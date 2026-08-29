@@ -4,6 +4,7 @@
 #include <vector>
 #include <set>
 #include <map>
+#include <cstdint>
 
 //==============================================================================
 // Chord quality enumeration
@@ -80,12 +81,17 @@ struct ChordInfo
     ChordQuality quality = ChordQuality::Unknown;
     juce::String extensions;        // Any additional text
     int inversion = 0;              // 0=root, 1=first, 2=second, etc.
+    bool slashBass = false;         // Bass is not the root - display slash notation
     bool isValid = false;
     float confidence = 0.0f;        // 0.0-1.0 confidence score
 
     bool operator==(const ChordInfo& other) const
     {
-        return name == other.name && rootNote == other.rootNote && quality == other.quality;
+        // bassNote is part of the identity: C/E and C/G share a name, root and
+        // quality, but they display differently and publish a different
+        // detectedBass. Omitting it left both stale until some other note moved.
+        return name == other.name && rootNote == other.rootNote
+            && quality == other.quality && bassNote == other.bassNote;
     }
 
     bool operator!=(const ChordInfo& other) const
@@ -164,9 +170,20 @@ private:
     // Analysis helpers
     int findRoot(const std::vector<int>& notes) const;
     std::set<int> getIntervals(const std::vector<int>& notes, int root) const;
-    ChordQuality matchPattern(const std::set<int>& intervals, int& outPriority) const;
+    static bool patternMatches(const ChordPattern& pattern, const std::set<int>& intervals);
+
+    // Pitch classes a pattern covers, as a 12-bit mask (bit n = pitch class n).
+    // analyze() runs on the audio thread in the headless LV2 build, so the
+    // hot helpers below stay free of heap containers.
+    static std::uint16_t patternPitchClasses(const ChordPattern& pattern);
+    const ChordPattern* matchPattern(const std::set<int>& intervals) const;
     int calculateInversion(const std::vector<int>& notes, int root) const;
-    float calculateConfidence(const std::set<int>& intervals, ChordQuality matched) const;
+    static float calculateConfidence(const ChordPattern& pattern, const std::set<int>& intervals);
+
+    //==========================================================================
+    // Naming of tones the matched pattern does not account for
+    static const char* tensionLabel(int semitonesFromRoot);   // nullptr if none
+    static juce::String describeAddedTones(const ChordPattern& pattern, const std::set<int>& intervals);
 
     //==========================================================================
     // Roman numeral helpers

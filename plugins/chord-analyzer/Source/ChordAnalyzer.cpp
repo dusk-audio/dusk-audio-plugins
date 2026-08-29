@@ -4,7 +4,11 @@
 
 //==============================================================================
 // Chord patterns - interval sets from root (in semitones)
-// Priority determines which pattern wins when multiple match
+// Priority determines which pattern wins when multiple match. Patterns that
+// tie on both priority and size fall back to DECLARATION ORDER, so this list
+// is ordered by preferred spelling: Major before Minor before Diminished, and
+// the lower tension first (add9 before add11, so C E G D F reads Cadd9(11)).
+// Reordering entries within a priority band changes chord names.
 const std::vector<ChordAnalyzer::ChordPattern> ChordAnalyzer::chordPatterns = {
     // Power chord (2 notes)
     {{0, 7}, ChordQuality::Power5, "5", 1},
@@ -35,8 +39,8 @@ const std::vector<ChordAnalyzer::ChordPattern> ChordAnalyzer::chordPatterns = {
     // Altered dominants
     {{0, 4, 6, 10}, ChordQuality::Dominant7Flat5, "7b5", 21},
     {{0, 4, 8, 10}, ChordQuality::Dominant7Sharp5, "7#5", 21},
-    {{0, 4, 7, 10, 13}, ChordQuality::Dominant7Flat9, "7b9", 25},
-    {{0, 4, 7, 10, 15}, ChordQuality::Dominant7Sharp9, "7#9", 25},
+    {{0, 1, 4, 7, 10}, ChordQuality::Dominant7Flat9, "7b9", 25},
+    {{0, 3, 4, 7, 10}, ChordQuality::Dominant7Sharp9, "7#9", 25},
 
     // Add chords
     {{0, 4, 7, 14}, ChordQuality::Add9, "add9", 16},
@@ -109,27 +113,35 @@ ChordInfo ChordAnalyzer::analyze(const std::vector<int>& midiNotes)
     auto intervals = getIntervals(sortedNotes, result.rootNote);
 
     // Match pattern
-    int priority = 0;
-    result.quality = matchPattern(intervals, priority);
+    const ChordPattern* pattern = matchPattern(intervals);
 
-    if (result.quality == ChordQuality::Unknown)
+    if (pattern == nullptr)
     {
-        // Try simpler patterns by removing some notes
-        // Sometimes extra notes don't fit known patterns
+        // No known chord shape fits these notes
         result.name = pitchClassToName(result.rootNote) + "?";
         result.romanNumeral = "?";
         result.confidence = 0.3f;
         return result;
     }
 
-    // Build chord name
-    result.name = pitchClassToName(result.rootNote) + qualityToSuffix(result.quality);
+    result.quality = pattern->quality;
+
+    // Build chord name. Any sounding tone the matched pattern does not account
+    // for is spelled out instead of dropped, so C E G F# reads "Cadd#11" and
+    // not "C" (issue #235).
+    result.name = pitchClassToName(result.rootNote)
+                + qualityToSuffix(result.quality)
+                + describeAddedTones(*pattern, intervals);
 
     // Calculate inversion
     result.inversion = calculateInversion(sortedNotes, result.rootNote);
 
-    // Add inversion notation if not root position
-    if (result.inversion > 0)
+    // Slash notation for any bass note other than the root. This covers the
+    // classic inversions and also an upper-structure bass such as the #11,
+    // which calculateInversion cannot number but must still be shown.
+    result.slashBass = (result.bassNote != result.rootNote);
+
+    if (result.slashBass)
     {
         result.extensions = "/" + pitchClassToName(result.bassNote);
     }
@@ -139,7 +151,7 @@ ChordInfo ChordAnalyzer::analyze(const std::vector<int>& midiNotes)
     result.function = getHarmonicFunction(result.rootNote, result.quality);
 
     // Calculate confidence
-    result.confidence = calculateConfidence(intervals, result.quality);
+    result.confidence = calculateConfidence(*pattern, intervals);
     result.isValid = true;
 
     return result;
@@ -185,17 +197,7 @@ int ChordAnalyzer::findRoot(const std::vector<int>& notes) const
         for (const auto& pattern : chordPatterns)
         {
             // Check if intervals match pattern (allowing extra notes)
-            bool matches = true;
-            for (int interval : pattern.intervals)
-            {
-                if (intervals.find(interval) == intervals.end())
-                {
-                    matches = false;
-                    break;
-                }
-            }
-
-            if (matches)
+            if (patternMatches(pattern, intervals))
             {
                 float score = static_cast<float>(pattern.priority);
 
@@ -240,41 +242,127 @@ std::set<int> ChordAnalyzer::getIntervals(const std::vector<int>& notes, int roo
     return intervals;
 }
 
-ChordQuality ChordAnalyzer::matchPattern(const std::set<int>& intervals, int& outPriority) const
+std::uint16_t ChordAnalyzer::patternPitchClasses(const ChordPattern& pattern)
 {
-    ChordQuality bestMatch = ChordQuality::Unknown;
-    int bestPriority = -1;
-    size_t bestMatchSize = 0;
+    // Patterns state extensions in compound form (a 9th as 14), while a played
+    // voicing is compared as pitch classes. Reduce once, here, so the matcher,
+    // the tension naming and the confidence score cannot drift apart. Returned
+    // as a bit mask rather than a set: this runs per analysed chord, and the
+    // headless LV2 build calls analyze() straight from its audio callback.
+    std::uint16_t covered = 0;
+
+    for (int interval : pattern.intervals)
+        covered |= static_cast<std::uint16_t>(1u << (interval % 12));
+
+    return covered;
+}
+
+bool ChordAnalyzer::patternMatches(const ChordPattern& pattern, const std::set<int>& intervals)
+{
+    // Every tone the pattern requires must be sounding (extra notes allowed)
+    for (int interval : pattern.intervals)
+    {
+        if (intervals.find(interval) == intervals.end())
+            return false;
+    }
+
+    // A b5 or #5 spelling *replaces* the fifth, so it cannot describe a chord
+    // that also sounds a perfect fifth - there the altered tone is a #11 or a
+    // b13. Without this, C E G Bb F# matched C7b5 and the natural fifth was
+    // thrown away.
+    if (intervals.count(7) > 0 && pattern.intervals.count(7) == 0
+        && (pattern.intervals.count(6) > 0 || pattern.intervals.count(8) > 0))
+        return false;
+
+    return true;
+}
+
+const ChordAnalyzer::ChordPattern* ChordAnalyzer::matchPattern(const std::set<int>& intervals) const
+{
+    const ChordPattern* best = nullptr;
 
     for (const auto& pattern : chordPatterns)
     {
-        // Check if all pattern intervals are present
-        bool matches = true;
-        for (int interval : pattern.intervals)
-        {
-            if (intervals.find(interval) == intervals.end())
-            {
-                matches = false;
-                break;
-            }
-        }
+        if (! patternMatches(pattern, intervals))
+            continue;
 
-        if (matches)
+        // Prefer patterns that match more notes (more specific)
+        // But also consider priority. A pattern that ties on both keeps the
+        // incumbent, so an exact tie resolves to whichever is declared first
+        // in chordPatterns - see the ordering contract on that table.
+        if (best == nullptr
+            || pattern.priority > best->priority
+            || (pattern.priority == best->priority
+                && pattern.intervals.size() > best->intervals.size()))
         {
-            // Prefer patterns that match more notes (more specific)
-            // But also consider priority
-            if (pattern.priority > bestPriority ||
-                (pattern.priority == bestPriority && pattern.intervals.size() > bestMatchSize))
-            {
-                bestMatch = pattern.quality;
-                bestPriority = pattern.priority;
-                bestMatchSize = pattern.intervals.size();
-            }
+            best = &pattern;
         }
     }
 
-    outPriority = bestPriority;
-    return bestMatch;
+    return best;
+}
+
+const char* ChordAnalyzer::tensionLabel(int semitonesFromRoot)
+{
+    // Folded to a pitch class so a compound interval names the same tension as
+    // its simple form (14 and 2 are both a 9th, 17 and 5 both an 11th).
+    // String literals, so naming a tension costs no allocation.
+    switch (semitonesFromRoot % 12)
+    {
+        case 1:  return "b9";
+        case 2:  return "9";
+        case 3:  return "#9";
+        case 4:  return "3";
+        case 5:  return "11";
+        case 6:  return "#11";
+        case 7:  return "5";
+        case 8:  return "b13";
+        case 9:  return "13";
+        case 10: return "b7";
+        case 11: return "maj7";
+        default: return nullptr;   // 0 is the root, always covered by the pattern
+    }
+}
+
+juce::String ChordAnalyzer::describeAddedTones(const ChordPattern& pattern,
+                                               const std::set<int>& intervals)
+{
+    // Compare as pitch classes: getIntervals states a 9th as both 2 and 14, and
+    // the patterns use the compound form, so a raw set difference would report
+    // every add9/add11/13 chord tone as an extra note.
+    const std::uint16_t covered = patternPitchClasses(pattern);
+
+    // At most one extra per pitch class, so a fixed array suffices.
+    const char* extras[12];
+    int numExtras = 0;
+
+    for (int interval : intervals)
+    {
+        if (interval >= 12 || (covered & (1u << interval)) != 0)
+            continue;
+
+        if (const char* label = tensionLabel(interval))
+            extras[numExtras++] = label;
+    }
+
+    if (numExtras == 0)
+        return {};
+
+    // A triad carrying one extra tone reads as an add chord ("Cadd#11");
+    // anything richer takes parenthesised tensions ("C7(#11)", "C9(b13)").
+    if (numExtras == 1 && pattern.intervals.size() <= 3)
+        return juce::String("add") + extras[0];
+
+    juce::String text("(");
+    for (int i = 0; i < numExtras; ++i)
+    {
+        if (i > 0)
+            text << ",";
+        text << extras[i];
+    }
+    text << ")";
+
+    return text;
 }
 
 int ChordAnalyzer::calculateInversion(const std::vector<int>& notes, int root) const
@@ -298,38 +386,36 @@ int ChordAnalyzer::calculateInversion(const std::vector<int>& notes, int root) c
     return 0;
 }
 
-float ChordAnalyzer::calculateConfidence(const std::set<int>& intervals, ChordQuality matched) const
+float ChordAnalyzer::calculateConfidence(const ChordPattern& pattern, const std::set<int>& intervals)
 {
-    if (matched == ChordQuality::Unknown) return 0.0f;
+    // Score against the pattern that actually matched. Comparing in pitch
+    // classes keeps a compound pattern tone (9th written as 14) from counting
+    // its own chord tone as an extra note.
+    const std::uint16_t covered = patternPitchClasses(pattern);
 
-    // Find the matching pattern
-    for (const auto& pattern : chordPatterns)
+    int matchedIntervals = 0;
+    int extraIntervals = 0;
+
+    for (int interval : intervals)
     {
-        if (pattern.quality == matched)
-        {
-            // Check how closely we match
-            int matchedIntervals = 0;
-            int extraIntervals = 0;
+        if (interval >= 12)  // Compound restatement of a tone already counted
+            continue;
 
-            for (int interval : intervals)
-            {
-                if (interval < 12)  // Only count basic intervals
-                {
-                    if (pattern.intervals.find(interval) != pattern.intervals.end())
-                        matchedIntervals++;
-                    else if (interval != 0)
-                        extraIntervals++;
-                }
-            }
-
-            float patternMatch = static_cast<float>(matchedIntervals) / static_cast<float>(pattern.intervals.size());
-            float penalty = static_cast<float>(extraIntervals) * 0.1f;
-
-            return juce::jlimit(0.0f, 1.0f, patternMatch - penalty);
-        }
+        if ((covered & (1u << interval)) != 0)
+            matchedIntervals++;
+        else if (interval != 0)
+            extraIntervals++;
     }
 
-    return 0.5f;
+    int coveredCount = 0;
+    for (int pc = 0; pc < 12; ++pc)
+        if ((covered & (1u << pc)) != 0)
+            ++coveredCount;
+
+    const float patternMatch = static_cast<float>(matchedIntervals) / static_cast<float>(coveredCount);
+    const float penalty = static_cast<float>(extraIntervals) * 0.1f;
+
+    return juce::jlimit(0.0f, 1.0f, patternMatch - penalty);
 }
 
 //==============================================================================

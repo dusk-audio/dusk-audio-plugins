@@ -399,11 +399,13 @@ void ChordAnalyzerEditor::updateChordDisplay()
     // Update chord name
     juce::String displayName = cachedChord.name;
 
-    // Add inversion notation if enabled and not root position
+    // Add slash notation if enabled and the bass is not the root. This covers
+    // the numbered inversions and an upper-structure bass alike, so a C triad
+    // voiced over F# reads "Cadd#11/F#" rather than "C" (issue #235).
     bool showInv = *audioProcessor.getAPVTS().getRawParameterValue(
         ChordAnalyzerProcessor::PARAM_SHOW_INVERSIONS) > 0.5f;
 
-    if (showInv && !cachedChord.extensions.isEmpty() && cachedChord.inversion > 0)
+    if (showInv && cachedChord.slashBass && !cachedChord.extensions.isEmpty())
     {
         displayName += cachedChord.extensions;
     }

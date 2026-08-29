@@ -125,6 +125,8 @@ target_link_libraries(ChordAnalyzerTest PRIVATE
 )
 target_compile_definitions(ChordAnalyzerTest PRIVATE
     JUCE_STANDALONE_APPLICATION=1
+    JUCE_USE_CURL=0          # headless unit test: no network, avoids libcurl link dep
+    JUCE_WEB_BROWSER=0
 )
 
 # Optimization for release builds
