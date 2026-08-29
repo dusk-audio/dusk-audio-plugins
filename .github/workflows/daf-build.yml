@@ -66,8 +66,8 @@ on:
 # checkouts on the pinned SHAs (docker/check_daf_pins.sh) so a hand-tested build
 # is the one CI produces.
 env:
-  DAF_REF: dfc50729f7a7d31dc0e0740c863bf88dee71c7c2
-  DAFWIDGETS_REF: 91e0004e1ece0785d347801925d3e2518b0cbbda
+  DAF_REF: 2f573d68d79218d2f9e048e47d99e424ca7958c6
+  DAFWIDGETS_REF: 990751362a00f80433647136e27547ca691cd435
   AU_TYPE: aufx
   AU_MANUFACTURER: Dusk
 
@@ -936,11 +936,12 @@ jobs:
           # webview_choc_* symbols unconditionally, so an empty stub breaks the link (LNK2019).
           '// intentionally empty on Windows CI: unused by ImGui plugins (see workflow note)' `
             | Set-Content "$env:GITHUB_WORKSPACE/DAF/dgl/src/NanoVG.cpp"
-          # (2) DAF-Widgets' DearImGui.cpp (the ImGui backend we DO compile) uses the GCC/Clang
-          # "Elvis operator" (a ?: b), which MSVC rejects (C2059). Rewrite the two occurrences
-          # as standard ternaries. getWidth()/getHeight() are side-effect-free getters. The
-          # assertion after it catches a rewrite that has stopped matching the pinned source,
-          # which would otherwise surface as a C2059 buried in cl's output.
+          # (2) DAF-Widgets' DearImGui.cpp (the ImGui backend we DO compile) used the GCC/Clang
+          # "Elvis operator" (a ?: b), which MSVC rejects (C2059). The fork corrected it, so the
+          # rewrite matches nothing at the current pin and the assertion is what carries this;
+          # both stay because the pin has crossed that correction in each direction once already.
+          # getWidth()/getHeight() are side-effect-free getters, so the rewrite is safe whenever
+          # it does match.
           $f = "$env:GITHUB_WORKSPACE/DAF-Widgets/opengl/DearImGui.cpp"
           (Get-Content -Raw $f) `
             -replace 'self->getWidth\(\) \?: 640 \* scaleFactor',  'self->getWidth() ? self->getWidth() : 640 * scaleFactor' `

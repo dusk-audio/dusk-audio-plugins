@@ -42,8 +42,8 @@ on:
 # daf-build.yml, daf-au-test.yml and docker/build_release.sh, and re-run the
 # dispatch matrix before tagging.
 env:
-  DAF_SHA: dfc50729f7a7d31dc0e0740c863bf88dee71c7c2
-  DAFWIDGETS_SHA: 91e0004e1ece0785d347801925d3e2518b0cbbda
+  DAF_SHA: 2f573d68d79218d2f9e048e47d99e424ca7958c6
+  DAFWIDGETS_SHA: 990751362a00f80433647136e27547ca691cd435
   PLUGIN_DIR: plugins/sunset-circuits/daf-plugin
   SLUG: sunset-circuits
 
@@ -459,19 +459,17 @@ jobs:
       - name: Patch DAF-Widgets for MSVC
         shell: pwsh
         run: |
-          # DAF-Widgets' DearImGui.cpp uses the GNU 'Elvis operator' (a ?: b),
-          # which MSVC does not accept (C2059). Rewrite the two occurrences to
-          # explicit ternaries so the pinned checkout compiles under cl.
-          # Deterministic (fresh pinned checkout each run).
+          # DAF-Widgets' DearImGui.cpp used the GNU 'Elvis operator' (a ?: b), which
+          # MSVC does not accept (C2059). The fork corrected it, so at the current
+          # pin the rewrite below matches nothing and the assertion carries the
+          # step; both halves stay because the pin has already moved back and forth
+          # across that correction once, and a future bump could reintroduce the
+          # construct. Deterministic either way (fresh pinned checkout each run).
           #
-          # The pin briefly moved to a fork revision that had already corrected
-          # this, and the step was reduced to a bare assertion; that revision also
-          # carried a focus regression that broke knob dragging in every plugin,
-          # so the pin went back and the rewrite with it. Keep both halves: the
-          # rewrite for the current pin, the assertion so a rewrite that silently
-          # stops matching fails here by name rather than as a C2059 buried in
-          # cl's output. DearImGui.cpp is the only DAF-Widgets TU our plugins
-          # compile (DUSK_DAF_UI_SOURCES in shared-daf/cmake/DuskDafPlugin.cmake).
+          # The assertion is the part that matters: it fails by name instead of as
+          # a C2059 buried a hundred lines into cl's output. DearImGui.cpp is the
+          # only DAF-Widgets TU our plugins compile (DUSK_DAF_UI_SOURCES in
+          # shared-daf/cmake/DuskDafPlugin.cmake).
           $f = "${{ github.workspace }}/DAF-Widgets/opengl/DearImGui.cpp"
           $c = [System.IO.File]::ReadAllText($f)
           $c = $c.Replace('self->getWidth() ?: 640 * scaleFactor',  'self->getWidth() ? self->getWidth() : 640 * scaleFactor')
