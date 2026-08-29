@@ -321,6 +321,104 @@ static void testConfidence()
 }
 
 // =====================================================================
+// 9b. Added tones and slash bass (issue #235)
+//
+// The matcher accepts a pattern whose intervals are a subset of the notes
+// played, so every tone outside the pattern used to vanish from the name:
+// C E G F# read as plain "C".
+// =====================================================================
+static void testAddedTones()
+{
+    std::cout << "\n--- Added Tones / Slash Bass ---\n";
+    ChordAnalyzer a;
+
+    // C major triad plus F# (C E G F#) — the reported chord
+    auto addSharp11 = analyzeNotes(a, {60, 64, 66, 67});
+    check("C E G F# = Cadd#11", addSharp11.isValid && addSharp11.name == "Cadd#11");
+
+    // Same pitch classes voiced with F# in the bass — "C / F#"
+    auto overSharp11 = analyzeNotes(a, {54, 60, 64, 67});
+    check("C triad over F# names the #11", overSharp11.name == "Cadd#11");
+    check("C triad over F# is a slash chord",
+          overSharp11.slashBass && overSharp11.extensions == "/F#");
+
+    // A perfect fifth alongside the tritone means #11, never b5
+    auto dom7Sharp11 = analyzeNotes(a, {60, 64, 66, 67, 70});
+    check("C E G Bb F# = C7(#11)", dom7Sharp11.isValid
+                                    && dom7Sharp11.quality == ChordQuality::Dominant7
+                                    && dom7Sharp11.name == "C7(#11)");
+
+    auto maj7Sharp11 = analyzeNotes(a, {60, 64, 66, 67, 71});
+    check("C E G B F# = Cmaj7(#11)", maj7Sharp11.name == "Cmaj7(#11)");
+
+    // Same rule for the flat thirteenth against a natural fifth
+    auto dom7Flat13 = analyzeNotes(a, {60, 64, 67, 68, 70});
+    check("C E G Ab Bb = C7(b13)", dom7Flat13.name == "C7(b13)");
+
+    // Genuine altered fifths still resolve to their own spelling
+    auto realFlat5 = analyzeNotes(a, {60, 64, 66, 70});
+    check("C E Gb Bb = C7b5", realFlat5.quality == ChordQuality::Dominant7Flat5
+                               && realFlat5.name == "C7b5");
+    auto realSharp5 = analyzeNotes(a, {60, 64, 68, 70});
+    check("C E G# Bb = C7#5", realSharp5.name == "C7#5");
+    auto dim = analyzeNotes(a, {60, 63, 66});
+    check("C Eb Gb still = Cdim", dim.quality == ChordQuality::Diminished);
+
+    // Altered ninths: these patterns were written with compound intervals
+    // (13/15) that getIntervals never produces, so they could never match
+    auto flat9 = analyzeNotes(a, {60, 64, 67, 70, 73});
+    check("C E G Bb Db = C7b9", flat9.quality == ChordQuality::Dominant7Flat9
+                                 && flat9.name == "C7b9");
+    auto sharp9 = analyzeNotes(a, {60, 64, 67, 70, 75});
+    check("C E G Bb Eb = C7#9", sharp9.quality == ChordQuality::Dominant7Sharp9
+                                 && sharp9.name == "C7#9");
+
+    // Exactly matched chords must gain no extra text
+    check("C major gains no tension text", analyzeNotes(a, {60, 64, 67}).name == "C");
+    check("Cadd9 gains no tension text",   analyzeNotes(a, {60, 64, 67, 74}).name == "Cadd9");
+    check("Cadd11 gains no tension text",  analyzeNotes(a, {60, 64, 67, 65}).name == "Cadd11");
+    check("Cmaj13 gains no tension text",
+          analyzeNotes(a, {60, 64, 67, 71, 74, 77, 81}).name == "Cmaj13");
+
+    // Classic inversions keep numbering their bass and still flag the slash
+    auto firstInv = analyzeNotes(a, {64, 67, 72});
+    check("C/E still 1st inversion", firstInv.inversion == 1
+                                      && firstInv.slashBass
+                                      && firstInv.extensions == "/E");
+    check("Root position sets no slash", !analyzeNotes(a, {60, 64, 67}).slashBass);
+
+    // A third outside the matched triad is a tension, not a dropped note
+    check("C Eb E G = Cadd#9", analyzeNotes(a, {60, 63, 64, 67}).name == "Cadd#9");
+
+    // Two patterns can tie on priority and size (add9 and add11 are both
+    // {root,3,5,+1} at priority 16); chordPatterns declaration order breaks
+    // the tie, and this pins the spelling that ordering is meant to produce.
+    check("C E G D F = Cadd9(11)", analyzeNotes(a, {60, 64, 67, 74, 77}).name == "Cadd9(11)");
+}
+
+// =====================================================================
+// 9c. Chord identity includes the bass
+//
+// ChordInfo::operator== gates display refresh, history and the exported
+// detectedBass parameter. Leaving bassNote out of it meant moving only the
+// bass never registered as a change.
+// =====================================================================
+static void testBassIdentity()
+{
+    std::cout << "\n--- Bass Is Part Of Identity ---\n";
+    ChordAnalyzer a;
+
+    auto overE = analyzeNotes(a, {64, 67, 72});   // C/E
+    auto overG = analyzeNotes(a, {55, 60, 64});   // C/G
+
+    check("C/E and C/G share a name",  overE.name == overG.name
+                                        && overE.rootNote == overG.rootNote
+                                        && overE.quality == overG.quality);
+    check("C/E differs from C/G",      overE != overG);
+    check("Same voicing compares equal", overE == analyzeNotes(a, {64, 67, 72}));
+}
+
+// =====================================================================
 // 10. Static utility functions
 // =====================================================================
 static void testUtilities()
@@ -349,6 +447,8 @@ int main()
     testHarmonicFunctions();
     testEdgeCases();
     testConfidence();
+    testAddedTones();
+    testBassIdentity();
     testUtilities();
 
     std::cout << "\n=== Results: " << passed << " passed, " << failed << " failed ===\n";
