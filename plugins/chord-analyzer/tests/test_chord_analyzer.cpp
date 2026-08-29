@@ -419,6 +419,101 @@ static void testBassIdentity()
 }
 
 // =====================================================================
+// 9d. Root choice: the bass decides an ambiguous spelling
+//
+// C E G A is both C6 and Am7. findRoot gives the bass a bonus, but the
+// tie-break then preferred the higher pattern priority, so m7 always beat
+// 6 and every root-position 6th chord came out as a 7th chord instead.
+// =====================================================================
+static void testSixthChords()
+{
+    std::cout << "\n--- Sixth Chords / Root Choice ---\n";
+    ChordAnalyzer a;
+
+    check("C E G A over C = C6",     analyzeNotes(a, {60, 64, 67, 69}).name == "C6");
+    check("C Eb G A over C = Cm6",   analyzeNotes(a, {60, 63, 67, 69}).name == "Cm6");
+
+    // The same pitch classes over their other root still read as the 7th chord
+    auto am7 = analyzeNotes(a, {57, 60, 64, 67});
+    check("A C E G over A = Am7",    am7.name == "Am7" && !am7.slashBass);
+    auto am7b5 = analyzeNotes(a, {57, 60, 63, 67});
+    check("A C Eb G over A = Am7b5", am7b5.name == "Am7b5");
+
+    // Every root, both qualities
+    bool allRoots = true;
+    for (int r = 0; r < 12; ++r)
+    {
+        const juce::String root = ChordAnalyzer::pitchClassToName(r);
+        if (analyzeNotes(a, {60 + r, 64 + r, 67 + r, 69 + r}).name != root + "6")  allRoots = false;
+        if (analyzeNotes(a, {60 + r, 63 + r, 67 + r, 69 + r}).name != root + "m6") allRoots = false;
+    }
+    check("all 12 roots, major and minor 6ths", allRoots);
+
+    // A sub-triad shape must not absorb a cluster, and must not depend on the
+    // bass for whether it names anything at all
+    auto cluster     = analyzeNotes(a, {60, 61, 62, 65});   // C C# D F
+    auto clusterAlt  = analyzeNotes(a, {65, 72, 73, 74});   // same notes, F in the bass
+    check("cluster is not a power chord", !cluster.isValid && !clusterAlt.isValid);
+    check("cluster reading is bass-independent", cluster.quality == clusterAlt.quality);
+
+    // ...but a power chord with a single added tone is still named
+    check("C G F# = C5add#11", analyzeNotes(a, {60, 66, 67}).name == "C5add#11");
+    check("C G = C5",          analyzeNotes(a, {60, 67}).name == "C5");
+}
+
+// =====================================================================
+// 9e. analyzeFacts is the real-time path
+//
+// The headless LV2 wrapper calls analyzeFacts from run(), which is the
+// audio thread, and the plugin declares lv2:hardRTCapable. It must agree
+// with analyze() on every field that wrapper publishes.
+// =====================================================================
+static void testAnalyzeFacts()
+{
+    std::cout << "\n--- analyzeFacts (real-time path) ---\n";
+    ChordAnalyzer a;
+
+    int checked = 0, mismatches = 0;
+
+    for (int mask = 0; mask < 4096; ++mask)
+    {
+        std::vector<int> pcs;
+        for (int i = 0; i < 12; ++i)
+            if (mask & (1 << i))
+                pcs.push_back(i);
+
+        if (pcs.empty())
+            continue;
+
+        // every rotation, so the bass varies too
+        for (size_t rot = 0; rot < pcs.size(); ++rot)
+        {
+            std::vector<int> notes;
+            for (size_t i = 0; i < pcs.size(); ++i)
+                notes.push_back((i < rot ? 72 : 60) + pcs[i]);
+            std::sort(notes.begin(), notes.end());
+
+            const ChordInfo  full = a.analyze(notes);
+            const ChordFacts fast = a.analyzeFacts(notes.data(), (int) notes.size());
+            ++checked;
+
+            if (full.isValid   != fast.isValid   || full.rootNote  != fast.rootNote
+             || full.bassNote  != fast.bassNote  || full.quality   != fast.quality
+             || full.inversion != fast.inversion || full.slashBass != fast.slashBass)
+                ++mismatches;
+        }
+    }
+
+    std::cout << "       (" << checked << " voicings compared)\n";
+    check("analyzeFacts agrees with analyze", mismatches == 0);
+
+    // Degenerate inputs must not reach into the note pointer
+    check("null notes are safe",  !a.analyzeFacts(nullptr, 0).isValid);
+    const int one = 60;
+    check("single note is not a chord", !a.analyzeFacts(&one, 1).isValid);
+}
+
+// =====================================================================
 // 10. Static utility functions
 // =====================================================================
 static void testUtilities()
@@ -449,6 +544,8 @@ int main()
     testConfidence();
     testAddedTones();
     testBassIdentity();
+    testSixthChords();
+    testAnalyzeFacts();
     testUtilities();
 
     std::cout << "\n=== Results: " << passed << " passed, " << failed << " failed ===\n";
