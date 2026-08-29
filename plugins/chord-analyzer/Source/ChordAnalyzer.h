@@ -69,6 +69,30 @@ enum class SuggestionCategory
 };
 
 //==============================================================================
+// Numeric analysis result: no strings, no heap, safe to compute on an audio
+// thread. The headless LV2 wrapper publishes only these fields.
+struct ChordFacts
+{
+    int rootNote = -1;              // Root pitch class (0-11, C=0)
+    int bassNote = -1;              // Lowest note pitch class
+    ChordQuality quality = ChordQuality::Unknown;
+    int inversion = 0;              // 0=root, 1=first, 2=second, 3=seventh
+    bool slashBass = false;         // Bass is not the root
+    bool isValid = false;
+    float confidence = 0.0f;
+    int patternIndex = -1;          // matched entry, -1 when nothing fitted
+    std::uint32_t intervals = 0;    // interval bit mask from the root
+
+    bool operator==(const ChordFacts& o) const
+    {
+        return rootNote == o.rootNote && bassNote == o.bassNote
+            && quality == o.quality && inversion == o.inversion
+            && isValid == o.isValid;
+    }
+    bool operator!=(const ChordFacts& o) const { return !(*this == o); }
+};
+
+//==============================================================================
 // Chord information structure
 struct ChordInfo
 {
@@ -122,6 +146,11 @@ public:
     // Main analysis function
     ChordInfo analyze(const std::vector<int>& midiNotes);
 
+    // Numeric-only analysis. Allocates nothing and builds no strings, so it is
+    // safe to call from an audio callback - the headless LV2 wrapper does.
+    // analyze() is this plus the display strings.
+    ChordFacts analyzeFacts(const int* midiNotes, int numNotes) const noexcept;
+
     //==========================================================================
     // Key context
     void setKey(int rootNote, bool isMinor);
@@ -167,24 +196,33 @@ private:
     static const std::vector<ChordPattern> chordPatterns;
 
     //==========================================================================
-    // Analysis helpers
-    int findRoot(const std::vector<int>& notes) const;
-    std::set<int> getIntervals(const std::vector<int>& notes, int root) const;
-    static bool patternMatches(const ChordPattern& pattern, const std::set<int>& intervals);
+    // Each pattern reduced to bit masks once, at static-init time, so analysis
+    // touches no heap container. Interval masks carry bits 0-21 (the compound
+    // 14, 17 and 21 included); pitch masks are folded to 12 bits.
+    struct PatternMask
+    {
+        std::uint32_t intervals;
+        std::uint16_t pitches;
+        int           pitchCount;
+    };
 
-    // Pitch classes a pattern covers, as a 12-bit mask (bit n = pitch class n).
-    // analyze() runs on the audio thread in the headless LV2 build, so the
-    // hot helpers below stay free of heap containers.
-    static std::uint16_t patternPitchClasses(const ChordPattern& pattern);
-    static int countPitchClasses(std::uint16_t mask);
-    const ChordPattern* matchPattern(const std::set<int>& intervals) const;
-    int calculateInversion(const std::vector<int>& notes, int root) const;
-    static float calculateConfidence(const ChordPattern& pattern, const std::set<int>& intervals);
+    static const std::vector<PatternMask> kPatternMasks;
+    static std::vector<PatternMask> buildPatternMasks();
+
+    //==========================================================================
+    // Analysis helpers. All operate on masks and allocate nothing.
+    static int findRoot(std::uint16_t pitchMask, int bassPitch) noexcept;
+    static std::uint32_t intervalsFrom(std::uint16_t pitchMask, int root) noexcept;
+    static bool patternMatches(int patternIndex, std::uint32_t intervals) noexcept;
+    static int countPitchClasses(std::uint16_t mask) noexcept;
+    static int matchPattern(std::uint32_t intervals) noexcept;   // -1 if none
+    static int calculateInversion(int bassPitch, int root) noexcept;
+    static float calculateConfidence(int patternIndex, std::uint32_t intervals) noexcept;
 
     //==========================================================================
     // Naming of tones the matched pattern does not account for
     static const char* tensionLabel(int semitonesFromRoot);   // nullptr if none
-    static juce::String describeAddedTones(const ChordPattern& pattern, const std::set<int>& intervals);
+    static juce::String describeAddedTones(int patternIndex, std::uint32_t intervals);
 
     //==========================================================================
     // Roman numeral helpers

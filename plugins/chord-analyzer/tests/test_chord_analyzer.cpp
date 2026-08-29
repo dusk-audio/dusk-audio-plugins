@@ -462,6 +462,58 @@ static void testSixthChords()
 }
 
 // =====================================================================
+// 9e. analyzeFacts is the real-time path
+//
+// The headless LV2 wrapper calls analyzeFacts from run(), which is the
+// audio thread, and the plugin declares lv2:hardRTCapable. It must agree
+// with analyze() on every field that wrapper publishes.
+// =====================================================================
+static void testAnalyzeFacts()
+{
+    std::cout << "\n--- analyzeFacts (real-time path) ---\n";
+    ChordAnalyzer a;
+
+    int checked = 0, mismatches = 0;
+
+    for (int mask = 0; mask < 4096; ++mask)
+    {
+        std::vector<int> pcs;
+        for (int i = 0; i < 12; ++i)
+            if (mask & (1 << i))
+                pcs.push_back(i);
+
+        if (pcs.empty())
+            continue;
+
+        // every rotation, so the bass varies too
+        for (size_t rot = 0; rot < pcs.size(); ++rot)
+        {
+            std::vector<int> notes;
+            for (size_t i = 0; i < pcs.size(); ++i)
+                notes.push_back((i < rot ? 72 : 60) + pcs[i]);
+            std::sort(notes.begin(), notes.end());
+
+            const ChordInfo  full = a.analyze(notes);
+            const ChordFacts fast = a.analyzeFacts(notes.data(), (int) notes.size());
+            ++checked;
+
+            if (full.isValid   != fast.isValid   || full.rootNote  != fast.rootNote
+             || full.bassNote  != fast.bassNote  || full.quality   != fast.quality
+             || full.inversion != fast.inversion || full.slashBass != fast.slashBass)
+                ++mismatches;
+        }
+    }
+
+    std::cout << "       (" << checked << " voicings compared)\n";
+    check("analyzeFacts agrees with analyze", mismatches == 0);
+
+    // Degenerate inputs must not reach into the note pointer
+    check("null notes are safe",  !a.analyzeFacts(nullptr, 0).isValid);
+    const int one = 60;
+    check("single note is not a chord", !a.analyzeFacts(&one, 1).isValid);
+}
+
+// =====================================================================
 // 10. Static utility functions
 // =====================================================================
 static void testUtilities()
@@ -493,6 +545,7 @@ int main()
     testAddedTones();
     testBassIdentity();
     testSixthChords();
+    testAnalyzeFacts();
     testUtilities();
 
     std::cout << "\n=== Results: " << passed << " passed, " << failed << " failed ===\n";
