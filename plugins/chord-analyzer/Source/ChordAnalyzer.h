@@ -191,6 +191,12 @@ private:
         ChordQuality quality;
         juce::String suffix;
         int priority;               // Higher = preferred match
+
+        // Set on the shapes that deliberately leave the fifth out. The fifth
+        // is the most disposable chord tone, so these voicings are everywhere
+        // in practice, but the name has to say the fifth is absent or it would
+        // claim a note that is not sounding.
+        bool omitsFifth = false;
     };
 
     static const std::vector<ChordPattern> chordPatterns;
@@ -222,6 +228,7 @@ private:
     //==========================================================================
     // Naming of tones the matched pattern does not account for
     static const char* tensionLabel(int semitonesFromRoot);   // nullptr if none
+    static const char* intervalName(int semitones);           // "M3", "tritone", ...
     static juce::String describeAddedTones(int patternIndex, std::uint32_t intervals);
 
     //==========================================================================

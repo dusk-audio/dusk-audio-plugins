@@ -449,12 +449,30 @@ static void testSixthChords()
     }
     check("all 12 roots, major and minor 6ths", allRoots);
 
-    // A sub-triad shape must not absorb a cluster, and must not depend on the
-    // bass for whether it names anything at all
-    auto cluster     = analyzeNotes(a, {60, 61, 62, 65});   // C C# D F
-    auto clusterAlt  = analyzeNotes(a, {65, 72, 73, 74});   // same notes, F in the bass
-    check("cluster is not a power chord", !cluster.isValid && !clusterAlt.isValid);
-    check("cluster reading is bass-independent", cluster.quality == clusterAlt.quality);
+    // A two-note shape must never absorb a cluster, and whether a set can be
+    // named at all must not depend on which of its notes is lowest. Which
+    // root wins may legitimately change with the bass - that is the rule
+    // above - so only namability and the power-chord exclusion are asserted.
+    const int clusterPcs[4] = { 0, 1, 2, 5 };   // C C# D F
+    bool anyPowerChord = false;
+    bool allSameValidity = true;
+    bool firstValid = false;
+
+    for (int rot = 0; rot < 4; ++rot)
+    {
+        std::vector<int> notes;
+        for (int i = 0; i < 4; ++i)
+            notes.push_back((i < rot ? 72 : 60) + clusterPcs[i]);
+        std::sort(notes.begin(), notes.end());
+
+        const auto c = a.analyze(notes);
+        if (rot == 0) firstValid = c.isValid;
+        if (c.isValid != firstValid) allSameValidity = false;
+        if (c.quality == ChordQuality::Power5) anyPowerChord = true;
+    }
+
+    check("cluster is never a power chord", !anyPowerChord);
+    check("cluster namability is bass-independent", allSameValidity);
 
     // ...but a power chord with a single added tone is still named
     check("C G F# = C5add#11", analyzeNotes(a, {60, 66, 67}).name == "C5add#11");
@@ -514,6 +532,62 @@ static void testAnalyzeFacts()
 }
 
 // =====================================================================
+// 9f. Voicings without the fifth, and two-note intervals
+//
+// Every pattern used to require the perfect fifth, so the shell voicings
+// that are standard on guitar and piano either went unnamed (C E Bb) or
+// were read as nonsense (C E B came out as "E5addb13/C").
+// =====================================================================
+static void testNoFifthAndDyads()
+{
+    std::cout << "\n--- No-Fifth Voicings / Dyads ---\n";
+    ChordAnalyzer a;
+
+    // Shells: root, third, seventh
+    check("C E Bb = C7(no5)",       analyzeNotes(a, {60, 64, 70}).name == "C7(no5)");
+    check("C E B = Cmaj7(no5)",     analyzeNotes(a, {60, 64, 71}).name == "Cmaj7(no5)");
+    check("C Eb Bb = Cm7(no5)",     analyzeNotes(a, {60, 63, 70}).name == "Cm7(no5)");
+    check("C Eb B = CmMaj7(no5)",   analyzeNotes(a, {60, 63, 71}).name == "CmMaj7(no5)");
+    check("C E D = Cadd9(no5)",     analyzeNotes(a, {60, 64, 74}).name == "Cadd9(no5)");
+
+    // ...and the same with the ninth
+    check("C E Bb D = C9(no5)",     analyzeNotes(a, {60, 64, 70, 74}).name == "C9(no5)");
+    check("C E B D = Cmaj9(no5)",   analyzeNotes(a, {60, 64, 71, 74}).name == "Cmaj9(no5)");
+    check("C Eb Bb D = Cm9(no5)",   analyzeNotes(a, {60, 63, 70, 74}).name == "Cm9(no5)");
+
+    // The quality is the real one, so Roman numerals and the exported
+    // detected-quality port stay correct without new enum values
+    auto shell = analyzeNotes(a, {60, 64, 70});
+    check("shell keeps its quality", shell.quality == ChordQuality::Dominant7 && shell.isValid);
+
+    // A complete chord must still prefer the complete spelling
+    check("C7 with a fifth is plain C7",       analyzeNotes(a, {60, 64, 67, 70}).name == "C7");
+    check("Cmaj7 with a fifth is plain Cmaj7", analyzeNotes(a, {60, 64, 67, 71}).name == "Cmaj7");
+    check("C9 with a fifth is plain C9",       analyzeNotes(a, {60, 64, 67, 70, 74}).name == "C9");
+
+    // An incomplete shape must not outrank a complete one at another root.
+    // At priority 28 maj9(no5) rooted on Ab beat C7 rooted on the bass, and
+    // C E G Ab Bb came out as G#maj9(no5,b13)/C.
+    check("C E G Ab Bb = C7(b13)", analyzeNotes(a, {60, 64, 67, 68, 70}).name == "C7(b13)");
+    check("C Eb E G = Cadd#9",     analyzeNotes(a, {60, 63, 64, 67}).name == "Cadd#9");
+    check("C E G D F = Cadd9(11)", analyzeNotes(a, {60, 64, 67, 74, 77}).name == "Cadd9(11)");
+
+    // An omitted fifth joins the tension list rather than opening a second
+    // parenthesis, so it never reads C7(no5)(13)
+    check("C E Bb A = C7(no5,13)", analyzeNotes(a, {60, 64, 70, 81}).name == "C7(no5,13)");
+
+    // Two notes are an interval, not a chord
+    check("C E = M3 dyad",       analyzeNotes(a, {60, 64}).name == "C+E (M3)");
+    check("C F# = tritone dyad", analyzeNotes(a, {60, 66}).name == "C+F# (tritone)");
+    check("C Bb = m7 dyad",      analyzeNotes(a, {60, 70}).name == "C+A# (m7)");
+    check("dyad is not a chord", !analyzeNotes(a, {60, 64}).isValid);
+
+    // The two dyads that do imply a chord keep their chord names
+    check("C G is still C5",   analyzeNotes(a, {60, 67}).name == "C5");
+    check("C F is still F5/C", analyzeNotes(a, {60, 65}).name == "F5");
+}
+
+// =====================================================================
 // 10. Static utility functions
 // =====================================================================
 static void testUtilities()
@@ -546,6 +620,7 @@ int main()
     testBassIdentity();
     testSixthChords();
     testAnalyzeFacts();
+    testNoFifthAndDyads();
     testUtilities();
 
     std::cout << "\n=== Results: " << passed << " passed, " << failed << " failed ===\n";

@@ -62,6 +62,25 @@ const std::vector<ChordAnalyzer::ChordPattern> ChordAnalyzer::chordPatterns = {
     // Simplified extended chords (without all tensions)
     {{0, 4, 7, 10, 21}, ChordQuality::Dominant13, "13", 28},  // 13 without 9/11
     {{0, 4, 7, 10, 17}, ChordQuality::Dominant11, "11", 28},  // 11 without 9
+
+    // Voicings that drop the fifth. Standard practice on guitar and piano -
+    // the fifth adds no colour, so it is the first tone to go - and the shell
+    // voicing (root, third, seventh) is the backbone of jazz comping.
+    //
+    // These sit BELOW every pattern that contains a fifth, not just below
+    // their own full counterparts. findRoot compares priorities across
+    // candidate roots, so a high-priority incomplete shape wins at the wrong
+    // root: at 28, maj9(no5) rooted on Ab beat a plain C7 rooted on the bass
+    // and C E G Ab Bb came out as G#maj9(no5,b13)/C. Ranked here only against
+    // each other, they win when, and only when, no fifth is sounding.
+    {{0, 4, 14},         ChordQuality::Add9,        "add9",   3, true},
+    {{0, 4, 10},         ChordQuality::Dominant7,   "7",      5, true},
+    {{0, 4, 11},         ChordQuality::Major7,      "maj7",   5, true},
+    {{0, 3, 10},         ChordQuality::Minor7,      "m7",     5, true},
+    {{0, 3, 11},         ChordQuality::MinorMajor7, "mMaj7",  5, true},
+    {{0, 4, 10, 14},     ChordQuality::Dominant9,   "9",      7, true},
+    {{0, 4, 11, 14},     ChordQuality::Major9,      "maj9",   7, true},
+    {{0, 3, 10, 14},     ChordQuality::Minor9,      "m9",     7, true},
 };
 
 //==============================================================================
@@ -150,6 +169,31 @@ ChordInfo ChordAnalyzer::analyze(const std::vector<int>& midiNotes)
 
     if (facts.patternIndex < 0)
     {
+        // Two notes are an interval, not a chord, so name the interval rather
+        // than giving up with "C?". The dyads that do imply a chord, the
+        // fourth and the fifth, match a pattern above and never reach here.
+        std::uint16_t pitchMask = 0;
+        for (int note : midiNotes)
+            pitchMask = static_cast<std::uint16_t>(pitchMask | (1u << (((note % 12) + 12) % 12)));
+
+        if (countPitchClasses(pitchMask) == 2)
+        {
+            int upper = result.bassNote;
+            for (int pc = 0; pc < 12; ++pc)
+            {
+                if (pc != result.bassNote && (pitchMask & (1u << pc)) != 0)
+                {
+                    upper = pc;
+                    break;
+                }
+            }
+
+            result.name = pitchClassToName(result.bassNote) + "+" + pitchClassToName(upper)
+                        + " (" + intervalName(((upper - result.bassNote) + 12) % 12) + ")";
+            result.romanNumeral = "-";
+            return result;
+        }
+
         // No known chord shape fits these notes
         result.name = pitchClassToName(result.rootNote) + "?";
         result.romanNumeral = "?";
@@ -396,6 +440,25 @@ const char* ChordAnalyzer::tensionLabel(int semitonesFromRoot)
     }
 }
 
+const char* ChordAnalyzer::intervalName(int semitones)
+{
+    switch (((semitones % 12) + 12) % 12)
+    {
+        case 0:  return "octave";
+        case 1:  return "m2";
+        case 2:  return "M2";
+        case 3:  return "m3";
+        case 4:  return "M3";
+        case 5:  return "P4";
+        case 6:  return "tritone";
+        case 7:  return "P5";
+        case 8:  return "m6";
+        case 9:  return "M6";
+        case 10: return "m7";
+        default: return "M7";
+    }
+}
+
 juce::String ChordAnalyzer::describeAddedTones(int patternIndex, std::uint32_t intervals)
 {
     // Compare as pitch classes: intervalsFrom states a 9th as both 2 and 14,
@@ -403,9 +466,15 @@ juce::String ChordAnalyzer::describeAddedTones(int patternIndex, std::uint32_t i
     // every add9/add11/13 chord tone as an extra note.
     const PatternMask& m = kPatternMasks[static_cast<size_t>(patternIndex)];
 
-    // At most one extra per pitch class, so a fixed array suffices.
-    const char* extras[12];
+    // At most one extra per pitch class, plus the "no5" marker.
+    const char* extras[13];
     int numExtras = 0;
+
+    // Announce a missing fifth first, so it reads C9(no5,#11) rather than
+    // splitting the parenthesis into two groups.
+    const bool omitsFifth = chordPatterns[static_cast<size_t>(patternIndex)].omitsFifth;
+    if (omitsFifth)
+        extras[numExtras++] = "no5";
 
     for (int interval = 0; interval < 12; ++interval)
     {
@@ -421,7 +490,9 @@ juce::String ChordAnalyzer::describeAddedTones(int patternIndex, std::uint32_t i
 
     // A triad carrying one extra tone reads as an add chord ("Cadd#11");
     // anything richer takes parenthesised tensions ("C7(#11)", "C9(b13)").
-    if (numExtras == 1 && chordPatterns[static_cast<size_t>(patternIndex)].intervals.size() <= 3)
+    // An absent fifth is never an "add", so those always take the parens.
+    if (! omitsFifth && numExtras == 1
+        && chordPatterns[static_cast<size_t>(patternIndex)].intervals.size() <= 3)
         return juce::String("add") + extras[0];
 
     juce::String text("(");
