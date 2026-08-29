@@ -185,9 +185,13 @@ int ChordAnalyzer::findRoot(const std::vector<int>& notes) const
         return uniquePitches[0];
 
     // Try each note as potential root and score the result
+    const int bassPitch = notes[0] % 12;
+
     int bestRoot = uniquePitches[0];
     int bestPriority = -1;
     float bestScore = 0.0f;
+    bool bestIsBass = false;
+    bool found = false;          // a match scoring <= 0 is still a match
 
     for (int candidateRoot : uniquePitches)
     {
@@ -199,18 +203,48 @@ int ChordAnalyzer::findRoot(const std::vector<int>& notes) const
             // Check if intervals match pattern (allowing extra notes)
             if (patternMatches(pattern, intervals))
             {
+                // Penalty for sounding notes the pattern does not explain.
+                // Counted in pitch classes: getIntervals also states a 9th as
+                // 14, an 11th as 17 and a 13th as 21, and charging those
+                // restatements as extra notes penalised exactly the chords
+                // that have them. C E G A scored 19.5 as C6 but 20 as Am7,
+                // purely because the synthetic 21 made C6 look impure.
+                const int patternTones = countPitchClasses(patternPitchClasses(pattern));
+                const int extraNotes   = static_cast<int>(uniquePitches.size()) - patternTones;
+
+                // A shape smaller than a triad may carry at most one added
+                // tone. The two-note power chord fits almost anything, and
+                // without this it "identifies" dense chromatic clusters as
+                // F5(b13,13) and the like. One extra still allows the real
+                // C5add#11 voicing. Bass-independent, so the same notes read
+                // the same way whichever one of them is lowest - previously a
+                // cluster was named or not purely according to its bass.
+                if (patternTones < 3 && extraNotes > 1)
+                    continue;
+
                 float score = static_cast<float>(pattern.priority);
 
                 // Bonus for bass note being the root
-                if (notes[0] % 12 == candidateRoot)
+                const bool isBass = (bassPitch == candidateRoot);
+                if (isBass)
                     score += 5.0f;
 
-                // Bonus for matching interval count closely
-                int extraNotes = static_cast<int>(intervals.size()) - static_cast<int>(pattern.intervals.size());
                 score -= static_cast<float>(extraNotes) * 0.5f;
 
-                if (score > bestScore || (score == bestScore && pattern.priority > bestPriority))
+                // Rank on score, then on the bass, then on pattern priority.
+                // The bass has to outrank priority: C E G A over a C bass is
+                // C6, and only the tie-break tells it from Am7's first
+                // inversion, which scores the same but is not in the bass.
+                const bool better = ! found
+                    || score > bestScore
+                    || (score == bestScore && isBass && ! bestIsBass)
+                    || (score == bestScore && isBass == bestIsBass
+                        && pattern.priority > bestPriority);
+
+                if (better)
                 {
+                    found = true;
+                    bestIsBass = isBass;
                     bestScore = score;
                     bestPriority = pattern.priority;
                     bestRoot = candidateRoot;
@@ -240,6 +274,14 @@ std::set<int> ChordAnalyzer::getIntervals(const std::vector<int>& notes, int roo
     }
 
     return intervals;
+}
+
+int ChordAnalyzer::countPitchClasses(std::uint16_t mask)
+{
+    int n = 0;
+    for (; mask != 0; mask &= static_cast<std::uint16_t>(mask - 1))
+        ++n;
+    return n;
 }
 
 std::uint16_t ChordAnalyzer::patternPitchClasses(const ChordPattern& pattern)
@@ -407,10 +449,7 @@ float ChordAnalyzer::calculateConfidence(const ChordPattern& pattern, const std:
             extraIntervals++;
     }
 
-    int coveredCount = 0;
-    for (int pc = 0; pc < 12; ++pc)
-        if ((covered & (1u << pc)) != 0)
-            ++coveredCount;
+    const int coveredCount = countPitchClasses(covered);
 
     const float patternMatch = static_cast<float>(matchedIntervals) / static_cast<float>(coveredCount);
     const float penalty = static_cast<float>(extraIntervals) * 0.1f;
