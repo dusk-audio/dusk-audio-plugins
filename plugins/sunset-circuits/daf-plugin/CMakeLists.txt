@@ -103,3 +103,4 @@ dusk_daf_install_local(sunset_circuits LV2_PROGRAMS)
 # change, which is how a DAF-Widgets regression once broke every plugin's knobs
 # (dusk-audio/plugins#233 follow-up).
 dusk_daf_add_ui_drag_test(sunset_circuits 425 232)   # FILTER CUTOFF knob
+dusk_daf_add_resize_test(sunset_circuits)

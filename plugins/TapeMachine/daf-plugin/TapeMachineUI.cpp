@@ -82,7 +82,12 @@ public:
     {
         for (uint32_t i = 0; i < kParamCount; ++i)
             values[i] = kTmParams[i].def;
-        setGeometryConstraints(400, 260, true);   // aspect-locked
+        // Aspect-locked, and the pair must sit EXACTLY on the design ratio: pugl
+        // advertises the minimum size as the fixed aspect too, so 400x260 told
+        // hosts the window was 1.538 wide when the design is 800x470 = 1.702, and
+        // they sized it off-design accordingly. 800/470 reduces to 80:47, so a
+        // minimum width that is a multiple of 80 makes the height exact.
+        setGeometryConstraints(400, 235, true);
 
         // Bake the bold face at several native sizes (design px * DPI scaleFactor)
         // so body text and headers each render from a near-1x face (crisp, not an

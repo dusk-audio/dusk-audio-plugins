@@ -57,3 +57,4 @@ dusk_daf_install_local(four_k_eq_2 LV2_PROGRAMS)
 # harnesses dlopen() the built binaries, so they only run where they are built.
 dusk_daf_add_output_param_tests(four_k_eq_2)
 dusk_daf_add_ui_drag_test(four_k_eq_2 258 274)   # LF gain knob
+dusk_daf_add_resize_test(four_k_eq_2 684 23)     # GRAPH button collapses the design

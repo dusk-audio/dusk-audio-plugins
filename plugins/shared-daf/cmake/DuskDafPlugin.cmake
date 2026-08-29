@@ -291,3 +291,50 @@ macro(dusk_daf_add_ui_drag_test _dusk_ui_plugin _dusk_ui_knob_x _dusk_ui_knob_y)
         set_tests_properties(${_dusk_ui_plugin}UiDrag PROPERTIES TIMEOUT 300)
     endif()
 endmacro()
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Editor size-contract guard
+#
+# Asserts that the aspect ratio the editor advertises is the one it is actually
+# drawn to, and (where a toggle coordinate is given) that changing the design size
+# renotifies the host BEFORE asking it to resize, and that the size returns
+# exactly across toggles.
+#
+# Both halves shipped broken and neither was catchable by any other gate: 4K EQ 2
+# advertised 560x373 against a 960x640 design, and DAF only ever called
+# clap_host_gui->resize_hints_changed() at UI creation, so a host kept enforcing
+# a stale ratio. See the header comment in DafClapResizeTest.cpp.
+#
+# The aspect half needs no interaction, so call this for EVERY plugin. Pass the
+# coordinates of a control that changes the design size only where one exists.
+#
+# Same platform limits and macro-not-function reasoning as the guards above.
+macro(dusk_daf_add_resize_test _dusk_rs_plugin)
+    if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32 AND NOT APPLE)
+        if(NOT TARGET ${_dusk_rs_plugin}-clap)
+            message(FATAL_ERROR
+                "dusk_daf_add_resize_test(${_dusk_rs_plugin}): no target ${_dusk_rs_plugin}-clap. "
+                "Call this after daf_add_plugin, with the plugin base name, and with clap in TARGETS.")
+        endif()
+
+        find_package(X11 REQUIRED)
+        if(NOT X11_XTest_LIB)
+            message(FATAL_ERROR
+                "dusk_daf_add_resize_test(${_dusk_rs_plugin}): XTest not found. Install libxtst-dev.")
+        endif()
+
+        enable_testing()
+
+        add_executable(${_dusk_rs_plugin}ResizeTest
+            "${DUSK_SHARED_DAF_DIR}/tests/DafClapResizeTest.cpp")
+        target_include_directories(${_dusk_rs_plugin}ResizeTest PRIVATE "${DAF_PATH}/daf/src")
+        target_compile_features(${_dusk_rs_plugin}ResizeTest PRIVATE cxx_std_17)
+        target_link_libraries(${_dusk_rs_plugin}ResizeTest PRIVATE
+            ${CMAKE_DL_LIBS} ${X11_X11_LIB} ${X11_XTest_LIB})
+        add_dependencies(${_dusk_rs_plugin}ResizeTest ${_dusk_rs_plugin}-clap)
+
+        add_test(NAME ${_dusk_rs_plugin}Resize
+                 COMMAND ${_dusk_rs_plugin}ResizeTest "$<TARGET_FILE:${_dusk_rs_plugin}-clap>" ${ARGN})
+        set_tests_properties(${_dusk_rs_plugin}Resize PROPERTIES TIMEOUT 300)
+    endif()
+endmacro()

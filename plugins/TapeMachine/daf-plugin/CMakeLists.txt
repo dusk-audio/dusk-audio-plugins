@@ -51,3 +51,4 @@ dusk_daf_install_local(tape_machine_2 LV2_PROGRAMS)
 # harnesses dlopen() the built binaries, so they only run where they are built.
 dusk_daf_add_output_param_tests(tape_machine_2)
 dusk_daf_add_ui_drag_test(tape_machine_2 72 330)   # INPUT knob
+dusk_daf_add_resize_test(tape_machine_2)
