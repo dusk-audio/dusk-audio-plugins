@@ -4,6 +4,7 @@
 #include <vector>
 #include <set>
 #include <map>
+#include <cstdint>
 
 //==============================================================================
 // Chord quality enumeration
@@ -170,14 +171,18 @@ private:
     int findRoot(const std::vector<int>& notes) const;
     std::set<int> getIntervals(const std::vector<int>& notes, int root) const;
     static bool patternMatches(const ChordPattern& pattern, const std::set<int>& intervals);
-    static std::set<int> patternPitchClasses(const ChordPattern& pattern);
+
+    // Pitch classes a pattern covers, as a 12-bit mask (bit n = pitch class n).
+    // analyze() runs on the audio thread in the headless LV2 build, so the
+    // hot helpers below stay free of heap containers.
+    static std::uint16_t patternPitchClasses(const ChordPattern& pattern);
     const ChordPattern* matchPattern(const std::set<int>& intervals) const;
     int calculateInversion(const std::vector<int>& notes, int root) const;
     static float calculateConfidence(const ChordPattern& pattern, const std::set<int>& intervals);
 
     //==========================================================================
     // Naming of tones the matched pattern does not account for
-    static juce::String tensionLabel(int semitonesFromRoot);
+    static const char* tensionLabel(int semitonesFromRoot);   // nullptr if none
     static juce::String describeAddedTones(const ChordPattern& pattern, const std::set<int>& intervals);
 
     //==========================================================================

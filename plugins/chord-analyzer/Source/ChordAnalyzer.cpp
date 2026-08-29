@@ -242,15 +242,17 @@ std::set<int> ChordAnalyzer::getIntervals(const std::vector<int>& notes, int roo
     return intervals;
 }
 
-std::set<int> ChordAnalyzer::patternPitchClasses(const ChordPattern& pattern)
+std::uint16_t ChordAnalyzer::patternPitchClasses(const ChordPattern& pattern)
 {
     // Patterns state extensions in compound form (a 9th as 14), while a played
     // voicing is compared as pitch classes. Reduce once, here, so the matcher,
-    // the tension naming and the confidence score cannot drift apart.
-    std::set<int> covered;
+    // the tension naming and the confidence score cannot drift apart. Returned
+    // as a bit mask rather than a set: this runs per analysed chord, and the
+    // headless LV2 build calls analyze() straight from its audio callback.
+    std::uint16_t covered = 0;
 
     for (int interval : pattern.intervals)
-        covered.insert(interval % 12);
+        covered |= static_cast<std::uint16_t>(1u << (interval % 12));
 
     return covered;
 }
@@ -300,10 +302,11 @@ const ChordAnalyzer::ChordPattern* ChordAnalyzer::matchPattern(const std::set<in
     return best;
 }
 
-juce::String ChordAnalyzer::tensionLabel(int semitonesFromRoot)
+const char* ChordAnalyzer::tensionLabel(int semitonesFromRoot)
 {
     // Folded to a pitch class so a compound interval names the same tension as
     // its simple form (14 and 2 are both a 9th, 17 and 5 both an 11th).
+    // String literals, so naming a tension costs no allocation.
     switch (semitonesFromRoot % 12)
     {
         case 1:  return "b9";
@@ -317,7 +320,7 @@ juce::String ChordAnalyzer::tensionLabel(int semitonesFromRoot)
         case 9:  return "13";
         case 10: return "b7";
         case 11: return "maj7";
-        default: return {};   // 0 is the root, always covered by the pattern
+        default: return nullptr;   // 0 is the root, always covered by the pattern
     }
 }
 
@@ -327,29 +330,39 @@ juce::String ChordAnalyzer::describeAddedTones(const ChordPattern& pattern,
     // Compare as pitch classes: getIntervals states a 9th as both 2 and 14, and
     // the patterns use the compound form, so a raw set difference would report
     // every add9/add11/13 chord tone as an extra note.
-    const std::set<int> covered = patternPitchClasses(pattern);
+    const std::uint16_t covered = patternPitchClasses(pattern);
 
-    juce::StringArray extras;
+    // At most one extra per pitch class, so a fixed array suffices.
+    const char* extras[12];
+    int numExtras = 0;
 
     for (int interval : intervals)
     {
-        if (interval >= 12 || covered.count(interval) > 0)
+        if (interval >= 12 || (covered & (1u << interval)) != 0)
             continue;
 
-        const juce::String label = tensionLabel(interval);
-        if (label.isNotEmpty())
-            extras.add(label);
+        if (const char* label = tensionLabel(interval))
+            extras[numExtras++] = label;
     }
 
-    if (extras.isEmpty())
+    if (numExtras == 0)
         return {};
 
     // A triad carrying one extra tone reads as an add chord ("Cadd#11");
     // anything richer takes parenthesised tensions ("C7(#11)", "C9(b13)").
-    if (extras.size() == 1 && pattern.intervals.size() <= 3)
-        return "add" + extras[0];
+    if (numExtras == 1 && pattern.intervals.size() <= 3)
+        return juce::String("add") + extras[0];
 
-    return "(" + extras.joinIntoString(",") + ")";
+    juce::String text("(");
+    for (int i = 0; i < numExtras; ++i)
+    {
+        if (i > 0)
+            text << ",";
+        text << extras[i];
+    }
+    text << ")";
+
+    return text;
 }
 
 int ChordAnalyzer::calculateInversion(const std::vector<int>& notes, int root) const
@@ -378,7 +391,7 @@ float ChordAnalyzer::calculateConfidence(const ChordPattern& pattern, const std:
     // Score against the pattern that actually matched. Comparing in pitch
     // classes keeps a compound pattern tone (9th written as 14) from counting
     // its own chord tone as an extra note.
-    const std::set<int> covered = patternPitchClasses(pattern);
+    const std::uint16_t covered = patternPitchClasses(pattern);
 
     int matchedIntervals = 0;
     int extraIntervals = 0;
@@ -388,13 +401,18 @@ float ChordAnalyzer::calculateConfidence(const ChordPattern& pattern, const std:
         if (interval >= 12)  // Compound restatement of a tone already counted
             continue;
 
-        if (covered.count(interval) > 0)
+        if ((covered & (1u << interval)) != 0)
             matchedIntervals++;
         else if (interval != 0)
             extraIntervals++;
     }
 
-    const float patternMatch = static_cast<float>(matchedIntervals) / static_cast<float>(covered.size());
+    int coveredCount = 0;
+    for (int pc = 0; pc < 12; ++pc)
+        if ((covered & (1u << pc)) != 0)
+            ++coveredCount;
+
+    const float patternMatch = static_cast<float>(matchedIntervals) / static_cast<float>(coveredCount);
     const float penalty = static_cast<float>(extraIntervals) * 0.1f;
 
     return juce::jlimit(0.0f, 1.0f, patternMatch - penalty);
