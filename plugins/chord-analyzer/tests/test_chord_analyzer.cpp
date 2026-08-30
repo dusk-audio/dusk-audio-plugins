@@ -580,6 +580,16 @@ static void testNoFifthAndDyads()
     check("C E = M3 dyad",       analyzeNotes(a, {60, 64}).name == "C+E (M3)");
     check("C F# = tritone dyad", analyzeNotes(a, {60, 66}).name == "C+F# (tritone)");
     check("C Bb = m7 dyad",      analyzeNotes(a, {60, 70}).name == "C+A# (m7)");
+    check("C C = octave dyad",   analyzeNotes(a, {60, 72}).name == "C+C (octave)");
+    check("C C = exact unison",  analyzeNotes(a, {60, 60}).name == "C+C (unison)");
+    check("three octaves of C",  analyzeNotes(a, {60, 72, 84}).name == "C+C (octave)");
+
+    // Doubling a note must not cost the dyad its name: these are two pitch
+    // classes spread over three notes, still a major third
+    check("C E C doubled = M3",  analyzeNotes(a, {60, 64, 72}).name == "C+E (M3)");
+    check("C C E doubled = M3",  analyzeNotes(a, {60, 72, 76}).name == "C+E (M3)");
+    check("C E E doubled = M3",  analyzeNotes(a, {60, 64, 76}).name == "C+E (M3)");
+    check("wide tritone",        analyzeNotes(a, {60, 78}).name == "C+F# (tritone)");
     check("dyad is not a chord", !analyzeNotes(a, {60, 64}).isValid);
 
     // The two dyads that do imply a chord keep their chord names
