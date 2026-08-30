@@ -169,14 +169,18 @@ ChordInfo ChordAnalyzer::analyze(const std::vector<int>& midiNotes)
 
     if (facts.patternIndex < 0)
     {
-        // Two notes are an interval, not a chord, so name the interval rather
-        // than giving up with "C?". The dyads that do imply a chord, the
+        // Two pitch classes are an interval, not a chord, so name the interval
+        // rather than giving up with "C?". The dyads that do imply a chord, the
         // fourth and the fifth, match a pattern above and never reach here.
+        // Counted in pitch classes, not notes, so a doubled dyad still reads as
+        // its interval: C4 E4 C5 is a major third, not three unnamed notes.
         std::uint16_t pitchMask = 0;
         for (int note : midiNotes)
             pitchMask = static_cast<std::uint16_t>(pitchMask | (1u << (((note % 12) + 12) % 12)));
 
-        if (countPitchClasses(pitchMask) == 2)
+        const int distinctPitches = countPitchClasses(pitchMask);
+
+        if (distinctPitches <= 2)
         {
             int upper = result.bassNote;
             for (int pc = 0; pc < 12; ++pc)
@@ -188,8 +192,23 @@ ChordInfo ChordAnalyzer::analyze(const std::vector<int>& midiNotes)
                 }
             }
 
+            // One pitch class is the same note doubled: an octave, or a unison
+            // when every note is literally the same pitch.
+            const char* interval = nullptr;
+
+            if (distinctPitches < 2)
+            {
+                const auto range = std::minmax_element(result.midiNotes.begin(),
+                                                       result.midiNotes.end());
+                interval = (*range.first == *range.second) ? "unison" : "octave";
+            }
+            else
+            {
+                interval = intervalName(((upper - result.bassNote) + 12) % 12);
+            }
+
             result.name = pitchClassToName(result.bassNote) + "+" + pitchClassToName(upper)
-                        + " (" + intervalName(((upper - result.bassNote) + 12) % 12) + ")";
+                        + " (" + interval + ")";
             result.romanNumeral = "-";
             return result;
         }
