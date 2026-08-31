@@ -1,7 +1,7 @@
 ---
 slug: spectrum-analyzer
-version: 1.0.1
-last_updated: 2026-05-08
+version: 1.0.2
+last_updated: 2026-08-31
 tagline: Real-time FFT spectrum analyzer with LUFS metering and true-peak detection
 ---
 
