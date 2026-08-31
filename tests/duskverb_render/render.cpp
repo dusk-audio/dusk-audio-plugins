@@ -54,7 +54,8 @@ namespace
     // from plugin-internal FPU/SSE handling crashed at 4096). 256 is
     // historical default but hits yabridge IPC overhead. 2048 is the
     // measured sweet spot: 8× fewer round-trips than 256, no stack issue.
-    constexpr int    kBlockSize    = 2048;
+    int              kBlockSize    = 2048;
+    int              kChannelCount = 2;
     constexpr int    kRenderSec    = 6;
     int              kTotalSamples = static_cast<int> (kSampleRate * kRenderSec);
     // Silence tail appended after the opt-in long sine tone (Render 4). Shared so
@@ -98,12 +99,16 @@ namespace
             << "  --program NAME                Select a factory program\n"
             << "  --output-dir DIR              Render destination\n"
             << "  --sample-rate HZ              Render rate (default 48000)\n"
+            << "  --block-size FRAMES           Host block size (default 2048)\n"
+            << "  --channels 1|2                Main input/output channels (default 2)\n"
             << "  --self-test-resampler         Check rate conversion is band-limited, then exit\n"
             << "  --list-params|--list-programs Inspect the hosted plugin\n"
             << "  --dump-nparams               Dump normalized parameter values\n"
             << "  --param NAME=VALUE            Set a displayed parameter value\n"
             << "  --nparam NAME=VALUE           Set a normalized parameter value\n"
             << "  --nparam-event NAME=VALUE@SEC Automate at an exact sample\n"
+            << "  --meter-film STEM,START,STOP,STEP[,A:B:D[;A:B:D...]] Capture editor frames at rendered-sample times\n"
+            << "  --print-params IDX|NAME,...   Log post-apply values of those parameters\n"
             << "  --help                        Show this help\n";
     }
 
@@ -1083,6 +1088,7 @@ int main (int argc, char** argv)
     juce::String saveStatePath;         // dump getStateInformation bytes here after preset
     juce::String loadStatePath;         // setStateInformation from these bytes (one round-trip)
     juce::String screenshotPath;        // --screenshot: open the plugin editor + grab its window to PNG, then exit
+    juce::String meterFilmArg;          // --meter-film: persistent editor capture driven by one --input-wav
     int          waitAfterLoadMs = 0;   // for yabridge handshake races
     int          perParamDelayMs = 0;   // throttle preset apply for slow plugin bridges
     // SixAPTank-specific engine-state property overrides. Useful for tuner
@@ -1094,6 +1100,17 @@ int main (int argc, char** argv)
     float        sixAPEarlyMixOverride = -1.0f;  // -1 = no override
     bool         listParamsOnly   = false;
     bool         listProgramsOnly = false;
+    // --print-params LIST: after the authoritative preset/state apply, print the
+    // host-side value and display text of the named parameters. LIST is comma
+    // separated; a token that is a plain non-negative integer addresses a
+    // parameter by INDEX (the only unambiguous address when a plugin exposes
+    // duplicate display names), anything else is matched as a display name.
+    // Purely diagnostic setup-time logging on the message thread: it proves a
+    // --load-state blob actually took effect, which the per-parameter --nparam
+    // path already proves via its own read_back line. Bounded by
+    // kMaxPrintParams so a stray argument cannot flood a render log.
+    juce::StringArray printParamSpecs;
+    constexpr int kMaxPrintParams = 64;
     bool         selfTestResampler = false;  // --self-test-resampler: see below
     bool         dumpParams       = false;   // --dump-params: emit baked program
     bool         dumpNParams      = false;   // --dump-nparams: normalized host values
@@ -1170,6 +1187,23 @@ int main (int argc, char** argv)
             kTotalSamples        = static_cast<int> (kSampleRate * kRenderSec);
             kLongSineTailSamples = static_cast<int> (kSampleRate * 12.0);
         }
+        else if (a == "--block-size" && i + 1 < argc)
+        {
+            if (! parseInt (argv[++i], kBlockSize) || kBlockSize < 1 || kBlockSize > 16384)
+            {
+                std::cerr << "Invalid --block-size (expected 1-16384 frames)\n";
+                return 2;
+            }
+        }
+        else if (a == "--channels" && i + 1 < argc)
+        {
+            if (! parseInt (argv[++i], kChannelCount)
+                || (kChannelCount != 1 && kChannelCount != 2))
+            {
+                std::cerr << "Invalid --channels (expected 1 or 2)\n";
+                return 2;
+            }
+        }
         else if (a == "--input-wav"  && i + 1 < argc) inputWavPaths.emplace_back (argv[++i]);
         else if (a == "--legacy-stem-name")          legacyStemName = true;
         else if (a == "--program"   && i + 1 < argc) programArg   = argv[++i];
@@ -1199,6 +1233,7 @@ int main (int argc, char** argv)
         }
         else if (a == "--save-state" && i + 1 < argc) saveStatePath = argv[++i];
         else if (a == "--screenshot" && i + 1 < argc) screenshotPath = argv[++i];
+        else if (a == "--meter-film" && i + 1 < argc) meterFilmArg = argv[++i];
         else if (a == "--sixap-early-hpf" && i + 1 < argc)
         {
             double parsed = 0.0;
@@ -1224,6 +1259,26 @@ int main (int argc, char** argv)
             sixAPEarlyMixOverride = static_cast<float> (parsed);
         }
         else if (a == "--load-state" && i + 1 < argc) loadStatePath = argv[++i];
+        else if (a == "--print-params" && i + 1 < argc)
+        {
+            juce::StringArray tokens;
+            tokens.addTokens (juce::String (argv[++i]), ",", "");
+            tokens.trim();
+            tokens.removeEmptyStrings();
+            if (tokens.isEmpty())
+            {
+                std::cerr << "Invalid --print-params (expected a comma separated list of"
+                             " parameter indices or display names)\n";
+                return 2;
+            }
+            if (tokens.size() > kMaxPrintParams)
+            {
+                std::cerr << "Invalid --print-params (" << tokens.size() << " entries exceeds the "
+                          << kMaxPrintParams << "-entry cap)\n";
+                return 2;
+            }
+            printParamSpecs = tokens;
+        }
         else if (a == "--list-params")              listParamsOnly   = true;
         else if (a == "--list-programs")            listProgramsOnly = true;
         else if (a == "--self-test-resampler")      selfTestResampler = true;
@@ -1419,6 +1474,21 @@ int main (int argc, char** argv)
 
     // ---- Resolve everything rate-dependent, now that kSampleRate is final ----
     // Runs regardless of the order the options were written in.
+    struct MeterFilmDenseRange
+    {
+        double startSeconds = 0.0;
+        double stopSeconds = 0.0;
+        double stepSeconds = 0.0;
+    };
+    struct MeterFilmSpec
+    {
+        juce::String stem;
+        double startSeconds = 0.0;
+        double stopSeconds = 0.0;
+        double stepSeconds = 0.0;
+        std::vector<MeterFilmDenseRange> denseRanges;
+    } meterFilm;
+
     {
         const double maxPrerun =
             static_cast<double> (std::numeric_limits<int>::max()) / kSampleRate;
@@ -1464,6 +1534,85 @@ int main (int argc, char** argv)
                 pending.normalized,
                 static_cast<int> (std::llround (pending.seconds * kSampleRate))
             });
+        }
+
+        if (meterFilmArg.isNotEmpty())
+        {
+            juce::StringArray fields;
+            fields.addTokens (meterFilmArg, ",", "");
+            fields.trim();
+            if (fields.size() != 4 && fields.size() != 5)
+            {
+                std::cerr << "Invalid --meter-film (expected STEM,START,STOP,STEP[,A:B:D[;A:B:D...]])\n";
+                return 2;
+            }
+            meterFilm.stem = fields[0];
+            if (meterFilm.stem.isEmpty() || meterFilm.stem.containsAnyOf ("/\\"))
+            {
+                std::cerr << "Invalid --meter-film STEM (use a filename stem without path separators)\n";
+                return 2;
+            }
+            if (! parseFiniteDouble (fields[1], meterFilm.startSeconds)
+                || ! parseFiniteDouble (fields[2], meterFilm.stopSeconds)
+                || ! parseFiniteDouble (fields[3], meterFilm.stepSeconds)
+                || meterFilm.startSeconds < 0.0
+                || meterFilm.stopSeconds <= meterFilm.startSeconds
+                || meterFilm.stepSeconds <= 0.0)
+            {
+                std::cerr << "Invalid --meter-film time range\n";
+                return 2;
+            }
+            if (fields.size() == 5)
+            {
+                juce::StringArray denseSpecs;
+                denseSpecs.addTokens (fields[4], ";", "");
+                denseSpecs.trim();
+                if (denseSpecs.isEmpty())
+                {
+                    std::cerr << "Invalid --meter-film dense range "
+                                 "(expected A:B:D[;A:B:D...] inside START..STOP)\n";
+                    return 2;
+                }
+                for (const auto& denseSpec : denseSpecs)
+                {
+                    juce::StringArray dense;
+                    dense.addTokens (denseSpec, ":", "");
+                    dense.trim();
+                    MeterFilmDenseRange range;
+                    if (dense.size() != 3
+                        || ! parseFiniteDouble (dense[0], range.startSeconds)
+                        || ! parseFiniteDouble (dense[1], range.stopSeconds)
+                        || ! parseFiniteDouble (dense[2], range.stepSeconds)
+                        || range.startSeconds < meterFilm.startSeconds
+                        || range.stopSeconds <= range.startSeconds
+                        || range.stopSeconds > meterFilm.stopSeconds
+                        || range.stepSeconds <= 0.0)
+                    {
+                        std::cerr << "Invalid --meter-film dense range "
+                                     "(expected A:B:D[;A:B:D...] inside START..STOP)\n";
+                        return 2;
+                    }
+                    meterFilm.denseRanges.push_back (range);
+                }
+            }
+            const double maxFilmSeconds =
+                static_cast<double> (std::numeric_limits<int>::max()) / kSampleRate;
+            if (meterFilm.stopSeconds > maxFilmSeconds)
+            {
+                std::cerr << "Invalid --meter-film STOP (max " << maxFilmSeconds
+                          << " at " << kSampleRate << " Hz)\n";
+                return 2;
+            }
+            if (inputWavPaths.size() != 1)
+            {
+                std::cerr << "--meter-film requires exactly one --input-wav\n";
+                return 2;
+            }
+            if (dryPassthroughTest || screenshotPath.isNotEmpty())
+            {
+                std::cerr << "--meter-film cannot be combined with --dry-passthrough-test or --screenshot\n";
+                return 2;
+            }
         }
     }
 
@@ -1524,20 +1673,31 @@ int main (int argc, char** argv)
         }
     }
 
-    // Build a stereo bus layout that matches the plugin's bus topology.
+    // Build a mono or stereo bus layout that matches the plugin's bus topology.
     // Most reverbs are 1-in/1-out, but some (Arturia Rev LX-24) expose a
     // sidechain or auxiliary input bus. If we configure too few buses
     // here the plugin's processBlock segfaults trying to read from an
     // unprepared channel.
     juce::AudioProcessor::BusesLayout layout;
+    const auto channelSet = kChannelCount == 1
+                          ? juce::AudioChannelSet::mono()
+                          : juce::AudioChannelSet::stereo();
     for (int i = 0; i < plugin->getBusCount (true);  ++i)
-        layout.inputBuses.add  (juce::AudioChannelSet::stereo());
+        layout.inputBuses.add  (channelSet);
     for (int i = 0; i < plugin->getBusCount (false); ++i)
-        layout.outputBuses.add (juce::AudioChannelSet::stereo());
+        layout.outputBuses.add (channelSet);
     if (! plugin->setBusesLayout (layout))
-        std::cerr << "Warning: could not force stereo bus layout (in="
+    {
+        std::cerr << "Warning: could not force " << kChannelCount
+                  << "-channel bus layout (in="
                   << plugin->getBusCount (true) << ", out=" << plugin->getBusCount (false)
                   << ")" << std::endl;
+        // A plugin running with an unintended channel topology renders garbage
+        // that downstream analysis can accept silently — fail hard instead.
+        std::cerr << "Error: refusing to render with an unconfirmed bus layout"
+                  << std::endl;
+        return 1;
+    }
 
     plugin->prepareToPlay (kSampleRate, kBlockSize);
 
@@ -1803,6 +1963,63 @@ int main (int argc, char** argv)
     applyAnyPreset();
     applyParamOverrides();
 
+    // --print-params: readback of the post-apply host parameter values. This is
+    // the --load-state counterpart of the "read_back=" line every --nparam write
+    // already emits: a state blob is applied in one opaque dispatch, so without
+    // this there is no evidence in the log that the requested values took. It only
+    // reads the host-side parameter proxies, and it is invoked on the message
+    // thread AFTER the last parameter override (--gate-off, --dry-passthrough-test)
+    // and before any audio is rendered, so the values printed are the ones the
+    // renderer actually hears. Returns false if a requested spec did not resolve.
+    auto printParamReadback = [&plugin, &printParamSpecs]() -> bool
+    {
+        if (printParamSpecs.isEmpty())
+            return true;
+
+        const auto& hosted = plugin->getParameters();
+        const std::streamsize previousPrecision = std::cout.precision();
+        bool printParamsResolved = true;
+        for (const auto& spec : printParamSpecs)
+        {
+            juce::AudioProcessorParameter* p = nullptr;
+            int index = -1;
+            if (spec.containsOnly ("0123456789") && spec.isNotEmpty())
+            {
+                // parseInt, not getIntValue: JUCE's integer parse accumulates in
+                // int with no overflow check, so "99999999999999" comes back as
+                // 276447231. A wrapped value that lands INSIDE 0..numParams-1
+                // silently addresses the wrong parameter and prints a
+                // well-formed readback line for it.
+                if (! parseInt (spec, index) || index < 0 || index >= hosted.size())
+                {
+                    std::cerr << "  ! --print-params: index '" << spec << "' is not a parameter index in 0.."
+                              << (hosted.size() - 1) << std::endl;
+                    printParamsResolved = false;
+                    continue;
+                }
+                p = hosted[index];
+            }
+            else
+            {
+                p = findParam (*plugin, spec);
+                if (p == nullptr)
+                {
+                    std::cerr << "  ! --print-params: parameter '" << spec << "' not found" << std::endl;
+                    printParamsResolved = false;
+                    continue;
+                }
+                index = hosted.indexOf (p);
+            }
+            std::cout << "  --print-params [" << index << "] '" << p->getName (128)
+                      << "' norm=" << std::setprecision (9) << p->getValue()
+                      << " read_back='" << p->getText (p->getValue(), 50) << "'" << std::endl;
+        }
+        // std::setprecision is sticky on the stream; restore it so this
+        // diagnostic cannot change the formatting of any later output.
+        std::cout << std::setprecision (previousPrecision);
+        return printParamsResolved;
+    };
+
     // --screenshot PATH: open the plugin's editor (with --param/--nparam preset
     // applied so the GUI shows that state), let it paint, then grab the desktop
     // to a PNG and exit. A reusable way to read a closed-source plugin's GUI
@@ -1823,6 +2040,24 @@ int main (int argc, char** argv)
     // Crop the full-desktop PNG to the window (at the printed screen bounds) to read.
     if (screenshotPath.isNotEmpty())
     {
+        // This path exits without rendering and no override runs past it, so
+        // the values are already final here.
+        if (! printParamReadback())
+        {
+            plugin->releaseResources();
+            return 1;
+        }
+
+        // VST3 parameter changes are delivered from the controller to the
+        // processor at a process boundary. Without one silent block here, a
+        // newly created editor can receive the processor's old/default state
+        // even though the host-side parameter proxy already reads back the
+        // requested value. A DAW naturally supplies this boundary before or
+        // while showing an editor; make the screenshot harness do the same.
+        juce::AudioBuffer<float> screenshotWarmup (
+            std::max (1, plugin->getTotalNumInputChannels()), kBlockSize);
+        screenshotWarmup.clear();
+        (void) renderThroughPlugin (*plugin, screenshotWarmup);
         if (! plugin->hasEditor())
         {
             std::cerr << "  ! --screenshot: plugin reports no editor" << std::endl;
@@ -1872,15 +2107,45 @@ int main (int argc, char** argv)
         shotFile.deleteFile();
         juce::ChildProcess cap;
         bool capExitOk = false;
-        if (cap.start (juce::StringArray { "gnome-screenshot", "-f", screenshotPath }))
+#if JUCE_MAC
+        const juce::String captureBounds = juce::String (b.getX()) + ","
+                                         + juce::String (b.getY()) + ","
+                                         + juce::String (b.getWidth()) + ","
+                                         + juce::String (b.getHeight());
+        const juce::StringArray captureCommand {
+            "screencapture", "-x", "-R" + captureBounds, screenshotPath
+        };
+#elif JUCE_LINUX
+        const juce::StringArray captureCommand {
+            "gnome-screenshot", "-f", screenshotPath
+        };
+#else
+        // No stock CLI capture tool on this platform (e.g. Windows). Fail
+        // clearly instead of falling through to the Linux-only command.
+        const juce::StringArray captureCommand;
+#endif
+        if (captureCommand.isEmpty())
         {
+            std::cerr << "  ! --screenshot: unsupported platform for capture" << std::endl;
+        }
+        else if (cap.start (captureCommand))
+        {
+            // Wait (bounded) for the capture tool to exit before draining its
+            // output: readAllProcessOutput() blocks until the child closes its
+            // pipes, which made the 25 s timeout below unreachable and hung the
+            // harness whenever the capture tool stalled.
+            const bool capFinished = cap.waitForProcessToFinish (25000);
+            if (! capFinished)
+            {
+                std::cerr << "  ! --screenshot: capture tool timed out, killing it" << std::endl;
+                cap.kill();
+            }
             cap.readAllProcessOutput();
-            cap.waitForProcessToFinish (25000);
-            capExitOk = (cap.getExitCode() == 0);
+            capExitOk = capFinished && (cap.getExitCode() == 0);
         }
         else
         {
-            std::cerr << "  ! --screenshot: could not launch gnome-screenshot" << std::endl;
+            std::cerr << "  ! --screenshot: could not launch platform capture tool" << std::endl;
         }
         // Success requires BOTH a clean process exit AND a freshly written file.
         const bool shotOk = capExitOk && shotFile.existsAsFile();
@@ -2105,6 +2370,333 @@ int main (int argc, char** argv)
         runPreroll (prerunSeconds);
     }
 
+    // --meter-film: keep one editor alive while an input WAV is processed up to
+    // exact rendered-sample capture boundaries. This is intentionally a separate
+    // early-exit mode: when the flag is absent the standard render path below is
+    // byte-for-byte unchanged. Frame names contain both a sequence number and the
+    // authoritative rendered sample position; screenshot wall time is never used
+    // as the measurement clock.
+    if (meterFilmArg.isNotEmpty())
+    {
+        if (! printParamReadback())
+        {
+            plugin->releaseResources();
+            return 1;
+        }
+        if (! plugin->hasEditor())
+        {
+            std::cerr << "  ! --meter-film: plugin reports no editor" << std::endl;
+            plugin->releaseResources();
+            return 1;
+        }
+
+        juce::File sourceFile (inputWavPaths.front());
+        juce::AudioFormatManager filmFormats;
+        filmFormats.registerBasicFormats();
+        std::unique_ptr<juce::AudioFormatReader> filmReader (
+            filmFormats.createReaderFor (sourceFile));
+        if (filmReader == nullptr)
+        {
+            std::cerr << "  ! --meter-film: could not read input WAV: "
+                      << sourceFile.getFullPathName() << std::endl;
+            plugin->releaseResources();
+            return 1;
+        }
+        if (std::abs (filmReader->sampleRate - kSampleRate) > 1.0e-6)
+        {
+            std::cerr << "  ! --meter-film: input sample rate " << filmReader->sampleRate
+                      << " != renderer rate " << kSampleRate << std::endl;
+            plugin->releaseResources();
+            return 1;
+        }
+        if (filmReader->lengthInSamples <= 0
+            || filmReader->lengthInSamples > std::numeric_limits<int>::max())
+        {
+            std::cerr << "  ! --meter-film: input length is unsupported" << std::endl;
+            plugin->releaseResources();
+            return 1;
+        }
+        const int filmSamples = static_cast<int> (filmReader->lengthInSamples);
+        const int filmStopSample = static_cast<int> (
+            std::llround (meterFilm.stopSeconds * kSampleRate));
+        if (filmStopSample > filmSamples)
+        {
+            std::cerr << "  ! --meter-film: STOP reaches sample " << filmStopSample
+                      << " but input has only " << filmSamples << " samples" << std::endl;
+            plugin->releaseResources();
+            return 1;
+        }
+
+        juce::AudioBuffer<float> filmInput (2, filmSamples);
+        filmInput.clear();
+        if (! filmReader->read (&filmInput, 0, filmSamples, 0, true, true))
+        {
+            std::cerr << "  ! --meter-film: failed to read input samples" << std::endl;
+            plugin->releaseResources();
+            return 1;
+        }
+        if (filmReader->numChannels == 1)
+            filmInput.copyFrom (1, 0, filmInput, 0, 0, filmSamples);
+
+        constexpr size_t maxMeterFilmFrames = 10000;
+        std::vector<int> captureSamples;
+        auto appendGrid = [&captureSamples] (double start, double stop, double step)
+        {
+            // Integer loop counter avoids accumulated floating-point drift over
+            // long films. STOP is exclusive, matching duration/step frame counts.
+            int previousSample = -1;
+            for (int64_t i = 0; ; ++i)
+            {
+                const double seconds = start + static_cast<double> (i) * step;
+                if (seconds >= stop)
+                    break;
+                const int sample = static_cast<int> (
+                    std::llround (seconds * kSampleRate));
+                if (sample <= previousSample)
+                {
+                    std::cerr << "  ! --meter-film: STEP does not advance to a "
+                                 "distinct sample position" << std::endl;
+                    return false;
+                }
+                if (captureSamples.size() >= maxMeterFilmFrames)
+                {
+                    std::cerr << "  ! --meter-film: capture schedule exceeds "
+                              << maxMeterFilmFrames << " frames" << std::endl;
+                    return false;
+                }
+                captureSamples.push_back (sample);
+                previousSample = sample;
+            }
+            return true;
+        };
+        bool captureScheduleValid = appendGrid (
+            meterFilm.startSeconds, meterFilm.stopSeconds, meterFilm.stepSeconds);
+        for (const auto& dense : meterFilm.denseRanges)
+        {
+            if (! captureScheduleValid)
+                break;
+            captureScheduleValid = appendGrid (
+                dense.startSeconds, dense.stopSeconds, dense.stepSeconds);
+        }
+        if (! captureScheduleValid)
+        {
+            plugin->releaseResources();
+            return 1;
+        }
+        std::sort (captureSamples.begin(), captureSamples.end());
+        captureSamples.erase (std::unique (captureSamples.begin(), captureSamples.end()),
+                              captureSamples.end());
+        if (captureSamples.empty())
+        {
+            std::cerr << "  ! --meter-film: capture schedule is empty" << std::endl;
+            plugin->releaseResources();
+            return 1;
+        }
+
+        auto* filmEditor = plugin->createEditorIfNeeded();
+        if (filmEditor == nullptr)
+        {
+            std::cerr << "  ! --meter-film: createEditor returned null" << std::endl;
+            plugin->releaseResources();
+            return 1;
+        }
+        auto filmWindow = std::make_unique<juce::DocumentWindow> (
+            "DuskVerb-meter-film", juce::Colours::black,
+            juce::DocumentWindow::allButtons);
+        filmWindow->setUsingNativeTitleBar (true);
+        filmWindow->setAlwaysOnTop (true);
+        filmWindow->setContentNonOwned (filmEditor, true);
+        filmWindow->setTopLeftPosition (60, 60);
+        filmWindow->setVisible (true);
+        filmWindow->toFront (true);
+
+        // JUCE_MODAL_LOOPS_PERMITTED is disabled for this host, so the film uses
+        // one persistent dispatch loop rather than trying to nest a loop at every
+        // frame. The timer alternates process/repaint and capture phases; this
+        // gives the editor one event-loop turn to paint the newly published meter
+        // state, while audio still advances only to the declared sample boundary.
+        struct MeterFilmRunner final : juce::Timer
+        {
+            MeterFilmRunner (juce::AudioPluginInstance& pluginIn,
+                             juce::Component& editorIn,
+                             juce::Component& captureWindowIn,
+                             const juce::AudioBuffer<float>& inputIn,
+                             const std::vector<int>& captureSamplesIn,
+                             const std::vector<NormalizedParameterEvent>& eventsIn,
+                             const juce::File& outputDirectoryIn,
+                             const juce::String& stemIn,
+                             int settleMs)
+                : plugin (pluginIn), editor (editorIn), captureWindow (captureWindowIn),
+                  input (inputIn),
+                  captureSamples (captureSamplesIn), events (eventsIn),
+                  outputDirectory (outputDirectoryIn), stem (stemIn),
+                  block (std::max (plugin.getTotalNumInputChannels(),
+                                   plugin.getTotalNumOutputChannels()), kBlockSize),
+                  copyChans (std::min (input.getNumChannels(),
+                                      plugin.getTotalNumInputChannels()))
+            {
+                startTimer (settleMs);
+            }
+
+            void timerCallback() override
+            {
+                stopTimer();
+                if (capturePhase)
+                {
+                    captureCurrentFrame();
+                    if (failures > 0 || ++frameIndex >= captureSamples.size())
+                    {
+                        juce::MessageManager::getInstance()->stopDispatchLoop();
+                        return;
+                    }
+                    capturePhase = false;
+                    startTimer (1);
+                    return;
+                }
+
+                const int processed = processNextBlock (captureSamples[frameIndex]);
+                editor.repaint();
+                if (position >= captureSamples[frameIndex])
+                {
+                    capturePhase = true;
+                    startTimer (20);
+                    return;
+                }
+                // Pace offline processBlock calls at their rendered duration so
+                // editor timers receive the same inter-block message turns they
+                // get in a DAW. Processing several seconds inside one callback
+                // leaves both DPF and PACE needles visually frozen even though
+                // their DSP meter states advance.
+                const int blockDurationMs = std::max (1, static_cast<int> (
+                    std::llround (1000.0 * processed / kSampleRate)));
+                startTimer (blockDurationMs);
+            }
+
+            int processNextBlock (int captureSample)
+            {
+                while (eventIndex < events.size()
+                       && events[eventIndex].sampleOffset <= position)
+                {
+                    const auto& event = events[eventIndex++];
+                    if (auto* parameter = findParam (plugin, event.parameter))
+                        parameter->setValueNotifyingHost (event.normalized);
+                }
+
+                int next = std::min (position + kBlockSize, captureSample);
+                if (eventIndex < events.size())
+                    next = std::min (next, events[eventIndex].sampleOffset);
+                if (next <= position)
+                    return 0;
+                const int n = next - position;
+                juce::AudioBuffer<float> activeBlock (
+                    block.getArrayOfWritePointers(), block.getNumChannels(), n);
+                activeBlock.clear();
+                for (int ch = 0; ch < copyChans; ++ch)
+                    activeBlock.copyFrom (ch, 0, input, ch, position, n);
+                plugin.processBlock (activeBlock, midi);
+                position = next;
+                return n;
+            }
+
+            void captureCurrentFrame()
+            {
+                const int captureSample = captureSamples[frameIndex];
+                if (bounds.isEmpty())
+                {
+                    // The native peer is not guaranteed to be mapped or at its
+                    // requested position until the dispatch loop has turned.
+                    bounds = captureWindow.getScreenBounds();
+                    std::cout << "Meter film window: " << bounds.getWidth() << "x"
+                              << bounds.getHeight() << " @ (" << bounds.getX() << ","
+                              << bounds.getY() << "), " << captureSamples.size()
+                              << " unique frames" << std::endl;
+                    if (bounds.isEmpty())
+                    {
+                        std::cerr << "  ! --meter-film: mapped window has empty bounds"
+                                  << std::endl;
+                        ++failures;
+                        return;
+                    }
+                }
+                const auto frameName = stem + "_"
+                                     + juce::String (static_cast<int> (frameIndex)).paddedLeft ('0', 4)
+                                     + "_" + juce::String (captureSample) + ".png";
+                const auto frameFile = outputDirectory.getChildFile (frameName);
+                frameFile.deleteFile();
+                juce::ChildProcess capture;
+                bool frameOk = false;
+#if JUCE_MAC
+                const juce::String captureBounds = juce::String (bounds.getX()) + ","
+                                                 + juce::String (bounds.getY()) + ","
+                                                 + juce::String (bounds.getWidth()) + ","
+                                                 + juce::String (bounds.getHeight());
+                const juce::StringArray captureCommand {
+                    "screencapture", "-x", "-R" + captureBounds,
+                    frameFile.getFullPathName()
+                };
+#elif JUCE_LINUX
+                const juce::StringArray captureCommand {
+                    "gnome-screenshot", "-f", frameFile.getFullPathName()
+                };
+#else
+                const juce::StringArray captureCommand;
+#endif
+                if (captureCommand.isEmpty())
+                {
+                    std::cerr << "  ! --meter-film: unsupported platform for capture" << std::endl;
+                }
+                else if (capture.start (captureCommand))
+                {
+                    const bool finished = capture.waitForProcessToFinish (25000);
+                    if (! finished)
+                        capture.kill();
+                    frameOk = finished && capture.getExitCode() == 0
+                           && frameFile.existsAsFile();
+                }
+                if (! frameOk)
+                {
+                    std::cerr << "  ! --meter-film: capture failed at frame " << frameIndex
+                              << " sample " << captureSample << std::endl;
+                    ++failures;
+                }
+            }
+
+            juce::AudioPluginInstance& plugin;
+            juce::Component& editor;
+            juce::Component& captureWindow;
+            const juce::AudioBuffer<float>& input;
+            const std::vector<int>& captureSamples;
+            const std::vector<NormalizedParameterEvent>& events;
+            juce::File outputDirectory;
+            juce::String stem;
+            juce::Rectangle<int> bounds;
+            juce::AudioBuffer<float> block;
+            juce::MidiBuffer midi;
+            const int copyChans;
+            size_t eventIndex = 0;
+            size_t frameIndex = 0;
+            int position = 0;
+            int failures = 0;
+            bool capturePhase = false;
+        } filmRunner (*plugin, *filmEditor, *filmWindow, filmInput,
+                      captureSamples, nparamEvents, outDir, meterFilm.stem,
+                      waitAfterLoadMs > 0 ? waitAfterLoadMs : 12000);
+
+        juce::MessageManager::getInstance()->runDispatchLoop();
+
+        filmWindow->clearContentComponent();
+        plugin->editorBeingDeleted (filmEditor);
+        delete filmEditor;
+        plugin->releaseResources();
+        if (filmRunner.failures > 0)
+            return 1;
+        std::cout << "Wrote meter film " << meterFilm.stem << " ("
+                  << captureSamples.size() << " frames, samples "
+                  << captureSamples.front() << ".." << captureSamples.back() << ")"
+                  << std::endl;
+        return 0;
+    }
+
     // Dry-passthrough test: forcibly override Bus Mode = false and Dry/Wet = 0
     // so the engine outputs only the dry passthrough (the wet path is silent).
     // Used to verify that the gain_trim parameter does not bleed into the dry
@@ -2114,6 +2706,12 @@ int main (int argc, char** argv)
         if (auto* p = findParam (*plugin, "Bus Mode"))   p->setValue (0.0f);
         if (auto* p = findParam (*plugin, "Dry/Wet"))    p->setValue (0.0f);
         std::cout << "DRY PASSTHROUGH TEST: Bus Mode=0, Dry/Wet=0 (gain_trim retained)" << std::endl;
+        if (! printParamReadback())
+        {
+            plugin->releaseResources();
+            return 1;
+        }
+
         // Re-settle AFTER the override so the dry-path measurement isn't contaminated
         // by the Bus Mode / Dry-Wet smoothers ramping out of the pre-override (wet)
         // state the initial preroll left them in.
@@ -2141,6 +2739,14 @@ int main (int argc, char** argv)
     // writes. Captures are NOT byte-identical to the pre-rewrite renderer:
     // partial final blocks now process exactly n samples (host-accurate), and
     // all cross-renderer-version render comparisons are invalid.
+    // Every parameter override (--param/--nparam, --load-state, --gate-off) has
+    // been written by now, so this readback reports what the renders hear.
+    if (! printParamReadback())
+    {
+        plugin->releaseResources();
+        return 1;
+    }
+
     std::vector<float> configuredParamValues;
     configuredParamValues.reserve (static_cast<size_t> (plugin->getParameters().size()));
     for (auto* p : plugin->getParameters())

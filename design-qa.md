@@ -90,3 +90,96 @@ full-view scale.
 No P3 visual follow-up is required for this scope.
 
 final result: passed
+
+---
+
+# Multicomp-2 FET Design QA
+
+**Source visual truth**
+
+- User-supplied 1176-style front-panel reference, locally grounded at `build-multi-comp-1176/qa/1176ln-reference.jpg`.
+- Source pixels: 2560 × 532.
+
+**Implementation evidence**
+
+- Final hosted-AU screenshot: `build-multi-comp-1176/qa/au-fet-one-db-meter.png`.
+- Captured pixels: 2240 × 760 at a 2× backing scale; native editor viewport:
+  1120 × 380 design pixels.
+- State: FET mode, default FET controls, ratio 4:1, meter fixed to GR.
+- Internal product precedent: the shipping Opto face and its `drawOptoMeter`
+  renderer in `MultiCompUI.cpp`.
+
+**Normalization and comparison**
+
+- Full-view inspection used the final 2240 × 760 hosted-AU screenshot.
+- Focused same-input comparison:
+  `build-multi-comp-1176/qa/fet-one-db-comparison.png` (2240 × 310).
+- Focused meter comparison:
+  `build-multi-comp-1176/qa/fet-one-db-meter-focused.png` (1280 × 390),
+  with the hardware reference on the left and final AU meter on the right.
+- For the focused comparison, the source face was cropped to 2350 × 430,
+  scaled proportionally to 1120 px wide, and vertically padded to 1120 × 310.
+  The 2240 × 620 implementation face was cropped from the 2× capture and
+  downsampled to 1120 × 310. Neither face was stretched.
+
+**Findings**
+
+- No actionable P0, P1, or P2 visual differences remain.
+- Fonts and typography: the compact industrial hierarchy, calibrated scales,
+  uppercase labels, and centered rack branding follow the source. Dusk's
+  existing crisp font replaces the photographed manufacturer's type intentionally.
+- Spacing and layout rhythm: the primary order matches the source—Input,
+  Output, stacked Attack/Release, Ratio, VU, Meter. Threshold, Transient, and
+  Curve are no longer visible on the vintage face. Mix remains as the only
+  small product extension, placed at the lower-right edge.
+- Colors and visual tokens: black brushed face, restrained off-white markings, dark switch banks, machined silver controls, and amber VU treatment match the source palette.
+- Image quality and asset fidelity: the FET face now calls the exact Opto VU
+  renderer rather than maintaining a weaker FET-only approximation. Both large
+  and timing knobs use center-aligned metal layers; the prior upper-left gray
+  crescent is absent in the final capture. The photographed UA logo and branding
+  were intentionally not reproduced; original FET 76 / MC-2 branding is used.
+- Meter scale and copy: the shared Opto/FET VU contains 21 marks across its
+  0–20 dB gain-reduction span, producing one mark per dB. Five-dB marks remain
+  longer and numbered for hierarchy. The redundant `VU LEVEL INDICATOR` legend
+  is absent in both final AU captures; `VU`, `GR`, and `GAIN REDUCTION` remain.
+- Copy and content: hardware labels and ratio ordering match the source while
+  preserving the All-buttons option. Meter +8/+4/Off positions are decorative
+  because this plugin exposes only GR metering; GR is visibly fixed as active.
+
+**Comparison history**
+
+1. `fet-before-vst3.png`: P1—generic compressor row, wrong control order, small uniform knobs, no integrated hardware identity.
+   Fix: rebuilt the black face, added large gain knobs, stacked timing controls, vertical ratio bank, and amber analogue meter.
+2. `fet-pass-1.png` / `fet-pass-2.png`: P1—hardware row was closer, but an
+   always-visible MC-2 extension row made the mode taller and unlike the real
+   panel. Fix: followed the existing Opto pattern, removed the second row, and
+   returned FET to 1120 × 380.
+3. `fet-pass-3-opto-layout.png`: P1—Threshold, Transient, and Curve still added
+   faceplate clutter; the FET-only VU was visually weaker than the proven Opto
+   VU; offset opaque knob disks created gray upper-left crescents.
+4. `fet-pass-4-opto-meter.png`: removed those three visible controls, reused the
+   Opto VU renderer, and rebuilt each gray knob from concentric metal layers.
+   The final source/implementation comparison shows the requested hardware order,
+   clean knob silhouettes, shallow rack format, and original Dusk identity.
+5. `au-fet-one-db-meter.png` and `au-opto-one-db-meter.png`: reduced the shared
+   VU from 41 half-dB marks to 21 one-dB marks and removed its top legend. The
+   revised FET/reference comparison shows the calmer scale; the direct AU
+   captures confirm that the same renderer is used in both modes.
+
+**Implementation checklist**
+
+- [x] Use exactly one gain-reduction tick per dB in Opto and FET.
+- [x] Remove the `VU LEVEL INDICATOR` legend from the shared meter.
+- [x] Render and inspect both modes through the AU component.
+- [x] Compare the revised FET face with the source at matched dimensions.
+
+**Verification gaps / follow-up polish**
+
+- P3: a manual DAW pass can still judge hover bubbles and very small-label
+  readability at the minimum resize scale. The shared knob interaction path and
+  FET ratio source contract compile and pass the plugin-layer test, but pointer
+  interaction was not automated in the screenshot host.
+
+**Final result**
+
+final result: passed

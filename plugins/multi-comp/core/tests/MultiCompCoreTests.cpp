@@ -5,6 +5,7 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -23,6 +24,53 @@ struct MultiCompDSPTestAccess
     {
         return dsp.previousBusSidechainValid;
     }
+
+    // The vintage FET envelope gain, in dB, straight off the mode state --
+    // NOT the published meter, which is smoothed and clamped. `processFET`
+    // indexes `fetBroadbandK2` at `-gainToDecibels(envelope + 0.001f)`, so the
+    // raw envelope is the only way to read that lookup's own argument.
+    static float fetEnvelopeGainDb(const MultiCompDSP& dsp, int channel) noexcept
+    {
+        return dsp.modes.fetColourGainReduction(channel);
+    }
+
+    static float fetNetGainReductionDb(const MultiCompDSP& dsp,
+                                       int channel) noexcept
+    {
+        return dsp.modes.gainReduction(MultiCompMode::FET, channel);
+    }
+
+    static std::array<float, 2> fetRecoveryGains(
+        const MultiCompDSP& dsp) noexcept
+    {
+        return {{dsp.modes.fetPostBurstRecoveryGain(0),
+                 dsp.modes.fetPostBurstRecoveryGain(1)}};
+    }
+
+    static void setFetStartupState(
+        MultiCompDSP& dsp, std::array<float, 2> peaks,
+        std::array<int, 2> activeSamples,
+        std::array<int, 2> silentSamples) noexcept
+    {
+        dsp.fetStartupInputPeak = peaks;
+        dsp.fetStartupActiveSamples = activeSamples;
+        dsp.fetStartupSilentSamples = silentSamples;
+    }
+
+    static bool fetStartupStateIsClear(const MultiCompDSP& dsp) noexcept
+    {
+        return dsp.fetStartupInputPeak == std::array<float, 2>{{0.0f, 0.0f}}
+            && dsp.fetStartupActiveSamples == std::array<int, 2>{{0, 0}}
+            && dsp.fetStartupSilentSamples == std::array<int, 2>{{0, 0}};
+    }
+
+    static float advanceFetStartupBlend(
+        int& activeSamples, int fullCorrectionSamples,
+        int correctionEndSamples) noexcept
+    {
+        return MultiCompDSP::advanceFetStartupBlend(
+            activeSamples, fullCorrectionSamples, correctionEndSamples);
+    }
 };
 }
 
@@ -32,7 +80,9 @@ using duskaudio::MultiCompDSP;
 namespace
 {
 constexpr float kPi = duskaudio::kDuskPi;
+constexpr int kOversamplingOffSetting = 0;
 constexpr int kOversampling2xSetting = 1;
+constexpr int kOversampling4xSetting = 2;
 
 void require(bool condition, const char* message)
 {
@@ -2384,41 +2434,47 @@ void testOptoDenseProgrammeParity()
                 high.meanErrorDb, high.rmsErrorDb, high.correlation,
                 at85.meanErrorDb, at85.rmsErrorDb, at85.correlation,
                 at100.meanErrorDb, at100.rmsErrorDb, at100.correlation);
-    // For the PR 0.40/0.70 rows, the RMS ceilings reject the issue #210
-    // baseline (1.600 / 3.163 dB) with margin.  Correlation is gated separately
-    // so a uniform offset cannot conceal a time-inverted or shape-mismatched
-    // envelope.  (Pearson correlation is invariant to uniform offset AND
-    // uniform positive scaling, so flattening per se is owned by the RMS term,
-    // not this one.)
-    require(std::abs(low.meanErrorDb) < 0.60f && low.rmsErrorDb < 0.75f
-                && low.correlation > 0.75f,
-            "Opto low-PR dense-programme envelope stays inside the reference gate");
-    require(std::abs(high.meanErrorDb) < 1.75f && high.rmsErrorDb < 1.90f
-                && high.correlation > 0.72f,
-            "Opto high-PR dense-programme envelope stays inside the reference gate");
-    // The PR 0.85/1.00 rows are different in kind: their ceilings snapshot the
-    // CURRENT build (measured 2026-08-24: PR 0.85 +2.015929 / 2.130637 dB /
-    // 0.774589; PR 1.00 +2.445327 / 2.561165 dB / 0.726289) with 0.269-0.305 dB
-    // and ~0.075 correlation margin.  They document the open PR-dependent gap
-    // and reject regression beyond it; they do NOT certify parity, and they
-    // must be tightened when the event-boundary charge mechanism lands.
-    // Baselines were measured with the manual -O2 clang recipe and also pass
-    // under the ctest -O3 build; the margins cover the documented contraction
-    // baseline.  Hazard noted in review: the two reference envelopes sit only
-    // ~1.8 dB apart while these ceilings span ~2.3-2.9 dB, so a swapped
-    // PR/reference pairing could pass — convert the four rows to a paired
-    // table when these ceilings are next touched.  The mean gates are floored
-    // at -0.30 dB so a sign-flipped (under-compressing) regression cannot hide
-    // inside a two-sided ceiling.  Structural blind spots: these rows run mono
-    // (nCh = 1), so the linked-stereo Opto detector path is never exercised
-    // here (the stereo-link gates own it), and Linux arm64 has not yet run
-    // these rows (matrix: macOS clang, macOS no-contract, Linux gcc 12 x86-64).
-    require(at85.meanErrorDb > -0.30f && at85.meanErrorDb < 2.30f
-                && at85.rmsErrorDb < 2.40f && at85.correlation > 0.70f,
-            "Opto PR 0.85 dense-programme error stays within the documented gap ceiling (tripwire, not parity)");
-    require(at100.meanErrorDb > -0.30f && at100.meanErrorDb < 2.75f
-                && at100.rmsErrorDb < 2.85f && at100.correlation > 0.65f,
-            "Opto PR 1.00 dense-programme error stays within the documented gap ceiling (tripwire, not parity)");
+    // Issue #210's original PR 0.40/0.70 RMS errors were 1.600/3.163 dB.
+    // The continuous event-history law now keeps all four measured PR rows
+    // below 1.20 dB RMS. Keep the PR/reference pairings and their independently
+    // declared ceilings in one table: the old loose high-PR tripwires could let
+    // the 0.85/1.00 reference envelopes be exchanged without failing.
+    //
+    // Correlation is gated separately so a uniform offset cannot conceal a
+    // time-inverted or shape-mismatched envelope. Pearson correlation is
+    // invariant to uniform offset and uniform positive scaling, so flattening
+    // is owned by the RMS term. The rows are mono; the linked-stereo Opto path
+    // remains owned by the stereo-link gates. This revision was run with macOS
+    // clang and macOS no-contract. Linux GCC 12 x86-64 still needs re-running
+    // because the local Podman VM would not stay up; Linux arm64 remains unrun.
+    struct DenseProgrammeGate
+    {
+        const char* label;
+        OptoDenseProgrammeMetrics metrics;
+        float maximumAbsoluteMeanDb;
+        float maximumRmsDb;
+        float minimumCorrelation;
+    };
+    const std::array<DenseProgrammeGate, 4> gates{{
+        {"PR 0.40", low,   0.35f, 0.65f, 0.82f},
+        {"PR 0.70", high,  0.70f, 0.95f, 0.80f},
+        {"PR 0.85", at85,  0.85f, 1.15f, 0.75f},
+        {"PR 1.00", at100, 0.90f, 1.20f, 0.75f},
+    }};
+    for (const auto& gate : gates)
+    {
+        std::printf("opto dense parity gate: %s |mean| %.6f < %.2f, "
+                    "RMS %.6f < %.2f, correlation %.6f > %.2f\n",
+                    gate.label, std::abs(gate.metrics.meanErrorDb),
+                    gate.maximumAbsoluteMeanDb, gate.metrics.rmsErrorDb,
+                    gate.maximumRmsDb, gate.metrics.correlation,
+                    gate.minimumCorrelation);
+        require(std::abs(gate.metrics.meanErrorDb)
+                    < gate.maximumAbsoluteMeanDb
+                    && gate.metrics.rmsErrorDb < gate.maximumRmsDb
+                    && gate.metrics.correlation > gate.minimumCorrelation,
+                "Opto dense-programme row stays inside its paired parity gate");
+    }
 }
 
 struct OptoAttackCrossings
@@ -3791,9 +3847,72 @@ void testGoldenVectors()
         duskaudio::MultiCompMode::StudioVCA, duskaudio::MultiCompMode::Digital,
         duskaudio::MultiCompMode::Multiband};
     // Re-recorded 2026-08-19: affected hardware modes encoded stale oversampling-rate coefficients.
-    constexpr float expectedRms[] = {0.610338330f, 0.162082925f, 0.269918233f,
+    // FET was re-recorded 2026-08-25 after the measured reference calibration,
+    // again 2026-08-26 when the attack drive law was inverted to match the
+    // reference's measured direction (0.059634957/0.266311735), and again the
+    // same day when that law's unmeasured shallow-drive segment was replaced by
+    // the measured six-anchor table (0.042118039/0.242844120), and again the
+    // same day when the measured +0.149329 dB pre-detector gain excess was
+    // removed from fetInputGainDb (0.039900590/0.242788911 -> below; this
+    // vector runs at Input 18 dB, i.e. deep reduction, where a pre-detector
+    // change passes at the output slope, hence the small -0.030 dB move), and
+    // again the same day when fetBroadbandK2 was re-fitted against the measured
+    // H2 surface (0.039760567/0.242730290 -> below). That last move is larger
+    // than a colour term looks like it should be, and the reason is the vector
+    // itself: 512 of its 4096 samples are the step and the rest is the attack
+    // transient, so it integrates the whole 0-25 dB reduction sweep, including
+    // the band where the old table read 5.1 dB high. The settled-sine static
+    // grid, by contrast, moved 3.7e-05 dB across all 80 cells. Restoring the
+    // old table reproduces 0.039760567/0.242730290 exactly, which is what
+    // establishes this table as the sole cause. And again the same day when the
+    // low-frequency colour coefficient became the measured `fetLowFrequencyK2`
+    // table instead of `0.0400 * clamp(grDb / 12) * saturation`
+    // (0.039726499/0.241402537 -> below). Restoring the old expression
+    // reproduces that pair exactly, and the settled-sine static grid moved
+    // 1.6e-07 dB across all 80 cells, so this table is likewise the sole cause.
+    // The depth-gated intermediate FET population then moved only the vintage
+    // vector to 0.038088631/0.241441056; restoring the single slow population
+    // reproduces 0.039597437/0.241449714 and fails this assertion. Finally, the
+    // measured reduction-dependent broadband cubic moved it to
+    // 0.038748693/0.255038023. Restoring its constant -0.006 coefficient
+    // reproduces 0.038088631/0.241441056 and fails this assertion. The jointly
+    // closed low-frequency T3 and broadband K3 coordinate pair then moved it to
+    // 0.038780950/0.259218961; restoring the Wave 12 odd-order coefficients
+    // reproduces 0.038748693/0.255038023 and fails this assertion.
+    //
+    // Re-recorded 2026-08-26 (Wave 20) to the value below. This vector had gone
+    // stale: Waves 17-20A were accepted against their own targeted gates while
+    // the full suite was not re-run, so the pair above describes the pre-Wave-17
+    // core. The move is attributed, not assumed. Forcing `fetAttackKnobScale`
+    // to return 1.0f -- its pre-Wave-20A identity -- reproduces
+    // 0.038771123/0.259201407, so the Wave 20A drive-dependent Attack-knob
+    // correction accounts for essentially the whole move; the remaining
+    // 9.8e-06 of RMS is Waves 17-19 (stereo link, the ratio-specific detector
+    // caps, and the All-buttons overload memory), which touch this vector only
+    // where its transient grazes the deep-reduction caps.
+    //
+    // The Wave 20 startup peak ceiling itself moves this vector by EXACTLY
+    // zero: the stage-disabled diagnostic binary 28dd845b6adf reports the same
+    // 0.039380543/0.259151727 pair. This vector runs at Output 1.0, above the
+    // `outputControlBlend` fade-out at Output position 0.90, so the ceiling is
+    // switched off for it by construction -- which is the intended protection
+    // for the already-matched Output=1 ceiling sweep, here observed working.
+    //
+    // Re-recorded 2026-08-27 (Wave 21) after bounding only the source passed to
+    // the measured broadband K3 polynomial. The fitted coefficient is retained
+    // throughout its measured domain, while the first uncompressed cycle no
+    // longer extrapolates that cubic tens of times beyond the fitted source
+    // range. Removing the bound by setting kFetBroadbandK3SourceLimit to 1000
+    // reproduces the prior 0.039380543/0.259151727 pair exactly; restoring the
+    // bound moves only FET to 0.043111119/0.593543887. The six neighbouring
+    // modes print the same nine-decimal values in both control runs.
+    //
+    // The six neighbouring mode values remain the original regression oracles
+    // and must stay byte-identical across any vintage-FET change. They did:
+    // only mode=1 moved at any point in this wave.
+    constexpr float expectedRms[] = {0.043111119f, 0.162082925f, 0.269918233f,
                                      0.618480802f, 0.195874527f, 0.173109755f, 0.212109938f};
-    constexpr float expectedPeak[] = {1.912103295f, 0.350156724f, 0.797850311f,
+    constexpr float expectedPeak[] = {0.593543887f, 0.350156724f, 0.797850311f,
                                       1.836098075f, 0.657691538f, 0.349556237f, 0.815853894f};
     std::puts("golden vectors: seven non-Opto modes, deterministic step/sine-burst RMS peak");
     for (size_t vectorIndex = 0; vectorIndex < std::size(modes); ++vectorIndex)
@@ -5023,6 +5142,3635 @@ void testAllModesAreMonoSafe()
     std::puts("mono safety: all modes exercised with 4x, lookahead, external sidechain and stereo-link state");
 }
 
+float fetAttackPlain(float position)
+{
+    return 0.02f + (80.0f - 0.02f) * std::pow(
+        std::clamp(position, 0.0f, 1.0f), 1.0f / 0.3f);
+}
+
+float fetReleasePlain(float position)
+{
+    return 50.0f + (1100.0f - 50.0f)
+        * std::clamp(position, 0.0f, 1.0f);
+}
+
+void prepareReferenceFet(MultiCompDSP& dsp, double sampleRate, int blockSize,
+                         float inputPosition = 0.8f,
+                         float outputPosition = 0.625915527f,
+                         int ratio = 0, float curve = 0.0f)
+{
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::FET));
+    dsp.setMix(100.0f);
+    dsp.setStereoLink(100.0f);
+    dsp.setOversampling(kOversampling2xSetting);
+    dsp.setParameter(MultiCompDSP::Parameter::SidechainHP, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::TruePeakEnable, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::ExternalSidechain, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::AutoMakeup, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::Distortion, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::GlobalLookahead, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::FetInput,
+                     -20.0f + 60.0f * inputPosition);
+    dsp.setParameter(MultiCompDSP::Parameter::FetOutput,
+                     -20.0f + 40.0f * outputPosition);
+    dsp.setParameter(MultiCompDSP::Parameter::FetAttack, fetAttackPlain(0.5f));
+    dsp.setParameter(MultiCompDSP::Parameter::FetRelease, fetReleasePlain(0.5f));
+    dsp.setParameter(MultiCompDSP::Parameter::FetRatio, static_cast<float>(ratio));
+    dsp.setParameter(MultiCompDSP::Parameter::FetCurve, curve);
+    dsp.setParameter(MultiCompDSP::Parameter::FetTransient, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::FetThreshold, -10.0f);
+    dsp.prepare(sampleRate, blockSize);
+}
+
+float renderReferenceFetRmsDb(float inputDbfs, float inputPosition,
+                              float outputPosition, int ratio,
+                              double sampleRate = 48000.0,
+                              int blockSize = 256,
+                              float curve = 0.0f)
+{
+    const int totalSamples = static_cast<int>(std::lround(5.0 * sampleRate));
+    const int measureStart = static_cast<int>(std::lround(3.0 * sampleRate));
+    const int measureStop = static_cast<int>(std::lround(4.5 * sampleRate));
+    MultiCompDSP dsp;
+    prepareReferenceFet(dsp, sampleRate, blockSize,
+                        inputPosition, outputPosition, ratio, curve);
+    std::vector<float> input(static_cast<size_t>(blockSize));
+    std::vector<float> output(static_cast<size_t>(blockSize));
+    const float amplitude = duskaudio::decibelsToGain(inputDbfs);
+    double power = 0.0;
+    int measured = 0;
+    for (int offset = 0; offset < totalSamples; offset += blockSize)
+    {
+        const int count = std::min(blockSize, totalSamples - offset);
+        for (int sample = 0; sample < count; ++sample)
+            input[static_cast<size_t>(sample)] = amplitude * std::sin(
+                2.0f * kPi * 1000.0f * static_cast<float>(offset + sample)
+                / static_cast<float>(sampleRate));
+        const float* inputs[] = {input.data()};
+        float* outputs[] = {output.data()};
+        dsp.processBlock(inputs, outputs, 1, count);
+        for (int sample = 0; sample < count; ++sample)
+            if (offset + sample >= measureStart
+                && offset + sample < measureStop)
+            {
+                const float value = output[static_cast<size_t>(sample)];
+                power += static_cast<double>(value) * value;
+                ++measured;
+            }
+    }
+    require(measured == measureStop - measureStart,
+            "FET reference render measures exactly the reference 3.0-4.5 second window");
+    return duskaudio::gainToDecibels(static_cast<float>(
+        std::sqrt(power / static_cast<double>(measured))));
+}
+
+// ---------------------------------------------------------------------------
+// Vintage-FET flat gain against sample rate.
+//
+// `fetHardwareGain` is calibrated by `calibrateFetHardwareGain`, which measures
+// the RMS of `inputTransformerFet -> outputTransformerFet -> fetConvolution`
+// and inverts it. The vintage audio path applies that scalar to the
+// CONVOLUTION ALONE (`MultiCompModes.hpp`: `if (!studio) out =
+// fetConvolution.processSample(out, ch) * fetHardwareGain;`) -- the two
+// transformers are Studio-path stages and never run here. The normalisation
+// therefore inverts a three-stage response and is applied to a one-stage one,
+// and because each stage's response depends on the rate, the residual differs
+// per rate rather than cancelling as a constant.
+//
+// This measures the observable CONSEQUENCE rather than the coefficient: a
+// zero-reduction sine at a level far below the knee should come out at the same
+// level whatever the rate, since nothing else in the path is rate dependent at
+// 1 kHz. A constant part of the miscalibration is harmless -- it was absorbed
+// into `fetInputGainDb` when the static grid was fitted at 48 kHz -- so what
+// this guards is the part that cannot be absorbed, the RATE DEPENDENCE.
+//
+// Re-measured 2026-08-26 on plugin de386c39bdd9. A previous handoff recorded
+// this as "-0.010 dB at 96 k"; that number does not reproduce on the current
+// build, which reads -0.002266 dB there and worst 0.003448 dB at 88.2 kHz.
+//
+// The miscalibration is real but its consequence is NOT, and that was measured
+// rather than argued. Two deliberate breaks were run against this assertion:
+//
+//   `cacheHardwareGains` pinned to 48 kHz regardless of host rate,
+//   so 96 kHz uses a gain calibrated for the wrong rate   -> 0.004662 dB, PASSES
+//   `calibrateFetHardwareGain` probed at twice the rate   -> 0.003723 dB, PASSES
+//
+// Neither can breach the campaign's 0.02 dB tolerance, because the transformer
+// and convolution responses this coefficient normalises are all but flat around
+// the 1 kHz calibration tone. The constant part of the error is harmless in any
+// case -- it was absorbed into `fetInputGainDb` when the static grid was fitted
+// at 48 kHz -- so the item is closed as measured-and-immaterial rather than
+// fixed. What remains asserted here is the regression: a synthetic 1 %-per-rate
+// error in `fetHardwareGains` reads 0.083313 dB and fails, which is what proves
+// this assertion is wired to the quantity it names.
+void testFetSampleRateFlatGain()
+{
+    constexpr float probeDbfs = -60.0f;      // far below any knee: zero reduction
+    constexpr float inputPosition = 0.2f;
+    const float at48 = renderReferenceFetRmsDb(
+        probeDbfs, inputPosition, 0.625915527f, 0, 48000.0, 256);
+    std::printf("FET sample-rate flat gain: reference 48000 Hz -> %.6f dBFS\n",
+                at48);
+    double worst = 0.0;
+    for (const double rate : {44100.0, 48000.0, 88200.0, 96000.0})
+    {
+        const float measured = renderReferenceFetRmsDb(
+            probeDbfs, inputPosition, 0.625915527f, 0, rate, 256);
+        const double delta = static_cast<double>(measured) - at48;
+        worst = std::max(worst, std::abs(delta));
+        std::printf("FET sample-rate flat gain: %8.0f Hz -> %.6f dBFS "
+                    "delta %+.6f dB\n", rate, measured, delta);
+    }
+    std::printf("FET sample-rate flat gain: worst absolute delta %.6f dB\n",
+                worst);
+    require(worst < 0.02,
+            "vintage FET flat gain is sample-rate independent within the "
+            "campaign's 0.02 dB tolerance");
+}
+
+void testFetMeasuredControlTapers()
+{
+    struct Point { float position; float relativeDb; };
+    constexpr std::array<Point, 4> inputPoints{{
+        {0.2f, -33.678216f}, {0.5f, -13.389983f},
+        {0.8f, -1.246802f}, {1.0f, 0.0f}}};
+    constexpr std::array<Point, 4> outputPoints{{
+        {0.2f, -55.024575f}, {0.5f, -21.810000f},
+        {0.8f, -4.012500f}, {1.0f, 0.0f}}};
+    const float inputReference = renderReferenceFetRmsDb(
+        -72.0f, 1.0f, 1.0f, 0);
+    const float outputReference = inputReference;
+    float worstInputError = 0.0f;
+    float worstOutputError = 0.0f;
+    for (const auto& point : inputPoints)
+    {
+        const float measured = renderReferenceFetRmsDb(
+            -72.0f, point.position, 1.0f, 0) - inputReference;
+        std::printf("FET Input taper: position %.1f reference %+.6f measured %+.6f error %+.6f dB\n",
+                    point.position, point.relativeDb, measured,
+                    measured - point.relativeDb);
+        worstInputError = std::max(worstInputError,
+                                   std::abs(measured - point.relativeDb));
+    }
+    for (const auto& point : outputPoints)
+    {
+        const float measured = renderReferenceFetRmsDb(
+            -72.0f, 1.0f, point.position, 0) - outputReference;
+        std::printf("FET Output taper: position %.1f reference %+.6f measured %+.6f error %+.6f dB\n",
+                    point.position, point.relativeDb, measured,
+                    measured - point.relativeDb);
+        worstOutputError = std::max(worstOutputError,
+                                    std::abs(measured - point.relativeDb));
+    }
+    std::printf("FET measured tapers: input worst %.6f dB output worst %.6f dB\n",
+                worstInputError, worstOutputError);
+    require(worstInputError < 0.02f && worstOutputError < 0.02f,
+            "vintage FET Input and Output reproduce the measured pot tapers");
+}
+
+void testFetMeasuredStaticSurface()
+{
+    struct Point
+    {
+        float inputPosition;
+        float inputDbfs;
+        int ratio;
+        float referenceOutputDbfs;
+    };
+    constexpr std::array<Point, 5> points{{
+        {0.8f, -24.0f, 0, -15.926712f},
+        {0.8f, -6.0f, 0, -12.854822f},
+        {0.8f, -12.0f, 1, -14.280624f},
+        {0.6f, -12.0f, 3, -13.415414f},
+        {0.8f, -6.0f, 4, -14.918762f}
+    }};
+    float worstError = 0.0f;
+    for (const auto& point : points)
+    {
+        const float measured = renderReferenceFetRmsDb(
+            point.inputDbfs, point.inputPosition, 0.625915527f, point.ratio);
+        const float error = measured - point.referenceOutputDbfs;
+        worstError = std::max(worstError, std::abs(error));
+        std::printf("FET static reference: ratio %d input %.1f/%.1f reference %.6f measured %.6f error %+.6f dB\n",
+                    point.ratio, point.inputPosition, point.inputDbfs,
+                    point.referenceOutputDbfs, measured, error);
+    }
+    require(worstError < 0.20f,
+            "vintage FET representative static points stay within 0.20 dB of the live reference");
+}
+
+double renderFetKneeFundamentalDb(double frequencyHz, float inputDbfs,
+                                  float inputPosition)
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int blockSize = 256;
+    constexpr int totalSamples = 12 * static_cast<int>(sampleRate);
+    constexpr int measureStart = 9 * static_cast<int>(sampleRate);
+    constexpr int measureStop = measureStart
+        + 3 * static_cast<int>(sampleRate) / 2;
+    MultiCompDSP dsp;
+    prepareReferenceFet(dsp, sampleRate, blockSize,
+                        inputPosition, 0.625915527f, 0);
+    std::array<float, blockSize> input{};
+    std::array<float, blockSize> output{};
+    const double amplitude = duskaudio::decibelsToGain(inputDbfs);
+    double real = 0.0;
+    double imaginary = 0.0;
+    int measured = 0;
+    for (int offset = 0; offset < totalSamples; offset += blockSize)
+    {
+        const int count = std::min(blockSize, totalSamples - offset);
+        for (int sample = 0; sample < count; ++sample)
+            input[static_cast<size_t>(sample)] = static_cast<float>(
+                amplitude * std::sin(2.0 * duskaudio::kDuskPi * frequencyHz
+                    * static_cast<double>(offset + sample) / sampleRate));
+        const float* inputs[] = {input.data()};
+        float* outputs[] = {output.data()};
+        dsp.processBlock(inputs, outputs, 1, count);
+        for (int sample = 0; sample < count; ++sample)
+        {
+            const int absolute = offset + sample;
+            if (absolute < measureStart || absolute >= measureStop)
+                continue;
+            const double phase = 2.0 * duskaudio::kDuskPi * frequencyHz
+                * static_cast<double>(absolute) / sampleRate;
+            real += output[static_cast<size_t>(sample)] * std::cos(phase);
+            imaginary -= output[static_cast<size_t>(sample)] * std::sin(phase);
+            ++measured;
+        }
+    }
+    const double magnitude = 2.0 * std::hypot(real, imaginary)
+        / static_cast<double>(measured);
+    return 20.0 * std::log10(std::max(magnitude, 1.0e-30));
+}
+
+void testFetKneeOnsetMatchesReference()
+{
+    // Wave 27's independently repeated 100 Hz and 1 kHz captures agree within
+    // 0.00564 dB at every selected point: this is a common static-knee shape,
+    // not the deeper ratio/frequency detector surface that the joint LF shelf
+    // experiment rejected. The old representative static grid skipped this
+    // interval and therefore let the quadratic knee start up to 0.72 dB early.
+    struct Point
+    {
+        float driveDb;
+        double reference100HzDb;
+        double reference1kHzDb;
+    };
+    constexpr std::array<Point, 9> points{{
+        {-14.00f, 0.001054856, 0.001054679},
+        {-12.75f, 0.001418202, 0.001419694},
+        {-11.00f, 0.002144157, 0.002144161},
+        {-10.50f, 0.009454543, 0.010022404},
+        {-10.00f, 0.135284617, 0.129645572},
+        { -9.00f, 0.590613455, 0.589745640},
+        { -8.00f, 1.167230576, 1.167031554},
+        { -7.00f, 1.809697156, 1.808799028},
+        { -6.00f, 2.486826948, 2.483171013},
+    }};
+    constexpr float controlInputPosition = 0.2f;
+    constexpr float controlSourceDbfs = -36.0f;
+    constexpr double controlDriveDb = -29.827545;
+    constexpr float measuredInputPosition = 0.8f;
+    constexpr double measuredInputGainDb = 38.603869;
+    const auto outputOffset = [&](double frequencyHz) {
+        return renderFetKneeFundamentalDb(
+            frequencyHz, controlSourceDbfs, controlInputPosition)
+            - controlDriveDb;
+    };
+    const double offset100 = outputOffset(100.0);
+    const double offset1k = outputOffset(1000.0);
+    double worstError = 0.0;
+    double worstFrequencySplit = 0.0;
+    double measured1kAtMinusSix = 0.0;
+    for (const auto& point : points)
+    {
+        const double reduction100 = point.driveDb + offset100
+            - renderFetKneeFundamentalDb(
+                100.0, static_cast<float>(point.driveDb - measuredInputGainDb),
+                measuredInputPosition);
+        const double reduction1k = point.driveDb + offset1k
+            - renderFetKneeFundamentalDb(
+                1000.0, static_cast<float>(point.driveDb - measuredInputGainDb),
+                measuredInputPosition);
+        const double error100 = reduction100 - point.reference100HzDb;
+        const double error1k = reduction1k - point.reference1kHzDb;
+        worstError = std::max(
+            worstError, std::max(std::abs(error100), std::abs(error1k)));
+        worstFrequencySplit = std::max(
+            worstFrequencySplit, std::abs(reduction100 - reduction1k));
+        if (point.driveDb == -6.0f)
+            measured1kAtMinusSix = reduction1k;
+        std::printf("FET knee onset: drive %+.2f reference/measured/error "
+                    "100 Hz %.6f/%.6f/%+.6f dB, 1 kHz %.6f/%.6f/%+.6f dB\n",
+                    static_cast<double>(point.driveDb),
+                    point.reference100HzDb, reduction100, error100,
+                    point.reference1kHzDb, reduction1k, error1k);
+    }
+    // Wave 24 independently measured the same -6 dB endpoint at 40 and 60 Hz.
+    // Both are held out from the 1 kHz knee table, as is the 100 Hz curve above.
+    struct HeldOutFrequency
+    {
+        double frequencyHz;
+        double referenceReductionDb;
+    };
+    constexpr std::array<HeldOutFrequency, 2> heldOut{{
+        {40.0, 2.476338413},
+        {60.0, 2.487113619},
+    }};
+    for (const auto& point : heldOut)
+    {
+        const double offset = outputOffset(point.frequencyHz);
+        const double reduction = -6.0 + offset
+            - renderFetKneeFundamentalDb(
+                point.frequencyHz,
+                static_cast<float>(-6.0 - measuredInputGainDb),
+                measuredInputPosition);
+        const double error = reduction - point.referenceReductionDb;
+        worstError = std::max(worstError, std::abs(error));
+        worstFrequencySplit = std::max(
+            worstFrequencySplit,
+            std::abs(reduction - measured1kAtMinusSix));
+        std::printf("FET knee onset held-out: %.0f Hz drive -6.00 "
+                    "reference %.6f measured %.6f error %+.6f dB\n",
+                    point.frequencyHz, point.referenceReductionDb,
+                    reduction, error);
+    }
+    std::printf("FET knee onset: worst absolute error %.6f dB, "
+                "worst 100 Hz/1 kHz split %.6f dB\n",
+                worstError, worstFrequencySplit);
+    require(worstError < 0.04 && worstFrequencySplit < 0.03,
+            "vintage FET knee onset follows the measured UAD curve and frequency collapse");
+}
+
+void testFetKneeCellDoesNotCancelDeepReleaseMemory()
+{
+    // The auxiliary cell owns at most the shallow-knee difference (0.724 dB
+    // on the pre-change path). After a loud passage it must not mistake the
+    // main envelope's retained deep reduction for a new knee error and cancel
+    // that programme memory on its independent timing path.
+    constexpr double sampleRate = 48000.0;
+    constexpr int blockSize = 256;
+    constexpr int loudSamples = 3 * static_cast<int>(sampleRate);
+    constexpr int shallowSamples = 4 * static_cast<int>(sampleRate);
+    constexpr float measuredInputGainDb = 38.603869f;
+    constexpr float loudSourceDbfs = -6.0f;
+    constexpr float shallowSourceDbfs = -10.0f - measuredInputGainDb;
+    MultiCompDSP dsp;
+    prepareReferenceFet(dsp, sampleRate, blockSize, 0.8f, 0.625915527f, 0);
+    std::array<float, blockSize> input{};
+    std::array<float, blockSize> output{};
+    float reductionAtTransition = 0.0f;
+    float maximumAuxiliaryCorrection = 0.0f;
+    float finalAuxiliaryCorrection = 0.0f;
+    const int totalSamples = loudSamples + shallowSamples;
+    for (int offset = 0; offset < totalSamples; offset += blockSize)
+    {
+        const int count = std::min(blockSize, totalSamples - offset);
+        for (int sample = 0; sample < count; ++sample)
+        {
+            const int absolute = offset + sample;
+            const float levelDb = absolute < loudSamples
+                ? loudSourceDbfs : shallowSourceDbfs;
+            input[static_cast<size_t>(sample)] = duskaudio::decibelsToGain(levelDb)
+                * std::sin(2.0f * kPi * 1000.0f
+                    * static_cast<float>(absolute) / static_cast<float>(sampleRate));
+        }
+        const float* inputs[] = {input.data()};
+        float* outputs[] = {output.data()};
+        dsp.processBlock(inputs, outputs, 1, count);
+        const float colourReduction = -duskaudio::MultiCompDSPTestAccess::
+            fetEnvelopeGainDb(dsp, 0);
+        const float netReduction = -duskaudio::MultiCompDSPTestAccess::
+            fetNetGainReductionDb(dsp, 0);
+        const float correction = colourReduction - netReduction;
+        if (offset < loudSamples && offset + count >= loudSamples)
+            reductionAtTransition = colourReduction;
+        if (offset >= loudSamples)
+        {
+            maximumAuxiliaryCorrection = std::max(
+                maximumAuxiliaryCorrection, correction);
+            finalAuxiliaryCorrection = correction;
+        }
+    }
+    std::printf("FET knee release neighbour: deep reduction %.6f dB, "
+                "maximum/final auxiliary correction %.6f/%.6f dB\n",
+                reductionAtTransition, maximumAuxiliaryCorrection,
+                finalAuxiliaryCorrection);
+    require(reductionAtTransition > 20.0f
+                && maximumAuxiliaryCorrection < 1.0f
+                && finalAuxiliaryCorrection > 0.3f,
+            "the exercised shallow FET knee cell never cancels deep release memory");
+}
+
+void testFetMaximumReductionSaturation()
+{
+    // The ordinary static surface stops at about +34 dB internal level. With
+    // Input and Output clockwise, the installed unit follows the same 4:1 law
+    // through a -3 dBFS source, then stops adding reduction over the last
+    // roughly 1.3 dB of detector level. Pin both directions: the 0 dBFS point
+    // proves that the saturation exists, while -3 dBFS proves that its onset
+    // does not narrow the already-fitted straight-law domain.
+    struct Point
+    {
+        int ratio;
+        float referenceMinusThreeDbfs;
+        float referenceZeroDbfs;
+    };
+    // Live-reference 3.0--4.5 second windows. The All-buttons -3 dBFS point is
+    // intentionally not replaced by its later asymptote: this helper and the
+    // campaign ceiling gate both measure this practical five-second window.
+    constexpr std::array<Point, 5> points{{
+        {0,  0.718774f,  2.253437f},
+        {1, -0.450040f,  0.856189f},
+        {2, -0.557974f,  0.505468f},
+        {3,  0.014880f,  0.857770f},
+        {4, -1.918019f, -0.552185f},
+    }};
+    float worstBelowError = 0.0f;
+    float worstSaturatedError = 0.0f;
+    for (const auto& point : points)
+    {
+        const float belowSaturation = renderReferenceFetRmsDb(
+            -3.0f, 1.0f, 1.0f, point.ratio);
+        const float saturated = renderReferenceFetRmsDb(
+            0.0f, 1.0f, 1.0f, point.ratio);
+        const float belowError = belowSaturation - point.referenceMinusThreeDbfs;
+        const float saturatedError = saturated - point.referenceZeroDbfs;
+        worstBelowError = std::max(worstBelowError, std::abs(belowError));
+        worstSaturatedError = std::max(
+            worstSaturatedError, std::abs(saturatedError));
+        std::printf("FET maximum reduction ratio %d: -3 dBFS reference %.6f "
+                    "measured %.6f error %+.6f; 0 dBFS reference %.6f "
+                    "measured %.6f error %+.6f dB\n",
+                    point.ratio, point.referenceMinusThreeDbfs,
+                    belowSaturation, belowError, point.referenceZeroDbfs,
+                    saturated, saturatedError);
+    }
+    require(worstBelowError < 0.15f,
+            "vintage FET maximum-reduction onset preserves the lower straight-law point");
+    require(worstSaturatedError < 0.15f,
+            "vintage FET maximum reduction reproduces every ratio's 0 dBFS reference point");
+}
+
+void testFetAllButtonsSettlingWindows()
+{
+    // A five-second ceiling row alone can hide a wrong asymptote: before this
+    // test, All-buttons crossed the reference around four seconds but kept
+    // charging to a level 0.466 dB too low by nine seconds. 4:1 already follows
+    // the reference's long population and is the opposite-path control.
+    constexpr int sampleRate = 48000;
+    constexpr int blockSize = 256;
+    constexpr int totalSamples = 12 * sampleRate;
+    struct Point
+    {
+        int ratio;
+        float inputDbfs;
+        float referenceEarlyDbfs;
+        float referenceLateDbfs;
+    };
+    constexpr std::array<Point, 3> points{{
+        {0,  0.0f,  2.253437f,  2.253322f},
+        {4, -3.0f, -1.918019f, -2.620076f},
+        {4,  0.0f, -0.552185f, -0.562661f},
+    }};
+    float worstEarlyError = 0.0f;
+    float worstLateError = 0.0f;
+    for (const auto& point : points)
+    {
+        MultiCompDSP dsp;
+        prepareReferenceFet(dsp, sampleRate, blockSize, 1.0f, 1.0f, point.ratio);
+        std::array<float, blockSize> input{}, output{};
+        const float amplitude = duskaudio::decibelsToGain(point.inputDbfs);
+        double earlyPower = 0.0;
+        double latePower = 0.0;
+        int earlySamples = 0;
+        int lateSamples = 0;
+        for (int offset = 0; offset < totalSamples; offset += blockSize)
+        {
+            const int count = std::min(blockSize, totalSamples - offset);
+            for (int sample = 0; sample < count; ++sample)
+                input[static_cast<size_t>(sample)] = amplitude * std::sin(
+                    2.0f * kPi * 1000.0f * static_cast<float>(offset + sample)
+                    / static_cast<float>(sampleRate));
+            const float* inputs[] = {input.data()};
+            float* outputs[] = {output.data()};
+            dsp.processBlock(inputs, outputs, 1, count);
+            for (int sample = 0; sample < count; ++sample)
+            {
+                const int absolute = offset + sample;
+                const double value = output[static_cast<size_t>(sample)];
+                if (absolute >= 3 * sampleRate
+                    && absolute < 9 * sampleRate / 2)
+                {
+                    earlyPower += value * value;
+                    ++earlySamples;
+                }
+                if (absolute >= 9 * sampleRate
+                    && absolute < 23 * sampleRate / 2)
+                {
+                    latePower += value * value;
+                    ++lateSamples;
+                }
+            }
+        }
+        require(earlySamples == 3 * sampleRate / 2
+                    && lateSamples == 5 * sampleRate / 2,
+                "FET settling windows contain every requested sample");
+        const float earlyDbfs = duskaudio::gainToDecibels(static_cast<float>(
+            std::sqrt(earlyPower / earlySamples)));
+        const float lateDbfs = duskaudio::gainToDecibels(static_cast<float>(
+            std::sqrt(latePower / lateSamples)));
+        const float earlyError = earlyDbfs - point.referenceEarlyDbfs;
+        const float lateError = lateDbfs - point.referenceLateDbfs;
+        worstEarlyError = std::max(worstEarlyError, std::abs(earlyError));
+        worstLateError = std::max(worstLateError, std::abs(lateError));
+        std::printf("FET settling ratio %d input %+.0f: early reference %.6f measured %.6f "
+                    "error %+.6f; late reference %.6f measured %.6f error %+.6f dB\n",
+                    point.ratio, static_cast<double>(point.inputDbfs),
+                    point.referenceEarlyDbfs, earlyDbfs, earlyError,
+                    point.referenceLateDbfs, lateDbfs, lateError);
+    }
+    require(worstEarlyError < 0.15f,
+            "vintage FET practical settling window remains reference-compatible");
+    require(worstLateError < 0.15f,
+            "vintage FET late settling window reaches the reference asymptote");
+}
+
+void testFetAbsoluteGainAnchors()
+{
+    // testFetMeasuredControlTapers above only ever compares knob positions with
+    // each other, so a uniform scalar in the vintage chain cancels out of every
+    // one of its assertions -- which is how a +0.149329 dB gain excess lived in
+    // this code through several waves of taper work. These two anchors are
+    // absolute and were measured on the reference unit itself.
+    //
+    // (a) Absolute output level at a proved zero-gain-reduction operating point:
+    //     1 kHz at -72 dBFS, Input knob 0.2, Output knob 1.0. Zero reduction is
+    //     not assumed -- the campaign's frequency sweep proves it by rendering a
+    //     6 dB source step at this setting and getting 6.0000 dB back from both
+    //     devices. With no reduction, no detector or ratio term can contribute,
+    //     so this pins the product of every gain constant in the chain.
+    constexpr float kReferenceZeroReductionDbfs = -64.488648f;
+    const float measured = renderReferenceFetRmsDb(-72.0f, 0.2f, 1.0f, 0);
+    const float error = measured - kReferenceZeroReductionDbfs;
+    std::printf("FET absolute gain: zero-reduction reference %.6f measured %.6f error %+.6f dB\n",
+                kReferenceZeroReductionDbfs, measured, error);
+
+    // (b) All-buttons small-signal gain, expressed as All-buttons minus 4:1 at
+    //     the same operating point (Input knob 0.4, 1 kHz at -36 dBFS, which is
+    //     below BOTH laws' knees). Taking the difference of two ratio buttons
+    //     cancels every gain constant common to them, so this reads the
+    //     All-buttons correction alone and no output trim can mask it. It was
+    //     1.046 dB here while the excess above was in place and the flat
+    //     +0.15 dB fit constant was being added to the correction plateau.
+    constexpr float kReferenceAllMinusFourToOneDb = 1.199919f;
+    const float allButtons = renderReferenceFetRmsDb(-36.0f, 0.4f, 0.625915527f, 4);
+    const float fourToOne = renderReferenceFetRmsDb(-36.0f, 0.4f, 0.625915527f, 0);
+    const float smallSignal = allButtons - fourToOne;
+    const float smallSignalError = smallSignal - kReferenceAllMinusFourToOneDb;
+    std::printf("FET All-buttons small signal: reference %+.6f measured %+.6f error %+.6f dB\n",
+                kReferenceAllMinusFourToOneDb, smallSignal, smallSignalError);
+
+    require(std::abs(error) < 0.01f,
+            "vintage FET absolute gain at zero reduction matches the measured reference");
+    require(std::abs(smallSignalError) < 0.02f,
+            "vintage FET All-buttons small-signal gain matches the measured reference");
+}
+
+void testFetMeasuredCurveAllButtons()
+{
+    // `processFET` reaches `fetAllProcessorCorrectionDb` only on the Modern
+    // curve. With Curve = Measured and ratio ALL it takes
+    // `lookupTables.getAllButtonsReduction()` instead, a different law, and the
+    // whole 1176 campaign is pinned to Modern -- so nothing else in this file
+    // or in the campaign exercises that arm. These are recorded regression
+    // vectors, not reference parity: the reference unit was never rendered on
+    // this arm.
+    //
+    // (a) Leak guard, and the open gap. Below the All-buttons detector
+    //     threshold the Measured arm generates NO reduction at all, so its
+    //     small-signal gain relative to 4:1 at the same operating point is
+    //     exactly 0 dB. The reference's is +1.199919 dB (see
+    //     testFetAbsoluteGainAnchors, where the Modern arm now reproduces it to
+    //     0.004 dB). That -1.20 dB shortfall is a real, separate defect and is
+    //     deliberately NOT fixed here; the assertion pins the current value so
+    //     that a change to it -- including anything leaking out of the Modern
+    //     correction table -- has to be deliberate.
+    constexpr float kMeasuredCurveSmallSignalDb = 0.0f;
+    const float measuredAll = renderReferenceFetRmsDb(
+        -36.0f, 0.4f, 0.625915527f, 4, 48000.0, 256, 1.0f);
+    const float fourToOne = renderReferenceFetRmsDb(
+        -36.0f, 0.4f, 0.625915527f, 0, 48000.0, 256, 0.0f);
+    const float smallSignal = measuredAll - fourToOne;
+    std::printf("FET Measured-curve All-buttons small signal: recorded %+.6f measured %+.6f "
+                "(reference wants +1.199919, i.e. a %+.6f dB gap this arm does not close)\n",
+                kMeasuredCurveSmallSignalDb, smallSignal, smallSignal - 1.199919f);
+
+    // (b) Four compressing points on the Measured arm, recorded from this
+    //     build. They were re-recorded when the shared vintage broadband cubic
+    //     became reduction-dependent: that colour path is deliberately common
+    //     to both curve arms, while the small-signal assertion above still
+    //     proves the Modern-only reduction correction does not leak here.
+    //     Restoring the old constant -0.006 cubic reproduces the previous
+    //     -27.010939/-26.974682/-27.533485/-14.744394 dBFS values and fails
+    //     this assertion. The All-buttons detector threshold is -16.03 dBFS and the
+    //     Input 0.4 law adds 19.209 dB, so these sources put the detector
+    //     7.2 / 15.2 / 23.2 dB over threshold -- three different segments of
+    //     `MultiCompHelpers::LookupTables`'s ten measured control points -- and
+    //     the Input 0.8 row lands at 42.8 dB over, past the table's 30 dB clamp.
+    //     Any change to that table moves at least one of them; the Modern-arm
+    //     correction fold moves none, which is the leak guard.
+    struct Point { float inputPosition; float inputDbfs; float recordedDbfs; };
+    constexpr std::array<Point, 4> points{{
+        {0.4f, -28.0f, -27.010859f}, {0.4f, -20.0f, -26.974270f},
+        {0.4f, -12.0f, -27.532766f}, {0.8f, -12.0f, -14.729914f}}};
+    float worstError = 0.0f;
+    for (const auto& point : points)
+    {
+        const float measured = renderReferenceFetRmsDb(
+            point.inputDbfs, point.inputPosition, 0.625915527f, 4, 48000.0, 256, 1.0f);
+        const float error = measured - point.recordedDbfs;
+        worstError = std::max(worstError, std::abs(error));
+        std::printf("FET Measured-curve All-buttons: input %.1f/%.1f recorded %.6f measured %.6f error %+.6f dB\n",
+                    point.inputPosition, point.inputDbfs, point.recordedDbfs, measured, error);
+    }
+
+    require(std::abs(smallSignal - kMeasuredCurveSmallSignalDb) < 0.002f,
+            "Measured-curve All-buttons small-signal gain is unchanged and the Modern correction does not leak into it");
+    require(worstError < 0.005f,
+            "Measured-curve All-buttons compressing points are unchanged");
+}
+
+void testFetAllButtonsKneeTransition()
+{
+    // The All-buttons knee, against the reference unit's own 0.5 dB sweep at
+    // Input 0.4 with Curve = Modern. `testFetAbsoluteGainAnchors` pins the
+    // plateau far below the knee and `testFetMeasuredStaticSurface` pins one
+    // point far above it; between them sat the whole transition, sampled by
+    // nothing. The campaign's own All-buttons sweep steps 2 dB, which is
+    // exactly the knot spacing `fetAllProcessorCorrectionDb` used there, so it
+    // read one knot per row and could not see the segment interiors either: it
+    // reported 0.167 dB of error where a 0.5 dB sweep of the same operating
+    // point found 0.334 dB.
+    //
+    // Levels are the internal level the Input 0.4 law produces under the
+    // pre-Wave-5 40.0 dB absolute input constant, which is the campaign's
+    // labelling convention; the sources are what that convention implies.
+    //
+    // The three `inNewSegment` rows are the only in-process guard on the
+    // [-8.145, -7.224] plateau extension. At Input 0.4 the detector sits
+    // 0.149329 dB below the label, so the campaign's 2 dB All-buttons sweep
+    // lands 0.0043 dB BELOW a knot on every row and samples no segment
+    // interior at all -- it cannot regress-detect a fault in the segment this
+    // table added. `probe_all_knee.py`'s 0.5 dB grid (and its --extra-levels,
+    // which measured the -7.7 and -7.3 reference points below) is the
+    // VST3-level guard for the same region; these are its in-process mirror,
+    // at detector fractions 0.32 / 0.54 / 0.76 of the segment.
+    constexpr float kInputGainDb = 40.0f - 20.790574f;
+    struct Point { float internalDb; float referenceOutputDbfs; bool inNewSegment; };
+    constexpr std::array<Point, 7> points{{
+        {-8.0f, -18.461636f, false}, {-7.7f, -18.161981f, true},
+        {-7.5f, -17.962224f, true}, {-7.3f, -17.766153f, true},
+        {-7.0f, -17.528762f, false}, {-6.5f, -17.312539f, false},
+        {-6.0f, -17.187491f, false}}};
+    std::array<float, 7> measured{};
+    float worstError = 0.0f;
+    float worstSegmentError = 0.0f;
+    for (size_t index = 0; index < points.size(); ++index)
+    {
+        measured[index] = renderReferenceFetRmsDb(
+            points[index].internalDb - kInputGainDb, 0.4f, 0.625915527f, 4);
+        const float error = measured[index] - points[index].referenceOutputDbfs;
+        worstError = std::max(worstError, std::abs(error));
+        if (points[index].inNewSegment)
+            worstSegmentError = std::max(worstSegmentError, std::abs(error));
+        std::printf("FET All-buttons knee: internal %+.1f reference %.6f measured %.6f error %+.6f dB%s\n",
+                    points[index].internalDb, points[index].referenceOutputDbfs,
+                    measured[index], error,
+                    points[index].inNewSegment ? "  [plateau-extension interior]" : "");
+    }
+
+    // The sub-knee step is the mechanism itself, and it is scalar-immune: the
+    // reference generates no reduction at all up to -7.5 dB internal, so a
+    // 0.5 dB source step must come back as 0.499412 dB. A correction table
+    // whose plateau ends at -8.145 instead of at the measured knee start
+    // returns 0.313541 here -- 0.186 dB of compression the reference does not
+    // produce -- while every absolute level in the row stays plausible, which
+    // is how it survived. Both bounds are set by that defect: 3.7x under it on
+    // the step and 4.2x under the 0.334 dB absolute error it caused.
+    constexpr float kReferenceSubKneeStepDb = 0.499412f;
+    const float subKneeStep = measured[2] - measured[0];
+    std::printf("FET All-buttons sub-knee 0.5 dB step: reference %+.6f measured %+.6f error %+.6f dB\n",
+                kReferenceSubKneeStepDb, subKneeStep,
+                subKneeStep - kReferenceSubKneeStepDb);
+    std::printf("FET All-buttons plateau-extension interior: worst %+.6f dB over 3 points\n",
+                worstSegmentError);
+
+    // Checked first, and on a tighter bound than the transition as a whole, so
+    // that a fault in the plateau extension fails on the rows that sample it
+    // rather than on the higher-leverage rows above the knot.
+    require(worstSegmentError < 0.05f,
+            "vintage FET All-buttons plateau extension holds inside the segment no campaign sweep samples");
+    require(worstError < 0.08f,
+            "vintage FET All-buttons knee transition matches the measured reference");
+    require(std::abs(subKneeStep - kReferenceSubKneeStepDb) < 0.05f,
+            "vintage FET All-buttons generates no reduction below the reference's knee start");
+}
+
+std::vector<float> renderReferenceFetProgramme(int blockSize)
+{
+    constexpr int totalSamples = 96000;
+    MultiCompDSP dsp;
+    prepareReferenceFet(dsp, 48000.0, blockSize);
+    std::vector<float> result(totalSamples);
+    std::vector<float> input(static_cast<size_t>(blockSize));
+    std::vector<float> output(static_cast<size_t>(blockSize));
+    for (int offset = 0; offset < totalSamples; offset += blockSize)
+    {
+        const int count = std::min(blockSize, totalSamples - offset);
+        for (int sample = 0; sample < count; ++sample)
+        {
+            const int absolute = offset + sample;
+            const float amplitude = absolute < 24000
+                ? duskaudio::decibelsToGain(-30.0f)
+                : absolute < 72000 ? duskaudio::decibelsToGain(-6.0f)
+                                   : duskaudio::decibelsToGain(-30.0f);
+            input[static_cast<size_t>(sample)] = amplitude * std::sin(
+                2.0f * kPi * 997.0f * static_cast<float>(absolute) / 48000.0f);
+        }
+        const float* inputs[] = {input.data()};
+        float* outputs[] = {output.data()};
+        dsp.processBlock(inputs, outputs, 1, count);
+        std::copy_n(output.data(), count, result.data() + offset);
+    }
+    return result;
+}
+
+void testFetBlockSizeInvariance()
+{
+    const auto small = renderReferenceFetProgramme(64);
+    const auto large = renderReferenceFetProgramme(512);
+    float signalPeak = 0.0f;
+    float maximumDelta = 0.0f;
+    for (size_t sample = 0; sample < small.size(); ++sample)
+    {
+        signalPeak = std::max(signalPeak, std::abs(small[sample]));
+        maximumDelta = std::max(maximumDelta,
+                                std::abs(small[sample] - large[sample]));
+    }
+    std::printf("FET block invariance: signal peak %.9g max delta %.9g\n",
+                signalPeak, maximumDelta);
+    require(signalPeak > 0.01f && maximumDelta < 1.0e-6f,
+            "vintage FET programme timing is invariant between 64- and 512-sample blocks");
+}
+
+void testFetResetClearsProgrammeAndColourState()
+{
+    constexpr int blockSize = 128;
+    MultiCompDSP reused;
+    MultiCompDSP fresh;
+    prepareReferenceFet(reused, 48000.0, blockSize);
+    prepareReferenceFet(fresh, 48000.0, blockSize);
+    std::array<float, blockSize> hot{}, scratch{}, reusedOut{}, freshOut{};
+    for (int block = 0; block < 500; ++block)
+    {
+        for (int sample = 0; sample < blockSize; ++sample)
+            hot[static_cast<size_t>(sample)] = 0.9f * std::sin(
+                2.0f * kPi * 100.0f * static_cast<float>(block * blockSize + sample)
+                / 48000.0f);
+        const float* inputs[] = {hot.data()};
+        float* outputs[] = {scratch.data()};
+        reused.processBlock(inputs, outputs, 1, blockSize);
+    }
+    reused.reset();
+    float maximumDelta = 0.0f;
+    float signalPeak = 0.0f;
+    for (int block = 0; block < 40; ++block)
+    {
+        for (int sample = 0; sample < blockSize; ++sample)
+            hot[static_cast<size_t>(sample)] = 0.2f * std::sin(
+                2.0f * kPi * 997.0f * static_cast<float>(block * blockSize + sample)
+                / 48000.0f);
+        const float* inputs[] = {hot.data()};
+        float* reusedOutputs[] = {reusedOut.data()};
+        float* freshOutputs[] = {freshOut.data()};
+        reused.processBlock(inputs, reusedOutputs, 1, blockSize);
+        fresh.processBlock(inputs, freshOutputs, 1, blockSize);
+        for (int sample = 0; sample < blockSize; ++sample)
+        {
+            signalPeak = std::max(signalPeak,
+                                  std::abs(freshOut[static_cast<size_t>(sample)]));
+            maximumDelta = std::max(maximumDelta, std::abs(
+                reusedOut[static_cast<size_t>(sample)]
+                - freshOut[static_cast<size_t>(sample)]));
+        }
+    }
+    std::printf("FET reset determinism: signal peak %.9g max delta %.9g\n",
+                signalPeak, maximumDelta);
+    require(signalPeak > 0.01f && maximumDelta < 1.0e-7f,
+            "vintage FET reset clears programme, detector, and coloration state");
+}
+
+void testFetInternalStereoLinkReference()
+{
+    constexpr int sampleRate = 48000;
+    constexpr int blockSize = 256;
+    constexpr int totalSamples = 5 * sampleRate;
+    constexpr int measureStart = 3 * sampleRate;
+    constexpr int measureStop = 9 * sampleRate / 2;
+    MultiCompDSP dsp;
+    prepareReferenceFet(dsp, sampleRate, blockSize);
+    std::array<float, blockSize> left{}, right{}, outputLeft{}, outputRight{};
+    double leftPower = 0.0;
+    double rightPower = 0.0;
+    int measured = 0;
+    for (int offset = 0; offset < totalSamples; offset += blockSize)
+    {
+        const int count = std::min(blockSize, totalSamples - offset);
+        for (int sample = 0; sample < count; ++sample)
+        {
+            const int absolute = offset + sample;
+            left[static_cast<size_t>(sample)] = duskaudio::decibelsToGain(-12.0f)
+                * std::sin(2.0f * kPi * 997.0f * absolute / sampleRate);
+            right[static_cast<size_t>(sample)] = duskaudio::decibelsToGain(-30.0f)
+                * std::sin(2.0f * kPi * 1499.0f * absolute / sampleRate);
+        }
+        const float* inputs[] = {left.data(), right.data()};
+        float* outputs[] = {outputLeft.data(), outputRight.data()};
+        dsp.processBlock(inputs, outputs, 2, count);
+        for (int sample = 0; sample < count; ++sample)
+            if (offset + sample >= measureStart && offset + sample < measureStop)
+            {
+                const float l = outputLeft[static_cast<size_t>(sample)];
+                const float r = outputRight[static_cast<size_t>(sample)];
+                leftPower += static_cast<double>(l) * l;
+                rightPower += static_cast<double>(r) * r;
+                ++measured;
+            }
+    }
+    const float leftDb = duskaudio::gainToDecibels(static_cast<float>(
+        std::sqrt(leftPower / measured)));
+    const float rightDb = duskaudio::gainToDecibels(static_cast<float>(
+        std::sqrt(rightPower / measured)));
+    std::printf("FET internal stereo link: reference %.6f/%.6f measured %.6f/%.6f dBFS\n",
+                -13.877202f, -31.875823f, leftDb, rightDb);
+    require(std::abs(leftDb + 13.877202f) < 0.20f
+                && std::abs(rightDb + 31.875823f) < 0.20f,
+            "vintage FET internal link reproduces the asymmetric stereo reference");
+}
+
+void testFetStereoLinkPhaseLaw()
+{
+    // The installed unit is not power-sum linked. On converged 40 s renders,
+    // an equal in-phase right channel is bit-identical to left-only, while an
+    // equal antiphase channel makes the left output 0.179579 dB quieter. A
+    // signed sample-wise maximum followed by the unit's slow peak hold has
+    // exactly that shape: the antiphase copy refreshes the peak between the
+    // left channel's peaks, while a lower copy never overtakes the held peak.
+    constexpr int sampleRate = 48000;
+    constexpr int blockSize = 256;
+    constexpr int totalSamples = 15 * sampleRate;
+    constexpr int measureStart = 10 * sampleRate;
+    constexpr int measureStop = 14 * sampleRate;
+    const auto measure = [&](float rightScale, float& reductionDb) {
+        MultiCompDSP dsp;
+        prepareReferenceFet(dsp, sampleRate, blockSize);
+        std::array<float, blockSize> left{}, right{};
+        std::array<float, blockSize> outputLeft{}, outputRight{};
+        double leftPower = 0.0;
+        int measured = 0;
+        for (int offset = 0; offset < totalSamples; offset += blockSize)
+        {
+            const int count = std::min(blockSize, totalSamples - offset);
+            for (int sample = 0; sample < count; ++sample)
+            {
+                const int absolute = offset + sample;
+                const float value = duskaudio::decibelsToGain(-12.0f)
+                    * std::sin(2.0f * kPi * 997.0f * absolute / sampleRate);
+                left[static_cast<size_t>(sample)] = value;
+                right[static_cast<size_t>(sample)] = value * rightScale;
+            }
+            const float* inputs[] = {left.data(), right.data()};
+            float* outputs[] = {outputLeft.data(), outputRight.data()};
+            dsp.processBlock(inputs, outputs, 2, count);
+            for (int sample = 0; sample < count; ++sample)
+                if (offset + sample >= measureStart
+                    && offset + sample < measureStop)
+                {
+                    const float value = outputLeft[static_cast<size_t>(sample)];
+                    leftPower += static_cast<double>(value) * value;
+                    ++measured;
+                }
+        }
+        require(measured == measureStop - measureStart,
+                "FET stereo phase-law window is complete");
+        reductionDb = dsp.getGainReduction();
+        return duskaudio::gainToDecibels(static_cast<float>(
+            std::sqrt(leftPower / measured)));
+    };
+
+    float leftOnlyReductionDb = 0.0f;
+    float inPhaseReductionDb = 0.0f;
+    float antiphaseReductionDb = 0.0f;
+    const float leftOnlyDb = measure(0.0f, leftOnlyReductionDb);
+    const float inPhaseDb = measure(1.0f, inPhaseReductionDb);
+    const float antiphaseDb = measure(-1.0f, antiphaseReductionDb);
+    const float inPhaseResponseDb = inPhaseDb - leftOnlyDb;
+    const float antiphaseResponseDb = antiphaseDb - leftOnlyDb;
+    std::printf("FET stereo phase law: left-only %.9f in-phase %.9f "
+                "response %+.9f, antiphase %.9f response %+.9f "
+                "(reference -0.179579), GR %.9f/%.9f/%.9f\n",
+                leftOnlyDb, inPhaseDb, inPhaseResponseDb,
+                antiphaseDb, antiphaseResponseDb,
+                leftOnlyReductionDb, inPhaseReductionDb,
+                antiphaseReductionDb);
+    require(std::abs(inPhaseResponseDb) < 0.02f,
+            "vintage FET equal in-phase link remains identical to left-only");
+    require(std::abs(antiphaseResponseDb + 0.179579f) < 0.03f,
+            "vintage FET antiphase link reproduces the measured signed-maximum response");
+}
+
+float renderFetDenseStereoLevelDb(double sampleRate, float rightDbfs,
+                                  float phaseCycles)
+{
+    constexpr int blockSize = 512;
+    const int totalSamples = static_cast<int>(std::lround(15.0 * sampleRate));
+    const int measureStart = static_cast<int>(std::lround(10.0 * sampleRate));
+    const int measureStop = static_cast<int>(std::lround(14.0 * sampleRate));
+    MultiCompDSP dsp;
+    prepareReferenceFet(dsp, sampleRate, blockSize);
+    // The dense Wave 27 capture used the installed unit's campaign default,
+    // not the 0.5 Release coordinate used by the older canonical phase test.
+    dsp.setParameter(MultiCompDSP::Parameter::FetRelease,
+                     fetReleasePlain(0.665954590f));
+    std::array<float, blockSize> left{}, right{};
+    std::array<float, blockSize> outputLeft{}, outputRight{};
+    const double leftAmplitude = duskaudio::decibelsToGain(-12.0f);
+    const double rightAmplitude = rightDbfs <= -150.0f
+        ? 0.0 : duskaudio::decibelsToGain(rightDbfs);
+    double power = 0.0;
+    int measured = 0;
+    for (int offset = 0; offset < totalSamples; offset += blockSize)
+    {
+        const int count = std::min(blockSize, totalSamples - offset);
+        for (int sample = 0; sample < count; ++sample)
+        {
+            const double cycles = 997.0 * (offset + sample) / sampleRate;
+            left[static_cast<size_t>(sample)] = static_cast<float>(
+                leftAmplitude * std::sin(2.0 * kPi * cycles));
+            right[static_cast<size_t>(sample)] = static_cast<float>(
+                rightAmplitude * std::sin(2.0 * kPi
+                    * (cycles + phaseCycles)));
+        }
+        const float* inputs[] = {left.data(), right.data()};
+        float* outputs[] = {outputLeft.data(), outputRight.data()};
+        dsp.processBlock(inputs, outputs, 2, count);
+        for (int sample = 0; sample < count; ++sample)
+            if (offset + sample >= measureStart
+                && offset + sample < measureStop)
+            {
+                const double value = outputLeft[static_cast<size_t>(sample)];
+                power += value * value;
+                ++measured;
+            }
+    }
+    return duskaudio::gainToDecibels(static_cast<float>(
+        std::sqrt(power / measured)));
+}
+
+void testFetDenseStereoPhaseParity()
+{
+    // Exact UAD Wave 27 same-stimulus link responses. The 96 kHz equal-level
+    // quarter-cycle row is the exposed defect; the adjacent phases, the same
+    // phase at 48 kHz, and the lower-level opposite arm reject a one-cell or
+    // phase-only correction.
+    struct Row
+    {
+        double sampleRate;
+        float rightDbfs;
+        float phaseCycles;
+        float referenceResponseDb;
+    };
+    constexpr std::array<Row, 5> rows{{
+        {48000.0, -12.0f, 0.250f, -0.179689254f},
+        {96000.0, -12.0f, 0.125f, -0.182474400f},
+        {96000.0, -12.0f, 0.250f, -0.180580158f},
+        {96000.0, -12.0f, 0.375f, -0.178920248f},
+        {96000.0, -18.0f, 0.250f,  0.000000000f},
+    }};
+    const float baseline48 = renderFetDenseStereoLevelDb(48000.0, -160.0f, 0.0f);
+    const float baseline96 = renderFetDenseStereoLevelDb(96000.0, -160.0f, 0.0f);
+    float worstError = 0.0f;
+    for (const auto& row : rows)
+    {
+        const float level = renderFetDenseStereoLevelDb(
+            row.sampleRate, row.rightDbfs, row.phaseCycles);
+        const float baseline = row.sampleRate == 48000.0
+            ? baseline48 : baseline96;
+        const float response = level - baseline;
+        const float error = response - row.referenceResponseDb;
+        worstError = std::max(worstError, std::abs(error));
+        std::printf("FET dense stereo: rate %.0f right %.1f phase %.3f "
+                    "response reference/measured %.9f/%.9f error %+.9f dB\n",
+                    row.sampleRate, row.rightDbfs, row.phaseCycles,
+                    row.referenceResponseDb, response, error);
+    }
+    std::printf("FET dense stereo: worst absolute response error %.9f dB\n",
+                worstError);
+    require(worstError < 0.020f,
+            "vintage FET dense stereo phase surface matches the UAD response");
+}
+
+std::array<float, 5> renderFetRecoveryH1Db(
+    double sampleRate, double frequencyHz, float loudDbfs,
+    float attackPosition, int ratio, float phaseDegrees, bool quietOnly)
+{
+    constexpr int blockSize = 512;
+    constexpr std::array<double, 5> windowStarts{{1.5, 3.0, 4.5, 6.0, 7.0}};
+    const int totalSamples = static_cast<int>(std::lround(8.0 * sampleRate));
+    MultiCompDSP dsp;
+    prepareReferenceFet(dsp, sampleRate, blockSize,
+                        0.8f, 0.625915527f, ratio);
+    dsp.setParameter(MultiCompDSP::Parameter::FetAttack,
+                     fetAttackPlain(attackPosition));
+    std::array<float, blockSize> left{}, right{};
+    std::array<float, blockSize> outputLeft{}, outputRight{};
+    std::array<double, 5> real{}, imaginary{};
+    std::array<int, 5> counts{};
+    const double phaseRadians = phaseDegrees * kPi / 180.0;
+    for (int offset = 0; offset < totalSamples; offset += blockSize)
+    {
+        const int count = std::min(blockSize, totalSamples - offset);
+        for (int sample = 0; sample < count; ++sample)
+        {
+            const int absolute = offset + sample;
+            const bool loud = !quietOnly
+                && absolute >= static_cast<int>(std::lround(1.0 * sampleRate))
+                && absolute < static_cast<int>(std::lround(1.25 * sampleRate));
+            const double amplitude = duskaudio::decibelsToGain(
+                loud ? loudDbfs : -72.0f);
+            const float value = static_cast<float>(amplitude * std::sin(
+                2.0 * kPi * frequencyHz * absolute / sampleRate
+                    + phaseRadians));
+            left[static_cast<size_t>(sample)] = value;
+            right[static_cast<size_t>(sample)] = value;
+        }
+        const float* inputs[] = {left.data(), right.data()};
+        float* outputs[] = {outputLeft.data(), outputRight.data()};
+        dsp.processBlock(inputs, outputs, 2, count);
+        for (int sample = 0; sample < count; ++sample)
+        {
+            const int absolute = offset + sample;
+            for (size_t window = 0; window < windowStarts.size(); ++window)
+            {
+                const int start = static_cast<int>(std::lround(
+                    windowStarts[window] * sampleRate));
+                const int stop = start + static_cast<int>(std::lround(
+                    0.25 * sampleRate));
+                if (absolute < start || absolute >= stop) continue;
+                const double angle = 2.0 * kPi * frequencyHz
+                    * (absolute - start) / sampleRate;
+                const double value = outputLeft[static_cast<size_t>(sample)];
+                real[window] += value * std::cos(angle);
+                imaginary[window] -= value * std::sin(angle);
+                ++counts[window];
+            }
+        }
+    }
+    std::array<float, 5> result{};
+    for (size_t window = 0; window < result.size(); ++window)
+    {
+        const double amplitude = 2.0 * std::hypot(
+            real[window], imaginary[window]) / counts[window];
+        result[window] = duskaudio::gainToDecibels(
+            static_cast<float>(amplitude));
+    }
+    return result;
+}
+
+void testFetDenseStartupRecoveryParity()
+{
+    // Wave 27's equal 8 s sources, rescored against the current binary. These
+    // are absolute UAD H1 levels in the five declared 250 ms windows; the
+    // quiet render removes static device gain before the recovery residual is
+    // compared. Both phases are required because the reference recovery state
+    // is phase-sensitive, and both rates prevent a 96 kHz-only scalar patch.
+    struct Row
+    {
+        double sampleRate;
+        double frequencyHz;
+        float loudDbfs;
+        float attackPosition;
+        int ratio;
+        float phaseDegrees;
+        std::array<float, 5> referenceBurstH1Db;
+    };
+    constexpr std::array<float, 5> referenceQuiet48At1k{{
+        -41.893320337f, -41.893320368f, -41.893320383f,
+        -41.893320383f, -41.893320342f}};
+    constexpr std::array<float, 5> referenceQuiet48At4k{{
+        -41.893301721f, -41.893301999f, -41.893301863f,
+        -41.893301900f, -41.893301957f}};
+    constexpr std::array<float, 5> referenceQuiet96At1k{{
+        -41.893315285f, -41.893315284f, -41.893315295f,
+        -41.893315299f, -41.893315299f}};
+    constexpr std::array<float, 5> referenceQuiet96At4k{{
+        -41.893256638f, -41.893256649f, -41.893256616f,
+        -41.893256634f, -41.893256638f}};
+    constexpr std::array<Row, 16> rows{{
+        {48000.0, 1000.0, -30.0f, 1.0f, 0, 0.0f,
+         {{-47.419350088f, -42.650442047f, -42.068162291f,
+           -41.935354660f, -41.909370750f}}},
+        {48000.0, 1000.0, -18.0f, 1.0f, 0, 0.0f,
+         {{-54.036772679f, -43.774027215f, -42.343618938f,
+           -42.002990460f, -41.935819549f}}},
+        {48000.0, 1000.0, -6.0f, 0.0f, 0, 0.0f,
+         {{-62.220349821f, -45.875034457f, -42.890472921f,
+           -42.141661518f, -41.989978202f}}},
+        {48000.0, 1000.0, -6.0f, 0.5f, 0, 0.0f,
+         {{-62.348086472f, -45.918949483f, -42.902420025f,
+           -42.144733190f, -41.991205368f}}},
+        {48000.0, 1000.0, -6.0f, 1.0f, 0, 0.0f,
+         {{-61.713930703f, -45.721158272f, -42.849444759f,
+           -42.131120139f, -41.985762444f}}},
+        {48000.0, 4000.0, -6.0f, 1.0f, 0, 0.0f,
+         {{-61.749603648f, -45.733247595f, -42.852740715f,
+           -42.131954906f, -41.986083237f}}},
+        {48000.0, 1000.0, -6.0f, 0.5f, 1, 0.0f,
+         {{-61.945040336f, -45.202601731f, -42.657725180f,
+           -42.077761376f, -41.967769331f}}},
+        {48000.0, 1000.0, -6.0f, 1.0f, 0, 90.0f,
+         {{-61.705564454f, -45.718980353f, -42.848872874f,
+           -42.130973182f, -41.985703692f}}},
+        {96000.0, 1000.0, -30.0f, 1.0f, 0, 0.0f,
+         {{-47.415809867f, -42.644629538f, -42.067771570f,
+           -41.935679773f, -41.909903760f}}},
+        {96000.0, 1000.0, -18.0f, 1.0f, 0, 0.0f,
+         {{-54.027647794f, -43.769335252f, -42.343640894f,
+           -42.003419066f, -41.936346456f}}},
+        {96000.0, 1000.0, -6.0f, 0.0f, 0, 0.0f,
+         {{-62.201864830f, -45.886727593f, -42.895905602f,
+           -42.143223719f, -41.991170365f}}},
+        {96000.0, 1000.0, -6.0f, 0.5f, 0, 0.0f,
+         {{-62.322730153f, -45.915093954f, -42.902799746f,
+           -42.145043299f, -41.991851560f}}},
+        {96000.0, 1000.0, -6.0f, 1.0f, 0, 0.0f,
+         {{-61.703073934f, -45.718643957f, -42.849774945f,
+           -42.131019558f, -41.986576420f}}},
+        {96000.0, 4000.0, -6.0f, 1.0f, 0, 0.0f,
+         {{-61.715997425f, -45.722939034f, -42.850906413f,
+           -42.131273036f, -41.986637300f}}},
+        {96000.0, 1000.0, -6.0f, 0.5f, 1, 0.0f,
+         {{-61.916516268f, -45.222883277f, -42.669602672f,
+           -42.076591872f, -41.976011280f}}},
+        {96000.0, 1000.0, -6.0f, 1.0f, 0, 90.0f,
+         {{-61.697527700f, -45.716923653f, -42.849306859f,
+           -42.130897452f, -41.986529699f}}},
+    }};
+    const auto quiet48At1k = renderFetRecoveryH1Db(
+        48000.0, 1000.0, -72.0f, 0.5f, 0, 0.0f, true);
+    const auto quiet48At4k = renderFetRecoveryH1Db(
+        48000.0, 4000.0, -72.0f, 0.5f, 0, 0.0f, true);
+    const auto quiet96At1k = renderFetRecoveryH1Db(
+        96000.0, 1000.0, -72.0f, 0.5f, 0, 0.0f, true);
+    const auto quiet96At4k = renderFetRecoveryH1Db(
+        96000.0, 4000.0, -72.0f, 0.5f, 0, 0.0f, true);
+    float worstResidual = 0.0f;
+    for (const auto& row : rows)
+    {
+        const auto burst = renderFetRecoveryH1Db(
+            row.sampleRate, row.frequencyHz, row.loudDbfs,
+            row.attackPosition, row.ratio, row.phaseDegrees, false);
+        const auto& quiet = row.sampleRate == 48000.0
+            ? row.frequencyHz == 1000.0 ? quiet48At1k : quiet48At4k
+            : row.frequencyHz == 1000.0 ? quiet96At1k : quiet96At4k;
+        const auto& referenceQuiet = row.sampleRate == 48000.0
+            ? row.frequencyHz == 1000.0
+                ? referenceQuiet48At1k : referenceQuiet48At4k
+            : row.frequencyHz == 1000.0
+                ? referenceQuiet96At1k : referenceQuiet96At4k;
+        for (size_t window = 0; window < burst.size(); ++window)
+        {
+            const float residual = (burst[window] - row.referenceBurstH1Db[window])
+                - (quiet[window] - referenceQuiet[window]);
+            worstResidual = std::max(worstResidual, std::abs(residual));
+            std::printf("FET dense recovery: rate %.0f carrier %.0f level %.0f "
+                        "attack %.1f ratio %d phase %.0f window %zu "
+                        "candidate-minus-UAD residual %+.9f dB\n",
+                        row.sampleRate, row.frequencyHz, row.loudDbfs,
+                        row.attackPosition, row.ratio, row.phaseDegrees,
+                        window, residual);
+        }
+    }
+    std::printf("FET dense recovery: worst absolute residual %.9f dB\n",
+                worstResidual);
+    require(worstResidual < 0.150f,
+            "vintage FET post-burst recovery follows the UAD phase/rate surface");
+}
+
+void armFetPostBurstRecovery(MultiCompDSP& dsp, int channels)
+{
+    constexpr int blockSize = 256;
+    constexpr int loudSamples = 12000;
+    constexpr int quietSamples = 2400;
+    std::array<float, blockSize> left{}, right{}, outputLeft{}, outputRight{};
+    const int totalSamples = loudSamples + quietSamples;
+    for (int offset = 0; offset < totalSamples; offset += blockSize)
+    {
+        const int count = std::min(blockSize, totalSamples - offset);
+        for (int sample = 0; sample < count; ++sample)
+        {
+            const int absolute = offset + sample;
+            const float amplitude = duskaudio::decibelsToGain(
+                absolute < loudSamples ? -6.0f : -72.0f);
+            const float value = amplitude * std::sin(
+                2.0f * kPi * 1000.0f * absolute / 48000.0f);
+            left[static_cast<size_t>(sample)] = value;
+            right[static_cast<size_t>(sample)] = value;
+        }
+        const float* inputs[] = {left.data(), right.data()};
+        float* outputs[] = {outputLeft.data(), outputRight.data()};
+        dsp.processBlock(inputs, outputs, channels, count);
+    }
+}
+
+void testFetPostBurstRecoveryLifecycle()
+{
+    constexpr int blockSize = 256;
+    const auto isClear = [](const std::array<float, 2>& gains) noexcept {
+        return gains[0] == 1.0f && gains[1] == 1.0f;
+    };
+    MultiCompDSP dsp;
+    prepareReferenceFet(dsp, 48000.0, blockSize);
+    armFetPostBurstRecovery(dsp, 2);
+    const auto armed = duskaudio::MultiCompDSPTestAccess::fetRecoveryGains(dsp);
+
+    dsp.prepare(48000.0, blockSize);
+    const auto afterPrepare = duskaudio::MultiCompDSPTestAccess::fetRecoveryGains(dsp);
+    armFetPostBurstRecovery(dsp, 2);
+    dsp.reset();
+    const auto afterReset = duskaudio::MultiCompDSPTestAccess::fetRecoveryGains(dsp);
+
+    prepareReferenceFet(dsp, 48000.0, blockSize);
+    armFetPostBurstRecovery(dsp, 2);
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::VCA));
+    std::array<float, blockSize> silence{}, outputLeft{}, outputRight{};
+    const float* inputs[] = {silence.data(), silence.data()};
+    float* outputs[] = {outputLeft.data(), outputRight.data()};
+    dsp.processBlock(inputs, outputs, 2, blockSize);
+    const auto afterModeExit = duskaudio::MultiCompDSPTestAccess::fetRecoveryGains(dsp);
+
+    prepareReferenceFet(dsp, 48000.0, blockSize);
+    armFetPostBurstRecovery(dsp, 2);
+    dsp.setBypass(true);
+    for (int block = 0; block < 8; ++block)
+        dsp.processBlock(inputs, outputs, 2, blockSize);
+    const auto afterBypass = duskaudio::MultiCompDSPTestAccess::fetRecoveryGains(dsp);
+
+    dsp.setBypass(false);
+    dsp.reset();
+    prepareReferenceFet(dsp, 48000.0, blockSize);
+    armFetPostBurstRecovery(dsp, 2);
+    dsp.processBlock(inputs, outputs, 1, blockSize);
+    const auto afterMono = duskaudio::MultiCompDSPTestAccess::fetRecoveryGains(dsp);
+
+    std::printf("FET recovery state: armed %.6f/%.6f; prepare %.6f/%.6f; "
+                "reset %.6f/%.6f; mode %.6f/%.6f; bypass %.6f/%.6f; "
+                "mono %.6f/%.6f\n",
+                armed[0], armed[1], afterPrepare[0], afterPrepare[1],
+                afterReset[0], afterReset[1], afterModeExit[0], afterModeExit[1],
+                afterBypass[0], afterBypass[1], afterMono[0], afterMono[1]);
+    require(armed[0] > 1.05f && armed[1] > 1.05f
+                && isClear(afterPrepare) && isClear(afterReset)
+                && isClear(afterModeExit) && isClear(afterBypass)
+                && afterMono[1] == 1.0f,
+            "FET post-burst recovery state arms and clears on every lifecycle path");
+}
+
+// --- vintage FET attack drive axis ---------------------------------------
+//
+// The 1176 comparison campaign's headline dynamics finding is that the
+// reference's attack time constant FALLS as it is driven harder
+// (1.73 -> 1.03 -> 0.72 ms for -30 / -18 / -6 dBFS at attack knob 0.5) while
+// this core's rose. The measurement below reproduces that campaign row
+// in process: same programme (1 s of a -72 dBFS 1 kHz carrier then a
+// phase-continuous burst), same estimator (exact 1 kHz quadrature
+// demodulation through a one-cycle boxcar, first-order log-linear fit over
+// 15-88 % of the 40-60 ms plateau starting half a carrier period in).
+//
+// Absolute milliseconds are NOT an oracle: the estimator carries a documented
+// x1.85 relaxation-domain ambiguity and a -4..-10 % bias below 1 ms
+// (report/opus_notes/wave3_validation.md). What is asserted is the direction of
+// the drive axis, and mine/reference through this same estimator.
+//
+// `MultiCompCoreTest --fet-attack-drive` prints the whole grid; setting
+// MC_FET_DUMP_GR=1 additionally dumps every `GRCURVE <drive> <knob> <ms> <dB>`
+// sample, which is how the reference and this core were compared curve for
+// curve rather than through a single fitted number.
+//
+// THE TAU AT -6 dBFS MOVES UNDER PURE COLOUR CHANGES, AND THAT IS THE
+// ESTIMATOR, NOT THE CELL. Measured twice, on two independent colour-only
+// changes to the vintage FET:
+//
+//   fetBroadbandK2 refit  tau -6 dBFS 3.238590 -> 3.626379 ms  (+12.0 %)
+//   fetLowFrequencyK2     tau -6 dBFS 3.626379 -> 4.099728 ms  (+13.1 %)
+//
+// while `--fet-envelope-trace` -- which reads `d.envelope` straight off the
+// mode state and never touches the demodulator -- returns a BIT-IDENTICAL
+// FNV-1a digest over the 60 ms after onset across all three builds, at -6,
+// -18 and -30 dBFS, with the plateau reduction unchanged to four decimals. The
+// same runs show the OUTPUT peak moving (4.4361 -> 4.4568 -> 4.4568), so the
+// control has a live positive arm: the audio really did change and the internal
+// trajectory really did not. It cannot change: for the vintage arm `detect`
+// comes from `|transformedInput * inputGain|`, never from `saturated`, so no
+// colour coefficient has a path into the envelope.
+//
+// The mechanism is the demodulator. `quadratureEnvelope`'s one-period boxcar
+// nulls harmonics exactly only for a STEADY amplitude; during the attack the 2f
+// product is amplitude modulated and its cancellation is incomplete. At -6 dBFS
+// the log-linear fit has 33 points inside a sub-millisecond band (against 104
+// at -30 dBFS), so a tiny envelope perturbation moves the slope a lot -- the
+// same rows move 0.05 % and 0.17 % at -30 and -18 dBFS.
+//
+// So: tau is a diagnostic (wave3b_validation.md section 3 already ratified
+// that), the gate is the normalised curve RMS, and a colour change that moves
+// tau at -6 dBFS while curve RMS moves 6e-06 is behaving correctly. Do not
+// re-tune the attack law against it.
+constexpr float kFetCampaignLatencySamples48k = 27.0f;
+
+struct FetAttackMeasurement
+{
+    float driveDbfs = 0.0f;
+    double plateauGrDb = 0.0;
+    double tauMs = 0.0;
+    // First crossing of 90 % of the plateau on the RUNNING MAXIMUM of the
+    // reduction curve, scanned from half a carrier period in. It is better
+    // conditioned than the log-linear tau -- the tau fit runs out of points
+    // above about 30 dB of reduction and inverts sign against this metric
+    // there, and the 63 % crossing saturates at the scan floor on every
+    // reference row because the centred one-cycle boxcar has smeared the step.
+    // The running maximum makes it immune to the first-cycle overshoot.
+    //
+    // It is NOT unconditionally trustworthy either, and the deep rows are where
+    // it degrades: at -6 dBFS the whole knob sweep reads 0.6439 / 0.6276 /
+    // 0.6041 ms, a 6 % spread across the entire control, all of it 0.10-0.14 ms
+    // above the 0.5 ms scan floor, against a 6.8x spread at -30 dBFS. Above
+    // ~30 dB of reduction neither estimator resolves this carrier; use the
+    // curve RMS against the reference trajectory instead.
+    double recovery90Ms = 0.0;
+    // Whole-programme output peak. The base-rate FET output ceiling in
+    // MultiCompDSP.cpp has its knee at 6.39712761; a first-cycle overshoot
+    // above it puts clipping harmonics into the captures, so any change to the
+    // attack must be checked against it.
+    double outputPeak = 0.0;
+    int fitPoints = 0;
+    bool fitted = false;
+};
+
+double medianOf(std::vector<double> values)
+{
+    if (values.empty()) return std::numeric_limits<double>::quiet_NaN();
+    std::sort(values.begin(), values.end());
+    const size_t middle = values.size() / 2;
+    return values.size() % 2 == 1
+        ? values[middle]
+        : 0.5 * (values[middle - 1] + values[middle]);
+}
+
+// One-carrier-period boxcar on the quadrature-demodulated signal. The boxcar
+// is exactly one period long, so every harmonic of the carrier lands on a
+// transfer-function null, and it is centred (the scorer's `mode="same"`), so
+// the envelope is zero phase.
+std::vector<double> quadratureEnvelope(const std::vector<double>& signal,
+                                       double sampleRate, double frequency)
+{
+    const int period = static_cast<int>(std::lround(sampleRate / frequency));
+    require(std::abs(sampleRate / frequency - period) < 1.0e-9,
+            "carrier period is an integer number of samples");
+    const int count = static_cast<int>(signal.size());
+    std::vector<double> real(signal.size()), imaginary(signal.size());
+    for (int n = 0; n < count; ++n)
+    {
+        const double phase = -2.0 * 3.14159265358979323846 * frequency * n / sampleRate;
+        real[static_cast<size_t>(n)] = signal[static_cast<size_t>(n)] * std::cos(phase);
+        imaginary[static_cast<size_t>(n)] = signal[static_cast<size_t>(n)] * std::sin(phase);
+    }
+    // numpy's convolve(..., mode="same") with an even-length kernel averages
+    // samples n-period/2 .. n+period/2-1; zero outside the signal.
+    const int back = period / 2;
+    std::vector<double> envelope(signal.size());
+    double sumReal = 0.0, sumImaginary = 0.0;
+    // Prime the window. At n = 0 the centred boxcar spans -back .. period-1-back,
+    // so indices 0 .. period-2-back are already inside it; the loop below only
+    // ever ADDS index n+period-1-back, and it later SUBTRACTS those primed
+    // indices as they leave. Without this the accumulator carries a constant
+    // complex offset -sum(x[0 .. period-2-back]) forever. It was benign here by
+    // accident -- the plugin's 27-sample latency keeps those samples 28.6 dB
+    // below the quiet carrier -- but on a programme that starts at level it is
+    // a multi-dB baseline error (measured: -78.008 dB read for a -72.000 dB
+    // carrier), and this helper is meant to be reusable.
+    for (int k = 0; k < period - 1 - back && k < count; ++k)
+    {
+        sumReal += real[static_cast<size_t>(k)];
+        sumImaginary += imaginary[static_cast<size_t>(k)];
+    }
+    for (int n = 0; n < count; ++n)
+    {
+        const int enter = n + period - 1 - back;
+        const int leave = n - 1 - back;
+        if (enter < count)
+        {
+            sumReal += real[static_cast<size_t>(enter)];
+            sumImaginary += imaginary[static_cast<size_t>(enter)];
+        }
+        if (leave >= 0)
+        {
+            sumReal -= real[static_cast<size_t>(leave)];
+            sumImaginary -= imaginary[static_cast<size_t>(leave)];
+        }
+        envelope[static_cast<size_t>(n)] = 2.0 * std::hypot(sumReal, sumImaginary)
+            / static_cast<double>(period);
+    }
+    return envelope;
+}
+
+FetAttackMeasurement measureFetAttack(float driveDbfs, float attackPosition = 0.5f,
+                                      int ratio = 0, double sampleRate = 48000.0,
+                                      std::vector<double>* reductionOut = nullptr,
+                                      double carrierHz = 1000.0)
+{
+    constexpr int blockSize = 256;
+    constexpr double quietSeconds = 1.0;
+    constexpr double burstSeconds = 0.25;
+    constexpr double quietPeakDbfs = -72.0;
+    const int totalSamples = static_cast<int>(
+        std::lround((quietSeconds + burstSeconds) * sampleRate));
+    const int loudFrom = static_cast<int>(std::lround(quietSeconds * sampleRate));
+
+    MultiCompDSP dsp;
+    prepareReferenceFet(dsp, sampleRate, blockSize, 0.8f, 0.625915527f, ratio);
+    dsp.setParameter(MultiCompDSP::Parameter::FetAttack, fetAttackPlain(attackPosition));
+    const float quietAmplitude = duskaudio::decibelsToGain(
+        static_cast<float>(quietPeakDbfs));
+    const float loudAmplitude = duskaudio::decibelsToGain(driveDbfs);
+
+    std::vector<float> left(static_cast<size_t>(blockSize));
+    std::vector<float> right(static_cast<size_t>(blockSize));
+    std::vector<float> outLeft(static_cast<size_t>(blockSize));
+    std::vector<float> outRight(static_cast<size_t>(blockSize));
+    std::vector<double> mono(static_cast<size_t>(totalSamples));
+    double peak = 0.0;
+    for (int offset = 0; offset < totalSamples; offset += blockSize)
+    {
+        const int count = std::min(blockSize, totalSamples - offset);
+        for (int sample = 0; sample < count; ++sample)
+        {
+            const int absolute = offset + sample;
+            // Phase continuous across the step, exactly as gen_stimuli.py
+            // builds `amplitude_program`.
+            const float value = (absolute < loudFrom ? quietAmplitude : loudAmplitude)
+                * std::sin(2.0f * kPi * static_cast<float>(carrierHz)
+                    * static_cast<float>(absolute) / static_cast<float>(sampleRate));
+            left[static_cast<size_t>(sample)] = value;
+            right[static_cast<size_t>(sample)] = value;
+        }
+        const float* inputs[] = {left.data(), right.data()};
+        float* outputs[] = {outLeft.data(), outRight.data()};
+        dsp.processBlock(inputs, outputs, 2, count);
+        for (int sample = 0; sample < count; ++sample)
+        {
+            mono[static_cast<size_t>(offset + sample)] = 0.5
+                * (static_cast<double>(outLeft[static_cast<size_t>(sample)])
+                    + static_cast<double>(outRight[static_cast<size_t>(sample)]));
+            peak = std::max(peak, std::max(
+                std::abs(static_cast<double>(outLeft[static_cast<size_t>(sample)])),
+                std::abs(static_cast<double>(outRight[static_cast<size_t>(sample)]))));
+        }
+    }
+
+    const auto envelope = quadratureEnvelope(mono, sampleRate, carrierHz);
+    const int latency = static_cast<int>(std::lround(
+        kFetCampaignLatencySamples48k * sampleRate / 48000.0));
+    const auto gainDb = [&envelope](int index, double referencePeakDbfs) {
+        return 20.0 * std::log10(std::max(envelope[static_cast<size_t>(index)], 1.0e-30))
+            - referencePeakDbfs;
+    };
+    std::vector<double> quiet;
+    for (int n = static_cast<int>(0.5 * sampleRate) + latency;
+         n < static_cast<int>(0.9 * sampleRate) + latency; ++n)
+        quiet.push_back(gainDb(n, quietPeakDbfs));
+    const double baseline = medianOf(quiet);
+
+    const int onset = static_cast<int>(std::lround(quietSeconds * sampleRate)) + latency;
+    const int stop = onset + static_cast<int>(std::lround(0.060 * sampleRate));
+    require(stop < totalSamples, "attack window fits inside the rendered burst");
+    std::vector<double> reductionDb, times;
+    for (int n = onset; n < stop; ++n)
+    {
+        reductionDb.push_back(baseline - gainDb(n, driveDbfs));
+        times.push_back(static_cast<double>(n - onset) / sampleRate);
+    }
+    if (std::getenv("MC_FET_DUMP_GR") != nullptr)
+        for (size_t i = 0; i < reductionDb.size(); ++i)
+            std::printf("GRCURVE %.1f %.4f %.6f %.6f\n",
+                        static_cast<double>(driveDbfs),
+                        static_cast<double>(attackPosition),
+                        1000.0 * times[i], reductionDb[i]);
+    std::vector<double> plateauSamples(
+        reductionDb.begin() + static_cast<long>(std::lround(0.040 * sampleRate)),
+        reductionDb.end());
+    FetAttackMeasurement result;
+    result.driveDbfs = driveDbfs;
+    result.plateauGrDb = medianOf(plateauSamples);
+    result.outputPeak = peak;
+
+    // The scan starts where the fit does, half a carrier period in. Before
+    // that the centred boxcar still straddles the pre-step carrier and the
+    // demodulated amplitude spikes above the plateau on every row of both
+    // devices -- scanning from zero reported the same 0.63 ms for laws a
+    // factor of 2.2 apart, which is the artefact and not the attack.
+    const size_t firstScannable = static_cast<size_t>(
+        std::lround(0.5 / carrierHz * sampleRate));
+    double runningMaximum = -1.0e30;
+    for (size_t i = firstScannable; i < reductionDb.size(); ++i)
+    {
+        const double previous = runningMaximum;
+        runningMaximum = std::max(runningMaximum, reductionDb[i]);
+        if (runningMaximum < 0.90 * result.plateauGrDb) continue;
+        // `previous` cannot already be above the threshold here: the guard
+        // above tests exactly that quantity, so the loop would have broken one
+        // iteration earlier. The only special case is the first scanned sample,
+        // where there is no earlier point to interpolate from.
+        result.recovery90Ms = i == firstScannable
+            ? 1000.0 * times[i]
+            : 1000.0 * (times[i - 1] + (times[i] - times[i - 1])
+                * (0.90 * result.plateauGrDb - previous)
+                / (runningMaximum - previous));
+        break;
+    }
+
+    double sumX = 0.0, sumY = 0.0, sumXX = 0.0, sumXY = 0.0;
+    int used = 0;
+    for (size_t i = 0; i < reductionDb.size(); ++i)
+    {
+        const double fraction = reductionDb[i] / result.plateauGrDb;
+        if (fraction < 0.15 || fraction > 0.88) continue;
+        if (times[i] < 0.5 / carrierHz) continue;
+        const double y = std::log(1.0 - fraction);
+        sumX += times[i]; sumY += y;
+        sumXX += times[i] * times[i]; sumXY += times[i] * y;
+        ++used;
+    }
+    result.fitPoints = used;
+    if (reductionOut != nullptr) *reductionOut = reductionDb;
+    if (used >= 4)
+    {
+        const double denominator = used * sumXX - sumX * sumX;
+        const double slope = (used * sumXY - sumX * sumY) / denominator;
+        if (slope < 0.0)
+        {
+            result.tauMs = -1000.0 / slope;
+            result.fitted = true;
+        }
+    }
+    return result;
+}
+
+void reportFetSettledReduction()
+{
+    // positiveReduction is the settled static-law output, which is what the
+    // drive law's clamp sees -- NOT the 40-60 ms plateau the attack estimator
+    // reads (the programme-memory population is only ~5 % charged there).
+    const float unity = renderReferenceFetRmsDb(-72.0f, 0.8f, 0.625915527f, 0)
+        - (-72.0f - 3.0102999566f);
+    for (int ratio : {0, 1, 2, 3, 4})
+        for (float drive : {-48.0f, -45.0f, -42.0f, -39.0f, -36.0f, -30.0f, -18.0f, -6.0f})
+        {
+            if (ratio != 0 && drive != -6.0f) continue;
+            const float through = renderReferenceFetRmsDb(
+                drive, 0.8f, 0.625915527f, ratio) - (drive - 3.0102999566f);
+            std::printf("  settled GR: ratio %d drive %+.0f dBFS -> %.4f dB\n",
+                        ratio, static_cast<double>(drive),
+                        static_cast<double>(unity - through));
+        }
+}
+
+void reportFetAttackDriveAxis()
+{
+    reportFetSettledReduction();
+    std::puts("FET attack drive axis (in-process, campaign estimator):");
+    for (float attackPosition : {0.0f, 0.5f, 1.0f})
+        for (float drive : {-48.0f, -45.0f, -42.0f, -39.0f, -36.0f, -30.0f, -18.0f, -6.0f})
+        {
+            const auto measured = measureFetAttack(drive, attackPosition);
+            std::printf("  knob %.2f drive %+.0f dBFS: plateau GR %.4f dB tau %s ms (%d pts) t90 %.4f ms peak %.4f\n",
+                        static_cast<double>(attackPosition), static_cast<double>(drive),
+                        measured.plateauGrDb,
+                        measured.fitted ? std::to_string(measured.tauMs).c_str() : "unfittable",
+                        measured.fitPoints, measured.recovery90Ms, measured.outputPeak);
+        }
+    for (int ratio : {1, 2, 3, 4})
+    {
+        const auto measured = measureFetAttack(-6.0f, 0.5f, ratio);
+        std::printf("  knob 0.50 drive -6 dBFS ratio index %d: plateau GR %.4f dB tau %s ms (%d pts) t90 %.4f ms peak %.4f\n",
+                    ratio, measured.plateauGrDb,
+                    measured.fitted ? std::to_string(measured.tauMs).c_str() : "unfittable",
+                    measured.fitPoints, measured.recovery90Ms, measured.outputPeak);
+    }
+}
+
+// The installed unit's own attack trajectory, measured through this same
+// estimator and normalised to its own 40-60 ms plateau. Rendered by
+// `probe_drive_axis.py` (dusk-audio-tools, reference_comparison_1176) from the
+// reference AU at attack knob 0.5, ratio 4:1, input knob 0.8; each row is one
+// source level. This is the campaign's PRIMARY dynamics gate: Wave 3b ratified
+// the demotion of the fitted time constant to a diagnostic, because above
+// ~30 dB of reduction the tau fit reports this core 1.6x SLOWER than the
+// reference on a row where it reaches 90 % of plateau 2.45x SOONER, and the row
+// ranking the two metrics produce is inverted.
+constexpr int kFetReferenceCurvePoints = 79;
+constexpr double kFetReferenceCurveFirstMs = 0.5;
+constexpr double kFetReferenceCurveStepMs = 0.25;
+constexpr float kFetCurveDrivesDbfs[5] = {-42.0f, -36.0f, -30.0f, -18.0f, -6.0f};
+constexpr double kFetReferencePlateauDb[5] = {
+    3.0336033509, 7.1708, 11.7581, 21.1670, 30.7397
+};
+constexpr double kFetReferenceCurve[5][kFetReferenceCurvePoints] = {
+    // -42 dBFS: reference plateau 3.0336 dB, candidate curve RMS 0.0218
+    {0.1265, 0.1933, 0.2695, 0.3330, 0.3960, 0.4438, 0.4904, 0.5290,
+     0.5659, 0.5940, 0.6216, 0.6455, 0.6684, 0.6860, 0.7036, 0.7196,
+     0.7351, 0.7467, 0.7585, 0.7697, 0.7806, 0.7887, 0.7972, 0.8056,
+     0.8139, 0.8199, 0.8263, 0.8330, 0.8397, 0.8443, 0.8495, 0.8551,
+     0.8607, 0.8644, 0.8686, 0.8734, 0.8781, 0.8811, 0.8845, 0.8885,
+     0.8926, 0.8950, 0.8978, 0.9013, 0.9048, 0.9069, 0.9092, 0.9122,
+     0.9154, 0.9171, 0.9191, 0.9218, 0.9246, 0.9261, 0.9278, 0.9302,
+     0.9327, 0.9340, 0.9354, 0.9375, 0.9398, 0.9408, 0.9421, 0.9440,
+     0.9460, 0.9469, 0.9479, 0.9496, 0.9515, 0.9522, 0.9530, 0.9546,
+     0.9563, 0.9569, 0.9576, 0.9590, 0.9605, 0.9610, 0.9616},
+    // -36 dBFS: reference plateau 7.1708 dB, candidate curve RMS 0.0322
+    {0.2588, 0.3704, 0.4740, 0.5473, 0.6095, 0.6534, 0.6933, 0.7245,
+     0.7522, 0.7730, 0.7926, 0.8090, 0.8241, 0.8356, 0.8468, 0.8567,
+     0.8660, 0.8730, 0.8800, 0.8866, 0.8929, 0.8974, 0.9022, 0.9069,
+     0.9114, 0.9146, 0.9180, 0.9216, 0.9252, 0.9275, 0.9302, 0.9332,
+     0.9361, 0.9379, 0.9400, 0.9425, 0.9449, 0.9464, 0.9480, 0.9500,
+     0.9521, 0.9532, 0.9546, 0.9563, 0.9581, 0.9590, 0.9601, 0.9616,
+     0.9631, 0.9639, 0.9647, 0.9661, 0.9675, 0.9681, 0.9688, 0.9700,
+     0.9712, 0.9717, 0.9723, 0.9734, 0.9745, 0.9749, 0.9754, 0.9763,
+     0.9773, 0.9776, 0.9780, 0.9789, 0.9798, 0.9800, 0.9803, 0.9811,
+     0.9819, 0.9821, 0.9824, 0.9830, 0.9838, 0.9839, 0.9841},
+    // -30 dBFS: reference plateau 11.7581 dB, candidate curve RMS 0.0315
+    {0.3716, 0.5086, 0.6133, 0.6793, 0.7306, 0.7656, 0.7961, 0.8194,
+     0.8393, 0.8540, 0.8676, 0.8789, 0.8891, 0.8968, 0.9042, 0.9109,
+     0.9170, 0.9215, 0.9260, 0.9303, 0.9344, 0.9372, 0.9402, 0.9432,
+     0.9462, 0.9481, 0.9502, 0.9525, 0.9548, 0.9562, 0.9578, 0.9597,
+     0.9616, 0.9626, 0.9639, 0.9655, 0.9670, 0.9678, 0.9688, 0.9701,
+     0.9714, 0.9720, 0.9727, 0.9739, 0.9750, 0.9755, 0.9760, 0.9770,
+     0.9780, 0.9784, 0.9788, 0.9797, 0.9806, 0.9809, 0.9812, 0.9820,
+     0.9828, 0.9830, 0.9833, 0.9840, 0.9847, 0.9849, 0.9851, 0.9857,
+     0.9863, 0.9865, 0.9866, 0.9872, 0.9878, 0.9878, 0.9879, 0.9885,
+     0.9890, 0.9890, 0.9891, 0.9896, 0.9901, 0.9901, 0.9901},
+    // -18 dBFS: reference plateau 21.1670 dB, candidate curve RMS 0.0273
+    {0.5484, 0.6976, 0.7761, 0.8193, 0.8504, 0.8714, 0.8892, 0.9026,
+     0.9137, 0.9220, 0.9296, 0.9359, 0.9415, 0.9456, 0.9496, 0.9532,
+     0.9565, 0.9588, 0.9611, 0.9634, 0.9655, 0.9669, 0.9684, 0.9700,
+     0.9716, 0.9725, 0.9735, 0.9748, 0.9761, 0.9768, 0.9776, 0.9787,
+     0.9797, 0.9802, 0.9808, 0.9817, 0.9826, 0.9829, 0.9833, 0.9840,
+     0.9848, 0.9850, 0.9853, 0.9859, 0.9866, 0.9868, 0.9870, 0.9875,
+     0.9881, 0.9882, 0.9884, 0.9889, 0.9894, 0.9895, 0.9896, 0.9901,
+     0.9906, 0.9906, 0.9906, 0.9911, 0.9915, 0.9915, 0.9916, 0.9920,
+     0.9924, 0.9924, 0.9923, 0.9927, 0.9931, 0.9931, 0.9930, 0.9934,
+     0.9937, 0.9937, 0.9936, 0.9939, 0.9943, 0.9942, 0.9942},
+    // -6 dBFS: reference plateau 30.7397 dB, candidate curve RMS 0.0249
+    {0.6611, 0.7898, 0.8484, 0.8785, 0.8995, 0.9142, 0.9266, 0.9354,
+     0.9426, 0.9484, 0.9536, 0.9577, 0.9613, 0.9641, 0.9669, 0.9692,
+     0.9713, 0.9729, 0.9745, 0.9760, 0.9774, 0.9784, 0.9794, 0.9805,
+     0.9815, 0.9821, 0.9828, 0.9837, 0.9846, 0.9850, 0.9855, 0.9862,
+     0.9869, 0.9872, 0.9876, 0.9882, 0.9888, 0.9890, 0.9892, 0.9897,
+     0.9902, 0.9904, 0.9905, 0.9910, 0.9914, 0.9915, 0.9916, 0.9920,
+     0.9924, 0.9925, 0.9925, 0.9929, 0.9932, 0.9933, 0.9933, 0.9936,
+     0.9939, 0.9939, 0.9939, 0.9942, 0.9945, 0.9945, 0.9945, 0.9948,
+     0.9951, 0.9950, 0.9950, 0.9952, 0.9955, 0.9955, 0.9954, 0.9956,
+     0.9959, 0.9958, 0.9958, 0.9960, 0.9962, 0.9962, 0.9961},
+};
+
+// Independent fast-Attack row that exposed the first-cycle cubic
+// extrapolation. Same reference AU, estimator, normalization and 0.5-20 ms
+// sampling grid as kFetReferenceCurve, but Attack at 0.0 and source -6 dBFS.
+// The ordinary attack-drive grid above deliberately fixes Attack at 0.5, so it
+// passed unchanged while this row regressed from 0.0372 to 0.0495 under the
+// old output-only startup correction. Keeping the complete 79-point curve
+// prevents a single hand-picked early sample from standing in for its shape.
+constexpr double kFetFastAttackReferenceCurve[kFetReferenceCurvePoints] = {
+    0.5706071, 0.6871019, 0.7607918, 0.8010365, 0.8320398, 0.8535559,
+    0.8728547, 0.8864650, 0.8985135, 0.9078389, 0.9167143, 0.9235340,
+    0.9299250, 0.9350079, 0.9400243, 0.9441639, 0.9481543, 0.9512554,
+    0.9543590, 0.9571029, 0.9597972, 0.9617954, 0.9638285, 0.9657916,
+    0.9677510, 0.9690963, 0.9704762, 0.9719545, 0.9734467, 0.9743731,
+    0.9753383, 0.9765010, 0.9776848, 0.9783268, 0.9789944, 0.9799258,
+    0.9808852, 0.9813297, 0.9818037, 0.9825868, 0.9833999, 0.9837119,
+    0.9840465, 0.9847241, 0.9854343, 0.9856527, 0.9858864, 0.9864811,
+    0.9871073, 0.9872519, 0.9874151, 0.9879509, 0.9885175, 0.9886107,
+    0.9887202, 0.9892094, 0.9897284, 0.9897819, 0.9898507, 0.9903024,
+    0.9907831, 0.9908067, 0.9908413, 0.9912601, 0.9917069, 0.9917052,
+    0.9917111, 0.9921007, 0.9925176, 0.9924949, 0.9924767, 0.9928406,
+    0.9932309, 0.9931909, 0.9931529, 0.9934937, 0.9938602, 0.9938058,
+    0.9937513,
+};
+
+// Worst normalised curve RMS accepted on any drive. Measured on this build:
+// 0.0218 / 0.0321 / 0.0315 / 0.0273 / 0.0249, shallow to deep, so the worst row
+// has 18 % of headroom. The bound is set by what it has to catch, not by taste:
+// restoring only the three SHALLOW table entries to the values the previous,
+// deep-anchored-only parabola extrapolated there reads 0.0436 at -42 dBFS, and
+// restoring the whole pre-campaign law reads 0.1578. A bound of 0.045 would
+// have let the first of those through, which is the exact defect this table
+// exists to fix. The measurement is deterministic -- same binary, same numbers
+// -- so the headroom does not have to cover run-to-run noise.
+//
+// It gates the SHAPE of the attack, so it fails for a law that is too fast as
+// readily as for one that is too slow.
+constexpr double kFetCurveRmsBound = 0.038;
+
+double fetCurveRmsAgainstValues(const FetAttackMeasurement& measured,
+                                const std::vector<double>& reductionDb,
+                                double sampleRate, const double* reference)
+{
+    double sum = 0.0;
+    int used = 0;
+    for (int point = 0; point < kFetReferenceCurvePoints; ++point)
+    {
+        const double milliseconds = kFetReferenceCurveFirstMs
+            + kFetReferenceCurveStepMs * point;
+        const size_t index = static_cast<size_t>(
+            std::lround(milliseconds * sampleRate / 1000.0));
+        if (index >= reductionDb.size()) break;
+        const double difference = reductionDb[index] / measured.plateauGrDb
+            - reference[point];
+        sum += difference * difference;
+        ++used;
+    }
+    require(used == kFetReferenceCurvePoints,
+            "the whole reference curve window is inside the rendered attack");
+    return std::sqrt(sum / used);
+}
+
+double fetCurveRmsAgainstReference(const FetAttackMeasurement& measured,
+                                   const std::vector<double>& reductionDb,
+                                   double sampleRate, int driveIndex)
+{
+    return fetCurveRmsAgainstValues(
+        measured, reductionDb, sampleRate, kFetReferenceCurve[driveIndex]);
+}
+
+void testFetAttackMatchesReferenceCurve()
+{
+    // Diagnostics only -- see kFetReferenceCurve. Kept because the DIRECTION of
+    // the drive axis is the mechanism this law exists to fix, and the direction
+    // is legible in tau on the rows where the fit is well conditioned.
+    constexpr double referenceTauMs[5] = {4.918, 2.540, 1.729, 1.030, 0.724};
+    double worst = 0.0;
+    int worstDrive = -1;
+    double worstDeepPlateauError = 0.0;
+    double previousPlateau = -1.0e30;
+    for (int driveIndex = 0; driveIndex < 5; ++driveIndex)
+    {
+        std::vector<double> curve;
+        const auto measured = measureFetAttack(
+            kFetCurveDrivesDbfs[driveIndex], 0.5f, 0, 48000.0, &curve);
+        require(measured.plateauGrDb > previousPlateau,
+                "the drive axis really is a monotonically increasing reduction");
+        previousPlateau = measured.plateauGrDb;
+        const double rms = fetCurveRmsAgainstReference(measured, curve, 48000.0, driveIndex);
+        std::printf("FET attack curve: %+.0f dBFS plateau %.4f dB  curve RMS %.4f"
+                    "  (tau %s ms, x%.3f reference)\n",
+                    static_cast<double>(kFetCurveDrivesDbfs[driveIndex]),
+                    measured.plateauGrDb, rms,
+                    measured.fitted ? std::to_string(measured.tauMs).c_str() : "unfittable",
+                    measured.fitted ? measured.tauMs / referenceTauMs[driveIndex] : 0.0);
+        if (rms > worst) { worst = rms; worstDrive = driveIndex; }
+        if (driveIndex >= 2)
+            worstDeepPlateauError = std::max(
+                worstDeepPlateauError,
+                std::abs(measured.plateauGrDb - kFetReferencePlateauDb[driveIndex]));
+    }
+    std::printf("FET attack curve: worst %.4f at %+.0f dBFS, bound %.4f\n",
+                worst, static_cast<double>(kFetCurveDrivesDbfs[worstDrive]),
+                kFetCurveRmsBound);
+    require(worst <= kFetCurveRmsBound,
+            "every vintage FET drive point tracks the reference attack trajectory");
+
+    std::vector<double> fastCurve;
+    const auto fastMeasured = measureFetAttack(
+        -6.0f, 0.0f, 0, 48000.0, &fastCurve);
+    const double fastRms = fetCurveRmsAgainstValues(
+        fastMeasured, fastCurve, 48000.0, kFetFastAttackReferenceCurve);
+    std::printf("FET fast-Attack curve: -6 dBFS plateau %.4f dB  "
+                "curve RMS %.4f, bound %.4f\n",
+                fastMeasured.plateauGrDb, fastRms, kFetCurveRmsBound);
+    require(fastRms <= kFetCurveRmsBound,
+            "the vintage FET first-cycle colour tracks the complete fast-Attack reference curve");
+
+    std::printf("FET attack deep plateau: worst absolute error %.4f dB, bound 0.2000 dB\n",
+                worstDeepPlateauError);
+    require(worstDeepPlateauError <= 0.20,
+            "the vintage FET intermediate attack population reaches the measured deep plateau");
+}
+
+void testFetAttackAcceleratesWithDrive()
+{
+    // Direction, on the two shallowest and the two deepest measured drives.
+    // Before this law was corrected the same points read 1.777 / 2.804 /
+    // 4.885 ms at -30 / -18 / -6 dBFS -- monotonically SLOWER with drive, the
+    // exact inverse of the reference's 1.729 / 1.030 / 0.724 ms.
+    const auto shallow = measureFetAttack(-42.0f);
+    const auto light = measureFetAttack(-36.0f);
+    const auto middle = measureFetAttack(-18.0f);
+    require(shallow.fitted && light.fitted && middle.fitted,
+            "every well-conditioned vintage FET drive point yields an attack fit");
+    std::printf("FET attack vs drive: %.4f dB -> %.4f ms, %.4f dB -> %.4f ms, "
+                "%.4f dB -> %.4f ms\n",
+                shallow.plateauGrDb, shallow.tauMs, light.plateauGrDb, light.tauMs,
+                middle.plateauGrDb, middle.tauMs);
+    require(light.tauMs < shallow.tauMs && middle.tauMs < light.tauMs,
+            "vintage FET attack gets FASTER as drive deepens, as the reference does");
+    // Spacing, not absolute milliseconds. The reference spans 4.918 -> 1.030 ms
+    // over these three drives, a factor of 4.8; a law that merely tilted the
+    // sign by a percent would satisfy the ordering above.
+    const double span = shallow.tauMs / middle.tauMs;
+    std::printf("FET attack drive span: %.4f (reference 4.775)\n", span);
+    require(span > 3.0 && span < 8.0,
+            "the vintage FET attack drive axis spans the reference's factor of ~4.8");
+    // No bound is asserted at -6 dBFS and none should be: there the estimator's
+    // fit band collapses to a fraction of a millisecond and the fitted tau
+    // stops tracking the cell entirely. testFetAttackMatchesReferenceCurve
+    // gates that row, on the curve.
+}
+
+void testFetHighCarrierAttackKnobAxis()
+{
+    // The 1 kHz estimator has a 0.5 ms floor and cannot resolve the reference's
+    // fast half of the Attack knob. At 4 kHz the period is exactly 12 samples;
+    // the campaign estimator's synthetic self-check recovers 0.2--2.0 ms
+    // exponentials within 3.1 %. These live-reference taus therefore pin the
+    // low-knob region without retuning against the known 1 kHz dead zone.
+    struct Point
+    {
+        float driveDbfs;
+        float attackPosition;
+        double referenceTauMs;
+    };
+    constexpr std::array<Point, 7> points{{
+        {-30.0f, 0.00f, 2.873214},
+        {-18.0f, 0.00f, 1.665809},
+        { -6.0f, 0.00f, 1.320637},
+        {-30.0f, 0.25f, 2.364919},
+        {-18.0f, 0.25f, 1.457143},
+        {-30.0f, 0.50f, 1.737511},
+        {-30.0f, 1.00f, 0.188000},
+    }};
+    double worstRelativeError = 0.0;
+    for (const auto& point : points)
+    {
+        const auto measured = measureFetAttack(
+            point.driveDbfs, point.attackPosition, 0, 48000.0,
+            nullptr, 4000.0);
+        require(measured.fitted,
+                "every selected 4 kHz FET attack-knob row yields a fit");
+        const double relativeError
+            = measured.tauMs / point.referenceTauMs - 1.0;
+        worstRelativeError = std::max(
+            worstRelativeError, std::abs(relativeError));
+        std::printf("FET 4 kHz attack knob: drive %+.0f position %.2f "
+                    "reference %.6f measured %.6f error %+.3f%%\n",
+                    static_cast<double>(point.driveDbfs),
+                    static_cast<double>(point.attackPosition),
+                    point.referenceTauMs, measured.tauMs,
+                    100.0 * relativeError);
+    }
+    std::printf("FET 4 kHz attack knob: worst relative tau error %.3f%%\n",
+                100.0 * worstRelativeError);
+    require(worstRelativeError < 0.25,
+            "vintage FET Attack knob follows the resolved 4 kHz reference axis");
+}
+
+void testFetStartupPeakSurface()
+{
+    // Whole-capture peaks from the installed-unit 1 kHz dynamics campaign.
+    // Every row uses the same -6 dBFS step, Input 0.8 and Output 0.625915527;
+    // only Attack or Ratio changes. The old harness printed this quantity but
+    // never asserted it, allowing 3.0--7.0 dB first-cycle errors to stay green.
+    struct Point
+    {
+        float attackPosition;
+        int ratioIndex;
+        double referencePeak;
+    };
+    constexpr std::array<Point, 7> points{{
+        {0.00f, 0, 3.040199757},
+        {0.50f, 0, 2.489228725},
+        {1.00f, 0, 0.911336124},
+        {0.50f, 1, 2.128107786},
+        {0.50f, 2, 1.832375646},
+        {0.50f, 3, 1.477138281},
+        {0.50f, 4, 2.583157301},
+    }};
+    double worstErrorDb = 0.0;
+    for (const auto& point : points)
+    {
+        const auto measured = measureFetAttack(
+            -6.0f, point.attackPosition, point.ratioIndex);
+        const double errorDb = 20.0 * std::log10(
+            measured.outputPeak / point.referencePeak);
+        worstErrorDb = std::max(worstErrorDb, std::abs(errorDb));
+        std::printf("FET startup peak: attack %.2f ratio %d reference %.6f "
+                    "measured %.6f error %+.3f dB\n",
+                    static_cast<double>(point.attackPosition), point.ratioIndex,
+                    point.referencePeak, measured.outputPeak, errorDb);
+    }
+    std::printf("FET startup peak: worst absolute error %.3f dB\n",
+                worstErrorDb);
+    require(worstErrorDb < 0.75,
+            "vintage FET first-cycle peaks match the installed-unit surface");
+}
+
+void testFetStartupStateLifecycleAndCounterSaturation()
+{
+    constexpr std::array<float, 2> peaks{{0.25f, 0.75f}};
+    constexpr std::array<int, 2> poisonedActiveSamples{{7, 11}};
+    constexpr std::array<int, 2> poisonedSilentSamples{{13, 17}};
+    const auto poisonState = [&](MultiCompDSP& dsp) {
+        duskaudio::MultiCompDSPTestAccess::setFetStartupState(
+            dsp, peaks, poisonedActiveSamples, poisonedSilentSamples);
+    };
+    const auto requireCleared = [&](const MultiCompDSP& dsp,
+                                    const char* message) {
+        require(duskaudio::MultiCompDSPTestAccess::fetStartupStateIsClear(dsp),
+                message);
+    };
+
+    MultiCompDSP dsp;
+    prepareReferenceFet(dsp, 48000.0, 64, 0.8f, 0.625915527f, 0);
+    dsp.prepare(48000.0, 64);
+
+    poisonState(dsp);
+    dsp.prepare(48000.0, 64);
+    requireCleared(dsp,
+        "repeated prepare clears both channels of FET startup peak/counter state");
+
+    poisonState(dsp);
+    dsp.reset();
+    requireCleared(dsp,
+        "reset clears both channels of FET startup peak/counter state");
+
+    poisonState(dsp);
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::VCA));
+    std::array<float, 64> input{};
+    std::array<float, 64> output{};
+    const float* inputs[] = {input.data()};
+    float* outputs[] = {output.data()};
+    dsp.processBlock(inputs, outputs, 1, 1);
+    requireCleared(dsp,
+        "leaving FET clears both channels of FET startup peak/counter state");
+
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::FET));
+    dsp.reset();
+    poisonState(dsp);
+    dsp.setBypass(true);
+    input.fill(0.5f); // keep the startup state armed until bypass has settled
+    for (int block = 0; block < 32; ++block)
+        dsp.processBlock(inputs, outputs, 1, static_cast<int>(input.size()));
+    requireCleared(dsp,
+        "settled bypass clears both channels of FET startup peak/counter state");
+
+    constexpr int fullCorrectionSamples = 12;
+    constexpr int correctionEndSamples = 24;
+    int activeSamples = correctionEndSamples;
+    float worstPastWindowBlend = 0.0f;
+    for (int sample = 0; sample < 1000000; ++sample)
+        worstPastWindowBlend = std::max(
+            worstPastWindowBlend,
+            duskaudio::MultiCompDSPTestAccess::advanceFetStartupBlend(
+                activeSamples, fullCorrectionSamples,
+                correctionEndSamples));
+    std::printf("FET startup state: peak/counters clear prepare/reset/mode/bypass yes, "
+                "counter after 1000000 post-window samples %d, blend %.9g\n",
+                activeSamples, static_cast<double>(worstPastWindowBlend));
+    require(activeSamples == correctionEndSamples,
+        "FET startup active counter saturates at the correction-window end");
+    require(worstPastWindowBlend == 0.0f,
+        "FET startup blend stays exactly zero after the correction window");
+}
+
+// ---------------------------------------------------------------------------
+// Wave 20 neighbours for the base-rate startup peak ceiling.
+//
+// The ceiling adds the first per-channel state the vintage path has ever
+// carried in `MultiCompDSP` itself rather than in `MultiCompModes`: a
+// preallocated input-scratch buffer plus a running source peak, an active
+// counter and a silence counter. Every path that shares that state is
+// enumerated here. The stage is deliberately gated on Output position, runs
+// after the mid/side decode and follows the AUDIO input rather than the
+// sidechain, so each of those is asserted rather than assumed.
+struct FetStartupProbeConfig
+{
+    double sampleRate = 48000.0;
+    int blockSize = 256;
+    float outputPosition = 0.625915527f;
+    int oversampling = kOversampling2xSetting;
+    int ratio = 0;
+    float attackPosition = 0.0f;
+    float driveDbfs = -6.0f;
+    float sidechainDbfs = 0.0f;       // 0 == follow driveDbfs
+    int channels = 1;
+    bool inPlace = false;
+    float stereoLink = 100.0f;
+    bool externalSidechain = false;
+    double leadSilenceSeconds = 0.050;
+    double burstSeconds = 0.120;
+    double gapSeconds = 0.0;          // optional silent gap, then a second burst
+    double secondBurstSeconds = 0.0;
+};
+
+struct FetStartupProbeResult
+{
+    std::vector<float> left;
+    double firstBurstPeak = 0.0;      // |out| over the first 3 ms of burst one
+    double secondBurstPeak = 0.0;     // |out| over the first 3 ms of burst two
+    double settledPeak = 0.0;         // |out| over the last 20 ms of burst one
+};
+
+FetStartupProbeResult renderFetStartupProbe(const FetStartupProbeConfig& cfg)
+{
+    const double sr = cfg.sampleRate;
+    const int lead = static_cast<int>(std::lround(cfg.leadSilenceSeconds * sr));
+    const int burst = static_cast<int>(std::lround(cfg.burstSeconds * sr));
+    const int gap = static_cast<int>(std::lround(cfg.gapSeconds * sr));
+    const int burst2 = static_cast<int>(std::lround(cfg.secondBurstSeconds * sr));
+    const int total = lead + burst + gap + burst2;
+
+    MultiCompDSP dsp;
+    prepareReferenceFet(dsp, sr, cfg.blockSize, 0.8f, cfg.outputPosition,
+                        cfg.ratio);
+    dsp.setOversampling(cfg.oversampling);
+    dsp.setStereoLink(cfg.stereoLink);
+    dsp.setExternalSidechain(cfg.externalSidechain);
+    dsp.setParameter(MultiCompDSP::Parameter::ExternalSidechain,
+                     cfg.externalSidechain ? 1.0f : 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::FetAttack,
+                     fetAttackPlain(cfg.attackPosition));
+    dsp.prepare(sr, cfg.blockSize);
+
+    const float amplitude = duskaudio::decibelsToGain(cfg.driveDbfs);
+    const float sidechainAmplitude = cfg.sidechainDbfs < 0.0f
+        ? duskaudio::decibelsToGain(cfg.sidechainDbfs) : amplitude;
+    const auto sourceAt = [&](int n) {
+        const bool active = (n >= lead && n < lead + burst)
+            || (burst2 > 0 && n >= lead + burst + gap);
+        if (! active) return 0.0f;
+        return amplitude * std::sin(2.0f * kPi * 1000.0f
+            * static_cast<float>(n) / static_cast<float>(sr));
+    };
+
+    const int nCh = cfg.channels;
+    std::vector<std::vector<float>> in(static_cast<size_t>(nCh),
+        std::vector<float>(static_cast<size_t>(cfg.blockSize)));
+    std::vector<std::vector<float>> out(static_cast<size_t>(nCh),
+        std::vector<float>(static_cast<size_t>(cfg.blockSize)));
+    std::vector<std::vector<float>> sc(static_cast<size_t>(nCh),
+        std::vector<float>(static_cast<size_t>(cfg.blockSize)));
+
+    FetStartupProbeResult result;
+    result.left.resize(static_cast<size_t>(total));
+    for (int offset = 0; offset < total; offset += cfg.blockSize)
+    {
+        const int count = std::min(cfg.blockSize, total - offset);
+        for (int ch = 0; ch < nCh; ++ch)
+            for (int s = 0; s < count; ++s)
+            {
+                in[static_cast<size_t>(ch)][static_cast<size_t>(s)]
+                    = sourceAt(offset + s);
+                sc[static_cast<size_t>(ch)][static_cast<size_t>(s)]
+                    = sourceAt(offset + s) * (sidechainAmplitude / amplitude);
+            }
+        std::vector<const float*> inputs(static_cast<size_t>(nCh));
+        std::vector<const float*> sidechains(static_cast<size_t>(nCh));
+        std::vector<float*> outputs(static_cast<size_t>(nCh));
+        for (int ch = 0; ch < nCh; ++ch)
+        {
+            inputs[static_cast<size_t>(ch)] = in[static_cast<size_t>(ch)].data();
+            sidechains[static_cast<size_t>(ch)]
+                = sc[static_cast<size_t>(ch)].data();
+            outputs[static_cast<size_t>(ch)] = cfg.inPlace
+                ? in[static_cast<size_t>(ch)].data()
+                : out[static_cast<size_t>(ch)].data();
+        }
+        if (cfg.externalSidechain)
+            dsp.processBlockExternal(inputs.data(), sidechains.data(),
+                                     outputs.data(), nCh, count);
+        else
+            dsp.processBlock(inputs.data(), outputs.data(), nCh, count);
+        std::copy_n(outputs[0], count,
+                    result.left.data() + offset);
+    }
+
+    const int latency = static_cast<int>(std::lround(
+        kFetCampaignLatencySamples48k * sr / 48000.0));
+    const auto peakOver = [&result, total](int from, int to) {
+        double peak = 0.0;
+        for (int n = std::max(0, from); n < std::min(total, to); ++n)
+            peak = std::max(peak, std::abs(
+                static_cast<double>(result.left[static_cast<size_t>(n)])));
+        return peak;
+    };
+    const int firstOnset = lead + latency;
+    // Measured over the correction window itself (0.5 ms), not a few
+    // milliseconds of it: outside that window the stage is inert by
+    // construction, and a wider window would let an uncorrected later sample
+    // mask a correction that never happened.
+    const int window = static_cast<int>(std::lround(0.0005 * sr));
+    result.firstBurstPeak = peakOver(firstOnset, firstOnset + window);
+    result.settledPeak = peakOver(lead + burst + latency
+                                      - static_cast<int>(std::lround(0.020 * sr)),
+                                  lead + burst + latency);
+    if (burst2 > 0)
+    {
+        const int secondOnset = lead + burst + gap + latency;
+        result.secondBurstPeak = peakOver(secondOnset, secondOnset + window);
+    }
+    return result;
+}
+
+double maximumDeltaOf(const std::vector<float>& a, const std::vector<float>& b)
+{
+    require(a.size() == b.size(), "startup neighbour renders are the same length");
+    double worst = 0.0;
+    for (size_t n = 0; n < a.size(); ++n)
+        worst = std::max(worst, std::abs(static_cast<double>(a[n])
+                                         - static_cast<double>(b[n])));
+    return worst;
+}
+
+void testFetStartupCeilingNeighbours()
+{
+    // 1. REACHABILITY, and the Output-position fade that protects the already
+    //    matched Output = 1.0 ceiling sweep. The stage changes the first-cycle
+    //    peak but never the settled level, so the peak-to-settled ratio isolates
+    //    it from the makeup gain the Output knob also moves. `outputControlBlend`
+    //    is 1.0 at or below position 0.625915527 and exactly 0 at or above 0.90.
+    // The stage's contract is an ABSOLUTE ceiling, so assert it as one. At
+    // -6 dBFS / Attack 0.00 / 4:1 the table target is 2.7164 and our
+    // uncorrected first-cycle peak is 5.954755 (measured on the stage-disabled
+    // diagnostic binary 28dd845b6adf), i.e. 2.19x the target -- so a stage that
+    // does not run, indexes the wrong cell, or ignores `startupBlend` cannot
+    // squeeze under the bound below. The soft knee passes
+    // `startupCeilingSlope` of the excess, which is why the bound is 1.20x and
+    // not 1.00x; the observed value is 1.119x.
+    //
+    // Deliberately NOT asserted by a peak/settled ratio across Output
+    // positions. That construction looks gain invariant and is not: above
+    // about -36 dBFS the vintage output stage compresses the first-cycle peak
+    // relative to the settled level as Output rises, even with this stage
+    // switched off, so the ratio moves for reasons that have nothing to do
+    // with the ceiling (measured: peak/settled 5.89 at Output 0.6259 against
+    // 3.38 at 0.90 for a -18 dBFS row whose peak never approaches the main
+    // 6.39712761 output ceiling).
+    constexpr double kCeilingTargetAtMinusSix = 2.7164;
+    constexpr double kCeilingTargetAtMinusThirty = 0.9677;
+    FetStartupProbeConfig base;
+    FetStartupProbeConfig atTarget = base;
+    atTarget.driveDbfs = -6.0f;
+    atTarget.attackPosition = 0.0f;
+    FetStartupProbeConfig faded = atTarget;
+    faded.outputPosition = 0.90f;
+    const auto atDefault = renderFetStartupProbe(atTarget);
+    const auto atHigh = renderFetStartupProbe(faded);
+    std::printf("FET startup neighbours: ceiling target %.4f  peak at Output "
+                "0.6259 %.6f (%.3fx)  peak at Output 0.90 %.6f (%.3fx)\n",
+                kCeilingTargetAtMinusSix, atDefault.firstBurstPeak,
+                atDefault.firstBurstPeak / kCeilingTargetAtMinusSix,
+                atHigh.firstBurstPeak,
+                atHigh.firstBurstPeak / kCeilingTargetAtMinusSix);
+    require(atDefault.settledPeak > 1.0e-3 && atHigh.settledPeak > 1.0e-3,
+            "startup neighbour programme actually produces signal");
+    require(atDefault.firstBurstPeak
+                < 1.20 * kCeilingTargetAtMinusSix,
+            "the startup ceiling is REACHED at the default Output position and "
+            "holds the first cycle at its measured target");
+    require(atHigh.firstBurstPeak > 1.50 * kCeilingTargetAtMinusSix,
+            "the startup ceiling is switched off at Output position 0.90, so "
+            "the already-matched Output = 1.0 ceiling sweep is untouched by "
+            "this stage");
+
+    // 2. Determinism neighbours. Each must be EXACTLY zero: the stage adds no
+    //    rate-dependent smoothing, so any block-boundary or state-carry defect
+    //    shows up as a non-zero delta rather than a small one.
+    FetStartupProbeConfig small = base;  small.blockSize = 64;
+    FetStartupProbeConfig large = base;  large.blockSize = 512;
+    const double blockDelta = maximumDeltaOf(
+        renderFetStartupProbe(small).left, renderFetStartupProbe(large).left);
+
+    FetStartupProbeConfig stereo = base; stereo.channels = 2;
+    const double monoStereoDelta = maximumDeltaOf(
+        atDefault.left, renderFetStartupProbe(stereo).left);
+
+    FetStartupProbeConfig inPlace = base; inPlace.inPlace = true;
+    const double inPlaceDelta = maximumDeltaOf(
+        atDefault.left, renderFetStartupProbe(inPlace).left);
+
+    FetStartupProbeConfig unlinked = base;
+    unlinked.channels = 2; unlinked.stereoLink = 0.0f;
+    FetStartupProbeConfig linked = base;
+    linked.channels = 2; linked.stereoLink = 100.0f;
+    const double linkDelta = maximumDeltaOf(
+        renderFetStartupProbe(unlinked).left, renderFetStartupProbe(linked).left);
+
+    // The external sidechain path is NOT bit-identical to the internal one even
+    // with the same programme on both -- that is a pre-existing property of the
+    // vintage gain staging, quantified below at Output 0.90 where this stage is
+    // switched off entirely (10.7 there against 4.9 with it on, so the stage
+    // narrows the difference rather than causing it).
+    //
+    // What must hold is WHICH input the ceiling reads. It runs after the audio
+    // reconstruction and takes its source peak from `fetStartupInput`, so with
+    // -6 dBFS audio it must keep the -6 dBFS target (2.7164) even when the
+    // sidechain is 24 dB quieter. Had it read the sidechain it would have
+    // selected the -30 dBFS row instead and clamped near 0.9677 -- a 9 dB
+    // difference, which is what makes this assertion able to fail.
+    FetStartupProbeConfig external = atTarget; external.externalSidechain = true;
+    FetStartupProbeConfig externalFaded = external;
+    externalFaded.outputPosition = 0.90f;
+    FetStartupProbeConfig quietSidechain = external;
+    quietSidechain.sidechainDbfs = -30.0f;
+    const auto externalRender = renderFetStartupProbe(external);
+    const auto quietScRender = renderFetStartupProbe(quietSidechain);
+    const double sidechainDelta = maximumDeltaOf(
+        atDefault.left, externalRender.left);
+    const double sidechainDeltaStageOff = maximumDeltaOf(
+        atHigh.left, renderFetStartupProbe(externalFaded).left);
+
+    std::printf("FET startup neighbours: block %.9g  mono/stereo %.9g  "
+                "in-place %.9g  link %.9g | external-SC delta %.6g "
+                "(stage off %.6g) first-cycle peak %.6f (%.3fx target)\n",
+                blockDelta, monoStereoDelta, inPlaceDelta, linkDelta,
+                sidechainDelta, sidechainDeltaStageOff,
+                quietScRender.firstBurstPeak,
+                quietScRender.firstBurstPeak / kCeilingTargetAtMinusSix);
+    require(blockDelta == 0.0,
+            "startup ceiling is identical for 64- and 512-sample blocks");
+    require(monoStereoDelta == 0.0,
+            "startup ceiling treats a mono render and the left channel of an "
+            "identical stereo render alike");
+    require(inPlaceDelta == 0.0,
+            "startup ceiling reads the preserved input scratch, not the "
+            "overwritten in-place output");
+    require(linkDelta == 0.0,
+            "startup ceiling is unchanged by the stereo link law for identical "
+            "channels");
+    // A quiet sidechain leaves the compressor barely working, so the raw first
+    // cycle arrives around 19.1 and the 10 % knee passes a large excess: the
+    // clamped result is target + 0.1 * (19.1 - target), not the target itself.
+    // That makes this a three-way discriminator, and all three outcomes are
+    // separated by the bounds below:
+    //   no ceiling at all        -> about 19.1   (7.03x)
+    //   target read from the SC  -> about  2.78  (1.02x)  [-30 dBFS row, 0.9677]
+    //   target read from audio   -> about  4.36  (1.60x)  [ -6 dBFS row, 2.7164]
+    require(quietScRender.firstBurstPeak > 1.25 * kCeilingTargetAtMinusSix
+                && quietScRender.firstBurstPeak
+                    < 2.00 * kCeilingTargetAtMinusSix,
+            "startup ceiling selects its target from the AUDIO input, not from "
+            "a 24 dB quieter external sidechain");
+
+    // 3. Lifecycle neighbours: prepare twice, reset, and a fresh instance must
+    //    all agree, and leaving and re-entering FET must clear the state.
+    {
+        MultiCompDSP twice;
+        prepareReferenceFet(twice, 48000.0, base.blockSize, 0.8f,
+                            base.outputPosition, 0);
+        twice.prepare(48000.0, base.blockSize);
+        twice.prepare(48000.0, base.blockSize);   // must be safe to repeat
+        std::array<float, 64> silence{};
+        const float* inputs[] = {silence.data()};
+        std::array<float, 64> scratch{};
+        float* outputs[] = {scratch.data()};
+        twice.processBlock(inputs, outputs, 1, 0);          // zero-sample block
+        twice.processBlock(inputs, outputs, 1, 64);
+        std::puts("FET startup neighbours: prepare-twice and zero-sample block "
+                  "survived");
+    }
+
+    // 4. Silence rearm. The stage zeroes its source peak and its active
+    //    counter after 2 ms of input below -60 dBFS, and without that a second
+    //    burst would arrive with `fetStartupActiveSamples` long past the end of
+    //    the correction window and get no correction at all. Half a second of
+    //    silence both rearms the stage and lets the detector release, so the
+    //    second burst presents the same uncorrected 5.95 first cycle as the
+    //    first one did -- if it is still held at the target, the stage rearmed.
+    FetStartupProbeConfig rearm = atTarget;
+    rearm.burstSeconds = 0.060; rearm.gapSeconds = 0.500;
+    rearm.secondBurstSeconds = 0.060;
+    const auto rearmed = renderFetStartupProbe(rearm);
+    std::printf("FET startup neighbours: rearm after 500 ms silence, first "
+                "%.6f (%.3fx target) second %.6f (%.3fx target)\n",
+                rearmed.firstBurstPeak,
+                rearmed.firstBurstPeak / kCeilingTargetAtMinusSix,
+                rearmed.secondBurstPeak,
+                rearmed.secondBurstPeak / kCeilingTargetAtMinusSix);
+    // The upper bound is the one that bites: a stage that failed to rearm would
+    // leave the second burst uncorrected at about 5.95 (2.19x). The lower bound
+    // only guards against a silent render -- half a second is not long enough
+    // for the detector to release fully, so the second burst legitimately
+    // presents a smaller raw first cycle than the first (observed 0.554x).
+    require(rearmed.secondBurstPeak > 0.25 * kCeilingTargetAtMinusSix
+                && rearmed.secondBurstPeak
+                    < 1.20 * kCeilingTargetAtMinusSix,
+            "the startup ceiling rearms after a silence longer than its 2 ms "
+            "threshold and holds the next burst's first cycle at the target");
+
+    // 5. Oversampling and sample rate. The stage runs at the base rate and its
+    //    window is expressed in seconds, so every combination must both run and
+    //    still hold the same absolute target; state sized for one rate and
+    //    reused at another, or a window that collapsed to nothing at 96 kHz,
+    //    would show up here as a lost correction.
+    for (const int oversampling : {kOversamplingOffSetting, kOversampling2xSetting,
+                                   kOversampling4xSetting})
+        for (const double rate : {44100.0, 48000.0, 96000.0})
+        {
+            FetStartupProbeConfig cell = atTarget;
+            cell.oversampling = oversampling; cell.sampleRate = rate;
+            const auto rendered = renderFetStartupProbe(cell);
+            std::printf("FET startup neighbours: oversampling %d rate %.0f "
+                        "first-cycle peak %.6f (%.3fx target)\n",
+                        oversampling, rate, rendered.firstBurstPeak,
+                        rendered.firstBurstPeak / kCeilingTargetAtMinusSix);
+            require(rendered.firstBurstPeak < 1.20 * kCeilingTargetAtMinusSix,
+                    "the startup ceiling holds its target at every "
+                    "oversampling setting and sample rate");
+        }
+
+    // 6. Mode exit/re-entry and settled bypass. Both clear the stage's state;
+    //    a leaked source peak would suppress the next burst's first cycle.
+    const auto renderThroughDetour = [&](bool useBypass) {
+        MultiCompDSP dsp;
+        prepareReferenceFet(dsp, 48000.0, base.blockSize, 0.8f,
+                            base.outputPosition, 0);
+        dsp.setParameter(MultiCompDSP::Parameter::FetAttack,
+                         fetAttackPlain(base.attackPosition));
+        dsp.prepare(48000.0, base.blockSize);
+        std::vector<float> in(static_cast<size_t>(base.blockSize));
+        std::vector<float> out(static_cast<size_t>(base.blockSize));
+        const float amplitude = duskaudio::decibelsToGain(base.driveDbfs);
+        // Drive it hot so the stage is armed and charged, then detour.
+        for (int block = 0; block < 40; ++block)
+        {
+            for (int s = 0; s < base.blockSize; ++s)
+                in[static_cast<size_t>(s)] = amplitude * std::sin(
+                    2.0f * kPi * 1000.0f
+                    * static_cast<float>(block * base.blockSize + s) / 48000.0f);
+            const float* inputs[] = {in.data()};
+            float* outputs[] = {out.data()};
+            dsp.processBlock(inputs, outputs, 1, base.blockSize);
+        }
+        if (useBypass)
+        {
+            dsp.setBypass(true);
+            for (int block = 0; block < 400; ++block)
+            {
+                std::fill(in.begin(), in.end(), 0.0f);
+                const float* inputs[] = {in.data()};
+                float* outputs[] = {out.data()};
+                dsp.processBlock(inputs, outputs, 1, base.blockSize);
+            }
+            dsp.setBypass(false);
+        }
+        else
+        {
+            dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::VCA));
+            for (int block = 0; block < 400; ++block)
+            {
+                std::fill(in.begin(), in.end(), 0.0f);
+                const float* inputs[] = {in.data()};
+                float* outputs[] = {out.data()};
+                dsp.processBlock(inputs, outputs, 1, base.blockSize);
+            }
+            dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::FET));
+        }
+        dsp.reset();
+        // Now the same programme a fresh instance would see.
+        const int lead = static_cast<int>(std::lround(0.050 * 48000.0));
+        const int burstSamples = static_cast<int>(std::lround(0.120 * 48000.0));
+        std::vector<float> rendered(static_cast<size_t>(lead + burstSamples));
+        for (int offset = 0; offset < lead + burstSamples;
+             offset += base.blockSize)
+        {
+            const int count = std::min(base.blockSize,
+                                       lead + burstSamples - offset);
+            for (int s = 0; s < count; ++s)
+            {
+                const int n = offset + s;
+                in[static_cast<size_t>(s)] = n < lead ? 0.0f
+                    : amplitude * std::sin(2.0f * kPi * 1000.0f
+                        * static_cast<float>(n) / 48000.0f);
+            }
+            const float* inputs[] = {in.data()};
+            float* outputs[] = {out.data()};
+            dsp.processBlock(inputs, outputs, 1, count);
+            std::copy_n(out.data(), count, rendered.data() + offset);
+        }
+        return rendered;
+    };
+    FetStartupProbeConfig freshCfg = base;
+    freshCfg.leadSilenceSeconds = 0.050; freshCfg.burstSeconds = 0.120;
+    const auto freshRender = renderFetStartupProbe(freshCfg).left;
+    const double modeDelta = maximumDeltaOf(freshRender, renderThroughDetour(false));
+    const double bypassDelta = maximumDeltaOf(freshRender, renderThroughDetour(true));
+    std::printf("FET startup neighbours: FET->VCA->FET+reset %.9g  "
+                "settled-bypass+reset %.9g\n", modeDelta, bypassDelta);
+    require(modeDelta == 0.0,
+            "leaving and re-entering FET leaves no startup ceiling state behind");
+    require(bypassDelta == 0.0,
+            "a settled bypass leaves no startup ceiling state behind");
+}
+
+// ---------------------------------------------------------------------------
+// Vintage-FET broadband H2 surface (`fetBroadbandK2`).
+//
+// The table is indexed by the value `processFET` computes per sample as
+// `-gainToDecibels(envelope + 0.001f)` -- NOT by the settled output-referred
+// reduction the campaign's render probes report, and not by the published
+// meter. The +0.001 offset alone costs 0.087 dB at 20 dB of reduction, and the
+// envelope ripples with the programme, so a fit performed in any other
+// coordinate lands its anchors in the wrong segment. Wave 7b's coordinate
+// artifact was exactly this class of error in a different table; this harness
+// exists so the H2 fit is done in the coordinate the code consumes.
+struct FetHarmonicMeasurement
+{
+    double reductionDbMean = 0.0;   // the fetBroadbandK2 argument, window mean
+    double reductionDbMin = 0.0;
+    double reductionDbMax = 0.0;
+    double h1Dbfs = 0.0;
+    double h2Dbfs = 0.0;
+    double h3Dbfs = 0.0;
+    double h5Dbfs = 0.0;
+    double h2RelativeDb = 0.0;
+    // The COMPLEX second-harmonic amplitude, same DFT and normalisation as
+    // h2Dbfs. Wave 9 needs it because the vintage FET's 2f output is the sum of
+    // two contributions -- `k2 * h2` (broadband) and `lowFrequencyK2 *
+    // colourLowH2` (the 250 Hz two-pole path) -- which at 100 Hz arrive nearly
+    // in QUADRATURE: the two-pole low pass shifts by -21.8 deg per pole there,
+    // and squaring doubles that to -87 deg. A magnitude-only reading cannot
+    // separate them, and inverting for the coefficient one of them needs is a
+    // complex problem, not a scalar one. h1 is carried for the same reason: the
+    // relative measure the campaign scores is h2 referred to it.
+    double h1Real = 0.0, h1Imag = 0.0;
+    double h2Real = 0.0, h2Imag = 0.0;
+    double h3Real = 0.0, h3Imag = 0.0;
+    double h5Real = 0.0, h5Imag = 0.0;
+};
+
+// Renders one settled sine through the vintage FET in process. The default
+// 3.0-4.5 s coherent-DFT window matches `harmonic_levels`; callers can select
+// the campaign's longer 9.0-10.5 s convergence window. The block size is
+// deliberately coprime with the 1 kHz period at 48 kHz (48 samples) so the
+// envelope samples walk every phase of the detector ripple instead of aliasing
+// onto three of them.
+FetHarmonicMeasurement measureFetHarmonics(double frequencyHz, float inputDbfs,
+                                           float inputPosition, int ratio = 0,
+                                           double sampleRate = 48000.0,
+                                           int blockSize = 13,
+                                           double totalSeconds = 5.0,
+                                           double measureStartSeconds = 3.0,
+                                           double measureStopSeconds = 4.5,
+                                           float releasePosition = 0.5f)
+{
+    const int totalSamples = static_cast<int>(
+        std::lround(totalSeconds * sampleRate));
+    const int measureStart = static_cast<int>(
+        std::lround(measureStartSeconds * sampleRate));
+    const int measureStop = static_cast<int>(
+        std::lround(measureStopSeconds * sampleRate));
+    MultiCompDSP dsp;
+    prepareReferenceFet(dsp, sampleRate, blockSize,
+                        inputPosition, 0.625915527f, ratio);
+    dsp.setParameter(MultiCompDSP::Parameter::FetRelease,
+                     fetReleasePlain(releasePosition));
+    std::vector<float> input(static_cast<size_t>(blockSize));
+    std::vector<float> output(static_cast<size_t>(blockSize));
+    const double amplitude = duskaudio::decibelsToGain(inputDbfs);
+    double realPart[5] = {0.0, 0.0, 0.0, 0.0, 0.0};
+    double imagPart[5] = {0.0, 0.0, 0.0, 0.0, 0.0};
+    double reductionSum = 0.0;
+    double reductionMin = std::numeric_limits<double>::max();
+    double reductionMax = -std::numeric_limits<double>::max();
+    int reductionCount = 0;
+    int measured = 0;
+    for (int offset = 0; offset < totalSamples; offset += blockSize)
+    {
+        const int count = std::min(blockSize, totalSamples - offset);
+        for (int sample = 0; sample < count; ++sample)
+            input[static_cast<size_t>(sample)] = static_cast<float>(
+                amplitude * std::sin(2.0 * duskaudio::kDuskPi * frequencyHz
+                    * static_cast<double>(offset + sample) / sampleRate));
+        const float* inputs[] = {input.data()};
+        float* outputs[] = {output.data()};
+        dsp.processBlock(inputs, outputs, 1, count);
+        for (int sample = 0; sample < count; ++sample)
+        {
+            const int absolute = offset + sample;
+            if (absolute < measureStart || absolute >= measureStop)
+                continue;
+            const double value = output[static_cast<size_t>(sample)];
+            for (int harmonic = 0; harmonic < 5; ++harmonic)
+            {
+                const double phase = 2.0 * duskaudio::kDuskPi * frequencyHz
+                    * static_cast<double>(harmonic + 1)
+                    * static_cast<double>(absolute) / sampleRate;
+                realPart[harmonic] += value * std::cos(phase);
+                imagPart[harmonic] -= value * std::sin(phase);
+            }
+            ++measured;
+        }
+        if (offset + count > measureStart && offset < measureStop)
+        {
+            const float envelope = duskaudio::decibelsToGain(
+                duskaudio::MultiCompDSPTestAccess::fetEnvelopeGainDb(dsp, 0));
+            const double reduction = -static_cast<double>(
+                duskaudio::gainToDecibels(envelope + 0.001f));
+            reductionSum += reduction;
+            reductionMin = std::min(reductionMin, reduction);
+            reductionMax = std::max(reductionMax, reduction);
+            ++reductionCount;
+        }
+    }
+    require(measured == measureStop - measureStart && reductionCount > 0,
+            "FET harmonic render measures exactly the requested coherent window");
+    FetHarmonicMeasurement result;
+    result.reductionDbMean = reductionSum / static_cast<double>(reductionCount);
+    result.reductionDbMin = reductionMin;
+    result.reductionDbMax = reductionMax;
+    const auto levelDb = [measured](double re, double im) {
+        const double magnitude = 2.0 * std::hypot(re, im)
+            / static_cast<double>(measured);
+        return 20.0 * std::log10(std::max(magnitude, 1.0e-30));
+    };
+    result.h1Dbfs = levelDb(realPart[0], imagPart[0]);
+    result.h2Dbfs = levelDb(realPart[1], imagPart[1]);
+    result.h3Dbfs = levelDb(realPart[2], imagPart[2]);
+    result.h5Dbfs = levelDb(realPart[4], imagPart[4]);
+    result.h2RelativeDb = result.h2Dbfs - result.h1Dbfs;
+    const double scale = 2.0 / static_cast<double>(measured);
+    result.h1Real = realPart[0] * scale;
+    result.h1Imag = imagPart[0] * scale;
+    result.h2Real = realPart[1] * scale;
+    result.h2Imag = imagPart[1] * scale;
+    result.h3Real = realPart[2] * scale;
+    result.h3Imag = imagPart[2] * scale;
+    result.h5Real = realPart[4] * scale;
+    result.h5Imag = imagPart[4] * scale;
+    return result;
+}
+
+struct FetDetectorMeasurement
+{
+    double reductionDbMean = 0.0;
+    double reductionDbMinimum = 0.0;
+    double reductionDbMaximum = 0.0;
+};
+
+// Null-method diagnostic for the vintage detector's private transformer path.
+// The ordinary render and the external-sidechain render receive the same sine
+// as audio and detector input. Their audio path is therefore identical. The
+// only intended difference is at processFET's detector selection: internal
+// reads inputTransformerFet, external reads the raw prepared sidechain. Reading
+// the mode envelope directly avoids attributing GR-dependent audio coloration
+// or harmonic energy to the detector.
+FetDetectorMeasurement measureFetDetectorTransformer(
+    double frequencyHz, float inputDbfs, float inputPosition,
+    bool external, double sampleRate)
+{
+    constexpr int blockSize = 1;
+    const int totalSamples = static_cast<int>(std::lround(12.0 * sampleRate));
+    const int measureStart = static_cast<int>(std::lround(9.0 * sampleRate));
+    const int measureStop = static_cast<int>(std::lround(10.5 * sampleRate));
+    MultiCompDSP dsp;
+    prepareReferenceFet(dsp, sampleRate, blockSize,
+                        inputPosition, 0.625915527f, 0);
+    dsp.setParameter(MultiCompDSP::Parameter::ExternalSidechain,
+                     external ? 1.0f : 0.0f);
+    const double amplitude = duskaudio::decibelsToGain(inputDbfs);
+    double reductionSum = 0.0;
+    double reductionMinimum = std::numeric_limits<double>::max();
+    double reductionMaximum = -std::numeric_limits<double>::max();
+    int measured = 0;
+    float input = 0.0f;
+    float output = 0.0f;
+    for (int sample = 0; sample < totalSamples; ++sample)
+    {
+        input = static_cast<float>(amplitude * std::sin(
+            2.0 * duskaudio::kDuskPi * frequencyHz
+            * static_cast<double>(sample) / sampleRate));
+        const float* inputs[] = {&input};
+        float* outputs[] = {&output};
+        if (external)
+        {
+            const float* sidechains[] = {&input};
+            dsp.processBlockExternal(inputs, sidechains, outputs, 1, 1);
+        }
+        else
+            dsp.processBlock(inputs, outputs, 1, 1);
+        if (sample < measureStart || sample >= measureStop)
+            continue;
+        const double reduction = -static_cast<double>(
+            duskaudio::MultiCompDSPTestAccess::fetEnvelopeGainDb(dsp, 0));
+        reductionSum += reduction;
+        reductionMinimum = std::min(reductionMinimum, reduction);
+        reductionMaximum = std::max(reductionMaximum, reduction);
+        ++measured;
+    }
+    require(measured == measureStop - measureStart,
+            "FET detector null measures exactly the campaign 9.0-10.5 second window");
+    return {reductionSum / static_cast<double>(measured),
+            reductionMinimum, reductionMaximum};
+}
+
+void reportFetDetectorFrequencyNull()
+{
+    std::puts("FET detector transformer null (external raw minus internal transformed GR):");
+    for (double sampleRate : {48000.0, 96000.0})
+        for (double frequencyHz : {40.0, 60.0, 100.0, 1000.0,
+                                   15900.0, 16000.0, 16100.0})
+            for (const auto point : {std::array<float, 2>{{0.6f, -30.0f}},
+                                     std::array<float, 2>{{0.8f, -18.0f}}})
+            {
+                const auto internal = measureFetDetectorTransformer(
+                    frequencyHz, point[1], point[0], false, sampleRate);
+                const auto external = measureFetDetectorTransformer(
+                    frequencyHz, point[1], point[0], true, sampleRate);
+                std::printf("  rate %.0f f %7.1f i%.1f src %+.0f: "
+                            "internal %.7f [%.7f %.7f] external %.7f "
+                            "[%.7f %.7f] delta %+.7f dB\n",
+                            sampleRate, frequencyHz,
+                            static_cast<double>(point[0]),
+                            static_cast<double>(point[1]),
+                            internal.reductionDbMean,
+                            internal.reductionDbMinimum,
+                            internal.reductionDbMaximum,
+                            external.reductionDbMean,
+                            external.reductionDbMinimum,
+                            external.reductionDbMaximum,
+                            external.reductionDbMean - internal.reductionDbMean);
+            }
+}
+
+// Diagnostic grid: places every campaign harmonic row on the `fetBroadbandK2`
+// axis and reports what the in-process DSP produces there. Not gated -- the
+// gate is testFetBroadbandHarmonicSurface below.
+void reportFetBroadbandK2Surface()
+{
+    std::puts("FET broadband H2 surface (in-process, fetBroadbandK2 coordinate):");
+    for (double frequency : {1000.0, 100.0})
+        for (float inputPosition : {0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f,
+                                    0.9f, 1.0f})
+            // -45 and -15 dBFS are Wave 9 additions, and only the reduction
+            // axis motivates them: at 100 Hz the knob/level product jumps from
+            // 1.39 to 2.58 dB of reduction with nothing between, and from 4.97
+            // to 6.92, which are the two steepest stretches of the
+            // low-frequency colour law. Leaving a segment sampled only at its
+            // edges is the exact hole Wave 8 found in `fetBroadbandK2`.
+            for (float level : {-48.0f, -46.0f, -45.0f, -42.0f, -36.0f,
+                                -30.0f, -24.0f, -18.0f, -15.0f, -12.0f, -9.0f,
+                                -7.5f, -6.0f})
+            {
+                const auto measured = measureFetHarmonics(
+                    frequency, level, inputPosition);
+                // The complex H1/H2 tail is appended, never inserted: the
+                // campaign probe parses this line with a prefix-anchored
+                // regular expression, so growing the right-hand end is safe and
+                // reordering the left-hand end is not.
+                std::printf("  %6.0f Hz i%.2f src %+6.1f dBFS: gr %8.4f dB "
+                            "[%8.4f %8.4f] H1 %+10.5f H2 %+10.5f H2rel %+10.5f "
+                            "H3rel %+10.5f H2re %+.9e H2im %+.9e "
+                            "H1re %+.9e H1im %+.9e H3re %+.9e H3im %+.9e "
+                            "H5re %+.9e H5im %+.9e H5rel %+10.5f\n",
+                            frequency, static_cast<double>(inputPosition),
+                            static_cast<double>(level),
+                            measured.reductionDbMean, measured.reductionDbMin,
+                            measured.reductionDbMax, measured.h1Dbfs,
+                            measured.h2Dbfs, measured.h2RelativeDb,
+                            measured.h3Dbfs - measured.h1Dbfs,
+                            measured.h2Real, measured.h2Imag,
+                            measured.h1Real, measured.h1Imag,
+                            measured.h3Real, measured.h3Imag,
+                            measured.h5Real, measured.h5Imag,
+                            measured.h5Dbfs - measured.h1Dbfs);
+            }
+}
+
+// Wave 9 doubt #4 (wave3f_validation.md section 8.4). The drive-axis fitted
+// attack tau at -6 dBFS moved 3.2314 -> 3.6174 ms under Wave 8's colour-only
+// change while the gated curve RMS moved 3e-04. Either the added 2f content
+// perturbs the DEMODULATED envelope the estimator reads -- a measurement-side
+// artefact of a diagnostic -- or the internal gain-reduction trajectory really
+// moved, which would break Wave 8's isolation claim.
+//
+// This dumps the internal trajectory itself: `d.envelope` in dB, read straight
+// off the mode state, one sample per block with blockSize 1, over the same
+// window the estimator fits. Run it on two builds and diff. The whole point is
+// that it does NOT go through the demodulator, so it cannot share its artefact.
+void reportFetEnvelopeTrace()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr double quietSeconds = 1.0;
+    constexpr double traceSeconds = 0.060;
+    constexpr double carrierHz = 1000.0;
+    // The drive-axis row in question, with the campaign's controls: input knob
+    // 0.8, attack 0.5, 4:1, a phase-continuous burst after a -72 dBFS carrier.
+    for (float driveDbfs : {-6.0f, -18.0f, -30.0f})
+    {
+        MultiCompDSP dsp;
+        prepareReferenceFet(dsp, sampleRate, 1, 0.8f, 0.625915527f, 0);
+        dsp.setParameter(MultiCompDSP::Parameter::FetAttack, fetAttackPlain(0.5f));
+        const float quietAmplitude = duskaudio::decibelsToGain(-72.0f);
+        const float loudAmplitude = duskaudio::decibelsToGain(driveDbfs);
+        const int loudFrom = static_cast<int>(std::lround(quietSeconds * sampleRate));
+        const int totalSamples = loudFrom
+            + static_cast<int>(std::lround(traceSeconds * sampleRate));
+        float left = 0.0f, right = 0.0f, outLeft = 0.0f, outRight = 0.0f;
+        // FNV-1a over the raw bit patterns, so a one-ULP move is a different
+        // digest. Sampled values are printed alongside for human reading.
+        std::uint64_t digest = 1469598103934665603ull;
+        double outputPeak = 0.0;
+        for (int n = 0; n < totalSamples; ++n)
+        {
+            const float value = (n < loudFrom ? quietAmplitude : loudAmplitude)
+                * std::sin(2.0f * kPi * static_cast<float>(carrierHz)
+                    * static_cast<float>(n) / static_cast<float>(sampleRate));
+            left = right = value;
+            const float* inputs[] = {&left, &right};
+            float* outputs[] = {&outLeft, &outRight};
+            dsp.processBlock(inputs, outputs, 2, 1);
+            outputPeak = std::max(outputPeak,
+                std::max(std::abs(static_cast<double>(outLeft)),
+                         std::abs(static_cast<double>(outRight))));
+            if (n < loudFrom) continue;
+            const float envelopeDb
+                = duskaudio::MultiCompDSPTestAccess::fetEnvelopeGainDb(dsp, 0);
+            std::uint32_t bits;
+            std::memcpy(&bits, &envelopeDb, sizeof(bits));
+            for (int byte = 0; byte < 4; ++byte)
+            {
+                digest ^= (bits >> (byte * 8)) & 0xffu;
+                digest *= 1099511628211ull;
+            }
+            const int elapsed = n - loudFrom;
+            for (double milliseconds : {0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0, 40.0})
+                if (elapsed == static_cast<int>(std::lround(
+                        milliseconds * sampleRate / 1000.0)))
+                    std::printf("  ENVTRACE drive %+.0f dBFS t %6.2f ms "
+                                "envelope %+.9f dB\n",
+                                static_cast<double>(driveDbfs), milliseconds,
+                                static_cast<double>(envelopeDb));
+        }
+        std::printf("  ENVTRACE drive %+.0f dBFS digest %016llx samples %d "
+                    "output peak %.9f\n",
+                    static_cast<double>(driveDbfs),
+                    static_cast<unsigned long long>(digest),
+                    static_cast<int>(std::lround(traceSeconds * sampleRate)),
+                    outputPeak);
+    }
+}
+
+void testFetBroadbandHarmonicSurface()
+{
+    // Six absolute anchors on the reference unit's own 1 kHz second harmonic,
+    // one per region of `fetBroadbandK2`, rendered from the installed AU by
+    // `probe_h2_surface.py` (campaign reference_comparison_1176) and quoted
+    // here as H2 relative to the fundamental, which is scalar-immune: a gain
+    // error anywhere in the chain cancels out of the ratio, so this measures
+    // the colour law and nothing else.
+    //
+    // Two of the six sit where NOTHING previously looked. The campaign's
+    // sixteen-row harmonic grid reaches only eight distinct reduction depths,
+    // four of them zero, so three of the old table's seven segments held no
+    // measured point at all -- and the interior of the widest of them read
+    // 5.14 dB high. `probe_h2_surface.py` is the VST3-level guard on the dense
+    // axis; these are its in-process mirror at the depths that matter.
+    struct Point
+    {
+        float inputPosition;
+        float inputDbfs;
+        double reductionDb;              // the fetBroadbandK2 argument
+        double referenceH2RelativeDb;
+        double previousErrorDb;          // what the pre-Wave-8 table read here
+    };
+    constexpr std::array<Point, 6> points{{
+        {0.2f, -36.0f,  -0.009, -83.991595, -0.2590},
+        {0.4f, -30.0f,   0.557, -65.114341, -1.3251},
+        {0.8f, -36.0f,   8.984, -65.319662, +3.1241},
+        {0.6f, -24.0f,  12.800, -61.448271, +5.1379},
+        {0.8f, -24.0f,  18.864, -54.794383, +3.7694},
+        {0.8f, -12.0f,  28.663, -43.927124, -0.4908}}};
+
+    // Set by what it has to catch, not by taste. The table this replaced read
+    // 5.14 dB high at the fourth point and 3.77 at the fifth; the campaign's
+    // own harmonic gate is 1.0 dB. 0.35 dB is 14x under the worst defect, 2.9x
+    // under the campaign gate, and 3.5x over the worst error this build
+    // actually produces anywhere on the 39-row 1 kHz surface (0.262 dB).
+    constexpr double kBoundDb = 0.35;
+    double worstError = 0.0;
+    for (const auto& point : points)
+    {
+        const auto measured = measureFetHarmonics(
+            1000.0, point.inputDbfs, point.inputPosition);
+        const double error = measured.h2RelativeDb - point.referenceH2RelativeDb;
+        worstError = std::max(worstError, std::abs(error));
+        // The reduction is checked too: these anchors are only meaningful at
+        // the depth they were measured at, so a change that moved the detector
+        // must fail here rather than silently re-point the assertion.
+        std::printf("FET H2 surface: i%.1f %+.0f dBFS gr %.4f (expected %.3f) "
+                    "reference %.6f measured %.6f error %+.6f dB "
+                    "(previous table %+.4f)\n",
+                    static_cast<double>(point.inputPosition),
+                    static_cast<double>(point.inputDbfs),
+                    measured.reductionDbMean, point.reductionDb,
+                    point.referenceH2RelativeDb, measured.h2RelativeDb, error,
+                    point.previousErrorDb);
+        require(std::abs(measured.reductionDbMean - point.reductionDb) < 0.02,
+                "vintage FET H2 anchors are evaluated at the reduction they were measured at");
+    }
+    std::printf("FET H2 surface: worst %+.6f dB over %zu anchors (bound %.2f)\n",
+                worstError, points.size(), kBoundDb);
+    require(worstError < kBoundDb,
+            "vintage FET broadband H2 matches the measured reference across the reduction axis");
+}
+
+void testFetBroadbandOddHarmonicSurface()
+{
+    // Absolute anchors on the installed reference unit's 1 kHz third
+    // harmonic, rendered by `probe_h2_surface.py` and quoted relative to each
+    // row's own fundamental.  The ten rows span every region of the measured
+    // reduction-dependent cubic law; all sit above the campaign's -92 dBc
+    // harmonic floor.
+    struct Point
+    {
+        float inputPosition;
+        float inputDbfs;
+        double reductionDb;              // the broadband cubic argument
+        double referenceH3RelativeDb;
+        double previousErrorDb;          // the constant -0.006 law
+    };
+    constexpr std::array<Point, 10> points{{
+        {0.2f, -18.0f,  0.3543, -83.185967, +2.4514},
+        {0.8f, -48.0f,  1.0175, -78.547980, +1.5210},
+        {0.4f, -24.0f,  3.1457, -72.965816, +0.9981},
+        {0.4f, -18.0f,  7.7089, -68.541805, +0.3595},
+        {1.0f, -36.0f, 10.0089, -67.305299, +0.4806},
+        {0.8f, -30.0f, 13.9253, -66.683950, +1.9392},
+        {0.8f, -24.0f, 18.8564, -67.067362, +3.7122},
+        {0.8f, -18.0f, 23.7855, -67.007091, +5.1897},
+        {0.8f, -12.0f, 28.6512, -66.239258, +6.1158},
+        {0.8f,  -6.0f, 33.4397, -65.841835, +7.5232}}};
+
+    // The fitted table predicts 0.090 dB worst over all 36 scoreable dense
+    // rows. 0.25 dB leaves 0.16 dB for render/fit error, is 4x tighter than the
+    // campaign harmonic gate, and is 30x below the defect this test guards.
+    constexpr double kBoundDb = 0.25;
+    double worstError = 0.0;
+    for (const auto& point : points)
+    {
+        const auto measured = measureFetHarmonics(
+            1000.0, point.inputDbfs, point.inputPosition,
+            0, 48000.0, 13, 5.0, 3.0, 4.5, 0.66595459f);
+        const double relativeDb = measured.h3Dbfs - measured.h1Dbfs;
+        const double error = relativeDb - point.referenceH3RelativeDb;
+        worstError = std::max(worstError, std::abs(error));
+        std::printf("FET H3 surface: i%.1f %+.0f dBFS gr %.4f (expected %.4f) "
+                    "reference %.6f measured %.6f error %+.6f dB "
+                    "(constant cubic %+.4f)\n",
+                    static_cast<double>(point.inputPosition),
+                    static_cast<double>(point.inputDbfs),
+                    measured.reductionDbMean, point.reductionDb,
+                    point.referenceH3RelativeDb, relativeDb, error,
+                    point.previousErrorDb);
+        require(std::abs(measured.reductionDbMean - point.reductionDb) < 0.02,
+                "vintage FET H3 anchors are evaluated at the reduction they were measured at");
+    }
+    std::printf("FET H3 surface: worst %+.6f dB over %zu anchors (bound %.2f)\n",
+                worstError, points.size(), kBoundDb);
+    require(worstError < kBoundDb,
+            "vintage FET broadband H3 matches the measured reference across the reduction axis");
+}
+
+void testFetDenseShallowLowFrequencyH3()
+{
+    // Wave 25's long-window quarter-dB sweep resolved a shallow 100 Hz H3
+    // discontinuity that the sparse anchor grid cannot see. Wave 31 corrected
+    // the net transfer knee after the colour stage, so H3/H1 is deliberately
+    // unchanged and this is the red gate for re-keying only the shallow T3
+    // lookup coordinate. All 33 reference rows are above the -92 dBc floor;
+    // phase is H3 normalised to the measured H1 phase in the retained UAD WAVs.
+    constexpr std::array<double, 33> referenceH3RelativeDb{{
+        -87.5355661498, -87.0345848794, -86.5351668744,
+        -86.0312293496, -85.5273531539, -85.0280479681,
+        -84.5333143309, -84.0341295974, -83.5338373029,
+        -83.0330680840, -82.5339559301, -82.0337489982,
+        -81.5355197908, -81.0348656644, -80.5314591569,
+        -79.8022302194, -78.4827434384, -76.7603074239,
+        -74.9308655682, -73.1561258963, -71.5103369991,
+        -70.0956033502, -68.8039456730, -67.6385917602,
+        -66.5862012345, -65.6257125540, -64.7530959602,
+        -63.9492703885, -63.2050707290, -62.4919866483,
+        -61.8479698190, -61.2448072109, -60.6779950280,
+    }};
+    constexpr std::array<double, 33> referenceH3PhaseDegrees{{
+        164.574386210, 164.568754298, 164.587209264,
+        164.583462881, 164.555582900, 164.581018951,
+        164.559148355, 164.563333155, 164.565172531,
+        164.564831551, 164.567394428, 164.581083527,
+        164.567890256, 164.565486682, 162.609175403,
+        151.692183566, 137.444247340, 125.704337058,
+        116.545006349, 109.996295484, 105.443832946,
+        101.992914880, 99.447364997, 97.455138422,
+        95.971594935, 94.726141534, 93.789663654,
+        93.000992621, 92.347180306, 91.808287130,
+        91.337563273, 90.975973893, 90.682247744,
+    }};
+    // Wave 31 disabled-cell controls. The complex H3 correction must not move
+    // the detector coordinate, fundamental, H2, or H5 while closing H3.
+    constexpr std::array<double, 33> baselineRawReductionDb{{
+        0.029716000, 0.048177000, 0.070274000, 0.096058000,
+        0.125481000, 0.158561000, 0.195368000, 0.235742000,
+        0.279877000, 0.327532000, 0.378935000, 0.434012000,
+        0.492733000, 0.555186000, 0.621030000, 0.691084000,
+        0.764184000, 0.841293000, 0.922006000, 1.006012000,
+        1.094495000, 1.186523000, 1.280972000, 1.380174000,
+        1.483288000, 1.589177000, 1.698991000, 1.812978000,
+        1.930353000, 2.050711000, 2.175596000, 2.330144000,
+        2.523558000,
+    }};
+    constexpr std::array<double, 33> baselineH1Dbfs{{
+        -22.517646519, -22.267776115, -22.017924806, -21.768063099,
+        -21.518243558, -21.268396665, -21.018562962, -20.768732336,
+        -20.518977564, -20.269160613, -20.019358791, -19.769581424,
+        -19.519810191, -19.270195905, -19.028065592, -18.823623932,
+        -18.647961145, -18.492946606, -18.353784838, -18.225785490,
+        -18.108660738, -17.993383887, -17.886011202, -17.784177402,
+        -17.686316849, -17.593147310, -17.501647061, -17.413560609,
+        -17.328535586, -17.238455408, -17.158407652, -17.079629548,
+        -17.003295320,
+    }};
+    constexpr std::array<double, 33> baselineH2RelativeDb{{
+        -68.176862518, -67.919736609, -67.661408400, -67.401899067,
+        -67.141503189, -66.880034702, -66.617654179, -66.354426405,
+        -66.090456669, -65.825923755, -65.560601330, -65.294723278,
+        -65.028456835, -64.761711657, -64.558376597, -64.503492683,
+        -64.458505667, -64.426396787, -64.344126736, -63.974874818,
+        -63.415142104, -62.693191572, -61.858654057, -60.940430082,
+        -60.256219303, -59.583329668, -58.898983716, -58.215039428,
+        -57.538036035, -56.944940939, -56.456114109, -55.923925238,
+        -55.340584815,
+    }};
+    constexpr std::array<double, 33> baselineH5RelativeDb{{
+        -107.650059235, -103.475767425, -100.217278878, -97.499889181,
+        -95.181745995, -93.143545054, -91.321140508, -89.677320044,
+        -88.198104175, -86.844162414, -85.590532914, -84.423507653,
+        -83.334528742, -82.307836261, -81.335691130, -80.407565785,
+        -80.570779415, -82.113527529, -82.035633823, -79.712111086,
+        -77.708341240, -76.065702145, -74.667480346, -73.365161890,
+        -72.349628632, -71.367801275, -70.406562232, -69.659530361,
+        -68.943540125, -68.245675954, -67.556478621, -67.038444608,
+        -66.426639305,
+    }};
+    constexpr float inputPosition = 0.8f;
+    constexpr float inputGainDb = 38.603869f;
+    constexpr double worstErrorBoundDb = 0.75;
+    constexpr double adjacentErrorStepBoundDb = 0.20;
+    constexpr double phaseErrorBoundDegrees = 3.0;
+    constexpr double neighbourMovementBoundDb = 0.02;
+    double worstError = 0.0;
+    double worstAdjacentErrorStep = 0.0;
+    double worstPhaseErrorDegrees = 0.0;
+    double worstReductionMovementDb = 0.0;
+    double worstH1MovementDb = 0.0;
+    double worstH2MovementDb = 0.0;
+    double worstH5MovementDb = 0.0;
+    double previousError = 0.0;
+    for (size_t index = 0; index < referenceH3RelativeDb.size(); ++index)
+    {
+        const double driveDb = -14.0 + 0.25 * static_cast<double>(index);
+        const auto measured = measureFetHarmonics(
+            100.0, static_cast<float>(driveDb - inputGainDb),
+            inputPosition, 0, 48000.0, 13, 12.0, 9.0, 10.5);
+        const double relativeDb = measured.h3Dbfs - measured.h1Dbfs;
+        const double error = relativeDb - referenceH3RelativeDb[index];
+        const double relativePhaseDegrees = std::remainder(
+            (std::atan2(measured.h3Imag, measured.h3Real)
+                - 3.0 * std::atan2(measured.h1Imag, measured.h1Real))
+                * 180.0 / static_cast<double>(kPi),
+            360.0);
+        const double phaseErrorDegrees = std::remainder(
+            relativePhaseDegrees - referenceH3PhaseDegrees[index], 360.0);
+        worstError = std::max(worstError, std::abs(error));
+        worstPhaseErrorDegrees = std::max(
+            worstPhaseErrorDegrees, std::abs(phaseErrorDegrees));
+        worstReductionMovementDb = std::max(worstReductionMovementDb,
+            std::abs(measured.reductionDbMean
+                - baselineRawReductionDb[index]));
+        worstH1MovementDb = std::max(worstH1MovementDb,
+            std::abs(measured.h1Dbfs - baselineH1Dbfs[index]));
+        worstH2MovementDb = std::max(worstH2MovementDb,
+            std::abs(measured.h2RelativeDb
+                - baselineH2RelativeDb[index]));
+        worstH5MovementDb = std::max(worstH5MovementDb,
+            std::abs(measured.h5Dbfs - measured.h1Dbfs
+                - baselineH5RelativeDb[index]));
+        if (index > 0)
+            worstAdjacentErrorStep = std::max(
+                worstAdjacentErrorStep, std::abs(error - previousError));
+        previousError = error;
+        std::printf("FET dense shallow H3: drive %+.2f raw GR %.6f "
+                    "reference %.6f measured %.6f error %+.6f dB "
+                    "phase ref %.3f measured %.3f error %+.3f deg "
+                    "H1dB %.9f H2rel %.9f H5rel %.9f\n",
+                    driveDb, measured.reductionDbMean,
+                    referenceH3RelativeDb[index], relativeDb, error,
+                    referenceH3PhaseDegrees[index], relativePhaseDegrees,
+                    phaseErrorDegrees,
+                    measured.h1Dbfs, measured.h2RelativeDb,
+                    measured.h5Dbfs - measured.h1Dbfs);
+    }
+    std::printf("FET dense shallow H3: worst error %.6f dB (bound %.2f), "
+                "worst adjacent error step %.6f dB (bound %.2f)\n",
+                worstError, worstErrorBoundDb,
+                worstAdjacentErrorStep, adjacentErrorStepBoundDb);
+    std::printf("FET dense shallow H3: worst phase error %.6f degrees "
+                "(bound %.1f)\n",
+                worstPhaseErrorDegrees, phaseErrorBoundDegrees);
+    std::printf("FET dense shallow H3 neighbours: GR %.9f H1 %.9f H2 %.9f "
+                "H5 %.9f dB movement (bound %.2f)\n",
+                worstReductionMovementDb, worstH1MovementDb,
+                worstH2MovementDb, worstH5MovementDb,
+                neighbourMovementBoundDb);
+    require(worstError < worstErrorBoundDb
+                && worstAdjacentErrorStep < adjacentErrorStepBoundDb
+                && worstPhaseErrorDegrees < phaseErrorBoundDegrees
+                && worstReductionMovementDb < neighbourMovementBoundDb
+                && worstH1MovementDb < neighbourMovementBoundDb
+                && worstH2MovementDb < neighbourMovementBoundDb
+                && worstH5MovementDb < neighbourMovementBoundDb,
+            "vintage FET dense shallow H3 follows the continuous UAD knee surface");
+}
+
+void testFetDenseBroadbandComplexH3()
+{
+    // Wave 27's matched-reduction experiment exposed a hole between the sparse
+    // broadband-K3 anchors: at the campaign's standard Input 0.8 setting the
+    // reference H3 vector rotates by more than 120 degrees as drive increases,
+    // while the reduction-only cubic remains near 135 degrees. These are
+    // same-stimulus UAD rows, so unlike the diagnostic matched-GR pairs they
+    // are an absolute parity surface. Nine 6 dB-spaced calibration rows are the
+    // fit candidates. The interleaved original campaign rows are held out.
+    struct Point
+    {
+        double driveDb;
+        double referenceH3RelativeDb;
+        double referenceH3PhaseDegrees;
+        bool longWindow;
+    };
+    constexpr std::array<Point, 17> points48{{
+        {-10.000000, -80.093341978695, 177.687066107719, true},
+        { -9.396131, -78.547979854381, 171.226193686187, false},
+        { -6.000000, -75.275138780963, 161.662663170743, true},
+        {  0.000000, -71.341723628416, 148.874140373035, true},
+        {  2.603869, -67.758380420931, 134.327004564712, false},
+        {  6.000000, -69.398865553427, 143.746264604366, true},
+        {  8.603869, -66.683950146981, 129.606510806320, false},
+        { 12.000000, -69.994428200374, 133.836171775278, true},
+        { 14.603869, -67.067362001200, 114.802823644219, false},
+        { 18.000000, -71.693122390628, 105.360058420843, true},
+        { 20.603869, -67.007091083965,  97.413860751674, false},
+        { 24.000000, -71.022650547630, 104.135549319130, true},
+        { 26.603869, -66.239258321331, 103.756598802683, false},
+        { 29.603869, -66.280253217482,  90.457415082858, false},
+        { 30.000000, -70.799346975874,  82.234725653060, true},
+        { 32.603869, -65.841834939054,  78.825484571464, false},
+        { 34.000000, -68.728361536357,  52.833790119970, true},
+    }};
+    constexpr std::array<Point, 13> points96{{
+        {-10.000000, -80.097042453048, 177.696342306673, true},
+        { -6.000000, -75.455011881557, 161.038265236934, true},
+        {  0.000000, -71.628434186257, 147.756265096633, true},
+        {  2.603869, -68.081229874941, 131.316680755374, false},
+        {  6.000000, -69.742686119066, 141.522779246719, true},
+        { 12.000000, -70.306788585484, 130.972063972273, true},
+        { 14.603869, -67.231070894836, 111.064005040855, false},
+        { 18.000000, -71.753961126338, 100.247994488755, true},
+        { 24.000000, -71.046582933575,  98.881462478703, true},
+        { 26.603869, -66.344200218942,  99.526868957747, false},
+        { 30.000000, -70.507458664241,  77.826050538591, true},
+        { 32.603869, -65.687203176704,  74.615490903841, false},
+        { 34.000000, -68.244547763047,  50.193464717676, true},
+    }};
+    struct Neighbour
+    {
+        double reductionDb;
+        double h1Dbfs;
+        double h2RelativeDb;
+        double h5RelativeDb;
+    };
+    // GR/H1/H2 are the Wave 32 disabled-cell controls. H5 is the accepted
+    // Wave 34 complex-H5 surface; keeping it here preserves the isolation
+    // check on the H3 cell after that independently intended H5 movement.
+    constexpr std::array<Neighbour, 17> neighbours48{{
+        {0.841649000, -18.629714537, -64.887909553, -99.581655271},
+        {1.017519000, -18.285063626, -64.846393526, -100.879597828},
+        {2.575931000, -16.984825081, -65.586058982, -91.534458011},
+        {6.890009000, -15.413734199, -66.844373894, -83.085557935},
+        {8.982944000, -14.909029296, -65.422977733, -77.202491691},
+        {11.845395000, -14.385453508, -62.441230449, -80.058262355},
+        {13.924587000, -13.870014377, -60.081638318, -75.647198253},
+        {16.792435000, -13.358179157, -56.969671451, -79.034972720},
+        {18.855112000, -12.832771605, -54.763665988, -74.626986666},
+        {21.740536000, -12.351838120, -51.626013367, -78.192254130},
+        {23.772755000, -11.808827369, -48.961281052, -73.785922015},
+        {26.637381000, -11.331278484, -45.593773604, -77.563605756},
+        {28.638845000, -10.778717817, -43.962033952, -73.267264548},
+        {31.046316000, -10.263438194, -43.210607233, -73.005297776},
+        {31.472347000, -10.309492422, -43.213892135, -77.110961415},
+        {33.429245000,  -9.749078832, -42.466283929, -72.684391483},
+        {34.640800000,  -9.629165393, -42.230297759, -76.742451740},
+    }};
+    constexpr std::array<Neighbour, 13> neighbours96{{
+        {0.840455000, -18.632275228, -64.886996710, -99.473814047},
+        {2.563588000, -16.987101913, -65.552781857, -91.448550478},
+        {6.876930000, -15.402907847, -66.812403986, -83.352131442},
+        {8.979934000, -14.908283965, -65.396640992, -77.186430657},
+        {11.842650000, -14.384965875, -62.429217230, -80.220393326},
+        {16.794703000, -13.362716404, -56.963142668, -79.133477181},
+        {18.860217000, -12.840183893, -54.756840865, -74.650385893},
+        {21.742937000, -12.356526314, -51.622620658, -78.215637876},
+        {26.637899000, -11.334068943, -45.592883592, -77.527998525},
+        {28.656762000, -10.799360916, -43.977103985, -73.448082011},
+        {31.468414000, -10.307674402, -43.209729376, -77.004771575},
+        {33.443372000,  -9.766143549, -42.478466744, -72.935668328},
+        {34.636967000,  -9.627382846, -42.226193831, -76.676009167},
+    }};
+    constexpr float inputPosition = 0.8f;
+    constexpr double inputGainDb = 38.603869;
+    constexpr double magnitudeBoundDb = 0.25;
+    constexpr double phaseBoundDegrees = 3.0;
+    constexpr double adjacentErrorStepBoundDb = 0.20;
+    double worstMagnitudeErrorDb = 0.0;
+    double worstPhaseErrorDegrees = 0.0;
+    double worstAdjacentErrorStepDb = 0.0;
+    double worstReductionMovementDb = 0.0;
+    double worstH1MovementDb = 0.0;
+    double worstH2MovementDb = 0.0;
+    double worstH5MovementDb = 0.0;
+
+    const auto measureRate = [&](double sampleRate, const auto& points,
+                                 const auto& neighbours) {
+        double previousError = 0.0;
+        for (size_t index = 0; index < points.size(); ++index)
+        {
+            const auto& point = points[index];
+            const auto measured = measureFetHarmonics(
+                1000.0, static_cast<float>(point.driveDb - inputGainDb),
+                inputPosition, 0, sampleRate, 13,
+                point.longWindow ? 12.0 : 5.0,
+                point.longWindow ? 9.0 : 3.0,
+                point.longWindow ? 10.5 : 4.5,
+                point.longWindow ? 0.5f : 0.66595459f);
+            const double relativeDb = measured.h3Dbfs - measured.h1Dbfs;
+            const double magnitudeErrorDb
+                = relativeDb - point.referenceH3RelativeDb;
+            const double relativePhaseDegrees = std::remainder(
+                (std::atan2(measured.h3Imag, measured.h3Real)
+                    - 3.0 * std::atan2(measured.h1Imag, measured.h1Real))
+                    * 180.0 / static_cast<double>(kPi),
+                360.0);
+            const double phaseErrorDegrees = std::remainder(
+                relativePhaseDegrees - point.referenceH3PhaseDegrees, 360.0);
+            worstMagnitudeErrorDb = std::max(
+                worstMagnitudeErrorDb, std::abs(magnitudeErrorDb));
+            worstPhaseErrorDegrees = std::max(
+                worstPhaseErrorDegrees, std::abs(phaseErrorDegrees));
+            worstReductionMovementDb = std::max(worstReductionMovementDb,
+                std::abs(measured.reductionDbMean
+                    - neighbours[index].reductionDb));
+            worstH1MovementDb = std::max(worstH1MovementDb,
+                std::abs(measured.h1Dbfs - neighbours[index].h1Dbfs));
+            worstH2MovementDb = std::max(worstH2MovementDb,
+                std::abs(measured.h2RelativeDb
+                    - neighbours[index].h2RelativeDb));
+            worstH5MovementDb = std::max(worstH5MovementDb,
+                std::abs(measured.h5Dbfs - measured.h1Dbfs
+                    - neighbours[index].h5RelativeDb));
+            if (index > 0)
+                worstAdjacentErrorStepDb = std::max(
+                    worstAdjacentErrorStepDb,
+                    std::abs(magnitudeErrorDb - previousError));
+            previousError = magnitudeErrorDb;
+            std::printf("FET dense broadband complex H3: %.0f kHz drive "
+                        "%+.6f raw GR %.6f reference %.6f measured %.6f "
+                        "error %+.6f dB phase ref %.3f measured %.3f "
+                        "error %+.3f deg H1 %.9f H2rel %.9f H5rel %.9f %s\n",
+                        sampleRate / 1000.0, point.driveDb,
+                        measured.reductionDbMean,
+                        point.referenceH3RelativeDb, relativeDb,
+                        magnitudeErrorDb, point.referenceH3PhaseDegrees,
+                        relativePhaseDegrees, phaseErrorDegrees,
+                        measured.h1Dbfs, measured.h2RelativeDb,
+                        measured.h5Dbfs - measured.h1Dbfs,
+                        point.longWindow ? "fit" : "heldout");
+        }
+    };
+    measureRate(48000.0, points48, neighbours48);
+    measureRate(96000.0, points96, neighbours96);
+    std::printf("FET dense broadband complex H3 summary: magnitude %.6f dB "
+                "(bound %.2f), phase %.6f degrees (bound %.1f), adjacent "
+                "error step %.6f dB (bound %.2f)\n",
+                worstMagnitudeErrorDb, magnitudeBoundDb,
+                worstPhaseErrorDegrees, phaseBoundDegrees,
+                worstAdjacentErrorStepDb, adjacentErrorStepBoundDb);
+    std::printf("FET dense broadband complex H3 neighbours: GR %.9f H1 "
+                "%.9f H2 %.9f H5 %.9f dB movement (bound 0.02)\n",
+                worstReductionMovementDb, worstH1MovementDb,
+                worstH2MovementDb, worstH5MovementDb);
+    require(worstReductionMovementDb < 0.02
+                && worstH1MovementDb < 0.02
+                && worstH2MovementDb < 0.02
+                && worstH5MovementDb < 0.02,
+            "vintage FET broadband complex H3 preserves GR, H1, H2, and H5");
+    require(worstMagnitudeErrorDb < magnitudeBoundDb
+                && worstPhaseErrorDegrees < phaseBoundDegrees
+                && worstAdjacentErrorStepDb < adjacentErrorStepBoundDb,
+            "vintage FET dense broadband complex H3 follows the UAD drive and rate surface");
+}
+
+void testFetDenseBroadbandComplexH5()
+{
+    // Wave 27 proved that the high-passed T5 source is complex-linear, but its
+    // proposed reduction-only scale compared two different Release controls:
+    // the matched-reduction probe used 0.5 while the original campaign used
+    // 0.66595459. The apparent contradiction was therefore a missing control
+    // coordinate. These rows close that measurement hole with same-stimulus
+    // UAD vectors. The Release-0.5 rows are the retained 6 dB-spaced rate
+    // calibration captures; the Release-0.66595459 rows are the independently
+    // captured original 96 kHz campaign grid.
+    struct Point
+    {
+        double sampleRate;
+        float inputPosition;
+        float inputDbfs;
+        float releasePosition;
+        double referenceH5RelativeDb;
+        double referenceH5PhaseDegrees;
+        bool calibration;
+    };
+    constexpr std::array<Point, 31> points{{
+        {48000.0, 0.8f, -44.603869f, 0.5f, -91.533179234405, 105.900970272912, true},
+        {48000.0, 0.8f, -38.603869f, 0.5f, -83.083794562062, 105.048867429580, true},
+        {48000.0, 0.8f, -32.603869f, 0.5f, -80.057145956160, 107.618090045645, true},
+        {48000.0, 0.8f, -26.603869f, 0.5f, -79.035871730328, 107.440746891236, true},
+        {48000.0, 0.8f, -20.603869f, 0.5f, -78.192600105118, 107.268602058487, true},
+        {48000.0, 0.8f, -14.603869f, 0.5f, -77.563532531602, 107.098390087017, true},
+        {48000.0, 0.8f,  -8.603869f, 0.5f, -77.110371461677, 107.129903567437, true},
+        {48000.0, 0.8f,  -4.603869f, 0.5f, -76.743252387396, 108.593988909372, true},
+        {96000.0, 0.8f, -44.603869f, 0.5f, -91.449657516767,  96.097304738500, true},
+        {96000.0, 0.8f, -38.603869f, 0.5f, -83.351695647491,  96.931650857938, true},
+        {96000.0, 0.8f, -32.603869f, 0.5f, -80.220609495544,  97.853510967479, true},
+        {96000.0, 0.8f, -26.603869f, 0.5f, -79.133402786188,  97.952804569443, true},
+        {96000.0, 0.8f, -20.603869f, 0.5f, -78.215989155770,  97.758513230822, true},
+        {96000.0, 0.8f, -14.603869f, 0.5f, -77.528149737899,  97.624203875896, true},
+        {96000.0, 0.8f,  -8.603869f, 0.5f, -77.004561671439,  98.289469095491, true},
+        {96000.0, 0.8f,  -4.603869f, 0.5f, -76.675624919709,  99.072196558121, true},
+        {48000.0, 0.8f, -36.000000f, 0.66595459f, -77.202512804068, 106.812037993755, false},
+        {48000.0, 0.8f, -30.000000f, 0.66595459f, -75.647217239294, 106.560727086506, false},
+        {48000.0, 0.8f, -24.000000f, 0.66595459f, -74.626974737862, 106.477570022950, false},
+        {48000.0, 0.2f, -12.000000f, 0.66595459f, -86.169521078737, 104.904138993336, false},
+        {48000.0, 0.8f, -18.000000f, 0.66595459f, -73.785900563641, 106.480020496798, false},
+        {48000.0, 0.8f, -12.000000f, 0.66595459f, -73.267311371359, 106.277905357769, false},
+        {48000.0, 0.2f,  -6.000000f, 0.66595459f, -78.820903125102, 107.020699420289, false},
+        {48000.0, 0.8f,  -9.000000f, 0.66595459f, -73.005278739567, 106.479510610175, false},
+        {48000.0, 0.8f,  -6.000000f, 0.66595459f, -72.684399572396, 106.768369965984, false},
+        {96000.0, 0.8f, -36.000000f, 0.66595459f, -77.186414195630, 97.604616779722, false},
+        {96000.0, 0.8f, -24.000000f, 0.66595459f, -74.650335303332, 98.651857220974, false},
+        {96000.0, 0.2f, -12.000000f, 0.66595459f, -86.410298909599, 97.167861054148, false},
+        {96000.0, 0.8f, -12.000000f, 0.66595459f, -73.447941957507, 98.436663459609, false},
+        {96000.0, 0.2f,  -6.000000f, 0.66595459f, -78.886313234298, 97.779477772866, false},
+        {96000.0, 0.8f,  -6.000000f, 0.66595459f, -72.935442093146, 98.986422851229, false},
+    }};
+    constexpr double magnitudeBoundDb = 0.25;
+    constexpr double phaseBoundDegrees = 3.0;
+    double worstMagnitudeErrorDb = 0.0;
+    double worstPhaseErrorDegrees = 0.0;
+    for (const auto& point : points)
+    {
+        const auto measured = measureFetHarmonics(
+            1000.0, point.inputDbfs, point.inputPosition, 0,
+            point.sampleRate, 13,
+            point.calibration ? 12.0 : 5.0,
+            point.calibration ? 9.0 : 3.0,
+            point.calibration ? 10.5 : 4.5,
+            point.releasePosition);
+        const double relativeDb = measured.h5Dbfs - measured.h1Dbfs;
+        const double magnitudeErrorDb
+            = relativeDb - point.referenceH5RelativeDb;
+        const double relativePhaseDegrees = std::remainder(
+            (std::atan2(measured.h5Imag, measured.h5Real)
+                - 5.0 * std::atan2(measured.h1Imag, measured.h1Real))
+                * 180.0 / static_cast<double>(kPi),
+            360.0);
+        const double relativeMagnitude = std::hypot(
+            measured.h5Real, measured.h5Imag)
+            / std::max(std::hypot(measured.h1Real, measured.h1Imag), 1.0e-30);
+        const double relativeReal = relativeMagnitude * std::cos(
+            relativePhaseDegrees * static_cast<double>(kPi) / 180.0);
+        const double relativeImag = relativeMagnitude * std::sin(
+            relativePhaseDegrees * static_cast<double>(kPi) / 180.0);
+        const double phaseErrorDegrees = std::remainder(
+            relativePhaseDegrees - point.referenceH5PhaseDegrees, 360.0);
+        worstMagnitudeErrorDb = std::max(
+            worstMagnitudeErrorDb, std::abs(magnitudeErrorDb));
+        worstPhaseErrorDegrees = std::max(
+            worstPhaseErrorDegrees, std::abs(phaseErrorDegrees));
+        std::printf("FET dense broadband complex H5: %.0f kHz i%.1f src "
+                    "%+.6f Release %.9f raw GR %.6f reference %.6f "
+                    "measured %.6f error %+.6f dB phase ref %.3f "
+                    "measured %.6f error %+.6f deg H5re %+.12e "
+                    "H5im %+.12e %s\n",
+                    point.sampleRate / 1000.0,
+                    static_cast<double>(point.inputPosition),
+                    static_cast<double>(point.inputDbfs),
+                    static_cast<double>(point.releasePosition),
+                    measured.reductionDbMean,
+                    point.referenceH5RelativeDb, relativeDb,
+                    magnitudeErrorDb, point.referenceH5PhaseDegrees,
+                    relativePhaseDegrees, phaseErrorDegrees,
+                    relativeReal, relativeImag,
+                    point.calibration ? "calibration" : "campaign");
+    }
+    std::printf("FET dense broadband complex H5 summary: magnitude %.6f dB "
+                "(bound %.2f), phase %.6f degrees (bound %.1f)\n",
+                worstMagnitudeErrorDb, magnitudeBoundDb,
+                worstPhaseErrorDegrees, phaseBoundDegrees);
+    require(worstMagnitudeErrorDb < magnitudeBoundDb
+                && worstPhaseErrorDegrees < phaseBoundDegrees,
+            "vintage FET dense broadband complex H5 follows the UAD drive, Release, and rate surface");
+}
+
+void testFetLowFrequencyOddHarmonicSurface()
+{
+    // Absolute H3 anchors from the installed reference unit. The 100 Hz set
+    // spans the complete low-frequency T3 law; the 1 kHz set is the opposite
+    // failure-mode guard, because this nominally low-frequency path remains
+    // large enough there that an unconstrained 100 Hz fit would undo Wave 12.
+    struct Point
+    {
+        double frequencyHz;
+        float inputPosition;
+        float inputDbfs;
+        double reductionDb;
+        double referenceH3RelativeDb;
+        double previousErrorDb;          // the constant -0.0058 T3 term
+    };
+    constexpr std::array<Point, 18> points{{
+        {100.0, 0.3f, -30.0f, -0.0087, -91.700375, +0.5559},
+        {100.0, 0.7f, -46.0f,  0.2378, -83.943235, +0.7112},
+        {100.0, 0.6f, -42.0f,  0.5373, -81.075196, +4.9007},
+        {100.0, 0.3f, -24.0f,  0.7234, -78.962196, +5.5109},
+        {100.0, 0.9f, -48.0f,  1.3622, -67.407430, -0.2529},
+        {100.0, 0.2f, -12.0f,  2.5753, -60.225389, -1.4289},
+        {100.0, 0.8f, -36.0f,  8.9210, -50.600997, +0.0783},
+        {100.0, 0.8f, -30.0f, 13.8515, -48.872046, +2.3465},
+        {100.0, 0.8f, -18.0f, 23.6915, -47.030741, +0.6235},
+        {100.0, 0.9f,  -7.5f, 33.1003, -46.020733, -0.4754},
+        {100.0, 1.0f,  -6.0f, 34.3368, -46.009239, -0.5075},
+        {1000.0, 0.4f, -30.0f,  0.5570, -81.411229, -0.0501},
+        {1000.0, 0.6f, -36.0f,  3.2496, -72.802041, -0.0073},
+        {1000.0, 0.8f, -36.0f,  8.9830, -67.758380, -0.0895},
+        {1000.0, 0.8f, -30.0f, 13.9253, -66.683950, +0.0055},
+        {1000.0, 0.4f,  -9.0f, 15.1374, -66.685792, -0.0476},
+        {1000.0, 0.8f, -24.0f, 18.8564, -67.067362, +0.0040},
+        {1000.0, 0.8f, -12.0f, 28.6512, -66.239258, -0.0394}}};
+
+    constexpr double kLowFrequencyBoundDb = 0.75;
+    constexpr double kBroadbandGuardDb = 0.98;
+    double lowFrequencyWorst = 0.0;
+    double broadbandWorst = 0.0;
+    for (const auto& point : points)
+    {
+        const auto measured = measureFetHarmonics(
+            point.frequencyHz, point.inputDbfs, point.inputPosition,
+            0, 48000.0, 13, 5.0, 3.0, 4.5,
+            point.frequencyHz == 1000.0 ? 0.66595459f : 0.5f);
+        const double relativeDb = measured.h3Dbfs - measured.h1Dbfs;
+        const double error = relativeDb - point.referenceH3RelativeDb;
+        if (point.frequencyHz == 100.0)
+            lowFrequencyWorst = std::max(lowFrequencyWorst, std::abs(error));
+        else
+            broadbandWorst = std::max(broadbandWorst, std::abs(error));
+        std::printf("FET low T3: %.0f Hz i%.1f %+.1f dBFS gr %.4f "
+                    "(expected %.4f) reference %.6f measured %.6f "
+                    "error %+.6f dB (constant T3 %+.4f)\n",
+                    point.frequencyHz,
+                    static_cast<double>(point.inputPosition),
+                    static_cast<double>(point.inputDbfs),
+                    measured.reductionDbMean, point.reductionDb,
+                    point.referenceH3RelativeDb, relativeDb, error,
+                    point.previousErrorDb);
+        require(std::abs(measured.reductionDbMean - point.reductionDb) < 0.02,
+                "vintage FET low-T3 anchors are evaluated at the reduction they were measured at");
+    }
+    std::printf("FET low T3: 100 Hz worst %.6f dB (bound %.2f), "
+                "1 kHz guard worst %.6f dB (bound %.2f)\n",
+                lowFrequencyWorst, kLowFrequencyBoundDb,
+                broadbandWorst, kBroadbandGuardDb);
+    require(lowFrequencyWorst < kLowFrequencyBoundDb,
+            "vintage FET low-frequency H3 matches the measured reference across the reduction axis");
+    require(broadbandWorst < kBroadbandGuardDb,
+            "vintage FET low-frequency T3 fit does not undo the broadband H3 surface");
+}
+
+void testFetLowFrequencyFifthHarmonicSurface()
+{
+    // Absolute 100 Hz H5 anchors from the installed reference unit. All sit
+    // above the campaign's -92 dBc floor and span the complete measured
+    // low-frequency T5 law. H3 is guarded independently by
+    // testFetLowFrequencyOddHarmonicSurface, which is necessary because this
+    // fifth-order term also feeds the compressor loop.
+    struct Point
+    {
+        float inputPosition;
+        float inputDbfs;
+        double reductionDb;
+        double referenceH5RelativeDb;
+        double previousErrorDb;          // the constant +0.00255 T5 term
+    };
+    constexpr std::array<Point, 11> points{{
+        {0.5f, -36.0f,  0.8882, -83.281606, +6.3542},
+        {0.8f, -48.0f,  0.9345, -81.697045, +5.2159},
+        {0.2f, -15.0f,  1.1328, -77.026211, +2.2414},
+        {0.8f, -46.0f,  1.7057, -70.430321, -0.7602},
+        {0.8f, -45.0f,  2.1781, -67.616563, -1.4404},
+        {0.6f, -36.0f,  3.1896, -64.403196, -1.1304},
+        {0.2f,  -6.0f,  6.9247, -58.897481, +0.0256},
+        {0.9f, -36.0f,  9.8790, -56.672763, +0.8281},
+        {0.8f, -30.0f, 13.8515, -55.670300, +2.7093},
+        {0.9f, -18.0f, 24.6525, -53.815062, +0.9463},
+        {1.0f,  -6.0f, 34.3368, -52.992012, +0.1356}}};
+
+    constexpr double kBoundDb = 0.20;
+    double worstError = 0.0;
+    for (const auto& point : points)
+    {
+        const auto measured = measureFetHarmonics(
+            100.0, point.inputDbfs, point.inputPosition);
+        const double relativeDb = measured.h5Dbfs - measured.h1Dbfs;
+        const double error = relativeDb - point.referenceH5RelativeDb;
+        worstError = std::max(worstError, std::abs(error));
+        std::printf("FET low T5: i%.1f %+.1f dBFS gr %.9f (expected %.4f) "
+                    "reference %.6f measured %.6f error %+.6f dB "
+                    "(constant T5 %+.4f)\n",
+                    static_cast<double>(point.inputPosition),
+                    static_cast<double>(point.inputDbfs),
+                    measured.reductionDbMean, point.reductionDb,
+                    point.referenceH5RelativeDb, relativeDb, error,
+                    point.previousErrorDb);
+        require(std::abs(measured.reductionDbMean - point.reductionDb) < 0.02,
+                "vintage FET low-T5 anchors are evaluated at the reduction they were measured at");
+    }
+    std::printf("FET low T5: worst %.6f dB over %zu anchors (bound %.2f)\n",
+                worstError, points.size(), kBoundDb);
+    require(worstError < kBoundDb,
+            "vintage FET low-frequency H5 matches the measured reference across the reduction axis");
+}
+
+void testFetBroadbandFifthHarmonicSurface()
+{
+    // Absolute 1 kHz H5 anchors from the installed reference unit. They span
+    // every scoreable reduction region of the dense campaign and are kept
+    // separate from the low-frequency T5 gate because that path's finite
+    // leakage cannot reproduce the nearly uniform broadband residual without
+    // undoing its 100 Hz fit.
+    struct Point
+    {
+        float inputPosition;
+        float inputDbfs;
+        double reductionDb;
+        double referenceH5RelativeDb;
+        double previousErrorDb;          // after the fitted low-T5 path
+    };
+    constexpr std::array<Point, 10> points{{
+        {0.2f, -12.0f,  2.6305, -86.169521, -3.5774},
+        {0.6f, -36.0f,  3.2496, -84.117415, -3.7298},
+        {0.7f, -36.0f,  5.0243, -80.818005, -3.7525},
+        {0.8f, -36.0f,  8.9830, -77.202513, -3.6191},
+        {0.4f, -12.0f, 12.6634, -75.951320, -3.5684},
+        {0.6f, -18.0f, 17.7317, -74.841900, -3.6337},
+        {0.6f, -12.0f, 22.6659, -73.960898, -3.7055},
+        {0.6f,  -6.0f, 27.5467, -73.353275, -3.7455},
+        {0.8f,  -9.0f, 31.0579, -73.005279, -3.7882},
+        {0.8f,  -6.0f, 33.4397, -72.684400, -3.9067}}};
+
+    constexpr double kBoundDb = 0.25;
+    double worstError = 0.0;
+    for (const auto& point : points)
+    {
+        const auto measured = measureFetHarmonics(
+            1000.0, point.inputDbfs, point.inputPosition,
+            0, 48000.0, 13, 5.0, 3.0, 4.5, 0.66595459f);
+        const double relativeDb = measured.h5Dbfs - measured.h1Dbfs;
+        const double error = relativeDb - point.referenceH5RelativeDb;
+        worstError = std::max(worstError, std::abs(error));
+        std::printf("FET broadband T5: i%.1f %+.1f dBFS gr %.9f "
+                    "(expected %.4f) reference %.6f measured %.6f "
+                    "error %+.6f dB (low T5 %+.4f)\n",
+                    static_cast<double>(point.inputPosition),
+                    static_cast<double>(point.inputDbfs),
+                    measured.reductionDbMean, point.reductionDb,
+                    point.referenceH5RelativeDb, relativeDb, error,
+                    point.previousErrorDb);
+        require(std::abs(measured.reductionDbMean - point.reductionDb) < 0.02,
+                "vintage FET broadband-T5 anchors are evaluated at the reduction they were measured at");
+    }
+    std::printf("FET broadband T5: worst %.6f dB over %zu anchors "
+                "(bound %.2f)\n", worstError, points.size(), kBoundDb);
+    require(worstError < kBoundDb,
+            "vintage FET broadband H5 matches the measured reference across the reduction axis");
+}
+
+void testFetLowFrequencyColourSurface()
+{
+    // The 100 Hz twin of testFetBroadbandHarmonicSurface, gating
+    // `fetLowFrequencyK2`. Seven absolute anchors on the reference unit's own
+    // 100 Hz second harmonic, rendered from the installed AU by
+    // `probe_h2_surface.py` (campaign reference_comparison_1176) and quoted as
+    // H2 relative to the fundamental, which is scalar-immune.
+    //
+    // Why 100 Hz needs its own gate at all: at 1 kHz this table contributes
+    // 49 dB down and the broadband table owns the spectrum, so
+    // testFetBroadbandHarmonicSurface cannot see a low-frequency fault. It was
+    // run with the pre-Wave-9 law installed and passes -- at that point the
+    // 100 Hz surface was 2.07 dB out on 45 of its 91 compressing rows.
+    struct Point
+    {
+        float inputPosition;
+        float inputDbfs;
+        double reductionDb;              // the fetLowFrequencyK2 argument
+        double referenceH2RelativeDb;
+        double previousErrorDb;          // what the pre-Wave-9 law read here
+    };
+    // One per region of the table, and deliberately not a flattering set: the
+    // 0.9345 dB anchor is in the band this table CANNOT fix (see
+    // fetLowFrequencyK2 -- the broadband table alone reads high there), so the
+    // test carries the honest residual rather than sampling around it. The
+    // 18.7912 and 33.3699 anchors are the two rows the sixteen-row campaign
+    // grid failed on, at +1.5999 and -0.4610.
+    constexpr std::array<Point, 7> points{{
+        {0.2f, -36.0f,  -0.009, -83.993408, -0.0168},
+        {0.8f, -48.0f,   0.934, -64.008370, +1.1667},
+        {0.8f, -45.0f,   2.178, -56.347350, -1.9758},
+        {0.2f,  -6.0f,   6.918, -47.274840, -0.6102},
+        {0.6f, -24.0f,  12.726, -43.761082, +1.9464},
+        {0.8f, -24.0f,  18.791, -41.975760, +1.5999},
+        {0.8f,  -6.0f,  33.370, -37.552714, -0.4610}}};
+
+    // Set by what it has to catch. The law this replaced read 2.07 dB out at
+    // 100 Hz and 1.97 at the third anchor; the campaign's harmonic gate is
+    // 1.0 dB. 0.35 dB is 5.9x under the worst defect, 2.9x under the campaign
+    // gate, and 1.8x over the worst error this build produces anywhere on the
+    // 91-row 100 Hz surface (0.196 dB, rendered).
+    constexpr double kBoundDb = 0.35;
+    double worstError = 0.0;
+    for (const auto& point : points)
+    {
+        const auto measured = measureFetHarmonics(
+            100.0, point.inputDbfs, point.inputPosition);
+        const double error = measured.h2RelativeDb - point.referenceH2RelativeDb;
+        worstError = std::max(worstError, std::abs(error));
+        std::printf("FET LF colour: i%.1f %+.0f dBFS gr %.4f (expected %.3f) "
+                    "reference %.6f measured %.6f error %+.6f dB "
+                    "(previous law %+.4f)\n",
+                    static_cast<double>(point.inputPosition),
+                    static_cast<double>(point.inputDbfs),
+                    measured.reductionDbMean, point.reductionDb,
+                    point.referenceH2RelativeDb, measured.h2RelativeDb, error,
+                    point.previousErrorDb);
+        // Same guard as the broadband test: an anchor is only meaningful at the
+        // depth it was measured at, so a detector change must fail here rather
+        // than silently re-point the assertion.
+        require(std::abs(measured.reductionDbMean - point.reductionDb) < 0.02,
+                "vintage FET low-frequency anchors are evaluated at the reduction they were measured at");
+    }
+    std::printf("FET LF colour: worst %+.6f dB over %zu anchors (bound %.2f)\n",
+                worstError, points.size(), kBoundDb);
+    require(worstError < kBoundDb,
+            "vintage FET low-frequency colour matches the measured reference across the reduction axis");
+}
+
 void testPublishedGainReductionRange()
 {
     MultiCompDSP dsp;
@@ -5111,8 +8859,233 @@ void testAtomicControlSnapshotsAreSingleLoad()
     std::puts("atomic snapshots: oversampling/global lookahead/Digital lookahead loaded once per block");
 }
 
-int main()
+int main(int argc, char** argv)
 {
+    if (argc == 2 && std::strcmp(argv[1], "--opto-dense") == 0)
+    {
+        testOptoDenseProgrammeParity();
+        std::puts("Multi-Comp Opto dense-programme parity test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--golden") == 0)
+    {
+        testGoldenVectors();
+        std::puts("Multi-Comp golden-vector test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-tapers") == 0)
+    {
+        testFetMeasuredControlTapers();
+        std::puts("Multi-Comp FET taper test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-static") == 0)
+    {
+        testFetMeasuredStaticSurface();
+        std::puts("Multi-Comp FET static test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-knee-onset") == 0)
+    {
+        testFetKneeOnsetMatchesReference();
+        std::puts("Multi-Comp FET knee-onset test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-knee-release") == 0)
+    {
+        testFetKneeCellDoesNotCancelDeepReleaseMemory();
+        std::puts("Multi-Comp FET knee release-neighbour test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-max-gr") == 0)
+    {
+        testFetMaximumReductionSaturation();
+        std::puts("Multi-Comp FET maximum-reduction test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-all-settling") == 0)
+    {
+        testFetAllButtonsSettlingWindows();
+        std::puts("Multi-Comp FET All-buttons settling test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-absolute-gain") == 0)
+    {
+        testFetAbsoluteGainAnchors();
+        testFetMeasuredCurveAllButtons();
+        std::puts("Multi-Comp FET absolute-gain anchor test: PASS");
+        return 0;
+    }
+    // Separately reachable so the Measured arm can be shown to hold while the
+    // Modern-arm anchor above is deliberately broken -- `require` aborts on the
+    // first failure, so a leak test needs the two runnable independently.
+    if (argc == 2 && std::strcmp(argv[1], "--fet-measured-curve-all") == 0)
+    {
+        testFetMeasuredCurveAllButtons();
+        std::puts("Multi-Comp FET Measured-curve All-buttons test: PASS");
+        return 0;
+    }
+    // Likewise separate: the knee assertions and the plateau anchor guard
+    // different entries of the same table, so each has to be runnable while the
+    // other is deliberately broken.
+    if (argc == 2 && std::strcmp(argv[1], "--fet-all-knee") == 0)
+    {
+        testFetAllButtonsKneeTransition();
+        std::puts("Multi-Comp FET All-buttons knee test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-block") == 0)
+    {
+        testFetBlockSizeInvariance();
+        std::puts("Multi-Comp FET block-size test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-reset") == 0)
+    {
+        testFetResetClearsProgrammeAndColourState();
+        std::puts("Multi-Comp FET reset test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-stereo") == 0)
+    {
+        testFetInternalStereoLinkReference();
+        std::puts("Multi-Comp FET stereo-link test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-stereo-phase") == 0)
+    {
+        testFetStereoLinkPhaseLaw();
+        std::puts("Multi-Comp FET stereo phase-law test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-stereo-dense") == 0)
+    {
+        testFetDenseStereoPhaseParity();
+        std::puts("Multi-Comp FET dense stereo-phase test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-recovery-dense") == 0)
+    {
+        testFetDenseStartupRecoveryParity();
+        std::puts("Multi-Comp FET dense recovery test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-recovery-state") == 0)
+    {
+        testFetPostBurstRecoveryLifecycle();
+        std::puts("Multi-Comp FET recovery-state test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-h2-surface") == 0)
+    {
+        reportFetBroadbandK2Surface();
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-envelope-trace") == 0)
+    {
+        reportFetEnvelopeTrace();
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-detector-fr") == 0)
+    {
+        reportFetDetectorFrequencyNull();
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-h2") == 0)
+    {
+        testFetBroadbandHarmonicSurface();
+        std::puts("Multi-Comp FET broadband H2 surface test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-h3") == 0)
+    {
+        testFetBroadbandOddHarmonicSurface();
+        std::puts("Multi-Comp FET broadband H3 surface test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-low-h3-dense") == 0)
+    {
+        testFetDenseShallowLowFrequencyH3();
+        std::puts("Multi-Comp FET dense shallow low-frequency H3 test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-broadband-h3-dense") == 0)
+    {
+        testFetDenseBroadbandComplexH3();
+        std::puts("Multi-Comp FET dense broadband complex H3 test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-broadband-h5-dense") == 0)
+    {
+        testFetDenseBroadbandComplexH5();
+        std::puts("Multi-Comp FET dense broadband complex H5 test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-low-h3") == 0)
+    {
+        testFetLowFrequencyOddHarmonicSurface();
+        std::puts("Multi-Comp FET low-frequency H3 surface test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-low-h5") == 0)
+    {
+        testFetLowFrequencyFifthHarmonicSurface();
+        std::puts("Multi-Comp FET low-frequency H5 surface test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-h5") == 0)
+    {
+        testFetBroadbandFifthHarmonicSurface();
+        std::puts("Multi-Comp FET broadband H5 surface test: PASS");
+        return 0;
+    }
+    // Separate from --fet-h2 on purpose: the two tables are independently
+    // breakable and each has to be runnable while the other is deliberately
+    // faulted, which is how the coverage-hole justification is demonstrated.
+    if (argc == 2 && std::strcmp(argv[1], "--fet-lf") == 0)
+    {
+        testFetLowFrequencyColourSurface();
+        std::puts("Multi-Comp FET low-frequency colour test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-attack-drive") == 0)
+    {
+        reportFetAttackDriveAxis();
+        testFetAttackMatchesReferenceCurve();
+        testFetAttackAcceleratesWithDrive();
+        std::puts("Multi-Comp FET attack drive test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-attack-knob") == 0)
+    {
+        testFetHighCarrierAttackKnobAxis();
+        std::puts("Multi-Comp FET high-carrier attack-knob test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-startup-peak") == 0)
+    {
+        testFetStartupPeakSurface();
+        std::puts("Multi-Comp FET startup-peak test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-rate-gain") == 0)
+    {
+        testFetSampleRateFlatGain();
+        std::puts("Multi-Comp FET sample-rate flat-gain test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-startup-neighbours") == 0)
+    {
+        testFetStartupCeilingNeighbours();
+        std::puts("Multi-Comp FET startup-neighbour test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-startup-state") == 0)
+    {
+        testFetStartupStateLifecycleAndCounterSaturation();
+        std::puts("Multi-Comp FET startup-state test: PASS");
+        return 0;
+    }
     testOptoMeasuredGainTaper();
     testOptoMeasuredOutputCeiling();
     testOptoDriveApplicability();
@@ -5148,6 +9121,38 @@ int main()
     testOptoOverloadOrderingAndMonotonicity();
     testOptoSampleRateParity();
     testAtomicControlSnapshotsAreSingleLoad();
+    testFetMeasuredControlTapers();
+    testFetMeasuredStaticSurface();
+    testFetKneeOnsetMatchesReference();
+    testFetKneeCellDoesNotCancelDeepReleaseMemory();
+    testFetMaximumReductionSaturation();
+    testFetAllButtonsSettlingWindows();
+    testFetAbsoluteGainAnchors();
+    testFetMeasuredCurveAllButtons();
+    testFetAllButtonsKneeTransition();
+    testFetBlockSizeInvariance();
+    testFetResetClearsProgrammeAndColourState();
+    testFetInternalStereoLinkReference();
+    testFetStereoLinkPhaseLaw();
+    testFetDenseStereoPhaseParity();
+    testFetDenseStartupRecoveryParity();
+    testFetPostBurstRecoveryLifecycle();
+    testFetAttackMatchesReferenceCurve();
+    testFetAttackAcceleratesWithDrive();
+    testFetHighCarrierAttackKnobAxis();
+    testFetStartupPeakSurface();
+    testFetStartupStateLifecycleAndCounterSaturation();
+    testFetStartupCeilingNeighbours();
+    testFetSampleRateFlatGain();
+    testFetBroadbandHarmonicSurface();
+    testFetBroadbandOddHarmonicSurface();
+    testFetDenseShallowLowFrequencyH3();
+    testFetDenseBroadbandComplexH3();
+    testFetDenseBroadbandComplexH5();
+    testFetLowFrequencyOddHarmonicSurface();
+    testFetLowFrequencyFifthHarmonicSurface();
+    testFetBroadbandFifthHarmonicSurface();
+    testFetLowFrequencyColourSurface();
     testPublishedGainReductionRange();
     testAllModesAreMonoSafe();
     testOversamplingBlockSizeInvariance();

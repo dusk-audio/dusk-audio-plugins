@@ -35,11 +35,11 @@ inline constexpr float optoFaceplateAspect() noexcept
 
 inline float designHeightForMode(float hostValue) noexcept
 {
-    // Opto is a single rack face and should have the same shallow proportion as
-    // the hardware it evokes. Multiband still needs the original tall canvas;
-    // keeping the decision here also gives fractional host automation the same
-    // rounding rule as the DSP and the mode picker.
-    return choiceIndex(hostValue, 8) == 0 ? 380.0f : 486.0f;
+    // Opto and vintage FET are single rack faces and use the same compact
+    // canvas. The modern modes still need the original tall control surface;
+    // keeping the decision here gives fractional host automation the same
+    // rounding rule as the DSP and mode picker.
+    return choiceIndex(hostValue, 8) <= 1 ? 380.0f : 486.0f;
 }
 
 inline float optoMeterNeedleAngle(float gainReductionDb) noexcept
@@ -49,23 +49,43 @@ inline float optoMeterNeedleAngle(float gainReductionDb) noexcept
     return (55.0f - 110.0f * amount) * pi / 180.0f;
 }
 
-inline float optoMeterBallisticStep(float currentGainReductionDb,
-                                    float targetGainReductionDb,
-                                    float elapsedSeconds) noexcept
+inline float optoMeterDisplayValue(float gainReductionDb) noexcept
 {
-    // Display-only VU inertia. Use elapsed time rather than a per-frame blend
-    // so the response remains the same at different host repaint rates.
-    if (!std::isfinite(currentGainReductionDb)) currentGainReductionDb = 0.0f;
-    if (!std::isfinite(targetGainReductionDb) || !(elapsedSeconds > 0.0f))
-        return currentGainReductionDb;
-    constexpr float timeConstantSeconds = 0.300f;
-    const float boundedElapsed = std::min(elapsedSeconds, 3.0f);
-    const float response = 1.0f - std::exp(-boundedElapsed / timeConstantSeconds);
-    return currentGainReductionDb
-        + (targetGainReductionDb - currentGainReductionDb) * response;
+    // The Opto gain cell already carries the measured LA-2A attack and release.
+    // The separate display decay was not measured from the reference and made
+    // the needle return materially later than the audio. Keep only a finite guard.
+    return std::isfinite(gainReductionDb) ? gainReductionDb : 0.0f;
 }
 
 inline constexpr const char* optoKnobValueSuffix() noexcept { return ""; }
+
+inline bool fetTimingUsesDialReadout(uint32_t parameter) noexcept
+{
+    return parameter == static_cast<uint32_t>(ParamId::FetAttack)
+        || parameter == static_cast<uint32_t>(ParamId::FetRelease);
+}
+
+// Vintage FET timing follows the reference unit's numbered 1-7 controls. Keep
+// the legacy host ranges intact for automation/state compatibility and convert
+// only the faceplate readout, gesture domain, and pointer position.
+inline float fetTimingDialValue(float hostValue, uint32_t parameter) noexcept
+{
+    if (!fetTimingUsesDialReadout(parameter)) return hostValue;
+    const auto& descriptor = kParams[parameter];
+    const float minimum = hostMin(descriptor);
+    const float range = hostMax(descriptor) - minimum;
+    const float position = std::clamp((hostValue - minimum) / range, 0.0f, 1.0f);
+    return 1.0f + 6.0f * position;
+}
+
+inline float fetTimingHostValue(float dialValue, uint32_t parameter) noexcept
+{
+    if (!fetTimingUsesDialReadout(parameter)) return dialValue;
+    const auto& descriptor = kParams[parameter];
+    const float position = std::clamp((dialValue - 1.0f) / 6.0f, 0.0f, 1.0f);
+    return hostMin(descriptor)
+        + position * (hostMax(descriptor) - hostMin(descriptor));
+}
 
 inline bool optoKnobUsesPlainDomainDrag(uint32_t parameter) noexcept
 {
@@ -124,6 +144,20 @@ inline void refreshCrossoverMirror(std::array<float, N>& values, ReadParameter r
         if (index != skipIndex)
             values[index] = readParameter(index);
 }
+
+// A host may set parameters before it creates the editor, and DPF does not
+// replay those earlier parameterChanged() calls to a newly constructed UI.
+// Seed the mirror once from the live plugin so the first frame represents the
+// state the host actually opened rather than the compile-time defaults.
+template <size_t N, typename ReadParameter>
+inline void refreshParameterMirror(std::array<float, N>& values,
+                                   ReadParameter readParameter,
+                                   uint32_t parameterCount)
+{
+    const uint32_t count = std::min(parameterCount, static_cast<uint32_t>(N));
+    for (uint32_t index = 0; index < count; ++index)
+        values[index] = readParameter(index);
+}
 } // namespace multicompp::ui_detail
 
 #ifndef MULTICOMP_UI_LOGIC_TEST
@@ -136,7 +170,6 @@ inline void refreshCrossoverMirror(std::array<float, N>& values, ReadParameter r
 #include "DuskSupportersOverlay.hpp"
 #include "DuskUserPresetStore.hpp"
 
-#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -229,8 +262,8 @@ public:
                 values[multicompp::kBandBase + b * 8 + f] =
                     multicompp::hostDefault(multicompp::bandParam(f, b));
 
-        // Opto opens as a shallow rack face. Other modes request their taller
-        // authored canvas when selected, preserving the user's current scale.
+        // Hardware modes open as shallow rack faces. Modern modes request their
+        // taller authored canvas when selected, preserving the user's scale.
         constrainedDesignH = multicompp::ui_detail::designHeightForMode(values[P_MODE]);
         pendingDesignH = constrainedDesignH;
         setGeometryConstraints(static_cast<uint32_t>(kDesignW),
@@ -288,13 +321,14 @@ protected:
 
     void uiIdle() override
     {
+        seedParameterMirror();
         refreshCrossoverMirror();
-        updateOptoMeter();
         repaint();
     }
 
     void onImGuiDisplay() override
     {
+        seedParameterMirror();
         // The crossovers are only submitted in Multiband mode. If the host
         // switches Mode away mid-drag the widget stops being drawn, so ImGui
         // never reports IsItemDeactivated for it: the gesture would stay open on
@@ -380,6 +414,7 @@ private:
     std::array<float, multicompp::kTotalParamCount> values{};
     duskdaf::DuskPanel panel;
     ImDrawListSplitter optoKnobSplitter;
+    ImDrawListSplitter fetKnobSplitter;
     duskdaf::CrispFontSet fontSet;
     ImFont* labelFont = nullptr;
     duskdaf::SupportersOverlay supporters;
@@ -388,9 +423,7 @@ private:
     float constrainedDesignH = 380.0f;
     float pendingDesignH = 380.0f;
     bool modeGeometryPending = false;
-    float optoMeterGainReductionDb = 0.0f;
-    std::chrono::steady_clock::time_point optoMeterLastUpdate{};
-    bool optoMeterInitialized = false;
+    bool parameterMirrorSeeded = false;
     static constexpr uint32_t kNoCrossover = ~uint32_t(0);
     // The crossover handle under an active drag. Owns both the open automation
     // gesture and the mirror's skip, so the two cannot disagree.
@@ -413,25 +446,6 @@ private:
     bool saveFailed = false;
 
     float value(uint32_t p) const { return values[p]; }
-
-    void updateOptoMeter()
-    {
-        const auto now = std::chrono::steady_clock::now();
-        const float target = meter(kMeterMaster);
-        if (!optoMeterInitialized)
-        {
-            optoMeterGainReductionDb = target;
-            optoMeterInitialized = true;
-        }
-        else
-        {
-            const float elapsed = std::chrono::duration<float>(
-                now - optoMeterLastUpdate).count();
-            optoMeterGainReductionDb = multicompp::ui_detail::optoMeterBallisticStep(
-                optoMeterGainReductionDb, target, elapsed);
-        }
-        optoMeterLastUpdate = now;
-    }
 
     void scheduleModeGeometry(float hostMode)
     {
@@ -570,6 +584,19 @@ private:
         multicompp::ui_detail::refreshCrossoverMirror(values,
             [instance](uint32_t index) { return multiCompGetParameterValue(instance, index); },
             draggedCrossover);
+    }
+
+    void seedParameterMirror()
+    {
+        if (parameterMirrorSeeded || multiCompGetParameterValue == nullptr) return;
+        void* const instance = getPluginInstancePointer();
+        if (instance == nullptr) return;
+        multicompp::ui_detail::refreshParameterMirror(values,
+            [instance](uint32_t index) { return multiCompGetParameterValue(instance, index); },
+            static_cast<uint32_t>(multicompp::kMeterMaster));
+        parameterMirrorSeeded = true;
+        scheduleModeGeometry(values[P_MODE]);
+        syncPresetSelection();
     }
 
     void setValue(uint32_t p, float v)
@@ -1063,14 +1090,24 @@ private:
         return static_cast<MultiCompUI*>(context)->hostValueForPlain(p, plain);
     }
 
+    static float fetTimingHostToDial(float host, uint32_t p, void*)
+    {
+        return multicompp::ui_detail::fetTimingDialValue(host, p);
+    }
+
+    static float fetTimingDialToHost(float dial, uint32_t p, void*)
+    {
+        return multicompp::ui_detail::fetTimingHostValue(dial, p);
+    }
+
     void drawModePanel(ImDrawList* dl)
     {
         const int mode = multicompp::ui_detail::choiceIndex(value(P_MODE), 8);
         drawSection(dl, kModeCanvasTop, kModeCanvasBottom - 8, "");
         drawModeToolbar(dl);
-        if (mode == 0)
+        if (mode == 0 || mode == 1)
         {
-            // Opto owns a panel-integrated analogue GR meter.
+            // Opto and vintage FET own panel-integrated analogue GR meters.
         }
         else if (mode == 7)
             drawMeter(dl, 1062, kModeCanvasTop + 42, 42, 92, meter(kMeterMaster), kAccent, "MASTER GR");
@@ -1180,7 +1217,7 @@ private:
         optoModeSwitch(dl, 139, top + 170.0f);
         optoKnob(dl, "opto_gain", P_OPTO_GAIN, 287, top + 170.0f, 53.0f, "GAIN");
         drawOptoMeter(dl, 390, top + 54.0f, 348, 196,
-                      optoMeterGainReductionDb);
+                      multicompp::ui_detail::optoMeterDisplayValue(meter(kMeterMaster)));
         optoKnob(dl, "opto_peak", P_OPTO_PEAK, 838, top + 170.0f, 53.0f,
                  "PEAK REDUCTION");
         optoKnob(dl, "opto_sc_hp", P_SC_HP, 996, top + 108.0f, 18.0f,
@@ -1479,32 +1516,29 @@ private:
                       -35.0f * kUiPi / 180.0f, 40);
         dl->PathStroke(IM_COL32(92, 70, 38, 185), 0, scale);
         constexpr std::array<const char*, 5> labels{{"20", "15", "10", "5", "0"}};
-        for (int tick = 0; tick <= 40; ++tick)
+        for (int tick = 0; tick <= 20; ++tick)
         {
-            const float amount = static_cast<float>(tick) / 40.0f;
+            const float amount = static_cast<float>(tick) / 20.0f;
             const float angle = (-55.0f + 110.0f * amount)
                 * kUiPi / 180.0f;
             const ImVec2 direction(std::sin(angle), -std::cos(angle));
-            const bool major = tick % 10 == 0;
-            const bool medium = tick % 5 == 0;
+            const bool major = tick % 5 == 0;
             dl->AddLine(ImVec2(pivot.x + direction.x * radius
-                                   * (major ? 0.70f : medium ? 0.74f : 0.78f),
+                                   * (major ? 0.70f : 0.78f),
                                pivot.y + direction.y * radius
-                                   * (major ? 0.70f : medium ? 0.74f : 0.78f)),
+                                   * (major ? 0.70f : 0.78f)),
                         ImVec2(pivot.x + direction.x * radius * 0.88f,
                                pivot.y + direction.y * radius * 0.88f),
                         kOptoInk, (major ? 1.45f : 0.70f) * scale);
             if (major)
             {
-                const size_t label = static_cast<size_t>(tick / 10);
+                const size_t label = static_cast<size_t>(tick / 5);
                 const float labelRadius = radiusDesign * 0.61f;
                 panel.text(dl, pivotX + direction.x * labelRadius,
                            pivotY + direction.y * labelRadius - 4.0f,
                            8.5f, kOptoInk, labels[label], 0, true);
             }
         }
-        panel.text(dl, x + w * 0.5f, y + 17.0f, 8.0f,
-                   IM_COL32(89, 67, 35, 255), "VU LEVEL INDICATOR", 0, true);
         panel.text(dl, x + 31.0f, y + 54.0f, 12.0f, kOptoInk, "VU", 0, true);
         panel.text(dl, x + w - 32.0f, y + 54.0f, 12.0f, kOptoRed,
                    multicompp::ui_detail::optoMeterLabel(), 0, true);
@@ -1536,16 +1570,358 @@ private:
 
     void drawFet(ImDrawList* dl, bool studio)
     {
-        knob(dl, studio ? "sf_in" : "fet_in", P_FET_IN, 120, 380, "INPUT", "%.1f", " dB");
-        knob(dl, studio ? "sf_out" : "fet_out", P_FET_OUT, 250, 380, "OUTPUT", "%.1f", " dB");
-        knob(dl, studio ? "sf_att" : "fet_att", P_FET_ATTACK, 380, 380, "ATTACK", "%.2f", " ms");
-        knob(dl, studio ? "sf_rel" : "fet_rel", P_FET_RELEASE, 510, 380, "RELEASE", "%.0f", " ms");
-        knob(dl, studio ? "sf_mix" : "fet_mix", P_MIX, 640, 380, "MIX", "%.0f", "%");
-        combo(studio ? "sf_ratio" : "fet_ratio", P_FET_RATIO, multicompp::kRatios, 5, 775, 352, 118, "RATIO");
-        combo(studio ? "sf_curve" : "fet_curve", P_FET_CURVE, multicompp::kFetCurve, 2, 905, 352, 142, "CURVE");
-        knob(dl, studio ? "sf_trans" : "fet_trans", P_FET_TRANSIENT, 1020, 380, "TRANSIENT", "%.0f", "%");
-        panel.text(dl, 560, 500, 12, studio ? IM_COL32(80, 215, 205, 255) : IM_COL32(235, 175, 80, 255),
-                   studio ? "Clean FET response with controlled harmonics" : "Fast FET response with program-dependent release", 0);
+        if (studio)
+        {
+            knob(dl, "sf_in", P_FET_IN, 120, 380, "INPUT", "%.1f", " dB");
+            knob(dl, "sf_out", P_FET_OUT, 250, 380, "OUTPUT", "%.1f", " dB");
+            knob(dl, "sf_att", P_FET_ATTACK, 380, 380, "ATTACK", "%.2f", " ms");
+            knob(dl, "sf_rel", P_FET_RELEASE, 510, 380, "RELEASE", "%.0f", " ms");
+            knob(dl, "sf_mix", P_MIX, 640, 380, "MIX", "%.0f", "%");
+            combo("sf_ratio", P_FET_RATIO, multicompp::kRatios, 5, 775, 352, 118, "RATIO");
+            combo("sf_curve", P_FET_CURVE, multicompp::kFetCurve, 2, 905, 352, 142, "CURVE");
+            knob(dl, "sf_trans", P_FET_TRANSIENT, 1020, 380, "TRANSIENT", "%.0f", "%");
+            panel.text(dl, 560, 500, 12, IM_COL32(80, 215, 205, 255),
+                       "Clean FET response with controlled harmonics", 0);
+            return;
+        }
+
+        constexpr float left = 0.0f, right = 1120.0f;
+        constexpr float top = 344.0f, bottom = 654.0f;
+        dl->AddRectFilled(panel.P(left + 5, top + 7), panel.P(right + 5, bottom + 7),
+                          IM_COL32(0, 0, 0, 150), 4.0f * panel.scale());
+        dl->AddRectFilledMultiColor(panel.P(left, top), panel.P(right, bottom),
+                                    IM_COL32(27, 28, 27, 255),
+                                    IM_COL32(17, 18, 18, 255),
+                                    IM_COL32(7, 8, 8, 255),
+                                    IM_COL32(13, 14, 14, 255));
+        dl->AddRect(panel.P(left, top), panel.P(right, bottom),
+                    IM_COL32(114, 116, 111, 255), 4.0f * panel.scale(), 0,
+                    1.3f * panel.scale());
+        for (int row = static_cast<int>(top + 4); row < static_cast<int>(bottom); row += 4)
+            dl->AddLine(panel.P(left + 3, static_cast<float>(row)),
+                        panel.P(right - 3, static_cast<float>(row)),
+                        row % 8 == 0 ? IM_COL32(255, 255, 255, 9)
+                                     : IM_COL32(0, 0, 0, 17), panel.scale());
+        // Rack ears and mounting slots use the same full-face construction as
+        // Opto mode so switching hardware models feels like swapping rack units.
+        dl->AddRectFilled(panel.P(left, top), panel.P(left + 38.0f, bottom),
+                          IM_COL32(35, 36, 35, 255));
+        dl->AddRectFilled(panel.P(right - 38.0f, top), panel.P(right, bottom),
+                          IM_COL32(35, 36, 35, 255));
+        dl->AddLine(panel.P(left + 38.0f, top), panel.P(left + 38.0f, bottom),
+                    IM_COL32(104, 106, 101, 180), panel.scale());
+        dl->AddLine(panel.P(right - 38.0f, top), panel.P(right - 38.0f, bottom),
+                    IM_COL32(104, 106, 101, 180), panel.scale());
+        for (const float slotY : {top + 62.0f, bottom - 62.0f})
+        {
+            dl->AddRectFilled(panel.P(-9.0f, slotY - 9.0f),
+                              panel.P(23.0f, slotY + 9.0f),
+                              IM_COL32(2, 3, 3, 255), 8.0f * panel.scale());
+            dl->AddRectFilled(panel.P(right - 23.0f, slotY - 9.0f),
+                              panel.P(right + 9.0f, slotY + 9.0f),
+                              IM_COL32(2, 3, 3, 255), 8.0f * panel.scale());
+        }
+        for (const ImVec2 screw : {ImVec2(left + 73, top + 18),
+                                   ImVec2(right - 73, top + 18),
+                                   ImVec2(left + 73, bottom - 18),
+                                   ImVec2(right - 73, bottom - 18)})
+        {
+            dl->AddCircleFilled(panel.P(screw.x, screw.y), 5.5f * panel.scale(),
+                                IM_COL32(130, 132, 127, 255), 24);
+            dl->AddLine(panel.P(screw.x - 3.0f, screw.y),
+                        panel.P(screw.x + 3.0f, screw.y),
+                        IM_COL32(38, 39, 38, 255), panel.scale());
+        }
+
+        // Match the reference unit's left-to-right reading order: two large gain
+        // controls, vertically paired timing controls, ratio buttons, the same
+        // VU assembly proven in Opto mode, then the fixed GR meter bank.
+        fetKnob(dl, "fet_in", P_FET_IN, 194, 496, 45.0f,
+                "INPUT", true, "%.1f", " dB");
+        fetKnob(dl, "fet_out", P_FET_OUT, 390, 496, 45.0f,
+                "OUTPUT", true, "%.1f", " dB");
+        fetKnob(dl, "fet_att", P_FET_ATTACK, 548, 422, 22.0f,
+                "ATTACK", false, "%.2f", "");
+        fetKnob(dl, "fet_rel", P_FET_RELEASE, 548, 526, 22.0f,
+                "RELEASE", false, "%.2f", "");
+        drawFetRatioButtons(dl, 635, 392);
+        drawOptoMeter(dl, 675, 384, 300, 178,
+                      multicompp::ui_detail::optoMeterDisplayValue(meter(kMeterMaster)));
+        panel.text(dl, 825, top + 14, 13.0f, IM_COL32(234, 234, 221, 255),
+                   "FET 76", 0, true);
+        panel.text(dl, 825, top + 32, 7.2f, IM_COL32(177, 179, 170, 255),
+                   "REFERENCE SERIES", 0, true);
+        panel.text(dl, 825, top + 226, 9.2f, IM_COL32(234, 234, 221, 255),
+                   "MC-2", 0, true);
+        panel.text(dl, 825, top + 243, 8.0f, IM_COL32(202, 204, 194, 255),
+                   "LIMITING AMPLIFIER", 0, true);
+        drawFetMeterSwitch(dl, 997, 393);
+        fetTrimKnob(dl, "fet_mix", P_MIX, 1048, 594, 13.0f,
+                    "MIX", "%.0f", "%");
+    }
+
+    void fetKnob(ImDrawList* dl, const char* id, uint32_t p,
+                 float x, float y, float radius, const char* label,
+                 bool gainScale, const char* format, const char* suffix)
+    {
+        // Reuse the shared gesture and type-entry contract, but draw the body
+        // here so FET mode gets the reference unit's silver skirt and knurling.
+        fetKnobSplitter.Split(dl, 2);
+        fetKnobSplitter.SetCurrentChannel(dl, 1);
+        const bool timingDial = multicompp::ui_detail::fetTimingUsesDialReadout(p);
+        panel.knob(id, p, hostMinimum(p), hostMaximum(p), x, y, radius,
+                   values[p], hostDefaultValue(p), false, false, format, suffix,
+                   0, true, false, nullptr, false, 1.0f, 0.0f, label, true,
+                   nullptr, false, 0.0f, 0.0f, false, true, 9.5f, true, false,
+                   timingDial ? &fetTimingHostToDial : &knobHostToPlain,
+                   timingDial ? &fetTimingDialToHost : &knobPlainToHost,
+                   this, true);
+        fetKnobSplitter.SetCurrentChannel(dl, 0);
+
+        const float plain = plainValueForHost(p, values[p]);
+        const float minimum = plainValueForHost(p, hostMinimum(p));
+        const float maximum = plainValueForHost(p, hostMaximum(p));
+        const float t = timingDial
+            ? std::clamp((multicompp::ui_detail::fetTimingDialValue(values[p], p) - 1.0f)
+                             / 6.0f,
+                         0.0f, 1.0f)
+            : std::clamp((plain - minimum)
+                             / std::max(maximum - minimum, 1.0e-6f),
+                         0.0f, 1.0f);
+        const float scale = panel.scale();
+        const ImVec2 center = panel.P(x, y);
+        const float r = radius * scale;
+
+        if (gainScale)
+        {
+            constexpr std::array<const char*, 9> labels{{
+                "INF", "48", "36", "30", "24", "18", "12", "6", "0"}};
+            for (int tick = 0; tick <= 16; ++tick)
+            {
+                const float tickT = static_cast<float>(tick) / 16.0f;
+                const float angle = duskdaf::DuskPanel::knobAngle(tickT);
+                const ImVec2 direction(std::sin(angle), -std::cos(angle));
+                const bool major = tick % 2 == 0;
+                const float inner = r + (major ? 4.0f : 7.0f) * scale;
+                const float outer = r + 10.0f * scale;
+                dl->AddLine(ImVec2(center.x + direction.x * inner,
+                                   center.y + direction.y * inner),
+                            ImVec2(center.x + direction.x * outer,
+                                   center.y + direction.y * outer),
+                            IM_COL32(229, 230, 219, 240),
+                            (major ? 1.25f : 0.75f) * scale);
+                if (major)
+                    panel.text(dl, x + direction.x * (radius + 19.0f),
+                               y + direction.y * (radius + 19.0f) - 3.0f,
+                               7.3f, IM_COL32(232, 232, 220, 255),
+                               labels[static_cast<size_t>(tick / 2)], 0, true);
+            }
+        }
+        else
+        {
+            constexpr std::array<const char*, 4> labels{{"1", "3", "5", "7"}};
+            for (int tick = 0; tick <= 6; ++tick)
+            {
+                const float tickT = static_cast<float>(tick) / 6.0f;
+                const float angle = duskdaf::DuskPanel::knobAngle(tickT);
+                const ImVec2 direction(std::sin(angle), -std::cos(angle));
+                const bool major = tick % 2 == 0;
+                dl->AddCircleFilled(ImVec2(center.x + direction.x * (r + 7.0f * scale),
+                                           center.y + direction.y * (r + 7.0f * scale)),
+                                    (major ? 1.45f : 0.85f) * scale,
+                                    IM_COL32(230, 230, 218, 255), 10);
+                if (major)
+                    panel.text(dl, x + direction.x * (radius + 15.0f),
+                               y + direction.y * (radius + 15.0f) - 3.0f,
+                               7.0f, IM_COL32(232, 232, 220, 255),
+                               labels[static_cast<size_t>(tick / 2)], 0, true);
+            }
+        }
+
+        // Soft shadow, concentric spun-metal skirt, knurled black collar and
+        // machined cap. Keep every structural circle on the exact center; the
+        // previous offset 91% disk read as a second gray knob at upper left.
+        dl->AddCircleFilled(ImVec2(center.x + 3.0f * scale, center.y + 4.0f * scale),
+                            r * 1.01f, IM_COL32(0, 0, 0, 150), 56);
+        dl->AddCircleFilled(center, r, IM_COL32(66, 67, 66, 255), 56);
+        dl->AddCircleFilled(center, r * 0.96f, IM_COL32(139, 140, 137, 255), 56);
+        dl->AddCircleFilled(center, r * 0.83f, IM_COL32(176, 177, 173, 255), 56);
+        dl->AddCircleFilled(center, r * 0.75f, IM_COL32(91, 92, 90, 255), 56);
+        dl->PathArcTo(center, r * 0.90f, -2.55f, -0.55f, 30);
+        dl->PathStroke(IM_COL32(238, 239, 234, 75), 0, 1.5f * scale);
+        dl->PathArcTo(center, r * 0.91f, 0.55f, 2.55f, 30);
+        dl->PathStroke(IM_COL32(24, 25, 24, 110), 0, 1.8f * scale);
+        dl->AddCircle(center, r, IM_COL32(31, 32, 31, 255), 56, 1.3f * scale);
+        const float collarR = r * 0.69f;
+        dl->AddCircleFilled(center, collarR, IM_COL32(20, 20, 20, 255), 52);
+        for (int notch = 0; notch < 28; ++notch)
+        {
+            const float angle = 2.0f * kUiPi * static_cast<float>(notch) / 28.0f;
+            const ImVec2 direction(std::sin(angle), -std::cos(angle));
+            dl->AddLine(ImVec2(center.x + direction.x * collarR * 0.78f,
+                               center.y + direction.y * collarR * 0.78f),
+                        ImVec2(center.x + direction.x * collarR,
+                               center.y + direction.y * collarR),
+                        IM_COL32(92, 93, 90, 235), 1.0f * scale);
+        }
+        const float capR = r * 0.49f;
+        dl->AddCircleFilled(center, capR, IM_COL32(111, 112, 110, 255), 48);
+        dl->AddCircleFilled(center, capR * 0.92f,
+                            IM_COL32(198, 199, 196, 255), 48);
+        dl->PathArcTo(center, capR * 0.78f, -2.50f, -0.65f, 22);
+        dl->PathStroke(IM_COL32(255, 255, 251, 95), 0, 1.2f * scale);
+        dl->AddCircle(center, capR, IM_COL32(44, 45, 44, 255), 48, 1.1f * scale);
+        const float pointerAngle = duskdaf::DuskPanel::knobAngle(t);
+        const ImVec2 pointer(std::sin(pointerAngle), -std::cos(pointerAngle));
+        dl->AddLine(ImVec2(center.x + pointer.x * capR * 0.12f,
+                           center.y + pointer.y * capR * 0.12f),
+                    ImVec2(center.x + pointer.x * capR * 0.88f,
+                           center.y + pointer.y * capR * 0.88f),
+                    IM_COL32(36, 37, 36, 255), 2.2f * scale);
+        dl->AddCircleFilled(ImVec2(center.x + pointer.x * collarR * 0.88f,
+                                   center.y + pointer.y * collarR * 0.88f),
+                            1.8f * scale, IM_COL32(221, 197, 145, 255), 12);
+
+        panel.text(dl, x, gainScale ? y + radius + 27.0f
+                                    : y + (label[0] == 'A' ? -50.0f : 39.0f),
+                   gainScale ? 8.8f : 8.0f,
+                   IM_COL32(235, 235, 222, 255), label, 0, true);
+        fetKnobSplitter.Merge(dl);
+    }
+
+    void fetTrimKnob(ImDrawList* dl, const char* id, uint32_t p,
+                     float x, float y, float radius, const char* label,
+                     const char* format, const char* suffix)
+    {
+        // The Opto face established the fleet contract for non-reference
+        // controls: keep the full parameter available as a small set-screw trim
+        // without letting it compete with the hardware's primary controls.
+        fetKnobSplitter.Split(dl, 2);
+        fetKnobSplitter.SetCurrentChannel(dl, 1);
+        panel.knob(id, p, hostMinimum(p), hostMaximum(p), x, y, radius,
+                   values[p], hostDefaultValue(p), false, false, format, suffix,
+                   0, true, false, nullptr, false, 1.0f, 0.0f, label, true,
+                   nullptr, false, 0.0f, 0.0f, false, true, 8.0f, true, false,
+                   &knobHostToPlain, &knobPlainToHost, this, true);
+        fetKnobSplitter.SetCurrentChannel(dl, 0);
+
+        const float plain = plainValueForHost(p, values[p]);
+        const float minimum = plainValueForHost(p, hostMinimum(p));
+        const float maximum = plainValueForHost(p, hostMaximum(p));
+        const float t = std::clamp((plain - minimum)
+            / std::max(maximum - minimum, 1.0e-6f), 0.0f, 1.0f);
+        const float scale = panel.scale();
+        const ImVec2 center = panel.P(x, y);
+        const float r = radius * scale;
+
+        std::array<ImVec2, 6> nut{};
+        for (int point = 0; point < 6; ++point)
+        {
+            const float angle = kUiPi / 6.0f + static_cast<float>(point)
+                * kUiPi / 3.0f;
+            nut[static_cast<size_t>(point)] = ImVec2(
+                center.x + std::cos(angle) * r * 1.18f,
+                center.y + std::sin(angle) * r * 1.18f);
+        }
+        std::array<ImVec2, 6> shadow = nut;
+        for (auto& point : shadow)
+        {
+            point.x += 2.0f * scale;
+            point.y += 3.0f * scale;
+        }
+        dl->AddConvexPolyFilled(shadow.data(), 6, IM_COL32(0, 0, 0, 120));
+        dl->AddConvexPolyFilled(nut.data(), 6, IM_COL32(94, 96, 93, 255));
+        dl->AddCircleFilled(center, r, IM_COL32(116, 118, 115, 255), 32);
+        dl->AddCircleFilled(center, r * 0.84f,
+                            IM_COL32(190, 192, 188, 255), 32);
+        dl->PathArcTo(center, r * 0.70f, -2.45f, -0.75f, 18);
+        dl->PathStroke(IM_COL32(247, 248, 242, 80), 0, panel.scale());
+        dl->AddCircle(center, r, IM_COL32(43, 44, 43, 255), 32, 1.1f * scale);
+        const float angle = duskdaf::DuskPanel::knobAngle(t);
+        const ImVec2 pointer(std::sin(angle), -std::cos(angle));
+        dl->AddLine(ImVec2(center.x - pointer.x * r * 0.58f,
+                           center.y - pointer.y * r * 0.58f),
+                    ImVec2(center.x + pointer.x * r * 0.58f,
+                           center.y + pointer.y * r * 0.58f),
+                    IM_COL32(42, 43, 42, 255), 2.0f * scale);
+        panel.text(dl, x, y - 38.0f, 7.5f,
+                   IM_COL32(225, 226, 215, 255), label, 0, true);
+        panel.text(dl, x - 27.0f, y - 5.0f, 10.0f,
+                   IM_COL32(157, 160, 152, 255), "-", 0, true);
+        panel.text(dl, x + 27.0f, y - 5.0f, 10.0f,
+                   IM_COL32(210, 212, 201, 255), "+", 0, true);
+        fetKnobSplitter.Merge(dl);
+    }
+
+    void drawFetRatioButtons(ImDrawList* dl, float x, float y)
+    {
+        const int selected = multicompp::ui_detail::choiceIndex(value(P_FET_RATIO), 5);
+        panel.text(dl, x + 14, y - 23, 8.5f, IM_COL32(230, 231, 219, 255),
+                   "RATIO", 0, true);
+        constexpr std::array<int, 5> visualOrder{{3, 2, 1, 0, 4}};
+        constexpr std::array<const char*, 5> visualLabels{{
+            "20", "12", "8", "4", "ALL"}};
+        for (int row = 0; row < 5; ++row)
+        {
+            const int index = visualOrder[static_cast<size_t>(row)];
+            const float y0 = y + static_cast<float>(row) * 31.0f;
+            const ImVec2 p0 = panel.P(x, y0);
+            const ImVec2 p1 = panel.P(x + 28.0f, y0 + 27.0f);
+            char id[32];
+            std::snprintf(id, sizeof(id), "##fet_ratio_button_%d", index);
+            ImGui::SetCursorScreenPos(p0);
+            const bool clicked = ImGui::InvisibleButton(
+                id, ImVec2(p1.x - p0.x, p1.y - p0.y));
+            const bool active = index == selected;
+            dl->AddRectFilled(panel.P(x + 2.0f, y0 + 3.0f),
+                              panel.P(x + 31.0f, y0 + 30.0f),
+                              IM_COL32(0, 0, 0, 130), 1.5f * panel.scale());
+            dl->AddRectFilled(p0, p1,
+                              active ? IM_COL32(24, 24, 23, 255)
+                                     : ImGui::IsItemHovered()
+                                         ? IM_COL32(52, 52, 49, 255)
+                                         : IM_COL32(31, 31, 29, 255),
+                              1.5f * panel.scale());
+            dl->AddRect(p0, p1, IM_COL32(91, 92, 87, 255),
+                        1.5f * panel.scale(), 0, panel.scale());
+            if (active)
+                dl->AddRectFilled(panel.P(x + 1.0f, y0 + 2.0f),
+                                  panel.P(x + 3.0f, y0 + 25.0f),
+                                  index == 4 ? IM_COL32(160, 48, 34, 255)
+                                             : IM_COL32(226, 151, 61, 255));
+            panel.text(dl, x - 10.0f, y0 + 7.0f, 8.0f,
+                       active ? IM_COL32(246, 224, 177, 255)
+                              : IM_COL32(228, 228, 216, 255),
+                       visualLabels[static_cast<size_t>(row)], 1, true);
+            if (clicked && !active) setValue(P_FET_RATIO, static_cast<float>(index));
+        }
+    }
+
+    void drawFetMeterSwitch(ImDrawList* dl, float x, float y)
+    {
+        panel.text(dl, x + 10.0f, y - 24.0f, 8.5f,
+                   IM_COL32(230, 231, 219, 255), "METER", 0, true);
+        constexpr std::array<const char*, 4> labels{{"GR", "+8", "+4", "OFF"}};
+        for (int row = 0; row < 4; ++row)
+        {
+            const float y0 = y + static_cast<float>(row) * 38.0f;
+            dl->AddRectFilled(panel.P(x + 2.0f, y0 + 3.0f),
+                              panel.P(x + 23.0f, y0 + 35.0f),
+                              IM_COL32(0, 0, 0, 145), 1.5f * panel.scale());
+            dl->AddRectFilled(panel.P(x, y0), panel.P(x + 20.0f, y0 + 32.0f),
+                              IM_COL32(29, 29, 28, 255), 1.5f * panel.scale());
+            dl->AddRect(panel.P(x, y0), panel.P(x + 20.0f, y0 + 32.0f),
+                        IM_COL32(87, 88, 84, 255), 1.5f * panel.scale(), 0,
+                        panel.scale());
+            if (row == 0)
+                dl->AddRectFilled(panel.P(x + 1.0f, y0 + 2.0f),
+                                  panel.P(x + 3.0f, y0 + 30.0f),
+                                  IM_COL32(226, 151, 61, 255));
+            panel.text(dl, x + 31.0f, y0 + 9.0f, 8.0f,
+                       row == 0 ? IM_COL32(246, 224, 177, 255)
+                                : IM_COL32(227, 227, 215, 255),
+                       labels[static_cast<size_t>(row)], -1, true);
+        }
     }
 
     void drawVca(ImDrawList* dl)
