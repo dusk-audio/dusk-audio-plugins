@@ -2730,7 +2730,8 @@ private:
                 -1.0f / (0.250f * sr));
             constexpr float kneeHoldSeconds = 0.030f;
             const float sampleSeconds = 1.0f / sr;
-            const auto advanceHeldPeak = [kneePeakRelease, sampleSeconds](
+            const auto advanceHeldPeak = [kneePeakRelease, kneeHoldSeconds,
+                                          sampleSeconds](
                 float inputLevel, float& peak,
                 float& holdSeconds) noexcept {
                 if (inputLevel >= peak)
