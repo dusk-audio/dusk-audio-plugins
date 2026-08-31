@@ -14,6 +14,129 @@ void copyParameter(std::atomic<T>& destination, const std::atomic<T>& source) no
 {
     destination.store(source.load(std::memory_order_relaxed), std::memory_order_relaxed);
 }
+
+float fetAttackPositionFromPlain(float legacyMilliseconds) noexcept
+{
+    const float proportion = std::clamp(
+        (legacyMilliseconds - 0.02f) / (80.0f - 0.02f), 0.0f, 1.0f);
+    return std::pow(proportion, 0.3f);
+}
+
+// The installed unit's first-cycle output peak SATURATES. Twelve dB of extra
+// input moves it +8.83 dB from -30 to -18 dBFS but only +1.63 dB from -18 to
+// -6 dBFS (Attack 0.00, 4 kHz reference peaks 0.9672 / 2.6765 / 3.2279). That
+// is a ceiling signature, not a detector one, and it is the mechanism the
+// vintage path was missing: our own peaks ran 6.69-7.01 dB high across the
+// whole -6 dBFS row and +3.39/+6.62 dB at Attack 1.00 lower down.
+//
+// This is deliberately a LEVEL-domain soft ceiling and not the time-windowed
+// output gain an earlier attempt used, because the two gates that constrain it
+// overlap in time and cannot both be satisfied by any choice of window. The
+// 4 kHz attack estimator fits from half a carrier period (0.125 ms) out to
+// 20 ms, while the measured first-cycle peaks sit at 0.0208-0.2500 ms. A gain
+// held across a fixed window multiplies the estimator's exponential by a
+// non-exponential envelope, which moved the fitted tau by up to 26 percentage
+// points on two rows -- proven by disabling the stage outright on diagnostic
+// binary 28dd845b6adf, which restored the pre-stage 23.487 % worst exactly.
+//
+// A ceiling has the property the window cannot buy: it is inert on every
+// sample already below the target, so it stops acting the moment the envelope
+// has decayed past it. At -30 dBFS/Attack 1.00 that is 0.065 ms after onset,
+// before the estimator's first fitted sample.
+float fetStartupPeakTarget(float sourcePeakDbfs, float attackPosition,
+                           int ratioIndex) noexcept
+{
+    // Reference whole-capture peaks, each entry fitted to the gated 1 kHz
+    // dynamics campaign where that measurement exists and to the 4 kHz
+    // high-carrier probe where it does not. `testFetStartupPeakSurface` asserts
+    // the 1 kHz Attack 0.00/0.50/1.00 knots of the -6 dBFS row (and the ratio
+    // rows at 0.50); nothing was ever captured at 1 kHz for Attack 0.25 or
+    // 0.75, so those two take the 4 kHz numbers rather than an interpolation
+    // between the knots either side. An earlier revision did interpolate them,
+    // and the 4 kHz probe rejected it: Attack 0.75 came out 3.847 dB low with
+    // its curve RMS up from 0.01808 to 0.04877, because the invented target
+    // (1.3554) sat far under the measured one (2.5606).
+    //
+    // That leaves the row non-monotonic in Attack, and the non-monotonicity is
+    // real rather than a fitting artefact: the installed unit's first-cycle
+    // peak is CARRIER dependent wherever its own detector wins the race to the
+    // first crest, so 1 kHz reads 2.4892 at Attack 0.50 where 4 kHz reads
+    // 3.1495. A single carrier-independent ceiling cannot serve both, and the
+    // gated carrier wins. The cost is recorded in the scorecard: the 4 kHz
+    // Attack 1.00 row keeps a -3.394 dB residual, where the reference is
+    // detector-bound (its peaks are 0.9113 at 1 kHz against 1.3908 at 4 kHz)
+    // while ours is ceiling-bound and therefore nearly carrier independent.
+    //
+    // The -18 and -30 rows are 4 kHz throughout; no 1 kHz row was ever
+    // captured at those drives.
+    constexpr std::array<float, 3> sourceDbfs{{-30.0f, -18.0f, -6.0f}};
+    constexpr std::array<float, 5> attackKnots{{
+        0.0f, 0.25f, 0.5f, 0.75f, 1.0f}};
+    // Stored knee-compensated, NOT as the raw reference peak: the soft knee
+    // below passes `startupCeilingSlope` of the excess, so a table holding the
+    // target itself lands high by exactly that fraction (measured: +0.444 to
+    // +1.007 dB, core c9281fa8bc9b). Each entry is the C solving
+    // `T = C + (P - C) * slope` for the measured reference peak T and our own
+    // measured raw peak P, i.e. `C = (T - slope * P) / (1 - slope)`.
+    constexpr std::array<std::array<float, 5>, 3> peaks{{
+        {{0.9677f, 0.9350f, 0.8921f, 0.8034f, 0.5058f}},
+        {{2.7337f, 2.3762f, 2.1709f, 1.8299f, 0.7835f}},
+        {{2.7164f, 2.6670f, 2.3360f, 2.5606f, 0.7865f}},
+    }};
+    // Ratio scaling, measured at Attack 0.50 / -6 dBFS on the 1 kHz reference
+    // (2.4892 / 2.1281 / 1.8324 / 1.4771 / 2.5832), knee-compensated the same
+    // way and expressed against the 4:1 entry. The 8:1 entry is the reference
+    // peak itself rather than a solved C, because our raw 8:1 peak (2.1056)
+    // already sits BELOW the reference (2.1281): that row needs the ceiling to
+    // stay inert, and solving it would have pulled the target under our own
+    // peak and started clipping a row that was already within 0.092 dB. Held
+    // flat in Attack because no other ratio row was captured, and faded out
+    // towards -30 dBFS where no ratio row was captured at all.
+    constexpr std::array<float, 5> ratioScale{{
+        1.0f, 0.910999f, 0.772807f, 0.603782f, 1.029946f}};
+
+    size_t sourceHigh = 1;
+    if (sourcePeakDbfs >= sourceDbfs.back())
+        sourceHigh = sourceDbfs.size() - 1;
+    else
+        while (sourceHigh < sourceDbfs.size() - 1
+               && sourcePeakDbfs > sourceDbfs[sourceHigh])
+            ++sourceHigh;
+    const size_t sourceLow = sourceHigh - 1;
+    const float sourceFraction = std::clamp(
+        (sourcePeakDbfs - sourceDbfs[sourceLow])
+            / (sourceDbfs[sourceHigh] - sourceDbfs[sourceLow]),
+        0.0f, 1.0f);
+
+    size_t attackHigh = 1;
+    if (attackPosition >= attackKnots.back())
+        attackHigh = attackKnots.size() - 1;
+    else
+        while (attackHigh < attackKnots.size() - 1
+               && attackPosition > attackKnots[attackHigh])
+            ++attackHigh;
+    const size_t attackLow = attackHigh - 1;
+    const float attackFraction = std::clamp(
+        (attackPosition - attackKnots[attackLow])
+            / (attackKnots[attackHigh] - attackKnots[attackLow]),
+        0.0f, 1.0f);
+    const auto interpolateAttack = [&](size_t sourceIndex) noexcept {
+        return peaks[sourceIndex][attackLow]
+            + attackFraction
+                * (peaks[sourceIndex][attackHigh]
+                    - peaks[sourceIndex][attackLow]);
+    };
+    const float low = interpolateAttack(sourceLow);
+    const float high = interpolateAttack(sourceHigh);
+    const float target = low + sourceFraction * (high - low);
+
+    const float ratioDepth = std::clamp(
+        (sourcePeakDbfs + 30.0f) / 24.0f, 0.0f, 1.0f);
+    const float scale = 1.0f + ratioDepth
+        * (ratioScale[static_cast<size_t>(std::clamp(ratioIndex, 0, 4))]
+            - 1.0f);
+    return target * scale;
+}
 }
 
 void MultiCompDSP::prepare(double sr, int blockSize)
@@ -24,6 +147,10 @@ void MultiCompDSP::prepare(double sr, int blockSize)
     const int initialOversampling = oversamplingSetting == 2 ? 4
                                   : oversamplingSetting == 1 ? 2 : 1;
     modes.prepare(sampleRate, maxBlock, initialOversampling);
+    // MultiCompModes::prepare deliberately preserves state when its rate and
+    // factor are unchanged. A host prepare is nevertheless a lifecycle reset
+    // for the finite FET post-burst helper, including repeated prepare calls.
+    modes.clearFetPostBurstRecovery();
     truePeakDetector.prepare();
     truePeakDetector.setQuality(MultiCompTruePeakDetector::Quality::Standard4x);
     for (auto& os : oversamplers) { os.setFactor(4); os.prepare(maxBlock); os.reset(); }
@@ -42,6 +169,8 @@ void MultiCompDSP::prepare(double sr, int blockSize)
     for (auto& v : crossoverCurves) v.assign(static_cast<size_t>(maxBlock), 0.0f);
     dry.assign(static_cast<size_t>(maxBlock * kMaxChannels), 0.0f);
     bypassDry.assign(static_cast<size_t>(maxBlock * kMaxChannels), 0.0f);
+    fetStartupInput.assign(
+        static_cast<size_t>(maxBlock * kMaxChannels), 0.0f);
     mixCurve.assign(static_cast<size_t>(maxBlock), 1.0f);
     bypassCurve.assign(static_cast<size_t>(maxBlock), 0.0f);
     autoGainCurve.assign(static_cast<size_t>(maxBlock), 1.0f);
@@ -55,6 +184,9 @@ void MultiCompDSP::prepare(double sr, int blockSize)
     previousOptoOwnSidechainValid = {{false, false}};
     previousBusSidechain = {{0.0f, 0.0f}};
     previousBusSidechainValid = {{false, false}};
+    fetStartupInputPeak = {{0.0f, 0.0f}};
+    fetStartupActiveSamples = {{0, 0}};
+    fetStartupSilentSamples = {{0, 0}};
     const size_t dryDelaySize = static_cast<size_t>(std::max(1, antiAliasLatency + static_cast<int>(std::ceil(sampleRate * 0.01)) + 1));
     for (auto& line : dryPathDelay) line.assign(dryDelaySize, 0.0f);
     dryPathWrite = {{0, 0}};
@@ -105,6 +237,7 @@ void MultiCompDSP::reset()
     for (auto& v : modeInput) std::fill(v.begin(), v.end(), 0.0f);
     std::fill(dry.begin(), dry.end(), 0.0f);
     std::fill(bypassDry.begin(), bypassDry.end(), 0.0f);
+    std::fill(fetStartupInput.begin(), fetStartupInput.end(), 0.0f);
     for (auto& line : delayedInput) std::fill(line.begin(), line.end(), 0.0f);
     for (auto& line : globalLookahead) std::fill(line.begin(), line.end(), 0.0f);
     globalLookaheadWrite = {{0, 0}};
@@ -114,6 +247,9 @@ void MultiCompDSP::reset()
     previousOptoOwnSidechainValid = {{false, false}};
     previousBusSidechain = {{0.0f, 0.0f}};
     previousBusSidechainValid = {{false, false}};
+    fetStartupInputPeak = {{0.0f, 0.0f}};
+    fetStartupActiveSamples = {{0, 0}};
+    fetStartupSilentSamples = {{0, 0}};
     for (auto& line : dryPathDelay) std::fill(line.begin(), line.end(), 0.0f);
     dryPathWrite = {{0, 0}};
     for (auto& line : bypassDelay) std::fill(line.begin(), line.end(), 0.0f);
@@ -239,6 +375,20 @@ void MultiCompDSP::processBlock(const float* const* in, float* const* out, int n
     processBlockExternal(in, nullptr, out, nCh, nSamples);
 }
 
+float MultiCompDSP::advanceFetStartupBlend(
+    int& activeSamples, int fullCorrectionSamples,
+    int correctionEndSamples) noexcept
+{
+    if (activeSamples < correctionEndSamples)
+        ++activeSamples;
+    if (activeSamples <= fullCorrectionSamples)
+        return 1.0f;
+    return std::clamp(static_cast<float>(correctionEndSamples - activeSamples)
+                          / static_cast<float>(correctionEndSamples
+                                               - fullCorrectionSamples),
+                      0.0f, 1.0f);
+}
+
 void MultiCompDSP::processBlockExternal(const float* const* in, const float* const* sidechain,
                                         float* const* out, int nCh, int nSamples)
 {
@@ -270,6 +420,20 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
             blockInputPeak = std::max(blockInputPeak, std::abs(in[ch][i]));
     const MultiCompMode mode = static_cast<MultiCompMode>(
         std::clamp(params.mode.load(std::memory_order_relaxed), 0, 7));
+    if (mode != MultiCompMode::FET)
+    {
+        fetStartupInputPeak = {{0.0f, 0.0f}};
+        fetStartupActiveSamples = {{0, 0}};
+        fetStartupSilentSamples = {{0, 0}};
+        modes.clearFetPostBurstRecovery();
+    }
+    else
+    {
+        if (nCh == 1) modes.clearFetPostBurstRecovery(1);
+        for (int ch = 0; ch < nCh; ++ch)
+            std::copy_n(in[ch], nSamples,
+                fetStartupInput.data() + static_cast<size_t>(ch * maxBlock));
+    }
     const int linkMode = std::clamp(params.stereoLinkMode.load(std::memory_order_relaxed), 0, 2);
     const int oversamplingSetting = params.oversampling.load(std::memory_order_relaxed);
     const int actualOversampling = oversamplingSetting == 2 ? 4 : oversamplingSetting == 1 ? 2 : 1;
@@ -322,6 +486,10 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     processLatencyHistory(in, out, nCh, nSamples, blockLatency, requestedBypass && bypassSettled);
     if (requestedBypass && bypassSettled)
     {
+        fetStartupInputPeak = {{0.0f, 0.0f}};
+        fetStartupActiveSamples = {{0, 0}};
+        fetStartupSilentSamples = {{0, 0}};
+        modes.clearFetPostBurstRecovery();
         previousBusSidechainValid = {{false, false}};
         processSidechainListenHistory(filteredSidechain, nCh, nSamples, blockLatency);
         for (int i = 0; i < nSamples; ++i) (void)sidechainListenRamp.next();
@@ -412,6 +580,130 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
                 dry[rightIndex] = dryMid - drySide;
             }
         }
+    }
+    if (mode == MultiCompMode::FET)
+    {
+        // The installed unit's first reconstructed cycle has a short output-
+        // stage memory that depends on source peak, Attack, and Ratio. Apply
+        // its measured surface here, after AA reconstruction: the current raw
+        // input then leads the delayed output by `antiAliasLatency`, matching
+        // the reference signal path without adding lookahead or changing PDC.
+        // The correction is gone 0.5 ms after the aligned output onset. The
+        // higher-carrier gate resolves and separately constrains the small
+        // overlap with its first attack-shape samples.
+        const float attackPosition = fetAttackPositionFromPlain(
+            params.fetAttack.load(std::memory_order_relaxed));
+        const int ratioIndex = std::clamp(
+            params.fetRatio.load(std::memory_order_relaxed), 0, 4);
+        const float outputPosition = std::clamp(
+            (params.fetOutput.load(std::memory_order_relaxed) + 20.0f) / 40.0f,
+            0.0f, 1.0f);
+        const float outputControlBlend = std::clamp(
+            (0.90f - outputPosition) / (0.90f - 0.625915527f),
+            0.0f, 1.0f);
+        const float activeThreshold = decibelsToGain(-60.0f);
+        const int silenceResetSamples = std::max(
+            1, static_cast<int>(std::lround(0.002 * sampleRate)));
+        const int fullCorrectionSamples = antiAliasLatency
+            + std::max(1, static_cast<int>(std::lround(0.00025 * sampleRate)));
+        const int correctionEndSamples = antiAliasLatency
+            + std::max(2, static_cast<int>(std::lround(0.00050 * sampleRate)));
+        const float peakRelease = std::exp(
+            -1.0f / static_cast<float>(0.010 * sampleRate));
+        constexpr float startupCeilingSlope = 0.10f;
+        for (int ch = 0; ch < nCh; ++ch)
+            for (int i = 0; i < nSamples; ++i)
+            {
+                const float inputMagnitude = std::abs(fetStartupInput[
+                    static_cast<size_t>(ch * maxBlock + i)]);
+                if (inputMagnitude > activeThreshold)
+                {
+                    if (fetStartupInputPeak[static_cast<size_t>(ch)] <= 0.0f
+                        || fetStartupSilentSamples[static_cast<size_t>(ch)]
+                            >= silenceResetSamples)
+                    {
+                        fetStartupInputPeak[static_cast<size_t>(ch)]
+                            = inputMagnitude;
+                        fetStartupActiveSamples[static_cast<size_t>(ch)] = 0;
+                    }
+                    else
+                        fetStartupInputPeak[static_cast<size_t>(ch)] = std::max(
+                            inputMagnitude,
+                            fetStartupInputPeak[static_cast<size_t>(ch)]
+                                * peakRelease);
+                    fetStartupSilentSamples[static_cast<size_t>(ch)] = 0;
+                }
+                else if (fetStartupInputPeak[static_cast<size_t>(ch)] > 0.0f)
+                {
+                    fetStartupInputPeak[static_cast<size_t>(ch)] *= peakRelease;
+                    fetStartupSilentSamples[static_cast<size_t>(ch)] = std::min(
+                        fetStartupSilentSamples[static_cast<size_t>(ch)] + 1,
+                        silenceResetSamples + 1);
+                    if (fetStartupSilentSamples[static_cast<size_t>(ch)]
+                        >= silenceResetSamples)
+                    {
+                        fetStartupInputPeak[static_cast<size_t>(ch)] = 0.0f;
+                        fetStartupActiveSamples[static_cast<size_t>(ch)] = 0;
+                    }
+                }
+
+                float startupBlend = 0.0f;
+                if (fetStartupInputPeak[static_cast<size_t>(ch)] > 0.0f)
+                {
+                    // Saturate at the end of the correction window: the blend is
+                    // already 0 there and stays 0, so counting past it changes
+                    // nothing audible and only risks int overflow on a long
+                    // sustained input.
+                    int& activeSamples
+                        = fetStartupActiveSamples[static_cast<size_t>(ch)];
+                    startupBlend = advanceFetStartupBlend(
+                        activeSamples, fullCorrectionSamples,
+                        correctionEndSamples);
+                }
+                const float magnitude = std::abs(out[ch][i]);
+                if (startupBlend > 0.0f && outputControlBlend > 0.0f
+                    && magnitude > 0.0f)
+                {
+                    const float sourcePeakDbfs = gainToDecibels(std::max(
+                        fetStartupInputPeak[static_cast<size_t>(ch)], 1.0e-12f));
+                    const float startupCeiling = fetStartupPeakTarget(
+                        sourcePeakDbfs, attackPosition, ratioIndex);
+                    // Inert below the target -- that is the property the old
+                    // time-windowed gain lacked. Only samples ABOVE the
+                    // installed unit's measured first-cycle peak are touched,
+                    // so the estimator window is left alone the instant the
+                    // envelope has decayed past it.
+                    if (magnitude > startupCeiling)
+                    {
+                        const float limited = startupCeiling
+                            + (magnitude - startupCeiling)
+                                * startupCeilingSlope;
+                        out[ch][i] += outputControlBlend * startupBlend
+                            * (std::copysign(limited, out[ch][i]) - out[ch][i]);
+                    }
+                }
+            }
+
+        // The reference's base-rate output stage compresses only the largest
+        // reconstructed startup peaks. Its steady ceiling sweep stays below
+        // this knee, so static gain and harmonic measurements remain untouched.
+        // Runs after the mid/side decode above: the hardware limits the
+        // physical left/right outputs, so the ceiling must see decoded L/R
+        // samples in both link modes (identical result for mono and for pure
+        // mid or pure side content; differs only for mixed stereo material).
+        constexpr float outputCeilingKnee = 6.39712761f;
+        constexpr float outputCeilingSlope = 0.46720009f;
+        for (int ch = 0; ch < nCh; ++ch)
+            for (int i = 0; i < nSamples; ++i)
+            {
+                const float magnitude = std::abs(out[ch][i]);
+                if (magnitude > outputCeilingKnee)
+                    out[ch][i] = std::copysign(
+                        outputCeilingKnee
+                            + (magnitude - outputCeilingKnee)
+                                * outputCeilingSlope,
+                        out[ch][i]);
+            }
     }
     const float targetMix = std::clamp((isMulti ? params.mbMix.load(std::memory_order_relaxed) : params.mix.load(std::memory_order_relaxed)) * 0.01f, 0.0f, 1.0f);
     globalMixSmoother.setTarget(targetMix);
@@ -779,13 +1071,90 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
             previousOptoOwnSidechainValid = {{false, false}};
             continue;
         }
+        if (mode == MultiCompMode::FET && link)
+        {
+            // The installed 1176's stereo link is an arithmetic signed
+            // maximum, not a magnitude maximum or a power sum. Its internal
+            // link control is evaluated once per host sample and held across
+            // the oversampling phases; the audio and colour path remain fully
+            // oversampled. Recomputing the maximum on interpolated sub-samples
+            // creates a false time-order arm at 96 kHz: the equal-level
+            // quarter-cycle response moves by 0.059 dB while its adjacent and
+            // complementary phases do not. A full 1x control proved the rate
+            // coordinate (0.0065 dB worst); this held control reproduces it
+            // without disabling audio oversampling (0.0099 dB worst).
+            std::array<float, 4> inputLeftPhases{}, inputRightPhases{};
+            std::array<float, 4> outputLeftPhases{}, outputRightPhases{};
+            oversamplers[0].upsampleSample(in[0][i], inputLeftPhases.data());
+            oversamplers[1].upsampleSample(in[1][i], inputRightPhases.data());
+            for (int ch = 0; ch < 2; ++ch)
+                if (!previousOversampledSidechainValid[static_cast<size_t>(ch)])
+                {
+                    previousOversampledSidechain[static_cast<size_t>(ch)]
+                        = ch == 0 ? sc0 : sc1;
+                    previousOversampledSidechainValid[static_cast<size_t>(ch)] = true;
+                }
+            const float nativeSignedMaximum = std::max(sc0, sc1);
+            const bool nativeLeftUsesLinkedDetector = external
+                || sc0 < nativeSignedMaximum - 1.0e-12f;
+            const bool nativeRightUsesLinkedDetector = external
+                || sc1 < nativeSignedMaximum - 1.0e-12f;
+            for (int phase = 0; phase < actualOs; ++phase)
+            {
+                const float phaseSc0 = external
+                    ? actualOs == 1 ? sc0
+                        : interpolateOversampledSidechain(
+                            previousOversampledSidechain[0], sc0,
+                            phase, actualOs)
+                    : inputLeftPhases[static_cast<size_t>(phase)];
+                const float phaseSc1 = external
+                    ? actualOs == 1 ? sc1
+                        : interpolateOversampledSidechain(
+                            previousOversampledSidechain[1], sc1,
+                            phase, actualOs)
+                    : inputRightPhases[static_cast<size_t>(phase)];
+                // External sidechains retain their existing interpolated path;
+                // only the measured internal link has a native-rate control.
+                const float detectorSc0 = external ? phaseSc0 : sc0;
+                const float detectorSc1 = external ? phaseSc1 : sc1;
+                const float signedMaximum = std::max(detectorSc0, detectorSc1);
+                constexpr float fetLinkDetectorGain = 1.0285f;
+                const float leftSidechain = detectorSc0
+                    + (fetLinkDetectorGain * signedMaximum - detectorSc0)
+                        * linkAmount;
+                const float rightSidechain = detectorSc1
+                    + (fetLinkDetectorGain * signedMaximum - detectorSc1)
+                        * linkAmount;
+                outputLeftPhases[static_cast<size_t>(phase)] = applyCoreDistortion(
+                    modes.process(
+                        mode, inputLeftPhases[static_cast<size_t>(phase)], 0,
+                        leftSidechain, modeParams, localBusMix, external, 0.0f,
+                        nativeLeftUsesLinkedDetector),
+                    distortionType, distortionAmount);
+                outputRightPhases[static_cast<size_t>(phase)] = applyCoreDistortion(
+                    modes.process(
+                        mode, inputRightPhases[static_cast<size_t>(phase)], 1,
+                        rightSidechain, modeParams, localBusMix, external, 0.0f,
+                        nativeRightUsesLinkedDetector),
+                    distortionType, distortionAmount);
+            }
+            out[0][i] = oversamplers[0].downsampleSample(outputLeftPhases.data());
+            out[1][i] = oversamplers[1].downsampleSample(outputRightPhases.data());
+            previousOversampledSidechain = {{sc0, sc1}};
+            previousOptoOwnSidechain = {{sc0, sc1}};
+            previousOptoOwnSidechainValid = {{true, true}};
+            previousBusSidechainValid = {{false, false}};
+            continue;
+        }
         for (int ch = 0; ch < nCh; ++ch)
         {
             const float input = in[ch][i];
             const float ownSc = ch == 0 ? sc0 : sc1;
             const float midSideSc = ch == 0 ? (sc0 + sc1) * 0.5f : (sc0 - sc1) * 0.5f;
-            const float sc = link ? std::abs(ownSc) * (1.0f - linkAmount) + scLevel * linkAmount
-                                  : linkMode == 1 ? midSideSc : ownSc;
+            const float sc = link
+                ? std::abs(ownSc) * (1.0f - linkAmount)
+                    + scLevel * linkAmount
+                : linkMode == 1 ? midSideSc : ownSc;
             // Interpolate causally from the previous native detector sample to
             // this one.  The carried endpoint makes the same detector curve
             // independent of where the host divides blocks.
@@ -803,15 +1172,26 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
             }
             const float previousOptoOwnSc = previousOptoOwnSidechain[channelIndex];
             const float localMix = mode == MultiCompMode::Digital ? localDigitalMix : localBusMix;
+            const bool fetOwnDetectorIsLinkedMaximum
+                = std::abs(ownSc) >= scLevel - 1.0e-12f;
+            const bool modeUsesLinkedDetector = mode == MultiCompMode::FET
+                ? link && (external || !fetOwnDetectorIsLinkedMaximum) : link;
             if (actualOs == 1)
             {
                 out[ch][i] = oversamplers[ch].processSample(input, [&](float sample) noexcept {
                     const float optoOwnDetector = external ? ownSc : sample;
                     const float optoDetector = optoOwnDetector
                         + (optoLinkedPhases[0] - optoOwnDetector) * linkAmount;
+                    const float modeSidechain = mode == MultiCompMode::FET && link
+                        ? external ? sc
+                        : fetOwnDetectorIsLinkedMaximum ? std::abs(sample)
+                        : std::abs(sample) * (1.0f - linkAmount)
+                            + std::abs(optoLinkedPhases[0]) * linkAmount
+                        : sc;
                     return applyCoreDistortion(modes.process(
-                                                   mode, sample, ch, sc, modeParams,
-                                                   localMix, external, optoDetector, link),
+                                                   mode, sample, ch, modeSidechain, modeParams,
+                                                   localMix, external, optoDetector,
+                                                   modeUsesLinkedDetector),
                                                distortionType, distortionAmount);
                 });
             }
@@ -829,9 +1209,17 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
                     const float optoDetector = optoOwnDetector
                         + (optoLinkedPhases[static_cast<size_t>(phase)]
                            - optoOwnDetector) * linkAmount;
+                    const float modeSidechain = mode == MultiCompMode::FET && link
+                        ? external ? osSc
+                        : fetOwnDetectorIsLinkedMaximum ? std::abs(sample)
+                        : std::abs(sample) * (1.0f - linkAmount)
+                            + std::abs(optoLinkedPhases[static_cast<size_t>(phase)])
+                                * linkAmount
+                        : osSc;
                     return applyCoreDistortion(modes.process(
-                                                   mode, sample, ch, osSc, modeParams,
-                                                   localMix, external, optoDetector, link),
+                                                   mode, sample, ch, modeSidechain, modeParams,
+                                                   localMix, external, optoDetector,
+                                                   modeUsesLinkedDetector),
                                                distortionType, distortionAmount);
                 });
             }

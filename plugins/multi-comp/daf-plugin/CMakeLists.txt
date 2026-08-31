@@ -16,6 +16,11 @@ daf_add_plugin(multi_comp_2
   FILES_UI MultiCompUI.cpp ${DUSK_DAF_UI_SOURCES})
 target_include_directories(multi_comp_2 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/../core" ${DUSK_DAF_INCLUDE_DIRS})
 target_compile_definitions(multi_comp_2 PUBLIC MULTICOMP2_VERSION_MAJOR=${PROJECT_VERSION_MAJOR} MULTICOMP2_VERSION_MINOR=${PROJECT_VERSION_MINOR} MULTICOMP2_VERSION_PATCH=${PROJECT_VERSION_PATCH})
+if(APPLE)
+  # DAF's generic AU path lookup can resolve the remote host executable in
+  # AUHostingService. Resolve from code linked into this component instead.
+  target_sources(multi_comp_2-au PRIVATE MultiCompAUComponentBundlePath.mm)
+endif()
 dusk_daf_install_local(multi_comp_2 LV2_PROGRAMS)
 
 if(NOT CMAKE_CROSSCOMPILING)

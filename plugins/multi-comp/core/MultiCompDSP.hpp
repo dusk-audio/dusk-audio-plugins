@@ -115,6 +115,9 @@ private:
     void processSidechainListenHistory(const float* const* sidechain, int nCh,
                                        int nSamples, int delay) noexcept;
     void resetAutoGainMeasurement() noexcept;
+    static float advanceFetStartupBlend(int& activeSamples,
+                                        int fullCorrectionSamples,
+                                        int correctionEndSamples) noexcept;
     int latencySamplesForMode(MultiCompMode mode, float globalLookaheadMs,
                               float digitalLookaheadMs) const noexcept;
 
@@ -136,7 +139,8 @@ private:
     std::array<std::array<std::vector<float>, kMaxChannels>, kMultiCompBands> bands, sidechainBands;
     std::array<std::vector<float>, kMaxChannels> processedSidechain;
     std::array<std::vector<float>, kMaxChannels> modeInput;
-    std::vector<float> dry, bypassDry, mixCurve, bypassCurve, autoGainCurve;
+    std::vector<float> dry, bypassDry, fetStartupInput;
+    std::vector<float> mixCurve, bypassCurve, autoGainCurve;
     std::array<std::vector<float>, kMaxChannels> dryPathDelay;
     std::array<int, kMaxChannels> dryPathWrite{{0, 0}};
     std::array<std::vector<float>, kMaxChannels> bypassDelay;
@@ -153,6 +157,9 @@ private:
     std::array<float, kMaxChannels> previousBusSidechain{{0.0f, 0.0f}};
     std::array<bool, kMaxChannels> previousBusSidechainValid{{false, false}};
     std::array<float, kMultiCompBands * kMaxChannels> multibandEnvelopes{};
+    std::array<float, kMaxChannels> fetStartupInputPeak{{0.0f, 0.0f}};
+    std::array<int, kMaxChannels> fetStartupActiveSamples{{0, 0}};
+    std::array<int, kMaxChannels> fetStartupSilentSamples{{0, 0}};
     std::uint8_t activeBandMask = 0x0f;
     std::array<int, kMultiCompBands> enabledBandIndices{{0, 1, 2, 3}};
     std::array<int, kMultiCompBands - 1> stageBoundaryIndices{{0, 1, 2}};

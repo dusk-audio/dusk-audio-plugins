@@ -442,6 +442,26 @@ void testFractionalEnumUiAndDspAgreement()
     std::puts("fractional enum automation: UI and DSP select the same rounded index");
 }
 
+void testEditorMirrorSeedsFromCurrentPluginState()
+{
+    multicompp::StateValues mirror{};
+    for (int i = 0; i < multicompp::kMeterMaster; ++i)
+        mirror[static_cast<size_t>(i)] = multicompp::resolveParameter(i,
+            [](const multicompp::Param& d) { return multicompp::hostDefault(d); },
+            [](const multicompp::BandParam& d, int) { return multicompp::hostDefault(d); });
+    auto pluginValues = mirror;
+    const auto mode = static_cast<uint32_t>(multicompp::ParamId::Mode);
+    const auto fetInput = static_cast<uint32_t>(multicompp::ParamId::FetInput);
+    pluginValues[mode] = 1.0f;
+    pluginValues[fetInput] = 17.25f;
+    multicompp::ui_detail::refreshParameterMirror(mirror,
+        [&pluginValues](uint32_t index) { return pluginValues[index]; },
+        static_cast<uint32_t>(multicompp::kMeterMaster));
+    require(mirror[mode] == 1.0f && mirror[fetInput] == 17.25f,
+            "a newly opened editor seeds its mirror from the live plugin state");
+    std::puts("editor mirror seed: pre-open FET host state adopted on the first frame");
+}
+
 void testCrossoverMirrorRefreshesEveryPluginChangedValue()
 {
     multicompp::StateValues values{};
@@ -666,6 +686,82 @@ void testShippingUiUsesConformingHeaderWithoutUtilityBands()
                 "all eight compressor modes are exposed as top-row buttons");
 }
 
+void testFetFaceplateContract()
+{
+    const std::string source = readSiblingSource("MultiCompUI.cpp");
+    const bool hasBlackFaceIdentity = source.find("\"FET 76\"") != std::string::npos
+        && source.find("\"LIMITING AMPLIFIER\"") != std::string::npos;
+    const bool reusesOptoMeter =
+        source.find("drawOptoMeter(dl, 675") != std::string::npos
+        && source.find("void drawFetMeter(") == std::string::npos
+        && source.find("mode == 0 || mode == 1") != std::string::npos;
+    const bool hasFiveRatioButtons = source.find("drawFetRatioButtons(dl") != std::string::npos
+        && source.find("visualOrder") != std::string::npos
+        && source.find("row < 5") != std::string::npos;
+    const bool exposesOnlyMixExtension =
+        source.find("fetTrimKnob(dl, \"fet_mix\"") != std::string::npos
+        && source.find("fetTrimKnob(dl, \"fet_threshold\"") == std::string::npos
+        && source.find("fetTrimKnob(dl, \"fet_trans\"") == std::string::npos
+        && source.find("drawFetCurveSwitch") == std::string::npos;
+    const bool hasConcentricKnobSkirts =
+        source.find("AddCircleFilled(center, r * 0.96f") != std::string::npos
+        && source.find("center.x - r * 0.13f") == std::string::npos;
+    const size_t studioBranch = source.find("if (studio)");
+    const size_t vintageFace = source.find("constexpr float left = 0.0f",
+                                           studioBranch);
+    const bool keepsStudioDistinct = studioBranch != std::string::npos
+        && vintageFace != std::string::npos && studioBranch < vintageFace
+        && source.find("\"sf_in\"", studioBranch) < vintageFace;
+    const auto attack = static_cast<uint32_t>(multicompp::ParamId::FetAttack);
+    const auto release = static_cast<uint32_t>(multicompp::ParamId::FetRelease);
+    const auto input = static_cast<uint32_t>(multicompp::ParamId::FetInput);
+    const bool timingReadoutUsesDialPosition =
+        multicompp::ui_detail::fetTimingDialValue(multicompp::hostMin(
+            multicompp::kParams[attack]), attack) == 1.0f
+        && multicompp::ui_detail::fetTimingDialValue(multicompp::hostMax(
+            multicompp::kParams[attack]), attack) == 7.0f
+        && multicompp::ui_detail::fetTimingDialValue(multicompp::hostMin(
+            multicompp::kParams[release]), release) == 1.0f
+        && multicompp::ui_detail::fetTimingDialValue(multicompp::hostMax(
+            multicompp::kParams[release]), release) == 7.0f
+        && multicompp::ui_detail::fetTimingHostValue(4.0f, attack) == 0.5f
+        && multicompp::ui_detail::fetTimingHostValue(4.0f, release) == 575.0f
+        && !multicompp::ui_detail::fetTimingUsesDialReadout(input);
+    std::printf("FET faceplate: identity=%s opto-meter=%s ratios=%s mix-only=%s "
+                "concentric-knobs=%s studio-distinct=%s timing-readout=%s\n",
+                hasBlackFaceIdentity ? "yes" : "no",
+                reusesOptoMeter ? "yes" : "no",
+                hasFiveRatioButtons ? "yes" : "no",
+                exposesOnlyMixExtension ? "yes" : "no",
+                hasConcentricKnobSkirts ? "yes" : "no",
+                keepsStudioDistinct ? "yes" : "no",
+                timingReadoutUsesDialPosition ? "1-7" : "legacy-ms");
+    require(hasBlackFaceIdentity && reusesOptoMeter && hasFiveRatioButtons
+                && exposesOnlyMixExtension && hasConcentricKnobSkirts
+                && keepsStudioDistinct && timingReadoutUsesDialPosition,
+            "vintage FET uses 1-7 timing readouts while preserving its hardware faceplate");
+}
+
+void testAuCustomViewUsesComponentBundle()
+{
+#if defined(__APPLE__)
+    const std::string cmake = readSiblingSource("CMakeLists.txt");
+    const std::string resolver = readSiblingSource("MultiCompAUComponentBundlePath.mm");
+    const bool resolverIsLinkedIntoAu =
+        cmake.find("target_sources(multi_comp_2-au PRIVATE "
+                   "MultiCompAUComponentBundlePath.mm)") != std::string::npos;
+    const bool resolverUsesItsOwnImage =
+        resolver.find("&setMultiCompAUComponentBundlePath") != std::string::npos
+        && resolver.find("DAF_NAMESPACE::d_nextBundlePath = componentBundlePath")
+            != std::string::npos;
+    require(resolverIsLinkedIntoAu && resolverUsesItsOwnImage,
+            "AU custom view bundle is resolved from code inside the component image");
+    std::printf("AU Cocoa editor path: component-local resolver linked=%s source=%s\n",
+                resolverIsLinkedIntoAu ? "yes" : "no",
+                resolverUsesItsOwnImage ? "yes" : "no");
+#endif
+}
+
 void testHostProgramChangeUpdatesUiMirror()
 {
     for (size_t presetIndex = 0; presetIndex < multicompp::kFactoryPresets.size(); ++presetIndex)
@@ -732,9 +828,11 @@ void testOptoFaceplateContract()
             "Opto faceplate fills the complete mode canvas below the toolbar");
     require(multicompp::ui_detail::designHeightForMode(0.0f) == 380.0f
                 && multicompp::ui_detail::designHeightForMode(0.4f) == 380.0f
-                && multicompp::ui_detail::designHeightForMode(0.6f) == 486.0f
+                && multicompp::ui_detail::designHeightForMode(0.6f) == 380.0f
+                && multicompp::ui_detail::designHeightForMode(1.4f) == 380.0f
+                && multicompp::ui_detail::designHeightForMode(1.6f) == 486.0f
                 && multicompp::ui_detail::designHeightForMode(7.0f) == 486.0f,
-            "Opto uses the compact rack canvas while every other mode keeps the full canvas");
+            "Opto and vintage FET use rack-height canvases while the other modes keep the full canvas");
 
     const float zero = multicompp::ui_detail::optoMeterNeedleAngle(0.0f);
     const float ten = multicompp::ui_detail::optoMeterNeedleAngle(-10.0f);
@@ -747,10 +845,30 @@ void testOptoFaceplateContract()
             "Opto mode control exposes the Comp and Limit panel labels");
     require(std::strcmp(multicompp::ui_detail::optoMeterLabel(), "GR") == 0,
             "Opto analogue meter is fixed to the GR panel readout");
-    const float afterOneTimeConstant =
-        multicompp::ui_detail::optoMeterBallisticStep(0.0f, -20.0f, 0.300f);
-    reviewCheck(std::abs(afterOneTimeConstant + 12.64241f) < 0.001f,
-                "Opto needle applies a 300 ms RC response instead of raw block GR");
+    const float attackDisplay = multicompp::ui_detail::optoMeterDisplayValue(-20.0f);
+    const float releaseDisplay = multicompp::ui_detail::optoMeterDisplayValue(0.0f);
+    const std::string source = readSiblingSource("MultiCompUI.cpp");
+    const size_t meterStart = source.find("void drawOptoMeter(");
+    const size_t meterEnd = source.find("void drawFet(", meterStart);
+    require(meterStart != std::string::npos && meterEnd != std::string::npos,
+            "shared Opto/FET meter renderer is present");
+    const std::string meterSource = source.substr(meterStart, meterEnd - meterStart);
+    const bool hasOneDbTickScale =
+        meterSource.find("for (int tick = 0; tick <= 20; ++tick)") != std::string::npos
+        && meterSource.find("static_cast<float>(tick) / 20.0f") != std::string::npos
+        && meterSource.find("const bool major = tick % 5 == 0") != std::string::npos;
+    const bool omitsVuLevelLegend =
+        meterSource.find("VU LEVEL INDICATOR") == std::string::npos;
+    require(hasOneDbTickScale && omitsVuLevelLegend,
+            "shared Opto/FET meter has one tick per dB and no VU level legend");
+    const bool drawsRawGainReduction = source.find(
+        "optoMeterDisplayValue(meter(kMeterMaster))") != std::string::npos;
+    const bool keepsDisplayEnvelope = source.find("optoMeterBallisticStep")
+            != std::string::npos
+        || source.find("optoMeterGainReductionDb") != std::string::npos;
+    reviewCheck(attackDisplay == -20.0f && releaseDisplay == 0.0f
+                    && drawsRawGainReduction && !keepsDisplayEnvelope,
+                "Opto needle follows raw DSP gain reduction without added display lag or state");
     reviewCheck(std::strcmp(multicompp::ui_detail::optoKnobValueSuffix(), "") == 0,
                 "Opto knob value bubbles show unitless 0-100 values");
     const float idleReadout = multicompp::ui_detail::optoMeterReadoutAmount(0.0f);
@@ -759,7 +877,8 @@ void testOptoFaceplateContract()
                 && multicompp::ui_detail::optoMeterReadoutAmount(1.0f) == 0.0f
                 && multicompp::ui_detail::optoMeterReadoutAmount(-150.0f) == 99.9f,
             "Opto GR readout is positive, bounded, and never displays negative zero");
-    std::printf("opto faceplate: aspect %.6f reference %.6f; meter angles "
+    std::printf("opto faceplate: aspect %.6f reference %.6f; meter ticks=21 "
+                "(1 dB each), legend=removed; meter angles "
                 "0/10/20 dB %.6f/%.6f/%.6f rad; modes %s/%s\n",
                 aspect, referenceAspect, zero, ten, twenty,
                 multicompp::ui_detail::optoModeLabel(0.0f),
@@ -823,14 +942,22 @@ void testFractionalIntegerAutomationStaysLoadable()
     std::puts("fractional integer automation: snapped on store, state stays loadable");
 }
 
-int main()
+int main(int argc, char** argv)
 {
+    if (argc == 2 && std::strcmp(argv[1], "--fet-ui") == 0)
+    {
+        testFetFaceplateContract();
+        std::puts("Multi-Comp FET faceplate test: PASS");
+        return 0;
+    }
     testRunGuardsSidechainPortsPerLayout();
     testCrossoverOrderingDoesNotRatchet();
     testQuantisedFineStepFallsBackToRestingPrecision();
     testOptoSidechainHpUsesPhysicalDragDomain();
     testShippingUiHasNoDeadCrossoverDescriptor();
     testShippingUiUsesConformingHeaderWithoutUtilityBands();
+    testFetFaceplateContract();
+    testAuCustomViewUsesComponentBundle();
     testOptoFaceplateContract();
     testCrossoverMirrorRefreshesEveryPluginChangedValue();
     require(reviewFailureCount == 0, "review regressions are fixed");
@@ -842,6 +969,7 @@ int main()
     testHostProgramChangeUpdatesUiMirror();
     testPresetIdentityFollowsPresetOwnership();
     testFractionalEnumUiAndDspAgreement();
+    testEditorMirrorSeedsFromCurrentPluginState();
     testFractionalIntegerAutomationStaysLoadable();
     std::puts("Multi-Comp plugin-layer tests: PASS");
     return 0;

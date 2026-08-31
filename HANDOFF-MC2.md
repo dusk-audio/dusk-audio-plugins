@@ -356,3 +356,360 @@ Declined, with reasons — do not silently re-apply:
 Terse. Numbers, not adjectives. Report your own errors plainly and move on.
 When two gates conflict, stop optimising and ask what single mechanism
 produces both readings.
+
+## 9. Logic "black box" AU investigation — 2026-08-28, OPEN
+
+Symptom: the `aufx DsMc Dusk` AU opens in Logic Pro as an empty dark rectangle
+with the plugin name centred. Same `.component` renders in REAPER.
+
+**The plugin is exonerated in every configuration reproducible outside Logic.**
+Measured with `plugins/shared-daf/tests/DafAUViewProbe.mm` (new, untracked)
+against the Aug 28 14:38 build, which is byte-identical to the installed bundle:
+
+| configuration | result |
+|---|---|
+| in-process, view instantiated | renders, 666 distinct colours in the GL front buffer |
+| out of process (`LoadOutOfProcess`) | renders; host gets `_RemoteAUv2ViewFactory` + `NSRemoteView` |
+| host `setFrameSize` 1012x257 and 700x200 right after creation | renders |
+| 1000 blocks rendered through both input buses with the editor open | renders, `worstStatus=0` |
+| the above under `MallocGuardEdges`/`MallocScribble`/`MallocCheckHeapEach` | clean, disposes cleanly |
+
+Do not re-derive these. In particular the OpenGL-over-ViewBridge theory is dead:
+out-of-process hosting composites the GL view correctly.
+
+Also ruled out by evidence: Info.plist shape, linked frameworks, exported symbols
+and ObjC class names (identical to `tape_machine_2`); code signing (the broken
+plugin verifies clean, the *working* `tape_machine_2` does not); the uncommitted
+`MultiCompAUComponentBundlePath.mm`, which produces the same string as DAF's own
+fallback and is a no-op in the normal case; `scanUserPresets`, which uses the
+`std::error_code` overloads throughout and cannot throw out of the view factory.
+
+Logic's own scan is clean: `~/Library/Caches/AudioUnitCache/Logs/AUScan*.plist`
+records `Multi-Comp 2 start` / `took 0.000000 seconds`, no error.
+
+**`auval` cannot catch this class of bug.** Its `Cocoa Views Available: 1` comes
+from enumerating the class name; it never calls `uiViewForAudioUnit:`. That is
+why `DafAUViewProbe.mm` exists, and why it belongs in `daf-au-test.yml`.
+
+**Next step, and the only one left:** Logic running with the plugin inserted and
+the blank window open, then `lsof` across the `Logic Pro` and
+`AUHostingServiceXPC_arrow` pids to see which process maps the bundle. Note that
+`AUHostingServiceXPC_arrow` loading a component is NOT proof of out-of-process
+hosting — Logic's startup scan runs there too, and was observed loading
+known-good `tape_machine_2` alongside Multi-Comp 2.
+
+### Two real defects found alongside, both unfixed
+
+1. `DAF::PluginAU::reallocAudioBufferList(bool)` heap-corrupts on `Uninitialize`
+   (`~/Library/Logs/DiagnosticReports/REAPER-2026-08-28-110312.ips`, imageIndex 24
+   is this bundle), and auval prints ~20 `AU Reports Processing in Place; Input
+   buffer[0] ... and Output buffer[0] ... are not the same` on the same path.
+   Multi-Comp 2 is the only DAF plugin with two AU input elements. The probe's
+   render path does not trip it; the bus-reconfiguration sequences in
+   `MultiCompAUTests.cpp` are the better vehicle.
+2. `docker/check_daf_pins.sh:84-90` and `.github/scripts/check_fork_sources.sh`
+   both decide pugl's provenance from `.gitmodules`, never from the checkout.
+   Local `DAF/dgl/src/pugl-upstream` origin is `https://github.com/DISTRHO/pugl.git`
+   on `5e2621d` while DAF HEAD pins `43d8e34` (object not even fetched), and both
+   guards report OK. Every local AU build compiled upstream DISTRHO pugl.
+   `DAF-Widgets` is also off-pin (local `1c09e1ef`, CI `91e0004e`).
+
+## 10. Milestone #2 closeout audit — 2026-08-30
+
+The live milestone had two open issues at audit time: #200 (DAF AU true
+sidechain bus) and #210 (Opto dense-programme parity).
+
+- #200's requested production path is present in the pinned DAF checkout at
+  `dfc50729` (the grouped-input-bus implementation is `cd445a50`). The committed
+  `MultiCompAUTest` sees two AU input elements and passes stereo, mono,
+  disconnected, disabled and routed-sidechain cases. Both the normal and
+  `-ffp-contract=off` CTest runs passed 4/4, including `MultiCompAU`.
+- #210's old issue-body figures (RMS 1.600/3.163 dB at PR 0.85/1.00) no longer
+  describe current production. The current paired results are PR 0.40:
+  mean -0.019567 dB, RMS 0.427058 dB, correlation 0.870237; PR 0.70:
+  +0.440839/0.742100/0.854521; PR 0.85:
+  +0.584630/0.921499/0.811253; PR 1.00:
+  +0.616529/0.987459/0.822303. The four-row parity gate now constrains all
+  three metrics at every PR. Removing the production startup-attack scale made
+  PR 1.00 correlation fall to 0.734804 and the gate fail; restoring it returns
+  the figures above and passes.
+- The FET/1176 lifecycle test previously poisoned a dead sentinel rather than
+  the state used by the callback. The sentinel is removed and the test now
+  poisons/checks both input peaks and both active/silent counters across
+  repeated prepare, reset, mode exit and settled bypass. Removing the bypass
+  active-counter reset produces the expected focused failure; restoring it
+  passes with the counter saturated at 24 and post-window blend exactly 0.
+- Current FET audio DSP remains the accepted Wave 27/30 state. No scalar DSP
+  candidate survived the recorded controls, so no speculative audio change was
+  made in this closeout. The meter-film comparison is still measurement-blocked:
+  UAD independent repeats exceed the 0.5-degree repeatability limit at 27/504
+  points, with a 22.172-degree maximum. Collect continuous timestamped,
+  nonblocking film before scoring another visual-meter candidate.
+- Verification on this source: native CTest 4/4 in 40.21 seconds; no-FMA CTest
+  4/4 in 43.49 seconds. The Linux GCC 12 tripwire could not run because the
+  existing Podman VM returned to `stopped` immediately after reporting a
+  successful start; this is an unverified platform, not a test failure.
+
+## 11. FET Wave 31: shallow-knee parity — 2026-08-30
+
+Wave 28 identified the next measurable frontier: the accepted detector entered
+the 4:1 knee too early, and its 100 Hz/1 kHz split contradicted the reference.
+The new `--fet-knee-onset` gate uses nine independently captured points per
+frequency from -14 through -6 dB driven level, plus held-out 40 and 60 Hz
+endpoints from Wave 24. On the pre-change production path it failed with
+0.724184 dB worst absolute error and 0.120661 dB worst frequency split. The
+accepted path reads 0.011842 dB and 0.000574 dB respectively; the bounds are
+0.04 and 0.03 dB.
+
+The implemented mechanism is a shallow, raw-input peak cell for vintage 4:1
+only. It holds peaks for 30 ms, releases over 250 ms, and applies the difference
+between the existing colour-envelope reduction and the measured onset table as
+a post-colour scalar, bounded to +/-0.85 dB (the measured pre-change miss tops
+out at 0.724 dB). The original transformed detector and FET envelope remain the
+harmonic lookup coordinate. The auxiliary cell fades over -5 to -4 dB and clears
+immediately at the accepted-law join, leaving deeper reduction, other ratios,
+Studio FET, All-buttons and the established harmonic surface on their existing
+paths. Its state is part of `FETState`, so repeated prepare and reset clear it
+with the rest of that aggregate.
+
+Controls that shaped the result:
+
+- Replacing the main envelope target passed the onset rows but moved the
+  harmonic coordinate; low-frequency H3 missed by as much as 5.895 dB.
+- A post-colour scalar without a true peak hold amplitude-modulated the
+  harmonics; low-frequency H3/H5 errors reached 22 dB/0.806 dB.
+- Linear frequency compensation fixed 100 Hz but over-corrected the held-out
+  40 Hz endpoint by 0.090826 dB. The final common cell needs no frequency fit.
+- Letting the cell release above the accepted-law join made the -42 dBFS attack
+  curve miss by 0.0832 RMS (bound 0.038) and read 2.052x the reference fitted
+  tau. Ending it at the join restored the attack gate to 0.0289 RMS worst-case
+  without moving the knee result.
+- The opposite deep-to-shallow control exposed a second failure in that draft:
+  after 33.757294 dB of main-envelope reduction the auxiliary cell cancelled
+  14.446922 dB of retained release memory (3.229736 dB still cancelled after
+  four seconds). Bounding the cell to its measured domain reduces the observed
+  maximum/final correction to 0.849715/0.849714 dB while leaving the static and
+  harmonic gates unchanged. Removing the bound reproduces the focused failure.
+
+Neighbour verification passed for static and maximum reduction, all ratios,
+All-buttons and measured-curve arms, attack drive/knob, startup peak/lifecycle,
+deep-to-shallow release memory, block-size invariance (maximum delta 0), reset
+determinism (maximum delta 0), stereo link/phase, and sample rates
+44.1/48/88.2/96 kHz (worst flat-gain delta 0.003448 dB). The six colour gates
+remain within their established bounds:
+low H5 0.117296 dB, low H3 0.646858/0.104789 dB at 100 Hz/1 kHz, LF colour
+0.232735 dB, broadband H2 0.103566 dB, H3 0.059604 dB and H5 0.068170 dB.
+
+Final release builds produced JACK, LV2, VST3, CLAP and AU. Native CTest passed
+4/4 in 46.96 seconds; no-FMA CTest passed 4/4 in 50.70 seconds. The Linux retry
+again reported a successful Podman-machine start and then immediately returned
+to `Running: false`; the unverified platform gap recorded in section 10 remains.
+
+## 12. FET Wave 32: complex shallow-knee H3 parity — 2026-08-30
+
+Wave 25's retained 33-point, quarter-dB 100 Hz sweep remained a real hole after
+the Wave 31 transfer fix because that post-colour scalar deliberately left the
+harmonic ratio unchanged. The new `--fet-low-h3-dense` gate renders the same
+12-second stimuli and 9.0-10.5 second coherent window in process. On the
+unchanged Wave 31 path it failed at 1.756796 dB worst H3/H1 error and 0.855123
+dB worst adjacent error step. The retained UAD WAVs also expose the missing
+complex constraint: reference H3 phase moves smoothly from 164.574 to 90.682
+degrees, while Wave 31 moved from 167.171 to 54.322 degrees and missed by up to
+73.758 degrees. A magnitude-only scalar fit can therefore match the reference
+only by jumping between two coefficient roots; it is not a parity mechanism.
+
+The accepted mechanism is confined to vintage 4:1 and the measured -15 to -4
+dB driven-input window. It makes pure Chebyshev T3 and T5 bases from the raw
+input normalised by Wave 31's held peak, then passes each through one and two
+300 Hz low-pass poles. Four real coefficients jointly match UAD H3 real/imaginary
+while holding the prior H5 real/imaginary vector. Half-dB rows from -14 through
+-6 dB are fit anchors; all intervening quarter-dB rows remain held out, with
+cubic interpolation used only across the uniformly spaced fit anchors. The
+unequal -15/-14 and -6/-4 endpoint fades stay linear. The four pole states live
+in `FETState`, so aggregate prepare/reset clearing covers both channels without
+allocation or callback locking.
+
+The accepted dense result is 0.194420 dB worst H3/H1 error, 0.194702 dB worst
+adjacent error step and 2.587519 degrees worst phase error, against 0.75/0.20/3.0
+bounds. A disabled-cell control across the same 33 rows measures maximum
+movement of 0.000000475 dB raw GR, 0.000034092 dB H1, 0.000090070 dB H2 and
+0.004332182 dB H5, all below the predeclared 0.02 dB isolation bound.
+
+Controls that shaped and prove the result:
+
+- Re-keying only low-frequency K3 from raw to net knee reduction was rejected:
+  it worsened the dense result to 3.908683 dB error and 2.320884 dB adjacent
+  step. The Wave 31 scalar is not the hidden harmonic coordinate.
+- A raw-input direct-plus-lag draft closed dense H3 and fixed H5, but leaked
+  into the established 1 kHz H3 guard (0.846793 dB worst versus about 0.10 dB
+  before). Replacing the direct branch with the first 300 Hz pole and using the
+  second pole as its independent vector restores the 1 kHz guard to 0.097896
+  dB.
+- Scaling the accepted direct coefficient to 99 percent leaves magnitude and
+  continuity green at 0.225589/0.199254 dB, but phase rises to 3.022585 degrees
+  and the combined assertion fails. Restoring it returns 2.587519 degrees.
+- Removing only the two T5 hold terms leaves H3 green at 0.194526 dB error,
+  0.194710 dB adjacent step and 2.585369 degrees, but moves H5 by 0.032555608
+  dB and produces the focused neighbour failure. Restoring them reduces that
+  movement to 0.004332182 dB.
+
+Neighbour verification passed for static and maximum reduction, all ratios,
+All-buttons and measured-curve arms, the Wave 31 knee/onset and deep-release
+cell, attack drive/knob, startup peak/lifecycle, block-size invariance (maximum
+delta 0), reset determinism (maximum delta 0), stereo link/phase and flat gain
+at 44.1/48/88.2/96 kHz (0.003448 dB worst). The established colour gates read:
+low H5 0.117306 dB, low H3 0.619408/0.097896 dB at 100 Hz/1 kHz, LF colour
+0.232732 dB, broadband H2 0.103566 dB, H3 0.076874 dB and H5 0.068170 dB.
+
+Final release builds again produced JACK, LV2, VST3, CLAP and AU. Native CTest
+passed 4/4 in 58.98 seconds; no-FMA CTest passed 4/4 in 62.87 seconds. The full
+Milestone #2 sidechain/Opto gates from section 10 remain green. Linux GCC 12 was
+not re-run in this wave; the stopped-Podman platform gap remains unverified.
+
+## 13. FET Wave 33: broadband complex H3 parity — 2026-08-30
+
+Wave 27's scalar-rate experiment had compared different Release controls and
+therefore rejected a coordinate the experiment did not hold constant. Its
+matched-reduction rows used Release 0.5; the original harmonic campaign used
+0.66595459. Once that distinction is retained, the sparse broadband-K3 fit is
+shown to match its anchor magnitudes but miss the UAD vector between them: at
+Input 0.8 the reference H3 phase rotates by more than 120 degrees while the
+reduction-only cubic remains near 135 degrees.
+
+The new `--fet-broadband-h3-dense` gate contains 17 same-stimulus UAD rows at
+48 kHz and 13 at 96 kHz. Nine Release-0.5 rows per rate are the long-window
+calibration surface; the original Release-0.66595459 campaign rows are the
+opposite-control validation surface. Wave 32 failed this gate at 4.441893 dB
+worst magnitude error, 85.829597 degrees worst phase error and 4.479455 dB
+worst adjacent error step. The accepted Wave 33 result was 0.174096 dB,
+0.528112 degrees and 0.172962 dB against 0.25/3.0/0.20 bounds.
+
+The mechanism uses raw Chebyshev T3 and its first three 300 Hz pole states.
+Four real coefficients solve the complex 1 kHz H3 residual while forcing the
+same cell's complex 100 Hz H3 contribution to zero. Release interpolates
+between separately measured 0.5 and 0.66595459 coefficient tables; Input uses
+a triangular measured-cell weight centred at 0.8. The 96 kHz normalisation was
+fit only from the Release-0.5 rows; four untouched 96 kHz campaign-Release rows
+then validated within 0.075 dB / 0.42 degrees. `shallowT3Lowest` is part of
+`FETState`, so aggregate prepare/reset clearing covers it without allocation or
+callback locking.
+
+The neighbour gate measured 0.000000496 dB GR, 0.000011050 dB H1,
+0.000099685 dB H2 and 0.002120043 dB H5 movement at acceptance. Injecting
+`0.0001 * shallowT5Lag` left the H3 gate green but moved H5 by 7.060746814 dB
+and produced the intended isolation failure; removing the fault restored the
+figures above. Native/no-FMA focused gates and both 4/4 full suites passed
+(73.82/78.42 seconds). Wave 34's independently intended H5 correction changes
+the stored H5 neighbour anchors; with those accepted anchors the current H3
+gate reads 0.183746 dB / 0.504795 degrees / 0.160003 dB natively and
+0.184155 / 0.503875 / 0.160423 without FMA.
+
+## 14. FET Wave 34: broadband complex H5 parity — 2026-08-30
+
+The remaining broadband H5 problem was larger than Wave 26's 0.372948 dB
+96 kHz magnitude failure. Retained same-stimulus Release-0.5 captures expose a
+5.131136 dB / 137.482381-degree miss, while the sparse campaign magnitudes hid
+the phase error. A new `--fet-broadband-h5-dense` gate now carries 31 scoreable
+same-stimulus UAD vectors: Release 0.5 at 48/96 kHz, the original
+Release-0.66595459 grid at 48/96 kHz, and three independently retained 48 kHz
+campaign midpoints at -30, -18 and -9 dBFS.
+
+The old scalar proposal is conclusively rejected, not tuned around. Zero/full
+source controls confirm complex linearity, but the best real scale still leaves
+0.739-2.513 dB and 8.735-33.615 degrees residual. The accepted mechanism is a
+raw Chebyshev T5 plus its first three 300 Hz pole states. Four real coefficients
+solve the 1 kHz H5 vector and force the joint 100 Hz H5 contribution to zero.
+Tables retain drive, Input, Release and 48/96 kHz as measured coordinates;
+zero guards keep the correction dormant below the -92 dBc scoring onset, and
+triangular Input weights leave neighbouring measured positions on their prior
+paths. The added `shallowT5Lowest` state is cleared by the existing aggregate
+prepare/reset paths.
+
+The three initially unscored 48 kHz campaign midpoint magnitude errors were
+0.779003, 1.450880 and 0.493261 dB. They now read +0.000019, -0.000021 and
+-0.000019 dB, with phase errors +0.000016, +0.000093 and +0.000089
+degrees.
+Across all 31 rows the native worst result is 0.001763 dB / 0.007186 degrees;
+the no-FMA result is 0.002256 dB / 0.021547 degrees, against 0.25 dB / 3.0
+degree bounds. The pre-existing sparse broadband H5 gate improves to 0.055018
+dB worst, and the constrained opposite-frequency path remains 0.117324 dB
+worst at 100 Hz.
+
+Neighbour verification passed for broadband H2 (0.103559 dB), LF colour
+(0.232734 dB), both dense H3 gates, static and maximum reduction, knee onset
+(0.011713 dB worst and 0.000446 dB frequency split), deep-release memory,
+startup lifecycle (counter 24, blend 0), stereo phase, reset determinism and
+block-size invariance (both maximum delta 0), and 44.1/48/88.2/96 kHz flat
+gain (0.003448 dB worst). After updating the H3 gate's H5 anchors to this
+independently accepted surface, a deliberate `0.00001 * shallowT5` leak left
+H3 within its bounds but moved H5 by 11.682719686 dB and produced the expected
+neighbour failure; restoring production returns native H5 movement to exactly
+0 in that gate (0.002006967 dB without FMA).
+
+Final release builds produced standalone/JACK, LV2, VST3, CLAP and signed AU in
+both variants. Native CTest passed 4/4 in 86.78 seconds; no-FMA CTest passed
+4/4 in 92.00 seconds. This includes the Milestone #2 AU sidechain and Opto
+dense-programme gates from section 10. A final live GitHub audit confirms both
+milestone issues, #200 and #210, are CLOSED (closed 2026-08-30 at 14:51 UTC).
+Linux GCC 12 was not re-run; the stopped Podman platform gap remains explicitly
+unverified.
+
+## 15. FET Wave 35: final stereo/recovery audio parity — 2026-08-30
+
+The two retained Wave 27 audio holdouts are now measured gates and both pass.
+This closes the known FET audio-parity surface; it does not manufacture a claim
+for the still-unrepeatable visual meter film or the unavailable Linux runner.
+
+The new `--fet-stereo-dense` gate replays the exact 48/96 kHz UAD phase rows:
+the exposed 96 kHz equal-level quarter-cycle cell, its two adjacent phases, the
+same 48 kHz cell, and the unequal-level opposite arm. The pre-change path failed
+at 0.059104905 dB worst. A common oversampled detector was rejected at
+0.199462399 dB and native winner selection with an oversampled maximum was
+rejected at 0.345179409 dB. The control experiment was decisive: evaluating the
+link at 1x reduced the whole falsifier set to 0.006510735 dB. The accepted path
+therefore evaluates the internal signed-maximum link control once per host
+sample and holds it through the oversampling phases, while leaving audio,
+colour, and external-sidechain interpolation oversampled. It reads 0.009922296
+dB native and 0.010486871 dB without FMA against the 0.020 dB bound. The older
+in-phase/antiphase law, asymmetric stereo reference, block and reset gates all
+remain green.
+
+The new `--fet-recovery-dense` gate covers all 16 retained recovery conditions
+and five declared windows per condition: 48/96 kHz, 1/4 kHz carriers, -30/-18/-6
+dBFS drive, Attack 0/0.5/1, 4:1/8:1, and the 90-degree terminal-phase falsifier.
+The current pre-change binary failed at 3.404430389 dB. It also exposed a newer
+neighbor regression: after a loud burst, the shallow-knee helper treated a
+retained envelope as live knee programme and produced a false +0.85 dB gain
+hump, reaching +0.915519714 dB error in the 48 kHz phase-90 4.5 s window. The
+helper now requires the existing 2 ms live-programme support, so carrier zero
+crossings remain supported while the post-burst false arm cannot engage.
+
+The remaining recovery difference is a finite terminal-charge population, not
+a new asymptotic release scalar. Its measured coordinates are maximum
+reduction, Attack, Release, ratio, host rate, and terminal level drop; the last
+coordinate supplies the phase/time-order degree of freedom that Wave 27 proved
+was missing. A compact positive terminal arm plus the independently measured
+small bipolar tail reaches 0.140045166 dB worst over all 80 native points and
+the same 0.140045166 dB without FMA, against the 0.150 dB bound. Static and
+sustained programme never enter this arm. Ratio/Attack/Release automation
+clears a pending event instead of reinterpreting it under new controls.
+
+The recovery state is aggregate-initialized in prepare/reset and explicitly
+cleared on repeated prepare, reset, FET mode exit, settled bypass, and the
+unused channel of a mono render. `--fet-recovery-state` measures an exercised
+gain of 1.491761/1.491761 and exactly 1.000000/1.000000 after prepare, reset,
+mode exit, and bypass; mono clears channel 1 to exactly 1.000000. Removing only
+the settled-bypass clear left 1.482260/1.482260 and produced the expected test
+failure; restoring it returns the gate to green.
+
+Focused neighbors passed for knee onset/release, static and maximum reduction,
+All-buttons settling, attack drive/knob, startup peak/lifecycle/neighbors,
+stereo, reset and block invariance, sample-rate gain, and every broadband/LF
+H2/H3/H5 gate. Final production builds again generated standalone/JACK, LV2,
+VST3, CLAP, and signed AU in both variants. Native CTest passed 4/4 in 109.23
+seconds; no-FMA CTest passed 4/4 in 116.06 seconds. These suites include the
+Milestone #2 AU-sidechain and Opto dense-programme gates; the live closeout in
+section 14 remains valid with issues #200 and #210 CLOSED. Linux GCC 12 was not
+re-run because the Podman platform remains unavailable, and visual meter-film
+parity remains measurement-blocked by the reference's failed repeatability
+control.
