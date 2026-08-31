@@ -3,7 +3,6 @@
 #include "../UniversalCompressor.h"
 
 #include <cmath>
-#include <iostream>
 #include <memory>
 
 class MultiCompEditorResizeTest final : public juce::JUCEApplicationBase
@@ -64,25 +63,19 @@ public:
 private:
     int failures = 0;
 
-    void check(const char* name, bool condition)
+    void check(const char*, bool condition)
     {
-        if (condition)
-            std::cout << "[PASS] " << name << '\n';
-        else
-            fail(name);
+        if (!condition)
+            ++failures;
     }
 
-    void fail(const char* name)
+    void fail(const char*)
     {
-        std::cout << "[FAIL] " << name << '\n';
         ++failures;
     }
 
     void finish()
     {
-        std::cout << (failures == 0 ? "PASS" : "FAIL")
-                  << ": Multi-Comp editor resize regression ("
-                  << failures << " failures)\n";
         setApplicationReturnValue(failures == 0 ? 0 : 1);
         quit();
     }
