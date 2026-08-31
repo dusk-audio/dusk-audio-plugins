@@ -1603,6 +1603,25 @@ private:
         // DSP/session compatibility, but the physical knob lives in effective
         // Hz. This makes its pointer, legends and live read-out agree with the
         // response curve and FFT in both Brown and Black modes.
+        //
+        // The V[] legends are authored in the console's DIAL coordinates (the
+        // numbers silkscreened on the panel), so they MUST be mapped through
+        // the same calibration before they can position a knob that lives in
+        // effective Hz. Comparing the two spaces directly pins the pointer to
+        // whatever slice of the arc the calibrated range happens to cover: the
+        // Brown HF SHELF spans 643..5554 Hz against a 1500..16000 legend, which
+        // left it stuck at 36% of travel with the read-out frozen near 5.5 kHz
+        // however far the knob was turned. Bell mode reaches 75-97%, which is
+        // why this only ever looked broken on SHELF.
+        static constexpr int kMaxLegend = 8;   // every frequency legend is 7 long
+        float calibratedLegend[kMaxLegend];
+        if (frequencyKnob && n <= kMaxLegend)
+        {
+            for (int i = 0; i < n; ++i)
+                calibratedLegend[i] = calibratedFreqFor(paramId, V[i]);
+            V = calibratedLegend;
+        }
+
         float t = detentValToPos(T, V, n,
                                 frequencyKnob ? displayValue(paramId)
                                               : values[paramId]);
