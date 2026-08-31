@@ -10,7 +10,7 @@ ChordAnalyzerEditor::ChordAnalyzerEditor(ChordAnalyzerProcessor& p)
     // Default 800x580 (was 520) to fit the recent-chord history strip
     // below the main display. Min 460 (was 400) preserves a usable
     // chord-display area at the smallest size.
-    resizeHelper.initialize(this, &audioProcessor, 800, 580, 600, 460, 1200, 840, false);
+    resizeHelper.initialize(this, &audioProcessor, 800, 580, 600, 460, 1200, 840, true);
     setSize(resizeHelper.getStoredWidth(), resizeHelper.getStoredHeight());
 
     setupChordDisplay();

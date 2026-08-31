@@ -9,7 +9,18 @@ class ScalableEditorHelper
 {
 public:
     ScalableEditorHelper() = default;
-    ~ScalableEditorHelper() = default;
+    ~ScalableEditorHelper()
+    {
+        // The editor does not own a custom constrainer. Detach it while both
+        // objects are still alive so the editor cannot retain a dangling
+        // pointer during base-class teardown.
+        resizer.reset();
+        if (parentEditor != nullptr && parentEditor->getConstrainer() == &constrainer)
+        {
+            parentEditor->setResizable(false, false);
+            parentEditor->setConstrainer(nullptr);
+        }
+    }
 
     // uiVersion (default 0 = no version check, backwards-compatible) bumps
     // the persistence "uiVersion" key. If the stored uiVersion is lower
@@ -26,6 +37,7 @@ public:
     {
         parentEditor = editor;
         audioProcessor = processor;
+        persistenceEnabled = true;
         baseWidth = static_cast<float>(defaultWidth);
         baseHeight = static_cast<float>(defaultHeight);
         defaultW = defaultWidth;
@@ -36,19 +48,22 @@ public:
         maxH = maxHeight;
         currentUiVersion = uiVersion;
 
-        loadStoredSize();
-
         constrainer.setMinimumSize(minWidth, minHeight);
         constrainer.setMaximumSize(maxWidth, maxHeight);
-        if (fixedAspectRatio)
-            constrainer.setFixedAspectRatio(baseWidth / baseHeight);
+        constrainer.setFixedAspectRatio(fixedAspectRatio ? baseWidth / baseHeight : 0.0);
+
+        loadStoredSize();
 
         resizer = std::make_unique<juce::ResizableCornerComponent>(editor, &constrainer);
         editor->addAndMakeVisible(resizer.get());
         resizer->setAlwaysOnTop(true);
 
-        editor->setResizable(true, true);
-        editor->setResizeLimits(minWidth, minHeight, maxWidth, maxHeight);
+        // The host and the in-editor corner must share this constrainer.
+        // setResizeLimits() configures AudioProcessorEditor's separate default
+        // constrainer, which allowed host-window edge drags to bypass the
+        // fixed aspect ratio used by the corner component.
+        editor->setResizable(true, false);
+        editor->setConstrainer(&constrainer);
     }
 
     // Overload without processor — no size persistence, fixed aspect ratio.
@@ -79,8 +94,8 @@ public:
         editor->addAndMakeVisible(resizer.get());
         resizer->setAlwaysOnTop(true);
 
-        editor->setResizable(true, true);
-        editor->setResizeLimits(minWidth, minHeight, maxWidth, maxHeight);
+        editor->setResizable(true, false);
+        editor->setConstrainer(&constrainer);
     }
 
     int getStoredWidth() const { return storedWidth; }
@@ -175,6 +190,20 @@ private:
 
         storedWidth = juce::jlimit(minW, maxW, storedWidth);
         storedHeight = juce::jlimit(minH, maxH, storedHeight);
+
+        // setSize() intentionally bypasses an editor constrainer. Normalise a
+        // previously persisted free-aspect size here so an editor fixed by a
+        // newer build cannot reopen in the clipped shape saved by an older one.
+        if (constrainer.getFixedAspectRatio() > 0.0)
+        {
+            juce::Rectangle<int> storedBounds(0, 0, storedWidth, storedHeight);
+            const juce::Rectangle<int> defaultBounds(0, 0, defaultW, defaultH);
+            const juce::Rectangle<int> limits(0, 0, maxW, maxH);
+            constrainer.checkBounds(storedBounds, defaultBounds, limits,
+                                    false, false, true, true);
+            storedWidth = storedBounds.getWidth();
+            storedHeight = storedBounds.getHeight();
+        }
     }
 
     void saveCurrentSize()
