@@ -236,7 +236,7 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor(TapeMachineAudi
 
     // Initialize scalable resize helper with persistence
     // Base size: 800x580, Min: 640x464 (80%), Max: 1200x870 (150%)
-    resizeHelper.initialize(this, &audioProcessor, 800, 580, 640, 464, 1200, 870, false);
+    resizeHelper.initialize(this, &audioProcessor, 800, 580, 640, 464, 1200, 870, true);
     setSize(resizeHelper.getStoredWidth(), resizeHelper.getStoredHeight());
 }
 

@@ -250,6 +250,9 @@ if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
     # --- State-restore integrity (pluginval L10 bool-param flake, deterministic) ---
     multicomp_add_functional_test(MultiCompStateRestoreTest tests/test_state_restore.cpp)
 
+    # --- Issue #240: host-edge resizing must preserve the proportional UI ---
+    multicomp_add_functional_test(MultiCompEditorResizeTest tests/test_editor_resize.cpp)
+
     # --- Parameter fuzz (pluginval "Fuzz parameters" replica; run under ASan) ---
     multicomp_add_functional_test(MultiCompParamFuzzTest tests/test_param_fuzz.cpp)
 endif()

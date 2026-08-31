@@ -192,7 +192,7 @@ TapeEchoEditor::TapeEchoEditor(TapeEchoProcessor& p)
     startTimerHz(30);
 
     // Initialize resizable UI (600x450 base, range 480-900 width)
-    resizeHelper.initialize(this, &processor, 600, 450, 480, 360, 900, 675, false);
+    resizeHelper.initialize(this, &processor, 600, 450, 480, 360, 900, 675, true);
     setSize(resizeHelper.getStoredWidth(), resizeHelper.getStoredHeight());
 }
 
