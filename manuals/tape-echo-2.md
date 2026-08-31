@@ -136,7 +136,7 @@ a downloaded build is loaded, Gatekeeper may report that it cannot verify the
 developer. Approve the plugin once under System Settings > Privacy & Security
 ("Open Anyway"), or remove the quarantine attribute from the installed bundle
 in Terminal, for example: `xattr -dr com.apple.quarantine
-~/Library/Audio/Plug-Ins/Components/tape_echo.component`. Rescan or restart the
+~/Library/Audio/Plug-Ins/Components/tape-echo-2.component`. Rescan or restart the
 host afterward; Logic Pro users should re-run the Audio Unit scan.
 
 When `MACOS_SIGNING_ENABLED=true` and the required Apple signing and

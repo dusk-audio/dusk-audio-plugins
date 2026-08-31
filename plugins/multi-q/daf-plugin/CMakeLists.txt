@@ -17,7 +17,7 @@ endif()
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/cmake/DuskDafPlugin.cmake")
 
-daf_add_plugin(multi_q_2
+daf_add_plugin(multi-q-2
     TARGETS clap vst3 lv2 jack au # au builds on macOS only, silently skipped elsewhere
     # MONOLITHIC: DAF_PLUGIN_WANT_DIRECT_ACCESS makes DAF's LV2 TTL export
     # declare the UI inside the dsp binary; the LV2 build must match or hosts
@@ -33,17 +33,17 @@ daf_add_plugin(multi_q_2
         MultiQUI.cpp
         ${DUSK_DAF_UI_SOURCES})
 
-target_include_directories(multi_q_2 PUBLIC
+target_include_directories(multi-q-2 PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/../core"
     ${DUSK_DAF_INCLUDE_DIRS})
 
 # Single source of truth for host metadata and crash-log diagnostics.
-target_compile_definitions(multi_q_2 PUBLIC
+target_compile_definitions(multi-q-2 PUBLIC
     MQ2_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
     MQ2_VERSION_MINOR=${PROJECT_VERSION_MINOR}
     MQ2_VERSION_PATCH=${PROJECT_VERSION_PATCH})
 
 # Auto-deploy the built CLAP/VST3/LV2 into the user plugin dirs after each build
 # (disable with -DDUSK_DAF_INSTALL_LOCAL=OFF).
-dusk_daf_install_local(multi_q_2 LV2_PROGRAMS)
+dusk_daf_install_local(multi-q-2 LV2_PROGRAMS)

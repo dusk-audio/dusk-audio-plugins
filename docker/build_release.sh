@@ -121,13 +121,13 @@ build_sunset() {
                 -DDAF_PATH=/tmp/daf \
                 -DDAFWIDGETS_PATH=/tmp/daf-widgets
             cmake --build /tmp/scbuild \
-                --target sunset_circuits-vst3 sunset_circuits-clap sunset_circuits-lv2 \
+                --target sunset-circuits-vst3 sunset-circuits-clap sunset-circuits-lv2 \
                 -j"$(nproc)"
 
             echo "Copying artefacts to output..."
-            cp -r /tmp/scbuild/bin/sunset_circuits.vst3 /output/
-            cp -r /tmp/scbuild/bin/sunset_circuits.lv2  /output/
-            cp    /tmp/scbuild/bin/sunset_circuits.clap /output/
+            cp -r /tmp/scbuild/bin/sunset-circuits.vst3 /output/
+            cp -r /tmp/scbuild/bin/sunset-circuits.lv2  /output/
+            cp    /tmp/scbuild/bin/sunset-circuits.clap /output/
             echo "=== Sunset Circuits build complete ==="
         '
 
@@ -135,7 +135,7 @@ build_sunset() {
     # Hard artifact check: the container exits nonzero on any build failure
     # (set -e inside), but guard against a silently-empty output dir so the
     # install section below can never no-op its way to a bogus success.
-    for a in sunset_circuits.vst3 sunset_circuits.lv2 sunset_circuits.clap; do
+    for a in sunset-circuits.vst3 sunset-circuits.lv2 sunset-circuits.clap; do
         if [ ! -e "$OUTPUT_DIR/$a" ]; then
             echo "ERROR: expected artifact missing: $OUTPUT_DIR/$a"
             exit 1
@@ -143,19 +143,19 @@ build_sunset() {
     done
     echo "=== Installing Sunset Circuits to standard locations ==="
     mkdir -p "$HOME/.vst3" "$HOME/.lv2" "$HOME/.clap"
-    if [ -d "$OUTPUT_DIR/sunset_circuits.vst3" ]; then
-        rm -rf "$HOME/.vst3/sunset_circuits.vst3"
-        cp -r "$OUTPUT_DIR/sunset_circuits.vst3" "$HOME/.vst3/"
-        echo "  VST3: sunset_circuits.vst3 -> ~/.vst3/"
+    if [ -d "$OUTPUT_DIR/sunset-circuits.vst3" ]; then
+        rm -rf "$HOME/.vst3/sunset-circuits.vst3"
+        cp -r "$OUTPUT_DIR/sunset-circuits.vst3" "$HOME/.vst3/"
+        echo "  VST3: sunset-circuits.vst3 -> ~/.vst3/"
     fi
-    if [ -d "$OUTPUT_DIR/sunset_circuits.lv2" ]; then
-        rm -rf "$HOME/.lv2/sunset_circuits.lv2"
-        cp -r "$OUTPUT_DIR/sunset_circuits.lv2" "$HOME/.lv2/"
-        echo "  LV2:  sunset_circuits.lv2 -> ~/.lv2/"
+    if [ -d "$OUTPUT_DIR/sunset-circuits.lv2" ]; then
+        rm -rf "$HOME/.lv2/sunset-circuits.lv2"
+        cp -r "$OUTPUT_DIR/sunset-circuits.lv2" "$HOME/.lv2/"
+        echo "  LV2:  sunset-circuits.lv2 -> ~/.lv2/"
     fi
-    if [ -f "$OUTPUT_DIR/sunset_circuits.clap" ]; then
-        cp "$OUTPUT_DIR/sunset_circuits.clap" "$HOME/.clap/"
-        echo "  CLAP: sunset_circuits.clap -> ~/.clap/"
+    if [ -f "$OUTPUT_DIR/sunset-circuits.clap" ]; then
+        cp "$OUTPUT_DIR/sunset-circuits.clap" "$HOME/.clap/"
+        echo "  CLAP: sunset-circuits.clap -> ~/.clap/"
     fi
     echo ""
     echo "=== Done. ==="

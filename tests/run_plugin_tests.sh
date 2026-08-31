@@ -42,11 +42,11 @@ PLUGINS=(
 )
 
 # Sunset Circuits is the DAF port, not a JUCE plugin: its bundle is named
-# sunset_circuits (not after the display name), it may live in the DAF build
+# sunset-circuits (not after the display name), it may live in the DAF build
 # tree rather than ~/.vst3, and it carries its own offline gate suite. It is
 # handled by run_sunset_circuits_tests() instead of the generic path below.
 SUNSET_NAME="Sunset Circuits"
-SUNSET_BUNDLE="sunset_circuits"
+SUNSET_BUNDLE="sunset-circuits"
 
 #------------------------------------------------------------------------------
 # Utility Functions

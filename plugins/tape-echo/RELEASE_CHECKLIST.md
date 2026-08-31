@@ -7,8 +7,8 @@ must match that value exactly; suffixes such as `-rc.1` are allowed.
 ## Local release candidate
 
 1. Configure a clean Release build with local installation disabled.
-2. Build the `tape_echo-vst3`, `tape_echo-clap`, `tape_echo-lv2`, and
-   `tape_echo-au` targets (Audio Unit is macOS-only).
+2. Build the `tape-echo-2-vst3`, `tape-echo-2-clap`, `tape-echo-2-lv2`, and
+   `tape-echo-2-au` targets (Audio Unit is macOS-only).
 3. Parse every LV2 Turtle file with `serdi`, then discover
    `https://dusk-audio.github.io/plugins/tape-echo` in an isolated `LV2_PATH`
    with `lv2info`. All 13 factory programs must appear.

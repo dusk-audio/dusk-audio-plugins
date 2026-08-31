@@ -6,7 +6,7 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/cmake/DuskDafPlugin.cmake")
-daf_add_plugin(multi_comp_2
+daf_add_plugin(multi-comp-2
   TARGETS clap vst3 lv2 jack au
   # Keep MONOLITHIC: the UI uses the same-process meter bridge and LV2 must
   # advertise the embedded UI alongside the DSP binary.
@@ -14,14 +14,14 @@ daf_add_plugin(multi_comp_2
   UI_TYPE opengl
   FILES_DSP MultiCompPlugin.cpp ../core/MultiCompDSP.cpp
   FILES_UI MultiCompUI.cpp ${DUSK_DAF_UI_SOURCES})
-target_include_directories(multi_comp_2 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/../core" ${DUSK_DAF_INCLUDE_DIRS})
-target_compile_definitions(multi_comp_2 PUBLIC MULTICOMP2_VERSION_MAJOR=${PROJECT_VERSION_MAJOR} MULTICOMP2_VERSION_MINOR=${PROJECT_VERSION_MINOR} MULTICOMP2_VERSION_PATCH=${PROJECT_VERSION_PATCH})
+target_include_directories(multi-comp-2 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/../core" ${DUSK_DAF_INCLUDE_DIRS})
+target_compile_definitions(multi-comp-2 PUBLIC MULTICOMP2_VERSION_MAJOR=${PROJECT_VERSION_MAJOR} MULTICOMP2_VERSION_MINOR=${PROJECT_VERSION_MINOR} MULTICOMP2_VERSION_PATCH=${PROJECT_VERSION_PATCH})
 if(APPLE)
   # DAF's generic AU path lookup can resolve the remote host executable in
   # AUHostingService. Resolve from code linked into this component instead.
-  target_sources(multi_comp_2-au PRIVATE MultiCompAUComponentBundlePath.mm)
+  target_sources(multi-comp-2-au PRIVATE MultiCompAUComponentBundlePath.mm)
 endif()
-dusk_daf_install_local(multi_comp_2 LV2_PROGRAMS)
+dusk_daf_install_local(multi-comp-2 LV2_PROGRAMS)
 
 if(NOT CMAKE_CROSSCOMPILING)
   enable_testing()
@@ -47,11 +47,11 @@ if(NOT CMAKE_CROSSCOMPILING)
     add_executable(MultiCompAUTest MultiCompAUTests.cpp)
     target_compile_features(MultiCompAUTest PRIVATE cxx_std_17)
     target_compile_definitions(MultiCompAUTest PRIVATE
-      MULTICOMP_AU_BINARY="$<TARGET_FILE:multi_comp_2-au>")
+      MULTICOMP_AU_BINARY="$<TARGET_FILE:multi-comp-2-au>")
     target_link_libraries(MultiCompAUTest PRIVATE
       "-framework AudioToolbox"
       "-framework AudioUnit")
-    add_dependencies(MultiCompAUTest multi_comp_2-au)
+    add_dependencies(MultiCompAUTest multi-comp-2-au)
     add_test(NAME MultiCompAU COMMAND MultiCompAUTest)
   endif()
 

@@ -66,6 +66,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Check DAF artefact naming standard
+        run: ./tests/check_daf_plugin_names.sh
+
       - name: Parse tag
         id: v
         run: |
@@ -225,17 +228,17 @@ jobs:
       - name: Build (VST3 + CLAP + LV2)
         working-directory: ${{ env.PLUGIN_DIR }}
         run: |
-          cmake --build build --target sunset_circuits-vst3 sunset_circuits-clap sunset_circuits-lv2 -j"$(nproc)"
+          cmake --build build --target sunset-circuits-vst3 sunset-circuits-clap sunset-circuits-lv2 -j"$(nproc)"
 
       - name: Package
         working-directory: ${{ env.PLUGIN_DIR }}
         run: |
           mkdir -p out/VST3 out/CLAP out/LV2
-          cp -r build/bin/sunset_circuits.vst3 out/VST3/
-          cp    build/bin/sunset_circuits.clap out/CLAP/
-          cp -r build/bin/sunset_circuits.lv2  out/LV2/
-          test -f "out/VST3/sunset_circuits.vst3/Contents/x86_64-linux/sunset_circuits.so"
-          test -f "out/LV2/sunset_circuits.lv2/manifest.ttl"
+          cp -r build/bin/sunset-circuits.vst3 out/VST3/
+          cp    build/bin/sunset-circuits.clap out/CLAP/
+          cp -r build/bin/sunset-circuits.lv2  out/LV2/
+          test -f "out/VST3/sunset-circuits.vst3/Contents/x86_64-linux/sunset-circuits.so"
+          test -f "out/LV2/sunset-circuits.lv2/manifest.ttl"
           # Bundle the published user manual (non-fatal if absent), same as
           # daf-build.yml does for the "-2" plugins.
           manual_url="https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/main/assets/manuals/${SLUG}-manual.pdf"
@@ -362,17 +365,17 @@ jobs:
       - name: Build (VST3 + CLAP + LV2)
         working-directory: ${{ env.PLUGIN_DIR }}
         run: |
-          cmake --build build --target sunset_circuits-vst3 sunset_circuits-clap sunset_circuits-lv2 -j"$(nproc)"
+          cmake --build build --target sunset-circuits-vst3 sunset-circuits-clap sunset-circuits-lv2 -j"$(nproc)"
 
       - name: Package
         working-directory: ${{ env.PLUGIN_DIR }}
         run: |
           mkdir -p out/VST3 out/CLAP out/LV2
-          cp -r build/bin/sunset_circuits.vst3 out/VST3/
-          cp    build/bin/sunset_circuits.clap out/CLAP/
-          cp -r build/bin/sunset_circuits.lv2  out/LV2/
-          test -f "out/VST3/sunset_circuits.vst3/Contents/aarch64-linux/sunset_circuits.so"
-          test -f "out/LV2/sunset_circuits.lv2/manifest.ttl"
+          cp -r build/bin/sunset-circuits.vst3 out/VST3/
+          cp    build/bin/sunset-circuits.clap out/CLAP/
+          cp -r build/bin/sunset-circuits.lv2  out/LV2/
+          test -f "out/VST3/sunset-circuits.vst3/Contents/aarch64-linux/sunset-circuits.so"
+          test -f "out/LV2/sunset-circuits.lv2/manifest.ttl"
           # Bundle the published user manual (non-fatal if absent).
           manual_url="https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/main/assets/manuals/${SLUG}-manual.pdf"
           curl -fL --silent --show-error "$manual_url" -o "out/${SLUG}-manual.pdf" \
@@ -496,16 +499,16 @@ jobs:
         working-directory: ${{ env.PLUGIN_DIR }}
         shell: pwsh
         run: |
-          cmake --build build --target sunset_circuits-vst3 sunset_circuits-clap sunset_circuits-lv2 -j $env:NUMBER_OF_PROCESSORS
+          cmake --build build --target sunset-circuits-vst3 sunset-circuits-clap sunset-circuits-lv2 -j $env:NUMBER_OF_PROCESSORS
 
       - name: Package
         working-directory: ${{ env.PLUGIN_DIR }}
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path out/VST3, out/CLAP, out/LV2 | Out-Null
-          Copy-Item -Recurse build/bin/sunset_circuits.vst3 out/VST3/
-          Copy-Item          build/bin/sunset_circuits.clap out/CLAP/
-          Copy-Item -Recurse build/bin/sunset_circuits.lv2  out/LV2/
+          Copy-Item -Recurse build/bin/sunset-circuits.vst3 out/VST3/
+          Copy-Item          build/bin/sunset-circuits.clap out/CLAP/
+          Copy-Item -Recurse build/bin/sunset-circuits.lv2  out/LV2/
           # Bundle the published user manual (non-fatal if absent).
           $manualUrl = "https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/main/assets/manuals/$env:SLUG-manual.pdf"
           try { Invoke-WebRequest -Uri $manualUrl -OutFile "out/$env:SLUG-manual.pdf" }
@@ -536,7 +539,7 @@ jobs:
         run: |
           $pv = Get-ChildItem -Recurse "$env:GITHUB_WORKSPACE/pluginval" -Filter pluginval.exe | Select-Object -First 1
           if (-not $pv) { Write-Error "pluginval.exe not found after install"; exit 1 }
-          $vst3 = (Resolve-Path "build/bin/sunset_circuits.vst3").Path
+          $vst3 = (Resolve-Path "build/bin/sunset-circuits.vst3").Path
           # --skip-gui-tests: no display on the runner. pluginval crashes on DAF's
           # headless plugin teardown (the known DAF editor-lifecycle issue,
           # docs/daf-migration/00-OVERVIEW.md landmine 9) AFTER the tests pass, so
@@ -624,12 +627,12 @@ jobs:
       - name: Build (VST3 + CLAP + LV2 + AU)
         working-directory: ${{ env.PLUGIN_DIR }}
         run: |
-          cmake --build build --target sunset_circuits-vst3 sunset_circuits-clap sunset_circuits-lv2 sunset_circuits-au -j"$(sysctl -n hw.ncpu)"
+          cmake --build build --target sunset-circuits-vst3 sunset-circuits-clap sunset-circuits-lv2 sunset-circuits-au -j"$(sysctl -n hw.ncpu)"
 
       - name: Verify universal binary
         working-directory: ${{ env.PLUGIN_DIR }}
         run: |
-          BIN="build/bin/sunset_circuits.vst3/Contents/MacOS/sunset_circuits"
+          BIN="build/bin/sunset-circuits.vst3/Contents/MacOS/sunset-circuits"
           lipo -info "$BIN"
           lipo -info "$BIN" | grep -q "arm64" && lipo -info "$BIN" | grep -q "x86_64" \
             && echo "Universal confirmed" || { echo "::error::VST3 not universal"; exit 1; }
@@ -672,7 +675,7 @@ jobs:
         env:
           MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
         run: |
-          for plugin in build/bin/sunset_circuits.vst3 build/bin/sunset_circuits.component build/bin/sunset_circuits.clap; do
+          for plugin in build/bin/sunset-circuits.vst3 build/bin/sunset-circuits.component build/bin/sunset-circuits.clap; do
             if [ -d "$plugin" ]; then
               echo "Signing: $plugin"
               codesign --force --deep --sign "$MACOS_SIGNING_IDENTITY" --options runtime --timestamp "$plugin"
@@ -689,7 +692,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           mkdir -p notarize_staging
-          for plugin in build/bin/sunset_circuits.vst3 build/bin/sunset_circuits.component build/bin/sunset_circuits.clap; do
+          for plugin in build/bin/sunset-circuits.vst3 build/bin/sunset-circuits.component build/bin/sunset-circuits.clap; do
             [ -d "$plugin" ] && cp -R "$plugin" notarize_staging/
           done
           ditto -c -k --keepParent notarize_staging plugins-macos-notarize.zip
@@ -705,14 +708,14 @@ jobs:
           mkdir -p out/VST3 out/CLAP out/LV2 out/AU
           # Prefer notarized+stapled bundles when present.
           if [ -d notarize_staging ]; then
-            cp -r notarize_staging/sunset_circuits.vst3      out/VST3/ 2>/dev/null || true
-            cp -r notarize_staging/sunset_circuits.clap      out/CLAP/ 2>/dev/null || true
-            cp -r notarize_staging/sunset_circuits.component out/AU/   2>/dev/null || true
+            cp -r notarize_staging/sunset-circuits.vst3      out/VST3/ 2>/dev/null || true
+            cp -r notarize_staging/sunset-circuits.clap      out/CLAP/ 2>/dev/null || true
+            cp -r notarize_staging/sunset-circuits.component out/AU/   2>/dev/null || true
           fi
-          [ -e out/VST3/sunset_circuits.vst3 ]      || cp -r build/bin/sunset_circuits.vst3      out/VST3/
-          [ -e out/CLAP/sunset_circuits.clap ]      || cp -r build/bin/sunset_circuits.clap      out/CLAP/
-          [ -e out/AU/sunset_circuits.component ]   || cp -r build/bin/sunset_circuits.component out/AU/
-          cp -r build/bin/sunset_circuits.lv2 out/LV2/
+          [ -e out/VST3/sunset-circuits.vst3 ]      || cp -r build/bin/sunset-circuits.vst3      out/VST3/
+          [ -e out/CLAP/sunset-circuits.clap ]      || cp -r build/bin/sunset-circuits.clap      out/CLAP/
+          [ -e out/AU/sunset-circuits.component ]   || cp -r build/bin/sunset-circuits.component out/AU/
+          cp -r build/bin/sunset-circuits.lv2 out/LV2/
           # Bundle the published user manual (non-fatal if absent).
           manual_url="https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/main/assets/manuals/${SLUG}-manual.pdf"
           curl -fL --silent --show-error "$manual_url" -o "out/${SLUG}-manual.pdf" \
@@ -824,11 +827,11 @@ jobs:
       - name: Build (VST3 + CLAP + LV2)
         working-directory: ${{ env.PLUGIN_DIR }}
         run: |
-          # The suite's lv2_smoke gate hosts build/bin/sunset_circuits.lv2, so the
+          # The suite's lv2_smoke gate hosts build/bin/sunset-circuits.lv2, so the
           # LV2 bundle must exist before run_all.sh; pluginval below needs the
           # VST3 and clap-validator needs the CLAP.
           cmake --build build --target \
-            sunset_circuits-vst3 sunset_circuits-clap sunset_circuits-lv2 -j"$(nproc)"
+            sunset-circuits-vst3 sunset-circuits-clap sunset-circuits-lv2 -j"$(nproc)"
 
       - name: Core gate suite
         run: |
@@ -875,7 +878,7 @@ jobs:
       - name: Validate VST3 (pluginval, headless)
         working-directory: ${{ env.PLUGIN_DIR }}
         run: |
-          VST3="$(cd build/bin && pwd)/sunset_circuits.vst3"
+          VST3="$(cd build/bin && pwd)/sunset-circuits.vst3"
           test -d "$VST3"
           # --skip-gui-tests is mandatory, not an optimisation: pluginval's editor
           # tests segfault headless for every DAF plugin (host-side XEmbed issue,
@@ -941,7 +944,7 @@ jobs:
           #
           # xvfb: clap-validator drives the plugin GUI, which needs an X display.
           set -o pipefail
-          CLAP="$(cd build/bin && pwd)/sunset_circuits.clap"
+          CLAP="$(cd build/bin && pwd)/sunset-circuits.clap"
           test -f "$CLAP"
           xvfb-run -a python3 "${GITHUB_WORKSPACE}/.github/scripts/daf_clap_validate.py" \
             "$CLAP" 2>&1 | tee clap-validator.log

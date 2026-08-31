@@ -107,9 +107,9 @@ echo "########## lv2_smoke (LV2 host integration) ##########"
 lv2_bundle_dir="../../daf-plugin/build/bin"
 if [ ! -x build/lv2_smoke ]; then
     echo "SKIP: lv2_smoke was not built (lilv-0 missing at cmake time; apt install liblilv-dev)"
-elif [ ! -d "$lv2_bundle_dir/sunset_circuits.lv2" ]; then
-    echo "SKIP: no LV2 bundle at $lv2_bundle_dir/sunset_circuits.lv2"
-    echo "      build it with: (cd ../../daf-plugin && cmake --build build --target sunset_circuits-lv2)"
+elif [ ! -d "$lv2_bundle_dir/sunset-circuits.lv2" ]; then
+    echo "SKIP: no LV2 bundle at $lv2_bundle_dir/sunset-circuits.lv2"
+    echo "      build it with: (cd ../../daf-plugin && cmake --build build --target sunset-circuits-lv2)"
 else
     # Point LV2_PATH at a directory holding ONLY the bundle: daf-plugin/build/bin
     # also contains the .vst3 and .clap, and lilv logs errors trying to read a
@@ -120,8 +120,8 @@ else
     lv2_scan_dir="build/lv2_scan"
     if rm -rf "$lv2_scan_dir" \
        && mkdir -p "$lv2_scan_dir" \
-       && ln -s "$(cd "$lv2_bundle_dir/sunset_circuits.lv2" && pwd)" \
-                "$lv2_scan_dir/sunset_circuits.lv2"; then
+       && ln -s "$(cd "$lv2_bundle_dir/sunset-circuits.lv2" && pwd)" \
+                "$lv2_scan_dir/sunset-circuits.lv2"; then
         # A renamed/moved plugin URI makes lv2_smoke exit 2 (plugin not found),
         # which is a real failure here, not a skip -- the bundle exists but does
         # not expose the URI we ship.

@@ -96,6 +96,10 @@ jobs:
           # one-commit checkout contains only the synthetic merge commit.
           fetch-depth: 0
 
+      - name: Check DAF artefact naming standard
+        shell: bash
+        run: ./tests/check_daf_plugin_names.sh
+
       - name: Resolve build set + release info
         id: plan
         shell: bash
@@ -103,7 +107,9 @@ jobs:
           # ---- Plugin registry (single source of truth) -------------------
           # key   : workflow_dispatch value + artifact base
           # dir   : standalone CMake dir
-          # base  : dpf_add_plugin() name -> build/bin/<base>.{vst3,clap,lv2,component}
+          # base  : daf_add_plugin() name -> build/bin/<base>.{vst3,clap,lv2,component}
+          #         ALWAYS equal to key: the naming standard enforced by the step
+          #         above is that the artefact name IS the release slug.
           # project: project(<name> ...) token, for the tag<->CMake version guard
           # au    : DISTRHO_PLUGIN_UNIQUE_ID (AU subtype code)
           # name  : human display name
@@ -111,11 +117,11 @@ jobs:
           # asset : release/website asset base (asset zip = <asset>-<os>.zip)
           cat > registry.json <<'JSON'
           [
-            {"key":"tapemachine-2","dir":"plugins/TapeMachine/daf-plugin","base":"tape_machine_2","project":"TapeMachine2DAF","au":"DsTM","uri":"https://dusk-audio.github.io/plugins/tapemachine-2","name":"TapeMachine 2","tag":"tapemachine-2-v","asset":"tapemachine-2"},
-            {"key":"4k-eq-2","dir":"plugins/4k-eq/daf-plugin","base":"four_k_eq_2","project":"FourKEQ2DAF","au":"DsFq","uri":"https://dusk-audio.github.io/plugins/4k-eq-2","name":"4K EQ 2","tag":"4k-eq-2-v","asset":"4k-eq-2"},
-            {"key":"tape-echo-2","dir":"plugins/tape-echo/daf-plugin","base":"tape_echo","project":"TapeEchoDAF","au":"DsTE","uri":"https://dusk-audio.github.io/plugins/tape-echo","name":"Tape Echo 2","tag":"tape-echo-2-v","asset":"tape-echo-2"},
-            {"key":"multi-q-2","dir":"plugins/multi-q/daf-plugin","base":"multi_q_2","project":"MultiQ2DAF","au":"DsMq","uri":"https://dusk-audio.github.io/plugins/multi-q-2","name":"Multi-Q 2","tag":"multi-q-2-v","asset":"multi-q-2"}
-            ,{"key":"multi-comp-2","dir":"plugins/multi-comp/daf-plugin","base":"multi_comp_2","project":"MultiComp2DAF","au":"DsMc","uri":"https://dusk-audio.github.io/plugins/multi-comp-2","name":"Multi-Comp 2","tag":"multi-comp-2-v","asset":"multi-comp-2"}
+            {"key":"tapemachine-2","dir":"plugins/TapeMachine/daf-plugin","base":"tapemachine-2","project":"TapeMachine2DAF","au":"DsTM","uri":"https://dusk-audio.github.io/plugins/tapemachine-2","name":"TapeMachine 2","tag":"tapemachine-2-v","asset":"tapemachine-2"},
+            {"key":"4k-eq-2","dir":"plugins/4k-eq/daf-plugin","base":"4k-eq-2","project":"FourKEQ2DAF","au":"DsFq","uri":"https://dusk-audio.github.io/plugins/4k-eq-2","name":"4K EQ 2","tag":"4k-eq-2-v","asset":"4k-eq-2"},
+            {"key":"tape-echo-2","dir":"plugins/tape-echo/daf-plugin","base":"tape-echo-2","project":"TapeEchoDAF","au":"DsTE","uri":"https://dusk-audio.github.io/plugins/tape-echo","name":"Tape Echo 2","tag":"tape-echo-2-v","asset":"tape-echo-2"},
+            {"key":"multi-q-2","dir":"plugins/multi-q/daf-plugin","base":"multi-q-2","project":"MultiQ2DAF","au":"DsMq","uri":"https://dusk-audio.github.io/plugins/multi-q-2","name":"Multi-Q 2","tag":"multi-q-2-v","asset":"multi-q-2"}
+            ,{"key":"multi-comp-2","dir":"plugins/multi-comp/daf-plugin","base":"multi-comp-2","project":"MultiComp2DAF","au":"DsMc","uri":"https://dusk-audio.github.io/plugins/multi-comp-2","name":"Multi-Comp 2","tag":"multi-comp-2-v","asset":"multi-comp-2"}
           ]
           JSON
 

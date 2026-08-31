@@ -5,6 +5,12 @@ You are the planner and reviewer; delegate implementation to Codex via the
 file. The campaign log memory `mc2-la2a-campaign.md` is the long-form record;
 this file is the working state.
 
+**Artefact names changed after this file was written.** DAF plugins now compile
+to their release slug, so the binaries this document tells you to hunt for are
+`multi-comp-2.*` and `tapemachine-2.*`, not `multi_comp_2.*` / `tape_machine_2.*`.
+The names below have been updated; older Logic caches, AUScan logs and `lsof`
+output captured before the rename will still show the underscore forms.
+
 **Snapshot authority (updated 2026-08-24):** the campaign branch
 `multi-comp-2/opto-campaign-snapshot` lives in the worktree
 `/private/tmp/dusk-audio-plugins-opto-campaign`. The snapshot has MERGED to
@@ -378,8 +384,8 @@ Do not re-derive these. In particular the OpenGL-over-ViewBridge theory is dead:
 out-of-process hosting composites the GL view correctly.
 
 Also ruled out by evidence: Info.plist shape, linked frameworks, exported symbols
-and ObjC class names (identical to `tape_machine_2`); code signing (the broken
-plugin verifies clean, the *working* `tape_machine_2` does not); the uncommitted
+and ObjC class names (identical to `tapemachine-2`); code signing (the broken
+plugin verifies clean, the *working* `tapemachine-2` does not); the uncommitted
 `MultiCompAUComponentBundlePath.mm`, which produces the same string as DAF's own
 fallback and is a no-op in the normal case; `scanUserPresets`, which uses the
 `std::error_code` overloads throughout and cannot throw out of the view factory.
@@ -396,7 +402,7 @@ the blank window open, then `lsof` across the `Logic Pro` and
 `AUHostingServiceXPC_arrow` pids to see which process maps the bundle. Note that
 `AUHostingServiceXPC_arrow` loading a component is NOT proof of out-of-process
 hosting — Logic's startup scan runs there too, and was observed loading
-known-good `tape_machine_2` alongside Multi-Comp 2.
+known-good `tapemachine-2` alongside Multi-Comp 2.
 
 ### Two real defects found alongside, both unfixed
 

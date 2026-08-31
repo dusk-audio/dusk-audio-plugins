@@ -18,7 +18,7 @@ endif()
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/cmake/DuskDafPlugin.cmake")
 
-daf_add_plugin(tape_echo
+daf_add_plugin(tape-echo-2
     TARGETS clap vst3 lv2 jack au # au builds on macOS only, silently skipped elsewhere
     # MONOLITHIC: DAF_PLUGIN_WANT_DIRECT_ACCESS makes DAF's LV2 TTL export
     # declare the UI inside the dsp binary; the LV2 build must match or hosts
@@ -32,7 +32,7 @@ daf_add_plugin(tape_echo
         TapeEchoUI.cpp
         ${DUSK_DAF_UI_SOURCES})
 
-target_include_directories(tape_echo PUBLIC
+target_include_directories(tape-echo-2 PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/../core"
     ${DUSK_DAF_INCLUDE_DIRS})   # shared-daf dsp/ui + DAF-Widgets opengl
@@ -40,16 +40,16 @@ target_include_directories(tape_echo PUBLIC
 # Single source of truth for the plugin version: the project() VERSION above is
 # plumbed into getVersion() and the UI version display via these macros (see
 # TapeEchoVersion.hpp). Bumped by the /release-plugin skill. PUBLIC because DAF
-# compiles the UI in a separate tape_echo-ui target that links this one and must
+# compiles the UI in a separate tape-echo-2-ui target that links this one and must
 # see the same values — PRIVATE would leave the UI on the header's stale fallback.
-target_compile_definitions(tape_echo PUBLIC
+target_compile_definitions(tape-echo-2 PUBLIC
     TE2_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
     TE2_VERSION_MINOR=${PROJECT_VERSION_MINOR}
     TE2_VERSION_PATCH=${PROJECT_VERSION_PATCH})
 
 # Auto-deploy the built CLAP/VST3/LV2 into the user plugin dirs after each build
 # (disable with -DDUSK_DAF_INSTALL_LOCAL=OFF).
-dusk_daf_install_local(tape_echo LV2_PROGRAMS)
+dusk_daf_install_local(tape-echo-2 LV2_PROGRAMS)
 
 if(NOT CMAKE_CROSSCOMPILING)
     # enable_testing() + add_test() are what make this reachable from ctest.
@@ -80,6 +80,6 @@ endif()
 # Record VU / Record Peak are output parameters; guard them against reaching the
 # host as parameter edits, in both VST3 (dusk-audio/plugins#233) and CLAP
 # (#231). The macro handles the cross-compile skip and enable_testing() itself.
-dusk_daf_add_output_param_tests(tape_echo)
-dusk_daf_add_ui_drag_test(tape_echo 37 232)   # INPUT knob
-dusk_daf_add_resize_test(tape_echo)
+dusk_daf_add_output_param_tests(tape-echo-2)
+dusk_daf_add_ui_drag_test(tape-echo-2 37 232)   # INPUT knob
+dusk_daf_add_resize_test(tape-echo-2)

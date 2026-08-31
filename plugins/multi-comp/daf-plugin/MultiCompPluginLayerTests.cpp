@@ -748,7 +748,7 @@ void testAuCustomViewUsesComponentBundle()
     const std::string cmake = readSiblingSource("CMakeLists.txt");
     const std::string resolver = readSiblingSource("MultiCompAUComponentBundlePath.mm");
     const bool resolverIsLinkedIntoAu =
-        cmake.find("target_sources(multi_comp_2-au PRIVATE "
+        cmake.find("target_sources(multi-comp-2-au PRIVATE "
                    "MultiCompAUComponentBundlePath.mm)") != std::string::npos;
     const bool resolverUsesItsOwnImage =
         resolver.find("&setMultiCompAUComponentBundlePath") != std::string::npos

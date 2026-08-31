@@ -47,7 +47,7 @@ endif()
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/cmake/DuskDafPlugin.cmake")
 
-daf_add_plugin(sunset_circuits
+daf_add_plugin(sunset-circuits
     TARGETS clap vst3 lv2 jack au # au builds on macOS only, silently skipped elsewhere
     # MONOLITHIC: DAF_PLUGIN_WANT_DIRECT_ACCESS makes DAF's LV2 TTL export
     # declare the UI inside the dsp binary; the LV2 build must match or hosts
@@ -61,15 +61,15 @@ daf_add_plugin(sunset_circuits
         MultiSynthUI.cpp
         ${DUSK_DAF_UI_SOURCES})
 
-target_include_directories(sunset_circuits PUBLIC
+target_include_directories(sunset-circuits PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/../core"
     ${DUSK_DAF_INCLUDE_DIRS})   # shared-daf dsp/ui + DAF-Widgets opengl
 
 # Version reaches both the DSP shell (getVersion()/d_version) and the UI nameplate
 # tooltip. PUBLIC on the base target propagates to the -dsp and -ui static libs
-# (they link sunset_circuits PUBLIC), so every format binary sees the same value.
-target_compile_definitions(sunset_circuits PUBLIC
+# (they link sunset-circuits PUBLIC), so every format binary sees the same value.
+target_compile_definitions(sunset-circuits PUBLIC
     SC_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
     SC_VERSION_MINOR=${PROJECT_VERSION_MINOR}
     SC_VERSION_PATCH=${PROJECT_VERSION_PATCH}
@@ -82,25 +82,25 @@ target_compile_definitions(sunset_circuits PUBLIC
 # containers link too. Applied to the final module targets where pugl resolves.
 if(UNIX AND NOT APPLE)
     foreach(_fmt clap vst3 lv2 jack)
-        if(TARGET sunset_circuits-${_fmt})
+        if(TARGET sunset-circuits-${_fmt})
             # --no-as-needed (emitted before the link libraries) forces librt /
             # libpthread to stay on the line even though they appear before the
             # dgl archive that references shm_*/pthread_*; being shared libs they
             # then resolve those refs regardless of archive order.
-            target_link_options(sunset_circuits-${_fmt} PRIVATE "LINKER:--no-as-needed")
-            target_link_libraries(sunset_circuits-${_fmt} PRIVATE rt pthread)
+            target_link_options(sunset-circuits-${_fmt} PRIVATE "LINKER:--no-as-needed")
+            target_link_libraries(sunset-circuits-${_fmt} PRIVATE rt pthread)
         endif()
     endforeach()
 endif()
 
 # Auto-deploy the built CLAP/VST3/LV2 into the user plugin dirs after each build
 # (disable with -DDUSK_DAF_INSTALL_LOCAL=OFF).
-dusk_daf_install_local(sunset_circuits LV2_PROGRAMS)
+dusk_daf_install_local(sunset-circuits LV2_PROGRAMS)
 
 # The editor's knobs are the one thing pluginval and clap-validator never touch:
 # both skip the GUI entirely. This drives the real editor with synthetic pointer
 # input and fails if a drag stops moving parameters, including across a focus
 # change, which is how a DAF-Widgets regression once broke every plugin's knobs
 # (dusk-audio/plugins#233 follow-up).
-dusk_daf_add_ui_drag_test(sunset_circuits 425 232)   # FILTER CUTOFF knob
-dusk_daf_add_resize_test(sunset_circuits)
+dusk_daf_add_ui_drag_test(sunset-circuits 425 232)   # FILTER CUTOFF knob
+dusk_daf_add_resize_test(sunset-circuits)
