@@ -91,6 +91,24 @@ namespace
         return true;
     }
 
+    juce::StringArray makeScreenshotCommand (const juce::Rectangle<int>& bounds,
+                                              const juce::String& outputPath)
+    {
+#if JUCE_MAC
+        const juce::String captureBounds = juce::String (bounds.getX()) + ","
+                                         + juce::String (bounds.getY()) + ","
+                                         + juce::String (bounds.getWidth()) + ","
+                                         + juce::String (bounds.getHeight());
+        return { "screencapture", "-x", "-R" + captureBounds, outputPath };
+#elif JUCE_LINUX
+        juce::ignoreUnused (bounds);
+        return { "gnome-screenshot", "-f", outputPath };
+#else
+        juce::ignoreUnused (bounds, outputPath);
+        return {};
+#endif
+    }
+
     void printUsage()
     {
         std::cout
@@ -2107,23 +2125,8 @@ int main (int argc, char** argv)
         shotFile.deleteFile();
         juce::ChildProcess cap;
         bool capExitOk = false;
-#if JUCE_MAC
-        const juce::String captureBounds = juce::String (b.getX()) + ","
-                                         + juce::String (b.getY()) + ","
-                                         + juce::String (b.getWidth()) + ","
-                                         + juce::String (b.getHeight());
-        const juce::StringArray captureCommand {
-            "screencapture", "-x", "-R" + captureBounds, screenshotPath
-        };
-#elif JUCE_LINUX
-        const juce::StringArray captureCommand {
-            "gnome-screenshot", "-f", screenshotPath
-        };
-#else
-        // No stock CLI capture tool on this platform (e.g. Windows). Fail
-        // clearly instead of falling through to the Linux-only command.
-        const juce::StringArray captureCommand;
-#endif
+        // Unsupported platforms receive an empty command and fail clearly.
+        const auto captureCommand = makeScreenshotCommand (b, screenshotPath);
         if (captureCommand.isEmpty())
         {
             std::cerr << "  ! --screenshot: unsupported platform for capture" << std::endl;
@@ -2625,22 +2628,8 @@ int main (int argc, char** argv)
                 frameFile.deleteFile();
                 juce::ChildProcess capture;
                 bool frameOk = false;
-#if JUCE_MAC
-                const juce::String captureBounds = juce::String (bounds.getX()) + ","
-                                                 + juce::String (bounds.getY()) + ","
-                                                 + juce::String (bounds.getWidth()) + ","
-                                                 + juce::String (bounds.getHeight());
-                const juce::StringArray captureCommand {
-                    "screencapture", "-x", "-R" + captureBounds,
-                    frameFile.getFullPathName()
-                };
-#elif JUCE_LINUX
-                const juce::StringArray captureCommand {
-                    "gnome-screenshot", "-f", frameFile.getFullPathName()
-                };
-#else
-                const juce::StringArray captureCommand;
-#endif
+                const auto captureCommand = makeScreenshotCommand (
+                    bounds, frameFile.getFullPathName());
                 if (captureCommand.isEmpty())
                 {
                     std::cerr << "  ! --meter-film: unsupported platform for capture" << std::endl;
