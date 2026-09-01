@@ -747,17 +747,74 @@ void testAuCustomViewUsesComponentBundle()
 #if defined(__APPLE__)
     const std::string cmake = readSiblingSource("CMakeLists.txt");
     const std::string resolver = readSiblingSource("MultiCompAUComponentBundlePath.mm");
-    const bool resolverIsLinkedIntoAu =
-        cmake.find("multi_comp_2-au") != std::string::npos
-        && cmake.find("MultiCompAUComponentBundlePath.mm") != std::string::npos;
+    // Both names merely appearing somewhere in the file is not an association:
+    // the source counts as attached only when a single live target_sources()
+    // call names the target as its first argument and lists the source as one
+    // of its own whitespace-delimited tokens. Comments are ignored twice over:
+    // an invocation whose line is commented out is skipped entirely, and a
+    // comment inside the argument list is stripped so a commented-out entry
+    // does not pass. Exact token comparison keeps a longer filename containing
+    // the source name from matching.
+    const auto targetSourcesAttaches =
+        [](const std::string& text, const std::string& target,
+           const std::string& source)
+    {
+        const std::string command = "target_sources(";
+        for (size_t at = text.find(command); at != std::string::npos;
+             at = text.find(command, at + 1))
+        {
+            const size_t lineStart = text.rfind('\n', at) + 1;
+            if (text.find('#', lineStart) < at)
+                continue;
+            std::string arguments;
+            size_t end = at + command.size();
+            int depth = 1;
+            while (end < text.size() && depth > 0)
+            {
+                const char c = text[end++];
+                if (c == '#')
+                {
+                    while (end < text.size() && text[end] != '\n')
+                        ++end;
+                    continue;
+                }
+                if (c == '(')
+                    ++depth;
+                else if (c == ')' && --depth == 0)
+                    break;
+                arguments += c;
+            }
+            if (depth > 0)
+                break;
+            std::istringstream tokens(arguments);
+            std::string token;
+            if (!(tokens >> token) || token != target)
+                continue;
+            while (tokens >> token)
+                if (token == source)
+                    return true;
+        }
+        return false;
+    };
+    const bool resolverIsLinkedIntoAu = targetSourcesAttaches(
+        cmake, "multi-comp-2-au", "MultiCompAUComponentBundlePath.mm");
+    const bool resolverStaysOffSharedTarget = !targetSourcesAttaches(
+        cmake, "multi-comp-2", "MultiCompAUComponentBundlePath.mm");
+    const bool commentedCallDoesNotCount = !targetSourcesAttaches(
+        "# target_sources(multi-comp-2-au PRIVATE MultiCompAUComponentBundlePath.mm)\n",
+        "multi-comp-2-au", "MultiCompAUComponentBundlePath.mm");
     const bool resolverUsesItsOwnImage =
         resolver.find("&setMultiCompAUComponentBundlePath") != std::string::npos
         && resolver.find("DAF_NAMESPACE::d_nextBundlePath = componentBundlePath")
             != std::string::npos;
-    require(resolverIsLinkedIntoAu && resolverUsesItsOwnImage,
+    require(resolverIsLinkedIntoAu && resolverStaysOffSharedTarget
+                && commentedCallDoesNotCount && resolverUsesItsOwnImage,
             "AU custom view bundle is resolved from code inside the component image");
-    std::printf("AU Cocoa editor path: component-local resolver linked=%s source=%s\n",
+    std::printf("AU Cocoa editor path: component-local resolver linked=%s "
+                "au-only=%s ignores-commented=%s source=%s\n",
                 resolverIsLinkedIntoAu ? "yes" : "no",
+                resolverStaysOffSharedTarget ? "yes" : "no",
+                commentedCallDoesNotCount ? "yes" : "no",
                 resolverUsesItsOwnImage ? "yes" : "no");
 #endif
 }

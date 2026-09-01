@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.15)
 include(${CMAKE_SOURCE_DIR}/cmake/PluginVersion.cmake)
 
 # Get version from git tag or CI environment (fallback to default version)
-set(MULTICOMP_DEFAULT_VERSION "1.3.5")
+set(MULTICOMP_DEFAULT_VERSION "1.3.6")
 get_plugin_version("multi-comp" MULTICOMP_VERSION)
 if(NOT MULTICOMP_VERSION OR MULTICOMP_VERSION STREQUAL "0.0.0")
     set(MULTICOMP_VERSION ${MULTICOMP_DEFAULT_VERSION})
@@ -249,6 +249,9 @@ if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
 
     # --- State-restore integrity (pluginval L10 bool-param flake, deterministic) ---
     multicomp_add_functional_test(MultiCompStateRestoreTest tests/test_state_restore.cpp)
+
+    # --- Issue #240: host-edge resizing must preserve the proportional UI ---
+    multicomp_add_functional_test(MultiCompEditorResizeTest tests/test_editor_resize.cpp)
 
     # --- Parameter fuzz (pluginval "Fuzz parameters" replica; run under ASan) ---
     multicomp_add_functional_test(MultiCompParamFuzzTest tests/test_param_fuzz.cpp)

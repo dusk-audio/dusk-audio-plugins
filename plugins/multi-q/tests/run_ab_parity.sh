@@ -18,7 +18,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"
 JCLAP="${1:-$REPO/build/bin/CLAP/Multi-Q.clap}"
-DCLAP="${2:-$REPO/plugins/multi-q/daf-plugin/build/bin/multi_q_2.clap}"
+DCLAP="${2:-$REPO/plugins/multi-q/daf-plugin/build/bin/multi-q-2.clap}"
 CLAPINC="$REPO/external/clap-juce-extensions/clap-libs/clap/include"
 WORK="$(mktemp -d)"
 HOST="$WORK/clap_ab_host"

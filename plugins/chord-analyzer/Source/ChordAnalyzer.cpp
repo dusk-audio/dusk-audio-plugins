@@ -4,7 +4,11 @@
 
 //==============================================================================
 // Chord patterns - interval sets from root (in semitones)
-// Priority determines which pattern wins when multiple match
+// Priority determines which pattern wins when multiple match. Patterns that
+// tie on both priority and size fall back to DECLARATION ORDER, so this list
+// is ordered by preferred spelling: Major before Minor before Diminished, and
+// the lower tension first (add9 before add11, so C E G D F reads Cadd9(11)).
+// Reordering entries within a priority band changes chord names.
 const std::vector<ChordAnalyzer::ChordPattern> ChordAnalyzer::chordPatterns = {
     // Power chord (2 notes)
     {{0, 7}, ChordQuality::Power5, "5", 1},
@@ -35,8 +39,8 @@ const std::vector<ChordAnalyzer::ChordPattern> ChordAnalyzer::chordPatterns = {
     // Altered dominants
     {{0, 4, 6, 10}, ChordQuality::Dominant7Flat5, "7b5", 21},
     {{0, 4, 8, 10}, ChordQuality::Dominant7Sharp5, "7#5", 21},
-    {{0, 4, 7, 10, 13}, ChordQuality::Dominant7Flat9, "7b9", 25},
-    {{0, 4, 7, 10, 15}, ChordQuality::Dominant7Sharp9, "7#9", 25},
+    {{0, 1, 4, 7, 10}, ChordQuality::Dominant7Flat9, "7b9", 25},
+    {{0, 3, 4, 7, 10}, ChordQuality::Dominant7Sharp9, "7#9", 25},
 
     // Add chords
     {{0, 4, 7, 14}, ChordQuality::Add9, "add9", 16},
@@ -58,6 +62,25 @@ const std::vector<ChordAnalyzer::ChordPattern> ChordAnalyzer::chordPatterns = {
     // Simplified extended chords (without all tensions)
     {{0, 4, 7, 10, 21}, ChordQuality::Dominant13, "13", 28},  // 13 without 9/11
     {{0, 4, 7, 10, 17}, ChordQuality::Dominant11, "11", 28},  // 11 without 9
+
+    // Voicings that drop the fifth. Standard practice on guitar and piano -
+    // the fifth adds no colour, so it is the first tone to go - and the shell
+    // voicing (root, third, seventh) is the backbone of jazz comping.
+    //
+    // These sit BELOW every pattern that contains a fifth, not just below
+    // their own full counterparts. findRoot compares priorities across
+    // candidate roots, so a high-priority incomplete shape wins at the wrong
+    // root: at 28, maj9(no5) rooted on Ab beat a plain C7 rooted on the bass
+    // and C E G Ab Bb came out as G#maj9(no5,b13)/C. Ranked here only against
+    // each other, they win when, and only when, no fifth is sounding.
+    {{0, 4, 14},         ChordQuality::Add9,        "add9",   3, true},
+    {{0, 4, 10},         ChordQuality::Dominant7,   "7",      5, true},
+    {{0, 4, 11},         ChordQuality::Major7,      "maj7",   5, true},
+    {{0, 3, 10},         ChordQuality::Minor7,      "m7",     5, true},
+    {{0, 3, 11},         ChordQuality::MinorMajor7, "mMaj7",  5, true},
+    {{0, 4, 10, 14},     ChordQuality::Dominant9,   "9",      7, true},
+    {{0, 4, 11, 14},     ChordQuality::Major9,      "maj9",   7, true},
+    {{0, 3, 10, 14},     ChordQuality::Minor9,      "m9",     7, true},
 };
 
 //==============================================================================
@@ -66,10 +89,58 @@ ChordAnalyzer::ChordAnalyzer()
 }
 
 //==============================================================================
+ChordFacts ChordAnalyzer::analyzeFacts(const int* midiNotes, int numNotes) const noexcept
+{
+    ChordFacts facts;
+
+    if (midiNotes == nullptr || numNotes <= 0)
+        return facts;
+
+    // Fold to a pitch-class mask and find the lowest sounding note. Neither
+    // needs the notes sorted or copied.
+    std::uint16_t pitchMask = 0;
+    int lowest = midiNotes[0];
+
+    for (int i = 0; i < numNotes; ++i)
+    {
+        pitchMask = static_cast<std::uint16_t>(pitchMask | (1u << (((midiNotes[i] % 12) + 12) % 12)));
+        lowest = std::min(lowest, midiNotes[i]);
+    }
+
+    facts.bassNote = ((lowest % 12) + 12) % 12;
+
+    if (countPitchClasses(pitchMask) < 2)
+    {
+        // A single pitch class is a note, not a chord
+        facts.rootNote = facts.bassNote;
+        return facts;
+    }
+
+    facts.rootNote = findRoot(pitchMask, facts.bassNote);
+    facts.intervals = intervalsFrom(pitchMask, facts.rootNote);
+    facts.patternIndex = matchPattern(facts.intervals);
+
+    if (facts.patternIndex < 0)
+    {
+        facts.confidence = 0.3f;
+        return facts;
+    }
+
+    facts.quality = chordPatterns[static_cast<size_t>(facts.patternIndex)].quality;
+    facts.inversion = calculateInversion(facts.bassNote, facts.rootNote);
+    facts.slashBass = (facts.bassNote != facts.rootNote);
+    facts.confidence = calculateConfidence(facts.patternIndex, facts.intervals);
+    facts.isValid = true;
+
+    return facts;
+}
+
+//==============================================================================
 ChordInfo ChordAnalyzer::analyze(const std::vector<int>& midiNotes)
 {
     ChordInfo result;
     result.midiNotes = midiNotes;
+    std::sort(result.midiNotes.begin(), result.midiNotes.end());
 
     if (midiNotes.empty())
     {
@@ -78,69 +149,91 @@ ChordInfo ChordAnalyzer::analyze(const std::vector<int>& midiNotes)
         return result;
     }
 
+    const ChordFacts facts = analyzeFacts(midiNotes.data(), static_cast<int>(midiNotes.size()));
+
+    result.rootNote  = facts.rootNote;
+    result.bassNote  = facts.bassNote;
+    result.quality   = facts.quality;
+    result.inversion = facts.inversion;
+    result.slashBass = facts.slashBass;
+    result.confidence = facts.confidence;
+    result.isValid   = facts.isValid;
+
     if (midiNotes.size() == 1)
     {
         // Single note - just show the note name
         result.name = noteToName(midiNotes[0]);
         result.romanNumeral = "-";
-        result.rootNote = midiNotes[0] % 12;
-        result.bassNote = result.rootNote;
         return result;
     }
 
-    // Sort notes for consistent analysis
-    std::vector<int> sortedNotes = midiNotes;
-    std::sort(sortedNotes.begin(), sortedNotes.end());
-
-    // Get bass note
-    result.bassNote = sortedNotes[0] % 12;
-
-    // Find the root
-    result.rootNote = findRoot(sortedNotes);
-
-    if (result.rootNote < 0)
+    if (facts.patternIndex < 0)
     {
-        result.name = "?";
-        result.romanNumeral = "?";
-        return result;
-    }
+        // Two pitch classes are an interval, not a chord, so name the interval
+        // rather than giving up with "C?". The dyads that do imply a chord, the
+        // fourth and the fifth, match a pattern above and never reach here.
+        // Counted in pitch classes, not notes, so a doubled dyad still reads as
+        // its interval: C4 E4 C5 is a major third, not three unnamed notes.
+        std::uint16_t pitchMask = 0;
+        for (int note : midiNotes)
+            pitchMask = static_cast<std::uint16_t>(pitchMask | (1u << (((note % 12) + 12) % 12)));
 
-    // Get intervals from root
-    auto intervals = getIntervals(sortedNotes, result.rootNote);
+        const int distinctPitches = countPitchClasses(pitchMask);
 
-    // Match pattern
-    int priority = 0;
-    result.quality = matchPattern(intervals, priority);
+        if (distinctPitches <= 2)
+        {
+            int upper = result.bassNote;
+            for (int pc = 0; pc < 12; ++pc)
+            {
+                if (pc != result.bassNote && (pitchMask & (1u << pc)) != 0)
+                {
+                    upper = pc;
+                    break;
+                }
+            }
 
-    if (result.quality == ChordQuality::Unknown)
-    {
-        // Try simpler patterns by removing some notes
-        // Sometimes extra notes don't fit known patterns
+            // One pitch class is the same note doubled: an octave, or a unison
+            // when every note is literally the same pitch.
+            const char* interval = nullptr;
+
+            if (distinctPitches < 2)
+            {
+                const auto range = std::minmax_element(result.midiNotes.begin(),
+                                                       result.midiNotes.end());
+                interval = (*range.first == *range.second) ? "unison" : "octave";
+            }
+            else
+            {
+                interval = intervalName(((upper - result.bassNote) + 12) % 12);
+            }
+
+            result.name = pitchClassToName(result.bassNote) + "+" + pitchClassToName(upper)
+                        + " (" + interval + ")";
+            result.romanNumeral = "-";
+            return result;
+        }
+
+        // No known chord shape fits these notes
         result.name = pitchClassToName(result.rootNote) + "?";
         result.romanNumeral = "?";
-        result.confidence = 0.3f;
         return result;
     }
 
-    // Build chord name
-    result.name = pitchClassToName(result.rootNote) + qualityToSuffix(result.quality);
+    // Build chord name. Any sounding tone the matched pattern does not account
+    // for is spelled out instead of dropped, so C E G F# reads "Cadd#11" and
+    // not "C" (issue #235).
+    result.name = pitchClassToName(result.rootNote)
+                + qualityToSuffix(result.quality)
+                + describeAddedTones(facts.patternIndex, facts.intervals);
 
-    // Calculate inversion
-    result.inversion = calculateInversion(sortedNotes, result.rootNote);
-
-    // Add inversion notation if not root position
-    if (result.inversion > 0)
-    {
+    // Slash notation for any bass note other than the root. This covers the
+    // classic inversions and also an upper-structure bass such as the #11,
+    // which calculateInversion cannot number but must still be shown.
+    if (result.slashBass)
         result.extensions = "/" + pitchClassToName(result.bassNote);
-    }
 
-    // Get Roman numeral and function
     result.romanNumeral = buildRomanNumeral(result.rootNote, result.quality);
     result.function = getHarmonicFunction(result.rootNote, result.quality);
-
-    // Calculate confidence
-    result.confidence = calculateConfidence(intervals, result.quality);
-    result.isValid = true;
 
     return result;
 }
@@ -158,61 +251,160 @@ juce::String ChordAnalyzer::getKeyName() const
 }
 
 //==============================================================================
-int ChordAnalyzer::findRoot(const std::vector<int>& notes) const
+std::vector<ChordAnalyzer::PatternMask> ChordAnalyzer::buildPatternMasks()
 {
-    if (notes.empty()) return -1;
+    std::vector<PatternMask> masks;
+    masks.reserve(chordPatterns.size());
 
-    // Get unique pitch classes
-    std::set<int> pitchClasses;
-    for (int note : notes)
-        pitchClasses.insert(note % 12);
+    for (const auto& pattern : chordPatterns)
+    {
+        PatternMask m { 0u, 0u, 0 };
 
-    std::vector<int> uniquePitches(pitchClasses.begin(), pitchClasses.end());
+        for (int interval : pattern.intervals)
+        {
+            m.intervals |= (1u << interval);
+            m.pitches = static_cast<std::uint16_t>(m.pitches | (1u << (interval % 12)));
+        }
 
-    if (uniquePitches.size() < 2)
-        return uniquePitches[0];
+        m.pitchCount = countPitchClasses(m.pitches);
+        masks.push_back(m);
+    }
+
+    return masks;
+}
+
+// Built once at static-init time, after chordPatterns, so no analysis call
+// ever has to allocate this table.
+const std::vector<ChordAnalyzer::PatternMask> ChordAnalyzer::kPatternMasks
+    = ChordAnalyzer::buildPatternMasks();
+
+int ChordAnalyzer::countPitchClasses(std::uint16_t mask) noexcept
+{
+    int n = 0;
+    for (; mask != 0; mask &= static_cast<std::uint16_t>(mask - 1))
+        ++n;
+    return n;
+}
+
+std::uint32_t ChordAnalyzer::intervalsFrom(std::uint16_t pitchMask, int root) noexcept
+{
+    std::uint32_t intervals = 1u;   // the root is always interval 0
+
+    for (int pc = 0; pc < 12; ++pc)
+    {
+        if ((pitchMask & (1u << pc)) == 0)
+            continue;
+
+        const int interval = ((pc - root) + 12) % 12;
+        intervals |= (1u << interval);
+
+        // Also state compound intervals, so the extended patterns can match
+        if (interval == 2) intervals |= (1u << 14);   // 9th
+        if (interval == 5) intervals |= (1u << 17);   // 11th
+        if (interval == 9) intervals |= (1u << 21);   // 13th
+    }
+
+    return intervals;
+}
+
+bool ChordAnalyzer::patternMatches(int patternIndex, std::uint32_t intervals) noexcept
+{
+    const PatternMask& m = kPatternMasks[static_cast<size_t>(patternIndex)];
+
+    // Every tone the pattern requires must be sounding (extra notes allowed)
+    if ((intervals & m.intervals) != m.intervals)
+        return false;
+
+    // A b5 or #5 spelling *replaces* the fifth, so it cannot describe a chord
+    // that also sounds a perfect fifth - there the altered tone is a #11 or a
+    // b13. Without this, C E G Bb F# matched C7b5 and the natural fifth was
+    // thrown away.
+    const bool soundsFifth  = (intervals   & (1u << 7)) != 0;
+    const bool patternFifth = (m.intervals & (1u << 7)) != 0;
+    const bool patternAltFifth = (m.intervals & ((1u << 6) | (1u << 8))) != 0;
+
+    if (soundsFifth && ! patternFifth && patternAltFifth)
+        return false;
+
+    return true;
+}
+
+int ChordAnalyzer::findRoot(std::uint16_t pitchMask, int bassPitch) noexcept
+{
+    const int soundingTones = countPitchClasses(pitchMask);
+    int lowestPitch = 0;
+    while (lowestPitch < 12 && (pitchMask & (1u << lowestPitch)) == 0)
+        ++lowestPitch;
+
+    if (soundingTones < 2)
+        return lowestPitch;
 
     // Try each note as potential root and score the result
-    int bestRoot = uniquePitches[0];
+    int bestRoot = lowestPitch;
     int bestPriority = -1;
     float bestScore = 0.0f;
+    bool bestIsBass = false;
+    bool found = false;          // a match scoring <= 0 is still a match
 
-    for (int candidateRoot : uniquePitches)
+    for (int candidateRoot = 0; candidateRoot < 12; ++candidateRoot)
     {
-        auto intervals = getIntervals(uniquePitches, candidateRoot);
+        if ((pitchMask & (1u << candidateRoot)) == 0)
+            continue;
+
+        const std::uint32_t intervals = intervalsFrom(pitchMask, candidateRoot);
 
         // Try to match a pattern
-        for (const auto& pattern : chordPatterns)
+        for (size_t i = 0; i < chordPatterns.size(); ++i)
         {
             // Check if intervals match pattern (allowing extra notes)
-            bool matches = true;
-            for (int interval : pattern.intervals)
+            if (! patternMatches(static_cast<int>(i), intervals))
+                continue;
+
+            // Penalty for sounding notes the pattern does not explain.
+            // Counted in pitch classes: intervalsFrom also states a 9th as
+            // 14, an 11th as 17 and a 13th as 21, and charging those
+            // restatements as extra notes penalised exactly the chords
+            // that have them. C E G A scored 19.5 as C6 but 20 as Am7,
+            // purely because the synthetic 21 made C6 look impure.
+            const int patternTones = kPatternMasks[i].pitchCount;
+            const int extraNotes   = soundingTones - patternTones;
+
+            // A shape smaller than a triad may carry at most one added
+            // tone. The two-note power chord fits almost anything, and
+            // without this it "identifies" dense chromatic clusters as
+            // F5(b13,13) and the like. One extra still allows the real
+            // C5add#11 voicing. Bass-independent, so the same notes read
+            // the same way whichever one of them is lowest - previously a
+            // cluster was named or not purely according to its bass.
+            if (patternTones < 3 && extraNotes > 1)
+                continue;
+
+            const int priority = chordPatterns[i].priority;
+            float score = static_cast<float>(priority);
+
+            // Bonus for bass note being the root
+            const bool isBass = (bassPitch == candidateRoot);
+            if (isBass)
+                score += 5.0f;
+
+            score -= static_cast<float>(extraNotes) * 0.5f;
+
+            // Rank on score, then on the bass, then on pattern priority.
+            // The bass has to outrank priority: C E G A over a C bass is
+            // C6, and only the tie-break tells it from Am7's first
+            // inversion, which scores the same but is not in the bass.
+            const bool better = ! found
+                || score > bestScore
+                || (score == bestScore && isBass && ! bestIsBass)
+                || (score == bestScore && isBass == bestIsBass && priority > bestPriority);
+
+            if (better)
             {
-                if (intervals.find(interval) == intervals.end())
-                {
-                    matches = false;
-                    break;
-                }
-            }
-
-            if (matches)
-            {
-                float score = static_cast<float>(pattern.priority);
-
-                // Bonus for bass note being the root
-                if (notes[0] % 12 == candidateRoot)
-                    score += 5.0f;
-
-                // Bonus for matching interval count closely
-                int extraNotes = static_cast<int>(intervals.size()) - static_cast<int>(pattern.intervals.size());
-                score -= static_cast<float>(extraNotes) * 0.5f;
-
-                if (score > bestScore || (score == bestScore && pattern.priority > bestPriority))
-                {
-                    bestScore = score;
-                    bestPriority = pattern.priority;
-                    bestRoot = candidateRoot;
-                }
+                found = true;
+                bestIsBass = isBass;
+                bestScore = score;
+                bestPriority = priority;
+                bestRoot = candidateRoot;
             }
         }
     }
@@ -220,76 +412,126 @@ int ChordAnalyzer::findRoot(const std::vector<int>& notes) const
     return bestRoot;
 }
 
-std::set<int> ChordAnalyzer::getIntervals(const std::vector<int>& notes, int root) const
+int ChordAnalyzer::matchPattern(std::uint32_t intervals) noexcept
 {
-    std::set<int> intervals;
-    intervals.insert(0);  // Root is always 0
+    int best = -1;
 
-    for (int note : notes)
+    for (size_t i = 0; i < chordPatterns.size(); ++i)
     {
-        int pitchClass = note % 12;
-        int interval = (pitchClass - root + 12) % 12;
-        intervals.insert(interval);
+        if (! patternMatches(static_cast<int>(i), intervals))
+            continue;
 
-        // Also add compound intervals for extended chords
-        if (interval == 2) intervals.insert(14);  // 9th
-        if (interval == 5) intervals.insert(17);  // 11th
-        if (interval == 9) intervals.insert(21);  // 13th
-    }
-
-    return intervals;
-}
-
-ChordQuality ChordAnalyzer::matchPattern(const std::set<int>& intervals, int& outPriority) const
-{
-    ChordQuality bestMatch = ChordQuality::Unknown;
-    int bestPriority = -1;
-    size_t bestMatchSize = 0;
-
-    for (const auto& pattern : chordPatterns)
-    {
-        // Check if all pattern intervals are present
-        bool matches = true;
-        for (int interval : pattern.intervals)
+        // Prefer patterns that match more notes (more specific)
+        // But also consider priority. A pattern that ties on both keeps the
+        // incumbent, so an exact tie resolves to whichever is declared first
+        // in chordPatterns - see the ordering contract on that table.
+        if (best < 0
+            || chordPatterns[i].priority > chordPatterns[static_cast<size_t>(best)].priority
+            || (chordPatterns[i].priority == chordPatterns[static_cast<size_t>(best)].priority
+                && chordPatterns[i].intervals.size() > chordPatterns[static_cast<size_t>(best)].intervals.size()))
         {
-            if (intervals.find(interval) == intervals.end())
-            {
-                matches = false;
-                break;
-            }
-        }
-
-        if (matches)
-        {
-            // Prefer patterns that match more notes (more specific)
-            // But also consider priority
-            if (pattern.priority > bestPriority ||
-                (pattern.priority == bestPriority && pattern.intervals.size() > bestMatchSize))
-            {
-                bestMatch = pattern.quality;
-                bestPriority = pattern.priority;
-                bestMatchSize = pattern.intervals.size();
-            }
+            best = static_cast<int>(i);
         }
     }
 
-    outPriority = bestPriority;
-    return bestMatch;
+    return best;
 }
 
-int ChordAnalyzer::calculateInversion(const std::vector<int>& notes, int root) const
+const char* ChordAnalyzer::tensionLabel(int semitonesFromRoot)
 {
-    if (notes.empty()) return 0;
+    // Folded to a pitch class so a compound interval names the same tension as
+    // its simple form (14 and 2 are both a 9th, 17 and 5 both an 11th).
+    // String literals, so naming a tension costs no allocation.
+    switch (semitonesFromRoot % 12)
+    {
+        case 1:  return "b9";
+        case 2:  return "9";
+        case 3:  return "#9";
+        case 4:  return "3";
+        case 5:  return "11";
+        case 6:  return "#11";
+        case 7:  return "5";
+        case 8:  return "b13";
+        case 9:  return "13";
+        case 10: return "b7";
+        case 11: return "maj7";
+        default: return nullptr;   // 0 is the root, always covered by the pattern
+    }
+}
 
-    int bassNote = notes[0] % 12;
-    if (bassNote == root) return 0;
+const char* ChordAnalyzer::intervalName(int semitones)
+{
+    switch (((semitones % 12) + 12) % 12)
+    {
+        case 0:  return "octave";
+        case 1:  return "m2";
+        case 2:  return "M2";
+        case 3:  return "m3";
+        case 4:  return "M3";
+        case 5:  return "P4";
+        case 6:  return "tritone";
+        case 7:  return "P5";
+        case 8:  return "m6";
+        case 9:  return "M6";
+        case 10: return "m7";
+        default: return "M7";
+    }
+}
 
-    // Find which chord tone is in the bass
-    std::set<int> intervals;
-    for (int note : notes)
-        intervals.insert((note % 12 - root + 12) % 12);
+juce::String ChordAnalyzer::describeAddedTones(int patternIndex, std::uint32_t intervals)
+{
+    // Compare as pitch classes: intervalsFrom states a 9th as both 2 and 14,
+    // and the patterns use the compound form, so a raw difference would report
+    // every add9/add11/13 chord tone as an extra note.
+    const PatternMask& m = kPatternMasks[static_cast<size_t>(patternIndex)];
 
-    int bassInterval = (bassNote - root + 12) % 12;
+    // At most one extra per pitch class, plus the "no5" marker.
+    const char* extras[13];
+    int numExtras = 0;
+
+    // Announce a missing fifth first, so it reads C9(no5,#11) rather than
+    // splitting the parenthesis into two groups.
+    const bool omitsFifth = chordPatterns[static_cast<size_t>(patternIndex)].omitsFifth;
+    if (omitsFifth)
+        extras[numExtras++] = "no5";
+
+    for (int interval = 0; interval < 12; ++interval)
+    {
+        if ((intervals & (1u << interval)) == 0 || (m.pitches & (1u << interval)) != 0)
+            continue;
+
+        if (const char* label = tensionLabel(interval))
+            extras[numExtras++] = label;
+    }
+
+    if (numExtras == 0)
+        return {};
+
+    // A triad carrying one extra tone reads as an add chord ("Cadd#11");
+    // anything richer takes parenthesised tensions ("C7(#11)", "C9(b13)").
+    // An absent fifth is never an "add", so those always take the parens.
+    if (! omitsFifth && numExtras == 1
+        && chordPatterns[static_cast<size_t>(patternIndex)].intervals.size() <= 3)
+        return juce::String("add") + extras[0];
+
+    juce::String text("(");
+    for (int i = 0; i < numExtras; ++i)
+    {
+        if (i > 0)
+            text << ",";
+        text << extras[i];
+    }
+    text << ")";
+
+    return text;
+}
+
+int ChordAnalyzer::calculateInversion(int bassPitch, int root) noexcept
+{
+    if (bassPitch == root)
+        return 0;
+
+    const int bassInterval = ((bassPitch - root) + 12) % 12;
 
     if (bassInterval == 3 || bassInterval == 4) return 1;  // Third in bass
     if (bassInterval == 7) return 2;  // Fifth in bass
@@ -298,38 +540,31 @@ int ChordAnalyzer::calculateInversion(const std::vector<int>& notes, int root) c
     return 0;
 }
 
-float ChordAnalyzer::calculateConfidence(const std::set<int>& intervals, ChordQuality matched) const
+float ChordAnalyzer::calculateConfidence(int patternIndex, std::uint32_t intervals) noexcept
 {
-    if (matched == ChordQuality::Unknown) return 0.0f;
+    // Score against the pattern that actually matched. Comparing in pitch
+    // classes keeps a compound pattern tone (9th written as 14) from counting
+    // its own chord tone as an extra note.
+    const PatternMask& m = kPatternMasks[static_cast<size_t>(patternIndex)];
 
-    // Find the matching pattern
-    for (const auto& pattern : chordPatterns)
+    int matchedIntervals = 0;
+    int extraIntervals = 0;
+
+    for (int interval = 0; interval < 12; ++interval)
     {
-        if (pattern.quality == matched)
-        {
-            // Check how closely we match
-            int matchedIntervals = 0;
-            int extraIntervals = 0;
+        if ((intervals & (1u << interval)) == 0)
+            continue;
 
-            for (int interval : intervals)
-            {
-                if (interval < 12)  // Only count basic intervals
-                {
-                    if (pattern.intervals.find(interval) != pattern.intervals.end())
-                        matchedIntervals++;
-                    else if (interval != 0)
-                        extraIntervals++;
-                }
-            }
-
-            float patternMatch = static_cast<float>(matchedIntervals) / static_cast<float>(pattern.intervals.size());
-            float penalty = static_cast<float>(extraIntervals) * 0.1f;
-
-            return juce::jlimit(0.0f, 1.0f, patternMatch - penalty);
-        }
+        if ((m.pitches & (1u << interval)) != 0)
+            matchedIntervals++;
+        else if (interval != 0)
+            extraIntervals++;
     }
 
-    return 0.5f;
+    const float patternMatch = static_cast<float>(matchedIntervals) / static_cast<float>(m.pitchCount);
+    const float penalty = static_cast<float>(extraIntervals) * 0.1f;
+
+    return juce::jlimit(0.0f, 1.0f, patternMatch - penalty);
 }
 
 //==============================================================================

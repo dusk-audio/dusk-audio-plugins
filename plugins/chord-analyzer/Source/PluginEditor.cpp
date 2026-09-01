@@ -10,7 +10,7 @@ ChordAnalyzerEditor::ChordAnalyzerEditor(ChordAnalyzerProcessor& p)
     // Default 800x580 (was 520) to fit the recent-chord history strip
     // below the main display. Min 460 (was 400) preserves a usable
     // chord-display area at the smallest size.
-    resizeHelper.initialize(this, &audioProcessor, 800, 580, 600, 460, 1200, 840, false);
+    resizeHelper.initialize(this, &audioProcessor, 800, 580, 600, 460, 1200, 840, true);
     setSize(resizeHelper.getStoredWidth(), resizeHelper.getStoredHeight());
 
     setupChordDisplay();
@@ -399,11 +399,13 @@ void ChordAnalyzerEditor::updateChordDisplay()
     // Update chord name
     juce::String displayName = cachedChord.name;
 
-    // Add inversion notation if enabled and not root position
+    // Add slash notation if enabled and the bass is not the root. This covers
+    // the numbered inversions and an upper-structure bass alike, so a C triad
+    // voiced over F# reads "Cadd#11/F#" rather than "C" (issue #235).
     bool showInv = *audioProcessor.getAPVTS().getRawParameterValue(
         ChordAnalyzerProcessor::PARAM_SHOW_INVERSIONS) > 0.5f;
 
-    if (showInv && !cachedChord.extensions.isEmpty() && cachedChord.inversion > 0)
+    if (showInv && cachedChord.slashBass && !cachedChord.extensions.isEmpty())
     {
         displayName += cachedChord.extensions;
     }

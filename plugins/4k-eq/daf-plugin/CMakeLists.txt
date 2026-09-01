@@ -8,7 +8,7 @@
 #   cmake --build build
 
 cmake_minimum_required(VERSION 3.15)
-project(FourKEQ2DAF VERSION 1.0.1)
+project(FourKEQ2DAF VERSION 1.0.4)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -18,7 +18,7 @@ endif()
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/cmake/DuskDafPlugin.cmake")
 
-daf_add_plugin(four_k_eq_2
+daf_add_plugin(4k-eq-2
     TARGETS clap vst3 lv2 jack au # au builds on macOS only, silently skipped elsewhere
     # MONOLITHIC: DAF_PLUGIN_WANT_DIRECT_ACCESS makes DAF's LV2 TTL export
     # declare the UI inside the dsp binary; the LV2 build must match or hosts
@@ -32,7 +32,7 @@ daf_add_plugin(four_k_eq_2
         FourKEQUI.cpp
         ${DUSK_DAF_UI_SOURCES})
 
-target_include_directories(four_k_eq_2 PUBLIC
+target_include_directories(4k-eq-2 PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp"
     ${DUSK_DAF_INCLUDE_DIRS})
@@ -40,19 +40,21 @@ target_include_directories(four_k_eq_2 PUBLIC
 # Single source of truth for the plugin version: the project() VERSION above is
 # plumbed into getVersion() and the UI nameplate via these macros (see
 # FourKEQVersion.hpp). Bumped by the /release-plugin skill. PUBLIC because DAF
-# compiles the UI in a separate four_k_eq_2-ui target that links this one and
+# compiles the UI in a separate 4k-eq-2-ui target that links this one and
 # must see the same values — PRIVATE would leave the UI on the header's stale
 # fallback.
-target_compile_definitions(four_k_eq_2 PUBLIC
+target_compile_definitions(4k-eq-2 PUBLIC
     FOURKEQ2_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
     FOURKEQ2_VERSION_MINOR=${PROJECT_VERSION_MINOR}
     FOURKEQ2_VERSION_PATCH=${PROJECT_VERSION_PATCH})
 
 # Auto-deploy the built CLAP/VST3/LV2 into the user plugin dirs after each build
 # (disable with -DDUSK_DAF_INSTALL_LOCAL=OFF).
-dusk_daf_install_local(four_k_eq_2 LV2_PROGRAMS)
+dusk_daf_install_local(4k-eq-2 LV2_PROGRAMS)
 
 # Out Peak L/R are output parameters; guard them against reaching the host as
 # parameter edits, in both VST3 (dusk-audio/plugins#233) and CLAP (#231). The
 # harnesses dlopen() the built binaries, so they only run where they are built.
-dusk_daf_add_output_param_tests(four_k_eq_2)
+dusk_daf_add_output_param_tests(4k-eq-2)
+dusk_daf_add_ui_drag_test(4k-eq-2 258 274)   # LF gain knob
+dusk_daf_add_resize_test(4k-eq-2 684 23)     # GRAPH button collapses the design

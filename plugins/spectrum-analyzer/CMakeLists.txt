@@ -8,7 +8,7 @@ set(PLUGIN_NAME "SpectrumAnalyzer")
 set(PLUGIN_CODE "SpAn")
 set(PLUGIN_MANUFACTURER_CODE "Dusk")
 set(PLUGIN_MANUFACTURER "Dusk Audio")
-set(PLUGIN_VERSION "1.0.1")
+set(PLUGIN_VERSION "1.0.2")
 
 # Build format options (matches other plugins)
 option(BUILD_VST3 "Build VST3 format" ON)
@@ -34,6 +34,7 @@ juce_add_plugin(${PLUGIN_NAME}
     COMPANY_NAME "${PLUGIN_MANUFACTURER}"
     PLUGIN_MANUFACTURER_CODE ${PLUGIN_MANUFACTURER_CODE}
     PLUGIN_CODE ${PLUGIN_CODE}
+    VERSION ${PLUGIN_VERSION}
     FORMATS ${PLUGIN_FORMATS}
     PRODUCT_NAME "Spectrum Analyzer"
     PLUGIN_NAME "Spectrum Analyzer"

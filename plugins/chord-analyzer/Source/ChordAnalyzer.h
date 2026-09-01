@@ -4,6 +4,7 @@
 #include <vector>
 #include <set>
 #include <map>
+#include <cstdint>
 
 //==============================================================================
 // Chord quality enumeration
@@ -68,6 +69,30 @@ enum class SuggestionCategory
 };
 
 //==============================================================================
+// Numeric analysis result: no strings, no heap, safe to compute on an audio
+// thread. The headless LV2 wrapper publishes only these fields.
+struct ChordFacts
+{
+    int rootNote = -1;              // Root pitch class (0-11, C=0)
+    int bassNote = -1;              // Lowest note pitch class
+    ChordQuality quality = ChordQuality::Unknown;
+    int inversion = 0;              // 0=root, 1=first, 2=second, 3=seventh
+    bool slashBass = false;         // Bass is not the root
+    bool isValid = false;
+    float confidence = 0.0f;
+    int patternIndex = -1;          // matched entry, -1 when nothing fitted
+    std::uint32_t intervals = 0;    // interval bit mask from the root
+
+    bool operator==(const ChordFacts& o) const
+    {
+        return rootNote == o.rootNote && bassNote == o.bassNote
+            && quality == o.quality && inversion == o.inversion
+            && isValid == o.isValid;
+    }
+    bool operator!=(const ChordFacts& o) const { return !(*this == o); }
+};
+
+//==============================================================================
 // Chord information structure
 struct ChordInfo
 {
@@ -80,12 +105,17 @@ struct ChordInfo
     ChordQuality quality = ChordQuality::Unknown;
     juce::String extensions;        // Any additional text
     int inversion = 0;              // 0=root, 1=first, 2=second, etc.
+    bool slashBass = false;         // Bass is not the root - display slash notation
     bool isValid = false;
     float confidence = 0.0f;        // 0.0-1.0 confidence score
 
     bool operator==(const ChordInfo& other) const
     {
-        return name == other.name && rootNote == other.rootNote && quality == other.quality;
+        // bassNote is part of the identity: C/E and C/G share a name, root and
+        // quality, but they display differently and publish a different
+        // detectedBass. Omitting it left both stale until some other note moved.
+        return name == other.name && rootNote == other.rootNote
+            && quality == other.quality && bassNote == other.bassNote;
     }
 
     bool operator!=(const ChordInfo& other) const
@@ -115,6 +145,11 @@ public:
     //==========================================================================
     // Main analysis function
     ChordInfo analyze(const std::vector<int>& midiNotes);
+
+    // Numeric-only analysis. Allocates nothing and builds no strings, so it is
+    // safe to call from an audio callback - the headless LV2 wrapper does.
+    // analyze() is this plus the display strings.
+    ChordFacts analyzeFacts(const int* midiNotes, int numNotes) const noexcept;
 
     //==========================================================================
     // Key context
@@ -156,17 +191,45 @@ private:
         ChordQuality quality;
         juce::String suffix;
         int priority;               // Higher = preferred match
+
+        // Set on the shapes that deliberately leave the fifth out. The fifth
+        // is the most disposable chord tone, so these voicings are everywhere
+        // in practice, but the name has to say the fifth is absent or it would
+        // claim a note that is not sounding.
+        bool omitsFifth = false;
     };
 
     static const std::vector<ChordPattern> chordPatterns;
 
     //==========================================================================
-    // Analysis helpers
-    int findRoot(const std::vector<int>& notes) const;
-    std::set<int> getIntervals(const std::vector<int>& notes, int root) const;
-    ChordQuality matchPattern(const std::set<int>& intervals, int& outPriority) const;
-    int calculateInversion(const std::vector<int>& notes, int root) const;
-    float calculateConfidence(const std::set<int>& intervals, ChordQuality matched) const;
+    // Each pattern reduced to bit masks once, at static-init time, so analysis
+    // touches no heap container. Interval masks carry bits 0-21 (the compound
+    // 14, 17 and 21 included); pitch masks are folded to 12 bits.
+    struct PatternMask
+    {
+        std::uint32_t intervals;
+        std::uint16_t pitches;
+        int           pitchCount;
+    };
+
+    static const std::vector<PatternMask> kPatternMasks;
+    static std::vector<PatternMask> buildPatternMasks();
+
+    //==========================================================================
+    // Analysis helpers. All operate on masks and allocate nothing.
+    static int findRoot(std::uint16_t pitchMask, int bassPitch) noexcept;
+    static std::uint32_t intervalsFrom(std::uint16_t pitchMask, int root) noexcept;
+    static bool patternMatches(int patternIndex, std::uint32_t intervals) noexcept;
+    static int countPitchClasses(std::uint16_t mask) noexcept;
+    static int matchPattern(std::uint32_t intervals) noexcept;   // -1 if none
+    static int calculateInversion(int bassPitch, int root) noexcept;
+    static float calculateConfidence(int patternIndex, std::uint32_t intervals) noexcept;
+
+    //==========================================================================
+    // Naming of tones the matched pattern does not account for
+    static const char* tensionLabel(int semitonesFromRoot);   // nullptr if none
+    static const char* intervalName(int semitones);           // "M3", "tritone", ...
+    static juce::String describeAddedTones(int patternIndex, std::uint32_t intervals);
 
     //==========================================================================
     // Roman numeral helpers

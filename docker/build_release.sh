@@ -16,10 +16,10 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 IMAGE_NAME="dusk-plugins-builder"
 
 # DAF / DAF-Widgets SHAs — keep in sync with daf-build.yml, daf-release.yml and daf-au-test.yml.
-# DAF comes from the dusk-audio/DAF fork (our patches live there); DAF-Widgets
-# stays on upstream DAF (no fork).
-DAF_SHA="dfc50729f7a7d31dc0e0740c863bf88dee71c7c2"
-DAFWIDGETS_SHA="91e0004e1ece0785d347801925d3e2518b0cbbda"
+# Both come from permanent dusk-audio hard forks (dusk-audio/DAF and
+# dusk-audio/DAF-Widgets); never fetch either from upstream DISTRHO.
+DAF_SHA="2f573d68d79218d2f9e048e47d99e424ca7958c6"
+DAFWIDGETS_SHA="990751362a00f80433647136e27547ca691cd435"
 
 # Plugin lookup functions (compatible with bash 3.2 on macOS)
 get_plugin_target() {
@@ -94,7 +94,7 @@ build_sunset() {
             # DAF opengl UI deps not baked into the JUCE image.
             apt-get update
             apt-get install -y --no-install-recommends \
-                ninja-build libxext-dev libglu1-mesa-dev mesa-common-dev libdbus-1-dev
+                ninja-build libxext-dev libxtst-dev libglu1-mesa-dev mesa-common-dev libdbus-1-dev
 
             # Shallow-fetch each dependency at its exact pinned SHA. Submodule
             # failures are NOT suppressed: DAF requires its pugl submodule, and a
@@ -121,13 +121,13 @@ build_sunset() {
                 -DDAF_PATH=/tmp/daf \
                 -DDAFWIDGETS_PATH=/tmp/daf-widgets
             cmake --build /tmp/scbuild \
-                --target sunset_circuits-vst3 sunset_circuits-clap sunset_circuits-lv2 \
+                --target sunset-circuits-vst3 sunset-circuits-clap sunset-circuits-lv2 \
                 -j"$(nproc)"
 
             echo "Copying artefacts to output..."
-            cp -r /tmp/scbuild/bin/sunset_circuits.vst3 /output/
-            cp -r /tmp/scbuild/bin/sunset_circuits.lv2  /output/
-            cp    /tmp/scbuild/bin/sunset_circuits.clap /output/
+            cp -r /tmp/scbuild/bin/sunset-circuits.vst3 /output/
+            cp -r /tmp/scbuild/bin/sunset-circuits.lv2  /output/
+            cp    /tmp/scbuild/bin/sunset-circuits.clap /output/
             echo "=== Sunset Circuits build complete ==="
         '
 
@@ -135,7 +135,7 @@ build_sunset() {
     # Hard artifact check: the container exits nonzero on any build failure
     # (set -e inside), but guard against a silently-empty output dir so the
     # install section below can never no-op its way to a bogus success.
-    for a in sunset_circuits.vst3 sunset_circuits.lv2 sunset_circuits.clap; do
+    for a in sunset-circuits.vst3 sunset-circuits.lv2 sunset-circuits.clap; do
         if [ ! -e "$OUTPUT_DIR/$a" ]; then
             echo "ERROR: expected artifact missing: $OUTPUT_DIR/$a"
             exit 1
@@ -143,19 +143,19 @@ build_sunset() {
     done
     echo "=== Installing Sunset Circuits to standard locations ==="
     mkdir -p "$HOME/.vst3" "$HOME/.lv2" "$HOME/.clap"
-    if [ -d "$OUTPUT_DIR/sunset_circuits.vst3" ]; then
-        rm -rf "$HOME/.vst3/sunset_circuits.vst3"
-        cp -r "$OUTPUT_DIR/sunset_circuits.vst3" "$HOME/.vst3/"
-        echo "  VST3: sunset_circuits.vst3 -> ~/.vst3/"
+    if [ -d "$OUTPUT_DIR/sunset-circuits.vst3" ]; then
+        rm -rf "$HOME/.vst3/sunset-circuits.vst3"
+        cp -r "$OUTPUT_DIR/sunset-circuits.vst3" "$HOME/.vst3/"
+        echo "  VST3: sunset-circuits.vst3 -> ~/.vst3/"
     fi
-    if [ -d "$OUTPUT_DIR/sunset_circuits.lv2" ]; then
-        rm -rf "$HOME/.lv2/sunset_circuits.lv2"
-        cp -r "$OUTPUT_DIR/sunset_circuits.lv2" "$HOME/.lv2/"
-        echo "  LV2:  sunset_circuits.lv2 -> ~/.lv2/"
+    if [ -d "$OUTPUT_DIR/sunset-circuits.lv2" ]; then
+        rm -rf "$HOME/.lv2/sunset-circuits.lv2"
+        cp -r "$OUTPUT_DIR/sunset-circuits.lv2" "$HOME/.lv2/"
+        echo "  LV2:  sunset-circuits.lv2 -> ~/.lv2/"
     fi
-    if [ -f "$OUTPUT_DIR/sunset_circuits.clap" ]; then
-        cp "$OUTPUT_DIR/sunset_circuits.clap" "$HOME/.clap/"
-        echo "  CLAP: sunset_circuits.clap -> ~/.clap/"
+    if [ -f "$OUTPUT_DIR/sunset-circuits.clap" ]; then
+        cp "$OUTPUT_DIR/sunset-circuits.clap" "$HOME/.clap/"
+        echo "  CLAP: sunset-circuits.clap -> ~/.clap/"
     fi
     echo ""
     echo "=== Done. ==="

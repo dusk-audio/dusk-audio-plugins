@@ -333,7 +333,7 @@ ConvolutionReverbEditor::ConvolutionReverbEditor(ConvolutionReverbProcessor& p)
     updateIRNameLabel();
 
     // Initialize resizable UI (900x700 base, range 720-1350 width)
-    resizeHelper.initialize(this, &audioProcessor, 900, 700, 720, 560, 1350, 1050, false);
+    resizeHelper.initialize(this, &audioProcessor, 900, 700, 720, 560, 1350, 1050, true);
     setSize(resizeHelper.getStoredWidth(), resizeHelper.getStoredHeight());
 
     // User preset manager (no factory presets — IR-dependent plugin)

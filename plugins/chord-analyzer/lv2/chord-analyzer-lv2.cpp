@@ -66,14 +66,14 @@ struct ChordAnalyzerLV2
 
     ChordAnalyzer    analyzer;
     std::vector<int> activeNotes;
-    ChordInfo        currentChord;
+    ChordFacts       currentChord;
 
     // Sustain pedal (CC 64) state — single audio thread, no synchronisation needed.
     bool             sustainPedalDown = false;
     std::vector<int> sustainedReleasedNotes;  // notes released while pedal was down
 };
 
-void publishDetectedChord (ChordAnalyzerLV2& self, const ChordInfo& chord)
+void publishDetectedChord (ChordAnalyzerLV2& self, const ChordFacts& chord)
 {
     // Choice index 0 == "no chord / unknown". Indices 1..N follow the same
     // order used by the JUCE-built variant for cross-format consistency.
@@ -246,7 +246,12 @@ void run (LV2_Handle instance, uint32_t /*nSamples*/)
     if (! notesChanged)
         return;
 
-    const ChordInfo newChord = self->analyzer.analyze (self->activeNotes);
+    // analyzeFacts rather than analyze: run() is the audio thread and this
+    // plugin declares lv2:hardRTCapable. The numeric form allocates nothing,
+    // and the display strings analyze() would build are unused here - only
+    // the four detection control ports are published.
+    const ChordFacts newChord = self->analyzer.analyzeFacts (self->activeNotes.data(),
+                                                             static_cast<int> (self->activeNotes.size()));
     if (newChord != self->currentChord)
     {
         self->currentChord = newChord;

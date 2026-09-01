@@ -1,7 +1,7 @@
 ---
 slug: tapemachine-2
-version: 1.0.7
-last_updated: 2026-08-26
+version: 1.0.10
+last_updated: 2026-08-29
 tagline: tracking and mastering tape color in one processor
 ---
 

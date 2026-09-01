@@ -26,6 +26,8 @@
 #include "DuskUserPresetStore.hpp"
 #include "util/CrashLog.hpp"
 
+#include <numeric> // std::gcd, for the exact-aspect minimum size
+
 #include <algorithm>
 #include <cctype>
 #include <cfloat>
@@ -269,8 +271,16 @@ protected:
     void applyGraphSize()
     {
         const float designH = showGraph ? kDesignH : kDesignHCollapsed;
+
+        // Read the width BEFORE the constraints change. Updating the aspect can
+        // make a host resize the window underneath us, and the new height has to
+        // be derived from the width we actually had, not from whatever the host
+        // just did in response to a ratio that no longer matches the old height.
+        const uint w = (uint)getWidth();
+        const uint h = (uint)std::lround((double)w * designH / kDesignW);
+
         updateSizeConstraints();
-        setSize((uint)getWidth(), (uint)std::lround((double)getWidth() * designH / kDesignW));
+        setSize(w, h);
     }
 
     // Lock the resize aspect ratio to the current design (graph shown vs hidden)
@@ -280,9 +290,38 @@ protected:
     void updateSizeConstraints()
     {
         const float designH = showGraph ? kDesignH : kDesignHCollapsed;
-        const uint minW = 560;
+        const uint minW = minWidthOnDesignRatio(designH);
         const uint minH = (uint)std::lround((double)minW * designH / kDesignW);
         setGeometryConstraints(minW, minH, /*keepAspectRatio*/ true);
+    }
+
+    // The aspect a host is told to preserve comes from the SAME pair of numbers as
+    // the minimum size: puglSetGeometryConstraints stores (width, height) as
+    // PUGL_MIN_SIZE and, with keepAspectRatio, as PUGL_FIXED_ASPECT as well, and
+    // X11 advertises both out of that one pair. A minimum that is not exactly on
+    // the design ratio therefore advertises the WRONG aspect.
+    //
+    // A 560 minimum did exactly that with the graph shown: 560 x lround(560*640/960)
+    // is 560x373, an aspect of 1.50134 rather than the design 1.5. A host honouring
+    // it resolves a 960-wide window to 639 tall, so the window sits a pixel off the
+    // design; and when the graph is hidden the advertised ratio changes, so a host
+    // that keeps the current height and derives the width from the new aspect
+    // inflates the window well past its visible frame (639 * 1.86047 = 1189). The
+    // editor then draws 1189 px of design into 960 px of window and the right-hand
+    // column is cut off, which is what was reported against v1.0.3.
+    //
+    // Pick the minimum width that puts minH exactly on the design ratio: reduce
+    // designH/kDesignW and round the target to the nearest multiple of the
+    // denominator. 640/960 reduces to 2/3, so the width must be a multiple of 3
+    // (561, minH 374); 516/960 reduces to 43/80, so a multiple of 80 (560, minH
+    // 301, which is why the collapsed state was already exact and only the graph
+    // state drifted).
+    static uint minWidthOnDesignRatio(const float designH)
+    {
+        constexpr int kMinWidthTarget = 560;
+        const int step = (int)kDesignW / std::gcd((int)kDesignW, (int)designH);
+        const int nearest = (int)std::lround((double)kMinWidthTarget / step) * step;
+        return (uint)std::max(step, nearest);
     }
 
 private:
@@ -1564,6 +1603,25 @@ private:
         // DSP/session compatibility, but the physical knob lives in effective
         // Hz. This makes its pointer, legends and live read-out agree with the
         // response curve and FFT in both Brown and Black modes.
+        //
+        // The V[] legends are authored in the console's DIAL coordinates (the
+        // numbers silkscreened on the panel), so they MUST be mapped through
+        // the same calibration before they can position a knob that lives in
+        // effective Hz. Comparing the two spaces directly pins the pointer to
+        // whatever slice of the arc the calibrated range happens to cover: the
+        // Brown HF SHELF spans 643..5554 Hz against a 1500..16000 legend, which
+        // left it stuck at 36% of travel with the read-out frozen near 5.5 kHz
+        // however far the knob was turned. Bell mode reaches 75-97%, which is
+        // why this only ever looked broken on SHELF.
+        static constexpr int kMaxLegend = 8;   // every frequency legend is 7 long
+        float calibratedLegend[kMaxLegend];
+        if (frequencyKnob && n <= kMaxLegend)
+        {
+            for (int i = 0; i < n; ++i)
+                calibratedLegend[i] = calibratedFreqFor(paramId, V[i]);
+            V = calibratedLegend;
+        }
+
         float t = detentValToPos(T, V, n,
                                 frequencyKnob ? displayValue(paramId)
                                               : values[paramId]);
