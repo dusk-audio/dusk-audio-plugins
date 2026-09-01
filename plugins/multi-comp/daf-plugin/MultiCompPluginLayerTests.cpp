@@ -15,6 +15,7 @@
 #undef MULTICOMP_PLUGIN_LOGIC_TEST
 
 #define DUSK_IMGUI_WIDGETS_LOGIC_TEST
+#include "../core/MultiCompDbxLaw.hpp"
 #include "../../shared-daf/ui/DuskImGuiWidgets.hpp"
 #undef DUSK_IMGUI_WIDGETS_LOGIC_TEST
 
@@ -24,6 +25,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <string>
 
@@ -56,23 +58,32 @@ void reviewCheck(bool condition, const char* message)
 
 void testHostParameterTapers()
 {
-    const auto& ratio = multicompp::kParams[static_cast<size_t>(multicompp::ParamId::VcaRatio)];
+    const auto& compression = multicompp::kParams[static_cast<size_t>(multicompp::ParamId::VcaRatio)];
     const auto& attack = multicompp::kParams[static_cast<size_t>(multicompp::ParamId::DigitalAttack)];
     const float positions[] = {0.25f, 0.5f, 0.75f};
-    const float expectedRatio[] = {2.2f, 12.8f, 46.6f};
+    // VCA Compression is a plain knob position; the measured dbx 160 law maps
+    // it to the applied ratio (probe_compress_law.py: 2.37 / 4.14 / 7.51 :1).
+    const float expectedRatio[] = {2.37f, 4.14f, 7.51f};
     const float expectedAttack[] = {4.93f, 49.62f, 191.66f};
-    require(multicompp::hostMin(ratio) == 0.0f && multicompp::hostMax(ratio) == 1.0f,
-            "tapered VCA Ratio is declared in normalized host space");
+    require(!multicompp::hasSkew(compression)
+                && multicompp::hostMin(compression) == 0.0f
+                && multicompp::hostMax(compression) == 100.0f
+                && multicompp::hostToPlain(compression, 50.0f) == 50.0f,
+            "VCA Compression is an untapered 0-100 knob position");
     require(multicompp::hostMin(attack) == 0.0f && multicompp::hostMax(attack) == 1.0f,
             "tapered Digital Attack is declared in normalized host space");
+    require(std::isinf(duskaudio::dbx160::compressRatio(100.0f))
+                && duskaudio::dbx160::compressRatio(0.0f) == 1.0f
+                && std::abs(duskaudio::dbx160::compressPosition(4.14f) - 50.0f) < 0.05f,
+            "dbx 160 compression law is 1:1 at the start, INF at the stop, and invertible");
     for (size_t i = 0; i < 3; ++i)
     {
-        require(std::abs(multicompp::hostToPlain(ratio, positions[i]) - expectedRatio[i]) < 0.011f,
-                "VCA Ratio follows JUCE skew at quarter points");
+        require(std::abs(duskaudio::dbx160::compressRatio(positions[i] * 100.0f) - expectedRatio[i]) < 0.011f,
+                "VCA Compression follows the measured dbx 160 ratio law at quarter points");
         require(std::abs(multicompp::hostToPlain(attack, positions[i]) - expectedAttack[i]) < 0.011f,
                 "Digital Attack follows JUCE skew at quarter points");
     }
-    std::puts("host tapers: VCA Ratio and Digital Attack match JUCE at 0.25/0.5/0.75");
+    std::puts("host tapers: VCA Compression follows the dbx 160 law, Digital Attack matches JUCE at 0.25/0.5/0.75");
 }
 
 void testParameterIntervals()
@@ -147,6 +158,31 @@ void testStrictStateValidationAndRoundTrip()
     version2.replace(0, 3, "v=2");
     version2 += ";envelope_curve=0;saturation_mode=0";
     rejectedWithoutMutation(version2, "complete version-2 state rejected");
+
+    // Version 3 carried `vca_ratio` (skew 0.3, host-normalized) and a
+    // -38..+12 dB VCA threshold. It must still load, with the ratio converted
+    // to the dbx 160 knob position that applies it and the threshold clamped.
+    {
+        const size_t ratioIndex = static_cast<size_t>(multicompp::ParamId::VcaRatio);
+        const size_t thresholdIndex = static_cast<size_t>(multicompp::ParamId::VcaThreshold);
+        auto legacyValues = saved;
+        legacyValues[ratioIndex] = 0.331491f;   // 4:1 in the old normalized domain
+        legacyValues[thresholdIndex] = 5.0f;    // legal in -38..+12, above the new 0 dB ceiling
+        std::string version3 = multicompp::encodeState(legacyValues);
+        version3.replace(0, 3, "v=3");
+        const size_t key = version3.find("vca_compression=");
+        require(key != std::string::npos, "version-4 state names vca_compression");
+        version3.replace(key, std::strlen("vca_compression="), "vca_ratio=");
+        multicompp::StateValues migrated{};
+        require(multicompp::decodeState(version3, migrated), "version-3 VCA state still loads");
+        require(std::abs(migrated[ratioIndex] - duskaudio::dbx160::compressPosition(4.0f)) < 0.05f,
+                "version-3 vca_ratio migrates to the knob position applying the same ratio");
+        require(migrated[thresholdIndex] == 0.0f,
+                "version-3 vca_threshold above the dbx ceiling clamps to 0 dB");
+        std::string version4Ratio = multicompp::encodeState(legacyValues);
+        version4Ratio.replace(version4Ratio.find("vca_compression="), std::strlen("vca_compression="), "vca_ratio=");
+        rejectedWithoutMutation(version4Ratio, "a version-4 state naming the legacy vca_ratio key is rejected");
+    }
 
     auto fractionalInteger = saved;
     fractionalInteger[static_cast<size_t>(multicompp::ParamId::Mode)] = 0.6f;
@@ -278,8 +314,9 @@ void testFactoryPresetOwnership()
             case 2:
                 expect(multicompp::ParamId::VcaThreshold, preset.threshold,
                        "VCA preset applies Threshold");
-                expect(multicompp::ParamId::VcaRatio, preset.ratio,
-                       "VCA preset applies Ratio");
+                expect(multicompp::ParamId::VcaRatio,
+                       duskaudio::dbx160::compressPosition(preset.ratio),
+                       "VCA preset applies Ratio as a dbx 160 knob position");
                 expect(multicompp::ParamId::VcaAttack, preset.attack,
                        "VCA preset applies Attack");
                 expect(multicompp::ParamId::VcaRelease, preset.release,
@@ -887,9 +924,30 @@ void testOptoFaceplateContract()
                 && multicompp::ui_detail::designHeightForMode(0.4f) == 380.0f
                 && multicompp::ui_detail::designHeightForMode(0.6f) == 380.0f
                 && multicompp::ui_detail::designHeightForMode(1.4f) == 380.0f
-                && multicompp::ui_detail::designHeightForMode(1.6f) == 486.0f
+                && multicompp::ui_detail::designHeightForMode(1.6f) == 380.0f
+                && multicompp::ui_detail::designHeightForMode(2.4f) == 380.0f
+                && multicompp::ui_detail::designHeightForMode(2.6f) == 486.0f
                 && multicompp::ui_detail::designHeightForMode(7.0f) == 486.0f,
-            "Opto and vintage FET use rack-height canvases while the other modes keep the full canvas");
+            "Opto, vintage FET, and VCA use rack-height canvases while the other modes keep the full canvas");
+    {
+        using Vca = multicompp::ui_detail::VcaFaceplateLayout;
+        const float vcaAspect = multicompp::ui_detail::vcaFaceplateAspect();
+        require(Vca::left == 0.0f && Vca::right == 1120.0f && Vca::top == 344.0f && Vca::bottom == 654.0f
+                    && std::abs(vcaAspect - referenceAspect) < 0.01f,
+                "VCA faceplate shares the rack-height canvas with the Opto and FET faces");
+    }
+
+    require(!multicompp::ui_detail::vcaSignalAboveThreshold(-30.0f, -10.0f)
+                && multicompp::ui_detail::vcaSignalAboveThreshold(-10.0f, -10.0f)
+                && multicompp::ui_detail::vcaSignalAboveThreshold(-5.0f, -10.0f)
+                && !multicompp::ui_detail::vcaSignalAboveThreshold(
+                       std::numeric_limits<float>::quiet_NaN(), -10.0f),
+            "VCA threshold lamps split below/at-or-above the threshold and stay dark on non-finite input");
+    require(std::strcmp(multicompp::ui_detail::vcaMeterSourceLabel(0), "INPUT") == 0
+                && std::strcmp(multicompp::ui_detail::vcaMeterSourceLabel(1), "OUTPUT") == 0
+                && std::strcmp(multicompp::ui_detail::vcaMeterSourceLabel(2), "GAIN CHANGE") == 0
+                && multicompp::ui_detail::kVcaMeterSourceCount == 3,
+            "VCA meter selector exposes the reference INPUT/OUTPUT/GAIN CHANGE sources");
 
     const float zero = multicompp::ui_detail::optoMeterNeedleAngle(0.0f);
     const float ten = multicompp::ui_detail::optoMeterNeedleAngle(-10.0f);

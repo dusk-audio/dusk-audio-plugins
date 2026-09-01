@@ -47,7 +47,7 @@ void forEachPresetParam(const duskaudio::MultiCompPreset& preset,
             break;
         case 2:
             setParameter(P::VcaThreshold, preset.threshold);
-            setParameter(P::VcaRatio, preset.ratio);
+            setParameter(P::VcaRatio, duskaudio::dbx160::compressPosition(preset.ratio));
             setParameter(P::VcaAttack, preset.attack);
             setParameter(P::VcaRelease, preset.release);
             setParameter(P::VcaOutput, preset.makeup);

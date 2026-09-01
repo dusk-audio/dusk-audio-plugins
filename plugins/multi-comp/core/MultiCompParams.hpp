@@ -147,7 +147,7 @@ struct MultiCompParameterState
     std::atomic<int> fetRatio{0}, fetCurve{0};
     std::atomic<float> fetTransient{0.0f}, fetThreshold{-10.0f};
 
-    std::atomic<float> vcaThreshold{0.0f}, vcaRatio{4.0f}, vcaAttack{1.0f}, vcaRelease{100.0f}, vcaOutput{0.0f};
+    std::atomic<float> vcaThreshold{-27.0f}, vcaRatio{50.4944f}, vcaAttack{1.0f}, vcaRelease{100.0f}, vcaOutput{0.0f};
     std::atomic<bool> vcaOverEasy{false}, vcaClassicDetector{false};
 
     std::atomic<float> busThreshold{0.0f}, busMakeup{0.0f}, busMix{100.0f};

@@ -161,6 +161,7 @@ void MultiCompDSP::prepare(double sr, int blockSize)
     for (auto& os : oversamplers) os.setFactor(initialOversampling);
     optoLinkedDetectorOversampler.setFactor(initialOversampling);
     for (auto& f : sidechainFilters) f.prepare(sampleRate);
+    for (auto& f : sidechainTilt) f.prepare(sampleRate);
     for (auto& f : sidechainEQ) f.prepare(sampleRate);
     for (auto& band : bands) for (auto& v : band) v.assign(static_cast<size_t>(maxBlock), 0.0f);
     for (auto& band : sidechainBands) for (auto& v : band) v.assign(static_cast<size_t>(maxBlock), 0.0f);
@@ -211,6 +212,7 @@ void MultiCompDSP::prepare(double sr, int blockSize)
     sidechainListenRamp.snap(params.globalSidechainListen.load(std::memory_order_relaxed) ? 1.0f : 0.0f);
     bypassSettled = false; lastBypass = false; lastExternalSidechain = false;
     lastAutoMakeup = false; firstBlock = true; lastMode = -1; autoGainHoldSamples = 0;
+    lastDbxSidechainTilt = false;
     noiseState = 0x6d2b79f5u;
     multibandEnvelopes.fill(1.0f);
     prepareCrossovers();
@@ -229,6 +231,7 @@ void MultiCompDSP::reset()
     for (auto& os : oversamplers) os.reset();
     optoLinkedDetectorOversampler.reset();
     for (auto& f : sidechainFilters) f.reset();
+    for (auto& f : sidechainTilt) f.reset();
     for (auto& f : sidechainEQ) f.reset();
     resetCrossovers();
     for (auto& band : bands) for (auto& v : band) std::fill(v.begin(), v.end(), 0.0f);
@@ -274,6 +277,7 @@ void MultiCompDSP::reset()
     lastAutoMakeup = false;
     firstBlock = true;
     lastMode = -1;
+    lastDbxSidechainTilt = false;
     autoGainHoldSamples = 0;
     noiseState = 0x6d2b79f5u;
     for (auto& m : bandGR) m.store(0.0f, std::memory_order_relaxed);
@@ -454,6 +458,21 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     const bool useExternalSidechain = params.externalSidechain.load(std::memory_order_relaxed) && sidechain != nullptr;
     const float* filteredSidechain[kMaxChannels] = {processedSidechain[0].data(), processedSidechain[1].data()};
     const float sidechainHP = params.sidechainHP.load(std::memory_order_relaxed);
+    // In VCA mode the SC HP control is the dbx 160's PULL/SC switch: any
+    // non-zero setting engages the reference's measured half-order tilt in
+    // place of the high-pass (MultiCompDbxLaw.hpp SidechainTilt).
+    const bool dbxSidechainTilt = mode == MultiCompMode::VCA;
+    if (dbxSidechainTilt != lastDbxSidechainTilt)
+    {
+        // The filter that was not running holds state from whenever it last
+        // ran; clear it before it takes over so a mode switch does not start
+        // from a stale sidechain.
+        if (dbxSidechainTilt)
+            for (auto& f : sidechainTilt) f.reset();
+        else
+            for (auto& f : sidechainFilters) f.reset();
+        lastDbxSidechainTilt = dbxSidechainTilt;
+    }
     for (int ch = 0; ch < nCh; ++ch)
     {
         const float* source = useExternalSidechain ? sidechain[ch] : in[ch];
@@ -464,7 +483,8 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
         {
             float sample = source[i];
             if (sidechainHP >= 1.0f)
-                sample = sidechainFilters[ch].process(sample);
+                sample = dbxSidechainTilt ? sidechainTilt[ch].process(sample)
+                                          : sidechainFilters[ch].process(sample);
             processedSidechain[ch][static_cast<size_t>(i)] = sidechainEQ[ch].process(sample);
         }
     }
