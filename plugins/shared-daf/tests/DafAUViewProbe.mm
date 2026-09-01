@@ -40,6 +40,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
+#include <algorithm>
 
 namespace
 {
@@ -63,12 +64,22 @@ OSStatus feedInput(void* refCon,
     const float level = *static_cast<const float*>(refCon);
     for (UInt32 buffer = 0; buffer < data->mNumberBuffers; ++buffer)
     {
-        float* const samples = static_cast<float*>(data->mBuffers[buffer].mData);
+        const AudioBuffer& audioBuffer = data->mBuffers[buffer];
+        float* const samples = static_cast<float*>(audioBuffer.mData);
         if (samples == nullptr)
             continue;
-        for (UInt32 frame = 0; frame < frames; ++frame)
-            samples[frame] = level * std::sin(6.2831853f * 220.0f
-                                              * (float) frame / 48000.0f);
+        const UInt32 channels = audioBuffer.mNumberChannels;
+        if (channels == 0)
+            continue;
+        const size_t capacity = audioBuffer.mDataByteSize / sizeof(float);
+        const size_t sampleCount = std::min(
+            capacity, static_cast<size_t>(frames) * channels);
+        for (size_t sample = 0; sample < sampleCount; ++sample)
+        {
+            const UInt32 frame = static_cast<UInt32>(sample / channels);
+            samples[sample] = level * std::sin(6.2831853f * 220.0f
+                                               * (float) frame / 48000.0f);
+        }
     }
     return noErr;
 }

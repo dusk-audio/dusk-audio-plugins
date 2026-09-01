@@ -1172,24 +1172,17 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
             }
             const float previousOptoOwnSc = previousOptoOwnSidechain[channelIndex];
             const float localMix = mode == MultiCompMode::Digital ? localDigitalMix : localBusMix;
-            const bool fetOwnDetectorIsLinkedMaximum
-                = std::abs(ownSc) >= scLevel - 1.0e-12f;
-            const bool modeUsesLinkedDetector = mode == MultiCompMode::FET
-                ? link && (external || !fetOwnDetectorIsLinkedMaximum) : link;
+            // Linked FET samples use the dedicated paired path above and always
+            // continue before this generic per-channel loop.
+            const bool modeUsesLinkedDetector = link;
             if (actualOs == 1)
             {
                 out[ch][i] = oversamplers[ch].processSample(input, [&](float sample) noexcept {
                     const float optoOwnDetector = external ? ownSc : sample;
                     const float optoDetector = optoOwnDetector
                         + (optoLinkedPhases[0] - optoOwnDetector) * linkAmount;
-                    const float modeSidechain = mode == MultiCompMode::FET && link
-                        ? external ? sc
-                        : fetOwnDetectorIsLinkedMaximum ? std::abs(sample)
-                        : std::abs(sample) * (1.0f - linkAmount)
-                            + std::abs(optoLinkedPhases[0]) * linkAmount
-                        : sc;
                     return applyCoreDistortion(modes.process(
-                                                   mode, sample, ch, modeSidechain, modeParams,
+                                                   mode, sample, ch, sc, modeParams,
                                                    localMix, external, optoDetector,
                                                    modeUsesLinkedDetector),
                                                distortionType, distortionAmount);
@@ -1209,15 +1202,8 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
                     const float optoDetector = optoOwnDetector
                         + (optoLinkedPhases[static_cast<size_t>(phase)]
                            - optoOwnDetector) * linkAmount;
-                    const float modeSidechain = mode == MultiCompMode::FET && link
-                        ? external ? osSc
-                        : fetOwnDetectorIsLinkedMaximum ? std::abs(sample)
-                        : std::abs(sample) * (1.0f - linkAmount)
-                            + std::abs(optoLinkedPhases[static_cast<size_t>(phase)])
-                                * linkAmount
-                        : osSc;
                     return applyCoreDistortion(modes.process(
-                                                   mode, sample, ch, modeSidechain, modeParams,
+                                                   mode, sample, ch, osSc, modeParams,
                                                    localMix, external, optoDetector,
                                                    modeUsesLinkedDetector),
                                                distortionType, distortionAmount);

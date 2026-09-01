@@ -369,7 +369,7 @@ Symptom: the `aufx DsMc Dusk` AU opens in Logic Pro as an empty dark rectangle
 with the plugin name centred. Same `.component` renders in REAPER.
 
 **The plugin is exonerated in every configuration reproducible outside Logic.**
-Measured with `plugins/shared-daf/tests/DafAUViewProbe.mm` (new, untracked)
+Measured with the committed `plugins/shared-daf/tests/DafAUViewProbe.mm`
 against the Aug 28 14:38 build, which is byte-identical to the installed bundle:
 
 | configuration | result |
@@ -385,7 +385,7 @@ out-of-process hosting composites the GL view correctly.
 
 Also ruled out by evidence: Info.plist shape, linked frameworks, exported symbols
 and ObjC class names (identical to `tapemachine-2`); code signing (the broken
-plugin verifies clean, the *working* `tapemachine-2` does not); the uncommitted
+plugin verifies clean, the *working* `tapemachine-2` does not); the committed
 `MultiCompAUComponentBundlePath.mm`, which produces the same string as DAF's own
 fallback and is a no-op in the normal case; `scanUserPresets`, which uses the
 `std::error_code` overloads throughout and cannot throw out of the view factory.
@@ -404,7 +404,7 @@ the blank window open, then `lsof` across the `Logic Pro` and
 hosting — Logic's startup scan runs there too, and was observed loading
 known-good `tapemachine-2` alongside Multi-Comp 2.
 
-### Two real defects found alongside, both unfixed
+### Two real defects found alongside, both tracked and unfixed
 
 1. `DAF::PluginAU::reallocAudioBufferList(bool)` heap-corrupts on `Uninitialize`
    (`~/Library/Logs/DiagnosticReports/REAPER-2026-08-28-110312.ips`, imageIndex 24
@@ -412,13 +412,15 @@ known-good `tapemachine-2` alongside Multi-Comp 2.
    buffer[0] ... and Output buffer[0] ... are not the same` on the same path.
    Multi-Comp 2 is the only DAF plugin with two AU input elements. The probe's
    render path does not trip it; the bus-reconfiguration sequences in
-   `MultiCompAUTests.cpp` are the better vehicle.
+   `MultiCompAUTests.cpp` are the better vehicle. Tracked as
+   [dusk-audio/DAF#21](https://github.com/dusk-audio/DAF/issues/21).
 2. `docker/check_daf_pins.sh:84-90` and `.github/scripts/check_fork_sources.sh`
    both decide pugl's provenance from `.gitmodules`, never from the checkout.
    Local `DAF/dgl/src/pugl-upstream` origin is `https://github.com/DISTRHO/pugl.git`
    on `5e2621d` while DAF HEAD pins `43d8e34` (object not even fetched), and both
    guards report OK. Every local AU build compiled upstream DISTRHO pugl.
-   `DAF-Widgets` is also off-pin (local `1c09e1ef`, CI `91e0004e`).
+   `DAF-Widgets` is also off-pin (local `1c09e1ef`, CI `91e0004e`). Tracked as
+   [#243](https://github.com/dusk-audio/dusk-audio-plugins/issues/243).
 
 ## 10. Milestone #2 closeout audit — 2026-08-30
 

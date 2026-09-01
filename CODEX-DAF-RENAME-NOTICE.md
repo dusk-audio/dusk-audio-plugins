@@ -8,11 +8,11 @@ in your current brief.
 While you were working, the framework was renamed and its public API forked.
 This landed on `main` as `f7edaea` (PR #223) and CI is green across all four
 platforms. **Your working tree almost certainly references paths and macros
-that no longer exist.** Before continuing, run `git status` and preserve any
-uncommitted work you have (commit it on your branch, or stash it). For unrelated
-work, rebase onto `origin/main`. For Multi-Comp 2 Opto campaign work, switch to
-`multi-comp-2/opto-campaign-snapshot` instead so validation uses the campaign's
-intended gate set.
+that no longer exist.** Before continuing, inspect the working-tree status and
+tell the user about any uncommitted work. The user must preserve that work and
+select the starting branch themselves: `origin/main` is appropriate for
+unrelated work, while Multi-Comp 2 Opto campaign validation requires
+`multi-comp-2/opto-campaign-snapshot` and its intended gate set.
 
 ## The substitution table
 
@@ -83,11 +83,10 @@ renamed tree and pushed:
 
     branch: multi-comp-2/opto-campaign-snapshot   (off main, f7edaea)
 
-**Branch from that, not from `main`, and not from the old worktree.** `main`
-does not contain the extra Opto gates; if you branch from `main` you will be
-measuring against a smaller gate set and your numbers will not be comparable to
-the campaign log. The old worktree is now stale: two of its five files sit at
-deleted paths.
+**The user-selected campaign base must be that snapshot, not `main` or the old
+worktree.** `main` does not contain the extra Opto gates; measurements from it
+use a smaller gate set and are not comparable to the campaign log. The old
+worktree is now stale: two of its five files sit at deleted paths.
 
 The port is verified faithful. Every gate reports the same numbers as before
 the rename, to the digit: crest sweep -0.141 / -0.540 / +0.615 held out /
@@ -98,33 +97,27 @@ the rename, to the digit: crest sweep -0.141 / -0.540 / +0.615 held out /
 
 Core suite (fast, this is the one that carries the Opto gates):
 
-```bash
-c++ -O2 -std=c++17 -Iplugins/multi-comp/core -Iplugins/shared-daf/dsp \
-  plugins/multi-comp/core/tests/MultiCompCoreTests.cpp \
-  plugins/multi-comp/core/MultiCompDSP.cpp -o /tmp/mc2tests && /tmp/mc2tests
-```
+    c++ -O2 -std=c++17 -Iplugins/multi-comp/core -Iplugins/shared-daf/dsp \
+      plugins/multi-comp/core/tests/MultiCompCoreTests.cpp \
+      plugins/multi-comp/core/MultiCompDSP.cpp -o /tmp/mc2tests && /tmp/mc2tests
 
 Full plugin build plus both ctest targets:
 
-```bash
-cmake -U 'SDL2*' -U 'pkgcfg_lib_SDL2*' \
-  -S plugins/multi-comp/daf-plugin -B build-mc2 \
-  -DCMAKE_BUILD_TYPE=Release -DDAF_PATH=$HOME/projects/DAF \
-  -DDAFWIDGETS_PATH=$HOME/projects/DAF-Widgets -DDUSK_DAF_INSTALL_LOCAL=OFF \
-  -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=TRUE
-cmake --build build-mc2 -j8 && ctest --test-dir build-mc2 --output-on-failure
-```
+    cmake -U 'SDL2*' -U 'pkgcfg_lib_SDL2*' \
+      -S plugins/multi-comp/daf-plugin -B build-mc2 \
+      -DCMAKE_BUILD_TYPE=Release -DDAF_PATH=$HOME/projects/DAF \
+      -DDAFWIDGETS_PATH=$HOME/projects/DAF-Widgets -DDUSK_DAF_INSTALL_LOCAL=OFF \
+      -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=TRUE
+    cmake --build build-mc2 -j8 && ctest --test-dir build-mc2 --output-on-failure
 
 Linux parity check, still mandatory before declaring a DSP change done:
 
-```bash
-podman run --rm --arch amd64 -v "$PWD/plugins:/src/plugins:ro" \
-  docker.io/library/gcc:12 bash -c \
-  'g++ -O3 -std=c++17 -I/src/plugins/multi-comp/core \
-   -I/src/plugins/shared-daf/dsp \
-   /src/plugins/multi-comp/core/tests/MultiCompCoreTests.cpp \
-   /src/plugins/multi-comp/core/MultiCompDSP.cpp -o /tmp/t && /tmp/t'
-```
+    podman run --rm --arch amd64 -v "$PWD/plugins:/src/plugins:ro" \
+      docker.io/library/gcc:12 bash -c \
+      'g++ -O3 -std=c++17 -I/src/plugins/multi-comp/core \
+       -I/src/plugins/shared-daf/dsp \
+       /src/plugins/multi-comp/core/tests/MultiCompCoreTests.cpp \
+       /src/plugins/multi-comp/core/MultiCompDSP.cpp -o /tmp/t && /tmp/t'
 
 Framework pins are `DAF 788eb019` and `DAF-Widgets 91e0004e`. Confirm your
 checkouts match with `./docker/check_daf_pins.sh` (exits 0 when they do).
