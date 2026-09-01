@@ -17,7 +17,7 @@ endif()
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/cmake/DuskDafPlugin.cmake")
 
-daf_add_plugin(tape_machine_2
+daf_add_plugin(tapemachine-2
     TARGETS clap vst3 lv2 jack au # au builds on macOS only, silently skipped elsewhere
     MONOLITHIC
     UI_TYPE opengl
@@ -28,7 +28,7 @@ daf_add_plugin(tape_machine_2
         TapeMachineUI.cpp
         ${DUSK_DAF_UI_SOURCES})
 
-target_include_directories(tape_machine_2 PUBLIC
+target_include_directories(tapemachine-2 PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/../core"
     ${DUSK_DAF_INCLUDE_DIRS})
@@ -37,18 +37,18 @@ target_include_directories(tape_machine_2 PUBLIC
 # plumbed into getVersion() and the UI version display via these macros (see
 # TapeMachineVersion.hpp). Bumped by the /release-plugin skill (slug
 # tapemachine-2). PUBLIC because DAF compiles the UI in a separate
-# tape_machine_2-ui target that links this one and must see the same values —
+# tapemachine-2-ui target that links this one and must see the same values —
 # PRIVATE would leave the UI on the header's stale fallback.
-target_compile_definitions(tape_machine_2 PUBLIC
+target_compile_definitions(tapemachine-2 PUBLIC
     TM2_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
     TM2_VERSION_MINOR=${PROJECT_VERSION_MINOR}
     TM2_VERSION_PATCH=${PROJECT_VERSION_PATCH})
 
-dusk_daf_install_local(tape_machine_2 LV2_PROGRAMS)
+dusk_daf_install_local(tapemachine-2 LV2_PROGRAMS)
 
 # VU L/R are output parameters; guard them against reaching the host as
 # parameter edits, in both VST3 (dusk-audio/plugins#233) and CLAP (#231). The
 # harnesses dlopen() the built binaries, so they only run where they are built.
-dusk_daf_add_output_param_tests(tape_machine_2)
-dusk_daf_add_ui_drag_test(tape_machine_2 72 330)   # INPUT knob
-dusk_daf_add_resize_test(tape_machine_2)
+dusk_daf_add_output_param_tests(tapemachine-2)
+dusk_daf_add_ui_drag_test(tapemachine-2 72 330)   # INPUT knob
+dusk_daf_add_resize_test(tapemachine-2)

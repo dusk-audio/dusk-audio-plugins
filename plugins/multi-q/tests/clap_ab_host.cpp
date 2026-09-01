@@ -130,7 +130,7 @@ int main(int argc, char** argv) {
     uint32_t pc = params->count(plug);
 
     // --dump-params: emit a stable, framework-neutral parameter table for A/B
-    // diffing (JUCE MultiQ.clap vs DAF multi_q_2.clap). We deliberately print
+    // diffing (JUCE MultiQ.clap vs DAF multi-q-2.clap). We deliberately print
     // only cross-framework-comparable fields: index order, display name, whether
     // the param is stepped (choice/bool), and the enumerated choice labels
     // (value_to_text over the integer range). Raw min/max/skew are NOT printed —

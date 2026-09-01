@@ -91,12 +91,12 @@ cmake -S plugins/4k-eq/daf-plugin \
   -DDAFWIDGETS_PATH=/path/to/DAF-Widgets
 
 cmake --build plugins/4k-eq/daf-plugin/build --target \
-  four_k_eq_2-vst3 four_k_eq_2-clap four_k_eq_2-lv2
+  4k-eq-2-vst3 4k-eq-2-clap 4k-eq-2-lv2
 ```
 
-The target list above is for Linux. On Windows, build only `four_k_eq_2-vst3`
-and `four_k_eq_2-clap`. On macOS, use the Linux list and add
-`four_k_eq_2-au`. Local installation after building is enabled by default;
+The target list above is for Linux. On Windows, build only `4k-eq-2-vst3`
+and `4k-eq-2-clap`. On macOS, use the Linux list and add
+`4k-eq-2-au`. Local installation after building is enabled by default;
 configure with `-DDUSK_DAF_INSTALL_LOCAL=OFF` for packaging or CI.
 
 ## Installation
@@ -104,25 +104,25 @@ configure with `-DDUSK_DAF_INSTALL_LOCAL=OFF` for packaging or CI.
 ### Linux
 
 ```text
-VST3: ~/.vst3/four_k_eq_2.vst3
-CLAP: ~/.clap/four_k_eq_2.clap
-LV2:  ~/.lv2/four_k_eq_2.lv2
+VST3: ~/.vst3/4k-eq-2.vst3
+CLAP: ~/.clap/4k-eq-2.clap
+LV2:  ~/.lv2/4k-eq-2.lv2
 ```
 
 ### macOS
 
 ```text
-AU:   ~/Library/Audio/Plug-Ins/Components/four_k_eq_2.component
-VST3: ~/Library/Audio/Plug-Ins/VST3/four_k_eq_2.vst3
-CLAP: ~/Library/Audio/Plug-Ins/CLAP/four_k_eq_2.clap
-LV2:  ~/Library/Audio/Plug-Ins/LV2/four_k_eq_2.lv2
+AU:   ~/Library/Audio/Plug-Ins/Components/4k-eq-2.component
+VST3: ~/Library/Audio/Plug-Ins/VST3/4k-eq-2.vst3
+CLAP: ~/Library/Audio/Plug-Ins/CLAP/4k-eq-2.clap
+LV2:  ~/Library/Audio/Plug-Ins/LV2/4k-eq-2.lv2
 ```
 
 ### Windows
 
 ```text
-VST3: C:\Program Files\Common Files\VST3\four_k_eq_2.vst3
-CLAP: C:\Program Files\Common Files\CLAP\four_k_eq_2.clap
+VST3: C:\Program Files\Common Files\VST3\4k-eq-2.vst3
+CLAP: C:\Program Files\Common Files\CLAP\4k-eq-2.clap
 ```
 
 ## Validation

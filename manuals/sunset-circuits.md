@@ -30,31 +30,31 @@ Sunset Circuits ships with 54 factory presets spread across all six modes, plus 
 
 ### Formats and installation
 
-Sunset Circuits builds as VST3, CLAP, and LV2 on every platform, plus an Audio Unit on macOS. The binaries share the base name `sunset_circuits`.
+Sunset Circuits builds as VST3, CLAP, and LV2 on every platform, plus an Audio Unit on macOS. The binaries share the base name `sunset-circuits`.
 
 **Linux**
 
-```
-VST3: ~/.vst3/sunset_circuits.vst3
-CLAP: ~/.clap/sunset_circuits.clap
-LV2:  ~/.lv2/sunset_circuits.lv2
+```text
+VST3: ~/.vst3/sunset-circuits.vst3
+CLAP: ~/.clap/sunset-circuits.clap
+LV2:  ~/.lv2/sunset-circuits.lv2
 ```
 
 **Windows**
 
-```
-VST3: C:\Program Files\Common Files\VST3\sunset_circuits.vst3
-CLAP: C:\Program Files\Common Files\CLAP\sunset_circuits.clap
-LV2:  C:\Program Files\Common Files\LV2\sunset_circuits.lv2
+```text
+VST3: C:\Program Files\Common Files\VST3\sunset-circuits.vst3
+CLAP: C:\Program Files\Common Files\CLAP\sunset-circuits.clap
+LV2:  C:\Program Files\Common Files\LV2\sunset-circuits.lv2
 ```
 
 **macOS**
 
-```
-VST3: ~/Library/Audio/Plug-Ins/VST3/sunset_circuits.vst3
-CLAP: ~/Library/Audio/Plug-Ins/CLAP/sunset_circuits.clap
-LV2:  ~/Library/Audio/Plug-Ins/LV2/sunset_circuits.lv2
-AU:   ~/Library/Audio/Plug-Ins/Components/sunset_circuits.component
+```text
+VST3: ~/Library/Audio/Plug-Ins/VST3/sunset-circuits.vst3
+CLAP: ~/Library/Audio/Plug-Ins/CLAP/sunset-circuits.clap
+LV2:  ~/Library/Audio/Plug-Ins/LV2/sunset-circuits.lv2
+AU:   ~/Library/Audio/Plug-Ins/Components/sunset-circuits.component
 ```
 
 After installing, rescan plugins in your DAW. If the instrument does not appear, confirm the file landed in the folder above and that your host scans that folder.
@@ -376,7 +376,7 @@ The preset folder is scanned when the plugin opens and after each save or delete
 
 User presets are plain files in a per-user application-data folder:
 
-```
+```text
 Linux:   ~/.config/DuskAudio/SunsetCircuits/presets/
 macOS:   ~/Library/Application Support/DuskAudio/SunsetCircuits/presets/
 Windows: %APPDATA%\DuskAudio\SunsetCircuits\presets\

@@ -63,7 +63,7 @@ int main(int argc, char** argv)
     if (britishMode)
     {
         // British character (routed through FourKEQDSP). Must match the standalone
-        // four_k_eq_2 knob-for-knob for the A/B.
+        // 4k-eq-2 knob-for-knob for the A/B.
         p.eqType = 2;            // British
         p.oversampling = 1;      // 2x
         p.processingMode = 0;    // Stereo (M/S off)

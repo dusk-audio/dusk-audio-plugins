@@ -188,7 +188,7 @@ host automation handshakes. State flows host → UI via `parameterChanged()`;
 never touch the DSP object from the UI process (DAF may run it out-of-process).
 
 Build: `make` with DAF's `Makefile.plugins.mk`, or CMake via
-`daf_add_plugin(tape_echo TARGETS clap vst3 lv2 jack FILES_DSP ...)`.
+`daf_add_plugin(tape-echo-2 TARGETS clap vst3 lv2 jack FILES_DSP ...)`.
 Add `core/TapeEchoDSP.cpp` to `FILES_DSP`.
 
 ## Option B: raw CLAP
