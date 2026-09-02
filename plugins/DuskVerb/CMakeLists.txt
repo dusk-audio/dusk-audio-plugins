@@ -186,6 +186,45 @@ if(NOT CMAKE_CROSSCOMPILING)
 
     add_test(NAME DuskVerbStereoImage COMMAND DuskVerbStereoImageTest)
 
+    # Issue #240: the editor must update its scale and resize handle when the
+    # host changes its bounds, and the shared supporters overlay must keep its
+    # scrolling content out of the fixed footer.
+    add_executable(DuskVerbEditorResizeTest
+        tests/test_editor_resize.cpp
+    )
+
+    target_include_directories(DuskVerbEditorResizeTest PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/../shared
+        ${CMAKE_CURRENT_BINARY_DIR}/DuskVerb_artefacts/JuceLibraryCode
+    )
+
+    target_compile_definitions(DuskVerbEditorResizeTest PRIVATE
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0
+    )
+
+    target_compile_features(DuskVerbEditorResizeTest PRIVATE cxx_std_17)
+
+    target_link_libraries(DuskVerbEditorResizeTest
+        PRIVATE
+            DuskVerb
+            juce::juce_core
+            juce::juce_audio_basics
+            juce::juce_audio_formats
+            juce::juce_audio_processors
+            juce::juce_audio_utils
+            juce::juce_data_structures
+            juce::juce_dsp
+            juce::juce_events
+            juce::juce_graphics
+            juce::juce_gui_basics
+            juce::juce_gui_extra
+    )
+
+    add_test(NAME DuskVerbEditorResize COMMAND DuskVerbEditorResizeTest)
+
     # Issue #171 Nyquist-clamp regression: covers every migrated call site,
     # compares helper/legacy bytes at standard rates, and exercises the real DSP types.
     add_executable(DuskVerbNyquistClampTest
