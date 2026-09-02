@@ -24,17 +24,16 @@ inline constexpr float kThresholdDefaultDb = -27.0f;   // reference default 0.50
 
 // COMPRESSION: knob position 0..100 (%) to the ratio the device APPLIES,
 // measured as a 6 dB input step (-12 -> -6 dBFS, 15-21 dB over threshold)
-// over the output step at 21 positions (probe_compress_law.py). The panel
+// over the output step at 21 regular positions plus the held-out 97.5 %
+// midpoint (probe_compress_law.py). The panel
 // read-back rounds lower (text 4.0:1 where 4.14:1 is applied; 13.6 vs 15.9 at
 // 90 %), so the measured table is the law. At the INF stop the reference's
-// output actually falls slightly with input: the 100-cell static grid reads
-// its gain reduction growing 0.016-0.019 dB per dB over threshold beyond
-// infinite ratio at three thresholds, i.e. a slope of -0.017 dB/dB, which a
-// ratio of -60:1 encodes (the read-out shows INF). Between points the ratio
-// is interpolated linearly in 1/ratio (slope), the quantity a compressor
-// applies.
+// output actually falls slightly with input: from -12 to -6 dBFS it drops
+// 0.070243 dB at each of three thresholds, i.e. a -0.011707 dB/dB slope or
+// -85.418:1 (the read-out shows INF). Between points the ratio is interpolated
+// linearly in 1/ratio (slope), the quantity a compressor applies.
 struct CompressPoint { float position; float ratio; };
-inline constexpr std::array<CompressPoint, 21> kCompressLaw{{
+inline constexpr std::array<CompressPoint, 22> kCompressLaw{{
     {0.0f, 1.000f},
     {5.0f, 1.255f},
     {10.0f, 1.518f},
@@ -55,7 +54,8 @@ inline constexpr std::array<CompressPoint, 21> kCompressLaw{{
     {85.0f, 11.243f},
     {90.0f, 15.932f},
     {95.0f, 32.424f},
-    {100.0f, -60.0f}}};
+    {97.5f, 87.972f},
+    {100.0f, -85.418f}}};
 inline constexpr float kCompressDefaultPosition = 50.4944f;  // reference default 0.504944
 
 inline constexpr float lawSlope(float ratio) noexcept
@@ -109,6 +109,42 @@ inline float compressPosition(float ratio) noexcept
         }
     }
     return 100.0f;
+}
+
+// The reference's RMS detector is not exactly linear in dB. Dense 1 dB
+// sweeps at threshold positions 0, 0.25 and 0.509064 showed that the
+// ratio-normalised residual follows absolute input level, not threshold or
+// ratio: the same correction fitted at 4:1, combined with the directly
+// measured Inf-stop slope above, predicts the held-out Inf curves within
+// 0.017 dB. These points are a reduced linear interpolation of that 4:1 fit.
+// Below the measured onset the correction is neutral; above the measured
+// range it is held rather than extrapolated.
+struct DetectorCalibrationPoint { float levelDb; float correctionDb; };
+inline constexpr std::array<DetectorCalibrationPoint, 18> kDetectorCalibration{{
+    {-56.0f, 0.0000f}, {-55.0f, 0.4237f}, {-54.0f, 0.1705f},
+    {-52.0f, -0.2395f}, {-50.0f, -0.5287f}, {-48.0f, -0.7115f},
+    {-46.0f, -0.8128f}, {-44.0f, -0.8555f}, {-42.0f, -0.8425f},
+    {-40.0f, -0.7701f}, {-36.0f, -0.6011f}, {-32.0f, -0.3873f},
+    {-28.0f, -0.1744f}, {-24.0f, 0.0282f}, {-20.0f, 0.1538f},
+    {-16.0f, 0.2235f}, {-14.0f, 0.2401f}, {0.0f, 0.2401f},
+}};
+
+inline float detectorCorrectionDb(float inputPeakDb) noexcept
+{
+    if (!std::isfinite(inputPeakDb)
+        || inputPeakDb <= kDetectorCalibration.front().levelDb)
+        return 0.0f;
+    for (size_t i = 1; i < kDetectorCalibration.size(); ++i)
+    {
+        const auto& a = kDetectorCalibration[i - 1];
+        const auto& b = kDetectorCalibration[i];
+        if (inputPeakDb <= b.levelDb)
+        {
+            const float t = (inputPeakDb - a.levelDb) / (b.levelDb - a.levelDb);
+            return a.correctionDb + (b.correctionDb - a.correctionDb) * t;
+        }
+    }
+    return kDetectorCalibration.back().correctionDb;
 }
 
 // OUTPUT GAIN: linear -20..+20 dB (probe_gain_law.py: matches the read-back to

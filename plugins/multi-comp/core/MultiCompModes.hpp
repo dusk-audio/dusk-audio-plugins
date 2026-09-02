@@ -3340,7 +3340,13 @@ private:
         // measured law (INF at the stop). Hard knee to within the measured
         // 0.2 dB soft region.
         const float slope = dbx160::compressSlope(p.vcaRatio.load(std::memory_order_relaxed));
-        const float over = gainToDecibels(std::max(level, 1.0e-9f)) - thresholdDb;
+        const float rawDetectorDb = gainToDecibels(std::max(level, 1.0e-9f));
+        // The calibration campaign specifies sine levels in peak dBFS, while
+        // the RMS detector is 3.0103 dB lower. Select the measured correction
+        // in the campaign's domain, then apply it to the detector's dB value.
+        const float detectorDb = rawDetectorDb
+            + dbx160::detectorCorrectionDb(rawDetectorDb + 3.0103f);
+        const float over = detectorDb - thresholdDb;
         const float reduction = over > 0.0f ? std::min(over * (1.0f - slope), 60.0f) : 0.0f;
         // The reference adds no even-order or fifth harmonic at all (H2/H4 at
         // the numerical floor across the 100-cell static grid) and its H3

@@ -18,6 +18,7 @@
 #include "../core/MultiCompDbxLaw.hpp"
 #include "../../shared-daf/ui/DuskImGuiWidgets.hpp"
 #undef DUSK_IMGUI_WIDGETS_LOGIC_TEST
+#include "../../shared-daf/ui/DuskVuMeterGeometry.hpp"
 
 #include <array>
 #include <cmath>
@@ -1001,6 +1002,11 @@ void testOptoFaceplateContract()
                 && std::strcmp(multicompp::ui_detail::vcaMeterSourceLabel(2), "GAIN CHANGE") == 0
                 && multicompp::ui_detail::kVcaMeterSourceCount == 3,
             "VCA meter selector exposes the reference INPUT/OUTPUT/GAIN CHANGE sources");
+    const auto vuUnitOffset = duskdaf::vuScreenOffset(100.0f, 0.0f, 1.0f);
+    const auto vuLargeOffset = duskdaf::vuScreenOffset(100.0f, 0.0f, 1.5f);
+    require(std::abs(std::hypot(vuUnitOffset.x, vuUnitOffset.y) - 100.0f) < 1.0e-5f
+                && std::abs(std::hypot(vuLargeOffset.x, vuLargeOffset.y) - 150.0f) < 1.0e-5f,
+            "VCA VU arc and needle radius scale exactly once at non-unity UI sizes");
 
     float rememberedSidechainHp = 1.0f;
     const float switchOut = multicompp::ui_detail::vcaSidechainSwitchTarget(

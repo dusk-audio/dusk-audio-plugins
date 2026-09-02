@@ -26,6 +26,7 @@
 #include <cstdio>
 
 #include "DuskImGuiWidgets.hpp"
+#include "DuskVuMeterGeometry.hpp"
 
 namespace duskdaf
 {
@@ -166,8 +167,10 @@ inline void drawVuMeter(DuskPanel& panel, ImDrawList* dl,
     // Radius: the arc must clear the top of the face at its highest point
     // (directly above the pivot) and its ends must stay inside the sides.
     const float radius = std::min((pivotY - fy0 - 12.0f), (fx1 - fx0) * 0.5f / std::max(std::sin(half), 0.2f) - 6.0f);
+    const ImVec2 pivot = panel.P(cx, pivotY);
     const auto pt = [&](float r, float a) {
-        return panel.P(cx + r * std::cos(a), pivotY + r * std::sin(a));
+        const auto offset = vuScreenOffset(r, a, s);
+        return ImVec2(pivot.x + offset.x, pivot.y + offset.y);
     };
     const ImU32 ink = style.ink;
     const ImU32 red = style.hot;
@@ -191,14 +194,14 @@ inline void drawVuMeter(DuskPanel& panel, ImDrawList* dl,
         const bool rz = tick.db >= cfg.redFromDb;
         const float rt = radius * 0.90f;
         const ImU32 minorInk = style.minorTickColor != 0 ? style.minorTickColor : ink;
-        dl->AddLine(pt(rt * s, a), pt((rt + (tick.major ? style.majorTickLength : style.minorTickLength)) * s, a),
+        dl->AddLine(pt(rt, a), pt(rt + (tick.major ? style.majorTickLength : style.minorTickLength), a),
                     rz ? red : (tick.major ? ink : minorInk), (tick.major ? 1.6f : 1.0f) * s);
         if (tick.label != nullptr)
         {
             const float px = style.tickLabelSize * s;
             ImFont* nf = panel.pickFont(px);
             const ImVec2 ts = nf->CalcTextSizeA(px, FLT_MAX, 0, tick.label);
-            const ImVec2 tp = pt(radius * 0.76f * s, a);
+            const ImVec2 tp = pt(radius * 0.76f, a);
             dl->AddText(nf, px, ImVec2(tp.x - ts.x * 0.5f, tp.y - ts.y * 0.5f),
                         rz ? red : ink, tick.label);
         }
@@ -219,13 +222,13 @@ inline void drawVuMeter(DuskPanel& panel, ImDrawList* dl,
 
     // black needle with soft shadow + mound pivot
     const float na = angle0 + needle01 * (angle1 - angle0);
-    dl->AddLine(panel.P(cx + 2, pivotY + 1), pt(radius * 0.95f * s, na),
+    dl->AddLine(panel.P(cx + 2, pivotY + 1), pt(radius * 0.95f, na),
                 IM_COL32(60, 50, 36, 70), 4.0f * s);
     {
         const float perp = na + 1.5707963f, bw = 3.4f;
         dl->AddTriangleFilled(
             panel.P(cx + bw * 0.5f * std::cos(perp), pivotY + bw * 0.5f * std::sin(perp)),
-            pt(radius * 0.95f * s, na),
+            pt(radius * 0.95f, na),
             panel.P(cx - bw * 0.5f * std::cos(perp), pivotY - bw * 0.5f * std::sin(perp)),
             style.needle);
     }

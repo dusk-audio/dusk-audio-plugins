@@ -8903,12 +8903,12 @@ void testVcaDbxParityGates()
 {
     constexpr int kRate = 48000, kBlock = 512;
     constexpr float kCompress4to1 = 50.4944f;
-    auto makeDsp = [&](float compression) {
+    auto makeDspAt = [&](float compression, float threshold) {
         auto dsp = std::make_unique<MultiCompDSP>();
         dsp->prepare(kRate, kBlock);
         dsp->setMode(static_cast<int>(duskaudio::MultiCompMode::VCA));
         dsp->setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
-        dsp->setParameter(MultiCompDSP::Parameter::VcaThreshold, -27.0f);
+        dsp->setParameter(MultiCompDSP::Parameter::VcaThreshold, threshold);
         dsp->setParameter(MultiCompDSP::Parameter::VcaRatio, compression);
         dsp->setParameter(MultiCompDSP::Parameter::VcaOutput, 0.0f);
         return dsp;
@@ -8916,8 +8916,9 @@ void testVcaDbxParityGates()
     // Renders `signal` (mono, duplicated to both channels) and returns the
     // left output. GR is always taken against the 1:1 render of the same
     // signal, so any output-stage constant cancels exactly as in the campaign.
-    auto renderWith = [&](const std::vector<float>& signal, float compression) {
-        auto dsp = makeDsp(compression);
+    auto renderWithAt = [&](const std::vector<float>& signal, float compression,
+                            float threshold) {
+        auto dsp = makeDspAt(compression, threshold);
         std::vector<float> out(signal.size(), 0.0f);
         std::array<float, kBlock> l{}, r{}, ol{}, orr{};
         const float* inputs[2] = {l.data(), r.data()};
@@ -8931,6 +8932,9 @@ void testVcaDbxParityGates()
             for (size_t i = 0; i < n; ++i) out[start + i] = ol[i];
         }
         return out;
+    };
+    auto renderWith = [&](const std::vector<float>& signal, float compression) {
+        return renderWithAt(signal, compression, -27.0f);
     };
     auto rmsDb = [](const std::vector<float>& x, size_t from, size_t to) {
         double sum = 0.0;
@@ -8959,6 +8963,63 @@ void testVcaDbxParityGates()
             std::printf("  dbx static %+.0f dBFS: GR %.3f dB (reference %.2f)\n", levels[i], gr, expected[i]);
             require(std::abs(gr - expected[i]) < 0.35, "VCA static law matches the dbx 160 within 0.35 dB at the default threshold");
         }
+    }
+    // Dense sweeps found that the reference's ratio-normalised residual is a
+    // function of absolute detector level, shared by threshold and ratio. The
+    // three 4:1 rows establish the curve; the shallow Inf rows are held-out
+    // ratio checks. The final three Inf rows guard the directly measured stop
+    // slope at deep reduction across three thresholds. These are steady-state
+    // 1 kHz GR readings from the installed AU.
+    {
+        struct Anchor { float threshold, input, compression, referenceGr; };
+        constexpr std::array<Anchor, 9> anchors{{
+            {-55.0f, -48.0f, kCompress4to1, 4.56290f},
+            {-41.25f, -40.0f, kCompress4to1, 0.14449f},
+            {-27.0f, -20.0f, kCompress4to1, 5.22218f},
+            {-55.0f, -48.0f, 100.0f, 6.06796f},
+            {-41.25f, -40.0f, 100.0f, 0.19214f},
+            {-27.0f, -20.0f, 100.0f, 6.94471f},
+            {-55.0f, -6.0f, 100.0f, 49.47814f},
+            {-41.25f, -6.0f, 100.0f, 35.59174f},
+            {-27.0f, -6.0f, 100.0f, 21.20189f},
+        }};
+        double worst = 0.0;
+        for (const auto& anchor : anchors)
+        {
+            const auto sig = tone(anchor.input, 4.0f);
+            const auto unity = renderWithAt(sig, 0.0f, anchor.threshold);
+            const auto comp = renderWithAt(sig, anchor.compression, anchor.threshold);
+            const size_t from = static_cast<size_t>(3.0f * kRate), to = sig.size();
+            const double gr = rmsDb(unity, from, to) - rmsDb(comp, from, to);
+            const double error = gr - anchor.referenceGr;
+            worst = std::max(worst, std::abs(error));
+            std::printf("  dbx detector %+.2f thresh, %+.0f input, %.0f%%: "
+                        "GR %.3f dB (reference %.3f, delta %+.3f)\n",
+                        static_cast<double>(anchor.threshold),
+                        static_cast<double>(anchor.input),
+                        static_cast<double>(anchor.compression), gr,
+                        static_cast<double>(anchor.referenceGr), error);
+        }
+        require(worst < 0.08,
+                "VCA detector calibration and stop slope match shallow/deep dbx anchors");
+    }
+    // The original law measured every 5 %, so changing the Inf endpoint also
+    // changes its unmeasured 95-100 % interpolation. A direct held-out 97.5 %
+    // capture closes that gap rather than assuming the endpoint improvement
+    // preserves the interval between the last two anchors.
+    {
+        const auto sig = tone(-6.0f, 4.0f);
+        const auto unity = renderWithAt(sig, 0.0f, -27.0f);
+        const auto comp = renderWithAt(sig, 97.5f, -27.0f);
+        const size_t from = static_cast<size_t>(3.0f * kRate), to = sig.size();
+        const double gr = rmsDb(unity, from, to) - rmsDb(comp, from, to);
+        constexpr double referenceGr = 20.71833;
+        const double error = gr - referenceGr;
+        std::printf("  dbx detector -27.00 thresh, -6 input, 97.5%%: "
+                    "GR %.3f dB (reference %.3f, delta %+.3f)\n",
+                    gr, referenceGr, error);
+        require(std::abs(error) < 0.02,
+                "VCA stop-law interpolation matches the held-out 97.5-percent anchor");
     }
     // Step response: -40 dBFS pedestal to -12 dBFS at 1 s, back at 2 s.
     // Reference attack t63 12 ms, release t37 75 ms (probe_dynamics.py);
