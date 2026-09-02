@@ -7,9 +7,10 @@
 # include() this from a plugin's CMakeLists after project(). It locates the
 # DAF and DAF-Widgets checkouts (siblings of the repo by default, overridable
 # with -DDAF_PATH=... / -DDAFWIDGETS_PATH=...), adds DAF as a subdirectory, and
-# exposes DUSK_DAF_UI_SOURCES (the DearImGui wrapper) and DUSK_DAF_INCLUDE_DIRS
-# (shared-daf dsp/ui + DAF-Widgets opengl) for the caller to attach. Plugins
-# still call daf_add_plugin themselves so per-plugin TARGETS/FILES stay local.
+# exposes DUSK_DAF_UI_SOURCES (the DearImGui wrapper), DUSK_DAF_WIDGET_SOURCES
+# (the Dusk console widget set, opt-in) and DUSK_DAF_INCLUDE_DIRS (shared-daf
+# dsp/ui + DAF-Widgets opengl) for the caller to attach. Plugins still call
+# daf_add_plugin themselves so per-plugin TARGETS/FILES stay local.
 
 if(NOT DEFINED DUSK_SHARED_DAF_DIR)
     set(DUSK_SHARED_DAF_DIR "${CMAKE_CURRENT_LIST_DIR}/..")
@@ -33,6 +34,20 @@ if(NOT TARGET daf)
 endif()
 
 set(DUSK_DAF_UI_SOURCES  "${DAFWIDGETS_PATH}/opengl/DearImGui.cpp")
+
+# The Dusk console widget set (DAF-Widgets opengl/DuskWidgets.hpp): the knob with
+# its baked dome, the fader, the meters, the needle meter, the button bank and the
+# rest. Its header is not header-only, so a plugin that includes it and does not
+# compile this fails to link -- which is what dusk-audio/DAF-Widgets#6 reports.
+#
+# Named rather than folded into DUSK_DAF_UI_SOURCES, because it is opt-in. The
+# plugins in this repository draw with the header-only toolkit in shared-daf/ui
+# instead, and none of them includes DuskWidgets.hpp today; adding a thousand
+# lines to all six for a kit they do not call would cost build time and binary
+# size for nothing. A plugin that does draw with the kit appends this to its
+# FILES_UI next to DUSK_DAF_UI_SOURCES.
+set(DUSK_DAF_WIDGET_SOURCES "${DAFWIDGETS_PATH}/opengl/DuskWidgets.cpp")
+
 set(DUSK_DAF_INCLUDE_DIRS
     "${DUSK_SHARED_DAF_DIR}"
     "${DUSK_SHARED_DAF_DIR}/dsp"
