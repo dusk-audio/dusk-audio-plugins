@@ -18,8 +18,8 @@ IMAGE_NAME="dusk-plugins-builder"
 # DAF / DAF-Widgets SHAs — keep in sync with daf-build.yml, daf-release.yml and daf-au-test.yml.
 # Both come from permanent dusk-audio hard forks (dusk-audio/DAF and
 # dusk-audio/DAF-Widgets); never fetch either from upstream DISTRHO.
-DAF_SHA="2f573d68d79218d2f9e048e47d99e424ca7958c6"
-DAFWIDGETS_SHA="990751362a00f80433647136e27547ca691cd435"
+DAF_SHA="3aa9c9d309867afda3c0400bbca8d77bf5198e00"
+DAFWIDGETS_SHA="487b092aa265458feb8320308a1fa36ca0901a5b"
 
 # Plugin lookup functions (compatible with bash 3.2 on macOS)
 get_plugin_target() {
