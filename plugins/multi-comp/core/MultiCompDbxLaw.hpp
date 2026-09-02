@@ -101,7 +101,7 @@ inline float compressPosition(float ratio) noexcept
         const auto& a = kCompressLaw[i - 1];
         const auto& b = kCompressLaw[i];
         const float sa = lawSlope(a.ratio);
-        const float sb = std::max(lawSlope(b.ratio), 0.0f);   // positions map ratios; the stop is 100
+        const float sb = lawSlope(b.ratio);
         if (slope <= sa && slope >= sb)
         {
             const float t = (sa - sb) > 0.0f ? (sa - slope) / (sa - sb) : 0.0f;

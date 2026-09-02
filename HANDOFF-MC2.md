@@ -787,7 +787,7 @@ hardware's mV/V threshold ring at the reference's own angles, keycap meter
 buttons, PULL/SC slide switch, amber/blue meter through the shared
 `DuskVuMeter` style options) lives on the 1120x310 face.
 
-#240 root cause (2026-09-01, night): pugl's `mac.m` sizes the wrapper view from
+Issue `#240` root cause (2026-09-01, night): pugl's `mac.m` sizes the wrapper view from
 `viewScreen(view)` but the GL draw view through its own `convertRectFromBacking:`
 -- two scale sources, which disagree in mixed-DPI or not-yet-windowed cases and
 put the draw view at half/double size. Fix (draw view takes the wrapper's point

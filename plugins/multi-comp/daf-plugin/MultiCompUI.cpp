@@ -87,6 +87,21 @@ inline const char* vcaMeterSourceLabel(int source) noexcept
     }
 }
 
+inline float vcaSidechainSwitchTarget(bool currentlyEngaged,
+                                      float currentHostValue,
+                                      float& lastEngagedHostValue,
+                                      float minimumHostValue,
+                                      float maximumHostValue) noexcept
+{
+    if (currentlyEngaged)
+    {
+        lastEngagedHostValue = std::clamp(
+            currentHostValue, minimumHostValue, maximumHostValue);
+        return minimumHostValue;
+    }
+    return std::clamp(lastEngagedHostValue, minimumHostValue, maximumHostValue);
+}
+
 inline float optoMeterNeedleAngle(float gainReductionDb) noexcept
 {
     constexpr float pi = 3.14159265358979323846f;
@@ -468,6 +483,7 @@ private:
     // buttons): UI state, deliberately not a host parameter.
     int vcaMeterSource = 2;
     float vcaVuNeedle = 0.0f;
+    float vcaLastScHp = 1.0f;
     duskdaf::CrispFontSet fontSet;
     ImFont* labelFont = nullptr;
     duskdaf::SupportersOverlay supporters;
@@ -2035,7 +2051,7 @@ private:
                                     IM_COL32(24, 24, 25, 255), IM_COL32(26, 26, 27, 255));
         {
             uint32_t seed = 0x1600u;
-            for (int i = 0; i < 900; ++i)
+            for (int i = 0; i < 120; ++i)
             {
                 seed = seed * 1664525u + 1013904223u;
                 const float px = left + cheek + static_cast<float>((seed >> 8) % 1032);
@@ -2209,6 +2225,7 @@ private:
     void vcaPullSwitch(ImDrawList* dl, float x, float y)
     {
         const bool on = plainValueForHost(P_SC_HP, values[P_SC_HP]) >= 1.0f;   // same OFF rule as optoKnob
+        if (on) vcaLastScHp = values[P_SC_HP];
         const ImVec2 p0 = panel.P(x - 40.0f, y - 16.0f);
         const ImVec2 p1 = panel.P(x + 40.0f, y + 16.0f);
         ImGui::SetCursorScreenPos(p0);
@@ -2232,7 +2249,10 @@ private:
             dl->AddRectFilled(panel.P(x - 40.0f, y - 15.0f), panel.P(x + 40.0f, y + 15.0f), IM_COL32(255, 255, 255, 14), 3.0f * s);
         spacedText(dl, x - 48.0f, y - 6.0f, 9.0f, on ? kVcaInkDim : kVcaInk, "OUT", 1);
         spacedText(dl, x + 48.0f, y - 6.0f, 9.0f, on ? kVcaInk : kVcaInkDim, "IN", -1);
-        if (clicked) setValue(P_SC_HP, on ? hostMinimum(P_SC_HP) : hostMaximum(P_SC_HP));
+        if (clicked)
+            setHostValue(P_SC_HP, multicompp::ui_detail::vcaSidechainSwitchTarget(
+                on, values[P_SC_HP], vcaLastScHp,
+                hostMinimum(P_SC_HP), hostMaximum(P_SC_HP)));
     }
 
     // Small set-screw trim (the reference's MIX control). Same gesture

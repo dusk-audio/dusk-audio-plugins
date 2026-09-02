@@ -213,6 +213,7 @@ void MultiCompDSP::prepare(double sr, int blockSize)
     bypassSettled = false; lastBypass = false; lastExternalSidechain = false;
     lastAutoMakeup = false; firstBlock = true; lastMode = -1; autoGainHoldSamples = 0;
     lastDbxSidechainTilt = false;
+    lastDbxSidechainTiltEngaged = false;
     noiseState = 0x6d2b79f5u;
     multibandEnvelopes.fill(1.0f);
     prepareCrossovers();
@@ -278,6 +279,7 @@ void MultiCompDSP::reset()
     firstBlock = true;
     lastMode = -1;
     lastDbxSidechainTilt = false;
+    lastDbxSidechainTiltEngaged = false;
     autoGainHoldSamples = 0;
     noiseState = 0x6d2b79f5u;
     for (auto& m : bandGR) m.store(0.0f, std::memory_order_relaxed);
@@ -458,11 +460,12 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     const bool useExternalSidechain = params.externalSidechain.load(std::memory_order_relaxed) && sidechain != nullptr;
     const float* filteredSidechain[kMaxChannels] = {processedSidechain[0].data(), processedSidechain[1].data()};
     const float sidechainHP = params.sidechainHP.load(std::memory_order_relaxed);
-    // In VCA mode the SC HP control is the dbx 160's PULL/SC switch: any
-    // non-zero setting engages the reference's measured half-order tilt in
+    // In VCA mode the SC HP control is the dbx 160's PULL/SC switch: settings
+    // at or above 1 Hz engage the reference's measured half-order tilt in
     // place of the high-pass (MultiCompDbxLaw.hpp SidechainTilt).
     const bool dbxSidechainTilt = mode == MultiCompMode::VCA;
-    if (dbxSidechainTilt != lastDbxSidechainTilt)
+    const bool dbxSidechainPathChanged = dbxSidechainTilt != lastDbxSidechainTilt;
+    if (dbxSidechainPathChanged)
     {
         // The filter that was not running holds state from whenever it last
         // ran; clear it before it takes over so a mode switch does not start
@@ -473,6 +476,17 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
             for (auto& f : sidechainFilters) f.reset();
         lastDbxSidechainTilt = dbxSidechainTilt;
     }
+    const bool dbxSidechainTiltEngaged = dbxSidechainTilt && sidechainHP >= 1.0f;
+    if (dbxSidechainTiltEngaged && !lastDbxSidechainTiltEngaged
+        && !dbxSidechainPathChanged)
+    {
+        // While PULL/SC is out the tilt is bypassed and retains its last
+        // history. Clear that stale history once, on the edge back to IN,
+        // before the first newly filtered sample. A mode entry already reset
+        // it in the path-change block above.
+        for (auto& f : sidechainTilt) f.reset();
+    }
+    lastDbxSidechainTiltEngaged = dbxSidechainTiltEngaged;
     for (int ch = 0; ch < nCh; ++ch)
     {
         const float* source = useExternalSidechain ? sidechain[ch] : in[ch];

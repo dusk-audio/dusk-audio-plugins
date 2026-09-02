@@ -182,6 +182,59 @@ void testStrictStateValidationAndRoundTrip()
         std::string version4Ratio = multicompp::encodeState(legacyValues);
         version4Ratio.replace(version4Ratio.find("vca_compression="), std::strlen("vca_compression="), "vca_ratio=");
         rejectedWithoutMutation(version4Ratio, "a version-4 state naming the legacy vca_ratio key is rejected");
+
+        const auto makeVersion3State = [&](float normalizedRatio, float thresholdDb) {
+            auto values = saved;
+            values[ratioIndex] = normalizedRatio;
+            values[thresholdIndex] = thresholdDb;
+            std::string encoded = multicompp::encodeState(values);
+            encoded.replace(0, 3, "v=3");
+            const size_t ratioKey = encoded.find("vca_compression=");
+            require(ratioKey != std::string::npos, "version-4 state names vca_compression");
+            encoded.replace(ratioKey, std::strlen("vca_compression="), "vca_ratio=");
+            return encoded;
+        };
+
+        multicompp::StateValues ratio120Values{};
+        const bool ratio120Loaded = multicompp::decodeState(
+            makeVersion3State(1.0f, 12.0f), ratio120Values);
+        const float ratio120Slope = ratio120Loaded
+            ? duskaudio::dbx160::compressSlope(ratio120Values[ratioIndex]) : 0.0f;
+
+        multicompp::StateValues lowerEndpointValues{};
+        const bool lowerEndpointsLoaded = multicompp::decodeState(
+            makeVersion3State(0.0f, -38.0f), lowerEndpointValues);
+        const bool validEndpointsPreserved = ratio120Loaded && lowerEndpointsLoaded
+            && ratio120Values[thresholdIndex] == 0.0f
+            && lowerEndpointValues[ratioIndex] == 0.0f
+            && lowerEndpointValues[thresholdIndex] == -38.0f;
+
+        multicompp::StateValues invalidRatioDestination{};
+        invalidRatioDestination.fill(0.1234567f);
+        const auto invalidRatioBefore = invalidRatioDestination;
+        const bool invalidRatioRejected = !multicompp::decodeState(
+            makeVersion3State(-0.01f, -20.0f), invalidRatioDestination)
+            && std::memcmp(invalidRatioDestination.data(), invalidRatioBefore.data(),
+                           sizeof(invalidRatioDestination)) == 0;
+
+        multicompp::StateValues invalidThresholdDestination{};
+        invalidThresholdDestination.fill(0.1234567f);
+        const auto invalidThresholdBefore = invalidThresholdDestination;
+        const bool invalidThresholdRejected = !multicompp::decodeState(
+            makeVersion3State(0.5f, 12.01f), invalidThresholdDestination)
+            && std::memcmp(invalidThresholdDestination.data(), invalidThresholdBefore.data(),
+                           sizeof(invalidThresholdDestination)) == 0;
+
+        std::printf("version-3 VCA edges: 120:1 slope %.8f (expected %.8f); "
+                    "valid endpoints %s; invalid ratio %s; invalid threshold %s\n",
+                    static_cast<double>(ratio120Slope), 1.0 / 120.0,
+                    validEndpointsPreserved ? "loaded" : "rejected",
+                    invalidRatioRejected ? "rejected" : "accepted",
+                    invalidThresholdRejected ? "rejected" : "accepted");
+        require(ratio120Loaded && std::abs(ratio120Slope - 1.0f / 120.0f) < 1.0e-6f
+                    && validEndpointsPreserved && invalidRatioRejected
+                    && invalidThresholdRejected,
+                "version-3 VCA migration preserves 120:1 and rejects values outside the historical ranges");
     }
 
     auto fractionalInteger = saved;
@@ -948,6 +1001,15 @@ void testOptoFaceplateContract()
                 && std::strcmp(multicompp::ui_detail::vcaMeterSourceLabel(2), "GAIN CHANGE") == 0
                 && multicompp::ui_detail::kVcaMeterSourceCount == 3,
             "VCA meter selector exposes the reference INPUT/OUTPUT/GAIN CHANGE sources");
+
+    float rememberedSidechainHp = 1.0f;
+    const float switchOut = multicompp::ui_detail::vcaSidechainSwitchTarget(
+        true, 0.33f, rememberedSidechainHp, 0.0f, 1.0f);
+    const float switchIn = multicompp::ui_detail::vcaSidechainSwitchTarget(
+        false, 0.0f, rememberedSidechainHp, 0.0f, 1.0f);
+    require(switchOut == 0.0f && rememberedSidechainHp == 0.33f
+                && switchIn == 0.33f,
+            "VCA PULL/SC restores the shared sidechain cutoff it switched out");
 
     const float zero = multicompp::ui_detail::optoMeterNeedleAngle(0.0f);
     const float ten = multicompp::ui_detail::optoMeterNeedleAngle(-10.0f);

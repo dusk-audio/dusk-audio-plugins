@@ -233,8 +233,7 @@ inline bool stateVersionSupported(std::string_view state) noexcept
 // domain. Returns the plain ratio the old build applied for that state value.
 inline float legacyVcaRatioFromState(float normalized) noexcept
 {
-    const float t = std::clamp(normalized, 0.0f, 1.0f);
-    return 1.0f + 119.0f * std::pow(t, 1.0f / 0.3f);
+    return 1.0f + 119.0f * std::pow(normalized, 1.0f / 0.3f);
 }
 
 inline bool decodeStateFloat(std::string_view text, float& out) noexcept
@@ -295,17 +294,21 @@ inline float snapHostValue(const Descriptor& d, float value) noexcept
     return d.integer ? std::round(clamped) : clamped;
 }
 
+inline bool hostValueInRange(float value, float minimum, float maximum,
+                             bool integer) noexcept
+{
+    return std::isfinite(value) && value >= minimum && value <= maximum
+        && (!integer || std::trunc(value) == value);
+}
+
 inline bool hostValueInRange(int index, float value) noexcept
 {
-    if (!std::isfinite(value)) return false;
     return resolveParameter(index,
         [value](const Param& d) {
-            return value >= hostMin(d) && value <= hostMax(d)
-                && (!d.integer || std::trunc(value) == value);
+            return hostValueInRange(value, hostMin(d), hostMax(d), d.integer);
         },
         [value](const BandParam& d, int) {
-            return value >= hostMin(d) && value <= hostMax(d)
-                && (!d.integer || std::trunc(value) == value);
+            return hostValueInRange(value, hostMin(d), hostMax(d), d.integer);
         });
 }
 
@@ -338,9 +341,15 @@ inline bool decodeState(std::string_view state, StateValues& out) noexcept
         float value = 0.0f;
         if (!decodeStateFloat(token.substr(equal + 1), value)) return false;
         if (legacyRatio)
+        {
+            if (!hostValueInRange(value, 0.0f, 1.0f, false)) return false;
             value = duskaudio::dbx160::compressPosition(legacyVcaRatioFromState(value));
+        }
         else if (legacy && index == static_cast<int>(ParamId::VcaThreshold))
+        {
+            if (!hostValueInRange(value, -38.0f, 12.0f, false)) return false;
             value = std::clamp(value, duskaudio::dbx160::kThresholdMinDb, duskaudio::dbx160::kThresholdMaxDb);
+        }
         if (!hostValueInRange(index, value)) return false;
         decoded[static_cast<size_t>(index)] = value;
         seen[static_cast<size_t>(index)] = true;

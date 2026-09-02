@@ -72,6 +72,12 @@ struct MultiCompDSPTestAccess
         return MultiCompDSP::advanceFetStartupBlend(
             activeSamples, fullCorrectionSamples, correctionEndSamples);
     }
+
+    static float advanceDbxSidechainTilt(MultiCompDSP& dsp, int channel,
+                                         float sample) noexcept
+    {
+        return dsp.sidechainTilt[static_cast<size_t>(channel)].process(sample);
+    }
 };
 }
 
@@ -8838,6 +8844,54 @@ void testDbxSidechainTilt()
     std::puts("dbx sidechain tilt: response and VCA routing verified");
 }
 
+void testDbxSidechainTiltEngagementLifecycle()
+{
+    constexpr int blockSize = 64;
+    const auto configure = [](MultiCompDSP& dsp) {
+        dsp.prepare(48000.0, blockSize);
+        dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::VCA));
+        dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::SidechainHP, 500.0f);
+    };
+    const auto processConstant = [](MultiCompDSP& dsp, float value) {
+        std::array<float, blockSize> input{}, output{};
+        input.fill(value);
+        const float* inputs[] = {input.data()};
+        float* outputs[] = {output.data()};
+        dsp.processBlock(inputs, outputs, 1, blockSize);
+    };
+
+    MultiCompDSP switched;
+    configure(switched);
+    for (int block = 0; block < 20; ++block) processConstant(switched, 1.0f);
+    switched.setParameter(MultiCompDSP::Parameter::SidechainHP, 0.0f);
+    processConstant(switched, 0.0f);
+    switched.setParameter(MultiCompDSP::Parameter::SidechainHP, 500.0f);
+    processConstant(switched, 0.0f);
+    const float reenabledResidual = duskaudio::MultiCompDSPTestAccess::
+        advanceDbxSidechainTilt(switched, 0, 0.0f);
+
+    MultiCompDSP oneEnabledBlock, continuouslyEnabled;
+    configure(oneEnabledBlock);
+    configure(continuouslyEnabled);
+    processConstant(oneEnabledBlock, 1.0f);
+    processConstant(continuouslyEnabled, 1.0f);
+    processConstant(continuouslyEnabled, 1.0f);
+    const float oneBlockResidual = duskaudio::MultiCompDSPTestAccess::
+        advanceDbxSidechainTilt(oneEnabledBlock, 0, 0.0f);
+    const float continuousResidual = duskaudio::MultiCompDSPTestAccess::
+        advanceDbxSidechainTilt(continuouslyEnabled, 0, 0.0f);
+
+    std::printf("dbx tilt lifecycle: off->on residual %.9g; one/continuous block "
+                "residual %.9g/%.9g\n",
+                static_cast<double>(reenabledResidual),
+                static_cast<double>(oneBlockResidual),
+                static_cast<double>(continuousResidual));
+    require(reenabledResidual == 0.0f
+                && std::abs(continuousResidual - oneBlockResidual) > 1.0e-6f,
+            "VCA sidechain tilt resets only when its switch becomes engaged");
+}
+
 // VCA / dbx 160 parity gate. Every expected number below was measured on the
 // installed UAD dbx 160 (reference_comparison_dbx160 campaign, 2026-09-01)
 // with the same stimuli rendered in process here: steady 1 kHz tones for the
@@ -9287,6 +9341,7 @@ int main(int argc, char** argv)
     testOptoMeasuredOutputCeiling();
     testOptoDriveApplicability();
     testDbxSidechainTilt();
+    testDbxSidechainTiltEngagementLifecycle();
     testVcaDbxParityGates();
     testGoldenVectors();
     reportOptoPedestalEventGrid();
