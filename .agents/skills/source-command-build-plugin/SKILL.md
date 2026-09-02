@@ -1,3 +1,14 @@
+---
+name: "source-command-build-plugin"
+description: "Migrated source command `build-plugin`"
+---
+
+# source-command-build-plugin
+
+Use this skill when the user asks to run the migrated source command `build-plugin`.
+
+## Command Template
+
 # Build Plugin
 
 Build Dusk Audio plugins using Docker containerized builds for consistent, distributable binaries.

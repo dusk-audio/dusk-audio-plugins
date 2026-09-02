@@ -1,3 +1,14 @@
+---
+name: "source-command-release-plugin"
+description: "Migrated source command `release-plugin`"
+---
+
+# source-command-release-plugin
+
+Use this skill when the user asks to run the migrated source command `release-plugin`.
+
+## Command Template
+
 # Release Plugin
 
 Release one or more Dusk Audio plugins with automated version bumps, website updates, tagging, and push.
