@@ -35,20 +35,25 @@ run_spec() { "$HARNESS" "$PLUGIN" 4 64 --set "$1" 2>&1; }
 # and the harness exits non-zero for a reason that has nothing to do with the
 # argument -- which is exactly the confusion this guards. So the rejection has
 # to be reported as one: the message must name --set.
-reject() {
-    local spec="$1" what="$2" out status=0
-    out="$(run_spec "$spec")" || status=$?
+check_rejected() {
+    local what="$1" status="$2" out="$3"
 
     if [ "$status" -eq 0 ]; then
-        printf '  FAIL  %s: --set "%s" was accepted\n' "$what" "$spec"
+        printf '  FAIL  %s was accepted\n' "$what"
         failures=$((failures + 1))
     elif ! printf '%s' "$out" | grep -q -- "--set"; then
-        printf '  FAIL  %s: --set "%s" failed, but not as a bad specification\n' "$what" "$spec"
+        printf '  FAIL  %s failed, but not as a bad specification\n' "$what"
         printf '%s\n' "$out" | sed 's/^/          /' | head -3
         failures=$((failures + 1))
     else
         printf '  ok    %s rejected\n' "$what"
     fi
+}
+
+reject() {
+    local spec="$1" what="$2" out status=0
+    out="$(run_spec "$spec")" || status=$?
+    check_rejected "$what (--set \"$spec\")" "$status" "$out"
 }
 
 printf '%s\n' "arm specification parsing: $(basename "$HARNESS")"
@@ -60,6 +65,13 @@ reject "${PARAM}=-inf"  "-inf"
 reject "${PARAM}=0.5x"  "trailing garbage"
 reject "=0.5"           "empty name"
 reject "${PARAM}"       "no separator"
+
+# A bare --set with nothing after it. Separate from the cases above because
+# there is no specification to pass: the harness has to notice it is at the end
+# of argv rather than reading past it, and still say what is wrong.
+bare_out=""; bare_status=0
+bare_out="$("$HARNESS" "$PLUGIN" 4 64 --set 2>&1)" || bare_status=$?
+check_rejected "a bare --set with no specification" "$bare_status" "$bare_out"
 
 # The positive case, so a harness that rejects everything cannot pass this.
 if run_spec "${PARAM}=0.8" > /dev/null; then
