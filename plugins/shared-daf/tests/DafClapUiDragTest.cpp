@@ -48,6 +48,19 @@
 // gate suite. XTest drives the server the way real hardware does rather than
 // pushing synthetic events at a window, so pugl sees ordinary input and nothing
 // here depends on a toolkit honouring SendEvent.
+//
+// RUN IT HEADLESS, even on a workstation that has a display:
+//
+//     Xvfb :99 -screen 0 1600x1200x24 &
+//     DISPLAY=:99 ctest --test-dir build -R UiDrag
+//
+// XTest delivers by screen position, and this harness's window is
+// override-redirect and therefore unmanaged, so anything a desktop session puts
+// on top of it takes the gesture instead. A GNOME Wayland session does exactly
+// that: synthetic input raises a Remote Desktop permission prompt, and until
+// someone approves it every run fails identically, blaming the plugin. The gate
+// now detects that case and says so, but a headless display avoids it, matches
+// CI, and does not fight the user for the pointer.
 
 #include <cmath>
 #include <cstdint>
@@ -204,6 +217,7 @@ struct EmptyInEvents {
 
 struct Fixture {
     const clap_plugin_t* plugin = nullptr;
+    Window parent = None;              // the editor's host window
     const clap_plugin_params_t* params = nullptr;
     const clap_plugin_timer_support_t* timer = nullptr;
     Display* display = nullptr;
@@ -231,6 +245,20 @@ struct Fixture {
         }
     }
 
+    // Pump frames until the editor has done something observable, rather than
+    // for a fixed number of frames. A warm editor on an idle machine answers on
+    // the first frame; a loaded one takes longer and is not wrong for it.
+    template <typename Ready>
+    bool pumpUntil(Ready ready, const int timeoutMs = 512)
+    {
+        for (int waited = 0; waited < timeoutMs; waited += 16)
+        {
+            pump(1);
+            if (ready()) return true;
+        }
+        return false;
+    }
+
     std::vector<double> snapshot() const
     {
         std::vector<double> values;
@@ -249,6 +277,7 @@ struct DragResult {
     size_t edits = 0;           // parameter edits the host would have received
     size_t midEdits = 0;        // how many had arrived halfway through the gesture
     uint32_t gestureBegins = 0; // begin-edit gestures seen
+    bool pointerBlocked = false;// another window sat above the editor
 
     // A knob follows the pointer, so edits arrive throughout the gesture. A
     // button, a preset step or an INIT produces one burst at the press. Requiring
@@ -259,6 +288,43 @@ struct DragResult {
         return midEdits > 0 && edits > midEdits;
     }
 };
+
+// Which top-level window the pointer is actually over. XTest events are
+// delivered by position, not by addressee, so this is the difference between
+// driving the editor and driving whatever happens to be stacked above it.
+Window topLevelUnderPointer(Display* const display)
+{
+    const Window root = DefaultRootWindow(display);
+    Window reportedRoot = None, child = None;
+    int rootX = 0, rootY = 0, winX = 0, winY = 0;
+    unsigned int mask = 0;
+    if (! XQueryPointer(display, root, &reportedRoot, &child, &rootX, &rootY, &winX, &winY, &mask))
+        return None;
+    return child;
+}
+
+// Put the editor under the pointer and keep it there. Under Xvfb, where this
+// gate runs in CI, nothing else is on screen and this is a no-op. On a desktop
+// the test window is override-redirect and unmanaged, so anything the user (or
+// the compositor) raises afterwards sits above it and silently swallows every
+// synthetic click -- which reads as "the editor ignores input" for the whole
+// process, retry included. Raising it back is cheap and turns an invisible
+// environment failure into either a pass or a specific diagnostic.
+bool raiseEditorUnderPointer(Fixture& fx, const Window parent, const int rootX, const int rootY)
+{
+    for (int attempt = 0; attempt < 4; ++attempt)
+    {
+        XTestFakeMotionEvent(fx.display, -1, rootX, rootY, CurrentTime);
+        XSync(fx.display, False);
+        if (topLevelUnderPointer(fx.display) == parent)
+            return true;
+
+        XRaiseWindow(fx.display, parent);
+        XSync(fx.display, False);
+        fx.pump(1);
+    }
+    return topLevelUnderPointer(fx.display) == parent;
+}
 
 DragResult dragAt(Fixture& fx, const int rootX, const int rootY, const int stepDy, const Window focusThief)
 {
@@ -277,11 +343,13 @@ DragResult dragAt(Fixture& fx, const int rootX, const int rootY, const int stepD
     fx.collected.paramValueIds.clear();
     fx.collected.gestureBegins = 0;
 
-    XTestFakeMotionEvent(fx.display, -1, rootX, rootY, CurrentTime);
+    const bool onTop = raiseEditorUnderPointer(fx, fx.parent, rootX, rootY);
     fx.pump();
 
     XTestFakeButtonEvent(fx.display, 1, True, CurrentTime);
-    fx.pump();
+    // The press is what the rest of the gesture hangs off, so wait for the
+    // editor to acknowledge it instead of assuming four frames is enough.
+    fx.pumpUntil([&] { return fx.collected.gestureBegins > 0 || countFor() > 0; });
 
     const int steps = 12;
     size_t midCount = 0;
@@ -304,6 +372,12 @@ DragResult dragAt(Fixture& fx, const int rootX, const int rootY, const int stepD
     fx.pump();
 
     DragResult result;
+    // Checked at both ends of the gesture. Before, because a window that was
+    // already above the editor takes the press; after, because one that raises
+    // itself mid-gesture (a permission prompt appearing, a compositor putting a
+    // dialog back on top) takes the rest of it, and a snapshot from before the
+    // drag would have said everything was fine.
+    result.pointerBlocked = ! onTop || topLevelUnderPointer(fx.display) != fx.parent;
     result.edits         = countFor();
     result.midEdits      = midCount;
     result.gestureBegins = fx.collected.gestureBegins;
@@ -449,6 +523,7 @@ int main(const int argc, const char* const* const argv)
                                         CopyFromParent, InputOutput, CopyFromParent,
                                         CWOverrideRedirect | CWEventMask, &attr);
     XMapRaised(fx.display, parent);
+    fx.parent = parent;
 
     // The thief only has to be focusable; it is never drawn over the editor.
     const Window thief = XCreateWindow(fx.display, root, (int) width + 32, 0, 32, 32, 0,
@@ -584,6 +659,26 @@ int main(const int argc, const char* const* const argv)
 
     if (phaseA.edits == 0)
     {
+        // Distinguish "the plugin is broken" from "this machine has something
+        // else on screen". XTest delivers by position, so a window stacked over
+        // the test window takes every click and the plugin never sees one --
+        // deterministically, retry included. Under Xvfb, where CI runs this,
+        // nothing else exists and this branch cannot trigger.
+        if (phaseA.pointerBlocked)
+        {
+            std::fprintf(stderr,
+                         "\nFAIL (environment): another window stayed above the editor at (%d,%d), so\n"
+                         "  the synthetic clicks went to it and not to the plugin. This says nothing\n"
+                         "  about the plugin.\n"
+                         "  On a GNOME Wayland session the usual culprit is the Remote Desktop\n"
+                         "  permission prompt that XTest raises: until it is approved it sits above\n"
+                         "  the editor and eats the gesture, and every run fails identically.\n"
+                         "  Run the gate on a headless display instead, which is also what CI does:\n"
+                         "    Xvfb :99 -screen 0 1600x1200x24 &  DISPLAY=:99 ctest -R UiDrag\n",
+                         knobX, knobY);
+            return 1;
+        }
+
         std::fprintf(stderr,
                      "\nFAIL (phase A): dragging at (%d,%d) produced no parameter edit, in either\n"
                      "  direction. Either the editor is ignoring pointer input, or there is no longer\n"
