@@ -251,11 +251,24 @@ struct Fixture {
     template <typename Ready>
     bool pumpUntil(Ready ready, const int timeoutMs = 512)
     {
-        for (int waited = 0; waited < timeoutMs; waited += 16)
+        // Measured against the clock, not counted in frames. A frame here is a
+        // timer tick, a flush, an XSync and a 16 ms sleep, so on a loaded
+        // machine it overruns its nominal 16 ms and a frame count would let the
+        // wait run several times longer than the bound it advertises.
+        struct timespec start;
+        clock_gettime(CLOCK_MONOTONIC, &start);
+        const auto elapsedMs = [&start]() {
+            struct timespec now;
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            return (now.tv_sec - start.tv_sec) * 1000L
+                 + (now.tv_nsec - start.tv_nsec) / 1000000L;
+        };
+
+        do
         {
             pump(1);
             if (ready()) return true;
-        }
+        } while (elapsedMs() < timeoutMs);
         return false;
     }
 
@@ -382,6 +395,30 @@ DragResult dragAt(Fixture& fx, const int rootX, const int rootY, const int stepD
     result.midEdits      = midCount;
     result.gestureBegins = fx.collected.gestureBegins;
     return result;
+}
+
+// Every failure below this point accuses the plugin of something specific: a
+// dead input path, a coordinate aimed at a button, or the DAF-Widgets focus
+// regression. None of those conclusions survive the pointer having been
+// somewhere else, so each phase asks this first. Under Xvfb, where CI runs,
+// nothing else is on screen and this never fires.
+bool reportInterception(const DragResult& result, const char* const phase,
+                        const int knobX, const int knobY)
+{
+    if (! result.pointerBlocked)
+        return false;
+
+    std::fprintf(stderr,
+                 "\nFAIL (environment, during %s): another window was above the editor at (%d,%d),\n"
+                 "  so the synthetic clicks went to it and not to the plugin. This says nothing\n"
+                 "  about the plugin.\n"
+                 "  On a GNOME Wayland session the usual culprit is the Remote Desktop\n"
+                 "  permission prompt that XTest raises: until it is approved it sits above\n"
+                 "  the editor and eats the gesture, and every run fails identically.\n"
+                 "  Run the gate on a headless display instead, which is also what CI does:\n"
+                 "    Xvfb :99 -screen 0 1600x1200x24 &  DISPLAY=:99 ctest -R UiDrag\n",
+                 phase, knobX, knobY);
+    return true;
 }
 
 } // namespace
@@ -659,25 +696,7 @@ int main(const int argc, const char* const* const argv)
 
     if (phaseA.edits == 0)
     {
-        // Distinguish "the plugin is broken" from "this machine has something
-        // else on screen". XTest delivers by position, so a window stacked over
-        // the test window takes every click and the plugin never sees one --
-        // deterministically, retry included. Under Xvfb, where CI runs this,
-        // nothing else exists and this branch cannot trigger.
-        if (phaseA.pointerBlocked)
-        {
-            std::fprintf(stderr,
-                         "\nFAIL (environment): another window stayed above the editor at (%d,%d), so\n"
-                         "  the synthetic clicks went to it and not to the plugin. This says nothing\n"
-                         "  about the plugin.\n"
-                         "  On a GNOME Wayland session the usual culprit is the Remote Desktop\n"
-                         "  permission prompt that XTest raises: until it is approved it sits above\n"
-                         "  the editor and eats the gesture, and every run fails identically.\n"
-                         "  Run the gate on a headless display instead, which is also what CI does:\n"
-                         "    Xvfb :99 -screen 0 1600x1200x24 &  DISPLAY=:99 ctest -R UiDrag\n",
-                         knobX, knobY);
-            return 1;
-        }
+        if (reportInterception(phaseA, "phase A", knobX, knobY)) return 1;
 
         std::fprintf(stderr,
                      "\nFAIL (phase A): dragging at (%d,%d) produced no parameter edit, in either\n"
@@ -691,6 +710,10 @@ int main(const int argc, const char* const* const argv)
 
     if (! phaseA.looksLikeADrag())
     {
+        // A prompt that appears after the press takes the rest of the gesture,
+        // which looks exactly like a button: edits at the start, none after.
+        if (reportInterception(phaseA, "phase A", knobX, knobY)) return 1;
+
         std::fprintf(stderr,
                      "\nFAIL (phase A): the control at (%d,%d) emitted edits, but not progressively\n"
                      "  (%zu by the halfway point, %zu in total). That is the signature of a button or\n"
@@ -720,6 +743,10 @@ int main(const int argc, const char* const* const argv)
     const size_t required = (phaseA.edits + 1) / 2;
     if (phaseB.edits < required)
     {
+        // Worth guarding hardest here: the message below names a specific
+        // framework regression, and a stolen pointer produces the same shortfall.
+        if (reportInterception(phaseB, "phase B", knobX, knobY)) return 1;
+
         std::fprintf(stderr,
                      "\nFAIL (phase B): the drag stopped working when focus changed mid-gesture.\n"
                      "  phase A produced %zu edits, phase B produced %zu, needed at least %zu.\n"
