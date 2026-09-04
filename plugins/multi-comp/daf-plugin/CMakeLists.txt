@@ -62,3 +62,17 @@ if(NOT CMAKE_CROSSCOMPILING)
   target_compile_features(DuskUserPresetStoreTest PRIVATE cxx_std_17)
   add_test(NAME DuskUserPresetStore COMMAND DuskUserPresetStoreTest)
 endif()
+
+# Fleet gates. Multi-Comp 2 had none of these: nothing opened its editor. The
+# drag gate exists because a DAF-Widgets bump broke dragging in every plugin's
+# editor and shipped through four green releases, so a plugin outside it is
+# exactly the one that would ship broken.
+#
+# The output-parameter gates are deliberately absent: Multi-Comp 2's five GR
+# meters report no reduction at the default preset (opto_peak_reduction is 0),
+# so the harness, which processes noise at default settings and never touches a
+# control, fails its "the meters track the audio" assertion. The no-spam half
+# passes today. Arming a parameter before processing needs a harness change
+# rather than a registration here.
+dusk_daf_add_ui_drag_test(multi-comp-2 287 237)   # Opto GAIN knob (default face)
+dusk_daf_add_resize_test(multi-comp-2)

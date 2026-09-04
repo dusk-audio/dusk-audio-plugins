@@ -47,3 +47,12 @@ target_compile_definitions(multi-q-2 PUBLIC
 # Auto-deploy the built CLAP/VST3/LV2 into the user plugin dirs after each build
 # (disable with -DDUSK_DAF_INSTALL_LOCAL=OFF).
 dusk_daf_install_local(multi-q-2 LV2_PROGRAMS)
+
+# Fleet gates. Multi-Q 2 registered no ctest at all; see #148.
+#
+# No output-parameter gates: Multi-Q 2 exposes no output parameters. Its IN/OUT
+# meters are read straight off the live DSP through MultiQAccess.hpp rather than
+# published to the host, so the harness correctly reports that it would pass
+# vacuously.
+dusk_daf_add_ui_drag_test(multi-q-2 323 618)   # Digital-mode GAIN knob
+dusk_daf_add_resize_test(multi-q-2)

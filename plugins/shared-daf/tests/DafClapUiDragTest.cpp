@@ -390,6 +390,15 @@ DragResult dragAt(Fixture& fx, const int rootX, const int rootY, const int stepD
     // itself mid-gesture (a permission prompt appearing, a compositor putting a
     // dialog back on top) takes the rest of it, and a snapshot from before the
     // drag would have said everything was fine.
+    //
+    // The second check asks at the coordinate the gesture STARTED from, not
+    // wherever it ended. A drag of 12 steps runs 72 px past its origin, so a
+    // coordinate near the bottom of the editor ends with the pointer over the
+    // root window, and asking there reports "something is above the editor"
+    // for what is really a coordinate aimed off the knob -- replacing the one
+    // message that would have said so.
+    XTestFakeMotionEvent(fx.display, -1, rootX, rootY, CurrentTime);
+    XSync(fx.display, False);
     result.pointerBlocked = ! onTop || topLevelUnderPointer(fx.display) != fx.parent;
     result.edits         = countFor();
     result.midEdits      = midCount;
