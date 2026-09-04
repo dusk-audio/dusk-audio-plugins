@@ -65,6 +65,25 @@ fi
 # checkout made before a fork was repointed keeps its old origin, and a correct
 # .gitmodules sitting next to it makes the tree look clean. So when a checkout
 # path is supplied, ask the checkout.
+# Reduce a remote URL to the "owner/repo" it names on github.com, or to nothing
+# if it names something else. Matching a substring instead accepts far too much:
+# not-dusk-audio/pugl, gitlab.com/dusk-audio/pugl and
+# github.com/attacker/mirror-dusk-audio/pugl all contain "dusk-audio/pugl".
+# Twin of the function in docker/check_daf_pins.sh; keep the two in step.
+github_repo_of() {
+    local url="$1" path=""
+    case "$url" in
+        git@github.com:*)       path="${url#git@github.com:}" ;;
+        ssh://git@github.com/*) path="${url#ssh://git@github.com/}" ;;
+        https://github.com/*)   path="${url#https://github.com/}" ;;
+        http://github.com/*)    path="${url#http://github.com/}" ;;
+        *) return 0 ;;
+    esac
+    path="${path%/}"
+    path="${path%.git}"
+    printf '%s' "${path%/}"
+}
+
 check_checkout_origin() {
     local name="$1" path="$2" expect="$3"
 
@@ -77,14 +96,11 @@ check_checkout_origin() {
 
     local remote
     remote="$(git -C "$path" remote get-url origin 2>/dev/null || echo '(none)')"
-    case "$remote" in
-        *"$expect"*) ;;
-        *)
-            echo "FAIL  $name checkout compiles from $remote, expected $expect"
-            echo "        this is the tree being built, not a .gitmodules entry"
-            failed=1
-            ;;
-    esac
+    if [ "$(github_repo_of "$remote")" != "$expect" ]; then
+        echo "FAIL  $name checkout compiles from $remote, expected github.com/$expect"
+        echo "        this is the tree being built, not a .gitmodules entry"
+        failed=1
+    fi
 }
 
 check_checkout_origin "DAF" "$DAF_CHECKOUT" "dusk-audio/DAF"
@@ -100,7 +116,19 @@ if [ -n "$DAF_CHECKOUT" ] && [ -e "$DAF_CHECKOUT/.git" ]; then
     if [ -e "$pugl_path/.git" ]; then
         pugl_pin="$(git -C "$DAF_CHECKOUT" rev-parse -q --verify HEAD:dgl/src/pugl-upstream 2>/dev/null || echo '')"
         pugl_head="$(git -C "$pugl_path" rev-parse HEAD 2>/dev/null || echo '')"
-        if [ -n "$pugl_pin" ] && [ -n "$pugl_head" ] && [ "$pugl_pin" != "$pugl_head" ]; then
+
+        # An empty pin with a checkout present is not "nothing to compare": it
+        # means DAF records no gitlink at that path, so whatever is sitting
+        # there is unpinned source that no revision check can vouch for.
+        # Skipping the comparison would let it through unverified.
+        if [ -z "$pugl_pin" ]; then
+            echo "FAIL  pugl checkout exists at $pugl_path, but DAF records no gitlink there"
+            echo "        nothing pins this source, so its revision cannot be verified"
+            failed=1
+        elif [ -z "$pugl_head" ]; then
+            echo "FAIL  pugl checkout at $pugl_path has no readable HEAD"
+            failed=1
+        elif [ "$pugl_pin" != "$pugl_head" ]; then
             echo "FAIL  pugl checkout is at ${pugl_head:0:12}, but DAF pins ${pugl_pin:0:12}"
             echo "        run git submodule update --init --recursive in the DAF checkout"
             failed=1

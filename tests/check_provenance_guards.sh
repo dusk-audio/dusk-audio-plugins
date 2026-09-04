@@ -161,7 +161,66 @@ make_repo "$WORK/widgets-bad" "https://github.com/DISTRHO/DPF-Widgets.git"
 fork_guard_exits "$WORK/good" "$WORK/widgets-bad" yes \
     "fork guard rejects a DAF-Widgets checkout from upstream" "DAF-Widgets checkout compiles from"
 
-# --- 6. no paths supplied: config-only scan still works -------------------
+# --- 6. a lookalike origin ------------------------------------------------
+# The guards used to substring-match the expected "owner/repo", which accepts a
+# different account (not-dusk-audio/pugl), a different host, and a nested path
+# that merely contains the name.
+for lookalike in "https://github.com/not-dusk-audio/pugl.git" \
+                 "https://gitlab.com/dusk-audio/pugl.git" \
+                 "https://github.com/attacker/mirror-dusk-audio/pugl.git"; do
+    rm -rf "$WORK/lookalike"
+    make_daf "$WORK/lookalike" "git@github.com:dusk-audio/DAF.git" \
+             "$lookalike" "https://github.com/dusk-audio/pugl.git" head
+    pin_guard_says "$WORK/lookalike" "REMOTE   pugl checkout:" \
+        "pin guard rejects lookalike origin $lookalike"
+    fork_guard_exits "$WORK/lookalike" "$WORK/widgets-good" yes \
+        "fork guard rejects lookalike origin $lookalike" "pugl checkout compiles from"
+done
+
+# --- 7. a pugl checkout DAF does not pin at all ---------------------------
+# An empty gitlink is not "nothing to compare": it means the source sitting
+# there is pinned by nothing, so no revision check can vouch for it.
+rm -rf "$WORK/nogitlink"
+make_repo "$WORK/nogitlink" "git@github.com:dusk-audio/DAF.git"
+mkdir -p "$WORK/nogitlink/dgl/src"
+make_repo "$WORK/nogitlink/dgl/src/pugl-upstream" "https://github.com/dusk-audio/pugl.git"
+cat > "$WORK/nogitlink/.gitmodules" <<EOF
+[submodule "dgl/src/pugl-upstream"]
+	path = dgl/src/pugl-upstream
+	url = https://github.com/dusk-audio/pugl.git
+EOF
+git_q -C "$WORK/nogitlink" add .gitmodules
+git_q -C "$WORK/nogitlink" commit -qm "gitmodules without a gitlink"
+
+fork_guard_exits "$WORK/nogitlink" "$WORK/widgets-good" yes \
+    "fork guard rejects a pugl checkout DAF records no gitlink for" "records no gitlink"
+pin_guard_says "$WORK/nogitlink" "MISSING  pugl checkout:" \
+    "pin guard reports a pugl checkout DAF records no gitlink for"
+
+# --- 8. --fix repairs a stale submodule remote ----------------------------
+# submodule update reads .git/config, not .gitmodules, so a submodule whose
+# recorded URL is stale keeps fetching from the old remote however often it is
+# updated. sync is what copies the declared URL across, and --fix has to run it
+# even when the revision already matches, which is the remote-only case here.
+rm -rf "$WORK/staleremote"
+make_daf "$WORK/staleremote" "git@github.com:dusk-audio/DAF.git" \
+         "https://github.com/DISTRHO/pugl.git" \
+         "https://github.com/dusk-audio/pugl.git" head
+git_q -C "$WORK/staleremote" config submodule.dgl/src/pugl-upstream.url \
+    "https://github.com/DISTRHO/pugl.git"
+
+before="$(git_q -C "$WORK/staleremote/dgl/src/pugl-upstream" remote get-url origin)"
+DAF_PATH="$WORK/staleremote" DAFWIDGETS_PATH="$WORK/staleremote" \
+    "$PIN_GUARD" --fix > /dev/null 2>&1 || true
+after="$(git_q -C "$WORK/staleremote/dgl/src/pugl-upstream" remote get-url origin)"
+
+if [ "$before" != "$after" ] && [ "$(printf '%s' "$after" | grep -c 'dusk-audio/pugl')" = "1" ]; then
+    pass "--fix syncs a stale submodule remote to the declared URL"
+else
+    fail "--fix syncs a stale submodule remote to the declared URL -- origin went $before -> $after"
+fi
+
+# --- 9. no paths supplied: config-only scan still works -------------------
 fork_guard_exits "" "" no "fork guard still scans config alone when given no paths"
 
 echo
