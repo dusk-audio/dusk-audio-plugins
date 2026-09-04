@@ -84,9 +84,50 @@ check_one "DAF-Widgets" "$DAFWIDGETS_PATH"  "$DAFWIDGETS_PIN"  "dusk-audio/DAF-W
 if [ -f "$DAF_PATH/.gitmodules" ]; then
     pugl_url="$(git -C "$DAF_PATH" config -f .gitmodules --get submodule.dgl/src/pugl-upstream.url || echo '')"
     case "$pugl_url" in
-        *dusk-audio/pugl*) echo "OK       pugl submodule: dusk-audio/pugl" ;;
-        *)                 echo "REMOTE   pugl submodule: $pugl_url, expected dusk-audio/pugl"; drift=1 ;;
+        *dusk-audio/pugl*) echo "OK       pugl .gitmodules: dusk-audio/pugl" ;;
+        *)                 echo "REMOTE   pugl .gitmodules: $pugl_url, expected dusk-audio/pugl"; drift=1 ;;
     esac
+fi
+
+# ...and .gitmodules only describes the next fetch. What a build actually
+# compiles is whatever sits in the working tree now, which can be a different
+# remote at a different revision: a checkout created before the fork was
+# repointed keeps its old origin forever, and .gitmodules saying the right thing
+# hides it. Check the checkout itself against the gitlink DAF records.
+PUGL_PATH="$DAF_PATH/dgl/src/pugl-upstream"
+if [ -d "$DAF_PATH/.git" ]; then
+    pugl_pin="$(git -C "$DAF_PATH" rev-parse -q --verify HEAD:dgl/src/pugl-upstream 2>/dev/null || echo '')"
+
+    if [ -z "$pugl_pin" ]; then
+        echo "MISSING  pugl checkout: DAF records no gitlink at dgl/src/pugl-upstream"
+        drift=1
+    elif [ ! -e "$PUGL_PATH/.git" ]; then
+        echo "MISSING  pugl checkout: nothing at $PUGL_PATH; run git submodule update --init --recursive"
+        drift=1
+    else
+        pugl_head="$(git -C "$PUGL_PATH" rev-parse HEAD)"
+        pugl_remote="$(git -C "$PUGL_PATH" remote get-url origin 2>/dev/null || echo '(none)')"
+
+        case "$pugl_remote" in
+            *dusk-audio/pugl*) ;;
+            *)
+                echo "REMOTE   pugl checkout: origin is $pugl_remote, expected dusk-audio/pugl"
+                echo "         .gitmodules is not evidence: this tree compiles from that remote"
+                drift=1
+                ;;
+        esac
+
+        if [ "$pugl_head" != "$pugl_pin" ]; then
+            echo "DRIFT    pugl checkout: local $(echo "$pugl_head" | cut -c1-12), DAF pins $(echo "$pugl_pin" | cut -c1-12)"
+            drift=1
+            if [ "$FIX" = "1" ]; then
+                echo "         checking out the pinned commit"
+                git -C "$DAF_PATH" submodule update -q --init --recursive
+            fi
+        else
+            echo "OK       pugl checkout: $(echo "$pugl_head" | cut -c1-12)"
+        fi
+    fi
 fi
 
 echo

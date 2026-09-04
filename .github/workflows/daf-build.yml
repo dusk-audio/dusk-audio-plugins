@@ -100,6 +100,10 @@ jobs:
         shell: bash
         run: ./tests/check_daf_plugin_names.sh
 
+      - name: Test the framework provenance guards
+        shell: bash
+        run: ./tests/check_provenance_guards.sh
+
       - name: Resolve build set + release info
         id: plan
         shell: bash
@@ -298,11 +302,14 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
-      # Runs after the checkouts so it can inspect the fork's own .gitmodules,
-      # which is where pugl silently kept pointing at upstream. Cheap, so it
-      # gates the expensive build instead of reporting after it.
+      # Runs after the checkouts so it can inspect the trees themselves: their
+      # origin remotes and pugl's revision against the gitlink DAF records, not
+      # just the config that says where a fetch would go. Cheap, so it gates the
+      # expensive build instead of reporting after it.
       - name: Check framework sources are our forks
-        run: ./.github/scripts/check_fork_sources.sh "${GITHUB_WORKSPACE}/DAF"
+        run: |
+          ./.github/scripts/check_fork_sources.sh \
+            "${GITHUB_WORKSPACE}/DAF" "${GITHUB_WORKSPACE}/DAF-Widgets"
 
       - name: Install Linux dependencies
         env:
