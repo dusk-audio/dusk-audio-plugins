@@ -2191,8 +2191,24 @@ private:
         const float thresholdDb = plainValueForHost(P_VCA_THRESHOLD, values[P_VCA_THRESHOLD]);
         const bool above = multicompp::ui_detail::vcaSignalAboveThreshold(inputDb, thresholdDb);
         spacedText(dl, 110, 391, 9.5f, kVcaInk, "BELOW", 1);
-        vcaLamp(dl, 128, 397, !above, IM_COL32(240, 205, 70, 255), IM_COL32(240, 205, 70, 80));
-        vcaLamp(dl, 214, 397, above, IM_COL32(220, 62, 46, 255), IM_COL32(220, 62, 46, 80));
+        // The reference's two jewels: amber below the threshold, red above.
+        duskdaf::DuskPanel::LedStyle jewel;
+        jewel.bezelColor = IM_COL32(52, 52, 54, 255);
+        jewel.rimRadiusAdd = 1.2f;
+        jewel.glowRadiusAdd = 7.0f;
+        jewel.dropShadowRadiusAdd = 3.0f;
+        jewel.highlightScale = 1.5f;
+        jewel.highlightColor = IM_COL32(255, 248, 225, 220);
+        jewel.offFromOnColor = true;
+        jewel.offHighlight = true;
+
+        jewel.onColor = IM_COL32(240, 205, 70, 255);
+        jewel.glowColor = IM_COL32(240, 205, 70, 80);
+        panel.led(dl, 128, 397, !above, 7.0f, jewel);
+
+        jewel.onColor = IM_COL32(220, 62, 46, 255);
+        jewel.glowColor = IM_COL32(220, 62, 46, 80);
+        panel.led(dl, 214, 397, above, 7.0f, jewel);
         spacedText(dl, 232, 391, 9.5f, kVcaInk, "ABOVE", -1);
 
         {
@@ -2365,30 +2381,6 @@ private:
         vcaKnobSplitter.Merge(dl);
     }
 
-
-    // Domed lamp; the shared DuskPanel::led is palette-locked to one colour
-    // (plugins issue #247), so the amber/red pair is drawn here.
-    void vcaLamp(ImDrawList* dl, float x, float y, bool on, ImU32 onCol, ImU32 glowCol)
-    {
-        const float s = panel.scale();
-        const ImVec2 c = panel.P(x, y);
-        dl->AddCircleFilled(ImVec2(c.x + 1.0f * s, c.y + 1.5f * s), 10.0f * s, IM_COL32(0, 0, 0, 120), 24);
-        dl->AddCircleFilled(c, 9.5f * s, IM_COL32(52, 52, 54, 255), 24);
-        dl->AddCircleFilled(c, 8.2f * s, IM_COL32(6, 6, 6, 255), 24);
-        if (on)
-        {
-            dl->AddCircleFilled(c, 14.0f * s, glowCol, 24);
-            dl->AddCircleFilled(c, 7.0f * s, onCol, 24);
-            dl->AddCircleFilled(ImVec2(c.x - 2.2f * s, c.y - 2.4f * s), 2.4f * s, IM_COL32(255, 248, 225, 220), 12);
-        }
-        else
-        {
-            // A dark version of the lamp's own colour, like an unlit red jewel.
-            const ImU32 offCol = IM_COL32((onCol & 0xFF) / 3, ((onCol >> 8) & 0xFF) / 3, ((onCol >> 16) & 0xFF) / 3, 255);
-            dl->AddCircleFilled(c, 7.0f * s, offCol, 24);
-            dl->AddCircleFilled(ImVec2(c.x - 2.2f * s, c.y - 2.4f * s), 1.8f * s, IM_COL32(255, 255, 255, 60), 12);
-        }
-    }
 
     void vcaKnob(ImDrawList* dl, const char* id, uint32_t p,
                  float x, float y, float radius, const char* label,

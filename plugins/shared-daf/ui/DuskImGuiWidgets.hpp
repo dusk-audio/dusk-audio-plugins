@@ -144,20 +144,69 @@ public:
             dl->AddText(font, sz, ImVec2(pos.x + 0.6f * s, pos.y), col, txt);
     }
 
+    // A lamp that is not the panel's indicator colour. The dbx 160 face carries
+    // an amber BELOW and a red ABOVE side by side, which one palette entry
+    // cannot say, and the jewel it uses is built a little differently from the
+    // small panel indicator: a drop shadow under the bezel, a wider glow, an
+    // unlit state tinted from its own colour rather than a flat grey, and a
+    // highlight that grows with the lamp instead of staying at indicator size.
+    //
+    // Every field is optional and defaults to the indicator, so the callers that
+    // want a plain palette LED say nothing and get exactly what they had.
+    struct LedStyle
+    {
+        ImU32 onColor = 0;          // 0 = pal.ledOn
+        ImU32 glowColor = 0;        // 0 = pal.ledGlow
+        ImU32 offColor = 0;         // 0 = pal.ledOff, unless offFromOnColor
+        float bezelRadiusAdd = 2.5f;
+        float rimRadiusAdd = 1.0f;
+        float glowRadiusAdd = 5.0f;
+        float dropShadowRadiusAdd = 0.0f;   // 0 = no drop shadow under the bezel
+        ImU32 bezelColor = IM_COL32(60, 60, 62, 255);
+        float highlightScale = 1.0f;        // scales the lit highlight's offset and size
+        ImU32 highlightColor = IM_COL32(255, 215, 205, 230);
+        bool offFromOnColor = false;        // unlit jewel = a third of its lit colour
+        bool offHighlight = false;          // a faint glint even when unlit
+    };
+
     void led(ImDrawList* dl, float x, float y, bool on, float r = 5.0f) const
     {
+        led(dl, x, y, on, r, LedStyle{});
+    }
+
+    void led(ImDrawList* dl, float x, float y, bool on, float r, const LedStyle& style) const
+    {
         const ImVec2 c = P(x, y);
-        dl->AddCircleFilled(c, (r + 2.5f) * s, IM_COL32(60, 60, 62, 255), 20);
-        dl->AddCircleFilled(c, (r + 1.0f) * s, IM_COL32(0, 0, 0, 255), 20);
+        const ImU32 onColor = style.onColor != 0 ? style.onColor : pal.ledOn;
+        const ImU32 glowColor = style.glowColor != 0 ? style.glowColor : pal.ledGlow;
+
+        if (style.dropShadowRadiusAdd > 0.0f)
+            dl->AddCircleFilled(ImVec2(c.x + 1.0f * s, c.y + 1.5f * s),
+                                (r + style.dropShadowRadiusAdd) * s, IM_COL32(0, 0, 0, 120), 24);
+
+        dl->AddCircleFilled(c, (r + style.bezelRadiusAdd) * s, style.bezelColor, 20);
+        dl->AddCircleFilled(c, (r + style.rimRadiusAdd) * s, IM_COL32(0, 0, 0, 255), 20);
         if (on)
         {
-            dl->AddCircleFilled(c, (r + 5.0f) * s, pal.ledGlow, 20);
-            dl->AddCircleFilled(c, r * s, pal.ledOn, 20);
-            dl->AddCircleFilled(ImVec2(c.x - 1.5f * s, c.y - 1.5f * s), 1.6f * s,
-                                IM_COL32(255, 215, 205, 230), 10);
+            dl->AddCircleFilled(c, (r + style.glowRadiusAdd) * s, glowColor, 20);
+            dl->AddCircleFilled(c, r * s, onColor, 20);
+            const float h = style.highlightScale;
+            dl->AddCircleFilled(ImVec2(c.x - 1.5f * h * s, c.y - 1.5f * h * s), 1.6f * h * s,
+                                style.highlightColor, 10);
         }
         else
-            dl->AddCircleFilled(c, r * s, pal.ledOff, 20);
+        {
+            ImU32 offColor = style.offColor != 0 ? style.offColor : pal.ledOff;
+            if (style.offFromOnColor)
+                offColor = IM_COL32((onColor & 0xFF) / 3, ((onColor >> 8) & 0xFF) / 3,
+                                    ((onColor >> 16) & 0xFF) / 3, 255);
+            dl->AddCircleFilled(c, r * s, offColor, 20);
+            if (style.offHighlight)
+                dl->AddCircleFilled(ImVec2(c.x - 1.5f * style.highlightScale * s,
+                                           c.y - 1.5f * style.highlightScale * s),
+                                    1.2f * style.highlightScale * s,
+                                    IM_COL32(255, 255, 255, 60), 12);
+        }
     }
 
     static float knobAngle(float t) { return (-135.0f + 270.0f * t) * kPi / 180.0f; }
