@@ -1,3 +1,14 @@
+---
+name: "source-command-add-plugin"
+description: "Migrated source command `add-plugin`"
+---
+
+# source-command-add-plugin
+
+Use this skill when the user asks to run the migrated source command `add-plugin`.
+
+## Command Template
+
 # Add Plugin
 
 Scaffold a new Dusk Audio plugin with all required files and configurations.

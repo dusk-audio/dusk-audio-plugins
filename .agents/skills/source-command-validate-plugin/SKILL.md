@@ -1,3 +1,14 @@
+---
+name: "source-command-validate-plugin"
+description: "Migrated source command `validate-plugin`"
+---
+
+# source-command-validate-plugin
+
+Use this skill when the user asks to run the migrated source command `validate-plugin`.
+
+## Command Template
+
 # Validate Plugin
 
 Run validation tests on Dusk Audio plugins using pluginval and optional audio analysis.

@@ -942,6 +942,7 @@ namespace
 
 void DuskVerbEditor::resized()
 {
+    scaler_.updateResizer();
     auto sf = scaler_.getScaleFactor();
 
     int margin   = scaler_.scaled (10);
@@ -1935,4 +1936,3 @@ void HeroDecay::paint (juce::Graphics& g)
     g.setFont (juce::FontOptions (16.0f, juce::Font::bold));
     g.drawText (valueText, valueRow.toNearestInt(), juce::Justification::centred);
 }
-

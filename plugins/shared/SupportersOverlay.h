@@ -49,8 +49,11 @@ public:
         const int headerHeight  = 95;   // title + subheading + divider
         const int actionHeight  = actionLabel.isNotEmpty() ? 20 : 0;
         const int footerHeight  = 55 + actionHeight;
-        const int panelWidth    = juce::jmin(440, w - 80);
-        const int panelHeight   = juce::jmin(headerHeight + contentHeight + footerHeight, h - 60);
+        const int panelWidth    = juce::jmax(0, juce::jmin(440, w - 80));
+        const int panelHeight   = juce::jmax(0, juce::jmin(headerHeight + contentHeight + footerHeight, h - 60));
+
+        if (panelWidth == 0 || panelHeight == 0)
+            return;
 
         auto panelBounds = juce::Rectangle<int>(
             (w - panelWidth) / 2,
@@ -85,18 +88,32 @@ public:
         g.setColour(juce::Colour(0xff3a3a3a));
         g.fillRect(panelBounds.getX() + 30, panelBounds.getY() + 80, panelBounds.getWidth() - 60, 1);
 
+        // Keep the supporter list inside the space between the fixed header
+        // and footer. A growing live Patreon list can exceed the available
+        // height at a plugin's minimum size, so make that region scrollable
+        // instead of letting names paint through the footer.
+        const auto contentBounds = juce::Rectangle<int> (
+            panelBounds.getX() + 30,
+            panelBounds.getY() + headerHeight,
+            juce::jmax(0, panelBounds.getWidth() - 60),
+            juce::jmax(0, panelBounds.getHeight() - headerHeight - footerHeight));
+        maxScrollOffset = juce::jmax(0, contentHeight - contentBounds.getHeight());
+        scrollOffset = juce::jlimit(0, maxScrollOffset, scrollOffset);
+
+        g.saveState();
+        g.reduceClipRegion(contentBounds);
+
         // Render each tier with its own accent colour
-        int y = panelBounds.getY() + headerHeight;
+        int y = contentBounds.getY() - scrollOffset;
         const int cx = panelBounds.getCentreX();
         const int textW = panelBounds.getWidth() - 60;
-        const int maxY = panelBounds.getBottom() - footerHeight;
 
         auto drawTier = [&](const juce::String& tierName,
                             const std::vector<juce::String>& names,
                             const juce::Colour& headerColour,
                             bool isPast = false)
         {
-            if (names.empty() || y >= maxY) return;
+            if (names.empty()) return;
 
             // Tier heading
             g.setFont(juce::Font(juce::FontOptions(10.0f).withStyle("Bold")));
@@ -126,6 +143,27 @@ public:
         drawTier("PATRONS",         PatreonCredits::patrons,        juce::Colour(0xff00aaff));
         drawTier("SUPPORTERS",      PatreonCredits::supporters,     juce::Colour(0xff6ac47e));
         drawTier("PAST SUPPORTERS", PatreonCredits::pastSupporters, juce::Colour(0xff606060), true);
+
+        g.restoreState();
+
+        if (maxScrollOffset > 0 && contentBounds.getHeight() > 0)
+        {
+            const int trackHeight = contentBounds.getHeight();
+            const int thumbHeight = juce::jmin(trackHeight,
+                                               juce::jmax(20, trackHeight * trackHeight / contentHeight));
+            const int thumbTravel = trackHeight - thumbHeight;
+            const int thumbY = contentBounds.getY()
+                             + (thumbTravel * scrollOffset / maxScrollOffset);
+
+            g.setColour(juce::Colour(0x304f4f4f));
+            g.fillRoundedRectangle(static_cast<float>(contentBounds.getRight() - 3),
+                                   static_cast<float>(contentBounds.getY()),
+                                   3.0f, static_cast<float>(trackHeight), 1.5f);
+            g.setColour(juce::Colour(0x906f6f6f));
+            g.fillRoundedRectangle(static_cast<float>(contentBounds.getRight() - 3),
+                                   static_cast<float>(thumbY),
+                                   3.0f, static_cast<float>(thumbHeight), 1.5f);
+        }
 
         // Footer divider
         g.setColour(juce::Colour(0xff3a3a3a));
@@ -181,6 +219,22 @@ public:
             onDismiss();
     }
 
+    void mouseWheelMove(const juce::MouseEvent&,
+                        const juce::MouseWheelDetails& wheel) override
+    {
+        if (maxScrollOffset == 0)
+            return;
+
+        const float direction = wheel.isReversed ? -1.0f : 1.0f;
+        const int delta = juce::roundToInt(60.0f * wheel.deltaY * direction);
+        const int newOffset = juce::jlimit(0, maxScrollOffset, scrollOffset - delta);
+        if (newOffset != scrollOffset)
+        {
+            scrollOffset = newOffset;
+            repaint();
+        }
+    }
+
     std::function<void()> onDismiss;
 
 private:
@@ -205,6 +259,8 @@ private:
     juce::String actionLabel;
     std::function<void()> onActionClick;
     juce::Rectangle<int> actionHitRegion; // recomputed in paint()
+    int scrollOffset = 0;
+    int maxScrollOffset = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SupportersOverlay)
 };
