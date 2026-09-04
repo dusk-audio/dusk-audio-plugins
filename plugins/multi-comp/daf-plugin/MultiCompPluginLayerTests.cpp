@@ -1028,6 +1028,47 @@ void testOptoFaceplateContract()
             "Opto mode control exposes the Comp and Limit panel labels");
     require(std::strcmp(multicompp::ui_detail::optoMeterLabel(), "GR") == 0,
             "Opto analogue meter is fixed to the GR panel readout");
+
+    {
+        using namespace multicompp::ui_detail;
+        require(kFetMeterModeCount == 4
+                    && std::strcmp(fetMeterModeLabel(0), "GR") == 0
+                    && std::strcmp(fetMeterModeLabel(1), "+8") == 0
+                    && std::strcmp(fetMeterModeLabel(2), "+4") == 0
+                    && std::strcmp(fetMeterModeLabel(3), "OFF") == 0,
+                "FET meter switch exposes the reference unit's GR/+8/+4/OFF positions");
+
+        // GR position passes gain reduction through untouched, so the needle
+        // keeps the raw feed the Opto path is required to keep.
+        require(fetMeterNeedleValueDb(0, -7.5f, -30.0f) == -7.5f
+                    && fetMeterNeedleValueDb(0, 0.0f, -3.0f) == 0.0f,
+                "FET meter GR position reads gain reduction and ignores output level");
+
+        // On a level position the needle reads distance below the reference,
+        // so 0 VU parks on the same 0 mark the GR scale rests at.
+        require(fetMeterNeedleValueDb(2, -6.0f, kFetMeterPlus4ReferenceDbFs) == 0.0f
+                    && fetMeterNeedleValueDb(1, -6.0f, kFetMeterPlus8ReferenceDbFs) == 0.0f,
+                "FET meter level positions park 0 VU on the scale's 0 mark");
+        require(std::abs(fetMeterNeedleValueDb(2, 0.0f, -24.0f) + 6.0f) < 1.0e-5f
+                    && std::abs(fetMeterNeedleValueDb(1, 0.0f, -24.0f) + 10.0f) < 1.0e-5f,
+                "FET meter level positions deflect by the shortfall below their reference");
+        require(kFetMeterPlus8ReferenceDbFs - kFetMeterPlus4ReferenceDbFs == 4.0f,
+                "FET meter +4 and +8 references stay the panel's 4 dB apart");
+
+        // Louder than the reference pegs at 0 rather than running off the arc,
+        // and nothing exceeds the 20 dB the face is drawn for.
+        require(fetMeterNeedleValueDb(2, 0.0f, 0.0f) == 0.0f
+                    && fetMeterNeedleValueDb(2, 0.0f, -60.0f) == -20.0f,
+                "FET meter level positions clamp to the drawn 0..20 sweep");
+
+        require(fetMeterNeedleValueDb(3, -9.0f, -3.0f) == -20.0f,
+                "FET meter OFF position rests the needle at the mechanical stop");
+
+        const float nan = std::numeric_limits<float>::quiet_NaN();
+        require(fetMeterNeedleValueDb(0, nan, -18.0f) == 0.0f
+                    && fetMeterNeedleValueDb(2, 0.0f, nan) == 0.0f,
+                "FET meter survives a non-finite reading on either feed");
+    }
     const float attackDisplay = multicompp::ui_detail::optoMeterDisplayValue(-20.0f);
     const float releaseDisplay = multicompp::ui_detail::optoMeterDisplayValue(0.0f);
     const std::string source = readSiblingSource("MultiCompUI.cpp");
