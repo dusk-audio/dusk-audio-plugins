@@ -280,6 +280,7 @@ inline void refreshParameterMirror(std::array<float, N>& values,
 #include "MultiCompVersion.hpp"
 #include "DuskImGuiFont.hpp"
 #include "DuskImGuiWidgets.hpp"
+#include "DuskKnobRing.hpp"
 #include "DuskVuMeter.hpp"
 #include "DuskSupportersOverlay.hpp"
 #include "DuskUserPresetStore.hpp"
@@ -1468,31 +1469,27 @@ private:
         constexpr std::array<const char*, 11> scaleLabels{{
             "0", "10", "20", "30", "40", "50",
             "60", "70", "80", "90", "100"}};
+        // Three tiers of mark, so the styles differ only by how far in they
+        // start; the placement comes from the shared ring either way.
+        duskdaf::KnobRingStyle ring;
+        ring.markOuter = 12.0f;   ring.minorOuter = 12.0f;
+        ring.markInner = 4.0f;    ring.markThickness = 1.45f;
+        ring.minorThickness = 0.75f;
+        ring.markColor = kOptoInk;
+        ring.labelOffset = 23.0f; ring.labelNudgeY = -4.0f; ring.labelSize = 7.8f;
+        ring.labelColor = kOptoInk;
+        ring.labelCentred = true;
+        duskdaf::KnobRingStyle medium = ring;   medium.minorInner = 6.0f;
+        duskdaf::KnobRingStyle fine = ring;     fine.minorInner = 8.0f;
+
         for (int tick = 0; tick <= 50; ++tick)
         {
-            const float angle = duskdaf::DuskPanel::knobAngle(
-                static_cast<float>(tick) / 50.0f);
-            const ImVec2 direction(std::sin(angle), -std::cos(angle));
-            const bool major = tick % 5 == 0;
-            const bool medium = tick % 5 == 0 || tick % 5 == 2;
-            const float inner = scaledRadius
-                + (major ? 4.0f : medium ? 6.0f : 8.0f) * panel.scale();
-            const float outer = scaledRadius + 12.0f * panel.scale();
-            dl->AddLine(ImVec2(center.x + direction.x * inner,
-                               center.y + direction.y * inner),
-                        ImVec2(center.x + direction.x * outer,
-                               center.y + direction.y * outer),
-                        kOptoInk, (major ? 1.45f : 0.75f) * panel.scale());
-            if (major)
-            {
-                const int labelIndex = tick / 5;
-                const float labelRadius = radius + 23.0f;
-                panel.text(dl,
-                           x + direction.x * labelRadius,
-                           y + direction.y * labelRadius - 4.0f,
-                           7.8f, kOptoInk,
-                           scaleLabels[static_cast<size_t>(labelIndex)], 0, true);
-            }
+            const bool isMajor = tick % 5 == 0;
+            const bool isMedium = tick % 5 == 2;
+            duskdaf::drawKnobRingMark(
+                panel, dl, x, y, radius, static_cast<float>(tick) / 50.0f,
+                isMajor ? scaleLabels[static_cast<size_t>(tick / 5)] : nullptr,
+                isMajor ? ring : (isMedium ? medium : fine), !isMajor);
         }
 
         const ImVec2 shadowCenter(center.x + 3.0f * panel.scale(),
@@ -1838,45 +1835,41 @@ private:
         {
             constexpr std::array<const char*, 9> labels{{
                 "INF", "48", "36", "30", "24", "18", "12", "6", "0"}};
+            duskdaf::KnobRingStyle ring;
+            ring.markInner = 4.0f;   ring.markOuter = 10.0f;  ring.markThickness = 1.25f;
+            ring.minorInner = 7.0f;  ring.minorOuter = 10.0f; ring.minorThickness = 0.75f;
+            ring.markColor = IM_COL32(229, 230, 219, 240);
+            ring.labelOffset = 19.0f; ring.labelNudgeY = -3.0f; ring.labelSize = 7.3f;
+            ring.labelColor = IM_COL32(232, 232, 220, 255);
+            ring.labelCentred = true;
             for (int tick = 0; tick <= 16; ++tick)
             {
-                const float tickT = static_cast<float>(tick) / 16.0f;
-                const float angle = duskdaf::DuskPanel::knobAngle(tickT);
-                const ImVec2 direction(std::sin(angle), -std::cos(angle));
                 const bool major = tick % 2 == 0;
-                const float inner = r + (major ? 4.0f : 7.0f) * scale;
-                const float outer = r + 10.0f * scale;
-                dl->AddLine(ImVec2(center.x + direction.x * inner,
-                                   center.y + direction.y * inner),
-                            ImVec2(center.x + direction.x * outer,
-                                   center.y + direction.y * outer),
-                            IM_COL32(229, 230, 219, 240),
-                            (major ? 1.25f : 0.75f) * scale);
-                if (major)
-                    panel.text(dl, x + direction.x * (radius + 19.0f),
-                               y + direction.y * (radius + 19.0f) - 3.0f,
-                               7.3f, IM_COL32(232, 232, 220, 255),
-                               labels[static_cast<size_t>(tick / 2)], 0, true);
+                duskdaf::drawKnobRingMark(
+                    panel, dl, x, y, radius, static_cast<float>(tick) / 16.0f,
+                    major ? labels[static_cast<size_t>(tick / 2)] : nullptr,
+                    ring, !major);
             }
         }
         else
         {
             constexpr std::array<const char*, 4> labels{{"1", "3", "5", "7"}};
+            duskdaf::KnobRingStyle ring;
+            ring.dotMarks = true;
+            ring.markOuter = 7.0f;   ring.minorOuter = 7.0f;
+            ring.dotRadius = 1.45f;  ring.minorDotRadius = 0.85f;
+            ring.dotSegments = 10;
+            ring.markColor = IM_COL32(230, 230, 218, 255);
+            ring.labelOffset = 15.0f; ring.labelNudgeY = -3.0f; ring.labelSize = 7.0f;
+            ring.labelColor = IM_COL32(232, 232, 220, 255);
+            ring.labelCentred = true;
             for (int tick = 0; tick <= 6; ++tick)
             {
-                const float tickT = static_cast<float>(tick) / 6.0f;
-                const float angle = duskdaf::DuskPanel::knobAngle(tickT);
-                const ImVec2 direction(std::sin(angle), -std::cos(angle));
                 const bool major = tick % 2 == 0;
-                dl->AddCircleFilled(ImVec2(center.x + direction.x * (r + 7.0f * scale),
-                                           center.y + direction.y * (r + 7.0f * scale)),
-                                    (major ? 1.45f : 0.85f) * scale,
-                                    IM_COL32(230, 230, 218, 255), 10);
-                if (major)
-                    panel.text(dl, x + direction.x * (radius + 15.0f),
-                               y + direction.y * (radius + 15.0f) - 3.0f,
-                               7.0f, IM_COL32(232, 232, 220, 255),
-                               labels[static_cast<size_t>(tick / 2)], 0, true);
+                duskdaf::drawKnobRingMark(
+                    panel, dl, x, y, radius, static_cast<float>(tick) / 6.0f,
+                    major ? labels[static_cast<size_t>(tick / 2)] : nullptr,
+                    ring, !major);
             }
         }
 
@@ -2086,23 +2079,7 @@ private:
     void spacedText(ImDrawList* dl, float x, float y, float size, ImU32 col,
                     const char* text, int align, float tracking = 0.16f)
     {
-        const float s = panel.scale();
-        const float px = size * s;
-        ImFont* font = panel.pickFont(px);
-        const float gap = tracking * px;
-        float total = 0.0f;
-        for (const char* c = text; *c; ++c)
-            total += font->CalcTextSizeA(px, FLT_MAX, 0.0f, c, c + 1).x + (c[1] ? gap : 0.0f);
-        ImVec2 pos = panel.P(x, y);
-        if (align == 0) pos.x -= 0.5f * total;
-        if (align == 1) pos.x -= total;
-        pos.x = std::floor(pos.x + 0.5f);
-        pos.y = std::floor(pos.y + 0.5f);
-        for (const char* c = text; *c; ++c)
-        {
-            dl->AddText(font, px, pos, col, c, c + 1);
-            pos.x += font->CalcTextSizeA(px, FLT_MAX, 0.0f, c, c + 1).x + gap;
-        }
+        duskdaf::spacedText(panel, dl, x, y, size, col, text, align, tracking);
     }
 
     void drawVca(ImDrawList* dl)
@@ -2421,15 +2398,20 @@ private:
                         ImVec2(center.x + d.x * (r + 13.0f * scale), center.y + d.y * (r + 13.0f * scale)),
                         IM_COL32(214, 215, 210, 220), 1.1f * scale);
         }
-        for (int i = 0; i < majorCount; ++i)
         {
-            const float angle = duskdaf::DuskPanel::knobAngle(ringT(majorValues[i]));
-            const ImVec2 d(std::sin(angle), -std::cos(angle));
-            dl->AddLine(ImVec2(center.x + d.x * (r + 7.0f * scale), center.y + d.y * (r + 7.0f * scale)),
-                        ImVec2(center.x + d.x * (r + 15.0f * scale), center.y + d.y * (r + 15.0f * scale)),
-                        kVcaInk, 1.7f * scale);
-            spacedText(dl, x + d.x * (radius + 27.0f), y + d.y * (radius + 27.0f) - 5.5f,
-                       10.5f, kVcaInk, majorLabels[i], 0, 0.06f);
+            duskdaf::KnobRingStyle ring;
+            ring.markInner = 7.0f;
+            ring.markOuter = 15.0f;
+            ring.markThickness = 1.7f;
+            ring.markColor = kVcaInk;
+            ring.labelOffset = 27.0f;
+            ring.labelNudgeY = -5.5f;
+            ring.labelColor = kVcaInk;
+            ring.labelCentred = true;
+            ring.labelTracking = 0.06f;
+            duskdaf::drawKnobRing(panel, dl, x, y, radius,
+                                  majorValues, majorLabels, majorCount, nullptr, 0,
+                                  ringT, ring);
         }
 
         // Drop shadow, black serrated skirt, silver dome with radial brushing
