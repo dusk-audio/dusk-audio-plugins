@@ -4,6 +4,8 @@
 // Decibels, jlimit and IIR filters are replaced by small local helpers/shared DSP.
 #pragma once
 
+
+#include "MultiCompDbxLaw.hpp"
 #include "MultiCompParams.hpp"
 #include "MultiCompHelpers.hpp"
 #include "../../shared-daf/dsp/DuskCrossover.hpp"
@@ -308,8 +310,8 @@ private:
     };
     struct VCAState
     {
-        float envelope = 1, rms = 0, signal = 0, rate = 0, previous = 0;
-        float overshoot = 0, dc = 0, prevSq = 0;
+        float envelope = 1, rms = 0;
+        int phase = 0;  // oversampling phase counter; the RMS integrator runs on the native phase only
     };
     struct BusState
     {
@@ -3295,68 +3297,64 @@ private:
     float processVCA(float input, int ch, float sidechain,
                      const MultiCompParameterState& p, bool /*external*/) noexcept
     {
+        // dbx 160 model (reference campaign 2026-09-01). The unit is a true-RMS
+        // detector driving the gain directly: one first-order power integrator,
+        // no separate attack/release envelope. Fitting a single time constant to
+        // nine reference step responses (three depths x three ratios) gave
+        // 31 ms on attack and 35 ms on release with 0.22 / 0.06 dB RMSE, and the
+        // equal-RMS crest triplet read identical GR for sine, gated bursts and
+        // noise -- an RMS detector with no crest sensitivity. The attack/release,
+        // Over Easy and detector-mode parameters stay host-visible for state
+        // compatibility but the reference has no such controls; they are inert.
         auto& d = vca[ch];
-        const float sr = static_cast<float>(fs * osFactor);
         // The DSP has already selected, filtered and stereo-linked the
-        // detector signal for both internal and external operation. VCA is
-        // feed-forward, so consuming that signal preserves its topology while
-        // making the global sidechain controls effective.
-        const float detect = std::abs(sidechain);
-        d.rate = d.rate * 0.95f + std::abs(detect - d.previous) * 0.05f;
-        d.previous = detect;
-        const float rmsMs = p.vcaClassicDetector.load(std::memory_order_relaxed) ? 0.010f : 0.005f + 0.030f * std::exp(-3.0f * std::clamp((gainToDecibels(std::max(detect, 0.0001f)) + 20.0f) / 30.0f, 0.0f, 1.0f));
-        const float rmsCoeff = std::exp(-1.0f / (std::max(0.0001f, rmsMs) * sr));
-        d.rms = d.rms * rmsCoeff + detect * detect * (1.0f - rmsCoeff);
+        // detector signal (max-law, as measured on the reference) for both
+        // internal and external operation. Under oversampling that signal is
+        // only linearly interpolated between native samples, and its images
+        // refilled the RMS reading above 8 kHz (detector_fr: -1.25 dB at
+        // 12 kHz against a flat reference). The oversampled sidechain equals
+        // the native sample exactly on the last phase of each host sample
+        // (MultiCompHelpers position = (phase + 1) / factor), so the RMS
+        // integrator runs once per host sample at the native rate and the gain
+        // is held across the phases -- the same native-rate control the FET
+        // stereo link uses.
+        const bool nativePhase = ++d.phase >= osFactor;
+        if (nativePhase)
+        {
+            d.phase = 0;
+            // 35 ms: the single-constant fit to the reference step family gave
+            // 31 ms (attack) / 35 ms (release); at 33 ms our attack and release
+            // both read 1-7 ms fast against the reference, so the constant sits
+            // at the release fit.
+            constexpr float rmsSeconds = 0.035f;
+            const float rmsCoeff = std::exp(-1.0f / (rmsSeconds * static_cast<float>(fs)));
+            d.rms = d.rms * rmsCoeff + sidechain * sidechain * (1.0f - rmsCoeff);
+        }
         const float level = std::sqrt(std::max(d.rms, 0.0f));
-        d.signal = d.signal * 0.99f + level * 0.01f;
-        const float threshold = decibelsToGain(p.vcaThreshold.load(std::memory_order_relaxed));
-        const float ratio = std::max(1.0f, p.vcaRatio.load(std::memory_order_relaxed));
-        const float over = gainToDecibels(std::max(level, 1.0e-9f) / threshold);
-        float reduction = 0.0f;
-        if (p.vcaOverEasy.load(std::memory_order_relaxed))
-        {
-            const float kneeWidth = 10.0f, kneeStart = -5.0f, kneeEnd = 5.0f;
-            if (over > kneeStart && over < kneeEnd) { const float x = over - kneeStart; reduction = (1.0f - 1.0f / ratio) * x * x / (2.0f * kneeWidth); }
-            else if (over >= kneeEnd) reduction = over * (1.0f - 1.0f / ratio);
-        }
-        else if (level > threshold) reduction = over * (1.0f - 1.0f / ratio);
-        reduction = std::clamp(reduction, 0.0f, 60.0f);
-        const float userAttackScale = p.vcaAttack.load(std::memory_order_relaxed) / 15.0f;
-        const float programAttack = reduction > 0.1f ? (reduction <= 10.0f ? 0.015f : (reduction <= 20.0f ? 0.005f : 0.003f)) : 0.015f;
-        const float attack = std::clamp(programAttack * userAttackScale, 0.0001f, 0.050f);
-        const float userRelease = p.vcaRelease.load(std::memory_order_relaxed) * 0.001f;
-        const float programRelease = reduction > 0.1f ? std::max(0.008f, reduction / 120.0f) : 0.008f;
-        const float blend = std::clamp((userRelease - 0.01f) / 0.5f, 0.0f, 1.0f);
-        const float release = programRelease * (1.0f - blend) + userRelease * blend;
-        const float target = decibelsToGain(-reduction);
-        const float attackCoeff = std::exp(-1.0f / (std::max(1.0e-6f, attack) * sr));
-        if (target < d.envelope)
-        {
-            d.envelope = target + (d.envelope - target) * attackCoeff;
-            if (attack < 0.005f && reduction > 5.0f)
-                d.overshoot = std::clamp((0.005f - attack) / 0.004f, 0.0f, 1.0f) * std::clamp(reduction / 20.0f, 0.0f, 1.0f) * 0.02f;
-            else d.overshoot *= 0.95f;
-        }
-        else
-        {
-            const float currentDb = gainToDecibels(std::max(d.envelope, 0.0001f));
-            const float rate = reduction > 0.1f ? reduction / std::max(0.001f, release) : 120.0f;
-            d.envelope = decibelsToGain(std::min(currentDb + rate / sr, 0.0f));
-            d.overshoot *= 0.98f;
-        }
-        d.envelope = std::clamp(d.envelope, 0.0001f, 1.0f);
-        const float envelope = std::clamp(d.envelope * (1.0f + d.overshoot), 0.0001f, 1.0f);
-        const float compressed = input * envelope;
-        float out = compressed;
-        if (std::abs(out) > 0.01f)
-        {
-            const float h2 = (d.dc + compressed * compressed - d.prevSq) / (1.0f + kDuskTwoPi * 10.0f / sr);
-            d.dc = h2; d.prevSq = compressed * compressed;
-            const float factor = reduction > 2.0f ? std::min(1.0f, reduction / 30.0f) : 0.0f;
-            out += h2 * (0.0003f + 0.001f * factor) + compressed * compressed * compressed * (0.0006f + (reduction > 10.0f ? 0.0008f * factor : 0.0f));
-            if (std::abs(out) > 1.5f) out = std::copysign(1.5f + std::tanh((std::abs(out) - 1.5f) * 0.3f) * 0.2f, out);
-        }
-        return std::clamp(out * decibelsToGain(p.vcaOutput.load(std::memory_order_relaxed)), -2.0f, 2.0f);
+        // THRESHOLD reads in dB and the measured onset for a sine sits 0.26 dB
+        // above the knob text (knee fit -26.742 dBFS for '-27.0'); the RMS of a
+        // full-scale sine is 3.01 dB below its peak, and our own fixed-tau onset
+        // read 0.03 dB low, hence +0.29 on top of the RMS-vs-peak offset.
+        const float thresholdDb = p.vcaThreshold.load(std::memory_order_relaxed) - 3.0103f + 0.29f;
+        // COMPRESSION is a knob position; the applied ratio comes from the
+        // measured law (INF at the stop). Hard knee to within the measured
+        // 0.2 dB soft region.
+        const float slope = dbx160::compressSlope(p.vcaRatio.load(std::memory_order_relaxed));
+        const float rawDetectorDb = gainToDecibels(std::max(level, 1.0e-9f));
+        // The calibration campaign specifies sine levels in peak dBFS, while
+        // the RMS detector is 3.0103 dB lower. Select the measured correction
+        // in the campaign's domain, then apply it to the detector's dB value.
+        const float detectorDb = rawDetectorDb
+            + dbx160::detectorCorrectionDb(rawDetectorDb + 3.0103f);
+        const float over = detectorDb - thresholdDb;
+        const float reduction = over > 0.0f ? std::min(over * (1.0f - slope), 60.0f) : 0.0f;
+        // The reference adds no even-order or fifth harmonic at all (H2/H4 at
+        // the numerical floor across the 100-cell static grid) and its H3
+        // (~-69 dBc) is what this detector's own 2 kHz ripple imposes on a
+        // 1 kHz carrier, so the gain is applied clean.
+        d.envelope = decibelsToGain(-reduction);
+        return std::clamp(input * d.envelope * decibelsToGain(p.vcaOutput.load(std::memory_order_relaxed)),
+                          -2.0f, 2.0f);
     }
 
     float busFeedbackRect(BusState& d, int ch, float sr) noexcept

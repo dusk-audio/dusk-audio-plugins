@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <memory>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -70,6 +71,12 @@ struct MultiCompDSPTestAccess
     {
         return MultiCompDSP::advanceFetStartupBlend(
             activeSamples, fullCorrectionSamples, correctionEndSamples);
+    }
+
+    static float advanceDbxSidechainTilt(MultiCompDSP& dsp, int channel,
+                                         float sample) noexcept
+    {
+        return dsp.sidechainTilt[static_cast<size_t>(channel)].process(sample);
     }
 };
 }
@@ -2943,7 +2950,7 @@ void configureStrongCompression(MultiCompDSP& dsp, int mode)
             break;
         case duskaudio::MultiCompMode::VCA:
             dsp.setParameter(MultiCompDSP::Parameter::VcaThreshold, -30.0f);
-            dsp.setParameter(MultiCompDSP::Parameter::VcaRatio, 10.0f);
+            dsp.setParameter(MultiCompDSP::Parameter::VcaRatio, 90.0f);   // knob position: ~16:1
             dsp.setParameter(MultiCompDSP::Parameter::VcaAttack, 0.1f);
             dsp.setParameter(MultiCompDSP::Parameter::VcaRelease, 50.0f);
             break;
@@ -3841,8 +3848,11 @@ void testGoldenVectors()
     // commercial-hardware data, and its old recorded values describe
     // superseded behaviour. Do not restore them or use them to judge the new
     // implementation: the hardware reference is the only Opto oracle.
+    // VCA left 2026-09-01 for the same reason: it is being rebuilt against
+    // the measured UAD dbx 160 (reference_comparison_dbx160 campaign), whose
+    // static and control laws already differ from the JUCE implementation.
     constexpr duskaudio::MultiCompMode modes[] = {
-        duskaudio::MultiCompMode::FET, duskaudio::MultiCompMode::VCA,
+        duskaudio::MultiCompMode::FET,
         duskaudio::MultiCompMode::Bus, duskaudio::MultiCompMode::StudioFET,
         duskaudio::MultiCompMode::StudioVCA, duskaudio::MultiCompMode::Digital,
         duskaudio::MultiCompMode::Multiband};
@@ -3910,11 +3920,11 @@ void testGoldenVectors()
     // The six neighbouring mode values remain the original regression oracles
     // and must stay byte-identical across any vintage-FET change. They did:
     // only mode=1 moved at any point in this wave.
-    constexpr float expectedRms[] = {0.043111119f, 0.162082925f, 0.269918233f,
+    constexpr float expectedRms[] = {0.043111119f, 0.269918233f,
                                      0.618480802f, 0.195874527f, 0.173109755f, 0.212109938f};
-    constexpr float expectedPeak[] = {0.593543887f, 0.350156724f, 0.797850311f,
+    constexpr float expectedPeak[] = {0.593543887f, 0.797850311f,
                                       1.836098075f, 0.657691538f, 0.349556237f, 0.815853894f};
-    std::puts("golden vectors: seven non-Opto modes, deterministic step/sine-burst RMS peak");
+    std::puts("golden vectors: six JUCE-oracle modes, deterministic step/sine-burst RMS peak");
     for (size_t vectorIndex = 0; vectorIndex < std::size(modes); ++vectorIndex)
     {
         const int mode = static_cast<int>(modes[vectorIndex]);
@@ -8771,6 +8781,308 @@ void testFetLowFrequencyColourSurface()
             "vintage FET low-frequency colour matches the measured reference across the reduction axis");
 }
 
+// The VCA mode's PULL/SC switch engages the measured dbx 160 sidechain tilt:
+// |H(f)| = sqrt(f / 276 Hz). Check the filter alone against that ideal at
+// 48 kHz, then that VCA mode actually routes a non-zero SC HP setting through
+// it (more reduction on a 3 kHz tone than on a 60 Hz tone at equal level,
+// the opposite of the other modes' high-pass which only ever removes lows).
+void testDbxSidechainTilt()
+{
+    duskaudio::dbx160::SidechainTilt tilt;
+    tilt.prepare(48000.0);
+    float worst = 0.0f;
+    for (const auto& point : duskaudio::dbx160::kSidechainTiltMeasured)
+    {
+        tilt.reset();
+        const int settle = 48000, measure = 48000;
+        double sumSq = 0.0;
+        for (int i = 0; i < settle + measure; ++i)
+        {
+            const float x = std::sin(2.0f * 3.14159265f * point.hz * static_cast<float>(i) / 48000.0f);
+            const float y = tilt.process(x);
+            if (i >= settle) sumSq += static_cast<double>(y) * y;
+        }
+        const double rms = std::sqrt(sumSq / measure);
+        const double gainDb = 20.0 * std::log10(rms / std::sqrt(0.5));
+        worst = std::max(worst, static_cast<float>(std::abs(gainDb - point.db)));
+        std::printf("  tilt %6.0f Hz: %+.3f dB (measured %+.2f)\n", point.hz, gainDb, point.db);
+    }
+    require(worst < 0.40f, "dbx sidechain tilt matches the measured reference response within 0.40 dB from 40 Hz to 20 kHz");
+
+    auto reductionAt = [](float freq, float sidechainHp) {
+        MultiCompDSP dsp;
+        dsp.prepare(48000.0, 512);
+        dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::VCA));
+        dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::VcaThreshold, -27.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::VcaRatio, 50.4944f);
+        dsp.setParameter(MultiCompDSP::Parameter::SidechainHP, sidechainHp);
+        std::array<float, 512> left{}, right{}, outLeft{}, outRight{};
+        const float* inputs[2] = {left.data(), right.data()};
+        float* outputs[2] = {outLeft.data(), outRight.data()};
+        double inSq = 0.0, outSq = 0.0;
+        for (int block = 0; block < 400; ++block)
+        {
+            for (int i = 0; i < 512; ++i)
+            {
+                const float x = 0.25f * std::sin(2.0f * 3.14159265f * freq * static_cast<float>(block * 512 + i) / 48000.0f);
+                left[static_cast<size_t>(i)] = x; right[static_cast<size_t>(i)] = x;
+                if (block >= 300) inSq += static_cast<double>(x) * x;
+            }
+            dsp.processBlock(inputs, outputs, 2, 512);
+            if (block >= 300)
+                for (int i = 0; i < 512; ++i) outSq += static_cast<double>(outLeft[static_cast<size_t>(i)]) * outLeft[static_cast<size_t>(i)];
+        }
+        return 10.0 * std::log10(inSq / std::max(outSq, 1e-30));
+    };
+    const double lowOff = reductionAt(60.0f, 0.0f), lowOn = reductionAt(60.0f, 500.0f);
+    const double highOff = reductionAt(3000.0f, 0.0f), highOn = reductionAt(3000.0f, 500.0f);
+    std::printf("  VCA SC switch: 60 Hz %.2f -> %.2f dB, 3 kHz %.2f -> %.2f dB\n", lowOff, lowOn, highOff, highOn);
+    require(std::abs(lowOff - highOff) < 0.3, "VCA detector is flat with the switch out");
+    require(lowOn < lowOff - 3.0 && highOn > highOff + 3.0,
+            "VCA PULL/SC engages a tilt: less reduction at 60 Hz, more at 3 kHz");
+    std::puts("dbx sidechain tilt: response and VCA routing verified");
+}
+
+void testDbxSidechainTiltEngagementLifecycle()
+{
+    constexpr int blockSize = 64;
+    const auto configure = [](MultiCompDSP& dsp) {
+        dsp.prepare(48000.0, blockSize);
+        dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::VCA));
+        dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::SidechainHP, 500.0f);
+    };
+    const auto processConstant = [](MultiCompDSP& dsp, float value) {
+        std::array<float, blockSize> input{}, output{};
+        input.fill(value);
+        const float* inputs[] = {input.data()};
+        float* outputs[] = {output.data()};
+        dsp.processBlock(inputs, outputs, 1, blockSize);
+    };
+
+    MultiCompDSP switched;
+    configure(switched);
+    for (int block = 0; block < 20; ++block) processConstant(switched, 1.0f);
+    switched.setParameter(MultiCompDSP::Parameter::SidechainHP, 0.0f);
+    processConstant(switched, 0.0f);
+    switched.setParameter(MultiCompDSP::Parameter::SidechainHP, 500.0f);
+    processConstant(switched, 0.0f);
+    const float reenabledResidual = duskaudio::MultiCompDSPTestAccess::
+        advanceDbxSidechainTilt(switched, 0, 0.0f);
+
+    MultiCompDSP oneEnabledBlock, continuouslyEnabled;
+    configure(oneEnabledBlock);
+    configure(continuouslyEnabled);
+    processConstant(oneEnabledBlock, 1.0f);
+    processConstant(continuouslyEnabled, 1.0f);
+    processConstant(continuouslyEnabled, 1.0f);
+    const float oneBlockResidual = duskaudio::MultiCompDSPTestAccess::
+        advanceDbxSidechainTilt(oneEnabledBlock, 0, 0.0f);
+    const float continuousResidual = duskaudio::MultiCompDSPTestAccess::
+        advanceDbxSidechainTilt(continuouslyEnabled, 0, 0.0f);
+
+    std::printf("dbx tilt lifecycle: off->on residual %.9g; one/continuous block "
+                "residual %.9g/%.9g\n",
+                static_cast<double>(reenabledResidual),
+                static_cast<double>(oneBlockResidual),
+                static_cast<double>(continuousResidual));
+    require(reenabledResidual == 0.0f
+                && std::abs(continuousResidual - oneBlockResidual) > 1.0e-6f,
+            "VCA sidechain tilt resets only when its switch becomes engaged");
+}
+
+// VCA / dbx 160 parity gate. Every expected number below was measured on the
+// installed UAD dbx 160 (reference_comparison_dbx160 campaign, 2026-09-01)
+// with the same stimuli rendered in process here: steady 1 kHz tones for the
+// static law at the default threshold (-27 dB) and 4:1 position, a pedestal
+// step for the attack/release timing, and an equal-RMS sine/burst/noise
+// triplet for the detector's crest response. Tolerances sit just outside the
+// campaign's achieved residuals so a regression, not the reference, fails.
+void testVcaDbxParityGates()
+{
+    constexpr int kRate = 48000, kBlock = 512;
+    constexpr float kCompress4to1 = 50.4944f;
+    auto makeDspAt = [&](float compression, float threshold) {
+        auto dsp = std::make_unique<MultiCompDSP>();
+        dsp->prepare(kRate, kBlock);
+        dsp->setMode(static_cast<int>(duskaudio::MultiCompMode::VCA));
+        dsp->setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+        dsp->setParameter(MultiCompDSP::Parameter::VcaThreshold, threshold);
+        dsp->setParameter(MultiCompDSP::Parameter::VcaRatio, compression);
+        dsp->setParameter(MultiCompDSP::Parameter::VcaOutput, 0.0f);
+        return dsp;
+    };
+    // Renders `signal` (mono, duplicated to both channels) and returns the
+    // left output. GR is always taken against the 1:1 render of the same
+    // signal, so any output-stage constant cancels exactly as in the campaign.
+    auto renderWithAt = [&](const std::vector<float>& signal, float compression,
+                            float threshold) {
+        auto dsp = makeDspAt(compression, threshold);
+        std::vector<float> out(signal.size(), 0.0f);
+        std::array<float, kBlock> l{}, r{}, ol{}, orr{};
+        const float* inputs[2] = {l.data(), r.data()};
+        float* outputs[2] = {ol.data(), orr.data()};
+        for (size_t start = 0; start < signal.size(); start += kBlock)
+        {
+            const size_t n = std::min<size_t>(kBlock, signal.size() - start);
+            for (size_t i = 0; i < n; ++i) { l[i] = r[i] = signal[start + i]; }
+            for (size_t i = n; i < kBlock; ++i) { l[i] = r[i] = 0.0f; }
+            dsp->processBlock(inputs, outputs, 2, static_cast<int>(n));
+            for (size_t i = 0; i < n; ++i) out[start + i] = ol[i];
+        }
+        return out;
+    };
+    auto renderWith = [&](const std::vector<float>& signal, float compression) {
+        return renderWithAt(signal, compression, -27.0f);
+    };
+    auto rmsDb = [](const std::vector<float>& x, size_t from, size_t to) {
+        double sum = 0.0;
+        for (size_t i = from; i < to; ++i) sum += static_cast<double>(x[i]) * x[i];
+        return 10.0 * std::log10(std::max(sum / static_cast<double>(to - from), 1e-30));
+    };
+    auto tone = [&](float dbfs, float seconds) {
+        std::vector<float> s(static_cast<size_t>(kRate * seconds));
+        const float a = std::pow(10.0f, dbfs / 20.0f);
+        for (size_t i = 0; i < s.size(); ++i) s[i] = a * std::sin(2.0f * 3.14159265f * 1000.0f * static_cast<float>(i) / kRate);
+        return s;
+    };
+
+    // Static law at the default threshold, 4:1: reference GR 2.08 / 11.38 /
+    // 15.94 dB at -24 / -12 / -6 dBFS (probe_static.py); campaign residuals
+    // were within 0.2 dB.
+    {
+        const float expected[3] = {2.08f, 11.38f, 15.94f};
+        const float levels[3] = {-24.0f, -12.0f, -6.0f};
+        for (int i = 0; i < 3; ++i)
+        {
+            const auto sig = tone(levels[i], 4.0f);
+            const auto unity = renderWith(sig, 0.0f), comp = renderWith(sig, kCompress4to1);
+            const size_t from = static_cast<size_t>(3.0f * kRate), to = sig.size();
+            const double gr = rmsDb(unity, from, to) - rmsDb(comp, from, to);
+            std::printf("  dbx static %+.0f dBFS: GR %.3f dB (reference %.2f)\n", levels[i], gr, expected[i]);
+            require(std::abs(gr - expected[i]) < 0.35, "VCA static law matches the dbx 160 within 0.35 dB at the default threshold");
+        }
+    }
+    // Dense sweeps found that the reference's ratio-normalised residual is a
+    // function of absolute detector level, shared by threshold and ratio. The
+    // three 4:1 rows establish the curve; the shallow Inf rows are held-out
+    // ratio checks. The final three Inf rows guard the directly measured stop
+    // slope at deep reduction across three thresholds. These are steady-state
+    // 1 kHz GR readings from the installed AU.
+    {
+        struct Anchor { float threshold, input, compression, referenceGr; };
+        constexpr std::array<Anchor, 9> anchors{{
+            {-55.0f, -48.0f, kCompress4to1, 4.56290f},
+            {-41.25f, -40.0f, kCompress4to1, 0.14449f},
+            {-27.0f, -20.0f, kCompress4to1, 5.22218f},
+            {-55.0f, -48.0f, 100.0f, 6.06796f},
+            {-41.25f, -40.0f, 100.0f, 0.19214f},
+            {-27.0f, -20.0f, 100.0f, 6.94471f},
+            {-55.0f, -6.0f, 100.0f, 49.47814f},
+            {-41.25f, -6.0f, 100.0f, 35.59174f},
+            {-27.0f, -6.0f, 100.0f, 21.20189f},
+        }};
+        double worst = 0.0;
+        for (const auto& anchor : anchors)
+        {
+            const auto sig = tone(anchor.input, 4.0f);
+            const auto unity = renderWithAt(sig, 0.0f, anchor.threshold);
+            const auto comp = renderWithAt(sig, anchor.compression, anchor.threshold);
+            const size_t from = static_cast<size_t>(3.0f * kRate), to = sig.size();
+            const double gr = rmsDb(unity, from, to) - rmsDb(comp, from, to);
+            const double error = gr - anchor.referenceGr;
+            worst = std::max(worst, std::abs(error));
+            std::printf("  dbx detector %+.2f thresh, %+.0f input, %.0f%%: "
+                        "GR %.3f dB (reference %.3f, delta %+.3f)\n",
+                        static_cast<double>(anchor.threshold),
+                        static_cast<double>(anchor.input),
+                        static_cast<double>(anchor.compression), gr,
+                        static_cast<double>(anchor.referenceGr), error);
+        }
+        require(worst < 0.08,
+                "VCA detector calibration and stop slope match shallow/deep dbx anchors");
+    }
+    // The original law measured every 5 %, so changing the Inf endpoint also
+    // changes its unmeasured 95-100 % interpolation. A direct held-out 97.5 %
+    // capture closes that gap rather than assuming the endpoint improvement
+    // preserves the interval between the last two anchors.
+    {
+        const auto sig = tone(-6.0f, 4.0f);
+        const auto unity = renderWithAt(sig, 0.0f, -27.0f);
+        const auto comp = renderWithAt(sig, 97.5f, -27.0f);
+        const size_t from = static_cast<size_t>(3.0f * kRate), to = sig.size();
+        const double gr = rmsDb(unity, from, to) - rmsDb(comp, from, to);
+        constexpr double referenceGr = 20.71833;
+        const double error = gr - referenceGr;
+        std::printf("  dbx detector -27.00 thresh, -6 input, 97.5%%: "
+                    "GR %.3f dB (reference %.3f, delta %+.3f)\n",
+                    gr, referenceGr, error);
+        require(std::abs(error) < 0.02,
+                "VCA stop-law interpolation matches the held-out 97.5-percent anchor");
+    }
+    // Step response: -40 dBFS pedestal to -12 dBFS at 1 s, back at 2 s.
+    // Reference attack t63 12 ms, release t37 75 ms (probe_dynamics.py);
+    // the model reproduces them within 1 ms.
+    {
+        std::vector<float> sig(static_cast<size_t>(kRate * 4));
+        for (size_t i = 0; i < sig.size(); ++i)
+        {
+            const float t = static_cast<float>(i) / kRate;
+            const float a = (t >= 1.0f && t < 2.0f) ? std::pow(10.0f, -12.0f / 20.0f) : std::pow(10.0f, -40.0f / 20.0f);
+            sig[i] = a * std::sin(2.0f * 3.14159265f * 1000.0f * static_cast<float>(i) / kRate);
+        }
+        const auto unity = renderWith(sig, 0.0f), comp = renderWith(sig, kCompress4to1);
+        auto grAt = [&](float seconds) {
+            const size_t c = static_cast<size_t>(seconds * kRate);
+            return rmsDb(unity, c, c + 48) - rmsDb(comp, c, c + 48);
+        };
+        const double settled = grAt(1.9f);
+        double t63 = -1.0, t37 = -1.0;
+        for (int ms = 0; ms < 400 && t63 < 0.0; ++ms)
+            if (grAt(1.0f + ms * 0.001f) >= 0.63 * settled) t63 = ms;
+        for (int ms = 0; ms < 800 && t37 < 0.0; ++ms)
+            if (grAt(2.0f + ms * 0.001f) <= 0.37 * settled) t37 = ms;
+        std::printf("  dbx step: settled %.2f dB, attack t63 %.0f ms (reference 12), release t37 %.0f ms (reference 75)\n", settled, t63, t37);
+        require(std::abs(settled - 11.38) < 0.35, "VCA step settles at the reference GR");
+        require(std::abs(t63 - 12.0) <= 3.0 && std::abs(t37 - 75.0) <= 6.0,
+                "VCA attack/release timing matches the dbx 160 RMS integrator");
+    }
+    // Crest triplet at -20 dBFS RMS: the reference reads sine, 10 % duty
+    // bursts and noise within 0.05 dB of each other (7.56 / 7.60 / 7.57).
+    {
+        const size_t n = static_cast<size_t>(kRate * 4);
+        const float rms = std::pow(10.0f, -20.0f / 20.0f);
+        std::vector<float> sine(n), burst(n), noise(n);
+        uint32_t seed = 160u;
+        double burstSq = 0.0, noiseSq = 0.0;
+        for (size_t i = 0; i < n; ++i)
+        {
+            const float t = static_cast<float>(i) / kRate;
+            const float carrier = std::sin(2.0f * 3.14159265f * 1000.0f * t);
+            sine[i] = std::sqrt(2.0f) * rms * carrier;
+            burst[i] = (std::fmod(t * 50.0f, 1.0f) < 0.10f) ? carrier : 0.0f;
+            seed = seed * 1664525u + 1013904223u;
+            noise[i] = (static_cast<float>(seed >> 8) / 16777216.0f) * 2.0f - 1.0f;
+            burstSq += static_cast<double>(burst[i]) * burst[i]; noiseSq += static_cast<double>(noise[i]) * noise[i];
+        }
+        const float burstGain = rms / static_cast<float>(std::sqrt(burstSq / n)), noiseGain = rms / static_cast<float>(std::sqrt(noiseSq / n));
+        for (size_t i = 0; i < n; ++i) { burst[i] *= burstGain; noise[i] *= noiseGain; }
+        double gr[3];
+        int k = 0;
+        for (const auto* sig : {&sine, &burst, &noise})
+        {
+            const auto unity = renderWith(*sig, 0.0f), comp = renderWith(*sig, kCompress4to1);
+            const size_t from = static_cast<size_t>(3.0f * kRate);
+            gr[k++] = rmsDb(unity, from, n) - rmsDb(comp, from, n);
+        }
+        std::printf("  dbx crest: sine %.2f burst %.2f noise %.2f dB\n", gr[0], gr[1], gr[2]);
+        require(std::abs(gr[1] - gr[0]) < 0.4 && std::abs(gr[2] - gr[0]) < 0.4,
+                "VCA detector is RMS: gated bursts and noise read within 0.4 dB of a sine at equal RMS");
+    }
+    std::puts("dbx 160 parity gates: static law, step timing, crest response");
+}
+
 void testPublishedGainReductionRange()
 {
     MultiCompDSP dsp;
@@ -9089,6 +9401,9 @@ int main(int argc, char** argv)
     testOptoMeasuredGainTaper();
     testOptoMeasuredOutputCeiling();
     testOptoDriveApplicability();
+    testDbxSidechainTilt();
+    testDbxSidechainTiltEngagementLifecycle();
+    testVcaDbxParityGates();
     testGoldenVectors();
     reportOptoPedestalEventGrid();
     testOptoPedestalEventHarnessInvariants();

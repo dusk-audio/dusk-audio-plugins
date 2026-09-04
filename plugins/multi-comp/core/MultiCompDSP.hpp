@@ -4,6 +4,7 @@
 
 #include "MultiCompModes.hpp"
 #include "MultiCompParams.hpp"
+#include "MultiCompDbxLaw.hpp"
 #include "MultiCompAutoGain.hpp"
 #include "MultiCompHelpers.hpp"
 #include "../../shared-daf/dsp/DuskCrossover.hpp"
@@ -130,6 +131,9 @@ private:
     MultiCompAntiAliasing optoLinkedDetectorOversampler;
     MultiCompTruePeakDetector truePeakDetector;
     std::array<MultiCompSidechainFilter, kMaxChannels> sidechainFilters;
+    std::array<dbx160::SidechainTilt, kMaxChannels> sidechainTilt;
+    bool lastDbxSidechainTilt = false;   // which sidechain filter ran last block
+    bool lastDbxSidechainTiltEngaged = false;
     std::array<MultiCompSidechainEQ, kMaxChannels> sidechainEQ;
 
     std::array<DuskCrossover, kMaxChannels> crossover1, crossover2, crossover3;

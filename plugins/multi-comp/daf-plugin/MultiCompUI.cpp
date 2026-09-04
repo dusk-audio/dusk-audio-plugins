@@ -4,6 +4,7 @@
 
 #include "MultiCompParams.hpp"
 #include "MultiCompProgramPresets.hpp"
+#include "../core/MultiCompDbxLaw.hpp"
 
 #include <algorithm>
 #include <array>
@@ -11,6 +12,7 @@
 #include <cfloat>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 
 namespace multicompp::ui_detail
 {
@@ -33,13 +35,71 @@ inline constexpr float optoFaceplateAspect() noexcept
         / (OptoFaceplateLayout::bottom - OptoFaceplateLayout::top);
 }
 
+// The VCA face shares the rack-height canvas with the Opto and FET faces
+// (1120 x 310). The dbx 160's own ~2.5:1 proportions were tried on the tall
+// canvas (2026-09-01) and abandoned: the AU wrapper's resize path leaves the
+// GL view at half size / the host keeps the old window (#240), so a mode
+// whose canvas differs from the opening size shows up shrunken in Logic.
+struct VcaFaceplateLayout
+{
+    static constexpr float left = 0.0f;
+    static constexpr float right = 1120.0f;
+    static constexpr float top = 344.0f;
+    static constexpr float bottom = 654.0f;
+};
+
+inline constexpr float vcaFaceplateAspect() noexcept
+{
+    return (VcaFaceplateLayout::right - VcaFaceplateLayout::left)
+        / (VcaFaceplateLayout::bottom - VcaFaceplateLayout::top);
+}
+
 inline float designHeightForMode(float hostValue) noexcept
 {
-    // Opto and vintage FET are single rack faces and use the same compact
-    // canvas. The modern modes still need the original tall control surface;
-    // keeping the decision here gives fractional host automation the same
-    // rounding rule as the DSP and mode picker.
-    return choiceIndex(hostValue, 8) <= 1 ? 380.0f : 486.0f;
+    // Opto, vintage FET and VCA are hardware faces on the compact canvas; the
+    // modern modes still need the original tall control surface. Keeping the
+    // decision here gives fractional host automation the same rounding rule
+    // as the DSP and mode picker.
+    return choiceIndex(hostValue, 8) <= 2 ? 380.0f : 486.0f;
+}
+
+// dbx-style threshold lamps: BELOW lights while the programme sits under the
+// threshold, ABOVE from the threshold up. One boolean keeps the pair mutually
+// exclusive by construction.
+inline bool vcaSignalAboveThreshold(float inputDb, float thresholdDb) noexcept
+{
+    if (!std::isfinite(inputDb) || !std::isfinite(thresholdDb)) return false;
+    return inputDb >= thresholdDb;
+}
+
+// The VCA face's meter selector is display-only hardware behaviour (matching
+// the reference unit's INPUT / OUTPUT / GAIN CHANGE buttons), so it is UI
+// state, not a host parameter.
+inline constexpr int kVcaMeterSourceCount = 3;
+
+inline const char* vcaMeterSourceLabel(int source) noexcept
+{
+    switch (source)
+    {
+        case 0: return "INPUT";
+        case 1: return "OUTPUT";
+        default: return "GAIN CHANGE";
+    }
+}
+
+inline float vcaSidechainSwitchTarget(bool currentlyEngaged,
+                                      float currentHostValue,
+                                      float& lastEngagedHostValue,
+                                      float minimumHostValue,
+                                      float maximumHostValue) noexcept
+{
+    if (currentlyEngaged)
+    {
+        lastEngagedHostValue = std::clamp(
+            currentHostValue, minimumHostValue, maximumHostValue);
+        return minimumHostValue;
+    }
+    return std::clamp(lastEngagedHostValue, minimumHostValue, maximumHostValue);
 }
 
 inline float optoMeterNeedleAngle(float gainReductionDb) noexcept
@@ -167,6 +227,7 @@ inline void refreshParameterMirror(std::array<float, N>& values,
 #include "MultiCompVersion.hpp"
 #include "DuskImGuiFont.hpp"
 #include "DuskImGuiWidgets.hpp"
+#include "DuskVuMeter.hpp"
 #include "DuskSupportersOverlay.hpp"
 #include "DuskUserPresetStore.hpp"
 
@@ -209,6 +270,8 @@ constexpr ImU32 kHeaderGreen = IM_COL32(76, 103, 48, 255);
 constexpr ImU32 kHeaderGreenDark = IM_COL32(39, 57, 24, 255);
 constexpr ImU32 kOptoInk = IM_COL32(31, 32, 31, 255);
 constexpr ImU32 kOptoRed = IM_COL32(151, 25, 31, 255);
+constexpr ImU32 kVcaInk = IM_COL32(228, 229, 224, 255);
+constexpr ImU32 kVcaInkDim = IM_COL32(168, 170, 166, 255);
 constexpr ImU32 kBandColors[4] = {
     IM_COL32(92, 165, 235, 255), IM_COL32(92, 205, 150, 255),
     IM_COL32(232, 185, 74, 255), IM_COL32(224, 100, 93, 255)
@@ -415,6 +478,12 @@ private:
     duskdaf::DuskPanel panel;
     ImDrawListSplitter optoKnobSplitter;
     ImDrawListSplitter fetKnobSplitter;
+    ImDrawListSplitter vcaKnobSplitter;
+    // Display-only hardware behaviour (reference INPUT/OUTPUT/GAIN CHANGE
+    // buttons): UI state, deliberately not a host parameter.
+    int vcaMeterSource = 2;
+    float vcaVuNeedle = 0.0f;
+    float vcaLastScHp = 1.0f;
     duskdaf::CrispFontSet fontSet;
     ImFont* labelFont = nullptr;
     duskdaf::SupportersOverlay supporters;
@@ -1090,6 +1159,18 @@ private:
         return static_cast<MultiCompUI*>(context)->hostValueForPlain(p, plain);
     }
 
+    static float vcaCompressionHostToRatio(float host, uint32_t p, void* context)
+    {
+        const float position = static_cast<MultiCompUI*>(context)->plainValueForHost(p, host);
+        return duskaudio::dbx160::compressRatio(position);
+    }
+
+    static float vcaCompressionRatioToHost(float ratio, uint32_t p, void* context)
+    {
+        const float position = duskaudio::dbx160::compressPosition(ratio);
+        return static_cast<MultiCompUI*>(context)->hostValueForPlain(p, position);
+    }
+
     static float fetTimingHostToDial(float host, uint32_t p, void*)
     {
         return multicompp::ui_detail::fetTimingDialValue(host, p);
@@ -1105,9 +1186,9 @@ private:
         const int mode = multicompp::ui_detail::choiceIndex(value(P_MODE), 8);
         drawSection(dl, kModeCanvasTop, kModeCanvasBottom - 8, "");
         drawModeToolbar(dl);
-        if (mode == 0 || mode == 1)
+        if (mode == 0 || mode == 1 || mode == 2)
         {
-            // Opto and vintage FET own panel-integrated analogue GR meters.
+            // Opto, vintage FET, and VCA own panel-integrated analogue meters.
         }
         else if (mode == 7)
             drawMeter(dl, 1062, kModeCanvasTop + 42, 42, 92, meter(kMeterMaster), kAccent, "MASTER GR");
@@ -1924,16 +2005,474 @@ private:
         }
     }
 
+    // Silkscreen lettering with letter-spacing, which ImGui text lacks: each
+    // glyph is placed by its own advance plus a tracking gap. align: -1 left,
+    // 0 centred, 1 right.
+    void spacedText(ImDrawList* dl, float x, float y, float size, ImU32 col,
+                    const char* text, int align, float tracking = 0.16f)
+    {
+        const float s = panel.scale();
+        const float px = size * s;
+        ImFont* font = panel.pickFont(px);
+        const float gap = tracking * px;
+        float total = 0.0f;
+        for (const char* c = text; *c; ++c)
+            total += font->CalcTextSizeA(px, FLT_MAX, 0.0f, c, c + 1).x + (c[1] ? gap : 0.0f);
+        ImVec2 pos = panel.P(x, y);
+        if (align == 0) pos.x -= 0.5f * total;
+        if (align == 1) pos.x -= total;
+        pos.x = std::floor(pos.x + 0.5f);
+        pos.y = std::floor(pos.y + 0.5f);
+        for (const char* c = text; *c; ++c)
+        {
+            dl->AddText(font, px, pos, col, c, c + 1);
+            pos.x += font->CalcTextSizeA(px, FLT_MAX, 0.0f, c, c + 1).x + gap;
+        }
+    }
+
     void drawVca(ImDrawList* dl)
     {
-        knob(dl, "vca_thr", P_VCA_THRESHOLD, 170, 380, "THRESHOLD", "%.1f", " dB");
-        knob(dl, "vca_ratio", P_VCA_RATIO, 320, 380, "RATIO", "%.1f", ":1");
-        knob(dl, "vca_att", P_VCA_ATTACK, 470, 380, "ATTACK", "%.1f", " ms");
-        knob(dl, "vca_rel", P_VCA_RELEASE, 620, 380, "RELEASE", "%.0f", " ms");
-        knob(dl, "vca_out", P_VCA_OUT, 770, 380, "OUTPUT", "%.1f", " dB");
-        knob(dl, "vca_mix", P_MIX, 920, 380, "MIX", "%.0f", "%");
-        panel.toggle("vca_over", P_VCA_OVER_EASY, 860, 450, 1000, 476, values[P_VCA_OVER_EASY], "OVER EASY");
-        combo("vca_detector", P_VCA_DETECTOR, multicompp::kVcaDetector, 2, 670, 450, 170, "DETECTOR");
+        // dbx 160 face for the VCA mode, laid out from the reference panel's
+        // own proportions (x scaled 0.56, y scaled 0.52 from the 2000x802
+        // reference image onto the 1120x416 face). Only the reference's
+        // front-panel controls are drawn; attack, release, Over Easy and the
+        // detector selector have no dbx 160 equivalent and stay host-visible
+        // parameters without faceplate controls. No third-party marks.
+        using Layout = multicompp::ui_detail::VcaFaceplateLayout;
+        constexpr float left = Layout::left, right = Layout::right;
+        constexpr float top = Layout::top, bottom = Layout::bottom;
+        constexpr float cheek = 44.0f, rail = 16.0f;
+        const float s = panel.scale();
+        dl->AddRectFilled(panel.P(left + 5, top + 7), panel.P(right + 5, bottom + 7),
+                          IM_COL32(0, 0, 0, 150), 4.0f * s);
+        // Matte charcoal face with a faint speckle and a gentle vertical fall-off.
+        dl->AddRectFilledMultiColor(panel.P(left, top), panel.P(right, bottom),
+                                    IM_COL32(44, 44, 45, 255), IM_COL32(44, 44, 45, 255),
+                                    IM_COL32(24, 24, 25, 255), IM_COL32(26, 26, 27, 255));
+        {
+            uint32_t seed = 0x1600u;
+            for (int i = 0; i < 120; ++i)
+            {
+                seed = seed * 1664525u + 1013904223u;
+                const float px = left + cheek + static_cast<float>((seed >> 8) % 1032);
+                seed = seed * 1664525u + 1013904223u;
+                const float py = top + rail + static_cast<float>((seed >> 8) % 276);
+                dl->AddRectFilled(panel.P(px, py), panel.P(px + 1.2f, py + 1.2f),
+                                  (i & 3) ? IM_COL32(255, 255, 255, 9) : IM_COL32(0, 0, 0, 40));
+            }
+        }
+        // Brushed aluminium rails with a dark seam against the face.
+        for (const bool topRail : {true, false})
+        {
+            const float y0 = topRail ? top : bottom - rail;
+            const float y1 = topRail ? top + rail : bottom;
+            dl->AddRectFilledMultiColor(panel.P(left, y0), panel.P(right, y1),
+                                        IM_COL32(190, 192, 192, 255), IM_COL32(190, 192, 192, 255),
+                                        IM_COL32(118, 120, 120, 255), IM_COL32(118, 120, 120, 255));
+            for (int row = static_cast<int>(y0 + 1); row < static_cast<int>(y1); row += 2)
+                dl->AddLine(panel.P(left, static_cast<float>(row)), panel.P(right, static_cast<float>(row)),
+                            (row * 7) % 5 == 0 ? IM_COL32(255, 255, 255, 40) : IM_COL32(0, 0, 0, 28), s);
+            dl->AddLine(panel.P(left, topRail ? y1 : y0), panel.P(right, topRail ? y1 : y0),
+                        IM_COL32(6, 6, 6, 255), 1.6f * s);
+            dl->AddLine(panel.P(left, topRail ? y1 + 1.5f : y0 - 1.5f), panel.P(right, topRail ? y1 + 1.5f : y0 - 1.5f),
+                        IM_COL32(90, 90, 92, 120), s);
+        }
+        // Walnut cheeks: warm gradient, deterministic grain, a soft vignette
+        // towards the face, and a dark seam.
+        for (const bool leftCheek : {true, false})
+        {
+            const float x0 = leftCheek ? left : right - cheek;
+            const float x1 = leftCheek ? left + cheek : right;
+            dl->AddRectFilledMultiColor(panel.P(x0, top), panel.P(x1, bottom),
+                                        IM_COL32(128, 78, 40, 255), IM_COL32(112, 66, 32, 255),
+                                        IM_COL32(72, 40, 18, 255), IM_COL32(84, 48, 22, 255));
+            for (int grain = 0; grain < 14; ++grain)
+            {
+                const float gx = x0 + 2.5f + static_cast<float>(grain) * (cheek - 5.0f) / 13.0f;
+                const float wobble = 2.0f * std::sin(static_cast<float>(grain) * 1.9f);
+                dl->AddLine(panel.P(gx + wobble, top + 2.0f), panel.P(gx - wobble, bottom - 2.0f),
+                            grain % 3 == 0 ? IM_COL32(168, 108, 58, 80) : IM_COL32(34, 16, 4, 120), 1.1f * s);
+            }
+            dl->AddRectFilledMultiColor(panel.P(leftCheek ? x1 - 10.0f : x0, top), panel.P(leftCheek ? x1 : x0 + 10.0f, bottom),
+                                        leftCheek ? IM_COL32(0, 0, 0, 0) : IM_COL32(0, 0, 0, 90),
+                                        leftCheek ? IM_COL32(0, 0, 0, 90) : IM_COL32(0, 0, 0, 0),
+                                        leftCheek ? IM_COL32(0, 0, 0, 90) : IM_COL32(0, 0, 0, 0),
+                                        leftCheek ? IM_COL32(0, 0, 0, 0) : IM_COL32(0, 0, 0, 90));
+            dl->AddLine(panel.P(leftCheek ? x1 : x0, top), panel.P(leftCheek ? x1 : x0, bottom),
+                        IM_COL32(4, 3, 2, 255), 1.8f * s);
+        }
+        dl->AddRect(panel.P(left, top), panel.P(right, bottom), IM_COL32(18, 18, 18, 255), 4.0f * s, 0, 1.3f * s);
+
+        // Section titles.
+        spacedText(dl, 171, 368, 14.0f, kVcaInk, "THRESHOLD", 0);
+        spacedText(dl, 385, 368, 14.0f, kVcaInk, "COMPRESSION", 0);
+        spacedText(dl, 595, 360, 14.0f, kVcaInk, "OUTPUT", 0);
+        spacedText(dl, 595, 378, 14.0f, kVcaInk, "GAIN", 0);
+
+        // Threshold lamps: BELOW (amber) under threshold, ABOVE (red) at or
+        // over it, from the DSP's published input peak level; labels sit
+        // outboard of the lamps like the reference.
+        const float inputDb = levelMeterDb(false);
+        const float thresholdDb = plainValueForHost(P_VCA_THRESHOLD, values[P_VCA_THRESHOLD]);
+        const bool above = multicompp::ui_detail::vcaSignalAboveThreshold(inputDb, thresholdDb);
+        spacedText(dl, 110, 391, 9.5f, kVcaInk, "BELOW", 1);
+        vcaLamp(dl, 128, 397, !above, IM_COL32(240, 205, 70, 255), IM_COL32(240, 205, 70, 80));
+        vcaLamp(dl, 214, 397, above, IM_COL32(220, 62, 46, 255), IM_COL32(220, 62, 46, 80));
+        spacedText(dl, 232, 391, 9.5f, kVcaInk, "ABOVE", -1);
+
+        {
+            // The reference's ring artwork: 10 mV .. 3 V at the hardware's
+            // angles. Our threshold law follows the reference's knob positions,
+            // so the same angles are honest; the values passed are the dB the
+            // linear -55..0 law places at those angles (t = 0, .25, .40, .60,
+            // .75, 1). The read-out bubble keeps the real dB threshold.
+            constexpr std::array<float, 6> majors{{-55.0f, -41.25f, -33.0f, -22.0f, -13.75f, 0.0f}};
+            constexpr std::array<const char*, 6> labels{{"10 mV", "30 mV", "100 mV", "300 mV", "1 V", "3 V"}};
+            constexpr std::array<float, 4> minors{{-48.0f, -27.5f, -17.5f, -6.5f}};
+            vcaKnob(dl, "vca_thr", P_VCA_THRESHOLD, 171, 478, 34.0f,
+                    "THRESHOLD", "%.1f", " dB", majors.data(), labels.data(),
+                    static_cast<int>(majors.size()), minors.data(), static_cast<int>(minors.size()));
+        }
+        {
+            // Position knob; ring marks placed by the measured ratio law and the
+            // read-out shows the applied ratio (MultiCompDbxLaw.hpp).
+            constexpr std::array<float, 9> ratios{{1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f, 10.0f, 20.0f,
+                                                   std::numeric_limits<float>::infinity()}};
+            constexpr std::array<const char*, 9> labels{{"1", "1.5", "2", "3", "4", "6", "10", "20", "INF"}};
+            std::array<float, 9> majors{};
+            for (size_t i = 0; i < ratios.size(); ++i)
+                majors[i] = duskaudio::dbx160::compressPosition(ratios[i]);
+            vcaKnob(dl, "vca_ratio", P_VCA_RATIO, 385, 478, 42.0f,
+                    "COMPRESSION", "%.1f", ":1", majors.data(), labels.data(),
+                    static_cast<int>(majors.size()), nullptr, 0,
+                    &vcaCompressionHostToRatio, &vcaCompressionRatioToHost);
+        }
+        {
+            constexpr std::array<float, 5> majors{{-20.0f, -10.0f, 0.0f, 10.0f, 20.0f}};
+            constexpr std::array<const char*, 5> labels{{"-20", "-10", "0", "+10", "+20"}};
+            constexpr std::array<float, 4> minors{{-15.0f, -5.0f, 5.0f, 15.0f}};
+            vcaKnob(dl, "vca_out", P_VCA_OUT, 595, 478, 34.0f,
+                    "OUTPUT GAIN", "%.1f", " dB", majors.data(), labels.data(),
+                    static_cast<int>(majors.size()), minors.data(), static_cast<int>(minors.size()));
+        }
+        // PULL/SC: printed under the threshold knob like the reference; the
+        // switch itself takes the POWER button's place (global bypass covers
+        // power).
+        spacedText(dl, 171, 534, 9.5f, kVcaInk, "PULL/SC", 0);
+        vcaPullSwitch(dl, 171, 594);
+
+        drawVcaMeterButtons(dl, 355, 562);
+
+        // Meter: the reference's amber-lit window with blue scale, on the
+        // shared needle meter. One -40..+20 dB scale reads level (0 VU =
+        // -12 dBFS, fleet calibration) or gain change per the selected source.
+        static constexpr std::array<duskdaf::VuTick, 25> ticks{{
+            {-40.0f, "-40", true}, {-37.5f, nullptr, false}, {-35.0f, nullptr, false}, {-32.5f, nullptr, false},
+            {-30.0f, "-30", true}, {-27.5f, nullptr, false}, {-25.0f, nullptr, false}, {-22.5f, nullptr, false},
+            {-20.0f, "-20", true}, {-17.5f, nullptr, false}, {-15.0f, nullptr, false}, {-12.5f, nullptr, false},
+            {-10.0f, "-10", true}, {-7.5f, nullptr, false}, {-5.0f, nullptr, false}, {-2.5f, nullptr, false},
+            {0.0f, "0", true}, {2.5f, nullptr, false}, {5.0f, nullptr, false}, {7.5f, nullptr, false},
+            {10.0f, "+10", true}, {12.5f, nullptr, false}, {15.0f, nullptr, false}, {17.5f, nullptr, false},
+            {20.0f, "+20", true}}};
+        duskdaf::VuScaleConfig scale;
+        scale.ticks = ticks.data();
+        scale.tickCount = static_cast<int>(ticks.size());
+        scale.minDb = -40.0f;
+        scale.maxDb = 20.0f;
+        scale.redFromDb = 100.0f;
+        scale.legend = "DECIBELS";
+        scale.sublabel = multicompp::ui_detail::vcaMeterSourceLabel(vcaMeterSource);
+        duskdaf::VuStyle style;
+        style.bezelLight = IM_COL32(62, 62, 64, 255);
+        style.bezelDark = IM_COL32(26, 26, 28, 255);
+        style.bezelLine = IM_COL32(10, 10, 10, 255);
+        style.bezelInnerLine = IM_COL32(128, 128, 130, 255);
+        style.lip = IM_COL32(14, 14, 16, 255);
+        style.faceBase = IM_COL32(228, 176, 96, 255);
+        style.faceTopTint = IM_COL32(250, 212, 146, 70);
+        style.faceBottomTint = IM_COL32(190, 132, 60, 160);
+        style.faceGlow = 0;
+        style.ink = IM_COL32(44, 84, 168, 255);
+        style.hot = IM_COL32(44, 84, 168, 255);
+        style.minorTickColor = IM_COL32(44, 84, 168, 200);
+        style.sublabelColor = IM_COL32(120, 96, 60, 255);
+        style.needle = IM_COL32(20, 18, 14, 255);
+        style.overloadArc = false;
+        style.cornerMarks = false;
+        style.tickLabelSize = 10.5f;
+        style.legendSize = 12.0f;
+        style.sublabelSize = 8.0f;
+        style.pivotBelowFace = 34.0f;
+        style.sweepHalfAngleDeg = 46.0f;
+        style.majorTickLength = 8.0f;
+        style.minorTickLength = 5.0f;
+        style.legendOffset = 0.42f;
+        const float meterDb = vcaMeterSource == 0 ? inputDb + 12.0f
+                            : vcaMeterSource == 1 ? levelMeterDb(true) + 12.0f
+                            : meter(kMeterMaster);
+        duskdaf::drawVuMeter(panel, dl, 700, 364, 1046, 552, meterDb, vcaVuNeedle, scale,
+                             IM_COL32(40, 40, 42, 255), style);
+
+        // Badge under the meter: model name with the MIX trim between the
+        // words, and the function line beneath.
+        spacedText(dl, 800, 574, 26.0f, IM_COL32(240, 240, 236, 255), "VCA", 0, 0.02f);
+        spacedText(dl, 868, 566, 8.0f, kVcaInk, "MIX", 0);
+        vcaTrim(dl, "vca_mix", P_MIX, 868, 590, 7.5f, nullptr, "%.0f", "%");
+        spacedText(dl, 934, 574, 26.0f, IM_COL32(240, 240, 236, 255), "160", 0, 0.02f);
+        spacedText(dl, 866, 618, 11.0f, kVcaInk, "COMPRESSOR/LIMITER", 0, 0.12f);
+    }
+
+    void vcaPullSwitch(ImDrawList* dl, float x, float y)
+    {
+        const bool on = plainValueForHost(P_SC_HP, values[P_SC_HP]) >= 1.0f;   // same OFF rule as optoKnob
+        if (on) vcaLastScHp = values[P_SC_HP];
+        const ImVec2 p0 = panel.P(x - 40.0f, y - 16.0f);
+        const ImVec2 p1 = panel.P(x + 40.0f, y + 16.0f);
+        ImGui::SetCursorScreenPos(p0);
+        const bool clicked = ImGui::InvisibleButton("##vca_pull_sc", ImVec2(p1.x - p0.x, p1.y - p0.y));
+        const float s = panel.scale();
+        // Black bezel like the reference's push buttons, holding a sliding
+        // silver bar that sits right when the filter is in.
+        dl->AddRectFilled(panel.P(x - 40.0f, y - 15.0f), panel.P(x + 40.0f, y + 15.0f),
+                          IM_COL32(8, 8, 8, 255), 3.0f * s);
+        dl->AddRect(panel.P(x - 40.0f, y - 15.0f), panel.P(x + 40.0f, y + 15.0f),
+                    IM_COL32(60, 62, 60, 255), 3.0f * s, 0, s);
+        const float barX = on ? x + 17.0f : x - 17.0f;
+        dl->AddRectFilled(panel.P(barX - 16.0f + 1.5f, y - 9.0f + 2.0f), panel.P(barX + 16.0f + 1.5f, y + 9.0f + 2.0f),
+                          IM_COL32(0, 0, 0, 140), 2.5f * s);
+        dl->AddRectFilledMultiColor(panel.P(barX - 16.0f, y - 9.0f), panel.P(barX + 16.0f, y + 9.0f),
+                                    IM_COL32(222, 224, 222, 255), IM_COL32(222, 224, 222, 255),
+                                    IM_COL32(158, 160, 158, 255), IM_COL32(158, 160, 158, 255));
+        dl->AddLine(panel.P(barX - 14.0f, y - 7.5f), panel.P(barX + 14.0f, y - 7.5f), IM_COL32(250, 250, 250, 180), 1.2f * s);
+        dl->AddRect(panel.P(barX - 16.0f, y - 9.0f), panel.P(barX + 16.0f, y + 9.0f), IM_COL32(36, 37, 36, 255), 2.5f * s, 0, s);
+        if (ImGui::IsItemHovered())
+            dl->AddRectFilled(panel.P(x - 40.0f, y - 15.0f), panel.P(x + 40.0f, y + 15.0f), IM_COL32(255, 255, 255, 14), 3.0f * s);
+        spacedText(dl, x - 48.0f, y - 6.0f, 9.0f, on ? kVcaInkDim : kVcaInk, "OUT", 1);
+        spacedText(dl, x + 48.0f, y - 6.0f, 9.0f, on ? kVcaInk : kVcaInkDim, "IN", -1);
+        if (clicked)
+            setHostValue(P_SC_HP, multicompp::ui_detail::vcaSidechainSwitchTarget(
+                on, values[P_SC_HP], vcaLastScHp,
+                hostMinimum(P_SC_HP), hostMaximum(P_SC_HP)));
+    }
+
+    // Small set-screw trim (the reference's MIX control). Same gesture
+    // contract as fetTrimKnob; label optional (the badge prints its own).
+    void vcaTrim(ImDrawList* dl, const char* id, uint32_t p, float x, float y, float radius,
+                 const char* label, const char* format, const char* suffix)
+    {
+        vcaKnobSplitter.Split(dl, 2);
+        vcaKnobSplitter.SetCurrentChannel(dl, 1);
+        panel.knob(id, p, hostMinimum(p), hostMaximum(p), x, y, radius,
+                   values[p], hostDefaultValue(p), false, false, format, suffix,
+                   0, true, false, nullptr, false, 1.0f, 0.0f, label ? label : "MIX", true,
+                   nullptr, false, 0.0f, 0.0f, false, true, 8.0f, true, false,
+                   &knobHostToPlain, &knobPlainToHost, this, true);
+        vcaKnobSplitter.SetCurrentChannel(dl, 0);
+        const float hostMinV = hostMinimum(p);
+        const float hostRange = std::max(hostMaximum(p) - hostMinV, 1.0e-6f);
+        const float t = std::clamp((values[p] - hostMinV) / hostRange, 0.0f, 1.0f);
+        const float scale = panel.scale();
+        const ImVec2 center = panel.P(x, y);
+        const float r = radius * scale;
+        dl->AddCircleFilled(ImVec2(center.x + 1.5f * scale, center.y + 2.5f * scale), r * 1.35f, IM_COL32(0, 0, 0, 140), 32);
+        dl->AddCircleFilled(center, r * 1.3f, IM_COL32(28, 28, 28, 255), 32);
+        dl->AddCircle(center, r * 1.3f, IM_COL32(70, 71, 70, 255), 32, scale);
+        dl->AddCircleFilled(center, r, IM_COL32(158, 160, 158, 255), 32);
+        dl->AddCircleFilled(center, r * 0.8f, IM_COL32(206, 208, 206, 255), 32);
+        dl->PathArcTo(center, r * 0.62f, -2.45f, -0.75f, 18);
+        dl->PathStroke(IM_COL32(250, 251, 248, 120), 0, scale);
+        const float angle = duskdaf::DuskPanel::knobAngle(t);
+        const ImVec2 pointer(std::sin(angle), -std::cos(angle));
+        dl->AddLine(ImVec2(center.x - pointer.x * r * 0.62f, center.y - pointer.y * r * 0.62f),
+                    ImVec2(center.x + pointer.x * r * 0.62f, center.y + pointer.y * r * 0.62f),
+                    IM_COL32(34, 35, 34, 255), 1.8f * scale);
+        if (label != nullptr) spacedText(dl, x, y - radius - 22.0f, 9.0f, kVcaInk, label, 0);
+        vcaKnobSplitter.Merge(dl);
+    }
+
+
+    // Domed lamp; the shared DuskPanel::led is palette-locked to one colour
+    // (plugins issue #247), so the amber/red pair is drawn here.
+    void vcaLamp(ImDrawList* dl, float x, float y, bool on, ImU32 onCol, ImU32 glowCol)
+    {
+        const float s = panel.scale();
+        const ImVec2 c = panel.P(x, y);
+        dl->AddCircleFilled(ImVec2(c.x + 1.0f * s, c.y + 1.5f * s), 10.0f * s, IM_COL32(0, 0, 0, 120), 24);
+        dl->AddCircleFilled(c, 9.5f * s, IM_COL32(52, 52, 54, 255), 24);
+        dl->AddCircleFilled(c, 8.2f * s, IM_COL32(6, 6, 6, 255), 24);
+        if (on)
+        {
+            dl->AddCircleFilled(c, 14.0f * s, glowCol, 24);
+            dl->AddCircleFilled(c, 7.0f * s, onCol, 24);
+            dl->AddCircleFilled(ImVec2(c.x - 2.2f * s, c.y - 2.4f * s), 2.4f * s, IM_COL32(255, 248, 225, 220), 12);
+        }
+        else
+        {
+            // A dark version of the lamp's own colour, like an unlit red jewel.
+            const ImU32 offCol = IM_COL32((onCol & 0xFF) / 3, ((onCol >> 8) & 0xFF) / 3, ((onCol >> 16) & 0xFF) / 3, 255);
+            dl->AddCircleFilled(c, 7.0f * s, offCol, 24);
+            dl->AddCircleFilled(ImVec2(c.x - 2.2f * s, c.y - 2.4f * s), 1.8f * s, IM_COL32(255, 255, 255, 60), 12);
+        }
+    }
+
+    void vcaKnob(ImDrawList* dl, const char* id, uint32_t p,
+                 float x, float y, float radius, const char* label,
+                 const char* format, const char* suffix,
+                 const float* majorValues, const char* const* majorLabels,
+                 int majorCount, const float* minorValues, int minorCount,
+                 float (*toDisplay)(float, uint32_t, void*) = &knobHostToPlain,
+                 float (*fromDisplay)(float, uint32_t, void*) = &knobPlainToHost)
+    {
+        // Shared gesture/readout contract; the reference's silver domed knob
+        // on a black serrated skirt is drawn here. Ring marks are placed
+        // through the parameter's own host law, so the printed ring and the
+        // pointer agree by construction; the read-out can use a different
+        // law (Compression shows the applied ratio for its position).
+        const bool dragInDisplay = toDisplay == &knobHostToPlain;
+        vcaKnobSplitter.Split(dl, 2);
+        vcaKnobSplitter.SetCurrentChannel(dl, 1);
+        panel.knob(id, p, hostMinimum(p), hostMaximum(p), x, y, radius,
+                   values[p], hostDefaultValue(p), false, false, format, suffix,
+                   0, true, false, nullptr, false, 1.0f, 0.0f, label, true,
+                   nullptr, false, 0.0f, 0.0f, false, true, 9.5f, true, false,
+                   toDisplay, fromDisplay, this, dragInDisplay);
+        vcaKnobSplitter.SetCurrentChannel(dl, 0);
+
+        const float hostMinV = hostMinimum(p);
+        const float hostRange = std::max(hostMaximum(p) - hostMinV, 1.0e-6f);
+        const float scale = panel.scale();
+        const ImVec2 center = panel.P(x, y);
+        const float r = radius * scale;
+        const auto ringT = [&](float plain) {
+            return std::clamp((hostValueForPlain(p, plain) - hostMinV) / hostRange, 0.0f, 1.0f);
+        };
+        for (int i = 0; i < minorCount; ++i)
+        {
+            const float angle = duskdaf::DuskPanel::knobAngle(ringT(minorValues[i]));
+            const ImVec2 d(std::sin(angle), -std::cos(angle));
+            dl->AddLine(ImVec2(center.x + d.x * (r + 8.0f * scale), center.y + d.y * (r + 8.0f * scale)),
+                        ImVec2(center.x + d.x * (r + 13.0f * scale), center.y + d.y * (r + 13.0f * scale)),
+                        IM_COL32(214, 215, 210, 220), 1.1f * scale);
+        }
+        for (int i = 0; i < majorCount; ++i)
+        {
+            const float angle = duskdaf::DuskPanel::knobAngle(ringT(majorValues[i]));
+            const ImVec2 d(std::sin(angle), -std::cos(angle));
+            dl->AddLine(ImVec2(center.x + d.x * (r + 7.0f * scale), center.y + d.y * (r + 7.0f * scale)),
+                        ImVec2(center.x + d.x * (r + 15.0f * scale), center.y + d.y * (r + 15.0f * scale)),
+                        kVcaInk, 1.7f * scale);
+            spacedText(dl, x + d.x * (radius + 27.0f), y + d.y * (radius + 27.0f) - 5.5f,
+                       10.5f, kVcaInk, majorLabels[i], 0, 0.06f);
+        }
+
+        // Drop shadow, black serrated skirt, silver dome with radial brushing
+        // and a top-left highlight, dark pointer line to the cap edge.
+        dl->AddCircleFilled(ImVec2(center.x + 3.0f * scale, center.y + 4.5f * scale), r * 1.03f, IM_COL32(0, 0, 0, 160), 64);
+        dl->AddCircleFilled(center, r, IM_COL32(24, 24, 24, 255), 64);
+        for (int tooth = 0; tooth < 72; ++tooth)
+        {
+            const float a = 2.0f * kUiPi * static_cast<float>(tooth) / 72.0f;
+            const ImVec2 d(std::sin(a), -std::cos(a));
+            dl->AddLine(ImVec2(center.x + d.x * r * 0.90f, center.y + d.y * r * 0.90f),
+                        ImVec2(center.x + d.x * r, center.y + d.y * r),
+                        (tooth & 1) ? IM_COL32(76, 77, 76, 255) : IM_COL32(10, 10, 10, 255), 1.6f * scale);
+        }
+        const float capR = r * 0.86f;
+        dl->AddCircleFilled(center, capR, IM_COL32(150, 152, 150, 255), 64);
+        dl->AddCircleFilled(ImVec2(center.x, center.y - capR * 0.06f), capR * 0.94f, IM_COL32(204, 206, 204, 255), 64);
+        for (int spoke = 0; spoke < 96; ++spoke)
+        {
+            const float a = 2.0f * kUiPi * static_cast<float>(spoke) / 96.0f;
+            const ImVec2 d(std::cos(a), std::sin(a));
+            const int shade = (spoke * 7) % 5;
+            dl->AddLine(ImVec2(center.x + d.x * capR * 0.18f, center.y + d.y * capR * 0.18f),
+                        ImVec2(center.x + d.x * capR * 0.93f, center.y + d.y * capR * 0.93f),
+                        shade == 0 ? IM_COL32(255, 255, 255, 40) : shade == 2 ? IM_COL32(0, 0, 0, 28) : IM_COL32(0, 0, 0, 0),
+                        0.9f * scale);
+        }
+        dl->AddCircleFilled(ImVec2(center.x - capR * 0.28f, center.y - capR * 0.32f), capR * 0.42f, IM_COL32(255, 255, 255, 34), 40);
+        dl->PathArcTo(center, capR * 0.97f, 0.35f, 2.75f, 30);
+        dl->PathStroke(IM_COL32(60, 62, 60, 170), 0, 1.6f * scale);
+        dl->AddCircle(center, capR, IM_COL32(88, 90, 88, 255), 64, 1.1f * scale);
+        const float t = std::clamp((values[p] - hostMinV) / hostRange, 0.0f, 1.0f);
+        const float pointerAngle = duskdaf::DuskPanel::knobAngle(t);
+        const ImVec2 pointer(std::sin(pointerAngle), -std::cos(pointerAngle));
+        dl->AddLine(ImVec2(center.x + pointer.x * capR * 0.12f, center.y + pointer.y * capR * 0.12f),
+                    ImVec2(center.x + pointer.x * capR * 0.97f, center.y + pointer.y * capR * 0.97f),
+                    IM_COL32(28, 29, 28, 255), 2.6f * scale);
+        vcaKnobSplitter.Merge(dl);
+    }
+
+    void drawVcaMeterButtons(ImDrawList* dl, float x, float y)
+    {
+        // Reference layout: source labels above three silver keycaps in black
+        // bezels, a square-cornered bracket with METER beneath. Selection is
+        // display-only UI state.
+        struct Cell { float x0, x1; };
+        constexpr std::array<Cell, 3> cells{{{0.0f, 82.0f}, {88.0f, 170.0f}, {176.0f, 262.0f}}};
+        constexpr float capTop = 14.0f, capBottom = 44.0f;
+        for (int i = 0; i < multicompp::ui_detail::kVcaMeterSourceCount; ++i)
+        {
+            const float bx0 = x + cells[static_cast<size_t>(i)].x0;
+            const float bx1 = x + cells[static_cast<size_t>(i)].x1;
+            const float by0 = y + capTop, by1 = y + capBottom;
+            const char* label = multicompp::ui_detail::vcaMeterSourceLabel(i);
+            if (i == 2)
+            {
+                spacedText(dl, 0.5f * (bx0 + bx1), y - 9.0f, 10.0f, kVcaInk, "GAIN", 0);
+                spacedText(dl, 0.5f * (bx0 + bx1), y + 2.0f, 10.0f, kVcaInk, "CHANGE", 0);
+            }
+            else
+                spacedText(dl, 0.5f * (bx0 + bx1), y + 2.0f, 10.0f, kVcaInk, label, 0);
+            char id[32];
+            std::snprintf(id, sizeof(id), "##vca_meter_source_%d", i);
+            const ImVec2 b0 = panel.P(bx0, by0), b1 = panel.P(bx1, by1);
+            ImGui::SetCursorScreenPos(b0);
+            const bool clicked = ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
+            const bool active = i == vcaMeterSource;
+            const float s = panel.scale();
+            // Black bezel with a soft outer shadow, then the keycap.
+            dl->AddRectFilled(panel.P(bx0 - 4.0f + 2.0f, by0 - 4.0f + 3.0f), panel.P(bx1 + 4.0f + 2.0f, by1 + 4.0f + 3.0f),
+                              IM_COL32(0, 0, 0, 130), 3.0f * s);
+            dl->AddRectFilled(panel.P(bx0 - 4.0f, by0 - 4.0f), panel.P(bx1 + 4.0f, by1 + 4.0f), IM_COL32(8, 8, 8, 255), 3.0f * s);
+            dl->AddRect(panel.P(bx0 - 4.0f, by0 - 4.0f), panel.P(bx1 + 4.0f, by1 + 4.0f), IM_COL32(58, 60, 58, 255), 3.0f * s, 0, s);
+            const ImU32 capHi = active ? IM_COL32(150, 152, 150, 255) : IM_COL32(226, 228, 226, 255);
+            const ImU32 capLo = active ? IM_COL32(104, 106, 104, 255) : IM_COL32(164, 166, 164, 255);
+            dl->AddRectFilledMultiColor(b0, b1, capHi, capHi, capLo, capLo);
+            if (active)
+                dl->AddRectFilledMultiColor(b0, panel.P(bx1, by0 + 8.0f), IM_COL32(0, 0, 0, 110), IM_COL32(0, 0, 0, 110),
+                                            IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0));
+            else
+                dl->AddLine(panel.P(bx0 + 3.0f, by0 + 2.5f), panel.P(bx1 - 3.0f, by0 + 2.5f), IM_COL32(250, 251, 250, 200), 1.3f * s);
+            if (ImGui::IsItemHovered() && !active)
+                dl->AddRectFilled(b0, b1, IM_COL32(255, 255, 255, 22), 2.0f * s);
+            dl->AddRect(b0, b1, IM_COL32(40, 41, 40, 255), 2.0f * s, 0, s);
+            if (clicked) vcaMeterSource = i;
+        }
+        // Square-ended bracket with METER in the gap.
+        const float bx0 = x - 4.0f, bx1 = x + cells.back().x1 + 4.0f;
+        const float byy = y + 66.0f;
+        const float s = panel.scale();
+        const float gap = 34.0f;
+        const float mid = 0.5f * (bx0 + bx1);
+        dl->AddLine(panel.P(bx0, byy), panel.P(mid - gap, byy), kVcaInk, 2.0f * s);
+        dl->AddLine(panel.P(mid + gap, byy), panel.P(bx1, byy), kVcaInk, 2.0f * s);
+        dl->AddLine(panel.P(bx0, byy - 9.0f), panel.P(bx0, byy), kVcaInk, 2.0f * s);
+        dl->AddLine(panel.P(bx1, byy - 9.0f), panel.P(bx1, byy), kVcaInk, 2.0f * s);
+        spacedText(dl, mid, byy - 7.0f, 11.0f, kVcaInk, "METER", 0);
+    }
+
+    float levelMeterDb(bool output) const
+    {
+        void* instance = getPluginInstancePointer();
+        if (instance != nullptr)
+        {
+            if (output && multiCompGetOutputLevel != nullptr)
+                return multiCompGetOutputLevel(instance);
+            if (!output && multiCompGetInputLevel != nullptr)
+                return multiCompGetInputLevel(instance);
+        }
+        return -60.0f;
     }
 
     void drawBus(ImDrawList* dl)

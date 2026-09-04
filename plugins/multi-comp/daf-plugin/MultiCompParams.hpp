@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../core/MultiCompDSP.hpp"
+#include "../core/MultiCompDbxLaw.hpp"
 #include "../core/MultiCompPresets.hpp"
 #include <algorithm>
 #include <array>
@@ -55,7 +56,7 @@ inline constexpr std::array<Param, 63> kParams = {{
  {"global_lookahead","Lookahead","ms",0,10,0,CoreParameter::GlobalLookahead,false},
  {"opto_peak_reduction","Peak Reduction","%",0,100,0,CoreParameter::OptoPeakReduction,false}, {"opto_gain","Gain","%",0,100,duskaudio::kOptoGainUnityKnob,CoreParameter::OptoGain,false}, {"opto_limit","Limit Mode","",0,1,0,CoreParameter::OptoLimit,true},
  {"fet_input","Input","dB",-20,40,0,CoreParameter::FetInput,false}, {"fet_output","Output","dB",-20,20,0,CoreParameter::FetOutput,false}, {"fet_attack","Attack","ms",0.02f,80,0.2f,CoreParameter::FetAttack,false,0.01f,0.3f}, {"fet_release","Release","ms",50,1100,400,CoreParameter::FetRelease,false}, {"fet_ratio","Ratio",":1",0,4,0,CoreParameter::FetRatio,true}, {"fet_curve_mode","Curve Mode","",0,1,0,CoreParameter::FetCurve,true}, {"fet_transient","Transient","%",0,100,0,CoreParameter::FetTransient,false}, {"fet_threshold","Threshold","dB",-60,0,-10,CoreParameter::FetThreshold,false},
- {"vca_threshold","Threshold","dB",-38,12,0,CoreParameter::VcaThreshold,false}, {"vca_ratio","Ratio",":1",1,120,4,CoreParameter::VcaRatio,false,0.1f,0.3f}, {"vca_attack","Attack","ms",0.1f,50,1,CoreParameter::VcaAttack,false}, {"vca_release","Release","ms",10,5000,100,CoreParameter::VcaRelease,false}, {"vca_output","Output","dB",-20,20,0,CoreParameter::VcaOutput,false}, {"vca_overeasy","Over Easy","",0,1,0,CoreParameter::VcaOverEasy,true}, {"vca_detector_mode","VCA Detector","",0,1,0,CoreParameter::VcaClassicDetector,true},
+ {"vca_threshold","Threshold","dB",-55,0,-27,CoreParameter::VcaThreshold,false}, {"vca_compression","Compression","",0,100,50.4944f,CoreParameter::VcaRatio,false}, {"vca_attack","Attack","ms",0.1f,50,1,CoreParameter::VcaAttack,false}, {"vca_release","Release","ms",10,5000,100,CoreParameter::VcaRelease,false}, {"vca_output","Output","dB",-20,20,0,CoreParameter::VcaOutput,false}, {"vca_overeasy","Over Easy","",0,1,0,CoreParameter::VcaOverEasy,true}, {"vca_detector_mode","VCA Detector","",0,1,0,CoreParameter::VcaClassicDetector,true},
  {"bus_threshold","Threshold","dB",-30,15,0,CoreParameter::BusThreshold,false}, {"bus_ratio","Ratio",":1",0,2,0,CoreParameter::BusRatio,true}, {"bus_attack","Attack","",0,5,2,CoreParameter::BusAttack,true}, {"bus_release","Release","",0,4,1,CoreParameter::BusRelease,true}, {"bus_makeup","Makeup","dB",0,20,0,CoreParameter::BusMakeup,false}, {"bus_mix","Bus Mix","%",0,100,100,CoreParameter::BusMix,false},
  {"studio_vca_threshold","Threshold","dB",-40,20,-10,CoreParameter::StudioVcaThreshold,false}, {"studio_vca_ratio","Ratio",":1",1,10,3,CoreParameter::StudioVcaRatio,false}, {"studio_vca_attack","Attack","ms",0.3f,75,10,CoreParameter::StudioVcaAttack,false}, {"studio_vca_release","Release","ms",100,4000,300,CoreParameter::StudioVcaRelease,false}, {"studio_vca_output","Output","dB",-20,20,0,CoreParameter::StudioVcaOutput,false},
  {"digital_threshold","Threshold","dB",-60,0,-20,CoreParameter::DigitalThreshold,false}, {"digital_ratio","Ratio",":1",1,100,4,CoreParameter::DigitalRatio,false,0.1f,0.4f}, {"digital_knee","Knee","dB",0,20,6,CoreParameter::DigitalKnee,false}, {"digital_attack","Attack","ms",0.01f,500,10,CoreParameter::DigitalAttack,false,0.01f,0.3f}, {"digital_release","Release","ms",1,5000,100,CoreParameter::DigitalRelease,false,1,0.4f}, {"digital_lookahead","Lookahead","ms",0,10,0,CoreParameter::DigitalLookahead,false}, {"digital_mix","Mix","%",0,100,100,CoreParameter::DigitalMix,false}, {"digital_output","Output","dB",-24,24,0,CoreParameter::DigitalOutput,false}, {"digital_adaptive","Adaptive Release","",0,1,0,CoreParameter::DigitalAdaptive,true},
@@ -196,22 +197,43 @@ inline constexpr const char* const kLinkMode[3] = {"Stereo","Mid-Side","Dual Mon
 // Version 2 therefore carried the float's bit pattern through the integer
 // overloads. Version 3 removes two inert fields and stores tapered controls in
 // their new normalized host domain. Both are exact and locale-independent.
-inline constexpr int kStateVersion = 3;
+// Version 4 (2026-09-01) moves the VCA mode onto the measured dbx 160 laws:
+// `vca_ratio` (a skew-0.3 ratio stored host-normalized 0..1) became
+// `vca_compression` (a plain 0..100 knob position), and `vca_threshold` moved
+// from -38..+12 dB to -55..0 dB. Version-3 states are still loaded: the legacy
+// ratio is converted to the knob position that applies the same ratio, and the
+// threshold is clamped into the new range.
+inline constexpr int kStateVersion = 4;
+inline constexpr int kLegacyVcaStateVersion = 3;
+
+// Parses "v=N" and returns N, or -1 when the token is malformed.
+inline int stateVersionOf(std::string_view state) noexcept
+{
+    const size_t end = state.find(';');
+    const std::string_view token = state.substr(0, end == std::string_view::npos ? state.size() : end);
+    if (token.size() < 3 || token.substr(0, 2) != "v=") return -1;
+
+    int version = 0;
+    const std::string_view digits = token.substr(2);
+    const auto parsed = std::from_chars(digits.data(), digits.data() + digits.size(), version);
+    if (parsed.ec != std::errc() || parsed.ptr != digits.data() + digits.size()) return -1;
+    return version;
+}
 
 // A version we do not understand must be refused outright. Decoding it anyway
 // makes every value fail to parse and silently restores defaults, which reads
 // to the user as a session that quietly lost its settings.
 inline bool stateVersionSupported(std::string_view state) noexcept
 {
-    const size_t end = state.find(';');
-    const std::string_view token = state.substr(0, end == std::string_view::npos ? state.size() : end);
-    if (token.size() < 3 || token.substr(0, 2) != "v=") return false;
+    const int version = stateVersionOf(state);
+    return version == kStateVersion || version == kLegacyVcaStateVersion;
+}
 
-    int version = 0;
-    const std::string_view digits = token.substr(2);
-    const auto parsed = std::from_chars(digits.data(), digits.data() + digits.size(), version);
-    return parsed.ec == std::errc() && parsed.ptr == digits.data() + digits.size()
-        && version == kStateVersion;
+// Version-3 `vca_ratio`: skew 0.3 over 1..120, stored in its normalized host
+// domain. Returns the plain ratio the old build applied for that state value.
+inline float legacyVcaRatioFromState(float normalized) noexcept
+{
+    return 1.0f + 119.0f * std::pow(normalized, 1.0f / 0.3f);
 }
 
 inline bool decodeStateFloat(std::string_view text, float& out) noexcept
@@ -272,17 +294,21 @@ inline float snapHostValue(const Descriptor& d, float value) noexcept
     return d.integer ? std::round(clamped) : clamped;
 }
 
+inline bool hostValueInRange(float value, float minimum, float maximum,
+                             bool integer) noexcept
+{
+    return std::isfinite(value) && value >= minimum && value <= maximum
+        && (!integer || std::trunc(value) == value);
+}
+
 inline bool hostValueInRange(int index, float value) noexcept
 {
-    if (!std::isfinite(value)) return false;
     return resolveParameter(index,
         [value](const Param& d) {
-            return value >= hostMin(d) && value <= hostMax(d)
-                && (!d.integer || std::trunc(value) == value);
+            return hostValueInRange(value, hostMin(d), hostMax(d), d.integer);
         },
         [value](const BandParam& d, int) {
-            return value >= hostMin(d) && value <= hostMax(d)
-                && (!d.integer || std::trunc(value) == value);
+            return hostValueInRange(value, hostMin(d), hostMax(d), d.integer);
         });
 }
 
@@ -291,6 +317,7 @@ inline bool hostValueInRange(int index, float value) noexcept
 inline bool decodeState(std::string_view state, StateValues& out) noexcept
 {
     if (state.empty() || state.back() == ';' || !stateVersionSupported(state)) return false;
+    const bool legacy = stateVersionOf(state) == kLegacyVcaStateVersion;
     const size_t versionEnd = state.find(';');
     if (versionEnd == std::string_view::npos) return false;
 
@@ -307,12 +334,23 @@ inline bool decodeState(std::string_view state, StateValues& out) noexcept
             || equal + 1 == token.size() || token.find('=', equal + 1) != std::string_view::npos)
             return false;
 
-        const int index = stateIndexForId(token.substr(0, equal));
+        const std::string_view id = token.substr(0, equal);
+        const bool legacyRatio = legacy && id == "vca_ratio";
+        const int index = legacyRatio ? static_cast<int>(ParamId::VcaRatio) : stateIndexForId(id);
         if (index < 0 || seen[static_cast<size_t>(index)]) return false;
         float value = 0.0f;
-        if (!decodeStateFloat(token.substr(equal + 1), value)
-            || !hostValueInRange(index, value))
-            return false;
+        if (!decodeStateFloat(token.substr(equal + 1), value)) return false;
+        if (legacyRatio)
+        {
+            if (!hostValueInRange(value, 0.0f, 1.0f, false)) return false;
+            value = duskaudio::dbx160::compressPosition(legacyVcaRatioFromState(value));
+        }
+        else if (legacy && index == static_cast<int>(ParamId::VcaThreshold))
+        {
+            if (!hostValueInRange(value, -38.0f, 12.0f, false)) return false;
+            value = std::clamp(value, duskaudio::dbx160::kThresholdMinDb, duskaudio::dbx160::kThresholdMaxDb);
+        }
+        if (!hostValueInRange(index, value)) return false;
         decoded[static_cast<size_t>(index)] = value;
         seen[static_cast<size_t>(index)] = true;
 

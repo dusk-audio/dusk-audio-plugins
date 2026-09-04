@@ -721,3 +721,112 @@ section 14 remains valid with issues #200 and #210 CLOSED. Linux GCC 12 was not
 re-run because the Podman platform remains unavailable, and visual meter-film
 parity remains measurement-blocked by the reference's failed repeatability
 control.
+
+## 16. VCA mode = dbx 160: campaign and model — 2026-09-01
+
+Owner decision: the VCA mode achieves parity with the UAD dbx 160 (installed
+`/Library/Audio/Plug-Ins/Components/uaudio_dbx_160.component`, `aufx U373
+UADx`, v1.0.9); its front panel has no attack/release, so those controls are
+gone from the face. Harness: `dusk-audio-tools/plugins/MultiComp/tests/
+reference_comparison_dbx160/` on the shared `harness_core` (README lists every
+probe and the model). Everything below was measured on the installed AU and
+reproduced on the plugin with one extraction per probe; every report is
+capture-audited.
+
+Laws (`core/MultiCompDbxLaw.hpp`): THRESHOLD linear -55..0 dB (knob text is the
+sine onset in peak dBFS +0.26 dB); COMPRESSION is a 0..100 knob position whose
+applied ratio is the measured table (2.37/4.14/7.51 at 25/50/75 %, Inf at the
+stop; the panel read-back rounds lower); OUTPUT GAIN linear -20..+20 (exact);
+SC FILTER is an on/off switch engaging a half-order tilt ~sqrt(f/276 Hz) that
+keeps rising to +19.4 dB at 20 kHz (`SidechainTilt`, seven sections fitted in
+the digital domain, 0.12 dB RMSE); MIX is a linear amplitude crossfade with
+gain on the wet path; the stereo detector is a linked maximum.
+
+Model (`processVCA`): one first-order RMS power integrator (35 ms) run once per
+host sample on the native oversampling phase, driving the gain directly. Its
+dB reading passes through the measured absolute-level detector calibration in
+`MultiCompDbxLaw.hpp` before the threshold comparison. No
+attack/release envelope: a single constant fitted to nine reference step
+responses (three depths x three ratios) gave 31/35 ms at 0.22/0.06 dB RMSE, and
+the equal-RMS sine/burst/noise triplet reads identical GR on the reference. No
+colour block: the reference's H2/H4/H5 sit at the numerical floor and its H3
+(~-67 dBc) is the detector's own 2 kHz ripple, which the model reproduces to
+0.2 dB. Threshold compared 3.01 dB below the knob (RMS of a sine) plus the
+0.29 dB measured onset offset. `vca_attack`, `vca_release`, `vca_overeasy` and
+`vca_detector_mode` remain host-visible for state compatibility and are inert.
+
+Findings that changed the code, each from a falsifier or a direct measurement:
+the JUCE-era level-adaptive RMS constant inflated the deep slope from 0.76 to
+0.80 dB/dB (fixed-tau control read 0.750); the 2x sidechain's linear
+interpolation refilled the RMS reading above 8 kHz (-1.25 dB at 12 kHz, non-
+monotonic; native-phase integration reads flat to 20 kHz like the reference);
+a per-cycle GR mean over gated bursts diluted GR by the duty cycle when one
+side is digitally silent (use energy-weighted GR). The 2026-09-02 dense knee
+control at threshold positions 0, 0.25 and 0.509064 falsified a threshold-knee
+fix: ratio-normalised residual instead collapsed onto absolute input level.
+The 4:1 detector calibration predicted the held-out Inf curves to 0.067 dB and
+the independent static ratios/thresholds before it was added to the DSP. The
+remaining depth-linear Inf residual falsified the broad-range `-60:1` endpoint:
+the reference output's direct -12 to -6 dBFS step is -0.070243 dB at three
+thresholds, or `-85.418:1`. Encoding that measured slope reduced the held-out
+Inf sweeps to 0.017 dB and the full static worst to 0.051 dB. Because changing
+the stop also changes the formerly unmeasured 95--100 % interpolation, a direct
+97.5 % capture measured `87.972:1`; adding that point moved its deep anchor
+from +0.032 dB (failing) to -0.005 dB (passing).
+
+Scoreboard (VST3 SHA 10ea6ad5ecf3, 2026-09-02): step attack/release within 1 ms
+at every depth and ratio; six dense 4:1/Inf knee sweeps have worst residuals
+0.012/0.017 dB at threshold 0, 0.008/0.010 at 0.25, and 0.012/0.016 at the
+default; the seventh 97.5 % holdout is 0.016 dB worst. The 100-cell static grid
+reads mean +0.005 dB, mean absolute 0.0095, 100/100 within 0.5 dB, worst 0.051
+dB. Crest
+excess sine/burst/noise is +0.00/+0.22/+0.01 dB; detector FR is flat within
+0.01 dB above 100 Hz; SC filter RMSE is 0.129 dB from 40 Hz-20 kHz; H3 mean/max
+residual is -0.124/0.215 dB; Mix remains linear. Every cited capture passed the
+harness audit. Framework refresh: DAF `50ad8c22` (PR #26) and DAF-Widgets
+`487b092a`; the latter changes funding metadata only, and the current candidate
+builds against both refreshed checkouts. Final native CTest passed 4/4 in
+115.24 seconds and the no-FMA build passed 4/4 in 123.07 seconds.
+
+State: version 4 (v3 `vca_ratio` migrates through `compressPosition()`, the
+threshold clamps into -55..0; regression test in the layer suite). Remaining:
+meter calibration/ballistics (visual), retiring the four inert parameters (state v5,
+shifts host indices for every later parameter and therefore the Opto/1176
+campaign pins -- do it as its own change). Linux gcc-12 amd64 (podman) ran the
+full predecessor core suite to PASS on 2026-09-02. On final SHA 10ea6ad5ecf3,
+the dbx tilt and VCA parity gates passed (deep Inf deltas +0.046/+0.021/-0.006
+dB; 97.5 % delta -0.006 dB), followed by the complete unchanged Opto block and
+the early FET neighbor gates. The redundant emulated sweep was stopped during
+the unchanged dense FET harmonics when work was redirected back to VCA; native
+and no-FMA still completed the full final suite.
+
+UI note (2026-09-01, later): the VCA face was briefly moved to the 486-tall
+canvas to match the dbx 160's ~2.5:1 proportions and reverted the same day --
+Logic kept the 380 window and the canvas rendered letterboxed at 78 %, and the
+headless probe shows the AU wrapper's GL child at half size after any resize
+(evidence on #240). Rule until #240 is fixed: a mode's canvas must equal the
+plugin's opening size (380 for the hardware faces). The reference styling
+(letter-spaced silkscreen via `spacedText`, domed knobs on serrated skirts, the
+hardware's mV/V threshold ring at the reference's own angles, keycap meter
+buttons, PULL/SC slide switch, amber/blue meter through the shared
+`DuskVuMeter` style options) lives on the 1120x310 face.
+
+VU geometry fix (2026-09-02): `DuskVuMeter` used `panel.P()` on radii that had
+already been multiplied by the panel scale. At enlarged host sizes this made
+the arc radius proportional to scale squared, clipping the ticks/labels and
+drawing an overlong needle across the face. `DuskVuMeterGeometry.hpp` now
+converts design radii to screen offsets exactly once. The new 1.5x regression
+failed at 225 px before the fix and passes at 150 px after it; the rebuilt
+standalone was visually checked at 1.0x and 1.27x with the full -40..+20 arc,
+labels and needle contained in the window. This closes meter layout/rendering,
+not the separately recorded reference-ballistics measurement gap.
+
+Issue `#240` root cause (2026-09-01, night): pugl's `mac.m` sizes the wrapper view from
+`viewScreen(view)` but the GL draw view through its own `convertRectFromBacking:`
+-- two scale sources, which disagree in mixed-DPI or not-yet-windowed cases and
+put the draw view at half/double size. Fix (draw view takes the wrapper's point
+size in `puglSetWindowSize` and `puglRealize`) sits uncommitted on fork branch
+`fix/draw-view-follows-wrapper-scale` in `~/projects/DAF/dgl/src/pugl-upstream`;
+verified with three probe resize replays. Ship via pugl commit -> DAF submodule
+pin -> CI `DAF_REF`. Logic keeping the opening window size on a plugin resize
+request is separate host behaviour; hardware faces stay on the 380 canvas.
