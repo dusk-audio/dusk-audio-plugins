@@ -25,6 +25,7 @@
 #include "FourKEQDSP.hpp"
 #include "MultiQFilters.hpp"  // amb:: analog-matched designers + MqBiquadCoeffs (Digital curve)
 
+#include "DuskKnobRing.hpp"
 #include "DuskImGuiFont.hpp"
 #include "DuskImGuiTextInput.hpp"
 #include "DuskImGuiWidgets.hpp"
@@ -4034,29 +4035,6 @@ private:
     //========================================================================
     // British-style console band knob (continuous over (t,value) breakpoints)
     //========================================================================
-    static float detentPosToVal(const float* T, const float* V, int n, float t)
-    {
-        if (t <= T[0]) return V[0];
-        if (t >= T[n - 1]) return V[n - 1];
-        for (int i = 0; i < n - 1; ++i)
-            if (t <= T[i + 1]) { const float a = (t - T[i]) / (T[i + 1] - T[i]); return V[i] + (V[i + 1] - V[i]) * a; }
-        return V[n - 1];
-    }
-    static float detentValToPos(const float* T, const float* V, int n, float v)
-    {
-        float lo = V[0], hi = V[0];
-        for (int i = 1; i < n; ++i) { lo = std::min(lo, V[i]); hi = std::max(hi, V[i]); }
-        v = v < lo ? lo : (v > hi ? hi : v);
-        for (int i = 0; i < n - 1; ++i)
-            if ((v - V[i]) * (v - V[i + 1]) <= 0.f)
-            {
-                const float d = V[i + 1] - V[i];
-                const float a = d != 0.f ? (v - V[i]) / d : 0.f;
-                return T[i] + (T[i + 1] - T[i]) * a;
-            }
-        return T[n - 1];
-    }
-
     void consoleDetentKnob(ImDrawList* dl, const char* id, float cx, float cy, float R,
                            uint32_t paramId, const float* T, const float* V,
                            const char* const* labels, int n, ImU32 capCol,
@@ -4067,15 +4045,15 @@ private:
         const float RR = R * s;
         auto c01 = [](float v) { return v < 0.f ? 0.f : (v > 1.f ? 1.f : v); };
 
-        float t = detentValToPos(T, V, n, values[paramId]);
+        float t = duskdaf::knobDetentValueToPos(T, V, n, values[paramId]);
 
         ImGui::SetCursorScreenPos(ImVec2(c.x - RR, c.y - RR));
         ImGui::InvisibleButton(id, ImVec2(2.f * RR, 2.f * RR));
         const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
         const bool editing = panel.isEditingValue(id);
         const bool modKey = ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper;
-        auto setFromT = [&](float tt) { const float nv = detentPosToVal(T, V, n, tt); values[paramId] = nv; setParameterValue(paramId, nv); };
-        auto resetDefault = [&] { editParameter(paramId, true); values[paramId] = mqDef(paramId); setParameterValue(paramId, mqDef(paramId)); editParameter(paramId, false); t = detentValToPos(T, V, n, values[paramId]); };
+        auto setFromT = [&](float tt) { const float nv = duskdaf::knobDetentPosToValue(T, V, n, tt); values[paramId] = nv; setParameterValue(paramId, nv); };
+        auto resetDefault = [&] { editParameter(paramId, true); values[paramId] = mqDef(paramId); setParameterValue(paramId, mqDef(paramId)); editParameter(paramId, false); t = duskdaf::knobDetentValueToPos(T, V, n, values[paramId]); };
         if (!editing)
         {
             if (ImGui::IsItemActivated())
@@ -4099,13 +4077,13 @@ private:
             }
         }
 
-        for (int i = 0; i < n; ++i)
         {
-            const float a = duskdaf::DuskPanel::knobAngle(T[i]);
-            const float dx = std::sin(a), dy = -std::cos(a);
-            dl->AddCircleFilled(panel.P(cx + dx * (R + 9.f), cy + dy * (R + 9.f)), 1.6f * s, IM_COL32(150, 152, 156, 255), 8);
-            const int align = dx < -0.25f ? 1 : (dx > 0.25f ? -1 : 0);
-            panel.text(dl, cx + dx * (R + 20.f), cy + dy * (R + 20.f) - 5.f, 10.5f, IM_COL32(206, 208, 212, 255), labels[i], align, true);
+            duskdaf::KnobRingStyle ring;
+            ring.dotMarks = true;
+            ring.markOuter = 9.0f;
+            ring.labelOffset = 20.0f;
+            for (int i = 0; i < n; ++i)
+                duskdaf::drawKnobRingMark(panel, dl, cx, cy, R, T[i], labels[i], ring);
         }
 
         drawMetalKnobBody(dl, c, RR, t, capCol, IM_COL32(245, 245, 245, 255));

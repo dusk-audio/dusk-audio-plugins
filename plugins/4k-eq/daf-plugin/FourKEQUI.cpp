@@ -1568,30 +1568,6 @@ private:
     // 0 at top, +-15 dB; LF FREQ 30-450 Hz with 200 at top). Maroon cap, white
     // pointer, unit beneath.
     //========================================================================
-    static float detentPosToVal(const float* T, const float* V, int n, float t)
-    {
-        if (t <= T[0]) return V[0];
-        if (t >= T[n - 1]) return V[n - 1];
-        for (int i = 0; i < n - 1; ++i)
-            if (t <= T[i + 1]) { const float a = (t - T[i]) / (T[i + 1] - T[i]); return V[i] + (V[i + 1] - V[i]) * a; }
-        return V[n - 1];
-    }
-    static float detentValToPos(const float* T, const float* V, int n, float v)
-    {
-        // clamp to the value range (works whether V ascends or descends)
-        float lo = V[0], hi = V[0];
-        for (int i = 1; i < n; ++i) { lo = std::min(lo, V[i]); hi = std::max(hi, V[i]); }
-        v = v < lo ? lo : (v > hi ? hi : v);
-        for (int i = 0; i < n - 1; ++i)
-            if ((v - V[i]) * (v - V[i + 1]) <= 0.f) // v lies within this segment
-            {
-                const float d = V[i + 1] - V[i];
-                const float a = d != 0.f ? (v - V[i]) / d : 0.f;
-                return T[i] + (T[i + 1] - T[i]) * a;
-            }
-        return T[n - 1];
-    }
-
     void consoleDetentKnob(ImDrawList* dl, const char* id, float cx, float cy, float R,
                            uint32_t paramId, const float* T, const float* V,
                            const char* const* labels, int n, ImU32 capCol,
@@ -1627,7 +1603,7 @@ private:
             V = calibratedLegend;
         }
 
-        float t = detentValToPos(T, V, n,
+        float t = duskdaf::knobDetentValueToPos(T, V, n,
                                 frequencyKnob ? displayValue(paramId)
                                               : values[paramId]);
 
@@ -1637,7 +1613,7 @@ private:
         const bool editing = panel.isEditingValue(id);
         const bool modKey = ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper;
         auto setFromT = [&](float tt) {
-            const float shown = detentPosToVal(T, V, n, tt);
+            const float shown = duskdaf::knobDetentPosToValue(T, V, n, tt);
             const float nv = normalizeParamValue(
                 paramId, frequencyKnob ? dialForCalibrated(paramId, shown)
                                        : shown);
@@ -1649,7 +1625,7 @@ private:
             values[paramId] = kDefault(paramId);
             setParameterValue(paramId, kDefault(paramId));
             editParameter(paramId, false);
-            t = detentValToPos(T, V, n,
+            t = duskdaf::knobDetentValueToPos(T, V, n,
                               frequencyKnob ? displayValue(paramId)
                                             : values[paramId]);
         };

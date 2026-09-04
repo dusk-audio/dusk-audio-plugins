@@ -24,6 +24,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 
 #include "DuskImGuiWidgets.hpp"
@@ -92,6 +93,47 @@ inline void spacedText(const DuskPanel& panel, ImDrawList* dl, float x, float y,
         dl->AddText(font, px, pos, col, c, c + 1);
         pos.x += font->CalcTextSizeA(px, FLT_MAX, 0.0f, c, c + 1).x + gap;
     }
+}
+
+// Detent laws. A console knob's travel is not linear in its printed value: the
+// legend names n positions, and the dial interpolates between them, so the same
+// piecewise map converts both ways. 4K EQ 2 and Multi-Q 2 carried
+// character-identical copies of this pair.
+//
+//   T[] positions on the dial, 0..1, ascending
+//   V[] the printed value at each position, ascending or descending
+//
+// Placing a ring through knobDetentValueToPos is what keeps a detented dial's
+// marks under its pointer.
+inline float knobDetentPosToValue(const float* T, const float* V, int n, float t)
+{
+    if (n <= 0) return 0.0f;
+    if (t <= T[0]) return V[0];
+    if (t >= T[n - 1]) return V[n - 1];
+    for (int i = 0; i < n - 1; ++i)
+        if (t <= T[i + 1])
+        {
+            const float a = (t - T[i]) / (T[i + 1] - T[i]);
+            return V[i] + (V[i + 1] - V[i]) * a;
+        }
+    return V[n - 1];
+}
+
+inline float knobDetentValueToPos(const float* T, const float* V, int n, float v)
+{
+    if (n <= 0) return 0.0f;
+    // Clamp to the value range, which works whether V ascends or descends.
+    float lo = V[0], hi = V[0];
+    for (int i = 1; i < n; ++i) { lo = std::min(lo, V[i]); hi = std::max(hi, V[i]); }
+    v = v < lo ? lo : (v > hi ? hi : v);
+    for (int i = 0; i < n - 1; ++i)
+        if ((v - V[i]) * (v - V[i + 1]) <= 0.0f)   // v lies within this segment
+        {
+            const float d = V[i + 1] - V[i];
+            const float a = d != 0.0f ? (v - V[i]) / d : 0.0f;
+            return T[i] + (T[i + 1] - T[i]) * a;
+        }
+    return T[n - 1];
 }
 
 // One mark, plus its label if it has one. Exposed so a face with a mark that
