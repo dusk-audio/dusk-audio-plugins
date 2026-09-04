@@ -449,9 +449,12 @@ int main(const int argc, const char* const* const argv)
             }
             char* end = nullptr;
             const double value = std::strtod(eq + 1, &end);
-            if (end == nullptr || *end != '\0')
+            // An empty suffix converts nothing and still returns 0.0, which
+            // would arm the parameter to zero and then blame the meters; nan
+            // and inf both parse cleanly and neither is a normalised value.
+            if (end == eq + 1 || end == nullptr || *end != '\0' || ! std::isfinite(value))
             {
-                std::fprintf(stderr, "FAIL: --set value for \"%s\" is not a number\n", spec);
+                std::fprintf(stderr, "FAIL: --set value for \"%s\" is not a finite number\n", spec);
                 return 1;
             }
             armRequests.push_back({ std::string(spec, static_cast<size_t>(eq - spec)), value });
@@ -628,7 +631,11 @@ int main(const int argc, const char* const* const argv)
                          req.name.c_str());
             return 1;
         }
-        armed.emplace_back(match->id, req.value);
+        // Clamped to the documented normalised range before it reaches
+        // add_point, matching the CLAP side: a VST3 parameter value outside
+        // 0..1 is not a value the plugin has any defined answer for.
+        const double clamped = req.value < 0.0 ? 0.0 : (req.value > 1.0 ? 1.0 : req.value);
+        armed.emplace_back(match->id, clamped);
     }
 
     std::vector<int> outputParams;

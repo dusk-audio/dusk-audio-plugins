@@ -257,6 +257,27 @@ macro(dusk_daf_add_output_param_tests _dusk_op_plugin)   # [<param name>=<normal
         add_test(NAME ${_dusk_op_plugin}ClapOutputParams
                  COMMAND ${_dusk_op_plugin}ClapOutputParamTest
                          "$<TARGET_FILE:${_dusk_op_plugin}-clap>" 100 256 ${_dusk_op_arm})
+
+        # If this plugin arms anything, guard the parsing that arming depends
+        # on. A misread specification arms the wrong control or none at all, the
+        # meters then correctly report nothing, and the failure blames them
+        # rather than the typo. Uses the first armed parameter's name, split off
+        # its value.
+        if(_dusk_op_arm)
+            # ARGN is substituted textually in a macro rather than being a
+            # variable, so it has to be copied into a real list first.
+            set(_dusk_op_specs ${ARGN})
+            list(GET _dusk_op_specs 0 _dusk_op_first_spec)
+            string(REGEX REPLACE "=[^=]*$" "" _dusk_op_first_name "${_dusk_op_first_spec}")
+            add_test(NAME ${_dusk_op_plugin}Vst3ArmSpecs
+                     COMMAND bash "${DUSK_SHARED_DAF_DIR}/tests/daf_arm_spec_cases.sh"
+                             "$<TARGET_FILE:${_dusk_op_plugin}Vst3OutputParamTest>"
+                             "$<TARGET_FILE:${_dusk_op_plugin}-vst3>" "${_dusk_op_first_name}")
+            add_test(NAME ${_dusk_op_plugin}ClapArmSpecs
+                     COMMAND bash "${DUSK_SHARED_DAF_DIR}/tests/daf_arm_spec_cases.sh"
+                             "$<TARGET_FILE:${_dusk_op_plugin}ClapOutputParamTest>"
+                             "$<TARGET_FILE:${_dusk_op_plugin}-clap>" "${_dusk_op_first_name}")
+        endif()
     endif()
 endmacro()
 

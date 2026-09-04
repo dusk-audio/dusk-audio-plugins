@@ -151,9 +151,16 @@ inline bool parseArmRequest(const char* arg, ArmRequest& out)
     const char* eq = std::strrchr(arg, '=');
     if (eq == nullptr || eq == arg) return false;
     out.name.assign(arg, static_cast<size_t>(eq - arg));
+
     char* end = nullptr;
     out.value = std::strtod(eq + 1, &end);
-    return end != nullptr && *end == '\0';
+    // strtod reports "no conversion" by leaving end at the start, and it does
+    // it for an empty suffix while still returning 0.0. Accepting that arms the
+    // parameter to zero, which for a compressor's Peak Reduction means the run
+    // proceeds uncompressed and then blames the meters. A non-finite value is
+    // worse: nan and inf both parse cleanly, and nan reaches the plugin.
+    if (end == eq + 1 || end == nullptr || *end != '\0') return false;
+    return std::isfinite(out.value);
 }
 
 // --------------------------------------------------------------------------------------------------------------------
