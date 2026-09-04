@@ -159,6 +159,59 @@ inline const char* optoModeLabel(float hostValue) noexcept
 
 inline constexpr const char* optoMeterLabel() noexcept { return "GR"; }
 
+// --- FET faceplate meter switch -------------------------------------------
+//
+// The reference unit's four-position selector: gain reduction, two output-level
+// settings, and off. Like the VCA face's source buttons this is hardware
+// display behaviour, so it is UI state rather than a host parameter.
+inline constexpr int kFetMeterModeCount = 4;
+
+inline const char* fetMeterModeLabel(int mode) noexcept
+{
+    switch (mode)
+    {
+        case 0: return "GR";
+        case 1: return "+8";
+        case 2: return "+4";
+        default: return "OFF";
+    }
+}
+
+// What "+4" and "+8" reference. The switch positions mean 0 VU = +4 dBu and
+// 0 VU = +8 dBu on the hardware, which says nothing on its own about digital
+// full scale, so the mapping is a decision recorded here rather than a number
+// read off the artwork: full scale is taken as +22 dBu, the convention that
+// puts +4 dBu at -18 dBFS. The two settings then sit 4 dB apart, as the front
+// panel implies. Changing the house reference means changing these two
+// constants and nothing else.
+inline constexpr float kFetMeterPlus4ReferenceDbFs = -18.0f;
+inline constexpr float kFetMeterPlus8ReferenceDbFs = -14.0f;
+
+// The face carries a single 0..20 sweep, 0 at the right. In GR it reads gain
+// reduction. On a level setting the same sweep reads how far the output sits
+// below the selected reference, so 0 VU parks on the same 0 mark and a quieter
+// signal swings left exactly as gain reduction does. OFF drops the needle to
+// the mechanical rest at full left, which is where an unpowered moving coil
+// goes.
+//
+// The level bridge publishes peak dBFS, and this deflection uses it as-is: no
+// VU averaging ballistic is invented here, matching the GR path, which the
+// plugin-layer tests require to stay free of a display envelope.
+inline float fetMeterNeedleValueDb(int mode, float gainReductionDb,
+                                   float outputDbFs) noexcept
+{
+    if (mode == 0)
+        return std::isfinite(gainReductionDb) ? gainReductionDb : 0.0f;
+    if (mode == 1 || mode == 2)
+    {
+        if (!std::isfinite(outputDbFs)) return 0.0f;
+        const float reference = mode == 1 ? kFetMeterPlus8ReferenceDbFs
+                                          : kFetMeterPlus4ReferenceDbFs;
+        return -std::clamp(reference - outputDbFs, 0.0f, 20.0f);
+    }
+    return -20.0f;   // OFF
+}
+
 inline float optoMeterReadoutAmount(float gainReductionDb) noexcept
 {
     return std::clamp(std::max(0.0f, -gainReductionDb), 0.0f, 99.9f);
@@ -482,6 +535,9 @@ private:
     // Display-only hardware behaviour (reference INPUT/OUTPUT/GAIN CHANGE
     // buttons): UI state, deliberately not a host parameter.
     int vcaMeterSource = 2;
+    // FET faceplate meter selector (GR / +8 / +4 / OFF), display-only like the
+    // VCA source buttons above.
+    int fetMeterMode = 0;
     float vcaVuNeedle = 0.0f;
     float vcaLastScHp = 1.0f;
     duskdaf::CrispFontSet fontSet;
@@ -1550,7 +1606,8 @@ private:
                       IM_COL32(48, 50, 49, 255), 28, 1.0f * panel.scale());
     }
 
-    void drawOptoMeter(ImDrawList* dl, float x, float y, float w, float h, float gr)
+    void drawOptoMeter(ImDrawList* dl, float x, float y, float w, float h, float gr,
+                       const char* legend = multicompp::ui_detail::optoMeterLabel())
     {
         const float scale = panel.scale();
         dl->AddRectFilled(panel.P(x + 5.0f, y + 7.0f),
@@ -1622,7 +1679,7 @@ private:
         }
         panel.text(dl, x + 31.0f, y + 54.0f, 12.0f, kOptoInk, "VU", 0, true);
         panel.text(dl, x + w - 32.0f, y + 54.0f, 12.0f, kOptoRed,
-                   multicompp::ui_detail::optoMeterLabel(), 0, true);
+                   legend, 0, true);
         panel.text(dl, x + w * 0.5f, y + h - 51.0f, 7.0f,
                    IM_COL32(94, 64, 34, 255), "GAIN REDUCTION", 0, true);
         const float needleAngle = multicompp::ui_detail::optoMeterNeedleAngle(gr);
@@ -1727,7 +1784,11 @@ private:
                 "RELEASE", false, "%.2f", "");
         drawFetRatioButtons(dl, 635, 392);
         drawOptoMeter(dl, 675, 384, 300, 178,
-                      multicompp::ui_detail::optoMeterDisplayValue(meter(kMeterMaster)));
+                      multicompp::ui_detail::fetMeterNeedleValueDb(
+                          fetMeterMode,
+                          multicompp::ui_detail::optoMeterDisplayValue(meter(kMeterMaster)),
+                          levelMeterDb(true)),
+                      multicompp::ui_detail::fetMeterModeLabel(fetMeterMode));
         panel.text(dl, 825, top + 14, 13.0f, IM_COL32(234, 234, 221, 255),
                    "FET 76", 0, true);
         panel.text(dl, 825, top + 32, 7.2f, IM_COL32(177, 179, 170, 255),
@@ -1982,26 +2043,40 @@ private:
     {
         panel.text(dl, x + 10.0f, y - 24.0f, 8.5f,
                    IM_COL32(230, 231, 219, 255), "METER", 0, true);
-        constexpr std::array<const char*, 4> labels{{"GR", "+8", "+4", "OFF"}};
-        for (int row = 0; row < 4; ++row)
+        for (int row = 0; row < multicompp::ui_detail::kFetMeterModeCount; ++row)
         {
             const float y0 = y + static_cast<float>(row) * 38.0f;
+            const bool active = row == fetMeterMode;
+
+            // The button covers the switch body and its label, so the whole
+            // row is clickable rather than just the 20 px cap.
+            char id[32];
+            std::snprintf(id, sizeof(id), "##fet_meter_mode_%d", row);
+            const ImVec2 b0 = panel.P(x, y0), b1 = panel.P(x + 52.0f, y0 + 32.0f);
+            ImGui::SetCursorScreenPos(b0);
+            if (ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y)))
+                fetMeterMode = row;
+            const bool hovered = ImGui::IsItemHovered();
+
             dl->AddRectFilled(panel.P(x + 2.0f, y0 + 3.0f),
                               panel.P(x + 23.0f, y0 + 35.0f),
                               IM_COL32(0, 0, 0, 145), 1.5f * panel.scale());
             dl->AddRectFilled(panel.P(x, y0), panel.P(x + 20.0f, y0 + 32.0f),
-                              IM_COL32(29, 29, 28, 255), 1.5f * panel.scale());
+                              active ? IM_COL32(44, 43, 41, 255)
+                                     : IM_COL32(29, 29, 28, 255),
+                              1.5f * panel.scale());
             dl->AddRect(panel.P(x, y0), panel.P(x + 20.0f, y0 + 32.0f),
-                        IM_COL32(87, 88, 84, 255), 1.5f * panel.scale(), 0,
-                        panel.scale());
-            if (row == 0)
+                        hovered ? IM_COL32(132, 133, 128, 255)
+                                : IM_COL32(87, 88, 84, 255),
+                        1.5f * panel.scale(), 0, panel.scale());
+            if (active)
                 dl->AddRectFilled(panel.P(x + 1.0f, y0 + 2.0f),
                                   panel.P(x + 3.0f, y0 + 30.0f),
                                   IM_COL32(226, 151, 61, 255));
             panel.text(dl, x + 31.0f, y0 + 9.0f, 8.0f,
-                       row == 0 ? IM_COL32(246, 224, 177, 255)
-                                : IM_COL32(227, 227, 215, 255),
-                       labels[static_cast<size_t>(row)], -1, true);
+                       active ? IM_COL32(246, 224, 177, 255)
+                              : IM_COL32(227, 227, 215, 255),
+                       multicompp::ui_detail::fetMeterModeLabel(row), -1, true);
         }
     }
 
