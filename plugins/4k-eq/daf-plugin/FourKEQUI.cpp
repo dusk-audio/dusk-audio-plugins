@@ -19,6 +19,7 @@
 #include "FourKEQPresetRuntime.hpp"
 #include "FourKEQVersion.hpp"
 
+#include "DuskKnobRing.hpp"
 #include "DuskImGuiFont.hpp"
 #include "DuskImGuiTextInput.hpp"
 #include "DuskImGuiWidgets.hpp"
@@ -1240,14 +1241,16 @@ private:
         drawMetalKnobBody(dl, panel.P(cx, cy), r * sc(), t,
                           IM_COL32(150, 152, 156, 255), IM_COL32(30, 30, 33, 255));
         // tick dots + labels around the dial, matching the band/filter knobs.
-        for (int i = 0; i < nT; ++i)
         {
-            const float tt = range > 0.f ? (TV[i] - minV) / range : 0.f;
-            const float a = duskdaf::DuskPanel::knobAngle(tt);
-            const float dx = std::sin(a), dy = -std::cos(a);
-            dl->AddCircleFilled(panel.P(cx + dx * (r + 9.f), cy + dy * (r + 9.f)), 1.6f * sc(), IM_COL32(150, 152, 156, 255), 8);
-            const int align = dx < -0.25f ? 1 : (dx > 0.25f ? -1 : 0);
-            panel.text(dl, cx + dx * (r + 20.f), cy + dy * (r + 20.f) - 5.f, 10.5f, IM_COL32(206, 208, 212, 255), TL[i], align, true);
+            duskdaf::KnobRingStyle ring;
+            ring.dotMarks = true;
+            ring.markOuter = 9.0f;
+            ring.labelOffset = 20.0f;
+            duskdaf::drawKnobRing(panel, dl, cx, cy, r, TV, TL, nT, nullptr, 0,
+                                  [minV, range](float v) {
+                                      return range > 0.f ? (v - minV) / range : 0.f;
+                                  },
+                                  ring);
         }
         panel.text(dl, cx, cy + r + 10.f, 11.0f, IM_COL32(206, 208, 212, 255), name, 0, true);
         // gestures + value read-out on top (no body drawn)
@@ -1473,13 +1476,15 @@ private:
         }
 
         // detent dots + labels
-        for (int i = 0; i < 7; ++i)
         {
-            const float a = duskdaf::DuskPanel::knobAngle(stepLT(i));
-            const float dx = std::sin(a), dy = -std::cos(a);
-            dl->AddCircleFilled(panel.P(cx + dx * (R + 9.f), cy + dy * (R + 9.f)), 1.7f * s, IM_COL32(150, 152, 156, 255), 8);
-            const int align = dx < -0.25f ? 1 : (dx > 0.25f ? -1 : 0);
-            panel.text(dl, cx + dx * (R + 20.f), cy + dy * (R + 20.f) - 5.f, 11.f, IM_COL32(206, 208, 212, 255), labels[i], align, true);
+            duskdaf::KnobRingStyle ring;
+            ring.dotMarks = true;
+            ring.markOuter = 9.0f;
+            ring.dotRadius = 1.7f;
+            ring.labelOffset = 20.0f;
+            ring.labelSize = 11.0f;
+            for (int i = 0; i < 7; ++i)
+                duskdaf::drawKnobRingMark(panel, dl, cx, cy, R, stepLT(i), labels[i], ring);
         }
 
         // brushed-metal body: silver cap + dark pointer for the filter knobs.
@@ -1676,26 +1681,22 @@ private:
         // around the top detent, so add one unlabeled minor dot at each midpoint
         // (e.g. LF 75→200 and 200→338). This is visual only: interpolation
         // and the labeled parameter detents remain exactly as before.
+        duskdaf::KnobRingStyle ring;
+        ring.dotMarks = true;
+        ring.markOuter = 9.0f;   ring.minorOuter = 9.0f;
+        ring.dotRadius = 1.6f;   ring.minorDotRadius = 1.45f;
+        ring.labelOffset = 20.0f;
+
+        // An unlabelled dot halfway across a wide gap, so the ring reads evenly
+        // where the detents are far apart.
         if (addWideGapDots)
             for (int i = 0; i < n - 1; ++i)
                 if (T[i + 1] - T[i] >= 0.20f)
-                {
-                    const float mt = 0.5f * (T[i] + T[i + 1]);
-                    const float ma = duskdaf::DuskPanel::knobAngle(mt);
-                    const float mdx = std::sin(ma), mdy = -std::cos(ma);
-                    dl->AddCircleFilled(
-                        panel.P(cx + mdx * (R + 9.f), cy + mdy * (R + 9.f)),
-                        1.45f * s, IM_COL32(150, 152, 156, 255), 8);
-                }
+                    duskdaf::drawKnobRingMark(panel, dl, cx, cy, R,
+                                              0.5f * (T[i] + T[i + 1]), nullptr, ring, true);
 
         for (int i = 0; i < n; ++i)
-        {
-            const float a = duskdaf::DuskPanel::knobAngle(T[i]);
-            const float dx = std::sin(a), dy = -std::cos(a);
-            dl->AddCircleFilled(panel.P(cx + dx * (R + 9.f), cy + dy * (R + 9.f)), 1.6f * s, IM_COL32(150, 152, 156, 255), 8);
-            const int align = dx < -0.25f ? 1 : (dx > 0.25f ? -1 : 0);
-            panel.text(dl, cx + dx * (R + 20.f), cy + dy * (R + 20.f) - 5.f, 10.5f, IM_COL32(206, 208, 212, 255), labels[i], align, true);
-        }
+            duskdaf::drawKnobRingMark(panel, dl, cx, cy, R, T[i], labels[i], ring);
 
         drawMetalKnobBody(dl, c, RR, t, capCol, IM_COL32(245, 245, 245, 255));
         panel.text(dl, cx, cy + R + 16.f, 12.f, IM_COL32(210, 212, 216, 255), unit, 0, true);
