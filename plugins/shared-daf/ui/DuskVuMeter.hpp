@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 
 #include "DuskImGuiWidgets.hpp"
 #include "DuskVuMeterGeometry.hpp"
@@ -38,14 +39,34 @@ struct VuTick
     bool major;
 };
 
+// An optional second numeral row inside the tick ring, reading 0..100 % of a
+// reference level. The broadcast VU faces carry one: 100 % sits on 0 VU, not
+// on full deflection, so the row is laid out in deflection space against
+// `fullScaleDb` rather than against the ends of the scale.
+struct VuPercentRow
+{
+    bool enabled = false;
+    int divisions = 5;             // labels at k/divisions, k = 0..divisions
+    float fullScaleDb = 0.0f;      // the dB value the last label (100 %) sits on
+    float radiusFrac = 0.60f;      // as a fraction of the needle radius
+    float textSize = 8.5f;
+    ImU32 color = IM_COL32(70, 60, 46, 255);
+};
+
 struct VuScaleConfig
 {
     const VuTick* ticks = nullptr;
     int tickCount = 0;
     float minDb = -20.0f;         // deflection domain: full-left
     float maxDb = 3.0f;           // full-right
-    float redFromDb = 0.0f;       // red numerals + overload arc from here up;
-                                  // set above maxDb to disable the red zone
+    float redFromDb = 0.0f;       // red numerals from here up; set above maxDb
+                                  // to disable the red zone
+    // Where the bold overload arc starts, when it differs from the numerals.
+    // A face that inks its 0 numeral black but sweeps the arc from 0 upward
+    // wants redFromDb just above 0 and arcFromDb exactly on it. NaN = follow
+    // redFromDb.
+    float arcFromDb = std::numeric_limits<float>::quiet_NaN();
+    VuPercentRow percentRow;
     const char* legend = "VU";
     const char* sublabel = nullptr;
     // 0..1 deflection for a dB value. Default is linear in dB across
@@ -58,8 +79,13 @@ struct VuScaleConfig
 // lit reference window overrides only what differs.
 struct VuStyle
 {
-    ImU32 bezelLight = IM_COL32(170, 142, 100, 255);
-    ImU32 bezelDark = IM_COL32(110, 88, 54, 255);
+    // Bezel corners, in ImGui's multicolour order. The right/left variants
+    // default to their neighbour, so a two-tone bezel sets two colours and a
+    // moulded one (the TapeMachine face) sets all four.
+    ImU32 bezelLight = IM_COL32(170, 142, 100, 255);      // upper left
+    ImU32 bezelLightRight = 0;                            // 0 = bezelLight
+    ImU32 bezelDark = IM_COL32(110, 88, 54, 255);         // lower right
+    ImU32 bezelDarkLeft = 0;                              // 0 = bezelDark
     ImU32 bezelLine = IM_COL32(92, 72, 44, 255);
     ImU32 lip = IM_COL32(56, 44, 30, 255);
     ImU32 faceBase = IM_COL32(240, 231, 205, 255);
@@ -81,12 +107,25 @@ struct VuStyle
     // and a flatter arc; both are expressed here so the widget stays shared.
     float pivotBelowFace = -4.0f;     // design px below the face's bottom edge (negative = above)
     float sweepHalfAngleDeg = 64.7f;
+    // Sweep endpoints in radians, for a face whose arc is not symmetric about
+    // straight up. NaN = derive both from sweepHalfAngleDeg, which is what a
+    // face designed around a half-angle wants.
+    float sweepStartRad = std::numeric_limits<float>::quiet_NaN();
+    float sweepEndRad = std::numeric_limits<float>::quiet_NaN();
+    // Needle radius. By default the arc is sized to clear the top of the face
+    // and stay inside its sides, which is what a meter with a low pivot needs.
+    // A face whose radius was drawn as a fraction of the face box instead (the
+    // TapeMachine VU) sets both fractions and gets min(faceW * w, faceH * h).
+    float radiusWidthFrac = 0.0f;     // 0 = use the clearance rule
+    float radiusHeightFrac = 0.0f;
     float majorTickLength = 6.0f;
     float minorTickLength = 4.0f;
+    float tickLabelRadiusFrac = 0.76f;  // numeral centres, as a fraction of the radius
     ImU32 minorTickColor = 0;         // 0 = same as ink
     ImU32 bezelInnerLine = 0;         // 0 = none; a lighter bevel line inside the bezel
     ImU32 faceGlow = 0;               // 0 = none; a soft lit band across the top of the face
     float legendOffset = 0.46f;       // legend centre as a fraction of the radius above the pivot
+    float sublabelGap = 3.0f;         // sublabel baseline, below legend centre + legendSize
 };
 
 inline float vuLinearDeflection(float db, const VuScaleConfig& cfg) noexcept
@@ -139,8 +178,10 @@ inline void drawVuMeter(DuskPanel& panel, ImDrawList* dl,
     }
 
     // bezel -> dark inner lip -> face
+    const ImU32 bezelUR = style.bezelLightRight != 0 ? style.bezelLightRight : style.bezelLight;
+    const ImU32 bezelBL = style.bezelDarkLeft != 0 ? style.bezelDarkLeft : style.bezelDark;
     dl->AddRectFilledMultiColor(panel.P(x0, y0), panel.P(x1, y1),
-        style.bezelLight, style.bezelLight, style.bezelDark, style.bezelDark);
+        style.bezelLight, bezelUR, style.bezelDark, bezelBL);
     dl->AddRect(panel.P(x0, y0), panel.P(x1, y1), style.bezelLine, 6.0f * s, 0, 1.4f * s);
     dl->AddLine(panel.P(x0 + 6, y0 + 3), panel.P(x1 - 6, y0 + 3), accent, 1.6f * s);
     dl->AddRectFilled(panel.P(x0 + 4, y0 + 4), panel.P(x1 - 4, y1 - 4), style.lip, 4.0f * s);
@@ -163,10 +204,13 @@ inline void drawVuMeter(DuskPanel& panel, ImDrawList* dl,
     const float cx = 0.5f * (fx0 + fx1);
     const float pivotY = fy1 + style.pivotBelowFace;
     const float half = style.sweepHalfAngleDeg * 3.14159265f / 180.0f;
-    const float angle0 = -1.5707963f - half, angle1 = -1.5707963f + half;
+    const float angle0 = std::isnan(style.sweepStartRad) ? -1.5707963f - half : style.sweepStartRad;
+    const float angle1 = std::isnan(style.sweepEndRad) ? -1.5707963f + half : style.sweepEndRad;
     // Radius: the arc must clear the top of the face at its highest point
     // (directly above the pivot) and its ends must stay inside the sides.
-    const float radius = std::min((pivotY - fy0 - 12.0f), (fx1 - fx0) * 0.5f / std::max(std::sin(half), 0.2f) - 6.0f);
+    const float radius = (style.radiusWidthFrac > 0.0f && style.radiusHeightFrac > 0.0f)
+        ? std::min((fx1 - fx0) * style.radiusWidthFrac, (fy1 - fy0) * style.radiusHeightFrac)
+        : std::min((pivotY - fy0 - 12.0f), (fx1 - fx0) * 0.5f / std::max(std::sin(half), 0.2f) - 6.0f);
     const ImVec2 pivot = panel.P(cx, pivotY);
     const auto pt = [&](float r, float a) {
         const auto offset = vuScreenOffset(r, a, s);
@@ -179,11 +223,12 @@ inline void drawVuMeter(DuskPanel& panel, ImDrawList* dl,
     };
 
     // bold red arc across the overload zone
-    if (style.overloadArc && cfg.redFromDb <= cfg.maxDb)
+    const float arcFromDb = std::isnan(cfg.arcFromDb) ? cfg.redFromDb : cfg.arcFromDb;
+    if (style.overloadArc && arcFromDb <= cfg.maxDb)
     {
         dl->PathClear();
         dl->PathArcTo(panel.P(cx, pivotY), radius * 0.90f * s,
-                      angleFor(cfg.redFromDb), angle1, 26);
+                      angleFor(arcFromDb), angle1, 26);
         dl->PathStroke(red, 0, 3.4f * s);
     }
 
@@ -201,9 +246,29 @@ inline void drawVuMeter(DuskPanel& panel, ImDrawList* dl,
             const float px = style.tickLabelSize * s;
             ImFont* nf = panel.pickFont(px);
             const ImVec2 ts = nf->CalcTextSizeA(px, FLT_MAX, 0, tick.label);
-            const ImVec2 tp = pt(radius * 0.76f, a);
+            const ImVec2 tp = pt(radius * style.tickLabelRadiusFrac, a);
             dl->AddText(nf, px, ImVec2(tp.x - ts.x * 0.5f, tp.y - ts.y * 0.5f),
                         rz ? red : ink, tick.label);
+        }
+    }
+
+    // Percentage row, laid out in deflection space so 100 % lands on its
+    // reference level rather than on the end of the scale.
+    if (cfg.percentRow.enabled && cfg.percentRow.divisions > 0)
+    {
+        const VuPercentRow& row = cfg.percentRow;
+        const float fullScale = vuDeflection(row.fullScaleDb, cfg);
+        for (int k = 0; k <= row.divisions; ++k)
+        {
+            const float t = (static_cast<float>(k) / static_cast<float>(row.divisions)) * fullScale;
+            const float a = angle0 + t * (angle1 - angle0);
+            char label[8];
+            std::snprintf(label, sizeof(label), "%d", k * 100 / row.divisions);
+            const float px = row.textSize * s;
+            ImFont* nf = panel.pickFont(px);
+            const ImVec2 ts = nf->CalcTextSizeA(px, FLT_MAX, 0, label);
+            const ImVec2 tp = pt(radius * row.radiusFrac, a);
+            dl->AddText(nf, px, ImVec2(tp.x - ts.x * 0.5f, tp.y - ts.y * 0.5f), row.color, label);
         }
     }
 
@@ -217,7 +282,7 @@ inline void drawVuMeter(DuskPanel& panel, ImDrawList* dl,
     if (cfg.legend != nullptr)
         panel.text(dl, cx, pivotY - radius * style.legendOffset, style.legendSize, ink, cfg.legend, 0, true);
     if (cfg.sublabel != nullptr)
-        panel.text(dl, cx, pivotY - radius * style.legendOffset + style.legendSize + 3.0f,
+        panel.text(dl, cx, pivotY - radius * style.legendOffset + style.legendSize + style.sublabelGap,
                    style.sublabelSize, style.sublabelColor, cfg.sublabel, 0, true);
 
     // black needle with soft shadow + mound pivot

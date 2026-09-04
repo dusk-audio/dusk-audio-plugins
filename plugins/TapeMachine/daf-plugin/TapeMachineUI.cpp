@@ -17,6 +17,7 @@
 #include "DuskImGuiTextInput.hpp"
 #include "DuskImGuiWidgets.hpp"
 #include "DuskSupportersOverlay.hpp"   // shared DAF Patreon "Special Thanks" overlay (click title)
+#include "DuskVuMeter.hpp"             // shared analogue needle meter (this face is where it came from)
 #include "DuskUserPresetStore.hpp"
 #include "util/CrashLog.hpp"
 
@@ -780,107 +781,54 @@ private:
         ImGui::PopStyleColor(6);
     }
 
-    static constexpr float kVuA0 = -2.70f, kVuA1 = -0.44f;
-
+    // The face lives in the shared widget now (plugins/shared-daf/ui/DuskVuMeter.hpp);
+    // this is the TapeMachine scale and styling that the widget draws.
     void drawVU(ImDrawList* dl, float x0, float y0, float x1, float y1,
                 float level, float& needle, ImU32 accent, const char* label)
     {
         // 0 VU = -12 dBFS: the reference/Swiss/American spec ("plug-in operates at an internal
         // level of -12 dBFS ... a -12 dBFS input equates to 0 dB on the meters").
-        // The DSP now feeds a mean-abs (rectified) value, which reads 2/pi (-3.92 dB) below
+        // The DSP feeds a mean-abs (rectified) value, which reads 2/pi (-3.92 dB) below
         // peak for a sine. So a -12 dBFS sine arrives here as 0.15992 lin, and the offset is
         // 12 + 20*log10(pi/2) = 15.92 dB so that sine still lands exactly on 0 VU.
         const float dB = 20.0f * std::log10(level > 1e-4f ? level : 1e-4f) + 15.92f;
-        // deflection is linear in signal level (%), not dB: gives the classic
+
+        static constexpr duskdaf::VuTick kTicks[11] = {
+            {-20.0f, "20", true}, {-10.0f, "10", true}, {-7.0f, "7", true},
+            {-5.0f, "5", true},   {-3.0f, "3", true},   {-2.0f, "2", false},
+            {-1.0f, "1", true},   {0.0f, "0", true},    {1.0f, "1", true},
+            {2.0f, "2", false},   {3.0f, "3", true}};
+
+        duskdaf::VuScaleConfig cfg;
+        cfg.ticks = kTicks;
+        cfg.tickCount = 11;
+        cfg.minDb = -20.0f;
+        cfg.maxDb = 3.0f;
+        // Numerals go red above 0, but the overload arc starts on 0 itself.
+        cfg.redFromDb = 1.0f;
+        cfg.arcFromDb = 0.0f;
+        // deflection is linear in signal level (%), not dB: the classic
         // log-spread VU scale (marks bunch at the bottom, open up near 0..+3).
-        float target = std::pow(10.0f, (dB - 3.0f) / 20.0f);
-        target = target < 0.0f ? 0.0f : (target > 1.0f ? 1.0f : target);
-        // The 300 ms ANSI ballistic lives entirely in the DSP integrator now; this UI filter
-        // is only a fast cosmetic anti-jitter / frame-interpolation pole (tau ~= 25 ms, well
-        // under 30 ms) so it does not add a second, slower time constant to the needle.
-        needle += (target - needle) * (1.0f - std::exp(-ImGui::GetIO().DeltaTime * 40.0f));
+        cfg.deflection = duskdaf::vuBroadcastDeflection;
+        cfg.percentRow.enabled = true;      // 0..100 %, with 100 % on 0 VU
+        cfg.percentRow.fullScaleDb = 0.0f;
+        cfg.legend = "VU";
+        cfg.sublabel = label;
 
-        // warm tan bezel -> dark inner lip -> aged-cream face
-        dl->AddRectFilledMultiColor(P(x0, y0), P(x1, y1),
-            IM_COL32(170, 142, 100, 255), IM_COL32(158, 130, 88, 255),
-            IM_COL32(120, 96, 60, 255),  IM_COL32(110, 88, 54, 255));
-        dl->AddRect(P(x0, y0), P(x1, y1), IM_COL32(92, 72, 44, 255), 6.0f * s, 0, 1.4f * s);
-        dl->AddLine(P(x0 + 6, y0 + 3), P(x1 - 6, y0 + 3), accent, 1.6f * s); // machine accent stripe
-        dl->AddRectFilled(P(x0 + 4, y0 + 4), P(x1 - 4, y1 - 4), IM_COL32(56, 44, 30, 255), 4.0f * s);
-        const float fx0 = x0 + 7, fy0 = y0 + 7, fx1 = x1 - 7, fy1 = y1 - 7;
-        dl->AddRectFilled(P(fx0, fy0), P(fx1, fy1), IM_COL32(240, 231, 205, 255), 3.0f * s);
-        dl->AddRectFilledMultiColor(P(fx0, fy0), P(fx1, fy1),
-            IM_COL32(252, 246, 226, 130), IM_COL32(252, 246, 226, 130),
-            IM_COL32(210, 194, 158, 150), IM_COL32(210, 194, 158, 150));
+        duskdaf::VuStyle style;
+        style.bezelLightRight = IM_COL32(158, 130, 88, 255);
+        style.bezelDark = IM_COL32(120, 96, 60, 255);
+        style.bezelDarkLeft = IM_COL32(110, 88, 54, 255);
+        style.radiusWidthFrac = 0.48f;
+        style.radiusHeightFrac = 0.92f;
+        // The face was drawn against these endpoints, which are very slightly
+        // asymmetric; keeping them exact holds every numeral on its pixel.
+        style.sweepStartRad = -2.70f;
+        style.sweepEndRad = -0.44f;
+        style.tickLabelRadiusFrac = 0.80f;
+        style.sublabelGap = 2.0f;
 
-        const float cx = 0.5f * (fx0 + fx1);
-        const float pivotY = fy1 - 4.0f;
-        const float L = std::min((fx1 - fx0) * 0.48f, (fy1 - fy0) * 0.92f);
-        auto pt = [&](float r, float a) { return P(cx + r * std::cos(a), pivotY + r * std::sin(a)); };
-        ImFont* f = labelFont ? labelFont : ImGui::GetFont();
-        const ImU32 ink = IM_COL32(38, 32, 24, 255), red = IM_COL32(196, 42, 34, 255);
-        auto num = [&](float r, float a, const char* b, ImU32 c, float sz) {
-            ImFont* nf = panel.pickFont(sz * s); if (nf == nullptr) nf = f;   // nearest baked size -> crisp
-            ImVec2 ts = nf->CalcTextSizeA(sz * s, FLT_MAX, 0, b);
-            ImVec2 tp = pt(r, a);
-            dl->AddText(nf, sz * s, ImVec2(tp.x - ts.x * 0.5f, tp.y - ts.y * 0.5f), c, b);
-        };
-        auto ang = [&](float db) { float n = std::pow(10.0f, (db - 3.0f) / 20.0f);
-                                   n = n < 0.0f ? 0.0f : (n > 1.0f ? 1.0f : n);
-                                   return kVuA0 + n * (kVuA1 - kVuA0); };
-
-        // bold red arc over the 0..+3 zone
-        dl->PathClear();
-        dl->PathArcTo(P(cx, pivotY), L * 0.90f * s, ang(0.0f), kVuA1, 26);
-        dl->PathStroke(red, 0, 3.4f * s);
-
-        // dB scale: ticks + numbers (black below 0, red above)
-        const float dbv[11] = { -20, -10, -7, -5, -3, -2, -1, 0, 1, 2, 3 };
-        for (int i = 0; i < 11; ++i)
-        {
-            const float db = dbv[i], a = ang(db);
-            const bool major = !(db == -2 || db == 2);
-            const bool rz = db > 0.0f;
-            const float rt = L * 0.90f;
-            dl->AddLine(pt(rt, a), pt(rt + (major ? 6.0f : 4.0f), a),
-                        rz ? red : ink, (major ? 1.6f : 1.0f) * s);
-            char b[6]; std::snprintf(b, sizeof(b), "%d", (int)std::abs(db));
-            num(L * 0.80f, a, b, rz ? red : ink, 10.0f);
-        }
-        // percentage row (0..100) across the black zone, closer to the pivot
-        const float pct0 = std::pow(10.0f, -3.0f / 20.0f); // 0 VU == 100%
-        for (int k = 0; k <= 5; ++k)
-        {
-            const float aP = kVuA0 + (k / 5.0f) * pct0 * (kVuA1 - kVuA0);
-            char b[6]; std::snprintf(b, sizeof(b), "%d", k * 20);
-            num(L * 0.60f, aP, b, IM_COL32(70, 60, 46, 255), 8.5f);
-        }
-        // - (left) and + (red, right) marks in the top corners
-        text(dl, fx0 + 10, fy0 + 3, 15.0f, ink, "-", -1, true);
-        text(dl, fx1 - 10, fy0 + 3, 15.0f, red, "+", 1, true);
-
-        // VU legend + channel tag
-        text(dl, cx, pivotY - L * 0.46f, 11, ink, "VU", 0, true);
-        text(dl, cx, pivotY - L * 0.46f + 13.0f, 9.0f, IM_COL32(90, 80, 64, 255), label, 0, true);
-
-        // black needle with soft shadow + mound pivot
-        const float na = kVuA0 + needle * (kVuA1 - kVuA0);
-        dl->AddLine(P(cx + 2, pivotY + 1), pt(L * 0.95f, na), IM_COL32(60, 50, 36, 70), 4.0f * s);
-        {
-            const float perp = na + 1.5707963f, bw = 3.4f;
-            dl->AddTriangleFilled(P(cx + bw * 0.5f * std::cos(perp), pivotY + bw * 0.5f * std::sin(perp)),
-                                  pt(L * 0.95f, na),
-                                  P(cx - bw * 0.5f * std::cos(perp), pivotY - bw * 0.5f * std::sin(perp)),
-                                  IM_COL32(28, 24, 18, 255));
-        }
-        dl->AddCircleFilled(P(cx, pivotY + 1), 8.0f * s, IM_COL32(40, 32, 22, 90), 20);
-        dl->AddCircleFilled(P(cx, pivotY), 4.6f * s, IM_COL32(24, 20, 14, 255), 18);
-        dl->AddCircleFilled(P(cx - 1.2f * s, pivotY - 1.4f * s), 1.5f * s, IM_COL32(150, 140, 120, 150), 10);
-
-        // glass top highlight
-        dl->AddRectFilledMultiColor(P(fx0 + 4, fy0 + 2), P(fx1 - 4, fy0 + (fy1 - fy0) * 0.22f),
-            IM_COL32(255, 255, 255, 30), IM_COL32(255, 255, 255, 30),
-            IM_COL32(255, 255, 255, 0), IM_COL32(255, 255, 255, 0));
+        duskdaf::drawVuMeter(panel, dl, x0, y0, x1, y1, dB, needle, cfg, accent, style);
     }
 
     //--- selectors (single row of six) -----------------------------------------
