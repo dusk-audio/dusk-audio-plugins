@@ -66,6 +66,13 @@ reject "${PARAM}=0.5x"  "trailing garbage"
 reject "=0.5"           "empty name"
 reject "${PARAM}"       "no separator"
 
+# An unknown flag that merely starts with --set. It used to match and swallow
+# the next argument as its specification, so a typo armed a parameter and the
+# run passed.
+unknown_out=""; unknown_status=0
+unknown_out="$("$HARNESS" "$PLUGIN" 4 64 --setfoo "${PARAM}=0.8" 2>&1)" || unknown_status=$?
+check_rejected "an unknown --setfoo flag" "$unknown_status" "$unknown_out"
+
 # A bare --set with nothing after it. Separate from the cases above because
 # there is no specification to pass: the harness has to notice it is at the end
 # of argv rather than reading past it, and still say what is wrong.

@@ -437,7 +437,11 @@ int main(const int argc, const char* const* const argv)
     std::vector<ArmRequest> armRequests;
     for (int i = 1; i < argc; ++i)
     {
-        if (std::strncmp(argv[i], "--set", 5) == 0)
+        // Exactly --set, or --set=SPEC. A prefix test also matched --setfoo and
+        // any future --set-something, and then swallowed the following argument
+        // as its specification: an unknown flag silently armed a parameter and
+        // the run passed.
+        if (std::strcmp(argv[i], "--set") == 0 || std::strncmp(argv[i], "--set=", 6) == 0)
         {
             const char* spec = argv[i][5] == '=' ? argv[i] + 6
                              : (i + 1 < argc ? argv[++i] : nullptr);
