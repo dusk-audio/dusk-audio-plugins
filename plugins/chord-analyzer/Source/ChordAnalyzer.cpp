@@ -239,6 +239,161 @@ ChordInfo ChordAnalyzer::analyze(const std::vector<int>& midiNotes)
 }
 
 //==============================================================================
+// Label encoding for the "Detected Chord" host parameter. See ChordAnalyzer.h
+// for why the decoder has to be a pure function of the code.
+namespace
+{
+    // One block of codes per branch analyze() can take when it builds
+    // ChordInfo::name, sized exactly to what that branch needs.
+    constexpr int kLabelNone        = 0;
+    constexpr int kLabelSingleBase  = 1;                              // 128 MIDI notes
+    constexpr int kLabelDyadBase    = kLabelSingleBase + 128;         // 12 x 12 x unison flag
+    constexpr int kLabelUnknownBase = kLabelDyadBase + 12 * 12 * 2;   // 12 roots
+    constexpr int kLabelChordBase   = kLabelUnknownBase + 12;         // root x bass x mask
+
+    // Sounding intervals above the root, one bit each for 1..11 semitones. The
+    // root is always sounding (findRoot only ever returns a sounding pitch
+    // class), so interval 0 is implied and costs no bit.
+    constexpr int kLabelMaskBits    = 11;
+    constexpr int kLabelMaskCount   = 1 << kLabelMaskBits;
+
+    static_assert(kLabelChordBase + 12 * 12 * kLabelMaskCount - 1
+                      == ChordAnalyzer::maxLabelCode,
+                  "maxLabelCode must match the label code layout");
+
+    std::uint16_t pitchMaskOf(const std::vector<int>& midiNotes) noexcept
+    {
+        std::uint16_t mask = 0;
+        for (int note : midiNotes)
+            mask = static_cast<std::uint16_t>(mask | (1u << (((note % 12) + 12) % 12)));
+        return mask;
+    }
+}
+
+int ChordAnalyzer::encodeLabel(const ChordInfo& chord, bool showInversions) noexcept
+{
+    // Branches in the same order as analyze(), on the same conditions, so the
+    // code always describes the string analyze() produced. isValid stands in
+    // for "a pattern matched": ChordFacts sets it only on that path, and sets
+    // it whenever that path is taken.
+    const std::vector<int>& notes = chord.midiNotes;
+
+    if (notes.empty())
+        return kLabelNone;
+
+    if (notes.size() == 1)
+        return kLabelSingleBase + juce::jlimit(0, 127, notes[0]);
+
+    const std::uint16_t pitchMask = pitchMaskOf(notes);
+    const int bass = ((chord.bassNote % 12) + 12) % 12;
+    const int root = ((chord.rootNote % 12) + 12) % 12;
+
+    if (! chord.isValid)
+    {
+        const int distinctPitches = countPitchClasses(pitchMask);
+
+        if (distinctPitches > 2)
+            return kLabelUnknownBase + root;
+
+        int upper = bass;
+        for (int pc = 0; pc < 12; ++pc)
+        {
+            if (pc != bass && (pitchMask & (1u << pc)) != 0)
+            {
+                upper = pc;
+                break;
+            }
+        }
+
+        // One pitch class is a doubled note: an octave, or a unison when every
+        // note is literally the same pitch.
+        bool unison = false;
+        if (distinctPitches < 2)
+        {
+            const auto range = std::minmax_element(notes.begin(), notes.end());
+            unison = (*range.first == *range.second);
+        }
+
+        return kLabelDyadBase + (bass * 12 + upper) * 2 + (unison ? 1 : 0);
+    }
+
+    int intervalMask = 0;
+    for (int pc = 0; pc < 12; ++pc)
+    {
+        if ((pitchMask & (1u << pc)) == 0)
+            continue;
+
+        const int interval = ((pc - root) + 12) % 12;
+        if (interval != 0)
+            intervalMask |= (1 << (interval - 1));
+    }
+
+    // Bass interval 0 means "no slash", which is also how a toggled-off Show
+    // Inversions reads: the editor drops the suffix, so the code must too.
+    const int bassInterval = (showInversions && chord.slashBass)
+                                 ? ((bass - root) + 12) % 12 : 0;
+
+    return kLabelChordBase + (root * 12 + bassInterval) * kLabelMaskCount + intervalMask;
+}
+
+juce::String ChordAnalyzer::decodeLabel(int code)
+{
+    // Hosts probe getText() with any value in range, so every code out of the
+    // encoder's image still has to produce something harmless.
+    if (code <= kLabelNone || code > maxLabelCode)
+        return "-";
+
+    if (code < kLabelDyadBase)
+        return noteToName(code - kLabelSingleBase);
+
+    if (code < kLabelUnknownBase)
+    {
+        int payload = code - kLabelDyadBase;
+        const bool unison = (payload % 2) != 0;
+        payload /= 2;
+        const int bass  = payload / 12;
+        const int upper = payload % 12;
+
+        const char* interval = (bass == upper) ? (unison ? "unison" : "octave")
+                                               : intervalName(((upper - bass) + 12) % 12);
+
+        return pitchClassToName(bass) + "+" + pitchClassToName(upper)
+             + " (" + interval + ")";
+    }
+
+    if (code < kLabelChordBase)
+        return pitchClassToName(code - kLabelUnknownBase) + "?";
+
+    int payload = code - kLabelChordBase;
+    const int intervalMask = payload % kLabelMaskCount;
+    payload /= kLabelMaskCount;
+    const int bassInterval = payload % 12;
+    const int root         = payload / 12;
+
+    // Rebuild the sounding pitch classes, then run the same matching and
+    // naming analyze() runs. No second copy of the pattern table.
+    std::uint16_t pitchMask = static_cast<std::uint16_t>(1u << root);
+    for (int bit = 0; bit < kLabelMaskBits; ++bit)
+        if ((intervalMask & (1 << bit)) != 0)
+            pitchMask = static_cast<std::uint16_t>(pitchMask | (1u << ((root + bit + 1) % 12)));
+
+    const std::uint32_t intervals = intervalsFrom(pitchMask, root);
+    const int patternIndex = matchPattern(intervals);
+
+    if (patternIndex < 0)
+        return pitchClassToName(root) + "?";   // only reachable from a probed code
+
+    juce::String label = pitchClassToName(root)
+                       + qualityToSuffix(chordPatterns[static_cast<size_t>(patternIndex)].quality)
+                       + describeAddedTones(patternIndex, intervals);
+
+    if (bassInterval != 0)
+        label += "/" + pitchClassToName((root + bassInterval) % 12);
+
+    return label;
+}
+
+//==============================================================================
 void ChordAnalyzer::setKey(int rootNote, bool isMinor)
 {
     keyRoot = rootNote % 12;

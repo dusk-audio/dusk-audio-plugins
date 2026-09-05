@@ -129,6 +129,21 @@ target_compile_definitions(ChordAnalyzerTest PRIVATE
     JUCE_WEB_BROWSER=0
 )
 
+# Host-side test target for the "Detected Chord" output parameter. Links the
+# plugin's shared code so it exercises the real processor, the real parameter
+# object and the real 20 Hz publish path rather than a stand-in.
+add_executable(ChordAnalyzerHostTest EXCLUDE_FROM_ALL
+    tests/test_detected_chord_param.cpp
+)
+target_link_libraries(ChordAnalyzerHostTest PRIVATE ChordAnalyzer)
+# Borrow the shared code's include paths and defines rather than linking the
+# JUCE module targets again: those are INTERFACE libraries that would compile a
+# second copy of every JUCE module into this executable.
+target_include_directories(ChordAnalyzerHostTest
+    PRIVATE $<TARGET_PROPERTY:ChordAnalyzer,INCLUDE_DIRECTORIES>)
+target_compile_definitions(ChordAnalyzerHostTest
+    PRIVATE $<TARGET_PROPERTY:ChordAnalyzer,COMPILE_DEFINITIONS>)
+
 # Optimization for release builds
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

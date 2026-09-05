@@ -77,10 +77,37 @@ ChordAnalyzerProcessor::ChordAnalyzerProcessor()
         juce::ParameterID(PARAM_DETECTED_INVERSION, 1),
         "Detected Inversion", inversionChoices, 0);
 
+    // The four above are fragments: a host can show "C", "maj7" and "E" but
+    // cannot always reassemble "Cmaj7/E", let alone "Cadd#11" (issue #267).
+    // This one carries the whole label the editor draws.
+    //
+    // Deliberately an AudioParameterFloat with a custom string function rather
+    // than an AudioParameterInt. AudioParameterInt is discrete, and every JUCE
+    // wrapper treats a discrete parameter as an enumeration: the AU wrapper
+    // reports kAudioUnitParameterUnit_Indexed with maxValue = getNumSteps() - 1
+    // and eagerly builds one CFString per step at instantiation
+    // (juce_audio_plugin_client_AU_1.mm), which for 295341 codes means AU hosts
+    // enumerating a menu of a quarter of a million entries. Not discrete means
+    // AU keeps it a plain 0..1 float and asks for one string at a time through
+    // kAudioUnitProperty_ParameterStringFromValue, VST3 reports stepCount 0 and
+    // calls getParamStringByValue, and the LV2 wrapper writes no scale points.
+    //
+    // The lambda reads nothing but its argument. Hosts call getText() with
+    // arbitrary values and cache the answers, so anything that peeked at the
+    // live chord here would label cached values with the wrong chord.
+    detectedChordParam = new juce::AudioParameterFloat(
+        juce::ParameterID(PARAM_DETECTED_CHORD, 1),
+        "Detected Chord",
+        juce::NormalisableRange<float>(0.0f, static_cast<float>(ChordAnalyzer::maxLabelCode), 1.0f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float value, int) { return ChordAnalyzer::decodeLabel(juce::roundToInt(value)); }));
+
     addParameter(detectedRootParam);
     addParameter(detectedQualityParam);
     addParameter(detectedBassParam);
     addParameter(detectedInversionParam);
+    addParameter(detectedChordParam);
 
     startTimer(50);  // 20Hz publishing of detection results to host parameters
 }
@@ -164,6 +191,11 @@ void ChordAnalyzerProcessor::parameterChanged(const juce::String& parameterID, f
     else if (parameterID == PARAM_SHOW_INVERSIONS)
     {
         showInversions.store(newValue > 0.5f);
+        // The published label carries the slash bass only while this is on, so
+        // the chord already sounding has to be re-encoded. Deferred to the
+        // timer: this callback can arrive on the audio thread and re-staging
+        // takes chordLock.
+        detectionRestageRequested.store(true, std::memory_order_release);
     }
     else if (parameterID == PARAM_RESPECT_SUSTAIN)
     {
@@ -513,6 +545,7 @@ void ChordAnalyzerProcessor::stageDetectedChord(const ChordInfo& chord)
     pendingQualityIndex.store(qualityIndex);
     pendingBassIndex.store(bassIndex);
     pendingInversionIndex.store(inversionIndex);
+    pendingChordCode.store(ChordAnalyzer::encodeLabel(chord, showInversions.load()));
     detectionDirty.store(true);
 }
 
@@ -525,6 +558,12 @@ void ChordAnalyzerProcessor::timerCallback()
     if (analysisDirty.exchange(false, std::memory_order_acq_rel))
         updateAnalysis();
 
+    if (detectionRestageRequested.exchange(false, std::memory_order_acq_rel))
+    {
+        const juce::SpinLock::ScopedLockType lock(chordLock);
+        stageDetectedChord(currentChord);
+    }
+
     if (! detectionDirty.exchange(false))
         return;
 
@@ -532,6 +571,13 @@ void ChordAnalyzerProcessor::timerCallback()
     if (detectedQualityParam   != nullptr) *detectedQualityParam   = pendingQualityIndex.load();
     if (detectedBassParam      != nullptr) *detectedBassParam      = pendingBassIndex.load();
     if (detectedInversionParam != nullptr) *detectedInversionParam = pendingInversionIndex.load();
+
+    // Published unnormalised, like the four choices above: operator= skips the
+    // notification only when the value is unchanged, and its relative epsilon
+    // at the top of this range works out at 0.04 codes, far short of the 1 that
+    // separates two labels.
+    if (detectedChordParam != nullptr)
+        *detectedChordParam = static_cast<float>(pendingChordCode.load());
 }
 
 //==============================================================================

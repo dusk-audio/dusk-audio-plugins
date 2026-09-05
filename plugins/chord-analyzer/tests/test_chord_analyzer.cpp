@@ -7,6 +7,7 @@
 #include <iostream>
 #include <iomanip>
 #include <vector>
+#include <algorithm>
 
 static int passed = 0, failed = 0;
 
@@ -613,6 +614,201 @@ static void testUtilities()
 }
 
 // =====================================================================
+// 11. "Detected Chord" label codec (issue #267)
+// =====================================================================
+
+// The exact string PluginEditor::updateChordDisplay() writes into the label.
+static juce::String uiLabel(const ChordInfo& chord, bool showInversions)
+{
+    juce::String text = chord.name;
+
+    if (showInversions && chord.slashBass && ! chord.extensions.isEmpty())
+        text += chord.extensions;
+
+    return text;
+}
+
+// Bass lowest, every other sounding pitch class stacked inside the octave
+// above it.
+static std::vector<int> canonicalVoicing(int pitchMask, int bassPc)
+{
+    std::vector<int> notes{ 48 + bassPc };
+
+    for (int step = 1; step < 12; ++step)
+        if ((pitchMask & (1 << ((bassPc + step) % 12))) != 0)
+            notes.push_back(48 + bassPc + step);
+
+    return notes;
+}
+
+// Same pitch classes and the same lowest note, but spread over three octaves
+// with the bass doubled. Used to show the label depends on the pitch classes
+// and the bass, not on how the notes are laid out.
+static std::vector<int> spreadVoicing(int pitchMask, int bassPc)
+{
+    std::vector<int> notes{ 36 + bassPc, 48 + bassPc };
+    int spread = 0;
+
+    for (int step = 1; step < 12; ++step)
+    {
+        if ((pitchMask & (1 << ((bassPc + step) % 12))) == 0)
+            continue;
+
+        notes.push_back(48 + bassPc + step + 12 * (spread % 3));
+        ++spread;
+    }
+
+    return notes;
+}
+
+static void testDetectedChordCodec()
+{
+    std::cout << "\n--- Detected Chord Codec ---\n";
+    ChordAnalyzer a;
+
+    int cases = 0;
+    int mismatches = 0;
+    int outOfRange = 0;
+    int voicingMismatches = 0;
+    int maxCodeSeen = 0;
+    juce::String firstMismatch;
+    juce::String firstVoicingMismatch;
+
+    auto roundTrip = [&](const std::vector<int>& notes, bool showInversions)
+    {
+        const ChordInfo chord = a.analyze(notes);
+        const int code = ChordAnalyzer::encodeLabel(chord, showInversions);
+        ++cases;
+
+        if (code < 0 || code > ChordAnalyzer::maxLabelCode)
+        {
+            ++outOfRange;
+            return;
+        }
+
+        maxCodeSeen = std::max(maxCodeSeen, code);
+
+        const juce::String expected = uiLabel(chord, showInversions);
+        const juce::String actual   = ChordAnalyzer::decodeLabel(code);
+
+        if (actual != expected)
+        {
+            ++mismatches;
+
+            if (firstMismatch.isEmpty())
+                firstMismatch = "notes[" + juce::String(static_cast<int>(notes.size()))
+                              + "] showInv=" + (showInversions ? "1" : "0")
+                              + " code=" + juce::String(code)
+                              + " expected \"" + expected + "\" got \"" + actual + "\"";
+        }
+    };
+
+    // Every pitch-class set, over every bass that set can have.
+    for (int mask = 1; mask < 4096; ++mask)
+    {
+        for (int bassPc = 0; bassPc < 12; ++bassPc)
+        {
+            if ((mask & (1 << bassPc)) == 0)
+                continue;
+
+            const std::vector<int> notes = canonicalVoicing(mask, bassPc);
+            roundTrip(notes, false);
+            roundTrip(notes, true);
+
+            // Two or more pitch classes: the label must not move when the same
+            // set is voiced differently over the same bass. This is the claim
+            // the encoding rests on, that (root, interval mask, bass) is
+            // enough, so it is measured rather than assumed.
+            if (notes.size() < 2)
+                continue;
+
+            const juce::String canonical = uiLabel(a.analyze(notes), true);
+            const juce::String spread    = uiLabel(a.analyze(spreadVoicing(mask, bassPc)), true);
+
+            if (canonical != spread)
+            {
+                ++voicingMismatches;
+
+                if (firstVoicingMismatch.isEmpty())
+                    firstVoicingMismatch = "mask=" + juce::String(mask)
+                                         + " bass=" + juce::String(bassPc)
+                                         + " \"" + canonical + "\" vs \"" + spread + "\"";
+            }
+        }
+    }
+
+    const int chordCases = cases;
+
+    // All 128 single notes: that label carries an octave, so it is its own kind.
+    for (int note = 0; note < 128; ++note)
+    {
+        roundTrip({ note }, false);
+        roundTrip({ note }, true);
+    }
+
+    // Every two-note voicing, including the unisons and every octave.
+    for (int low = 0; low < 128; ++low)
+    {
+        for (int high = low; high < 128; ++high)
+        {
+            roundTrip({ low, high }, false);
+            roundTrip({ low, high }, true);
+        }
+    }
+
+    // No notes at all.
+    roundTrip({}, false);
+    roundTrip({}, true);
+
+    std::cout << "       chord-set cases: " << chordCases
+              << ", total cases: " << cases
+              << ", highest code: " << maxCodeSeen
+              << " (limit " << ChordAnalyzer::maxLabelCode << ")\n";
+
+    if (! firstMismatch.isEmpty())
+        std::cout << "       first mismatch: " << firstMismatch << "\n";
+
+    if (! firstVoicingMismatch.isEmpty())
+        std::cout << "       first voicing mismatch: " << firstVoicingMismatch << "\n";
+
+    check("codec: every case round-trips to the UI label", mismatches == 0);
+    check("codec: every code stays inside maxLabelCode", outOfRange == 0);
+    check("codec: label is independent of the voicing", voicingMismatches == 0);
+    check("codec: no chord decodes to \"-\"", ChordAnalyzer::decodeLabel(0) == "-");
+
+    // Spot checks, so a broken decoder shows what it broke rather than a count.
+    const ChordInfo cmaj7overE = a.analyze({ 64, 67, 71, 72 });
+    check("codec: Cmaj7/E with inversions on",
+          ChordAnalyzer::decodeLabel(ChordAnalyzer::encodeLabel(cmaj7overE, true)) == "Cmaj7/E");
+    check("codec: Cmaj7/E with inversions off",
+          ChordAnalyzer::decodeLabel(ChordAnalyzer::encodeLabel(cmaj7overE, false)) == "Cmaj7");
+
+    const ChordInfo addSharp11 = a.analyze({ 60, 64, 67, 78 });
+    check("codec: Cadd#11",
+          ChordAnalyzer::decodeLabel(ChordAnalyzer::encodeLabel(addSharp11, true)) == "Cadd#11");
+
+    check("codec: single note keeps its octave",
+          ChordAnalyzer::decodeLabel(ChordAnalyzer::encodeLabel(a.analyze({ 60 }), true)) == "C4");
+    check("codec: dyad names the interval",
+          ChordAnalyzer::decodeLabel(ChordAnalyzer::encodeLabel(a.analyze({ 60, 64 }), true))
+              == "C+E (M3)");
+    check("codec: doubled note reads as an octave",
+          ChordAnalyzer::decodeLabel(ChordAnalyzer::encodeLabel(a.analyze({ 60, 72 }), true))
+              == "C+C (octave)");
+
+    // Values the encoder never produces still have to be safe to ask about:
+    // hosts probe getText() across the whole range and cache what it returns.
+    int probed = 0;
+    for (int code = -4096; code <= ChordAnalyzer::maxLabelCode + 4096; code += 7)
+    {
+        ChordAnalyzer::decodeLabel(code);
+        ++probed;
+    }
+    check("codec: out-of-image codes decode without crashing", probed > 0);
+    std::cout << "       probed " << probed << " codes across and beyond the range\n";
+}
+
+// =====================================================================
 int main()
 {
     std::cout << "=== Chord Analyzer Unit Tests ===\n";
@@ -632,6 +828,7 @@ int main()
     testAnalyzeFacts();
     testNoFifthAndDyads();
     testUtilities();
+    testDetectedChordCodec();
 
     std::cout << "\n=== Results: " << passed << " passed, " << failed << " failed ===\n";
     return failed > 0 ? 1 : 0;
