@@ -927,16 +927,21 @@ private:
         // Shelf spans the VU-meter width exactly (left meter x0=68 .. right meter x1=732).
         drawSelectorShelf(dl, 68.0f, 206.0f, 732.0f, 259.0f);
 
-        // The selector row reflows per machine: the American adds a HEAD WIDTH cell (6
-        // cells); the Swiss omits it (5). TAPE SPEED exposes 3.75 IPS on the American only.
+        // The selector row reflows per machine: the American adds a HEAD WIDTH cell (7
+        // cells); the Swiss omits it (6). TAPE SPEED exposes 3.75 IPS on the American only.
         // No OVERSAMPLING cell: the OS param is pinned at the tuned 2x core (DSP ignores it),
         // matching the reference decks which have no OS control (see TapeMachineDSP::factorFromChoice).
         struct Sel { const char* id; uint32_t p; const char* t; int n; };
-        Sel cells[6];
+        Sel cells[7];
         int nc = 0;
         cells[nc++] = { "##machine", kParamTapeMachine, "MACHINE",     2 };
         cells[nc++] = { "##speed",   kParamTapeSpeed,   "TAPE SPEED",  classic ? 4 : 3 };
         cells[nc++] = { "##type",    kParamTapeType,    "TAPE TYPE",   4 };
+        // Operating level. The DSP has always taken it (kParamCalibration ->
+        // setCalibration, +3/+6/+7.5/+9 dB over the reference flux), and it was
+        // reachable only from a host's generic parameter list; a deck's
+        // calibration belongs next to its tape and EQ standard (#144).
+        cells[nc++] = { "##cal",     kParamCalibration, "CALIBRATION", 4 };
         cells[nc++] = { "##path",    kParamSignalPath,  "SIGNAL PATH", 4 };
         cells[nc++] = { "##eq",      kParamEqStandard,  "EQ STANDARD", 2 };
         if (classic)
@@ -946,7 +951,12 @@ private:
         // as an even grid instead of ragged per-option boxes. Centres are distributed inside
         // the shelf (68..732) with an 8 px inner margin so no box touches the shelf border,
         // in either the 5-cell (Swiss) or 6-cell (American) layout.
-        const float x0 = 76.f, x1 = 724.f, selW = 100.f;
+        // 100 px wide wherever it fits, which is every layout up to six cells;
+        // the seven-cell American row is narrower than that, so the width
+        // follows the spacing and keeps the 8 px gap rather than overlapping.
+        const float x0 = 76.f, x1 = 724.f;
+        const float spacing = (x1 - x0) / (float) nc;
+        const float selW = spacing - 8.f < 100.f ? spacing - 8.f : 100.f;
         for (int i = 0; i < nc; ++i)
         {
             const float cx = x0 + (x1 - x0) * ((float)i + 0.5f) / (float)nc;
