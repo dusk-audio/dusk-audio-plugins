@@ -505,11 +505,16 @@ RenderCoverage renderCoverage(Display* const display, const Window window,
     return cov;
 }
 
-// Where the drawn pixels are, for the failure message only. On a window this
-// check is complaining about the most frequent sampled colour is the background
-// by definition, so the bounding box of everything else is the region the plugin
-// actually painted, and its share of the window is the number that says "a
-// quarter of it" out loud. Grid-aligned like the counts above.
+// Where the drawn pixels are, for the failure message only. The background is
+// read off the quadrants that came up blank, which is what "blank" means, and
+// the bounding box of every sample that is not that colour is the region the
+// plugin did manage to paint; its share of the window is the number that says
+// "a quarter of it" out loud. Grid-aligned like the counts above.
+//
+// Read off the blank quadrants rather than off the window, because the most
+// frequent colour of the whole window is only the background when the painted
+// region is the smaller part, and a window can fail this check with three
+// quadrants blank or with one. The blank quadrants are unambiguous either way.
 struct DrawnExtent
 {
     bool any;
@@ -525,7 +530,8 @@ struct DrawnExtent
 };
 
 DrawnExtent drawnExtent(Display* const display, const Window window,
-                        const unsigned width, const unsigned height)
+                        const unsigned width, const unsigned height,
+                        const RenderCoverage& coverage)
 {
     DrawnExtent ext = { false, 0, 0, 0, 0 };
 
@@ -533,22 +539,31 @@ DrawnExtent drawnExtent(Display* const display, const Window window,
     if (img == nullptr)
         return ext;
 
-    unsigned long value[64] = {};
-    unsigned tally[64] = {};
+    const unsigned midX = width / 2, midY = height / 2;
+
+    // Every colour the blank quadrants hold, exactly. A quadrant is only blank
+    // when it showed fewer than kColourBar distinct colours, so together they
+    // hold at most kQuadrants * (kColourBar - 1) and this table cannot fill; the
+    // guard below is the proof standing watch, not a case that arises.
+    constexpr unsigned kBackgroundKinds = kQuadrants * kColourBar;
+    unsigned long value[kBackgroundKinds] = {};
+    unsigned tally[kBackgroundKinds] = {};
     unsigned kinds = 0;
 
     for (unsigned y = 0; y < height; y += kSampleStep)
         for (unsigned x = 0; x < width; x += kSampleStep)
         {
+            const unsigned quadrant = (y >= midY ? 2u : 0u) + (x >= midX ? 1u : 0u);
+            if ((unsigned) coverage.quadrant[quadrant] >= kColourBar)
+                continue;
+
             const unsigned long px = XGetPixel(img, (int) x, (int) y);
             unsigned i = 0;
             for (; i < kinds; ++i)
                 if (value[i] == px) break;
             if (i == kinds)
             {
-                // Table full: the dominant colour of a near-empty window is long
-                // since in it, and a 65th shade cannot become the majority now.
-                if (kinds == 64)
+                if (kinds == kBackgroundKinds)
                     continue;
                 value[kinds++] = px;
             }
@@ -963,7 +978,7 @@ int main(const int argc, const char* const* const argv)
                 used += (unsigned) std::snprintf(empty + used, sizeof(empty) - used,
                                                  "%s%s", used != 0 ? ", " : "", kQuadrantNames[i]);
 
-        const DrawnExtent ext = drawnExtent(fx.display, sampled, width, height);
+        const DrawnExtent ext = drawnExtent(fx.display, sampled, width, height, coverage);
 
         std::fprintf(stderr,
                      "\nFAIL: the editor is drawing into part of its window. After three seconds of\n"
