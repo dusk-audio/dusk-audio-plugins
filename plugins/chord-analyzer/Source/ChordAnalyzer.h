@@ -179,6 +179,33 @@ public:
     static juce::String qualityToSuffix(ChordQuality quality);
     static juce::String functionToString(HarmonicFunction func);
 
+    //==========================================================================
+    // Host-parameter encoding of the label the editor displays.
+    //
+    // The "Detected Chord" parameter has to build its text out of the
+    // parameter VALUE alone. Hosts call getText() with arbitrary values and
+    // cache what comes back, so a stringFromValue that peeked at live
+    // processor state would hand the host a string belonging to some other
+    // value. encodeLabel packs everything the label depends on into one small
+    // integer; decodeLabel rebuilds the string from that integer and nothing
+    // else, through the same naming helpers analyze() uses.
+    //
+    // Value layout (the bases live in ChordAnalyzer.cpp):
+    //   0                no chord, "-"
+    //   1 .. 128         single note, MIDI 0..127 (that label carries an octave)
+    //   129 .. 416       two sounding pitch classes, "C+E (M3)", "C+C (octave)"
+    //   417 .. 428       nothing matched, "C?" .. "B?"
+    //   429 .. 295340    matched pattern: root, sounding intervals, bass
+    //
+    // 295340 needs 19 bits, comfortably inside the 24-bit mantissa a float
+    // NormalisableRange has to round-trip.
+    static constexpr int maxLabelCode = 295340;
+
+    // showInversions mirrors the editor's Show Inversions toggle: the slash
+    // bass belongs to the label only while that toggle is on.
+    static int encodeLabel(const ChordInfo& chord, bool showInversions) noexcept;
+    static juce::String decodeLabel(int code);
+
 private:
     int keyRoot = 0;        // C
     bool minorKey = false;

@@ -124,6 +124,10 @@ public:
     static constexpr const char* PARAM_DETECTED_BASS      = "detectedBass";
     static constexpr const char* PARAM_DETECTED_INVERSION = "detectedInversion";
 
+    // The whole label the editor shows ("Cadd#11/F#"), for hosts that put a
+    // parameter on a widget instead of opening the editor (issue #267).
+    static constexpr const char* PARAM_DETECTED_CHORD     = "detectedChord";
+
 private:
     juce::AudioProcessorValueTreeState parameters;
 
@@ -217,6 +221,9 @@ private:
     juce::AudioParameterChoice* detectedQualityParam = nullptr;
     juce::AudioParameterChoice* detectedBassParam = nullptr;
     juce::AudioParameterChoice* detectedInversionParam = nullptr;
+    // Float, not Int, deliberately - see the constructor for why a discrete
+    // parameter with this many steps is a trap in the AU wrapper.
+    juce::AudioParameterFloat*  detectedChordParam = nullptr;
 
     // Atomic snapshot of detection results, published to the host by the timer
     // (Reaper and others don't refresh their generic parameter display from
@@ -225,7 +232,14 @@ private:
     std::atomic<int>  pendingQualityIndex{0};
     std::atomic<int>  pendingBassIndex{0};
     std::atomic<int>  pendingInversionIndex{0};
+    std::atomic<int>  pendingChordCode{0};
     std::atomic<bool> detectionDirty{false};
+
+    // Show Inversions changes the label without any note changing, so the
+    // toggle asks the timer to re-encode the chord that is already sounding.
+    // Set from parameterChanged, which the host may call on the audio thread,
+    // so the restage itself (which takes chordLock) happens on the timer.
+    std::atomic<bool> detectionRestageRequested{false};
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
