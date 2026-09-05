@@ -927,8 +927,8 @@ private:
         // Shelf spans the VU-meter width exactly (left meter x0=68 .. right meter x1=732).
         drawSelectorShelf(dl, 68.0f, 206.0f, 732.0f, 259.0f);
 
-        // The selector row reflows per machine: the American adds a HEAD WIDTH cell (6
-        // cells); the Swiss omits it (5). TAPE SPEED exposes 3.75 IPS on the American only.
+        // The selector row reflows per machine: the American adds a HEAD WIDTH cell (7
+        // cells); the Swiss omits it (6). TAPE SPEED exposes 3.75 IPS on the American only.
         // No OVERSAMPLING cell: the OS param is pinned at the tuned 2x core (DSP ignores it),
         // matching the reference decks which have no OS control (see TapeMachineDSP::factorFromChoice).
         struct Sel { const char* id; uint32_t p; const char* t; int n; };
