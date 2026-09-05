@@ -200,7 +200,11 @@ int main(const int argc, const char* const* const argv)
     std::vector<ArmRequest> armRequests;
     for (int i = 1; i < argc; ++i)
     {
-        if (std::strncmp(argv[i], "--set", 5) == 0)
+        // Exactly --set, or --set=SPEC. A prefix test also matched --setfoo and
+        // any future --set-something, and then swallowed the following argument
+        // as its specification: an unknown flag silently armed a parameter and
+        // the run passed.
+        if (std::strcmp(argv[i], "--set") == 0 || std::strncmp(argv[i], "--set=", 6) == 0)
         {
             const char* spec = argv[i][5] == '=' ? argv[i] + 6
                              : (i + 1 < argc ? argv[++i] : nullptr);
@@ -347,7 +351,17 @@ int main(const int argc, const char* const* const argv)
         // the very failure this arming exists to avoid.
         const double span = match->maxValue - match->minValue;
         const double clamped = req.value < 0.0 ? 0.0 : (req.value > 1.0 ? 1.0 : req.value);
-        armed.emplace_back(match->id, match->minValue + clamped * span);
+        double plain = match->minValue + clamped * span;
+
+        // A stepped parameter's value is an integer in CLAP, so a normalised
+        // position has to be quantised before it is queued: half way along a
+        // four-choice control is a choice, not 1.5. Rounded to nearest rather
+        // than truncated, because truncation biases every position down by up
+        // to a step and makes the last choice reachable only at exactly 1.0.
+        if ((match->flags & CLAP_PARAM_IS_STEPPED) != 0)
+            plain = std::round(plain);
+
+        armed.emplace_back(match->id, plain);
     }
 
     std::vector<size_t> meters;
