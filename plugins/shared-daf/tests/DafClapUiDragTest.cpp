@@ -406,6 +406,71 @@ DragResult dragAt(Fixture& fx, const int rootX, const int rootY, const int stepD
     return result;
 }
 
+// How many distinct colours the editor is showing. A window that never draws is
+// one flat colour, and a window that draws its background and nothing else is
+// two -- which is exactly what a broken GL path produces, and exactly what this
+// harness used to accept: the drag phases assert that parameters move, and an
+// editor can answer pointer input perfectly while painting nothing.
+//
+// Sampled on a grid rather than per pixel: the question is "is there a UI here",
+// and 8 distinct colours separates a real faceplate (thousands) from a blank or
+// background-only window (one or two) with room to spare.
+//
+// kCaptureFailed is distinct from a count, because "X would not give us the
+// pixels" and "the pixels are all one colour" are different findings and only
+// the second one is about the plugin.
+constexpr int kCaptureFailed = -1;
+
+int distinctColours(Display* const display, const Window window,
+                    const unsigned width, const unsigned height,
+                    const unsigned cap)
+{
+    XImage* const img = XGetImage(display, window, 0, 0, width, height, AllPlanes, ZPixmap);
+    if (img == nullptr)
+        return kCaptureFailed;
+
+    unsigned long seen[64];
+    unsigned count = 0;
+    for (unsigned y = 0; y < height && count < cap; y += 8)
+        for (unsigned x = 0; x < width && count < cap; x += 8)
+        {
+            const unsigned long px = XGetPixel(img, (int) x, (int) y);
+            bool known = false;
+            for (unsigned i = 0; i < count; ++i)
+                if (seen[i] == px) { known = true; break; }
+            if (! known && count < 64)
+                seen[count++] = px;
+        }
+
+    XDestroyImage(img);
+    return (int) count;
+}
+
+// The editor renders into the child window the plugin creates under the host
+// parent, so sample that directly rather than relying on the parent's capture
+// including its inferior. In this fleet both are the same size and depth (24)
+// and either works, but the child is the drawable whose contents are actually
+// defined, and if a plugin ever presents a different visual there this keeps
+// asking the right window.
+Window renderedChildOf(Display* const display, const Window parent)
+{
+    Window root = None, up = None, *children = nullptr;
+    unsigned int count = 0;
+    if (! XQueryTree(display, parent, &root, &up, &children, &count))
+        return None;
+
+    Window found = None;
+    for (unsigned int i = 0; i < count && found == None; ++i)
+    {
+        XWindowAttributes wa = {};
+        if (XGetWindowAttributes(display, children[i], &wa) && wa.map_state == IsViewable)
+            found = children[i];
+    }
+    if (children != nullptr)
+        XFree(children);
+    return found;
+}
+
 // Every failure below this point accuses the plugin of something specific: a
 // dead input path, a coordinate aimed at a button, or the DAF-Widgets focus
 // regression. None of those conclusions survive the pointer having been
@@ -695,6 +760,57 @@ int main(const int argc, const char* const* const argv)
     // when it saturates, which reads as "not progressive" rather than as silence,
     // so both outcomes have to fall through to the retry. Sunset Circuits' cutoff
     // knob does exactly this from its default preset.
+    // ---- is there a UI at all? ---------------------------------------------
+    //
+    // Asserted before the drag, because every assertion after it is about input
+    // and none of them notices an editor that paints nothing. A pugl or DGL
+    // change that breaks the GL path leaves the drag working perfectly -- the
+    // widgets are laid out, they hit-test, they emit parameter edits -- while
+    // the user sees a blank window. That shipped past this harness once already
+    // during a pugl rebase trial: all four gates green, two colours on screen.
+    // Sample the editor's own window when it has one; fall back to the host
+    // parent, which is what a plugin that draws directly into it presents.
+    const Window drawn = renderedChildOf(fx.display, parent);
+    const Window sampled = drawn != None ? drawn : parent;
+
+    int colours = 0;
+    fx.pumpUntil([&] {
+        colours = distinctColours(fx.display, sampled, width, height, 8);
+        return colours >= 8 || colours == kCaptureFailed;
+    }, 3000);
+
+    if (colours == kCaptureFailed)
+    {
+        // Not a verdict on the plugin: X refused to hand over the pixels, so
+        // there is nothing to judge. Reported separately so it cannot be read
+        // as "the editor is blank".
+        XWindowAttributes pa = {}, ca = {};
+        XGetWindowAttributes(fx.display, parent, &pa);
+        if (drawn != None)
+            XGetWindowAttributes(fx.display, drawn, &ca);
+        std::fprintf(stderr,
+                     "\nFAIL (environment): XGetImage could not capture the editor window 0x%lx\n"
+                     "  (%dx%d depth %d; host parent 0x%lx %dx%d depth %d). Nothing here says whether\n"
+                     "  the plugin draws -- the capture itself failed. An unmapped or resized window,\n"
+                     "  or a visual this server will not read back, are the usual causes.\n",
+                     (unsigned long) sampled, drawn != None ? ca.width : pa.width,
+                     drawn != None ? ca.height : pa.height, drawn != None ? ca.depth : pa.depth,
+                     (unsigned long) parent, pa.width, pa.height, pa.depth);
+        return 1;
+    }
+
+    if (colours < 8)
+    {
+        std::fprintf(stderr,
+                     "\nFAIL: the editor is not drawing. After three seconds of frames window 0x%lx is\n"
+                     "  showing %d distinct colour(s); a drawn faceplate has thousands. The drag phases\n"
+                     "  below would still pass, because widgets hit-test and emit parameter edits\n"
+                     "  whether or not anything reaches the screen -- so this is checked first. Look at\n"
+                     "  it with DUSK_UI_DRAG_DUMP=/tmp/editor.ppm; a framework bump is the usual cause.\n",
+                     (unsigned long) sampled, colours);
+        return 1;
+    }
+
     int hitStep = -6;
     DragResult phaseA = dragAt(fx, knobX, knobY, hitStep, None);
     if (phaseA.edits == 0 || ! phaseA.looksLikeADrag())
