@@ -198,7 +198,7 @@ endfunction()
 # enable_testing() takes effect, so callers cannot forget it. Being a macro is
 # also why the body is wrapped in if() rather than guarded with return(): a
 # return() here would return from the caller's CMakeLists.
-macro(dusk_daf_add_output_param_tests _dusk_op_plugin)
+macro(dusk_daf_add_output_param_tests _dusk_op_plugin)   # [<param name>=<normalised> ...]
     # A missing target is a typo or a rename, not a platform the harness cannot
     # run on, and the two must not share a branch: silently skipping it would
     # register no test, leave enable_testing() uncalled, and let CI -- which
@@ -239,12 +239,45 @@ macro(dusk_daf_add_output_param_tests _dusk_op_plugin)
         # $<TARGET_FILE:...> is the loadable binary itself, so the harnesses
         # never have to reconstruct Contents/<arch>-linux/ and keep working on
         # architectures no table here would list.
+        # Any extra arguments are --set specifications, forwarded to both
+        # harnesses. A dynamics plugin at its default settings does not process
+        # anything, so its gain-reduction meters correctly report nothing, and a
+        # run that only feeds noise cannot tell that apart from meters that do
+        # not work. Naming a control to move first is what makes those meters
+        # testable; the name is used rather than an index because the same
+        # parameter has different ids in each format.
+        set(_dusk_op_arm "")
+        foreach(_dusk_op_spec ${ARGN})
+            list(APPEND _dusk_op_arm "--set" "${_dusk_op_spec}")
+        endforeach()
+
         add_test(NAME ${_dusk_op_plugin}Vst3OutputParams
                  COMMAND ${_dusk_op_plugin}Vst3OutputParamTest
-                         "$<TARGET_FILE:${_dusk_op_plugin}-vst3>" 100 256)
+                         "$<TARGET_FILE:${_dusk_op_plugin}-vst3>" 100 256 ${_dusk_op_arm})
         add_test(NAME ${_dusk_op_plugin}ClapOutputParams
                  COMMAND ${_dusk_op_plugin}ClapOutputParamTest
-                         "$<TARGET_FILE:${_dusk_op_plugin}-clap>" 100 256)
+                         "$<TARGET_FILE:${_dusk_op_plugin}-clap>" 100 256 ${_dusk_op_arm})
+
+        # If this plugin arms anything, guard the parsing that arming depends
+        # on. A misread specification arms the wrong control or none at all, the
+        # meters then correctly report nothing, and the failure blames them
+        # rather than the typo. Uses the first armed parameter's name, split off
+        # its value.
+        if(_dusk_op_arm)
+            # ARGN is substituted textually in a macro rather than being a
+            # variable, so it has to be copied into a real list first.
+            set(_dusk_op_specs ${ARGN})
+            list(GET _dusk_op_specs 0 _dusk_op_first_spec)
+            string(REGEX REPLACE "=[^=]*$" "" _dusk_op_first_name "${_dusk_op_first_spec}")
+            add_test(NAME ${_dusk_op_plugin}Vst3ArmSpecs
+                     COMMAND bash "${DUSK_SHARED_DAF_DIR}/tests/daf_arm_spec_cases.sh"
+                             "$<TARGET_FILE:${_dusk_op_plugin}Vst3OutputParamTest>"
+                             "$<TARGET_FILE:${_dusk_op_plugin}-vst3>" "${_dusk_op_first_name}")
+            add_test(NAME ${_dusk_op_plugin}ClapArmSpecs
+                     COMMAND bash "${DUSK_SHARED_DAF_DIR}/tests/daf_arm_spec_cases.sh"
+                             "$<TARGET_FILE:${_dusk_op_plugin}ClapOutputParamTest>"
+                             "$<TARGET_FILE:${_dusk_op_plugin}-clap>" "${_dusk_op_first_name}")
+        endif()
     endif()
 endmacro()
 

@@ -92,8 +92,15 @@ struct OutEvents {
     }
 };
 
+// Normally empty: the point of this harness is what the plugin emits, not what
+// a host sends it. It can carry parameter values for one block, though, because
+// a compressor whose threshold sits at its default does not compress, and its
+// gain-reduction meters then correctly report nothing at all -- which reads as
+// "the meters are dead" to a test that only ever feeds noise. Arming the plugin
+// first is what makes a dynamics meter testable.
 struct InEvents {
     clap_input_events_t iface;
+    std::vector<clap_event_param_value> events;
 
     InEvents()
     {
@@ -102,9 +109,59 @@ struct InEvents {
         iface.get = get;
     }
 
-    static uint32_t CLAP_ABI size(const clap_input_events_t*) { return 0; }
-    static const clap_event_header_t* CLAP_ABI get(const clap_input_events_t*, uint32_t) { return nullptr; }
+    void arm(clap_id paramId, double value)
+    {
+        clap_event_param_value ev = {};
+        ev.header.size = sizeof(ev);
+        ev.header.time = 0;
+        ev.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+        ev.header.type = CLAP_EVENT_PARAM_VALUE;
+        ev.header.flags = 0;
+        ev.param_id = paramId;
+        ev.cookie = nullptr;
+        ev.note_id = -1;
+        ev.port_index = -1;
+        ev.channel = -1;
+        ev.key = -1;
+        ev.value = value;
+        events.push_back(ev);
+    }
+
+    void clear() { events.clear(); }
+
+    static uint32_t CLAP_ABI size(const clap_input_events_t* list)
+    {
+        return static_cast<uint32_t>(static_cast<const InEvents*>(list->ctx)->events.size());
+    }
+
+    static const clap_event_header_t* CLAP_ABI get(const clap_input_events_t* list, uint32_t index)
+    {
+        const InEvents* self = static_cast<const InEvents*>(list->ctx);
+        return index < self->events.size() ? &self->events[index].header : nullptr;
+    }
 };
+
+// --set "Parameter Name=0.8": a parameter to move before the run, named rather
+// than numbered because the same control has different ids in each format (this
+// plugin's GR meters are id 95 in CLAP and 97 in VST3).
+struct ArmRequest { std::string name; double value; };
+
+inline bool parseArmRequest(const char* arg, ArmRequest& out)
+{
+    const char* eq = std::strrchr(arg, '=');
+    if (eq == nullptr || eq == arg) return false;
+    out.name.assign(arg, static_cast<size_t>(eq - arg));
+
+    char* end = nullptr;
+    out.value = std::strtod(eq + 1, &end);
+    // strtod reports "no conversion" by leaving end at the start, and it does
+    // it for an empty suffix while still returning 0.0. Accepting that arms the
+    // parameter to zero, which for a compressor's Peak Reduction means the run
+    // proceeds uncompressed and then blames the meters. A non-finite value is
+    // worse: nan and inf both parse cleanly, and nan reaches the plugin.
+    if (end == eq + 1 || end == nullptr || *end != '\0') return false;
+    return std::isfinite(out.value);
+}
 
 // --------------------------------------------------------------------------------------------------------------------
 
@@ -140,9 +197,22 @@ int main(const int argc, const char* const* const argv)
 {
     bool silent = false;
     std::vector<const char*> positional;
+    std::vector<ArmRequest> armRequests;
     for (int i = 1; i < argc; ++i)
     {
-        if (std::strcmp(argv[i], "--silent") == 0)
+        if (std::strncmp(argv[i], "--set", 5) == 0)
+        {
+            const char* spec = argv[i][5] == '=' ? argv[i] + 6
+                             : (i + 1 < argc ? argv[++i] : nullptr);
+            ArmRequest req;
+            if (spec == nullptr || ! parseArmRequest(spec, req))
+            {
+                std::fprintf(stderr, "FAIL: --set wants NAME=VALUE (normalised 0..1)\n");
+                return 1;
+            }
+            armRequests.push_back(req);
+        }
+        else if (std::strcmp(argv[i], "--silent") == 0)
             silent = true;
         else
             positional.push_back(argv[i]);
@@ -150,7 +220,7 @@ int main(const int argc, const char* const* const argv)
 
     if (positional.empty() || positional.size() > 3)
     {
-        std::fprintf(stderr, "usage: %s <plugin.clap> [blocks] [frames] [--silent]\n", argv[0]);
+        std::fprintf(stderr, "usage: %s <plugin.clap> [blocks] [frames] [--silent] [--set NAME=VALUE]\n", argv[0]);
         return 2;
     }
 
@@ -223,7 +293,8 @@ int main(const int argc, const char* const* const argv)
         return 1;
     }
 
-    struct P { clap_id id; std::string name; std::string module; uint32_t flags; };
+    struct P { clap_id id; std::string name; std::string module; uint32_t flags;
+               double minValue; double maxValue; };
     std::vector<P> params;
     const uint32_t paramCount = paramsExt->count(plugin);
     for (uint32_t i = 0; i < paramCount; ++i)
@@ -234,7 +305,8 @@ int main(const int argc, const char* const* const argv)
             std::fprintf(stderr, "FAIL: get_info(%u); cannot classify every parameter\n", i);
             return 1;
         }
-        params.push_back({ info.id, info.name, info.module, info.flags });
+        params.push_back({ info.id, info.name, info.module, info.flags,
+                           info.min_value, info.max_value });
     }
 
     // DAF stamps CLAP_PARAM_IS_READONLY on output parameters and on the Reset
@@ -249,6 +321,34 @@ int main(const int argc, const char* const* const argv)
     auto isOutput = [](const P& p) {
         return (p.flags & CLAP_PARAM_IS_READONLY) != 0 && p.module != "daf_reset";
     };
+
+    // Resolve --set names against the plugin's own parameter list. A name that
+    // does not match is a typo or a rename in the plugin, and silently arming
+    // nothing would leave the meter assertion failing for a reason the message
+    // does not mention.
+    std::vector<std::pair<clap_id, double>> armed;
+    for (const ArmRequest& req : armRequests)
+    {
+        const P* match = nullptr;
+        for (const P& p : params)
+            if (p.name == req.name) { match = &p; break; }
+
+        if (match == nullptr)
+        {
+            std::fprintf(stderr, "FAIL: --set names \"%s\", which this plugin has no parameter called\n",
+                         req.name.c_str());
+            return 1;
+        }
+        // --set speaks normalised 0..1 so one specification works for both
+        // formats, but a CLAP parameter value is PLAIN, in the parameter's own
+        // range. Sending 0.8 to a 0..100 % control would set 0.8 %, which for a
+        // compressor's Peak Reduction is indistinguishable from leaving it
+        // alone -- and the meters would then correctly report nothing, which is
+        // the very failure this arming exists to avoid.
+        const double span = match->maxValue - match->minValue;
+        const double clamped = req.value < 0.0 ? 0.0 : (req.value > 1.0 ? 1.0 : req.value);
+        armed.emplace_back(match->id, match->minValue + clamped * span);
+    }
 
     std::vector<size_t> meters;
     for (size_t i = 0; i < params.size(); ++i)
@@ -373,6 +473,13 @@ int main(const int argc, const char* const* const argv)
         process.audio_inputs_count = numInPorts;
         process.audio_outputs = outBuses.data();
         process.audio_outputs_count = numOutPorts;
+        // Armed values ride the first block, the way a host sends a control
+        // change: once applied they persist, so later blocks stay empty and the
+        // "nothing reaches the host" assertions still see a quiet input.
+        inEvents.clear();
+        if (block == 0)
+            for (const auto& a : armed)
+                inEvents.arm(a.first, a.second);
         process.in_events = &inEvents.iface;
         process.out_events = &outEvents.iface;
         process.steady_time = static_cast<int64_t>(block) * numFrames;

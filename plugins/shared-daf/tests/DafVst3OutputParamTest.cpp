@@ -428,9 +428,38 @@ int main(const int argc, const char* const* const argv)
     // plugin for a command-line mistake.
     bool silent = false;
     std::vector<const char*> positional;
+    // --set "Parameter Name=0.8": a control to move before the run. Named
+    // rather than numbered because the same parameter has different ids in each
+    // format. A compressor at its default threshold does not compress, so its
+    // gain-reduction meters correctly report nothing, which a noise-only run
+    // cannot tell apart from meters that do not work.
+    struct ArmRequest { std::string name; double value; };
+    std::vector<ArmRequest> armRequests;
     for (int i = 1; i < argc; ++i)
     {
-        if (std::strcmp(argv[i], "--silent") == 0)
+        if (std::strncmp(argv[i], "--set", 5) == 0)
+        {
+            const char* spec = argv[i][5] == '=' ? argv[i] + 6
+                             : (i + 1 < argc ? argv[++i] : nullptr);
+            const char* eq = spec != nullptr ? std::strrchr(spec, '=') : nullptr;
+            if (eq == nullptr || eq == spec)
+            {
+                std::fprintf(stderr, "FAIL: --set wants NAME=VALUE (normalised 0..1)\n");
+                return 1;
+            }
+            char* end = nullptr;
+            const double value = std::strtod(eq + 1, &end);
+            // An empty suffix converts nothing and still returns 0.0, which
+            // would arm the parameter to zero and then blame the meters; nan
+            // and inf both parse cleanly and neither is a normalised value.
+            if (end == eq + 1 || end == nullptr || *end != '\0' || ! std::isfinite(value))
+            {
+                std::fprintf(stderr, "FAIL: --set value for \"%s\" is not a finite number\n", spec);
+                return 1;
+            }
+            armRequests.push_back({ std::string(spec, static_cast<size_t>(eq - spec)), value });
+        }
+        else if (std::strcmp(argv[i], "--silent") == 0)
             silent = true;
         else
             positional.push_back(argv[i]);
@@ -438,7 +467,7 @@ int main(const int argc, const char* const* const argv)
 
     if (positional.empty() || positional.size() > 3)
     {
-        std::fprintf(stderr, "usage: %s <plugin.vst3> [blocks] [frames] [--silent]\n", argv[0]);
+        std::fprintf(stderr, "usage: %s <plugin.vst3> [blocks] [frames] [--silent] [--set NAME=VALUE]\n", argv[0]);
         return 2;
     }
 
@@ -588,6 +617,26 @@ int main(const int argc, const char* const* const argv)
                 return static_cast<int>(i);
         return -1;
     };
+
+    std::vector<std::pair<v3_param_id, double>> armed;
+    for (const ArmRequest& req : armRequests)
+    {
+        const ParamInfo* match = nullptr;
+        for (const ParamInfo& p : params)
+            if (p.title == req.name) { match = &p; break; }
+
+        if (match == nullptr)
+        {
+            std::fprintf(stderr, "FAIL: --set names \"%s\", which this plugin has no parameter called\n",
+                         req.name.c_str());
+            return 1;
+        }
+        // Clamped to the documented normalised range before it reaches
+        // add_point, matching the CLAP side: a VST3 parameter value outside
+        // 0..1 is not a value the plugin has any defined answer for.
+        const double clamped = req.value < 0.0 ? 0.0 : (req.value > 1.0 ? 1.0 : req.value);
+        armed.emplace_back(match->id, clamped);
+    }
 
     std::vector<int> outputParams;
     for (size_t i = 0; i < params.size(); ++i)
@@ -835,6 +884,22 @@ int main(const int argc, const char* const* const argv)
 
         inputChanges.reset();
         outputChanges.reset();
+
+        // Armed values ride the first block, the way a host delivers a control
+        // change: once applied they persist, so later blocks send nothing and
+        // the "nothing reaches the host" assertions still see a quiet input.
+        if (block == 0)
+            for (const auto& a : armed)
+            {
+                int32_t queueIndex = 0;
+                v3_param_value_queue** queue = v3_cpp_obj(inputChanges.handle())
+                    ->add_param_data(inputChanges.handle(), &a.first, &queueIndex);
+                if (queue != nullptr)
+                {
+                    int32_t pointIndex = 0;
+                    v3_cpp_obj(queue)->add_point(queue, 0, a.second, &pointIndex);
+                }
+            }
 
         v3_process_data data = {};
         data.process_mode = V3_REALTIME;

@@ -68,11 +68,10 @@ endif()
 # editor and shipped through four green releases, so a plugin outside it is
 # exactly the one that would ship broken.
 #
-# The output-parameter gates are deliberately absent: Multi-Comp 2's five GR
-# meters report no reduction at the default preset (opto_peak_reduction is 0),
-# so the harness, which processes noise at default settings and never touches a
-# control, fails its "the meters track the audio" assertion. The no-spam half
-# passes today. Arming a parameter before processing needs a harness change
-# rather than a registration here.
+# The output-parameter gates arm Peak Reduction first. Multi-Comp 2's five GR
+# meters correctly report nothing at the default preset, where
+# opto_peak_reduction is 0 and the Opto cell does not compress, so a run that
+# only feeds noise cannot tell working meters from dead ones.
+dusk_daf_add_output_param_tests(multi-comp-2 "Peak Reduction=0.8")
 dusk_daf_add_ui_drag_test(multi-comp-2 287 237)   # Opto GAIN knob (default face)
 dusk_daf_add_resize_test(multi-comp-2)
