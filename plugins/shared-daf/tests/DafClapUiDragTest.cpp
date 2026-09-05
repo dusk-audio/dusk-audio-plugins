@@ -406,6 +406,40 @@ DragResult dragAt(Fixture& fx, const int rootX, const int rootY, const int stepD
     return result;
 }
 
+// How many distinct colours the editor is showing. A window that never draws is
+// one flat colour, and a window that draws its background and nothing else is
+// two -- which is exactly what a broken GL path produces, and exactly what this
+// harness used to accept: the drag phases assert that parameters move, and an
+// editor can answer pointer input perfectly while painting nothing.
+//
+// Sampled on a grid rather than per pixel: the question is "is there a UI here",
+// and 8 distinct colours separates a real faceplate (thousands) from a blank or
+// background-only window (one or two) with room to spare.
+unsigned distinctColours(Display* const display, const Window window,
+                         const unsigned width, const unsigned height,
+                         const unsigned cap)
+{
+    XImage* const img = XGetImage(display, window, 0, 0, width, height, AllPlanes, ZPixmap);
+    if (img == nullptr)
+        return 0;
+
+    unsigned long seen[64];
+    unsigned count = 0;
+    for (unsigned y = 0; y < height && count < cap; y += 8)
+        for (unsigned x = 0; x < width && count < cap; x += 8)
+        {
+            const unsigned long px = XGetPixel(img, (int) x, (int) y);
+            bool known = false;
+            for (unsigned i = 0; i < count; ++i)
+                if (seen[i] == px) { known = true; break; }
+            if (! known && count < 64)
+                seen[count++] = px;
+        }
+
+    XDestroyImage(img);
+    return count;
+}
+
 // Every failure below this point accuses the plugin of something specific: a
 // dead input path, a coordinate aimed at a button, or the DAF-Widgets focus
 // regression. None of those conclusions survive the pointer having been
@@ -695,6 +729,32 @@ int main(const int argc, const char* const* const argv)
     // when it saturates, which reads as "not progressive" rather than as silence,
     // so both outcomes have to fall through to the retry. Sunset Circuits' cutoff
     // knob does exactly this from its default preset.
+    // ---- is there a UI at all? ---------------------------------------------
+    //
+    // Asserted before the drag, because every assertion after it is about input
+    // and none of them notices an editor that paints nothing. A pugl or DGL
+    // change that breaks the GL path leaves the drag working perfectly -- the
+    // widgets are laid out, they hit-test, they emit parameter edits -- while
+    // the user sees a blank window. That shipped past this harness once already
+    // during a pugl rebase trial: all four gates green, two colours on screen.
+    unsigned colours = 0;
+    fx.pumpUntil([&] {
+        colours = distinctColours(fx.display, parent, width, height, 8);
+        return colours >= 8;
+    }, 3000);
+
+    if (colours < 8)
+    {
+        std::fprintf(stderr,
+                     "\nFAIL: the editor is not drawing. After three seconds of frames it is showing\n"
+                     "  %u distinct colour(s); a drawn faceplate has thousands. The drag phases below\n"
+                     "  would still pass, because widgets hit-test and emit parameter edits whether or\n"
+                     "  not anything reaches the screen -- so this is checked first. Look at it with\n"
+                     "  DUSK_UI_DRAG_DUMP=/tmp/editor.ppm; a framework bump is the usual cause.\n",
+                     colours);
+        return 1;
+    }
+
     int hitStep = -6;
     DragResult phaseA = dragAt(fx, knobX, knobY, hitStep, None);
     if (phaseA.edits == 0 || ! phaseA.looksLikeADrag())
