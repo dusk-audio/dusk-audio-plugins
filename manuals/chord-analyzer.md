@@ -117,8 +117,9 @@ Chord Analyzer exposes five user-facing parameters plus four read-only detection
 
 ### Detection outputs (read-only)
 
-These four parameters expose the detection result for host automation, screen-recording overlays, and the Headless variant's parameter-driven display:
+These parameters expose the detection result for host automation, screen-recording overlays, and the Headless variant's parameter-driven display:
 
+- **Detected Chord:** The whole chord name exactly as the plugin's own display shows it, slash bass and all (`Cadd#11/F#`). Use this when your host can put a parameter's text on a widget, such as Gig Performer, and you want the chord on screen without opening the plugin. It follows **Show Inversions**: turn that off and the slash bass disappears here too. Not available in the Headless variant, whose LV2 control ports carry numbers only.
 - **Detected Root:** Current chord root (12 values).
 - **Detected Quality:** Current chord quality (major, minor, 7, maj7, m7, sus2, sus4, dim, aug, etc.).
 - **Detected Bass:** Bass note for slash chords (like C/E or G/B).
