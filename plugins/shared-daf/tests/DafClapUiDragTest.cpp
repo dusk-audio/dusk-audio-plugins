@@ -406,44 +406,196 @@ DragResult dragAt(Fixture& fx, const int rootX, const int rootY, const int stepD
     return result;
 }
 
-// How many distinct colours the editor is showing. A window that never draws is
-// one flat colour, and a window that draws its background and nothing else is
-// two -- which is exactly what a broken GL path produces, and exactly what this
-// harness used to accept: the drag phases assert that parameters move, and an
-// editor can answer pointer input perfectly while painting nothing.
+// How much of the editor is showing, counted in distinct colours. A window that
+// never draws is one flat colour, and a window that draws its background and
+// nothing else is two -- which is exactly what a broken GL path produces, and
+// exactly what this harness used to accept: the drag phases assert that
+// parameters move, and an editor can answer pointer input perfectly while
+// painting nothing.
+//
+// Counted per quadrant as well as over the whole window, because a dead GL path
+// is not the only shape that failure takes. When DGL was still setting up its
+// viewport and projection from the configure event, which pugl stopped running
+// inside the graphics context, multi-comp-2 drew its entire faceplate into the
+// top-right quarter of its window: 61 distinct colours overall, comfortably past
+// a whole-window bar of 8, so this gate passed an editor that was visibly wrong
+// (dusk-audio/DAF#28, issue #266). Every quadrant of a real faceplate is full of
+// detail, so asking each of them to clear the same bar costs nothing here and
+// makes a viewport regression read as one.
 //
 // Sampled on a grid rather than per pixel: the question is "is there a UI here",
 // and 8 distinct colours separates a real faceplate (thousands) from a blank or
-// background-only window (one or two) with room to spare.
+// background-only region (one or two) with room to spare. The grid is the
+// window's and not each quadrant's, so the whole-window count is exactly the
+// number this gate has always judged.
 //
 // kCaptureFailed is distinct from a count, because "X would not give us the
 // pixels" and "the pixels are all one colour" are different findings and only
 // the second one is about the plugin.
 constexpr int kCaptureFailed = -1;
+constexpr unsigned kColourBar = 8;
+constexpr unsigned kSampleStep = 8;
+constexpr unsigned kQuadrants = 4;
 
-int distinctColours(Display* const display, const Window window,
-                    const unsigned width, const unsigned height,
-                    const unsigned cap)
+// Indexed as (y >= midY) * 2 + (x >= midX), which is the order these are built in.
+const char* const kQuadrantNames[kQuadrants] = { "NW", "NE", "SW", "SE" };
+
+struct RenderCoverage
 {
+    int whole;                     // distinct colours over the whole window, or kCaptureFailed
+    int quadrant[kQuadrants];      // distinct colours within each quadrant
+    unsigned samples[kQuadrants];  // grid points that landed in each quadrant
+
+    bool captureFailed() const { return whole == kCaptureFailed; }
+
+    // A quadrant with no sample in it cannot be judged, which only happens on a
+    // window narrower or shorter than the sampling step. Nothing in this fleet
+    // is, and an editor that small has no knob to drag either way.
+    bool everyQuadrantDraws() const
+    {
+        for (unsigned i = 0; i < kQuadrants; ++i)
+            if (samples[i] != 0 && (unsigned) quadrant[i] < kColourBar)
+                return false;
+        return true;
+    }
+};
+
+RenderCoverage renderCoverage(Display* const display, const Window window,
+                              const unsigned width, const unsigned height)
+{
+    RenderCoverage cov = {};
+
     XImage* const img = XGetImage(display, window, 0, 0, width, height, AllPlanes, ZPixmap);
     if (img == nullptr)
-        return kCaptureFailed;
+    {
+        cov.whole = kCaptureFailed;
+        return cov;
+    }
 
-    unsigned long seen[64];
-    unsigned count = 0;
-    for (unsigned y = 0; y < height && count < cap; y += 8)
-        for (unsigned x = 0; x < width && count < cap; x += 8)
+    // Region 0 is the whole window, regions 1 to 4 the quadrants.
+    unsigned long seen[1 + kQuadrants][kColourBar];
+    unsigned count[1 + kQuadrants] = {};
+    const unsigned midX = width / 2, midY = height / 2;
+
+    for (unsigned y = 0; y < height; y += kSampleStep)
+        for (unsigned x = 0; x < width; x += kSampleStep)
         {
             const unsigned long px = XGetPixel(img, (int) x, (int) y);
-            bool known = false;
-            for (unsigned i = 0; i < count; ++i)
-                if (seen[i] == px) { known = true; break; }
-            if (! known && count < 64)
-                seen[count++] = px;
+            const unsigned quadrant = (y >= midY ? 2u : 0u) + (x >= midX ? 1u : 0u);
+            ++cov.samples[quadrant];
+
+            const unsigned regions[2] = { 0, 1 + quadrant };
+            for (unsigned r = 0; r < 2; ++r)
+            {
+                unsigned& n = count[regions[r]];
+                unsigned long* const set = seen[regions[r]];
+                bool known = false;
+                for (unsigned i = 0; i < n; ++i)
+                    if (set[i] == px) { known = true; break; }
+                if (! known && n < kColourBar)
+                    set[n++] = px;
+            }
         }
 
     XDestroyImage(img);
-    return (int) count;
+
+    cov.whole = (int) count[0];
+    for (unsigned i = 0; i < kQuadrants; ++i)
+        cov.quadrant[i] = (int) count[1 + i];
+    return cov;
+}
+
+// Where the drawn pixels are, for the failure message only. The background is
+// read off the quadrants that came up blank, which is what "blank" means, and
+// the bounding box of every sample that is not that colour is the region the
+// plugin did manage to paint; its share of the window is the number that says
+// "a quarter of it" out loud. Grid-aligned like the counts above.
+//
+// Read off the blank quadrants rather than off the window, because the most
+// frequent colour of the whole window is only the background when the painted
+// region is the smaller part, and a window can fail this check with three
+// quadrants blank or with one. The blank quadrants are unambiguous either way.
+struct DrawnExtent
+{
+    bool any;
+    unsigned x0, y0, x1, y1;
+
+    unsigned percentOf(const unsigned width, const unsigned height) const
+    {
+        if (! any || width == 0 || height == 0)
+            return 0;
+        return (unsigned) ((unsigned long) (x1 - x0 + 1) * (y1 - y0 + 1) * 100
+                           / ((unsigned long) width * height));
+    }
+};
+
+DrawnExtent drawnExtent(Display* const display, const Window window,
+                        const unsigned width, const unsigned height,
+                        const RenderCoverage& coverage)
+{
+    DrawnExtent ext = { false, 0, 0, 0, 0 };
+
+    XImage* const img = XGetImage(display, window, 0, 0, width, height, AllPlanes, ZPixmap);
+    if (img == nullptr)
+        return ext;
+
+    const unsigned midX = width / 2, midY = height / 2;
+
+    // Every colour the blank quadrants hold, exactly. A quadrant is only blank
+    // when it showed fewer than kColourBar distinct colours, so together they
+    // hold at most kQuadrants * (kColourBar - 1) and this table cannot fill; the
+    // guard below is the proof standing watch, not a case that arises.
+    constexpr unsigned kBackgroundKinds = kQuadrants * kColourBar;
+    unsigned long value[kBackgroundKinds] = {};
+    unsigned tally[kBackgroundKinds] = {};
+    unsigned kinds = 0;
+
+    for (unsigned y = 0; y < height; y += kSampleStep)
+        for (unsigned x = 0; x < width; x += kSampleStep)
+        {
+            const unsigned quadrant = (y >= midY ? 2u : 0u) + (x >= midX ? 1u : 0u);
+            if ((unsigned) coverage.quadrant[quadrant] >= kColourBar)
+                continue;
+
+            const unsigned long px = XGetPixel(img, (int) x, (int) y);
+            unsigned i = 0;
+            for (; i < kinds; ++i)
+                if (value[i] == px) break;
+            if (i == kinds)
+            {
+                if (kinds == kBackgroundKinds)
+                    continue;
+                value[kinds++] = px;
+            }
+            ++tally[i];
+        }
+
+    unsigned dominant = 0;
+    for (unsigned i = 1; i < kinds; ++i)
+        if (tally[i] > tally[dominant])
+            dominant = i;
+
+    if (kinds != 0)
+        for (unsigned y = 0; y < height; y += kSampleStep)
+            for (unsigned x = 0; x < width; x += kSampleStep)
+            {
+                if (XGetPixel(img, (int) x, (int) y) == value[dominant])
+                    continue;
+                if (! ext.any)
+                {
+                    ext.any = true;
+                    ext.x0 = ext.x1 = x;
+                    ext.y0 = ext.y1 = y;
+                    continue;
+                }
+                if (x < ext.x0) ext.x0 = x;
+                if (x > ext.x1) ext.x1 = x;
+                if (y < ext.y0) ext.y0 = y;
+                if (y > ext.y1) ext.y1 = y;
+            }
+
+    XDestroyImage(img);
+    return ext;
 }
 
 // The editor renders into the child window the plugin creates under the host
@@ -693,20 +845,22 @@ int main(const int argc, const char* const* const argv)
         std::printf("debug       : host parent %dx%d at (%d,%d) map_state=%d\n",
                     pa.width, pa.height, pa.x, pa.y, pa.map_state);
 
-        // Is anything actually being drawn? An editor that never renders has no
-        // ImGui widget rectangles to hit-test against, and every drag would miss
-        // for a reason that has nothing to do with input delivery.
+        // Is anything actually being drawn, and over how much of the window? The
+        // same counts the assertion below judges, printed rather than asserted on,
+        // because an editor that never renders has no widget rectangles to hit-test
+        // against and every drag would miss for a reason that has nothing to do
+        // with input delivery.
         if (XImage* const img = XGetImage(fx.display, parent, 0, 0, width, height, AllPlanes, ZPixmap))
         {
-            unsigned long first = XGetPixel(img, 0, 0);
-            bool uniform = true;
-            for (unsigned int y = 0; y < height && uniform; y += 8)
-                for (unsigned int x = 0; x < width && uniform; x += 8)
-                    if (XGetPixel(img, (int) x, (int) y) != first)
-                        uniform = false;
-            std::printf("debug       : editor pixels %s (first pixel 0x%lx)\n",
-                        uniform ? "UNIFORM -- nothing is being rendered" : "vary -- the editor is drawing",
-                        first);
+            const RenderCoverage dbg = renderCoverage(fx.display, parent, width, height);
+            std::printf("debug       : editor colours %d overall, %d/%d/%d/%d by quadrant NW/NE/SW/SE"
+                        " (bar is %u each): %s\n",
+                        dbg.whole, dbg.quadrant[0], dbg.quadrant[1], dbg.quadrant[2], dbg.quadrant[3],
+                        kColourBar,
+                        dbg.captureFailed()      ? "capture FAILED"
+                        : dbg.whole < (int) kColourBar ? "nothing is being rendered"
+                        : dbg.everyQuadrantDraws()     ? "the editor is drawing"
+                                                       : "PART of the window is being rendered");
 
             // DUSK_UI_DRAG_DUMP writes the editor as a PPM so a human (or a
             // model) can look at what the harness is dragging on. Worth keeping:
@@ -773,13 +927,13 @@ int main(const int argc, const char* const* const argv)
     const Window drawn = renderedChildOf(fx.display, parent);
     const Window sampled = drawn != None ? drawn : parent;
 
-    int colours = 0;
+    RenderCoverage coverage = {};
     fx.pumpUntil([&] {
-        colours = distinctColours(fx.display, sampled, width, height, 8);
-        return colours >= 8 || colours == kCaptureFailed;
+        coverage = renderCoverage(fx.display, sampled, width, height);
+        return coverage.captureFailed() || coverage.everyQuadrantDraws();
     }, 3000);
 
-    if (colours == kCaptureFailed)
+    if (coverage.captureFailed())
     {
         // Not a verdict on the plugin: X refused to hand over the pixels, so
         // there is nothing to judge. Reported separately so it cannot be read
@@ -799,7 +953,7 @@ int main(const int argc, const char* const* const argv)
         return 1;
     }
 
-    if (colours < 8)
+    if (coverage.whole < (int) kColourBar)
     {
         std::fprintf(stderr,
                      "\nFAIL: the editor is not drawing. After three seconds of frames window 0x%lx is\n"
@@ -807,7 +961,39 @@ int main(const int argc, const char* const* const argv)
                      "  below would still pass, because widgets hit-test and emit parameter edits\n"
                      "  whether or not anything reaches the screen -- so this is checked first. Look at\n"
                      "  it with DUSK_UI_DRAG_DUMP=/tmp/editor.ppm; a framework bump is the usual cause.\n",
-                     (unsigned long) sampled, colours);
+                     (unsigned long) sampled, coverage.whole);
+        return 1;
+    }
+
+    if (! coverage.everyQuadrantDraws())
+    {
+        // Drawing, but not everywhere. Name the empty quadrants and the box the
+        // painted pixels fit in, because "a quarter of the window, in the top
+        // right" is the whole diagnosis for a lost viewport or projection.
+        // Four names of two letters plus separators, so 32 is far more than enough.
+        char empty[32] = {};
+        unsigned used = 0;
+        for (unsigned i = 0; i < kQuadrants; ++i)
+            if (coverage.samples[i] != 0 && (unsigned) coverage.quadrant[i] < kColourBar)
+                used += (unsigned) std::snprintf(empty + used, sizeof(empty) - used,
+                                                 "%s%s", used != 0 ? ", " : "", kQuadrantNames[i]);
+
+        const DrawnExtent ext = drawnExtent(fx.display, sampled, width, height, coverage);
+
+        std::fprintf(stderr,
+                     "\nFAIL: the editor is drawing into part of its window. After three seconds of\n"
+                     "  frames window 0x%lx (%ux%u) shows %d distinct colour(s) overall, but by quadrant\n"
+                     "  NW/NE/SW/SE it shows %d/%d/%d/%d against a bar of %u each, so %s %s effectively\n"
+                     "  blank. Everything that is not the background colour fits inside x[%u,%u] y[%u,%u],\n"
+                     "  which is %u%% of the window. A faceplate covers all of its window, so this is a\n"
+                     "  viewport or projection regression rather than a blank editor, and the drag phases\n"
+                     "  below would still pass either way. Look at it with DUSK_UI_DRAG_DUMP=/tmp/e.ppm.\n",
+                     (unsigned long) sampled, width, height, coverage.whole,
+                     coverage.quadrant[0], coverage.quadrant[1], coverage.quadrant[2], coverage.quadrant[3],
+                     kColourBar, empty, std::strchr(empty, ',') != nullptr ? "are" : "is",
+                     ext.any ? ext.x0 : 0u, ext.any ? ext.x1 : 0u,
+                     ext.any ? ext.y0 : 0u, ext.any ? ext.y1 : 0u,
+                     ext.percentOf(width, height));
         return 1;
     }
 
