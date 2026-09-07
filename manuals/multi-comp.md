@@ -1,7 +1,7 @@
 ---
 slug: multi-comp
-version: 1.3.7
-last_updated: 2026-09-06
+version: 1.3.8
+last_updated: 2026-09-07
 tagline: Multi-mode dynamics compressor (8 modes plus 4-band multiband)
 ---
 
