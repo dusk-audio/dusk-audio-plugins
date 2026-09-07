@@ -52,8 +52,18 @@ public:
         const int panelWidth    = juce::jmax(0, juce::jmin(440, w - 80));
         const int panelHeight   = juce::jmax(0, juce::jmin(headerHeight + contentHeight + footerHeight, h - 60));
 
+        // Nothing to draw, and nothing for mouseDown to hit: clear the cached
+        // scrollbar state here, or a track region left over from a larger
+        // paint would still swallow a click that should dismiss the panel.
         if (panelWidth == 0 || panelHeight == 0)
+        {
+            maxScrollOffset   = 0;
+            scrollThumbTravel = 0;
+            scrollTrackRegion = juce::Rectangle<int>{};
+            scrollThumbRegion = juce::Rectangle<int>{};
+            actionHitRegion   = juce::Rectangle<int>{};
             return;
+        }
 
         auto panelBounds = juce::Rectangle<int>(
             (w - panelWidth) / 2,
@@ -146,6 +156,9 @@ public:
 
         g.restoreState();
 
+        scrollTrackRegion = juce::Rectangle<int>{};
+        scrollThumbRegion = juce::Rectangle<int>{};
+
         if (maxScrollOffset > 0 && contentBounds.getHeight() > 0)
         {
             const int trackHeight = contentBounds.getHeight();
@@ -154,6 +167,17 @@ public:
             const int thumbTravel = trackHeight - thumbHeight;
             const int thumbY = contentBounds.getY()
                              + (thumbTravel * scrollOffset / maxScrollOffset);
+
+            // Hit regions, cached for the mouse handlers. The painted bar is 3px
+            // wide, which is a hopeless click target, so the hit zone is widened
+            // to kScrollHitWidth around it. thumbTravel is kept because mouseDrag
+            // needs the same mapping the paint used, in reverse.
+            scrollTrackRegion = juce::Rectangle<int>(contentBounds.getRight() - kScrollHitWidth,
+                                                     contentBounds.getY(),
+                                                     kScrollHitWidth + 3, trackHeight);
+            scrollThumbRegion = juce::Rectangle<int>(scrollTrackRegion.getX(), thumbY,
+                                                     scrollTrackRegion.getWidth(), thumbHeight);
+            scrollThumbTravel = thumbTravel;
 
             g.setColour(juce::Colour(0x304f4f4f));
             g.fillRoundedRectangle(static_cast<float>(contentBounds.getRight() - 3),
@@ -210,13 +234,54 @@ public:
 
     void mouseDown(const juce::MouseEvent& e) override
     {
+        draggingScrollThumb = false;
+
         if (onActionClick && actionHitRegion.contains(e.getPosition()))
         {
             onActionClick();
             return;
         }
+
+        // The scrollbar is part of the panel, so a press on it scrolls and must
+        // not be read as a click outside. Before this, the bar appeared at small
+        // sizes and dismissed the panel the moment it was touched.
+        if (maxScrollOffset > 0 && scrollTrackRegion.contains(e.getPosition()))
+        {
+            if (scrollThumbRegion.contains(e.getPosition()))
+            {
+                draggingScrollThumb = true;
+                dragStartY = e.getPosition().getY();
+                dragStartOffset = scrollOffset;
+            }
+            else
+            {
+                // A press on the track above or below the thumb pages that way.
+                const int page = juce::jmax(1, scrollThumbRegion.getHeight());
+                const int direction = e.getPosition().getY() < scrollThumbRegion.getY() ? -1 : 1;
+                setScrollOffset(scrollOffset + direction * page);
+            }
+
+            return;
+        }
+
         if (onDismiss)
             onDismiss();
+    }
+
+    void mouseDrag(const juce::MouseEvent& e) override
+    {
+        if (! draggingScrollThumb || scrollThumbTravel <= 0)
+            return;
+
+        // Invert the thumb mapping from paint(): thumbY moves thumbTravel pixels
+        // over the whole of maxScrollOffset.
+        const int deltaY = e.getPosition().getY() - dragStartY;
+        setScrollOffset(dragStartOffset + (deltaY * maxScrollOffset) / scrollThumbTravel);
+    }
+
+    void mouseUp(const juce::MouseEvent&) override
+    {
+        draggingScrollThumb = false;
     }
 
     void mouseWheelMove(const juce::MouseEvent&,
@@ -227,13 +292,25 @@ public:
 
         const float direction = wheel.isReversed ? -1.0f : 1.0f;
         const int delta = juce::roundToInt(60.0f * wheel.deltaY * direction);
-        const int newOffset = juce::jlimit(0, maxScrollOffset, scrollOffset - delta);
+        setScrollOffset(scrollOffset - delta);
+    }
+
+    void setScrollOffset(int newOffset)
+    {
+        newOffset = juce::jlimit(0, maxScrollOffset, newOffset);
+
         if (newOffset != scrollOffset)
         {
             scrollOffset = newOffset;
             repaint();
         }
     }
+
+    int getScrollOffset() const { return scrollOffset; }
+    int getMaxScrollOffset() const { return maxScrollOffset; }
+    juce::Rectangle<int> getScrollThumbRegion() const { return scrollThumbRegion; }
+    juce::Rectangle<int> getScrollTrackRegion() const { return scrollTrackRegion; }
+    juce::Rectangle<int> getActionHitRegion() const { return actionHitRegion; }
 
     std::function<void()> onDismiss;
 
@@ -258,7 +335,15 @@ private:
     juce::String pluginVersion;
     juce::String actionLabel;
     std::function<void()> onActionClick;
+    static constexpr int kScrollHitWidth = 12;
+
     juce::Rectangle<int> actionHitRegion; // recomputed in paint()
+    juce::Rectangle<int> scrollTrackRegion; // recomputed in paint()
+    juce::Rectangle<int> scrollThumbRegion; // recomputed in paint()
+    int scrollThumbTravel = 0;
+    bool draggingScrollThumb = false;
+    int dragStartY = 0;
+    int dragStartOffset = 0;
     int scrollOffset = 0;
     int maxScrollOffset = 0;
 
