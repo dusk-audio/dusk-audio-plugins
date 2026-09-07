@@ -115,8 +115,28 @@ public:
                                handleSize, handleSize);
         }
 
-        // Scale based on width only (height may vary with collapsible sections)
-        scaleFactor = static_cast<float>(parentEditor->getWidth()) / baseWidth;
+        const float widthScale = static_cast<float>(parentEditor->getWidth()) / baseWidth;
+
+        // An editor whose layout is tied to an aspect ratio has to scale by
+        // whichever axis is the tighter fit, or a window shorter than the base
+        // aspect lays the rows out at the width's scale and they overlap: knobs
+        // over their labels, panel titles over the panel above. A host can hand
+        // out any shape it likes (issue #240), so this is reachable in normal
+        // use, and it is not the same thing as being clipped, which is why the
+        // bounds checks did not see it.
+        //
+        // Editors initialised without a fixed aspect ratio grow their height
+        // independently, by opening collapsible sections, so for those the
+        // height ratio is not a scale at all and the width alone is right.
+        if (constrainer.getFixedAspectRatio() > 0.0)
+        {
+            const float heightScale = static_cast<float>(parentEditor->getHeight()) / baseHeight;
+            scaleFactor = juce::jmax(kMinimumScale, juce::jmin(widthScale, heightScale));
+        }
+        else
+        {
+            scaleFactor = juce::jmax(kMinimumScale, widthScale);
+        }
     }
 
     float getScaleFactor() const { return scaleFactor; }
@@ -157,6 +177,10 @@ private:
     // from updateResizer()'s factor and spans the panels across the editor, so
     // the face fills whatever window it is given instead of overhanging it.
     static constexpr int kHostMinimumSize = 1;
+
+    // A host may drive the editor to a degenerate size mid-drag; keep the scale
+    // positive so nothing downstream divides by zero.
+    static constexpr float kMinimumScale = 0.01f;
 
     void configureHostConstrainer(int maxWidth, int maxHeight)
     {
