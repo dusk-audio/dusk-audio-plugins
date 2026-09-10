@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <complex>
 
@@ -25,6 +26,24 @@ namespace duskaudio
 
 constexpr float kDuskTwoPi = 6.28318530717958647692f;
 constexpr float kDuskPi    = 3.14159265358979323846f;
+
+// The one implementation of the design-frequency clamp ordering. A named clamp
+// helper elsewhere in the tree aliases this at its own ceiling rather than
+// re-implementing the comparison, so the two cannot drift apart.
+//
+// maxFraction has no default on purpose. It is a fraction of fs, and a
+// defaulted parameter of that shape invites a caller to pass a frequency in Hz
+// and silently get a ceiling of fs * 12000.
+//
+// Floor first, ceiling last. The reverse order lets the 1 Hz floor win at
+// absurdly low fs and hand the designer a corner at or above Nyquist, which is
+// the instability this guard exists to prevent. The order is also what makes a
+// NaN freq land on the ceiling instead of propagating: both comparisons are
+// false, so max returns the NaN and min then returns fs * maxFraction.
+inline double nyquistSafeDesignHzD(double fs, double freq, double maxFraction) noexcept
+{
+    return std::min(fs * maxFraction, std::max(freq, 1.0));
+}
 
 //==============================================================================
 class OnePoleLP
