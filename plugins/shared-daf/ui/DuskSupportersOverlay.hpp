@@ -1,0 +1,251 @@
+// Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
+// Third-party components in the built plugins (DAF — ISC; Dear ImGui — MIT; and
+// others) are attributed in plugins/shared-daf/THIRD_PARTY_LICENSES.md.
+//
+// DuskSupportersOverlay.hpp — framework-free (DAF/Dear ImGui) Patreon "Special Thanks"
+// credits overlay. The non-JUCE counterpart of plugins/shared/SupportersOverlay.h, so
+// DAF ports show the same click-title-to-see-supporters panel as the JUCE plugins.
+//
+// Usage (call every frame, LAST, while `open` is true — it draws a scrim over the UI):
+//     if (showSupporters)
+//         duskdaf::drawSupportersOverlay(panel, dl, kDesignW, kDesignH,
+//                                        showSupporters, "TapeMachine 2", "1.0.1");
+// Open it from a title/logo hit-test:  if (titleClicked) showSupporters = true;
+// Reads the generated, JUCE-free duskdaf::patreonTiers() list. Reusable across all DAF UIs.
+
+#pragma once
+
+#include "DuskImGuiWidgets.hpp"   // duskdaf::DuskPanel (crisp text + P()/scale); requires imgui.h pre-included
+#include "PatreonBackersDaf.hpp"  // duskdaf::patreonTiers() — generated, framework-free
+
+#include <algorithm>   // std::min
+#include <cstdio>      // std::snprintf
+#include <cstring>     // std::strcmp
+#include <functional>
+#include <string>
+#include <utility>
+
+namespace duskdaf
+{
+
+// Persistent action state for the immediate-mode overlay. The setter mirrors
+// the JUCE SupportersOverlay API while the draw function remains compatible
+// with existing callers that do not need an action.
+class SupportersOverlay
+{
+public:
+    void setActionLink(std::string label, std::function<void()> onClick)
+    {
+        actionLabel = std::move(label);
+        onActionClick = std::move(onClick);
+    }
+
+    bool hasActionLink() const noexcept
+    {
+        return !actionLabel.empty() && static_cast<bool>(onActionClick);
+    }
+
+    const std::string& actionLinkLabel() const noexcept { return actionLabel; }
+    void triggerAction() const { if (onActionClick) onActionClick(); }
+    bool isDismissArmed() const noexcept { return dismissArmed; }
+    void armDismiss() noexcept { dismissArmed = true; }
+    void resetDismiss() noexcept { dismissArmed = false; }
+    bool ownsActionPress() const noexcept { return actionPressOwned; }
+    void ownActionPress() noexcept { actionPressOwned = true; }
+    void releaseActionPress() noexcept { actionPressOwned = false; }
+    void resetInteraction() noexcept
+    {
+        dismissArmed = false;
+        actionPressOwned = false;
+    }
+
+private:
+    std::string actionLabel;
+    std::function<void()> onActionClick;
+    bool dismissArmed = false;
+    bool actionPressOwned = false;
+};
+
+// Per-tier accent colour, matched to the JUCE SupportersOverlay palette (HUGS is DAF-only, warm).
+inline ImU32 supporterTierColor(const char* title) noexcept
+{
+    if (std::strcmp(title, "CHAMPIONS") == 0)       return IM_COL32(255, 215,   0, 255);  // gold
+    if (std::strcmp(title, "PATRONS") == 0)         return IM_COL32(  0, 170, 255, 255);  // blue
+    if (std::strcmp(title, "SUPPORTERS") == 0)      return IM_COL32(106, 196, 126, 255);  // green
+    if (std::strcmp(title, "HUGS") == 0)            return IM_COL32(224, 156, 112, 255);  // warm peach
+    if (std::strcmp(title, "PAST SUPPORTERS") == 0) return IM_COL32(140, 140, 140, 255);  // grey
+    return IM_COL32(200, 200, 204, 255);
+}
+
+// Full-canvas "Special Thanks" credits overlay. Immediate-mode: draws a dark scrim over the whole
+// plugin area, a centred panel with per-tier accented names (scrollable so a growing list never
+// overflows), and a footer. Clicking the scrim (anywhere outside the scrolling list) dismisses.
+// Coordinates are the plugin's DESIGN space (0..designW/H); the shared DuskPanel maps to screen.
+inline void drawSupportersOverlay(DuskPanel& panel, ImDrawList* dl,
+                                  float designW, float designH, bool& open,
+                                  const char* pluginName, const char* version = "",
+                                  SupportersOverlay* overlay = nullptr)
+{
+    if (!open)
+        return;
+
+    const float s = panel.scale();
+    const bool hasAction = overlay != nullptr && overlay->hasActionLink();
+    const bool canDismiss = hasAction && overlay->isDismissArmed();
+    if (hasAction && !canDismiss && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
+        overlay->armDismiss();
+
+    // --- scrim + click-to-dismiss (any click outside the scrolling name list) ---------------
+    dl->AddRectFilled(panel.P(0.0f, 0.0f), panel.P(designW, designH), IM_COL32(16, 16, 16, 242));
+    // With an action link, dismissal is handled after the panel items so the
+    // full-canvas target cannot take ActiveId before the link. Existing callers
+    // without an action retain the original immediate-mode scrim button.
+    if (!hasAction)
+    {
+        ImGui::SetCursorScreenPos(panel.P(0.0f, 0.0f));
+        ImGui::SetNextItemAllowOverlap();
+        if (ImGui::InvisibleButton("##supscrim", ImVec2(designW * s, designH * s)))
+            open = false;
+    }
+
+    // --- centred panel (design coords) ------------------------------------------------------
+    const float pw = std::min(384.0f, designW - 56.0f);
+    const float ph = std::min(452.0f, designH - 40.0f);
+    const float px = 0.5f * (designW - pw);
+    const float py = 0.5f * (designH - ph);
+
+    dl->AddRectFilled(panel.P(px, py), panel.P(px + pw, py + ph), IM_COL32(30, 30, 32, 255), 11.0f * s);
+    dl->AddRect      (panel.P(px, py), panel.P(px + pw, py + ph), IM_COL32(80, 80, 84, 255), 11.0f * s, 0, 1.6f * s);
+
+    // header
+    panel.text(dl, px + pw * 0.5f, py + 20.0f, 18.0f, IM_COL32(232, 232, 232, 255), "Special Thanks", 0, true);
+    panel.text(dl, px + pw * 0.5f, py + 46.0f, 9.5f,  IM_COL32(120, 120, 120, 255),
+               "To our supporters who make this plugin possible", 0);
+    dl->AddRectFilled(panel.P(px + 26.0f, py + 66.0f), panel.P(px + pw - 26.0f, py + 67.0f), IM_COL32(58, 58, 58, 255));
+
+    // --- scrolling tier/name list -----------------------------------------------------------
+    const float listTop = py + 76.0f;
+    const float footerH = hasAction ? 60.0f : 40.0f;
+    const float listH   = ph - (listTop - py) - footerH;
+    const ImVec2 listMin = panel.P(px + 14.0f, listTop);
+    const ImVec2 listMax = panel.P(px + pw - 14.0f, listTop + listH);
+
+    ImGui::SetCursorScreenPos(listMin);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(0, 0, 0, 0));
+    ImGui::BeginChild("##suplist", ImVec2((pw - 28.0f) * s, listH * s), false,
+                      ImGuiWindowFlags_None);   // native scrollbar appears only when the list overflows
+    {
+        ImDrawList* cdl = ImGui::GetWindowDrawList();
+        const float avail = ImGui::GetContentRegionAvail().x;
+
+        auto centred = [&](const char* txt, float px_sz, ImU32 col, float advance)
+        {
+            ImFont* f = panel.pickFont(px_sz * s);
+            const float fsz = px_sz * s;
+            const ImVec2 ts = f->CalcTextSizeA(fsz, FLT_MAX, 0.0f, txt);
+            const ImVec2 cur = ImGui::GetCursorScreenPos();
+            cdl->AddText(f, fsz, ImVec2(std::floor(cur.x + 0.5f * (avail - ts.x) + 0.5f),
+                                        std::floor(cur.y + 0.5f)), col, txt);
+            ImGui::Dummy(ImVec2(avail, advance * s));
+        };
+
+        bool first = true;
+        for (const BackerTier& tier : patreonTiers())
+        {
+            if (tier.names.empty())
+                continue;
+            const bool isPast = (std::strcmp(tier.title, "PAST SUPPORTERS") == 0);
+            if (!first)
+                ImGui::Dummy(ImVec2(avail, 12.0f * s));   // gap between tiers
+            first = false;
+
+            const ImU32 accent = supporterTierColor(tier.title);
+            centred(tier.title, 9.5f, accent, 17.0f);
+
+            // short accent line under the heading
+            const ImVec2 cur = ImGui::GetCursorScreenPos();
+            const float lineW = 26.0f * s;
+            cdl->AddRectFilled(ImVec2(cur.x + 0.5f * (avail - lineW), cur.y),
+                               ImVec2(cur.x + 0.5f * (avail + lineW), cur.y + 1.0f * s),
+                               (accent & 0x00ffffff) | 0x66000000);
+            ImGui::Dummy(ImVec2(avail, 8.0f * s));
+
+            const ImU32 nameCol = isPast ? IM_COL32(130, 130, 130, 255) : IM_COL32(206, 206, 206, 255);
+            for (const char* name : tier.names)
+                centred(name, isPast ? 11.0f : 12.0f, nameCol, 15.5f);
+        }
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+
+    // --- footer -----------------------------------------------------------------------------
+    dl->AddRectFilled(panel.P(px + 26.0f, py + ph - footerH), panel.P(px + pw - 26.0f, py + ph - footerH + 1.0f),
+                      IM_COL32(58, 58, 58, 255));
+    if (hasAction)
+    {
+        const float linkY = py + ph - footerH + 7.0f;
+        ImFont* const font = panel.pickFont(10.0f * s);
+        const ImVec2 textSize = font->CalcTextSizeA(10.0f * s, FLT_MAX, 0.0f,
+                                                    overlay->actionLinkLabel().c_str());
+        const ImVec2 linkCenter = panel.P(px + 0.5f * pw, linkY);
+        const ImVec2 hitMin(linkCenter.x - 0.5f * textSize.x - 5.0f * s,
+                            linkCenter.y - 3.0f * s);
+        const ImVec2 hitMax(hitMin.x + textSize.x + 10.0f * s,
+                            hitMin.y + textSize.y + 6.0f * s);
+        const ImVec2 mouse = ImGui::GetMousePos();
+        const bool actionHovered = mouse.x >= hitMin.x && mouse.x < hitMax.x
+                                && mouse.y >= hitMin.y && mouse.y < hitMax.y;
+        const bool mouseReleased = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+        if (overlay->ownsActionPress()
+            && !ImGui::IsMouseDown(ImGuiMouseButton_Left) && !mouseReleased)
+            overlay->releaseActionPress();
+        if (actionHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+            overlay->ownActionPress();
+        const bool actionPressOwned = overlay->ownsActionPress();
+        const bool actionPressed = actionPressOwned && actionHovered && mouseReleased;
+        if (mouseReleased)
+            overlay->releaseActionPress();
+        if (actionHovered)
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        const ImU32 linkColor = actionHovered ? IM_COL32(218, 178, 126, 255)
+                                              : IM_COL32(184, 144, 96, 255);
+        panel.text(dl, px + pw * 0.5f, linkY, 10.0f, linkColor,
+                   overlay->actionLinkLabel().c_str(), 0);
+        dl->AddLine(ImVec2(linkCenter.x - 0.5f * textSize.x,
+                           linkCenter.y + textSize.y + 1.0f * s),
+                    ImVec2(linkCenter.x + 0.5f * textSize.x,
+                           linkCenter.y + textSize.y + 1.0f * s),
+                    linkColor, 1.0f * s);
+        if (actionPressed)
+        {
+            overlay->triggerAction();
+        }
+        else if (canDismiss && mouseReleased && !actionPressOwned
+                 && !actionHovered && !ImGui::IsAnyItemActive())
+        {
+            const bool overList = mouse.x >= listMin.x && mouse.x < listMax.x
+                               && mouse.y >= listMin.y && mouse.y < listMax.y;
+            if (!overList)
+            {
+                open = false;
+                overlay->resetDismiss();
+            }
+        }
+    }
+
+    panel.text(dl, px + pw * 0.5f, py + ph - footerH + (hasAction ? 29.0f : 8.0f),
+               10.0f, IM_COL32(96, 96, 96, 255),
+               hasAction ? "Click anywhere else to close" : "Click anywhere to close", 0);
+
+    char credit[128];
+    if (pluginName == nullptr || pluginName[0] == '\0')
+        std::snprintf(credit, sizeof(credit), "by Dusk Audio");
+    else if (version == nullptr || version[0] == '\0')
+        std::snprintf(credit, sizeof(credit), "%s by Dusk Audio", pluginName);
+    else
+        std::snprintf(credit, sizeof(credit), "%s v%s by Dusk Audio", pluginName, version);
+    panel.text(dl, px + pw * 0.5f, py + ph - footerH + (hasAction ? 44.0f : 23.0f),
+               10.0f, IM_COL32(80, 80, 80, 255), credit, 0);
+}
+
+} // namespace duskdaf
