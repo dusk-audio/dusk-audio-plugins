@@ -1204,16 +1204,28 @@ namespace DuskCrashLog
     //
     // Declare it FIRST among the members so it outlives everything whose
     // construction could crash.
+    //
+    // A host that compiles the plug-in into its own executable defines
+    // DUSK_CRASHLOG_NO_INSTALL. The process and its crash reporting are the
+    // host's there, and a handler chained in front of it would log every host
+    // crash as this plug-in's.
     class ScopedRegistration
     {
     public:
         ScopedRegistration (std::string pluginName, std::string version)
             : name (std::move (pluginName)), ver (std::move (version))
         {
+          #ifndef DUSK_CRASHLOG_NO_INSTALL
             install (name, ver);
+          #endif
         }
 
-        ~ScopedRegistration() { uninstall (name, ver); }
+        ~ScopedRegistration()
+        {
+          #ifndef DUSK_CRASHLOG_NO_INSTALL
+            uninstall (name, ver);
+          #endif
+        }
 
         ScopedRegistration (const ScopedRegistration&) = delete;
         ScopedRegistration& operator= (const ScopedRegistration&) = delete;
