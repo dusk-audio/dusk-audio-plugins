@@ -1,4 +1,52 @@
-# Multi-Comp 2 Opto Rack-Proportion QA
+# Multi-Comp 2 OPTO/FET meter-control QA — 2026-09-08 continuation
+
+Latest: [functional meter controls, captures, and validation](../dusk-audio-tools/plugins/MultiComp/handoff/reports/multi-comp-2-vintage-meter-controls-2026-09-08.md).
+The GR-only limitations in the earlier assessments below are superseded.
+
+- OPTO adds a compact GR/+10/+4 selector beneath the existing meter. FET's
+  existing bank now switches GR/+8/+4 and bypasses with OFF. The approved
+  1120 × 380 layouts remain intact.
+- Fresh installed-AU state-recall views:
+  [OPTO +4](build-multi-comp-1176/vintage-controls-20260908/final-opto-restored.png),
+  [FET +8](build-multi-comp-1176/vintage-controls-20260908/final-fet-restored.png),
+  [FET OFF](build-multi-comp-1176/vintage-controls-20260908/final-fet-off.png).
+- All captions and active selections are visible; OFF dims the face and parks
+  the needle. Live signal films confirm zero-reference alignment and needle
+  movement. Four hundred ImGui render cases pass at five scales.
+- VCA and Studio FET are pixel-identical to fresh baseline captures. BUS's only
+  differences are six label cleanups already present in the pre-task source;
+  no BUS layout/control drawing was edited in this continuation.
+- No blocking visual defects remain in the inspected views. Exact UAD meter
+  transients and every manual Logic interaction remain unverified.
+
+---
+
+# Multi-Comp 2 OPTO/FET refinement QA — 2026-09-08
+
+Latest review: [complete findings and validation](../dusk-audio-tools/plugins/MultiComp/handoff/reports/multi-comp-2-opto-fet-ui-2026-09-08.md).
+This supersedes the older visual assessments below for OPTO and vintage FET.
+
+- Fresh native source captures: installed UAD LA-2A and 1176. Each was viewed
+  together with its candidate; no historical mockup was used as current evidence.
+- Final installed AU: [OPTO](build-multi-comp-1176/ui-refinement-20260908/09-opto-final-au.png)
+  and [FET](build-multi-comp-1176/ui-refinement-20260908/10-fet-final-au.png),
+  both 1120 × 380.
+- Corrected oversized meters, OPTO knob/switch proportions, FET metal-cap
+  shading, scale spacing, and label legibility. The first FET revision's
+  clipped +3 label and radial cap seams were fixed before final captures.
+- Main control printing, hardware centers, meter framing, panel texture,
+  Dusk identity, pointer alignment, and rack spacing were visually inspected.
+  Native vector geometry remains sharp; no bitmap assets were introduced.
+- Five scales and translated origins pass the actual meter-render tests.
+  The final default-size captures have no blocking visual defect. Manual Logic
+  drag/typing and accessibility testing remain outside this verified scope.
+- VCA, BUS, and Studio FET before/after captures each show 0 changed pixels.
+- Existing OPTO/FET GR-only metering remains a functional limitation; FET's
+  +8/+4/OFF labels are still decorative, not newly implemented output modes.
+
+---
+
+# Historical Multi-Comp 2 Opto Rack-Proportion QA
 
 ## Evidence
 
