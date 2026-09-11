@@ -4,6 +4,12 @@
 
 #include <cstdint>
 
+// Every Dusk plug-in names its parameter enum ParamId. A host that links more
+// than one of them into one program would otherwise hold several different
+// definitions of the same global types, so the table lives in a namespace of
+// its own and the using-directive below keeps the plug-in's code unchanged.
+namespace teparams
+{
 enum ParamId
 {
     kParamMode = 0,
@@ -447,3 +453,6 @@ static constexpr const char* kModeNames[12] =
     "11: Heads 1+2+3 + Reverb",
     "12: Reverb Only",
 };
+} // namespace teparams
+
+using namespace teparams;
