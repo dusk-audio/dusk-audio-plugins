@@ -38,6 +38,7 @@ inline std::array<float, 3> orderedCrossovers(float f1, float f2, float f3) noex
 
 #include "DafPlugin.hpp"
 #include "MultiCompAccess.hpp"
+#include "MultiCompOutputVu.hpp"
 #include "MultiCompParams.hpp"
 #include "MultiCompProgramPresets.hpp"
 #include "MultiCompVersion.hpp"
@@ -52,7 +53,7 @@ class MultiCompPlugin final : public Plugin
 public:
     MultiCompPlugin() : Plugin(multicompp::kTotalParamCount, multicompp::kFactoryPresets.size(), 1)
     {
-        for (int i = 0; i < multicompp::kMeterMaster; ++i)
+        for (int i = 0; i < multicompp::kTotalParamCount; i = multicompp::nextControlParameter(i))
         {
             const float def = multicompp::resolveParameter(i,
                 [](const multicompp::Param& d) { return multicompp::hostDefault(d); },
@@ -65,13 +66,16 @@ public:
     float bandGr(int b) const noexcept { return dsp.getBandGainReduction(b); }
     float inputLevel() const noexcept { return dsp.getInputLevel(); }
     float outputLevel() const noexcept { return dsp.getOutputLevel(); }
+    float outputVuLevel() const noexcept { return outputVu.levelDb(); }
+    float busMeterReading() const noexcept { return dsp.getBusMeterReading(); }
+    float busFadePosition() const noexcept { return dsp.getBusFadePosition(); }
     // The UI's view of a parameter. Crossovers report the frequency the DSP
     // will use rather than the raw setting, so raising one handle visibly pushes
     // the handles above it. The host-facing getParameterValue() deliberately
     // does not do this: an automation lane must read back what it wrote.
     float parameterValue(uint32_t index) const noexcept
     {
-        if (index >= multicompp::kMeterMaster) return 0.0f;
+        if (!multicompp::isControlParameter(static_cast<int>(index))) return 0.0f;
         constexpr auto x1 = static_cast<uint32_t>(multicompp::ParamId::Crossover1);
         constexpr auto x3 = static_cast<uint32_t>(multicompp::ParamId::Crossover3);
         // plain(x1 + 1) and ordered[index - x1] below assume the three
@@ -114,7 +118,7 @@ protected:
 
     void initParameter(uint32_t index, Parameter& p) override
     {
-        if (index < multicompp::kMeterMaster)
+        if (multicompp::isControlParameter(static_cast<int>(index)))
         {
             multicompp::resolveParameter(static_cast<int>(index),
                 [&](const multicompp::Param& d) {
@@ -133,17 +137,20 @@ protected:
                         case Id::Mode: setEnum(p, multicompp::kModes, 8); break;
                         case Id::TruePeakEnable: case Id::ExternalSidechain: case Id::AutoMakeup:
                         case Id::OptoLimit: case Id::VcaOverEasy: case Id::DigitalAdaptive:
-                        case Id::GlobalSidechainListen: case Id::NoiseEnable:
+                        case Id::GlobalSidechainListen: case Id::NoiseEnable: case Id::BusFade:
                             setEnum(p, multicompp::kOnOff, 2); p.hints |= kParameterIsBoolean; break;
                         case Id::TruePeakQuality: setEnum(p, multicompp::kTruePeakQuality, 2); break;
                         case Id::Distortion: setEnum(p, multicompp::kDistortion, 4); break;
                         case Id::Oversampling: setEnum(p, multicompp::kOversampling, 3); break;
                         case Id::FetRatio: setEnum(p, multicompp::kRatios, 5); break;
+                        case Id::OptoMeter: setEnum(p, multicompp::kOptoMeterModes, 3); break;
+                        case Id::FetMeter: setEnum(p, multicompp::kFetMeterModes, 3); break;
                         case Id::FetCurve: setEnum(p, multicompp::kFetCurve, 2); break;
                         case Id::VcaClassicDetector: setEnum(p, multicompp::kVcaDetector, 2); break;
                         case Id::BusRatio: setEnum(p, multicompp::kBusRatios, 3); break;
                         case Id::BusAttack: setEnum(p, multicompp::kBusAttack, 6); break;
                         case Id::BusRelease: setEnum(p, multicompp::kBusRelease, 5); break;
+                        case Id::BusHeadroom: setEnum(p, multicompp::kBusHeadroom, 7); break;
                         case Id::StereoLinkMode: setEnum(p, multicompp::kLinkMode, 3); break;
                         default: break;
                     }
@@ -171,8 +178,7 @@ protected:
 
     float getParameterValue(uint32_t index) const override
     {
-        if (index < multicompp::kParamCount) return values[index].load(std::memory_order_relaxed);
-        if (index < multicompp::kMeterMaster) return values[index].load(std::memory_order_relaxed);
+        if (multicompp::isControlParameter(static_cast<int>(index))) return values[index].load(std::memory_order_relaxed);
         if (index == multicompp::kMeterMaster) return dsp.getGainReduction();
         if (index >= multicompp::kMeterBand0 && index <= multicompp::kMeterBand3)
             return dsp.getBandGainReduction(static_cast<int>(index - multicompp::kMeterBand0));
@@ -181,7 +187,7 @@ protected:
 
     void setParameterValue(uint32_t index, float value) override
     {
-        if (index >= multicompp::kMeterMaster) return;
+        if (!multicompp::isControlParameter(static_cast<int>(index))) return;
         // Crossovers take the ordinary path: each one stores exactly what the
         // host set. The DSP re-derives the ordering from all three every block,
         // so nothing here needs to -- and must not -- rewrite its neighbours.
@@ -218,7 +224,7 @@ protected:
     {
         if (std::strcmp(key, "parameters") != 0) return String();
         multicompp::StateValues state{};
-        for (int i = 0; i < multicompp::kMeterMaster; ++i)
+        for (int i = 0; i < multicompp::kTotalParamCount; i = multicompp::nextControlParameter(i))
             state[static_cast<size_t>(i)] = values[static_cast<size_t>(i)].load(std::memory_order_relaxed);
         return String(multicompp::encodeState(state).c_str());
     }
@@ -228,14 +234,14 @@ protected:
         if (std::strcmp(key, "parameters") != 0 || value == nullptr) return;
         multicompp::StateValues state{};
         if (!multicompp::decodeState(value, state)) return;
-        for (int i = 0; i < multicompp::kMeterMaster; ++i)
+        for (int i = 0; i < multicompp::kTotalParamCount; i = multicompp::nextControlParameter(i))
             setParameterValue(static_cast<uint32_t>(i), state[static_cast<size_t>(i)]);
     }
 
-    void activate() override { dsp.prepare(getSampleRate(), static_cast<int>(getBufferSize())); pushParameters(); updateLatency(); }
-    void deactivate() override { dsp.reset(); }
-    void sampleRateChanged(double sr) override { dsp.prepare(sr, static_cast<int>(getBufferSize())); pushParameters(); updateLatency(); }
-    void bufferSizeChanged(uint32_t bs) override { dsp.prepare(getSampleRate(), static_cast<int>(bs)); pushParameters(); updateLatency(); }
+    void activate() override { dsp.prepare(getSampleRate(), static_cast<int>(getBufferSize())); outputVu.prepare(getSampleRate()); pushParameters(); updateLatency(); }
+    void deactivate() override { dsp.reset(); outputVu.reset(); }
+    void sampleRateChanged(double sr) override { dsp.prepare(sr, static_cast<int>(getBufferSize())); outputVu.prepare(sr); pushParameters(); updateLatency(); }
+    void bufferSizeChanged(uint32_t bs) override { dsp.prepare(getSampleRate(), static_cast<int>(bs)); outputVu.prepare(getSampleRate()); pushParameters(); updateLatency(); }
 
     void ioChanged(uint16_t in, uint16_t out) override
     {
@@ -250,6 +256,7 @@ protected:
 
     void run(const float** inputs, float** outputs, uint32_t frames) override
     {
+        duskaudio::ScopedFlushDenormals guard;
         if (frames == 0)
         {
             // Still publish a latched latency change: some hosts probe with
@@ -262,6 +269,7 @@ protected:
             && multicompp::plugin_detail::hasStereoExternalSidechainPorts(activeInputs, inputs);
         if (useSc) { const float* sc[2] = {inputs[2], inputs[3]}; dsp.processBlockExternal(inputs, sc, outputs, activeChannels, static_cast<int>(frames)); }
         else dsp.processBlock(inputs, outputs, activeChannels, static_cast<int>(frames));
+        outputVu.process(outputs, activeChannels, static_cast<int>(frames));
         // setLatency() is documented as callable from run(). The CLAP wrapper
         // latches a change here and publishes it at the next activate(), which
         // is the only point the CLAP spec allows the latency to move.
@@ -273,7 +281,7 @@ private:
     { p.enumValues.count = static_cast<uint8_t>(count); p.enumValues.restrictedMode = true; auto* e = new ParameterEnumerationValue[count]; for (int i = 0; i < count; ++i) e[i] = ParameterEnumerationValue(static_cast<float>(i), labels[i]); p.enumValues.values = e; }
     void pushParameters()
     {
-        for (int i = 0; i < multicompp::kMeterMaster; ++i)
+        for (int i = 0; i < multicompp::kTotalParamCount; i = multicompp::nextControlParameter(i))
         {
             const float value = values[static_cast<size_t>(i)].load(std::memory_order_relaxed);
             multicompp::resolveParameter(i,
@@ -288,12 +296,13 @@ private:
     void updateLatency() { const int l = dsp.getLatencySamples(); if (l != lastLatency) { lastLatency = l; setLatency(static_cast<uint32_t>(l < 0 ? 0 : l)); } }
 
     duskaudio::MultiCompDSP dsp;
+    multicompp::OutputVu outputVu;
     // Formats other than AU always present the full input set, and ioChanged()
     // is only called where a host narrows it, so the declared count is the
     // correct default rather than a placeholder.
     int activeInputs = DAF_PLUGIN_NUM_INPUTS;
     int activeChannels = DAF_PLUGIN_NUM_OUTPUTS;
-    std::array<std::atomic<float>, multicompp::kMeterMaster> values{};
+    std::array<std::atomic<float>, multicompp::kTotalParamCount> values{};
     int lastLatency = -1;
     DAF_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MultiCompPlugin)
 };
@@ -306,6 +315,9 @@ float multiCompGetGainReduction(void* p) noexcept { return p ? asMultiComp(p)->g
 float multiCompGetBandGainReduction(void* p, int band) noexcept { return p ? asMultiComp(p)->bandGr(band) : 0.0f; }
 float multiCompGetInputLevel(void* p) noexcept { return p ? asMultiComp(p)->inputLevel() : -60.0f; }
 float multiCompGetOutputLevel(void* p) noexcept { return p ? asMultiComp(p)->outputLevel() : -60.0f; }
+float multiCompGetOutputVuLevel(void* p) noexcept { return p ? asMultiComp(p)->outputVuLevel() : -120.0f; }
+float multiCompGetBusMeterReading(void* p) noexcept { return p ? asMultiComp(p)->busMeterReading() : 0.0f; }
+float multiCompGetBusFadePosition(void* p) noexcept { return p ? asMultiComp(p)->busFadePosition() : 0.0f; }
 float multiCompGetParameterValue(void* p, uint32_t index) noexcept
 { return p ? asMultiComp(p)->parameterValue(index) : 0.0f; }
 

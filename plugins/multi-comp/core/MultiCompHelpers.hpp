@@ -9,10 +9,50 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <vector>
 
 namespace duskaudio
 {
+
+// One non-finite input sample latches for good. It lands in the sidechain
+// shelf biquads (every mode filters its detector through them), the
+// oversampler FIR histories, the multiband crossovers and the mode envelopes,
+// and none of those can flush a NaN with more audio: only reset() clears them.
+// So the guard has to run before any of that state is touched.
+//
+// Exponent-field maximum rather than a per-sample std::isfinite: a finite
+// float has a biased exponent of at most 0xfe, an infinity or NaN has exactly
+// 0xff, so the maximum over the field is 0x7f800000 if and only if at least
+// one sample is non-finite. Branch-free, sign- and payload-agnostic, and it
+// vectorises to an AND plus an unsigned MAX, where an isfinite loop with an
+// early exit does not. Exact, so it never fires on finite input.
+inline bool blockIsAllFinite(const float* samples, int numSamples) noexcept
+{
+    std::uint32_t worstExponent = 0;
+    for (int i = 0; i < numSamples; ++i)
+    {
+        std::uint32_t bits = 0;
+        std::memcpy(&bits, samples + i, sizeof(bits));
+        worstExponent = std::max(worstExponent, bits & 0x7f800000u);
+    }
+    return worstExponent != 0x7f800000u;
+}
+
+// Substitute silence for the offending samples only. Everything finite in the
+// block is copied through bit-exactly, so a glitch costs one sample, not one
+// buffer.
+inline void copyWithoutNonFinite(const float* source, float* destination,
+                                 int numSamples) noexcept
+{
+    for (int i = 0; i < numSamples; ++i)
+    {
+        std::uint32_t bits = 0;
+        std::memcpy(&bits, source + i, sizeof(bits));
+        destination[i] = (bits & 0x7f800000u) == 0x7f800000u ? 0.0f : source[i];
+    }
+}
 
 class MultiCompSidechainFilter
 {
@@ -25,13 +65,14 @@ public:
         reset();
     }
 
-    void setFrequency(float frequency) noexcept
+    void setFrequency(float frequency, float q = 0.707f) noexcept
     {
         const float f = std::clamp(frequency, 20.0f, 500.0f);
-        if (std::abs(f - currentFrequency) > 0.1f)
+        if (std::abs(f - currentFrequency) > 0.1f || q != currentQ)
         {
             currentFrequency = f;
-            filter.setCoeffs(Biquad::highPass(sampleRate, f, 0.707f));
+            currentQ = q;
+            filter.setCoeffs(Biquad::highPass(sampleRate, f, q));
         }
     }
 
@@ -45,6 +86,7 @@ public:
 private:
     double sampleRate = 44100.0;
     float currentFrequency = -1.0f;
+    float currentQ = 0.707f;
     Biquad filter;
 };
 

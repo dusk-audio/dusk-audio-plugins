@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cmath>
 
+#include "MultiCompDbxLaw.hpp"
 #include "../../shared-daf/dsp/DuskFilters.hpp"
 
 namespace duskaudio
@@ -147,11 +148,18 @@ struct MultiCompParameterState
     std::atomic<int> fetRatio{0}, fetCurve{0};
     std::atomic<float> fetTransient{0.0f}, fetThreshold{-10.0f};
 
-    std::atomic<float> vcaThreshold{-27.0f}, vcaRatio{50.4944f}, vcaAttack{1.0f}, vcaRelease{100.0f}, vcaOutput{0.0f};
+    // vcaRatio retains its core identifier; its value is the measured
+    // compression knob position, shared with the host parameter descriptor.
+    std::atomic<float> vcaThreshold{dbx160::kThresholdDefaultDb},
+        vcaRatio{dbx160::kCompressDefaultPosition}, vcaAttack{1.0f},
+        vcaRelease{100.0f}, vcaOutput{0.0f};
     std::atomic<bool> vcaOverEasy{false}, vcaClassicDetector{false};
 
     std::atomic<float> busThreshold{0.0f}, busMakeup{0.0f}, busMix{100.0f};
     std::atomic<int> busRatio{0}, busAttack{2}, busRelease{1};
+    std::atomic<int> busHeadroom{3};
+    std::atomic<float> busFadeRate{24.8f};
+    std::atomic<bool> busFade{false};
 
     std::atomic<float> studioVcaThreshold{-10.0f}, studioVcaRatio{3.0f}, studioVcaAttack{10.0f}, studioVcaRelease{300.0f}, studioVcaOutput{0.0f};
 
