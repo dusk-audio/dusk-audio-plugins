@@ -16,7 +16,7 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 IMAGE_NAME="dusk-plugins-builder"
 
 # DAF SHA — keep in sync with the DAF workflow pins.
-DAF_SHA="64d386a8b04841aceef8c0a8d9035e8c02ce1c15"
+DAF_SHA="867183d73b8fea20892eb8de49fb8c8b108c4910"
 
 # Plugin lookup functions (compatible with bash 3.2 on macOS)
 get_plugin_target() {
