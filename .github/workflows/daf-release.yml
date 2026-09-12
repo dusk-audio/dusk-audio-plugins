@@ -42,8 +42,7 @@ on:
 # daf-build.yml, daf-au-test.yml and docker/build_release.sh, and re-run the
 # dispatch matrix before tagging.
 env:
-  DAF_SHA: 22b8282461c5847057aa31b7f210bc9e0652366e
-  DAFWIDGETS_SHA: 487b092aa265458feb8320308a1fa36ca0901a5b
+  DAF_SHA: 867183d73b8fea20892eb8de49fb8c8b108c4910
   PLUGIN_DIR: plugins/sunset-circuits/daf-plugin
   SLUG: sunset-circuits
 
@@ -204,16 +203,6 @@ jobs:
           repository: dusk-audio/DAF
           ref: ${{ env.DAF_SHA }}
           path: DAF
-          submodules: recursive
-          persist-credentials: false
-
-      - name: Checkout DAF-Widgets
-        uses: actions/checkout@v4
-        with:
-          repository: dusk-audio/DAF-Widgets
-          ref: ${{ env.DAFWIDGETS_SHA }}
-          path: DAF-Widgets
-          submodules: recursive
           persist-credentials: false
 
       - name: Configure
@@ -222,8 +211,7 @@ jobs:
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DDUSK_DAF_INSTALL_LOCAL=OFF \
-            -DDAF_PATH="${GITHUB_WORKSPACE}/DAF" \
-            -DDAFWIDGETS_PATH="${GITHUB_WORKSPACE}/DAF-Widgets"
+            -DDAF_PATH="${GITHUB_WORKSPACE}/DAF"
 
       - name: Build (VST3 + CLAP + LV2)
         working-directory: ${{ env.PLUGIN_DIR }}
@@ -341,16 +329,6 @@ jobs:
           repository: dusk-audio/DAF
           ref: ${{ env.DAF_SHA }}
           path: DAF
-          submodules: recursive
-          persist-credentials: false
-
-      - name: Checkout DAF-Widgets
-        uses: actions/checkout@v4
-        with:
-          repository: dusk-audio/DAF-Widgets
-          ref: ${{ env.DAFWIDGETS_SHA }}
-          path: DAF-Widgets
-          submodules: recursive
           persist-credentials: false
 
       - name: Configure
@@ -359,8 +337,7 @@ jobs:
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DDUSK_DAF_INSTALL_LOCAL=OFF \
-            -DDAF_PATH="${GITHUB_WORKSPACE}/DAF" \
-            -DDAFWIDGETS_PATH="${GITHUB_WORKSPACE}/DAF-Widgets"
+            -DDAF_PATH="${GITHUB_WORKSPACE}/DAF"
 
       - name: Build (VST3 + CLAP + LV2)
         working-directory: ${{ env.PLUGIN_DIR }}
@@ -416,16 +393,6 @@ jobs:
           repository: dusk-audio/DAF
           ref: ${{ env.DAF_SHA }}
           path: DAF
-          submodules: recursive
-          persist-credentials: false
-
-      - name: Checkout DAF-Widgets
-        uses: actions/checkout@v4
-        with:
-          repository: dusk-audio/DAF-Widgets
-          ref: ${{ env.DAFWIDGETS_SHA }}
-          path: DAF-Widgets
-          submodules: recursive
           persist-credentials: false
 
       - name: Setup MSVC
@@ -473,7 +440,7 @@ jobs:
           # a C2059 buried a hundred lines into cl's output. DearImGui.cpp is the
           # only DAF-Widgets TU our plugins compile (DUSK_DAF_UI_SOURCES in
           # shared-daf/cmake/DuskDafPlugin.cmake).
-          $f = "${{ github.workspace }}/DAF-Widgets/opengl/DearImGui.cpp"
+          $f = "${{ github.workspace }}/DAF/widgets/imgui/DearImGui.cpp"
           $c = [System.IO.File]::ReadAllText($f)
           $c = $c.Replace('self->getWidth() ?: 640 * scaleFactor',  'self->getWidth() ? self->getWidth() : 640 * scaleFactor')
           $c = $c.Replace('self->getHeight() ?: 480 * scaleFactor', 'self->getHeight() ? self->getHeight() : 480 * scaleFactor')
@@ -492,8 +459,7 @@ jobs:
             -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl `
             -DCMAKE_BUILD_TYPE=Release `
             -DDUSK_DAF_INSTALL_LOCAL=OFF `
-            -DDAF_PATH="${{ github.workspace }}/DAF" `
-            -DDAFWIDGETS_PATH="${{ github.workspace }}/DAF-Widgets"
+            -DDAF_PATH="${{ github.workspace }}/DAF"
 
       - name: Build (VST3 + CLAP + LV2)
         working-directory: ${{ env.PLUGIN_DIR }}
@@ -598,16 +564,6 @@ jobs:
           repository: dusk-audio/DAF
           ref: ${{ env.DAF_SHA }}
           path: DAF
-          submodules: recursive
-          persist-credentials: false
-
-      - name: Checkout DAF-Widgets
-        uses: actions/checkout@v4
-        with:
-          repository: dusk-audio/DAF-Widgets
-          ref: ${{ env.DAFWIDGETS_SHA }}
-          path: DAF-Widgets
-          submodules: recursive
           persist-credentials: false
 
       - name: Install Ninja
@@ -621,8 +577,7 @@ jobs:
             -DDUSK_DAF_INSTALL_LOCAL=OFF \
             -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
             -DCMAKE_OSX_DEPLOYMENT_TARGET="10.15" \
-            -DDAF_PATH="${{ github.workspace }}/DAF" \
-            -DDAFWIDGETS_PATH="${{ github.workspace }}/DAF-Widgets"
+            -DDAF_PATH="${{ github.workspace }}/DAF"
 
       - name: Build (VST3 + CLAP + LV2 + AU)
         working-directory: ${{ env.PLUGIN_DIR }}
@@ -803,16 +758,6 @@ jobs:
           repository: dusk-audio/DAF
           ref: ${{ env.DAF_SHA }}
           path: DAF
-          submodules: recursive
-          persist-credentials: false
-
-      - name: Checkout DAF-Widgets
-        uses: actions/checkout@v4
-        with:
-          repository: dusk-audio/DAF-Widgets
-          ref: ${{ env.DAFWIDGETS_SHA }}
-          path: DAF-Widgets
-          submodules: recursive
           persist-credentials: false
 
       - name: Configure
@@ -821,8 +766,7 @@ jobs:
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DDUSK_DAF_INSTALL_LOCAL=OFF \
-            -DDAF_PATH="${GITHUB_WORKSPACE}/DAF" \
-            -DDAFWIDGETS_PATH="${GITHUB_WORKSPACE}/DAF-Widgets"
+            -DDAF_PATH="${GITHUB_WORKSPACE}/DAF"
 
       - name: Build (VST3 + CLAP + LV2)
         working-directory: ${{ env.PLUGIN_DIR }}

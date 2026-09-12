@@ -5,11 +5,10 @@
 # DuskDafPlugin.cmake — shared DAF wiring for Dusk Audio DAF plugins.
 #
 # include() this from a plugin's CMakeLists after project(). It locates the
-# DAF and DAF-Widgets checkouts (siblings of the repo by default, overridable
-# with -DDAF_PATH=... / -DDAFWIDGETS_PATH=...), adds DAF as a subdirectory, and
-# exposes DUSK_DAF_UI_SOURCES (the DearImGui wrapper), DUSK_DAF_WIDGET_SOURCES
+# DAF checkout (a sibling by default, overridable with -DDAF_PATH=...), adds DAF
+# as a subdirectory, and exposes DUSK_DAF_UI_SOURCES (the DearImGui wrapper), DUSK_DAF_WIDGET_SOURCES
 # (the Dusk console widget set, opt-in) and DUSK_DAF_INCLUDE_DIRS (shared-daf
-# dsp/ui + DAF-Widgets opengl) for the caller to attach. Plugins still call
+# dsp/ui + DAF widgets) for the caller to attach. Plugins still call
 # daf_add_plugin themselves so per-plugin TARGETS/FILES stay local.
 
 if(NOT DEFINED DUSK_SHARED_DAF_DIR)
@@ -20,22 +19,22 @@ set(DUSK_SHARED_DAF_CMAKE_DIR "${CMAKE_CURRENT_LIST_DIR}")
 # repo root is three levels up from plugins/<name>/daf-plugin
 set(_dusk_repo_root "${CMAKE_CURRENT_SOURCE_DIR}/../../..")
 set(DAF_PATH        "${_dusk_repo_root}/../DAF"         CACHE PATH "Path to Dusk Audio Framework")
-set(DAFWIDGETS_PATH "${_dusk_repo_root}/../DAF-Widgets" CACHE PATH "Path to DAF-Widgets (Dear ImGui wrapper)")
+set(DAFWIDGETS_PATH "${DAF_PATH}/widgets")
 
 if(NOT EXISTS "${DAF_PATH}/CMakeLists.txt")
     message(FATAL_ERROR "DAF not found at ${DAF_PATH} — clone https://github.com/dusk-audio/DAF (our fork; do not use upstream DISTRHO/DPF) or pass -DDAF_PATH=...")
 endif()
-if(NOT EXISTS "${DAFWIDGETS_PATH}/opengl/DearImGui.cpp")
-    message(FATAL_ERROR "DAF-Widgets not found at ${DAFWIDGETS_PATH} — clone https://github.com/dusk-audio/DAF-Widgets (our fork; do not use upstream DAF) or pass -DDAFWIDGETS_PATH=...")
+if(NOT EXISTS "${DAFWIDGETS_PATH}/imgui/DearImGui.cpp")
+    message(FATAL_ERROR "DAF widgets not found at ${DAFWIDGETS_PATH} — use a DAF checkout with its in-tree widgets/ directory selected by -DDAF_PATH=...")
 endif()
 
 if(NOT TARGET daf)
     add_subdirectory("${DAF_PATH}" daf EXCLUDE_FROM_ALL)
 endif()
 
-set(DUSK_DAF_UI_SOURCES  "${DAFWIDGETS_PATH}/opengl/DearImGui.cpp")
+set(DUSK_DAF_UI_SOURCES  "${DAFWIDGETS_PATH}/imgui/DearImGui.cpp")
 
-# The Dusk console widget set (DAF-Widgets opengl/DuskWidgets.hpp): the knob with
+# The Dusk console widget set (DAF widgets/dusk/DuskWidgets.hpp): the knob with
 # its baked dome, the fader, the meters, the needle meter, the button bank and the
 # rest. Its header is not header-only, so a plugin that includes it and does not
 # compile this fails to link -- which is what dusk-audio/DAF-Widgets#6 reports.
@@ -46,13 +45,14 @@ set(DUSK_DAF_UI_SOURCES  "${DAFWIDGETS_PATH}/opengl/DearImGui.cpp")
 # lines to all six for a kit they do not call would cost build time and binary
 # size for nothing. A plugin that does draw with the kit appends this to its
 # FILES_UI next to DUSK_DAF_UI_SOURCES.
-set(DUSK_DAF_WIDGET_SOURCES "${DAFWIDGETS_PATH}/opengl/DuskWidgets.cpp")
+set(DUSK_DAF_WIDGET_SOURCES "${DAFWIDGETS_PATH}/dusk/DuskWidgets.cpp")
 
 set(DUSK_DAF_INCLUDE_DIRS
     "${DUSK_SHARED_DAF_DIR}"
     "${DUSK_SHARED_DAF_DIR}/dsp"
     "${DUSK_SHARED_DAF_DIR}/ui"
-    "${DAFWIDGETS_PATH}/opengl")
+    "${DAFWIDGETS_PATH}/imgui"
+    "${DAFWIDGETS_PATH}/dusk")
 
 # Copy the built CLAP/VST3/LV2 artefacts into the user plugin dirs after each
 # build, so hosts always load the freshly-built binary (DAF's ninja target only
