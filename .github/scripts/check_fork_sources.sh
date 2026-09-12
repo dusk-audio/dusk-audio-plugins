@@ -1,29 +1,16 @@
 #!/usr/bin/env bash
 # Fail the build if anything would fetch framework source from upstream.
 #
-# DAF, DAF-Widgets and pugl are hard forks under dusk-audio with local patches
-# that upstream does not have. A build that pulls any of them from DISTRHO does
-# not contain those patches, and the divergence is silent: it compiles, it runs,
-# and the binary simply is not the one that was tested.
+# DAF is a hard fork under dusk-audio. Pugl and widgets are tracked trees in
+# the same checkout, so their source is covered by the single DAF revision.
 #
-# Two leaks have happened for real, and neither was a typo:
-#   - workflow `repository:` fields copied from upstream examples, which name
-#     DISTRHO because that is where upstream lives;
-#   - the `url` in the fork's own .gitmodules, which GitHub copies verbatim when
-#     a fork is created, so pugl kept pointing at DISTRHO long after the fork.
+#   ./.github/scripts/check_fork_sources.sh [daf-checkout-path]
 #
-#   ./.github/scripts/check_fork_sources.sh [daf-checkout-path] [daf-widgets-path]
-#
-# The optional arguments point at checked-out framework trees. With them the
-# guard also inspects what those trees actually are -- their origin remotes, and
-# pugl's revision against the gitlink DAF records -- rather than only the config
-# that describes a future fetch. Without them only this repository's build
-# config is scanned.
+# Without a checkout argument, only this repository's build config is scanned.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DAF_CHECKOUT="${1:-}"
-DAFWIDGETS_CHECKOUT="${2:-}"
 
 # Scan the files that decide where source comes from. Documentation may discuss
 # upstream freely, so it is deliberately out of scope.
@@ -51,24 +38,7 @@ for f in "${CONFIG_FILES[@]}"; do
     fi
 done
 
-if [ -n "$DAF_CHECKOUT" ] && [ -f "$DAF_CHECKOUT/.gitmodules" ]; then
-    if hits="$(grep -nE 'url *= *.*DISTRHO/' "$DAF_CHECKOUT/.gitmodules" || true)"; [ -n "$hits" ]; then
-        echo "FAIL  the DAF checkout's .gitmodules fetches a submodule from upstream:"
-        echo "$hits" | sed 's/^/        /'
-        echo "        fix it in dusk-audio/DAF, not here: a fork inherits this file"
-        failed=1
-    fi
-fi
-
-# Everything above reads configuration, which describes what a future fetch
-# would do. It cannot tell you what the tree in front of you was built from: a
-# checkout made before a fork was repointed keeps its old origin, and a correct
-# .gitmodules sitting next to it makes the tree look clean. So when a checkout
-# path is supplied, ask the checkout.
-# Reduce a remote URL to the "owner/repo" it names on github.com, or to nothing
-# if it names something else. Matching a substring instead accepts far too much:
-# not-dusk-audio/pugl, gitlab.com/dusk-audio/pugl and
-# github.com/attacker/mirror-dusk-audio/pugl all contain "dusk-audio/pugl".
+# Match the exact host and owner/repo, not a lookalike containing the name.
 # Twin of the function in docker/check_daf_pins.sh; keep the two in step.
 github_repo_of() {
     local url="$1" path=""
@@ -98,42 +68,30 @@ check_checkout_origin() {
     remote="$(git -C "$path" remote get-url origin 2>/dev/null || echo '(none)')"
     if [ "$(github_repo_of "$remote")" != "$expect" ]; then
         echo "FAIL  $name checkout compiles from $remote, expected github.com/$expect"
-        echo "        this is the tree being built, not a .gitmodules entry"
         failed=1
     fi
 }
 
 check_checkout_origin "DAF" "$DAF_CHECKOUT" "dusk-audio/DAF"
-check_checkout_origin "DAF-Widgets" "$DAFWIDGETS_CHECKOUT" "dusk-audio/DAF-Widgets"
 
-# pugl lives inside the DAF checkout, and its revision matters as well as its
-# origin: a submodule left at some other commit compiles source DAF does not
-# pin, which is exactly as wrong as fetching it from upstream.
 if [ -n "$DAF_CHECKOUT" ] && [ -e "$DAF_CHECKOUT/.git" ]; then
-    pugl_path="$DAF_CHECKOUT/dgl/src/pugl-upstream"
-    check_checkout_origin "pugl" "$pugl_path" "dusk-audio/pugl"
-
-    if [ -e "$pugl_path/.git" ]; then
-        pugl_pin="$(git -C "$DAF_CHECKOUT" rev-parse -q --verify HEAD:dgl/src/pugl-upstream 2>/dev/null || echo '')"
-        pugl_head="$(git -C "$pugl_path" rev-parse HEAD 2>/dev/null || echo '')"
-
-        # An empty pin with a checkout present is not "nothing to compare": it
-        # means DAF records no gitlink at that path, so whatever is sitting
-        # there is unpinned source that no revision check can vouch for.
-        # Skipping the comparison would let it through unverified.
-        if [ -z "$pugl_pin" ]; then
-            echo "FAIL  pugl checkout exists at $pugl_path, but DAF records no gitlink there"
-            echo "        nothing pins this source, so its revision cannot be verified"
+    if [ -e "$DAF_CHECKOUT/.gitmodules" ]; then
+        echo "FAIL  DAF uses submodules instead of the consolidated tree"
+        failed=1
+    fi
+    for component in dgl/src/pugl-upstream widgets; do
+        path="$DAF_CHECKOUT/$component"
+        if [ -e "$path/.git" ]; then
+            echo "FAIL  $component is a nested checkout"
             failed=1
-        elif [ -z "$pugl_head" ]; then
-            echo "FAIL  pugl checkout at $pugl_path has no readable HEAD"
+        elif [ "$(git -C "$DAF_CHECKOUT" cat-file -t "HEAD:$component" 2>/dev/null || true)" != tree ]; then
+            echo "FAIL  $component is not a tracked tree in DAF"
             failed=1
-        elif [ "$pugl_pin" != "$pugl_head" ]; then
-            echo "FAIL  pugl checkout is at ${pugl_head:0:12}, but DAF pins ${pugl_pin:0:12}"
-            echo "        run git submodule update --init --recursive in the DAF checkout"
+        elif [ -n "$(git -C "$DAF_CHECKOUT" status --porcelain -- "$component")" ]; then
+            echo "FAIL  $component differs from the DAF revision"
             failed=1
         fi
-    fi
+    done
 fi
 
 if [ "$failed" = "1" ]; then

@@ -11,8 +11,7 @@ on:
       - 'tape-echo-daf-v*'
 
 env:
-  DAF_SHA: 22b8282461c5847057aa31b7f210bc9e0652366e
-  DAFWIDGETS_SHA: 487b092aa265458feb8320308a1fa36ca0901a5b
+  DAF_SHA: 64d386a8b04841aceef8c0a8d9035e8c02ce1c15
 
 jobs:
   build-au-macos:
@@ -33,16 +32,6 @@ jobs:
           repository: dusk-audio/DAF
           ref: ${{ env.DAF_SHA }}
           path: DAF
-          submodules: recursive
-          persist-credentials: false
-
-      - name: Checkout DAF-Widgets
-        uses: actions/checkout@v4
-        with:
-          repository: dusk-audio/DAF-Widgets
-          ref: ${{ env.DAFWIDGETS_SHA }}
-          path: DAF-Widgets
-          submodules: recursive
           persist-credentials: false
 
       - name: Install Ninja
@@ -53,8 +42,7 @@ jobs:
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DDAF_PATH="${GITHUB_WORKSPACE}/DAF" \
-            -DDAFWIDGETS_PATH="${GITHUB_WORKSPACE}/DAF-Widgets"
+            -DDAF_PATH="${GITHUB_WORKSPACE}/DAF"
 
       - name: Build
         working-directory: plugins/tape-echo/daf-plugin

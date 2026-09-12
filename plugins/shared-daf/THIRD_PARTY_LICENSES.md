@@ -44,10 +44,10 @@ code. Copyright (C) 2012-2025 Filipe Coelho <falktx@falktx.com>.
 
 Copyright 2011-2022 David Robillard <d@drobilla.net> (ISC, same terms as above).
 
-## Dear ImGui (via DAF-Widgets `opengl/DearImGui`) — MIT
+## Dear ImGui (via DAF `widgets/imgui/DearImGui`) — MIT
 
-DAF-Widgets ([dusk-audio/DAF-Widgets](https://github.com/dusk-audio/DAF-Widgets)) is a
-fork of DISTRHO/DPF-Widgets by Filipe Coelho and contributors.
+DAF ([dusk-audio/DAF](https://github.com/dusk-audio/DAF)) carries the in-tree widget
+kit, forked from DPF-Widgets by Filipe Coelho and contributors.
 Dear ImGui copyright (c) 2014-2025 Omar Cornut.
 
 > Permission is hereby granted, free of charge, to any person obtaining a copy of

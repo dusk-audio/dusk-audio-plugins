@@ -121,9 +121,9 @@ floats locale-independently in both directions.
 
 ## Building and testing a DAF plugin
 
-DAF and DAF-Widgets are sibling checkouts of this repository (`../DAF`,
-`../DAF-Widgets`), as JUCE is. CMake finds them automatically in a normal layout;
-pass the paths explicitly only when yours differ.
+DAF is a sibling checkout of this repository (`../DAF`), as JUCE is. Its in-tree
+`widgets/` directory supplies Dear ImGui and DuskWidgets. CMake finds it
+automatically in a normal layout; pass `-DDAF_PATH=...` only when yours differs.
 
 ```bash
 cmake -S plugins/<name>/daf-plugin -B build-<name> -DCMAKE_BUILD_TYPE=Release \

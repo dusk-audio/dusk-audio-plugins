@@ -66,8 +66,7 @@ on:
 # checkouts on the pinned SHAs (docker/check_daf_pins.sh) so a hand-tested build
 # is the one CI produces.
 env:
-  DAF_REF: 22b8282461c5847057aa31b7f210bc9e0652366e
-  DAFWIDGETS_REF: 487b092aa265458feb8320308a1fa36ca0901a5b
+  DAF_REF: 64d386a8b04841aceef8c0a8d9035e8c02ce1c15
   AU_TYPE: aufx
   AU_MANUFACTURER: Dusk
 
@@ -290,26 +289,14 @@ jobs:
           repository: dusk-audio/DAF
           ref: ${{ env.DAF_REF }}
           path: DAF
-          submodules: recursive
           persist-credentials: false
 
-      - name: Checkout DAF-Widgets
-        uses: actions/checkout@v4
-        with:
-          repository: dusk-audio/DAF-Widgets
-          ref: ${{ env.DAFWIDGETS_REF }}
-          path: DAF-Widgets
-          submodules: recursive
-          persist-credentials: false
-
-      # Runs after the checkouts so it can inspect the trees themselves: their
-      # origin remotes and pugl's revision against the gitlink DAF records, not
-      # just the config that says where a fetch would go. Cheap, so it gates the
+      # Check the DAF origin and its tracked widget/pugl trees. This gates the
       # expensive build instead of reporting after it.
       - name: Check framework sources are our forks
         run: |
           ./.github/scripts/check_fork_sources.sh \
-            "${GITHUB_WORKSPACE}/DAF" "${GITHUB_WORKSPACE}/DAF-Widgets"
+            "${GITHUB_WORKSPACE}/DAF"
 
       - name: Install Linux dependencies
         env:
@@ -344,8 +331,7 @@ jobs:
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DDUSK_DAF_INSTALL_LOCAL=OFF \
-            -DDAF_PATH="${GITHUB_WORKSPACE}/DAF" \
-            -DDAFWIDGETS_PATH="${GITHUB_WORKSPACE}/DAF-Widgets"
+            -DDAF_PATH="${GITHUB_WORKSPACE}/DAF"
 
       - name: Build (VST3 + CLAP + LV2)
         working-directory: ${{ env.PLUGIN_DIR }}
@@ -571,16 +557,6 @@ jobs:
           repository: dusk-audio/DAF
           ref: ${{ env.DAF_REF }}
           path: DAF
-          submodules: recursive
-          persist-credentials: false
-
-      - name: Checkout DAF-Widgets
-        uses: actions/checkout@v4
-        with:
-          repository: dusk-audio/DAF-Widgets
-          ref: ${{ env.DAFWIDGETS_REF }}
-          path: DAF-Widgets
-          submodules: recursive
           persist-credentials: false
 
       - name: Install Linux dependencies
@@ -606,8 +582,7 @@ jobs:
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DDUSK_DAF_INSTALL_LOCAL=OFF \
-            -DDAF_PATH="${GITHUB_WORKSPACE}/DAF" \
-            -DDAFWIDGETS_PATH="${GITHUB_WORKSPACE}/DAF-Widgets"
+            -DDAF_PATH="${GITHUB_WORKSPACE}/DAF"
 
       - name: Build (VST3 + CLAP + LV2)
         working-directory: ${{ env.PLUGIN_DIR }}
@@ -678,16 +653,6 @@ jobs:
           repository: dusk-audio/DAF
           ref: ${{ env.DAF_REF }}
           path: DAF
-          submodules: recursive
-          persist-credentials: false
-
-      - name: Checkout DAF-Widgets
-        uses: actions/checkout@v4
-        with:
-          repository: dusk-audio/DAF-Widgets
-          ref: ${{ env.DAFWIDGETS_REF }}
-          path: DAF-Widgets
-          submodules: recursive
           persist-credentials: false
 
       - name: Install Ninja
@@ -701,8 +666,7 @@ jobs:
             -DDUSK_DAF_INSTALL_LOCAL=OFF \
             -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
             -DCMAKE_OSX_DEPLOYMENT_TARGET="10.15" \
-            -DDAF_PATH="${GITHUB_WORKSPACE}/DAF" \
-            -DDAFWIDGETS_PATH="${GITHUB_WORKSPACE}/DAF-Widgets"
+            -DDAF_PATH="${GITHUB_WORKSPACE}/DAF"
 
       - name: Build (AU + VST3 + CLAP + LV2)
         working-directory: ${{ env.PLUGIN_DIR }}
@@ -925,16 +889,6 @@ jobs:
           repository: dusk-audio/DAF
           ref: ${{ env.DAF_REF }}
           path: DAF
-          submodules: recursive
-          persist-credentials: false
-
-      - name: Checkout DAF-Widgets
-        uses: actions/checkout@v4
-        with:
-          repository: dusk-audio/DAF-Widgets
-          ref: ${{ env.DAFWIDGETS_REF }}
-          path: DAF-Widgets
-          submodules: recursive
           persist-credentials: false
 
       - name: Patch DAF sources for MSVC / Windows
@@ -955,7 +909,7 @@ jobs:
           # both stay because the pin has crossed that correction in each direction once already.
           # getWidth()/getHeight() are side-effect-free getters, so the rewrite is safe whenever
           # it does match.
-          $f = "$env:GITHUB_WORKSPACE/DAF-Widgets/opengl/DearImGui.cpp"
+          $f = "$env:GITHUB_WORKSPACE/DAF/widgets/imgui/DearImGui.cpp"
           (Get-Content -Raw $f) `
             -replace 'self->getWidth\(\) \?: 640 \* scaleFactor',  'self->getWidth() ? self->getWidth() : 640 * scaleFactor' `
             -replace 'self->getHeight\(\) \?: 480 \* scaleFactor', 'self->getHeight() ? self->getHeight() : 480 * scaleFactor' `
@@ -972,8 +926,7 @@ jobs:
           cmake -B build -G "Visual Studio 17 2022" -A x64 `
             -DCMAKE_BUILD_TYPE=Release `
             -DDUSK_DAF_INSTALL_LOCAL=OFF `
-            -DDAF_PATH="$env:GITHUB_WORKSPACE/DAF" `
-            -DDAFWIDGETS_PATH="$env:GITHUB_WORKSPACE/DAF-Widgets"
+            -DDAF_PATH="$env:GITHUB_WORKSPACE/DAF"
 
       - name: Build (VST3 + CLAP)
         working-directory: ${{ env.PLUGIN_DIR }}

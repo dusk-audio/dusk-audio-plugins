@@ -1,232 +1,82 @@
 #!/usr/bin/env bash
 # Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
-#
-# check_provenance_guards.sh — tests for the two framework-provenance guards.
-#
-# docker/check_daf_pins.sh and .github/scripts/check_fork_sources.sh decide
-# whether a build tree is made of the source we think it is. Both used to answer
-# that from configuration alone: workflow fields and .gitmodules. Configuration
-# describes the next fetch, not the tree in front of you, so a checkout created
-# before a fork was repointed kept its old origin and both guards approved it
-# (issue #243).
-#
-# These fixtures are throwaway git repositories, so the cases below can be built
-# exactly: a correct checkout, one on the wrong remote, one at the wrong
-# revision, and the case that motivated the issue -- a .gitmodules that names our
-# fork sitting next to a checkout that does not come from it.
-#
-# No network: remotes are set with `git remote add` and never fetched.
-
+# Local fixtures exercise origin, revision and in-tree provenance without network access.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PIN_GUARD="$REPO_ROOT/docker/check_daf_pins.sh"
-FORK_GUARD="$REPO_ROOT/.github/scripts/check_fork_sources.sh"
-
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-
+mkdir -p "$WORK/harness/.github/scripts" "$WORK/harness/.github/workflows" "$WORK/harness/docker"
+cp "$REPO_ROOT/.github/scripts/check_fork_sources.sh" "$WORK/harness/.github/scripts/"
+cp "$REPO_ROOT/docker/check_daf_pins.sh" "$WORK/harness/docker/"
+cp "$REPO_ROOT/.github/workflows/"daf-*.yml "$WORK/harness/.github/workflows/"
+FORK_GUARD="$WORK/harness/.github/scripts/check_fork_sources.sh"
+PIN_GUARD="$WORK/harness/docker/check_daf_pins.sh"
 failures=0
 
-pass() { printf '  ok    %s\n' "$1"; }
-fail() { printf '  FAIL  %s\n' "$1"; failures=$((failures + 1)); }
-
 git_q() { git -c user.email=t@t -c user.name=t -c init.defaultBranch=main -c commit.gpgsign=false "$@"; }
-
-# A minimal repository with one commit and a named origin.
-make_repo() {
-    local dir="$1" origin="$2"
-    mkdir -p "$dir"
-    git_q -C "$dir" init -q
-    echo seed > "$dir/file.txt"
-    git_q -C "$dir" add file.txt
-    git_q -C "$dir" commit -qm seed
-    git_q -C "$dir" remote add origin "$origin"
-}
-
-# A DAF-shaped tree: .gitmodules for pugl, a nested pugl checkout, and a gitlink
-# recorded at whichever pugl commit is asked for. Built with update-index rather
-# than `git submodule add` so the recorded revision can disagree with the
-# checkout, which is the whole point of two of the cases.
-#   $1 dir  $2 DAF origin  $3 pugl origin  $4 gitmodules url  $5 pin=head|stale
-make_daf() {
-    local dir="$1" dafOrigin="$2" puglOrigin="$3" modulesUrl="$4" pinMode="$5"
-    make_repo "$dir" "$dafOrigin"
-
-    mkdir -p "$dir/dgl/src"
-    local pugl="$dir/dgl/src/pugl-upstream"
-    make_repo "$pugl" "$puglOrigin"
-    local puglHead stalePin
-    puglHead="$(git_q -C "$pugl" rev-parse HEAD)"
-    echo second > "$pugl/file.txt"
-    git_q -C "$pugl" commit -qam second
-    stalePin="$puglHead"                       # the first commit, now behind
-    puglHead="$(git_q -C "$pugl" rev-parse HEAD)"
-
-    cat > "$dir/.gitmodules" <<EOF
-[submodule "dgl/src/pugl-upstream"]
-	path = dgl/src/pugl-upstream
-	url = $modulesUrl
-EOF
-
-    local recorded="$puglHead"
-    [ "$pinMode" = stale ] && recorded="$stalePin"
-    git_q -C "$dir" update-index --add --cacheinfo "160000,$recorded,dgl/src/pugl-upstream"
-    git_q -C "$dir" add .gitmodules
-    git_q -C "$dir" commit -qm "record pugl"
-}
-
-# The pin guard reports on DAF and DAF-Widgets too, and those rows will always
-# read DRIFT against fixtures, since the fixture SHAs are not the CI pins. Only
-# the pugl lines are under test here, so assert on those.
-pin_guard_says() {
-    local dafPath="$1" expected="$2" label="$3"
-    local out
-    out="$(DAF_PATH="$dafPath" DAFWIDGETS_PATH="$dafPath" "$PIN_GUARD" 2>&1 || true)"
-    if printf '%s' "$out" | grep -q "$expected"; then
-        pass "$label"
+check() {
+    local label="$1" expected_status="$2" expected_text="$3" status=0 out
+    shift 3
+    out="$("$@" 2>&1)" || status=$?
+    if [ "$status" -eq "$expected_status" ] && printf '%s' "$out" | grep -q "$expected_text"; then
+        printf '  ok    %s\n' "$label"
     else
-        fail "$label -- expected a line matching: $expected"
-        printf '%s\n' "$out" | sed 's/^/        /'
+        printf '  FAIL  %s (exit %s)\n%s\n' "$label" "$status" "$out"
+        failures=$((failures + 1))
     fi
 }
 
-fork_guard_exits() {
-    local dafPath="$1" widgetsPath="$2" wantFail="$3" label="$4" expected="${5:-}"
-    local out status=0
-    out="$("$FORK_GUARD" "$dafPath" "$widgetsPath" 2>&1)" || status=$?
+mkdir -p "$WORK/daf/dgl/src/pugl-upstream" "$WORK/daf/widgets/imgui"
+git_q -C "$WORK/daf" init -q
+printf 'pugl\n' > "$WORK/daf/dgl/src/pugl-upstream/source.c"
+printf 'widgets\n' > "$WORK/daf/widgets/imgui/DearImGui.hpp"
+git_q -C "$WORK/daf" add .
+git_q -C "$WORK/daf" commit -qm 'vendor framework trees'
+git_q -C "$WORK/daf" remote add origin git@github.com:dusk-audio/DAF.git
+pin="$(git_q -C "$WORK/daf" rev-parse HEAD)"
+printf 'env:\n  DAF_REF: %s\n' "$pin" > "$WORK/harness/.github/workflows/daf-build.yml"
 
-    if [ "$wantFail" = yes ] && [ "$status" -eq 0 ]; then
-        fail "$label -- guard passed, expected failure"
-        printf '%s\n' "$out" | sed 's/^/        /'
-        return
-    fi
-    if [ "$wantFail" = no ] && [ "$status" -ne 0 ]; then
-        fail "$label -- guard failed, expected pass"
-        printf '%s\n' "$out" | sed 's/^/        /'
-        return
-    fi
-    if [ -n "$expected" ] && ! printf '%s' "$out" | grep -q "$expected"; then
-        fail "$label -- expected a line matching: $expected"
-        printf '%s\n' "$out" | sed 's/^/        /'
-        return
-    fi
-    pass "$label"
-}
+check 'fork guard accepts in-tree components' 0 'OK' "$FORK_GUARD" "$WORK/daf"
+check 'pin guard accepts the single revision' 0 'OK' env DAF_PATH="$WORK/daf" "$PIN_GUARD"
+git_q -C "$WORK/daf" worktree add -q --detach "$WORK/worktree" "$pin"
+check 'pin guard accepts a git worktree' 0 'OK' env DAF_PATH="$WORK/worktree" "$PIN_GUARD"
+check 'fork guard accepts a git worktree' 0 'OK' "$FORK_GUARD" "$WORK/worktree"
 
-echo "provenance guards"
-
-# --- 1. a correct checkout is approved ------------------------------------
-make_daf "$WORK/good" "git@github.com:dusk-audio/DAF.git" \
-         "https://github.com/dusk-audio/pugl.git" \
-         "https://github.com/dusk-audio/pugl.git" head
-make_repo "$WORK/widgets-good" "https://github.com/dusk-audio/DAF-Widgets.git"
-
-pin_guard_says "$WORK/good" "OK       pugl checkout:" "pin guard accepts a matching pugl checkout"
-fork_guard_exits "$WORK/good" "$WORK/widgets-good" no "fork guard accepts checkouts from our forks"
-
-# --- 2. wrong origin ------------------------------------------------------
-make_daf "$WORK/badremote" "git@github.com:dusk-audio/DAF.git" \
-         "https://github.com/DISTRHO/pugl.git" \
-         "https://github.com/DISTRHO/pugl.git" head
-
-pin_guard_says "$WORK/badremote" "REMOTE   pugl checkout:" "pin guard rejects a pugl checkout from upstream"
-fork_guard_exits "$WORK/badremote" "$WORK/widgets-good" yes \
-    "fork guard rejects a pugl checkout from upstream" "pugl checkout compiles from"
-
-# --- 3. wrong revision ----------------------------------------------------
-make_daf "$WORK/badsha" "git@github.com:dusk-audio/DAF.git" \
-         "https://github.com/dusk-audio/pugl.git" \
-         "https://github.com/dusk-audio/pugl.git" stale
-
-pin_guard_says "$WORK/badsha" "DRIFT    pugl checkout:" "pin guard rejects a pugl checkout at the wrong revision"
-fork_guard_exits "$WORK/badsha" "$WORK/widgets-good" yes \
-    "fork guard rejects a pugl checkout at the wrong revision" "but DAF pins"
-
-# --- 4. the case from #243: honest .gitmodules, dishonest checkout --------
-make_daf "$WORK/misleading" "git@github.com:dusk-audio/DAF.git" \
-         "https://github.com/DISTRHO/pugl.git" \
-         "https://github.com/dusk-audio/pugl.git" head
-
-pin_guard_says "$WORK/misleading" "OK       pugl .gitmodules:" \
-    "pin guard still reads .gitmodules as declared"
-pin_guard_says "$WORK/misleading" "REMOTE   pugl checkout:" \
-    "pin guard rejects an upstream checkout that .gitmodules vouches for"
-fork_guard_exits "$WORK/misleading" "$WORK/widgets-good" yes \
-    "fork guard rejects an upstream checkout that .gitmodules vouches for" \
-    "pugl checkout compiles from"
-
-# --- 5. a DAF-Widgets checkout from upstream ------------------------------
-make_repo "$WORK/widgets-bad" "https://github.com/DISTRHO/DPF-Widgets.git"
-fork_guard_exits "$WORK/good" "$WORK/widgets-bad" yes \
-    "fork guard rejects a DAF-Widgets checkout from upstream" "DAF-Widgets checkout compiles from"
-
-# --- 6. a lookalike origin ------------------------------------------------
-# The guards used to substring-match the expected "owner/repo", which accepts a
-# different account (not-dusk-audio/pugl), a different host, and a nested path
-# that merely contains the name.
-for lookalike in "https://github.com/not-dusk-audio/pugl.git" \
-                 "https://gitlab.com/dusk-audio/pugl.git" \
-                 "https://github.com/attacker/mirror-dusk-audio/pugl.git"; do
-    rm -rf "$WORK/lookalike"
-    make_daf "$WORK/lookalike" "git@github.com:dusk-audio/DAF.git" \
-             "$lookalike" "https://github.com/dusk-audio/pugl.git" head
-    pin_guard_says "$WORK/lookalike" "REMOTE   pugl checkout:" \
-        "pin guard rejects lookalike origin $lookalike"
-    fork_guard_exits "$WORK/lookalike" "$WORK/widgets-good" yes \
-        "fork guard rejects lookalike origin $lookalike" "pugl checkout compiles from"
+for remote in https://github.com/DISTRHO/DPF.git \
+              https://github.com/not-dusk-audio/DAF.git \
+              https://gitlab.com/dusk-audio/DAF.git \
+              https://github.com/attacker/mirror-dusk-audio/DAF.git; do
+    git_q -C "$WORK/daf" remote set-url origin "$remote"
+    check "fork guard rejects $remote" 1 'checkout compiles from' "$FORK_GUARD" "$WORK/daf"
+    check "pin guard rejects $remote" 1 'REMOTE' env DAF_PATH="$WORK/daf" "$PIN_GUARD"
 done
+git_q -C "$WORK/daf" remote set-url origin https://github.com/dusk-audio/DAF.git
 
-# --- 7. a pugl checkout DAF does not pin at all ---------------------------
-# An empty gitlink is not "nothing to compare": it means the source sitting
-# there is pinned by nothing, so no revision check can vouch for it.
-rm -rf "$WORK/nogitlink"
-make_repo "$WORK/nogitlink" "git@github.com:dusk-audio/DAF.git"
-mkdir -p "$WORK/nogitlink/dgl/src"
-make_repo "$WORK/nogitlink/dgl/src/pugl-upstream" "https://github.com/dusk-audio/pugl.git"
-cat > "$WORK/nogitlink/.gitmodules" <<EOF
-[submodule "dgl/src/pugl-upstream"]
-	path = dgl/src/pugl-upstream
-	url = https://github.com/dusk-audio/pugl.git
-EOF
-git_q -C "$WORK/nogitlink" add .gitmodules
-git_q -C "$WORK/nogitlink" commit -qm "gitmodules without a gitlink"
+printf 'changed\n' >> "$WORK/daf/widgets/imgui/DearImGui.hpp"
+check 'fork guard rejects modified vendored source' 1 'differs from' "$FORK_GUARD" "$WORK/daf"
+check 'pin guard rejects dirty source' 1 'DIRTY' env DAF_PATH="$WORK/daf" "$PIN_GUARD"
+git_q -C "$WORK/daf" commit -qam 'change widgets'
+check 'pin guard rejects another revision' 1 'DRIFT' env DAF_PATH="$WORK/daf" "$PIN_GUARD"
+git_q -C "$WORK/daf" reset -q --hard "$pin"
 
-fork_guard_exits "$WORK/nogitlink" "$WORK/widgets-good" yes \
-    "fork guard rejects a pugl checkout DAF records no gitlink for" "records no gitlink"
-pin_guard_says "$WORK/nogitlink" "MISSING  pugl checkout:" \
-    "pin guard reports a pugl checkout DAF records no gitlink for"
+mkdir "$WORK/daf/widgets/.git"
+check 'fork guard rejects a nested widget checkout' 1 'nested checkout' "$FORK_GUARD" "$WORK/daf"
+rmdir "$WORK/daf/widgets/.git"
+printf '[submodule "pugl"]\n' > "$WORK/daf/.gitmodules"
+check 'fork guard rejects legacy submodule configuration' 1 'submodules' "$FORK_GUARD" "$WORK/daf"
+rm "$WORK/daf/.gitmodules"
+git_q -C "$WORK/daf" rm -qr dgl/src/pugl-upstream
+git_q -C "$WORK/daf" update-index --add --cacheinfo "160000,$pin,dgl/src/pugl-upstream"
+git_q -C "$WORK/daf" commit -qm 'legacy gitlink'
+check 'fork guard rejects gitlinks instead of subtrees' 1 'tracked tree' "$FORK_GUARD" "$WORK/daf"
 
-# --- 8. --fix repairs a stale submodule remote ----------------------------
-# submodule update reads .git/config, not .gitmodules, so a submodule whose
-# recorded URL is stale keeps fetching from the old remote however often it is
-# updated. sync is what copies the declared URL across, and --fix has to run it
-# even when the revision already matches, which is the remote-only case here.
-rm -rf "$WORK/staleremote"
-make_daf "$WORK/staleremote" "git@github.com:dusk-audio/DAF.git" \
-         "https://github.com/DISTRHO/pugl.git" \
-         "https://github.com/dusk-audio/pugl.git" head
-git_q -C "$WORK/staleremote" config submodule.dgl/src/pugl-upstream.url \
-    "https://github.com/DISTRHO/pugl.git"
+check 'config-only scan still passes' 0 'OK' "$FORK_GUARD"
+printf 'repository: DISTRHO/DPF\n' >> "$WORK/harness/.github/workflows/daf-build.yml"
+check 'config-only scan rejects forbidden source' 1 'fetches framework source' "$FORK_GUARD"
 
-before="$(git_q -C "$WORK/staleremote/dgl/src/pugl-upstream" remote get-url origin)"
-DAF_PATH="$WORK/staleremote" DAFWIDGETS_PATH="$WORK/staleremote" \
-    "$PIN_GUARD" --fix > /dev/null 2>&1 || true
-after="$(git_q -C "$WORK/staleremote/dgl/src/pugl-upstream" remote get-url origin)"
-
-if [ "$before" != "$after" ] && [ "$(printf '%s' "$after" | grep -c 'dusk-audio/pugl')" = "1" ]; then
-    pass "--fix syncs a stale submodule remote to the declared URL"
-else
-    fail "--fix syncs a stale submodule remote to the declared URL -- origin went $before -> $after"
-fi
-
-# --- 9. no paths supplied: config-only scan still works -------------------
-fork_guard_exits "" "" no "fork guard still scans config alone when given no paths"
-
-echo
-if [ "$failures" = 0 ]; then
-    echo "all provenance guard tests passed"
-else
+if [ "$failures" -ne 0 ]; then
     echo "$failures provenance guard test(s) failed"
     exit 1
 fi
+echo 'all provenance guard tests passed'

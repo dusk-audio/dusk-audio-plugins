@@ -15,11 +15,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 IMAGE_NAME="dusk-plugins-builder"
 
-# DAF / DAF-Widgets SHAs — keep in sync with daf-build.yml, daf-release.yml and daf-au-test.yml.
-# Both come from permanent dusk-audio hard forks (dusk-audio/DAF and
-# dusk-audio/DAF-Widgets); never fetch either from upstream DISTRHO.
-DAF_SHA="22b8282461c5847057aa31b7f210bc9e0652366e"
-DAFWIDGETS_SHA="487b092aa265458feb8320308a1fa36ca0901a5b"
+# DAF SHA — keep in sync with the DAF workflow pins.
+DAF_SHA="64d386a8b04841aceef8c0a8d9035e8c02ce1c15"
 
 # Plugin lookup functions (compatible with bash 3.2 on macOS)
 get_plugin_target() {
@@ -67,12 +64,12 @@ is_sunset() {
 }
 
 # Build Sunset Circuits (DAF) in the container. Unlike the JUCE plugins this does
-# NOT use the top-level JUCE build graph: it clones dusk-audio/DAF (our fork) + dusk-audio/DAF-Widgets at
-# the pinned SHAs inside the container and builds plugins/sunset-circuits/daf-plugin
+# NOT use the top-level JUCE build graph: it clones dusk-audio/DAF at the pinned
+# SHA inside the container and builds plugins/sunset-circuits/daf-plugin
 # standalone (mirrors .github/workflows/daf-release.yml). Produces VST3/CLAP/LV2.
 build_sunset() {
     echo "=== Building Sunset Circuits (DAF) ==="
-    echo "Using: $CONTAINER_CMD  (DAF ${DAF_SHA:0:12}, DAF-Widgets ${DAFWIDGETS_SHA:0:12})"
+    echo "Using: $CONTAINER_CMD  (DAF ${DAF_SHA:0:12})"
 
     if ! $CONTAINER_CMD image inspect "$IMAGE_NAME" &>/dev/null; then
         echo "Building container image..."
@@ -89,16 +86,13 @@ build_sunset() {
             set -e
             export DEBIAN_FRONTEND=noninteractive
             DAF_SHA="'"$DAF_SHA"'"
-            DAFWIDGETS_SHA="'"$DAFWIDGETS_SHA"'"
 
             # DAF opengl UI deps not baked into the JUCE image.
             apt-get update
             apt-get install -y --no-install-recommends \
                 ninja-build libxext-dev libxtst-dev libglu1-mesa-dev mesa-common-dev libdbus-1-dev
 
-            # Shallow-fetch each dependency at its exact pinned SHA. Submodule
-            # failures are NOT suppressed: DAF requires its pugl submodule, and a
-            # hollow checkout must fail here, not as a confusing CMake error.
+            # Pugl and widgets are included in the pinned DAF tree.
             fetch_sha() {
                 local url="$1" sha="$2" dir="$3"
                 mkdir -p "$dir" && cd "$dir"
@@ -106,20 +100,15 @@ build_sunset() {
                 git remote add origin "$url"
                 git fetch -q --depth 1 origin "$sha"
                 git checkout -q FETCH_HEAD
-                git submodule update -q --init --recursive --depth 1
                 cd /tmp
             }
             cd /tmp
             fetch_sha https://github.com/dusk-audio/DAF.git      "$DAF_SHA"        /tmp/daf
-            fetch_sha https://github.com/dusk-audio/DAF-Widgets.git  "$DAFWIDGETS_SHA" /tmp/daf-widgets
-            test -n "$(ls -A /tmp/daf/dgl/src/pugl-upstream 2>/dev/null)" \
-                || { echo "ERROR: DAF pugl submodule missing after fetch"; exit 1; }
 
             cmake -S /src/plugins/sunset-circuits/daf-plugin -B /tmp/scbuild -G Ninja \
                 -DCMAKE_BUILD_TYPE=Release \
                 -DDUSK_DAF_INSTALL_LOCAL=OFF \
-                -DDAF_PATH=/tmp/daf \
-                -DDAFWIDGETS_PATH=/tmp/daf-widgets
+                -DDAF_PATH=/tmp/daf
             cmake --build /tmp/scbuild \
                 --target sunset-circuits-vst3 sunset-circuits-clap sunset-circuits-lv2 \
                 -j"$(nproc)"
