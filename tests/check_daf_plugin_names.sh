@@ -28,6 +28,7 @@ cd "$REPO_ROOT"
 expected_slug_for() {
     case "$1" in
         plugins/4k-eq/daf-plugin/CMakeLists.txt)           echo "4k-eq-2" ;;
+        plugins/DuskVerb/daf-plugin/CMakeLists.txt)        echo "duskverb-2" ;;
         plugins/TapeMachine/daf-plugin/CMakeLists.txt)     echo "tapemachine-2" ;;
         plugins/multi-comp/daf-plugin/CMakeLists.txt)      echo "multi-comp-2" ;;
         plugins/multi-q/daf-plugin/CMakeLists.txt)         echo "multi-q-2" ;;

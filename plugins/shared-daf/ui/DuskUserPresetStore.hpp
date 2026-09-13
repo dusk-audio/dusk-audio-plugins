@@ -3,7 +3,10 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
+#include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -108,25 +111,37 @@ SavedUserPreset writeUserPreset(const std::filesystem::path& directory,
         return {};
 
     const std::string stem = userPresetFilenameStem(name);
-    std::filesystem::path selectedPath;
-    for (int suffix = 1; suffix <= 99; ++suffix)
+    // Stage beside the destination for same-filesystem publication.
+    // Atomically claiming a private directory avoids sharing a temporary file
+    // with another editor/process saving at the same time.
+    struct StagedPreset
     {
-        const std::string filename = stem
-            + (suffix == 1 ? std::string() : "_" + std::to_string(suffix))
-            + std::string(extension);
-        const std::filesystem::path candidate = directory / filename;
-        error.clear();
-        const bool exists = std::filesystem::exists(candidate, error);
-        if (!error && (!exists || nameReader(candidate) == name))
+        std::filesystem::path directory;
+        std::filesystem::path file;
+        ~StagedPreset()
         {
-            selectedPath = candidate;
+            std::error_code ignored;
+            if (!file.empty()) std::filesystem::remove(file, ignored);
+            if (!directory.empty()) std::filesystem::remove(directory, ignored);
+        }
+    } staged;
+    static std::atomic<std::uint64_t> nextTemporary{0};
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    for (int attempt = 0; attempt < 100; ++attempt)
+    {
+        const auto temporary = directory / (".dusk-preset-save-" + std::to_string(stamp)
+            + "-" + std::to_string(nextTemporary.fetch_add(1, std::memory_order_relaxed)));
+        error.clear();
+        if (std::filesystem::create_directory(temporary, error))
+        {
+            staged.directory = temporary;
             break;
         }
+        if (error) return {};
     }
-    if (selectedPath.empty())
-        return {};
-
-    std::ofstream output(selectedPath, std::ios::trunc);
+    if (staged.directory.empty()) return {};
+    staged.file = staged.directory / "payload";
+    std::ofstream output(staged.file, std::ios::trunc);
     if (!output)
         return {};
     output.imbue(std::locale::classic());
@@ -136,7 +151,32 @@ SavedUserPreset writeUserPreset(const std::filesystem::path& directory,
     if (!output)
         return {};
 
-    return {name, selectedPath.string()};
+    for (int suffix = 1; suffix <= 99; ++suffix)
+    {
+        const std::string filename = stem
+            + (suffix == 1 ? std::string() : "_" + std::to_string(suffix))
+            + std::string(extension);
+        const std::filesystem::path candidate = directory / filename;
+        SavedUserPreset result{name, candidate.string()};
+
+        // A hard link publishes the complete staged file atomically and cannot
+        // replace an existing directory entry, even across processes. The stage
+        // is on the same filesystem; its private link is removed by RAII.
+        error.clear();
+        std::filesystem::create_hard_link(staged.file, candidate, error);
+        if (!error) return result;
+        if (error != std::errc::file_exists) return {};
+
+        // Only an explicitly matching display name is eligible for replacement.
+        // Competing new names cannot claim this occupied path through this API.
+        if (nameReader(candidate) == name)
+        {
+            std::filesystem::rename(staged.file, candidate, error);
+            if (error) return {};
+            return result;
+        }
+    }
+    return {};
 }
 
 template <typename Writer>

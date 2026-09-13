@@ -54,6 +54,51 @@ set(DUSK_DAF_INCLUDE_DIRS
     "${DAFWIDGETS_PATH}/imgui"
     "${DAFWIDGETS_PATH}/dusk")
 
+# ---------------------------------------------------------------------------------------------------------------------
+# Embed a TTF face as a C byte array, at configure time, into the build tree.
+#
+# The UIs bundle their typeface so metrics are identical on every OS
+# (DuskImGuiFont.hpp's loadEmbeddedCrispFontSets takes a pointer + length). The
+# faces themselves already live in the repository once, under
+# plugins/shared-daf/fonts; generating the C array here means a plugin does not
+# have to commit a second, hex-encoded copy of the same bytes (Tape Echo 2's two
+# checked-in .inc files are 1.3 MB of exactly that).
+#
+# Generated next to the build, never into the source tree, and written through
+# copy_if_different so a reconfigure does not force a rebuild of the UI.
+#
+#   dusk_daf_embed_font(kMyFontSemiBold
+#       "${DUSK_SHARED_DAF_DIR}/fonts/BarlowCondensed/BarlowCondensed-SemiBold.ttf"
+#       "${CMAKE_CURRENT_BINARY_DIR}/generated/MyFontSemiBold.inc")
+#
+# Costs about 0.15 s per face at configure time.
+function(dusk_daf_embed_font symbol ttf out)
+    if(NOT EXISTS "${ttf}")
+        message(FATAL_ERROR "dusk_daf_embed_font(${symbol}): no such font file: ${ttf}")
+    endif()
+    get_filename_component(_dusk_font_dir "${out}" DIRECTORY)
+    file(MAKE_DIRECTORY "${_dusk_font_dir}")
+    get_filename_component(_dusk_font_name "${ttf}" NAME)
+
+    file(READ "${ttf}" _dusk_font_hex HEX)
+    file(SIZE "${ttf}" _dusk_font_size)
+    string(REGEX REPLACE "(..)" "0x\\1," _dusk_font_bytes "${_dusk_font_hex}")
+    # CMake's regex has no {n} repetition, so the 16-byte row is spelled out.
+    string(REGEX REPLACE "(0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,)" "\\1\n  " _dusk_font_bytes "${_dusk_font_bytes}")
+
+    file(WRITE "${out}.tmp"
+"// GENERATED at configure time by dusk_daf_embed_font() from ${_dusk_font_name}.
+// SIL Open Font License 1.1 - see plugins/shared-daf/fonts/BarlowCondensed/OFL.txt.
+// Lives in the build tree. Do not edit and do not commit.
+static const unsigned char ${symbol}[] = {
+  ${_dusk_font_bytes}
+};
+static const unsigned int ${symbol}_len = ${_dusk_font_size}u;
+")
+    execute_process(COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${out}.tmp" "${out}")
+    file(REMOVE "${out}.tmp")
+endfunction()
+
 # Copy the built CLAP/VST3/LV2 artefacts into the user plugin dirs after each
 # build, so hosts always load the freshly-built binary (DAF's ninja target only
 # writes to <build>/bin). Call AFTER daf_add_plugin with the plugin base name.
