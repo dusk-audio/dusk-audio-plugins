@@ -46,6 +46,7 @@ Release one or more Dusk Audio plugins with automated version bumps, website upd
 | Multi-Comp 2 | multi-comp-2 | plugins/multi-comp/daf-plugin | (inline: MultiComp2DAF) | compressor |
 | Convolution Reverb | convolution-reverb | plugins/convolution-reverb | (inline: ConvolutionReverb) | convolution |
 | DuskVerb | duskverb | plugins/DuskVerb | DUSKVERB | duskverb |
+| DuskVerb 2 | duskverb-2 | plugins/DuskVerb/daf-plugin | (inline: DuskVerb2DAF) | duskverb |
 | Chord Analyzer | chord-analyzer | plugins/chord-analyzer | CHORDANALYZER | chord |
 | Spectrum Analyzer | spectrum-analyzer | plugins/spectrum-analyzer | (PLUGIN_VERSION) | spectrum |
 | DuskAmp | duskamp | plugins/DuskAmp | DUSKAMP | duskamp |
@@ -140,6 +141,7 @@ case "$SLUG" in
   multi-comp-2)       PLUGIN_NAME="Multi-Comp 2";       PLUGIN_DIR="plugins/multi-comp/daf-plugin";    PLUGIN_FORM="daf-inline";  VERSION_VAR="";            PROJECT_TOKEN="MultiComp2DAF" ;;
   convolution-reverb) PLUGIN_NAME="Convolution Reverb"; PLUGIN_DIR="plugins/convolution-reverb";       PLUGIN_FORM="literal";     VERSION_VAR="";            PROJECT_TOKEN="ConvolutionReverb" ;;
   duskverb)           PLUGIN_NAME="DuskVerb";           PLUGIN_DIR="plugins/DuskVerb";                 PLUGIN_FORM="default-var"; VERSION_VAR="DUSKVERB";      PROJECT_TOKEN="" ;;
+  duskverb-2)         PLUGIN_NAME="DuskVerb 2";         PLUGIN_DIR="plugins/DuskVerb/daf-plugin";      PLUGIN_FORM="daf-inline";  VERSION_VAR="";            PROJECT_TOKEN="DuskVerb2DAF" ;;
   chord-analyzer)     PLUGIN_NAME="Chord Analyzer";     PLUGIN_DIR="plugins/chord-analyzer";           PLUGIN_FORM="default-var"; VERSION_VAR="CHORDANALYZER"; PROJECT_TOKEN="" ;;
   spectrum-analyzer)  PLUGIN_NAME="Spectrum Analyzer";  PLUGIN_DIR="plugins/spectrum-analyzer";        PLUGIN_FORM="plugin-var";  VERSION_VAR="PLUGIN_VERSION"; PROJECT_TOKEN="" ;;
   duskamp)            PLUGIN_NAME="DuskAmp";            PLUGIN_DIR="plugins/DuskAmp";                  PLUGIN_FORM="default-var"; VERSION_VAR="DUSKAMP";       PROJECT_TOKEN="" ;;
@@ -206,6 +208,7 @@ git rev-parse -q --verify "refs/tags/$SLUG-v$NEW_VERSION" >/dev/null \
      - tape-echo-2 → `project(TapeEchoDAF …)`
      - multi-q-2 → `project(MultiQ2DAF …)`
      - multi-comp-2 → `project(MultiComp2DAF …)`
+     - duskverb-2 → `project(DuskVerb2DAF …)`
      The DAF version guard in `daf-build.yml` strips any `-beta`/`-rc`/`-alpha` suffix
      from the tag, then rejects the release unless the tag's numeric BASE version equals
      this `project()` VERSION — so bump it here to match exactly (e.g. tag
@@ -311,6 +314,7 @@ project(FourKEQ2DAF     VERSION <base-version>)   # 4k-eq-2
 project(TapeEchoDAF     VERSION <base-version>)   # tape-echo-2
 project(MultiQ2DAF      VERSION <base-version>)   # multi-q-2
 project(MultiComp2DAF   VERSION <base-version>)   # multi-comp-2
+project(DuskVerb2DAF    VERSION <base-version>)   # duskverb-2
 ```
 Bump only the one being released. `daf-build.yml`'s guard strips any
 `-beta`/`-rc`/`-alpha` suffix from the tag and compares the numeric BASE version to
@@ -666,7 +670,7 @@ The `<slug>-v<version>` form produces the tag each plugin's CI release workflow
 listens for:
 - **JUCE plugins** (4k-eq, multi-comp, tapemachine, tape-echo, multi-q, convolution-reverb, …)
   → matched by `.github/workflows/build.yml` (`<slug>-v*` triggers).
-- **DAF "-2" plugins** (tapemachine-2, 4k-eq-2, tape-echo-2, multi-q-2, multi-comp-2)
+- **DAF "-2" plugins** (tapemachine-2, 4k-eq-2, tape-echo-2, multi-q-2, multi-comp-2, duskverb-2)
   → matched by `.github/workflows/daf-build.yml`, whose registry maps each `<slug>-v*`
   tag to the right `plugins/<dir>/daf-plugin` build. e.g. `tapemachine-2-v2.0.1`
   triggers a TapeMachine 2 build + release.

@@ -29,6 +29,7 @@ on:
       - 'tape-echo-2-v*'
       - 'multi-q-2-v*'
       - 'multi-comp-2-v*'
+      - 'duskverb-2-v*'
   workflow_dispatch:
     inputs:
       plugin:
@@ -43,6 +44,7 @@ on:
           - 'tape-echo-2'
           - 'multi-q-2'
           - 'multi-comp-2'
+          - 'duskverb-2'
   pull_request:
     paths:
       - 'plugins/*/daf-plugin/**'
@@ -53,13 +55,11 @@ on:
       # daf_clap_validate.py never runs the gate it just changed.
       - '.github/scripts/**'
 
-# Every framework dependency is a hard fork under dusk-audio and must be fetched
-# from there: DAF (CLAP latency constrained to activate(), AU preset + CLAP state
-# hardening, CLAP UI parameter delivery, UI size reconciliation, Wayland/CI work),
-# DAF-Widgets, and pugl. pugl is fetched through the url in the DAF fork's own
-# .gitmodules, not from anything here, which is how it kept pointing at upstream
-# unnoticed. check_fork_sources.sh below fails the build if any of that regresses.
-# To advance DAF: land changes on fork main in ~/projects/DAF, re-run
+# DAF is the single hard-fork dependency under dusk-audio. Its widgets/ and
+# dgl/src/pugl-upstream/ trees are included in the same revision; archived
+# component repositories and submodules are not used. check_fork_sources.sh
+# enforces this layout and provenance.
+# To advance DAF: land changes on fork main (local checkout DAF-monorepo), re-run
 # clap-validator and pluginval against the rebuilt plugins, push to
 # dusk-audio/DAF, THEN bump DAF_REF. Keep SHAs in sync with daf-release.yml,
 # daf-au-test.yml and docker/build_release.sh. Bump deliberately, and keep local
@@ -125,6 +125,7 @@ jobs:
             {"key":"tape-echo-2","dir":"plugins/tape-echo/daf-plugin","base":"tape-echo-2","project":"TapeEchoDAF","au":"DsTE","uri":"https://dusk-audio.github.io/plugins/tape-echo","name":"Tape Echo 2","tag":"tape-echo-2-v","asset":"tape-echo-2"},
             {"key":"multi-q-2","dir":"plugins/multi-q/daf-plugin","base":"multi-q-2","project":"MultiQ2DAF","au":"DsMq","uri":"https://dusk-audio.github.io/plugins/multi-q-2","name":"Multi-Q 2","tag":"multi-q-2-v","asset":"multi-q-2"}
             ,{"key":"multi-comp-2","dir":"plugins/multi-comp/daf-plugin","base":"multi-comp-2","project":"MultiComp2DAF","au":"DsMc","uri":"https://dusk-audio.github.io/plugins/multi-comp-2","name":"Multi-Comp 2","tag":"multi-comp-2-v","asset":"multi-comp-2"}
+            ,{"key":"duskverb-2","dir":"plugins/DuskVerb/daf-plugin","base":"duskverb-2","project":"DuskVerb2DAF","au":"DsDv","uri":"https://dusk-audio.github.io/plugins/duskverb-2","name":"DuskVerb 2","tag":"duskverb-2-v","asset":"duskverb-2"}
           ]
           JSON
 
