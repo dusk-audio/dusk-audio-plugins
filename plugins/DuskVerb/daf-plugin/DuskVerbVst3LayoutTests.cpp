@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstring>
 #include "DuskVerbTestLibrary.hpp"
+#include "DuskVerbParams.hpp"
 #include <utility>
 #include <vector>
 static uint32_t V3_API refStub(void *) { return 1; }
@@ -280,6 +281,7 @@ int main(int argc, char **argv)
             v3_param_id programId = 0;
             int programSteps = 0;
             bool foundMix = false;
+            int checkedUnits = 0;
             for (int i = 0; i < v3_cpp_obj(controller)->get_parameter_count(controller); ++i)
             {
                 v3_param_info info{};
@@ -292,6 +294,15 @@ int main(int argc, char **argv)
                 char title[129]{};
                 for (int j = 0; j < 128 && info.title[j]; ++j)
                     title[j] = char(info.title[j]);
+                for (const auto& d : duskverb::paramTable())
+                    if (std::strcmp(title, d.name) == 0)
+                    {
+                        char units[129]{};
+                        for (int j = 0; j < 128 && info.units[j]; ++j) units[j] = char(info.units[j]);
+                        check(std::strcmp(units, duskverb::hasSkew(d) ? "" : d.unit) == 0,
+                              "host units match physical versus normalized parameter domain");
+                        ++checkedUnits;
+                    }
                 if (std::strcmp(title, "Dry/Wet") == 0)
                 {
                     parameter.id = info.param_id;
@@ -299,6 +310,7 @@ int main(int argc, char **argv)
                 }
             }
             check(foundMix, "mix parameter enumerated");
+            check(checkedUnits == duskverb::kNumParams, "all parameter unit metadata checked");
             check(programSteps == 19, "twenty host factory programs enumerated");
             v3_cpp_obj(controller)->set_parameter_normalised(controller, programId, 2.0 / programSteps);
             StateStream saved;
@@ -352,6 +364,8 @@ int main(int argc, char **argv)
                 check(v3_cpp_obj(processor)->setup_processing(processor, &setup) == V3_OK,
                       "valid repeated setup remains supported");
                 v3_cpp_obj(component)->set_active(component, true);
+                check(v3_cpp_obj(processor)->get_tail_samples(processor) == 30u * 48000u,
+                      "active processor reports the JUCE build's 30-second tail");
                 v3_cpp_obj(processor)->set_processing(processor, true);
                 float signal[512]{}, l[512]{}, r[512]{};
                 float *inputs[] = {signal, signal};

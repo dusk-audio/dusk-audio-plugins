@@ -16,6 +16,12 @@
 #include <system_error>
 #include <utility>
 #include <vector>
+#if defined(_WIN32)
+# ifndef NOMINMAX
+#  define NOMINMAX
+# endif
+# include <windows.h>
+#endif
 
 namespace duskdaf
 {
@@ -99,7 +105,8 @@ SavedUserPreset writeUserPreset(const std::filesystem::path& directory,
                                 std::string_view extension,
                                 const char* rawName,
                                 Writer&& writer,
-                                NameReader&& nameReader)
+                                NameReader&& nameReader,
+                                bool allowReplace = false)
 {
     const std::string name = normaliseUserPresetName(rawName);
     if (name.empty())
@@ -167,12 +174,18 @@ SavedUserPreset writeUserPreset(const std::filesystem::path& directory,
         if (!error) return result;
         if (error != std::errc::file_exists) return {};
 
-        // Only an explicitly matching display name is eligible for replacement.
+        // Only an explicitly authorized matching display name may be replaced.
         // Competing new names cannot claim this occupied path through this API.
         if (nameReader(candidate) == name)
         {
+            if (!allowReplace) return {};
+           #if defined(_WIN32)
+            if (!MoveFileExW(staged.file.c_str(), candidate.c_str(), MOVEFILE_REPLACE_EXISTING))
+                return {};
+           #else
             std::filesystem::rename(staged.file, candidate, error);
             if (error) return {};
+           #endif
             return result;
         }
     }
@@ -183,11 +196,12 @@ template <typename Writer>
 SavedUserPreset writeUserPreset(const std::filesystem::path& directory,
                                 std::string_view extension,
                                 const char* rawName,
-                                Writer&& writer)
+                                Writer&& writer,
+                                bool allowReplace = false)
 {
     return writeUserPreset(
         directory, extension, rawName, std::forward<Writer>(writer),
-        [](const std::filesystem::path& path) { return storedUserPresetName(path); });
+        [](const std::filesystem::path& path) { return storedUserPresetName(path); }, allowReplace);
 }
 
 // Preset records intentionally use the common `name` and `path` members. The

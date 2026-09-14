@@ -92,6 +92,8 @@ int main(int argc, char **argv)
     if (!entry)
         return 2;
     const auto *descriptor = entry(0);
+    if (!descriptor)
+        return 2;
     const auto *state =
         static_cast<const LV2_State_Interface *>(descriptor->extension_data(LV2_STATE__interface));
     if (!state)

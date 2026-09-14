@@ -85,6 +85,40 @@ int main()
     xml += "</DuskVerb>";
     CHECK(decodeJucePreset(xml, out) && out.presetName == "Black Hole" && out.userName == "A & B"
           && out.sixAP.densityBaseline == 0.71f);
+    // Parameter IDs independently transcribed from the first versioned JUCE
+    // layouts (99eba57, 628e356, f95ecfc), not from the importer's omission mask.
+    const char* v1Ids[] = {"algorithm", "mix", "bus_mode", "bypass", "predelay",
+        "predelay_sync", "decay", "size", "mod_depth", "mod_rate", "bass_mult",
+        "mid_mult", "damping", "crossover", "high_crossover", "saturation",
+        "diffusion", "er_level", "er_size", "lo_cut", "hi_cut", "width", "freeze",
+        "gain_trim", "mono_below"};
+    for (int version = 1; version <= 3; ++version)
+    {
+        std::string historical = "<DuskVerb stateVersion=\"" + std::to_string(version) + "\">";
+        std::array<bool, kNumParams> present{};
+        const auto add = [&](const char* id) {
+            const int index = paramIndexForId(id);
+            present[index] = true;
+            historical += "<PARAM id=\"" + std::string(id) + "\" value=\""
+                + std::to_string(index == Algorithm ? 7.0f : paramDesc(index).def) + "\"/>";
+        };
+        for (const auto* id : v1Ids) add(id);
+        if (version >= 2) add("gate_enabled");
+        if (version >= 3) add("bass_choke");
+        historical += "</DuskVerb>";
+        CHECK(decodeJucePreset(historical, out));
+        CHECK(out.params[Algorithm] == (version < 3 ? 1.0f : 7.0f));
+        const auto defaults = makeDefaultState();
+        for (int i = 0; i < kNumParams; ++i)
+            if (!present[i]) CHECK(out.params[i] == defaults.params[i]);
+        auto incomplete = historical;
+        const auto start = incomplete.find("<PARAM id=\"mix\"");
+        incomplete.erase(start, incomplete.find("/>", start) + 2 - start);
+        CHECK(!decodeJucePreset(incomplete, sentinel) && same(sentinel, untouched));
+        auto modernIncomplete = historical;
+        modernIncomplete[modernIncomplete.find("stateVersion=\"") + 14] = '4';
+        CHECK(!decodeJucePreset(modernIncomplete, sentinel) && same(sentinel, untouched));
+    }
     const char* legacyNames[] = {"dpvHfShelfGainDb", "dpvHfShelfFreqHz", "dpvStructHfDampHz",
         "dpvBoxCutGainDb", "dpvBoxCutFreqHz", "dpvBassShelfGainDb", "dpvBassShelfFreqHz"};
     const int legacyParams[] = {DpvHfShelfDb, DpvHfShelfHz, DpvStructHfDampHz,

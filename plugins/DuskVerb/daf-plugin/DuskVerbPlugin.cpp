@@ -113,7 +113,7 @@ protected:
         p.symbol = d.id;
         // Nonlinear parameters use JUCE's normalized automation coordinate;
         // optional framework text callbacks supply their musical units.
-        p.unit = d.unit;
+        p.unit = duskverb::hasSkew(d) ? "" : d.unit;
         p.ranges.min = duskverb::hostMin(d);
         p.ranges.max = duskverb::hostMax(d);
         p.ranges.def = duskverb::hostDefault(d);

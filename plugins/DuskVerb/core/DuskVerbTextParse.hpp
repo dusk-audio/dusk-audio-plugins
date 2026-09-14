@@ -24,6 +24,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 
 #include <locale.h>
 #if defined(__APPLE__)
@@ -33,21 +34,103 @@
 namespace duskverb
 {
 
+// Locale-independent fallback for when the "C" locale cannot be created: plain
+// std::strtod would honour the process locale and misread "1.25" under a
+// comma-decimal locale. Accepts the same dot-decimal spelling strtod does in the
+// "C" locale (leading whitespace, optional sign, digits with an optional '.',
+// optional exponent) and sets *end past the consumed text, or to s when nothing
+// converts. Hex floats, inf and nan are not accepted; no tuning string uses them.
+inline double parseAsciiDouble(const char* s, const char** end) noexcept
+{
+    const char* p = s;
+    while (*p == ' ' || (*p >= '\t' && *p <= '\r')) ++p;
+
+    bool negative = false;
+    if (*p == '+' || *p == '-') negative = (*p++ == '-');
+
+    constexpr int kMaxDigits = 19;  // fits a uint64 without overflow
+    unsigned long long mantissa = 0;
+    int kept = 0, exp10 = 0;
+    bool anyDigits = false;
+
+    for (; *p >= '0' && *p <= '9'; ++p)
+    {
+        anyDigits = true;
+        if (kept < kMaxDigits) { mantissa = mantissa * 10u + unsigned(*p - '0'); if (mantissa != 0) ++kept; }
+        else ++exp10;
+    }
+    if (*p == '.')
+    {
+        ++p;
+        for (; *p >= '0' && *p <= '9'; ++p)
+        {
+            anyDigits = true;
+            if (kept < kMaxDigits) { mantissa = mantissa * 10u + unsigned(*p - '0'); if (mantissa != 0) ++kept; --exp10; }
+        }
+    }
+    if (!anyDigits) { *end = s; return 0.0; }
+
+    if (*p == 'e' || *p == 'E')
+    {
+        const char* q = p + 1;
+        bool expNegative = false;
+        if (*q == '+' || *q == '-') expNegative = (*q++ == '-');
+        if (*q >= '0' && *q <= '9')
+        {
+            int e = 0;
+            for (; *q >= '0' && *q <= '9'; ++q)
+                if (e < 100000) e = e * 10 + (*q - '0');
+            exp10 += expNegative ? -e : e;
+            p = q;
+        }
+    }
+    *end = p;
+
+    double v = static_cast<double>(mantissa);
+    if (v != 0.0)
+    {
+        // Divide for negative exponents: 1/10^n is exact as a divisor where
+        // 0.1^n is not, which keeps short decimals like "1.25" bit-exact.
+        const bool shrink = exp10 < 0;
+        int n = shrink ? -exp10 : exp10;
+        double scale = 1.0, base = 10.0;
+        for (; n > 0 && scale < 1e308; n >>= 1, base *= base)
+            if (n & 1) scale *= base;
+        if (n > 0) scale = std::numeric_limits<double>::infinity();  // |v| is 0/inf as a float anyway
+        v = shrink ? v / scale : v * scale;
+    }
+    return negative ? -v : v;
+}
+
 inline float parseFloat(const char* s) noexcept
 {
     if (s == nullptr || *s == '\0') return 0.0f;
 #if defined(_WIN32)
     static _locale_t cLocale = _create_locale(LC_ALL, "C");
-    char* end = nullptr;
-    const double v = _strtod_l(s, &end, cLocale);
 #else
     static locale_t cLocale = newlocale(LC_ALL_MASK, "C", static_cast<locale_t>(0));
-    char* end = nullptr;
-    const double v = strtod_l(s, &end, cLocale);
 #endif
+    const char* end = nullptr;
+    double v = 0.0;
+    if (cLocale != nullptr)
+    {
+        char* localeEnd = nullptr;
+#if defined(_WIN32)
+        v = _strtod_l(s, &localeEnd, cLocale);
+#else
+        v = strtod_l(s, &localeEnd, cLocale);
+#endif
+        end = localeEnd;
+    }
+    else
+    {
+        v = parseAsciiDouble(s, &end);
+    }
     if (end == s) return 0.0f;
     return static_cast<float>(v);
 }
+
+inline void primeParseLocale() noexcept { (void)parseFloat("0"); }
 
 inline int parseInt(const char* s) noexcept
 {

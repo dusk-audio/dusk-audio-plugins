@@ -2,6 +2,7 @@
 
 #include "DuskUserPresetStore.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -10,6 +11,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 #if !defined(_WIN32)
 #include <poll.h>
@@ -72,7 +74,7 @@ int main()
         [](std::ostream& output) { output << "value=" << 3.0 << '\n'; });
     const auto overwritten = duskdaf::writeUserPreset(
         library, ".preset", "Alpha/Beta",
-        [](std::ostream& output) { output << "value=" << 2.5 << '\n'; });
+        [](std::ostream& output) { output << "value=" << 2.5 << '\n'; }, true);
     std::locale::global(previousLocale);
 
     int failures = 0;
@@ -80,6 +82,28 @@ int main()
     {
         if (!condition) { std::cerr << "FAIL: " << message << '\n'; ++failures; }
     };
+    const auto unapproved = duskdaf::writeUserPreset(
+        library, ".preset", "Alpha/Beta",
+        [](std::ostream& output) { output << "value=unapproved\n"; }, false);
+    check(!unapproved && fileContents(first.path) == "name=Alpha/Beta\nvalue=2.5\n",
+          "unapproved same-name save preserves the authorized replacement");
+    const auto raceDirectory = temporary.path / "unapproved-race";
+    std::atomic<int> threadsReady{0};
+    duskdaf::SavedUserPreset winners[2];
+    auto competingSave = [&](int index) {
+        winners[index] = duskdaf::writeUserPreset(raceDirectory, ".preset", "Same Name",
+            [&](std::ostream& output) {
+                output << "value=" << index << '\n';
+                threadsReady.fetch_add(1);
+                while (threadsReady.load() != 2) std::this_thread::yield();
+            }, false);
+    };
+    std::thread left(competingSave, 0), right(competingSave, 1);
+    left.join(); right.join();
+    check(bool(winners[0]) != bool(winners[1]), "only one concurrent unapproved save may publish");
+    const int winner = winners[0] ? 0 : 1;
+    check(fileContents(raceDirectory / "Same_Name.preset") == "name=Same Name\nvalue="
+              + std::to_string(winner) + "\n", "losing concurrent save cannot overwrite winner bytes");
 #if !defined(_WIN32)
     // Both independent processes finish writing before either publishes. This
     // deterministically exercises filenames selected concurrently by the old code.
@@ -134,7 +158,7 @@ int main()
           "separate store/session has its own payload");
     const auto reopened = duskdaf::writeUserPreset(
         concurrent, ".preset", "Alpha/Beta",
-        [](std::ostream& output) { output << "value=reopened\n"; });
+        [](std::ostream& output) { output << "value=reopened\n"; }, true);
     check(reopened && fileContents(reopened.path) == "name=Alpha/Beta\nvalue=reopened\n"
               && fileContents(otherSession.path) == "name=Alpha/Beta\nvalue=separate\n",
           "reopened store does not leak state into another session");
@@ -166,7 +190,7 @@ int main()
         {
             output << "incomplete replacement";
             output.setstate(std::ios::badbit);
-        });
+        }, true);
     check(!failedOverwrite, "failed overwrite reports failure");
     check(fileContents(first.path) == savedContents, "failed overwrite preserves the original bytes");
     try

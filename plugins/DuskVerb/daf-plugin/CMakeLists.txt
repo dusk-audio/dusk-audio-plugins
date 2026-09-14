@@ -111,6 +111,21 @@ dusk_daf_install_local(duskverb-2 LV2_PROGRAMS)
 
 if(NOT CMAKE_CROSSCOMPILING)
 enable_testing()
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    set(JUCE_LAYOUT_CHECK "${DUSKVERB_GENERATED_DIR}/JuceLayoutCheck.cpp")
+    add_custom_command(OUTPUT "${JUCE_LAYOUT_CHECK}"
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../core/tests/generate_juce_layout_check.py"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../src/PluginProcessor.cpp" "${JUCE_LAYOUT_CHECK}"
+        DEPENDS ../src/PluginProcessor.cpp ../core/tests/generate_juce_layout_check.py
+        VERBATIM)
+    add_executable(DuskVerbLayoutParityTest "${JUCE_LAYOUT_CHECK}")
+    target_include_directories(DuskVerbLayoutParityTest PRIVATE ../core)
+    target_compile_features(DuskVerbLayoutParityTest PRIVATE cxx_std_17)
+    add_test(NAME DuskVerbLayoutParity COMMAND DuskVerbLayoutParityTest)
+    add_executable(DuskVerbLocaleFailureTest ../core/tests/DuskVerbLocaleFailureTests.cpp)
+    target_include_directories(DuskVerbLocaleFailureTest PRIVATE ../core)
+    target_compile_features(DuskVerbLocaleFailureTest PRIVATE cxx_std_17)
+    add_test(NAME DuskVerbLocaleFailure COMMAND DuskVerbLocaleFailureTest)
     add_executable(DuskUserPresetStoreTest ../../shared-daf/ui/tests/DuskUserPresetStoreTest.cpp)
     target_include_directories(DuskUserPresetStoreTest PRIVATE ../../shared-daf/ui)
     target_compile_features(DuskUserPresetStoreTest PRIVATE cxx_std_17)

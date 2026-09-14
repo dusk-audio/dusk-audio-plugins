@@ -1,13 +1,13 @@
 # DuskVerb 2 release candidate
 
-Updated 2026-09-12. This is an unpublished, uncommitted candidate, not release
+Updated 2026-09-14. This is an unpublished, uncommitted candidate, not release
 approval. The approved native UI is retained. No engine coefficients or source
 files under `src/dsp/` were changed.
 
-Ready for the human to commit and push the reviewed plugin and consolidated DAF
-changes. Publish DAF first, then update the plugin CI/Docker pins to that exact
-revision before committing the plugin release work. This is source readiness;
-the remaining compatibility checks below concern release qualification.
+Ready for the human to commit and push the reviewed plugin changes. Consolidated
+DAF commit `2f3a685885007a03e8c3e94d82c3b52653bd9a77` is published and the plugin
+CI/Docker pins now select that exact revision. This is source readiness; the
+remaining compatibility checks below concern release qualification.
 
 ## Fixes completed in the release pass
 
@@ -24,6 +24,17 @@ the remaining compatibility checks below concern release qualification.
   when the terminator crosses a short-read boundary.
 - Concurrent sanitized preset names publish without replacing each other;
   intentional same-name re-save and failed-write safety remain supported.
+- JUCE preset imports now accept the actual earliest unversioned/v1/v2/v3
+  parameter layouts while retaining defaults for controls introduced later;
+  current v4 imports still require the complete 92-parameter set.
+- A generated compile-time gate compares all 92 DAF parameter IDs, ranges,
+  intervals, skews and defaults against the current JUCE declarations.
+- Numeric tuning overrides retain dot-decimal parsing if creation of the
+  dedicated C locale fails, and the locale is still primed off the audio thread.
+- Normalized nonlinear host parameters no longer advertise misleading physical
+  units; their text conversion callbacks continue to show the musical value.
+- The hosted VST3 layout gate now proves that activation reports the JUCE
+  build's 30-second tail in frames at the active sample rate.
 - Windows native resizing now preserves default `WM_WINDOWPOSCHANGED`
   processing, so WGL receives `WM_SIZE` and resizes its drawable. Previously,
   shrinking from 1200×800 to 1050×700 left a 100-pixel black band and clipped
@@ -46,6 +57,7 @@ Logs and frozen binaries are in
 | Original JUCE comparison, 20 programs × 6 stems, 48 kHz/512 | 120/120 sample-exact | `candidate-release-rt/comparison.csv` |
 | Additional rate/block matrix on the capacity fix | 480/480 sample-exact | `matrix-release-rt/comparison.csv` |
 | Linux CTest | 13/13 passed | `release-linux-complete.log` |
+| Final source review (2026-09-14) | Linux build passed; 16/16 CTests passed on Xvfb | Live local verification after legacy-import, locale, unit-metadata and pin updates |
 | Final shared-knob regression and builds | Linux 14/14, Windows 11/11, universal macOS 12/12 passed | `knob-final-linux-tests.log`, `knob-final-windows-build.log`, `knob-final-macos-build.log` |
 | Knob activation negative control | Nine failures before; all 15 checks pass after | `knob-activation-before.log`, `knob-activation-after.log` |
 | Native Apple Silicon CTest | 11/11 passed | `release-macos-complete.log` |
@@ -91,17 +103,9 @@ heap-owned DSP fixtures fixed it without changing the plugin. Negative controls 
 callback allocation and produced 204 VST3 / 2 LV2 failures. See the corresponding
 `*-before.log` and `*-negative.log` files.
 
-## Release gates still open
+## Release gate still open
 
-1. **Dependency reproducibility:** CI still pins DAF
-   `867183d73b8fea20892eb8de49fb8c8b108c4910`, which does not contain this work.
-   The consolidated DAF worktree is based on `c393724c9ab01ff52707a4bdc3fe1f587994a4b5`
-   plus uncommitted changes. The human must commit/publish the framework changes,
-   then pin that exact revision consistently in CI/Docker before release builds.
-   Never substitute the current base SHA for the uncommitted changes.
-   The latest remote `main`, `f17a0d575acff13c2627aabff168d2de0fe71010`, was
-   checked and does not contain these changes either.
-2. **Remaining compatibility qualification:** Logic insert/discovery menus
+1. **Remaining compatibility qualification:** Logic insert/discovery menus
    and mixed-DPI/native-Wayland scenarios are untested.
    Logic is unavailable on the accessible Mac. Windows
    native controls and REAPER sessions are now covered, as are macOS validator

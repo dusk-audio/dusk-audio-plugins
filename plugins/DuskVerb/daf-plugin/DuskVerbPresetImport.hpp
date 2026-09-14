@@ -145,7 +145,8 @@ inline bool decodeUserPreset(std::string_view text, StateValues& out)
 }
 
 // Restricted JUCE ValueTree XML import for the DuskVerb root and versions 1..4.
-// Version <4 may omit tonal_correction (its safe default is false). Predefined
+// Versions 1..3 grew without a version bump for every added control. Require
+// their earliest layout, retaining defaults for later additions. Predefined
 // XML entities and comments are supported; DTDs and custom entities are rejected.
 inline bool decodeJucePreset(std::string_view xml, StateValues& out)
 {
@@ -189,7 +190,8 @@ inline bool decodeJucePreset(std::string_view xml, StateValues& out)
     // An invalid attribute is not the same as an absent optional property.
     for (size_t i = 0; i < rootAttrCount; ++i)
         if (!unescape(rootAttrs[i].value, textValue)) return false;
-    if (rootAttr("stateVersion", textValue))
+    const bool versioned = rootAttr("stateVersion", textValue);
+    if (versioned)
     {
         const auto parsed = std::from_chars(textValue.data(), textValue.data() + textValue.size(), version);
         if (parsed.ec != std::errc() || parsed.ptr != textValue.data() + textValue.size()
@@ -267,8 +269,28 @@ inline bool decodeJucePreset(std::string_view xml, StateValues& out)
             decoded.params[index] = plainToHost(paramDesc(index), plain);
             seen[index] = true;
         }
+    // Earliest layouts from JUCE history: unversioned 03bae9d (19 controls),
+    // v1 99eba57 (25), v2 628e356 (+gate), v3 f95ecfc (+bass_choke).
+    // v3 later grew to 91 controls; v4 adds tonal_correction and requires all 92.
+    const auto required = [&](int index) {
+        if (version >= 4) return true;
+        switch (index)
+        {
+        case Algorithm: case Decay: case Predelay: case Size: case Damping:
+        case BassMult: case Crossover: case Diffusion: case ModDepth: case ModRate:
+        case ErLevel: case ErSize: case Mix: case LoCut: case HiCut: case Width:
+        case Freeze: case PredelaySync: case BusMode:
+            return true;
+        case Bypass: case MidMult: case HighCrossover: case Saturation:
+        case GainTrim: case MonoBelow:
+            return versioned;
+        case GateEnabled: return version >= 2;
+        case BassChoke: return version >= 3;
+        default: return false;
+        }
+    };
     for (int i = 0; i < kNumParams; ++i)
-        if (!seen[static_cast<size_t>(i)] && !(version < 4 && i == TonalCorrection)) return false;
+        if (!seen[static_cast<size_t>(i)] && required(i)) return false;
     out = std::move(decoded); return true;
 }
 

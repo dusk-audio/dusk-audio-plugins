@@ -66,7 +66,7 @@ on:
 # checkouts on the pinned SHAs (docker/check_daf_pins.sh) so a hand-tested build
 # is the one CI produces.
 env:
-  DAF_REF: 867183d73b8fea20892eb8de49fb8c8b108c4910
+  DAF_REF: 2f3a685885007a03e8c3e94d82c3b52653bd9a77
   AU_TYPE: aufx
   AU_MANUFACTURER: Dusk
 

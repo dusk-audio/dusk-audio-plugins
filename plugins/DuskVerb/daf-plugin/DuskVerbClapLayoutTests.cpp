@@ -233,7 +233,9 @@ Render processSelected(Instance& instance, const uint32_t inputs, const uint32_t
     EmptyInputEvents inputEvents;
     EmptyOutputEvents outputEvents;
     int64_t steadyTime = 0;
-    const std::array<uint32_t, 7> frameCounts = {0, 1, 17, 64, 257, 128, 33};
+    constexpr std::array<uint32_t, 6> frameCounts = {1, 17, 64, 257, 128, 33};
+    static_assert(*std::min_element(frameCounts.begin(), frameCounts.end()) >= 1,
+                  "process blocks must respect activate's minimum frame count");
 
     for (uint32_t block=0; block<64; ++block)
     {

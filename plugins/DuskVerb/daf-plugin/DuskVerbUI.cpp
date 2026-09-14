@@ -1205,7 +1205,7 @@ private:
             });
     }
 
-    bool saveUserPreset(const char* rawName)
+    bool saveUserPreset(const char* rawName, bool allowReplace)
     {
         auto state = captureSnapshot();
         state.userName = duskdaf::normaliseUserPresetName(rawName);
@@ -1214,7 +1214,7 @@ private:
         state.edited = false;
         const auto saved = duskdaf::writeUserPreset(
             configDir(), ".dvpreset", state.userName.c_str(),
-            [&state](std::ostream& output) { output << duskverb::encodeState(state) << '\n'; });
+            [&state](std::ostream& output) { output << duskverb::encodeState(state) << '\n'; }, allowReplace);
         if (!saved) return false;
         state.userName = saved.name;
         recallSnapshot(state);
@@ -1316,7 +1316,7 @@ private:
             {
                 // Only dismiss on a save that actually wrote a file: a failed
                 // write that closed the dialog would read as success.
-                if (saveUserPreset(saveBuf_)) { saveFailed_ = false; ImGui::CloseCurrentPopup(); }
+                if (saveUserPreset(saveBuf_, overwriteAccepted_)) { saveFailed_ = false; ImGui::CloseCurrentPopup(); }
                 else                          { saveFailed_ = true; }
             }
             if (saveFailed_)

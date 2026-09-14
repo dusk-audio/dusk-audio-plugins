@@ -329,7 +329,7 @@ namespace duskverb
 
 // Prime the DUSKVERB_* getenv() cache on the message thread. applyEngineConfig()
 // runs on the audio thread and only ever reads the already-initialised pointers.
-void primeTuningEnvCache() noexcept { tuningEnv(); }
+void primeTuningEnvCache() noexcept { primeParseLocale(); tuningEnv(); }
 
 // Per-preset PostTankEQ band centres + Qs (the GAINS are parameters).
 // Hoisted out of the anonymous namespace so DuskVerbDSP::performPresetSwap can
