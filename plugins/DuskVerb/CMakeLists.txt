@@ -70,6 +70,9 @@ target_sources(DuskVerb
     PRIVATE
         src/PluginProcessor.cpp
         src/PluginEditor.cpp
+        # Framework-free: the calibrated per-preset engine configuration, shared
+        # verbatim with the DAF build (plugins/DuskVerb/daf-plugin).
+        core/DuskVerbPresetEngineConfig.cpp
         src/dsp/FDNReverb.cpp
         src/dsp/OctaveGEQDesign.cpp
         src/dsp/DattorroTank.cpp

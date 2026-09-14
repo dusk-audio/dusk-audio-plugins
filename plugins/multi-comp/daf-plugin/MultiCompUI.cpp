@@ -1079,7 +1079,7 @@ private:
             [](const std::filesystem::path& path) {
                 UserPreset preset;
                 return readUserPresetFile(path, preset) ? preset.name : std::string();
-            });
+            }, true); // This editor retains its existing Save-as-replace behavior.
         if (!saved) return false;
 
         scanUserPresets();

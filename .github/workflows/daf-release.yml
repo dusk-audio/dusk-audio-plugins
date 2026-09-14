@@ -42,7 +42,7 @@ on:
 # daf-build.yml, daf-au-test.yml and docker/build_release.sh, and re-run the
 # dispatch matrix before tagging.
 env:
-  DAF_SHA: 867183d73b8fea20892eb8de49fb8c8b108c4910
+  DAF_SHA: 2f3a685885007a03e8c3e94d82c3b52653bd9a77
   PLUGIN_DIR: plugins/sunset-circuits/daf-plugin
   SLUG: sunset-circuits
 

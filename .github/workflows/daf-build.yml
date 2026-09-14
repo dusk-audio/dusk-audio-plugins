@@ -29,6 +29,7 @@ on:
       - 'tape-echo-2-v*'
       - 'multi-q-2-v*'
       - 'multi-comp-2-v*'
+      - 'duskverb-2-v*'
   workflow_dispatch:
     inputs:
       plugin:
@@ -43,30 +44,30 @@ on:
           - 'tape-echo-2'
           - 'multi-q-2'
           - 'multi-comp-2'
+          - 'duskverb-2'
   pull_request:
     paths:
       - 'plugins/*/daf-plugin/**'
       - 'plugins/*/core/**'
+      - 'plugins/DuskVerb/src/**'
       - 'plugins/shared-daf/**'
       - '.github/workflows/daf-build.yml'
       # The gate scripts this workflow runs. Without this a PR that only edits
       # daf_clap_validate.py never runs the gate it just changed.
       - '.github/scripts/**'
 
-# Every framework dependency is a hard fork under dusk-audio and must be fetched
-# from there: DAF (CLAP latency constrained to activate(), AU preset + CLAP state
-# hardening, CLAP UI parameter delivery, UI size reconciliation, Wayland/CI work),
-# DAF-Widgets, and pugl. pugl is fetched through the url in the DAF fork's own
-# .gitmodules, not from anything here, which is how it kept pointing at upstream
-# unnoticed. check_fork_sources.sh below fails the build if any of that regresses.
-# To advance DAF: land changes on fork main in ~/projects/DAF, re-run
+# DAF is the single hard-fork dependency under dusk-audio. Its widgets/ and
+# dgl/src/pugl-upstream/ trees are included in the same revision; archived
+# component repositories and submodules are not used. check_fork_sources.sh
+# enforces this layout and provenance.
+# To advance DAF: land changes on fork main (local checkout DAF-monorepo), re-run
 # clap-validator and pluginval against the rebuilt plugins, push to
 # dusk-audio/DAF, THEN bump DAF_REF. Keep SHAs in sync with daf-release.yml,
 # daf-au-test.yml and docker/build_release.sh. Bump deliberately, and keep local
 # checkouts on the pinned SHAs (docker/check_daf_pins.sh) so a hand-tested build
 # is the one CI produces.
 env:
-  DAF_REF: 867183d73b8fea20892eb8de49fb8c8b108c4910
+  DAF_REF: 2f3a685885007a03e8c3e94d82c3b52653bd9a77
   AU_TYPE: aufx
   AU_MANUFACTURER: Dusk
 
@@ -125,6 +126,7 @@ jobs:
             {"key":"tape-echo-2","dir":"plugins/tape-echo/daf-plugin","base":"tape-echo-2","project":"TapeEchoDAF","au":"DsTE","uri":"https://dusk-audio.github.io/plugins/tape-echo","name":"Tape Echo 2","tag":"tape-echo-2-v","asset":"tape-echo-2"},
             {"key":"multi-q-2","dir":"plugins/multi-q/daf-plugin","base":"multi-q-2","project":"MultiQ2DAF","au":"DsMq","uri":"https://dusk-audio.github.io/plugins/multi-q-2","name":"Multi-Q 2","tag":"multi-q-2-v","asset":"multi-q-2"}
             ,{"key":"multi-comp-2","dir":"plugins/multi-comp/daf-plugin","base":"multi-comp-2","project":"MultiComp2DAF","au":"DsMc","uri":"https://dusk-audio.github.io/plugins/multi-comp-2","name":"Multi-Comp 2","tag":"multi-comp-2-v","asset":"multi-comp-2"}
+            ,{"key":"duskverb-2","dir":"plugins/DuskVerb/daf-plugin","base":"duskverb-2","project":"DuskVerb2DAF","au":"DsDv","uri":"https://dusk-audio.github.io/plugins/duskverb-2","name":"DuskVerb 2","tag":"duskverb-2-v","asset":"duskverb-2"}
           ]
           JSON
 
@@ -572,9 +574,22 @@ jobs:
           # registers the editor drag guard requires XTest. The guard fails the
           # configure rather than skipping itself, so the package belongs in every
           # Linux dep list, not only the ones that go on to run ctest.
+          # xvfb + python3 + serdi: this job runs the same ctest gate as build-linux.
+          # ctest opens the plugin's real editor (UI drag guard), so it needs a
+          # display, and CMake only registers the generated DuskVerbLayoutParity
+          # test when a Python3 interpreter is present to run its generator.
+          # Without python3 the JUCE-to-DAF parameter-table parity check is
+          # silently skipped here; without serdi Tape Echo's DuskFixLv2Presets
+          # test is likewise never registered.
           .github/scripts/apt_install.sh \
             build-essential pkg-config cmake ninja-build zip curl \
-            libgl1-mesa-dev libx11-dev libxext-dev libxtst-dev libdbus-1-dev
+            libgl1-mesa-dev libx11-dev libxext-dev libxtst-dev libdbus-1-dev \
+            xvfb python3 serdi
+          # Binaries, not packages: these come from several of the packages above
+          # and a missing one should fail here rather than mid-gate.
+          for tool in cmake ninja zip curl python3 serdi xvfb-run; do
+            command -v "$tool" >/dev/null || { echo "::error::missing dependency: $tool"; exit 1; }
+          done
 
       - name: Configure
         working-directory: ${{ env.PLUGIN_DIR }}
@@ -589,6 +604,36 @@ jobs:
         run: |
           cmake --build build --config Release -j"$(nproc)" \
             --target "${PLUGIN_BASE}-vst3" "${PLUGIN_BASE}-clap" "${PLUGIN_BASE}-lv2"
+
+      - name: Run DSP core unit tests (gate)
+        # Mirrors build-linux so the JUCE-to-DAF parameter-table parity check
+        # (DuskVerbLayoutParity, generated from PluginProcessor.cpp) runs on
+        # arm64 too, not only on x86_64. Plugins without these targets are
+        # skipped rather than failed, so this stays generic.
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          if ctest --test-dir build -N > ctest-discovery.log 2>&1; then
+            ctest_status=0
+          else
+            ctest_status=$?
+          fi
+          cat ctest-discovery.log
+          if [ "$ctest_status" -ne 0 ]; then
+            exit "$ctest_status"
+          fi
+          if grep -q "Total Tests: [1-9]" ctest-discovery.log; then
+            # The plugin build step only builds the -vst3/-clap/-lv2 targets,
+            # so the test executables ctest expects may not exist yet. Build
+            # the default target set (which includes them) rather than
+            # hardcoding any one plugin's test target name.
+            cmake --build build --config Release -j"$(nproc)"
+            # xvfb-run: the UI drag guard opens the plugin's real editor, so ctest
+            # needs a display. The harness fails with that instruction rather
+            # than skipping when DISPLAY is unset, so this must stay.
+            xvfb-run -a ctest --test-dir build --output-on-failure
+          else
+            echo "::notice::no ctest targets registered for ${PLUGIN_BASE}; skipping"
+          fi
 
       - name: Package
         working-directory: ${{ env.PLUGIN_DIR }}

@@ -25,6 +25,7 @@
 #include <string>
 #include <utility>   // std::swap (RealFFT::transform) — don't rely on transitive headers
 #include <vector>
+#include "DuskValueText.hpp"
 
 #ifndef DUSK_IMGUI_WIDGETS_LOGIC_TEST
 #include "DuskImGuiFont.hpp"  // CrispFontSet — nearest-size face per label
@@ -287,10 +288,14 @@ public:
     }
 
     // Open the inline editor on the knob `id`, seeded with its current value.
-    void openValueEdit(const char* id, float curValue) noexcept
+    void openValueEdit(const char* id, float curValue, const char* seedText = nullptr) noexcept
     {
         valueEditId_ = id;
-        std::snprintf(valueEditBuf_, sizeof(valueEditBuf_), "%.4g", (double) curValue);
+        if (seedText != nullptr)
+            std::snprintf(valueEditBuf_, sizeof(valueEditBuf_), "%s", seedText);
+        else
+            std::snprintf(valueEditBuf_, sizeof(valueEditBuf_), "%.4g", (double) curValue);
+        valueEditInvalid_ = false;
         valueEditFocus_ = true;
     }
     bool isEditingValue(const char* id) const noexcept { return valueEditId_ == id; }
@@ -316,15 +321,18 @@ public:
     // same window. If a layout ever needs that, split the offending chrome into an
     // earlier window rather than reordering the knob (the knob must stay ahead of
     // any modal blocker — see the valueBubble note above).
-    bool valueEdit(const char* id, float cx, float cy, float /*r*/, float& outValue)
+    bool valueEdit(const char* id, float cx, float cy, float /*r*/, float& outValue,
+                   bool (*parseText)(const char*, uint32_t, void*, float&) = nullptr,
+                   uint32_t param = 0, void* parseContext = nullptr)
     {
         if (valueEditId_ != id)
             return false;
         const ImVec2 c = P(cx, cy);
-        const float w = 58.0f * s, h = 22.0f * s;
+        const float w = (parseText != nullptr ? 96.0f : 58.0f) * s, h = 22.0f * s;
         ImGui::SetCursorScreenPos(ImVec2(c.x - w * 0.5f, c.y - h * 0.5f));
         ImGui::SetNextItemWidth(w);
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(246, 247, 249, 255));
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, valueEditInvalid_ ? IM_COL32(255, 205, 205, 255)
+                                                                  : IM_COL32(246, 247, 249, 255));
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(22, 22, 24, 255));
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f * s, 3.0f * s));
         if (valueEditFocus_) { ImGui::SetKeyboardFocusHere(); valueEditFocus_ = false; }
@@ -333,22 +341,49 @@ public:
             ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
         const bool committed = ImGui::IsItemDeactivatedAfterEdit();
         const bool deactivated = ImGui::IsItemDeactivated();
+        const bool escaped = ImGui::IsKeyPressed(ImGuiKey_Escape, false);
         ImGui::PopStyleVar();
         ImGui::PopStyleColor(2);
-        if (entered || committed)
+        // Escape wins over deactivation: InputText can report both in the same
+        // frame, and committing here would turn a cancel into an edit.
+        if (escaped)
         {
-            // Strict parse: reject empty / non-numeric input (std::atof silently
-            // turns those into 0, committing a bogus value). Only apply when the
-            // whole trimmed buffer is a valid number.
-            char* end = nullptr;
-            const float parsed = std::strtof(valueEditBuf_, &end);
-            bool valid = (end != valueEditBuf_);
-            while (valid && *end != '\0') { if (*end != ' ' && *end != '\t') valid = false; ++end; }
             valueEditId_.clear();
-            if (valid) { outValue = parsed; return true; }
+            valueEditInvalid_ = false;
             return false;
         }
-        if (deactivated) valueEditId_.clear(); // Escape / click-away without an edit
+        if (entered || committed)
+        {
+            float parsed = 0.0f;
+            bool valid;
+            if (parseText != nullptr)
+                valid = parseText(valueEditBuf_, param, parseContext, parsed);
+            else
+            {
+                // Existing consumers seed with locale-sensitive snprintf. Keep
+                // their matching parser; custom unit entry opts into its own
+                // locale-independent seed/parser pair.
+                char* end = nullptr;
+                parsed = std::strtof(valueEditBuf_, &end);
+                valid = end != valueEditBuf_ && duskdaf::value_text::finiteFloat(parsed);
+                while (valid && *end != '\0')
+                {
+                    if (*end != ' ' && *end != '\t') valid = false;
+                    ++end;
+                }
+            }
+            if (valid)
+            {
+                valueEditId_.clear();
+                valueEditInvalid_ = false;
+                outValue = parsed;
+                return true;
+            }
+            valueEditInvalid_ = true;
+            ImGui::SetKeyboardFocusHere(-1);
+            return false;
+        }
+        if (deactivated && !valueEditInvalid_) valueEditId_.clear(); // click-away without an edit
         return false;
     }
 
@@ -396,7 +431,8 @@ public:
               float (*toDisplay)(float, uint32_t, void*) = nullptr,
               float (*fromDisplay)(float, uint32_t, void*) = nullptr,
               void* displayContext = nullptr,
-              bool dragInDisplayDomain = false)
+              bool dragInDisplayDomain = false,
+              bool (*parseText)(const char*, uint32_t, void*, float&) = nullptr)
     {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const float R  = radius * s;
@@ -450,7 +486,11 @@ public:
             }
             if (active && !modResetActive_)
             {
-                dragValue = dragKnobCoordinate(dragValue, ImGui::GetIO().MouseDelta.y,
+                const auto& io = ImGui::GetIO();
+                // Activation can share a frame with pointer movement before the press.
+                const float deltaY = ImGui::IsItemActivated()
+                    ? io.MousePos.y - io.MouseClickedPos[0].y : io.MouseDelta.y;
+                dragValue = dragKnobCoordinate(dragValue, deltaY,
                                                dragMinimum, dragMaximum,
                                                ImGui::GetIO().KeyShift);
                 if (stepped && dragInDisplayDomain) dragValue = std::round(dragValue);
@@ -478,7 +518,7 @@ public:
                 }
                 else
                 {
-                    openValueEdit(id, displayValue(value));
+                    openValueEdit(id, displayValue(value), parseText != nullptr ? overrideText : nullptr);
                     host->endEdit(param); // close the gesture the press opened
                 }
             }
@@ -528,7 +568,7 @@ public:
                         host->setParam(param, value); host->endEdit(param); changed = true;
                     }
                     if (ImGui::MenuItem("Type value..."))
-                        openValueEdit(id, displayValue(value));
+                        openValueEdit(id, displayValue(value), parseText != nullptr ? overrideText : nullptr);
                     ImGui::EndPopup();
                 }
             }
@@ -605,9 +645,10 @@ public:
         }
 
         float typed;
-        if (valueEdit(id, cx, cy, radius, typed))
+        if (valueEdit(id, cx, cy, radius, typed, parseText, param, displayContext))
         {
-            typed = valueFromDisplay(typed); // display -> actual
+            if (parseText == nullptr)
+                typed = valueFromDisplay(typed); // display -> actual
             typed = typed < minV ? minV : (typed > maxV ? maxV : typed);
             if (stepped) typed = std::round(typed);
             if (typed != value)
@@ -845,6 +886,7 @@ private:
     std::string valueEditId_;
     char        valueEditBuf_[32] = { 0 };
     bool        valueEditFocus_ = false;
+    bool        valueEditInvalid_ = false;
     bool        modResetActive_ = false; // Ctrl/Cmd+click reset in progress (suppress drag)
 };
 

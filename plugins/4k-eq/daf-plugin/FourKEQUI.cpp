@@ -825,7 +825,7 @@ private:
                         output << kFourKParams[i].key << '='
                                << (isFrequencyParam(i) ? displayValue(i) : values[i])
                                << '\n';
-            });
+            }, true); // This editor retains its existing Save-as-replace behavior.
         if (!saved)
             return false;
         scanUserPresets();

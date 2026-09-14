@@ -71,3 +71,44 @@ infrastructure. **The prime directive: the DAF build must be bit-identical
   TU layout before suspecting the port.
 - The user has deep ear-history with this plugin. Every deviation, however
   measured, gets flagged to the user with renders, never silently accepted.
+
+## Editor behaviour versus the JUCE editor (validated 2026-09-12)
+
+Measured, not assumed. The offline program null (20 presets, 6 stems, 3
+conditions) says nothing about a knob; these were checked separately:
+
+- **Host units.** Nonlinear parameters expose the original JUCE normalized
+  coordinate (0..1); linear parameters retain their plain domain. Custom host
+  text callbacks display and parse physical units. The shared parameter table
+  drives the UI, host mapping and DSP conversion, preserving the JUCE taper.
+- **DSP value per knob position.** For every parameter and five positions
+  along the JUCE travel, the plain value reaches the DSP as the float JUCE's
+  APVTS produces (core test `testHostAndKnobDomains`), and rendering both
+  VST3s with the same plain value is bit-identical (knob sweep, private tools
+  repo).
+- **Read-outs.** `daf-plugin/DuskVerbFormat.hpp` transcribes the JUCE
+  `formatValue` rules and the Gated / Shimmer / Spring relabels and value
+  overrides; the plugin-layer test holds it to them string for string.
+- **Editor wiring.** A scratch variant of `DafClapUiDragTest` dragged every
+  knob up and down and clicked every switch: each emits only its own
+  parameter, up increases, down decreases.
+
+Deliberate fleet differences from the JUCE editor (DuskPanel, shared by every
+DAF plugin; change there, not here):
+
+| Gesture | JUCE DuskVerb editor | DuskVerb 2 |
+|---|---|---|
+| Full-travel drag | 250 px (stock `juce::Slider`) | 200 px |
+| Fine drag | none | Shift, 6x finer |
+| Double-click | nothing | type a value |
+| Reset to default | none | Alt-click / Ctrl-click, or the right-click menu |
+| Mouse wheel | JUCE default | 2 % of travel per notch, Shift 0.4 % |
+| Preset name after an edit | kept | kept, with a trailing `*` |
+
+## Release-candidate follow-up
+
+The approved native UI is implemented, including full-height LED meters and
+the revised Input/Filter layout. The release registry and `manuals/duskverb-2.md`
+now include DuskVerb 2. See `plugins/DuskVerb/daf-plugin/RELEASE_READINESS.md`
+for current evidence and remaining release gates. The older checklist above is
+the original migration plan, not a statement of completed release qualification.

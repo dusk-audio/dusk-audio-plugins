@@ -1,8 +1,8 @@
 #pragma once
 
-#include <juce_audio_processors/juce_audio_processors.h>
-#include <vector>
 #include <map>
+#include <string_view>
+#include <vector>
 #include "dsp/DspUtils.h"
 
 // Forward declaration — applyEngineConfig() needs to call SixAPTank-specific
@@ -138,18 +138,32 @@ struct FactoryPreset
     // applyEngineConfig via a static name → bands map (kPostTankEQByName).
     // Presets not in the map get an all-zero-gain EQ → bit-identical bypass.
 
-    void applyTo (juce::AudioProcessorValueTreeState& apvts) const
+    // Emit every parameter this preset sets, as (parameter id, PLAIN value)
+    // pairs, in the order the JUCE build wrote them.
+    //
+    // Framework-free on purpose: the JUCE processor wraps it in
+    // applyPresetToApvts() (setValueNotifyingHost(convertTo0to1(v))) and the DAF
+    // shell wraps it in setParameterValue(plainToHost(v)). Both end up handing
+    // the DSP the identical float — see DuskVerbParamTable.hpp.
+    //
+    // NOTE what is deliberately NOT emitted: pteq_band*_gain_db, post_band_*_db,
+    // bypass, duck, tone and character keep whatever value they already hold. A
+    // preset change is not allowed to reset the macro layer or the post-tank
+    // gains under the user's hands, and the JUCE build has always behaved that
+    // way; changing it would move the fleet.
+    //
+    // `set` is called as set(const char* parameterId, float plainValue).
+    template <typename SetFn>
+    void collectParameters (SetFn&& set) const
     {
-        auto setIfExists = [&apvts] (const juce::String& id, float v) {
-            if (auto* p = apvts.getParameter (id)) p->setValueNotifyingHost (p->convertTo0to1 (v));
-        };
-        if (auto* p = apvts.getParameter ("algorithm"))
-            p->setValueNotifyingHost (p->convertTo0to1 (static_cast<float> (algorithm)));
-        if (auto* p = apvts.getParameter ("predelay_sync"))
-            p->setValueNotifyingHost (p->convertTo0to1 (static_cast<float> (predelaySync)));
-        if (auto* p = apvts.getParameter ("bus_mode"))     p->setValueNotifyingHost (busMode     ? 1.0f : 0.0f);
-        if (auto* p = apvts.getParameter ("freeze"))       p->setValueNotifyingHost (freeze      ? 1.0f : 0.0f);
-        if (auto* p = apvts.getParameter ("gate_enabled")) p->setValueNotifyingHost (gateEnabled ? 1.0f : 0.0f);
+        // Kept under its old name so the ~80 call sites below are untouched by
+        // the de-JUCE change and still read against the tuning history.
+        const auto setIfExists = [&set] (const char* id, float v) { set (id, v); };
+        setIfExists ("algorithm",     static_cast<float> (algorithm));
+        setIfExists ("predelay_sync", static_cast<float> (predelaySync));
+        setIfExists ("bus_mode",      busMode     ? 1.0f : 0.0f);
+        setIfExists ("freeze",        freeze      ? 1.0f : 0.0f);
+        setIfExists ("gate_enabled",  gateEnabled ? 1.0f : 0.0f);
         setIfExists ("mix",       mix);
         setIfExists ("predelay",  predelay);
         setIfExists ("decay",     decay);
@@ -166,7 +180,7 @@ struct FactoryPreset
         // so positional rows can't set them; same trap as kFiveBandByName).
         // Default depth 0 = bit-exact bypass everywhere not listed here.
         struct TailSpinOverride { float depth, rate; };
-        static const std::map<juce::String, TailSpinOverride> kTailSpinByName = {
+        static const std::map<std::string_view, TailSpinOverride> kTailSpinByName = {
             // (Vocal Hall override REMOVED 2026-06-01: the depth-0.537 tail-spin
             //  scored 13 by satisfying the old envelope-AM rate gate, but it was
             //  a +-54% tremolo pump — audibly unusable in stereo. Reverted to
@@ -174,7 +188,7 @@ struct FactoryPreset
             //  against the new pitch-chorus gate. Tail-spin stays dormant infra.)
         };
         float tsDepth = tailSpinDepth, tsRate = tailSpinRate;
-        if (auto it = kTailSpinByName.find (juce::String (name)); it != kTailSpinByName.end())
+        if (auto it = kTailSpinByName.find (std::string_view (name)); it != kTailSpinByName.end())
         { tsDepth = it->second.depth; tsRate = it->second.rate; }
         setIfExists ("tail_spin_depth", tsDepth);
         setIfExists ("tail_spin_rate",  tsRate);
@@ -182,7 +196,7 @@ struct FactoryPreset
         // 1.0 (unlisted) → ×1.0 exact → bit-identical. >1 lets the parallel ER
         // own the 0-26 ms attack the FDN tank structurally can't supply.
         struct ERBoostOverride { float boost; };
-        static const std::map<juce::String, ERBoostOverride> kERBoostByName = {
+        static const std::map<std::string_view, ERBoostOverride> kERBoostByName = {
             // Vocal Hall: front-load campaign (2026-06-08). er_boost 7.07→3.0
             // paired with the tank-rebalance (tank_level 0.42) — the energy
             // front-load now comes from the tank/ER BALANCE, not raw ER boost.
@@ -196,13 +210,13 @@ struct FactoryPreset
             { "Cathedral Large Hall", { 2.0f } },   // 2026-06-13: 4.96->2.0 — the big ER spike emphasized the post-transient energy hole (perceived ducking). Smaller spike + longer rise (below) bridges into the tail.
         };
         float erBoost = 1.0f;
-        if (auto it = kERBoostByName.find (juce::String (name)); it != kERBoostByName.end())
+        if (auto it = kERBoostByName.find (std::string_view (name)); it != kERBoostByName.end())
             erBoost = it->second.boost;
         setIfExists ("er_boost", erBoost);
         // Rising-onset ER peak time (ms). 0 (unlisted) → legacy first-tap
         // rolloff → bit-identical. Paired with er_boost to set the early field.
         struct ERRiseOverride { float ms; };
-        static const std::map<juce::String, ERRiseOverride> kERRiseByName = {
+        static const std::map<std::string_view, ERRiseOverride> kERRiseByName = {
             // Vocal Hall: 31.6→15 (front-load campaign) — closes attack_time +
             // onset_slope with the rebalanced early field.
             { "Vocal Hall", { 15.0f } },
@@ -220,7 +234,7 @@ struct FactoryPreset
             { "Drum Plate", { 6.0f } },
         };
         float erRise = 0.0f;
-        if (auto it = kERRiseByName.find (juce::String (name)); it != kERRiseByName.end())
+        if (auto it = kERRiseByName.find (std::string_view (name)); it != kERRiseByName.end())
             erRise = it->second.ms;
         setIfExists ("er_rise", erRise);
 
@@ -235,7 +249,7 @@ struct FactoryPreset
         // tank_level, er_bus shelves, er_decorr have NO row field → set here.
         // er_level + mono_below ARE row fields (0.79 / 20 for VH) → set by the row.
         struct FrontLoadOverride { float tankLevel, erBusLow, erBusHigh, erDecorr, splitHz; };
-        static const std::map<juce::String, FrontLoadOverride> kFrontLoadByName = {
+        static const std::map<std::string_view, FrontLoadOverride> kFrontLoadByName = {
             // VH split 300: the tank cut starved the LATE lows (boom/body 8
             // gates quiet) — below 300 Hz the tank stays unity, mid/high keep
             // the 0.42 front-load (attack/t50/first50 unaffected).
@@ -262,7 +276,7 @@ struct FactoryPreset
             // (n_fail 21->20; trades 5 low-end energy gates). Others neutral.
             { "Drum Plate", { 1.0f, 0.0f, 0.0f, 0.4f, 0.0f } },
         };
-        if (auto it = kFrontLoadByName.find (juce::String (name)); it != kFrontLoadByName.end())
+        if (auto it = kFrontLoadByName.find (std::string_view (name)); it != kFrontLoadByName.end())
         {
             setIfExists ("tank_level",       it->second.tankLevel);
             setIfExists ("er_bus_low_gain",  it->second.erBusLow);
@@ -289,18 +303,18 @@ struct FactoryPreset
         // Phase 4 (Change 2): HF cross-talk decorrelation depth. 0 (unlisted) →
         // no cross-feed → bit-identical. Per-preset from the cross-talk sweep.
         struct XTalkOverride { float depth; };
-        static const std::map<juce::String, XTalkOverride> kXTalkByName = {
+        static const std::map<std::string_view, XTalkOverride> kXTalkByName = {
             // Calibrated by the cross-talk width sweep (2026-06-02).
             { "Vocal Hall", { 0.0041f } },
         };
         float xtalk = 0.0f;
-        if (auto it = kXTalkByName.find (juce::String (name)); it != kXTalkByName.end())
+        if (auto it = kXTalkByName.find (std::string_view (name)); it != kXTalkByName.end())
             xtalk = it->second.depth;
         setIfExists ("xtalk", xtalk);
         // Phase 5 multiband: enable + per-band decays, per-preset. Default off /
         // 0 → single legacy tank → bit-identical. Populated post-sweep.
         struct MultibandOverride { bool enable; float lowSec, midSec, highSec; };
-        static const std::map<juce::String, MultibandOverride> kMultibandByName = {
+        static const std::map<std::string_view, MultibandOverride> kMultibandByName = {
             // Calibrated by the per-band decay sweep (2026-06-02).
             // MDR multiband trial (2026-06-11) FALSIFIED: algo 4 + 3-band decays
             // scored 29 vs the algo-10 AccurateHall baseline 25. The anchor's
@@ -311,9 +325,9 @@ struct FactoryPreset
             // than the GEQ already in use. Reverted.
         };
         bool  mbEnable = false; float mbLo = 0.0f, mbMi = 0.0f, mbHi = 0.0f;
-        if (auto it = kMultibandByName.find (juce::String (name)); it != kMultibandByName.end())
+        if (auto it = kMultibandByName.find (std::string_view (name)); it != kMultibandByName.end())
         { mbEnable = it->second.enable; mbLo = it->second.lowSec; mbMi = it->second.midSec; mbHi = it->second.highSec; }
-        if (auto* p = apvts.getParameter ("mb_enable")) p->setValueNotifyingHost (mbEnable ? 1.0f : 0.0f);
+        setIfExists ("mb_enable", mbEnable ? 1.0f : 0.0f);
         setIfExists ("mb_low_decay",  mbLo);
         setIfExists ("mb_mid_decay",  mbMi);
         setIfExists ("mb_high_decay", mbHi);
@@ -322,7 +336,7 @@ struct FactoryPreset
         // lengthens with no spec cost). +attack = hold (longer edt), - = shorter.
         // All 0 (unlisted) → AttackRamp returns 1.0 → bit-identical bypass.
         struct EDTOverride { float subA, subT, lmA, lmT, mhA, mhT, airA, airT; };
-        static const std::map<juce::String, EDTOverride> kEDTByName = {
+        static const std::map<std::string_view, EDTOverride> kEDTByName = {
             // Vocal Hall EDT override REMOVED 2026-06-04: the AttackRamp shaper
             // applies an envelope-relative per-sample gain. On DYNAMIC material
             // its envelope follower tracks the program's beat/transient envelope
@@ -336,7 +350,7 @@ struct FactoryPreset
             // were gamed by the distortion). Ear-is-arbiter — clean beats gated.
         };
         float esA=0,esT=120,elA=0,elT=120,emA=0,emT=120,eaA=0,eaT=120;
-        if (auto it = kEDTByName.find (juce::String (name)); it != kEDTByName.end())
+        if (auto it = kEDTByName.find (std::string_view (name)); it != kEDTByName.end())
         { const auto& e=it->second; esA=e.subA;esT=e.subT;elA=e.lmA;elT=e.lmT;emA=e.mhA;emT=e.mhT;eaA=e.airA;eaT=e.airT; }
         setIfExists ("edt_sub_attack_db", esA);     setIfExists ("edt_sub_tau_ms", esT);
         setIfExists ("edt_lowmid_attack_db", elA);  setIfExists ("edt_lowmid_tau_ms", elT);
@@ -346,7 +360,7 @@ struct FactoryPreset
         // → inherit the legacy treble rate → bit-identical 3-band. Lets QuadTank
         // presets shorten the 8 k / 16 k tails independently of the centroid.
         struct QuadBandOverride { float hiMid, air; };
-        static const std::map<juce::String, QuadBandOverride> kQuadBandByName = {
+        static const std::map<std::string_view, QuadBandOverride> kQuadBandByName = {
             // 79 Vocal Chamber (QuadTank) vs VVV — hi-mid+air split closes
             // cent_500 and pulls the 4-8 k tail in without darkening the mids
             // (the 3-band gHigh couldn't). 23->21.
@@ -366,7 +380,7 @@ struct FactoryPreset
             { "79 Vocal Chamber", { 0.11f, 0.22f } },
         };
         float qtHiMid = -1.0f, qtAir = -1.0f;
-        if (auto it = kQuadBandByName.find (juce::String (name)); it != kQuadBandByName.end())
+        if (auto it = kQuadBandByName.find (std::string_view (name)); it != kQuadBandByName.end())
         { qtHiMid = it->second.hiMid; qtAir = it->second.air; }
         setIfExists ("qt_himid_mult", qtHiMid);
         setIfExists ("qt_air_mult",   qtAir);
@@ -398,7 +412,7 @@ struct FactoryPreset
         // The long-standing "kFiveBandByName['Vocal Plate'] won't apply" bug is
         // therefore NOT a bug: the octave table is the T60 lever for algo-10
         // presets. fleet_audit.py --verify-tables now checks this map.
-        static const std::map<juce::String, FiveBandOverride> kFiveBandByName = {
+        static const std::map<std::string_view, FiveBandOverride> kFiveBandByName = {
             // Tiled Room (algo-13 composite, tail = accurateHall_): decay fields
             // flattened (octave GEQ live), but Input Sub/Mid makeup IS live.
             { "Tiled Room", { 1.661f, 0.8853f, 43.26f, 10850.0f, 0.0346f, -1.87f, 0.0f, 0.0f } },
@@ -411,7 +425,7 @@ struct FactoryPreset
         float fbInMid = inputMidGain;
         float fbInHigh = 0.0f;
         float fbInLoopDb = 0.0f;
-        if (auto it = kFiveBandByName.find (juce::String (name)); it != kFiveBandByName.end())
+        if (auto it = kFiveBandByName.find (std::string_view (name)); it != kFiveBandByName.end())
         {
             fbSub  = it->second.sub;   fbHiMid = it->second.hiMid;
             fbXSub = it->second.xSub;  fbXAir  = it->second.xAir;
@@ -445,7 +459,7 @@ struct FactoryPreset
         // Partial mono-below: 1.0 = full mono (legacy). Vocal Hall uses 0.45 so
         // the lows match VVV's gentle decorrelation instead of full-mono (which
         // over-correlated broadband stereo_corr). Others stay full-mono.
-        setIfExists ("mono_below_depth", juce::String (name) == "Vocal Hall" ? 0.45f : 1.0f);
+        setIfExists ("mono_below_depth", std::string_view (name) == "Vocal Hall" ? 0.45f : 1.0f);
         // DPV corrective EQ + brightness — only audible when algorithm=1
         // routes through DattorroPlateVintage. Other engines forward to
         // no-op setters; safe to set unconditionally.

@@ -1032,7 +1032,7 @@ private:
                         continue;
                     output << kTeParams[i].id << "=" << values[i] << '\n';
                 }
-            });
+            }, true); // This editor retains its existing Save-as-replace behavior.
         if (!saved)
             return false;
         scanUserPresets();

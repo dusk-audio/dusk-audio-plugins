@@ -283,7 +283,7 @@ private:
                 for (uint32_t i = 0; i < kParamVuL; ++i)
                     if (i != kParamBypass)
                         output << kTmParams[i].id << '=' << values[i] << '\n';
-            });
+            }, true); // This editor retains its existing Save-as-replace behavior.
         if (!saved)
             return false;
         scanUserPresets();
