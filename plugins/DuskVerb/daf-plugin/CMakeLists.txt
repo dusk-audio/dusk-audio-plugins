@@ -111,17 +111,27 @@ dusk_daf_install_local(duskverb-2 LV2_PROGRAMS)
 
 if(NOT CMAKE_CROSSCOMPILING)
 enable_testing()
-    find_package(Python3 REQUIRED COMPONENTS Interpreter)
-    set(JUCE_LAYOUT_CHECK "${DUSKVERB_GENERATED_DIR}/JuceLayoutCheck.cpp")
-    add_custom_command(OUTPUT "${JUCE_LAYOUT_CHECK}"
-        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../core/tests/generate_juce_layout_check.py"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../src/PluginProcessor.cpp" "${JUCE_LAYOUT_CHECK}"
-        DEPENDS ../src/PluginProcessor.cpp ../core/tests/generate_juce_layout_check.py
-        VERBATIM)
-    add_executable(DuskVerbLayoutParityTest "${JUCE_LAYOUT_CHECK}")
-    target_include_directories(DuskVerbLayoutParityTest PRIVATE ../core)
-    target_compile_features(DuskVerbLayoutParityTest PRIVATE cxx_std_17)
-    add_test(NAME DuskVerbLayoutParity COMMAND DuskVerbLayoutParityTest)
+    # The layout-parity cross-check is GENERATED from the JUCE source by a Python
+    # script, but a Python interpreter is not otherwise a build dependency of
+    # this plugin. Requiring it would fail configuration outright on a machine or
+    # CI image without one (the GitHub runner has none), so look for it quietly
+    # and wire the test only when it is actually present. The rest of the
+    # DuskVerb suite below is Python-free and must keep building regardless.
+    find_package(Python3 QUIET COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        set(JUCE_LAYOUT_CHECK "${DUSKVERB_GENERATED_DIR}/JuceLayoutCheck.cpp")
+        add_custom_command(OUTPUT "${JUCE_LAYOUT_CHECK}"
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../core/tests/generate_juce_layout_check.py"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../src/PluginProcessor.cpp" "${JUCE_LAYOUT_CHECK}"
+            DEPENDS ../src/PluginProcessor.cpp ../core/tests/generate_juce_layout_check.py
+            VERBATIM)
+        add_executable(DuskVerbLayoutParityTest "${JUCE_LAYOUT_CHECK}")
+        target_include_directories(DuskVerbLayoutParityTest PRIVATE ../core)
+        target_compile_features(DuskVerbLayoutParityTest PRIVATE cxx_std_17)
+        add_test(NAME DuskVerbLayoutParity COMMAND DuskVerbLayoutParityTest)
+    else()
+        message(STATUS "Python3 interpreter not found; skipping the generated JUCE layout parity check")
+    endif()
     add_executable(DuskVerbLocaleFailureTest ../core/tests/DuskVerbLocaleFailureTests.cpp)
     target_include_directories(DuskVerbLocaleFailureTest PRIVATE ../core)
     target_compile_features(DuskVerbLocaleFailureTest PRIVATE cxx_std_17)
