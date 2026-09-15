@@ -331,7 +331,8 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
 // -----------------------------------------------------------------------
 
 void DattorroTank::process (const float* inputL, const float* inputR,
-                            float* outputL, float* outputR, int numSamples)
+                            float* outputL, float* outputR, int numSamples,
+                            const float* sourceSide)
 {
     if (! prepared_)
         return;
@@ -348,6 +349,10 @@ void DattorroTank::process (const float* inputL, const float* inputR,
         // Mono sum of stereo input (Dattorro tank is internally mono,
         // stereo comes from decorrelated output tapping)
         float input = (inputL[i] + inputR[i]) * 0.5f;
+        const float side = (stereoInputActive_ && ! frozen_)
+                         ? (sourceSide != nullptr ? sourceSide[i]
+                                                  : (inputL[i] - inputR[i]) * 0.5f)
+                         : 0.0f;
 
         if (frozen_)
             input = 0.0f;
@@ -412,10 +417,12 @@ void DattorroTank::process (const float* inputL, const float* inputR,
         // Order: left first, then right. The one-sample delay in cross-feed
         // is intentional (Dattorro's figure-8 topology).
 
-        auto processTank = [&] (Tank& tank, float otherCrossFeed)
+        auto processTank = [&] (Tank& tank, float otherCrossFeed, float sideSign)
         {
             // Tank input: new audio + cross-fed signal from the other tank
             float tankIn = input + otherCrossFeed;
+            if (stereoInputActive_)
+                tankIn += sideSign * stereoInputAmount_ * side;
 
             // --- Modulated allpass (decay diffusion 1) ---
             // Random-walk LFO replaces the previous std::sin(phase) + drift
@@ -543,8 +550,8 @@ void DattorroTank::process (const float* inputL, const float* inputR,
         float rightCrossFeed = rightTank_.crossFeedState;
         float leftCrossFeed = leftTank_.crossFeedState;
 
-        processTank (leftTank_, rightCrossFeed);
-        processTank (rightTank_, leftCrossFeed);
+        processTank (leftTank_, rightCrossFeed, +1.0f);
+        processTank (rightTank_, leftCrossFeed, -1.0f);
 
         // ------------------------------------------------------------------
         // Output: sum 7 signed taps from both tanks per channel.
@@ -690,6 +697,12 @@ void DattorroTank::setSaturation (float amount)
 {
     saturationAmount_ = std::clamp (amount, 0.0f, 1.0f);
     // Wired into the per-sample softClip in process() — no recomputation needed.
+}
+
+void DattorroTank::setStereoInput (float amount)
+{
+    stereoInputAmount_ = std::clamp (amount, 0.0f, 4.0f);
+    stereoInputActive_ = stereoInputAmount_ > 1.0e-6f;
 }
 
 void DattorroTank::setTrebleMultiply (float mult)
@@ -1044,7 +1057,8 @@ void DattorroTank::setModeNotch (float hz, float cutDb, float q)
     // compounds per pass, shortening the mode's T60 without a broadband dip.
     const float sr = static_cast<float> (sampleRate_);
     const float A  = std::pow (10.0f, std::clamp (cutDb, -12.0f, 0.0f) / 40.0f);
-    const float w0 = 6.283185307179586f * std::clamp (hz, 20.0f, 0.45f * sr) / sr;
+    const float w0 = 6.283185307179586f
+                   * DspUtils::nyquistSafeHz (sr, std::max (hz, 20.0f)) / sr;
     const float alpha = std::sin (w0) / (2.0f * mnQ_);
     const float cosw = std::cos (w0);
     const float a0 = 1.0f + alpha / A;

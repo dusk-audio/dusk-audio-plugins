@@ -136,7 +136,8 @@ private:
         }
         void lowpass (float fc, float sr)
         {
-            const float w = std::tan (3.14159265358979f * std::clamp (fc, 20.0f, 0.45f*sr) / sr);
+            const float w = std::tan (3.14159265358979f
+                                     * DspUtils::nyquistSafeHz (sr, std::max (fc, 20.0f)) / sr);
             const float k = 1.41421356f;
             const float nrm = 1.0f / (1.0f + k*w + w*w);
             b0 = w*w*nrm; b1 = 2.0f*b0; b2 = b0;

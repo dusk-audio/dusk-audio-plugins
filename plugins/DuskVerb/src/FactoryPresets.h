@@ -1,8 +1,8 @@
 #pragma once
 
-#include <juce_audio_processors/juce_audio_processors.h>
-#include <vector>
 #include <map>
+#include <string_view>
+#include <vector>
 #include "dsp/DspUtils.h"
 
 // Forward declaration — applyEngineConfig() needs to call SixAPTank-specific
@@ -138,18 +138,32 @@ struct FactoryPreset
     // applyEngineConfig via a static name → bands map (kPostTankEQByName).
     // Presets not in the map get an all-zero-gain EQ → bit-identical bypass.
 
-    void applyTo (juce::AudioProcessorValueTreeState& apvts) const
+    // Emit every parameter this preset sets, as (parameter id, PLAIN value)
+    // pairs, in the order the JUCE build wrote them.
+    //
+    // Framework-free on purpose: the JUCE processor wraps it in
+    // applyPresetToApvts() (setValueNotifyingHost(convertTo0to1(v))) and the DAF
+    // shell wraps it in setParameterValue(plainToHost(v)). Both end up handing
+    // the DSP the identical float — see DuskVerbParamTable.hpp.
+    //
+    // NOTE what is deliberately NOT emitted: pteq_band*_gain_db, post_band_*_db,
+    // bypass, duck, tone and character keep whatever value they already hold. A
+    // preset change is not allowed to reset the macro layer or the post-tank
+    // gains under the user's hands, and the JUCE build has always behaved that
+    // way; changing it would move the fleet.
+    //
+    // `set` is called as set(const char* parameterId, float plainValue).
+    template <typename SetFn>
+    void collectParameters (SetFn&& set) const
     {
-        auto setIfExists = [&apvts] (const juce::String& id, float v) {
-            if (auto* p = apvts.getParameter (id)) p->setValueNotifyingHost (p->convertTo0to1 (v));
-        };
-        if (auto* p = apvts.getParameter ("algorithm"))
-            p->setValueNotifyingHost (p->convertTo0to1 (static_cast<float> (algorithm)));
-        if (auto* p = apvts.getParameter ("predelay_sync"))
-            p->setValueNotifyingHost (p->convertTo0to1 (static_cast<float> (predelaySync)));
-        if (auto* p = apvts.getParameter ("bus_mode"))     p->setValueNotifyingHost (busMode     ? 1.0f : 0.0f);
-        if (auto* p = apvts.getParameter ("freeze"))       p->setValueNotifyingHost (freeze      ? 1.0f : 0.0f);
-        if (auto* p = apvts.getParameter ("gate_enabled")) p->setValueNotifyingHost (gateEnabled ? 1.0f : 0.0f);
+        // Kept under its old name so the ~80 call sites below are untouched by
+        // the de-JUCE change and still read against the tuning history.
+        const auto setIfExists = [&set] (const char* id, float v) { set (id, v); };
+        setIfExists ("algorithm",     static_cast<float> (algorithm));
+        setIfExists ("predelay_sync", static_cast<float> (predelaySync));
+        setIfExists ("bus_mode",      busMode     ? 1.0f : 0.0f);
+        setIfExists ("freeze",        freeze      ? 1.0f : 0.0f);
+        setIfExists ("gate_enabled",  gateEnabled ? 1.0f : 0.0f);
         setIfExists ("mix",       mix);
         setIfExists ("predelay",  predelay);
         setIfExists ("decay",     decay);
@@ -166,7 +180,7 @@ struct FactoryPreset
         // so positional rows can't set them; same trap as kFiveBandByName).
         // Default depth 0 = bit-exact bypass everywhere not listed here.
         struct TailSpinOverride { float depth, rate; };
-        static const std::map<juce::String, TailSpinOverride> kTailSpinByName = {
+        static const std::map<std::string_view, TailSpinOverride> kTailSpinByName = {
             // (Vocal Hall override REMOVED 2026-06-01: the depth-0.537 tail-spin
             //  scored 13 by satisfying the old envelope-AM rate gate, but it was
             //  a +-54% tremolo pump — audibly unusable in stereo. Reverted to
@@ -174,7 +188,7 @@ struct FactoryPreset
             //  against the new pitch-chorus gate. Tail-spin stays dormant infra.)
         };
         float tsDepth = tailSpinDepth, tsRate = tailSpinRate;
-        if (auto it = kTailSpinByName.find (juce::String (name)); it != kTailSpinByName.end())
+        if (auto it = kTailSpinByName.find (std::string_view (name)); it != kTailSpinByName.end())
         { tsDepth = it->second.depth; tsRate = it->second.rate; }
         setIfExists ("tail_spin_depth", tsDepth);
         setIfExists ("tail_spin_rate",  tsRate);
@@ -182,7 +196,7 @@ struct FactoryPreset
         // 1.0 (unlisted) → ×1.0 exact → bit-identical. >1 lets the parallel ER
         // own the 0-26 ms attack the FDN tank structurally can't supply.
         struct ERBoostOverride { float boost; };
-        static const std::map<juce::String, ERBoostOverride> kERBoostByName = {
+        static const std::map<std::string_view, ERBoostOverride> kERBoostByName = {
             // Vocal Hall: front-load campaign (2026-06-08). er_boost 7.07→3.0
             // paired with the tank-rebalance (tank_level 0.42) — the energy
             // front-load now comes from the tank/ER BALANCE, not raw ER boost.
@@ -196,13 +210,13 @@ struct FactoryPreset
             { "Cathedral Large Hall", { 2.0f } },   // 2026-06-13: 4.96->2.0 — the big ER spike emphasized the post-transient energy hole (perceived ducking). Smaller spike + longer rise (below) bridges into the tail.
         };
         float erBoost = 1.0f;
-        if (auto it = kERBoostByName.find (juce::String (name)); it != kERBoostByName.end())
+        if (auto it = kERBoostByName.find (std::string_view (name)); it != kERBoostByName.end())
             erBoost = it->second.boost;
         setIfExists ("er_boost", erBoost);
         // Rising-onset ER peak time (ms). 0 (unlisted) → legacy first-tap
         // rolloff → bit-identical. Paired with er_boost to set the early field.
         struct ERRiseOverride { float ms; };
-        static const std::map<juce::String, ERRiseOverride> kERRiseByName = {
+        static const std::map<std::string_view, ERRiseOverride> kERRiseByName = {
             // Vocal Hall: 31.6→15 (front-load campaign) — closes attack_time +
             // onset_slope with the rebalanced early field.
             { "Vocal Hall", { 15.0f } },
@@ -220,7 +234,7 @@ struct FactoryPreset
             { "Drum Plate", { 6.0f } },
         };
         float erRise = 0.0f;
-        if (auto it = kERRiseByName.find (juce::String (name)); it != kERRiseByName.end())
+        if (auto it = kERRiseByName.find (std::string_view (name)); it != kERRiseByName.end())
             erRise = it->second.ms;
         setIfExists ("er_rise", erRise);
 
@@ -235,7 +249,7 @@ struct FactoryPreset
         // tank_level, er_bus shelves, er_decorr have NO row field → set here.
         // er_level + mono_below ARE row fields (0.79 / 20 for VH) → set by the row.
         struct FrontLoadOverride { float tankLevel, erBusLow, erBusHigh, erDecorr, splitHz; };
-        static const std::map<juce::String, FrontLoadOverride> kFrontLoadByName = {
+        static const std::map<std::string_view, FrontLoadOverride> kFrontLoadByName = {
             // VH split 300: the tank cut starved the LATE lows (boom/body 8
             // gates quiet) — below 300 Hz the tank stays unity, mid/high keep
             // the 0.42 front-load (attack/t50/first50 unaffected).
@@ -262,7 +276,7 @@ struct FactoryPreset
             // (n_fail 21->20; trades 5 low-end energy gates). Others neutral.
             { "Drum Plate", { 1.0f, 0.0f, 0.0f, 0.4f, 0.0f } },
         };
-        if (auto it = kFrontLoadByName.find (juce::String (name)); it != kFrontLoadByName.end())
+        if (auto it = kFrontLoadByName.find (std::string_view (name)); it != kFrontLoadByName.end())
         {
             setIfExists ("tank_level",       it->second.tankLevel);
             setIfExists ("er_bus_low_gain",  it->second.erBusLow);
@@ -289,18 +303,18 @@ struct FactoryPreset
         // Phase 4 (Change 2): HF cross-talk decorrelation depth. 0 (unlisted) →
         // no cross-feed → bit-identical. Per-preset from the cross-talk sweep.
         struct XTalkOverride { float depth; };
-        static const std::map<juce::String, XTalkOverride> kXTalkByName = {
+        static const std::map<std::string_view, XTalkOverride> kXTalkByName = {
             // Calibrated by the cross-talk width sweep (2026-06-02).
             { "Vocal Hall", { 0.0041f } },
         };
         float xtalk = 0.0f;
-        if (auto it = kXTalkByName.find (juce::String (name)); it != kXTalkByName.end())
+        if (auto it = kXTalkByName.find (std::string_view (name)); it != kXTalkByName.end())
             xtalk = it->second.depth;
         setIfExists ("xtalk", xtalk);
         // Phase 5 multiband: enable + per-band decays, per-preset. Default off /
         // 0 → single legacy tank → bit-identical. Populated post-sweep.
         struct MultibandOverride { bool enable; float lowSec, midSec, highSec; };
-        static const std::map<juce::String, MultibandOverride> kMultibandByName = {
+        static const std::map<std::string_view, MultibandOverride> kMultibandByName = {
             // Calibrated by the per-band decay sweep (2026-06-02).
             // MDR multiband trial (2026-06-11) FALSIFIED: algo 4 + 3-band decays
             // scored 29 vs the algo-10 AccurateHall baseline 25. The anchor's
@@ -311,9 +325,9 @@ struct FactoryPreset
             // than the GEQ already in use. Reverted.
         };
         bool  mbEnable = false; float mbLo = 0.0f, mbMi = 0.0f, mbHi = 0.0f;
-        if (auto it = kMultibandByName.find (juce::String (name)); it != kMultibandByName.end())
+        if (auto it = kMultibandByName.find (std::string_view (name)); it != kMultibandByName.end())
         { mbEnable = it->second.enable; mbLo = it->second.lowSec; mbMi = it->second.midSec; mbHi = it->second.highSec; }
-        if (auto* p = apvts.getParameter ("mb_enable")) p->setValueNotifyingHost (mbEnable ? 1.0f : 0.0f);
+        setIfExists ("mb_enable", mbEnable ? 1.0f : 0.0f);
         setIfExists ("mb_low_decay",  mbLo);
         setIfExists ("mb_mid_decay",  mbMi);
         setIfExists ("mb_high_decay", mbHi);
@@ -322,7 +336,7 @@ struct FactoryPreset
         // lengthens with no spec cost). +attack = hold (longer edt), - = shorter.
         // All 0 (unlisted) → AttackRamp returns 1.0 → bit-identical bypass.
         struct EDTOverride { float subA, subT, lmA, lmT, mhA, mhT, airA, airT; };
-        static const std::map<juce::String, EDTOverride> kEDTByName = {
+        static const std::map<std::string_view, EDTOverride> kEDTByName = {
             // Vocal Hall EDT override REMOVED 2026-06-04: the AttackRamp shaper
             // applies an envelope-relative per-sample gain. On DYNAMIC material
             // its envelope follower tracks the program's beat/transient envelope
@@ -336,7 +350,7 @@ struct FactoryPreset
             // were gamed by the distortion). Ear-is-arbiter — clean beats gated.
         };
         float esA=0,esT=120,elA=0,elT=120,emA=0,emT=120,eaA=0,eaT=120;
-        if (auto it = kEDTByName.find (juce::String (name)); it != kEDTByName.end())
+        if (auto it = kEDTByName.find (std::string_view (name)); it != kEDTByName.end())
         { const auto& e=it->second; esA=e.subA;esT=e.subT;elA=e.lmA;elT=e.lmT;emA=e.mhA;emT=e.mhT;eaA=e.airA;eaT=e.airT; }
         setIfExists ("edt_sub_attack_db", esA);     setIfExists ("edt_sub_tau_ms", esT);
         setIfExists ("edt_lowmid_attack_db", elA);  setIfExists ("edt_lowmid_tau_ms", elT);
@@ -346,7 +360,7 @@ struct FactoryPreset
         // → inherit the legacy treble rate → bit-identical 3-band. Lets QuadTank
         // presets shorten the 8 k / 16 k tails independently of the centroid.
         struct QuadBandOverride { float hiMid, air; };
-        static const std::map<juce::String, QuadBandOverride> kQuadBandByName = {
+        static const std::map<std::string_view, QuadBandOverride> kQuadBandByName = {
             // 79 Vocal Chamber (QuadTank) vs VVV — hi-mid+air split closes
             // cent_500 and pulls the 4-8 k tail in without darkening the mids
             // (the 3-band gHigh couldn't). 23->21.
@@ -355,10 +369,18 @@ struct FactoryPreset
             // gave T60-16k +80% and pulled cent_500 +27% bright in the late tail. Air is
             // the top band -> must damp FASTEST. Fixes the late-centroid tilt in-loop
             // (cent_50 untouched, unlike the static air-shelf).
-            { "79 Vocal Chamber", { 0.18f, 0.22f } },
+            // 2026-07-24: hi-mid 0.18->0.11 — the 4-8k tail ran long+bright vs the dark
+            // Chamber1979 anchor (T60 4k +17.9%, T60 8k +36.2%, cent_500 +28%). Damping
+            // the hi-mid band faster closes all three (cent_500 +5%, T60 4k -0.9%, T60 8k
+            // +9.0%) in one lever. COST: edt hi 2-8k goes -34% (early HF decays faster —
+            // inherent to a single damping multiplier: can't shorten the late tail without
+            // shortening the early). Sweet spot 0.11: 0.10 also breaks ripple-high; 0.13
+            // leaves T60-8k failing. Air 0.22 unchanged (ss-air +14.5 is structural — the
+            // anchor top is near-silent -72dB, no damping reaches it). 12->10, byte-stable.
+            { "79 Vocal Chamber", { 0.11f, 0.22f } },
         };
         float qtHiMid = -1.0f, qtAir = -1.0f;
-        if (auto it = kQuadBandByName.find (juce::String (name)); it != kQuadBandByName.end())
+        if (auto it = kQuadBandByName.find (std::string_view (name)); it != kQuadBandByName.end())
         { qtHiMid = it->second.hiMid; qtAir = it->second.air; }
         setIfExists ("qt_himid_mult", qtHiMid);
         setIfExists ("qt_air_mult",   qtAir);
@@ -390,7 +412,7 @@ struct FactoryPreset
         // The long-standing "kFiveBandByName['Vocal Plate'] won't apply" bug is
         // therefore NOT a bug: the octave table is the T60 lever for algo-10
         // presets. fleet_audit.py --verify-tables now checks this map.
-        static const std::map<juce::String, FiveBandOverride> kFiveBandByName = {
+        static const std::map<std::string_view, FiveBandOverride> kFiveBandByName = {
             // Tiled Room (algo-13 composite, tail = accurateHall_): decay fields
             // flattened (octave GEQ live), but Input Sub/Mid makeup IS live.
             { "Tiled Room", { 1.661f, 0.8853f, 43.26f, 10850.0f, 0.0346f, -1.87f, 0.0f, 0.0f } },
@@ -403,7 +425,7 @@ struct FactoryPreset
         float fbInMid = inputMidGain;
         float fbInHigh = 0.0f;
         float fbInLoopDb = 0.0f;
-        if (auto it = kFiveBandByName.find (juce::String (name)); it != kFiveBandByName.end())
+        if (auto it = kFiveBandByName.find (std::string_view (name)); it != kFiveBandByName.end())
         {
             fbSub  = it->second.sub;   fbHiMid = it->second.hiMid;
             fbXSub = it->second.xSub;  fbXAir  = it->second.xAir;
@@ -437,7 +459,7 @@ struct FactoryPreset
         // Partial mono-below: 1.0 = full mono (legacy). Vocal Hall uses 0.45 so
         // the lows match VVV's gentle decorrelation instead of full-mono (which
         // over-correlated broadband stereo_corr). Others stay full-mono.
-        setIfExists ("mono_below_depth", juce::String (name) == "Vocal Hall" ? 0.45f : 1.0f);
+        setIfExists ("mono_below_depth", std::string_view (name) == "Vocal Hall" ? 0.45f : 1.0f);
         // DPV corrective EQ + brightness — only audible when algorithm=1
         // routes through DattorroPlateVintage. Other engines forward to
         // no-op setters; safe to set unconditionally.
@@ -572,10 +594,10 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
           /* bassChoke            */ 20.0f,
           /* dpvHfShelfGainDb     */ 8.50f,       // 2026-06-29 HF cut to 5.5 REVERTED: closed ss-hi/air but net-0 (gain-match whack-a-mole) AND darkened cent_50 -19%->-29% = re-muffle (the user's complaint). HF bloom vs cent is the documented Dattorro density coupling wall.  // 2026-06-24 EAR "Lex brighter": shelf 3.25->8.5 lifts the
           /* dpvHfShelfFreqHz     */ 4049.0f,     // EARLY field to ~Lex cent_50 5191; struct-damp 6605->4000
-          /* dpvStructHfDampHz    */ 2500.0f,     // 2026-07-07 5500->2500 (VVP surgery): the 5500 ear-"crispy top" OVERSHOT the anchor — gates read hi +5 dB / bloom-hi +6 / T60-8k +11% / T60-16k +17% HOT. 2500 = more per-pass HF damping -> shortens the HF TAIL toward the anchor; cent_50 stays -1.1% (the EARLY hit is untouched -> NO re-muffle, unlike cutting the HF shelf) -> closes T60-8k + the HF cluster, 27->24. EAR-CHECK the darker/shorter top (may be anchor-truer; 5500 was an over-bright chase). // 2026-06-29 4000->5500 (EAR "Lex crispier/fuller top"): less per-pass HF damping -> HF tail sustains longer (T60-16k 0.25->? toward Lex 0.55) = crispy sparkle + fills the tail. DV decay was HF-tilted (low long, top dies fast); Lex is EVEN across freq.
+          /* dpvStructHfDampHz    */ 2500.0f,     // 2026-07-24 2500->2000 TESTED+REVERTED (gates): no HF-level help (cent_500 +43.8->+47.9 WORSE, hi 4-12k/bloom flat) and broke T60-4k (-8.8->-10.2%); HF LEVEL surplus is not per-pass-damp reachable (Dattorro density coupling). // 2026-07-07 5500->2500 (VVP surgery): the 5500 ear-"crispy top" OVERSHOT the anchor — gates read hi +5 dB / bloom-hi +6 / T60-8k +11% / T60-16k +17% HOT. 2500 = more per-pass HF damping -> shortens the HF TAIL toward the anchor; cent_50 stays -1.1% (the EARLY hit is untouched -> NO re-muffle, unlike cutting the HF shelf) -> closes T60-8k + the HF cluster, 27->24. EAR-CHECK the darker/shorter top (may be anchor-truer; 5500 was an over-bright chase). // 2026-06-29 4000->5500 (EAR "Lex crispier/fuller top"): less per-pass HF damping -> HF tail sustains longer (T60-16k 0.25->? toward Lex 0.55) = crispy sparkle + fills the tail. DV decay was HF-tilted (low long, top dies fast); Lex is EVEN across freq.
           /* dpvBoxCutGainDb      */ -1.52f,      // 2026-06-19: confirmed via bake-sweep the DPV EQ is LIVE but
           /* dpvBoxCutFreqHz      */ 704.0f,      // every lever is coupled to a structural wall — HF shelf brightens
-          /* dpvBassShelfGainDb   */ 0.82f,       // cent_50 but blooms the tank HF (29->33); box/bass cut fixes sub/mid
+          /* dpvBassShelfGainDb   */ 0.82f,       // 2026-07-24 0.82->-2.0 TESTED+REVERTED: closed sub-bass <100 but the 101Hz spec_L1 spike is MODAL (worsened via gain-match renorm) + broke boom-low 80-200 (16->19); low surplus is modal/snare-window, not shelf-reachable. // cent_50 but blooms the tank HF (29->33); box/bass cut fixes sub/mid
           /* dpvBassShelfFreqHz   */ 89.7f },
         // ── Drum Plate (VVV anchor) ────────────────────────────────────────
         // Engine: FDN. Anchor: VVV "Drum Plate" preset (Reverb Mode = Plate,
@@ -1074,7 +1096,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Medium Drum Room",     "Rooms",
           15, 0.30f, false,  5.1f, 0,   // 2026-07-06 PMB feasibility test (algo 0->15): does PMB ripple at medium decay (~0.7-0.8s bands) as it did on Small Drum's short bands? Decay 2.0 => scale 1.0 so kPmbByName t60[] realize directly. Revert to 0 if it ripples.
           2.0f, 0.40165f, 0.03176f, 0.62647f, 1.418f, 1.488f, 471.781f,  // Decay 0.55->2.0 for the PMB test.
-          0.60000f, 0.45000f, 0.41204f, 25.000f, 8152.437f, 0.99109f, false, 16.96f,  // diffusion 0.678->0.60, erLevel 0.27->0.45: stronger discrete early field, less smear.
+          0.60000f, 0.45000f, 0.41204f, 25.000f, 8152.437f, 0.83900f, false, 16.96f,  // Issue #123: width 0.99109->0.839 matches the anchor's centred-input side/mid energy and correlation. diffusion 0.678->0.60, erLevel 0.27->0.45: stronger discrete early field, less smear.
           /* mono */ 120.0f, /* mid */ 1.155f, /* highX */ 5189.961f, /* sat */ 0.02480f,
           /* hiCutShelfGainDb */ -9.0f },  // 2026-06-16: -0.5->-9dB post-tank air shelf — attenuate ss_air/bloom 8-12k hot (decoupled from loop T60; test before bake)
         // ── Live Room (general-purpose medium room) ───────────────────────────
@@ -1283,7 +1305,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Black Hole",           "Shimmer",
           7,  0.50f, false,   0.0f, 0,
           10.8728f, 0.56922f, 0.50890f, 0.10000f, 1.16880f, 0.45f,  372.24f,  // 2026-07-03 Bass 0.536->0.45: decay low_mid +24.9% long -> pass (24->23). T60-63 +37% is bass-mult-saturated (0.35 measured identical) — the 63 Hz ring lives in the FDN low modes, not the damping band.  // 2026-06-16 EAR: modRate->0.1 = feedback 0 to match Valhalla BlackHole (screenshot feedback 0.000). DV sine 2k was +40dB hot vs anchor = over-shimmer. NOTE: DV pitch is feedback-loop-only → fb0 may kill shimmer (topology check).
-          0.85741f, 0.05f, 0.70f, 24.591f, 18926.8f, 1.10000f, false, 7.64f,  // 2026-06-29 Width 1.26->1.10: DV's broadband stereo ran too WIDE (stereo_corr -0.01 vs Valhalla +0.12); 1.10 closes it (25->24). (snare confirmed DV wider than Valhalla, not narrower.)  // 2026-06-14 Phase-3 match-EQ (s=0.75): gainTrim re-matched (+7.64) after the output match-EQ cut (28->25).
+          0.85741f, 0.05f, 0.70f, 24.591f, 18926.8f, 0.90100f, false, 7.64f,  // Issue #123: width 1.10->0.901 matches the anchor's centred-input side/mid energy and correlation. 2026-06-29 Width 1.26->1.10: DV's broadband stereo ran too WIDE.  // 2026-06-14 Phase-3 match-EQ (s=0.75): gainTrim re-matched (+7.64) after the output match-EQ cut (28->25).
           /* mono */ 60.0f, /* mid */ 0.75073f, /* highX */ 3390.34f, /* sat */ 0.38197f },
         // ── Deep Blue Day ────────────────────────────────────────────────
         // Reference: external reference Shimmer "DeepBlueDay" preset (named after the
@@ -1305,9 +1327,9 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // confirmed flat). Locked at the honest floor (23); needs an engine fix.
         { "Deep Blue Day",        "Shimmer",
           7,  0.50f, false,  25.0f, 0,  // mix pinned 50% — all Valhalla Shimmer factory presets ship 50% wet (verified from plugin UI 2026-06-15)
-          20.000f, 0.59833f, 0.50f, 0.70f, 0.999f, 1.800f, 668.755f,  // 2026-07-08 EAR "low/darker info arrives much later in the tail than the rest": Bass 1.0->1.8 — snare-tail low-vs-hi dominance was flat (+1..+3.6dB over 3s) while the anchor turns low-dominant fast (+5..+8dB by 1-3s); 1.8 sustains the low from the start (+2..+5.6, boom-low rows green, 16->15). NOTE the loop sits at softClip equilibrium: bassMult and hfSustain both BACK-REACT through clip loading (bassMult up SHORTENED T60-250; hfSustain down LENGTHENED T60-8k) — do not tune those axes by linear reasoning here. Reverses the 2026-06-19 Bass 1.5->1.0 call: valid then (sub voice 4.5 plateaued the low), inverted now (sub 1.5 + cascade: DV low decays FASTER than REF).  // 2026-07-03 decay 18->20 + modRate 0.605->0.70 (feedback ~5%->~6.5%): the pair (with the new sub 4.5 + oct-cascade 250/125 fills, kShimmer*ByName) nets 30->26 — feedback 0.7 shortens the over-long low/mid T60s (63/250/1k, decay low/low_mid/mid, edt low_mid, env_p2p all -> pass) where 0.8+ re-breaks body/cascade (non-monotone: 0.8 -> 32, 1.3 -> 43); Decay 20 + oct fill then recover T60-125/250. Decay DOWN was net-negative (11-15s all >= 34: boom/env_shape tank — DV needs a LOUDER 0.5-2s shelf with a SHORTER ring, the non-exponential shape wall).  // 2026-06-19 EAR "a bit more low end than VS over the long tail": Bass 1.5->1.0 — over the 15s tail Bass 1.5 made the LOW band (150-400) plateau (-25->-28dB t6->t13) while VS DECAYS (-24->-32); the down voice now supplies the warm low so Bass no longer needs 1.5 to fake it, and 1.0 restores VS's low-band decay (low@13s -32 = VS).  // (superseded) modRate 1.30->0.605 = feedback ~11.5%->~5% — tames DV's over-hot high octave to match VVV + frees headroom (less regen → the down voice runs hotter without clipping).  // "low missing in tail / darker": Bass 0.659->1.5 — Bass<1 made the LOW band decay FASTER than the tail (low died early -> tail lacked warm low -> sounded bright/thin). 1.5 sustains the low (low T60 12.5->13.3s ~VVV). NB tail HF is already DARKER than VVV; the "bright" was the missing low, not hot highs.  // decay 9.34->18 — THE fix. DV's tail was ~HALF VVV's length (per-band T60 7-10s vs VVV 13-16s); the sustained-spectrum match hid it (level, not ring-time). 18 ~doubles the tail toward VVV's 13-16s ambient wash. Feedback kept at 1.30 (~11.5%, user's clean setting) — the decay does the fullness, not metallic regeneration.  // 2026-06-16 EAR: modRate 0.605->1.30 = feedback ~0.048->0.115 (user: "closer to 11-12%")
+          20.000f, 0.59833f, 0.50f, 0.70f, 0.999f, 1.800f, 668.755f,  // 2026-07-24 Treble 0.598->0.45 TESTED+REVERTED: softClip inversion — closed T60-500/1k but LENGTHENED the hi tail (T60-8k/decay-hi/edt-hi worse, 14->19); mid & hi trade, can't sculpt the anchor's 500-1k dip. // 2026-07-08 EAR "low/darker info arrives much later in the tail than the rest": Bass 1.0->1.8 — snare-tail low-vs-hi dominance was flat (+1..+3.6dB over 3s) while the anchor turns low-dominant fast (+5..+8dB by 1-3s); 1.8 sustains the low from the start (+2..+5.6, boom-low rows green, 16->15). NOTE the loop sits at softClip equilibrium: bassMult and hfSustain both BACK-REACT through clip loading (bassMult up SHORTENED T60-250; hfSustain down LENGTHENED T60-8k) — do not tune those axes by linear reasoning here. Reverses the 2026-06-19 Bass 1.5->1.0 call: valid then (sub voice 4.5 plateaued the low), inverted now (sub 1.5 + cascade: DV low decays FASTER than REF).  // 2026-07-03 decay 18->20 + modRate 0.605->0.70 (feedback ~5%->~6.5%): the pair (with the new sub 4.5 + oct-cascade 250/125 fills, kShimmer*ByName) nets 30->26 — feedback 0.7 shortens the over-long low/mid T60s (63/250/1k, decay low/low_mid/mid, edt low_mid, env_p2p all -> pass) where 0.8+ re-breaks body/cascade (non-monotone: 0.8 -> 32, 1.3 -> 43); Decay 20 + oct fill then recover T60-125/250. Decay DOWN was net-negative (11-15s all >= 34: boom/env_shape tank — DV needs a LOUDER 0.5-2s shelf with a SHORTER ring, the non-exponential shape wall).  // 2026-06-19 EAR "a bit more low end than VS over the long tail": Bass 1.5->1.0 — over the 15s tail Bass 1.5 made the LOW band (150-400) plateau (-25->-28dB t6->t13) while VS DECAYS (-24->-32); the down voice now supplies the warm low so Bass no longer needs 1.5 to fake it, and 1.0 restores VS's low-band decay (low@13s -32 = VS).  // (superseded) modRate 1.30->0.605 = feedback ~11.5%->~5% — tames DV's over-hot high octave to match VVV + frees headroom (less regen → the down voice runs hotter without clipping).  // "low missing in tail / darker": Bass 0.659->1.5 — Bass<1 made the LOW band decay FASTER than the tail (low died early -> tail lacked warm low -> sounded bright/thin). 1.5 sustains the low (low T60 12.5->13.3s ~VVV). NB tail HF is already DARKER than VVV; the "bright" was the missing low, not hot highs.  // decay 9.34->18 — THE fix. DV's tail was ~HALF VVV's length (per-band T60 7-10s vs VVV 13-16s); the sustained-spectrum match hid it (level, not ring-time). 18 ~doubles the tail toward VVV's 13-16s ambient wash. Feedback kept at 1.30 (~11.5%, user's clean setting) — the decay does the fullness, not metallic regeneration.  // 2026-06-16 EAR: modRate 0.605->1.30 = feedback ~0.048->0.115 (user: "closer to 11-12%")
           0.80742f, 0.20f, 0.50f, 26.925f, 19144.104f, 1.07f, false, -4.50f,  // 2026-07-03 Width 1.69->1.07: 1.69 drove the whole tail anti-phase (stereo_corr -0.43 vs anchor 0.00, audibly hollow/phasey — the same regression the 2026-05-31 "capped 1.3" note warned about, re-introduced by a later sweep). 1.07 lands corr -0.006 = anchor-exact; sweep showed corr(w) monotone (1.00 -> +0.07, 1.15 -> -0.07). width-hi>5k stays short (0.77 vs 0.95) — anchor has mono-ish HIGHS over a decorrelated broadband tail, needs a per-band width tilt the engine lacks.  // 2026-06-29 gainTrim 0.37->-4.50: the new −2 oct SUB voice (kShimmerSubByName 3.8) added deep-low energy that pushed the wet-stem peak 0.37->-0.3dB; trim back to ~-5dB so it matches Valhalla Shimmer's own stem level (-5.6dB peak) and stays mix-safe (50% mix + hot dry can't clip). Rel-fundamental shape (the screenshot match) is gain-invariant.
-          /* mono */ 20.0f, /* mid */ 1.200f, /* highX */ 2157.808f, /* sat */ 0.23195f, /* hiCutShelfGainDb */ -12.109f },  // 2026-06-19 EAR "a bit fuller": mid 0.606->1.2 — DV's mid body (500-2k) ran ~0.5dB thinner + 0.7dB quieter than the anchor; mid_mult lifts the mid GEQ (shimmer feedback is in the pitch loop = sparkle not body; mid_mult is the body lever).  // 29->27->23: Shimmer 2nd pitch voice (+24, fills 12-24k) + Hi Cut 4521->11000 so its HF reaches output (matches Valhalla broadband octave; the dark 4521 was choking the new top band)
+          /* mono */ 20.0f, /* mid */ 1.200f, /* highX */ 2157.808f, /* sat */ 0.23195f, /* hiCutShelfGainDb */ -12.109f },  // 2026-07-24 mid 1.2->1.4 TESTED+REVERTED: gain-match ate it (body 500-1k -1.80->-1.76 still fail), lateral trade (T60-1k passed, T60-63 broke), 14->14. // 2026-06-19 EAR "a bit fuller": mid 0.606->1.2 — DV's mid body (500-2k) ran ~0.5dB thinner + 0.7dB quieter than the anchor; mid_mult lifts the mid GEQ (shimmer feedback is in the pitch loop = sparkle not body; mid_mult is the body lever).  // 29->27->23: Shimmer 2nd pitch voice (+24, fills 12-24k) + Hi Cut 4521->11000 so its HF reaches output (matches Valhalla broadband octave; the dark 4521 was choking the new top band)
     };
     return presets;
 }

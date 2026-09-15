@@ -44,7 +44,8 @@ public:
     void prepare (double sampleRate, int maxBlockSize);
     void clearBuffers();
     void process (const float* inputL, const float* inputR,
-                  float* outputL, float* outputR, int numSamples);
+                  float* outputL, float* outputR, int numSamples,
+                  const float* sourceSide = nullptr);
 
     // Forwarded to internal DattorroTank — same semantics as DattorroTank.
     void setDecayTime         (float seconds);
@@ -73,6 +74,7 @@ public:
     void setSustainLimiterLow (float loHz, float hiHz, float threshDb, float maxCutDb,
                                float atkMs, float relFastMs, float relSlowMs);
     void setFreeze            (bool frozen);
+    void setStereoInput       (float amount);
 
     // HDP-compat no-ops. The Dattorro architecture has no in-loop bass
     // choke, no sparse-tap ER generator, no 4-band damper sub-band.
