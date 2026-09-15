@@ -431,6 +431,8 @@ private:
     std::array<std::array<Biquad, 4>, kChannels> optoDepthWeighting;
     std::array<Biquad, kChannels> optoLimitFloorFilter;
     float optoInvSampleRate = 1.0f / 48000.0f;
+    // VCA detector onset limit (MultiCompDbxLaw.hpp), refreshed with the rate.
+    float vcaDetectorFloorPower = 0.0f, vcaDetectorRise = 1.0f;
     float optoDetectorAttack = 0, optoDetectorRelease = 0;
     float optoDetectorFloorPeakAttack = 0, optoDetectorFloorPeakRelease = 0;
     float optoDetectorPeakAttack = 0, optoDetectorPeakRelease = 0;
@@ -517,6 +519,9 @@ private:
         }
         for (auto& filter : busFeedbackCoupling) filter.setSampleRate(sr, 1.6666667f);
         optoInvSampleRate = 1.0f / sr;
+        // The VCA detector runs once per host sample, so its limit uses fs.
+        vcaDetectorFloorPower = std::pow(10.0f, dbx160::kDetectorFloorDb * 0.1f);
+        vcaDetectorRise = std::pow(10.0f, dbx160::kDetectorRiseDbPerMs * 100.0f / static_cast<float>(fs));
         optoFloorHighPassStep = 1.0f - std::exp(-6.283185307f * 30.0f / sr);
         optoFloorLowPassStep = 1.0f - std::exp(-6.283185307f * 2.016362169f / sr);
         optoFloorBandStep = 1.0f - std::exp(-6.283185307f * 1000.0f / sr);
@@ -3555,7 +3560,12 @@ private:
             // at the release fit.
             constexpr float rmsSeconds = 0.035f;
             const float rmsCoeff = std::exp(-1.0f / (rmsSeconds * static_cast<float>(fs)));
-            d.rms = d.rms * rmsCoeff + sidechain * sidechain * (1.0f - rmsCoeff);
+            // The state climbs at most vcaDetectorRise per sample from its
+            // floor; energy arriving faster is discarded (MultiCompDbxLaw.hpp,
+            // DETECTOR ONSET).
+            const float previous = std::max(d.rms, vcaDetectorFloorPower);
+            d.rms = std::min(previous * rmsCoeff + sidechain * sidechain * (1.0f - rmsCoeff),
+                             previous * vcaDetectorRise);
             d.rmsWrite = (d.rmsWrite + 1u) & 31u;
             d.rmsHistory[d.rmsWrite] = d.rms;
         }

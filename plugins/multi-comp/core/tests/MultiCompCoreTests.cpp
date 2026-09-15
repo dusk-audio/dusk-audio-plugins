@@ -9001,7 +9001,7 @@ void testDbxSidechainTilt()
         worst = std::max(worst, static_cast<float>(std::abs(gainDb - point.db)));
         std::printf("  tilt %6.0f Hz: %+.3f dB (measured %+.2f)\n", point.hz, gainDb, point.db);
     }
-    require(worst < 0.40f, "dbx sidechain tilt matches the measured reference response within 0.40 dB from 40 Hz to 20 kHz");
+    require(worst < 0.30f, "dbx sidechain tilt matches the measured reference response within 0.30 dB from 40 Hz to 23.5 kHz");
 
     auto reductionAt = [](float freq, float sidechainHp) {
         MultiCompDSP dsp;
@@ -9275,6 +9275,79 @@ void testVcaDbxParityGates()
                 "VCA detector is RMS: gated bursts and noise read within 0.4 dB of a sine at equal RMS");
     }
     std::puts("dbx 160 parity gates: static law, step timing, crest response");
+}
+
+// VCA / dbx 160 onset from silence and from quiet pedestals. Measured
+// 2026-09-11 on the installed UAD dbx 160 (dusk-audio-tools
+// plugins/MultiComp/tests/programme_parity/vca/onset_probes2.py): a 1 kHz tone
+// holds a pedestal for 1 s, then steps in phase to -12 dB RMS; Thresh
+// -48.125 dB, Compress at the Inf stop, 2x oversampling. Each row is the gain
+// reduction over the first four 1 ms cycles after the step. From silence the
+// reference passes the first half-millisecond almost untouched, a pedestal
+// shortens that, and the next cycles reduce as if that first energy never
+// arrived; the previous detector reduced the first cycle 13 dB more than the
+// reference. Bounds sit just outside the achieved residuals (<= 0.39 dB on the
+// first cycle, <= 0.19 dB after), at both rates.
+void testVcaDbxOnsetGates()
+{
+    struct Row { int rate; float pedestalDb; std::array<double, 4> referenceGr; };
+    constexpr std::array<Row, 5> rows{{
+        {48000, -300.0f, {{-2.806, -23.009, -26.579, -28.426}}},
+        {48000, -60.0f, {{-9.134, -24.570, -27.281, -28.883}}},
+        {48000, -40.0f, {{-18.667, -25.473, -27.765, -29.212}}},
+        {96000, -300.0f, {{-2.792, -22.879, -26.508, -28.375}}},
+        {96000, -60.0f, {{-8.891, -24.470, -27.219, -28.836}}},
+    }};
+    double worstFirst = 0.0, worstLater = 0.0;
+    for (const auto& row : rows)
+    {
+        constexpr int kBlock = 512;
+        auto dsp = std::make_unique<MultiCompDSP>();
+        dsp->prepare(static_cast<double>(row.rate), kBlock);
+        dsp->setMode(static_cast<int>(duskaudio::MultiCompMode::VCA));
+        dsp->setOversampling(1);
+        dsp->setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+        dsp->setParameter(MultiCompDSP::Parameter::VcaThreshold, -48.125f);
+        dsp->setParameter(MultiCompDSP::Parameter::VcaRatio, 100.0f);
+        dsp->setParameter(MultiCompDSP::Parameter::VcaOutput, 0.0f);
+        const size_t stepAt = static_cast<size_t>(row.rate), total = stepAt + static_cast<size_t>(row.rate / 5);
+        const double pedestal = row.pedestalDb < -200.0f ? 0.0 : std::pow(10.0, row.pedestalDb / 20.0) * std::sqrt(2.0);
+        const double step = std::pow(10.0, -12.0 / 20.0) * std::sqrt(2.0);
+        std::vector<float> in(total), out(total, 0.0f);
+        for (size_t i = 0; i < total; ++i)
+            in[i] = static_cast<float>((i < stepAt ? pedestal : step)
+                                       * std::sin(2.0 * 3.14159265358979323846 * 1000.0 * static_cast<double>(i) / row.rate));
+        std::array<float, kBlock> l{}, r{}, ol{}, orr{};
+        const float* inputs[2] = {l.data(), r.data()};
+        float* outputs[2] = {ol.data(), orr.data()};
+        for (size_t start = 0; start < total; start += kBlock)
+        {
+            const size_t n = std::min<size_t>(kBlock, total - start);
+            for (size_t i = 0; i < n; ++i) l[i] = r[i] = in[start + i];
+            dsp->processBlock(inputs, outputs, 2, static_cast<int>(n));
+            for (size_t i = 0; i < n; ++i) out[start + i] = ol[i];
+        }
+        const size_t latency = static_cast<size_t>(dsp->getLatencySamples());
+        const size_t cycle = static_cast<size_t>(row.rate / 1000);
+        std::printf("  dbx onset %d Hz, pedestal %+.0f dB:", row.rate, static_cast<double>(row.pedestalDb));
+        for (size_t k = 0; k < 4; ++k)
+        {
+            double inSq = 0.0, outSq = 0.0;
+            for (size_t i = stepAt + k * cycle; i < stepAt + (k + 1) * cycle; ++i)
+            {
+                inSq += static_cast<double>(in[i]) * in[i];
+                outSq += static_cast<double>(out[i + latency]) * out[i + latency];
+            }
+            const double gr = 10.0 * std::log10(std::max(outSq, 1e-30) / inSq);
+            const double error = std::abs(gr - row.referenceGr[k]);
+            (k == 0 ? worstFirst : worstLater) = std::max(k == 0 ? worstFirst : worstLater, error);
+            std::printf(" %.3f (ref %.3f)", gr, row.referenceGr[k]);
+        }
+        std::printf("\n");
+    }
+    std::printf("  dbx onset worst: first cycle %.3f dB, cycles 2-4 %.3f dB\n", worstFirst, worstLater);
+    require(worstFirst < 0.5 && worstLater < 0.25,
+            "VCA onset from silence and quiet pedestals matches the dbx 160 at 48 and 96 kHz");
 }
 
 void testVcaDetectorAlignment()
@@ -9559,6 +9632,7 @@ int main(int argc, char** argv)
         testDbxSidechainTilt();
         testDbxSidechainTiltEngagementLifecycle();
         testVcaDbxParityGates();
+        testVcaDbxOnsetGates();
         testVcaOutputHeadroom();
         std::puts("Multi-Comp VCA parity tests: PASS");
         return 0;
