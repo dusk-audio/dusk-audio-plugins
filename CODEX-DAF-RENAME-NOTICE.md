@@ -44,7 +44,7 @@ Apply this to every file you have touched and to every path in your brief.
 | `DPF_SHA` | `DAF_SHA` |
 | `DPFWIDGETS_*` | `DAFWIDGETS_*` |
 | `.github/workflows/dpf-*.yml` | `.github/workflows/daf-*.yml` |
-| `docker/check_dpf_pins.sh` | `docker/check_daf_pins.sh` |
+| `docker/check_dpf_pins.sh` | `docker/check_daf_pins.sh` (since replaced by `docker/check_daf_checkout.sh`) |
 | `.github/scripts/dpf_clap_validate.py` | `.github/scripts/daf_clap_validate.py` |
 | `docs/dpf-migration/` | `docs/daf-migration/` |
 
@@ -106,7 +106,7 @@ Full plugin build plus both ctest targets:
     cmake -U 'SDL2*' -U 'pkgcfg_lib_SDL2*' \
       -S plugins/multi-comp/daf-plugin -B build-mc2 \
       -DCMAKE_BUILD_TYPE=Release -DDAF_PATH=$HOME/projects/DAF \
-      -DDAFWIDGETS_PATH=$HOME/projects/DAF-Widgets -DDUSK_DAF_INSTALL_LOCAL=OFF \
+      -DDUSK_DAF_INSTALL_LOCAL=OFF \
       -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=TRUE
     cmake --build build-mc2 -j8 && ctest --test-dir build-mc2 --output-on-failure
 
@@ -119,8 +119,9 @@ Linux parity check, still mandatory before declaring a DSP change done:
        /src/plugins/multi-comp/core/tests/MultiCompCoreTests.cpp \
        /src/plugins/multi-comp/core/MultiCompDSP.cpp -o /tmp/t && /tmp/t'
 
-Framework pins are `DAF 788eb019` and `DAF-Widgets 91e0004e`. Confirm your
-checkouts match with `./docker/check_daf_pins.sh` (exits 0 when they do).
+DAF is no longer pinned (the widgets live inside it): builds use the ref in
+`.github/daf-ref`, normally `main`. Confirm your checkout matches what CI builds
+with `./docker/check_daf_checkout.sh` (exits 0 when it does).
 
 ## One trap worth knowing
 
@@ -147,5 +148,5 @@ licence headers, and the examples' own `"DISTRHO"` brand strings and
 and strips required attribution. Treat only hits outside that allowlist as
 leftovers to fix.
 
-Then re-run `./docker/check_daf_pins.sh` and
+Then re-run `./docker/check_daf_checkout.sh` and
 `./.github/scripts/check_fork_sources.sh ~/projects/DAF`. Both must exit 0.

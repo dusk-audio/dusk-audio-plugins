@@ -4,10 +4,12 @@ Updated 2026-09-14. This is an unpublished, uncommitted candidate, not release
 approval. The approved native UI is retained. No engine coefficients or source
 files under `src/dsp/` were changed.
 
-Ready for the human to commit and push the reviewed plugin changes. Consolidated
-DAF commit `2f3a685885007a03e8c3e94d82c3b52653bd9a77` is published and the plugin
-CI/Docker pins now select that exact revision. This is source readiness; the
-remaining compatibility checks below concern release qualification.
+Ready for the human to commit and push the reviewed plugin changes. This
+qualification used consolidated DAF commit `2f3a685885007a03e8c3e94d82c3b52653bd9a77`.
+DAF is no longer pinned: CI now builds the revision named in `.github/daf-ref`
+(normally `main`) and records the commit it used in each release's notes. This
+is source readiness; the remaining compatibility checks below concern release
+qualification.
 
 ## Fixes completed in the release pass
 

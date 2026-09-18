@@ -221,7 +221,8 @@ cmake --build plugins/sunset-circuits/daf-plugin/build
 
 The container/CI path (`./docker/build_release.sh sunset`,
 `.github/workflows/daf-release.yml`) is the reproducible way to build a DAF plugin
-from clean — it pins dusk-audio/DAF and dusk-audio/DAF-Widgets (our forks) at known-good SHAs.
+from clean. It builds the dusk-audio/DAF revision named in `.github/daf-ref`
+(normally `main`, resolved to one commit per build and recorded in the release notes).
 
 ### Installation Paths
 - **macOS AU**: `~/Library/Audio/Plug-Ins/Components/`

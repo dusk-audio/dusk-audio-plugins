@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """clap-validator gate for Dusk Audio DAF plugins.
 
-Purpose-built gate for our dusk-audio/DAF fork (see the DAF_REF comment in
+Purpose-built gate for our dusk-audio/DAF fork (see the DAF comment in
 .github/workflows/daf-build.yml). The fork exists because upstream DAF's CLAP
 wrapper called clap_host_latency::changed OUTSIDE clap_plugin::activate(),
 violating the CLAP spec. This script runs clap-validator on a built .clap and:
@@ -298,7 +298,7 @@ def main():
             log(f"::error::DAF CLAP latency regression: '{LATENCY_SIGNATURE}' "
                 "reported -- latency changed outside clap_plugin::activate(). "
                 "This is the upstream bug the dusk-audio/DAF fork fixes; DAF has "
-                "regressed. Check DAF_REF against dusk-audio/DAF main.")
+                "regressed. The DAF commit this run built is in the job summary.")
             sys.exit(1)
 
         # STRICT (or advisory) on the remaining suite.
