@@ -139,34 +139,49 @@ def parse_front_matter(raw_md: str, path: Path, errors: list[str]) -> dict | Non
     return fm
 
 
-def load_plugin_versions(errors: list[str]) -> dict[str, str]:
-    """Read _data/plugins.yml and return {slug: version}."""
+# Statuses of plugins listed on the website but not released yet, so without a
+# version; /release-plugin writes the version when it releases them. The site's
+# own "pre-release" status is deliberately NOT here: it shows a download box, so
+# such an entry must carry a version like any released plugin.
+UNRELEASED_STATUSES = {"in-dev", "coming-soon"}
+
+
+def load_plugin_versions(errors: list[str]) -> tuple[dict[str, str], dict[str, str]]:
+    """Read _data/plugins.yml; return ({slug: version}, {slug: status}).
+
+    The second map holds EVERY listed slug (status "" when absent), so the
+    version check can tell an unlisted plugin from a listed pre-release one.
+    """
     if not PLUGINS_YML.exists():
         errors.append(f"plugins.yml not found at {PLUGINS_YML} "
                       f"(set DUSK_WEBSITE_REPO env var to override)")
-        return {}
+        return {}, {}
     try:
         with PLUGINS_YML.open() as f:
             data = yaml.safe_load(f)
     except yaml.YAMLError as e:
         errors.append(f"{PLUGINS_YML}: YAML parse error: {e}")
-        return {}
+        return {}, {}
     versions: dict[str, str] = {}
+    statuses: dict[str, str] = {}
     if not isinstance(data, list):
         errors.append(f"{PLUGINS_YML}: expected list of plugins")
-        return {}
+        return {}, {}
     for entry in data:
         if not isinstance(entry, dict):
             continue
         slug = entry.get("slug")
+        if not slug:
+            continue
+        statuses[slug] = str(entry.get("status") or "").strip()
         version = entry.get("version")
-        if slug and version:
-            versions[slug] = str(version)
-    return versions
+        if version is not None and str(version).strip():
+            versions[slug] = str(version).strip()
+    return versions, statuses
 
 
 def check_version_match(path: Path, fm: dict, plugin_versions: dict[str, str],
-                       errors: list[str]) -> None:
+                       plugin_statuses: dict[str, str], errors: list[str]) -> None:
     slug = fm.get("slug")
     fm_version = fm.get("version")
     if not slug:
@@ -177,7 +192,12 @@ def check_version_match(path: Path, fm: dict, plugin_versions: dict[str, str],
         return
     expected = plugin_versions.get(slug)
     if expected is None:
-        errors.append(f"{path}: slug '{slug}' not found in {PLUGINS_YML}")
+        if slug not in plugin_statuses:
+            errors.append(f"{path}: slug '{slug}' not found in {PLUGINS_YML}")
+        elif plugin_statuses[slug] not in UNRELEASED_STATUSES:
+            errors.append(f"{path}: slug '{slug}' has status "
+                          f"{plugin_statuses[slug] or '<none>'!r} but no version in {PLUGINS_YML}")
+        # else: not released yet, so there is no version to match.
         return
     if str(fm_version) != expected:
         errors.append(
@@ -200,7 +220,10 @@ def discover_chapters(manuals_dir: Path) -> list[Path]:
 
 def run_preflight(slug: str | None) -> int:
     errors: list[str] = []
-    plugin_versions = load_plugin_versions(errors)
+    plugin_versions, plugin_statuses = load_plugin_versions(errors)
+    # Check versions whenever plugins.yml loaded, even if it lists nothing: an
+    # empty list must fail every chapter as unlisted, not skip the check.
+    plugins_loaded = not errors
     chapters = discover_chapters(MANUALS_DIR)
 
     if slug is not None:
@@ -220,8 +243,8 @@ def run_preflight(slug: str | None) -> int:
         check_dashes(path, prose, errors)
         check_screenshots(path, raw, errors)
         fm = parse_front_matter(raw, path, errors)
-        if fm is not None and plugin_versions:
-            check_version_match(path, fm, plugin_versions, errors)
+        if fm is not None and plugins_loaded:
+            check_version_match(path, fm, plugin_versions, plugin_statuses, errors)
 
     if errors:
         for e in errors:
