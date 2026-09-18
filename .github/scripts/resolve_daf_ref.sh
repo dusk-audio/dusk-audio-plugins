@@ -26,7 +26,8 @@
 # DAF_URL, so a local or unpushed commit (or one only reachable from a fork or a
 # pull request) fails here and not later in every build job.
 # Tags and abbreviated SHAs are not accepted. In .github/daf-ref, text after a
-# '#' is a comment. At most one argument is taken: nothing may follow a flag.
+# '#' is a comment and exactly one value must remain. At most one argument is
+# taken: nothing may follow a flag.
 #
 # Prints the result on stdout. On any failure it exits non-zero with a message
 # naming the ref; it never falls back to another revision.
@@ -63,10 +64,19 @@ configured_ref() {
         return 1
     fi
     local ref
-    # Drop comments and all whitespace (CR included), keep the first value left.
-    ref="$(sed -e 's/#.*//' -e 's/[[:space:]]//g' "$REF_FILE" | grep -v '^$' | head -n 1 || true)"
+    # Drop comments and surrounding whitespace (CR included); exactly one value
+    # may be left, so a second line is refused rather than silently ignored.
+    ref="$(sed -e 's/#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$REF_FILE" | grep -v '^$' || true)"
     if [ -z "$ref" ]; then
         echo "resolve_daf_ref: $REF_FILE names no ref" >&2
+        return 1
+    fi
+    if [[ "$ref" == *$'\n'* ]]; then
+        echo "resolve_daf_ref: $REF_FILE names more than one ref; it takes exactly one value" >&2
+        return 1
+    fi
+    if [[ "$ref" =~ [[:space:]] ]]; then
+        echo "resolve_daf_ref: $REF_FILE ref '$ref' contains whitespace" >&2
         return 1
     fi
     normalize "$ref"

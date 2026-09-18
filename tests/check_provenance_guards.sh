@@ -495,8 +495,13 @@ check 'resolver refuses a ref after --github-output in CI' 1 'at most one argume
 check_same 'resolver wrote no output for a refused ref' "$(cat "$gh_out")" ''
 check 'resolver --github-output needs GITHUB_OUTPUT' 1 'needs GITHUB_OUTPUT' env -u GITHUB_OUTPUT "$RESOLVER" --github-output
 check 'resolver lets DAF_REF override the file' 0 "$pin" env DAF_REF="$pin" DAF_URL="file://$WORK/daf-remote.git" "$RESOLVER"
-printf 'main   # comment\r\n' > "$REF_FILE"
-check 'resolver strips comments and CR from .github/daf-ref' 0 '^main$' "$RESOLVER" --configured
+printf '\t main   # comment\r\n' > "$REF_FILE"
+check 'resolver strips comments, surrounding whitespace and CR from .github/daf-ref' 0 '^main$' "$RESOLVER" --configured
+printf '# fixture\nmain\n\n# held back\n%s\n' "$pin" > "$REF_FILE"
+check 'resolver refuses a second ref in .github/daf-ref' 1 'more than one ref' "$RESOLVER" --configured
+check 'resolver resolves nothing when .github/daf-ref names two refs' 1 'more than one ref' env DAF_URL="file://$WORK/daf-remote.git" "$RESOLVER"
+printf 'ma in\n' > "$REF_FILE"
+check 'resolver refuses a ref with whitespace inside it' 1 'contains whitespace' "$RESOLVER" --configured
 set_ref main
 check 'resolver rejects an unknown branch' 1 "branch 'nope' does not exist" env DAF_URL="file://$WORK/daf-remote.git" "$RESOLVER" nope
 check 'resolver names the branch when origin is unreachable' 1 "to resolve branch 'main'" env GIT_ALLOW_PROTOCOL=file "$RESOLVER"
