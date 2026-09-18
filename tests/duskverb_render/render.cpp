@@ -2441,7 +2441,11 @@ int main (int argc, char** argv)
         if (filmReader->numChannels == 1)
             filmInput.copyFrom (1, 0, filmInput, 0, 0, filmSamples);
 
-        constexpr size_t maxMeterFilmFrames = 10000;
+        // static: a lambda may use a variable with static storage without
+        // capturing it on every compiler. A plain constexpr local is accepted
+        // uncaptured by GCC and Clang but rejected by MSVC (C3493), and
+        // capturing it instead draws Clang's -Wunused-lambda-capture.
+        static constexpr size_t maxMeterFilmFrames = 10000;
         std::vector<int> captureSamples;
         auto appendGrid = [&captureSamples] (double start, double stop, double step)
         {
