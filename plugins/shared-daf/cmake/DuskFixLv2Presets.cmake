@@ -4,7 +4,7 @@
 # an output parameter is followed by more input parameters, the exporter emits
 # a period before those later port entries and presets.ttl becomes invalid
 # Turtle. Keep this build-local workaround until the equivalent exporter fix is
-# available in the pinned dusk-audio/DAF revision.
+# available in the dusk-audio/DAF revision the builds use (.github/daf-ref).
 
 if(NOT DEFINED PRESETS_FILE OR PRESETS_FILE STREQUAL "")
     message(FATAL_ERROR "PRESETS_FILE is required")

@@ -1,0 +1,34 @@
+name: DAF provenance guards
+
+# Runs tests/check_provenance_guards.sh for any change that can alter which DAF
+# revision a build uses or how it is checked out: every workflow (a DAF checkout
+# can be added to any of them, and daf-au-test.yml has no PR trigger of its
+# own), .github/daf-ref, the scripts that resolve and verify it, and the local
+# checkout guard. It builds nothing, so it is cheap enough to run on all of them.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - '.github/daf-ref'
+      - '.github/scripts/**'
+      - '.gitattributes'
+      - 'docker/check_daf_checkout.sh'
+      - 'tests/check_provenance_guards.sh'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  provenance:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Test the framework provenance guards
+        shell: bash
+        run: ./tests/check_provenance_guards.sh

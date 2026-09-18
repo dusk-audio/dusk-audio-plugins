@@ -49,8 +49,7 @@ Already written and validated inside tape-echo — reuse, do not rewrite:
 | Factory-preset table + host programs | `daf-plugin/TapeEchoParams.hpp` + shell | preset headers |
 | CMake template | `daf-plugin/CMakeLists.txt` | JUCE CMake |
 
-DAF checkout: `~/projects/DAF` — our fork `dusk-audio/DAF`, branch `main` (permanent home of our DAF patches: CLAP latency-in-activate, AU/CLAP/VST3 state hardening, Wayland LV2 UIs). Keep the checkout on the SHA pinned by `DAF_REF` in `.github/workflows/daf-build.yml`. Needs `git submodule update --init` for pugl.
-DAF-Widgets checkout: `~/projects/DAF-Widgets` (DearImGui wrapper).
+DAF checkout: `~/projects/DAF` — our fork `dusk-audio/DAF`, branch `main` (permanent home of our DAF patches: CLAP latency-in-activate, AU/CLAP/VST3 state hardening, Wayland LV2 UIs). DAF is not pinned: CI builds the ref in `.github/daf-ref` (normally `main`), so keep the checkout on it; `./docker/check_daf_checkout.sh` verifies it and `--fix` fast-forwards a clean checkout. Pugl and the widgets (including the DearImGui wrapper) are in-tree under `dgl/` and `widgets/`; there are no submodules and no separate DAF-Widgets checkout.
 
 ## Landmines (all hit and fixed during tape-echo — do not rediscover them)
 

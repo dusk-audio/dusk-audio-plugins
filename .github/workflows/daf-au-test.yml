@@ -10,8 +10,8 @@ on:
     tags:
       - 'tape-echo-daf-v*'
 
-env:
-  DAF_SHA: 2f3a685885007a03e8c3e94d82c3b52653bd9a77
+# DAF is not pinned; this single-job debug workflow builds the ref in
+# .github/daf-ref and logs the resolved commit.
 
 jobs:
   build-au-macos:
@@ -23,16 +23,22 @@ jobs:
         with:
           persist-credentials: false
 
-      # DAF and DAF-Widgets come from permanent dusk-audio hard forks.
-      # Keep SHAs in sync with daf-build.yml, daf-release.yml and
-      # docker/build_release.sh.
+      # DAF comes from the permanent dusk-audio hard fork.
+      - name: Resolve DAF revision
+        id: daf
+        run: ./.github/scripts/resolve_daf_ref.sh --github-output
       - name: Checkout DAF
         uses: actions/checkout@v4
         with:
           repository: dusk-audio/DAF
-          ref: ${{ env.DAF_SHA }}
+          ref: ${{ steps.daf.outputs.sha }}
           path: DAF
           persist-credentials: false
+
+      - name: Verify DAF revision
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: ./.github/scripts/verify_daf_checkout.sh DAF "${{ steps.daf.outputs.sha }}"
 
       - name: Install Ninja
         run: brew install ninja

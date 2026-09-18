@@ -1,0 +1,6 @@
+# Scripts the CI workflows execute, including on the Windows runners, where
+# Git's default core.autocrlf=true would otherwise check them out with CRLF
+# line endings and bash would fail on the first line ("bash\r"). Scoped to what
+# CI runs; widen it when another script starts running on Windows.
+.github/scripts/*.sh text eol=lf
+.github/daf-ref text eol=lf

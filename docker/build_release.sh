@@ -15,8 +15,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 IMAGE_NAME="dusk-plugins-builder"
 
-# DAF SHA — keep in sync with the DAF workflow pins.
-DAF_SHA="2f3a685885007a03e8c3e94d82c3b52653bd9a77"
+# DAF is not pinned: builds use the ref in .github/daf-ref (normally main),
+# resolved to one commit when a DAF plugin is built. Export DAF_REF=<branch or
+# full sha> to override it for a local build only; CI never does.
 
 # Plugin lookup functions (compatible with bash 3.2 on macOS)
 get_plugin_target() {
@@ -64,12 +65,14 @@ is_sunset() {
 }
 
 # Build Sunset Circuits (DAF) in the container. Unlike the JUCE plugins this does
-# NOT use the top-level JUCE build graph: it clones dusk-audio/DAF at the pinned
-# SHA inside the container and builds plugins/sunset-circuits/daf-plugin
+# NOT use the top-level JUCE build graph: it clones dusk-audio/DAF at the commit
+# .github/daf-ref resolves to, inside the container, and builds plugins/sunset-circuits/daf-plugin
 # standalone (mirrors .github/workflows/daf-release.yml). Produces VST3/CLAP/LV2.
 build_sunset() {
     echo "=== Building Sunset Circuits (DAF) ==="
-    echo "Using: $CONTAINER_CMD  (DAF ${DAF_SHA:0:12})"
+    local DAF_SHA
+    DAF_SHA="$("$PROJECT_DIR/.github/scripts/resolve_daf_ref.sh")"
+    echo "Using: $CONTAINER_CMD  (DAF ${DAF_SHA:0:12}${DAF_REF:+, local override DAF_REF=$DAF_REF})"
 
     if ! $CONTAINER_CMD image inspect "$IMAGE_NAME" &>/dev/null; then
         echo "Building container image..."
@@ -92,7 +95,7 @@ build_sunset() {
             apt-get install -y --no-install-recommends \
                 ninja-build libxext-dev libxtst-dev libglu1-mesa-dev mesa-common-dev libdbus-1-dev
 
-            # Pugl and widgets are included in the pinned DAF tree.
+            # Pugl and widgets are included in the DAF tree.
             fetch_sha() {
                 local url="$1" sha="$2" dir="$3"
                 mkdir -p "$dir" && cd "$dir"
