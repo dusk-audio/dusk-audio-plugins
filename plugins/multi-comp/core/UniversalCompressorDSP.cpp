@@ -437,10 +437,13 @@ void UniversalCompressorDSP::processBlock (const float* const* in, float* const*
                 break;
 
             case CompMode::VCA:
+                // With the sidechain HP on, the detector has to read the
+                // filtered sidechain; on the input it would still pump on bass.
                 for (int i = 0; i < numSamples; ++i)
                 {
                     const float scSignal = useStereoLink ? linkedSidechain[ch][(size_t) i] : filteredSidechain[ch][(size_t) i];
-                    data[i] = vca.process (data[i], ch, cp[0], cp[1], cp[2], cp[3], cp[4], cp[5] > 0.5f, false, scSignal, hasExternalSidechain) * compensationGain;
+                    data[i] = vca.process (data[i], ch, cp[0], cp[1], cp[2], cp[3], cp[4], cp[5] > 0.5f, false, scSignal,
+                                           hasExternalSidechain || scHpEnabled) * compensationGain;
                 }
                 break;
 
