@@ -3,7 +3,6 @@
 #include <juce_core/juce_core.h>
 #include <vector>
 #include <set>
-#include <map>
 #include <cstdint>
 
 //==============================================================================
@@ -153,6 +152,19 @@ struct ChordSuggestion
 };
 
 //==============================================================================
+// Numeric form of a suggestion: no strings, no heap, safe to compute on an
+// audio thread. The headless LV2 wrapper publishes these through its
+// suggestion output control ports, using the same encoding as its detected
+// root and detected quality ports.
+struct SuggestionFacts
+{
+    int rootNote = -1;                                  // 0-11, C=0; -1 when unset
+    ChordQuality quality = ChordQuality::Unknown;
+    SuggestionCategory category = SuggestionCategory::Basic;
+    float commonality = 0.5f;                           // 0.0-1.0, how common the move is
+};
+
+//==============================================================================
 // Main chord analyzer class
 class ChordAnalyzer
 {
@@ -186,6 +198,21 @@ public:
     // Get chord suggestions based on current chord
     std::vector<ChordSuggestion> getSuggestions(const ChordInfo& currentChord,
                                                  SuggestionCategory maxLevel = SuggestionCategory::Advanced) const;
+
+    // The longest list the generator can produce, so a caller can size a
+    // fixed buffer and never truncate. Asserted by the unit tests over every
+    // key, degree and quality.
+    static constexpr int maxSuggestions = 16;
+
+    // The same suggestions without the strings. Writes at most maxOut entries
+    // into out and returns how many it wrote, in the same order and with the
+    // same contents getSuggestions produces - both go through one generator.
+    // Allocates nothing, builds no juce::String and takes no lock, so the
+    // headless LV2 wrapper calls it from run().
+    int getSuggestionFacts(const ChordFacts& currentChord,
+                           SuggestionCategory maxLevel,
+                           SuggestionFacts* out,
+                           int maxOut) const noexcept;
 
     //==========================================================================
     // Static utilities
@@ -289,19 +316,54 @@ private:
 
     //==========================================================================
     // Roman numeral helpers
-    int getScaleDegree(int chordRoot) const;
-    bool isChromatic(int chordRoot) const;
+    int getScaleDegree(int chordRoot) const noexcept;
+    bool isChromatic(int chordRoot) const noexcept;
     juce::String getAccidental(int chordRoot) const;
     juce::String degreeToRoman(int degree, bool uppercase) const;
     juce::String buildRomanNumeral(int chordRoot, ChordQuality quality) const;
 
     //==========================================================================
-    // Suggestion generation
-    juce::String getRootNameInKey(int degree) const;
+    // Suggestion generation.
+    //
+    // The generator emits numeric seeds; getSuggestions spells them and
+    // getSuggestionFacts copies the numbers straight out. One list, so the
+    // strings the editor shows and the numbers the LV2 ports carry cannot
+    // drift apart.
+    //
+    // How a seed's root is spelled in the chord name. The three tiers were
+    // written with different conventions - the diatonic degrees follow the key
+    // signature, the flat-numeral borrowings are always written with flats -
+    // and this records which one each suggestion used.
+    enum class RootSpelling { KeyAware, Sharp, Flat };
+
+    struct SuggestionSeed
+    {
+        int rootNote;                   // pitch class 0-11
+        ChordQuality quality;
+        SuggestionCategory category;
+        float commonality;
+        const char* romanNumeral;       // string literal, never owned
+        const char* reason;             // string literal, never owned
+        RootSpelling spelling;
+        const char* nameSuffix;         // overrides qualityToSuffix when set
+    };
+
+    // Each appends to out[] starting at count and returns the new count,
+    // never writing past maxOut.
+    static int emitSeed(SuggestionSeed* out, int count, int maxOut,
+                        const SuggestionSeed& seed) noexcept;
+    int collectSuggestions(SuggestionSeed* out, int maxOut, int currentDegree,
+                           ChordQuality quality, SuggestionCategory maxLevel) const noexcept;
+    int addBasicSuggestions(SuggestionSeed* out, int count, int maxOut,
+                            int currentDegree, ChordQuality quality) const noexcept;
+    int addIntermediateSuggestions(SuggestionSeed* out, int count, int maxOut,
+                                   int currentDegree, ChordQuality quality) const noexcept;
+    int addAdvancedSuggestions(SuggestionSeed* out, int count, int maxOut,
+                               int currentDegree, ChordQuality quality) const noexcept;
+
+    int rootPitchClassForDegree(int degree) const noexcept;
+    juce::String spellSeed(const SuggestionSeed& seed) const;
     juce::String getSpellingForKey(int pitchClass) const;
-    void addBasicSuggestions(std::vector<ChordSuggestion>& suggestions, int currentDegree, ChordQuality quality) const;
-    void addIntermediateSuggestions(std::vector<ChordSuggestion>& suggestions, int currentDegree, ChordQuality quality) const;
-    void addAdvancedSuggestions(std::vector<ChordSuggestion>& suggestions, int currentDegree, ChordQuality quality) const;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ChordAnalyzer)
 };

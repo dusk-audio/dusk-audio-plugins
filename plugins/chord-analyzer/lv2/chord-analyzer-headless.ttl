@@ -7,6 +7,64 @@
 @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rsz:  <http://lv2plug.in/ns/ext/resize-port#> .
 @prefix urid: <http://lv2plug.in/ns/ext/urid#> .
+@prefix ca:   <https://dusk-audio.github.io/plugins/chord-analyzer-headless#> .
+
+# Scale points shared by the suggestion ports below. Named rather than
+# repeated inline for each port: the four suggestion slots reuse the same
+# two enumerations, and four more copies of a 34 entry list would be a
+# hand-maintained duplicate of ChordQuality. The detection ports keep their
+# inline form, so nothing a host already reads changes.
+#
+# Values match the detection ports exactly: 0 is the empty slot, notes run
+# 1..12 from C, qualities 1..33 in ChordQuality order.
+ca:note-none  a lv2:ScalePoint ; rdfs:label "-" ; rdf:value 0 .
+ca:note-c     a lv2:ScalePoint ; rdfs:label "C" ; rdf:value 1 .
+ca:note-cs-db a lv2:ScalePoint ; rdfs:label "C#/Db" ; rdf:value 2 .
+ca:note-d     a lv2:ScalePoint ; rdfs:label "D" ; rdf:value 3 .
+ca:note-ds-eb a lv2:ScalePoint ; rdfs:label "D#/Eb" ; rdf:value 4 .
+ca:note-e     a lv2:ScalePoint ; rdfs:label "E" ; rdf:value 5 .
+ca:note-f     a lv2:ScalePoint ; rdfs:label "F" ; rdf:value 6 .
+ca:note-fs-gb a lv2:ScalePoint ; rdfs:label "F#/Gb" ; rdf:value 7 .
+ca:note-g     a lv2:ScalePoint ; rdfs:label "G" ; rdf:value 8 .
+ca:note-gs-ab a lv2:ScalePoint ; rdfs:label "G#/Ab" ; rdf:value 9 .
+ca:note-a     a lv2:ScalePoint ; rdfs:label "A" ; rdf:value 10 .
+ca:note-as-bb a lv2:ScalePoint ; rdfs:label "A#/Bb" ; rdf:value 11 .
+ca:note-b     a lv2:ScalePoint ; rdfs:label "B" ; rdf:value 12 .
+
+ca:q-none     a lv2:ScalePoint ; rdfs:label "-" ; rdf:value 0 .
+ca:q-maj      a lv2:ScalePoint ; rdfs:label "maj" ; rdf:value 1 .
+ca:q-m        a lv2:ScalePoint ; rdfs:label "m" ; rdf:value 2 .
+ca:q-dim      a lv2:ScalePoint ; rdfs:label "dim" ; rdf:value 3 .
+ca:q-aug      a lv2:ScalePoint ; rdfs:label "aug" ; rdf:value 4 .
+ca:q-7        a lv2:ScalePoint ; rdfs:label "7" ; rdf:value 5 .
+ca:q-maj7     a lv2:ScalePoint ; rdfs:label "maj7" ; rdf:value 6 .
+ca:q-m7       a lv2:ScalePoint ; rdfs:label "m7" ; rdf:value 7 .
+ca:q-mmaj7    a lv2:ScalePoint ; rdfs:label "mMaj7" ; rdf:value 8 .
+ca:q-dim7     a lv2:ScalePoint ; rdfs:label "dim7" ; rdf:value 9 .
+ca:q-m7b5     a lv2:ScalePoint ; rdfs:label "m7b5" ; rdf:value 10 .
+ca:q-aug7     a lv2:ScalePoint ; rdfs:label "aug7" ; rdf:value 11 .
+ca:q-augmaj7  a lv2:ScalePoint ; rdfs:label "augMaj7" ; rdf:value 12 .
+ca:q-sus2     a lv2:ScalePoint ; rdfs:label "sus2" ; rdf:value 13 .
+ca:q-sus4     a lv2:ScalePoint ; rdfs:label "sus4" ; rdf:value 14 .
+ca:q-7sus4    a lv2:ScalePoint ; rdfs:label "7sus4" ; rdf:value 15 .
+ca:q-add9     a lv2:ScalePoint ; rdfs:label "add9" ; rdf:value 16 .
+ca:q-add11    a lv2:ScalePoint ; rdfs:label "add11" ; rdf:value 17 .
+ca:q-6        a lv2:ScalePoint ; rdfs:label "6" ; rdf:value 18 .
+ca:q-m6       a lv2:ScalePoint ; rdfs:label "m6" ; rdf:value 19 .
+ca:q-maj9     a lv2:ScalePoint ; rdfs:label "maj9" ; rdf:value 20 .
+ca:q-m9       a lv2:ScalePoint ; rdfs:label "m9" ; rdf:value 21 .
+ca:q-9        a lv2:ScalePoint ; rdfs:label "9" ; rdf:value 22 .
+ca:q-maj11    a lv2:ScalePoint ; rdfs:label "maj11" ; rdf:value 23 .
+ca:q-m11      a lv2:ScalePoint ; rdfs:label "m11" ; rdf:value 24 .
+ca:q-11       a lv2:ScalePoint ; rdfs:label "11" ; rdf:value 25 .
+ca:q-maj13    a lv2:ScalePoint ; rdfs:label "maj13" ; rdf:value 26 .
+ca:q-m13      a lv2:ScalePoint ; rdfs:label "m13" ; rdf:value 27 .
+ca:q-13       a lv2:ScalePoint ; rdfs:label "13" ; rdf:value 28 .
+ca:q-5        a lv2:ScalePoint ; rdfs:label "5" ; rdf:value 29 .
+ca:q-7b5      a lv2:ScalePoint ; rdfs:label "7b5" ; rdf:value 30 .
+ca:q-7s5      a lv2:ScalePoint ; rdfs:label "7#5" ; rdf:value 31 .
+ca:q-7b9      a lv2:ScalePoint ; rdfs:label "7b9" ; rdf:value 32 .
+ca:q-7s9      a lv2:ScalePoint ; rdfs:label "7#9" ; rdf:value 33 .
 
 <https://dusk-audio.github.io/plugins/chord-analyzer-headless>
     a lv2:Plugin , lv2:MIDIPlugin ;
@@ -206,4 +264,117 @@
         lv2:maximum 1 ;
         lv2:portProperty lv2:integer , lv2:toggled ;
         rdfs:comment "When on, MIDI CC 64 (sustain pedal) holds the detected chord until the pedal is released."
+
+    # Chord suggestions for the detected chord in the configured key, one slot
+    # per suggestion, in the order the plugin's own UI lists them. A slot with
+    # nothing in it reads 0 ("-") in both of its ports. The set follows Key
+    # Root, Key Mode and Suggestion Level as well as the notes being played.
+    ] , [
+        a lv2:OutputPort , lv2:ControlPort ;
+        lv2:index 11 ;
+        lv2:symbol "suggestion_1_root" ;
+        lv2:name "Suggestion 1 Root" ;
+        lv2:default 0 ;
+        lv2:minimum 0 ;
+        lv2:maximum 12 ;
+        lv2:portProperty lv2:integer , lv2:enumeration ;
+        lv2:scalePoint ca:note-none , ca:note-c , ca:note-cs-db , ca:note-d , ca:note-ds-eb ,
+                       ca:note-e , ca:note-f , ca:note-fs-gb , ca:note-g , ca:note-gs-ab ,
+                       ca:note-a , ca:note-as-bb , ca:note-b
+    ] , [
+        a lv2:OutputPort , lv2:ControlPort ;
+        lv2:index 12 ;
+        lv2:symbol "suggestion_1_quality" ;
+        lv2:name "Suggestion 1 Quality" ;
+        lv2:default 0 ;
+        lv2:minimum 0 ;
+        lv2:maximum 33 ;
+        lv2:portProperty lv2:integer , lv2:enumeration ;
+        lv2:scalePoint ca:q-none , ca:q-maj , ca:q-m , ca:q-dim , ca:q-aug , ca:q-7 ,
+                       ca:q-maj7 , ca:q-m7 , ca:q-mmaj7 , ca:q-dim7 , ca:q-m7b5 , ca:q-aug7 ,
+                       ca:q-augmaj7 , ca:q-sus2 , ca:q-sus4 , ca:q-7sus4 , ca:q-add9 ,
+                       ca:q-add11 , ca:q-6 , ca:q-m6 , ca:q-maj9 , ca:q-m9 , ca:q-9 ,
+                       ca:q-maj11 , ca:q-m11 , ca:q-11 , ca:q-maj13 , ca:q-m13 , ca:q-13 ,
+                       ca:q-5 , ca:q-7b5 , ca:q-7s5 , ca:q-7b9 , ca:q-7s9
+    ] , [
+        a lv2:OutputPort , lv2:ControlPort ;
+        lv2:index 13 ;
+        lv2:symbol "suggestion_2_root" ;
+        lv2:name "Suggestion 2 Root" ;
+        lv2:default 0 ;
+        lv2:minimum 0 ;
+        lv2:maximum 12 ;
+        lv2:portProperty lv2:integer , lv2:enumeration ;
+        lv2:scalePoint ca:note-none , ca:note-c , ca:note-cs-db , ca:note-d , ca:note-ds-eb ,
+                       ca:note-e , ca:note-f , ca:note-fs-gb , ca:note-g , ca:note-gs-ab ,
+                       ca:note-a , ca:note-as-bb , ca:note-b
+    ] , [
+        a lv2:OutputPort , lv2:ControlPort ;
+        lv2:index 14 ;
+        lv2:symbol "suggestion_2_quality" ;
+        lv2:name "Suggestion 2 Quality" ;
+        lv2:default 0 ;
+        lv2:minimum 0 ;
+        lv2:maximum 33 ;
+        lv2:portProperty lv2:integer , lv2:enumeration ;
+        lv2:scalePoint ca:q-none , ca:q-maj , ca:q-m , ca:q-dim , ca:q-aug , ca:q-7 ,
+                       ca:q-maj7 , ca:q-m7 , ca:q-mmaj7 , ca:q-dim7 , ca:q-m7b5 , ca:q-aug7 ,
+                       ca:q-augmaj7 , ca:q-sus2 , ca:q-sus4 , ca:q-7sus4 , ca:q-add9 ,
+                       ca:q-add11 , ca:q-6 , ca:q-m6 , ca:q-maj9 , ca:q-m9 , ca:q-9 ,
+                       ca:q-maj11 , ca:q-m11 , ca:q-11 , ca:q-maj13 , ca:q-m13 , ca:q-13 ,
+                       ca:q-5 , ca:q-7b5 , ca:q-7s5 , ca:q-7b9 , ca:q-7s9
+    ] , [
+        a lv2:OutputPort , lv2:ControlPort ;
+        lv2:index 15 ;
+        lv2:symbol "suggestion_3_root" ;
+        lv2:name "Suggestion 3 Root" ;
+        lv2:default 0 ;
+        lv2:minimum 0 ;
+        lv2:maximum 12 ;
+        lv2:portProperty lv2:integer , lv2:enumeration ;
+        lv2:scalePoint ca:note-none , ca:note-c , ca:note-cs-db , ca:note-d , ca:note-ds-eb ,
+                       ca:note-e , ca:note-f , ca:note-fs-gb , ca:note-g , ca:note-gs-ab ,
+                       ca:note-a , ca:note-as-bb , ca:note-b
+    ] , [
+        a lv2:OutputPort , lv2:ControlPort ;
+        lv2:index 16 ;
+        lv2:symbol "suggestion_3_quality" ;
+        lv2:name "Suggestion 3 Quality" ;
+        lv2:default 0 ;
+        lv2:minimum 0 ;
+        lv2:maximum 33 ;
+        lv2:portProperty lv2:integer , lv2:enumeration ;
+        lv2:scalePoint ca:q-none , ca:q-maj , ca:q-m , ca:q-dim , ca:q-aug , ca:q-7 ,
+                       ca:q-maj7 , ca:q-m7 , ca:q-mmaj7 , ca:q-dim7 , ca:q-m7b5 , ca:q-aug7 ,
+                       ca:q-augmaj7 , ca:q-sus2 , ca:q-sus4 , ca:q-7sus4 , ca:q-add9 ,
+                       ca:q-add11 , ca:q-6 , ca:q-m6 , ca:q-maj9 , ca:q-m9 , ca:q-9 ,
+                       ca:q-maj11 , ca:q-m11 , ca:q-11 , ca:q-maj13 , ca:q-m13 , ca:q-13 ,
+                       ca:q-5 , ca:q-7b5 , ca:q-7s5 , ca:q-7b9 , ca:q-7s9
+    ] , [
+        a lv2:OutputPort , lv2:ControlPort ;
+        lv2:index 17 ;
+        lv2:symbol "suggestion_4_root" ;
+        lv2:name "Suggestion 4 Root" ;
+        lv2:default 0 ;
+        lv2:minimum 0 ;
+        lv2:maximum 12 ;
+        lv2:portProperty lv2:integer , lv2:enumeration ;
+        lv2:scalePoint ca:note-none , ca:note-c , ca:note-cs-db , ca:note-d , ca:note-ds-eb ,
+                       ca:note-e , ca:note-f , ca:note-fs-gb , ca:note-g , ca:note-gs-ab ,
+                       ca:note-a , ca:note-as-bb , ca:note-b
+    ] , [
+        a lv2:OutputPort , lv2:ControlPort ;
+        lv2:index 18 ;
+        lv2:symbol "suggestion_4_quality" ;
+        lv2:name "Suggestion 4 Quality" ;
+        lv2:default 0 ;
+        lv2:minimum 0 ;
+        lv2:maximum 33 ;
+        lv2:portProperty lv2:integer , lv2:enumeration ;
+        lv2:scalePoint ca:q-none , ca:q-maj , ca:q-m , ca:q-dim , ca:q-aug , ca:q-7 ,
+                       ca:q-maj7 , ca:q-m7 , ca:q-mmaj7 , ca:q-dim7 , ca:q-m7b5 , ca:q-aug7 ,
+                       ca:q-augmaj7 , ca:q-sus2 , ca:q-sus4 , ca:q-7sus4 , ca:q-add9 ,
+                       ca:q-add11 , ca:q-6 , ca:q-m6 , ca:q-maj9 , ca:q-m9 , ca:q-9 ,
+                       ca:q-maj11 , ca:q-m11 , ca:q-11 , ca:q-maj13 , ca:q-m13 , ca:q-13 ,
+                       ca:q-5 , ca:q-7b5 , ca:q-7s5 , ca:q-7b9 , ca:q-7s9
     ] .

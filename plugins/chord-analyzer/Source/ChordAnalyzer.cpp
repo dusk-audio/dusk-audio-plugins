@@ -808,28 +808,22 @@ float ChordAnalyzer::calculateConfidence(int patternIndex, std::uint32_t interva
 
 //==============================================================================
 // Roman numeral generation
-int ChordAnalyzer::getScaleDegree(int chordRoot) const
+int ChordAnalyzer::getScaleDegree(int chordRoot) const noexcept
 {
-    int interval = (chordRoot - keyRoot + 12) % 12;
+    const int interval = (((chordRoot - keyRoot) % 12) + 12) % 12;
 
-    if (minorKey)
-    {
-        // Natural minor scale: 0, 2, 3, 5, 7, 8, 10
-        static const std::map<int, int> minorDegrees = {
-            {0, 1}, {2, 2}, {3, 3}, {5, 4}, {7, 5}, {8, 6}, {10, 7}
-        };
-        auto it = minorDegrees.find(interval);
-        if (it != minorDegrees.end()) return it->second;
-    }
-    else
-    {
-        // Major scale: 0, 2, 4, 5, 7, 9, 11
-        static const std::map<int, int> majorDegrees = {
-            {0, 1}, {2, 2}, {4, 3}, {5, 4}, {7, 5}, {9, 6}, {11, 7}
-        };
-        auto it = majorDegrees.find(interval);
-        if (it != majorDegrees.end()) return it->second;
-    }
+    // Degree of each interval, 0 for an interval the scale does not contain.
+    // Natural minor is 0, 2, 3, 5, 7, 8, 10; major is 0, 2, 4, 5, 7, 9, 11.
+    // constexpr arrays rather than the function-local std::maps these were:
+    // getSuggestionFacts runs on the audio thread in the headless LV2, and a
+    // function-local static container allocates and takes a guard lock the
+    // first time it is touched.
+    static constexpr int minorDegrees[12] = { 1, 0, 2, 3, 0, 4, 0, 5, 6, 0, 7, 0 };
+    static constexpr int majorDegrees[12] = { 1, 0, 2, 0, 3, 4, 0, 5, 0, 6, 0, 7 };
+
+    const int degree = minorKey ? minorDegrees[interval] : majorDegrees[interval];
+    if (degree != 0)
+        return degree;
 
     // Chromatic - find closest degree
     if (interval == 1) return 2;   // b2
@@ -844,22 +838,18 @@ int ChordAnalyzer::getScaleDegree(int chordRoot) const
     return 1;  // Default to tonic
 }
 
-bool ChordAnalyzer::isChromatic(int chordRoot) const
+bool ChordAnalyzer::isChromatic(int chordRoot) const noexcept
 {
-    int interval = (chordRoot - keyRoot + 12) % 12;
+    const int interval = (((chordRoot - keyRoot) % 12) + 12) % 12;
 
-    if (minorKey)
-    {
-        // Natural minor scale degrees
-        static const std::set<int> minorScale = {0, 2, 3, 5, 7, 8, 10};
-        return minorScale.find(interval) == minorScale.end();
-    }
-    else
-    {
-        // Major scale degrees
-        static const std::set<int> majorScale = {0, 2, 4, 5, 7, 9, 11};
-        return majorScale.find(interval) == majorScale.end();
-    }
+    // One bit per scale degree, for the same reason getScaleDegree above uses
+    // a plain array: no static container to build on first use.
+    constexpr unsigned int minorScale = (1u << 0) | (1u << 2) | (1u << 3) | (1u << 5)
+                                      | (1u << 7) | (1u << 8) | (1u << 10);
+    constexpr unsigned int majorScale = (1u << 0) | (1u << 2) | (1u << 4) | (1u << 5)
+                                      | (1u << 7) | (1u << 9) | (1u << 11);
+
+    return (((minorKey ? minorScale : majorScale) >> interval) & 1u) == 0u;
 }
 
 juce::String ChordAnalyzer::getAccidental(int chordRoot) const
@@ -1026,19 +1016,17 @@ HarmonicFunction ChordAnalyzer::getHarmonicFunction(int chordRoot, ChordQuality 
 }
 
 //==============================================================================
-juce::String ChordAnalyzer::getRootNameInKey(int degree) const
+int ChordAnalyzer::rootPitchClassForDegree(int degree) const noexcept
 {
-    // Calculate the pitch class for this scale degree
-    static const int majorIntervals[] = {0, 2, 4, 5, 7, 9, 11};
-    static const int minorIntervals[] = {0, 2, 3, 5, 7, 8, 10};
+    // Pitch class of a scale degree in the current key.
+    static constexpr int majorIntervals[7] = { 0, 2, 4, 5, 7, 9, 11 };
+    static constexpr int minorIntervals[7] = { 0, 2, 3, 5, 7, 8, 10 };
 
-    if (degree < 1 || degree > 7) return "?";
+    if (degree < 1 || degree > 7)
+        return keyRoot % 12;
 
-    int interval = minorKey ? minorIntervals[degree - 1] : majorIntervals[degree - 1];
-    int pitchClass = (keyRoot + interval) % 12;
-
-    // Use the key-aware spelling method
-    return getSpellingForKey(pitchClass);
+    const int interval = minorKey ? minorIntervals[degree - 1] : majorIntervals[degree - 1];
+    return (keyRoot + interval) % 12;
 }
 
 juce::String ChordAnalyzer::getSpellingForKey(int pitchClass) const
@@ -1086,6 +1074,49 @@ juce::String ChordAnalyzer::getSpellingForKey(int pitchClass) const
     return keySpellings[keyIndex][pitchClass];
 }
 
+//==============================================================================
+// Suggestion generation. Everything below emits SuggestionSeeds; the two
+// public entry points differ only in what they do with them.
+int ChordAnalyzer::emitSeed(SuggestionSeed* out, int count, int maxOut,
+                            const SuggestionSeed& seed) noexcept
+{
+    if (count >= maxOut)
+        return count;               // caller sized the buffer; drop, never write past it
+
+    out[count] = seed;
+    return count + 1;
+}
+
+int ChordAnalyzer::collectSuggestions(SuggestionSeed* out, int maxOut, int currentDegree,
+                                      ChordQuality quality, SuggestionCategory maxLevel) const noexcept
+{
+    int count = addBasicSuggestions(out, 0, maxOut, currentDegree, quality);
+
+    if (maxLevel >= SuggestionCategory::Intermediate)
+        count = addIntermediateSuggestions(out, count, maxOut, currentDegree, quality);
+
+    if (maxLevel >= SuggestionCategory::Advanced)
+        count = addAdvancedSuggestions(out, count, maxOut, currentDegree, quality);
+
+    return count;
+}
+
+juce::String ChordAnalyzer::spellSeed(const SuggestionSeed& seed) const
+{
+    juce::String name;
+
+    switch (seed.spelling)
+    {
+        case RootSpelling::KeyAware: name = getSpellingForKey(seed.rootNote);        break;
+        case RootSpelling::Flat:     name = pitchClassToName(seed.rootNote, true);   break;
+        case RootSpelling::Sharp:
+        default:                     name = pitchClassToName(seed.rootNote, false);  break;
+    }
+
+    return name + (seed.nameSuffix != nullptr ? juce::String(seed.nameSuffix)
+                                              : qualityToSuffix(seed.quality));
+}
+
 std::vector<ChordSuggestion> ChordAnalyzer::getSuggestions(const ChordInfo& currentChord,
                                                             SuggestionCategory maxLevel) const
 {
@@ -1094,34 +1125,69 @@ std::vector<ChordSuggestion> ChordAnalyzer::getSuggestions(const ChordInfo& curr
     if (!currentChord.isValid || currentChord.rootNote < 0)
         return suggestions;
 
-    int currentDegree = getScaleDegree(currentChord.rootNote);
+    SuggestionSeed seeds[maxSuggestions];
+    const int count = collectSuggestions(seeds, maxSuggestions,
+                                         getScaleDegree(currentChord.rootNote),
+                                         currentChord.quality, maxLevel);
 
-    // Always add basic suggestions
-    addBasicSuggestions(suggestions, currentDegree, currentChord.quality);
+    suggestions.reserve(static_cast<size_t>(count));
 
-    if (maxLevel >= SuggestionCategory::Intermediate)
-        addIntermediateSuggestions(suggestions, currentDegree, currentChord.quality);
-
-    if (maxLevel >= SuggestionCategory::Advanced)
-        addAdvancedSuggestions(suggestions, currentDegree, currentChord.quality);
+    for (int i = 0; i < count; ++i)
+    {
+        ChordSuggestion s;
+        s.romanNumeral = seeds[i].romanNumeral;
+        s.chordName    = spellSeed(seeds[i]);
+        s.category     = seeds[i].category;
+        s.reason       = seeds[i].reason;
+        s.commonality  = seeds[i].commonality;
+        suggestions.push_back(std::move(s));
+    }
 
     return suggestions;
 }
 
-void ChordAnalyzer::addBasicSuggestions(std::vector<ChordSuggestion>& suggestions,
-                                         int currentDegree, ChordQuality /*quality*/) const
+int ChordAnalyzer::getSuggestionFacts(const ChordFacts& currentChord,
+                                      SuggestionCategory maxLevel,
+                                      SuggestionFacts* out,
+                                      int maxOut) const noexcept
 {
-    // Common progressions based on current chord
-    auto addSuggestion = [&](int degree, const juce::String& roman, ChordQuality q,
-                             const juce::String& reason, float commonality)
+    if (out == nullptr || maxOut <= 0)
+        return 0;
+
+    if (!currentChord.isValid || currentChord.rootNote < 0)
+        return 0;
+
+    // On the stack, not the heap: this runs on the audio thread in the
+    // headless LV2 wrapper.
+    SuggestionSeed seeds[maxSuggestions];
+    const int count = collectSuggestions(seeds, maxSuggestions,
+                                         getScaleDegree(currentChord.rootNote),
+                                         currentChord.quality, maxLevel);
+
+    const int written = count < maxOut ? count : maxOut;
+
+    for (int i = 0; i < written; ++i)
     {
-        ChordSuggestion s;
-        s.romanNumeral = roman;
-        s.chordName = getRootNameInKey(degree) + qualityToSuffix(q);
-        s.category = SuggestionCategory::Basic;
-        s.reason = reason;
-        s.commonality = commonality;
-        suggestions.push_back(s);
+        out[i].rootNote    = seeds[i].rootNote;
+        out[i].quality     = seeds[i].quality;
+        out[i].category    = seeds[i].category;
+        out[i].commonality = seeds[i].commonality;
+    }
+
+    return written;
+}
+
+int ChordAnalyzer::addBasicSuggestions(SuggestionSeed* out, int count, int maxOut,
+                                        int currentDegree, ChordQuality /*quality*/) const noexcept
+{
+    // Common progressions based on current chord. The root is a scale degree,
+    // so it is spelled by the key signature.
+    auto addSuggestion = [&](int degree, const char* roman, ChordQuality q,
+                             const char* reason, float commonality)
+    {
+        count = emitSeed(out, count, maxOut,
+                         { rootPitchClassForDegree(degree), q, SuggestionCategory::Basic,
+                           commonality, roman, reason, RootSpelling::KeyAware, nullptr });
     };
 
     if (minorKey)
@@ -1199,37 +1265,33 @@ void ChordAnalyzer::addBasicSuggestions(std::vector<ChordSuggestion>& suggestion
                 break;
         }
     }
+
+    return count;
 }
 
-void ChordAnalyzer::addIntermediateSuggestions(std::vector<ChordSuggestion>& suggestions,
-                                                int currentDegree, ChordQuality quality) const
+int ChordAnalyzer::addIntermediateSuggestions(SuggestionSeed* out, int count, int maxOut,
+                                               int currentDegree, ChordQuality quality) const noexcept
 {
-    auto addSuggestion = [&](const juce::String& roman, const juce::String& name,
-                             const juce::String& reason, float commonality)
+    auto addSuggestion = [&](const char* roman, int rootNote, ChordQuality q,
+                             RootSpelling spelling, const char* reason, float commonality)
     {
-        ChordSuggestion s;
-        s.romanNumeral = roman;
-        s.chordName = name;
-        s.category = SuggestionCategory::Intermediate;
-        s.reason = reason;
-        s.commonality = commonality;
-        suggestions.push_back(s);
+        count = emitSeed(out, count, maxOut,
+                         { rootNote, q, SuggestionCategory::Intermediate,
+                           commonality, roman, reason, spelling, nullptr });
     };
 
     // Secondary dominants
     if (currentDegree == 1)
     {
         // V/V (secondary dominant of V)
-        int vOfV = (keyRoot + 2) % 12;  // D in C major
-        addSuggestion("V/V", pitchClassToName(vOfV) + "7",
+        addSuggestion("V/V", (keyRoot + 2) % 12, ChordQuality::Dominant7, RootSpelling::Sharp,
                       "Secondary dominant to V", 0.7f);
     }
 
     if (currentDegree == 2 || currentDegree == 5)
     {
         // V/vi (secondary dominant of vi)
-        int vOfVi = (keyRoot + 4) % 12;  // E in C major
-        addSuggestion("V/vi", pitchClassToName(vOfVi) + "7",
+        addSuggestion("V/vi", (keyRoot + 4) % 12, ChordQuality::Dominant7, RootSpelling::Sharp,
                       "Secondary dominant to vi", 0.6f);
     }
 
@@ -1237,20 +1299,17 @@ void ChordAnalyzer::addIntermediateSuggestions(std::vector<ChordSuggestion>& sug
     if (!minorKey)
     {
         // bVII from mixolydian - use flats for flat numeral
-        int bVII = (keyRoot + 10) % 12;
-        addSuggestion("bVII", pitchClassToName(bVII, true),
+        addSuggestion("bVII", (keyRoot + 10) % 12, ChordQuality::Major, RootSpelling::Flat,
                       "Borrowed from parallel minor", 0.65f);
 
         // iv from parallel minor
-        int iv = (keyRoot + 5) % 12;
-        addSuggestion("iv", pitchClassToName(iv) + "m",
+        addSuggestion("iv", (keyRoot + 5) % 12, ChordQuality::Minor, RootSpelling::Sharp,
                       "Minor iv from parallel", 0.6f);
     }
     else
     {
         // IV from parallel major (Picardy motion)
-        int IV = (keyRoot + 5) % 12;
-        addSuggestion("IV", pitchClassToName(IV),
+        addSuggestion("IV", (keyRoot + 5) % 12, ChordQuality::Major, RootSpelling::Sharp,
                       "Borrowed from parallel major", 0.6f);
     }
 
@@ -1258,68 +1317,64 @@ void ChordAnalyzer::addIntermediateSuggestions(std::vector<ChordSuggestion>& sug
     if (quality == ChordQuality::Dominant7)
     {
         // Tritone substitution target - use flats for flat numeral
-        int tritone = (keyRoot + 6) % 12;
-        addSuggestion("bII7", pitchClassToName(tritone, true) + "7",
+        addSuggestion("bII7", (keyRoot + 6) % 12, ChordQuality::Dominant7, RootSpelling::Flat,
                       "Tritone substitution", 0.5f);
     }
+
+    return count;
 }
 
-void ChordAnalyzer::addAdvancedSuggestions(std::vector<ChordSuggestion>& suggestions,
-                                            int currentDegree, ChordQuality /*quality*/) const
+int ChordAnalyzer::addAdvancedSuggestions(SuggestionSeed* out, int count, int maxOut,
+                                           int currentDegree, ChordQuality /*quality*/) const noexcept
 {
-    auto addSuggestion = [&](const juce::String& roman, const juce::String& name,
-                             const juce::String& reason, float commonality)
+    auto addSuggestion = [&](const char* roman, int rootNote, ChordQuality q,
+                             const char* nameSuffix, const char* reason, float commonality)
     {
-        ChordSuggestion s;
-        s.romanNumeral = roman;
-        s.chordName = name;
-        s.category = SuggestionCategory::Advanced;
-        s.reason = reason;
-        s.commonality = commonality;
-        suggestions.push_back(s);
+        // Every advanced suggestion is spelled with flats: they are all named
+        // by a flat Roman numeral.
+        count = emitSeed(out, count, maxOut,
+                         { rootNote, q, SuggestionCategory::Advanced,
+                           commonality, roman, reason, RootSpelling::Flat, nameSuffix });
     };
 
     // Chromatic mediants
     if (currentDegree == 1)
     {
-        // bVI (chromatic mediant) - use flats for flat numeral
-        int bVI = (keyRoot + 8) % 12;
-        addSuggestion("bVI", pitchClassToName(bVI, true),
+        // bVI (chromatic mediant)
+        addSuggestion("bVI", (keyRoot + 8) % 12, ChordQuality::Major, nullptr,
                       "Chromatic mediant - dramatic shift", 0.4f);
 
-        // bIII (chromatic mediant) - use flats for flat numeral
-        int bIII = (keyRoot + 3) % 12;
-        addSuggestion("bIII", pitchClassToName(bIII, true),
+        // bIII (chromatic mediant)
+        addSuggestion("bIII", (keyRoot + 3) % 12, ChordQuality::Major, nullptr,
                       "Chromatic mediant - upward", 0.35f);
     }
 
     // Neapolitan
     if (currentDegree == 4 || currentDegree == 2)
     {
-        // Neapolitan chord - use flats for flat numeral
-        int neapolitan = (keyRoot + 1) % 12;
-        addSuggestion("bII", pitchClassToName(neapolitan, true),
+        addSuggestion("bII", (keyRoot + 1) % 12, ChordQuality::Major, nullptr,
                       "Neapolitan chord - pre-dominant", 0.4f);
     }
 
     // Augmented 6th approach
     if (currentDegree == 5)
     {
-        // Italian augmented 6th - built on b6 scale degree
-        // In C major: Ab-C-F# (resolves to G)
-        int flatSix = (keyRoot + 8) % 12;
-        addSuggestion("It+6", pitchClassToName(flatSix, true) + " It+6",
+        // Italian augmented 6th - built on b6 scale degree. In C major that is
+        // Ab-C-F#, which is no quality in the table, so the name carries the
+        // tag and the quality stays Unknown: a host port can still show the
+        // root, and shows "-" where a quality would go.
+        addSuggestion("It+6", (keyRoot + 8) % 12, ChordQuality::Unknown, " It+6",
                       "Italian augmented 6th - chromatic approach", 0.3f);
     }
 
     // Coltrane changes suggestion
     if (currentDegree == 1)
     {
-        // bVI maj7 - use flats for flat numeral
-        int majThirdDown = (keyRoot + 8) % 12;  // Ab in C
-        addSuggestion("bVI maj7", pitchClassToName(majThirdDown, true) + "maj7",
+        addSuggestion("bVI maj7", (keyRoot + 8) % 12, ChordQuality::Major7, nullptr,
                       "Coltrane changes - major third cycle", 0.25f);
     }
+
+    return count;
 }
 
 //==============================================================================
