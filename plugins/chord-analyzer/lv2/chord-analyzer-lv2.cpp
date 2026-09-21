@@ -90,6 +90,10 @@ struct ChordAnalyzerLV2
     bool suggestionKeyMinor = false;
     int  suggestionLevelIndex = -1;
 
+    // Set by activate(): the next run() republishes the detected-chord ports
+    // so a reactivated instance never shows a chord it no longer holds.
+    bool detectedStale = true;
+
     // Sustain pedal (CC 64) state — single audio thread, no synchronisation needed.
     bool             sustainPedalDown = false;
     std::vector<int> sustainedReleasedNotes;  // notes released while pedal was down
@@ -204,7 +208,23 @@ void connect_port (LV2_Handle instance, uint32_t port, void* data)
     }
 }
 
-void activate (LV2_Handle) {}
+void activate (LV2_Handle instance)
+{
+    // LV2 core: activate() must reset every piece of state that depends on
+    // the instance's history. clear() keeps the reserved capacity, so run()
+    // stays allocation free afterwards.
+    auto* self = static_cast<ChordAnalyzerLV2*> (instance);
+
+    self->activeNotes.clear();
+    self->sustainedReleasedNotes.clear();
+    self->sustainPedalDown = false;
+    self->currentChord     = ChordFacts{};
+
+    self->suggestionKeyRoot    = -1;
+    self->suggestionKeyMinor   = false;
+    self->suggestionLevelIndex = -1;
+    self->detectedStale        = true;
+}
 
 void run (LV2_Handle instance, uint32_t /*nSamples*/)
 {
@@ -217,6 +237,13 @@ void run (LV2_Handle instance, uint32_t /*nSamples*/)
     // on the key and on the level, so a change to either has to refresh the
     // suggestion ports even when no note moved.
     bool suggestionsStale = false;
+
+    if (self->detectedStale)
+    {
+        publishDetectedChord (*self, self->currentChord);
+        self->detectedStale = false;
+        suggestionsStale    = true;
+    }
 
     if (self->keyRoot != nullptr && self->keyMode != nullptr)
     {
