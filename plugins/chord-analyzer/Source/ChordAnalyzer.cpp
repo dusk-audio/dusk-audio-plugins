@@ -73,14 +73,29 @@ const std::vector<ChordAnalyzer::ChordPattern> ChordAnalyzer::chordPatterns = {
     // root: at 28, maj9(no5) rooted on Ab beat a plain C7 rooted on the bass
     // and C E G Ab Bb came out as G#maj9(no5,b13)/C. Ranked here only against
     // each other, they win when, and only when, no fifth is sounding.
+    //
+    // Inside the block, a four-tone shape has to outrank a three-tone one
+    // ROOTED ON THE BASS, because findRoot hands the bass candidate five
+    // points and charges half a point for each sounding tone the shape does
+    // not explain. A three-tone shape on the bass with one tone left over
+    // therefore scores its priority + 4.5, so at 7 the four-tone shapes were
+    // half a point short of add9(no5) at 3: Bb C E D over the Bb read as
+    // A#add9(no5,#11), the Bb owning the name and the E demoted to a #11,
+    // rather than as the C9 shell it is (issue #277).
+    //
+    // 8 clears add9(no5). It does not clear the three-tone shells at 5, which
+    // would need 10, and that is deliberate: at 10 these shapes tie the triads
+    // and beat one at another root, which is the failure the paragraph above
+    // describes. Chromatic clusters that pit a shell on the bass against a
+    // four-tone shape elsewhere therefore still take the shell.
     {{0, 4, 14},         ChordQuality::Add9,        "add9",   3, true},
     {{0, 4, 10},         ChordQuality::Dominant7,   "7",      5, true},
     {{0, 4, 11},         ChordQuality::Major7,      "maj7",   5, true},
     {{0, 3, 10},         ChordQuality::Minor7,      "m7",     5, true},
     {{0, 3, 11},         ChordQuality::MinorMajor7, "mMaj7",  5, true},
-    {{0, 4, 10, 14},     ChordQuality::Dominant9,   "9",      7, true},
-    {{0, 4, 11, 14},     ChordQuality::Major9,      "maj9",   7, true},
-    {{0, 3, 10, 14},     ChordQuality::Minor9,      "m9",     7, true},
+    {{0, 4, 10, 14},     ChordQuality::Dominant9,   "9",      8, true},
+    {{0, 4, 11, 14},     ChordQuality::Major9,      "maj9",   8, true},
+    {{0, 3, 10, 14},     ChordQuality::Minor9,      "m9",     8, true},
 };
 
 //==============================================================================
@@ -591,7 +606,9 @@ int ChordAnalyzer::findRoot(std::uint16_t pitchMask, int bassPitch) noexcept
             const int priority = chordPatterns[i].priority;
             float score = static_cast<float>(priority);
 
-            // Bonus for bass note being the root
+            // Bonus for bass note being the root. The no-fifth block at the
+            // top of chordPatterns is spaced against this five, so read the
+            // note there before changing it.
             const bool isBass = (bassPitch == candidateRoot);
             if (isBass)
                 score += 5.0f;

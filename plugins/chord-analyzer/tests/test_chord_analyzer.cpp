@@ -809,6 +809,48 @@ static void testNoFifthAndDyads()
     // parenthesis, so it never reads C7(no5)(13)
     check("C E Bb A = C7(no5,13)", analyzeNotes(a, {60, 64, 70, 81}).name == "C7(no5,13)");
 
+    // Issue #277: a no-fifth ninth shell voiced over its own seventh. The
+    // three-tone add9(no5) rooted on that seventh explains three of the four
+    // tones, and findRoot's bass bonus used to buy it the half point it was
+    // short, so Bb2 C4 E4 D5 came out as A#add9(no5,#11) with the E demoted to
+    // a #11 of a chord nobody played. It is a C9 shell over its seventh, and
+    // the same tones read as a plain C9 the moment a fifth joins them.
+    auto ninthShell = analyzeNotes(a, {46, 60, 64, 74});
+    check("Bb2 C4 E4 D5 = C9(no5) over its 7th",
+          ninthShell.isValid && ninthShell.quality == ChordQuality::Dominant9
+           && ninthShell.rootNote == 0 && ninthShell.bassNote == 10
+           && ninthShell.name == "C9(no5)" && ninthShell.extensions == "/A#"
+           && ninthShell.inversion == 3);
+    check("adding the fifth makes the same voicing a plain C9",
+          analyzeNotes(a, {46, 60, 64, 67, 74}).name == "C9");
+
+    // ...and the minor and major shells voiced the same way, at all twelve
+    // roots. What this fixes is an ordering between two pattern priorities, so
+    // it either holds for every transposition or for none.
+    bool allNinthShells = true;
+    for (int r = 0; r < 12; ++r)
+    {
+        const juce::String root       = ChordAnalyzer::pitchClassToName(r);
+        const juce::String minorSev   = ChordAnalyzer::pitchClassToName((r + 10) % 12);
+        const juce::String majorSev   = ChordAnalyzer::pitchClassToName((r + 11) % 12);
+
+        const auto dom = analyzeNotes(a, {46 + r, 60 + r, 64 + r, 74 + r});
+        if (dom.name != root + "9(no5)" || dom.extensions != "/" + minorSev
+             || dom.inversion != 3)
+            allNinthShells = false;
+
+        const auto min = analyzeNotes(a, {46 + r, 60 + r, 63 + r, 74 + r});
+        if (min.name != root + "m9(no5)" || min.extensions != "/" + minorSev
+             || min.inversion != 3)
+            allNinthShells = false;
+
+        const auto maj = analyzeNotes(a, {47 + r, 60 + r, 64 + r, 74 + r});
+        if (maj.name != root + "maj9(no5)" || maj.extensions != "/" + majorSev
+             || maj.inversion != 3)
+            allNinthShells = false;
+    }
+    check("all 12 roots: a ninth shell over its 7th names from the root", allNinthShells);
+
     // Two notes are an interval, not a chord
     check("C E = M3 dyad",       analyzeNotes(a, {60, 64}).name == "C+E (M3)");
     check("C F# = tritone dyad", analyzeNotes(a, {60, 66}).name == "C+F# (tritone)");
