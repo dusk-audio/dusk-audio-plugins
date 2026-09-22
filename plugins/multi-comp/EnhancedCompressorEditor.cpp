@@ -1,5 +1,4 @@
 #include "EnhancedCompressorEditor.h"
-#include "../shared/CrashLog.h"
 #include <cmath>
 
 //==============================================================================
@@ -304,7 +303,7 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     
     // Initialize resizable UI using shared helper with persistence
     // Base size: 750x500, Min: 500x350, Max: 1400x1000
-    resizeHelper.initialize(this, &processor, 750, 500, 500, 350, 1400, 1000, true);
+    resizeHelper.initialize(this, &processor, 750, 500, 500, 350, 1400, 1000, false);
     setSize(resizeHelper.getStoredWidth(), resizeHelper.getStoredHeight());
 }
 
@@ -1788,8 +1787,6 @@ void EnhancedCompressorEditor::showSupportersPanel()
         supportersOverlay = std::make_unique<SupportersOverlay>("Multi-Comp", "1.0.0");
 #endif
         supportersOverlay->onDismiss = [this]() { hideSupportersPanel(); };
-        supportersOverlay->setActionLink("Open crash log folder",
-                                         []() { DuskCrashLog::openLogFolder(); });
         addAndMakeVisible(supportersOverlay.get());
     }
     supportersOverlay->setBounds(getLocalBounds());

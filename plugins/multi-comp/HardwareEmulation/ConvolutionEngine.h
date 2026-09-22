@@ -74,7 +74,7 @@ public:
                 break;
 
             case TransformerType::Console_Bus:
-                // British bus: transparent active design — bypass convolution
+                // SSL G-Bus: transparent active design — bypass convolution
                 // (TransformerEmulation handles saturation/harmonics)
                 irLength = 1;
                 impulseResponse[0] = 1.0f;

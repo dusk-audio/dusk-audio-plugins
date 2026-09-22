@@ -35,14 +35,6 @@ public:
         reset();
     }
 
-    // Coefficient-only update for real-time oversampling changes. The tube's
-    // per-channel capacitor and grid-current history remains continuous.
-    void setSampleRate(double newSampleRate) noexcept
-    {
-        sampleRate = newSampleRate;
-        updateCoefficients();
-    }
-
     void reset()
     {
         // Always reset all available channels to avoid stale state
