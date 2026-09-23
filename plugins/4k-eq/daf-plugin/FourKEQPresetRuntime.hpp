@@ -1,10 +1,12 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
 //
 // Runtime expansion of factory-preset data. Band and filter frequencies go to
-// the Hz parameters as authored.
+// the Hz parameters as authored, and the selectors then state that every band
+// and filter follows its Hz parameter. The legacy dials are left as they were.
 
 #pragma once
 
+#include "FourKEQBandFrequency.hpp"
 #include "FourKEQParams.hpp"
 
 template <typename Fn>
@@ -41,4 +43,7 @@ inline void forEachFourKEQFactoryPresetParam(int idx, Fn&& fn)
     // convenience compensation out of their sound unless the user enables it
     // after recall.
     fn((uint32_t)kAutoGain, 0.0f);
+
+    fn((uint32_t)kLegacyDialBands, (float)kSelectorStated);
+    fn((uint32_t)kLegacyDialFilters, (float)kSelectorStated);
 }

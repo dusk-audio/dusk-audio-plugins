@@ -105,17 +105,22 @@ endfunction()
 # Disable with -DDUSK_DAF_INSTALL_LOCAL=OFF (e.g. on CI / release runners).
 option(DUSK_DAF_INSTALL_LOCAL "Copy built DAF plugins into the user plugin dirs after build" ON)
 
+# LV2_PRESET_OMIT <symbol>...: control ports to leave out of the exported
+# factory presets.
 function(dusk_daf_install_local plugin_name)
-    cmake_parse_arguments(DUSK_DAF "LV2_PROGRAMS" "" "" ${ARGN})
+    cmake_parse_arguments(DUSK_DAF "LV2_PROGRAMS" "" "LV2_PRESET_OMIT" ${ARGN})
 
     # DAF's preset exporter can prematurely close an lv2:port list when an
     # output parameter appears before later input parameters. Repair the
     # generated Turtle before validation, packaging, or local installation.
     if(TARGET ${plugin_name}-lv2)
+        # Commas, since a list would split the command-line argument.
+        string(JOIN "," _dusk_lv2_omit ${DUSK_DAF_LV2_PRESET_OMIT})
         add_custom_command(TARGET ${plugin_name}-lv2 POST_BUILD
             COMMAND ${CMAKE_COMMAND}
                 "-DPRESETS_FILE=${CMAKE_BINARY_DIR}/bin/${plugin_name}.lv2/presets.ttl"
                 "-DEXPECT_PRESETS=${DUSK_DAF_LV2_PROGRAMS}"
+                "-DOMIT_SYMBOLS=${_dusk_lv2_omit}"
                 -P "${DUSK_SHARED_DAF_CMAKE_DIR}/DuskFixLv2Presets.cmake"
             COMMENT "Checking ${plugin_name}.lv2 factory-preset metadata"
             VERBATIM)

@@ -157,9 +157,11 @@ public:
     // Band frequency in Hz (dusk-audio-plugins#288). The band sits where hz
     // says rather than where the dial law puts it:
     //   - a bell (LM, HM, and LF/HF in bell mode) is centred on hz;
-    //   - a shelf's hz is its corner, the pole frequency where the boost
-    //     completes: the RBJ design (half-gain) frequency times sqrt(A) for
-    //     HF, divided by sqrt(A) for LF, A = 10^(gainDb / 40).
+    //   - a shelf's hz is its corner, the pole frequency: the RBJ design
+    //     (half-gain) frequency times sqrt(A) for HF, divided by sqrt(A) for
+    //     LF, A = 10^(gainDb / 40). From about 3 dB of boost or cut, roughly
+    //     half to two-thirds of it is in there and nearly all of it two octaves
+    //     further out.
     // Both hold exactly at kEqReferenceGainDb. Gain moves the band the way the
     // dial API does and no further: the design frequency is scaled by the
     // measured frequencyAtGain ratio, which moves a bell's centre by -0.4% to
@@ -202,11 +204,14 @@ public:
     // Sections designed at or above this rate use the RBJ bilinear designs the
     // reference captures were fitted with: 4x at 44.1/48 kHz, 2x at 88.2/96 kHz,
     // 1x from 176.4 kHz. That path is bit-identical to the calibrated core, so
-    // the reference parity holds there. Below it every band, the LPF and the
-    // pair-correction sections use Biquad's matched-magnitude designs, which
-    // keep the same analog curves up to Nyquist instead of cramping
-    // (dusk-audio-plugins#289). The HPF is untouched: it sits far below any
-    // Nyquist it runs at.
+    // the reference parity holds there. The frozen copy of that core the tests
+    // compare against shares the live Biquad designers, oversampler and console
+    // saturation, so the comparison proves only this file unchanged; the 4x
+    // golden aggregates in FourKEQDSPTests pin the shared pieces. Below this
+    // rate every band, the LPF and the pair-correction sections use Biquad's
+    // matched-magnitude designs, which keep the same analog curves up to
+    // Nyquist instead of cramping (dusk-audio-plugins#289). The HPF is
+    // untouched: it sits far below any Nyquist it runs at.
     static constexpr double kReferenceDesignRate = 176400.0;
 
     // The gain the dense frequency sweep was measured at (the frequency[] and

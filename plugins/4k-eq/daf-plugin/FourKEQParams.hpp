@@ -43,7 +43,9 @@ enum ParamId
     // Bit b set: band b (LF, LM, HM, HF) follows its legacy dial parameter
     // rather than its Hz parameter. Whichever of the two was written last
     // wins, and this records the outcome so a saved state restores it: the
-    // formats restore parameters in index order, so it lands after both.
+    // formats restore parameters in index order, so it lands after both. The
+    // value may also carry a flag marking a deliberate write
+    // (FourKEQBandFrequency.hpp).
     kLegacyDialBands,
     // The filters the same way: kHpfHz / kLpfHz are each filter's -3 dB point,
     // kHpfFreq / kLpfFreq keep their dial meaning, and the selector (bit 0 HPF,
@@ -63,10 +65,10 @@ static constexpr const char* kOversampleLabels[3]  = { "1x", "2x", "4x" };
 
 // The legacy dial defaults are the dials that play the Hz defaults (Brown;
 // HF in bell mode, as the shelf dial stops short of 8 kHz), not the shipped
-// 200/1000/3000/8000 and 16/15201. DAF's LV2 wrapper hands the plugin a control port only
-// when it differs from the last value seen, starting from the instance's, so a
-// pre-#288 LV2 session whose dial sat at a shipped default would otherwise
-// never reach the plugin and would play the Hz default.
+// 200/1000/3000/8000 and 16/15201. DAF's LV2 wrapper hands the plugin a
+// control port only when it differs from the last value seen, starting from
+// the instance's, so a pre-#288 LV2 session whose dial sat at a shipped
+// default would otherwise never reach the plugin and would play the Hz default.
 //
 // Per-parameter key + range + default, index order = ParamId. The single source
 // of truth shared by the plugin (initParameter symbols/ranges, values[] seed),
@@ -111,10 +113,10 @@ static constexpr FourKParam kFourKParams[kParamCount] = {
     { "lm_hz",            200.f,   2500.f,  1000.f  },
     { "hm_hz",            600.f,   7000.f,  3000.f  },
     { "hf_hz",            1500.f,  16000.f, 8000.f  },
-    { "legacy_dial_bands",0.f,     15.f,    0.f     },
+    { "legacy_dial_bands",0.f,     47.f,    0.f     }, // bits + flag, FourKEQBandFrequency.hpp
     { "hpf_hz",           16.f,    350.f,   16.f    },
     { "lpf_hz",           3000.f,  15201.f, 15201.f },
-    { "legacy_dial_filters", 0.f,  3.f,     0.f     },
+    { "legacy_dial_filters", 0.f,  35.f,    0.f     },
 };
 
 // Sound-shaping parameters a preset owns (saved to user preset files, compared
@@ -151,10 +153,10 @@ constexpr bool fkIsPresetParam(uint32_t index)
 
 // Factory presets: same musical targets as the JUCE FourKEQPresets. Band
 // frequencies are the Hz each band plays, by the core's definition: a bell's
-// centre, a shelf's full-boost corner (both exact at +7.5 dB). HPF/LPF fields
-// are each filter's -3 dB point. HPF/LPF are auto-enabled when their target departs from the neutral 16 Hz /
-// 15.201 kHz endpoints (JUCE left the enables untouched, making "Telephone EQ"
-// inert).
+// centre, a shelf's corner (both exact at +7.5 dB). HPF/LPF fields are each
+// filter's -3 dB point. HPF/LPF are auto-enabled when their target departs
+// from the neutral 16 Hz / 15.201 kHz endpoints (JUCE left the enables
+// untouched, making "Telephone EQ" inert).
 struct FourKEQPreset
 {
     const char* name;

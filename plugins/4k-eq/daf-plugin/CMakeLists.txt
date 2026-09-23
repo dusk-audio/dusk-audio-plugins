@@ -50,7 +50,10 @@ target_compile_definitions(4k-eq-2 PUBLIC
 
 # Auto-deploy the built CLAP/VST3/LV2 into the user plugin dirs after each build
 # (disable with -DDUSK_DAF_INSTALL_LOCAL=OFF).
-dusk_daf_install_local(4k-eq-2 LV2_PROGRAMS)
+# A factory preset states every band and filter in Hz and leaves the legacy
+# dials where they are (FourKEQBandFrequency.hpp).
+dusk_daf_install_local(4k-eq-2 LV2_PROGRAMS
+    LV2_PRESET_OMIT hpf_freq lpf_freq lf_freq lm_freq hm_freq hf_freq)
 
 if(NOT CMAKE_CROSSCOMPILING)
     # The shared FourKEQDSP core: bit identity with the frozen RBJ-only core at
@@ -93,25 +96,35 @@ if(NOT CMAKE_CROSSCOMPILING)
         add_test(NAME FourKEQClapState
                  COMMAND FourKEQClapStateTest "$<TARGET_FILE:4k-eq-2-clap>")
 
-        # LV2 restores by writing control ports, and DAF's LV2 wrapper passes on
-        # only those that changed, which the CLAP test cannot reach. Needs lilv.
+        # LV2 restores and applies presets by writing control ports, and DAF's
+        # LV2 wrapper passes on only those that changed, which the CLAP test
+        # cannot reach. Needs lilv. On Linux, where CI runs the tests, an LV2
+        # build without it fails to configure rather than going green with the
+        # guard unregistered.
         find_package(PkgConfig QUIET)
         if(PkgConfig_FOUND)
             pkg_check_modules(FOURKEQ_LILV QUIET IMPORTED_TARGET lilv-0)
         endif()
-        if(FOURKEQ_LILV_FOUND AND TARGET 4k-eq-2-lv2)
+        if(TARGET 4k-eq-2-lv2 AND NOT FOURKEQ_LILV_FOUND)
+            if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+                message(FATAL_ERROR
+                    "4k-eq-2: the LV2 state and preset test needs the lilv-0 development "
+                    "files (liblilv-dev). Install them, or build without the LV2 format.")
+            endif()
+            message(STATUS "FourKEQLv2State not registered: lilv-0 development files not found")
+        endif()
+        if(TARGET 4k-eq-2-lv2 AND FOURKEQ_LILV_FOUND)
             add_executable(FourKEQLv2StateTest
                 tests/FourKEQLv2StateTest.cpp
                 ../../shared-daf/dsp/FourKEQDSP.cpp)
             target_include_directories(FourKEQLv2StateTest PRIVATE
+                "${CMAKE_CURRENT_SOURCE_DIR}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
             target_compile_features(FourKEQLv2StateTest PRIVATE cxx_std_17)
             target_link_libraries(FourKEQLv2StateTest PRIVATE PkgConfig::FOURKEQ_LILV)
             add_dependencies(FourKEQLv2StateTest 4k-eq-2-lv2)
             add_test(NAME FourKEQLv2State
                      COMMAND FourKEQLv2StateTest "${CMAKE_BINARY_DIR}/bin/4k-eq-2.lv2")
-        else()
-            message(STATUS "FourKEQLv2State not registered: lilv-0 development files not found")
         endif()
     endif()
 endif()

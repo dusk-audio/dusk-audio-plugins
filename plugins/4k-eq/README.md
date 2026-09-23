@@ -45,8 +45,10 @@ and so on) take over a band or filter as soon as they are set.
 | Master | Input: +/-12 dB; Output: +/-12 dB; Bypass; Auto Gain |
 | Header | Presets, oversampling, Brown/Black, graph, FFT, and pre/post analyzer source |
 
-The band frequency knobs are in Hz: a bell's centre, a shelf's full-boost corner
-(both exact at +7.5 dB of gain), the same in Brown and Black. The readout does
+The band frequency knobs are in Hz: a bell's centre, a shelf's corner (both
+exact at +7.5 dB of gain), the same in Brown and Black. From about 3 dB of
+boost or cut a shelf has roughly half to two-thirds of it in at its corner and
+nearly all of it two octaves further out. The readout does
 not move with gain. The HPF and LPF knobs are in Hz as well, each filter's
 3 dB point, with their marks where the stepped console dials have theirs.
 

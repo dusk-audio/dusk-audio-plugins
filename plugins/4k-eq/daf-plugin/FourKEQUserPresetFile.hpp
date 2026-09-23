@@ -7,13 +7,13 @@
 // key=value lines. format_version 4 stores each band and filter in Hz under
 // lf_hz..hf_hz, hpf_hz and lpf_hz, or, for one following its legacy dial
 // (FourKEQBandFrequency.hpp), the dial position under lf_freq..hf_freq, or
-// hpf_freq / lpf_freq. Version 3 stored the filters only as dial positions.
-// Version 2 and the unversioned files before it stored every band as a dial
-// position: raw (frequency_domain=control_hz, or no domain line), or as the
-// gain-dependent frequency the pre-#288 read-out showed (effective_hz). Those
-// load onto the legacy dial they meant, so they play what they played. A
-// filter's dial position is stored as its design frequency when the domain is
-// effective_hz, as every version since 2 writes it.
+// hpf_freq / lpf_freq. Version 2 and the unversioned files before it stored
+// every band and filter as a dial position: raw (frequency_domain=control_hz,
+// or no domain line), or as the gain-dependent frequency the pre-#288 read-out
+// showed (effective_hz). Those load onto the legacy dial they meant, so they
+// play what they played. A filter's dial position is stored as its design
+// frequency when the domain is effective_hz, as every version since 2 writes
+// it.
 
 #pragma once
 
@@ -33,7 +33,6 @@
 #include "FourKEQParams.hpp"
 
 static constexpr int kFourKUserPresetFormatVersion = 4;
-static constexpr int kFourKHzBandsUserPresetFormatVersion = 3;
 static constexpr int kFourKLegacyUserPresetFormatVersion = 2;
 
 // Clamp to range and quantise the discrete parameters exactly the way the
@@ -119,7 +118,6 @@ inline bool fkReadUserPreset(std::istream& in, std::string& name, float (&out)[k
             float v = 0.0f;
             if (!fkParsePresetNumber(line, eq + 1, v)
                 || (v != (float)kFourKUserPresetFormatVersion
-                    && v != (float)kFourKHzBandsUserPresetFormatVersion
                     && v != (float)kFourKLegacyUserPresetFormatVersion))
                 return false;
             version = (int)v;
@@ -139,7 +137,7 @@ inline bool fkReadUserPreset(std::istream& in, std::string& name, float (&out)[k
     }
     if (!supportedDomain)
         return false;
-    const bool legacyFile = version < kFourKHzBandsUserPresetFormatVersion;
+    const bool legacyFile = version < kFourKUserPresetFormatVersion;
 
     // Mode, gain and shape first: they select the inverse laws below,
     // whatever order the file lists them in.
@@ -153,7 +151,7 @@ inline bool fkReadUserPreset(std::istream& in, std::string& name, float (&out)[k
     for (int f = 0; f < 2; ++f)
     {
         const FourKEQFilterIds& ids = kFourKEQFilters[f];
-        if (version < kFourKUserPresetFormatVersion)
+        if (legacyFile)
             present[ids.hz] = false;
         if (present[ids.hz])
             out[ids.hz] = fkNormalizeParamValue(ids.hz, out[ids.hz]);

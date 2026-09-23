@@ -48,8 +48,10 @@ original channel strip are intentionally outside this plugin.
 
 The LF, LMF, HMF and HF frequency knobs are in Hz: the mark a knob points at,
 the value bubble and a typed value are the frequency the band plays. For a bell
-that is its centre, for a shelf the corner where the full boost or cut is
-reached. The bubble does not change when you turn a gain knob. The band itself
+that is its centre. For a shelf it is the corner: from about 3 dB of boost or
+cut, roughly half to two-thirds of it is in at that frequency, and nearly all
+of it two octaves further out. The bubble does not change when you turn a gain
+knob. The band itself
 moves slightly with gain, as the console's does: a bell by at most about 2.3%,
 a shelf's corner by at most about 4% at 3 dB of gain or more. The HPF and LPF
 knobs are in Hz too: the frequency where the filter is 3 dB down, the same in
@@ -176,16 +178,17 @@ an unsuitable curve by driving the modeled path harder.
   is 3 dB down. Moving away from OUT enables the filter. Brown and Black use
   different measured slopes. Use it to remove rumble; the common mistake is
   setting it by number alone without listening to the source's fundamental.
-- **LPF:** OUT by default, then 15.201 down to 3 kHz, again the 3 dB point. Use
-  it for deliberate
-  bandwidth restriction or high-frequency cleanup. The control runs downward
-  in frequency as it turns clockwise, matching the panel layout.
+- **LPF:** OUT by default, then 15.201 down to 3 kHz, again the 3 dB point.
+  Use it for deliberate bandwidth restriction or high-frequency cleanup. The
+  control runs downward in frequency as it turns clockwise, matching the panel
+  layout.
 
 ### EQ bands
 
 - **LF Gain:** -15 to +15 dB, default 0 dB. **LF Frequency:** 30 to 450 Hz,
-  default 200 Hz. Like the other band frequencies, it is the Hz the band plays. **SHELF/BELL:** shelf by default. Use the shelf for broad
-  weight and the bell for a localized low-frequency move.
+  default 200 Hz. Like the other band frequencies, it is the Hz the band
+  plays. **SHELF/BELL:** shelf by default. Use the shelf for broad weight and
+  the bell for a localized low-frequency move.
 - **LMF Gain:** -15 to +15 dB, default 0 dB. **LMF Frequency:** 200 Hz to
   2.5 kHz, default 1 kHz. **LMF Q:** 0.5 to 3.0, default 1.5. Use lower Q for
   broad body changes and higher Q for a focused low-mid correction.

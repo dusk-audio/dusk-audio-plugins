@@ -7,6 +7,11 @@
 //   git show d7aca75f:plugins/shared-daf/dsp/<file> | diff - <this file>
 // Never edit it to track the live core. If the 4x sound is meant to change,
 // the test that renders it is what has to change.
+// It includes the live DuskFilters.hpp, DuskOversampler.hpp and
+// ConsoleSaturationCore.h, not frozen copies, so the comparison proves only
+// that FourKEQDSP.cpp's own changes left the reference rate untouched. A
+// change to those shared files moves both cores alike; the 4x golden
+// aggregates in FourKEQDSPTests are what catch it.
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
 // Third-party components in the built plugins (DAF — ISC; Dear ImGui — MIT; and
 // others) are attributed in plugins/shared-daf/THIRD_PARTY_LICENSES.md.

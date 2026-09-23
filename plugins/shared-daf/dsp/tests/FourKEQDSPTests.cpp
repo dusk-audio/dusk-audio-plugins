@@ -518,6 +518,57 @@ void testReferenceRateIsBitIdentical()
                 designsCompared - designsDiffering, designsCompared);
 }
 
+// The frozen reference shares DuskFilters.hpp, DuskOversampler.hpp and
+// ConsoleSaturationCore.h with the live core, so [1] cannot see a change to
+// them. These aggregates of the 4x sound at 48 kHz, dial API, both voicings,
+// can. Aggregates rather than bits, so they hold across compilers and
+// architectures; re-measure them only when the 4x sound is meant to change.
+// The tolerances sit well above what fused multiply-add moves them (4e-6 RMS,
+// 2e-5 peak) and below what a 0.1% change to a peaking band's bandwidth or a
+// 1e-4 change to the first halfband tap does (1e-4 RMS and up). The LF shelf
+// sits at the top of its dial: lower down its render moves by up to 0.3% with
+// fused multiply-add alone.
+void testFourTimesSoundIsPinned()
+{
+    Settings brown;
+    brown.hpfOn = true; brown.hpf = 80.0f;
+    brown.lpfOn = true; brown.lpf = 12800.0f;
+    brown.lfGain = 6.0f; brown.lfFreq = 400.0f;
+    brown.lmGain = -4.0f; brown.lmFreq = 400.0f; brown.lmQ = 0.8f;
+    brown.hmGain = 9.0f; brown.hmFreq = 6700.0f; brown.hmQ = 2.4f;
+    brown.hfGain = 5.0f; brown.hfFreq = 12000.0f;
+    brown.inputDb = 6.0f;
+    Settings black = brown;
+    black.eqType = 1;
+    black.hfBell = true; black.hfGain = 12.0f; black.hfFreq = 16000.0f;
+
+    struct Golden { const char* name; Settings s; double peak, rms; };
+    const Golden goldens[] = {
+        { "Brown", brown, 1.91320848, 0.529754799 },
+        { "Black", black, 2.1849072, 1.10863099 },
+    };
+    const auto in = makeProgramme((int)(48000.0 * 0.35), 48000.0);
+    std::printf("[1b] 48 kHz 4x, dial API: peak / RMS against the pinned aggregates\n");
+    for (const Golden& g : goldens)
+    {
+        CHECK(FourKEQDSP::chooseFactor(48000.0, g.s.oversampling) == 4, "the golden render is not at 4x");
+        const RenderResult r = render<FourKEQDSP>(48000.0, 512, g.s, {}, in);
+        double peak = 0.0, sum = 0.0;
+        size_t n = 0;
+        for (const auto& channel : r.out)
+            for (float v : channel)
+            {
+                peak = std::max(peak, (double)std::abs(v));
+                sum += (double)v * v;
+                ++n;
+            }
+        const double rms = std::sqrt(sum / (double)n);
+        CHECK(std::abs(peak / g.peak - 1.0) < 2.0e-4 && std::abs(rms / g.rms - 1.0) < 5.0e-5,
+              "%s at 4x: peak %.9g, RMS %.9g; pinned %.9g, %.9g", g.name, peak, rms, g.peak, g.rms);
+        std::printf("  %s: peak %.9g (pinned %.9g), RMS %.9g (pinned %.9g)\n", g.name, peak, g.peak, rms, g.rms);
+    }
+}
+
 //==============================================================================
 // 2. No cramping at 1x/2x
 //==============================================================================
@@ -1374,6 +1425,7 @@ void testExtremeRendersStayFiniteAndDecay()
 int main()
 {
     testReferenceRateIsBitIdentical();
+    testFourTimesSoundIsPinned();
     testNoCrampingBelowReferenceRate();
     testAudioPathRunsTheCurve();
     testHzApiPlacesBands();
