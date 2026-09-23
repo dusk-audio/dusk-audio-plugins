@@ -18,8 +18,18 @@
 // port only when its value changes, so a band whose Hz port already holds the
 // value a preset or reset wants would otherwise stay on its dial. Presets and
 // programs write the selector with a flag, and the editor alternates the two
-// flags, so that write always differs from the port's last value. Port order
+// flags, so an editor write always differs from the port's last value. A
+// preset's does not: it writes the same flagged value every time. Port order
 // makes the selector land after the frequencies it arbitrates.
+//
+// LV2 leaves one case this cannot reach. A plugin cannot write its own input
+// ports, and hosts such as Ardour do not implement the control-input change
+// request, so a legacy dial write made after a preset (from a generic UI, or
+// old automation on a "(Legacy Dial)" parameter) moves the plugin's selector
+// but not the host's selector port, which still holds the preset's value.
+// Reloading the session restores that port and the band returns to its Hz
+// parameter, and applying the same preset again changes no port, so the band
+// stays on its dial. manuals/4k-eq-2.md documents it.
 
 #pragma once
 
