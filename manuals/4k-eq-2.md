@@ -298,6 +298,18 @@ setting from a session saved with version 1.0.5 or earlier, and its 3 dB point
 is outside the knob's range. The bubble shows it. Turn the knob to bring the
 filter back onto the knob's scale.
 
+**In an LV2 host, a band set through its legacy dial moves after a reload.**
+After a preset is applied, a write to a band's or filter's "(Legacy Dial)"
+parameter, from a generic parameter view or from automation an older version
+recorded there, is not kept when the session reloads: the band or filter goes
+back to its Hz frequency. Applying the same preset again does not bring it back
+to the preset's frequency either; the band stays on the dial. An LV2 plugin
+cannot write its own input ports, and hosts such as Ardour do not implement the
+request that would let it, so the host keeps the value the preset gave the
+parameter that records which bands follow their dials. Set the band on its knob
+or with its Hz parameter ("LF Frequency" and so on) instead, and it keeps that
+frequency through a reload.
+
 **The plugin becomes louder or distorts after an Input change.** Lower Output
 by the same amount for comparison. If it still overloads, lower Input or the
 largest EQ boost. Auto Gain compensates the curve estimate, not every nonlinear
