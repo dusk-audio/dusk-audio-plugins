@@ -14,9 +14,11 @@
 
 #include "DafUI.hpp"
 #include "FourKEQAccess.hpp"
+#include "FourKEQBandFrequency.hpp"
 #include "FourKEQParams.hpp"
 #include "FourKEQDSP.hpp"
 #include "FourKEQPresetRuntime.hpp"
+#include "FourKEQUserPresetFile.hpp"
 #include "FourKEQVersion.hpp"
 
 #include "DuskKnobRing.hpp"
@@ -37,10 +39,6 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <iomanip>
-#include <limits>
-#include <locale>
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -51,7 +49,6 @@ namespace
     constexpr float kDesignW = 960.0f;
     constexpr float kDesignH = 640.0f;             // graph shown
     constexpr float kDesignHCollapsed = 516.0f;    // graph hidden (band removed)
-    constexpr int kUserPresetFormatVersion = 2;
     constexpr float kDbRange = 20.0f;               // graph vertical: +-20 dB
     constexpr float kFMin = 20.0f, kFMax = 20000.0f;
 
@@ -133,7 +130,7 @@ protected:
     void parameterChanged(uint32_t index, float value) override
     {
         if (index >= kParamCount) return;
-        values[index] = value;
+        fkStoreParam(values, index, value);
         if (index == kShowGraph)
         {
             // restore persisted graph state on UI (re)open; size on next frame
@@ -146,7 +143,7 @@ protected:
         // back to a preset recovers the selection. It also clears once an edit
         // diverges from every preset. Gated on the preset params so the
         // per-frame meter outputs never trigger a scan.
-        if (fkIsPresetParam(index))
+        if (fkIsPresetParam(index) || fkBandOfLegacyDialParam(index) >= 0)
             syncPresetSelection();
     }
 
@@ -163,7 +160,7 @@ protected:
         // directly (store only, no write-back: the host already has the values).
         forEachFourKEQFactoryPresetParam(currentPreset,
                                          [this](uint32_t param, float value)
-                                         { values[param] = normalizeParamValue(param, value); });
+                                         { fkStoreParam(values, param, fkNormalizeParamValue(param, value)); });
     }
 
     void onImGuiDisplay() override
@@ -630,36 +627,14 @@ private:
     // presets — factory recall, INIT/SAVE, user preset library, identity
     //========================================================================
 
-    // Clamp to range and quantise the discrete parameters exactly the way the
-    // DSP shell reads them, so the cached value can never disagree with what
-    // the DSP acts on. values[] is not display-only: it feeds preset identity
-    // matching and is what a saved user preset writes to disk.
-    static float normalizeParamValue(uint32_t idx, float v) noexcept
-    {
-        v = std::max(kFourKParams[idx].min, std::min(kFourKParams[idx].max, v));
-        switch (idx)
-        {
-        case kHpfEnabled: case kLpfEnabled: case kLfBell: case kHfBell:
-        case kEqType: case kBypass: case kMsMode: case kSpectrumPrePost:
-        case kAutoGain: case kShowGraph:
-            // Folded to an exact 0/1 so the DSP shell's > 0.5f reads can never
-            // disagree with this cache about which side a boundary value took.
-            return v >= 0.5f ? 1.0f : 0.0f;
-        case kOversampling:
-            return std::round(v);
-        default:
-            return v;
-        }
-    }
-
     // Single write path for a preset-driven parameter change: normalises, keeps
     // the local cache in step and brackets the host write with edit markers.
     void setP(uint32_t param, float value)
     {
         if (param >= kParamCount || !std::isfinite(value))
             return;
-        value = normalizeParamValue(param, value);
-        values[param] = value;
+        value = fkNormalizeParamValue(param, value);
+        fkStoreParam(values, param, value);
         editParameter(param, true);
         setParameterValue(param, value);
         editParameter(param, false);
@@ -708,97 +683,11 @@ private:
         return duskdaf::userPresetDirectory("FourKEQ2");
     }
 
-    // Strict field parse, shared by the library scan and the loader so a file
-    // can never mean two things. atof() reports failure as 0.0 and happily
-    // yields NaN/inf for "nan"/"1e999", all of which would reach the DSP through
-    // setP(); require the whole field to be one finite float. Range clamping is
-    // done after the file's frequency domain is known: effective LPF values can
-    // legitimately exceed the legacy host parameter's 15.201 kHz end stop.
-    //
-    // Locale-independent on purpose, in both directions (saveUserPreset() imbues
-    // the same classic locale): plugin hosts do call setlocale(), and a
-    // comma-decimal locale makes strtod() stop at the '.' in "0.5" — every value
-    // in every preset file would silently read as its default.
-    static bool parsePresetNumber(const std::string& line, std::size_t valueStart,
-                                  float& out)
-    {
-        std::istringstream field(line.substr(valueStart));
-        field.imbue(std::locale::classic());
-        double d = 0.0;
-        field >> d;
-        if (field.fail() || !std::isfinite(d)
-            || std::abs(d) > (double)std::numeric_limits<float>::max())
-            return false;
-        char trailing = '\0';
-        if (field >> trailing)                   // trailing junk: not a number
-            return false;
-        out = (float)d;
-        return true;
-    }
-
-    // Reads both legacy files (no frequency_domain line: raw/control Hz) and
-    // v2 files (effective_hz). The returned array is always in the INTERNAL
-    // host-parameter domain so preset identity and setP() see one representation.
     static bool readUserPresetFile(const std::string& path, std::string& name,
                                    float (&out)[kParamCount])
     {
-        for (uint32_t i = 0; i < kParamCount; ++i)
-            out[i] = kFourKParams[i].def;
-        bool present[kParamCount] = {};
-        bool effectiveHz = false;
-        bool supportedDomain = true;
-
         std::ifstream f(path);
-        if (!f)
-            return false;
-        std::string line;
-        while (std::getline(f, line))
-        {
-            const auto eq = line.find('=');
-            if (eq == std::string::npos)
-                continue;
-            const std::string key = line.substr(0, eq);
-            const std::string field = line.substr(eq + 1);
-            if (key == "name") { name = field; continue; }
-            if (key == "frequency_domain")
-            {
-                effectiveHz = field == "effective_hz";
-                supportedDomain = effectiveHz || field == "control_hz";
-                continue;
-            }
-            if (key == "format_version")
-            {
-                float version = 0.0f;
-                if (!parsePresetNumber(line, eq + 1, version)
-                    || version != (float)kUserPresetFormatVersion)
-                    return false;
-                continue;
-            }
-            for (uint32_t i = 0; i < kParamCount; ++i)
-                if (fkIsPresetParam(i) && key == kFourKParams[i].key)
-                {
-                    float v = 0.0f;
-                    if (!parsePresetNumber(line, eq + 1, v))
-                        return false;
-                    out[i] = v;
-                    present[i] = true;
-                    break;
-                }
-        }
-        if (!supportedDomain)
-            return false;
-
-        // Normalise mode/gain/shape first: those values select the inverse
-        // frequency law used below, regardless of their order in the file.
-        for (uint32_t i = 0; i < kParamCount; ++i)
-            if (present[i] && !isFrequencyParam(i))
-                out[i] = normalizeParamValue(i, out[i]);
-        for (uint32_t i = 0; i < kParamCount; ++i)
-            if (present[i] && isFrequencyParam(i))
-                out[i] = normalizeParamValue(
-                    i, effectiveHz ? controlForEffectiveFrequency(i, out[i], out)
-                                   : out[i]);
-        return true;
+        return f && fkReadUserPreset(f, name, out);
     }
 
     void scanUserPresets()
@@ -817,14 +706,7 @@ private:
         const auto saved = duskdaf::writeUserPreset(
             configDir(), ".4kpreset", rawName,
             [this](std::ostream& output) {
-                output << "format_version=" << kUserPresetFormatVersion << '\n';
-                output << "frequency_domain=effective_hz\n";
-                output << std::setprecision(std::numeric_limits<float>::max_digits10);
-                for (uint32_t i = 0; i < kParamCount; ++i)
-                    if (fkIsPresetParam(i))
-                        output << kFourKParams[i].key << '='
-                               << (isFrequencyParam(i) ? displayValue(i) : values[i])
-                               << '\n';
+                fkWriteUserPreset(output, stateView().v);
             }, true); // This editor retains its existing Save-as-replace behavior.
         if (!saved)
             return false;
@@ -847,8 +729,14 @@ private:
         // identity records - otherwise a missing key would keep the current
         // value and deriveUserPreset() could never match.
         for (uint32_t i = 0; i < kParamCount; ++i)
-            if (fkIsPresetParam(i))
+            if (fkIsPresetParam(i) && fkBandOfHzParam(i) < 0)
                 setP(i, loaded[i]);
+        for (int b = 0; b < 4; ++b)
+        {
+            const uint32_t id = fkBandFollowsLegacyDial(loaded, b) ? kFourKEQBands[b].legacyDial
+                                                                   : kFourKEQBands[b].hz;
+            setP(id, loaded[id]);
+        }
         currentPreset = -1;
         currentUserName = name;
         currentUserPath = path;
@@ -863,7 +751,14 @@ private:
     {
         const FourKParam& d = kFourKParams[id];
         const float tol = std::max(1.0e-3f, (d.max - d.min) * 1.0e-4f);
-        return std::fabs(values[id] - v) <= tol;
+        const int band = fkBandOfHzParam(id);
+        return std::fabs((band >= 0 ? bandHz(band) : values[id]) - v) <= tol;
+    }
+
+    static float userPresetValue(const float* vals, uint32_t id)
+    {
+        const int band = fkBandOfHzParam(id);
+        return band >= 0 ? fkBandHz(vals, band) : vals[id];
     }
 
     int deriveFactoryPreset() const
@@ -891,7 +786,7 @@ private:
                 {
                     bool ok = true;
                     for (uint32_t id = 0; id < kParamCount && ok; ++id)
-                        if (fkIsPresetParam(id) && !paramMatches(id, userPresets[i].vals[id]))
+                        if (fkIsPresetParam(id) && !paramMatches(id, userPresetValue(userPresets[i].vals, id)))
                             ok = false;
                     if (ok)
                         return (int)i;
@@ -902,7 +797,7 @@ private:
         {
             bool ok = true;
             for (uint32_t id = 0; id < kParamCount && ok; ++id)
-                if (fkIsPresetParam(id) && !paramMatches(id, userPresets[i].vals[id]))
+                if (fkIsPresetParam(id) && !paramMatches(id, userPresetValue(userPresets[i].vals, id)))
                     ok = false;
             if (ok)
                 return (int)i;
@@ -947,10 +842,11 @@ private:
         c.lpfEnabled   = values[kLpfEnabled] > 0.5f;
         c.hpfFreq      = values[kHpfFreq];
         c.lpfFreq      = values[kLpfFreq];
-        c.lfGain = values[kLfGain]; c.lfFreq = values[kLfFreq]; c.lfBell = values[kLfBell];
-        c.lmGain = values[kLmGain]; c.lmFreq = values[kLmFreq]; c.lmQ    = values[kLmQ];
-        c.hmGain = values[kHmGain]; c.hmFreq = values[kHmFreq]; c.hmQ    = values[kHmQ];
-        c.hfGain = values[kHfGain]; c.hfFreq = values[kHfFreq]; c.hfBell = values[kHfBell];
+        c.lfGain = values[kLfGain]; c.lfBell = values[kLfBell];
+        c.lmGain = values[kLmGain]; c.lmQ    = values[kLmQ];
+        c.hmGain = values[kHmGain]; c.hmQ    = values[kHmQ];
+        c.hfGain = values[kHfGain]; c.hfBell = values[kHfBell];
+        fkSetCurveBandFrequencies(c, stateView().v);
         // NOT values[kSaturation]. That index is a retired compatibility slot
         // kept so existing sessions do not remap; FourKEQPlugin.cpp answers it
         // with dsp.setSaturation(0.0f), so the standalone 4K DSP always runs at
@@ -1142,7 +1038,7 @@ private:
             static const char* const FL[7] = { "30", "42", "75", "200", "338", "405", "450" };
             const ImU32 lfCap = values[kEqType] > 0.5f ? C_LF_BLACK : C_LF_BROWN;
             consoleDetentKnob(dl, "lfg", lcx, cY(314), 28.f, kLfGain, GT, GV, GL, 11, lfCap, "dB", "%.1f dB");
-            consoleDetentKnob(dl, "lff", lcx, cY(452), 28.f, kLfFreq, FT, FV, FL, 7, lfCap, "Hz", "%.0f Hz", true);
+            consoleDetentKnob(dl, "lff", lcx, cY(452), 28.f, kLfHz, FT, FV, FL, 7, lfCap, "Hz", kFourKBandHzFormat, true);
             metalButton(dl, "lfbell", lcx - 32.f, cY(560), lcx + 32.f, cY(584), kLfBell, "BELL", "SHELF");
         }
         // LMF — British blue band: GAIN + FREQ (.2-2.5 kHz, 1 at top) + Q
@@ -1152,7 +1048,7 @@ private:
             static const float MFV[7] = { 200.f, 260.f, 550.f, 1000.f, 1750.f, 2200.f, 2500.f };
             static const char* const MFL[7] = { ".2", ".26", ".55", "1", "1.75", "2.2", "2.5" };
             consoleDetentKnob(dl, "lmg", mcx, cY(314), 28.f, kLmGain, GT, GV, GL, 11, C_LMF_BLUE, "dB", "%.1f dB");
-            consoleDetentKnob(dl, "lmf", mcx, cY(452), 28.f, kLmFreq, FT7, MFV, MFL, 7, C_LMF_BLUE, "kHz", "%.0f Hz", true);
+            consoleDetentKnob(dl, "lmf", mcx, cY(452), 28.f, kLmHz, FT7, MFV, MFL, 7, C_LMF_BLUE, "kHz", kFourKBandHzFormat, true);
             consoleDetentKnob(dl, "lmq", mcx, cY(590), 28.f, kLmQ, QT, QV, QL, 5, C_LMF_BLUE, "", "Q %.2f");
             bandwidthIcons(dl, mcx, cY(590) + 40.f);
         }
@@ -1162,7 +1058,7 @@ private:
             static const float HFV[7] = { 600.f, 720.f, 1150.f, 3000.f, 5250.f, 6400.f, 7000.f };
             static const char* const HFL[7] = { ".6", ".72", "1.15", "3", "5.25", "6.4", "7" };
             consoleDetentKnob(dl, "hmg", hcx, cY(314), 28.f, kHmGain, GT, GV, GL, 11, C_HMF_GREEN, "dB", "%.1f dB");
-            consoleDetentKnob(dl, "hmf", hcx, cY(452), 28.f, kHmFreq, FT7, HFV, HFL, 7, C_HMF_GREEN, "kHz", "%.0f Hz", true);
+            consoleDetentKnob(dl, "hmf", hcx, cY(452), 28.f, kHmHz, FT7, HFV, HFL, 7, C_HMF_GREEN, "kHz", kFourKBandHzFormat, true);
             consoleDetentKnob(dl, "hmq", hcx, cY(590), 28.f, kHmQ, QT, QV, QL, 5, C_HMF_GREEN, "", "Q %.2f");
             bandwidthIcons(dl, hcx, cY(590) + 40.f);
         }
@@ -1172,7 +1068,7 @@ private:
             static const float XFV[7] = { 1500.f, 1800.f, 3500.f, 8000.f, 12000.f, 14800.f, 16000.f };
             static const char* const XFL[7] = { "1.5", "1.8", "3.5", "8", "12", "14.8", "16" };
             consoleDetentKnob(dl, "hfg", hcx, cY(314), 28.f, kHfGain, GT, GV, GL, 11, C_HF_RED, "dB", "%.1f dB");
-            consoleDetentKnob(dl, "hff", hcx, cY(452), 28.f, kHfFreq, FT7, XFV, XFL, 7, C_HF_RED, "kHz", "%.0f Hz", true);
+            consoleDetentKnob(dl, "hff", hcx, cY(452), 28.f, kHfHz, FT7, XFV, XFL, 7, C_HF_RED, "kHz", kFourKBandHzFormat, true);
             metalButton(dl, "hfbell", hcx - 32.f, cY(560), hcx + 32.f, cY(584), kHfBell, "BELL", "SHELF");
         }
 
@@ -1286,95 +1182,57 @@ private:
     }
 
     //========================================================================
-    // Calibrated frequency read-outs. The panel legends keep the reference's
-    // printed dial values, but the live value displays (hover/drag bubble and
-    // the double-click editor) show the frequency the section actually centres
-    // on — the same measured law the DSP and the response curve use, so the
-    // read-out always agrees with the graph and the FFT. Display-only: the
-    // parameter values, the automation domain and the emulation are untouched.
+    // Frequency read-outs. A band knob is its Hz parameter and shows the Hz
+    // the band plays (fkBandHz), which no gain setting moves. The HPF/LPF
+    // parameters are still positions on the reference's dial, so their
+    // read-outs show the measured corner that position plays.
     //========================================================================
-    float calibratedFreqFor(uint32_t paramId, float dialHz) const
+
+    // The UI's mirror with kLegacyDialBands taken from the plugin when it
+    // shares the process: a host restoring a pre-#288 session never sets that
+    // parameter, so the value it forwards is stale.
+    float legacyDialBits() const
     {
-        using duskaudio::FourKEQDSP;
-        const bool black = values[kEqType] > 0.5f;
-        switch (paramId)
-        {
-        case kHpfFreq:
-            return FourKEQDSP::calibratedFilterFrequency(dialHz, true, black);
-        case kLpfFreq:
-            return FourKEQDSP::calibratedFilterFrequency(dialHz, false, black);
-        case kLfFreq:
-            return FourKEQDSP::calibratedEqFrequency(
-                dialHz, values[kLfGain], FourKEQDSP::Band::LF, black,
-                values[kLfBell] > 0.5f);
-        case kLmFreq:
-            return FourKEQDSP::calibratedEqFrequency(
-                dialHz, values[kLmGain], FourKEQDSP::Band::LM, black, true);
-        case kHmFreq:
-            return FourKEQDSP::calibratedEqFrequency(
-                dialHz, values[kHmGain], FourKEQDSP::Band::HM, black, true);
-        case kHfFreq:
-            return FourKEQDSP::calibratedEqFrequency(
-                dialHz, values[kHfGain], FourKEQDSP::Band::HF, black,
-                values[kHfBell] > 0.5f);
-        default:
-            return dialHz;   // not a frequency control: display = dial value
-        }
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
+        if (fourKEQGetLegacyDialBands != nullptr)
+            if (void* inst = getPluginInstancePointer())
+                return (float)fourKEQGetLegacyDialBands(inst);
+       #endif
+        return values[kLegacyDialBands];
     }
+
+    struct StateView { float v[kParamCount]; };
+    StateView stateView() const
+    {
+        StateView view;
+        std::copy(values, values + kParamCount, view.v);
+        view.v[kLegacyDialBands] = legacyDialBits();
+        return view;
+    }
+
+    float bandHz(int band) const { return fkBandHz(stateView().v, band); }
 
     float displayValue(uint32_t paramId) const
     {
-        return calibratedFreqFor(paramId, values[paramId]);
+        if (paramId == kHpfFreq || paramId == kLpfFreq)
+            return duskaudio::FourKEQDSP::calibratedFilterFrequency(
+                values[paramId], paramId == kHpfFreq, values[kEqType] > 0.5f);
+        if (const int band = fkBandOfHzParam(paramId); band >= 0)
+            return bandHz(band);
+        return values[paramId];
     }
 
     static bool isFrequencyParam(uint32_t paramId)
     {
-        switch (paramId)
-        {
-        case kHpfFreq: case kLpfFreq:
-        case kLfFreq: case kLmFreq: case kHmFreq: case kHfFreq:
-            return true;
-        default:
-            return false;
-        }
+        return paramId == kHpfFreq || paramId == kLpfFreq || fkBandOfHzParam(paramId) >= 0;
     }
 
-    static float controlForEffectiveFrequency(uint32_t paramId, float target,
-                                              const float* state) noexcept
+    // The filter dial position whose measured corner is `target`; the same
+    // inverse factory presets use.
+    float dialForFilterCorner(uint32_t paramId, float target) const
     {
-        using duskaudio::FourKEQDSP;
-        const bool black = state[kEqType] > 0.5f;
-        switch (paramId)
-        {
-        case kHpfFreq:
-            return FourKEQDSP::controlForCalibratedFilterFrequency(target, true, black);
-        case kLpfFreq:
-            return FourKEQDSP::controlForCalibratedFilterFrequency(target, false, black);
-        case kLfFreq:
-            return FourKEQDSP::controlForCalibratedEqFrequency(
-                target, state[kLfGain], FourKEQDSP::Band::LF, black,
-                state[kLfBell] > 0.5f);
-        case kLmFreq:
-            return FourKEQDSP::controlForCalibratedEqFrequency(
-                target, state[kLmGain], FourKEQDSP::Band::LM, black, true);
-        case kHmFreq:
-            return FourKEQDSP::controlForCalibratedEqFrequency(
-                target, state[kHmGain], FourKEQDSP::Band::HM, black, true);
-        case kHfFreq:
-            return FourKEQDSP::controlForCalibratedEqFrequency(
-                target, state[kHfGain], FourKEQDSP::Band::HF, black,
-                state[kHfBell] > 0.5f);
-        default:
-            return target;
-        }
-    }
-
-    // Inverse of calibratedFreqFor for typed entry: the dial position whose
-    // ACTUAL frequency is `target`. This is the same core inverse used by
-    // factory and versioned user presets.
-    float dialForCalibrated(uint32_t paramId, float target) const
-    {
-        return controlForEffectiveFrequency(paramId, target, values);
+        const bool black = values[kEqType] > 0.5f;
+        return duskaudio::FourKEQDSP::controlForCalibratedFilterFrequency(target, paramId == kHpfFreq, black);
     }
 
     //========================================================================
@@ -1418,7 +1276,7 @@ private:
             // F[] is the frequency printed around the bezel. Convert that
             // effective corner back to the fitted UAD control coordinate before
             // handing it to the DSP, so the pointer and response agree.
-            f = normalizeParamValue(freqId, dialForCalibrated(freqId, f));
+            f = fkNormalizeParamValue(freqId, dialForFilterCorner(freqId, f));
             values[freqId] = f;
             setParameterValue(freqId, f);
         }
@@ -1513,7 +1371,7 @@ private:
             float lo = F[1], hi = F[1];
             for (int i = 2; i <= 6; ++i) { lo = std::min(lo, F[i]); hi = std::max(hi, F[i]); }
             typed = typed < lo ? lo : (typed > hi ? hi : typed);
-            typed = normalizeParamValue(freqId, dialForCalibrated(freqId, typed));
+            typed = fkNormalizeParamValue(freqId, dialForFilterCorner(freqId, typed));
             editParameter(enId, true); editParameter(freqId, true);
             values[enId] = 1.f;    setParameterValue(enId, 1.f);
             values[freqId] = typed; setParameterValue(freqId, typed);
@@ -1580,29 +1438,6 @@ private:
         auto c01 = [](float v) { return v < 0.f ? 0.f : (v > 1.f ? 1.f : v); };
 
         const bool frequencyKnob = isFrequencyParam(paramId);
-        // Frequency parameters retain the captured UAD control coordinate for
-        // DSP/session compatibility, but the physical knob lives in effective
-        // Hz. This makes its pointer, legends and live read-out agree with the
-        // response curve and FFT in both Brown and Black modes.
-        //
-        // The V[] legends are authored in the console's DIAL coordinates (the
-        // numbers silkscreened on the panel), so they MUST be mapped through
-        // the same calibration before they can position a knob that lives in
-        // effective Hz. Comparing the two spaces directly pins the pointer to
-        // whatever slice of the arc the calibrated range happens to cover: the
-        // Brown HF SHELF spans 643..5554 Hz against a 1500..16000 legend, which
-        // left it stuck at 36% of travel with the read-out frozen near 5.5 kHz
-        // however far the knob was turned. Bell mode reaches 75-97%, which is
-        // why this only ever looked broken on SHELF.
-        static constexpr int kMaxLegend = 8;   // every frequency legend is 7 long
-        float calibratedLegend[kMaxLegend];
-        if (frequencyKnob && n <= kMaxLegend)
-        {
-            for (int i = 0; i < n; ++i)
-                calibratedLegend[i] = calibratedFreqFor(paramId, V[i]);
-            V = calibratedLegend;
-        }
-
         float t = duskdaf::knobDetentValueToPos(T, V, n,
                                 frequencyKnob ? displayValue(paramId)
                                               : values[paramId]);
@@ -1613,16 +1448,13 @@ private:
         const bool editing = panel.isEditingValue(id);
         const bool modKey = ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper;
         auto setFromT = [&](float tt) {
-            const float shown = duskdaf::knobDetentPosToValue(T, V, n, tt);
-            const float nv = normalizeParamValue(
-                paramId, frequencyKnob ? dialForCalibrated(paramId, shown)
-                                       : shown);
-            values[paramId] = nv;
+            const float nv = fkNormalizeParamValue(paramId, duskdaf::knobDetentPosToValue(T, V, n, tt));
+            fkStoreParam(values, paramId, nv);
             setParameterValue(paramId, nv);
         };
         auto resetDefault = [&] {
             editParameter(paramId, true);
-            values[paramId] = kDefault(paramId);
+            fkStoreParam(values, paramId, kDefault(paramId));
             setParameterValue(paramId, kDefault(paramId));
             editParameter(paramId, false);
             t = duskdaf::knobDetentValueToPos(T, V, n,
@@ -1680,15 +1512,11 @@ private:
         float typed;
         if (panel.valueEdit(id, cx, cy, R, typed))
         {
-            // Frequency knobs take the typed value as the ACTUAL centre and map
-            // it back to the dial law; every other knob types the dial value.
             float lo = V[0], hi = V[0];
             for (int i = 1; i < n; ++i) { lo = std::min(lo, V[i]); hi = std::max(hi, V[i]); }
             typed = typed < lo ? lo : (typed > hi ? hi : typed);
-            if (frequencyKnob)
-                typed = dialForCalibrated(paramId, typed);
-            typed = normalizeParamValue(paramId, typed);
-            editParameter(paramId, true); values[paramId] = typed; setParameterValue(paramId, typed); editParameter(paramId, false);
+            typed = fkNormalizeParamValue(paramId, typed);
+            editParameter(paramId, true); fkStoreParam(values, paramId, typed); setParameterValue(paramId, typed); editParameter(paramId, false);
         }
         else if ((hov || act) && !editing)
         {

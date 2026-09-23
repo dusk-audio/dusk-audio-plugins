@@ -911,14 +911,15 @@ FourKEQDSP::CoeffInputs FourKEQDSP::coeffInputsFor(const CurveControls& c) noexc
     CoeffInputs in{};
     in.hpfFreq = c.hpfFreq;
     in.lpfFreq = c.lpfFreq;
-    auto frequency = [&c](float value, float& dial, float& hz) {
-        dial = c.bandFrequenciesInHz ? 0.0f : value;
-        hz = c.bandFrequenciesInHz ? sanitizeBandHz(value) : 0.0f;
+    auto frequency = [&c](int band, float value, float& dial, float& hz) {
+        const bool inHz = c.bandFrequenciesInHz && ((c.dialBands >> band) & 1u) == 0;
+        dial = inHz ? 0.0f : value;
+        hz = inHz ? sanitizeBandHz(value) : 0.0f;
     };
-    in.lfGain = c.lfGain; frequency(c.lfFreq, in.lfFreq, in.lfFreqHz); in.lfBell = c.lfBell;
-    in.lmGain = c.lmGain; frequency(c.lmFreq, in.lmFreq, in.lmFreqHz); in.lmQ = c.lmQ;
-    in.hmGain = c.hmGain; frequency(c.hmFreq, in.hmFreq, in.hmFreqHz); in.hmQ = c.hmQ;
-    in.hfGain = c.hfGain; frequency(c.hfFreq, in.hfFreq, in.hfFreqHz); in.hfBell = c.hfBell;
+    in.lfGain = c.lfGain; frequency(0, c.lfFreq, in.lfFreq, in.lfFreqHz); in.lfBell = c.lfBell;
+    in.lmGain = c.lmGain; frequency(1, c.lmFreq, in.lmFreq, in.lmFreqHz); in.lmQ = c.lmQ;
+    in.hmGain = c.hmGain; frequency(2, c.hmFreq, in.hmFreq, in.hmFreqHz); in.hmQ = c.hmQ;
+    in.hfGain = c.hfGain; frequency(3, c.hfFreq, in.hfFreq, in.hfFreqHz); in.hfBell = c.hfBell;
     in.eqType = c.black ? 1.0f : 0.0f;
     return in;
 }

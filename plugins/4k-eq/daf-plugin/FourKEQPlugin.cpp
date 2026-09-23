@@ -6,6 +6,7 @@
 
 #include "DafPlugin.hpp"
 #include "FourKEQAccess.hpp"
+#include "FourKEQBandFrequency.hpp"
 #include "FourKEQDSP.hpp"
 #include "FourKEQParams.hpp"
 #include "FourKEQPresetRuntime.hpp"
@@ -28,6 +29,7 @@ public:
         // just to read ranges.def — the table is the single source of truth.)
         for (uint32_t i = 0; i < kParamCount; ++i)
             values[i] = kFourKParams[i].def;
+        applyBandFrequencies();
     }
 
     //--- same-process accessors for the UI bridge -----------------------------
@@ -37,6 +39,7 @@ public:
     float outPeakRv() const noexcept { return dsp.getOutputPeakR(); }
     const duskaudio::SpectrumRing* preSpec()  const noexcept { return &dsp.preSpectrum(); }
     const duskaudio::SpectrumRing* postSpec() const noexcept { return &dsp.postSpectrum(); }
+    uint32_t legacyDialBands() const noexcept { return legacyDialBandsForUi.load(std::memory_order_relaxed); }
 
 protected:
     //--- metadata -------------------------------------------------------------
@@ -78,16 +81,16 @@ protected:
         case kLpfFreq:   p.name = "LPF Frequency"; p.unit = "Hz"; break;
         case kLpfEnabled:boolean(); p.name = "LPF Enabled"; break;
         case kLfGain:    p.name = "LF Gain"; p.unit = "dB"; break;
-        case kLfFreq:    p.name = "LF Frequency"; p.unit = "Hz"; break;
+        case kLfFreq:    p.name = "LF Frequency (Legacy Dial)"; p.unit = "Hz"; break;
         case kLfBell:    boolean(); p.name = "LF Bell Mode"; break;
         case kLmGain:    p.name = "LM Gain"; p.unit = "dB"; break;
-        case kLmFreq:    p.name = "LM Frequency"; p.unit = "Hz"; break;
+        case kLmFreq:    p.name = "LM Frequency (Legacy Dial)"; p.unit = "Hz"; break;
         case kLmQ:       p.name = "LM Q"; break;
         case kHmGain:    p.name = "HM Gain"; p.unit = "dB"; break;
-        case kHmFreq:    p.name = "HM Frequency"; p.unit = "Hz"; break;
+        case kHmFreq:    p.name = "HM Frequency (Legacy Dial)"; p.unit = "Hz"; break;
         case kHmQ:       p.name = "HM Q"; break;
         case kHfGain:    p.name = "HF Gain"; p.unit = "dB"; break;
-        case kHfFreq:    p.name = "HF Frequency"; p.unit = "Hz"; break;
+        case kHfFreq:    p.name = "HF Frequency (Legacy Dial)"; p.unit = "Hz"; break;
         case kHfBell:    boolean(); p.name = "HF Bell Mode"; break;
         case kEqType:    p.hints |= kParameterIsInteger; p.name = "EQ Type";
                          p.enumValues.count = 2; p.enumValues.restrictedMode = true;
@@ -128,6 +131,16 @@ protected:
                          p.name = "Show Graph"; break;
         case kOutPeakL:  p.hints = kParameterIsAutomatable | kParameterIsOutput; p.name = "Out Peak L"; break;
         case kOutPeakR:  p.hints = kParameterIsAutomatable | kParameterIsOutput; p.name = "Out Peak R"; break;
+        case kLfHz:      p.name = "LF Frequency"; p.unit = "Hz"; break;
+        case kLmHz:      p.name = "LM Frequency"; p.unit = "Hz"; break;
+        case kHmHz:      p.name = "HM Frequency"; p.unit = "Hz"; break;
+        case kHfHz:      p.name = "HF Frequency"; p.unit = "Hz"; break;
+        case kLegacyDialBands:
+            // State, not a control: written by the plugin as the band
+            // frequency parameters arrive, saved so a reload restores it.
+            p.hints = kParameterIsHidden | kParameterIsInteger;
+            p.name = "Legacy Dial Bands";
+            break;
         }
     }
 
@@ -143,43 +156,10 @@ protected:
 
     void setParameterValue(uint32_t index, float value) override
     {
-        if (index >= kNumInputParams) // output params are not settable
+        if (index >= kParamCount || fkIsOutputParam(index))
             return;
-        values[index] = value;
-        switch (index)
-        {
-        case kHpfFreq:    dsp.setHpfFreq(value); break;
-        case kHpfEnabled: dsp.setHpfEnabled(value > 0.5f); break;
-        case kLpfFreq:    dsp.setLpfFreq(value); break;
-        case kLpfEnabled: dsp.setLpfEnabled(value > 0.5f); break;
-        case kLfGain:     dsp.setLfGain(value); break;
-        case kLfFreq:     dsp.setLfFreq(value); break;
-        case kLfBell:     dsp.setLfBell(value > 0.5f); break;
-        case kLmGain:     dsp.setLmGain(value); break;
-        case kLmFreq:     dsp.setLmFreq(value); break;
-        case kLmQ:        dsp.setLmQ(value); break;
-        case kHmGain:     dsp.setHmGain(value); break;
-        case kHmFreq:     dsp.setHmFreq(value); break;
-        case kHmQ:        dsp.setHmQ(value); break;
-        case kHfGain:     dsp.setHfGain(value); break;
-        case kHfFreq:     dsp.setHfFreq(value); break;
-        case kHfBell:     dsp.setHfBell(value > 0.5f); break;
-        case kEqType:     dsp.setEqType((int)(value + 0.5f)); break;
-        case kBypass:     dsp.setBypass(value > 0.5f); break;
-        case kInputGain:  dsp.setInputGainDb(value); break;
-        case kOutputGain: dsp.setOutputGainDb(value); break;
-        case kSaturation:
-            // The SSL EQ has no independent drive/mix control. Its calibrated
-            // native nonlinearity is the core's 0% reference state; Input Gain
-            // controls the level presented to that nonlinear path.
-            dsp.setSaturation(0.0f);
-            break;
-        case kOversampling: dsp.setOversampling((int)(value + 0.5f)); break;
-        case kMsMode:     dsp.setMsMode(false); break;
-        case kSpectrumPrePost: break; // UI-only (analyzer source select)
-        case kShowGraph:  break;      // UI-only (graph collapse), persisted in state
-        case kAutoGain:   dsp.setAutoGain(value > 0.5f); break;
-        }
+        fkStoreParam(values, index, value);
+        applyToDsp(index);
     }
 
     //--- programs -------------------------------------------------------------
@@ -195,6 +175,14 @@ protected:
             return;
         forEachFourKEQFactoryPresetParam((int)index,
             [this](uint32_t param, float value) { setParameterValue(param, value); });
+        // An LV2 host applies an exported preset by writing ports, and runs
+        // only the ones whose value changed. A band whose Hz port already held
+        // the preset's value would then be left to whatever its legacy dial
+        // port was set to, so that port carries the dial that plays the same Hz.
+        const bool black = values[kEqType] > 0.5f;
+        for (int b = 0; b < 4; ++b)
+            values[kFourKEQBands[b].legacyDial] = fkLegacyDialForHz(
+                b, values[kFourKEQBands[b].hz], black, fkBandIsBell(values, b));
     }
 
     //--- lifecycle ------------------------------------------------------------
@@ -239,9 +227,57 @@ protected:
 private:
     void pushAllParams()
     {
-        for (uint32_t i = 0; i < kNumInputParams; ++i)
-            setParameterValue(i, values[i]);
+        for (uint32_t i = 0; i < kParamCount; ++i)
+            if (!fkIsOutputParam(i))
+                applyToDsp(i);
     }
+
+    void applyToDsp(uint32_t index)
+    {
+        const float value = values[index];
+        switch (index)
+        {
+        case kHpfFreq:    dsp.setHpfFreq(value); break;
+        case kHpfEnabled: dsp.setHpfEnabled(value > 0.5f); break;
+        case kLpfFreq:    dsp.setLpfFreq(value); break;
+        case kLpfEnabled: dsp.setLpfEnabled(value > 0.5f); break;
+        case kLfGain:     dsp.setLfGain(value); break;
+        case kLfBell:     dsp.setLfBell(value > 0.5f); break;
+        case kLmGain:     dsp.setLmGain(value); break;
+        case kLmQ:        dsp.setLmQ(value); break;
+        case kHmGain:     dsp.setHmGain(value); break;
+        case kHmQ:        dsp.setHmQ(value); break;
+        case kHfGain:     dsp.setHfGain(value); break;
+        case kHfBell:     dsp.setHfBell(value > 0.5f); break;
+        case kEqType:     dsp.setEqType((int)(value + 0.5f)); break;
+        case kBypass:     dsp.setBypass(value > 0.5f); break;
+        case kInputGain:  dsp.setInputGainDb(value); break;
+        case kOutputGain: dsp.setOutputGainDb(value); break;
+        case kSaturation:
+            // The SSL EQ has no independent drive/mix control. Its calibrated
+            // native nonlinearity is the core's 0% reference state; Input Gain
+            // controls the level presented to that nonlinear path.
+            dsp.setSaturation(0.0f);
+            break;
+        case kOversampling: dsp.setOversampling((int)(value + 0.5f)); break;
+        case kMsMode:     dsp.setMsMode(false); break;
+        case kSpectrumPrePost: break; // UI-only (analyzer source select)
+        case kShowGraph:  break;      // UI-only (graph collapse), persisted in state
+        case kAutoGain:   dsp.setAutoGain(value > 0.5f); break;
+        case kLfFreq: case kLmFreq: case kHmFreq: case kHfFreq:
+        case kLfHz: case kLmHz: case kHmHz: case kHfHz:
+        case kLegacyDialBands:
+            applyBandFrequencies();
+            break;
+        }
+    }
+
+    void applyBandFrequencies()
+    {
+        fkApplyBandFrequencies(dsp, values);
+        legacyDialBandsForUi.store(fkLegacyDialBits(values[kLegacyDialBands]), std::memory_order_relaxed);
+    }
+
     void updateLatency()
     {
         const uint32_t lat = (uint32_t)dsp.getLatencySamples();
@@ -250,6 +286,7 @@ private:
 
     duskaudio::FourKEQDSP dsp;
     float values[kParamCount] = {};
+    std::atomic<uint32_t> legacyDialBandsForUi { 0 };
     uint32_t lastLatency = 0xffffffffu;
     uint16_t activeChannels = DAF_PLUGIN_NUM_INPUTS;
 
@@ -270,3 +307,4 @@ float fourKEQGetOutputPeakL(void* p) noexcept { return p ? asPlugin(p)->outPeakL
 float fourKEQGetOutputPeakR(void* p) noexcept { return p ? asPlugin(p)->outPeakRv() : 0.0f; }
 const duskaudio::SpectrumRing* fourKEQGetPreSpectrum(void* p) noexcept  { return p ? asPlugin(p)->preSpec() : nullptr; }
 const duskaudio::SpectrumRing* fourKEQGetPostSpectrum(void* p) noexcept { return p ? asPlugin(p)->postSpec() : nullptr; }
+uint32_t fourKEQGetLegacyDialBands(void* p) noexcept { return p ? asPlugin(p)->legacyDialBands() : 0u; }

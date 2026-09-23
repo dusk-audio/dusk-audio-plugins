@@ -64,6 +64,56 @@ if(NOT CMAKE_CROSSCOMPILING)
         "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
     target_compile_features(FourKEQCoreTest PRIVATE cxx_std_17)
     add_test(NAME FourKEQCore COMMAND FourKEQCoreTest)
+
+    # Band-frequency parameters (#288): which of a band's two parameters wins,
+    # factory presets, the read-out, and user preset files across the change.
+    add_executable(FourKEQPluginLogicTest
+        tests/FourKEQPluginLogicTests.cpp
+        ../../shared-daf/dsp/FourKEQDSP.cpp)
+    target_include_directories(FourKEQPluginLogicTest PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+    target_compile_features(FourKEQPluginLogicTest PRIVATE cxx_std_17)
+    add_test(NAME FourKEQPluginLogic COMMAND FourKEQPluginLogicTest)
+
+    # The same through the built CLAP's state and parameter paths: pre-#288
+    # states and legacy automation keep their sound, the Hz parameters and the
+    # factory programs play the Hz they state. dlopen(), so not on Windows.
+    if(NOT WIN32)
+        add_executable(FourKEQClapStateTest
+            tests/FourKEQClapStateTest.cpp
+            ../../shared-daf/dsp/FourKEQDSP.cpp)
+        target_include_directories(FourKEQClapStateTest PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp"
+            "${DAF_PATH}/daf/src")
+        target_compile_features(FourKEQClapStateTest PRIVATE cxx_std_17)
+        target_link_libraries(FourKEQClapStateTest PRIVATE ${CMAKE_DL_LIBS})
+        add_dependencies(FourKEQClapStateTest 4k-eq-2-clap)
+        add_test(NAME FourKEQClapState
+                 COMMAND FourKEQClapStateTest "$<TARGET_FILE:4k-eq-2-clap>")
+
+        # LV2 restores by writing control ports, and DAF's LV2 wrapper passes on
+        # only those that changed, which the CLAP test cannot reach. Needs lilv.
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(FOURKEQ_LILV QUIET IMPORTED_TARGET lilv-0)
+        endif()
+        if(FOURKEQ_LILV_FOUND AND TARGET 4k-eq-2-lv2)
+            add_executable(FourKEQLv2StateTest
+                tests/FourKEQLv2StateTest.cpp
+                ../../shared-daf/dsp/FourKEQDSP.cpp)
+            target_include_directories(FourKEQLv2StateTest PRIVATE
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+            target_compile_features(FourKEQLv2StateTest PRIVATE cxx_std_17)
+            target_link_libraries(FourKEQLv2StateTest PRIVATE PkgConfig::FOURKEQ_LILV)
+            add_dependencies(FourKEQLv2StateTest 4k-eq-2-lv2)
+            add_test(NAME FourKEQLv2State
+                     COMMAND FourKEQLv2StateTest "${CMAKE_BINARY_DIR}/bin/4k-eq-2.lv2")
+        else()
+            message(STATUS "FourKEQLv2State not registered: lilv-0 development files not found")
+        endif()
+    endif()
 endif()
 
 # Out Peak L/R are output parameters; guard them against reaching the host as

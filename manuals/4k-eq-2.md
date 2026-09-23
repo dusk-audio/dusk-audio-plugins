@@ -46,9 +46,13 @@ original channel strip are intentionally outside this plugin.
 7. If you raise Input for more nonlinear character, lower Output by roughly the
    same amount. Enable Auto Gain only as a convenience while auditioning.
 
-The printed frequency marks reproduce the console dial. The value bubble shown
-while you hover or drag reports the calibrated audible frequency, which is the
-number to use when matching a target or typing a value.
+The LF, LMF, HMF and HF frequency knobs are in Hz: the mark a knob points at,
+the value bubble and a typed value are the frequency the band plays. For a bell
+that is its centre, for a shelf the corner where the full boost or cut is
+reached. The bubble does not change when you turn a gain knob. The band itself
+moves slightly with gain, as the console's does: a bell by at most about 2.3%,
+a shelf's corner by at most about 4% at 3 dB of gain or more. The HPF and LPF knobs keep
+the console's printed dial marks, and their bubble shows the measured corner.
 
 ## Workflows
 
@@ -178,7 +182,7 @@ an unsuitable curve by driving the modeled path harder.
 ### EQ bands
 
 - **LF Gain:** -15 to +15 dB, default 0 dB. **LF Frequency:** 30 to 450 Hz,
-  default 200 Hz. **SHELF/BELL:** shelf by default. Use the shelf for broad
+  default 200 Hz. Like the other band frequencies, it is the Hz the band plays. **SHELF/BELL:** shelf by default. Use the shelf for broad
   weight and the bell for a localized low-frequency move.
 - **LMF Gain:** -15 to +15 dB, default 0 dB. **LMF Frequency:** 200 Hz to
   2.5 kHz, default 1 kHz. **LMF Q:** 0.5 to 3.0, default 1.5. Use lower Q for
@@ -211,10 +215,20 @@ from running nominally unity biquads.
 
 ## Tips and Traps
 
-- Brown and Black can produce different audible frequencies at the same printed
-  dial position. Use the live value bubble when matching a known frequency.
-- Frequency automation retains the calibrated host-control coordinates used by
-  earlier 2.x sessions. The UI translates them to audible frequency for display.
+- Brown and Black put a band at the same frequency for the same knob setting.
+  They differ in Q, gain law, band interaction and color.
+- Up to version 1.0.5 the band frequency parameters were positions on the
+  console's printed dial, which played a different frequency from the number:
+  HMF stopped at about 6.4 kHz in Brown mode, and the Brown HF shelf never went
+  past about 6 kHz. Those parameters are still there, named "LF Frequency
+  (Legacy Dial)" and so on, so older sessions and their automation sound as
+  they did. A band follows whichever of its two frequency parameters was set
+  last. New automation belongs on "LF Frequency", "LM Frequency", "HM
+  Frequency" and "HF Frequency", which are in Hz.
+- A band from an older session can play a frequency outside its knob's range,
+  for example a Black LF shelf above 450 Hz. The knob then rests at its end stop
+  and the bubble shows the frequency the band plays. Turning the knob moves the
+  band onto the knob's range.
 - A large EQ boost can hit the modeled rail even when the DAW input meter looks
   safe. Lower Input or the band gain if the overload is not intentional.
 - Auto Gain is a convenience, not part of the modeled channel-strip signal
@@ -223,6 +237,8 @@ from running nominally unity biquads.
   while a host is not prepared to refresh plugin delay compensation.
 - The old Drive and M/S parameter indices may still appear in generic host
   views for compatibility. They are hidden or inert and are not part of the UI.
+  So do the four legacy dial frequencies and "Legacy Dial Bands", which records
+  which bands follow them.
 
 ## Presets Explained
 
@@ -261,9 +277,14 @@ from running nominally unity biquads.
 gain is away from 0 dB, or an HPF/LPF knob is not OUT. The HPF and LPF remain
 bypassed only while their knobs read OUT.
 
-**The frequency bubble does not match the printed legend.** The legend is the
-console's control marking; the bubble is the measured audible frequency. Use
-the bubble or typed entry when an exact target matters.
+**A band frequency knob sits at its end stop.** The band follows a legacy dial
+setting from a session saved with version 1.0.5 or earlier, and the frequency
+it plays is outside the knob's range. The bubble shows that frequency. Turn the
+knob to bring the band back onto the knob's scale.
+
+**The HPF or LPF bubble does not match the printed legend.** The filter legends
+are the console's dial markings; the bubble is the measured corner. Use the
+bubble or typed entry when an exact target matters.
 
 **The plugin becomes louder or distorts after an Input change.** Lower Output
 by the same amount for comparison. If it still overloads, lower Input or the
