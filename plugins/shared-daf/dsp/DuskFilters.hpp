@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <utility>
 
 namespace duskaudio
 {
@@ -391,7 +392,201 @@ public:
         return { b0f * inv, b1f * inv, b2f * inv, a1f * inv, a2f * inv };
     }
 
+    //--- matched-magnitude designers (Vicanek 2016) ---------------------------
+    // The RBJ designers above are bilinear: they place the analog response
+    // exactly up to the design frequency and then squash everything above it
+    // into Nyquist ("cramping"). These match the analog prototype's MAGNITUDE
+    // instead. Poles come from impulse invariance (exact pole frequency and
+    // damping); the numerator is solved so |H| equals the analog |H| at DC, at
+    // Nyquist and at one match point, so the response keeps its analog shape
+    // right up to fs/2 without oversampling. They take the same analog
+    // prototypes as peak(), shelf() and lowPass() (the RBJ cookbook s-domain
+    // forms), so at a high design rate the two families converge.
+    //
+    // A cut is the exact reciprocal of the matching boost, as the analog
+    // prototypes are, so boost and cut stay mirror images in dB at any rate.
+    //
+    // A design frequency at or above Nyquist is legal: the poles are clamped to
+    // 0.9*pi and the numerator still matches the unclamped analog magnitude, so
+    // a corner past fs/2 leaves the correct tail inside the band instead of
+    // folding back. No nyquistSafeDesignHz() ceiling is applied for the same
+    // reason; freq is only floored at 1 Hz.
+    //
+    // Designed in double, returned as the float coefficients Biquad runs, so
+    // the per-sample cost is identical to the RBJ sections. Design cost is
+    // roughly 100 ns per section.
+    static BiquadCoeffs matchedPeak(double fs, double freq, double gainDb, double Q) noexcept
+    {
+        return MatchedDesign::toFloat(MatchedDesign::peak(fs, freq, gainDb, Q));
+    }
+
+    static BiquadCoeffs matchedShelf(double fs, double freq, double gainDb, double Q, bool high) noexcept
+    {
+        return MatchedDesign::toFloat(MatchedDesign::shelf(fs, freq, gainDb, Q, high));
+    }
+
+    static BiquadCoeffs matchedLowPass(double fs, double freq, double Q) noexcept
+    {
+        return MatchedDesign::toFloat(MatchedDesign::lowPass(fs, freq, Q));
+    }
+
 private:
+    struct MatchedDesign
+    {
+        struct Section { double b0, b1, b2, a1, a2; };
+
+        static constexpr double kPi = 3.14159265358979323846;
+        // Pole frequency ceiling: at pi the impulse-invariant pole pair would
+        // alias onto itself.
+        static constexpr double kMaxPoleOmega = 0.9 * kPi;
+
+        static BiquadCoeffs toFloat(const Section& s) noexcept
+        {
+            return { (float)s.b0, (float)s.b1, (float)s.b2, (float)s.a1, (float)s.a2 };
+        }
+
+        static double safeFreq(double freq) noexcept { return freq > 1.0 ? freq : 1.0; }
+        static double safeQ(double Q) noexcept { return Q > 1.0e-3 ? Q : 1.0e-3; }
+        static double safeGain(double gainDb) noexcept { return std::isfinite(gainDb) ? gainDb : 0.0; }
+
+        // Third match point: the given frequency itself while it sits in the
+        // lower half band (so a bell's centre gain is exact), then pulled in
+        // below it, and never above 0.6*pi. A section centred near or past
+        // Nyquist (an LPF corner at 30 kHz, a fitted correction at 20-30 kHz)
+        // is matched on its in-band skirt, which is what is heard; matching it
+        // up at 0.8*pi instead let a broad +11 dB section centred at 30 kHz
+        // miss by 6 dB at 7 kHz at 44.1 kHz.
+        static double matchOmega(double w0) noexcept
+        {
+            const double w = w0 <= 0.5 * kPi ? w0 : std::max(0.5 * kPi, 0.7 * w0);
+            return std::min(w, 0.6 * kPi);
+        }
+
+        // Impulse-invariant poles of s^2 + (w/Q) s + w^2, w in rad/sample.
+        // Overdamped pairs use the two real poles directly: the cosh form
+        // overflows to inf * 0 at very low Q.
+        static void poles(double w, double Q, double& a1, double& a2) noexcept
+        {
+            w = std::min(w, kMaxPoleOmega);
+            const double zeta = 0.5 / Q;
+            a2 = std::exp(-2.0 * zeta * w);
+            if (zeta <= 1.0)
+            {
+                a1 = -2.0 * std::exp(-zeta * w) * std::cos(std::sqrt(1.0 - zeta * zeta) * w);
+            }
+            else
+            {
+                const double s = std::sqrt(zeta * zeta - 1.0);
+                a1 = -(std::exp(-w / (zeta + s)) + std::exp(-(zeta + s) * w));
+            }
+        }
+
+        // Numerator whose |B/A|^2 equals h0sq at DC, hpisq at Nyquist and hmsq at
+        // wm (Vicanek 2016, section 3).
+        static Section numerator(double a1, double a2, double h0sq, double hpisq,
+                                 double wm, double hmsq) noexcept
+        {
+            const double A0 = (1.0 + a1 + a2) * (1.0 + a1 + a2);
+            const double A1 = (1.0 - a1 + a2) * (1.0 - a1 + a2);
+            const double A2 = -4.0 * a2;
+            const double sm = std::sin(0.5 * wm);
+            const double phi1 = sm * sm;
+            const double phi0 = 1.0 - phi1;
+            const double phi2 = 4.0 * phi0 * phi1;
+            const double B0 = A0 * h0sq;
+            const double B1 = A1 * hpisq;
+            const double B2 = (hmsq * (A0 * phi0 + A1 * phi1 + A2 * phi2) - B0 * phi0 - B1 * phi1) / phi2;
+            const double sB0 = std::sqrt(B0), sB1 = std::sqrt(B1);
+            const double W = 0.5 * (sB0 + sB1);
+            double b0 = 0.5 * (W + std::sqrt(std::max(0.0, W * W + B2)));
+            const double b1 = 0.5 * (sB0 - sB1);
+            double b2 = b0 > 0.0 ? -B2 / (4.0 * b0) : 0.0;
+            // When the three magnitudes admit no real solution (W^2 + B2 < 0) the
+            // clamp above leaves a complex zero pair OUTSIDE the unit circle,
+            // |z|^2 = b2/b0 > 1. That is still a stable boost, but its reciprocal
+            // (every cut) would not be. Reversing the numerator reflects the pair
+            // inside with |B(e^jw)| unchanged. In every other case the solution is
+            // already minimum phase and b2 < b0.
+            if (b2 > b0)
+                std::swap(b0, b2);
+            return { b0, b1, b2, a1, a2 };
+        }
+
+        static Section reciprocal(const Section& s) noexcept
+        {
+            const double inv = 1.0 / s.b0;
+            return { inv, s.a1 * inv, s.a2 * inv, s.b1 * inv, s.b2 * inv };
+        }
+
+        // Analog |H(jx)|^2 of the RBJ prototypes, x = w / w0, A = 10^(gainDb/40).
+        static double peakSq(double x, double A, double Q) noexcept
+        {
+            const double u = (1.0 - x * x) * (1.0 - x * x);
+            const double num = x * A / Q, den = x / (A * Q);
+            return (u + num * num) / (u + den * den);
+        }
+
+        static double shelfSq(double x, double A, double Q, bool high) noexcept
+        {
+            const double x2 = x * x;
+            const double mid = (A / (Q * Q)) * x2;
+            const double hi = (1.0 - A * x2) * (1.0 - A * x2);
+            const double lo = (A - x2) * (A - x2);
+            return high ? A * A * (hi + mid) / (lo + mid) : A * A * (lo + mid) / (hi + mid);
+        }
+
+        static double lowPassSq(double x, double Q) noexcept
+        {
+            const double u = 1.0 - x * x, v = x / Q;
+            return 1.0 / (u * u + v * v);
+        }
+
+        static Section peak(double fs, double freq, double gainDb, double Q) noexcept
+        {
+            gainDb = safeGain(gainDb);
+            if (gainDb < 0.0)
+                return reciprocal(peak(fs, freq, -gainDb, Q));
+            Q = safeQ(Q);
+            const double A = std::pow(10.0, gainDb / 40.0);
+            const double w0 = 2.0 * kPi * safeFreq(freq) / fs;
+            const double wm = matchOmega(w0);
+            double a1, a2;
+            poles(w0, Q * A, a1, a2);
+            return numerator(a1, a2, 1.0, peakSq(kPi / w0, A, Q), wm, peakSq(wm / w0, A, Q));
+        }
+
+        static Section shelf(double fs, double freq, double gainDb, double Q, bool high) noexcept
+        {
+            gainDb = safeGain(gainDb);
+            if (gainDb < 0.0)
+                return reciprocal(shelf(fs, freq, -gainDb, Q, high));
+            Q = safeQ(Q);
+            const double A = std::pow(10.0, gainDb / 40.0);
+            const double sqrtA = std::sqrt(A);
+            const double w0 = 2.0 * kPi * safeFreq(freq) / fs;
+            // A high shelf is matched at its lower corner (the zero frequency,
+            // w0 / sqrt(A)), where its rise begins. With the design frequency
+            // high in the band, matching at the half-gain point instead leaves
+            // twice the error: 1.6 dB against 0.8 dB for a 16 kHz corner at
+            // 44.1 kHz.
+            const double wm = matchOmega(high ? w0 / sqrtA : w0);
+            double a1, a2;
+            poles(high ? w0 * sqrtA : w0 / sqrtA, Q, a1, a2);
+            return numerator(a1, a2, shelfSq(0.0, A, Q, high), shelfSq(kPi / w0, A, Q, high),
+                             wm, shelfSq(wm / w0, A, Q, high));
+        }
+
+        static Section lowPass(double fs, double freq, double Q) noexcept
+        {
+            Q = safeQ(Q);
+            const double w0 = 2.0 * kPi * safeFreq(freq) / fs;
+            const double wm = matchOmega(w0);
+            double a1, a2;
+            poles(w0, Q, a1, a2);
+            return numerator(a1, a2, 1.0, lowPassSq(kPi / w0, Q), wm, lowPassSq(wm / w0, Q));
+        }
+    };
+
     BiquadCoeffs c;
     float z1 = 0.0f, z2 = 0.0f;
 };
