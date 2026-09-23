@@ -52,6 +52,20 @@ target_compile_definitions(4k-eq-2 PUBLIC
 # (disable with -DDUSK_DAF_INSTALL_LOCAL=OFF).
 dusk_daf_install_local(4k-eq-2 LV2_PROGRAMS)
 
+if(NOT CMAKE_CROSSCOMPILING)
+    # The shared FourKEQDSP core: bit identity with the frozen RBJ-only core at
+    # the reference design rate, matched designs below it, the Hz API, extremes.
+    enable_testing()
+    add_executable(FourKEQCoreTest
+        ../../shared-daf/dsp/tests/FourKEQDSPTests.cpp
+        ../../shared-daf/dsp/tests/reference/FourKEQDSPMainRef.cpp
+        ../../shared-daf/dsp/FourKEQDSP.cpp)
+    target_include_directories(FourKEQCoreTest PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+    target_compile_features(FourKEQCoreTest PRIVATE cxx_std_17)
+    add_test(NAME FourKEQCore COMMAND FourKEQCoreTest)
+endif()
+
 # Out Peak L/R are output parameters; guard them against reaching the host as
 # parameter edits, in both VST3 (dusk-audio/plugins#233) and CLAP (#231). The
 # harnesses dlopen() the built binaries, so they only run where they are built.

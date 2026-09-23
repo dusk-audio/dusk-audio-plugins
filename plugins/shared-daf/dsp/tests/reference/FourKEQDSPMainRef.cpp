@@ -1,16 +1,26 @@
+// FROZEN REFERENCE: FourKEQDSP as of dusk-audio-plugins main d7aca75f, the last
+// revision whose every section used the RBJ designers. FourKEQDSPTests renders it
+// beside the live core to prove the live core is still bit-identical at the
+// reference design rate (FourKEQDSP::kReferenceDesignRate). Byte-for-byte the
+// original except for this comment, the header include, and the enclosing
+// namespace, duskaudio::fourk_main_ref, so both can link into one binary:
+//   git show d7aca75f:plugins/shared-daf/dsp/<file> | diff - <this file>
+// Never edit it to track the live core. If the 4x sound is meant to change,
+// the test that renders it is what has to change.
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
 // Third-party components in the built plugins (DAF — ISC; Dear ImGui — MIT; and
 // others) are attributed in plugins/shared-daf/THIRD_PARTY_LICENSES.md.
 //
 // FourKEQDSP.cpp — implementation of the framework-free 4K console EQ core.
 
-#include "FourKEQDSP.hpp"
+#include "FourKEQDSPMainRef.hpp"
 
 #include <algorithm>
 #include <cmath>
-#include <cstring>
 
 namespace duskaudio
+{
+namespace fourk_main_ref
 {
 
 static inline float dbToGain(float db) noexcept { return std::pow(10.0f, 0.05f * db); }
@@ -633,143 +643,19 @@ float FourKEQDSP::calibratedEqQ(float q, float hz, float gainDb, Band band,
     return atFrequency * (atControl / centerQ) * (atGain / centerQ);
 }
 
-//==============================================================================
-// Section design: RBJ at the reference rate, matched-magnitude below it
-//==============================================================================
-static bool usesMatchedDesign(double fs) noexcept
+std::array<BiquadCoeffs, 3> FourKEQDSP::calibratedPairCorrection(
+    double sampleRate, bool highPair, bool black,
+    float firstGainDb, float firstControlHz, float firstShape,
+    float secondGainDb, float secondControlHz, float secondShape) noexcept
 {
-    return fs < FourKEQDSP::kReferenceDesignRate;
-}
-
-static bool isBellShape(FourKEQDSP::Band band, bool bell) noexcept
-{
-    return bell || band == FourKEQDSP::Band::LM || band == FourKEQDSP::Band::HM;
-}
-
-// A resolved band: the RBJ design frequency it plays at its gain, the dial
-// position its Q and pair interaction are read at, and the frequency the
-// measured law gives that position (what places the interaction corrections).
-struct ResolvedBand
-{
-    float designHz;
-    float control;
-    float measuredHz;
-};
-
-// sqrt(A) at the calibrated reference gain for a shelf, 1 for a bell: the
-// ratio between a shelf's corner (its pole frequency) and its RBJ design
-// frequency, the half-gain point.
-static float shelfCornerRatio(FourKEQDSP::Band band, bool black, bool bell) noexcept
-{
-    if (isBellShape(band, bell))
-        return 1.0f;
-    const float referenceDb = FourKEQDSP::calibratedEqGain(
-        FourKEQDSP::kEqReferenceGainDb, band, black, bell);
-    return std::pow(10.0f, referenceDb / 80.0f);
-}
-
-// Normalized position (0..1) along a measured frequency table at which f sits.
-// The tables flatten at both ends (see the note above kBrownEqBands) and a few
-// dip by under a ppm there, so the table is read through its running maximum,
-// and a frequency at or past an end returns the INNER edge of that end's flat
-// run. The position then stays continuous as a requested frequency crosses the
-// end of the table instead of jumping across the flat run.
-static float anchorPositionForFrequency(float f, const float (&table)[21]) noexcept
-{
-    constexpr int last = 20;
-    float envelope[21];
-    envelope[0] = table[0];
-    for (int i = 1; i <= last; ++i)
-        envelope[i] = std::max(envelope[i - 1], table[i]);
-    int bottomRunEnd = 0;
-    while (bottomRunEnd < last && envelope[bottomRunEnd + 1] <= envelope[0])
-        ++bottomRunEnd;
-    int topRunStart = last;
-    while (topRunStart > 0 && envelope[topRunStart - 1] >= envelope[last])
-        --topRunStart;
-    if (!(f > envelope[0]))
-        return static_cast<float>(bottomRunEnd) / last;
-    for (int i = bottomRunEnd + 1; i <= topRunStart; ++i)
-    {
-        if (f <= envelope[i])
-        {
-            const float t = (f - envelope[i - 1]) / (envelope[i] - envelope[i - 1]);
-            return (static_cast<float>(i - 1) + t) / last;
-        }
-    }
-    return static_cast<float>(topRunStart) / last;
-}
-
-static float controlAtPosition(FourKEQDSP::Band band, float position) noexcept
-{
-    const float (&controls)[21] = kEqFrequencyControls[static_cast<int>(band)];
-    const float x = clampf(position, 0.0f, 1.0f) * 20.0f;
-    const int i = std::min(static_cast<int>(x), 19);
-    return controls[i] + (x - static_cast<float>(i)) * (controls[i + 1] - controls[i]);
-}
-
-// hz > 0 selects the Hz API; otherwise the band follows its dial position.
-static ResolvedBand resolveBand(FourKEQDSP::Band band, bool black, bool bell,
-                                float gainDb, float control, float hz) noexcept
-{
-    if (!(hz > 0.0f))
-    {
-        const float measured = FourKEQDSP::calibratedEqFrequency(control, gainDb, band, black, bell);
-        return { measured, control, measured };
-    }
-
-    const DenseBandCalibration& calibration = denseBandCalibration(band, black, bell);
-    const float ratio = shelfCornerRatio(band, black, bell);
-    const float referenceHz = band == FourKEQDSP::Band::HF ? hz / ratio : hz * ratio;
-    const float atGain = interpolateAnchors(
-        std::abs(gainDb), kEqGainControls, calibration.frequencyAtGain);
-    const float position = anchorPositionForFrequency(referenceHz, calibration.frequency);
-    const float equivalent = controlAtPosition(band, position);
-    return { referenceHz * atGain / calibration.frequency[10], equivalent,
-             FourKEQDSP::calibratedEqFrequency(equivalent, gainDb, band, black, bell) };
-}
-
-using SectionDesign = FourKEQDSP::SectionDesign;
-using SectionShape = FourKEQDSP::SectionDesign::Shape;
-
-static SectionDesign bandSection(FourKEQDSP::Band band, bool black, bool bell,
-                                 float controlGain, const ResolvedBand& resolved,
-                                 float controlQ) noexcept
-{
-    SectionDesign d;
-    d.shape = isBellShape(band, bell) ? SectionShape::Peak
-            : band == FourKEQDSP::Band::HF ? SectionShape::HighShelf
-                                           : SectionShape::LowShelf;
-    d.freq = resolved.designHz;
-    d.gainDb = FourKEQDSP::calibratedEqGain(controlGain, band, black, bell);
-    d.q = FourKEQDSP::calibratedEqQ(controlQ, resolved.control, controlGain, band, black, bell);
-    return d;
-}
-
-static SectionDesign lowPassSection(float control, bool black) noexcept
-{
-    SectionDesign d;
-    d.shape = SectionShape::LowPass;
-    d.freq = FourKEQDSP::calibratedFilterFrequency(control, false, black);
-    d.q = FourKEQDSP::calibratedFilterQ(false, black);
-    return d;
-}
-
-// firstControl/secondControl are dial positions (the model's inputs), and
-// firstFrequency/secondFrequency what the measured law plays at them, which
-// places the correction sections. Both come from the measured domain even when
-// a band is asked for past its table through the Hz API, so the corrections
-// never leave the range they were fitted over: every one is centred at or
-// above 5.8 Hz (the lowest LF/LM pair centre, 70 Hz, times e^-2.5), which the
-// float sections at the 4x rate hold.
-static std::array<SectionDesign, 3> pairCorrectionDesigns(
-    bool highPair, bool black,
-    float firstGainDb, float firstControl, float firstShape, float firstFrequency,
-    float secondGainDb, float secondControl, float secondShape, float secondFrequency) noexcept
-{
-    using Band = FourKEQDSP::Band;
     const Band firstBand = highPair ? Band::HM : Band::LF;
     const Band secondBand = highPair ? Band::HF : Band::LM;
+    const bool firstBell = highPair || firstShape > 0.5f;
+    const bool secondBell = !highPair || secondShape > 0.5f;
+    const float firstFrequency = calibratedEqFrequency(
+        firstControlHz, firstGainDb, firstBand, black, firstBell);
+    const float secondFrequency = calibratedEqFrequency(
+        secondControlHz, secondGainDb, secondBand, black, secondBell);
 
     // Convert our physical controls back to the normalized coordinates used by
     // the British console EQ measurement campaign. Q runs in the opposite
@@ -777,13 +663,13 @@ static std::array<SectionDesign, 3> pairCorrectionDesigns(
     float controls[6] = {
         clampf(firstGainDb / 15.0f, -1.0f, 1.0f),
         2.0f * inverseAnchorPosition(
-            firstControl, kEqFrequencyControls[static_cast<int>(firstBand)]) - 1.0f,
+            firstControlHz, kEqFrequencyControls[static_cast<int>(firstBand)]) - 1.0f,
         highPair
             ? 1.0f - 2.0f * inverseAnchorPosition(firstShape, kEqQControls)
             : (firstShape > 0.5f ? 1.0f : -1.0f),
         clampf(secondGainDb / 15.0f, -1.0f, 1.0f),
         2.0f * inverseAnchorPosition(
-            secondControl, kEqFrequencyControls[static_cast<int>(secondBand)]) - 1.0f,
+            secondControlHz, kEqFrequencyControls[static_cast<int>(secondBand)]) - 1.0f,
         highPair
             ? (secondShape > 0.5f ? 1.0f : -1.0f)
             : 1.0f - 2.0f * inverseAnchorPosition(secondShape, kEqQControls),
@@ -812,152 +698,20 @@ static std::array<SectionDesign, 3> pairCorrectionDesigns(
     const float centerLogFrequency = 0.5f * (
         std::log(std::max(firstFrequency, 1.0f))
         + std::log(std::max(secondFrequency, 1.0f)));
-    std::array<SectionDesign, 3> result;
+    std::array<BiquadCoeffs, 3> result;
     for (int index = 0; index < 3; ++index)
     {
         const int offset = index * 3;
-        SectionDesign& d = result[static_cast<size_t>(index)];
-        d.shape = SectionShape::Peak;
-        d.gainDb = 20.0f * gate * std::tanh(raw[offset]);
-        d.freq = std::min(std::exp(centerLogFrequency + 2.5f * std::tanh(raw[offset + 1])), 30000.0f);
+        const float gainDb = 20.0f * gate * std::tanh(raw[offset]);
+        const float frequency = std::min(
+            std::exp(centerLogFrequency + 2.5f * std::tanh(raw[offset + 1])),
+            std::min(30000.0f, static_cast<float>(sampleRate * 0.49)));
         const float sigmoid = 1.0f / (1.0f + std::exp(-raw[offset + 2]));
-        d.q = std::exp(std::log(0.05f) + std::log(200.0f) * sigmoid);
+        const float q = std::exp(std::log(0.05f) + std::log(200.0f) * sigmoid);
+        result[static_cast<size_t>(index)] = Biquad::peak(
+            sampleRate, frequency, gainDb, q);
     }
     return result;
-}
-
-// Float TDF-II coefficients cannot hold a pole pair closer to z = 1 than their
-// rounding allows, so a section designed below roughly 1e-4 * fs can round
-// onto or past the unit circle: a slowly exploding DC integrator. Up to a
-// 192 kHz design rate nothing either API asks for gets there, so this returns
-// every section untouched and the reference rate stays bit-identical (every
-// dial-API design stays untouched up to 384 kHz too). It acts from 352.8 kHz
-// on Hz-API bands asked for at 20-25 Hz, and at 768 kHz on the lowest dial-API
-// pair corrections (6-10 Hz), which the RBJ designer alone puts on the circle.
-// Pull a1 in until the pair is strictly inside; at those frequencies the
-// section is inaudible either way.
-static BiquadCoeffs keepPolesInside(BiquadCoeffs c) noexcept
-{
-    if (!(std::isfinite(c.b0) && std::isfinite(c.b1) && std::isfinite(c.b2)
-          && std::isfinite(c.a1) && std::isfinite(c.a2)))
-        return BiquadCoeffs{};
-    if (std::abs((double)c.a1) < 1.0 + (double)c.a2 && std::abs(c.a2) < 1.0f)
-        return c;
-    c.a2 = clampf(c.a2, -0.99999f, 0.99999f);
-    const double limit = 1.0 + (double)c.a2 - 1.0e-6;
-    float a1 = (float)std::copysign(std::min(std::abs((double)c.a1), limit), (double)c.a1);
-    while (std::abs((double)a1) > limit)
-        a1 = std::nextafter(a1, 0.0f);
-    c.a1 = a1;
-    return c;
-}
-
-BiquadCoeffs FourKEQDSP::realize(const SectionDesign& d, double fs) noexcept
-{
-    BiquadCoeffs c;
-    if (usesMatchedDesign(fs))
-    {
-        switch (d.shape)
-        {
-        case SectionShape::Peak:      c = Biquad::matchedPeak(fs, d.freq, d.gainDb, d.q); break;
-        case SectionShape::LowShelf:  c = Biquad::matchedShelf(fs, d.freq, d.gainDb, d.q, false); break;
-        case SectionShape::HighShelf: c = Biquad::matchedShelf(fs, d.freq, d.gainDb, d.q, true); break;
-        case SectionShape::LowPass:   c = Biquad::matchedLowPass(fs, d.freq, d.q); break;
-        }
-    }
-    else
-    {
-        const float freq = std::min(d.freq, static_cast<float>(fs * 0.49));
-        switch (d.shape)
-        {
-        case SectionShape::Peak:      c = Biquad::peak(fs, freq, d.gainDb, d.q); break;
-        case SectionShape::LowShelf:  c = Biquad::shelf(fs, freq, d.gainDb, d.q, false); break;
-        case SectionShape::HighShelf: c = Biquad::shelf(fs, freq, d.gainDb, d.q, true); break;
-        case SectionShape::LowPass:   c = Biquad::lowPass(fs, freq, d.q); break;
-        }
-    }
-    return keepPolesInside(c);
-}
-
-FourKEQDSP::SectionDesigns FourKEQDSP::designSections(const CoeffInputs& in) noexcept
-{
-    const bool black = in.eqType > 0.5f;
-    const bool lfBell = in.lfBell > 0.5f;
-    const bool hfBell = in.hfBell > 0.5f;
-    const ResolvedBand lf = resolveBand(Band::LF, black, lfBell, in.lfGain, in.lfFreq, in.lfFreqHz);
-    const ResolvedBand lm = resolveBand(Band::LM, black, true, in.lmGain, in.lmFreq, in.lmFreqHz);
-    const ResolvedBand hm = resolveBand(Band::HM, black, true, in.hmGain, in.hmFreq, in.hmFreqHz);
-    const ResolvedBand hf = resolveBand(Band::HF, black, hfBell, in.hfGain, in.hfFreq, in.hfFreqHz);
-
-    SectionDesigns d;
-    d.bands[0] = bandSection(Band::LF, black, lfBell, in.lfGain, lf, 1.5f);
-    d.bands[1] = bandSection(Band::LM, black, true, in.lmGain, lm, in.lmQ);
-    d.bands[2] = bandSection(Band::HM, black, true, in.hmGain, hm, in.hmQ);
-    d.bands[3] = bandSection(Band::HF, black, hfBell, in.hfGain, hf, 1.5f);
-    d.lowCorrection = pairCorrectionDesigns(
-        false, black,
-        in.lfGain, lf.control, lfBell ? 1.0f : 0.0f, lf.measuredHz,
-        in.lmGain, lm.control, in.lmQ, lm.measuredHz);
-    d.highCorrection = pairCorrectionDesigns(
-        true, black,
-        in.hmGain, hm.control, in.hmQ, hm.measuredHz,
-        in.hfGain, hf.control, hfBell ? 1.0f : 0.0f, hf.measuredHz);
-    d.lpf = lowPassSection(in.lpfFreq, black);
-    return d;
-}
-
-FourKEQDSP::CoeffInputs FourKEQDSP::coeffInputsFor(const CurveControls& c) noexcept
-{
-    CoeffInputs in{};
-    in.hpfFreq = c.hpfFreq;
-    in.lpfFreq = c.lpfFreq;
-    auto frequency = [&c](float value, float& dial, float& hz) {
-        dial = c.bandFrequenciesInHz ? 0.0f : value;
-        hz = c.bandFrequenciesInHz ? sanitizeBandHz(value) : 0.0f;
-    };
-    in.lfGain = c.lfGain; frequency(c.lfFreq, in.lfFreq, in.lfFreqHz); in.lfBell = c.lfBell;
-    in.lmGain = c.lmGain; frequency(c.lmFreq, in.lmFreq, in.lmFreqHz); in.lmQ = c.lmQ;
-    in.hmGain = c.hmGain; frequency(c.hmFreq, in.hmFreq, in.hmFreqHz); in.hmQ = c.hmQ;
-    in.hfGain = c.hfGain; frequency(c.hfFreq, in.hfFreq, in.hfFreqHz); in.hfBell = c.hfBell;
-    in.eqType = c.black ? 1.0f : 0.0f;
-    return in;
-}
-
-std::array<BiquadCoeffs, 3> FourKEQDSP::calibratedPairCorrection(
-    double sampleRate, bool highPair, bool black,
-    float firstGainDb, float firstControlHz, float firstShape,
-    float secondGainDb, float secondControlHz, float secondShape) noexcept
-{
-    const Band firstBand = highPair ? Band::HM : Band::LF;
-    const Band secondBand = highPair ? Band::HF : Band::LM;
-    const bool firstBell = highPair || firstShape > 0.5f;
-    const bool secondBell = !highPair || secondShape > 0.5f;
-    const auto designs = pairCorrectionDesigns(
-        highPair, black,
-        firstGainDb, firstControlHz, firstShape,
-        calibratedEqFrequency(firstControlHz, firstGainDb, firstBand, black, firstBell),
-        secondGainDb, secondControlHz, secondShape,
-        calibratedEqFrequency(secondControlHz, secondGainDb, secondBand, black, secondBell));
-    std::array<BiquadCoeffs, 3> result;
-    for (size_t i = 0; i < 3; ++i)
-        result[i] = realize(designs[i], sampleRate);
-    return result;
-}
-
-float FourKEQDSP::calibratedEqFrequencyForHz(float hz, float gainDb, Band band,
-                                             bool black, bool bell) noexcept
-{
-    return resolveBand(band, black, bell, gainDb, 0.0f, sanitizeBandHz(hz)).designHz;
-}
-
-float FourKEQDSP::hzForCalibratedEqControl(float controlHz, Band band,
-                                           bool black, bool bell) noexcept
-{
-    const DenseBandCalibration& calibration = denseBandCalibration(band, black, bell);
-    const float referenceHz = interpolateAnchors(
-        controlHz, kEqFrequencyControls[static_cast<int>(band)], calibration.frequency);
-    const float ratio = shelfCornerRatio(band, black, bell);
-    return band == Band::HF ? referenceHz * ratio : referenceHz / ratio;
 }
 
 float FourKEQDSP::calibratedFilterFrequency(float hz, bool highPass,
@@ -1081,29 +835,55 @@ FourKEQDSP::CurveCoeffs FourKEQDSP::designCurve(const CurveControls& c) noexcept
         d.hasHpf = true;
         d.hpfTrimLinear = std::pow(10.0, calibratedHpfTrimDb(c.hpfFreq, black) / 20.0);
     }
-    const SectionDesigns sections = designSections(coeffInputsFor(c));
     if (c.lpfEnabled)
     {
-        d.lpf = realize(sections.lpf, d.sampleRate);
+        const float f = std::min(calibratedFilterFrequency(c.lpfFreq, false, black),
+                                 static_cast<float>(d.sampleRate * 0.49));
+        d.lpf = Biquad::lowPass(d.sampleRate, f, calibratedFilterQ(false, black));
         d.hasLpf = true;
     }
 
-    const bool active[4] = { std::abs(c.lfGain) > 1.0e-6f, std::abs(c.lmGain) > 1.0e-6f,
-                             std::abs(c.hmGain) > 1.0e-6f, std::abs(c.hfGain) > 1.0e-6f };
-    for (int i = 0; i < 4; ++i)
+    auto designBand = [&](Band band, float controlGain, float controlFreq,
+                          float controlQ, bool bell, bool highShelf) {
+        const float f = std::min(calibratedEqFrequency(controlFreq, controlGain, band, black, bell),
+                                 static_cast<float>(d.sampleRate * 0.49));
+        const float g = calibratedEqGain(controlGain, band, black, bell);
+        const float q = calibratedEqQ(controlQ, controlFreq, controlGain, band, black, bell);
+        return bell || band == Band::LM || band == Band::HM
+            ? Biquad::peak(d.sampleRate, f, g, q)
+            : Biquad::shelf(d.sampleRate, f, g, q, highShelf);
+    };
+
+    const bool lfActive = std::abs(c.lfGain) > 1.0e-6f;
+    const bool lmActive = std::abs(c.lmGain) > 1.0e-6f;
+    const bool hmActive = std::abs(c.hmGain) > 1.0e-6f;
+    const bool hfActive = std::abs(c.hfGain) > 1.0e-6f;
+    if (lfActive)
+        d.bands[0] = designBand(Band::LF, c.lfGain, c.lfFreq, 1.5f, c.lfBell > 0.5f, false);
+    if (lmActive)
+        d.bands[1] = designBand(Band::LM, c.lmGain, c.lmFreq, c.lmQ, true, false);
+    if (hmActive)
+        d.bands[2] = designBand(Band::HM, c.hmGain, c.hmFreq, c.hmQ, true, false);
+    if (hfActive)
+        d.bands[3] = designBand(Band::HF, c.hfGain, c.hfFreq, 1.5f, c.hfBell > 0.5f, true);
+    d.hasBand[0] = lfActive; d.hasBand[1] = lmActive;
+    d.hasBand[2] = hmActive; d.hasBand[3] = hfActive;
+
+    if (lfActive && lmActive)
     {
-        d.hasBand[i] = active[i];
-        if (active[i])
-            d.bands[i] = realize(sections.bands[i], d.sampleRate);
+        d.lowCorrection = calibratedPairCorrection(
+            d.sampleRate, false, black,
+            c.lfGain, c.lfFreq, c.lfBell,
+            c.lmGain, c.lmFreq, c.lmQ);
+        d.hasLowCorrection = true;
     }
-    d.hasLowCorrection = active[0] && active[1];
-    d.hasHighCorrection = active[2] && active[3];
-    for (size_t i = 0; i < 3; ++i)
+    if (hmActive && hfActive)
     {
-        if (d.hasLowCorrection)
-            d.lowCorrection[i] = realize(sections.lowCorrection[i], d.sampleRate);
-        if (d.hasHighCorrection)
-            d.highCorrection[i] = realize(sections.highCorrection[i], d.sampleRate);
+        d.highCorrection = calibratedPairCorrection(
+            d.sampleRate, true, black,
+            c.hmGain, c.hmFreq, c.hmQ,
+            c.hfGain, c.hfFreq, c.hfBell);
+        d.hasHighCorrection = true;
     }
     return d;
 }
@@ -1183,7 +963,7 @@ void FourKEQDSP::prepare(double sampleRate, int maxBlockSize)
     lastHpfEnabled = pHpfEnabled.load(R) > 0.5f;
     lastLpfEnabled = pLpfEnabled.load(R) > 0.5f;
 
-    coeffsValid_ = false;
+    recomputeCoeffs(osRate);
     reset();
 }
 
@@ -1204,32 +984,15 @@ void FourKEQDSP::reset()
 //==============================================================================
 // Coefficients (both channels share identical coefficients, as in JUCE)
 //==============================================================================
-FourKEQDSP::CoeffInputs FourKEQDSP::loadCoeffInputs() const noexcept
+void FourKEQDSP::recomputeCoeffs(double fs) noexcept
 {
-    CoeffInputs in;
-    in.hpfFreq = pHpfFreq.load(R);
-    in.lpfFreq = pLpfFreq.load(R);
-    in.lfGain = pLfGain.load(R); in.lfFreq = pLfFreq.load(R);
-    in.lfFreqHz = pLfFreqHz.load(R); in.lfBell = pLfBell.load(R);
-    in.lmGain = pLmGain.load(R); in.lmFreq = pLmFreq.load(R);
-    in.lmFreqHz = pLmFreqHz.load(R); in.lmQ = pLmQ.load(R);
-    in.hmGain = pHmGain.load(R); in.hmFreq = pHmFreq.load(R);
-    in.hmFreqHz = pHmFreqHz.load(R); in.hmQ = pHmQ.load(R);
-    in.hfGain = pHfGain.load(R); in.hfFreq = pHfFreq.load(R);
-    in.hfFreqHz = pHfFreqHz.load(R); in.hfBell = pHfBell.load(R);
-    in.eqType = pEqType.load(R);
-    return in;
-}
-
-void FourKEQDSP::recomputeCoeffs(const CoeffInputs& in, double fs) noexcept
-{
-    const bool black = in.eqType > 0.5f;
+    const bool black = pEqType.load(R) > 0.5f;
 
     // Captured British console filters: Brown/E-series HPF is two-pole,
     // Black/G-series is a split three-pole; both LPFs are two-pole. The
     // dial-to-cutoff anchors and HPF insertion trim are fitted from all six
     // hosted readback markings.
-    const float hpfControl = in.hpfFreq;
+    const float hpfControl = pHpfFreq.load(R);
     // The sub-20 Hz HPF poles run at base rate. At 4x/192 kHz their float TDF-II
     // state can overflow for some in-between dial values due to coefficient
     // cancellation, while the base-rate response differs by far below 0.01 dB.
@@ -1243,18 +1006,43 @@ void FourKEQDSP::recomputeCoeffs(const CoeffInputs& in, double fs) noexcept
         hpfFs, hpfFreq, calibratedFilterQ(true, black));
     hpfTrimGain = dbToGain(calibratedHpfTrimDb(hpfControl, black));
 
-    const SectionDesigns sections = designSections(in);
-    const BiquadCoeffs lpf = realize(sections.lpf, fs);
-    const BiquadCoeffs lf = realize(sections.bands[0], fs);
-    const BiquadCoeffs lm = realize(sections.bands[1], fs);
-    const BiquadCoeffs hm = realize(sections.bands[2], fs);
-    const BiquadCoeffs hf = realize(sections.bands[3], fs);
-    std::array<BiquadCoeffs, 3> lowCorrection, highCorrection;
-    for (size_t i = 0; i < 3; ++i)
+    const float lpfFreq = std::min(
+        calibratedFilterFrequency(pLpfFreq.load(R), false, black),
+        static_cast<float>(fs * 0.49));
+    const BiquadCoeffs lpf = Biquad::lowPass(
+        fs, lpfFreq, calibratedFilterQ(false, black));
+
+    auto bandCoeffs = [fs, black](Band band, float controlGain, float controlFreq,
+                                  float controlQ, bool bell, bool highShelf) noexcept
     {
-        lowCorrection[i] = realize(sections.lowCorrection[i], fs);
-        highCorrection[i] = realize(sections.highCorrection[i], fs);
-    }
+        const float freq = std::min(calibratedEqFrequency(controlFreq, controlGain, band, black, bell),
+                                    static_cast<float>(fs * 0.49));
+        const float gain = calibratedEqGain(controlGain, band, black, bell);
+        const float q = calibratedEqQ(
+            controlQ, controlFreq, controlGain, band, black, bell);
+        return bell || band == Band::LM || band == Band::HM
+            ? Biquad::peak(fs, freq, gain, q)
+            : Biquad::shelf(fs, freq, gain, q, highShelf);
+    };
+
+    const bool lfBell = pLfBell.load(R) > 0.5f;
+    const bool hfBell = pHfBell.load(R) > 0.5f;
+    const BiquadCoeffs lf = bandCoeffs(
+        Band::LF, pLfGain.load(R), pLfFreq.load(R), 1.5f, lfBell, false);
+    const BiquadCoeffs lm = bandCoeffs(
+        Band::LM, pLmGain.load(R), pLmFreq.load(R), pLmQ.load(R), true, false);
+    const BiquadCoeffs hm = bandCoeffs(
+        Band::HM, pHmGain.load(R), pHmFreq.load(R), pHmQ.load(R), true, false);
+    const BiquadCoeffs hf = bandCoeffs(
+        Band::HF, pHfGain.load(R), pHfFreq.load(R), 1.5f, hfBell, true);
+    const auto lowCorrection = calibratedPairCorrection(
+        fs, false, black,
+        pLfGain.load(R), pLfFreq.load(R), lfBell ? 1.0f : 0.0f,
+        pLmGain.load(R), pLmFreq.load(R), pLmQ.load(R));
+    const auto highCorrection = calibratedPairCorrection(
+        fs, true, black,
+        pHmGain.load(R), pHmFreq.load(R), pHmQ.load(R),
+        pHfGain.load(R), pHfFreq.load(R), hfBell ? 1.0f : 0.0f);
 
     for (auto& c : ch)
     {
@@ -1271,7 +1059,7 @@ void FourKEQDSP::recomputeCoeffs(const CoeffInputs& in, double fs) noexcept
     }
 }
 
-float FourKEQDSP::calcAutoGainCompensation(const CoeffInputs& in, bool hpfEn, bool lpfEn) const noexcept
+float FourKEQDSP::calcAutoGainCompensation() const noexcept
 {
     // Measure the actual serial response (reusing the coefficients just built)
     // and undo
@@ -1280,10 +1068,12 @@ float FourKEQDSP::calcAutoGainCompensation(const CoeffInputs& in, bool hpfEn, bo
     // that sub-add in the summing node are counted once, not double-counted like
     // the old per-band gain*bandwidth heuristic did.
     const double osRate = baseSampleRate * (double)curFactor;
-    const bool lfActive = std::abs(in.lfGain) > 1.0e-6f;
-    const bool lmActive = std::abs(in.lmGain) > 1.0e-6f;
-    const bool hmActive = std::abs(in.hmGain) > 1.0e-6f;
-    const bool hfActive = std::abs(in.hfGain) > 1.0e-6f;
+    const bool hpfEn = pHpfEnabled.load(R) > 0.5f;
+    const bool lpfEn = pLpfEnabled.load(R) > 0.5f;
+    const bool lfActive = std::abs(pLfGain.load(R)) > 1.0e-6f;
+    const bool lmActive = std::abs(pLmGain.load(R)) > 1.0e-6f;
+    const bool hmActive = std::abs(pHmGain.load(R)) > 1.0e-6f;
+    const bool hfActive = std::abs(pHfGain.load(R)) > 1.0e-6f;
     const ChannelFilters& cf = ch[0];
 
     double sumSq = 0.0; int cnt = 0;
@@ -1356,20 +1146,12 @@ void FourKEQDSP::processChunk(const float* const* inputs, float* const* outputs,
     }
     const double osRate = baseSampleRate * curFactor;
 
-    const CoeffInputs in = loadCoeffInputs();
-    if (!coeffsValid_ || coeffFactor_ != curFactor
-        || std::memcmp(&in, &coeffInputs_, sizeof(CoeffInputs)) != 0)
-    {
-        recomputeCoeffs(in, osRate);
-        coeffInputs_ = in;
-        coeffFactor_ = curFactor;
-        coeffsValid_ = true;
-    }
-
     // Console voicing follows the mode; keep the saturator's type in sync.
-    const bool black = in.eqType > 0.5f;
+    const bool black = pEqType.load(R) > 0.5f;
     consoleSat.setConsoleType(black ? ConsoleSaturationCore::ConsoleType::GSeries
                                     : ConsoleSaturationCore::ConsoleType::ESeries);
+
+    recomputeCoeffs(osRate);
 
     // HPF/LPF re-enable: clear stale state so toggling on does not click.
     const bool hpfEn = pHpfEnabled.load(R) > 0.5f;
@@ -1423,10 +1205,10 @@ void FourKEQDSP::processChunk(const float* const* inputs, float* const* outputs,
     // to 192 kHz, producing an input-correlated sub-40 Hz floor around
     // -100 dBFS. The measured reference path is silent there, so bypass neutral
     // stages exactly.
-    const bool lfActive = std::abs(in.lfGain) > 1.0e-6f;
-    const bool lmActive = std::abs(in.lmGain) > 1.0e-6f;
-    const bool hmActive = std::abs(in.hmGain) > 1.0e-6f;
-    const bool hfActive = std::abs(in.hfGain) > 1.0e-6f;
+    const bool lfActive = std::abs(pLfGain.load(R)) > 1.0e-6f;
+    const bool lmActive = std::abs(pLmGain.load(R)) > 1.0e-6f;
+    const bool hmActive = std::abs(pHmGain.load(R)) > 1.0e-6f;
+    const bool hfActive = std::abs(pHfGain.load(R)) > 1.0e-6f;
     // These models contain only the residual interaction left after the two
     // isolated band responses. With either member at 0 dB there is no pair
     // interaction to correct; applying the model there double-corrects the
@@ -1512,12 +1294,17 @@ void FourKEQDSP::processChunk(const float* const* inputs, float* const* outputs,
     float autoComp = 1.0f;
     if (pAutoGain.load(R) > 0.5f)
     {
-        const AutoGainSnapshot snap = {
-            in, hpfEn ? 1.0f : 0.0f, lpfEn ? 1.0f : 0.0f, (float)curFactor };
-        if (!autoCompValid_ || std::memcmp(&snap, &autoGainSnap_, sizeof(AutoGainSnapshot)) != 0)
+        const AutoGainSnapshot snap = { {
+            pLfGain.load(R), pLfFreq.load(R), pLfBell.load(R),
+            pLmGain.load(R), pLmFreq.load(R), pLmQ.load(R),
+            pHmGain.load(R), pHmFreq.load(R), pHmQ.load(R),
+            pHfGain.load(R), pHfFreq.load(R), pHfBell.load(R),
+            pEqType.load(R), pHpfFreq.load(R), pHpfEnabled.load(R),
+            pLpfFreq.load(R), pLpfEnabled.load(R), (float)curFactor } };
+        if (!autoCompValid_ || snap != autoGainSnap_)
         {
             autoGainSnap_  = snap;
-            autoCompCached_ = calcAutoGainCompensation(in, hpfEn, lpfEn);
+            autoCompCached_ = calcAutoGainCompensation();
             autoCompValid_ = true;
         }
         autoComp = autoCompCached_;
@@ -1559,4 +1346,5 @@ void FourKEQDSP::processChunk(const float* const* inputs, float* const* outputs,
     storePeak(outPeakL, outPk[0]); storePeak(outPeakR, nCh == 2 ? outPk[1] : outPk[0]);
 }
 
+} // namespace fourk_main_ref
 } // namespace duskaudio
