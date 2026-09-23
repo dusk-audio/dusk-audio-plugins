@@ -8,7 +8,14 @@
 //
 //   - a pre-#288 session keeps its sound, including one whose frequency dials
 //     sat at 1.0.5's defaults, filters switched in or not;
-//   - a session saved with the Hz ports plays the core's Hz API, filters too.
+//   - a session saved with the Hz ports plays the core's Hz API, filters too;
+//   - every exported factory preset, applied through lilv the way Ardour
+//     applies one, plays its stated Hz in a fresh instance and in one that
+//     restored a pre-#288 session, and sets no legacy dial;
+//   - a program selected through the programs extension, saved and reloaded,
+//     keeps its Hz;
+//   - the editor's selector write takes a band off its legacy dial even where
+//     the Hz port already holds the value.
 
 #include <cmath>
 #include <cstdio>
@@ -25,7 +32,9 @@
 #include <lv2/parameters/parameters.h>
 #include <lv2/urid/urid.h>
 
+#include "FourKEQBandFrequency.hpp"
 #include "FourKEQDSP.hpp"
+#include "FourKEQParams.hpp"
 #include "FourKEQTestReference.hpp"
 
 using namespace fourk_test;
@@ -48,6 +57,15 @@ int gChecks = 0, gFailures = 0;
     } while (false)
 
 constexpr const char* kUri = "https://dusk-audio.github.io/plugins/4k-eq-2";
+
+// The programs extension as DAF's lv2_programs.h declares it.
+constexpr const char* kProgramsInterface = "http://kxstudio.sf.net/ns/lv2ext/programs#Interface";
+struct ProgramDescriptor { uint32_t bank, program; const char* name; };
+struct ProgramsInterface
+{
+    const ProgramDescriptor* (*get_program)(LV2_Handle, uint32_t);
+    void (*select_program)(LV2_Handle, uint32_t bank, uint32_t program);
+};
 
 std::vector<std::string> gUris;
 LV2_URID mapUri(LV2_URID_Map_Handle, const char* uri)
@@ -123,6 +141,30 @@ public:
         lilv_instance_free(instance);
     }
 
+    float get(const std::string& symbol) const { return controls[bySymbol.at(symbol)]; }
+
+    // Every control port's value, as a host saves them.
+    std::map<std::string, float> ports() const
+    {
+        std::map<std::string, float> out;
+        for (const auto& [symbol, index] : bySymbol)
+            out[symbol] = controls[index];
+        return out;
+    }
+
+    void selectProgram(uint32_t index)
+    {
+        const auto* programs = (const ProgramsInterface*) lilv_instance_get_extension_data(instance, kProgramsInterface);
+        if (programs == nullptr || programs->select_program == nullptr)
+        {
+            std::fprintf(stderr, "FAIL: no programs interface\n");
+            std::exit(1);
+        }
+        programs->select_program(lilv_instance_get_handle(instance), index / 128, index % 128);
+    }
+
+    LilvInstance* handle() const { return instance; }
+
     void set(const std::string& symbol, float value)
     {
         const auto it = bySymbol.find(symbol);
@@ -186,6 +228,210 @@ void restoreLegacy(Lv2Instance& lv2, const LegacySettings& s)
     lv2.set("input_gain", s.inputGain); lv2.set("output_gain", s.outputGain);
     lv2.set("oversampling", s.oversampling); lv2.set("auto_gain", s.autoGain);
 }
+
+float legacyDialPort(const LegacySettings& s, const std::string& symbol)
+{
+    const std::map<std::string, float> dials {
+        { "hpf_freq", s.hpfFreq }, { "lpf_freq", s.lpfFreq }, { "lf_freq", s.lfFreq },
+        { "lm_freq", s.lmFreq }, { "hm_freq", s.hmFreq }, { "hf_freq", s.hfFreq } };
+    return dials.at(symbol);
+}
+
+LV2_URID_Map gMap { nullptr, mapUri };
+
+void setPortValue(const char* symbol, void* user, const void* value, uint32_t, uint32_t type)
+{
+    float v = 0.0f;
+    if (type == mapUri(nullptr, LV2_ATOM__Float)) v = *static_cast<const float*>(value);
+    else if (type == mapUri(nullptr, LV2_ATOM__Double)) v = (float)*static_cast<const double*>(value);
+    else if (type == mapUri(nullptr, LV2_ATOM__Int) || type == mapUri(nullptr, LV2_ATOM__Bool))
+        v = (float)*static_cast<const int32_t*>(value);
+    else if (type == mapUri(nullptr, LV2_ATOM__Long)) v = (float)*static_cast<const int64_t*>(value);
+    else
+    {
+        std::fprintf(stderr, "FAIL: preset port %s has an unknown value type\n", symbol);
+        std::exit(1);
+    }
+    static_cast<Lv2Instance*>(user)->set(symbol, v);
+}
+
+void collectSymbol(const char* symbol, void* user, const void*, uint32_t, uint32_t)
+{
+    static_cast<std::vector<std::string>*>(user)->push_back(symbol);
+}
+
+// Factory preset i as exported to presets.ttl.
+LilvState* exportedPreset(LilvWorld* world, int index)
+{
+    char uri[128];
+    std::snprintf(uri, sizeof(uri), "%s#preset%03d", kUri, index + 1);
+    LilvNode* node = lilv_new_uri(world, uri);
+    lilv_world_load_resource(world, node);
+    LilvState* state = lilv_state_new_from_world(world, &gMap, node);
+    lilv_node_free(node);
+    if (state == nullptr)
+    {
+        std::fprintf(stderr, "FAIL: no exported preset %s\n", uri);
+        std::exit(1);
+    }
+    return state;
+}
+
+// As Ardour applies an LV2 preset: lilv writes each of its port values.
+void applyPreset(Lv2Instance& lv2, const LilvState* state)
+{
+    lilv_state_restore(state, lv2.handle(), setPortValue, &lv2, 0, nullptr);
+}
+
+// What factory preset i states, as settings for the core.
+LegacySettings presetSettings(int index)
+{
+    const FourKEQPreset& p = kFactoryPresets[index];
+    LegacySettings s;
+    s.eqType = p.eqType;
+    s.lfGain = p.lfGain; s.lfBell = p.lfBell;
+    s.lmGain = p.lmGain; s.lmQ = p.lmQ;
+    s.hmGain = p.hmGain; s.hmQ = p.hmQ;
+    s.hfGain = p.hfGain; s.hfBell = p.hfBell;
+    s.hpfEnabled = p.hpfFreq > 16.5f ? 1.f : 0.f;
+    s.lpfEnabled = p.lpfFreq < 15200.5f ? 1.f : 0.f;
+    s.inputGain = p.inputGain; s.outputGain = p.outputGain;
+    return s;
+}
+
+CoreBands presetBands(int index)
+{
+    const FourKEQPreset& p = kFactoryPresets[index];
+    return { p.lfFreq, p.lmFreq, p.hmFreq, p.hfFreq, true };
+}
+
+CoreFilters presetFilters(int index)
+{
+    const FourKEQPreset& p = kFactoryPresets[index];
+    return { p.hpfFreq, p.lpfFreq, true };
+}
+
+void testExportedPresets(LilvWorld* world, const LilvPlugin* plugin, const std::vector<float>& in)
+{
+    const char* const legacyDials[] = { "hpf_freq", "lpf_freq", "lf_freq", "lm_freq", "hm_freq", "hf_freq" };
+    for (int i = 0; i < kNumFactoryPresets; ++i)
+    {
+        const char* const name = kFactoryPresets[i].name;
+        LilvState* state = exportedPreset(world, i);
+        std::vector<std::string> symbols;
+        lilv_state_emit_port_values(state, collectSymbol, &symbols);
+        for (const char* dial : legacyDials)
+            for (const std::string& symbol : symbols)
+                CHECK(symbol != dial, "preset \"%s\" sets the legacy dial %s", name, dial);
+
+        {
+            Lv2Instance lv2(world, plugin);
+            applyPreset(lv2, state);
+            const double diff = maxDiff(lv2.render(in), CoreRunner(presetSettings(i), presetBands(i), presetFilters(i)).render(in));
+            CHECK(diff <= 1.0e-6, "preset \"%s\" in a fresh instance plays %.3g from its stated Hz", name, diff);
+            std::printf("  %-24s fresh %.2g", name, diff);
+        }
+
+        // Restored from a pre-#288 session, run, then the preset applied: the
+        // bands and filters that were on their dials come back to Hz, even
+        // where the Hz port already held the preset's value.
+        double worst = 0.0;
+        for (const auto& [session, settings] : legacySessions())
+        {
+            Lv2Instance lv2(world, plugin);
+            restoreLegacy(lv2, settings);
+            CoreRunner core(settings, dialsOf(settings));
+            const double before = maxDiff(lv2.render(in), core.render(in));
+            applyPreset(lv2, state);
+            core.apply(presetSettings(i), presetBands(i), presetFilters(i));
+            const double diff = maxDiff(lv2.render(in), core.render(in));
+            CHECK(before <= 1.0e-6 && diff <= 1.0e-6,
+                  "preset \"%s\" after \"%s\" plays %.3g from its stated Hz (%.3g before it)", name, session, diff, before);
+            for (const char* dial : legacyDials)
+                CHECK(lv2.get(dial) == legacyDialPort(settings, dial), "preset \"%s\" moved %s", name, dial);
+            worst = std::max(worst, diff);
+        }
+        std::printf(", after each pre-#288 session %.2g\n", worst);
+        lilv_state_free(state);
+    }
+}
+
+void testSelectedProgramsSaveTheirHz(LilvWorld* world, const LilvPlugin* plugin, const std::vector<float>& in)
+{
+    for (int i = 0; i < kNumFactoryPresets; ++i)
+    {
+        const char* const name = kFactoryPresets[i].name;
+        double worst = 0.0;
+        for (const auto& [session, settings] : legacySessions())
+        {
+            Lv2Instance lv2(world, plugin);
+            restoreLegacy(lv2, settings);
+            CoreRunner core(settings, dialsOf(settings));
+            lv2.render(in);
+            core.render(in);
+            // A program leaves oversampling, a machine choice, where it was.
+            LegacySettings program = presetSettings(i);
+            program.oversampling = settings.oversampling;
+            lv2.selectProgram((uint32_t)i);
+            core.apply(program, presetBands(i), presetFilters(i));
+            const double played = maxDiff(lv2.render(in), core.render(in));
+
+            Lv2Instance reloaded(world, plugin);
+            for (const auto& [symbol, value] : lv2.ports())
+                reloaded.set(symbol, value);
+            const double diff = maxDiff(reloaded.render(in),
+                                        CoreRunner(program, presetBands(i), presetFilters(i)).render(in));
+            CHECK(played <= 1.0e-6 && diff <= 1.0e-6,
+                  "program \"%s\" after \"%s\" plays %.3g from its stated Hz, %.3g once saved and reloaded",
+                  name, session, played, diff);
+            worst = std::max({ worst, played, diff });
+        }
+        std::printf("  %-24s %.2g\n", name, worst);
+    }
+}
+
+// The editor takes a band off its legacy dial with an Hz write and a stated
+// selector (FourKEQUI.cpp setFrequency). Pre-#288 dials at 1.0.5's defaults
+// leave every Hz port at its default, where a reset writes the same value, so
+// only the selector reaches the plugin. Legacy dial automation then puts the
+// bands back on their dials, and a second reset has to state the same bits
+// again, which the other flag carries past the unchanged port.
+void testEditorTakesBandsOffTheirDials(LilvWorld* world, const LilvPlugin* plugin, const std::vector<float>& in)
+{
+    const LegacySettings s = legacySessions()[4].second;
+    const CoreBands defaults { kFourKParams[kLfHz].def, kFourKParams[kLmHz].def,
+                               kFourKParams[kHmHz].def, kFourKParams[kHfHz].def, true };
+    Lv2Instance lv2(world, plugin);
+    restoreLegacy(lv2, s);
+    CoreRunner core(s, dialsOf(s));
+    lv2.render(in);
+    core.render(in);
+
+    const auto reset = [&] {
+        for (const uint32_t id : { (uint32_t)kLfHz, (uint32_t)kLmHz, (uint32_t)kHmHz, (uint32_t)kHfHz })
+            lv2.set(kFourKParams[id].key, kFourKParams[id].def);
+        lv2.set("legacy_dial_bands", fkStatedSelector(0u, lv2.get("legacy_dial_bands"), kLegacyDialBandsMax));
+    };
+    reset();
+    core.apply(s, defaults);
+    const double first = maxDiff(lv2.render(in), core.render(in));
+    CHECK(first <= 1.0e-6, "an editor reset left a band on its legacy dial (%.3g)", first);
+
+    LegacySettings automated = s;
+    automated.lfFreq = 90.f; automated.lmFreq = 700.f; automated.hmFreq = 2500.f; automated.hfFreq = 9000.f;
+    restoreLegacy(lv2, automated);
+    core.apply(automated, dialsOf(automated));
+    const double onDials = maxDiff(lv2.render(in), core.render(in));
+    CHECK(onDials <= 1.0e-6, "legacy dial automation did not take the bands (%.3g)", onDials);
+
+    const float stated = lv2.get("legacy_dial_bands");
+    reset();
+    CHECK(lv2.get("legacy_dial_bands") != stated, "a second reset repeated the selector value %g", stated);
+    core.apply(automated, defaults);
+    const double second = maxDiff(lv2.render(in), core.render(in));
+    CHECK(second <= 1.0e-6, "a second editor reset left a band on its legacy dial (%.3g)", second);
+    std::printf("  reset %.2g, legacy dial automation %.2g, reset again %.2g\n", first, onDials, second);
+}
 } // namespace
 
 int main(int argc, char** argv)
@@ -240,6 +486,13 @@ int main(int argc, char** argv)
         CHECK(diff <= 1.0e-6, "Hz session plays %.3g away from the Hz API", diff);
         std::printf("  Black, LF 450 / LM 200 / HM 7000 / HF 1500 / HPF 350 / LPF 3000 Hz: %.2g\n", diff);
     }
+
+    std::printf("[3] exported factory presets, applied as Ardour applies them\n");
+    testExportedPresets(world, plugin, in);
+    std::printf("[4] programs selected, saved and reloaded\n");
+    testSelectedProgramsSaveTheirHz(world, plugin, in);
+    std::printf("[5] the editor takes bands off their legacy dials\n");
+    testEditorTakesBandsOffTheirDials(world, plugin, in);
 
     lilv_node_free(pluginUri);
     lilv_node_free(bundleUri);

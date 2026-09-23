@@ -110,6 +110,47 @@ void testLastWriteWins()
     CHECK(fkLegacyDialFilterBits(f.v[kLegacyDialFilters]) == 0u, "a NaN filter selector is not 'no legacy filters'");
 }
 
+// A stated selector carries a flag that only marks the write: the bits under
+// it decide, frequency writes keep it, and a second statement of the same bits
+// takes the other flag, so a host that passes on only changed values still
+// delivers it.
+void testStatedSelector()
+{
+    Values s;
+    fkStoreParam(s.v, kLegacyDialBands, (float)(kSelectorStated | 9u));
+    CHECK(fkLegacyDialBits(s.v[kLegacyDialBands]) == 9u, "a stated selector selects %u", fkLegacyDialBits(s.v[kLegacyDialBands]));
+    fkStoreParam(s.v, kLmFreq, 800.0f);
+    CHECK(fkLegacyDialBits(s.v[kLegacyDialBands]) == 11u, "a dial write under a stated selector");
+    CHECK(((uint32_t)s.v[kLegacyDialBands] & kSelectorStated) != 0u, "a dial write dropped the selector's flag");
+    fkStoreParam(s.v, kLfHz, 120.0f);
+    CHECK(fkLegacyDialBits(s.v[kLegacyDialBands]) == 10u, "an Hz write under a stated selector");
+
+    const float first = fkStatedSelector(0u, 0.0f, kLegacyDialBandsMax);
+    const float second = fkStatedSelector(0u, first, kLegacyDialBandsMax);
+    const float third = fkStatedSelector(0u, second, kLegacyDialBandsMax);
+    CHECK(first != 0.0f && second != first && third != second, "stated selectors %g, %g, %g repeat", first, second, third);
+    CHECK(fkLegacyDialBits(first) == 0u && fkLegacyDialBits(second) == 0u && fkLegacyDialBits(third) == 0u,
+          "a stated selector changed the bits it states");
+    const float filters = fkStatedSelector(2u, kLegacyDialFiltersMax, kLegacyDialFiltersMax);
+    CHECK(fkLegacyDialFilterBits(filters) == 2u && filters <= kLegacyDialFiltersMax,
+          "a stated filter selector reads %g", filters);
+
+    // A factory preset states its selectors, so it takes every band and
+    // filter back from its dial and leaves the dials where they were.
+    Values dials;
+    for (int b = 0; b < 4; ++b)
+        fkStoreParam(dials.v, kFourKEQBands[b].legacyDial, kFourKParams[kFourKEQBands[b].legacyDial].min);
+    fkStoreParam(dials.v, kHpfFreq, 120.0f);
+    fkStoreParam(dials.v, kLpfFreq, 9000.0f);
+    forEachFourKEQFactoryPresetParam(0, [&](uint32_t id, float v) { fkStoreParam(dials.v, id, v); });
+    CHECK(fkLegacyDialBits(dials.v[kLegacyDialBands]) == 0u && fkLegacyDialFilterBits(dials.v[kLegacyDialFilters]) == 0u,
+          "a factory preset left a band or filter on its dial");
+    for (int b = 0; b < 4; ++b)
+        CHECK(dials.v[kFourKEQBands[b].legacyDial] == kFourKParams[kFourKEQBands[b].legacyDial].min,
+              "a factory preset moved band %d's legacy dial", b);
+    CHECK(dials.v[kHpfFreq] == 120.0f && dials.v[kLpfFreq] == 9000.0f, "a factory preset moved a legacy filter dial");
+}
+
 void testLegacyDialDefaults()
 {
     const float shipped[4] = { 200.f, 1000.f, 3000.f, 8000.f };
@@ -135,7 +176,7 @@ void testLegacyDialDefaults()
 }
 
 // The Hz a designed band plays, by the core's definition: a bell's centre, a
-// shelf's full-boost corner, at the reference gain.
+// shelf's corner, at the reference gain.
 float designedHz(const FourKEQDSP::SectionDesign& d, Band band, bool black, bool bell)
 {
     if (bell || band == Band::LM || band == Band::HM)
@@ -397,27 +438,6 @@ void testUserPresetFiles()
           "format 4 lost its Hz bands");
     CHECK(fkBandFollowsLegacyDial(read, 0) && read[kLfFreq] == 400.0f, "format 4 lost its legacy LF dial");
 
-    // Filters: a format 3 file stored them as dial positions, written as their
-    // design frequency; they load onto those dials.
-    Values three;
-    three.v[kEqType] = 1.0f;
-    fkStoreParam(three.v, kHpfFreq, 120.0f);
-    fkStoreParam(three.v, kLpfFreq, 8800.0f);
-    fkStoreParam(three.v, kHmHz, 5000.0f);
-    std::ostringstream v3;
-    v3.imbue(std::locale::classic());
-    v3 << std::setprecision(9) << "name=Three\nformat_version=3\nfrequency_domain=effective_hz\neq_type=1\n"
-       << "hpf_freq=" << FourKEQDSP::calibratedFilterFrequency(120.0f, true, true) << '\n'
-       << "lpf_freq=" << FourKEQDSP::calibratedFilterFrequency(8800.0f, false, true) << '\n'
-       << "hpf_hz=300\nhm_hz=5000\n";
-    std::istringstream in3(v3.str());
-    float read3[kParamCount];
-    CHECK(fkReadUserPreset(in3, name, read3), "a format 3 preset was rejected");
-    CHECK(fkLegacyDialFilterBits(read3[kLegacyDialFilters]) == 3u, "a format 3 preset left a filter off its dial");
-    CHECK(std::abs(read3[kHpfFreq] / 120.0f - 1.0f) < 1.0e-4f && std::abs(read3[kLpfFreq] / 8800.0f - 1.0f) < 1.0e-4f,
-          "format 3 filters read dials %.2f / %.1f", read3[kHpfFreq], read3[kLpfFreq]);
-    CHECK(read3[kHmHz] == 5000.0f && !fkBandFollowsLegacyDial(read3, 2), "format 3 lost its Hz band");
-
     Values four;
     fkStoreParam(four.v, kHpfHz, 80.0f);
     fkStoreParam(four.v, kLpfFreq, 12800.0f);
@@ -430,8 +450,11 @@ void testUserPresetFiles()
     CHECK(read4[kHpfHz] == 80.0f && !fkFilterFollowsLegacyDial(read4, 0), "format 4 lost its Hz HPF");
     CHECK(fkFilterFollowsLegacyDial(read4, 1) && std::abs(read4[kLpfFreq] / 12800.0f - 1.0f) < 1.0e-4f,
           "format 4 lost its legacy LPF dial (%.1f)", read4[kLpfFreq]);
-    std::printf("[4] user presets: format 2 (effective_hz, control_hz) loads onto the saved dials; format 3's filters\n"
-                "    load onto theirs; format 4 round-trips Hz and legacy bands and filters\n");
+    std::istringstream in3("name=Three\nformat_version=3\nhm_hz=5000\n");
+    float read3[kParamCount];
+    CHECK(!fkReadUserPreset(in3, name, read3), "a format 3 preset, a version never released, was read");
+    std::printf("[4] user presets: format 2 (effective_hz, control_hz) loads onto the saved dials; format 4\n"
+                "    round-trips Hz and legacy bands and filters\n");
 }
 } // namespace
 
@@ -439,6 +462,7 @@ int main()
 {
     std::printf("[1] last write wins\n");
     testLastWriteWins();
+    testStatedSelector();
     testLegacyDialDefaults();
     testFactoryPresetsStateTheirHz();
     testReadoutIgnoresGain();

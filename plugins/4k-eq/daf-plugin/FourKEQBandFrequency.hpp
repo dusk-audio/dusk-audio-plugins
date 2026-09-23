@@ -11,6 +11,15 @@
 // The last one written wins; kLegacyDialBands records which that was. The HPF
 // and LPF work the same way: kHpfHz / kLpfHz (each filter's -3 dB point),
 // kHpfFreq / kLpfFreq, and kLegacyDialFilters.
+//
+// A selector's value is its bits (bit set: that band or filter follows its
+// legacy dial) plus an optional flag, kSelectorStated or kSelectorStatedAlt,
+// that only marks a deliberate write. DAF's LV2 wrapper passes on a control
+// port only when its value changes, so a band whose Hz port already holds the
+// value a preset or reset wants would otherwise stay on its dial. Presets and
+// programs write the selector with a flag, and the editor alternates the two
+// flags, so that write always differs from the port's last value. Port order
+// makes the selector land after the frequencies it arbitrates.
 
 #pragma once
 
@@ -50,11 +59,32 @@ constexpr int fkBandOfLegacyDialParam(uint32_t index)
     return -1;
 }
 
-inline uint32_t fkLegacyDialBits(float stored) noexcept
+static constexpr uint32_t kSelectorStated = 1u << 4;
+static constexpr uint32_t kSelectorStatedAlt = 1u << 5;
+static constexpr float kLegacyDialBandsMax = (float)(kSelectorStatedAlt | 15u);
+static constexpr float kLegacyDialFiltersMax = (float)(kSelectorStatedAlt | 3u);
+static_assert(kFourKParams[kLegacyDialBands].max == kLegacyDialBandsMax
+              && kFourKParams[kLegacyDialFilters].max == kLegacyDialFiltersMax,
+              "the selector parameters must hold every bit and flag");
+
+inline uint32_t fkSelectorValue(float stored, float max) noexcept
 {
     if (!(stored > 0.0f))
         return 0u;
-    return (uint32_t)std::lround(stored < 15.0f ? stored : 15.0f);
+    return (uint32_t)std::lround(stored < max ? stored : max);
+}
+
+inline uint32_t fkLegacyDialBits(float stored) noexcept
+{
+    return fkSelectorValue(stored, kLegacyDialBandsMax) & 15u;
+}
+
+// A selector value stating bits, with the flag the previous value did not
+// carry, so a host that forwards only changes cannot drop it.
+inline float fkStatedSelector(uint32_t bits, float previous, float max) noexcept
+{
+    const bool stated = fkSelectorValue(previous, max) & kSelectorStated;
+    return (float)((stated ? kSelectorStatedAlt : kSelectorStated) | bits);
 }
 
 inline bool fkBandFollowsLegacyDial(const float* values, int band) noexcept
@@ -85,9 +115,7 @@ constexpr int fkFilterOfLegacyDialParam(uint32_t index)
 
 inline uint32_t fkLegacyDialFilterBits(float stored) noexcept
 {
-    if (!(stored > 0.0f))
-        return 0u;
-    return (uint32_t)std::lround(stored < 3.0f ? stored : 3.0f);
+    return fkSelectorValue(stored, kLegacyDialFiltersMax) & 3u;
 }
 
 inline bool fkFilterFollowsLegacyDial(const float* values, int filter) noexcept
@@ -102,24 +130,31 @@ inline bool fkBandIsBell(const float* values, int band) noexcept
 }
 
 // Stores a parameter write and, for a band or filter frequency, records which
-// of its two parameters it came through.
+// of its two parameters it came through; a selector write keeps its flag.
+//
+// Not thread-safe, like the rest of values[]: the CLAP wrapper applies a state
+// on the main thread while the plugin may be processing parameter events on
+// the audio thread. Two frequency writes racing there can lose one selector
+// update and leave that band or filter on the other parameter until its next
+// write. It takes a state load and a band or filter frequency change arriving
+// on the audio thread at the same moment.
 inline void fkStoreParam(float* values, uint32_t index, float value) noexcept
 {
     values[index] = value;
-    const uint32_t bands = fkLegacyDialBits(values[kLegacyDialBands]);
-    const uint32_t filters = fkLegacyDialFilterBits(values[kLegacyDialFilters]);
+    const uint32_t bands = fkSelectorValue(values[kLegacyDialBands], kLegacyDialBandsMax);
+    const uint32_t filters = fkSelectorValue(values[kLegacyDialFilters], kLegacyDialFiltersMax);
     if (const int b = fkBandOfLegacyDialParam(index); b >= 0)
         values[kLegacyDialBands] = (float)(bands | (1u << b));
     else if (const int h = fkBandOfHzParam(index); h >= 0)
         values[kLegacyDialBands] = (float)(bands & ~(1u << h));
     else if (index == kLegacyDialBands)
-        values[kLegacyDialBands] = (float)fkLegacyDialBits(value);
+        values[kLegacyDialBands] = (float)fkSelectorValue(value, kLegacyDialBandsMax);
     else if (const int f = fkFilterOfLegacyDialParam(index); f >= 0)
         values[kLegacyDialFilters] = (float)(filters | (1u << f));
     else if (const int g = fkFilterOfHzParam(index); g >= 0)
         values[kLegacyDialFilters] = (float)(filters & ~(1u << g));
     else if (index == kLegacyDialFilters)
-        values[kLegacyDialFilters] = (float)fkLegacyDialFilterBits(value);
+        values[kLegacyDialFilters] = (float)fkSelectorValue(value, kLegacyDialFiltersMax);
 }
 
 // The Hz a band plays: its Hz parameter, or the Hz its legacy dial position
@@ -131,25 +166,6 @@ inline float fkBandHz(const float* values, int band) noexcept
         return values[ids.hz];
     return duskaudio::FourKEQDSP::hzForCalibratedEqControl(
         values[ids.legacyDial], ids.band, values[kEqType] > 0.5f, fkBandIsBell(values, band));
-}
-
-// The legacy dial position that plays hz, clamped to the dial's ends where
-// the dial cannot reach it.
-inline float fkLegacyDialForHz(int band, float hz, bool black, bool bell) noexcept
-{
-    using duskaudio::FourKEQDSP;
-    const FourKEQBandIds& ids = kFourKEQBands[band];
-    float lo = kFourKParams[ids.legacyDial].min, hi = kFourKParams[ids.legacyDial].max;
-    if (!(hz > FourKEQDSP::hzForCalibratedEqControl(lo, ids.band, black, bell)))
-        return lo;
-    if (!(hz < FourKEQDSP::hzForCalibratedEqControl(hi, ids.band, black, bell)))
-        return hi;
-    for (int i = 0; i < 48; ++i)
-    {
-        const float mid = 0.5f * (lo + hi);
-        (FourKEQDSP::hzForCalibratedEqControl(mid, ids.band, black, bell) < hz ? lo : hi) = mid;
-    }
-    return 0.5f * (lo + hi);
 }
 
 // Routes each band to the core through the parameter it follows: the dial
@@ -195,15 +211,6 @@ inline float fkFilterHz(const float* values, int filter) noexcept
         return values[ids.hz];
     return duskaudio::FourKEQDSP::hzForCalibratedFilterControl(
         values[ids.legacyDial], ids.highPass, values[kEqType] > 0.5f);
-}
-
-// The legacy dial position that plays hz, clamped to the dial's ends.
-inline float fkLegacyDialForFilterHz(int filter, float hz, bool black) noexcept
-{
-    using duskaudio::FourKEQDSP;
-    const bool highPass = kFourKEQFilters[filter].highPass;
-    return FourKEQDSP::controlForCalibratedFilterFrequency(
-        FourKEQDSP::calibratedFilterFrequencyForHz(hz, highPass, black), highPass, black);
 }
 
 inline void fkApplyFilterFrequencies(duskaudio::FourKEQDSP& dsp, const float* values) noexcept

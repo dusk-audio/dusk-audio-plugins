@@ -131,6 +131,8 @@ protected:
     {
         if (index >= kParamCount) return;
         fkStoreParam(values, index, value);
+        if (const int sel = selectorSlot(index); sel >= 0)
+            selectorPort[sel] = value;
         if (index == kShowGraph)
         {
             // restore persisted graph state on UI (re)open; size on next frame
@@ -162,6 +164,8 @@ protected:
         forEachFourKEQFactoryPresetParam(currentPreset,
                                          [this](uint32_t param, float value)
                                          { fkStoreParam(values, param, fkNormalizeParamValue(param, value)); });
+        selectorPort[0] = values[kLegacyDialBands];
+        selectorPort[1] = values[kLegacyDialFilters];
     }
 
     void onImGuiDisplay() override
@@ -634,11 +638,50 @@ private:
     {
         if (param >= kParamCount || !std::isfinite(value))
             return;
+        if (const int sel = selectorSlot(param); sel >= 0)
+        {
+            stateSelector(param, sel == 0 ? fkLegacyDialBits(value) : fkLegacyDialFilterBits(value));
+            return;
+        }
         value = fkNormalizeParamValue(param, value);
         fkStoreParam(values, param, value);
         editParameter(param, true);
         setParameterValue(param, value);
         editParameter(param, false);
+    }
+
+    static int selectorSlot(uint32_t param)
+    {
+        return param == kLegacyDialBands ? 0 : param == kLegacyDialFilters ? 1 : -1;
+    }
+
+    // Writes a selector with the flag its port does not hold (fkStatedSelector),
+    // so the write reaches the plugin even through a host that passes on only
+    // changed values.
+    void stateSelector(uint32_t selector, uint32_t bits)
+    {
+        const int sel = selectorSlot(selector);
+        const float value = fkStatedSelector(bits, selectorPort[sel], kFourKParams[selector].max);
+        selectorPort[sel] = value;
+        fkStoreParam(values, selector, value);
+        editParameter(selector, true);
+        setParameterValue(selector, value);
+        editParameter(selector, false);
+    }
+
+    // A band or filter Hz write. One still on its legacy dial is also taken off
+    // it through the selector: where the Hz port already holds this value, the
+    // Hz write alone would not reach the plugin.
+    void setFrequency(uint32_t paramId, float value)
+    {
+        const int band = fkBandOfHzParam(paramId), filter = fkFilterOfHzParam(paramId);
+        const StateView before = stateView();
+        fkStoreParam(values, paramId, value);
+        setParameterValue(paramId, value);
+        if (band >= 0 && fkBandFollowsLegacyDial(before.v, band))
+            stateSelector(kLegacyDialBands, fkLegacyDialBits(before.v[kLegacyDialBands]) & ~(1u << band));
+        else if (filter >= 0 && fkFilterFollowsLegacyDial(before.v, filter))
+            stateSelector(kLegacyDialFilters, fkLegacyDialFilterBits(before.v[kLegacyDialFilters]) & ~(1u << filter));
     }
 
     void applyPreset(int idx)
@@ -673,6 +716,8 @@ private:
         for (uint32_t i = 0; i < kParamCount; ++i)
             if (fkIsPresetParam(i))
                 setP(i, kFourKParams[i].def);
+        stateSelector(kLegacyDialBands, 0u);
+        stateSelector(kLegacyDialFilters, 0u);
         // Re-derive rather than assuming: a user preset saved at the defaults
         // is a recognised state and should read as such in the combo.
         syncPresetSelection();
@@ -744,6 +789,8 @@ private:
                                                                      : kFourKEQFilters[f].hz;
             setP(id, loaded[id]);
         }
+        stateSelector(kLegacyDialBands, fkLegacyDialBits(loaded[kLegacyDialBands]));
+        stateSelector(kLegacyDialFilters, fkLegacyDialFilterBits(loaded[kLegacyDialFilters]));
         currentPreset = -1;
         currentUserName = name;
         currentUserPath = path;
@@ -1267,11 +1314,7 @@ private:
         bool en; float f; stepPosToState(F, t, en, f);
         values[enId] = en ? 1.f : 0.f; setParameterValue(enId, values[enId]);
         if (en)
-        {
-            f = fkNormalizeParamValue(freqId, f);
-            fkStoreParam(values, freqId, f);
-            setParameterValue(freqId, f);
-        }
+            setFrequency(freqId, fkNormalizeParamValue(freqId, f));
     }
 
     void steppedFilterKnob(ImDrawList* dl, const char* id, float cx, float cy, float R,
@@ -1363,7 +1406,7 @@ private:
             typed = fkNormalizeParamValue(freqId, typed);
             editParameter(enId, true); editParameter(freqId, true);
             values[enId] = 1.f;    setParameterValue(enId, 1.f);
-            fkStoreParam(values, freqId, typed); setParameterValue(freqId, typed);
+            setFrequency(freqId, typed);
             editParameter(freqId, false); editParameter(enId, false);
         }
         else if ((hov || act) && !editing)
@@ -1438,13 +1481,19 @@ private:
         const bool modKey = ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper;
         auto setFromT = [&](float tt) {
             const float nv = fkNormalizeParamValue(paramId, duskdaf::knobDetentPosToValue(T, V, n, tt));
+            if (frequencyKnob) { setFrequency(paramId, nv); return; }
             fkStoreParam(values, paramId, nv);
             setParameterValue(paramId, nv);
         };
         auto resetDefault = [&] {
             editParameter(paramId, true);
-            fkStoreParam(values, paramId, kDefault(paramId));
-            setParameterValue(paramId, kDefault(paramId));
+            if (frequencyKnob)
+                setFrequency(paramId, kDefault(paramId));
+            else
+            {
+                fkStoreParam(values, paramId, kDefault(paramId));
+                setParameterValue(paramId, kDefault(paramId));
+            }
             editParameter(paramId, false);
             t = duskdaf::knobDetentValueToPos(T, V, n,
                               frequencyKnob ? displayValue(paramId)
@@ -1505,7 +1554,15 @@ private:
             for (int i = 1; i < n; ++i) { lo = std::min(lo, V[i]); hi = std::max(hi, V[i]); }
             typed = typed < lo ? lo : (typed > hi ? hi : typed);
             typed = fkNormalizeParamValue(paramId, typed);
-            editParameter(paramId, true); fkStoreParam(values, paramId, typed); setParameterValue(paramId, typed); editParameter(paramId, false);
+            editParameter(paramId, true);
+            if (frequencyKnob)
+                setFrequency(paramId, typed);
+            else
+            {
+                fkStoreParam(values, paramId, typed);
+                setParameterValue(paramId, typed);
+            }
+            editParameter(paramId, false);
         }
         else if ((hov || act) && !editing)
         {
@@ -1648,6 +1705,8 @@ private:
     float meterDbIn_ = -60.f, meterDbOut_ = -60.f;
     float meterTimer_ = 0.f;
     float values[kParamCount] = {};
+    // What each selector port was last set to, by the host or by this editor.
+    float selectorPort[2] = { kFourKParams[kLegacyDialBands].def, kFourKParams[kLegacyDialFilters].def };
     int currentPreset = -1;
     bool showGraph = true;
     bool showSupporters = false; // Patreon supporters overlay (title click)

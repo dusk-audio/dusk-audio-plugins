@@ -183,17 +183,6 @@ protected:
             return;
         forEachFourKEQFactoryPresetParam((int)index,
             [this](uint32_t param, float value) { setParameterValue(param, value); });
-        // An LV2 host applies an exported preset by writing ports, and runs
-        // only the ones whose value changed. A band whose Hz port already held
-        // the preset's value would then be left to whatever its legacy dial
-        // port was set to, so that port carries the dial that plays the same Hz.
-        const bool black = values[kEqType] > 0.5f;
-        for (int b = 0; b < 4; ++b)
-            values[kFourKEQBands[b].legacyDial] = fkLegacyDialForHz(
-                b, values[kFourKEQBands[b].hz], black, fkBandIsBell(values, b));
-        for (int f = 0; f < 2; ++f)
-            values[kFourKEQFilters[f].legacyDial] = fkLegacyDialForFilterHz(
-                f, values[kFourKEQFilters[f].hz], black);
     }
 
     //--- lifecycle ------------------------------------------------------------
