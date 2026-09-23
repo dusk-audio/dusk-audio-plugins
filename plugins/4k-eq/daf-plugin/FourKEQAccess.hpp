@@ -11,6 +11,8 @@
 
 #include "DuskAccessBridge.hpp"
 
+#include <cstdint>
+
 namespace duskaudio { class SpectrumRing; }
 
 // Linear peak levels (0..~2), ~300 ms release.
@@ -22,3 +24,8 @@ DUSK_ACCESS_DECL(float, fourKEQGetOutputPeakR);
 // Pointers to the DSP's lock-free spectrum rings (null when out-of-process).
 DUSK_ACCESS_DECL(const duskaudio::SpectrumRing*, fourKEQGetPreSpectrum);
 DUSK_ACCESS_DECL(const duskaudio::SpectrumRing*, fourKEQGetPostSpectrum);
+
+// Which bands follow their legacy dial parameter (kLegacyDialBands). A host
+// restoring a pre-#288 session never sets that parameter, so its cached value
+// stays stale and the UI reads the plugin's instead.
+DUSK_ACCESS_DECL(uint32_t, fourKEQGetLegacyDialBands);

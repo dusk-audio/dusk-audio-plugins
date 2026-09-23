@@ -196,9 +196,9 @@ public:
     // API reproduces the dial API's band exactly.
     static float hzForCalibratedEqControl(float controlHz, Band band,
                                           bool black, bool bell) noexcept;
-    // Inverse of calibratedEqFrequency(). Factory/user presets are authored in
-    // audible Hz, while the shipped host parameter remains the original
-    // control coordinate for session/automation compatibility.
+    // Inverse of calibratedEqFrequency(): the dial position whose measured
+    // frequency at controlGainDb is frequencyHz, clamped to the dial's ends.
+    // 4K EQ 2 user presets saved before #288 stored that frequency.
     static float controlForCalibratedEqFrequency(float frequencyHz, float controlGainDb,
                                                  Band band, bool black, bool bell) noexcept;
     static float calibratedEqGain(float controlDb, Band band,
@@ -262,8 +262,13 @@ public:
         float  hmGain  = 0.0f, hmFreq  = 0.0f, hmQ    = 1.0f;
         float  hfGain  = 0.0f, hfFreq  = 0.0f, hfBell = 0.0f;
         // false: lfFreq..hfFreq are dial positions (setLfFreq).
-        // true:  they are Hz, drawn the way setLfFreqHz plays them.
+        // true:  they are Hz, drawn the way setLfFreqHz plays them, except
+        //        the bands set in dialBands (bit 0 LF .. bit 3 HF), which
+        //        stay dial positions. A band's Hz equivalent designs the same
+        //        band but not always the same pair correction, so a plugin
+        //        that keeps some bands on the dial API draws them on it.
         bool   bandFrequenciesInHz = false;
+        unsigned dialBands = 0;
         // Saturation knob percent, 0..100, as setSaturation() receives it.
         // Feeds the console saturator's broadband insertion loss into the drawn
         // curve (GH #169). Defaulting to 0 is the SAFE default rather than an
