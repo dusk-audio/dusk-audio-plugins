@@ -30,6 +30,7 @@ public:
         for (uint32_t i = 0; i < kParamCount; ++i)
             values[i] = kFourKParams[i].def;
         applyBandFrequencies();
+        applyFilterFrequencies();
     }
 
     //--- same-process accessors for the UI bridge -----------------------------
@@ -40,6 +41,7 @@ public:
     const duskaudio::SpectrumRing* preSpec()  const noexcept { return &dsp.preSpectrum(); }
     const duskaudio::SpectrumRing* postSpec() const noexcept { return &dsp.postSpectrum(); }
     uint32_t legacyDialBands() const noexcept { return legacyDialBandsForUi.load(std::memory_order_relaxed); }
+    uint32_t legacyDialFilters() const noexcept { return legacyDialFiltersForUi.load(std::memory_order_relaxed); }
 
 protected:
     //--- metadata -------------------------------------------------------------
@@ -76,9 +78,9 @@ protected:
 
         switch (index)
         {
-        case kHpfFreq:   p.name = "HPF Frequency"; p.unit = "Hz"; break;
+        case kHpfFreq:   p.name = "HPF Frequency (Legacy Dial)"; p.unit = "Hz"; break;
         case kHpfEnabled:boolean(); p.name = "HPF Enabled"; break;
-        case kLpfFreq:   p.name = "LPF Frequency"; p.unit = "Hz"; break;
+        case kLpfFreq:   p.name = "LPF Frequency (Legacy Dial)"; p.unit = "Hz"; break;
         case kLpfEnabled:boolean(); p.name = "LPF Enabled"; break;
         case kLfGain:    p.name = "LF Gain"; p.unit = "dB"; break;
         case kLfFreq:    p.name = "LF Frequency (Legacy Dial)"; p.unit = "Hz"; break;
@@ -141,6 +143,12 @@ protected:
             p.hints = kParameterIsHidden | kParameterIsInteger;
             p.name = "Legacy Dial Bands";
             break;
+        case kHpfHz:     p.name = "HPF Frequency"; p.unit = "Hz"; break;
+        case kLpfHz:     p.name = "LPF Frequency"; p.unit = "Hz"; break;
+        case kLegacyDialFilters:
+            p.hints = kParameterIsHidden | kParameterIsInteger;
+            p.name = "Legacy Dial Filters";
+            break;
         }
     }
 
@@ -183,6 +191,9 @@ protected:
         for (int b = 0; b < 4; ++b)
             values[kFourKEQBands[b].legacyDial] = fkLegacyDialForHz(
                 b, values[kFourKEQBands[b].hz], black, fkBandIsBell(values, b));
+        for (int f = 0; f < 2; ++f)
+            values[kFourKEQFilters[f].legacyDial] = fkLegacyDialForFilterHz(
+                f, values[kFourKEQFilters[f].hz], black);
     }
 
     //--- lifecycle ------------------------------------------------------------
@@ -237,9 +248,7 @@ private:
         const float value = values[index];
         switch (index)
         {
-        case kHpfFreq:    dsp.setHpfFreq(value); break;
         case kHpfEnabled: dsp.setHpfEnabled(value > 0.5f); break;
-        case kLpfFreq:    dsp.setLpfFreq(value); break;
         case kLpfEnabled: dsp.setLpfEnabled(value > 0.5f); break;
         case kLfGain:     dsp.setLfGain(value); break;
         case kLfBell:     dsp.setLfBell(value > 0.5f); break;
@@ -269,6 +278,10 @@ private:
         case kLegacyDialBands:
             applyBandFrequencies();
             break;
+        case kHpfFreq: case kLpfFreq: case kHpfHz: case kLpfHz:
+        case kLegacyDialFilters:
+            applyFilterFrequencies();
+            break;
         }
     }
 
@@ -276,6 +289,12 @@ private:
     {
         fkApplyBandFrequencies(dsp, values);
         legacyDialBandsForUi.store(fkLegacyDialBits(values[kLegacyDialBands]), std::memory_order_relaxed);
+    }
+
+    void applyFilterFrequencies()
+    {
+        fkApplyFilterFrequencies(dsp, values);
+        legacyDialFiltersForUi.store(fkLegacyDialFilterBits(values[kLegacyDialFilters]), std::memory_order_relaxed);
     }
 
     void updateLatency()
@@ -287,6 +306,7 @@ private:
     duskaudio::FourKEQDSP dsp;
     float values[kParamCount] = {};
     std::atomic<uint32_t> legacyDialBandsForUi { 0 };
+    std::atomic<uint32_t> legacyDialFiltersForUi { 0 };
     uint32_t lastLatency = 0xffffffffu;
     uint16_t activeChannels = DAF_PLUGIN_NUM_INPUTS;
 
@@ -308,3 +328,4 @@ float fourKEQGetOutputPeakR(void* p) noexcept { return p ? asPlugin(p)->outPeakR
 const duskaudio::SpectrumRing* fourKEQGetPreSpectrum(void* p) noexcept  { return p ? asPlugin(p)->preSpec() : nullptr; }
 const duskaudio::SpectrumRing* fourKEQGetPostSpectrum(void* p) noexcept { return p ? asPlugin(p)->postSpec() : nullptr; }
 uint32_t fourKEQGetLegacyDialBands(void* p) noexcept { return p ? asPlugin(p)->legacyDialBands() : 0u; }
+uint32_t fourKEQGetLegacyDialFilters(void* p) noexcept { return p ? asPlugin(p)->legacyDialFilters() : 0u; }

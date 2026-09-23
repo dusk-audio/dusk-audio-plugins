@@ -1,21 +1,16 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
 //
-// Runtime expansion of factory-preset data. Band frequencies go to the Hz
-// parameters as authored; HPF/LPF targets are audible corners, converted to
-// the filter dial the host parameters use.
+// Runtime expansion of factory-preset data. Band and filter frequencies go to
+// the Hz parameters as authored.
 
 #pragma once
 
-#include "FourKEQDSP.hpp"
 #include "FourKEQParams.hpp"
 
 template <typename Fn>
 inline void forEachFourKEQFactoryPresetParam(int idx, Fn&& fn)
 {
-    using duskaudio::FourKEQDSP;
-
     const FourKEQPreset& p = kFactoryPresets[idx];
-    const bool black = p.eqType > 0.5f;
 
     fn((uint32_t)kEqType, p.eqType);
 
@@ -35,10 +30,8 @@ inline void forEachFourKEQFactoryPresetParam(int idx, Fn&& fn)
     fn((uint32_t)kHfBell, p.hfBell);
     fn((uint32_t)kHfHz, p.hfFreq);
 
-    fn((uint32_t)kHpfFreq, FourKEQDSP::controlForCalibratedFilterFrequency(
-        p.hpfFreq, true, black));
-    fn((uint32_t)kLpfFreq, FourKEQDSP::controlForCalibratedFilterFrequency(
-        p.lpfFreq, false, black));
+    fn((uint32_t)kHpfHz, p.hpfFreq);
+    fn((uint32_t)kLpfHz, p.lpfFreq);
     fn((uint32_t)kHpfEnabled, p.hpfFreq > 16.5f ? 1.0f : 0.0f);
     fn((uint32_t)kLpfEnabled, p.lpfFreq < 15200.5f ? 1.0f : 0.0f);
 

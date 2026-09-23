@@ -1,14 +1,16 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
 //
-// FourKEQBandFrequency.hpp — the two ways a 4K EQ 2 band frequency can be set,
-// shared by the DSP shell, the UI and the tests (framework-free).
+// FourKEQBandFrequency.hpp — the two ways a 4K EQ 2 band or filter frequency
+// can be set, shared by the DSP shell, the UI and the tests (framework-free).
 //
 // Each band has a Hz parameter (kLfHz..kHfHz, what the knob shows and the band
 // plays) and a legacy dial parameter (kLfFreq..kHfFreq, the shipped index and
 // symbol, a position on the reference's printed dial played through the
 // measured dial law). Sessions and automation from before
 // dusk-audio-plugins#288 address the dial parameter, so it keeps its meaning.
-// The last one written wins; kLegacyDialBands records which that was.
+// The last one written wins; kLegacyDialBands records which that was. The HPF
+// and LPF work the same way: kHpfHz / kLpfHz (each filter's -3 dB point),
+// kHpfFreq / kLpfFreq, and kLegacyDialFilters.
 
 #pragma once
 
@@ -60,27 +62,64 @@ inline bool fkBandFollowsLegacyDial(const float* values, int band) noexcept
     return (fkLegacyDialBits(values[kLegacyDialBands]) >> band) & 1u;
 }
 
+struct FourKEQFilterIds
+{
+    uint32_t hz, legacyDial;
+    bool highPass;
+};
+
+static constexpr FourKEQFilterIds kFourKEQFilters[2] = {
+    { kHpfHz, kHpfFreq, true },
+    { kLpfHz, kLpfFreq, false },
+};
+
+constexpr int fkFilterOfHzParam(uint32_t index)
+{
+    return index == kHpfHz ? 0 : index == kLpfHz ? 1 : -1;
+}
+
+constexpr int fkFilterOfLegacyDialParam(uint32_t index)
+{
+    return index == kHpfFreq ? 0 : index == kLpfFreq ? 1 : -1;
+}
+
+inline uint32_t fkLegacyDialFilterBits(float stored) noexcept
+{
+    if (!(stored > 0.0f))
+        return 0u;
+    return (uint32_t)std::lround(stored < 3.0f ? stored : 3.0f);
+}
+
+inline bool fkFilterFollowsLegacyDial(const float* values, int filter) noexcept
+{
+    return (fkLegacyDialFilterBits(values[kLegacyDialFilters]) >> filter) & 1u;
+}
+
 inline bool fkBandIsBell(const float* values, int band) noexcept
 {
     const int sw = kFourKEQBands[band].bellSwitch;
     return sw < 0 || values[sw] > 0.5f;
 }
 
-// Stores a parameter write and, for a band frequency, records which of the
-// band's two parameters it came through.
+// Stores a parameter write and, for a band or filter frequency, records which
+// of its two parameters it came through.
 inline void fkStoreParam(float* values, uint32_t index, float value) noexcept
 {
     values[index] = value;
-    uint32_t bits = fkLegacyDialBits(values[kLegacyDialBands]);
+    const uint32_t bands = fkLegacyDialBits(values[kLegacyDialBands]);
+    const uint32_t filters = fkLegacyDialFilterBits(values[kLegacyDialFilters]);
     if (const int b = fkBandOfLegacyDialParam(index); b >= 0)
-        bits |= 1u << b;
+        values[kLegacyDialBands] = (float)(bands | (1u << b));
     else if (const int h = fkBandOfHzParam(index); h >= 0)
-        bits &= ~(1u << h);
+        values[kLegacyDialBands] = (float)(bands & ~(1u << h));
     else if (index == kLegacyDialBands)
-        bits = fkLegacyDialBits(value);
-    else
-        return;
-    values[kLegacyDialBands] = (float)bits;
+        values[kLegacyDialBands] = (float)fkLegacyDialBits(value);
+    else if (const int f = fkFilterOfLegacyDialParam(index); f >= 0)
+        values[kLegacyDialFilters] = (float)(filters | (1u << f));
+    else if (const int g = fkFilterOfHzParam(index); g >= 0)
+        values[kLegacyDialFilters] = (float)(filters & ~(1u << g));
+    else if (index == kLegacyDialFilters)
+        values[kLegacyDialFilters] = (float)fkLegacyDialFilterBits(value);
 }
 
 // The Hz a band plays: its Hz parameter, or the Hz its legacy dial position
@@ -146,3 +185,43 @@ inline void fkSetCurveBandFrequencies(duskaudio::FourKEQDSP::CurveControls& c, c
 
 // The band knobs' read-out of fkBandHz.
 static constexpr const char* kFourKBandHzFormat = "%.0f Hz";
+
+// The Hz a filter plays (its -3 dB point): its Hz parameter, or the Hz its
+// legacy dial position plays.
+inline float fkFilterHz(const float* values, int filter) noexcept
+{
+    const FourKEQFilterIds& ids = kFourKEQFilters[filter];
+    if (!fkFilterFollowsLegacyDial(values, filter))
+        return values[ids.hz];
+    return duskaudio::FourKEQDSP::hzForCalibratedFilterControl(
+        values[ids.legacyDial], ids.highPass, values[kEqType] > 0.5f);
+}
+
+// The legacy dial position that plays hz, clamped to the dial's ends.
+inline float fkLegacyDialForFilterHz(int filter, float hz, bool black) noexcept
+{
+    using duskaudio::FourKEQDSP;
+    const bool highPass = kFourKEQFilters[filter].highPass;
+    return FourKEQDSP::controlForCalibratedFilterFrequency(
+        FourKEQDSP::calibratedFilterFrequencyForHz(hz, highPass, black), highPass, black);
+}
+
+inline void fkApplyFilterFrequencies(duskaudio::FourKEQDSP& dsp, const float* values) noexcept
+{
+    if (fkFilterFollowsLegacyDial(values, 0))
+        dsp.setHpfFreq(values[kHpfFreq]);
+    else
+        dsp.setHpfFreqHz(values[kHpfHz]);
+    if (fkFilterFollowsLegacyDial(values, 1))
+        dsp.setLpfFreq(values[kLpfFreq]);
+    else
+        dsp.setLpfFreqHz(values[kLpfHz]);
+}
+
+inline void fkSetCurveFilterFrequencies(duskaudio::FourKEQDSP::CurveControls& c, const float* values) noexcept
+{
+    c.hpfFreqInHz = !fkFilterFollowsLegacyDial(values, 0);
+    c.lpfFreqInHz = !fkFilterFollowsLegacyDial(values, 1);
+    c.hpfFreq = values[c.hpfFreqInHz ? kHpfHz : kHpfFreq];
+    c.lpfFreq = values[c.lpfFreqInHz ? kLpfHz : kLpfFreq];
+}

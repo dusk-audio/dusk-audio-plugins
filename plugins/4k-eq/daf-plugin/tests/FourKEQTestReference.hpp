@@ -47,23 +47,40 @@ struct LegacySettings
 };
 
 // The core, set up the way the plugin sets it up, run pass by pass so a test
-// can replay the history a plugin instance went through.
+// can replay the history a plugin instance went through. Without CoreFilters
+// the filters follow the settings' dial positions.
 struct CoreBands { float lf, lm, hm, hf; bool hz; };
+struct CoreFilters { float hpf, lpf; bool hz; };
+
+inline CoreFilters filterDialsOf(const LegacySettings& s) { return { s.hpfFreq, s.lpfFreq, false }; }
 
 class CoreRunner
 {
 public:
     CoreRunner(const LegacySettings& s, const CoreBands& bands)
+        : CoreRunner(s, bands, filterDialsOf(s)) {}
+
+    CoreRunner(const LegacySettings& s, const CoreBands& bands, const CoreFilters& filters)
     {
-        apply(s, bands);
+        apply(s, bands, filters);
         dsp.prepare(kRate, (int)kBlock);
-        apply(s, bands);
+        apply(s, bands, filters);
     }
 
-    void apply(const LegacySettings& s, const CoreBands& bands)
+    void apply(const LegacySettings& s, const CoreBands& bands) { apply(s, bands, filterDialsOf(s)); }
+
+    void apply(const LegacySettings& s, const CoreBands& bands, const CoreFilters& filters)
     {
-        dsp.setHpfFreq(s.hpfFreq); dsp.setHpfEnabled(s.hpfEnabled > 0.5f);
-        dsp.setLpfFreq(s.lpfFreq); dsp.setLpfEnabled(s.lpfEnabled > 0.5f);
+        dsp.setHpfEnabled(s.hpfEnabled > 0.5f);
+        dsp.setLpfEnabled(s.lpfEnabled > 0.5f);
+        if (filters.hz)
+        {
+            dsp.setHpfFreqHz(filters.hpf); dsp.setLpfFreqHz(filters.lpf);
+        }
+        else
+        {
+            dsp.setHpfFreq(filters.hpf); dsp.setLpfFreq(filters.lpf);
+        }
         dsp.setLfGain(s.lfGain); dsp.setLfBell(s.lfBell > 0.5f);
         dsp.setLmGain(s.lmGain); dsp.setLmQ(s.lmQ);
         dsp.setHmGain(s.hmGain); dsp.setHmQ(s.hmQ);
@@ -158,6 +175,16 @@ inline std::vector<std::pair<const char*, LegacySettings>> legacySessions()
     LegacySettings e;
     e.lfGain = 5.f; e.lmGain = -4.f; e.hmGain = 6.f; e.hfGain = 3.f;
     out.push_back({ "frequency dials at 1.0.5 defaults", e });
+
+    // Both filters switched in and never turned: their dials at 1.0.5's
+    // defaults, where they play 9.4 Hz and 29.9 kHz.
+    LegacySettings f = e;
+    f.hpfEnabled = 1.f; f.lpfEnabled = 1.f;
+    out.push_back({ "filters in at 1.0.5's default dials", f });
+
+    LegacySettings g = a;
+    g.eqType = 1.f; g.hpfFreq = 350.f; g.lpfFreq = 3000.f; g.lpfEnabled = 1.f; g.oversampling = 0.f;
+    out.push_back({ "Black filters at the dial ends, 1x", g });
     return out;
 }
 

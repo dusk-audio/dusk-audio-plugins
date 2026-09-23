@@ -26,11 +26,12 @@ JUCE 4K-EQ in existing sessions.
 
 4K EQ 2 intentionally has no independent Drive or M/S control. Hidden legacy
 parameter slots remain only to preserve automation and session compatibility
-with earlier builds. The same goes for the four band frequencies as dial
-positions ("LF Frequency (Legacy Dial)" and so on): up to 1.0.5 the band
-frequency parameters were positions on the console's printed dial, and
-sessions and automation that address them still sound as they did. The Hz
-parameters ("LF Frequency" and so on) take over a band as soon as they are set.
+with earlier builds. The same goes for the four band and two filter
+frequencies as dial positions ("LF Frequency (Legacy Dial)", "HPF Frequency
+(Legacy Dial)" and so on): up to 1.0.5 the frequency parameters were positions
+on the console's printed dial, and sessions and automation that address them
+still sound as they did. The Hz parameters ("LF Frequency", "HPF Frequency"
+and so on) take over a band or filter as soon as they are set.
 
 ## Controls
 
@@ -46,8 +47,8 @@ parameters ("LF Frequency" and so on) take over a band as soon as they are set.
 
 The band frequency knobs are in Hz: a bell's centre, a shelf's full-boost corner
 (both exact at +7.5 dB of gain), the same in Brown and Black. The readout does
-not move with gain. The HPF and LPF legends reproduce the stepped console
-dials, and their readouts report the measured corner.
+not move with gain. The HPF and LPF knobs are in Hz as well, each filter's
+3 dB point, with their marks where the stepped console dials have theirs.
 
 ## Factory Presets
 

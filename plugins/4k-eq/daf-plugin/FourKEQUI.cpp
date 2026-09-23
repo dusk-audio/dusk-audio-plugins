@@ -143,7 +143,8 @@ protected:
         // back to a preset recovers the selection. It also clears once an edit
         // diverges from every preset. Gated on the preset params so the
         // per-frame meter outputs never trigger a scan.
-        if (fkIsPresetParam(index) || fkBandOfLegacyDialParam(index) >= 0)
+        if (fkIsPresetParam(index) || fkBandOfLegacyDialParam(index) >= 0
+            || fkFilterOfLegacyDialParam(index) >= 0)
             syncPresetSelection();
     }
 
@@ -729,12 +730,18 @@ private:
         // identity records - otherwise a missing key would keep the current
         // value and deriveUserPreset() could never match.
         for (uint32_t i = 0; i < kParamCount; ++i)
-            if (fkIsPresetParam(i) && fkBandOfHzParam(i) < 0)
+            if (fkIsPresetParam(i) && fkBandOfHzParam(i) < 0 && fkFilterOfHzParam(i) < 0)
                 setP(i, loaded[i]);
         for (int b = 0; b < 4; ++b)
         {
             const uint32_t id = fkBandFollowsLegacyDial(loaded, b) ? kFourKEQBands[b].legacyDial
                                                                    : kFourKEQBands[b].hz;
+            setP(id, loaded[id]);
+        }
+        for (int f = 0; f < 2; ++f)
+        {
+            const uint32_t id = fkFilterFollowsLegacyDial(loaded, f) ? kFourKEQFilters[f].legacyDial
+                                                                     : kFourKEQFilters[f].hz;
             setP(id, loaded[id]);
         }
         currentPreset = -1;
@@ -751,14 +758,16 @@ private:
     {
         const FourKParam& d = kFourKParams[id];
         const float tol = std::max(1.0e-3f, (d.max - d.min) * 1.0e-4f);
-        const int band = fkBandOfHzParam(id);
-        return std::fabs((band >= 0 ? bandHz(band) : values[id]) - v) <= tol;
+        return std::fabs(userPresetValue(stateView().v, id) - v) <= tol;
     }
 
     static float userPresetValue(const float* vals, uint32_t id)
     {
-        const int band = fkBandOfHzParam(id);
-        return band >= 0 ? fkBandHz(vals, band) : vals[id];
+        if (const int band = fkBandOfHzParam(id); band >= 0)
+            return fkBandHz(vals, band);
+        if (const int filter = fkFilterOfHzParam(id); filter >= 0)
+            return fkFilterHz(vals, filter);
+        return vals[id];
     }
 
     int deriveFactoryPreset() const
@@ -840,13 +849,13 @@ private:
         c.black        = values[kEqType] > 0.5f;
         c.hpfEnabled   = values[kHpfEnabled] > 0.5f;
         c.lpfEnabled   = values[kLpfEnabled] > 0.5f;
-        c.hpfFreq      = values[kHpfFreq];
-        c.lpfFreq      = values[kLpfFreq];
         c.lfGain = values[kLfGain]; c.lfBell = values[kLfBell];
         c.lmGain = values[kLmGain]; c.lmQ    = values[kLmQ];
         c.hmGain = values[kHmGain]; c.hmQ    = values[kHmQ];
         c.hfGain = values[kHfGain]; c.hfBell = values[kHfBell];
-        fkSetCurveBandFrequencies(c, stateView().v);
+        const StateView state = stateView();
+        fkSetCurveBandFrequencies(c, state.v);
+        fkSetCurveFilterFrequencies(c, state.v);
         // NOT values[kSaturation]. That index is a retired compatibility slot
         // kept so existing sessions do not remap; FourKEQPlugin.cpp answers it
         // with dsp.setSaturation(0.0f), so the standalone 4K DSP always runs at
@@ -1010,14 +1019,15 @@ private:
         }
 
         // FILTERS — British-style stepped HPF & LPF (OUT folds in each enable).
-        // Values are the hosted UAD/LUNA dial readbacks.
+        // Marked at the reference's dial positions; each marking is the Hz the
+        // filter is 3 dB down at there.
         static const char* const HPFL[7] = { "OUT", "16", "45", "120", "250", "320", "350" };
         static const float        HPFF[7] = { 16.f, 16.f, 45.f, 120.f, 250.f, 320.f, 350.f };
         static const char* const LPFL[7] = { "OUT", "15.2", "10", "5", "3.75", "3.3", "3" };
         static const float        LPFF[7] = { 15201.f, 15201.f, 10000.f, 5000.f, 3750.f, 3300.f, 3000.f };
         const float fcx = 0.5f * (COL[0] + COL[1]);
-        steppedFilterKnob(dl, "hpfknob", fcx, cY(314), 28.f, kHpfEnabled, kHpfFreq, HPFL, HPFF, false, "Hz");
-        steppedFilterKnob(dl, "lpfknob", fcx, cY(452), 28.f, kLpfEnabled, kLpfFreq, LPFL, LPFF, true,  "kHz");
+        steppedFilterKnob(dl, "hpfknob", fcx, cY(314), 28.f, kHpfEnabled, kHpfHz, HPFL, HPFF, false, "Hz");
+        steppedFilterKnob(dl, "lpfknob", fcx, cY(452), 28.f, kLpfEnabled, kLpfHz, LPFL, LPFF, true,  "kHz");
 
         // Shared GAIN (0 top, +-15 dB) and Q (.5-3 descending) detent tables.
         static const float GT[11] = { 0.f, .1f, .2f, .3f, .4f, .5f, .6f, .7f, .8f, .9f, 1.f };
@@ -1182,57 +1192,42 @@ private:
     }
 
     //========================================================================
-    // Frequency read-outs. A band knob is its Hz parameter and shows the Hz
-    // the band plays (fkBandHz), which no gain setting moves. The HPF/LPF
-    // parameters are still positions on the reference's dial, so their
-    // read-outs show the measured corner that position plays.
+    // Frequency read-outs. A band or filter knob is its Hz parameter and shows
+    // the Hz it plays (fkBandHz, fkFilterHz), which no gain setting moves.
     //========================================================================
 
-    // The UI's mirror with kLegacyDialBands taken from the plugin when it
-    // shares the process: a host restoring a pre-#288 session never sets that
-    // parameter, so the value it forwards is stale.
-    float legacyDialBits() const
-    {
-       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
-        if (fourKEQGetLegacyDialBands != nullptr)
-            if (void* inst = getPluginInstancePointer())
-                return (float)fourKEQGetLegacyDialBands(inst);
-       #endif
-        return values[kLegacyDialBands];
-    }
-
+    // The UI's mirror with kLegacyDialBands and kLegacyDialFilters taken from
+    // the plugin when it shares the process: a host restoring a pre-#288
+    // session never sets those parameters, so the values it forwards are stale.
     struct StateView { float v[kParamCount]; };
     StateView stateView() const
     {
         StateView view;
         std::copy(values, values + kParamCount, view.v);
-        view.v[kLegacyDialBands] = legacyDialBits();
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
+        if (void* inst = getPluginInstancePointer())
+        {
+            if (fourKEQGetLegacyDialBands != nullptr)
+                view.v[kLegacyDialBands] = (float)fourKEQGetLegacyDialBands(inst);
+            if (fourKEQGetLegacyDialFilters != nullptr)
+                view.v[kLegacyDialFilters] = (float)fourKEQGetLegacyDialFilters(inst);
+        }
+       #endif
         return view;
     }
 
-    float bandHz(int band) const { return fkBandHz(stateView().v, band); }
-
     float displayValue(uint32_t paramId) const
     {
-        if (paramId == kHpfFreq || paramId == kLpfFreq)
-            return duskaudio::FourKEQDSP::calibratedFilterFrequency(
-                values[paramId], paramId == kHpfFreq, values[kEqType] > 0.5f);
         if (const int band = fkBandOfHzParam(paramId); band >= 0)
-            return bandHz(band);
+            return fkBandHz(stateView().v, band);
+        if (const int filter = fkFilterOfHzParam(paramId); filter >= 0)
+            return fkFilterHz(stateView().v, filter);
         return values[paramId];
     }
 
     static bool isFrequencyParam(uint32_t paramId)
     {
-        return paramId == kHpfFreq || paramId == kLpfFreq || fkBandOfHzParam(paramId) >= 0;
-    }
-
-    // The filter dial position whose measured corner is `target`; the same
-    // inverse factory presets use.
-    float dialForFilterCorner(uint32_t paramId, float target) const
-    {
-        const bool black = values[kEqType] > 0.5f;
-        return duskaudio::FourKEQDSP::controlForCalibratedFilterFrequency(target, paramId == kHpfFreq, black);
+        return fkFilterOfHzParam(paramId) >= 0 || fkBandOfHzParam(paramId) >= 0;
     }
 
     //========================================================================
@@ -1273,11 +1268,8 @@ private:
         values[enId] = en ? 1.f : 0.f; setParameterValue(enId, values[enId]);
         if (en)
         {
-            // F[] is the frequency printed around the bezel. Convert that
-            // effective corner back to the fitted UAD control coordinate before
-            // handing it to the DSP, so the pointer and response agree.
-            f = fkNormalizeParamValue(freqId, dialForFilterCorner(freqId, f));
-            values[freqId] = f;
+            f = fkNormalizeParamValue(freqId, f);
+            fkStoreParam(values, freqId, f);
             setParameterValue(freqId, f);
         }
     }
@@ -1292,9 +1284,8 @@ private:
         auto c01 = [](float v) { return v < 0.f ? 0.f : (v > 1.f ? 1.f : v); };
 
         const bool en = values[enId] > 0.5f;
-        // Position the pointer by the measured corner, not by the hidden fitted
-        // control coordinate. For example, a Brown HPF control value of 120 Hz
-        // actually turns over near 85 Hz and must point between those markings.
+        // By the Hz the filter plays, so a legacy dial points where its corner
+        // is: a Brown HPF dial at 120 is 3 dB down near 80 Hz.
         float t = stepStateToPos(F, en, displayValue(freqId));
 
         // interaction
@@ -1366,15 +1357,13 @@ private:
         float typed;
         if (panel.valueEdit(id, cx, cy, R, typed))
         {
-            // Typed frequency is the ACTUAL corner: clamp it in that display
-            // domain, map back to the dial law, then normalize the control.
             float lo = F[1], hi = F[1];
             for (int i = 2; i <= 6; ++i) { lo = std::min(lo, F[i]); hi = std::max(hi, F[i]); }
             typed = typed < lo ? lo : (typed > hi ? hi : typed);
-            typed = fkNormalizeParamValue(freqId, dialForFilterCorner(freqId, typed));
+            typed = fkNormalizeParamValue(freqId, typed);
             editParameter(enId, true); editParameter(freqId, true);
             values[enId] = 1.f;    setParameterValue(enId, 1.f);
-            values[freqId] = typed; setParameterValue(freqId, typed);
+            fkStoreParam(values, freqId, typed); setParameterValue(freqId, typed);
             editParameter(freqId, false); editParameter(enId, false);
         }
         else if ((hov || act) && !editing)
