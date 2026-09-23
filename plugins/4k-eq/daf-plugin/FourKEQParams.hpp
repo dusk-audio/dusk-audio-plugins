@@ -45,6 +45,11 @@ enum ParamId
     // wins, and this records the outcome so a saved state restores it: the
     // formats restore parameters in index order, so it lands after both.
     kLegacyDialBands,
+    // The filters the same way: kHpfHz / kLpfHz are each filter's -3 dB point,
+    // kHpfFreq / kLpfFreq keep their dial meaning, and the selector (bit 0 HPF,
+    // bit 1 LPF) follows every parameter it arbitrates.
+    kHpfHz, kLpfHz,
+    kLegacyDialFilters,
     kParamCount
 };
 
@@ -58,7 +63,7 @@ static constexpr const char* kOversampleLabels[3]  = { "1x", "2x", "4x" };
 
 // The legacy dial defaults are the dials that play the Hz defaults (Brown;
 // HF in bell mode, as the shelf dial stops short of 8 kHz), not the shipped
-// 200/1000/3000/8000. DAF's LV2 wrapper hands the plugin a control port only
+// 200/1000/3000/8000 and 16/15201. DAF's LV2 wrapper hands the plugin a control port only
 // when it differs from the last value seen, starting from the instance's, so a
 // pre-#288 LV2 session whose dial sat at a shipped default would otherwise
 // never reach the plugin and would play the Hz default.
@@ -74,9 +79,9 @@ struct FourKParam
 };
 
 static constexpr FourKParam kFourKParams[kParamCount] = {
-    { "hpf_freq",         16.f,    350.f,   16.f    },
+    { "hpf_freq",         16.f,    350.f,   44.5562363f  }, // legacy dial
     { "hpf_enabled",      0.f,     1.f,     0.f     },
-    { "lpf_freq",         3000.f,  15201.f, 15201.f },
+    { "lpf_freq",         3000.f,  15201.f, 10609.6094f  }, // legacy dial
     { "lpf_enabled",      0.f,     1.f,     0.f     },
     { "lf_gain",          -15.f,   15.f,    0.f     },
     { "lf_freq",          30.f,    450.f,   244.155182f  }, // legacy dial
@@ -107,13 +112,17 @@ static constexpr FourKParam kFourKParams[kParamCount] = {
     { "hm_hz",            600.f,   7000.f,  3000.f  },
     { "hf_hz",            1500.f,  16000.f, 8000.f  },
     { "legacy_dial_bands",0.f,     15.f,    0.f     },
+    { "hpf_hz",           16.f,    350.f,   16.f    },
+    { "lpf_hz",           3000.f,  15201.f, 15201.f },
+    { "legacy_dial_filters", 0.f,  3.f,     0.f     },
 };
 
 // Sound-shaping parameters a preset owns (saved to user preset files, compared
 // for preset-identity recovery, reset by INIT). Excluded: bypass (a preset
 // recall must never fight the host's bypass state), oversampling (machine-level
 // quality/CPU choice), the analyzer/graph UI state, the meter outputs, and the
-// legacy dial inputs with their selector: a preset states each band in Hz.
+// legacy dial inputs with their selectors: a preset states each band and
+// filter in Hz.
 constexpr bool fkIsPresetParam(uint32_t index)
 {
     switch (index)
@@ -131,6 +140,9 @@ constexpr bool fkIsPresetParam(uint32_t index)
     case kHmFreq:
     case kHfFreq:
     case kLegacyDialBands:
+    case kHpfFreq:
+    case kLpfFreq:
+    case kLegacyDialFilters:
         return false;
     default:
         return index < (uint32_t)kParamCount;
@@ -140,8 +152,7 @@ constexpr bool fkIsPresetParam(uint32_t index)
 // Factory presets: same musical targets as the JUCE FourKEQPresets. Band
 // frequencies are the Hz each band plays, by the core's definition: a bell's
 // centre, a shelf's full-boost corner (both exact at +7.5 dB). HPF/LPF fields
-// are the audible corner, converted to the filter dial by FourKEQPresetRuntime.
-// HPF/LPF are auto-enabled when their target departs from the neutral 16 Hz /
+// are each filter's -3 dB point. HPF/LPF are auto-enabled when their target departs from the neutral 16 Hz /
 // 15.201 kHz endpoints (JUCE left the enables untouched, making "Telephone EQ"
 // inert).
 struct FourKEQPreset

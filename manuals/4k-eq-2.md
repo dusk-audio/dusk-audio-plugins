@@ -51,8 +51,9 @@ the value bubble and a typed value are the frequency the band plays. For a bell
 that is its centre, for a shelf the corner where the full boost or cut is
 reached. The bubble does not change when you turn a gain knob. The band itself
 moves slightly with gain, as the console's does: a bell by at most about 2.3%,
-a shelf's corner by at most about 4% at 3 dB of gain or more. The HPF and LPF knobs keep
-the console's printed dial marks, and their bubble shows the measured corner.
+a shelf's corner by at most about 4% at 3 dB of gain or more. The HPF and LPF
+knobs are in Hz too: the frequency where the filter is 3 dB down, the same in
+Brown and Black. Their marks sit where the console's printed dial marks do.
 
 ## Workflows
 
@@ -171,11 +172,12 @@ an unsuitable curve by driving the modeled path harder.
 
 ### Filters
 
-- **HPF:** OUT by default, then 16 to 350 Hz. Moving away from OUT enables the
-  filter. Brown and Black use different measured responses. Use it to remove
-  rumble; the common mistake is setting it from the printed dial alone without
-  listening to the source's fundamental.
-- **LPF:** OUT by default, then 15.201 down to 3 kHz. Use it for deliberate
+- **HPF:** OUT by default, then 16 to 350 Hz, the frequency where the filter
+  is 3 dB down. Moving away from OUT enables the filter. Brown and Black use
+  different measured slopes. Use it to remove rumble; the common mistake is
+  setting it by number alone without listening to the source's fundamental.
+- **LPF:** OUT by default, then 15.201 down to 3 kHz, again the 3 dB point. Use
+  it for deliberate
   bandwidth restriction or high-frequency cleanup. The control runs downward
   in frequency as it turns clockwise, matching the panel layout.
 
@@ -225,6 +227,12 @@ from running nominally unity biquads.
   they did. A band follows whichever of its two frequency parameters was set
   last. New automation belongs on "LF Frequency", "LM Frequency", "HM
   Frequency" and "HF Frequency", which are in Hz.
+- The HPF and LPF frequency parameters were dial positions too: an HPF set to
+  80 was 3 dB down at about 26 Hz in Brown mode. They work the same way as the
+  bands, as "HPF Frequency (Legacy Dial)" and "LPF Frequency (Legacy Dial)"
+  beside "HPF Frequency" and "LPF Frequency" in Hz. A filter from an older
+  session can play outside its knob's range, for example a Brown LPF above
+  15.2 kHz; the knob then rests at its end stop.
 - A band from an older session can play a frequency outside its knob's range,
   for example a Black LF shelf above 450 Hz. The knob then rests at its end stop
   and the bubble shows the frequency the band plays. Turning the knob moves the
@@ -237,8 +245,8 @@ from running nominally unity biquads.
   while a host is not prepared to refresh plugin delay compensation.
 - The old Drive and M/S parameter indices may still appear in generic host
   views for compatibility. They are hidden or inert and are not part of the UI.
-  So do the four legacy dial frequencies and "Legacy Dial Bands", which records
-  which bands follow them.
+  So do the six legacy dial frequencies, "Legacy Dial Bands" and "Legacy Dial
+  Filters", which record which bands and filters follow them.
 
 ## Presets Explained
 
@@ -282,9 +290,10 @@ setting from a session saved with version 1.0.5 or earlier, and the frequency
 it plays is outside the knob's range. The bubble shows that frequency. Turn the
 knob to bring the band back onto the knob's scale.
 
-**The HPF or LPF bubble does not match the printed legend.** The filter legends
-are the console's dial markings; the bubble is the measured corner. Use the
-bubble or typed entry when an exact target matters.
+**The HPF or LPF knob sits at its end stop.** The filter follows a legacy dial
+setting from a session saved with version 1.0.5 or earlier, and its 3 dB point
+is outside the knob's range. The bubble shows it. Turn the knob to bring the
+filter back onto the knob's scale.
 
 **The plugin becomes louder or distorts after an Input change.** Lower Output
 by the same amount for comparison. If it still overloads, lower Input or the

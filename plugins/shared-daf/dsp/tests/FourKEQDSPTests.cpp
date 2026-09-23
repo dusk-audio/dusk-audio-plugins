@@ -8,7 +8,8 @@
 //   2. Below it, 1x and 2x at 44.1 and 48 kHz hold the calibration's model
 //      (each section as an RBJ biquad at 192 kHz) to within 1 dB per section
 //      over 20 Hz..20 kHz: no cramping (dusk-audio-plugins#289).
-//   3. The Hz API puts a band where it is asked to (dusk-audio-plugins#288).
+//   3. The Hz API puts a band, and a filter's -3 dB point, where it is asked
+//      to (dusk-audio-plugins#288).
 //   4. No NaN, no unstable section and no runaway tail at extreme settings.
 
 #include "FourKEQDSP.hpp"
@@ -33,7 +34,7 @@ struct FourKEQDSPTestAccess
     {
         BiquadCoeffs bands[4];
         std::array<BiquadCoeffs, 3> low, high;
-        BiquadCoeffs lpf;
+        BiquadCoeffs lpf, hpf1, hpf2;
     };
 
     static FourKEQDSP::SectionDesigns designs(const FourKEQDSP::CurveControls& c) noexcept
@@ -47,7 +48,7 @@ struct FourKEQDSPTestAccess
         return { { c.lf.coeffs(), c.lm.coeffs(), c.hm.coeffs(), c.hf.coeffs() },
                  { { c.lowCorrection1.coeffs(), c.lowCorrection2.coeffs(), c.lowCorrection3.coeffs() } },
                  { { c.highCorrection1.coeffs(), c.highCorrection2.coeffs(), c.highCorrection3.coeffs() } },
-                 c.lpf.coeffs() };
+                 c.lpf.coeffs(), c.hpf1.coeffs(), c.hpf2.coeffs() };
     }
 };
 } // namespace duskaudio
@@ -116,6 +117,7 @@ struct Settings
     float hfGain = 0.0f, hfFreq = 8000.0f;
     bool lfBell = false, hfBell = false;
     bool hz = false; // live core only: band frequencies go through the Hz API
+    bool filtersHz = false; // live core only: HPF/LPF through the Hz API
     float inputDb = 0.0f, outputDb = 0.0f, saturation = 0.0f;
     int oversampling = 2;
     bool ms = false, autoGain = false, bypass = false;
@@ -156,6 +158,11 @@ void apply(FourKEQDSP& c, const Settings& s)
         c.setLfFreq(s.lfFreq); c.setLmFreq(s.lmFreq);
         c.setHmFreq(s.hmFreq); c.setHfFreq(s.hfFreq);
     }
+    if (s.filtersHz)
+    {
+        c.setHpfFreqHz(s.hpf);
+        c.setLpfFreqHz(s.lpf);
+    }
 }
 
 template <class Controls>
@@ -179,6 +186,7 @@ FourKEQDSP::CurveCoeffs liveCurve(const Settings& s, double hostRate)
 {
     auto c = curveControls<FourKEQDSP::CurveControls>(s, hostRate);
     c.bandFrequenciesInHz = s.hz;
+    c.hpfFreqInHz = c.lpfFreqInHz = s.filtersHz;
     return FourKEQDSP::designCurve(c);
 }
 
@@ -193,6 +201,7 @@ FourKEQDSP::SectionDesigns designsFor(const Settings& s, double hostRate)
 {
     auto c = curveControls<FourKEQDSP::CurveControls>(s, hostRate);
     c.bandFrequenciesInHz = s.hz;
+    c.hpfFreqInHz = c.lpfFreqInHz = s.filtersHz;
     return FourKEQDSPTestAccess::designs(c);
 }
 
@@ -1019,6 +1028,208 @@ void testLastFrequencySetterWins()
           "coefficients not redesigned after prepare() at a new rate");
 }
 
+// The filters, drawn alone: the HPF at the base rate without its flat trim,
+// the LPF at the curve's rate. In dB at freq.
+double hpfDb(const FourKEQDSP::CurveCoeffs& d, double freq)
+{
+    const double w = 2.0 * kPi * freq / d.baseSampleRate;
+    return magnitudeDb(d.hpf, w) + (d.hasHpfFirstOrder ? magnitudeDb(d.hpfFirstOrder, w) : 0.0);
+}
+
+double lpfDb(const FourKEQDSP::CurveCoeffs& d, double freq)
+{
+    return magnitudeDb(d.lpf, 2.0 * kPi * freq / d.sampleRate);
+}
+
+// Where a filter's response crosses half power between lo and hi, where it
+// crosses once.
+template <class Response>
+double halfPowerHz(Response db, double lo, double hi)
+{
+    const double halfPower = -10.0 * std::log10(2.0);
+    const bool risesThrough = db(lo) < halfPower;
+    for (int i = 0; i < 80; ++i)
+    {
+        const double mid = std::sqrt(lo * hi);
+        ((db(mid) < halfPower) == risesThrough ? lo : hi) = mid;
+    }
+    return std::sqrt(lo * hi);
+}
+
+void testHzApiPlacesFilters()
+{
+    std::printf("[3d] filter Hz API: requested -> measured -3 dB point, worst relative error; 1x LPF above\n"
+                "    a quarter of the rate: worst level at the request, against the model's -3.01 dB\n");
+    std::printf("    %-10s %5s   %9s   %9s   %9s   %s\n", "", "host", "4x", "1x", "1x high", "dial API at 80, 4x");
+    const double halfPowerDb = -10.0 * std::log10(2.0);
+    double worst4x = 0.0, worst1x = 0.0, worstHighDb = 0.0;
+    for (double host : { 44100.0, 48000.0 })
+        for (int black = 0; black < 2; ++black)
+            for (int highPass = 0; highPass < 2; ++highPass)
+            {
+                const std::vector<float> requests = highPass
+                    ? std::vector<float>{ 16.0f, 20.0f, 30.0f, 80.0f, 150.0f, 300.0f, 350.0f }
+                    : std::vector<float>{ 3000.0f, 5000.0f, 10000.0f, 15201.0f, 20000.0f };
+                double worst[2] = { 0.0, 0.0 }, worstHigh = 0.0;
+                double dialAt80 = 0.0;
+                for (float hz : requests)
+                    for (int os : { 2, 0 })
+                    {
+                        Settings s;
+                        s.eqType = black;
+                        s.oversampling = os;
+                        s.filtersHz = true;
+                        (highPass ? s.hpfOn : s.lpfOn) = true;
+                        (highPass ? s.hpf : s.lpf) = hz;
+                        const auto d = liveCurve(s, host);
+                        const double measured = highPass
+                            ? halfPowerHz([&d](double f) { return hpfDb(d, f); }, hz * 0.25, hz * 1.3)
+                            : halfPowerHz([&d](double f) { return lpfDb(d, f); }, hz * 0.5,
+                                          std::min(hz * 1.5, 0.4999 * d.sampleRate));
+                        const double err = std::abs(measured / hz - 1.0);
+                        // The LPF at 1x is the matched design, which holds the
+                        // analog curve to its accuracy near Nyquist: above a
+                        // quarter of the rate, where its match point moves off
+                        // the corner, it is held to the model's level there
+                        // instead. The HPF runs at the base rate whatever the
+                        // factor; below 50 Hz its float coefficients move it
+                        // by a few tenths of a percent, as they do the dial
+                        // API's.
+                        if (!highPass && os == 0 && hz >= 0.25 * host)
+                        {
+                            const double level = std::abs(lpfDb(d, hz) - halfPowerDb);
+                            worstHigh = std::max(worstHigh, level);
+                            CHECK(level < 1.0, "%s LPF %.0f Hz at %.1f kHz x1: %.3f dB at the request",
+                                  black ? "Black" : "Brown", hz, host / 1000, lpfDb(d, hz));
+                        }
+                        else
+                        {
+                            worst[os == 2 ? 0 : 1] = std::max(worst[os == 2 ? 0 : 1], err);
+                            const double tolerance = highPass ? 5.0e-3 : 2.0e-4;
+                            CHECK(err < tolerance, "%s %s %.0f Hz at %.1f kHz x%d: -3 dB at %.2f Hz",
+                                  black ? "Black" : "Brown", highPass ? "HPF" : "LPF", hz, host / 1000, 1 << os, measured);
+                        }
+                        if (highPass && hz == 80.0f && os == 2)
+                        {
+                            Settings dial = s;
+                            dial.filtersHz = false;
+                            const auto dd = liveCurve(dial, host);
+                            dialAt80 = halfPowerHz([&dd](double f) { return hpfDb(dd, f); }, 5.0, 200.0);
+                        }
+                    }
+                worst4x = std::max(worst4x, worst[0]);
+                worst1x = std::max(worst1x, worst[1]);
+                worstHighDb = std::max(worstHighDb, worstHigh);
+                char label[24];
+                std::snprintf(label, sizeof label, "%s %s", black ? "Black" : "Brown", highPass ? "HPF" : "LPF");
+                if (highPass)
+                    std::printf("    %-10s %5.1f   %8.4f%%   %8.4f%%   %9s   %.1f Hz\n", label, host / 1000,
+                                100.0 * worst[0], 100.0 * worst[1], "", dialAt80);
+                else
+                    std::printf("    %-10s %5.1f   %8.4f%%   %8.4f%%   %6.3f dB\n", label, host / 1000,
+                                100.0 * worst[0], 100.0 * worst[1], worstHigh);
+            }
+
+    // The design frequency is the requested Hz over the filter's corner
+    // ratio, which the prototype's own half-power point defines.
+    for (int black = 0; black < 2; ++black)
+        for (int highPass = 0; highPass < 2; ++highPass)
+        {
+            const double q = FourKEQDSP::calibratedFilterQ(highPass, black);
+            auto analogDb = [&](double w) {
+                const double x = w * w;
+                if (!highPass)
+                    return -10.0 * std::log10((1.0 - x) * (1.0 - x) + x / (q * q));
+                double db = 10.0 * std::log10(x * x / ((1.0 - x) * (1.0 - x) + x / (q * q)));
+                if (black)
+                    db += 10.0 * std::log10(x / (x + 0.96134252 * 0.96134252));
+                return db;
+            };
+            const double corner = halfPowerHz(analogDb, 0.5, 1.5);
+            CHECK(std::abs(FourKEQDSP::filterCornerRatio(highPass, black) / corner - 1.0) < 1.0e-6,
+                  "%s %s corner ratio %.8f, prototype %.8f", black ? "Black" : "Brown", highPass ? "HPF" : "LPF",
+                  (double)FourKEQDSP::filterCornerRatio(highPass, black), corner);
+            CHECK(std::abs(FourKEQDSP::calibratedFilterFrequencyForHz(1000.0f, highPass, black)
+                           * FourKEQDSP::filterCornerRatio(highPass, black) / 1000.0 - 1.0) < 1.0e-6,
+                  "calibratedFilterFrequencyForHz disagrees with the corner ratio");
+        }
+    std::printf("    worst: 4x %.4f%%, 1x %.4f%%, 1x LPF high %.3f dB\n", 100.0 * worst4x, 100.0 * worst1x, worstHighDb);
+}
+
+void testHzApiMigratesFilterDials()
+{
+    // hzForCalibratedFilterControl(dial) through the Hz API plays the filter the
+    // dial API plays at dial, over the whole dial. Where the measured table is
+    // flat several dial positions share one corner and the Hz API reads the
+    // trim at the first of them: the largest such step is Brown's 27.8..30 run
+    // at 13.6 Hz, 0.0017 dB.
+    double worstDb = 0.0;
+    int filters = 0;
+    for (int black = 0; black < 2; ++black)
+        for (int highPass = 0; highPass < 2; ++highPass)
+        {
+            const float lo = highPass ? 16.0f : 3000.0f, hi = highPass ? 350.0f : 15201.0f;
+            for (int step = 0; step <= 200; ++step)
+            {
+                const float dial = lo * std::pow(hi / lo, step / 200.0f);
+                const float hz = FourKEQDSP::hzForCalibratedFilterControl(dial, highPass, black);
+                Settings s;
+                s.eqType = black;
+                s.oversampling = 0;
+                (highPass ? s.hpfOn : s.lpfOn) = true;
+                (highPass ? s.hpf : s.lpf) = dial;
+                Settings h = s;
+                h.filtersHz = true;
+                (highPass ? h.hpf : h.lpf) = hz;
+                ++filters;
+                const double designDial = highPass ? FourKEQDSP::calibratedFilterFrequency(dial, true, black)
+                                                   : designsFor(s, 48000.0).lpf.freq;
+                const double designHz = highPass ? FourKEQDSP::calibratedFilterFrequencyForHz(hz, true, black)
+                                                 : designsFor(h, 48000.0).lpf.freq;
+                CHECK(std::abs(designHz / designDial - 1.0) < 1.0e-6, "%s %s dial %.1f -> %.2f Hz: design %.4f, dial API %.4f",
+                      black ? "Black" : "Brown", highPass ? "HPF" : "LPF", dial, hz, designHz, designDial);
+                const auto a = liveCurve(s, 48000.0), b = liveCurve(h, 48000.0);
+                for (int i = 0; i <= 60; ++i)
+                {
+                    const float f = (float)(10.0 * std::pow(2000.0, i / 60.0));
+                    worstDb = std::max(worstDb, (double)std::abs(FourKEQDSP::curveDbAt(a, f) - FourKEQDSP::curveDbAt(b, f)));
+                }
+            }
+        }
+    CHECK(worstDb < 0.002, "a migrated filter dial plays up to %.4f dB away from the dial API", worstDb);
+    std::printf("[3e] dial -> Hz filter migration: %d dials over both filters and voicings, "
+                "worst %.4f dB from the dial API\n", filters, worstDb);
+}
+
+void testLastFilterSetterWins()
+{
+    Settings s;
+    s.oversampling = 0;
+    s.hpfOn = s.lpfOn = true;
+    s.hpf = 80.0f; s.lpf = 9000.0f;
+    s.filtersHz = true;
+    FourKEQDSP viaHzThenDial, dialOnly;
+    apply(viaHzThenDial, s);
+    Settings d = s;
+    d.filtersHz = false;
+    apply(dialOnly, d);
+    viaHzThenDial.prepare(48000.0, 64);
+    dialOnly.prepare(48000.0, 64);
+    std::vector<float> buf(64, 0.0f);
+    float* io[2] = { buf.data(), buf.data() };
+    viaHzThenDial.processBlock(io, io, 2, 64);
+    const auto hz = FourKEQDSPTestAccess::running(viaHzThenDial);
+    CHECK(sameBits(hz.hpf2, liveCurve(s, 48000.0).hpf) && sameBits(hz.lpf, liveCurve(s, 48000.0).lpf),
+          "the Hz API's running filters are not the curve's");
+    viaHzThenDial.setHpfFreq(80.0f);
+    viaHzThenDial.setLpfFreq(9000.0f);
+    viaHzThenDial.processBlock(io, io, 2, 64);
+    dialOnly.processBlock(io, io, 2, 64);
+    const auto after = FourKEQDSPTestAccess::running(viaHzThenDial), dial = FourKEQDSPTestAccess::running(dialOnly);
+    CHECK(!sameBits(hz.hpf2, after.hpf2) && !sameBits(hz.lpf, after.lpf), "the dial setters did not take the filters over");
+    CHECK(sameBits(after.hpf2, dial.hpf2) && sameBits(after.lpf, dial.lpf), "after the dial setters the filters are not the dial API's");
+}
+
 //==============================================================================
 // 4. Extremes
 //==============================================================================
@@ -1045,8 +1256,11 @@ void testEveryDesignedSectionIsStable()
                                 s.hmGain = g; s.hmFreq = f; s.hmQ = q;
                                 s.hfGain = -g; s.hfFreq = f; s.hfBell = q < 1.0f;
                                 s.lpfOn = true; s.lpf = f;
+                                s.hpfOn = hz; s.hpf = f; // the dial API's HPF: see highPassSection
+                                s.filtersHz = hz;
                                 const auto d = liveCurve(s, host);
                                 const BiquadCoeffs* all[] = { &d.bands[0], &d.bands[1], &d.bands[2], &d.bands[3], &d.lpf,
+                                                              &d.hpf, &d.hpfFirstOrder,
                                                               &d.lowCorrection[0], &d.lowCorrection[1], &d.lowCorrection[2],
                                                               &d.highCorrection[0], &d.highCorrection[1], &d.highCorrection[2] };
                                 for (const BiquadCoeffs* c : all)
@@ -1061,8 +1275,8 @@ void testEveryDesignedSectionIsStable()
                                     }
                                 }
                             }
-    std::printf("[4] %ld designed sections over rates 1.2k..192k x 1/2/4x, every band shape, gains to +-40 dB, "
-                "Q 0..50, frequencies 0..inf and NaN: %ld unstable or non-finite\n", sections, unstable);
+    std::printf("[4] %ld designed sections over rates 1.2k..192k x 1/2/4x, every band shape and both filters, "
+                "gains to +-40 dB, Q 0..50, frequencies 0..inf and NaN: %ld unstable or non-finite\n", sections, unstable);
 }
 
 void testExtremeRendersStayFiniteAndDecay()
@@ -1072,6 +1286,7 @@ void testExtremeRendersStayFiniteAndDecay()
     {
         Settings s; // everything up, Hz API at nonsense frequencies
         s.hz = true;
+        s.filtersHz = true;
         s.lfGain = s.lmGain = s.hmGain = s.hfGain = 15.0f;
         s.lfFreq = 1.0f; s.lmFreq = 1.0e6f; s.hmFreq = nan; s.hfFreq = 0.0f;
         s.lmQ = 0.0f; s.hmQ = 100.0f;
@@ -1090,6 +1305,9 @@ void testExtremeRendersStayFiniteAndDecay()
     {
         Settings s; // range ends through the Hz API, maximum interaction, driven hard
         s.hz = true;
+        s.filtersHz = true;
+        s.hpfOn = true; s.hpf = 16.0f;
+        s.lpfOn = true; s.lpf = 15201.0f;
         s.lfGain = 15.0f; s.lfFreq = 30.0f; s.lfBell = true;
         s.lmGain = -15.0f; s.lmFreq = 200.0f; s.lmQ = 3.0f;
         s.hmGain = 15.0f; s.hmFreq = 7000.0f; s.hmQ = 3.0f;
@@ -1162,6 +1380,9 @@ int main()
     testHzApiMigratesDialPositions();
     testHzApiIsContinuous();
     testLastFrequencySetterWins();
+    testHzApiPlacesFilters();
+    testHzApiMigratesFilterDials();
+    testLastFilterSetterWins();
     testEveryDesignedSectionIsStable();
     testExtremeRendersStayFiniteAndDecay();
     if (gFailures > 0)

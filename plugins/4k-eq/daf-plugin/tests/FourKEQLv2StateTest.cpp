@@ -7,8 +7,8 @@
 // this path cannot be covered by the CLAP test (dusk-audio-plugins#288):
 //
 //   - a pre-#288 session keeps its sound, including one whose frequency dials
-//     sat at 1.0.5's defaults;
-//   - a session saved with the Hz ports plays the core's Hz API.
+//     sat at 1.0.5's defaults, filters switched in or not;
+//   - a session saved with the Hz ports plays the core's Hz API, filters too.
 
 #include <cmath>
 #include <cstdio>
@@ -224,7 +224,9 @@ int main(int argc, char** argv)
     {
         LegacySettings s;
         s.eqType = 1.f; s.lfGain = 6.f; s.lmGain = -4.f; s.hmGain = 7.5f; s.hfGain = 5.f;
+        s.hpfEnabled = 1.f; s.lpfEnabled = 1.f;
         const CoreBands hz { 450.f, 200.f, 7000.f, 1500.f, true };
+        const CoreFilters filters { 350.f, 3000.f, true };
         // Saved by this build: the legacy dial ports were never moved, so
         // they stay at their declared defaults.
         Lv2Instance lv2(world, plugin);
@@ -232,9 +234,11 @@ int main(int argc, char** argv)
         lv2.set("lf_gain", s.lfGain); lv2.set("lm_gain", s.lmGain);
         lv2.set("hm_gain", s.hmGain); lv2.set("hf_gain", s.hfGain);
         lv2.set("lf_hz", hz.lf); lv2.set("lm_hz", hz.lm); lv2.set("hm_hz", hz.hm); lv2.set("hf_hz", hz.hf);
-        const double diff = maxDiff(lv2.render(in), CoreRunner(s, hz).render(in));
+        lv2.set("hpf_enabled", 1.f); lv2.set("lpf_enabled", 1.f);
+        lv2.set("hpf_hz", filters.hpf); lv2.set("lpf_hz", filters.lpf);
+        const double diff = maxDiff(lv2.render(in), CoreRunner(s, hz, filters).render(in));
         CHECK(diff <= 1.0e-6, "Hz session plays %.3g away from the Hz API", diff);
-        std::printf("  Black, LF 450 / LM 200 / HM 7000 / HF 1500 Hz: %.2g\n", diff);
+        std::printf("  Black, LF 450 / LM 200 / HM 7000 / HF 1500 / HPF 350 / LPF 3000 Hz: %.2g\n", diff);
     }
 
     lilv_node_free(pluginUri);

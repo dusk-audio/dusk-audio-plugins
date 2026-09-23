@@ -3,14 +3,17 @@
 // Loads states into the built 4K EQ 2 CLAP and checks what it plays against
 // the FourKEQDSP core configured directly (dusk-audio-plugins#288):
 //
-//   - a state saved before #288 (band frequencies stored as dial positions
-//     under lf_freq..hf_freq) plays what the core's dial API plays, and keeps
-//     doing so after the plugin saves it again and a fresh instance reloads it;
-//   - automation replayed into a legacy dial parameter takes the band over;
-//   - the band frequency parameters are Hz: HM Frequency at 7000 plays the
-//     core's Hz API at 7 kHz and peaks there;
-//   - every factory program plays its stated band frequencies through the Hz
-//     API.
+//   - a state saved before #288 (band and filter frequencies stored as dial
+//     positions under lf_freq..hf_freq, hpf_freq and lpf_freq) plays what the
+//     core's dial API plays, and keeps doing so after the plugin saves it again
+//     and a fresh instance reloads it;
+//   - automation replayed into a legacy dial parameter takes the band or
+//     filter over;
+//   - the frequency parameters are Hz: HM Frequency at 7000 plays the core's
+//     Hz API at 7 kHz and peaks there, HPF Frequency at 80 and LPF Frequency
+//     at 10000 are 3 dB down there, and a state saved with them reloads so;
+//   - every factory program plays its stated band and filter frequencies
+//     through the Hz API.
 //
 // The comparisons are sample for sample: the plugin runs the same core.
 //
@@ -297,7 +300,10 @@ void testLegacyAutomationTakesTheBandOver(const Library& lib)
     LegacySettings s;
     s.lfGain = 6.f; s.lmGain = -5.f; s.hmGain = 7.f; s.hfGain = 4.f;
     s.lfFreq = 60.f; s.lmFreq = 1450.f; s.hmFreq = 5250.f; s.hfFreq = 3500.f;
+    s.hpfEnabled = 1.f; s.lpfEnabled = 1.f;
+    s.hpfFreq = 120.f; s.lpfFreq = 8800.f;
     const CoreBands hzState { 300.f, 500.f, 2000.f, 12000.f, true };
+    const CoreFilters hzFilters { 60.f, 12000.f, true };
 
     Instance plugin(lib);
     const bool hasHzParams = plugin.bySymbol.count("lf_hz") != 0;
@@ -313,7 +319,11 @@ void testLegacyAutomationTakesTheBandOver(const Library& lib)
     setup.queue(plugin.idOf("lm_hz"), hzState.lm);
     setup.queue(plugin.idOf("hm_hz"), hzState.hm);
     setup.queue(plugin.idOf("hf_hz"), hzState.hf);
-    CoreRunner core(s, hzState);
+    setup.queue(plugin.idOf("hpf_enabled"), 1.0);
+    setup.queue(plugin.idOf("lpf_enabled"), 1.0);
+    setup.queue(plugin.idOf("hpf_hz"), hzFilters.hpf);
+    setup.queue(plugin.idOf("lpf_hz"), hzFilters.lpf);
+    CoreRunner core(s, hzState, hzFilters);
     const double before = maxDiff(plugin.render(in, &setup), core.render(in));
     CHECK(before <= 1.0e-6, "Hz state plays %.3g away from the Hz API", before);
 
@@ -323,18 +333,42 @@ void testLegacyAutomationTakesTheBandOver(const Library& lib)
     lane.queue(plugin.idOf("lm_freq"), s.lmFreq);
     lane.queue(plugin.idOf("hm_freq"), s.hmFreq);
     lane.queue(plugin.idOf("hf_freq"), s.hfFreq);
+    lane.queue(plugin.idOf("hpf_freq"), s.hpfFreq);
+    lane.queue(plugin.idOf("lpf_freq"), s.lpfFreq);
     core.apply(s, dialsOf(s));
     const double during = maxDiff(plugin.render(in, &lane), core.render(in));
     CHECK(during <= 1.0e-6, "legacy-dial automation plays %.3g away from the dial API", during);
     std::printf("  Hz state %.2g from the Hz API; legacy lane over it %.2g from the dial API\n", before, during);
 
-    // A Hz write takes the band back.
+    // A Hz write takes the band or filter back.
     Events back;
     back.queue(plugin.idOf("hm_hz"), 7000.f);
-    core.apply(s, { s.lfFreq, s.lmFreq, s.hmFreq, s.hfFreq, false });
+    back.queue(plugin.idOf("hpf_hz"), hzFilters.hpf);
+    core.apply(s, { s.lfFreq, s.lmFreq, 7000.f, s.hfFreq, false }, filterDialsOf(s));
     const std::vector<float> got = plugin.render(in, &back);
     const std::vector<float> dialOnly = core.render(in);
     CHECK(maxDiff(got, dialOnly) > 1.0e-3, "an HM Hz write after the legacy lane did not move the band");
+
+    // ... and a state saved in that mix restores it: a fresh instance given
+    // the same writes plays what the reloaded one plays.
+    const std::string saved = plugin.save();
+    Instance reloaded(lib), fresh(lib);
+    CHECK(reloaded.load(saved), "the mixed state was rejected");
+    Events same;
+    for (const char* gain : { "lf_gain", "lm_gain", "hm_gain", "hf_gain" })
+        same.queue(fresh.idOf(gain), gain[1] == 'f' ? (gain[0] == 'l' ? s.lfGain : s.hfGain)
+                                                    : (gain[0] == 'l' ? s.lmGain : s.hmGain));
+    same.queue(fresh.idOf("hpf_enabled"), 1.0);
+    same.queue(fresh.idOf("lpf_enabled"), 1.0);
+    same.queue(fresh.idOf("lf_freq"), s.lfFreq);
+    same.queue(fresh.idOf("lm_freq"), s.lmFreq);
+    same.queue(fresh.idOf("hf_freq"), s.hfFreq);
+    same.queue(fresh.idOf("hm_hz"), 7000.f);
+    same.queue(fresh.idOf("hpf_hz"), hzFilters.hpf);
+    same.queue(fresh.idOf("lpf_freq"), s.lpfFreq);
+    const double restored = maxDiff(reloaded.render(in), fresh.render(in, &same));
+    CHECK(restored <= 1.0e-6, "a state with Hz and legacy bands and filters reloads %.3g away", restored);
+    std::printf("  mixed Hz / legacy bands and filters, saved and reloaded: %.2g\n", restored);
 }
 
 // Level of a sine through the plugin, relative to its input.
@@ -344,16 +378,18 @@ double gainAt(Instance& plugin, double hz)
     for (size_t i = 0; i < in.size() / 2; ++i)
         in[2 * i] = in[2 * i + 1] = 0.05f * (float)std::sin(2.0 * M_PI * hz * (double)i / kRate);
     const std::vector<float> out = plugin.render(in);
-    // Skip the first half (settling, oversampler latency), then correlate.
+    // Skip the first half (settling, oversampler latency), then correlate over
+    // whole periods: a part period leaks 0.1 dB at 80 Hz.
     const size_t n = in.size() / 2, start = n / 2;
+    const size_t len = (size_t)std::llround(std::floor((double)(n - start) * hz / kRate) * kRate / hz);
     double re = 0.0, im = 0.0;
-    for (size_t i = start; i < n; ++i)
+    for (size_t i = start; i < start + len; ++i)
     {
         const double w = 2.0 * M_PI * hz * (double)i / kRate;
         re += out[2 * i] * std::cos(w);
         im += out[2 * i] * std::sin(w);
     }
-    return 2.0 * std::sqrt(re * re + im * im) / (double)(n - start) / 0.05;
+    return 2.0 * std::sqrt(re * re + im * im) / (double)len / 0.05;
 }
 
 void testHmReachesSevenKilohertz(const Library& lib)
@@ -402,25 +438,63 @@ void testHmReachesSevenKilohertz(const Library& lib)
     }
 }
 
+void testFiltersAreThreeDbDownAtTheirHz(const Library& lib)
+{
+    const std::vector<float> in = noise();
+    for (int black = 0; black < 2; ++black)
+    {
+        Instance plugin(lib);
+        Events ev;
+        ev.queue(plugin.idOf("eq_type"), black);
+        ev.queue(plugin.idOf("hpf_enabled"), 1.0);
+        ev.queue(plugin.byName.at("HPF Frequency"), 80.0);
+        LegacySettings s;
+        s.eqType = (float)black;
+        s.hpfEnabled = 1.f;
+        CoreRunner core(s, { 200.f, 1000.f, 3000.f, 8000.f, true }, { 80.f, 15201.f, true });
+        const double vsHz = maxDiff(plugin.render(in, &ev), core.render(in));
+        CHECK(vsHz <= 1.0e-6, "%s HPF Frequency 80 plays %.3g away from the Hz API", black ? "Black" : "Brown", vsHz);
+        const double hpf = 20.0 * std::log10(gainAt(plugin, 80.0) / gainAt(plugin, 2000.0));
+
+        Events lpfOn;
+        lpfOn.queue(plugin.idOf("hpf_enabled"), 0.0);
+        lpfOn.queue(plugin.idOf("lpf_enabled"), 1.0);
+        lpfOn.queue(plugin.byName.at("LPF Frequency"), 10000.0);
+        plugin.render(in, &lpfOn);
+        const double lpf = 20.0 * std::log10(gainAt(plugin, 10000.0) / gainAt(plugin, 1000.0));
+        CHECK(std::abs(hpf + 3.0103) < 0.05 && std::abs(lpf + 3.0103) < 0.05,
+              "%s HPF at 80 Hz reads %.3f dB there, LPF at 10 kHz %.3f dB", black ? "Black" : "Brown", hpf, lpf);
+
+        // Saved and reloaded into a fresh instance, the Hz filters stay.
+        const std::string saved = plugin.save();
+        Instance reloaded(lib);
+        CHECK(reloaded.load(saved), "a state with Hz filters was rejected");
+        s.hpfEnabled = 0.f; s.lpfEnabled = 1.f;
+        CoreRunner lpfCore(s, { 200.f, 1000.f, 3000.f, 8000.f, true }, { 80.f, 10000.f, true });
+        const double reloadedDiff = maxDiff(reloaded.render(in), lpfCore.render(in));
+        CHECK(reloadedDiff <= 1.0e-6, "%s: a reloaded Hz-filter state plays %.3g away", black ? "Black" : "Brown", reloadedDiff);
+        std::printf("  %s HPF 80 Hz: %.2g from the Hz API, %.3f dB at 80 Hz; LPF 10 kHz: %.3f dB at 10 kHz; "
+                    "reloaded %.2g\n", black ? "Black" : "Brown", vsHz, hpf, lpf, reloadedDiff);
+    }
+}
+
 void testFactoryProgramsPlayTheirStatedHz(const Library& lib)
 {
     const std::vector<float> in = noise();
     for (int i = 0; i < kNumFactoryPresets; ++i)
     {
         const FourKEQPreset& p = kFactoryPresets[i];
-        const bool black = p.eqType > 0.5f;
         LegacySettings s;
         s.eqType = p.eqType;
         s.lfGain = p.lfGain; s.lfBell = p.lfBell;
         s.lmGain = p.lmGain; s.lmQ = p.lmQ;
         s.hmGain = p.hmGain; s.hmQ = p.hmQ;
         s.hfGain = p.hfGain; s.hfBell = p.hfBell;
-        s.hpfFreq = FourKEQDSP::controlForCalibratedFilterFrequency(p.hpfFreq, true, black);
-        s.lpfFreq = FourKEQDSP::controlForCalibratedFilterFrequency(p.lpfFreq, false, black);
         s.hpfEnabled = p.hpfFreq > 16.5f ? 1.f : 0.f;
         s.lpfEnabled = p.lpfFreq < 15200.5f ? 1.f : 0.f;
         s.inputGain = p.inputGain; s.outputGain = p.outputGain;
-        const std::vector<float> want = CoreRunner(s, { p.lfFreq, p.lmFreq, p.hmFreq, p.hfFreq, true }).render(in);
+        const std::vector<float> want = CoreRunner(s, { p.lfFreq, p.lmFreq, p.hmFreq, p.hfFreq, true },
+                                                   { p.hpfFreq, p.lpfFreq, true }).render(in);
 
         Instance plugin(lib);
         std::string program = "__daf_program__";
@@ -428,16 +502,17 @@ void testFactoryProgramsPlayTheirStatedHz(const Library& lib)
         CHECK(plugin.load(program), "program %d rejected", i);
         const double diff = maxDiff(plugin.render(in), want);
         CHECK(diff <= 1.0e-6, "program \"%s\" plays %.3g away from its stated Hz", p.name, diff);
-        for (const char* sym : { "lf_hz", "lm_hz", "hm_hz", "hf_hz" })
+        const std::pair<const char*, float> stated[] = {
+            { "lf_hz", p.lfFreq }, { "lm_hz", p.lmFreq }, { "hm_hz", p.hmFreq }, { "hf_hz", p.hfFreq },
+            { "hpf_hz", p.hpfFreq }, { "lpf_hz", p.lpfFreq } };
+        for (const auto& [sym, hz] : stated)
         {
             double v = 0.0;
             plugin.params->get_value(plugin.plugin, plugin.idOf(sym), &v);
-            const float stated = sym[0] == 'l' ? (sym[1] == 'f' ? p.lfFreq : p.lmFreq)
-                                               : (sym[1] == 'm' ? p.hmFreq : p.hfFreq);
-            CHECK(std::abs(v - stated) < 1.0e-3, "program \"%s\" %s reads %.1f, states %.1f", p.name, sym, v, stated);
+            CHECK(std::abs(v - hz) < 1.0e-3, "program \"%s\" %s reads %.1f, states %.1f", p.name, sym, v, hz);
         }
-        std::printf("  %-24s %.2g from LF %.0f / LM %.0f / HM %.0f / HF %.0f Hz\n",
-                    p.name, diff, p.lfFreq, p.lmFreq, p.hmFreq, p.hfFreq);
+        std::printf("  %-24s %.2g from LF %.0f / LM %.0f / HM %.0f / HF %.0f / HPF %.0f / LPF %.0f Hz\n",
+                    p.name, diff, p.lfFreq, p.lmFreq, p.hmFreq, p.hfFreq, p.hpfFreq, p.lpfFreq);
     }
 }
 } // namespace
@@ -476,7 +551,9 @@ int main(int argc, char** argv)
     testLegacyAutomationTakesTheBandOver(lib);
     std::printf("[3] HM Frequency reaches 7 kHz\n");
     testHmReachesSevenKilohertz(lib);
-    std::printf("[4] factory programs play their stated Hz\n");
+    std::printf("[4] HPF and LPF Frequency are 3 dB down at their Hz\n");
+    testFiltersAreThreeDbDownAtTheirHz(lib);
+    std::printf("[5] factory programs play their stated Hz\n");
     testFactoryProgramsPlayTheirStatedHz(lib);
 
     entry->deinit();

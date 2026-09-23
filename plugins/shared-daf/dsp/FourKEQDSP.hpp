@@ -101,10 +101,41 @@ public:
     }
 
     //--- parameters (atomic, any thread) --------------------------------------
-    void setHpfFreq(float hz)     noexcept { pHpfFreq.store(hz, R); }
     void setHpfEnabled(bool on)   noexcept { pHpfEnabled.store(on ? 1.f : 0.f, R); }
-    void setLpfFreq(float hz)     noexcept { pLpfFreq.store(hz, R); }
     void setLpfEnabled(bool on)   noexcept { pLpfEnabled.store(on ? 1.f : 0.f, R); }
+
+    // Filter frequency as a hardware DIAL position, mapped onto the filter's
+    // design frequency by the measured law (calibratedFilterFrequency), which
+    // runs flat past the end of each table. A Brown HPF dial at 80 is 3 dB
+    // down at 26 Hz.
+    void setHpfFreq(float dial) noexcept { pHpfFreq.store(dial, R); pHpfFreqHz.store(0.f, R); }
+    void setLpfFreq(float dial) noexcept { pLpfFreq.store(dial, R); pLpfFreqHz.store(0.f, R); }
+
+    // Filter frequency in Hz: the filter's -3 dB point against its own
+    // passband, so the HPF's flat insertion trim does not move it. That is
+    // how a filter frequency is quoted, and it is the one definition both HPF
+    // voicings share: Black's is a first-order and a second-order section at
+    // two different corners, so it has no single natural corner to name. The
+    // measured shape is kept (each filter's Q, and Black's first-order split,
+    // do not vary along the dial), so hz sets the design frequency through a
+    // fixed ratio per filter (filterCornerRatio). The HPF's insertion trim is
+    // read along the measured table at that design frequency, held at the
+    // table's ends. Inside the table this plays what the dial API plays at the
+    // position with that corner, and past its ends the filter keeps moving
+    // with the trim where the measured law leaves it. The -3 dB point is the
+    // calibrated analog response's; the sections hold it as they hold the rest
+    // of the curve, so a 1x LPF corner above a quarter of the rate lands
+    // within the matched design's accuracy (0.7 dB in level). The last setter
+    // called for a filter wins. hz is clamped to kMaxFilterHz and from below
+    // to kMinLpfHz, the float limit at the oversampled rate the LPF runs at
+    // (as kMinBandHz), or kMinHpfHz, under the lowest corner the dial API
+    // reaches (Brown's 9.4 Hz) so every dial position has an Hz equivalent.
+    static constexpr float kMinHpfHz = 5.0f;
+    static constexpr float kMinLpfHz = 20.0f;
+    static constexpr float kMaxFilterHz = 40000.0f;
+    void setHpfFreqHz(float hz) noexcept { pHpfFreqHz.store(sanitizeFilterHz(hz, true), R); }
+    void setLpfFreqHz(float hz) noexcept { pLpfFreqHz.store(sanitizeFilterHz(hz, false), R); }
+
     void setLfGain(float db)      noexcept { pLfGain.store(db, R); }
     void setLfBell(bool on)       noexcept { pLfBell.store(on ? 1.f : 0.f, R); }
     void setLmGain(float db)      noexcept { pLmGain.store(db, R); }
@@ -236,6 +267,19 @@ public:
                                            bool black) noexcept;
     static float controlForCalibratedFilterFrequency(float frequencyHz, bool highPass,
                                                      bool black) noexcept;
+    // The -3 dB point of a filter over its design frequency, from the analog
+    // prototype: 1/sqrt(x) for the Brown HPF and sqrt(x) for the LPF, with x
+    // the root of x^2 - (2 - 1/Q^2) x - 1 = 0, and the root of the cubic the
+    // two Black HPF sections give.
+    static float filterCornerRatio(bool highPass, bool black) noexcept;
+    // Design frequency the Hz API (setHpfFreqHz / setLpfFreqHz) runs a filter
+    // at for the requested hz.
+    static float calibratedFilterFrequencyForHz(float hz, bool highPass,
+                                                bool black) noexcept;
+    // The Hz that plays what dial position controlHz plays: migrates a stored
+    // filter dial to the Hz API.
+    static float hzForCalibratedFilterControl(float controlHz, bool highPass,
+                                              bool black) noexcept;
     static float calibratedHpfTrimDb(float controlHz, bool black) noexcept;
     static float calibratedFilterQ(bool highPass, bool black) noexcept;
 
@@ -257,6 +301,9 @@ public:
         bool   hpfEnabled     = false;
         bool   lpfEnabled     = false;
         float  hpfFreq = 0.0f, lpfFreq = 0.0f;
+        // false: hpfFreq / lpfFreq are dial positions (setHpfFreq).
+        // true:  they are Hz, drawn the way setHpfFreqHz / setLpfFreqHz play.
+        bool   hpfFreqInHz = false, lpfFreqInHz = false;
         float  lfGain  = 0.0f, lfFreq  = 0.0f, lfBell = 0.0f;
         float  lmGain  = 0.0f, lmFreq  = 0.0f, lmQ    = 1.0f;
         float  hmGain  = 0.0f, hmFreq  = 0.0f, hmQ    = 1.0f;
@@ -383,14 +430,14 @@ private:
     // redesign every block.
     struct CoeffInputs
     {
-        float hpfFreq, lpfFreq;
+        float hpfFreq, hpfFreqHz, lpfFreq, lpfFreqHz;
         float lfGain, lfFreq, lfFreqHz, lfBell;
         float lmGain, lmFreq, lmFreqHz, lmQ;
         float hmGain, hmFreq, hmFreqHz, hmQ;
         float hfGain, hfFreq, hfFreqHz, hfBell;
         float eqType;
     };
-    static_assert(sizeof(CoeffInputs) == 19 * sizeof(float), "CoeffInputs must stay padding-free");
+    static_assert(sizeof(CoeffInputs) == 21 * sizeof(float), "CoeffInputs must stay padding-free");
 
     static float sanitizeBandHz(float hz) noexcept
     {
@@ -399,6 +446,13 @@ private:
         // limit, not a voicing choice: at the 4x rate a section much below it
         // rounds to a pole pair within ~1e-8 of z = 1, a DC integrator.
         return hz > kMinBandHz ? (hz < kMaxBandHz ? hz : kMaxBandHz) : kMinBandHz;
+    }
+
+    // > 0 selects the Hz API for the filter; see sanitizeBandHz.
+    static float sanitizeFilterHz(float hz, bool highPass) noexcept
+    {
+        const float lo = highPass ? kMinHpfHz : kMinLpfHz;
+        return hz > lo ? (hz < kMaxFilterHz ? hz : kMaxFilterHz) : lo;
     }
 
     CoeffInputs loadCoeffInputs() const noexcept;
@@ -461,7 +515,7 @@ private:
         CoeffInputs coeffs;
         float hpfEnabled, lpfEnabled, factor;
     };
-    static_assert(sizeof(AutoGainSnapshot) == 22 * sizeof(float), "AutoGainSnapshot must stay padding-free");
+    static_assert(sizeof(AutoGainSnapshot) == 24 * sizeof(float), "AutoGainSnapshot must stay padding-free");
     AutoGainSnapshot autoGainSnap_{};
     float autoCompCached_ = 1.0f;
     bool  autoCompValid_  = false;
@@ -478,8 +532,9 @@ private:
     std::atomic<float> pLmGain{0.f}, pLmFreq{1000.f}, pLmQ{1.5f};
     std::atomic<float> pHmGain{0.f}, pHmFreq{3000.f}, pHmQ{1.5f};
     std::atomic<float> pHfGain{0.f}, pHfFreq{8000.f}, pHfBell{0.f};
-    // Hz API values; 0 = the band follows its dial position above.
+    // Hz API values; 0 = the band or filter follows its dial position above.
     std::atomic<float> pLfFreqHz{0.f}, pLmFreqHz{0.f}, pHmFreqHz{0.f}, pHfFreqHz{0.f};
+    std::atomic<float> pHpfFreqHz{0.f}, pLpfFreqHz{0.f};
     std::atomic<float> pEqType{0.f}, pBypass{0.f};
     std::atomic<float> pInputGain{0.f}, pOutputGain{0.f}, pSaturation{0.f};
     std::atomic<float> pOversampling{2.f}, pMsMode{0.f}, pAutoGain{0.f};

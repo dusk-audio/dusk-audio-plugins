@@ -65,8 +65,8 @@ if(NOT CMAKE_CROSSCOMPILING)
     target_compile_features(FourKEQCoreTest PRIVATE cxx_std_17)
     add_test(NAME FourKEQCore COMMAND FourKEQCoreTest)
 
-    # Band-frequency parameters (#288): which of a band's two parameters wins,
-    # factory presets, the read-out, and user preset files across the change.
+    # Band and filter frequency parameters (#288): which of the two parameters
+    # wins, factory presets, the read-out, and user preset files across the change.
     add_executable(FourKEQPluginLogicTest
         tests/FourKEQPluginLogicTests.cpp
         ../../shared-daf/dsp/FourKEQDSP.cpp)

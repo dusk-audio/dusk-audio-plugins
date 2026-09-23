@@ -4,14 +4,16 @@
 // (~/.config/DuskAudio/FourKEQ2/presets/*.4kpreset), framework-free so the
 // tests can read what the editor writes.
 //
-// key=value lines. format_version 3 stores each band in Hz under lf_hz..hf_hz,
-// or, for a band following its legacy dial (FourKEQBandFrequency.hpp), the dial
-// position under lf_freq..hf_freq. Version 2 and the unversioned files before
-// it stored every band as a dial position: raw (frequency_domain=control_hz, or
-// no domain line), or as the gain-dependent frequency the pre-#288 read-out
-// showed (effective_hz). Those load onto the legacy dial they meant, so they
-// play what they played. HPF/LPF are dial positions in every version, stored
-// as their measured corner when the domain is effective_hz.
+// key=value lines. format_version 4 stores each band and filter in Hz under
+// lf_hz..hf_hz, hpf_hz and lpf_hz, or, for one following its legacy dial
+// (FourKEQBandFrequency.hpp), the dial position under lf_freq..hf_freq, or
+// hpf_freq / lpf_freq. Version 3 stored the filters only as dial positions.
+// Version 2 and the unversioned files before it stored every band as a dial
+// position: raw (frequency_domain=control_hz, or no domain line), or as the
+// gain-dependent frequency the pre-#288 read-out showed (effective_hz). Those
+// load onto the legacy dial they meant, so they play what they played. A
+// filter's dial position is stored as its design frequency when the domain is
+// effective_hz, as every version since 2 writes it.
 
 #pragma once
 
@@ -30,7 +32,8 @@
 #include "FourKEQDSP.hpp"
 #include "FourKEQParams.hpp"
 
-static constexpr int kFourKUserPresetFormatVersion = 3;
+static constexpr int kFourKUserPresetFormatVersion = 4;
+static constexpr int kFourKHzBandsUserPresetFormatVersion = 3;
 static constexpr int kFourKLegacyUserPresetFormatVersion = 2;
 
 // Clamp to range and quantise the discrete parameters exactly the way the
@@ -50,6 +53,7 @@ inline float fkNormalizeParamValue(uint32_t idx, float v) noexcept
         return v >= 0.5f ? 1.0f : 0.0f;
     case kOversampling:
     case kLegacyDialBands:
+    case kLegacyDialFilters:
         return std::round(v);
     default:
         return v;
@@ -115,13 +119,15 @@ inline bool fkReadUserPreset(std::istream& in, std::string& name, float (&out)[k
             float v = 0.0f;
             if (!fkParsePresetNumber(line, eq + 1, v)
                 || (v != (float)kFourKUserPresetFormatVersion
+                    && v != (float)kFourKHzBandsUserPresetFormatVersion
                     && v != (float)kFourKLegacyUserPresetFormatVersion))
                 return false;
             version = (int)v;
             continue;
         }
         for (uint32_t i = 0; i < kParamCount; ++i)
-            if ((fkIsPresetParam(i) || fkBandOfLegacyDialParam(i) >= 0) && key == kFourKParams[i].key)
+            if ((fkIsPresetParam(i) || fkBandOfLegacyDialParam(i) >= 0 || fkFilterOfLegacyDialParam(i) >= 0)
+                && key == kFourKParams[i].key)
             {
                 float v = 0.0f;
                 if (!fkParsePresetNumber(line, eq + 1, v))
@@ -133,21 +139,34 @@ inline bool fkReadUserPreset(std::istream& in, std::string& name, float (&out)[k
     }
     if (!supportedDomain)
         return false;
-    const bool legacyFile = version != kFourKUserPresetFormatVersion;
+    const bool legacyFile = version < kFourKHzBandsUserPresetFormatVersion;
 
     // Mode, gain and shape first: they select the inverse laws below,
     // whatever order the file lists them in.
     for (uint32_t i = 0; i < kParamCount; ++i)
-        if (present[i] && i != kHpfFreq && i != kLpfFreq
+        if (present[i] && fkFilterOfHzParam(i) < 0 && fkFilterOfLegacyDialParam(i) < 0
             && fkBandOfHzParam(i) < 0 && fkBandOfLegacyDialParam(i) < 0)
             out[i] = fkNormalizeParamValue(i, out[i]);
 
     const bool black = out[kEqType] > 0.5f;
-    for (uint32_t filter : { (uint32_t)kHpfFreq, (uint32_t)kLpfFreq })
-        if (present[filter])
-            out[filter] = fkNormalizeParamValue(filter, effectiveHz
-                ? FourKEQDSP::controlForCalibratedFilterFrequency(out[filter], filter == kHpfFreq, black)
-                : out[filter]);
+    uint32_t filterBits = 0;
+    for (int f = 0; f < 2; ++f)
+    {
+        const FourKEQFilterIds& ids = kFourKEQFilters[f];
+        if (version < kFourKUserPresetFormatVersion)
+            present[ids.hz] = false;
+        if (present[ids.hz])
+            out[ids.hz] = fkNormalizeParamValue(ids.hz, out[ids.hz]);
+        else if (present[ids.legacyDial])
+        {
+            const float v = out[ids.legacyDial];
+            out[ids.legacyDial] = fkNormalizeParamValue(ids.legacyDial, effectiveHz
+                ? FourKEQDSP::controlForCalibratedFilterFrequency(v, ids.highPass, black)
+                : v);
+            filterBits |= 1u << f;
+        }
+    }
+    out[kLegacyDialFilters] = (float)filterBits;
 
     uint32_t bits = 0;
     for (int b = 0; b < 4; ++b)
@@ -171,7 +190,7 @@ inline bool fkReadUserPreset(std::istream& in, std::string& name, float (&out)[k
     return true;
 }
 
-// values must carry the plugin's kLegacyDialBands.
+// values must carry the plugin's kLegacyDialBands and kLegacyDialFilters.
 inline void fkWriteUserPreset(std::ostream& out, const float* values)
 {
     using duskaudio::FourKEQDSP;
@@ -190,9 +209,13 @@ inline void fkWriteUserPreset(std::ostream& out, const float* values)
             out << kFourKParams[dial].key << '=' << values[dial] << '\n';
             continue;
         }
-        float v = values[i];
-        if (i == kHpfFreq || i == kLpfFreq)
-            v = FourKEQDSP::calibratedFilterFrequency(v, i == kHpfFreq, black);
-        out << kFourKParams[i].key << '=' << v << '\n';
+        if (const int f = fkFilterOfHzParam(i); f >= 0 && fkFilterFollowsLegacyDial(values, f))
+        {
+            const FourKEQFilterIds& ids = kFourKEQFilters[f];
+            out << kFourKParams[ids.legacyDial].key << '='
+                << FourKEQDSP::calibratedFilterFrequency(values[ids.legacyDial], ids.highPass, black) << '\n';
+            continue;
+        }
+        out << kFourKParams[i].key << '=' << values[i] << '\n';
     }
 }

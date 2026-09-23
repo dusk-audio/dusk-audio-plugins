@@ -746,13 +746,33 @@ static SectionDesign bandSection(FourKEQDSP::Band band, bool black, bool bell,
     return d;
 }
 
-static SectionDesign lowPassSection(float control, bool black) noexcept
+// hz > 0 selects the Hz API; otherwise the filter follows its dial position.
+static SectionDesign lowPassSection(float control, float hz, bool black) noexcept
 {
     SectionDesign d;
     d.shape = SectionShape::LowPass;
-    d.freq = FourKEQDSP::calibratedFilterFrequency(control, false, black);
+    d.freq = hz > 0.0f ? hz / FourKEQDSP::filterCornerRatio(false, black)
+                       : FourKEQDSP::calibratedFilterFrequency(control, false, black);
     d.q = FourKEQDSP::calibratedFilterQ(false, black);
     return d;
+}
+
+struct ResolvedHighPass
+{
+    float designHz;
+    float trimDb;
+    bool hzApi;
+};
+
+static ResolvedHighPass resolveHighPass(float control, float hz, bool black) noexcept
+{
+    if (!(hz > 0.0f))
+        return { FourKEQDSP::calibratedFilterFrequency(control, true, black),
+                 FourKEQDSP::calibratedHpfTrimDb(control, black), false };
+    const FilterCalibration& calibration = kFilterCalibrations[black ? 2 : 0];
+    const float designHz = hz / FourKEQDSP::filterCornerRatio(true, black);
+    return { designHz, interpolateAnchors(designHz, calibration.frequency,
+                                          calibration.trimDb, calibration.count), true };
 }
 
 // firstControl/secondControl are dial positions (the model's inputs), and
@@ -852,6 +872,17 @@ static BiquadCoeffs keepPolesInside(BiquadCoeffs c) noexcept
     return c;
 }
 
+// The HPF's second-order section at the base rate. Its float coefficients put
+// the pole pair on the unit circle below about 5.5e-5 * fs (2.6 Hz at 48 kHz,
+// 10.6 Hz at 192 kHz), where the dial API's lowest corners already sit at
+// 176.4 kHz and up; that path stays as the reference built it. The Hz API
+// reaches down to kMinHpfHz, so its section is kept inside.
+static BiquadCoeffs highPassSection(const ResolvedHighPass& hpf, double fs, float freq, bool black) noexcept
+{
+    const BiquadCoeffs c = Biquad::highPass(fs, freq, FourKEQDSP::calibratedFilterQ(true, black));
+    return hpf.hzApi ? keepPolesInside(c) : c;
+}
+
 BiquadCoeffs FourKEQDSP::realize(const SectionDesign& d, double fs) noexcept
 {
     BiquadCoeffs c;
@@ -902,15 +933,17 @@ FourKEQDSP::SectionDesigns FourKEQDSP::designSections(const CoeffInputs& in) noe
         true, black,
         in.hmGain, hm.control, in.hmQ, hm.measuredHz,
         in.hfGain, hf.control, hfBell ? 1.0f : 0.0f, hf.measuredHz);
-    d.lpf = lowPassSection(in.lpfFreq, black);
+    d.lpf = lowPassSection(in.lpfFreq, in.lpfFreqHz, black);
     return d;
 }
 
 FourKEQDSP::CoeffInputs FourKEQDSP::coeffInputsFor(const CurveControls& c) noexcept
 {
     CoeffInputs in{};
-    in.hpfFreq = c.hpfFreq;
-    in.lpfFreq = c.lpfFreq;
+    in.hpfFreq = c.hpfFreqInHz ? 0.0f : c.hpfFreq;
+    in.hpfFreqHz = c.hpfFreqInHz ? sanitizeFilterHz(c.hpfFreq, true) : 0.0f;
+    in.lpfFreq = c.lpfFreqInHz ? 0.0f : c.lpfFreq;
+    in.lpfFreqHz = c.lpfFreqInHz ? sanitizeFilterHz(c.lpfFreq, false) : 0.0f;
     auto frequency = [&c](int band, float value, float& dial, float& hz) {
         const bool inHz = c.bandFrequenciesInHz && ((c.dialBands >> band) & 1u) == 0;
         dial = inHz ? 0.0f : value;
@@ -987,6 +1020,25 @@ float FourKEQDSP::controlForCalibratedFilterFrequency(float frequencyHz, bool hi
         (calibratedFilterFrequency(mid, highPass, black) < frequencyHz ? lo : hi) = mid;
     }
     return 0.5f * (lo + hi);
+}
+
+float FourKEQDSP::filterCornerRatio(bool highPass, bool black) noexcept
+{
+    // LPF: Q 0.706625. Black HPF: Q 0.87429652 behind a first order at
+    // 0.96134252 of the design frequency. Brown HPF: Q 0.76532684.
+    if (!highPass)
+        return 0.99931819f;
+    return black ? 1.0905043f : 0.92967530f;
+}
+
+float FourKEQDSP::calibratedFilterFrequencyForHz(float hz, bool highPass, bool black) noexcept
+{
+    return sanitizeFilterHz(hz, highPass) / filterCornerRatio(highPass, black);
+}
+
+float FourKEQDSP::hzForCalibratedFilterControl(float controlHz, bool highPass, bool black) noexcept
+{
+    return calibratedFilterFrequency(controlHz, highPass, black) * filterCornerRatio(highPass, black);
 }
 
 float FourKEQDSP::calibratedHpfTrimDb(float hz, bool black) noexcept
@@ -1069,20 +1121,21 @@ FourKEQDSP::CurveCoeffs FourKEQDSP::designCurve(const CurveControls& c) noexcept
     // which is the rate FourKEQDSP prepares ConsoleSaturationCore with.
     d.saturation = consoleSatResponse(consoleSatAmount(black, c.saturation), d.sampleRate);
 
+    const CoeffInputs in = coeffInputsFor(c);
     if (c.hpfEnabled)
     {
-        const float f = std::min(calibratedFilterFrequency(c.hpfFreq, true, black),
-                                 static_cast<float>(base * 0.49));
+        const ResolvedHighPass hpf = resolveHighPass(in.hpfFreq, in.hpfFreqHz, black);
+        const float f = std::min(hpf.designHz, static_cast<float>(base * 0.49));
         if (black)
         {
             d.hpfFirstOrder = Biquad::firstOrderHighPass(base, f * 0.96134252f);
             d.hasHpfFirstOrder = true;
         }
-        d.hpf = Biquad::highPass(base, f, calibratedFilterQ(true, black));
+        d.hpf = highPassSection(hpf, base, f, black);
         d.hasHpf = true;
-        d.hpfTrimLinear = std::pow(10.0, calibratedHpfTrimDb(c.hpfFreq, black) / 20.0);
+        d.hpfTrimLinear = std::pow(10.0, hpf.trimDb / 20.0);
     }
-    const SectionDesigns sections = designSections(coeffInputsFor(c));
+    const SectionDesigns sections = designSections(in);
     if (c.lpfEnabled)
     {
         d.lpf = realize(sections.lpf, d.sampleRate);
@@ -1209,7 +1262,9 @@ FourKEQDSP::CoeffInputs FourKEQDSP::loadCoeffInputs() const noexcept
 {
     CoeffInputs in;
     in.hpfFreq = pHpfFreq.load(R);
+    in.hpfFreqHz = pHpfFreqHz.load(R);
     in.lpfFreq = pLpfFreq.load(R);
+    in.lpfFreqHz = pLpfFreqHz.load(R);
     in.lfGain = pLfGain.load(R); in.lfFreq = pLfFreq.load(R);
     in.lfFreqHz = pLfFreqHz.load(R); in.lfBell = pLfBell.load(R);
     in.lmGain = pLmGain.load(R); in.lmFreq = pLmFreq.load(R);
@@ -1230,19 +1285,17 @@ void FourKEQDSP::recomputeCoeffs(const CoeffInputs& in, double fs) noexcept
     // Black/G-series is a split three-pole; both LPFs are two-pole. The
     // dial-to-cutoff anchors and HPF insertion trim are fitted from all six
     // hosted readback markings.
-    const float hpfControl = in.hpfFreq;
+    const ResolvedHighPass hpf = resolveHighPass(in.hpfFreq, in.hpfFreqHz, black);
     // The sub-20 Hz HPF poles run at base rate. At 4x/192 kHz their float TDF-II
     // state can overflow for some in-between dial values due to coefficient
     // cancellation, while the base-rate response differs by far below 0.01 dB.
     const double hpfFs = baseSampleRate;
-    const float hpfFreq = std::min(calibratedFilterFrequency(hpfControl, true, black),
-                                   static_cast<float>(hpfFs * 0.49));
+    const float hpfFreq = std::min(hpf.designHz, static_cast<float>(hpfFs * 0.49));
     const BiquadCoeffs hpf1 = black
         ? Biquad::firstOrderHighPass(hpfFs, hpfFreq * 0.96134252f)
         : BiquadCoeffs{};
-    const BiquadCoeffs hpf2 = Biquad::highPass(
-        hpfFs, hpfFreq, calibratedFilterQ(true, black));
-    hpfTrimGain = dbToGain(calibratedHpfTrimDb(hpfControl, black));
+    const BiquadCoeffs hpf2 = highPassSection(hpf, hpfFs, hpfFreq, black);
+    hpfTrimGain = dbToGain(hpf.trimDb);
 
     const SectionDesigns sections = designSections(in);
     const BiquadCoeffs lpf = realize(sections.lpf, fs);
