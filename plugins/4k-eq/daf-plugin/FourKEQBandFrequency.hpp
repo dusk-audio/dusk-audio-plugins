@@ -23,6 +23,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 
@@ -129,33 +130,103 @@ inline bool fkBandIsBell(const float* values, int band) noexcept
     return sw < 0 || values[sw] > 0.5f;
 }
 
-// Stores a parameter write and, for a band or filter frequency, records which
-// of its two parameters it came through; a selector write keeps its flag.
-//
-// Not thread-safe, like the rest of values[]: the CLAP wrapper applies a state
-// on the main thread while the plugin may be processing parameter events on
-// the audio thread. Two frequency writes racing there can lose one selector
-// update and leave that band or filter on the other parameter until its next
-// write. It takes a state load and a band or filter frequency change arriving
-// on the audio thread at the same moment.
+// What a parameter write does to a selector: a legacy dial write sets its
+// band's or filter's bit, an Hz write clears it, and a write to the selector
+// replaces it, flag and all. Any other write leaves both selectors alone.
+struct FourKEQSelectorWrite
+{
+    enum Op { None, SetBit, ClearBit, Replace };
+    Op op;
+    uint32_t selector; // kLegacyDialBands or kLegacyDialFilters
+    uint32_t operand;  // the bit, or the whole selector value
+
+    uint32_t applyTo(uint32_t current) const noexcept
+    {
+        switch (op)
+        {
+        case SetBit:   return current | operand;
+        case ClearBit: return current & ~operand;
+        case Replace:  return operand;
+        case None:     break;
+        }
+        return current;
+    }
+};
+
+inline FourKEQSelectorWrite fkSelectorWrite(uint32_t index, float value) noexcept
+{
+    if (const int b = fkBandOfLegacyDialParam(index); b >= 0)
+        return { FourKEQSelectorWrite::SetBit, kLegacyDialBands, 1u << b };
+    if (const int b = fkBandOfHzParam(index); b >= 0)
+        return { FourKEQSelectorWrite::ClearBit, kLegacyDialBands, 1u << b };
+    if (index == kLegacyDialBands)
+        return { FourKEQSelectorWrite::Replace, kLegacyDialBands, fkSelectorValue(value, kLegacyDialBandsMax) };
+    if (const int f = fkFilterOfLegacyDialParam(index); f >= 0)
+        return { FourKEQSelectorWrite::SetBit, kLegacyDialFilters, 1u << f };
+    if (const int f = fkFilterOfHzParam(index); f >= 0)
+        return { FourKEQSelectorWrite::ClearBit, kLegacyDialFilters, 1u << f };
+    if (index == kLegacyDialFilters)
+        return { FourKEQSelectorWrite::Replace, kLegacyDialFilters, fkSelectorValue(value, kLegacyDialFiltersMax) };
+    return { FourKEQSelectorWrite::None, 0u, 0u };
+}
+
+// Stores a parameter write in a copy of the parameters that one thread owns
+// (the editor's, a preset file's), moving its selector as fkSelectorWrite
+// says. The plugin's own parameters are written by more than one thread and
+// keep their selectors in FourKEQSelectors.
 inline void fkStoreParam(float* values, uint32_t index, float value) noexcept
 {
     values[index] = value;
-    const uint32_t bands = fkSelectorValue(values[kLegacyDialBands], kLegacyDialBandsMax);
-    const uint32_t filters = fkSelectorValue(values[kLegacyDialFilters], kLegacyDialFiltersMax);
-    if (const int b = fkBandOfLegacyDialParam(index); b >= 0)
-        values[kLegacyDialBands] = (float)(bands | (1u << b));
-    else if (const int h = fkBandOfHzParam(index); h >= 0)
-        values[kLegacyDialBands] = (float)(bands & ~(1u << h));
-    else if (index == kLegacyDialBands)
-        values[kLegacyDialBands] = (float)fkSelectorValue(value, kLegacyDialBandsMax);
-    else if (const int f = fkFilterOfLegacyDialParam(index); f >= 0)
-        values[kLegacyDialFilters] = (float)(filters | (1u << f));
-    else if (const int g = fkFilterOfHzParam(index); g >= 0)
-        values[kLegacyDialFilters] = (float)(filters & ~(1u << g));
-    else if (index == kLegacyDialFilters)
-        values[kLegacyDialFilters] = (float)fkSelectorValue(value, kLegacyDialFiltersMax);
+    const FourKEQSelectorWrite w = fkSelectorWrite(index, value);
+    if (w.op != FourKEQSelectorWrite::None)
+        values[w.selector] = (float)w.applyTo(fkSelectorValue(values[w.selector], kFourKParams[w.selector].max));
 }
+
+// The selectors of a plugin instance. Hosts write parameters from two threads
+// at once: DAF's CLAP and VST3 wrappers apply a state or a program on the main
+// thread while the audio thread applies automation. Each write therefore moves
+// its selector in one atomic read-modify-write that changes only what the
+// write owns: fetch_or or fetch_and of its band's or filter's bit, which keeps
+// the other bits and the flag, or exchange for a selector write. However the
+// writes interleave, a selector ends where some order of them would leave it,
+// so no band or filter is left following a parameter its last write did not
+// choose, and a stated selector keeps its flag.
+//
+// The writes release and the reads acquire: the plugin stores a frequency
+// before it moves the selector, so a thread that reads the selector as moved
+// also reads the frequency written with it. Word is std::atomic<uint32_t>
+// (FourKEQSelectors); the logic test substitutes one that runs another write
+// between any two of its operations.
+template <typename Word>
+struct FourKEQSelectorsOf
+{
+    Word bands { 0u }, filters { 0u };
+
+    // Moves the selector the write concerns. False when it concerns neither.
+    bool record(uint32_t index, float value) noexcept
+    {
+        const FourKEQSelectorWrite w = fkSelectorWrite(index, value);
+        Word& word = w.selector == kLegacyDialBands ? bands : filters;
+        switch (w.op)
+        {
+        case FourKEQSelectorWrite::SetBit:   word.fetch_or(w.operand, std::memory_order_release); return true;
+        case FourKEQSelectorWrite::ClearBit: word.fetch_and(~w.operand, std::memory_order_release); return true;
+        case FourKEQSelectorWrite::Replace:  word.exchange(w.operand, std::memory_order_release); return true;
+        case FourKEQSelectorWrite::None:     break;
+        }
+        return false;
+    }
+
+    // The selector parameter's value, bits and flag.
+    uint32_t value(uint32_t selector) const noexcept
+    {
+        return (selector == kLegacyDialBands ? bands : filters).load(std::memory_order_acquire);
+    }
+    uint32_t bandBits() const noexcept { return value(kLegacyDialBands) & 15u; }
+    uint32_t filterBits() const noexcept { return value(kLegacyDialFilters) & 3u; }
+};
+
+using FourKEQSelectors = FourKEQSelectorsOf<std::atomic<uint32_t>>;
 
 // The Hz a band plays: its Hz parameter, or the Hz its legacy dial position
 // plays. Gain-independent, so the readout does not move with the gain knob.
@@ -168,15 +239,16 @@ inline float fkBandHz(const float* values, int band) noexcept
         values[ids.legacyDial], ids.band, values[kEqType] > 0.5f, fkBandIsBell(values, band));
 }
 
-// Routes each band to the core through the parameter it follows: the dial
-// API for a legacy dial, so a pre-#288 session plays exactly what it did.
-inline void fkApplyBandFrequencies(duskaudio::FourKEQDSP& dsp, const float* values) noexcept
+// Routes each band to the core through the parameter it follows (bit b of
+// dialBands, kLegacyDialBands' bits): the dial API for a legacy dial, so a
+// pre-#288 session plays exactly what it did.
+inline void fkApplyBandFrequencies(duskaudio::FourKEQDSP& dsp, const float* values, uint32_t dialBands) noexcept
 {
     using Band = duskaudio::FourKEQDSP::Band;
     for (int b = 0; b < 4; ++b)
     {
         const FourKEQBandIds& ids = kFourKEQBands[b];
-        const bool dial = fkBandFollowsLegacyDial(values, b);
+        const bool dial = (dialBands >> b) & 1u;
         const float v = values[dial ? ids.legacyDial : ids.hz];
         switch (ids.band)
         {
@@ -213,13 +285,14 @@ inline float fkFilterHz(const float* values, int filter) noexcept
         values[ids.legacyDial], ids.highPass, values[kEqType] > 0.5f);
 }
 
-inline void fkApplyFilterFrequencies(duskaudio::FourKEQDSP& dsp, const float* values) noexcept
+// dialFilters: kLegacyDialFilters' bits.
+inline void fkApplyFilterFrequencies(duskaudio::FourKEQDSP& dsp, const float* values, uint32_t dialFilters) noexcept
 {
-    if (fkFilterFollowsLegacyDial(values, 0))
+    if (dialFilters & 1u)
         dsp.setHpfFreq(values[kHpfFreq]);
     else
         dsp.setHpfFreqHz(values[kHpfHz]);
-    if (fkFilterFollowsLegacyDial(values, 1))
+    if (dialFilters & 2u)
         dsp.setLpfFreq(values[kLpfFreq]);
     else
         dsp.setLpfFreqHz(values[kLpfHz]);

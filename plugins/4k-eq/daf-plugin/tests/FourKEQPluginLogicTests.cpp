@@ -3,15 +3,19 @@
 // The band- and filter-frequency rules of 4K EQ 2 without a host
 // (dusk-audio-plugins#288): which of a band's or filter's two parameters wins,
 // where the factory presets put each band and filter by the core's definition,
-// what the read-out shows as gain moves, and user preset files written before
-// and after #288.
+// what the read-out shows as gain moves, user preset files written before and
+// after #288, and that writes arriving on two threads at once never lose one
+// another's selector update.
 
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "FourKEQBandFrequency.hpp"
@@ -149,6 +153,177 @@ void testStatedSelector()
         CHECK(dials.v[kFourKEQBands[b].legacyDial] == kFourKParams[kFourKEQBands[b].legacyDial].min,
               "a factory preset moved band %d's legacy dial", b);
     CHECK(dials.v[kHpfFreq] == 120.0f && dials.v[kLpfFreq] == 9000.0f, "a factory preset moved a legacy filter dial");
+}
+
+// A selector word whose every operation is one step, with a hook before each,
+// so a test can land another write between any two steps a write takes.
+struct SteppedWord
+{
+    uint32_t v;
+    static inline std::function<void()> step;
+
+    void before() const { if (step) step(); }
+    uint32_t load(std::memory_order) const { before(); return v; }
+    void store(uint32_t x, std::memory_order) { before(); v = x; }
+    uint32_t exchange(uint32_t x, std::memory_order) { before(); const uint32_t old = v; v = x; return old; }
+    uint32_t fetch_or(uint32_t x, std::memory_order) { before(); const uint32_t old = v; v |= x; return old; }
+    uint32_t fetch_and(uint32_t x, std::memory_order) { before(); const uint32_t old = v; v &= x; return old; }
+    bool compare_exchange_weak(uint32_t& expected, uint32_t desired, std::memory_order, std::memory_order)
+    {
+        before();
+        if (v != expected) { expected = v; return false; }
+        v = desired;
+        return true;
+    }
+};
+
+// A host can write parameters from two threads at once: a state or program
+// loading on the main thread, automation on the audio thread. So any write can
+// land between two steps of another's selector update. Every write, with every
+// other landing before each of its steps in turn, must leave the selectors as
+// the two writes one after the other do, never as if one had not happened.
+void testSelectorWritesNeverLoseOneAnother()
+{
+    using Stepped = FourKEQSelectorsOf<SteppedWord>;
+    struct Write { uint32_t index; float value; };
+    std::vector<Write> writes;
+    for (const FourKEQBandIds& ids : kFourKEQBands)
+        for (const uint32_t id : { ids.legacyDial, ids.hz })
+            writes.push_back({ id, kFourKParams[id].def });
+    for (const FourKEQFilterIds& ids : kFourKEQFilters)
+        for (const uint32_t id : { ids.legacyDial, ids.hz })
+            writes.push_back({ id, kFourKParams[id].def });
+    for (const uint32_t selector : { (uint32_t)kLegacyDialBands, (uint32_t)kLegacyDialFilters })
+    {
+        writes.push_back({ selector, (float)(kSelectorStated | 1u) });
+        writes.push_back({ selector, (float)(kSelectorStatedAlt | 2u) });
+    }
+    const uint32_t starts[][2] = { { 0u, 0u },
+                                   { kSelectorStated | 15u, kSelectorStated | 3u },
+                                   { kSelectorStatedAlt | 6u, kSelectorStatedAlt | 1u } };
+
+    int interleavings = 0, lost = 0;
+    for (const auto& start : starts)
+        for (const Write& a : writes)
+            for (const Write& b : writes)
+            {
+                Values sequential;
+                sequential.v[kLegacyDialBands] = (float)start[0];
+                sequential.v[kLegacyDialFilters] = (float)start[1];
+                fkStoreParam(sequential.v, b.index, b.value);
+                fkStoreParam(sequential.v, a.index, a.value);
+                const uint32_t bands = (uint32_t)sequential.v[kLegacyDialBands];
+                const uint32_t filters = (uint32_t)sequential.v[kLegacyDialFilters];
+
+                FourKEQSelectors plugin;
+                plugin.bands.store(start[0]);
+                plugin.filters.store(start[1]);
+                plugin.record(b.index, b.value);
+                plugin.record(a.index, a.value);
+                CHECK(plugin.value(kLegacyDialBands) == bands && plugin.value(kLegacyDialFilters) == filters,
+                      "param %u then %u: the plugin's selectors %u/%u, a copy's %u/%u", b.index, a.index,
+                      plugin.value(kLegacyDialBands), plugin.value(kLegacyDialFilters), bands, filters);
+
+                int steps = 0;
+                {
+                    Stepped s { { start[0] }, { start[1] } };
+                    SteppedWord::step = [&] { ++steps; };
+                    s.record(a.index, a.value);
+                }
+                CHECK(steps > 0, "param %u moved no selector", a.index);
+                for (int k = 0; k < steps; ++k)
+                {
+                    Stepped s { { start[0] }, { start[1] } };
+                    int step = 0;
+                    bool landing = false;
+                    SteppedWord::step = [&] {
+                        if (landing || step++ != k)
+                            return;
+                        landing = true;
+                        s.record(b.index, b.value);
+                        landing = false;
+                    };
+                    s.record(a.index, a.value);
+                    ++interleavings;
+                    lost += (s.bands.v != bands || s.filters.v != filters) ? 1 : 0;
+                    CHECK(s.bands.v == bands && s.filters.v == filters,
+                          "param %u landing before step %d of param %u: selectors %u/%u, in order %u/%u",
+                          b.index, k, a.index, s.bands.v, s.filters.v, bands, filters);
+                }
+            }
+    SteppedWord::step = nullptr;
+
+    for (uint32_t i = 0; i < kParamCount; ++i)
+    {
+        if (fkSelectorWrite(i, 1.0f).op != FourKEQSelectorWrite::None)
+            continue;
+        Stepped s { { 7u }, { 3u } };
+        int steps = 0;
+        SteppedWord::step = [&] { ++steps; };
+        const bool moved = s.record(i, 1.0f);
+        CHECK(!moved && steps == 0 && s.bands.v == 7u && s.filters.v == 3u, "param %u touched a selector", i);
+    }
+    SteppedWord::step = nullptr;
+    std::printf("[6] selector writes: %d interleavings of %zu writes, %d lost one\n", interleavings, writes.size(), lost);
+}
+
+// The same on two real threads (and a check for -fsanitize=thread): each
+// thread moving its own band and filter, then a state stating the band
+// selector while automation moves LM.
+void testSelectorWritesRace()
+{
+    constexpr int kWrites = 100000;
+    std::atomic<int> ready { 0 }, wrong { 0 };
+    auto start = [&ready] {
+        ready.fetch_add(1);
+        while (ready.load() < 2)
+            std::this_thread::yield();
+    };
+
+    FourKEQSelectors s;
+    s.record(kLegacyDialBands, (float)kSelectorStated);
+    s.record(kLegacyDialFilters, (float)kSelectorStated);
+    auto owner = [&](int band, int filter) {
+        start();
+        for (int i = 0; i < kWrites; ++i)
+        {
+            const uint32_t dial = (uint32_t)(i & 1);
+            s.record(dial ? kFourKEQBands[band].legacyDial : kFourKEQBands[band].hz, 1000.0f);
+            s.record(dial ? kFourKEQFilters[filter].legacyDial : kFourKEQFilters[filter].hz, 100.0f);
+            if (((s.bandBits() >> band) & 1u) != dial || ((s.filterBits() >> filter) & 1u) != dial)
+                wrong.fetch_add(1, std::memory_order_relaxed);
+        }
+    };
+    std::thread first(owner, 0, 0), second(owner, 1, 1);
+    first.join();
+    second.join();
+    const int moved = wrong.load();
+    CHECK(moved == 0, "%d writes found their own band or filter moved by the other thread", moved);
+    CHECK(s.value(kLegacyDialBands) == (kSelectorStated | 3u) && s.value(kLegacyDialFilters) == (kSelectorStated | 3u),
+          "selectors ended %u/%u", s.value(kLegacyDialBands), s.value(kLegacyDialFilters));
+
+    FourKEQSelectors t;
+    ready = 0;
+    wrong = 0;
+    std::atomic<bool> loading { true };
+    std::thread automation([&] {
+        start();
+        for (int i = 0; loading.load(std::memory_order_relaxed); ++i)
+            t.record((i & 1) ? kLmFreq : kLmHz, 1000.0f);
+    });
+    start();
+    for (int i = 0; i < kWrites; ++i)
+    {
+        const uint32_t stated = ((i & 16) ? kSelectorStatedAlt : kSelectorStated) | ((uint32_t)i & 13u);
+        t.record(kLegacyDialBands, (float)stated);
+        if ((t.value(kLegacyDialBands) & ~2u) != stated)
+            wrong.fetch_add(1, std::memory_order_relaxed);
+    }
+    loading = false;
+    automation.join();
+    CHECK(wrong.load() == 0, "%d stated selectors lost a bit or their flag to LM automation", wrong.load());
+    std::printf("[7] selector writes on two threads, %d each: %d moved another's band or filter, "
+                "%d stated selectors lost to automation\n", kWrites, moved, wrong.load());
 }
 
 void testLegacyDialDefaults()
@@ -316,8 +491,8 @@ void testCurveDrawsWhatPlays()
         dsp.setLfGain(s.v[kLfGain]); dsp.setLmGain(s.v[kLmGain]);
         dsp.setHmGain(s.v[kHmGain]); dsp.setHfGain(s.v[kHfGain]);
         dsp.setHpfEnabled(true); dsp.setLpfEnabled(true);
-        fkApplyBandFrequencies(dsp, s.v);
-        fkApplyFilterFrequencies(dsp, s.v);
+        fkApplyBandFrequencies(dsp, s.v, fkLegacyDialBits(s.v[kLegacyDialBands]));
+        fkApplyFilterFrequencies(dsp, s.v, fkLegacyDialFilterBits(s.v[kLegacyDialFilters]));
         dsp.prepare(48000.0, 64);
         std::vector<float> buf(64, 0.0f);
         float* io[2] = { buf.data(), buf.data() };
@@ -468,6 +643,8 @@ int main()
     testReadoutIgnoresGain();
     testUserPresetFiles();
     testCurveDrawsWhatPlays();
+    testSelectorWritesNeverLoseOneAnother();
+    testSelectorWritesRace();
     std::printf("%d checks, %d failures\n", gChecks, gFailures);
     return gFailures == 0 ? 0 : 1;
 }

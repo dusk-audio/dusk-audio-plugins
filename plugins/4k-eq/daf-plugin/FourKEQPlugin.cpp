@@ -29,8 +29,9 @@ public:
         // just to read ranges.def — the table is the single source of truth.)
         for (uint32_t i = 0; i < kParamCount; ++i)
             values[i] = kFourKParams[i].def;
-        applyBandFrequencies();
-        applyFilterFrequencies();
+        selectors.record(kLegacyDialBands, kFourKParams[kLegacyDialBands].def);
+        selectors.record(kLegacyDialFilters, kFourKParams[kLegacyDialFilters].def);
+        applyFrequencies();
     }
 
     //--- same-process accessors for the UI bridge -----------------------------
@@ -40,8 +41,8 @@ public:
     float outPeakRv() const noexcept { return dsp.getOutputPeakR(); }
     const duskaudio::SpectrumRing* preSpec()  const noexcept { return &dsp.preSpectrum(); }
     const duskaudio::SpectrumRing* postSpec() const noexcept { return &dsp.postSpectrum(); }
-    uint32_t legacyDialBands() const noexcept { return legacyDialBandsForUi.load(std::memory_order_relaxed); }
-    uint32_t legacyDialFilters() const noexcept { return legacyDialFiltersForUi.load(std::memory_order_relaxed); }
+    uint32_t legacyDialBands() const noexcept { return selectors.bandBits(); }
+    uint32_t legacyDialFilters() const noexcept { return selectors.filterBits(); }
 
 protected:
     //--- metadata -------------------------------------------------------------
@@ -158,6 +159,8 @@ protected:
         {
         case kOutPeakL: return dsp.getOutputPeakL();
         case kOutPeakR: return dsp.getOutputPeakR();
+        case kLegacyDialBands:
+        case kLegacyDialFilters: return (float)selectors.value(index);
         default:        return index < kParamCount ? values[index] : 0.0f;
         }
     }
@@ -166,8 +169,12 @@ protected:
     {
         if (index >= kParamCount || fkIsOutputParam(index))
             return;
-        fkStoreParam(values, index, value);
-        applyToDsp(index);
+        if (index != kLegacyDialBands && index != kLegacyDialFilters)
+            values[index] = value;
+        if (selectors.record(index, value))
+            frequenciesChanged.store(true, std::memory_order_release);
+        else
+            applyToDsp(index);
     }
 
     //--- programs -------------------------------------------------------------
@@ -220,6 +227,9 @@ protected:
     //--- audio ----------------------------------------------------------------
     void run(const float** inputs, float** outputs, uint32_t frames) override
     {
+        if (frequenciesChanged.load(std::memory_order_relaxed)
+            && frequenciesChanged.exchange(false, std::memory_order_acquire))
+            applyFrequencies();
         dsp.processBlock(inputs, outputs, activeChannels, (int)frames);
         updateLatency();
     }
@@ -230,6 +240,7 @@ private:
         for (uint32_t i = 0; i < kParamCount; ++i)
             if (!fkIsOutputParam(i))
                 applyToDsp(i);
+        applyFrequencies();
     }
 
     void applyToDsp(uint32_t index)
@@ -262,28 +273,15 @@ private:
         case kSpectrumPrePost: break; // UI-only (analyzer source select)
         case kShowGraph:  break;      // UI-only (graph collapse), persisted in state
         case kAutoGain:   dsp.setAutoGain(value > 0.5f); break;
-        case kLfFreq: case kLmFreq: case kHmFreq: case kHfFreq:
-        case kLfHz: case kLmHz: case kHmHz: case kHfHz:
-        case kLegacyDialBands:
-            applyBandFrequencies();
-            break;
-        case kHpfFreq: case kLpfFreq: case kHpfHz: case kLpfHz:
-        case kLegacyDialFilters:
-            applyFilterFrequencies();
-            break;
         }
     }
 
-    void applyBandFrequencies()
+    // The band and filter frequencies, routed by the selectors. Reads each
+    // selector before the frequencies it picks (FourKEQSelectors).
+    void applyFrequencies()
     {
-        fkApplyBandFrequencies(dsp, values);
-        legacyDialBandsForUi.store(fkLegacyDialBits(values[kLegacyDialBands]), std::memory_order_relaxed);
-    }
-
-    void applyFilterFrequencies()
-    {
-        fkApplyFilterFrequencies(dsp, values);
-        legacyDialFiltersForUi.store(fkLegacyDialFilterBits(values[kLegacyDialFilters]), std::memory_order_relaxed);
+        fkApplyBandFrequencies(dsp, values, selectors.bandBits());
+        fkApplyFilterFrequencies(dsp, values, selectors.filterBits());
     }
 
     void updateLatency()
@@ -293,9 +291,14 @@ private:
     }
 
     duskaudio::FourKEQDSP dsp;
+    // Every input parameter but the two selectors, which live in selectors.
     float values[kParamCount] = {};
-    std::atomic<uint32_t> legacyDialBandsForUi { 0 };
-    std::atomic<uint32_t> legacyDialFiltersForUi { 0 };
+    FourKEQSelectors selectors;
+    // Set by a band or filter frequency or selector write, taken by run(),
+    // which alone routes the frequencies to the core while the plugin is
+    // active. Routed from two threads, each by the selectors it read, the later
+    // of the two could leave a band on a parameter the selectors had left.
+    std::atomic<bool> frequenciesChanged { false };
     uint32_t lastLatency = 0xffffffffu;
     uint16_t activeChannels = DAF_PLUGIN_NUM_INPUTS;
 

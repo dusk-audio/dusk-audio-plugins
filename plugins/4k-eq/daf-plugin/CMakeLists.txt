@@ -69,7 +69,8 @@ if(NOT CMAKE_CROSSCOMPILING)
     add_test(NAME FourKEQCore COMMAND FourKEQCoreTest)
 
     # Band and filter frequency parameters (#288): which of the two parameters
-    # wins, factory presets, the read-out, and user preset files across the change.
+    # wins, factory presets, the read-out, user preset files across the change,
+    # and selector writes from two threads at once.
     add_executable(FourKEQPluginLogicTest
         tests/FourKEQPluginLogicTests.cpp
         ../../shared-daf/dsp/FourKEQDSP.cpp)
@@ -77,6 +78,8 @@ if(NOT CMAKE_CROSSCOMPILING)
         "${CMAKE_CURRENT_SOURCE_DIR}"
         "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
     target_compile_features(FourKEQPluginLogicTest PRIVATE cxx_std_17)
+    find_package(Threads REQUIRED)
+    target_link_libraries(FourKEQPluginLogicTest PRIVATE Threads::Threads)
     add_test(NAME FourKEQPluginLogic COMMAND FourKEQPluginLogicTest)
 
     # The same through the built CLAP's state and parameter paths: pre-#288
