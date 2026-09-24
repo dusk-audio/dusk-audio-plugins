@@ -103,7 +103,7 @@ struct VuStyle
     float sublabelSize = 9.0f;
     // Geometry. The defaults reproduce the TapeMachine face: the pivot sits
     // 4 design px above the face bottom and the needle sweeps +-64.7 degrees.
-    // A meter like the dbx 160's has its pivot well below the visible face
+    // A meter like the VCA compressor's has its pivot well below the visible face
     // and a flatter arc; both are expressed here so the widget stays shared.
     float pivotBelowFace = -4.0f;     // design px below the face's bottom edge (negative = above)
     float sweepHalfAngleDeg = 64.7f;

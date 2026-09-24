@@ -4,7 +4,7 @@
 //
 // Implements the Yeh/Smith bilinear transform method (Stanford DAFx 2006-2008)
 // for passive RC tone stack networks. Each topology is a 3rd-order (or 2nd-order
-// for Vox) IIR filter whose coefficients are polynomial functions of the
+// for class-A chime) IIR filter whose coefficients are polynomial functions of the
 // Bass/Mid/Treble pot positions, producing the interactive knob behavior of
 // real amplifiers.
 //
@@ -20,9 +20,9 @@ class ToneStackModel
 public:
     enum class Topology
     {
-        Fender = 0,     // Fender Twin Reverb AB763 tone stack
-        Marshall = 1,   // Marshall JTM45/Plexi "James" tone stack
-        Vox = 2         // Vox AC30 Top Boost cut circuit
+        Fender = 0,     // American clean amp tone stack
+        Marshall = 1,   // British crunch amp "James" tone stack
+        Vox = 2         // British class-A chime amp cut circuit
     };
 
     void prepare (double sampleRate);
@@ -48,7 +48,7 @@ private:
     bool coeffsDirty_ = true;
 
     // 3rd-order IIR filter state (Transposed Direct Form II)
-    // Fender and Marshall use all 3 sections; Vox uses only 2
+    // American clean and British crunch use all 3 sections; class-A chime uses only 2
     double b0_ = 1.0, b1_ = 0.0, b2_ = 0.0, b3_ = 0.0;
     double a1_ = 0.0, a2_ = 0.0, a3_ = 0.0;
     double z1_ = 0.0, z2_ = 0.0, z3_ = 0.0;

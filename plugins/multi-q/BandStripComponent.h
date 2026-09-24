@@ -7,7 +7,7 @@ class MultiQ;
 
 //==============================================================================
 /**
-    BandStripComponent - Eventide SplitEQ-style horizontal band display
+    BandStripComponent - split-EQ-style horizontal band display
 
     Shows all 8 EQ bands in a horizontal strip with click-to-edit text values
     for frequency, gain, and Q parameters.

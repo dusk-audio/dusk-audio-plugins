@@ -6,7 +6,7 @@
 #include <cstring>
 
 // ============================================================================
-// ShimmerEngine v8 — classic Eno/Lanois Townhouse rig topology.
+// ShimmerEngine v8 — classic Eno/Lanois rig topology.
 // See header for full architecture description.
 // ============================================================================
 
@@ -541,7 +541,7 @@ void ShimmerEngine::process (const float* inL, const float* inR,
         const float fbSrcR = fbDelayLineR_[static_cast<size_t> (readPos)];
         // Per-preset scale on the upward voices (voice1 +12 st fills 250-500, voice2 +24 st fills
         // 500-1k). Deep Blue Day boosts these to regenerate the mid tail harder on transients
-        // (the snare body ×2/×4 → the 250 Hz-1 kHz body Valhalla has). Default 1.0 → ×1.0f bypass
+        // (the snare body ×2/×4 → the 250 Hz-1 kHz body REF has). Default 1.0 → ×1.0f bypass
         // → bit-identical to legacy for Black Hole + every other preset.
         float pitchedFbL = kVoice1Mix * voice1Scale_ * pitchL_.process (fbSrcL)
                          + kVoice2Mix * voice2Scale_ * pitch2L_.process (fbSrcL);
@@ -562,7 +562,7 @@ void ShimmerEngine::process (const float* inL, const float* inR,
                                                          kFeedbackSoftClipKnee, kFeedbackSoftClipCeil);
         }
         // Octave-DOWN-2 (sub) voice: reaches 250 Hz in ONE step where the −1 oct cascade
-        // dies out, then the loop regenerates 125→62 Hz from it → the deep low wash Valhalla
+        // dies out, then the loop regenerates 125→62 Hz from it → the deep low wash REF
         // Shimmer has. Same softClip + loop band-pass keep it bounded. 0 → branch skipped
         // (byte-identical on non-shimmer presets; recursive-feedback TU, see the .h note).
         if (subMix_ > 0.0f)
@@ -624,7 +624,7 @@ void ShimmerEngine::process (const float* inL, const float* inR,
 
         // Dry-fed octave cascade (mono, feed-forward): each −12 st stage pitches the previous
         // stage's output down another octave, summed at its own gain → an independent, EVEN
-        // 500/250/125/62 Hz descent (Valhalla's structure) that does NOT depend on the feedback
+        // 500/250/125/62 Hz descent (REF's structure) that does NOT depend on the feedback
         // loop. Fed from the raw dry (inL/inR), so a transient generates the full cascade in one
         // pass instead of starving the feedback voices. octActive_ false → skipped → bit-null.
         float octMono = 0.0f;
@@ -687,7 +687,7 @@ void ShimmerEngine::process (const float* inL, const float* inR,
         // Taps the raw wet (wL/wR), pitches its 6-12 kHz up to 12-24 k. mix 0 → bit-null.
         if (air_.active) air_.process (wL, wR, oL, oR);
         if (stereoMod_.active) stereoMod_.process (oL, oR);
-        // Tail noise floor — envelope-tracked to the wet, fades with the decay (Valhalla's
+        // Tail noise floor — envelope-tracked to the wet, fades with the decay (REF's
         // dense noise-like fade; masks the sparse-mode ring). gain 0 → skipped → bit-null.
         // NOISE SUSTAIN-DUCK (2026-07-08): the noise's gentle LP leaks 8-16 kHz; on a
         // 22 s sustained stem the envelope-tracked noise runs continuously → measured

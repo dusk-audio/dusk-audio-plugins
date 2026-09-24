@@ -22,7 +22,7 @@
 //   duskverb_render <preset_name>                              # default DuskVerb
 //   duskverb_render "Lush Dark Hall"
 //   duskverb_render --vst3 ~/.vst3/DuskVerb.vst3 "Vintage Vocal Plate"
-//   duskverb_render --vst2 ~/.vst/yabridge/LexConcertHall.so --program "Concert Hall"
+//   duskverb_render --vst2 ~/.vst/yabridge/ReferenceHall.so --program "Concert Hall"
 //   duskverb_render --vst3 plugin.vst3 --program "Preset" --dump-nparams
 //   duskverb_render --vst3 plugin.vst3 --input-wav input.wav \
 //       --nparam-event "Input Send=0@1.0" --legacy-stem-name
@@ -49,7 +49,7 @@ namespace
     // actually runs at is the only way to catch a rate-dependent defect.
     double kSampleRate = 48000.0;
     // 2048 samples ≈ 43 ms blocks. 4096 triggered Wine-side stack overflows
-    // inside Lex VST2 plugins after a full vpreset apply (yabridge handles
+    // inside REF VST2 plugins after a full vpreset apply (yabridge handles
     // every Wine exception on a finite thread stack; deep call stacks
     // from plugin-internal FPU/SSE handling crashed at 4096). 256 is
     // historical default but hits yabridge IPC overhead. 2048 is the
@@ -257,8 +257,8 @@ namespace
         return {
             "Blade Runner 224",
             {
-                // 2026-05-25 re-anchor to Lex Large RHall 4 (the actual
-                // 224 Random Hall algorithm used on the 1982 Blade Runner
+                // 2026-05-25 re-anchor to REF Large RHall 4 (the actual
+                // vintage random-hall algorithm used on the 1982 Blade Runner
                 // score). Engine swapped from Dattorro (algo 0) to FDN
                 // (algo 4) — Dattorro 2-AP topology can't replicate Random
                 // Hall's multi-tap input + dense diffusion + heavy mod.
@@ -272,7 +272,7 @@ namespace
                 { "Mod Depth",       0.35f },     // heavy mod — Random Hall signature
                 { "Mod Rate",        0.64f },
                 { "Treble Multiply", 0.93f },
-                { "Bass Multiply",   2.08f },     // extended bass — Lex 1.5× BassRT
+                { "Bass Multiply",   2.08f },     // extended bass — REF 1.5× BassRT
                 { "Mid Multiply",    1.94f },
                 { "Low Crossover",   550.0f },
                 { "High Crossover",  1581.0f },
@@ -284,7 +284,7 @@ namespace
                 { "Hi Cut",          19723.0f },
                 { "Width",           1.10f },
                 { "Freeze",          0.0f },
-                { "Gain Trim",      -11.3f },     // level-matched to Lex Random Hall RHall 4
+                { "Gain Trim",      -11.3f },     // level-matched to random-hall reference RHall 4
                 { "Mono Below",      20.0f },
             }
         };
@@ -341,7 +341,7 @@ namespace
     PresetParams getPresetByName (const juce::String& name)
     {
         // For Cathedral we keep the explicit definition (has bus_mode=1 for the
-        // 100 % wet A/B against Valhalla). Otherwise transcribe FactoryPresets.h.
+        // 100 % wet A/B against REF). Otherwise transcribe FactoryPresets.h.
         if (name == "Cathedral")          return getCathedral();
         if (name == "Lush Dark Hall")     return getLushDarkHall();
         if (name == "Blade Runner 224")   return getBladeRunner224();
@@ -382,7 +382,7 @@ namespace
         // Smooth Concert Hall — algo=3 (QuadTank) per FactoryPresets.h post-reorder.
         // Stress-test rendering: BUS=true, Mix=1.0 to expose any FDN/QuadTank
         // residual artifacts. Factory bus/mix/predelay otherwise preserved.
-        // Rich Plate — algo=4 (FDN). Bright + diffuse Lexicon PCM-90 plate
+        // Rich Plate — algo=4 (FDN). Bright + diffuse vintage digital plate
         // anchor. Stress-rendered at BUS=true Mix=1.0 (factory is mix=0.40 bus=false).
         // Vocal Booth — algo=4 (FDN). Sub-second tight close-mic room.
         // Stress-rendered at BUS=true Mix=1.0 (factory is mix=0.30 bus=false).
@@ -446,9 +446,9 @@ namespace
         // Mirrors FactoryPresets.h "Bright Hall" row.
         if (name == "Bright Hall")
             return makePreset (name.toRawUTF8(), 4, 1.0f, true, 0.0f, 4.31f, 0.75f, 0.103f, 0.83f, 1.29f, 1.38f, 540.0f, 0.44f, 0.50f, 0.50f, 20.0f, 11112.0f, 0.99f, -2.84f, 20.0f, 0.68f, 8344.0f, 0.03f);
-        // PCM 90 — Rooms (QuadTank / NonLinear):
-        // Ambience — Optuna-aligned to VVV Ambience (all 5 metrics within strict noise floor, lowest loss 0.248).
-        // ModDepth + ModRate pulled to VVV's actual values (0.36, 0.32 Hz) —
+        // Vintage digital — Rooms (QuadTank / NonLinear):
+        // Ambience — Optuna-aligned to REF Ambience (all 5 metrics within strict noise floor, lowest loss 0.248).
+        // ModDepth + ModRate pulled to REF's actual values (0.36, 0.32 Hz) —
         // Ambience — v1 autonomous staged_tuner.py (--category Rooms).
         // Mirrors FactoryPresets.h "Ambience" row.
         if (name == "Ambience")
@@ -772,7 +772,7 @@ namespace
         return nullptr;
     }
 
-    // Apply a Valhalla-style .vpreset XML directly: each XML attribute is a
+    // Apply a REF-style .vpreset XML directly: each XML attribute is a
     // parameter name with an already-normalised 0..1 value. Skip the XML
     // metadata attributes (version, encoding, pluginVersion, presetName).
     void applyVpresetXml (juce::AudioPluginInstance& plugin, const juce::File& xmlFile,
@@ -808,7 +808,7 @@ namespace
             // as a raw display value (e.g. "10" seconds, "540" Hz) and ask
             // the plugin to convert text → normalised. This makes a single
             // .vpreset file work both for our DuskVerb (normalised values)
-            // and for hosted plugins like Arturia LX-24 (raw display values).
+            // and for hosted plugins like the reference emulation (raw display values).
             float normalised;
             if (raw > 1.0f)
             {
@@ -820,8 +820,8 @@ namespace
                 if (normalised == 0.0f && raw > 0.0f && raw <= 1.0f)
                     normalised = raw;
             }
-            // Hard clamp to [0, 1] before pushing. Some VST2s (Lex PCM
-            // Native) return the raw display value verbatim from
+            // Hard clamp to [0, 1] before pushing. Some VST2s (a reference
+            // reverb) return the raw display value verbatim from
             // getValueForText for negative-dB inputs ("-3.0 dB" → -3.0),
             // which then gets reinterpreted as a huge positive coefficient
             // inside the plugin (we saw read_back='2.2e+07') and crashes
@@ -845,7 +845,7 @@ namespace
 
     // Apply an Apple-format `.aupreset` (binary plist with embedded JUCE
     // plugin state). Used to render through hosted JUCE-built AUs (e.g.
-    // Valhalla Shimmer) at one of their factory presets, for A/B comparison.
+    // reference shimmer) at one of their factory presets, for A/B comparison.
     // The .aupreset is XML-on-the-outside but the relevant payload is the
     // base64-encoded `jucePluginState` data element, which is exactly what
     // `setStateInformation` consumes.
@@ -861,8 +861,8 @@ namespace
         if (dict == nullptr) { std::cerr << "aupreset: no <dict>\n"; return; }
 
         // Strategy: prefer 'jucePluginState' (works for JUCE-built plugins
-        // like Valhalla Shimmer); fall back to passing the whole .aupreset
-        // as a binary plist (works for non-JUCE AUs like Arturia LX-24,
+        // like reference shimmer); fall back to passing the whole .aupreset
+        // as a binary plist (works for non-JUCE AUs like the reference emulation,
         // whose state lives under the 'data' key in Apple ClassInfo format
         // — JUCE's AU wrapper routes the whole serialized plist to the AU's
         // kAudioUnitProperty_ClassInfo when setStateInformation can't find
@@ -1021,7 +1021,7 @@ namespace
     // this makes momentary controls and automation testable through the same
     // hosted wrapper path a DAW uses.
     // The processBlock buffer must have max(totalInputChannels,
-    // totalOutputChannels) channels so multi-bus plugins (Arturia LX-24
+    // totalOutputChannels) channels so multi-bus plugins (the reference emulation
     // exposes 2 stereo input buses = 4 channels) don't read past the
     // buffer end and segfault.
     juce::AudioBuffer<float> renderThroughPlugin (juce::AudioPluginInstance& plugin,
@@ -1092,7 +1092,7 @@ int main (int argc, char** argv)
     // Arbitrary stem input: when set, load WAV, pad with reverb-tail
     // headroom, render through the configured engine, write to
     // {outDir}/{slug}_{input-file-stem}_stem.wav. Lets users A/B real-world
-    // stems against Lexicon reference renders without going through a DAW.
+    // stems against reference renders without going through a DAW.
     // May be repeated; the input-stem naming applies regardless of count so
     // capture sets stay resolvable. --legacy-stem-name restores the old
     // single-input {slug}_stem.wav name for scripts that predate the multi-
@@ -1159,7 +1159,7 @@ int main (int argc, char** argv)
     // Per-parameter overrides via --param NAME=VALUE. Stored in declaration
     // order so multiple --param flags compose the way the user wrote them
     // (last write wins). Applied AFTER the preset so they override anything
-    // the preset set. Works against any plugin — DuskVerb, Valhalla, Lex, etc.
+    // the preset set. Works against any plugin — DuskVerb, reference reverbs, etc.
     std::vector<std::pair<juce::String, juce::String>> paramOverrides;
     std::vector<std::pair<juce::String, juce::String>> nparamOverrides;
     std::vector<NormalizedParameterEvent> nparamEvents;
@@ -1350,7 +1350,7 @@ int main (int argc, char** argv)
         {
             // Format: NAME=NORMVALUE — sets the parameter's NORMALISED value
             // directly, bypassing getValueForText. Needed when replaying a
-            // plugin's own saved state (e.g. a Valhalla .vstpreset XML, whose
+            // plugin's own saved state (e.g. a REF .vstpreset XML, whose
             // attributes are normalised 0..1 floats): the text parser would
             // misread "0.2299" as 0.23 seconds/percent/etc.
             const juce::String spec = argv[++i];
@@ -1692,7 +1692,7 @@ int main (int argc, char** argv)
     }
 
     // Build a mono or stereo bus layout that matches the plugin's bus topology.
-    // Most reverbs are 1-in/1-out, but some (Arturia Rev LX-24) expose a
+    // Most reverbs are 1-in/1-out, but some (the reference emulation) expose a
     // sidechain or auxiliary input bus. If we configure too few buses
     // here the plugin's processBlock segfaults trying to read from an
     // unprepared channel.
@@ -1795,7 +1795,7 @@ int main (int argc, char** argv)
     // measured a phantom config no shipped plugin uses. Resolving to the
     // program kills that footgun: --preset now == what the DAW loads. The
     // mirror is kept ONLY as a fallback for names with no matching program
-    // (e.g. external Lex/Valhalla A/B definitions). --param overrides (Dry/Wet,
+    // (e.g. external REF A/B definitions). --param overrides (Dry/Wet,
     // Bus Mode) still apply on top, exactly as before.
     if (isDuskVerb && resolvedProgramIndex < 0 && programArg.isEmpty()
         && presetExplicit && loadStatePath.isEmpty())
@@ -1964,7 +1964,7 @@ int main (int argc, char** argv)
 
     // Optional first pass: apply the preset BEFORE the final prepareToPlay
     // so the plugin sizes its per-algorithm DSP buffers correctly for any
-    // Algorithm change. Required by Arturia Rev LX-24 (segfaults otherwise).
+    // Algorithm change. Required by the reference emulation (segfaults otherwise).
     // Off by default — each param-set on a yabridge-bridged plugin is a Wine
     // IPC round-trip, so double-applying is expensive.
     if (prePrepareApply)
@@ -2041,12 +2041,12 @@ int main (int argc, char** argv)
     // --screenshot PATH: open the plugin's editor (with --param/--nparam preset
     // applied so the GUI shows that state), let it paint, then grab the desktop
     // to a PNG and exit. A reusable way to read a closed-source plugin's GUI
-    // state (e.g. Valhalla mode NAMES the host API exposes only as raw norms),
+    // state (e.g. REF mode NAMES the host API exposes only as raw norms),
     // WITH a chosen preset set. Runs on the message thread (this console app owns
     // the MessageManager via ScopedJuceInitialiser_GUI).
     //
     // WORKS on the dev box's GNOME/Mutter Wayland session (verified 2026-06-16 on
-    // ValhallaShimmer + DuskVerb). Two things were essential: (1) host the editor
+    // reference shimmer + DuskVerb). Two things were essential: (1) host the editor
     // in a DocumentWindow that is setAlwaysOnTop(true) BEFORE setVisible, so the
     // Wine GUI maps + the window raises above the user's maximised apps; (2)
     // capture with gnome-screenshot (GNOME Shell Wayland capture composites

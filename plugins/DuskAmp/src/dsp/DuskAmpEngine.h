@@ -35,7 +35,7 @@ public:
     void setGateRelease (float ms);
 
     // Amp type (controls preamp model + tone stack topology + power amp config)
-    void setAmpType (int type); // 0=Fender, 1=Marshall, 2=Vox
+    void setAmpType (int type); // 0=American clean, 1=British crunch, 2=British class-A chime
 
     // Preamp (DSP mode)
     void setPreampGain (float gain01);
@@ -99,7 +99,7 @@ public:
 private:
     InputSection input_;
     StompBox stompBox_;
-    std::unique_ptr<PreampModel> preampPool_[3];  // Pre-created models: [Fender, Marshall, Vox]
+    std::unique_ptr<PreampModel> preampPool_[3];  // Pre-created models: [American clean, British crunch, British class-A chime]
     PreampModel* preamp_ = nullptr;               // Active model (borrowed from pool, not owned)
     AmpType currentAmpType_ = AmpType::Marshall;
     ToneStackModel toneStack_;

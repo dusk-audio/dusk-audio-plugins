@@ -709,7 +709,7 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     // addAndMakeVisible'd. The early call inside the algorithmBox_ setup
     // block runs before gateButton_ is added, so its setVisible(false)
     // there gets overwritten by the later addAndMakeVisible (which forces
-    // visible). Without this second call, sessions saved with a non-RMX16
+    // visible). Without this second call, sessions saved with a non-NonLinear
     // algorithm reopen with the GATE button showing.
     const auto currentEngine = getAlgorithmConfig (
         static_cast<int> (p.parameters.getRawParameterValue ("algorithm")->load())).engine;

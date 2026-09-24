@@ -62,7 +62,7 @@ void testHostParameterTapers()
     const auto& compression = multicompp::kParams[static_cast<size_t>(multicompp::ParamId::VcaRatio)];
     const auto& attack = multicompp::kParams[static_cast<size_t>(multicompp::ParamId::DigitalAttack)];
     const float positions[] = {0.25f, 0.5f, 0.75f};
-    // VCA Compression is a plain knob position; the measured dbx 160 law maps
+    // VCA Compression is a plain knob position; the measured VCA compressor law maps
     // it to the applied ratio (probe_compress_law.py: 2.37 / 4.14 / 7.51 :1).
     const float expectedRatio[] = {2.37f, 4.14f, 7.51f};
     const float expectedAttack[] = {4.93f, 49.62f, 191.66f};
@@ -162,7 +162,7 @@ void testStrictStateValidationAndRoundTrip()
 
     // Version 3 carried `vca_ratio` (skew 0.3, host-normalized) and a
     // -38..+12 dB VCA threshold. It must still load, with the ratio converted
-    // to the dbx 160 knob position that applies it and the threshold clamped.
+    // to the VCA compressor knob position that applies it and the threshold clamped.
     {
         const size_t ratioIndex = static_cast<size_t>(multicompp::ParamId::VcaRatio);
         const size_t thresholdIndex = static_cast<size_t>(multicompp::ParamId::VcaThreshold);

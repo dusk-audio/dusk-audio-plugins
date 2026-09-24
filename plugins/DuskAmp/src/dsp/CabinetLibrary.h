@@ -44,9 +44,9 @@ namespace CabinetLibrary
         CabinetId   id;
         const char* displayName;   // shown in the host's choice list
         const char* binarySymbol;  // BinaryData symbol stem (no extension)
-                                   //   e.g. "fender_twin_2x12_sm57_oa"
-                                   // resolves to BinaryData::fender_twin_2x12_sm57_oa_wav
-                                   //         and BinaryData::fender_twin_2x12_sm57_oa_wavSize
+                                   //   e.g. "combo_2x12_dynamic_oa"
+                                   // resolves to BinaryData::combo_2x12_dynamic_oa_wav
+                                   //         and BinaryData::combo_2x12_dynamic_oa_wavSize
     };
 
     /** Returns the static catalog of known cabinets. */

@@ -18,9 +18,9 @@
 
 enum class AmpType
 {
-    Fender  = 0,  // Fender Twin Reverb — clean headroom, cathode follower compression
-    Marshall = 1, // Marshall Plexi 1959 — cascaded gain, tight bass, aggressive
-    Vox     = 2   // Vox AC30 Top Boost — cathode follower sag, chimey breakup
+    Fender  = 0,  // American clean amp — clean headroom, cathode follower compression
+    Marshall = 1, // British crunch amp — cascaded gain, tight bass, aggressive
+    Vox     = 2   // British class-A chime amp — cathode follower sag, chimey breakup
 };
 
 class PreampModel
@@ -41,11 +41,11 @@ public:
 };
 
 // ============================================================================
-// Fender Twin Reverb preamp
+// American clean amp preamp
 //
 // V1a (12AX7 gain stage) → cathode follower (V1b, unity-gain buffer with
 // compression) → volume control. The cathode follower provides impedance
-// buffering and soft compression that gives the Fender its spongy clean feel.
+// buffering and soft compression that gives the American clean amp its spongy clean feel.
 //
 // Coupling cap: 22nF (large → warm bass, low rolloff ~30Hz)
 // Cathode bypass: 25uF on V1a (bass boost below ~80Hz)
@@ -91,14 +91,14 @@ private:
 };
 
 // ============================================================================
-// Marshall Plexi 1959 preamp
+// British crunch amp preamp
 //
 // V1a (12AX7) → coupling cap → V1b (12AX7) → tone stack.
 // Two cascaded gain stages before the tone stack — this is the classic
-// Marshall gain structure. Each stage is driven progressively harder.
+// British crunch gain structure. Each stage is driven progressively harder.
 //
-// Coupling caps: 22nF (V1a→V1b) — tighter bass than Fender
-// Cathode bypass V1a: 0.68uF (less bass boost than Fender, ~340Hz)
+// Coupling caps: 22nF (V1a→V1b) — tighter bass than the American clean amp
+// Cathode bypass V1a: 0.68uF (less bass boost than the American clean amp, ~340Hz)
 // Cathode bypass V1b: 0.68uF
 // Bright cap: 5nF (aggressive treble boost)
 // ============================================================================
@@ -129,7 +129,7 @@ private:
     float cathodeBypassState_[2] = {};
     float cathodeBypassCoeff_ = 0.0f;
 
-    // Bright cap HPF (~700Hz for 5nF — more aggressive than Fender)
+    // Bright cap HPF (~700Hz for 5nF — more aggressive than the American clean amp)
     float brightCapState_ = 0.0f;
     float brightCapCoeff_ = 0.0f;
 
@@ -137,16 +137,16 @@ private:
 };
 
 // ============================================================================
-// Vox AC30 Top Boost preamp
+// British class-A chime amp preamp
 //
 // V1a (12AX7) → cathode follower (V1b) → tone circuit → V2a (12AX7).
-// The cathode follower between stages gives the AC30 its distinctive spongy
+// The cathode follower between stages gives the class-A chime amp its distinctive spongy
 // compression. The second gain stage (V2a) after the tone circuit is unique
-// to the Vox — it re-amplifies the tone-shaped signal.
+// to the class-A chime amp — it re-amplifies the tone-shaped signal.
 //
 // Coupling caps: 10nF (smaller → tighter bass, ~50Hz rolloff)
 // Cathode bypass V1a: 25uF (full bass boost)
-// No bright cap — the AC30 relies on the Cut control instead
+// No bright cap — the class-A chime amp relies on the Cut control instead
 // ============================================================================
 
 class VoxPreamp : public PreampModel
@@ -165,7 +165,7 @@ private:
 
     double sampleRate_ = 44100.0;
     float gain_ = 0.5f;
-    bool bright_ = false;  // not used on Vox, but kept for interface compat
+    bool bright_ = false;  // not used on the class-A chime amp, but kept for interface compat
 
     // Cathode follower state
     float cfEnvelope_ = 0.0f;
@@ -176,7 +176,7 @@ private:
     float couplingCapState_[2] = {};
     float couplingCapCoeff_ = 0.0f;
 
-    // Cathode bypass V1a (~80Hz, full bypass like Fender)
+    // Cathode bypass V1a (~80Hz, full bypass like the American clean amp)
     float cathodeBypassState_ = 0.0f;
     float cathodeBypassCoeff_ = 0.0f;
 

@@ -78,7 +78,7 @@ public:
     float getFrequencyDependentQ(float frequency, float baseQ) const
     {
         // Smooth polynomial fit of inductor Q vs frequency
-        // Based on typical vintage Pultec inductor measurements:
+        // Based on typical vintage passive tube program EQ inductor measurements:
         //   Peak Q around 200-400 Hz, rolling off at both extremes
         //   LF losses from core hysteresis, HF losses from skin effect + winding capacitance
         //
@@ -129,7 +129,7 @@ public:
             float compressed = dynamicThreshold + langevin * (1.0f - dynamicThreshold) * 0.7f;
             saturatedInput = std::copysign(compressed, input);
 
-            // Freed/UTC inductors operate 10-15dB below input in the passive EQ network.
+            // The program EQ's inductors operate 10-15dB below input in the passive EQ network.
             // Core saturation is subtle at normal levels, only significant at extreme LF boost.
             // H3 dominant (symmetric core), with small H2 from residual asymmetry.
             float h2Amount = 0.012f * driveLevel * excess;
@@ -207,7 +207,7 @@ private:
     3. LF transformer H3         — extra H3 on the LF split component only
     4. DC blocking               — removes DC from even-order (x², x⁴) terms
 
-  Harmonic profile calibrated to EQP-1A spec (0.15% THD at 1kHz into 600Ω):
+  Harmonic profile calibrated to the passive tube program EQ spec (0.15% THD at 1kHz into 600Ω):
     H2 ≈ 0.10-0.12%  — dominant, rises progressively with input level
                         (tube asymmetry + transformer coloration)
     H3 ≈ 0.01-0.03%  — secondary, relatively constant with level
@@ -279,7 +279,7 @@ public:
         // Soft-clip to prevent polynomial explosion at hot levels
         const float xd  = xd_raw / std::sqrt(1.0f + xd_raw * xd_raw * 0.25f);
 
-        // Pultec EQP-1A spec: 0.15% THD at 1kHz into 600Ω.
+        // Passive tube program EQ spec: 0.15% THD at 1kHz into 600Ω.
         // H2 ≈ 0.10-0.12% — dominant, rises progressively with input level
         //   (12AX7/12AU7 tubes + three signal-path transformers)
         // H3 ≈ 0.01-0.03% — present but secondary, relatively constant
@@ -295,13 +295,13 @@ public:
             [b,c,d](float v) { return ADAASaturation::polyAntideriv(v, b, c, d, 0.0f); });
         prevXdVal = xd;
 
-        // ── 3. LF transformer H3 (Peerless iron core saturation) ────────────────
+        // ── 3. LF transformer H3 (iron core saturation) ────────────────
         // Extra H3 applied only to the LF component. At 8 kHz, lfState ≈ 0 —
         // no extra H3 is generated at high frequencies, preventing aliasing.
         // At 80 Hz, lfState ≈ input → pronounced "growl" in the sub-bass.
         // H3 from transformer grows as driveAmount² (faster than tube H2) — at
         // heavy drive the transformer H3 rises disproportionately, matching the
-        // behaviour of a Pultec driven hard on a drum bus.
+        // behaviour of a passive tube program EQ driven hard on a drum bus.
         const float xd_lf_raw = lfState * driveAmount;
         const float xd_lf = xd_lf_raw / std::sqrt(1.0f + xd_lf_raw * xd_lf_raw * 0.25f);
         const float transformerH3 = 0.025f * xd_lf * xd_lf * xd_lf;  // LF-only H3
@@ -343,16 +343,16 @@ class PultecLFSection
 {
 public:
     // Tunable interaction constants (named for easy adjustment)
-    // Calibrated to match Pultec EQP-1A hardware measurements
+    // Calibrated to match passive tube program EQ hardware measurements
     static constexpr float kPeakGainScale = 1.4f;       // Max ~14 dB boost (hardware: ~13.5 dB)
     static constexpr float kPeakInteraction = 0.08f;     // Boost enhanced slightly by cut presence
     static constexpr float kBaseQ = 0.55f;               // Base resonance width
     static constexpr float kQInteraction = 0.015f;       // Q sharpens with cut (hardware behavior)
-    static constexpr float kDipFreqBase = 1.0f;          // Dip shelf at SAME freq as boost (Pultec Trick)
+    static constexpr float kDipFreqBase = 1.0f;          // Dip shelf at SAME freq as boost (simultaneous boost/cut low-shelf trick)
     static constexpr float kDipFreqRange = 0.0f;         // No gain-dependent frequency shift
     static constexpr float kDipGainScale = 1.75f;        // Max ~17.5 dB cut (hardware: ~17.5 dB)
     static constexpr float kDipInteraction = 0.06f;      // Boost presence slightly deepens cut
-    static constexpr float kDipBaseQ = 0.65f;            // Broad shelf (wider than peak for Pultec Trick)
+    static constexpr float kDipBaseQ = 0.65f;            // Broad shelf (wider than peak for simultaneous boost/cut low-shelf trick)
     static constexpr float kDipQScale = 0.03f;           // Q increases with atten amount
 
     void prepare(double sampleRate, uint32_t characterSeed = 0)
@@ -820,7 +820,7 @@ public:
         }
 
         // Per-block inductor Q modulation for HF boost
-        // Real Pultec inductors: core saturation reduces inductance → lowers filter Q
+        // Real program EQ inductors: core saturation reduces inductance → lowers filter Q
         // Update HF boost filter Q based on per-channel inductor saturation state (once per block, not per sample)
         if (params.hfBoostGain > 0.01f)
         {
@@ -972,11 +972,11 @@ private:
 
     void setupTransformerProfiles()
     {
-        // Input transformer profile (Chicago/UTC/Freed style)
-        // Pultec transformers have symmetric B-H curves → odd harmonics (H3, H5)
-        // This is distinct from Neve (asymmetric → H2). The combination of
+        // Input transformer profile (vintage American iron style)
+        // Program EQ transformers have symmetric B-H curves → odd harmonics (H3, H5)
+        // This is distinct from a British class-A console (asymmetric → H2). The combination of
         // even-order tube harmonics + odd-order transformer harmonics creates
-        // the signature Pultec character.
+        // the signature passive tube program EQ character.
         AnalogEmulation::TransformerProfile inputProfile;
         inputProfile.hasTransformer = true;
         inputProfile.saturationAmount = 0.15f;
@@ -1021,7 +1021,7 @@ private:
         float gainDB = params.hfBoostGain * 1.8f;  // 0-10 maps to ~0-18 dB (hardware: ~18 dB)
 
         // Bandwidth control: Sharp (high Q) to Broad (low Q)
-        // EQP-1A bandwidth pot range: Q ~2.0 (narrow) to ~0.3 (wide)
+        // Program EQ bandwidth pot range: Q ~2.0 (narrow) to ~0.3 (wide)
         float baseQ = juce::jmap(params.hfBoostBandwidth, 0.0f, 1.0f, 2.0f, 0.3f);
 
         // Frequency-dependent Q from inductor model

@@ -2014,7 +2014,7 @@ void MultiQ::computeTiltShelfCoeffs(BiquadCoeffs& c, double sr, double freq, flo
     c.coeffs[5] = 0.0f;
 }
 
-// Cytomic SVF coefficient computation
+// Simper trapezoidal (ZDF) SVF coefficient computation
 // These compute SVFCoeffs for the audio processing path.
 // The transfer function is identical to the corresponding biquad; the difference
 // is in the filter topology which allows per-sample coefficient modulation.
@@ -2664,7 +2664,7 @@ void MultiQ::transferCurrentEQToDigital()
         // Band 1: HPF off (Tube EQ has no HPF)
         // Band 8: LPF off (Tube EQ has no LPF)
 
-        // Band 2: Low Shelf ← Tube EQ LF section (Pultec boost + atten at the same frequency)
+        // Band 2: Low Shelf ← Tube EQ LF section (passive tube program EQ boost + atten at the same frequency)
         // Scale factors match PultecLFSection constants: kPeakGainScale=1.4, kDipGainScale=1.75
         // Net gain at the shelf frequency ≈ boost*1.4 − atten*1.75 dB.
         float lfBoost = safeGetParam(tubeEQLfBoostGainParam, 0.0f);
@@ -2933,7 +2933,7 @@ void MultiQ::transferCurrentEQToDigital()
     });
 }
 
-// Match EQ — Logic Pro Match EQ style
+// Match EQ — DAW-style spectral match EQ
 
 bool MultiQ::computeMatchCorrection()
 {

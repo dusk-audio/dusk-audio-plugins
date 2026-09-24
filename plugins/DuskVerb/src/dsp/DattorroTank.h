@@ -89,7 +89,7 @@ public:
     // Per-pass HF-sustain compensation shelf (the shimmer precedent, ported 2026-07-08):
     // the tank is HF-lossy per pass (modulated-read interpolation + AA one-poles), which
     // COMPOUNDS over the tail into a top-octave cliff (~-10 dB @12.5k, -50 @19k vs the
-    // anchors - Marc hears it as "muffled"). The octave GEQ is attenuation-only and
+    // anchors - heard as "muffled" in listening tests). The octave GEQ is attenuation-only and
     // cannot lift past that loss; a small per-pass HF lift (y += g*HP(y)) cancels it.
     // Bounded: loop decay gain x lift stays < 1 per band; softClip backstop. 0 dB = bit-null.
     void setHFSustain (float db, float cornerHz);
@@ -113,7 +113,7 @@ public:
     //   setDensityDepth: 0 = legacy 3 APs; >0 engages all 6 density APs +
     //     a small coeff boost (denser, smoother tail — no added modulation).
     //   setModReduction: 1.0 = legacy mod; <1.0 pulls AP1 + delay modulation
-    //     toward still (toward the Lex/VVV near-static tail).
+    //     toward still (toward the REF near-static tail).
     void setDensityDepth (float depth01);
     void setModReduction (float reduction01);
     // #87 boing fix (short rooms): when true, the 12-AP density cascade loads the
@@ -149,7 +149,7 @@ public:
     // spectrum). All-zero dB = identity = bit-identical.
     void setTonalCorrDb (int band, float dB);
 
-    // Slow-attack BLOOM (input-onset-driven swell). The real Lex vintage vocal
+    // Slow-attack BLOOM (input-onset-driven swell). The real REF vintage vocal
     // plate's impulse peaks ~90ms in (a gentle swell), not instantly. An input
     // activity follower (slow release, so it stays latched through the tail)
     // drives a one-pole swell gain that opens over attackMs after onset, then
@@ -280,7 +280,7 @@ private:
     // stages 3..11 are the dense-path extension, engaged when a preset opts in
     // (numActiveDensityAPs_ 3->12). More Schroeder stages = more modes/echoes =
     // shallower spectral comb (lower 'ripple' gates) AND smoother tail — the
-    // Lexicon/Valhalla density mechanism, no added modulation. Allpasses are
+    // reference density mechanism, no added modulation. Allpasses are
     // lossless (|H|=1) so extra stages do NOT raise loop gain / threaten
     // stability; they only fill the mode density. Default processes only 3 →
     // byte-identical to the legacy plate.
@@ -327,7 +327,7 @@ private:
     // 7 output taps as a sparse spray of discrete arrivals — the measured
     // first-60 ms kurtosis spike (DV 7-27 vs a dense anchor's 3-6). With it, the
     // early field is already a dense diffuse burst (low kurtosis), matching the
-    // Lexicon/Valhalla "smooth from sample one" character.
+    // reference "smooth from sample one" character.
     //
     //   • Feed-FORWARD (NOT in the recirculating loop) → does NOT change RT60.
     //   • Energy-preserving allpass (flat magnitude) → no level/spectrum shift;
@@ -524,10 +524,10 @@ private:
     // Dense-tail path (plate density rework). Default = legacy (3 APs, no boost,
     // full modulation) so existing presets are byte-identical until they opt in.
     //   numActiveDensityAPs_ : 3 (legacy) or 6 (dense) — more Schroeder stages =
-    //     more echoes/sec = smoother tail WITHOUT modulation (the Lex/VVV way).
+    //     more echoes/sec = smoother tail WITHOUT modulation (the REF way).
     //   densityCoeffBoost_   : multiplies densityDiffCoeff_ (clamped <0.85 in loop).
     //   modReduction_        : scales AP1 + delay1/2 modulation toward 0 to pull the
-    //     tail near-still (the user hears ours wobble more than Lex/VVV). 1.0 = legacy.
+    //     tail near-still (the user hears ours wobble more than REF). 1.0 = legacy.
     int   numActiveDensityAPs_ = 3;
     float densityCoeffBoost_   = 1.0f;
     float modReduction_        = 1.0f;
