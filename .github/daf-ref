@@ -1,0 +1,9 @@
+# The dusk-audio/DAF revision every DAF plugin build uses: CI workflows,
+# docker/build_release.sh, and the local check in docker/check_daf_checkout.sh
+# all read this file, so it is the only place the framework revision is set.
+#
+# A branch name follows that branch; each run resolves it once, builds that one
+# commit on every platform and records it in the job summary and release notes.
+# A full 40-character commit SHA holds every build on that commit (e.g. while
+# DAF main is broken). Put exactly one value on the first non-comment line.
+main

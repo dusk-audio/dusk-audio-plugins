@@ -32,6 +32,13 @@ name: JUCE compile check
 #     real Windows branch and drags windows.h into every processor TU, so that
 #     one platform needs covering here rather than at tag time. macOS is still
 #     left to the release build.
+#
+# One exception to "compile check, not a test run": the Chord Analyzer leg also
+# builds and RUNS that plugin's two test executables, and checks its hand-rolled
+# headless LV2 bundle (GH #276, #284). Those targets are EXCLUDE_FROM_ALL and
+# no workflow named them, so they passed only when someone ran them by hand, and
+# the headless LV2 is not a juce_add_plugin target so no matrix row built it at
+# all. Both are headless and take seconds; see the steps for the details.
 on:
   pull_request:
     paths:
@@ -227,6 +234,109 @@ jobs:
             exit 1
           fi
           echo "Built: $found"
+
+      # Chord Analyzer is the only plugin here with test executables of its own,
+      # and nothing ran them: both targets are EXCLUDE_FROM_ALL and no workflow
+      # named them, so the unit checks and the host-side checks that guard #267
+      # and #273 passed only when someone remembered to run them (GH #276).
+      # They are headless, build with JUCE_USE_CURL=0, need no display and take
+      # about three seconds between them.
+      #
+      # Gated to the ChordAnalyzer row, which is in the matrix exactly when the
+      # selector picked chord-analyzer or a fleet-wide path. That is one run per
+      # workflow, reusing this job's configure and ccache rather than paying for
+      # a second one. ChordAnalyzerMIDI is a second row over the same sources,
+      # so running there as well would only repeat the work.
+      - name: Chord Analyzer unit and host tests
+        if: matrix.plugin == 'ChordAnalyzer'
+        env:
+          CCACHE_MAXSIZE: 350M
+        run: |
+          set -euo pipefail
+          cmake --build build --config Release \
+            --target ChordAnalyzerTest ChordAnalyzerHostTest -j"$(nproc)"
+          ./build/plugins/chord-analyzer/ChordAnalyzerTest
+          ./build/plugins/chord-analyzer/ChordAnalyzerHostTest
+
+      # lv2info comes from lilv-utils, which is the same lilv the reporting
+      # host (Jalv on Zynthian) loads the bundle with. Stock Ubuntu package,
+      # per the apt policy.
+      - name: Install LV2 tooling
+        if: matrix.plugin == 'ChordAnalyzer'
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        timeout-minutes: 10
+        run: .github/scripts/apt_install.sh lilv-utils
+
+      # The headless LV2 is hand-rolled rather than a juce_add_plugin target, so
+      # the matrix above never builds it, and it shipped with fifteen unresolved
+      # libcurl symbols that no build step could see (GH #284). It links
+      # --no-undefined now, which turns a repeat into a link failure, but the
+      # guard below reads the binary that actually goes into the release zip and
+      # asks lilv the same question a host asks.
+      - name: Chord Analyzer headless LV2 bundle
+        if: matrix.plugin == 'ChordAnalyzer'
+        env:
+          CCACHE_MAXSIZE: 350M
+        run: |
+          set -euo pipefail
+          cmake --build build --config Release \
+            --target ChordAnalyzerHeadless_LV2 -j"$(nproc)"
+
+          bundle=$(find build -type d -name 'Chord Analyzer Headless.lv2' -print -quit)
+          if [ -z "$bundle" ]; then
+            echo "::error::ChordAnalyzerHeadless_LV2 built without producing a bundle"
+            exit 1
+          fi
+          echo "Bundle: $bundle"
+
+          so="$bundle/ChordAnalyzerHeadless.so"
+          if nm -D --undefined-only "$so" | grep -i curl; then
+            echo "::error::headless LV2 references libcurl; JUCE_USE_CURL=0 is missing (#284)"
+            exit 1
+          fi
+          if ldd -r "$so" 2>&1 | grep 'undefined symbol'; then
+            echo "::error::headless LV2 has symbols no host will resolve"
+            exit 1
+          fi
+          echo "No unresolved symbols."
+
+          # Parses both TTL files through serd and loads the binary through
+          # lilv, so a broken manifest or a port the wrapper does not answer
+          # for fails here rather than on a user's rig. LV2_PATH has to be
+          # absolute: lilv builds a file URI out of it and lv2info segfaults on
+          # a relative one.
+          lv2dir=$(cd "$(dirname "$bundle")" && pwd)
+          LV2_PATH="$lv2dir" lv2info \
+            https://dusk-audio.github.io/plugins/chord-analyzer-headless > ports.txt
+          sed -n '/^[[:space:]]*Port [0-9]/,$p' ports.txt
+
+          # Every port the wrapper connects, by symbol and in index order.
+          # This is the TTL half of the contract with PortIndex in
+          # chord-analyzer-lv2.cpp: an index that moves breaks sessions that
+          # already addressed it, and a slot the two sides number differently
+          # shows up as a port whose value never changes.
+          expected="midi_in midi_out key_root key_mode suggestion_level
+                    show_inversions detected_root detected_quality detected_bass
+                    detected_inversion respect_sustain
+                    suggestion_1_root suggestion_1_quality
+                    suggestion_2_root suggestion_2_quality
+                    suggestion_3_root suggestion_3_quality
+                    suggestion_4_root suggestion_4_quality"
+          for symbol in $expected; do
+            if ! grep -qE "Symbol:[[:space:]]+${symbol}$" ports.txt; then
+              echo "::error::headless LV2 is missing port '$symbol'"
+              exit 1
+            fi
+          done
+
+          count=$(grep -cE '^[[:space:]]*Port [0-9]+:' ports.txt)
+          wanted=$(wc -w <<< "$expected")
+          if [ "$count" != "$wanted" ]; then
+            echo "::error::headless LV2 declares $count ports, expected $wanted"
+            exit 1
+          fi
+          echo "All $count ports present."
 
   # plugins/shared/ now carries a substantial platform-specific branch:
   # CrashLog.h pulls in windows.h and compiles a whole SEH filter, CreateFileW

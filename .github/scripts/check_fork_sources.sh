@@ -39,7 +39,7 @@ for f in "${CONFIG_FILES[@]}"; do
 done
 
 # Match the exact host and owner/repo, not a lookalike containing the name.
-# Twin of the function in docker/check_daf_pins.sh; keep the two in step.
+# Twin of the function in docker/check_daf_checkout.sh; keep the two in step.
 github_repo_of() {
     local url="$1" path=""
     case "$url" in
@@ -97,7 +97,7 @@ fi
 if [ "$failed" = "1" ]; then
     echo
     echo "Every framework dependency must come from dusk-audio. See"
-    echo "docker/check_daf_pins.sh for the local equivalent."
+    echo "docker/check_daf_checkout.sh for the local equivalent."
     exit 1
 fi
 

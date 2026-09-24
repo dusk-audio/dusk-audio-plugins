@@ -1,7 +1,7 @@
 ---
 slug: chord-analyzer
-version: 1.2.2
-last_updated: 2026-09-06
+version: 1.3.0
+last_updated: 2026-09-21
 tagline: Real-time MIDI chord detection with theory and inversion display
 ---
 
@@ -99,6 +99,27 @@ Use **Chord Analyzer Headless**; it exposes the detected chord through native LV
 1. Install the bundle from the `chord-analyzer-headless-*.zip` (separate download).
 2. Add **Chord Analyzer Headless** to your MIDI chain before your synth.
 3. The detected root, quality, bass, and inversion appear as live values in your host's plugin parameter view.
+4. Four suggestion slots appear below them, each a root and a quality, carrying the first four chords the plugin's own suggestion list would show for what you are playing.
+
+The headless bundle publishes nineteen ports:
+
+| Index | Symbol | Direction | What it carries |
+|-------|--------|-----------|-----------------|
+| 0 | `midi_in` | in | MIDI, passed through unchanged |
+| 1 | `midi_out` | out | The same MIDI, forwarded to the next plugin |
+| 2 | `key_root` | in | Key Root, C through B |
+| 3 | `key_mode` | in | Key Mode, Major or Minor |
+| 4 | `suggestion_level` | in | Suggestion Level, Basic through All |
+| 5 | `show_inversions` | in | Show Inversions |
+| 6 | `detected_root` | out | Detected Root, `-` when nothing is playing |
+| 7 | `detected_quality` | out | Detected Quality |
+| 8 | `detected_bass` | out | Detected Bass |
+| 9 | `detected_inversion` | out | Detected Inversion |
+| 10 | `respect_sustain` | in | Respect Sustain |
+| 11, 13, 15, 17 | `suggestion_N_root` | out | Root of suggestion N, `-` for an empty slot |
+| 12, 14, 16, 18 | `suggestion_N_quality` | out | Quality of suggestion N |
+
+Suggestion slots use the same value scale as the detection ports, so a host can render all of them with one widget. They follow **Key Root**, **Key Mode** and **Suggestion Level** as well as the notes you play: at Basic Only a chord with three suggestions fills three slots and leaves the fourth reading `-`.
 
 ## Parameter Reference
 
@@ -126,6 +147,8 @@ These parameters expose the detection result for host automation, screen-recordi
 - **Detected Inversion:** Which inversion is currently being played, named after the degree in the bass: `Root`, `1st` (3rd in the bass), `2nd` (5th), `3rd` (7th), `4th` (9th), `5th` (11th), `6th` (13th). A bass note the chord does not contain, such as the F# under `Cadd#11/F#`, reads `Slash` rather than a numbered inversion.
 
 You cannot set these from the host; they update automatically as the plugin detects chords.
+
+The Headless variant adds four suggestion slots to these, as output control ports only. See the port table under **Headless LV2 hosts** above.
 
 ## Tips and Traps
 

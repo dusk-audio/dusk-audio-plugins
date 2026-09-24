@@ -3,8 +3,8 @@ name: Build Sunset Circuits (DAF)
 # Release + CI-debug workflow for the DAF-based Sunset Circuits synth.
 #
 # The DAF ports live outside the JUCE release build graph (build.yml), so they
-# need their own matrix: this checks out dusk-audio/DAF (our fork) + dusk-audio/DAF-Widgets at
-# pinned SHAs and builds plugins/sunset-circuits/daf-plugin (VST3 + CLAP + LV2
+# need their own matrix: this checks out dusk-audio/DAF (our fork) at the commit
+# .github/daf-ref resolves to and builds plugins/sunset-circuits/daf-plugin (VST3 + CLAP + LV2
 # everywhere, plus a notarizable AU on macOS with an auval pass).
 #
 # Triggers:
@@ -35,14 +35,17 @@ on:
       - 'plugins/sunset-circuits/**'
       - 'plugins/shared-daf/**'
       - '.github/workflows/daf-release.yml'
+      # The DAF revision and the scripts that resolve and verify it.
+      - '.github/daf-ref'
+      - '.github/scripts/resolve_daf_ref.sh'
+      - '.github/scripts/verify_daf_checkout.sh'
   workflow_dispatch:
 
-# DAF and DAF-Widgets are pinned to permanent dusk-audio hard forks. They are
-# the sole source of truth for framework changes. Keep SHAs in sync with
-# daf-build.yml, daf-au-test.yml and docker/build_release.sh, and re-run the
-# dispatch matrix before tagging.
+# DAF is the permanent dusk-audio hard fork and the sole source of truth for
+# framework changes. It is NOT pinned: the setup job resolves .github/daf-ref to
+# one commit and every job builds exactly that commit; the release notes record
+# it. See the matching note in daf-build.yml.
 env:
-  DAF_SHA: 2f3a685885007a03e8c3e94d82c3b52653bd9a77
   PLUGIN_DIR: plugins/sunset-circuits/daf-plugin
   SLUG: sunset-circuits
 
@@ -57,6 +60,7 @@ jobs:
       version: ${{ steps.v.outputs.version }}
       is_release: ${{ steps.v.outputs.is_release }}
       prerelease: ${{ steps.v.outputs.prerelease }}
+      daf_sha: ${{ steps.daf.outputs.sha }}
     steps:
       # Needed by the tag<->CMake version guard below, which reads the plugin's
       # CMakeLists.txt.
@@ -67,6 +71,15 @@ jobs:
 
       - name: Check DAF artefact naming standard
         run: ./tests/check_daf_plugin_names.sh
+
+      # Also run here: this workflow's own DAF checkouts are checked by it, and
+      # a PR that only edits this file never triggers daf-build.yml.
+      - name: Test the framework provenance guards
+        run: ./tests/check_provenance_guards.sh
+
+      - name: Resolve DAF revision
+        id: daf
+        run: ./.github/scripts/resolve_daf_ref.sh --github-output
 
       - name: Parse tag
         id: v
@@ -201,9 +214,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: dusk-audio/DAF
-          ref: ${{ env.DAF_SHA }}
+          ref: ${{ needs.setup.outputs.daf_sha }}
           path: DAF
           persist-credentials: false
+
+      - name: Verify DAF revision
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: ./.github/scripts/verify_daf_checkout.sh DAF "${{ needs.setup.outputs.daf_sha }}"
 
       - name: Configure
         working-directory: ${{ env.PLUGIN_DIR }}
@@ -327,9 +345,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: dusk-audio/DAF
-          ref: ${{ env.DAF_SHA }}
+          ref: ${{ needs.setup.outputs.daf_sha }}
           path: DAF
           persist-credentials: false
+
+      - name: Verify DAF revision
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: ./.github/scripts/verify_daf_checkout.sh DAF "${{ needs.setup.outputs.daf_sha }}"
 
       - name: Configure
         working-directory: ${{ env.PLUGIN_DIR }}
@@ -391,9 +414,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: dusk-audio/DAF
-          ref: ${{ env.DAF_SHA }}
+          ref: ${{ needs.setup.outputs.daf_sha }}
           path: DAF
           persist-credentials: false
+
+      - name: Verify DAF revision
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: ./.github/scripts/verify_daf_checkout.sh DAF "${{ needs.setup.outputs.daf_sha }}"
 
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
@@ -429,16 +457,16 @@ jobs:
       - name: Patch DAF-Widgets for MSVC
         shell: pwsh
         run: |
-          # DAF-Widgets' DearImGui.cpp used the GNU 'Elvis operator' (a ?: b), which
-          # MSVC does not accept (C2059). The fork corrected it, so at the current
-          # pin the rewrite below matches nothing and the assertion carries the
-          # step; both halves stay because the pin has already moved back and forth
-          # across that correction once, and a future bump could reintroduce the
-          # construct. Deterministic either way (fresh pinned checkout each run).
+          # DAF's widgets/imgui/DearImGui.cpp used the GNU 'Elvis operator' (a ?: b), which
+          # MSVC does not accept (C2059). The fork corrected it, so on current DAF
+          # main the rewrite below matches nothing and the assertion carries the
+          # step; both halves stay because DAF has already moved back and forth
+          # across that correction once, and a future change could reintroduce
+          # the construct. Each run patches a fresh checkout of the resolved commit.
           #
           # The assertion is the part that matters: it fails by name instead of as
           # a C2059 buried a hundred lines into cl's output. DearImGui.cpp is the
-          # only DAF-Widgets TU our plugins compile (DUSK_DAF_UI_SOURCES in
+          # only DAF widgets TU our plugins compile (DUSK_DAF_UI_SOURCES in
           # shared-daf/cmake/DuskDafPlugin.cmake).
           $f = "${{ github.workspace }}/DAF/widgets/imgui/DearImGui.cpp"
           $c = [System.IO.File]::ReadAllText($f)
@@ -446,7 +474,7 @@ jobs:
           $c = $c.Replace('self->getHeight() ?: 480 * scaleFactor', 'self->getHeight() ? self->getHeight() : 480 * scaleFactor')
           [System.IO.File]::WriteAllText($f, $c)
           if ($c.Contains('?:')) {
-            Write-Error "DAF-Widgets DearImGui.cpp still contains the GNU Elvis operator (a ?: b) after patching, which MSVC rejects. The rewrite above no longer matches the pinned source."
+            Write-Error "DAF widgets/imgui/DearImGui.cpp still contains the GNU Elvis operator (a ?: b) after patching, which MSVC rejects. The rewrite above no longer matches the DAF source being built."
             exit 1
           }
           Write-Host "Patched DearImGui.cpp"
@@ -562,9 +590,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: dusk-audio/DAF
-          ref: ${{ env.DAF_SHA }}
+          ref: ${{ needs.setup.outputs.daf_sha }}
           path: DAF
           persist-credentials: false
+
+      - name: Verify DAF revision
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: ./.github/scripts/verify_daf_checkout.sh DAF "${{ needs.setup.outputs.daf_sha }}"
 
       - name: Install Ninja
         run: brew install ninja
@@ -756,9 +789,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: dusk-audio/DAF
-          ref: ${{ env.DAF_SHA }}
+          ref: ${{ needs.setup.outputs.daf_sha }}
           path: DAF
           persist-credentials: false
+
+      - name: Verify DAF revision
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: ./.github/scripts/verify_daf_checkout.sh DAF "${{ needs.setup.outputs.daf_sha }}"
 
       - name: Configure
         working-directory: ${{ env.PLUGIN_DIR }}
@@ -926,6 +964,8 @@ jobs:
           path: artifacts
 
       - name: Assemble release notes
+        env:
+          DAF_SHA: ${{ needs.setup.outputs.daf_sha }}
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
           VERSION="${TAG#sunset-circuits-v}"
@@ -944,6 +984,8 @@ jobs:
             echo "**Windows:** copy \`.vst3\` to \`C:\\Program Files\\Common Files\\VST3\\\`, \`.clap\` to \`C:\\Program Files\\Common Files\\CLAP\\\`."
             echo ""
             echo "**macOS:** copy \`.vst3\` to \`~/Library/Audio/Plug-Ins/VST3/\`, \`.component\` to \`~/Library/Audio/Plug-Ins/Components/\`, \`.clap\` to \`~/Library/Audio/Plug-Ins/CLAP/\`."
+            echo ""
+            echo "<sub>Built with dusk-audio/DAF ${DAF_SHA}.</sub>"
           } > release_body.md
           echo "=== staged zips ==="; find artifacts -name '*.zip'
 

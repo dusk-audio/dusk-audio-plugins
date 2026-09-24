@@ -809,6 +809,48 @@ static void testNoFifthAndDyads()
     // parenthesis, so it never reads C7(no5)(13)
     check("C E Bb A = C7(no5,13)", analyzeNotes(a, {60, 64, 70, 81}).name == "C7(no5,13)");
 
+    // Issue #277: a no-fifth ninth shell voiced over its own seventh. The
+    // three-tone add9(no5) rooted on that seventh explains three of the four
+    // tones, and findRoot's bass bonus used to buy it the half point it was
+    // short, so Bb2 C4 E4 D5 came out as A#add9(no5,#11) with the E demoted to
+    // a #11 of a chord nobody played. It is a C9 shell over its seventh, and
+    // the same tones read as a plain C9 the moment a fifth joins them.
+    auto ninthShell = analyzeNotes(a, {46, 60, 64, 74});
+    check("Bb2 C4 E4 D5 = C9(no5) over its 7th",
+          ninthShell.isValid && ninthShell.quality == ChordQuality::Dominant9
+           && ninthShell.rootNote == 0 && ninthShell.bassNote == 10
+           && ninthShell.name == "C9(no5)" && ninthShell.extensions == "/A#"
+           && ninthShell.inversion == 3);
+    check("adding the fifth makes the same voicing a plain C9",
+          analyzeNotes(a, {46, 60, 64, 67, 74}).name == "C9");
+
+    // ...and the minor and major shells voiced the same way, at all twelve
+    // roots. What this fixes is an ordering between two pattern priorities, so
+    // it either holds for every transposition or for none.
+    bool allNinthShells = true;
+    for (int r = 0; r < 12; ++r)
+    {
+        const juce::String root       = ChordAnalyzer::pitchClassToName(r);
+        const juce::String minorSev   = ChordAnalyzer::pitchClassToName((r + 10) % 12);
+        const juce::String majorSev   = ChordAnalyzer::pitchClassToName((r + 11) % 12);
+
+        const auto dom = analyzeNotes(a, {46 + r, 60 + r, 64 + r, 74 + r});
+        if (dom.name != root + "9(no5)" || dom.extensions != "/" + minorSev
+             || dom.inversion != 3)
+            allNinthShells = false;
+
+        const auto min = analyzeNotes(a, {46 + r, 60 + r, 63 + r, 74 + r});
+        if (min.name != root + "m9(no5)" || min.extensions != "/" + minorSev
+             || min.inversion != 3)
+            allNinthShells = false;
+
+        const auto maj = analyzeNotes(a, {47 + r, 60 + r, 64 + r, 74 + r});
+        if (maj.name != root + "maj9(no5)" || maj.extensions != "/" + majorSev
+             || maj.inversion != 3)
+            allNinthShells = false;
+    }
+    check("all 12 roots: a ninth shell over its 7th names from the root", allNinthShells);
+
     // Two notes are an interval, not a chord
     check("C E = M3 dyad",       analyzeNotes(a, {60, 64}).name == "C+E (M3)");
     check("C F# = tritone dyad", analyzeNotes(a, {60, 66}).name == "C+F# (tritone)");
@@ -828,6 +870,145 @@ static void testNoFifthAndDyads()
     // The two dyads that do imply a chord keep their chord names
     check("C G is still C5",   analyzeNotes(a, {60, 67}).name == "C5");
     check("C F is still F5/C", analyzeNotes(a, {60, 65}).name == "F5");
+}
+
+// =====================================================================
+// 9g. getSuggestionFacts: the allocation-free suggestion query (issue #283)
+//
+// The headless LV2 wrapper publishes suggestions on output control ports and
+// calls this from run(), which is the audio thread. It has to agree with
+// getSuggestions - same count, same order, same chords - because the two are
+// the same list, and it has to respect a buffer smaller than that list.
+// =====================================================================
+static void testSuggestionFacts()
+{
+    std::cout << "\n--- Suggestion facts (issue #283) ---\n";
+    ChordAnalyzer a;
+
+    const SuggestionCategory levels[3] = { SuggestionCategory::Basic,
+                                           SuggestionCategory::Intermediate,
+                                           SuggestionCategory::Advanced };
+
+    // A chord per scale degree, plus a dominant 7th, which is the one quality
+    // that adds a suggestion of its own (the tritone substitution).
+    const std::vector<std::vector<int>> voicings = {
+        { 60, 64, 67 },        // C
+        { 62, 65, 69 },        // Dm
+        { 64, 67, 71 },        // Em
+        { 65, 69, 72 },        // F
+        { 67, 71, 74 },        // G
+        { 55, 59, 62, 65 },    // G7
+        { 69, 72, 76 },        // Am
+        { 71, 74, 77 },        // Bdim
+        { 60, 63, 66, 69 },    // Cdim7, chromatic in most keys
+    };
+
+    int compared = 0, mismatches = 0, longest = 0;
+    juce::String firstMismatch;
+
+    for (int key = 0; key < 12; ++key)
+    {
+        for (int minor = 0; minor < 2; ++minor)
+        {
+            a.setKey(key, minor != 0);
+
+            for (const auto& notes : voicings)
+            {
+                const ChordInfo  chord = a.analyze(notes);
+                const ChordFacts facts = a.analyzeFacts(notes.data(), (int) notes.size());
+
+                for (int lv = 0; lv < 3; ++lv)
+                {
+                    const std::vector<ChordSuggestion> expected = a.getSuggestions(chord, levels[lv]);
+
+                    SuggestionFacts got[ChordAnalyzer::maxSuggestions];
+                    const int count = a.getSuggestionFacts(facts, levels[lv], got,
+                                                           ChordAnalyzer::maxSuggestions);
+                    ++compared;
+                    longest = std::max(longest, count);
+
+                    auto fail = [&](const juce::String& why)
+                    {
+                        ++mismatches;
+                        if (firstMismatch.isEmpty())
+                            firstMismatch = "key " + juce::String(key) + (minor ? "m" : "M")
+                                          + " " + chord.name + " level " + juce::String(lv)
+                                          + ": " + why;
+                    };
+
+                    if (count != (int) expected.size())
+                    {
+                        fail("count " + juce::String(count) + " vs "
+                             + juce::String((int) expected.size()));
+                        continue;
+                    }
+
+                    for (int i = 0; i < count; ++i)
+                    {
+                        // The name carries the root and the quality, so it is
+                        // an independent statement of what the numbers say:
+                        // the leading note name must be the root pitch class,
+                        // and the rest must be that quality's suffix.
+                        const juce::String name = expected[(size_t) i].chordName;
+                        const juce::String suffix = ChordAnalyzer::qualityToSuffix(got[i].quality);
+
+                        if (ChordAnalyzer::nameToNote(name) != got[i].rootNote)
+                            fail("\"" + name + "\" is not rooted on pitch class "
+                                 + juce::String(got[i].rootNote));
+                        else if (got[i].quality != ChordQuality::Unknown && ! name.endsWith(suffix))
+                            fail("\"" + name + "\" does not end in \"" + suffix + "\"");
+                        else if (got[i].category != expected[(size_t) i].category)
+                            fail("category differs for \"" + name + "\"");
+                        else if (got[i].commonality != expected[(size_t) i].commonality)
+                            fail("commonality differs for \"" + name + "\"");
+                    }
+                }
+            }
+        }
+    }
+
+    std::cout << "       (" << compared << " key/chord/level combinations, longest list "
+              << longest << " of " << ChordAnalyzer::maxSuggestions << ")\n";
+
+    if (! firstMismatch.isEmpty())
+        std::cout << "       first mismatch: " << firstMismatch << "\n";
+
+    check("getSuggestionFacts agrees with getSuggestions", mismatches == 0);
+    check("no list outruns maxSuggestions", longest <= ChordAnalyzer::maxSuggestions);
+
+    // A buffer smaller than the list truncates rather than overruns. The LV2
+    // wrapper passes four, and the generator can produce ten.
+    a.setKey(0, false);
+    const std::vector<int> tonic { 60, 64, 67 };
+    const ChordFacts facts = a.analyzeFacts(tonic.data(), (int) tonic.size());
+
+    SuggestionFacts four[4];
+    SuggestionFacts guarded[5];
+    guarded[4].rootNote = -99;
+    const int full = a.getSuggestionFacts(facts, SuggestionCategory::Advanced, guarded, 4);
+
+    check("a short buffer returns what fits", a.getSuggestionFacts(facts,
+              SuggestionCategory::Advanced, four, 4) == 4);
+    check("a short buffer writes nothing past its end", full == 4 && guarded[4].rootNote == -99);
+    check("the first four are the first four",
+          four[0].rootNote == guarded[0].rootNote && four[3].rootNote == guarded[3].rootNote);
+
+    // C major in C major: IV, V, vi are the basic suggestions, so the first
+    // three slots are F, G and Am whatever the level.
+    check("C in C major suggests F, G then Am",
+          four[0].rootNote == 5 && four[0].quality == ChordQuality::Major
+           && four[1].rootNote == 7 && four[1].quality == ChordQuality::Major
+           && four[2].rootNote == 9 && four[2].quality == ChordQuality::Minor);
+
+    // Degenerate inputs must be safe: the wrapper calls this every time the
+    // key moves, including with no chord sounding.
+    ChordFacts nothing;
+    check("no chord yields no suggestions",
+          a.getSuggestionFacts(nothing, SuggestionCategory::Advanced, four, 4) == 0);
+    check("a null buffer is safe",
+          a.getSuggestionFacts(facts, SuggestionCategory::Advanced, nullptr, 4) == 0);
+    check("a zero-length buffer is safe",
+          a.getSuggestionFacts(facts, SuggestionCategory::Advanced, four, 0) == 0);
 }
 
 // =====================================================================
@@ -1061,6 +1242,7 @@ int main()
     testSixthChords();
     testAnalyzeFacts();
     testNoFifthAndDyads();
+    testSuggestionFacts();
     testUtilities();
     testDetectedChordCodec();
 

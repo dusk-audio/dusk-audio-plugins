@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.15)
 include(${CMAKE_SOURCE_DIR}/cmake/PluginVersion.cmake)
 
 # Get version from git tag or CI environment (fallback to default version)
-set(CHORDANALYZER_DEFAULT_VERSION "1.2.2")
+set(CHORDANALYZER_DEFAULT_VERSION "1.3.0")
 get_plugin_version("chord-analyzer" CHORDANALYZER_VERSION)
 if(NOT CHORDANALYZER_VERSION OR CHORDANALYZER_VERSION STREQUAL "0.0.0")
     set(CHORDANALYZER_VERSION ${CHORDANALYZER_DEFAULT_VERSION})
@@ -284,9 +284,28 @@ if("LV2" IN_LIST PLUGIN_FORMATS)
         "${LV2_SDK_DIR}"
     )
 
+    # juce_core compiles its networking (URL, WebInputStream) against libcurl
+    # unless JUCE_USE_CURL is off. Nothing here links curl, so without this the
+    # module carries fifteen unresolved curl_* symbols and Jalv refuses to load
+    # it on Zynthian (issue #284). The three other chord-analyzer targets have
+    # carried this define since they were written; only this one was missed.
+    target_compile_definitions(ChordAnalyzerHeadless_LV2 PRIVATE
+        JUCE_USE_CURL=0
+        JUCE_WEB_BROWSER=0
+    )
+
     target_link_libraries(ChordAnalyzerHeadless_LV2 PRIVATE
         juce::juce_core
     )
+
+    # Make the loader's complaint a link error instead. A plugin module resolves
+    # nothing from its host, so every symbol it references must be satisfied at
+    # link time; without this the linker is happy to emit a module that only
+    # fails once a host tries to dlopen it, which is exactly how #284 shipped.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_link_options(ChordAnalyzerHeadless_LV2 PRIVATE
+            LINKER:--no-undefined)
+    endif()
 
     set_target_properties(ChordAnalyzerHeadless_LV2 PROPERTIES
         PREFIX ""

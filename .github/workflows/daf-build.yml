@@ -1,23 +1,24 @@
 name: DAF Plugins (build + release)
 
-# One reusable pipeline for ALL DAF (DISTRHO Plugin Framework) plugins. Replaces
-# the per-plugin ad-hoc DAF workflows (tapemachine2-release.yml, daf-au-test.yml).
+# One reusable pipeline for the DAF (Dusk Audio Framework) effect plugins. It
+# replaced the per-plugin ad-hoc tapemachine2-release.yml.
 #
 # DAF plugins are NOT JUCE — each is built by its own standalone CMake under
-# plugins/<name>/daf-plugin, with DAF + DAF-Widgets checked out next to the repo.
+# plugins/<name>/daf-plugin, with DAF (widgets included) checked out next to the repo.
 # They do not go through the JUCE pipeline in build.yml.
 #
 # A single registry (see the "plan" step) drives a dynamic matrix:
 #   - PR touching plugin-local daf-plugin/core   -> build the touched plugin(s).
-#   - PR touching shared-daf, this workflow or its gate scripts -> build ALL DAF
-#     plugins. This is the shared-code safety net: shared-daf/ is compiled into
-#     every DAF plugin, so a change there is verified against all of them.
+#   - PR touching shared-daf, this workflow, its gate scripts or the DAF revision
+#     (.github/daf-ref) -> build ALL DAF plugins. This is the shared-code safety
+#     net: shared-daf/ and DAF are compiled into every DAF plugin, so a change
+#     there is verified against all of them.
 #   - workflow_dispatch                          -> build one (input) or all.
 #   - push tag '<plugin>-v*'                      -> build + release THAT plugin.
 #
-# This is the SINGLE pipeline for all DAF plugins. It supersedes the old
-# per-plugin DAF workflows (tapemachine2-release.yml, daf-au-test.yml) — both
-# deleted. TapeMachine 2 (DAF) is the main plugin going forward; the original
+# This is the SINGLE pipeline for the DAF effect plugins. It superseded the old
+# per-plugin tapemachine2-release.yml; Sunset Circuits keeps daf-release.yml and
+# the Tape Echo AU smoke test keeps daf-au-test.yml. TapeMachine 2 (DAF) is the main plugin going forward; the original
 # JUCE TapeMachine stays on build.yml for maintenance releases only ('tapemachine-v*').
 # Tip: before tagging a release, run this via workflow_dispatch (build-only, no
 # release) once to smoke the pipeline for that plugin.
@@ -55,19 +56,22 @@ on:
       # The gate scripts this workflow runs. Without this a PR that only edits
       # daf_clap_validate.py never runs the gate it just changed.
       - '.github/scripts/**'
+      # The DAF revision every plugin is built against.
+      - '.github/daf-ref'
 
 # DAF is the single hard-fork dependency under dusk-audio. Its widgets/ and
 # dgl/src/pugl-upstream/ trees are included in the same revision; archived
 # component repositories and submodules are not used. check_fork_sources.sh
 # enforces this layout and provenance.
-# To advance DAF: land changes on fork main (local checkout DAF-monorepo), re-run
-# clap-validator and pluginval against the rebuilt plugins, push to
-# dusk-audio/DAF, THEN bump DAF_REF. Keep SHAs in sync with daf-release.yml,
-# daf-au-test.yml and docker/build_release.sh. Bump deliberately, and keep local
-# checkouts on the pinned SHAs (docker/check_daf_pins.sh) so a hand-tested build
-# is the one CI produces.
+# DAF is NOT pinned: every build follows the ref in .github/daf-ref (normally
+# main), the single place the framework revision is set for CI, Docker and local
+# checks. The plan job resolves it to one commit (.github/scripts/resolve_daf_ref.sh)
+# and every build job checks out exactly that commit, so a merge to DAF main
+# during a run cannot mix two framework revisions into one release. The resolved
+# commit is printed in the job summary and written into the release notes. To
+# hold builds on a known revision (e.g. while DAF main is broken), put its full
+# SHA in .github/daf-ref. Local builds: docker/check_daf_checkout.sh.
 env:
-  DAF_REF: 2f3a685885007a03e8c3e94d82c3b52653bd9a77
   AU_TYPE: aufx
   AU_MANUFACTURER: Dusk
 
@@ -87,6 +91,7 @@ jobs:
       rel_asset: ${{ steps.plan.outputs.rel_asset }}
       rel_display: ${{ steps.plan.outputs.rel_display }}
       rel_base: ${{ steps.plan.outputs.rel_base }}
+      daf_sha: ${{ steps.daf.outputs.sha }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -103,6 +108,11 @@ jobs:
       - name: Test the framework provenance guards
         shell: bash
         run: ./tests/check_provenance_guards.sh
+
+      - name: Resolve DAF revision
+        id: daf
+        shell: bash
+        run: ./.github/scripts/resolve_daf_ref.sh --github-output
 
       - name: Resolve build set + release info
         id: plan
@@ -177,7 +187,10 @@ jobs:
             BUILD_ALL=false
             while IFS= read -r changed_path; do
               case "$changed_path" in
-                plugins/shared-daf/*|.github/workflows/daf-build.yml|.github/scripts/*)
+                # .github/daf-ref and the scripts that resolve and verify it change
+                # what every plugin is built against, so they build everything, as
+                # shared code does. (daf-provenance.yml tests the guards themselves.)
+                plugins/shared-daf/*|.github/workflows/daf-build.yml|.github/scripts/*|.github/daf-ref)
                   BUILD_ALL=true
                   break
                   ;;
@@ -289,9 +302,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: dusk-audio/DAF
-          ref: ${{ env.DAF_REF }}
+          ref: ${{ needs.plan.outputs.daf_sha }}
           path: DAF
           persist-credentials: false
+
+      - name: Verify DAF revision
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: ./.github/scripts/verify_daf_checkout.sh DAF "${{ needs.plan.outputs.daf_sha }}"
 
       # Check the DAF origin and its tracked widget/pugl trees. This gates the
       # expensive build instead of reporting after it.
@@ -557,9 +575,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: dusk-audio/DAF
-          ref: ${{ env.DAF_REF }}
+          ref: ${{ needs.plan.outputs.daf_sha }}
           path: DAF
           persist-credentials: false
+
+      - name: Verify DAF revision
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: ./.github/scripts/verify_daf_checkout.sh DAF "${{ needs.plan.outputs.daf_sha }}"
 
       - name: Install Linux dependencies
         env:
@@ -696,9 +719,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: dusk-audio/DAF
-          ref: ${{ env.DAF_REF }}
+          ref: ${{ needs.plan.outputs.daf_sha }}
           path: DAF
           persist-credentials: false
+
+      - name: Verify DAF revision
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: ./.github/scripts/verify_daf_checkout.sh DAF "${{ needs.plan.outputs.daf_sha }}"
 
       - name: Install Ninja
         run: brew install ninja
@@ -932,9 +960,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: dusk-audio/DAF
-          ref: ${{ env.DAF_REF }}
+          ref: ${{ needs.plan.outputs.daf_sha }}
           path: DAF
           persist-credentials: false
+
+      - name: Verify DAF revision
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: ./.github/scripts/verify_daf_checkout.sh DAF "${{ needs.plan.outputs.daf_sha }}"
 
       - name: Patch DAF sources for MSVC / Windows
         shell: pwsh
@@ -948,10 +981,10 @@ jobs:
           # webview_choc_* symbols unconditionally, so an empty stub breaks the link (LNK2019).
           '// intentionally empty on Windows CI: unused by ImGui plugins (see workflow note)' `
             | Set-Content "$env:GITHUB_WORKSPACE/DAF/dgl/src/NanoVG.cpp"
-          # (2) DAF-Widgets' DearImGui.cpp (the ImGui backend we DO compile) used the GCC/Clang
+          # (2) DAF's widgets/imgui/DearImGui.cpp (the ImGui backend we DO compile) used the GCC/Clang
           # "Elvis operator" (a ?: b), which MSVC rejects (C2059). The fork corrected it, so the
-          # rewrite matches nothing at the current pin and the assertion is what carries this;
-          # both stay because the pin has crossed that correction in each direction once already.
+          # rewrite matches nothing on current DAF main and the assertion is what carries this;
+          # both stay because DAF has crossed that correction in each direction once already.
           # getWidth()/getHeight() are side-effect-free getters, so the rewrite is safe whenever
           # it does match.
           $f = "$env:GITHUB_WORKSPACE/DAF/widgets/imgui/DearImGui.cpp"
@@ -960,7 +993,7 @@ jobs:
             -replace 'self->getHeight\(\) \?: 480 \* scaleFactor', 'self->getHeight() ? self->getHeight() : 480 * scaleFactor' `
             | Set-Content -NoNewline $f
           if ((Get-Content -Raw $f).Contains('?:')) {
-            Write-Error "DAF-Widgets DearImGui.cpp still contains the GNU Elvis operator (a ?: b) after patching, which MSVC rejects. The rewrite above no longer matches the pinned source."
+            Write-Error "DAF widgets/imgui/DearImGui.cpp still contains the GNU Elvis operator (a ?: b) after patching, which MSVC rejects. The rewrite above no longer matches the DAF source being built."
             exit 1
           }
 
@@ -1032,6 +1065,7 @@ jobs:
       DISPLAY: ${{ needs.plan.outputs.rel_display }}
       ASSET: ${{ needs.plan.outputs.rel_asset }}
       BASE: ${{ needs.plan.outputs.rel_base }}
+      DAF_SHA: ${{ needs.plan.outputs.daf_sha }}
       SIGNED: ${{ vars.MACOS_SIGNING_ENABLED == 'true' }}
     steps:
       - name: Checkout repository (for tag message)
@@ -1079,6 +1113,8 @@ jobs:
             else
               echo "> macOS AU, VST3, and CLAP bundles are ad-hoc signed, as is the LV2 bundle's dylib. They are **not** Developer ID signed and **not** notarized, so on first launch macOS Gatekeeper will warn; either right-click the plugin and choose **Open**, or clear the quarantine flag: \`xattr -dr com.apple.quarantine <bundle>\`."
             fi
+            echo ""
+            echo "<sub>Built with dusk-audio/DAF ${DAF_SHA}.</sub>"
           } > release_body.md
           echo "=== collected artifacts ==="
           find dist -type f -name '*.zip'
