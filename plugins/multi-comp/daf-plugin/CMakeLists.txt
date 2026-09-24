@@ -34,6 +34,58 @@ if(NOT CMAKE_CROSSCOMPILING)
   target_compile_features(MultiCompCoreTest PRIVATE cxx_std_17)
   add_test(NAME MultiCompCore COMMAND MultiCompCoreTest)
 
+  add_executable(MultiCompBusControlTest ../core/tests/MultiCompBusControlTests.cpp ../core/MultiCompDSP.cpp)
+  target_include_directories(MultiCompBusControlTest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../core" "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+  target_compile_features(MultiCompBusControlTest PRIVATE cxx_std_17)
+  add_test(NAME MultiCompBusControl COMMAND MultiCompBusControlTest)
+
+  add_executable(MultiCompBusDynamicsTest ../core/tests/MultiCompBusDynamicsTests.cpp ../core/MultiCompDSP.cpp)
+  target_include_directories(MultiCompBusDynamicsTest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../core" "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+  target_compile_features(MultiCompBusDynamicsTest PRIVATE cxx_std_17)
+  add_test(NAME MultiCompBusDynamics COMMAND MultiCompBusDynamicsTest)
+
+  add_executable(MultiCompBusFrequencyTest ../core/tests/MultiCompBusFrequencyTests.cpp ../core/MultiCompDSP.cpp)
+  target_include_directories(MultiCompBusFrequencyTest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../core" "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+  target_compile_features(MultiCompBusFrequencyTest PRIVATE cxx_std_17)
+  add_test(NAME MultiCompBusFrequency COMMAND MultiCompBusFrequencyTest)
+
+  add_executable(MultiCompBusProgrammeTest ../core/tests/MultiCompBusProgrammeTests.cpp ../core/MultiCompDSP.cpp)
+  target_include_directories(MultiCompBusProgrammeTest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../core" "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+  target_compile_features(MultiCompBusProgrammeTest PRIVATE cxx_std_17)
+  add_test(NAME MultiCompBusProgramme COMMAND MultiCompBusProgrammeTest)
+
+  add_executable(MultiCompBusMeterTest ../core/tests/MultiCompBusMeterTests.cpp ../core/MultiCompDSP.cpp)
+  target_include_directories(MultiCompBusMeterTest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../core" "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+  target_compile_features(MultiCompBusMeterTest PRIVATE cxx_std_17)
+  add_test(NAME MultiCompBusMeter COMMAND MultiCompBusMeterTest)
+
+  add_executable(MultiCompBusCompletionTest ../core/tests/MultiCompBusCompletionTests.cpp ../core/MultiCompDSP.cpp)
+  target_include_directories(MultiCompBusCompletionTest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../core" "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+  target_compile_features(MultiCompBusCompletionTest PRIVATE cxx_std_17)
+  add_test(NAME MultiCompBusCompletion COMMAND MultiCompBusCompletionTest)
+
+  # One executable, two independently reported gates: the dry/wet mix and the
+  # compressed output ceiling share the native programme and scoring helpers.
+  # Pins the known, unfixed BUS drive-law divergence so it cannot grow silently.
+  # This is a witness, not a parity gate: see the header of the test source.
+  add_executable(MultiCompBusWitnessTest ../core/tests/MultiCompBusWitnessTests.cpp ../core/MultiCompDSP.cpp)
+  target_include_directories(MultiCompBusWitnessTest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../core" "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+  target_compile_features(MultiCompBusWitnessTest PRIVATE cxx_std_17)
+  add_test(NAME MultiCompBusWitness COMMAND MultiCompBusWitnessTest)
+
+  add_executable(MultiCompBusOutputTest ../core/tests/MultiCompBusOutputTests.cpp ../core/MultiCompDSP.cpp)
+  target_include_directories(MultiCompBusOutputTest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../core" "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+  target_compile_features(MultiCompBusOutputTest PRIVATE cxx_std_17)
+  add_test(NAME MultiCompBusMix COMMAND MultiCompBusOutputTest --mix)
+  add_test(NAME MultiCompBusCeiling COMMAND MultiCompBusOutputTest --ceiling)
+
+  # One inf/NaN sample, or a finite burst that overflows a stage, must not latch:
+  # every mode stays finite and recovers, from the main input and the sidechain.
+  add_executable(MultiCompNonFiniteTest ../core/tests/MultiCompNonFiniteTests.cpp ../core/MultiCompDSP.cpp)
+  target_include_directories(MultiCompNonFiniteTest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../core" "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+  target_compile_features(MultiCompNonFiniteTest PRIVATE cxx_std_17)
+  add_test(NAME MultiCompNonFinite COMMAND MultiCompNonFiniteTest)
+
   add_executable(MultiCompPluginLayerTest
     MultiCompPluginLayerTests.cpp)
   target_include_directories(MultiCompPluginLayerTest PRIVATE
@@ -42,6 +94,18 @@ if(NOT CMAKE_CROSSCOMPILING)
     "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
   target_compile_features(MultiCompPluginLayerTest PRIVATE cxx_std_17)
   add_test(NAME MultiCompPluginLayer COMMAND MultiCompPluginLayerTest)
+
+  add_executable(MultiCompVintageControlTest MultiCompVintageControlTests.cpp)
+  target_include_directories(MultiCompVintageControlTest PRIVATE ${DUSK_DAF_INCLUDE_DIRS})
+  add_test(NAME MultiCompVintageControls COMMAND MultiCompVintageControlTest)
+
+  add_executable(MultiCompMeterRenderTest MultiCompMeterRenderTests.cpp
+    "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui.cpp"
+    "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_draw.cpp"
+    "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_tables.cpp"
+    "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_widgets.cpp")
+  target_include_directories(MultiCompMeterRenderTest PRIVATE ${DUSK_DAF_INCLUDE_DIRS})
+  add_test(NAME MultiCompMeterRender COMMAND MultiCompMeterRenderTest)
 
   if(APPLE)
     add_executable(MultiCompAUTest MultiCompAUTests.cpp)

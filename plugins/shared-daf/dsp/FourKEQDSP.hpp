@@ -6,7 +6,7 @@
 //
 // Reference-calibrated DAF implementation. Isolated band/filter laws, shared
 // LF/LM and HM/HF stage interactions, native nonlinear residue, and overload
-// rails are fitted from hosted SSL E-channel measurements. The EQ and
+// rails are fitted from hosted British console E-series channel measurements. The EQ and
 // saturation chain can be oversampled; below kReferenceDesignRate the EQ
 // sections are matched-magnitude designs, so no rate cramps them.
 //

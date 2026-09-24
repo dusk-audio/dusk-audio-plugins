@@ -140,7 +140,8 @@ tests/test_linear_phase
 tests/velvet90_match/
 
 # DuskAmp DSP comparison runtime artifacts (regenerated locally per developer)
-# Scripts, schematics, and committed baseline reports under results/ stay tracked.
+# Scripts and schematics stay tracked; results/ is local-only.
+plugins/DuskAmp/tests/comparison/results/
 plugins/DuskAmp/tests/comparison/dsp_test_output/
 plugins/DuskAmp/tests/comparison/signals/
 
@@ -174,3 +175,8 @@ plugins/neural-amp/
 
 # Sunset Circuits (multi-synth) core test build artifacts
 plugins/sunset-circuits/core/tests/build/
+
+# Local AI-assistant configuration (kept on disk, never published)
+CLAUDE.md
+AGENTS.md
+.agents/

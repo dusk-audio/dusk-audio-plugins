@@ -3,6 +3,7 @@
 #pragma once
 
 #include "MultiCompModes.hpp"
+#include "MultiCompBusMeter.hpp"
 #include "MultiCompParams.hpp"
 #include "MultiCompDbxLaw.hpp"
 #include "MultiCompAutoGain.hpp"
@@ -41,7 +42,9 @@ public:
         DigitalThreshold, DigitalRatio, DigitalKnee, DigitalAttack, DigitalRelease, DigitalLookahead, DigitalMix, DigitalOutput, DigitalAdaptive,
         Crossover1, Crossover2, Crossover3, EnvelopeCurve, GlobalSidechainListen,
         MbMix, MbOutput, NoiseEnable, SaturationMode, ScLowFreq, ScLowGain,
-        ScHighFreq, ScHighGain, StereoLinkMode
+        ScHighFreq, ScHighGain, StereoLinkMode,
+        BusHeadroom, BusFadeRate, BusFade,
+        None // Host-persisted display controls have no audio parameter binding.
     };
     enum class MultibandParameter { Threshold, Ratio, Attack, Release, Makeup, Bypass, Solo, Enabled };
 
@@ -63,6 +66,8 @@ public:
 
     MultiCompParameterState& parameterState() noexcept { return params; }
     const MultiCompParameterState& parameterState() const noexcept { return params; }
+    float getBusMeterReading() const noexcept { return busMeterReading.load(std::memory_order_relaxed); }
+    float getBusFadePosition() const noexcept { return busFadeMeter.load(std::memory_order_relaxed); }
 
     float getBandGainReduction(int band) const noexcept
     {
@@ -94,6 +99,15 @@ private:
     static constexpr int kCrossoverRampMs = 20;
     static constexpr int kCrossoverCoefficientInterval = 8;
 
+    // Replaces any non-finite sample with silence, into `scratch`, and returns
+    // the channel pointers to use downstream. Returns `source` untouched when
+    // the block is clean, so normal audio is processed through the host's own
+    // buffers and is not merely copied bit-exactly -- it is not copied at all.
+    const float* const* sanitizeChannels(
+        const float* const* source,
+        std::array<std::vector<float>, kMaxChannels>& scratch,
+        const float* (&pointers)[kMaxChannels], int nCh, int nSamples) noexcept;
+
     void processRange(const float* const* in, const float* const* sidechain,
                       float* const* out, int nCh, int nSamples,
                       bool externalSidechain, bool autoMakeup,
@@ -111,8 +125,11 @@ private:
     void rebuildMultibandTopology(std::uint8_t mask) noexcept;
     DuskCrossover& crossoverForBoundary(int boundary, int channel, bool sidechain) noexcept;
     void updateMeters(float inPeak, float* const* out, int nCh, int nSamples);
-    void processLatencyHistory(const float* const* in, float* const* out, int nCh,
-                               int nSamples, int delay, bool emit) noexcept;
+    // Advances the raw-input history and leaves the latency-aligned dry in
+    // `bypassDry`. Never writes the output: `out` may alias `in`, and the
+    // stages that follow still have to read the untouched input.
+    void processLatencyHistory(const float* const* in, int nCh,
+                               int nSamples, int delay) noexcept;
     void processSidechainListenHistory(const float* const* sidechain, int nCh,
                                        int nSamples, int delay) noexcept;
     void resetAutoGainMeasurement() noexcept;
@@ -123,17 +140,28 @@ private:
                               float digitalLookaheadMs) const noexcept;
 
     MultiCompParameterState params;
+    float busFadeControl = 0.0f;
+    std::atomic<float> busFadeMeter{0.0f};
     MultiCompParameterState modeParams;
     MultiCompModes modes;
     double sampleRate = 48000.0;
     int maxBlock = 512;
     std::array<MultiCompAntiAliasing, kMaxChannels> oversamplers;
-    MultiCompAntiAliasing optoLinkedDetectorOversampler;
+    // OPTO detector feeds use the classic 47-tap upsampler on the host-rate
+    // sidechain (delayed by kHostSidechainAlignmentSamples): the cell's onset
+    // and silence laws were measured through that reconstruction, and its
+    // gain is applied to the wide-FIR audio path pre-gain (feed-forward), so
+    // this keeps every OPTO dynamic bit-identical while the audio path is flat.
+    Oversampler optoLinkedDetectorUpsampler;
+    std::array<Oversampler, kMaxChannels> optoOwnDetectorUpsamplers;
+    std::array<MultiCompAntiAliasing, kMaxChannels> busExternalOversamplers;
     MultiCompTruePeakDetector truePeakDetector;
     std::array<MultiCompSidechainFilter, kMaxChannels> sidechainFilters;
     std::array<dbx160::SidechainTilt, kMaxChannels> sidechainTilt;
     bool lastDbxSidechainTilt = false;   // which sidechain filter ran last block
     bool lastDbxSidechainTiltEngaged = false;
+    std::array<dbx160::OutputVoicing, kMaxChannels> vcaOutputVoicing;
+    bool vcaVoicingActive = false;
     std::array<MultiCompSidechainEQ, kMaxChannels> sidechainEQ;
 
     std::array<DuskCrossover, kMaxChannels> crossover1, crossover2, crossover3;
@@ -143,6 +171,9 @@ private:
     std::array<std::array<std::vector<float>, kMaxChannels>, kMultiCompBands> bands, sidechainBands;
     std::array<std::vector<float>, kMaxChannels> processedSidechain;
     std::array<std::vector<float>, kMaxChannels> modeInput;
+    // Scratch for the non-finite input guard. Written only when a block
+    // actually carries a non-finite sample; see sanitizeChannels.
+    std::array<std::vector<float>, kMaxChannels> sanitizedInput, sanitizedSidechain;
     std::vector<float> dry, bypassDry, fetStartupInput;
     std::vector<float> mixCurve, bypassCurve, autoGainCurve;
     std::array<std::vector<float>, kMaxChannels> dryPathDelay;
@@ -158,8 +189,15 @@ private:
     std::array<bool, kMaxChannels> previousOversampledSidechainValid{{false, false}};
     std::array<float, kMaxChannels> previousOptoOwnSidechain{{0.0f, 0.0f}};
     std::array<bool, kMaxChannels> previousOptoOwnSidechainValid{{false, false}};
-    std::array<float, kMaxChannels> previousBusSidechain{{0.0f, 0.0f}};
-    std::array<bool, kMaxChannels> previousBusSidechainValid{{false, false}};
+    // Host-rate sidechain delay that keeps the calibrated detector-to-audio
+    // timing of the OPTO feeds and the FET link control under the wide audio
+    // FIR (MultiCompAntiAliasing::kHostSidechainAlignmentSamples).
+    static constexpr int kHostSidechainRing = 32;
+    static_assert(MultiCompAntiAliasing::kHostSidechainAlignmentSamples < kHostSidechainRing,
+                  "host sidechain ring must cover the alignment delay");
+    std::array<std::array<float, kHostSidechainRing>, kMaxChannels> hostSidechainHistory{};
+    int hostSidechainWrite = 0;
+    float delayHostSidechain(int channel, float value, int delay) noexcept;
     std::array<float, kMultiCompBands * kMaxChannels> multibandEnvelopes{};
     std::array<float, kMaxChannels> fetStartupInputPeak{{0.0f, 0.0f}};
     std::array<int, kMaxChannels> fetStartupActiveSamples{{0, 0}};
@@ -192,6 +230,8 @@ private:
     int antiAliasLatency = 0;
 
     std::array<std::atomic<float>, kMultiCompBands> bandGR{{0.0f, 0.0f, 0.0f, 0.0f}};
+    sslbus::CompressionMeter busCompressionMeter;
+    std::atomic<float> busMeterReading{0.0f};
     std::atomic<float> masterGR{0.0f}, inputLevel{-60.0f}, outputLevel{-60.0f};
     std::uint32_t noiseState = 0x6d2b79f5u;
 };

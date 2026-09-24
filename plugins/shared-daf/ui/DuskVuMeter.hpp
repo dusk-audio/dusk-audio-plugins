@@ -98,12 +98,15 @@ struct VuStyle
     ImU32 needle = IM_COL32(28, 24, 18, 255);
     bool overloadArc = true;
     bool cornerMarks = true;
+    // A caller with a complete ballistic can disable the cosmetic pole.
+    bool smoothNeedle = true;
+    float maximumNeedleDeflection = 1.0f;
     float tickLabelSize = 10.0f;
     float legendSize = 11.0f;
     float sublabelSize = 9.0f;
     // Geometry. The defaults reproduce the TapeMachine face: the pivot sits
     // 4 design px above the face bottom and the needle sweeps +-64.7 degrees.
-    // A meter like the dbx 160's has its pivot well below the visible face
+    // A meter like the VCA compressor's has its pivot well below the visible face
     // and a flatter arc; both are expressed here so the widget stays shared.
     float pivotBelowFace = -4.0f;     // design px below the face's bottom edge (negative = above)
     float sweepHalfAngleDeg = 64.7f;
@@ -121,11 +124,17 @@ struct VuStyle
     float majorTickLength = 6.0f;
     float minorTickLength = 4.0f;
     float tickLabelRadiusFrac = 0.76f;  // numeral centres, as a fraction of the radius
+                                        // (> 0.90 places numerals outside the tick baseline)
     ImU32 minorTickColor = 0;         // 0 = same as ink
     ImU32 bezelInnerLine = 0;         // 0 = none; a lighter bevel line inside the bezel
     ImU32 faceGlow = 0;               // 0 = none; a soft lit band across the top of the face
     float legendOffset = 0.46f;       // legend centre as a fraction of the radius above the pivot
     float sublabelGap = 3.0f;         // sublabel baseline, below legend centre + legendSize
+    bool scaleArc = false;           // continuous baseline across the complete scale
+    float radiusTopInset = 12.0f;    // design-space clearance above the outer radius (clearance rule only)
+    float needleWidth = 3.4f;        // design px at the hidden pivot
+    ImU32 lampGlow = 0;              // 0 = none; three soft backlight pools
+    ImU32 faceEdgeShade = 0;         // 0 = none; inset shadow at the glass edges
 };
 
 inline float vuLinearDeflection(float db, const VuScaleConfig& cfg) noexcept
@@ -172,9 +181,12 @@ inline void drawVuMeter(DuskPanel& panel, ImDrawList* dl,
         // Cosmetic anti-jitter / frame-interpolation pole only (tau ~= 25 ms)
         // so the widget never adds a second, slower time constant to a DSP
         // ballistic.
-        needle01 += (target - needle01)
-            * (1.0f - std::exp(-ImGui::GetIO().DeltaTime * 40.0f));
-        needle01 = std::clamp(needle01, 0.0f, 1.0f);
+        if (style.smoothNeedle)
+            needle01 += (target - needle01)
+                * (1.0f - std::exp(-ImGui::GetIO().DeltaTime * 40.0f));
+        else
+            needle01 = target;
+        needle01 = std::clamp(needle01, 0.0f, style.maximumNeedleDeflection);
     }
 
     // bezel -> dark inner lip -> face
@@ -201,6 +213,46 @@ inline void drawVuMeter(DuskPanel& panel, ImDrawList* dl,
     // below the visible window as it does on the reference.
     dl->PushClipRect(panel.P(fx0, fy0), panel.P(fx1, fy1), true);
 
+    if (style.lampGlow != 0)
+    {
+        const float width = fx1 - fx0, height = fy1 - fy0;
+        // Smooth radial falloff, tessellated in design space so resizing never
+        // changes the relationship between the lamps and the printed scale.
+        for (float position : {0.17f, 0.50f, 0.83f})
+        {
+            const ImVec2 centre = panel.P(fx0 + width * position, fy0 + height * 0.14f);
+            constexpr int segments = 48;
+            dl->PrimReserve(segments * 3, segments + 1);
+            const unsigned int base = dl->_VtxCurrentIdx;
+            const ImVec2 uv = ImGui::GetIO().Fonts->TexUvWhitePixel;
+            dl->PrimWriteVtx(centre, uv, style.lampGlow);
+            for (int i = 0; i < segments; ++i)
+            {
+                const float a = i * 6.2831853f / segments;
+                dl->PrimWriteVtx(ImVec2(centre.x + width * 0.22f * s * std::cos(a),
+                                       centre.y + height * 0.72f * s * std::sin(a)),
+                                 uv, style.lampGlow & ~IM_COL32_A_MASK);
+            }
+            for (int i = 0; i < segments; ++i)
+            {
+                dl->PrimWriteIdx(static_cast<ImDrawIdx>(base));
+                dl->PrimWriteIdx(static_cast<ImDrawIdx>(base + 1 + i));
+                dl->PrimWriteIdx(static_cast<ImDrawIdx>(base + 1 + (i + 1) % segments));
+            }
+        }
+    }
+    if (style.faceEdgeShade != 0)
+    {
+        const ImU32 clear = style.faceEdgeShade & ~IM_COL32_A_MASK;
+        const float inset = (fx1 - fx0) * 0.07f;
+        dl->AddRectFilledMultiColor(panel.P(fx0, fy0), panel.P(fx0 + inset, fy1),
+                                    style.faceEdgeShade, clear, clear, style.faceEdgeShade);
+        dl->AddRectFilledMultiColor(panel.P(fx1 - inset, fy0), panel.P(fx1, fy1),
+                                    clear, style.faceEdgeShade, style.faceEdgeShade, clear);
+        dl->AddRectFilledMultiColor(panel.P(fx0, fy0), panel.P(fx1, fy0 + inset * 0.3f),
+                                    style.faceEdgeShade, style.faceEdgeShade, clear, clear);
+    }
+
     const float cx = 0.5f * (fx0 + fx1);
     const float pivotY = fy1 + style.pivotBelowFace;
     const float half = style.sweepHalfAngleDeg * 3.14159265f / 180.0f;
@@ -210,7 +262,7 @@ inline void drawVuMeter(DuskPanel& panel, ImDrawList* dl,
     // (directly above the pivot) and its ends must stay inside the sides.
     const float radius = (style.radiusWidthFrac > 0.0f && style.radiusHeightFrac > 0.0f)
         ? std::min((fx1 - fx0) * style.radiusWidthFrac, (fy1 - fy0) * style.radiusHeightFrac)
-        : std::min((pivotY - fy0 - 12.0f), (fx1 - fx0) * 0.5f / std::max(std::sin(half), 0.2f) - 6.0f);
+        : std::min((pivotY - fy0 - style.radiusTopInset), (fx1 - fx0) * 0.5f / std::max(std::sin(half), 0.2f) - 6.0f);
     const ImVec2 pivot = panel.P(cx, pivotY);
     const auto pt = [&](float r, float a) {
         const auto offset = vuScreenOffset(r, a, s);
@@ -221,6 +273,12 @@ inline void drawVuMeter(DuskPanel& panel, ImDrawList* dl,
     const auto angleFor = [&](float db) {
         return angle0 + vuDeflection(db, cfg) * (angle1 - angle0);
     };
+
+    if (style.scaleArc)
+    {
+        dl->PathArcTo(pivot, radius * 0.90f * s, angle0, angle1, 64);
+        dl->PathStroke(ink, 0, 1.2f * s);
+    }
 
     // bold red arc across the overload zone
     const float arcFromDb = std::isnan(cfg.arcFromDb) ? cfg.redFromDb : cfg.arcFromDb;
@@ -290,7 +348,7 @@ inline void drawVuMeter(DuskPanel& panel, ImDrawList* dl,
     dl->AddLine(panel.P(cx + 2, pivotY + 1), pt(radius * 0.95f, na),
                 IM_COL32(60, 50, 36, 70), 4.0f * s);
     {
-        const float perp = na + 1.5707963f, bw = 3.4f;
+        const float perp = na + 1.5707963f, bw = style.needleWidth;
         dl->AddTriangleFilled(
             panel.P(cx + bw * 0.5f * std::cos(perp), pivotY + bw * 0.5f * std::sin(perp)),
             pt(radius * 0.95f, na),

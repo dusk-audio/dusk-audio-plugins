@@ -9,10 +9,50 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <vector>
 
 namespace duskaudio
 {
+
+// One non-finite input sample latches for good. It lands in the sidechain
+// shelf biquads (every mode filters its detector through them), the
+// oversampler FIR histories, the multiband crossovers and the mode envelopes,
+// and none of those can flush a NaN with more audio: only reset() clears them.
+// So the guard has to run before any of that state is touched.
+//
+// Exponent-field maximum rather than a per-sample std::isfinite: a finite
+// float has a biased exponent of at most 0xfe, an infinity or NaN has exactly
+// 0xff, so the maximum over the field is 0x7f800000 if and only if at least
+// one sample is non-finite. Branch-free, sign- and payload-agnostic, and it
+// vectorises to an AND plus an unsigned MAX, where an isfinite loop with an
+// early exit does not. Exact, so it never fires on finite input.
+inline bool blockIsAllFinite(const float* samples, int numSamples) noexcept
+{
+    std::uint32_t worstExponent = 0;
+    for (int i = 0; i < numSamples; ++i)
+    {
+        std::uint32_t bits = 0;
+        std::memcpy(&bits, samples + i, sizeof(bits));
+        worstExponent = std::max(worstExponent, bits & 0x7f800000u);
+    }
+    return worstExponent != 0x7f800000u;
+}
+
+// Substitute silence for the offending samples only. Everything finite in the
+// block is copied through bit-exactly, so a glitch costs one sample, not one
+// buffer.
+inline void copyWithoutNonFinite(const float* source, float* destination,
+                                 int numSamples) noexcept
+{
+    for (int i = 0; i < numSamples; ++i)
+    {
+        std::uint32_t bits = 0;
+        std::memcpy(&bits, source + i, sizeof(bits));
+        destination[i] = (bits & 0x7f800000u) == 0x7f800000u ? 0.0f : source[i];
+    }
+}
 
 class MultiCompSidechainFilter
 {
@@ -25,13 +65,14 @@ public:
         reset();
     }
 
-    void setFrequency(float frequency) noexcept
+    void setFrequency(float frequency, float q = 0.707f) noexcept
     {
         const float f = std::clamp(frequency, 20.0f, 500.0f);
-        if (std::abs(f - currentFrequency) > 0.1f)
+        if (std::abs(f - currentFrequency) > 0.1f || q != currentQ)
         {
             currentFrequency = f;
-            filter.setCoeffs(Biquad::highPass(sampleRate, f, 0.707f));
+            currentQ = q;
+            filter.setCoeffs(Biquad::highPass(sampleRate, f, q));
         }
     }
 
@@ -45,6 +86,7 @@ public:
 private:
     double sampleRate = 44100.0;
     float currentFrequency = -1.0f;
+    float currentQ = 0.707f;
     Biquad filter;
 };
 
@@ -204,7 +246,7 @@ public:
     void prepare(int maxBlock) noexcept
     {
         (void)maxBlock;
-        Oversampler maxOversampler;
+        OversamplerWide maxOversampler;
         maxOversampler.setFactor(4);
         maxLatency = static_cast<int>(std::lround(maxOversampler.latency()));
         compensation.assign(static_cast<size_t>(std::max(1, maxLatency + 1)), 0.0f);
@@ -218,8 +260,9 @@ public:
         use4x = factorValue >= 4;
         oversampler.setFactor(oversamplingOff ? 1 : (use4x ? 4 : 2));
         // The streaming decimators emit their odd polyphase sample, making the
-        // rendered delays 22.5 (2x) and 25.75 (4x). Exact phase-rate padding
-        // brings both paths to the helper's integer 27-sample contract.
+        // rendered delays 62.5 (2x) and 65.75 (4x) with the 127-tap wide stage
+        // (22.5 / 25.75 with the classic 47-tap set). Exact phase-rate padding
+        // brings both paths to the helper's integer 67-sample contract.
         const int requiredPhaseDelay = oversamplingOff ? 0 : (use4x ? 5 : 1);
         if (requiredPhaseDelay != phaseDelaySamples)
         {
@@ -273,6 +316,22 @@ public:
     }
     float latency() const noexcept { return static_cast<float>(maxLatency); }
     bool isOversamplingOff() const noexcept { return oversamplingOff; }
+    // The native-calibrated host-rate controls (the OPTO detector feeds, the
+    // vintage FET link control) were measured against the classic 47-tap audio
+    // FIR, whose upsampling lead is 11.5 host samples at 2x and 13.25 at 4x.
+    // The wide 127-tap stage adds (127 - 47) / 4 = 20 host samples at either
+    // factor. MultiCompDSP delays those controls' host samples by this amount
+    // whenever oversampling is on, so their detector-to-audio timing is exactly
+    // the calibrated one and the wide stage is a linear-path change for them.
+    static constexpr int kHostSidechainAlignmentSamples
+        = (hbtaps::StageAwide::L - hbtaps::StageA::L) / 4;
+    static_assert(kHostSidechainAlignmentSamples * 4
+                      == hbtaps::StageAwide::L - hbtaps::StageA::L,
+                  "wide and classic stage lengths must differ by a multiple of four");
+    int hostSidechainAlignmentSamples() const noexcept
+    {
+        return oversamplingOff ? 0 : kHostSidechainAlignmentSamples;
+    }
 private:
     float compensateBaseRate(float wet) noexcept
     {
@@ -285,7 +344,7 @@ private:
         writePosition = (writePosition + 1) % static_cast<int>(compensation.size());
         return delay > 0 ? result : wet;
     }
-    Oversampler oversampler;
+    OversamplerWide oversampler;   // 127-tap stage A: flat to 20 kHz at 44.1 kHz
     bool oversamplingOff = false, use4x = false;
     std::vector<float> compensation;
     int maxLatency = 0, writePosition = 0, factor = 2;

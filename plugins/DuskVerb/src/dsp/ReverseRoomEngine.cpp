@@ -9,7 +9,7 @@
 
 // ============================================================================
 // ReverseRoomEngine — causal rising-ER onset + dark modulated FDN tail.
-// Reverse-engineered from lex-reverse-1 (Lexicon PCM Room "Reverse 1").
+// Reverse-engineered from ref-reverse-1 (reference "Reverse 1" program).
 // See header for the full architecture and the measured reference spec.
 // ============================================================================
 
@@ -38,7 +38,7 @@ void ReverseRoomEngine::prepare (double sampleRate, int maxBlockSize)
     }
 
     // Velvet-noise FIR tail (replaces the FDN — see VelvetTail.h). Baked defaults
-    // = the lex-reverse-1 per-band T60 / level / stereo; DUSKVERB_VELVET overrides
+    // = the ref-reverse-1 per-band T60 / level / stereo; DUSKVERB_VELVET overrides
     // for hand-tuning without a rebuild. Feed-forward → no FDN mid-decay floor.
     velvet_.prepare (sampleRate, maxBlockSize);
 
@@ -245,7 +245,7 @@ void ReverseRoomEngine::process (const float* inL, const float* inR,
 
         // Onset-keyed window close (ENDED bursts only): once the burst is older
         // than the window AND the input has stopped, cut immediately instead of
-        // serving out the remaining hold — the Lex reverse window is fixed-length
+        // serving out the remaining hold — the REF reverse window is fixed-length
         // from onset. While input is still present the legacy hold semantics
         // stand untouched (a latch here killed the sustained stimuli: the piano
         // never drops below threshold, so the gate stayed shut for 22 s).

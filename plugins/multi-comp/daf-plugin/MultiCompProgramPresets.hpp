@@ -7,8 +7,11 @@ namespace multicompp
 {
 inline int coreParamIndex(CoreParameter parameter) noexcept
 {
+    if (parameter == CoreParameter::None) return -1;
     for (int i = 0; i < kParamCount; ++i)
         if (kParams[static_cast<size_t>(i)].core == parameter) return i;
+    for (size_t i = 0; i < kExtensionParams.size(); ++i)
+        if (kExtensionParams[i].core == parameter) return kExtensionBase + static_cast<int>(i);
     return -1;
 }
 
@@ -64,6 +67,9 @@ void forEachPresetParam(const duskaudio::MultiCompPreset& preset,
             setParameter(P::BusRelease, static_cast<float>(preset.busRelease));
             setParameter(P::BusMakeup, preset.makeup);
             setParameter(P::BusMix, preset.mix);
+            setParameter(P::BusHeadroom, 3.0f);
+            setParameter(P::BusFadeRate, 24.8f);
+            setParameter(P::BusFade, 0.0f);
             break;
         }
         case 5:
@@ -113,7 +119,8 @@ void applyPresetToHostParameters(const duskaudio::MultiCompPreset& preset,
             const int parameterIndex = coreParamIndex(parameter);
             if (parameterIndex >= 0)
             {
-                const auto& d = kParams[static_cast<size_t>(parameterIndex)];
+                const auto& d = parameterIndex < kParamCount ? kParams[static_cast<size_t>(parameterIndex)]
+                    : kExtensionParams[static_cast<size_t>(parameterIndex - kExtensionBase)];
                 setHostParameter(parameterIndex, plainToHost(d, value));
             }
         },
@@ -126,8 +133,8 @@ void applyPresetToHostParameters(const duskaudio::MultiCompPreset& preset,
 
 struct ExpandedFactoryPreset
 {
-    std::array<float, kMeterMaster> hostValues{};
-    std::array<bool, kMeterMaster> ownsParameter{};
+    std::array<float, kTotalParamCount> hostValues{};
+    std::array<bool, kTotalParamCount> ownsParameter{};
 };
 
 // Expand the small core preset records into their exact host-domain writes once
@@ -141,7 +148,7 @@ inline const std::array<ExpandedFactoryPreset, kFactoryPresets.size()>
             applyPresetToHostParameters(kFactoryPresets[presetIndex],
                 [&expanded, presetIndex](int parameterIndex, float hostValue)
                 {
-                    if (parameterIndex < 0 || parameterIndex >= kMeterMaster) return;
+                    if (!isControlParameter(parameterIndex)) return;
                     auto& preset = expanded[presetIndex];
                     preset.hostValues[static_cast<size_t>(parameterIndex)] = hostValue;
                     preset.ownsParameter[static_cast<size_t>(parameterIndex)] = true;
@@ -153,7 +160,7 @@ inline bool presetOwnsParam(int presetIndex, uint32_t parameterIndex) noexcept
 {
     return presetIndex >= 0
         && static_cast<size_t>(presetIndex) < kExpandedFactoryPresets.size()
-        && parameterIndex < static_cast<uint32_t>(kMeterMaster)
+        && isControlParameter(static_cast<int>(parameterIndex))
         && kExpandedFactoryPresets[static_cast<size_t>(presetIndex)]
                .ownsParameter[static_cast<size_t>(parameterIndex)];
 }
@@ -164,7 +171,7 @@ void applyFactoryPresetToHostParameters(uint32_t presetIndex,
 {
     if (presetIndex >= kExpandedFactoryPresets.size()) return;
     const auto& preset = kExpandedFactoryPresets[presetIndex];
-    for (int parameterIndex = 0; parameterIndex < kMeterMaster; ++parameterIndex)
+    for (int parameterIndex = 0; parameterIndex < kTotalParamCount; parameterIndex = nextControlParameter(parameterIndex))
         if (presetOwnsParam(static_cast<int>(presetIndex),
                             static_cast<uint32_t>(parameterIndex)))
             setHostParameter(parameterIndex,

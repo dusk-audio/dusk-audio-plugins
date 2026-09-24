@@ -70,7 +70,7 @@ carries no wet path at all).
 | 18 | Input Send    | `setInputSend`    | off/on     | on      | interrupts only the tape-record feed; spring remains live for reverb-only operation |
 | 19 | Record Peak   | `getRecordPeakLevel` | 0–3 (out) | —     | transient record-path peak with a 300 ms release |
 | 20 | Mix           | `setMix`          | 0–1        | 0.5     | dry/combined-wet crossfade; 0 = dry, 0.5 = both paths at unity, 1 = wet-only |
-| 21 | Echo Rate Note | (shell-level)    | 1–11 (int) | 5       | physical tempo-sync detent; its division table follows the leading active playback head, matching Galaxy |
+| 21 | Echo Rate Note | (shell-level)    | 1–11 (int) | 5       | physical tempo-sync detent; its division table follows the leading active playback head, matching the reference tape echo |
 
 Mix uses a unity-overlap balance law so the 50% default reproduces the
 previous parallel dry-plus-wet output exactly. Below 50% the dry path remains
@@ -85,7 +85,7 @@ converts that division plus host BPM into the leading active head's delay each
 block (see `syncDelayMs` in `TapeEchoParams.hpp`), derives head-1 time from the
 selected mode, and clamps the motor to its measured range. Changing Head Select
 therefore keeps the physical detent fixed while changing its note assignment,
-as on Galaxy. The hidden Sync Division parameter remains an exact compatibility
+as on the reference tape echo. The hidden Sync Division parameter remains an exact compatibility
 path for old sessions. The core stays host-agnostic and its motor-inertia
 smoother supplies tape-style glides on tempo changes.
 

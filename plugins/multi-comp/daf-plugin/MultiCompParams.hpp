@@ -21,12 +21,14 @@ struct Param
     const char* id; const char* name; const char* unit;
     float min, max, def; CoreParameter core; bool integer;
     float interval = 0.0f, skew = 1.0f;
+    float linearMidpoint = 0.0f; // Optional two-segment taper, at host position 0.5.
 };
 struct BandParam
 {
     const char* id; const char* name; const char* unit;
     float min, max, def; duskaudio::MultiCompDSP::MultibandParameter core; bool integer;
     float interval = 0.0f, skew = 1.0f;
+    float linearMidpoint = 0.0f;
 };
 
 enum class ParamId : uint32_t {
@@ -40,7 +42,9 @@ enum class ParamId : uint32_t {
  DigitalKnee, DigitalAttack, DigitalRelease, DigitalLookahead, DigitalMix, DigitalOutput,
  DigitalAdaptive, Crossover1, Crossover2, Crossover3, GlobalSidechainListen,
  MbMix, MbOutput, NoiseEnable, ScLowFreq, ScLowGain, ScHighFreq,
- ScHighGain, StereoLinkMode, Count
+ ScHighGain, StereoLinkMode, Count,
+ // Append after the original five meter IDs; existing automation IDs stay fixed.
+ BusHeadroom = 100, BusFadeRate, BusFade, OptoMeter, FetMeter
 };
 
 // Single source of truth for host symbols, physical ranges/defaults, JUCE taper
@@ -56,7 +60,7 @@ inline constexpr std::array<Param, 63> kParams = {{
  {"global_lookahead","Lookahead","ms",0,10,0,CoreParameter::GlobalLookahead,false},
  {"opto_peak_reduction","Peak Reduction","%",0,100,0,CoreParameter::OptoPeakReduction,false}, {"opto_gain","Gain","%",0,100,duskaudio::kOptoGainUnityKnob,CoreParameter::OptoGain,false}, {"opto_limit","Limit Mode","",0,1,0,CoreParameter::OptoLimit,true},
  {"fet_input","Input","dB",-20,40,0,CoreParameter::FetInput,false}, {"fet_output","Output","dB",-20,20,0,CoreParameter::FetOutput,false}, {"fet_attack","Attack","ms",0.02f,80,0.2f,CoreParameter::FetAttack,false,0.01f,0.3f}, {"fet_release","Release","ms",50,1100,400,CoreParameter::FetRelease,false}, {"fet_ratio","Ratio",":1",0,4,0,CoreParameter::FetRatio,true}, {"fet_curve_mode","Curve Mode","",0,1,0,CoreParameter::FetCurve,true}, {"fet_transient","Transient","%",0,100,0,CoreParameter::FetTransient,false}, {"fet_threshold","Threshold","dB",-60,0,-10,CoreParameter::FetThreshold,false},
- {"vca_threshold","Threshold","dB",-55,0,-27,CoreParameter::VcaThreshold,false}, {"vca_compression","Compression","",0,100,50.4944f,CoreParameter::VcaRatio,false}, {"vca_attack","Attack","ms",0.1f,50,1,CoreParameter::VcaAttack,false}, {"vca_release","Release","ms",10,5000,100,CoreParameter::VcaRelease,false}, {"vca_output","Output","dB",-20,20,0,CoreParameter::VcaOutput,false}, {"vca_overeasy","Over Easy","",0,1,0,CoreParameter::VcaOverEasy,true}, {"vca_detector_mode","VCA Detector","",0,1,0,CoreParameter::VcaClassicDetector,true},
+ {"vca_threshold","Threshold","dB",duskaudio::dbx160::kThresholdMinDb,duskaudio::dbx160::kThresholdMaxDb,duskaudio::dbx160::kThresholdDefaultDb,CoreParameter::VcaThreshold,false}, {"vca_compression","Compression","",duskaudio::dbx160::kCompressLaw.front().position,duskaudio::dbx160::kCompressLaw.back().position,duskaudio::dbx160::kCompressDefaultPosition,CoreParameter::VcaRatio,false}, {"vca_attack","Attack","ms",0.1f,50,1,CoreParameter::VcaAttack,false}, {"vca_release","Release","ms",10,5000,100,CoreParameter::VcaRelease,false}, {"vca_output","Output","dB",-20,20,0,CoreParameter::VcaOutput,false}, {"vca_overeasy","Over Easy","",0,1,0,CoreParameter::VcaOverEasy,true}, {"vca_detector_mode","VCA Detector","",0,1,0,CoreParameter::VcaClassicDetector,true},
  {"bus_threshold","Threshold","dB",-30,15,0,CoreParameter::BusThreshold,false}, {"bus_ratio","Ratio",":1",0,2,0,CoreParameter::BusRatio,true}, {"bus_attack","Attack","",0,5,2,CoreParameter::BusAttack,true}, {"bus_release","Release","",0,4,1,CoreParameter::BusRelease,true}, {"bus_makeup","Makeup","dB",0,20,0,CoreParameter::BusMakeup,false}, {"bus_mix","Bus Mix","%",0,100,100,CoreParameter::BusMix,false},
  {"studio_vca_threshold","Threshold","dB",-40,20,-10,CoreParameter::StudioVcaThreshold,false}, {"studio_vca_ratio","Ratio",":1",1,10,3,CoreParameter::StudioVcaRatio,false}, {"studio_vca_attack","Attack","ms",0.3f,75,10,CoreParameter::StudioVcaAttack,false}, {"studio_vca_release","Release","ms",100,4000,300,CoreParameter::StudioVcaRelease,false}, {"studio_vca_output","Output","dB",-20,20,0,CoreParameter::StudioVcaOutput,false},
  {"digital_threshold","Threshold","dB",-60,0,-20,CoreParameter::DigitalThreshold,false}, {"digital_ratio","Ratio",":1",1,100,4,CoreParameter::DigitalRatio,false,0.1f,0.4f}, {"digital_knee","Knee","dB",0,20,6,CoreParameter::DigitalKnee,false}, {"digital_attack","Attack","ms",0.01f,500,10,CoreParameter::DigitalAttack,false,0.01f,0.3f}, {"digital_release","Release","ms",1,5000,100,CoreParameter::DigitalRelease,false,1,0.4f}, {"digital_lookahead","Lookahead","ms",0,10,0,CoreParameter::DigitalLookahead,false}, {"digital_mix","Mix","%",0,100,100,CoreParameter::DigitalMix,false}, {"digital_output","Output","dB",-24,24,0,CoreParameter::DigitalOutput,false}, {"digital_adaptive","Adaptive Release","",0,1,0,CoreParameter::DigitalAdaptive,true},
@@ -105,7 +109,30 @@ inline constexpr int kMeterBand0 = kMeterMaster + 1;
 inline constexpr int kMeterBand1 = kMeterMaster + 2;
 inline constexpr int kMeterBand2 = kMeterMaster + 3;
 inline constexpr int kMeterBand3 = kMeterMaster + 4;
-inline constexpr int kTotalParamCount = kMeterMaster + 5;
+inline constexpr int kExtensionBase = kMeterMaster + 5;
+inline constexpr std::array<Param, 5> kExtensionParams{{
+ {"bus_headroom", "Headroom", "dB", 0, 6, 3, CoreParameter::BusHeadroom, true},
+ {"bus_fade_rate", "Fade Rate", "s", 1, 60, 24.8f, CoreParameter::BusFadeRate, false, 0.1f, 0.5f, 6.0f},
+ {"bus_fade", "Auto Fade", "", 0, 1, 0, CoreParameter::BusFade, true},
+ {"opto_meter", "Opto Meter", "", 0, 2, 0, CoreParameter::None, true},
+ {"fet_meter", "FET Meter", "", 0, 2, 0, CoreParameter::None, true}
+}};
+inline constexpr int kTotalParamCount = kExtensionBase + static_cast<int>(kExtensionParams.size());
+inline constexpr int kVintageMeterBase = static_cast<int>(ParamId::OptoMeter);
+static_assert(kExtensionBase == static_cast<int>(ParamId::BusHeadroom));
+inline constexpr bool isControlParameter(int index) noexcept
+{
+    return index >= 0 && (index < kMeterMaster || (index >= kExtensionBase && index < kTotalParamCount));
+}
+inline constexpr bool isDisplayParameter(int index) noexcept
+{
+    return index >= kExtensionBase && index < kTotalParamCount
+        && kExtensionParams[static_cast<size_t>(index - kExtensionBase)].core == CoreParameter::None;
+}
+inline constexpr int nextControlParameter(int index) noexcept
+{
+    return index + 1 == kMeterMaster ? kExtensionBase : index + 1;
+}
 inline constexpr BandParam bandParam(int field, int band)
 {
     const char* names[8] = {"Threshold", "Ratio", "Attack", "Release", "Makeup", "Bypass", "Solo", "Enabled"};
@@ -127,6 +154,8 @@ inline constexpr BandParam bandParam(int field, int band)
 template <class GlobalFn, class BandFn>
 decltype(auto) resolveParameter(int index, GlobalFn&& globalFn, BandFn&& bandFn)
 {
+    if (index >= kExtensionBase)
+        return std::forward<GlobalFn>(globalFn)(kExtensionParams[static_cast<size_t>(index - kExtensionBase)]);
     if (index < kParamCount)
         return std::forward<GlobalFn>(globalFn)(kParams[static_cast<size_t>(index)]);
 
@@ -159,6 +188,10 @@ inline float plainToHost(const Descriptor& d, float value) noexcept
 {
     value = snapPlainValue(d, value);
     if (!hasSkew(d)) return value;
+    if (d.linearMidpoint != 0.0f)
+        return value <= d.linearMidpoint
+            ? 0.5f * (value - d.min) / (d.linearMidpoint - d.min)
+            : 0.5f + 0.5f * (value - d.linearMidpoint) / (d.max - d.linearMidpoint);
     const float proportion = (value - d.min) / (d.max - d.min);
     return std::pow(proportion, d.skew);
 }
@@ -168,6 +201,10 @@ inline float hostToPlain(const Descriptor& d, float value) noexcept
 {
     value = std::clamp(value, hostMin(d), hostMax(d));
     if (!hasSkew(d)) return snapPlainValue(d, value);
+    if (d.linearMidpoint != 0.0f)
+        return snapPlainValue(d, value <= 0.5f
+            ? d.min + 2.0f * value * (d.linearMidpoint - d.min)
+            : d.linearMidpoint + 2.0f * (value - 0.5f) * (d.max - d.linearMidpoint));
     const float proportion = std::pow(value, 1.0f / d.skew);
     return snapPlainValue(d, d.min + (d.max - d.min) * proportion);
 }
@@ -178,11 +215,14 @@ inline float hostDefault(const Descriptor& d) noexcept { return plainToHost(d, d
 inline constexpr const char* const kModes[8] = {"Opto","FET","VCA","Bus","Studio FET","Studio VCA","Digital","Multiband"};
 inline constexpr const char* const kOnOff[2] = {"Off","On"};
 inline constexpr const char* const kRatios[5] = {"4:1","8:1","12:1","20:1","All"};
+inline constexpr const char* const kOptoMeterModes[3] = {"GR", "Output +10", "Output +4"};
+inline constexpr const char* const kFetMeterModes[3] = {"GR", "Output +8", "Output +4"};
 inline constexpr const char* const kOversampling[3] = {"Off","2x","4x"};
 inline constexpr const char* const kDistortion[4] = {"Off","Soft","Hard","Clip"};
 inline constexpr const char* const kTruePeakQuality[2] = {"4x (Standard)","8x (High)"};
 inline constexpr const char* const kFetCurve[2] = {"Modern", "Measured"};
 inline constexpr const char* const kVcaDetector[2] = {"Adaptive", "Classic"};
+inline constexpr const char* const kBusHeadroom[7] = {"4", "8", "12", "16", "20", "24", "28"};
 inline constexpr const char* const kBusRatios[3] = {"2:1", "4:1", "10:1"};
 inline constexpr const char* const kBusAttack[6] = {"0.1ms", "0.3ms", "1ms", "3ms", "10ms", "30ms"};
 inline constexpr const char* const kBusRelease[5] = {"0.1s", "0.3s", "0.6s", "1.2s", "Auto"};
@@ -197,13 +237,15 @@ inline constexpr const char* const kLinkMode[3] = {"Stereo","Mid-Side","Dual Mon
 // Version 2 therefore carried the float's bit pattern through the integer
 // overloads. Version 3 removes two inert fields and stores tapered controls in
 // their new normalized host domain. Both are exact and locale-independent.
-// Version 4 (2026-09-01) moves the VCA mode onto the measured dbx 160 laws:
+// Version 4 (2026-09-01) moves the VCA mode onto the measured VCA compressor laws:
 // `vca_ratio` (a skew-0.3 ratio stored host-normalized 0..1) became
 // `vca_compression` (a plain 0..100 knob position), and `vca_threshold` moved
 // from -38..+12 dB to -55..0 dB. Version-3 states are still loaded: the legacy
 // ratio is converted to the knob position that applies the same ratio, and the
 // threshold is clamped into the new range.
-inline constexpr int kStateVersion = 4;
+inline constexpr int kStateVersion = 6;
+inline constexpr int kPreMeterStateVersion = 5;
+inline constexpr int kPreBusStateVersion = 4;
 inline constexpr int kLegacyVcaStateVersion = 3;
 
 // Parses "v=N" and returns N, or -1 when the token is malformed.
@@ -226,7 +268,8 @@ inline int stateVersionOf(std::string_view state) noexcept
 inline bool stateVersionSupported(std::string_view state) noexcept
 {
     const int version = stateVersionOf(state);
-    return version == kStateVersion || version == kLegacyVcaStateVersion;
+    return version == kStateVersion || version == kPreMeterStateVersion
+        || version == kPreBusStateVersion || version == kLegacyVcaStateVersion;
 }
 
 // Version-3 `vca_ratio`: skew 0.3 over 1..120, stored in its normalized host
@@ -254,12 +297,15 @@ inline void appendStateFloat(std::string& out, float value)
     if (result.ec == std::errc()) out.append(number, result.ptr);
 }
 
-using StateValues = std::array<float, static_cast<size_t>(kMeterMaster)>;
+using StateValues = std::array<float, static_cast<size_t>(kTotalParamCount)>;
 
 inline int stateIndexForId(std::string_view id) noexcept
 {
     for (int i = 0; i < kParamCount; ++i)
         if (id == kParams[static_cast<size_t>(i)].id) return i;
+
+    for (size_t i = 0; i < kExtensionParams.size(); ++i)
+        if (id == kExtensionParams[i].id) return kExtensionBase + static_cast<int>(i);
 
     for (int field = 0; field < 8; ++field)
     {
@@ -322,7 +368,12 @@ inline bool decodeState(std::string_view state, StateValues& out) noexcept
     if (versionEnd == std::string_view::npos) return false;
 
     StateValues decoded{};
-    std::array<bool, static_cast<size_t>(kMeterMaster)> seen{};
+    std::array<bool, static_cast<size_t>(kTotalParamCount)> seen{};
+    const int version = stateVersionOf(state);
+    const int firstAbsent = version < kPreMeterStateVersion ? kExtensionBase
+                          : version < kStateVersion ? kVintageMeterBase : kTotalParamCount;
+    for (int i = firstAbsent; i < kTotalParamCount; ++i)
+        decoded[static_cast<size_t>(i)] = hostDefault(kExtensionParams[static_cast<size_t>(i - kExtensionBase)]);
     size_t begin = versionEnd + 1;
     while (begin < state.size())
     {
@@ -335,9 +386,10 @@ inline bool decodeState(std::string_view state, StateValues& out) noexcept
             return false;
 
         const std::string_view id = token.substr(0, equal);
+        if (legacy && id == "vca_compression") return false;
         const bool legacyRatio = legacy && id == "vca_ratio";
         const int index = legacyRatio ? static_cast<int>(ParamId::VcaRatio) : stateIndexForId(id);
-        if (index < 0 || seen[static_cast<size_t>(index)]) return false;
+        if (index < 0 || index >= firstAbsent || seen[static_cast<size_t>(index)]) return false;
         float value = 0.0f;
         if (!decodeStateFloat(token.substr(equal + 1), value)) return false;
         if (legacyRatio)
@@ -358,8 +410,8 @@ inline bool decodeState(std::string_view state, StateValues& out) noexcept
         begin = end + 1;
     }
     if (begin != state.size()) return false;
-    for (bool present : seen)
-        if (!present) return false;
+    for (int i = 0; i < kTotalParamCount; i = nextControlParameter(i))
+        if (i < firstAbsent && !seen[static_cast<size_t>(i)]) return false;
     out = decoded;
     return true;
 }
@@ -368,7 +420,7 @@ inline std::string encodeState(const StateValues& values)
 {
     std::string state = "v=" + std::to_string(kStateVersion);
     state.reserve(32 + static_cast<size_t>(kMeterMaster) * 28);
-    for (int i = 0; i < kMeterMaster; ++i)
+    for (int i = 0; i < kTotalParamCount; i = nextControlParameter(i))
     {
         state.push_back(';');
         resolveParameter(i,

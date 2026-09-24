@@ -125,7 +125,7 @@ protected:
                            e[2] = ParameterEnumerationValue(2.f, kOversampleLabels[2]);
                            p.enumValues.values = e; } break;
         case kMsMode:
-            // ABI/state compatibility only. The modeled SSL EQ has no M/S mode,
+            // ABI/state compatibility only. The modeled British console EQ has no M/S mode,
             // so retain the shipped index without exposing or processing it.
             p.hints = kParameterIsHidden;
             p.name = "M/S Mode";
@@ -265,7 +265,7 @@ private:
         case kInputGain:  dsp.setInputGainDb(value); break;
         case kOutputGain: dsp.setOutputGainDb(value); break;
         case kSaturation:
-            // The SSL EQ has no independent drive/mix control. Its calibrated
+            // The British console EQ has no independent drive/mix control. Its calibrated
             // native nonlinearity is the core's 0% reference state; Input Gain
             // controls the level presented to that nonlinear path.
             dsp.setSaturation(0.0f);

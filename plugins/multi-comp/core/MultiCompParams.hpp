@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cmath>
 
+#include "MultiCompDbxLaw.hpp"
 #include "../../shared-daf/dsp/DuskFilters.hpp"
 
 namespace duskaudio
@@ -29,22 +30,41 @@ struct OptoGainPoint
     float gainDb;
 };
 
-inline constexpr float kOptoGainSilentKnobMax = 8.5f;
-inline constexpr float kOptoGainMuteDb = -160.0f;
-inline constexpr float kOptoGainUnityKnob =
-    20.0f + 3.017f / (3.017f + 0.214f) * 3.75f;
-inline constexpr std::array<OptoGainPoint, 15> kOptoGainTaper{{
-    {kOptoGainSilentKnobMax, kOptoGainMuteDb},
-    {10.0f, -21.951f}, {15.0f, -8.777f}, {20.0f, -3.017f},
-    {23.75f, 0.214f}, {30.0f, 4.191f}, {35.0f, 7.823f},
-    {40.0f, 10.615f}, {50.0f, 14.501f}, {60.0f, 18.813f},
-    {70.0f, 26.646f}, {80.0f, 33.269f}, {90.0f, 37.271f},
-    {95.0f, 37.702f}, {100.0f, 37.702f}
+// Native reference opto leveler Gain, 2026-09-16: 23 nodes at .958333 + 4.458333*k,
+// 0.1 dB values. linear-path-20260916/opto-gain-taper-nodes-solved.json and
+// make_opto_linear_core.py: 65 captures fit within .0008 dB; rendered residual
+// rounds to .002 dB. Node 0 is silent; store nodes 1..22, mute through node 1.
+inline constexpr float kOptoGainSilentKnobMax = 5.416667f;
+inline constexpr float kOptoGainMuteDb = -462.5f;
+// Unity is 23.25 + (.1 / 2.8) * 4.458333333, rounded as in the lab core.
+inline constexpr float kOptoGainUnityKnob = 23.409226f;
+inline constexpr std::array<OptoGainPoint, 22> kOptoGainTaper{{
+    {5.416667f, -462.5f},
+    {9.875000f, -22.3f},
+    {14.333333f, -9.6f},
+    {18.791667f, -4.1f},
+    {23.250000f, -0.1f},
+    {27.708333f, 2.7f},
+    {32.166667f, 5.6f},
+    {36.625000f, 9.1f},
+    {41.083333f, 11.1f},
+    {45.541667f, 12.7f},
+    {50.000000f, 14.5f},
+    {54.458333f, 16.6f},
+    {58.916667f, 18.4f},
+    {63.375000f, 20.1f},
+    {67.833333f, 24.8f},
+    {72.291667f, 28.6f},
+    {76.750000f, 31.3f},
+    {81.208333f, 34.0f},
+    {85.666667f, 36.2f},
+    {90.125000f, 37.3f},
+    {94.583333f, 37.7f},
+    {99.041667f, 37.7f}
 }};
 
-// The measured hardware taper is interpolated in dB between observed knob
-// positions. It mutes below about 0.085 and its gain element, independently of
-// the output ceiling, has reached its +37.702 dB plateau by 0.95.
+// Interpolate in dB; the native +37.7 dB plateau begins at knob 94.583333.
+// The inverse below uses this same table so factory presets keep their dB gain.
 inline float optoKnobToGainDb(float knob) noexcept
 {
     const float clamped = clampFinite(knob, 0.0f, 100.0f, kOptoGainUnityKnob);
@@ -147,11 +167,18 @@ struct MultiCompParameterState
     std::atomic<int> fetRatio{0}, fetCurve{0};
     std::atomic<float> fetTransient{0.0f}, fetThreshold{-10.0f};
 
-    std::atomic<float> vcaThreshold{-27.0f}, vcaRatio{50.4944f}, vcaAttack{1.0f}, vcaRelease{100.0f}, vcaOutput{0.0f};
+    // vcaRatio retains its core identifier; its value is the measured
+    // compression knob position, shared with the host parameter descriptor.
+    std::atomic<float> vcaThreshold{dbx160::kThresholdDefaultDb},
+        vcaRatio{dbx160::kCompressDefaultPosition}, vcaAttack{1.0f},
+        vcaRelease{100.0f}, vcaOutput{0.0f};
     std::atomic<bool> vcaOverEasy{false}, vcaClassicDetector{false};
 
     std::atomic<float> busThreshold{0.0f}, busMakeup{0.0f}, busMix{100.0f};
     std::atomic<int> busRatio{0}, busAttack{2}, busRelease{1};
+    std::atomic<int> busHeadroom{3};
+    std::atomic<float> busFadeRate{24.8f};
+    std::atomic<bool> busFade{false};
 
     std::atomic<float> studioVcaThreshold{-10.0f}, studioVcaRatio{3.0f}, studioVcaAttack{10.0f}, studioVcaRelease{300.0f}, studioVcaOutput{0.0f};
 

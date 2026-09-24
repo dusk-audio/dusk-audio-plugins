@@ -163,10 +163,10 @@ public:
     // instead of at the first tap. 0 = legacy rolloff = bit-identical.
     void setEROnsetRiseMs (float ms);
     // Stereo-neutral early-field mode (Phase 2): independent R taps → uniform
-    // ~0 L/R correlation (VVV-like), no anti-phase low. false → bit-identical.
+    // ~0 L/R correlation (REF-like), no anti-phase low. false → bit-identical.
     void setERStereoNeutral (bool enabled);
     // ER decorrelation allpass depth (0 = bypassed → bit-identical). Different
-    // prime delays per channel → pushes L/R correlation toward 0 (VVV-like).
+    // prime delays per channel → pushes L/R correlation toward 0 (REF-like).
     void setERDecorr (float coeff);
     // Phase 4 (Change 2): output cross-talk shelving matrix. Decorrelates only
     // the HF air (>1.5 kHz) by cross-bleeding each channel's high band into the
@@ -260,7 +260,7 @@ public:
     // (splitHz = 0 → current behavior, bit-identical). When splitHz > 0, the
     // tank's LOW band (below splitHz) stays at unity while only MID/HIGH is
     // scaled by tankOutLevel_ — so front-loading the washy mid/high bloom does
-    // NOT sacrifice the tank's correlated low (body + VVV-matched low image).
+    // NOT sacrifice the tank's correlated low (body + REF-matched low image).
     // One-pole split on the tank output, OUTSIDE the recursive loop → bit-safe.
     void setTankSplitHz (float hz);
 
@@ -560,7 +560,7 @@ private:
     SustainBandLimiter::PeakCut  wetSusLimMidCutL_, wetSusLimMidCutR_,
                                  wetSusLimLowCutL_, wetSusLimLowCutR_;
     SustainBandLimiter::InputKey wetSusLimKey_;
-    ReverseRoomEngine  reverseRoom_;     // algo 9 (2026-05-31): causal rising-ER onset + dark FDN tail; replicates Lexicon PCM Room "Reverse 1".
+    ReverseRoomEngine  reverseRoom_;     // algo 9 (2026-05-31): causal rising-ER onset + dark FDN tail; replicates reference "Reverse 1" program.
     FDNReverbT<true>   accurateHall_;    // algo 10 (2026-06-09): FDN + per-octave GEQ. Also the fallback for the removed VintageTank(8)/AccurateHall32(12) engines on old saved sessions.
     SparseEarlyField   sparseField_;     // algo 11 (2026-06-10): velvet-noise front-loaded sparse early field. Summed with a reduced accurateHall_ tail in the SparseField process() case.
     DiffusedEarlyReflections diffuseER_; // 2026-06-25: DISCRETE-but-smooth early reflections (diffuse-then-tap) — the clarity/un-masking comb the velvet field can't do without going metallic. DenseHall additive bus; bit-null when no reflections set.
@@ -655,7 +655,7 @@ private:
 
     // FORK A — discrete EARLY-REFLECTION tap ("duh-duh"). A single delayed dry tap
     // (~90-110 ms, per-preset) summed to the wet, giving the prominent SECOND
-    // arrival the VVV hall anchors have at that time (DV's tank decays smoothly
+    // arrival the REF hall anchors have at that time (DV's tank decays smoothly
     // through it). NOT the smooth er_ cluster (8-80 ms) and NOT a tank-onset delay
     // (that left a silence gap — reverted). One discrete reflection + a slightly
     // offset R tap for width + a gentle LP (a real reflection is darker). reflGain_

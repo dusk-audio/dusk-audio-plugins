@@ -575,8 +575,8 @@ int main (int argc, char* argv[])
         }
     }
 
-    // --- 8. Fender stage-by-stage diagnostic ---
-    // The push-pull fix made Marshall correct but collapsed Fender's full-chain
+    // --- 8. American clean stage-by-stage diagnostic ---
+    // The push-pull fix made British crunch correct but collapsed American clean amp's full-chain
     // output to silence. Render the chain at incremental endpoints to pinpoint
     // where the signal disappears.
     std::cout << std::endl << "=== FENDER STAGE-BY-STAGE DIAGNOSTIC ===" << std::endl;

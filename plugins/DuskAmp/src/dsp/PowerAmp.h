@@ -47,17 +47,17 @@ private:
         float biasAsymmetry;    // Class A bias offset (0 = symmetric push-pull)
 
         // Push-pull (Class AB) vs single-ended (Class A) topology.
-        // True for Fender / Marshall: model the phase-inverter + paired-tubes
+        // True for American clean / British crunch: model the phase-inverter + paired-tubes
         // + output-transformer subtraction as out = 0.5 * (f(x) - f(-x)),
         // which cancels even-order harmonics from the asymmetric tube curve
         // and doubles odd-order — the defining sound of Class AB.
-        // False for Vox: single tube path keeps even harmonics (Class A).
+        // False for British class-A chime: single tube path keeps even harmonics (Class A).
         bool  isPushPull;
 
         // Per-amp sag depth coefficient. Total sag reduction =
         // sagAmount * env * sagDepth. Real-amp targets at fully cranked:
-        // Fender 5AR4 tube rectifier ~5dB (deep), Marshall solid-state
-        // bridge ~1dB (shallow), Vox GZ34 ~3dB (medium). Previously a
+        // American clean 5AR4 tube rectifier ~5dB (deep), British crunch solid-state
+        // bridge ~1dB (shallow), class-A chime GZ34 ~3dB (medium). Previously a
         // single hardcoded 0.3 across all amps gave at most -1.4dB —
         // too gentle for vintage tube-rectified character.
         float sagDepth;
