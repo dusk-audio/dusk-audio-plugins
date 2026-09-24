@@ -317,7 +317,7 @@ static void testBritishHarmonics()
 }
 
 // ==============================================================================
-// TEST 3: Tube Mode (Pultec) Harmonic Character
+// TEST 3: Tube Mode (Passive Tube Program EQ) Harmonic Character
 // ==============================================================================
 static void testTubeHarmonics()
 {
@@ -349,7 +349,7 @@ static void testTubeHarmonics()
               << " dB, H3=" << levels.h3 << " dB, H4=" << levels.h4
               << " dB, THD=" << std::setprecision(3) << levels.thd << "%\n";
 
-    // Pultec produces a complex spectrum: tube adds H2 (even), transformers add H3 (odd).
+    // A passive tube program EQ produces a complex spectrum: tube adds H2 (even), transformers add H3 (odd).
     // The combination is neither purely even nor odd dominant — both should be present.
     check("Tube: 2nd harmonic present (> -80dB)", levels.h2 > -80.0f);
     check("Tube: 3rd harmonic present (> -80dB)", levels.h3 > -80.0f);
@@ -402,7 +402,7 @@ static void testMonoProcessing()
 }
 
 // ==============================================================================
-// TEST 5: Pultec Trick — LF Boost + Cut Interaction
+// TEST 5: Simultaneous Boost/Cut Low-Shelf Trick — LF Boost + Cut Interaction
 // ==============================================================================
 static void testPultecTrick()
 {
@@ -440,7 +440,7 @@ static void testPultecTrick()
     check("Atten only: -dB at 60Hz", attenOnly60 < -3.0f);
     check("Atten only: more cut at 30Hz than 60Hz (shelf shape)", attenOnly30 < attenOnly60);
 
-    // --- Test C: Pultec Trick (both boost + atten at max) ---
+    // --- Test C: Simultaneous boost/cut low-shelf trick (both boost + atten at max) ---
     lf.updateCoefficients(8.0f, 8.0f, testFreq, sampleRate);
     float trick20 = lf.getMagnitudeDB(20.0f, sampleRate);
     float trick30 = lf.getMagnitudeDB(30.0f, sampleRate);
@@ -455,7 +455,7 @@ static void testPultecTrick()
               << ", 80Hz=" << trick80 << ", 120Hz=" << trick120
               << ", 200Hz=" << trick200 << ", 1kHz=" << trick1k << " dB\n";
 
-    // THE key Pultec Trick signature:
+    // THE key simultaneous boost/cut low-shelf trick signature:
     // - Region around/above the selected freq gets a net boost (peak pokes through shelf)
     // - Region below gets a net cut (shelf dominates peak)
     // - The boost at the selected freq must be HIGHER than the response at half-freq

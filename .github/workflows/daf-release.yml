@@ -507,8 +507,8 @@ jobs:
           if (-not $pv) { Write-Error "pluginval.exe not found after install"; exit 1 }
           $vst3 = (Resolve-Path "build/bin/sunset-circuits.vst3").Path
           # --skip-gui-tests: no display on the runner. pluginval crashes on DAF's
-          # headless plugin teardown (the known DAF editor-lifecycle issue,
-          # docs/daf-migration/00-OVERVIEW.md landmine 9) AFTER the tests pass, so
+          # headless plugin teardown (the known DAF editor-lifecycle issue)
+          # AFTER the tests pass, so
           # a non-zero exit is tolerated ONLY when the log shows tests actually
           # ran and none failed. A missing executable, a plugin that fails to
           # load, or a real test failure all fail the job — we must never release
@@ -825,8 +825,8 @@ jobs:
           VST3="$(cd build/bin && pwd)/sunset-circuits.vst3"
           test -d "$VST3"
           # --skip-gui-tests is mandatory, not an optimisation: pluginval's editor
-          # tests segfault headless for every DAF plugin (host-side XEmbed issue,
-          # docs/daf-migration/00-OVERVIEW.md landmine 9). Strictness 8 is the bar
+          # tests segfault headless for every DAF plugin (host-side XEmbed
+          # issue). Strictness 8 is the bar
           # the QA checklist calls authoritative for the 223-parameter state
           # round-trip; the Windows job runs 5 on top of this.
           #

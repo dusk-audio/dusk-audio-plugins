@@ -89,7 +89,7 @@ namespace
     constexpr float kFlutterAgeLin = 0.589f;
     constexpr float kFlutterAgeSq  = 1.214f;
 
-    // Captured Galaxy cartridges expose a quiet 60 Hz odd-harmonic bed. The
+    // Captured reference cartridges expose a quiet 60 Hz odd-harmonic bed. The
     // fifth harmonic is strongest; the others are normalized to it from the
     // hosted New/Used/Old noise spectra. A separate, much quieter random layer
     // supplies the residual tape/electronics texture above these lines.
@@ -1473,7 +1473,7 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
         // POWER off.
         //
         // The regeneration term was `+ power * loopDrive` and is deliberately
-        // gone. That placement follows the UAD manual, which says "echo
+        // gone. That placement follows the reference plugin's manual, which says "echo
         // feedback is applied just before the level detection circuit, so the
         // Feedback control will affect the level readings" -- but it does not
         // match the reference's observable behaviour. Watching both plugins
@@ -1510,7 +1510,7 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
         // stop at all (at nominal level even 1.00 shows only 0.06 s of tail).
         //
         // This factor is calibrated to a description of the reference's needle,
-        // not to a measurement of it -- Galaxy exposes no meter parameter, so
+        // not to a measurement of it -- the reference exposes no meter parameter, so
         // its VU cannot be read programmatically. Treat 0.25 as provisional.
         constexpr float kMeterRegenAmount = 0.25f;
         const float recordMeterSignal =

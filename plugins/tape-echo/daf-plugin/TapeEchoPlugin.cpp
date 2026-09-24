@@ -144,7 +144,7 @@ protected:
             // moved again. That is deliberate -- it is the only way 0.1.x
             // automation lanes keep working, exactly as for Dry Level -- but it
             // is a real trap for anyone who automates the wrong one of the
-            // pair, so RELEASE_CHECKLIST asks for it to be exercised by hand.
+            // pair, so every release exercises it by hand.
             // Do NOT "fix" it by assigning p.hints to drop
             // kParameterIsAutomatable: that silences shipped 0.1.x automation.
             p.hints |= kParameterIsInteger | kParameterIsHidden;

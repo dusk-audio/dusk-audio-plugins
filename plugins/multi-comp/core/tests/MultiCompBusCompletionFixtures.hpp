@@ -1,6 +1,6 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
 #pragma once
-// Fresh native UAD SSL G captures; see docs/multi-comp-2-bus-completion-2026-09-09.md.
+// Fresh native reference console bus compressor captures; see docs/multi-comp-2-bus-completion-2026-09-09.md.
 namespace buscompletion {
 struct Frequency { bool external; int ratio, headroom; float hp; double gain[7]; };
 constexpr Frequency frequency[] = {

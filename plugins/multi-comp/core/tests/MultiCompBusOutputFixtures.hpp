@@ -1,9 +1,9 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
 #pragma once
-// Native UAD SSL G captures for the BUS output stage: the dry/wet Mix control
+// Native reference console bus compressor captures for the BUS output stage: the dry/wet Mix control
 // and the internal-magnitude-3.3 output ceiling under COMPRESSION. Every number
 // here is measured from a native reference WAV in
-// build-multi-comp-1176/bus-completion-20260909/ (abbreviated C below); none is
+// capture set bus-completion-20260909/ (abbreviated C below); none is
 // generated from the candidate model. Provenance is named per row.
 // See docs/multi-comp-2-bus-completion-2026-09-09.md.
 //

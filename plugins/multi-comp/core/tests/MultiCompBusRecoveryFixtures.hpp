@@ -2,7 +2,7 @@
 #pragma once
 #include <array>
 
-// Native UADx SSL G, HR16, threshold +2.5, ratio 10:1, attack 10 ms.
+// Native reference console bus compressor, HR16, threshold +2.5, ratio 10:1, attack 10 ms.
 // Independent 997 Hz / phase .37 carrier: -66 dBFS, -9 dBFS from 1 to 2.3 s.
 // 5 s silent preroll, 256-frame blocks. Four-ms carrier fits remove DC/trend.
 // Source WAVs, exact captures and fitting scripts: bus-release-20260909/.

@@ -1,6 +1,6 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
 #pragma once
-// Measured native UADx SSL G, HR16, internal detector, makeup 0, SC Off.
+// Measured native reference console bus compressor, HR16, internal detector, makeup 0, SC Off.
 // Provenance: docs/multi-comp-2-bus-frequency-2026-09-09.md.
 namespace busfrequency
 {

@@ -59,7 +59,7 @@ std::vector<float> render(DSP& dsp, const std::vector<float>& input, int channel
 }
 // Fit sine/cosine plus constant and linear trend. The nuisance terms remove
 // coupling-filter step tails from the low carrier during recovery. This is the
-// same extraction used on the native UAD WAVs, after each device's latency.
+// same extraction used on the native reference WAVs, after each device's latency.
 std::array<double, 2> carrier(const std::vector<float>& audio, int begin,
                               int count = 48, double frequency = 1000,
                               int sampleRate = rate)
@@ -96,7 +96,7 @@ std::array<double, 2> carrier(const std::vector<float>& audio, int begin,
 
 void timing(bool onlyAuto = false)
 {
-    // Independent UADx captures at ratio 4, threshold 0, HR16, attack 1 ms.
+    // Independent reference captures at ratio 4, threshold 0, HR16, attack 1 ms.
     // Two bursts (150 ms / 2 s) expose the different Auto-release memories.
     auto input = sine(10.15, -54);
     for (size_t i = 0; i < input.size(); ++i)

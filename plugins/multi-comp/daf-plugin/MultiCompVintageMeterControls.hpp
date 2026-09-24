@@ -12,7 +12,7 @@ inline int vintageMeterChoice(float value) noexcept
 inline float vintageMeterDb(bool opto, int choice, float gr, float outputRmsDb) noexcept
 {
     if (choice == 0) return std::isfinite(gr) ? std::min(gr, 0.0f) : 0.0f;
-    // Calibrated independently against the installed UAD output meters. The
+    // Calibrated independently against the installed reference output meters. The
     // envelope is expressed as sine-equivalent RMS dBFS, not block peak dBFS.
     const float reference = opto ? (choice == 1 ? -12.0f : -18.0f)
                                  : (choice == 1 ? -17.0103f : -21.0103f);

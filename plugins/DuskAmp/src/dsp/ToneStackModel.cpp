@@ -2,17 +2,17 @@
 
 // ToneStackModel.cpp — Circuit-modeled tone stack coefficient computation
 //
-// Fender & Marshall: The classic 3-knob tone stack is a passive RC network
+// American clean & British crunch: The classic 3-knob tone stack is a passive RC network
 // analyzed by Yeh/Smith. The transfer function H(s) = B(s)/A(s) is a ratio
 // of 3rd-degree polynomials in s, where the coefficients are functions of
 // the pot positions t (treble), m (mid), b (bass) and fixed component values.
 //
-// The formulas below are derived from nodal analysis of the Fender/Marshall
+// The formulas below are derived from nodal analysis of the American clean/British crunch
 // tone stack circuit. See Yeh 2009, Chapter 4, and the DAFx-06 paper
 // "Automated Physical Modeling of Nonlinear Audio Circuits for Real-Time
 // Audio Effects" for the complete derivation.
 //
-// Vox AC30 Top Boost: Different topology — a "cut" circuit with Bass and
+// British class-A chime amp: Different topology — a "cut" circuit with Bass and
 // Treble controls plus a fixed midrange emphasis. Modeled as a 2nd-order
 // filter with interactive controls.
 
@@ -26,7 +26,7 @@
 
 ToneStackModel::FenderMarshallComponents ToneStackModel::getFenderComponents()
 {
-    // Fender Twin Reverb AB763
+    // American clean amp
     return {
         250e3,  // R1 — Treble pot (250k)
         1e6,    // R2 — Bass pot (1M)
@@ -40,12 +40,12 @@ ToneStackModel::FenderMarshallComponents ToneStackModel::getFenderComponents()
 
 ToneStackModel::FenderMarshallComponents ToneStackModel::getMarshallComponents()
 {
-    // Marshall JTM45 / Plexi 1959
+    // British crunch amp
     return {
         220e3,  // R1 — Treble pot (220k)
         1e6,    // R2 — Bass pot (1M)
         22e3,   // R3 — Mid pot (22k) — note: some schematics show 25k
-        33e3,   // R4 — Slope resistor (33k — different from Fender's 56k)
+        33e3,   // R4 — Slope resistor (33k — different from American clean amp's 56k)
         470e-12, // C1 — Treble cap (470pF — larger = more mid scoop)
         22e-9,   // C2 — Bass cap (22nF)
         22e-9    // C3 — Mid cap (22nF)
@@ -54,7 +54,7 @@ ToneStackModel::FenderMarshallComponents ToneStackModel::getMarshallComponents()
 
 ToneStackModel::VoxComponents ToneStackModel::getVoxComponents()
 {
-    // Vox AC30 Top Boost
+    // British class-A chime amp
     // Simplified model: volume pot interaction is omitted since this
     // tone-stack model runs independently of the volume control.
     return {
@@ -163,7 +163,7 @@ void ToneStackModel::recomputeCoefficients()
 }
 
 // ----------------------------------------------------------------------------
-// Fender/Marshall tone stack (Yeh/Smith derivation)
+// American clean/British crunch tone stack (Yeh/Smith derivation)
 //
 // The transfer function H(s) = B(s)/A(s) for the classic 3-knob tone stack:
 //
@@ -274,9 +274,9 @@ void ToneStackModel::computeFenderMarshall (const FenderMarshallComponents& comp
 }
 
 // ----------------------------------------------------------------------------
-// Vox AC30 Top Boost "Cut" circuit
+// British class-A chime amp "Cut" circuit
 //
-// The Vox tone circuit is different from Fender/Marshall — it uses a simpler
+// The class-A chime tone circuit is different from American clean/British crunch — it uses a simpler
 // Bass + Treble ("Cut") 2-control topology. The Mid control adds a fixed
 // resonant emphasis. This is modeled as a 2nd-order filter (b3_=0, a3_=0).
 //

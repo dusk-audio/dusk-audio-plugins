@@ -65,7 +65,7 @@ struct Rig
 
 void staticParity()
 {
-    // Native UADx SSL G captures, internal detector, HR16, 1 kHz, 48 kHz.
+    // Native reference console bus compressor captures, internal detector, HR16, 1 kHz, 48 kHz.
     // See docs/multi-comp-2-bus-audio-2026-09-08.md for raw evidence/holdouts.
     struct Row { int ratio; float threshold, input, output; };
     constexpr Row rows[] = {
@@ -96,7 +96,7 @@ void staticParity()
 
 void makeupHeadroomParity()
 {
-    // Fresh UAD native SSL G capture: 997 Hz, HR4, threshold +15,
+    // Fresh native reference console bus compressor capture: 997 Hz, HR4, threshold +15,
     // ratio 10, attack 30 ms, release 1.2 s. Makeup is post-compressor.
     // Evidence: bus-completion-20260909/capture-matrix.json.
     constexpr double expected[2][4] = {
@@ -193,7 +193,7 @@ void fadeControls()
 
 void fadeParity()
 {
-    // Independent native UADx captures, including rates excluded from the fit,
+    // Independent native reference captures, including rates excluded from the fit,
     // completed fade-ins, mid-fade reversals, and three sample rates. Times are
     // on the host automation clock; levels use the final 2 ms before each time.
     // Evidence: docs/multi-comp-2-bus-fade-2026-09-08.md.
@@ -242,7 +242,7 @@ void fadeParity()
 
 void fadeRateAutomation()
 {
-    // UAD reference: start 3.5 s, change to 10 s at 1.7, reverse at 3.7,
+    // Reference: start 3.5 s, change to 10 s at 1.7, reverse at 3.7,
     // then change to 2 s at 5.0. The rate changes retain the current level.
     constexpr double times[] = {1.5, 2, 3, 4, 5.5, 6};
     constexpr double reference[] = {-10.46040153, -17.01823705, -24.71192275,

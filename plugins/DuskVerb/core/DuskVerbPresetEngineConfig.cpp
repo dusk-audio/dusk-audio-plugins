@@ -258,7 +258,7 @@ namespace {
             //              gainTrim +6.20 in the preset row: wings get
             //              full +6.20 dB lift, mids get ~+2.7 dB net.
             { "Small Drum Room", {
-                {  250.0f, 1000.0f, 1500.0f, 5000.0f },   // 2026-06-16 EAR: Band 0 101->250 Hz — tame the ~250 Hz "boxy" resonance vs Valhalla (gentle, narrow Q)
+                {  250.0f, 1000.0f, 1500.0f, 5000.0f },   // 2026-06-16 EAR: Band 0 101->250 Hz — tame the ~250 Hz "boxy" resonance vs REF (gentle, narrow Q)
                 {  3.50f,  4.00f,  1.00f,  1.50f },
                 { -2.50f, +3.50f, -3.00f, -4.50f },
             } },
@@ -308,7 +308,7 @@ namespace {
                 {   1.20f,   1.50f,   1.00f,    1.20f },
                 {  -3.00f,  -3.50f,  -5.00f,   -6.00f },
             } },
-            // 79 Vocal Chamber (2026-06-25 ear: "dull vs VVV"): the QuadTank's 5-10k
+            // 79 Vocal Chamber (2026-06-25 ear: "dull vs REF"): the QuadTank's 5-10k
             // inversion + the earlier qt_air damp left ss-hi 5-10k -5.3dB. A 6.5kHz
             // Q1.2 +4.5dB peak lifts the dull region (ss-hi -5.3 -> ~-1.8) without
             // touching the hot >10k. COST: re-brightens the late tail (cent_500 fails)
@@ -514,7 +514,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // first preset swap. Same RT-safe pattern as the DenseHall GEQ map below.
         static constexpr std::array<std::pair<std::string_view, OctaveT60Override>, 3> kAccurateHallT60ByName = {{
             // Per-octave T60 targets (63 Hz..16 kHz), calibrated to land each
-            // octave within ±5% of the VVV anchor (Schroeder backward-int on
+            // octave within ±5% of the REF anchor (Schroeder backward-int on
             // the noiseburst tail). The 9-vs-5 coupling wall the FDN
             // FiveBandDamping floored on; the octave GEQ sets each directly.
             // Since the composite-exact GEQ design (OctaveGEQDesign.cpp) the
@@ -670,7 +670,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     }
 
     // ─── FORK A: discrete early-reflection tap ("duh-duh") ────────────────────
-    // The VVV halls have a prominent SECOND arrival ~90-110 ms post-onset; DV's
+    // The REF halls have a prominent SECOND arrival ~90-110 ms post-onset; DV's
     // smooth tank decays through it (the user A/B: Blade Runner + Bright Hall
     // "missing the delay sound, two snare hits"). A single delayed dry tap
     // (R-offset for width, 6 kHz-darkened) summed to the wet restores it. Unlisted
@@ -691,10 +691,10 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // loudest arrival) ON TOP of the front-load composite. NOW the CLEAN+BRIGHT
         // Fork A (pre-diffuser dry feed + 11kHz LP) — the earlier 6kHz dark/smeared
         // version was "very hard to hear" + cloudy. Bright tap also lifts the early
-        // field (cent dark −11% → "VVV brighter on top"). gain 0.5 = prominent.
+        // field (cent dark −11% → "REF brighter on top"). gain 0.5 = prominent.
         static constexpr std::array<ReflConfig, 3> kReflectionByName = {{
             // 95ms/1.2 (ear 2026-06-18/19): gain 1.2 balanced (2.0 too loud, 0.5 too
-            // quiet). ms 112→95 — the tap "sounded longer than VVV" (DV's fuller blob
+            // quiet). ms 112→95 — the tap "sounded longer than REF" (DV's fuller blob
             // reads as a longer delay), so pull it earlier. NOTE: anchor metric prom
             // 28.5 dB is a SHARP tick; DV's blob sounds louder at lower prom — match
             // the EAR, not the metric target.
@@ -707,9 +707,9 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // back to). gain 0.20 → early_tap 18.0 dB@149 ms ≈ anchor 18.8@139, attack
             // stays 13 ms. The buildup's smooth density peak alone was inaudible (user:
             // "no duh-DUH, buried"); this clean tick is the audible 2nd hit.
-            // Ear 2026-06-19: ms 139→129 (DV's tap was ~10 ms LATER than VVV — pull it in
+            // Ear 2026-06-19: ms 139→129 (DV's tap was ~10 ms LATER than REF — pull it in
             // to ~139 ms measured); lpFc 3500 (11 k sharp tick → 5.5 k → 3.5 k: ear said
-            // the tap was still "bright/harsher", VVV's is "smoother", so keep rolling the
+            // the tap was still "bright/harsher", REF's is "smoother", so keep rolling the
             // top off — a real room reflection is darker than the dry snare transient).
             { "Bright Hall", 129.0f, 0.20f, 3500.0f },
         }};
@@ -744,7 +744,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
                             float duckAmt; float duckHold; float duckThresh; };
         static constexpr std::array<ETapConfig, 1> kEarlyTapsByName = {{
             // BEGIN_ERTAPS_MAP (times from full_check 'early refl' anchor readouts)
-            // 2026-07-04: one quiet dark tap at the VVV anchor's 11.6 ms first
+            // 2026-07-04: one quiet dark tap at the REF anchor's 11.6 ms first
             // arrival — the QuadTank's earliest output tap sits at 18.8 ms and
             // the velvet field at 110, so nothing in the composite could arrive
             // on time. Lands arrival 11.5 ms exact + closes sine1k/pitch-chorus/
@@ -825,7 +825,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // strength-iterated (partial s) — gentler tables that rescue presets full strength over-corrected:
             { "Black Hole",           { 0.3911f, 0.4127f, 0.4340f, 0.4046f, 0.3763f, 0.3884f, 0.3867f, 0.4817f, 1.0000f } },
             { "Vintage Vocal Plate",  { 0.7424f, 0.9964f, 1.0000f, 0.9505f, 0.9176f, 0.8638f, 0.6995f, 0.5468f, 0.7873f } },
-            { "Bright Hall",          { 0.9951f, 0.8682f, 0.9500f, 0.9500f, 0.9300f, 0.9500f, 0.5800f, 0.6800f, 1.0000f } },  // 2026-07-24 body lift: 250/500/1k/2k 0.870/0.869/0.860/0.887 -> 0.95/0.95/0.93/0.95: the 250-2k mids ran cold (body 250-500 -2.03, body 1-2k -2.06 vs VVV, both under the -1.5 gate). Raising the mid bands toward unity (cut-only headroom) closes body 250-500 (-1.44) + improves body 1-2k (-1.79); spec_L1 +0.3 (noise). body 1-2k still just fails (gain-match zero-sum: pushing 1k/2k harder reopens 250-500/sine1k). (9->8)  // 2026-06-19 EAR + tone-match: 4k 0.85->0.58 + 8k 0.91->0.68 — DV ran +3.3dB over VVV at 5-10k; the match-EQ 4k/8k cut (the Treble param is dead-wired on DenseHall) flattens the whole 5-10k to within ±1.1dB of VVV (6.3-8k +2.4->+0.5).
+            { "Bright Hall",          { 0.9951f, 0.8682f, 0.9500f, 0.9500f, 0.9300f, 0.9500f, 0.5800f, 0.6800f, 1.0000f } },  // 2026-07-24 body lift: 250/500/1k/2k 0.870/0.869/0.860/0.887 -> 0.95/0.95/0.93/0.95: the 250-2k mids ran cold (body 250-500 -2.03, body 1-2k -2.06 vs REF, both under the -1.5 gate). Raising the mid bands toward unity (cut-only headroom) closes body 250-500 (-1.44) + improves body 1-2k (-1.79); spec_L1 +0.3 (noise). body 1-2k still just fails (gain-match zero-sum: pushing 1k/2k harder reopens 250-500/sine1k). (9->8)  // 2026-06-19 EAR + tone-match: 4k 0.85->0.58 + 8k 0.91->0.68 — DV ran +3.3dB over REF at 5-10k; the match-EQ 4k/8k cut (the Treble param is dead-wired on DenseHall) flattens the whole 5-10k to within ±1.1dB of REF (6.3-8k +2.4->+0.5).
             { "79 Vocal Chamber",     { 0.6672f, 0.6200f, 0.7059f, 0.7068f, 0.7097f, 0.7092f, 0.7763f, 0.5500f, 0.3505f } },  // 2026-06-23 workflow: 8k 1.0->0.55 (spec_L1 + tail-chorus, 18->16) + 125Hz 0.59->0.62 (body 125-250, 16->15)
             { "Small Drum Room",      { 0.9079f, 0.9794f, 0.8922f, 0.7830f, 0.7596f, 0.9453f, 1.0000f, 0.6000f, 0.1000f } },  // 2026-07-03 8k 0.689->0.60 + 16k 0.212->0.10: ss-air ran +12 dB hot (yet T60-16k short — loud-but-dying top). With Bass 0.85: 26->23. 8k 0.50 over-cuts (hi 4-12k breaks).
             { "Blade Runner 224",     { 1.0000f, 0.7800f, 0.8000f, 1.0000f, 1.0000f, 1.0000f, 1.0000f, 1.0000f, 1.0000f } },  // 2026-07-08 MARC EAR "too much low end": ss-low was +3.74 hot; 125/250 x0.78/0.80 -> +2.67 ✓ and 19->16 er... 18->16. Deeper (0.70) over-cuts.
@@ -855,17 +855,17 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // the AUDIO thread; same RT-safe pattern as kDiffuseERByName.
         static constexpr std::array<std::pair<std::string_view, AirShelf>, 9> kOutputAirShelfByName = {{
             { "Live Room",            { 8000.0f,   0.0f } },   // 2026-07-07 +5->0: the +5 was tuned vs the DRY-CONTAMINATED anchor (which read dark, cent_50 -49%). Vs the CORRECTED wet anchor cent_50 is -4.7% ✓ and +5 overbrightened (cent_500 +26%). 0 closes cent_500 + HF (36->32). (0 = bit-null pass-through for the shelf.)
-            { "Vocal Hall",           { 9000.0f,   2.0f } },   // 2026-07-04 EAR "VVV richer and brighter": +2 dB @ 9k. Gates +1 (body 500-1k trades via gain-match) — ear-driven, the anchor IS brighter.
+            { "Vocal Hall",           { 9000.0f,   2.0f } },   // 2026-07-04 EAR "REF richer and brighter": +2 dB @ 9k. Gates +1 (body 500-1k trades via gain-match) — ear-driven, the anchor IS brighter.
             // BEGIN_AIRSHELF_MAP (per-preset HF air-shelf, 2026-06-24 fleet cent match
             // vs anchors; env-swept DUSKVERB_AIRSHELF, then baked. {freqHz, gainDb})
             // The air-shelf is an HF-LEVEL lever — it only belongs where the deficit is
             // a genuine HF LEVEL gap (present-but-quiet HF, reachable, decay-neutral).
             // These 4 close BOTH centroid gates cleanly at moderate gain:
-            { "Bright Hall",          { 4000.0f,   2.0f } },   // 2026-06-24 +7->+2: ear "too bright" + snare-tail tilt (anchor +0.83 dB/oct vs DV+7 +2.02) + VVV panel is DARK (HighShelf -24dB@6k, HiCut 8k). +7 over-tilted the tail; +2 keeps a touch of early lift. (was cent_50 -30.7->-7.9)
+            { "Bright Hall",          { 4000.0f,   2.0f } },   // 2026-06-24 +7->+2: ear "too bright" + snare-tail tilt (anchor +0.83 dB/oct vs DV+7 +2.02) + REF panel is DARK (HighShelf -24dB@6k, HiCut 8k). +7 over-tilted the tail; +2 keeps a touch of early lift. (was cent_50 -30.7->-7.9)
             { "Vintage Gold Plate",   { 5000.0f,   7.5f } },   // cent_50 -30.5->-5.4, cent_500 -19.5->+5.9
             { "Deep Blue Day",        { 3000.0f,   3.75f } },  // 2026-07-06 6.0->3.75: the baked mode-smear ({100,2.0}) already brightens the tail, so +6 dB over-cranked the HF — cent_50 +16.3% (over ±15), ss-hi +3.01, bloom 4-8k/8-12k, spec_L1@10.2k all ran HF-hot. 3.75 relands them (cent_50 +8.0%, cent_500 +3.5%, decay_tail_L1 2.93, boing untouched) → 22->16 @ native 50% wet. (Prior note, pre-smear: +6 pulled cent_50 -14.4->+7.0.)
             { "Ambience",             { 3000.0f,  -5.0f } },   // bright-late: cent_500 +45.3->+5.1, cent_50 +12.5->-11.7
-            { "Black Hole",           { 3000.0f,   2.5f } },   // 2026-06-29 gain 12->2.5 (EAR "DV brighter" + snare/noiseburst): +12 over-cranked the 4-12k presence ~9 dB hot vs Valhalla (snare HF tilt -6 vs -15) — harsh-bright. 2.5 matches the 4-12k presence (tilt ~-15 = Valhalla) -> n_fail 34->25. DV stays darker by CENTROID (no >12k air) — that's the 12 kHz pitch-shifter AA ceiling, structural. (Prev +12 chased cent_50 on the early window but over-brightened the band the ear hears.)
+            { "Black Hole",           { 3000.0f,   2.5f } },   // 2026-06-29 gain 12->2.5 (EAR "DV brighter" + snare/noiseburst): +12 over-cranked the 4-12k presence ~9 dB hot vs REF (snare HF tilt -6 vs -15) — harsh-bright. 2.5 matches the 4-12k presence (tilt ~-15 = REF) -> n_fail 34->25. DV stays darker by CENTROID (no >12k air) — that's the 12 kHz pitch-shifter AA ceiling, structural. (Prev +12 chased cent_50 on the early window but over-brightened the band the ear hears.)
             { "Vintage Vocal Plate",  { 6000.0f,  -4.0f } },   // 2026-07-07: DPV runs HF-HOT (ss-hi +4.3, ss-air +4.0, cent_50 +17%). A -4 dB high-shelf @6k lands cent_50 at +1.8% (matches anchor) + closes ss-hi/ss-air/HF-spec_L1 -> 30->27. Marginal decay_tail_L1 +0.2 opens (DPV HF<->decay coupling). EAR-CHECK the darker top.
             { "Small Drum Room",      { 11000.0f, -12.0f } },  // 2026-07-07: anchor is a DARK plate (ss-air 10-20k -53.7 dB) vs DV +11 dB hot. The shelf ALONE broke transient-def (DV crest already at the -1.8 edge -> -2.5); the paired diffusion-0.30 sharpen (FactoryPresets.h) lifts crest to -1.2 FIRST, so the shelf lands ss-air +2.8 with transient-def -1.9 STILL ✓. Net (with smear{300,2.5}): 24->21. See FactoryPresets.h Small Drum diffusion note.
             // air-shelf can't fix; fixed at the proper in-loop lever instead):
@@ -932,7 +932,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // the AUDIO thread; same RT-safe pattern as kDenseHallOctaveT60ByName.
         static constexpr std::array<std::pair<std::string_view, DiffER>, 1> kDiffuseERByName = {{
             // BEGIN_DIFFER_MAP (per-preset discrete-ER comb, 2026-06-25; matched to anchor reflections)
-            // Cathedral: VVV's discrete early-reflection comb (the "two distinct taps" /
+            // Cathedral: REF's discrete early-reflection comb (the "two distinct taps" /
             // clarity / un-masking). Closes early_refl_count (DV 1->9) + transient_def
             // (-3.2->+0.2), not metallic (HF kurtosis 13.7). COST: energy_first50/t50
             // open (+4 n_fail) — diffused bursts carry more energy than the anchor's
@@ -1103,7 +1103,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // Phase α (2026-05-29): promote Bright Hall, Cathedral Large Hall,
         // and Drum Plate to ModulatedDamping. The static-line + slow-drift
         // damping topology eliminates the per-line LFO harmonic-stacking
-        // signature (DV mod at wrong per-band rates vs VVV) AND clears the
+        // signature (DV mod at wrong per-band rates vs REF) AND clears the
         // path for per-line frequency-indexed decay scaling (Phase α
         // setPerLineDecayTilt) to sculpt RT60 per band without Doppler.
         // Cathedral previously used CoherentLoop (+6 gates closed in Phase 2)
@@ -1135,7 +1135,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     // Long lines (low-band-dominant) get longLineScale; short lines (high-
     // band-dominant) get shortLineScale. Defaults 1.0/1.0 = backward
     // identical for presets not in this map. The aggressive 0.5/1.7 spread
-    // for Halls + Cathedral is calibrated against VVV's measured 5.3× T60
+    // for Halls + Cathedral is calibrated against REF's measured 5.3× T60
     // ratio (63 Hz vs 16 kHz on Bright Hall) — gives the FDN feedback path
     // a structural lever to deliver per-band RT60 shape that 3-band damping
     // multiplexing alone cannot reach (proven by the BH "sacrificial sweep"
@@ -1174,7 +1174,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
 
     // ─── Phase β: per-preset FDN base delays ──────────────────────────────
     // Replaces the engine's log-spaced-prime kDefaultDelays[16] for presets
-    // whose VVV anchor exhibits a distinct per-band Hilbert-FFT modal-beat
+    // whose REF anchor exhibits a distinct per-band Hilbert-FFT modal-beat
     // pattern that the default delays can't reproduce. Each 16-int set must
     // fit inside FDNReverb::kMaxBaseDelay (6700 samples).
     //
@@ -1190,7 +1190,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // Vocal Hall (Step 2 on v15 baseline, 2026-05-30): restored Phase β
         // sweep result. Without this override the engine's default log-
         // spaced-prime delays push the dominant pairwise (1/T_i - 1/T_j)
-        // beats to 4-8 Hz, while the VVV anchor sits at 1.5-2.5 Hz. The
+        // beats to 4-8 Hz, while the REF anchor sits at 1.5-2.5 Hz. The
         // sweep-tuned array below aligns the Hilbert envelope mod peaks
         // back to anchor without touching the RandomWalk topology.
         // Sweep ID: baseDelay_sweep.py trial 299, 500 trials TPE.
@@ -1270,14 +1270,14 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         { "Blade Runner 224", { -1.05804f, -0.69518f, -1.16656f, -0.68592f } },  // mild broadband post-trim (sweep)
         { "Cathedral Large Hall", { -3.42900f, -3.50000f, -0.35222f, -4.19473f } },  // 2026-06-13: low-mid cut -7.9->-3.5 — the deep scoop hollowed the body + deepened the post-transient energy hole (pumping)
         // 79 Vocal Chamber 2026-06-19 (ear: "EQ/tone a little off"): the residual
-        // 1/3-oct curve vs VVV = +5dB@100 (thick low) / −2.7@315 (over-scoop) /
+        // 1/3-oct curve vs REF = +5dB@100 (thick low) / −2.7@315 (over-scoop) /
         // −5dB@5-8k (dull presence). 4-region fix over crossovers 130/3500/9000:
         // Sub(≤130) −3.5 cuts the 100 bump; LowMid(130-3500) −1.5 keeps the hump tamed
         // without the 315 over-scoop; MidHi(3500-9000) +2.5 lifts the 5-8k presence;
         // Air(>9000) 0 (the >10k is the measurement ghost, leave).
         { "79 Vocal Chamber", { 0.0f, -2.5f, 0.0f, 0.0f } },
         // Bright Hall 2026-06-19 (AccurateHall32): HF cut TRIED + reverted. ss hi 5-10k
-        // +3.7 (DV tail brighter than VVV) is a normalized-SHAPE excess — the post-band
+        // +3.7 (DV tail brighter than REF) is a normalized-SHAPE excess — the post-band
         // trim is renorm-compensated (−2.5dB band cut nets only −0.8dB ss hi, the
         // gain-match scales it back) AND it darkens cent_500 away from the anchor
         // (tap-only cent −2.6% is the closest match). The 5-10k + spec_L1 @12.9k are the
@@ -1506,7 +1506,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     // PER-PASS HF-SUSTAIN SHELF (top-octave cliff fix, 2026-07-08). The Dattorro/
     // DenseHall tanks lose HF per pass (modulated-read interpolation + AA one-poles);
     // the loss COMPOUNDS over the tail into a -10..-50 dB 11-19 kHz cliff vs the
-    // anchors (spec_L1 max @12.9k on 7 presets; Marc hears "muffled"). The octave GEQ
+    // anchors (spec_L1 max @12.9k on 7 presets; heard as "muffled" in listening tests). The octave GEQ
     // is attenuation-only and cannot lift past it; this small per-pass lift cancels the
     // loss (the shimmer's setHFSustainDb precedent, which landed Black Hole's T60-8k).
     // Env DUSKVERB_HFSUS="db,cornerHz"; else per-preset bake; else 0 dB -> bit-null.
@@ -1535,8 +1535,8 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         engine.setTankHFSustain (hsDb, hsHz);
     }
 
-    // QuadTank wet-output stereo chorus/ensemble (2026-07-08, Marc's ear: 79VC misses
-    // VVV's "phasey/fizzy" modulated character; osc_p2p is blind to it and raw tank
+    // QuadTank wet-output stereo chorus/ensemble (2026-07-08, listening test: 79VC misses
+    // REF's "phasey/fizzy" modulated character; osc_p2p is blind to it and raw tank
     // modDepth smears T60/ripple 15->21). The ShimmerEngine StereoMod design on the
     // QuadTank output. Env DUSKVERB_QTSTEREO="rateHz,depth"; else bake; else bit-null.
     {
@@ -1613,7 +1613,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         static constexpr std::array<std::pair<std::string_view, PMB>, 3> kPmbByName = {{
             // BEGIN_PMB_MAP
             // Vocal Hall (2026-07-06, first PMB migration; re-trimmed same day
-            // for the 8-line tanks after Marc's ear flagged the 4-line build as
+            // for the 8-line tanks after listening tests flagged the 4-line build as
             // springy/bouncy + thin — w3 config, full_check 13, DenseHall
             // baseline was 15). t60 values are at the 2 s decay reference —
             // the preset's Decay 5.226 s scales them ×2.613 onto the anchor
@@ -1670,7 +1670,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     //   density  (0..1): 0 = legacy 3 density APs; >0 = dense 6 APs + coeff lift
     //                    (more echoes/sec = smoother tail, no added modulation).
     //   modred   (0..1): 1.0 = legacy modulation; <1.0 pulls AP1+delay mod toward
-    //                    still (the Lex/VVV near-static tail).
+    //                    still (the REF near-static tail).
     // Defaults (0 / 1.0) = byte-identical legacy. Env DUSKVERB_DENS/DUSKVERB_MODRED
     // drive the no-rebuild sweep; else the per-preset map; else legacy.
     {
@@ -1678,10 +1678,10 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // scale (0 = OFF/bit-null; 1.0 = canonical = the first-60ms kurtosis fix).
         // modred: pulls the tail toward still. All three DECOUPLED.
         // softonset: tank output soft-onset ramp (ms; 0 = instant = bit-null).
-        // Slows the early-field attack toward a slow-swell anchor (e.g. the Lex
+        // Slows the early-field attack toward a slow-swell anchor (e.g. the REF
         // vintage vocal plate's ~90ms attack) without touching the tail.
         // bloom: input-onset slow-attack swell (ms; 0 = off). For slow-bloom
-        // anchors (Lex vintage vocal plate ~90ms attack-to-peak).
+        // anchors (REF vintage vocal plate ~90ms attack-to-peak).
         // #87 boing fix: roomfill loads the hall density bases onto the room-scale
         // main lines (close-spaced coprime modes → kills the comb resonance); det[4]
         // = per-line incommensurate detune {Ldel1,Ldel2,Rdel1,Rdel2}. Defaults
@@ -1692,7 +1692,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // BEGIN_DATTDENS_MAP (offline density/modred/indiff sweep, key on exact row name)
             // Drum Plate: density 1.0 (12 in-loop APs) + Size up (row 0.337->0.8)
             // densify the modes → kill the ~360Hz tail "boing" (19.5->~15dB =
-            // VVV). The octave GEQ holds T60 independent of the longer loop.
+            // REF). The octave GEQ holds T60 independent of the longer loop.
             // indiff 1.0 keeps the first-60ms kurtosis fix.
             { "Drum Plate", { 1.0f /*density*/, 1.0f /*modred*/, 1.0f /*indiff*/ } },
             // Vintage Vocal Plate: input diffusion densifies the early field
@@ -1755,7 +1755,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     {
         struct OctaveT60Config { float t60[9]; float decayRef; };
         static constexpr std::array<std::pair<std::string_view, OctaveT60Config>, 4> kDattorroOctaveT60ByName = {{
-            // Re-tuned 2026-06-15 vs the CORRECTED LexVintagePlate anchors. Values
+            // Re-tuned 2026-06-15 vs the CORRECTED vintage-plate reference anchors. Values
             // are the CALIBRATED commanded T60s (Newton-corrected so the REALIZED
             // per-octave RT60 lands within ±5% JND of the anchor — the raw anchor
             // T60s overshoot the mids ~+30% due to in-loop shelf-cascade leakage).
@@ -1764,7 +1764,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // (octave disrupted its decay-rate/boom gates: 24->27); Vocal uses
             // Decay 0.50 (row) + input diffusion (kDattorroDensityByName) instead.
             { "Live Room",           { { 1.0200f, 0.9500f, 0.8700f, 0.6500f, 0.6300f, 0.5700f, 0.5600f, 0.5300f, 0.4600f }, 0.660f } },  // 2026-07-08: mid-band T60 dip (250/500/1k -19..-21%, 2k+ in gate) not reachable by 3-band; commanded=anchor T60s + Newton 63Hz (0.88->1.02), realized 9/9 within JND first pass. Trimming commands is CHAOTIC (0.87->0.85 exploded T60-250 to +26%) — do not fine-tune this row without re-measuring all 9. GEQ-on bypasses Bass 1.4 (trap).
-            { "Vintage Gold Plate",  { { 1.4928f, 1.8500f, 1.5359f, 1.5653f, 1.7700f, 1.7800f, 1.4181f, 1.3007f, 1.2370f }, 1.961f } },  // 2026-07-24 1kHz 1.5761->1.77 (+12%): lengthen mid tail — body 500-1k cold + T60-1k -7.8% short.  // 2026-07-24 2kHz 1.5187->1.78 (+17%): body 1-2k -3.35->close + T60-2k -6.6%->~+7%.  // 2026-07-08 125Hz 2.027->1.85 (MARC EAR: "more low end than the Lexicon" on the snare) — the 125 band was the ringer; boom-low-late +4.35 -> +1.44 ✓ with T60-125 -7.5% still ✓ (knife-edge threaded; 1.80 flips T60, 2.0 flips boom).
+            { "Vintage Gold Plate",  { { 1.4928f, 1.8500f, 1.5359f, 1.5653f, 1.7700f, 1.7800f, 1.4181f, 1.3007f, 1.2370f }, 1.961f } },  // 2026-07-24 1kHz 1.5761->1.77 (+12%): lengthen mid tail — body 500-1k cold + T60-1k -7.8% short.  // 2026-07-24 2kHz 1.5187->1.78 (+17%): body 1-2k -3.35->close + T60-2k -6.6%->~+7%.  // 2026-07-08 125Hz 2.027->1.85 (MARC EAR: "more low end than the reference" on the snare) — the 125 band was the ringer; boom-low-late +4.35 -> +1.44 ✓ with T60-125 -7.5% still ✓ (knife-edge threaded; 1.80 flips T60, 2.0 flips boom).
             // Drum Plate: octave GEQ fixes per-octave T60 (the low-band decay/boom
             // the user heard as "too much bass" = hot-but-short low band, the
             // coupling wall the 3-band couldn't fix). 8/9 bands within JND; 16k
@@ -1786,12 +1786,12 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // Mid/high (4k 0.595, 16k 1.21 beats the AA one-pole) fixed cleanly. n_fail 29->22.
             // 2026-06-20 EAR "tail cut off / increase decay": decayRef 0.50->0.43
             // scales the whole octave curve ×1.16 → broadband tail_t60 0.75->0.86s
-            // (the old 0.75s died before the Lexicon's audible ~0.93s = "cut off").
+            // (the old 0.75s died before the reference's audible ~0.93s = "cut off").
             // This OVERSHOOTS the per-band T60 gates (anchor per-band 0.6-0.8s) — but
             // the anchor's BROADBAND decay (0.93s) exceeds its own max per-band (0.80s),
             // so per-band-match and audible-broadband-match are mutually exclusive here;
             // the user hears broadband → ear over the per-band gates.
-            { "Vintage Vocal Plate", { { 0.500f, 0.600f, 0.620f, 0.777f, 0.620f, 0.658f, 0.595f, 0.700f, 1.210f }, 0.700f } },  // 2026-07-24 gates: 1k 0.744->0.620 (T60-1k +19.1% too long; also closed decay-mid 500-2k). 16k mult DOWN tested inert (T60-16k pinned by AA one-pole @0.64s — WALL), left at 1.210. // 2026-07-08 worst-5 pass: 500 0.666->0.777 (T60-500 -14% -> -0.1%) + 63 0.650->0.500 / 125 0.640->0.600 DOWN — trades T60-63 (-35%, sacrificed) for the SNARE-WINDOW low mud (boom-sub +5.6->-1.5, boom-low-80 +5.2->-0.1, sub-bass, snare RMS): the boom trio is a 300 ms snare window no sustain-keyed limiter can reach; lifting 63 toward the anchor T60 blew boom-sub to +11. 20->19.  // 2026-06-29 decayRef 0.82->0.70 (EAR "Lex rings out longer / DV shorter"): LENGTHENS the tail to match the anchor's PERCEIVED ringout (mid-tail @1.2s -91->-81 ≈ anchor -79). UNDOES Surgery A's gate-driven shortening: the T60-25dB gate measures the anchor's EARLY slope (0.61s) but the Lex is NON-EXPONENTIAL (rings out far past that), so matching the gate made DV sound too short. Ear > gate here; raises n_fail (T60 "too long") but matches the audible tail.
+            { "Vintage Vocal Plate", { { 0.500f, 0.600f, 0.620f, 0.777f, 0.620f, 0.658f, 0.595f, 0.700f, 1.210f }, 0.700f } },  // 2026-07-24 gates: 1k 0.744->0.620 (T60-1k +19.1% too long; also closed decay-mid 500-2k). 16k mult DOWN tested inert (T60-16k pinned by AA one-pole @0.64s — WALL), left at 1.210. // 2026-07-08 worst-5 pass: 500 0.666->0.777 (T60-500 -14% -> -0.1%) + 63 0.650->0.500 / 125 0.640->0.600 DOWN — trades T60-63 (-35%, sacrificed) for the SNARE-WINDOW low mud (boom-sub +5.6->-1.5, boom-low-80 +5.2->-0.1, sub-bass, snare RMS): the boom trio is a 300 ms snare window no sustain-keyed limiter can reach; lifting 63 toward the anchor T60 blew boom-sub to +11. 20->19.  // 2026-06-29 decayRef 0.82->0.70 (EAR "REF rings out longer / DV shorter"): LENGTHENS the tail to match the anchor's PERCEIVED ringout (mid-tail @1.2s -91->-81 ≈ anchor -79). UNDOES Surgery A's gate-driven shortening: the T60-25dB gate measures the anchor's EARLY slope (0.61s) but the REF is NON-EXPONENTIAL (rings out far past that), so matching the gate made DV sound too short. Ear > gate here; raises n_fail (T60 "too long") but matches the audible tail.
         }};
         float t60[9] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
         float ref = 0.0f;
@@ -1824,7 +1824,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // via the noiseburst gain-match (sub-bass pops hot) — left uncut.
             // 2026-06-20 EAR "brighter": eased the 4k/8k/16k cuts (-5/-4/-2 -> -2/-1/0)
             // so the (now longer + thus darker) tail keeps its top → cent_50 stays bright.
-            { "Vintage Vocal Plate", { { 0.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, 0.0f } } },  // 2026-07-24 4k/8k -3 + 16k -2 TESTED+REVERTED (gates): tonal-corr GEQ inert on the HF cluster (cent_500 +43.8->+43.3, bloom 4-8k -44.48 UNCHANGED) — tail-HF surplus is post-tank density, not reachable by this cut; and the cut popped boom-low via gain-match renorm. // 2026-06-29 EAR "muffled/midrange different": the old -6dB@1k + -3@500/2k scoop GOUGED the upper-mid presence (snare tail 630-2500Hz was -5 to -7dB under anchor). Flatten to a gentle -1 uniform trim -> tail upper-mid match 5.3->3.3 L1, n_fail 36->35. Residual jaggedness (peaks 125/400, dip 1k) is DPV modal structure vs Lexicon, not EQ-fixable. Sweep: tonal_sweep.py / tonal_refine.py.
+            { "Vintage Vocal Plate", { { 0.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, 0.0f } } },  // 2026-07-24 4k/8k -3 + 16k -2 TESTED+REVERTED (gates): tonal-corr GEQ inert on the HF cluster (cent_500 +43.8->+43.3, bloom 4-8k -44.48 UNCHANGED) — tail-HF surplus is post-tank density, not reachable by this cut; and the cut popped boom-low via gain-match renorm. // 2026-06-29 EAR "muffled/midrange different": the old -6dB@1k + -3@500/2k scoop GOUGED the upper-mid presence (snare tail 630-2500Hz was -5 to -7dB under anchor). Flatten to a gentle -1 uniform trim -> tail upper-mid match 5.3->3.3 L1, n_fail 36->35. Residual jaggedness (peaks 125/400, dip 1k) is DPV modal structure vs REF, not EQ-fixable. Sweep: tonal_sweep.py / tonal_refine.py.
             // (Drum Plate REMOVED 2026-06-15: the tonal cuts were treating a
             // SYMPTOM — the +6dB@125 tilt is the boing mode's energy. It gamed the
             // sustained gates (19->8 fiction), broke the impulse/hit loudness
@@ -1845,7 +1845,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
 
     // DattorroPlateVintage front-load early-reflection network (algo 1 only).
     // Sparse diffused early field + tank pre-delay → the slow-build envelope +
-    // discrete early tap the Lexicon Vintage Plate has and the dense-from-onset
+    // discrete early tap the vintage plate reference has and the dense-from-onset
     // Dattorro tank lacks. Per-preset {erGain, predelayMs, tapMs, lpHz}; erGain 0
     // (unlisted) = bypassed = byte-identical. Env override DUSKVERB_FRONTLOAD=
     // "erGain,predelayMs,tapMs,lpHz" for rebuild-free sweeps.
@@ -1909,7 +1909,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         struct DenseFieldConfig { float gain, predelayMs, t60Ms; };
         static constexpr std::array<std::pair<std::string_view, DenseFieldConfig>, 1> kDpvDenseFieldByName = {{
             // BEGIN_DPVDENSEFIELD_MAP
-            // 2026-06-29 (EAR "Lex fuller"): a compact Schroeder reverb (4 combs + 2
+            // 2026-06-29 (EAR "REF fuller"): a compact Schroeder reverb (4 combs + 2
             // allpasses, predelayed 80 ms so it's POST-onset, T60 500 ms) summed post-
             // tank fills the loud 0.1-0.5 s "shelf" the sparse Dattorro tank lacks.
             // Closes the new decay_tail_l1 gate (the metric that matches the ear) with
@@ -1945,8 +1945,8 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // fills it: 25 -> 19. Residual 19 = boing (333 Hz sparse mode), T60-63
             // bass coupling, discrete-ER structure, cent/sine1k voicing -- structural.
             { "Medium Drum Room", { 0.27f /*gain*/, 42.0f /*predelayMs*/, 730.0f /*t60Ms*/ } },
-            // 2026-07-06 (W2 port): Live Room (Lexicon medium-live-room anchor) — a
-            // MUCH SHORTER, LOWER config than Medium Drum. The Lex room has a short
+            // 2026-07-06 (W2 port): Live Room (medium-live-room reference anchor) — a
+            // MUCH SHORTER, LOWER config than Medium Drum. The REF room has a short
             // band-varying tail (T60 125=0.91s .. 16k=0.42s); a long/loud dense field
             // (the Medium 0.27/730 config) overwrites the per-octave T60 profile and
             // regresses (31->38). Short T60 450 ms + low gain 0.10 stays under the
@@ -1978,7 +1978,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // bit-null. Env DUSKVERB_MODESMEAR="depthSamp,rateHz" for rebuild-free sweeps.
         struct ModeSmear { float depthSamples, rateHz; };
         static constexpr std::array<std::pair<std::string_view, ModeSmear>, 4> kModeSmearByName = {{
-            // Mode-smear anti-boing (2026-07-07). The boing gate is a Δ vs anchor, and the VVV/Lex
+            // Mode-smear anti-boing (2026-07-07). The boing gate is a Δ vs anchor, and the REF
             // anchors are THEMSELVES resonant (Small Drum 13.7 dB, Ambience 14.0, VGP 14.2), so the
             // smear only needs to pull DV DOWN to the anchor's ~14 dB, not to 0. Use the MINIMUM
             // depth that reaches anchor+3 — a deep smear shifts the tail T60 and nets worse; a
@@ -2108,7 +2108,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // 136, near-match; not the overshot 60ms of the first pass). Fixes the cloud
         // (edt mid +52%→+2%, edt hi +28%→−18%). erGain 0.40 keeps the QuadTank tail
         // primary so it's a chamber, not an ER slap.
-        { "79 Vocal Chamber", { 0.40f, 110.0f, 30.0f, 130.0f, 0.92f, 0.40f } },   // 2026-07-04 tailGain 0.75->0.92 (EAR "VVV thicker/denser"): with Diffusion 0.95 closes body 125-250 / edt-hi / attack / deep-sub / flux (18->17); the fuller tank IS the density the ear heard missing.
+        { "79 Vocal Chamber", { 0.40f, 110.0f, 30.0f, 130.0f, 0.92f, 0.40f } },   // 2026-07-04 tailGain 0.75->0.92 (EAR "REF thicker/denser"): with Diffusion 0.95 closes body 125-250 / edt-hi / attack / deep-sub / flux (18->17); the fuller tank IS the density the ear heard missing.
         // Small Drum Room (2026-07-06): Dattorro tank + er_ 0.80 (the 25 baseline) + an
         // ADDITIVE transient-ducked sparse ER on top. The hold-gate fires the velvet ER
         // across the early window on a hit (early_tap / early_refl) but ducks it to
@@ -2126,14 +2126,14 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // (setAccurateHallEarlyField), but NOT baked here: 2026-07-07 the composite (tail 0.7
         // + sharp ducked ERTAPS front) is a CHARACTER TRADE, not a win. It closes 6 gates
         // (cent_500/cent_50 brighter, early_tap, edt mid/hi shorter, transient_def sharper —
-        // genuinely pulls DV's dark/smooth/long plate toward the VVV bright/sharp/short anchor)
+        // genuinely pulls DV's dark/smooth/long plate toward the REF bright/sharp/short anchor)
         // but OPENS 6-7 (body 250-500, decay-low, diffusion_flux kurt-spike from the discrete
         // taps, ripple-high, snare RMS, width-low) => n_fail 19 -> 19. Vocal Plate is a broad
         // VOICING mismatch (attack 9.3 ms vs the FDN's ~26 ms floor; sine1k -3 dB voicing gap;
         // first50 49 % needs a tail cut that breaks T60/decay), not a clean front-load target,
         // so no single composite config nets. Un-baked → Vocal Plate takes the else branch →
         // setAccurateHallEarlyField(false) → AccurateHall case skips the composite → bit-null.
-        // Live Room: the transient-ducked ER does NOT cleanly help this Lexicon room
+        // Live Room: the transient-ducked ER does NOT cleanly help this reference room
         // (row tried + REVERTED 2026-07-06). Its early field is too EXTREME for the ER
         // to match — anchor front-loads 94.8% of energy in the first 50 ms with a 14.7 dB
         // reflection @56 ms + crest 16.6 dB; DV's Dattorro back-loads (73.7%, crest 6.7).
@@ -2228,7 +2228,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         engine.setBuildupPostTank (false);
     }
 
-    // Shimmer octave-DOWN voice (the warm low Valhalla Shimmer's DeepBlueDay has via a
+    // Shimmer octave-DOWN voice (the warm low reference shimmer's DeepBlueDay has via a
     // down-pitched voice — DV's up-only voices produced 0 dB at 500 Hz from a 1 kHz sine).
     // Per-preset; 0 = off → the voice is skipped → bit-null (Black Hole + non-shimmer).
     // Env DUSKVERB_SHIMMERDOWN="mix" for the rebuild-free sweep.
@@ -2238,7 +2238,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // static-init guard lock + heap-allocate on first preset swap. Same RT-safe
         // pattern as kWidthBandsByName / kDenseHallOctaveT60ByName.
         static constexpr std::array<std::pair<std::string_view, float>, 1> kShimmerDownByName = {{
-            { "Deep Blue Day", 0.35f },   // 2026-06-29: −1 oct voice DROPPED 1.5→0.35 — the new −2 oct SUB voice (below) does the low work far more efficiently (reaches 250 Hz in one step vs the −1 oct cascade dying out). 0.35 just tops up the 500 Hz rung. See kShimmerSubByName/kShimmerHpfByName for the validated 1 kHz-sine match to Valhalla Shimmer program 3.
+            { "Deep Blue Day", 0.35f },   // 2026-06-29: −1 oct voice DROPPED 1.5→0.35 — the new −2 oct SUB voice (below) does the low work far more efficiently (reaches 250 Hz in one step vs the −1 oct cascade dying out). 0.35 just tops up the 500 Hz rung. See kShimmerSubByName/kShimmerHpfByName for the validated 1 kHz-sine match to reference shimmer program 3.
         }};
         float downMix = 0.0f;
         const std::string_view nameView (name);
@@ -2250,20 +2250,20 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
 
         // Sub voice (−2 oct → 250 Hz) + feedback-HPF corner: the −1 oct cascade dies out
         // before the deep lows; the sub voice reaches 250 Hz in one step and a lower HPF
-        // corner lets the 60-250 Hz wash survive the loop. Matches Valhalla Shimmer
+        // corner lets the 60-250 Hz wash survive the loop. Matches reference shimmer
         // DeepBlueDay (program 3: 250 Hz −9 dB, 60-200 wash −15..−22 rel. fundamental).
         // 0 / default 60 = bit-null (Black Hole + non-shimmer untouched).
         // Env DUSKVERB_SHIMMERSUB="mix", DUSKVERB_SHIMMERHPF="hz" for rebuild-free sweeps.
         static constexpr std::array<std::pair<std::string_view, float>, 1> kShimmerSubByName = {{
-            // 2026-06-29: −2 oct (×0.25 → 250 Hz) voice. Tuned vs Valhalla Shimmer program 3
+            // 2026-06-29: −2 oct (×0.25 → 250 Hz) voice. Tuned vs reference shimmer program 3
             // on a sustained 1 kHz sine (rel. fundamental @ output level): lifts 31-60 Hz
             // −55→−30 (Val −22), 60-125 −54→−20 (Val −18), 250 Hz −28→−3 (Val −9). The deep
             // low warmth DV lacked. Residual: 250-500 runs ~+6 dB hot (the +12 st up voice
             // re-pitches the sub's 250 → 500) — structural, not tunable from here.
-            { "Deep Blue Day", 1.50f },   // 2026-07-04 4.5->1.5 (EAR): the recirculating sub voice pushed the loop's low-register gain past unity — 62/125/250 rungs GREW +19..25 dB across a 20 s tail into a softClip equilibrium that NEVER fades (user: "buildup that never fades out"; Valhalla gently fades). Unity crossing measured at ~2.0; 1.5 fades -7 dB and the dry-fed octave cascade (below) restores the low fullness SAFELY (feed-forward, cannot build). Gates hid this: sinelong renders tone-only (no tail window), and the buildup inflated low T60 readings toward the anchor's long values.
+            { "Deep Blue Day", 1.50f },   // 2026-07-04 4.5->1.5 (EAR): the recirculating sub voice pushed the loop's low-register gain past unity — 62/125/250 rungs GREW +19..25 dB across a 20 s tail into a softClip equilibrium that NEVER fades (user: "buildup that never fades out"; REF gently fades). Unity crossing measured at ~2.0; 1.5 fades -7 dB and the dry-fed octave cascade (below) restores the low fullness SAFELY (feed-forward, cannot build). Gates hid this: sinelong renders tone-only (no tail window), and the buildup inflated low T60 readings toward the anchor's long values.
         }};
         static constexpr std::array<std::pair<std::string_view, float>, 1> kShimmerHpfByName = {{
-            { "Deep Blue Day", 24.0f },  // feedback HPF 60→24 so the regenerated 31-125 Hz wash survives the loop (24 still clears the ~12 Hz grain rumble). Flattens DV's over-steep low cascade toward Valhalla's.
+            { "Deep Blue Day", 24.0f },  // feedback HPF 60→24 so the regenerated 31-125 Hz wash survives the loop (24 still clears the ~12 Hz grain rumble). Flattens DV's over-steep low cascade toward REF's.
         }};
         float subMix = 0.0f, hpfHz = 60.0f;
         for (const auto& e : kShimmerSubByName) if (e.first == nameView) { subMix = e.second; break; }
@@ -2275,14 +2275,14 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         engine.setShimmerSubOctaveMix  (subMix);
         engine.setShimmerFeedbackHpfHz (hpfHz);
 
-        // Wet stereo chorus/ensemble — Valhalla Shimmer Black Hole swings the image at
+        // Wet stereo chorus/ensemble — reference shimmer Black Hole swings the image at
         // ~0.83 Hz (measured L-R mod rms 6.8 dB vs DV's static 2.2). A slow anti-phase
         // modulated-delay pair gives that moving field. {rateHz, depth}; depth 0 = off.
         // Env DUSKVERB_SHIMMERSTEREO="rateHz,depth".
         static constexpr std::array<std::pair<std::string_view, std::pair<float,float>>, 1> kShimmerStereoByName = {{
             // 2026-06-29: rate 0.42 Hz (the comb passes its notch TWICE per LFO cycle, so
-            // the L-R movement lands at 2×0.42 = 0.83 Hz = Valhalla's measured rate), depth
-            // 0.8. Result vs Valhalla Shimmer Black Hole: L-R mod rate 0.83 Hz (exact),
+            // the L-R movement lands at 2×0.42 = 0.83 Hz = REF's measured rate), depth
+            // 0.8. Result vs reference shimmer Black Hole: L-R mod rate 0.83 Hz (exact),
             // correlation +0.62 (Val +0.60), movement rms 4.2 dB (Val 6.8 — full magnitude
             // destabilises the rate, 4.2 is the musical max; up from DV's static 2.2).
             { "Black Hole", { 0.42f, 0.00f } },   // 2026-06-29 DORMANT: the sine-tuned chorus matched the 0.83 Hz movement but worsened the broadband stereo_corr gate (-0.22 vs anchor +0.12 = over-wide) — the real BH "stereo" gap is mono HIGHS (width hi +0.02 vs +0.95), addressed via width/brightness below. Infra kept for a future gentler pass.
@@ -2297,14 +2297,14 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         }
         engine.setShimmerStereoMod (smRate, smDepth);
 
-        // HF-air voice — the genuine >12 kHz air Valhalla Shimmer has (centroid ~9.9k/6.6k vs
+        // HF-air voice — the genuine >12 kHz air reference shimmer has (centroid ~9.9k/6.6k vs
         // DV ~6k/5k). A post-loop +12 st shifter on the wet 6-12 kHz makes 12-24 k air,
         // bypassing the reverb HF-damp + 14 k feedback LPF that cap it. mix 0 = off = bit-null.
         // Env DUSKVERB_SHIMMERAIR="mix".
         static constexpr std::array<std::pair<std::string_view, float>, 2> kShimmerAirByName = {{
             // 2026-06-30: post-loop +12 st air voice = the genuine >12 kHz air the engine
             // couldn't make (the reverb HF-damps + the 14 k feedback LPF cut the in-loop air).
-            // Raises the snare centroid toward Valhalla WITHOUT harshening 4-12k (unlike the
+            // Raises the snare centroid toward REF WITHOUT harshening 4-12k (unlike the
             // air shelf): BH 6006→7029 (Val 9920), DBD 4936→5749 (Val 6620), tilt stays matched.
             // Capped at the max that doesn't regress the noiseburst ss_air gate (DV's residual
             // 12.9 k AA spike already runs the noiseburst air-heavy) — closes ~half the gap clean.
@@ -2344,7 +2344,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         engine.setShimmerUseTailSpin (useSpin);
 
         // Per-preset up-voice scale — fills the mid tail (250 Hz-1 kHz) on transients. Deep Blue
-        // Day boosts to match Valhalla's fuller snare-body regeneration. 1.0/1.0 = bit-identical.
+        // Day boosts to match REF's fuller snare-body regeneration. 1.0/1.0 = bit-identical.
         static constexpr std::array<std::pair<std::string_view, std::pair<float, float>>, 2> kShimmerUpVoiceByName = {{
             { "Black Hole",    { 1.0f, 1.0f } },
             { "Deep Blue Day", { 1.0f, 1.0f } },   // tuned by the sweep below
@@ -2374,7 +2374,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         }
         engine.setShimmerOctaveCascade (octGains);
 
-        // Tail noise floor — the dense noise-like fade Valhalla has; masks the sparse-mode ring.
+        // Tail noise floor — the dense noise-like fade REF has; masks the sparse-mode ring.
         // gain 0 = off/bit-null. Env DUSKVERB_SHIMMERNOISE.
         struct TailNoiseCfg { float gain, hpHz, lpHz; };
         static constexpr std::array<std::pair<std::string_view, TailNoiseCfg>, 2> kShimmerTailNoiseByName = {{
@@ -2415,7 +2415,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // Output-tanh headroom. The wet output is tanh(oL*kWetOutputGain); on very-
         // long-decay presets the sustained-tone buildup drives that tanh nonlinear →
         // odd-harmonic (3k/5k) grit on a 1 kHz tone (Deep Blue Day, Decay 20 s: DV
-        // 5.0% vs Valhalla anchor 0.01% — the "sat-0.232 3 kHz grit" the old notes
+        // 5.0% vs REF anchor 0.01% — the "sat-0.232 3 kHz grit" the old notes
         // mis-attributed to the Saturation param, which is actually INERT here: the
         // -12 dBFS sine peak (0.355) never reaches the input-drive softClip threshold
         // 0.861, and pitch-shift is dyadic so it CAN'T make 3k/5k — the odd harmonics

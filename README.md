@@ -92,7 +92,7 @@ Algorithmic reverb with 11 selectable engines and 20 factory presets:
 - 11 engines: Plate, Vintage Plate, Smooth Plate, Chamber, Spring, Gated, Shimmer, Reverse, Hall, Tiled Room, Dense Hall
 - Tone / Character / Duck macro row for one-knob global shaping over any engine
 - Overhauled Shimmer engine: post-loop HF air voice for sparkle plus a down-octave voice for warmth
-- Per-preset tuned engine wrappers with corrective EQ, anchored to Lexicon, EMT, and AMS references
+- Per-preset tuned engine wrappers with corrective EQ, anchored to classic digital reverb, plate, and nonlinear hardware references
 - Honest Decay knob (position tracks actual tail length), size, pre-delay, damping, modulation, and mix controls
 - Early reflections with configurable patterns
 
@@ -131,7 +131,7 @@ Training data: Groove MIDI Dataset (Google Magenta), CC-BY 4.0. See [DATASETS.md
 
 ### DuskAmp - IN DEVELOPMENT
 Guitar amp plugin with WDF-modeled preamps, tone stack, power amp, convolution cab, and post-FX:
-- Three preamp topologies: Clean (Fender Twin), British Crunch (Marshall Plexi), British Chime (Vox AC30)
+- Three preamp topologies: American Clean, British Crunch, and British Chime (class-A)
 - Yeh/Smith bilinear tone stack
 - Power amp with negative-feedback presence/resonance and sag
 - Convolution cab with hi/lo cut

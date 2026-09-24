@@ -6,7 +6,7 @@
 
 namespace duskaudio::sslbus
 {
-// Native UADx measurements at 1–60 s and 44.1/48/96 kHz. The displayed
+// Native reference-plugin measurements at 1–60 s and 44.1/48/96 kHz. The displayed
 // rate has two linear clock ranges. A float control ramp reproduces the
 // measured changes in speed at binade boundaries on long fades; converting
 // this accumulator to double changes the audible timing. This is an empirical

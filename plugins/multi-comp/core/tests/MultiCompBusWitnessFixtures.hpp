@@ -1,8 +1,8 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
 #pragma once
 
-// Native UAD SSL G bus compressor gain reduction, measured 2026-09-09 from the
-// captures in build-multi-comp-1176/bus-deepgr-20260909 (nat-th-15-r*-a5-rel*-hr3)
+// Native reference console bus compressor gain reduction, measured 2026-09-09 from the
+// captures in capture set bus-deepgr-20260909 (nat-th-15-r*-a5-rel*-hr3)
 // and bus-gaps-20260909/sat-n3, plus the 2:1 / 0.1 s point added 2026-09-10 from
 // bus-recal-codex-20260910.  Pins re-tightened 2026-09-11 after the 2:1 upper-law
 // nodes, complete law/detector model and release charge offset (native unchanged).

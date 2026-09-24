@@ -50,7 +50,7 @@ inline duskdaf::VuStyle vcaMeterStyle()
     style.tickLabelSize = 15.0f;
     style.legendSize = 15.0f;
     style.sublabelSize = 8.0f;
-    // A shallow arc and an off-window pivot reproduce the dbx scale. All
+    // A shallow arc and an off-window pivot reproduce the reference VCA compressor's scale. All
     // distances stay in design coordinates until drawVuMeter maps them once.
     style.pivotBelowFace = 126.0f;
     style.sweepHalfAngleDeg = 32.0f;

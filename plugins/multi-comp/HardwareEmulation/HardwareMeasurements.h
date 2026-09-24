@@ -128,7 +128,7 @@ struct HardwareUnitProfile
 namespace Profiles {
 
 //------------------------------------------------------------------------------
-// Opto compressor (LA-2A style)
+// Opto compressor (classic opto leveler style)
 inline HardwareUnitProfile createOptoCompressor()
 {
     HardwareUnitProfile profile;
@@ -144,27 +144,27 @@ inline HardwareUnitProfile createOptoCompressor()
     profile.outputStageHarmonics = HarmonicProfile::create(
         0.035f, 0.012f, 0.70f, 0.004f);
 
-    // Input transformer (UTC A-10) — H2-dominant, iron-core
+    // Input transformer (vintage line input) — H2-dominant, iron-core
     profile.inputTransformer = TransformerProfile::createActive(
         0.75f,    // saturationThreshold
         0.06f,    // saturationAmount
         1.05f,    // lowFreqSaturation — gentle LF boost (was 1.15, too much on kicks)
-        0.0f,     // HF rolloff disabled (convolution IR handles UTC A-10 rolloff)
+        0.0f,     // HF rolloff disabled (convolution IR handles input transformer rolloff)
         2.0f,     // dcBlockingFreq
         0.012f, 0.004f, 0.75f  // h2, h3, balance — H2 dominant, moderate level
     );
 
-    // Output transformer (UTC A-24) — H2-dominant, lighter than input.
+    // Output transformer (vintage line output) — H2-dominant, lighter than input.
     profile.outputTransformer = TransformerProfile::createActive(
         0.8f,     // saturationThreshold
         0.04f,    // saturationAmount
         1.1f,     // lowFreqSaturation
-        0.0f,     // HF rolloff disabled (convolution IR handles UTC A-24 rolloff)
+        0.0f,     // HF rolloff disabled (convolution IR handles output transformer rolloff)
         2.0f,     // dcBlockingFreq
         0.012f, 0.004f, 0.78f  // h2, h3, balance — H2 dominant (even = warm)
     );
 
-    profile.inputTransformer.hysteresisAmount = 0.02f;   // UTC iron-core transformer
+    profile.inputTransformer.hysteresisAmount = 0.02f;   // Vintage iron-core transformer
     profile.outputTransformer.hysteresisAmount = 0.02f;
 
     profile.timing = TimingProfile::create(
@@ -177,7 +177,7 @@ inline HardwareUnitProfile createOptoCompressor()
 }
 
 //------------------------------------------------------------------------------
-// FET compressor (1176 style)
+// FET compressor (classic FET limiter style)
 inline HardwareUnitProfile createFETCompressor()
 {
     HardwareUnitProfile profile;
@@ -214,7 +214,7 @@ inline HardwareUnitProfile createFETCompressor()
 }
 
 //------------------------------------------------------------------------------
-// Classic VCA compressor (dbx 160 style)
+// Classic VCA compressor (classic VCA compressor style)
 inline HardwareUnitProfile createClassicVCA()
 {
     HardwareUnitProfile profile;
@@ -308,7 +308,7 @@ inline HardwareUnitProfile createStudioVCA()
     profile.compressionStageHarmonics = HarmonicProfile::create(0.002f, 0.0015f, 0.55f);
     profile.outputStageHarmonics = HarmonicProfile::create(0.001f, 0.0005f, 0.6f);
 
-    // Subtle modern transformer coloration (API 2500 / Neve 33609 style)
+    // Subtle modern transformer coloration (modern console bus compressor style)
     profile.inputTransformer = TransformerProfile::createActive(
         0.95f, 0.01f, 1.0f, 0.0f, 10.0f,
         0.001f, 0.001f, 0.55f);

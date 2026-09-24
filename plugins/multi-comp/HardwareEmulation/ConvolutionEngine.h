@@ -61,7 +61,7 @@ public:
         switch (type)
         {
             case TransformerType::Opto:
-                // UTC transformer: 80Hz warmth, gentle HF rolloff (real LA-2A rolls off top end)
+                // Vintage transformer: 80Hz warmth, gentle HF rolloff (a real opto leveler rolls off top end)
                 generateTransformerIR(80.0f, 0.5f, 16000.0f, -1.0f, 64);
                 break;
 

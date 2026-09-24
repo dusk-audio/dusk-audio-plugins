@@ -1,5 +1,5 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
-// Measured native UAD SSL G displayed meter, 2026-09-09.
+// Measured native reference console bus compressor displayed meter, 2026-09-09.
 // Capture procedure and uncertainty: docs/multi-comp-2-bus-completion-2026-09-09.md
 #pragma once
 namespace bus_meter_reference {

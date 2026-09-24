@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
 #pragma once
 #include <array>
-// Independent native UADx SSL G 2:1 captures, HR16 unless specified.
+// Independent native reference console bus compressor 2:1 captures, HR16 unless specified.
 // Provenance: docs/multi-comp-2-bus-knee-2026-09-09.md.
 namespace busknee
 {

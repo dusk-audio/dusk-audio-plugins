@@ -1534,7 +1534,7 @@ private:
             }
             else if (sync)
             {
-                // Galaxy uses a measured per-leading-head lookup, including
+                // The reference uses a measured per-leading-head lookup, including
                 // intentional +/- omissions at the two shortest Head-2 values.
                 // Do not re-derive this from ideal head-spacing ratios.
                 const char* const readout =

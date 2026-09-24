@@ -51,7 +51,7 @@ inline Drive fourToOneCorrection(float over) noexcept
     return nodeCorrection(knots, correction, over);
 }
 
-// Feedback control-voltage law measured from the native UADx SSL G, HR16.
+// Feedback control-voltage law measured from the native reference console bus compressor, HR16.
 // The ratio switch changes both detector bias and curvature. These coefficients
 // operate on the compressed detector level in dBFS RMS; applying a feedforward
 // (1 - 1/ratio) slope here would divide the compression a second time.

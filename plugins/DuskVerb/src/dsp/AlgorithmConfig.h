@@ -19,15 +19,15 @@ enum class EngineType : int
     SixAPTank         = 2,  // 6-AP density cascade tank (lush halls, dense ambience).
     QuadTank          = 3,  // 4 cross-coupled tanks, 48 taps, no modulation.
     FDN               = 4,  // 16-channel Hadamard feedback delay network.
-    Spring            = 5,  // Fender 6G15-style 3-spring tank with dispersion-AP chirp.
-    NonLinear         = 6,  // RMX16-NonLin2-style 64-tap feed-forward TDL with envelope shapes.
+    Spring            = 5,  // Classic outboard-unit-style 3-spring tank with dispersion-AP chirp.
+    NonLinear         = 6,  // Classic nonlinear-program-style 64-tap feed-forward TDL with envelope shapes.
     Shimmer           = 7,  // 8-channel Hadamard FDN with in-loop granular pitch shifter.
-    VintageTank       = 8,  // Griesinger/Lexicon figure-8 modulated AP loop — replaces FDN's
+    VintageTank       = 8,  // Griesinger figure-8 modulated AP loop — replaces FDN's
                             // unitary Hadamard scatter with a recirculating tank that builds
                             // modal density + lateral bloom over time. Reference architecture
                             // for vintage hardware reverbs.
     ReverseRoom       = 9,  // Causal rising-gain early-reflection onset + dark modulated FDN
-                            // tail. Replicates the Lexicon PCM Room "Reverse 1" (NOT
+                            // tail. Replicates the reference "Reverse 1" program (NOT
                             // backwards-convolution — the reference is causal, impulse peaks
                             // ~70ms then decays). The rising-ER "Tap Slope" is the reverse.
     AccurateHall      = 10, // FDN + per-OCTAVE attenuation GEQ in the feedback loop (Jot/
@@ -81,7 +81,7 @@ inline const AlgorithmConfig& getAlgorithmConfig (int index)
 {
     // User-facing engine names. Standardized 2026-06-11: clean musician-facing
     // labels, no internal-algorithm jargon and no trademark references (was
-    // Lexicon / RMX16 / Eno / 6G15 / Figure-8 / Dattorro). ENUM ORDER IS FIXED —
+    // hardware / product / Eno / Figure-8 / Dattorro names). ENUM ORDER IS FIXED —
     // AudioParameterChoice stores the index, presets store the algorithm index,
     // so these strings are display-only and must NOT be reordered or removed
     // (that would shift indices and break saved state). Rename freely.

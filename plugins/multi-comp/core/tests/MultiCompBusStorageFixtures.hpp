@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
 #pragma once
 #include <array>
-// Native UADx SSL G captures and extraction: bus-storage-20260909/.
+// Native reference console bus compressor captures and extraction: bus-storage-20260909/.
 namespace busstorage {
 inline constexpr int recoveryPoints[] = {10, 30, 50, 80, 150, 500, 2500};
 // Least-squares inverse of [exp(-t/0.04165904), exp(-t/4.1588435), 1]

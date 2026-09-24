@@ -2,7 +2,7 @@
 
 #include <array>
 
-// Installed UADx LA-2A AU, SHA-256:
+// Installed reference opto leveler AU, SHA-256:
 // 8c97e490ab02c6d6a68a14621bcce660bd96a9f9d840d2ab4339f733f5651ba2
 // Capture/extraction recipes and provenance: docs/multi-comp-2-parity-2026-09-07.md.
 // 48 kHz, Compress, matched controls. These are reference measurements, never

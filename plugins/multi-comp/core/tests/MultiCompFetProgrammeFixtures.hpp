@@ -2,7 +2,7 @@
 #include <array>
 namespace fetprogramme {
 struct Point { float input, output, attack, release; int ratio, stimulus; std::array<double,4> gr; };
-// Native UAD 1176 at 48 kHz/512 frames, 5 s preroll; see programme release report.
+// Native reference FET limiter at 48 kHz/512 frames, 5 s preroll; see programme release report.
 // H1 uses 5 ms bins and 86-sample native latency. Values are native, not model snapshots.
 inline constexpr std::array<Point, 32> points{{
     {0.399993896484f, 0.375000000000f, 0.500000000000f, 1.000000000000f, 0, 0, {{3.7838646017, 1.6776869304, 0.5492232586, 0.2917774415}}}, // probe-03 quiet

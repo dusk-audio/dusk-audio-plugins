@@ -938,7 +938,7 @@ void DuskAmpEditor::resized()
 
     // 4-column layout: cab gets the lion's share of the bottom row so the
     // IR-name combo + cab browser have unrestricted room (full cab IR
-    // names like "Marshall 1960VB — SM57 OA" need ~250 px). The three
+    // names like "British 4x12 closed-back — OA" need ~250 px). The three
     // effect sections to the right share matching small knobs (effectKnob),
     // so DELAY and REVERB don't need extra width to fit oversized knobs.
     int cabW    = static_cast<int> (contentW * 0.50f);
@@ -1004,7 +1004,7 @@ void DuskAmpEditor::resized()
 
         // Right column: combo above browser. With CAB at 50% of contentW
         // the right sub-column is now ~250 px wide — full IR display
-        // names ("Marshall 1960VB — SM57 OA" class) fit without
+        // names ("British 4x12 closed-back — OA" class) fit without
         // truncation.
         int rightX     = innerX + 3 * knobColW + scaler_.scaled (4);
         int rightW     = cabX + cabW - rightX - pad;

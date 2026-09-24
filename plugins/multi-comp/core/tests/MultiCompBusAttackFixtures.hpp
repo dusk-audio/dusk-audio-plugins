@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
 #pragma once
 #include <array>
-// Native UADx SSL G measurements, 48 kHz, internal detector, HR16, makeup 0.
+// Native reference console bus compressor measurements, 48 kHz, internal detector, HR16, makeup 0.
 // Captures, parameter readbacks, extraction and failure/restoration evidence:
 // docs/multi-comp-2-bus-attack-2026-09-08.md.
 namespace busfixtures
