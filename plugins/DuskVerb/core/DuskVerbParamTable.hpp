@@ -27,7 +27,7 @@
 //
 // Host domain: parameters with a skew expose a normalised 0..1 coordinate,
 // matching the convention the other Dusk DAF ports use (DAF has no taper the
-// shipping formats honour, see AGENTS.md). Everything else exposes its plain
+// shipping formats honour). Everything else exposes its plain
 // physical range.
 
 #pragma once

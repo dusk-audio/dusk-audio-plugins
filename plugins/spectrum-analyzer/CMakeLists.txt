@@ -138,8 +138,7 @@ if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
     )
 
     # SpectrumRing writer-vs-reader stress harness. The gating run is the
-    # ThreadSanitizer build documented in docs/daf-migration/10-spectrum-analyzer.md
-    # and in the file header; this plain build keeps the torn-read oracle
+    # ThreadSanitizer build documented in the file header; this plain build keeps the torn-read oracle
     # exercised wherever TSan is unavailable.
     add_executable(SpectrumRingStressTest
         core/tests/ring_tsan.cpp

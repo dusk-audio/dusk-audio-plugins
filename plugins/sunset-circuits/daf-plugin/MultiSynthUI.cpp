@@ -3,8 +3,7 @@
 // others) are attributed in plugins/shared-daf/THIRD_PARTY_LICENSES.md.
 //
 // MultiSynthUI.cpp — Dear ImGui / ImDrawList UI for Sunset Circuits (internal
-// class/namespace names stay stable), implementing
-// docs/daf-migration/09-multi-synth-ui-spec.md: fixed 1240x780 design space
+// class/namespace names stay stable): fixed 1240x780 design space
 // (uniformly scaled, tape-echo pattern), six crossfaded mode skins, custom
 // filter / ADSR / scope / VU displays, dual LFOs, mod-matrix overlay, 4-op FM
 // operator matrix + algorithm diagram, 3-lane acid sequencer, and a playable

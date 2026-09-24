@@ -91,13 +91,30 @@ This enables Ninja + ccache automatically.
 
 ## Development Guidelines
 
-Read [CLAUDE.md](CLAUDE.md) — it covers the project's conventions including:
+### Audio thread
 
-- Audio thread rules (no allocation, no locks, no I/O in `processBlock`)
-- Parameter setup pattern
-- DSP lifecycle (`prepareToPlay`, smoothing, latency)
-- State save/load pattern
-- Common DSP patterns and shared library usage
+`processBlock` runs on the real-time thread. Inside it:
+
+- No memory allocation (`new`, `push_back`, `resize`, `juce::String`, ...)
+- No mutex locks; use `juce::SpinLock::ScopedTryLockType` and clear the buffer if the lock is busy
+- No file, network, or logging I/O, and no message-thread APIs
+- Start with `juce::ScopedNoDenormals` and return early when `numSamples == 0`
+
+### Parameters
+
+- Define parameter IDs as `PARAM_*` constants and build the layout in a static function
+- Cache `getRawParameterValue()` pointers in the constructor; only `load()` them in `processBlock`
+- Metering atomics use `std::memory_order_relaxed`; state flags use release/acquire
+
+### DSP lifecycle
+
+- `prepareToPlay` caches the sample rate, prepares every `juce::dsp` object, and resets all filter state and `SmoothedValue`s. It may be called more than once.
+- Report latency with `setLatencySamples()`; clear it on bypass and restore it on un-bypass.
+- Load heavy resources (IRs, models) off the audio thread and swap them in under a try-lock.
+
+### State
+
+`setStateInformation` validates every custom property's type before calling `replaceState`. A rejected state is better than a half-applied one.
 
 The most important rule: **always check `plugins/shared/` before writing new utilities.** Several reusable components already exist (`LEDMeter`, `DuskLookAndFeel`, `Oversampling`, `UserPresetManager`, `SupportersOverlay`, `AnalogEmulation`).
 
@@ -142,7 +159,7 @@ After that, the regression script renders to a temp dir and md5-compares against
 - [ ] No allocations, locks, or I/O in `processBlock` (`grep` it)
 - [ ] No new files without an SPDX-License-Identifier header
 - [ ] Existing presets still load (run the regression suite if you touched DSP)
-- [ ] CLAUDE.md updated if you changed conventions or added shared code
+- [ ] This guide updated if you changed conventions or added shared code
 
 ## Reporting Bugs
 

@@ -281,8 +281,7 @@ static constexpr ParamDef kParamDefs[kNumCoreParams] =
 // param to its default, applies the shared baseline, then the per-preset
 // overrides. Every preset ships at 2x oversampling (baseline oversampling=1);
 // the pitch bug is fixed so 2x is correct. Phase 5 re-voiced the original 40
-// (unity-gain filter fix + level/intent) and appended new preset banks; see
-// docs/daf-migration/09-multi-synth-presets.md for the per-preset change log.
+// (unity-gain filter fix + level/intent) and appended new preset banks.
 // ---------------------------------------------------------------------------
 struct PresetRow { int index; float value; };
 

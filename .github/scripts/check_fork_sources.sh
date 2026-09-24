@@ -96,8 +96,8 @@ fi
 
 if [ "$failed" = "1" ]; then
     echo
-    echo "Every framework dependency must come from dusk-audio. See the fork policy"
-    echo "in CLAUDE.md and docker/check_daf_checkout.sh for the local equivalent."
+    echo "Every framework dependency must come from dusk-audio. See"
+    echo "docker/check_daf_checkout.sh for the local equivalent."
     exit 1
 fi
 
