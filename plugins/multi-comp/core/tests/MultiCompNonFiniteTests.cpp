@@ -16,7 +16,7 @@
 //   burst  10 ms at 3e38 peak -- finite, but it overflows every mode: every
 //          output sample finite, the first block after the burst audible,
 //          meters finite, and the tail within kBurstTailDb of the control.
-#include "MultiCompDSP.hpp"
+#include "../MultiCompDSP.hpp"
 
 #include <algorithm>
 #include <cmath>

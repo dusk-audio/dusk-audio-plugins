@@ -30,7 +30,7 @@ class HalfbandFIR
 {
 public:
     // Power-of-two ring so the index wrap is a mask. Sized for the deepest tap set
-    // in use (kAdeep, L=71/NSide=18 -> 70 samples of lookback).
+    // in use (kAwide, L=127/NSide=32 -> 126 samples of lookback).
     static constexpr int kRing = 128;
     static constexpr int kMask = kRing - 1;
 
@@ -90,9 +90,33 @@ namespace hbtaps
         0.0021806595f, -0.0012869948f, 0.0007170541f, -0.0003719507f, 0.0001760559f,
         -0.0000735499f, 0.0000254803f, -0.0000063102f,
     };
+    // stage A-wide: 127-tap halfband, transition 0.042, stopband -90 dB. Passband
+    // flat to within 0.001 dB up to 20 kHz at a 44.1 kHz base rate (kA sags 1.18 dB
+    // there: its passband ends at 0.86 Nyquist). Costs 63 base samples of latency
+    // instead of 23; use it where the host compensates latency and the reference
+    // being matched is flat to 20 kHz (Multi-Comp 2). Round trip -11.6 dB at Nyquist.
+    static constexpr float kAwide[32] = {
+        0.3180152602f, -0.1052223122f, 0.0622032639f, -0.0434505883f,
+        0.0328014530f, -0.0258512876f, 0.0209085984f, -0.0171858670f,
+        0.0142674138f, -0.0119133357f, 0.0099754677f, -0.0083571881f,
+        0.0069925296f, -0.0058345845f, 0.0048487434f, -0.0040085704f,
+        0.0032932013f, -0.0026856879f, 0.0021718778f, -0.0017396661f,
+        0.0013785235f, -0.0010791554f, 0.0008332916f, -0.0006335074f,
+        0.0004730913f, -0.0003460624f, 0.0002470644f, -0.0001712807f,
+        0.0001145247f, -0.0000730276f, 0.0000436856f, -0.0000314876f,
+    };
+
+    // Stage-A tap-set descriptors for OversamplerT. L = full tap length, NSide =
+    // one-sided nonzero taps, taps = the set.
+    struct StageA     { static constexpr int L = 47;  static constexpr int NSide = 12; static constexpr const float* taps = kA; };
+    struct StageAwide { static constexpr int L = 127; static constexpr int NSide = 32; static constexpr const float* taps = kAwide; };
 }
 
-class Oversampler
+// Streaming oversampler parameterised on its base<->2x halfband (stage A). The
+// 2x<->4x inner stage is always the 15-tap kB set. `Oversampler` below is the
+// original 47-tap instantiation and is byte-identical to the pre-template class.
+template <class StageA>
+class OversamplerT
 {
 public:
     // factor must be 1, 2, or 4. factor 1 is a transparent passthrough.
@@ -106,11 +130,13 @@ public:
     }
 
     // Fixed group delay of the up+down FIR round trip, in base-rate samples.
-    // 2x stage (47-tap): 46 samples @2x = 23 base. 4x stage (15-tap): 14 @4x = 3.5 base.
+    // 2x stage (L taps): L-1 samples @2x = (L-1)/2 base (23 for the 47-tap set,
+    // 63 for the 127-tap set). 4x stage (15-tap): 14 @4x = 3.5 base.
+    static constexpr float kStageALatency = static_cast<float>(StageA::L - 1) / 2.0f;
     float latency() const noexcept
     {
-        if (factor == 4) return 23.0f + 3.5f;
-        if (factor == 2) return 23.0f;
+        if (factor == 4) return kStageALatency + 3.5f;
+        if (factor == 2) return kStageALatency;
         return 0.0f;
     }
 
@@ -139,9 +165,9 @@ public:
         }
 
         upA.push(x);
-        const float a0 = 2.0f * upA.out(hbtaps::kA);
+        const float a0 = 2.0f * upA.out(StageA::taps);
         upA.push(0.0f);
-        const float a1 = 2.0f * upA.out(hbtaps::kA);
+        const float a1 = 2.0f * upA.out(StageA::taps);
         if (factor == 2)
         {
             phases[0] = a0;
@@ -166,7 +192,7 @@ public:
         {
             downA.push(phases[0]);
             downA.push(phases[1]);
-            return downA.out(hbtaps::kA);
+            return downA.out(StageA::taps);
         }
 
         downB.push(phases[0]);
@@ -177,7 +203,7 @@ public:
         const float a1 = downB.out(hbtaps::kB);
         downA.push(a0);
         downA.push(a1);
-        return downA.out(hbtaps::kA);
+        return downA.out(StageA::taps);
     }
 
 private:
@@ -185,11 +211,11 @@ private:
     template <class Fn>
     float process2x(float x, Fn&& f) noexcept
     {
-        upA.push(x);        const float a0 = 2.0f * upA.out(hbtaps::kA);
-        upA.push(0.0f);     const float a1 = 2.0f * upA.out(hbtaps::kA);
+        upA.push(x);        const float a0 = 2.0f * upA.out(StageA::taps);
+        upA.push(0.0f);     const float a1 = 2.0f * upA.out(StageA::taps);
         downA.push(f(a0));
         downA.push(f(a1));
-        return downA.out(hbtaps::kA);
+        return downA.out(StageA::taps);
     }
 
     // one 2x-rate sample -> 4x, process, -> back to 2x, via stage B.
@@ -204,9 +230,12 @@ private:
     }
 
     int factor = 2;
-    HalfbandFIR<47, 12> upA, downA;   // base <-> 2x
-    HalfbandFIR<15, 4>  upB, downB;   // 2x  <-> 4x
+    HalfbandFIR<StageA::L, StageA::NSide> upA, downA;   // base <-> 2x
+    HalfbandFIR<15, 4>                    upB, downB;   // 2x  <-> 4x
 };
+
+using Oversampler     = OversamplerT<hbtaps::StageA>;       // 47-tap, 23-sample stage
+using OversamplerWide = OversamplerT<hbtaps::StageAwide>;   // 127-tap, 63-sample stage
 
 //==============================================================================
 // Local 2x wrapper for ONE memoryless nonlinearity: a single (non-nested)

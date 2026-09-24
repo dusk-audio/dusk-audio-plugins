@@ -246,7 +246,7 @@ public:
     void prepare(int maxBlock) noexcept
     {
         (void)maxBlock;
-        Oversampler maxOversampler;
+        OversamplerWide maxOversampler;
         maxOversampler.setFactor(4);
         maxLatency = static_cast<int>(std::lround(maxOversampler.latency()));
         compensation.assign(static_cast<size_t>(std::max(1, maxLatency + 1)), 0.0f);
@@ -260,8 +260,9 @@ public:
         use4x = factorValue >= 4;
         oversampler.setFactor(oversamplingOff ? 1 : (use4x ? 4 : 2));
         // The streaming decimators emit their odd polyphase sample, making the
-        // rendered delays 22.5 (2x) and 25.75 (4x). Exact phase-rate padding
-        // brings both paths to the helper's integer 27-sample contract.
+        // rendered delays 62.5 (2x) and 65.75 (4x) with the 127-tap wide stage
+        // (22.5 / 25.75 with the classic 47-tap set). Exact phase-rate padding
+        // brings both paths to the helper's integer 67-sample contract.
         const int requiredPhaseDelay = oversamplingOff ? 0 : (use4x ? 5 : 1);
         if (requiredPhaseDelay != phaseDelaySamples)
         {
@@ -315,6 +316,22 @@ public:
     }
     float latency() const noexcept { return static_cast<float>(maxLatency); }
     bool isOversamplingOff() const noexcept { return oversamplingOff; }
+    // The native-calibrated host-rate controls (the OPTO detector feeds, the
+    // vintage FET link control) were measured against the classic 47-tap audio
+    // FIR, whose upsampling lead is 11.5 host samples at 2x and 13.25 at 4x.
+    // The wide 127-tap stage adds (127 - 47) / 4 = 20 host samples at either
+    // factor. MultiCompDSP delays those controls' host samples by this amount
+    // whenever oversampling is on, so their detector-to-audio timing is exactly
+    // the calibrated one and the wide stage is a linear-path change for them.
+    static constexpr int kHostSidechainAlignmentSamples
+        = (hbtaps::StageAwide::L - hbtaps::StageA::L) / 4;
+    static_assert(kHostSidechainAlignmentSamples * 4
+                      == hbtaps::StageAwide::L - hbtaps::StageA::L,
+                  "wide and classic stage lengths must differ by a multiple of four");
+    int hostSidechainAlignmentSamples() const noexcept
+    {
+        return oversamplingOff ? 0 : kHostSidechainAlignmentSamples;
+    }
 private:
     float compensateBaseRate(float wet) noexcept
     {
@@ -327,7 +344,7 @@ private:
         writePosition = (writePosition + 1) % static_cast<int>(compensation.size());
         return delay > 0 ? result : wet;
     }
-    Oversampler oversampler;
+    OversamplerWide oversampler;   // 127-tap stage A: flat to 20 kHz at 44.1 kHz
     bool oversamplingOff = false, use4x = false;
     std::vector<float> compensation;
     int maxLatency = 0, writePosition = 0, factor = 2;

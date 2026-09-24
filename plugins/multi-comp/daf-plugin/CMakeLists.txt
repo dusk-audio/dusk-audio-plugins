@@ -36,6 +36,7 @@ if(NOT CMAKE_CROSSCOMPILING)
 
   add_executable(MultiCompBusControlTest ../core/tests/MultiCompBusControlTests.cpp ../core/MultiCompDSP.cpp)
   target_include_directories(MultiCompBusControlTest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../core" "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+  target_compile_features(MultiCompBusControlTest PRIVATE cxx_std_17)
   add_test(NAME MultiCompBusControl COMMAND MultiCompBusControlTest)
 
   add_executable(MultiCompBusDynamicsTest ../core/tests/MultiCompBusDynamicsTests.cpp ../core/MultiCompDSP.cpp)

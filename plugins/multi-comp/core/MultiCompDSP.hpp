@@ -125,8 +125,11 @@ private:
     void rebuildMultibandTopology(std::uint8_t mask) noexcept;
     DuskCrossover& crossoverForBoundary(int boundary, int channel, bool sidechain) noexcept;
     void updateMeters(float inPeak, float* const* out, int nCh, int nSamples);
-    void processLatencyHistory(const float* const* in, float* const* out, int nCh,
-                               int nSamples, int delay, bool emit) noexcept;
+    // Advances the raw-input history and leaves the latency-aligned dry in
+    // `bypassDry`. Never writes the output: `out` may alias `in`, and the
+    // stages that follow still have to read the untouched input.
+    void processLatencyHistory(const float* const* in, int nCh,
+                               int nSamples, int delay) noexcept;
     void processSidechainListenHistory(const float* const* sidechain, int nCh,
                                        int nSamples, int delay) noexcept;
     void resetAutoGainMeasurement() noexcept;
@@ -144,13 +147,21 @@ private:
     double sampleRate = 48000.0;
     int maxBlock = 512;
     std::array<MultiCompAntiAliasing, kMaxChannels> oversamplers;
-    MultiCompAntiAliasing optoLinkedDetectorOversampler;
+    // OPTO detector feeds use the classic 47-tap upsampler on the host-rate
+    // sidechain (delayed by kHostSidechainAlignmentSamples): the cell's onset
+    // and silence laws were measured through that reconstruction, and its
+    // gain is applied to the wide-FIR audio path pre-gain (feed-forward), so
+    // this keeps every OPTO dynamic bit-identical while the audio path is flat.
+    Oversampler optoLinkedDetectorUpsampler;
+    std::array<Oversampler, kMaxChannels> optoOwnDetectorUpsamplers;
     std::array<MultiCompAntiAliasing, kMaxChannels> busExternalOversamplers;
     MultiCompTruePeakDetector truePeakDetector;
     std::array<MultiCompSidechainFilter, kMaxChannels> sidechainFilters;
     std::array<dbx160::SidechainTilt, kMaxChannels> sidechainTilt;
     bool lastDbxSidechainTilt = false;   // which sidechain filter ran last block
     bool lastDbxSidechainTiltEngaged = false;
+    std::array<dbx160::OutputVoicing, kMaxChannels> vcaOutputVoicing;
+    bool vcaVoicingActive = false;
     std::array<MultiCompSidechainEQ, kMaxChannels> sidechainEQ;
 
     std::array<DuskCrossover, kMaxChannels> crossover1, crossover2, crossover3;
@@ -178,6 +189,15 @@ private:
     std::array<bool, kMaxChannels> previousOversampledSidechainValid{{false, false}};
     std::array<float, kMaxChannels> previousOptoOwnSidechain{{0.0f, 0.0f}};
     std::array<bool, kMaxChannels> previousOptoOwnSidechainValid{{false, false}};
+    // Host-rate sidechain delay that keeps the calibrated detector-to-audio
+    // timing of the OPTO feeds and the FET link control under the wide audio
+    // FIR (MultiCompAntiAliasing::kHostSidechainAlignmentSamples).
+    static constexpr int kHostSidechainRing = 32;
+    static_assert(MultiCompAntiAliasing::kHostSidechainAlignmentSamples < kHostSidechainRing,
+                  "host sidechain ring must cover the alignment delay");
+    std::array<std::array<float, kHostSidechainRing>, kMaxChannels> hostSidechainHistory{};
+    int hostSidechainWrite = 0;
+    float delayHostSidechain(int channel, float value, int delay) noexcept;
     std::array<float, kMultiCompBands * kMaxChannels> multibandEnvelopes{};
     std::array<float, kMaxChannels> fetStartupInputPeak{{0.0f, 0.0f}};
     std::array<int, kMaxChannels> fetStartupActiveSamples{{0, 0}};

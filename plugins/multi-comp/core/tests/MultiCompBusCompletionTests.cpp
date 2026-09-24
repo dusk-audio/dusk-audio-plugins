@@ -40,6 +40,68 @@ void warm(DSP& dsp, bool external, int channels, int sampleRate = rate) {
     const std::vector<float> silence(5 * sampleRate);
     render(dsp, silence, silence, external, channels);
 }
+void audioControlHarmonics() {
+    // Archived reference console bus compressor LushDarkHall_sine1k.wav captures:
+    // native latency (86 samples) removed, rectangular 1.000--1.500 s window.
+    // Match render.cpp Render 3: reset, silent preroll, 2 s at -12 dBFS RMS.
+    // This guards the audio-only smoother; feedback must remain unsmoothed.
+    struct Reference {
+        const char* name;
+        float threshold;
+        int ratio, release;
+        std::array<double, 4> db; // H1 dBFS (peak FFT amplitude), then H3/H5/H7 dBc
+    };
+    constexpr Reference references[] = {
+        {"r1_t-5", -5, 1, 0, {-27.6796, -52.920, -62.360, -70.414}},
+        {"ultra-r2-a0-rel3", -15, 2, 3, {-40.6802, -62.166, -70.728, -77.379}}
+    };
+    std::array<std::array<double, 4>, 2> measured{};
+    std::vector<float> tone(2 * rate);
+    const double peak = std::sqrt(2.0) * std::pow(10.0, -12.0 / 20.0);
+    for (size_t i = 0; i < tone.size(); ++i)
+        tone[i] = float(peak * std::sin(2 * pi * 1000 * double(i) / rate));
+    for (size_t row = 0; row < measured.size(); ++row) {
+        const auto& ref = references[row];
+        DSP dsp;
+        configure(dsp, false, ref.ratio, 1); // OS index 1 = shipping 2x, HR index 3 = 16 dB
+        dsp.setParameter(P::BusThreshold, ref.threshold);
+        dsp.setParameter(P::BusRelease, float(ref.release));
+        dsp.setParameter(P::BusMix, 100);
+        dsp.setParameter(P::Mix, 100);
+        dsp.reset();
+        warm(dsp, false, 2);
+        const auto output = render(dsp, tone, tone, false, 2);
+        constexpr int count = rate / 2; // 500 complete cycles; no taper/window correction
+        const int start = rate + dsp.getLatencySamples();
+        std::array<double, 4> magnitude{};
+        for (int h = 0; h < 4; ++h) {
+            const int bin = 500 * (2 * h + 1);
+            double real = 0, imag = 0;
+            for (int i = 0; i < count; ++i) {
+                const double phase = 2 * pi * bin * i / count;
+                const double sample = output[size_t(start + i)];
+                real += sample * std::cos(phase);
+                imag -= sample * std::sin(phase);
+            }
+            magnitude[h] = std::hypot(real, imag);
+            measured[row][h] = h == 0
+                ? 20 * std::log10(2.0 * magnitude[0] / count)
+                : 20 * std::log10(magnitude[h] / magnitude[0]);
+            std::printf("BUS audio harmonics %s H%d: ours %.4f native %.4f delta %+.4f %s\n",
+                ref.name, 2*h+1, measured[row][h], ref.db[h], measured[row][h]-ref.db[h],
+                h == 0 ? "dBFS" : "dBc");
+        }
+    }
+    std::fflush(stdout);
+    // Separate checks identify the setting and harmonic. NaN/Inf fail the bounds.
+    require(std::abs(measured[0][0] - references[0].db[0]) <= .3, "BUS r1_t-5 H1 within 0.3 dB of native");
+    require(std::abs(measured[0][1] - references[0].db[1]) <= 1.0, "BUS r1_t-5 H3 within 1.0 dB of native");
+    require(std::abs(measured[0][2] - references[0].db[2]) <= 1.5, "BUS r1_t-5 H5 within 1.5 dB of native");
+    require(std::abs(measured[1][0] - references[1].db[0]) <= .3, "BUS ultra-r2-a0-rel3 H1 within 0.3 dB of native");
+    require(std::abs(measured[1][1] - references[1].db[1]) <= 1.0, "BUS ultra-r2-a0-rel3 H3 within 1.0 dB of native");
+    require(std::abs(measured[1][2] - references[1].db[2]) <= 1.5, "BUS ultra-r2-a0-rel3 H5 within 1.5 dB of native");
+    // H7 is diagnostic only: the known native residual is +0.3..+2.5 dB.
+}
 double gain(const std::vector<float>& input, const std::vector<float>& output,
             int start, int count, int delay) {
     double x = 0, y = 0;
@@ -312,6 +374,7 @@ int main(int argc, char** argv) {
         if (!std::strcmp(argv[1], "--dynamics")) { dynamicsParity(); return 0; }
         return 2;
     }
+    audioControlHarmonics();
     levelParity(); frequencyParity(false); frequencyParity(true); dynamicsParity(); saturationParity(); rateParity(); filterModeSwitch(); externalResetHistory(false); externalResetHistory(true);
     std::puts("Multi-Comp BUS completion: PASS");
 }

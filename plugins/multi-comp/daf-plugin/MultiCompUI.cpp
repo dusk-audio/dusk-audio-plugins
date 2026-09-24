@@ -38,7 +38,7 @@ inline constexpr float optoFaceplateAspect() noexcept
 }
 
 // The VCA face shares the rack-height canvas with the Opto and FET faces
-// (1120 x 310). The dbx 160's own ~2.5:1 proportions were tried on the tall
+// (1120 x 310). The reference VCA compressor's own ~2.5:1 proportions were tried on the tall
 // canvas (2026-09-01) and abandoned: the AU wrapper's resize path leaves the
 // GL view at half size / the host keeps the old window (#240), so a mode
 // whose canvas differs from the opening size shows up shrunken in Logic.
@@ -65,7 +65,7 @@ inline float designHeightForMode(float hostValue) noexcept
     return choiceIndex(hostValue, 8) <= 3 ? 380.0f : 486.0f;
 }
 
-// dbx-style threshold lamps: BELOW lights while the programme sits under the
+// VCA-compressor-style threshold lamps: BELOW lights while the programme sits under the
 // threshold, ABOVE from the threshold up. One boolean keeps the pair mutually
 // exclusive by construction.
 inline bool vcaSignalAboveThreshold(float inputDb, float thresholdDb) noexcept
@@ -111,7 +111,7 @@ inline float optoMeterNeedleAngle(float gainReductionDb) noexcept
 
 inline float optoMeterDisplayValue(float gainReductionDb) noexcept
 {
-    // The Opto gain cell already carries the measured LA-2A attack and release.
+    // The Opto gain cell already carries the measured opto leveler attack and release.
     // The separate display decay was not measured from the reference and made
     // the needle return materially later than the audio. Keep only a finite guard.
     return std::isfinite(gainReductionDb) ? gainReductionDb : 0.0f;
@@ -1698,6 +1698,9 @@ private:
 
         if (gainScale)
         {
+            // Printed as on the reference faceplate. The audio law's
+            // counter-clockwise stop is finite (Input -41.95 dB relative),
+            // but the silkscreen reads INF.
             constexpr std::array<const char*, 9> labels{{
                 "INF", "48", "36", "30", "24", "18", "12", "6", "0"}};
             duskdaf::KnobRingStyle ring;
@@ -1958,11 +1961,11 @@ private:
 
     void drawVca(ImDrawList* dl)
     {
-        // dbx 160 face for the VCA mode, laid out from the reference panel's
+        // VCA compressor face for the VCA mode, laid out from the reference panel's
         // own proportions (x scaled 0.56, y scaled 0.52 from the 2000x802
         // reference image onto the 1120x416 face). Only the reference's
         // front-panel controls are drawn; attack, release, Over Easy and the
-        // detector selector have no dbx 160 equivalent and stay host-visible
+        // detector selector have no reference-unit equivalent and stay host-visible
         // parameters without faceplate controls. No third-party marks.
         using Layout = multicompp::ui_detail::VcaFaceplateLayout;
         constexpr float left = Layout::left, right = Layout::right;
@@ -2488,8 +2491,10 @@ private:
                                     IM_COL32(94, 100, 97, 255), IM_COL32(77, 83, 80, 255),
                                     IM_COL32(49, 54, 52, 255), IM_COL32(66, 71, 68, 255));
         // Fine deterministic powder-coat grain; remains static while meters move.
+        // 1500 quads (6k vertices) keeps the whole panel well inside ImGui's
+        // 16-bit index space; 9000 pushed the draw list toward the limit.
         uint32_t grain = 0x534c4742u;
-        for (int i = 0; i < 9000; ++i)
+        for (int i = 0; i < 1500; ++i)
         {
             grain = grain * 1664525u + 1013904223u;
             const float x = 46.0f + static_cast<float>(grain & 65535u) * (1028.0f / 65535.0f);

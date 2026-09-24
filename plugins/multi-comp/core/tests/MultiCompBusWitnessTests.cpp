@@ -3,7 +3,7 @@
 // WITNESS GATE -- NOT A PARITY GATE.  READ THIS BEFORE CHANGING A NUMBER HERE.
 //
 // These points pin slow-attack BUS settings where the model has diverged from the
-// native UAD SSL G bus compressor. The complete law/detector calibration on
+// native reference console bus compressor. The complete law/detector calibration on
 // 2026-09-11 puts all five witnesses below 0.3 dB; see
 // docs/multi-comp-2-bus-finish-2026-09-11.md. Each bound remains measured + 0.01 dB.
 //
@@ -129,6 +129,10 @@ void witness(const buswitness::Point& point)
             rootMeanSquare(rendered, start + latency, window)
             / rootMeanSquare(input, start, window));
         const double error = point.nativeGrDb[level] - reduction;
+        // A NaN error would fail the '>' below silently and leave `worst` finite,
+        // so the isfinite(worst) check after the loop could never see it.
+        require(std::isfinite(error),
+                "BUS witness gain-reduction error is finite at every measured level");
         if (std::abs(error) > worst)
         { worst = std::abs(error); worstSigned = error; worstLevel = -30 + 3 * level; }
     }

@@ -157,13 +157,26 @@ void externalHandoff()
     external.setExternalSidechain(false);
     external.setParameter(P::BusThreshold, 0); external.setParameter(P::BusRelease, 2);
     const auto output = render(external, source(48000, 2));
-    constexpr int points[] = {32,40,64,96,128,160,192,224,256,320,384,512,768,1024,1536,2048};
+    // Output indices were chosen against the 27-sample anti-alias latency; the
+    // 127-tap wide oversampler reports 67, so keep the same signal times.
+    constexpr int kWideOversamplerLatencyShift = 67 - 27;
+    constexpr int points[] = {32 + kWideOversamplerLatencyShift, 40 + kWideOversamplerLatencyShift,
+        64 + kWideOversamplerLatencyShift, 96 + kWideOversamplerLatencyShift, 128 + kWideOversamplerLatencyShift,
+        160 + kWideOversamplerLatencyShift, 192 + kWideOversamplerLatencyShift, 224 + kWideOversamplerLatencyShift,
+        256 + kWideOversamplerLatencyShift, 320 + kWideOversamplerLatencyShift, 384 + kWideOversamplerLatencyShift,
+        512 + kWideOversamplerLatencyShift, 768 + kWideOversamplerLatencyShift, 1024 + kWideOversamplerLatencyShift,
+        1536 + kWideOversamplerLatencyShift, 2048 + kWideOversamplerLatencyShift};
     // Captured after calibration (bus-completion-20260909/); re-captured 2026-09-11
     // after the release-dependent charge offset (docs/multi-comp-2-bus-recal2-2026-09-11.md).
     // Re-captured for the complete BUS detector/law model (2026-09-11).
+    // Trial B 2600 Hz audio control: sampled peak .089369446 -> .090106972; max snapshot change .000737526.
+    // 127-tap wide oversampler (points shifted +40 to the same signal times): sampled peak
+    // .090106972 -> .085380249; max snapshot change .004726723 at the first (onset) point.
+    // H-S2R 3500/12000 Hz audio control, re-captured 2026-09-17: sampled peak
+    // .085380249 -> .085287072; max snapshot change .000093177. Bound unchanged.
     constexpr double reference[2][16] = {
-        {-0.0893694460392,-0.0834169387817,-0.0744125768542,-0.0672984868288,-0.0634469091892,-0.0621398203075,-0.0628421381116,-0.0648157224059,-0.0672592371702,-0.0711472928524,-0.0715723410249,-0.0607239566743,-0.0507512800395,-0.0552682578564,-0.0506264939904,-0.0466336607933},
-        {-0.0812952145934,-0.0767870768905,-0.0713550746441,-0.0683850497007,-0.0680608972907,-0.0692847445607,-0.0711847394705,-0.0729508250952,-0.0740072578192,-0.0732129737735,-0.06886087358,-0.0551139861345,-0.056271199137,-0.0491328537464,-0.044148106128,-0.0400252826512}
+        {-0.08528707176447,-0.08133792877197,-0.07270044088364,-0.06621856987476,-0.06272590905428,-0.06161833554506,-0.06244390085340,-0.06451326608658,-0.06704254448414,-0.07105600088835,-0.07155094295740,-0.06070049852133,-0.05073999613523,-0.05524813756347,-0.05060903728008,-0.04661852493882},
+        {-0.07786365598440,-0.07514257729053,-0.06981984525919,-0.06725260615349,-0.06716624647379,-0.06855859607458,-0.07061339914799,-0.07253330945969,-0.07372960448265,-0.07311574369669,-0.06884371489286,-0.05510040745139,-0.05625312030315,-0.04912254959345,-0.04414022341371,-0.04001903161407}
     };    double worst = 0, peak = 0;
     for (int ch = 0; ch < 2; ++ch)
         for (int i = 0; i < 16; ++i)

@@ -1,6 +1,6 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
 //
-// Measured control laws of the VCA mode's reference unit (UAD dbx 160,
+// Measured control laws of the VCA mode's reference unit (reference VCA compressor plugin,
 // campaign: dusk-audio-tools plugins/MultiComp/tests/reference_comparison_dbx160).
 // Parity is judged at matched knob positions, so the host parameters carry the
 // knob positions and these functions carry the device's laws. Framework-free;
@@ -263,6 +263,92 @@ private:
     struct Section { float b0 = 1.0f, b1 = 0.0f, a1 = 0.0f, x1 = 0.0f, y1 = 0.0f; };
     std::array<Section, static_cast<size_t>(kSidechainTiltSections)> sections{};
     float normalise = 1.0f;
+};
+
+// OUTPUT VOICING: native impulse at 48 kHz (setting-independent +0.13 dB
+// around 10 kHz), plus pilot-normalised SC-On HF tone probes at 44.1/96 kHz.
+// Fitted 2026-09-16: vca-programme-20260911/vca-voicing-families.json,
+// fit_vca_linear_eq.py, exp_postfilter_score.py and make_vca_voicing_core.py.
+// Maximum residual: 48 kHz family 0.008 dB to 20 kHz; 96 kHz family
+// 0.026 dB to 44 kHz; 48 kHz family at a 44.1 kHz host 0.047 dB.
+// The reference curve scales with host Nyquist at 44.1/48 kHz: this is a
+// host-rate digital response. An oversampled analogue match would miss it
+// at 44.1 kHz, so this stage runs AFTER downsampling, at the host rate.
+struct OutputVoicingFamily { double peakHz; double gainDb; double q; double lowpassHz; };
+inline constexpr OutputVoicingFamily kOutputVoicing48{
+    12302.077765110202, 0.19377605455040672, 0.40418487576463935, 129578.02520201266};
+inline constexpr OutputVoicingFamily kOutputVoicing96{
+    10021.447091993265, 0.2151958011836086, 0.9311700023107351, 118902.54589407815};
+
+class OutputVoicing
+{
+public:
+    void prepare(double hostRate) noexcept
+    {
+        const double fs = std::isfinite(hostRate) && hostRate > 0.0 ? hostRate : 48000.0;
+        const auto& family = fs >= 70000.0 ? kOutputVoicing96 : kOutputVoicing48;
+        const double pi = 3.14159265358979323846;
+        // RBJ peaking section. Preserve the lab's double-precision arithmetic
+        // and evaluation order, including its 1 kHz magnitude normalisation.
+        const double A = std::pow(10.0, family.gainDb / 40.0);
+        const double w = 2.0 * pi * std::min(family.peakHz, 0.49 * fs) / fs;
+        const double al = std::sin(w) / (2.0 * family.q);
+        const double a0 = 1.0 + al / A;
+        b[0] = (1.0 + al * A) / a0;
+        b[1] = -2.0 * std::cos(w) / a0;
+        b[2] = (1.0 - al * A) / a0;
+        a[0] = 1.0;
+        a[1] = -2.0 * std::cos(w) / a0;
+        a[2] = (1.0 - al / A) / a0;
+
+        // Magnitude-matched one-pole LP: matched pole, unity DC gain, and
+        // Nyquist gain equal to the analogue low-pass magnitude at fs / 2.
+        const double fc = family.lowpassHz;
+        const double pz = std::exp(-2.0 * pi * fc / fs);
+        const double ny = 1.0 / std::sqrt(1.0 + (0.5 * fs / fc) * (0.5 * fs / fc));
+        const double Am = ny * (1.0 + pz) / (1.0 - pz);
+        const double qz = (Am - 1.0) / (Am + 1.0);
+        const double g = (1.0 - pz) / (1.0 - qz);
+        lpB[0] = g;
+        lpB[1] = -g * qz;
+        lpA1 = -pz;
+
+        // Static-law and headroom measurements are calibrated at 1 kHz.
+        const double wr = 2.0 * pi * 1000.0 / fs;
+        const double cr = std::cos(wr), sr = std::sin(wr);
+        const double c2 = std::cos(2 * wr), s2 = std::sin(2 * wr);
+        const double nr = b[0] + b[1] * cr + b[2] * c2;
+        const double ni = -(b[1] * sr + b[2] * s2);
+        const double dr = 1.0 + a[1] * cr + a[2] * c2;
+        const double di = -(a[1] * sr + a[2] * s2);
+        const double lnr = lpB[0] + lpB[1] * cr, lni = -lpB[1] * sr;
+        const double ldr = 1.0 + lpA1 * cr, ldi = -lpA1 * sr;
+        const double mag = std::sqrt((nr * nr + ni * ni) / (dr * dr + di * di)
+                                    * (lnr * lnr + lni * lni) / (ldr * ldr + ldi * ldi));
+        for (double& coefficient : b) coefficient /= mag;
+        reset();
+    }
+
+    void reset() noexcept
+    {
+        px1 = px2 = py1 = py2 = lx1 = ly1 = 0.0;
+    }
+
+    float process(float input) noexcept
+    {
+        const double x = input;
+        const double y = b[0] * x + b[1] * px1 + b[2] * px2 - a[1] * py1 - a[2] * py2;
+        px2 = px1; px1 = x; py2 = py1; py1 = y;
+        const double z = lpB[0] * y + lpB[1] * lx1 - lpA1 * ly1;
+        lx1 = y; ly1 = z;
+        return static_cast<float>(z);
+    }
+
+private:
+    std::array<double, 3> b{{1.0, 0.0, 0.0}}, a{{1.0, 0.0, 0.0}};
+    std::array<double, 2> lpB{{1.0, 0.0}};
+    double lpA1 = 0.0;
+    double px1 = 0.0, px2 = 0.0, py1 = 0.0, py2 = 0.0, lx1 = 0.0, ly1 = 0.0;
 };
 
 } // namespace duskaudio::dbx160
