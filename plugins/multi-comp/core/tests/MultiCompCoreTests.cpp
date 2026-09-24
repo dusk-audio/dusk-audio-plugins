@@ -1,4 +1,6 @@
+#include "MultiCompFetProgrammeFixtures.hpp"
 #include "../MultiCompDSP.hpp"
+#include "MultiCompOptoParityFixtures.hpp"
 #include "../../../shared-daf/dsp/DuskCrossover.hpp"
 
 #include <algorithm>
@@ -21,10 +23,7 @@ namespace duskaudio
 {
 struct MultiCompDSPTestAccess
 {
-    static std::array<bool, 2> busSidechainValidity(const MultiCompDSP& dsp) noexcept
-    {
-        return dsp.previousBusSidechainValid;
-    }
+
 
     // The vintage FET envelope gain, in dB, straight off the mode state --
     // NOT the published meter, which is smoothed and clamped. `processFET`
@@ -63,6 +62,22 @@ struct MultiCompDSPTestAccess
         return dsp.fetStartupInputPeak == std::array<float, 2>{{0.0f, 0.0f}}
             && dsp.fetStartupActiveSamples == std::array<int, 2>{{0, 0}}
             && dsp.fetStartupSilentSamples == std::array<int, 2>{{0, 0}};
+    }
+
+    // The same trio as a readable value, so a path that is NOT a lifecycle
+    // boundary can be asserted against the numbers it is supposed to hold
+    // rather than against "not cleared".
+    struct FetStartupState
+    {
+        std::array<float, 2> inputPeak;
+        std::array<int, 2> activeSamples;
+        std::array<int, 2> silentSamples;
+    };
+
+    static FetStartupState fetStartupState(const MultiCompDSP& dsp) noexcept
+    {
+        return {dsp.fetStartupInputPeak, dsp.fetStartupActiveSamples,
+                dsp.fetStartupSilentSamples};
     }
 
     static float advanceFetStartupBlend(
@@ -139,14 +154,26 @@ struct OptoOutputRender
     float inputRms = 0.0f;
     float outputRms = 0.0f;
     float outputPeak = 0.0f;
+    // Peak over the render's last 8192 samples; equals outputPeak at 0.5 s.
+    float finalPeak = 0.0f;
 };
 
+// Float computes the tone's phase in float, which drifts as n grows. Exact
+// uses that 1 kHz repeats every 48 samples at 48 kHz: the index is reduced
+// mod 48 and the phase computed in double, so a long tone does not drift.
+enum class OptoTonePhase { Float, Exact };
+
+// RMS and outputPeak are read over samples [15808, 24000), the last 8192 of
+// a 0.5 s render; a longer render reads that same window and adds finalPeak.
 OptoOutputRender renderOptoOutput(float inputDbfs, float gainKnob,
-                                  int distortion = 0, float drive = 50.0f)
+                                  int distortion = 0, float drive = 50.0f,
+                                  int renderSamples = 24000,
+                                  OptoTonePhase tonePhase = OptoTonePhase::Float)
 {
-    constexpr int kSamples = 24000;
+    constexpr int kWindowEnd = 24000;
     constexpr int kMeasureSamples = 8192;
     constexpr int kBlockSize = 256;
+    constexpr double pi = 3.14159265358979323846;
     MultiCompDSP dsp;
     dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Opto));
     dsp.setMix(100.0f);
@@ -166,22 +193,32 @@ OptoOutputRender renderOptoOutput(float inputDbfs, float gainKnob,
     double inputPower = 0.0;
     double outputPower = 0.0;
     float outputPeak = 0.0f;
+    float finalPeak = 0.0f;
     std::array<float, kBlockSize> input{};
     std::array<float, kBlockSize> output{};
-    for (int blockStart = 0; blockStart < kSamples; blockStart += kBlockSize)
+    for (int blockStart = 0; blockStart < renderSamples; blockStart += kBlockSize)
     {
-        const int count = std::min(kBlockSize, kSamples - blockStart);
+        const int count = std::min(kBlockSize, renderSamples - blockStart);
         for (int i = 0; i < count; ++i)
-            input[static_cast<size_t>(i)] = amplitude * std::sin(
-                2.0f * kPi * 1000.0f * static_cast<float>(blockStart + i) / 48000.0f);
+        {
+            const int n = blockStart + i;
+            input[static_cast<size_t>(i)] = tonePhase == OptoTonePhase::Exact
+                ? static_cast<float>(static_cast<double>(amplitude) * std::sin(
+                    2.0 * pi * static_cast<double>(n % 48) / 48.0))
+                : amplitude * std::sin(
+                    2.0f * kPi * 1000.0f * static_cast<float>(n) / 48000.0f);
+        }
         const float* inputs[] = {input.data()};
         float* outputs[] = {output.data()};
         dsp.processBlock(inputs, outputs, 1, count);
         for (int i = 0; i < count; ++i)
         {
-            if (blockStart + i < kSamples - kMeasureSamples) continue;
-            const float in = input[static_cast<size_t>(i)];
+            const int sample = blockStart + i;
             const float out = output[static_cast<size_t>(i)];
+            if (sample >= renderSamples - kMeasureSamples)
+                finalPeak = std::max(finalPeak, std::abs(out));
+            if (sample < kWindowEnd - kMeasureSamples || sample >= kWindowEnd) continue;
+            const float in = input[static_cast<size_t>(i)];
             inputPower += static_cast<double>(in) * in;
             outputPower += static_cast<double>(out) * out;
             outputPeak = std::max(outputPeak, std::abs(out));
@@ -190,7 +227,8 @@ OptoOutputRender renderOptoOutput(float inputDbfs, float gainKnob,
     return {
         static_cast<float>(std::sqrt(inputPower / kMeasureSamples)),
         static_cast<float>(std::sqrt(outputPower / kMeasureSamples)),
-        outputPeak
+        outputPeak,
+        finalPeak
     };
 }
 
@@ -199,7 +237,8 @@ void testOptoMeasuredGainTaper()
     struct TaperPoint { float knob; float gainDb; bool silent; };
     constexpr std::array<TaperPoint, 16> points{{
         {0.0f, 0.0f, true}, {5.0f, 0.0f, true},
-        {10.0f, -21.951f, false}, {15.0f, -8.777f, false},
+        // Native Gain + HF shelf promotion: knob 10 at 1 kHz -21.951 -> -21.938238 dB.
+        {10.0f, -21.938238f, false}, {15.0f, -8.777f, false},
         {20.0f, -3.017f, false}, {23.75f, 0.214f, false},
         {30.0f, 4.191f, false}, {35.0f, 7.823f, false},
         {40.0f, 10.615f, false}, {50.0f, 14.501f, false},
@@ -233,6 +272,14 @@ void testOptoMeasuredGainTaper()
 
 void testOptoMeasuredOutputCeiling()
 {
+    // The peak clause's +4.72 dBFS is native's STEADY-STATE peak. Native's
+    // ~1 Hz output high-pass is still settling the curve's DC at 0.5 s (C4.1
+    // render: +4.966 dBFS over samples 15808-24000, +4.741 settled, within
+    // 2e-4 dB from 2.5 s on), so the tones run 4 s and the peak is read over
+    // their last 8192 samples. The shortfall clause keeps its 0.5 s window.
+    // The tones are phase-exact: by 4 s a float phase is off by up to 3.2e-3
+    // rad, which lifted the peak read (native +0.030 dB, ours up to +0.044).
+    constexpr int kRenderSamples = 4 * 48000;
     constexpr std::array<float, 7> knobs{{40.0f, 50.0f, 60.0f, 70.0f,
                                           80.0f, 90.0f, 100.0f}};
     constexpr std::array<float, 7> taperDb{{10.615f, 14.501f, 18.813f,
@@ -249,7 +296,9 @@ void testOptoMeasuredOutputCeiling()
     {
         for (size_t point = 0; point < knobs.size(); ++point)
         {
-            const auto measured = renderOptoOutput(inputDbfs[inputRow], knobs[point]);
+            const auto measured = renderOptoOutput(inputDbfs[inputRow], knobs[point],
+                                                   0, 50.0f, kRenderSamples,
+                                                   OptoTonePhase::Exact);
             const float measuredGainDb = duskaudio::gainToDecibels(
                 measured.outputRms / measured.inputRms);
             const float shortfallDb = measuredGainDb - taperDb[point];
@@ -259,7 +308,7 @@ void testOptoMeasuredOutputCeiling()
                         inputDbfs[inputRow], knobs[point] * 0.01f,
                         referenceShortfallDb[inputRow][point], shortfallDb, errorDb);
             if (inputRow + 1 == inputDbfs.size() && point + 1 == knobs.size())
-                maximumDrivePeakDbfs = duskaudio::gainToDecibels(measured.outputPeak);
+                maximumDrivePeakDbfs = duskaudio::gainToDecibels(measured.finalPeak);
         }
     }
     std::printf("opto output ceiling summary: worst shortfall error %.6f dB; maximum-drive peak %+.6f dBFS\n",
@@ -681,7 +730,7 @@ void prepareOptoDynamicsDsp(MultiCompDSP& dsp, float peakReduction,
 }
 
 constexpr int kOptoPedestalEventTraceStartMs = -5;
-constexpr int kOptoPedestalEventTraceStopMs = 80;
+constexpr int kOptoPedestalEventTraceStopMs = 400;
 constexpr size_t kOptoPedestalEventTracePoints
     = kOptoPedestalEventTraceStopMs - kOptoPedestalEventTraceStartMs;
 
@@ -810,19 +859,18 @@ float optoPedestalEventLocalTauMs(
 }
 
 OptoPedestalEventMeasurement measureOptoPedestalEventCell(
-    float pedestalDbfs, float eventDbfs, float peakReduction)
+    float pedestalDbfs, float eventDbfs, float peakReduction, int durationMs = 2)
 {
     constexpr int kSampleRate = 48000;
     constexpr int kBlockSize = kSampleRate / 1000;
     constexpr int kStimulusSamples = 9 * kSampleRate / 2;
     constexpr int kEventStart = 4 * kSampleRate;
-    constexpr int kEventSamples = 2 * kSampleRate / 1000;
+    const int kEventSamples = durationMs * kSampleRate / 1000;
     constexpr int kCycleSamples = kSampleRate / 1000;
     constexpr double kTwoPi = 6.283185307179586476925286766559;
     static_assert(kBlockSize == kCycleSamples);
     static_assert(kEventStart % kCycleSamples == 0);
-    static_assert(kEventSamples == 2 * kCycleSamples);
-    static_assert(kOptoPedestalEventTracePoints == 85);
+    static_assert(kOptoPedestalEventTracePoints == 405);
     static_assert(kEventStart
             + kOptoPedestalEventTraceStopMs * kCycleSamples
             + kCycleSamples
@@ -856,7 +904,7 @@ OptoPedestalEventMeasurement measureOptoPedestalEventCell(
             && std::abs(withoutEventInput[static_cast<size_t>(
                     kEventStart + kQuarterCycleSamples)] - pedestalAmplitude)
                 < 1.0e-6f,
-            "Opto pedestal-event stimulus has a phase-continuous two-cycle amplitude event");
+            "Opto pedestal-event stimulus has a phase-continuous amplitude event");
 
     MultiCompDSP withEvent;
     MultiCompDSP withoutEvent;
@@ -1141,11 +1189,204 @@ void testOptoPedestalEventHarnessInvariants()
     for (size_t row = 0; row < grid.cells.size(); ++row)
     {
         const auto& cell = grid.cells[row];
-        require(cell.signalStartSample == 26,
+        // 127-tap wide oversampler: the located carrier start moved 26 -> 66
+        // with the 27 -> 67 sample anti-alias latency (same cycle phase).
+        require(cell.signalStartSample == 66,
                 "Opto in-process pedestal-event extraction stays cycle-aligned");
         require(cell.preEventMaximumAbsDb < 0.10f,
                 "Opto in-process pedestal-event render stays below the clean-cell contamination limit");
     }
+}
+
+void testOptoRecoveryParity()
+{
+    const auto& grid = measureOptoPedestalEventGrid();
+    constexpr std::array<int, 10> earlyOffsets{{3, 4, 5, 7, 10, 15, 20, 30, 50, 79}};
+    for (size_t row = 0; row < optoReference::recovery.size(); ++row)
+    {
+        const auto& reference = optoReference::recovery[row];
+        const auto measured = row < grid.cells.size() ? grid.cells[row]
+            : measureOptoPedestalEventCell(reference.pedestalDbfs,
+                reference.eventDbfs, reference.peakReduction, reference.durationMs);
+        double earlySquared = 0.0, sparseSquared = 0.0;
+        float earlyMaximum = 0.0f, lateMaximum = 0.0f;
+        // Leave one full carrier cycle after the event for the oversampling
+        // FIR edge. Score EVERY subsequent cycle through 399 ms, not just
+        // a fitted local time constant or a handful of selected crossings.
+        const int firstCleanMs = reference.durationMs + 1;
+        for (int ms = firstCleanMs; ms < 400; ++ms)
+        {
+            const size_t index = static_cast<size_t>(ms + 5);
+            const float error = measured.traceDb[index] - reference.traceDb[index];
+            if (ms < 80)
+            {
+                earlySquared += static_cast<double>(error) * error;
+                earlyMaximum = std::max(earlyMaximum, std::abs(error));
+            }
+            else lateMaximum = std::max(lateMaximum, std::abs(error));
+        }
+        for (const int ms : earlyOffsets)
+        {
+            const size_t index = static_cast<size_t>(ms + 5);
+            const double error = measured.traceDb[index] - reference.traceDb[index];
+            sparseSquared += error * error;
+        }
+        const double earlyRms = std::sqrt(earlySquared / (80 - firstCleanMs));
+        const double sparseRms = std::sqrt(sparseSquared / earlyOffsets.size());
+        std::printf("opto recovery %zu %s PR %.2f ped %.0f event %.0f %d ms: "
+                    "full early RMS %.6f max %.6f, late max %.6f, sparse RMS %.6f\n",
+                    row, reference.heldOut ? "holdout" : "calibration",
+                    reference.peakReduction, reference.pedestalDbfs,
+                    reference.eventDbfs, reference.durationMs,
+                    earlyRms, earlyMaximum, lateMaximum, sparseRms);
+        require(earlyRms < 0.75 && earlyMaximum < 1.0f && lateMaximum < 1.0f,
+                "Opto complete post-event recovery stays within measured parity limits");
+        if (reference.durationMs == 2)
+            require(sparseRms < 0.50,
+                    "Opto two-millisecond calibration offsets retain their tighter RMS limit");
+    }
+}
+
+float measureOptoSettledReduction(const optoReference::Steady& row)
+{
+    constexpr int sampleRate = 48000, blockSize = 256;
+    constexpr int stimulusSamples = 8 * sampleRate;
+    constexpr double twoPi = 6.283185307179586476925286766559;
+    std::array<double, 2> powers{};
+    for (int active = 0; active < 2; ++active)
+    {
+        MultiCompDSP dsp;
+        prepareOptoDynamicsDsp(dsp, active ? row.peakReduction : 0.0f,
+                               kOversampling2xSetting);
+        dsp.setParameter(MultiCompDSP::Parameter::OptoGain, row.gain);
+        dsp.setParameter(MultiCompDSP::Parameter::OptoLimit, row.limit ? 1.0f : 0.0f);
+        const int latency = dsp.getLatencySamples();
+        const int begin = 6 * sampleRate + latency;
+        const int end = 15 * sampleRate / 2 + latency;
+        std::array<float, blockSize> input{}, output{};
+        for (int offset = 0; offset < stimulusSamples + latency; offset += blockSize)
+        {
+            const int count = std::min(blockSize, stimulusSamples + latency - offset);
+            for (int i = 0; i < count; ++i)
+                input[static_cast<size_t>(i)] = offset + i < stimulusSamples
+                    ? static_cast<float>(std::pow(10.0, row.inputDbfs / 20.0)
+                        * std::sin(twoPi * row.frequencyHz * (offset + i) / sampleRate))
+                    : 0.0f;
+            const float* inputs[]{input.data()};
+            float* outputs[]{output.data()};
+            dsp.processBlock(inputs, outputs, 1, count);
+            for (int i = std::max(0, begin - offset); i < std::min(count, end - offset); ++i)
+            {
+                const double value = output[static_cast<size_t>(i)];
+                powers[static_cast<size_t>(active)] += value * value;
+            }
+        }
+    }
+    return static_cast<float>(10.0 * std::log10(powers[0] / powers[1]));
+}
+
+void testOptoSettledFrequencyParity()
+{
+    float worst = 0.0f;
+    for (const auto& row : optoReference::steady)
+    {
+        const float measured = measureOptoSettledReduction(row);
+        const float error = measured - row.reductionDb;
+        worst = std::max(worst, std::abs(error));
+        std::printf("opto settled frequency %s %.2f Hz input %.0f PR %.0f: "
+                    "reference %.6f measured %.6f error %+.6f\n",
+                    row.limit ? "Limit" : "Compress",
+                    row.frequencyHz, row.inputDbfs, row.peakReduction,
+                    row.reductionDb, measured, error);
+        require(std::isfinite(measured) && std::abs(error) < 0.50f,
+                "Opto settled level/frequency surface matches the reference");
+    }
+    std::printf("opto settled frequency: %zu cells worst %.6f dB\n",
+                optoReference::steady.size(), worst);
+}
+
+void testOptoSoftKneeParity()
+{
+    float worst = 0.0f;
+    for (const auto& row : optoReference::knee)
+    {
+        const float measured = measureOptoSettledReduction(row);
+        const float error = measured - row.reductionDb;
+        worst = std::max(worst, std::abs(error));
+        std::printf("opto soft knee input %.0f: reference %.6f measured %.6f error %+.6f\n",
+                    row.inputDbfs, row.reductionDb, measured, error);
+        require(std::isfinite(measured) && std::abs(error) < 0.10f,
+                "Opto soft knee preserves measured below-table compression onset");
+    }
+    std::printf("opto soft knee: worst %.6f dB\n", worst);
+}
+
+void testOptoResetClearsSpectralAndEventState()
+{
+    float worst = 0.0f, activePeak = 0.0f;
+    for (const bool limit : {false, true})
+    for (const double rate : {44100.0, 48000.0, 96000.0})
+    {
+        MultiCompDSP reused, fresh;
+        for (auto* dsp : {&reused, &fresh})
+        {
+            prepareOptoDynamicsDsp(*dsp, 100.0f, kOversampling2xSetting);
+            dsp->setParameter(MultiCompDSP::Parameter::OptoLimit, limit ? 1.0f : 0.0f);
+            dsp->prepare(rate, 256);
+        }
+        std::array<float, 256> input{}, a{}, b{};
+        const float* inputs[]{input.data(), input.data()};
+        std::array<float, 256> ar{}, br{};
+        float* reusedOutputs[]{a.data(), ar.data()};
+        float* freshOutputs[]{b.data(), br.data()};
+        for (int block = 0; block < 400; ++block)
+        {
+            for (int i = 0; i < 256; ++i)
+            {
+                const double t = (block * 256 + i) / rate;
+                input[static_cast<size_t>(i)] = static_cast<float>(
+                    0.4 * std::sin(6.283185307179586 * 50.0 * t)
+                    + 0.4 * std::sin(6.283185307179586 * 12000.0 * t));
+            }
+            reused.processBlock(inputs, reusedOutputs, 2, 256);
+        }
+        // Settle onto a quiet pedestal, then charge the tagged transient
+        // population. Broadband alone does not exercise that reservoir.
+        const int pedestalSamples = static_cast<int>(4.0 * rate);
+        const int eventSamples = static_cast<int>(std::lround(0.005 * rate));
+        for (int offset = 0; offset < pedestalSamples + eventSamples; offset += 256)
+        {
+            const int count = std::min(256, pedestalSamples + eventSamples - offset);
+            for (int i = 0; i < count; ++i)
+            {
+                const float amplitude = offset + i < pedestalSamples
+                    ? 0.044668359f : 0.501187234f;
+                input[static_cast<size_t>(i)] = amplitude * static_cast<float>(
+                    std::sin(6.283185307179586 * 1000.0 * (offset + i) / rate));
+            }
+            reused.processBlock(inputs, reusedOutputs, 2, count);
+        }
+        reused.reset();
+        fresh.reset();
+        for (int block = 0; block < 32; ++block)
+        {
+            for (int i = 0; i < 256; ++i)
+                input[static_cast<size_t>(i)] = 0.1f * std::sin(
+                    static_cast<float>(6.283185307179586 * 110.0
+                        * (block * 256 + i) / rate));
+            reused.processBlock(inputs, reusedOutputs, 2, 256);
+            fresh.processBlock(inputs, freshOutputs, 2, 256);
+            for (size_t i = 0; i < a.size(); ++i)
+            {
+                activePeak = std::max(activePeak, std::abs(b[i]));
+                worst = std::max({worst, std::abs(a[i] - b[i]),
+                                  std::abs(ar[i] - br[i])});
+            }
+        }
+    }
+    std::printf("opto reset: residual %.9g, fresh peak %.9g\n", worst, activePeak);
+    require(worst == 0.0f && activePeak > 0.01f,
+            "Opto reset clears spectral and event history on both active channels");
 }
 
 struct OptoHarmonicMeasurement
@@ -1247,7 +1488,9 @@ void testOptoHarmonicContent()
             rows[row].inputDbfs, rows[row].peakReduction);
         worstFundamentalError = std::max(worstFundamentalError, std::abs(
             measured[row].fundamentalDbfs
-                - (rows[row].inputDbfs + measured[row].meterDb)));
+                // Native HF shelf promotion: expected 1 kHz gain at 96 kHz processing 0 -> +.002886114 dB.
+                // 127-tap wide oversampler: +.002886114 -> +.003160477 dB (measured, uncompressed rows).
+                - (rows[row].inputDbfs + measured[row].meterDb + 0.003160477f)));
         for (size_t harmonic = 0; harmonic < rows[row].reference.size(); ++harmonic)
         {
             const float error = std::abs(
@@ -1536,7 +1779,8 @@ std::array<float, kOptoShortEventTraceOffsets.size()>
 measureOptoShortEventTrace(int eventSamples, float peakDbfs,
                            float preEventFloorDbfs = -200.0f,
                            int repeatGapSamples = 0,
-                           float repeatGapFloorDbfs = -200.0f)
+                           float repeatGapFloorDbfs = -200.0f,
+                           int oversamplingSetting = kOversampling2xSetting)
 {
     // One event from reset, immediately followed by a -48 dBFS probe. The
     // matched PR=0 control removes Gain/output-stage response; one complete
@@ -1551,8 +1795,8 @@ measureOptoShortEventTrace(int eventSamples, float peakDbfs,
     const int eventEnd = secondEventStart + eventSamples;
     MultiCompDSP control;
     MultiCompDSP active;
-    prepareOptoDynamicsDsp(control, 0.0f);
-    prepareOptoDynamicsDsp(active, 70.0f);
+    prepareOptoDynamicsDsp(control, 0.0f, oversamplingSetting);
+    prepareOptoDynamicsDsp(active, 70.0f, oversamplingSetting);
     control.setParameter(MultiCompDSP::Parameter::OptoGain, 23.754f);
     active.setParameter(MultiCompDSP::Parameter::OptoGain, 23.754f);
     const int latency = control.getLatencySamples();
@@ -2441,19 +2685,9 @@ void testOptoDenseProgrammeParity()
                 high.meanErrorDb, high.rmsErrorDb, high.correlation,
                 at85.meanErrorDb, at85.rmsErrorDb, at85.correlation,
                 at100.meanErrorDb, at100.rmsErrorDb, at100.correlation);
-    // Issue #210's original PR 0.40/0.70 RMS errors were 1.600/3.163 dB.
-    // The continuous event-history law now keeps all four measured PR rows
-    // below 1.20 dB RMS. Keep the PR/reference pairings and their independently
-    // declared ceilings in one table: the old loose high-PR tripwires could let
-    // the 0.85/1.00 reference envelopes be exchanged without failing.
-    //
-    // Correlation is gated separately so a uniform offset cannot conceal a
-    // time-inverted or shape-mismatched envelope. Pearson correlation is
-    // invariant to uniform offset and uniform positive scaling, so flattening
-    // is owned by the RMS term. The rows are mono; the linked-stereo Opto path
-    // remains owned by the stereo-link gates. This revision was run with macOS
-    // clang and macOS no-contract. Linux GCC 12 x86-64 still needs re-running
-    // because the local Podman VM would not stay up; Linux arm64 remains unrun.
+    // Score both level error and temporal shape for each measured PR row.
+    // Correlation alone is invariant to a uniform offset or positive scaling.
+    // The linked-stereo path has separate stereo-link and lifecycle gates.
     struct DenseProgrammeGate
     {
         const char* label;
@@ -2463,10 +2697,10 @@ void testOptoDenseProgrammeParity()
         float minimumCorrelation;
     };
     const std::array<DenseProgrammeGate, 4> gates{{
-        {"PR 0.40", low,   0.35f, 0.65f, 0.82f},
-        {"PR 0.70", high,  0.70f, 0.95f, 0.80f},
-        {"PR 0.85", at85,  0.85f, 1.15f, 0.75f},
-        {"PR 1.00", at100, 0.90f, 1.20f, 0.75f},
+        {"PR 0.40", low,   0.35f, 0.50f, 0.90f},
+        {"PR 0.70", high,  0.70f, 0.50f, 0.90f},
+        {"PR 0.85", at85,  0.85f, 0.50f, 0.90f},
+        {"PR 1.00", at100, 0.90f, 0.50f, 0.90f},
     }};
     for (const auto& gate : gates)
     {
@@ -3121,6 +3355,251 @@ void testMixBypassAndBlockEdges()
     std::puts("mix ramp, bypass, zero-sample and single-sample blocks OK");
 }
 
+// --- global bypass toggle continuity, every mode --------------------------
+//
+// The owner's report: toggling the global Bypass switch while stereo audio is
+// playing produced an audible artefact in every mode. Root cause, measured in
+// `multi-comp-2-bypass-toggle-2026-09-18.md` (tools repo): the settled-bypass
+// path returned early, so the 127-tap oversampler histories, every detector and
+// feedback state, the dry-path delay, the mix/makeup ramps and the analog-noise
+// LCG all froze, and the FET first-cycle helpers were cleared on top. Resuming
+// spliced up-to-a-second-old state back onto live audio: 5e-4 .. 1.9e-2 peak
+// error against a never-bypassed render, up to 1.35 dB of 50 ms level error,
+// for as long as 2.6 s after the un-bypass crossfade.
+//
+// The contract asserted here is the one the fix (P0) and the owner's follow-up
+// decision (P0b) established: a bypass is NOT an interruption of the signal
+// path and NOT a lifecycle boundary. The whole chain keeps running while
+// bypassed and merely emits the latency-aligned dry instead of its result, so
+// once the 30 ms un-bypass crossfade is over the output must be the signal a
+// never-bypassed render would have produced. Not close -- identical: both
+// renders come from this one binary, on the same input, with nothing reset or
+// re-armed in between, so anything other than a byte-for-byte match is stale
+// state leaking across the toggle. The bound is therefore exact equality; there
+// is no tolerance to tune.
+//
+// Three bit-exact assertions per mode, plus a non-vacuity gate:
+//   * real gain reduction on the never-bypassed render (without it, bypassed
+//     and processed audio would be the same signal and nothing below could
+//     fail),
+//   * everything before the first toggle matches the never-bypassed render
+//     (the control: the two instances really are configured identically),
+//   * the settled bypass emits the input delayed by getLatencySamples(),
+//   * from un-bypass + 30 ms to the end it matches the never-bypassed render.
+void makeBypassToggleStimulus(std::vector<float>& left, std::vector<float>& right,
+                              int totalSamples, double sampleRate)
+{
+    // Four partials per channel under a slowly breathing envelope: continuous
+    // programme-like content with a level that keeps moving, so the detectors
+    // are never parked on a settled tone and the state that a bypass used to
+    // freeze is always different from the state it resumes into. Different
+    // partials and phases per channel so a stereo-link defect cannot hide.
+    constexpr double twoPi = 6.283185307179586476;
+    left.assign(static_cast<size_t>(totalSamples), 0.0f);
+    right.assign(static_cast<size_t>(totalSamples), 0.0f);
+    for (int i = 0; i < totalSamples; ++i)
+    {
+        const double t = static_cast<double>(i) / sampleRate;
+        const double envelope = 0.55 + 0.30 * std::sin(twoPi * 0.37 * t)
+                                     + 0.10 * std::sin(twoPi * 1.70 * t + 1.1);
+        const double l = 0.45 * std::sin(twoPi * 110.00 * t)
+                       + 0.28 * std::sin(twoPi * 277.18 * t + 0.9)
+                       + 0.17 * std::sin(twoPi * 659.26 * t + 2.1)
+                       + 0.10 * std::sin(twoPi * 1318.51 * t + 4.0);
+        const double r = 0.42 * std::sin(twoPi * 110.00 * t + 0.6)
+                       + 0.30 * std::sin(twoPi * 329.63 * t + 2.4)
+                       + 0.15 * std::sin(twoPi * 554.37 * t + 0.3)
+                       + 0.11 * std::sin(twoPi * 1479.98 * t + 5.2);
+        left[static_cast<size_t>(i)] = static_cast<float>(0.5 * envelope * l);
+        right[static_cast<size_t>(i)] = static_cast<float>(0.5 * envelope * r);
+    }
+}
+
+void configureBypassToggleMode(MultiCompDSP& dsp, duskaudio::MultiCompMode mode)
+{
+    // The knob sets the P0 diagnostic used, chosen for 6-12 dB of real gain
+    // reduction on programme material (tools repo,
+    // plugins/MultiComp/tests/bypass/bypass_toggle.py).
+    using Parameter = MultiCompDSP::Parameter;
+    using Band = MultiCompDSP::MultibandParameter;
+    switch (mode)
+    {
+        case duskaudio::MultiCompMode::Opto:
+            dsp.setParameter(Parameter::OptoPeakReduction, 45.0f);
+            break;
+        case duskaudio::MultiCompMode::FET:
+            dsp.setParameter(Parameter::FetInput, 0.0f);
+            dsp.setParameter(Parameter::FetRatio, 1.0f);
+            dsp.setParameter(Parameter::FetAttack, 0.2f);
+            dsp.setParameter(Parameter::FetRelease, 400.0f);
+            break;
+        case duskaudio::MultiCompMode::VCA:
+            dsp.setParameter(Parameter::VcaThreshold, -26.0f);
+            dsp.setParameter(Parameter::VcaRatio, 62.0f);
+            dsp.setParameter(Parameter::VcaAttack, 1.0f);
+            dsp.setParameter(Parameter::VcaRelease, 100.0f);
+            break;
+        case duskaudio::MultiCompMode::Bus:
+            dsp.setParameter(Parameter::BusThreshold, 0.0f);
+            dsp.setParameter(Parameter::BusRatio, 1.0f);
+            dsp.setParameter(Parameter::BusAttack, 2.0f);
+            dsp.setParameter(Parameter::BusRelease, 1.0f);
+            break;
+        case duskaudio::MultiCompMode::Digital:
+            dsp.setParameter(Parameter::DigitalThreshold, -28.0f);
+            dsp.setParameter(Parameter::DigitalRatio, 4.0f);
+            dsp.setParameter(Parameter::DigitalAttack, 10.0f);
+            dsp.setParameter(Parameter::DigitalRelease, 100.0f);
+            break;
+        case duskaudio::MultiCompMode::Multiband:
+            for (int band = 0; band < duskaudio::kMultiCompBands; ++band)
+            {
+                dsp.setMultibandParameter(band, Band::Threshold, -30.0f);
+                dsp.setMultibandParameter(band, Band::Ratio, 4.0f);
+            }
+            break;
+        case duskaudio::MultiCompMode::StudioFET:
+        case duskaudio::MultiCompMode::StudioVCA:
+            break;
+    }
+}
+
+int renderBypassToggle(duskaudio::MultiCompMode mode, bool toggle,
+                       const std::vector<float>& inputLeft,
+                       const std::vector<float>& inputRight,
+                       std::vector<float>& outputLeft,
+                       std::vector<float>& outputRight,
+                       std::vector<float>& gainReductionTrace,
+                       int bypassOnSample, int bypassOffSample)
+{
+    constexpr int blockSize = 256;
+    MultiCompDSP dsp;
+    dsp.setMode(static_cast<int>(mode));
+    dsp.setOversampling(kOversampling2xSetting);
+    configureBypassToggleMode(dsp, mode);
+    // Analog noise is deliberately left at its shipping default (on): its LCG
+    // is one of the histories a settled bypass used to freeze, and both renders
+    // advance it identically, so it costs nothing and covers one more mechanism.
+    dsp.prepare(48000.0, blockSize);
+
+    const int totalSamples = static_cast<int>(inputLeft.size());
+    outputLeft.assign(inputLeft.size(), 0.0f);
+    outputRight.assign(inputRight.size(), 0.0f);
+    gainReductionTrace.clear();
+    std::array<float, blockSize> blockLeft{}, blockRight{}, blockOutLeft{}, blockOutRight{};
+    const float* inputs[] = {blockLeft.data(), blockRight.data()};
+    float* outputs[] = {blockOutLeft.data(), blockOutRight.data()};
+    for (int start = 0; start < totalSamples; start += blockSize)
+    {
+        if (toggle && start == bypassOnSample) dsp.setBypass(true);
+        if (toggle && start == bypassOffSample) dsp.setBypass(false);
+        const int count = std::min(blockSize, totalSamples - start);
+        std::copy_n(inputLeft.begin() + start, count, blockLeft.begin());
+        std::copy_n(inputRight.begin() + start, count, blockRight.begin());
+        dsp.processBlock(inputs, outputs, 2, count);
+        std::copy_n(blockOutLeft.begin(), count, outputLeft.begin() + start);
+        std::copy_n(blockOutRight.begin(), count, outputRight.begin() + start);
+        gainReductionTrace.push_back(dsp.getGainReduction());
+    }
+    return dsp.getLatencySamples();
+}
+
+void testBypassToggleResumesWithoutGlitch()
+{
+    constexpr int blockSize = 256;
+    constexpr int sampleRate = 48000;
+    constexpr int totalSamples = 4 * sampleRate;
+    constexpr int bypassOnSample = 2 * sampleRate;
+    // The first block boundary at or after 3.000 s -- 144000 is not a multiple
+    // of 256, and the host can only toggle on a boundary.
+    constexpr int bypassOffSample = ((3 * sampleRate + blockSize - 1) / blockSize) * blockSize;
+    constexpr int crossfadeSamples = 30 * sampleRate / 1000;   // kBypassRampMs
+    static_assert(bypassOnSample % blockSize == 0, "bypass ON must be block aligned");
+    static_assert(bypassOffSample == 144128, "bypass OFF is the first boundary at or after 3.000 s");
+    static_assert(bypassOffSample + crossfadeSamples < totalSamples,
+                  "the render has to outlast the un-bypass crossfade");
+
+    std::vector<float> inputLeft, inputRight;
+    makeBypassToggleStimulus(inputLeft, inputRight, totalSamples, sampleRate);
+
+    struct Mode { const char* name; duskaudio::MultiCompMode mode; };
+    constexpr std::array<Mode, 6> modes{{
+        {"OPTO", duskaudio::MultiCompMode::Opto},
+        {"FET", duskaudio::MultiCompMode::FET},
+        {"VCA", duskaudio::MultiCompMode::VCA},
+        {"BUS", duskaudio::MultiCompMode::Bus},
+        {"Digital", duskaudio::MultiCompMode::Digital},
+        {"Multiband", duskaudio::MultiCompMode::Multiband},
+    }};
+
+    for (const auto& entry : modes)
+    {
+        std::vector<float> toggledLeft, toggledRight, neverLeft, neverRight;
+        std::vector<float> toggledGr, neverGr;
+        const int latency = renderBypassToggle(
+            entry.mode, true, inputLeft, inputRight, toggledLeft, toggledRight,
+            toggledGr, bypassOnSample, bypassOffSample);
+        const int neverLatency = renderBypassToggle(
+            entry.mode, false, inputLeft, inputRight, neverLeft, neverRight,
+            neverGr, bypassOnSample, bypassOffSample);
+
+        std::vector<float> sortedGr = neverGr;
+        std::sort(sortedGr.begin(), sortedGr.end());
+        const float medianGr = sortedGr[sortedGr.size() / 2];
+
+        float preToggle = 0.0f, settled = 0.0f, resume = 0.0f;
+        int lastAudibleResume = -1;
+        for (int i = 0; i < bypassOnSample; ++i)
+        {
+            preToggle = std::max(preToggle,
+                std::abs(toggledLeft[static_cast<size_t>(i)] - neverLeft[static_cast<size_t>(i)]));
+            preToggle = std::max(preToggle,
+                std::abs(toggledRight[static_cast<size_t>(i)] - neverRight[static_cast<size_t>(i)]));
+        }
+        for (int i = bypassOnSample + crossfadeSamples; i < bypassOffSample; ++i)
+        {
+            const float dryLeft = i >= latency ? inputLeft[static_cast<size_t>(i - latency)] : 0.0f;
+            const float dryRight = i >= latency ? inputRight[static_cast<size_t>(i - latency)] : 0.0f;
+            settled = std::max(settled, std::abs(toggledLeft[static_cast<size_t>(i)] - dryLeft));
+            settled = std::max(settled, std::abs(toggledRight[static_cast<size_t>(i)] - dryRight));
+        }
+        for (int i = bypassOffSample + crossfadeSamples; i < totalSamples; ++i)
+        {
+            const float difference = std::max(
+                std::abs(toggledLeft[static_cast<size_t>(i)] - neverLeft[static_cast<size_t>(i)]),
+                std::abs(toggledRight[static_cast<size_t>(i)] - neverRight[static_cast<size_t>(i)]));
+            resume = std::max(resume, difference);
+            if (difference >= 1.0e-3f) lastAudibleResume = i;
+        }
+        const double audibleMs = lastAudibleResume < 0 ? 0.0
+            : static_cast<double>(lastAudibleResume + 1 - (bypassOffSample + crossfadeSamples))
+                  / sampleRate * 1000.0;
+
+        std::printf("bypass toggle %-9s latency %3d GR median %7.2f dB | "
+                    "pre-toggle %.6e settled-dry %.6e resume %.6e "
+                    "(>1e-3 for %.1f ms)\n",
+                    entry.name, latency, static_cast<double>(medianGr),
+                    static_cast<double>(preToggle), static_cast<double>(settled),
+                    static_cast<double>(resume), audibleMs);
+
+        const std::string label = std::string("bypass toggle [") + entry.name + "] ";
+        require(latency == neverLatency,
+                (label + "reports the same latency with and without a bypass").c_str());
+        // Non-vacuity first: with no gain reduction the bypassed and processed
+        // paths carry the same signal and none of the assertions below could
+        // tell a resumed chain from a frozen one.
+        require(medianGr <= -3.0f,
+                (label + "stimulus drives real gain reduction").c_str());
+        require(preToggle == 0.0f,
+                (label + "toggled and never-bypassed renders are identical before the toggle").c_str());
+        require(settled == 0.0f,
+                (label + "settled bypass is the latency-aligned input, bit for bit").c_str());
+        require(resume == 0.0f,
+                (label + "un-bypass resumes the never-bypassed signal, bit for bit").c_str());
+    }
+    std::puts("bypass toggle: all six modes resume bit-identically after the 30 ms crossfade");
+}
+
 float renderNeutralSine(int oversampling, float mix, float frequency = 997.0f)
 {
     MultiCompDSP dsp;
@@ -3239,6 +3718,304 @@ void testOversampledDetectorHasNativeRateStepTiming()
             "4x detector gain reduction starts on the same native sample as 1x");
 }
 
+// Independent classic reference: an L-entry circular history, rather than the
+// production 128-entry masked ring. Preserve float accumulation order for the
+// zero-ULP contract, but do not use production descriptors, taps, or FIR code.
+template <size_t Length, size_t SideCount>
+struct ClassicReferenceFir
+{
+    std::array<float, Length> history{};
+    size_t next = 0;
+    void push(float value)
+    {
+        history[next] = value;
+        next = (next + 1) % Length;
+    }
+    float convolve(const std::array<float, SideCount>& taps) const
+    {
+        const auto ago = [&](size_t age) {
+            return history[(next + Length - 1 - age) % Length];
+        };
+        float result = 0.5f * ago(Length / 2);
+        for (size_t side = 0; side < SideCount; ++side)
+        {
+            const size_t offset = 2 * side + 1;
+            result += taps[side] * (ago(Length / 2 - offset)
+                                    + ago(Length / 2 + offset));
+        }
+        return result;
+    }
+};
+
+struct ClassicOversamplerReference
+{
+    static constexpr std::array<float, 12> stageA{{
+        0.3168690344f, -0.1018442627f, 0.0567777617f, -0.0362614803f,
+        0.0242159187f, -0.0162814078f, 0.0107858313f, -0.0069217143f,
+        0.0042343916f, -0.0024153268f, 0.0012438004f, -0.0006166386f}};
+    static constexpr std::array<float, 4> stageB{{
+        0.3048934958f, -0.0712879483f, 0.0197218961f, -0.0034083969f}};
+    ClassicReferenceFir<47, 12> upA, downA;
+    ClassicReferenceFir<15, 4> upB, downB;
+
+    float process(float input, int factor)
+    {
+        if (factor == 1) return input;
+        std::array<float, 2> outer{};
+        for (int phase = 0; phase < 2; ++phase)
+        {
+            upA.push(phase == 0 ? input : 0.0f);
+            outer[phase] = 2.0f * upA.convolve(stageA);
+        }
+        for (float sample : outer)
+        {
+            if (factor == 4)
+            {
+                for (int phase = 0; phase < 2; ++phase)
+                {
+                    upB.push(phase == 0 ? sample : 0.0f);
+                    downB.push(2.0f * upB.convolve(stageB));
+                }
+                sample = downB.convolve(stageB);
+            }
+            downA.push(sample);
+        }
+        return downA.convolve(stageA);
+    }
+};
+
+void testClassicOversamplerByteIdentity()
+{
+    std::array<float, 4096> input{};
+    uint32_t seed = 0x47a127u;
+    for (float& sample : input)
+    {
+        seed = seed * 1664525u + 1013904223u;
+        sample = static_cast<float>(seed >> 8) / 8388608.0f - 1.0f;
+    }
+    for (int factor : {1, 2, 4})
+    {
+        duskaudio::Oversampler actual;
+        actual.setFactor(factor);
+        // Re-run after reset to cover dirty FIR histories as well as startup.
+        for (int pass = 0; pass < 2; ++pass)
+        {
+            actual.reset();
+            ClassicOversamplerReference reference;
+            std::array<float, 4096> expected{}, rendered{};
+            size_t differingSamples = 0;
+            for (size_t i = 0; i < input.size(); ++i)
+            {
+                expected[i] = reference.process(input[i], factor);
+                rendered[i] = actual.processSample(input[i], [](float x) { return x; });
+                if (std::memcmp(&expected[i], &rendered[i], sizeof(float)) != 0)
+                    ++differingSamples;
+            }
+            const float expectedLatency = factor == 1 ? 0.0f : factor == 2 ? 23.0f : 26.5f;
+            std::printf("classic FIR: factor=%d pass=%d differing_samples=%zu/4096 latency=%.1f\n",
+                        factor, pass, differingSamples, actual.latency());
+            require(std::memcmp(expected.data(), rendered.data(), sizeof(expected)) == 0,
+                    "classic alias is byte-identical to independent 47-tap reference (0 ULP)");
+            require(actual.latency() == expectedLatency, "classic latency remains 0/23/26.5");
+        }
+    }
+}
+
+struct OversamplerImpulseMeasurement
+{
+    static constexpr int impulseAt = 100;
+    std::array<float, 1024> output{};
+    double centroid = 0.0;
+    double energy = 0.0;
+    float latency = 0.0f;
+    double magnitudeDb(double frequency) const
+    {
+        double real = 0.0, imaginary = 0.0;
+        constexpr double pi = 3.14159265358979323846;
+        for (size_t i = 0; i < output.size(); ++i)
+        {
+            const double angle = 2.0 * pi * frequency * static_cast<double>(i) / 44100.0;
+            real += output[i] * std::cos(angle);
+            imaginary -= output[i] * std::sin(angle);
+        }
+        return 20.0 * std::log10(std::hypot(real, imaginary));
+    }
+};
+
+template <class Oversampler>
+OversamplerImpulseMeasurement measureOversamplerImpulse(Oversampler& os)
+{
+    OversamplerImpulseMeasurement result;
+    os.reset();
+    result.latency = os.latency();
+    for (size_t i = 0; i < result.output.size(); ++i)
+    {
+        result.output[i] = os.processSample(
+            i == OversamplerImpulseMeasurement::impulseAt ? 1.0f : 0.0f,
+            [](float x) { return x; });
+        const double power = static_cast<double>(result.output[i]) * result.output[i];
+        result.energy += power;
+        result.centroid += (static_cast<double>(i) - OversamplerImpulseMeasurement::impulseAt) * power;
+    }
+    result.centroid /= result.energy;
+    return result;
+}
+
+void testWideOversamplerResponse()
+{
+    for (int factor : {2, 4})
+    {
+        duskaudio::OversamplerWide wide;
+        wide.setFactor(factor);
+        const auto measured = measureOversamplerImpulse(wide);
+        // Also measure the integration wrapper: changing just its audio FIR
+        // must fail even while the standalone OversamplerWide still passes.
+        duskaudio::MultiCompAntiAliasing audio;
+        audio.prepare(1024);
+        audio.setFactor(factor);
+        const auto integrated = measureOversamplerImpulse(audio);
+        duskaudio::Oversampler classic;
+        classic.setFactor(factor);
+        const auto control = measureOversamplerImpulse(classic);
+        std::printf("wide FIR: factor=%d centroid=%.9f latency=%.1f energy=%.9f classic20k=%.6f dB\n",
+                    factor, measured.centroid, measured.latency, measured.energy,
+                    control.magnitudeDb(20000.0));
+        for (double frequency : {1000.0, 10000.0, 15000.0, 19000.0, 20000.0, 21000.0})
+            std::printf("wide FIR: factor=%d Hz=%.0f standalone=%+.9f helper=%+.9f dB\n",
+                        factor, frequency, measured.magnitudeDb(frequency), integrated.magnitudeDb(frequency));
+        require(std::abs(measured.centroid - (factor == 2 ? 62.5 : 65.75))
+                    <= (factor == 2 ? 0.05 : 0.1), "wide FIR energy centroid matches rendered delay");
+        require(measured.latency == (factor == 2 ? 63.0f : 66.5f),
+                "wide FIR reports 63/66.5 samples");
+        require(std::abs(control.magnitudeDb(20000.0) + 1.18) <= 0.05,
+                "classic control retains its 20 kHz droop at 44.1 kHz");
+        for (double frequency : {1000.0, 10000.0, 15000.0, 19000.0, 20000.0})
+        {
+            require(std::abs(measured.magnitudeDb(frequency)) <= 0.01,
+                    "wide FIR passband stays within 0.01 dB through 20 kHz");
+            require(std::abs(integrated.magnitudeDb(frequency)) <= 0.01,
+                    "Multi-Comp audio helper uses the wide FIR passband");
+        }
+        require(measured.magnitudeDb(21000.0) < -0.5,
+                "wide FIR attenuates 21 kHz by more than 0.5 dB");
+    }
+}
+
+void testWideDigitalLatencyContract()
+{
+    for (double rate : {48000.0, 44100.0})
+        for (int setting : {0, 1, 2})
+        {
+            MultiCompDSP dsp;
+            dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Digital));
+            dsp.setOversampling(setting);
+            dsp.setMix(100.0f);
+            dsp.setParameter(MultiCompDSP::Parameter::DigitalThreshold, 0.0f);
+            dsp.setParameter(MultiCompDSP::Parameter::DigitalRatio, 1.0f);
+            dsp.setParameter(MultiCompDSP::Parameter::DigitalLookahead, 0.0f);
+            dsp.setParameter(MultiCompDSP::Parameter::GlobalLookahead, 0.0f);
+            dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+            dsp.prepare(rate, 512);
+            std::array<float, 512> input{}, output{};
+            input[0] = 0.25f;
+            const float* in[] = {input.data()};
+            float* out[] = {output.data()};
+            dsp.processBlock(in, out, 1, static_cast<int>(input.size()));
+            const auto peak = std::max_element(output.begin(), output.end(),
+                [](float a, float b) { return std::abs(a) < std::abs(b); });
+            const int index = static_cast<int>(peak - output.begin());
+            // The FIR spreads the impulse over neighbouring samples, so its
+            // central sample cannot stay at 0.25 (measured 0.246107 at 2x,
+            // 0.246104 at 4x); the DC gain (sum of the response) is the level
+            // claim: 0.249984 (2x) / 0.249903 (4x), i.e. within -0.004 dB.
+            double sum = 0.0;
+            for (float v : output) sum += v;
+            std::printf("wide Digital: rate=%.0f setting=%d latency=%d peak_index=%d peak=%.9f sum=%.9f\n",
+                        rate, setting, dsp.getLatencySamples(), index, *peak, sum);
+            require(dsp.getLatencySamples() == 67, "Digital reports 67 samples at every oversampling setting");
+            require(index == 67, "neutral Digital impulse peaks exactly at sample 67");
+            require(std::abs(sum - 0.25) < 2.5e-4, "neutral Digital impulse DC gain is unity within 0.1%");
+            require(*peak > 0.24f, "neutral Digital impulse keeps its central sample above 0.24");
+        }
+}
+
+void testOptoWideDetectorCharge()
+{
+    for (int eventSamples : {48, 480})
+        for (float peakDbfs : {-12.0f, -0.25f})
+        {
+            const float two = measureOptoShortEventTrace(eventSamples, peakDbfs,
+                -200.0f, 0, -200.0f, kOversampling2xSetting)[0];
+            const float four = measureOptoShortEventTrace(eventSamples, peakDbfs,
+                -200.0f, 0, -200.0f, kOversampling4xSetting)[0];
+            std::printf("wide OPTO charge: event=%d peak=%+.2f 2x=%.9f 4x=%.9f delta=%+.9f dB\n",
+                        eventSamples, peakDbfs, two, four, four - two);
+            require(two > 0.1f, "2x OPTO event establishes measurable cell charge");
+            require(four > 0.1f, "4x OPTO event establishes measurable cell charge");
+            require(std::abs(four - two) <= 0.05f, "OPTO short-event charge agrees within 0.05 dB at 2x/4x");
+        }
+}
+
+void testVcaWideOutputOnset()
+{
+    constexpr int rate = 48000, stepAt = rate / 2, cycle = rate / 1000;
+    constexpr int total = stepAt + rate / 10, block = 127;
+    std::vector<float> input(total);
+    for (int i = 0; i < total; ++i)
+        input[i] = duskaudio::decibelsToGain(i < stepAt ? -36.0f : -24.0f)
+            * static_cast<float>(std::sin(2.0 * 3.14159265358979323846 * 1000.0 * i / rate));
+    std::array<int, 3> onset{{-1, -1, -1}};
+    for (int setting : {0, 1, 2})
+    {
+        MultiCompDSP dsp;
+        dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::VCA));
+        dsp.setOversampling(setting);
+        dsp.setParameter(MultiCompDSP::Parameter::VcaThreshold, -30.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::VcaRatio, 50.4944f);
+        dsp.setParameter(MultiCompDSP::Parameter::VcaOutput, 0.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::SidechainHP, 0.0f);
+        dsp.prepare(rate, block);
+        std::vector<float> output(total);
+        for (int start = 0; start < total; start += block)
+        {
+            const float* in[] = {input.data() + start};
+            float* out[] = {output.data() + start};
+            dsp.processBlock(in, out, 1, std::min(block, total - start));
+        }
+        // A trailing full carrier cycle avoids dividing by zero crossings.
+        // Compensate only reported latency, then compare output/input power.
+        // Subtract the settled quiet gain to remove the VCA reference's static voicing.
+        const auto gainDb = [&](int end) {
+            double inPower = 0.0, outPower = 0.0;
+            for (int i = end - cycle + 1; i <= end; ++i)
+            {
+                inPower += static_cast<double>(input[i]) * input[i];
+                const double value = output[i + dsp.getLatencySamples()];
+                outPower += value * value;
+            }
+            return 10.0 * std::log10(outPower / inPower);
+        };
+        const double quietGain = gainDb(stepAt - cycle);
+        const double finalReduction = quietGain - gainDb(total - 1 - dsp.getLatencySamples());
+        for (int i = stepAt; i < total - dsp.getLatencySamples(); ++i)
+            if (quietGain - gainDb(i) >= 0.1)
+            {
+                onset[setting] = i - stepAt;
+                break;
+            }
+        std::printf("wide VCA output: setting=%d latency=%d onset_after_step=%d quiet_gain=%+.9f final_GR=%.9f dB\n",
+                    setting, dsp.getLatencySamples(), onset[setting], quietGain, finalReduction);
+        require(std::isfinite(quietGain), "VCA quiet carrier has finite output/input gain");
+        require(finalReduction > 1.0, "VCA +12 dB step establishes output gain reduction");
+        require(onset[setting] >= 0, "VCA output GR onset is observed");
+    }
+    std::printf("wide VCA output onsets after latency compensation: 1x=%d 2x=%d 4x=%d\n",
+                onset[0], onset[1], onset[2]);
+    require(std::abs(onset[1] - onset[0]) <= 1, "2x VCA output GR onset agrees with 1x within one host sample");
+    require(std::abs(onset[2] - onset[0]) <= 1, "4x VCA output GR onset agrees with 1x within one host sample");
+}
+
 void testLatencyMixBypassAndDigitalStereo()
 {
     for (int oversampling : {0, 1, 2})
@@ -3252,7 +4029,7 @@ void testLatencyMixBypassAndDigitalStereo()
         dsp.setParameter(MultiCompDSP::Parameter::DigitalRatio, 1.0f);
         dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
         const int latency = dsp.getLatencySamples();
-        require(latency == 27, "constant maximum anti-alias latency");
+        require(latency == 67, "constant maximum anti-alias latency");
 
         std::vector<float> impulse(512, 0.0f), output(512, 0.0f);
         impulse[0] = 0.25f;
@@ -3297,15 +4074,15 @@ void testLatencyMixBypassAndDigitalStereo()
                 latencyMatrix.setOversampling(oversampling);
                 latencyMatrix.setParameter(MultiCompDSP::Parameter::GlobalLookahead, globalLookahead);
                 latencyMatrix.setParameter(MultiCompDSP::Parameter::DigitalLookahead, digitalLookahead);
-                const int expected = 27 + static_cast<int>(globalLookahead * 48.0f)
+                const int expected = 67 + static_cast<int>(globalLookahead * 48.0f)
                                         + static_cast<int>(digitalLookahead * 48.0f);
                 require(latencyMatrix.getLatencySamples() == expected,
                         "Digital latency reports AA plus global and mode lookahead");
             }
     latencyMatrix.setMode(static_cast<int>(duskaudio::MultiCompMode::FET));
-    require(latencyMatrix.getLatencySamples() == 507,
+    require(latencyMatrix.getLatencySamples() == 547,
             "mode change removes Digital lookahead while retaining global lookahead");
-    std::printf("latency matrix: os=off/2x/4x, global=0/10ms, digital=0/10ms; Digital max=987 FET max=507\n");
+    std::printf("latency matrix: os=off/2x/4x, global=0/10ms, digital=0/10ms; Digital max=1027 FET max=547\n");
 
     MultiCompDSP stereo;
     stereo.prepare(48000.0, 256);
@@ -3342,6 +4119,9 @@ std::array<float, 4> renderAnalogStereoLink(int mode, float linkAmount)
     dsp.setStereoLink(linkAmount);
     dsp.setParameter(MultiCompDSP::Parameter::ExternalSidechain, 1.0f);
     configureStrongCompression(dsp, mode);
+    // Keep BUS inside the reference threshold range and above the audibility
+    // floor: the calibrated external path now really compresses this hot source.
+    if (mode == 3) dsp.setParameter(MultiCompDSP::Parameter::BusThreshold, 0);
     std::array<float, 256> inputLeft{}, inputRight{}, sidechainLeft{}, sidechainRight{};
     std::array<float, 256> outputLeft{}, outputRight{};
     const float* input[] = {inputLeft.data(), inputRight.data()};
@@ -3567,14 +4347,15 @@ void testVcaAndBusInternalDetectorControls()
     }
 }
 
-void testLinkedBusResetDeterminism()
+void testLinkedBusResetDeterminism(bool external = false, bool prepareAgain = false, int os = 2)
 {
     constexpr int blockSize = 256;
     constexpr int blocks = 16;
     MultiCompDSP dsp;
     dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Bus));
-    dsp.setOversampling(2);
+    dsp.setOversampling(os);
     dsp.setStereoLink(65.0f);
+    dsp.setExternalSidechain(external);
     dsp.setMix(100.0f);
     dsp.setParameter(MultiCompDSP::Parameter::AutoMakeup, 0.0f);
     dsp.setParameter(MultiCompDSP::Parameter::Distortion, 0.0f);
@@ -3603,7 +4384,8 @@ void testLinkedBusResetDeterminism()
                 inputRight[static_cast<size_t>(i)] = 0.07f * std::sin(
                     2.0f * kPi * 3299.0f * static_cast<float>(sampleIndex) / 48000.0f);
             }
-            dsp.processBlock(input, output, 2, blockSize);
+            if (external) dsp.processBlockExternal(input, input, output, 2, blockSize);
+            else dsp.processBlock(input, output, 2, blockSize);
             std::copy(outputLeft.begin(), outputLeft.end(),
                 result.begin() + static_cast<ptrdiff_t>(2 * block * blockSize));
             std::copy(outputRight.begin(), outputRight.end(),
@@ -3613,7 +4395,8 @@ void testLinkedBusResetDeterminism()
     };
 
     const auto first = render();
-    dsp.reset();
+    if (prepareAgain) { dsp.prepare(48000.0, blockSize); dsp.prepare(48000.0, blockSize); }
+    else dsp.reset();
     const auto second = render();
     float signalPeak = 0.0f;
     float maxDelta = 0.0f;
@@ -3622,91 +4405,11 @@ void testLinkedBusResetDeterminism()
         signalPeak = std::max(signalPeak, std::max(std::abs(first[i]), std::abs(second[i])));
         maxDelta = std::max(maxDelta, std::abs(first[i] - second[i]));
     }
-    std::printf("linked Bus reset: signal peak %.9g max delta %.9g\n",
-                signalPeak, maxDelta);
+    std::printf("linked Bus reset external %d prepare %d os %d: signal peak %.9g max delta %.9g\n",
+                external, prepareAgain, os, signalPeak, maxDelta);
     require(signalPeak > 1.0e-4f, "linked Bus reset comparison produces output");
     require(maxDelta == 0.0f,
             "reset clears linked Bus detector, filter and split-oversampling state");
-}
-
-void testLinkedBusReentryReseedsSidechainInterpolation()
-{
-    constexpr int blockSize = 64;
-    MultiCompDSP dsp;
-    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Bus));
-    dsp.setOversampling(2);
-    dsp.setStereoLink(100.0f);
-    dsp.setExternalSidechain(true);
-    dsp.setMix(100.0f);
-    dsp.setParameter(MultiCompDSP::Parameter::AutoMakeup, 0.0f);
-    dsp.setParameter(MultiCompDSP::Parameter::Distortion, 0.0f);
-    dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
-    dsp.setParameter(MultiCompDSP::Parameter::SidechainHP, 0.0f);
-    configureStrongCompression(dsp, static_cast<int>(duskaudio::MultiCompMode::Bus));
-    dsp.prepare(48000.0, blockSize);
-
-    std::array<float, blockSize> inputLeft{}, inputRight{}, sidechain{};
-    std::array<float, blockSize> outputLeft{}, outputRight{};
-    const float* input[] = {inputLeft.data(), inputRight.data()};
-    const float* external[] = {sidechain.data(), sidechain.data()};
-    float* output[] = {outputLeft.data(), outputRight.data()};
-    for (int i = 0; i < blockSize; ++i)
-    {
-        inputLeft[static_cast<size_t>(i)] = 0.4f * std::sin(
-            2.0f * kPi * 997.0f * static_cast<float>(i) / 48000.0f);
-        inputRight[static_cast<size_t>(i)] = 0.2f * std::sin(
-            2.0f * kPi * 1709.0f * static_cast<float>(i) / 48000.0f);
-        sidechain[static_cast<size_t>(i)] = 0.8f;
-    }
-
-    const auto validity = [&] {
-        return duskaudio::MultiCompDSPTestAccess::busSidechainValidity(dsp);
-    };
-    const auto both = [](const std::array<bool, 2>& value, bool expected) {
-        return value[0] == expected && value[1] == expected;
-    };
-
-    dsp.processBlockExternal(input, external, output, 2, blockSize);
-    require(both(validity(), true),
-            "linked stereo Bus processing retains interpolation endpoints");
-
-    dsp.setStereoLink(0.0f);
-    dsp.processBlockExternal(input, external, output, 2, blockSize);
-    require(both(validity(), false),
-            "unlinked Bus processing invalidates linked interpolation endpoints");
-
-    dsp.setStereoLink(100.0f);
-    dsp.processBlockExternal(input, external, output, 2, blockSize);
-    require(both(validity(), true),
-            "linked Bus processing re-seeds invalid interpolation endpoints");
-
-    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::VCA));
-    dsp.processBlockExternal(input, external, output, 2, blockSize);
-    require(both(validity(), false),
-            "a non-Bus mode invalidates linked Bus interpolation endpoints");
-
-    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Bus));
-    dsp.processBlockExternal(input, external, output, 2, blockSize);
-    require(both(validity(), true),
-            "returning to linked Bus processing re-seeds interpolation endpoints");
-
-    dsp.setBypass(true);
-    for (int block = 0; block < 32; ++block)
-        dsp.processBlockExternal(input, external, output, 2, blockSize);
-    require(both(validity(), false),
-            "settled bypass invalidates linked Bus interpolation endpoints");
-
-    dsp.setBypass(false);
-    dsp.processBlockExternal(input, external, output, 2, blockSize);
-    require(both(validity(), true),
-            "leaving bypass re-seeds linked Bus interpolation endpoints");
-
-    const float* monoInput[] = {inputLeft.data()};
-    const float* monoExternal[] = {sidechain.data()};
-    float* monoOutput[] = {outputLeft.data()};
-    dsp.processBlockExternal(monoInput, monoExternal, monoOutput, 1, blockSize);
-    require(both(validity(), false),
-            "mono Bus processing invalidates stereo linked interpolation endpoints");
 }
 
 std::array<float, 2> renderOptoInternalStereo(float leftDbfs, float rightDbfs,
@@ -3920,10 +4623,32 @@ void testGoldenVectors()
     // The six neighbouring mode values remain the original regression oracles
     // and must stay byte-identical across any vintage-FET change. They did:
     // only mode=1 moved at any point in this wave.
-    constexpr float expectedRms[] = {0.043111119f, 0.269918233f,
-                                     0.618480802f, 0.195874527f, 0.173109755f, 0.212109938f};
-    constexpr float expectedPeak[] = {0.593543887f, 0.797850311f,
-                                      1.836098075f, 0.657691538f, 0.349556237f, 0.815853894f};
+    // BUS re-recorded 2026-09-08 after the independently validated bus-compressor static
+    // law calibration (72 fit cells, 171 held-out cells). Its old fixture
+    // encoded the uncalibrated threshold/slope. Re-recorded again after the
+    // measured BUS detector timing/coupling changes; all sibling oracles remain.
+    // BUS defaults to 2:1. Its RMS was re-recorded on 2026-09-09 after the
+    // independent knee/headroom/transient gates validated that ratio's curve
+    // and attack calibration. Re-recorded after native clean-path/saturation
+    // captures proved the generic BUS colour was spurious. Siblings unchanged.
+    // Re-recorded 2026-09-11 after the 2:1 upper-law nodes and the release-
+    // dependent charge offset (2026-09-11 BUS recalibration report); this
+    // vector's crests reach 2:1 over ~32 dB, where the old law was extrapolated.
+    // Re-recorded after the complete BUS law/detector calibration; native gates
+    // and the stable Auto shape guard are documented in the finish report.
+    // Native taper16 promotion: FET RMS .043111119 -> .043101102, peak .593543887 -> .593093991.
+    // Trial B 2600 Hz audio control: BUS RMS .020585179 -> .021936152, peak .349974662 -> .349974453.
+    // 127-tap wide oversampler (latency 27 -> 67 shifts the fixed analysis window):
+    // FET .043101102/.593093991 -> .042996734/.593003154, BUS .021936152/.349974453 ->
+    // .021881176/.349883616, VCA .618480802/1.836098075 -> .615188122/1.836065888,
+    // Studio .195874527/.657691538 -> .195212007/.657659471, Digital .173109755 -> .172583029,
+    // mode 7 .212109938/.815853894 -> .212110028/.815853953.
+    // H-S2R 3500/12000 Hz audio control: BUS RMS .021881176 -> .021684144
+    // (delta -.000197032); peak .349883616 unchanged. Re-recorded 2026-09-17.
+    constexpr float expectedRms[] = {0.042996734f, 0.021684144f,
+                                     0.615188122f, 0.195212007f, 0.172583029f, 0.212110028f};
+    constexpr float expectedPeak[] = {0.593003154f, 0.349883616f,
+                                      1.836065888f, 0.657659471f, 0.349556237f, 0.815853953f};
     std::puts("golden vectors: six JUCE-oracle modes, deterministic step/sine-burst RMS peak");
     for (size_t vectorIndex = 0; vectorIndex < std::size(modes); ++vectorIndex)
     {
@@ -6260,6 +6985,76 @@ std::array<float, 5> renderFetRecoveryH1Db(
     return result;
 }
 
+// A partial-recovery regression guard. The full music survey remains necessary.
+void testFetProgrammeRecovery()
+{
+    constexpr int rate = 48000, block = 512, bin = 240;
+    constexpr double pi = 3.1415926535897932384626433832795;
+    double worst = 0.0;
+    for (size_t row = 0; row < fetprogramme::points.size(); ++row)
+    {
+        const auto& p = fetprogramme::points[row];
+        const bool train = p.stimulus == 3;
+        const int burst = p.stimulus == 2 ? 1200 : train ? 6000 : 12000;
+        const int lastEnd = train ? 48000 + 7 * 12000 + 6000 : 48000 + burst;
+        const int total = lastEnd + 24000;
+        const double quiet = std::pow(10.0, (p.stimulus == 0 ? -72.0 : -42.0) / 20.0);
+        const double loud = std::pow(10.0, -12.0 / 20.0);
+        MultiCompDSP dsp;
+        prepareReferenceFet(dsp, rate, block, p.input, p.output, p.ratio);
+        dsp.setParameter(MultiCompDSP::Parameter::FetAttack, fetAttackPlain(p.attack));
+        dsp.setParameter(MultiCompDSP::Parameter::FetRelease, fetReleasePlain(p.release));
+        std::array<float, block> left{}, right{}, outLeft{}, outRight{};
+        const float* inputs[]{left.data(), right.data()};
+        float* outputs[]{outLeft.data(), outRight.data()};
+        for (int offset = 0; offset < 5 * rate; offset += block)
+            dsp.processBlock(inputs, outputs, 2, std::min(block, 5 * rate - offset));
+        std::vector<float> rendered(static_cast<size_t>(total + block));
+        for (int offset = 0; offset < total + block; offset += block)
+        {
+            const int count = std::min(block, total + block - offset);
+            for (int i = 0; i < count; ++i)
+            {
+                const int n = offset + i;
+                const bool high = n >= rate && n < lastEnd
+                    && (!train || (n - rate) % 12000 < burst);
+                const float value = static_cast<float>((high ? loud : quiet)
+                    * std::sin(2.0 * pi * 1000.0 * n / rate));
+                left[static_cast<size_t>(i)] = value;
+                right[static_cast<size_t>(i)] = value;
+            }
+            dsp.processBlock(inputs, outputs, 2, count);
+            std::copy_n(outLeft.data(), count, rendered.data() + offset);
+        }
+        const auto h1 = [&](int start) {
+            double re = 0.0, im = 0.0;
+            for (int i = 0; i < bin; ++i)
+            {
+                const double angle = 2.0 * pi * 1000.0 * i / rate;
+                const double value = rendered[static_cast<size_t>(start + dsp.getLatencySamples() + i)];
+                re += value * std::cos(angle); im -= value * std::sin(angle);
+            }
+            return 20.0 * std::log10(std::max(2.0 * std::hypot(re, im) / bin, 1.0e-15));
+        };
+        double baseline = 0.0;
+        for (int b = 50; b < 150; ++b) baseline += h1(b * bin) / 100.0;
+        const double charged = baseline - h1(lastEnd - 2 * bin)
+            + (p.stimulus == 0 ? 60.0 : 30.0);
+        require(charged > 6.0, "FET programme fixture actually charges the compressor");
+        constexpr std::array<int, 4> times{{2400, 4800, 9600, 19200}};
+        for (size_t t = 0; t < times.size(); ++t)
+        {
+            const double gr = baseline - h1(lastEnd + times[t]);
+            const double error = std::abs(gr - p.gr[t]);
+            worst = std::max(worst, error);
+            std::printf("FET programme recovery row %zu time %.0f ms native %.6f measured %.6f error %.6f dB\n",
+                row, times[t] / 48.0, p.gr[t], gr, error);
+        }
+    }
+    std::printf("FET programme recovery maximum error %.9f dB (partial-regression bound 4.0)\n", worst);
+    require(worst < 4.0, "FET fast programme recovery retains the measured partial improvement");
+}
+
 void testFetDenseStartupRecoveryParity()
 {
     // Wave 27's equal 8 s sources, rescored against the current binary. These
@@ -6432,12 +7227,27 @@ void testFetPostBurstRecoveryLifecycle()
     dsp.processBlock(inputs, outputs, 2, blockSize);
     const auto afterModeExit = duskaudio::MultiCompDSPTestAccess::fetRecoveryGains(dsp);
 
+    // Bypass is NOT a lifecycle boundary (owner decision 2026-09-18, P0b).
+    // The chain keeps running while bypassed and only emits the latency-aligned
+    // dry, so the post-burst recovery must be exactly where the SAME eight
+    // blocks leave it with no bypass at all -- still armed, still decaying.
+    // The pre-P0 build cleared it here, which is what made un-bypassing FET
+    // re-arm its first cycle on stale state.
     prepareReferenceFet(dsp, 48000.0, blockSize);
     armFetPostBurstRecovery(dsp, 2);
     dsp.setBypass(true);
     for (int block = 0; block < 8; ++block)
         dsp.processBlock(inputs, outputs, 2, blockSize);
     const auto afterBypass = duskaudio::MultiCompDSPTestAccess::fetRecoveryGains(dsp);
+
+    MultiCompDSP live;
+    prepareReferenceFet(live, 48000.0, blockSize);
+    armFetPostBurstRecovery(live, 2);
+    std::array<float, blockSize> liveLeft{}, liveRight{};
+    float* liveOutputs[] = {liveLeft.data(), liveRight.data()};
+    for (int block = 0; block < 8; ++block)
+        live.processBlock(inputs, liveOutputs, 2, blockSize);
+    const auto afterLive = duskaudio::MultiCompDSPTestAccess::fetRecoveryGains(live);
 
     dsp.setBypass(false);
     dsp.reset();
@@ -6448,15 +7258,27 @@ void testFetPostBurstRecoveryLifecycle()
 
     std::printf("FET recovery state: armed %.6f/%.6f; prepare %.6f/%.6f; "
                 "reset %.6f/%.6f; mode %.6f/%.6f; bypass %.6f/%.6f; "
-                "mono %.6f/%.6f\n",
+                "never bypassed %.6f/%.6f; mono %.6f/%.6f\n",
                 armed[0], armed[1], afterPrepare[0], afterPrepare[1],
                 afterReset[0], afterReset[1], afterModeExit[0], afterModeExit[1],
-                afterBypass[0], afterBypass[1], afterMono[0], afterMono[1]);
+                afterBypass[0], afterBypass[1], afterLive[0], afterLive[1],
+                afterMono[0], afterMono[1]);
     require(armed[0] > 1.05f && armed[1] > 1.05f
                 && isClear(afterPrepare) && isClear(afterReset)
-                && isClear(afterModeExit) && isClear(afterBypass)
+                && isClear(afterModeExit)
                 && afterMono[1] == 1.0f,
             "FET post-burst recovery state arms and clears on every lifecycle path");
+    require(afterBypass[0] == afterLive[0] && afterBypass[1] == afterLive[1],
+            "settled bypass leaves the FET post-burst recovery exactly where a "
+            "never-bypassed run of the same blocks leaves it");
+    // Guards the vacuous reading of the assertion above: a build that cleared
+    // BOTH runs would satisfy equality. These two say the shared value is the
+    // live one -- still above unity, and lower than where it was armed, i.e.
+    // it kept decaying through the bypass instead of being reset to 1.
+    require(afterBypass[0] > 1.05f && afterBypass[1] > 1.05f,
+            "settled bypass keeps the FET post-burst recovery armed");
+    require(afterBypass[0] < armed[0] && afterBypass[1] < armed[1],
+            "the FET post-burst recovery keeps decaying through a settled bypass");
 }
 
 // --- vintage FET attack drive axis ---------------------------------------
@@ -6508,7 +7330,7 @@ void testFetPostBurstRecoveryLifecycle()
 // that), the gate is the normalised curve RMS, and a colour change that moves
 // tau at -6 dBFS while curve RMS moves 6e-06 is behaving correctly. Do not
 // re-tune the attack law against it.
-constexpr float kFetCampaignLatencySamples48k = 27.0f;
+constexpr float kFetCampaignLatencySamples48k = 67.0f;
 
 struct FetAttackMeasurement
 {
@@ -7144,6 +7966,11 @@ void testFetStartupStateLifecycleAndCounterSaturation()
     requireCleared(dsp,
         "leaving FET clears both channels of FET startup peak/counter state");
 
+    // Bypass is NOT a lifecycle boundary (owner decision 2026-09-18, P0b): the
+    // chain runs on while bypassed, so the startup helpers have to be exactly
+    // where the same 32 blocks leave them with no bypass at all. Channel 0 is
+    // the live one and tracks the 0.5 it is still being given; channel 1 keeps
+    // the poison untouched because a one-channel call never visits it.
     dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::FET));
     dsp.reset();
     poisonState(dsp);
@@ -7151,8 +7978,52 @@ void testFetStartupStateLifecycleAndCounterSaturation()
     input.fill(0.5f); // keep the startup state armed until bypass has settled
     for (int block = 0; block < 32; ++block)
         dsp.processBlock(inputs, outputs, 1, static_cast<int>(input.size()));
-    requireCleared(dsp,
-        "settled bypass clears both channels of FET startup peak/counter state");
+    const auto afterBypass = duskaudio::MultiCompDSPTestAccess::fetStartupState(dsp);
+
+    MultiCompDSP live;
+    prepareReferenceFet(live, 48000.0, 64, 0.8f, 0.625915527f, 0);
+    live.prepare(48000.0, 64);
+    live.setMode(static_cast<int>(duskaudio::MultiCompMode::FET));
+    live.reset();
+    poisonState(live);
+    std::array<float, 64> liveOutput{};
+    float* liveOutputs[] = {liveOutput.data()};
+    for (int block = 0; block < 32; ++block)
+        live.processBlock(inputs, liveOutputs, 1, static_cast<int>(input.size()));
+    const auto afterLive = duskaudio::MultiCompDSPTestAccess::fetStartupState(live);
+
+    // Where the active counter saturates: the first-cycle correction window
+    // ends 0.5 ms past the anti-alias latency (MultiCompDSP.cpp, processBlock's
+    // `correctionEndSamples`), and FET with no global lookahead reports exactly
+    // that latency.
+    const int correctionWindowEnd = dsp.getLatencySamples()
+        + static_cast<int>(std::lround(0.00050 * 48000.0));
+    std::printf("FET startup state under settled bypass: peak %.6f/%.6f "
+                "active %d/%d silent %d/%d; never bypassed: peak %.6f/%.6f "
+                "active %d/%d silent %d/%d; correction window ends at %d\n",
+                static_cast<double>(afterBypass.inputPeak[0]),
+                static_cast<double>(afterBypass.inputPeak[1]),
+                afterBypass.activeSamples[0], afterBypass.activeSamples[1],
+                afterBypass.silentSamples[0], afterBypass.silentSamples[1],
+                static_cast<double>(afterLive.inputPeak[0]),
+                static_cast<double>(afterLive.inputPeak[1]),
+                afterLive.activeSamples[0], afterLive.activeSamples[1],
+                afterLive.silentSamples[0], afterLive.silentSamples[1],
+                correctionWindowEnd);
+    require(afterBypass.inputPeak == afterLive.inputPeak
+                && afterBypass.activeSamples == afterLive.activeSamples
+                && afterBypass.silentSamples == afterLive.silentSamples,
+            "settled bypass leaves the FET startup peak/counters exactly where a "
+            "never-bypassed run of the same blocks leaves them");
+    require(afterBypass.inputPeak[0] == 0.5f
+                && afterBypass.activeSamples[0] == correctionWindowEnd
+                && afterBypass.silentSamples[0] == 0,
+            "settled bypass keeps the live FET startup channel tracking its input");
+    require(afterBypass.inputPeak[1] == peaks[1]
+                && afterBypass.activeSamples[1] == poisonedActiveSamples[1]
+                && afterBypass.silentSamples[1] == poisonedSilentSamples[1],
+            "a one-channel call leaves the second FET startup channel untouched "
+            "through a settled bypass");
 
     constexpr int fullCorrectionSamples = 12;
     constexpr int correctionEndSamples = 24;
@@ -7164,7 +8035,7 @@ void testFetStartupStateLifecycleAndCounterSaturation()
             duskaudio::MultiCompDSPTestAccess::advanceFetStartupBlend(
                 activeSamples, fullCorrectionSamples,
                 correctionEndSamples));
-    std::printf("FET startup state: peak/counters clear prepare/reset/mode/bypass yes, "
+    std::printf("FET startup state: peak/counters clear prepare/reset/mode yes, "
                 "counter after 1000000 post-window samples %d, blend %.9g\n",
                 activeSamples, static_cast<double>(worstPastWindowBlend));
     require(activeSamples == correctionEndSamples,
@@ -8030,17 +8901,19 @@ void testFetBroadbandOddHarmonicSurface()
         double referenceH3RelativeDb;
         double previousErrorDb;          // the constant -0.006 law
     };
+    // Internal model coordinates re-recorded with the accepted deep release law;
+    // native harmonic values and coordinate/harmonic bounds remain unchanged.
     constexpr std::array<Point, 10> points{{
-        {0.2f, -18.0f,  0.3543, -83.185967, +2.4514},
-        {0.8f, -48.0f,  1.0175, -78.547980, +1.5210},
-        {0.4f, -24.0f,  3.1457, -72.965816, +0.9981},
-        {0.4f, -18.0f,  7.7089, -68.541805, +0.3595},
-        {1.0f, -36.0f, 10.0089, -67.305299, +0.4806},
-        {0.8f, -30.0f, 13.9253, -66.683950, +1.9392},
-        {0.8f, -24.0f, 18.8564, -67.067362, +3.7122},
-        {0.8f, -18.0f, 23.7855, -67.007091, +5.1897},
-        {0.8f, -12.0f, 28.6512, -66.239258, +6.1158},
-        {0.8f,  -6.0f, 33.4397, -65.841835, +7.5232}}};
+        {0.2f, -18.0f, 0.3543, -83.185967, +2.4514},
+        {0.8f, -48.0f, 1.0175, -78.547980, +1.5210},
+        {0.4f, -24.0f, 3.1455, -72.965816, +0.9981},
+        {0.4f, -18.0f, 7.7103, -68.541805, +0.3595},
+        {1.0f, -36.0f, 10.0111, -67.305299, +0.4806},
+        {0.8f, -30.0f, 13.9271, -66.683950, +1.9392},
+        {0.8f, -24.0f, 18.8576, -67.067362, +3.7122},
+        {0.8f, -18.0f, 23.7641, -67.007091, +5.1897},
+        {0.8f, -12.0f, 28.6294, -66.239258, +6.1158},
+        {0.8f,  -6.0f, 33.4247, -65.841835, +7.5232}}};
 
     // The fitted table predicts 0.090 dB worst over all 36 scoreable dense
     // rows. 0.25 dB leaves 0.16 dB for render/fit error, is 4x tighter than the
@@ -8141,16 +9014,20 @@ void testFetDenseShallowLowFrequencyH3()
         -57.538036035, -56.944940939, -56.456114109, -55.923925238,
         -55.340584815,
     }};
+    // 127-tap wide audio oversampler: H5 here sits at -107..-66 dBc, at the float
+    // and alias floor, so the control moved by up to 0.128 dB at the quietest
+    // rows (-107.640 -> -107.512) and 0.006 dB where H5 is above -80 dBc.
+    // Re-recorded from that build; the other three controls stayed within bound.
     constexpr std::array<double, 33> baselineH5RelativeDb{{
-        -107.650059235, -103.475767425, -100.217278878, -97.499889181,
-        -95.181745995, -93.143545054, -91.321140508, -89.677320044,
-        -88.198104175, -86.844162414, -85.590532914, -84.423507653,
-        -83.334528742, -82.307836261, -81.335691130, -80.407565785,
-        -80.570779415, -82.113527529, -82.035633823, -79.712111086,
-        -77.708341240, -76.065702145, -74.667480346, -73.365161890,
-        -72.349628632, -71.367801275, -70.406562232, -69.659530361,
-        -68.943540125, -68.245675954, -67.556478621, -67.038444608,
-        -66.426639305,
+        -107.512370217, -103.389608074, -100.152330442, -97.458515561,
+        -95.143427614, -93.112941600, -91.292530988, -89.654021057,
+        -88.182150574, -86.827305879, -85.575632907, -84.411224996,
+        -83.323708209, -82.296400305, -81.325805571, -80.399049355,
+        -80.571011959, -82.116639866, -82.012869645, -79.695972229,
+        -77.696020799, -76.054570422, -74.658632371, -73.358127694,
+        -72.343269901, -71.361360602, -70.400510005, -69.655283451,
+        -68.939652580, -68.240804355, -67.553220924, -67.034964018,
+        -66.423817930,
     }};
     constexpr float inputPosition = 0.8f;
     constexpr float inputGainDb = 38.603869f;
@@ -8289,42 +9166,47 @@ void testFetDenseBroadbandComplexH3()
         double h2RelativeDb;
         double h5RelativeDb;
     };
-    // GR/H1/H2 are the Wave 32 disabled-cell controls. H5 is the accepted
-    // Wave 34 complex-H5 surface; keeping it here preserves the isolation
-    // check on the H3 cell after that independently intended H5 movement.
+    // Model snapshots updated after the 2026-09-11 deep FET release change.
+    // Native H3/H5 fixtures and every bound below remain unchanged. These
+    // values guard future unintended movement of the neighbouring components;
+    // they are not native parity oracles. See the programme-release report.
+    // Re-recorded 2026-09-17 for the 127-tap wide audio oversampler: its -90 dB
+    // stopband (classic -23 dB at the edge) changes what folds onto the quiet
+    // H5 rows; H5 moved up to 0.032 dB (96 kHz, -72.962 -> -72.931), GR/H1/H2
+    // stayed within 0.006 dB. The native fixtures and bounds are untouched.
     constexpr std::array<Neighbour, 17> neighbours48{{
-        {0.841649000, -18.629714537, -64.887909553, -99.581655271},
-        {1.017519000, -18.285063626, -64.846393526, -100.879597828},
-        {2.575931000, -16.984825081, -65.586058982, -91.534458011},
-        {6.890009000, -15.413734199, -66.844373894, -83.085557935},
-        {8.982944000, -14.909029296, -65.422977733, -77.202491691},
-        {11.845395000, -14.385453508, -62.441230449, -80.058262355},
-        {13.924587000, -13.870014377, -60.081638318, -75.647198253},
-        {16.792435000, -13.358179157, -56.969671451, -79.034972720},
-        {18.855112000, -12.832771605, -54.763665988, -74.626986666},
-        {21.740536000, -12.351838120, -51.626013367, -78.192254130},
-        {23.772755000, -11.808827369, -48.961281052, -73.785922015},
-        {26.637381000, -11.331278484, -45.593773604, -77.563605756},
-        {28.638845000, -10.778717817, -43.962033952, -73.267264548},
-        {31.046316000, -10.263438194, -43.210607233, -73.005297776},
-        {31.472347000, -10.309492422, -43.213892135, -77.110961415},
-        {33.429245000,  -9.749078832, -42.466283929, -72.684391483},
-        {34.640800000,  -9.629165393, -42.230297759, -76.742451740},
+        {0.841904, -18.629085134, -64.891124271, -99.584434450},
+        {1.017785, -18.284527560, -64.849608935, -100.856827913},
+        {2.576376, -16.984430206, -65.589560824, -91.547415538},
+        {6.890676, -15.413468908, -66.847614421, -83.091497538},
+        {8.987168, -14.912284556, -65.427179713, -77.166350311},
+        {11.846062, -14.385188848, -62.444076786, -80.059613306},
+        {13.927758, -13.872216061, -60.084067536, -75.616107509},
+        {16.793095, -13.357909871, -56.972538998, -79.037441938},
+        {18.858198, -12.834896614, -54.766542849, -74.599143828},
+        {21.741236, -12.351612160, -51.628850063, -78.195101110},
+        {23.764762, -11.799735535, -48.965506473, -73.764579566},
+        {26.638048, -11.331028286, -45.596792006, -77.565075417},
+        {28.630008, -10.768663546, -43.956383598, -73.248000418},
+        {31.038776, -10.254642168, -43.206078439, -72.983779818},
+        {31.473076, -10.309318346, -43.217447292, -77.111267649},
+        {33.425334, -9.743986707, -42.465107730, -72.655997979},
+        {34.641548, -9.629022895, -42.233882213, -76.742080639},
     }};
     constexpr std::array<Neighbour, 13> neighbours96{{
-        {0.840455000, -18.632275228, -64.886996710, -99.473814047},
-        {2.563588000, -16.987101913, -65.552781857, -91.448550478},
-        {6.876930000, -15.402907847, -66.812403986, -83.352131442},
-        {8.979934000, -14.908283965, -65.396640992, -77.186430657},
-        {11.842650000, -14.384965875, -62.429217230, -80.220393326},
-        {16.794703000, -13.362716404, -56.963142668, -79.133477181},
-        {18.860217000, -12.840183893, -54.756840865, -74.650385893},
-        {21.742937000, -12.356526314, -51.622620658, -78.215637876},
-        {26.637899000, -11.334068943, -45.592883592, -77.527998525},
-        {28.656762000, -10.799360916, -43.977103985, -73.448082011},
-        {31.468414000, -10.307674402, -43.209729376, -77.004771575},
-        {33.443372000,  -9.766143549, -42.478466744, -72.935668328},
-        {34.636967000,  -9.627382846, -42.226193831, -76.676009167},
+        {0.840798, -18.626308002, -64.885817516, -99.460402188},
+        {2.564319, -16.981485509, -65.551928562, -91.455487760},
+        {6.877975, -15.397669832, -66.810775684, -83.340992808},
+        {8.984688, -14.906748247, -65.400314386, -77.133524466},
+        {11.843448, -14.379480474, -62.427521699, -80.208259749},
+        {16.795479, -13.357212586, -56.961843994, -79.119409506},
+        {18.855827, -12.829466143, -54.754448880, -74.603337568},
+        {21.743776, -12.351088243, -51.621558181, -78.201832769},
+        {26.638714, -11.328615143, -45.592046792, -77.511522894},
+        {28.631420, -10.767081216, -43.952833604, -73.461324671},
+        {31.469259, -10.302267832, -43.209530700, -76.989781105},
+        {33.428366, -9.744134634, -42.463410251, -72.930777741},
+        {34.637836, -9.622013111, -42.226036031, -76.659609390},
     }};
     constexpr float inputPosition = 0.8f;
     constexpr double inputGainDb = 38.603869;
@@ -8546,25 +9428,27 @@ void testFetLowFrequencyOddHarmonicSurface()
         double referenceH3RelativeDb;
         double previousErrorDb;          // the constant -0.0058 T3 term
     };
+    // Internal model coordinates re-recorded with the accepted deep release law;
+    // native harmonic values and coordinate/harmonic bounds remain unchanged.
     constexpr std::array<Point, 18> points{{
         {100.0, 0.3f, -30.0f, -0.0087, -91.700375, +0.5559},
-        {100.0, 0.7f, -46.0f,  0.2378, -83.943235, +0.7112},
-        {100.0, 0.6f, -42.0f,  0.5373, -81.075196, +4.9007},
-        {100.0, 0.3f, -24.0f,  0.7234, -78.962196, +5.5109},
-        {100.0, 0.9f, -48.0f,  1.3622, -67.407430, -0.2529},
-        {100.0, 0.2f, -12.0f,  2.5753, -60.225389, -1.4289},
-        {100.0, 0.8f, -36.0f,  8.9210, -50.600997, +0.0783},
+        {100.0, 0.7f, -46.0f, 0.2378, -83.943235, +0.7112},
+        {100.0, 0.6f, -42.0f, 0.5373, -81.075196, +4.9007},
+        {100.0, 0.3f, -24.0f, 0.7234, -78.962196, +5.5109},
+        {100.0, 0.9f, -48.0f, 1.3622, -67.407430, -0.2529},
+        {100.0, 0.2f, -12.0f, 2.5753, -60.225389, -1.4289},
+        {100.0, 0.8f, -36.0f, 8.9210, -50.600997, +0.0783},
         {100.0, 0.8f, -30.0f, 13.8515, -48.872046, +2.3465},
         {100.0, 0.8f, -18.0f, 23.6915, -47.030741, +0.6235},
         {100.0, 0.9f,  -7.5f, 33.1003, -46.020733, -0.4754},
         {100.0, 1.0f,  -6.0f, 34.3368, -46.009239, -0.5075},
-        {1000.0, 0.4f, -30.0f,  0.5570, -81.411229, -0.0501},
-        {1000.0, 0.6f, -36.0f,  3.2496, -72.802041, -0.0073},
-        {1000.0, 0.8f, -36.0f,  8.9830, -67.758380, -0.0895},
-        {1000.0, 0.8f, -30.0f, 13.9253, -66.683950, +0.0055},
-        {1000.0, 0.4f,  -9.0f, 15.1374, -66.685792, -0.0476},
-        {1000.0, 0.8f, -24.0f, 18.8564, -67.067362, +0.0040},
-        {1000.0, 0.8f, -12.0f, 28.6512, -66.239258, -0.0394}}};
+        {1000.0, 0.4f, -30.0f, 0.5570, -81.411229, -0.0501},
+        {1000.0, 0.6f, -36.0f, 3.2494, -72.802041, -0.0073},
+        {1000.0, 0.8f, -36.0f, 8.9865, -67.758380, -0.0895},
+        {1000.0, 0.8f, -30.0f, 13.9271, -66.683950, +0.0055},
+        {1000.0, 0.4f,  -9.0f, 15.1388, -66.685792, -0.0476},
+        {1000.0, 0.8f, -24.0f, 18.8576, -67.067362, +0.0040},
+        {1000.0, 0.8f, -12.0f, 28.6294, -66.239258, -0.0394}}};
 
     constexpr double kLowFrequencyBoundDb = 0.75;
     constexpr double kBroadbandGuardDb = 0.98;
@@ -8807,7 +9691,7 @@ void testDbxSidechainTilt()
         worst = std::max(worst, static_cast<float>(std::abs(gainDb - point.db)));
         std::printf("  tilt %6.0f Hz: %+.3f dB (measured %+.2f)\n", point.hz, gainDb, point.db);
     }
-    require(worst < 0.40f, "dbx sidechain tilt matches the measured reference response within 0.40 dB from 40 Hz to 20 kHz");
+    require(worst < 0.30f, "dbx sidechain tilt matches the measured reference response within 0.30 dB from 40 Hz to 23.5 kHz");
 
     auto reductionAt = [](float freq, float sidechainHp) {
         MultiCompDSP dsp;
@@ -9083,6 +9967,360 @@ void testVcaDbxParityGates()
     std::puts("dbx 160 parity gates: static law, step timing, crest response");
 }
 
+// VCA compressor onset from silence and from quiet pedestals. Measured
+// 2026-09-11 on the installed reference VCA compressor (dusk-audio-tools
+// plugins/MultiComp/tests/programme_parity/vca/onset_probes2.py): a 1 kHz tone
+// holds a pedestal for 1 s, then steps in phase to -12 dB RMS; Thresh
+// -48.125 dB, Compress at the Inf stop, 2x oversampling. Each row is the gain
+// reduction over the first four 1 ms cycles after the step. From silence the
+// reference passes the first half-millisecond almost untouched, a pedestal
+// shortens that, and the next cycles reduce as if that first energy never
+// arrived; the previous detector reduced the first cycle 13 dB more than the
+// reference. Bounds sit just outside the achieved residuals (<= 0.39 dB on the
+// first cycle, <= 0.19 dB after), at both rates.
+void testVcaDbxOnsetGates()
+{
+    struct Row { int rate; float pedestalDb; std::array<double, 4> referenceGr; };
+    constexpr std::array<Row, 5> rows{{
+        {48000, -300.0f, {{-2.806, -23.009, -26.579, -28.426}}},
+        {48000, -60.0f, {{-9.134, -24.570, -27.281, -28.883}}},
+        {48000, -40.0f, {{-18.667, -25.473, -27.765, -29.212}}},
+        {96000, -300.0f, {{-2.792, -22.879, -26.508, -28.375}}},
+        {96000, -60.0f, {{-8.891, -24.470, -27.219, -28.836}}},
+    }};
+    double worstFirst = 0.0, worstLater = 0.0;
+    for (const auto& row : rows)
+    {
+        constexpr int kBlock = 512;
+        auto dsp = std::make_unique<MultiCompDSP>();
+        dsp->prepare(static_cast<double>(row.rate), kBlock);
+        dsp->setMode(static_cast<int>(duskaudio::MultiCompMode::VCA));
+        dsp->setOversampling(1);
+        dsp->setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+        dsp->setParameter(MultiCompDSP::Parameter::VcaThreshold, -48.125f);
+        dsp->setParameter(MultiCompDSP::Parameter::VcaRatio, 100.0f);
+        dsp->setParameter(MultiCompDSP::Parameter::VcaOutput, 0.0f);
+        const size_t stepAt = static_cast<size_t>(row.rate), total = stepAt + static_cast<size_t>(row.rate / 5);
+        const double pedestal = row.pedestalDb < -200.0f ? 0.0 : std::pow(10.0, row.pedestalDb / 20.0) * std::sqrt(2.0);
+        const double step = std::pow(10.0, -12.0 / 20.0) * std::sqrt(2.0);
+        std::vector<float> in(total), out(total, 0.0f);
+        for (size_t i = 0; i < total; ++i)
+            in[i] = static_cast<float>((i < stepAt ? pedestal : step)
+                                       * std::sin(2.0 * 3.14159265358979323846 * 1000.0 * static_cast<double>(i) / row.rate));
+        std::array<float, kBlock> l{}, r{}, ol{}, orr{};
+        const float* inputs[2] = {l.data(), r.data()};
+        float* outputs[2] = {ol.data(), orr.data()};
+        for (size_t start = 0; start < total; start += kBlock)
+        {
+            const size_t n = std::min<size_t>(kBlock, total - start);
+            for (size_t i = 0; i < n; ++i) l[i] = r[i] = in[start + i];
+            dsp->processBlock(inputs, outputs, 2, static_cast<int>(n));
+            for (size_t i = 0; i < n; ++i) out[start + i] = ol[i];
+        }
+        const size_t latency = static_cast<size_t>(dsp->getLatencySamples());
+        const size_t cycle = static_cast<size_t>(row.rate / 1000);
+        std::printf("  dbx onset %d Hz, pedestal %+.0f dB:", row.rate, static_cast<double>(row.pedestalDb));
+        for (size_t k = 0; k < 4; ++k)
+        {
+            double inSq = 0.0, outSq = 0.0;
+            for (size_t i = stepAt + k * cycle; i < stepAt + (k + 1) * cycle; ++i)
+            {
+                inSq += static_cast<double>(in[i]) * in[i];
+                outSq += static_cast<double>(out[i + latency]) * out[i + latency];
+            }
+            const double gr = 10.0 * std::log10(std::max(outSq, 1e-30) / inSq);
+            const double error = std::abs(gr - row.referenceGr[k]);
+            (k == 0 ? worstFirst : worstLater) = std::max(k == 0 ? worstFirst : worstLater, error);
+            std::printf(" %.3f (ref %.3f)", gr, row.referenceGr[k]);
+        }
+        std::printf("\n");
+    }
+    std::printf("  dbx onset worst: first cycle %.3f dB, cycles 2-4 %.3f dB\n", worstFirst, worstLater);
+    require(worstFirst < 0.5 && worstLater < 0.25,
+            "VCA onset from silence and quiet pedestals matches the dbx 160 at 48 and 96 kHz");
+}
+
+void testVcaDbxOutputVoicing()
+{
+    // Native reference VCA compressor, measured 2026-09-16: Thresh 0 dB, Compress 0
+    // (1:1), Gain 0 dB, SC Off, Mix 100%. Provenance:
+    // capture set vca-programme-20260911/NOTES-20260916.md;
+    // 48 kHz impulse vca-041 confirmed by -24 dBFS tones; 44.1/96 kHz
+    // pilot-normalised tone probes (exact references supplied in the test brief).
+    struct Row { int rate; std::array<double, 4> hz, nativeDb; };
+    constexpr std::array<Row, 3> rows{{
+        {44100, {{5000, 10000, 14000, 18000}}, {{0.066, 0.128, 0.060, -0.057}}},
+        {48000, {{10000, 16000, 19000, 20000}}, {{0.132, 0.043, -0.039, -0.063}}},
+        {96000, {{5000, 10000, 16000, 20000}}, {{0.076, 0.124, -0.026, -0.171}}},
+    }};
+    const auto measure = [](int rate, double hz)
+    {
+        constexpr int block = 512;
+        auto dsp = std::make_unique<MultiCompDSP>();
+        dsp->prepare(rate, block);
+        dsp->setMode(static_cast<int>(duskaudio::MultiCompMode::VCA));
+        dsp->setOversampling(kOversampling2xSetting);
+        dsp->setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+        dsp->setParameter(MultiCompDSP::Parameter::VcaThreshold, 0.0f);
+        dsp->setParameter(MultiCompDSP::Parameter::VcaRatio, 1.0f);
+        dsp->setParameter(MultiCompDSP::Parameter::VcaOutput, 0.0f);
+        dsp->setParameter(MultiCompDSP::Parameter::SidechainHP, 0.0f);
+        dsp->setParameter(MultiCompDSP::Parameter::AutoMakeup, 0.0f);
+        dsp->setMix(100.0f);
+        // -24 dBFS peak leaves ample headroom. Measure one second (whole
+        // cycles at every probe, regardless of latency) after 0.5 s settling.
+        const int settle = rate / 2, total = settle + rate;
+        const double amplitude = std::pow(10.0, -24.0 / 20.0);
+        std::array<float, block> l{}, r{}, ol{}, orr{};
+        const float* inputs[] = {l.data(), r.data()};
+        float* outputs[] = {ol.data(), orr.data()};
+        double inSq = 0.0, outSq = 0.0;
+        for (int start = 0; start < total; start += block)
+        {
+            const int n = std::min(block, total - start);
+            for (int i = 0; i < n; ++i)
+                l[i] = r[i] = static_cast<float>(amplitude * std::sin(
+                    2.0 * 3.14159265358979323846 * hz * (start + i) / rate));
+            dsp->processBlock(inputs, outputs, 2, n);
+            for (int i = 0; i < n; ++i)
+                if (start + i >= settle)
+                {
+                    inSq += static_cast<double>(l[i]) * l[i];
+                    outSq += static_cast<double>(ol[i]) * ol[i];
+                }
+        }
+        return 10.0 * std::log10(outSq / inSq);
+    };
+    double controlDb = 0.0;
+    for (const auto& row : rows)
+    {
+        const double unityDb = measure(row.rate, 1000.0);
+        for (size_t i = 0; i < row.hz.size(); ++i)
+        {
+            const double relativeDb = measure(row.rate, row.hz[i]) - unityDb;
+            const double bound = row.hz[i] <= 16000.0 ? 0.04 : 0.08;
+            const bool pass = std::abs(relativeDb - row.nativeDb[i]) <= bound;
+            std::printf("  dbx voicing %d Hz host, %.0f Hz: %+.6f dB, native %+.3f, bound %.2f: %s\n",
+                        row.rate, row.hz[i], relativeDb, row.nativeDb[i], bound, pass ? "PASS" : "FAIL");
+            // Per-check require: folded booleans across many FP checks have
+            // miscompiled under -ffp-contract=off in this suite.
+            require(pass, "VCA output voicing matches the native dbx 160 linear path at 2x");
+            if (row.rate == 48000 && row.hz[i] == 10000.0) controlDb = relativeDb;
+        }
+    }
+    std::printf("  dbx voicing 48 kHz / 10 kHz control: %+.6f dB >= +0.10: %s\n",
+                controlDb, controlDb >= 0.10 ? "PASS" : "FAIL");
+    require(controlDb >= 0.10, "VCA output voicing has the measured 10 kHz lift at 48 kHz");
+}
+
+void testVcaDetectorOverflowRecovery()
+{
+    // Finite input can overflow detector power without tripping the output
+    // non-finite latch: finite output alone does not prove compression recovered.
+    constexpr int rate = 48000, block = 256, burst = 480, total = 8 * rate;
+    std::array<std::array<double, 2>, 2> tailDb{};
+    std::array<int, 2> nonFinite{};
+    double inputSquares = 0.0;
+    for (int fault = 0; fault < 2; ++fault)
+    {
+        auto dsp = std::make_unique<MultiCompDSP>();
+        dsp->prepare(rate, block);
+        dsp->setMode(static_cast<int>(duskaudio::MultiCompMode::VCA));
+        dsp->setOversampling(0);
+        dsp->setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+        dsp->setParameter(MultiCompDSP::Parameter::VcaThreshold, -40.0f);
+        dsp->setParameter(MultiCompDSP::Parameter::VcaRatio, 100.0f);
+        dsp->setParameter(MultiCompDSP::Parameter::VcaOutput, 0.0f);
+        std::array<float, block> l{}, r{}, ol{}, orr{};
+        const float* inputs[] = {l.data(), r.data()};
+        float* outputs[] = {ol.data(), orr.data()};
+        std::array<double, 2> squares{};
+        for (int start = 0; start < total; start += block)
+        {
+            const int n = std::min(block, total - start);
+            for (int i = 0; i < n; ++i)
+            {
+                const float clean = static_cast<float>(std::pow(10.0, -12.0 / 20.0)
+                    * std::sin(2.0 * 3.14159265358979323846 * 1000.0 * (start + i) / rate));
+                l[i] = r[i] = fault && start + i < burst ? 1.0e20f : clean;
+                if (fault == 0 && start + i >= total - rate)
+                    inputSquares += static_cast<double>(clean) * clean;
+            }
+            dsp->processBlock(inputs, outputs, 2, n);
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < n; ++i)
+                {
+                    const double y = outputs[ch][i];
+                    if (!std::isfinite(y)) ++nonFinite[fault];
+                    if (start + i >= total - rate) squares[ch] += y * y;
+                }
+        }
+        for (int ch = 0; ch < 2; ++ch)
+            tailDb[fault][ch] = 10.0 * std::log10(squares[ch] / rate);
+    }
+    const double inputDb = 10.0 * std::log10(inputSquares / rate);
+    for (int ch = 0; ch < 2; ++ch)
+        std::printf("VCA overflow ch %d: input %.6f, control %.6f, fault %.6f dBFS, delta %.6f dB\n",
+            ch, inputDb, tailDb[0][ch], tailDb[1][ch], tailDb[1][ch] - tailDb[0][ch]);
+    std::printf("VCA overflow non-finite outputs: control %d, fault %d\n", nonFinite[0], nonFinite[1]);
+    require(nonFinite[0] == 0 && nonFinite[1] == 0,
+            "VCA control and overflow renders keep every output sample finite");
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        require(tailDb[0][ch] <= inputDb - 6.0,
+                "VCA overflow control actually compresses by at least 6 dB");
+        require(tailDb[1][ch] < inputDb - 3.0,
+                "VCA compression returns after finite detector overflow");
+        // Measured at 8 s: fixed delta +0.000002 dB; without the RMS
+        // guard, +28.277957 dB. Allow 3 dB for recovery/platform margin.
+        require(std::abs(tailDb[1][ch] - tailDb[0][ch]) <= 3.0,
+                "VCA overflow recovery is within 3 dB of the control in the last second");
+    }
+}
+
+void testVcaDetectorAlignment()
+{
+    // Same equal-RMS 50 Hz / 10% duty carrier as the live VCA compressor campaign.
+    // Disabling oversampling is the control experiment: it removes the
+    // upsampling delay without changing the native RMS detector law.
+    double worstSpread = 0.0, worstReferenceError = 0.0;
+    double worstResetResidual = 0.0;
+    bool activeAndFinite = true;
+    for (const int rate : {44100, 48000, 96000})
+        for (const int channels : {1, 2})
+        {
+            std::array<double, 3> reduction{};
+            for (int os = 0; os < 3; ++os)
+            {
+                constexpr int block = 127;
+                MultiCompDSP unity, compressed;
+                for (auto* dsp : {&unity, &compressed})
+                {
+                    dsp->setMode(static_cast<int>(duskaudio::MultiCompMode::VCA));
+                    dsp->setOversampling(os);
+                    dsp->setParameter(MultiCompDSP::Parameter::VcaThreshold, -27.0f);
+                    dsp->setParameter(MultiCompDSP::Parameter::VcaOutput, 0.0f);
+                    dsp->setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+                    dsp->prepare(rate, block);
+                }
+                unity.setParameter(MultiCompDSP::Parameter::VcaRatio, 0.0f);
+                compressed.setParameter(MultiCompDSP::Parameter::VcaRatio, 50.4944f);
+                std::array<float, block> input{}, u0{}, u1{}, c0{}, c1{};
+                std::array<float, block> freshStart{};
+                const float* in[] = {input.data(), input.data()};
+                float* u[] = {u0.data(), u1.data()};
+                float* c[] = {c0.data(), c1.data()};
+                double unityPower = 0.0, compressedPower = 0.0;
+                const auto fillInput = [&](int start, int count) {
+                    for (int i = 0; i < count; ++i)
+                    {
+                        const double time = static_cast<double>(start + i) / rate;
+                        const bool on = std::fmod(time * 50.0, 1.0) < 0.10;
+                        input[i] = on ? static_cast<float>(std::sqrt(0.2)
+                            * std::sin(2.0 * 3.141592653589793 * 1000.0 * time)) : 0.0f;
+                    }
+                };
+                for (int start = 0; start < 4 * rate; start += block)
+                {
+                    const int count = std::min(block, 4 * rate - start);
+                    fillInput(start, count);
+                    unity.processBlock(in, u, channels, count);
+                    compressed.processBlock(in, c, channels, count);
+                    if (start == 0) freshStart = c0;
+                    for (int i = 0; i < count; ++i)
+                        if (start + i >= 3 * rate)
+                        {
+                            unityPower += static_cast<double>(u0[i]) * u0[i];
+                            compressedPower += static_cast<double>(c0[i]) * c0[i];
+                        }
+                }
+                activeAndFinite = activeAndFinite
+                    && unityPower > 1.0 && compressedPower > 0.1
+                    && std::isfinite(unityPower) && std::isfinite(compressedPower);
+                reduction[os] = 10.0 * std::log10(unityPower / compressedPower);
+                worstReferenceError = std::max(worstReferenceError,
+                    std::abs(reduction[os] - 7.60));
+                compressed.reset();
+                fillInput(0, block);
+                compressed.processBlock(in, c, channels, block);
+                for (int i = 0; i < block; ++i)
+                    worstResetResidual = std::max(worstResetResidual,
+                        std::abs(static_cast<double>(freshStart[i]) - c0[i]));
+            }
+            const double spread = *std::max_element(reduction.begin(), reduction.end())
+                - *std::min_element(reduction.begin(), reduction.end());
+            worstSpread = std::max(worstSpread, spread);
+            std::printf("VCA detector alignment %d Hz %d ch: 1x/2x/4x %.6f/%.6f/%.6f dB, spread %.6f dB\n",
+                rate, channels, reduction[0], reduction[1], reduction[2], spread);
+        }
+    std::printf("VCA detector alignment: worst spread %.6f dB, reference error %.6f dB, reset residual %.9f\n",
+        worstSpread, worstReferenceError, worstResetResidual);
+    require(activeAndFinite && worstSpread < 0.015 && worstReferenceError < 0.05,
+        "VCA detector follows the same audio time at every oversampling factor");
+    require(worstResetResidual == 0.0,
+        "VCA reset clears detector alignment history as well as RMS charge");
+}
+
+// Fresh reference VCA compressor unity-compression captures (2026-09-07): output is
+// linear through +20 dB gain, including a 9.888659 peak at -0.1 dBFS input.
+// The former +/-2 clamp lost 11.260670 dB RMS on that row. Use output energy
+// and matched gain-off controls so the test cannot pass on silent output.
+void testVcaOutputHeadroom()
+{
+    constexpr int blockSize = 512;
+    double worst = 0.0;
+    for (double rate : {44100.0, 48000.0, 96000.0})
+        for (int channels : {1, 2})
+            for (float levelDb : {-24.0f, -12.0f, -6.0f, -0.1f})
+            {
+                double outputDb[2]{};
+                for (int gainIndex = 0; gainIndex < 2; ++gainIndex)
+                {
+                    MultiCompDSP dsp;
+                    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::VCA));
+                    dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+                    dsp.setParameter(MultiCompDSP::Parameter::VcaRatio, 0.0f);
+                    dsp.setParameter(MultiCompDSP::Parameter::VcaOutput, gainIndex * 20.0f);
+                    dsp.prepare(rate, blockSize);
+                    std::array<float, blockSize> input{}, left{}, right{};
+                    const float* inputs[] = {input.data(), input.data()};
+                    float* outputs[] = {left.data(), right.data()};
+                    const int samples = static_cast<int>(rate * 2.0);
+                    double sum = 0.0;
+                    int count = 0;
+                    for (int start = 0; start < samples; start += blockSize)
+                    {
+                        const int n = std::min(blockSize, samples - start);
+                        for (int i = 0; i < n; ++i)
+                            input[static_cast<size_t>(i)] = duskaudio::decibelsToGain(levelDb)
+                                * static_cast<float>(std::sin(2.0 * 3.14159265358979323846
+                                    * 1000.0 * (start + i) / rate));
+                        dsp.processBlock(inputs, outputs, channels, n);
+                        for (int i = 0; i < n; ++i)
+                            if (start + i >= static_cast<int>(rate))
+                            {
+                                const double sample = left[static_cast<size_t>(i)];
+                                sum += sample * sample;
+                                ++count;
+                            }
+                    }
+                    outputDb[gainIndex] = 10.0 * std::log10(std::max(sum / count, 1.0e-30));
+                }
+                const double gainError = outputDb[1] - outputDb[0] - 20.0;
+                // The reference's gain-off RMS is input peak -3.007360 dB;
+                // its small fixed gain offset is included in the absolute gate.
+                const double absoluteError = outputDb[1] - (levelDb + 20.0 - 3.007360);
+                worst = std::max({worst, std::abs(gainError), std::abs(absoluteError)});
+                if (!std::isfinite(gainError) || !std::isfinite(absoluteError))
+                    worst = std::numeric_limits<double>::infinity();
+                std::printf("dbx headroom: %.0f Hz %d ch input %+.1f dBFS "
+                            "output %.6f dBFS gain error %+.6f absolute error %+.6f dB\n",
+                            rate, channels, static_cast<double>(levelDb), outputDb[1],
+                            gainError, absoluteError);
+            }
+    require(worst < 0.01, "VCA preserves the dbx 160 output headroom at +20 dB gain");
+}
+
 void testPublishedGainReductionRange()
 {
     MultiCompDSP dsp;
@@ -9173,6 +10411,73 @@ void testAtomicControlSnapshotsAreSingleLoad()
 
 int main(int argc, char** argv)
 {
+    if (argc == 2 && std::strcmp(argv[1], "--wide-classic") == 0)
+    { testClassicOversamplerByteIdentity(); return 0; }
+    if (argc == 2 && std::strcmp(argv[1], "--wide-response") == 0)
+    { testWideOversamplerResponse(); return 0; }
+    if (argc == 2 && std::strcmp(argv[1], "--wide-latency") == 0)
+    { testWideDigitalLatencyContract(); return 0; }
+    if (argc == 2 && std::strcmp(argv[1], "--wide-opto") == 0)
+    { testOptoWideDetectorCharge(); return 0; }
+    if (argc == 2 && std::strcmp(argv[1], "--wide-vca") == 0)
+    { testVcaWideOutputOnset(); return 0; }
+
+    if (argc == 2 && std::strcmp(argv[1], "--analog-link") == 0)
+    { testAnalogStereoLinkSharesEnvelope(); return 0; }
+    if (argc == 2 && std::strcmp(argv[1], "--bus-reset") == 0)
+    {
+        testLinkedBusResetDeterminism();
+        testLinkedBusResetDeterminism(false, true);
+        testLinkedBusResetDeterminism(true);
+        testLinkedBusResetDeterminism(true, true);
+        testLinkedBusResetDeterminism(true, false, 0);
+        testLinkedBusResetDeterminism(true, true, 0);
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--opto-recovery") == 0)
+    {
+        testOptoRecoveryParity();
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--opto-frequency") == 0)
+    {
+        testOptoSettledFrequencyParity();
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--opto-knee") == 0)
+    {
+        testOptoSoftKneeParity();
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--opto-reset") == 0)
+    {
+        testOptoResetClearsSpectralAndEventState();
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--vca-alignment") == 0)
+    {
+        testVcaDetectorAlignment();
+        std::puts("Multi-Comp VCA detector alignment: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--vca-headroom") == 0)
+    {
+        testVcaOutputHeadroom();
+        std::puts("Multi-Comp VCA headroom test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--vca") == 0)
+    {
+        testDbxSidechainTilt();
+        testDbxSidechainTiltEngagementLifecycle();
+        testVcaDbxParityGates();
+        testVcaDbxOnsetGates();
+        testVcaDbxOutputVoicing();
+        testVcaDetectorOverflowRecovery();
+        testVcaOutputHeadroom();
+        std::puts("Multi-Comp VCA parity tests: PASS");
+        return 0;
+    }
     if (argc == 2 && std::strcmp(argv[1], "--opto-dense") == 0)
     {
         testOptoDenseProgrammeParity();
@@ -9274,6 +10579,12 @@ int main(int argc, char** argv)
     {
         testFetDenseStereoPhaseParity();
         std::puts("Multi-Comp FET dense stereo-phase test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-programme-recovery") == 0)
+    {
+        testFetProgrammeRecovery();
+        std::puts("Multi-Comp FET programme recovery regression test: PASS");
         return 0;
     }
     if (argc == 2 && std::strcmp(argv[1], "--fet-recovery-dense") == 0)
@@ -9398,12 +10709,26 @@ int main(int argc, char** argv)
         std::puts("Multi-Comp FET startup-state test: PASS");
         return 0;
     }
+    // Also in the default run below; separately reachable so the break-first
+    // proof can run it against another MultiCompDSP.cpp without the rest of
+    // the suite.
+    if (argc == 2 && std::strcmp(argv[1], "--bypass-toggle") == 0)
+    {
+        testBypassToggleResumesWithoutGlitch();
+        std::puts("Multi-Comp bypass-toggle continuity test: PASS");
+        return 0;
+    }
     testOptoMeasuredGainTaper();
     testOptoMeasuredOutputCeiling();
     testOptoDriveApplicability();
     testDbxSidechainTilt();
     testDbxSidechainTiltEngagementLifecycle();
     testVcaDbxParityGates();
+    testVcaDbxOnsetGates();
+    testVcaDbxOutputVoicing();
+    testVcaDetectorOverflowRecovery();
+    testVcaOutputHeadroom();
+    testVcaDetectorAlignment();
     testGoldenVectors();
     reportOptoPedestalEventGrid();
     testOptoPedestalEventHarnessInvariants();
@@ -9435,6 +10760,10 @@ int main(int argc, char** argv)
     testOptoOverloadCompression();
     testOptoOverloadOrderingAndMonotonicity();
     testOptoSampleRateParity();
+    testOptoRecoveryParity();
+    testOptoSettledFrequencyParity();
+    testOptoSoftKneeParity();
+    testOptoResetClearsSpectralAndEventState();
     testAtomicControlSnapshotsAreSingleLoad();
     testFetMeasuredControlTapers();
     testFetMeasuredStaticSurface();
@@ -9451,6 +10780,7 @@ int main(int argc, char** argv)
     testFetStereoLinkPhaseLaw();
     testFetDenseStereoPhaseParity();
     testFetDenseStartupRecoveryParity();
+    testFetProgrammeRecovery();
     testFetPostBurstRecoveryLifecycle();
     testFetAttackMatchesReferenceCurve();
     testFetAttackAcceleratesWithDrive();
@@ -9499,12 +10829,22 @@ int main(int argc, char** argv)
     testStaticCurves();
     testEnvelopeAndReset();
     testMixBypassAndBlockEdges();
+    testBypassToggleResumesWithoutGlitch();
+    testClassicOversamplerByteIdentity();
+    testWideOversamplerResponse();
+    testWideDigitalLatencyContract();
+    testOptoWideDetectorCharge();
+    testVcaWideOutputOnset();
     testLatencyMixBypassAndDigitalStereo();
     testAnalogStereoLinkSharesEnvelope();
     testSplitOversamplingMatchesFunctorPath();
     testVcaAndBusInternalDetectorControls();
     testLinkedBusResetDeterminism();
-    testLinkedBusReentryReseedsSidechainInterpolation();
+    testLinkedBusResetDeterminism(false, true);
+    testLinkedBusResetDeterminism(true);
+    testLinkedBusResetDeterminism(true, true);
+    testLinkedBusResetDeterminism(true, false, 0);
+    testLinkedBusResetDeterminism(true, true, 0);
     testOptoInternalStereoLinkUsesSignedMaximum();
     testDigitalLookaheadMixAlignment();
     testMultibandMixAlignment();

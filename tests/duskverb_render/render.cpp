@@ -119,6 +119,7 @@ namespace
             << "  --sample-rate HZ              Render rate (default 48000)\n"
             << "  --block-size FRAMES           Host block size (default 2048)\n"
             << "  --channels 1|2                Main input/output channels (default 2)\n"
+            << "  --disable-aux-inputs         Use the plugin's internal detector (no auxiliary inputs)\n"
             << "  --self-test-resampler         Check rate conversion is band-limited, then exit\n"
             << "  --list-params|--list-programs Inspect the hosted plugin\n"
             << "  --dump-nparams               Dump normalized parameter values\n"
@@ -1135,6 +1136,7 @@ int main (int argc, char** argv)
                                              // params as JSON (Optuna warm-start
                                              // seed), then exit before rendering.
     bool         prePrepareApply  = false;
+    bool         disableAuxInputs = false;
     // Dry-passthrough test: override bus_mode=0 + mix=0 on the loaded preset
     // so the engine's wet path is silent and only the dry passes through.
     // Used to verify that gain_trim does not bleed into the dry signal.
@@ -1222,6 +1224,7 @@ int main (int argc, char** argv)
                 return 2;
             }
         }
+        else if (a == "--disable-aux-inputs")       disableAuxInputs = true;
         else if (a == "--input-wav"  && i + 1 < argc) inputWavPaths.emplace_back (argv[++i]);
         else if (a == "--legacy-stem-name")          legacyStemName = true;
         else if (a == "--program"   && i + 1 < argc) programArg   = argv[++i];
@@ -1701,7 +1704,8 @@ int main (int argc, char** argv)
                           ? juce::AudioChannelSet::mono()
                           : juce::AudioChannelSet::stereo();
     for (int i = 0; i < plugin->getBusCount (true);  ++i)
-        layout.inputBuses.add  (channelSet);
+        layout.inputBuses.add  (disableAuxInputs && i > 0
+                               ? juce::AudioChannelSet::disabled() : channelSet);
     for (int i = 0; i < plugin->getBusCount (false); ++i)
         layout.outputBuses.add (channelSet);
     if (! plugin->setBusesLayout (layout))
@@ -1718,6 +1722,9 @@ int main (int argc, char** argv)
     }
 
     plugin->prepareToPlay (kSampleRate, kBlockSize);
+
+    std::cout << "Active audio channels: inputs=" << plugin->getTotalNumInputChannels()
+              << " outputs=" << plugin->getTotalNumOutputChannels() << std::endl;
 
     // Some yabridge-bridged plugins need a moment after prepareToPlay before
     // the Wine-side dispatcher is fully responsive (yabridge issues #167/#391).

@@ -3,10 +3,14 @@
 // this file are direct C++17 transcriptions of multicomp.cpp; JUCE containers,
 // Decibels, jlimit and IIR filters are replaced by small local helpers/shared DSP.
 #pragma once
+#include "MultiCompBusControls.hpp"
+#include "MultiCompBusLaw.hpp"
 
 
 #include "MultiCompDbxLaw.hpp"
 #include "MultiCompParams.hpp"
+#include "MultiCompOptoShelf.hpp"
+#include "MultiCompOptoCell.hpp"
 #include "MultiCompHelpers.hpp"
 #include "../../shared-daf/dsp/DuskCrossover.hpp"
 #include "../../shared-daf/dsp/DuskFilters.hpp"
@@ -41,9 +45,14 @@ public:
         transientShaper.prepare(modeRate);
         lookupTables.prepare();
         for (auto& d : opto) d = OptoState{};
+        optoCell.reset();
+        for (auto& shelf : optoShelf) shelf.reset();
+        for (auto& filter : optoPreHighPass) filter.reset();
+        for (auto& filter : optoPostHighPass) filter.reset();
         for (auto& d : fet) d = FETState{};
         for (auto& d : vca) d = VCAState{};
         for (auto& d : bus) d = BusState{};
+        for (auto& filter : busFeedbackCoupling) filter.reset();
         for (auto& d : studioFet) d = StudioFETState{};
         for (auto& d : studioVca) d = StudioVCAState{};
         for (auto& d : digital) d = DigitalState{};
@@ -75,6 +84,10 @@ public:
         fs = newFs;
         osFactor = newFactor;
         const float sr = static_cast<float>(fs * osFactor);
+        // A new rate starts at the first phase of a host sample. Keep the
+        // control envelope, but realign its sampling clock.
+        for (auto& d : bus) d.detectorPhase = 0;
+        for (auto& d : vca) d.phase = 0;
         transientShaper.setRate(sr);
         updateRateCoefficients(sr);
         // The Opto fields below store elapsed or remaining samples. Preserve
@@ -85,31 +98,41 @@ public:
             return std::min(maximum, std::max(1, static_cast<int>(
                 std::lround(static_cast<double>(value) * counterScale))));
         };
+        optoCell.scaleCounters(scaleCounter);
         for (auto& d : opto)
-        {
-            d.detectorExposureSamples = scaleCounter(
-                d.detectorExposureSamples, optoChargeTopOffSamples);
-            d.detectorFloorOnlySamples = scaleCounter(
-                d.detectorFloorOnlySamples, optoDetectorFloorHoldSamples);
-            d.detectorUnsupportedSamples = scaleCounter(
-                d.detectorUnsupportedSamples, optoDetectorSilenceHoldSamples);
-            d.detectorReleaseExposureSamples = scaleCounter(
-                d.detectorReleaseExposureSamples, optoChargeTopOffSamples);
-            d.detectorSilentSamples = scaleCounter(
-                d.detectorSilentSamples, optoDetectorSilenceHoldSamples);
             d.colourPeakHold = scaleCounter(
                 d.colourPeakHold, optoColourPeakHoldSamples);
-        }
         updateHardwareRate(sr);
         selectHardwareGains();
+    }
+
+    // Rate caching is independent of a host lifecycle reset. Clear every BUS
+    // history even when prepare() can reuse coefficients at the same rate.
+    void clearBusState() noexcept
+    {
+        for (auto& d : bus) d = BusState{};
+        for (auto& filter : busFeedbackCoupling) filter.reset();
+        for (auto& filter : busSidechainHighPass) filter.reset();
+        for (auto& filter : busSidechainLowShelf) filter.reset();
+        for (auto& filter : busSidechainHighShelf) filter.reset();
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            inputTransformerBus[ch].reset();
+            outputTransformerBus[ch].reset();
+        }
+        busConvolution.reset();
     }
 
     void reset() noexcept
     {
         for (auto& d : opto) d = OptoState{};
+        optoCell.reset();
+        for (auto& shelf : optoShelf) shelf.reset();
+        for (auto& filter : optoPreHighPass) filter.reset();
+        for (auto& filter : optoPostHighPass) filter.reset();
         for (auto& d : fet) d = FETState{};
         for (auto& d : vca) d = VCAState{};
-        for (auto& d : bus) d = BusState{};
+        clearBusState();
         for (auto& d : studioFet) d = StudioFETState{};
         for (auto& d : studioVca) d = StudioVCAState{};
         for (auto& d : digital) d = DigitalState{};
@@ -156,7 +179,7 @@ public:
         ch = std::clamp(ch, 0, 1);
         switch (mode)
         {
-            case MultiCompMode::Opto: return gainToDecibels(opto[ch].gain);
+            case MultiCompMode::Opto: return gainToDecibels(optoCell.gain(ch));
             case MultiCompMode::FET: return gainToDecibels(
                 fet[ch].envelope * fet[ch].kneeGain
                     * fet[ch].recoveryGain);
@@ -218,9 +241,19 @@ public:
         const float lowG = std::clamp(lowGain, -12.0f, 12.0f);
         const float highF = std::clamp(highFrequency, 2000.0f, 16000.0f);
         const float highG = std::clamp(highGain, -12.0f, 12.0f);
+        // renderBusOutput advances this high-pass only while SC FILTER is
+        // engaged, so while it is off the filter freezes holding whatever it
+        // last ran with. Clear that stale history on the edge back to engaged,
+        // before the first newly filtered sample reaches the detector; this
+        // mirrors the VCA sidechain tilt's PULL/SC edge in MultiCompDSP.cpp.
+        // Retuning alone must NOT reset it: a continuously running filter's
+        // state is current, and clearing it injects a larger transient than
+        // letting it settle (measured 3x to 12x worse across corner/tone).
+        if (hp >= 1.0f && busSidechainHighPassFrequency < 1.0f)
+            for (auto& filter : busSidechainHighPass) filter.reset();
         if (rate != busSidechainRate || hp != busSidechainHighPassFrequency)
             for (auto& filter : busSidechainHighPass)
-                filter.setCoeffs(Biquad::highPass(rate, std::max(hp, 20.0f), 0.707f));
+                filter.setCoeffs(Biquad::highPass(rate, std::max(hp, 20.0f), 0.5f));
         if (rate != busSidechainRate || lowF != busSidechainLowFrequency
             || lowG != busSidechainLowGain)
             for (auto& filter : busSidechainLowShelf)
@@ -246,39 +279,28 @@ public:
         auto& left = bus[0];
         auto& right = bus[1];
         const float sr = static_cast<float>(fs * osFactor);
-        const float leftLevel = busRmsLevel(left,
-            external ? std::abs(sidechainLeft) : busFeedbackRect(left, 0, sr), sr);
-        const float rightLevel = busRmsLevel(right,
-            external ? std::abs(sidechainRight) : busFeedbackRect(right, 1, sr), sr);
+        const float leftLevel = busDetectorLevel(
+            external ? std::abs(left.externalCompressed) : busFeedbackMagnitude(left, 0));
+        const float rightLevel = busDetectorLevel(
+            external ? std::abs(right.externalCompressed) : busFeedbackMagnitude(right, 1));
         const float linkedLevel = std::max(leftLevel, rightLevel);
         const float amount = std::clamp(linkAmount, 0.0f, 1.0f);
         advanceBusEnvelope(left, leftLevel + (linkedLevel - leftLevel) * amount, p, sr);
         advanceBusEnvelope(right, rightLevel + (linkedLevel - rightLevel) * amount, p, sr);
+        const float drive = busDrive(p);
+        left.externalCompressed = sidechainLeft * drive * left.detectorEnvelope;
+        right.externalCompressed = sidechainRight * drive * right.detectorEnvelope;
         outputLeft = renderBusOutput(inputLeft, 0, p, mix);
         outputRight = renderBusOutput(inputRight, 1, p, mix);
     }
 
 private:
+    // The output stage's own state. The detector, estimator and cell state
+    // live in OptoCell (MultiCompOptoCell.hpp).
     struct OptoState
     {
-        float gain = 1, detectorLevel = 0, detectorPeak = 0, chargePeak = 0;
-        float colourPeak = 0, colourDc = 0;
-        float fastGrDb = 0, midGrDb = 0, slowGrDb = 0;
-        float isolatedEventGrDb = 0;
-        float fastSustainedTargetDb = 0;
-        float fastAttackReferencePhase = 0;
-        float programmeMemory = 0;
-        float previousCellGrDb = 0, previousSustainedTargetDb = 0;
-        float recentEventCharge = 1;
-        float programmeMotion = 0, programmeActivity = 0;
-        float detectorFloorPeak = 0, nextEventWeight = 1;
-        int detectorExposureSamples = 0, detectorFloorOnlySamples = 0;
-        int detectorUnsupportedSamples = 0;
-        int detectorReleaseExposureSamples = 0;
+        float colourPeak = 0;
         int colourPeakHold = 0;
-        bool detectorEventActive = false;
-        // Starts saturated so a freshly reset state counts as silent.
-        int detectorSilentSamples = 1 << 20;
     };
     struct FETState
     {
@@ -311,12 +333,65 @@ private:
     struct VCAState
     {
         float envelope = 1, rms = 0;
-        int phase = 0;  // oversampling phase counter; the RMS integrator runs on the native phase only
+        // Native power history aligns the detector with the upsampling FIR.
+        // 4x needs 13.25 native samples, including one interpolation tap.
+        std::array<float, 64> rmsHistory{};
+        unsigned rmsWrite = 0;
+        int phase = 0;
     };
     struct BusState
     {
-        float envelope = 1, rms = 0, previous = 0, hp = 0, prev = 0, hp2 = 0, prev2 = 0, compressed = 0;
+        // Signed internal control, shared by fixed and Auto release.
+        // Keep dB state directly: gain/dB round trips stall near unity at
+        // high sample rates. BusState{} clears it on prepare/reset; the
+        // external detector shares the same control state.
+        float fixedControlDb = 0;
+        // Detector-side gain cell: the sidechain sees busDetectorExponent * control.
+        float envelope = 1, compressed = 0, detectorEnvelope = 1;
+        // Audio-only control after timing; shared across detector handoffs.
+        // BusState{} clears it alongside the timing reservoirs on prepare/reset.
+        // smoothControlDb2 is the second cascaded pole's state; BusState{}
+        // clears it the same way.
+        float smoothControlDb = 0;
+        float smoothControlDb2 = 0;
+        // Charged by sustained compression from either detector source;
+        // BusState{} clears it on prepare/reset and fixed release clears it.
+        float autoSlowDb = 0;
+        // Independent sidechain through a virtual VCA; BusState{} resets it.
+        float externalCompressed = 0;
+        // Internal feedback is sampled at the host rate; the audio path stays
+        // oversampled. BusState{} clears this clock on prepare/reset.
+        int detectorPhase = 0;
     };
+    // Derived host-rate transition coefficients; not signal history.
+    std::array<double, 6> busAutoStep{};
+    // bus-audible-20260911/HYPOTHESES-20260917.md: 164 native sine captures
+    // showed H3/H5/H7 excess +1.9..2.6/+4.6..6.3/+8..10 dB. Trial B's
+    // audio-only dB pole gives median excess -0.35/-0.18/+0.72 dB and passes
+    // every BUS gate; trial A (smoothed feedback) fails attack by 2.36/2.52 dB.
+    // Survey: pass-all 53 -> 110/252, balance median .298 -> .092 dB,
+    // 400/50/10 ms maxima .424/.816/1.964 -> .315/.402/.524 dB.
+    //
+    // Two cascaded poles, not one (H-S2R, two-term-20260917/REPORT.md section 12).
+    // The single 2600 Hz pole was tuned against the 2:1 steady-ripple harmonics;
+    // the survey's largest remaining block was snare tonal balance at the fast
+    // attacks, and 34 of its 35 winnable captures are 4:1 or 10:1. Cascading
+    // 3500 Hz with 12000 Hz takes pass-all 107 -> 121/252 (22 captures won,
+    // 8 lost), snare-balance failures 110 -> 90 captures and the balance maximum
+    // 1.057 -> 0.732 dB. All eight native-reference gates pass, including
+    // Completion's harmonic bounds (4:1 H3 +0.5084 / H5 +1.3420, 10:1 H3
+    // +0.4641 / H5 +1.1818, against 1.0 / 1.5 dB). Seven losses are at
+    // 10:1 / 0.1 ms / 0.1 s with shallow thresholds; the eighth is a marginal
+    // 2:1 / 1 ms / 0.1 s session-balance failure. The fastest 10:1 corner
+    // wants the old 2600 Hz while 2:1 wants about 1200 Hz, and a single gain
+    // cell cannot be both. The unresolved 2:1 control-ripple excess behind that
+    // split is recorded in section 14 of the report; it is NOT the node table
+    // (a C2 spline through the same nodes leaves H5 at +1.27 dB) and not the
+    // output ceiling (frame peaks sit 39..52 dB below it).
+    static constexpr float busAudioControlSmoothingHz = 3500.0f;
+    static constexpr float busAudioControlSmoothingHz2 = 12000.0f;
+    float busAudioControlSmoothingStep = 0;
+    float busAudioControlSmoothingStep2 = 0;
     struct StudioFETState : FETState {};
     struct StudioVCAState { float envelope = 1, rms = 0, previous = 0, smooth = 1; };
     struct DigitalState
@@ -328,12 +403,28 @@ private:
     int osFactor = 1;
     bool prepared = false;
     std::array<OptoState, 2> opto{};
+    OptoCell optoCell;
+    std::array<OptoHfShelf, kChannels> optoShelf{};
+    std::array<OptoSubsonicHighPass, kChannels> optoPreHighPass{}, optoPostHighPass{};
     std::array<FETState, 2> fet{};
     std::array<VCAState, 2> vca{};
     std::array<BusState, 2> bus{};
     std::array<StudioFETState, 2> studioFet{};
     std::array<StudioVCAState, 2> studioVca{};
     std::array<DigitalState, 2> digital{};
+    // sslbus::headroomDrive() is a std::pow evaluated two to three times per
+    // channel per oversampled sample for a value that only changes when the
+    // HEADROOM switch moves. Memoise it on the switch position; the cached
+    // result is the same float the call would have returned. The output
+    // ceiling's headroom compensation is memoised with it, so the wet path
+    // multiplies instead of dividing by the drive every sample.
+    int busDrivePosition = -1;
+    float busDriveValue = 1.0f;
+    float busCeilingScale = busCeilingReference;   // busCeilingReference / busDriveValue
+    // The compressed feedback signal has its own low-frequency coupling.
+    // Reuse the shared filter; prepare/reset clear each channel's history,
+    // and runtime oversampling changes refresh its pole without discarding it.
+    std::array<DCBlocker, 2> busFeedbackCoupling;
     std::array<Biquad, 2> busSidechainHighPass, busSidechainLowShelf,
                           busSidechainHighShelf;
     float busSidechainRate = 0.0f;
@@ -351,28 +442,11 @@ private:
     MultiCompTransientShaper transientShaper;
     MultiCompLookupTables lookupTables;
 
-    static constexpr size_t kOptoDetectorSections = 5;
-    std::array<std::array<Biquad, kOptoDetectorSections>, kChannels> optoDetectorWeighting;
     float optoInvSampleRate = 1.0f / 48000.0f;
-    float optoDetectorAttack = 0, optoDetectorRelease = 0;
-    float optoDetectorFloorPeakAttack = 0, optoDetectorFloorPeakRelease = 0;
-    float optoDetectorPeakAttack = 0, optoDetectorPeakRelease = 0;
-    float optoChargePeakRelease = 0;
-    float optoColourPeakRelease = 0, optoColourDcSmoothing = 0;
-    int optoChargeTopOffSamples = 1, optoFastPathSamples = 1;
+    // VCA detector onset limit (MultiCompDbxLaw.hpp), refreshed with the rate.
+    float vcaDetectorFloorPower = 0.0f, vcaDetectorRise = 1.0f;
+    float optoColourPeakRelease = 0;
     int optoColourPeakHoldSamples = 1;
-    int optoDetectorSilenceHoldSamples = 1, optoDetectorFloorHoldSamples = 1;
-    float optoSlowAttack = 0;
-    float optoSustainedTargetSmoothing = 0, optoSustainedTopOffAttack = 0;
-    float optoLimitFastTopOffAttack = 0, optoLimitSlowTopOffAttack = 0;
-    float optoFastAttackAtCalibrationRate = 0;
-    float optoCalibrationRateRatio = 1;
-    float optoFlashRelease = 0, optoFastRelease = 0;
-    float optoMidRelease = 0, optoSlowRelease = 0;
-    float optoProgrammeMemoryRelease = 0;
-    float optoRecentEventChargeRelease = 0, optoRecentEventChargeReset = 0;
-    float optoProgrammeMotionRelease = 0, optoProgrammeActivityAttack = 0;
-    float optoIsolatedEventAttack = 0, optoIsolatedEventRelease = 0;
     float fetTilt = 0, fetHardwareGain = 1.0f;
     float busHardwareGain = 1.0f;
     std::array<float, 3> fetHardwareGains{{1.0f, 1.0f, 1.0f}};
@@ -385,7 +459,18 @@ private:
             out.prepare(rate, 2); out.setProfile(profile.outputTransformer); out.setEnabled(enable);
         };
         const auto& fp = HardwareEmulation::HardwareProfiles::getFETCompressor();
-        const auto& bp = HardwareEmulation::HardwareProfiles::getConsoleBus();
+        // The reference neutral response has two 1.67 Hz coupling poles.
+        // Override only this instance; shared profiles and sibling modes retain
+        // their existing audio paths. See the BUS dynamics measurement report.
+        auto bp = HardwareEmulation::HardwareProfiles::getConsoleBus();
+        bp.inputTransformer.dcBlockingFreq = 1.6666667f;
+        bp.outputTransformer.dcBlockingFreq = 1.6666667f;
+        // The native console bus compressor is linear below its output ceiling; retain coupling
+        // and frequency response, but do not add generic transformer colour.
+        bp.inputTransformer.saturationAmount = bp.outputTransformer.saturationAmount = 0;
+        bp.inputTransformer.hysteresisAmount = bp.outputTransformer.hysteresisAmount = 0;
+        bp.inputTransformer.harmonics = {};
+        bp.outputTransformer.harmonics = {};
         const auto& sfp = HardwareEmulation::HardwareProfiles::getStudioFET();
         const auto& svp = HardwareEmulation::HardwareProfiles::getStudioVCA();
         for (int ch = 0; ch < 2; ++ch)
@@ -407,66 +492,46 @@ private:
 
     void updateRateCoefficients(float sr) noexcept
     {
+        // Match trial B's float arithmetic: processing rate divided by OS,
+        // then a host-rate pole. Cache only the coefficient, never its history.
+        const float busControlRate = sr / static_cast<float>(osFactor);
+        busAudioControlSmoothingStep = 1.0f - std::exp(
+            -6.2831853f * busAudioControlSmoothingHz / busControlRate);
+        busAudioControlSmoothingStep2 = 1.0f - std::exp(
+            -6.2831853f * busAudioControlSmoothingHz2 / busControlRate);
+        // Internal BUS control runs once per host sample, at every audio OS setting.
+        // Exact coupled-state transition with measured 41.659 ms / 4.159 s poles
+        // and 86.82% sustained slow recovery. The -0.33 dB/s control bias also
+        // predicts the independent quiet drift. See the BUS storage report.
+        {
+            const double fastRate = 1.0 / 0.04165904;
+            const double slowRate = 1.0 / 4.1588435;
+            const double slowWeight = 0.8682;
+            const double k = slowRate / (1.0 - slowWeight);
+            const double a = fastRate + slowRate - k;
+            const double gamma = 1.0 - fastRate * slowRate / (a * k);
+            const double ef = std::exp(-fastRate / static_cast<float>(fs)), es = std::exp(-slowRate / static_cast<float>(fs));
+            const double f = (es - ef) / (fastRate - slowRate);
+            const double b = (k - slowRate) / (fastRate - slowRate);
+            const double dc = -0.33 * ((1-b)*(1-ef)/fastRate + b*(1-es)/slowRate);
+            const double ds = -0.33 * k*gamma/(fastRate-slowRate) * ((1-es)/slowRate - (1-ef)/fastRate);
+            busAutoStep = {{es + (slowRate-a)*f, a*f, k*gamma*f, es + (slowRate-k)*f, dc, ds}};
+        }
+        for (auto& filter : busFeedbackCoupling) filter.setSampleRate(sr, 1.6666667f);
         optoInvSampleRate = 1.0f / sr;
-        // The 0.4 ms / 8 ms rectifier supplies the programme integration that
-        // separates sustained energy from unsupported peaks. The 50 us /
-        // 40 ms follower supplies both the calibrated ceiling and the first
-        // 1.5 ms of the isolated-event fast-cell target.
-        constexpr float detectorAttackSeconds = 0.000400f;
-        optoDetectorAttack = std::exp(-optoInvSampleRate / detectorAttackSeconds);
-        optoDetectorRelease = std::exp(-optoInvSampleRate / 0.008f);
-        optoDetectorFloorPeakAttack = std::exp(-optoInvSampleRate / 0.010f);
-        optoDetectorFloorPeakRelease = std::exp(-optoInvSampleRate / 0.100f);
-        optoDetectorPeakAttack = std::exp(-optoInvSampleRate / 0.000050f);
-        optoDetectorPeakRelease = std::exp(-optoInvSampleRate / 0.040f);
-        optoChargePeakRelease = std::exp(-optoInvSampleRate / 0.00025f);
+        for (auto& shelf : optoShelf) shelf.prepare(sr);
+        for (auto& filter : optoPreHighPass)
+            filter.prepare(sr, kOptoPreHighPassHz, kOptoPreHighPassQ);
+        for (auto& filter : optoPostHighPass)
+            filter.prepare(sr, kOptoPostHighPassHz, kOptoPostHighPassQ);
+        // The VCA detector runs once per host sample, so its limit uses fs.
+        vcaDetectorFloorPower = std::pow(10.0f, dbx160::kDetectorFloorDb * 0.1f);
+        vcaDetectorRise = std::pow(10.0f, dbx160::kDetectorRiseDbPerMs * 100.0f / static_cast<float>(fs));
+        optoCell.setRate(sr);
         optoColourPeakRelease = std::exp(-optoInvSampleRate / 0.040f);
-        optoChargeTopOffSamples = std::max(1, static_cast<int>(
-            std::lround(0.020f * sr)));
-        optoFastPathSamples = std::max(1, static_cast<int>(
-            std::lround(0.0015f * sr)));
         optoColourPeakHoldSamples = std::max(1, static_cast<int>(
             std::lround(0.002f * sr)));
-        optoDetectorSilenceHoldSamples = std::max(1, static_cast<int>(
-            std::lround(0.0005f * sr)));
-        optoDetectorFloorHoldSamples = std::max(1, static_cast<int>(
-            std::lround(0.030f * sr)));
-        optoColourDcSmoothing = 1.0f - std::exp(
-            -kDuskTwoPi * 10.0f * optoInvSampleRate);
-        constexpr float optoCalibrationRate = 96000.0f;
-        optoFastAttackAtCalibrationRate = std::exp(
-            -1.0f / (0.021f * optoCalibrationRate));
-        optoCalibrationRateRatio = optoCalibrationRate / sr;
-        optoSlowAttack = std::exp(-optoInvSampleRate / 0.190f);
-        optoSustainedTargetSmoothing = std::exp(-optoInvSampleRate / 0.001f);
-        optoSustainedTopOffAttack = std::exp(-optoInvSampleRate / 0.014f);
-        optoLimitFastTopOffAttack = std::exp(-optoInvSampleRate / 0.0013f);
-        optoLimitSlowTopOffAttack = std::exp(-optoInvSampleRate / 0.0037f);
-        optoFlashRelease = std::exp(-optoInvSampleRate / 0.010f);
-        optoFastRelease = std::exp(-optoInvSampleRate / 0.064f);
-        optoMidRelease = std::exp(-optoInvSampleRate / 0.185f);
-        optoSlowRelease = std::exp(-optoInvSampleRate / 1.174f);
-        optoProgrammeMemoryRelease = std::exp(-optoInvSampleRate / 0.250f);
-        optoRecentEventChargeRelease = std::exp(-optoInvSampleRate / 1.000f);
-        optoRecentEventChargeReset = std::exp(-optoInvSampleRate / 0.012f);
-        optoProgrammeMotionRelease = std::exp(-optoInvSampleRate / 0.500f);
-        optoProgrammeActivityAttack = std::exp(-optoInvSampleRate / 0.100f);
-        optoIsolatedEventAttack = std::exp(-optoInvSampleRate / 0.00020f);
-        optoIsolatedEventRelease = std::exp(-optoInvSampleRate / 0.015f);
         fetTilt = 1.0f - std::exp(-2.0f * kDuskPi * 800.0f / sr);
-        // Measured reference opto leveler detector weighting. The shelf's equivalent Q is
-        // the JSON fit's S=0.6998415302 converted to the RBJ shelf-Q form.
-        // Design at the processing rate: processOpto is called at fs*osFactor.
-        const std::array<BiquadCoeffs, kOptoDetectorSections> weightingCoeffs{{
-            Biquad::shelf(sr, 319.1844220f, 3.778170748f, 0.5894442553f, false),
-            Biquad::peak(sr, 134.4305880f, 1.245285462f, 0.5136042617f),
-            Biquad::peak(sr, 880.5758706f, -0.4288385533f, 0.6986416568f),
-            Biquad::peak(sr, 5840.123777f, 1.410524878f, 0.4820592696f),
-            Biquad::peak(sr, 9991.669467f, -1.407323237f, 0.7988600998f)
-        }};
-        for (auto& channel : optoDetectorWeighting)
-            for (size_t section = 0; section < kOptoDetectorSections; ++section)
-                channel[section].setCoeffs(weightingCoeffs[section]);
     }
 
     static int hardwareGainIndex(int factor) noexcept
@@ -551,11 +616,6 @@ private:
 
     void resetHardware() noexcept
     {
-        // Detector filters hold state between blocks. Clear every section for
-        // both channels so reset/reprepare is deterministic on every platform.
-        for (auto& channel : optoDetectorWeighting)
-            for (auto& filter : channel)
-                filter.reset();
         fetConvolution.reset(); busConvolution.reset();
         for (int ch = 0; ch < 2; ++ch)
         {
@@ -566,33 +626,31 @@ private:
         }
     }
 
-    inline static constexpr std::array<float, 23> kOptoCompressCurve{{
-        0.9207f, 1.9474f, 3.1430f, 4.6974f, 6.1696f, 7.6165f,
-        9.2638f, 10.8676f, 12.4485f, 13.9366f, 15.7917f, 17.2499f,
-        19.0803f, 20.4897f, 22.3318f, 23.8425f, 25.2656f, 26.5058f,
-        28.2780f, 29.5828f, 30.6369f, 32.1649f, 32.9052f}};
-    inline static constexpr std::array<float, 23> kOptoLimitCurve{{
-        0.9379f, 1.9978f, 3.2454f, 4.8601f, 6.4467f, 8.0793f,
-        9.6964f, 11.7394f, 13.5249f, 15.2602f, 17.4341f, 19.2438f,
-        21.5010f, 23.3864f, 25.7863f, 27.9270f, 30.0609f, 32.0834f,
-        34.7103f, 36.8851f, 38.8184f, 40.5691f, 40.9082f}};
-
-    // Reference FET limiter control laws, measured from three source
-    // levels at each position so neither compression nor the low-level floor
-    // can masquerade as pot taper. Values are relative to the clockwise stop.
-    // Multi-Comp's existing host ranges remain unchanged: saved/automated
-    // values retain their knob position and are mapped only inside vintage FET.
-    inline static constexpr std::array<float, 12> kFetControlPositions{{
-        0.0f, 0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.625915527f,
-        0.7f, 0.8f, 0.9f, 1.0f}};
-    inline static constexpr std::array<float, 12> kFetInputRelativeDb{{
-        -120.0f, -38.892933f, -33.678216f, -25.932386f, -20.790574f,
-        -13.389983f, -8.620572f, -7.996695f, -6.054538f, -1.246802f,
-        -0.066005f, 0.0f}};
-    inline static constexpr std::array<float, 12> kFetOutputRelativeDb{{
-        -120.0f, -76.428106f, -55.024575f, -41.535576f, -30.782583f,
-        -21.810000f, -14.485545f, -12.846387f, -8.604931f, -4.012500f,
-        -0.978134f, 0.0f}};
+    // Native reference FET limiter Input/Output, 2026-09-16: 17 nodes at k/16,
+    // relative to the clockwise stop. fet-programme-20260911/HYPOTHESES.md H15
+    // and make_fet_taper_core.py: taper-sweep/native-90 Input (-90 dBFS),
+    // taper-sweep/native Output (-54 dBFS). Sweep residual rounds to 0.000 dB;
+    // old-node agreement <= .002/.01 dB, off-node errors reached 2.23/.37 dB.
+    // Input 0 is -41.95 dB relative, not mute. Legacy host ranges retain knob
+    // positions; Studio FET still uses their original dB meaning.
+    inline static constexpr std::array<float, 17> kFetControlPositions{{
+        0.000000f, 0.062500f, 0.125000f, 0.187500f,
+        0.250000f, 0.312500f, 0.375000f, 0.437500f,
+        0.500000f, 0.562500f, 0.625000f, 0.687500f,
+        0.750000f, 0.812500f, 0.875000f, 0.937500f,
+        1.000000f}};
+    inline static constexpr std::array<float, 17> kFetInputRelativeDb{{
+        -41.949972f, -40.349972f, -37.919972f, -35.199972f,
+        -27.579973f, -25.519973f, -23.209974f, -17.159975f,
+        -13.389977f, -9.519981f, -8.019983f, -6.429985f,
+        -4.549989f, -0.419998f, -0.090000f, -0.030000f,
+        0.000000f}};
+    inline static constexpr std::array<float, 17> kFetOutputRelativeDb{{
+        -99.990001f, -91.940000f, -66.070001f, -56.780000f,
+        -47.990000f, -39.920000f, -33.170000f, -27.200001f,
+        -21.810001f, -16.860000f, -12.900000f, -9.240000f,
+        -6.060000f, -3.500000f, -1.529999f, -0.150000f,
+        0.000000f}};
 
     // Vintage-FET attack drive law. Six measured points, no extrapolation:
     // see the note at the use site in processFET. The abscissa is the SETTLED
@@ -635,7 +693,7 @@ private:
     }
 
     static float fetControlLaw(float position,
-                               const std::array<float, 12>& values) noexcept
+                               const std::array<float, 17>& values) noexcept
     {
         position = std::clamp(position, 0.0f, 1.0f);
         for (size_t i = 1; i < kFetControlPositions.size(); ++i)
@@ -1552,6 +1610,28 @@ private:
             (legacyMilliseconds - 50.0f) / (1100.0f - 50.0f), 0.0f, 1.0f);
     }
 
+    // New native phrase/gap probes constrain deep release. Keep the existing
+    // shallow knee below the post-burst population's 8 dB activation boundary;
+    // the next measured depth anchor supplies the continuous handoff.
+    static float fetProgrammeReleaseDepth(float maximumGrDb) noexcept
+    {
+        return std::clamp((maximumGrDb - 8.0f) / (9.1406f - 8.0f), 0.0f, 1.0f);
+    }
+
+    static float fetProgrammeFastReleaseSeconds(float position) noexcept
+    {
+        // The native .9 and 1.0 controls have the same fast recovery. The old
+        // quadratic missed that floor and over-held phrases by several dB.
+        // Retain the lower half, which owns the existing quiet-tail captures.
+        if (position <= 0.5f)
+            return 2.00f - 1.82f * position + 0.12f * position * position;
+        if (position <= 0.75f)
+            return 1.12f + (0.20f - 1.12f) * (position - 0.5f) * 4.0f;
+        if (position < 0.9f)
+            return 0.20f + (0.075f - 0.20f) * (position - 0.75f) / 0.15f;
+        return 0.075f;
+    }
+
     static float fetReleaseExposureScale(float exposureSeconds,
                                          float maximumGrDb) noexcept
     {
@@ -1659,11 +1739,24 @@ private:
             * std::max(tailShape, 0.0f);
     }
 
-    static float optoThresholdDb(float peakReduction, bool limit) noexcept
+    // The colour blend's own copy of the measured PR 0.7 static law, so the
+    // output stage no longer reads the cell header (a replacement cell need
+    // not keep optoThresholdDb/optoCurveDb). The tables and the arithmetic
+    // are the 2026-08-21 Compress/Limit measurements exactly as the cell
+    // evaluates them at PR 70, which keeps the blend sample-identical.
+    static constexpr std::array<float, 23> kOptoColourCompressCurve{{
+        0.9207f, 1.9474f, 3.1430f, 4.6974f, 6.1696f, 7.6165f,
+        9.2638f, 10.8676f, 12.4485f, 13.9366f, 15.7917f, 17.2499f,
+        19.0803f, 20.4897f, 22.3318f, 23.8425f, 25.2656f, 26.5058f,
+        28.2780f, 29.5828f, 30.6369f, 32.1649f, 32.9052f}};
+    static constexpr std::array<float, 23> kOptoColourLimitCurve{{
+        0.9379f, 1.9978f, 3.2454f, 4.8601f, 6.4467f, 8.0793f,
+        9.6964f, 11.7394f, 13.5249f, 15.2602f, 17.4341f, 19.2438f,
+        21.5010f, 23.3864f, 25.7863f, 27.9270f, 30.0609f, 32.0834f,
+        34.7103f, 36.8851f, 38.8184f, 40.5691f, 40.9082f}};
+
+    static float optoColourReferenceThresholdDb(bool limit) noexcept
     {
-        // The reference knob is normalised 0..1; Multi-Comp exposes the same
-        // control as a displayed 0..100 percentage. Compress and Limit use
-        // their independently measured onset tables.
         constexpr std::array<float, 9> compressThresholds{{
             -3.8483f, -10.8579f, -17.0206f, -21.4516f, -25.7740f,
             -33.8121f, -40.1926f, -44.3555f, -45.4059f}};
@@ -1671,36 +1764,13 @@ private:
             -4.1256f, -11.1198f, -17.2740f, -21.6889f, -26.0047f,
             -34.0625f, -40.5015f, -44.6568f, -45.6471f}};
         const auto& thresholds = limit ? limitThresholds : compressThresholds;
-        const auto& curve = limit ? kOptoLimitCurve : kOptoCompressCurve;
+        const auto& curve = limit ? kOptoColourLimitCurve
+                                  : kOptoColourCompressCurve;
         const float onsetOffset = (1.0f - curve[0])
             / ((curve[1] - curve[0]) * 0.5f);
         const float thresholdCorrection = -onsetOffset;
+        const float peakReduction = 70.0f;
         const float normalised = std::clamp(peakReduction * 0.01f, 0.0f, 1.0f);
-        if (normalised <= 0.1f) return 1000.0f;
-
-        // The first measured threshold is at 0.2.  Continue its measured
-        // 0.2->0.3 slope toward 0.1 so automation stays continuous while still
-        // leaving 0.0 and 0.1 inactive over the measured input range.
-        if (normalised < 0.2f)
-            return thresholds[0] + thresholdCorrection
-                + (normalised - 0.2f) * (thresholds[1] - thresholds[0]) * 10.0f;
-        if (normalised >= 1.0f) return thresholds.back() + thresholdCorrection;
-        // The original tenth-step sweep did not sample PR 0.55.  A dedicated
-        // steady-state capture there places the Compress threshold 0.53 dB
-        // below the linear 0.50 -> 0.60 interpolation (measured GR residuals
-        // were -0.239/-0.377/-0.500 dB at -24/-18/-12 dBFS).  Preserve the
-        // measured endpoints and interpolate through the new midpoint.
-        if (!limit && normalised >= 0.5f && normalised < 0.6f)
-        {
-            constexpr float midpointThreshold = -24.1428f;
-            if (normalised < 0.55f)
-                return thresholds[3] + thresholdCorrection
-                    + (normalised - 0.5f)
-                        * (midpointThreshold - thresholds[3]) * 20.0f;
-            return midpointThreshold + thresholdCorrection
-                + (normalised - 0.55f)
-                    * (thresholds[4] - midpointThreshold) * 20.0f;
-        }
         const float position = (normalised - 0.2f) * 10.0f;
         const size_t index = static_cast<size_t>(position);
         const float fraction = position - static_cast<float>(index);
@@ -1708,12 +1778,15 @@ private:
             + fraction * (thresholds[index + 1] - thresholds[index]);
     }
 
-    static float optoCurveDb(float overshootDb, bool limit) noexcept
+    static float optoColourReferenceCurveDb(float overshootDb, bool limit) noexcept
     {
-        const auto& curve = limit ? kOptoLimitCurve : kOptoCompressCurve;
+        const auto& curve = limit ? kOptoColourLimitCurve
+                                  : kOptoColourCompressCurve;
         const float position = overshootDb * 0.5f;
-        if (position <= 0.0f)
-            return std::max(0.0f, curve[0] + position * (curve[1] - curve[0]));
+        if (position <= 0.0f) {
+            if (limit) return std::max(0.0f, curve[0] + position * (curve[1] - curve[0]));
+            return curve[0] * std::exp(position * (curve[1] - curve[0]) / curve[0]);
+        }
         if (position >= static_cast<float>(curve.size() - 1))
         {
             const float extraPosition
@@ -1721,12 +1794,6 @@ private:
             if (limit)
                 return curve.back() + extraPosition
                     * (curve.back() - curve[curve.size() - 2]);
-
-            // Transition from the table's final measured slope to just below
-            // unity (1.90 dB GR per 2 dB input), then approach the Limit
-            // continuation smoothly. Both joins are C1: a hard slope change at
-            // the table edge and the old min() crossing produced unmeasured
-            // output-slope steps.
             constexpr float compressInitialSlope = 1.90f;
             constexpr float slopeTransitionPositions = 0.10f;
             const float tableEndSlope = curve.back()
@@ -1736,14 +1803,14 @@ private:
                     + (compressInitialSlope - tableEndSlope)
                         * extraPosition * extraPosition
                         / (2.0f * slopeTransitionPositions);
-            const float limitSlope = kOptoLimitCurve.back()
-                - kOptoLimitCurve[kOptoLimitCurve.size() - 2];
-            const float limitContinuation = kOptoLimitCurve.back()
+            const float limitSlope = kOptoColourLimitCurve.back()
+                - kOptoColourLimitCurve[kOptoColourLimitCurve.size() - 2];
+            const float limitContinuation = kOptoColourLimitCurve.back()
                 + extraPosition * limitSlope;
             const float transitionValue = curve.back()
                 + slopeTransitionPositions
                     * (tableEndSlope + compressInitialSlope) * 0.5f;
-            const float limitAtTransition = kOptoLimitCurve.back()
+            const float limitAtTransition = kOptoColourLimitCurve.back()
                 + slopeTransitionPositions * limitSlope;
             const float initialGap = limitAtTransition - transitionValue;
             const float convergenceRate = (compressInitialSlope - limitSlope)
@@ -1801,24 +1868,98 @@ private:
         return ratios;
     }
 
+    // Native reference opto leveler output curve, 2026-09-22 (T4-P5-OUTPUT, curve-fit2.json).
+    // Static and asymmetric; it sits between the two sub-audio high-passes,
+    // which remove the DC its asymmetry produces. Fitted on the ten native
+    // 100 Hz PR-0 waveforms (C4.1 near-knee rows, C1.7 grid, residual -45.7
+    // to -49.6 dB) and the 1 kHz C4.1 transfer at Gains .6 / 1.0; held out,
+    // Gains .4 / .8 reproduce H1 to 0.0074 dB RMS (0.031 dB worst) and the
+    // +6 / +12 dBFS rows to 0.003 dB. Identity up to 0.7; above it the
+    // slope is a power law per quarter octave, so each segment is the exact
+    // integral value + scale * expm1(exponent * ln(u / knee)) / exponent.
+    // Plateaus: +1.4540 and -1.8386 before the post high-pass.
+    struct OptoOutputSegment { float knee, value, scale, exponent; };
+    static constexpr float kOptoOutputLinearLimit = 0.7f;
+    static constexpr float kOptoOutputSegmentsPerNeper = 5.77078016f;
+    static constexpr float kOptoOutputNepersPerSegment = 0.173286795f;
+    static constexpr std::array<OptoOutputSegment, 27> kOptoOutputPositive{{
+        {0.7f, 0.7f, 0.7f, 0.735609584f},
+        {0.832444981f, 0.82937119f, 0.795166687f, 0.999999999f},
+        {0.989949494f, 0.979822385f, 0.945617882f, 0.999999999f},
+        {1.17725498f, 1.15874002f, 1.12453551f, -0.779775352f},
+        {1.4f, 1.34101498f, 0.982401988f, -8.07936085f},
+        {1.66488996f, 1.43262568f, 0.242246071f, -11.3010834f},
+        {1.97989899f, 1.45103689f, 0.0341794817f, -11.7037174f},
+        {2.35450996f, 1.45357301f, 0.00449751863f, -11.7335775f},
+        {2.8f, 1.45390613f, 0.000588753193f, -11.7354162f},
+        {3.32977992f, 1.45394974f, 7.70469061e-05f, -11.7356702f},
+        {3.95979797f, 1.45395544f, 1.00822629e-05f, -11.7357204f},
+        {4.70901993f, 1.45395619f, 1.31934098e-06f, -11.7357284f},
+        {5.6f, 1.45395629f, 1.72645587e-07f, -11.735728f},
+        {6.65955984f, 1.4539563f, 2.25919618e-08f, -11.7357259f},
+        {7.91959595f, 1.4539563f, 2.95632765e-09f, -11.7357241f},
+        {9.41803985f, 1.4539563f, 3.86857766e-10f, -11.7357226f},
+        {11.2f, 1.4539563f, 5.06232692e-11f, -11.7357213f},
+        {13.3191197f, 1.4539563f, 6.62443974e-12f, -11.7357202f},
+        {15.8391919f, 1.4539563f, 8.66858485e-13f, -11.7357192f},
+        {18.8360797f, 1.4539563f, 1.13435066e-13f, -11.7357184f},
+        {22.4f, 1.4539563f, 1.48438486e-14f, -11.7357177f},
+        {26.6382394f, 1.4539563f, 1.94243169e-15f, -11.7357171f},
+        {31.6783838f, 1.4539563f, 2.54182144e-16f, -11.7357166f},
+        {37.6721594f, 1.4539563f, 3.32616937e-17f, -11.7357163f},
+        {44.8f, 1.4539563f, 4.35254937e-18f, -11.735716f},
+        {53.2764788f, 1.4539563f, 5.69564708e-19f, -11.7357159f},
+        {63.3567676f, 1.4539563f, 7.45319433e-20f, -11.7357159f}
+    }};
+    static constexpr std::array<OptoOutputSegment, 27> kOptoOutputNegative{{
+        {0.7f, 0.7f, 0.7f, 0.999999999f},
+        {0.832444981f, 0.83244498f, 0.83244498f, 0.708004539f},
+        {0.989949494f, 0.985918934f, 0.941105236f, -0.00762807569f},
+        {1.17725498f, 1.14889231f, 0.939862063f, 0.878050212f},
+        {1.4f, 1.32480143f, 1.09431911f, -3.73425825f},
+        {1.66488996f, 1.46442058f, 0.572945149f, -0.785561912f},
+        {1.97989899f, 1.55724326f, 0.500027191f, -1.32044229f},
+        {2.35450996f, 1.63469292f, 0.397759387f, -1.15432708f},
+        {2.8f, 1.69716325f, 0.32564819f, -0.536588254f},
+        {3.32977992f, 1.75104968f, 0.296733363f, -1.62798737f},
+        {3.95979797f, 1.79585318f, 0.223793836f, -4.46419577f},
+        {4.70901993f, 1.82285587f, 0.103248539f, -6.32807459f},
+        {5.6f, 1.83372206f, 0.0344864782f, -7.03290262f},
+        {6.65955984f, 1.83717609f, 0.0101945999f, -7.24497104f},
+        {7.91959595f, 1.83818227f, 0.002904904f, -7.30280894f},
+        {9.41803985f, 1.83846783f, 0.000819484322f, -7.31796741f},
+        {11.2f, 1.8385483f, 0.000230573146f, -7.32185948f},
+        {13.3191197f, 1.83857094f, 6.4831175e-05f, -7.32284792f},
+        {15.8391919f, 1.83857731f, 1.82257192e-05f, -7.32309911f},
+        {18.8360797f, 1.83857909f, 5.12349775e-06f, -7.32316439f},
+        {22.4f, 1.8385796f, 1.44026867e-06f, -7.32318493f},
+        {26.6382394f, 1.83857974f, 4.04873108e-07f, -7.32319564f},
+        {31.6783838f, 1.83857978f, 1.13813438e-07f, -7.32320167f},
+        {37.6721594f, 1.83857979f, 3.19939382e-08f, -7.32320616f},
+        {44.8f, 1.83857979f, 8.99376473e-09f, -7.32320909f},
+        {53.2764788f, 1.83857979f, 2.52822151e-09f, -7.32321054f},
+        {63.3567676f, 1.83857979f, 7.10703761e-10f, -7.32321054f}
+    }};
+
     static float optoOutputStage(float input) noexcept
     {
-        // The observed peak plateau is +4.72 dBFS, or 1.721868575 linear.
-        // Above the fitted knee, this reciprocal approach is value/slope
-        // continuous with the linear path and converges to that measured
-        // plateau. The one fitted value (1.1575) uses the -24 dBFS sweep only:
-        // processBlock fit RMS 0.023 dB; the held-out -12 dBFS sweep is 0.137 dB
-        // RMS with a 0.230 dB worst point. The old +6.344 dB stored value is deliberately
-        // absent: it described a different fit's mathematical asymptote.
-        constexpr float peakCeiling = 1.721868575f;
-        constexpr float linearThreshold = 1.1575f;
         const float magnitude = std::abs(input);
-        if (magnitude <= linearThreshold) return input;
-        constexpr float headroom = peakCeiling - linearThreshold;
-        const float excess = magnitude - linearThreshold;
-        const float limited = peakCeiling
-            - headroom * headroom / (headroom + excess);
-        return std::copysign(limited, input);
+        if (!(magnitude > kOptoOutputLinearLimit)) return input;
+        const auto& curve = input > 0.0f ? kOptoOutputPositive
+                                         : kOptoOutputNegative;
+        const float nepers = std::log(magnitude / kOptoOutputLinearLimit);
+        const float position = nepers * kOptoOutputSegmentsPerNeper;
+        constexpr int last = static_cast<int>(kOptoOutputPositive.size()) - 1;
+        // Also catches infinity and NaN, which a cast to int must never see.
+        const int index = position < static_cast<float>(last)
+            ? static_cast<int>(position) : last;
+        const auto& segment = curve[static_cast<size_t>(index)];
+        const float excess = nepers
+            - static_cast<float>(index) * kOptoOutputNepersPerSegment;
+        const float shaped = std::abs(segment.exponent) > 1.0e-6f
+            ? std::expm1(segment.exponent * excess) / segment.exponent
+            : excess;
+        return std::copysign(segment.value + segment.scale * shaped, input);
     }
 
     float processOpto(float input, int ch, float sidechain,
@@ -1826,620 +1967,27 @@ private:
                       float optoDetector, bool useOptoDetector) noexcept
     {
         auto& d = opto[ch];
+        // Native opto leveler HF rise acts on the audio before harmonic generation:
+        // 1 -> 4 kHz fundamentals at -6 dBFS / PR 0 move H2..H5 by
+        // +.03/-.12/-.10/-.03 dB where a post-colour shelf predicts
+        // +.12/+.30/+.51/+.72 (opto-shelf-placement-20260917). The detector
+        // tap stays on the unshelved input.
+        const float audio = optoShelf[ch].process(input);
         // `gain` is the physical cell gain applied to this sample. Colour is
         // added later as a residual with no fundamental term, so the static
         // law no longer has to anticipate or invert a colour-stage level shift.
-        const float appliedGain = d.gain;
-        const float compressed = input * appliedGain;
+        const float appliedGain = optoCell.gain(ch);
+        const float compressed = audio * appliedGain;
         const bool limit = p.optoLimit.load(std::memory_order_relaxed);
-        // The measured detector tap is pre-gain. Weight only the selected
-        // detector source; the audio path above remains untouched.
-        float sc = useOptoDetector ? optoDetector
-                                   : (external ? sidechain : input);
-        const float detectorInputAbs = std::abs(sc);
-        // Silence must be decided against the recent signal scale, never an
-        // absolute epsilon: the oversampler's FIR tail spends its last few
-        // samples in cancellation territory where whether it sits above or
-        // below any fixed threshold depends on per-op rounding (FMA
-        // contraction flipped hold-vs-discharge every burst and moved
-        // high-crest gain reduction by 1.5 dB between platforms). Relative to
-        // the 40 ms peak follower the crossing lands in the steep part of the
-        // tail at every signal level, and the short hold bridges the samples
-        // near a waveform zero crossing. The floor only keeps a long-silent
-        // peak from dragging the threshold into denormal territory.
-        const float silenceFloor = std::max(d.detectorPeak * 1.0e-4f, 1.0e-9f);
-        if (detectorInputAbs > silenceFloor)
-            d.detectorSilentSamples = 0;
-        else if (d.detectorSilentSamples < optoDetectorSilenceHoldSamples)
-            ++d.detectorSilentSamples;
-        const bool hasDetectorInput
-            = d.detectorSilentSamples < optoDetectorSilenceHoldSamples;
-        for (auto& filter : optoDetectorWeighting[static_cast<size_t>(ch)])
-            sc = filter.process(sc);
-        const float pr = std::clamp(p.optoPeakReduction.load(std::memory_order_relaxed), 0.0f, 100.0f);
-        const float detectorAbs = std::abs(sc);
-        const bool detectorRising = detectorAbs > d.detectorLevel;
-        const float detectorCoeff = detectorRising
-            ? optoDetectorAttack : optoDetectorRelease;
-        d.detectorLevel = detectorAbs
-            + (d.detectorLevel - detectorAbs) * detectorCoeff;
-        const bool detectorPeakRising = detectorAbs > d.detectorPeak;
-        const float detectorPeakCoeff = detectorPeakRising
-            ? optoDetectorPeakAttack : optoDetectorPeakRelease;
-        d.detectorPeak = detectorAbs
-            + (d.detectorPeak - detectorAbs) * detectorPeakCoeff;
-        const float chargePeakCoeff = detectorAbs > d.chargePeak
-            ? optoDetectorPeakAttack : optoChargePeakRelease;
-        d.chargePeak = detectorAbs
-            + (d.chargePeak - detectorAbs) * chargePeakCoeff;
-        constexpr float detectorSupportFloor = 0.006309573f; // -44 dBFS
-        const bool detectorAboveSupportFloor
-            = detectorInputAbs > detectorSupportFloor;
-        // A persistent sub-audible floor can keep the relative silence gate
-        // open. Require 30 ms: even a 20 Hz sine whose peak only just clears
-        // the support floor returns above it within 25 ms, so audible
-        // low-frequency zero crossings cannot masquerade as floor noise.
-        const bool hadPersistentFloor
-            = d.detectorFloorOnlySamples >= optoDetectorFloorHoldSamples;
-        if (detectorAboveSupportFloor
-            && hadPersistentFloor)
-        {
-            // A hard reset at detectorSupportFloor made otherwise identical
-            // events over -43 and -45 dBFS beds differ by 6.84 dB. Blend the
-            // retained exposure across the sub-audible floor range: a -80 dBFS
-            // or lower floor behaves as silence, while the blend reaches the
-            // uninterrupted-exposure path continuously at -44 dBFS.
-            constexpr float lowestExposureFloorDb = -80.0f;
-            constexpr float detectorSupportFloorDb = -44.0f;
-            const float floorExposurePosition = std::clamp(
-                (gainToDecibels(std::max(d.detectorFloorPeak, 1.0e-12f))
-                    - lowestExposureFloorDb)
-                    / (detectorSupportFloorDb - lowestExposureFloorDb),
-                0.0f, 1.0f);
-            const float floorExposureBlend = floorExposurePosition
-                * floorExposurePosition * (3.0f - 2.0f * floorExposurePosition);
-            d.detectorExposureSamples = static_cast<int>(std::lround(
-                static_cast<float>(d.detectorExposureSamples)
-                    * floorExposureBlend));
-            d.detectorEventActive = false;
-            d.nextEventWeight = 1.0f - floorExposureBlend;
-        }
-        // Once a real floor starts, bridge its exact waveform-zero samples;
-        // do not turn an untouched run of digital zero into floor history.
-        const bool floorSignalPresent = detectorInputAbs > 1.0e-12f
-            || d.detectorFloorOnlySamples > 0;
-        if (!detectorAboveSupportFloor && floorSignalPresent)
-        {
-            // Track the recent floor rather than freezing the first few
-            // samples after the signal crosses -44 dBFS. The 10 ms attack /
-            // 100 ms release spans low-frequency cycles but forgets a decayed
-            // tail before a later event. The slower attack also prevents the few
-            // below-threshold samples at an event's rising edge from
-            // materially contaminating the estimate before it is consumed.
-            const float floorPeakCoeff
-                = detectorInputAbs > d.detectorFloorPeak
-                    ? optoDetectorFloorPeakAttack
-                    : optoDetectorFloorPeakRelease;
-            d.detectorFloorPeak = detectorInputAbs
-                + (d.detectorFloorPeak - detectorInputAbs) * floorPeakCoeff;
-            d.detectorFloorOnlySamples = std::min(
-                d.detectorFloorOnlySamples + 1, optoDetectorFloorHoldSamples);
-        }
-        else
-        {
-            d.detectorFloorOnlySamples = 0;
-            d.detectorFloorPeak = 0.0f;
-        }
-        const int previousDetectorExposureSamples = d.detectorExposureSamples;
-        d.detectorExposureSamples = hasDetectorInput
-            ? std::min(d.detectorExposureSamples + 1, optoChargeTopOffSamples)
-            : 0;
-        // The static law was measured with the original 50 us / 40 ms peak
-        // follower on a 997 Hz sine.  At 48 kHz, fixed-point iteration of one
-        // full-wave period gives peaks of 0.925093862 for the 0.4 ms / 8 ms
-        // integrator and 0.994476788 for that peak follower.  Therefore the
-        // exact calibration-condition correction is the peak ratio
-        // 0.994476788 / 0.925093862 = 1.07500095 (= 0.628177 dB), stored as
-        // the linear factor so the per-sample path carries no pow().
-        constexpr float detectorIntegrationCalibrationGain = 1.07500095f;
-        const float integratedDetectorLevel = d.detectorLevel
-            * detectorIntegrationCalibrationGain;
-        const float effectiveDetectorLevel = std::min(
-            d.detectorPeak, integratedDetectorLevel);
-        const float uncorrectedInputLevelDb = gainToDecibels(effectiveDetectorLevel);
-        // A calibrated 997 Hz sine leaves at most 0.138029 dB between the peak
-        // reference and integrated detector, whereas the fitted gaussian
-        // waveform averages 3.629921 dB and peaks at 6.186975 dB.  The excess
-        // is therefore a measured fluctuating-signal term, not a knob offset.
-        constexpr float sineSeparationGuardDb = 0.15f;
-        constexpr float maximumFittedSeparationDb = 6.19f;
-        const float detectorSeparationDb = gainToDecibels(
-            d.detectorPeak / std::max(integratedDetectorLevel, 1.0e-12f));
-        const float fluctuationDb = std::clamp(
-            detectorSeparationDb - sineSeparationGuardDb,
-            0.0f, maximumFittedSeparationDb - sineSeparationGuardDb);
-        const float exposureSaturation = std::clamp(
-            static_cast<float>(d.detectorExposureSamples)
-                / static_cast<float>(optoChargeTopOffSamples),
-            0.0f, 1.0f);
-        const float sustainedExposurePosition = std::clamp(
-            (exposureSaturation - 0.75f) / 0.25f, 0.0f, 1.0f);
-        const float sustainedExposureBlend = sustainedExposurePosition
-            * sustainedExposurePosition * (3.0f - 2.0f * sustainedExposurePosition);
-        // The constrained fit uses the -36/-30/-18/-12 dBFS broadband points
-        // while retaining the crest triplet; -24 dBFS is held out. Sustained
-        // exposure uses the separately measured dense-programme correction.
-        constexpr float broadbandFitPivotDb = -18.0f;
-        const float broadbandFitAtPivot = 0.010f
-            + (0.055f - 0.010f) * sustainedExposureBlend;
-        constexpr float broadbandFitSlope = -0.0167f;
-        const float broadbandCorrectionDb = fluctuationDb
-            * (broadbandFitAtPivot + broadbandFitSlope
-                * (uncorrectedInputLevelDb - broadbandFitPivotDb));
-        const float inputLevelDb = uncorrectedInputLevelDb
-            + broadbandCorrectionDb;
-        const float thresholdDb = optoThresholdDb(pr, limit);
-        const float overdriveDb = inputLevelDb - thresholdDb;
-        const float targetGrDb = pr <= 10.0f ? 0.0f : optoCurveDb(overdriveDb, limit);
-        // The fast cell has a second, peak-fed charge path. The isolated event
-        // grid shows full peak contribution at -12 dBFS but progressively
-        // companded contribution toward 0 dBFS; sustained signals are
-        // unchanged because their calibrated integrated and peak levels meet.
-        const float peakInputLevelDb = uncorrectedInputLevelDb
-            + std::max(0.0f, detectorSeparationDb);
-        const float peakSeparationDb = std::max(
-            0.0f, peakInputLevelDb - inputLevelDb);
-        const float fastLevelBlend = std::clamp(
-            -peakInputLevelDb / 12.0f, 0.0f, 1.0f);
-        const float fastExposureBlend = std::clamp(
-            1.0f - static_cast<float>(
-                d.detectorExposureSamples - optoDetectorSilenceHoldSamples)
-                / static_cast<float>(std::max(
-                    1, optoFastPathSamples - optoDetectorSilenceHoldSamples)),
-            0.0f, 1.0f);
-        const float fastPeakBlend = fastLevelBlend * fastExposureBlend;
-        const float fastInputLevelDb = inputLevelDb
-            + peakSeparationDb * fastPeakBlend;
-        const float fastTargetGrDb = pr <= 10.0f ? 0.0f
-            : fastPeakBlend > 0.0f
-                ? optoCurveDb(fastInputLevelDb - thresholdDb, limit)
-                : targetGrDb;
-        // The release populations partition, rather than augment, the static
-        // law. Their measured 11.02 / 8.01 / 3.20 dB amplitudes sum to the
-        // 22.23 dB target at the memory-curve operating point.
-        constexpr float highDriveTotal = 11.02f + 8.01f + 3.20f;
-        constexpr float highDriveFastShare = 11.02f / highDriveTotal;
-        constexpr float highDriveMidShare = 8.01f / highDriveTotal;
-        constexpr float highDriveSlowShare = 3.20f / highDriveTotal;
-        // Projecting the corrected 5 s low-drive exposure through the same
-        // fixed taus gives this fully charged operating-point partition.
-        constexpr float lowDriveTotal = 4.469f + 3.749f + 2.674f;
-        constexpr float lowDriveFastShare = 4.469f / lowDriveTotal;
-        constexpr float lowDriveMidShare = 3.749f / lowDriveTotal;
-        constexpr float lowDriveSlowShare = 2.674f / lowDriveTotal;
-        const float driveBlend = 1.0f / (1.0f + std::exp(
-            -(overdriveDb - 5.0f) / 0.8f));
-        const float baseFastShare = lowDriveFastShare
-            + (highDriveFastShare - lowDriveFastShare) * driveBlend;
-        const float baseMidShare = lowDriveMidShare
-            + (highDriveMidShare - lowDriveMidShare) * driveBlend;
-        const float limitFastShareBoost = limit ? 0.175f : 0.0f;
-        const float fastShare = baseFastShare + limitFastShareBoost;
-        const float midShare = baseMidShare - limitFastShareBoost;
-        const float slowShare = lowDriveSlowShare
-            + (highDriveSlowShare - lowDriveSlowShare) * driveBlend;
-        // The base 21 ms fast charge applies at the amplitude-fit point. At
-        // high drive, the rate and remaining-capacity exponents are calibrated
-        // jointly against isolated events and the 2/5/20/40 Hz repeated-burst
-        // points (10 Hz held out). An empty population charges quickly, then
-        // slows as it approaches capacity.
-        constexpr float lowDriveAttackRate = 2.1f;
-        constexpr float highDriveFastAttackRate = 1600.0f;
-        constexpr float highDriveSlowAttackRate = 200.0f;
-        constexpr float highDriveFastChargeExponent = 5.1f;
-        constexpr float highDriveSlowChargeExponent = 1.5f;
-        constexpr float highDriveFastMinimumChargeRate = 0.150f;
-        // The isolated-event grid shows that empty-cell charge is much less
-        // level-dependent than final GR capacity. Scale the high-drive rate
-        // inversely around the fitted 18 dB pivot; later fill remains limited
-        // by the capacity exponent below.
-        constexpr float fastRatePivotDb = 18.0f;
-        const float fastRateRatio
-            = fastRatePivotDb / std::max(targetGrDb, 1.0f);
-        const float fastRateRatioSquared = fastRateRatio * fastRateRatio;
-        const float fastRateCompanding = std::clamp(
-            fastRateRatioSquared * fastRateRatioSquared, 0.25f, 2.0f);
-        const float compandedFastAttackRate
-            = highDriveFastAttackRate * fastRateCompanding;
-        const float fastExposureRateScale = 1.0f - sustainedExposureBlend;
-        const float fastAttackRate = lowDriveAttackRate
-            + (compandedFastAttackRate * fastExposureRateScale
-                - lowDriveAttackRate) * driveBlend;
-        const float selectedHighDriveSlowAttackRate = limit
-            ? 50.0f : highDriveSlowAttackRate;
-        const float slowAttackRate = lowDriveAttackRate
-            + (selectedHighDriveSlowAttackRate - lowDriveAttackRate) * driveBlend;
-        const float limitSlowRateBlend = std::clamp(
-            (pr - 60.0f) / 40.0f, 0.0f, 1.0f);
-        const float selectedLimitSlowPopulationAttackRate = 5.0f
-            + (35.0f - 5.0f) * limitSlowRateBlend;
-        const float limitSlowPopulationAttackRate = lowDriveAttackRate
-            + (selectedLimitSlowPopulationAttackRate - lowDriveAttackRate)
-                * driveBlend;
-        const float fastChargeExponent = 1.0f
-            + (highDriveFastChargeExponent - 1.0f) * driveBlend;
-        const float slowChargeExponent = 1.0f
-            + (highDriveSlowChargeExponent - 1.0f) * driveBlend;
-        const float fastCellTargetGrDb = fastShare * fastTargetGrDb;
-        d.fastSustainedTargetDb = fastCellTargetGrDb
-            + (d.fastSustainedTargetDb - fastCellTargetGrDb)
-                * optoSustainedTargetSmoothing;
-        // Positive motion of the already-smoothed cell target distinguishes a
-        // settled pedestal from continuing programme without inspecting the
-        // waveform or switching regimes.  Normalising the leaky result by PR
-        // separates the measured pedestal ceiling (0.102) from sustained
-        // broadband onset (0.155); the slower follower makes that boundary a
-        // continuous 100 ms attack / 500 ms release transition.
-        const float positiveSustainedTargetChargeDb = std::max(
-            d.fastSustainedTargetDb - d.previousSustainedTargetDb, 0.0f);
-        d.previousSustainedTargetDb = d.fastSustainedTargetDb;
-        d.programmeMotion = std::min(
-            d.programmeMotion * optoProgrammeMotionRelease
-                + 0.010f * positiveSustainedTargetChargeDb,
-            1.0f);
-        const float programmeActivityCoeff
-            = d.programmeMotion > d.programmeActivity
-                ? optoProgrammeActivityAttack : optoProgrammeMotionRelease;
-        d.programmeActivity = d.programmeMotion
-            + (d.programmeActivity - d.programmeMotion)
-                * programmeActivityCoeff;
-        // The nonlinear attack was fitted at the shipping 2x processing rate
-        // (96 kHz). Advance that discrete charge law on a fixed 96 kHz clock;
-        // scaling 1-coeff at the processing rate saturates at different attack
-        // rates for 1x, 2x and 4x.
-        const float fastAttackCoeffAtCalibrationRate = std::max(
-            0.0f, 1.0f
-                - (1.0f - optoFastAttackAtCalibrationRate) * fastAttackRate);
-        d.fastAttackReferencePhase += optoCalibrationRateRatio;
-        const int fastAttackReferenceSteps = static_cast<int>(
-            d.fastAttackReferencePhase);
-        d.fastAttackReferencePhase -= static_cast<float>(
-            fastAttackReferenceSteps);
-        const float slowAttackCoeff = std::max(
-            0.0f, 1.0f - (1.0f - optoSlowAttack) * slowAttackRate);
-        const float slowPopulationAttackCoeff = limit ? std::max(
-            0.0f, 1.0f - (1.0f - optoSlowAttack)
-                * limitSlowPopulationAttackRate) : slowAttackCoeff;
-        const float midCellTargetGrDb = midShare * targetGrDb;
-        const float slowCellTargetGrDb = slowShare * targetGrDb;
-        const float standingGrDb = d.fastGrDb + d.midGrDb + d.slowGrDb;
-        const float positiveCellChargeDb = std::max(
-            standingGrDb - d.previousCellGrDb, 0.0f);
-        d.previousCellGrDb = standingGrDb;
-        const float detectorSupport = std::clamp(
-            d.detectorPeak / detectorSupportFloor, 0.0f, 1.0f);
-        const float cellLoaded = std::clamp(standingGrDb / 0.50f, 0.0f, 1.0f);
-        const float recentEventChargeTarget = 1.0f
-            - exposureSaturation * detectorSupport * cellLoaded;
-        const float recentEventChargeCoeff
-            = recentEventChargeTarget > d.recentEventCharge
-                ? optoRecentEventChargeReset : optoRecentEventChargeRelease;
-        d.recentEventCharge = recentEventChargeTarget
-            + (d.recentEventCharge - recentEventChargeTarget)
-                * recentEventChargeCoeff;
-        constexpr float eventHistoryPerChargedDb = 0.000020f;
-        d.recentEventCharge = std::min(
-            d.recentEventCharge
-                + eventHistoryPerChargedDb * positiveCellChargeDb,
-            1.0f);
-        const float settledEventHistory = 1.0f - d.recentEventCharge;
-        const float settledHistorySquared
-            = settledEventHistory * settledEventHistory;
-        const float settledHistoryFourth
-            = settledHistorySquared * settledHistorySquared;
-        const float settledEventWeight = settledHistoryFourth
-            * settledHistoryFourth * settledHistoryFourth;
-        const float settledEventDrainWeight
-            = settledHistoryFourth * settledEventHistory;
-        const float pedestalAttackStrength = 1.75f
-            + 24.0f * std::exp(-standingGrDb / 6.5f);
-        const float continuousAttackScale = 1.0f
-            + settledEventWeight * (pedestalAttackStrength - 1.0f);
-        // The live dense trace overcharged only while a high-drive, already
-        // loaded cell was leaving its reset state.  Fade that startup charge
-        // over the same event-history reservoir; an empty short-event cell and
-        // the independently calibrated Limit path remain unchanged.
-        const float highDriveChargePosition = std::clamp(
-            (pr * 0.01f - 0.70f) / 0.30f, 0.0f, 1.0f);
-        const float highDriveChargeWeight = highDriveChargePosition
-            * highDriveChargePosition
-            * (3.0f - 2.0f * highDriveChargePosition);
-        const float programmeLoadPosition = std::clamp(
-            (standingGrDb - 1.5f) / 1.5f, 0.0f, 1.0f);
-        const float programmeLoadWeight = programmeLoadPosition
-            * programmeLoadPosition
-            * (3.0f - 2.0f * programmeLoadPosition);
-        const float loadedHighDriveWeight
-            = highDriveChargeWeight * programmeLoadWeight;
-        const float startupAttackWeight = std::sqrt(d.recentEventCharge);
-        const float startupAttackScale = 1.0f
-            - 0.90f * startupAttackWeight * loadedHighDriveWeight;
-        const float programmeAttackScale = continuousAttackScale
-            * (limit ? 1.0f : startupAttackScale);
-        // 1e-9 is a linear-amplitude denominator floor for a peak/peak
-        // ratio (both operands at audio scale); the 1e-12 below is a log-domain
-        // floor before dB conversion.  Different domains, deliberately
-        // different constants; neither is a gating branch (the decisions flow
-        // through the continuous clamps above).
-        const float chargePeakRatio = d.chargePeak
-            / std::max(d.detectorPeak, 1.0e-9f);
-        const float fastChargeSupport = std::clamp(
-            (chargePeakRatio - 0.10f) / 0.20f, 0.0f, 1.0f);
-        const float continuousChargeSupport = 1.0f
-            - settledEventDrainWeight * (1.0f - fastChargeSupport);
-        const float coherentFastAttack = std::max(
-            0.0f, 1.0f - (1.0f - fastAttackCoeffAtCalibrationRate)
-                * programmeAttackScale);
-        const float coherentSlowAttack = std::max(
-            0.0f, 1.0f - (1.0f - slowAttackCoeff)
-                * programmeAttackScale);
-        const float coherentSlowPopulationAttack = std::max(
-            0.0f, 1.0f - (1.0f - slowPopulationAttackCoeff)
-                * programmeAttackScale);
-        const bool detectorDriven = detectorAbs > effectiveDetectorLevel * 0.4f;
-        // Support is intentionally judged against the frequency-weighted peak:
-        // replacing it with an unweighted peak preserves the 1 kHz grid but
-        // adds 0.55 dB of over-compression on the dense reference programme.
-        const bool detectorInputPeakSupported = detectorInputAbs
-                > detectorSupportFloor || detectorInputAbs
-            > std::max(d.detectorPeak * 0.04f, 1.0e-9f);
-        const bool detectorInputStartsNewEvent = detectorInputAbs
-            > std::max(d.detectorPeak * 0.50f, 1.0e-9f);
-        const int previousUnsupportedSamples = d.detectorUnsupportedSamples;
-        d.detectorUnsupportedSamples = detectorInputPeakSupported
-            ? 0 : std::min(d.detectorUnsupportedSamples + 1,
-                           optoDetectorSilenceHoldSamples);
-        const bool detectorSupported = detectorInputPeakSupported
-            || d.detectorUnsupportedSamples < optoDetectorSilenceHoldSamples;
-        d.programmeMemory *= optoProgrammeMemoryRelease;
-        if (hasDetectorInput && detectorAboveSupportFloor
-            && !d.detectorEventActive)
-        {
-            d.programmeMemory = std::min(
-                d.programmeMemory + 0.25f * d.nextEventWeight, 1.0f);
-            d.detectorEventActive = true;
-            d.nextEventWeight = 1.0f;
-        }
-        else if (!hasDetectorInput)
-        {
-            d.detectorEventActive = false;
-            d.nextEventWeight = 1.0f;
-        }
-        if (!detectorSupported
-            && previousUnsupportedSamples < optoDetectorSilenceHoldSamples)
-            d.detectorReleaseExposureSamples = previousDetectorExposureSamples;
-        else if (detectorInputStartsNewEvent)
-            d.detectorReleaseExposureSamples = 0;
-        const bool retainPreviousExposure
-            = d.detectorReleaseExposureSamples > 0;
-        const int releaseExposureSamples = retainPreviousExposure
-            ? d.detectorReleaseExposureSamples : d.detectorExposureSamples;
-        const float releaseExposureLinear = std::clamp(
-            static_cast<float>(releaseExposureSamples)
-                / static_cast<float>(optoChargeTopOffSamples),
-            0.0f, 1.0f);
-        const float releaseExposureBlend
-            = releaseExposureLinear * releaseExposureLinear;
-        const float repetitionBlend = std::clamp(
-            (d.programmeMemory - 0.25f) / 0.75f, 0.0f, 1.0f);
-        const float repeatedExposureTopOff = 0.90f * repetitionBlend * std::clamp(
-            (static_cast<float>(d.detectorExposureSamples)
-                - 0.40f * static_cast<float>(optoChargeTopOffSamples))
-                / (0.10f * static_cast<float>(optoChargeTopOffSamples)),
-            0.0f, 1.0f);
-        const float fastMinimumChargeRate = highDriveFastMinimumChargeRate
-            * driveBlend * repeatedExposureTopOff;
-        const float fastRecoveryBlend = std::max(
-            releaseExposureBlend, repetitionBlend);
-        const float exposureDependentFastRelease = optoFlashRelease
-            + (optoFastRelease - optoFlashRelease) * fastRecoveryBlend;
-        const float fastRelease = exposureDependentFastRelease
-            + (optoSlowRelease - exposureDependentFastRelease) * repetitionBlend;
-        const float midReleaseExposureBlend = std::clamp(
-            3.2f * static_cast<float>(releaseExposureSamples)
-                / static_cast<float>(optoChargeTopOffSamples),
-            0.0f, 1.0f);
-        const float exposureDependentMidRelease = detectorSupported ? optoMidRelease
-            : optoFlashRelease
-                + (optoMidRelease - optoFlashRelease)
-                    * std::max(midReleaseExposureBlend, repetitionBlend);
-        const auto followTarget = [detectorDriven, detectorSupported,
-                                   hasDetectorInput, continuousChargeSupport](
-                                      float& state, float target, float attack,
-                                      float release, float chargeExponent,
-                                      float minimumChargeRate,
-                                      int attackSteps = 1) noexcept {
-            // Silence discharges the cells directly; cascading the detector's
-            // 40 ms waveform integration into them is what produced D3e's
-            // false 8-120 ms hold. A stale detector envelope may continue a
-            // release toward a lower target, but cannot recharge a cell until
-            // the selected detector input supports it again.
-            if (!hasDetectorInput)
-                state *= release;
-            else if (!detectorSupported)
-                state *= release;
-            else if (!detectorDriven && target > state)
-                return;
-            else if (target > state)
-            {
-                const auto advanceAttack = [&] {
-                    const float remainingFraction = target > 1.0e-9f
-                        ? std::clamp((target - state) / target, 0.0f, 1.0f)
-                        : 0.0f;
-                    const float curvedAttackStep = (1.0f - attack) * std::max(
-                        std::pow(remainingFraction, chargeExponent - 1.0f),
-                        minimumChargeRate) * continuousChargeSupport;
-                    state += curvedAttackStep * (target - state);
-                };
-                for (int step = 0; step < attackSteps; ++step)
-                    advanceAttack();
-            }
-            else
-                state = target + (state - target) * release;
-        };
-        // Three gain-reduction populations share the static capacity. The
-        // fast and mid releases interpolate with event exposure and programme
-        // memory; the slow optical afterglow retains its measured 1.174 s tau.
-        followTarget(d.fastGrDb, fastCellTargetGrDb,
-                     coherentFastAttack, fastRelease,
-                     fastChargeExponent, fastMinimumChargeRate,
-                     fastAttackReferenceSteps);
-        followTarget(d.midGrDb, midCellTargetGrDb,
-                     coherentSlowAttack, exposureDependentMidRelease,
-                     slowChargeExponent, 0.0f);
-        followTarget(d.slowGrDb, slowCellTargetGrDb,
-                     coherentSlowPopulationAttack, optoSlowRelease,
-                     slowChargeExponent, 0.0f);
-        const float sustainedTopOffBase = std::min(
-            d.fastSustainedTargetDb, fastCellTargetGrDb);
-        // The 0.12 dB full-scale bias closes the measured long-exposure
-        // residual. Scale it into the onset so a target crossing zero cannot
-        // toggle a 0.12 dB step; the exposure blend starts at 15 ms and reaches
-        // full strength at 20 ms.
-        const float sustainedTopOffTarget = sustainedTopOffBase > 0.0f
-            ? sustainedTopOffBase
-                + 0.12f * std::min(sustainedTopOffBase, 1.0f)
-            : 0.0f;
-        if (sustainedExposureBlend > 0.0f
-            && sustainedTopOffTarget > d.fastGrDb)
-        {
-            const float limitTopOffAttack = optoLimitFastTopOffAttack
-                + (optoLimitSlowTopOffAttack - optoLimitFastTopOffAttack)
-                    * limitSlowRateBlend;
-            const float sustainedTopOffAttack = limit
-                ? limitTopOffAttack : optoSustainedTopOffAttack;
-            const float blendedTopOffAttack = sustainedExposureBlend >= 1.0f
-                ? sustainedTopOffAttack
-                : std::pow(sustainedTopOffAttack, sustainedExposureBlend);
-            d.fastGrDb = sustainedTopOffTarget
-                + (d.fastGrDb - sustainedTopOffTarget) * blendedTopOffAttack;
-        }
-        const float chargeInputLevelDb = gainToDecibels(
-            std::max(d.chargePeak, 1.0e-12f));
-        const float chargeTargetGrDb = pr <= 10.0f ? 0.0f
-            : optoCurveDb(chargeInputLevelDb - thresholdDb, limit);
-        const float chargedTotalGrDb
-            = d.fastGrDb + d.midGrDb + d.slowGrDb;
-        // A settled optical cell accepts a much larger two-millisecond charge
-        // than a cell in ongoing programme.  The continuous activity weight
-        // above owns that distinction.  Capacity is the joint fit to the 16
-        // clean pedestal/event cells: state suppression is approximately
-        // -0.75 dB of lift per dB of standing GR, event-level growth is
-        // sub-linear, and the low-PR exponent preserves the PR 0.40 cells.
-        // Limit is excluded because its transient grid is separately fitted.
-        const float isolatedNormalisedDrive = pr * 0.01f;
-        const float isolatedBusyPosition = std::clamp(
-            (d.programmeActivity
-                    / std::max(isolatedNormalisedDrive, 0.10f)
-                - 0.11f) / 0.04f,
-            0.0f, 1.0f);
-        const float isolatedBusyWeight = isolatedBusyPosition
-            * isolatedBusyPosition * (3.0f - 2.0f * isolatedBusyPosition);
-        const float isolatedFluctuationSupport = std::clamp(
-            fluctuationDb / 1.0f, 0.0f, 1.0f);
-        const float isolatedEventDriveBase = std::clamp(
-            (isolatedNormalisedDrive - 0.10f) / 0.60f, 0.0f, 1.0f);
-        const float isolatedEventDrive = std::pow(
-            isolatedEventDriveBase, 2.3f);
-        const float isolatedEventLevel = 1.0f - fastLevelBlend;
-        const float isolatedEventLevelSquared
-            = isolatedEventLevel * isolatedEventLevel;
-        const float isolatedHighEventPosition = std::clamp(
-            (isolatedEventLevel - 0.50f) / 0.50f, 0.0f, 1.0f);
-        const float isolatedHighEventWeight = isolatedHighEventPosition
-            * isolatedHighEventPosition
-            * (3.0f - 2.0f * isolatedHighEventPosition);
-        const float isolatedEventCapacityDb = isolatedEventDrive
-            * ((10.0f + 12.4f * isolatedEventLevel
-                    + 10.7f * isolatedEventLevelSquared)
-                    * std::exp(-standingGrDb / 4.6f)
-                + 64.0f * isolatedHighEventWeight
-                    * std::exp(-standingGrDb / 2.5f));
-        const float isolatedTargetSupport = std::clamp(
-            targetGrDb, 0.0f, 1.0f);
-        const float isolatedEventSupport = (limit ? 0.0f : 1.0f)
-            * sustainedExposureBlend
-            * (1.0f - isolatedBusyWeight) * isolatedFluctuationSupport
-            * fastChargeSupport * isolatedTargetSupport;
-        const float isolatedEventTargetDb
-            = isolatedEventCapacityDb * isolatedEventSupport;
-        if (isolatedEventTargetDb > d.isolatedEventGrDb)
-            d.isolatedEventGrDb = isolatedEventTargetDb
-                + (d.isolatedEventGrDb - isolatedEventTargetDb)
-                    * optoIsolatedEventAttack;
-        else
-            d.isolatedEventGrDb *= optoIsolatedEventRelease;
-        const float eventExcessGrDb = std::max(
-            chargedTotalGrDb - chargeTargetGrDb, 0.0f);
-        if (eventExcessGrDb > 0.0f && chargedTotalGrDb > 1.0e-9f)
-        {
-            const float eventReleaseSeconds = 0.007f
-                + (0.024f - 0.007f)
-                    * std::clamp(eventExcessGrDb / 15.0f, 0.0f, 1.0f);
-            const float eventRelease = std::exp(
-                -optoInvSampleRate / eventReleaseSeconds);
-            // Settled events use the full measured excess drain.  Ongoing
-            // programme continuously approaches the PR-squared drain that
-            // closes the five-point live A/B; a small low-state term prevents
-            // PR 0.40 from being under-compressed.  The target/charge gap adds
-            // drain while a settled event is ending, without narrowing the
-            // sustained-tone or busy-programme paths.
-            const float normalisedDrive = pr * 0.01f;
-            const float lowStateDrainPosition = std::clamp(
-                (6.0f - chargedTotalGrDb) / 4.0f, 0.0f, 1.0f);
-            const float lowStateDrainWeight = lowStateDrainPosition
-                * lowStateDrainPosition
-                * (3.0f - 2.0f * lowStateDrainPosition);
-            const float driveDrainScale = std::min(
-                normalisedDrive * normalisedDrive
-                    + 0.20f * lowStateDrainWeight,
-                1.0f);
-            const float normalisedProgrammeActivity = d.programmeActivity
-                / std::max(normalisedDrive, 0.10f);
-            const float busyDrainPosition = std::clamp(
-                (normalisedProgrammeActivity - 0.11f) / 0.04f,
-                0.0f, 1.0f);
-            const float busyDrainWeight = busyDrainPosition
-                * busyDrainPosition * (3.0f - 2.0f * busyDrainPosition);
-            const float programmeDrainScale = 1.0f
-                + busyDrainWeight * (driveDrainScale - 1.0f);
-            const float eventDrainPosition = std::clamp(
-                (targetGrDb - chargeTargetGrDb - 1.0f) / 1.25f,
-                0.0f, 1.0f);
-            const float eventDrainDemand = eventDrainPosition
-                * eventDrainPosition * (3.0f - 2.0f * eventDrainPosition);
-            const float eventFluctuationSupport = std::clamp(
-                fluctuationDb / 0.50f, 0.0f, 1.0f);
-            const float supplementalDrainSupport = fastChargeSupport
-                * (1.0f - busyDrainWeight) * eventDrainDemand
-                * eventFluctuationSupport;
-            const float eventDrainSupport = 1.0f - fastChargeSupport
-                + supplementalDrainSupport;
-            const float drainEngagement = settledEventDrainWeight
-                * programmeDrainScale * eventDrainSupport;
-            const float excessFraction = eventExcessGrDb / chargedTotalGrDb;
-            const float drainGain = 1.0f
-                - drainEngagement * (1.0f - eventRelease) * excessFraction;
-            d.fastGrDb *= drainGain;
-            d.midGrDb *= drainGain;
-            d.slowGrDb *= drainGain;
-        }
-        const float dynamicGrDb = std::max(
-            0.0f, d.fastGrDb + d.midGrDb + d.slowGrDb
-                + d.isolatedEventGrDb);
-        const float dynamicMeasuredGain = decibelsToGain(-dynamicGrDb);
-        d.gain = dynamicMeasuredGain;
-        if (!std::isfinite(d.gain)) d.gain = 1.0f;
+        // Side-chain selection, level estimator, static law and cell
+        // populations are OptoCell (MultiCompOptoCell.hpp). It advances this
+        // channel to the gain for the next sample and leaves this sample's
+        // detector level and dynamic reduction for the colour blend below.
+        optoCell.process(ch, input, compressed, sidechain, external,
+                         optoDetector, useOptoDetector, limit,
+                         p.optoPeakReduction.load(std::memory_order_relaxed));
+        const float inputLevelDb = optoCell.inputLevelDb(ch);
+        const float dynamicGrDb = optoCell.dynamicGrDb(ch);
         const float makeup = optoKnobToLinearGain(
             p.optoGain.load(std::memory_order_relaxed));
 
@@ -2447,12 +1995,12 @@ private:
         // toward it with physical cell reduction relative to the reduction
         // this same detector level would produce at PR=0.7. This ties colour
         // to compression, not to the knob position: no GR means no blend.
-        const float referenceGrDb = optoCurveDb(
-            inputLevelDb - optoThresholdDb(70.0f, limit), limit);
+        const float referenceGrDb = optoColourReferenceCurveDb(
+            inputLevelDb - optoColourReferenceThresholdDb(limit), limit);
         const float compressionBlend = referenceGrDb > 1.0e-6f
             ? dynamicGrDb / referenceGrDb : 0.0f;
 
-        const float inputAbs = std::abs(input);
+        const float inputAbs = std::abs(audio);
         // Hold longer than the 1 kHz calibration period so its normalisation
         // peak is constant, while the measured 40 ms release still follows
         // genuine level drops on programme material.
@@ -2466,14 +2014,14 @@ private:
         else
             d.colourPeak *= optoColourPeakRelease;
         const float colourPeak = std::max(d.colourPeak, 1.0e-12f);
-        const float u = std::clamp(input / colourPeak, -1.0f, 1.0f);
+        const float u = std::clamp(audio / colourPeak, -1.0f, 1.0f);
         const float u2 = u * u;
         const float u3 = u2 * u;
         const float u4 = u2 * u2;
         const float u5 = u4 * u;
         // Chebyshev bases synthesize H2-H5 without an H1 component for a
         // settled sinusoid. Even bases omit their constant term so silence
-        // produces silence; the resulting DC is removed below.
+        // produces silence; the resulting DC is left to the post high-pass.
         const float bases[4] = {
             2.0f * u2,
             4.0f * u3 - 3.0f * u,
@@ -2486,10 +2034,15 @@ private:
         for (size_t harmonic = 0; harmonic < ratios.size(); ++harmonic)
             colour += ratios[harmonic] * bases[harmonic];
         colour *= colourPeak * appliedGain * makeup;
-        d.colourDc += optoColourDcSmoothing * (colour - d.colourDc);
         if (makeup == 0.0f) return 0.0f;
-        const float out = compressed * makeup + colour - d.colourDc;
-        return optoOutputStage(out);
+        // The native sub-audio high-passes bracket the output nonlinearity
+        // (MultiCompOptoShelf.hpp). The pre high-pass sees the linear signal
+        // only; the colour stands for harmonics generated inside the native
+        // nonlinearity, so its even-order DC, like the curve's own, is left
+        // to the post high-pass, as in native.
+        const float out = optoPreHighPass[ch].process(compressed * makeup)
+            + colour;
+        return optoPostHighPass[ch].process(optoOutputStage(out));
     }
 
     float processFET(float input, int ch, float sidechain,
@@ -2719,7 +2272,13 @@ private:
                                      : transformedInput * inputGain);
             vintageInstantLevel = instantLevel;
             vintageProgrammeActive = instantLevel > 0.03f;
-            const float peakReleaseCoeff = std::exp(-1.0f / (0.040f * sr));
+            // The detector must reach the same upper-knob floor as the gain
+            // cell; retaining 40 ms here held even a 25 ms phrase after it ended.
+            const float peakReleaseSeconds = 0.040f + (0.004f - 0.040f)
+                * std::clamp(2.5f * fetReleasePosition(
+                    p.fetRelease.load(std::memory_order_relaxed)) - 1.25f, 0.0f, 1.0f)
+                * fetProgrammeReleaseDepth(d.programmeMaximumGrDb);
+            const float peakReleaseCoeff = std::exp(-1.0f / (peakReleaseSeconds * sr));
             if (instantLevel > d.peak)
                 d.peak = instantLevel;
             else
@@ -3044,11 +2603,18 @@ private:
                 : ratioIndex == 1 ? 0.875f
                 : ratioIndex == 2 ? 0.842f
                 : ratioIndex == 3 ? 0.762f : 1.0f;
-            const float fastReleaseSeconds = ratioIndex == 4
-                ? 0.020f
-                : (2.00f - 1.82f * releasePosition
+            const float legacyFastReleaseSeconds
+                = (2.00f - 1.82f * releasePosition
                     + 0.12f * releasePosition * releasePosition)
                     * ratioReleaseScale * exposureReleaseScale;
+            const float mappedFastReleaseSeconds
+                = fetProgrammeFastReleaseSeconds(releasePosition)
+                    * ratioReleaseScale * exposureReleaseScale;
+            const float fastReleaseSeconds = ratioIndex == 4
+                ? 0.020f
+                : legacyFastReleaseSeconds
+                    + (mappedFastReleaseSeconds - legacyFastReleaseSeconds)
+                        * fetProgrammeReleaseDepth(d.programmeMaximumGrDb);
             const float slowReleaseSeconds = ratioIndex == 4
                 ? 0.020f
                 : (2.00f - 2.17f * releasePosition
@@ -3307,30 +2873,55 @@ private:
         // Over Easy and detector-mode parameters stay host-visible for state
         // compatibility but the reference has no such controls; they are inert.
         auto& d = vca[ch];
-        // The DSP has already selected, filtered and stereo-linked the
-        // detector signal (max-law, as measured on the reference) for both
-        // internal and external operation. Under oversampling that signal is
-        // only linearly interpolated between native samples, and its images
-        // refilled the RMS reading above 8 kHz (detector_fr: -1.25 dB at
-        // 12 kHz against a flat reference). The oversampled sidechain equals
-        // the native sample exactly on the last phase of each host sample
-        // (MultiCompHelpers position = (phase + 1) / factor), so the RMS
-        // integrator runs once per host sample at the native rate and the gain
-        // is held across the phases -- the same native-rate control the FET
-        // stereo link uses.
-        const bool nativePhase = ++d.phase >= osFactor;
+        // The DSP supplies the selected, filtered, linked native sample on
+        // every phase. Integrate power once: interpolating the detector
+        // waveform first changes its high-frequency RMS. The audio reaches
+        // this gain cell later, through the upsampling FIR. Applying today's
+        // power to that delayed audio adds unintended lookahead: the measured
+        // 50 Hz burst reads 7.57 dB at 1x but 7.78 dB at 4x (reference 7.60 dB).
+        const bool nativePhase = d.phase == 0;
         if (nativePhase)
         {
-            d.phase = 0;
             // 35 ms: the single-constant fit to the reference step family gave
             // 31 ms (attack) / 35 ms (release); at 33 ms our attack and release
             // both read 1-7 ms fast against the reference, so the constant sits
             // at the release fit.
             constexpr float rmsSeconds = 0.035f;
             const float rmsCoeff = std::exp(-1.0f / (rmsSeconds * static_cast<float>(fs)));
-            d.rms = d.rms * rmsCoeff + sidechain * sidechain * (1.0f - rmsCoeff);
+            // The state climbs at most vcaDetectorRise per sample from its
+            // floor; energy arriving faster is discarded (MultiCompDbxLaw.hpp,
+            // DETECTOR ONSET).
+            const float previous = std::max(d.rms, vcaDetectorFloorPower);
+            d.rms = std::min(previous * rmsCoeff + sidechain * sidechain * (1.0f - rmsCoeff),
+                             previous * vcaDetectorRise);
+            // A finite but absurd input (|x| > 1.8e19) overflows the power
+            // state to infinity within one block; the aligned-history read
+            // below would then interpolate inf - inf = NaN and the gain cell
+            // would sit at unity with finite output, so the shared non-finite
+            // latch never fires. Drop such a state before it enters the
+            // history; the integrator recharges from the floor. Byte-identical
+            // for every finite state.
+            if (!std::isfinite(d.rms)) d.rms = 0.0f;
+            d.rmsWrite = (d.rmsWrite + 1u) & 63u;
+            d.rmsHistory[d.rmsWrite] = d.rms;
         }
-        const float level = std::sqrt(std::max(d.rms, 0.0f));
+        // The wide 127-tap DuskOversampler's upsampling group delays are 63
+        // samples at 2x, and 2*63 + 7 at 4x (31.5 / 33.25 host samples; the
+        // classic 47-tap stage gave 11.5 / 13.25). Read that same time in the
+        // native power history (the 64-entry ring covers it);
+        // interpolate power across phases before converting it to gain.
+        // The ring stays in host samples when oversampling is automated.
+        const float upDelay = osFactor == 4 ? 33.25f : osFactor == 2 ? 31.5f : 0.0f;
+        // Never negative for a phase inside the current factor; the clamp only
+        // guards the unsigned conversion against a stale phase.
+        const float delay = std::max(upDelay - static_cast<float>(d.phase) / osFactor, 0.0f);
+        const auto whole = static_cast<unsigned>(delay);
+        const float fraction = delay - static_cast<float>(whole);
+        const float recent = d.rmsHistory[(d.rmsWrite - whole) & 63u];
+        const float older = d.rmsHistory[(d.rmsWrite - whole - 1u) & 63u];
+        const float alignedRms = recent + (older - recent) * fraction;
+        d.phase = (d.phase + 1) % osFactor;
+        const float level = std::sqrt(std::max(alignedRms, 0.0f));
         // THRESHOLD reads in dB and the measured onset for a sine sits 0.26 dB
         // above the knob text (knee fit -26.742 dBFS for '-27.0'); the RMS of a
         // full-scale sine is 3.01 dB below its peak, and our own fixed-tau onset
@@ -3353,21 +2944,20 @@ private:
         // (~-69 dBc) is what this detector's own 2 kHz ripple imposes on a
         // 1 kHz carrier, so the gain is applied clean.
         d.envelope = decibelsToGain(-reduction);
-        return std::clamp(input * d.envelope * decibelsToGain(p.vcaOutput.load(std::memory_order_relaxed)),
-                          -2.0f, 2.0f);
+        // The reference's output gain remains linear at +20 dB: a -0.1 dBFS
+        // unity-ratio sine peaks at 9.888659 (2026-09-07 capture). A +/-2
+        // guard here clips ordinary makeup gain and loses 11.26 dB RMS on
+        // that row. Preserve the floating-point headroom of the measured unit.
+        return input * d.envelope
+            * decibelsToGain(p.vcaOutput.load(std::memory_order_relaxed));
     }
 
-    float busFeedbackRect(BusState& d, int ch, float sr) noexcept
+    float busFeedbackMagnitude(BusState& d, int ch) noexcept
     {
-        const float alpha = 1.0f / (1.0f + kDuskTwoPi * 60.0f / sr);
-        d.hp = alpha * (d.hp + d.compressed - d.prev);
-        d.prev = d.compressed;
-        d.hp2 = alpha * (d.hp2 + d.hp - d.prev2);
-        d.prev2 = d.hp;
-        float detector = d.hp2;
+        // Coupling and adjustable HP are already applied when storing feedback.
+        // Optional extension shelves retain their existing feedback placement.
+        float detector = d.compressed;
         const size_t channel = static_cast<size_t>(std::clamp(ch, 0, 1));
-        if (busSidechainHighPassFrequency >= 1.0f)
-            detector = busSidechainHighPass[channel].process(detector);
         if (std::abs(busSidechainLowGain) > 0.001f)
             detector = busSidechainLowShelf[channel].process(detector);
         if (std::abs(busSidechainHighGain) > 0.001f)
@@ -3375,67 +2965,229 @@ private:
         return std::abs(detector);
     }
 
-    static float busRmsLevel(BusState& d, float rectified, float sr) noexcept
+    float busDrive(const MultiCompParameterState& p) noexcept
     {
-        const float coefficient = std::exp(-1.0f / (0.005f * sr));
-        d.rms = coefficient * d.rms
-              + (1.0f - coefficient) * rectified * rectified;
-        return std::sqrt(std::max(0.0f, d.rms));
+        const int position = std::clamp(p.busHeadroom.load(std::memory_order_relaxed), 0, 6);
+        if (position != busDrivePosition)
+        {
+            busDrivePosition = position;
+            busDriveValue = sslbus::headroomDrive(position);
+            busCeilingScale = busCeilingReference / busDriveValue;
+        }
+        return busDriveValue;
     }
 
-    static float busReduction(float level, const MultiCompParameterState& p) noexcept
+    // BUS output ceiling, after makeup and inside headroom compensation. All
+    // values are measured from the native saturation matrix; fits and evidence
+    // are in capture set bus-ceiling-analysis-20260910 (a1, a3, s3b).
+    //  - The clip is HARD, not a soft curve: clipped H3..H19 match an ideal
+    //    hard clip to +/-0.05 dB and +/-0.35 degrees. Its level is
+    //    3.2867 +/- 0.0006 internal, the same at HR4, HR16 and HR28.
+    //  - Below it the native adds a weak x - a*x^7 - b*x^6, x = u / 3.3:
+    //    H3 grows 6.0 dB/dB, the pure x^7 signature. At x = 0.868 the native
+    //    H2/H3/H5/H7 are -88.4/-76.7/-86.2/-103.1 dBc.
+    //  - The native clips at 4x. This clips at the wet-path rate, and that
+    //    rate, not the law, sets the residual of the saturation peak gate.
+    static constexpr float busCeilingReference = 3.3f;   // normalises x
+    static constexpr float busCeilingClip = 3.2867f / busCeilingReference;
+    static constexpr float busCeilingSeventh = 1.03907e-3f;   // a
+    static constexpr float busCeilingSixth = 1.63593e-4f;     // b
+    // p(x) is monotonic for |x| <= 1.1 (slope >= 0.9855) and folds back near
+    // |x| = 2.27. p(+/-1.1) = +1.0977 / -1.0983 lies beyond the clip, so this
+    // guard keeps p on its monotonic branch without ever shaping the output.
+    static constexpr float busCeilingGuard = 1.1f;
+
+    static float busOutputCeiling(float normalised) noexcept
     {
-        const float ratios[3] = {2.0f, 4.0f, 10.0f};
-        const float ratio = ratios[std::clamp(
-            p.busRatio.load(std::memory_order_relaxed), 0, 2)];
-        const float over = gainToDecibels(std::max(level, 1.0e-9f)
-            / decibelsToGain(p.busThreshold.load(std::memory_order_relaxed)));
-        const float slope = 1.0f - 1.0f / ratio;
-        const float reduction = over <= -5.0f ? 0.0f
-            : (over >= 5.0f ? over * slope
-                            : slope * (over + 5.0f) * (over + 5.0f) / 20.0f);
-        return std::min(reduction, 20.0f);
+        const float x = std::clamp(normalised, -busCeilingGuard, busCeilingGuard);
+        const float x2 = x * x, x6 = x2 * x2 * x2;
+        return std::clamp(x - x6 * (busCeilingSeventh * x + busCeilingSixth),
+                          -busCeilingClip, busCeilingClip);
     }
 
-    static void advanceBusEnvelope(BusState& d, float level,
-                                   const MultiCompParameterState& p,
-                                   float sr) noexcept
+    static float busDetectorLevel(float rectified) noexcept
     {
-        const float reduction = busReduction(level, p);
-        const float attacks[6] = {0.1f, 0.3f, 1.0f, 3.0f, 10.0f, 30.0f};
+        return rectified * 0.70710678f;
+    }
+
+    // Native drive ceiling. 10:1 near-zero-leak sweeps to +210 dBFS plateau at
+    // 128.11 / 126.67 / 129.28 dB for 0.1 ms/0.1 s, 0.3 ms/0.1 s, 0.1 ms/1.2 s:
+    // one ceiling with a soft approach reproduces all three. The old 120 dB bound
+    // was a compensating calibration and is gone.
+    static constexpr float busDriveCeiling = 128.86116f, busDriveCeilingWidth = 0.817485452f;
+    // The detector's gain cell attenuates by this multiple of the control, so
+    // loop gain rises with law slope. Onset-fitted attack RCs then agree with the
+    // ratio-independent RCs measured on saturated (flat-drive) sidechains.
+    static constexpr float busDetectorExponent = 1.02129996f;
+
+    static sslbus::Drive busCappedDrive(float detectorDb, float threshold, int ratio) noexcept
+    {
+        const sslbus::Drive d = sslbus::drive(detectorDb, threshold, ratio);
+        // More than 16 widths below the ceiling the smooth minimum is the drive to < 1e-7 dB.
+        if (d.value < busDriveCeiling - 16.0f * busDriveCeilingWidth) return d;
+        const float lo = std::min(d.value, busDriveCeiling), hi = std::max(d.value, busDriveCeiling);
+        const float value = lo - busDriveCeilingWidth * std::log1p(std::exp((lo - hi) / busDriveCeilingWidth));
+        const float gate = 1.0f / (1.0f + std::exp((d.value - busDriveCeiling) / busDriveCeilingWidth));
+        return {value, d.slope * gate};
+    }
+
+    // The static law is specified on the detector level the audio gain alone
+    // would give; the detector actually sees busDetectorExponent * control, so
+    // solve R = law(y + (k - 1) R). Near-zero-leak steady states stay exactly on
+    // the fitted law; only the loop gain changes. Newton from the k = 1 value
+    // converges in two to four steps (at most four) over the whole drive range.
+    static float busFeedbackDrive(float level, const MultiCompParameterState& p) noexcept
+    {
+        const float y = gainToDecibels(std::max(level, 1.0e-9f));
+        const float threshold = p.busThreshold.load(std::memory_order_relaxed);
+        const int ratio = p.busRatio.load(std::memory_order_relaxed);
+        constexpr float excess = busDetectorExponent - 1.0f;
+        float r = busCappedDrive(y, threshold, ratio).value;
+        if (r <= 0.0f) return 0.0f;          // below the knee: no drive at any exponent
+        for (int i = 0; i < 4; ++i)
+        {
+            const sslbus::Drive f = busCappedDrive(y + excess * r, threshold, ratio);
+            const float step = (r - f.value) / std::max(1.0f - excess * f.slope, 0.05f);
+            r -= step;
+            if (std::abs(step) <= 1.0e-5f * r) break;
+        }
+        return std::max(r, 0.0f);
+    }
+
+    // Release-dependent part of the charge-path diode drop, driven by the leak
+    // current (C + bias) / RC. Zero at the 0.1 s release by construction; tends
+    // to -gamma * ln(RC / RC0) under compression and fades near idle. Identified
+    // on crest-free quadrature sidechains at four releases (pass 2, 2026-09-10).
+    static float busChargeOffset(float control, float bias, float release) noexcept
+    {
+        constexpr float rc0 = 0.08022117f, gamma = 0.377103031f, leakScale = 2.3818202f;
+        const float leak = std::max(0.0f, control + bias) / release;
+        const float leak0 = std::max(0.0f, control + 0.33f * rc0) / rc0;
+        return 0.33f * rc0 + gamma * (std::log1p(leak / leakScale) - std::log1p(leak0 / leakScale));
+    }
+
+    void smoothBusAudioGain(BusState& d) noexcept
+    {
+        d.smoothControlDb += busAudioControlSmoothingStep
+            * (d.fixedControlDb - d.smoothControlDb);
+        d.smoothControlDb2 += busAudioControlSmoothingStep2
+            * (d.smoothControlDb - d.smoothControlDb2);
+        d.envelope = decibelsToGain(-d.smoothControlDb2);
+    }
+
+    void advanceBusEnvelope(BusState& d, float level,
+                            const MultiCompParameterState& p,
+                            float sr) noexcept
+    {
+        const int phase = d.detectorPhase;
+        if (++d.detectorPhase >= osFactor) d.detectorPhase = 0;
+        {
+            // Native reference phase/detune captures identify a host-rate detector.
+            // The upsampling FIR delays are 31.5 / 33.25 host samples at
+            // 2x / 4x with the 127-tap wide stage (the fractional parts equal
+            // the classic 11.5 / 13.25, so the phase choice is unchanged).
+            // Feedback holds the preceding phase, so phases 0 / 2 read an
+            // integer-aligned input sample. See the BUS frequency
+            // report dated 2026-09-09 for the measurements and fault checks.
+            const int nativePhase = osFactor == 4 ? 2 : 0;
+            if (phase != nativePhase) return;
+            sr /= static_cast<float>(osFactor);
+        }
+        const float reduction = busFeedbackDrive(level, p);
         const float releases[5] = {100.0f, 300.0f, 600.0f, 1200.0f, -1.0f};
-        const float attack = attacks[std::clamp(
-            p.busAttack.load(std::memory_order_relaxed), 0, 5)] * 0.001f;
+        // Measured control RC constants; the feedback loop sets the audible
+        // attack, and its discharge branch remains active while charging.
+        // Reference traces and independent levels/phase holdouts are recorded
+        // in the 2026-09-08 BUS attack measurement report.
+        const int attackIndex = std::clamp(p.busAttack.load(std::memory_order_relaxed), 0, 5);
+        const float internalAttacks[] = {0.000527820201f, 0.00145334529f, 0.00315266824f, 0.01306096f, 0.0385882184f, 0.124117881f};
+        // Recalibrate the 2:1 control response with its measured knee. The old
+        // static bias masked excessive early attack; fresh 997 Hz bursts at
+        // independent levels/threshold validate these effective RC constants.
+        // They describe this model, not recovered UA circuit values.
+        const float twoToOneAttacks[] = {0.000541862973f, 0.00146395736f, 0.00314006675f, 0.0125738038f, 0.0364539362f, 0.117983066f};
+        const float attack = (p.busRatio.load(std::memory_order_relaxed) == 0
+                ? twoToOneAttacks[attackIndex] : internalAttacks[attackIndex]);
         float release = releases[std::clamp(
             p.busRelease.load(std::memory_order_relaxed), 0, 4)] * 0.001f;
-        if (release < 0.0f)
+        if (release > 0.0f)
         {
-            const float delta = std::abs(level - d.previous);
-            d.previous = d.previous * 0.95f + level * 0.05f;
-            const float transientDensity = std::clamp(delta * 20.0f, 0.0f, 1.0f);
-            const float compressionFactor = std::clamp(reduction / 12.0f, 0.0f, 1.0f);
-            release = 0.15f + (1.0f - transientDensity) * compressionFactor * 0.30f;
+            const float measured[] = {0.08022117f, 0.11729294f, 0.22496914f, 0.41338287f};
+            release = measured[std::clamp(p.busRelease.load(std::memory_order_relaxed), 0, 3)];
         }
-        const float target = decibelsToGain(-reduction);
-        const float time = target < d.envelope ? attack : release;
-        const float coefficient = std::exp(-1.0f
-            / std::max(1.0f, time * sr));
-        d.envelope = target + (d.envelope - target) * coefficient;
-        if (!std::isfinite(d.envelope)) d.envelope = 1.0f;
+        if (p.busRelease.load(std::memory_order_relaxed) == 4)
+        {
+            // Both reservoirs stay coupled through attack and recovery. Switching
+            // the slow reservoir between charge and decay distorts early release.
+            const float current = d.fixedControlDb;
+            const float slow = d.autoSlowDb;
+            const float charge = 1.0f - std::exp(-1.0f / std::max(1.0f, attack * sr));
+            d.fixedControlDb = float(busAutoStep[0]*current + busAutoStep[1]*slow + busAutoStep[4])
+                + std::max(0.0f, reduction - std::max(0.0f, current)) * charge;
+            d.autoSlowDb = float(busAutoStep[2]*current + busAutoStep[3]*slow + busAutoStep[5]);
+            d.envelope = decibelsToGain(-d.fixedControlDb);
+            // Test the reservoirs, not only the envelope: decibelsToGain(-inf)
+            // is 0, which is finite, so an envelope-only guard would leave a
+            // non-finite reservoir latched at digital silence. The fixed-release
+            // branch below already uses this two-sided form.
+            if (!std::isfinite(d.envelope) || !std::isfinite(d.fixedControlDb)
+                || !std::isfinite(d.autoSlowDb))
+            { d.envelope = 1; d.autoSlowDb = 0; d.fixedControlDb = 0; }
+            d.detectorEnvelope = decibelsToGain(-busDetectorExponent * d.fixedControlDb);
+            smoothBusAudioGain(d);
+            return;
+        }
+        d.autoSlowDb = 0.0f;
+        {
+            // A charging diode and a continuously connected discharge path.
+            // Mutually exclusive attack/release pauses discharge during each
+            // carrier crest and over-compresses with slow attack/fast release.
+            // Native fixed-release recoveries have a positive gain asymptote
+            // proportional to the release RC, also measured below threshold.
+            // This calibrated control bias is shared by all ratios. Rate/level
+            // holdouts are in the 2026-09-09 BUS release measurement report.
+            const float bias = 0.33f * release;
+            const float currentReduction = busChargeOffset(d.fixedControlDb, bias, release) + d.fixedControlDb;
+            const float discharge = std::exp(-1.0f / std::max(1.0f, release * sr));
+            const float charge = 1.0f - std::exp(-1.0f / std::max(1.0f, attack * sr));
+            // A lower release setting can leave control below the new bias.
+            // Let it settle through release; it must not trigger fast charge.
+            d.fixedControlDb = d.fixedControlDb * discharge - bias * (1.0f - discharge)
+                + std::max(0.0f, reduction - std::max(0.0f, currentReduction)) * charge;
+            d.envelope = decibelsToGain(-d.fixedControlDb);
+        }
+        if (!std::isfinite(d.envelope) || !std::isfinite(d.fixedControlDb))
+        { d.envelope = 1.0f; d.fixedControlDb = 0.0f; }
+        d.detectorEnvelope = decibelsToGain(-busDetectorExponent * d.fixedControlDb);
+        smoothBusAudioGain(d);
     }
 
     float renderBusOutput(float input, int ch,
                           const MultiCompParameterState& p, float mix) noexcept
     {
         auto& d = bus[ch];
-        const float transformed = inputTransformerBus[ch].processSample(input, ch);
+        const float drive = busDrive(p);
+        const float transformed = inputTransformerBus[ch].processSample(input * drive, ch);
         float out = transformed * d.envelope;
-        d.compressed = out;
-        out += 0.004f * out * out + 0.003f * out * out * out;
+        // Independent asymmetric-bass captures identify coupling in feedback.
+        // Taking the entire output-transformer signal would also add its HF
+        // coloration and fails the 4x phase/detune guard. Keep only the measured
+        // low-frequency coupling here; see the BUS programme report, 2026-09-09.
+        // Advance it during external detection too, for a continuous handoff.
+        // The adjustable HP precedes the detector gain cell. Filtering its
+        // modulated output instead creates extra harmonics and over-compresses
+        // a 40 Hz tone by 3.70 dB with the 80 Hz filter. Audio stays unfiltered.
+        const float feedbackInput = (busSidechainHighPassFrequency >= 1.0f
+            ? busSidechainHighPass[static_cast<size_t>(ch)].process(transformed) : transformed)
+            * d.detectorEnvelope;
+        d.compressed = busFeedbackCoupling[static_cast<size_t>(ch)].process(feedbackInput);
         out = outputTransformerBus[ch].processSample(out, ch);
         out = busConvolution.processSample(out, ch) * busHardwareGain
             * decibelsToGain(p.busMakeup.load(std::memory_order_relaxed));
-        out = std::clamp(out, -2.0f, 2.0f);
+        out = busOutputCeiling(out * (1.0f / busCeilingReference)) * busCeilingScale;
+        // Native ceiling is inside headroom compensation, after makeup.
+        // HR4 permits ~13.1 linear output; HR28 clips near 0.83.
+        // A fixed +/-2 output clamp cannot reproduce either endpoint.
         return out * mix + input * (1.0f - mix);
     }
 
@@ -3445,9 +3197,10 @@ private:
     {
         auto& d = bus[ch];
         const float sr = static_cast<float>(fs * osFactor);
-        const float level = busRmsLevel(d,
-            external ? std::abs(sidechain) : busFeedbackRect(d, ch, sr), sr);
+        const float level = busDetectorLevel(
+            external ? std::abs(d.externalCompressed) : busFeedbackMagnitude(d, ch));
         advanceBusEnvelope(d, level, p, sr);
+        d.externalCompressed = sidechain * busDrive(p) * d.detectorEnvelope;
         return renderBusOutput(input, ch, p, mix);
     }
 

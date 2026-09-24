@@ -116,7 +116,7 @@ void testParameterIntervals()
 void testStrictStateValidationAndRoundTrip()
 {
     multicompp::StateValues saved{};
-    for (int i = 0; i < multicompp::kMeterMaster; ++i)
+    for (int i = 0; i < multicompp::kTotalParamCount; i = multicompp::nextControlParameter(i))
     {
         saved[static_cast<size_t>(i)] = multicompp::resolveParameter(i,
             [i](const multicompp::Param& d) {
@@ -147,7 +147,7 @@ void testStrictStateValidationAndRoundTrip()
     };
 
     auto version2Values = saved;
-    for (int i = 0; i < multicompp::kMeterMaster; ++i)
+    for (int i = 0; i < multicompp::kTotalParamCount; i = multicompp::nextControlParameter(i))
         version2Values[static_cast<size_t>(i)] = multicompp::resolveParameter(i,
             [&](const multicompp::Param& d) {
                 return multicompp::hostToPlain(d, version2Values[static_cast<size_t>(i)]);
@@ -171,6 +171,7 @@ void testStrictStateValidationAndRoundTrip()
         legacyValues[thresholdIndex] = 5.0f;    // legal in -38..+12, above the new 0 dB ceiling
         std::string version3 = multicompp::encodeState(legacyValues);
         version3.replace(0, 3, "v=3");
+        version3.erase(version3.find(";bus_headroom="));
         const size_t key = version3.find("vca_compression=");
         require(key != std::string::npos, "version-4 state names vca_compression");
         version3.replace(key, std::strlen("vca_compression="), "vca_ratio=");
@@ -180,7 +181,18 @@ void testStrictStateValidationAndRoundTrip()
                 "version-3 vca_ratio migrates to the knob position applying the same ratio");
         require(migrated[thresholdIndex] == 0.0f,
                 "version-3 vca_threshold above the dbx ceiling clamps to 0 dB");
-        std::string version4Ratio = multicompp::encodeState(legacyValues);
+        // A v3 payload must use its historical key and domain. Accepting the
+        // v4 key would silently interpret the old normalized ratio as a new
+        // compression-knob position instead of migrating it.
+        std::string mixedVersion = version3;
+        mixedVersion.replace(mixedVersion.find("vca_ratio="),
+                             std::strlen("vca_ratio="), "vca_compression=");
+        rejectedWithoutMutation(mixedVersion,
+                                "version-3 state rejects the version-4 VCA key");
+        // Start from the accepted version-4 state so the legacy key is the only
+        // defect: legacyValues carries a threshold above the version-4 ceiling,
+        // which would be rejected on its own.
+        std::string version4Ratio = valid;
         version4Ratio.replace(version4Ratio.find("vca_compression="), std::strlen("vca_compression="), "vca_ratio=");
         rejectedWithoutMutation(version4Ratio, "a version-4 state naming the legacy vca_ratio key is rejected");
 
@@ -190,6 +202,7 @@ void testStrictStateValidationAndRoundTrip()
             values[thresholdIndex] = thresholdDb;
             std::string encoded = multicompp::encodeState(values);
             encoded.replace(0, 3, "v=3");
+            encoded.erase(encoded.find(";bus_headroom="));
             const size_t ratioKey = encoded.find("vca_compression=");
             require(ratioKey != std::string::npos, "version-4 state names vca_compression");
             encoded.replace(ratioKey, std::strlen("vca_compression="), "vca_ratio=");
@@ -282,7 +295,7 @@ void testFactoryPresetOwnership()
           ParamId::VcaOutput, ParamId::VcaOverEasy, ParamId::VcaClassicDetector}, 11, false},
         {{ParamId::Mode, ParamId::Mix, ParamId::SidechainHP, ParamId::AutoMakeup,
           ParamId::BusThreshold, ParamId::BusRatio, ParamId::BusAttack, ParamId::BusRelease,
-          ParamId::BusMakeup, ParamId::BusMix}, 10, false},
+          ParamId::BusMakeup, ParamId::BusMix, ParamId::BusHeadroom, ParamId::BusFadeRate, ParamId::BusFade}, 13, false},
         {{ParamId::Mode, ParamId::Mix, ParamId::SidechainHP, ParamId::AutoMakeup,
           ParamId::FetInput, ParamId::FetOutput, ParamId::FetAttack, ParamId::FetRelease,
           ParamId::FetRatio, ParamId::FetCurve, ParamId::FetTransient, ParamId::FetThreshold},
@@ -300,8 +313,8 @@ void testFactoryPresetOwnership()
     }};
 
     auto verifyPreset = [&expectedOwnership](const duskaudio::MultiCompPreset& preset) {
-        std::array<float, multicompp::kMeterMaster> values{};
-        std::array<bool, multicompp::kMeterMaster> owned{};
+        std::array<float, multicompp::kTotalParamCount> values{};
+        std::array<bool, multicompp::kTotalParamCount> owned{};
         values.fill(-123.0f);
         multicompp::forEachPresetParam(preset,
             [&](multicompp::CoreParameter parameter, float value) {
@@ -466,7 +479,7 @@ void testFactoryPresetOwnership()
 
         require(preset.mode >= 0 && static_cast<size_t>(preset.mode) < expectedOwnership.size(),
                 "factory preset mode has an ownership table entry");
-        std::array<bool, multicompp::kMeterMaster> expected{};
+        std::array<bool, multicompp::kTotalParamCount> expected{};
         const auto& modeOwnership = expectedOwnership[static_cast<size_t>(preset.mode)];
         for (size_t i = 0; i < modeOwnership.parameterCount; ++i)
             expected[static_cast<size_t>(modeOwnership.parameters[i])] = true;
@@ -497,11 +510,11 @@ void testHostProgramChangeAppliesBandParameters()
 {
     auto multibandProgram = multicompp::kFactoryPresets.front();
     multibandProgram.mode = 7;
-    std::array<float, multicompp::kMeterMaster> hostValues{};
+    std::array<float, multicompp::kTotalParamCount> hostValues{};
     hostValues.fill(-123.0f);
 
     auto setHostParameter = [&](int parameterIndex, float hostValue) {
-        const bool validIndex = parameterIndex >= 0 && parameterIndex < multicompp::kMeterMaster;
+        const bool validIndex = multicompp::isControlParameter(parameterIndex);
         require(validIndex, "host program change emits an in-range parameter index");
         if (validIndex)
             hostValues[static_cast<size_t>(parameterIndex)] = hostValue;
@@ -536,7 +549,7 @@ void testFractionalEnumUiAndDspAgreement()
 void testEditorMirrorSeedsFromCurrentPluginState()
 {
     multicompp::StateValues mirror{};
-    for (int i = 0; i < multicompp::kMeterMaster; ++i)
+    for (int i = 0; i < multicompp::kTotalParamCount; i = multicompp::nextControlParameter(i))
         mirror[static_cast<size_t>(i)] = multicompp::resolveParameter(i,
             [](const multicompp::Param& d) { return multicompp::hostDefault(d); },
             [](const multicompp::BandParam& d, int) { return multicompp::hostDefault(d); });
@@ -556,7 +569,7 @@ void testEditorMirrorSeedsFromCurrentPluginState()
 void testCrossoverMirrorRefreshesEveryPluginChangedValue()
 {
     multicompp::StateValues values{};
-    for (int i = 0; i < multicompp::kMeterMaster; ++i)
+    for (int i = 0; i < multicompp::kTotalParamCount; i = multicompp::nextControlParameter(i))
         values[static_cast<size_t>(i)] = multicompp::resolveParameter(i,
             [](const multicompp::Param& d) { return multicompp::hostDefault(d); },
             [](const multicompp::BandParam& d, int) { return multicompp::hostDefault(d); });
@@ -782,8 +795,11 @@ void testFetFaceplateContract()
     const std::string source = readSiblingSource("MultiCompUI.cpp");
     const bool hasBlackFaceIdentity = source.find("\"FET 76\"") != std::string::npos
         && source.find("\"LIMITING AMPLIFIER\"") != std::string::npos;
-    const bool reusesOptoMeter =
-        source.find("drawOptoMeter(dl, 675") != std::string::npos
+    const size_t fetStart = source.find("void drawFet(");
+    const size_t fetEnd = source.find("void fetKnob(", fetStart);
+    const bool reusesOptoMeter = fetStart != std::string::npos
+        && fetEnd != std::string::npos
+        && source.find("drawOptoMeter(dl,", fetStart) < fetEnd
         && source.find("void drawFetMeter(") == std::string::npos
         && source.find("mode == 0 || mode == 1") != std::string::npos;
     const bool hasFiveRatioButtons = source.find("drawFetRatioButtons(dl") != std::string::npos
@@ -980,9 +996,11 @@ void testOptoFaceplateContract()
                 && multicompp::ui_detail::designHeightForMode(1.4f) == 380.0f
                 && multicompp::ui_detail::designHeightForMode(1.6f) == 380.0f
                 && multicompp::ui_detail::designHeightForMode(2.4f) == 380.0f
-                && multicompp::ui_detail::designHeightForMode(2.6f) == 486.0f
+                && multicompp::ui_detail::designHeightForMode(2.6f) == 380.0f
+                && multicompp::ui_detail::designHeightForMode(3.4f) == 380.0f
+                && multicompp::ui_detail::designHeightForMode(3.6f) == 486.0f
                 && multicompp::ui_detail::designHeightForMode(7.0f) == 486.0f,
-            "Opto, vintage FET, and VCA use rack-height canvases while the other modes keep the full canvas");
+            "Opto, vintage FET, VCA, and Bus use rack-height canvases while the other modes keep the full canvas");
     {
         using Vca = multicompp::ui_detail::VcaFaceplateLayout;
         const float vcaAspect = multicompp::ui_detail::vcaFaceplateAspect();
@@ -1026,49 +1044,6 @@ void testOptoFaceplateContract()
     require(std::strcmp(multicompp::ui_detail::optoModeLabel(0.0f), "COMPRESS") == 0
                 && std::strcmp(multicompp::ui_detail::optoModeLabel(1.0f), "LIMIT") == 0,
             "Opto mode control exposes the Comp and Limit panel labels");
-    require(std::strcmp(multicompp::ui_detail::optoMeterLabel(), "GR") == 0,
-            "Opto analogue meter is fixed to the GR panel readout");
-
-    {
-        using namespace multicompp::ui_detail;
-        require(kFetMeterModeCount == 4
-                    && std::strcmp(fetMeterModeLabel(0), "GR") == 0
-                    && std::strcmp(fetMeterModeLabel(1), "+8") == 0
-                    && std::strcmp(fetMeterModeLabel(2), "+4") == 0
-                    && std::strcmp(fetMeterModeLabel(3), "OFF") == 0,
-                "FET meter switch exposes the reference unit's GR/+8/+4/OFF positions");
-
-        // GR position passes gain reduction through untouched, so the needle
-        // keeps the raw feed the Opto path is required to keep.
-        require(fetMeterNeedleValueDb(0, -7.5f, -30.0f) == -7.5f
-                    && fetMeterNeedleValueDb(0, 0.0f, -3.0f) == 0.0f,
-                "FET meter GR position reads gain reduction and ignores output level");
-
-        // On a level position the needle reads distance below the reference,
-        // so 0 VU parks on the same 0 mark the GR scale rests at.
-        require(fetMeterNeedleValueDb(2, -6.0f, kFetMeterPlus4ReferenceDbFs) == 0.0f
-                    && fetMeterNeedleValueDb(1, -6.0f, kFetMeterPlus8ReferenceDbFs) == 0.0f,
-                "FET meter level positions park 0 VU on the scale's 0 mark");
-        require(std::abs(fetMeterNeedleValueDb(2, 0.0f, -24.0f) + 6.0f) < 1.0e-5f
-                    && std::abs(fetMeterNeedleValueDb(1, 0.0f, -24.0f) + 10.0f) < 1.0e-5f,
-                "FET meter level positions deflect by the shortfall below their reference");
-        require(kFetMeterPlus8ReferenceDbFs - kFetMeterPlus4ReferenceDbFs == 4.0f,
-                "FET meter +4 and +8 references stay the panel's 4 dB apart");
-
-        // Louder than the reference pegs at 0 rather than running off the arc,
-        // and nothing exceeds the 20 dB the face is drawn for.
-        require(fetMeterNeedleValueDb(2, 0.0f, 0.0f) == 0.0f
-                    && fetMeterNeedleValueDb(2, 0.0f, -60.0f) == -20.0f,
-                "FET meter level positions clamp to the drawn 0..20 sweep");
-
-        require(fetMeterNeedleValueDb(3, -9.0f, -3.0f) == -20.0f,
-                "FET meter OFF position rests the needle at the mechanical stop");
-
-        const float nan = std::numeric_limits<float>::quiet_NaN();
-        require(fetMeterNeedleValueDb(0, nan, -18.0f) == 0.0f
-                    && fetMeterNeedleValueDb(2, 0.0f, nan) == 0.0f,
-                "FET meter survives a non-finite reading on either feed");
-    }
     const float attackDisplay = multicompp::ui_detail::optoMeterDisplayValue(-20.0f);
     const float releaseDisplay = multicompp::ui_detail::optoMeterDisplayValue(0.0f);
     const std::string source = readSiblingSource("MultiCompUI.cpp");
@@ -1077,14 +1052,19 @@ void testOptoFaceplateContract()
     require(meterStart != std::string::npos && meterEnd != std::string::npos,
             "shared Opto/FET meter renderer is present");
     const std::string meterSource = source.substr(meterStart, meterEnd - meterStart);
-    const bool hasOneDbTickScale =
-        meterSource.find("for (int tick = 0; tick <= 20; ++tick)") != std::string::npos
-        && meterSource.find("static_cast<float>(tick) / 20.0f") != std::string::npos
-        && meterSource.find("const bool major = tick % 5 == 0") != std::string::npos;
-    const bool omitsVuLevelLegend =
-        meterSource.find("VU LEVEL INDICATOR") == std::string::npos;
-    require(hasOneDbTickScale && omitsVuLevelLegend,
-            "shared Opto/FET meter has one tick per dB and no VU level legend");
+    require(meterSource.find("drawVintageMeter") != std::string::npos,
+            "Opto and FET delegate their VU face to the shared vintage renderer");
+    const float zeroVu = multicompp::ui_detail::vintageVuDeflection(0.0f);
+    const float minusTenVu = multicompp::ui_detail::vintageVuDeflection(-10.0f);
+    const float minusTwentyVu = multicompp::ui_detail::vintageVuDeflection(-20.0f);
+    std::printf("vintage VU deflection at 0/-10/-20/+3 dB: %.7f/%.7f/%.7f/%.7f\n",
+                zeroVu, minusTenVu, minusTwentyVu,
+                multicompp::ui_detail::vintageVuDeflection(3.0f));
+    require(std::abs(zeroVu - 0.7079458f) < 0.00001f
+                && std::abs(minusTenVu - 0.2238721f) < 0.00001f
+                && std::abs(minusTwentyVu - 0.07079458f) < 0.00001f
+                && multicompp::ui_detail::vintageVuDeflection(3.0f) == 1.0f,
+            "vintage VU voltage scale reserves the red zone beyond unity gain reduction");
     const bool drawsRawGainReduction = source.find(
         "optoMeterDisplayValue(meter(kMeterMaster))") != std::string::npos;
     const bool keepsDisplayEnvelope = source.find("optoMeterBallisticStep")
@@ -1101,8 +1081,8 @@ void testOptoFaceplateContract()
                 && multicompp::ui_detail::optoMeterReadoutAmount(1.0f) == 0.0f
                 && multicompp::ui_detail::optoMeterReadoutAmount(-150.0f) == 99.9f,
             "Opto GR readout is positive, bounded, and never displays negative zero");
-    std::printf("opto faceplate: aspect %.6f reference %.6f; meter ticks=21 "
-                "(1 dB each), legend=removed; meter angles "
+    std::printf("opto faceplate: aspect %.6f reference %.6f; meter scale=voltage VU "
+                "with red overload marks; meter angles "
                 "0/10/20 dB %.6f/%.6f/%.6f rad; modes %s/%s\n",
                 aspect, referenceAspect, zero, ten, twenty,
                 multicompp::ui_detail::optoModeLabel(0.0f),
@@ -1122,7 +1102,7 @@ void testFractionalIntegerAutomationStaysLoadable()
 {
     const auto defaults = []() {
         multicompp::StateValues v{};
-        for (int i = 0; i < multicompp::kMeterMaster; ++i)
+        for (int i = 0; i < multicompp::kTotalParamCount; i = multicompp::nextControlParameter(i))
             v[static_cast<size_t>(i)] = multicompp::resolveParameter(i,
                 [](const multicompp::Param& d) { return multicompp::hostDefault(d); },
                 [](const multicompp::BandParam& d, int) { return multicompp::hostDefault(d); });
