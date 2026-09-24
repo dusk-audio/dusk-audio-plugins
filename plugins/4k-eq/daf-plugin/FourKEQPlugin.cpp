@@ -13,6 +13,8 @@
 #include "FourKEQVersion.hpp"
 #include "util/CrashLog.hpp"
 
+#include <atomic>
+
 START_NAMESPACE_DAF
 
 class FourKEQPlugin : public Plugin
@@ -28,7 +30,7 @@ public:
         // re-allocate the kEqType / kOversampling enumeration arrays each pass
         // just to read ranges.def — the table is the single source of truth.)
         for (uint32_t i = 0; i < kParamCount; ++i)
-            values[i] = kFourKParams[i].def;
+            values[i].store(kFourKParams[i].def, std::memory_order_relaxed);
         selectors.record(kLegacyDialBands, kFourKParams[kLegacyDialBands].def);
         selectors.record(kLegacyDialFilters, kFourKParams[kLegacyDialFilters].def);
         applyFrequencies();
@@ -161,7 +163,7 @@ protected:
         case kOutPeakR: return dsp.getOutputPeakR();
         case kLegacyDialBands:
         case kLegacyDialFilters: return (float)selectors.value(index);
-        default:        return index < kParamCount ? values[index] : 0.0f;
+        default:        return index < kParamCount ? values[index].load(std::memory_order_relaxed) : 0.0f;
         }
     }
 
@@ -170,7 +172,7 @@ protected:
         if (index >= kParamCount || fkIsOutputParam(index))
             return;
         if (index != kLegacyDialBands && index != kLegacyDialFilters)
-            values[index] = value;
+            values[index].store(value, std::memory_order_relaxed);
         if (selectors.record(index, value))
             frequenciesChanged.store(true, std::memory_order_release);
         else
@@ -245,7 +247,7 @@ private:
 
     void applyToDsp(uint32_t index)
     {
-        const float value = values[index];
+        const float value = values[index].load(std::memory_order_relaxed);
         switch (index)
         {
         case kHpfEnabled: dsp.setHpfEnabled(value > 0.5f); break;
@@ -277,11 +279,17 @@ private:
     }
 
     // The band and filter frequencies, routed by the selectors. Reads each
-    // selector before the frequencies it picks (FourKEQSelectors).
+    // selector before the frequencies it picks (FourKEQSelectors), then routes
+    // from one snapshot of the values so both helpers see the same state.
     void applyFrequencies()
     {
-        fkApplyBandFrequencies(dsp, values, selectors.bandBits());
-        fkApplyFilterFrequencies(dsp, values, selectors.filterBits());
+        const uint32_t dialBands = selectors.bandBits();
+        const uint32_t dialFilters = selectors.filterBits();
+        float snapshot[kParamCount];
+        for (uint32_t i = 0; i < kParamCount; ++i)
+            snapshot[i] = values[i].load(std::memory_order_relaxed);
+        fkApplyBandFrequencies(dsp, snapshot, dialBands);
+        fkApplyFilterFrequencies(dsp, snapshot, dialFilters);
     }
 
     void updateLatency()
@@ -292,7 +300,12 @@ private:
 
     duskaudio::FourKEQDSP dsp;
     // Every input parameter but the two selectors, which live in selectors.
-    float values[kParamCount] = {};
+    // Written by setParameterValue() on the host's thread and read by run()
+    // on the audio thread, so each entry is atomic; frequenciesChanged's
+    // release/acquire pair orders a frequency write before run() routes it.
+    std::atomic<float> values[kParamCount] {};
+    static_assert(std::atomic<float>::is_always_lock_free,
+                  "parameter values are read on the audio thread");
     FourKEQSelectors selectors;
     // Set by a band or filter frequency or selector write, taken by run(),
     // which alone routes the frequencies to the core while the plugin is
