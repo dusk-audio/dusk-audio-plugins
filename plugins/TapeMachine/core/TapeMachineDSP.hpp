@@ -425,7 +425,7 @@ private:
 };
 
 //==============================================================================
-// Improved Noise Generator (verbatim; RNG made deterministic — see PORT_NOTES).
+// Improved Noise Generator (verbatim; RNG made deterministic).
 //==============================================================================
 struct ImprovedNoiseGenerator
 {
@@ -2207,14 +2207,14 @@ public:
     void setSignalPath  (int idx)  noexcept { pSignalPath.store (clampI (idx, 0, 3), std::memory_order_relaxed); }
     void setEqStandard  (int idx)  noexcept { pEqStandard.store (clampI (idx, 0, 1), std::memory_order_relaxed); }
     void setInputGainDb (float db) noexcept { pInputGainDb.store (db, std::memory_order_relaxed); }
-    void setSaturation  (float pct)noexcept { pSaturation.store (pct, std::memory_order_relaxed); }  // DEAD (see PORT_NOTES)
+    void setSaturation  (float pct)noexcept { pSaturation.store (pct, std::memory_order_relaxed); }  // DEAD in the JUCE source; kept for parity
     void setBias        (float pct)noexcept { pBias.store (pct, std::memory_order_relaxed); }
     void setCalibration (int idx)  noexcept { pCalibration.store (clampI (idx, 0, 3), std::memory_order_relaxed); }
     void setAutoCal     (bool b)   noexcept { pAutoCal.store (b, std::memory_order_relaxed); }
     void setHighpassHz  (float hz) noexcept { pHighpassHz.store (hz, std::memory_order_relaxed); }
     void setLowpassHz   (float hz) noexcept { pLowpassHz.store (hz, std::memory_order_relaxed); }
     void setNoiseAmount (float pct)noexcept { pNoiseAmount.store (pct, std::memory_order_relaxed); }
-    void setNoiseEnabled(bool b)   noexcept { pNoiseEnabled.store (b, std::memory_order_relaxed); } // DEAD gate (see PORT_NOTES)
+    void setNoiseEnabled(bool b)   noexcept { pNoiseEnabled.store (b, std::memory_order_relaxed); } // DEAD gate in the JUCE source; kept for parity
     void setWow         (float pct)noexcept { pWow.store (pct, std::memory_order_relaxed); }
     void setFlutter     (float pct)noexcept { pFlutter.store (pct, std::memory_order_relaxed); }
     void setOutputGainDb(float db) noexcept { pOutputGainDb.store (db, std::memory_order_relaxed); }

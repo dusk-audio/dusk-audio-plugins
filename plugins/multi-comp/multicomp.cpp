@@ -1183,7 +1183,7 @@ inline void getHarmonicScaling(int saturationMode, float& h2Scale, float& h3Scal
     }
 }
 
-// LA-2A Optical Leveling Amplifier
+// Classic Opto Leveling Amplifier
 // Authentic feedback topology: gain reduction emerges from the T4B cell
 // interacting with the feedback loop — no hardcoded threshold or ratio.
 class UniversalCompressor::OptoCompressor
@@ -1233,12 +1233,12 @@ public:
         elPanelReleaseCoeff = 1.0f - std::exp(-2.0f * juce::MathConstants<float>::pi * Constants::T4B_EL_PANEL_RELEASE_FREQ / sr);
         scLevelSmoothCoeff = 1.0f - std::exp(-2.0f * juce::MathConstants<float>::pi * Constants::SC_LEVEL_SMOOTH_FREQ / sr);
 
-        // Hardware emulation: Input transformer (UTC A-10)
+        // Hardware emulation: Input transformer (vintage line input)
         inputTransformer.prepare(sampleRate, numChannels);
         inputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getOptoCompressor().inputTransformer);
         inputTransformer.setEnabled(true);
 
-        // Hardware emulation: Output transformer (UTC A-24)
+        // Hardware emulation: Output transformer (vintage line output)
         outputTransformer.prepare(sampleRate, numChannels);
         outputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getOptoCompressor().outputTransformer);
         outputTransformer.setEnabled(true);
@@ -1309,7 +1309,7 @@ public:
 
         auto& det = detectors[channel];
 
-        // Stage 1: Input transformer (UTC A-10)
+        // Stage 1: Input transformer (vintage line input)
         float x = inputTransformer.processSample(input, channel);
 
         // Stage 2: T4B gain cell — apply gain from previous sample's T4B state
@@ -1319,7 +1319,7 @@ public:
         // that varies with illumination. Under gain reduction, the cell's
         // resistance curve produces even-order harmonics (primarily H2).
         // More GR = more nonlinearity = more "warmth" and "fullness."
-        // This is the core of the LA-2A's character — NOT just the tube.
+        // This is the core of the opto leveler's character — NOT just the tube.
         float compressed = x * det.t4bGain;
 
         // T4B even-harmonic distortion: proportional to gain reduction depth
@@ -1366,7 +1366,7 @@ public:
         // Stage 5: Peak Reduction = sidechain amplifier gain
         // This is the primary compression control — NOT a threshold
         // Cubic taper: PR=0 → gain=0 (no compression), PR=100 → gain=MAX
-        // Models the real LA-2A pot where low settings barely reach the T4B
+        // Models the real opto leveler pot where low settings barely reach the T4B
         float prNorm = peakReduction * 0.01f;
         float peakReductionGain = prNorm * prNorm * prNorm * Constants::PEAK_REDUCTION_MAX_SC_GAIN;
 
@@ -1380,15 +1380,15 @@ public:
 
         // Stage 6: Sidechain envelope smoothing + T4B cell update
         // Symmetric LP filter reduces 2f ripple from rectified sidechain.
-        // The real LA-2A has capacitor smoothing in the rectifier circuit.
+        // The real opto leveler has capacitor smoothing in the rectifier circuit.
         det.scLevelSmoothed += scLevelSmoothCoeff * (scLevel - det.scLevelSmoothed);
         updateT4BCell(det, det.scLevelSmoothed);
 
-        // Stage 7: Output stage — real LA-2A signal chain
-        // In the real LA-2A, the 12BH7 IS the makeup gain amplifier.
+        // Stage 7: Output stage — real opto leveler signal chain
+        // In the real opto leveler, the 12BH7 IS the makeup gain amplifier.
         // When compressing hard, you turn up the Gain knob to compensate,
         // which drives the tube harder → more even-harmonic warmth.
-        // This is why LA-2A compression sounds "full and alive."
+        // This is why opto leveler compression sounds "full and alive."
         float makeupGain = juce::Decibels::decibelsToGain(gain);
 
         // Drive the tube proportionally harder when compression is applied.
@@ -1401,7 +1401,7 @@ public:
         float output = compressed * makeupGain * tubeBoost;
 
         // Dynamic tube drive: more GR → user turns up Gain → tube driven harder
-        // Models real LA-2A behavior where compression + makeup = harmonically rich
+        // Models real opto leveler behavior where compression + makeup = harmonically rich
         float dynamicDrive = 0.15f + grAmount * 0.3f;  // 0.15 clean to 0.45 pushed
         tubeStage.setDrive(dynamicDrive);
 
@@ -1411,7 +1411,7 @@ public:
         // Scale back to preserve level (harmonics are retained)
         output /= tubeBoost;
 
-        // Output transformer (UTC A-24)
+        // Output transformer (vintage line output)
         output = outputTransformer.processSample(output, channel);
 
         // Only apply hardware compensation (not makeup, already applied)
@@ -1636,7 +1636,7 @@ private:
     float scLevelSmoothCoeff = 0.0f;          // Symmetric sidechain envelope smoother
     float hardwareGainCompensation = 1.0f;  // Compensates for tube + transformer gain
 
-    // Hardware emulation components (LA-2A)
+    // Hardware emulation components (opto leveler)
     HardwareEmulation::TransformerEmulation inputTransformer;
     HardwareEmulation::TransformerEmulation outputTransformer;
     HardwareEmulation::TubeEmulation tubeStage;
@@ -1668,7 +1668,7 @@ public:
             detector.subBassHpState = 0.0f;
         }
 
-        // 1176 sidechain tilt: ~3dB/octave via 1st-order HPF at 800Hz blended with original
+        // FET limiter sidechain tilt: ~3dB/octave via 1st-order HPF at 800Hz blended with original
         {
             float sr = static_cast<float>(sampleRate);
             tiltCoeff = 1.0f - std::exp(-2.0f * 3.14159f * 800.0f / sr);
@@ -1741,7 +1741,7 @@ public:
         float inputGainLin = juce::Decibels::decibelsToGain(inputGainDb);
         float amplifiedInput = transformedInput * inputGainLin;
 
-        // Ratio mapping: measured Rev D 1176 ratios (not the nominal panel
+        // Ratio mapping: measured vintage FET limiter ratios (not the nominal panel
         // markings). JFET square-law conduction drifts the effective slope
         // off the integer label by ~5-10 %. All-buttons mode follows its
         // own non-linear curve below, so the table entry there only matters
@@ -1757,7 +1757,7 @@ public:
 
         // ─── FET saturation stage (asymmetric) ───
         // Applied BEFORE feedback detection so harmonics interact with compression pumping.
-        // In the real 1176, the FET gain element is inside the feedback loop — its
+        // In the real FET limiter, the FET gain element is inside the feedback loop — its
         // nonlinearity colors the signal that the sidechain sees.
         float saturated = compressed;
         float sr = static_cast<float>(sampleRate);
@@ -1775,7 +1775,7 @@ public:
             else
             {
                 // Normal ratios: FET coloring scales with gain reduction, like a
-                // real 1176 — nearly clean when barely working, grittier when
+                // real FET limiter — nearly clean when barely working, grittier when
                 // driven hard. Calibrated so ~6 dB GR matches the previous fixed
                 // 0.032 / 0.006 values, with less color below and more above.
                 k2 = 0.024f + grNorm * 0.026f;   // 2nd harmonic: 0.024 (clean) → 0.050 (driven)
@@ -1841,7 +1841,7 @@ public:
             detectionLevel = std::abs(chokedSignal);
         }
 
-        // 1176 sidechain tilt: 3dB/octave HF emphasis
+        // FET limiter sidechain tilt: 3dB/octave HF emphasis
         detector.tiltState += tiltCoeff * (detectionLevel - detector.tiltState);
         float hfContent = detectionLevel - detector.tiltState;
         detectionLevel = std::max(detectionLevel + hfContent * 0.35f, 0.0f);
@@ -2052,7 +2052,7 @@ public:
 
         // Sub-bass tightening: GR-driven 1-pole HPF. Cutoff sweeps from
         // 20 Hz (effectively off) at 0 dB GR up to 80 Hz at 20 dB GR.
-        // Emulates the 1176's coupling-capacitor saturation that tightens
+        // Emulates the FET limiter's coupling-capacitor saturation that tightens
         // the low end under heavy compression. Per-channel state lives on
         // `detector.subBassHpState`. Implementation: LPF state tracks the
         // low-end content, then we subtract it from the signal to get
@@ -2098,7 +2098,7 @@ private:
         float voltageSag = 0.0f;     // PSU sag envelope (0 = no sag, 1 = full sag)
         int sagCounter = 0;          // Samples sustained above 15dB GR
         float hfChokeState = 0.0f;   // 1-pole LPF state for HF choke in feedback
-        float tiltState = 0.0f;      // 1176 sidechain tilt filter state
+        float tiltState = 0.0f;      // FET limiter sidechain tilt filter state
         float subBassHpState = 0.0f; // 1-pole LPF state for GR-driven sub-bass HPF (output side)
     };
 
@@ -2175,7 +2175,7 @@ private:
 class UniversalCompressor::VCACompressor
 {
 public:
-    // M3: when true, use a fixed 10 ms RMS time constant (dbx 160 spec)
+    // M3: when true, use a fixed 10 ms RMS time constant (classic VCA compressor spec)
     // instead of the level-adaptive 35 ms → 5 ms curve. Caller sets this
     // once per block from the "vca_detector_mode" APVTS choice param.
     void setDetectorClassic(bool classic) noexcept { detectorClassic = classic; }
@@ -2227,10 +2227,10 @@ public:
         detector.envelopeRate = detector.envelopeRate * 0.95f + signalDelta * 0.05f;
         detector.previousInput = detectionLevel;
 
-        // dbx 160: Level-dependent RMS time constant
-        // Real dbx 202XT VCA junction impedance decreases with level
+        // Classic VCA compressor: Level-dependent RMS time constant
+        // Real VCA chip junction impedance decreases with level
         // Small-signal: ~35ms; loud signals: ~5ms
-        // M3: "Classic" mode forces a fixed 10 ms TC for dbx 160 authenticity
+        // M3: "Classic" mode forces a fixed 10 ms TC for classic VCA compressor authenticity
         // (no level adaptation). Default "Adaptive" preserves the donor's
         // prior behaviour.
         float rmsTimeMs;
@@ -2262,7 +2262,7 @@ public:
 
         if (overEasy)
         {
-            // dbx OverEasy: parabolic soft knee, engages 5dB below threshold
+            // OverEasy: parabolic soft knee, engages 5dB below threshold
             float kneeWidth = 10.0f;
             float kneeStart = -kneeWidth * 0.5f;  // -5dB below threshold
             float kneeEnd = kneeWidth * 0.5f;      // +5dB above threshold
@@ -2383,7 +2383,7 @@ public:
         }
         else
         {
-            // Release phase - constant 120dB/second release rate (dbx 160 defining characteristic)
+            // Release phase - constant 120dB/second release rate (classic VCA compressor defining characteristic)
             // Linear in dB space: gain recovers at a fixed dB/sec rate, not exponentially
             float currentDb = juce::Decibels::gainToDecibels(juce::jmax(0.0001f, detector.envelope));
             float targetDb = juce::Decibels::gainToDecibels(juce::jmax(0.0001f, targetGain));
@@ -2437,13 +2437,13 @@ public:
             float sign = (processed < 0.0f) ? -1.0f : 1.0f;
 
             // Classic VCA harmonics: circuit path coloration + compression harmonics
-            // Real dbx 160 has ~0.05-0.1% THD even at unity from VCA chip bias + op-amps
+            // The real VCA compressor has ~0.05-0.1% THD even at unity from VCA chip bias + op-amps
             float h2_level = 0.0f;
             float h3_level = 0.0f;
 
             // Always-on circuit coloration (VCA chip bias current + op-amp stages)
-            // dbx 202C VCA chip: control voltage feedthrough + op-amp crossover
-            // Real dbx 160 measures ~0.05-0.1% THD passthrough
+            // Classic VCA chip: control voltage feedthrough + op-amp crossover
+            // The real VCA compressor measures ~0.05-0.1% THD passthrough
             float circuitH2 = 0.0003f;  // VCA chip even-order from bias asymmetry
             float circuitH3 = 0.0006f;  // Op-amp odd-order from output stage
 
@@ -2524,7 +2524,7 @@ private:
 
     std::vector<Detector> detectors;
     double sampleRate = 0.0;  // Set by prepare() from DAW
-    bool detectorClassic = false;  // M3: dbx 160 fixed 10 ms RMS TC when true
+    bool detectorClassic = false;  // M3: classic VCA compressor fixed 10 ms RMS TC when true
 
 public:
     void updateSampleRate(double newSampleRate)
@@ -2998,7 +2998,7 @@ public:
             detector.hfChokeState = 0.0f;
         }
 
-        // 1176 sidechain tilt: ~3dB/octave via 1st-order HPF at 800Hz blended with original
+        // FET limiter sidechain tilt: ~3dB/octave via 1st-order HPF at 800Hz blended with original
         {
             float sr = static_cast<float>(sampleRate);
             tiltCoeff = 1.0f - std::exp(-2.0f * 3.14159f * 800.0f / sr);
@@ -3045,7 +3045,7 @@ public:
             default: ratio = 4.0f; break;
         }
 
-        // FEEDBACK detection — Studio FET is an 1176 variant (Rev F / modern reissue)
+        // FEEDBACK detection — Studio FET is a FET limiter variant (later revision / modern reissue)
         // Apply previous envelope to get compressed signal for feedback detection
         float compressed = gained * detector.envelope;
 
@@ -3091,11 +3091,11 @@ public:
         }
         else
         {
-            // Feedback detection from compressed output (1176 topology)
+            // Feedback detection from compressed output (FET limiter topology)
             detectionLevel = std::abs(feedbackSignal);
         }
 
-        // 1176 sidechain tilt: 3dB/octave HF emphasis
+        // FET limiter sidechain tilt: 3dB/octave HF emphasis
         detector.tiltState += tiltCoeff * (detectionLevel - detector.tiltState);
         float hfContent = detectionLevel - detector.tiltState;
         detectionLevel = std::max(detectionLevel + hfContent * 0.35f, 0.0f);
@@ -3147,7 +3147,7 @@ public:
             reduction = juce::jmin(reduction, 30.0f);
         }
 
-        // Studio FET timing (same 1176 range as Vintage FET)
+        // Studio FET timing (same FET limiter range as Vintage FET)
         const float minRelease = 0.05f;
         const float maxRelease = 1.1f;
 
@@ -3233,7 +3233,7 @@ public:
         compressed = gained * detector.envelope;
 
         // Studio FET saturation — JFET square-law (even-harmonic), 30% of Vintage
-        // Models Rev F / modern reissue 1176 (Q-bias keeps FET closer to linear)
+        // Models a later-revision / modern reissue FET limiter (Q-bias keeps FET closer to linear)
         float output = compressed;
         {
             float grDb = -juce::Decibels::gainToDecibels(detector.envelope + 0.001f);
@@ -3294,7 +3294,7 @@ private:
         float peakHold = 0.0f;        // Peak-hold envelope for ABI detection
         int transientCounter = 0;     // ABI: counts samples since last transient onset
         float releaseMemory = 0.0f;   // Capacitor discharge accumulator (release lengthening)
-        float tiltState = 0.0f;      // 1176 sidechain tilt filter state
+        float tiltState = 0.0f;      // FET limiter sidechain tilt filter state
         float hfChokeState = 0.0f;   // HF choke: FET junction capacitance LPF
     };
 
@@ -3341,7 +3341,7 @@ public:
             detector.smoothedEnvelope = 1.0f;
         }
 
-        // Studio VCA transformer emulation (API 2500 / Neve 33609 style)
+        // Studio VCA transformer emulation (modern console bus compressor style)
         auto studioVCAProfile = HardwareEmulation::HardwareProfiles::getStudioVCA();
         inputTransformer.prepare(sampleRate, numChannels);
         inputTransformer.setProfile(studioVCAProfile.inputTransformer);
@@ -3357,7 +3357,7 @@ public:
 
         auto& detector = detectors[static_cast<size_t>(channel)];
 
-        // Hardware emulation: Input transformer (API 2500 / Neve 33609 style)
+        // Hardware emulation: Input transformer (modern console bus compressor style)
         float transformedInput = inputTransformer.processSample(input, channel);
 
         // Studio VCA uses RMS detection
@@ -3436,7 +3436,7 @@ public:
             compressed = (compressed > 0.0f ? 1.0f : -1.0f) * softClip;
         }
 
-        // Hardware emulation: Output transformer (API 2500 / Neve 33609 style)
+        // Hardware emulation: Output transformer (modern console bus compressor style)
         float output = outputTransformer.processSample(compressed, channel);
 
         // Apply output gain
@@ -4762,7 +4762,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
 
     // VCA detector mode: "Adaptive" matches the donor's prior behaviour
     // (level-dependent RMS TC, 35 ms → 5 ms). "Classic" forces a fixed
-    // 10 ms RMS TC for dbx 160 authenticity. Default Adaptive so existing
+    // 10 ms RMS TC for classic VCA compressor authenticity. Default Adaptive so existing
     // sessions / DAW projects keep their sound.
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         "vca_detector_mode", "VCA Detector",
@@ -4974,7 +4974,7 @@ void UniversalCompressor::LookupTables::initialize()
     // Measured curve: based on hardware analysis of real FET units
 
     // Hardware-measured data points (overThresh dB → reduction dB):
-    // Real 1176 ABI is extreme — essentially a limiter with unique distortion.
+    // The real FET limiter's ABI is extreme — essentially a limiter with unique distortion.
     // All four ratio buttons engaged simultaneously create competing feedback loops
     // that produce an effective ratio of ~100:1 or higher, with heavy harmonic
     // distortion and the characteristic "nuke" pumping effect.
@@ -4991,7 +4991,7 @@ void UniversalCompressor::LookupTables::initialize()
         float overThreshDb = 30.0f * static_cast<float>(i) / static_cast<float>(ALLBUTTONS_TABLE_SIZE - 1);
 
         // Modern curve: extreme compression (~100:1 effective ratio)
-        // Real 1176 ABI creates competing feedback loops from all 4 ratio circuits,
+        // The real FET limiter's ABI creates competing feedback loops from all 4 ratio circuits,
         // resulting in near-limiting behavior with heavy harmonic distortion.
         // This is the "nuke" setting — NOT just a high ratio, it's a wall.
         if (overThreshDb < 1.0f)

@@ -460,7 +460,7 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     const bool useExternalSidechain = params.externalSidechain.load(std::memory_order_relaxed) && sidechain != nullptr;
     const float* filteredSidechain[kMaxChannels] = {processedSidechain[0].data(), processedSidechain[1].data()};
     const float sidechainHP = params.sidechainHP.load(std::memory_order_relaxed);
-    // In VCA mode the SC HP control is the dbx 160's PULL/SC switch: settings
+    // In VCA mode the SC HP control is the reference VCA compressor's PULL/SC switch: settings
     // at or above 1 Hz engage the reference's measured half-order tilt in
     // place of the high-pass (MultiCompDbxLaw.hpp SidechainTilt).
     const bool dbxSidechainTilt = mode == MultiCompMode::VCA;
@@ -1107,7 +1107,7 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
         }
         if (mode == MultiCompMode::FET && link)
         {
-            // The installed 1176's stereo link is an arithmetic signed
+            // The installed reference FET limiter's stereo link is an arithmetic signed
             // maximum, not a magnitude maximum or a power sum. Its internal
             // link control is evaluated once per host sample and held across
             // the oversampling phases; the audio and colour path remain fully

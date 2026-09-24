@@ -248,7 +248,7 @@ run_sunset_circuits_tests() {
 
     # --- offline gate suite (the authoritative DSP check for this plugin) -----
     # Honours --skip-audio: the suite is offline audio rendering and takes
-    # minutes, and the documented fleet command in CLAUDE.md
+    # minutes, and the documented fleet command
     # (run_plugin_tests.sh --plugin "<Name>" --skip-audio) has to stay quick.
     print_section "Core gate suite: $SUNSET_NAME"
     if [ "$skip_audio" = true ]; then
@@ -310,8 +310,7 @@ run_sunset_circuits_tests() {
     fi
 
     # --skip-gui-tests is mandatory: pluginval's editor tests segfault headless
-    # for every DAF plugin (a host-side XEmbed issue, docs/daf-migration
-    # 00-OVERVIEW.md landmine 9), so a GUI run says nothing about this plugin.
+    # for every DAF plugin (a host-side XEmbed issue), so a GUI run says nothing about this plugin.
     # Strictness 8 is the bar the Sunset Circuits QA checklist declares
     # authoritative for the 222-parameter state round-trip.
     local level=8

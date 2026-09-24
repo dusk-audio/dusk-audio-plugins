@@ -1114,7 +1114,7 @@ private:
         }
 
         // FILTERS — British-style stepped HPF & LPF (OUT folds in each enable).
-        // Values are the hosted UAD/LUNA dial readbacks.
+        // Values are the reference plugin's hosted dial readbacks.
         static const char* const HPFL[7] = { "OUT", "16", "45", "120", "250", "320", "350" };
         static const float        HPFF[7] = { 16.f, 16.f, 45.f, 120.f, 250.f, 320.f, 350.f };
         static const char* const LPFL[7] = { "OUT", "15.2", "10", "5", "3.75", "3.3", "3" };
@@ -1416,7 +1416,7 @@ private:
         if (en)
         {
             // F[] is the frequency printed around the bezel. Convert that
-            // effective corner back to the fitted UAD control coordinate before
+            // effective corner back to the fitted reference control coordinate before
             // handing it to the DSP, so the pointer and response agree.
             f = normalizeParamValue(freqId, dialForCalibrated(freqId, f));
             values[freqId] = f;
@@ -1580,7 +1580,7 @@ private:
         auto c01 = [](float v) { return v < 0.f ? 0.f : (v > 1.f ? 1.f : v); };
 
         const bool frequencyKnob = isFrequencyParam(paramId);
-        // Frequency parameters retain the captured UAD control coordinate for
+        // Frequency parameters retain the captured reference control coordinate for
         // DSP/session compatibility, but the physical knob lives in effective
         // Hz. This makes its pointer, legends and live read-out agree with the
         // response curve and FFT in both Brown and Black modes.

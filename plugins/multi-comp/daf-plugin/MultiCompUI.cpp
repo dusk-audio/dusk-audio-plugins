@@ -36,7 +36,7 @@ inline constexpr float optoFaceplateAspect() noexcept
 }
 
 // The VCA face shares the rack-height canvas with the Opto and FET faces
-// (1120 x 310). The dbx 160's own ~2.5:1 proportions were tried on the tall
+// (1120 x 310). The reference VCA compressor's own ~2.5:1 proportions were tried on the tall
 // canvas (2026-09-01) and abandoned: the AU wrapper's resize path leaves the
 // GL view at half size / the host keeps the old window (#240), so a mode
 // whose canvas differs from the opening size shows up shrunken in Logic.
@@ -63,7 +63,7 @@ inline float designHeightForMode(float hostValue) noexcept
     return choiceIndex(hostValue, 8) <= 2 ? 380.0f : 486.0f;
 }
 
-// dbx-style threshold lamps: BELOW lights while the programme sits under the
+// VCA-compressor-style threshold lamps: BELOW lights while the programme sits under the
 // threshold, ABOVE from the threshold up. One boolean keeps the pair mutually
 // exclusive by construction.
 inline bool vcaSignalAboveThreshold(float inputDb, float thresholdDb) noexcept
@@ -111,7 +111,7 @@ inline float optoMeterNeedleAngle(float gainReductionDb) noexcept
 
 inline float optoMeterDisplayValue(float gainReductionDb) noexcept
 {
-    // The Opto gain cell already carries the measured LA-2A attack and release.
+    // The Opto gain cell already carries the measured opto leveler attack and release.
     // The separate display decay was not measured from the reference and made
     // the needle return materially later than the audio. Keep only a finite guard.
     return std::isfinite(gainReductionDb) ? gainReductionDb : 0.0f;
@@ -2084,11 +2084,11 @@ private:
 
     void drawVca(ImDrawList* dl)
     {
-        // dbx 160 face for the VCA mode, laid out from the reference panel's
+        // VCA compressor face for the VCA mode, laid out from the reference panel's
         // own proportions (x scaled 0.56, y scaled 0.52 from the 2000x802
         // reference image onto the 1120x416 face). Only the reference's
         // front-panel controls are drawn; attack, release, Over Easy and the
-        // detector selector have no dbx 160 equivalent and stay host-visible
+        // detector selector have no reference-unit equivalent and stay host-visible
         // parameters without faceplate controls. No third-party marks.
         using Layout = multicompp::ui_detail::VcaFaceplateLayout;
         constexpr float left = Layout::left, right = Layout::right;

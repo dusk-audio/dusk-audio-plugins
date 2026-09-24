@@ -104,7 +104,7 @@ public:
     void setBassShelfFreqHz   (float fcHz);       // pre-tank low-shelf corner (Hz)
 
     // Front-load early-reflection network (2026-06-19). The Dattorro tank is
-    // dense-from-onset (~44% of the energy in the first 50 ms); the Lexicon
+    // dense-from-onset (~44% of the energy in the first 50 ms); the reference
     // Vintage Plate BUILDS over ~90 ms to a prominent reflection then tails
     // (~11% first-50 ms, peak/tap @ ~92 ms). This injects a sparse, lightly-
     // diffused, band-limited early field (0..~tapMs, building) AND pre-delays
@@ -117,7 +117,7 @@ public:
     void setFrontLoad (float erGain, float predelayMs, float tapMs, float lpHz);
 
     // Post-main discrete second reflection tap — the anchor's "duh-DUH"
-    // (Lexicon Vintage Plate: main onset ~83 ms + a near-equal SECOND arrival
+    // (vintage plate reference: main onset ~83 ms + a near-equal SECOND arrival
     // ~143 ms). A darkened, stereo-decorrelated, delayed copy of the pre-tank
     // signal summed POST-tank, arriving AFTER the main onset (the opposite of
     // the front-load ER, which pre-echoes). Mirrors DenseHall's reflBuf tap.
@@ -262,7 +262,7 @@ private:
     // Early-field tap pattern: a FEW well-separated DISCRETE taps (NOT diffused —
     // diffusion fills the envelope dips and collapses env_p2p, the anchor's defining
     // dynamic). Fractions of frontTapMs_ + building gains; silence between taps =
-    // the envelope ripple the Lexicon plate has. The delayed-tank onset supplies the
+    // the envelope ripple the reference plate has. The delayed-tank onset supplies the
     // final peak. R taps offset a hair for L/R decorrelation (stereo_corr).
     static constexpr int   kErTaps = 3;
     static constexpr float kErTapFrac[kErTaps] = { 0.30f, 0.60f, 0.92f };

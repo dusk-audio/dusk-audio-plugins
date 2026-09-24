@@ -455,11 +455,11 @@ float TubeEQCurveDisplay::calculateLFCombinedResponse(float freq) const
     constexpr float kPeakInteraction = 0.08f;
     constexpr float kBaseQ = 0.55f;
     constexpr float kQInteraction = 0.015f;
-    constexpr float kDipFreqBase = 1.0f;          // Same freq as boost (Pultec Trick)
+    constexpr float kDipFreqBase = 1.0f;          // Same freq as boost (simultaneous boost/cut low-shelf trick)
     constexpr float kDipFreqRange = 0.0f;          // No gain-dependent shift
     constexpr float kDipGainScale = 1.75f;         // ~17.5 dB max (hardware match)
     constexpr float kDipInteraction = 0.06f;
-    constexpr float kDipBaseQ = 0.65f;             // Broader shelf for Pultec Trick
+    constexpr float kDipBaseQ = 0.65f;             // Broader shelf for simultaneous boost/cut low-shelf trick
     constexpr float kDipQScale = 0.03f;
 
     double peakMag = 1.0;

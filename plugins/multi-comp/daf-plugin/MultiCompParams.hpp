@@ -197,7 +197,7 @@ inline constexpr const char* const kLinkMode[3] = {"Stereo","Mid-Side","Dual Mon
 // Version 2 therefore carried the float's bit pattern through the integer
 // overloads. Version 3 removes two inert fields and stores tapered controls in
 // their new normalized host domain. Both are exact and locale-independent.
-// Version 4 (2026-09-01) moves the VCA mode onto the measured dbx 160 laws:
+// Version 4 (2026-09-01) moves the VCA mode onto the measured VCA compressor laws:
 // `vca_ratio` (a skew-0.3 ratio stored host-normalized 0..1) became
 // `vca_compression` (a plain 0..100 knob position), and `vca_threshold` moved
 // from -38..+12 dB to -55..0 dB. Version-3 states are still loaded: the legacy

@@ -15,7 +15,7 @@ tagline: Algorithmic reverb with eleven engines (pre-release)
 
 DuskVerb is an algorithmic reverb with eleven distinct engines under one user interface. Each engine targets a different reverb territory: **Plate** is the classic dense plate that works on almost everything; **Vintage Plate** is the darker, steely vintage-plate character; **Smooth Plate** is a smooth six-allpass plate; **Chamber** is a studio chamber and tight-room voice; **Spring** is the surf-guitar spring sound; **Gated** produces the gated 1980s drum sound and other non-natural curves; **Shimmer** adds pitched sparkle above and warmth below the tail; **Reverse** is the swelling reverse effect; **Hall** is a realistic per-octave-tuned hall; **Tiled Room** is a bright tiled room; and **Dense Hall** is a lush, densely diffused hall.
 
-Use it where you would use any reverb. Vocals, drums, guitars, and full-mix space all have an engine in DuskVerb that is voiced for them. The 20 factory presets are anchored to specific hardware references (Lexicon 224 and 480L, EMT 140, AMS RMX16, and others) and serve both as starting points and as a tutorial in what each engine can do.
+Use it where you would use any reverb. Vocals, drums, guitars, and full-mix space all have an engine in DuskVerb that is voiced for them. The 20 factory presets are anchored to specific hardware references (classic digital halls, a steel plate, a vintage nonlinear reverb, and others) and serve both as starting points and as a tutorial in what each engine can do.
 
 It is not a convolution reverb (use Convolution Reverb for IR-based work), and it is not a delay/multitap effect. It is an eleven-in-one algorithmic reverb that lets you pick the right engine for the job.
 
@@ -113,7 +113,7 @@ Settings (or load the **1981 Gated Snare** preset):
 - **Gate:** Enabled (default; this is the parameter that makes the engine non-linear)
 - **Dry/Wet:** 35% (insert)
 
-Why this works. The Gated engine mimics the AMS RMX16's "Non-Lin 2" algorithm: the reverb has constant level for a fixed time (set by Decay Time) and then cuts to silence rather than fading naturally. This produces the 1980s snare sound that defined a decade of records. For the swelling backward version instead, load **Reverse Taps** on the **Reverse** engine.
+Why this works. The Gated engine mimics a classic 1980s digital nonlinear reverb algorithm: the reverb has constant level for a fixed time (set by Decay Time) and then cuts to silence rather than fading naturally. This produces the 1980s snare sound that defined a decade of records. For the swelling backward version instead, load **Reverse Taps** on the **Reverse** engine.
 
 ## Parameter Reference
 
@@ -177,7 +177,7 @@ The wet tail preserves the dry source's left/right placement instead of collapsi
 
 - **Pre-Delay is your most important parameter for clarity.** Without pre-delay, the reverb tail starts on the same sample as the dry signal and the result smears. 20 to 60 ms of pre-delay keeps vocals and drums distinct from their reverb.
 - **The macros are the fast path.** Tone, Character, and Duck reshape any preset without diving into the per-band controls. Reach for them first when a preset is close but not quite matched to the track.
-- **Hardware anchors are real.** The presets are tuned to specific hardware references. "Vintage Vocal Plate" leans on the EMT 140's darker, steely plate character; "Blade Runner 224" captures the long-decay Lexicon 224 sound; "Cathedral Large Hall" is a long Lexicon-style hall. If you are familiar with the source hardware, the preset name tells you what to expect.
+- **Hardware anchors are real.** The presets are tuned to specific hardware references. "Vintage Vocal Plate" leans on the darker, steely character of a classic plate; "Blade Runner 224" captures a long-decay vintage digital hall sound; "Cathedral Large Hall" is a long classic digital hall. If you are familiar with the source hardware, the preset name tells you what to expect.
 - **Engine switching is not parameter-preserving.** Each engine has its own internal state. Switching engines while a tail is decaying produces a crossfade; do not expect identical-sounding results across engines at the same parameter values.
 - **Freeze is loud.** Freeze captures the current reverb tail and loops it indefinitely. Levels can build dramatically; pull Gain Trim back before enabling Freeze on a busy mix.
 
@@ -193,11 +193,11 @@ DuskVerb ships with 20 factory presets, laid out in a two-column menu grouped by
 
 ### Plates
 
-Four plate presets: **Vocal Plate** is the bright, smooth plate for lead vocals; **Vintage Vocal Plate** is the darker, steely EMT 140 character; **Drum Plate** is the punchy plate for snares and drums; **Vintage Gold Plate** is the long, lush plate that helped define 1980s record production.
+Four plate presets: **Vocal Plate** is the bright, smooth plate for lead vocals; **Vintage Vocal Plate** is the darker, steelier character of a classic plate; **Drum Plate** is the punchy plate for snares and drums; **Vintage Gold Plate** is the long, lush plate that helped define 1980s record production.
 
 ### Halls
 
-Four halls, from bright studio (**Bright Hall**) through vocal-tuned (**Vocal Hall**) to massive (**Cathedral Large Hall**, a long Lexicon-style concert hall). **Blade Runner 224** captures the long-decay extended-tail Lexicon 224 sound. Pick by length and brightness.
+Four halls, from bright studio (**Bright Hall**) through vocal-tuned (**Vocal Hall**) to massive (**Cathedral Large Hall**, a long classic digital concert hall). **Blade Runner 224** captures a long-decay, extended-tail vintage digital hall sound. Pick by length and brightness.
 
 ### Chambers
 

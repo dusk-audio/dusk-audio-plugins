@@ -23,7 +23,7 @@ enum ParamId
     kInputGain, kOutputGain,
     // Retained at its shipped index so existing sessions keep every following
     // parameter aligned. 4K EQ 2 no longer exposes or acts on a separate drive
-    // amount: the modeled SSL path has fixed native nonlinearity and is driven
+    // amount: the modeled British console path has fixed native nonlinearity and is driven
     // by Input Gain, like the reference channel strip.
     kSaturation,
     kOversampling,  // 0 = 1x (off), 1 = 2x, 2 = 4x

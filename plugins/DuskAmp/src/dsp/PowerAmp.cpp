@@ -32,7 +32,7 @@ PowerAmp::PowerAmpConfig PowerAmp::getConfigForAmpType (AmpType type)
                 0.7f,       // Heavy NFB → clean headroom, lots of control
                 20.0f,      // Slow sag attack (20ms) — 6L6 tubes are beefy
                 200.0f,     // Slow sag release — gentle recovery
-                3.0f,       // Max drive gain (less aggressive than Marshall)
+                3.0f,       // Max drive gain (less aggressive than British crunch)
                 0.0f,       // Symmetric push-pull (Class AB)
                 true,       // isPushPull (Class AB — pair of 6L6, transformer subtracts).
                             // Re-enabled after fixing the underlying bug:
@@ -46,7 +46,7 @@ PowerAmp::PowerAmpConfig PowerAmp::getConfigForAmpType (AmpType type)
                             // output collapsed to zero. zeroCenterCurve()
                             // now subtracts f(0) so push-pull works for all
                             // three Koren curves.
-                0.55f,      // sagDepth: deep — Fender's 5AR4 tube rectifier
+                0.55f,      // sagDepth: deep — American clean amp's 5AR4 tube rectifier
                             // produces 3-5dB sag at cranked operation
                 0.80f,      // Transformer: high saturation threshold
                 0.10f,      // Moderate saturation amount
@@ -63,8 +63,8 @@ PowerAmp::PowerAmpConfig PowerAmp::getConfigForAmpType (AmpType type)
                 3.5f,       // More drive available (single-ended needs it)
                 0.15f,      // Class A bias asymmetry → 2nd harmonic content
                 false,      // isPushPull (Class A — single-ended EL84, even harmonics survive)
-                0.40f,      // sagDepth: medium — Vox AC30's GZ34 rectifier
-                            // gives 2-3dB sag, less than Fender's 5AR4
+                0.40f,      // sagDepth: medium — class-A chime amp's GZ34 rectifier
+                            // gives 2-3dB sag, less than American clean amp's 5AR4
                 0.65f,      // Lower saturation threshold (EL84 clips earlier)
                 0.15f,      // More saturation
                 1.4f,       // More LF saturation (loose bottom end)
@@ -81,7 +81,7 @@ PowerAmp::PowerAmpConfig PowerAmp::getConfigForAmpType (AmpType type)
                 4.0f,       // More drive headroom (for high gain)
                 0.0f,       // Symmetric push-pull (Class AB)
                 true,       // isPushPull (Class AB — pair of EL34, transformer subtracts)
-                0.12f,      // sagDepth: shallow — Marshall's solid-state bridge
+                0.12f,      // sagDepth: shallow — British crunch amp's solid-state bridge
                             // rectifier delivers tight, fast response (~0.5-1dB)
                 0.70f,      // Moderate saturation threshold
                 0.12f,      // Moderate saturation
@@ -220,7 +220,7 @@ void PowerAmp::process (float* buffer, int numSamples)
         // Resonance: remove LF from feedback (adds LF energy)
         feedbackSignal -= resonanceFilterState_ * resonanceAmount_ * 0.5f;
 
-        // Apply NFB ratio (0 for Vox = no feedback, 0.7 for Fender = heavy)
+        // Apply NFB ratio (0 for class-A chime = no feedback, 0.7 for American clean = heavy)
         float feedback = nfb * feedbackSignal;
 
         // --- 2. Sag: envelope follows input level, reduces headroom ---
@@ -236,7 +236,7 @@ void PowerAmp::process (float* buffer, int numSamples)
         // --- 3. Drive stage with feedback subtraction ---
         float driven = (input - feedback) * driveGain_ * sagReduction;
 
-        // Class A bias asymmetry (Vox): offset the signal to create
+        // Class A bias asymmetry (class-A chime): offset the signal to create
         // asymmetric clipping → even harmonics (2nd, 4th)
         driven += biasOffset;
 
@@ -247,10 +247,10 @@ void PowerAmp::process (float* buffer, int numSamples)
         // — even-order harmonics cancel because f(x) and f(-x) produce the
         // same even harmonics in phase, so the subtraction kills them. Odd
         // harmonics double. This is the canonical Class AB cancellation
-        // signature; without it Marshall/Fender power amps wrongly behave
+        // signature; without it British crunch/American clean power amps wrongly behave
         // like single-ended Class A circuits.
-        // Single-ended (Class A, Vox) keeps the unprocessed asymmetric
-        // output so even harmonics survive — the chimey AC30 character.
+        // Single-ended (Class A, chime amp) keeps the unprocessed asymmetric
+        // output so even harmonics survive — the chimey class-A character.
         float saturated;
         if (config_.isPushPull)
         {

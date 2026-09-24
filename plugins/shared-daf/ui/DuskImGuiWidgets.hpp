@@ -145,7 +145,7 @@ public:
             dl->AddText(font, sz, ImVec2(pos.x + 0.6f * s, pos.y), col, txt);
     }
 
-    // A lamp that is not the panel's indicator colour. The dbx 160 face carries
+    // A lamp that is not the panel's indicator colour. The VCA compressor face carries
     // an amber BELOW and a red ABOVE side by side, which one palette entry
     // cannot say, and the jewel it uses is built a little differently from the
     // small panel indicator: a drop shadow under the bezel, a wider glow, an

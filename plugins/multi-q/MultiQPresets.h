@@ -991,7 +991,7 @@ inline std::vector<Preset> getFactoryPresets()
         presets.push_back(p);
     }
 
-    // ==================== BRITISH (Neve-Style Console EQ) ====================
+    // ==================== BRITISH (British Class-A Console EQ) ====================
 
     // British: Vocal Channel (E-Series warmth)
     {
@@ -1164,9 +1164,9 @@ inline std::vector<Preset> getFactoryPresets()
         presets.push_back(p);
     }
 
-    // ==================== TUBE (Pultec-Style EQ) ====================
+    // ==================== TUBE (Passive Tube Program EQ) ====================
 
-    // Tube: Vintage Warmth (classic Pultec trick)
+    // Tube: Vintage Warmth (classic simultaneous boost/cut low-shelf trick)
     {
         Preset p;
         p.name = "Vintage Warmth";
@@ -1175,7 +1175,7 @@ inline std::vector<Preset> getFactoryPresets()
         p.hasTube = true;
         p.tube.lfBoostGain = 4.0f;
         p.tube.lfBoostFreq = 60.0f;
-        p.tube.lfAttenGain = 3.0f;   // Pultec trick: boost + atten
+        p.tube.lfAttenGain = 3.0f;   // Simultaneous boost/cut low-shelf trick: boost + atten
         p.tube.hfBoostGain = 3.0f;
         p.tube.hfBoostFreq = 10000.0f;
         p.tube.hfBoostBandwidth = 0.6f;

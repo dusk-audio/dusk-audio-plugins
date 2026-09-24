@@ -13,7 +13,7 @@
 // kParamBritish* indices. An EQ Type character selector (Digital/Match/British/
 // Tube) lives in the header and switches between the four fully-drawn skins:
 // Digital (8-band curve editor + strips + detail panel), Match (spectrum-learn
-// overlays + LEARN & MATCH panel), British (this console) and Tube (Pultec).
+// overlays + LEARN & MATCH panel), British (this console) and Tube (passive tube program EQ).
 //
 // Everything is drawn in a 960x680 design space, uniformly scaled and letterboxed
 // inside the 1040x680 window (side chassis margins), exactly as FourKEQUI does.
@@ -201,7 +201,7 @@ namespace
         }
     }
 
-    // Tube (Pultec) column x-dividers + warm face colour.
+    // Tube (passive program EQ) column x-dividers + warm face colour.
     constexpr ImU32 C_TUBE_FACE = IM_COL32(120, 78, 52, 255);   // bronze knob face
     constexpr ImU32 C_TUBE_LBL  = IM_COL32(214, 196, 168, 255); // warm caption
     constexpr float TGY0 = 104.f, TGY1 = 300.f;                 // tube response plot
@@ -1299,7 +1299,7 @@ private:
         {
             for (int b = 0; b < 8; ++b) enable(b, false);
 
-            // Band 2 (mqidx 1): Low Shelf <- Pultec LF (boost*1.4 - atten*1.75).
+            // Band 2 (mqidx 1): Low Shelf <- Tube LF (boost*1.4 - atten*1.75).
             const float lfBoost = values[kParamPultecLfBoostGain];
             const float lfAtten = values[kParamPultecLfAttenGain];
             if (std::abs(lfBoost) > 0.1f || std::abs(lfAtten) > 0.1f)
@@ -1311,7 +1311,7 @@ private:
                 setRaw(mqidx::shape(1), 0.f);   // Low Shelf
             }
 
-            // Band 5 (mqidx 4): Parametric <- Pultec HF Boost (gain*1.8, Q=2-bw*1.7).
+            // Band 5 (mqidx 4): Parametric <- Tube HF Boost (gain*1.8, Q=2-bw*1.7).
             const float hfBoost = values[kParamPultecHfBoostGain];
             if (std::abs(hfBoost) > 0.1f)
             {
@@ -1324,7 +1324,7 @@ private:
                 setRaw(mqidx::shape(4), 0.f);   // Peaking
             }
 
-            // Band 7 (mqidx 6): High Shelf cut <- Pultec HF Atten (-gain*1.6).
+            // Band 7 (mqidx 6): High Shelf cut <- Tube HF Atten (-gain*1.6).
             const float hfAtten = values[kParamPultecHfAttenGain];
             if (std::abs(hfAtten) > 0.1f)
             {
@@ -2591,7 +2591,7 @@ private:
         pushUiPresets();
     }
 
-    // Apply a Tube (Pultec) factory preset (pi<0 = Init/defaults). Resets the Tube
+    // Apply a Tube (passive program EQ) factory preset (pi<0 = Init/defaults). Resets the Tube
     // param group to layout defaults, then applies the preset's sparse overrides
     // (which include eq_type=Tube) — matching the shell's loadProgram semantics.
     void applyTubePreset(int pi)
@@ -2917,7 +2917,7 @@ private:
     }
 
     //========================================================================
-    // TUBE — Pultec-style passive program EQ
+    // TUBE — passive tube program EQ
     //========================================================================
     // Read-only response, ported verbatim from JUCE TubeEQCurveDisplay so the
     // curve matches the DSP's voiced behaviour (analytic approximation; the real

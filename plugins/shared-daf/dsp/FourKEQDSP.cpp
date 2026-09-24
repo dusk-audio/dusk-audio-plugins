@@ -147,7 +147,7 @@ struct FilterCalibration
 // `q_control = [q_frequency[10]] * 21` fallback for the four bands that have no
 // Q sweep (which is why exactly 8 arrays here are entirely constant).
 //
-// The duplication is in the REFERENCE. The UAD/LUNA parameter law flattens over
+// The duplication is in the REFERENCE. The reference plugin's parameter law flattens over
 // its top 1/20th, so positions 19/20 and 20/20 return the same response, for
 // frequency, gain and Q alike. One property of the reference explains all 64
 // arrays at once. FourKEQFilterCalibration.inc shows the same signature on the

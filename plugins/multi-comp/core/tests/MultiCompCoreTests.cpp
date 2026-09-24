@@ -3849,7 +3849,7 @@ void testGoldenVectors()
     // superseded behaviour. Do not restore them or use them to judge the new
     // implementation: the hardware reference is the only Opto oracle.
     // VCA left 2026-09-01 for the same reason: it is being rebuilt against
-    // the measured UAD dbx 160 (reference_comparison_dbx160 campaign), whose
+    // the measured reference VCA compressor (reference_comparison_dbx160 campaign), whose
     // static and control laws already differ from the JUCE implementation.
     constexpr duskaudio::MultiCompMode modes[] = {
         duskaudio::MultiCompMode::FET,
@@ -5754,7 +5754,7 @@ void testFetMeasuredCurveAllButtons()
     // `processFET` reaches `fetAllProcessorCorrectionDb` only on the Modern
     // curve. With Curve = Measured and ratio ALL it takes
     // `lookupTables.getAllButtonsReduction()` instead, a different law, and the
-    // whole 1176 campaign is pinned to Modern -- so nothing else in this file
+    // whole FET limiter campaign is pinned to Modern -- so nothing else in this file
     // or in the campaign exercises that arm. These are recorded regression
     // vectors, not reference parity: the reference unit was never rendered on
     // this arm.
@@ -6152,7 +6152,7 @@ float renderFetDenseStereoLevelDb(double sampleRate, float rightDbfs,
 
 void testFetDenseStereoPhaseParity()
 {
-    // Exact UAD Wave 27 same-stimulus link responses. The 96 kHz equal-level
+    // Exact reference Wave 27 same-stimulus link responses. The 96 kHz equal-level
     // quarter-cycle row is the exposed defect; the adjacent phases, the same
     // phase at 48 kHz, and the lower-level opposite arm reject a one-cell or
     // phase-only correction.
@@ -6263,7 +6263,7 @@ std::array<float, 5> renderFetRecoveryH1Db(
 void testFetDenseStartupRecoveryParity()
 {
     // Wave 27's equal 8 s sources, rescored against the current binary. These
-    // are absolute UAD H1 levels in the five declared 250 ms windows; the
+    // are absolute reference H1 levels in the five declared 250 ms windows; the
     // quiet render removes static device gain before the recovery residual is
     // compared. Both phases are required because the reference recovery state
     // is phase-sensitive, and both rates prevent a 96 kHz-only scalar patch.
@@ -6461,7 +6461,7 @@ void testFetPostBurstRecoveryLifecycle()
 
 // --- vintage FET attack drive axis ---------------------------------------
 //
-// The 1176 comparison campaign's headline dynamics finding is that the
+// The FET limiter comparison campaign's headline dynamics finding is that the
 // reference's attack time constant FALLS as it is driven harder
 // (1.73 -> 1.03 -> 0.72 ms for -30 / -18 / -6 dBFS at attack knob 0.5) while
 // this core's rose. The measurement below reproduces that campaign row
@@ -8079,7 +8079,7 @@ void testFetDenseShallowLowFrequencyH3()
     // the net transfer knee after the colour stage, so H3/H1 is deliberately
     // unchanged and this is the red gate for re-keying only the shallow T3
     // lookup coordinate. All 33 reference rows are above the -92 dBc floor;
-    // phase is H3 normalised to the measured H1 phase in the retained UAD WAVs.
+    // phase is H3 normalised to the measured H1 phase in the retained reference WAVs.
     constexpr std::array<double, 33> referenceH3RelativeDb{{
         -87.5355661498, -87.0345848794, -86.5351668744,
         -86.0312293496, -85.5273531539, -85.0280479681,
@@ -8238,7 +8238,7 @@ void testFetDenseBroadbandComplexH3()
     // broadband-K3 anchors: at the campaign's standard Input 0.8 setting the
     // reference H3 vector rotates by more than 120 degrees as drive increases,
     // while the reduction-only cubic remains near 135 degrees. These are
-    // same-stimulus UAD rows, so unlike the diagnostic matched-GR pairs they
+    // same-stimulus reference rows, so unlike the diagnostic matched-GR pairs they
     // are an absolute parity surface. Nine 6 dB-spaced calibration rows are the
     // fit candidates. The interleaved original campaign rows are held out.
     struct Point
@@ -8426,7 +8426,7 @@ void testFetDenseBroadbandComplexH5()
     // the matched-reduction probe used 0.5 while the original campaign used
     // 0.66595459. The apparent contradiction was therefore a missing control
     // coordinate. These rows close that measurement hole with same-stimulus
-    // UAD vectors. The Release-0.5 rows are the retained 6 dB-spaced rate
+    // reference vectors. The Release-0.5 rows are the retained 6 dB-spaced rate
     // calibration captures; the Release-0.66595459 rows are the independently
     // captured original 96 kHz campaign grid.
     struct Point
@@ -8781,7 +8781,7 @@ void testFetLowFrequencyColourSurface()
             "vintage FET low-frequency colour matches the measured reference across the reduction axis");
 }
 
-// The VCA mode's PULL/SC switch engages the measured dbx 160 sidechain tilt:
+// The VCA mode's PULL/SC switch engages the measured VCA compressor sidechain tilt:
 // |H(f)| = sqrt(f / 276 Hz). Check the filter alone against that ideal at
 // 48 kHz, then that VCA mode actually routes a non-zero SC HP setting through
 // it (more reduction on a 3 kHz tone than on a 60 Hz tone at equal level,
@@ -8892,8 +8892,8 @@ void testDbxSidechainTiltEngagementLifecycle()
             "VCA sidechain tilt resets only when its switch becomes engaged");
 }
 
-// VCA / dbx 160 parity gate. Every expected number below was measured on the
-// installed UAD dbx 160 (reference_comparison_dbx160 campaign, 2026-09-01)
+// VCA compressor parity gate. Every expected number below was measured on the
+// installed reference VCA compressor (reference_comparison_dbx160 campaign, 2026-09-01)
 // with the same stimuli rendered in process here: steady 1 kHz tones for the
 // static law at the default threshold (-27 dB) and 4:1 position, a pedestal
 // step for the attack/release timing, and an equal-RMS sine/burst/noise

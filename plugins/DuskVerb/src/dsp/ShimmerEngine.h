@@ -74,10 +74,10 @@ public:
     void setModDepth          (float depth);   // hijacked: PITCH (0..1 → 0..24 semitones)
     void setModRate           (float hz);      // hijacked: FEEDBACK (0.1..10 → 0..0.95)
     void setTankDiffusion     (float amount);
-    void setDownOctaveMix     (float mix);     // octave-DOWN voice level (0 = off/bit-null) — the warm low Valhalla Shimmer has, DV's up-only voices lacked
+    void setDownOctaveMix     (float mix);     // octave-DOWN voice level (0 = off/bit-null) — the warm low reference shimmer has, DV's up-only voices lacked
     void setSubOctaveMix      (float mix);     // octave-DOWN-2 voice (×0.25 → 250 Hz from 1 kHz); 0 = off/bit-null — reaches the deep lows in ONE step where the −1 oct cascade dies out
     void setFeedbackHpfHz     (float hz);      // feedback-loop HPF corner; lower = the low cascade survives (default 60; ~35 keeps killing the 12 Hz grain rumble)
-    void setStereoMod         (float rateHz, float depth);  // wet-output stereo chorus/ensemble (anti-phase modulated delay); depth 0 = bypassed/bit-null. Matches Valhalla Black Hole's moving stereo field.
+    void setStereoMod         (float rateHz, float depth);  // wet-output stereo chorus/ensemble (anti-phase modulated delay); depth 0 = bypassed/bit-null. Matches REF Black Hole's moving stereo field.
     void setHFAir             (float mix);   // post-loop +12 st air voice (genuine >12 kHz air); mix 0 = bit-null
     void setModeSmear         (float depthSamples, float rateHz);  // deep+slow FDN mode-smear on the reverb tail (anti-boing); depth 0 = off/bit-null
     // In-loop sustained-energy limiter in the internal reverb tank(s) (SustainBandLimiter.h).
@@ -100,9 +100,9 @@ public:
     void setNoiseSustainDuck  (float amt);
     void setUseDenseReverb    (bool on);     // route the tank through DenseHallReverb (dense diffusion → smooth, non-metallic HF tail) instead of the sparse 16-line FDN. false = legacy FDN (bit-identical).
     void setUseTailSpin       (bool on);     // 2-stage modulated-allpass spin-comb on the FDN wet output — smears the metallic HF while keeping the FDN's cascade/width/HF (for Deep Blue Day). false = untouched.
-    void setTailNoise         (float gain, float hpHz = 250.0f, float lpHz = 7000.0f);  // envelope-tracked band-limited noise floor on the output — the 'ocean' fade Valhalla has; masks the sparse-mode ring. Band corners shape its color. 0 = off/bit-null.
+    void setTailNoise         (float gain, float hpHz = 250.0f, float lpHz = 7000.0f);  // envelope-tracked band-limited noise floor on the output — the 'ocean' fade REF has; masks the sparse-mode ring. Band corners shape its color. 0 = off/bit-null.
     void setUpVoiceScale      (float v1, float v2);  // per-preset scale on the +12/+24 up-voices — fills the mid tail (250 Hz-1 kHz) harder on transients (Deep Blue Day). 1.0/1.0 = bit-identical.
-    void setOctaveCascade     (const float gains[4]);  // dry-fed feed-forward octave cascade levels (500/250/125/62 Hz) — matches Valhalla's even down-cascade. all 0 = off/bit-null.
+    void setOctaveCascade     (const float gains[4]);  // dry-fed feed-forward octave cascade levels (500/250/125/62 Hz) — matches REF's even down-cascade. all 0 = off/bit-null.
     void setHFSustainDb       (float db, float cornerHz = 4000.0f);   // feedback-loop HF compensation shelf (dB lift above cornerHz, applied post-band-pass, pre-fb-gain). The FDN tank is HF-lossy per pass — that loss, not the loop LPF, caps HF T60 (T60-16k wall). Re-entering the loop with the HF band lifted extends the HF ring; bounded by kFeedbackLoopAttn + the loop softClip. First-order (6 dB/oct) — corner placement is the mid-isolation lever. 0 dB = off/bit-null.
     void setOutputHeadroom    (float h);   // OUTPUT-stage tanh headroom. The wet output is tanh(oL*kWetOutputGain); on very-long-decay presets (Deep Blue Day, Decay 20 s) the sustained-tone buildup drives that tanh into its nonlinear region → ODD-harmonic (3k/5k) grit on a 1 kHz tone (~5% vs anchor 0.01%). h scales the knee: out = h*tanh(x/h) so the curve stays linear up to ±h (h>1 = more headroom, less distortion; the RAW wet feeding the loop is untouched, so cascade dynamics are identical). h=1.0 → EXACTLY tanh(x) = bit-null (Black Hole + every non-DBD preset).
     void setFreeze            (bool frozen);
@@ -180,7 +180,7 @@ private:
     // SECOND pitch voice — an octave ABOVE voice 1 (2026-05-31). A single
     // granular voice + its anti-alias filter (cutoff = nyquist/ratio ≈ 12 kHz
     // for the +12 octave) is band-limited: the top octave (10-20 kHz) is
-    // starved vs Valhalla Shimmer's broadband octave (Deep Blue Day: ss-air
+    // starved vs reference shimmer's broadband octave (Deep Blue Day: ss-air
     // -19 dB short, spec_L1 max +36 dB at 12.9 kHz). Voice 2 pitches the same
     // feedback up a FURTHER octave (ratio ×2, AA cutoff ~6 kHz → output to
     // 24 kHz), filling 12-24 kHz so the shimmer reads broadband. Lower mix —
@@ -194,7 +194,7 @@ private:
 
     // DOWN voice (2026-06-19) — pitches the feedback DOWN one octave (×0.5) IN THE
     // FEEDBACK LOOP, alongside the up voices. The loop regenerates a descending ladder
-    // (500, 250, 125 Hz from a 1 kHz input) — the WARM LOW that Valhalla Shimmer's
+    // (500, 250, 125 Hz from a 1 kHz input) — the WARM LOW that reference shimmer's
     // DeepBlueDay has and DV's up-only voices lacked (measured: Shimmer 500 Hz = 64 dB,
     // DV = 0 dB from a pure 1 kHz sine). Crucially it shares the SAME loop as the up
     // shimmer, so the low octave builds with IDENTICAL timing — no late "kick-in" (the
@@ -212,10 +212,10 @@ private:
 
     // SUB voice (2026-06-29) — pitches the feedback DOWN TWO octaves (×0.25). The −1 oct
     // voice must cascade 1k→500→250→125 over successive loop passes, losing level each step
-    // (softClip + loop attn), so the deep lows never arrive — measured against Valhalla
+    // (softClip + loop attn), so the deep lows never arrive — measured against REF
     // Shimmer DeepBlueDay the DV deficit GROWS with depth (500 Hz −7 dB, 250 −19, 125 −21,
     // 60 −35). This voice reaches 250 Hz in ONE step (and the loop regenerates 125→62 from
-    // it), filling the low wash Valhalla has. Same loop = identical build timing. subMix_ 0
+    // it), filling the low wash REF has. Same loop = identical build timing. subMix_ 0
     // → branch skipped. Byte-identical on NON-shimmer presets (they don't run this engine);
     // the shimmer presets that run this loop with subMix_ 0 are functionally unchanged but
     // NOT byte-guaranteed (recursive-feedback TU codegen ~1e-4, see duskverb_bitnull_codegen_limit)
@@ -226,7 +226,7 @@ private:
 
     // DRY-FED OCTAVE CASCADE (2026-07-01) — a mono, FEED-FORWARD chain of −12 st pitch stages
     // fed from the DRY input (not the feedback), each octave summed into the reverb input at its
-    // OWN gain. This is what Valhalla Shimmer does: independent per-octave generation → a gentle
+    // OWN gain. This is what reference shimmer does: independent per-octave generation → a gentle
     // EVEN 500/250/125/62 descent. DV's old feedback down/sub voices could not (they read the
     // recirculated wet, so a transient starves them, and the "sub" ratio 0.25 was silently
     // clamped to 0.5 by setPitchRatio — never actually −24 st). Feed-forward → each stage's level
@@ -342,7 +342,7 @@ private:
 
     // Stereo modulation (chorus/ensemble) on the WET output — a slow LFO sweeps
     // per-channel modulated delays in ANTI-PHASE, so the L/R combs move oppositely:
-    // on a steady tone the image swings side-to-side (Valhalla Shimmer Black Hole
+    // on a steady tone the image swings side-to-side (reference shimmer Black Hole
     // measured 0.83 Hz, ±25 dB L-R), on broadband it's a moving, animated field.
     // depth 0 → bypassed → bit-null. Applied post-feedback-write so the loop stays clean.
     struct StereoMod
@@ -407,7 +407,7 @@ private:
     // Tail spin-comb — a 2-stage cascade of MODULATED Schroeder allpasses on the
     // WET output (allpass = magnitude-flat → no comb notches, only the slow spin
     // modulation smears the spectrum). L/R run in opposite mod phase. It smears the
-    // sparse FDN's metallic HF modes (kurt ~31 → ~9, matching Valhalla) WITHOUT the
+    // sparse FDN's metallic HF modes (kurt ~31 → ~9, matching REF) WITHOUT the
     // density of a full reverb swap, so the FDN tank's deep-low cascade / width /
     // HF-sustain are preserved. Applied to the OUTPUT only, post-feedback-write, so
     // the recirculating cascade stays un-spun. Used on Deep Blue Day (keeps its FDN);
@@ -442,8 +442,8 @@ private:
     TailSpin tailSpin_;
     bool useTailSpin_ = false;
 
-    // Tail noise floor — the dense, noise-like decay Valhalla's shimmer has and DV's sparse FDN
-    // lacks (measured: Valhalla's fade stays denser + ~2 dB higher; DV collapses to a single
+    // Tail noise floor — the dense, noise-like decay REF's shimmer has and DV's sparse FDN
+    // lacks (measured: REF's fade stays denser + ~2 dB higher; DV collapses to a single
     // sparse mode). A low-level band-limited noise, ENVELOPE-TRACKED to the wet tail so it fades
     // WITH the decay ("white noise heard as the audio fades out"). It fills the spectral gaps
     // between DV's sparse modes → masks the discrete low-mode ring (203 Hz boing) so it blends
@@ -499,7 +499,7 @@ private:
     float noiseGain_ = 0.0f;   // per-preset; 0 = off (bit-null)
     float stereoModRate_ = 0.83f, stereoModDepth_ = 0.0f;   // depth 0 = bypassed (bit-null)
 
-    // HF-air voice — the genuine >12 kHz "air" Valhalla Shimmer has (centroid ~9.9k BH /
+    // HF-air voice — the genuine >12 kHz "air" reference shimmer has (centroid ~9.9k BH /
     // 6.6k DBD vs DV ~6k/5k). DV's reverb HF-damps + AA-caps the top, and the +12 loop
     // voice's air is cut by the 14 kHz feedback LPF before it recirculates. This taps the
     // wet 6-12 kHz POST-loop, pitches it up +12 st (the granular shifter outputs up to 24 kHz

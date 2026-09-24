@@ -237,8 +237,8 @@ PRESETS = [
  # Flagship (design-doc mandate): Oracle mode, two slightly detuned saws, arp
  # Up-Down 1/8 with latch so holding a Cmaj-ish chord instantly plays the famous
  # 80s sci-fi title-sequence arpeggio. Filter ~2 kHz with slight env, a subtle
- # slow LFO on cutoff, and a touch of tempo-synced delay. Verified at 132 BPM in
- # docs/daf-migration/09-multi-synth-presets.md (grid dev / pitch cycle / centroid).
+ # slow LFO on cutoff, and a touch of tempo-synced delay. Verified at 132 BPM
+ # (grid dev / pitch cycle / centroid).
  ("Upside Down", {"mode":1,"osc1Wave":0,"osc2Wave":0,"osc1Detune":0,"osc2Detune":8,"osc2Level":0.8,
    "filterCutoff":2000,"filterRes":0.3,"filterEnvAmt":0.25,"filtA":0.01,"filtD":0.3,"filtS":0.5,
    "ampA":0.005,"ampD":0.3,"ampS":0.7,"ampR":0.4,
@@ -440,8 +440,7 @@ w(f"// Factory presets ({len(PRESETS)}) - static override table. loadProgram() r
 w("// param to its default, applies the shared baseline, then the per-preset\n")
 w("// overrides. Every preset ships at 2x oversampling (baseline oversampling=1);\n")
 w("// the pitch bug is fixed so 2x is correct. Phase 5 re-voiced the original 40\n")
-w("// (unity-gain filter fix + level/intent) and appended new preset banks; see\n")
-w("// docs/daf-migration/09-multi-synth-presets.md for the per-preset change log.\n")
+w("// (unity-gain filter fix + level/intent) and appended new preset banks.\n")
 w("// ---------------------------------------------------------------------------\n")
 w("struct PresetRow { int index; float value; };\n\n")
 def rows(name, d):

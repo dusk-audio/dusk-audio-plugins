@@ -216,7 +216,7 @@ static constexpr bool teSyncKnobMappingsRoundTrip() noexcept
 static_assert(teSyncKnobMappingsRoundTrip(),
               "each captured tempo-sync detent must round-trip exactly");
 
-// Exact LED strings captured from Galaxy 1.3.16 at all eleven detents. Each row
+// Exact LED strings captured from the reference tape echo (v1.3.16) at all eleven detents. Each row
 // is selected by leading head; inactive earlier heads are null. A single blink
 // flag applies to every active display in the row, matching the reference UI.
 //
@@ -227,12 +227,12 @@ static_assert(teSyncKnobMappingsRoundTrip(),
 // thirty-three satisfied that rule; the two that did not were both this row's
 // third column, both 8% BELOW their printed note while carrying a '+', and
 // both the same substitution (a triplet replaced by the dotted form of the
-// next longer note). Re-reading Galaxy at Head Select 11 (the only detent with
+// next longer note). Re-reading the reference at Head Select 11 (the only detent with
 // all three heads live), tempo sync on, 120 BPM settled it: the display reads
 // "1/8  -1/4  +1/2t", all three blinking. So position 1 below was a
 // transcription slip and is corrected; position 7 is the identical geometry
 // (0.3451 beats, 1/8t +3.5% vs 1/16d -8.0%) and is corrected the same way,
-// still pending its own eyeball -- see RELEASE_CHECKLIST item 8.
+// still pending its own hands-on check against the reference.
 //
 // The rule is a CHECK, not the source. Where a reading and the rule disagree,
 // the reading wins; do not regenerate this table from the ratios.
@@ -240,7 +240,7 @@ static constexpr const char* kSyncReadoutText[3][11][3] =
 {
     {
         { "5/32",   "+1/4",    "+1/2t"  },
-        { "1/8",    "-1/4",    "+1/2t"  }, // read from Galaxy, was "+1/4d"
+        { "1/8",    "-1/4",    "+1/2t"  }, // read from the reference, was "+1/4d"
         { "1/16d",  "-1/8d",   "+1/4"   },
         { "1/8t",   "+5/32",   "-1/4"   },
         { "1/16",   "-1/8",    "+1/4t"  },

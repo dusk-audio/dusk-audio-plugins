@@ -454,7 +454,7 @@ private:
         optoIsolatedEventAttack = std::exp(-optoInvSampleRate / 0.00020f);
         optoIsolatedEventRelease = std::exp(-optoInvSampleRate / 0.015f);
         fetTilt = 1.0f - std::exp(-2.0f * kDuskPi * 800.0f / sr);
-        // Measured UAD LA-2A detector weighting. The shelf's equivalent Q is
+        // Measured reference opto leveler detector weighting. The shelf's equivalent Q is
         // the JSON fit's S=0.6998415302 converted to the RBJ shelf-Q form.
         // Design at the processing rate: processOpto is called at fs*osFactor.
         const std::array<BiquadCoeffs, kOptoDetectorSections> weightingCoeffs{{
@@ -577,7 +577,7 @@ private:
         21.5010f, 23.3864f, 25.7863f, 27.9270f, 30.0609f, 32.0834f,
         34.7103f, 36.8851f, 38.8184f, 40.5691f, 40.9082f}};
 
-    // Installed UADx 1176 v1.0.3 control laws, measured from three source
+    // Reference FET limiter control laws, measured from three source
     // levels at each position so neither compression nor the low-level floor
     // can masquerade as pot taper. Values are relative to the clockwise stop.
     // Multi-Comp's existing host ranges remain unchanged: saved/automated
@@ -939,7 +939,7 @@ private:
         float drivenInputDb, double hostSampleRate) noexcept
     {
         // The sparse reduction-only K3 fit gets the original campaign anchors'
-        // magnitudes right, but misses the UAD vector between them: at Input
+        // magnitudes right, but misses the reference vector between them: at Input
         // 0.8 its H3 phase rotates by more than 120 degrees while the cubic
         // stays near 135 degrees. A pure raw-input T3 and its first three
         // 300 Hz poles provide four real degrees of freedom: two solve the
@@ -1038,7 +1038,7 @@ private:
         // H5 residual and two force the same cell's complex 100 Hz H5 to zero.
         // T5 contributes no H1-H4 for the settled calibration sine.
         //
-        // The tables are same-stimulus UAD fits at Release 0.5 and the original
+        // The tables are same-stimulus reference fits at Release 0.5 and the original
         // campaign Release 0.66595459, separately at 48/96 kHz. Zero guards
         // below the -92 dBc scoring onset keep the correction dormant where
         // the reference fifth harmonic is not measurable. Input 0.2 and 0.8
@@ -1306,7 +1306,7 @@ private:
     static float fetReferenceReductionDb(float inputLevelDb, int ratioIndex,
                                          float thresholdControlDb) noexcept
     {
-        // The installed 1176's settled sine transfer collapses onto one input
+        // The installed reference FET limiter's settled sine transfer collapses onto one input
         // axis regardless of whether the level is reached with the source or
         // Input control. A conventional quadratic knee fits that surface to
         // 0.032 dB or better for every button. Because this is a feed-forward
@@ -1591,7 +1591,7 @@ private:
     {
         // The installed cell sheds a finite terminal-charge population after
         // programme support disappears. It is separate from the ordinary
-        // asymptotic release: the candidate/UAD difference is 1.1--3.4 dB in
+        // asymptotic release: the candidate/reference difference is 1.1--3.4 dB in
         // the first 250 ms recovery window and has crossed zero by 3.25 s.
         // Maximum reduction owns the population size/shape; the final active
         // detector sample supplies the measured phase coordinate that a
@@ -3297,7 +3297,7 @@ private:
     float processVCA(float input, int ch, float sidechain,
                      const MultiCompParameterState& p, bool /*external*/) noexcept
     {
-        // dbx 160 model (reference campaign 2026-09-01). The unit is a true-RMS
+        // VCA compressor model (reference campaign 2026-09-01). The unit is a true-RMS
         // detector driving the gain directly: one first-order power integrator,
         // no separate attack/release envelope. Fitting a single time constant to
         // nine reference step responses (three depths x three ratios) gave
