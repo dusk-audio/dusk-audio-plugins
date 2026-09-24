@@ -26,7 +26,12 @@ JUCE 4K-EQ in existing sessions.
 
 4K EQ 2 intentionally has no independent Drive or M/S control. Hidden legacy
 parameter slots remain only to preserve automation and session compatibility
-with earlier 2.x builds.
+with earlier builds. The same goes for the four band and two filter
+frequencies as dial positions ("LF Frequency (Legacy Dial)", "HPF Frequency
+(Legacy Dial)" and so on): up to 1.0.5 the frequency parameters were positions
+on the console's printed dial, and sessions and automation that address them
+still sound as they did. The Hz parameters ("LF Frequency", "HPF Frequency"
+and so on) take over a band or filter as soon as they are set.
 
 ## Controls
 
@@ -40,14 +45,17 @@ with earlier 2.x builds.
 | Master | Input: +/-12 dB; Output: +/-12 dB; Bypass; Auto Gain |
 | Header | Presets, oversampling, Brown/Black, graph, FFT, and pre/post analyzer source |
 
-The printed frequency legends reproduce the stepped console dials. Hover,
-drag, and typed-entry readouts report the calibrated audible frequency, so the
-display agrees with the response graph and FFT in both modes.
+The band frequency knobs are in Hz: a bell's centre, a shelf's corner (both
+exact at +7.5 dB of gain), the same in Brown and Black. From about 3 dB of
+boost or cut a shelf has roughly half to two-thirds of it in at its corner and
+nearly all of it two octaves further out. The readout does
+not move with gain. The HPF and LPF knobs are in Hz as well, each filter's
+3 dB point, with their marks where the stepped console dials have theirs.
 
 ## Factory Presets
 
-`INIT` restores the flat default. Factory-preset frequencies below are audible
-targets rather than internal control coordinates.
+`INIT` restores the flat default. The band frequencies below are the Hz each
+band plays, by the definition above.
 
 1. **Vocal Presence**: HPF 80 Hz; LF +3 dB at 100 Hz, LMF -3 dB at 300 Hz, HMF +4 dB at 3.5 kHz, HF +2 dB at 8 kHz
 2. **Kick Punch**: HPF 30 Hz; LF +4 dB at 50 Hz, LMF -2.5 dB at 200 Hz, HMF +3 dB at 2 kHz
@@ -81,6 +89,14 @@ preferences are machine-level settings and are not changed by preset recall.
 
 DAF and DAF-Widgets are expected beside this repository by default. Their
 locations can be overridden at configure time.
+
+On Linux, a native build with the LV2 format also builds the LV2 state and
+preset test, which needs the lilv development files. Configuration stops with
+an error if they are missing. On Debian or Ubuntu, install them first:
+
+```sh
+sudo apt install liblilv-dev
+```
 
 ```sh
 cmake -S plugins/4k-eq/daf-plugin \

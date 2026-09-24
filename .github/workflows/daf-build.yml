@@ -334,11 +334,13 @@ jobs:
           # .github/scripts/apt_install.sh so every workflow gets the same one.
           # libxtst-dev: the UI drag guard synthesises pointer input with XTest to
           # prove a knob still turns. Without it that gate is not built at all.
+          # liblilv-dev: 4K EQ 2's LV2 state and preset test hosts the built LV2
+          # through lilv, and its configure fails on Linux without it.
           .github/scripts/apt_install.sh \
             build-essential pkg-config cmake ninja-build zip unzip curl \
             libgl1-mesa-dev libx11-dev libxext-dev libxtst-dev libdbus-1-dev \
             libasound2 libfreetype6 \
-            xvfb python3 serdi lilv-utils
+            xvfb python3 serdi lilv-utils liblilv-dev
           # Binaries, not packages: these come from several of the packages above
           # and a missing one should fail here rather than mid-gate.
           for tool in cmake ninja zip unzip curl python3 serdi lv2info xvfb-run; do
@@ -603,11 +605,12 @@ jobs:
           # test when a Python3 interpreter is present to run its generator.
           # Without python3 the JUCE-to-DAF parameter-table parity check is
           # silently skipped here; without serdi Tape Echo's DuskFixLv2Presets
-          # test is likewise never registered.
+          # test is likewise never registered. liblilv-dev: as build-linux, for
+          # 4K EQ 2's LV2 state and preset test.
           .github/scripts/apt_install.sh \
             build-essential pkg-config cmake ninja-build zip curl \
             libgl1-mesa-dev libx11-dev libxext-dev libxtst-dev libdbus-1-dev \
-            xvfb python3 serdi
+            xvfb python3 serdi liblilv-dev
           # Binaries, not packages: these come from several of the packages above
           # and a missing one should fail here rather than mid-gate.
           for tool in cmake ninja zip curl python3 serdi xvfb-run; do

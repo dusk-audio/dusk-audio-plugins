@@ -1,3 +1,17 @@
+// FROZEN REFERENCE: FourKEQDSP as of dusk-audio-plugins main d7aca75f, the last
+// revision whose every section used the RBJ designers. FourKEQDSPTests renders it
+// beside the live core to prove the live core is still bit-identical at the
+// reference design rate (FourKEQDSP::kReferenceDesignRate). Byte-for-byte the
+// original except for this comment, the header include, and the enclosing
+// namespace, duskaudio::fourk_main_ref, so both can link into one binary:
+//   git show d7aca75f:plugins/shared-daf/dsp/<file> | diff - <this file>
+// Never edit it to track the live core. If the 4x sound is meant to change,
+// the test that renders it is what has to change.
+// It includes the live DuskFilters.hpp, DuskOversampler.hpp and
+// ConsoleSaturationCore.h, not frozen copies, so the comparison proves only
+// that FourKEQDSP.cpp's own changes left the reference rate untouched. A
+// change to those shared files moves both cores alike; the 4x golden
+// aggregates in FourKEQDSPTests are what catch it.
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
 // Third-party components in the built plugins (DAF — ISC; Dear ImGui — MIT; and
 // others) are attributed in plugins/shared-daf/THIRD_PARTY_LICENSES.md.
@@ -7,8 +21,7 @@
 // Reference-calibrated DAF implementation. Isolated band/filter laws, shared
 // LF/LM and HM/HF stage interactions, native nonlinear residue, and overload
 // rails are fitted from hosted British console E-series channel measurements. The EQ and
-// saturation chain can be oversampled; below kReferenceDesignRate the EQ
-// sections are matched-magnitude designs, so no rate cramps them.
+// saturation chain is oversampled (>=2x) per the project "no EQ cramping" rule.
 //
 // Signal flow (reproduces FourKEQ::processBlock):
 //   in-meter -> input gain -> [pre-EQ spectrum tap] -> (M/S encode) ->
@@ -33,6 +46,8 @@
 #include "ConsoleSaturationCore.h"
 
 namespace duskaudio
+{
+namespace fourk_main_ref
 {
 
 // Lock-free single-producer / single-consumer sample ring for UI spectrum taps.
@@ -101,84 +116,22 @@ public:
     }
 
     //--- parameters (atomic, any thread) --------------------------------------
+    void setHpfFreq(float hz)     noexcept { pHpfFreq.store(hz, R); }
     void setHpfEnabled(bool on)   noexcept { pHpfEnabled.store(on ? 1.f : 0.f, R); }
+    void setLpfFreq(float hz)     noexcept { pLpfFreq.store(hz, R); }
     void setLpfEnabled(bool on)   noexcept { pLpfEnabled.store(on ? 1.f : 0.f, R); }
-
-    // Filter frequency as a hardware DIAL position, mapped onto the filter's
-    // design frequency by the measured law (calibratedFilterFrequency), which
-    // runs flat past the end of each table. A Brown HPF dial at 80 is 3 dB
-    // down at 26 Hz.
-    void setHpfFreq(float dial) noexcept { pHpfFreq.store(dial, R); pHpfFreqHz.store(0.f, R); }
-    void setLpfFreq(float dial) noexcept { pLpfFreq.store(dial, R); pLpfFreqHz.store(0.f, R); }
-
-    // Filter frequency in Hz: the filter's -3 dB point against its own
-    // passband, so the HPF's flat insertion trim does not move it. That is
-    // how a filter frequency is quoted, and it is the one definition both HPF
-    // voicings share: Black's is a first-order and a second-order section at
-    // two different corners, so it has no single natural corner to name. The
-    // measured shape is kept (each filter's Q, and Black's first-order split,
-    // do not vary along the dial), so hz sets the design frequency through a
-    // fixed ratio per filter (filterCornerRatio). The HPF's insertion trim is
-    // read along the measured table at that design frequency, held at the
-    // table's ends. Inside the table this plays what the dial API plays at the
-    // position with that corner, and past its ends the filter keeps moving
-    // with the trim where the measured law leaves it. The -3 dB point is the
-    // calibrated analog response's; the sections hold it as they hold the rest
-    // of the curve, so a 1x LPF corner above a quarter of the rate lands
-    // within the matched design's accuracy (0.7 dB in level). The last setter
-    // called for a filter wins. hz is clamped to kMaxFilterHz and from below
-    // to kMinLpfHz, the float limit at the oversampled rate the LPF runs at
-    // (as kMinBandHz), or kMinHpfHz, under the lowest corner the dial API
-    // reaches (Brown's 9.4 Hz) so every dial position has an Hz equivalent.
-    static constexpr float kMinHpfHz = 5.0f;
-    static constexpr float kMinLpfHz = 20.0f;
-    static constexpr float kMaxFilterHz = 40000.0f;
-    void setHpfFreqHz(float hz) noexcept { pHpfFreqHz.store(sanitizeFilterHz(hz, true), R); }
-    void setLpfFreqHz(float hz) noexcept { pLpfFreqHz.store(sanitizeFilterHz(hz, false), R); }
-
     void setLfGain(float db)      noexcept { pLfGain.store(db, R); }
+    void setLfFreq(float hz)      noexcept { pLfFreq.store(hz, R); }
     void setLfBell(bool on)       noexcept { pLfBell.store(on ? 1.f : 0.f, R); }
     void setLmGain(float db)      noexcept { pLmGain.store(db, R); }
+    void setLmFreq(float hz)      noexcept { pLmFreq.store(hz, R); }
     void setLmQ(float q)          noexcept { pLmQ.store(q, R); }
     void setHmGain(float db)      noexcept { pHmGain.store(db, R); }
+    void setHmFreq(float hz)      noexcept { pHmFreq.store(hz, R); }
     void setHmQ(float q)          noexcept { pHmQ.store(q, R); }
     void setHfGain(float db)      noexcept { pHfGain.store(db, R); }
+    void setHfFreq(float hz)      noexcept { pHfFreq.store(hz, R); }
     void setHfBell(bool on)       noexcept { pHfBell.store(on ? 1.f : 0.f, R); }
-
-    // Band frequency as a hardware DIAL position: the value printed on the
-    // reference's frequency knob, mapped onto the played frequency by the
-    // measured dial law (calibratedEqFrequency). That law is uneven and runs
-    // flat past the end of each measured table.
-    void setLfFreq(float dial) noexcept { pLfFreq.store(dial, R); pLfFreqHz.store(0.f, R); }
-    void setLmFreq(float dial) noexcept { pLmFreq.store(dial, R); pLmFreqHz.store(0.f, R); }
-    void setHmFreq(float dial) noexcept { pHmFreq.store(dial, R); pHmFreqHz.store(0.f, R); }
-    void setHfFreq(float dial) noexcept { pHfFreq.store(dial, R); pHfFreqHz.store(0.f, R); }
-
-    // Band frequency in Hz (dusk-audio-plugins#288). The band sits where hz
-    // says rather than where the dial law puts it:
-    //   - a bell (LM, HM, and LF/HF in bell mode) is centred on hz;
-    //   - a shelf's hz is its corner, the pole frequency: the RBJ design
-    //     (half-gain) frequency times sqrt(A) for HF, divided by sqrt(A) for
-    //     LF, A = 10^(gainDb / 40). From about 3 dB of boost or cut, roughly
-    //     half to two-thirds of it is in there and nearly all of it two octaves
-    //     further out.
-    // Both hold exactly at kEqReferenceGainDb. Gain moves the band the way the
-    // dial API does and no further: the design frequency is scaled by the
-    // measured frequencyAtGain ratio, which moves a bell's centre by -0.4% to
-    // +2.3% over 0..15 dB and holds a shelf's corner within -3.5% to +3.7%
-    // from 3 to 15 dB (up to 8% below 3 dB, where a shelf barely has one).
-    // Q and the pair interaction come from the dial position that plays hz,
-    // clamped to the ends of the measured table, so inside the table this
-    // plays exactly what the dial API plays at that position, and past its
-    // ends the band keeps moving while its Q and the interaction corrections
-    // stay where the measured law leaves them. The last setter called for a
-    // band wins. hz is clamped to kMinBandHz..kMaxBandHz.
-    static constexpr float kMinBandHz = 20.0f;
-    static constexpr float kMaxBandHz = 40000.0f;
-    void setLfFreqHz(float hz) noexcept { pLfFreqHz.store(sanitizeBandHz(hz), R); }
-    void setLmFreqHz(float hz) noexcept { pLmFreqHz.store(sanitizeBandHz(hz), R); }
-    void setHmFreqHz(float hz) noexcept { pHmFreqHz.store(sanitizeBandHz(hz), R); }
-    void setHfFreqHz(float hz) noexcept { pHfFreqHz.store(sanitizeBandHz(hz), R); }
     void setEqType(int brown0black1) noexcept { pEqType.store((float)brown0black1, R); }
     void setBypass(bool on)       noexcept { pBypass.store(on ? 1.f : 0.f, R); }
     void setInputGainDb(float db) noexcept { pInputGain.store(db, R); }
@@ -200,41 +153,11 @@ public:
 
     //--- measured EQ calibration, shared with the UI response curve -----------
     enum class Band { LF = 0, LM, HM, HF };
-
-    // Sections designed at or above this rate use the RBJ bilinear designs the
-    // reference captures were fitted with: 4x at 44.1/48 kHz, 2x at 88.2/96 kHz,
-    // 1x from 176.4 kHz. That path is bit-identical to the calibrated core, so
-    // the reference parity holds there. The frozen copy of that core the tests
-    // compare against shares the live Biquad designers, oversampler and console
-    // saturation, so the comparison proves only this file unchanged; the 4x
-    // golden aggregates in FourKEQDSPTests pin the shared pieces. Below this
-    // rate every band, the LPF and the pair-correction sections use Biquad's
-    // matched-magnitude designs, which keep the same analog curves up to
-    // Nyquist instead of cramping (dusk-audio-plugins#289). The HPF is
-    // untouched: it sits far below any Nyquist it runs at.
-    static constexpr double kReferenceDesignRate = 176400.0;
-
-    // The gain the dense frequency sweep was measured at (the frequency[] and
-    // qAtFrequency[] tables), where the measured frequencyAtGain ratio is 1.
-    // The Hz API's frequency holds exactly here.
-    static constexpr float kEqReferenceGainDb = 7.5f;
-
     static float calibratedEqFrequency(float controlHz, float controlGainDb, Band band,
                                        bool black, bool bell) noexcept;
-    // RBJ design frequency the Hz API (setXxFreqHz) runs a band at, for the
-    // requested hz at controlGainDb. Equal to hz for a bell at the reference
-    // gain; see setLfFreqHz for the shelf corner.
-    static float calibratedEqFrequencyForHz(float hz, float controlGainDb, Band band,
-                                            bool black, bool bell) noexcept;
-    // The Hz that plays what dial position controlHz plays: migrates a stored
-    // dial position to the Hz API. Gain-independent, since both APIs apply the
-    // same gain law. Inside the measured table the round trip through the Hz
-    // API reproduces the dial API's band exactly.
-    static float hzForCalibratedEqControl(float controlHz, Band band,
-                                          bool black, bool bell) noexcept;
-    // Inverse of calibratedEqFrequency(): the dial position whose measured
-    // frequency at controlGainDb is frequencyHz, clamped to the dial's ends.
-    // 4K EQ 2 user presets saved before #288 stored that frequency.
+    // Inverse of calibratedEqFrequency(). Factory/user presets are authored in
+    // audible Hz, while the shipped host parameter remains the original
+    // control coordinate for session/automation compatibility.
     static float controlForCalibratedEqFrequency(float frequencyHz, float controlGainDb,
                                                  Band band, bool black, bool bell) noexcept;
     static float calibratedEqGain(float controlDb, Band band,
@@ -251,40 +174,10 @@ public:
         double sampleRate, bool highPair, bool black,
         float firstGainDb, float firstControlHz, float firstShape,
         float secondGainDb, float secondControlHz, float secondShape) noexcept;
-    // One EQ section as the calibration defines it: an RBJ-cookbook analog
-    // prototype, before it is realized as coefficients at a sample rate. The
-    // calibration is rate-independent; only the realization looks at the rate
-    // (see kReferenceDesignRate).
-    struct SectionDesign
-    {
-        enum class Shape { Peak, LowShelf, HighShelf, LowPass };
-        Shape shape = Shape::Peak;
-        float freq = 1000.0f, gainDb = 0.0f, q = 0.70710678f;
-    };
-    struct SectionDesigns
-    {
-        SectionDesign bands[4];   // LF, LM, HM, HF
-        std::array<SectionDesign, 3> lowCorrection, highCorrection;
-        SectionDesign lpf;
-    };
-
     static float calibratedFilterFrequency(float controlHz, bool highPass,
                                            bool black) noexcept;
     static float controlForCalibratedFilterFrequency(float frequencyHz, bool highPass,
                                                      bool black) noexcept;
-    // The -3 dB point of a filter over its design frequency, from the analog
-    // prototype: 1/sqrt(x) for the Brown HPF and sqrt(x) for the LPF, with x
-    // the root of x^2 - (2 - 1/Q^2) x - 1 = 0, and the root of the cubic the
-    // two Black HPF sections give.
-    static float filterCornerRatio(bool highPass, bool black) noexcept;
-    // Design frequency the Hz API (setHpfFreqHz / setLpfFreqHz) runs a filter
-    // at for the requested hz.
-    static float calibratedFilterFrequencyForHz(float hz, bool highPass,
-                                                bool black) noexcept;
-    // The Hz that plays what dial position controlHz plays: migrates a stored
-    // filter dial to the Hz API.
-    static float hzForCalibratedFilterControl(float controlHz, bool highPass,
-                                              bool black) noexcept;
     static float calibratedHpfTrimDb(float controlHz, bool black) noexcept;
     static float calibratedFilterQ(bool highPass, bool black) noexcept;
 
@@ -306,21 +199,10 @@ public:
         bool   hpfEnabled     = false;
         bool   lpfEnabled     = false;
         float  hpfFreq = 0.0f, lpfFreq = 0.0f;
-        // false: hpfFreq / lpfFreq are dial positions (setHpfFreq).
-        // true:  they are Hz, drawn the way setHpfFreqHz / setLpfFreqHz play.
-        bool   hpfFreqInHz = false, lpfFreqInHz = false;
         float  lfGain  = 0.0f, lfFreq  = 0.0f, lfBell = 0.0f;
         float  lmGain  = 0.0f, lmFreq  = 0.0f, lmQ    = 1.0f;
         float  hmGain  = 0.0f, hmFreq  = 0.0f, hmQ    = 1.0f;
         float  hfGain  = 0.0f, hfFreq  = 0.0f, hfBell = 0.0f;
-        // false: lfFreq..hfFreq are dial positions (setLfFreq).
-        // true:  they are Hz, drawn the way setLfFreqHz plays them, except
-        //        the bands set in dialBands (bit 0 LF .. bit 3 HF), which
-        //        stay dial positions. A band's Hz equivalent designs the same
-        //        band but not always the same pair correction, so a plugin
-        //        that keeps some bands on the dial API draws them on it.
-        bool   bandFrequenciesInHz = false;
-        unsigned dialBands = 0;
         // Saturation knob percent, 0..100, as setSaturation() receives it.
         // Feeds the console saturator's broadband insertion loss into the drawn
         // curve (GH #169). Defaulting to 0 is the SAFE default rather than an
@@ -412,8 +294,6 @@ public:
     static int   chooseFactor(double baseSampleRate, int mode) noexcept; // mode 0=1x,1=2x,2=4x
 
 private:
-    friend struct FourKEQDSPTestAccess; // tests/FourKEQDSPTests.cpp reads the running coefficients
-
     static constexpr std::memory_order R = std::memory_order_relaxed;
 
     struct ChannelFilters
@@ -429,46 +309,8 @@ private:
         }
     };
 
-    // Every parameter the section coefficients depend on, read once per block.
-    // All floats, so the struct has no padding and compares with memcmp: NaN
-    // compares equal to itself, which keeps a NaN parameter from forcing a
-    // redesign every block.
-    struct CoeffInputs
-    {
-        float hpfFreq, hpfFreqHz, lpfFreq, lpfFreqHz;
-        float lfGain, lfFreq, lfFreqHz, lfBell;
-        float lmGain, lmFreq, lmFreqHz, lmQ;
-        float hmGain, hmFreq, hmFreqHz, hmQ;
-        float hfGain, hfFreq, hfFreqHz, hfBell;
-        float eqType;
-    };
-    static_assert(sizeof(CoeffInputs) == 21 * sizeof(float), "CoeffInputs must stay padding-free");
-
-    static float sanitizeBandHz(float hz) noexcept
-    {
-        // > 0 selects the Hz API for the band, so every input, NaN included,
-        // lands on a positive finite frequency. The 20 Hz floor is the float
-        // limit, not a voicing choice: at the 4x rate a section much below it
-        // rounds to a pole pair within ~1e-8 of z = 1, a DC integrator.
-        return hz > kMinBandHz ? (hz < kMaxBandHz ? hz : kMaxBandHz) : kMinBandHz;
-    }
-
-    // > 0 selects the Hz API for the filter; see sanitizeBandHz.
-    static float sanitizeFilterHz(float hz, bool highPass) noexcept
-    {
-        const float lo = highPass ? kMinHpfHz : kMinLpfHz;
-        return hz > lo ? (hz < kMaxFilterHz ? hz : kMaxFilterHz) : lo;
-    }
-
-    CoeffInputs loadCoeffInputs() const noexcept;
-    static CoeffInputs coeffInputsFor(const CurveControls& c) noexcept;
-    // The calibration: every band, pair-correction and LPF section, rate-free.
-    static SectionDesigns designSections(const CoeffInputs& in) noexcept;
-    // The realization at fs: RBJ at kReferenceDesignRate and up, matched below.
-    static BiquadCoeffs realize(const SectionDesign& d, double fs) noexcept;
-    // Designs every section at osRate and sets both channels.
-    void recomputeCoeffs(const CoeffInputs& in, double osRate) noexcept;
-    float calcAutoGainCompensation(const CoeffInputs& in, bool hpfEn, bool lpfEn) const noexcept;
+    void recomputeCoeffs(double osRate) noexcept; // sets both channels from a snapshot
+    float calcAutoGainCompensation() const noexcept;
     // Processes up to maxBlock samples; processBlock() chunks oversized host
     // buffers through this so every output sample is written.
     void processChunk(const float* const* inputs, float* const* outputs,
@@ -495,19 +337,6 @@ private:
     bool lastHpfEnabled = false;
     bool lastLpfEnabled = false;
 
-    // Cached section coefficients. The matched designs cost about 100 ns a
-    // section, so the sections are redesigned only when a CoeffInputs field or
-    // the oversampling factor moved since the block that last designed them
-    // (prepare() invalidates, which covers a base-rate change). The
-    // coefficients a block runs are the same either way, so this is output
-    // identical to redesigning every block; the core has never interpolated
-    // coefficients, and a parameter move still lands on the next block
-    // boundary exactly as before. The first block after prepare() designs
-    // under processBlock's flush-to-zero mode, as every block used to.
-    CoeffInputs coeffInputs_{};
-    int  coeffFactor_ = 0;
-    bool coeffsValid_ = false;
-
     // Cached auto-gain. calcAutoGainCompensation() is a ~28-point complex
     // response scan — too costly to run every block. It only moves when a
     // band/filter param moves, so cache it keyed on a snapshot of those raw
@@ -517,11 +346,11 @@ private:
     // lock-step with them introduces no new discontinuity.
     struct AutoGainSnapshot
     {
-        CoeffInputs coeffs;
-        float hpfEnabled, lpfEnabled, factor;
+        float p[18] = {};
+        bool operator!=(const AutoGainSnapshot& o) const noexcept
+        { for (int i = 0; i < 18; ++i) if (p[i] != o.p[i]) return true; return false; }
     };
-    static_assert(sizeof(AutoGainSnapshot) == 24 * sizeof(float), "AutoGainSnapshot must stay padding-free");
-    AutoGainSnapshot autoGainSnap_{};
+    AutoGainSnapshot autoGainSnap_;
     float autoCompCached_ = 1.0f;
     bool  autoCompValid_  = false;
 
@@ -537,12 +366,10 @@ private:
     std::atomic<float> pLmGain{0.f}, pLmFreq{1000.f}, pLmQ{1.5f};
     std::atomic<float> pHmGain{0.f}, pHmFreq{3000.f}, pHmQ{1.5f};
     std::atomic<float> pHfGain{0.f}, pHfFreq{8000.f}, pHfBell{0.f};
-    // Hz API values; 0 = the band or filter follows its dial position above.
-    std::atomic<float> pLfFreqHz{0.f}, pLmFreqHz{0.f}, pHmFreqHz{0.f}, pHfFreqHz{0.f};
-    std::atomic<float> pHpfFreqHz{0.f}, pLpfFreqHz{0.f};
     std::atomic<float> pEqType{0.f}, pBypass{0.f};
     std::atomic<float> pInputGain{0.f}, pOutputGain{0.f}, pSaturation{0.f};
     std::atomic<float> pOversampling{2.f}, pMsMode{0.f}, pAutoGain{0.f};
 };
 
+} // namespace fourk_main_ref
 } // namespace duskaudio

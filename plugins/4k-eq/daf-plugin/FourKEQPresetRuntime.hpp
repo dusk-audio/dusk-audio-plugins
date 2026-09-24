@@ -1,48 +1,39 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
 //
-// Runtime expansion of factory-preset data. Preset tables are authored in
-// audible Hz; the host parameters retain their calibrated control coordinates
-// so old sessions and automation remain bit-for-bit compatible.
+// Runtime expansion of factory-preset data. Band and filter frequencies go to
+// the Hz parameters as authored, and the selectors then state that every band
+// and filter follows its Hz parameter. The legacy dials are left as they were.
 
 #pragma once
 
-#include "FourKEQDSP.hpp"
+#include "FourKEQBandFrequency.hpp"
 #include "FourKEQParams.hpp"
 
 template <typename Fn>
 inline void forEachFourKEQFactoryPresetParam(int idx, Fn&& fn)
 {
-    using duskaudio::FourKEQDSP;
-
     const FourKEQPreset& p = kFactoryPresets[idx];
-    const bool black = p.eqType > 0.5f;
 
     fn((uint32_t)kEqType, p.eqType);
 
     fn((uint32_t)kLfGain, p.lfGain);
     fn((uint32_t)kLfBell, p.lfBell);
-    fn((uint32_t)kLfFreq, FourKEQDSP::controlForCalibratedEqFrequency(
-        p.lfFreq, p.lfGain, FourKEQDSP::Band::LF, black, p.lfBell > 0.5f));
+    fn((uint32_t)kLfHz, p.lfFreq);
 
     fn((uint32_t)kLmGain, p.lmGain);
     fn((uint32_t)kLmQ, p.lmQ);
-    fn((uint32_t)kLmFreq, FourKEQDSP::controlForCalibratedEqFrequency(
-        p.lmFreq, p.lmGain, FourKEQDSP::Band::LM, black, true));
+    fn((uint32_t)kLmHz, p.lmFreq);
 
     fn((uint32_t)kHmGain, p.hmGain);
     fn((uint32_t)kHmQ, p.hmQ);
-    fn((uint32_t)kHmFreq, FourKEQDSP::controlForCalibratedEqFrequency(
-        p.hmFreq, p.hmGain, FourKEQDSP::Band::HM, black, true));
+    fn((uint32_t)kHmHz, p.hmFreq);
 
     fn((uint32_t)kHfGain, p.hfGain);
     fn((uint32_t)kHfBell, p.hfBell);
-    fn((uint32_t)kHfFreq, FourKEQDSP::controlForCalibratedEqFrequency(
-        p.hfFreq, p.hfGain, FourKEQDSP::Band::HF, black, p.hfBell > 0.5f));
+    fn((uint32_t)kHfHz, p.hfFreq);
 
-    fn((uint32_t)kHpfFreq, FourKEQDSP::controlForCalibratedFilterFrequency(
-        p.hpfFreq, true, black));
-    fn((uint32_t)kLpfFreq, FourKEQDSP::controlForCalibratedFilterFrequency(
-        p.lpfFreq, false, black));
+    fn((uint32_t)kHpfHz, p.hpfFreq);
+    fn((uint32_t)kLpfHz, p.lpfFreq);
     fn((uint32_t)kHpfEnabled, p.hpfFreq > 16.5f ? 1.0f : 0.0f);
     fn((uint32_t)kLpfEnabled, p.lpfFreq < 15200.5f ? 1.0f : 0.0f);
 
@@ -52,4 +43,7 @@ inline void forEachFourKEQFactoryPresetParam(int idx, Fn&& fn)
     // convenience compensation out of their sound unless the user enables it
     // after recall.
     fn((uint32_t)kAutoGain, 0.0f);
+
+    fn((uint32_t)kLegacyDialBands, (float)kSelectorStated);
+    fn((uint32_t)kLegacyDialFilters, (float)kSelectorStated);
 }

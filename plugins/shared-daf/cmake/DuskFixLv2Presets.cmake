@@ -45,6 +45,29 @@ if(NOT _dusk_bad_boundary STREQUAL ""
     message(STATUS "Repaired non-terminal LV2 preset port-list boundary: ${PRESETS_FILE}")
 endif()
 
+# OMIT_SYMBOLS: comma-separated control ports a preset must not set. A port
+# left out of a preset keeps the value it had when the host applies the preset.
+if(DEFINED OMIT_SYMBOLS AND NOT OMIT_SYMBOLS STREQUAL "")
+    string(REPLACE "," ";" _dusk_omit_symbols "${OMIT_SYMBOLS}")
+    file(READ "${PRESETS_FILE}" _dusk_lv2_presets)
+    string(REPLACE "\r\n" "\n" _dusk_lv2_presets "${_dusk_lv2_presets}")
+    string(REPLACE "\r" "\n" _dusk_lv2_presets "${_dusk_lv2_presets}")
+    foreach(_dusk_symbol IN LISTS _dusk_omit_symbols)
+        set(_dusk_port_regex "\\[[^][]*lv2:symbol[ \t\n]+\"${_dusk_symbol}\"[^][]*\\]")
+        # A port with another after it goes with its comma; the last port of a
+        # list hands its full stop to the one before it.
+        string(REGEX REPLACE "${_dusk_port_regex}[ \t\n]*,[ \t\n]*" ""
+            _dusk_lv2_presets "${_dusk_lv2_presets}")
+        string(REGEX REPLACE ",[ \t\n]*${_dusk_port_regex}[ \t\n]*\\." " ."
+            _dusk_lv2_presets "${_dusk_lv2_presets}")
+        string(FIND "${_dusk_lv2_presets}" "\"${_dusk_symbol}\"" _dusk_left)
+        if(NOT _dusk_left EQUAL -1)
+            message(FATAL_ERROR "Could not omit port ${_dusk_symbol} from ${PRESETS_FILE}")
+        endif()
+    endforeach()
+    file(WRITE "${PRESETS_FILE}" "${_dusk_lv2_presets}")
+endif()
+
 # Refuse to package a file that still contains the known malformed boundary.
 file(READ "${PRESETS_FILE}" _dusk_lv2_verified)
 string(REPLACE "\r\n" "\n" _dusk_lv2_verified "${_dusk_lv2_verified}")

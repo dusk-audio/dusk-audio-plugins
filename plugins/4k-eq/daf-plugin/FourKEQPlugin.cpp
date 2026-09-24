@@ -6,11 +6,14 @@
 
 #include "DafPlugin.hpp"
 #include "FourKEQAccess.hpp"
+#include "FourKEQBandFrequency.hpp"
 #include "FourKEQDSP.hpp"
 #include "FourKEQParams.hpp"
 #include "FourKEQPresetRuntime.hpp"
 #include "FourKEQVersion.hpp"
 #include "util/CrashLog.hpp"
+
+#include <atomic>
 
 START_NAMESPACE_DAF
 
@@ -27,7 +30,10 @@ public:
         // re-allocate the kEqType / kOversampling enumeration arrays each pass
         // just to read ranges.def — the table is the single source of truth.)
         for (uint32_t i = 0; i < kParamCount; ++i)
-            values[i] = kFourKParams[i].def;
+            values[i].store(kFourKParams[i].def, std::memory_order_relaxed);
+        selectors.record(kLegacyDialBands, kFourKParams[kLegacyDialBands].def);
+        selectors.record(kLegacyDialFilters, kFourKParams[kLegacyDialFilters].def);
+        applyFrequencies();
     }
 
     //--- same-process accessors for the UI bridge -----------------------------
@@ -37,6 +43,8 @@ public:
     float outPeakRv() const noexcept { return dsp.getOutputPeakR(); }
     const duskaudio::SpectrumRing* preSpec()  const noexcept { return &dsp.preSpectrum(); }
     const duskaudio::SpectrumRing* postSpec() const noexcept { return &dsp.postSpectrum(); }
+    uint32_t legacyDialBands() const noexcept { return selectors.bandBits(); }
+    uint32_t legacyDialFilters() const noexcept { return selectors.filterBits(); }
 
 protected:
     //--- metadata -------------------------------------------------------------
@@ -73,21 +81,21 @@ protected:
 
         switch (index)
         {
-        case kHpfFreq:   p.name = "HPF Frequency"; p.unit = "Hz"; break;
+        case kHpfFreq:   p.name = "HPF Frequency (Legacy Dial)"; p.unit = "Hz"; break;
         case kHpfEnabled:boolean(); p.name = "HPF Enabled"; break;
-        case kLpfFreq:   p.name = "LPF Frequency"; p.unit = "Hz"; break;
+        case kLpfFreq:   p.name = "LPF Frequency (Legacy Dial)"; p.unit = "Hz"; break;
         case kLpfEnabled:boolean(); p.name = "LPF Enabled"; break;
         case kLfGain:    p.name = "LF Gain"; p.unit = "dB"; break;
-        case kLfFreq:    p.name = "LF Frequency"; p.unit = "Hz"; break;
+        case kLfFreq:    p.name = "LF Frequency (Legacy Dial)"; p.unit = "Hz"; break;
         case kLfBell:    boolean(); p.name = "LF Bell Mode"; break;
         case kLmGain:    p.name = "LM Gain"; p.unit = "dB"; break;
-        case kLmFreq:    p.name = "LM Frequency"; p.unit = "Hz"; break;
+        case kLmFreq:    p.name = "LM Frequency (Legacy Dial)"; p.unit = "Hz"; break;
         case kLmQ:       p.name = "LM Q"; break;
         case kHmGain:    p.name = "HM Gain"; p.unit = "dB"; break;
-        case kHmFreq:    p.name = "HM Frequency"; p.unit = "Hz"; break;
+        case kHmFreq:    p.name = "HM Frequency (Legacy Dial)"; p.unit = "Hz"; break;
         case kHmQ:       p.name = "HM Q"; break;
         case kHfGain:    p.name = "HF Gain"; p.unit = "dB"; break;
-        case kHfFreq:    p.name = "HF Frequency"; p.unit = "Hz"; break;
+        case kHfFreq:    p.name = "HF Frequency (Legacy Dial)"; p.unit = "Hz"; break;
         case kHfBell:    boolean(); p.name = "HF Bell Mode"; break;
         case kEqType:    p.hints |= kParameterIsInteger; p.name = "EQ Type";
                          p.enumValues.count = 2; p.enumValues.restrictedMode = true;
@@ -128,6 +136,22 @@ protected:
                          p.name = "Show Graph"; break;
         case kOutPeakL:  p.hints = kParameterIsAutomatable | kParameterIsOutput; p.name = "Out Peak L"; break;
         case kOutPeakR:  p.hints = kParameterIsAutomatable | kParameterIsOutput; p.name = "Out Peak R"; break;
+        case kLfHz:      p.name = "LF Frequency"; p.unit = "Hz"; break;
+        case kLmHz:      p.name = "LM Frequency"; p.unit = "Hz"; break;
+        case kHmHz:      p.name = "HM Frequency"; p.unit = "Hz"; break;
+        case kHfHz:      p.name = "HF Frequency"; p.unit = "Hz"; break;
+        case kLegacyDialBands:
+            // State, not a control: written by the plugin as the band
+            // frequency parameters arrive, saved so a reload restores it.
+            p.hints = kParameterIsHidden | kParameterIsInteger;
+            p.name = "Legacy Dial Bands";
+            break;
+        case kHpfHz:     p.name = "HPF Frequency"; p.unit = "Hz"; break;
+        case kLpfHz:     p.name = "LPF Frequency"; p.unit = "Hz"; break;
+        case kLegacyDialFilters:
+            p.hints = kParameterIsHidden | kParameterIsInteger;
+            p.name = "Legacy Dial Filters";
+            break;
         }
     }
 
@@ -137,49 +161,22 @@ protected:
         {
         case kOutPeakL: return dsp.getOutputPeakL();
         case kOutPeakR: return dsp.getOutputPeakR();
-        default:        return index < kParamCount ? values[index] : 0.0f;
+        case kLegacyDialBands:
+        case kLegacyDialFilters: return (float)selectors.value(index);
+        default:        return index < kParamCount ? values[index].load(std::memory_order_relaxed) : 0.0f;
         }
     }
 
     void setParameterValue(uint32_t index, float value) override
     {
-        if (index >= kNumInputParams) // output params are not settable
+        if (index >= kParamCount || fkIsOutputParam(index))
             return;
-        values[index] = value;
-        switch (index)
-        {
-        case kHpfFreq:    dsp.setHpfFreq(value); break;
-        case kHpfEnabled: dsp.setHpfEnabled(value > 0.5f); break;
-        case kLpfFreq:    dsp.setLpfFreq(value); break;
-        case kLpfEnabled: dsp.setLpfEnabled(value > 0.5f); break;
-        case kLfGain:     dsp.setLfGain(value); break;
-        case kLfFreq:     dsp.setLfFreq(value); break;
-        case kLfBell:     dsp.setLfBell(value > 0.5f); break;
-        case kLmGain:     dsp.setLmGain(value); break;
-        case kLmFreq:     dsp.setLmFreq(value); break;
-        case kLmQ:        dsp.setLmQ(value); break;
-        case kHmGain:     dsp.setHmGain(value); break;
-        case kHmFreq:     dsp.setHmFreq(value); break;
-        case kHmQ:        dsp.setHmQ(value); break;
-        case kHfGain:     dsp.setHfGain(value); break;
-        case kHfFreq:     dsp.setHfFreq(value); break;
-        case kHfBell:     dsp.setHfBell(value > 0.5f); break;
-        case kEqType:     dsp.setEqType((int)(value + 0.5f)); break;
-        case kBypass:     dsp.setBypass(value > 0.5f); break;
-        case kInputGain:  dsp.setInputGainDb(value); break;
-        case kOutputGain: dsp.setOutputGainDb(value); break;
-        case kSaturation:
-            // The British console EQ has no independent drive/mix control. Its calibrated
-            // native nonlinearity is the core's 0% reference state; Input Gain
-            // controls the level presented to that nonlinear path.
-            dsp.setSaturation(0.0f);
-            break;
-        case kOversampling: dsp.setOversampling((int)(value + 0.5f)); break;
-        case kMsMode:     dsp.setMsMode(false); break;
-        case kSpectrumPrePost: break; // UI-only (analyzer source select)
-        case kShowGraph:  break;      // UI-only (graph collapse), persisted in state
-        case kAutoGain:   dsp.setAutoGain(value > 0.5f); break;
-        }
+        if (index != kLegacyDialBands && index != kLegacyDialFilters)
+            values[index].store(value, std::memory_order_relaxed);
+        if (selectors.record(index, value))
+            frequenciesChanged.store(true, std::memory_order_release);
+        else
+            applyToDsp(index);
     }
 
     //--- programs -------------------------------------------------------------
@@ -232,6 +229,9 @@ protected:
     //--- audio ----------------------------------------------------------------
     void run(const float** inputs, float** outputs, uint32_t frames) override
     {
+        if (frequenciesChanged.load(std::memory_order_relaxed)
+            && frequenciesChanged.exchange(false, std::memory_order_acquire))
+            applyFrequencies();
         dsp.processBlock(inputs, outputs, activeChannels, (int)frames);
         updateLatency();
     }
@@ -239,9 +239,59 @@ protected:
 private:
     void pushAllParams()
     {
-        for (uint32_t i = 0; i < kNumInputParams; ++i)
-            setParameterValue(i, values[i]);
+        for (uint32_t i = 0; i < kParamCount; ++i)
+            if (!fkIsOutputParam(i))
+                applyToDsp(i);
+        applyFrequencies();
     }
+
+    void applyToDsp(uint32_t index)
+    {
+        const float value = values[index].load(std::memory_order_relaxed);
+        switch (index)
+        {
+        case kHpfEnabled: dsp.setHpfEnabled(value > 0.5f); break;
+        case kLpfEnabled: dsp.setLpfEnabled(value > 0.5f); break;
+        case kLfGain:     dsp.setLfGain(value); break;
+        case kLfBell:     dsp.setLfBell(value > 0.5f); break;
+        case kLmGain:     dsp.setLmGain(value); break;
+        case kLmQ:        dsp.setLmQ(value); break;
+        case kHmGain:     dsp.setHmGain(value); break;
+        case kHmQ:        dsp.setHmQ(value); break;
+        case kHfGain:     dsp.setHfGain(value); break;
+        case kHfBell:     dsp.setHfBell(value > 0.5f); break;
+        case kEqType:     dsp.setEqType((int)(value + 0.5f)); break;
+        case kBypass:     dsp.setBypass(value > 0.5f); break;
+        case kInputGain:  dsp.setInputGainDb(value); break;
+        case kOutputGain: dsp.setOutputGainDb(value); break;
+        case kSaturation:
+            // The British console EQ has no independent drive/mix control. Its calibrated
+            // native nonlinearity is the core's 0% reference state; Input Gain
+            // controls the level presented to that nonlinear path.
+            dsp.setSaturation(0.0f);
+            break;
+        case kOversampling: dsp.setOversampling((int)(value + 0.5f)); break;
+        case kMsMode:     dsp.setMsMode(false); break;
+        case kSpectrumPrePost: break; // UI-only (analyzer source select)
+        case kShowGraph:  break;      // UI-only (graph collapse), persisted in state
+        case kAutoGain:   dsp.setAutoGain(value > 0.5f); break;
+        }
+    }
+
+    // The band and filter frequencies, routed by the selectors. Reads each
+    // selector before the frequencies it picks (FourKEQSelectors), then routes
+    // from one snapshot of the values so both helpers see the same state.
+    void applyFrequencies()
+    {
+        const uint32_t dialBands = selectors.bandBits();
+        const uint32_t dialFilters = selectors.filterBits();
+        float snapshot[kParamCount];
+        for (uint32_t i = 0; i < kParamCount; ++i)
+            snapshot[i] = values[i].load(std::memory_order_relaxed);
+        fkApplyBandFrequencies(dsp, snapshot, dialBands);
+        fkApplyFilterFrequencies(dsp, snapshot, dialFilters);
+    }
+
     void updateLatency()
     {
         const uint32_t lat = (uint32_t)dsp.getLatencySamples();
@@ -249,7 +299,19 @@ private:
     }
 
     duskaudio::FourKEQDSP dsp;
-    float values[kParamCount] = {};
+    // Every input parameter but the two selectors, which live in selectors.
+    // Written by setParameterValue() on the host's thread and read by run()
+    // on the audio thread, so each entry is atomic; frequenciesChanged's
+    // release/acquire pair orders a frequency write before run() routes it.
+    std::atomic<float> values[kParamCount] {};
+    static_assert(std::atomic<float>::is_always_lock_free,
+                  "parameter values are read on the audio thread");
+    FourKEQSelectors selectors;
+    // Set by a band or filter frequency or selector write, taken by run(),
+    // which alone routes the frequencies to the core while the plugin is
+    // active. Routed from two threads, each by the selectors it read, the later
+    // of the two could leave a band on a parameter the selectors had left.
+    std::atomic<bool> frequenciesChanged { false };
     uint32_t lastLatency = 0xffffffffu;
     uint16_t activeChannels = DAF_PLUGIN_NUM_INPUTS;
 
@@ -270,3 +332,5 @@ float fourKEQGetOutputPeakL(void* p) noexcept { return p ? asPlugin(p)->outPeakL
 float fourKEQGetOutputPeakR(void* p) noexcept { return p ? asPlugin(p)->outPeakRv() : 0.0f; }
 const duskaudio::SpectrumRing* fourKEQGetPreSpectrum(void* p) noexcept  { return p ? asPlugin(p)->preSpec() : nullptr; }
 const duskaudio::SpectrumRing* fourKEQGetPostSpectrum(void* p) noexcept { return p ? asPlugin(p)->postSpec() : nullptr; }
+uint32_t fourKEQGetLegacyDialBands(void* p) noexcept { return p ? asPlugin(p)->legacyDialBands() : 0u; }
+uint32_t fourKEQGetLegacyDialFilters(void* p) noexcept { return p ? asPlugin(p)->legacyDialFilters() : 0u; }

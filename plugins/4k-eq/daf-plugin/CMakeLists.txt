@@ -50,7 +50,87 @@ target_compile_definitions(4k-eq-2 PUBLIC
 
 # Auto-deploy the built CLAP/VST3/LV2 into the user plugin dirs after each build
 # (disable with -DDUSK_DAF_INSTALL_LOCAL=OFF).
-dusk_daf_install_local(4k-eq-2 LV2_PROGRAMS)
+# A factory preset states every band and filter in Hz and leaves the legacy
+# dials where they are (FourKEQBandFrequency.hpp).
+dusk_daf_install_local(4k-eq-2 LV2_PROGRAMS
+    LV2_PRESET_OMIT hpf_freq lpf_freq lf_freq lm_freq hm_freq hf_freq)
+
+if(NOT CMAKE_CROSSCOMPILING)
+    # The shared FourKEQDSP core: bit identity with the frozen RBJ-only core at
+    # the reference design rate, matched designs below it, the Hz API, extremes.
+    enable_testing()
+    add_executable(FourKEQCoreTest
+        ../../shared-daf/dsp/tests/FourKEQDSPTests.cpp
+        ../../shared-daf/dsp/tests/reference/FourKEQDSPMainRef.cpp
+        ../../shared-daf/dsp/FourKEQDSP.cpp)
+    target_include_directories(FourKEQCoreTest PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+    target_compile_features(FourKEQCoreTest PRIVATE cxx_std_17)
+    add_test(NAME FourKEQCore COMMAND FourKEQCoreTest)
+
+    # Band and filter frequency parameters (#288): which of the two parameters
+    # wins, factory presets, the read-out, user preset files across the change,
+    # and selector writes from two threads at once.
+    add_executable(FourKEQPluginLogicTest
+        tests/FourKEQPluginLogicTests.cpp
+        ../../shared-daf/dsp/FourKEQDSP.cpp)
+    target_include_directories(FourKEQPluginLogicTest PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+    target_compile_features(FourKEQPluginLogicTest PRIVATE cxx_std_17)
+    find_package(Threads REQUIRED)
+    target_link_libraries(FourKEQPluginLogicTest PRIVATE Threads::Threads)
+    add_test(NAME FourKEQPluginLogic COMMAND FourKEQPluginLogicTest)
+
+    # The same through the built CLAP's state and parameter paths: pre-#288
+    # states and legacy automation keep their sound, the Hz parameters and the
+    # factory programs play the Hz they state. dlopen(), so not on Windows.
+    if(NOT WIN32)
+        add_executable(FourKEQClapStateTest
+            tests/FourKEQClapStateTest.cpp
+            ../../shared-daf/dsp/FourKEQDSP.cpp)
+        target_include_directories(FourKEQClapStateTest PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp"
+            "${DAF_PATH}/daf/src")
+        target_compile_features(FourKEQClapStateTest PRIVATE cxx_std_17)
+        target_link_libraries(FourKEQClapStateTest PRIVATE ${CMAKE_DL_LIBS})
+        add_dependencies(FourKEQClapStateTest 4k-eq-2-clap)
+        add_test(NAME FourKEQClapState
+                 COMMAND FourKEQClapStateTest "$<TARGET_FILE:4k-eq-2-clap>")
+
+        # LV2 restores and applies presets by writing control ports, and DAF's
+        # LV2 wrapper passes on only those that changed, which the CLAP test
+        # cannot reach. Needs lilv. On Linux, where CI runs the tests, an LV2
+        # build without it fails to configure rather than going green with the
+        # guard unregistered.
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(FOURKEQ_LILV QUIET IMPORTED_TARGET lilv-0)
+        endif()
+        if(TARGET 4k-eq-2-lv2 AND NOT FOURKEQ_LILV_FOUND)
+            if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+                message(FATAL_ERROR
+                    "4k-eq-2: the LV2 state and preset test needs the lilv-0 development "
+                    "files (liblilv-dev). Install them, or build without the LV2 format.")
+            endif()
+            message(STATUS "FourKEQLv2State not registered: lilv-0 development files not found")
+        endif()
+        if(TARGET 4k-eq-2-lv2 AND FOURKEQ_LILV_FOUND)
+            add_executable(FourKEQLv2StateTest
+                tests/FourKEQLv2StateTest.cpp
+                ../../shared-daf/dsp/FourKEQDSP.cpp)
+            target_include_directories(FourKEQLv2StateTest PRIVATE
+                "${CMAKE_CURRENT_SOURCE_DIR}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+            target_compile_features(FourKEQLv2StateTest PRIVATE cxx_std_17)
+            target_link_libraries(FourKEQLv2StateTest PRIVATE PkgConfig::FOURKEQ_LILV)
+            add_dependencies(FourKEQLv2StateTest 4k-eq-2-lv2)
+            add_test(NAME FourKEQLv2State
+                     COMMAND FourKEQLv2StateTest "${CMAKE_BINARY_DIR}/bin/4k-eq-2.lv2")
+        endif()
+    endif()
+endif()
 
 # Out Peak L/R are output parameters; guard them against reaching the host as
 # parameter edits, in both VST3 (dusk-audio/plugins#233) and CLAP (#231). The
