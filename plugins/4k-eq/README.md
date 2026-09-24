@@ -90,6 +90,14 @@ preferences are machine-level settings and are not changed by preset recall.
 DAF and DAF-Widgets are expected beside this repository by default. Their
 locations can be overridden at configure time.
 
+On Linux, a native build with the LV2 format also builds the LV2 state and
+preset test, which needs the lilv development files. Configuration stops with
+an error if they are missing. On Debian or Ubuntu, install them first:
+
+```sh
+sudo apt install liblilv-dev
+```
+
 ```sh
 cmake -S plugins/4k-eq/daf-plugin \
   -B plugins/4k-eq/daf-plugin/build \
