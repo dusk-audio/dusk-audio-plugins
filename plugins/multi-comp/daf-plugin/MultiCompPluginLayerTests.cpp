@@ -15,7 +15,7 @@
 #undef MULTICOMP_PLUGIN_LOGIC_TEST
 
 #define DUSK_IMGUI_WIDGETS_LOGIC_TEST
-#include "../core/MultiCompDbxLaw.hpp"
+#include "../core/MultiCompVcaLaw.hpp"
 #include "../../shared-daf/ui/DuskImGuiWidgets.hpp"
 #undef DUSK_IMGUI_WIDGETS_LOGIC_TEST
 #include "../../shared-daf/ui/DuskVuMeterGeometry.hpp"
@@ -73,18 +73,18 @@ void testHostParameterTapers()
             "VCA Compression is an untapered 0-100 knob position");
     require(multicompp::hostMin(attack) == 0.0f && multicompp::hostMax(attack) == 1.0f,
             "tapered Digital Attack is declared in normalized host space");
-    require(std::isinf(duskaudio::dbx160::compressRatio(100.0f))
-                && duskaudio::dbx160::compressRatio(0.0f) == 1.0f
-                && std::abs(duskaudio::dbx160::compressPosition(4.14f) - 50.0f) < 0.05f,
-            "dbx 160 compression law is 1:1 at the start, INF at the stop, and invertible");
+    require(std::isinf(duskaudio::vcaLaw::compressRatio(100.0f))
+                && duskaudio::vcaLaw::compressRatio(0.0f) == 1.0f
+                && std::abs(duskaudio::vcaLaw::compressPosition(4.14f) - 50.0f) < 0.05f,
+            "VCA compression law is 1:1 at the start, INF at the stop, and invertible");
     for (size_t i = 0; i < 3; ++i)
     {
-        require(std::abs(duskaudio::dbx160::compressRatio(positions[i] * 100.0f) - expectedRatio[i]) < 0.011f,
-                "VCA Compression follows the measured dbx 160 ratio law at quarter points");
+        require(std::abs(duskaudio::vcaLaw::compressRatio(positions[i] * 100.0f) - expectedRatio[i]) < 0.011f,
+                "VCA Compression follows the measured VCA ratio law at quarter points");
         require(std::abs(multicompp::hostToPlain(attack, positions[i]) - expectedAttack[i]) < 0.011f,
                 "Digital Attack follows JUCE skew at quarter points");
     }
-    std::puts("host tapers: VCA Compression follows the dbx 160 law, Digital Attack matches JUCE at 0.25/0.5/0.75");
+    std::puts("host tapers: VCA Compression follows the VCA law, Digital Attack matches JUCE at 0.25/0.5/0.75");
 }
 
 void testParameterIntervals()
@@ -177,10 +177,10 @@ void testStrictStateValidationAndRoundTrip()
         version3.replace(key, std::strlen("vca_compression="), "vca_ratio=");
         multicompp::StateValues migrated{};
         require(multicompp::decodeState(version3, migrated), "version-3 VCA state still loads");
-        require(std::abs(migrated[ratioIndex] - duskaudio::dbx160::compressPosition(4.0f)) < 0.05f,
+        require(std::abs(migrated[ratioIndex] - duskaudio::vcaLaw::compressPosition(4.0f)) < 0.05f,
                 "version-3 vca_ratio migrates to the knob position applying the same ratio");
         require(migrated[thresholdIndex] == 0.0f,
-                "version-3 vca_threshold above the dbx ceiling clamps to 0 dB");
+                "version-3 vca_threshold above the VCA ceiling clamps to 0 dB");
         // A v3 payload must use its historical key and domain. Accepting the
         // v4 key would silently interpret the old normalized ratio as a new
         // compression-knob position instead of migrating it.
@@ -213,7 +213,7 @@ void testStrictStateValidationAndRoundTrip()
         const bool ratio120Loaded = multicompp::decodeState(
             makeVersion3State(1.0f, 12.0f), ratio120Values);
         const float ratio120Slope = ratio120Loaded
-            ? duskaudio::dbx160::compressSlope(ratio120Values[ratioIndex]) : 0.0f;
+            ? duskaudio::vcaLaw::compressSlope(ratio120Values[ratioIndex]) : 0.0f;
 
         multicompp::StateValues lowerEndpointValues{};
         const bool lowerEndpointsLoaded = multicompp::decodeState(
@@ -382,8 +382,8 @@ void testFactoryPresetOwnership()
                 expect(multicompp::ParamId::VcaThreshold, preset.threshold,
                        "VCA preset applies Threshold");
                 expect(multicompp::ParamId::VcaRatio,
-                       duskaudio::dbx160::compressPosition(preset.ratio),
-                       "VCA preset applies Ratio as a dbx 160 knob position");
+                       duskaudio::vcaLaw::compressPosition(preset.ratio),
+                       "VCA preset applies Ratio as a VCA knob position");
                 expect(multicompp::ParamId::VcaAttack, preset.attack,
                        "VCA preset applies Attack");
                 expect(multicompp::ParamId::VcaRelease, preset.release,

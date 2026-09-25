@@ -90,7 +90,7 @@ void staticParity()
         std::printf("BUS static ratio %d threshold %.0f input %.0f: %.4f dBFS, reference %.4f, error %.4f dB\n",
                     row.ratio, row.threshold, row.input, output, row.output, output - row.output);
         require(std::abs(output - row.output) < 0.6,
-                "BUS steady compression matches measured UAD ratio/threshold law");
+                "BUS steady compression matches measured reference ratio/threshold law");
     }
 }
 
@@ -168,7 +168,7 @@ void fadeControls()
             const double halfDb = 20 * std::log10(half / unity);
             std::printf("BUS fade %.0f Hz %dch: quarter %.4f dB, half %.4f dB\n", rate, channels, quarterDb, halfDb);
             require(std::abs(quarterDb + 22.05) < 0.6 && std::abs(halfDb + 53.83) < 0.8,
-                    "BUS fade follows the captured UAD quarter/half contour");
+                    "BUS fade follows the captured reference quarter/half contour");
             rig.dsp.setParameter(P::BusFade, 0);
             const double reversed = rig.render(0.25, -30, channels);
             const double restored = rig.render(0.25, -30, channels);
@@ -237,7 +237,7 @@ void fadeParity()
         }
     }
     std::printf("BUS fade parity worst %.6f dB\n", worst);
-    require(worst < 0.6, "BUS fade matches UAD rates, full fade-ins and interrupted reversals");
+    require(worst < 0.6, "BUS fade matches reference rates, full fade-ins and interrupted reversals");
 }
 
 void fadeRateAutomation()
@@ -359,7 +359,7 @@ void stateControls()
     require(hostToPlain(rate, 0.25f) == 3.5f && hostToPlain(rate, 0.5f) == 6.0f
                 && hostToPlain(rate, 0.75f) == 33.0f
                 && std::abs(plainToHost(rate, 24.8f) - 0.674074f) < 0.00001f,
-            "fade rate taper matches UAD parameter readbacks in both directions");
+            "fade rate taper matches reference parameter readbacks in both directions");
     saved[static_cast<size_t>(ParamId::BusHeadroom)] = 6;
     saved[static_cast<size_t>(ParamId::BusFadeRate)] = 0.5f;
     saved[static_cast<size_t>(ParamId::BusFade)] = 1;

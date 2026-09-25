@@ -225,8 +225,8 @@ void MultiCompDSP::prepare(double sr, int blockSize)
     sidechainListenRamp.snap(params.globalSidechainListen.load(std::memory_order_relaxed) ? 1.0f : 0.0f);
     bypassSettled = false; lastBypass = false; lastExternalSidechain = false;
     lastAutoMakeup = false; firstBlock = true; lastMode = -1; autoGainHoldSamples = 0;
-    lastDbxSidechainTilt = false;
-    lastDbxSidechainTiltEngaged = false;
+    lastVcaSidechainTilt = false;
+    lastVcaSidechainTiltEngaged = false;
     noiseState = 0x6d2b79f5u;
     multibandEnvelopes.fill(1.0f);
     prepareCrossovers();
@@ -301,8 +301,8 @@ void MultiCompDSP::reset()
     lastAutoMakeup = false;
     firstBlock = true;
     lastMode = -1;
-    lastDbxSidechainTilt = false;
-    lastDbxSidechainTiltEngaged = false;
+    lastVcaSidechainTilt = false;
+    lastVcaSidechainTiltEngaged = false;
     autoGainHoldSamples = 0;
     noiseState = 0x6d2b79f5u;
     for (auto& m : bandGR) m.store(0.0f, std::memory_order_relaxed);
@@ -529,23 +529,23 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     const float sidechainHP = params.sidechainHP.load(std::memory_order_relaxed);
     // In VCA mode the SC HP control is the reference VCA compressor's PULL/SC switch: settings
     // at or above 1 Hz engage the reference's measured half-order tilt in
-    // place of the high-pass (MultiCompDbxLaw.hpp SidechainTilt).
-    const bool dbxSidechainTilt = mode == MultiCompMode::VCA;
-    const bool dbxSidechainPathChanged = dbxSidechainTilt != lastDbxSidechainTilt;
-    if (dbxSidechainPathChanged)
+    // place of the high-pass (MultiCompVcaLaw.hpp SidechainTilt).
+    const bool vcaSidechainTilt = mode == MultiCompMode::VCA;
+    const bool vcaSidechainPathChanged = vcaSidechainTilt != lastVcaSidechainTilt;
+    if (vcaSidechainPathChanged)
     {
         // The filter that was not running holds state from whenever it last
         // ran; clear it before it takes over so a mode switch does not start
         // from a stale sidechain.
-        if (dbxSidechainTilt)
+        if (vcaSidechainTilt)
             for (auto& f : sidechainTilt) f.reset();
         else
             for (auto& f : sidechainFilters) f.reset();
-        lastDbxSidechainTilt = dbxSidechainTilt;
+        lastVcaSidechainTilt = vcaSidechainTilt;
     }
-    const bool dbxSidechainTiltEngaged = dbxSidechainTilt && sidechainHP >= 1.0f;
-    if (dbxSidechainTiltEngaged && !lastDbxSidechainTiltEngaged
-        && !dbxSidechainPathChanged)
+    const bool vcaSidechainTiltEngaged = vcaSidechainTilt && sidechainHP >= 1.0f;
+    if (vcaSidechainTiltEngaged && !lastVcaSidechainTiltEngaged
+        && !vcaSidechainPathChanged)
     {
         // While PULL/SC is out the tilt is bypassed and retains its last
         // history. Clear that stale history once, on the edge back to IN,
@@ -553,7 +553,7 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
         // it in the path-change block above.
         for (auto& f : sidechainTilt) f.reset();
     }
-    lastDbxSidechainTiltEngaged = dbxSidechainTiltEngaged;
+    lastVcaSidechainTiltEngaged = vcaSidechainTiltEngaged;
     for (int ch = 0; ch < nCh; ++ch)
     {
         const float* source = useExternalSidechain ? sidechain[ch] : in[ch];
@@ -564,7 +564,7 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
         {
             float sample = source[i];
             if (sidechainHP >= 1.0f)
-                sample = dbxSidechainTilt ? sidechainTilt[ch].process(sample)
+                sample = vcaSidechainTilt ? sidechainTilt[ch].process(sample)
                                           : sidechainFilters[ch].process(sample);
             processedSidechain[ch][static_cast<size_t>(i)] = sidechainEQ[ch].process(sample);
         }
@@ -882,15 +882,15 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
         // history this is a user-facing control, so it must not run on while
         // the plugin is out of circuit (MultiCompBusControlTests.cpp:308-314).
         const float step = requestedSidechainListen || settledBypass ? 0.0f
-            : (fadeOut ? 1.0f : -1.0f) * sslbus::fadeStep(seconds, sampleRate);
+            : (fadeOut ? 1.0f : -1.0f) * busLaw::fadeStep(seconds, sampleRate);
         for (int i = 0; i < nSamples; ++i)
         {
-            busFadeControl = std::clamp(busFadeControl + step, 0.0f, sslbus::fadeControlMaximum);
-            const float gain = sslbus::fadeGain(busFadeControl);
+            busFadeControl = std::clamp(busFadeControl + step, 0.0f, busLaw::fadeControlMaximum);
+            const float gain = busLaw::fadeGain(busFadeControl);
             for (int ch = 0; ch < nCh; ++ch) out[ch][i] *= gain;
         }
     }
-    busFadeMeter.store(busFadeControl / sslbus::fadeControlMaximum, std::memory_order_relaxed);
+    busFadeMeter.store(busFadeControl / busLaw::fadeControlMaximum, std::memory_order_relaxed);
     for (int i = 0; i < nSamples; ++i)
     {
         const float listen = sidechainListenRamp.next();

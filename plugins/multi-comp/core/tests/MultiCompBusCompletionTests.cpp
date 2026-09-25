@@ -134,7 +134,7 @@ void frequencyParity(bool external) {
         }
     }
     std::printf("BUS %s frequency worst %.6f dB\n", external ? "external" : "internal", worst);
-    require(worst < .35, "BUS detector frequency, filter and headroom match native UAD");
+    require(worst < .35, "BUS detector frequency, filter and headroom match native reference");
 }
 void levelParity() {
     constexpr double levels[] = {-48,-36,-24,-18,-12,-6};
@@ -155,7 +155,7 @@ void levelParity() {
         }
     }
     std::printf("BUS external level worst %.6f dB\n", worst);
-    require(worst < .2, "BUS independent sidechain follows measured UAD compression law");
+    require(worst < .2, "BUS independent sidechain follows measured reference compression law");
 }
 std::array<double, 2> carrier(const std::vector<float>& audio, int begin,
                               int count = 48, double frequency = 1000,
@@ -215,7 +215,7 @@ void dynamicsParity() {
     }
     const double rms = std::sqrt(squared/count);
     std::printf("BUS external dynamics %d points: RMS %.6f, worst %.6f dB\n",count,rms,worst);
-    require(worst < .7 && rms < .2, "BUS external fixed and Auto attack/recovery match native UAD");
+    require(worst < .7 && rms < .2, "BUS external fixed and Auto attack/recovery match native reference");
 }
 void saturationParity() {
     std::vector<float> main(32*rate), side(main.size(), 0);
@@ -275,8 +275,8 @@ void saturationParity() {
         levelOk?"PASS":"FAIL",worstGain,100*worstPeak,colourOk?"PASS":"FAIL",worstEven,worstWeakOdd,worstStrongOdd);
     std::printf("BUS sub-ceiling colour %s: %d cells, worst H2/H3 %.6f dB\n",
         subCeilingOk?"PASS":"FAIL",subCeilingCells,worstSubCeiling);
-    require(levelOk && colourOk, "BUS clean path and headroom-dependent saturation match native UAD");
-    require(subCeilingOk, "BUS sub-ceiling x^7/x^6 colour matches native UAD in dB");
+    require(levelOk && colourOk, "BUS clean path and headroom-dependent saturation match native reference");
+    require(subCeilingOk, "BUS sub-ceiling x^7/x^6 colour matches native reference in dB");
 }
 
 void rateParity() {

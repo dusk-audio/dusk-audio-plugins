@@ -5,7 +5,7 @@
 #include "MultiCompModes.hpp"
 #include "MultiCompBusMeter.hpp"
 #include "MultiCompParams.hpp"
-#include "MultiCompDbxLaw.hpp"
+#include "MultiCompVcaLaw.hpp"
 #include "MultiCompAutoGain.hpp"
 #include "MultiCompHelpers.hpp"
 #include "../../shared-daf/dsp/DuskCrossover.hpp"
@@ -157,10 +157,10 @@ private:
     std::array<MultiCompAntiAliasing, kMaxChannels> busExternalOversamplers;
     MultiCompTruePeakDetector truePeakDetector;
     std::array<MultiCompSidechainFilter, kMaxChannels> sidechainFilters;
-    std::array<dbx160::SidechainTilt, kMaxChannels> sidechainTilt;
-    bool lastDbxSidechainTilt = false;   // which sidechain filter ran last block
-    bool lastDbxSidechainTiltEngaged = false;
-    std::array<dbx160::OutputVoicing, kMaxChannels> vcaOutputVoicing;
+    std::array<vcaLaw::SidechainTilt, kMaxChannels> sidechainTilt;
+    bool lastVcaSidechainTilt = false;   // which sidechain filter ran last block
+    bool lastVcaSidechainTiltEngaged = false;
+    std::array<vcaLaw::OutputVoicing, kMaxChannels> vcaOutputVoicing;
     bool vcaVoicingActive = false;
     std::array<MultiCompSidechainEQ, kMaxChannels> sidechainEQ;
 
@@ -230,7 +230,7 @@ private:
     int antiAliasLatency = 0;
 
     std::array<std::atomic<float>, kMultiCompBands> bandGR{{0.0f, 0.0f, 0.0f, 0.0f}};
-    sslbus::CompressionMeter busCompressionMeter;
+    busLaw::CompressionMeter busCompressionMeter;
     std::atomic<float> busMeterReading{0.0f};
     std::atomic<float> masterGR{0.0f}, inputLevel{-60.0f}, outputLevel{-60.0f};
     std::uint32_t noiseState = 0x6d2b79f5u;

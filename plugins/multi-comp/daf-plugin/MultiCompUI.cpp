@@ -6,7 +6,7 @@
 #include "MultiCompProgramPresets.hpp"
 #include "MultiCompVintageMeterGeometry.hpp"
 #include "MultiCompVintageMeterControls.hpp"
-#include "../core/MultiCompDbxLaw.hpp"
+#include "../core/MultiCompVcaLaw.hpp"
 
 #include <algorithm>
 #include <array>
@@ -1164,12 +1164,12 @@ private:
     static float vcaCompressionHostToRatio(float host, uint32_t p, void* context)
     {
         const float position = static_cast<MultiCompUI*>(context)->plainValueForHost(p, host);
-        return duskaudio::dbx160::compressRatio(position);
+        return duskaudio::vcaLaw::compressRatio(position);
     }
 
     static float vcaCompressionRatioToHost(float ratio, uint32_t p, void* context)
     {
-        const float position = duskaudio::dbx160::compressPosition(ratio);
+        const float position = duskaudio::vcaLaw::compressPosition(ratio);
         return static_cast<MultiCompUI*>(context)->hostValueForPlain(p, position);
     }
 
@@ -2080,13 +2080,13 @@ private:
         }
         {
             // Position knob; ring marks placed by the measured ratio law and the
-            // read-out shows the applied ratio (MultiCompDbxLaw.hpp).
+            // read-out shows the applied ratio (MultiCompVcaLaw.hpp).
             constexpr std::array<float, 9> ratios{{1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f, 10.0f, 20.0f,
                                                    std::numeric_limits<float>::infinity()}};
             constexpr std::array<const char*, 9> labels{{"1", "1.5", "2", "3", "4", "6", "10", "20", "INF"}};
             std::array<float, 9> majors{};
             for (size_t i = 0; i < ratios.size(); ++i)
-                majors[i] = duskaudio::dbx160::compressPosition(ratios[i]);
+                majors[i] = duskaudio::vcaLaw::compressPosition(ratios[i]);
             vcaKnob(dl, "vca_ratio", P_VCA_RATIO, 385, 478, 42.0f,
                     "COMPRESSION", "%.1f", ":1", majors.data(), labels.data(),
                     static_cast<int>(majors.size()), nullptr, 0,
