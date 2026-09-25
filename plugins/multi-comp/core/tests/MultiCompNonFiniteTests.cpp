@@ -16,6 +16,12 @@
 //   burst  10 ms at 3e38 peak -- finite, but it overflows every mode: every
 //          output sample finite, the first block after the burst audible,
 //          meters finite, and the tail within kBurstTailDb of the control.
+//   param  every parameter (and every multiband band parameter, Mix and
+//          Stereo Link) set to +inf, -inf or NaN mid-render (a corrupt
+//          host automation value): every output sample finite, meters
+//          finite, and the tail within kSingleFaultTailDb of the control.
+//          std::clamp passes NaN through, so these reached int conversions
+//          and table indices unguarded.
 #include "../MultiCompDSP.hpp"
 
 #include <algorithm>
@@ -53,7 +59,7 @@ constexpr double kAudibleRms = 1.0e-3;
 constexpr const char* kModeNames[8] = {
     "Opto", "FET", "VCA", "Bus", "StudioFET", "StudioVCA", "Digital", "Multiband"};
 
-enum class Fault { None, Sample, Burst };
+enum class Fault { None, Sample, Burst, Parameter };
 
 struct Render
 {
@@ -112,6 +118,16 @@ Render render(int mode, int oversampling, int channels, bool sidechain, Fault fa
                 faulted = static_cast<float>(value * wave);
             left[static_cast<size_t>(i)] = right[static_cast<size_t>(i)] = sidechain ? clean : faulted;
             scLeft[static_cast<size_t>(i)] = scRight[static_cast<size_t>(i)] = sidechain ? faulted : clean;
+        }
+        if (fault == Fault::Parameter && block == kFaultBlock)
+        {
+            for (int p = 0; p < static_cast<int>(P::None); ++p)
+                dsp.setParameter(static_cast<P>(p), value);
+            for (int band = 0; band < 4; ++band)
+                for (int p = 0; p <= static_cast<int>(DSP::MultibandParameter::Enabled); ++p)
+                    dsp.setMultibandParameter(band, static_cast<DSP::MultibandParameter>(p), value);
+            dsp.setMix(value);
+            dsp.setStereoLink(value);
         }
         if (sidechain) dsp.processBlockExternal(in, sc, out, channels, kBlock);
         else dsp.processBlock(in, out, channels, kBlock);
@@ -174,7 +190,7 @@ int main()
         for (const bool sidechain : {false, true})
         {
             const char* path = sidechain ? "sidechain" : "main-in";
-            Summary single, burst;
+            Summary single, burst, parameter;
             for (int oversampling = 0; oversampling < 3; ++oversampling)
                 for (int channels = 1; channels <= 2; ++channels)
                 {
@@ -182,13 +198,19 @@ int main()
                     for (const float value : faults)
                         score(single, render(mode, oversampling, channels, sidechain, Fault::Sample, value),
                               control, kSingleFaultTailDb);
+                    if (!sidechain)
+                        for (const float value : faults)
+                            score(parameter, render(mode, oversampling, channels, sidechain, Fault::Parameter, value),
+                                  control, kSingleFaultTailDb);
                     if (channels == 2)
                         score(burst, render(mode, oversampling, channels, sidechain, Fault::Burst, kBurstPeak),
                               control, kBurstTailDb);
                 }
             print("fault", kModeNames[mode], path, single);
             print("burst", kModeNames[mode], path, burst);
-            failures += single.failures + burst.failures;
+            if (!sidechain)
+                print("param", kModeNames[mode], path, parameter);
+            failures += single.failures + burst.failures + parameter.failures;
         }
     std::printf("%s: %d failing case(s)\n", failures == 0 ? "PASS" : "FAIL", failures);
     return failures == 0 ? 0 : 1;
