@@ -7,7 +7,7 @@
 #include "MultiCompBusLaw.hpp"
 
 
-#include "MultiCompDbxLaw.hpp"
+#include "MultiCompVcaLaw.hpp"
 #include "MultiCompParams.hpp"
 #include "MultiCompOptoShelf.hpp"
 #include "MultiCompOptoCell.hpp"
@@ -412,7 +412,7 @@ private:
     std::array<StudioFETState, 2> studioFet{};
     std::array<StudioVCAState, 2> studioVca{};
     std::array<DigitalState, 2> digital{};
-    // sslbus::headroomDrive() is a std::pow evaluated two to three times per
+    // busLaw::headroomDrive() is a std::pow evaluated two to three times per
     // channel per oversampled sample for a value that only changes when the
     // HEADROOM switch moves. Memoise it on the switch position; the cached
     // result is the same float the call would have returned. The output
@@ -443,7 +443,7 @@ private:
     MultiCompLookupTables lookupTables;
 
     float optoInvSampleRate = 1.0f / 48000.0f;
-    // VCA detector onset limit (MultiCompDbxLaw.hpp), refreshed with the rate.
+    // VCA detector onset limit (MultiCompVcaLaw.hpp), refreshed with the rate.
     float vcaDetectorFloorPower = 0.0f, vcaDetectorRise = 1.0f;
     float optoColourPeakRelease = 0;
     int optoColourPeakHoldSamples = 1;
@@ -525,8 +525,8 @@ private:
         for (auto& filter : optoPostHighPass)
             filter.prepare(sr, kOptoPostHighPassHz, kOptoPostHighPassQ);
         // The VCA detector runs once per host sample, so its limit uses fs.
-        vcaDetectorFloorPower = std::pow(10.0f, dbx160::kDetectorFloorDb * 0.1f);
-        vcaDetectorRise = std::pow(10.0f, dbx160::kDetectorRiseDbPerMs * 100.0f / static_cast<float>(fs));
+        vcaDetectorFloorPower = std::pow(10.0f, vcaLaw::kDetectorFloorDb * 0.1f);
+        vcaDetectorRise = std::pow(10.0f, vcaLaw::kDetectorRiseDbPerMs * 100.0f / static_cast<float>(fs));
         optoCell.setRate(sr);
         optoColourPeakRelease = std::exp(-optoInvSampleRate / 0.040f);
         optoColourPeakHoldSamples = std::max(1, static_cast<int>(
@@ -765,8 +765,8 @@ private:
         // reduction read anywhere else without moving the abscissa first.
         //
         // MEASUREMENT. 39 operating points at 1 kHz spanning Input 0.2-1.0 and
-        // source -48 to -6 dBFS (`probe_h2_surface.py`, campaign
-        // reference_comparison_1176), each giving the coefficient that lands
+        // source -48 to -6 dBFS (`probe_h2_surface.py`, the FET
+        // reference-comparison harness), each giving the coefficient that lands
         // the reference unit's own H2: rows reaching the same reduction from
         // different knob/level combinations agree to about 0.1 dB, which is
         // what makes a reduction-indexed law the right shape here. Every
@@ -1306,8 +1306,8 @@ private:
         // that coordinate by `MultiCompCoreTest --fet-h2-surface`.
         //
         // MEASUREMENT. 91 compressing operating points at 100 Hz, Input
-        // 0.2-1.0 x source -48 to -6 dBFS (`probe_h2_surface.py`, campaign
-        // reference_comparison_1176). At 100 Hz mine's 2f output is the sum of
+        // 0.2-1.0 x source -48 to -6 dBFS (`probe_h2_surface.py`, the FET
+        // reference-comparison harness). At 100 Hz mine's 2f output is the sum of
         // TWO contributions, this one and `fetBroadbandK2`, and they arrive
         // nearly in QUADRATURE -- the two-pole low pass turns -21.8 deg per
         // pole at 100 Hz and squaring doubles it, measured -78 to -86 deg
@@ -2889,7 +2889,7 @@ private:
             constexpr float rmsSeconds = 0.035f;
             const float rmsCoeff = std::exp(-1.0f / (rmsSeconds * static_cast<float>(fs)));
             // The state climbs at most vcaDetectorRise per sample from its
-            // floor; energy arriving faster is discarded (MultiCompDbxLaw.hpp,
+            // floor; energy arriving faster is discarded (MultiCompVcaLaw.hpp,
             // DETECTOR ONSET).
             const float previous = std::max(d.rms, vcaDetectorFloorPower);
             d.rms = std::min(previous * rmsCoeff + sidechain * sidechain * (1.0f - rmsCoeff),
@@ -2930,13 +2930,13 @@ private:
         // COMPRESSION is a knob position; the applied ratio comes from the
         // measured law (INF at the stop). Hard knee to within the measured
         // 0.2 dB soft region.
-        const float slope = dbx160::compressSlope(p.vcaRatio.load(std::memory_order_relaxed));
+        const float slope = vcaLaw::compressSlope(p.vcaRatio.load(std::memory_order_relaxed));
         const float rawDetectorDb = gainToDecibels(std::max(level, 1.0e-9f));
         // The calibration campaign specifies sine levels in peak dBFS, while
         // the RMS detector is 3.0103 dB lower. Select the measured correction
         // in the campaign's domain, then apply it to the detector's dB value.
         const float detectorDb = rawDetectorDb
-            + dbx160::detectorCorrectionDb(rawDetectorDb + 3.0103f);
+            + vcaLaw::detectorCorrectionDb(rawDetectorDb + 3.0103f);
         const float over = detectorDb - thresholdDb;
         const float reduction = over > 0.0f ? std::min(over * (1.0f - slope), 60.0f) : 0.0f;
         // The reference adds no even-order or fifth harmonic at all (H2/H4 at
@@ -2971,7 +2971,7 @@ private:
         if (position != busDrivePosition)
         {
             busDrivePosition = position;
-            busDriveValue = sslbus::headroomDrive(position);
+            busDriveValue = busLaw::headroomDrive(position);
             busCeilingScale = busCeilingReference / busDriveValue;
         }
         return busDriveValue;
@@ -3020,9 +3020,9 @@ private:
     // ratio-independent RCs measured on saturated (flat-drive) sidechains.
     static constexpr float busDetectorExponent = 1.02129996f;
 
-    static sslbus::Drive busCappedDrive(float detectorDb, float threshold, int ratio) noexcept
+    static busLaw::Drive busCappedDrive(float detectorDb, float threshold, int ratio) noexcept
     {
-        const sslbus::Drive d = sslbus::drive(detectorDb, threshold, ratio);
+        const busLaw::Drive d = busLaw::drive(detectorDb, threshold, ratio);
         // More than 16 widths below the ceiling the smooth minimum is the drive to < 1e-7 dB.
         if (d.value < busDriveCeiling - 16.0f * busDriveCeilingWidth) return d;
         const float lo = std::min(d.value, busDriveCeiling), hi = std::max(d.value, busDriveCeiling);
@@ -3046,7 +3046,7 @@ private:
         if (r <= 0.0f) return 0.0f;          // below the knee: no drive at any exponent
         for (int i = 0; i < 4; ++i)
         {
-            const sslbus::Drive f = busCappedDrive(y + excess * r, threshold, ratio);
+            const busLaw::Drive f = busCappedDrive(y + excess * r, threshold, ratio);
             const float step = (r - f.value) / std::max(1.0f - excess * f.slope, 0.05f);
             r -= step;
             if (std::abs(step) <= 1.0e-5f * r) break;

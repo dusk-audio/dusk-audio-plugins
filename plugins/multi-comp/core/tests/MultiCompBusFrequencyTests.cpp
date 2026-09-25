@@ -104,7 +104,7 @@ void frequencyParity()
         std::printf("BUS frequency os %d %dch: worst %.6f dB\n", os, channels, localWorst);
         worst = std::max(worst, localWorst);
     }
-    require(worst < 0.4, "BUS native-clock phase and detune response matches UAD across rates and oversampling");
+    require(worst < 0.4, "BUS native-clock phase and detune response matches reference across rates and oversampling");
 }
 void frequencyHoldouts()
 {
@@ -167,7 +167,7 @@ void kneeParity()
         worst = std::max(worst, localWorst);
         std::printf("BUS 2:1 independent knee os %d %dch: worst %.6f dB\n", os, channels, localWorst);
     }
-    require(worst < 0.15, "BUS 2:1 knee predicts the independent UAD threshold sweep within 0.15 dB");
+    require(worst < 0.15, "BUS 2:1 knee predicts the independent reference threshold sweep within 0.15 dB");
 }
 // SC FILTER off->on must not re-enter the detector with stale history.
 // renderBusOutput advances busSidechainHighPass only while the control is

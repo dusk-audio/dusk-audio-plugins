@@ -5,17 +5,20 @@ Drop CC0 / explicitly-redistributable WAV impulse responses into this directory.
 ## Naming convention
 
 ```
-<amp-archetype>_<cab>_<mic>_<position>.wav
+<region>_<cab-size>_<mic-type>_<position>.wav
 ```
 
-For example:
-- `fender_twin_2x12_sm57_oa.wav` — Fender Twin 2×12, SM57 on-axis edge of cone
-- `marshall_1960a_v30_sm57_oa.wav` — Marshall 1960A 4×12 V30, SM57 on-axis
-- `marshall_1960a_greenback_sm57_off.wav` — Marshall 1960A Greenback, off-axis
-- `vox_ac30_2x12_blue_ribbon.wav` — Vox AC30 Blue Alnico, ribbon mic
-- `mesa_4x12_v30_57_blend.wav` — Mesa 4×12 V30, multi-mic blend
+Names stay generic (no manufacturer, model or mic brand names); the upstream
+recording details live in `LICENSES.md` as attribution. For example:
+- `american_2x12_dynamic_oa.wav` — American 2×12 combo, dynamic mic on-axis
+- `british_4x12_dynamic_oa.wav` — British 4×12 closed-back, dynamic mic on-axis
+- `british_4x12_dynamic_off.wav` — British 4×12 closed-back, dynamic mic off-axis
+- `british_1x12_condenser_close.wav` — British 1×12 combo, condenser mic close
 
-`CabinetLibrary::registerKnownCabinets()` knows how to map filenames to display names. If you add a new file, add an entry there too.
+`CabinetLibrary.cpp` maps each file stem to its display name in `kEntries[]`
+(with a matching `CabinetId` in `CabinetLibrary.h`). If you add a new file, add
+entries there, append (never reorder) the enum, and allowlist the WAV in the
+root `.gitignore`.
 
 ## Format requirements
 

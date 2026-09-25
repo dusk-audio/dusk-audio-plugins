@@ -142,57 +142,57 @@ void TubeEQCurveDisplay::timerCallback()
     static const float midHighFreqValues[] = { 1500.0f, 2000.0f, 3000.0f, 4000.0f, 5000.0f };
 
     // Read Tube EQ mode parameters (freq params are indices, convert to Hz)
-    if (auto* p = params.getRawParameterValue(ParamIDs::pultecLfBoostGain))
+    if (auto* p = params.getRawParameterValue(ParamIDs::tubeEqLfBoostGain))
         newParams.lfBoostGain = p->load();
-    if (auto* p = params.getRawParameterValue(ParamIDs::pultecLfBoostFreq))
+    if (auto* p = params.getRawParameterValue(ParamIDs::tubeEqLfBoostFreq))
     {
         int idx = juce::jlimit(0, 3, static_cast<int>(p->load()));
         newParams.lfBoostFreq = lfFreqValues[idx];
     }
-    if (auto* p = params.getRawParameterValue(ParamIDs::pultecLfAttenGain))
+    if (auto* p = params.getRawParameterValue(ParamIDs::tubeEqLfAttenGain))
         newParams.lfAttenGain = p->load();
-    if (auto* p = params.getRawParameterValue(ParamIDs::pultecHfBoostGain))
+    if (auto* p = params.getRawParameterValue(ParamIDs::tubeEqHfBoostGain))
         newParams.hfBoostGain = p->load();
-    if (auto* p = params.getRawParameterValue(ParamIDs::pultecHfBoostFreq))
+    if (auto* p = params.getRawParameterValue(ParamIDs::tubeEqHfBoostFreq))
     {
         int idx = juce::jlimit(0, 6, static_cast<int>(p->load()));
         newParams.hfBoostFreq = hfBoostFreqValues[idx];
     }
-    if (auto* p = params.getRawParameterValue(ParamIDs::pultecHfBoostBandwidth))
+    if (auto* p = params.getRawParameterValue(ParamIDs::tubeEqHfBoostBandwidth))
         newParams.hfBoostBandwidth = p->load();
-    if (auto* p = params.getRawParameterValue(ParamIDs::pultecHfAttenGain))
+    if (auto* p = params.getRawParameterValue(ParamIDs::tubeEqHfAttenGain))
         newParams.hfAttenGain = p->load();
-    if (auto* p = params.getRawParameterValue(ParamIDs::pultecHfAttenFreq))
+    if (auto* p = params.getRawParameterValue(ParamIDs::tubeEqHfAttenFreq))
     {
         int idx = juce::jlimit(0, 2, static_cast<int>(p->load()));
         newParams.hfAttenFreq = hfAttenFreqValues[idx];
     }
-    if (auto* p = params.getRawParameterValue(ParamIDs::pultecTubeDrive))
+    if (auto* p = params.getRawParameterValue(ParamIDs::tubeEqTubeDrive))
         newParams.tubeDrive = p->load();
 
     // Mid Dip/Peak section
-    if (auto* p = params.getRawParameterValue(ParamIDs::pultecMidEnabled))
+    if (auto* p = params.getRawParameterValue(ParamIDs::tubeEqMidEnabled))
         newParams.midEnabled = p->load() > 0.5f;
-    if (auto* p = params.getRawParameterValue(ParamIDs::pultecMidLowFreq))
+    if (auto* p = params.getRawParameterValue(ParamIDs::tubeEqMidLowFreq))
     {
         int idx = juce::jlimit(0, 4, static_cast<int>(p->load()));
         newParams.midLowFreq = midLowFreqValues[idx];
     }
-    if (auto* p = params.getRawParameterValue(ParamIDs::pultecMidLowPeak))
+    if (auto* p = params.getRawParameterValue(ParamIDs::tubeEqMidLowPeak))
         newParams.midLowPeak = p->load();
-    if (auto* p = params.getRawParameterValue(ParamIDs::pultecMidDipFreq))
+    if (auto* p = params.getRawParameterValue(ParamIDs::tubeEqMidDipFreq))
     {
         int idx = juce::jlimit(0, 6, static_cast<int>(p->load()));
         newParams.midDipFreq = midDipFreqValues[idx];
     }
-    if (auto* p = params.getRawParameterValue(ParamIDs::pultecMidDip))
+    if (auto* p = params.getRawParameterValue(ParamIDs::tubeEqMidDip))
         newParams.midDip = p->load();
-    if (auto* p = params.getRawParameterValue(ParamIDs::pultecMidHighFreq))
+    if (auto* p = params.getRawParameterValue(ParamIDs::tubeEqMidHighFreq))
     {
         int idx = juce::jlimit(0, 4, static_cast<int>(p->load()));
         newParams.midHighFreq = midHighFreqValues[idx];
     }
-    if (auto* p = params.getRawParameterValue(ParamIDs::pultecMidHighPeak))
+    if (auto* p = params.getRawParameterValue(ParamIDs::tubeEqMidHighPeak))
         newParams.midHighPeak = p->load();
 
     // Compare using epsilon for floating point values
@@ -420,7 +420,7 @@ float TubeEQCurveDisplay::calculateLFCombinedResponse(float freq) const
     if (cachedParams.lfBoostGain < 0.1f && cachedParams.lfAttenGain < 0.1f)
         return 0.0f;
 
-    // Replicate PultecLFSection::getMagnitudeDB using the same dual-biquad math
+    // Replicate TubeEqLFSection::getMagnitudeDB using the same dual-biquad math
     // so the curve display matches the actual DSP processing.
     float boostGain = cachedParams.lfBoostGain;
     float attenGain = cachedParams.lfAttenGain;
@@ -449,8 +449,8 @@ float TubeEQCurveDisplay::calculateLFCombinedResponse(float freq) const
         return (denMag2 > 1e-20) ? std::sqrt(numMag2 / denMag2) : 1.0;
     };
 
-    // PultecLFSection constants
-    // Must match PultecLFSection constants in TubeEQProcessor.h
+    // TubeEqLFSection constants
+    // Must match TubeEqLFSection constants in TubeEQProcessor.h
     constexpr float kPeakGainScale = 1.4f;
     constexpr float kPeakInteraction = 0.08f;
     constexpr float kBaseQ = 0.55f;

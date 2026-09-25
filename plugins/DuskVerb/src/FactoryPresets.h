@@ -1287,7 +1287,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // granular pitch shifter") supplies the octave feedback. mod_depth 0.5
         // = +12 st; mod_rate maps to shimmer feedback (longer/darker than
         // Deep Blue Day for the huge "black hole" space).
-        // Tuned vs valhalla-shimmer-black-hole 2026-05-31 (39→22 fails). Octave
+        // Tuned vs the reference shimmer "black hole" preset 2026-05-31 (39→22 fails). Octave
         // PINNED at +12 (mod_depth 0.5) — letting the optimizer detune it spiked
         // inharmonic 12.9k content; dense diffusion (0.857) keeps the noiseburst
         // tail from collapsing. Low mod_rate (0.875 → low shimmer feedback) beat
@@ -1315,7 +1315,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // (45%) keeps the cascade gentle so the long reverb dominates over
         // the pitched recirculation.
         // mod_depth 0.5 = +12 st; mod_rate 4.5 Hz maps to feedback ≈ 0.42.
-        // Tuned vs valhalla-shimmer-deep-blue-day 2026-05-31 (43→29 fails). Same
+        // Tuned vs the reference shimmer "deep blue day" preset 2026-05-31 (43→29 fails). Same
         // shimmer recipe as Black Hole: octave PINNED at +12 (mod_depth 0.5),
         // dense diffusion (0.941), Width capped 1.3 (1.77 went anti-correlated /
         // phasey). Remaining fails (cent dark, 12.9k image spike, T60-HF short,

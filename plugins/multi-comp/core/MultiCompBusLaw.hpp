@@ -4,7 +4,7 @@
 #include <cmath>
 #include <cstddef>
 
-namespace duskaudio::sslbus
+namespace duskaudio::busLaw
 {
 // Charging drive in dB and its slope with respect to detector level.
 struct Drive { float value, slope; };
@@ -97,4 +97,4 @@ inline float reductionDb(float detectorDb, float threshold, int ratio) noexcept
 {
     return drive(detectorDb, threshold, ratio).value;
 }
-} // namespace duskaudio::sslbus
+} // namespace duskaudio::busLaw

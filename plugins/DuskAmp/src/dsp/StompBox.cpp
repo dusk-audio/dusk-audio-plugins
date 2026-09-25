@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// StompBox.cpp — Tube Screamer-style boost/overdrive pedal
+// StompBox.cpp — mid-hump boost/overdrive pedal
 
 #include "StompBox.h"
 #include "AnalogEmulation/WaveshaperCurves.h"
@@ -57,7 +57,7 @@ void StompBox::process (float* buffer, int numSamples)
         // 1. Input gain (drive)
         sample *= driveGain_;
 
-        // 2. Mid-hump bandpass — THE Tube Screamer character
+        // 2. Mid-hump bandpass — the classic mid-hump overdrive character
         // Cuts bass below ~300Hz and treble above ~3kHz, emphasizes 720Hz
         // The mix of dry + filtered creates the classic TS curve
         float filtered = midHump_.process (sample);

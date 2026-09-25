@@ -30,11 +30,11 @@ namespace CabinetLibrary
     enum CabinetId
     {
         None = 0,
-        FenderTwin_SM57,
-        Marshall1960VB_SM57_OA,
-        Marshall1960VB_SM57_Off,
-        VoxAC15_SM57,
-        VoxAC15_sE4_Close,
+        American2x12_Dynamic,
+        British4x12_Dynamic_OA,
+        British4x12_Dynamic_Off,
+        British1x12_Dynamic,
+        British1x12_Condenser_Close,
         // Add new entries here AND in kEntries[] below.
         Count
     };

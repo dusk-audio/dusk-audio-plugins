@@ -657,7 +657,7 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     gateButton_.setName ("gate_enabled");
     gateButton_.setClickingTogglesState (true);
     gateButton_.setTooltip ("Gate (NonLinear engine only): when ON the FIR envelope shapes "
-                            "the per-tap gains (the gated/RMX16 sound). When OFF the envelope "
+                            "the per-tap gains (the classic 1980s gated sound). When OFF the envelope "
                             "is bypassed and you hear the underlying 256-tap dense FIR wash "
                             "with no gating character. No effect on other engines.");
     addAndMakeVisible (gateButton_);
@@ -1430,7 +1430,7 @@ void DuskVerbEditor::applyEngineAccent (EngineType engine)
                                               : "DIFFUSION",
                                   juce::dontSendNotification);
     diffusion_.slider.setTooltip (isNonLinear ? "Hold: how long the gate stays fully open after the dry input drops below threshold (0 - 500 ms). 100-200 ms is classic gated-snare territory."
-                                 : isSpring   ? "Chirp: dispersion-AP coefficient - 0 = plain delay, 1 = full Fender 'boing' on transients"
+                                 : isSpring   ? "Chirp: dispersion-AP coefficient - 0 = plain delay, 1 = full spring-tank 'boing' on transients"
                                               : "Diffusion: smear amount before the late tank");
 
     // mid_mult hijacked by NonLinear → THRESHOLD (the gate's sidechain

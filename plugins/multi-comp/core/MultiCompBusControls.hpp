@@ -4,7 +4,7 @@
 #include <array>
 #include <cmath>
 
-namespace duskaudio::sslbus
+namespace duskaudio::busLaw
 {
 // Native reference-plugin measurements at 1–60 s and 44.1/48/96 kHz. The displayed
 // rate has two linear clock ranges. A float control ramp reproduces the
@@ -57,4 +57,4 @@ inline float headroomDrive(int position) noexcept
 {
     return std::pow(10.0f, static_cast<float>((std::clamp(position, 0, 6) - 3) * 4) * 0.05f);
 }
-} // namespace duskaudio::sslbus
+} // namespace duskaudio::busLaw

@@ -6,7 +6,9 @@ If you are a Soundwoofer uploader and want a specific IR removed or differently 
 
 ## Files
 
-### `fender_twin_sm57_oa.wav`
+Bundled files use generic names (region, cabinet size, mic type, position) that match the plugin's cab-preset display names. The upstream recording, cabinet and mic names below are kept verbatim because they are the source attribution.
+
+### `american_2x12_dynamic_oa.wav` ("American 2x12 — Dynamic")
 
 - **Source:** Soundwoofer public catalog
 - **Original filename:** `Rocksta Reactions Fender Twin Reverb SM57 A 2 3 3 45.wav`
@@ -16,7 +18,7 @@ If you are a Soundwoofer uploader and want a specific IR removed or differently 
 - **Mic:** Shure SM57, on-axis position
 - **Format:** 44.1 kHz, 24-bit, stereo, 143 ms
 
-### `marshall_1960vb_sm57_oa.wav`
+### `british_4x12_dynamic_oa.wav` ("British 4x12 — Dynamic OA")
 
 - **Source:** Soundwoofer community library
 - **Original filename:** `Marshall 1960VB SM57 A 0 0 0.wav`
@@ -24,7 +26,7 @@ If you are a Soundwoofer uploader and want a specific IR removed or differently 
 - **Mic:** Shure SM57, on-axis cap centre (position A, no offset)
 - **Format:** 44.1 kHz, 24-bit, stereo, 143 ms
 
-### `marshall_1960vb_sm57_off.wav`
+### `british_4x12_dynamic_off.wav` ("British 4x12 — Dynamic Off")
 
 - **Source:** Soundwoofer community library
 - **Original filename:** `Marshall 1960VB SM57 B 5 0 0.wav`
@@ -32,7 +34,7 @@ If you are a Soundwoofer uploader and want a specific IR removed or differently 
 - **Mic:** Shure SM57, off-axis position B with 5 unit offset (warmer, less harsh than on-axis)
 - **Format:** 44.1 kHz, 24-bit, stereo, 143 ms
 
-### `vox_ac15_sm57.wav`
+### `british_1x12_dynamic.wav` ("British 1x12 — Dynamic")
 
 - **Source:** Soundwoofer community library
 - **Original filename:** `SM57 1.wav` (in the Vox AC15 set)
@@ -40,7 +42,7 @@ If you are a Soundwoofer uploader and want a specific IR removed or differently 
 - **Mic:** Shure SM57, take 1
 - **Format:** 44.1 kHz, 24-bit, stereo, 42 ms
 
-### `vox_ac15_se4_close.wav`
+### `british_1x12_condenser_close.wav` ("British 1x12 — Condenser Close")
 
 - **Source:** Soundwoofer community library
 - **Original filename:** `Se4 Close.wav` (in the Vox AC15 set)
