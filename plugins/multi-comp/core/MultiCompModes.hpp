@@ -870,29 +870,79 @@ private:
         // superposition to 0.000226 dB worst over scoreable H3. A constrained
         // fit uses all 96 scoreable 100 Hz H3 rows while bounding all 36
         // scoreable 1 kHz rows, then removes anchors until either frequency's
-        // predeclared guard would fail. This eight-anchor result predicts
-        // 0.606240 dB worst at 100 Hz and 0.897453 dB at 1 kHz, compared with
-        // 5.510934 and 0.089538 dB for the constant coefficient. The broadband
-        // residual is intentionally closed again by that mechanism's own fit;
-        // it is kept visible here rather than hidden in an unconstrained
-        // low-frequency table.
+        // predeclared guard would fail. That original eight-anchor, linearly
+        // interpolated result predicted 0.606240 dB worst at 100 Hz and
+        // 0.897453 dB at 1 kHz, compared with 5.510934 and 0.089538 dB for the
+        // constant coefficient. The broadband residual is intentionally closed
+        // again by that mechanism's own fit; it is kept visible here rather
+        // than hidden in an unconstrained low-frequency table.
+        //
+        // INTERPOLATION (C1 refit). Linear interpolation put slope kinks at
+        // every node, and the quarter-dB dense shallow 100 Hz gate resolves
+        // them: the old anchors formed a sharp V at 0.2378 dB, and the dense
+        // rows beside the nodes stepped by up to 0.200329 dB against a 0.20
+        // bound. The curve is now a C1 cubic Hermite whose node slopes are
+        // three-point finite differences (end secants at 0 and 40 dB), so it
+        // stays linear in the table values. Keeping the old anchors under a
+        // smooth curve was measured and rejected (dense phase 3.6 degrees,
+        // dense 1 kHz H3 off by 1.45 dB): anchors fitted for straight lines
+        // are wrong for a curve. The table was therefore re-fitted: 0.25 dB
+        // nodes through the shallow knee, sparse ones above, and nodes either
+        // side of 13.8515 dB so the 1 kHz surface keeps its shape. The fit
+        // linearised all 156 gated MultiCompCore FET harmonic rows (H1, H2,
+        // H3, H5 and GR) around the old table with 61 small hat
+        // perturbations on a 0.1 dB grid, then minimised the 100 Hz and 1 kHz
+        // H3 least-squares residual, holding every gate at or near its old
+        // value. Rendered against the linear table: dense shallow adjacent
+        // step 0.2003 -> 0.1105 dB, worst error 0.1855 -> 0.1233 dB, phase
+        // 2.54 -> 1.01 degrees; 1 kHz H3 surface 0.078 -> 0.059 dB; dense
+        // broadband H3 magnitude/step unchanged at 0.175/0.153 dB, phase
+        // 0.815 -> 0.868 degrees; 100 Hz low-T3 worst unchanged at 0.631 dB
+        // (the uncompressed row, where this path is gated off).
         //
         // H5 is not part of this fit and remains assigned to the independent
         // fifth-order term below.
-        constexpr std::array<float, 8> reductionDb{{
-            0.0f, 0.2378f, 0.5373f, 0.7234f, 1.3622f, 2.5753f, 13.8515f,
-            40.0f}};
-        constexpr std::array<float, 8> coefficients{{
-            -0.002084180f, -0.004712892f, -0.003397340f, -0.003469579f,
-            -0.005932644f, -0.006994165f, -0.004806491f, -0.006058491f}};
+        constexpr std::array<float, 17> reductionDb{{
+            0.0f, 0.25f, 0.5f, 0.75f, 1.0f, 1.5f, 2.0f, 2.5f, 3.0f, 5.0f,
+            9.0f, 12.0f, 13.8515f, 16.0f, 20.0f, 30.0f, 40.0f}};
+        constexpr std::array<float, 17> coefficients{{
+            -0.002204120f, -0.004502483f, -0.003561590f, -0.003561269f,
+            -0.004575360f, -0.006128076f, -0.006419791f, -0.007056827f,
+            -0.006831423f, -0.006450033f, -0.005764124f, -0.005135094f,
+            -0.004763844f, -0.004944271f, -0.005138309f, -0.005582037f,
+            -0.006061610f}};
+        constexpr size_t last = reductionDb.size() - 1;
+        // Node slope: the three-point (non-uniform) derivative estimate at
+        // interior anchors, the end secant at the two ends. Every slope is a
+        // fixed linear combination of anchor values, so the whole curve stays
+        // linear in the table, which is what the superposition fit relies on.
+        const auto slope = [&](size_t k) noexcept {
+            if (k == 0)
+                return (coefficients[1] - coefficients[0])
+                    / (reductionDb[1] - reductionDb[0]);
+            if (k == last)
+                return (coefficients[last] - coefficients[last - 1])
+                    / (reductionDb[last] - reductionDb[last - 1]);
+            const float left = reductionDb[k] - reductionDb[k - 1];
+            const float right = reductionDb[k + 1] - reductionDb[k];
+            const float leftSlope = (coefficients[k] - coefficients[k - 1])
+                / left;
+            const float rightSlope = (coefficients[k + 1] - coefficients[k])
+                / right;
+            return (leftSlope * right + rightSlope * left) / (left + right);
+        };
         gainReductionDb = std::clamp(gainReductionDb, 0.0f, 40.0f);
-        for (size_t i = 1; i < reductionDb.size(); ++i)
+        for (size_t i = 1; i <= last; ++i)
             if (gainReductionDb <= reductionDb[i])
             {
-                const float fraction = (gainReductionDb - reductionDb[i - 1])
-                    / (reductionDb[i] - reductionDb[i - 1]);
-                return coefficients[i - 1]
-                    + fraction * (coefficients[i] - coefficients[i - 1]);
+                const float width = reductionDb[i] - reductionDb[i - 1];
+                const float t = (gainReductionDb - reductionDb[i - 1]) / width;
+                const float t2 = t * t;
+                const float t3 = t2 * t;
+                return (2.0f * t3 - 3.0f * t2 + 1.0f) * coefficients[i - 1]
+                    + (t3 - 2.0f * t2 + t) * width * slope(i - 1)
+                    + (-2.0f * t3 + 3.0f * t2) * coefficients[i]
+                    + (t3 - t2) * width * slope(i);
             }
         return coefficients.back();
     }
