@@ -81,7 +81,7 @@ inline const AlgorithmConfig& getAlgorithmConfig (int index)
 {
     // User-facing engine names. Standardized 2026-06-11: clean musician-facing
     // labels, no internal-algorithm jargon and no trademark references (was
-    // hardware / product / Eno / Figure-8 / Dattorro names). ENUM ORDER IS FIXED —
+    // hardware / product / artist / Figure-8 / Dattorro names). ENUM ORDER IS FIXED —
     // AudioParameterChoice stores the index, presets store the algorithm index,
     // so these strings are display-only and must NOT be reordered or removed
     // (that would shift indices and break saved state). Rename freely.

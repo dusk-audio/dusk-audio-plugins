@@ -109,7 +109,7 @@ void DiffusionStage::prepare (double sampleRate, int /*maxBlockSize*/)
         // Right channel allpass — SAME rate and depth as left, but offset
         // phase. Original code used fully-asymmetric (rate, depth, phase) per
         // L/R, which let the channel modulators drift at different speeds —
-        // measured LR-correlation stddev wandered ~0.066 (vs Arturia 0.028).
+        // measured LR-correlation stddev wandered ~0.066 (vs the reference emulation's 0.028).
         // Locking the rate keeps the modulation cycle in phase between L
         // and R, so the late-field correlation stays stable. The π-offset
         // phase still gives a clear stereo image at any moment in time

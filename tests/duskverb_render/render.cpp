@@ -416,9 +416,9 @@ namespace
         if (name == "Surf '63 Spring")
             return makePreset (name.toRawUTF8(), 5, 1.0f, true, 0.0f, 1.60f, 0.40f, 0.20f, 1.50f, 1.00f, 0.85f, 1000.0f, 0.45f, 0.10f, 0.30f, 80.0f, 4000.0f, 1.10f, 2.5f, 20.0f, 1.00f, 4000.0f, 0.10f);
         // Non-Linear engine (algo 5) — Phase B v3.0:
-        if (name == "In The Air Tonight")
+        if (name == "Legacy Gated Snare")
             return makePreset (name.toRawUTF8(), 6, 0.216f, false, 0.0f, 2.608f, 0.80f, 0.092f, 0.794f, 0.75f, 1.10f, 500.0f, 0.50f, 0.00f, 0.30f, 60.0f, 10000.0f, 1.30f, 0.0f, 20.0f, 0.75f, 4000.0f, 0.10f);
-        // Shimmer engine (algo 6) — v8 Eno/Lanois topology (mirrors FactoryPresets.h):
+        // Shimmer engine (algo 6) — v8 classic ambient shimmer topology (mirrors FactoryPresets.h):
         // mod_depth = PITCH (0..1 → 0..24 semis), mod_rate Hz → FEEDBACK gain.
         if (name == "Deep Blue Day")
             return makePreset (name.toRawUTF8(), 7, 0.38f, false, 25.0f,  10.30f, 1.00f, 0.50f, 2.395f, 1.00f, 1.10f,  800.0f, 0.85f, 0.20f, 0.50f, 60.0f, 7000.0f, 1.30f,  0.0f, 20.0f, 1.00f, 4000.0f, 0.05f);

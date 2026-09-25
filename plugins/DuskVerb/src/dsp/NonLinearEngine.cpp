@@ -29,7 +29,7 @@ void NonLinearEngine::prepare (double sampleRate, int maxBlockSize)
     // Default hall character: lushest config (matches the Lush Dark Hall preset
     // baseline as the user requested in the v7 plan). Per-preset setters then
     // override per-instance.
-    fdn_.setDecayTime         (1.5f);   // 1.5 s default; Phil Collins sweet spot
+    fdn_.setDecayTime         (1.5f);   // 1.5 s default; classic gated-snare sweet spot
     fdn_.setSize              (0.80f);  // big hall room
     fdn_.setBassMultiply      (1.20f);  // slight low-end body
     fdn_.setMidMultiply       (1.10f);  // mid emphasis (lush voicing)
@@ -40,7 +40,7 @@ void NonLinearEngine::prepare (double sampleRate, int maxBlockSize)
     fdn_.setTankDiffusion     (0.85f);  // very dense — max-density baseline
 
     // ── Gate ──
-    // Defaults match a typical Phil Collins-style snare gate (will be
+    // Defaults match a typical 1980s-style snare gate (will be
     // overridden by preset). 1-sample attack on the envelope follower
     // (built into NoiseGate) ensures the gate opens crisply on the snare
     // transient.
@@ -93,7 +93,7 @@ void NonLinearEngine::setSaturation   (float amount) { fdn_.setSaturation (amoun
 // MID MULT → GATE THRESHOLD. Map 0.1..1.5 (FDN's mid-mult range — see
 // PluginProcessor.cpp param layout) to threshold dB -60..0:
 //   mult = 0.10 → threshold -60 dB (very sensitive)
-//   mult = 0.80 → threshold -28 dB (typical Phil Collins)
+//   mult = 0.80 → threshold -28 dB (typical gated snare)
 //   mult = 1.50 → threshold   0 dB (gate barely triggers)
 void NonLinearEngine::setMidMultiply (float mult)
 {
@@ -104,7 +104,7 @@ void NonLinearEngine::setMidMultiply (float mult)
 
 // DEPTH (mod_depth, 0..1) → GATE ATTACK. Linear 0..1 → 1..50 ms.
 //   depth 0.00 →  1 ms (instant gate snap)
-//   depth 0.04 →  3 ms (Phil Collins)
+//   depth 0.04 →  3 ms (classic gated snare)
 //   depth 1.00 → 50 ms (slow soft open)
 void NonLinearEngine::setModDepth (float depth)
 {
@@ -126,7 +126,7 @@ void NonLinearEngine::setModRate (float hz)
 
 // DIFFUSION (0..1) → GATE HOLD. Linear 0..1 → 0..500 ms.
 //   diffusion 0.00 →   0 ms (immediate release after threshold drop)
-//   diffusion 0.30 → 150 ms (Phil Collins)
+//   diffusion 0.30 → 150 ms (classic gated snare)
 //   diffusion 1.00 → 500 ms (long sustained gate before fade)
 void NonLinearEngine::setTankDiffusion (float amount)
 {

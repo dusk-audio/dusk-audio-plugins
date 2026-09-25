@@ -7,7 +7,7 @@
 //
 // Usage:
 //   au_native_render <au_subtype> <au_manufacturer> <preset_path> <output_dir> <slug>
-// where subtype/manufacturer are 4-char strings (e.g. RVLX AUTR for Arturia).
+// where subtype/manufacturer are 4-char strings (e.g. "abcd" "Abcd").
 //
 // Renders the same noise-burst signal as duskverb_render so spectral
 // analysis is directly comparable.
@@ -44,7 +44,7 @@ UInt32 fourcc (const char* s)
 
 // Build the noise-burst signal — MUST match duskverb_render's fillNoiseBurst
 // exactly (same pink-noise generator, same per-channel seeds) so the
-// Arturia A/B comparison sees the identical input that DuskVerb sees.
+// reference A/B comparison sees the identical input that DuskVerb sees.
 // DV uses Voss-McCartney pink noise via JUCE's xorshift Random with seeds
 // 0xC0FFEE / 0xBADBEEF — we reimplement both in pure C here so this tool
 // doesn't have to link JUCE.
@@ -276,7 +276,7 @@ int main (int argc, const char** argv)
     const char* slug            = argv[5];
 
     // Optional per-param overrides via --set <id>=<norm>. When ANY override
-    // is given, we skip the .aupreset's setStateInformation (because Arturia
+    // is given, we skip the .aupreset's setStateInformation (because the reference plugin
     // silently ignores it — verified by post-load param dump showing every
     // value at default after the supposed load). The overrides are applied
     // via AudioUnitSetParameter() on each AU param ID directly, which DOES
@@ -302,7 +302,7 @@ int main (int argc, const char** argv)
     }
 
     // Try 'aufx' (Audio Effect) first, then 'aumf' (Music Effect).
-    // Arturia Rev LX-24 registers as aumf even though it's a reverb.
+    // The reference reverb registers as aumf even though it's a reverb.
     AudioComponent comp = nullptr;
     for (const char* typeStr : { "aufx", "aumf", "aumu", "augn" })
     {
@@ -341,7 +341,7 @@ int main (int argc, const char** argv)
     else
     {
         CFRelease (plist);
-        std::printf ("Skipping setStateInformation (Arturia ignores it). Applying %zu manual overrides:\n", overrides.size());
+        std::printf ("Skipping setStateInformation (the reference plugin ignores it). Applying %zu manual overrides:\n", overrides.size());
         for (const auto& o : overrides)
         {
             OSStatus os = AudioUnitSetParameter (au, o.id, kAudioUnitScope_Global, 0, o.val, 0);

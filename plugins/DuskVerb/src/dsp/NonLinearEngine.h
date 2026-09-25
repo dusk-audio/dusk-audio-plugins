@@ -13,8 +13,8 @@
 //   v3: 256-tap TDL + dynamic threshold gate — wrong model
 //   v4: + 4-stage allpass pre-diffusion — destroyed snare transients
 //   v5: classic noise-gate envelope — still wrong (missing real reverb)
-//   v6: TRUE static FIR — mathematically the AMS RMX16 NonLin algorithm,
-//       but USERS DON'T WANT the RMX16 algorithm. They want the
+//   v6: TRUE static FIR — mathematically the classic 1980s digital nonlinear algorithm,
+//       but USERS DON'T WANT that algorithm. They want the
 //       engineering TECHNIQUE: a long lush hall + sidechain noise gate.
 //   v7 (this file): the engineering technique exactly:
 //      ┌─────────┐   ┌────────────────┐   ┌─────────────┐
@@ -29,7 +29,7 @@
 //   (inL/inR), so it opens IMMEDIATELY on snare onset. The hall reverb
 //   plays in full underneath but its WET output is shaped by the gate
 //   envelope (attack → hold → release). Result: thick snare bloom +
-//   clean cutoff = the Phil Collins "In The Air Tonight" sound.
+//   clean cutoff = the classic 1981 gated-drum sound.
 //
 // UI knob mapping (NonLinear engine only — see PluginEditor::applyEngineAccent):
 //   DECAY      → Hall RT60          (FDN setDecayTime)

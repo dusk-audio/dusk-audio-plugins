@@ -657,7 +657,7 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     gateButton_.setName ("gate_enabled");
     gateButton_.setClickingTogglesState (true);
     gateButton_.setTooltip ("Gate (NonLinear engine only): when ON the FIR envelope shapes "
-                            "the per-tap gains (the gated/RMX16 sound). When OFF the envelope "
+                            "the per-tap gains (the classic 1980s gated sound). When OFF the envelope "
                             "is bypassed and you hear the underlying 256-tap dense FIR wash "
                             "with no gating character. No effect on other engines.");
     addAndMakeVisible (gateButton_);
@@ -1416,10 +1416,10 @@ void DuskVerbEditor::applyEngineAccent (EngineType engine)
                                  juce::dontSendNotification);
     modDepth_.slider.setTooltip (isSpring    ? "Spring Length: read-position LFO depth (subtle wobble that gives the tank its 'drip' character)"
                                 : isShimmer   ? "Pitch: in-loop pitch interval (0 = unity, 50% = +12 semitones / +1 octave, 100% = +24 / +2 octaves)"
-                                : isNonLinear ? "Attack: gate open time (1 - 50 ms). 1-3 ms gives the classic Phil Collins instant-snap; longer for a softer breathing feel."
+                                : isNonLinear ? "Attack: gate open time (1 - 50 ms). 1-3 ms gives the classic 1980s gated-snare instant-snap; longer for a softer breathing feel."
                                               : "Modulation Depth");
     modRate_ .slider.setTooltip (isSpring    ? "Drip: spring-tank LFO rate (Hz)"
-                                : isShimmer   ? "Feedback: cascade strength (0 = single pitched pass, 95% = long cascading octaves a la Eno/Lanois). Higher feedback builds more shimmer at the cost of slower decay."
+                                : isShimmer   ? "Feedback: cascade strength (0 = single pitched pass, 95% = long cascading octaves, the classic ambient shimmer). Higher feedback builds more shimmer at the cost of slower decay."
                                 : isNonLinear ? "Release: gate close time (5 - 2000 ms). Short values (5-50 ms) = the classic 80s gated-snare cliff; longer values let the hall tail fade naturally after the gate."
                                               : "Modulation Rate (Hz)");
 
@@ -1430,7 +1430,7 @@ void DuskVerbEditor::applyEngineAccent (EngineType engine)
                                               : "DIFFUSION",
                                   juce::dontSendNotification);
     diffusion_.slider.setTooltip (isNonLinear ? "Hold: how long the gate stays fully open after the dry input drops below threshold (0 - 500 ms). 100-200 ms is classic gated-snare territory."
-                                 : isSpring   ? "Chirp: dispersion-AP coefficient - 0 = plain delay, 1 = full Fender 'boing' on transients"
+                                 : isSpring   ? "Chirp: dispersion-AP coefficient - 0 = plain delay, 1 = full spring-tank 'boing' on transients"
                                               : "Diffusion: smear amount before the late tank");
 
     // mid_mult hijacked by NonLinear → THRESHOLD (the gate's sidechain

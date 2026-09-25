@@ -6,7 +6,7 @@
 #include <cstring>
 
 // ============================================================================
-// ShimmerEngine v8 — classic Eno/Lanois rig topology.
+// ShimmerEngine v8 — classic 1980s ambient shimmer rig topology.
 // See header for full architecture description.
 // ============================================================================
 
@@ -227,7 +227,7 @@ void ShimmerEngine::prepare (double sampleRate, int maxBlockSize)
     tailNoise_.setGain (noiseGain_);
 
     // Hall reverb baseline: long, lush, slightly dark (period-correct
-    // for the late-1970s digital hall hardware character that the original Eno/Lanois rig used).
+    // for the late-1970s digital hall hardware character that the original ambient shimmer rig used).
     reverb_.prepare (sampleRate, maxBlockSize);
     reverb_.setDecayTime         (4.0f);
     reverb_.setSize              (0.75f);
@@ -384,7 +384,7 @@ void ShimmerEngine::setOutputHeadroom (float h)
 }
 
 // DEPTH (mod_depth, 0..1) → PITCH semitones (0..24). 0 = unity (no shift),
-// 0.5 = +12 (octave up — canonical Eno Choir), 1.0 = +24 (Cascading Heaven).
+// 0.5 = +12 (octave up — canonical shimmer choir), 1.0 = +24 (Cascading Heaven).
 void ShimmerEngine::setModDepth (float depth)
 {
     const float clamped = std::clamp (depth, 0.0f, 1.0f);

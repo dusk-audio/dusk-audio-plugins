@@ -1310,7 +1310,7 @@ void DattorroTank::updateLFORates()
     // (×√5/2 offset) to "prevent correlated modulation paths," but this
     // turned out to be the dominant source of LR-correlation jitter — over
     // time the two LFOs drift in and out of phase, causing the late-field
-    // L/R correlation to wander. Measured against Arturia LX-24 BladeRunner
+    // L/R correlation to wander. Measured against the reference emulation's Blade Runner preset
     // (LR stddev 0.028), our wandering of 0.066 is audibly less stable
     // than a true random late field.
     //
