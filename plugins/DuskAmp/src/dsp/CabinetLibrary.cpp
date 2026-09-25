@@ -78,7 +78,7 @@ namespace CabinetLibrary
     {
         if (choiceIndex < 0 || choiceIndex >= static_cast<int> (Count))
             return "(unknown)";
-        return juce::String (kEntries[choiceIndex].displayName);
+        return juce::String::fromUTF8 (kEntries[choiceIndex].displayName);
     }
 
     bool loadInto (CabinetIR& cabinet, int choiceIndex)
@@ -94,7 +94,7 @@ namespace CabinetLibrary
 
         cabinet.loadIRFromMemory (bytes.data,
                                    static_cast<size_t> (bytes.size),
-                                   juce::String (entry.displayName));
+                                   juce::String::fromUTF8 (entry.displayName));
         return true;
     }
 }
