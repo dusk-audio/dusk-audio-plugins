@@ -903,8 +903,8 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
           /* mono */ 20.0f, /* mid */ 1.026f, /* highX */ 3071.094f, /* sat */ 0.00126f,  // 2026-06-14 sweep: Mid 1.026, HighXover 3071.  // edt+498% residual is octave-T60-locked (GEQ recal = next pass)
           /* hiCutShelfGainDb */ -6.206f },   // 2026-06-14 sweep (was -9.0).
         // ── Blade Runner 224 ─────────────────────────────────────────────────
-        // Anchor: the late-1970s digital hall hardware (Hall A / Constellation) sound
-        // of the 1982 film score. Validated against the
+        // Anchor: Vangelis on the late-1970s digital hall hardware (Hall A / Constellation) —
+        // "Tears in Rain" / "Memories of Green". Validated against the
         // reference hardware emulation's "Large Hall" preset rendered through the same
         // noise-burst test signal.
         //
@@ -966,7 +966,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
           5.277f, 0.91981f, 0.33084f, 2.64911f, 1.000f, 1.700f,  632.719f,  // 2026-06-24 Decay knob 9.9->5.277 = realized broadband RT60 (honest; DenseHall decayRef auto-tracks knob -> scale 1.0 -> octave T60 table + sound UNCHANGED; per-octave lows still hold the anchor's ~9.7s low tail, the broadband -60dB just lands far shorter).  // 2026-06-17 EAR: decay 8.64->9.9 = anchor low T60 (9.72s) for low sustain.  // 2026-06-16 re-tune vs corrected anchor: Bass 1.377->1.7, Treble 1.189->1.0 (T60 250/1k/2k/8k + tail_t60), 34->29  // 2026-06-14 gain-matched 8-lever sweep (29->21): decay 8.64, Treble 1.189, Bass 1.377, LowXover 633.  // decay 11.08->12.21: restore length after honest-decay fold-in (RT60 10.62->~11.7)  // Treble 0.98->0.40: darken to anchor (centroid 1662->1484, anchor 1415).
           0.72216f, 0.20000f, 0.84883f, 56.210f, 11699.854f, 1.03215f, false, 7.67f,  // 2026-06-16 erLevel 0.44->0.20: DenseHall ER re-included; 0.44 made onset too spiky (anchor onset is gentle). 2026-06-14 sweep: HiCut 14430->11700; gainTrim level-matched (+7.67).  // tunable-cluster sweep 2026-06-11: 20 -> 17 (ER on 0->0.44 fixes 107ms attack; decay 13.6->11.1 tail_t60; damping/diffusion/spectral). gainTrim -0.12 = 100%-wet RMS match. edt+254% residual is octave-T60-locked (GEQ recal needed).
           /* mono */ 20.0f, /* mid */ 1.000f, /* highX */ 6948.433f, /* sat */ 0.17579f,  // 2026-06-14 sweep: Mid 1.06, HighXover 6948.
-          /* hiCutShelfGainDb */ -9.000f },  // 2026-06-16 EAR: -4.5->-9 cut the hot air (ss_air +10.85 after HF-fix). 2026-06-14 sweep RE-ANCHORED to the REF random-hall preset.
+          /* hiCutShelfGainDb */ -9.000f },  // 2026-06-16 EAR: -4.5->-9 cut the hot air (ss_air +10.85 after HF-fix). 2026-06-14 sweep RE-ANCHORED to REF "Homestar Blade Runner".
         // ── 79 Vocal Chamber (REF anchor) ──────────────────────────────────
         // Engine: QuadTank. Anchor: REF "79 Vocal Chamber" preset (Reverb
         // Mode = Chamber1979) @ 100% wet.
@@ -1164,8 +1164,8 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // (attack ramp → flat plateau → mathematical cliff) is baked into
         // the per-tap gains, so EVERY input sample is convolved with the
         // same fixed-shape FIR. No trigger, no envelope follower — this is
-        // the classic 1980s digital nonlinear program exactly as used on the
-        // famous 1981 gated-drum records.
+        // the classic digital nonlinear program exactly as Hugh Padgham used it
+        // on Phil Collins's "In The Air Tonight" (1981).
         //
         // FIR ENVELOPE PARAMETERS (re-purposed UI knobs on this engine —
         // see PluginEditor::applyEngineAccent for the visible labels):
@@ -1184,18 +1184,18 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   HALL: decay 1.5 s, size 0.70, bass 1.0, treble 0.80 (slight darkening)
         //   GATE: threshold -32 dB (mid 0.75), attack 1 ms (mod_depth 0.0),
         //         hold 150 ms (diffusion 0.30), release 210 ms (mod_rate 1.117)
-        //   This is the classic 1981 gated-drum sound:
+        //   This is the "In The Air Tonight" Phil Collins/Padgham sound:
         //   thick hall bloom for 150 ms then a longer fade to silence.
         //
         // DESIGN-LED — NO valid external anchor (confirmed 2026-05-31). This is
-        // an attempt at the classic 1981 gated-snare sound,
+        // an attempt at the Phil Collins "In The Air Tonight" gated-snare sound,
         // a famous RECORD PRODUCTION, not a reproducible plugin preset. It was
         // previously mis-anchored to REF "84 Small Room", which is a tiny bright
         // NON-gated room (56 ms tail, +10..+28 dB hotter) — matching it would
         // un-gate the snare and destroy the preset. Do NOT score this against
         // 84 Small Room. The gate cliff IS the preset; tune by ear only.
-        // (NB: the render harness's "Legacy Gated Snare" preset chases the same sound — overlap.)
-        // Classic gated-snare recreation (research-voiced 2026-06-13): a BRIGHT,
+        // (NB: the "In The Air Tonight" preset chases the same sound — overlap.)
+        // Phil Collins / Padgham recreation (research-voiced 2026-06-13): a BRIGHT,
         // long, dense reverb chopped by a tight gate. Gate knob mapping (NonLinear
         // algo 6): mod_depth=attack (0.04→3ms snap), mod_rate=release (0.60→~110ms),
         // diffusion=hold (0.30→150ms), mid=threshold (0.72→~-32dB). Reverb brightened
@@ -1308,8 +1308,8 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
           0.85741f, 0.05f, 0.70f, 24.591f, 18926.8f, 0.90100f, false, 7.64f,  // Issue #123: width 1.10->0.901 matches the anchor's centred-input side/mid energy and correlation. 2026-06-29 Width 1.26->1.10: DV's broadband stereo ran too WIDE.  // 2026-06-14 Phase-3 match-EQ (s=0.75): gainTrim re-matched (+7.64) after the output match-EQ cut (28->25).
           /* mono */ 60.0f, /* mid */ 0.75073f, /* highX */ 3390.34f, /* sat */ 0.38197f },
         // ── Deep Blue Day ────────────────────────────────────────────────
-        // Reference: external reference Shimmer "DeepBlueDay" preset (named after a
-        // 1983 ambient track). 80% wet,
+        // Reference: external reference Shimmer "DeepBlueDay" preset (named after the
+        // Brian Eno track on *Apollo: Atmospheres and Soundtracks*). 80% wet,
         // +12 octave, ~45% feedback, very long sustained tail. Decay 10.3 s
         // + size 100% gives the long sustained character; lower feedback
         // (45%) keeps the cascade gentle so the long reverb dominates over

@@ -25,11 +25,11 @@
 //   (pitched fb × fb × softClip) ←── [PitchShifter +N] ←── [delay 50 ms]
 //
 // Why this fixes "doesn't sound like reverb":
-//   v8 (classic aux-send chain) put the pitch shifter on the FORWARD path,
+//   v8 (Eno aux-send chain) put the pitch shifter on the FORWARD path,
 //   so the very first reverb hit was already pitched up — the wet output
 //   was 100% pitched-cascade, with no natural reverb component anywhere.
 //   That's only musical when the dry source is loud in the listener's
-//   mix (the original rig's use case), but as a "shimmer reverb" plugin where
+//   mix (Eno's actual use case), but as a "shimmer reverb" plugin where
 //   mix=80% means dry sits at -10 dB while wet dominates, the listener
 //   hears only pitched-cascade-of-pitched-cascade and no real tail.
 //   v9 mirrors what external reference Shimmer / modern multi-FX hardware / modern shimmer

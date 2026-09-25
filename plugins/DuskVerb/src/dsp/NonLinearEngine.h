@@ -29,7 +29,7 @@
 //   (inL/inR), so it opens IMMEDIATELY on snare onset. The hall reverb
 //   plays in full underneath but its WET output is shaped by the gate
 //   envelope (attack → hold → release). Result: thick snare bloom +
-//   clean cutoff = the classic 1981 gated-drum sound.
+//   clean cutoff = the Phil Collins "In The Air Tonight" sound.
 //
 // UI knob mapping (NonLinear engine only — see PluginEditor::applyEngineAccent):
 //   DECAY      → Hall RT60          (FDN setDecayTime)

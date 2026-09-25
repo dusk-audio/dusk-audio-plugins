@@ -184,7 +184,7 @@ private:
 
     double sampleRate_ = 48000.0;
 
-    // Parameters (defaults sensible for the classic 1980s gated snare)
+    // Parameters (defaults sensible for a Phil Collins-style gated snare)
     float thresholdLin_ = 0.0631f;     // -24 dBFS
     float reductionLin_ = 0.0f;        // full silence
     int   attackSamples_  = 48;        // 1 ms @ 48k

@@ -1416,10 +1416,10 @@ void DuskVerbEditor::applyEngineAccent (EngineType engine)
                                  juce::dontSendNotification);
     modDepth_.slider.setTooltip (isSpring    ? "Spring Length: read-position LFO depth (subtle wobble that gives the tank its 'drip' character)"
                                 : isShimmer   ? "Pitch: in-loop pitch interval (0 = unity, 50% = +12 semitones / +1 octave, 100% = +24 / +2 octaves)"
-                                : isNonLinear ? "Attack: gate open time (1 - 50 ms). 1-3 ms gives the classic 1980s gated-snare instant-snap; longer for a softer breathing feel."
+                                : isNonLinear ? "Attack: gate open time (1 - 50 ms). 1-3 ms gives the classic Phil Collins instant-snap; longer for a softer breathing feel."
                                               : "Modulation Depth");
     modRate_ .slider.setTooltip (isSpring    ? "Drip: spring-tank LFO rate (Hz)"
-                                : isShimmer   ? "Feedback: cascade strength (0 = single pitched pass, 95% = long cascading octaves, the classic ambient shimmer). Higher feedback builds more shimmer at the cost of slower decay."
+                                : isShimmer   ? "Feedback: cascade strength (0 = single pitched pass, 95% = long cascading octaves a la Eno/Lanois). Higher feedback builds more shimmer at the cost of slower decay."
                                 : isNonLinear ? "Release: gate close time (5 - 2000 ms). Short values (5-50 ms) = the classic 80s gated-snare cliff; longer values let the hall tail fade naturally after the gate."
                                               : "Modulation Rate (Hz)");
 
