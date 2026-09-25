@@ -321,7 +321,7 @@ static void testBritishHarmonics()
 // ==============================================================================
 static void testTubeHarmonics()
 {
-    std::cout << "\n=== Tube Mode (Pultec) Harmonic Character ===\n";
+    std::cout << "\n=== Tube EQ Mode Harmonic Character ===\n";
 
     const double sampleRate = 44100.0;
     const int blockSize = 512;
@@ -335,7 +335,7 @@ static void testTubeHarmonics()
     proc->prepareToPlay(sampleRate, blockSize);
 
     setParamNorm(*proc, ParamIDs::eqType, 1.0f);  // Tube mode (3/3 = 1.0)
-    setParam(*proc, ParamIDs::pultecTubeDrive, 0.5f);
+    setParam(*proc, ParamIDs::tubeEqTubeDrive, 0.5f);
 
     auto buffer = generateSine(testFreq, sampleRate, totalSamples);
     buffer.applyGain(0.25f);
@@ -404,17 +404,17 @@ static void testMonoProcessing()
 // ==============================================================================
 // TEST 5: Simultaneous Boost/Cut Low-Shelf Trick — LF Boost + Cut Interaction
 // ==============================================================================
-static void testPultecTrick()
+static void testTubeEqTrick()
 {
-    std::cout << "\n=== Pultec Trick — LF Boost + Cut Interaction ===\n";
+    std::cout << "\n=== Tube EQ Trick — LF Boost + Cut Interaction ===\n";
 
-    // Test the PultecLFSection directly via getMagnitudeDB to avoid
+    // Test the TubeEqLFSection directly via getMagnitudeDB to avoid
     // mode-switching crossfade issues in the full plugin
     const double sampleRate = 44100.0;
     const float testFreq = 60.0f;
 
-    // Include TubeEQProcessor.h provides PultecLFSection
-    PultecLFSection lf;
+    // Include TubeEQProcessor.h provides TubeEqLFSection
+    TubeEqLFSection lf;
     lf.prepare(sampleRate);
 
     // --- Test A: Boost only (atten = 0) ---
@@ -450,7 +450,7 @@ static void testPultecTrick()
     float trick200 = lf.getMagnitudeDB(200.0f, sampleRate);
     float trick1k = lf.getMagnitudeDB(1000.0f, sampleRate);
 
-    std::cout << "  Pultec Trick: 20Hz=" << std::fixed << std::setprecision(1) << trick20
+    std::cout << "  Tube EQ Trick: 20Hz=" << std::fixed << std::setprecision(1) << trick20
               << ", 30Hz=" << trick30 << ", 60Hz=" << trick60
               << ", 80Hz=" << trick80 << ", 120Hz=" << trick120
               << ", 200Hz=" << trick200 << ", 1kHz=" << trick1k << " dB\n";
@@ -459,13 +459,13 @@ static void testPultecTrick()
     // - Region around/above the selected freq gets a net boost (peak pokes through shelf)
     // - Region below gets a net cut (shelf dominates peak)
     // - The boost at the selected freq must be HIGHER than the response at half-freq
-    check("Pultec Trick: net boost at 60-80Hz (peak dominates)",
+    check("Tube EQ Trick: net boost at 60-80Hz (peak dominates)",
           trick60 > 0.0f || trick80 > 0.0f);
-    check("Pultec Trick: response at 60Hz > response at 30Hz (bump above, dip below)",
+    check("Tube EQ Trick: response at 60Hz > response at 30Hz (bump above, dip below)",
           trick60 > trick30);
-    check("Pultec Trick: NOT flat cancellation (60Hz != 0dB)",
+    check("Tube EQ Trick: NOT flat cancellation (60Hz != 0dB)",
           std::abs(trick60) > 0.5f);
-    check("Pultec Trick: returns to ~0dB by 1kHz",
+    check("Tube EQ Trick: returns to ~0dB by 1kHz",
           std::abs(trick1k) < 2.0f);
 }
 
@@ -483,7 +483,7 @@ int main()
     testBritishHarmonics();
     testTubeHarmonics();
     testMonoProcessing();
-    testPultecTrick();
+    testTubeEqTrick();
 
     std::cout << "\n==========================================\n";
     std::cout << "Results: " << passed << " passed, " << failed << " failed\n";

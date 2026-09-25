@@ -418,24 +418,24 @@ private:
 
         // Tube: resolve the 6 stepped choice freqs via the LUTs (MultiQ.cpp:784-842).
         auto& t = p.tube;
-        t.lfBoostGain      = f(kParamPultecLfBoostGain);
-        t.lfBoostFreq      = lut(mqp::kLfBoostHz, 4, ci(kParamPultecLfBoostFreq));
-        t.lfAttenGain      = f(kParamPultecLfAttenGain);
-        t.hfBoostGain      = f(kParamPultecHfBoostGain);
-        t.hfBoostFreq      = lut(mqp::kHfBoostHz, 7, ci(kParamPultecHfBoostFreq));
-        t.hfBoostBandwidth = f(kParamPultecHfBoostBandwidth);
-        t.hfAttenGain      = f(kParamPultecHfAttenGain);
-        t.hfAttenFreq      = lut(mqp::kHfAttenHz, 3, ci(kParamPultecHfAttenFreq));
-        t.midEnabled       = bl(kParamPultecMidEnabled);
-        t.midLowFreq       = lut(mqp::kMidLowHz, 5, ci(kParamPultecMidLowFreq));
-        t.midLowPeak       = f(kParamPultecMidLowPeak);
-        t.midDipFreq       = lut(mqp::kMidDipHz, 7, ci(kParamPultecMidDipFreq));
-        t.midDip           = f(kParamPultecMidDip);
-        t.midHighFreq      = lut(mqp::kMidHighHz, 5, ci(kParamPultecMidHighFreq));
-        t.midHighPeak      = f(kParamPultecMidHighPeak);
-        t.inputGain        = f(kParamPultecInputGain);
-        t.outputGain       = f(kParamPultecOutputGain);
-        t.tubeDrive        = f(kParamPultecTubeDrive);
+        t.lfBoostGain      = f(kParamTubeEqLfBoostGain);
+        t.lfBoostFreq      = lut(mqp::kLfBoostHz, 4, ci(kParamTubeEqLfBoostFreq));
+        t.lfAttenGain      = f(kParamTubeEqLfAttenGain);
+        t.hfBoostGain      = f(kParamTubeEqHfBoostGain);
+        t.hfBoostFreq      = lut(mqp::kHfBoostHz, 7, ci(kParamTubeEqHfBoostFreq));
+        t.hfBoostBandwidth = f(kParamTubeEqHfBoostBandwidth);
+        t.hfAttenGain      = f(kParamTubeEqHfAttenGain);
+        t.hfAttenFreq      = lut(mqp::kHfAttenHz, 3, ci(kParamTubeEqHfAttenFreq));
+        t.midEnabled       = bl(kParamTubeEqMidEnabled);
+        t.midLowFreq       = lut(mqp::kMidLowHz, 5, ci(kParamTubeEqMidLowFreq));
+        t.midLowPeak       = f(kParamTubeEqMidLowPeak);
+        t.midDipFreq       = lut(mqp::kMidDipHz, 7, ci(kParamTubeEqMidDipFreq));
+        t.midDip           = f(kParamTubeEqMidDip);
+        t.midHighFreq      = lut(mqp::kMidHighHz, 5, ci(kParamTubeEqMidHighFreq));
+        t.midHighPeak      = f(kParamTubeEqMidHighPeak);
+        t.inputGain        = f(kParamTubeEqInputGain);
+        t.outputGain       = f(kParamTubeEqOutputGain);
+        t.tubeDrive        = f(kParamTubeEqTubeDrive);
     }
 
     void updateLatency()

@@ -339,7 +339,7 @@ private:
 /** Vintage passive EQ style LF section with dual-biquad boost/cut interaction.
     Peak filter for boost + low shelf for attenuation, with inductor nonlinearity
     applied between stages for authentic passive LC network behavior. */
-class PultecLFSection
+class TubeEqLFSection
 {
 public:
     // Tunable interaction constants (named for easy adjustment)
@@ -618,7 +618,7 @@ public:
         // Use deterministic seed based on sample rate for reproducible vintage character
         characterSeed = static_cast<uint32_t>(sampleRate * 1000.0);
         tubeStage.prepare(sampleRate, numChannels);
-        pultecLF.prepare(sampleRate, characterSeed);
+        tubeEqLF.prepare(sampleRate, characterSeed);
         hfInductorL.prepare(sampleRate, characterSeed + 1);  // Offset for variation between inductors
         hfInductorR.prepare(sampleRate, characterSeed + 2);  // Different seed for subtle L/R character variation
         hfQInductor.prepare(sampleRate, characterSeed + 1);
@@ -662,7 +662,7 @@ public:
         midHighPeakFilterL.reset();
         midHighPeakFilterR.reset();
         tubeStage.reset();
-        pultecLF.reset();
+        tubeEqLF.reset();
         hfInductorL.reset();
         hfInductorR.reset();
         inputTransformer.reset();
@@ -677,7 +677,7 @@ public:
 
         // Lightweight rate updates (no allocation, safe for audio thread)
         tubeStage.updateSampleRate(newRate);
-        pultecLF.updateSampleRate(newRate);
+        tubeEqLF.updateSampleRate(newRate);
         hfInductorL.updateSampleRate(newRate);
         hfInductorR.updateSampleRate(newRate);
         hfQInductor.updateSampleRate(newRate);
@@ -757,7 +757,7 @@ public:
                 sample = inputTransformer.processSample(sample, ch);
 
                 // === LF Section: dual-biquad boost/cut interaction ===
-                sample = pultecLF.processSample(sample, ch);
+                sample = tubeEqLF.processSample(sample, ch);
 
                 // === HF Section with inductor characteristics ===
                 if (params.hfBoostGain > 0.01f)
@@ -854,9 +854,9 @@ public:
     }
 
     /** Get LF section magnitude at a frequency (for curve display). */
-    float getPultecLFMagnitudeDB(float frequencyHz) const
+    float getTubeEqLFMagnitudeDB(float frequencyHz) const
     {
-        return pultecLF.getMagnitudeDB(frequencyHz, currentSampleRate);
+        return tubeEqLF.getMagnitudeDB(frequencyHz, currentSampleRate);
     }
 
     // Get frequency response magnitude at a specific frequency (for curve display)
@@ -890,7 +890,7 @@ public:
         // LF Section (dual-biquad: combined boost + atten interaction)
         if (localParams.lfBoostGain > 0.01f || localParams.lfAttenGain > 0.01f)
         {
-            magnitudeDB += pultecLF.getMagnitudeDB(frequencyHz, currentSampleRate);
+            magnitudeDB += tubeEqLF.getMagnitudeDB(frequencyHz, currentSampleRate);
         }
 
         // Helper: evaluate biquad magnitude from JUCE IIR coefficients
@@ -957,7 +957,7 @@ private:
 
     // Enhanced analog stages
     TubeEQTubeStage tubeStage;
-    PultecLFSection pultecLF;
+    TubeEqLFSection tubeEqLF;
     InductorModel hfInductorL;  // Per-channel inductors to prevent L/R state cross-contamination
     InductorModel hfInductorR;
 
@@ -1005,7 +1005,7 @@ private:
     void updateFilters()
     {
         // LF Section: dual-biquad with boost/cut interaction
-        pultecLF.updateCoefficients(params.lfBoostGain, params.lfAttenGain,
+        tubeEqLF.updateCoefficients(params.lfBoostGain, params.lfAttenGain,
                                      params.lfBoostFreq, currentSampleRate);
         updateHFBoost();
         updateHFAtten();
