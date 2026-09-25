@@ -136,7 +136,7 @@ Guitar amp plugin with WDF-modeled preamps, tone stack, power amp, convolution c
 - Power amp with negative-feedback presence/resonance and sag
 - Convolution cab with hi/lo cut
 - Optional NAM (Neural Amp Modeler) integration
-- Built-in delay + plate reverb + noise gate + Tube Screamer-style stompbox
+- Built-in delay + plate reverb + noise gate + mid-hump overdrive stompbox
 - 2x/4x oversampling on nonlinear stages
 
 ### Sunset Circuits - RELEASED
