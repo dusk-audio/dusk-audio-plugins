@@ -180,3 +180,7 @@ plugins/sunset-circuits/core/tests/build/
 CLAUDE.md
 AGENTS.md
 .agents/
+
+# Outputs of the manual compile commands documented in these test sources
+plugins/multi-comp/tests/compressor_analysis
+plugins/multi-q/tests/test_multiq_dsp
