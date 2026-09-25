@@ -311,6 +311,11 @@ void MultiCompDSP::reset()
 
 void MultiCompDSP::setParameter(Parameter parameter, float value) noexcept
 {
+    // std::clamp passes NaN straight through, and several cases below convert
+    // to int or feed a table index. A non-finite host value keeps the last
+    // good setting instead.
+    if (!std::isfinite(value))
+        return;
     const bool b = value >= 0.5f;
     switch (parameter)
     {
@@ -388,7 +393,7 @@ void MultiCompDSP::setParameter(Parameter parameter, float value) noexcept
 
 void MultiCompDSP::setMultibandParameter(int band, MultibandParameter parameter, float value) noexcept
 {
-    if (band < 0 || band >= kMultiCompBands) return;
+    if (band < 0 || band >= kMultiCompBands || !std::isfinite(value)) return;
     const size_t b = static_cast<size_t>(band);
     switch (parameter)
     {

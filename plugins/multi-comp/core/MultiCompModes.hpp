@@ -1783,6 +1783,12 @@ private:
         const auto& curve = limit ? kOptoColourLimitCurve
                                   : kOptoColourCompressCurve;
         const float position = overshootDb * 0.5f;
+        // A NaN detector level (one non-finite input sample, before the
+        // non-finite recovery resets the cell) fails both range tests below
+        // and would reach the size_t conversion, which is undefined: x86 turns
+        // it into 2^63 and reads far outside the table. No level, no colour.
+        if (std::isnan(position))
+            return 0.0f;
         if (position <= 0.0f) {
             if (limit) return std::max(0.0f, curve[0] + position * (curve[1] - curve[0]));
             return curve[0] * std::exp(position * (curve[1] - curve[0]) / curve[0]);
