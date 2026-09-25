@@ -101,7 +101,7 @@ private:
     StompBox stompBox_;
     std::unique_ptr<PreampModel> preampPool_[3];  // Pre-created models: [American clean, British crunch, British class-A chime]
     PreampModel* preamp_ = nullptr;               // Active model (borrowed from pool, not owned)
-    AmpType currentAmpType_ = AmpType::Marshall;
+    AmpType currentAmpType_ = AmpType::BritishCrunch;
     ToneStackModel toneStack_;
     PowerAmp powerAmp_;
     CabinetIR cabinet_;

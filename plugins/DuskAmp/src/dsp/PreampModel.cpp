@@ -29,18 +29,18 @@ std::unique_ptr<PreampModel> PreampModel::create (AmpType type)
 {
     switch (type)
     {
-        case AmpType::Fender:  return std::make_unique<FenderPreamp>();
-        case AmpType::Marshall: return std::make_unique<MarshallPreamp>();
-        case AmpType::Vox:     return std::make_unique<VoxPreamp>();
+        case AmpType::AmericanClean:  return std::make_unique<AmericanCleanPreamp>();
+        case AmpType::BritishCrunch:  return std::make_unique<BritishCrunchPreamp>();
+        case AmpType::BritishChime:   return std::make_unique<BritishChimePreamp>();
     }
-    return std::make_unique<MarshallPreamp>(); // fallback
+    return std::make_unique<BritishCrunchPreamp>(); // fallback
 }
 
 // ============================================================================
 // American clean amp
 // ============================================================================
 
-void FenderPreamp::prepare (double sampleRate)
+void AmericanCleanPreamp::prepare (double sampleRate)
 {
     sampleRate_ = sampleRate;
 
@@ -55,7 +55,7 @@ void FenderPreamp::prepare (double sampleRate)
     reset();
 }
 
-void FenderPreamp::reset()
+void AmericanCleanPreamp::reset()
 {
     v1a_.reset();
     dc1_.reset();
@@ -65,19 +65,19 @@ void FenderPreamp::reset()
     brightCapState_ = 0.0f;
 }
 
-void FenderPreamp::setGain (float gain01)
+void AmericanCleanPreamp::setGain (float gain01)
 {
     gain_ = std::clamp (gain01, 0.0f, 1.0f);
     // American clean: map 0-1 to gentle drive range (lots of clean headroom)
     v1a_.setDrive (gain_ * 0.5f);
 }
 
-void FenderPreamp::setBright (bool on)
+void AmericanCleanPreamp::setBright (bool on)
 {
     bright_ = on;
 }
 
-void FenderPreamp::process (float* buffer, int numSamples)
+void AmericanCleanPreamp::process (float* buffer, int numSamples)
 {
     for (int i = 0; i < numSamples; ++i)
     {
@@ -122,7 +122,7 @@ void FenderPreamp::process (float* buffer, int numSamples)
     }
 }
 
-void FenderPreamp::updateCoeffs()
+void AmericanCleanPreamp::updateCoeffs()
 {
     couplingCapCoeff_ = hpfCoeff (30.0f, sampleRate_);   // 22nF → ~30Hz
     cathodeBypassCoeff_ = lpfCoeff (80.0f, sampleRate_); // 25uF → ~80Hz
@@ -137,7 +137,7 @@ void FenderPreamp::updateCoeffs()
 // British crunch amp
 // ============================================================================
 
-void MarshallPreamp::prepare (double sampleRate)
+void BritishCrunchPreamp::prepare (double sampleRate)
 {
     sampleRate_ = sampleRate;
 
@@ -158,7 +158,7 @@ void MarshallPreamp::prepare (double sampleRate)
     reset();
 }
 
-void MarshallPreamp::reset()
+void BritishCrunchPreamp::reset()
 {
     v1a_.reset();
     v1b_.reset();
@@ -169,7 +169,7 @@ void MarshallPreamp::reset()
     brightCapState_ = 0.0f;
 }
 
-void MarshallPreamp::setGain (float gain01)
+void BritishCrunchPreamp::setGain (float gain01)
 {
     gain_ = std::clamp (gain01, 0.0f, 1.0f);
     // British crunch: progressive cascaded gain
@@ -178,12 +178,12 @@ void MarshallPreamp::setGain (float gain01)
     v1b_.setDrive (gain_ * 0.7f);
 }
 
-void MarshallPreamp::setBright (bool on)
+void BritishCrunchPreamp::setBright (bool on)
 {
     bright_ = on;
 }
 
-void MarshallPreamp::process (float* buffer, int numSamples)
+void BritishCrunchPreamp::process (float* buffer, int numSamples)
 {
     for (int i = 0; i < numSamples; ++i)
     {
@@ -231,7 +231,7 @@ void MarshallPreamp::process (float* buffer, int numSamples)
     }
 }
 
-void MarshallPreamp::updateCoeffs()
+void BritishCrunchPreamp::updateCoeffs()
 {
     couplingCapCoeff_ = hpfCoeff (30.0f, sampleRate_);     // 22nF → ~30Hz
     cathodeBypassCoeff_ = lpfCoeff (340.0f, sampleRate_);  // 0.68uF → ~340Hz
@@ -242,7 +242,7 @@ void MarshallPreamp::updateCoeffs()
 // British class-A chime amp
 // ============================================================================
 
-void VoxPreamp::prepare (double sampleRate)
+void BritishChimePreamp::prepare (double sampleRate)
 {
     sampleRate_ = sampleRate;
 
@@ -263,7 +263,7 @@ void VoxPreamp::prepare (double sampleRate)
     reset();
 }
 
-void VoxPreamp::reset()
+void BritishChimePreamp::reset()
 {
     v1a_.reset();
     v2a_.reset();
@@ -274,7 +274,7 @@ void VoxPreamp::reset()
     cathodeBypassState_ = 0.0f;
 }
 
-void VoxPreamp::setGain (float gain01)
+void BritishChimePreamp::setGain (float gain01)
 {
     gain_ = std::clamp (gain01, 0.0f, 1.0f);
     // Class-A chime: V1a moderate, V2a adds the treble-boost gain
@@ -282,12 +282,12 @@ void VoxPreamp::setGain (float gain01)
     v2a_.setDrive (gain_ * 0.55f);
 }
 
-void VoxPreamp::setBright (bool /*on*/)
+void BritishChimePreamp::setBright (bool /*on*/)
 {
     // The class-A chime amp has no bright cap — the Cut control on the tone stack handles HF
 }
 
-void VoxPreamp::process (float* buffer, int numSamples)
+void BritishChimePreamp::process (float* buffer, int numSamples)
 {
     for (int i = 0; i < numSamples; ++i)
     {
@@ -341,7 +341,7 @@ void VoxPreamp::process (float* buffer, int numSamples)
     }
 }
 
-void VoxPreamp::updateCoeffs()
+void BritishChimePreamp::updateCoeffs()
 {
     couplingCapCoeff_ = hpfCoeff (50.0f, sampleRate_);    // 10nF → ~50Hz
     cathodeBypassCoeff_ = lpfCoeff (80.0f, sampleRate_);  // 25uF → ~80Hz

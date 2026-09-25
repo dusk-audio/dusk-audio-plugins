@@ -72,7 +72,7 @@ private:
     static PowerAmpConfig getConfigForAmpType (AmpType type);
 
     double sampleRate_ = 44100.0;
-    AmpType currentType_ = AmpType::Marshall;
+    AmpType currentType_ = AmpType::BritishCrunch;
     PowerAmpConfig config_;
 
     // Drive

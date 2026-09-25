@@ -18,9 +18,9 @@
 
 enum class AmpType
 {
-    Fender  = 0,  // American clean amp — clean headroom, cathode follower compression
-    Marshall = 1, // British crunch amp — cascaded gain, tight bass, aggressive
-    Vox     = 2   // British class-A chime amp — cathode follower sag, chimey breakup
+    AmericanClean = 0,  // American clean amp — clean headroom, cathode follower compression
+    BritishCrunch = 1,  // British crunch amp — cascaded gain, tight bass, aggressive
+    BritishChime  = 2   // British class-A chime amp — cathode follower sag, chimey breakup
 };
 
 class PreampModel
@@ -52,7 +52,7 @@ public:
 // Bright cap: 120pF across volume pot
 // ============================================================================
 
-class FenderPreamp : public PreampModel
+class AmericanCleanPreamp : public PreampModel
 {
 public:
     void prepare (double sampleRate) override;
@@ -60,7 +60,7 @@ public:
     void process (float* buffer, int numSamples) override;
     void setGain (float gain01) override;
     void setBright (bool on) override;
-    AmpType getAmpType() const override { return AmpType::Fender; }
+    AmpType getAmpType() const override { return AmpType::AmericanClean; }
 
 private:
     AnalogEmulation::TubeEmulation v1a_;  // First gain stage
@@ -103,7 +103,7 @@ private:
 // Bright cap: 5nF (aggressive treble boost)
 // ============================================================================
 
-class MarshallPreamp : public PreampModel
+class BritishCrunchPreamp : public PreampModel
 {
 public:
     void prepare (double sampleRate) override;
@@ -111,7 +111,7 @@ public:
     void process (float* buffer, int numSamples) override;
     void setGain (float gain01) override;
     void setBright (bool on) override;
-    AmpType getAmpType() const override { return AmpType::Marshall; }
+    AmpType getAmpType() const override { return AmpType::BritishCrunch; }
 
 private:
     AnalogEmulation::TubeEmulation v1a_, v1b_;
@@ -149,7 +149,7 @@ private:
 // No bright cap — the class-A chime amp relies on the Cut control instead
 // ============================================================================
 
-class VoxPreamp : public PreampModel
+class BritishChimePreamp : public PreampModel
 {
 public:
     void prepare (double sampleRate) override;
@@ -157,7 +157,7 @@ public:
     void process (float* buffer, int numSamples) override;
     void setGain (float gain01) override;
     void setBright (bool on) override;
-    AmpType getAmpType() const override { return AmpType::Vox; }
+    AmpType getAmpType() const override { return AmpType::BritishChime; }
 
 private:
     AnalogEmulation::TubeEmulation v1a_, v2a_;

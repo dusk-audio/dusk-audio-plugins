@@ -153,11 +153,11 @@ plugins/DuskAmp/tests/comparison/signals/
 plugins/DuskAmp/resources/cabs/*.wav
 # Soundwoofer-sourced IRs — redistribution permission confirmed; see
 # plugins/DuskAmp/resources/cabs/LICENSES.md for per-file attribution.
-!plugins/DuskAmp/resources/cabs/fender_twin_sm57_oa.wav
-!plugins/DuskAmp/resources/cabs/marshall_1960vb_sm57_oa.wav
-!plugins/DuskAmp/resources/cabs/marshall_1960vb_sm57_off.wav
-!plugins/DuskAmp/resources/cabs/vox_ac15_sm57.wav
-!plugins/DuskAmp/resources/cabs/vox_ac15_se4_close.wav
+!plugins/DuskAmp/resources/cabs/american_2x12_dynamic_oa.wav
+!plugins/DuskAmp/resources/cabs/british_4x12_dynamic_oa.wav
+!plugins/DuskAmp/resources/cabs/british_4x12_dynamic_off.wav
+!plugins/DuskAmp/resources/cabs/british_1x12_dynamic.wav
+!plugins/DuskAmp/resources/cabs/british_1x12_condenser_close.wav
 
 # DuskVerb render-tool test stimuli — render.cpp resolves these from
 # tests/duskverb_render/test_signals/; the historical anchors were rendered
