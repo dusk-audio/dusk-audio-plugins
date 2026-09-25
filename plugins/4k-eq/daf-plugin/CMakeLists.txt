@@ -66,6 +66,17 @@ if(NOT CMAKE_CROSSCOMPILING)
     target_include_directories(FourKEQCoreTest PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
     target_compile_features(FourKEQCoreTest PRIVATE cxx_std_17)
+    # The test compares the live core against the frozen reference core bit for
+    # bit. Both call the same RBJ designers, but clang merges a sin and a cos of
+    # one angle into a single sincos call only where both land in one basic
+    # block, which depends on how each core's caller inlined them. Apple's arm64
+    # libm sincos differs from sinf/cosf by an ulp for ~0.7% of arguments, so
+    # the merge alone broke bit identity on Apple Silicon. Errno-setting math
+    # stops clang from merging, so both cores call sinf and cosf. Test-only: the
+    # shipped plugin is built without this flag.
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_compile_options(FourKEQCoreTest PRIVATE -fmath-errno)
+    endif()
     add_test(NAME FourKEQCore COMMAND FourKEQCoreTest)
 
     # Band and filter frequency parameters (#288): which of the two parameters
