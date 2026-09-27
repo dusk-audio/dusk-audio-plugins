@@ -8,7 +8,9 @@
 // reset() -- whether the sample arrived on the main input or on the external
 // sidechain. A finite but huge burst did the same by overflowing a stage.
 //
-// In all eight modes, at every oversampling setting:
+// In all eight modes, at every oversampling setting, and Opto twice: at the
+// default Peak Reduction, where its reduction law is idle, and at 70, where
+// it compresses (a burst-overflowed NaN level reached that law's table index):
 //   fault  one +inf, -inf or NaN sample on the main input or the external
 //          sidechain, stereo and mono: every output sample finite, the faulted
 //          block itself still audible, meters finite, and the tail within
@@ -16,9 +18,33 @@
 //   burst  10 ms at 3e38 peak -- finite, but it overflows every mode: every
 //          output sample finite, the first block after the burst audible,
 //          meters finite, and the tail within kBurstTailDb of the control.
+//   param  every parameter (and every multiband band parameter, Mix and
+//          Stereo Link) set to +inf, -inf or NaN mid-render (a corrupt
+//          host automation value): every output sample finite, meters
+//          finite, and the tail within kSingleFaultTailDb of the control.
+//          std::clamp passes NaN through, so these reached int conversions
+//          and table indices unguarded. The whole parameter block must also
+//          be byte-identical across those setters: a non-finite value is
+//          ignored outright, including on a switch whose accepted value
+//          sounds like the default (+inf Solo on every band mutes nothing).
+//   shape  WaveshaperCurves::processWithDrive (Multi-Comp's copy) on a +inf,
+//          -inf or NaN input at every drive, bypass included, and on finite
+//          audio with a NaN drive: every output finite, and the NaN drive
+//          reads as bypass. The blend reused the raw input, so a non-finite
+//          sample passed straight through process()'s own guard. No shipped
+//          path calls it today (the DSP uses process()); this keeps the
+//          public entry point from regressing.
+//   law    optoCurveDb on a NaN level reads as no reduction. The Opto PR 70
+//          burst renders reach that NaN, but a release build cannot see the
+//          undefined conversion it used to hit: the NaN target is discarded
+//          and the burst's output recovery masks the rest. Unguarded, the
+//          law returns NaN, so this fails without a sanitizer.
 #include "../MultiCompDSP.hpp"
+#include "../MultiCompOptoCell.hpp"
+#include "../../HardwareEmulation/WaveshaperCurves.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <limits>
@@ -45,15 +71,26 @@ constexpr float kBurstPeak = 3.0e38f;
 // margin and still catches anything the fault leaves behind in state.
 constexpr double kSingleFaultTailDb = 0.01;
 // Measured worst: 0.271 dB (FET, whose programme-dependent release has 0.6 s
-// rather than 0.87 s of history once recovery has reset it); every other mode
-// 0.0000 dB. Unguarded, every mode misses by more than 570 dB.
+// rather than 0.87 s of history once recovery has reset it); Opto at PR 70
+// 0.006 dB; every other mode 0.0000 dB. Unguarded, every mode misses by more
+// than 570 dB.
 constexpr double kBurstTailDb = 1.0;
 // -60 dBFS RMS: audio is flowing again. Not a level claim.
 constexpr double kAudibleRms = 1.0e-3;
-constexpr const char* kModeNames[8] = {
-    "Opto", "FET", "VCA", "Bus", "StudioFET", "StudioVCA", "Digital", "Multiband"};
+// Opto's reduction law only runs above 10 Peak Reduction and the default is
+// 0, so Opto also runs compressing, at the calibrated 70.
+struct ModeCase
+{
+    int mode;
+    float optoPeakReduction;
+    const char* name;
+};
+constexpr ModeCase kModeCases[] = {
+    {0, 0.0f, "Opto"}, {0, 70.0f, "Opto PR70"}, {1, 0.0f, "FET"}, {2, 0.0f, "VCA"},
+    {3, 0.0f, "Bus"}, {4, 0.0f, "StudioFET"}, {5, 0.0f, "StudioVCA"}, {6, 0.0f, "Digital"},
+    {7, 0.0f, "Multiband"}};
 
-enum class Fault { None, Sample, Burst };
+enum class Fault { None, Sample, Burst, Parameter };
 
 struct Render
 {
@@ -61,7 +98,20 @@ struct Render
     double recoveryBlockRms = 0.0;
     double tailRms = 0.0;
     bool metersFinite = true;
+    bool parametersUnchanged = true;
 };
+
+// The parameter block's bytes, to compare the whole block rather than a
+// hand-picked list of fields.
+using ParameterBytes = std::array<unsigned char, sizeof(duskaudio::MultiCompParameterState)>;
+
+ParameterBytes parameterBytes(const DSP& dsp)
+{
+    ParameterBytes bytes;
+    const auto* state = reinterpret_cast<const unsigned char*>(&dsp.parameterState());
+    std::copy(state, state + bytes.size(), bytes.begin());
+    return bytes;
+}
 
 bool metersFinite(const DSP& dsp)
 {
@@ -72,10 +122,11 @@ bool metersFinite(const DSP& dsp)
     return finite;
 }
 
-Render render(int mode, int oversampling, int channels, bool sidechain, Fault fault, float value)
+Render render(const ModeCase& mode, int oversampling, int channels, bool sidechain, Fault fault, float value)
 {
     DSP dsp;
-    dsp.setMode(mode);
+    dsp.setMode(mode.mode);
+    dsp.setParameter(P::OptoPeakReduction, mode.optoPeakReduction);
     dsp.setParameter(P::TruePeakEnable, 0);
     dsp.setParameter(P::NoiseEnable, 0);
     dsp.setParameter(P::AutoMakeup, 0);
@@ -113,6 +164,18 @@ Render render(int mode, int oversampling, int channels, bool sidechain, Fault fa
             left[static_cast<size_t>(i)] = right[static_cast<size_t>(i)] = sidechain ? clean : faulted;
             scLeft[static_cast<size_t>(i)] = scRight[static_cast<size_t>(i)] = sidechain ? faulted : clean;
         }
+        if (fault == Fault::Parameter && block == kFaultBlock)
+        {
+            const ParameterBytes before = parameterBytes(dsp);
+            for (int p = 0; p < static_cast<int>(P::None); ++p)
+                dsp.setParameter(static_cast<P>(p), value);
+            for (int band = 0; band < 4; ++band)
+                for (int p = 0; p <= static_cast<int>(DSP::MultibandParameter::Enabled); ++p)
+                    dsp.setMultibandParameter(band, static_cast<DSP::MultibandParameter>(p), value);
+            dsp.setMix(value);
+            dsp.setStereoLink(value);
+            result.parametersUnchanged = parameterBytes(dsp) == before;
+        }
         if (sidechain) dsp.processBlockExternal(in, sc, out, channels, kBlock);
         else dsp.processBlock(in, out, channels, kBlock);
         result.metersFinite = metersFinite(dsp) && result.metersFinite;
@@ -141,6 +204,7 @@ struct Summary
     double worstTailDb = 0.0;
     double quietestRecoveryRms = std::numeric_limits<double>::max();
     int meterFailures = 0;
+    int stateChanges = 0;
     int failures = 0;
 };
 
@@ -151,16 +215,62 @@ void score(Summary& summary, const Render& faulted, const Render& control, doubl
     summary.worstTailDb = std::max(summary.worstTailDb, tailDb);
     summary.quietestRecoveryRms = std::min(summary.quietestRecoveryRms, faulted.recoveryBlockRms);
     summary.meterFailures += faulted.metersFinite ? 0 : 1;
+    summary.stateChanges += faulted.parametersUnchanged ? 0 : 1;
     if (faulted.nonFinite != 0 || !faulted.metersFinite || faulted.recoveryBlockRms <= kAudibleRms
-        || !(tailDb <= tailBoundDb))
+        || !faulted.parametersUnchanged || !(tailDb <= tailBoundDb))
         ++summary.failures;
 }
 
 void print(const char* gate, const char* mode, const char* path, const Summary& s)
 {
-    std::printf("%-5s %-9s %-9s non-finite %7ld  recovery-block RMS %.6f  worst tail %9.6f dB  meter faults %d  %s\n",
+    std::printf("%-5s %-9s %-9s non-finite %7ld  recovery-block RMS %.6f  worst tail %9.6f dB  meter faults %d"
+                "  state changes %d  %s\n",
                 gate, mode, path, s.nonFinite, s.quietestRecoveryRms, s.worstTailDb, s.meterFailures,
-                s.failures == 0 ? "PASS" : "FAIL");
+                s.stateChanges, s.failures == 0 ? "PASS" : "FAIL");
+}
+
+int waveshaperFailures(const float (&faults)[3])
+{
+    using C = HardwareEmulation::WaveshaperCurves::CurveType;
+    const auto& curves = HardwareEmulation::getWaveshaperCurves();
+    const float drives[] = {0.0f, 0.5f, 1.0f, faults[0], faults[1], faults[2]};
+    int failures = 0, cases = 0;
+    for (const C curve : {C::Opto_Tube, C::FET, C::Classic_VCA, C::Console_Bus, C::Transformer, C::Linear})
+    {
+        for (const float drive : drives)
+            for (const float input : faults)
+            {
+                ++cases;
+                if (!std::isfinite(curves.processWithDrive(input, curve, drive)))
+                    ++failures;
+            }
+        for (const float input : {-1.5f, -0.25f, 0.0f, 0.5f, 1.9f})
+        {
+            ++cases;
+            if (!(curves.processWithDrive(input, curve, faults[2]) == input))
+                ++failures;
+        }
+    }
+    std::printf("shape processWithDrive non-finite input / NaN drive  failing %d of %d  %s\n",
+                failures, cases, failures == 0 ? "PASS" : "FAIL");
+    return failures;
+}
+
+int optoLawFailures(float nan)
+{
+    // Read through a volatile so an unguarded law converts the NaN at run
+    // time instead of letting the optimiser fold a known constant.
+    volatile float level = nan;
+    int failures = 0, cases = 0;
+    for (const bool limit : {false, true})
+    {
+        ++cases;
+        if (!(duskaudio::optoCurveDb(level, limit) == 0.0f))
+            ++failures;
+    }
+    std::printf("law   optoCurveDb NaN level reads as no reduction  failing %d of %d  %s\n",
+                failures, cases, failures == 0 ? "PASS" : "FAIL");
+    return failures;
 }
 } // namespace
 
@@ -170,11 +280,11 @@ int main()
                             -std::numeric_limits<float>::infinity(),
                             std::numeric_limits<float>::quiet_NaN()};
     int failures = 0;
-    for (int mode = 0; mode < 8; ++mode)
+    for (const ModeCase& mode : kModeCases)
         for (const bool sidechain : {false, true})
         {
             const char* path = sidechain ? "sidechain" : "main-in";
-            Summary single, burst;
+            Summary single, burst, parameter;
             for (int oversampling = 0; oversampling < 3; ++oversampling)
                 for (int channels = 1; channels <= 2; ++channels)
                 {
@@ -182,14 +292,22 @@ int main()
                     for (const float value : faults)
                         score(single, render(mode, oversampling, channels, sidechain, Fault::Sample, value),
                               control, kSingleFaultTailDb);
+                    if (!sidechain)
+                        for (const float value : faults)
+                            score(parameter, render(mode, oversampling, channels, sidechain, Fault::Parameter, value),
+                                  control, kSingleFaultTailDb);
                     if (channels == 2)
                         score(burst, render(mode, oversampling, channels, sidechain, Fault::Burst, kBurstPeak),
                               control, kBurstTailDb);
                 }
-            print("fault", kModeNames[mode], path, single);
-            print("burst", kModeNames[mode], path, burst);
-            failures += single.failures + burst.failures;
+            print("fault", mode.name, path, single);
+            print("burst", mode.name, path, burst);
+            if (!sidechain)
+                print("param", mode.name, path, parameter);
+            failures += single.failures + burst.failures + parameter.failures;
         }
+    failures += waveshaperFailures(faults);
+    failures += optoLawFailures(faults[2]);
     std::printf("%s: %d failing case(s)\n", failures == 0 ? "PASS" : "FAIL", failures);
     return failures == 0 ? 0 : 1;
 }

@@ -1833,6 +1833,16 @@ private:
         const auto& curve = limit ? kOptoColourLimitCurve
                                   : kOptoColourCompressCurve;
         const float position = overshootDb * 0.5f;
+        // Non-finite input samples are replaced before they reach any state,
+        // but a huge finite one overflows the detector, whose level then
+        // reads NaN. NaN fails both range tests below and would reach the
+        // size_t conversion, which is undefined behaviour (UBSan:
+        // float-cast-overflow). +/-inf is rejected too, defensively: -inf
+        // already reaches 0 on both curves, and +inf would extrapolate to
+        // +inf and leave the caller's blend ratio at 0 or NaN. No level, no
+        // colour.
+        if (!std::isfinite(position))
+            return 0.0f;
         if (position <= 0.0f) {
             if (limit) return std::max(0.0f, curve[0] + position * (curve[1] - curve[0]));
             return curve[0] * std::exp(position * (curve[1] - curve[0]) / curve[0]);
