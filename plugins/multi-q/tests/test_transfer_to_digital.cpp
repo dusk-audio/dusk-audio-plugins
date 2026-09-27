@@ -169,14 +169,14 @@ static void testTubeTransfer(MultiQ& plugin)
     initPlugin(plugin);
 
     setChoiceParam(plugin, ParamIDs::eqType, static_cast<int>(EQType::Tube));
-    setParam(plugin, ParamIDs::pultecLfBoostGain,      1.5f);
-    setParam(plugin, ParamIDs::pultecLfAttenGain,      0.0f);
-    setParam(plugin, ParamIDs::pultecLfBoostFreq,      3.0f);   // index 3 = 100 Hz
-    setParam(plugin, ParamIDs::pultecHfBoostGain,      1.5f);
-    setParam(plugin, ParamIDs::pultecHfBoostFreq,      5.0f);   // index 5 = 12 kHz
-    setParam(plugin, ParamIDs::pultecHfBoostBandwidth, 0.5f);
-    setParam(plugin, ParamIDs::pultecHfAttenGain,      0.5f);
-    setParam(plugin, ParamIDs::pultecHfAttenFreq,      2.0f);   // index 2 = 20 kHz
+    setParam(plugin, ParamIDs::tubeEqLfBoostGain,      1.5f);
+    setParam(plugin, ParamIDs::tubeEqLfAttenGain,      0.0f);
+    setParam(plugin, ParamIDs::tubeEqLfBoostFreq,      3.0f);   // index 3 = 100 Hz
+    setParam(plugin, ParamIDs::tubeEqHfBoostGain,      1.5f);
+    setParam(plugin, ParamIDs::tubeEqHfBoostFreq,      5.0f);   // index 5 = 12 kHz
+    setParam(plugin, ParamIDs::tubeEqHfBoostBandwidth, 0.5f);
+    setParam(plugin, ParamIDs::tubeEqHfAttenGain,      0.5f);
+    setParam(plugin, ParamIDs::tubeEqHfAttenFreq,      2.0f);   // index 2 = 20 kHz
 
     check("Pre-transfer mode is Tube", getEqType(plugin) == 3.0f);
 

@@ -129,7 +129,7 @@ void timing(bool onlyAuto = false)
                 worst = std::max(worst, std::abs(gain - reference[release][i]));
             }
             std::printf("BUS timing release %d, %dch: worst %.6f dB\n", release, channels, worst);
-            require(worst < 0.6, "BUS attack and fixed/Auto recovery match measured UAD traces");
+            require(worst < 0.6, "BUS attack and fixed/Auto recovery match measured reference traces");
         }
 }
 void lowFrequency(bool neutral)
@@ -192,8 +192,8 @@ void attackParity(bool shiftedPhase = false)
                     shiftedPhase ? "phase" : "attack", fixture.ratio, fixture.attack, fixture.release, channels, error);
     }
     std::printf("BUS %s total worst %.6f dB\n", shiftedPhase ? "phase" : "attack", worst);
-    require(worst < 0.6, shiftedPhase ? "BUS attacks match independent phase-shifted UAD bursts"
-                                     : "BUS attacks and interacting fixed releases match UAD across all ratios");
+    require(worst < 0.6, shiftedPhase ? "BUS attacks match independent phase-shifted reference bursts"
+                                     : "BUS attacks and interacting fixed releases match reference across all ratios");
 }
 
 void twoToOneTransientHoldout()
@@ -220,7 +220,7 @@ void twoToOneTransientHoldout()
         std::printf("BUS 2:1 independent transient attack %d %dch: worst %.6f dB\n",
                     fixture.attack, channels, error);
     }
-    require(worst < 0.25, "BUS 2:1 predicts independent UAD burst levels, phase and threshold within 0.25 dB");
+    require(worst < 0.25, "BUS 2:1 predicts independent reference burst levels, phase and threshold within 0.25 dB");
 }
 
 void levelHoldout()
@@ -244,7 +244,7 @@ void levelHoldout()
                     fixture.ratio, fixture.attack, channels, error);
     }
     std::printf("BUS level holdout total worst %.6f dB\n", worst);
-    require(worst < 0.65, "BUS attack model predicts independent UAD burst levels within 0.65 dB");
+    require(worst < 0.65, "BUS attack model predicts independent reference burst levels within 0.65 dB");
 }
 
 void autoHoldout()
@@ -421,8 +421,8 @@ void fixedRecovery(bool neutralOnly)
     }
     std::printf("BUS fixed %s worst %.6f dB\n", neutralOnly ? "bias" : "recovery shape", worst);
     require(worst < 0.015, neutralOnly
-        ? "BUS fixed releases reproduce the independent UAD below-threshold gain bias"
-        : "BUS fixed recovery shape matches independent UAD traces within 0.015 dB");
+        ? "BUS fixed releases reproduce the independent reference below-threshold gain bias"
+        : "BUS fixed recovery shape matches independent reference traces within 0.015 dB");
 }
 
 void fixedReleaseSwitch()

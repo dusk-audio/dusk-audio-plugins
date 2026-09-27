@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
 //
 // Measured control laws of the VCA mode's reference unit (reference VCA compressor plugin,
-// campaign: dusk-audio-tools plugins/MultiComp/tests/reference_comparison_dbx160).
+// campaign: the VCA reference-comparison harness in dusk-audio-tools).
 // Parity is judged at matched knob positions, so the host parameters carry the
 // knob positions and these functions carry the device's laws. Framework-free;
 // shared by the DSP, the UI, and the tests.
@@ -14,7 +14,7 @@
 #include <complex>
 #include <limits>
 
-namespace duskaudio::dbx160
+namespace duskaudio::vcaLaw
 {
 
 // THRESHOLD: linear in dB across the knob, -55 dB full-left to 0 dB
@@ -351,4 +351,4 @@ private:
     double px1 = 0.0, px2 = 0.0, py1 = 0.0, py2 = 0.0, lx1 = 0.0, ly1 = 0.0;
 };
 
-} // namespace duskaudio::dbx160
+} // namespace duskaudio::vcaLaw

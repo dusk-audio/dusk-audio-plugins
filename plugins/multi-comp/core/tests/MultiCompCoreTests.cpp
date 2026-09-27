@@ -88,7 +88,7 @@ struct MultiCompDSPTestAccess
             activeSamples, fullCorrectionSamples, correctionEndSamples);
     }
 
-    static float advanceDbxSidechainTilt(MultiCompDSP& dsp, int channel,
+    static float advanceVcaSidechainTilt(MultiCompDSP& dsp, int channel,
                                          float sample) noexcept
     {
         return dsp.sidechainTilt[static_cast<size_t>(channel)].process(sample);
@@ -4552,7 +4552,7 @@ void testGoldenVectors()
     // superseded behaviour. Do not restore them or use them to judge the new
     // implementation: the hardware reference is the only Opto oracle.
     // VCA left 2026-09-01 for the same reason: it is being rebuilt against
-    // the measured reference VCA compressor (reference_comparison_dbx160 campaign), whose
+    // the measured reference VCA compressor (VCA reference-comparison harness), whose
     // static and control laws already differ from the JUCE implementation.
     constexpr duskaudio::MultiCompMode modes[] = {
         duskaudio::MultiCompMode::FET,
@@ -6236,7 +6236,7 @@ void testFetKneeOnsetMatchesReference()
                 "worst 100 Hz/1 kHz split %.6f dB\n",
                 worstError, worstFrequencySplit);
     require(worstError < 0.04 && worstFrequencySplit < 0.03,
-            "vintage FET knee onset follows the measured UAD curve and frequency collapse");
+            "vintage FET knee onset follows the measured reference curve and frequency collapse");
 }
 
 void testFetKneeCellDoesNotCancelDeepReleaseMemory()
@@ -6915,7 +6915,7 @@ void testFetDenseStereoPhaseParity()
     std::printf("FET dense stereo: worst absolute response error %.9f dB\n",
                 worstError);
     require(worstError < 0.020f,
-            "vintage FET dense stereo phase surface matches the UAD response");
+            "vintage FET dense stereo phase surface matches the reference response");
 }
 
 std::array<float, 5> renderFetRecoveryH1Db(
@@ -7163,7 +7163,7 @@ void testFetDenseStartupRecoveryParity()
             worstResidual = std::max(worstResidual, std::abs(residual));
             std::printf("FET dense recovery: rate %.0f carrier %.0f level %.0f "
                         "attack %.1f ratio %d phase %.0f window %zu "
-                        "candidate-minus-UAD residual %+.9f dB\n",
+                        "candidate-minus-reference residual %+.9f dB\n",
                         row.sampleRate, row.frequencyHz, row.loudDbfs,
                         row.attackPosition, row.ratio, row.phaseDegrees,
                         window, residual);
@@ -7172,7 +7172,7 @@ void testFetDenseStartupRecoveryParity()
     std::printf("FET dense recovery: worst absolute residual %.9f dB\n",
                 worstResidual);
     require(worstResidual < 0.150f,
-            "vintage FET post-burst recovery follows the UAD phase/rate surface");
+            "vintage FET post-burst recovery follows the reference phase/rate surface");
 }
 
 void armFetPostBurstRecovery(MultiCompDSP& dsp, int channels)
@@ -7615,7 +7615,7 @@ void reportFetAttackDriveAxis()
 
 // The installed unit's own attack trajectory, measured through this same
 // estimator and normalised to its own 40-60 ms plateau. Rendered by
-// `probe_drive_axis.py` (dusk-audio-tools, reference_comparison_1176) from the
+// `probe_drive_axis.py` (dusk-audio-tools, the FET reference-comparison harness) from the
 // reference AU at attack knob 0.5, ratio 4:1, input knob 0.8; each row is one
 // source level. This is the campaign's PRIMARY dynamics gate: Wave 3b ratified
 // the demotion of the fitted time constant to a diagnostic, because above
@@ -8826,7 +8826,7 @@ void testFetBroadbandHarmonicSurface()
 {
     // Six absolute anchors on the reference unit's own 1 kHz second harmonic,
     // one per region of `fetBroadbandK2`, rendered from the installed AU by
-    // `probe_h2_surface.py` (campaign reference_comparison_1176) and quoted
+    // `probe_h2_surface.py` (the FET reference-comparison harness) and quoted
     // here as H2 relative to the fundamental, which is scalar-immune: a gain
     // error anywhere in the chain cancels out of the ratio, so this measures
     // the colour law and nothing else.
@@ -9106,7 +9106,7 @@ void testFetDenseShallowLowFrequencyH3()
                 && worstH1MovementDb < neighbourMovementBoundDb
                 && worstH2MovementDb < neighbourMovementBoundDb
                 && worstH5MovementDb < neighbourMovementBoundDb,
-            "vintage FET dense shallow H3 follows the continuous UAD knee surface");
+            "vintage FET dense shallow H3 follows the continuous reference knee surface");
 }
 
 void testFetDenseBroadbandComplexH3()
@@ -9298,7 +9298,7 @@ void testFetDenseBroadbandComplexH3()
     require(worstMagnitudeErrorDb < magnitudeBoundDb
                 && worstPhaseErrorDegrees < phaseBoundDegrees
                 && worstAdjacentErrorStepDb < adjacentErrorStepBoundDb,
-            "vintage FET dense broadband complex H3 follows the UAD drive and rate surface");
+            "vintage FET dense broadband complex H3 follows the reference drive and rate surface");
 }
 
 void testFetDenseBroadbandComplexH5()
@@ -9410,7 +9410,7 @@ void testFetDenseBroadbandComplexH5()
                 worstPhaseErrorDegrees, phaseBoundDegrees);
     require(worstMagnitudeErrorDb < magnitudeBoundDb
                 && worstPhaseErrorDegrees < phaseBoundDegrees,
-            "vintage FET dense broadband complex H5 follows the UAD drive, Release, and rate surface");
+            "vintage FET dense broadband complex H5 follows the reference drive, Release, and rate surface");
 }
 
 void testFetLowFrequencyOddHarmonicSurface()
@@ -9601,7 +9601,7 @@ void testFetLowFrequencyColourSurface()
     // The 100 Hz twin of testFetBroadbandHarmonicSurface, gating
     // `fetLowFrequencyK2`. Seven absolute anchors on the reference unit's own
     // 100 Hz second harmonic, rendered from the installed AU by
-    // `probe_h2_surface.py` (campaign reference_comparison_1176) and quoted as
+    // `probe_h2_surface.py` (the FET reference-comparison harness) and quoted as
     // H2 relative to the fundamental, which is scalar-immune.
     //
     // Why 100 Hz needs its own gate at all: at 1 kHz this table contributes
@@ -9670,12 +9670,12 @@ void testFetLowFrequencyColourSurface()
 // 48 kHz, then that VCA mode actually routes a non-zero SC HP setting through
 // it (more reduction on a 3 kHz tone than on a 60 Hz tone at equal level,
 // the opposite of the other modes' high-pass which only ever removes lows).
-void testDbxSidechainTilt()
+void testVcaSidechainTilt()
 {
-    duskaudio::dbx160::SidechainTilt tilt;
+    duskaudio::vcaLaw::SidechainTilt tilt;
     tilt.prepare(48000.0);
     float worst = 0.0f;
-    for (const auto& point : duskaudio::dbx160::kSidechainTiltMeasured)
+    for (const auto& point : duskaudio::vcaLaw::kSidechainTiltMeasured)
     {
         tilt.reset();
         const int settle = 48000, measure = 48000;
@@ -9691,7 +9691,7 @@ void testDbxSidechainTilt()
         worst = std::max(worst, static_cast<float>(std::abs(gainDb - point.db)));
         std::printf("  tilt %6.0f Hz: %+.3f dB (measured %+.2f)\n", point.hz, gainDb, point.db);
     }
-    require(worst < 0.30f, "dbx sidechain tilt matches the measured reference response within 0.30 dB from 40 Hz to 23.5 kHz");
+    require(worst < 0.30f, "VCA sidechain tilt matches the measured reference response within 0.30 dB from 40 Hz to 23.5 kHz");
 
     auto reductionAt = [](float freq, float sidechainHp) {
         MultiCompDSP dsp;
@@ -9725,10 +9725,10 @@ void testDbxSidechainTilt()
     require(std::abs(lowOff - highOff) < 0.3, "VCA detector is flat with the switch out");
     require(lowOn < lowOff - 3.0 && highOn > highOff + 3.0,
             "VCA PULL/SC engages a tilt: less reduction at 60 Hz, more at 3 kHz");
-    std::puts("dbx sidechain tilt: response and VCA routing verified");
+    std::puts("VCA sidechain tilt: response and VCA routing verified");
 }
 
-void testDbxSidechainTiltEngagementLifecycle()
+void testVcaSidechainTiltEngagementLifecycle()
 {
     constexpr int blockSize = 64;
     const auto configure = [](MultiCompDSP& dsp) {
@@ -9753,7 +9753,7 @@ void testDbxSidechainTiltEngagementLifecycle()
     switched.setParameter(MultiCompDSP::Parameter::SidechainHP, 500.0f);
     processConstant(switched, 0.0f);
     const float reenabledResidual = duskaudio::MultiCompDSPTestAccess::
-        advanceDbxSidechainTilt(switched, 0, 0.0f);
+        advanceVcaSidechainTilt(switched, 0, 0.0f);
 
     MultiCompDSP oneEnabledBlock, continuouslyEnabled;
     configure(oneEnabledBlock);
@@ -9762,11 +9762,11 @@ void testDbxSidechainTiltEngagementLifecycle()
     processConstant(continuouslyEnabled, 1.0f);
     processConstant(continuouslyEnabled, 1.0f);
     const float oneBlockResidual = duskaudio::MultiCompDSPTestAccess::
-        advanceDbxSidechainTilt(oneEnabledBlock, 0, 0.0f);
+        advanceVcaSidechainTilt(oneEnabledBlock, 0, 0.0f);
     const float continuousResidual = duskaudio::MultiCompDSPTestAccess::
-        advanceDbxSidechainTilt(continuouslyEnabled, 0, 0.0f);
+        advanceVcaSidechainTilt(continuouslyEnabled, 0, 0.0f);
 
-    std::printf("dbx tilt lifecycle: off->on residual %.9g; one/continuous block "
+    std::printf("VCA tilt lifecycle: off->on residual %.9g; one/continuous block "
                 "residual %.9g/%.9g\n",
                 static_cast<double>(reenabledResidual),
                 static_cast<double>(oneBlockResidual),
@@ -9777,13 +9777,13 @@ void testDbxSidechainTiltEngagementLifecycle()
 }
 
 // VCA compressor parity gate. Every expected number below was measured on the
-// installed reference VCA compressor (reference_comparison_dbx160 campaign, 2026-09-01)
+// installed reference VCA compressor (VCA reference-comparison harness, 2026-09-01)
 // with the same stimuli rendered in process here: steady 1 kHz tones for the
 // static law at the default threshold (-27 dB) and 4:1 position, a pedestal
 // step for the attack/release timing, and an equal-RMS sine/burst/noise
 // triplet for the detector's crest response. Tolerances sit just outside the
 // campaign's achieved residuals so a regression, not the reference, fails.
-void testVcaDbxParityGates()
+void testVcaLawParityGates()
 {
     constexpr int kRate = 48000, kBlock = 512;
     constexpr float kCompress4to1 = 50.4944f;
@@ -9844,8 +9844,8 @@ void testVcaDbxParityGates()
             const auto unity = renderWith(sig, 0.0f), comp = renderWith(sig, kCompress4to1);
             const size_t from = static_cast<size_t>(3.0f * kRate), to = sig.size();
             const double gr = rmsDb(unity, from, to) - rmsDb(comp, from, to);
-            std::printf("  dbx static %+.0f dBFS: GR %.3f dB (reference %.2f)\n", levels[i], gr, expected[i]);
-            require(std::abs(gr - expected[i]) < 0.35, "VCA static law matches the dbx 160 within 0.35 dB at the default threshold");
+            std::printf("  VCA static %+.0f dBFS: GR %.3f dB (reference %.2f)\n", levels[i], gr, expected[i]);
+            require(std::abs(gr - expected[i]) < 0.35, "VCA static law matches the reference VCA within 0.35 dB at the default threshold");
         }
     }
     // Dense sweeps found that the reference's ratio-normalised residual is a
@@ -9877,7 +9877,7 @@ void testVcaDbxParityGates()
             const double gr = rmsDb(unity, from, to) - rmsDb(comp, from, to);
             const double error = gr - anchor.referenceGr;
             worst = std::max(worst, std::abs(error));
-            std::printf("  dbx detector %+.2f thresh, %+.0f input, %.0f%%: "
+            std::printf("  VCA detector %+.2f thresh, %+.0f input, %.0f%%: "
                         "GR %.3f dB (reference %.3f, delta %+.3f)\n",
                         static_cast<double>(anchor.threshold),
                         static_cast<double>(anchor.input),
@@ -9885,7 +9885,7 @@ void testVcaDbxParityGates()
                         static_cast<double>(anchor.referenceGr), error);
         }
         require(worst < 0.08,
-                "VCA detector calibration and stop slope match shallow/deep dbx anchors");
+                "VCA detector calibration and stop slope match shallow/deep reference anchors");
     }
     // The original law measured every 5 %, so changing the Inf endpoint also
     // changes its unmeasured 95-100 % interpolation. A direct held-out 97.5 %
@@ -9899,7 +9899,7 @@ void testVcaDbxParityGates()
         const double gr = rmsDb(unity, from, to) - rmsDb(comp, from, to);
         constexpr double referenceGr = 20.71833;
         const double error = gr - referenceGr;
-        std::printf("  dbx detector -27.00 thresh, -6 input, 97.5%%: "
+        std::printf("  VCA detector -27.00 thresh, -6 input, 97.5%%: "
                     "GR %.3f dB (reference %.3f, delta %+.3f)\n",
                     gr, referenceGr, error);
         require(std::abs(error) < 0.02,
@@ -9927,10 +9927,10 @@ void testVcaDbxParityGates()
             if (grAt(1.0f + ms * 0.001f) >= 0.63 * settled) t63 = ms;
         for (int ms = 0; ms < 800 && t37 < 0.0; ++ms)
             if (grAt(2.0f + ms * 0.001f) <= 0.37 * settled) t37 = ms;
-        std::printf("  dbx step: settled %.2f dB, attack t63 %.0f ms (reference 12), release t37 %.0f ms (reference 75)\n", settled, t63, t37);
+        std::printf("  VCA step: settled %.2f dB, attack t63 %.0f ms (reference 12), release t37 %.0f ms (reference 75)\n", settled, t63, t37);
         require(std::abs(settled - 11.38) < 0.35, "VCA step settles at the reference GR");
         require(std::abs(t63 - 12.0) <= 3.0 && std::abs(t37 - 75.0) <= 6.0,
-                "VCA attack/release timing matches the dbx 160 RMS integrator");
+                "VCA attack/release timing matches the reference VCA RMS integrator");
     }
     // Crest triplet at -20 dBFS RMS: the reference reads sine, 10 % duty
     // bursts and noise within 0.05 dB of each other (7.56 / 7.60 / 7.57).
@@ -9960,11 +9960,11 @@ void testVcaDbxParityGates()
             const size_t from = static_cast<size_t>(3.0f * kRate);
             gr[k++] = rmsDb(unity, from, n) - rmsDb(comp, from, n);
         }
-        std::printf("  dbx crest: sine %.2f burst %.2f noise %.2f dB\n", gr[0], gr[1], gr[2]);
+        std::printf("  VCA crest: sine %.2f burst %.2f noise %.2f dB\n", gr[0], gr[1], gr[2]);
         require(std::abs(gr[1] - gr[0]) < 0.4 && std::abs(gr[2] - gr[0]) < 0.4,
                 "VCA detector is RMS: gated bursts and noise read within 0.4 dB of a sine at equal RMS");
     }
-    std::puts("dbx 160 parity gates: static law, step timing, crest response");
+    std::puts("VCA parity gates: static law, step timing, crest response");
 }
 
 // VCA compressor onset from silence and from quiet pedestals. Measured
@@ -9978,7 +9978,7 @@ void testVcaDbxParityGates()
 // arrived; the previous detector reduced the first cycle 13 dB more than the
 // reference. Bounds sit just outside the achieved residuals (<= 0.39 dB on the
 // first cycle, <= 0.19 dB after), at both rates.
-void testVcaDbxOnsetGates()
+void testVcaLawOnsetGates()
 {
     struct Row { int rate; float pedestalDb; std::array<double, 4> referenceGr; };
     constexpr std::array<Row, 5> rows{{
@@ -10019,7 +10019,7 @@ void testVcaDbxOnsetGates()
         }
         const size_t latency = static_cast<size_t>(dsp->getLatencySamples());
         const size_t cycle = static_cast<size_t>(row.rate / 1000);
-        std::printf("  dbx onset %d Hz, pedestal %+.0f dB:", row.rate, static_cast<double>(row.pedestalDb));
+        std::printf("  VCA onset %d Hz, pedestal %+.0f dB:", row.rate, static_cast<double>(row.pedestalDb));
         for (size_t k = 0; k < 4; ++k)
         {
             double inSq = 0.0, outSq = 0.0;
@@ -10035,12 +10035,12 @@ void testVcaDbxOnsetGates()
         }
         std::printf("\n");
     }
-    std::printf("  dbx onset worst: first cycle %.3f dB, cycles 2-4 %.3f dB\n", worstFirst, worstLater);
+    std::printf("  VCA onset worst: first cycle %.3f dB, cycles 2-4 %.3f dB\n", worstFirst, worstLater);
     require(worstFirst < 0.5 && worstLater < 0.25,
-            "VCA onset from silence and quiet pedestals matches the dbx 160 at 48 and 96 kHz");
+            "VCA onset from silence and quiet pedestals matches the reference VCA at 48 and 96 kHz");
 }
 
-void testVcaDbxOutputVoicing()
+void testVcaLawOutputVoicing()
 {
     // Native reference VCA compressor, measured 2026-09-16: Thresh 0 dB, Compress 0
     // (1:1), Gain 0 dB, SC Off, Mix 100%. Provenance:
@@ -10100,15 +10100,15 @@ void testVcaDbxOutputVoicing()
             const double relativeDb = measure(row.rate, row.hz[i]) - unityDb;
             const double bound = row.hz[i] <= 16000.0 ? 0.04 : 0.08;
             const bool pass = std::abs(relativeDb - row.nativeDb[i]) <= bound;
-            std::printf("  dbx voicing %d Hz host, %.0f Hz: %+.6f dB, native %+.3f, bound %.2f: %s\n",
+            std::printf("  VCA voicing %d Hz host, %.0f Hz: %+.6f dB, native %+.3f, bound %.2f: %s\n",
                         row.rate, row.hz[i], relativeDb, row.nativeDb[i], bound, pass ? "PASS" : "FAIL");
             // Per-check require: folded booleans across many FP checks have
             // miscompiled under -ffp-contract=off in this suite.
-            require(pass, "VCA output voicing matches the native dbx 160 linear path at 2x");
+            require(pass, "VCA output voicing matches the native reference VCA linear path at 2x");
             if (row.rate == 48000 && row.hz[i] == 10000.0) controlDb = relativeDb;
         }
     }
-    std::printf("  dbx voicing 48 kHz / 10 kHz control: %+.6f dB >= +0.10: %s\n",
+    std::printf("  VCA voicing 48 kHz / 10 kHz control: %+.6f dB >= +0.10: %s\n",
                 controlDb, controlDb >= 0.10 ? "PASS" : "FAIL");
     require(controlDb >= 0.10, "VCA output voicing has the measured 10 kHz lift at 48 kHz");
 }
@@ -10313,12 +10313,12 @@ void testVcaOutputHeadroom()
                 worst = std::max({worst, std::abs(gainError), std::abs(absoluteError)});
                 if (!std::isfinite(gainError) || !std::isfinite(absoluteError))
                     worst = std::numeric_limits<double>::infinity();
-                std::printf("dbx headroom: %.0f Hz %d ch input %+.1f dBFS "
+                std::printf("VCA headroom: %.0f Hz %d ch input %+.1f dBFS "
                             "output %.6f dBFS gain error %+.6f absolute error %+.6f dB\n",
                             rate, channels, static_cast<double>(levelDb), outputDb[1],
                             gainError, absoluteError);
             }
-    require(worst < 0.01, "VCA preserves the dbx 160 output headroom at +20 dB gain");
+    require(worst < 0.01, "VCA preserves the reference VCA output headroom at +20 dB gain");
 }
 
 void testPublishedGainReductionRange()
@@ -10468,11 +10468,11 @@ int main(int argc, char** argv)
     }
     if (argc == 2 && std::strcmp(argv[1], "--vca") == 0)
     {
-        testDbxSidechainTilt();
-        testDbxSidechainTiltEngagementLifecycle();
-        testVcaDbxParityGates();
-        testVcaDbxOnsetGates();
-        testVcaDbxOutputVoicing();
+        testVcaSidechainTilt();
+        testVcaSidechainTiltEngagementLifecycle();
+        testVcaLawParityGates();
+        testVcaLawOnsetGates();
+        testVcaLawOutputVoicing();
         testVcaDetectorOverflowRecovery();
         testVcaOutputHeadroom();
         std::puts("Multi-Comp VCA parity tests: PASS");
@@ -10721,11 +10721,11 @@ int main(int argc, char** argv)
     testOptoMeasuredGainTaper();
     testOptoMeasuredOutputCeiling();
     testOptoDriveApplicability();
-    testDbxSidechainTilt();
-    testDbxSidechainTiltEngagementLifecycle();
-    testVcaDbxParityGates();
-    testVcaDbxOnsetGates();
-    testVcaDbxOutputVoicing();
+    testVcaSidechainTilt();
+    testVcaSidechainTiltEngagementLifecycle();
+    testVcaLawParityGates();
+    testVcaLawOnsetGates();
+    testVcaLawOutputVoicing();
     testVcaDetectorOverflowRecovery();
     testVcaOutputHeadroom();
     testVcaDetectorAlignment();

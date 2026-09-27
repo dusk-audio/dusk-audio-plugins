@@ -7,7 +7,7 @@
 #include <atomic>
 #include <cmath>
 
-#include "MultiCompDbxLaw.hpp"
+#include "MultiCompVcaLaw.hpp"
 #include "../../shared-daf/dsp/DuskFilters.hpp"
 
 namespace duskaudio
@@ -169,8 +169,8 @@ struct MultiCompParameterState
 
     // vcaRatio retains its core identifier; its value is the measured
     // compression knob position, shared with the host parameter descriptor.
-    std::atomic<float> vcaThreshold{dbx160::kThresholdDefaultDb},
-        vcaRatio{dbx160::kCompressDefaultPosition}, vcaAttack{1.0f},
+    std::atomic<float> vcaThreshold{vcaLaw::kThresholdDefaultDb},
+        vcaRatio{vcaLaw::kCompressDefaultPosition}, vcaAttack{1.0f},
         vcaRelease{100.0f}, vcaOutput{0.0f};
     std::atomic<bool> vcaOverEasy{false}, vcaClassicDetector{false};
 

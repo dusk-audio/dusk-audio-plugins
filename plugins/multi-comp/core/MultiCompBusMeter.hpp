@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace duskaudio::sslbus
+namespace duskaudio::busLaw
 {
 // Display-only moving-coil response measured against the native BUS reference.
 // Run on the audio clock: editor frame rate must not alter the meter motion.
@@ -40,4 +40,4 @@ private:
     double position = 0.0, velocity = 0.0;
     double a11 = 1.0, a12 = 0.0, a21 = 0.0, a22 = 1.0;
 };
-} // namespace duskaudio::sslbus
+} // namespace duskaudio::busLaw

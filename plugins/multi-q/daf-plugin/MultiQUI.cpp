@@ -1300,11 +1300,11 @@ private:
             for (int b = 0; b < 8; ++b) enable(b, false);
 
             // Band 2 (mqidx 1): Low Shelf <- Tube LF (boost*1.4 - atten*1.75).
-            const float lfBoost = values[kParamPultecLfBoostGain];
-            const float lfAtten = values[kParamPultecLfAttenGain];
+            const float lfBoost = values[kParamTubeEqLfBoostGain];
+            const float lfAtten = values[kParamTubeEqLfAttenGain];
             if (std::abs(lfBoost) > 0.1f || std::abs(lfAtten) > 0.1f)
             {
-                const int idx = clampIdx((int)values[kParamPultecLfBoostFreq], 4);
+                const int idx = clampIdx((int)values[kParamTubeEqLfBoostFreq], 4);
                 enable(1, true);
                 setRaw(mqidx::freq(1), mqp::kLfBoostHz[idx]);
                 setRaw(mqidx::gain(1), lfBoost * 1.4f - lfAtten * 1.75f);
@@ -1312,11 +1312,11 @@ private:
             }
 
             // Band 5 (mqidx 4): Parametric <- Tube HF Boost (gain*1.8, Q=2-bw*1.7).
-            const float hfBoost = values[kParamPultecHfBoostGain];
+            const float hfBoost = values[kParamTubeEqHfBoostGain];
             if (std::abs(hfBoost) > 0.1f)
             {
-                const int idx = clampIdx((int)values[kParamPultecHfBoostFreq], 7);
-                const float bw = values[kParamPultecHfBoostBandwidth];
+                const int idx = clampIdx((int)values[kParamTubeEqHfBoostFreq], 7);
+                const float bw = values[kParamTubeEqHfBoostBandwidth];
                 enable(4, true);
                 setRaw(mqidx::freq(4), mqp::kHfBoostHz[idx]);
                 setRaw(mqidx::gain(4), hfBoost * 1.8f);
@@ -1325,10 +1325,10 @@ private:
             }
 
             // Band 7 (mqidx 6): High Shelf cut <- Tube HF Atten (-gain*1.6).
-            const float hfAtten = values[kParamPultecHfAttenGain];
+            const float hfAtten = values[kParamTubeEqHfAttenGain];
             if (std::abs(hfAtten) > 0.1f)
             {
-                const int idx = clampIdx((int)values[kParamPultecHfAttenFreq], 3);
+                const int idx = clampIdx((int)values[kParamTubeEqHfAttenFreq], 3);
                 enable(6, true);
                 setRaw(mqidx::freq(6), mqp::kHfAttenHz[idx]);
                 setRaw(mqidx::gain(6), -hfAtten * 1.6f);
@@ -1336,32 +1336,32 @@ private:
             }
 
             // Mid section -> Bands 3/4/6 (mqidx 2/3/5), if enabled.
-            if (values[kParamPultecMidEnabled] > 0.5f)
+            if (values[kParamTubeEqMidEnabled] > 0.5f)
             {
-                const float midLowPeak = values[kParamPultecMidLowPeak];
+                const float midLowPeak = values[kParamTubeEqMidLowPeak];
                 if (std::abs(midLowPeak) > 0.1f)
                 {
-                    const int idx = clampIdx((int)values[kParamPultecMidLowFreq], 5);
+                    const int idx = clampIdx((int)values[kParamTubeEqMidLowFreq], 5);
                     enable(2, true);
                     setRaw(mqidx::freq(2), mqp::kMidLowHz[idx]);
                     setRaw(mqidx::gain(2), midLowPeak * 1.2f);
                     setRaw(mqidx::q(2), 1.2f);
                     setRaw(mqidx::shape(2), 0.f);
                 }
-                const float midDip = values[kParamPultecMidDip];
+                const float midDip = values[kParamTubeEqMidDip];
                 if (std::abs(midDip) > 0.1f)
                 {
-                    const int idx = clampIdx((int)values[kParamPultecMidDipFreq], 7);
+                    const int idx = clampIdx((int)values[kParamTubeEqMidDipFreq], 7);
                     enable(3, true);
                     setRaw(mqidx::freq(3), mqp::kMidDipHz[idx]);
                     setRaw(mqidx::gain(3), -midDip);    // dip knob already in dB
                     setRaw(mqidx::q(3), 0.8f);
                     setRaw(mqidx::shape(3), 0.f);
                 }
-                const float midHighPeak = values[kParamPultecMidHighPeak];
+                const float midHighPeak = values[kParamTubeEqMidHighPeak];
                 if (std::abs(midHighPeak) > 0.1f)
                 {
-                    const int idx = clampIdx((int)values[kParamPultecMidHighFreq], 5);
+                    const int idx = clampIdx((int)values[kParamTubeEqMidHighFreq], 5);
                     enable(5, true);
                     setRaw(mqidx::freq(5), mqp::kMidHighHz[idx]);
                     setRaw(mqidx::gain(5), midHighPeak * 1.2f);
@@ -1369,7 +1369,7 @@ private:
                     setRaw(mqidx::shape(5), 0.f);
                 }
             }
-            setRaw(kParamMasterGain, values[kParamPultecOutputGain]);
+            setRaw(kParamMasterGain, values[kParamTubeEqOutputGain]);
         }
         else if (mode == kMatchModeIndex)
         {
@@ -2598,7 +2598,7 @@ private:
     {
         auto setP = [&](uint32_t id, float v) {
             editParameter(id, true); values[id] = v; setParameterValue(id, v); editParameter(id, false); };
-        for (uint32_t i = kParamPultecLfBoostGain; i <= kParamPultecMidHighPeak; ++i)
+        for (uint32_t i = kParamTubeEqLfBoostGain; i <= kParamTubeEqMidHighPeak; ++i)
             setP(i, kMqParams[i].def);                          // reset Tube group
         setP(kParamEqType, (float)kTubeModeIndex);              // keep Tube character
         if (pi >= 0 && pi < mqprog::kNumTubePrograms)
@@ -2936,10 +2936,10 @@ private:
 
     float tubeLfCombinedDb(float freq, double sr) const
     {
-        const float boostGain = values[kParamPultecLfBoostGain];
-        const float attenGain = values[kParamPultecLfAttenGain];
+        const float boostGain = values[kParamTubeEqLfBoostGain];
+        const float attenGain = values[kParamTubeEqLfAttenGain];
         if (boostGain < 0.1f && attenGain < 0.1f) return 0.f;
-        float frequency = mqp::kLfBoostHz[choiceIdx(kParamPultecLfBoostFreq)];
+        float frequency = mqp::kLfBoostHz[choiceIdx(kParamTubeEqLfBoostFreq)];
         const float maxFreq = (float)sr * 0.45f;
         frequency = std::max(10.f, std::min(frequency, maxFreq));
         const float twoPi = 2.f * (float)duskaudio::kMultiQPi;
@@ -2975,11 +2975,11 @@ private:
 
     float tubeHfBoostDb(float freq) const
     {
-        const float g = values[kParamPultecHfBoostGain];
+        const float g = values[kParamTubeEqHfBoostGain];
         if (g < 0.1f) return 0.f;
-        const float fc = mqp::kHfBoostHz[choiceIdx(kParamPultecHfBoostFreq)];
+        const float fc = mqp::kHfBoostHz[choiceIdx(kParamTubeEqHfBoostFreq)];
         const float gain = g * 1.8f;
-        const float q = 2.0f + (0.3f - 2.0f) * values[kParamPultecHfBoostBandwidth]; // jmap bw 0..1 -> Q 2..0.3
+        const float q = 2.0f + (0.3f - 2.0f) * values[kParamTubeEqHfBoostBandwidth]; // jmap bw 0..1 -> Q 2..0.3
         const float bandwidth = 1.0f / q;
         const float logRatio = std::log(freq / fc);
         return gain * std::exp(-0.5f * std::pow(logRatio / (bandwidth * 0.6f), 2.0f));
@@ -2987,9 +2987,9 @@ private:
 
     float tubeHfAttenDb(float freq) const
     {
-        const float g = values[kParamPultecHfAttenGain];
+        const float g = values[kParamTubeEqHfAttenGain];
         if (g < 0.1f) return 0.f;
-        const float fc = mqp::kHfAttenHz[choiceIdx(kParamPultecHfAttenFreq)];
+        const float fc = mqp::kHfAttenHz[choiceIdx(kParamTubeEqHfAttenFreq)];
         const float gain = -g * 1.6f;
         const float logRatio = std::log10(freq / fc);
         const float normalized = 0.5f * (1.0f + std::tanh(logRatio / 0.5f));
@@ -2998,8 +2998,8 @@ private:
 
     float tubeMidDb(float freq, double sr) const
     {
-        if (values[kParamPultecMidEnabled] < 0.5f) return 0.f;
-        const float lowPk = values[kParamPultecMidLowPeak], dip = values[kParamPultecMidDip], hiPk = values[kParamPultecMidHighPeak];
+        if (values[kParamTubeEqMidEnabled] < 0.5f) return 0.f;
+        const float lowPk = values[kParamTubeEqMidLowPeak], dip = values[kParamTubeEqMidDip], hiPk = values[kParamTubeEqMidHighPeak];
         if (lowPk < 0.01f && dip < 0.01f && hiPk < 0.01f) return 0.f;
         const double omega = 2.0 * duskaudio::kMultiQPi * freq / sr;
         const double cosw = std::cos(omega), sinw = std::sin(omega), cos2w = std::cos(2 * omega), sin2w = std::sin(2 * omega);
@@ -3024,9 +3024,9 @@ private:
             return tubeBiquadMag(b0, b1, b2, a1, a2, cosw, sinw, cos2w, sin2w);
         };
         double combined = 1.0;
-        if (lowPk > 0.01f) combined *= peakMag(mqp::kMidLowHz[choiceIdx(kParamPultecMidLowFreq)], 1.2f, lowPk * 1.2f);
-        if (dip   > 0.01f) combined *= peakMag(mqp::kMidDipHz[choiceIdx(kParamPultecMidDipFreq)], 0.8f, -dip * 1.0f);
-        if (hiPk  > 0.01f) combined *= peakMag(mqp::kMidHighHz[choiceIdx(kParamPultecMidHighFreq)], 1.4f, hiPk * 1.2f);
+        if (lowPk > 0.01f) combined *= peakMag(mqp::kMidLowHz[choiceIdx(kParamTubeEqMidLowFreq)], 1.2f, lowPk * 1.2f);
+        if (dip   > 0.01f) combined *= peakMag(mqp::kMidDipHz[choiceIdx(kParamTubeEqMidDipFreq)], 0.8f, -dip * 1.0f);
+        if (hiPk  > 0.01f) combined *= peakMag(mqp::kMidHighHz[choiceIdx(kParamTubeEqMidHighFreq)], 1.4f, hiPk * 1.2f);
         return (float)(20.0 * std::log10(combined + 1e-10));
     }
 
@@ -3092,11 +3092,11 @@ private:
             }
             dl->AddPolyline(pts.data(), (int)pts.size(), col, 0, thick * s);
         };
-        const float lfB = values[kParamPultecLfBoostGain], lfA = values[kParamPultecLfAttenGain];
-        const float hfB = values[kParamPultecHfBoostGain], hfA = values[kParamPultecHfAttenGain];
-        const bool  midOn = values[kParamPultecMidEnabled] > 0.5f;
-        const bool  midAny = values[kParamPultecMidLowPeak] > 0.01f || values[kParamPultecMidDip] > 0.01f
-                          || values[kParamPultecMidHighPeak] > 0.01f;
+        const float lfB = values[kParamTubeEqLfBoostGain], lfA = values[kParamTubeEqLfAttenGain];
+        const float hfB = values[kParamTubeEqHfBoostGain], hfA = values[kParamTubeEqHfAttenGain];
+        const bool  midOn = values[kParamTubeEqMidEnabled] > 0.5f;
+        const bool  midAny = values[kParamTubeEqMidLowPeak] > 0.01f || values[kParamTubeEqMidDip] > 0.01f
+                          || values[kParamTubeEqMidHighPeak] > 0.01f;
         if (lfB > 0.1f || lfA > 0.1f)
             section(IM_COL32(96, 160, 200, 205), 1.6f, [&](float f) { return tubeLfCombinedDb(f, sr); });
         if (hfB > 0.1f || hfA > 0.1f)
@@ -3136,39 +3136,39 @@ private:
         // --- LF section ---
         {
             const float cx = 0.5f * (CX[0] + CX[1]);
-            stepSelector(dl, "tlff", cx, PY0 + 44, 92.f, 20.f, "BOOST/ATTEN FREQ", kParamPultecLfBoostFreq);
-            tubeKnob(dl, "tlfb", kParamPultecLfBoostGain, 0.f, 10.f, cx - 46, PY0 + 130, 26.f, "BOOST", "%.1f", "");
-            tubeKnob(dl, "tlfa", kParamPultecLfAttenGain, 0.f, 10.f, cx + 46, PY0 + 130, 26.f, "ATTEN", "%.1f", "");
+            stepSelector(dl, "tlff", cx, PY0 + 44, 92.f, 20.f, "BOOST/ATTEN FREQ", kParamTubeEqLfBoostFreq);
+            tubeKnob(dl, "tlfb", kParamTubeEqLfBoostGain, 0.f, 10.f, cx - 46, PY0 + 130, 26.f, "BOOST", "%.1f", "");
+            tubeKnob(dl, "tlfa", kParamTubeEqLfAttenGain, 0.f, 10.f, cx + 46, PY0 + 130, 26.f, "ATTEN", "%.1f", "");
         }
         // --- MID section ---
         {
-            const bool midOn = values[kParamPultecMidEnabled] > 0.5f;
+            const bool midOn = values[kParamTubeEqMidEnabled] > 0.5f;
             const float cx = 0.5f * (CX[1] + CX[2]);
             panelButton(dl, "tmiden", cx - 34, PY0 + 30, cx + 34, PY0 + 50, midOn ? "MID: ON" : "MID: OFF",
-                        midOn ? kGreenBtn : IM_COL32(50, 44, 38, 255), [this] { toggleParam(kParamPultecMidEnabled); });
+                        midOn ? kGreenBtn : IM_COL32(50, 44, 38, 255), [this] { toggleParam(kParamTubeEqMidEnabled); });
             const float col1 = CX[1] + 52, col2 = 0.5f * (CX[1] + CX[2]), col3 = CX[2] - 52;
-            stepSelector(dl, "tmlf", col1, PY0 + 78, 74.f, 18.f, "LOW PK FREQ", kParamPultecMidLowFreq, midOn);
-            stepSelector(dl, "tmdf", col2, PY0 + 78, 74.f, 18.f, "DIP FREQ", kParamPultecMidDipFreq, midOn);
-            stepSelector(dl, "tmhf", col3, PY0 + 78, 74.f, 18.f, "HIGH PK FREQ", kParamPultecMidHighFreq, midOn);
-            tubeKnob(dl, "tmlp", kParamPultecMidLowPeak, 0.f, 10.f, col1, PY0 + 158, 24.f, "PEAK", "%.1f", "");
-            tubeKnob(dl, "tmd",  kParamPultecMidDip,     0.f, 10.f, col2, PY0 + 158, 24.f, "DIP", "%.1f", "");
-            tubeKnob(dl, "tmhp", kParamPultecMidHighPeak,0.f, 10.f, col3, PY0 + 158, 24.f, "PEAK", "%.1f", "");
+            stepSelector(dl, "tmlf", col1, PY0 + 78, 74.f, 18.f, "LOW PK FREQ", kParamTubeEqMidLowFreq, midOn);
+            stepSelector(dl, "tmdf", col2, PY0 + 78, 74.f, 18.f, "DIP FREQ", kParamTubeEqMidDipFreq, midOn);
+            stepSelector(dl, "tmhf", col3, PY0 + 78, 74.f, 18.f, "HIGH PK FREQ", kParamTubeEqMidHighFreq, midOn);
+            tubeKnob(dl, "tmlp", kParamTubeEqMidLowPeak, 0.f, 10.f, col1, PY0 + 158, 24.f, "PEAK", "%.1f", "");
+            tubeKnob(dl, "tmd",  kParamTubeEqMidDip,     0.f, 10.f, col2, PY0 + 158, 24.f, "DIP", "%.1f", "");
+            tubeKnob(dl, "tmhp", kParamTubeEqMidHighPeak,0.f, 10.f, col3, PY0 + 158, 24.f, "PEAK", "%.1f", "");
         }
         // --- HF section ---
         {
             const float cxa = CX[2] + 60, cxb = CX[3] - 60;
-            stepSelector(dl, "thbf", cxa, PY0 + 44, 82.f, 20.f, "BOOST FREQ", kParamPultecHfBoostFreq);
-            stepSelector(dl, "thaf", cxb, PY0 + 44, 82.f, 20.f, "ATTEN FREQ", kParamPultecHfAttenFreq);
-            tubeKnob(dl, "thb",  kParamPultecHfBoostGain, 0.f, 10.f, cxa, PY0 + 130, 26.f, "BOOST", "%.1f", "");
-            tubeKnob(dl, "thbw", kParamPultecHfBoostBandwidth, 0.f, 1.f, 0.5f * (cxa + cxb), PY0 + 220, 22.f, "BANDWIDTH", "%.2f", "");
-            tubeKnob(dl, "tha",  kParamPultecHfAttenGain, 0.f, 10.f, cxb, PY0 + 130, 26.f, "ATTEN", "%.1f", "");
+            stepSelector(dl, "thbf", cxa, PY0 + 44, 82.f, 20.f, "BOOST FREQ", kParamTubeEqHfBoostFreq);
+            stepSelector(dl, "thaf", cxb, PY0 + 44, 82.f, 20.f, "ATTEN FREQ", kParamTubeEqHfAttenFreq);
+            tubeKnob(dl, "thb",  kParamTubeEqHfBoostGain, 0.f, 10.f, cxa, PY0 + 130, 26.f, "BOOST", "%.1f", "");
+            tubeKnob(dl, "thbw", kParamTubeEqHfBoostBandwidth, 0.f, 1.f, 0.5f * (cxa + cxb), PY0 + 220, 22.f, "BANDWIDTH", "%.2f", "");
+            tubeKnob(dl, "tha",  kParamTubeEqHfAttenGain, 0.f, 10.f, cxb, PY0 + 130, 26.f, "ATTEN", "%.1f", "");
         }
         // --- I/O + drive ---
         {
             const float cx = 0.5f * (CX[3] + CX[4]);
-            tubeKnob(dl, "tin",  kParamPultecInputGain,  -12.f, 12.f, cx, PY0 + 58,  22.f, "INPUT", "%.1f", " dB");
-            tubeKnob(dl, "tdrv", kParamPultecTubeDrive,   0.f,  1.f,  cx, PY0 + 150, 22.f, "DRIVE", "%.0f", "%", 100.f);
-            tubeKnob(dl, "tout", kParamPultecOutputGain, -12.f, 12.f, cx, PY0 + 242, 22.f, "OUTPUT", "%.1f", " dB");
+            tubeKnob(dl, "tin",  kParamTubeEqInputGain,  -12.f, 12.f, cx, PY0 + 58,  22.f, "INPUT", "%.1f", " dB");
+            tubeKnob(dl, "tdrv", kParamTubeEqTubeDrive,   0.f,  1.f,  cx, PY0 + 150, 22.f, "DRIVE", "%.0f", "%", 100.f);
+            tubeKnob(dl, "tout", kParamTubeEqOutputGain, -12.f, 12.f, cx, PY0 + 242, 22.f, "OUTPUT", "%.1f", " dB");
         }
     }
 

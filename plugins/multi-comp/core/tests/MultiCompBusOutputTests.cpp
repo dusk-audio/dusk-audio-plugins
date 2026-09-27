@@ -128,7 +128,7 @@ void mixParity() {
     std::printf("BUS mix worst %.6f dB, peak %.6f%%, unity difference %.9f, affine difference %.9f\n",
         worstGain, 100 * worstPeak, unity, affine);
     require(worstGain < .2 && worstPeak < .01,
-        "BUS dry/wet mix matches native UAD at Mix 0, 50 and 100");
+        "BUS dry/wet mix matches native reference at Mix 0, 50 and 100");
     // 0.002722 measured: a 0.02-sample group-delay residual of the oversampling
     // round trip, not a level error (the four Mix=0 band gains agree with the
     // native 0 dB to 0.000121 dB). Applying makeup or the ceiling to the dry
@@ -163,7 +163,7 @@ void ceilingParity() {
     }
     std::printf("BUS compressed ceiling worst %.6f dB, peak %.6f%%\n", worstGain, 100 * worstPeak);
     require(worstGain < .35 && worstPeak < .009,
-        "BUS compressed output ceiling matches native UAD at both headroom and makeup settings");
+        "BUS compressed output ceiling matches native reference at both headroom and makeup settings");
 }
 
 }

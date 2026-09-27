@@ -75,12 +75,12 @@ int main()
         // Set up the exact same chain as OptoCompressor::prepare()
         HardwareEmulation::TransformerEmulation inputTransformer;
         inputTransformer.prepare(sr, 1);
-        inputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getLA2A().inputTransformer);
+        inputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getOptoCompressor().inputTransformer);
         inputTransformer.setEnabled(true);
 
         HardwareEmulation::TransformerEmulation outputTransformer;
         outputTransformer.prepare(sr, 1);
-        outputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getLA2A().outputTransformer);
+        outputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getOptoCompressor().outputTransformer);
         outputTransformer.setEnabled(true);
 
         HardwareEmulation::TubeEmulation tubeStage;
@@ -179,12 +179,12 @@ int main()
 
         HardwareEmulation::TransformerEmulation inputXfrm;
         inputXfrm.prepare(sr, 1);
-        inputXfrm.setProfile(HardwareEmulation::HardwareProfiles::getLA2A().inputTransformer);
+        inputXfrm.setProfile(HardwareEmulation::HardwareProfiles::getOptoCompressor().inputTransformer);
         inputXfrm.setEnabled(true);
 
         HardwareEmulation::TransformerEmulation outputXfrm;
         outputXfrm.prepare(sr, 1);
-        outputXfrm.setProfile(HardwareEmulation::HardwareProfiles::getLA2A().outputTransformer);
+        outputXfrm.setProfile(HardwareEmulation::HardwareProfiles::getOptoCompressor().outputTransformer);
         outputXfrm.setEnabled(true);
 
         HardwareEmulation::TubeEmulation tube;

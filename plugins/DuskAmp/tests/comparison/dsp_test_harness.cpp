@@ -214,9 +214,9 @@ struct AmpConfig
 };
 
 static const AmpConfig kAmps[] = {
-    { "Fender",   ToneStackModel::Topology::Fender,   AmpType::Fender,   0.3f  },
-    { "Marshall", ToneStackModel::Topology::Marshall, AmpType::Marshall, 0.4f  },
-    { "Vox",      ToneStackModel::Topology::Vox,      AmpType::Vox,      0.35f },
+    { "AmericanClean", ToneStackModel::Topology::AmericanClean, AmpType::AmericanClean, 0.3f  },
+    { "BritishCrunch", ToneStackModel::Topology::BritishCrunch, AmpType::BritishCrunch, 0.4f  },
+    { "BritishChime",  ToneStackModel::Topology::BritishChime,  AmpType::BritishChime,  0.35f },
 };
 
 struct DriveConfig
@@ -354,11 +354,11 @@ int main (int argc, char* argv[])
     std::cout << "=== TONE STACK IMPULSE RESPONSES ===" << std::endl;
     {
         auto impulse = generateImpulse (sr);
-        const char* typeNames[] = { "Fender", "Marshall", "Vox" };
+        const char* typeNames[] = { "AmericanClean", "BritishCrunch", "BritishChime" };
         ToneStackModel::Topology types[] = {
-            ToneStackModel::Topology::Fender,
-            ToneStackModel::Topology::Marshall,
-            ToneStackModel::Topology::Vox
+            ToneStackModel::Topology::AmericanClean,
+            ToneStackModel::Topology::BritishCrunch,
+            ToneStackModel::Topology::BritishChime
         };
 
         for (int i = 0; i < 3; ++i)
@@ -457,9 +457,9 @@ int main (int argc, char* argv[])
         // into "amp + gain"; we just lean on a higher preampGain in the
         // DriveConfig below to push the same circuit harder.
         AmpConfig crankedAmps[] = {
-            { "Fender",   ToneStackModel::Topology::Fender,   AmpType::Fender,   0.55f },
-            { "Marshall", ToneStackModel::Topology::Marshall, AmpType::Marshall, 0.60f },
-            { "Vox",      ToneStackModel::Topology::Vox,      AmpType::Vox,      0.55f },
+            { "AmericanClean", ToneStackModel::Topology::AmericanClean, AmpType::AmericanClean, 0.55f },
+            { "BritishCrunch", ToneStackModel::Topology::BritishCrunch, AmpType::BritishCrunch, 0.60f },
+            { "BritishChime",  ToneStackModel::Topology::BritishChime,  AmpType::BritishChime,  0.55f },
         };
         for (const auto& amp : crankedAmps)
         {
@@ -521,9 +521,9 @@ int main (int argc, char* argv[])
 
         struct PAConfig { const char* name; AmpType type; float drive; };
         PAConfig paConfigs[] = {
-            { "Fender_PA",   AmpType::Fender,   0.5f },
-            { "Marshall_PA", AmpType::Marshall, 0.5f },
-            { "Vox_PA",      AmpType::Vox,      0.7f }, // Higher drive to push into nonlinear region
+            { "AmericanClean_PA", AmpType::AmericanClean, 0.5f },
+            { "BritishCrunch_PA", AmpType::BritishCrunch, 0.5f },
+            { "BritishChime_PA",  AmpType::BritishChime,  0.7f }, // Higher drive to push into nonlinear region
         };
 
         constexpr int blockSize = 512;
@@ -579,7 +579,7 @@ int main (int argc, char* argv[])
     // The push-pull fix made British crunch correct but collapsed American clean amp's full-chain
     // output to silence. Render the chain at incremental endpoints to pinpoint
     // where the signal disappears.
-    std::cout << std::endl << "=== FENDER STAGE-BY-STAGE DIAGNOSTIC ===" << std::endl;
+    std::cout << std::endl << "=== AMERICAN CLEAN STAGE-BY-STAGE DIAGNOSTIC ===" << std::endl;
     {
         auto signal = generateTestTone (sr, 440.0, 0.25f);   // matches THD "normal"
         constexpr int blockSize = 512;
@@ -595,7 +595,7 @@ int main (int argc, char* argv[])
             DuskAudio::OversamplingManager os;
             os.setFactor (kOversamplingFactor);
             os.prepare (sr, blockSize, 1);
-            auto preamp = PreampModel::create (AmpType::Fender);
+            auto preamp = PreampModel::create (AmpType::AmericanClean);
             preamp->prepare (os.getOversampledSampleRate());
             preamp->setGain (0.55f);   // crunch
             preamp->setBright (false);
@@ -621,13 +621,13 @@ int main (int argc, char* argv[])
             DuskAudio::OversamplingManager os;
             os.setFactor (kOversamplingFactor);
             os.prepare (sr, blockSize, 1);
-            auto preamp = PreampModel::create (AmpType::Fender);
+            auto preamp = PreampModel::create (AmpType::AmericanClean);
             ToneStackModel ts;
             preamp->prepare (os.getOversampledSampleRate());
             ts.prepare (os.getOversampledSampleRate());
             preamp->setGain (0.55f);
             preamp->setBright (false);
-            ts.setTopology (ToneStackModel::Topology::Fender);
+            ts.setTopology (ToneStackModel::Topology::AmericanClean);
             ts.setBass (0.5f); ts.setMid (0.5f); ts.setTreble (0.5f);
             juce::AudioBuffer<float> osBuf (1, blockSize);
             std::vector<float> out (signal);
@@ -653,13 +653,13 @@ int main (int argc, char* argv[])
             DuskAudio::OversamplingManager os;
             os.setFactor (kOversamplingFactor);
             os.prepare (sr, blockSize, 1);
-            auto preamp = PreampModel::create (AmpType::Fender);
+            auto preamp = PreampModel::create (AmpType::AmericanClean);
             ToneStackModel ts;
             PowerAmp pa;
             preamp->prepare (os.getOversampledSampleRate());
             ts.prepare (os.getOversampledSampleRate());
             pa.prepare (os.getOversampledSampleRate());
-            pa.setAmpType (AmpType::Fender);
+            pa.setAmpType (AmpType::AmericanClean);
             pa.setIsPushPullOverride (forcePushPull);
             pa.setDrive (0.5f);
             pa.setPresence (0.5f);
@@ -667,7 +667,7 @@ int main (int argc, char* argv[])
             pa.setSag (0.5f);
             preamp->setGain (0.55f);
             preamp->setBright (false);
-            ts.setTopology (ToneStackModel::Topology::Fender);
+            ts.setTopology (ToneStackModel::Topology::AmericanClean);
             ts.setBass (0.5f); ts.setMid (0.5f); ts.setTreble (0.5f);
             juce::AudioBuffer<float> osBuf (1, blockSize);
             std::vector<float> out (signal);
@@ -691,10 +691,10 @@ int main (int argc, char* argv[])
             return out;
         };
 
-        auto a = runPreampOnly();        writeWav (juce::File (outputDir + "/fender_diag_1_preamp.wav"), a, sr);
-        auto b = runPreampToneStack();   writeWav (juce::File (outputDir + "/fender_diag_2_preamp_tonestack.wav"), b, sr);
-        auto c = runFullChain (false);   writeWav (juce::File (outputDir + "/fender_diag_3_full_singleended.wav"), c, sr);
-        auto d = runFullChain (true);    writeWav (juce::File (outputDir + "/fender_diag_4_full_pushpull.wav"), d, sr);
+        auto a = runPreampOnly();        writeWav (juce::File (outputDir + "/american_clean_diag_1_preamp.wav"), a, sr);
+        auto b = runPreampToneStack();   writeWav (juce::File (outputDir + "/american_clean_diag_2_preamp_tonestack.wav"), b, sr);
+        auto c = runFullChain (false);   writeWav (juce::File (outputDir + "/american_clean_diag_3_full_singleended.wav"), c, sr);
+        auto d = runFullChain (true);    writeWav (juce::File (outputDir + "/american_clean_diag_4_full_pushpull.wav"), d, sr);
 
         std::cout << "  Stage 1: preamp only          peak=" << peakOf (a) << std::endl;
         std::cout << "  Stage 2: preamp + tone stack  peak=" << peakOf (b) << std::endl;

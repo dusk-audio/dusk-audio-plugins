@@ -1555,53 +1555,53 @@ inline void applyPreset(juce::AudioProcessorValueTreeState& params, const Preset
     if (preset.hasTube)
     {
         const auto& t = preset.tube;
-        if (auto* p = params.getParameter(ParamIDs::pultecLfBoostGain))
+        if (auto* p = params.getParameter(ParamIDs::tubeEqLfBoostGain))
             p->setValueNotifyingHost(p->convertTo0to1(t.lfBoostGain));
-        // pultecLfBoostFreq is a choice param (indices 0-3 for 20/30/60/100 Hz)
-        if (auto* p = params.getParameter(ParamIDs::pultecLfBoostFreq))
+        // tubeEqLfBoostFreq is a choice param (indices 0-3 for 20/30/60/100 Hz)
+        if (auto* p = params.getParameter(ParamIDs::tubeEqLfBoostFreq))
             p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(
                 nearestChoiceIdx(t.lfBoostFreq, {20.0f, 30.0f, 60.0f, 100.0f}))));
-        if (auto* p = params.getParameter(ParamIDs::pultecLfAttenGain))
+        if (auto* p = params.getParameter(ParamIDs::tubeEqLfAttenGain))
             p->setValueNotifyingHost(p->convertTo0to1(t.lfAttenGain));
-        if (auto* p = params.getParameter(ParamIDs::pultecHfBoostGain))
+        if (auto* p = params.getParameter(ParamIDs::tubeEqHfBoostGain))
             p->setValueNotifyingHost(p->convertTo0to1(t.hfBoostGain));
-        // pultecHfBoostFreq is a choice param (indices 0-6 for 3/4/5/8/10/12/16 kHz)
-        if (auto* p = params.getParameter(ParamIDs::pultecHfBoostFreq))
+        // tubeEqHfBoostFreq is a choice param (indices 0-6 for 3/4/5/8/10/12/16 kHz)
+        if (auto* p = params.getParameter(ParamIDs::tubeEqHfBoostFreq))
             p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(
                 nearestChoiceIdx(t.hfBoostFreq, {3000.0f, 4000.0f, 5000.0f, 8000.0f, 10000.0f, 12000.0f, 16000.0f}))));
-        if (auto* p = params.getParameter(ParamIDs::pultecHfBoostBandwidth))
+        if (auto* p = params.getParameter(ParamIDs::tubeEqHfBoostBandwidth))
             p->setValueNotifyingHost(p->convertTo0to1(t.hfBoostBandwidth));
-        if (auto* p = params.getParameter(ParamIDs::pultecHfAttenGain))
+        if (auto* p = params.getParameter(ParamIDs::tubeEqHfAttenGain))
             p->setValueNotifyingHost(p->convertTo0to1(t.hfAttenGain));
-        // pultecHfAttenFreq is a choice param (indices 0-2 for 5/10/20 kHz)
-        if (auto* p = params.getParameter(ParamIDs::pultecHfAttenFreq))
+        // tubeEqHfAttenFreq is a choice param (indices 0-2 for 5/10/20 kHz)
+        if (auto* p = params.getParameter(ParamIDs::tubeEqHfAttenFreq))
             p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(
                 nearestChoiceIdx(t.hfAttenFreq, {5000.0f, 10000.0f, 20000.0f}))));
-        if (auto* p = params.getParameter(ParamIDs::pultecInputGain))
+        if (auto* p = params.getParameter(ParamIDs::tubeEqInputGain))
             p->setValueNotifyingHost(p->convertTo0to1(t.inputGain));
-        if (auto* p = params.getParameter(ParamIDs::pultecOutputGain))
+        if (auto* p = params.getParameter(ParamIDs::tubeEqOutputGain))
             p->setValueNotifyingHost(p->convertTo0to1(t.outputGain));
-        if (auto* p = params.getParameter(ParamIDs::pultecTubeDrive))
+        if (auto* p = params.getParameter(ParamIDs::tubeEqTubeDrive))
             p->setValueNotifyingHost(p->convertTo0to1(t.tubeDrive));
-        if (auto* p = params.getParameter(ParamIDs::pultecMidEnabled))
+        if (auto* p = params.getParameter(ParamIDs::tubeEqMidEnabled))
             p->setValueNotifyingHost(t.midEnabled ? 1.0f : 0.0f);
-        // pultecMidDipFreq is a choice param (indices 0-6 for 200/300/500/700/1000/1500/2000 Hz)
-        if (auto* p = params.getParameter(ParamIDs::pultecMidDipFreq))
+        // tubeEqMidDipFreq is a choice param (indices 0-6 for 200/300/500/700/1000/1500/2000 Hz)
+        if (auto* p = params.getParameter(ParamIDs::tubeEqMidDipFreq))
             p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(
                 nearestChoiceIdx(t.midDipFreq, {200.0f, 300.0f, 500.0f, 700.0f, 1000.0f, 1500.0f, 2000.0f}))));
-        if (auto* p = params.getParameter(ParamIDs::pultecMidDip))
+        if (auto* p = params.getParameter(ParamIDs::tubeEqMidDip))
             p->setValueNotifyingHost(p->convertTo0to1(t.midDip));
-        // pultecMidLowFreq is a choice param (indices 0-4 for 200/300/500/700/1000 Hz)
-        if (auto* p = params.getParameter(ParamIDs::pultecMidLowFreq))
+        // tubeEqMidLowFreq is a choice param (indices 0-4 for 200/300/500/700/1000 Hz)
+        if (auto* p = params.getParameter(ParamIDs::tubeEqMidLowFreq))
             p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(
                 nearestChoiceIdx(t.midLowFreq, {200.0f, 300.0f, 500.0f, 700.0f, 1000.0f}))));
-        if (auto* p = params.getParameter(ParamIDs::pultecMidLowPeak))
+        if (auto* p = params.getParameter(ParamIDs::tubeEqMidLowPeak))
             p->setValueNotifyingHost(p->convertTo0to1(t.midLowPeak));
-        // pultecMidHighFreq is a choice param (indices 0-4 for 1500/2000/3000/4000/5000 Hz)
-        if (auto* p = params.getParameter(ParamIDs::pultecMidHighFreq))
+        // tubeEqMidHighFreq is a choice param (indices 0-4 for 1500/2000/3000/4000/5000 Hz)
+        if (auto* p = params.getParameter(ParamIDs::tubeEqMidHighFreq))
             p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(
                 nearestChoiceIdx(t.midHighFreq, {1500.0f, 2000.0f, 3000.0f, 4000.0f, 5000.0f}))));
-        if (auto* p = params.getParameter(ParamIDs::pultecMidHighPeak))
+        if (auto* p = params.getParameter(ParamIDs::tubeEqMidHighPeak))
             p->setValueNotifyingHost(p->convertTo0to1(t.midHighPeak));
     }
 

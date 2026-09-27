@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../core/MultiCompDSP.hpp"
-#include "../core/MultiCompDbxLaw.hpp"
+#include "../core/MultiCompVcaLaw.hpp"
 #include "../core/MultiCompPresets.hpp"
 #include <algorithm>
 #include <array>
@@ -60,7 +60,7 @@ inline constexpr std::array<Param, 63> kParams = {{
  {"global_lookahead","Lookahead","ms",0,10,0,CoreParameter::GlobalLookahead,false},
  {"opto_peak_reduction","Peak Reduction","%",0,100,0,CoreParameter::OptoPeakReduction,false}, {"opto_gain","Gain","%",0,100,duskaudio::kOptoGainUnityKnob,CoreParameter::OptoGain,false}, {"opto_limit","Limit Mode","",0,1,0,CoreParameter::OptoLimit,true},
  {"fet_input","Input","dB",-20,40,0,CoreParameter::FetInput,false}, {"fet_output","Output","dB",-20,20,0,CoreParameter::FetOutput,false}, {"fet_attack","Attack","ms",0.02f,80,0.2f,CoreParameter::FetAttack,false,0.01f,0.3f}, {"fet_release","Release","ms",50,1100,400,CoreParameter::FetRelease,false}, {"fet_ratio","Ratio",":1",0,4,0,CoreParameter::FetRatio,true}, {"fet_curve_mode","Curve Mode","",0,1,0,CoreParameter::FetCurve,true}, {"fet_transient","Transient","%",0,100,0,CoreParameter::FetTransient,false}, {"fet_threshold","Threshold","dB",-60,0,-10,CoreParameter::FetThreshold,false},
- {"vca_threshold","Threshold","dB",duskaudio::dbx160::kThresholdMinDb,duskaudio::dbx160::kThresholdMaxDb,duskaudio::dbx160::kThresholdDefaultDb,CoreParameter::VcaThreshold,false}, {"vca_compression","Compression","",duskaudio::dbx160::kCompressLaw.front().position,duskaudio::dbx160::kCompressLaw.back().position,duskaudio::dbx160::kCompressDefaultPosition,CoreParameter::VcaRatio,false}, {"vca_attack","Attack","ms",0.1f,50,1,CoreParameter::VcaAttack,false}, {"vca_release","Release","ms",10,5000,100,CoreParameter::VcaRelease,false}, {"vca_output","Output","dB",-20,20,0,CoreParameter::VcaOutput,false}, {"vca_overeasy","Over Easy","",0,1,0,CoreParameter::VcaOverEasy,true}, {"vca_detector_mode","VCA Detector","",0,1,0,CoreParameter::VcaClassicDetector,true},
+ {"vca_threshold","Threshold","dB",duskaudio::vcaLaw::kThresholdMinDb,duskaudio::vcaLaw::kThresholdMaxDb,duskaudio::vcaLaw::kThresholdDefaultDb,CoreParameter::VcaThreshold,false}, {"vca_compression","Compression","",duskaudio::vcaLaw::kCompressLaw.front().position,duskaudio::vcaLaw::kCompressLaw.back().position,duskaudio::vcaLaw::kCompressDefaultPosition,CoreParameter::VcaRatio,false}, {"vca_attack","Attack","ms",0.1f,50,1,CoreParameter::VcaAttack,false}, {"vca_release","Release","ms",10,5000,100,CoreParameter::VcaRelease,false}, {"vca_output","Output","dB",-20,20,0,CoreParameter::VcaOutput,false}, {"vca_overeasy","Over Easy","",0,1,0,CoreParameter::VcaOverEasy,true}, {"vca_detector_mode","VCA Detector","",0,1,0,CoreParameter::VcaClassicDetector,true},
  {"bus_threshold","Threshold","dB",-30,15,0,CoreParameter::BusThreshold,false}, {"bus_ratio","Ratio",":1",0,2,0,CoreParameter::BusRatio,true}, {"bus_attack","Attack","",0,5,2,CoreParameter::BusAttack,true}, {"bus_release","Release","",0,4,1,CoreParameter::BusRelease,true}, {"bus_makeup","Makeup","dB",0,20,0,CoreParameter::BusMakeup,false}, {"bus_mix","Bus Mix","%",0,100,100,CoreParameter::BusMix,false},
  {"studio_vca_threshold","Threshold","dB",-40,20,-10,CoreParameter::StudioVcaThreshold,false}, {"studio_vca_ratio","Ratio",":1",1,10,3,CoreParameter::StudioVcaRatio,false}, {"studio_vca_attack","Attack","ms",0.3f,75,10,CoreParameter::StudioVcaAttack,false}, {"studio_vca_release","Release","ms",100,4000,300,CoreParameter::StudioVcaRelease,false}, {"studio_vca_output","Output","dB",-20,20,0,CoreParameter::StudioVcaOutput,false},
  {"digital_threshold","Threshold","dB",-60,0,-20,CoreParameter::DigitalThreshold,false}, {"digital_ratio","Ratio",":1",1,100,4,CoreParameter::DigitalRatio,false,0.1f,0.4f}, {"digital_knee","Knee","dB",0,20,6,CoreParameter::DigitalKnee,false}, {"digital_attack","Attack","ms",0.01f,500,10,CoreParameter::DigitalAttack,false,0.01f,0.3f}, {"digital_release","Release","ms",1,5000,100,CoreParameter::DigitalRelease,false,1,0.4f}, {"digital_lookahead","Lookahead","ms",0,10,0,CoreParameter::DigitalLookahead,false}, {"digital_mix","Mix","%",0,100,100,CoreParameter::DigitalMix,false}, {"digital_output","Output","dB",-24,24,0,CoreParameter::DigitalOutput,false}, {"digital_adaptive","Adaptive Release","",0,1,0,CoreParameter::DigitalAdaptive,true},
@@ -395,12 +395,12 @@ inline bool decodeState(std::string_view state, StateValues& out) noexcept
         if (legacyRatio)
         {
             if (!hostValueInRange(value, 0.0f, 1.0f, false)) return false;
-            value = duskaudio::dbx160::compressPosition(legacyVcaRatioFromState(value));
+            value = duskaudio::vcaLaw::compressPosition(legacyVcaRatioFromState(value));
         }
         else if (legacy && index == static_cast<int>(ParamId::VcaThreshold))
         {
             if (!hostValueInRange(value, -38.0f, 12.0f, false)) return false;
-            value = std::clamp(value, duskaudio::dbx160::kThresholdMinDb, duskaudio::dbx160::kThresholdMaxDb);
+            value = std::clamp(value, duskaudio::vcaLaw::kThresholdMinDb, duskaudio::vcaLaw::kThresholdMaxDb);
         }
         if (!hostValueInRange(index, value)) return false;
         decoded[static_cast<size_t>(index)] = value;

@@ -16,7 +16,7 @@
 //   [92..97]  analyzer: enabled, pre_post, mode, resolution, smoothing, decay
 //   [98..99]  display: scale_mode, visualize_master_gain
 //   [100..119] british ×20
-//   [120..137] tube/pultec ×18 (6 stepped freqs are CHOICE, resolved via LUT)
+//   [120..137] tube EQ ×18 (6 stepped freqs are CHOICE, resolved via LUT)
 //   [138..185] dyn per-band ×8 (enabled, threshold, attack, release, range, ratio)
 //   [186..189] dyn_detection_mode, auto_gain_enabled, limiter_enabled, limiter_ceiling
 //
@@ -110,24 +110,24 @@ enum MqParamId
     kParamBritishSaturation,
     kParamBritishInputGain,
     kParamBritishOutputGain, // 119
-    kParamPultecLfBoostGain, // 120
-    kParamPultecLfBoostFreq,
-    kParamPultecLfAttenGain,
-    kParamPultecHfBoostGain,
-    kParamPultecHfBoostFreq,
-    kParamPultecHfBoostBandwidth,
-    kParamPultecHfAttenGain,
-    kParamPultecHfAttenFreq,
-    kParamPultecInputGain,
-    kParamPultecOutputGain,
-    kParamPultecTubeDrive,
-    kParamPultecMidEnabled,
-    kParamPultecMidLowFreq,
-    kParamPultecMidLowPeak,
-    kParamPultecMidDipFreq,
-    kParamPultecMidDip,
-    kParamPultecMidHighFreq,
-    kParamPultecMidHighPeak, // 137
+    kParamTubeEqLfBoostGain, // 120
+    kParamTubeEqLfBoostFreq,
+    kParamTubeEqLfAttenGain,
+    kParamTubeEqHfBoostGain,
+    kParamTubeEqHfBoostFreq,
+    kParamTubeEqHfBoostBandwidth,
+    kParamTubeEqHfAttenGain,
+    kParamTubeEqHfAttenFreq,
+    kParamTubeEqInputGain,
+    kParamTubeEqOutputGain,
+    kParamTubeEqTubeDrive,
+    kParamTubeEqMidEnabled,
+    kParamTubeEqMidLowFreq,
+    kParamTubeEqMidLowPeak,
+    kParamTubeEqMidDipFreq,
+    kParamTubeEqMidDip,
+    kParamTubeEqMidHighFreq,
+    kParamTubeEqMidHighPeak, // 137
     kMqDynBase          = 138, // dyn per-band ×8 (6 each) occupy [138..185]
     kParamDynDetectionMode = 186,
     kParamAutoGainEnabled, // 187
@@ -382,7 +382,7 @@ static constexpr MqParam kMqParams[kParamCount] =
 // Compile-time guards: the named indices must line up with the table's layout.
 static_assert(kParamMasterGain == 82, "band block must be 82 params");
 static_assert(mqidx::pan(7) == 81, "band8 pan must be index 81");
-static_assert(kParamPultecMidHighPeak == 137, "tube block must end at 137");
+static_assert(kParamTubeEqMidHighPeak == 137, "tube block must end at 137");
 static_assert(kMqDynBase == 138, "dyn block must start at 138");
 static_assert(mqidx::dynRatio(7) == 185, "dyn block must end at 185");
 static_assert(kParamLimiterCeiling == 189 && kParamCount == 190, "must total 190 params");

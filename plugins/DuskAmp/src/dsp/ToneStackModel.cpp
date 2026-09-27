@@ -24,7 +24,7 @@
 // Component values for each topology
 // ============================================================================
 
-ToneStackModel::FenderMarshallComponents ToneStackModel::getFenderComponents()
+ToneStackModel::TmbStackComponents ToneStackModel::getAmericanCleanComponents()
 {
     // American clean amp
     return {
@@ -38,7 +38,7 @@ ToneStackModel::FenderMarshallComponents ToneStackModel::getFenderComponents()
     };
 }
 
-ToneStackModel::FenderMarshallComponents ToneStackModel::getMarshallComponents()
+ToneStackModel::TmbStackComponents ToneStackModel::getBritishCrunchComponents()
 {
     // British crunch amp
     return {
@@ -52,7 +52,7 @@ ToneStackModel::FenderMarshallComponents ToneStackModel::getMarshallComponents()
     };
 }
 
-ToneStackModel::VoxComponents ToneStackModel::getVoxComponents()
+ToneStackModel::BritishChimeComponents ToneStackModel::getBritishChimeComponents()
 {
     // British class-A chime amp
     // Simplified model: volume pot interaction is omitted since this
@@ -150,14 +150,14 @@ void ToneStackModel::recomputeCoefficients()
 {
     switch (topology_)
     {
-        case Topology::Fender:
-            computeFenderMarshall (getFenderComponents());
+        case Topology::AmericanClean:
+            computeTmbStack (getAmericanCleanComponents());
             break;
-        case Topology::Marshall:
-            computeFenderMarshall (getMarshallComponents());
+        case Topology::BritishCrunch:
+            computeTmbStack (getBritishCrunchComponents());
             break;
-        case Topology::Vox:
-            computeVox (getVoxComponents());
+        case Topology::BritishChime:
+            computeBritishChime (getBritishChimeComponents());
             break;
     }
 }
@@ -180,7 +180,7 @@ void ToneStackModel::recomputeCoefficients()
 // See Yeh 2009 Section 4.2 for the full symbolic expressions.
 // ----------------------------------------------------------------------------
 
-void ToneStackModel::computeFenderMarshall (const FenderMarshallComponents& comp)
+void ToneStackModel::computeTmbStack (const TmbStackComponents& comp)
 {
     double t = static_cast<double> (treble_);
     double m = static_cast<double> (mid_);
@@ -285,7 +285,7 @@ void ToneStackModel::computeFenderMarshall (const FenderMarshallComponents& comp
 // We add a mid peaking section via the C3 coupling path.
 // ----------------------------------------------------------------------------
 
-void ToneStackModel::computeVox (const VoxComponents& comp)
+void ToneStackModel::computeBritishChime (const BritishChimeComponents& comp)
 {
     double t = static_cast<double> (treble_); // Cut control (1.0 = bright, 0.0 = dark)
     double m = static_cast<double> (mid_);

@@ -85,7 +85,7 @@ static bool rates()
     float values[3]{}; int k = 0;
     for (double rate : {44100.,48000.,96000.})
     {
-        duskaudio::sslbus::CompressionMeter m; m.prepare(rate);
+        duskaudio::busLaw::CompressionMeter m; m.prepare(rate);
         for (int i = 0; i < static_cast<int>(rate * .1); ++i) m.process(10);
         values[k++] = m.reading();
     }

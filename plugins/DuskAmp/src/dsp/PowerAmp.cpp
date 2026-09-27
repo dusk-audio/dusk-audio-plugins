@@ -26,7 +26,7 @@ PowerAmp::PowerAmpConfig PowerAmp::getConfigForAmpType (AmpType type)
 {
     switch (type)
     {
-        case AmpType::Fender:
+        case AmpType::AmericanClean:
             return {
                 AnalogEmulation::WaveshaperCurves::CurveType::Triode,
                 0.7f,       // Heavy NFB → clean headroom, lots of control
@@ -54,7 +54,7 @@ PowerAmp::PowerAmpConfig PowerAmp::getConfigForAmpType (AmpType type)
                 12000.0f    // Output transformer HF rolloff
             };
 
-        case AmpType::Vox:
+        case AmpType::BritishChime:
             return {
                 AnalogEmulation::WaveshaperCurves::CurveType::EL84,
                 0.0f,       // NO NFB — raw, harmonically rich (Class A)
@@ -71,7 +71,7 @@ PowerAmp::PowerAmpConfig PowerAmp::getConfigForAmpType (AmpType type)
                 10000.0f    // Earlier HF rolloff (darker transformer)
             };
 
-        case AmpType::Marshall:
+        case AmpType::BritishCrunch:
         default:
             return {
                 AnalogEmulation::WaveshaperCurves::CurveType::Pentode,

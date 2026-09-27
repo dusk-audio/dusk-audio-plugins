@@ -20,9 +20,9 @@ class ToneStackModel
 public:
     enum class Topology
     {
-        Fender = 0,     // American clean amp tone stack
-        Marshall = 1,   // British crunch amp "James" tone stack
-        Vox = 2         // British class-A chime amp cut circuit
+        AmericanClean = 0,  // American clean amp tone stack
+        BritishCrunch = 1,  // British crunch amp "James" tone stack
+        BritishChime  = 2   // British class-A chime amp cut circuit
     };
 
     void prepare (double sampleRate);
@@ -38,7 +38,7 @@ public:
     Topology getTopology() const { return topology_; }
 
 private:
-    Topology topology_ = Topology::Marshall;
+    Topology topology_ = Topology::BritishCrunch;
     double sampleRate_ = 44100.0;
 
     // Pot positions [0.01, 0.99] (clamped to avoid degenerate coefficients)
@@ -54,23 +54,23 @@ private:
     double z1_ = 0.0, z2_ = 0.0, z3_ = 0.0;
 
     // Component value structs for each topology
-    struct FenderMarshallComponents
+    struct TmbStackComponents
     {
         double R1, R2, R3, R4;
         double C1, C2, C3;
     };
 
-    struct VoxComponents
+    struct BritishChimeComponents
     {
         double R1, R2, R3;  // R_bass, R_treble, R_mix
         double C1, C2, C3;
     };
 
-    static FenderMarshallComponents getFenderComponents();
-    static FenderMarshallComponents getMarshallComponents();
-    static VoxComponents getVoxComponents();
+    static TmbStackComponents getAmericanCleanComponents();
+    static TmbStackComponents getBritishCrunchComponents();
+    static BritishChimeComponents getBritishChimeComponents();
 
     void recomputeCoefficients();
-    void computeFenderMarshall (const FenderMarshallComponents& comp);
-    void computeVox (const VoxComponents& comp);
+    void computeTmbStack (const TmbStackComponents& comp);
+    void computeBritishChime (const BritishChimeComponents& comp);
 };

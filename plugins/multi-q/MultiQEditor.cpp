@@ -2695,43 +2695,43 @@ void MultiQEditor::setupTubeEQControls()
 
     // Create attachments
     tubeEQLfBoostAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        processor.parameters, ParamIDs::pultecLfBoostGain, *tubeEQLfBoostSlider);
+        processor.parameters, ParamIDs::tubeEqLfBoostGain, *tubeEQLfBoostSlider);
     tubeEQLfFreqAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        processor.parameters, ParamIDs::pultecLfBoostFreq, *tubeEQLfFreqSelector);
+        processor.parameters, ParamIDs::tubeEqLfBoostFreq, *tubeEQLfFreqSelector);
     tubeEQLfAttenAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        processor.parameters, ParamIDs::pultecLfAttenGain, *tubeEQLfAttenSlider);
+        processor.parameters, ParamIDs::tubeEqLfAttenGain, *tubeEQLfAttenSlider);
     tubeEQHfBoostAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        processor.parameters, ParamIDs::pultecHfBoostGain, *tubeEQHfBoostSlider);
+        processor.parameters, ParamIDs::tubeEqHfBoostGain, *tubeEQHfBoostSlider);
     tubeEQHfBoostFreqAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        processor.parameters, ParamIDs::pultecHfBoostFreq, *tubeEQHfBoostFreqSelector);
+        processor.parameters, ParamIDs::tubeEqHfBoostFreq, *tubeEQHfBoostFreqSelector);
     tubeEQHfBandwidthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        processor.parameters, ParamIDs::pultecHfBoostBandwidth, *tubeEQHfBandwidthSlider);
+        processor.parameters, ParamIDs::tubeEqHfBoostBandwidth, *tubeEQHfBandwidthSlider);
     tubeEQHfAttenAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        processor.parameters, ParamIDs::pultecHfAttenGain, *tubeEQHfAttenSlider);
+        processor.parameters, ParamIDs::tubeEqHfAttenGain, *tubeEQHfAttenSlider);
     tubeEQHfAttenFreqAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        processor.parameters, ParamIDs::pultecHfAttenFreq, *tubeEQHfAttenFreqSelector);
+        processor.parameters, ParamIDs::tubeEqHfAttenFreq, *tubeEQHfAttenFreqSelector);
     tubeEQInputGainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        processor.parameters, ParamIDs::pultecInputGain, *tubeEQInputGainSlider);
+        processor.parameters, ParamIDs::tubeEqInputGain, *tubeEQInputGainSlider);
     tubeEQOutputGainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        processor.parameters, ParamIDs::pultecOutputGain, *tubeEQOutputGainSlider);
+        processor.parameters, ParamIDs::tubeEqOutputGain, *tubeEQOutputGainSlider);
     tubeEQTubeDriveAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        processor.parameters, ParamIDs::pultecTubeDrive, *tubeEQTubeDriveSlider);
+        processor.parameters, ParamIDs::tubeEqTubeDrive, *tubeEQTubeDriveSlider);
 
     // Mid section attachments
     tubeEQMidEnabledAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
-        processor.parameters, ParamIDs::pultecMidEnabled, *tubeEQMidEnabledButton);
+        processor.parameters, ParamIDs::tubeEqMidEnabled, *tubeEQMidEnabledButton);
     tubeEQMidLowFreqAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        processor.parameters, ParamIDs::pultecMidLowFreq, *tubeEQMidLowFreqSelector);
+        processor.parameters, ParamIDs::tubeEqMidLowFreq, *tubeEQMidLowFreqSelector);
     tubeEQMidLowPeakAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        processor.parameters, ParamIDs::pultecMidLowPeak, *tubeEQMidLowPeakSlider);
+        processor.parameters, ParamIDs::tubeEqMidLowPeak, *tubeEQMidLowPeakSlider);
     tubeEQMidDipFreqAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        processor.parameters, ParamIDs::pultecMidDipFreq, *tubeEQMidDipFreqSelector);
+        processor.parameters, ParamIDs::tubeEqMidDipFreq, *tubeEQMidDipFreqSelector);
     tubeEQMidDipAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        processor.parameters, ParamIDs::pultecMidDip, *tubeEQMidDipSlider);
+        processor.parameters, ParamIDs::tubeEqMidDip, *tubeEQMidDipSlider);
     tubeEQMidHighFreqAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        processor.parameters, ParamIDs::pultecMidHighFreq, *tubeEQMidHighFreqSelector);
+        processor.parameters, ParamIDs::tubeEqMidHighFreq, *tubeEQMidHighFreqSelector);
     tubeEQMidHighPeakAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        processor.parameters, ParamIDs::pultecMidHighPeak, *tubeEQMidHighPeakSlider);
+        processor.parameters, ParamIDs::tubeEqMidHighPeak, *tubeEQMidHighPeakSlider);
 }
 
 void MultiQEditor::layoutTubeEQControls()
