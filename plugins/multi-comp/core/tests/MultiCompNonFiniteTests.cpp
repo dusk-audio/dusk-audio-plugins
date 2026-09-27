@@ -23,7 +23,10 @@
 //          host automation value): every output sample finite, meters
 //          finite, and the tail within kSingleFaultTailDb of the control.
 //          std::clamp passes NaN through, so these reached int conversions
-//          and table indices unguarded.
+//          and table indices unguarded. The whole parameter block must also
+//          be byte-identical across those setters: a non-finite value is
+//          ignored outright, including on a switch whose accepted value
+//          sounds like the default (+inf Solo on every band mutes nothing).
 //   shape  WaveshaperCurves::processWithDrive (Multi-Comp's copy) on a +inf,
 //          -inf or NaN input at every drive, bypass included, and on finite
 //          audio with a NaN drive: every output finite, and the NaN drive
@@ -41,6 +44,7 @@
 #include "../../HardwareEmulation/WaveshaperCurves.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <limits>
@@ -94,7 +98,20 @@ struct Render
     double recoveryBlockRms = 0.0;
     double tailRms = 0.0;
     bool metersFinite = true;
+    bool parametersUnchanged = true;
 };
+
+// The parameter block's bytes, to compare the whole block rather than a
+// hand-picked list of fields.
+using ParameterBytes = std::array<unsigned char, sizeof(duskaudio::MultiCompParameterState)>;
+
+ParameterBytes parameterBytes(const DSP& dsp)
+{
+    ParameterBytes bytes;
+    const auto* state = reinterpret_cast<const unsigned char*>(&dsp.parameterState());
+    std::copy(state, state + bytes.size(), bytes.begin());
+    return bytes;
+}
 
 bool metersFinite(const DSP& dsp)
 {
@@ -149,6 +166,7 @@ Render render(const ModeCase& mode, int oversampling, int channels, bool sidecha
         }
         if (fault == Fault::Parameter && block == kFaultBlock)
         {
+            const ParameterBytes before = parameterBytes(dsp);
             for (int p = 0; p < static_cast<int>(P::None); ++p)
                 dsp.setParameter(static_cast<P>(p), value);
             for (int band = 0; band < 4; ++band)
@@ -156,6 +174,7 @@ Render render(const ModeCase& mode, int oversampling, int channels, bool sidecha
                     dsp.setMultibandParameter(band, static_cast<DSP::MultibandParameter>(p), value);
             dsp.setMix(value);
             dsp.setStereoLink(value);
+            result.parametersUnchanged = parameterBytes(dsp) == before;
         }
         if (sidechain) dsp.processBlockExternal(in, sc, out, channels, kBlock);
         else dsp.processBlock(in, out, channels, kBlock);
@@ -185,6 +204,7 @@ struct Summary
     double worstTailDb = 0.0;
     double quietestRecoveryRms = std::numeric_limits<double>::max();
     int meterFailures = 0;
+    int stateChanges = 0;
     int failures = 0;
 };
 
@@ -195,16 +215,18 @@ void score(Summary& summary, const Render& faulted, const Render& control, doubl
     summary.worstTailDb = std::max(summary.worstTailDb, tailDb);
     summary.quietestRecoveryRms = std::min(summary.quietestRecoveryRms, faulted.recoveryBlockRms);
     summary.meterFailures += faulted.metersFinite ? 0 : 1;
+    summary.stateChanges += faulted.parametersUnchanged ? 0 : 1;
     if (faulted.nonFinite != 0 || !faulted.metersFinite || faulted.recoveryBlockRms <= kAudibleRms
-        || !(tailDb <= tailBoundDb))
+        || !faulted.parametersUnchanged || !(tailDb <= tailBoundDb))
         ++summary.failures;
 }
 
 void print(const char* gate, const char* mode, const char* path, const Summary& s)
 {
-    std::printf("%-5s %-9s %-9s non-finite %7ld  recovery-block RMS %.6f  worst tail %9.6f dB  meter faults %d  %s\n",
+    std::printf("%-5s %-9s %-9s non-finite %7ld  recovery-block RMS %.6f  worst tail %9.6f dB  meter faults %d"
+                "  state changes %d  %s\n",
                 gate, mode, path, s.nonFinite, s.quietestRecoveryRms, s.worstTailDb, s.meterFailures,
-                s.failures == 0 ? "PASS" : "FAIL");
+                s.stateChanges, s.failures == 0 ? "PASS" : "FAIL");
 }
 
 int waveshaperFailures(const float (&faults)[3])
