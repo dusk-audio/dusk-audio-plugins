@@ -43,6 +43,10 @@ public:
     // Input should be normalized (-2 to +2 range for full curve access)
     float process(float input, CurveType curve) const
     {
+        // NaN/Inf guard — clamp won't catch NaN (NaN comparisons are always false)
+        if (!std::isfinite(input))
+            return 0.0f;
+
         // Map input to table index
         float normalized = (input + TABLE_RANGE / 2.0f) / TABLE_RANGE;
         normalized = std::clamp(normalized, 0.0f, 0.9999f);
@@ -59,7 +63,12 @@ public:
     // Process with drive amount (0 = bypass, 1 = full saturation)
     float processWithDrive(float input, CurveType curve, float drive) const
     {
-        drive = std::clamp(drive, 0.0f, 1.0f);
+        // process() maps a non-finite input to 0, but the blend below reuses
+        // the raw input, so guard it here too, bypass included. std::clamp
+        // passes a NaN drive through; read it as bypass.
+        if (!std::isfinite(input))
+            return 0.0f;
+        drive = std::isnan(drive) ? 0.0f : std::clamp(drive, 0.0f, 1.0f);
         if (drive <= 0.0f)
             return input;
 
