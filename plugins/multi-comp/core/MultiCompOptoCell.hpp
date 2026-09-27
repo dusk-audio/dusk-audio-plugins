@@ -110,6 +110,13 @@ inline float optoCurveDb(float overshootDb, bool limit) noexcept
 {
     const auto& curve = limit ? kOptoLimitCurve : kOptoCompressCurve;
     const float position = overshootDb * 0.5f;
+    // A huge finite input overflows the detector's squared powers, and its
+    // level then reads NaN. NaN fails both range tests below and would reach
+    // the size_t conversion, which is undefined behaviour (UBSan:
+    // float-cast-overflow). No level, no reduction. +/-inf already take the
+    // two range branches.
+    if (std::isnan(position))
+        return 0.0f;
     if (position <= 0.0f) {
         if (limit) return std::max(0.0f, curve[0] + position * (curve[1] - curve[0]));
         return curve[0] * std::exp(position * (curve[1] - curve[0]) / curve[0]);

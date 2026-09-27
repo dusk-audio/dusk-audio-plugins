@@ -63,7 +63,12 @@ public:
     // Process with drive amount (0 = bypass, 1 = full saturation)
     float processWithDrive(float input, CurveType curve, float drive) const
     {
-        drive = std::clamp(drive, 0.0f, 1.0f);
+        // process() maps a non-finite input to 0, but the blend below reuses
+        // the raw input, so guard it here too, bypass included. std::clamp
+        // passes a NaN drive through; read it as bypass.
+        if (!std::isfinite(input))
+            return 0.0f;
+        drive = std::isnan(drive) ? 0.0f : std::clamp(drive, 0.0f, 1.0f);
         if (drive <= 0.0f)
             return input;
 
