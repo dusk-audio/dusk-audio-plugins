@@ -32,6 +32,7 @@ FS = 48_000
 BLOCK = int(os.environ.get("OPTO_AU_BLOCK", "512"))
 PRERUN = 2.0
 FREQUENCIES = (100, 1000, 5000)
+PREDICTION_FREQUENCIES = (300, 2500, 10000)
 LEVELS = tuple(range(-40, 1, 4))
 GAINS = (0.15, 0.25, 0.35)
 ACTIVE = ((0.35, False), (0.70, False), (1.0, False),
@@ -207,6 +208,139 @@ def capture_map(plugin: str, tag: str) -> None:
                 continue
             print(f"capture {plugin} {label}", flush=True)
             run_host(plugin, destination, tones, pr, gain, limit)
+
+
+def prepare_prediction() -> list[dict]:
+    """Write the frequency-held-out map without touching the fit stimuli."""
+    directory = OUT / "prediction-stimuli"
+    directory.mkdir(parents=True, exist_ok=True)
+    sample = np.arange(8 * FS, dtype=np.float64)
+    records = []
+    for frequency in PREDICTION_FREQUENCIES:
+        for level in LEVELS:
+            peak = 10.0 ** (level / 20.0)
+            signal = peak * np.sin(2.0 * np.pi * frequency * sample / FS)
+            path = directory / f"prediction_f{frequency:05d}_l{level:+04d}.wav"
+            sf.write(path, np.column_stack((signal, signal)).astype(np.float32),
+                     FS, subtype="FLOAT")
+            records.append({"frequency_hz": frequency, "input_dbfs": level,
+                            "path": str(path), "sha256": sha256(path)})
+    atomic_json(directory / "manifest.json", {
+        "sample_rate": FS, "fit_frequencies_hz": FREQUENCIES,
+        "held_out_frequencies_hz": PREDICTION_FREQUENCIES,
+        "records": records,
+    })
+    return records
+
+
+def capture_prediction(plugin: str, tag: str) -> None:
+    records = prepare_prediction()
+    inputs = [Path(record["path"]) for record in records]
+    settings = [(0.0, False)] + list(ACTIVE)
+    for gain in GAINS:
+        for pr, limit in settings:
+            label = f"g{gain:.2f}_pr{pr:.2f}_{'limit' if limit else 'comp'}"
+            destination = OUT / "prediction-captures" / tag / plugin / label
+            if (destination / "complete.json").exists():
+                print(f"reuse prediction {plugin} {label}")
+                continue
+            print(f"capture prediction {plugin} {label}", flush=True)
+            run_host(plugin, destination, inputs, pr, gain, limit)
+
+
+def analyse_prediction(plugin: str, tag: str) -> list[dict]:
+    records = prepare_prediction()
+    latency = 87 if plugin == "uad" else 67
+    root = OUT / "prediction-captures" / tag / plugin
+    rows = []
+    settings = [(0.0, False)] + list(ACTIVE)
+    for gain in GAINS:
+        for pr, limit in settings:
+            label = f"g{gain:.2f}_pr{pr:.2f}_{'limit' if limit else 'comp'}"
+            complete = json.loads((root / label / "complete.json").read_text())
+            for record in records:
+                path = root / label / f"s_{Path(record['path']).stem}_stem.wav"
+                signal, rate = sf.read(path, always_2d=True, dtype="float64")
+                if rate != FS:
+                    raise RuntimeError(f"unexpected prediction render rate: {path}")
+                start = 7 * FS + latency
+                window = signal[start:start + FS, 0]
+                frequency = record["frequency_hz"]
+                fundamental = complex_harmonic(window, frequency)
+                fundamental_dbfs = 20.0 * math.log10(
+                    max(abs(fundamental), 1.0e-30))
+                fund_phase = math.degrees(math.atan2(
+                    fundamental.imag, fundamental.real))
+                for harmonic in range(2, 8):
+                    harmonic_frequency = harmonic * frequency
+                    representable = harmonic_frequency < FS / 2
+                    if representable:
+                        coefficient = complex_harmonic(window, harmonic_frequency)
+                        magnitude = 20.0 * math.log10(
+                            max(abs(coefficient), 1.0e-30))
+                        phase = wrap_degrees(math.degrees(math.atan2(
+                            coefficient.imag, coefficient.real))
+                            - harmonic * fund_phase)
+                    else:
+                        magnitude = phase = None
+                    rows.append({
+                        "plugin": plugin, "tag": tag,
+                        "frequency_hz": frequency,
+                        "input_dbfs": record["input_dbfs"],
+                        "peak_reduction_normalised": pr,
+                        "gain_normalised": gain, "limit": limit,
+                        "harmonic": harmonic, "representable": representable,
+                        "magnitude_dbfs": magnitude,
+                        "relative_phase_degrees": phase,
+                        "fundamental_dbfs": fundamental_dbfs,
+                        "fundamental_phase_degrees": fund_phase,
+                        "render": str(path), "latency_samples": latency,
+                        "component_binary_sha256": complete[
+                            "component_binary_sha256"],
+                    })
+    atomic_json(OUT / f"prediction-{tag}-{plugin}.json", rows)
+    print(f"analysed {len(rows)} prediction harmonic rows for {plugin}/{tag}")
+    return rows
+
+
+def compare_prediction(candidate_tag: str) -> None:
+    reference = analyse_prediction("uad", "base")
+    candidate = analyse_prediction("mc2", candidate_tag)
+    row_key = lambda row: (
+        row["frequency_hz"], row["input_dbfs"],
+        row["peak_reduction_normalised"], row["gain_normalised"],
+        row["limit"], row["harmonic"])
+    right = {row_key(row): row for row in candidate}
+    rows = []
+    for uad in reference:
+        mc2 = right[row_key(uad)]
+        error = None
+        if uad["representable"]:
+            error = mc2["magnitude_dbfs"] - uad["magnitude_dbfs"]
+        eligible = bool(uad["representable"]
+                        and uad["magnitude_dbfs"] > -100.0)
+        rows.append({
+            "key": row_key(uad), "uad_dbfs": uad["magnitude_dbfs"],
+            "mc2_dbfs": mc2["magnitude_dbfs"], "error_db": error,
+            "uad_phase_degrees": uad["relative_phase_degrees"],
+            "mc2_phase_degrees": mc2["relative_phase_degrees"],
+            "above_bar_floor": eligible,
+            "pass_2db": not eligible or abs(error) <= 2.0,
+        })
+    eligible_rows = [row for row in rows if row["above_bar_floor"]]
+    summary = {
+        "measurement_boundary": "actual Audio Units hosted by duskverb_render",
+        "fit_frequencies_hz": FREQUENCIES,
+        "held_out_frequencies_hz": PREDICTION_FREQUENCIES,
+        "candidate_tag": candidate_tag, "eligible_cells": len(eligible_rows),
+        "passing_cells": sum(row["pass_2db"] for row in eligible_rows),
+        "worst_abs_error_db": max(abs(row["error_db"])
+                                  for row in eligible_rows),
+        "pass": all(row["pass_2db"] for row in eligible_rows), "rows": rows,
+    }
+    atomic_json(OUT / f"prediction-comparison-{candidate_tag}.json", summary)
+    print(json.dumps({k: v for k, v in summary.items() if k != "rows"},
+                     indent=2))
 
 
 def sweep(plugin: str) -> None:
@@ -600,6 +734,7 @@ def analyse_capture(plugin: str, tag: str) -> list[dict]:
                     "limit": complete["limit"], "harmonic": harmonic,
                     "representable": representable, "magnitude_dbfs": magnitude,
                     "relative_phase_degrees": phase, "fundamental_dbfs": fund_mag,
+                    "fundamental_phase_degrees": fund_phase,
                     "left_right_max_abs_delta": lr_error, "render": str(output),
                     "latency_samples": latency, "analysis_start_sample": start,
                 })
@@ -786,7 +921,17 @@ def capture_settled(tag: str) -> None:
             print(f"capture MC-2 AU settled {label} ({len(paths)} tones)", flush=True)
             run_host("mc2", destination, paths, 0.0, gain / 100.0, limit)
 
-    lab = json.loads((OUT / "base-parity/result.json").read_text())["rows"]
+    # Never compare a new AU against the old base-parity JSON.  CTest's
+    # verbose log is the evidence from the exact core executable under test.
+    core_log = OUT / f"ctest-{tag}.log"
+    if not core_log.exists():
+        raise RuntimeError(f"fresh verbose CTest log required: {core_log}")
+    core_values = [float(value) for value in re.findall(
+        r"(?:^|\n)(?:\d+: )?opto settled frequency .*? measured "
+        r"([-+0-9.eE]+) error ", core_log.read_text())]
+    if len(core_values) != 122:
+        raise RuntimeError(
+            f"parsed {len(core_values)} settled core rows, expected 122")
     results = []
     begin, end = 6 * FS + 67, 15 * FS // 2 + 67
     for row in rows:
@@ -802,7 +947,7 @@ def capture_settled(tag: str) -> None:
         active_power = float(np.sum(np.square(active[begin:end, 0])))
         base_power = float(np.sum(np.square(base[begin:end, 0])))
         measured = 10.0 * math.log10(base_power / active_power)
-        lab_db = float(lab[row["row"]]["lab_db"])
+        lab_db = core_values[row["row"]]
         results.append({**row, "au_db": measured, "lab_db": lab_db,
                         "au_minus_lab_db": measured - lab_db,
                         "pass_0p01db": abs(measured - lab_db) <= 0.01,
@@ -811,6 +956,7 @@ def capture_settled(tag: str) -> None:
     summary = {
         "measurement_boundary": "actual built MC-2 Audio Unit hosted by duskverb_render",
         "sample_rate": FS, "block_size": BLOCK, "prerun_seconds": PRERUN,
+        "core_source": str(core_log),
         "cells": len(results),
         "passing_cells": sum(x["pass_0p01db"] for x in results),
         "worst_abs_au_minus_lab_db": max(abs(x["au_minus_lab_db"]) for x in results),
@@ -918,6 +1064,8 @@ def main() -> None:
     sub.add_parser("prepare")
     p = sub.add_parser("sweep"); p.add_argument("plugin", choices=("uad", "mc2"))
     p = sub.add_parser("capture"); p.add_argument("plugin", choices=("uad", "mc2")); p.add_argument("tag")
+    p = sub.add_parser("prediction-capture"); p.add_argument("plugin", choices=("uad", "mc2")); p.add_argument("tag")
+    p = sub.add_parser("prediction-compare"); p.add_argument("tag")
     p = sub.add_parser("analyse"); p.add_argument("plugin", choices=("uad", "mc2")); p.add_argument("tag")
     p = sub.add_parser("compare"); p.add_argument("tag")
     p = sub.add_parser("witness"); p.add_argument("tag")
@@ -936,6 +1084,8 @@ def main() -> None:
     if args.command == "prepare": prepare()
     elif args.command == "sweep": sweep(args.plugin)
     elif args.command == "capture": prepare_if_needed(); capture_map(args.plugin, args.tag)
+    elif args.command == "prediction-capture": capture_prediction(args.plugin, args.tag)
+    elif args.command == "prediction-compare": compare_prediction(args.tag)
     elif args.command == "analyse": analyse_capture(args.plugin, args.tag)
     elif args.command == "compare": compare(args.tag)
     elif args.command == "witness": witness(args.tag)

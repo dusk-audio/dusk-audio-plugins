@@ -11,6 +11,7 @@
 #include "MultiCompParams.hpp"
 #include "MultiCompOptoShelf.hpp"
 #include "MultiCompOptoCell.hpp"
+#include "MultiCompOptoFinalHarmonics.hpp"
 #include "MultiCompOptoHarmonics.hpp"
 #include "MultiCompOptoLfDynamicHarmonics.hpp"
 #include "MultiCompHelpers.hpp"
@@ -2845,8 +2846,25 @@ private:
             + hfMidPrCorrectionDb + limitMidPrCorrectionDb;
         const float activeLfDynamicCorrection = peakReduction > 10.0f
             ? lfDynamicCorrection : 0.0f;
-        return (settledOutput + predictionWeight * activeLfDynamicCorrection)
+        const float gainLawOutput =
+            (settledOutput + predictionWeight * activeLfDynamicCorrection)
             * decibelsToGain(-d.meterCorrectionDb);
+
+        // Final actual-AU calibration. This deliberately follows every
+        // gain-computer and settled-law correction so a later GR adjustment
+        // cannot silently rescale the fitted absolute harmonic amplitudes.
+        // Only 100 Hz, 1 kHz and 5 kHz populate the table; other frequencies
+        // are interpolation/extrapolation predictions and remain held out.
+        const auto finalResidual = optoFinalResiduals(
+            gainToDecibels(std::max(d.toneInputPeak, 1.0e-12f)),
+            frequencyHz, peakReduction > 10.0f ? peakReduction : 0.0f,
+            p.optoGain.load(std::memory_order_relaxed), limit);
+        float finalHarmonicCorrection = 0.0f;
+        if (d.sineSupportSamples >= optoGainRippleWarmupSamples)
+            for (size_t i = 0; i < sineBases.size(); ++i)
+                finalHarmonicCorrection += finalResidual[2 * i] * sineBases[i]
+                    + finalResidual[2 * i + 1] * cosineBases[i];
+        return gainLawOutput + finalHarmonicCorrection;
     }
 
     float processFET(float input, int ch, float sidechain,
