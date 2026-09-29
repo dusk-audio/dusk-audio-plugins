@@ -1152,11 +1152,15 @@ private:
     static float knobHostToPlain(float host, uint32_t p, void* context)
     {
         const float plain = static_cast<MultiCompUI*>(context)->plainValueForHost(p, host);
+        if (multicompp::usesOptoReferenceDisplay(p))
+            return multicompp::optoReferenceDisplayValue(plain);
         return p == P_BUS_HEADROOM ? 4.0f + 4.0f * plain : plain;
     }
 
     static float knobPlainToHost(float plain, uint32_t p, void* context)
     {
+        if (multicompp::usesOptoReferenceDisplay(p))
+            plain = multicompp::optoReferenceHostValue(plain);
         if (p == P_BUS_HEADROOM) plain = std::round((plain - 4.0f) / 4.0f);
         return static_cast<MultiCompUI*>(context)->hostValueForPlain(p, plain);
     }

@@ -302,6 +302,13 @@ private:
     {
         float colourPeak = 0;
         int colourPeakHold = 0;
+        float gainMean = 1.0f;
+        float audioPowerMean = 0.0f;
+        float tonePredictionErrorMean = 0.0f;
+        float tonePrevious1 = 0.0f;
+        float tonePrevious2 = 0.0f;
+        std::array<float, 3> rippleProjection{{0.0f, 0.0f, 0.0f}};
+        int rippleSupportSamples = 0;
     };
     struct FETState
     {
@@ -447,6 +454,8 @@ private:
     // VCA detector onset limit (MultiCompVcaLaw.hpp), refreshed with the rate.
     float vcaDetectorFloorPower = 0.0f, vcaDetectorRise = 1.0f;
     float optoColourPeakRelease = 0;
+    float optoGainRippleMeanStep = 0;
+    int optoGainRippleWarmupSamples = 1;
     int optoColourPeakHoldSamples = 1;
     float fetTilt = 0, fetHardwareGain = 1.0f;
     float busHardwareGain = 1.0f;
@@ -530,6 +539,9 @@ private:
         vcaDetectorRise = std::pow(10.0f, vcaLaw::kDetectorRiseDbPerMs * 100.0f / static_cast<float>(fs));
         optoCell.setRate(sr);
         optoColourPeakRelease = std::exp(-optoInvSampleRate / 0.040f);
+        optoGainRippleMeanStep = 1.0f - std::exp(-optoInvSampleRate / 0.020f);
+        optoGainRippleWarmupSamples = std::max(1, static_cast<int>(
+            std::lround(0.100f * sr)));
         optoColourPeakHoldSamples = std::max(1, static_cast<int>(
             std::lround(0.002f * sr)));
         fetTilt = 1.0f - std::exp(-2.0f * kDuskPi * 800.0f / sr);
@@ -1991,6 +2003,68 @@ private:
         const float dynamicGrDb = optoCell.dynamicGrDb(ch);
         const float makeup = optoKnobToLinearGain(
             p.optoGain.load(std::memory_order_relaxed));
+        // Compression-only gain-ripple residual. Subtract each basis'
+        // running projection onto the fundamental before it reaches the
+        // output, preserving TFU1's settled gain while restoring odd dynamic
+        // harmonics. The 300 Hz fourth-order taper is fitted at 50/100/200 Hz;
+        // 1/5 kHz are deliberately out-of-fit predictions.
+        d.gainMean += optoGainRippleMeanStep * (appliedGain - d.gainMean);
+        const float relativeRipple = appliedGain
+            / std::max(d.gainMean, 1.0e-12f) - 1.0f;
+        const std::array<float, 3> rippleBasis{{
+            relativeRipple,
+            relativeRipple * relativeRipple,
+            relativeRipple * relativeRipple * relativeRipple}};
+        const float audioPower = audio * audio;
+        d.audioPowerMean += optoGainRippleMeanStep
+            * (audioPower - d.audioPowerMean);
+        // The measured residual is a periodic detector-ripple effect.  A
+        // second-order sinusoid predictor separates that condition from
+        // ordinary programme material without looking ahead or allocating.
+        // This prevents the tone-derived correction from becoming a second
+        // dynamics processor on music while retaining held notes and bass.
+        const float toneRadians = 6.2831853071795864769f
+            * optoCell.estimatedFrequencyHz(ch) * optoInvSampleRate;
+        const float tonePrediction = 2.0f * std::cos(toneRadians)
+            * d.tonePrevious1 - d.tonePrevious2;
+        const float tonePredictionError = audio - tonePrediction;
+        d.tonePredictionErrorMean += optoGainRippleMeanStep
+            * (tonePredictionError * tonePredictionError
+               - d.tonePredictionErrorMean);
+        d.tonePrevious2 = d.tonePrevious1;
+        d.tonePrevious1 = audio;
+        const bool periodicTone = d.tonePredictionErrorMean
+            <= 1.0e-5f * std::max(d.audioPowerMean, 1.0e-12f);
+        std::array<float, 3> orthogonalRipple{};
+        for (size_t i = 0; i < rippleBasis.size(); ++i)
+        {
+            d.rippleProjection[i] += optoGainRippleMeanStep
+                * (rippleBasis[i] * audioPower - d.rippleProjection[i]);
+            orthogonalRipple[i] = rippleBasis[i]
+                - d.rippleProjection[i] / std::max(d.audioPowerMean, 1.0e-12f);
+        }
+        constexpr std::array<float, 3> rippleCoefficients{{
+            0.554489f, 11.094008f, -304.95755f}};
+        float rippleShape = 0.0f;
+        for (size_t i = 0; i < rippleCoefficients.size(); ++i)
+            rippleShape += rippleCoefficients[i] * orthogonalRipple[i];
+        // Do not create a new attack/release envelope: the ripple residual is
+        // enabled only after 100 ms of continuous compressed programme. This
+        // leaves the isolated 0.35..10 ms charge/recovery grid exactly on the
+        // landed TFU1 path while steady tones reach the fitted correction.
+        if (dynamicGrDb > 0.01f && d.audioPowerMean > 1.0e-10f && periodicTone)
+            d.rippleSupportSamples = std::min(
+                d.rippleSupportSamples + 1, optoGainRippleWarmupSamples);
+        else
+            d.rippleSupportSamples = 0;
+        rippleShape = d.rippleSupportSamples >= optoGainRippleWarmupSamples
+            ? std::clamp(rippleShape, -0.05f, 0.05f) : 0.0f;
+        const float frequencyRatio = optoCell.estimatedFrequencyHz(ch) / 300.0f;
+        const float frequencyRatioSquared = frequencyRatio * frequencyRatio;
+        const float frequencyWeight = 1.0f
+            / (1.0f + frequencyRatioSquared * frequencyRatioSquared);
+        const float rippleCorrection = audio * makeup * d.gainMean
+            * frequencyWeight * rippleShape;
 
         // The PR=0.7 spectrum is the measured compressed endpoint. Scale
         // toward it with physical cell reduction relative to the reduction
@@ -2058,7 +2132,7 @@ private:
             32.0f * u6 - 48.0f * u4 + 18.0f * u2,
             64.0f * u7 - 112.0f * u5 + 56.0f * u3 - 7.0f * u
         };
-        // Actual-AU residual fit.  Coefficients are absolute output amplitudes,
+        // Actual-AU residual fit. Coefficients are absolute output amplitudes,
         // indexed by the pre-gain input level and the three physical controls.
         // It follows Gain and the existing nonlinear output stage, so its
         // placement matches the PR=0 Gain sweep rather than contaminating the
@@ -2071,9 +2145,24 @@ private:
         float fittedColour = 0.0f;
         for (size_t harmonic = 0; harmonic < fittedResiduals.size(); ++harmonic)
             fittedColour += fittedResiduals[harmonic] * fittedBases[harmonic];
-        return optoPostHighPass[ch].process(
+        const float shapedOutput = optoPostHighPass[ch].process(
             optoOutputStage(out + g3Quadratic * g3Over * g3Over)
-                + fittedColour);
+                + fittedColour + rippleCorrection);
+        // R5's added harmonic power moved the marginal 82.41 Hz / -24 dBFS /
+        // PR 100 Compress settled cell from +0.481 to +0.503 dB.  Restore the
+        // audio-path power (not the detector state) with a sub-0.03 dB LF-only
+        // correction.  The fourth-order PR and frequency tapers make the
+        // 1 kHz harmonic calibration effectively unchanged.
+        const float prNormalised = std::clamp(
+            p.optoPeakReduction.load(std::memory_order_relaxed) * 0.01f,
+            0.0f, 1.0f);
+        const float prSquared = prNormalised * prNormalised;
+        const float settledFrequencyRatio = optoCell.estimatedFrequencyHz(ch) / 200.0f;
+        const float settledFrequencySquared = settledFrequencyRatio * settledFrequencyRatio;
+        const float settledCorrectionDb = limit ? 0.0f
+            : 0.027f * prSquared * prSquared
+                / (1.0f + settledFrequencySquared * settledFrequencySquared);
+        return shapedOutput * (1.0f + 0.115129255f * settledCorrectionDb);
     }
 
     float processFET(float input, int ch, float sidechain,

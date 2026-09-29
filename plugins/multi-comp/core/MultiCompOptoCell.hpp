@@ -444,6 +444,7 @@ public:
         double light = inert ? 0.0 : lightFor(d.el);
         if (cellParams.lightCeiling > 0.0f)
             light = light / (1.0 + light / static_cast<double>(cellParams.lightCeiling));
+        double estimatedFrequencyHz = 1000.0;
         if (cellParams.elFreqExponent != 0.0f && cellParams.elRevHysteresis > 0.0f)
         {
             // EL light is emitted at polarity reversals: the last completed half-cycle between significant
@@ -475,8 +476,10 @@ public:
             d.drivePower += elFreqStep * (s * s - d.drivePower);
             d.slewPower += elFreqStep * (slew * slew - d.slewPower);
             const double ratio = std::clamp(d.slewPower / std::max(d.drivePower, 1.0e-30), 1.0e-4, 1.0e4);
+            estimatedFrequencyHz = 1000.0 * std::sqrt(ratio);
             light *= std::pow(ratio, 0.5 * static_cast<double>(cellParams.elFreqExponent));
         }
+        d.estimatedFrequencyHz = estimatedFrequencyHz;
         double step = dt;
         if (cellParams.timeScaleLight > 0.0f && cellParams.hFloor > 0.0f)
         {
@@ -577,6 +580,10 @@ public:
         return gainToDecibels(static_cast<float>(channels[static_cast<size_t>(ch)].levelPeak));
     }
     float dynamicGrDb(int ch) const noexcept { return static_cast<float>(channels[static_cast<size_t>(ch)].grDb); }
+    float estimatedFrequencyHz(int ch) const noexcept
+    {
+        return static_cast<float>(channels[static_cast<size_t>(ch)].estimatedFrequencyHz);
+    }
 
     // ---- lab-only hooks (fitting kernel) ----
     void setParams(const OptoCellParams& p) noexcept
@@ -630,6 +637,7 @@ private:
     struct ChannelState
     {
         double cellGain = 1.0, grDb = 0.0, el = 0.0, levelPeak = 0.0, litLevel = 0.0, grRateSmooth = 0.0;
+        double estimatedFrequencyHz = 1000.0;
         double drivePower = 0.0, slewPower = 0.0, drivePrev = 0.0;
         double reversalPeak = 0.0, reversalPhi = 1.0, slewLow = 0.0, trap = 0.0;
         int reversalSign = 1, reversalCount = 0;

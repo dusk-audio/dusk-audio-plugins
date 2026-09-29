@@ -68,7 +68,7 @@ inline constexpr std::array<Param, 63> kParams = {{
  {"global_sidechain_listen","SC Listen","",0,1,0,CoreParameter::GlobalSidechainListen,true},
  {"mb_mix","MB Mix","%",0,100,100,CoreParameter::MbMix,false},
  {"mb_output","MB Output","dB",-24,24,0,CoreParameter::MbOutput,false},
- {"noise_enable","Analog Noise","",0,1,1,CoreParameter::NoiseEnable,true},
+ {"noise_enable","Analog Noise","",0,1,0,CoreParameter::NoiseEnable,true},
  {"sc_low_freq","SC Low Freq","Hz",60,500,100,CoreParameter::ScLowFreq,false,1,0.5f},
  {"sc_low_gain","SC Low Gain","dB",-12,12,0,CoreParameter::ScLowGain,false},
  {"sc_high_freq","SC High Freq","Hz",2000,16000,8000,CoreParameter::ScHighFreq,false,10,0.5f},
@@ -76,6 +76,46 @@ inline constexpr std::array<Param, 63> kParams = {{
  {"stereo_link_mode","Link Mode","",0,2,0,CoreParameter::StereoLinkMode,true}
 }};
 inline constexpr int kParamCount = static_cast<int>(kParams.size());
+
+inline bool usesOptoReferenceDisplay(uint32_t parameter) noexcept
+{
+    return parameter == static_cast<uint32_t>(ParamId::OptoPeakReduction)
+        || parameter == static_cast<uint32_t>(ParamId::OptoGain);
+}
+
+// UADx LA-2A control readout measured through the AU at 0.05-normalised
+// intervals. The central 5..95 region is affine; endpoints clamp. This is a
+// display conversion only: host values, state and automation remain 0..100.
+inline float optoReferenceDisplayValue(float hostValue) noexcept
+{
+    return std::clamp((hostValue - 5.5555556f) * 1.125f, 0.0f, 100.0f);
+}
+
+inline float optoReferenceHostValue(float displayValue) noexcept
+{
+    const float display = std::clamp(displayValue, 0.0f, 100.0f);
+    if (display <= 0.0f) return 0.0f;
+    if (display >= 100.0f) return 100.0f;
+    // Invert the displayed integer anchors, not the unrounded affine line.
+    // Thus typing the UAD readout 33 or 72 selects the measured .35 or .70
+    // position exactly; host automation itself remains in the old 0..100
+    // domain.  The endpoint words Min/Max stay mapped to 0/100 above.
+    constexpr std::array<float, 19> displayed{{
+        0, 5, 11, 16, 22, 28, 33, 39, 44, 50,
+        56, 61, 67, 72, 78, 84, 89, 95, 100}};
+    constexpr std::array<float, 19> host{{
+        5, 10, 15, 20, 25, 30, 35, 40, 45, 50,
+        55, 60, 65, 70, 75, 80, 85, 90, 95}};
+    for (size_t upper = 1; upper < displayed.size(); ++upper)
+    {
+        if (display > displayed[upper]) continue;
+        const float fraction = (display - displayed[upper - 1])
+            / (displayed[upper] - displayed[upper - 1]);
+        return host[upper - 1]
+            + fraction * (host[upper] - host[upper - 1]);
+    }
+    return 100.0f;
+}
 static_assert(kParamCount == static_cast<int>(ParamId::Count));
 static_assert(kParamCount == 63);
 #define MC_ASSERT_PARAM(name) \

@@ -1146,6 +1146,34 @@ void testFractionalIntegerAutomationStaysLoadable()
     std::puts("fractional integer automation: snapped on store, state stays loadable");
 }
 
+void testOptoReferenceDisplayAndNoiseDefault()
+{
+    constexpr std::array<float, 11> host{{
+        0.0f, 10.0f, 20.0f, 30.0f, 35.0f, 40.0f,
+        50.0f, 60.0f, 70.0f, 80.0f, 100.0f}};
+    constexpr std::array<float, 11> expected{{
+        0.0f, 5.0f, 16.0f, 28.0f, 33.0f, 39.0f,
+        50.0f, 61.0f, 72.0f, 84.0f, 100.0f}};
+    for (size_t i = 0; i < host.size(); ++i)
+        require(std::nearbyint(multicompp::optoReferenceDisplayValue(host[i]))
+                    == expected[i],
+                "Opto display follows the measured UAD control curve");
+    require(multicompp::optoReferenceHostValue(0.0f) == 0.0f
+                && multicompp::optoReferenceHostValue(100.0f) == 100.0f
+                && std::abs(multicompp::optoReferenceHostValue(33.0f)
+                            - 35.0f) < 0.0001f
+                && std::abs(multicompp::optoReferenceHostValue(72.0f)
+                            - 70.0f) < 0.0001f,
+            "Opto display text maps back without changing the stored domain");
+    const auto noise = multicompp::kParams[
+        static_cast<size_t>(multicompp::ParamId::NoiseEnable)];
+    duskaudio::MultiCompParameterState defaults;
+    require(noise.def == 0.0f
+                && !defaults.noiseEnable.load(std::memory_order_relaxed),
+            "Analog Noise defaults off in both the AU descriptor and DSP state");
+    std::puts("Opto display: host 35/70 -> UAD 33/72; Analog Noise default: off");
+}
+
 int main(int argc, char** argv)
 {
     if (argc == 2 && std::strcmp(argv[1], "--fet-ui") == 0)
@@ -1175,6 +1203,7 @@ int main(int argc, char** argv)
     testFractionalEnumUiAndDspAgreement();
     testEditorMirrorSeedsFromCurrentPluginState();
     testFractionalIntegerAutomationStaysLoadable();
+    testOptoReferenceDisplayAndNoiseDefault();
     std::puts("Multi-Comp plugin-layer tests: PASS");
     return 0;
 }
