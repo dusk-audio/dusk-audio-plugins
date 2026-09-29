@@ -1210,6 +1210,8 @@ void testOptoRecoveryParity()
                 reference.eventDbfs, reference.peakReduction, reference.durationMs);
         double earlySquared = 0.0, sparseSquared = 0.0;
         float earlyMaximum = 0.0f, lateMaximum = 0.0f;
+        float earlyMaximumSigned = 0.0f;
+        int earlyMaximumMs = 0;
         // Leave one full carrier cycle after the event for the oversampling
         // FIR edge. Score EVERY subsequent cycle through 399 ms, not just
         // a fitted local time constant or a handful of selected crossings.
@@ -1221,7 +1223,12 @@ void testOptoRecoveryParity()
             if (ms < 80)
             {
                 earlySquared += static_cast<double>(error) * error;
-                earlyMaximum = std::max(earlyMaximum, std::abs(error));
+                if (std::abs(error) > earlyMaximum)
+                {
+                    earlyMaximum = std::abs(error);
+                    earlyMaximumSigned = error;
+                    earlyMaximumMs = ms;
+                }
             }
             else lateMaximum = std::max(lateMaximum, std::abs(error));
         }
@@ -1234,11 +1241,13 @@ void testOptoRecoveryParity()
         const double earlyRms = std::sqrt(earlySquared / (80 - firstCleanMs));
         const double sparseRms = std::sqrt(sparseSquared / earlyOffsets.size());
         std::printf("opto recovery %zu %s PR %.2f ped %.0f event %.0f %d ms: "
-                    "full early RMS %.6f max %.6f, late max %.6f, sparse RMS %.6f\n",
+                    "full early RMS %.6f max %.6f (%+.6f at %d ms), "
+                    "late max %.6f, sparse RMS %.6f\n",
                     row, reference.heldOut ? "holdout" : "calibration",
                     reference.peakReduction, reference.pedestalDbfs,
                     reference.eventDbfs, reference.durationMs,
-                    earlyRms, earlyMaximum, lateMaximum, sparseRms);
+                    earlyRms, earlyMaximum, earlyMaximumSigned, earlyMaximumMs,
+                    lateMaximum, sparseRms);
         require(earlyRms < 0.75 && earlyMaximum < 1.0f && lateMaximum < 1.0f,
                 "Opto complete post-event recovery stays within measured parity limits");
         if (reference.durationMs == 2)
@@ -2437,10 +2446,15 @@ void testOptoReferenceOutputMemory()
     {
         const float measured = measureOptoReferenceOutputMemory(gapsMs[row]);
         const float delta = measured - reference[row];
+        std::printf("opto output memory: gap %d ms reference %.3f dB "
+                    "measured %.6f dB delta %+.6f dB\n",
+                    gapsMs[row], reference[row], measured, delta);
         squaredError += delta * delta;
         worstError = std::max(worstError, std::abs(delta));
     }
     const float rmsError = std::sqrt(squaredError / static_cast<float>(gapsMs.size()));
+    std::printf("opto output memory summary: RMS %.6f dB worst %.6f dB\n",
+                rmsError, worstError);
     // Reference and implementation both use the same plain-RMS extraction.
     require(rmsError < 0.125f && worstError < 0.26f,
             "Opto end-to-end output memory matches the sixteen-point reference curve");

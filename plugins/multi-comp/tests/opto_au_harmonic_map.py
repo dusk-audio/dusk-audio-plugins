@@ -26,7 +26,7 @@ from scipy.signal import butter, sosfilt
 REPO = Path(__file__).resolve().parents[3]
 OUT = REPO / "build-multi-comp-1176/opto-production-harmonics-20260928"
 HOST = REPO / "build-multi-comp-1176/programme-native-20260911/duskverb_render"
-MC2 = REPO / "build-mc2/bin/multi-comp-2.component"
+MC2 = Path.home() / "Library/Audio/Plug-Ins/Components/multi-comp-2.component"
 UAD = Path("/Library/Audio/Plug-Ins/Components/uaudio_teletronix_la-2a_tc.component")
 FS = 48_000
 BLOCK = int(os.environ.get("OPTO_AU_BLOCK", "512"))
@@ -52,6 +52,7 @@ CHARGE_HELD_OUT = (
 )
 LF_FREQUENCIES = (50, 100, 200)
 LF_LEVELS = tuple(range(-40, 1, 4))
+LF_GAINS = (0.15, 0.25, 0.35)
 LF_SETTINGS = ((0.0, False),) + ACTIVE
 MUSIC_ROOT = REPO / "build-multi-comp-1176/opto-music-20260923"
 MUSIC_PRS = (.3125, .40625, .5, .625, .71875, .8125, .90625, 1.0)
@@ -440,6 +441,111 @@ def compare_lf(tag: str) -> None:
     print(json.dumps({k: v for k, v in summary.items() if k != "rows"}, indent=2))
 
 
+def capture_lf_expanded(plugin: str, tag: str) -> None:
+    """Capture the 50/100/200 Hz fit grid at all three Gain positions."""
+    records = prepare_lf()
+    inputs = [Path(record["path"]) for record in records]
+    for gain in LF_GAINS:
+        for pr, limit in LF_SETTINGS:
+            label = f"g{gain:.2f}_pr{pr:.2f}_{'limit' if limit else 'comp'}"
+            destination = OUT / "lf-expanded-captures" / tag / plugin / label
+            if (destination / "complete.json").exists():
+                continue
+            print(f"capture LF expanded {tag}/{plugin} {label}", flush=True)
+            run_host(plugin, destination, inputs, pr, gain, limit)
+
+
+def analyse_lf_expanded(plugin: str, tag: str) -> list[dict]:
+    records = prepare_lf()
+    latency = 87 if plugin == "uad" else 67
+    root = OUT / "lf-expanded-captures" / tag / plugin
+    rows = []
+    fundamentals = {}
+    for gain in LF_GAINS:
+        for pr, limit in LF_SETTINGS:
+            label = f"g{gain:.2f}_pr{pr:.2f}_{'limit' if limit else 'comp'}"
+            complete = json.loads((root / label / "complete.json").read_text())
+            for record in records:
+                path = root / label / f"s_{Path(record['path']).stem}_stem.wav"
+                signal, rate = sf.read(path, always_2d=True, dtype="float64")
+                if rate != FS:
+                    raise RuntimeError(f"unexpected LF render rate: {path}")
+                start = 7 * FS + latency
+                window = signal[start:start + FS, 0]
+                frequency = record["frequency_hz"]
+                fundamental = complex_harmonic(window, frequency)
+                fundamental_dbfs = 20.0 * math.log10(max(abs(fundamental), 1.0e-30))
+                fund_phase = math.degrees(math.atan2(fundamental.imag, fundamental.real))
+                fundamentals[(frequency, record["input_dbfs"], gain, pr, limit)] = \
+                    fundamental_dbfs
+                for harmonic in range(2, 8):
+                    coefficient = complex_harmonic(window, harmonic * frequency)
+                    magnitude = 20.0 * math.log10(max(abs(coefficient), 1.0e-30))
+                    phase = wrap_degrees(
+                        math.degrees(math.atan2(coefficient.imag, coefficient.real))
+                        - harmonic * fund_phase)
+                    rows.append({
+                        "plugin": plugin, "tag": tag, "frequency_hz": frequency,
+                        "input_dbfs": record["input_dbfs"],
+                        "peak_reduction_normalised": pr,
+                        "gain_normalised": gain, "limit": limit,
+                        "harmonic": harmonic, "magnitude_dbfs": magnitude,
+                        "relative_phase_degrees": phase,
+                        "fundamental_dbfs": fundamental_dbfs,
+                        "fundamental_phase_degrees": fund_phase,
+                        "render": str(path), "latency_samples": latency,
+                        "component_binary_sha256": complete["component_binary_sha256"],
+                    })
+    baseline = {
+        (frequency, level, gain): value
+        for (frequency, level, gain, pr, limit), value in fundamentals.items()
+        if pr == 0.0 and not limit
+    }
+    for row in rows:
+        row["gain_reduction_db"] = baseline[(
+            row["frequency_hz"], row["input_dbfs"], row["gain_normalised"])] \
+            - row["fundamental_dbfs"]
+    atomic_json(OUT / f"lf-expanded-{tag}-{plugin}.json", rows)
+    print(f"analysed {len(rows)} expanded LF harmonic rows for {plugin}/{tag}")
+    return rows
+
+
+def compare_lf_expanded(reference_tag: str, candidate_tag: str) -> None:
+    reference = analyse_lf_expanded("uad", reference_tag)
+    candidate = analyse_lf_expanded("mc2", candidate_tag)
+    row_key = lambda row: (
+        row["frequency_hz"], row["input_dbfs"],
+        row["peak_reduction_normalised"], row["gain_normalised"],
+        row["limit"], row["harmonic"])
+    right = {row_key(row): row for row in candidate}
+    rows = []
+    for uad in reference:
+        mc2 = right[row_key(uad)]
+        error = mc2["magnitude_dbfs"] - uad["magnitude_dbfs"]
+        eligible = uad["magnitude_dbfs"] > -100.0
+        rows.append({
+            "key": row_key(uad), "uad_dbfs": uad["magnitude_dbfs"],
+            "mc2_dbfs": mc2["magnitude_dbfs"], "error_db": error,
+            "uad_phase_degrees": uad["relative_phase_degrees"],
+            "mc2_phase_degrees": mc2["relative_phase_degrees"],
+            "uad_gain_reduction_db": uad["gain_reduction_db"],
+            "mc2_gain_reduction_db": mc2["gain_reduction_db"],
+            "above_bar_floor": eligible,
+            "pass_2db": not eligible or abs(error) <= 2.0,
+        })
+    eligible_rows = [row for row in rows if row["above_bar_floor"]]
+    summary = {
+        "measurement_boundary": "actual Audio Units hosted by duskverb_render",
+        "reference_tag": reference_tag, "candidate_tag": candidate_tag,
+        "eligible_cells": len(eligible_rows),
+        "passing_cells": sum(row["pass_2db"] for row in eligible_rows),
+        "worst_abs_error_db": max(abs(row["error_db"]) for row in eligible_rows),
+        "pass": all(row["pass_2db"] for row in eligible_rows), "rows": rows,
+    }
+    atomic_json(OUT / f"lf-expanded-comparison-{candidate_tag}.json", summary)
+    print(json.dumps({k: v for k, v in summary.items() if k != "rows"}, indent=2))
+
+
 def complex_harmonic(signal: np.ndarray, frequency: float) -> complex:
     n = len(signal)
     phase = np.exp(-2j * np.pi * frequency * np.arange(n) / FS)
@@ -821,6 +927,9 @@ def main() -> None:
     p = sub.add_parser("lf-capture"); p.add_argument("plugin", choices=("uad", "mc2")); p.add_argument("tag")
     p = sub.add_parser("lf-analyse"); p.add_argument("plugin", choices=("uad", "mc2")); p.add_argument("tag")
     p = sub.add_parser("lf-compare"); p.add_argument("tag")
+    p = sub.add_parser("lf-expanded-capture"); p.add_argument("plugin", choices=("uad", "mc2")); p.add_argument("tag")
+    p = sub.add_parser("lf-expanded-analyse"); p.add_argument("plugin", choices=("uad", "mc2")); p.add_argument("tag")
+    p = sub.add_parser("lf-expanded-compare"); p.add_argument("reference_tag"); p.add_argument("candidate_tag")
     p = sub.add_parser("music-capture"); p.add_argument("tag")
     p = sub.add_parser("music-score"); p.add_argument("tag")
     args = parser.parse_args()
@@ -836,6 +945,9 @@ def main() -> None:
     elif args.command == "lf-capture": capture_lf(args.plugin, args.tag)
     elif args.command == "lf-analyse": analyse_lf(args.plugin, args.tag)
     elif args.command == "lf-compare": compare_lf(args.tag)
+    elif args.command == "lf-expanded-capture": capture_lf_expanded(args.plugin, args.tag)
+    elif args.command == "lf-expanded-analyse": analyse_lf_expanded(args.plugin, args.tag)
+    elif args.command == "lf-expanded-compare": compare_lf_expanded(args.reference_tag, args.candidate_tag)
     elif args.command == "music-capture": capture_music(args.tag)
     elif args.command == "music-score": score_music(args.tag)
 

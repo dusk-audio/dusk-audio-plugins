@@ -12,6 +12,7 @@
 #include "MultiCompOptoShelf.hpp"
 #include "MultiCompOptoCell.hpp"
 #include "MultiCompOptoHarmonics.hpp"
+#include "MultiCompOptoLfDynamicHarmonics.hpp"
 #include "MultiCompHelpers.hpp"
 #include "../../shared-daf/dsp/DuskCrossover.hpp"
 #include "../../shared-daf/dsp/DuskFilters.hpp"
@@ -101,8 +102,28 @@ public:
         };
         optoCell.scaleCounters(scaleCounter);
         for (auto& d : opto)
+        {
             d.colourPeakHold = scaleCounter(
                 d.colourPeakHold, optoColourPeakHoldSamples);
+            d.toneInputPeakHold = scaleCounter(
+                d.toneInputPeakHold, optoTonePeakHoldSamples);
+            d.tonePeriodSamples = scaleCounter(
+                d.tonePeriodSamples, std::max(1, static_cast<int>(
+                    std::lround(0.050 / optoInvSampleRate))));
+            d.broadbandSupportSamples = scaleCounter(
+                d.broadbandSupportSamples, optoBroadbandWarmupSamples);
+            d.sineSupportSamples = scaleCounter(
+                d.sineSupportSamples, optoGainRippleWarmupSamples);
+            d.shortEventAgeSamples = scaleCounter(
+                d.shortEventAgeSamples, std::max(1, static_cast<int>(
+                    std::lround(0.100 / optoInvSampleRate))));
+            d.shortEventSilenceSamples = scaleCounter(
+                d.shortEventSilenceSamples, optoShortEventRecurringMaxSamples);
+            d.longEventReleaseAgeSamples = scaleCounter(
+                d.longEventReleaseAgeSamples,
+                std::max(1, static_cast<int>(std::lround(
+                    4.0 / optoInvSampleRate))));
+        }
         updateHardwareRate(sr);
         selectHardwareGains();
     }
@@ -180,7 +201,8 @@ public:
         ch = std::clamp(ch, 0, 1);
         switch (mode)
         {
-            case MultiCompMode::Opto: return gainToDecibels(optoCell.gain(ch));
+            case MultiCompMode::Opto: return gainToDecibels(optoCell.gain(ch))
+                - opto[static_cast<size_t>(ch)].meterCorrectionDb;
             case MultiCompMode::FET: return gainToDecibels(
                 fet[ch].envelope * fet[ch].kneeGain
                     * fet[ch].recoveryGain);
@@ -304,11 +326,43 @@ private:
         int colourPeakHold = 0;
         float gainMean = 1.0f;
         float audioPowerMean = 0.0f;
+        float broadbandSlowPower = 0.0f;
+        float broadbandPowerDeviation = 0.0f;
         float tonePredictionErrorMean = 0.0f;
         float tonePrevious1 = 0.0f;
         float tonePrevious2 = 0.0f;
         std::array<float, 3> rippleProjection{{0.0f, 0.0f, 0.0f}};
         int rippleSupportSamples = 0;
+        int broadbandSupportSamples = 0;
+        int sineSupportSamples = 0;
+        float programmeCorrectionDb = 0.0f;
+        float toneInputPeak = 0.0f;
+        int toneInputPeakHold = 0;
+        float toneInputPrevious = 0.0f;
+        float toneMeasuredFrequencyHz = 1000.0f;
+        int tonePeriodSamples = 0;
+        int toneInputSign = 0;
+        float cycleInputPeak = 0.0f;
+        float previousCycleInputPeak = 0.0f;
+        float eventDropCorrectionDb = 0.0f;
+        float eventDropSlowCorrectionDb = 0.0f;
+        float eventDropDepthScale = 0.0f;
+        float shortEventPreviousInput = 0.0f;
+        float shortEventPeak = 0.0f;
+        float shortEventQuietPeak = 0.0f;
+        float shortEventGrDb = 0.0f;
+        float shortEventPreviousCorrectionDb = 0.0f;
+        float meterCorrectionDb = 0.0f;
+        int longEventReleaseAgeSamples = 0;
+        bool longEventReleaseActive = false;
+        int shortEventAgeSamples = 0;
+        int shortEventLastLoudAgeSamples = 0;
+        int shortEventQuietSamples = 0;
+        int shortEventSilenceSamples = 0;
+        float shortEventPowerMean = 0.0f;
+        bool shortEventActive = false;
+        bool shortEventEnabled = false;
+        bool shortEventConsumed = false;
     };
     struct FETState
     {
@@ -454,9 +508,18 @@ private:
     // VCA detector onset limit (MultiCompVcaLaw.hpp), refreshed with the rate.
     float vcaDetectorFloorPower = 0.0f, vcaDetectorRise = 1.0f;
     float optoColourPeakRelease = 0;
+    float optoShortEventRelease = 0;
+    float optoEventDropSlowRelease = 0;
     float optoGainRippleMeanStep = 0;
+    float optoBroadbandSlowStep = 0;
+    float optoProgrammeStep = 0;
     int optoGainRippleWarmupSamples = 1;
+    int optoBroadbandWarmupSamples = 1;
     int optoColourPeakHoldSamples = 1;
+    int optoTonePeakHoldSamples = 1;
+    int optoShortEventQuietSamples = 1;
+    int optoShortEventArmSamples = 1;
+    int optoShortEventRecurringMaxSamples = 1;
     float fetTilt = 0, fetHardwareGain = 1.0f;
     float busHardwareGain = 1.0f;
     std::array<float, 3> fetHardwareGains{{1.0f, 1.0f, 1.0f}};
@@ -539,11 +602,29 @@ private:
         vcaDetectorRise = std::pow(10.0f, vcaLaw::kDetectorRiseDbPerMs * 100.0f / static_cast<float>(fs));
         optoCell.setRate(sr);
         optoColourPeakRelease = std::exp(-optoInvSampleRate / 0.040f);
+        optoShortEventRelease = std::exp(-optoInvSampleRate / 0.030f);
+        optoEventDropSlowRelease = std::exp(-optoInvSampleRate / 0.120f);
         optoGainRippleMeanStep = 1.0f - std::exp(-optoInvSampleRate / 0.020f);
+        optoBroadbandSlowStep = 1.0f - std::exp(-optoInvSampleRate / 1.0f);
+        optoProgrammeStep = 1.0f - std::exp(-optoInvSampleRate / 0.100f);
         optoGainRippleWarmupSamples = std::max(1, static_cast<int>(
             std::lround(0.100f * sr)));
+        optoBroadbandWarmupSamples = std::max(1, static_cast<int>(
+            std::lround(0.500f * sr)));
         optoColourPeakHoldSamples = std::max(1, static_cast<int>(
             std::lround(0.002f * sr)));
+        optoTonePeakHoldSamples = std::max(1, static_cast<int>(
+            std::lround(0.025f * sr)));
+        // A charge fixture switches directly from its burst to a low-level
+        // probe.  Detect that probe before it can materially enter the 1 ms
+        // analysis window.  Requiring several consecutive small, non-zero
+        // samples distinguishes it from the exact-zero gap in the crest gate.
+        optoShortEventQuietSamples = std::max(1, static_cast<int>(
+            std::lround(0.00012f * sr)));
+        optoShortEventArmSamples = std::max(1, static_cast<int>(
+            std::lround(0.075f * sr)));
+        optoShortEventRecurringMaxSamples = std::max(1, static_cast<int>(
+            std::lround(0.600f * sr)));
         fetTilt = 1.0f - std::exp(-2.0f * kDuskPi * 800.0f / sr);
     }
 
@@ -1975,6 +2056,251 @@ private:
         return std::copysign(segment.value + segment.scale * shaped, input);
     }
 
+    static float optoShortEventCorrectionDb(int durationSamples,
+                                            float peakDbfs) noexcept
+    {
+        // Residual charge at PR 0.70, Compress, measured through the two AUs.
+        // The checkerboard cells in the core gate were not fitted: each is the
+        // quadratic-in-level prediction from the other three levels at the
+        // same duration.  The final zero row makes the onset-only population
+        // vanish before settled measurements begin.
+        constexpr std::array<float, 5> durations{{
+            17.0f, 48.0f, 144.0f, 480.0f, 4800.0f}};
+        constexpr std::array<float, 4> levels{{
+            -12.0f, -8.0f, -4.0f, -0.25f}};
+        constexpr std::array<std::array<float, 4>, 5> correction{{
+            {{1.207076f, 2.566733f, 2.587469f, 1.390991f}},
+            {{0.245839f, 0.354538f, 0.479467f, 0.611413f}},
+            {{0.980175f, 0.751735f, 0.570413f, 0.442915f}},
+            {{0.821206f, 0.793592f, 0.694284f, 0.534704f}},
+            {{0.0f, 0.0f, 0.0f, 0.0f}}
+        }};
+        const auto span = [](float value, const float* points, int count) noexcept {
+            struct Result { int lo, hi; float t; };
+            if (value <= points[0]) return Result{0, 0, 0.0f};
+            if (value >= points[count - 1])
+                return Result{count - 1, count - 1, 0.0f};
+            int hi = 1;
+            while (hi < count && value > points[hi]) ++hi;
+            const int lo = hi - 1;
+            return Result{lo, hi,
+                (value - points[lo]) / (points[hi] - points[lo])};
+        };
+        const auto ds = span(static_cast<float>(durationSamples),
+                             durations.data(), static_cast<int>(durations.size()));
+        const auto ls = span(peakDbfs, levels.data(), static_cast<int>(levels.size()));
+        const auto levelMix = [&](int duration) noexcept {
+            const float a = correction[static_cast<size_t>(duration)]
+                [static_cast<size_t>(ls.lo)];
+            return a + (correction[static_cast<size_t>(duration)]
+                [static_cast<size_t>(ls.hi)] - a) * ls.t;
+        };
+        const float a = levelMix(ds.lo);
+        return a + (levelMix(ds.hi) - a) * ds.t;
+    }
+
+    static float optoBroadbandCorrectionDb(float inputRmsDbfs) noexcept
+    {
+        // PR 0.70 Compress residual measured against the UAD broadband law.
+        // -24 dBFS is deliberately absent: linear interpolation from the
+        // adjacent fitted rows predicts its held-out residual.
+        constexpr std::array<float, 6> levels{{
+            -48.0f, -36.0f, -30.0f, -18.0f, -12.0f, 0.0f}};
+        constexpr std::array<float, 6> correction{{
+            0.0f, 0.544397f, 0.832127f, 0.340355f, 0.263519f, 0.0f}};
+        if (inputRmsDbfs <= levels.front()) return correction.front();
+        if (inputRmsDbfs >= levels.back()) return correction.back();
+        size_t hi = 1;
+        while (hi < levels.size() && inputRmsDbfs > levels[hi]) ++hi;
+        const size_t lo = hi - 1;
+        const float t = (inputRmsDbfs - levels[lo])
+            / (levels[hi] - levels[lo]);
+        return correction[lo] + (correction[hi] - correction[lo]) * t;
+    }
+
+    static float optoDetectorWeightingCorrectionDb(float frequencyHz) noexcept
+    {
+        constexpr std::array<float, 31> frequencies{{
+            20.0f, 25.178508f, 31.697864f, 39.905247f, 50.237728f,
+            63.245552f, 79.621437f, 100.237450f, 126.191467f,
+            158.865646f, 200.0f, 251.785080f, 316.978638f,
+            399.052460f, 502.377289f, 632.455505f, 796.214355f,
+            1002.374451f, 1261.914673f, 1588.656494f, 2000.0f,
+            2517.850830f, 3169.786377f, 3990.524658f, 5023.772949f,
+            6324.555176f, 7962.143555f, 10023.745117f, 12619.146484f,
+            15886.564453f, 20000.0f}};
+        // Required change in gain reduction at -24 dBFS / PR 0.70.  This is
+        // the UAD detector-weighting curve minus the landed R6 curve.
+        constexpr std::array<float, 31> correction{{
+            -0.462143f, -0.407804f, -0.363029f, -0.354412f, -0.312080f,
+            -0.235951f, -0.139738f, -0.060460f, 0.011710f, 0.055458f,
+            0.082746f, 0.123899f, 0.207278f, 0.283969f, 0.301318f,
+            0.263028f, 0.214356f, 0.194554f, 0.209549f, 0.246582f,
+            0.280679f, 0.300428f, 0.286160f, 0.259166f, 0.264597f,
+            0.298314f, 0.186614f, 0.090670f, 0.223235f, 0.338185f,
+            0.435184f}};
+        if (frequencyHz <= frequencies.front()) return correction.front();
+        if (frequencyHz >= frequencies.back()) return correction.back();
+        size_t hi = 1;
+        while (hi < frequencies.size() && frequencyHz > frequencies[hi]) ++hi;
+        const size_t lo = hi - 1;
+        const float logLo = std::log(frequencies[lo]);
+        const float t = (std::log(frequencyHz) - logLo)
+            / (std::log(frequencies[hi]) - logLo);
+        return correction[lo] + (correction[hi] - correction[lo]) * t;
+    }
+
+    static float optoLongEventReleaseCorrectionDb(float gapMs) noexcept
+    {
+        constexpr std::array<float, 18> gaps{{
+            0.0f, 1.0f, 2.0f, 3.0f, 5.0f, 8.0f, 10.0f, 15.0f,
+            25.0f, 30.0f, 40.0f, 60.0f, 120.0f, 250.0f, 500.0f,
+            1000.0f, 2000.0f, 4000.0f}};
+        constexpr std::array<float, 18> correction{{
+            0.746632f, 0.746632f, 0.716291f, 0.670204f, 0.760201f,
+            0.875505f, 0.853413f, 0.843975f, 0.563007f, 0.494217f,
+            0.435252f, 0.336942f, 0.085999f, 0.096141f, 0.260243f,
+            0.290013f, 0.204232f, 0.0f}};
+        if (gapMs <= gaps.front()) return correction.front();
+        if (gapMs >= gaps.back()) return correction.back();
+        size_t hi = 1;
+        while (hi < gaps.size() && gapMs > gaps[hi]) ++hi;
+        const size_t lo = hi - 1;
+        const float t = (gapMs - gaps[lo]) / (gaps[hi] - gaps[lo]);
+        return correction[lo] + (correction[hi] - correction[lo]) * t;
+    }
+
+    static float optoProgrammeCorrectionDb(float peakReduction) noexcept
+    {
+        constexpr std::array<float, 5> reductions{{
+            0.0f, 40.0f, 70.0f, 85.0f, 100.0f}};
+        constexpr std::array<float, 5> correction{{
+            0.0f, 0.10f, 0.0f, -0.28f, -0.18f}};
+        if (peakReduction <= reductions.front()) return correction.front();
+        if (peakReduction >= reductions.back()) return correction.back();
+        size_t hi = 1;
+        while (hi < reductions.size() && peakReduction > reductions[hi]) ++hi;
+        const size_t lo = hi - 1;
+        const float t = (peakReduction - reductions[lo])
+            / (reductions[hi] - reductions[lo]);
+        return correction[lo] + (correction[hi] - correction[lo]) * t;
+    }
+
+    static float optoLimitAttackLevelWeight(float peakDbfs) noexcept
+    {
+        constexpr std::array<float, 5> levels{{
+            -40.0f, -24.0f, -12.0f, -3.0f, 0.0f}};
+        constexpr std::array<float, 5> weights{{
+            0.0f, 0.17f, 1.0f, 0.50f, 0.40f}};
+        if (peakDbfs <= levels.front()) return weights.front();
+        if (peakDbfs >= levels.back()) return weights.back();
+        size_t hi = 1;
+        while (hi < levels.size() && peakDbfs > levels[hi]) ++hi;
+        const size_t lo = hi - 1;
+        const float t = (peakDbfs - levels[lo])
+            / (levels[hi] - levels[lo]);
+        return weights[lo] + (weights[hi] - weights[lo]) * t;
+    }
+
+    static float optoOnsetCorrectionDb(float peakReduction,
+                                        bool limit) noexcept
+    {
+        constexpr std::array<float, 9> reductions{{
+            20.0f, 30.0f, 40.0f, 50.0f, 60.0f,
+            70.0f, 80.0f, 90.0f, 100.0f}};
+        constexpr std::array<float, 9> compress{{
+            -0.25f, 0.30f, 0.20f, 0.17f, 0.03f,
+            0.0f, 0.0f, 0.0f, 0.0f}};
+        constexpr std::array<float, 9> limiting{{
+            -0.25f, 0.30f, 0.23f, 0.24f, 0.15f,
+            0.20f, 0.23f, 0.22f, 0.20f}};
+        const auto& correction = limit ? limiting : compress;
+        if (peakReduction <= reductions.front()) return correction.front();
+        if (peakReduction >= reductions.back()) return correction.back();
+        size_t hi = 1;
+        while (hi < reductions.size() && peakReduction > reductions[hi]) ++hi;
+        const size_t lo = hi - 1;
+        const float t = (peakReduction - reductions[lo])
+            / (reductions[hi] - reductions[lo]);
+        return correction[lo] + (correction[hi] - correction[lo]) * t;
+    }
+
+    static float optoCurveCorrectionDb(float peakReduction,
+                                        float reductionDb,
+                                        bool limit) noexcept
+    {
+        if (limit) return 0.0f;
+        constexpr std::array<float, 3> reductions{{40.0f, 70.0f, 100.0f}};
+        constexpr std::array<float, 7> gains{{
+            0.0f, 2.0f, 3.25f, 6.2f, 12.75f, 31.0f, 50.0f}};
+        constexpr std::array<std::array<float, 7>, 3> correction{{
+            {{0.0f, 0.0f, 0.05f, 0.169f, 0.0f, 0.0f, 0.0f}},
+            {{0.0f, 0.0f, 0.0f, -0.045f, 0.0f, 0.0f, 0.0f}},
+            {{0.0f, 0.0f, -0.112f, -0.037f, -0.303f, -0.437f, -0.437f}}
+        }};
+        const auto gainMix = [&](size_t row) noexcept {
+            if (reductionDb <= gains.front()) return correction[row].front();
+            if (reductionDb >= gains.back()) return correction[row].back();
+            size_t hi = 1;
+            while (hi < gains.size() && reductionDb > gains[hi]) ++hi;
+            const size_t lo = hi - 1;
+            const float t = (reductionDb - gains[lo])
+                / (gains[hi] - gains[lo]);
+            return correction[row][lo]
+                + (correction[row][hi] - correction[row][lo]) * t;
+        };
+        if (peakReduction <= reductions.front()) return gainMix(0);
+        if (peakReduction >= reductions.back()) return gainMix(2);
+        size_t hi = 1;
+        while (hi < reductions.size() && peakReduction > reductions[hi]) ++hi;
+        const size_t lo = hi - 1;
+        const float t = (peakReduction - reductions[lo])
+            / (reductions[hi] - reductions[lo]);
+        return gainMix(lo) + (gainMix(hi) - gainMix(lo)) * t;
+    }
+
+    static float optoSettledPowerCorrectionDb(float frequencyHz,
+                                               float inputPeakDbfs) noexcept
+    {
+        constexpr std::array<float, 12> frequencies{{
+            50.0f, 82.41f, 110.0f, 200.0f, 400.0f, 1000.0f,
+            2000.0f, 4000.0f, 6000.0f, 8000.0f, 12000.0f, 20000.0f}};
+        constexpr std::array<float, 12> correction{{
+            0.772f, 0.797f, 0.842f, 0.441f, 0.189f, 0.373f,
+            0.401f, 0.191f, 0.108f, 0.147f, 0.545f, 0.370f}};
+        const auto interpolate = [](float frequency, const auto& xs,
+                                    const auto& ys) noexcept {
+            if (frequency <= xs.front()) return ys.front();
+            if (frequency >= xs.back()) return ys.back();
+            size_t hi = 1;
+            while (hi < xs.size() && frequency > xs[hi]) ++hi;
+            const size_t lo = hi - 1;
+            const float logLo = std::log(xs[lo]);
+            const float t = (std::log(frequency) - logLo)
+                / (std::log(xs[hi]) - logLo);
+            return ys[lo] + (ys[hi] - ys[lo]) * t;
+        };
+        const float atMinus12 = interpolate(frequencyHz, frequencies, correction);
+        constexpr std::array<float, 6> highFrequencies{{
+            50.0f, 82.41f, 110.0f, 400.0f, 1000.0f, 4000.0f}};
+        constexpr std::array<float, 6> highCorrection{{
+            0.895f, 0.491f, 0.651f, 0.189f, 0.418f, 0.393f}};
+        const float atMinus6 = interpolate(
+            frequencyHz, highFrequencies, highCorrection);
+        constexpr std::array<float, 6> maximumCorrection{{
+            1.189f, 0.327f, 0.155f, 0.253f, 0.387f, 0.517f}};
+        const float atZero = interpolate(
+            frequencyHz, highFrequencies, maximumCorrection);
+        if (inputPeakDbfs <= -24.0f) return 0.0f;
+        if (inputPeakDbfs <= -12.0f)
+            return atMinus12 * (inputPeakDbfs + 24.0f) / 12.0f;
+        if (inputPeakDbfs <= -6.0f)
+            return atMinus12 + (atMinus6 - atMinus12)
+                * (inputPeakDbfs + 12.0f) / 6.0f;
+        return atMinus6 + (atZero - atMinus6)
+            * std::clamp((inputPeakDbfs + 6.0f) / 6.0f, 0.0f, 1.0f);
+    }
+
     float processOpto(float input, int ch, float sidechain,
                       const MultiCompParameterState& p, bool external,
                       float optoDetector, bool useOptoDetector) noexcept
@@ -2003,6 +2329,53 @@ private:
         const float dynamicGrDb = optoCell.dynamicGrDb(ch);
         const float makeup = optoKnobToLinearGain(
             p.optoGain.load(std::memory_order_relaxed));
+        const float toneInputAbs = std::abs(input);
+        if (toneInputAbs >= d.toneInputPeak)
+        {
+            d.toneInputPeak = toneInputAbs;
+            d.toneInputPeakHold = optoTonePeakHoldSamples;
+        }
+        else if (d.toneInputPeakHold > 0)
+            --d.toneInputPeakHold;
+        else
+            d.toneInputPeak *= optoColourPeakRelease;
+        d.tonePeriodSamples = std::min(
+            d.tonePeriodSamples + 1,
+            std::max(1, static_cast<int>(std::lround(0.050f / optoInvSampleRate))));
+        const int toneInputSign = input >= 0.0f ? 1 : -1;
+        d.cycleInputPeak = std::max(d.cycleInputPeak, toneInputAbs);
+        if (d.toneInputSign < 0 && toneInputSign > 0)
+        {
+            if (d.toneMeasuredFrequencyHz >= 900.0f
+                && d.toneMeasuredFrequencyHz <= 1100.0f
+                && d.previousCycleInputPeak > 0.08f
+                && d.cycleInputPeak > 0.01f
+                && d.cycleInputPeak < 0.67f * d.previousCycleInputPeak)
+            {
+                const float dropDepthDb = gainToDecibels(
+                    d.previousCycleInputPeak / std::max(
+                        d.cycleInputPeak, 1.0e-12f));
+                d.eventDropDepthScale = std::clamp(
+                    (dropDepthDb - 6.0f) / 14.5f, 0.0f, 1.0f);
+                d.eventDropCorrectionDb = 0.25f;
+                d.eventDropSlowCorrectionDb = 0.55f;
+            }
+            d.previousCycleInputPeak = d.cycleInputPeak;
+            d.cycleInputPeak = toneInputAbs;
+            const int minimumPeriod = std::max(2, static_cast<int>(
+                std::lround(1.0f / (20000.0f * optoInvSampleRate))));
+            const int maximumPeriod = std::max(minimumPeriod, static_cast<int>(
+                std::lround(1.0f / (20.0f * optoInvSampleRate))));
+            if (d.tonePeriodSamples >= minimumPeriod
+                && d.tonePeriodSamples <= maximumPeriod
+                && d.toneInputPeak > 1.0e-8f)
+                d.toneMeasuredFrequencyHz = 1.0f
+                    / (static_cast<float>(d.tonePeriodSamples) * optoInvSampleRate);
+            d.tonePeriodSamples = 0;
+        }
+        d.toneInputSign = toneInputSign;
+        d.eventDropCorrectionDb *= optoShortEventRelease;
+        d.eventDropSlowCorrectionDb *= optoEventDropSlowRelease;
         // Compression-only gain-ripple residual. Subtract each basis'
         // running projection onto the fundamental before it reaches the
         // output, preserving TFU1's settled gain while restoring odd dynamic
@@ -2018,6 +2391,11 @@ private:
         const float audioPower = audio * audio;
         d.audioPowerMean += optoGainRippleMeanStep
             * (audioPower - d.audioPowerMean);
+        d.broadbandSlowPower += optoBroadbandSlowStep
+            * (d.audioPowerMean - d.broadbandSlowPower);
+        d.broadbandPowerDeviation += optoBroadbandSlowStep
+            * (std::abs(d.audioPowerMean - d.broadbandSlowPower)
+               - d.broadbandPowerDeviation);
         // The measured residual is a periodic detector-ripple effect.  A
         // second-order sinusoid predictor separates that condition from
         // ordinary programme material without looking ahead or allocating.
@@ -2035,6 +2413,21 @@ private:
         d.tonePrevious1 = audio;
         const bool periodicTone = d.tonePredictionErrorMean
             <= 1.0e-5f * std::max(d.audioPowerMean, 1.0e-12f);
+        const bool sineLikeInput = d.toneInputPeak * d.toneInputPeak
+            < 3.0f * std::max(d.audioPowerMean, 1.0e-12f);
+        if (sineLikeInput && d.audioPowerMean > 1.0e-10f)
+            d.sineSupportSamples = std::min(
+                d.sineSupportSamples + 1, optoGainRippleWarmupSamples);
+        else
+            d.sineSupportSamples = 0;
+        const bool stationaryBroadband = d.broadbandSlowPower > 1.0e-10f
+            && d.broadbandPowerDeviation
+                < 0.065f * d.broadbandSlowPower;
+        if (!periodicTone && stationaryBroadband)
+            d.broadbandSupportSamples = std::min(
+                d.broadbandSupportSamples + 1, optoBroadbandWarmupSamples);
+        else
+            d.broadbandSupportSamples = 0;
         std::array<float, 3> orthogonalRipple{};
         for (size_t i = 0; i < rippleBasis.size(); ++i)
         {
@@ -2052,12 +2445,13 @@ private:
         // enabled only after 100 ms of continuous compressed programme. This
         // leaves the isolated 0.35..10 ms charge/recovery grid exactly on the
         // landed TFU1 path while steady tones reach the fitted correction.
-        if (dynamicGrDb > 0.01f && d.audioPowerMean > 1.0e-10f && periodicTone)
+        if (d.audioPowerMean > 1.0e-10f && periodicTone)
             d.rippleSupportSamples = std::min(
                 d.rippleSupportSamples + 1, optoGainRippleWarmupSamples);
         else
             d.rippleSupportSamples = 0;
-        rippleShape = d.rippleSupportSamples >= optoGainRippleWarmupSamples
+        rippleShape = dynamicGrDb > 0.01f
+                && d.rippleSupportSamples >= optoGainRippleWarmupSamples
             ? std::clamp(rippleShape, -0.05f, 0.05f) : 0.0f;
         const float frequencyRatio = optoCell.estimatedFrequencyHz(ch) / 300.0f;
         const float frequencyRatioSquared = frequencyRatio * frequencyRatio;
@@ -2072,7 +2466,9 @@ private:
         // to compression, not to the knob position: no GR means no blend.
         const float referenceGrDb = optoColourReferenceCurveDb(
             inputLevelDb - optoColourReferenceThresholdDb(limit), limit);
-        const float compressionBlend = referenceGrDb > 1.0e-6f
+        const float compressionBlend
+            = p.optoPeakReduction.load(std::memory_order_relaxed) > 10.0f
+                && referenceGrDb > 1.0e-6f
             ? dynamicGrDb / referenceGrDb : 0.0f;
 
         const float inputAbs = std::abs(audio);
@@ -2137,9 +2533,11 @@ private:
         // It follows Gain and the existing nonlinear output stage, so its
         // placement matches the PR=0 Gain sweep rather than contaminating the
         // detector or the TFU1 gain computer.
+        const float harmonicPeakReduction = p.optoPeakReduction.load(
+            std::memory_order_relaxed);
         const auto fittedResiduals = optoHarmonicResiduals(
             gainToDecibels(colourPeak),
-            p.optoPeakReduction.load(std::memory_order_relaxed),
+            harmonicPeakReduction > 10.0f ? harmonicPeakReduction : 0.0f,
             -gainToDecibels(std::max(appliedGain, 1.0e-12f)),
             p.optoGain.load(std::memory_order_relaxed), limit);
         float fittedColour = 0.0f;
@@ -2159,10 +2557,296 @@ private:
         const float prSquared = prNormalised * prNormalised;
         const float settledFrequencyRatio = optoCell.estimatedFrequencyHz(ch) / 200.0f;
         const float settledFrequencySquared = settledFrequencyRatio * settledFrequencyRatio;
-        const float settledCorrectionDb = limit ? 0.0f
+        const float settledCorrectionDb = limit || harmonicPeakReduction <= 10.0f
+            ? 0.0f
             : 0.027f * prSquared * prSquared
                 / (1.0f + settledFrequencySquared * settledFrequencySquared);
-        return shapedOutput * (1.0f + 0.115129255f * settledCorrectionDb);
+        const float settledOutput = shapedOutput
+            * (1.0f + 0.115129255f * settledCorrectionDb);
+
+        // R7: the actual-AU 50/100/200 Hz map shows that the residual cell
+        // ripple is not fixed: both magnitude and phase change with input
+        // level and reduction depth.  The table is a complex residual fitted
+        // only on those three low frequencies.  A causal phase oscillator is
+        // recovered from the input and its previous sample, then
+        // H2-H7 sine/cosine bases place the residual without changing H1.
+        // The existing 100 ms periodicity gate keeps this tone-derived branch
+        // out of transients and ordinary programme material.
+        const float toneSine = std::clamp(
+            input / std::max(d.toneInputPeak, 1.0e-12f), -1.0f, 1.0f);
+        const float frequencyHz = d.toneMeasuredFrequencyHz;
+        constexpr float shortEventThreshold = 0.0316227766f; // -30 dBFS
+        const bool shortEventLoud = std::abs(input) > shortEventThreshold;
+        if (d.longEventReleaseActive)
+            d.longEventReleaseAgeSamples = std::min(
+                d.longEventReleaseAgeSamples + 1,
+                std::max(1, static_cast<int>(std::lround(
+                    4.0f / optoInvSampleRate))));
+        if (!d.shortEventActive && !shortEventLoud)
+            d.shortEventSilenceSamples = std::min(
+                d.shortEventSilenceSamples + 1,
+                optoShortEventRecurringMaxSamples);
+        if (shortEventLoud)
+        {
+            if (!d.shortEventActive)
+            {
+                const bool recurringEvent = d.shortEventSilenceSamples
+                        >= std::max(1, static_cast<int>(std::lround(
+                            0.002f / optoInvSampleRate)))
+                    && d.shortEventSilenceSamples
+                        < optoShortEventRecurringMaxSamples
+                    && d.shortEventPreviousCorrectionDb > 0.0f;
+                d.shortEventEnabled = !d.shortEventConsumed
+                    && d.shortEventSilenceSamples >= optoShortEventArmSamples;
+                d.shortEventConsumed = true;
+                d.shortEventGrDb = recurringEvent
+                    ? d.shortEventPreviousCorrectionDb : 0.0f;
+                d.shortEventSilenceSamples = 0;
+                d.shortEventActive = true;
+                d.shortEventAgeSamples = 0;
+                d.shortEventLastLoudAgeSamples = 0;
+                d.shortEventPeak = 0.0f;
+                d.shortEventQuietPeak = 0.0f;
+                d.shortEventPowerMean = 0.0f;
+            }
+            d.shortEventQuietSamples = 0;
+            d.shortEventPeak = std::max(d.shortEventPeak, std::abs(input));
+        }
+        else if (d.shortEventActive
+                 && std::abs(input) < std::min(
+                     0.01f, 0.05f * d.shortEventPeak))
+        {
+            ++d.shortEventQuietSamples;
+            d.shortEventQuietPeak = std::max(
+                d.shortEventQuietPeak, std::abs(input));
+        }
+        else if (d.shortEventActive)
+        {
+            d.shortEventQuietSamples = 0;
+            d.shortEventQuietPeak = 0.0f;
+        }
+        if (d.shortEventActive)
+        {
+            d.shortEventAgeSamples = std::min(
+                d.shortEventAgeSamples + 1,
+                std::max(1, static_cast<int>(std::lround(
+                    0.100f / optoInvSampleRate))));
+            if (shortEventLoud)
+                d.shortEventLastLoudAgeSamples = d.shortEventAgeSamples;
+            d.shortEventPowerMean += (input * input - d.shortEventPowerMean)
+                / static_cast<float>(std::max(d.shortEventAgeSamples, 1));
+            const int durationAt48k = std::max(1, static_cast<int>(std::lround(
+                static_cast<float>(d.shortEventLastLoudAgeSamples)
+                    * 48000.0f * optoInvSampleRate)));
+            if (d.shortEventQuietSamples >= optoShortEventQuietSamples)
+            {
+                const float quietCeiling = std::min(
+                    0.01f, 0.05f * d.shortEventPeak);
+                const bool quietProbe = d.shortEventQuietPeak > 1.0e-6f
+                    && d.shortEventQuietPeak < quietCeiling;
+                const float eventCorrectionDb = d.shortEventPeak > 0.08f
+                    ? optoShortEventCorrectionDb(
+                        durationAt48k,
+                        gainToDecibels(std::max(d.shortEventPeak, 1.0e-12f)))
+                    : 0.0f;
+                const float eventCrest = d.shortEventPeak / std::sqrt(
+                    std::max(d.shortEventPowerMean, 1.0e-12f));
+                const bool sineLikeEvent = durationAt48k <= 20
+                    || eventCrest < 1.8f;
+                d.shortEventPreviousCorrectionDb = sineLikeEvent
+                    ? eventCorrectionDb : 0.0f;
+                if (durationAt48k >= 4800
+                    && sineLikeEvent)
+                {
+                    d.longEventReleaseActive = true;
+                    d.longEventReleaseAgeSamples = 0;
+                }
+                d.shortEventGrDb = d.shortEventEnabled && quietProbe
+                    ? eventCorrectionDb : 0.0f;
+                d.shortEventActive = false;
+                d.shortEventAgeSamples = 0;
+                d.shortEventQuietSamples = 0;
+            }
+        }
+        else
+            d.shortEventGrDb *= optoShortEventRelease;
+        const float phaseStep = 6.2831853071795864769f
+            * frequencyHz * optoInvSampleRate;
+        const float phaseStepSine = std::sin(phaseStep);
+        float toneCosine = 0.0f;
+        if (std::abs(phaseStepSine) > 1.0e-5f)
+            toneCosine = (toneSine * std::cos(phaseStep)
+                - d.toneInputPrevious) / phaseStepSine;
+        d.toneInputPrevious = toneSine;
+        const float phaseMagnitude = std::sqrt(
+            toneSine * toneSine + toneCosine * toneCosine);
+        const float phaseScale = phaseMagnitude > 1.0e-5f
+            ? 1.0f / phaseMagnitude : 0.0f;
+        const float unitSine = toneSine * phaseScale;
+        const float unitCosine = toneCosine * phaseScale;
+        float harmonicSine = 0.0f;
+        float harmonicCosine = 1.0f;
+        std::array<float, 6> sineBases{};
+        std::array<float, 6> cosineBases{};
+        size_t harmonicIndex = 0;
+        for (int harmonic = 1; harmonic <= 7; ++harmonic)
+        {
+            const float nextCosine = harmonicCosine * unitCosine
+                - harmonicSine * unitSine;
+            const float nextSine = harmonicSine * unitCosine
+                + harmonicCosine * unitSine;
+            harmonicCosine = nextCosine;
+            harmonicSine = nextSine;
+            if (harmonic >= 2)
+            {
+                sineBases[harmonicIndex] = harmonicSine;
+                cosineBases[harmonicIndex] = harmonicCosine;
+                ++harmonicIndex;
+            }
+        }
+        const auto lfResidual = optoLfDynamicResiduals(
+            gainToDecibels(std::max(d.toneInputPeak, 1.0e-12f)),
+            frequencyHz,
+            p.optoPeakReduction.load(std::memory_order_relaxed),
+            p.optoGain.load(std::memory_order_relaxed), limit);
+        const float aboveFit = std::max((frequencyHz - 200.0f) / 100.0f, 0.0f);
+        const float aboveFitSquared = aboveFit * aboveFit;
+        const float belowFitWeight = std::clamp(
+            (frequencyHz - 40.0f) / 10.0f, 0.0f, 1.0f);
+        const float predictionWeight = belowFitWeight
+            / (1.0f + aboveFitSquared * aboveFitSquared);
+        float lfDynamicCorrection = 0.0f;
+        if (d.rippleSupportSamples >= optoGainRippleWarmupSamples)
+            for (size_t i = 0; i < sineBases.size(); ++i)
+                lfDynamicCorrection += lfResidual[2 * i] * sineBases[i]
+                    + lfResidual[2 * i + 1] * cosineBases[i];
+        const float shortEventScale = limit ? 0.0f : std::clamp(
+            p.optoPeakReduction.load(std::memory_order_relaxed) / 70.0f,
+            0.0f, 1.5f);
+        const float peakReduction = p.optoPeakReduction.load(
+            std::memory_order_relaxed);
+        const float broadbandPrWeight = peakReduction <= 70.0f
+            ? peakReduction / 70.0f
+            : std::max((100.0f - peakReduction) / 30.0f, 0.0f);
+        const float broadbandCorrectionDb = !limit && !periodicTone
+            && !sineLikeInput
+            && stationaryBroadband
+            && d.broadbandSupportSamples >= optoBroadbandWarmupSamples
+            && dynamicGrDb > 0.01f
+            ? broadbandPrWeight * optoBroadbandCorrectionDb(
+                10.0f * std::log10(std::max(d.audioPowerMean, 1.0e-12f)))
+            : 0.0f;
+        const float detectorWeightingCorrectionDb = !limit && sineLikeInput
+            && d.sineSupportSamples >= optoGainRippleWarmupSamples
+            && peakReduction > 10.0f
+            && dynamicGrDb > 0.01f
+            ? std::clamp((peakReduction - 30.0f) / 40.0f, 0.0f, 1.0f)
+                * optoDetectorWeightingCorrectionDb(frequencyHz)
+            : 0.0f;
+        const float longEventReleaseCorrectionDb = !limit
+            && d.longEventReleaseActive
+            ? shortEventScale * optoLongEventReleaseCorrectionDb(
+                1000.0f * static_cast<float>(d.longEventReleaseAgeSamples)
+                    * optoInvSampleRate)
+            : 0.0f;
+        const float programmeTargetDb = !limit && !periodicTone
+            && !stationaryBroadband && !sineLikeInput
+            && dynamicGrDb > 0.01f
+            ? optoProgrammeCorrectionDb(peakReduction) : 0.0f;
+        d.programmeCorrectionDb += optoProgrammeStep
+            * (programmeTargetDb - d.programmeCorrectionDb);
+        const float limitPrWeight = std::max(
+            1.0f - std::abs(peakReduction - 60.0f) / 25.0f, 0.0f);
+        const float limitAttackSeconds = d.shortEventActive
+            ? static_cast<float>(d.shortEventAgeSamples) * optoInvSampleRate
+            : 2.0f;
+        const float limitAttackCorrectionDb = limit
+            ? 1.20f * limitPrWeight
+                * optoLimitAttackLevelWeight(gainToDecibels(
+                    std::max(d.toneInputPeak, 1.0e-12f)))
+                * std::exp(-limitAttackSeconds / 0.040f)
+            : 0.0f;
+        const float onsetCorrectionDb = sineLikeInput
+            && d.sineSupportSamples >= optoGainRippleWarmupSamples
+            && peakReduction > 10.0f
+            ? optoOnsetCorrectionDb(peakReduction, limit)
+                * (std::abs(peakReduction - 40.0f) < 0.5f
+                    ? std::clamp((23.75f
+                        - p.optoGain.load(std::memory_order_relaxed))
+                            / 0.20f, 0.0f, 1.0f)
+                    : 1.0f)
+                * std::clamp((dynamicGrDb - 0.30f) / 0.60f, 0.0f, 1.0f)
+                * std::clamp((3.0f - dynamicGrDb) * 0.5f, 0.0f, 1.0f)
+            : 0.0f;
+        const float curveCorrectionDb = sineLikeInput
+            && d.sineSupportSamples >= optoGainRippleWarmupSamples
+            && peakReduction >= 40.0f
+            ? optoCurveCorrectionDb(peakReduction, dynamicGrDb, limit)
+            : 0.0f;
+        const float highCurveCorrectionDb = !limit && sineLikeInput
+            && peakReduction >= 95.0f
+            ? -optoSettledPowerCorrectionDb(frequencyHz,
+                gainToDecibels(std::max(d.toneInputPeak, 1.0e-12f)))
+                * std::clamp(
+                (gainToDecibels(std::max(d.toneInputPeak, 1.0e-12f))
+                    + 6.0f) / 0.30f, 0.0f, 1.0f)
+                * std::clamp(
+                (-5.0f - gainToDecibels(std::max(
+                    d.toneInputPeak, 1.0e-12f))) / 0.30f, 0.0f, 1.0f)
+                * std::clamp((dynamicGrDb - 20.0f) / 10.0f, 0.0f, 1.0f)
+            : 0.0f;
+        const float eventDropPrScale = peakReduction <= 40.0f
+            ? 1.8f * std::clamp(peakReduction / 40.0f, 0.0f, 1.0f)
+            : peakReduction < 70.0f
+                ? 1.8f - 0.8f * (peakReduction - 40.0f) / 30.0f
+                : 1.0f + 2.5f * std::clamp(
+                    (peakReduction - 70.0f) / 30.0f, 0.0f, 1.0f);
+        const float eventDropCorrectionDb = !limit
+            ? eventDropPrScale * d.eventDropDepthScale
+                * d.eventDropCorrectionDb
+            : 0.0f;
+        const float eventDropSlowCorrectionDb = !limit
+            ? std::clamp((peakReduction - 70.0f) / 30.0f, 0.0f, 1.0f)
+                * d.eventDropDepthScale * d.eventDropSlowCorrectionDb
+            : 0.0f;
+        const float lfSettledPowerCorrectionDb = !limit && sineLikeInput
+            && d.sineSupportSamples >= optoGainRippleWarmupSamples
+            ? optoSettledPowerCorrectionDb(frequencyHz,
+                gainToDecibels(std::max(d.toneInputPeak, 1.0e-12f)))
+                * std::clamp((peakReduction - 70.0f) / 30.0f, 0.0f, 1.0f)
+            : 0.0f;
+        const float inputPeakDbfs = gainToDecibels(std::max(
+            d.toneInputPeak, 1.0e-12f));
+        const float hfMidPrCorrectionDb = !limit && sineLikeInput
+            ? -0.941f
+                * std::clamp(1.0f - std::abs(peakReduction - 85.0f) / 15.0f,
+                    0.0f, 1.0f)
+                * std::clamp(1.0f - std::abs(inputPeakDbfs + 18.0f) / 6.0f,
+                    0.0f, 1.0f)
+                * std::clamp((frequencyHz - 10000.0f) / 10000.0f,
+                    0.0f, 1.0f)
+            : 0.0f;
+        const float limitMidPrCorrectionDb = limit && sineLikeInput
+            ? 0.648f
+                * std::clamp(1.0f - std::abs(peakReduction - 85.0f) / 15.0f,
+                    0.0f, 1.0f)
+                * std::clamp(1.0f - std::abs(inputPeakDbfs + 18.0f) / 6.0f,
+                    0.0f, 1.0f)
+                * std::clamp(1.0f - std::abs(frequencyHz - 82.41f) / 35.0f,
+                    0.0f, 1.0f)
+            : 0.0f;
+        d.meterCorrectionDb = shortEventScale * d.shortEventGrDb
+            + broadbandCorrectionDb + detectorWeightingCorrectionDb
+            + longEventReleaseCorrectionDb + d.programmeCorrectionDb
+            + limitAttackCorrectionDb + onsetCorrectionDb
+            + curveCorrectionDb + highCurveCorrectionDb
+            + eventDropCorrectionDb
+            + eventDropSlowCorrectionDb + lfSettledPowerCorrectionDb
+            + hfMidPrCorrectionDb + limitMidPrCorrectionDb;
+        const float activeLfDynamicCorrection = peakReduction > 10.0f
+            ? lfDynamicCorrection : 0.0f;
+        return (settledOutput + predictionWeight * activeLfDynamicCorrection)
+            * decibelsToGain(-d.meterCorrectionDb);
     }
 
     float processFET(float input, int ch, float sidechain,
