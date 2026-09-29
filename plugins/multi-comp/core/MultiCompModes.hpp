@@ -11,6 +11,7 @@
 #include "MultiCompParams.hpp"
 #include "MultiCompOptoShelf.hpp"
 #include "MultiCompOptoCell.hpp"
+#include "MultiCompOptoHarmonics.hpp"
 #include "MultiCompHelpers.hpp"
 #include "../../shared-daf/dsp/DuskCrossover.hpp"
 #include "../../shared-daf/dsp/DuskFilters.hpp"
@@ -2019,6 +2020,8 @@ private:
         const float u3 = u2 * u;
         const float u4 = u2 * u2;
         const float u5 = u4 * u;
+        const float u6 = u3 * u3;
+        const float u7 = u6 * u;
         // Chebyshev bases synthesize H2-H5 without an H1 component for a
         // settled sinusoid. Even bases omit their constant term so silence
         // produces silence; the resulting DC is left to the post high-pass.
@@ -2028,8 +2031,11 @@ private:
             8.0f * u4 - 8.0f * u2,
             16.0f * u5 - 20.0f * u3 + 5.0f * u
         };
-        const auto ratios = optoHarmonicRatios(
+        auto ratios = optoHarmonicRatios(
             gainToDecibels(colourPeak), compressionBlend);
+        // G2: the measured colour stage contributes no independent H2. The
+        // output stage below owns even-order colour after the Gain control.
+        ratios[0] = 0.0f;
         float colour = 0.0f;
         for (size_t harmonic = 0; harmonic < ratios.size(); ++harmonic)
             colour += ratios[harmonic] * bases[harmonic];
@@ -2042,7 +2048,32 @@ private:
         // to the post high-pass, as in native.
         const float out = optoPreHighPass[ch].process(compressed * makeup)
             + colour;
-        return optoPostHighPass[ch].process(optoOutputStage(out));
+        // G3: measured output-stage H2 is level-dependent and occurs after
+        // Gain. These are the frozen lab-fit constants from g3-fit.json.
+        constexpr float g3Threshold = 1.725592546e-03f;
+        constexpr float g3Quadratic = 9.729929039e-03f;
+        const float g3Over = std::max(std::abs(out) - g3Threshold, 0.0f);
+        const float fittedBases[6] = {
+            bases[0], bases[1], bases[2], bases[3],
+            32.0f * u6 - 48.0f * u4 + 18.0f * u2,
+            64.0f * u7 - 112.0f * u5 + 56.0f * u3 - 7.0f * u
+        };
+        // Actual-AU residual fit.  Coefficients are absolute output amplitudes,
+        // indexed by the pre-gain input level and the three physical controls.
+        // It follows Gain and the existing nonlinear output stage, so its
+        // placement matches the PR=0 Gain sweep rather than contaminating the
+        // detector or the TFU1 gain computer.
+        const auto fittedResiduals = optoHarmonicResiduals(
+            gainToDecibels(colourPeak),
+            p.optoPeakReduction.load(std::memory_order_relaxed),
+            -gainToDecibels(std::max(appliedGain, 1.0e-12f)),
+            p.optoGain.load(std::memory_order_relaxed), limit);
+        float fittedColour = 0.0f;
+        for (size_t harmonic = 0; harmonic < fittedResiduals.size(); ++harmonic)
+            fittedColour += fittedResiduals[harmonic] * fittedBases[harmonic];
+        return optoPostHighPass[ch].process(
+            optoOutputStage(out + g3Quadratic * g3Over * g3Over)
+                + fittedColour);
     }
 
     float processFET(float input, int ch, float sidechain,
