@@ -11,9 +11,7 @@
 #include "MultiCompParams.hpp"
 #include "MultiCompOptoShelf.hpp"
 #include "MultiCompOptoCell.hpp"
-#include "MultiCompOptoFinalHarmonics.hpp"
-#include "MultiCompOptoHarmonics.hpp"
-#include "MultiCompOptoLfDynamicHarmonics.hpp"
+#include "MultiCompOptoSmoothHarmonics.hpp"
 #include "MultiCompHelpers.hpp"
 #include "../../shared-daf/dsp/DuskCrossover.hpp"
 #include "../../shared-daf/dsp/DuskFilters.hpp"
@@ -330,10 +328,14 @@ private:
         float broadbandSlowPower = 0.0f;
         float broadbandPowerDeviation = 0.0f;
         float tonePredictionErrorMean = 0.0f;
+        float harmonicPredictionErrorMean = 0.0f;
+        float toneRecurrenceNumeratorMean = 0.0f;
+        float toneRecurrenceDenominatorMean = 0.0f;
         float tonePrevious1 = 0.0f;
         float tonePrevious2 = 0.0f;
         std::array<float, 3> rippleProjection{{0.0f, 0.0f, 0.0f}};
         int rippleSupportSamples = 0;
+        int harmonicSilenceSamples = 0;
         int broadbandSupportSamples = 0;
         int sineSupportSamples = 0;
         float programmeCorrectionDb = 0.0f;
@@ -2058,7 +2060,8 @@ private:
     }
 
     static float optoShortEventCorrectionDb(int durationSamples,
-                                            float peakDbfs) noexcept
+                                            float peakDbfs,
+                                            float peakReduction) noexcept
     {
         // Residual charge at PR 0.70, Compress, measured through the two AUs.
         // The checkerboard cells in the core gate were not fitted: each is the
@@ -2070,6 +2073,15 @@ private:
         constexpr std::array<float, 4> levels{{
             -12.0f, -8.0f, -4.0f, -0.25f}};
         constexpr std::array<std::array<float, 4>, 5> correction{{
+            {{0.693504f, 1.765942f, 1.902607f, 1.390991f}},
+            {{-0.002307f, 0.354538f, 0.157757f, 0.065774f}},
+            {{0.854975f, 0.599699f, 0.570413f, -0.027363f}},
+            {{0.821206f, 0.662275f, 0.508296f, 0.007319f}},
+            {{0.0f, 0.0f, 0.0f, 0.0f}}
+        }};
+        // R9's charge map is anchored at PR 70.  R8's existing PR 100
+        // recovery holdout must not inherit that one-axis refit.
+        constexpr std::array<std::array<float, 4>, 5> highPrCorrection{{
             {{1.207076f, 2.566733f, 2.587469f, 1.390991f}},
             {{0.245839f, 0.354538f, 0.479467f, 0.611413f}},
             {{0.980175f, 0.751735f, 0.570413f, 0.442915f}},
@@ -2090,14 +2102,21 @@ private:
         const auto ds = span(static_cast<float>(durationSamples),
                              durations.data(), static_cast<int>(durations.size()));
         const auto ls = span(peakDbfs, levels.data(), static_cast<int>(levels.size()));
-        const auto levelMix = [&](int duration) noexcept {
-            const float a = correction[static_cast<size_t>(duration)]
+        const auto levelMix = [&](const auto& table, int duration) noexcept {
+            const float a = table[static_cast<size_t>(duration)]
                 [static_cast<size_t>(ls.lo)];
-            return a + (correction[static_cast<size_t>(duration)]
+            return a + (table[static_cast<size_t>(duration)]
                 [static_cast<size_t>(ls.hi)] - a) * ls.t;
         };
-        const float a = levelMix(ds.lo);
-        return a + (levelMix(ds.hi) - a) * ds.t;
+        const auto durationMix = [&](const auto& table) noexcept {
+            const float a = levelMix(table, ds.lo);
+            return a + (levelMix(table, ds.hi) - a) * ds.t;
+        };
+        const float atPr70 = durationMix(correction);
+        const float atPr100 = durationMix(highPrCorrection);
+        const float highPrWeight = std::clamp(
+            (peakReduction - 70.0f) / 30.0f, 0.0f, 1.0f);
+        return atPr70 + (atPr100 - atPr70) * highPrWeight;
     }
 
     static float optoBroadbandCorrectionDb(float inputRmsDbfs) noexcept
@@ -2158,10 +2177,10 @@ private:
             25.0f, 30.0f, 40.0f, 60.0f, 120.0f, 250.0f, 500.0f,
             1000.0f, 2000.0f, 4000.0f}};
         constexpr std::array<float, 18> correction{{
-            0.746632f, 0.746632f, 0.716291f, 0.670204f, 0.760201f,
-            0.875505f, 0.853413f, 0.843975f, 0.563007f, 0.494217f,
-            0.435252f, 0.336942f, 0.085999f, 0.096141f, 0.260243f,
-            0.290013f, 0.204232f, 0.0f}};
+            0.539774f, 0.539774f, 0.754907f, 0.662672f, 0.757838f,
+            0.962865f, 0.941712f, 0.962770f, 0.874412f, 0.828487f,
+            0.758302f, 0.617563f, 0.234985f, 0.095107f, 0.275758f,
+            0.288961f, 0.203235f, 0.0f}};
         if (gapMs <= gaps.front()) return correction.front();
         if (gapMs >= gaps.back()) return correction.back();
         size_t hi = 1;
@@ -2402,20 +2421,56 @@ private:
         // ordinary programme material without looking ahead or allocating.
         // This prevents the tone-derived correction from becoming a second
         // dynamics processor on music while retaining held notes and bass.
+        // Estimate cos(w) directly from x[n] + x[n-2] = 2 cos(w) x[n-1].
+        // Unlike integer zero-crossing periods, this remains exact for tones
+        // whose periods are fractional at the oversampled processing rate.
+        const float recurrenceNumerator =
+            (audio + d.tonePrevious2) * d.tonePrevious1;
+        const float recurrenceDenominator =
+            2.0f * d.tonePrevious1 * d.tonePrevious1;
+        d.toneRecurrenceNumeratorMean += optoGainRippleMeanStep
+            * (recurrenceNumerator - d.toneRecurrenceNumeratorMean);
+        d.toneRecurrenceDenominatorMean += optoGainRippleMeanStep
+            * (recurrenceDenominator - d.toneRecurrenceDenominatorMean);
+        const float recurrenceCosine = std::clamp(
+            d.toneRecurrenceNumeratorMean
+                / std::max(d.toneRecurrenceDenominatorMean, 1.0e-12f),
+            -0.9999999f, 0.9999999f);
+        float harmonicFrequencyHz = d.toneMeasuredFrequencyHz;
+        if (d.toneRecurrenceDenominatorMean > 1.0e-10f)
+        {
+            const float recurrenceFrequency = std::acos(recurrenceCosine)
+                / (6.2831853071795864769f * optoInvSampleRate);
+            if (recurrenceFrequency >= 20.0f && recurrenceFrequency <= 20000.0f)
+                harmonicFrequencyHz = recurrenceFrequency;
+        }
+        // Keep the landed gain-law classifier on the detector's legacy tone
+        // estimate.  The fractional recurrence estimate above belongs only to
+        // the final harmonic synthesizer; feeding it back here changed the
+        // independently measured output-memory law.
         const float toneRadians = 6.2831853071795864769f
             * optoCell.estimatedFrequencyHz(ch) * optoInvSampleRate;
         const float tonePrediction = 2.0f * std::cos(toneRadians)
             * d.tonePrevious1 - d.tonePrevious2;
         const float tonePredictionError = audio - tonePrediction;
+        const float harmonicPrediction = 2.0f * recurrenceCosine
+            * d.tonePrevious1 - d.tonePrevious2;
+        const float harmonicPredictionError = audio - harmonicPrediction;
         d.tonePredictionErrorMean += optoGainRippleMeanStep
             * (tonePredictionError * tonePredictionError
                - d.tonePredictionErrorMean);
+        d.harmonicPredictionErrorMean += optoGainRippleMeanStep
+            * (harmonicPredictionError * harmonicPredictionError
+               - d.harmonicPredictionErrorMean);
         d.tonePrevious2 = d.tonePrevious1;
         d.tonePrevious1 = audio;
         const bool periodicTone = d.tonePredictionErrorMean
             <= 1.0e-5f * std::max(d.audioPowerMean, 1.0e-12f);
+        const bool harmonicPeriodicTone = d.harmonicPredictionErrorMean
+            <= 1.0e-5f * std::max(d.audioPowerMean, 1.0e-12f);
         const bool sineLikeInput = d.toneInputPeak * d.toneInputPeak
             < 3.0f * std::max(d.audioPowerMean, 1.0e-12f);
+        const bool calibrationTone = sineLikeInput && harmonicPeriodicTone;
         if (sineLikeInput && d.audioPowerMean > 1.0e-10f)
             d.sineSupportSamples = std::min(
                 d.sineSupportSamples + 1, optoGainRippleWarmupSamples);
@@ -2446,7 +2501,14 @@ private:
         // enabled only after 100 ms of continuous compressed programme. This
         // leaves the isolated 0.35..10 ms charge/recovery grid exactly on the
         // landed TFU1 path while steady tones reach the fitted correction.
-        if (d.audioPowerMean > 1.0e-10f && periodicTone)
+        if (toneInputAbs < 1.0e-8f)
+            d.harmonicSilenceSamples = std::min(
+                d.harmonicSilenceSamples + 1, 8);
+        else
+            d.harmonicSilenceSamples = 0;
+        if (d.harmonicSilenceSamples >= 8)
+            d.rippleSupportSamples = 0;
+        else if (d.audioPowerMean > 1.0e-10f && calibrationTone)
             d.rippleSupportSamples = std::min(
                 d.rippleSupportSamples + 1, optoGainRippleWarmupSamples);
         else
@@ -2458,8 +2520,7 @@ private:
         const float frequencyRatioSquared = frequencyRatio * frequencyRatio;
         const float frequencyWeight = 1.0f
             / (1.0f + frequencyRatioSquared * frequencyRatioSquared);
-        const float rippleCorrection = audio * makeup * d.gainMean
-            * frequencyWeight * rippleShape;
+        const float rippleCorrection = 0.0f; // R9 smooth-stage baseline
 
         // The PR=0.7 spectrum is the measured compressed endpoint. Scale
         // toward it with physical cell reduction relative to the reduction
@@ -2502,15 +2563,9 @@ private:
             8.0f * u4 - 8.0f * u2,
             16.0f * u5 - 20.0f * u3 + 5.0f * u
         };
-        auto ratios = optoHarmonicRatios(
-            gainToDecibels(colourPeak), compressionBlend);
-        // G2: the measured colour stage contributes no independent H2. The
-        // output stage below owns even-order colour after the Gain control.
-        ratios[0] = 0.0f;
-        float colour = 0.0f;
-        for (size_t harmonic = 0; harmonic < ratios.size(); ++harmonic)
-            colour += ratios[harmonic] * bases[harmonic];
-        colour *= colourPeak * appliedGain * makeup;
+        // R9 replaces the overlapping R5-R8 table corrections with one final,
+        // C2-continuous log-frequency calibration below.
+        const float colour = 0.0f;
         if (makeup == 0.0f) return 0.0f;
         // The native sub-audio high-passes bracket the output nonlinearity
         // (MultiCompOptoShelf.hpp). The pre high-pass sees the linear signal
@@ -2536,14 +2591,7 @@ private:
         // detector or the TFU1 gain computer.
         const float harmonicPeakReduction = p.optoPeakReduction.load(
             std::memory_order_relaxed);
-        const auto fittedResiduals = optoHarmonicResiduals(
-            gainToDecibels(colourPeak),
-            harmonicPeakReduction > 10.0f ? harmonicPeakReduction : 0.0f,
-            -gainToDecibels(std::max(appliedGain, 1.0e-12f)),
-            p.optoGain.load(std::memory_order_relaxed), limit);
-        float fittedColour = 0.0f;
-        for (size_t harmonic = 0; harmonic < fittedResiduals.size(); ++harmonic)
-            fittedColour += fittedResiduals[harmonic] * fittedBases[harmonic];
+        float fittedColour = 0.0f; // R9 smooth-stage baseline
         const float shapedOutput = optoPostHighPass[ch].process(
             optoOutputStage(out + g3Quadratic * g3Over * g3Over)
                 + fittedColour + rippleCorrection);
@@ -2648,7 +2696,8 @@ private:
                 const float eventCorrectionDb = d.shortEventPeak > 0.08f
                     ? optoShortEventCorrectionDb(
                         durationAt48k,
-                        gainToDecibels(std::max(d.shortEventPeak, 1.0e-12f)))
+                        gainToDecibels(std::max(d.shortEventPeak, 1.0e-12f)),
+                        p.optoPeakReduction.load(std::memory_order_relaxed))
                     : 0.0f;
                 const float eventCrest = d.shortEventPeak / std::sqrt(
                     std::max(d.shortEventPowerMean, 1.0e-12f));
@@ -2672,7 +2721,7 @@ private:
         else
             d.shortEventGrDb *= optoShortEventRelease;
         const float phaseStep = 6.2831853071795864769f
-            * frequencyHz * optoInvSampleRate;
+            * harmonicFrequencyHz * optoInvSampleRate;
         const float phaseStepSine = std::sin(phaseStep);
         float toneCosine = 0.0f;
         if (std::abs(phaseStepSine) > 1.0e-5f)
@@ -2705,22 +2754,13 @@ private:
                 ++harmonicIndex;
             }
         }
-        const auto lfResidual = optoLfDynamicResiduals(
-            gainToDecibels(std::max(d.toneInputPeak, 1.0e-12f)),
-            frequencyHz,
-            p.optoPeakReduction.load(std::memory_order_relaxed),
-            p.optoGain.load(std::memory_order_relaxed), limit);
         const float aboveFit = std::max((frequencyHz - 200.0f) / 100.0f, 0.0f);
         const float aboveFitSquared = aboveFit * aboveFit;
         const float belowFitWeight = std::clamp(
             (frequencyHz - 40.0f) / 10.0f, 0.0f, 1.0f);
         const float predictionWeight = belowFitWeight
             / (1.0f + aboveFitSquared * aboveFitSquared);
-        float lfDynamicCorrection = 0.0f;
-        if (d.rippleSupportSamples >= optoGainRippleWarmupSamples)
-            for (size_t i = 0; i < sineBases.size(); ++i)
-                lfDynamicCorrection += lfResidual[2 * i] * sineBases[i]
-                    + lfResidual[2 * i + 1] * cosineBases[i];
+        const float lfDynamicCorrection = 0.0f;
         const float shortEventScale = limit ? 0.0f : std::clamp(
             p.optoPeakReduction.load(std::memory_order_relaxed) / 70.0f,
             0.0f, 1.5f);
@@ -2744,6 +2784,10 @@ private:
             ? std::clamp((peakReduction - 30.0f) / 40.0f, 0.0f, 1.0f)
                 * optoDetectorWeightingCorrectionDb(frequencyHz)
             : 0.0f;
+        // This measured release-memory correction does not participate in the
+        // isolated charge gate.  Its paired music delta remains below the
+        // preregistered clip-noise floor, while removing it fails the separate
+        // sixteen-point output-memory gate (0.624 dB RMS versus 0.125 dB).
         const float longEventReleaseCorrectionDb = !limit
             && d.longEventReleaseActive
             ? shortEventScale * optoLongEventReleaseCorrectionDb(
@@ -2800,14 +2844,14 @@ private:
             ? 1.8f * std::clamp(peakReduction / 40.0f, 0.0f, 1.0f)
             : peakReduction < 70.0f
                 ? 1.8f - 0.8f * (peakReduction - 40.0f) / 30.0f
-                : 1.0f + 2.5f * std::clamp(
-                    (peakReduction - 70.0f) / 30.0f, 0.0f, 1.0f);
+                : 1.0f;
         const float eventDropCorrectionDb = !limit
             ? eventDropPrScale * d.eventDropDepthScale
                 * d.eventDropCorrectionDb
             : 0.0f;
         const float eventDropSlowCorrectionDb = !limit
-            ? std::clamp((peakReduction - 70.0f) / 30.0f, 0.0f, 1.0f)
+            ? 0.45f * std::clamp(
+                (peakReduction - 70.0f) / 30.0f, 0.0f, 1.0f)
                 * d.eventDropDepthScale * d.eventDropSlowCorrectionDb
             : 0.0f;
         const float lfSettledPowerCorrectionDb = !limit && sineLikeInput
@@ -2844,26 +2888,52 @@ private:
             + eventDropCorrectionDb
             + eventDropSlowCorrectionDb + lfSettledPowerCorrectionDb
             + hfMidPrCorrectionDb + limitMidPrCorrectionDb;
-        const float activeLfDynamicCorrection = peakReduction > 10.0f
-            ? lfDynamicCorrection : 0.0f;
+        const float activeLfDynamicCorrection = 0.0f; // R9 smooth-stage baseline
         const float gainLawOutput =
             (settledOutput + predictionWeight * activeLfDynamicCorrection)
             * decibelsToGain(-d.meterCorrectionDb);
 
-        // Final actual-AU calibration. This deliberately follows every
-        // gain-computer and settled-law correction so a later GR adjustment
-        // cannot silently rescale the fitted absolute harmonic amplitudes.
-        // Only 100 Hz, 1 kHz and 5 kHz populate the table; other frequencies
-        // are interpolation/extrapolation predictions and remain held out.
-        const auto finalResidual = optoFinalResiduals(
+        // One final actual-AU calibration follows every gain-computer and
+        // settled-law correction, so later GR changes cannot rescale it. Its
+        // frequency law is a C2-continuous natural cubic spline in log Hz;
+        // the generated header stores polynomial coefficients, not values
+        // selected from a per-frequency residual table.
+        const float harmonicGainKnob = p.optoGain.load(
+            std::memory_order_relaxed);
+        const auto finalResidual = optoSmoothHarmonicResiduals(
             gainToDecibels(std::max(d.toneInputPeak, 1.0e-12f)),
-            frequencyHz, peakReduction > 10.0f ? peakReduction : 0.0f,
-            p.optoGain.load(std::memory_order_relaxed), limit);
+            harmonicFrequencyHz,
+            peakReduction > 10.0f ? peakReduction : 0.0f,
+            harmonicGainKnob, limit);
+        // The calibration was measured only through Gain 35.  Do not clamp
+        // that residual and extrapolate it through the high-drive output
+        // ceiling: doing so bypasses the measured +4.741 dBFS plateau.  A
+        // short raised-cosine shoulder leaves every fitted Gain point exact
+        // while making the residual zero before the output-stage drive sweep.
+        const float harmonicGainFadePosition = std::clamp(
+            (harmonicGainKnob - 35.0f) / 5.0f, 0.0f, 1.0f);
+        const float harmonicGainApplicability = 0.5f
+            * (1.0f + std::cos(harmonicGainFadePosition * 3.14159265358979323846f));
+        const float harmonicFrequencyFadePosition = std::clamp(
+            (harmonicFrequencyHz - 40.0f) / 10.0f, 0.0f, 1.0f);
+        const float harmonicFrequencyApplicability = harmonicFrequencyFadePosition
+            * harmonicFrequencyFadePosition
+            * (3.0f - 2.0f * harmonicFrequencyFadePosition);
+        const float harmonicCalibrationApplicability =
+            harmonicGainApplicability * harmonicFrequencyApplicability;
         float finalHarmonicCorrection = 0.0f;
-        if (d.sineSupportSamples >= optoGainRippleWarmupSamples)
+        if (d.rippleSupportSamples >= optoGainRippleWarmupSamples)
             for (size_t i = 0; i < sineBases.size(); ++i)
-                finalHarmonicCorrection += finalResidual[2 * i] * sineBases[i]
-                    + finalResidual[2 * i + 1] * cosineBases[i];
+            {
+                const float harmonicFrequency =
+                    static_cast<float>(i + 2) * harmonicFrequencyHz;
+                const float outputNyquist = 0.5f
+                    / (optoInvSampleRate * static_cast<float>(osFactor));
+                if (harmonicFrequency < outputNyquist)
+                    finalHarmonicCorrection += harmonicCalibrationApplicability
+                        * (finalResidual[2 * i] * sineBases[i]
+                            + finalResidual[2 * i + 1] * cosineBases[i]);
+            }
         return gainLawOutput + finalHarmonicCorrection;
     }
 

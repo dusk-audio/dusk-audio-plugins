@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import math
 import os
@@ -33,6 +34,8 @@ BLOCK = int(os.environ.get("OPTO_AU_BLOCK", "512"))
 PRERUN = 2.0
 FREQUENCIES = (100, 1000, 5000)
 PREDICTION_FREQUENCIES = (300, 2500, 10000)
+R9_FIT_FREQUENCIES = (50, 100, 200, 500, 1000, 2000, 5000, 8000)
+R9_HOLDOUT_FREQUENCIES = (150, 300, 700, 1400, 3500, 12000)
 LEVELS = tuple(range(-40, 1, 4))
 GAINS = (0.15, 0.25, 0.35)
 ACTIVE = ((0.35, False), (0.70, False), (1.0, False),
@@ -76,6 +79,53 @@ def atomic_json(path: Path, obj: object) -> None:
     temp = path.with_suffix(path.suffix + ".tmp")
     temp.write_text(json.dumps(obj, indent=2, sort_keys=True) + "\n")
     temp.replace(path)
+
+
+def archived_audio_path(path: Path) -> Path:
+    """Use a byte-exact local zstd archive when its source WAV was compacted."""
+    if path.exists():
+        return path
+    archived = path.with_suffix(path.suffix + ".zst")
+    if archived.exists():
+        return archived
+    return path
+
+
+def read_audio(path: Path) -> tuple[np.ndarray, int]:
+    path = archived_audio_path(path)
+    if path.suffix == ".zst":
+        decoded = subprocess.run(
+            ["zstd", "-q", "-d", "-c", str(path)], check=True,
+            stdout=subprocess.PIPE).stdout
+        return sf.read(io.BytesIO(decoded), always_2d=True, dtype="float64")
+    return sf.read(path, always_2d=True, dtype="float64")
+
+
+def archive_audio_files(root: Path) -> None:
+    """Losslessly compact one completed capture batch and verify every byte."""
+    records = []
+    for path in sorted(root.rglob("*.wav")):
+        original_hash = sha256(path)
+        archived = path.with_suffix(path.suffix + ".zst")
+        subprocess.run(
+            ["zstd", "-q", "-f", "-T0", str(path), "-o", str(archived)],
+            check=True)
+        digest = hashlib.sha256()
+        decoder = subprocess.Popen(
+            ["zstd", "-q", "-d", "-c", str(archived)],
+            stdout=subprocess.PIPE)
+        assert decoder.stdout is not None
+        for block in iter(lambda: decoder.stdout.read(1 << 20), b""):
+            digest.update(block)
+        if decoder.wait() != 0 or digest.hexdigest() != original_hash:
+            archived.unlink(missing_ok=True)
+            raise RuntimeError(f"lossless archive verification failed: {path}")
+        records.append({"source": path.name, "archive": archived.name,
+                        "decoded_sha256": original_hash})
+        path.unlink()
+    if records:
+        atomic_json(root / "lossless-archive.json", {
+            "codec": "zstd", "verified_decoded_files": records})
 
 
 def prepare() -> None:
@@ -210,48 +260,65 @@ def capture_map(plugin: str, tag: str) -> None:
             run_host(plugin, destination, tones, pr, gain, limit)
 
 
-def prepare_prediction() -> list[dict]:
-    """Write the frequency-held-out map without touching the fit stimuli."""
-    directory = OUT / "prediction-stimuli"
+def prepare_frequency_grid(grid: str, frequencies: tuple[int, ...]) -> list[dict]:
+    """Write a named frequency grid without touching another grid's stimuli."""
+    directory = OUT / f"{grid}-stimuli"
     directory.mkdir(parents=True, exist_ok=True)
     sample = np.arange(8 * FS, dtype=np.float64)
     records = []
-    for frequency in PREDICTION_FREQUENCIES:
+    for frequency in frequencies:
         for level in LEVELS:
             peak = 10.0 ** (level / 20.0)
             signal = peak * np.sin(2.0 * np.pi * frequency * sample / FS)
-            path = directory / f"prediction_f{frequency:05d}_l{level:+04d}.wav"
+            path = directory / f"{grid}_f{frequency:05d}_l{level:+04d}.wav"
             sf.write(path, np.column_stack((signal, signal)).astype(np.float32),
                      FS, subtype="FLOAT")
             records.append({"frequency_hz": frequency, "input_dbfs": level,
                             "path": str(path), "sha256": sha256(path)})
     atomic_json(directory / "manifest.json", {
         "sample_rate": FS, "fit_frequencies_hz": FREQUENCIES,
-        "held_out_frequencies_hz": PREDICTION_FREQUENCIES,
+        "frequencies_hz": frequencies,
         "records": records,
     })
     return records
 
 
-def capture_prediction(plugin: str, tag: str) -> None:
-    records = prepare_prediction()
+def capture_frequency_grid(plugin: str, tag: str, grid: str,
+                           frequencies: tuple[int, ...]) -> None:
+    records = prepare_frequency_grid(grid, frequencies)
+    frequency_filter = os.environ.get("OPTO_GRID_FREQUENCIES")
+    refresh = frequency_filter is not None
+    if frequency_filter:
+        selected = {int(value) for value in frequency_filter.split(",")}
+        records = [record for record in records
+                   if record["frequency_hz"] in selected]
+        if not records:
+            raise RuntimeError(f"frequency filter selected no {grid} records")
     inputs = [Path(record["path"]) for record in records]
     settings = [(0.0, False)] + list(ACTIVE)
+    gain_filter = os.environ.get("OPTO_GRID_GAIN")
     for gain in GAINS:
+        if gain_filter is not None and abs(gain - float(gain_filter)) > 1.0e-6:
+            continue
         for pr, limit in settings:
             label = f"g{gain:.2f}_pr{pr:.2f}_{'limit' if limit else 'comp'}"
-            destination = OUT / "prediction-captures" / tag / plugin / label
-            if (destination / "complete.json").exists():
-                print(f"reuse prediction {plugin} {label}")
+            destination = OUT / f"{grid}-captures" / tag / plugin / label
+            if (destination / "complete.json").exists() and not refresh:
+                print(f"reuse {grid} {plugin} {label}")
+                if os.environ.get("OPTO_ARCHIVE_AFTER_CAPTURE", "1") == "1":
+                    archive_audio_files(destination)
                 continue
-            print(f"capture prediction {plugin} {label}", flush=True)
+            print(f"capture {grid} {plugin} {label}", flush=True)
             run_host(plugin, destination, inputs, pr, gain, limit)
+            if os.environ.get("OPTO_ARCHIVE_AFTER_CAPTURE", "1") == "1":
+                archive_audio_files(destination)
 
 
-def analyse_prediction(plugin: str, tag: str) -> list[dict]:
-    records = prepare_prediction()
+def analyse_frequency_grid(plugin: str, tag: str, grid: str,
+                           frequencies: tuple[int, ...]) -> list[dict]:
+    records = prepare_frequency_grid(grid, frequencies)
     latency = 87 if plugin == "uad" else 67
-    root = OUT / "prediction-captures" / tag / plugin
+    root = OUT / f"{grid}-captures" / tag / plugin
     rows = []
     settings = [(0.0, False)] + list(ACTIVE)
     for gain in GAINS:
@@ -260,7 +327,7 @@ def analyse_prediction(plugin: str, tag: str) -> list[dict]:
             complete = json.loads((root / label / "complete.json").read_text())
             for record in records:
                 path = root / label / f"s_{Path(record['path']).stem}_stem.wav"
-                signal, rate = sf.read(path, always_2d=True, dtype="float64")
+                signal, rate = read_audio(path)
                 if rate != FS:
                     raise RuntimeError(f"unexpected prediction render rate: {path}")
                 start = 7 * FS + latency
@@ -298,14 +365,15 @@ def analyse_prediction(plugin: str, tag: str) -> list[dict]:
                         "component_binary_sha256": complete[
                             "component_binary_sha256"],
                     })
-    atomic_json(OUT / f"prediction-{tag}-{plugin}.json", rows)
-    print(f"analysed {len(rows)} prediction harmonic rows for {plugin}/{tag}")
+    atomic_json(OUT / f"{grid}-{tag}-{plugin}.json", rows)
+    print(f"analysed {len(rows)} {grid} harmonic rows for {plugin}/{tag}")
     return rows
 
 
-def compare_prediction(candidate_tag: str) -> None:
-    reference = analyse_prediction("uad", "base")
-    candidate = analyse_prediction("mc2", candidate_tag)
+def compare_frequency_grid(candidate_tag: str, grid: str,
+                           frequencies: tuple[int, ...]) -> None:
+    reference = analyse_frequency_grid("uad", "base", grid, frequencies)
+    candidate = analyse_frequency_grid("mc2", candidate_tag, grid, frequencies)
     row_key = lambda row: (
         row["frequency_hz"], row["input_dbfs"],
         row["peak_reduction_normalised"], row["gain_normalised"],
@@ -330,17 +398,24 @@ def compare_prediction(candidate_tag: str) -> None:
     eligible_rows = [row for row in rows if row["above_bar_floor"]]
     summary = {
         "measurement_boundary": "actual Audio Units hosted by duskverb_render",
-        "fit_frequencies_hz": FREQUENCIES,
-        "held_out_frequencies_hz": PREDICTION_FREQUENCIES,
+        "frequencies_hz": frequencies,
         "candidate_tag": candidate_tag, "eligible_cells": len(eligible_rows),
         "passing_cells": sum(row["pass_2db"] for row in eligible_rows),
         "worst_abs_error_db": max(abs(row["error_db"])
                                   for row in eligible_rows),
         "pass": all(row["pass_2db"] for row in eligible_rows), "rows": rows,
     }
-    atomic_json(OUT / f"prediction-comparison-{candidate_tag}.json", summary)
+    atomic_json(OUT / f"{grid}-comparison-{candidate_tag}.json", summary)
     print(json.dumps({k: v for k, v in summary.items() if k != "rows"},
                      indent=2))
+
+
+def capture_prediction(plugin: str, tag: str) -> None:
+    capture_frequency_grid(plugin, tag, "prediction", PREDICTION_FREQUENCIES)
+
+
+def compare_prediction(candidate_tag: str) -> None:
+    compare_frequency_grid(candidate_tag, "prediction", PREDICTION_FREQUENCIES)
 
 
 def sweep(plugin: str) -> None:
@@ -400,6 +475,10 @@ def prepare_charge() -> list[dict]:
 def capture_charge(plugin: str, tag: str) -> None:
     """Capture every charge cell in a fresh AU instance through the frozen host."""
     records = prepare_charge()
+    duration_filter = os.environ.get("OPTO_CHARGE_DURATION")
+    if duration_filter is not None:
+        records = [record for record in records
+                   if record["duration_samples"] == int(duration_filter)]
     root = OUT / "charge-captures" / tag / plugin
     for record in records:
         path = Path(record["path"])
@@ -428,7 +507,7 @@ def score_charge(plugin: str, tag: str) -> None:
         signals = {}
         for role in ("control", "active"):
             path = root / Path(record["path"]).stem / role / name
-            signals[role], rate = sf.read(path, always_2d=True, dtype="float64")
+            signals[role], rate = read_audio(path)
             if rate != FS:
                 raise RuntimeError(f"unexpected charge render rate: {path}")
         start = record["event_start_sample"] + duration + latency
@@ -778,20 +857,30 @@ def compare(tag: str) -> None:
 
 
 def witness(tag: str) -> None:
-    """Write the owner's repeatable 1 kHz AU witness from captured audio."""
+    """Render and write the owner's repeatable 1 kHz actual-AU witness."""
     import matplotlib.pyplot as plt
 
-    condition = "g0.25_pr0.35_comp"
-    filename = "s_tone_f1000_l-016_stem.wav"
+    stimulus = OUT / "r9-fit-stimuli/r9-fit_f01000_l-016.wav"
+    if not stimulus.exists():
+        prepare_frequency_grid("r9-fit", R9_FIT_FREQUENCIES)
+    render_root = OUT / "checkpoints" / tag / "one-khz-pr35" / "actual-au-renders"
+    rendered = {}
+    for plugin in ("uad", "mc2"):
+        destination = render_root / plugin
+        complete_path = destination / "complete.json"
+        complete = json.loads(complete_path.read_text()) if complete_path.exists() else {}
+        if complete.get("component_binary_sha256") != component_hash(plugin):
+            run_host(plugin, destination, [stimulus], 0.35, 0.25, False)
+        rendered[plugin] = destination / f"s_{stimulus.stem}_stem.wav"
     sources = {
-        "UAD": (OUT / "captures/base/uad" / condition / filename, 87),
-        f"MC2-{tag.upper()}": (OUT / "captures" / tag / "mc2" / condition / filename, 67),
+        "UAD": (rendered["uad"], 87),
+        f"MC2-{tag.upper()}": (rendered["mc2"], 67),
     }
     destination = OUT / "checkpoints" / tag / "one-khz-pr35"
     destination.mkdir(parents=True, exist_ok=True)
     audio = {}
     for name, (path, latency) in sources.items():
-        data, rate = sf.read(path, always_2d=True, dtype="float64")
+        data, rate = read_audio(path)
         if rate != FS:
             raise RuntimeError(f"unexpected witness rate: {path}")
         start = 7 * FS + latency
@@ -940,8 +1029,8 @@ def capture_settled(tag: str) -> None:
         base_label = (f"base_pr0_g{row['gain']:.7g}_"
                       f"{'limit' if row['limit'] else 'comp'}")
         name = f"s_{settled_stem(row)}_stem.wav"
-        active, arate = sf.read(root / active_label / name, always_2d=True, dtype="float64")
-        base, brate = sf.read(root / base_label / name, always_2d=True, dtype="float64")
+        active, arate = read_audio(root / active_label / name)
+        base, brate = read_audio(root / base_label / name)
         if arate != FS or brate != FS or len(active) < end or len(base) < end:
             raise RuntimeError(f"bad settled render format for row {row['row']}")
         active_power = float(np.sum(np.square(active[begin:end, 0])))
@@ -988,9 +1077,13 @@ def capture_music(tag: str) -> None:
         destination = root / label
         if (destination / "complete.json").exists():
             print(f"reuse MC-2 AU music {label}")
+            if os.environ.get("OPTO_ARCHIVE_AFTER_CAPTURE", "1") == "1":
+                archive_audio_files(destination)
             continue
         print(f"capture MC-2 AU music {label} ({len(inputs)} clips)", flush=True)
         run_host("mc2", destination, inputs, pr, 0.25, limit)
+        if os.environ.get("OPTO_ARCHIVE_AFTER_CAPTURE", "1") == "1":
+            archive_audio_files(destination)
 
 
 def score_music(tag: str) -> None:
@@ -1018,14 +1111,13 @@ def score_music(tag: str) -> None:
         native_gr = cache["gr"].item()
         keep = cache["keep"].item()
         base_path = root / music_setting_label(0.0, False) / f"s_{clip}_stem.wav"
-        base, base_rate = sf.read(base_path, always_2d=True, dtype="float64")
+        base, base_rate = read_audio(base_path)
         if base_rate != FS or len(base) < len(source) + MUSIC_LATENCY:
             raise RuntimeError(f"bad actual-AU music base render for {clip}")
         base_energy = energies(base[MUSIC_LATENCY:MUSIC_LATENCY + len(source)])
         for pr, limit in MUSIC_SETTINGS[1:]:
             rendered_path = root / music_setting_label(pr, limit) / f"s_{clip}_stem.wav"
-            rendered, rendered_rate = sf.read(
-                rendered_path, always_2d=True, dtype="float64")
+            rendered, rendered_rate = read_audio(rendered_path)
             if rendered_rate != FS or len(rendered) < len(source) + MUSIC_LATENCY:
                 raise RuntimeError(f"bad actual-AU music render for {clip}")
             active_energy = energies(
@@ -1058,6 +1150,56 @@ def score_music(tag: str) -> None:
     print(json.dumps({k: v for k, v in summary.items() if k != "rows"}, indent=2))
 
 
+def bootstrap_music(candidate_tag: str, base_tag: str,
+                    replicates: int = 200_000, seed: int = 20_260_929) -> None:
+    """Paired non-parametric bootstrap of metric differences over clips."""
+    def indexed(tag: str) -> dict:
+        score = json.loads((OUT / f"music-au-score-{tag}.json").read_text())
+        return {(row["clip"], row["peak_reduction_normalised"], row["limit"]): row
+                for row in score["rows"]}
+
+    base, candidate = indexed(base_tag), indexed(candidate_tag)
+    if base.keys() != candidate.keys():
+        raise RuntimeError("paired music score rows do not match")
+    clips = sorted({row_key[0] for row_key in base})
+
+    def matrices(high_pr: bool) -> tuple[np.ndarray, np.ndarray]:
+        base_rows, candidate_rows = [], []
+        for clip in clips:
+            keys = sorted(row_key for row_key in base
+                          if row_key[0] == clip
+                          and (not high_pr or row_key[1] >= .90625))
+            base_rows.append([base[row_key]["mean_square_error_db2"]
+                              for row_key in keys])
+            candidate_rows.append([candidate[row_key]["mean_square_error_db2"]
+                                   for row_key in keys])
+        return np.asarray(base_rows), np.asarray(candidate_rows)
+
+    rng = np.random.default_rng(seed)
+    samples = rng.integers(0, len(clips), (replicates, len(clips)))
+    results = {}
+    for name, high_pr in (("overall", False), ("high_pr", True)):
+        base_matrix, candidate_matrix = matrices(high_pr)
+        point = math.sqrt(float(np.mean(candidate_matrix))) \
+            - math.sqrt(float(np.mean(base_matrix)))
+        distribution = np.sqrt(np.mean(candidate_matrix[samples], axis=(1, 2))) \
+            - np.sqrt(np.mean(base_matrix[samples], axis=(1, 2)))
+        results[name] = {
+            "point_delta_db": point,
+            "ci95_db": [float(value) for value in
+                         np.quantile(distribution, (.025, .975))],
+            "probability_delta_gt_zero": float(np.mean(distribution > 0.0)),
+        }
+    summary = {
+        "method": "paired nonparametric bootstrap over clips with replacement",
+        "candidate_tag": candidate_tag, "base_tag": base_tag,
+        "replicates": replicates, "seed": seed, "clips": clips, **results,
+    }
+    atomic_json(OUT / f"music-paired-bootstrap-{candidate_tag}-minus-{base_tag}.json",
+                summary)
+    print(json.dumps(summary, indent=2))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1066,6 +1208,10 @@ def main() -> None:
     p = sub.add_parser("capture"); p.add_argument("plugin", choices=("uad", "mc2")); p.add_argument("tag")
     p = sub.add_parser("prediction-capture"); p.add_argument("plugin", choices=("uad", "mc2")); p.add_argument("tag")
     p = sub.add_parser("prediction-compare"); p.add_argument("tag")
+    p = sub.add_parser("r9-fit-capture"); p.add_argument("plugin", choices=("uad", "mc2")); p.add_argument("tag")
+    p = sub.add_parser("r9-fit-compare"); p.add_argument("tag")
+    p = sub.add_parser("r9-holdout-capture"); p.add_argument("plugin", choices=("uad", "mc2")); p.add_argument("tag")
+    p = sub.add_parser("r9-holdout-compare"); p.add_argument("tag")
     p = sub.add_parser("analyse"); p.add_argument("plugin", choices=("uad", "mc2")); p.add_argument("tag")
     p = sub.add_parser("compare"); p.add_argument("tag")
     p = sub.add_parser("witness"); p.add_argument("tag")
@@ -1080,12 +1226,21 @@ def main() -> None:
     p = sub.add_parser("lf-expanded-compare"); p.add_argument("reference_tag"); p.add_argument("candidate_tag")
     p = sub.add_parser("music-capture"); p.add_argument("tag")
     p = sub.add_parser("music-score"); p.add_argument("tag")
+    p = sub.add_parser("music-bootstrap"); p.add_argument("candidate_tag"); p.add_argument("base_tag")
     args = parser.parse_args()
     if args.command == "prepare": prepare()
     elif args.command == "sweep": sweep(args.plugin)
     elif args.command == "capture": prepare_if_needed(); capture_map(args.plugin, args.tag)
     elif args.command == "prediction-capture": capture_prediction(args.plugin, args.tag)
     elif args.command == "prediction-compare": compare_prediction(args.tag)
+    elif args.command == "r9-fit-capture": capture_frequency_grid(
+        args.plugin, args.tag, "r9-fit", R9_FIT_FREQUENCIES)
+    elif args.command == "r9-fit-compare": compare_frequency_grid(
+        args.tag, "r9-fit", R9_FIT_FREQUENCIES)
+    elif args.command == "r9-holdout-capture": capture_frequency_grid(
+        args.plugin, args.tag, "r9-holdout", R9_HOLDOUT_FREQUENCIES)
+    elif args.command == "r9-holdout-compare": compare_frequency_grid(
+        args.tag, "r9-holdout", R9_HOLDOUT_FREQUENCIES)
     elif args.command == "analyse": analyse_capture(args.plugin, args.tag)
     elif args.command == "compare": compare(args.tag)
     elif args.command == "witness": witness(args.tag)
@@ -1100,6 +1255,8 @@ def main() -> None:
     elif args.command == "lf-expanded-compare": compare_lf_expanded(args.reference_tag, args.candidate_tag)
     elif args.command == "music-capture": capture_music(args.tag)
     elif args.command == "music-score": score_music(args.tag)
+    elif args.command == "music-bootstrap": bootstrap_music(
+        args.candidate_tag, args.base_tag)
 
 
 if __name__ == "__main__":
