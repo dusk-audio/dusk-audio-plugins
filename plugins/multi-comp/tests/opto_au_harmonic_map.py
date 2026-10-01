@@ -26,7 +26,11 @@ from scipy.signal import butter, sosfilt
 
 REPO = Path(__file__).resolve().parents[3]
 OUT = REPO / "build-multi-comp-1176/opto-production-harmonics-20260928"
-HOST = REPO / "build-multi-comp-1176/programme-native-20260911/duskverb_render"
+# Rebuilt 2026-09-30 from tests/duskverb_render after the frozen 09-11 copy was
+# deleted; byte-identical to archived UAD (88/88) and MC-2 (22/22) renders.
+HOST = REPO / "build-multi-comp-1176/opto-host-20260930/duskverb_render"
+# Always the installed build: the AU host resolves a component by its
+# type/subtype/manufacturer, so a copy elsewhere would still load this one.
 MC2 = Path.home() / "Library/Audio/Plug-Ins/Components/multi-comp-2.component"
 UAD = Path("/Library/Audio/Plug-Ins/Components/uaudio_teletronix_la-2a_tc.component")
 FS = 48_000
@@ -36,6 +40,16 @@ FREQUENCIES = (100, 1000, 5000)
 PREDICTION_FREQUENCIES = (300, 2500, 10000)
 R9_FIT_FREQUENCIES = (50, 100, 200, 500, 1000, 2000, 5000, 8000)
 R9_HOLDOUT_FREQUENCIES = (150, 300, 700, 1400, 3500, 12000)
+# R10: the fit grid adds 30 Hz and the high-drive Gain range; the held-out
+# grid adds one Gain (0.45) that no fit ever reads.
+R10_FIT_FREQUENCIES = (30, 50, 100, 200, 500, 1000, 2000, 5000, 8000)
+R10_HOLDOUT_FREQUENCIES = R9_HOLDOUT_FREQUENCIES
+R10_FIT_GAINS = (0.15, 0.25, 0.35, 0.50, 0.65, 0.80)
+R10_HOLDOUT_GAIN = 0.45
+# R11+ interim validation (owner, 2026-09-30): used to judge model families
+# while the R10 held-out grid stays sealed until R13.
+R11_VAL_FREQUENCIES = (70, 400, 3000)
+R11_VAL_GAIN = 0.40
 LEVELS = tuple(range(-40, 1, 4))
 GAINS = (0.15, 0.25, 0.35)
 ACTIVE = ((0.35, False), (0.70, False), (1.0, False),
@@ -62,7 +76,11 @@ MUSIC_ROOT = REPO / "build-multi-comp-1176/opto-music-20260923"
 MUSIC_PRS = (.3125, .40625, .5, .625, .71875, .8125, .90625, 1.0)
 MUSIC_SETTINGS = ((0.0, False),) + tuple(
     (pr, limit) for limit in (False, True) for pr in MUSIC_PRS)
-MUSIC_LATENCY = 67
+# MC-2's reported latency.  R10 oversamples the Opto output stage locally
+# (+6 samples); captures from R9 and earlier were rendered at 67, so re-analyse
+# those with OPTO_MC2_LATENCY=67.
+MC2_LATENCY = int(os.environ.get("OPTO_MC2_LATENCY", "73"))
+MUSIC_LATENCY = MC2_LATENCY
 MUSIC_FRAME = 240
 
 
@@ -76,7 +94,8 @@ def sha256(path: Path) -> str:
 
 def atomic_json(path: Path, obj: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_suffix(path.suffix + ".tmp")
+    # Per-process temporary: parallel capture workers write the same manifests.
+    temp = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")
     temp.write_text(json.dumps(obj, indent=2, sort_keys=True) + "\n")
     temp.replace(path)
 
@@ -271,8 +290,13 @@ def prepare_frequency_grid(grid: str, frequencies: tuple[int, ...]) -> list[dict
             peak = 10.0 ** (level / 20.0)
             signal = peak * np.sin(2.0 * np.pi * frequency * sample / FS)
             path = directory / f"{grid}_f{frequency:05d}_l{level:+04d}.wav"
-            sf.write(path, np.column_stack((signal, signal)).astype(np.float32),
-                     FS, subtype="FLOAT")
+            # Write once: parallel capture workers read these files, so an
+            # existing stimulus is never truncated and rewritten under them.
+            if not path.exists():
+                temporary = path.with_suffix(".tmp.wav")
+                sf.write(temporary, np.column_stack(
+                    (signal, signal)).astype(np.float32), FS, subtype="FLOAT")
+                temporary.replace(path)
             records.append({"frequency_hz": frequency, "input_dbfs": level,
                             "path": str(path), "sha256": sha256(path)})
     atomic_json(directory / "manifest.json", {
@@ -284,7 +308,8 @@ def prepare_frequency_grid(grid: str, frequencies: tuple[int, ...]) -> list[dict
 
 
 def capture_frequency_grid(plugin: str, tag: str, grid: str,
-                           frequencies: tuple[int, ...]) -> None:
+                           frequencies: tuple[int, ...],
+                           gains: tuple[float, ...] = GAINS) -> None:
     records = prepare_frequency_grid(grid, frequencies)
     frequency_filter = os.environ.get("OPTO_GRID_FREQUENCIES")
     refresh = frequency_filter is not None
@@ -297,8 +322,10 @@ def capture_frequency_grid(plugin: str, tag: str, grid: str,
     inputs = [Path(record["path"]) for record in records]
     settings = [(0.0, False)] + list(ACTIVE)
     gain_filter = os.environ.get("OPTO_GRID_GAIN")
-    for gain in GAINS:
-        if gain_filter is not None and abs(gain - float(gain_filter)) > 1.0e-6:
+    for gain in gains:
+        if gain_filter is not None and all(
+                abs(gain - float(value)) > 1.0e-6
+                for value in gain_filter.split(",")):
             continue
         for pr, limit in settings:
             label = f"g{gain:.2f}_pr{pr:.2f}_{'limit' if limit else 'comp'}"
@@ -315,13 +342,14 @@ def capture_frequency_grid(plugin: str, tag: str, grid: str,
 
 
 def analyse_frequency_grid(plugin: str, tag: str, grid: str,
-                           frequencies: tuple[int, ...]) -> list[dict]:
+                           frequencies: tuple[int, ...],
+                           gains: tuple[float, ...] = GAINS) -> list[dict]:
     records = prepare_frequency_grid(grid, frequencies)
-    latency = 87 if plugin == "uad" else 67
+    latency = 87 if plugin == "uad" else MC2_LATENCY
     root = OUT / f"{grid}-captures" / tag / plugin
     rows = []
     settings = [(0.0, False)] + list(ACTIVE)
-    for gain in GAINS:
+    for gain in gains:
         for pr, limit in settings:
             label = f"g{gain:.2f}_pr{pr:.2f}_{'limit' if limit else 'comp'}"
             complete = json.loads((root / label / "complete.json").read_text())
@@ -336,6 +364,8 @@ def analyse_frequency_grid(plugin: str, tag: str, grid: str,
                 fundamental = complex_harmonic(window, frequency)
                 fundamental_dbfs = 20.0 * math.log10(
                     max(abs(fundamental), 1.0e-30))
+                output_peak_dbfs = 20.0 * math.log10(
+                    max(float(np.max(np.abs(window))), 1.0e-30))
                 fund_phase = math.degrees(math.atan2(
                     fundamental.imag, fundamental.real))
                 for harmonic in range(2, 8):
@@ -361,6 +391,7 @@ def analyse_frequency_grid(plugin: str, tag: str, grid: str,
                         "relative_phase_degrees": phase,
                         "fundamental_dbfs": fundamental_dbfs,
                         "fundamental_phase_degrees": fund_phase,
+                        "output_peak_dbfs": output_peak_dbfs,
                         "render": str(path), "latency_samples": latency,
                         "component_binary_sha256": complete[
                             "component_binary_sha256"],
@@ -371,9 +402,11 @@ def analyse_frequency_grid(plugin: str, tag: str, grid: str,
 
 
 def compare_frequency_grid(candidate_tag: str, grid: str,
-                           frequencies: tuple[int, ...]) -> None:
-    reference = analyse_frequency_grid("uad", "base", grid, frequencies)
-    candidate = analyse_frequency_grid("mc2", candidate_tag, grid, frequencies)
+                           frequencies: tuple[int, ...],
+                           gains: tuple[float, ...] = GAINS) -> None:
+    reference = analyse_frequency_grid("uad", "base", grid, frequencies, gains)
+    candidate = analyse_frequency_grid("mc2", candidate_tag, grid,
+                                       frequencies, gains)
     row_key = lambda row: (
         row["frequency_hz"], row["input_dbfs"],
         row["peak_reduction_normalised"], row["gain_normalised"],
@@ -392,13 +425,17 @@ def compare_frequency_grid(candidate_tag: str, grid: str,
             "mc2_dbfs": mc2["magnitude_dbfs"], "error_db": error,
             "uad_phase_degrees": uad["relative_phase_degrees"],
             "mc2_phase_degrees": mc2["relative_phase_degrees"],
+            "uad_fundamental_dbfs": uad["fundamental_dbfs"],
+            "mc2_fundamental_dbfs": mc2["fundamental_dbfs"],
+            "uad_output_peak_dbfs": uad.get("output_peak_dbfs"),
+            "mc2_output_peak_dbfs": mc2.get("output_peak_dbfs"),
             "above_bar_floor": eligible,
             "pass_2db": not eligible or abs(error) <= 2.0,
         })
     eligible_rows = [row for row in rows if row["above_bar_floor"]]
     summary = {
         "measurement_boundary": "actual Audio Units hosted by duskverb_render",
-        "frequencies_hz": frequencies,
+        "frequencies_hz": frequencies, "gains": gains,
         "candidate_tag": candidate_tag, "eligible_cells": len(eligible_rows),
         "passing_cells": sum(row["pass_2db"] for row in eligible_rows),
         "worst_abs_error_db": max(abs(row["error_db"])
@@ -492,7 +529,7 @@ def capture_charge(plugin: str, tag: str) -> None:
 
 def score_charge(plugin: str, tag: str) -> None:
     records = prepare_charge()
-    latency = 87 if plugin == "uad" else 67
+    latency = 87 if plugin == "uad" else MC2_LATENCY
     root = OUT / "charge-captures" / tag / plugin
     rows = []
     fitted_squared = held_squared = 0.0
@@ -580,7 +617,7 @@ def capture_lf(plugin: str, tag: str) -> None:
 
 def analyse_lf(plugin: str, tag: str) -> list[dict]:
     records = prepare_lf()
-    latency = 87 if plugin == "uad" else 67
+    latency = 87 if plugin == "uad" else MC2_LATENCY
     root = OUT / "lf-dynamic-captures" / tag / plugin
     rows = []
     fundamentals = {}
@@ -670,7 +707,7 @@ def capture_lf_expanded(plugin: str, tag: str) -> None:
 
 def analyse_lf_expanded(plugin: str, tag: str) -> list[dict]:
     records = prepare_lf()
-    latency = 87 if plugin == "uad" else 67
+    latency = 87 if plugin == "uad" else MC2_LATENCY
     root = OUT / "lf-expanded-captures" / tag / plugin
     rows = []
     fundamentals = {}
@@ -785,7 +822,7 @@ def analyse_capture(plugin: str, tag: str) -> list[dict]:
             # The host appends six seconds of silence to every explicit stem,
             # so the file's final second is tail, not tone.  Analyse input
             # seconds 7..8 after compensating each AU's reported latency.
-            latency = 87 if plugin == "uad" else 67
+            latency = 87 if plugin == "uad" else MC2_LATENCY
             start = 7 * FS + latency
             window = audio[start:start + FS, :]
             if len(window) != FS:
@@ -874,7 +911,7 @@ def witness(tag: str) -> None:
         rendered[plugin] = destination / f"s_{stimulus.stem}_stem.wav"
     sources = {
         "UAD": (rendered["uad"], 87),
-        f"MC2-{tag.upper()}": (rendered["mc2"], 67),
+        f"MC2-{tag.upper()}": (rendered["mc2"], MC2_LATENCY),
     }
     destination = OUT / "checkpoints" / tag / "one-khz-pr35"
     destination.mkdir(parents=True, exist_ok=True)
@@ -922,7 +959,7 @@ def witness(tag: str) -> None:
         "frequency_hz": 1000, "peak_reduction_normalised": 0.35,
         "gain_normalised": 0.25, "limit": False,
         "mc2_neutral": {"sidechain_hp": 0.0, "mix": 1.0, "analog_noise": 0.0},
-        "latency_samples": {"UAD": 87, candidate_name: 67},
+        "latency_samples": {"UAD": 87, candidate_name: MC2_LATENCY},
         "candidate_match_trim_db": trim_db,
         "matched_rms_delta_db": matched_delta_db, "harmonics": rows,
     }
@@ -1012,7 +1049,7 @@ def capture_settled(tag: str) -> None:
 
     # Never compare a new AU against the old base-parity JSON.  CTest's
     # verbose log is the evidence from the exact core executable under test.
-    core_log = OUT / f"ctest-{tag}.log"
+    core_log = Path(os.environ.get("OPTO_SETTLED_CORE_LOG", OUT / f"ctest-{tag}.log"))
     if not core_log.exists():
         raise RuntimeError(f"fresh verbose CTest log required: {core_log}")
     core_values = [float(value) for value in re.findall(
@@ -1022,7 +1059,7 @@ def capture_settled(tag: str) -> None:
         raise RuntimeError(
             f"parsed {len(core_values)} settled core rows, expected 122")
     results = []
-    begin, end = 6 * FS + 67, 15 * FS // 2 + 67
+    begin, end = 6 * FS + MC2_LATENCY, 15 * FS // 2 + MC2_LATENCY
     for row in rows:
         active_label = (f"active_pr{row['peak_reduction']:g}_g{row['gain']:.7g}_"
                         f"{'limit' if row['limit'] else 'comp'}")
@@ -1041,7 +1078,7 @@ def capture_settled(tag: str) -> None:
                         "au_minus_lab_db": measured - lab_db,
                         "pass_0p01db": abs(measured - lab_db) <= 0.01,
                         "analysis_start_sample": begin, "analysis_end_sample": end,
-                        "reported_latency_samples": 67})
+                        "reported_latency_samples": MC2_LATENCY})
     summary = {
         "measurement_boundary": "actual built MC-2 Audio Unit hosted by duskverb_render",
         "sample_rate": FS, "block_size": BLOCK, "prerun_seconds": PRERUN,
@@ -1200,6 +1237,233 @@ def bootstrap_music(candidate_tag: str, base_tag: str,
     print(json.dumps(summary, indent=2))
 
 
+# ------------------------------------------------------------------ R11a
+# Output-stage DC tail at PR 0 (no cell): a 1 kHz burst, a short gap, then a
+# -40 dBFS probe.  The sub-20 Hz output after the burst is the stage's DC
+# through the post high-pass; the probe's 1 kHz lock-in gain is the static
+# gain right after it.  Pass bar (written before fitting): tail peak within
+# 10% of the UAD's, probe gain within 0.01 dB.
+DC_LEVELS = (-18, -12, -6, 0)
+DC_GAINS = (0.25, 0.50)
+DC_BURST_S, DC_GAP_S, DC_PROBE_S = 0.300, 0.005, 1.000
+
+
+def prepare_dc() -> list[Path]:
+    directory = OUT / "r11a-dc-stimuli"
+    directory.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for level in DC_LEVELS:
+        path = directory / f"dc_burst_l{level:+04d}.wav"
+        if not path.exists():
+            start = FS // 2
+            burst = int(DC_BURST_S * FS)
+            probe_start = start + burst + int(DC_GAP_S * FS)
+            n = probe_start + int(DC_PROBE_S * FS) + FS // 2
+            k = np.arange(n)
+            x = np.zeros(n)
+            carrier = np.sin(2.0 * np.pi * 1000.0 * k / FS)
+            x[start:start + burst] = 10.0 ** (level / 20.0) * carrier[start:start + burst]
+            x[probe_start:probe_start + int(DC_PROBE_S * FS)] = 10.0 ** (-40 / 20.0) \
+                * carrier[probe_start:probe_start + int(DC_PROBE_S * FS)]
+            temporary = path.with_suffix(".tmp.wav")
+            sf.write(temporary, np.column_stack((x, x)).astype(np.float32), FS,
+                     subtype="FLOAT")
+            temporary.replace(path)
+        paths.append(path)
+    return paths
+
+
+def capture_dc(plugin: str, tag: str) -> None:
+    inputs = prepare_dc()
+    for gain in DC_GAINS:
+        destination = OUT / "r11a-dc-captures" / tag / plugin / f"g{gain:.2f}"
+        if (destination / "complete.json").exists():
+            continue
+        print(f"capture DC tail {tag}/{plugin} gain {gain}", flush=True)
+        run_host(plugin, destination, inputs, 0.0, gain, False)
+
+
+def analyse_dc(plugin: str, tag: str) -> list[dict]:
+    latency = 87 if plugin == "uad" else MC2_LATENCY
+    lowpass = butter(4, 20.0, "low", fs=FS, output="sos")
+    rows = []
+    start = FS // 2
+    burst = int(DC_BURST_S * FS)
+    probe_start = start + burst + int(DC_GAP_S * FS)
+    for gain in DC_GAINS:
+        root = OUT / "r11a-dc-captures" / tag / plugin / f"g{gain:.2f}"
+        for level, path in zip(DC_LEVELS, prepare_dc()):
+            y, _ = read_audio(root / f"s_{path.stem}_stem.wav")
+            y = y[latency:, 0]
+            low = sosfilt(lowpass, y)
+            tail = low[start + burst:start + burst + FS // 2]
+            during = low[start + burst - FS // 20:start + burst]
+            window = y[probe_start + FS // 10:probe_start + FS // 10 + FS // 2]
+            probe = abs(complex_harmonic(window, 1000.0))
+            rows.append({"plugin": plugin, "gain": gain, "level": level,
+                         "tail_peak": float(tail[np.argmax(np.abs(tail))]),
+                         "tail_mean_first_100ms": float(np.mean(tail[:FS // 10])),
+                         "lowpass_end_of_burst": float(np.mean(during)),
+                         "probe_gain_db": 20.0 * math.log10(probe / 10.0 ** (-40 / 20.0))})
+    return rows
+
+
+def compare_dc(tag: str) -> None:
+    uad = {(r["gain"], r["level"]): r for r in analyse_dc("uad", "base")}
+    rows = []
+    for r in analyse_dc("mc2", tag):
+        u = uad[(r["gain"], r["level"])]
+        rel = abs(r["tail_peak"] - u["tail_peak"]) / max(abs(u["tail_peak"]), 1e-12)
+        rows.append({**r, "uad_tail_peak": u["tail_peak"],
+                     "uad_probe_gain_db": u["probe_gain_db"],
+                     "tail_error_fraction": rel,
+                     "probe_gain_error_db": r["probe_gain_db"] - u["probe_gain_db"],
+                     "pass": rel <= 0.10 and abs(r["probe_gain_db"] - u["probe_gain_db"]) <= 0.01})
+        print(f"gain {r['gain']:.2f} burst {r['level']:+3d} dBFS: tail peak MC-2 "
+              f"{r['tail_peak']:+.3e} UAD {u['tail_peak']:+.3e} ({100 * rel:5.1f}%), "
+              f"probe gain MC-2 {r['probe_gain_db']:+.4f} UAD {u['probe_gain_db']:+.4f} dB")
+    atomic_json(OUT / f"r11a-dc-comparison-{tag}.json",
+                {"tag": tag, "pass": all(r["pass"] for r in rows), "rows": rows})
+
+
+# Non-tone harmonic checks (standing rule from R11a): two-tone
+# intermodulation and a slow exponential sweep, compared with the UAD at the
+# map's bar (2 dB wherever the UAD component is above -100 dBFS).  A steady-
+# tone detector cannot pass these by construction.
+CHECK_SETTINGS = ((0.0, False), (0.35, False), (0.70, False), (1.0, False), (0.70, True))
+CHECK_GAINS = (0.25, 0.50)
+IMD_PAIRS = (("smpte", 60, 7000, 4.0), ("ccif", 19000, 20000, 1.0), ("lf", 110, 170, 1.0))
+IMD_LEVELS = (-24, -12, -4)
+SWEEP_LEVELS = (-16, -4)
+SWEEP_F0, SWEEP_F1, SWEEP_SECONDS, SWEEP_LEAD = 20.0, 20000.0, 30.0, 1.0
+
+
+def imd_products(f1: int, f2: int) -> list[tuple[int, int, int]]:
+    products = set()
+    for m in range(-5, 6):
+        for n in range(-5, 6):
+            order = abs(m) + abs(n)
+            if not 2 <= order <= 5:
+                continue
+            f = m * f1 + n * f2
+            if 0 < f < 23500 and f not in (f1, f2):
+                products.add((f, m, n))
+    return sorted(products)
+
+
+def sweep_phase(t: np.ndarray) -> np.ndarray:
+    """Phase of the exponential sweep, with a constant-frequency lead-in."""
+    k = math.log(SWEEP_F1 / SWEEP_F0)
+    ts = np.clip(t - SWEEP_LEAD, 0.0, SWEEP_SECONDS)
+    lead = 2 * np.pi * SWEEP_F0 * np.minimum(t, SWEEP_LEAD)
+    return lead + 2 * np.pi * SWEEP_F0 * SWEEP_SECONDS / k * (np.exp(ts * k / SWEEP_SECONDS) - 1.0)
+
+
+def prepare_checks() -> list[Path]:
+    directory = OUT / "r11-check-stimuli"
+    directory.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for name, f1, f2, ratio in IMD_PAIRS:
+        for level in IMD_LEVELS:
+            path = directory / f"imd_{name}_l{level:+04d}.wav"
+            if not path.exists():
+                t = np.arange(8 * FS) / FS
+                x = ratio * np.sin(2 * np.pi * f1 * t) + np.sin(2 * np.pi * f2 * t)
+                x *= 10.0 ** (level / 20.0) / (ratio + 1.0)
+                temporary = path.with_suffix(".tmp.wav")
+                sf.write(temporary, np.column_stack((x, x)).astype(np.float32), FS, subtype="FLOAT")
+                temporary.replace(path)
+            paths.append(path)
+    for level in SWEEP_LEVELS:
+        path = directory / f"sweep_l{level:+04d}.wav"
+        if not path.exists():
+            t = np.arange(int((SWEEP_LEAD + SWEEP_SECONDS) * FS)) / FS
+            x = 10.0 ** (level / 20.0) * np.sin(sweep_phase(t))
+            temporary = path.with_suffix(".tmp.wav")
+            sf.write(temporary, np.column_stack((x, x)).astype(np.float32), FS, subtype="FLOAT")
+            temporary.replace(path)
+        paths.append(path)
+    return paths
+
+
+def check_label(pr: float, limit: bool, gain: float) -> str:
+    return f"g{gain:.2f}_pr{pr:.2f}_{'limit' if limit else 'comp'}"
+
+
+def capture_checks(plugin: str, tag: str) -> None:
+    inputs = prepare_checks()
+    gain_filter = os.environ.get("OPTO_GRID_GAIN")
+    for gain in CHECK_GAINS:
+        if gain_filter and all(abs(gain - float(v)) > 1e-6 for v in gain_filter.split(",")):
+            continue
+        for pr, limit in CHECK_SETTINGS:
+            destination = OUT / "r11-check-captures" / tag / plugin / check_label(pr, limit, gain)
+            if (destination / "complete.json").exists():
+                continue
+            print(f"capture checks {tag}/{plugin} {destination.name}", flush=True)
+            run_host(plugin, destination, inputs, pr, gain, limit)
+            if os.environ.get("OPTO_ARCHIVE_AFTER_CAPTURE", "1") == "1":
+                archive_audio_files(destination)
+
+
+def analyse_checks(plugin: str, tag: str) -> dict:
+    latency = 87 if plugin == "uad" else MC2_LATENCY
+    out = {}
+    window_n = int(0.100 * FS)
+    kernel = np.ones(window_n) / window_n
+    for gain in CHECK_GAINS:
+        for pr, limit in CHECK_SETTINGS:
+            root = OUT / "r11-check-captures" / tag / plugin / check_label(pr, limit, gain)
+            for name, f1, f2, _ in IMD_PAIRS:
+                for level in IMD_LEVELS:
+                    y, _ = read_audio(root / f"s_imd_{name}_l{level:+04d}_stem.wav")
+                    w = y[7 * FS + latency:8 * FS + latency, 0]
+                    for f, m_, n_ in imd_products(f1, f2):
+                        c = complex_harmonic(w, f)
+                        out[("imd", gain, pr, limit, name, level, f)] = \
+                            20 * math.log10(max(abs(c), 1e-30))
+            for level in SWEEP_LEVELS:
+                y, _ = read_audio(root / f"s_sweep_l{level:+04d}_stem.wav")
+                y = y[latency:, 0]
+                n = int((SWEEP_LEAD + SWEEP_SECONDS) * FS)
+                y = y[:n]
+                t = np.arange(len(y)) / FS
+                phase = sweep_phase(t)
+                for fc in np.geomspace(40.0, 10000.0, 24):
+                    tc = SWEEP_LEAD + SWEEP_SECONDS * math.log(fc / SWEEP_F0) / math.log(SWEEP_F1 / SWEEP_F0)
+                    i = int(tc * FS)
+                    seg = slice(i - window_n // 2, i + window_n // 2)
+                    for h in range(2, 8):
+                        if h * fc >= 20000:
+                            continue
+                        z = y[seg] * np.exp(-1j * h * phase[seg])
+                        c = 2.0 * np.mean(z)
+                        out[("sweep", gain, pr, limit, "sweep", level, round(float(fc), 1), h)] = \
+                            20 * math.log10(max(abs(c), 1e-30))
+    return out
+
+
+def compare_checks(tag: str) -> None:
+    uad, mc2 = analyse_checks("uad", "base"), analyse_checks("mc2", tag)
+    summary = {}
+    rows = []
+    for key, u in uad.items():
+        if u <= -100.0:
+            continue
+        e = mc2[key] - u
+        kind = key[0]
+        s_ = summary.setdefault(kind, {"eligible": 0, "within_2db": 0, "above_minus80": 0,
+                                       "fail_above_minus80": 0})
+        s_["eligible"] += 1
+        s_["within_2db"] += abs(e) <= 2.0
+        if u > -80:
+            s_["above_minus80"] += 1
+            s_["fail_above_minus80"] += abs(e) > 2.0
+        rows.append({"key": [str(k) for k in key], "uad_dbfs": u, "mc2_dbfs": mc2[key], "error_db": e})
+    atomic_json(OUT / f"r11-check-comparison-{tag}.json", {"tag": tag, "summary": summary, "rows": rows})
+    print(json.dumps(summary, indent=1))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1212,6 +1476,17 @@ def main() -> None:
     p = sub.add_parser("r9-fit-compare"); p.add_argument("tag")
     p = sub.add_parser("r9-holdout-capture"); p.add_argument("plugin", choices=("uad", "mc2")); p.add_argument("tag")
     p = sub.add_parser("r9-holdout-compare"); p.add_argument("tag")
+    p = sub.add_parser("r10-fit-capture"); p.add_argument("plugin", choices=("uad", "mc2")); p.add_argument("tag")
+    p = sub.add_parser("r10-fit-analyse"); p.add_argument("plugin", choices=("uad", "mc2")); p.add_argument("tag")
+    p = sub.add_parser("r10-fit-compare"); p.add_argument("tag")
+    p = sub.add_parser("r10-holdout-capture"); p.add_argument("plugin", choices=("uad", "mc2")); p.add_argument("tag")
+    p = sub.add_parser("r10-holdout-compare"); p.add_argument("tag")
+    p = sub.add_parser("r11a-dc-capture"); p.add_argument("plugin", choices=("uad", "mc2")); p.add_argument("tag")
+    p = sub.add_parser("r11a-dc-compare"); p.add_argument("tag")
+    p = sub.add_parser("r11-check-capture"); p.add_argument("plugin", choices=("uad", "mc2")); p.add_argument("tag")
+    p = sub.add_parser("r11-check-compare"); p.add_argument("tag")
+    p = sub.add_parser("r11-val-capture"); p.add_argument("plugin", choices=("uad", "mc2")); p.add_argument("tag")
+    p = sub.add_parser("r11-val-compare"); p.add_argument("tag")
     p = sub.add_parser("analyse"); p.add_argument("plugin", choices=("uad", "mc2")); p.add_argument("tag")
     p = sub.add_parser("compare"); p.add_argument("tag")
     p = sub.add_parser("witness"); p.add_argument("tag")
@@ -1241,6 +1516,42 @@ def main() -> None:
         args.plugin, args.tag, "r9-holdout", R9_HOLDOUT_FREQUENCIES)
     elif args.command == "r9-holdout-compare": compare_frequency_grid(
         args.tag, "r9-holdout", R9_HOLDOUT_FREQUENCIES)
+    elif args.command == "r10-fit-capture": capture_frequency_grid(
+        args.plugin, args.tag, "r10-fit", R10_FIT_FREQUENCIES, R10_FIT_GAINS)
+    elif args.command == "r10-fit-analyse": analyse_frequency_grid(
+        args.plugin, args.tag, "r10-fit", R10_FIT_FREQUENCIES, R10_FIT_GAINS)
+    elif args.command == "r10-fit-compare": compare_frequency_grid(
+        args.tag, "r10-fit", R10_FIT_FREQUENCIES, R10_FIT_GAINS)
+    elif args.command == "r10-holdout-capture":
+        # Held-out frequencies at every Gain, plus the held-out Gain at the
+        # fitting frequencies. Rendered once per candidate, for the verdict.
+        capture_frequency_grid(
+            args.plugin, args.tag, "r10-holdout", R10_HOLDOUT_FREQUENCIES,
+            R10_FIT_GAINS + (R10_HOLDOUT_GAIN,))
+        capture_frequency_grid(
+            args.plugin, args.tag, "r10-holdout-gain", R10_FIT_FREQUENCIES,
+            (R10_HOLDOUT_GAIN,))
+    elif args.command == "r10-holdout-compare":
+        compare_frequency_grid(
+            args.tag, "r10-holdout", R10_HOLDOUT_FREQUENCIES,
+            R10_FIT_GAINS + (R10_HOLDOUT_GAIN,))
+        compare_frequency_grid(
+            args.tag, "r10-holdout-gain", R10_FIT_FREQUENCIES,
+            (R10_HOLDOUT_GAIN,))
+    elif args.command == "r11a-dc-capture": capture_dc(args.plugin, args.tag)
+    elif args.command == "r11a-dc-compare": compare_dc(args.tag)
+    elif args.command == "r11-check-capture": capture_checks(args.plugin, args.tag)
+    elif args.command == "r11-check-compare": compare_checks(args.tag)
+    elif args.command == "r11-val-capture":
+        capture_frequency_grid(args.plugin, args.tag, "r11-val",
+                               R11_VAL_FREQUENCIES, R10_FIT_GAINS + (R11_VAL_GAIN,))
+        capture_frequency_grid(args.plugin, args.tag, "r11-val-gain",
+                               R10_FIT_FREQUENCIES, (R11_VAL_GAIN,))
+    elif args.command == "r11-val-compare":
+        compare_frequency_grid(args.tag, "r11-val", R11_VAL_FREQUENCIES,
+                               R10_FIT_GAINS + (R11_VAL_GAIN,))
+        compare_frequency_grid(args.tag, "r11-val-gain", R10_FIT_FREQUENCIES,
+                               (R11_VAL_GAIN,))
     elif args.command == "analyse": analyse_capture(args.plugin, args.tag)
     elif args.command == "compare": compare(args.tag)
     elif args.command == "witness": witness(args.tag)

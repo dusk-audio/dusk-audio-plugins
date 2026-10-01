@@ -1190,8 +1190,9 @@ void testOptoPedestalEventHarnessInvariants()
     {
         const auto& cell = grid.cells[row];
         // 127-tap wide oversampler: the located carrier start moved 26 -> 66
-        // with the 27 -> 67 sample anti-alias latency (same cycle phase).
-        require(cell.signalStartSample == 66,
+        // with the 27 -> 67 sample anti-alias latency (same cycle phase), and
+        // 66 -> 72 with Opto's +6 sample output-stage oversampling (73 total).
+        require(cell.signalStartSample == 72,
                 "Opto in-process pedestal-event extraction stays cycle-aligned");
         require(cell.preEventMaximumAbsDb < 0.10f,
                 "Opto in-process pedestal-event render stays below the clean-cell contamination limit");
@@ -4077,9 +4078,13 @@ void testLatencyMixBypassAndDigitalStereo()
         for (int i = 0; i < 512; ++i) input[static_cast<size_t>(i)] = 0.3f * std::sin(2.0f * kPi * 440.0f * i / 48000.0f);
         const float* bip[] = {input.data()}; float* bop[] = {bypassed.data()};
         bypass.processBlock(bip, bop, 1, 512);
+        // Bypass aligns with the bypassed instance's own reported latency
+        // (its default mode is Opto, whose output stage adds 6 samples).
+        const int bypassLatency = bypass.getLatencySamples();
         for (int i = 0; i < 512; ++i)
         {
-            const float expected = i >= latency ? input[static_cast<size_t>(i - latency)] : 0.0f;
+            const float expected = i >= bypassLatency
+                ? input[static_cast<size_t>(i - bypassLatency)] : 0.0f;
             require(bypassed[static_cast<size_t>(i)] == expected, "settled bypass is latency-aligned bit-exact passthrough");
         }
         std::printf("latency/mix: os=%d reported=%d mix_delta=%.5f dB\n", oversampling, latency, mixDelta);

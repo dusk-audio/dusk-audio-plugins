@@ -594,7 +594,10 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     prepareLookahead(in, processingIn, nCh, nSamples, globalLookaheadDelay);
     const int digitalDryDelay = mode == MultiCompMode::Digital
         ? static_cast<int>(std::round(digitalLookaheadMs * 0.001f * static_cast<float>(sampleRate))) : 0;
-    const int dryDelay = mode == MultiCompMode::Multiband ? 0 : antiAliasLatency + digitalDryDelay;
+    // Opto's output stage runs 2x oversampled with a constant extra latency.
+    const int optoStageDelay = mode == MultiCompMode::Opto ? kOptoStageLatencyHost : 0;
+    const int dryDelay = mode == MultiCompMode::Multiband ? 0
+        : antiAliasLatency + digitalDryDelay + optoStageDelay;
     for (int ch = 0; ch < nCh; ++ch)
     {
         auto& line = dryPathDelay[static_cast<size_t>(ch)];
@@ -1738,7 +1741,9 @@ int MultiCompDSP::latencySamplesForMode(MultiCompMode mode, float globalLookahea
     // JUCE keeps PDC constant at the maximum anti-alias group delay.  The
     // multiband path is native-rate, so it contributes only lookahead here.
     const int antiAlias = mode == MultiCompMode::Multiband ? 0 : antiAliasLatency;
-    return antiAlias + lookahead + digital;
+    // Opto's output stage is oversampled locally (MultiCompOptoStageOversampler.hpp).
+    const int optoStage = mode == MultiCompMode::Opto ? kOptoStageLatencyHost : 0;
+    return antiAlias + lookahead + digital + optoStage;
 }
 
 } // namespace duskaudio
