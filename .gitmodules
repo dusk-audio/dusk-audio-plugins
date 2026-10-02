@@ -4,6 +4,3 @@
 [submodule "external/clap-juce-extensions"]
 	path = external/clap-juce-extensions
 	url = https://github.com/free-audio/clap-juce-extensions.git
-[submodule "external/RTNeural"]
-	path = external/RTNeural
-	url = https://github.com/jatinchowdhury18/RTNeural
