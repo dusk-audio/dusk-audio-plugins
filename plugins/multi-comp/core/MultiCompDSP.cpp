@@ -412,12 +412,12 @@ const float* const* MultiCompDSP::sanitizeChannels(
     const float* const* source, std::array<std::vector<float>, kMaxChannels>& scratch,
     const float* (&pointers)[kMaxChannels], int nCh, int nSamples) noexcept
 {
-    bool finite = true;
-    for (int ch = 0; ch < nCh && finite; ++ch)
-        finite = blockIsAllFinite(source[ch], nSamples);
-    if (finite) return source;
+    bool audio = true;
+    for (int ch = 0; ch < nCh && audio; ++ch)
+        audio = blockIsAllAudio(source[ch], nSamples);
+    if (audio) return source;
     for (int ch = 0; ch < nCh; ++ch)
-        copyWithoutNonFinite(source[ch], scratch[static_cast<size_t>(ch)].data(), nSamples);
+        copyWithoutNonAudio(source[ch], scratch[static_cast<size_t>(ch)].data(), nSamples);
     pointers[0] = scratch[0].data();
     pointers[1] = nCh > 1 ? scratch[1].data() : scratch[0].data();
     return pointers;
@@ -465,7 +465,7 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     // Read once: the sidechain guard below and the detector source further
     // down must agree on whether the external bus is live this block.
     const bool useExternalSidechain = params.externalSidechain.load(std::memory_order_relaxed) && sidechain != nullptr;
-    // Stop non-finite input before any state reads it (see blockIsAllFinite in
+    // Stop non-finite or above-ceiling input before any state reads it (see blockIsAllAudio in
     // MultiCompHelpers.hpp). Both entry points latch: the main input reaches
     // every stage, and the external sidechain on its own poisons the shelf EQ,
     // the detector oversamplers and the envelopes. The sidechain is scanned
@@ -949,10 +949,13 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
         }
     }
     if (requestedBypass && bypassRamp.value() >= 1.0f) bypassSettled = true;
-    // Recovery. Finite input can still overflow inside a stage (measured with
-    // a 10 ms burst: Studio FET from about 3e3 peak, Studio VCA from 1e13, FET
-    // from 1e20, the other modes only near FLT_MAX), and once that reaches the
-    // output it is latched in the same histories the input guard protects.
+    // Recovery. Before the input ceiling, finite input could overflow inside a
+    // stage (measured with a 10 ms burst: Studio FET from about 3e3 peak, Studio
+    // VCA from 1e13, FET from 1e20, the other modes only near FLT_MAX). Input at
+    // or above 1024 no longer gets this far, but a sub-ceiling burst with mode
+    // input gain on top still does (Studio FET, 1000 peak, +20 dB Input), as
+    // would a fault that arises inside a stage. Once one reaches the output it
+    // is latched in the same histories the input guard protects.
     // Emit silence for the faulted block and clear every history exactly as a
     // host reset() would, so the next block starts from a defined state instead
     // of carrying NaN for ever. This sees only faults that reach the output: an

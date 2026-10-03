@@ -171,8 +171,8 @@ private:
     std::array<std::array<std::vector<float>, kMaxChannels>, kMultiCompBands> bands, sidechainBands;
     std::array<std::vector<float>, kMaxChannels> processedSidechain;
     std::array<std::vector<float>, kMaxChannels> modeInput;
-    // Scratch for the non-finite input guard. Written only when a block
-    // actually carries a non-finite sample; see sanitizeChannels.
+    // Scratch for the input guard. Written only when a block actually carries
+    // a non-finite or above-ceiling sample; see sanitizeChannels.
     std::array<std::vector<float>, kMaxChannels> sanitizedInput, sanitizedSidechain;
     std::vector<float> dry, bypassDry, fetStartupInput;
     std::vector<float> mixCurve, bypassCurve, autoGainCurve;
