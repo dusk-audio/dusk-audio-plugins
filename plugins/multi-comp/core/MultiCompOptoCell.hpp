@@ -8,6 +8,8 @@
 //               coefficients), unity at 1 kHz; Depth = production optoDepthWeighting fed by the cell's own
 //               reduction at n-1; LF_GR = the LF detector-law term, a low shelf blended in by the same
 //               reduction: loop += clamp(GR / span, 0, 1) * (Shelf(loop) - loop)
+//               (R14) transient LF cut ahead of Depth: loop += w_abs * w_tr * (LowShelf(loop) - loop), keyed on the
+//               peak-held envelope of s at n-1; w_tr is zero once the slow tracker has met the envelope
 //               s = 10^(P(pr)/20) * loop
 //   EL law      (R) l *= (P_slew / P_drive)^(kappa / 2): brightness ~ f^kappa, exactly 1 at 1 kHz
 //               (S) or, with elRevHysteresis > 0, l *= (f_half / 1 kHz)^kappa from significant reversals
@@ -154,20 +156,25 @@ inline float optoCurveDb(float overshootDb, bool limit) noexcept
 }
 
 // ---- BEGIN GENERATED DEFAULTS (Q) ----
-// Production TFU1, landed from the frozen lab fit on 2026-09-28
-// kOptoCellDefaults order: elTauSeconds, lightCeiling, fastRelease, fastBimolecular, slowCharge, slowRelease, slowBimolecular, memoryCharge, memoryRelease, limitOutputMix, limitInputMix, compressInputMix, timeScaleLight, timeScaleExponent, depthWeighting, lowFrequencyFloor, lfTermGainDb, lfTermFrequency, lfTermGrSpan, conductanceTableOn, flashCharge, flashRelease, flashBimolecular, lfShelfDb, hFloor, lfLitTauAttack, lfLitTauRelease, lfLitLevelDb, lfLitSpanDb, lfLitFloor, lfLitLog, hChargeOnly, attackRateDbPerS, attackRatePower, attackRateTau, elFreqExponent, elFreqTau, hfPeakDb, lfPeakDb, midPeakDb, hf10kPeakDb, elRevHysteresis, elRevRelease, elFreqCorner, trapCapture, trapEmit, trapCapacity, pStrength, pPrExp, pThresh, pKnee, pAsym, lightTableStartDb, lightTableStepDb, lightSlopeAbove, conductanceTableStartDb, conductanceTableStepDb, conductanceSlopeAbove, prStart, prStep, prSlopeBelow, prGate
-inline constexpr std::array<float, 62> kOptoCellDefaults{{
+// Indices 0..61: production TFU1, landed from the frozen lab fit on 2026-09-28, except lfLitFloor (index 29).
+// HAND-MAINTAINED since R14 (2026-10-03, docs/opto-r14-lf-onset-2026-10-03.md): lfLitFloor 0 -> 0.8 (LF shelf mostly
+// on when dark) and the transient LF cut (indices 62..70), fitted on the 60 Hz / 1 kHz onset probes and selected on
+// FIT music cells. The lab generator (tools repo, opto/pt_header.py) emits the 62-entry form and refuses to overwrite
+// a header that carries lfCutDb; port indices 62..70 there before regenerating.
+// kOptoCellDefaults order: elTauSeconds, lightCeiling, fastRelease, fastBimolecular, slowCharge, slowRelease, slowBimolecular, memoryCharge, memoryRelease, limitOutputMix, limitInputMix, compressInputMix, timeScaleLight, timeScaleExponent, depthWeighting, lowFrequencyFloor, lfTermGainDb, lfTermFrequency, lfTermGrSpan, conductanceTableOn, flashCharge, flashRelease, flashBimolecular, lfShelfDb, hFloor, lfLitTauAttack, lfLitTauRelease, lfLitLevelDb, lfLitSpanDb, lfLitFloor, lfLitLog, hChargeOnly, attackRateDbPerS, attackRatePower, attackRateTau, elFreqExponent, elFreqTau, hfPeakDb, lfPeakDb, midPeakDb, hf10kPeakDb, elRevHysteresis, elRevRelease, elFreqCorner, trapCapture, trapEmit, trapCapacity, pStrength, pPrExp, pThresh, pKnee, pAsym, lightTableStartDb, lightTableStepDb, lightSlopeAbove, conductanceTableStartDb, conductanceTableStepDb, conductanceSlopeAbove, prStart, prStep, prSlopeBelow, prGate, lfCutDb, lfCutFrequency, lfCutStartDb, lfCutSpanDb, lfCutTauAttack, lfCutTauSlow, lfCutTransSpanDb, lfCutHoldSeconds, lfCutMaxGapDb
+inline constexpr std::array<float, 71> kOptoCellDefaults{{
     2.11744767e-06f, 0.0f, 9.61066185f, 1.19941853f, 5.8555379f, 29.7343009f,
     0.815240487f, 0.00118519559f, 0.999977779f, 0.990760822f, 0.0365957224f, 0.0f,
     5.7612485f, 0.271498753f, 1.0f, 1.0f, -1.21699251f, 379.874676f,
     40.0f, 0.0f, 0.783605349f, 287.614327f, 0.0992242707f, 6.85569138f,
-    0.0f, 0.0193125313f, 0.020685854f, -28.593274f, 42.5204821f, 0.0f,
+    0.0f, 0.0193125313f, 0.020685854f, -28.593274f, 42.5204821f, 0.8f,
     1.0f, 0.0f, 0.0f, 2.0f, 0.01f, 0.197542329f,
     0.000508995409f, 1.55828697f, 0.301784265f, 0.00367525373f, -1.19515582f, 0.0f,
     0.02f, 2109.09771f, 62.0298299f, 2.85700604f, 14.1897856f, 0.0f,
     10.0f, 0.047f, 0.1f, 0.3f, -59.0f, 1.0f,
     0.082666399f, 0.0f, 0.1f, 0.0f, 0.3125f, 0.015625f,
     59.1923887f, 0.15f,
+    14.0f, 300.0f, -38.0f, 6.0f, 0.0003f, 0.03f, 12.0f, 0.02f, 40.0f,
 }};
 
 inline constexpr std::array<float, 37> kOptoCellLightTable{{
@@ -216,6 +223,11 @@ struct OptoCellParams
     float elRevHysteresis, elRevRelease, elFreqCorner;
     float trapCapture, trapEmit, trapCapacity;
     float pStrength, pPrExp, pThresh, pKnee, pAsym;
+    // R14 transient LF cut in the side-chain drive (see process()): shelf depth and corner, absolute drive gate
+    // (start, span), envelope attack, slow-tracker time constant, transient gate span, envelope peak hold, and
+    // the largest gap the slow tracker may trail the envelope by.
+    float lfCutDb, lfCutFrequency, lfCutStartDb, lfCutSpanDb, lfCutTauAttack, lfCutTauSlow, lfCutTransSpanDb;
+    float lfCutHoldSeconds, lfCutMaxGapDb;
     const float* lightTable;
     int lightTableSize;
     float lightTableStartDb, lightTableStepDb, lightSlopeAbove;
@@ -248,6 +260,9 @@ inline OptoCellParams defaultOptoCellParams() noexcept
     p.prStep = kOptoCellDefaults[59];
     p.prSlopeBelow = kOptoCellDefaults[60];
     p.prGate = kOptoCellDefaults[61];
+    p.lfCutDb = kOptoCellDefaults[62]; p.lfCutFrequency = kOptoCellDefaults[63]; p.lfCutStartDb = kOptoCellDefaults[64];
+    p.lfCutSpanDb = kOptoCellDefaults[65]; p.lfCutTauAttack = kOptoCellDefaults[66]; p.lfCutTauSlow = kOptoCellDefaults[67];
+    p.lfCutTransSpanDb = kOptoCellDefaults[68]; p.lfCutHoldSeconds = kOptoCellDefaults[69]; p.lfCutMaxGapDb = kOptoCellDefaults[70];
     return p;
 }
 
@@ -329,6 +344,19 @@ public:
         for (auto& filter : lfTermFilter)
             filter.setCoeffs(Biquad::shelf(sr, cellParams.lfTermFrequency > 0.0f ? cellParams.lfTermFrequency : 100.0f,
                                            cellParams.lfTermGainDb, 0.70710678f, false));
+        // R14 transient LF cut (low shelf) and its drive trackers: a peak-held envelope (attack lfCutTauAttack,
+        // hold lfCutHoldSeconds, then kLfCutEnvelopeRelease) and a slow dB tracker (lfCutTauSlow) whose gap to the
+        // envelope marks a step up from a lower level.
+        for (auto& filter : lfCutFilter)
+            filter.setCoeffs(Biquad::shelf(sr, std::max(cellParams.lfCutFrequency, 20.0f), -cellParams.lfCutDb, 0.70710678f, false));
+        cutAttack = std::exp(-1.0 / (std::max(static_cast<double>(cellParams.lfCutTauAttack), 1.0e-6) * sampleRate));
+        cutRelease = std::exp(-1.0 / (kLfCutEnvelopeRelease * sampleRate));
+        cutSlowStep = 1.0 - std::exp(-1.0 / (std::max(static_cast<double>(cellParams.lfCutTauSlow), 1.0e-6) * sampleRate));
+        // Truncated, not rounded (1919 samples at 96 kHz for 20 ms): the validated renders were made this way.
+        // The clamp keeps a lab-set NaN or absurd value out of the int cast.
+        const float holdSeconds = cellParams.lfCutHoldSeconds > 0.0f ? std::min(cellParams.lfCutHoldSeconds, 1.0f) : 0.0f;
+        cutHoldSamples = static_cast<int>(static_cast<double>(holdSeconds) * sampleRate);
+        for (auto& channel : channels) channel.driveHold = std::min(channel.driveHold, cutHoldSamples);
         // Production LF floor energy path (exact coefficients).
         floorHighPassStep = 1.0f - std::exp(-6.283185307f * 30.0f / sr);
         floorLowPassStep = 1.0f - std::exp(-6.283185307f * 2.016362169f / sr);
@@ -349,9 +377,11 @@ public:
         for (auto& channel : depthWeighting) for (auto& f : channel) f.reset();
         for (auto& f : lfTermFilter) f.reset();
         for (auto& f : limitFloorFilter) f.reset();
+        for (auto& f : lfCutFilter) f.reset();
     }
 
-    // This cell keeps no sample counters.
+    // The only sample counter is the R14 hold countdown; setRate() clamps it to the new hold length, which is
+    // all a rate change needs (a hold in progress ends no later than a fresh one would).
     template <typename ScaleCounter>
     void scaleCounters(const ScaleCounter&) noexcept {}
 
@@ -405,6 +435,25 @@ public:
             for (auto& f : loopWeighting[c]) loop = f.process(loop);
             loop *= weightingNormalisation;
         }
+        if (cellParams.lfCutDb != 0.0f)
+        {   // R14: LF loss in the side-chain drive at the onset of a loud passage (measured on the native unit:
+            // from dark, 60 Hz lags 1 kHz by 0 dB at -30 dBFS and by 11.5 dB at -4 dBFS, recovering within ~100 ms;
+            // once lit the LF response is the static one). Keyed on the drive envelope at n-1: an absolute drive
+            // gate times a transient gate (envelope above the slow tracker). The envelope holds each peak for
+            // lfCutHoldSeconds, which removes the per-cycle ripple that would otherwise keep the gate open on a
+            // settled low tone. It is exactly flat only open loop: in the feedback cell the drive peaks drift down
+            // by ~0.001 dB/s as the slow populations settle, the hold lapses a few times a second and the gate
+            // opens by at most a few percent. Measured, cut on against cut off, settled tone at PR 70: 60 Hz
+            // 0.002-0.005 dB, 30 Hz 0.01-0.03 dB, 25 Hz 0.02-0.04 dB, 15 Hz 0.04-0.10 dB (without the hold:
+            // 0.06-0.20 dB at 30-100 Hz).
+            const double driveDb = d.driveDb;
+            const float wAbs = std::clamp(static_cast<float>((driveDb - static_cast<double>(cellParams.lfCutStartDb))
+                                                            / std::max(static_cast<double>(cellParams.lfCutSpanDb), 1.0e-6)), 0.0f, 1.0f);
+            const float wTr = std::clamp(static_cast<float>((driveDb - d.driveSlow)
+                                                           / std::max(static_cast<double>(cellParams.lfCutTransSpanDb), 1.0e-6)), 0.0f, 1.0f);
+            const float wc = wAbs * wTr;
+            loop += wc * (lfCutFilter[c].process(loop) - loop);
+        }
         // Production optoDepthWeighting, fed by the cell reduction at n-1; both mode paths advance.
         const float priorReduction = static_cast<float>(d.grDb);
         const float compressShelfWeight = std::clamp((priorReduction - 8.0f) / 20.0f, 0.0f, 1.0f);
@@ -432,6 +481,24 @@ public:
             cachedSideChainGain = sideChainGain(prNorm);
         }
         const double s = inert ? 0.0 : cachedSideChainGain * static_cast<double>(loop);
+        if (cellParams.lfCutDb != 0.0f)
+        {
+            const double a = std::abs(s);
+            if (a >= d.driveEnv) { d.driveEnv = a + (d.driveEnv - a) * cutAttack; d.driveHold = cutHoldSamples; }
+            else if (d.driveHold > 0) --d.driveHold;
+            else
+            {
+                d.driveEnv = a + (d.driveEnv - a) * cutRelease;
+                if (d.driveEnv < 1.0e-30) d.driveEnv = 0.0;   // no denormal tail after release
+            }
+            d.driveDb = 20.0 * std::log10(std::max(d.driveEnv, kLfCutEnvelopeFloor));
+            d.driveSlow += cutSlowStep * (d.driveDb - d.driveSlow);
+            // The slow tracker trails the envelope by at most lfCutMaxGapDb, so the length of the cut is the same
+            // after any floor more than that far below the onset envelope (digital silence against a -90 dB
+            // floor: 0.005 dB at 100 ms). A floor closer than the cap shortens it (-60 dB: 0.12 dB, 9 ms).
+            if (cellParams.lfCutMaxGapDb > 0.0f)
+                d.driveSlow = std::max(d.driveSlow, d.driveDb - static_cast<double>(cellParams.lfCutMaxGapDb));
+        }
         d.el += elStep * (std::abs(s) - d.el);
         if (cellParams.lfLitLog != 0.0f)
         {
@@ -601,6 +668,11 @@ public:
         d.grRateSmooth = 0.0;
         d.drivePower = el * el;
         d.slewPower = el * el;
+        // R14 trackers settled at the primed drive, hold armed: no spurious onset cut. el must be the drive PEAK
+        // (the envelope holds peaks); priming from an instantaneous |s| mid-cycle would read as a step up.
+        d.driveEnv = el;
+        d.driveDb = d.driveSlow = 20.0 * std::log10(std::max(el, kLfCutEnvelopeFloor));
+        d.driveHold = cutHoldSamples;
         d.drivePrev = 0.0;
         d.reversalPeak = el;
         d.slewLow = 0.0;
@@ -633,10 +705,18 @@ public:
 
 private:
     static constexpr size_t kWeightingSections = 5;
+    // R14 envelope: release after the hold (fixed; the hold and the slow tracker carry the fitted timing) and
+    // the floor of its dB value (-240 dB, i.e. 1e-12 linear: below any drive the light table responds to).
+    static constexpr double kLfCutEnvelopeRelease = 0.010;
+    static constexpr double kLfCutEnvelopeFloor = 1.0e-12;
+    static constexpr double kLfCutFloorDb = -240.0;   // 20 log10(kLfCutEnvelopeFloor); keep the two in step
 
     struct ChannelState
     {
         double cellGain = 1.0, grDb = 0.0, el = 0.0, levelPeak = 0.0, litLevel = 0.0, grRateSmooth = 0.0;
+        // R14 drive trackers: peak-held envelope, its dB value, the slow dB tracker, and the hold countdown.
+        double driveEnv = 0.0, driveDb = kLfCutFloorDb, driveSlow = kLfCutFloorDb;
+        int driveHold = 0;
         double estimatedFrequencyHz = 1000.0;
         double drivePower = 0.0, slewPower = 0.0, drivePrev = 0.0;
         double reversalPeak = 0.0, reversalPhi = 1.0, slewLow = 0.0, trap = 0.0;
@@ -703,13 +783,15 @@ private:
     std::array<std::array<Biquad, 4>, kChannels> depthWeighting;
     std::array<Biquad, kChannels> lfTermFilter;
     std::array<Biquad, kChannels> limitFloorFilter;
+    std::array<Biquad, kChannels> lfCutFilter;
     double sampleRate = 0.0, dt = 1.0 / 96000.0, elStep = 0.0;
     double levelPeakAttack = 0.0, levelPeakRelease = 0.0;
     double cachedPrNorm = -1.0, cachedSideChainGain = 0.0;
     float weightingNormalisation = 1.0f;
     float levelNormalisation = 1.0f;
     float shelfNormalisation = 1.0f, weightingNormalisation14 = 1.0f;
-    double litAttack = 0.0, litRelease = 0.0;
+    double litAttack = 0.0, litRelease = 0.0, cutAttack = 0.0, cutRelease = 0.0, cutSlowStep = 0.0;
+    int cutHoldSamples = 0;
     double attackRateStep = 1.0;
     double elFreqStep = 1.0, slewNormalisation = 1.0;
     double reversalRelease = 0.0, reversalHalfCycle1k = 48.0;
