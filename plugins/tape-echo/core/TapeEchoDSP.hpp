@@ -215,6 +215,12 @@ public:
     void setReverbPan(float v01) noexcept         { pReverbPan.store(clamp01(v01), std::memory_order_relaxed); }
     void setInputSend(bool enabled) noexcept      { pInputSend.store(enabled ? 1.0f : 0.0f, std::memory_order_relaxed); }
     void setMix(float v01) noexcept               { pMix.store(clamp01(v01), std::memory_order_relaxed); }
+    // Repro noise bed level above the captured reference floor: 0 leaves the
+    // bed exactly as measured, 1 raises hum, bed and hiss together by
+    // kNoiseRangeDb. Tape Age's 1:2:4 law still multiplies on top.
+    void setNoise(float v01) noexcept             { pNoise.store(clamp01(v01), std::memory_order_relaxed); }
+    // Mains hum fundamental: 60 Hz as captured, or 50 Hz for 50 Hz regions.
+    void setHumFrequency50(bool fiftyHz) noexcept { pHum50.store(fiftyHz ? 1.0f : 0.0f, std::memory_order_relaxed); }
     float getTapeAge() const noexcept             { return pTapeAge.load(std::memory_order_relaxed); }
 
     // The motor control is intentionally nonlinear. The inverse is used by
@@ -640,6 +646,8 @@ private:
     std::atomic<float> pReverbPan   { 0.5f };
     std::atomic<float> pInputSend   { 1.0f };
     std::atomic<float> pMix         { 0.5f };
+    std::atomic<float> pNoise       { 0.0f };
+    std::atomic<float> pHum50       { 0.0f };
     std::atomic<uint32_t> pClearRequest { 0u };
 
     //--- smoothed control signals ----------------------------------------------
@@ -656,6 +664,7 @@ private:
     SmoothedValue driveSmoother, wowFlutterSmoother;
     SmoothedValue powerSmoother;                 // bypass crossfade, click-free
     SmoothedValue ageSmoother;                   // tape age morph
+    SmoothedValue noiseGainSmoother;             // linear gain on the repro noise bed
 
     // Tape-age noise has its own RNG and oscillator state so it never changes
     // the separately calibrated transport-noise realization.
@@ -665,8 +674,12 @@ private:
     Biquad    ageBedHighPass, ageBedLowPass;       // low-mid machine bed
     OnePoleLP wobbleLP;                           // slow playback-level wobble
     uint32_t  ageBedRngState = 0xB5297A4Du;
-    float     ageHumSin = 0.0f, ageHumCos = 1.0f; // 60 Hz fundamental
+    float     ageHumSin = 0.0f, ageHumCos = 1.0f; // mains fundamental phasor
     float     ageHumRotSin = 0.0f, ageHumRotCos = 1.0f;
+    // Per-sample rotations for 60 Hz [0] and 50 Hz [1]. Switching only swaps
+    // the rotation, so the phasor stays continuous and the change is click-free.
+    float     ageHumRateSin[2] = { 0.0f, 0.0f };
+    float     ageHumRateCos[2] = { 1.0f, 1.0f };
     uint32_t  ageHumRenormalize = 0u;
     float     lastPlaybackCutoff = -1.0f;         // block-rate speed/age guard
     float     lastAntiAliasCutoff = -1.0f;

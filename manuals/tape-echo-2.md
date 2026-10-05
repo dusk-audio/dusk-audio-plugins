@@ -73,6 +73,15 @@ keep loading; each one is noted in parentheses where the control is described.
 - **Tape Age** selects **New**, **Used**, or **Old** tape. New retains a very
   quiet tape/electronics bed; older states progressively add bandwidth loss,
   noise, transport variation, level wear, and a more audible tape splice.
+- **Noise** raises the tape and electronics noise (hum, low machine bed, and
+  hiss together) by up to 60 dB. At minimum the noise sits at its very quiet
+  captured level; Tape Age still scales it, so Old is louder than New at any
+  setting. The noise follows the echo path: Bass, Treble, Echo Level, Echo
+  Pan, Mix, and Output all act on it.
+- **Hum** sets the mains hum to **60 Hz** or **50 Hz** to match your region.
+  It is not stored in presets, so recalling a factory or user preset leaves it
+  where you set it. Loading a preset through an LV2 host's own preset menu
+  writes every control and returns it to 60 Hz.
 - **Wow & Flutter** extends the intrinsic transport movement from subtle
   mechanical motion to a creative wobble range.
 - **Power** is the host-designated bypass and uses a click-free transition.
@@ -147,7 +156,9 @@ Developer ID signed but is not submitted for notarization.
 Parameter IDs from the 0.1 series are preserved. Mix was appended after all
 previously shipped IDs. The hidden Dry Level parameter retains its original
 meaning for old project state and automation. Tape Age snaps stored continuous
-values to the nearest New/Used/Old state.
+values to the nearest New/Used/Old state. Noise and Hum Frequency were appended
+in the same way; projects saved before they existed load with the captured
+noise level and 60 Hz hum, so they sound unchanged.
 
 ## Gain and safety
 
