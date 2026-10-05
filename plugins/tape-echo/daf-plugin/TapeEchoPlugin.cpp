@@ -42,6 +42,8 @@ public:
         values[kParamPeakLevel]   = 0.0f;
         values[kParamMix]         = 0.5f;
         values[kParamEchoRateNote] = 5.0f; // fifth physical detent (Head 1 = 1/16)
+        values[kParamNoise]       = 0.0f;
+        values[kParamHumFrequency] = 0.0f; // 60 Hz
     }
 
 public:
@@ -205,6 +207,23 @@ protected:
             p.name = "Echo Rate Note"; p.symbol = "echo_rate_note";
             p.ranges.def = 5.0f;    p.ranges.min = 1.0f;  p.ranges.max = 11.0f;
             break;
+        case kParamNoise:
+            p.name = "Noise";       p.symbol = "noise";
+            p.ranges.def = 0.0f;    p.ranges.min = 0.0f;  p.ranges.max = 1.0f;
+            break;
+        case kParamHumFrequency:
+            p.hints |= kParameterIsInteger;
+            p.name = "Hum Frequency"; p.symbol = "hum_frequency";
+            p.ranges.def = 0.0f;    p.ranges.min = 0.0f;  p.ranges.max = 1.0f;
+            p.enumValues.count = 2;
+            p.enumValues.restrictedMode = true;
+            {
+                auto* const e = new ParameterEnumerationValue[2];
+                e[0] = ParameterEnumerationValue(0.0f, "60 Hz");
+                e[1] = ParameterEnumerationValue(1.0f, "50 Hz");
+                p.enumValues.values = e;
+            }
+            break;
         }
     }
 
@@ -232,7 +251,8 @@ protected:
             value = std::round(value);
         else if (index == kParamBypass
                  || index == kParamTempoSync
-                 || index == kParamInputSend)
+                 || index == kParamInputSend
+                 || index == kParamHumFrequency)
             value = value >= 0.5f ? 1.0f : 0.0f;
         if (index == kParamTapeAge)
             value = teQuantizeTapeAge(value);
@@ -284,6 +304,8 @@ protected:
         case kParamWowFlutter:  dsp.setWowFlutter(value);         break;
         case kParamDryLevel:    dsp.setDryLevel(value);           break;
         case kParamMix:         dsp.setMix(value);                break;
+        case kParamNoise:       dsp.setNoise(value);              break;
+        case kParamHumFrequency:dsp.setHumFrequency50(value >= 0.5f); break;
         }
     }
 
@@ -306,6 +328,7 @@ protected:
         setParameterValue(kParamReverbPan, preset.reverbPan);
         setParameterValue(kParamInputSend, preset.inputSend);
         setParameterValue(kParamMix, preset.mix);
+        setParameterValue(kParamNoise, preset.noise);
         const int leadingHead = teLeadingHeadIndexForMode(
             (int)(preset.v[kParamMode] + 0.5f));
         const int knobPos = teSyncKnobPosForDivision(

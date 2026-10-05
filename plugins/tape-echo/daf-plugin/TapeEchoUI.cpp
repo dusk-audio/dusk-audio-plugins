@@ -828,6 +828,7 @@ private:
         case kParamBypass:
         case kParamTempoSync:
         case kParamInputSend:
+        case kParamHumFrequency:
             return v >= 0.5f ? 1.0f : 0.0f;
         default:
             return v;
@@ -896,6 +897,7 @@ private:
         fn((uint32_t)kParamReverbPan, preset.reverbPan);
         fn((uint32_t)kParamInputSend, preset.inputSend);
         fn((uint32_t)kParamMix, preset.mix);
+        fn((uint32_t)kParamNoise, preset.noise);
         const int leadingHead = teLeadingHeadIndexForMode(
             (int)(preset.v[kParamMode] + 0.5f));
         const int knobPos = teSyncKnobPosForDivision(
@@ -1560,7 +1562,8 @@ private:
     }
 
     bool railToggle(ImDrawList* dl, const char* id, uint32_t param,
-                    float cx, const char* label, bool invert = false)
+                    float cx, const char* label, bool invert = false,
+                    const char* offLegend = "OFF", const char* onLegend = "ON")
     {
         const bool on = invert ? values[param] < 0.5f : values[param] >= 0.5f;
         const ImVec2 hit0 = P(cx - 39, 292);
@@ -1597,9 +1600,9 @@ private:
         dl->AddCircleFilled(P(ex, ey), 3.2f * s,
                             IM_COL32(225, 224, 219, 255), 18);
         text(dl, cx - 22.0f, 328.0f, 10.0f,
-             on ? IM_COL32(52, 51, 49, 255) : kColRailInk, "OFF", 0, true);
+             on ? IM_COL32(52, 51, 49, 255) : kColRailInk, offLegend, 0, true);
         text(dl, cx + 22.0f, 328.0f, 10.0f,
-             on ? kColRailInk : IM_COL32(52, 51, 49, 255), "ON", 0, true);
+             on ? kColRailInk : IM_COL32(52, 51, 49, 255), onLegend, 0, true);
         return ImGui::IsItemClicked();
     }
 
@@ -1613,23 +1616,24 @@ private:
                     IM_COL32(246, 244, 235, 100), 1.0f * s);
         dl->AddLine(P(0, 339), P(kDesignW, 339),
                     IM_COL32(20, 20, 20, 180), 1.0f * s);
-        for (float x : { 225.0f, 450.0f, 675.0f })
+        for (float x : { 180.0f, 360.0f, 540.0f, 720.0f })
             dl->AddLine(P(x, 295), P(x, 336),
                         IM_COL32(48, 47, 45, 110), 1.0f * s);
 
-        // Each control sits on the centre line of its equal-width rail section.
-        railToggle(dl, "##rail_input", kParamInputSend, 112.5f, "RECORD INPUT");
-        railToggle(dl, "##rail_sync", kParamTempoSync, 337.5f, "TEMPO SYNC");
+        // Each control sits on the centre line of its equal-width rail section;
+        // the noise section splits its width between the level and the hum mains.
+        railToggle(dl, "##rail_input", kParamInputSend, 90.0f, "RECORD INPUT");
+        railToggle(dl, "##rail_sync", kParamTempoSync, 270.0f, "TEMPO SYNC");
 
         // Three replaceable-cartridge conditions are exposed rather than a
         // continuous wear percentage. A compact engraved scale replaces the
         // detached LCD-style value box so the state reads as part of the rail.
-        text(dl, 562.5f, 292.0f, 12.5f, kColRailInk, "TAPE AGE", 0, true);
-        knob("rail_age", kParamTapeAge, 0.0f, 1.0f, 562.5f, 316.0f, 10.5f,
+        text(dl, 450.0f, 292.0f, 12.5f, kColRailInk, "TAPE AGE", 0, true);
+        knob("rail_age", kParamTapeAge, 0.0f, 1.0f, 450.0f, 316.0f, 10.5f,
              false, false, "%.0f", "", 1.0f, 0.0f, false, true);
 
         static constexpr const char* kAgeLabels[] = { "NEW", "USED", "OLD" };
-        static constexpr float kAgeLabelX[] = { 533.0f, 562.5f, 592.0f };
+        static constexpr float kAgeLabelX[] = { 420.5f, 450.0f, 479.5f };
         const int ageIndex = values[kParamTapeAge] < 0.25f
                            ? 0 : (values[kParamTapeAge] < 0.75f ? 1 : 2);
         for (int i = 0; i < 3; ++i)
@@ -1644,9 +1648,22 @@ private:
                             kColGreenDk, 1.4f * s);
         }
 
+        // Noise lifts the repro bed above the captured floor, so the scale is
+        // the gain added on top of it (see kNoiseRangeDb in TapeEchoDSP.cpp).
+        text(dl, 586.0f, 292.0f, 12.5f, kColRailInk, "NOISE", 0, true);
+        knob("rail_noise", kParamNoise, 0.0f, 1.0f, 586.0f, 316.0f, 10.5f,
+             false, false, "+%.0f", " dB", 60.0f, 0.0f, false, true);
+        char noiseReadout[16];
+        std::snprintf(noiseReadout, sizeof(noiseReadout), "+%.0f dB",
+                      60.0f * values[kParamNoise]);
+        text(dl, 586.0f, 328.0f, 10.0f, IM_COL32(52, 51, 49, 255),
+             noiseReadout, 0, true);
+        railToggle(dl, "##rail_hum", kParamHumFrequency, 670.0f, "HUM",
+                   false, "60 Hz", "50 Hz");
+
         const bool on = values[kParamBypass] < 0.5f;
-        railToggle(dl, "##rail_power", kParamBypass, 787.5f, "POWER", true);
-        led(dl, 828, 317, on, 5.0f);
+        railToggle(dl, "##rail_power", kParamBypass, 810.0f, "POWER", true);
+        led(dl, 850.5f, 317, on, 5.0f);
     }
 
     // Division the DSP is actually running. While an old project's semantic
