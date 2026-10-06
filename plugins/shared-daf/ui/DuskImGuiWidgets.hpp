@@ -78,6 +78,15 @@ struct ParamHost
     virtual void setParam(uint32_t idx, float value) = 0;
 };
 
+// A colour at a fraction of its alpha (0 = transparent, 1 = unchanged). The
+// scrim, glow and dimmed-state helper every panel used to carry privately.
+inline ImU32 scaleAlpha(ImU32 c, float amount) noexcept
+{
+    amount = amount < 0.0f ? 0.0f : (amount > 1.0f ? 1.0f : amount);
+    const ImU32 a = (c >> 24) & 0xffu;
+    return (c & 0x00ffffffu) | ((ImU32)((float)a * amount + 0.5f) << 24);
+}
+
 struct Palette
 {
     ImU32 white    = IM_COL32(238, 236, 228, 255);

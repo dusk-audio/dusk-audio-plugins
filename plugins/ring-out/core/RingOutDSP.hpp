@@ -23,13 +23,15 @@
 // Signal path
 // -----------
 //   in -> [input meter] -> notch bank (shared coefficients, per-channel state)
-//      -> output gain -> [output meter] -> out
+//      -> output gain -> [bypass crossfade] -> [output meter] -> out
 //   mono sum of the input -> analysis ring -> FFT (Hann) -> spectrum + detector
 //
-// Filter slots are not table rows. A slot keeps serving the filter it was given
-// until that filter leaves the table, then fades out in place; a filter that
-// moves to another row (a DEL closes the gap) keeps its slot. So a delete never
-// steps a coefficient set and never sweeps a notch across the band.
+// Every table row carries a stable id. Filter SLOTS follow ids, not row
+// numbers: a slot keeps serving its filter wherever the row moves (a DEL
+// closes the gap), a filter that leaves the table fades out in its slot, and a
+// new row ramps in from flat in a free one. There are twice as many slots as
+// rows so even a whole-table replacement crossfades cleanly. Bypass runs the
+// filters warm and crossfades to a bit-exact dry path over about 30 ms.
 //
 // Detection (see RingOutDSP.cpp, Detector) follows the standard acoustic
 // feedback criteria: a spectral peak that stands far above the frame average
@@ -50,6 +52,7 @@
 #include "DuskSpinLock.hpp"
 
 #include <atomic>
+#include <cstdint>
 #include <vector>
 
 namespace duskaudio
@@ -85,6 +88,9 @@ public:
 
     static constexpr int kMaxFftSize = 16384;
     static constexpr int kMaxChannels = 2;
+    // Meters and spectrum never read below this; it is also the floor the
+    // output parameters declare.
+    static constexpr float kDbFloor = -120.0f;
 
     // 4096 points up to 50 kHz, 8192 to 100 kHz, 16384 above: the bin width stays
     // near 11.7 Hz and the frame near 85 ms at every supported rate, so the
@@ -93,7 +99,8 @@ public:
 
     RingOutDSP();
 
-    // Not real-time safe: allocates the analysis buffers for the rate.
+    // Not real-time safe: allocates the analysis buffers for the rate. A SETUP
+    // or ADD countdown already running is rescaled to the new rate.
     void prepare(double sampleRate, int maxBlockSize);
 
     // Clears filter state, meters, analysis history and the detector; keeps the
@@ -112,7 +119,8 @@ public:
     void setBypass(bool b) noexcept          { bypass_.store(b, std::memory_order_relaxed); }
 
     // Edge-driven: false -> true arms the engine for kSetupSeconds; true -> false
-    // stops it. A second true while running is ignored.
+    // stops it. When the minute runs out the engine disarms itself, and the
+    // next true is a fresh edge again.
     void setSetup(bool on) noexcept;
 
     // Level-driven: while true the engine searches until it engages one filter,
@@ -134,6 +142,9 @@ public:
 
     //--- the filter table (host / UI threads; spin-locks) ----------------------
     void getTable(ringout::FilterTable& out) const noexcept;
+    // Whole-table replacement. Rows that are the same filter as before (same
+    // frequency within the slot-identity tolerance) keep their identity, so a
+    // preset load crossfades only what changed.
     void setTable(const ringout::FilterTable& table) noexcept;
     // Returns the slot touched, or -1 when the command changed nothing.
     int  applyEdit(const ringout::EditCommand& command) noexcept;
@@ -167,17 +178,18 @@ public:
 
 private:
     static constexpr int kSubBlock = 32;          // coefficient / smoother update grid
-    static constexpr int kNumSlots = ringout::kMaxFilters + 4;  // room for slots fading out
+    static constexpr int kNumSlots = 2 * ringout::kMaxFilters;   // a full replacement crossfades
     static constexpr int kMaxTracks = 24;
     static constexpr int kMaxHoldoffs = 32;
-    static constexpr float kSameFilterLogTol = 0.05f;  // ~5 %: the same filter, moved a little
+    static constexpr float kSameFilterLogTol = 0.05f;  // ~5 %: setTable() keeps the row's identity
 
     struct SlotState
     {
         Biquad        bq[kMaxChannels];
         SmoothedValue cutDb, logFreq, q;
         bool          engaged = false;    // serving a filter, or fading one out
-        int           entry = -1;         // table row served; -1 while fading out
+        uint32_t      rowId = 0;          // identity of the filter served (0 = none)
+        int           entry = -1;         // its row in live_ this block; -1 while fading out
         bool          active = false;     // coefficients are not identity this sub-block
         float         lastCut = 0.0f, lastLogF = 0.0f, lastQ = 0.0f;
         int           cooldownFrames = 0; // frames before the engine may touch it again
@@ -199,10 +211,16 @@ private:
     };
     static const Thresholds& thresholdsFor(int sense) noexcept;
 
+    // Table mutators; the caller holds tableLock_.
+    void clearLocked() noexcept;
+    int  addLocked(const ringout::Filter& x) noexcept;
+    int  applyEditLocked(const ringout::EditCommand& command) noexcept;
+    void replaceLocked(const ringout::FilterTable& table) noexcept;
+
     void syncTableFromShared() noexcept;
     void adoptLiveTable() noexcept;
     void assignSlots() noexcept;
-    int  slotForEntry(int entry) const noexcept;
+    int  slotForRow(int row) const noexcept;
     void updateSmoothersAndCoefficients() noexcept;
     void pushAnalysis(const float* const* inputs, int numChannels, int offset, int count) noexcept;
     void analyzeFrame() noexcept;
@@ -241,18 +259,24 @@ private:
     std::atomic<int>   lastEngagedSlot_ { -1 };
     std::atomic<unsigned> engagementCount_ { 0 };
 
-    //--- table: shared (locked) + the audio thread's copy
+    //--- table: shared (locked) + the audio thread's copy, each with row ids
     mutable SpinLock      tableLock_;
     ringout::FilterTable  shared_;
+    uint32_t              sharedIds_[ringout::kMaxFilters] = {};
+    uint32_t              nextRowId_ = 1;
     std::atomic<unsigned> tableVersion_ { 1 };
     std::atomic<bool>     resetRequested_ { false };
     ringout::FilterTable  live_;
+    uint32_t              liveIds_[ringout::kMaxFilters] = {};
     unsigned              liveVersion_ = 0;
 
     //--- audio-thread filter state
     SlotState     slots_[kNumSlots];
     SmoothedValue gain_;
     float         gainNow_ = 1.0f;
+    SmoothedValue bypassMix_;                 // 1 = processed, 0 = dry
+    float         mixNow_ = 1.0f;
+    float         wet_[kMaxChannels][kSubBlock] = {};
     int           subPos_ = 0;
 
     //--- analysis

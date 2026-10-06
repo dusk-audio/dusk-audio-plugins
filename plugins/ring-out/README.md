@@ -138,10 +138,15 @@ meter outputs.
   try-locks and otherwise leaves a request the audio thread honours at its
   next block.
 
-Filter *slots* are matched to table rows by frequency identity, not by index:
-a deleted filter fades out in place and the filters that move down a row keep
-their slot and their state, so a DEL during a show neither steps a coefficient
-set nor sweeps a notch across the band.
+Every table row carries a stable id, and filter *slots* follow ids, not row
+numbers: a deleted filter fades out in its slot, the filters that move down a
+row keep their slot and their state, a FREQ step glides the same slot, and a
+new row ramps in from flat in a free one. There are twice as many slots as
+rows (40) so even a whole-table replacement (a preset load) crossfades
+cleanly; `setTable()` keeps the id of any row that is the same filter as
+before, so a preset load crossfades only what changed. Bypass runs the filters
+warm and crossfades to a bit-exact dry path over about 30 ms, so un-bypass
+has no stale tail and neither edge clicks.
 
 User presets (`~/.config/DuskAudio/RingOut/presets/*.ropreset`) carry the
 preset parameters plus a `filters=` line.

@@ -460,11 +460,177 @@ static void testDetect()
     CHECK(st.tableVersion == dsp.tableVersion(), "status carries the table version");
 }
 
+// Runs a steady 1 kHz sine, applies `mutate` at 0.75 s, and reports the largest
+// sample-to-sample step over the whole run plus the level of the final quarter
+// second in dB relative to the input. A 0.5-amplitude 1 kHz sine at 48 kHz moves
+// at most 0.0654 per sample on its own.
+template <typename Fn>
+static void runStepProbe(RingOutDSP& dsp, Fn&& mutate, float& maxJumpOut, float& lateDbOut)
+{
+    const double sr = 48000.0;
+    const int block = 64;
+    std::vector<float> in((size_t)block), out((size_t)block);
+    double phase = 0.0;
+    float maxJump = 0.0f, prev = 0.0f;
+    double sumLateOut = 0.0, sumLateIn = 0.0;
+    const int total = (int)(1.5 * sr);
+    bool mutated = false;
+    for (int done = 0; done < total; done += block)
+    {
+        if (!mutated && done >= (int)(0.75 * sr)) { mutated = true; mutate(); }
+        for (int i = 0; i < block; ++i)
+        {
+            in[(size_t)i] = 0.5f * (float)std::sin(phase);
+            phase += 2.0 * 3.14159265358979323846 * 1000.0 / sr;
+        }
+        const float* ins[1] = { in.data() }; float* outs[1] = { out.data() };
+        dsp.processBlock(ins, outs, 1, block);
+        for (int i = 0; i < block; ++i)
+        {
+            const float y = out[(size_t)i];
+            if (done > 0 || i > 0) maxJump = std::max(maxJump, std::fabs(y - prev));
+            prev = y;
+            if (done >= (int)(1.25 * sr))
+            {
+                sumLateOut += (double)y * y;
+                sumLateIn += (double)in[(size_t)i] * in[(size_t)i];
+            }
+        }
+    }
+    maxJumpOut = maxJump;
+    // Relative to the input over the same window, so a window that is not a
+    // whole number of periods cancels out.
+    lateDbOut = (float)(10.0 * std::log10((sumLateOut + 1e-30) / (sumLateIn + 1e-30)));
+}
+
+// A FREQ step of +100 Hz at 1 kHz is the same filter moved, not a new one: the
+// slot glides, nothing fades out or ramps in.
+static void testFreqStepKeepsSlot()
+{
+    RingOutDSP dsp;
+    dsp.prepare(48000.0, 64);
+    ro::FilterTable t;
+    t.add(ro::Filter{ true, 1000.0f, -20.0f, 8.0f });
+    dsp.setTable(t);
+    float maxJump = 0.0f, lateDb = 0.0f;
+    runStepProbe(dsp, [&]
+    {
+        ro::EditCommand set; set.kind = ro::EditCommand::kSet; set.slot = 0;
+        set.filter = ro::Filter{ true, ro::stepFreq(1000.0f, +1), -20.0f, 8.0f };
+        CHECK(dsp.applyEdit(set) == 0 && near(set.filter.freqHz, 1100.0f, 1e-3f), "FREQ + at 1 kHz -> 1100 Hz");
+    }, maxJump, lateDb);
+    CHECK(maxJump < 0.085f, "a 100 Hz FREQ step mid-tone is click-free: max sample step %.4f", maxJump);
+    // The notch now centred at 1100 Hz still reaches 1 kHz with its skirt; the
+    // level must match the static response there, i.e. the slot glided and
+    // settled rather than a second slot ramping in.
+    ro::FilterTable moved;
+    moved.add(ro::Filter{ true, 1100.0f, -20.0f, 8.0f });
+    const float expected = (float)RingOutDSP::responseDb(moved, 1.0f, 0.0f, 48000.0, 1000.0);
+    CHECK(near(lateDb, expected, 0.5f), "after the step 1 kHz sits at %.2f dB (static response %.2f dB)", lateDb, expected);
+}
+
+// Bypass crossfades to a bit-exact dry path and back without a click; the
+// filters stay warm while bypassed so un-bypass replays no stale tail.
+static void testBypassCrossfade()
+{
+    {
+        RingOutDSP dsp;
+        dsp.prepare(48000.0, 64);
+        ro::FilterTable t;
+        t.add(ro::Filter{ true, 1000.0f, -20.0f, 8.0f });
+        dsp.setTable(t);
+        float maxJump = 0.0f, lateDb = 0.0f;
+        runStepProbe(dsp, [&] { dsp.setBypass(true); }, maxJump, lateDb);
+        CHECK(maxJump < 0.085f, "engaging bypass is click-free: max sample step %.4f", maxJump);
+        CHECK(near(lateDb, 0.0f, 1e-3f), "bypassed output is the dry input: %.4f dB", lateDb);
+    }
+    {
+        RingOutDSP dsp;
+        dsp.prepare(48000.0, 64);
+        ro::FilterTable t;
+        t.add(ro::Filter{ true, 1000.0f, -20.0f, 8.0f });
+        dsp.setTable(t);
+        dsp.setBypass(true);
+        float maxJump = 0.0f, lateDb = 0.0f;
+        runStepProbe(dsp, [&] { dsp.setBypass(false); }, maxJump, lateDb);
+        CHECK(maxJump < 0.085f, "releasing bypass is click-free: max sample step %.4f", maxJump);
+        CHECK(near(lateDb, -20.0f, 0.3f), "after un-bypass the notch is fully in: %.2f dB", lateDb);
+    }
+}
+
+static void testTimersAndEdges()
+{
+    {
+        // Armed at the constructor's 48 kHz, then activated at 96 kHz: still a minute.
+        RingOutDSP dsp;
+        dsp.setSetup(true);
+        dsp.prepare(96000.0, 256);
+        CHECK(near(dsp.status().setupRemainingSeconds, 60.0f, 0.05f),
+              "SETUP countdown survives a rate change: %.2f s left", dsp.status().setupRemainingSeconds);
+    }
+    {
+        // After the minute runs out, the next 1 is a rising edge again.
+        RingOutDSP dsp;
+        dsp.prepare(48000.0, 4096);
+        dsp.setSetup(true);
+        std::vector<float> z(4096, 0.0f), o(4096), o2(4096);
+        const float* ins[2] = { z.data(), z.data() }; float* outs[2] = { o.data(), o2.data() };
+        for (int b = 0; b < 720; ++b) dsp.processBlock(ins, outs, 2, 4096);
+        CHECK(!dsp.status().setupActive && dsp.status().setupExpired, "expired after a minute");
+        dsp.setSetup(true);
+        CHECK(dsp.status().setupActive && !dsp.status().setupExpired,
+              "a host that still holds 1 re-arms with its next write of 1");
+    }
+    {
+        // Meters never read below the declared parameter floor.
+        RingOutDSP dsp;
+        dsp.prepare(48000.0, 512);
+        std::vector<float> z(512, 0.0f), o(512), o2(512);
+        const float* ins[2] = { z.data(), z.data() }; float* outs[2] = { o.data(), o2.data() };
+        for (int b = 0; b < 200; ++b) dsp.processBlock(ins, outs, 2, 512);
+        CHECK(dsp.inputPeakDb(0) >= RingOutDSP::kDbFloor && dsp.outputPeakDb(1) >= RingOutDSP::kDbFloor,
+              "silence meters at the floor: %.1f / %.1f dB", dsp.inputPeakDb(0), dsp.outputPeakDb(1));
+    }
+    {
+        // A filter already at the floor has nothing left to give: the table
+        // version does not churn while the tone rings on.
+        RingOutDSP dsp;
+        dsp.prepare(48000.0, 256);
+        ro::FilterTable t;
+        t.add(ro::Filter{ true, 1000.0f, ro::kAutoCutFloor, ro::kAutoQFloor });
+        dsp.setTable(t);
+        const unsigned v = dsp.tableVersion();
+        dsp.setSetup(true);
+        runTone(dsp, 48000.0, 1.5f, -45.0f,
+                [](double tt) { return 0.3f * (float)std::sin(2.0 * 3.14159265358979323846 * 1000.0 * tt); });
+        CHECK(dsp.tableVersion() == v && dsp.status().engagementCount == 0,
+              "no version bump for an engage that changes nothing (version %u -> %u, engagements %u)",
+              v, dsp.tableVersion(), dsp.status().engagementCount);
+    }
+}
+
 // The bottom of the band: a 66 Hz ring (the reference manual's own example) sits
 // at bin 5 or 6 of a 4096-point frame, where a scan floor set for the widest
-// neighbourhood would skip it.
+// neighbourhood would skip it; 30 Hz sits between bins 2 and 3.
 static void testDetectLow()
 {
+    {
+        RingOutDSP dsp;
+        dsp.prepare(48000.0, 256);
+        dsp.setSense(RingOutDSP::kSenseLow);
+        dsp.setSetup(true);
+        auto tone = [](double tt)
+        {
+            const float db = tt < 0.6 ? -55.0f + (float)(tt / 0.6) * 47.0f : -8.0f;
+            return dbToLin(db) * (float)std::sin(2.0 * 3.14159265358979323846 * 30.0 * tt);
+        };
+        runTone(dsp, 48000.0, 0.8f, -45.0f, tone);
+        ro::FilterTable t;
+        dsp.getTable(t);
+        CHECK(t.count >= 1, "a 30 Hz ring is detected (count %d)", t.count);
+        if (t.count >= 1)
+            CHECK(near(t.f[0].freqHz, 30.0f, 5.0f), "placed at %.1f Hz for a 30 Hz tone", t.f[0].freqHz);
+    }
     const double sr = 48000.0;
     RingOutDSP dsp;
     dsp.prepare(sr, 256);
@@ -755,6 +921,9 @@ int main()
     testNotch();
     testBlockSizeInvariance();
     testDeleteCrossfade();
+    testFreqStepKeepsSlot();
+    testBypassCrossfade();
+    testTimersAndEdges();
     testDetect();
     testDetectLow();
     testHighSense();

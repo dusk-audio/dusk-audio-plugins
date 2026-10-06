@@ -286,14 +286,14 @@ private:
         inMeter.update(d->inputPeakDb(0), d->inputPeakDb(1), dt, meterStyle);
         outMeter.update(d->outputPeakDb(0), d->outputPeakDb(1), dt, meterStyle);
 
-        // Spectrum -> per-pixel-column dB with RTA ballistics (fast up, 40 dB/s down).
+        // Spectrum -> per-pixel-column dB, rebuilt only when a new frame arrived;
+        // the RTA ballistics (fast up, 40 dB/s down) run every UI frame.
+        const int cols = (int)rta.size();
         const unsigned seq = d->spectrumSequence();
         if (seq != spectrumSeqSeen && d->copySpectrum(spectrum))
-            spectrumSeqSeen = seq;
-        if (spectrum.bins > 0)
         {
-            const int cols = (int)rta.size();
-            std::vector<float>& colMax = rtaScratch;
+            spectrumSeqSeen = seq;
+            std::vector<float>& colMax = rtaTarget;
             colMax.assign((size_t)cols, -200.0f);
             for (int k = 1; k < spectrum.bins; ++k)
             {
@@ -311,10 +311,13 @@ private:
                 if (colMax[(size_t)c] > -199.0f) last = colMax[(size_t)c];
                 else colMax[(size_t)c] = last;
             }
+        }
+        if (rtaTarget.size() == (size_t)cols)
+        {
             const float fall = 40.0f * std::clamp(dt, 0.0f, 0.1f);
             for (int c = 0; c < cols; ++c)
             {
-                const float target = std::max(kRtaMinDb, colMax[(size_t)c]);
+                const float target = std::max(kRtaMinDb, rtaTarget[(size_t)c]);
                 float& v = rta[(size_t)c];
                 if (target > v) v += 0.6f * (target - v);
                 else            v = std::max(target, v - fall);
@@ -381,12 +384,7 @@ private:
         dl->AddText(font, px, pos, col, txt);
     }
 
-    static ImU32 fade(ImU32 c, float amount)
-    {
-        amount = std::clamp(amount, 0.0f, 1.0f);
-        const ImU32 a = (c >> 24) & 0xffu;
-        return (c & 0x00ffffffu) | ((ImU32)(a * amount + 0.5f) << 24);
-    }
+    static ImU32 fade(ImU32 c, float amount) { return duskdaf::scaleAlpha(c, amount); }
 
     void card(ImDrawList* dl, float x0, float y0, float x1, float y1) const
     {
@@ -726,7 +724,7 @@ private:
     void drawRta(ImDrawList* dl)
     {
         const int cols = (int)rta.size();
-        if (cols < 2 || !engineLive) return;
+        if (cols < 2 || !engineLive || rtaTarget.empty()) return;
         std::vector<ImVec2>& pts = ptsScratch;
         pts.clear();
         pts.reserve((size_t)cols);
@@ -1261,7 +1259,7 @@ private:
     duskdaf::LogFreqAxis axis { ro::kFreqMin, ro::kFreqMax };
     duskaudio::RingOutSpectrumFrame spectrum;
     unsigned spectrumSeqSeen = 0;
-    std::vector<float> rta, rtaScratch;
+    std::vector<float> rta, rtaTarget;
     std::vector<ImVec2> ptsScratch;
 
     duskdaf::LedLadder inMeter, outMeter;

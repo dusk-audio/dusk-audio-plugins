@@ -19,10 +19,11 @@ namespace
 {
     constexpr float kPi = 3.14159265358979f;
     constexpr float kLn2 = 0.69314718056f;
+    constexpr float kDbFloorLin = 1.0e-6f;   // = RingOutDSP::kDbFloor (-120 dB)
 
     inline float linToDb(float lin) noexcept
     {
-        return 20.0f * std::log10(lin > 1.0e-9f ? lin : 1.0e-9f);
+        return 20.0f * std::log10(lin > kDbFloorLin ? lin : kDbFloorLin);
     }
 
     // Half the -3 dB bandwidth of an RBJ peaking section, in octaves.
@@ -48,6 +49,12 @@ namespace
             x.cutDb = ringout::snapCut(std::max(ringout::kAutoCutFloor, x.cutDb - 3.0f));
         else
             x.q = ringout::snapQ(std::max(ringout::kAutoQFloor, x.q * 0.8f));
+    }
+
+    inline int rescaleSamples(int samples, double oldRate, double newRate) noexcept
+    {
+        if (samples <= 0 || oldRate <= 0.0) return samples;
+        return (int)((double)samples * newRate / oldRate + 0.5);
     }
 }
 
@@ -78,18 +85,27 @@ RingOutDSP::RingOutDSP()
 {
     for (int ch = 0; ch < kMaxChannels; ++ch)
     {
-        inPeakDb_[ch].store(-120.0f, std::memory_order_relaxed);
-        outPeakDb_[ch].store(-120.0f, std::memory_order_relaxed);
+        inPeakDb_[ch].store(kDbFloor, std::memory_order_relaxed);
+        outPeakDb_[ch].store(kDbFloor, std::memory_order_relaxed);
     }
     prepare(48000.0, 512);
 }
 
 void RingOutDSP::prepare(double sampleRate, int /*maxBlockSize*/)
 {
+    const double oldRate = sampleRate_;
     sampleRate_ = sampleRate > 1000.0 ? sampleRate : 48000.0;
     fftSize_ = fftSizeForRate(sampleRate_);
     hop_ = fftSize_ / 4;
     binHz_ = (float)(sampleRate_ / (double)fftSize_);
+
+    // A countdown armed before activation was measured at the old rate (the
+    // constructor's 48 kHz when a session is restored before the first
+    // activate()); keep its wall-clock length.
+    setupSamplesLeft_.store(rescaleSamples(setupSamplesLeft_.load(std::memory_order_relaxed), oldRate, sampleRate_),
+                            std::memory_order_relaxed);
+    addSamplesLeft_.store(rescaleSamples(addSamplesLeft_.load(std::memory_order_relaxed), oldRate, sampleRate_),
+                          std::memory_order_relaxed);
 
     fft_.prepare(fftSize_);
     ring_.assign((size_t)fftSize_, 0.0f);
@@ -99,9 +115,12 @@ void RingOutDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     for (int i = 0; i < fftSize_; ++i)
         window_[(size_t)i] = 0.5f - 0.5f * std::cos(2.0f * kPi * (float)i / (float)fftSize_);
 
-    // 24 Hz .. 20 kHz, and never above 0.45 fs so the harmonic checks have room.
+    // 24 Hz is bin 2 at every supported rate (the bin width is held near
+    // 11.7 Hz), and the detector's local-maximum test needs two bins below the
+    // scan start, so the band begins exactly there. Never above 0.45 fs so the
+    // harmonic checks have room.
     const float topHz = std::min(ringout::kFreqMax, 0.45f * (float)sampleRate_);
-    rangeLo_ = std::max(1, (int)std::ceil(ringout::kFreqMin / binHz_));
+    rangeLo_ = std::max(2, (int)std::floor(ringout::kFreqMin / binHz_));
     rangeHi_ = std::min(fftSize_ / 2 - 1, (int)std::floor(topHz / binHz_));
 
     const double subRate = sampleRate_ / (double)kSubBlock;
@@ -112,6 +131,7 @@ void RingOutDSP::prepare(double sampleRate, int /*maxBlockSize*/)
         st.q.prepare(subRate, 0.010f);
     }
     gain_.prepare(subRate, 0.010f);
+    bypassMix_.prepare(subRate, 0.010f);
 
     reset();
 }
@@ -125,12 +145,15 @@ void RingOutDSP::reset() noexcept
         st.logFreq.snap(std::log(ringout::kFreqDefault));
         st.q.snap(ringout::kQDefault);
         st.engaged = st.active = false;
+        st.rowId = 0;
         st.entry = -1;
         st.lastCut = 0.0f; st.lastLogF = 0.0f; st.lastQ = 0.0f;
         st.cooldownFrames = 0;
     }
     gainNow_ = std::pow(10.0f, gainOutDb_.load(std::memory_order_relaxed) * 0.05f);
     gain_.snap(gainNow_);
+    mixNow_ = bypass_.load(std::memory_order_relaxed) ? 0.0f : 1.0f;
+    bypassMix_.snap(mixNow_);
     subPos_ = 0;
 
     std::fill(ring_.begin(), ring_.end(), 0.0f);
@@ -143,8 +166,8 @@ void RingOutDSP::reset() noexcept
     for (int ch = 0; ch < kMaxChannels; ++ch)
     {
         inPeakLin_[ch] = outPeakLin_[ch] = 0.0f;
-        inPeakDb_[ch].store(-120.0f, std::memory_order_relaxed);
-        outPeakDb_[ch].store(-120.0f, std::memory_order_relaxed);
+        inPeakDb_[ch].store(kDbFloor, std::memory_order_relaxed);
+        outPeakDb_[ch].store(kDbFloor, std::memory_order_relaxed);
     }
 
     // Force a fresh copy of the table on the next block.
@@ -163,8 +186,10 @@ void RingOutDSP::setSetup(bool on) noexcept
         setupExpired_.store(false, std::memory_order_relaxed);
         setupActive_.store(true, std::memory_order_release);
     }
-    else if (!on && was)
+    else if (!on)
     {
+        // Also after an expiry already cleared the request: lowering SETUP
+        // always leaves the engine idle with no expiry pending.
         setupActive_.store(false, std::memory_order_release);
         setupExpired_.store(false, std::memory_order_relaxed);
     }
@@ -211,6 +236,74 @@ RingOutDSP::Status RingOutDSP::status() const noexcept
 }
 
 //==============================================================================
+// table mutators (tableLock_ held)
+
+void RingOutDSP::clearLocked() noexcept
+{
+    shared_.clear();
+    for (uint32_t& id : sharedIds_) id = 0;
+}
+
+int RingOutDSP::addLocked(const ringout::Filter& x) noexcept
+{
+    const int row = shared_.add(x);
+    if (row >= 0)
+        sharedIds_[row] = nextRowId_++;
+    return row;
+}
+
+int RingOutDSP::applyEditLocked(const ringout::EditCommand& c) noexcept
+{
+    using ringout::EditCommand;
+    switch (c.kind)
+    {
+    case EditCommand::kClear:
+        if (shared_.count == 0) return -1;
+        clearLocked();
+        return 0;
+    case EditCommand::kSet:
+        if (c.slot < 0 || c.slot >= shared_.count) return -1;
+        shared_.f[c.slot] = c.filter;         // same filter, edited: keeps its id
+        return c.slot;
+    case EditCommand::kAdd:
+        return addLocked(c.filter);
+    case EditCommand::kDelete:
+        if (c.slot < 0 || c.slot >= shared_.count) return -1;
+        for (int k = c.slot; k + 1 < shared_.count; ++k)
+            sharedIds_[k] = sharedIds_[k + 1];
+        sharedIds_[shared_.count - 1] = 0;
+        shared_.remove(c.slot);
+        return c.slot;
+    default:
+        return -1;
+    }
+}
+
+// Rows that are the same filter as an existing one (same frequency within the
+// identity tolerance) keep that filter's id, so only what changed crossfades.
+void RingOutDSP::replaceLocked(const ringout::FilterTable& table) noexcept
+{
+    uint32_t newIds[ringout::kMaxFilters] = {};
+    bool oldUsed[ringout::kMaxFilters] = {};
+    for (int row = 0; row < table.count; ++row)
+    {
+        const float lf = std::log(table.f[row].freqHz);
+        int best = -1; float bestDist = kSameFilterLogTol;
+        for (int old = 0; old < shared_.count; ++old)
+        {
+            if (oldUsed[old]) continue;
+            const float dist = std::fabs(std::log(shared_.f[old].freqHz) - lf);
+            if (dist <= bestDist) { best = old; bestDist = dist; }
+        }
+        if (best >= 0) { oldUsed[best] = true; newIds[row] = sharedIds_[best]; }
+        else newIds[row] = nextRowId_++;
+    }
+    shared_ = table;
+    for (int row = 0; row < ringout::kMaxFilters; ++row)
+        sharedIds_[row] = row < table.count ? newIds[row] : 0;
+}
+
+//==============================================================================
 // table access (host / UI side)
 
 void RingOutDSP::getTable(ringout::FilterTable& out) const noexcept
@@ -226,14 +319,14 @@ void RingOutDSP::setTable(const ringout::FilterTable& table) noexcept
     const SpinLock::ScopedLock guard(tableLock_);
     if (ringout::tablesEqual(shared_, table))
         return;
-    shared_ = table;
+    replaceLocked(table);
     tableVersion_.fetch_add(1, std::memory_order_acq_rel);
 }
 
 int RingOutDSP::applyEdit(const ringout::EditCommand& command) noexcept
 {
     const SpinLock::ScopedLock guard(tableLock_);
-    const int slot = ringout::applyEditCommand(shared_, command);
+    const int slot = applyEditLocked(command);
     if (slot >= 0)
         tableVersion_.fetch_add(1, std::memory_order_acq_rel);
     return slot;
@@ -250,7 +343,7 @@ void RingOutDSP::resetFilters() noexcept
         {
             if (shared_.count != 0)
             {
-                shared_.clear();
+                clearLocked();
                 tableVersion_.fetch_add(1, std::memory_order_acq_rel);
             }
             tableFull_.store(false, std::memory_order_relaxed);
@@ -275,7 +368,7 @@ void RingOutDSP::syncTableFromShared() noexcept
         resetRequested_.store(false, std::memory_order_relaxed);
         if (shared_.count != 0)
         {
-            shared_.clear();
+            clearLocked();
             tableVersion_.fetch_add(1, std::memory_order_acq_rel);
         }
         tableFull_.store(false, std::memory_order_relaxed);
@@ -283,62 +376,54 @@ void RingOutDSP::syncTableFromShared() noexcept
     adoptLiveTable();
 }
 
-// Caller holds tableLock_ (or is the only thread, in tests).
+// Caller holds tableLock_.
 void RingOutDSP::adoptLiveTable() noexcept
 {
     live_ = shared_;
+    std::memcpy(liveIds_, sharedIds_, sizeof(liveIds_));
     liveVersion_ = tableVersion_.load(std::memory_order_relaxed);
     assignSlots();
 }
 
-int RingOutDSP::slotForEntry(int entry) const noexcept
+int RingOutDSP::slotForRow(int row) const noexcept
 {
     for (int s = 0; s < kNumSlots; ++s)
-        if (slots_[s].engaged && slots_[s].entry == entry)
+        if (slots_[s].engaged && slots_[s].entry == row)
             return s;
     return -1;
 }
 
-// Match table rows to the slots already serving them by frequency identity,
-// give new rows free slots, and let slots whose filter is gone fade out.
+// Slots follow row ids: a slot keeps the filter it serves wherever the row
+// moved, a new id takes a free slot and ramps in, a slot whose id left the
+// table fades out.
 void RingOutDSP::assignSlots() noexcept
 {
     for (SlotState& st : slots_)
         if (st.engaged) st.entry = -1;
 
-    bool rowAssigned[ringout::kMaxFilters] = {};
-
-    // Pass 1: rows that are the same filter as an engaged slot (possibly moved
-    // a little by a nudge or a +/- step), nearest first.
     for (int row = 0; row < live_.count; ++row)
     {
-        const float targetLogF = std::log(live_.f[row].freqHz);
-        int best = -1; float bestDist = kSameFilterLogTol;
-        for (int s = 0; s < kNumSlots; ++s)
+        const uint32_t id = liveIds_[row];
+        bool found = false;
+        for (int s = 0; s < kNumSlots && !found; ++s)
         {
-            const SlotState& st = slots_[s];
-            if (!st.engaged || st.entry >= 0) continue;
-            const float dist = std::fabs(st.logFreq.value() - targetLogF);
-            if (dist <= bestDist) { best = s; bestDist = dist; }
+            SlotState& st = slots_[s];
+            if (st.engaged && st.rowId == id)
+            {
+                st.entry = row;
+                found = true;
+            }
         }
-        if (best >= 0)
-        {
-            slots_[best].entry = row;
-            rowAssigned[row] = true;
-        }
-    }
+        if (found)
+            continue;
 
-    // Pass 2: new filters take a free slot and ramp in from flat. With every
-    // slot busy (twenty filters plus four still fading), the fade nearest to
-    // silence is cut short.
-    for (int row = 0; row < live_.count; ++row)
-    {
-        if (rowAssigned[row]) continue;
         int chosen = -1;
         for (int s = 0; s < kNumSlots && chosen < 0; ++s)
             if (!slots_[s].engaged) chosen = s;
         if (chosen < 0)
         {
+            // Every slot busy: twenty filters plus twenty still fading. Cut the
+            // fade nearest to silence short.
             float quietest = 1.0e9f;
             for (int s = 0; s < kNumSlots; ++s)
             {
@@ -352,6 +437,7 @@ void RingOutDSP::assignSlots() noexcept
             break;   // cannot happen: kNumSlots > kMaxFilters
         SlotState& st = slots_[chosen];
         st.engaged = true;
+        st.rowId = id;
         st.entry = row;
         st.logFreq.snap(std::log(live_.f[row].freqHz));
         st.q.snap(effectiveQ(live_.f[row].q, globalQ_.load(std::memory_order_relaxed)));
@@ -374,13 +460,15 @@ void RingOutDSP::processBlock(const float* const* inputs, float* const* outputs,
 
     syncTableFromShared();
 
-    // SETUP and ADD timers.
+    // SETUP and ADD timers. An expired SETUP disarms the request too, so the
+    // next 1 the host writes is a rising edge again.
     if (setupActive_.load(std::memory_order_acquire))
     {
         const int left = setupSamplesLeft_.fetch_sub(numSamples, std::memory_order_relaxed) - numSamples;
         if (left <= 0)
         {
             setupActive_.store(false, std::memory_order_release);
+            setupRequested_.store(false, std::memory_order_release);
             setupExpired_.store(true, std::memory_order_relaxed);
             clearTracks();
         }
@@ -407,8 +495,6 @@ void RingOutDSP::processBlock(const float* const* inputs, float* const* outputs,
     if (numChannels == 1)
         inPeakDb_[1].store(inPeakDb_[0].load(std::memory_order_relaxed), std::memory_order_relaxed);
 
-    const bool bypass = bypass_.load(std::memory_order_relaxed);
-
     int offset = 0;
     while (offset < numSamples)
     {
@@ -423,38 +509,61 @@ void RingOutDSP::processBlock(const float* const* inputs, float* const* outputs,
             updateSmoothersAndCoefficients();
             gain_.setTarget(std::pow(10.0f, gainOutDb_.load(std::memory_order_relaxed) * 0.05f));
             gainNow_ = gain_.next();
+            bypassMix_.setTarget(bypass_.load(std::memory_order_relaxed) ? 0.0f : 1.0f);
+            mixNow_ = bypassMix_.next();
+            if (mixNow_ < 1.0e-4f) mixNow_ = 0.0f;
+            if (mixNow_ > 1.0f - 1.0e-4f) mixNow_ = 1.0f;
         }
 
         // The analyser sees the input whatever the bypass state, so the display
         // keeps working while the processing is out of circuit.
         pushAnalysis(inputs, numChannels, offset, chunk);
 
+        // The wet path is always computed, bypassed or not, so the filter
+        // states stay warm and un-bypass has no stale tail to replay. It runs in
+        // a scratch buffer because `inputs` may alias `outputs`.
         for (int ch = 0; ch < numChannels; ++ch)
-            if (outputs[ch] != inputs[ch])
-                std::memcpy(outputs[ch] + offset, inputs[ch] + offset, (size_t)chunk * sizeof(float));
-
-        if (!bypass)
+            std::memcpy(wet_[ch], inputs[ch] + offset, (size_t)chunk * sizeof(float));
+        for (SlotState& st : slots_)
         {
-            for (SlotState& st : slots_)
+            if (!st.active)
+                continue;
+            for (int ch = 0; ch < numChannels; ++ch)
             {
-                if (!st.active)
-                    continue;
-                for (int ch = 0; ch < numChannels; ++ch)
+                float* y = wet_[ch];
+                Biquad& b = st.bq[ch];
+                for (int i = 0; i < chunk; ++i)
+                    y[i] = b.process(y[i]);
+            }
+        }
+        if (std::fabs(gainNow_ - 1.0f) > 1.0e-6f)
+            for (int ch = 0; ch < numChannels; ++ch)
+                for (int i = 0; i < chunk; ++i)
+                    wet_[ch][i] *= gainNow_;
+
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            const float* x = inputs[ch] + offset;
+            float* y = outputs[ch] + offset;
+            const float* w = wet_[ch];
+            if (mixNow_ >= 1.0f)
+            {
+                std::memcpy(y, w, (size_t)chunk * sizeof(float));
+            }
+            else if (mixNow_ <= 0.0f)
+            {
+                // Bit-exact passthrough while bypassed.
+                if (y != x)
+                    std::memcpy(y, x, (size_t)chunk * sizeof(float));
+            }
+            else
+            {
+                for (int i = 0; i < chunk; ++i)
                 {
-                    float* y = outputs[ch] + offset;
-                    Biquad& b = st.bq[ch];
-                    for (int i = 0; i < chunk; ++i)
-                        y[i] = b.process(y[i]);
+                    const float d = x[i];        // read before the aliased write
+                    y[i] = d + mixNow_ * (w[i] - d);
                 }
             }
-
-            if (std::fabs(gainNow_ - 1.0f) > 1.0e-6f)
-                for (int ch = 0; ch < numChannels; ++ch)
-                {
-                    float* y = outputs[ch] + offset;
-                    for (int i = 0; i < chunk; ++i)
-                        y[i] *= gainNow_;
-                }
         }
 
         offset += chunk;
@@ -517,6 +626,7 @@ void RingOutDSP::updateSmoothersAndCoefficients() noexcept
         {
             st.engaged = false;
             st.active = false;
+            st.rowId = 0;
             st.entry = -1;
             for (Biquad& b : st.bq) { b.reset(); b.setCoeffs(BiquadCoeffs()); }
             continue;
@@ -631,9 +741,8 @@ void RingOutDSP::detect(const float* db, const Thresholds& t) noexcept
     for (int i = 0; i < numTracks_; ++i) tracks_[i].seen = false;
 
     const int half = fftSize_ / 2;
-    // The local-maximum test looks two bins each side, so the scan runs from
-    // bin 2; everything else guards its own reach. 24 Hz is bin 2 at 48 kHz.
-    const int lo = std::max(rangeLo_, 2);
+    // The local-maximum test looks two bins each side; rangeLo_ is at least 2.
+    const int lo = rangeLo_;
     const int hi = std::min(rangeHi_, half - 2);
     for (int k = lo; k <= hi; ++k)
     {
@@ -669,27 +778,31 @@ void RingOutDSP::detect(const float* db, const Thresholds& t) noexcept
         }
         if (peakDb - neighbour < t.pnpr) continue;
 
-        // PHPR: no second or third harmonic. A harmonic bin past the range
+        // Level near a frequency (the bin and its two neighbours), ignoring
+        // bins inside the candidate's own Hann main lobe: at the bottom of the
+        // band a 30 Hz tone's 2f lands two bins away, where the window is still
+        // showing the fundamental's leakage, not a harmonic. Past the band
         // counts as absent.
+        const float centreBin = (float)k + delta;
+        const auto levelNear = [&](float hz) -> float
+        {
+            const int kb = (int)std::lround(hz / binHz_);
+            if (kb - 1 < rangeLo_ || kb + 1 > rangeHi_) return -200.0f;
+            float m = -200.0f;
+            for (int d = -1; d <= 1; ++d)
+                if (std::fabs((float)(kb + d) - centreBin) > 2.5f)
+                    m = std::max(m, db[kb + d]);
+            return m;
+        };
+
+        // PHPR: no second or third harmonic.
         bool harmonicRich = false;
         for (int h = 2; h <= 3 && !harmonicRich; ++h)
-        {
-            const int kh = (int)std::lround(((float)k + delta) * (float)h);
-            if (kh + 1 > rangeHi_) break;
-            float hm = -200.0f;
-            for (int d = -1; d <= 1; ++d) hm = std::max(hm, db[kh + d]);
-            if (peakDb - hm < t.phpr) harmonicRich = true;
-        }
+            if (peakDb - levelNear(freq * (float)h) < t.phpr) harmonicRich = true;
         if (harmonicRich) continue;
 
         // Not itself the harmonic of something louder below it.
-        const int ks = (int)std::lround(0.5f * ((float)k + delta));
-        if (ks - 1 >= rangeLo_)
-        {
-            float sub = -200.0f;
-            for (int d = -1; d <= 1; ++d) sub = std::max(sub, db[ks + d]);
-            if (peakDb - sub < t.sub) continue;
-        }
+        if (peakDb - levelNear(0.5f * freq) < t.sub) continue;
 
         // Not a partial of a harmonic series. A note's high partials can sit
         // where their own 2f and 3f fall above the band, so the two checks
@@ -697,12 +810,7 @@ void RingOutDSP::detect(const float* db, const Thresholds& t) noexcept
         // and so are its neighbours in the series. Look for a fundamental f/k
         // that is present together with one other member of the same series,
         // all within 15 dB of the candidate.
-        const auto binMax = [&](float hz) -> float
-        {
-            const int kb = (int)std::lround(hz / binHz_);
-            if (kb - 1 < rangeLo_ || kb + 1 > rangeHi_) return -200.0f;
-            return std::max(db[kb - 1], std::max(db[kb], db[kb + 1]));
-        };
+        const auto binMax = levelNear;
         bool partialOfSeries = false;
         for (int kk = 2; kk <= 100 && !partialOfSeries; ++kk)
         {
@@ -824,18 +932,24 @@ bool RingOutDSP::engage(const Track& track) noexcept
     }
 
     int row = -1;
+    bool changed = false;
     if (covering >= 0)
     {
-        const int slot = slotForEntry(covering);
+        const int slot = slotForRow(covering);
         if (slot >= 0 && slots_[slot].cooldownFrames > 0)
             return true;                   // its last change has not had time to act
         ringout::Filter& x = table.f[covering];
+        const ringout::Filter before = x;
         if (!x.on)
             x.on = true;                   // it was switched off: bring it back first
         else
             deepen(x);
-        // Pull the centre a little toward where the tone actually is.
-        x.freqHz = ringout::snapFreq(x.freqHz * std::pow(f / x.freqHz, 0.3f));
+        // Pull the centre a little toward where the tone actually is, once the
+        // tone sits a quarter of a bin or more off it; closer than that the
+        // estimate's own jitter would just churn the table.
+        if (std::fabs(f - x.freqHz) > 0.25f * binHz_)
+            x.freqHz = ringout::snapFreq(x.freqHz * std::pow(f / x.freqHz, 0.3f));
+        changed = !ringout::filtersEqual(before, x);
         row = covering;
     }
     else if (table.count < ringout::kMaxFilters)
@@ -850,18 +964,21 @@ bool RingOutDSP::engage(const Track& track) noexcept
         // and let persistence deepen it from there.
         const float growth = ringout::clampf(0.5f * (track.lastDb - track.firstDb), 0.0f, 6.0f);
         x.cutDb = ringout::snapCut(-(6.0f + growth));
-        row = table.add(x);
+        row = addLocked(x);
+        changed = row >= 0;
     }
     else if (nearest >= 0 && nearestDist <= 2.0f * nearestHalfBw)
     {
         // Full table, tone just outside the nearest notch: widening that one is
         // the only move left.
-        const int slot = slotForEntry(nearest);
+        const int slot = slotForRow(nearest);
         if (slot >= 0 && slots_[slot].cooldownFrames > 0)
             return true;
         ringout::Filter& x = table.f[nearest];
+        const ringout::Filter before = x;
         x.on = true;
         deepen(x);
+        changed = !ringout::filtersEqual(before, x);
         row = nearest;
     }
     else
@@ -872,16 +989,20 @@ bool RingOutDSP::engage(const Track& track) noexcept
         addHoldoff(f);
         return true;
     }
-    if (row < 0)
+
+    // A filter already at the floor, both in depth and width, has nothing left
+    // to give: no version bump for an unchanged table, just a pause before the
+    // tone is judged again.
+    addHoldoff(f);
+    if (row < 0 || !changed)
         return true;
 
     tableVersion_.fetch_add(1, std::memory_order_acq_rel);
     adoptLiveTable();
 
-    const int slot = slotForEntry(row);
+    const int slot = slotForRow(row);
     if (slot >= 0)
         slots_[slot].cooldownFrames = 8;
-    addHoldoff(f);
     lastEngagedSlot_.store(row, std::memory_order_relaxed);
     engagementCount_.fetch_add(1, std::memory_order_relaxed);
 

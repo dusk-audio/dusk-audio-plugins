@@ -54,6 +54,9 @@ public:
     // keeps the sequence odd. On false the caller keeps its previous frame.
     bool load(T& out, int maxAttempts = 64) const noexcept
     {
+        // Read into a local first: `out` is only touched by a read that
+        // validated, so a torn attempt can never leave half a frame behind.
+        T local;
         for (int attempt = 0; attempt < maxAttempts; ++attempt)
         {
             const unsigned s0 = seq_.load(std::memory_order_acquire);
@@ -61,11 +64,14 @@ public:
                 return false;
             if (s0 & 1u)
                 continue;                         // writer mid-store
-            std::memcpy(static_cast<void*>(&out), &value_, sizeof(T));
+            std::memcpy(static_cast<void*>(&local), &value_, sizeof(T));
             std::atomic_thread_fence(std::memory_order_acquire);
             const unsigned s1 = seq_.load(std::memory_order_relaxed);
             if (s0 == s1)
+            {
+                std::memcpy(static_cast<void*>(&out), &local, sizeof(T));
                 return true;
+            }
         }
         return false;
     }
