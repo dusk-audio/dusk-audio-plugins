@@ -127,7 +127,7 @@ Raise the gain slowly while SETUP listens. Two frequencies ringing at once still
 
 A tone that keeps ringing after a filter has been placed is not ignored: the detector deepens that filter in 3 dB steps to -20 dB and then widens it toward Q 0.7. If you find a filter at -20 dB and a low Q after a session, the system was a long way over the edge at that frequency; look at the gain structure or the microphone placement rather than asking the plugin for more.
 
-More than about twelve filters, or filters at -16 dB and beyond, mean the same thing. With all twenty filters in use the detector will still deepen a filter whose band a new ring falls into, but it will not touch an unrelated one; the status line reads 20 FILTERS and NEW is greyed out.
+More than about twelve filters, or filters at -16 dB and beyond, mean the same thing. With all twenty filters in use the detector will still deepen a filter whose band a new ring falls into, or widen the nearest one toward a ring just outside it, but it will not touch an unrelated one; NEW is greyed out. When a ring keeps going and the detector has nothing left to do about it, the status line reads RING NOT COVERED while it is listening: the filters it could use are at their limits, and the fix is in the gain structure.
 
 The detector ignores tones with harmonics, tones that decay, and tones that are themselves a harmonic of something louder. A pure test oscillator held steady will be treated as feedback; so will a flute note held long enough. Stop SETUP before a soundcheck starts in earnest.
 

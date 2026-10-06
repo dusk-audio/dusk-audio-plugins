@@ -25,10 +25,17 @@
 #include <atomic>
 #include <thread>
 
-#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+#if defined(_MSC_VER)
+  #include <intrin.h>
+  #if defined(_M_ARM64) || defined(_M_ARM)
+    #define DUSK_SPIN_PAUSE() __yield()
+  #else
+    #define DUSK_SPIN_PAUSE() _mm_pause()
+  #endif
+#elif defined(__SSE2__) || defined(__x86_64__)
   #include <emmintrin.h>
   #define DUSK_SPIN_PAUSE() _mm_pause()
-#elif defined(__aarch64__) || defined(_M_ARM64)
+#elif defined(__aarch64__)
   #define DUSK_SPIN_PAUSE() __asm__ __volatile__("yield" ::: "memory")
 #else
   #define DUSK_SPIN_PAUSE() ((void)0)

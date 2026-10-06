@@ -18,7 +18,8 @@ namespace duskaudio
 namespace
 {
     constexpr float kLn2 = 0.69314718056f;
-    constexpr float kDbFloorLin = 1.0e-6f;   // = RingOutDSP::kDbFloor (-120 dB)
+    // The one floor, RingOutDSP::kDbFloor, as a linear magnitude.
+    const float kDbFloorLin = decibelsToGain(RingOutDSP::kDbFloor);
 
     // The fleet's gainToDecibels with this plugin's floor.
     inline float linToDb(float lin) noexcept
@@ -41,27 +42,29 @@ namespace
         return blockPeak > faded ? blockPeak : faded;
     }
 
-    // Deepen a filter that a tone still rings through: 3 dB at a time to the
-    // floor, then wider, a fifth at a time, to the widest the engine will go.
-    // A filter the user already set wider than that floor is left as wide as
-    // it is, never narrowed back to it.
-    inline void deepen(ringout::Filter& x) noexcept
+    // The two moves the engine has on an existing filter, each a no-op (false)
+    // at its floor. A filter the user already set wider or deeper than the
+    // engine's floor is left there, never pulled back to it.
+    constexpr float kFloorTol = 0.05f;
+
+    inline bool tryDeepenCut(ringout::Filter& x) noexcept
     {
-        if (x.cutDb > ringout::kAutoCutFloor + 0.05f)
-            x.cutDb = ringout::snapCut(std::max(ringout::kAutoCutFloor, x.cutDb - 3.0f));
-        else if (x.q > ringout::kAutoQFloor + 0.05f)
-            x.q = ringout::snapQ(std::max(ringout::kAutoQFloor, x.q * 0.8f));
+        if (x.cutDb <= ringout::kAutoCutFloor + kFloorTol) return false;
+        x.cutDb = ringout::snapCut(std::max(ringout::kAutoCutFloor, x.cutDb - 3.0f));
+        return true;
     }
 
-    // Reach a tone that sits just outside the notch: widen first, and only once
-    // the notch is as wide as the engine goes, deepen.
-    inline void widen(ringout::Filter& x) noexcept
+    inline bool tryWidenQ(ringout::Filter& x) noexcept
     {
-        if (x.q > ringout::kAutoQFloor + 0.05f)
-            x.q = ringout::snapQ(std::max(ringout::kAutoQFloor, x.q * 0.8f));
-        else if (x.cutDb > ringout::kAutoCutFloor + 0.05f)
-            x.cutDb = ringout::snapCut(std::max(ringout::kAutoCutFloor, x.cutDb - 3.0f));
+        if (x.q <= ringout::kAutoQFloor + kFloorTol) return false;
+        x.q = ringout::snapQ(std::max(ringout::kAutoQFloor, x.q * 0.8f));
+        return true;
     }
+
+    // A tone ringing THROUGH a notch: deeper first, wider once at the floor.
+    inline bool deepen(ringout::Filter& x) noexcept { return tryDeepenCut(x) || tryWidenQ(x); }
+    // A tone just OUTSIDE a notch: wider first, deeper once as wide as it goes.
+    inline bool widen(ringout::Filter& x) noexcept  { return tryWidenQ(x) || tryDeepenCut(x); }
 
     inline int rescaleSamples(int samples, double oldRate, double newRate) noexcept
     {
@@ -243,12 +246,14 @@ RingOutDSP::Status RingOutDSP::status() const noexcept
 {
     Status s;
     s.setupActive = setupActive_.load(std::memory_order_acquire);
+    // The block that expires the timer decrements it below zero a moment
+    // before it clears setupActive_; never show that as a negative count.
     s.setupRemainingSeconds = s.setupActive
-        ? (float)setupSamplesLeft_.load(std::memory_order_relaxed) / (float)sampleRate_ : 0.0f;
+        ? std::max(0.0f, (float)setupSamplesLeft_.load(std::memory_order_relaxed) / (float)sampleRate_) : 0.0f;
     s.setupExpired = setupExpired_.load(std::memory_order_acquire);
     s.addSearching = addSearching_.load(std::memory_order_acquire);
     s.addSatisfied = addSatisfied_.load(std::memory_order_acquire);
-    s.tableFull = tableFull_.load(std::memory_order_acquire);
+    s.ringUncovered = ringUncovered_.load(std::memory_order_acquire);
     s.engagementCount = engagementCount_.load(std::memory_order_acquire);   // before the row it pairs with
     s.lastEngagedRow = lastEngagedRow_.load(std::memory_order_relaxed);
     s.tableVersion = tableVersion();
@@ -285,7 +290,7 @@ int RingOutDSP::applyEditLocked(const ringout::EditCommand& c) noexcept
     {
     case EditCommand::kClear:
         for (uint32_t& id : sharedIds_) id = 0;
-        tableFull_.store(false, std::memory_order_release);
+        ringUncovered_.store(false, std::memory_order_release);
         break;
     case EditCommand::kAdd:
         sharedIds_[row] = nextRowId_++;
@@ -294,7 +299,7 @@ int RingOutDSP::applyEditLocked(const ringout::EditCommand& c) noexcept
         for (int k = row; k + 1 < countBefore; ++k)
             sharedIds_[k] = sharedIds_[k + 1];
         sharedIds_[countBefore - 1] = 0;
-        tableFull_.store(false, std::memory_order_release);   // room again
+        ringUncovered_.store(false, std::memory_order_release);   // room again
         break;
     default:
         break;                                 // kSet: same filter, edited, keeps its id
@@ -325,7 +330,7 @@ void RingOutDSP::replaceLocked(const ringout::FilterTable& table) noexcept
     for (int row = 0; row < ringout::kMaxFilters; ++row)
         sharedIds_[row] = row < table.count ? newIds[row] : 0;
     if (table.count < ringout::kMaxFilters)
-        tableFull_.store(false, std::memory_order_release);
+        ringUncovered_.store(false, std::memory_order_release);
 }
 
 //==============================================================================
@@ -371,7 +376,7 @@ void RingOutDSP::resetFilters() noexcept
                 clearLocked();
                 tableVersion_.fetch_add(1, std::memory_order_acq_rel);
             }
-            tableFull_.store(false, std::memory_order_release);
+            ringUncovered_.store(false, std::memory_order_release);
             return;
         }
     }
@@ -396,7 +401,7 @@ void RingOutDSP::syncTableFromShared() noexcept
             clearLocked();
             tableVersion_.fetch_add(1, std::memory_order_acq_rel);
         }
-        tableFull_.store(false, std::memory_order_release);
+        ringUncovered_.store(false, std::memory_order_release);
     }
     adoptLiveTable();
 }
@@ -426,21 +431,31 @@ void RingOutDSP::assignSlots() noexcept
     for (SlotState& st : slots_)
         if (st.engaged) st.entry = -1;
 
+    // Pass 1: every row that already has a slot keeps it. Done for all rows
+    // before any slot is allocated, so a steal below can never take a slot a
+    // later row still owns.
+    bool matched[ringout::kMaxFilters] = {};
     for (int row = 0; row < live_.count; ++row)
     {
         const uint32_t id = liveIds_[row];
-        bool found = false;
-        for (int s = 0; s < kNumSlots && !found; ++s)
+        for (int s = 0; s < kNumSlots; ++s)
         {
             SlotState& st = slots_[s];
             if (st.engaged && st.rowId == id)
             {
                 st.entry = row;
-                found = true;
+                matched[row] = true;
+                break;
             }
         }
-        if (found)
+    }
+
+    // Pass 2: new rows take a free slot.
+    for (int row = 0; row < live_.count; ++row)
+    {
+        if (matched[row])
             continue;
+        const uint32_t id = liveIds_[row];
 
         int chosen = -1;
         for (int s = 0; s < kNumSlots && chosen < 0; ++s)
@@ -448,7 +463,8 @@ void RingOutDSP::assignSlots() noexcept
         if (chosen < 0)
         {
             // Every slot busy: twenty filters plus twenty still fading. Cut the
-            // fade nearest to silence short.
+            // fade nearest to silence short; only fading slots (entry < 0)
+            // qualify, since pass 1 has already claimed every live one.
             float quietest = 1.0e9f;
             for (int s = 0; s < kNumSlots; ++s)
             {
@@ -461,6 +477,9 @@ void RingOutDSP::assignSlots() noexcept
         if (chosen < 0)
             break;   // cannot happen: kNumSlots > kMaxFilters
         SlotState& st = slots_[chosen];
+        // A stolen slot stops processing at once: its old coefficients would
+        // otherwise run on freshly zeroed state until the next grid point.
+        st.active = false;
         st.engaged = true;
         st.rowId = id;
         st.entry = row;
@@ -475,7 +494,7 @@ void RingOutDSP::assignSlots() noexcept
                           ? effectiveCutDb(f.cutDb, globalAmp_.load(std::memory_order_relaxed)) : 0.0f);
         st.lastCut = 1.0e9f;   // force the first coefficient design
         st.cooldownFrames = 0;
-        for (Biquad& b : st.bq) b.reset();
+        for (Biquad& b : st.bq) { b.reset(); b.setCoeffs(BiquadCoeffs()); }
     }
     snapOnAdopt_ = false;
 }
@@ -519,7 +538,7 @@ void RingOutDSP::processBlock(const float* const* inputs, float* const* outputs,
     // "Table full, ring not covered" describes a listening engine; once it is
     // idle the report has nothing to refer to.
     if (!engineActive())
-        tableFull_.store(false, std::memory_order_release);
+        ringUncovered_.store(false, std::memory_order_release);
 
     // Input meter, on the raw input.
     for (int ch = 0; ch < numChannels; ++ch)
@@ -988,8 +1007,8 @@ bool RingOutDSP::engage(const Track& track) noexcept
         const ringout::Filter before = x;
         if (!x.on)
             x.on = true;                   // it was switched off: bring it back first
-        else
-            deepen(x);
+        else if (!deepen(x))
+            ringUncovered_.store(true, std::memory_order_release);   // at the floor, still ringing
         // Pull the centre a little toward where the tone actually is, once the
         // tone sits a quarter of a bin or more off it; closer than that the
         // estimate's own jitter would just churn the table.
@@ -1023,7 +1042,8 @@ bool RingOutDSP::engage(const Track& track) noexcept
         ringout::Filter& x = table.f[nearest];
         const ringout::Filter before = x;
         x.on = true;
-        widen(x);
+        if (!widen(x) && before.on)
+            ringUncovered_.store(true, std::memory_order_release);   // as wide and deep as it goes
         changed = !ringout::filtersEqual(before, x);
         row = nearest;
     }
@@ -1031,7 +1051,7 @@ bool RingOutDSP::engage(const Track& track) noexcept
     {
         // Full table and nothing near: carving an unrelated notch deeper would
         // not stop this tone. Report it and leave the tone alone for a while.
-        tableFull_.store(true, std::memory_order_release);
+        ringUncovered_.store(true, std::memory_order_release);
         addHoldoff(f);
         return true;
     }
@@ -1056,7 +1076,11 @@ bool RingOutDSP::engage(const Track& track) noexcept
 
     if (addSearching_.load(std::memory_order_acquire))
     {
+        // The search is over. Dropping the held flag as well means a controller
+        // that never sends a release can start the next search; the editor's
+        // release still clears the satisfied state it shows meanwhile.
         addSearching_.store(false, std::memory_order_release);
+        addHeld_.store(false, std::memory_order_release);
         addSatisfied_.store(true, std::memory_order_release);
     }
     return true;

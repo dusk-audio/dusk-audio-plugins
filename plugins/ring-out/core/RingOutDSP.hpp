@@ -81,7 +81,9 @@ public:
         bool     setupExpired = false;    // the minute ran out since SETUP was last raised
         bool     addSearching = false;
         bool     addSatisfied = false;    // ADD found its filter; release and press again
-        bool     tableFull = false;       // the engine wanted a filter and had no row for it
+        // A persistent ring the engine could do nothing more about: no row left
+        // for it, or the filter it falls in already at the engine's floor.
+        bool     ringUncovered = false;
         int      lastEngagedRow = -1;     // table row the engine last placed or deepened
         unsigned engagementCount = 0;
         unsigned tableVersion = 0;
@@ -123,6 +125,8 @@ public:
     // it. When the minute runs out the engine disarms itself, and the next true
     // is a fresh edge again.
     void setSetup(bool on) noexcept;
+    // The SETUP button: arm, or disarm while listening.
+    void toggleSetup() noexcept { setSetup(!setupActive()); }
 
     // true starts a search that ends with the first filter engaged, with false
     // (the editor releasing ADD), or after kAddSeconds for a search nobody
@@ -272,7 +276,7 @@ private:
     std::atomic<bool>  addSearching_ { false };
     std::atomic<bool>  addSatisfied_ { false };
     std::atomic<int>   addSamplesLeft_ { 0 };
-    std::atomic<bool>  tableFull_ { false };
+    std::atomic<bool>  ringUncovered_ { false };
     std::atomic<int>   lastEngagedRow_ { -1 };
     std::atomic<unsigned> engagementCount_ { 0 };
 

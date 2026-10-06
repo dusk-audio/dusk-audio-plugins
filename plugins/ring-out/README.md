@@ -84,10 +84,14 @@ Engaging: if an existing filter's bandwidth covers the tone it is deepened by
 toward the tone; otherwise a new filter is placed at the tone with a cut of 6 dB
 plus half the growth observed (up to 12 dB) and a Q between 3 and 8 chosen so
 the notch spans at least three bins. With all twenty slots taken, a tone just
-outside the nearest notch widens that one; a tone far from every filter is
-left alone and reported (`Status::tableFull`), because carving an unrelated
-notch deeper would not stop it. Each engaged filter and frequency then gets a
-short hold-off so the notch can act before it is judged again.
+outside the nearest notch widens that one (wider first, deeper once as wide
+as the engine goes); a tone far from every filter is left alone, because
+carving an unrelated notch deeper would not stop it. Whenever a persistent
+ring leaves the engine nothing to do (no row for it, or the filter it falls
+in already at the floor) `Status::ringUncovered` is raised while the engine
+listens and the editor's status line says so. Each engaged filter and
+frequency then gets a short hold-off so the notch can act before it is judged
+again.
 
 `core/tests/RingOutDSPTest.cpp` covers the step rules, the text forms, notch
 accuracy, globals, block-size invariance, detection of a growing tone and its

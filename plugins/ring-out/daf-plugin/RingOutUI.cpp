@@ -82,7 +82,7 @@ namespace
     // Graph rectangle and axes.
     constexpr float GX0 = 58.0f, GX1 = 902.0f, GY0 = 62.0f, GY1 = 334.0f;
     constexpr float kRtaMinDb = -80.0f;        // analyser axis, 0 at the top
-    constexpr float kCurveMinDb = -24.0f;      // filter axis, 0 at the top
+    constexpr float kCurveMinDb = -24.0f;      // filter axis at rest, 0 at the top (extends for deep notches)
 }
 
 class RingOutUI : public UI, public duskdaf::ParamHost
@@ -381,6 +381,9 @@ private:
             setState("edit", buf);
     }
 
+    // Sends the row as edited AND as the mirror last saw it, so the plugin
+    // writes only the field that changed: an engine deepen that landed since
+    // the last pull survives a FREQ nudge.
     void setSelectedFilter(const ro::Filter& f)
     {
         if (selected < 0 || selected >= table.count) return;
@@ -388,6 +391,8 @@ private:
         c.kind = ro::EditCommand::kSet;
         c.slot = selected;
         c.filter = f;
+        c.previous = table.f[selected];
+        c.hasPrevious = true;
         sendEdit(c);
     }
 
@@ -659,9 +664,13 @@ private:
         const float ny = std::clamp(-db / -kRtaMinDb, 0.0f, 1.0f);   // 0 dB top .. -80 bottom
         return GY0 + ny * (GY1 - GY0);
     }
+    // The filter axis runs 0 .. curveMinDb, where curveMinDb is -24 dB unless a
+    // notch (cut plus GLOBAL AMP, or several notches stacked) goes deeper, in
+    // which case the axis extends in 12 dB steps so the display can still show
+    // what the engine is doing.
     float curveY(float db) const
     {
-        const float ny = std::clamp(-db / -kCurveMinDb, 0.0f, 1.0f);
+        const float ny = std::clamp(db / curveMinDb, 0.0f, 1.0f);
         return GY0 + ny * (GY1 - GY0);
     }
     float freqX(float f) const { return GX0 + axis.toNorm(f) * (GX1 - GX0); }
@@ -708,11 +717,14 @@ private:
             regularText(dl, GX0 + 4.0f, std::clamp(rtaY((float)db) - 5.0f, GY0 + 1.0f, GY1 - 12.0f),
                         9.0f, kColCyanDim, b, -1);
         }
-        for (int db = -4; db >= (int)kCurveMinDb; db -= 4)
         {
-            char b[8]; std::snprintf(b, sizeof(b), "%d", db);
-            regularText(dl, GX1 - 4.0f, std::clamp(curveY((float)db) - 5.0f, GY0 + 1.0f, GY1 - 12.0f),
-                        9.0f, fade(kColRed, 0.55f), b, 1);
+            const int step = (int)(-curveMinDb) / 6;
+            for (int db = -step; db >= (int)curveMinDb; db -= step)
+            {
+                char b[8]; std::snprintf(b, sizeof(b), "%d", db);
+                regularText(dl, GX1 - 4.0f, std::clamp(curveY((float)db) - 5.0f, GY0 + 1.0f, GY1 - 12.0f),
+                            9.0f, fade(kColRed, 0.55f), b, 1);
+            }
         }
 
         drawRta(dl);
@@ -788,12 +800,18 @@ private:
         {
             curveStamp = tableStamp; curveGq = gq; curveAmp = amp; curveSr = sr;
             curveDb.resize((size_t)N);
+            float deepest = 0.0f;
             for (int i = 0; i < N; ++i)
             {
                 const float f = axis.fromNorm((float)i / (float)(N - 1));
                 curveDb[(size_t)i] = anyOn
                     ? (float)RingOutDSP::responseDb(table, gq, amp, sr, (double)f) : 0.0f;
+                deepest = std::min(deepest, curveDb[(size_t)i]);
             }
+            for (int i = 0; i < table.count; ++i)
+                if (table.f[i].on)
+                    deepest = std::min(deepest, RingOutDSP::effectiveCutDb(table.f[i].cutDb, amp));
+            curveMinDb = -std::max(24.0f, 12.0f * std::ceil(-deepest / 12.0f));
         }
 
         if (anyOn)
@@ -905,8 +923,8 @@ private:
             std::snprintf(st, sizeof(st), "ADD: LISTENING");
         else if (live && status.addSatisfied)
             std::snprintf(st, sizeof(st), "ADD: FILTER PLACED");
-        else if (live && status.tableFull)
-            std::snprintf(st, sizeof(st), "20 FILTERS: TABLE FULL, RING NOT COVERED");
+        else if (live && status.ringUncovered)
+            std::snprintf(st, sizeof(st), "RING NOT COVERED: FILTERS AT THEIR LIMIT");
         else if (table.count > 0)
             std::snprintf(st, sizeof(st), "%d FILTER%s", table.count, table.count == 1 ? "" : "S");
         else
@@ -1096,18 +1114,10 @@ private:
     // bracketed edit when no drag is in progress, e.g. a wheel step).
     void setFollower(uint32_t param, float value)
     {
-        if (linkFollowerOpen != (int)param)
-        {
+        if (linkFollowerOpen == (int)param)
+            setParam(param, value);
+        else
             setP(param, value);
-            return;
-        }
-        if (param >= kParamCount || !std::isfinite(value))
-            return;
-        value = roNormalizeParamValue(param, value);
-        values[param] = value;
-        setParameterValue(param, value);
-        if (roIsPresetParam(param))
-            syncPresetSelection();
     }
 
     void drawCountdown(ImDrawList* dl)
@@ -1124,17 +1134,15 @@ private:
     }
 
     //--- parameter plumbing ---------------------------------------------------------
+    // One bracketed edit: setParam() (the ParamHost write the knobs use) inside
+    // its own begin/end gesture.
     void setP(uint32_t param, float value)
     {
         if (param >= kParamCount || !std::isfinite(value))
             return;
-        value = roNormalizeParamValue(param, value);
-        values[param] = value;
         editParameter(param, true);
-        setParameterValue(param, value);
+        setParam(param, value);
         editParameter(param, false);
-        if (roIsPresetParam(param))
-            syncPresetSelection();
     }
 
     //--- presets ---------------------------------------------------------------------
@@ -1359,6 +1367,7 @@ private:
     unsigned curveStamp = ~0u;
     float curveGq = 0.0f, curveAmp = 0.0f;
     double curveSr = 0.0;
+    float curveMinDb = kCurveMinDb;     // bottom of the filter axis, extended for deep notches
 
     duskdaf::LogFreqAxis axis { ro::kFreqMin, ro::kFreqMax };
     duskaudio::RingOutSpectrumFrame spectrum;

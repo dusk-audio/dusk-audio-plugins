@@ -147,6 +147,22 @@ static void testText()
     CHECK(ro::parseEditCommand("del,19", c) && c.kind == ro::EditCommand::kDelete && c.slot == 19, "parse del");
     CHECK(ro::parseEditCommand("clear", c) && c.kind == ro::EditCommand::kClear, "parse clear");
     CHECK(ro::parseEditCommand("addstop", c) && c.kind == ro::EditCommand::kAddStop, "parse addstop");
+    {
+        // set with the previous row: only the field that changed is written,
+        // so an engine deepen that landed meanwhile survives a FREQ nudge.
+        ro::EditCommand merge;
+        CHECK(ro::parseEditCommand("set,0,1,1001,-9,5,1,1000,-9,5", merge) && merge.hasPrevious
+              && near(merge.previous.freqHz, 1000.0f, 1e-3f), "parse set with previous row");
+        ro::FilterTable live;
+        live.add(ro::Filter{ true, 1000.0f, -12.0f, 5.0f });   // the engine deepened -9 -> -12
+        CHECK(ro::applyEditCommand(live, merge) == 0 && near(live.f[0].freqHz, 1001.0f, 1e-3f)
+              && near(live.f[0].cutDb, -12.0f, 1e-4f),
+              "merged set keeps the engine's cut (%.1f dB) and takes the nudged frequency (%.1f Hz)",
+              live.f[0].cutDb, live.f[0].freqHz);
+        char mb[128];
+        CHECK(ro::formatEditCommand(merge, mb, (int)sizeof(mb)) && std::strcmp(mb, "set,0,1,1001,-9,5,1,1000,-9,5") == 0,
+              "format set with previous: '%s'", mb);
+    }
     CHECK(ro::parseEditCommand("addstart", c) && c.kind == ro::EditCommand::kAddStart && !c.isTableEdit(), "parse addstart");
     CHECK(ro::parseEditCommand("setup", c) && c.kind == ro::EditCommand::kSetupToggle && !c.isTableEdit(), "parse setup");
     CHECK(!ro::parseEditCommand("setup,1", c), "setup takes no argument");
@@ -749,6 +765,7 @@ static void testTimersAndEdges()
         CHECK(dsp.tableVersion() == v && dsp.status().engagementCount == 0,
               "no version bump for an engage that changes nothing (version %u -> %u, engagements %u)",
               v, dsp.tableVersion(), dsp.status().engagementCount);
+        CHECK(dsp.status().ringUncovered, "a ring through a filter at its floor is reported as not covered");
     }
 }
 
@@ -816,7 +833,7 @@ static void testTableFull()
     ro::FilterTable after;
     dsp.getTable(after);
     CHECK(ro::tablesEqual(after, t), "a full table leaves unrelated filters alone");
-    CHECK(dsp.status().tableFull, "the status reports the full table");
+    CHECK(dsp.status().ringUncovered, "the status reports the ring as not covered");
     CHECK(dsp.status().engagementCount == 0, "no engagement was counted (%u)", dsp.status().engagementCount);
     {
         // The report describes a listening engine: it clears when SETUP stops.
@@ -824,7 +841,7 @@ static void testTableFull()
         std::vector<float> z(256, 0.0f), o(256), o2(256);
         const float* zi[2] = { z.data(), z.data() }; float* zo[2] = { o.data(), o2.data() };
         dsp.processBlock(zi, zo, 2, 256);
-        CHECK(!dsp.status().tableFull, "table-full report clears once the engine is idle");
+        CHECK(!dsp.status().ringUncovered, "table-full report clears once the engine is idle");
         dsp.setSetup(true);
     }
 
@@ -873,12 +890,12 @@ static void testTableFull()
     // Deleting a filter makes room again and says so.
     ro::EditCommand del; del.kind = ro::EditCommand::kDelete; del.slot = 0;
     CHECK(dsp.applyEdit(del) == 0, "delete one of twenty");
-    CHECK(!dsp.status().tableFull, "DEL clears the full-table flag");
+    CHECK(!dsp.status().ringUncovered, "DEL clears the full-table flag");
     dsp.resetFilters();
     std::vector<float> z(256, 0.0f), o(256), o2(256);
     const float* ins[2] = { z.data(), z.data() }; float* outs[2] = { o.data(), o2.data() };
     dsp.processBlock(ins, outs, 2, 256);
-    CHECK(!dsp.status().tableFull, "RESET clears the full-table flag");
+    CHECK(!dsp.status().ringUncovered, "RESET clears the full-table flag");
 }
 
 static void testHighSense()
@@ -986,6 +1003,15 @@ static void testAddAndTimer()
         dsp.getTable(t);
         CHECK(t.count == 1 && t.f[0].cutDb <= cut - 3.0f,
               "a second ADD on the same tone deepens rather than duplicating (%.1f -> %.1f)", cut, t.f[0].cutDb);
+        // A controller never sends a release: after a satisfied search the next
+        // start must still be a fresh one.
+        const float cut2 = t.f[0].cutDb;
+        dsp.setAdd(true);
+        CHECK(dsp.status().addSearching, "ADD restarts without a release once its filter was placed");
+        runTone(dsp, sr, 0.6f, -45.0f, ring);
+        dsp.getTable(t);
+        CHECK(t.count == 1 && t.f[0].cutDb <= cut2 - 3.0f,
+              "the controller-style re-press engaged again (%.1f -> %.1f)", cut2, t.f[0].cutDb);
     }
     {
         RingOutDSP dsp;

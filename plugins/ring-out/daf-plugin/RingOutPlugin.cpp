@@ -139,7 +139,7 @@ protected:
             // ("Parameter did not retain set value") and surprises every
             // host's automation.
             if (value >= 0.5f)
-                dsp.setSetup(!dsp.setupActive());
+                dsp.toggleSetup();
             break;
         case kParamAdd:
             // Trigger: starts a one-filter search. The editor ends it on
@@ -258,7 +258,7 @@ protected:
                 return;
             switch (command.kind)
             {
-            case EditCommand::kSetupToggle: dsp.setSetup(!dsp.setupActive()); break;
+            case EditCommand::kSetupToggle: dsp.toggleSetup(); break;
             case EditCommand::kAddStart:    dsp.setAdd(true);  break;
             case EditCommand::kAddStop:     dsp.setAdd(false); break;
             default:                        dsp.applyEdit(command); break;

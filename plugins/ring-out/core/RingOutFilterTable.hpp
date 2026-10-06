@@ -333,7 +333,13 @@ constexpr int kTableTextCapacity = 1024;
 //------------------------------------------------------------------------------
 // the edit command channel (UI -> plugin, see RingOutPlugin.cpp "edit" state)
 //
-//   "set,<slot>,<on>,<freq>,<cut>,<q>"   replace one existing slot
+//   "set,<slot>,<on>,<freq>,<cut>,<q>[,<on>,<freq>,<cut>,<q>]"
+//                                        edit one existing slot. With the second
+//                                        filter (the row as the editor last saw
+//                                        it) only the fields that differ between
+//                                        the two are written, so a nudge of one
+//                                        field cannot revert what the engine did
+//                                        to the others meanwhile
 //   "add,<on>,<freq>,<cut>,<q>"          append (ignored when full)
 //   "del,<slot>"                         remove and close the gap
 //   "clear"                              remove every filter
@@ -352,6 +358,8 @@ struct EditCommand
     Kind   kind = kNone;
     int    slot = -1;
     Filter filter;
+    Filter previous;              // kSet only: the row as the sender last saw it
+    bool   hasPrevious = false;
 };
 
 inline bool parseEditCommand(const char* text, EditCommand& out) noexcept
@@ -405,6 +413,12 @@ inline bool parseEditCommand(const char* text, EditCommand& out) noexcept
         if (!parseInt(c.slot) || c.slot >= kMaxFilters) return false;
         if (*p++ != ',') return false;
         if (!parseFilter(c.filter)) return false;
+        if (*p == ',')
+        {
+            ++p;
+            if (!parseFilter(c.previous)) return false;
+            c.hasPrevious = true;
+        }
     }
     else if (matchWord("add,"))
     {
@@ -453,7 +467,9 @@ inline bool formatEditCommand(const EditCommand& c, char* buf, int cap) noexcept
     case EditCommand::kSetupToggle: return put("setup");
     case EditCommand::kAddStart: return put("addstart");
     case EditCommand::kAddStop: return put("addstop");
-    case EditCommand::kSet:    return put("set,") && putNum((float)c.slot, 0) && put(",") && putFilter(c.filter);
+    case EditCommand::kSet:
+        if (!(put("set,") && putNum((float)c.slot, 0) && put(",") && putFilter(c.filter))) return false;
+        return !c.hasPrevious || (put(",") && putFilter(c.previous));
     case EditCommand::kAdd:    return put("add,") && putFilter(c.filter);
     case EditCommand::kDelete: return put("del,") && putNum((float)c.slot, 0);
     default: return false;
@@ -472,9 +488,21 @@ inline int applyEditCommand(FilterTable& t, const EditCommand& c) noexcept
         t.clear();
         return 0;
     case EditCommand::kSet:
+    {
         if (c.slot < 0 || c.slot >= t.count) return -1;
-        t.f[c.slot] = c.filter;
+        Filter& row = t.f[c.slot];
+        if (!c.hasPrevious)
+        {
+            row = c.filter;
+            return c.slot;
+        }
+        // Field-level merge: write only what the sender changed.
+        if (c.filter.on != c.previous.on)         row.on = c.filter.on;
+        if (c.filter.freqHz != c.previous.freqHz) row.freqHz = c.filter.freqHz;
+        if (c.filter.cutDb != c.previous.cutDb)   row.cutDb = c.filter.cutDb;
+        if (c.filter.q != c.previous.q)           row.q = c.filter.q;
         return c.slot;
+    }
     case EditCommand::kAdd:
         return t.add(c.filter);
     case EditCommand::kDelete:
