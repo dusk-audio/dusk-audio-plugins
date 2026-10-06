@@ -228,6 +228,7 @@ private:
     static const Thresholds& thresholdsFor(int sense) noexcept;
 
     // Table mutators; the caller holds tableLock_.
+    void honourPendingResetLocked() noexcept;
     void clearLocked() noexcept;
     int  addLocked(const ringout::Filter& x) noexcept;
     int  applyEditLocked(const ringout::EditCommand& command) noexcept;
@@ -276,6 +277,7 @@ private:
     std::atomic<bool>  addSearching_ { false };
     std::atomic<bool>  addSatisfied_ { false };
     std::atomic<int>   addSamplesLeft_ { 0 };
+    std::atomic<int>   addSatisfiedSamplesLeft_ { 0 };   // how long "filter placed" shows unreleased
     std::atomic<bool>  ringUncovered_ { false };
     std::atomic<int>   lastEngagedRow_ { -1 };
     std::atomic<unsigned> engagementCount_ { 0 };
@@ -290,7 +292,8 @@ private:
     ringout::FilterTable  live_;
     uint32_t              liveIds_[ringout::kMaxFilters] = {};
     unsigned              liveVersion_ = 0;
-    bool                  snapOnAdopt_ = true;   // first adoption after reset(): no ramp-in
+    bool                  snapOnAdopt_ = true;   // adoption right after reset(): no ramp-in
+    int                   samplesSinceReset_ = 0;
 
     //--- audio-thread filter state
     SlotState     slots_[kNumSlots];

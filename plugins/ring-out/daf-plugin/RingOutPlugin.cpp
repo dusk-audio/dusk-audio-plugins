@@ -258,9 +258,10 @@ protected:
                 return;
             switch (command.kind)
             {
-            case EditCommand::kSetupToggle: dsp.toggleSetup(); break;
-            case EditCommand::kAddStart:    dsp.setAdd(true);  break;
-            case EditCommand::kAddStop:     dsp.setAdd(false); break;
+            case EditCommand::kSetupOn:  dsp.setSetup(true);  break;
+            case EditCommand::kSetupOff: dsp.setSetup(false); break;
+            case EditCommand::kAddStart: dsp.setAdd(true);    break;
+            case EditCommand::kAddStop:  dsp.setAdd(false);   break;
             default:                        dsp.applyEdit(command); break;
             }
         }

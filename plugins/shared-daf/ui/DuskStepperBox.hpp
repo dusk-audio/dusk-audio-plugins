@@ -51,11 +51,16 @@ struct StepperBoxStyle
 
 struct StepperBoxRule
 {
+    // What typed entry accepts besides a bare number: the box's own unit, so
+    // a "2k" meant for FREQ cannot land in CUT as 2000 dB clamped to 0.
+    enum Unit { kPlain, kHertz, kDecibels };
+
     float (*step)(float value, int dir, void* ctx) = nullptr;
     float (*snap)(float value, void* ctx) = nullptr;
     void* ctx = nullptr;
     float minV = 0.0f;
     float maxV = 1.0f;
+    Unit  unit = kPlain;
 };
 
 // Returns true when `value` changed this frame. `enabled == false` draws the box
@@ -172,15 +177,15 @@ inline bool stepperBox(DuskPanel& panel, ImDrawList* dl, const char* id,
     if (editing)
     {
         float typed = 0.0f;
-        // Accepts a bare number, a trailing dB or Hz, and the console form the
-        // axis labels print: "2k", "1k2", "12k5" (digits after the k are
-        // tenths, hundredths ... of a thousand).
-        const auto parse = [](const char* text, uint32_t, void*, float& out) -> bool
+        // Accepts a bare number and, per the rule's unit, a trailing dB, or a
+        // trailing Hz and the console form the axis labels print: "2k", "1k2",
+        // "12k5" (digits after the k are tenths, hundredths ... of a thousand).
+        const auto parse = [](const char* text, uint32_t unit, void*, float& out) -> bool
         {
             const char* end = nullptr;
             float v = 0.0f;
             if (!value_text::parseDecimal(text, end, v)) return false;
-            if (*end == 'k' || *end == 'K')
+            if (unit == StepperBoxRule::kHertz && (*end == 'k' || *end == 'K'))
             {
                 ++end;
                 v *= 1000.0f;
@@ -194,12 +199,20 @@ inline bool stepperBox(DuskPanel& panel, ImDrawList* dl, const char* id,
                 if (!value_text::finish(end, "") && !value_text::suffix(end, "Hz", "hz"))
                     return false;
             }
-            else if (!value_text::finish(end, "") && !value_text::suffix(end, "dB", "Hz"))
+            else if (unit == StepperBoxRule::kHertz)
+            {
+                if (!value_text::finish(end, "") && !value_text::suffix(end, "Hz", "hz")) return false;
+            }
+            else if (unit == StepperBoxRule::kDecibels)
+            {
+                if (!value_text::finish(end, "") && !value_text::suffix(end, "dB", "db")) return false;
+            }
+            else if (!value_text::finish(end, ""))
                 return false;
             out = v;
             return true;
         };
-        if (panel.valueEdit(id, 0.5f * (wx0 + wx1), cy, 0.0f, typed, parse))
+        if (panel.valueEdit(id, 0.5f * (wx0 + wx1), cy, 0.0f, typed, parse, (uint32_t)rule.unit))
         {
             float v = clampV(typed);
             if (rule.snap != nullptr) v = clampV(rule.snap(v, rule.ctx));

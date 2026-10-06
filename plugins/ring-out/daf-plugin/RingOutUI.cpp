@@ -141,6 +141,17 @@ public:
         scanUserPresets();
     }
 
+    // The editor can close while ADD is held (host hides the window mid-press);
+    // the release would otherwise never be sent and the search would run on to
+    // its timeout. The DAF wrapper that owns this UI is still alive here.
+    ~RingOutUI() override
+    {
+        if (addHeldLocal)
+            sendEngineCommand(ro::EditCommand::kAddStop);
+        if (linkFollowerOpen >= 0)
+            editParameter((uint32_t)linkFollowerOpen, false);
+    }
+
 protected:
     //--- host -> UI --------------------------------------------------------------
     void parameterChanged(uint32_t index, float value) override
@@ -351,16 +362,22 @@ private:
         char buf[128];
         if (!ro::formatEditCommand(c, buf, (int)sizeof(buf)))
             return;
-        const int touched = ro::applyEditCommand(table, c);
+        // Apply to the mirror what the plugin will apply: the command as parsed
+        // back from its own text, so both sides snap identically and the
+        // added filter can be found again by value.
+        ro::EditCommand asSent;
+        if (!ro::parseEditCommand(buf, asSent))
+            return;
+        const int touched = ro::applyEditCommand(table, asSent);
         ++tableStamp;
         setState("edit", buf);
-        if (c.kind == ro::EditCommand::kAdd && touched >= 0)
+        if (asSent.kind == ro::EditCommand::kAdd && touched >= 0)
         {
             // The engine may have appended a filter of its own since the last
             // pull, so the row index is provisional: when the engine's table
             // arrives, the selection is re-resolved to the filter just added.
             selected = touched;
-            pendingSelect = c.filter;
+            pendingSelect = asSent.filter;
             pendingSelectValid = true;
         }
         else if (c.kind == ro::EditCommand::kDelete)
@@ -824,11 +841,13 @@ private:
                 const float lx = (float)i / (float)(N - 1);
                 pts.push_back(P(GX0 + lx * (GX1 - GX0), curveY(curveDb[(size_t)i])));
             }
+            // One concave polygon from the curve up to the 0 dB line, as the RTA
+            // fill does, instead of a quad per segment.
             const float topY = P(GX0, GY0).y;
-            for (size_t i = 0; i + 1 < pts.size(); ++i)
-                if (pts[i].y > topY + 0.5f || pts[i + 1].y > topY + 0.5f)
-                    dl->AddQuadFilled(ImVec2(pts[i].x, topY), ImVec2(pts[i + 1].x, topY), pts[i + 1], pts[i], kColRedFill);
-            dl->AddPolyline(pts.data(), (int)pts.size(), kColRed, 0, 1.6f * s);
+            pts.push_back(ImVec2(pts.back().x, topY));
+            pts.push_back(ImVec2(pts.front().x, topY));
+            dl->AddConcavePolyFilled(pts.data(), (int)pts.size(), kColRedFill);
+            dl->AddPolyline(pts.data(), N, kColRed, 0, 1.6f * s);
         }
 
         // Selected filter: cursor line first so the dots sit on top.
@@ -878,6 +897,9 @@ private:
         // parameters are for host automation and controllers, and a trigger
         // written from the editor could be swallowed by a host that forwards
         // only control-port changes.
+        // The button sends its INTENT (arm or disarm), never a toggle: the
+        // status it shows is a frame old, and a minute that expired in between
+        // must turn a stop into a harmless no-op rather than into a re-arm.
         const bool setupOn = live && status.setupActive;
         if (button(dl, "##setup", 230, y0, 430, y1, setupOn ? "SETUP  ON" : "SETUP", setupOn, kColRed, true, 12.0f))
         {
@@ -886,7 +908,7 @@ private:
                 setP(kParamGlobalQ, ro::kGlobalQDefault);
                 setP(kParamGlobalAmp, ro::kGlobalAmpDefault);
             }
-            sendEngineCommand(ro::EditCommand::kSetupToggle);
+            sendEngineCommand(setupOn ? ro::EditCommand::kSetupOff : ro::EditCommand::kSetupOn);
         }
 
         // ADD: hold to search. The engine also stops itself after one filter
@@ -913,23 +935,24 @@ private:
         }
 
         // Status read-out.
-        char st[64] = "";
+        // The uncovered-ring report only exists while the engine listens, so it
+        // rides along with the listening line instead of competing with it.
+        const char* uncovered = (live && status.ringUncovered) ? "  RING NOT COVERED" : "";
+        char st[80] = "";
         if (live && status.setupActive)
         {
             const int secs = (int)std::ceil(status.setupRemainingSeconds);
-            std::snprintf(st, sizeof(st), "LISTENING  %d:%02d", secs / 60, secs % 60);
+            std::snprintf(st, sizeof(st), "LISTENING  %d:%02d%s", secs / 60, secs % 60, uncovered);
         }
         else if (live && status.addSearching)
-            std::snprintf(st, sizeof(st), "ADD: LISTENING");
+            std::snprintf(st, sizeof(st), "ADD: LISTENING%s", uncovered);
         else if (live && status.addSatisfied)
             std::snprintf(st, sizeof(st), "ADD: FILTER PLACED");
-        else if (live && status.ringUncovered)
-            std::snprintf(st, sizeof(st), "RING NOT COVERED: FILTERS AT THEIR LIMIT");
         else if (table.count > 0)
             std::snprintf(st, sizeof(st), "%d FILTER%s", table.count, table.count == 1 ? "" : "S");
         else
             std::snprintf(st, sizeof(st), "NO FILTERS");
-        regularText(dl, 722, 368.0f, 12.0f, (live && (status.setupActive || status.addSearching)) ? kColRed : kColWhiteDim, st, 0);
+        regularText(dl, 722, 368.0f, 11.0f, (live && (status.setupActive || status.addSearching)) ? kColRed : kColWhiteDim, st, 0);
 
         // Filter navigation: clamped, never wrapping; from no selection both land on 1.
         if (chevron(dl, "##prevfilter", 867, 375, 13.0f, true) && table.count > 0)
@@ -998,9 +1021,11 @@ private:
         cutRule.step = [](float v, int d, void*) { return ro::stepCut(v, d); };
         cutRule.snap = [](float v, void*) { return ro::snapCut(v); };
         cutRule.minV = ro::kCutMin; cutRule.maxV = ro::kCutMax;
+        cutRule.unit = duskdaf::StepperBoxRule::kDecibels;
         freqRule.step = [](float v, int d, void*) { return ro::stepFreq(v, d); };
         freqRule.snap = [](float v, void*) { return ro::snapFreq(v); };
         freqRule.minV = ro::kFreqMin; freqRule.maxV = ro::kFreqMax;
+        freqRule.unit = duskdaf::StepperBoxRule::kHertz;
         qRule.step = [](float v, int d, void*) { return ro::stepQ(v, d); };
         qRule.snap = [](float v, void*) { return ro::snapQ(v); };
         qRule.minV = ro::kQMin; qRule.maxV = ro::kQMax;
@@ -1066,7 +1091,6 @@ private:
                                            780, 480, 20.0f, values[kParamGlobalAmp], ro::kGlobalAmpDefault,
                                            false, true, "%+.1f", " dB", 0, false, true, nullptr, false,
                                            1.0f, 0.0f, "Global Amp", true);
-        linkGesture(kParamGainOut, link);
 
         if (roundButton(dl, "##link", 740, 538, 9.0f, "", link, kColCyan))
             setP(kParamLink, link ? 0.0f : 1.0f);
@@ -1076,14 +1100,24 @@ private:
                                             890, 480, 24.0f, values[kParamGainOut], ro::kGainOutDefault,
                                             false, true, "%+.1f", " dB", IM_COL32(120, 36, 30, 255), false,
                                             true, nullptr, false, 1.0f, 0.0f, "Gain Out", true);
-        linkGesture(kParamGlobalAmp, link);
 
         // LINK: AMP and GAIN OUT move together in opposite directions, so a few dB
         // more output gain means the same few dB deeper on every filter. An
         // editor gesture coupling, like the reference's: both parameters reach
         // the host as edits, the follower inside one gesture spanning the drag
-        // (linkGesture) rather than a gesture per frame. Host automation of
-        // one knob moves only that knob (see RingOutPlugin.cpp, kParamLink).
+        // rather than a gesture per frame. Host automation of one knob moves
+        // only that knob (see RingOutPlugin.cpp, kParamLink).
+        //
+        // A drag is a run of changes while the mouse button is down; the
+        // follower gesture opens on the first such change and closes when the
+        // button comes up (or LINK goes off). The knob's own item state is not
+        // consulted: knob() may submit an inline text field or a popup after
+        // its button, so "last item" would be the wrong item.
+        if (linkFollowerOpen >= 0 && (!link || !ImGui::IsMouseDown(0)))
+        {
+            editParameter((uint32_t)linkFollowerOpen, false);
+            linkFollowerOpen = -1;
+        }
         if (link)
         {
             if (gainChanged)
@@ -1093,27 +1127,16 @@ private:
         }
     }
 
-    // Called right after a linked knob was submitted: opens one edit gesture on
-    // the FOLLOWER for the length of the drag and closes it on release, so a
-    // host recording automation sees one pass, not a touch per frame.
-    void linkGesture(uint32_t follower, bool link)
-    {
-        if (ImGui::IsItemActivated() && link && linkFollowerOpen < 0)
-        {
-            editParameter(follower, true);
-            linkFollowerOpen = (int)follower;
-        }
-        if (ImGui::IsItemDeactivated() && linkFollowerOpen == (int)follower)
-        {
-            editParameter(follower, false);
-            linkFollowerOpen = -1;
-        }
-    }
-
-    // A follower write inside the gesture linkGesture() opened (or a plain
-    // bracketed edit when no drag is in progress, e.g. a wheel step).
+    // A follower write: inside the open drag gesture when there is one, opening
+    // it on the first change of a drag, or a plain bracketed edit for a change
+    // with the mouse up (a wheel step, a typed value).
     void setFollower(uint32_t param, float value)
     {
+        if (linkFollowerOpen < 0 && ImGui::IsMouseDown(0))
+        {
+            editParameter(param, true);
+            linkFollowerOpen = (int)param;
+        }
         if (linkFollowerOpen == (int)param)
             setParam(param, value);
         else
@@ -1211,33 +1234,42 @@ private:
         return true;
     }
 
+    // Returns false for a file that must not appear in the browser: one that
+    // cannot be read, or one with no recognised line. Loading such a file would
+    // mean "defaults and no filters", which here wipes a ring-out.
     static bool readUserPresetFile(const std::filesystem::path& path, UserPreset& up)
     {
         for (uint32_t i = 0; i < kParamCount; ++i) up.vals[i] = kRoParams[i].def;
         up.filters.clear();
         std::ifstream input(path);
+        if (!input)
+            return false;
         std::string line;
+        bool recognised = false;
         while (std::getline(input, line))
         {
             const auto eq = line.find('=');
             if (eq == std::string::npos) continue;
             const std::string key = line.substr(0, eq);
-            if (key == "name") { up.name = line.substr(eq + 1); continue; }
+            if (key == "name") { up.name = line.substr(eq + 1); recognised = true; continue; }
             if (key == "filters")
             {
                 ro::FilterTable t;
-                if (ro::parseTable(line.c_str() + eq + 1, t)) up.filters = t;
+                if (!ro::parseTable(line.c_str() + eq + 1, t))
+                    return false;                 // a corrupt table must not load as "no filters"
+                up.filters = t;
+                recognised = true;
                 continue;
             }
             for (uint32_t i = 0; i < kParamCount; ++i)
                 if (roIsPresetParam(i) && key == kRoParams[i].id)
                 {
                     float v = 0.0f;
-                    if (parsePresetValue(line, eq + 1, i, v)) up.vals[i] = v;
+                    if (parsePresetValue(line, eq + 1, i, v)) { up.vals[i] = v; recognised = true; }
                     break;
                 }
         }
-        return true;
+        return recognised;
     }
 
     void scanUserPresets()

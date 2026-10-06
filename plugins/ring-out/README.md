@@ -130,10 +130,13 @@ Out, Bypass, and the two meter outputs.
   the editor ends it on release through the edit channel (`addstop`), and a
   search nobody ends gives up after 10 s.
 * The editor's SETUP, ADD and RESET buttons all go through the edit channel
-  (`setup`, `addstart` / `addstop`, `clear`), like every table edit; the
-  three trigger parameters are for host automation and controller mapping.
-  A trigger written from the editor could be swallowed by a host that
-  forwards only control-port changes (an LV2 port already sitting at 1).
+  (`setupon` / `setupoff`, `addstart` / `addstop`, `clear`), like every
+  table edit; the three trigger parameters are for host automation and
+  controller mapping. A trigger written from the editor could be swallowed
+  by a host that forwards only control-port changes (an LV2 port already
+  sitting at 1). SETUP carries the editor's intent rather than a toggle, so
+  a minute that expired between frames turns a stop into a no-op rather than
+  a re-arm. The countdowns pause while the plugin is bypassed.
 * Arming SETUP from the editor also resets GLOBAL Q and AMP, as editor edits
   the host sees. The plugin never rewrites one parameter because another
   moved: that fails AU validation ("Parameter did not retain set value") and

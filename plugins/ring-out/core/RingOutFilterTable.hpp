@@ -348,12 +348,13 @@ constexpr int kTableTextCapacity = 1024;
 // parameter written from the editor can be swallowed by a host that forwards
 // only control-port changes):
 //
-//   "setup"                              arm the engine, or disarm it while listening
+//   "setupon" / "setupoff"               arm the engine / disarm it (the editor's intent,
+//                                        never a toggle decided from a stale status)
 //   "addstart" / "addstop"               ADD pressed / released
 
 struct EditCommand
 {
-    enum Kind { kNone, kSet, kAdd, kDelete, kClear, kSetupToggle, kAddStart, kAddStop };
+    enum Kind { kNone, kSet, kAdd, kDelete, kClear, kSetupOn, kSetupOff, kAddStart, kAddStop };
     bool isTableEdit() const noexcept { return kind == kSet || kind == kAdd || kind == kDelete || kind == kClear; }
     Kind   kind = kNone;
     int    slot = -1;
@@ -405,8 +406,10 @@ inline bool parseEditCommand(const char* text, EditCommand& out) noexcept
         c.kind = EditCommand::kAddStop;
     else if (matchWord("addstart"))
         c.kind = EditCommand::kAddStart;
-    else if (matchWord("setup"))
-        c.kind = EditCommand::kSetupToggle;
+    else if (matchWord("setupon"))
+        c.kind = EditCommand::kSetupOn;
+    else if (matchWord("setupoff"))
+        c.kind = EditCommand::kSetupOff;
     else if (matchWord("set,"))
     {
         c.kind = EditCommand::kSet;
@@ -464,7 +467,8 @@ inline bool formatEditCommand(const EditCommand& c, char* buf, int cap) noexcept
     switch (c.kind)
     {
     case EditCommand::kClear:  return put("clear");
-    case EditCommand::kSetupToggle: return put("setup");
+    case EditCommand::kSetupOn:  return put("setupon");
+    case EditCommand::kSetupOff: return put("setupoff");
     case EditCommand::kAddStart: return put("addstart");
     case EditCommand::kAddStop: return put("addstop");
     case EditCommand::kSet:
@@ -491,17 +495,18 @@ inline int applyEditCommand(FilterTable& t, const EditCommand& c) noexcept
     {
         if (c.slot < 0 || c.slot >= t.count) return -1;
         Filter& row = t.f[c.slot];
+        const Filter before = row;
         if (!c.hasPrevious)
-        {
             row = c.filter;
-            return c.slot;
+        else
+        {
+            // Field-level merge: write only what the sender changed.
+            if (c.filter.on != c.previous.on)         row.on = c.filter.on;
+            if (c.filter.freqHz != c.previous.freqHz) row.freqHz = c.filter.freqHz;
+            if (c.filter.cutDb != c.previous.cutDb)   row.cutDb = c.filter.cutDb;
+            if (c.filter.q != c.previous.q)           row.q = c.filter.q;
         }
-        // Field-level merge: write only what the sender changed.
-        if (c.filter.on != c.previous.on)         row.on = c.filter.on;
-        if (c.filter.freqHz != c.previous.freqHz) row.freqHz = c.filter.freqHz;
-        if (c.filter.cutDb != c.previous.cutDb)   row.cutDb = c.filter.cutDb;
-        if (c.filter.q != c.previous.q)           row.q = c.filter.q;
-        return c.slot;
+        return filtersEqual(before, row) ? -1 : c.slot;   // an unchanged row is no edit
     }
     case EditCommand::kAdd:
         return t.add(c.filter);

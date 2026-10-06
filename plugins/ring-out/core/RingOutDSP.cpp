@@ -195,24 +195,31 @@ void RingOutDSP::reset() noexcept
     // force immediately rather than ramped in.
     liveVersion_ = 0;
     snapOnAdopt_ = true;
+    samplesSinceReset_ = 0;
 }
 
 //==============================================================================
 // engine controls
 
+// Arming is decided on the ENGINE state, not on the last request: a true that
+// lands in the gap between an expiry's two stores, or after a controller's
+// toggle, must still arm. A true while already listening is ignored.
 void RingOutDSP::setSetup(bool on) noexcept
 {
-    const bool was = setupRequested_.exchange(on, std::memory_order_acq_rel);
-    if (on && !was)
+    setupRequested_.store(on, std::memory_order_release);
+    if (on)
     {
-        setupSamplesLeft_.store((int)(ringout::kSetupSeconds * sampleRate_ + 0.5), std::memory_order_relaxed);
-        setupExpired_.store(false, std::memory_order_release);
-        setupActive_.store(true, std::memory_order_release);
+        if (!setupActive_.load(std::memory_order_acquire))
+        {
+            setupSamplesLeft_.store((int)(ringout::kSetupSeconds * sampleRate_ + 0.5), std::memory_order_relaxed);
+            setupExpired_.store(false, std::memory_order_release);
+            setupActive_.store(true, std::memory_order_release);
+        }
     }
-    else if (!on)
+    else
     {
-        // Also after an expiry already cleared the request: lowering SETUP
-        // always leaves the engine idle with no expiry pending.
+        // Also after an expiry: lowering SETUP always leaves the engine idle
+        // with no expiry pending.
         setupActive_.store(false, std::memory_order_release);
         setupExpired_.store(false, std::memory_order_release);
     }
@@ -220,14 +227,17 @@ void RingOutDSP::setSetup(bool on) noexcept
 
 void RingOutDSP::setAdd(bool held) noexcept
 {
-    const bool was = addHeld_.exchange(held, std::memory_order_acq_rel);
-    if (held && !was)
+    addHeld_.store(held, std::memory_order_release);
+    if (held)
     {
-        addSamplesLeft_.store((int)(ringout::kAddSeconds * sampleRate_ + 0.5), std::memory_order_relaxed);
-        addSatisfied_.store(false, std::memory_order_release);
-        addSearching_.store(true, std::memory_order_release);
+        if (!addSearching_.load(std::memory_order_acquire))
+        {
+            addSamplesLeft_.store((int)(ringout::kAddSeconds * sampleRate_ + 0.5), std::memory_order_relaxed);
+            addSatisfied_.store(false, std::memory_order_release);
+            addSearching_.store(true, std::memory_order_release);
+        }
     }
-    else if (!held)
+    else
     {
         addSearching_.store(false, std::memory_order_release);
         addSatisfied_.store(false, std::memory_order_release);
@@ -262,6 +272,22 @@ RingOutDSP::Status RingOutDSP::status() const noexcept
 
 //==============================================================================
 // table mutators (tableLock_ held)
+
+// A RESET that found the lock busy left a request for the audio thread. Any
+// caller that now holds the real lock applies it first, so a host saving or
+// the editor pulling while audio is not running still sees the empty table.
+void RingOutDSP::honourPendingResetLocked() noexcept
+{
+    if (!resetRequested_.load(std::memory_order_acquire))
+        return;
+    resetRequested_.store(false, std::memory_order_relaxed);
+    if (shared_.count != 0)
+    {
+        clearLocked();
+        tableVersion_.fetch_add(1, std::memory_order_acq_rel);
+    }
+    ringUncovered_.store(false, std::memory_order_release);
+}
 
 void RingOutDSP::clearLocked() noexcept
 {
@@ -339,6 +365,7 @@ void RingOutDSP::replaceLocked(const ringout::FilterTable& table) noexcept
 void RingOutDSP::getTable(ringout::FilterTable& out) const noexcept
 {
     const SpinLock::ScopedLock guard(tableLock_);
+    const_cast<RingOutDSP*>(this)->honourPendingResetLocked();
     out = shared_;
 }
 
@@ -347,6 +374,7 @@ void RingOutDSP::setTable(const ringout::FilterTable& table) noexcept
     if (!ringout::tableValid(table))
         return;
     const SpinLock::ScopedLock guard(tableLock_);
+    honourPendingResetLocked();
     if (ringout::tablesEqual(shared_, table))
         return;
     replaceLocked(table);
@@ -356,6 +384,7 @@ void RingOutDSP::setTable(const ringout::FilterTable& table) noexcept
 int RingOutDSP::applyEdit(const ringout::EditCommand& command) noexcept
 {
     const SpinLock::ScopedLock guard(tableLock_);
+    honourPendingResetLocked();
     const int slot = applyEditLocked(command);
     if (slot >= 0)
         tableVersion_.fetch_add(1, std::memory_order_acq_rel);
@@ -393,16 +422,8 @@ void RingOutDSP::syncTableFromShared() noexcept
     const SpinLock::ScopedTryLock guard(tableLock_);
     if (!guard.isLocked())
         return;
-    if (resetPending)
-    {
-        resetRequested_.store(false, std::memory_order_relaxed);
-        if (shared_.count != 0)
-        {
-            clearLocked();
-            tableVersion_.fetch_add(1, std::memory_order_acq_rel);
-        }
-        ringUncovered_.store(false, std::memory_order_release);
-    }
+    (void)resetPending;
+    honourPendingResetLocked();
     adoptLiveTable();
 }
 
@@ -496,7 +517,12 @@ void RingOutDSP::assignSlots() noexcept
         st.cooldownFrames = 0;
         for (Biquad& b : st.bq) { b.reset(); b.setCoeffs(BiquadCoeffs()); }
     }
-    snapOnAdopt_ = false;
+    // The no-ramp adoption is spent once real filters were placed; an empty
+    // table adopted first (a host that restores state after activation) keeps
+    // it for the table that follows. processBlock() also retires it once
+    // audio has flowed for a while.
+    if (live_.count > 0)
+        snapOnAdopt_ = false;
 }
 
 //==============================================================================
@@ -512,20 +538,33 @@ void RingOutDSP::processBlock(const float* const* inputs, float* const* outputs,
 
     syncTableFromShared();
 
-    // SETUP and ADD timers. An expiry drops the request too, so the next press
-    // is a fresh edge again.
-    if (setupActive_.load(std::memory_order_acquire))
+    // Once audio has flowed for a while, filters that arrive are live edits and
+    // ramp in; see snapOnAdopt_.
+    if (snapOnAdopt_)
+    {
+        samplesSinceReset_ += numSamples;
+        if ((double)samplesSinceReset_ > 0.05 * sampleRate_)
+            snapOnAdopt_ = false;
+    }
+
+    const bool bypass = bypass_.load(std::memory_order_relaxed);
+
+    // SETUP and ADD timers. They pause while bypassed, since the detector is
+    // out of circuit then too. An expiry drops the request first, so a press
+    // landing between the two stores sees the engine still active and can only
+    // issue a harmless disarm, never a lost arm.
+    if (!bypass && setupActive_.load(std::memory_order_acquire))
     {
         const int left = setupSamplesLeft_.fetch_sub(numSamples, std::memory_order_relaxed) - numSamples;
         if (left <= 0)
         {
-            setupActive_.store(false, std::memory_order_release);
             setupRequested_.store(false, std::memory_order_release);
+            setupActive_.store(false, std::memory_order_release);
             setupExpired_.store(true, std::memory_order_release);
             clearTracks();
         }
     }
-    if (addSearching_.load(std::memory_order_acquire))
+    if (!bypass && addSearching_.load(std::memory_order_acquire))
     {
         const int left = addSamplesLeft_.fetch_sub(numSamples, std::memory_order_relaxed) - numSamples;
         if (left <= 0)
@@ -535,8 +574,16 @@ void RingOutDSP::processBlock(const float* const* inputs, float* const* outputs,
             clearTracks();
         }
     }
-    // "Table full, ring not covered" describes a listening engine; once it is
-    // idle the report has nothing to refer to.
+    // "Filter placed" shows until the editor releases ADD, or for a moment
+    // after a controller tap that never will.
+    if (addSatisfied_.load(std::memory_order_acquire) && !addHeld_.load(std::memory_order_acquire))
+    {
+        const int left = addSatisfiedSamplesLeft_.fetch_sub(numSamples, std::memory_order_relaxed) - numSamples;
+        if (left <= 0)
+            addSatisfied_.store(false, std::memory_order_release);
+    }
+    // "Ring not covered" describes a listening engine; once it is idle the
+    // report has nothing to refer to.
     if (!engineActive())
         ringUncovered_.store(false, std::memory_order_release);
 
@@ -566,7 +613,7 @@ void RingOutDSP::processBlock(const float* const* inputs, float* const* outputs,
             updateSmoothersAndCoefficients();
             gain_.setTarget(decibelsToGain(gainOutDb_.load(std::memory_order_relaxed)));
             gainNow_ = gain_.next();
-            bypassMix_.setTarget(bypass_.load(std::memory_order_relaxed) ? 0.0f : 1.0f);
+            bypassMix_.setTarget(bypass ? 0.0f : 1.0f);
             mixNow_ = bypassMix_.next();
             if (mixNow_ < 1.0e-4f) mixNow_ = 0.0f;
             if (mixNow_ > 1.0f - 1.0e-4f) mixNow_ = 1.0f;
@@ -1081,6 +1128,7 @@ bool RingOutDSP::engage(const Track& track) noexcept
         // release still clears the satisfied state it shows meanwhile.
         addSearching_.store(false, std::memory_order_release);
         addHeld_.store(false, std::memory_order_release);
+        addSatisfiedSamplesLeft_.store((int)(1.5 * sampleRate_), std::memory_order_relaxed);
         addSatisfied_.store(true, std::memory_order_release);
     }
     return true;

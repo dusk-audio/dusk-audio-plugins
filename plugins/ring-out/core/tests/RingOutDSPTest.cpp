@@ -164,8 +164,15 @@ static void testText()
               "format set with previous: '%s'", mb);
     }
     CHECK(ro::parseEditCommand("addstart", c) && c.kind == ro::EditCommand::kAddStart && !c.isTableEdit(), "parse addstart");
-    CHECK(ro::parseEditCommand("setup", c) && c.kind == ro::EditCommand::kSetupToggle && !c.isTableEdit(), "parse setup");
-    CHECK(!ro::parseEditCommand("setup,1", c), "setup takes no argument");
+    CHECK(ro::parseEditCommand("setupon", c) && c.kind == ro::EditCommand::kSetupOn && !c.isTableEdit(), "parse setupon");
+    CHECK(ro::parseEditCommand("setupoff", c) && c.kind == ro::EditCommand::kSetupOff, "parse setupoff");
+    CHECK(!ro::parseEditCommand("setup", c), "a bare setup is not a command (intent is required)");
+    {
+        // A set that changes nothing is no edit.
+        ro::FilterTable same; same.add(ro::Filter{ true, 1000.0f, -9.0f, 5.0f });
+        ro::EditCommand noop; noop.kind = ro::EditCommand::kSet; noop.slot = 0; noop.filter = same.f[0];
+        CHECK(ro::applyEditCommand(same, noop) == -1, "an unchanged set touches nothing");
+    }
     {
         ro::FilterTable untouched; untouched.add(ro::defaultFilter());
         CHECK(ro::applyEditCommand(untouched, c) == -1 && untouched.count == 1, "addstop is not a table edit");
@@ -703,6 +710,59 @@ static void testTimersAndEdges()
         CHECK(!dsp.status().addSearching, "ADD gives up after %.0f s", ro::kAddSeconds);
         dsp.setAdd(true);
         CHECK(dsp.status().addSearching, "a new ADD after the timeout starts a new search");
+    }
+    {
+        // Bypass pauses the countdown: the detector is out of circuit then.
+        RingOutDSP dsp;
+        dsp.prepare(48000.0, 4096);
+        dsp.setSetup(true);
+        dsp.setBypass(true);
+        std::vector<float> z(4096, 0.0f), o(4096), o2(4096);
+        const float* ins[2] = { z.data(), z.data() }; float* outs[2] = { o.data(), o2.data() };
+        for (int b = 0; b < 120; ++b) dsp.processBlock(ins, outs, 2, 4096);   // ~10 s bypassed
+        CHECK(near(dsp.status().setupRemainingSeconds, 60.0f, 0.01f),
+              "SETUP countdown holds while bypassed: %.1f s left", dsp.status().setupRemainingSeconds);
+        dsp.setBypass(false);
+        for (int b = 0; b < 12; ++b) dsp.processBlock(ins, outs, 2, 4096);     // ~1 s live
+        CHECK(dsp.status().setupRemainingSeconds < 59.5f, "and drains again once un-bypassed");
+    }
+    {
+        // A controller-started ADD that places its filter shows "placed" for a
+        // moment and then clears by itself; nobody will release it.
+        RingOutDSP dsp;
+        dsp.prepare(48000.0, 256);
+        dsp.setAdd(true);
+        auto ring = [](double tt) { return 0.3f * (float)std::sin(2.0 * 3.14159265358979323846 * 2500.0 * tt); };
+        runTone(dsp, 48000.0, 0.6f, -45.0f, ring);
+        CHECK(dsp.status().addSatisfied, "filter placed is shown right after the search");
+        runTone(dsp, 48000.0, 2.0f, -45.0f, [](double) { return 0.0f; });
+        CHECK(!dsp.status().addSatisfied, "and clears on its own within two seconds");
+    }
+    {
+        // A deferred RESET is honoured by whoever next takes the real lock,
+        // audio running or not.
+        RingOutDSP dsp;
+        dsp.prepare(48000.0, 64);
+        ro::EditCommand add; add.kind = ro::EditCommand::kAdd; add.filter = ro::defaultFilter();
+        dsp.applyEdit(add);
+        std::atomic<bool> stop { false };
+        std::thread contender([&]
+        {
+            ro::FilterTable copy;
+            while (!stop.load(std::memory_order_relaxed)) dsp.getTable(copy);
+        });
+        bool everStale = false;
+        for (int i = 0; i < 200; ++i)
+        {
+            dsp.applyEdit(add);
+            dsp.resetFilters();          // may defer when the contender holds the lock
+            ro::FilterTable t;
+            dsp.getTable(t);             // takes the lock: must see the reset applied
+            if (t.count != 0) everStale = true;
+        }
+        stop.store(true, std::memory_order_relaxed);
+        contender.join();
+        CHECK(!everStale, "a read right after a (possibly deferred) RESET never shows the old table");
     }
     {
         // Meters never read below the declared parameter floor.
