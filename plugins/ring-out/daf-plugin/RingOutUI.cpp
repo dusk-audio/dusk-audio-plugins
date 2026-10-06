@@ -83,8 +83,6 @@ namespace
     constexpr float GX0 = 58.0f, GX1 = 902.0f, GY0 = 62.0f, GY1 = 334.0f;
     constexpr float kRtaMinDb = -80.0f;        // analyser axis, 0 at the top
     constexpr float kCurveMinDb = -24.0f;      // filter axis, 0 at the top
-
-    constexpr float kPi = 3.14159265358979f;
 }
 
 class RingOutUI : public UI, public duskdaf::ParamHost
@@ -316,8 +314,12 @@ private:
                 colMax[(size_t)col] = std::max(colMax[(size_t)col], spectrum.db[k]);
             }
             // Fill columns no bin landed in (low end at a coarse bin width) from
-            // their neighbours so the trace is continuous.
+            // their neighbours so the trace is continuous: the columns before
+            // the first in-band bin take that bin's level, the rest carry the
+            // last level forward.
             float last = kRtaMinDb;
+            for (int c = 0; c < cols; ++c)
+                if (colMax[(size_t)c] > -199.0f) { last = colMax[(size_t)c]; break; }
             for (int c = 0; c < cols; ++c)
             {
                 if (colMax[(size_t)c] > -199.0f) last = colMax[(size_t)c];
@@ -367,6 +369,16 @@ private:
             selected = -1;
         clampSelection();
         syncPresetSelection();
+    }
+
+    // SETUP / ADD, over the same channel as the table edits.
+    void sendEngineCommand(ro::EditCommand::Kind kind)
+    {
+        ro::EditCommand c;
+        c.kind = kind;
+        char buf[32];
+        if (ro::formatEditCommand(c, buf, (int)sizeof(buf)))
+            setState("edit", buf);
     }
 
     void setSelectedFilter(const ro::Filter& f)
@@ -844,6 +856,10 @@ private:
         // reference does. Those are editor edits the host sees; the plugin
         // itself never rewrites one parameter because another moved (that
         // fails AU validation).
+        // The engine buttons travel the edit channel, like RESET: the trigger
+        // parameters are for host automation and controllers, and a trigger
+        // written from the editor could be swallowed by a host that forwards
+        // only control-port changes.
         const bool setupOn = live && status.setupActive;
         if (button(dl, "##setup", 230, y0, 430, y1, setupOn ? "SETUP  ON" : "SETUP", setupOn, kColRed, true, 12.0f))
         {
@@ -852,12 +868,11 @@ private:
                 setP(kParamGlobalQ, ro::kGlobalQDefault);
                 setP(kParamGlobalAmp, ro::kGlobalAmpDefault);
             }
-            setP(kParamSetup, 1.0f);
+            sendEngineCommand(ro::EditCommand::kSetupToggle);
         }
 
-        // ADD: hold to search. The press fires the trigger, the release ends
-        // the search through the edit channel; the engine also stops itself
-        // after one filter and the button turns green until it is released.
+        // ADD: hold to search. The engine also stops itself after one filter
+        // and the button turns green until it is released.
         bool addHeld = false;
         const bool addLit = live && (status.addSearching || status.addSatisfied);
         const ImU32 addCol = (live && status.addSatisfied) ? kColGreen : IM_COL32(240, 150, 40, 255);
@@ -865,16 +880,7 @@ private:
         if (addHeld != addHeldLocal)
         {
             addHeldLocal = addHeld;
-            if (addHeld)
-                setP(kParamAdd, 1.0f);
-            else
-            {
-                ro::EditCommand stop;
-                stop.kind = ro::EditCommand::kAddStop;
-                char buf[32];
-                if (ro::formatEditCommand(stop, buf, (int)sizeof(buf)))
-                    setState("edit", buf);
-            }
+            sendEngineCommand(addHeld ? ro::EditCommand::kAddStart : ro::EditCommand::kAddStop);
         }
 
         // RESET goes through the edit channel like every other table edit; the
@@ -1028,6 +1034,7 @@ private:
 
         const float prevAmp = values[kParamGlobalAmp];
         const float prevGain = values[kParamGainOut];
+        const bool link = values[kParamLink] >= 0.5f;
 
         if (std::fabs(values[kParamGlobalQ] - ro::kGlobalQDefault) > 1.0e-4f)
             dl->AddCircle(P(700, 480), 25.0f * s, kColRed, 48, 2.0f * s);
@@ -1041,8 +1048,8 @@ private:
                                            780, 480, 20.0f, values[kParamGlobalAmp], ro::kGlobalAmpDefault,
                                            false, true, "%+.1f", " dB", 0, false, true, nullptr, false,
                                            1.0f, 0.0f, "Global Amp", true);
+        linkGesture(kParamGainOut, link);
 
-        const bool link = values[kParamLink] >= 0.5f;
         if (roundButton(dl, "##link", 740, 538, 9.0f, "", link, kColCyan))
             setP(kParamLink, link ? 0.0f : 1.0f);
         text(dl, 740, 552, 8.5f, link ? kColCyan : kColWhiteDim, "LINK", 0, true);
@@ -1051,19 +1058,56 @@ private:
                                             890, 480, 24.0f, values[kParamGainOut], ro::kGainOutDefault,
                                             false, true, "%+.1f", " dB", IM_COL32(120, 36, 30, 255), false,
                                             true, nullptr, false, 1.0f, 0.0f, "Gain Out", true);
+        linkGesture(kParamGlobalAmp, link);
 
         // LINK: AMP and GAIN OUT move together in opposite directions, so a few dB
         // more output gain means the same few dB deeper on every filter. An
         // editor gesture coupling, like the reference's: both parameters reach
-        // the host as edits. Host automation of one knob moves only that knob
-        // (see RingOutPlugin.cpp, kParamLink, for why).
+        // the host as edits, the follower inside one gesture spanning the drag
+        // (linkGesture) rather than a gesture per frame. Host automation of
+        // one knob moves only that knob (see RingOutPlugin.cpp, kParamLink).
         if (link)
         {
             if (gainChanged)
-                setP(kParamGlobalAmp, prevAmp - (values[kParamGainOut] - prevGain));
+                setFollower(kParamGlobalAmp, prevAmp - (values[kParamGainOut] - prevGain));
             else if (ampChanged)
-                setP(kParamGainOut, prevGain - (values[kParamGlobalAmp] - prevAmp));
+                setFollower(kParamGainOut, prevGain - (values[kParamGlobalAmp] - prevAmp));
         }
+    }
+
+    // Called right after a linked knob was submitted: opens one edit gesture on
+    // the FOLLOWER for the length of the drag and closes it on release, so a
+    // host recording automation sees one pass, not a touch per frame.
+    void linkGesture(uint32_t follower, bool link)
+    {
+        if (ImGui::IsItemActivated() && link && linkFollowerOpen < 0)
+        {
+            editParameter(follower, true);
+            linkFollowerOpen = (int)follower;
+        }
+        if (ImGui::IsItemDeactivated() && linkFollowerOpen == (int)follower)
+        {
+            editParameter(follower, false);
+            linkFollowerOpen = -1;
+        }
+    }
+
+    // A follower write inside the gesture linkGesture() opened (or a plain
+    // bracketed edit when no drag is in progress, e.g. a wheel step).
+    void setFollower(uint32_t param, float value)
+    {
+        if (linkFollowerOpen != (int)param)
+        {
+            setP(param, value);
+            return;
+        }
+        if (param >= kParamCount || !std::isfinite(value))
+            return;
+        value = roNormalizeParamValue(param, value);
+        values[param] = value;
+        setParameterValue(param, value);
+        if (roIsPresetParam(param))
+            syncPresetSelection();
     }
 
     void drawCountdown(ImDrawList* dl)
@@ -1308,6 +1352,7 @@ private:
     unsigned engagementsSeen = 0;       // engine engagements already flashed
     int flashRow = -1;
     float flashSecondsLeft = 0.0f;
+    int linkFollowerOpen = -1;          // parameter whose LINK follower gesture is open
 
     // Filter curve cache (drawFilterCurve).
     std::vector<float> curveDb;

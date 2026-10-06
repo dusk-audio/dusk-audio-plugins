@@ -337,11 +337,18 @@ constexpr int kTableTextCapacity = 1024;
 //   "add,<on>,<freq>,<cut>,<q>"          append (ignored when full)
 //   "del,<slot>"                         remove and close the gap
 //   "clear"                              remove every filter
-//   "addstop"                            the editor released ADD: end its search
+//
+// and the engine buttons, which the editor also sends this way (a trigger
+// parameter written from the editor can be swallowed by a host that forwards
+// only control-port changes):
+//
+//   "setup"                              arm the engine, or disarm it while listening
+//   "addstart" / "addstop"               ADD pressed / released
 
 struct EditCommand
 {
-    enum Kind { kNone, kSet, kAdd, kDelete, kClear, kAddStop };
+    enum Kind { kNone, kSet, kAdd, kDelete, kClear, kSetupToggle, kAddStart, kAddStop };
+    bool isTableEdit() const noexcept { return kind == kSet || kind == kAdd || kind == kDelete || kind == kClear; }
     Kind   kind = kNone;
     int    slot = -1;
     Filter filter;
@@ -388,6 +395,10 @@ inline bool parseEditCommand(const char* text, EditCommand& out) noexcept
         c.kind = EditCommand::kClear;
     else if (matchWord("addstop"))
         c.kind = EditCommand::kAddStop;
+    else if (matchWord("addstart"))
+        c.kind = EditCommand::kAddStart;
+    else if (matchWord("setup"))
+        c.kind = EditCommand::kSetupToggle;
     else if (matchWord("set,"))
     {
         c.kind = EditCommand::kSet;
@@ -439,6 +450,8 @@ inline bool formatEditCommand(const EditCommand& c, char* buf, int cap) noexcept
     switch (c.kind)
     {
     case EditCommand::kClear:  return put("clear");
+    case EditCommand::kSetupToggle: return put("setup");
+    case EditCommand::kAddStart: return put("addstart");
     case EditCommand::kAddStop: return put("addstop");
     case EditCommand::kSet:    return put("set,") && putNum((float)c.slot, 0) && put(",") && putFilter(c.filter);
     case EditCommand::kAdd:    return put("add,") && putFilter(c.filter);
@@ -448,8 +461,8 @@ inline bool formatEditCommand(const EditCommand& c, char* buf, int cap) noexcept
 }
 
 // Applies a parsed command to a table. Returns the slot the command touched
-// (for selection follow-up) or -1 when nothing changed. kAddStop is not a
-// table edit and always returns -1; the plugin acts on it directly.
+// (for selection follow-up) or -1 when nothing changed. The engine commands
+// are not table edits and always return -1; the plugin acts on them directly.
 inline int applyEditCommand(FilterTable& t, const EditCommand& c) noexcept
 {
     switch (c.kind)

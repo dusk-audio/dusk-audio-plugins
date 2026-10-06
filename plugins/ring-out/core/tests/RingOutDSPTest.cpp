@@ -19,11 +19,13 @@
 #include "DuskFilters.hpp"
 #include "DuskLogFreqAxis.hpp"
 
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <random>
 #include <string>
+#include <thread>
 #include <vector>
 
 using duskaudio::RingOutDSP;
@@ -145,6 +147,9 @@ static void testText()
     CHECK(ro::parseEditCommand("del,19", c) && c.kind == ro::EditCommand::kDelete && c.slot == 19, "parse del");
     CHECK(ro::parseEditCommand("clear", c) && c.kind == ro::EditCommand::kClear, "parse clear");
     CHECK(ro::parseEditCommand("addstop", c) && c.kind == ro::EditCommand::kAddStop, "parse addstop");
+    CHECK(ro::parseEditCommand("addstart", c) && c.kind == ro::EditCommand::kAddStart && !c.isTableEdit(), "parse addstart");
+    CHECK(ro::parseEditCommand("setup", c) && c.kind == ro::EditCommand::kSetupToggle && !c.isTableEdit(), "parse setup");
+    CHECK(!ro::parseEditCommand("setup,1", c), "setup takes no argument");
     {
         ro::FilterTable untouched; untouched.add(ro::defaultFilter());
         CHECK(ro::applyEditCommand(untouched, c) == -1 && untouched.count == 1, "addstop is not a table edit");
@@ -534,6 +539,89 @@ static void testFreqStepKeepsSlot()
     CHECK(near(lateDb, expected, 0.5f), "after the step 1 kHz sits at %.2f dB (static response %.2f dB)", lateDb, expected);
 }
 
+// setTable() keeps the identity of rows whose frequency did not change, so a
+// preset load (a whole-table replace) crossfades only what changed: the 1 kHz
+// notch here must not dip out and back in while its neighbour's cut moves.
+static void testReplaceKeepsIdentity()
+{
+    RingOutDSP dsp;
+    dsp.prepare(48000.0, 64);
+    ro::FilterTable t;
+    t.add(ro::Filter{ true, 1000.0f, -20.0f, 8.0f });
+    t.add(ro::Filter{ true, 3000.0f, -6.0f, 5.0f });
+    dsp.setTable(t);
+
+    // Same filters, the 3 kHz one deeper, presented as a new table.
+    ro::FilterTable replacement;
+    replacement.add(ro::Filter{ true, 3000.0f, -12.0f, 5.0f });   // rows reordered on purpose
+    replacement.add(ro::Filter{ true, 1000.0f, -20.0f, 8.0f });
+
+    const double sr = 48000.0;
+    const int block = 64;
+    std::vector<float> in((size_t)block), out((size_t)block);
+    double phase = 0.0;
+    float peakAfter = 0.0f;
+    bool replaced = false;
+    const int total = (int)(1.0 * sr);
+    for (int done = 0; done < total; done += block)
+    {
+        if (!replaced && done >= (int)(0.5 * sr)) { replaced = true; dsp.setTable(replacement); }
+        for (int i = 0; i < block; ++i)
+        {
+            in[(size_t)i] = 0.5f * (float)std::sin(phase);
+            phase += 2.0 * 3.14159265358979323846 * 1000.0 / sr;
+        }
+        const float* ins[1] = { in.data() }; float* outs[1] = { out.data() };
+        dsp.processBlock(ins, outs, 1, block);
+        if (replaced)
+            for (int i = 0; i < block; ++i) peakAfter = std::max(peakAfter, std::fabs(out[(size_t)i]));
+    }
+    // A -20 dB notch lets 0.05 through; a notch that ramped out and back in
+    // would have let the full 0.5 through for a moment.
+    CHECK(peakAfter < 0.08f, "the unchanged 1 kHz notch stays in force across a table replace (peak %.3f)", peakAfter);
+}
+
+// RESET from a thread that finds the table lock busy defers to the audio
+// thread; either way the table is empty after the next block.
+static void testDeferredReset()
+{
+    RingOutDSP dsp;
+    dsp.prepare(48000.0, 64);
+    std::atomic<bool> stop { false };
+    std::thread contender([&]
+    {
+        ro::FilterTable copy;
+        while (!stop.load(std::memory_order_relaxed))
+            dsp.getTable(copy);           // holds the lock most of the time
+    });
+    std::vector<float> z(64, 0.0f), o(64), o2(64);
+    const float* ins[2] = { z.data(), z.data() }; float* outs[2] = { o.data(), o2.data() };
+    // The audio thread only ever try-locks, so under a contender that holds
+    // the lock most of the time a deferred RESET may need more than one block;
+    // what must hold is that it never blocks and always lands within a few.
+    int worstBlocks = 0;
+    bool allCleared = true;
+    for (int i = 0; i < 300; ++i)
+    {
+        ro::EditCommand add; add.kind = ro::EditCommand::kAdd; add.filter = ro::defaultFilter();
+        dsp.applyEdit(add);
+        dsp.resetFilters();
+        int blocks = 0;
+        ro::FilterTable t;
+        do
+        {
+            dsp.processBlock(ins, outs, 2, 64);
+            ++blocks;
+            dsp.getTable(t);
+        } while (t.count != 0 && blocks < 200);
+        worstBlocks = std::max(worstBlocks, blocks);
+        if (t.count != 0) allCleared = false;
+    }
+    stop.store(true, std::memory_order_relaxed);
+    contender.join();
+    CHECK(allCleared, "RESET under lock contention always empties the table (worst %d blocks)", worstBlocks);
+}
+
 // Bypass crossfades to a bit-exact dry path and back without a click; the
 // filters stay warm while bypassed so un-bypass replays no stale tail.
 static void testBypassCrossfade()
@@ -747,6 +835,41 @@ static void testTableFull()
     dsp.getTable(after);
     CHECK(after.count == ro::kMaxFilters && after.f[10].cutDb <= t.f[10].cutDb - 3.0f,
           "a ring inside a filter's band deepens it: %.1f -> %.1f dB", t.f[10].cutDb, after.f[10].cutDb);
+
+    // A ring just OUTSIDE filter 15's band (1.3 half-bandwidths off centre):
+    // the filter widens toward it before it is deepened. Filters spaced wide
+    // enough (0.38 octave) that 15 is the nearest, unlike the 0.23-octave
+    // comb above where the next filter up would be.
+    {
+        ro::FilterTable fresh;
+        for (int i = 0; i < ro::kMaxFilters; ++i)
+            fresh.add(ro::Filter{ true, 60.0f * std::pow(1.3f, (float)i), -6.0f, 8.0f });   // 60 Hz .. ~8.8 kHz
+        dsp.setTable(fresh);
+        const float q15 = fresh.f[15].q;
+        const float halfBwOct = (1.0f / 0.69314718f) * std::asinh(0.5f / q15);
+        const float fOutside = fresh.f[15].freqHz * std::pow(2.0f, 1.3f * halfBwOct);
+        // Run only up to the FIRST engagement: once widened, the notch covers
+        // the tone and later engagements rightly deepen it.
+        const unsigned before = dsp.status().engagementCount;
+        NoiseSource noise;
+        std::vector<float> in(256), o1(256), o2(256);
+        double phase = 0.0;
+        for (int b = 0; b < 400 && dsp.status().engagementCount == before; ++b)   // up to ~2.1 s
+        {
+            for (int i = 0; i < 256; ++i)
+            {
+                in[(size_t)i] = noise.next(dbToLin(-45.0f)) + 0.3f * (float)std::sin(phase);
+                phase += 2.0 * 3.14159265358979323846 * (double)fOutside / sr;
+            }
+            const float* ins2[2] = { in.data(), in.data() }; float* outs2[2] = { o1.data(), o2.data() };
+            dsp.processBlock(ins2, outs2, 2, 256);
+        }
+        dsp.getTable(after);
+        CHECK(dsp.status().engagementCount == before + 1, "the outside ring was engaged once (%u)", dsp.status().engagementCount - before);
+        CHECK(after.f[15].q < q15 && near(after.f[15].cutDb, fresh.f[15].cutDb, 1e-4f),
+              "a ring just outside a notch widens it first (Q %.1f -> %.1f, cut %.1f -> %.1f)",
+              q15, after.f[15].q, fresh.f[15].cutDb, after.f[15].cutDb);
+    }
     // Deleting a filter makes room again and says so.
     ro::EditCommand del; del.kind = ro::EditCommand::kDelete; del.slot = 0;
     CHECK(dsp.applyEdit(del) == 0, "delete one of twenty");
@@ -990,6 +1113,8 @@ int main()
     testBlockSizeInvariance();
     testDeleteCrossfade();
     testFreqStepKeepsSlot();
+    testReplaceKeepsIdentity();
+    testDeferredReset();
     testBypassCrossfade();
     testTimersAndEdges();
     testDetect();

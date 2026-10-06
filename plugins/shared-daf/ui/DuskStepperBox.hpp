@@ -172,12 +172,28 @@ inline bool stepperBox(DuskPanel& panel, ImDrawList* dl, const char* id,
     if (editing)
     {
         float typed = 0.0f;
+        // Accepts a bare number, a trailing dB or Hz, and the console form the
+        // axis labels print: "2k", "1k2", "12k5" (digits after the k are
+        // tenths, hundredths ... of a thousand).
         const auto parse = [](const char* text, uint32_t, void*, float& out) -> bool
         {
             const char* end = nullptr;
             float v = 0.0f;
             if (!value_text::parseDecimal(text, end, v)) return false;
-            if (value_text::suffix(end, "k", "K")) v *= 1000.0f;
+            if (*end == 'k' || *end == 'K')
+            {
+                ++end;
+                v *= 1000.0f;
+                float place = 100.0f;
+                while (*end >= '0' && *end <= '9')
+                {
+                    v += (float)(*end - '0') * place;
+                    place *= 0.1f;
+                    ++end;
+                }
+                if (!value_text::finish(end, "") && !value_text::suffix(end, "Hz", "hz"))
+                    return false;
+            }
             else if (!value_text::finish(end, "") && !value_text::suffix(end, "dB", "Hz"))
                 return false;
             out = v;

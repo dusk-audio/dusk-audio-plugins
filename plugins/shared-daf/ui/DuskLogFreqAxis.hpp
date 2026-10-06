@@ -22,23 +22,30 @@
 namespace duskdaf
 {
 
-struct LogFreqAxis
+class LogFreqAxis
 {
-    float fMin = 20.0f;
-    float fMax = 20000.0f;
+public:
+    LogFreqAxis(float minHz = 20.0f, float maxHz = 20000.0f) noexcept
+        : fMin(minHz), fMax(maxHz),
+          logMin_(std::log10(minHz > 1.0e-6f ? minHz : 1.0e-6f)),
+          invSpan_(1.0f / (std::log10(maxHz > minHz ? maxHz : minHz * 2.0f) - logMin_))
+    {
+    }
+
+    float fMin;
+    float fMax;
 
     // 0 at fMin, 1 at fMax (not clamped: a caller may want to know a point is
-    // off the axis).
+    // off the axis). One log10 per call; the endpoints are cached, since an
+    // analyser calls this once per bin per frame.
     float toNorm(float freq) const noexcept
     {
-        const float l0 = std::log10(fMin), l1 = std::log10(fMax);
-        return (std::log10(freq > 1.0e-6f ? freq : 1.0e-6f) - l0) / (l1 - l0);
+        return (std::log10(freq > 1.0e-6f ? freq : 1.0e-6f) - logMin_) * invSpan_;
     }
 
     float fromNorm(float x) const noexcept
     {
-        const float l0 = std::log10(fMin), l1 = std::log10(fMax);
-        return std::pow(10.0f, l0 + x * (l1 - l0));
+        return std::pow(10.0f, logMin_ + x / invSpan_);
     }
 
     // Standard rule positions: 1-2-5 per decade plus the decade itself, clipped
@@ -76,6 +83,10 @@ struct LogFreqAxis
         else
             std::snprintf(buf, (size_t)cap, "%dk%d", k, hundreds);
     }
+
+private:
+    float logMin_;
+    float invSpan_;
 };
 
 } // namespace duskdaf

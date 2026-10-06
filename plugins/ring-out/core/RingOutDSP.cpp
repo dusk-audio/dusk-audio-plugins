@@ -53,6 +53,16 @@ namespace
             x.q = ringout::snapQ(std::max(ringout::kAutoQFloor, x.q * 0.8f));
     }
 
+    // Reach a tone that sits just outside the notch: widen first, and only once
+    // the notch is as wide as the engine goes, deepen.
+    inline void widen(ringout::Filter& x) noexcept
+    {
+        if (x.q > ringout::kAutoQFloor + 0.05f)
+            x.q = ringout::snapQ(std::max(ringout::kAutoQFloor, x.q * 0.8f));
+        else if (x.cutDb > ringout::kAutoCutFloor + 0.05f)
+            x.cutDb = ringout::snapCut(std::max(ringout::kAutoCutFloor, x.cutDb - 3.0f));
+    }
+
     inline int rescaleSamples(int samples, double oldRate, double newRate) noexcept
     {
         if (samples <= 0 || oldRate <= 0.0) return samples;
@@ -134,6 +144,12 @@ void RingOutDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     }
     gain_.prepare(subRate, 0.010f);
     bypassMix_.prepare(subRate, 0.010f);
+
+    // Publish an empty frame at the new size so a reader never pairs an old
+    // frame's bin count with the new, shorter copy.
+    frame_.bins = 0;
+    frame_.binHz = binHz_;
+    spectrum_.store(frame_, spectrumBytes());
 
     reset();
 }
@@ -233,8 +249,8 @@ RingOutDSP::Status RingOutDSP::status() const noexcept
     s.addSearching = addSearching_.load(std::memory_order_acquire);
     s.addSatisfied = addSatisfied_.load(std::memory_order_acquire);
     s.tableFull = tableFull_.load(std::memory_order_acquire);
+    s.engagementCount = engagementCount_.load(std::memory_order_acquire);   // before the row it pairs with
     s.lastEngagedRow = lastEngagedRow_.load(std::memory_order_relaxed);
-    s.engagementCount = engagementCount_.load(std::memory_order_relaxed);
     s.tableVersion = tableVersion();
     return s;
 }
@@ -256,33 +272,34 @@ int RingOutDSP::addLocked(const ringout::Filter& x) noexcept
     return row;
 }
 
+// The table semantics are applyEditCommand()'s, the same function the editor
+// uses for its optimistic local copy; this only keeps the row ids in step.
 int RingOutDSP::applyEditLocked(const ringout::EditCommand& c) noexcept
 {
     using ringout::EditCommand;
+    const int countBefore = shared_.count;
+    const int row = ringout::applyEditCommand(shared_, c);
+    if (row < 0)
+        return -1;
     switch (c.kind)
     {
     case EditCommand::kClear:
-        if (shared_.count == 0) return -1;
-        clearLocked();
+        for (uint32_t& id : sharedIds_) id = 0;
         tableFull_.store(false, std::memory_order_release);
-        return 0;
-    case EditCommand::kSet:
-        if (c.slot < 0 || c.slot >= shared_.count) return -1;
-        shared_.f[c.slot] = c.filter;         // same filter, edited: keeps its id
-        return c.slot;
+        break;
     case EditCommand::kAdd:
-        return addLocked(c.filter);
+        sharedIds_[row] = nextRowId_++;
+        break;
     case EditCommand::kDelete:
-        if (c.slot < 0 || c.slot >= shared_.count) return -1;
-        for (int k = c.slot; k + 1 < shared_.count; ++k)
+        for (int k = row; k + 1 < countBefore; ++k)
             sharedIds_[k] = sharedIds_[k + 1];
-        sharedIds_[shared_.count - 1] = 0;
-        shared_.remove(c.slot);
+        sharedIds_[countBefore - 1] = 0;
         tableFull_.store(false, std::memory_order_release);   // room again
-        return c.slot;
+        break;
     default:
-        return -1;
+        break;                                 // kSet: same filter, edited, keeps its id
     }
+    return row;
 }
 
 // Rows that are the same filter as an existing one (same frequency within the
@@ -831,18 +848,17 @@ void RingOutDSP::detect(const float* db, const Thresholds& t) noexcept
         // and so are its neighbours in the series. Look for a fundamental f/k
         // that is present together with one other member of the same series,
         // all within 15 dB of the candidate.
-        const auto binMax = levelNear;
         bool partialOfSeries = false;
         for (int kk = 2; kk <= 100 && !partialOfSeries; ++kk)
         {
             const float f0 = freq / (float)kk;
             if (f0 < (float)rangeLo_ * binHz_) break;
-            if (binMax(f0) < peakDb - 15.0f) continue;
+            if (levelNear(f0) < peakDb - 15.0f) continue;
             const int others[4] = { 2, 3, kk - 1, kk + 1 };
             for (const int m : others)
             {
                 if (m == kk || m < 2) continue;
-                if (binMax((float)m * f0) >= peakDb - 15.0f) { partialOfSeries = true; break; }
+                if (levelNear((float)m * f0) >= peakDb - 15.0f) { partialOfSeries = true; break; }
             }
         }
         if (partialOfSeries) continue;
@@ -1007,7 +1023,7 @@ bool RingOutDSP::engage(const Track& track) noexcept
         ringout::Filter& x = table.f[nearest];
         const ringout::Filter before = x;
         x.on = true;
-        deepen(x);
+        widen(x);
         changed = !ringout::filtersEqual(before, x);
         row = nearest;
     }
@@ -1033,8 +1049,10 @@ bool RingOutDSP::engage(const Track& track) noexcept
     const int slot = slotForRow(row);
     if (slot >= 0)
         slots_[slot].cooldownFrames = 8;
+    // Row first, then the count with release: a reader that sees the new
+    // count (acquire) sees the row that goes with it.
     lastEngagedRow_.store(row, std::memory_order_relaxed);
-    engagementCount_.fetch_add(1, std::memory_order_relaxed);
+    engagementCount_.fetch_add(1, std::memory_order_release);
 
     if (addSearching_.load(std::memory_order_acquire))
     {

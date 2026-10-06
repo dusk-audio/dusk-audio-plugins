@@ -125,9 +125,11 @@ Out, Bypass, and the two meter outputs.
   editor's button shows the engine's state. ADD starts a one-filter search;
   the editor ends it on release through the edit channel (`addstop`), and a
   search nobody ends gives up after 10 s.
-* The editor's RESET button goes through the edit channel (`clear`), like
-  every other table edit; the Reset trigger parameter is for host automation
-  and controller mapping.
+* The editor's SETUP, ADD and RESET buttons all go through the edit channel
+  (`setup`, `addstart` / `addstop`, `clear`), like every table edit; the
+  three trigger parameters are for host automation and controller mapping.
+  A trigger written from the editor could be swallowed by a host that
+  forwards only control-port changes (an LV2 port already sitting at 1).
 * Arming SETUP from the editor also resets GLOBAL Q and AMP, as editor edits
   the host sees. The plugin never rewrites one parameter because another
   moved: that fails AU validation ("Parameter did not retain set value") and

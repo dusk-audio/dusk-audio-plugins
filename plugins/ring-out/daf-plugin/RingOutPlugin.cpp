@@ -252,13 +252,17 @@ protected:
         }
         else if (std::strcmp(key, "edit") == 0 && value[0] != '\0')
         {
-            duskaudio::ringout::EditCommand command;
+            using duskaudio::ringout::EditCommand;
+            EditCommand command;
             if (!duskaudio::ringout::parseEditCommand(value, command))
                 return;
-            if (command.kind == duskaudio::ringout::EditCommand::kAddStop)
-                dsp.setAdd(false);
-            else
-                dsp.applyEdit(command);
+            switch (command.kind)
+            {
+            case EditCommand::kSetupToggle: dsp.setSetup(!dsp.setupActive()); break;
+            case EditCommand::kAddStart:    dsp.setAdd(true);  break;
+            case EditCommand::kAddStop:     dsp.setAdd(false); break;
+            default:                        dsp.applyEdit(command); break;
+            }
         }
     }
 

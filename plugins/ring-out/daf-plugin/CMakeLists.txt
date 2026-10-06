@@ -77,6 +77,8 @@ if(NOT CMAKE_CROSSCOMPILING)
         "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp"
         "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/ui")
     target_compile_features(RingOutCoreTest PRIVATE cxx_std_17)
+    find_package(Threads REQUIRED)   # the deferred-RESET test contends the table lock from a thread
+    target_link_libraries(RingOutCoreTest PRIVATE Threads::Threads)
     add_test(NAME RingOutCore COMMAND RingOutCoreTest)
 
     find_program(DUSK_SERDI_EXECUTABLE serdi)

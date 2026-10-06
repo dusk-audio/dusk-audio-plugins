@@ -157,8 +157,17 @@ public:
     float  outputPeakDb(int channel) const noexcept { return outPeakDb_[channel & 1].load(std::memory_order_relaxed); }
 
     // Copies only the bins in use for the current FFT size, not the frame's
-    // worst-case payload.
-    bool     copySpectrum(RingOutSpectrumFrame& out) const noexcept { return spectrum_.load(out, spectrumBytes()); }
+    // worst-case payload. A frame published at a larger size (a rate change in
+    // flight) is cut down to what was copied.
+    bool copySpectrum(RingOutSpectrumFrame& out) const noexcept
+    {
+        if (!spectrum_.load(out, spectrumBytes()))
+            return false;
+        const int copied = fftSize_ / 2 + 1;
+        if (out.bins > copied)
+            out.bins = copied;
+        return true;
+    }
     unsigned spectrumSequence() const noexcept                       { return spectrum_.sequence(); }
 
     double sampleRate() const noexcept { return sampleRate_; }
