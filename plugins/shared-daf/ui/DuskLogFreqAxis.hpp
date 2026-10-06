@@ -25,17 +25,21 @@ namespace duskdaf
 class LogFreqAxis
 {
 public:
-    LogFreqAxis(float minHz = 20.0f, float maxHz = 20000.0f) noexcept
-        : fMin(minHz), fMax(maxHz),
-          logMin_(std::log10(minHz > 1.0e-6f ? minHz : 1.0e-6f)),
-          invSpan_(1.0f / (std::log10(maxHz > minHz ? maxHz : minHz * 2.0f) - logMin_))
+    LogFreqAxis(float minHz = 20.0f, float maxHz = 20000.0f) noexcept { setRange(minHz, maxHz); }
+
+    // The range and the mapping cache are set together, so they cannot drift.
+    void setRange(float minHz, float maxHz) noexcept
     {
+        fMin_ = minHz > 1.0e-6f ? minHz : 1.0e-6f;
+        fMax_ = maxHz > fMin_ ? maxHz : fMin_ * 2.0f;
+        logMin_ = std::log10(fMin_);
+        invSpan_ = 1.0f / (std::log10(fMax_) - logMin_);
     }
 
-    float fMin;
-    float fMax;
+    float minHz() const noexcept { return fMin_; }
+    float maxHz() const noexcept { return fMax_; }
 
-    // 0 at fMin, 1 at fMax (not clamped: a caller may want to know a point is
+    // 0 at minHz, 1 at maxHz (not clamped: a caller may want to know a point is
     // off the axis). One log10 per call; the endpoints are cached, since an
     // analyser calls this once per bin per frame.
     float toNorm(float freq) const noexcept
@@ -58,7 +62,7 @@ public:
             for (const float m : kMantissa)
             {
                 const float f = m * decade;
-                if (f >= fMin * 0.999f && f <= fMax * 1.001f && n < cap)
+                if (f >= fMin_ * 0.999f && f <= fMax_ * 1.001f && n < cap)
                     out[n++] = f;
             }
         return n;
@@ -85,8 +89,10 @@ public:
     }
 
 private:
-    float logMin_;
-    float invSpan_;
+    float fMin_ = 20.0f;
+    float fMax_ = 20000.0f;
+    float logMin_ = 0.0f;
+    float invSpan_ = 1.0f;
 };
 
 } // namespace duskdaf

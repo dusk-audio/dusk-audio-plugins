@@ -45,7 +45,7 @@ public:
     }
 
     // Same-process UI bridge (RingOutAccess.hpp).
-    const duskaudio::RingOutDSP* dspForUI() const noexcept { return &dsp; }
+    duskaudio::RingOutDSP* dspForUI() noexcept { return &dsp; }
 
 protected:
     //--- metadata --------------------------------------------------------------
@@ -256,14 +256,19 @@ protected:
             EditCommand command;
             if (!duskaudio::ringout::parseEditCommand(value, command))
                 return;
+            if (command.isTableEdit())
+            {
+                dsp.applyEdit(command);
+                return;
+            }
             switch (command.kind)
             {
             case EditCommand::kSetupOn:  dsp.setSetup(true);  break;
             case EditCommand::kSetupOff: dsp.setSetup(false); break;
-            case EditCommand::kAddStart: dsp.setAdd(true);       break;
-            case EditCommand::kAddHold:  dsp.renewAddLease();    break;
-            case EditCommand::kAddStop:  dsp.setAdd(false);      break;
-            default:                        dsp.applyEdit(command); break;
+            case EditCommand::kAddStart: dsp.setAdd(true);    break;
+            case EditCommand::kAddHold:  dsp.renewAddLease(); break;
+            case EditCommand::kAddStop:  dsp.setAdd(false);   break;
+            default: break;
             }
         }
     }
@@ -311,7 +316,9 @@ private:
         }
     }
 
-    duskaudio::RingOutDSP dsp;
+    // mutable: DAF declares getState() const, but reading the table back for a
+    // save may apply a RESET that was deferred under lock contention.
+    mutable duskaudio::RingOutDSP dsp;
     int activeChannels = DAF_PLUGIN_NUM_INPUTS;
     std::atomic<float> values[kParamCount] = {};
 
@@ -326,7 +333,7 @@ Plugin* createPlugin()
 END_NAMESPACE_DAF
 
 // Same-process UI accessor (see RingOutAccess.hpp).
-const duskaudio::RingOutDSP* ringOutGetDSP(void* const pluginInstancePointer) noexcept
+duskaudio::RingOutDSP* ringOutGetDSP(void* const pluginInstancePointer) noexcept
 {
     auto* const plugin = static_cast<DAF_NAMESPACE::RingOutPlugin*>(pluginInstancePointer);
     return plugin != nullptr ? plugin->dspForUI() : nullptr;

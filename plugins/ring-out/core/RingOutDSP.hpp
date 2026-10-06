@@ -31,7 +31,8 @@
 // closes the gap), a filter that leaves the table fades out in its slot, and a
 // new row ramps in from flat in a free one. There are twice as many slots as
 // rows so even a whole-table replacement crossfades cleanly. Bypass runs the
-// filters warm and crossfades to a bit-exact dry path over about 30 ms.
+// filters warm and crossfades with a 10 ms time constant, reaching a bit-exact
+// dry path after about 90 ms.
 //
 // Detection (see RingOutDSP.cpp, Detector) follows the standard acoustic
 // feedback criteria: a spectral peak that stands far above the frame average
@@ -151,7 +152,9 @@ public:
     bool  addSearching() const noexcept { return addSearching_.load(std::memory_order_acquire); }
 
     //--- the filter table (host / UI threads; spin-locks) ----------------------
-    void getTable(ringout::FilterTable& out) const noexcept;
+    // Not const: a RESET that found the lock busy is applied by the next real
+    // lock holder, and that may be this read.
+    void getTable(ringout::FilterTable& out) noexcept;
     // Whole-table replacement. Rows that are the same filter as before (same
     // frequency within the slot-identity tolerance) keep their identity, so a
     // preset load crossfades only what changed.
@@ -170,18 +173,20 @@ public:
     // flight) is cut down to what was copied.
     bool copySpectrum(RingOutSpectrumFrame& out) const noexcept
     {
-        if (!spectrum_.load(out, spectrumBytes()))
+        const int bins = fftSize() / 2 + 1;
+        if (!spectrum_.load(out, spectrumBytesFor(bins)))
             return false;
-        const int copied = fftSize_ / 2 + 1;
-        if (out.bins > copied)
-            out.bins = copied;
+        if (out.bins > bins)
+            out.bins = bins;
         return true;
     }
-    unsigned spectrumSequence() const noexcept                       { return spectrum_.sequence(); }
+    unsigned spectrumSequence() const noexcept { return spectrum_.sequence(); }
 
-    double sampleRate() const noexcept { return sampleRate_; }
-    int    fftSize() const noexcept    { return fftSize_; }
-    float  binHz() const noexcept      { return binHz_; }
+    // UI / host-thread views of what prepare() set, through atomics: prepare()
+    // runs on the host thread while the editor keeps reading.
+    double sampleRate() const noexcept { return sampleRateShared_.load(std::memory_order_acquire); }
+    int    fftSize() const noexcept    { return fftSizeShared_.load(std::memory_order_acquire); }
+    float  binHz() const noexcept      { return (float)(sampleRate() / (double)fftSize()); }
 
     //--- pure helpers shared with the UI --------------------------------------
     static float effectiveCutDb(float cutDb, float globalAmpDb) noexcept
@@ -234,7 +239,6 @@ private:
 
     // Table mutators; the caller holds tableLock_.
     void honourPendingResetLocked() noexcept;
-    void clearLocked() noexcept;
     int  addLocked(const ringout::Filter& x) noexcept;
     int  applyEditLocked(const ringout::EditCommand& command) noexcept;
     void replaceLocked(const ringout::FilterTable& table) noexcept;
@@ -243,11 +247,12 @@ private:
     void adoptLiveTable() noexcept;
     void assignSlots() noexcept;
     int  slotForRow(int row) const noexcept;
-    // Bytes of RingOutSpectrumFrame in use at the current FFT size.
-    size_t spectrumBytes() const noexcept
+    // Bytes of RingOutSpectrumFrame in use for `bins` bins.
+    static size_t spectrumBytesFor(int bins) noexcept
     {
-        return offsetof(RingOutSpectrumFrame, db) + (size_t)(fftSize_ / 2 + 1) * sizeof(float);
+        return offsetof(RingOutSpectrumFrame, db) + (size_t)bins * sizeof(float);
     }
+    size_t spectrumBytes() const noexcept { return spectrumBytesFor(fftSize_ / 2 + 1); }
     void updateSmoothersAndCoefficients() noexcept;
     void pushAnalysis(const float* const* inputs, int numChannels, int offset, int count) noexcept;
     void analyzeFrame() noexcept;
@@ -261,11 +266,14 @@ private:
     void addHoldoff(float freq) noexcept;
     void raiseUncovered() noexcept;
 
+    // Audio-thread copies (plain) and the shared mirrors other threads read.
     double sampleRate_ = 48000.0;
     int    fftSize_ = 4096;
     int    hop_ = 1024;
     float  binHz_ = 48000.0f / 4096.0f;
     int    rangeLo_ = 2, rangeHi_ = 2047;   // bins analysed: 24 Hz .. 20 kHz (or 0.45 fs)
+    std::atomic<double> sampleRateShared_ { 48000.0 };
+    std::atomic<int>    fftSizeShared_ { 4096 };
 
     //--- parameters
     std::atomic<int>   sense_ { kSenseLow };
@@ -298,8 +306,9 @@ private:
     std::atomic<bool>     resetRequested_ { false };
     ringout::FilterTable  live_;
     unsigned              liveVersion_ = 0;
-    bool                  snapOnAdopt_ = true;   // adoption right after reset(): no ramp-in
-    int                   samplesSinceReset_ = 0;
+    // The first non-empty table adopted after reset() is a restore, not an
+    // edit: its notches snap into force instead of ramping in from flat.
+    bool                  snapOnAdopt_ = true;
 
     //--- audio-thread filter state
     SlotState     slots_[kNumSlots];

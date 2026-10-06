@@ -79,8 +79,7 @@ struct ParamHost
 };
 
 // A colour at a fraction of its alpha (0 = transparent, 1 = unchanged): the
-// scrim, glow and dimmed-state helper. Ring Out uses it; Tape Echo 2 and
-// DuskVerb 2 still carry a private fade() of their own that can move here.
+// scrim, glow and dimmed-state helper the panels share.
 inline ImU32 scaleAlpha(ImU32 c, float amount) noexcept
 {
     amount = amount < 0.0f ? 0.0f : (amount > 1.0f ? 1.0f : amount);

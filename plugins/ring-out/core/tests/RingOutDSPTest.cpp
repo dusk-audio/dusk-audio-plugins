@@ -658,8 +658,9 @@ static void testDeferredReset()
     CHECK(allCleared, "RESET under lock contention always empties the table (worst %d blocks)", worstBlocks);
 }
 
-// Bypass crossfades to a bit-exact dry path and back without a click; the
-// filters stay warm while bypassed so un-bypass replays no stale tail.
+// Bypass crossfades (10 ms time constant, bit-exact dry after about 90 ms) and
+// back without a click; the filters stay warm while bypassed so un-bypass
+// replays no stale tail.
 static void testBypassCrossfade()
 {
     {
@@ -742,6 +743,26 @@ static void testTimersAndEdges()
         for (int b = 0; b < (int)((ro::kAddLeaseSeconds + 0.5f) * perSecond); ++b)
             dsp.processBlock(ins, outs, 2, 4096);
         CHECK(!dsp.status().addSearching, "a lease nobody renews ends the search within %.0f s", ro::kAddLeaseSeconds);
+    }
+    {
+        // A held ADD that finds its filter keeps showing "placed" for as long
+        // as the button is down (lease renewed), then clears on the release.
+        RingOutDSP dsp;
+        dsp.prepare(48000.0, 256);
+        dsp.setAdd(true);
+        auto ring = [](double tt) { return 0.3f * (float)std::sin(2.0 * 3.14159265358979323846 * 2500.0 * tt); };
+        runTone(dsp, 48000.0, 0.6f, -45.0f, ring);
+        CHECK(dsp.status().addSatisfied && !dsp.status().addSearching, "held ADD placed its filter");
+        for (int sec = 0; sec < 4; ++sec)
+        {
+            runTone(dsp, 48000.0, 1.0f, -45.0f, [](double) { return 0.0f; });
+            dsp.renewAddLease();
+        }
+        CHECK(dsp.status().addSatisfied, "placed state persists while the editor holds and renews");
+        dsp.tapAdd();
+        CHECK(!dsp.status().addSearching, "a controller tap does not interrupt an editor hold");
+        dsp.setAdd(false);
+        CHECK(!dsp.status().addSatisfied, "the release clears it");
     }
     {
         // Bypass pauses the countdown: the detector is out of circuit then.
@@ -827,6 +848,34 @@ static void testTimersAndEdges()
         }
         const float early = (float)(10.0 * std::log10(sumOut / sumIn));
         CHECK(early < -12.0f, "notches are in force right after reset: %.1f dB within the first 10 ms", early);
+    }
+    {
+        // The same when the host restores the table only after audio has run
+        // on an empty one for a while.
+        RingOutDSP dsp;
+        dsp.prepare(48000.0, 64);
+        std::vector<float> in(64), out(64);
+        double phase = 0.0;
+        for (int b = 0; b < 300; ++b)   // 400 ms of tone through an empty table
+        {
+            for (int i = 0; i < 64; ++i) { in[(size_t)i] = 0.5f * (float)std::sin(phase); phase += 2.0 * 3.14159265358979323846 * 1000.0 / 48000.0; }
+            const float* ins[1] = { in.data() }; float* outs[1] = { out.data() };
+            dsp.processBlock(ins, outs, 1, 64);
+        }
+        ro::FilterTable t;
+        t.add(ro::Filter{ true, 1000.0f, -20.0f, 8.0f });
+        dsp.setTable(t);
+        double sumIn = 0.0, sumOut = 0.0;
+        for (int b = 0; b < 8; ++b)
+        {
+            for (int i = 0; i < 64; ++i) { in[(size_t)i] = 0.5f * (float)std::sin(phase); phase += 2.0 * 3.14159265358979323846 * 1000.0 / 48000.0; }
+            const float* ins[1] = { in.data() }; float* outs[1] = { out.data() };
+            dsp.processBlock(ins, outs, 1, 64);
+            if (b >= 4)
+                for (int i = 0; i < 64; ++i) { sumIn += in[(size_t)i] * in[(size_t)i]; sumOut += out[(size_t)i] * out[(size_t)i]; }
+        }
+        const float early = (float)(10.0 * std::log10(sumOut / sumIn));
+        CHECK(early < -12.0f, "a table restored after audio started still snaps into force: %.1f dB", early);
     }
     {
         // A user filter wider than the engine's floor is never narrowed back.

@@ -163,9 +163,12 @@ inline bool stepperBox(DuskPanel& panel, ImDrawList* dl, const char* id,
         // frame, so the gesture must be read while active, as the knob does.
         if ((hovered || active) && ImGui::IsMouseDoubleClicked(0))
         {
+            // Seed with the value's full precision, not the read-out's: a
+            // 1234.6 Hz filter shown as "1235" must come back as 1234.6 when
+            // the edit is confirmed untouched, or confirming would move it.
             char seed[32];
-            std::snprintf(seed, sizeof(seed), fmt, (double)value);
-            // Seed in the classic-locale form the parser below reads back.
+            std::snprintf(seed, sizeof(seed), "%.6g", (double)value);
+            // Classic-locale form, which the parser below reads back.
             for (char* p = seed; *p; ++p) if (*p == ',') *p = '.';
             panel.openValueEdit(id, value, seed);
         }

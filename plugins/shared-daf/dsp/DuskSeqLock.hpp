@@ -46,10 +46,9 @@ public:
         bytes = bytes > sizeof(T) ? sizeof(T) : bytes;
         const unsigned s = seq_.load(std::memory_order_relaxed);
         seq_.store(s + 1, std::memory_order_relaxed);
-        std::atomic_thread_fence(std::memory_order_release);
+        std::atomic_thread_fence(std::memory_order_release);   // the odd mark lands before the data
         std::memcpy(static_cast<void*>(&value_), &v, bytes);
-        std::atomic_thread_fence(std::memory_order_release);
-        seq_.store(s + 2, std::memory_order_release);
+        seq_.store(s + 2, std::memory_order_release);           // orders the data before the even mark
     }
 
     // Any thread. Returns false if no frame has ever been stored, or if the

@@ -263,6 +263,11 @@ namespace detail
         return n;
     }
 
+    inline void skipSpace(const char*& p) noexcept
+    {
+        while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') ++p;
+    }
+
     // Parses [+-]digits[.digits] at p; advances p past it. No exponent on
     // purpose: the writer never produces one and "1e999" must not get through.
     inline bool parseNumber(const char*& p, float& out) noexcept
@@ -282,6 +287,26 @@ namespace detail
         out = (float)(neg ? -v : v);
         if (!std::isfinite(out)) return false;
         p = q;
+        return true;
+    }
+
+    // One filter, "<on>,<freq>,<cut>,<q>", validated and landed on the grid.
+    // Shared by the table and the edit-command grammars so the editor's
+    // optimistic mirror and the plugin always parse the same text the same way.
+    inline bool parseFilter(const char*& p, Filter& x) noexcept
+    {
+        if (*p != '0' && *p != '1') return false;
+        x.on = *p++ == '1';
+        if (*p++ != ',') return false;
+        if (!parseNumber(p, x.freqHz)) return false;
+        if (*p++ != ',') return false;
+        if (!parseNumber(p, x.cutDb)) return false;
+        if (*p++ != ',') return false;
+        if (!parseNumber(p, x.q)) return false;
+        if (!filterValid(x)) return false;
+        x.freqHz = snapFreq(x.freqHz);
+        x.cutDb  = snapCut(x.cutDb);
+        x.q      = snapQ(x.q);
         return true;
     }
 }
@@ -315,30 +340,18 @@ inline bool parseTable(const char* text, FilterTable& out) noexcept
     FilterTable t;
     if (text == nullptr) return false;
     const char* p = text;
-    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') ++p;
+    detail::skipSpace(p);
     if (*p == '\0') { out = t; return true; }
     for (;;)
     {
         if (t.count >= kMaxFilters) return false;
         Filter x;
-        if (*p != '0' && *p != '1') return false;
-        x.on = *p++ == '1';
-        if (*p++ != ',') return false;
-        if (!detail::parseNumber(p, x.freqHz)) return false;
-        if (*p++ != ',') return false;
-        if (!detail::parseNumber(p, x.cutDb)) return false;
-        if (*p++ != ',') return false;
-        if (!detail::parseNumber(p, x.q)) return false;
-        if (!filterValid(x)) return false;
-        // Land on the grid so a hand-edited "66.33" reads back as the control shows it.
-        x.freqHz = snapFreq(x.freqHz);
-        x.cutDb  = snapCut(x.cutDb);
-        x.q      = snapQ(x.q);
+        if (!detail::parseFilter(p, x)) return false;
         t.f[t.count++] = x;
-        while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') ++p;
+        detail::skipSpace(p);
         if (*p == '\0') break;
         if (*p++ != ';') return false;
-        while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') ++p;
+        detail::skipSpace(p);
         if (*p == '\0') break;   // tolerate a trailing ';'
     }
     out = t;
@@ -401,22 +414,7 @@ inline bool parseEditCommand(const char* text, EditCommand& out) noexcept
         v = (int)f;
         return true;
     };
-    const auto parseFilter = [&p](Filter& x) -> bool
-    {
-        if (*p != '0' && *p != '1') return false;
-        x.on = *p++ == '1';
-        if (*p++ != ',') return false;
-        if (!detail::parseNumber(p, x.freqHz)) return false;
-        if (*p++ != ',') return false;
-        if (!detail::parseNumber(p, x.cutDb)) return false;
-        if (*p++ != ',') return false;
-        if (!detail::parseNumber(p, x.q)) return false;
-        if (!filterValid(x)) return false;
-        x.freqHz = snapFreq(x.freqHz);
-        x.cutDb  = snapCut(x.cutDb);
-        x.q      = snapQ(x.q);
-        return true;
-    };
+    const auto parseFilter = [&p](Filter& x) -> bool { return detail::parseFilter(p, x); };
 
     if (matchWord("clear"))
         c.kind = EditCommand::kClear;
@@ -456,7 +454,7 @@ inline bool parseEditCommand(const char* text, EditCommand& out) noexcept
     else
         return false;
 
-    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') ++p;
+    detail::skipSpace(p);
     if (*p != '\0') return false;
     out = c;
     return true;

@@ -120,6 +120,8 @@ void RingOutDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     fftSize_ = fftSizeForRate(sampleRate_);
     hop_ = fftSize_ / 4;
     binHz_ = (float)(sampleRate_ / (double)fftSize_);
+    sampleRateShared_.store(sampleRate_, std::memory_order_release);
+    fftSizeShared_.store(fftSize_, std::memory_order_release);
 
     // A countdown armed before activation was measured at the old rate (the
     // constructor's 48 kHz when a session is restored before the first
@@ -202,7 +204,6 @@ void RingOutDSP::reset() noexcept
     // force immediately rather than ramped in.
     liveVersion_ = 0;
     snapOnAdopt_ = true;
-    samplesSinceReset_ = 0;
 }
 
 //==============================================================================
@@ -216,7 +217,7 @@ void RingOutDSP::setSetup(bool on) noexcept
     {
         if (!setupActive_.load(std::memory_order_acquire))
         {
-            setupSamplesLeft_.store((int)(ringout::kSetupSeconds * sampleRate_ + 0.5), std::memory_order_relaxed);
+            setupSamplesLeft_.store((int)(ringout::kSetupSeconds * sampleRate() + 0.5), std::memory_order_relaxed);
             setupExpired_.store(false, std::memory_order_release);
             setupActive_.store(true, std::memory_order_release);
         }
@@ -234,7 +235,7 @@ void RingOutDSP::startAdd(bool held) noexcept
 {
     addHeld_.store(held, std::memory_order_release);
     const float seconds = held ? ringout::kAddLeaseSeconds : ringout::kAddSeconds;
-    addSamplesLeft_.store((int)(seconds * sampleRate_ + 0.5), std::memory_order_relaxed);
+    addSamplesLeft_.store((int)(seconds * sampleRate() + 0.5), std::memory_order_relaxed);
     if (!addSearching_.load(std::memory_order_acquire))
     {
         addSatisfied_.store(false, std::memory_order_release);
@@ -254,15 +255,18 @@ void RingOutDSP::setAdd(bool held) noexcept
     addSatisfied_.store(false, std::memory_order_release);
 }
 
+// The lease covers the held search AND the "filter placed" state that follows
+// it: both last as long as the editor keeps the button down and renews.
 void RingOutDSP::renewAddLease() noexcept
 {
-    if (addHeld_.load(std::memory_order_acquire) && addSearching_.load(std::memory_order_acquire))
-        addSamplesLeft_.store((int)(ringout::kAddLeaseSeconds * sampleRate_ + 0.5), std::memory_order_relaxed);
+    if (addHeld_.load(std::memory_order_acquire))
+        addSamplesLeft_.store((int)(ringout::kAddLeaseSeconds * sampleRate() + 0.5), std::memory_order_relaxed);
 }
 
+// A controller's tap never interrupts a search the editor is holding.
 void RingOutDSP::tapAdd() noexcept
 {
-    if (!addSearching_.load(std::memory_order_acquire))
+    if (!addSearching_.load(std::memory_order_acquire) && !addHeld_.load(std::memory_order_acquire))
         startAdd(false);
 }
 
@@ -281,7 +285,7 @@ RingOutDSP::Status RingOutDSP::status() const noexcept
     // The block that expires the timer decrements it below zero a moment
     // before it clears setupActive_; never show that as a negative count.
     s.setupRemainingSeconds = s.setupActive
-        ? std::max(0.0f, (float)setupSamplesLeft_.load(std::memory_order_relaxed) / (float)sampleRate_) : 0.0f;
+        ? std::max(0.0f, (float)setupSamplesLeft_.load(std::memory_order_relaxed) / (float)sampleRate()) : 0.0f;
     s.setupExpired = setupExpired_.load(std::memory_order_acquire);
     s.addSearching = addSearching_.load(std::memory_order_acquire);
     s.addSatisfied = addSatisfied_.load(std::memory_order_acquire);
@@ -305,15 +309,10 @@ void RingOutDSP::honourPendingResetLocked() noexcept
     resetRequested_.store(false, std::memory_order_relaxed);
     if (shared_.count != 0)
     {
-        clearLocked();
+        shared_.clear();
         tableVersion_.fetch_add(1, std::memory_order_acq_rel);
     }
     ringUncovered_.store(false, std::memory_order_release);
-}
-
-void RingOutDSP::clearLocked() noexcept
-{
-    shared_.clear();
 }
 
 int RingOutDSP::addLocked(const ringout::Filter& x) noexcept
@@ -366,10 +365,10 @@ void RingOutDSP::replaceLocked(const ringout::FilterTable& table) noexcept
 //==============================================================================
 // table access (host / UI side)
 
-void RingOutDSP::getTable(ringout::FilterTable& out) const noexcept
+void RingOutDSP::getTable(ringout::FilterTable& out) noexcept
 {
     const SpinLock::ScopedLock guard(tableLock_);
-    const_cast<RingOutDSP*>(this)->honourPendingResetLocked();
+    honourPendingResetLocked();
     out = shared_;
 }
 
@@ -406,7 +405,7 @@ void RingOutDSP::resetFilters() noexcept
         {
             if (shared_.count != 0)
             {
-                clearLocked();
+                shared_.clear();
                 tableVersion_.fetch_add(1, std::memory_order_acq_rel);
             }
             ringUncovered_.store(false, std::memory_order_release);
@@ -518,10 +517,10 @@ void RingOutDSP::assignSlots() noexcept
         st.cooldownFrames = 0;
         for (Biquad& b : st.bq) { b.reset(); b.setCoeffs(BiquadCoeffs()); }
     }
-    // The no-ramp adoption is spent once real filters were placed; an empty
-    // table adopted first (a host that restores state after activation) keeps
-    // it for the table that follows. processBlock() also retires it once
-    // audio has flowed for a while.
+    // The no-ramp adoption is spent by the first table with filters in it,
+    // whenever that arrives: a host that restores state after activation, even
+    // after audio has run on an empty table for a while, still gets its
+    // notches in force at once. Everything after that is an edit and ramps.
     if (live_.count > 0)
         snapOnAdopt_ = false;
 }
@@ -539,21 +538,12 @@ void RingOutDSP::processBlock(const float* const* inputs, float* const* outputs,
 
     syncTableFromShared();
 
-    // Once audio has flowed for a while, filters that arrive are live edits and
-    // ramp in; see snapOnAdopt_.
-    if (snapOnAdopt_)
-    {
-        samplesSinceReset_ += numSamples;
-        if ((double)samplesSinceReset_ > 0.05 * sampleRate_)
-            snapOnAdopt_ = false;
-    }
-
     const bool bypass = bypass_.load(std::memory_order_relaxed);
 
     // SETUP and ADD timers. They pause while bypassed, since the detector is
-    // out of circuit then too. ADD's timer is the controller tap's cap, or
-    // the editor's lease (renewed every half second while held); either way a
-    // lapse ends the search.
+    // out of circuit then too. ADD's timer is the controller tap's cap, or the
+    // editor's lease (renewed every half second while held, through the
+    // search and the "filter placed" state after it); a lapse ends both.
     if (!bypass && setupActive_.load(std::memory_order_acquire))
     {
         const int left = setupSamplesLeft_.fetch_sub(numSamples, std::memory_order_relaxed) - numSamples;
@@ -564,18 +554,19 @@ void RingOutDSP::processBlock(const float* const* inputs, float* const* outputs,
             clearTracks();
         }
     }
-    if (!bypass && addSearching_.load(std::memory_order_acquire))
+    if (!bypass && (addSearching_.load(std::memory_order_acquire) || addHeld_.load(std::memory_order_acquire)))
     {
         const int left = addSamplesLeft_.fetch_sub(numSamples, std::memory_order_relaxed) - numSamples;
         if (left <= 0)
         {
             addSearching_.store(false, std::memory_order_release);
             addHeld_.store(false, std::memory_order_release);
+            addSatisfied_.store(false, std::memory_order_release);
             clearTracks();
         }
     }
-    // "Filter placed" shows until the editor releases ADD, or for a moment
-    // after a controller tap that never will.
+    // After a controller tap nobody will release, "filter placed" shows for a
+    // moment and clears by itself; the editor's hold keeps it until release.
     if (addSatisfied_.load(std::memory_order_acquire) && !addHeld_.load(std::memory_order_acquire))
     {
         const int left = addSatisfiedSamplesLeft_.fetch_sub(numSamples, std::memory_order_relaxed) - numSamples;
@@ -1144,11 +1135,10 @@ bool RingOutDSP::engage(const Track& track) noexcept
 
     if (addSearching_.load(std::memory_order_acquire))
     {
-        // The search is over. Dropping the held flag as well means a controller
-        // that never sends a release can start the next search; the editor's
-        // release still clears the satisfied state it shows meanwhile.
+        // The search is over. An editor hold keeps its flag (and its lease), so
+        // "filter placed" shows until the release; a tap has no hold, so the
+        // next tap is free to start again and the state ages out on its own.
         addSearching_.store(false, std::memory_order_release);
-        addHeld_.store(false, std::memory_order_release);
         addSatisfiedSamplesLeft_.store((int)(1.5 * sampleRate_), std::memory_order_relaxed);
         addSatisfied_.store(true, std::memory_order_release);
     }

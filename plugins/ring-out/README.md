@@ -161,8 +161,8 @@ new row ramps in from flat in a free one. There are twice as many slots as
 rows (40) so even a whole-table replacement (a preset load) crossfades
 cleanly; `setTable()` keeps the id of any row that is the same filter as
 before, so a preset load crossfades only what changed. Bypass runs the filters
-warm and crossfades to a bit-exact dry path over about 30 ms, so un-bypass
-has no stale tail and neither edge clicks.
+warm and crossfades with a 10 ms time constant (bit-exact dry after about
+90 ms), so un-bypass has no stale tail and neither edge clicks.
 
 User presets (`~/.config/DuskAudio/RingOut/presets/*.ropreset`) carry the
 preset parameters plus a `filters=` line.

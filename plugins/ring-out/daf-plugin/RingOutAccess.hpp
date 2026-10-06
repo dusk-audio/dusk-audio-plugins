@@ -16,5 +16,7 @@
 namespace duskaudio { class RingOutDSP; }
 
 // Null in the split LV2 UI, where the display then has nothing to draw: this
-// plugin is built MONOLITHIC for exactly that reason.
-DUSK_ACCESS_DECL(const duskaudio::RingOutDSP*, ringOutGetDSP);
+// plugin is built MONOLITHIC for exactly that reason. Non-const because reading
+// the table may apply a RESET that was deferred under lock contention; every
+// member the editor calls is thread-safe by construction.
+DUSK_ACCESS_DECL(duskaudio::RingOutDSP*, ringOutGetDSP);

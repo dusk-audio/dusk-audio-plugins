@@ -246,7 +246,7 @@ protected:
 
 private:
     //--- engine access -------------------------------------------------------------
-    const RingOutDSP* dsp() const
+    RingOutDSP* dsp() const
     {
        #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         if (ringOutGetDSP != nullptr)
@@ -260,7 +260,7 @@ private:
     void pullEngineState()
     {
         const float dt = ImGui::GetIO().DeltaTime;
-        const RingOutDSP* const d = dsp();
+        RingOutDSP* const d = dsp();
         if (d == nullptr)
         {
             inMeter.update(-100.0f, -100.0f, dt, meterStyle);
@@ -313,7 +313,7 @@ private:
             for (int k = 1; k < spectrum.bins; ++k)
             {
                 const float f = (float)k * spectrum.binHz;
-                if (f < axis.fMin || f > axis.fMax) continue;
+                if (f < axis.minHz() || f > axis.maxHz()) continue;
                 const int col = (int)(axis.toNorm(f) * (float)(cols - 1) + 0.5f);
                 if (col < 0 || col >= cols) continue;
                 colMax[(size_t)col] = std::max(colMax[(size_t)col], spectrum.db[k]);
@@ -702,7 +702,7 @@ private:
             for (int m = 2; m <= 9; ++m)
             {
                 const float f = (float)m * decade;
-                if (f <= axis.fMin || f >= axis.fMax || m == 2 || m == 5) continue;
+                if (f <= axis.minHz() || f >= axis.maxHz() || m == 2 || m == 5) continue;
                 const float x = freqX(f);
                 dl->AddLine(P(x, GY0), P(x, GY1), kColGridMinor, 1.0f * s);
             }
@@ -811,12 +811,26 @@ private:
         {
             curveStamp = tableStamp; curveGq = gq; curveAmp = amp; curveSr = sr;
             curveDb.resize((size_t)N);
+            // Design each on filter once (the matched design is the costly part),
+            // then only evaluate magnitudes along the axis: a knob drag rebuilds
+            // this every frame.
+            duskaudio::Biquad sections[ro::kMaxFilters];
+            int nSections = 0;
+            for (int i = 0; i < table.count; ++i)
+            {
+                const ro::Filter& f = table.f[i];
+                if (!f.on) continue;
+                sections[nSections++].setCoeffs(duskaudio::Biquad::matchedPeak(
+                    sr, f.freqHz, RingOutDSP::effectiveCutDb(f.cutDb, amp), RingOutDSP::effectiveQ(f.q, gq)));
+            }
             float deepest = 0.0f;
             for (int i = 0; i < N; ++i)
             {
                 const float f = axis.fromNorm((float)i / (float)(N - 1));
-                curveDb[(size_t)i] = anyOn
-                    ? (float)RingOutDSP::responseDb(table, gq, amp, sr, (double)f) : 0.0f;
+                const double w = 2.0 * 3.14159265358979323846 * (double)f / sr;
+                double mag = 1.0;
+                for (int k = 0; k < nSections; ++k) mag *= sections[k].magnitude(w);
+                curveDb[(size_t)i] = (float)(20.0 * std::log10(mag > 1.0e-9 ? mag : 1.0e-9));
                 deepest = std::min(deepest, curveDb[(size_t)i]);
             }
             for (int i = 0; i < table.count; ++i)
@@ -955,6 +969,8 @@ private:
             std::snprintf(st, sizeof(st), "ADD: LISTENING%s", uncovered);
         else if (live && status.addSatisfied)
             std::snprintf(st, sizeof(st), "ADD: FILTER PLACED");
+        else if (live && status.setupExpired)
+            std::snprintf(st, sizeof(st), "SETUP ENDED: THE MINUTE IS UP");
         else if (table.count > 0)
             std::snprintf(st, sizeof(st), "%d FILTER%s", table.count, table.count == 1 ? "" : "S");
         else
@@ -1252,13 +1268,13 @@ private:
         if (!input)
             return false;
         std::string line;
-        bool recognised = false;
+        bool recognised = false;   // at least one SETTING line; a name alone is not a preset
         while (std::getline(input, line))
         {
             const auto eq = line.find('=');
             if (eq == std::string::npos) continue;
             const std::string key = line.substr(0, eq);
-            if (key == "name") { up.name = line.substr(eq + 1); recognised = true; continue; }
+            if (key == "name") { up.name = line.substr(eq + 1); continue; }
             if (key == "filters")
             {
                 ro::FilterTable t;
