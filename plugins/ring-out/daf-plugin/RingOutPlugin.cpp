@@ -112,6 +112,15 @@ protected:
             return std::max(dsp.inputPeakDb(0), dsp.inputPeakDb(1));
         if (index == kParamOutLevel)
             return std::max(dsp.outputPeakDb(0), dsp.outputPeakDb(1));
+        // SETUP and ADD report the ENGINE, not the last value written: the
+        // engine switches itself off (the minute runs out, ADD finds its
+        // filter), and every wrapper builds the saved state from this getter.
+        // A session saved after the minute therefore holds 0 and cannot re-arm
+        // the detector on a live PA when it is reloaded.
+        if (index == kParamSetup)
+            return dsp.setupActive() ? 1.0f : 0.0f;
+        if (index == kParamAdd)
+            return dsp.addSearching() ? 1.0f : 0.0f;
         return index < kParamCount ? values[index].load(std::memory_order_relaxed) : 0.0f;
     }
 
@@ -128,12 +137,24 @@ protected:
         switch (index)
         {
         case kParamSense:     dsp.setSense(value >= 0.5f ? 1 : 0); break;
-        case kParamSetup:     dsp.setSetup(value >= 0.5f);         break;
+        case kParamSetup:
+            // The GLOBAL Q / AMP reset that goes with arming is an editor edit
+            // (RingOutUI.cpp), not done here: a plugin that rewrites other
+            // parameters as a side effect fails AU validation ("Parameter did
+            // not retain set value") and surprises every host's automation.
+            dsp.setSetup(value >= 0.5f);
+            break;
         case kParamAdd:       dsp.setAdd(value >= 0.5f);           break;
         case kParamReset:     if (value >= 0.5f) dsp.resetFilters(); break;
         case kParamGlobalQ:   dsp.setGlobalQ(value);               break;
         case kParamGlobalAmp: dsp.setGlobalAmpDb(value);           break;
-        case kParamLink:      break;   // UI-side coupling of AMP and GAIN OUT
+        case kParamLink:
+            // LINK is an editor gesture coupling (the two knobs move together),
+            // deliberately not applied here: a processor-side coupling would
+            // fire on session restore (GAIN OUT is restored after LINK and
+            // would then shift the restored AMP) and would turn an automation
+            // lane for one parameter into silent writes to a second one.
+            break;
         case kParamGainOut:   dsp.setGainOutDb(value);             break;
         case kParamBypass:    dsp.setBypass(value >= 0.5f);        break;
         default: break;

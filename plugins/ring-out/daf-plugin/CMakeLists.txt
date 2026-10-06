@@ -71,9 +71,11 @@ if(NOT CMAKE_CROSSCOMPILING)
     add_executable(RingOutCoreTest
         ../core/tests/RingOutDSPTest.cpp
         ../core/RingOutDSP.cpp)
+    # shared-daf/ui for DuskLogFreqAxis.hpp, whose label() is pure and tested here.
     target_include_directories(RingOutCoreTest PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/../core"
-        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/ui")
     target_compile_features(RingOutCoreTest PRIVATE cxx_std_17)
     add_test(NAME RingOutCore COMMAND RingOutCoreTest)
 

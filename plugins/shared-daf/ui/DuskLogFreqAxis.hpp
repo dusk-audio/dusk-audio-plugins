@@ -66,8 +66,11 @@ struct LogFreqAxis
             std::snprintf(buf, (size_t)cap, "%d", (int)(freq + 0.5f));
             return;
         }
-        const int k = (int)(freq / 1000.0f);
-        const int hundreds = (int)((freq - (float)k * 1000.0f) / 100.0f + 0.5f);
+        // Round once, to hundreds of hertz, then split: rounding the remainder
+        // on its own would print 1999 Hz as "1k10".
+        const int hundredsTotal = (int)(freq / 100.0f + 0.5f);
+        const int k = hundredsTotal / 10;
+        const int hundreds = hundredsTotal % 10;
         if (hundreds == 0)
             std::snprintf(buf, (size_t)cap, "%dk", k);
         else

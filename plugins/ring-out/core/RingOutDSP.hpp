@@ -11,8 +11,10 @@
 // processBlock() runs on the audio thread and never blocks: it TRY-locks the
 // shared filter table (DuskSpinLock) and otherwise keeps using its last copy,
 // publishes the spectrum through a seqlock and the meters through atomics. The
-// host/UI side (setters, getTable, setTable, applyEdit) takes the same spinlock
-// for real, which only ever waits on a few hundred bytes of copying.
+// host/UI side (setTable, applyEdit, getTable) takes the same spinlock for
+// real, which only ever waits on a few hundred bytes of copying. The setters a
+// host may call from its process callback (parameters, RESET, SETUP, ADD) are
+// atomics or try-locks with a deferred fallback, never a wait.
 //
 // The filter table is owned HERE, not by the host: the detection engine adds
 // filters from the audio thread, so the plugin wrapper reads the table back
@@ -24,13 +26,19 @@
 //      -> output gain -> [output meter] -> out
 //   mono sum of the input -> analysis ring -> FFT (Hann) -> spectrum + detector
 //
+// Filter slots are not table rows. A slot keeps serving the filter it was given
+// until that filter leaves the table, then fades out in place; a filter that
+// moves to another row (a DEL closes the gap) keeps its slot. So a delete never
+// steps a coefficient set and never sweeps a notch across the band.
+//
 // Detection (see RingOutDSP.cpp, Detector) follows the standard acoustic
 // feedback criteria: a spectral peak that stands far above the frame average
-// (PAPR) and its own neighbourhood (PNPR), has no harmonics (PHPR) and is not
-// itself a harmonic, persists at the same frequency for several frames, and does
-// not decay. SENSE Low/High selects two threshold sets. A qualifying tone gets a
-// notch at the interpolated peak frequency; a tone that keeps ringing through an
-// existing notch deepens it in 3 dB steps to -20 dB, then widens it to Q 0.7.
+// (PAPR) and its own neighbourhood (PNPR), has no harmonics (PHPR) and is
+// neither a harmonic nor a partial of a series, persists at the same frequency
+// for several frames, and does not decay. SENSE Low/High selects two threshold
+// sets. A qualifying tone gets a notch at the interpolated peak frequency; a
+// tone that keeps ringing through an existing notch deepens it in 3 dB steps to
+// -20 dB, then widens it to Q 0.7.
 #pragma once
 
 #include "RingOutFilterTable.hpp"
@@ -42,7 +50,6 @@
 #include "DuskSpinLock.hpp"
 
 #include <atomic>
-#include <cstdint>
 #include <vector>
 
 namespace duskaudio
@@ -67,9 +74,10 @@ public:
     {
         bool     setupActive = false;
         float    setupRemainingSeconds = 0.0f;
-        bool     setupExpired = false;    // the 60 s ran out since SETUP was last raised
+        bool     setupExpired = false;    // the minute ran out since SETUP was last raised
         bool     addSearching = false;
         bool     addSatisfied = false;    // ADD found its filter; release and press again
+        bool     tableFull = false;       // the engine wanted a filter and had no slot for it
         int      lastEngagedSlot = -1;
         unsigned engagementCount = 0;
         unsigned tableVersion = 0;
@@ -96,7 +104,7 @@ public:
     void processBlock(const float* const* inputs, float* const* outputs,
                       int numChannels, int numSamples) noexcept;
 
-    //--- parameters (any thread) ---------------------------------------------
+    //--- parameters (any thread, including a host's process callback) ----------
     void setSense(int sense) noexcept        { sense_.store(sense != 0 ? 1 : 0, std::memory_order_relaxed); }
     void setGlobalQ(float q) noexcept        { globalQ_.store(ringout::clampf(q, ringout::kGlobalQMin, ringout::kGlobalQMax), std::memory_order_relaxed); }
     void setGlobalAmpDb(float db) noexcept   { globalAmp_.store(ringout::clampf(db, ringout::kGlobalAmpMin, ringout::kGlobalAmpMax), std::memory_order_relaxed); }
@@ -108,10 +116,12 @@ public:
     void setSetup(bool on) noexcept;
 
     // Level-driven: while true the engine searches until it engages one filter,
-    // then waits for the release.
+    // then waits for the release. A search also gives up after kSetupSeconds,
+    // so a control that is never released cannot hunt for ever.
     void setAdd(bool held) noexcept;
 
-    // RESET: remove every filter. Any thread.
+    // RESET: remove every filter. Any thread; never blocks (a contended lock
+    // defers the clear to the next audio block).
     void resetFilters() noexcept;
 
     int   sense() const noexcept        { return sense_.load(std::memory_order_relaxed); }
@@ -119,8 +129,10 @@ public:
     float globalAmpDb() const noexcept  { return globalAmp_.load(std::memory_order_relaxed); }
     float gainOutDb() const noexcept    { return gainOutDb_.load(std::memory_order_relaxed); }
     bool  bypassed() const noexcept     { return bypass_.load(std::memory_order_relaxed); }
+    bool  setupActive() const noexcept  { return setupActive_.load(std::memory_order_acquire); }
+    bool  addSearching() const noexcept { return addSearching_.load(std::memory_order_acquire); }
 
-    //--- the filter table (any thread; spin-locks) ----------------------------
+    //--- the filter table (host / UI threads; spin-locks) ----------------------
     void getTable(ringout::FilterTable& out) const noexcept;
     void setTable(const ringout::FilterTable& table) noexcept;
     // Returns the slot touched, or -1 when the command changed nothing.
@@ -148,20 +160,24 @@ public:
     {
         return ringout::clampf(q * globalQ, 0.1f, 200.0f);
     }
-    // Composite magnitude response of the on filters, in dB, as the UI draws it.
+    // Composite magnitude response of the on filters, in dB: what the UI draws
+    // and what the tests compare the processed signal against.
     static double responseDb(const ringout::FilterTable& table, float globalQ, float globalAmpDb,
                              double sampleRate, double freqHz) noexcept;
 
 private:
     static constexpr int kSubBlock = 32;          // coefficient / smoother update grid
+    static constexpr int kNumSlots = ringout::kMaxFilters + 4;  // room for slots fading out
     static constexpr int kMaxTracks = 24;
     static constexpr int kMaxHoldoffs = 32;
+    static constexpr float kSameFilterLogTol = 0.05f;  // ~5 %: the same filter, moved a little
 
     struct SlotState
     {
         Biquad        bq[kMaxChannels];
         SmoothedValue cutDb, logFreq, q;
-        bool          engaged = false;    // a filter occupies this slot (or is fading out)
+        bool          engaged = false;    // serving a filter, or fading one out
+        int           entry = -1;         // table row served; -1 while fading out
         bool          active = false;     // coefficients are not identity this sub-block
         float         lastCut = 0.0f, lastLogF = 0.0f, lastQ = 0.0f;
         int           cooldownFrames = 0; // frames before the engine may touch it again
@@ -184,13 +200,20 @@ private:
     static const Thresholds& thresholdsFor(int sense) noexcept;
 
     void syncTableFromShared() noexcept;
+    void adoptLiveTable() noexcept;
+    void assignSlots() noexcept;
+    int  slotForEntry(int entry) const noexcept;
     void updateSmoothersAndCoefficients() noexcept;
     void pushAnalysis(const float* const* inputs, int numChannels, int offset, int count) noexcept;
     void analyzeFrame() noexcept;
     void detect(const float* db, const Thresholds& t) noexcept;
-    void engage(Track& track, const Thresholds& t) noexcept;
+    // Returns false only when the table lock was busy and the track should be
+    // kept for the next frame; true means the tone was dealt with (or
+    // deliberately left alone) and the track can go.
+    bool engage(const Track& track) noexcept;
     bool engineActive() const noexcept;
     void clearTracks() noexcept;
+    void addHoldoff(float freq) noexcept;
 
     double sampleRate_ = 48000.0;
     int    fftSize_ = 4096;
@@ -213,6 +236,8 @@ private:
     std::atomic<bool>  addHeld_ { false };
     std::atomic<bool>  addSearching_ { false };
     std::atomic<bool>  addSatisfied_ { false };
+    std::atomic<int>   addSamplesLeft_ { 0 };
+    std::atomic<bool>  tableFull_ { false };
     std::atomic<int>   lastEngagedSlot_ { -1 };
     std::atomic<unsigned> engagementCount_ { 0 };
 
@@ -220,22 +245,24 @@ private:
     mutable SpinLock      tableLock_;
     ringout::FilterTable  shared_;
     std::atomic<unsigned> tableVersion_ { 1 };
+    std::atomic<bool>     resetRequested_ { false };
     ringout::FilterTable  live_;
     unsigned              liveVersion_ = 0;
 
     //--- audio-thread filter state
-    SlotState     slots_[ringout::kMaxFilters];
+    SlotState     slots_[kNumSlots];
     SmoothedValue gain_;
+    float         gainNow_ = 1.0f;
     int           subPos_ = 0;
 
     //--- analysis
     FFTr2              fft_;
-    std::vector<float> ring_, window_, re_, im_, dbBins_;
+    std::vector<float> ring_, window_, re_, im_;
     int                ringPos_ = 0;
     int                hopCount_ = 0;
     unsigned           framesSinceReset_ = 0;
     SeqLock<RingOutSpectrumFrame> spectrum_;
-    RingOutSpectrumFrame          frameScratch_;
+    RingOutSpectrumFrame          frame_;     // the frame being built, then published
 
     //--- detector
     Track   tracks_[kMaxTracks];

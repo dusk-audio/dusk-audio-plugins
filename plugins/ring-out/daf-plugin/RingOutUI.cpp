@@ -164,6 +164,7 @@ protected:
             if (roIsPresetParam(i))
                 values[i] = kRoParams[i].def;
         table.clear();
+        ++tableStamp;
         selected = -1;
         currentPreset = 0;
         currentUserName.clear();
@@ -178,6 +179,7 @@ protected:
         if (!ro::parseTable(value, t))
             return;
         table = t;
+        ++tableStamp;
         clampSelection();
         syncPresetSelection();
     }
@@ -272,6 +274,7 @@ private:
         {
             tableVersionSeen = status.tableVersion;
             d->getTable(table);
+            ++tableStamp;
             clampSelection();
             syncPresetSelection();
         }
@@ -332,6 +335,7 @@ private:
         if (!ro::formatEditCommand(c, buf, (int)sizeof(buf)))
             return;
         const int touched = ro::applyEditCommand(table, c);
+        ++tableStamp;
         setState("edit", buf);
         if (c.kind == ro::EditCommand::kAdd && touched >= 0)
             selected = touched;
@@ -736,36 +740,39 @@ private:
 
     // Composite response of the on filters, filled red down from the 0 dB line,
     // one dot per filter at its notch, the selected one with a yellow cursor.
+    // The curve is the engine's own responseDb(), evaluated once per change of
+    // table, trims or sample rate rather than every frame.
     void drawFilterCurve(ImDrawList* dl)
     {
         const float gq = values[kParamGlobalQ], amp = values[kParamGlobalAmp];
         const double sr = getSampleRate() > 1.0 ? getSampleRate() : 48000.0;
 
-        duskaudio::Biquad sections[ro::kMaxFilters];
-        int nSections = 0;
-        for (int i = 0; i < table.count; ++i)
+        constexpr int N = 420;
+        bool anyOn = false;
+        for (int i = 0; i < table.count && !anyOn; ++i) anyOn = table.f[i].on;
+
+        if (curveStamp != tableStamp || curveGq != gq || curveAmp != amp || curveSr != sr
+            || curveDb.size() != (size_t)N)
         {
-            const ro::Filter& f = table.f[i];
-            if (!f.on) continue;
-            sections[nSections++].setCoeffs(duskaudio::Biquad::peak(
-                sr, f.freqHz, RingOutDSP::effectiveCutDb(f.cutDb, amp), RingOutDSP::effectiveQ(f.q, gq)));
+            curveStamp = tableStamp; curveGq = gq; curveAmp = amp; curveSr = sr;
+            curveDb.resize((size_t)N);
+            for (int i = 0; i < N; ++i)
+            {
+                const float f = axis.fromNorm((float)i / (float)(N - 1));
+                curveDb[(size_t)i] = anyOn
+                    ? (float)RingOutDSP::responseDb(table, gq, amp, sr, (double)f) : 0.0f;
+            }
         }
 
-        if (nSections > 0)
+        if (anyOn)
         {
-            constexpr int N = 420;
             std::vector<ImVec2>& pts = ptsScratch;
             pts.clear();
             pts.reserve(N);
             for (int i = 0; i < N; ++i)
             {
                 const float lx = (float)i / (float)(N - 1);
-                const float f = axis.fromNorm(lx);
-                const double w = 2.0 * 3.14159265358979323846 * (double)f / sr;
-                double mag = 1.0;
-                for (int k = 0; k < nSections; ++k) mag *= sections[k].magnitude(w);
-                const float db = (float)(20.0 * std::log10(mag > 1.0e-9 ? mag : 1.0e-9));
-                pts.push_back(P(GX0 + lx * (GX1 - GX0), curveY(db)));
+                pts.push_back(P(GX0 + lx * (GX1 - GX0), curveY(curveDb[(size_t)i])));
             }
             const float topY = P(GX0, GY0).y;
             for (size_t i = 0; i + 1 < pts.size(); ++i)
@@ -812,8 +819,10 @@ private:
         if (button(dl, "##sensehigh", 128, y0, 182, y1, "HIGH", high, kColCyan))
             setP(kParamSense, 1.0f);
 
-        // SETUP: a toggle that arms the engine for a minute. Arming also puts the
-        // global Q and AMP back to their defaults, as the reference does.
+        // SETUP: a toggle that arms the engine for a minute. Arming also puts
+        // GLOBAL Q and AMP back to their defaults, as the reference does. Those
+        // are editor edits the host sees; the plugin itself never rewrites one
+        // parameter because another moved (that fails AU validation).
         const bool setupOn = live ? status.setupActive : values[kParamSetup] >= 0.5f;
         if (button(dl, "##setup", 230, y0, 430, y1, setupOn ? "SETUP  ON" : "SETUP", setupOn, kColRed, true, 12.0f))
         {
@@ -1009,21 +1018,16 @@ private:
                                             true, nullptr, false, 1.0f, 0.0f, "Gain Out", true);
 
         // LINK: AMP and GAIN OUT move together in opposite directions, so a few dB
-        // more output gain means the same few dB deeper on every filter.
-        if (link && !linkBusy)
+        // more output gain means the same few dB deeper on every filter. An
+        // editor gesture coupling, like the reference's: both parameters reach
+        // the host as edits. Host automation of one knob moves only that knob
+        // (see RingOutPlugin.cpp, kParamLink, for why).
+        if (link)
         {
-            linkBusy = true;
             if (gainChanged)
-            {
-                const float delta = values[kParamGainOut] - prevGain;
-                setP(kParamGlobalAmp, prevAmp - delta);
-            }
+                setP(kParamGlobalAmp, prevAmp - (values[kParamGainOut] - prevGain));
             else if (ampChanged)
-            {
-                const float delta = values[kParamGlobalAmp] - prevAmp;
-                setP(kParamGainOut, prevGain - delta);
-            }
-            linkBusy = false;
+                setP(kParamGainOut, prevGain - (values[kParamGlobalAmp] - prevAmp));
         }
     }
 
@@ -1064,6 +1068,7 @@ private:
                 setP(i, kRoParams[i].def);
         setState("filters", "");
         table.clear();
+        ++tableStamp;
         selected = -1;
         currentPreset = idx;
         currentUserName.clear();
@@ -1170,6 +1175,7 @@ private:
         {
             setState("filters", filters);
             table = up.filters;
+            ++tableStamp;
         }
         clampSelection();
         currentPreset = -1;
@@ -1242,9 +1248,15 @@ private:
     RingOutDSP::Status status;
     ro::FilterTable table;
     unsigned tableVersionSeen = 0;
+    unsigned tableStamp = 0;            // bumps on every change of the local mirror
     int selected = -1;
     bool addHeldLocal = false;
-    bool linkBusy = false;
+
+    // Filter curve cache (drawFilterCurve).
+    std::vector<float> curveDb;
+    unsigned curveStamp = ~0u;
+    float curveGq = 0.0f, curveAmp = 0.0f;
+    double curveSr = 0.0;
 
     duskdaf::LogFreqAxis axis { ro::kFreqMin, ro::kFreqMax };
     duskaudio::RingOutSpectrumFrame spectrum;

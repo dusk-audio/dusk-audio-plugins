@@ -17,11 +17,13 @@
 #include "RingOutDSP.hpp"
 #include "RingOutFilterTable.hpp"
 #include "DuskFilters.hpp"
+#include "DuskLogFreqAxis.hpp"
 
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <random>
+#include <string>
 #include <vector>
 
 using duskaudio::RingOutDSP;
@@ -62,6 +64,25 @@ static void testGrid()
     CHECK(near(ro::stepQ(20.0f, +1), 20.0f, 1e-5f), "Q ceiling is 20");
     CHECK(near(ro::stepQ(0.5f, -1), 0.5f, 1e-5f), "Q floor is 0.5");
     CHECK(near(ro::stepQ(2.5f, +1), 2.6f, 1e-5f), "Q steps by 0.1");
+}
+
+static void testAxisLabels()
+{
+    duskdaf::LogFreqAxis axis { 24.0f, 20000.0f };
+    char b[16];
+    const auto label = [&](float f) { duskdaf::LogFreqAxis::label(f, b, (int)sizeof(b)); return std::string(b); };
+    CHECK(label(24.0f) == "24", "24 Hz -> '%s'", b);
+    CHECK(label(100.0f) == "100", "100 Hz -> '%s'", b);
+    CHECK(label(1000.0f) == "1k", "1 kHz -> '%s'", b);
+    CHECK(label(1200.0f) == "1k2", "1.2 kHz -> '%s'", b);
+    CHECK(label(12500.0f) == "12k5", "12.5 kHz -> '%s'", b);
+    CHECK(label(1999.0f) == "2k", "1999 Hz rounds with carry -> '%s'", b);
+    CHECK(label(1050.0f) == "1k1", "1050 Hz -> '%s'", b);
+    CHECK(near(axis.fromNorm(axis.toNorm(440.0f)), 440.0f, 0.05f), "axis mapping round-trips");
+    float grid[16];
+    const int n = axis.gridLines(grid, 16);
+    CHECK(n == 9 && near(grid[0], 50.0f, 1e-3f) && near(grid[n - 1], 20000.0f, 1e-3f),
+          "1-2-5 grid inside 24 Hz..20 kHz has %d rules, %.0f..%.0f", n, grid[0], grid[n > 0 ? n - 1 : 0]);
 }
 
 //------------------------------------------------------------------------------
@@ -290,14 +311,73 @@ static void testBlockSizeInvariance()
         }
         return out;
     };
-    const std::vector<float> a = render(64), b = render(480), c = render(4096);
+    // 100 and 37 are not multiples of the 32-sample update grid, so sub-blocks
+    // straddle host blocks; the GAIN OUT ramp from 0 to -3 dB runs during the
+    // first 50 ms of every render and must advance identically in all of them.
+    const std::vector<float> a = render(64), b = render(480), c = render(4096), d = render(100), e = render(37);
     float maxDiff = 0.0f;
     for (int i = 0; i < total; ++i)
     {
         maxDiff = std::max(maxDiff, std::fabs(a[(size_t)i] - b[(size_t)i]));
         maxDiff = std::max(maxDiff, std::fabs(a[(size_t)i] - c[(size_t)i]));
+        maxDiff = std::max(maxDiff, std::fabs(a[(size_t)i] - d[(size_t)i]));
+        maxDiff = std::max(maxDiff, std::fabs(a[(size_t)i] - e[(size_t)i]));
     }
     CHECK(maxDiff <= 1e-6f, "block size changes the output by up to %.3g", maxDiff);
+}
+
+// A filter deleted while audio runs fades out in place; the filters that move
+// down a row keep their slot, so nothing steps and nothing sweeps.
+static void testDeleteCrossfade()
+{
+    const double sr = 48000.0;
+    RingOutDSP dsp;
+    dsp.prepare(sr, 64);
+    ro::FilterTable t;
+    t.add(ro::Filter{ true, 1000.0f, -20.0f, 8.0f });
+    t.add(ro::Filter{ true, 3000.0f, -6.0f, 5.0f });
+    dsp.setTable(t);
+
+    const int block = 64;
+    std::vector<float> in((size_t)block), out((size_t)block);
+    double phase = 0.0;
+    float maxJump = 0.0f, prev = 0.0f;
+    double sumLate = 0.0; int nLate = 0;
+    const int total = (int)(1.5 * sr);
+    bool deleted = false;
+    for (int done = 0; done < total; done += block)
+    {
+        // Block starts are multiples of 64, so test for "reached", not "equal".
+        if (!deleted && done >= (int)(0.75 * sr))
+        {
+            deleted = true;
+            ro::EditCommand del; del.kind = ro::EditCommand::kDelete; del.slot = 0;
+            CHECK(dsp.applyEdit(del) == 0, "delete slot 0 mid-stream");
+        }
+        for (int i = 0; i < block; ++i)
+        {
+            in[(size_t)i] = 0.5f * (float)std::sin(phase);
+            phase += 2.0 * 3.14159265358979323846 * 1000.0 / sr;
+        }
+        const float* ins[1] = { in.data() }; float* outs[1] = { out.data() };
+        dsp.processBlock(ins, outs, 1, block);
+        for (int i = 0; i < block; ++i)
+        {
+            const float y = out[(size_t)i];
+            if (done > 0 || i > 0) maxJump = std::max(maxJump, std::fabs(y - prev));
+            prev = y;
+            if (done >= (int)(1.25 * sr)) { sumLate += (double)y * y; ++nLate; }
+        }
+    }
+    // A 0.5-amplitude 1 kHz sine at 48 kHz moves at most 0.0654 per sample; a
+    // coefficient step at the delete would show as a far larger jump.
+    CHECK(maxJump < 0.085f, "delete is click-free: max sample step %.4f", maxJump);
+    const float lateDb = (float)(10.0 * std::log10(sumLate / (double)nLate / 0.125));
+    CHECK(lateDb > -1.0f && lateDb < 0.3f, "after the delete the 1 kHz tone is back to %.2f dB", lateDb);
+
+    // The surviving filter still does its job from whatever slot it holds.
+    const float at3k = measureGainDb(dsp, sr, 3000.0f);
+    CHECK(near(at3k, -6.0f, 0.4f), "the moved-down 3 kHz filter still cuts %.2f dB", at3k);
 }
 
 //------------------------------------------------------------------------------
@@ -378,6 +458,70 @@ static void testDetect()
     CHECK(st.setupActive, "SETUP still armed inside its minute");
     CHECK(st.engagementCount >= 2, "engagements counted (%u)", st.engagementCount);
     CHECK(st.tableVersion == dsp.tableVersion(), "status carries the table version");
+}
+
+// The bottom of the band: a 66 Hz ring (the reference manual's own example) sits
+// at bin 5 or 6 of a 4096-point frame, where a scan floor set for the widest
+// neighbourhood would skip it.
+static void testDetectLow()
+{
+    const double sr = 48000.0;
+    RingOutDSP dsp;
+    dsp.prepare(sr, 256);
+    dsp.setSense(RingOutDSP::kSenseLow);
+    dsp.setSetup(true);
+    const float f0 = 66.0f;
+    auto tone = [&](double t)
+    {
+        const float db = t < 0.6 ? -55.0f + (float)(t / 0.6) * 47.0f : -8.0f;
+        return dbToLin(db) * (float)std::sin(2.0 * 3.14159265358979323846 * f0 * t);
+    };
+    runTone(dsp, sr, 0.8f, -45.0f, tone);
+    ro::FilterTable t;
+    dsp.getTable(t);
+    CHECK(t.count >= 1, "a 66 Hz ring is detected (count %d)", t.count);
+    if (t.count >= 1)
+    {
+        CHECK(near(t.f[0].freqHz, f0, 5.0f), "placed at %.1f Hz for a %.0f Hz tone", t.f[0].freqHz, f0);
+        CHECK(near(t.f[0].q, 3.0f, 1e-3f), "low-frequency filter takes the widest engine Q (%.1f)", t.f[0].q);
+    }
+    CHECK(t.count <= 2, "one low tone does not scatter filters (count %d)", t.count);
+}
+
+// With every slot taken the engine must not carve an unrelated notch deeper.
+static void testTableFull()
+{
+    const double sr = 48000.0;
+    RingOutDSP dsp;
+    dsp.prepare(sr, 256);
+    dsp.setSense(RingOutDSP::kSenseHigh);
+    ro::FilterTable t;
+    for (int i = 0; i < ro::kMaxFilters; ++i)
+        t.add(ro::Filter{ true, 100.0f * std::pow(1.17f, (float)i), -6.0f, 8.0f });   // 100 Hz .. ~2 kHz
+    dsp.setTable(t);
+    dsp.setSetup(true);
+
+    // A ring far from every filter: nothing may change.
+    auto far = [](double tt) { return 0.3f * (float)std::sin(2.0 * 3.14159265358979323846 * 8000.0 * tt); };
+    runTone(dsp, sr, 1.0f, -45.0f, far);
+    ro::FilterTable after;
+    dsp.getTable(after);
+    CHECK(ro::tablesEqual(after, t), "a full table leaves unrelated filters alone");
+    CHECK(dsp.status().tableFull, "the status reports the full table");
+    CHECK(dsp.status().engagementCount == 0, "no engagement was counted (%u)", dsp.status().engagementCount);
+
+    // A ring inside filter 10's band: that filter deepens.
+    const float f10 = t.f[10].freqHz;
+    auto inside = [&](double tt) { return 0.3f * (float)std::sin(2.0 * 3.14159265358979323846 * (double)f10 * tt); };
+    runTone(dsp, sr, 1.0f, -45.0f, inside);
+    dsp.getTable(after);
+    CHECK(after.count == ro::kMaxFilters && after.f[10].cutDb <= t.f[10].cutDb - 3.0f,
+          "a ring inside a filter's band deepens it: %.1f -> %.1f dB", t.f[10].cutDb, after.f[10].cutDb);
+    dsp.resetFilters();
+    std::vector<float> z(256, 0.0f), o(256), o2(256);
+    const float* ins[2] = { z.data(), z.data() }; float* outs[2] = { o.data(), o2.data() };
+    dsp.processBlock(ins, outs, 2, 256);
+    CHECK(!dsp.status().tableFull, "RESET clears the full-table flag");
 }
 
 static void testHighSense()
@@ -606,13 +750,17 @@ static void testClosedLoop()
 int main()
 {
     testGrid();
+    testAxisLabels();
     testText();
     testNotch();
     testBlockSizeInvariance();
+    testDeleteCrossfade();
     testDetect();
+    testDetectLow();
     testHighSense();
     testReject();
     testAddAndTimer();
+    testTableFull();
     testClosedLoop();
 
     if (failures == 0)

@@ -83,8 +83,11 @@ Engaging: if an existing filter's bandwidth covers the tone it is deepened by
 3 dB (to -20 dB), then widened by a fifth (to Q 0.7), and its centre is nudged
 toward the tone; otherwise a new filter is placed at the tone with a cut of 6 dB
 plus half the growth observed (up to 12 dB) and a Q between 3 and 8 chosen so
-the notch spans at least three bins. Each engaged filter and frequency then
-gets a short hold-off so the notch can act before it is judged again.
+the notch spans at least three bins. With all twenty slots taken, a tone just
+outside the nearest notch widens that one; a tone far from every filter is
+left alone and reported (`Status::tableFull`), because carving an unrelated
+notch deeper would not stop it. Each engaged filter and frequency then gets a
+short hold-off so the notch can act before it is judged again.
 
 `core/tests/RingOutDSPTest.cpp` covers the step rules, the text forms, notch
 accuracy, globals, block-size invariance, detection of a growing tone and its
@@ -112,10 +115,33 @@ seqlock (`DuskSeqLock.hpp`).
 
 Host parameters (`daf-plugin/RingOutParams.hpp`, append-only): Sense, Setup,
 Add, Reset (trigger), Global Q, Global Amp, Link, Gain Out, Bypass, and the two
-meter outputs. SETUP's auto-off is an engine event; the editor puts the host
-parameter back to 0 when it sees the engine has stopped, and the plugin treats
-the next 0 to 1 edge as a fresh start, so with the editor closed a host that
-shows SETUP still on is simply one toggle away from re-arming.
+meter outputs.
+
+* SETUP and ADD report the *engine* through `getParameterValue()`, not the
+  last value written: every DAF wrapper builds the saved state from that
+  getter, so a session saved after the minute ran out holds 0 and cannot
+  re-arm the detector on a live PA when it is reloaded. ADD also gives up
+  after a minute, so a control that is never released cannot hunt for ever.
+  The editor puts the host parameter back to 0 when it sees the engine has
+  stopped; the plugin treats the next 0 to 1 edge as a fresh start.
+* Arming SETUP from the editor also resets GLOBAL Q and AMP, as editor edits
+  the host sees. The plugin never rewrites one parameter because another
+  moved: that fails AU validation ("Parameter did not retain set value") and
+  surprises host automation. Arming from a mapped controller with the editor
+  closed therefore leaves the trims where they are.
+* LINK is an editor gesture coupling, as on the reference: dragging either
+  knob sends both parameters to the host. It is deliberately not applied in
+  the processor, where it would fire on session restore (GAIN OUT is restored
+  after LINK and would shift the restored AMP) and would turn one automation
+  lane into silent writes to a second parameter.
+* RESET from a host's process callback never waits: `resetFilters()`
+  try-locks and otherwise leaves a request the audio thread honours at its
+  next block.
+
+Filter *slots* are matched to table rows by frequency identity, not by index:
+a deleted filter fades out in place and the filters that move down a row keep
+their slot and their state, so a DEL during a show neither steps a coefficient
+set nor sweeps a notch across the band.
 
 User presets (`~/.config/DuskAudio/RingOut/presets/*.ropreset`) carry the
 preset parameters plus a `filters=` line.

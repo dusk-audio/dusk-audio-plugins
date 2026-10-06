@@ -89,7 +89,7 @@ Why: the detector errs on the side of stopping the ringing. Once the pressure is
 
 **SETUP**, on or off, default off. Arms the detector for 60 seconds, after which it switches itself off. Arming also puts GLOBAL Q and AMP back to their defaults, so the filters you are about to place are judged at face value. Common mistake: leaving it armed during the show.
 
-**ADD**, momentary. Searches while held, stops after one filter has been placed or deepened. Release and press again for another.
+**ADD**, momentary. Searches while held, stops after one filter has been placed or deepened. Release and press again for another. A search also gives up after a minute, so a controller button that sticks cannot keep it hunting.
 
 **RESET** removes every filter.
 
@@ -113,7 +113,7 @@ Why: the detector errs on the side of stopping the ringing. Once the pressure is
 
 **AMP**, -24 to +24 dB, default 0 dB. Added to every filter's cut. Negative deepens all notches, positive shallows them; a filter never turns into a boost, so +24 dB simply flattens everything. Red rim when not at 0. Reset when SETUP is armed.
 
-**LINK**, on or off. Ties AMP to GAIN OUT in opposite directions: raise GAIN OUT by 3 dB and AMP drops by 3 dB.
+**LINK**, on or off. Ties AMP to GAIN OUT in opposite directions when you turn either knob in the editor: raise GAIN OUT by 3 dB and AMP drops by 3 dB. Host automation of one knob moves only that knob.
 
 **GAIN OUT**, -24 to +24 dB, default 0 dB. The output trim, and the control you raise to provoke the system during setup.
 
@@ -127,7 +127,7 @@ Raise the gain slowly while SETUP listens. Two frequencies ringing at once still
 
 A tone that keeps ringing after a filter has been placed is not ignored: the detector deepens that filter in 3 dB steps to -20 dB and then widens it toward Q 0.7. If you find a filter at -20 dB and a low Q after a session, the system was a long way over the edge at that frequency; look at the gain structure or the microphone placement rather than asking the plugin for more.
 
-More than about twelve filters, or filters at -16 dB and beyond, mean the same thing.
+More than about twelve filters, or filters at -16 dB and beyond, mean the same thing. With all twenty filters in use the detector will still deepen a filter whose band a new ring falls into, but it will not touch an unrelated one; the status line reads 20 FILTERS and NEW is greyed out.
 
 The detector ignores tones with harmonics, tones that decay, and tones that are themselves a harmonic of something louder. A pure test oscillator held steady will be treated as feedback; so will a flute note held long enough. Stop SETUP before a soundcheck starts in earnest.
 

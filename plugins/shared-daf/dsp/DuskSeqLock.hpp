@@ -48,12 +48,13 @@ public:
         seq_.store(s + 2, std::memory_order_release);
     }
 
-    // Any thread. Returns false only if no frame has ever been stored; a torn
-    // read retries internally (bounded: the writer publishes a frame every
-    // tens of milliseconds and a copy takes microseconds).
-    bool load(T& out) const noexcept
+    // Any thread. Returns false if no frame has ever been stored, or if the
+    // writer stayed mid-store for the whole retry budget: a reader must never
+    // spin for as long as a parked audio thread (host deactivation, a debugger)
+    // keeps the sequence odd. On false the caller keeps its previous frame.
+    bool load(T& out, int maxAttempts = 64) const noexcept
     {
-        for (;;)
+        for (int attempt = 0; attempt < maxAttempts; ++attempt)
         {
             const unsigned s0 = seq_.load(std::memory_order_acquire);
             if (s0 == 0)
@@ -66,6 +67,7 @@ public:
             if (s0 == s1)
                 return true;
         }
+        return false;
     }
 
     // Sequence number of the newest complete frame (even, 0 = none yet). A
