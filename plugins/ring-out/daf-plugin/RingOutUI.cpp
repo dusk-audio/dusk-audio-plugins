@@ -795,8 +795,9 @@ private:
 
     // Composite response of the on filters, filled red down from the 0 dB line,
     // one dot per filter at its notch, the selected one with a yellow cursor.
-    // The curve is the engine's own responseDb(), evaluated once per change of
-    // table, trims or sample rate rather than every frame.
+    // The curve comes from the engine's own section design and response
+    // formula, evaluated once per change of table, trims or sample rate rather
+    // than every frame.
     void drawFilterCurve(ImDrawList* dl)
     {
         const float gq = values[kParamGlobalQ], amp = values[kParamGlobalAmp];
@@ -811,26 +812,16 @@ private:
         {
             curveStamp = tableStamp; curveGq = gq; curveAmp = amp; curveSr = sr;
             curveDb.resize((size_t)N);
-            // Design each on filter once (the matched design is the costly part),
-            // then only evaluate magnitudes along the axis: a knob drag rebuilds
-            // this every frame.
+            // The engine's own response formula: design each on filter once (the
+            // matched design is the costly part), then only evaluate magnitudes
+            // along the axis. A knob drag rebuilds this every frame.
             duskaudio::Biquad sections[ro::kMaxFilters];
-            int nSections = 0;
-            for (int i = 0; i < table.count; ++i)
-            {
-                const ro::Filter& f = table.f[i];
-                if (!f.on) continue;
-                sections[nSections++].setCoeffs(duskaudio::Biquad::matchedPeak(
-                    sr, f.freqHz, RingOutDSP::effectiveCutDb(f.cutDb, amp), RingOutDSP::effectiveQ(f.q, gq)));
-            }
+            const int nSections = RingOutDSP::designSections(table, gq, amp, sr, sections, ro::kMaxFilters);
             float deepest = 0.0f;
             for (int i = 0; i < N; ++i)
             {
                 const float f = axis.fromNorm((float)i / (float)(N - 1));
-                const double w = 2.0 * 3.14159265358979323846 * (double)f / sr;
-                double mag = 1.0;
-                for (int k = 0; k < nSections; ++k) mag *= sections[k].magnitude(w);
-                curveDb[(size_t)i] = (float)(20.0 * std::log10(mag > 1.0e-9 ? mag : 1.0e-9));
+                curveDb[(size_t)i] = (float)RingOutDSP::sectionsResponseDb(sections, nSections, sr, (double)f);
                 deepest = std::min(deepest, curveDb[(size_t)i]);
             }
             for (int i = 0; i < table.count; ++i)

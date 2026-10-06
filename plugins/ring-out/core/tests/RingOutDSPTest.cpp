@@ -878,6 +878,44 @@ static void testTimersAndEdges()
         CHECK(early < -12.0f, "a table restored after audio started still snaps into force: %.1f dB", early);
     }
     {
+        // But the FIRST filter a user adds to an empty table is a live edit and
+        // ramps in: no snap, no click.
+        RingOutDSP dsp;
+        dsp.prepare(48000.0, 64);
+        std::vector<float> in(64), out(64);
+        double phase = 0.0;
+        for (int b = 0; b < 300; ++b)
+        {
+            for (int i = 0; i < 64; ++i) { in[(size_t)i] = 0.5f * (float)std::sin(phase); phase += 2.0 * 3.14159265358979323846 * 1000.0 / 48000.0; }
+            const float* ins[1] = { in.data() }; float* outs[1] = { out.data() };
+            dsp.processBlock(ins, outs, 1, 64);
+        }
+        ro::EditCommand add; add.kind = ro::EditCommand::kAdd; add.filter = ro::Filter{ true, 1000.0f, -20.0f, 8.0f };
+        dsp.applyEdit(add);
+        double sumIn = 0.0, sumOut = 0.0;
+        for (int b = 0; b < 4; ++b)   // the first ~5 ms
+        {
+            for (int i = 0; i < 64; ++i) { in[(size_t)i] = 0.5f * (float)std::sin(phase); phase += 2.0 * 3.14159265358979323846 * 1000.0 / 48000.0; }
+            const float* ins[1] = { in.data() }; float* outs[1] = { out.data() };
+            dsp.processBlock(ins, outs, 1, 64);
+            for (int i = 0; i < 64; ++i) { sumIn += in[(size_t)i] * in[(size_t)i]; sumOut += out[(size_t)i] * out[(size_t)i]; }
+        }
+        const float early = (float)(10.0 * std::log10(sumOut / sumIn));
+        CHECK(early > -8.0f, "a user's first filter ramps in rather than snapping: %.1f dB in the first 5 ms", early);
+    }
+    {
+        // "The minute is up" is a notice: it clears by itself after a few seconds.
+        RingOutDSP dsp;
+        dsp.prepare(48000.0, 4096);
+        dsp.setSetup(true);
+        std::vector<float> z(4096, 0.0f), o(4096), o2(4096);
+        const float* ins[2] = { z.data(), z.data() }; float* outs[2] = { o.data(), o2.data() };
+        for (int b = 0; b < 720; ++b) dsp.processBlock(ins, outs, 2, 4096);
+        CHECK(dsp.status().setupExpired, "expiry is reported right after the minute");
+        for (int b = 0; b < 60; ++b) dsp.processBlock(ins, outs, 2, 4096);   // ~5 s
+        CHECK(!dsp.status().setupExpired, "and the notice clears a few seconds later");
+    }
+    {
         // A user filter wider than the engine's floor is never narrowed back.
         RingOutDSP dsp;
         dsp.prepare(48000.0, 256);

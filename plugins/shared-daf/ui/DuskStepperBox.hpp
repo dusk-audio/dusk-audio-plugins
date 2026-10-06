@@ -167,7 +167,7 @@ inline bool stepperBox(DuskPanel& panel, ImDrawList* dl, const char* id,
             // 1234.6 Hz filter shown as "1235" must come back as 1234.6 when
             // the edit is confirmed untouched, or confirming would move it.
             char seed[32];
-            std::snprintf(seed, sizeof(seed), "%.6g", (double)value);
+            std::snprintf(seed, sizeof(seed), "%.9g", (double)value);   // round-trips any float
             // Classic-locale form, which the parser below reads back.
             for (char* p = seed; *p; ++p) if (*p == ',') *p = '.';
             panel.openValueEdit(id, value, seed);

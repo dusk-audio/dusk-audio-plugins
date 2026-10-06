@@ -183,10 +183,10 @@ public:
     unsigned spectrumSequence() const noexcept { return spectrum_.sequence(); }
 
     // UI / host-thread views of what prepare() set, through atomics: prepare()
-    // runs on the host thread while the editor keeps reading.
-    double sampleRate() const noexcept { return sampleRateShared_.load(std::memory_order_acquire); }
+    // runs on the host thread while the editor keeps reading. The spectrum
+    // frame carries its own bin width, so none is composed from these two.
+    double sampleRate() const noexcept { return (double)sampleRateShared_.load(std::memory_order_acquire); }
     int    fftSize() const noexcept    { return fftSizeShared_.load(std::memory_order_acquire); }
-    float  binHz() const noexcept      { return (float)(sampleRate() / (double)fftSize()); }
 
     //--- pure helpers shared with the UI --------------------------------------
     static float effectiveCutDb(float cutDb, float globalAmpDb) noexcept
@@ -197,8 +197,13 @@ public:
     {
         return ringout::clampf(q * globalQ, 0.1f, 200.0f);
     }
-    // Composite magnitude response of the on filters, in dB: what the UI draws
-    // and what the tests compare the processed signal against.
+    // The on filters as designed sections (what the audio thread runs), then
+    // their composite magnitude in dB: the one response formula, used by the
+    // tests, by responseDb() and by the display (which designs once and
+    // evaluates many frequencies).
+    static int designSections(const ringout::FilterTable& table, float globalQ, float globalAmpDb,
+                              double sampleRate, Biquad* out, int capacity) noexcept;
+    static double sectionsResponseDb(const Biquad* sections, int count, double sampleRate, double freqHz) noexcept;
     static double responseDb(const ringout::FilterTable& table, float globalQ, float globalAmpDb,
                              double sampleRate, double freqHz) noexcept;
 
@@ -272,8 +277,13 @@ private:
     int    hop_ = 1024;
     float  binHz_ = 48000.0f / 4096.0f;
     int    rangeLo_ = 2, rangeHi_ = 2047;   // bins analysed: 24 Hz .. 20 kHz (or 0.45 fs)
-    std::atomic<double> sampleRateShared_ { 48000.0 };
-    std::atomic<int>    fftSizeShared_ { 4096 };
+    // float, not double: every host rate is exact in a float, and a 32-bit
+    // target may implement atomic<double> with a lock, which the setters a
+    // host calls from its process callback must never take.
+    std::atomic<float> sampleRateShared_ { 48000.0f };
+    std::atomic<int>   fftSizeShared_ { 4096 };
+    static_assert(std::atomic<float>::is_always_lock_free, "the shared sample rate must be lock-free");
+    static_assert(std::atomic<int>::is_always_lock_free, "the shared FFT size must be lock-free");
 
     //--- parameters
     std::atomic<int>   sense_ { kSenseLow };
@@ -288,6 +298,7 @@ private:
     std::atomic<bool>  setupActive_ { false };
     std::atomic<bool>  setupExpired_ { false };
     std::atomic<int>   setupSamplesLeft_ { 0 };
+    std::atomic<int>   setupExpiredSamplesLeft_ { 0 };   // how long "the minute is up" shows
     std::atomic<bool>  addHeld_ { false };          // the editor holds the search (lease-renewed)
     std::atomic<bool>  addSearching_ { false };
     std::atomic<bool>  addSatisfied_ { false };
@@ -306,9 +317,12 @@ private:
     std::atomic<bool>     resetRequested_ { false };
     ringout::FilterTable  live_;
     unsigned              liveVersion_ = 0;
-    // The first non-empty table adopted after reset() is a restore, not an
-    // edit: its notches snap into force instead of ramping in from flat.
-    bool                  snapOnAdopt_ = true;
+    // A table that arrives whole through setTable() before anything else has
+    // touched the table (a host restore, a preset load into a fresh instance)
+    // snaps its notches into force instead of ramping them in from flat. The
+    // first edit or engine engagement retires it: those are live changes and
+    // ramp. Atomic because applyEdit() retires it from the host thread.
+    std::atomic<bool>     snapOnAdopt_ { true };
 
     //--- audio-thread filter state
     SlotState     slots_[kNumSlots];

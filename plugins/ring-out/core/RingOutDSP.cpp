@@ -120,7 +120,7 @@ void RingOutDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     fftSize_ = fftSizeForRate(sampleRate_);
     hop_ = fftSize_ / 4;
     binHz_ = (float)(sampleRate_ / (double)fftSize_);
-    sampleRateShared_.store(sampleRate_, std::memory_order_release);
+    sampleRateShared_.store((float)sampleRate_, std::memory_order_release);
     fftSizeShared_.store(fftSize_, std::memory_order_release);
 
     // A countdown armed before activation was measured at the old rate (the
@@ -203,7 +203,7 @@ void RingOutDSP::reset() noexcept
     // Force a fresh copy of the table on the next block, with the notches in
     // force immediately rather than ramped in.
     liveVersion_ = 0;
-    snapOnAdopt_ = true;
+    snapOnAdopt_.store(true, std::memory_order_release);
 }
 
 //==============================================================================
@@ -233,14 +233,17 @@ void RingOutDSP::setSetup(bool on) noexcept
 
 void RingOutDSP::startAdd(bool held) noexcept
 {
-    addHeld_.store(held, std::memory_order_release);
+    // The countdown goes in first: the audio thread expires on addHeld_ as
+    // well as on addSearching_, so a stale, already-lapsed count must never be
+    // visible together with a fresh hold.
     const float seconds = held ? ringout::kAddLeaseSeconds : ringout::kAddSeconds;
-    addSamplesLeft_.store((int)(seconds * sampleRate() + 0.5), std::memory_order_relaxed);
+    addSamplesLeft_.store((int)(seconds * sampleRate() + 0.5), std::memory_order_release);
     if (!addSearching_.load(std::memory_order_acquire))
     {
         addSatisfied_.store(false, std::memory_order_release);
         addSearching_.store(true, std::memory_order_release);
     }
+    addHeld_.store(held, std::memory_order_release);
 }
 
 void RingOutDSP::setAdd(bool held) noexcept
@@ -390,7 +393,10 @@ int RingOutDSP::applyEdit(const ringout::EditCommand& command) noexcept
     honourPendingResetLocked();
     const int slot = applyEditLocked(command);
     if (slot >= 0)
+    {
+        snapOnAdopt_.store(false, std::memory_order_release);   // a live edit ramps
         tableVersion_.fetch_add(1, std::memory_order_acq_rel);
+    }
     return slot;
 }
 
@@ -511,7 +517,7 @@ void RingOutDSP::assignSlots() noexcept
         // twenty notches must be in force from the first sample rather than
         // leave the PA unprotected for the length of a ramp.
         const ringout::Filter& f = live_.f[row];
-        st.cutDb.snap(snapOnAdopt_ && f.on
+        st.cutDb.snap(snapOnAdopt_.load(std::memory_order_acquire) && f.on
                           ? effectiveCutDb(f.cutDb, globalAmp_.load(std::memory_order_relaxed)) : 0.0f);
         st.lastCut = 1.0e9f;   // force the first coefficient design
         st.cooldownFrames = 0;
@@ -520,9 +526,10 @@ void RingOutDSP::assignSlots() noexcept
     // The no-ramp adoption is spent by the first table with filters in it,
     // whenever that arrives: a host that restores state after activation, even
     // after audio has run on an empty table for a while, still gets its
-    // notches in force at once. Everything after that is an edit and ramps.
+    // notches in force at once. Edits and engagements retire it on their own
+    // path, so a table that arrives whole afterwards ramps like any change.
     if (live_.count > 0)
-        snapOnAdopt_ = false;
+        snapOnAdopt_.store(false, std::memory_order_release);
 }
 
 //==============================================================================
@@ -550,9 +557,17 @@ void RingOutDSP::processBlock(const float* const* inputs, float* const* outputs,
         if (left <= 0)
         {
             setupActive_.store(false, std::memory_order_release);
+            setupExpiredSamplesLeft_.store((int)(4.0 * sampleRate_), std::memory_order_relaxed);
             setupExpired_.store(true, std::memory_order_release);
             clearTracks();
         }
+    }
+    // "The minute is up" is a notice, not a state: it shows for a few seconds.
+    if (setupExpired_.load(std::memory_order_acquire))
+    {
+        const int left = setupExpiredSamplesLeft_.fetch_sub(numSamples, std::memory_order_relaxed) - numSamples;
+        if (left <= 0)
+            setupExpired_.store(false, std::memory_order_release);
     }
     if (!bypass && (addSearching_.load(std::memory_order_acquire) || addHeld_.load(std::memory_order_acquire)))
     {
@@ -1120,6 +1135,7 @@ bool RingOutDSP::engage(const Track& track) noexcept
     if (row < 0 || !changed)
         return true;
 
+    snapOnAdopt_.store(false, std::memory_order_release);   // an engagement is a live change: it ramps
     tableVersion_.fetch_add(1, std::memory_order_acq_rel);
     adoptLiveTable();
     // A move the engine could make is the opposite of "nothing left to do".
@@ -1147,21 +1163,35 @@ bool RingOutDSP::engage(const Track& track) noexcept
 
 //==============================================================================
 
-double RingOutDSP::responseDb(const ringout::FilterTable& table, float globalQ, float globalAmpDb,
-                              double sampleRate, double freqHz) noexcept
+int RingOutDSP::designSections(const ringout::FilterTable& table, float globalQ, float globalAmpDb,
+                               double sampleRate, Biquad* out, int capacity) noexcept
 {
-    const double w = 2.0 * 3.14159265358979323846 * freqHz / sampleRate;
-    double mag = 1.0;
-    for (int i = 0; i < table.count; ++i)
+    int n = 0;
+    for (int i = 0; i < table.count && n < capacity; ++i)
     {
         const ringout::Filter& x = table.f[i];
         if (!x.on) continue;
-        Biquad b;
-        b.setCoeffs(Biquad::matchedPeak(sampleRate, x.freqHz, effectiveCutDb(x.cutDb, globalAmpDb),
-                                        effectiveQ(x.q, globalQ)));
-        mag *= b.magnitude(w);
+        out[n++].setCoeffs(Biquad::matchedPeak(sampleRate, x.freqHz, effectiveCutDb(x.cutDb, globalAmpDb),
+                                               effectiveQ(x.q, globalQ)));
     }
+    return n;
+}
+
+double RingOutDSP::sectionsResponseDb(const Biquad* sections, int count, double sampleRate, double freqHz) noexcept
+{
+    const double w = 2.0 * 3.14159265358979323846 * freqHz / sampleRate;
+    double mag = 1.0;
+    for (int i = 0; i < count; ++i)
+        mag *= sections[i].magnitude(w);
     return 20.0 * std::log10(mag > 1.0e-9 ? mag : 1.0e-9);
+}
+
+double RingOutDSP::responseDb(const ringout::FilterTable& table, float globalQ, float globalAmpDb,
+                              double sampleRate, double freqHz) noexcept
+{
+    Biquad sections[ringout::kMaxFilters];
+    const int n = designSections(table, globalQ, globalAmpDb, sampleRate, sections, ringout::kMaxFilters);
+    return sectionsResponseDb(sections, n, sampleRate, freqHz);
 }
 
 } // namespace duskaudio
