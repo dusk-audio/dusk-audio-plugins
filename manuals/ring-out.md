@@ -87,9 +87,9 @@ Why: the detector errs on the side of stopping the ringing. Once the pressure is
 
 **SENSE**, Low or High, default Low. How readily the detector calls a tone feedback. Low needs the tone to stand clearly above everything else, have no harmonics and persist for about 130 ms; High accepts quieter and shorter tones. Use Low for ringing out before the show; use High on a system that only rings briefly before someone pulls the fader. Common mistake: High on a stage with sustained synth pads, which places filters on the pads.
 
-**SETUP**, on or off, default off. Arms the detector for 60 seconds, after which it switches itself off. Arming also puts GLOBAL Q and AMP back to their defaults, so the filters you are about to place are judged at face value. Common mistake: leaving it armed during the show.
+**SETUP**, press to arm, press again to stop. Arms the detector for 60 seconds, after which it switches itself off. Arming also puts GLOBAL Q and AMP back to their defaults, so the filters you are about to place are judged at face value. The armed state is never saved with a session: a project you reload is always idle. Common mistake: leaving it armed during the show.
 
-**ADD**, momentary. Searches while held, stops after one filter has been placed or deepened. Release and press again for another. A search also gives up after a minute, so a controller button that sticks cannot keep it hunting.
+**ADD**, momentary. Searches while held, stops after one filter has been placed or deepened. Release and press again for another. From a mapped controller a tap starts the same search; it ends with its filter or after ten seconds, so a button that sticks cannot keep it hunting.
 
 **RESET** removes every filter.
 
@@ -137,7 +137,7 @@ The filter table is saved with your session and in user presets, so a ring-out d
 
 ## Presets Explained
 
-**Default** is the only factory preset: every control at its default and no filters. It is also what INIT loads.
+**Default** is the only factory preset: every control at its default and no filters. It is also what INIT loads. The header arrows step through the preset list without wrapping and never reload the preset already shown, and they do nothing while an edited, unsaved table is on screen; choosing Default from the list, or INIT, is how you deliberately clear a ring-out.
 
 User presets, saved with SAVE in the header, hold the five settings (SENSE, GLOBAL Q, AMP, LINK, GAIN OUT) and the complete filter table. Save one per venue or per wedge mix and recall it at the next show as a starting point; a quick SETUP pass then catches whatever the room does differently that night.
 

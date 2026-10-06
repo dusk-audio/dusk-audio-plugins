@@ -115,15 +115,6 @@ protected:
             return std::min(kRoParams[index].max, std::max(dsp.inputPeakDb(0), dsp.inputPeakDb(1)));
         if (index == kParamOutLevel)
             return std::min(kRoParams[index].max, std::max(dsp.outputPeakDb(0), dsp.outputPeakDb(1)));
-        // SETUP and ADD report the ENGINE, not the last value written: the
-        // engine switches itself off (the minute runs out, ADD finds its
-        // filter), and every wrapper builds the saved state from this getter.
-        // A session saved after the minute therefore holds 0 and cannot re-arm
-        // the detector on a live PA when it is reloaded.
-        if (index == kParamSetup)
-            return dsp.setupActive() ? 1.0f : 0.0f;
-        if (index == kParamAdd)
-            return dsp.addSearching() ? 1.0f : 0.0f;
         return index < kParamCount ? values[index].load(std::memory_order_relaxed) : 0.0f;
     }
 
@@ -136,23 +127,27 @@ protected:
             || !std::isfinite(value))
             return;
         value = roNormalizeParamValue(index, value);
-        // SETUP and ADD are not cached: the engine is their only owner (it
-        // disarms itself), getParameterValue() reads it back, and a cached 1
-        // replayed by pushAllParams() on the next activate() would re-arm a
-        // detector that had already timed out.
-        if (index != kParamSetup && index != kParamAdd)
-            values[index].store(value, std::memory_order_relaxed);
+        values[index].store(value, std::memory_order_relaxed);
         switch (index)
         {
         case kParamSense:     dsp.setSense(value >= 0.5f ? 1 : 0); break;
         case kParamSetup:
-            // The GLOBAL Q / AMP reset that goes with arming is an editor edit
-            // (RingOutUI.cpp), not done here: a plugin that rewrites other
-            // parameters as a side effect fails AU validation ("Parameter did
-            // not retain set value") and surprises every host's automation.
-            dsp.setSetup(value >= 0.5f);
+            // Trigger: each press arms the engine, or disarms it while it is
+            // listening. The GLOBAL Q / AMP reset that goes with arming is an
+            // editor edit (RingOutUI.cpp), not done here: a plugin that
+            // rewrites other parameters as a side effect fails AU validation
+            // ("Parameter did not retain set value") and surprises every
+            // host's automation.
+            if (value >= 0.5f)
+                dsp.setSetup(!dsp.setupActive());
             break;
-        case kParamAdd:       dsp.setAdd(value >= 0.5f);           break;
+        case kParamAdd:
+            // Trigger: starts a one-filter search. The editor ends it on
+            // release through the "addstop" edit command; a controller tap
+            // lets it run to one filter or kAddSeconds.
+            if (value >= 0.5f)
+                dsp.setAdd(true);
+            break;
         case kParamReset:     if (value >= 0.5f) dsp.resetFilters(); break;
         case kParamGlobalQ:   dsp.setGlobalQ(value);               break;
         case kParamGlobalAmp: dsp.setGlobalAmpDb(value);           break;
@@ -258,7 +253,11 @@ protected:
         else if (std::strcmp(key, "edit") == 0 && value[0] != '\0')
         {
             duskaudio::ringout::EditCommand command;
-            if (duskaudio::ringout::parseEditCommand(value, command))
+            if (!duskaudio::ringout::parseEditCommand(value, command))
+                return;
+            if (command.kind == duskaudio::ringout::EditCommand::kAddStop)
+                dsp.setAdd(false);
+            else
                 dsp.applyEdit(command);
         }
     }
@@ -293,8 +292,8 @@ protected:
 
 private:
     // Replays the cached controls into a freshly prepared engine. The meters are
-    // outputs, RESET is a trigger, and SETUP / ADD are owned by the engine: none
-    // of them has a cached value to replay.
+    // outputs and SETUP / ADD / RESET are triggers: none has a value to replay,
+    // and replaying a trigger would act on it.
     void pushAllParams()
     {
         for (uint32_t i = 0; i < kParamCount; ++i)

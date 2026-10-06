@@ -17,13 +17,13 @@ namespace duskaudio
 
 namespace
 {
-    constexpr float kPi = 3.14159265358979f;
     constexpr float kLn2 = 0.69314718056f;
     constexpr float kDbFloorLin = 1.0e-6f;   // = RingOutDSP::kDbFloor (-120 dB)
 
+    // The fleet's gainToDecibels with this plugin's floor.
     inline float linToDb(float lin) noexcept
     {
-        return 20.0f * std::log10(lin > kDbFloorLin ? lin : kDbFloorLin);
+        return gainToDecibels(lin > kDbFloorLin ? lin : kDbFloorLin);
     }
 
     // Half the -3 dB bandwidth of an RBJ peaking section, in octaves.
@@ -115,7 +115,7 @@ void RingOutDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     im_.assign((size_t)fftSize_, 0.0f);
     window_.resize((size_t)fftSize_);
     for (int i = 0; i < fftSize_; ++i)
-        window_[(size_t)i] = 0.5f - 0.5f * std::cos(2.0f * kPi * (float)i / (float)fftSize_);
+        window_[(size_t)i] = 0.5f - 0.5f * std::cos(kDuskTwoPi * (float)i / (float)fftSize_);
 
     // 24 Hz is bin 2 at every supported rate (the bin width is held near
     // 11.7 Hz), and the detector's local-maximum test needs two bins below the
@@ -152,7 +152,7 @@ void RingOutDSP::reset() noexcept
         st.lastCut = 0.0f; st.lastLogF = 0.0f; st.lastQ = 0.0f;
         st.cooldownFrames = 0;
     }
-    gainNow_ = std::pow(10.0f, gainOutDb_.load(std::memory_order_relaxed) * 0.05f);
+    gainNow_ = decibelsToGain(gainOutDb_.load(std::memory_order_relaxed));
     gain_.snap(gainNow_);
     mixNow_ = bypass_.load(std::memory_order_relaxed) ? 0.0f : 1.0f;
     bypassMix_.snap(mixNow_);
@@ -187,7 +187,7 @@ void RingOutDSP::setSetup(bool on) noexcept
     if (on && !was)
     {
         setupSamplesLeft_.store((int)(ringout::kSetupSeconds * sampleRate_ + 0.5), std::memory_order_relaxed);
-        setupExpired_.store(false, std::memory_order_relaxed);
+        setupExpired_.store(false, std::memory_order_release);
         setupActive_.store(true, std::memory_order_release);
     }
     else if (!on)
@@ -195,7 +195,7 @@ void RingOutDSP::setSetup(bool on) noexcept
         // Also after an expiry already cleared the request: lowering SETUP
         // always leaves the engine idle with no expiry pending.
         setupActive_.store(false, std::memory_order_release);
-        setupExpired_.store(false, std::memory_order_relaxed);
+        setupExpired_.store(false, std::memory_order_release);
     }
 }
 
@@ -204,14 +204,14 @@ void RingOutDSP::setAdd(bool held) noexcept
     const bool was = addHeld_.exchange(held, std::memory_order_acq_rel);
     if (held && !was)
     {
-        addSamplesLeft_.store((int)(ringout::kSetupSeconds * sampleRate_ + 0.5), std::memory_order_relaxed);
-        addSatisfied_.store(false, std::memory_order_relaxed);
+        addSamplesLeft_.store((int)(ringout::kAddSeconds * sampleRate_ + 0.5), std::memory_order_relaxed);
+        addSatisfied_.store(false, std::memory_order_release);
         addSearching_.store(true, std::memory_order_release);
     }
-    else if (!held && was)
+    else if (!held)
     {
         addSearching_.store(false, std::memory_order_release);
-        addSatisfied_.store(false, std::memory_order_relaxed);
+        addSatisfied_.store(false, std::memory_order_release);
     }
 }
 
@@ -229,10 +229,10 @@ RingOutDSP::Status RingOutDSP::status() const noexcept
     s.setupActive = setupActive_.load(std::memory_order_acquire);
     s.setupRemainingSeconds = s.setupActive
         ? (float)setupSamplesLeft_.load(std::memory_order_relaxed) / (float)sampleRate_ : 0.0f;
-    s.setupExpired = setupExpired_.load(std::memory_order_relaxed);
+    s.setupExpired = setupExpired_.load(std::memory_order_acquire);
     s.addSearching = addSearching_.load(std::memory_order_acquire);
-    s.addSatisfied = addSatisfied_.load(std::memory_order_relaxed);
-    s.tableFull = tableFull_.load(std::memory_order_relaxed);
+    s.addSatisfied = addSatisfied_.load(std::memory_order_acquire);
+    s.tableFull = tableFull_.load(std::memory_order_acquire);
     s.lastEngagedRow = lastEngagedRow_.load(std::memory_order_relaxed);
     s.engagementCount = engagementCount_.load(std::memory_order_relaxed);
     s.tableVersion = tableVersion();
@@ -264,7 +264,7 @@ int RingOutDSP::applyEditLocked(const ringout::EditCommand& c) noexcept
     case EditCommand::kClear:
         if (shared_.count == 0) return -1;
         clearLocked();
-        tableFull_.store(false, std::memory_order_relaxed);
+        tableFull_.store(false, std::memory_order_release);
         return 0;
     case EditCommand::kSet:
         if (c.slot < 0 || c.slot >= shared_.count) return -1;
@@ -278,7 +278,7 @@ int RingOutDSP::applyEditLocked(const ringout::EditCommand& c) noexcept
             sharedIds_[k] = sharedIds_[k + 1];
         sharedIds_[shared_.count - 1] = 0;
         shared_.remove(c.slot);
-        tableFull_.store(false, std::memory_order_relaxed);   // room again
+        tableFull_.store(false, std::memory_order_release);   // room again
         return c.slot;
     default:
         return -1;
@@ -308,7 +308,7 @@ void RingOutDSP::replaceLocked(const ringout::FilterTable& table) noexcept
     for (int row = 0; row < ringout::kMaxFilters; ++row)
         sharedIds_[row] = row < table.count ? newIds[row] : 0;
     if (table.count < ringout::kMaxFilters)
-        tableFull_.store(false, std::memory_order_relaxed);
+        tableFull_.store(false, std::memory_order_release);
 }
 
 //==============================================================================
@@ -354,7 +354,7 @@ void RingOutDSP::resetFilters() noexcept
                 clearLocked();
                 tableVersion_.fetch_add(1, std::memory_order_acq_rel);
             }
-            tableFull_.store(false, std::memory_order_relaxed);
+            tableFull_.store(false, std::memory_order_release);
             return;
         }
     }
@@ -379,7 +379,7 @@ void RingOutDSP::syncTableFromShared() noexcept
             clearLocked();
             tableVersion_.fetch_add(1, std::memory_order_acq_rel);
         }
-        tableFull_.store(false, std::memory_order_relaxed);
+        tableFull_.store(false, std::memory_order_release);
     }
     adoptLiveTable();
 }
@@ -476,8 +476,8 @@ void RingOutDSP::processBlock(const float* const* inputs, float* const* outputs,
 
     syncTableFromShared();
 
-    // SETUP and ADD timers. An expired SETUP disarms the request too, so the
-    // next 1 the host writes is a rising edge again.
+    // SETUP and ADD timers. An expiry drops the request too, so the next press
+    // is a fresh edge again.
     if (setupActive_.load(std::memory_order_acquire))
     {
         const int left = setupSamplesLeft_.fetch_sub(numSamples, std::memory_order_relaxed) - numSamples;
@@ -485,7 +485,7 @@ void RingOutDSP::processBlock(const float* const* inputs, float* const* outputs,
         {
             setupActive_.store(false, std::memory_order_release);
             setupRequested_.store(false, std::memory_order_release);
-            setupExpired_.store(true, std::memory_order_relaxed);
+            setupExpired_.store(true, std::memory_order_release);
             clearTracks();
         }
     }
@@ -495,9 +495,14 @@ void RingOutDSP::processBlock(const float* const* inputs, float* const* outputs,
         if (left <= 0)
         {
             addSearching_.store(false, std::memory_order_release);
+            addHeld_.store(false, std::memory_order_release);
             clearTracks();
         }
     }
+    // "Table full, ring not covered" describes a listening engine; once it is
+    // idle the report has nothing to refer to.
+    if (!engineActive())
+        tableFull_.store(false, std::memory_order_release);
 
     // Input meter, on the raw input.
     for (int ch = 0; ch < numChannels; ++ch)
@@ -523,7 +528,7 @@ void RingOutDSP::processBlock(const float* const* inputs, float* const* outputs,
         if (subPos_ == 0)
         {
             updateSmoothersAndCoefficients();
-            gain_.setTarget(std::pow(10.0f, gainOutDb_.load(std::memory_order_relaxed) * 0.05f));
+            gain_.setTarget(decibelsToGain(gainOutDb_.load(std::memory_order_relaxed)));
             gainNow_ = gain_.next();
             bypassMix_.setTarget(bypass_.load(std::memory_order_relaxed) ? 0.0f : 1.0f);
             mixNow_ = bypassMix_.next();
@@ -931,6 +936,15 @@ bool RingOutDSP::engage(const Track& track) noexcept
     if (!guard.isLocked())
         return false;        // someone is editing the table this instant
 
+    // A RESET is about to clear everything: nothing to deepen or add to.
+    if (resetRequested_.load(std::memory_order_acquire))
+        return true;
+    // The block's own sync may have lost its try-lock earlier, in which case
+    // live_ (and the slots' row numbers) lag shared_. We hold the lock now, so
+    // bring them level before mapping rows to slots.
+    if (liveVersion_ != tableVersion_.load(std::memory_order_acquire))
+        adoptLiveTable();
+
     const float f = track.freq;
     const float gq = globalQ_.load(std::memory_order_relaxed);
     ringout::FilterTable& table = shared_;
@@ -1001,7 +1015,7 @@ bool RingOutDSP::engage(const Track& track) noexcept
     {
         // Full table and nothing near: carving an unrelated notch deeper would
         // not stop this tone. Report it and leave the tone alone for a while.
-        tableFull_.store(true, std::memory_order_relaxed);
+        tableFull_.store(true, std::memory_order_release);
         addHoldoff(f);
         return true;
     }
@@ -1025,7 +1039,7 @@ bool RingOutDSP::engage(const Track& track) noexcept
     if (addSearching_.load(std::memory_order_acquire))
     {
         addSearching_.store(false, std::memory_order_release);
-        addSatisfied_.store(true, std::memory_order_relaxed);
+        addSatisfied_.store(true, std::memory_order_release);
     }
     return true;
 }

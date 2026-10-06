@@ -63,6 +63,8 @@ constexpr float kEffectiveCutMin = -60.0f;
 constexpr float kEffectiveCutMax = 0.0f;
 
 constexpr float kSetupSeconds = 60.0f;
+// An ADD search that nobody releases (a controller tap) gives up after this.
+constexpr float kAddSeconds = 10.0f;
 
 struct Filter
 {
@@ -335,10 +337,11 @@ constexpr int kTableTextCapacity = 1024;
 //   "add,<on>,<freq>,<cut>,<q>"          append (ignored when full)
 //   "del,<slot>"                         remove and close the gap
 //   "clear"                              remove every filter
+//   "addstop"                            the editor released ADD: end its search
 
 struct EditCommand
 {
-    enum Kind { kNone, kSet, kAdd, kDelete, kClear };
+    enum Kind { kNone, kSet, kAdd, kDelete, kClear, kAddStop };
     Kind   kind = kNone;
     int    slot = -1;
     Filter filter;
@@ -383,6 +386,8 @@ inline bool parseEditCommand(const char* text, EditCommand& out) noexcept
 
     if (matchWord("clear"))
         c.kind = EditCommand::kClear;
+    else if (matchWord("addstop"))
+        c.kind = EditCommand::kAddStop;
     else if (matchWord("set,"))
     {
         c.kind = EditCommand::kSet;
@@ -434,6 +439,7 @@ inline bool formatEditCommand(const EditCommand& c, char* buf, int cap) noexcept
     switch (c.kind)
     {
     case EditCommand::kClear:  return put("clear");
+    case EditCommand::kAddStop: return put("addstop");
     case EditCommand::kSet:    return put("set,") && putNum((float)c.slot, 0) && put(",") && putFilter(c.filter);
     case EditCommand::kAdd:    return put("add,") && putFilter(c.filter);
     case EditCommand::kDelete: return put("del,") && putNum((float)c.slot, 0);
@@ -442,7 +448,8 @@ inline bool formatEditCommand(const EditCommand& c, char* buf, int cap) noexcept
 }
 
 // Applies a parsed command to a table. Returns the slot the command touched
-// (for selection follow-up) or -1 when nothing changed.
+// (for selection follow-up) or -1 when nothing changed. kAddStop is not a
+// table edit and always returns -1; the plugin acts on it directly.
 inline int applyEditCommand(FilterTable& t, const EditCommand& c) noexcept
 {
     switch (c.kind)

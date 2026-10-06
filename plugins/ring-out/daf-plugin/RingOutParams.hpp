@@ -18,8 +18,8 @@
 enum RingOutParamId
 {
     kParamSense = 0,     // 0 = Low, 1 = High
-    kParamSetup,         // detection engine armed (auto-off after 60 s)
-    kParamAdd,           // momentary: search for one filter while held
+    kParamSetup,         // trigger: arm the detection engine for 60 s, or disarm it
+    kParamAdd,           // trigger: search for one filter (10 s at most)
     kParamReset,         // trigger: remove every filter
     kParamGlobalQ,       // multiplier on every filter's Q, 0.2..10
     kParamGlobalAmp,     // offset on every filter's cut, -24..+24 dB
@@ -48,8 +48,12 @@ struct RoParam
 static constexpr RoParam kRoParams[kParamCount] =
 {
     { "sense",      "Sense",        0.0f, 1.0f, 0.0f, RoParam::kBool },
-    { "setup",      "Setup",        0.0f, 1.0f, 0.0f, RoParam::kBool },
-    { "add",        "Add",          0.0f, 1.0f, 0.0f, RoParam::kBool },
+    // SETUP and ADD are triggers, like the reference's momentary buttons: a
+    // trigger is never part of a saved session, so a project saved while the
+    // detector was listening cannot re-arm it on a live PA when it is reloaded.
+    // The engine state they act on is read back through the editor.
+    { "setup",      "Setup",        0.0f, 1.0f, 0.0f, RoParam::kTrigger },
+    { "add",        "Add",          0.0f, 1.0f, 0.0f, RoParam::kTrigger },
     { "reset",      "Reset",        0.0f, 1.0f, 0.0f, RoParam::kTrigger },
     { "global_q",   "Global Q",     duskaudio::ringout::kGlobalQMin,   duskaudio::ringout::kGlobalQMax,   duskaudio::ringout::kGlobalQDefault,   RoParam::kFloat },
     { "global_amp", "Global Amp",   duskaudio::ringout::kGlobalAmpMin, duskaudio::ringout::kGlobalAmpMax, duskaudio::ringout::kGlobalAmpDefault, RoParam::kFloat },

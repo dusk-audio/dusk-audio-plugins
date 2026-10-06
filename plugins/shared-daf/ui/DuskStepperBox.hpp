@@ -153,14 +153,16 @@ inline bool stepperBox(DuskPanel& panel, ImDrawList* dl, const char* id,
             const float wheel = ImGui::GetIO().MouseWheel;
             if (wheel > 0.0f) doStep(+1);
             else if (wheel < 0.0f) doStep(-1);
-            if (ImGui::IsMouseDoubleClicked(0))
-            {
-                char seed[32];
-                std::snprintf(seed, sizeof(seed), fmt, (double)value);
-                // Seed in the classic-locale form the parser below reads back.
-                for (char* p = seed; *p; ++p) if (*p == ',') *p = '.';
-                panel.openValueEdit(id, value, seed);
-            }
+        }
+        // The second press of a double-click makes the item active that same
+        // frame, so the gesture must be read while active, as the knob does.
+        if ((hovered || active) && ImGui::IsMouseDoubleClicked(0))
+        {
+            char seed[32];
+            std::snprintf(seed, sizeof(seed), fmt, (double)value);
+            // Seed in the classic-locale form the parser below reads back.
+            for (char* p = seed; *p; ++p) if (*p == ',') *p = '.';
+            panel.openValueEdit(id, value, seed);
         }
     }
 

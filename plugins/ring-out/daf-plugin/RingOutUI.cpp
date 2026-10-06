@@ -285,10 +285,15 @@ private:
             clampSelection();
             syncPresetSelection();
         }
-        // SETUP timed out while armed: put the host parameter back so the next
-        // press is a fresh rising edge.
-        if (values[kParamSetup] >= 0.5f && !status.setupActive && status.setupExpired)
-            setP(kParamSetup, 0.0f);
+        // Flash the indicator of the filter the engine just placed or deepened.
+        if (status.engagementCount != engagementsSeen)
+        {
+            engagementsSeen = status.engagementCount;
+            flashRow = status.lastEngagedRow;
+            flashSecondsLeft = 0.7f;
+        }
+        if (flashSecondsLeft > 0.0f)
+            flashSecondsLeft -= std::clamp(dt, 0.0f, 0.1f);
 
         inMeter.update(d->inputPeakDb(0), d->inputPeakDb(1), dt, meterStyle);
         outMeter.update(d->outputPeakDb(0), d->outputPeakDb(1), dt, meterStyle);
@@ -739,15 +744,18 @@ private:
     {
         const int cols = (int)rta.size();
         if (cols < 2 || !engineLive || rtaTarget.empty()) return;
+        // One concave polygon (trace plus the two baseline corners) instead of a
+        // quad per column: a single fill call, and no per-column seams.
         std::vector<ImVec2>& pts = ptsScratch;
         pts.clear();
-        pts.reserve((size_t)cols);
+        pts.reserve((size_t)cols + 2);
         for (int c = 0; c < cols; ++c)
             pts.push_back(P(GX0 + (float)c, rtaY(rta[(size_t)c])));
         const float baseY = P(GX0, GY1).y;
-        for (size_t i = 0; i + 1 < pts.size(); ++i)
-            dl->AddQuadFilled(pts[i], pts[i + 1], ImVec2(pts[i + 1].x, baseY), ImVec2(pts[i].x, baseY), kColCyanFill);
-        dl->AddPolyline(pts.data(), (int)pts.size(), kColCyan, 0, 1.3f * s);
+        pts.push_back(ImVec2(pts.back().x, baseY));
+        pts.push_back(ImVec2(pts.front().x, baseY));
+        dl->AddConcavePolyFilled(pts.data(), (int)pts.size(), kColCyanFill);
+        dl->AddPolyline(pts.data(), cols, kColCyan, 0, 1.3f * s);
     }
 
     // Composite response of the on filters, filled red down from the 0 dB line,
@@ -831,35 +839,42 @@ private:
         if (button(dl, "##sensehigh", 128, y0, 182, y1, "HIGH", high, kColCyan))
             setP(kParamSense, 1.0f);
 
-        // SETUP: a toggle that arms the engine for a minute. Arming also puts
-        // GLOBAL Q and AMP back to their defaults, as the reference does. Those
-        // are editor edits the host sees; the plugin itself never rewrites one
-        // parameter because another moved (that fails AU validation).
-        const bool setupOn = live ? status.setupActive : values[kParamSetup] >= 0.5f;
+        // SETUP: a trigger that arms the engine for a minute, or disarms it.
+        // Arming also puts GLOBAL Q and AMP back to their defaults, as the
+        // reference does. Those are editor edits the host sees; the plugin
+        // itself never rewrites one parameter because another moved (that
+        // fails AU validation).
+        const bool setupOn = live && status.setupActive;
         if (button(dl, "##setup", 230, y0, 430, y1, setupOn ? "SETUP  ON" : "SETUP", setupOn, kColRed, true, 12.0f))
         {
-            if (setupOn)
-                setP(kParamSetup, 0.0f);
-            else
+            if (!setupOn)
             {
-                if (values[kParamSetup] >= 0.5f)
-                    setP(kParamSetup, 0.0f);          // stale 'on' with the engine idle: re-edge
                 setP(kParamGlobalQ, ro::kGlobalQDefault);
                 setP(kParamGlobalAmp, ro::kGlobalAmpDefault);
-                setP(kParamSetup, 1.0f);
             }
+            setP(kParamSetup, 1.0f);
         }
 
-        // ADD: momentary. Held = searching; the engine stops itself after one
-        // filter and the button turns green until it is released.
+        // ADD: hold to search. The press fires the trigger, the release ends
+        // the search through the edit channel; the engine also stops itself
+        // after one filter and the button turns green until it is released.
         bool addHeld = false;
-        const bool addLit = live ? (status.addSearching || status.addSatisfied) : values[kParamAdd] >= 0.5f;
+        const bool addLit = live && (status.addSearching || status.addSatisfied);
         const ImU32 addCol = (live && status.addSatisfied) ? kColGreen : IM_COL32(240, 150, 40, 255);
         button(dl, "##add", 436, y0, 506, y1, "ADD", addLit, addCol, true, 11.0f, &addHeld);
         if (addHeld != addHeldLocal)
         {
             addHeldLocal = addHeld;
-            setP(kParamAdd, addHeld ? 1.0f : 0.0f);
+            if (addHeld)
+                setP(kParamAdd, 1.0f);
+            else
+            {
+                ro::EditCommand stop;
+                stop.kind = ro::EditCommand::kAddStop;
+                char buf[32];
+                if (ro::formatEditCommand(stop, buf, (int)sizeof(buf)))
+                    setState("edit", buf);
+            }
         }
 
         // RESET goes through the edit channel like every other table edit; the
@@ -931,6 +946,9 @@ private:
             panel.led(dl, cx, cy, lit, 6.5f, ledOn);
             if (exists && !lit)
                 dl->AddCircle(P(cx, cy), 6.5f * s, kColCyanDim, 20, 1.2f * s);  // exists, switched off
+            if (i == flashRow && flashSecondsLeft > 0.0f)
+                dl->AddCircleFilled(P(cx, cy), (9.0f + 6.0f * flashSecondsLeft) * s,
+                                    fade(kColRed, 0.5f * flashSecondsLeft), 24);   // the engine just touched this one
             if (i == selected)
                 dl->AddCircle(P(cx, cy), 9.5f * s, kColYellow, 24, 1.8f * s);
             char num[4]; std::snprintf(num, sizeof(num), "%d", i + 1);
@@ -1094,12 +1112,29 @@ private:
 
     void initDefaults() { applyPreset(0); }
 
+    // Step through the combo's list (factory, then user presets). Clamped, never
+    // wrapping, and never re-applying the preset already loaded: here a preset
+    // carries the ring-out itself, so a click past the end of the list must not
+    // reload "Default" and wipe the notches. With nothing selected (an edited
+    // table) the arrows do nothing; the combo is the explicit choice.
     void stepPreset(int dir)
     {
-        int i = currentPreset < 0 ? (dir < 0 ? 0 : -1) : currentPreset;
-        i += dir;
-        i = std::clamp(i, 0, kRoNumFactoryPresets - 1);
-        applyPreset(i);
+        const int total = kRoNumFactoryPresets + (int)userPresets.size();
+        int current = -1;
+        if (currentPreset >= 0)
+            current = currentPreset;
+        else if (!currentUserPath.empty())
+            for (size_t i = 0; i < userPresets.size(); ++i)
+                if (userPresets[i].path == currentUserPath) { current = kRoNumFactoryPresets + (int)i; break; }
+        if (current < 0)
+            return;
+        const int next = std::clamp(current + dir, 0, total - 1);
+        if (next == current)
+            return;
+        if (next < kRoNumFactoryPresets)
+            applyPreset(next);
+        else
+            loadUserPreset(userPresets[(size_t)(next - kRoNumFactoryPresets)]);
     }
 
     struct UserPreset
@@ -1270,6 +1305,9 @@ private:
     bool addHeldLocal = false;
     ro::Filter pendingSelect;           // the filter NEW added, to re-select after the pull
     bool pendingSelectValid = false;
+    unsigned engagementsSeen = 0;       // engine engagements already flashed
+    int flashRow = -1;
+    float flashSecondsLeft = 0.0f;
 
     // Filter curve cache (drawFilterCurve).
     std::vector<float> curveDb;

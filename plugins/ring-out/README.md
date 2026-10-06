@@ -31,8 +31,8 @@ The build installs into the user plugin folders unless configured with
 | Control | Range | Default | Notes |
 |---|---|---|---|
 | SENSE | Low / High | Low | two detector threshold sets (see below) |
-| SETUP | on / off | off | arms the engine for 60 s, then switches itself off; arming resets GLOBAL Q and AMP |
-| ADD | momentary | off | searches while held, stops after one filter is placed or deepened |
+| SETUP | trigger | | arms the engine for 60 s (or disarms it); it switches itself off; arming from the editor resets GLOBAL Q and AMP |
+| ADD | trigger | | starts a search that ends with one filter placed or deepened, when the editor's button is released, or after 10 s |
 | RESET | trigger | | removes every filter |
 | filter CUT | -20 .. 0 dB, 0.1 dB steps | 0 | per filter |
 | filter FREQ | 24 Hz .. 20 kHz | 24 Hz | steps of 1 Hz to 500 Hz, 10 Hz to 1 kHz, 100 Hz above; the value itself is continuous |
@@ -113,20 +113,18 @@ seqlock (`DuskSeqLock.hpp`).
   commands rather than a table replace mean a filter the engine adds while the
   user drags a control is never clobbered by a stale copy.
 
-Host parameters (`daf-plugin/RingOutParams.hpp`, append-only): Sense, Setup,
-Add, Reset (trigger), Global Q, Global Amp, Link, Gain Out, Bypass, and the two
-meter outputs.
+Host parameters (`daf-plugin/RingOutParams.hpp`, append-only): Sense, Setup
+(trigger), Add (trigger), Reset (trigger), Global Q, Global Amp, Link, Gain
+Out, Bypass, and the two meter outputs.
 
-* SETUP and ADD are owned by the engine alone: the plugin caches no value
-  for them, `getParameterValue()` reads the engine back (every DAF wrapper
-  builds the saved state from that getter, so a session saved after the
-  minute ran out holds 0), and `activate()` replays nothing for them, so a
-  timed-out detector cannot be re-armed by a block-size or rate change. ADD
-  also gives up after a minute, so a control that is never released cannot
-  hunt for ever. When the minute expires the engine clears its own request,
-  so the next 1 a host writes is a fresh edge; the editor additionally writes
-  the host parameter back to 0 at that moment (the one host-visible
-  transition the plugin cannot make itself).
+* SETUP and ADD are trigger parameters, like the reference's momentary
+  buttons. A trigger is never part of a saved session and `activate()`
+  replays nothing for it, so neither a project saved while the detector was
+  listening nor a block-size or rate change can re-arm it on a live PA. Each
+  SETUP press arms the engine or, while it is listening, disarms it; the
+  editor's button shows the engine's state. ADD starts a one-filter search;
+  the editor ends it on release through the edit channel (`addstop`), and a
+  search nobody ends gives up after 10 s.
 * The editor's RESET button goes through the edit channel (`clear`), like
   every other table edit; the Reset trigger parameter is for host automation
   and controller mapping.

@@ -119,14 +119,14 @@ public:
     void setGainOutDb(float db) noexcept     { gainOutDb_.store(ringout::clampf(db, ringout::kGainOutMin, ringout::kGainOutMax), std::memory_order_relaxed); }
     void setBypass(bool b) noexcept          { bypass_.store(b, std::memory_order_relaxed); }
 
-    // Edge-driven: false -> true arms the engine for kSetupSeconds; true -> false
-    // stops it. When the minute runs out the engine disarms itself, and the
-    // next true is a fresh edge again.
+    // Edge-driven: false -> true arms the engine for kSetupSeconds; false stops
+    // it. When the minute runs out the engine disarms itself, and the next true
+    // is a fresh edge again.
     void setSetup(bool on) noexcept;
 
-    // Level-driven: while true the engine searches until it engages one filter,
-    // then waits for the release. A search also gives up after kSetupSeconds,
-    // so a control that is never released cannot hunt for ever.
+    // true starts a search that ends with the first filter engaged, with false
+    // (the editor releasing ADD), or after kAddSeconds for a search nobody
+    // ends. Any of those leaves the next true a fresh start.
     void setAdd(bool held) noexcept;
 
     // RESET: remove every filter. Any thread; never blocks (a contended lock

@@ -144,6 +144,11 @@ static void testText()
     CHECK(ro::parseEditCommand("add,0,24,0,2.5", c) && c.kind == ro::EditCommand::kAdd && !c.filter.on, "parse add");
     CHECK(ro::parseEditCommand("del,19", c) && c.kind == ro::EditCommand::kDelete && c.slot == 19, "parse del");
     CHECK(ro::parseEditCommand("clear", c) && c.kind == ro::EditCommand::kClear, "parse clear");
+    CHECK(ro::parseEditCommand("addstop", c) && c.kind == ro::EditCommand::kAddStop, "parse addstop");
+    {
+        ro::FilterTable untouched; untouched.add(ro::defaultFilter());
+        CHECK(ro::applyEditCommand(untouched, c) == -1 && untouched.count == 1, "addstop is not a table edit");
+    }
     CHECK(!ro::parseEditCommand("del,20", c), "slot 20 does not exist");
     CHECK(!ro::parseEditCommand("set,0,1,100,-3", c), "incomplete set rejected");
     CHECK(!ro::parseEditCommand("frob", c), "unknown verb rejected");
@@ -582,6 +587,20 @@ static void testTimersAndEdges()
               "a host that still holds 1 re-arms with its next write of 1");
     }
     {
+        // An ADD search nobody ends gives up after kAddSeconds, and the next
+        // start is a fresh one.
+        RingOutDSP dsp;
+        dsp.prepare(48000.0, 4096);
+        dsp.setAdd(true);
+        std::vector<float> z(4096, 0.0f), o(4096), o2(4096);
+        const float* ins[2] = { z.data(), z.data() }; float* outs[2] = { o.data(), o2.data() };
+        const int blocks = (int)((ro::kAddSeconds + 1.0f) * 48000.0f / 4096.0f);
+        for (int b = 0; b < blocks; ++b) dsp.processBlock(ins, outs, 2, 4096);
+        CHECK(!dsp.status().addSearching, "ADD gives up after %.0f s", ro::kAddSeconds);
+        dsp.setAdd(true);
+        CHECK(dsp.status().addSearching, "a new ADD after the timeout starts a new search");
+    }
+    {
         // Meters never read below the declared parameter floor.
         RingOutDSP dsp;
         dsp.prepare(48000.0, 512);
@@ -711,6 +730,15 @@ static void testTableFull()
     CHECK(ro::tablesEqual(after, t), "a full table leaves unrelated filters alone");
     CHECK(dsp.status().tableFull, "the status reports the full table");
     CHECK(dsp.status().engagementCount == 0, "no engagement was counted (%u)", dsp.status().engagementCount);
+    {
+        // The report describes a listening engine: it clears when SETUP stops.
+        dsp.setSetup(false);
+        std::vector<float> z(256, 0.0f), o(256), o2(256);
+        const float* zi[2] = { z.data(), z.data() }; float* zo[2] = { o.data(), o2.data() };
+        dsp.processBlock(zi, zo, 2, 256);
+        CHECK(!dsp.status().tableFull, "table-full report clears once the engine is idle");
+        dsp.setSetup(true);
+    }
 
     // A ring inside filter 10's band: that filter deepens.
     const float f10 = t.f[10].freqHz;
