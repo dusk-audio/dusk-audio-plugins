@@ -119,6 +119,18 @@ Three-head tape delay with spring reverb:
 
 See the [Tape Echo 2 manual](manuals/tape-echo-2.md).
 
+### Ring Out - IN DEVELOPMENT
+Feedback eliminator for ringing out stage monitors and PA before soundcheck (DAF):
+- SETUP arms a detection engine for one minute; ADD (hold) hunts for a single filter; RESET clears
+- Up to 20 notch filters, each with CUT (0 to -20 dB), FREQ (24 Hz to 20 kHz) and Q (0.5 to 20), editable by hand
+- Detection by the standard acoustic-feedback criteria: a persistent, growing pure tone with no harmonics
+- Filters the engine places are deepened in 3 dB steps, then widened, while the tone keeps ringing
+- GLOBAL Q and AMP act on every filter at once; LINK ties AMP to GAIN OUT in opposite directions
+- Live input analyser, filter curve, input and output peak meters
+- Sensitivity Low/High, mono and stereo, zero latency
+
+See `plugins/ring-out/README.md` for the engine design and the state model.
+
 ### GrooveMind - IN DEVELOPMENT
 > ⚠️ Early development - not functional yet.
 ML-powered intelligent drum pattern generator:
