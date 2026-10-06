@@ -141,16 +141,6 @@ public:
         scanUserPresets();
     }
 
-    // The editor can close while ADD is held (host hides the window mid-press);
-    // the release would otherwise never be sent and the search would run on to
-    // its timeout. The DAF wrapper that owns this UI is still alive here.
-    ~RingOutUI() override
-    {
-        if (addHeldLocal)
-            sendEngineCommand(ro::EditCommand::kAddStop);
-        if (linkFollowerOpen >= 0)
-            editParameter((uint32_t)linkFollowerOpen, false);
-    }
 
 protected:
     //--- host -> UI --------------------------------------------------------------
@@ -284,12 +274,16 @@ private:
             tableVersionSeen = status.tableVersion;
             d->getTable(table);
             ++tableStamp;
-            if (pendingSelectValid)
+            if (pendingSelectPulls > 0)
             {
-                // The filter NEW just added is the last row equal to it.
-                pendingSelectValid = false;
-                for (int i = table.count - 1; i >= 0; --i)
-                    if (ro::filtersEqual(table.f[i], pendingSelect)) { selected = i; break; }
+                // The filter NEW just added is the last row equal to it. The
+                // add travels through the host and may not have landed yet when
+                // an engine change bumps the version, so keep looking for a few
+                // pulls rather than giving up on the first one.
+                bool found = false;
+                for (int i = table.count - 1; i >= 0 && !found; --i)
+                    if (ro::filtersEqual(table.f[i], pendingSelect)) { selected = i; found = true; }
+                pendingSelectPulls = found ? 0 : pendingSelectPulls - 1;
             }
             clampSelection();
             syncPresetSelection();
@@ -378,7 +372,7 @@ private:
             // arrives, the selection is re-resolved to the filter just added.
             selected = touched;
             pendingSelect = asSent.filter;
-            pendingSelectValid = true;
+            pendingSelectPulls = 30;
         }
         else if (c.kind == ro::EditCommand::kDelete)
             selected = table.count == 0 ? -1 : std::min(c.slot, table.count - 1);
@@ -920,7 +914,20 @@ private:
         if (addHeld != addHeldLocal)
         {
             addHeldLocal = addHeld;
+            addLeaseTimer = 0.0f;
             sendEngineCommand(addHeld ? ro::EditCommand::kAddStart : ro::EditCommand::kAddStop);
+        }
+        // While held, keep the engine's lease alive. If the editor closes or
+        // stops drawing mid-press the lease lapses and the engine ends the
+        // search by itself, which is the only release it can rely on.
+        if (addHeldLocal)
+        {
+            addLeaseTimer += std::clamp(ImGui::GetIO().DeltaTime, 0.0f, 0.1f);
+            if (addLeaseTimer >= 0.5f)
+            {
+                addLeaseTimer = 0.0f;
+                sendEngineCommand(ro::EditCommand::kAddHold);
+            }
         }
 
         // RESET goes through the edit channel like every other table edit; the
@@ -1387,8 +1394,9 @@ private:
     unsigned tableStamp = 0;            // bumps on every change of the local mirror
     int selected = -1;
     bool addHeldLocal = false;
+    float addLeaseTimer = 0.0f;
     ro::Filter pendingSelect;           // the filter NEW added, to re-select after the pull
-    bool pendingSelectValid = false;
+    int pendingSelectPulls = 0;         // pulls left to find it (the add may still be in flight)
     unsigned engagementsSeen = 0;       // engine engagements already flashed
     int flashRow = -1;
     float flashSecondsLeft = 0.0f;

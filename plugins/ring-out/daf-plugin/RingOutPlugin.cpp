@@ -142,11 +142,11 @@ protected:
                 dsp.toggleSetup();
             break;
         case kParamAdd:
-            // Trigger: starts a one-filter search. The editor ends it on
-            // release through the "addstop" edit command; a controller tap
-            // lets it run to one filter or kAddSeconds.
+            // Trigger from a host or controller: a tap that nobody releases,
+            // so the search ends with its filter or after kAddSeconds. The
+            // editor's held ADD travels the edit channel instead.
             if (value >= 0.5f)
-                dsp.setAdd(true);
+                dsp.tapAdd();
             break;
         case kParamReset:     if (value >= 0.5f) dsp.resetFilters(); break;
         case kParamGlobalQ:   dsp.setGlobalQ(value);               break;
@@ -260,8 +260,9 @@ protected:
             {
             case EditCommand::kSetupOn:  dsp.setSetup(true);  break;
             case EditCommand::kSetupOff: dsp.setSetup(false); break;
-            case EditCommand::kAddStart: dsp.setAdd(true);    break;
-            case EditCommand::kAddStop:  dsp.setAdd(false);   break;
+            case EditCommand::kAddStart: dsp.setAdd(true);       break;
+            case EditCommand::kAddHold:  dsp.renewAddLease();    break;
+            case EditCommand::kAddStop:  dsp.setAdd(false);      break;
             default:                        dsp.applyEdit(command); break;
             }
         }

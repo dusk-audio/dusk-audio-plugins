@@ -63,8 +63,13 @@ constexpr float kEffectiveCutMin = -60.0f;
 constexpr float kEffectiveCutMax = 0.0f;
 
 constexpr float kSetupSeconds = 60.0f;
-// An ADD search that nobody releases (a controller tap) gives up after this.
+// An ADD search started by a controller tap (nobody will release it) gives up
+// after this. A search the editor holds runs for as long as the editor keeps
+// renewing its lease, which it does every half second while the button is
+// down; a lease that lapses (editor closed mid-press, message lost) ends the
+// search within kAddLeaseSeconds.
 constexpr float kAddSeconds = 10.0f;
+constexpr float kAddLeaseSeconds = 2.0f;
 
 struct Filter
 {
@@ -83,25 +88,38 @@ inline Filter defaultFilter() noexcept
 
 struct FilterTable
 {
-    int    count = 0;             // filters 0..count-1 exist; slots are contiguous
-    Filter f[kMaxFilters] = {};
+    int      count = 0;             // filters 0..count-1 exist; rows are contiguous
+    Filter   f[kMaxFilters] = {};
+    // Row identity, moved with the row by add/remove/clear and nothing else:
+    // the engine's filter slots follow it so a deleted row's neighbours keep
+    // their slots. 0 = none assigned yet. Not part of the text form or of
+    // tablesEqual(): two tables with the same filters are the same table.
+    uint32_t id[kMaxFilters] = {};
 
-    void clear() noexcept { count = 0; for (Filter& x : f) x = Filter(); }
+    void clear() noexcept
+    {
+        count = 0;
+        for (Filter& x : f) x = Filter();
+        for (uint32_t& i : id) i = 0;
+    }
 
-    // Appends; returns the new slot or -1 when full.
-    int add(const Filter& x) noexcept
+    // Appends; returns the new row or -1 when full.
+    int add(const Filter& x, uint32_t rowId = 0) noexcept
     {
         if (count >= kMaxFilters) return -1;
         f[count] = x;
+        id[count] = rowId;
         return count++;
     }
 
-    // Removes slot i and closes the gap (the indicators move left).
+    // Removes row i and closes the gap (the indicators move left).
     bool remove(int i) noexcept
     {
         if (i < 0 || i >= count) return false;
-        for (int k = i; k + 1 < count; ++k) f[k] = f[k + 1];
-        f[--count] = Filter();
+        for (int k = i; k + 1 < count; ++k) { f[k] = f[k + 1]; id[k] = id[k + 1]; }
+        --count;
+        f[count] = Filter();
+        id[count] = 0;
         return true;
     }
 };
@@ -350,11 +368,11 @@ constexpr int kTableTextCapacity = 1024;
 //
 //   "setupon" / "setupoff"               arm the engine / disarm it (the editor's intent,
 //                                        never a toggle decided from a stale status)
-//   "addstart" / "addstop"               ADD pressed / released
+//   "addstart" / "addhold" / "addstop"   ADD pressed / still held (lease renewal) / released
 
 struct EditCommand
 {
-    enum Kind { kNone, kSet, kAdd, kDelete, kClear, kSetupOn, kSetupOff, kAddStart, kAddStop };
+    enum Kind { kNone, kSet, kAdd, kDelete, kClear, kSetupOn, kSetupOff, kAddStart, kAddHold, kAddStop };
     bool isTableEdit() const noexcept { return kind == kSet || kind == kAdd || kind == kDelete || kind == kClear; }
     Kind   kind = kNone;
     int    slot = -1;
@@ -406,6 +424,8 @@ inline bool parseEditCommand(const char* text, EditCommand& out) noexcept
         c.kind = EditCommand::kAddStop;
     else if (matchWord("addstart"))
         c.kind = EditCommand::kAddStart;
+    else if (matchWord("addhold"))
+        c.kind = EditCommand::kAddHold;
     else if (matchWord("setupon"))
         c.kind = EditCommand::kSetupOn;
     else if (matchWord("setupoff"))
@@ -470,6 +490,7 @@ inline bool formatEditCommand(const EditCommand& c, char* buf, int cap) noexcept
     case EditCommand::kSetupOn:  return put("setupon");
     case EditCommand::kSetupOff: return put("setupoff");
     case EditCommand::kAddStart: return put("addstart");
+    case EditCommand::kAddHold:  return put("addhold");
     case EditCommand::kAddStop: return put("addstop");
     case EditCommand::kSet:
         if (!(put("set,") && putNum((float)c.slot, 0) && put(",") && putFilter(c.filter))) return false;

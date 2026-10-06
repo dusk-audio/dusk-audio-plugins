@@ -164,6 +164,19 @@ static void testText()
               "format set with previous: '%s'", mb);
     }
     CHECK(ro::parseEditCommand("addstart", c) && c.kind == ro::EditCommand::kAddStart && !c.isTableEdit(), "parse addstart");
+    CHECK(ro::parseEditCommand("addhold", c) && c.kind == ro::EditCommand::kAddHold, "parse addhold");
+    {
+        // Row ids travel with their rows.
+        ro::FilterTable ids;
+        ids.add(ro::Filter{ true, 100.0f, -1.0f, 1.0f }, 7);
+        ids.add(ro::Filter{ true, 200.0f, -1.0f, 1.0f }, 8);
+        ids.add(ro::Filter{ true, 300.0f, -1.0f, 1.0f }, 9);
+        CHECK(ids.remove(0) && ids.count == 2 && ids.id[0] == 8 && ids.id[1] == 9 && ids.id[2] == 0,
+              "remove moves ids down with their rows");
+        ro::FilterTable sameFilters = ids;
+        sameFilters.id[0] = 42;
+        CHECK(ro::tablesEqual(ids, sameFilters), "ids are not part of table equality");
+    }
     CHECK(ro::parseEditCommand("setupon", c) && c.kind == ro::EditCommand::kSetupOn && !c.isTableEdit(), "parse setupon");
     CHECK(ro::parseEditCommand("setupoff", c) && c.kind == ro::EditCommand::kSetupOff, "parse setupoff");
     CHECK(!ro::parseEditCommand("setup", c), "a bare setup is not a command (intent is required)");
@@ -698,18 +711,37 @@ static void testTimersAndEdges()
               "a host that still holds 1 re-arms with its next write of 1");
     }
     {
-        // An ADD search nobody ends gives up after kAddSeconds, and the next
-        // start is a fresh one.
+        // A controller tap nobody ends gives up after kAddSeconds, and the next
+        // tap is a fresh one.
+        RingOutDSP dsp;
+        dsp.prepare(48000.0, 4096);
+        dsp.tapAdd();
+        std::vector<float> z(4096, 0.0f), o(4096), o2(4096);
+        const float* ins[2] = { z.data(), z.data() }; float* outs[2] = { o.data(), o2.data() };
+        const int blocks = (int)((ro::kAddSeconds + 1.0f) * 48000.0f / 4096.0f);
+        for (int b = 0; b < blocks; ++b) dsp.processBlock(ins, outs, 2, 4096);
+        CHECK(!dsp.status().addSearching, "a tapped ADD gives up after %.0f s", ro::kAddSeconds);
+        dsp.tapAdd();
+        CHECK(dsp.status().addSearching, "a new tap after the timeout starts a new search");
+    }
+    {
+        // The editor's held ADD runs for as long as its lease is renewed, and
+        // ends within kAddLeaseSeconds once the renewals stop.
         RingOutDSP dsp;
         dsp.prepare(48000.0, 4096);
         dsp.setAdd(true);
         std::vector<float> z(4096, 0.0f), o(4096), o2(4096);
         const float* ins[2] = { z.data(), z.data() }; float* outs[2] = { o.data(), o2.data() };
-        const int blocks = (int)((ro::kAddSeconds + 1.0f) * 48000.0f / 4096.0f);
-        for (int b = 0; b < blocks; ++b) dsp.processBlock(ins, outs, 2, 4096);
-        CHECK(!dsp.status().addSearching, "ADD gives up after %.0f s", ro::kAddSeconds);
-        dsp.setAdd(true);
-        CHECK(dsp.status().addSearching, "a new ADD after the timeout starts a new search");
+        const int perSecond = (int)(48000.0f / 4096.0f) + 1;
+        for (int sec = 0; sec < 15; ++sec)   // held for 15 s, well past the tap cap
+        {
+            for (int b = 0; b < perSecond; ++b) dsp.processBlock(ins, outs, 2, 4096);
+            dsp.renewAddLease();
+        }
+        CHECK(dsp.status().addSearching, "a held ADD outlasts the tap cap while its lease is renewed");
+        for (int b = 0; b < (int)((ro::kAddLeaseSeconds + 0.5f) * perSecond); ++b)
+            dsp.processBlock(ins, outs, 2, 4096);
+        CHECK(!dsp.status().addSearching, "a lease nobody renews ends the search within %.0f s", ro::kAddLeaseSeconds);
     }
     {
         // Bypass pauses the countdown: the detector is out of circuit then.
@@ -731,7 +763,7 @@ static void testTimersAndEdges()
         // moment and then clears by itself; nobody will release it.
         RingOutDSP dsp;
         dsp.prepare(48000.0, 256);
-        dsp.setAdd(true);
+        dsp.tapAdd();
         auto ring = [](double tt) { return 0.3f * (float)std::sin(2.0 * 3.14159265358979323846 * 2500.0 * tt); };
         runTone(dsp, 48000.0, 0.6f, -45.0f, ring);
         CHECK(dsp.status().addSatisfied, "filter placed is shown right after the search");
@@ -826,6 +858,10 @@ static void testTimersAndEdges()
               "no version bump for an engage that changes nothing (version %u -> %u, engagements %u)",
               v, dsp.tableVersion(), dsp.status().engagementCount);
         CHECK(dsp.status().ringUncovered, "a ring through a filter at its floor is reported as not covered");
+        // The ring stops: the report ages out while the engine keeps listening.
+        runTone(dsp, 48000.0, 3.0f, -45.0f, [](double) { return 0.0f; });
+        CHECK(dsp.status().setupActive && !dsp.status().ringUncovered,
+              "the report clears a couple of seconds after the ring stops");
     }
 }
 

@@ -32,7 +32,7 @@ The build installs into the user plugin folders unless configured with
 |---|---|---|---|
 | SENSE | Low / High | Low | two detector threshold sets (see below) |
 | SETUP | trigger | | arms the engine for 60 s (or disarms it); it switches itself off; arming from the editor resets GLOBAL Q and AMP |
-| ADD | trigger | | starts a search that ends with one filter placed or deepened, when the editor's button is released, or after 10 s |
+| ADD | trigger | | from a host or controller: a search that ends with one filter placed or deepened, or after 10 s; from the editor: held for as long as the button is down |
 | RESET | trigger | | removes every filter |
 | filter CUT | -20 .. 0 dB, 0.1 dB steps | 0 | per filter |
 | filter FREQ | 24 Hz .. 20 kHz | 24 Hz | steps of 1 Hz to 500 Hz, 10 Hz to 1 kHz, 100 Hz above; the value itself is continuous |
@@ -51,8 +51,9 @@ select a filter.
 ## Engine
 
 `core/RingOutDSP.{hpp,cpp}`. Signal path: input meter, notch bank (shared
-coefficients, per-channel state, RBJ peaking sections from
-`shared-daf/dsp/DuskFilters.hpp`), output gain, output meter. The mono sum of
+coefficients, per-channel state, matched peaking sections from
+`shared-daf/dsp/DuskFilters.hpp`, so a notch near the top of the band keeps
+its analogue bandwidth without oversampling), output gain, output meter. The mono sum of
 the input feeds a Hann-windowed FFT (4096 points below 50 kHz, 8192 to 100 kHz,
 16384 above, so the bin stays near 11.7 Hz and the hop near 21 ms) that is both
 the display's analyser and the detector's input.
@@ -126,9 +127,11 @@ Out, Bypass, and the two meter outputs.
   replays nothing for it, so neither a project saved while the detector was
   listening nor a block-size or rate change can re-arm it on a live PA. Each
   SETUP press arms the engine or, while it is listening, disarms it; the
-  editor's button shows the engine's state. ADD starts a one-filter search;
-  the editor ends it on release through the edit channel (`addstop`), and a
-  search nobody ends gives up after 10 s.
+  editor's button shows the engine's state. A controller's ADD trigger starts
+  a one-filter search that gives up after 10 s. The editor's ADD is a held
+  search over the edit channel: `addstart` on press, `addhold` every half
+  second while down (a lease the engine lets lapse after 2 s if the editor
+  closes or stops drawing mid-press), `addstop` on release.
 * The editor's SETUP, ADD and RESET buttons all go through the edit channel
   (`setupon` / `setupoff`, `addstart` / `addstop`, `clear`), like every
   table edit; the three trigger parameters are for host automation and

@@ -121,17 +121,22 @@ public:
     void setGainOutDb(float db) noexcept     { gainOutDb_.store(ringout::clampf(db, ringout::kGainOutMin, ringout::kGainOutMax), std::memory_order_relaxed); }
     void setBypass(bool b) noexcept          { bypass_.store(b, std::memory_order_relaxed); }
 
-    // Edge-driven: false -> true arms the engine for kSetupSeconds; false stops
-    // it. When the minute runs out the engine disarms itself, and the next true
-    // is a fresh edge again.
+    // true arms the engine for kSetupSeconds (ignored while already listening);
+    // false stops it. When the minute runs out the engine disarms itself.
     void setSetup(bool on) noexcept;
-    // The SETUP button: arm, or disarm while listening.
+    // The SETUP trigger: arm, or disarm while listening.
     void toggleSetup() noexcept { setSetup(!setupActive()); }
 
-    // true starts a search that ends with the first filter engaged, with false
-    // (the editor releasing ADD), or after kAddSeconds for a search nobody
-    // ends. Any of those leaves the next true a fresh start.
+    // The editor's ADD. true starts a search the editor HOLDS: it ends with the
+    // first filter engaged, with false (the release), or when the editor stops
+    // renewing its lease (renewAddLease(), sent every half second while the
+    // button is down) for kAddLeaseSeconds. Any of those leaves the next true a
+    // fresh start.
     void setAdd(bool held) noexcept;
+    void renewAddLease() noexcept;
+    // A controller's ADD trigger: nobody will release it, so the search ends
+    // with its filter or after kAddSeconds.
+    void tapAdd() noexcept;
 
     // RESET: remove every filter. Any thread; never blocks (a contended lock
     // defers the clear to the next audio block).
@@ -254,6 +259,7 @@ private:
     bool engineActive() const noexcept;
     void clearTracks() noexcept;
     void addHoldoff(float freq) noexcept;
+    void raiseUncovered() noexcept;
 
     double sampleRate_ = 48000.0;
     int    fftSize_ = 4096;
@@ -268,29 +274,29 @@ private:
     std::atomic<float> gainOutDb_ { ringout::kGainOutDefault };
     std::atomic<bool>  bypass_ { false };
 
+    void startAdd(bool held) noexcept;
+
     //--- engine state
-    std::atomic<bool>  setupRequested_ { false };
     std::atomic<bool>  setupActive_ { false };
     std::atomic<bool>  setupExpired_ { false };
     std::atomic<int>   setupSamplesLeft_ { 0 };
-    std::atomic<bool>  addHeld_ { false };
+    std::atomic<bool>  addHeld_ { false };          // the editor holds the search (lease-renewed)
     std::atomic<bool>  addSearching_ { false };
     std::atomic<bool>  addSatisfied_ { false };
-    std::atomic<int>   addSamplesLeft_ { 0 };
+    std::atomic<int>   addSamplesLeft_ { 0 };       // tap: time to the cap; held: time to lease lapse
     std::atomic<int>   addSatisfiedSamplesLeft_ { 0 };   // how long "filter placed" shows unreleased
     std::atomic<bool>  ringUncovered_ { false };
+    std::atomic<int>   uncoveredSamplesLeft_ { 0 };  // the report ages out unless re-raised
     std::atomic<int>   lastEngagedRow_ { -1 };
     std::atomic<unsigned> engagementCount_ { 0 };
 
-    //--- table: shared (locked) + the audio thread's copy, each with row ids
+    //--- table: shared (locked) + the audio thread's copy (row ids travel inside)
     mutable SpinLock      tableLock_;
     ringout::FilterTable  shared_;
-    uint32_t              sharedIds_[ringout::kMaxFilters] = {};
     uint32_t              nextRowId_ = 1;
     std::atomic<unsigned> tableVersion_ { 1 };
     std::atomic<bool>     resetRequested_ { false };
     ringout::FilterTable  live_;
-    uint32_t              liveIds_[ringout::kMaxFilters] = {};
     unsigned              liveVersion_ = 0;
     bool                  snapOnAdopt_ = true;   // adoption right after reset(): no ramp-in
     int                   samplesSinceReset_ = 0;
