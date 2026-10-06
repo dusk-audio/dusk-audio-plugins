@@ -117,13 +117,19 @@ Host parameters (`daf-plugin/RingOutParams.hpp`, append-only): Sense, Setup,
 Add, Reset (trigger), Global Q, Global Amp, Link, Gain Out, Bypass, and the two
 meter outputs.
 
-* SETUP and ADD report the *engine* through `getParameterValue()`, not the
-  last value written: every DAF wrapper builds the saved state from that
-  getter, so a session saved after the minute ran out holds 0 and cannot
-  re-arm the detector on a live PA when it is reloaded. ADD also gives up
-  after a minute, so a control that is never released cannot hunt for ever.
-  The editor puts the host parameter back to 0 when it sees the engine has
-  stopped; the plugin treats the next 0 to 1 edge as a fresh start.
+* SETUP and ADD are owned by the engine alone: the plugin caches no value
+  for them, `getParameterValue()` reads the engine back (every DAF wrapper
+  builds the saved state from that getter, so a session saved after the
+  minute ran out holds 0), and `activate()` replays nothing for them, so a
+  timed-out detector cannot be re-armed by a block-size or rate change. ADD
+  also gives up after a minute, so a control that is never released cannot
+  hunt for ever. When the minute expires the engine clears its own request,
+  so the next 1 a host writes is a fresh edge; the editor additionally writes
+  the host parameter back to 0 at that moment (the one host-visible
+  transition the plugin cannot make itself).
+* The editor's RESET button goes through the edit channel (`clear`), like
+  every other table edit; the Reset trigger parameter is for host automation
+  and controller mapping.
 * Arming SETUP from the editor also resets GLOBAL Q and AMP, as editor edits
   the host sees. The plugin never rewrites one parameter because another
   moved: that fails AU validation ("Parameter did not retain set value") and

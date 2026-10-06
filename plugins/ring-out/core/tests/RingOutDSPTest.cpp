@@ -592,6 +592,42 @@ static void testTimersAndEdges()
               "silence meters at the floor: %.1f / %.1f dB", dsp.inputPeakDb(0), dsp.outputPeakDb(1));
     }
     {
+        // After reset() (activate, a rate change) the notches are in force
+        // from the first block: no ramp-in that would leave the PA bare.
+        RingOutDSP dsp;
+        dsp.prepare(48000.0, 64);
+        ro::FilterTable t;
+        t.add(ro::Filter{ true, 1000.0f, -20.0f, 8.0f });
+        dsp.setTable(t);
+        dsp.reset();
+        std::vector<float> in(64), out(64);
+        double phase = 0.0, sumIn = 0.0, sumOut = 0.0;
+        for (int b = 0; b < 8; ++b)   // the first ~10 ms
+        {
+            for (int i = 0; i < 64; ++i) { in[(size_t)i] = 0.5f * (float)std::sin(phase); phase += 2.0 * 3.14159265358979323846 * 1000.0 / 48000.0; }
+            const float* ins[1] = { in.data() }; float* outs[1] = { out.data() };
+            dsp.processBlock(ins, outs, 1, 64);
+            if (b >= 4)   // past the filter's own transient
+                for (int i = 0; i < 64; ++i) { sumIn += in[(size_t)i] * in[(size_t)i]; sumOut += out[(size_t)i] * out[(size_t)i]; }
+        }
+        const float early = (float)(10.0 * std::log10(sumOut / sumIn));
+        CHECK(early < -12.0f, "notches are in force right after reset: %.1f dB within the first 10 ms", early);
+    }
+    {
+        // A user filter wider than the engine's floor is never narrowed back.
+        RingOutDSP dsp;
+        dsp.prepare(48000.0, 256);
+        ro::FilterTable t;
+        t.add(ro::Filter{ true, 1000.0f, ro::kAutoCutFloor, ro::kQMin });
+        dsp.setTable(t);
+        dsp.setSetup(true);
+        runTone(dsp, 48000.0, 1.0f, -45.0f,
+                [](double tt) { return 0.3f * (float)std::sin(2.0 * 3.14159265358979323846 * 1000.0 * tt); });
+        dsp.getTable(t);
+        CHECK(t.count == 1 && near(t.f[0].q, ro::kQMin, 1e-4f),
+              "a Q 0.5 user filter stays at Q 0.5 (now %.1f)", t.count ? t.f[0].q : 0.0f);
+    }
+    {
         // A filter already at the floor has nothing left to give: the table
         // version does not churn while the tone rings on.
         RingOutDSP dsp;
@@ -683,6 +719,10 @@ static void testTableFull()
     dsp.getTable(after);
     CHECK(after.count == ro::kMaxFilters && after.f[10].cutDb <= t.f[10].cutDb - 3.0f,
           "a ring inside a filter's band deepens it: %.1f -> %.1f dB", t.f[10].cutDb, after.f[10].cutDb);
+    // Deleting a filter makes room again and says so.
+    ro::EditCommand del; del.kind = ro::EditCommand::kDelete; del.slot = 0;
+    CHECK(dsp.applyEdit(del) == 0, "delete one of twenty");
+    CHECK(!dsp.status().tableFull, "DEL clears the full-table flag");
     dsp.resetFilters();
     std::vector<float> z(256, 0.0f), o(256), o2(256);
     const float* ins[2] = { z.data(), z.data() }; float* outs[2] = { o.data(), o2.data() };

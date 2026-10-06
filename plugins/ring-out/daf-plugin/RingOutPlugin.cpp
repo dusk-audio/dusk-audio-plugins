@@ -108,10 +108,13 @@ protected:
 
     float getParameterValue(uint32_t index) const override
     {
+        // Meters are clamped to their declared range: a hot float signal (or
+        // GAIN OUT at +24 dB) can peak well above the +6 dB the parameter
+        // advertises, and wrappers normalise output values by that range.
         if (index == kParamInLevel)
-            return std::max(dsp.inputPeakDb(0), dsp.inputPeakDb(1));
+            return std::min(kRoParams[index].max, std::max(dsp.inputPeakDb(0), dsp.inputPeakDb(1)));
         if (index == kParamOutLevel)
-            return std::max(dsp.outputPeakDb(0), dsp.outputPeakDb(1));
+            return std::min(kRoParams[index].max, std::max(dsp.outputPeakDb(0), dsp.outputPeakDb(1)));
         // SETUP and ADD report the ENGINE, not the last value written: the
         // engine switches itself off (the minute runs out, ADD finds its
         // filter), and every wrapper builds the saved state from this getter.
@@ -133,7 +136,12 @@ protected:
             || !std::isfinite(value))
             return;
         value = roNormalizeParamValue(index, value);
-        values[index].store(value, std::memory_order_relaxed);
+        // SETUP and ADD are not cached: the engine is their only owner (it
+        // disarms itself), getParameterValue() reads it back, and a cached 1
+        // replayed by pushAllParams() on the next activate() would re-arm a
+        // detector that had already timed out.
+        if (index != kParamSetup && index != kParamAdd)
+            values[index].store(value, std::memory_order_relaxed);
         switch (index)
         {
         case kParamSense:     dsp.setSense(value >= 0.5f ? 1 : 0); break;
@@ -284,11 +292,15 @@ protected:
     }
 
 private:
+    // Replays the cached controls into a freshly prepared engine. The meters are
+    // outputs, RESET is a trigger, and SETUP / ADD are owned by the engine: none
+    // of them has a cached value to replay.
     void pushAllParams()
     {
         for (uint32_t i = 0; i < kParamCount; ++i)
         {
-            if (i == kParamInLevel || i == kParamOutLevel || i == kParamReset)
+            if (i == kParamInLevel || i == kParamOutLevel || i == kParamReset
+                || i == kParamSetup || i == kParamAdd)
                 continue;
             setParameterValue(i, values[i].load(std::memory_order_relaxed));
         }

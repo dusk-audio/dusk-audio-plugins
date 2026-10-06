@@ -43,11 +43,13 @@ namespace
 
     // Deepen a filter that a tone still rings through: 3 dB at a time to the
     // floor, then wider, a fifth at a time, to the widest the engine will go.
+    // A filter the user already set wider than that floor is left as wide as
+    // it is, never narrowed back to it.
     inline void deepen(ringout::Filter& x) noexcept
     {
         if (x.cutDb > ringout::kAutoCutFloor + 0.05f)
             x.cutDb = ringout::snapCut(std::max(ringout::kAutoCutFloor, x.cutDb - 3.0f));
-        else
+        else if (x.q > ringout::kAutoQFloor + 0.05f)
             x.q = ringout::snapQ(std::max(ringout::kAutoQFloor, x.q * 0.8f));
     }
 
@@ -170,8 +172,10 @@ void RingOutDSP::reset() noexcept
         outPeakDb_[ch].store(kDbFloor, std::memory_order_relaxed);
     }
 
-    // Force a fresh copy of the table on the next block.
+    // Force a fresh copy of the table on the next block, with the notches in
+    // force immediately rather than ramped in.
     liveVersion_ = 0;
+    snapOnAdopt_ = true;
 }
 
 //==============================================================================
@@ -229,7 +233,7 @@ RingOutDSP::Status RingOutDSP::status() const noexcept
     s.addSearching = addSearching_.load(std::memory_order_acquire);
     s.addSatisfied = addSatisfied_.load(std::memory_order_relaxed);
     s.tableFull = tableFull_.load(std::memory_order_relaxed);
-    s.lastEngagedSlot = lastEngagedSlot_.load(std::memory_order_relaxed);
+    s.lastEngagedRow = lastEngagedRow_.load(std::memory_order_relaxed);
     s.engagementCount = engagementCount_.load(std::memory_order_relaxed);
     s.tableVersion = tableVersion();
     return s;
@@ -260,6 +264,7 @@ int RingOutDSP::applyEditLocked(const ringout::EditCommand& c) noexcept
     case EditCommand::kClear:
         if (shared_.count == 0) return -1;
         clearLocked();
+        tableFull_.store(false, std::memory_order_relaxed);
         return 0;
     case EditCommand::kSet:
         if (c.slot < 0 || c.slot >= shared_.count) return -1;
@@ -273,6 +278,7 @@ int RingOutDSP::applyEditLocked(const ringout::EditCommand& c) noexcept
             sharedIds_[k] = sharedIds_[k + 1];
         sharedIds_[shared_.count - 1] = 0;
         shared_.remove(c.slot);
+        tableFull_.store(false, std::memory_order_relaxed);   // room again
         return c.slot;
     default:
         return -1;
@@ -301,6 +307,8 @@ void RingOutDSP::replaceLocked(const ringout::FilterTable& table) noexcept
     shared_ = table;
     for (int row = 0; row < ringout::kMaxFilters; ++row)
         sharedIds_[row] = row < table.count ? newIds[row] : 0;
+    if (table.count < ringout::kMaxFilters)
+        tableFull_.store(false, std::memory_order_relaxed);
 }
 
 //==============================================================================
@@ -441,10 +449,18 @@ void RingOutDSP::assignSlots() noexcept
         st.entry = row;
         st.logFreq.snap(std::log(live_.f[row].freqHz));
         st.q.snap(effectiveQ(live_.f[row].q, globalQ_.load(std::memory_order_relaxed)));
-        st.cutDb.snap(0.0f);
+        // A filter added while audio runs ramps in from flat. After reset()
+        // (activate, a rate change) no audio has flowed yet, and a table of
+        // twenty notches must be in force from the first sample rather than
+        // leave the PA unprotected for the length of a ramp.
+        const ringout::Filter& f = live_.f[row];
+        st.cutDb.snap(snapOnAdopt_ && f.on
+                          ? effectiveCutDb(f.cutDb, globalAmp_.load(std::memory_order_relaxed)) : 0.0f);
+        st.lastCut = 1.0e9f;   // force the first coefficient design
         st.cooldownFrames = 0;
         for (Biquad& b : st.bq) b.reset();
     }
+    snapOnAdopt_ = false;
 }
 
 //==============================================================================
@@ -697,7 +713,7 @@ void RingOutDSP::analyzeFrame() noexcept
     }
     frame_.bins = half + 1;
     frame_.binHz = binHz_;
-    spectrum_.store(frame_);
+    spectrum_.store(frame_, spectrumBytes());
 
     ++framesSinceReset_;
 
@@ -1003,7 +1019,7 @@ bool RingOutDSP::engage(const Track& track) noexcept
     const int slot = slotForRow(row);
     if (slot >= 0)
         slots_[slot].cooldownFrames = 8;
-    lastEngagedSlot_.store(row, std::memory_order_relaxed);
+    lastEngagedRow_.store(row, std::memory_order_relaxed);
     engagementCount_.fetch_add(1, std::memory_order_relaxed);
 
     if (addSearching_.load(std::memory_order_acquire))

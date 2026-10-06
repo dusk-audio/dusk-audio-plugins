@@ -23,6 +23,16 @@
 #pragma once
 
 #include <atomic>
+#include <thread>
+
+#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+  #include <emmintrin.h>
+  #define DUSK_SPIN_PAUSE() _mm_pause()
+#elif defined(__aarch64__) || defined(_M_ARM64)
+  #define DUSK_SPIN_PAUSE() __asm__ __volatile__("yield" ::: "memory")
+#else
+  #define DUSK_SPIN_PAUSE() ((void)0)
+#endif
 
 namespace duskaudio
 {
@@ -39,12 +49,18 @@ public:
         return !flag_.test_and_set(std::memory_order_acquire);
     }
 
+    // Never called from the audio thread (that side uses tryLock). A pause hint
+    // keeps a spinning sibling hyperthread from stealing issue slots from the
+    // holder it is waiting on, and after a few spins the wait yields the core.
     void lock() noexcept
     {
+        int spins = 0;
         while (flag_.test_and_set(std::memory_order_acquire))
         {
-            // Busy-wait. The holder is copying a small struct; yielding to the
-            // scheduler here would cost more than the wait itself.
+            if (++spins < 64)
+                DUSK_SPIN_PAUSE();
+            else
+                std::this_thread::yield();
         }
     }
 

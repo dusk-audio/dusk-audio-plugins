@@ -78,8 +78,9 @@ struct ParamHost
     virtual void setParam(uint32_t idx, float value) = 0;
 };
 
-// A colour at a fraction of its alpha (0 = transparent, 1 = unchanged). The
-// scrim, glow and dimmed-state helper every panel used to carry privately.
+// A colour at a fraction of its alpha (0 = transparent, 1 = unchanged): the
+// scrim, glow and dimmed-state helper. Ring Out uses it; Tape Echo 2 and
+// DuskVerb 2 still carry a private fade() of their own that can move here.
 inline ImU32 scaleAlpha(ImU32 c, float amount) noexcept
 {
     amount = amount < 0.0f ? 0.0f : (amount > 1.0f ? 1.0f : amount);

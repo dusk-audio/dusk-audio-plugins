@@ -52,6 +52,7 @@
 #include "DuskSpinLock.hpp"
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -80,8 +81,8 @@ public:
         bool     setupExpired = false;    // the minute ran out since SETUP was last raised
         bool     addSearching = false;
         bool     addSatisfied = false;    // ADD found its filter; release and press again
-        bool     tableFull = false;       // the engine wanted a filter and had no slot for it
-        int      lastEngagedSlot = -1;
+        bool     tableFull = false;       // the engine wanted a filter and had no row for it
+        int      lastEngagedRow = -1;     // table row the engine last placed or deepened
         unsigned engagementCount = 0;
         unsigned tableVersion = 0;
     };
@@ -155,7 +156,9 @@ public:
     float  inputPeakDb(int channel) const noexcept  { return inPeakDb_[channel & 1].load(std::memory_order_relaxed); }
     float  outputPeakDb(int channel) const noexcept { return outPeakDb_[channel & 1].load(std::memory_order_relaxed); }
 
-    bool     copySpectrum(RingOutSpectrumFrame& out) const noexcept { return spectrum_.load(out); }
+    // Copies only the bins in use for the current FFT size, not the frame's
+    // worst-case payload.
+    bool     copySpectrum(RingOutSpectrumFrame& out) const noexcept { return spectrum_.load(out, spectrumBytes()); }
     unsigned spectrumSequence() const noexcept                       { return spectrum_.sequence(); }
 
     double sampleRate() const noexcept { return sampleRate_; }
@@ -221,6 +224,11 @@ private:
     void adoptLiveTable() noexcept;
     void assignSlots() noexcept;
     int  slotForRow(int row) const noexcept;
+    // Bytes of RingOutSpectrumFrame in use at the current FFT size.
+    size_t spectrumBytes() const noexcept
+    {
+        return offsetof(RingOutSpectrumFrame, db) + (size_t)(fftSize_ / 2 + 1) * sizeof(float);
+    }
     void updateSmoothersAndCoefficients() noexcept;
     void pushAnalysis(const float* const* inputs, int numChannels, int offset, int count) noexcept;
     void analyzeFrame() noexcept;
@@ -256,7 +264,7 @@ private:
     std::atomic<bool>  addSatisfied_ { false };
     std::atomic<int>   addSamplesLeft_ { 0 };
     std::atomic<bool>  tableFull_ { false };
-    std::atomic<int>   lastEngagedSlot_ { -1 };
+    std::atomic<int>   lastEngagedRow_ { -1 };
     std::atomic<unsigned> engagementCount_ { 0 };
 
     //--- table: shared (locked) + the audio thread's copy, each with row ids
@@ -269,6 +277,7 @@ private:
     ringout::FilterTable  live_;
     uint32_t              liveIds_[ringout::kMaxFilters] = {};
     unsigned              liveVersion_ = 0;
+    bool                  snapOnAdopt_ = true;   // first adoption after reset(): no ramp-in
 
     //--- audio-thread filter state
     SlotState     slots_[kNumSlots];

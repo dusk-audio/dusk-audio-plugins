@@ -22,6 +22,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstddef>
 #include <cstring>
 #include <type_traits>
 
@@ -37,13 +38,16 @@ class SeqLock
 public:
     SeqLock() noexcept : value_{} {}
 
-    // Writer only. Odd sequence = write in progress.
-    void store(const T& v) noexcept
+    // Writer only. Odd sequence = write in progress. `bytes` lets a frame whose
+    // payload is only partly in use (a spectrum sized for the largest FFT)
+    // publish just its leading `bytes`; the reader must ask for the same.
+    void store(const T& v, size_t bytes = sizeof(T)) noexcept
     {
+        bytes = bytes > sizeof(T) ? sizeof(T) : bytes;
         const unsigned s = seq_.load(std::memory_order_relaxed);
         seq_.store(s + 1, std::memory_order_relaxed);
         std::atomic_thread_fence(std::memory_order_release);
-        std::memcpy(static_cast<void*>(&value_), &v, sizeof(T));
+        std::memcpy(static_cast<void*>(&value_), &v, bytes);
         std::atomic_thread_fence(std::memory_order_release);
         seq_.store(s + 2, std::memory_order_release);
     }
@@ -52,8 +56,9 @@ public:
     // writer stayed mid-store for the whole retry budget: a reader must never
     // spin for as long as a parked audio thread (host deactivation, a debugger)
     // keeps the sequence odd. On false the caller keeps its previous frame.
-    bool load(T& out, int maxAttempts = 64) const noexcept
+    bool load(T& out, size_t bytes = sizeof(T), int maxAttempts = 64) const noexcept
     {
+        bytes = bytes > sizeof(T) ? sizeof(T) : bytes;
         // Read into a local first: `out` is only touched by a read that
         // validated, so a torn attempt can never leave half a frame behind.
         T local;
@@ -64,12 +69,12 @@ public:
                 return false;
             if (s0 & 1u)
                 continue;                         // writer mid-store
-            std::memcpy(static_cast<void*>(&local), &value_, sizeof(T));
+            std::memcpy(static_cast<void*>(&local), &value_, bytes);
             std::atomic_thread_fence(std::memory_order_acquire);
             const unsigned s1 = seq_.load(std::memory_order_relaxed);
             if (s0 == s1)
             {
-                std::memcpy(static_cast<void*>(&out), &local, sizeof(T));
+                std::memcpy(static_cast<void*>(&out), &local, bytes);
                 return true;
             }
         }

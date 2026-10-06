@@ -275,6 +275,13 @@ private:
             tableVersionSeen = status.tableVersion;
             d->getTable(table);
             ++tableStamp;
+            if (pendingSelectValid)
+            {
+                // The filter NEW just added is the last row equal to it.
+                pendingSelectValid = false;
+                for (int i = table.count - 1; i >= 0; --i)
+                    if (ro::filtersEqual(table.f[i], pendingSelect)) { selected = i; break; }
+            }
             clampSelection();
             syncPresetSelection();
         }
@@ -341,7 +348,14 @@ private:
         ++tableStamp;
         setState("edit", buf);
         if (c.kind == ro::EditCommand::kAdd && touched >= 0)
+        {
+            // The engine may have appended a filter of its own since the last
+            // pull, so the row index is provisional: when the engine's table
+            // arrives, the selection is re-resolved to the filter just added.
             selected = touched;
+            pendingSelect = c.filter;
+            pendingSelectValid = true;
+        }
         else if (c.kind == ro::EditCommand::kDelete)
             selected = table.count == 0 ? -1 : std::min(c.slot, table.count - 1);
         else if (c.kind == ro::EditCommand::kClear)
@@ -848,12 +862,15 @@ private:
             setP(kParamAdd, addHeld ? 1.0f : 0.0f);
         }
 
+        // RESET goes through the edit channel like every other table edit; the
+        // trigger parameter is for host automation and controller mapping. A
+        // trigger written from here could be swallowed by a host that forwards
+        // only control-port changes (an LV2 port already sitting at 1).
         if (button(dl, "##reset", 530, y0, 600, y1, "RESET", false, kColRed))
         {
-            setP(kParamReset, 1.0f);
-            table.clear();
-            selected = -1;
-            syncPresetSelection();
+            ro::EditCommand c;
+            c.kind = ro::EditCommand::kClear;
+            sendEdit(c);
         }
 
         // Status read-out.
@@ -867,6 +884,8 @@ private:
             std::snprintf(st, sizeof(st), "ADD: LISTENING");
         else if (live && status.addSatisfied)
             std::snprintf(st, sizeof(st), "ADD: FILTER PLACED");
+        else if (live && status.tableFull)
+            std::snprintf(st, sizeof(st), "20 FILTERS: TABLE FULL, RING NOT COVERED");
         else if (table.count > 0)
             std::snprintf(st, sizeof(st), "%d FILTER%s", table.count, table.count == 1 ? "" : "S");
         else
@@ -1249,6 +1268,8 @@ private:
     unsigned tableStamp = 0;            // bumps on every change of the local mirror
     int selected = -1;
     bool addHeldLocal = false;
+    ro::Filter pendingSelect;           // the filter NEW added, to re-select after the pull
+    bool pendingSelectValid = false;
 
     // Filter curve cache (drawFilterCurve).
     std::vector<float> curveDb;
