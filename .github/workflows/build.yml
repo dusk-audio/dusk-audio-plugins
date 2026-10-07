@@ -234,12 +234,12 @@ jobs:
       - name: Install Linux apt dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
-          # Worst case, counting the 45s dpkg repair that precedes each retry:
-          # bootstrap 2x(60+120)+45+5 = 6.8m; plain packages 2x(45+90)+45+5
-          # = 5.3m; PPA retry = 2x60+5 = 2.1m; post-source update 2x45+45+5
-          # = 2.3m; final packages = 5.3m. Total apt ceiling is 21.9m,
-          # leaving 8m in this 30m job for checkout, configuration, and
-          # compilation.
+          # Worst case. Each script call runs against its own APT_TOTAL_TIMEOUT,
+          # which bounds every attempt, wait and repair inside it, plus at most
+          # one 5s retry sleep: plain packages 300s = 5.1m; PPA retry 2x60+5 =
+          # 2.1m; post-source update 135s = 2.3m; final packages 300s = 5.1m.
+          # With the 6.8m bootstrap above the apt ceiling is 21.4m, leaving
+          # 8.6m in this 30m job for checkout, configuration, and compilation.
           APT_ATTEMPTS: 2
           APT_UPDATE_TIMEOUT: 45
           APT_INSTALL_TIMEOUT: 90
@@ -250,7 +250,7 @@ jobs:
           # ubuntu-toolchain-r/test PPA. That PPA add is occasionally flaky
           # (launchpad resolution stalls), which failed past release builds, so
           # the PPA command is the only apt operation it cannot own.
-          .github/scripts/apt_install.sh software-properties-common wget gpg
+          APT_TOTAL_TIMEOUT=300 .github/scripts/apt_install.sh software-properties-common wget gpg
           for i in 1 2; do
             timeout 60 add-apt-repository -y ppa:ubuntu-toolchain-r/test && break
             [ "$i" = "2" ] && exit 1
@@ -259,8 +259,8 @@ jobs:
           done
           wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null
           echo 'deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ focal main' | tee /etc/apt/sources.list.d/kitware.list >/dev/null
-          .github/scripts/apt_install.sh --update-only
-          .github/scripts/apt_install.sh \
+          APT_TOTAL_TIMEOUT=135 .github/scripts/apt_install.sh --update-only
+          APT_TOTAL_TIMEOUT=300 .github/scripts/apt_install.sh \
             gcc-11 g++-11 cmake build-essential pkg-config \
             libasound2-dev libjack-jackd2-dev ladspa-sdk \
             libcurl4-openssl-dev libfreetype6-dev libx11-dev xvfb \
@@ -476,22 +476,23 @@ jobs:
       - name: Install Linux apt dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
-          # Worst case, counting the 45s dpkg repair that precedes each retry:
-          # bootstrap 2x(60+120)+45+5 = 6.8m; plain packages 2x(45+90)+45+5
-          # = 5.3m; post-source update 2x45+45+5 = 2.3m; final packages =
-          # 5.3m. Total apt ceiling is 19.8m, leaving
-          # over 13m in this 30m job for checkout, configuration, and build.
+          # Worst case. Each script call runs against its own APT_TOTAL_TIMEOUT,
+          # which bounds every attempt, wait and repair inside it, plus at most
+          # one 5s retry sleep: plain packages 300s = 5.1m; post-source update
+          # 135s = 2.3m; final packages 300s = 5.1m. With the 6.8m bootstrap
+          # above the apt ceiling is 19.3m, leaving over 10m in this 30m job
+          # for checkout, configuration, and build.
           APT_ATTEMPTS: 2
           APT_UPDATE_TIMEOUT: 45
           APT_INSTALL_TIMEOUT: 90
           APT_RETRY_SLEEP: 5
         run: |
           # Ubuntu 22.04 ships GCC 11 natively — no PPA needed.
-          .github/scripts/apt_install.sh wget gpg
+          APT_TOTAL_TIMEOUT=300 .github/scripts/apt_install.sh wget gpg
           wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null
           echo 'deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ jammy main' | tee /etc/apt/sources.list.d/kitware.list >/dev/null
-          .github/scripts/apt_install.sh --update-only
-          .github/scripts/apt_install.sh \
+          APT_TOTAL_TIMEOUT=135 .github/scripts/apt_install.sh --update-only
+          APT_TOTAL_TIMEOUT=300 .github/scripts/apt_install.sh \
             gcc-11 g++-11 cmake build-essential pkg-config \
             libasound2-dev libjack-jackd2-dev ladspa-sdk \
             libcurl4-openssl-dev libfreetype6-dev libx11-dev \
