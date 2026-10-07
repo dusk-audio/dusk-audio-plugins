@@ -83,13 +83,15 @@ APT_OPTS=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30)
 # missing packages would surface much later as a confusing compile error.
 # Zero and negatives fail the same way. The timeouts are checked too, since a
 # non-numeric one makes every attempt fail for a reason that has nothing to do
-# with the mirror.
+# with the mirror. A leading zero is refused because shell arithmetic reads it
+# as octal (APT_TOTAL_TIMEOUT=0100 would become a 64s deadline, 0900 an error),
+# and more than nine digits because a long enough value wraps silently.
 require_positive_int() {
     case "$2" in
-        '' | *[!0-9]* ) ;;
-        * ) [ "$2" -gt 0 ] && return 0 ;;
+        '' | *[!0-9]* | 0* | ??????????* ) ;;
+        * ) return 0 ;;
     esac
-    echo "::error::$1 must be a positive integer, got '$2'" >&2
+    echo "::error::$1 must be a positive decimal integer of at most nine digits, no leading zero, got '$2'" >&2
     exit 2
 }
 require_positive_int APT_ATTEMPTS         "$ATTEMPTS"
@@ -276,7 +278,9 @@ dpkg_running() {
 # locked by another process". Configuring is only half of it: a package cut
 # off mid-unpack leaves unmet dependencies (and can be left needing a
 # reinstall), which every later install refuses with "Unmet dependencies. Try
-# 'apt --fix-broken install'", so finish with exactly that.
+# 'apt --fix-broken install'", so finish with exactly that, split like attempt():
+# anything it still has to fetch comes down first, so the install timeout only
+# ever covers dpkg.
 repair_dpkg() {
     local waited=0
     while dpkg_running && [ "$waited" -lt "$LOCK_WAIT" ] && [ "$SECONDS" -lt "$DEADLINE" ]; do
@@ -285,8 +289,10 @@ repair_dpkg() {
         waited=$((waited + 1))
     done
     bounded 45 env DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
+    bounded "$DOWNLOAD_TIMEOUT" env DEBIAN_FRONTEND=noninteractive \
+        apt-get install -y -f --no-install-recommends --download-only "${APT_OPTS[@]}" || true
     bounded "$INSTALL_TIMEOUT" env DEBIAN_FRONTEND=noninteractive \
-        apt-get install -y -f --no-install-recommends "${APT_OPTS[@]}" || true
+        apt-get install -y -f --no-install-recommends --no-download || true
 }
 
 banish_azure
