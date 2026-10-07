@@ -72,7 +72,6 @@ TOTAL_TIMEOUT="${APT_TOTAL_TIMEOUT:-1140}"
 UPDATE_TIMEOUT="${APT_UPDATE_TIMEOUT:-180}"
 DOWNLOAD_TIMEOUT="${APT_DOWNLOAD_TIMEOUT:-240}"
 INSTALL_TIMEOUT="${APT_INSTALL_TIMEOUT:-120}"
-LOCK_WAIT="${APT_LOCK_WAIT:-60}"
 RETRY_SLEEP="${APT_RETRY_SLEEP:-10}"
 APT_OPTS=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30)
 
@@ -99,7 +98,6 @@ require_positive_int APT_TOTAL_TIMEOUT    "$TOTAL_TIMEOUT"
 require_positive_int APT_UPDATE_TIMEOUT   "$UPDATE_TIMEOUT"
 require_positive_int APT_DOWNLOAD_TIMEOUT "$DOWNLOAD_TIMEOUT"
 require_positive_int APT_INSTALL_TIMEOUT  "$INSTALL_TIMEOUT"
-require_positive_int APT_LOCK_WAIT        "$LOCK_WAIT"
 case "$RETRY_SLEEP" in
     '' | *[!0-9]* )
         echo "::error::APT_RETRY_SLEEP must be a non-negative integer, got '$RETRY_SLEEP'" >&2
@@ -275,19 +273,26 @@ dpkg_running() {
 # no matter how healthy the mirror is. Repair before each retry. apt starts
 # dpkg in a session of its own, so timeout(1) never reached it: wait for it to
 # finish (or die) first, or the repair only meets "dpkg database lock was
-# locked by another process". Configuring is only half of it: a package cut
+# locked by another process". The wait runs for as long as the deadline allows,
+# not a fixed slice of it: giving up early would only spend the next attempt
+# against the same lock. If dpkg outlives the whole budget there is nothing left
+# to retry with, so that ends the run. Configuring is only half of it: a package cut
 # off mid-unpack leaves unmet dependencies (and can be left needing a
 # reinstall), which every later install refuses with "Unmet dependencies. Try
 # 'apt --fix-broken install'", so finish with exactly that, split like attempt():
 # anything it still has to fetch comes down first, so the install timeout only
 # ever covers dpkg.
 repair_dpkg() {
-    local waited=0
-    while dpkg_running && [ "$waited" -lt "$LOCK_WAIT" ] && [ "$SECONDS" -lt "$DEADLINE" ]; do
-        [ "$waited" -eq 0 ] && echo "apt_install: waiting up to ${LOCK_WAIT}s for a running dpkg to finish"
-        sleep 1
-        waited=$((waited + 1))
-    done
+    if dpkg_running; then
+        echo "apt_install: waiting for a running dpkg to finish ($((DEADLINE - SECONDS))s of budget left)"
+        while dpkg_running && [ "$SECONDS" -lt "$DEADLINE" ]; do
+            sleep 1
+        done
+        if dpkg_running; then
+            echo "::error::dpkg was still running when apt's ${TOTAL_TIMEOUT}s budget ran out (stock Ubuntu mirror)"
+            exit 1
+        fi
+    fi
     bounded 45 env DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
     bounded "$DOWNLOAD_TIMEOUT" env DEBIAN_FRONTEND=noninteractive \
         apt-get install -y -f --no-install-recommends --download-only "${APT_OPTS[@]}" || true
