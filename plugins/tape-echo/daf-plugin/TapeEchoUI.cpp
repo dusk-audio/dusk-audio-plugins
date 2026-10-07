@@ -314,12 +314,7 @@ private:
     //
     ImVec2 P(float x, float y) const { return ImVec2(org.x + x * s, org.y + y * s); }
 
-    static ImU32 fade(ImU32 c, float amount)
-    {
-        amount = amount < 0.0f ? 0.0f : (amount > 1.0f ? 1.0f : amount);
-        const ImU32 a = (c >> 24) & 0xffu;
-        return (c & 0x00ffffffu) | ((ImU32)(a * amount + 0.5f) << 24);
-    }
+    static ImU32 fade(ImU32 c, float amount) { return duskdaf::scaleAlpha(c, amount); }
 
     static ImU32 blend(ImU32 a, ImU32 b, float t)
     {

@@ -78,6 +78,15 @@ struct ParamHost
     virtual void setParam(uint32_t idx, float value) = 0;
 };
 
+// A colour at a fraction of its alpha (0 = transparent, 1 = unchanged): the
+// scrim, glow and dimmed-state helper the panels share.
+inline ImU32 scaleAlpha(ImU32 c, float amount) noexcept
+{
+    amount = amount < 0.0f ? 0.0f : (amount > 1.0f ? 1.0f : amount);
+    const ImU32 a = (c >> 24) & 0xffu;
+    return (c & 0x00ffffffu) | ((ImU32)((float)a * amount + 0.5f) << 24);
+}
+
 struct Palette
 {
     ImU32 white    = IM_COL32(238, 236, 228, 255);
@@ -299,6 +308,12 @@ public:
         valueEditFocus_ = true;
     }
     bool isEditingValue(const char* id) const noexcept { return valueEditId_ == id; }
+    void cancelValueEdit() noexcept
+    {
+        valueEditId_.clear();
+        valueEditInvalid_ = false;
+        valueEditFocus_ = false;
+    }
 
     // Draw the inline InputText over knob `id` when it is being edited. Returns
     // true and writes the parsed number to outValue on commit (Enter / focus

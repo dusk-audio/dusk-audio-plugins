@@ -31,6 +31,7 @@ on:
       - 'multi-q-2-v*'
       - 'multi-comp-2-v*'
       - 'duskverb-2-v*'
+      - 'ring-out-v*'
   workflow_dispatch:
     inputs:
       plugin:
@@ -46,6 +47,7 @@ on:
           - 'multi-q-2'
           - 'multi-comp-2'
           - 'duskverb-2'
+          - 'ring-out'
   pull_request:
     paths:
       - 'plugins/*/daf-plugin/**'
@@ -137,6 +139,7 @@ jobs:
             {"key":"multi-q-2","dir":"plugins/multi-q/daf-plugin","base":"multi-q-2","project":"MultiQ2DAF","au":"DsMq","uri":"https://dusk-audio.github.io/plugins/multi-q-2","name":"Multi-Q 2","tag":"multi-q-2-v","asset":"multi-q-2"}
             ,{"key":"multi-comp-2","dir":"plugins/multi-comp/daf-plugin","base":"multi-comp-2","project":"MultiComp2DAF","au":"DsMc","uri":"https://dusk-audio.github.io/plugins/multi-comp-2","name":"Multi-Comp 2","tag":"multi-comp-2-v","asset":"multi-comp-2"}
             ,{"key":"duskverb-2","dir":"plugins/DuskVerb/daf-plugin","base":"duskverb-2","project":"DuskVerb2DAF","au":"DsDv","uri":"https://dusk-audio.github.io/plugins/duskverb-2","name":"DuskVerb 2","tag":"duskverb-2-v","asset":"duskverb-2"}
+            ,{"key":"ring-out","dir":"plugins/ring-out/daf-plugin","base":"ring-out","project":"RingOutDAF","au":"DsRO","uri":"https://dusk-audio.github.io/plugins/ring-out","name":"Ring Out","tag":"ring-out-v","asset":"ring-out"}
           ]
           JSON
 
