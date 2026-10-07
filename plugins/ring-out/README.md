@@ -17,8 +17,14 @@ plugins/ring-out/
 ```
 cmake -S plugins/ring-out/daf-plugin -B plugins/ring-out/daf-plugin/build \
       -G Ninja -DCMAKE_BUILD_TYPE=Release -DDAF_PATH="$HOME/projects/DAF"
-cmake --build plugins/ring-out/daf-plugin/build --target ring-out-clap ring-out-vst3 ring-out-lv2 ring-out-au -j8
+cmake --build plugins/ring-out/daf-plugin/build --target ring-out-clap ring-out-vst3 ring-out-lv2 -j8
 ctest --test-dir plugins/ring-out/daf-plugin/build --output-on-failure
+```
+
+macOS only (the AU target exists only there):
+
+```
+cmake --build plugins/ring-out/daf-plugin/build --target ring-out-au -j8
 auval -v aufx DsRO Dusk
 ```
 
