@@ -277,8 +277,11 @@ jobs:
           # The container starts on stock Ubuntu repositories by policy and
           # remains there. The timeout guards stalls, retries guard hard
           # failures, and the dpkg repair handles interrupted transactions.
+          # 180s for the index fetch: on a degraded mirror it ran past 90s on all
+          # three attempts (PR #300). Worst case 3 x (180 + 180) + 2 x 55 s, inside
+          # the job limit.
           prereqs() {
-            timeout 90 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
+            timeout 180 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
             timeout 180 apt-get install -y --no-install-recommends \
               -o Acquire::Retries=3 git ca-certificates
           }
@@ -552,8 +555,11 @@ jobs:
           # failures, and the dpkg repair handles interrupted transactions.
           # Inline because checkout cannot run until git is installed and the
           # shared script is not on disk yet.
+          # 180s for the index fetch: on a degraded mirror it ran past 90s on all
+          # three attempts (PR #300). Worst case 3 x (180 + 180) + 2 x 55 s, inside
+          # the job limit.
           prereqs() {
-            timeout 90 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
+            timeout 180 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
             timeout 180 apt-get install -y --no-install-recommends \
               -o Acquire::Retries=3 git ca-certificates
           }

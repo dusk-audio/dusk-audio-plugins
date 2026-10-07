@@ -24,6 +24,17 @@
 #   the network is (2026-08-19). Hence a bounded `dpkg --configure -a`
 #   before each retry.
 #
+#   SLOW MIRROR. On run 37675673160 (PR #300) the archive served 145-246 kB/s.
+#   Downloading 56 MB took 3m49s, the single install timeout covered download
+#   and dpkg together, so it fired just as dpkg began unpacking. apt runs dpkg
+#   in its own session, out of timeout(1)'s reach, so that dpkg kept the lock;
+#   the repair hit "dpkg database lock was locked by another process" and the
+#   last attempt died on "dpkg was interrupted". Five jobs failed that way.
+#   Hence the download runs on its own (--download-only: a timeout there can
+#   never interrupt dpkg, and the finished .debs carry over to the next
+#   attempt), the install runs from the cache under its own timeout, and the
+#   repair first waits for any dpkg still running.
+#
 # Mirror policy (owner decision, 2026-08-19): stock Ubuntu repos ONLY.
 # azure.archive.ubuntu.com has been the sick side of every incident to date
 # and is purged from every mirror file up front, including the hosted
@@ -44,15 +55,24 @@ set -uo pipefail
 # case has to fit inside the caller's job budget -- otherwise a pathological run
 # is killed by the JOB timeout and reports as "cancelled" with no error, which is
 # the exact failure mode this exists to remove. Callers run under 30-, 40- and
-# 45-minute job limits, so the defaults are sized against the smallest:
+# 45-minute job limits, and juce-compile-check backstops its install step at 20
+# minutes, so the whole script runs against one deadline that every apt call is
+# clipped to: APT_TOTAL_TIMEOUT, 1140s by default, a minute inside that step.
+# The per-phase timeouts below only stop a single stalled call from eating the
+# whole budget:
 #
-#   3 x (120 update + 240 install) + 2 x (45 dpkg repair + 10 sleep) = 1190s,
-#   just under 20 minutes.
+#   update    180s  index fetch; once it succeeds a retry skips it, unless
+#                   the download failed outright (stale lists, a 404)
+#   download  240s  --download-only; a retry resumes from what it fetched
+#   install   120s  dpkg from the local cache, no network
 #
 # A caller with a tighter step budget can lower any of these from the workflow.
 ATTEMPTS="${APT_ATTEMPTS:-3}"
-UPDATE_TIMEOUT="${APT_UPDATE_TIMEOUT:-120}"
-INSTALL_TIMEOUT="${APT_INSTALL_TIMEOUT:-240}"
+TOTAL_TIMEOUT="${APT_TOTAL_TIMEOUT:-1140}"
+UPDATE_TIMEOUT="${APT_UPDATE_TIMEOUT:-180}"
+DOWNLOAD_TIMEOUT="${APT_DOWNLOAD_TIMEOUT:-240}"
+INSTALL_TIMEOUT="${APT_INSTALL_TIMEOUT:-120}"
+LOCK_WAIT="${APT_LOCK_WAIT:-60}"
 RETRY_SLEEP="${APT_RETRY_SLEEP:-10}"
 APT_OPTS=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30)
 
@@ -72,9 +92,12 @@ require_positive_int() {
     echo "::error::$1 must be a positive integer, got '$2'" >&2
     exit 2
 }
-require_positive_int APT_ATTEMPTS        "$ATTEMPTS"
-require_positive_int APT_UPDATE_TIMEOUT  "$UPDATE_TIMEOUT"
-require_positive_int APT_INSTALL_TIMEOUT "$INSTALL_TIMEOUT"
+require_positive_int APT_ATTEMPTS         "$ATTEMPTS"
+require_positive_int APT_TOTAL_TIMEOUT    "$TOTAL_TIMEOUT"
+require_positive_int APT_UPDATE_TIMEOUT   "$UPDATE_TIMEOUT"
+require_positive_int APT_DOWNLOAD_TIMEOUT "$DOWNLOAD_TIMEOUT"
+require_positive_int APT_INSTALL_TIMEOUT  "$INSTALL_TIMEOUT"
+require_positive_int APT_LOCK_WAIT        "$LOCK_WAIT"
 case "$RETRY_SLEEP" in
     '' | *[!0-9]* )
         echo "::error::APT_RETRY_SLEEP must be a non-negative integer, got '$RETRY_SLEEP'" >&2
@@ -199,19 +222,71 @@ banish_azure() {
     fi
 }
 
-attempt() {
-    "${SUDO[@]}" timeout "$UPDATE_TIMEOUT" apt-get update "${APT_OPTS[@]}" || return 1
-    [ "$update_only" -eq 1 ] && return 0
-    "${SUDO[@]}" timeout "$INSTALL_TIMEOUT" env DEBIAN_FRONTEND=noninteractive \
-        apt-get install -y --no-install-recommends "${APT_OPTS[@]}" "${packages[@]}"
+DEADLINE=$((SECONDS + TOTAL_TIMEOUT))
+
+# Run one command under the smaller of its own timeout and what is left of the
+# script's deadline. Returns 124, as timeout(1) does, when no time is left.
+bounded() {
+    local limit="$1" left=$((DEADLINE - SECONDS))
+    shift
+    [ "$left" -le 0 ] && return 124
+    [ "$limit" -gt "$left" ] && limit="$left"
+    "${SUDO[@]}" timeout "$limit" "$@"
 }
 
-# A timed-out install can kill dpkg mid-transaction; every later attempt then
+lists_fresh=0
+
+attempt() {
+    if [ "$lists_fresh" -eq 0 ]; then
+        bounded "$UPDATE_TIMEOUT" apt-get update "${APT_OPTS[@]}" || return 1
+        lists_fresh=1
+    fi
+    [ "$update_only" -eq 1 ] && return 0
+
+    # Fetch first: a timeout here interrupts only the download, never dpkg.
+    bounded "$DOWNLOAD_TIMEOUT" env DEBIAN_FRONTEND=noninteractive \
+        apt-get install -y --no-install-recommends --download-only "${APT_OPTS[@]}" "${packages[@]}"
+    local rc=$?
+    if [ "$rc" -ne 0 ]; then
+        # A timeout means a slow mirror, and the lists are still good. Any other
+        # failure (a 404, a hash mismatch) can mean they went stale: refetch.
+        [ "$rc" -ne 124 ] && lists_fresh=0
+        return 1
+    fi
+
+    bounded "$INSTALL_TIMEOUT" env DEBIAN_FRONTEND=noninteractive \
+        apt-get install -y --no-install-recommends --no-download "${packages[@]}"
+}
+
+# True while a dpkg process is alive. Read from /proc because the bare
+# ubuntu:22.04 container has neither pgrep nor fuser.
+dpkg_running() {
+    local comm
+    for comm in /proc/[0-9]*/comm; do
+        [ "$(cat "$comm" 2>/dev/null)" = "dpkg" ] && return 0
+    done
+    return 1
+}
+
+# A timed-out install can interrupt dpkg mid-transaction; every later attempt then
 # dies on "dpkg was interrupted, you must manually run 'dpkg --configure -a'"
-# no matter how healthy the mirror is. Repair before each retry.
+# no matter how healthy the mirror is. Repair before each retry. apt starts
+# dpkg in a session of its own, so timeout(1) never reached it: wait for it to
+# finish (or die) first, or the repair only meets "dpkg database lock was
+# locked by another process". Configuring is only half of it: a package cut
+# off mid-unpack leaves unmet dependencies (and can be left needing a
+# reinstall), which every later install refuses with "Unmet dependencies. Try
+# 'apt --fix-broken install'", so finish with exactly that.
 repair_dpkg() {
-    "${SUDO[@]}" timeout 45 env DEBIAN_FRONTEND=noninteractive \
-        dpkg --configure -a || true
+    local waited=0
+    while dpkg_running && [ "$waited" -lt "$LOCK_WAIT" ] && [ "$SECONDS" -lt "$DEADLINE" ]; do
+        [ "$waited" -eq 0 ] && echo "apt_install: waiting up to ${LOCK_WAIT}s for a running dpkg to finish"
+        sleep 1
+        waited=$((waited + 1))
+    done
+    bounded 45 env DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
+    bounded "$INSTALL_TIMEOUT" env DEBIAN_FRONTEND=noninteractive \
+        apt-get install -y -f --no-install-recommends "${APT_OPTS[@]}" || true
 }
 
 banish_azure
@@ -232,6 +307,10 @@ for i in $(seq 1 "$ATTEMPTS"); do
         echo "::warning::apt reported success but these are missing: ${missing[*]}"
     fi
 
+    if [ "$SECONDS" -ge "$DEADLINE" ]; then
+        echo "::error::apt ran out of its ${TOTAL_TIMEOUT}s budget after ${i} attempt(s) (stock Ubuntu mirror)"
+        exit 1
+    fi
     if [ "$i" -eq "$ATTEMPTS" ]; then
         echo "::error::apt failed after ${ATTEMPTS} attempts (stock Ubuntu mirror)"
         exit 1

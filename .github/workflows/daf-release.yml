@@ -148,8 +148,10 @@ jobs:
           # shared script is not on disk yet. Stock Ubuntu repositories only.
           # The timeout guards stalls, retries guard hard failures, and the
           # dpkg repair handles interrupted transactions before the next try.
+          # 180s for the index fetch: on a degraded mirror it ran past 90s on every
+          # attempt (PR #300). Worst case 2 x (180 + 150) + 55 s, inside the job limit.
           bootstrap() {
-            timeout 90 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
+            timeout 180 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
             timeout 150 apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
               git ca-certificates
           }
@@ -285,8 +287,10 @@ jobs:
           # shared script is not on disk yet. Stock Ubuntu repositories only.
           # The timeout guards stalls, retries guard hard failures, and the
           # dpkg repair handles interrupted transactions before the next try.
+          # 180s for the index fetch: on a degraded mirror it ran past 90s on every
+          # attempt (PR #300). Worst case 2 x (180 + 150) + 55 s, inside the job limit.
           bootstrap() {
-            timeout 90 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
+            timeout 180 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
             timeout 150 apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
               git ca-certificates
           }
