@@ -20,7 +20,9 @@
 #include "RingOutAccess.hpp"
 #include "RingOutDSP.hpp"
 #include "RingOutFilterTable.hpp"
+#include "RingOutFilterEditor.hpp"
 #include "RingOutParams.hpp"
+#include "RingOutPreset.hpp"
 #include "RingOutVersion.hpp"
 #include "DuskImGuiFont.hpp"
 #include "DuskImGuiTextInput.hpp"
@@ -41,9 +43,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
-#include <fstream>
-#include <locale>
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -395,16 +394,11 @@ private:
     // Sends the row as edited AND as the mirror last saw it, so the plugin
     // writes only the field that changed: an engine deepen that landed since
     // the last pull survives a FREQ nudge.
-    void setSelectedFilter(const ro::Filter& f)
+    template <typename T>
+    void setSelectedFilter(T ro::Filter::* field, T value)
     {
         if (selected < 0 || selected >= table.count) return;
-        ro::EditCommand c;
-        c.kind = ro::EditCommand::kSet;
-        c.slot = selected;
-        c.filter = f;
-        c.previous = table.f[selected];
-        c.hasPrevious = true;
-        sendEdit(c);
+        sendEdit(roFilterFieldCommand(table, selected, field, value));
     }
 
     //--- helpers -----------------------------------------------------------------
@@ -815,7 +809,7 @@ private:
             // The engine's own response formula: design each on filter once (the
             // matched design is the costly part), then only evaluate magnitudes
             // along the axis. A knob drag rebuilds this every frame.
-            duskaudio::Biquad sections[ro::kMaxFilters];
+            duskaudio::DoubleBiquad sections[ro::kMaxFilters];
             const int nSections = RingOutDSP::designSections(table, gq, amp, sr, sections, ro::kMaxFilters);
             float deepest = 0.0f;
             for (int i = 0; i < N; ++i)
@@ -983,7 +977,6 @@ private:
 
         // Indicators 1..20 and NEW.
         text(dl, 330, 405, 11.0f, kColWhiteDim, "FILTERS", 0, true);
-        const bool haveSel = selected >= 0 && selected < table.count;
         duskdaf::DuskPanel::LedStyle ledOn;
         ledOn.onColor = kColCyan; ledOn.glowColor = IM_COL32(40, 220, 235, 70);
         ledOn.offColor = IM_COL32(32, 44, 46, 255);
@@ -999,10 +992,8 @@ private:
                 selected = i;
             if (exists && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0))
             {
-                ro::Filter f = table.f[i];
-                f.on = !f.on;
                 selected = i;
-                setSelectedFilter(f);
+                setSelectedFilter(&ro::Filter::on, !table.f[i].on);
             }
             panel.led(dl, cx, cy, lit, 6.5f, ledOn);
             if (exists && !lit)
@@ -1025,10 +1016,12 @@ private:
         regularText(dl, 604, 446.0f, 8.0f, kColWhiteDim, "NEW", 0);
 
         // Selected filter controls.
+        filterEditSelection.update(panel, table, selected);
+        const bool haveSel = selected >= 0 && selected < table.count;
         const ro::Filter cur = haveSel ? table.f[selected] : ro::Filter();
         if (roundButton(dl, "##on", 72, 490, 16.0f, "ON", haveSel && cur.on, kColCyan, haveSel))
         {
-            ro::Filter f = cur; f.on = !f.on; setSelectedFilter(f);
+            setSelectedFilter(&ro::Filter::on, !cur.on);
         }
 
         duskdaf::StepperBoxRule cutRule, freqRule, qRule;
@@ -1047,14 +1040,14 @@ private:
         float cut = cur.cutDb, freq = cur.freqHz, q = cur.q;
         constexpr float by0 = 476.0f, by1 = 504.0f;
         if (duskdaf::stepperBox(panel, dl, "cut", 104, by0, 208, by1, cut, cutRule, "%.1f", haveSel))
-        { ro::Filter f = cur; f.cutDb = cut; setSelectedFilter(f); }
+            setSelectedFilter(&ro::Filter::cutDb, cut);
         // A tenth of a hertz below 1 kHz (a detected 66.3 Hz reads as such), whole
         // hertz above where the control steps by 100.
         if (duskdaf::stepperBox(panel, dl, "freq", 222, by0, 326, by1, freq, freqRule,
                                 freq < 1000.0f ? "%.1f" : "%.0f", haveSel))
-        { ro::Filter f = cur; f.freqHz = freq; setSelectedFilter(f); }
+            setSelectedFilter(&ro::Filter::freqHz, freq);
         if (duskdaf::stepperBox(panel, dl, "q", 340, by0, 444, by1, q, qRule, "%.1f", haveSel))
-        { ro::Filter f = cur; f.q = q; setSelectedFilter(f); }
+            setSelectedFilter(&ro::Filter::q, q);
         text(dl, 156, 509, 9.0f, kColWhiteDim, "CUT (dB)", 0, true);
         text(dl, 274, 509, 9.0f, kColWhiteDim, "FREQ (Hz)", 0, true);
         text(dl, 392, 509, 9.0f, kColWhiteDim, "Q", 0, true);
@@ -1226,71 +1219,15 @@ private:
             loadUserPreset(userPresets[(size_t)(next - kRoNumFactoryPresets)]);
     }
 
-    struct UserPreset
-    {
-        std::string name, path;
-        float vals[kParamCount];
-        ro::FilterTable filters;
-    };
+    using UserPreset = RoUserPreset;
 
     std::filesystem::path configDir() const { return duskdaf::userPresetDirectory("RingOut"); }
-
-    static bool parsePresetValue(const std::string& line, std::size_t valueStart, uint32_t param, float& out)
-    {
-        std::istringstream field(line.substr(valueStart));
-        field.imbue(std::locale::classic());
-        double d = 0.0;
-        field >> d;
-        if (field.fail() || !std::isfinite(d)) return false;
-        char trailing = '\0';
-        if (field >> trailing) return false;
-        out = roNormalizeParamValue(param, (float)d);
-        return true;
-    }
-
-    // Returns false for a file that must not appear in the browser: one that
-    // cannot be read, or one with no recognised line. Loading such a file would
-    // mean "defaults and no filters", which here wipes a ring-out.
-    static bool readUserPresetFile(const std::filesystem::path& path, UserPreset& up)
-    {
-        for (uint32_t i = 0; i < kParamCount; ++i) up.vals[i] = kRoParams[i].def;
-        up.filters.clear();
-        std::ifstream input(path);
-        if (!input)
-            return false;
-        std::string line;
-        bool recognised = false;   // at least one SETTING line; a name alone is not a preset
-        while (std::getline(input, line))
-        {
-            const auto eq = line.find('=');
-            if (eq == std::string::npos) continue;
-            const std::string key = line.substr(0, eq);
-            if (key == "name") { up.name = line.substr(eq + 1); continue; }
-            if (key == "filters")
-            {
-                ro::FilterTable t;
-                if (!ro::parseTable(line.c_str() + eq + 1, t))
-                    return false;                 // a corrupt table must not load as "no filters"
-                up.filters = t;
-                recognised = true;
-                continue;
-            }
-            for (uint32_t i = 0; i < kParamCount; ++i)
-                if (roIsPresetParam(i) && key == kRoParams[i].id)
-                {
-                    float v = 0.0f;
-                    if (parsePresetValue(line, eq + 1, i, v)) { up.vals[i] = v; recognised = true; }
-                    break;
-                }
-        }
-        return recognised;
-    }
 
     void scanUserPresets()
     {
         duskdaf::scanUserPresets(configDir(), ".ropreset", userPresets,
                                  [](const std::filesystem::path& path, UserPreset& preset)
-                                 { return readUserPresetFile(path, preset); });
+                                 { return roReadUserPresetFile(path, preset); });
     }
 
     bool saveUserPreset(const char* rawName)
@@ -1400,6 +1337,7 @@ private:
     unsigned tableVersionSeen = 0;
     unsigned tableStamp = 0;            // bumps on every change of the local mirror
     int selected = -1;
+    RoFilterEditSelection filterEditSelection;
     bool addHeldLocal = false;
     float addLeaseTimer = 0.0f;
     ro::Filter pendingSelect;           // the filter NEW added, to re-select after the pull

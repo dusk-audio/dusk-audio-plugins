@@ -299,6 +299,12 @@ protected:
     void run(const float** inputs, float** outputs, uint32_t frames) override
     {
         dsp.processBlock(inputs, outputs, activeChannels, (int)frames);
+        // DAF triggers retain the written value until run(), then return to
+        // their default. Only retire their host-facing pulse: the engine owns
+        // SETUP/ADD lifetimes, and replaying a setter here would act on it.
+        values[kParamSetup].store(kRoParams[kParamSetup].def, std::memory_order_relaxed);
+        values[kParamAdd].store(kRoParams[kParamAdd].def, std::memory_order_relaxed);
+        values[kParamReset].store(kRoParams[kParamReset].def, std::memory_order_relaxed);
     }
 
 private:

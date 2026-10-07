@@ -81,6 +81,42 @@ if(NOT CMAKE_CROSSCOMPILING)
     target_link_libraries(RingOutCoreTest PRIVATE Threads::Threads)
     add_test(NAME RingOutCore COMMAND RingOutCoreTest)
 
+    # The shared SeqLock publishes its payload as atomic words; one writer is
+    # driven against several readers, so this runs under TSan as well as plain.
+    add_executable(RingOutSeqLockTest
+        ../../shared-daf/dsp/tests/DuskSeqLockTest.cpp)
+    target_include_directories(RingOutSeqLockTest PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+    target_compile_features(RingOutSeqLockTest PRIVATE cxx_std_17)
+    target_link_libraries(RingOutSeqLockTest PRIVATE Threads::Threads)
+    add_test(NAME RingOutSeqLock COMMAND RingOutSeqLockTest)
+
+    # User preset files: a truncated or partly corrupt file must be rejected
+    # whole, because loading it as "defaults and no filters" discards a ring-out.
+    add_executable(RingOutPresetTest tests/RingOutPresetTest.cpp)
+    target_include_directories(RingOutPresetTest PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../core")
+    target_compile_features(RingOutPresetTest PRIVATE cxx_std_17)
+    add_test(NAME RingOutPreset COMMAND RingOutPresetTest)
+
+    # Inline text entry belongs to the row it was opened on. The four ImGui core
+    # files are compiled in directly rather than through DUSK_DAF_UI_SOURCES,
+    # whose backend pulls in DGL and a window system this headless test never
+    # opens -- the same split the DuskVerb knob-gesture test uses.
+    add_executable(RingOutFilterEditorTest tests/RingOutFilterEditorTest.cpp
+        "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui.cpp"
+        "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_draw.cpp"
+        "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_tables.cpp"
+        "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_widgets.cpp")
+    target_include_directories(RingOutFilterEditorTest PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../core"
+        ${DUSK_DAF_INCLUDE_DIRS}
+        "${DAFWIDGETS_PATH}/imgui/DearImGui")   # the test includes "imgui.h" directly
+    target_compile_features(RingOutFilterEditorTest PRIVATE cxx_std_17)
+    add_test(NAME RingOutFilterEditor COMMAND RingOutFilterEditorTest)
+
     find_program(DUSK_SERDI_EXECUTABLE serdi)
     if(DUSK_SERDI_EXECUTABLE)
         add_test(NAME DuskFixLv2Presets
@@ -99,3 +135,24 @@ endif()
 dusk_daf_add_output_param_tests(ring-out)
 dusk_daf_add_ui_drag_test(ring-out 890 480)   # GAIN OUT knob
 dusk_daf_add_resize_test(ring-out)
+
+# SETUP / ADD / RESET as a host sees them, against the built .clap: the five
+# clap-validator 0.4.1 failures in miniature, and the two things a fix must not
+# trade away to clear them -- the press still reaching the plugin, and a trigger
+# staying out of the saved state. dlopen is what makes it Linux/macOS only, the
+# same restriction as the wrapper harnesses.
+if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
+    if(NOT TARGET ring-out-clap)
+        message(FATAL_ERROR "the Ring Out CLAP trigger test needs the ring-out-clap target")
+    endif()
+
+    add_executable(ring-outClapTriggerTest tests/DafClapTriggerTest.cpp)
+    # clap/ is DAF's own vendored interface; the harness speaks the same ABI the
+    # wrapper is compiled against rather than a second copy.
+    target_include_directories(ring-outClapTriggerTest PRIVATE "${DAF_PATH}/daf/src")
+    target_compile_features(ring-outClapTriggerTest PRIVATE cxx_std_17)
+    target_link_libraries(ring-outClapTriggerTest PRIVATE ${CMAKE_DL_LIBS})
+    add_dependencies(ring-outClapTriggerTest ring-out-clap)
+    add_test(NAME RingOutClapTriggers
+             COMMAND ring-outClapTriggerTest "$<TARGET_FILE:ring-out-clap>")
+endif()

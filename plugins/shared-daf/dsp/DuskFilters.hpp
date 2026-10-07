@@ -197,6 +197,41 @@ struct BiquadCoeffs
     float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f, a1 = 0.0f, a2 = 0.0f;
 };
 
+// Narrow notches near DC need more precision than float coefficients provide:
+// rounding a pole/zero pair can turn a cut into a boost at high sample rates.
+// Keep the existing float path unchanged for callers that require bit identity.
+struct BiquadCoeffsDouble
+{
+    double b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
+};
+
+class DoubleBiquad
+{
+public:
+    void setCoeffs(const BiquadCoeffsDouble& k) noexcept { c = k; }
+    const BiquadCoeffsDouble& coeffs() const noexcept { return c; }
+    void reset() noexcept { z1 = z2 = 0.0; }
+
+    float process(float x) noexcept
+    {
+        const double y = c.b0 * x + z1;
+        z1 = c.b1 * x - c.a1 * y + z2;
+        z2 = c.b2 * x - c.a2 * y;
+        return static_cast<float>(y);
+    }
+
+    double magnitude(double w) const noexcept
+    {
+        const std::complex<double> z = std::polar(1.0, -w);
+        return std::abs((c.b0 + c.b1 * z + c.b2 * z * z)
+                        / (1.0 + c.a1 * z + c.a2 * z * z));
+    }
+
+private:
+    BiquadCoeffsDouble c;
+    double z1 = 0.0, z2 = 0.0;
+};
+
 class Biquad
 {
 public:
@@ -418,6 +453,12 @@ public:
     static BiquadCoeffs matchedPeak(double fs, double freq, double gainDb, double Q) noexcept
     {
         return MatchedDesign::toFloat(MatchedDesign::peak(fs, freq, gainDb, Q));
+    }
+
+    static BiquadCoeffsDouble matchedPeakDouble(double fs, double freq, double gainDb, double Q) noexcept
+    {
+        const auto s = MatchedDesign::peak(fs, freq, gainDb, Q);
+        return { s.b0, s.b1, s.b2, s.a1, s.a2 };
     }
 
     static BiquadCoeffs matchedShelf(double fs, double freq, double gainDb, double Q, bool high) noexcept

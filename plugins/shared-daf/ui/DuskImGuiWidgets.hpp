@@ -308,6 +308,12 @@ public:
         valueEditFocus_ = true;
     }
     bool isEditingValue(const char* id) const noexcept { return valueEditId_ == id; }
+    void cancelValueEdit() noexcept
+    {
+        valueEditId_.clear();
+        valueEditInvalid_ = false;
+        valueEditFocus_ = false;
+    }
 
     // Draw the inline InputText over knob `id` when it is being edited. Returns
     // true and writes the parsed number to outValue on commit (Enter / focus

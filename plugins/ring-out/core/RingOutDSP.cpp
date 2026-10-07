@@ -73,11 +73,6 @@ namespace
     // A tone just OUTSIDE a notch: wider first, deeper once as wide as it goes.
     inline bool widen(ringout::Filter& x) noexcept  { return tryWidenQ(x) || tryDeepenCut(x); }
 
-    inline int rescaleSamples(int samples, double oldRate, double newRate) noexcept
-    {
-        if (samples <= 0 || oldRate <= 0.0) return samples;
-        return (int)((double)samples * newRate / oldRate + 0.5);
-    }
 }
 
 //==============================================================================
@@ -126,13 +121,18 @@ void RingOutDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     // A countdown armed before activation was measured at the old rate (the
     // constructor's 48 kHz when a session is restored before the first
     // activate()); keep its wall-clock length.
-    setupSamplesLeft_.store(rescaleSamples(setupSamplesLeft_.load(std::memory_order_relaxed), oldRate, sampleRate_),
-                            std::memory_order_relaxed);
-    addSamplesLeft_.store(rescaleSamples(addSamplesLeft_.load(std::memory_order_relaxed), oldRate, sampleRate_),
-                          std::memory_order_relaxed);
+    for (std::atomic<uint32_t>* timer : { &setupTimer_, &addTimer_ })
+    {
+        uint32_t observed = timer->load(std::memory_order_acquire);
+        const uint32_t count = timerSamples((double)timerCount(observed) * sampleRate_ / oldRate);
+        const uint32_t next = (observed & ((1u << kTimerShift) - 1u)) | (count << kTimerShift);
+        // A concurrent editor request takes precedence over this old snapshot.
+        timer->compare_exchange_strong(observed, next, std::memory_order_acq_rel, std::memory_order_acquire);
+    }
 
     fft_.prepare(fftSize_);
-    ring_.assign((size_t)fftSize_, 0.0f);
+    for (auto& ring : ring_)
+        ring.assign((size_t)fftSize_, 0.0f);
     re_.assign((size_t)fftSize_, 0.0f);
     im_.assign((size_t)fftSize_, 0.0f);
     window_.resize((size_t)fftSize_);
@@ -153,6 +153,7 @@ void RingOutDSP::prepare(double sampleRate, int /*maxBlockSize*/)
         st.cutDb.prepare(subRate, 0.015f);
         st.logFreq.prepare(subRate, 0.010f);
         st.q.prepare(subRate, 0.010f);
+        st.wetMix.prepare(sampleRate_, 0.010f);
     }
     gain_.prepare(subRate, 0.010f);
     bypassMix_.prepare(subRate, 0.010f);
@@ -170,10 +171,11 @@ void RingOutDSP::reset() noexcept
 {
     for (SlotState& st : slots_)
     {
-        for (Biquad& b : st.bq) { b.reset(); b.setCoeffs(BiquadCoeffs()); }
+        for (DoubleBiquad& b : st.bq) { b.reset(); b.setCoeffs(BiquadCoeffsDouble()); }
         st.cutDb.snap(0.0f);
         st.logFreq.snap(std::log(ringout::kFreqDefault));
         st.q.snap(ringout::kQDefault);
+        st.wetMix.snap(1.0f);
         st.engaged = st.active = false;
         st.rowId = 0;
         st.entry = -1;
@@ -186,7 +188,8 @@ void RingOutDSP::reset() noexcept
     bypassMix_.snap(mixNow_);
     subPos_ = 0;
 
-    std::fill(ring_.begin(), ring_.end(), 0.0f);
+    for (auto& ring : ring_)
+        std::fill(ring.begin(), ring.end(), 0.0f);
     ringPos_ = 0;
     hopCount_ = 0;
     framesSinceReset_ = 0;
@@ -213,37 +216,16 @@ void RingOutDSP::reset() noexcept
 // is ignored, a true at any other moment arms.
 void RingOutDSP::setSetup(bool on) noexcept
 {
-    if (on)
-    {
-        if (!setupActive_.load(std::memory_order_acquire))
-        {
-            setupSamplesLeft_.store((int)(ringout::kSetupSeconds * sampleRate() + 0.5), std::memory_order_relaxed);
-            setupExpired_.store(false, std::memory_order_release);
-            setupActive_.store(true, std::memory_order_release);
-        }
-    }
-    else
-    {
-        // Also after an expiry: lowering SETUP always leaves the engine idle
-        // with no expiry pending.
-        setupActive_.store(false, std::memory_order_release);
-        setupExpired_.store(false, std::memory_order_release);
-    }
+    if (on && setupActive()) return;
+    setupTimer_.store(on ? packTimer(kSetupActive, timerSamples(ringout::kSetupSeconds * sampleRate())) : 0,
+                      std::memory_order_release);
 }
 
 void RingOutDSP::startAdd(bool held) noexcept
 {
-    // The countdown goes in first: the audio thread expires on addHeld_ as
-    // well as on addSearching_, so a stale, already-lapsed count must never be
-    // visible together with a fresh hold.
     const float seconds = held ? ringout::kAddLeaseSeconds : ringout::kAddSeconds;
-    addSamplesLeft_.store((int)(seconds * sampleRate() + 0.5), std::memory_order_release);
-    if (!addSearching_.load(std::memory_order_acquire))
-    {
-        addSatisfied_.store(false, std::memory_order_release);
-        addSearching_.store(true, std::memory_order_release);
-    }
-    addHeld_.store(held, std::memory_order_release);
+    addTimer_.store(packTimer(held ? kAddHeldSearch : kAddTapSearch, timerSamples(seconds * sampleRate())),
+                    std::memory_order_release);
 }
 
 void RingOutDSP::setAdd(bool held) noexcept
@@ -253,45 +235,137 @@ void RingOutDSP::setAdd(bool held) noexcept
         startAdd(true);
         return;
     }
-    addHeld_.store(false, std::memory_order_release);
-    addSearching_.store(false, std::memory_order_release);
-    addSatisfied_.store(false, std::memory_order_release);
+    addTimer_.store(0, std::memory_order_release);
 }
 
 // The lease covers the held search AND the "filter placed" state that follows
 // it: both last as long as the editor keeps the button down and renews.
 void RingOutDSP::renewAddLease() noexcept
 {
-    if (addHeld_.load(std::memory_order_acquire))
-        addSamplesLeft_.store((int)(ringout::kAddLeaseSeconds * sampleRate() + 0.5), std::memory_order_relaxed);
+    addTimer_.fetch_or(kTimerRenewPending, std::memory_order_acq_rel);
 }
 
 // A controller's tap never interrupts a search the editor is holding.
 void RingOutDSP::tapAdd() noexcept
 {
-    if (!addSearching_.load(std::memory_order_acquire) && !addHeld_.load(std::memory_order_acquire))
-        startAdd(false);
+    addTimer_.fetch_or(kTimerTapPending, std::memory_order_acq_rel);
+}
+
+uint32_t RingOutDSP::timerSamples(double samples) noexcept
+{
+    if (!(samples > 0.0)) return 0;
+    if (samples >= (double)kTimerCountMax) return kTimerCountMax;
+    return (uint32_t)(samples + 0.5);
+}
+
+RingOutDSP::TimerPhase RingOutDSP::addPhase(uint32_t word) noexcept
+{
+    const TimerPhase phase = timerPhase(word);
+    // A tap during a hold or an existing search is consumed as a no-op. It
+    // must never survive that search and resurrect itself after its release.
+    if ((word & kTimerTapPending) && (phase == kTimerIdle || phase == kAddTapSatisfied))
+        return kAddTapSearch;
+    return phase;
+}
+
+uint32_t RingOutDSP::resolveAddTimer(uint32_t word) const noexcept
+{
+    const TimerPhase phase = addPhase(word);
+    uint32_t count = timerCount(word);
+    if (phase != timerPhase(word))
+        count = timerSamples(ringout::kAddSeconds * sampleRate());
+    if ((word & kTimerRenewPending) && (phase == kAddHeldSearch || phase == kAddHeldSatisfied))
+        count = timerSamples(ringout::kAddLeaseSeconds * sampleRate());
+    return packTimer(phase, count); // every pending bit is consumed, including ignored requests
+}
+
+bool RingOutDSP::addSearching() const noexcept
+{
+    const TimerPhase phase = addPhase(addTimer_.load(std::memory_order_acquire));
+    return phase == kAddTapSearch || phase == kAddHeldSearch;
+}
+
+// One CAS, never a retry loop: a concurrent request wins and this block leaves
+// its timer alone. All expiry side effects follow a successful CAS, so an old
+// observation cannot clear a new request's flags, notice or detector tracks.
+bool RingOutDSP::advanceSetupTimer(uint32_t observed, int samples, bool bypass) noexcept
+{
+    const TimerPhase phase = timerPhase(observed);
+    if (phase == kTimerIdle || (phase == kSetupActive && bypass)) return false;
+    const uint32_t count = timerCount(observed);
+    const uint32_t elapsed = (uint32_t)samples;
+    const bool expired = phase == kSetupActive && count <= elapsed;
+    uint32_t next = count > elapsed ? packTimer(phase, count - elapsed) : 0;
+    if (expired)
+    {
+        const uint32_t notice = timerSamples(4.0 * sampleRate_);
+        next = notice > elapsed ? packTimer(kSetupExpired, notice - elapsed) : 0;
+    }
+    return setupTimer_.compare_exchange_strong(observed, next, std::memory_order_acq_rel,
+                                              std::memory_order_acquire) && expired;
+}
+
+bool RingOutDSP::advanceAddTimer(uint32_t observed, int samples, bool bypass) noexcept
+{
+    uint32_t next = resolveAddTimer(observed);
+    const TimerPhase phase = timerPhase(next);
+    const bool leaseOrSearch = phase == kAddHeldSearch || phase == kAddHeldSatisfied || phase == kAddTapSearch;
+    bool expired = false;
+    if (phase != kTimerIdle && (!bypass || !leaseOrSearch))
+    {
+        const uint32_t count = timerCount(next);
+        const uint32_t elapsed = (uint32_t)samples;
+        expired = leaseOrSearch && count <= elapsed;
+        next = count > elapsed ? packTimer(phase, count - elapsed) : 0;
+    }
+    return addTimer_.compare_exchange_strong(observed, next, std::memory_order_acq_rel,
+                                            std::memory_order_acquire) && expired;
+}
+
+void RingOutDSP::satisfyAdd(uint32_t observed) noexcept
+{
+    constexpr uint32_t requests = kTimerTapPending | kTimerRenewPending;
+    const uint32_t original = observed & ~requests;
+    // Lease renewal must not turn a successful one-filter search into two.
+    // At most two request bits can be added to this snapshot, so three CAS
+    // attempts cover both without an unbounded audio-thread retry loop. A
+    // newer start/stop changes phase/count and always wins over this completion.
+    for (int attempt = 0; attempt < 3; ++attempt)
+    {
+        const uint32_t resolved = resolveAddTimer(observed);
+        const TimerPhase phase = timerPhase(resolved);
+        uint32_t next;
+        if (phase == kAddHeldSearch)
+            next = packTimer(kAddHeldSatisfied, timerCount(resolved));
+        else if (phase == kAddTapSearch)
+            next = packTimer(kAddTapSatisfied, timerSamples(1.5 * sampleRate_));
+        else
+            return;
+        if (addTimer_.compare_exchange_strong(observed, next, std::memory_order_acq_rel, std::memory_order_acquire))
+            return;
+        if ((observed & ~requests) != original)
+            return;
+    }
 }
 
 bool RingOutDSP::engineActive() const noexcept
 {
     if (bypass_.load(std::memory_order_relaxed))
         return false;
-    return setupActive_.load(std::memory_order_acquire)
-        || addSearching_.load(std::memory_order_acquire);
+    return setupActive() || addSearching();
 }
 
 RingOutDSP::Status RingOutDSP::status() const noexcept
 {
     Status s;
-    s.setupActive = setupActive_.load(std::memory_order_acquire);
-    // The block that expires the timer decrements it below zero a moment
-    // before it clears setupActive_; never show that as a negative count.
+    const uint32_t setup = setupTimer_.load(std::memory_order_acquire);
+    const TimerPhase add = addPhase(addTimer_.load(std::memory_order_acquire));
+    s.setupActive = timerPhase(setup) == kSetupActive;
     s.setupRemainingSeconds = s.setupActive
-        ? std::max(0.0f, (float)setupSamplesLeft_.load(std::memory_order_relaxed) / (float)sampleRate()) : 0.0f;
-    s.setupExpired = setupExpired_.load(std::memory_order_acquire);
-    s.addSearching = addSearching_.load(std::memory_order_acquire);
-    s.addSatisfied = addSatisfied_.load(std::memory_order_acquire);
+        ? (float)timerCount(setup) / (float)sampleRate() : 0.0f;
+    s.setupExpired = timerPhase(setup) == kSetupExpired;
+    s.addSearching = add == kAddTapSearch || add == kAddHeldSearch;
+    s.addSatisfied = add == kAddTapSatisfied || add == kAddHeldSatisfied;
     s.ringUncovered = ringUncovered_.load(std::memory_order_acquire);
     s.engagementCount = engagementCount_.load(std::memory_order_acquire);   // before the row it pairs with
     s.lastEngagedRow = lastEngagedRow_.load(std::memory_order_relaxed);
@@ -512,6 +586,7 @@ void RingOutDSP::assignSlots() noexcept
         st.entry = row;
         st.logFreq.snap(std::log(live_.f[row].freqHz));
         st.q.snap(effectiveQ(live_.f[row].q, globalQ_.load(std::memory_order_relaxed)));
+        st.wetMix.snap(1.0f);   // a new section keeps its existing coefficient ramp-in
         // A filter added while audio runs ramps in from flat. After reset()
         // (activate, a rate change) no audio has flowed yet, and a table of
         // twenty notches must be in force from the first sample rather than
@@ -521,7 +596,7 @@ void RingOutDSP::assignSlots() noexcept
                           ? effectiveCutDb(f.cutDb, globalAmp_.load(std::memory_order_relaxed)) : 0.0f);
         st.lastCut = 1.0e9f;   // force the first coefficient design
         st.cooldownFrames = 0;
-        for (Biquad& b : st.bq) { b.reset(); b.setCoeffs(BiquadCoeffs()); }
+        for (DoubleBiquad& b : st.bq) { b.reset(); b.setCoeffs(BiquadCoeffsDouble()); }
     }
     // The no-ramp adoption is spent by the first table with filters in it,
     // whenever that arrives: a host that restores state after activation, even
@@ -551,43 +626,10 @@ void RingOutDSP::processBlock(const float* const* inputs, float* const* outputs,
     // out of circuit then too. ADD's timer is the controller tap's cap, or the
     // editor's lease (renewed every half second while held, through the
     // search and the "filter placed" state after it); a lapse ends both.
-    if (!bypass && setupActive_.load(std::memory_order_acquire))
-    {
-        const int left = setupSamplesLeft_.fetch_sub(numSamples, std::memory_order_relaxed) - numSamples;
-        if (left <= 0)
-        {
-            setupActive_.store(false, std::memory_order_release);
-            setupExpiredSamplesLeft_.store((int)(4.0 * sampleRate_), std::memory_order_relaxed);
-            setupExpired_.store(true, std::memory_order_release);
-            clearTracks();
-        }
-    }
-    // "The minute is up" is a notice, not a state: it shows for a few seconds.
-    if (setupExpired_.load(std::memory_order_acquire))
-    {
-        const int left = setupExpiredSamplesLeft_.fetch_sub(numSamples, std::memory_order_relaxed) - numSamples;
-        if (left <= 0)
-            setupExpired_.store(false, std::memory_order_release);
-    }
-    if (!bypass && (addSearching_.load(std::memory_order_acquire) || addHeld_.load(std::memory_order_acquire)))
-    {
-        const int left = addSamplesLeft_.fetch_sub(numSamples, std::memory_order_relaxed) - numSamples;
-        if (left <= 0)
-        {
-            addSearching_.store(false, std::memory_order_release);
-            addHeld_.store(false, std::memory_order_release);
-            addSatisfied_.store(false, std::memory_order_release);
-            clearTracks();
-        }
-    }
-    // After a controller tap nobody will release, "filter placed" shows for a
-    // moment and clears by itself; the editor's hold keeps it until release.
-    if (addSatisfied_.load(std::memory_order_acquire) && !addHeld_.load(std::memory_order_acquire))
-    {
-        const int left = addSatisfiedSamplesLeft_.fetch_sub(numSamples, std::memory_order_relaxed) - numSamples;
-        if (left <= 0)
-            addSatisfied_.store(false, std::memory_order_release);
-    }
+    if (advanceSetupTimer(setupTimer_.load(std::memory_order_acquire), numSamples, bypass))
+        clearTracks();
+    if (advanceAddTimer(addTimer_.load(std::memory_order_acquire), numSamples, bypass))
+        clearTracks();
     // "Ring not covered" describes a ring the listening engine is failing on
     // right now: it ages out within a couple of seconds unless the engine
     // raises it again, and goes with the engine when that stops listening.
@@ -646,12 +688,20 @@ void RingOutDSP::processBlock(const float* const* inputs, float* const* outputs,
         {
             if (!st.active)
                 continue;
-            for (int ch = 0; ch < numChannels; ++ch)
+            for (int i = 0; i < chunk; ++i)
             {
-                float* y = wet_[ch];
-                Biquad& b = st.bq[ch];
-                for (int i = 0; i < chunk; ++i)
-                    y[i] = b.process(y[i]);
+                // Fade a disabled section's residual state to dry per sample.
+                // Changing only its coefficients leaves a low-frequency tail
+                // that would otherwise be cut off at the inactive threshold.
+                float mix = st.wetMix.next();
+                if (mix < 1.0e-4f) mix = 0.0f;
+                if (mix > 1.0f - 1.0e-4f) mix = 1.0f;
+                for (int ch = 0; ch < numChannels; ++ch)
+                {
+                    const float dry = wet_[ch][i];
+                    const float filtered = st.bq[ch].process(dry);
+                    wet_[ch][i] = mix >= 1.0f ? filtered : dry + mix * (filtered - dry);
+                }
             }
         }
         if (std::fabs(gainNow_ - 1.0f) > 1.0e-6f)
@@ -692,7 +742,7 @@ void RingOutDSP::processBlock(const float* const* inputs, float* const* outputs,
         if (hopCount_ >= hop_)
         {
             hopCount_ = 0;
-            analyzeFrame();
+            analyzeFrame(numChannels);
         }
     }
 
@@ -729,12 +779,17 @@ void RingOutDSP::updateSmoothersAndCoefficients() noexcept
         if (serving)
         {
             const ringout::Filter& f = live_.f[st.entry];
-            st.cutDb.setTarget(f.on ? effectiveCutDb(f.cutDb, amp) : 0.0f);
+            const float targetCut = f.on ? effectiveCutDb(f.cutDb, amp) : 0.0f;
+            st.cutDb.setTarget(targetCut);
+            st.wetMix.setTarget(targetCut == 0.0f ? 0.0f : 1.0f);
             st.logFreq.setTarget(std::log(f.freqHz));
             st.q.setTarget(effectiveQ(f.q, gq));
         }
         else
+        {
             st.cutDb.setTarget(0.0f);       // fade out, then release the slot
+            st.wetMix.setTarget(0.0f);
+        }
 
         const float cut  = st.cutDb.next();
         const float logF = st.logFreq.next();
@@ -746,7 +801,7 @@ void RingOutDSP::updateSmoothersAndCoefficients() noexcept
             st.active = false;
             st.rowId = 0;
             st.entry = -1;
-            for (Biquad& b : st.bq) { b.reset(); b.setCoeffs(BiquadCoeffs()); }
+            for (DoubleBiquad& b : st.bq) { b.reset(); b.setCoeffs(BiquadCoeffsDouble()); }
             continue;
         }
 
@@ -759,11 +814,20 @@ void RingOutDSP::updateSmoothersAndCoefficients() noexcept
             // near the top of the band keeps its analogue bandwidth on both
             // skirts, which is also what engage()'s coverage test assumes.
             // The fleet rule is no cramped IIR filters, and this costs no latency.
-            const BiquadCoeffs k = Biquad::matchedPeak(sampleRate_, std::exp(logF), cut, q);
-            for (Biquad& b : st.bq) b.setCoeffs(k);
+            const BiquadCoeffsDouble k = Biquad::matchedPeakDouble(sampleRate_, std::exp(logF), cut, q);
+            for (DoubleBiquad& b : st.bq) b.setCoeffs(k);
             st.lastCut = cut; st.lastLogF = logF; st.lastQ = q;
         }
-        st.active = std::fabs(cut) > 0.005f;
+        const bool active = std::fabs(cut) > 0.005f;
+        // A flat/off section no longer runs. Its low-frequency resonator can
+        // still hold substantial state after the cut ramp, so retire that
+        // state too instead of replaying it when the same row is enabled.
+        if (st.active && !active)
+        {
+            for (DoubleBiquad& b : st.bq) b.reset();
+            st.wetMix.snap(0.0f);
+        }
+        st.active = active;
     }
 }
 
@@ -773,39 +837,23 @@ void RingOutDSP::updateSmoothersAndCoefficients() noexcept
 void RingOutDSP::pushAnalysis(const float* const* inputs, int numChannels, int offset, int count) noexcept
 {
     const int mask = fftSize_ - 1;
-    if (numChannels == 1)
+    for (int ch = 0; ch < numChannels; ++ch)
     {
-        const float* x = inputs[0] + offset;
+        const float* x = inputs[ch] + offset;
+        int pos = ringPos_;
         for (int i = 0; i < count; ++i)
         {
-            ring_[(size_t)ringPos_] = x[i];
-            ringPos_ = (ringPos_ + 1) & mask;
+            ring_[ch][(size_t)pos] = x[i];
+            pos = (pos + 1) & mask;
         }
     }
-    else
-    {
-        const float* l = inputs[0] + offset;
-        const float* r = inputs[1] + offset;
-        for (int i = 0; i < count; ++i)
-        {
-            ring_[(size_t)ringPos_] = 0.5f * (l[i] + r[i]);
-            ringPos_ = (ringPos_ + 1) & mask;
-        }
-    }
+    ringPos_ = (ringPos_ + count) & mask;
 }
 
-void RingOutDSP::analyzeFrame() noexcept
+void RingOutDSP::analyzeFrame(int numChannels) noexcept
 {
     const int n = fftSize_;
     const int mask = n - 1;
-    // Oldest sample first: ringPos_ points at the oldest slot.
-    for (int i = 0; i < n; ++i)
-    {
-        re_[(size_t)i] = ring_[(size_t)((ringPos_ + i) & mask)] * window_[(size_t)i];
-        im_[(size_t)i] = 0.0f;
-    }
-    fft_.forward(re_.data(), im_.data());
-
     // Hann sums to N/2, so a full-scale sine lands at 0 dB with 4/N. The dB
     // spectrum is written once, straight into the frame that is published and
     // then read by the detector; in the power domain, so no square root per bin.
@@ -813,11 +861,27 @@ void RingOutDSP::analyzeFrame() noexcept
     const float normSq = norm * norm;
     const int half = n / 2;
     float* const db = frame_.db;
-    for (int k = 0; k <= half; ++k)
+    // Combine spectra rather than samples: opposite-polarity feedback in the
+    // two inputs must not disappear. Maximum power preserves the level of a
+    // ring in either channel, including when the other channel is silent.
+    // Reuse the FFT scratch buffers; all channel rings were sized in prepare().
+    for (int ch = 0; ch < numChannels; ++ch)
     {
-        const float power = (re_[(size_t)k] * re_[(size_t)k] + im_[(size_t)k] * im_[(size_t)k]) * normSq;
-        db[k] = powerToDb(power);
+        // Oldest sample first: ringPos_ points at the oldest slot.
+        for (int i = 0; i < n; ++i)
+        {
+            re_[(size_t)i] = ring_[ch][(size_t)((ringPos_ + i) & mask)] * window_[(size_t)i];
+            im_[(size_t)i] = 0.0f;
+        }
+        fft_.forward(re_.data(), im_.data());
+        for (int k = 0; k <= half; ++k)
+        {
+            const float power = (re_[(size_t)k] * re_[(size_t)k] + im_[(size_t)k] * im_[(size_t)k]) * normSq;
+            db[k] = ch == 0 ? power : std::max(db[k], power);
+        }
     }
+    for (int k = 0; k <= half; ++k)
+        db[k] = powerToDb(db[k]);
     frame_.bins = half + 1;
     frame_.binHz = binHz_;
     spectrum_.store(frame_, spectrumBytes());
@@ -1039,6 +1103,7 @@ void RingOutDSP::detect(const float* db, const Thresholds& t) noexcept
 // already be catching it.
 bool RingOutDSP::engage(const Track& track) noexcept
 {
+    const uint32_t addAtEngagement = addTimer_.load(std::memory_order_acquire);
     const SpinLock::ScopedTryLock guard(tableLock_);
     if (!guard.isLocked())
         return false;        // someone is editing the table this instant
@@ -1149,35 +1214,27 @@ bool RingOutDSP::engage(const Track& track) noexcept
     lastEngagedRow_.store(row, std::memory_order_relaxed);
     engagementCount_.fetch_add(1, std::memory_order_release);
 
-    if (addSearching_.load(std::memory_order_acquire))
-    {
-        // The search is over. An editor hold keeps its flag (and its lease), so
-        // "filter placed" shows until the release; a tap has no hold, so the
-        // next tap is free to start again and the state ages out on its own.
-        addSearching_.store(false, std::memory_order_release);
-        addSatisfiedSamplesLeft_.store((int)(1.5 * sampleRate_), std::memory_order_relaxed);
-        addSatisfied_.store(true, std::memory_order_release);
-    }
+    satisfyAdd(addAtEngagement);
     return true;
 }
 
 //==============================================================================
 
 int RingOutDSP::designSections(const ringout::FilterTable& table, float globalQ, float globalAmpDb,
-                               double sampleRate, Biquad* out, int capacity) noexcept
+                               double sampleRate, DoubleBiquad* out, int capacity) noexcept
 {
     int n = 0;
     for (int i = 0; i < table.count && n < capacity; ++i)
     {
         const ringout::Filter& x = table.f[i];
         if (!x.on) continue;
-        out[n++].setCoeffs(Biquad::matchedPeak(sampleRate, x.freqHz, effectiveCutDb(x.cutDb, globalAmpDb),
+        out[n++].setCoeffs(Biquad::matchedPeakDouble(sampleRate, x.freqHz, effectiveCutDb(x.cutDb, globalAmpDb),
                                                effectiveQ(x.q, globalQ)));
     }
     return n;
 }
 
-double RingOutDSP::sectionsResponseDb(const Biquad* sections, int count, double sampleRate, double freqHz) noexcept
+double RingOutDSP::sectionsResponseDb(const DoubleBiquad* sections, int count, double sampleRate, double freqHz) noexcept
 {
     const double w = 2.0 * 3.14159265358979323846 * freqHz / sampleRate;
     double mag = 1.0;
@@ -1189,7 +1246,7 @@ double RingOutDSP::sectionsResponseDb(const Biquad* sections, int count, double 
 double RingOutDSP::responseDb(const ringout::FilterTable& table, float globalQ, float globalAmpDb,
                               double sampleRate, double freqHz) noexcept
 {
-    Biquad sections[ringout::kMaxFilters];
+    DoubleBiquad sections[ringout::kMaxFilters];
     const int n = designSections(table, globalQ, globalAmpDb, sampleRate, sections, ringout::kMaxFilters);
     return sectionsResponseDb(sections, n, sampleRate, freqHz);
 }

@@ -24,7 +24,7 @@
 // -----------
 //   in -> [input meter] -> notch bank (shared coefficients, per-channel state)
 //      -> output gain -> [bypass crossfade] -> [output meter] -> out
-//   mono sum of the input -> analysis ring -> FFT (Hann) -> spectrum + detector
+//   each input -> analysis ring -> FFT (Hann) -> maximum power -> spectrum + detector
 //
 // Every table row carries a stable id. Filter SLOTS follow ids, not row
 // numbers: a slot keeps serving its filter wherever the row moves (a DEL
@@ -148,8 +148,8 @@ public:
     float globalAmpDb() const noexcept  { return globalAmp_.load(std::memory_order_relaxed); }
     float gainOutDb() const noexcept    { return gainOutDb_.load(std::memory_order_relaxed); }
     bool  bypassed() const noexcept     { return bypass_.load(std::memory_order_relaxed); }
-    bool  setupActive() const noexcept  { return setupActive_.load(std::memory_order_acquire); }
-    bool  addSearching() const noexcept { return addSearching_.load(std::memory_order_acquire); }
+    bool  setupActive() const noexcept  { return timerPhase(setupTimer_.load(std::memory_order_acquire)) == kSetupActive; }
+    bool  addSearching() const noexcept;
 
     //--- the filter table (host / UI threads; spin-locks) ----------------------
     // Not const: a RESET that found the lock busy is applied by the next real
@@ -202,12 +202,14 @@ public:
     // tests, by responseDb() and by the display (which designs once and
     // evaluates many frequencies).
     static int designSections(const ringout::FilterTable& table, float globalQ, float globalAmpDb,
-                              double sampleRate, Biquad* out, int capacity) noexcept;
-    static double sectionsResponseDb(const Biquad* sections, int count, double sampleRate, double freqHz) noexcept;
+                              double sampleRate, DoubleBiquad* out, int capacity) noexcept;
+    static double sectionsResponseDb(const DoubleBiquad* sections, int count, double sampleRate, double freqHz) noexcept;
     static double responseDb(const ringout::FilterTable& table, float globalQ, float globalAmpDb,
                              double sampleRate, double freqHz) noexcept;
 
 private:
+    friend struct RingOutDSPTestAccess;   // deterministic lock-contention regression
+
     static constexpr int kSubBlock = 32;          // coefficient / smoother update grid
     static constexpr int kNumSlots = 2 * ringout::kMaxFilters;   // a full replacement crossfades
     static constexpr int kMaxTracks = 24;
@@ -216,8 +218,8 @@ private:
 
     struct SlotState
     {
-        Biquad        bq[kMaxChannels];
-        SmoothedValue cutDb, logFreq, q;
+        DoubleBiquad  bq[kMaxChannels];
+        SmoothedValue cutDb, logFreq, q, wetMix;
         bool          engaged = false;    // serving a filter, or fading one out
         uint32_t      rowId = 0;          // identity of the filter served (0 = none)
         int           entry = -1;         // its row in live_ this block; -1 while fading out
@@ -260,7 +262,7 @@ private:
     size_t spectrumBytes() const noexcept { return spectrumBytesFor(fftSize_ / 2 + 1); }
     void updateSmoothersAndCoefficients() noexcept;
     void pushAnalysis(const float* const* inputs, int numChannels, int offset, int count) noexcept;
-    void analyzeFrame() noexcept;
+    void analyzeFrame(int numChannels) noexcept;
     void detect(const float* db, const Thresholds& t) noexcept;
     // Returns false only when the table lock was busy and the track should be
     // kept for the next frame; true means the tone was dealt with (or
@@ -295,15 +297,34 @@ private:
     void startAdd(bool held) noexcept;
 
     //--- engine state
-    std::atomic<bool>  setupActive_ { false };
-    std::atomic<bool>  setupExpired_ { false };
-    std::atomic<int>   setupSamplesLeft_ { 0 };
-    std::atomic<int>   setupExpiredSamplesLeft_ { 0 };   // how long "the minute is up" shows
-    std::atomic<bool>  addHeld_ { false };          // the editor holds the search (lease-renewed)
-    std::atomic<bool>  addSearching_ { false };
-    std::atomic<bool>  addSatisfied_ { false };
-    std::atomic<int>   addSamplesLeft_ { 0 };       // tap: time to the cap; held: time to lease lapse
-    std::atomic<int>   addSatisfiedSamplesLeft_ { 0 };   // how long "filter placed" shows unreleased
+    // Phase and countdown change as one atomic value. An old audio-thread
+    // expiry can therefore never clear a newer start, stop or lease renewal.
+    // The 27-bit sample count holds a minute up to 2.2 MHz; saturating its
+    // conversion also avoids overflow for an unreasonable host rate. The two
+    // pending bits let tap/renew publish with one RMW, without CAS retry loops
+    // on a host's process thread. reset() deliberately preserves these timers.
+    enum TimerPhase : uint32_t
+    {
+        kTimerIdle, kSetupActive, kSetupExpired,
+        kAddTapSearch, kAddHeldSearch, kAddTapSatisfied, kAddHeldSatisfied
+    };
+    static constexpr uint32_t kTimerPhaseMask = 7u;
+    static constexpr uint32_t kTimerTapPending = 8u;
+    static constexpr uint32_t kTimerRenewPending = 16u;
+    static constexpr unsigned kTimerShift = 5;
+    static constexpr uint32_t kTimerCountMax = UINT32_MAX >> kTimerShift;
+    static TimerPhase timerPhase(uint32_t word) noexcept { return (TimerPhase)(word & kTimerPhaseMask); }
+    static uint32_t timerCount(uint32_t word) noexcept { return word >> kTimerShift; }
+    static uint32_t packTimer(TimerPhase phase, uint32_t count) noexcept { return (count << kTimerShift) | phase; }
+    static uint32_t timerSamples(double samples) noexcept;
+    static TimerPhase addPhase(uint32_t word) noexcept;
+    uint32_t resolveAddTimer(uint32_t word) const noexcept;
+    bool advanceSetupTimer(uint32_t observed, int samples, bool bypass) noexcept;
+    bool advanceAddTimer(uint32_t observed, int samples, bool bypass) noexcept;
+    void satisfyAdd(uint32_t observed) noexcept;
+    std::atomic<uint32_t> setupTimer_ { 0 };
+    std::atomic<uint32_t> addTimer_ { 0 };
+    static_assert(std::atomic<uint32_t>::is_always_lock_free, "engine timers must be lock-free");
     std::atomic<bool>  ringUncovered_ { false };
     std::atomic<int>   uncoveredSamplesLeft_ { 0 };  // the report ages out unless re-raised
     std::atomic<int>   lastEngagedRow_ { -1 };
@@ -335,12 +356,12 @@ private:
 
     //--- analysis
     FFTr2              fft_;
-    std::vector<float> ring_, window_, re_, im_;
+    std::vector<float> ring_[kMaxChannels], window_, re_, im_;
     int                ringPos_ = 0;
     int                hopCount_ = 0;
     unsigned           framesSinceReset_ = 0;
     SeqLock<RingOutSpectrumFrame> spectrum_;
-    RingOutSpectrumFrame          frame_;     // the frame being built, then published
+    RingOutSpectrumFrame          frame_ {};  // the frame being built, then published
 
     //--- detector
     Track   tracks_[kMaxTracks];

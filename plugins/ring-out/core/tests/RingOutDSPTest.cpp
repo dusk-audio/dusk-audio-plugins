@@ -31,6 +31,34 @@
 using duskaudio::RingOutDSP;
 namespace ro = duskaudio::ringout;
 
+namespace duskaudio
+{
+struct RingOutDSPTestAccess
+{
+    static SpinLock& tableLock(RingOutDSP& dsp) { return dsp.tableLock_; }
+    static uint32_t setupTimer(RingOutDSP& dsp) { return dsp.setupTimer_.load(); }
+    static uint32_t addTimer(RingOutDSP& dsp) { return dsp.addTimer_.load(); }
+    static uint32_t shortenSetup(RingOutDSP& dsp)
+    {
+        const uint32_t word = RingOutDSP::packTimer(RingOutDSP::kSetupActive, 1);
+        dsp.setupTimer_.store(word);
+        return word;
+    }
+    static uint32_t shortenAdd(RingOutDSP& dsp)
+    {
+        const uint32_t word = RingOutDSP::packTimer(RingOutDSP::timerPhase(addTimer(dsp)), 1);
+        dsp.addTimer_.store(word);
+        return word;
+    }
+    static uint32_t addCount(RingOutDSP& dsp) { return RingOutDSP::timerCount(addTimer(dsp)); }
+    static bool advanceSetup(RingOutDSP& dsp, uint32_t observed, bool bypass = false)
+        { return dsp.advanceSetupTimer(observed, 64, bypass); }
+    static bool advanceAdd(RingOutDSP& dsp, uint32_t observed, bool bypass = false)
+        { return dsp.advanceAddTimer(observed, 64, bypass); }
+    static void satisfyAdd(RingOutDSP& dsp, uint32_t observed) { dsp.satisfyAdd(observed); }
+};
+}
+
 static int failures = 0;
 
 #define CHECK(cond, ...)                                                         \
@@ -55,8 +83,12 @@ static void testGrid()
     CHECK(near(ro::stepFreq(500.0f, +1), 510.0f, 1e-4f), "500 steps up by 10");
     CHECK(near(ro::stepFreq(510.0f, -1), 500.0f, 1e-4f), "510 steps down by 10");
     CHECK(near(ro::stepFreq(500.0f, -1), 499.0f, 1e-4f), "500 steps down by 1");
+    CHECK(near(ro::stepFreq(503.0f, -1), 493.0f, 1e-4f), "503 steps down by 10");
+    CHECK(near(ro::stepFreq(500.1f, -1), 490.1f, 1e-3f), "above 500 steps down by 10");
     CHECK(near(ro::stepFreq(1000.0f, +1), 1100.0f, 1e-4f), "1 kHz steps up by 100");
     CHECK(near(ro::stepFreq(1000.0f, -1), 990.0f, 1e-4f), "1 kHz steps down by 10");
+    CHECK(near(ro::stepFreq(1040.0f, -1), 940.0f, 1e-4f), "1040 steps down by 100");
+    CHECK(near(ro::stepFreq(1000.1f, -1), 900.1f, 1e-3f), "above 1 kHz steps down by 100");
     CHECK(near(ro::stepFreq(20000.0f, +1), 20000.0f, 1e-4f), "20 kHz is the ceiling");
     CHECK(near(ro::stepFreq(66.3f, +1), 67.3f, 1e-3f), "a detected 66.3 Hz nudges to 67.3, not to a grid");
     CHECK(near(ro::snapFreq(1234.56f), 1234.6f, 1e-3f), "frequency keeps a tenth of a hertz");
@@ -325,6 +357,103 @@ static void testNotch()
     }
 }
 
+// Narrow low-frequency cuts need double coefficients and state: rounding the
+// near-cancelling float coefficients can turn a legal -20 dB cut into a boost.
+static void testNarrowLowNotch()
+{
+    for (const double sr : { 48000.0, 96000.0, 192000.0 })
+    {
+        RingOutDSP dsp;
+        dsp.prepare(sr, 256);
+        ro::FilterTable table;
+        table.add(ro::Filter{ true, 24.0f, -20.0f, ro::kQMax });
+        dsp.setGlobalQ(ro::kGlobalQMax);
+        dsp.setTable(table);
+        const float predicted = (float)RingOutDSP::responseDb(table, ro::kGlobalQMax, 0.0f, sr, 24.0);
+        const float measured = measureGainDb(dsp, sr, 24.0f, 12.0f);
+        CHECK(near(predicted, -20.0f, 0.05f),
+              "24 Hz / maximum Q notch predicts -20 dB at %.0f Hz sample rate (%.3f dB)", sr, predicted);
+        CHECK(near(measured, -20.0f, 0.3f),
+              "24 Hz / maximum Q notch measures -20 dB at %.0f Hz sample rate (%.3f dB)", sr, measured);
+    }
+}
+
+// Turning an existing row off suspends its section. Once it is flat, no old
+// resonator state may remain to be replayed when the row is switched on again.
+static void testOffFilterClearsTail()
+{
+    RingOutDSP dsp;
+    dsp.prepare(48000.0, 256);
+    ro::FilterTable table;
+    table.add(ro::Filter{ true, 24.0f, -20.0f, 20.0f });
+    dsp.setTable(table);
+    float input[256], output[256];
+    const float* inputs[] = { input };
+    float* outputs[] = { output };
+    int sample = 0;
+    const auto run = [&](int samples, bool tone)
+    {
+        float peak = 0.0f;
+        for (int done = 0; done < samples; done += 256)
+        {
+            const int n = std::min(256, samples - done);
+            for (int i = 0; i < n; ++i, ++sample)
+                input[i] = tone ? 0.3f * (float)std::sin(2.0 * 3.14159265358979323846
+                                                       * 24.0 * sample / 48000.0) : 0.0f;
+            dsp.processBlock(inputs, outputs, 1, n);
+            for (int i = 0; i < n; ++i) peak = std::max(peak, std::fabs(output[i]));
+        }
+        return peak;
+    };
+    CHECK(run(96000, true) > 0.01f, "the low-frequency section processed a real signal before disabling");
+    table.f[0].on = false;
+    dsp.setTable(table);
+    CHECK(run(48000, true) > 0.25f, "the disabled section passes the tone at its dry level");
+    CHECK(run(48000, false) == 0.0f, "the disabled section stays silent with zero input");
+    table.f[0].on = true;
+    dsp.setTable(table);
+    const float replayPeak = run(24000, false);
+    CHECK(replayPeak == 0.0f, "re-enabling a silent filter replays no stored tail (peak %.6f)", replayPeak);
+}
+
+static void testOffLowNotchTransition()
+{
+    RingOutDSP dsp;
+    dsp.prepare(48000.0, 64);
+    ro::FilterTable table;
+    table.add(ro::Filter{ true, 24.0f, -20.0f, 20.0f });
+    dsp.setTable(table);
+    float input[64], output[64];
+    const float* inputs[] = { input };
+    float* outputs[] = { output };
+    float previous = 0.0f, maxStep = 0.0f, beforePeak = 0.0f, dryError = 0.0f;
+    bool disabled = false;
+    for (int done = 0; done < 120000; done += 64)
+    {
+        if (!disabled && done >= 96000)
+        {
+            disabled = true;
+            table.f[0].on = false;
+            dsp.setTable(table);
+        }
+        for (int i = 0; i < 64; ++i)
+            input[i] = 0.3f * (float)std::sin(2.0 * 3.14159265358979323846 * 24.0 * (done + i) / 48000.0);
+        dsp.processBlock(inputs, outputs, 1, 64);
+        for (int i = 0; i < 64; ++i)
+        {
+            if (done >= 96000) maxStep = std::max(maxStep, std::fabs(output[i] - previous));
+            else beforePeak = std::max(beforePeak, std::fabs(output[i]));
+            if (done >= 112000) dryError = std::max(dryError, std::fabs(output[i] - input[i]));
+            previous = output[i];
+        }
+    }
+    CHECK(beforePeak > 0.01f, "the low-notch off-transition probe processes a real signal");
+    // The dry sine's maximum step is 0.000943. Allow its derivative plus the
+    // 10 ms wet/dry envelope, but no discontinuity when the section stops.
+    CHECK(maxStep < 0.002f, "disabling a narrow low notch has no tail cutoff click (max step %.6f)", maxStep);
+    CHECK(dryError == 0.0f, "the disabled notch reaches exact dry output (error %.6g)", dryError);
+}
+
 //------------------------------------------------------------------------------
 static void testBlockSizeInvariance()
 {
@@ -506,6 +635,53 @@ static void testDetect()
     CHECK(st.tableVersion == dsp.tableVersion(), "status carries the table version");
 }
 
+// A stereo ring can arrive with either polarity or in just one channel. The
+// detector must retain the strongest channel's spectrum rather than cancel it
+// in a mono sum; the quieter channel must not dilute its absolute level.
+static void testStereoDetection()
+{
+    const float channelGains[][2] = {
+        { 1.0f, 1.0f }, { 1.0f, -1.0f }, { 1.0f, 0.0f },
+        { 0.0f, 1.0f }, { 1.0f, -0.5f }
+    };
+    float referencePeak = 0.0f;
+    for (const auto& gains : channelGains)
+    {
+        RingOutDSP dsp;
+        dsp.prepare(48000.0, 256);
+        dsp.tapAdd();
+        float left[256], right[256], outLeft[256], outRight[256];
+        const float* inputs[] = { left, right };
+        float* outputs[] = { outLeft, outRight };
+        for (int done = 0; done < 24000; done += 256)
+        {
+            const int n = std::min(256, 24000 - done);
+            for (int i = 0; i < n; ++i)
+            {
+                const float tone = 0.3f * (float)std::sin(2.0 * 3.14159265358979323846
+                                                       * 1234.0 * (done + i) / 48000.0);
+                left[i] = gains[0] * tone;
+                right[i] = gains[1] * tone;
+            }
+            dsp.processBlock(inputs, outputs, 2, n);
+        }
+        ro::FilterTable table;
+        dsp.getTable(table);
+        CHECK(table.count == 1 && near(table.f[0].freqHz, 1234.0f, 6.0f),
+              "stereo ring L=%g/R=%g receives its notch (count %d)", gains[0], gains[1], table.count);
+        duskaudio::RingOutSpectrumFrame frame;
+        CHECK(dsp.copySpectrum(frame) && frame.bins > 106, "stereo spectrum is available");
+        if (frame.bins > 106)
+        {
+            const float peak = std::max(frame.db[105], frame.db[106]);
+            if (gains[0] == 1.0f && gains[1] == 1.0f) referencePeak = peak;
+            CHECK(near(peak, referencePeak, 0.01f),
+                  "stereo L=%g/R=%g keeps the strongest channel level: %.3f vs %.3f dB",
+                  gains[0], gains[1], peak, referencePeak);
+        }
+    }
+}
+
 // Runs a steady 1 kHz sine, applies `mutate` at 0.75 s, and reports the largest
 // sample-to-sample step over the whole run plus the level of the final quarter
 // second in dB relative to the input. A 0.5-amplitude 1 kHz sine at 48 kHz moves
@@ -615,12 +791,42 @@ static void testReplaceKeepsIdentity()
     // A -20 dB notch lets 0.05 through; a notch that ramped out and back in
     // would have let the full 0.5 through for a moment.
     CHECK(peakAfter < 0.08f, "the unchanged 1 kHz notch stays in force across a table replace (peak %.3f)", peakAfter);
+    const float replaced3k = measureGainDb(dsp, sr, 3000.0f);
+    const float expected3k = (float)RingOutDSP::responseDb(replacement, 1.0f, 0.0f, sr, 3000.0f);
+    CHECK(near(replaced3k, expected3k, 0.3f),
+          "table replacement also applies the changed 3 kHz cut: %.2f vs %.2f dB", replaced3k, expected3k);
 }
 
 // RESET from a thread that finds the table lock busy defers to the audio
 // thread; either way the table is empty after the next block.
 static void testDeferredReset()
 {
+    {
+        RingOutDSP dsp;
+        dsp.prepare(48000.0, 64);
+        ro::FilterTable table;
+        table.add(ro::Filter{ true, 1000.0f, -12.0f, 8.0f });
+        dsp.setTable(table);
+        CHECK(near(measureGainDb(dsp, 48000.0, 1000.0f), -12.0f, 0.3f),
+              "the deferred-reset probe begins with a working notch");
+        std::atomic<bool> locked { false }, release { false };
+        std::thread holder([&]
+        {
+            const duskaudio::SpinLock::ScopedLock guard(duskaudio::RingOutDSPTestAccess::tableLock(dsp));
+            locked.store(true, std::memory_order_release);
+            while (!release.load(std::memory_order_acquire)) std::this_thread::yield();
+        });
+        while (!locked.load(std::memory_order_acquire)) std::this_thread::yield();
+        dsp.resetFilters();   // guaranteed to defer; returning here also proves it did not wait
+        release.store(true, std::memory_order_release);
+        holder.join();
+        // No getTable()/setTable()/applyEdit() until after this measurement:
+        // only the audio callback can honour the request and remove the notch.
+        const float resetGain = measureGainDb(dsp, 48000.0, 1000.0f);
+        CHECK(near(resetGain, 0.0f, 0.05f),
+              "the audio callback honours deferred RESET without a table reader (%.2f dB)", resetGain);
+    }
+
     RingOutDSP dsp;
     dsp.prepare(48000.0, 64);
     std::atomic<bool> stop { false };
@@ -686,6 +892,99 @@ static void testBypassCrossfade()
         CHECK(maxJump < 0.085f, "releasing bypass is click-free: max sample step %.4f", maxJump);
         CHECK(near(lateDb, -20.0f, 0.3f), "after un-bypass the notch is fully in: %.2f dB", lateDb);
     }
+}
+
+// Stop immediately after the audio thread's timer snapshot, publish a UI
+// request, then resume the actual CAS transition. This deterministic schedule
+// catches stale writes without relying on the OS to hit a tiny race window.
+static void testControlTimerInterleavings()
+{
+    using Access = duskaudio::RingOutDSPTestAccess;
+    RingOutDSP dsp;
+    dsp.prepare(48000.0, 64);
+
+    dsp.setSetup(true);
+    const uint32_t oldSetup = Access::shortenSetup(dsp);
+    CHECK(Access::advanceSetup(dsp, oldSetup) && dsp.status().setupExpired && !dsp.setupActive(),
+          "control: an uncontended SETUP expiry really disarms and reports expiry");
+    const uint32_t oldNotice = Access::setupTimer(dsp);
+    dsp.setSetup(true);
+    CHECK(!Access::advanceSetup(dsp, oldNotice) && dsp.setupActive() && !dsp.status().setupExpired,
+          "an old expiry notice cannot overwrite a SETUP re-arm");
+    const uint32_t beforeRearm = Access::shortenSetup(dsp);
+    dsp.setSetup(false);
+    dsp.setSetup(true);
+    CHECK(!Access::advanceSetup(dsp, beforeRearm) && dsp.setupActive() && !dsp.status().setupExpired
+          && near(dsp.status().setupRemainingSeconds, 60.0f, 0.001f),
+          "a stale SETUP expiry preserves the new minute and raises no stale notice");
+
+    dsp.setAdd(true);
+    const uint32_t oldAdd = Access::shortenAdd(dsp);
+    CHECK(Access::advanceAdd(dsp, oldAdd) && !dsp.addSearching(),
+          "control: an uncontended ADD lease expiry really stops the search");
+    dsp.setAdd(true);
+    const uint32_t beforeStart = Access::shortenAdd(dsp);
+    dsp.setAdd(true);
+    CHECK(!Access::advanceAdd(dsp, beforeStart) && dsp.addSearching() && Access::addCount(dsp) == 96000,
+          "a stale ADD expiry cannot discard a new held search");
+
+    const uint32_t beforeRenew = Access::shortenAdd(dsp);
+    dsp.renewAddLease();
+    CHECK(!Access::advanceAdd(dsp, beforeRenew) && dsp.addSearching(),
+          "an in-flight ADD expiry loses to a published lease renewal");
+    CHECK(!Access::advanceAdd(dsp, Access::addTimer(dsp)) && dsp.addSearching()
+          && Access::addCount(dsp) == 96000 - 64,
+          "the next block consumes the renewal and advances the full lease");
+
+    const uint32_t beforeCompletionRenew = Access::shortenAdd(dsp);
+    dsp.renewAddLease();
+    dsp.tapAdd(); // ignored during the hold, even when it races completion
+    Access::satisfyAdd(dsp, beforeCompletionRenew);
+    CHECK(dsp.status().addSatisfied && !dsp.addSearching() && Access::addCount(dsp) == 96000,
+          "concurrent renewal preserves both the one-filter completion and its renewed lease");
+    dsp.renewAddLease();
+    CHECK(!Access::advanceAdd(dsp, Access::addTimer(dsp), true) && dsp.status().addSatisfied
+          && Access::addCount(dsp) == 96000,
+          "bypass pauses a held satisfaction lease while consuming renewals");
+    dsp.tapAdd();
+    dsp.setAdd(false);
+    Access::advanceAdd(dsp, Access::addTimer(dsp));
+    CHECK(!dsp.addSearching() && !dsp.status().addSatisfied,
+          "a tap ignored during a hold cannot resurrect a released ADD");
+
+    dsp.setAdd(true);
+    const uint32_t beforeRestartCompletion = Access::shortenAdd(dsp);
+    dsp.setAdd(true);
+    Access::satisfyAdd(dsp, beforeRestartCompletion);
+    CHECK(dsp.addSearching() && !dsp.status().addSatisfied,
+          "an old engagement cannot satisfy a newer held search");
+    const uint32_t beforeStopCompletion = Access::addTimer(dsp);
+    dsp.setAdd(false);
+    Access::satisfyAdd(dsp, beforeStopCompletion);
+    CHECK(!dsp.addSearching() && !dsp.status().addSatisfied,
+          "an old engagement cannot restore satisfaction after release");
+
+    dsp.tapAdd();
+    CHECK(dsp.addSearching(), "a controller tap is visible before the next block");
+    Access::advanceAdd(dsp, Access::addTimer(dsp));
+    const uint32_t tapRemaining = Access::addCount(dsp);
+    dsp.tapAdd();
+    Access::advanceAdd(dsp, Access::addTimer(dsp));
+    CHECK(Access::addCount(dsp) == tapRemaining - 64,
+          "repeated controller taps do not extend a running search");
+    Access::satisfyAdd(dsp, Access::addTimer(dsp));
+    CHECK(dsp.status().addSatisfied && !dsp.addSearching(), "a controller search completes");
+    dsp.tapAdd();
+    CHECK(dsp.addSearching() && !dsp.status().addSatisfied,
+          "a tap after satisfaction starts a new search immediately");
+
+    dsp.setAdd(true);
+    dsp.prepare(96000.0, 64);
+    CHECK(near(dsp.status().setupRemainingSeconds, 60.0f, 0.001f) && Access::addCount(dsp) == 192000,
+          "SETUP and held ADD both retain wall-clock duration across prepare");
+    dsp.reset();
+    CHECK(dsp.setupActive() && dsp.addSearching() && Access::addCount(dsp) == 192000,
+          "reset intentionally preserves ongoing engine countdowns");
 }
 
 static void testTimersAndEdges()
@@ -1319,14 +1618,19 @@ int main()
     testAxisLabels();
     testText();
     testNotch();
+    testNarrowLowNotch();
+    testOffFilterClearsTail();
+    testOffLowNotchTransition();
     testBlockSizeInvariance();
     testDeleteCrossfade();
     testFreqStepKeepsSlot();
     testReplaceKeepsIdentity();
     testDeferredReset();
     testBypassCrossfade();
+    testControlTimerInterleavings();
     testTimersAndEdges();
     testDetect();
+    testStereoDetection();
     testDetectLow();
     testHighSense();
     testReject();

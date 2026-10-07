@@ -170,7 +170,7 @@ inline float stepFreq(float f, int dir) noexcept
     {
         // Stepping down from a band edge uses the finer increment below it:
         // 1000 -> 990, 500 -> 499.
-        const float below = f - 0.5f * freqStepAt(f);
+        const float below = std::nextafter(f, 0.0f);
         return snapFreq(f - freqStepAt(below < kFreqMin ? kFreqMin : below));
     }
     return f;

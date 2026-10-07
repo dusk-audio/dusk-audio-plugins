@@ -87,7 +87,7 @@ Why: the detector errs on the side of stopping the ringing. Once the pressure is
 
 **SENSE**, Low or High, default Low. How readily the detector calls a tone feedback. Low needs the tone to stand clearly above everything else, have no harmonics and persist for about 130 ms; High accepts quieter and shorter tones. Use Low for ringing out before the show; use High on a system that only rings briefly before someone pulls the fader. Common mistake: High on a stage with sustained synth pads, which places filters on the pads.
 
-**SETUP**, press to arm, press again to stop. Arms the detector for 60 seconds, after which it switches itself off. Arming also puts GLOBAL Q and AMP back to their defaults, so the filters you are about to place are judged at face value. The armed state is never saved with a session: a project you reload is always idle. Common mistake: leaving it armed during the show.
+**SETUP**, press to arm, press again to stop. Arms the detector for 60 seconds, after which it switches itself off. Arming from the editor also puts GLOBAL Q and AMP back to their defaults, so the filters you are about to place are judged at face value; a host/controller trigger leaves those trims unchanged. The armed state is never saved with a session: a project you reload is always idle. Common mistake: leaving it armed during the show.
 
 **ADD**, momentary. Searches while held, stops after one filter has been placed or deepened. Release and press again for another. From a mapped controller a tap starts the same search; it ends with its filter or after ten seconds, so a button that sticks cannot keep it hunting.
 
@@ -109,9 +109,9 @@ Why: the detector errs on the side of stopping the ringing. Once the pressure is
 
 ### Global
 
-**Q**, 0.2 to 10, default 1.0. Multiplies the Q of every filter; 0.5 makes every notch twice as wide. Red rim when not at 1.0. Reset when SETUP is armed.
+**Q**, 0.2 to 10, default 1.0. Multiplies the Q of every filter; 0.5 makes every notch twice as wide. Red rim when not at 1.0. Reset when SETUP is armed from the editor.
 
-**AMP**, -24 to +24 dB, default 0 dB. Added to every filter's cut. Negative deepens all notches, positive shallows them; a filter never turns into a boost, so +24 dB simply flattens everything. Red rim when not at 0. Reset when SETUP is armed.
+**AMP**, -24 to +24 dB, default 0 dB. Added to every filter's cut. Negative deepens all notches, positive shallows them; a filter never turns into a boost, so +24 dB simply flattens everything. Red rim when not at 0. Reset when SETUP is armed from the editor.
 
 **LINK**, on or off. Ties AMP to GAIN OUT in opposite directions when you turn either knob in the editor: raise GAIN OUT by 3 dB and AMP drops by 3 dB. Host automation of one knob moves only that knob.
 

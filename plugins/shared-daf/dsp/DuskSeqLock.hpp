@@ -16,13 +16,14 @@
 // Writer: exactly one thread calls store(). Readers: any number of threads call
 // load(); each load is a full copy of T, so keep T to tens of KB at most.
 //
-// T must be trivially copyable: the reader copies it while the writer may be
-// half-way through overwriting it, and then throws the copy away if the
-// sequence moved. A type with pointers or invariants cannot survive that.
+// T must be trivially copyable. Its object representation is published as
+// lock-free atomic words: concurrent non-atomic memcpy would be a C++ data race,
+// even when the sequence check subsequently discarded the torn copy.
 #pragma once
 
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <type_traits>
 
@@ -34,9 +35,24 @@ class SeqLock
 {
     static_assert(std::is_trivially_copyable<T>::value,
                   "SeqLock<T> copies T byte-wise while it may be torn; T must be trivially copyable");
+    using Word = std::uint32_t;
+    static_assert(std::atomic<Word>::is_always_lock_free,
+                  "SeqLock payload publication must never lock the audio thread");
+    static constexpr size_t kWordCount = (sizeof(T) + sizeof(Word) - 1) / sizeof(Word);
 
 public:
-    SeqLock() noexcept : value_{} {}
+    SeqLock() noexcept
+    {
+        const T initial {};
+        const auto* src = reinterpret_cast<const unsigned char*>(&initial);
+        for (size_t offset = 0; offset < sizeof(T); offset += sizeof(Word))
+        {
+            Word word = 0;
+            const size_t count = sizeof(T) - offset < sizeof(Word) ? sizeof(T) - offset : sizeof(Word);
+            std::memcpy(&word, src + offset, count);
+            words_[offset / sizeof(Word)].store(word, std::memory_order_relaxed);
+        }
+    }
 
     // Writer only. Odd sequence = write in progress. `bytes` lets a frame whose
     // payload is only partly in use (a spectrum sized for the largest FFT)
@@ -47,7 +63,16 @@ public:
         const unsigned s = seq_.load(std::memory_order_relaxed);
         seq_.store(s + 1, std::memory_order_relaxed);
         std::atomic_thread_fence(std::memory_order_release);   // the odd mark lands before the data
-        std::memcpy(static_cast<void*>(&value_), &v, bytes);
+        const auto* src = reinterpret_cast<const unsigned char*>(&v);
+        for (size_t offset = 0; offset < bytes; offset += sizeof(Word))
+        {
+            const size_t count = bytes - offset < sizeof(Word) ? bytes - offset : sizeof(Word);
+            // Preserve the suffix of a partially published word, just as a
+            // short memcpy preserved the unused tail of the previous frame.
+            Word word = count < sizeof(Word) ? words_[offset / sizeof(Word)].load(std::memory_order_relaxed) : 0;
+            std::memcpy(&word, src + offset, count);
+            words_[offset / sizeof(Word)].store(word, std::memory_order_relaxed);
+        }
         seq_.store(s + 2, std::memory_order_release);           // orders the data before the even mark
     }
 
@@ -68,7 +93,13 @@ public:
                 return false;
             if (s0 & 1u)
                 continue;                         // writer mid-store
-            std::memcpy(static_cast<void*>(&local), &value_, bytes);
+            auto* dst = reinterpret_cast<unsigned char*>(&local);
+            for (size_t offset = 0; offset < bytes; offset += sizeof(Word))
+            {
+                const Word word = words_[offset / sizeof(Word)].load(std::memory_order_relaxed);
+                const size_t count = bytes - offset < sizeof(Word) ? bytes - offset : sizeof(Word);
+                std::memcpy(dst + offset, &word, count);
+            }
             std::atomic_thread_fence(std::memory_order_acquire);
             const unsigned s1 = seq_.load(std::memory_order_relaxed);
             if (s0 == s1)
@@ -90,7 +121,7 @@ public:
 
 private:
     std::atomic<unsigned> seq_ { 0 };
-    T value_;
+    std::atomic<Word> words_[kWordCount];
 };
 
 } // namespace duskaudio
