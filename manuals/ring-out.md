@@ -7,8 +7,6 @@ tagline: feedback eliminator for ringing out monitors and PA
 
 # Ring Out User Manual
 
-Version 0.1.0
-
 ## Overview
 
 Ring Out finds the frequencies at which a sound system starts to feed back and notches them out. You insert it on a monitor send or the master bus, arm it, and push the gain up the way you would when ringing out by hand; every time a tone starts to build, Ring Out places a narrow cut at exactly that frequency, deep enough to stop it, and moves on to the next one. After a handful of filters you take the gain back down and have a few dB more headroom before the system rings.
