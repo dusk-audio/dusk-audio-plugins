@@ -37,8 +37,8 @@
 #define DAF_UI_USE_CUSTOM           1
 #define DAF_UI_CUSTOM_INCLUDE_PATH  "DearImGui.hpp"
 #define DAF_UI_CUSTOM_WIDGET_TYPE   DGL_NAMESPACE::ImGuiTopLevelWidget
-#define DAF_UI_DEFAULT_WIDTH        960
-#define DAF_UI_DEFAULT_HEIGHT       600
+#define DAF_UI_DEFAULT_WIDTH        1040
+#define DAF_UI_DEFAULT_HEIGHT       640
 #define DAF_UI_USER_RESIZABLE       1
 
 #define DAF_PLUGIN_CLAP_FEATURES   "audio-effect", "equalizer", "stereo"

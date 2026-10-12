@@ -4,13 +4,15 @@
 //
 // RingOutUI.cpp — Dear ImGui UI for Ring Out, the feedback eliminator.
 //
-// Layout (960 x 600 design space, uniformly scaled):
+// Layout (1040 x 640 design space, uniformly scaled):
 //   header row      the fleet-standard nameplate / preset / brand band
-//   graph card      IN meter | log-frequency graph (RTA + filter curve) | OUT meter
-//   toolbar         SENSE Low/High, SETUP, ADD, RESET, status, filter nav < >
-//   filter card     20 indicators + NEW, ON, CUT / FREQ / Q steppers, DEL,
-//                   GLOBAL Q / AMP + LINK, GAIN OUT
-//   countdown bar   drains while SETUP is armed
+//   graph card      log-frequency graph: the analyser, the notch response and a
+//                   numbered node per notch that drags (FREQ across, CUT up and
+//                   down, the wheel for Q, double-click for on/off)
+//   notch bank      twenty strips, one per notch, each with its own CUT fader;
+//                   the selected notch's FREQ / CUT / Q steppers beneath them
+//   detect card     LEARN with its countdown ring, CATCH, SENSITIVITY, status
+//   output card     Q SCALE and CUT TRIM for every notch, LINK, OUTPUT, meters
 //
 // The filter table is read straight off the DSP every frame (direct access);
 // edits go back as single "edit" state commands, so the engine's own additions
@@ -27,6 +29,7 @@
 #include "DuskImGuiFont.hpp"
 #include "DuskImGuiTextInput.hpp"
 #include "DuskImGuiWidgets.hpp"
+#include "DuskKnobRing.hpp"
 #include "DuskLedMeter.hpp"
 #include "DuskLogFreqAxis.hpp"
 #include "DuskStepperBox.hpp"
@@ -53,35 +56,63 @@ namespace
     using duskaudio::RingOutDSP;
     namespace ro = duskaudio::ringout;
 
-    constexpr float kDesignW = 960.0f;
-    constexpr float kDesignH = 600.0f;
+    constexpr float kDesignW = 1040.0f;
+    constexpr float kDesignH = 640.0f;
+    constexpr float kPi = duskdaf::DuskPanel::kPi;
 
-    // Palette: the dark chassis of the other Dusk DAF effects, with the two
-    // instrument colours of a feedback display: cyan for what the microphone
-    // hears, red for what the filters remove, and yellow for the selection.
-    constexpr ImU32 kColHeader   = IM_COL32(14, 14, 15, 255);
-    constexpr ImU32 kColCard     = IM_COL32(26, 27, 29, 255);
-    constexpr ImU32 kColCardEdge = IM_COL32(60, 60, 63, 255);
-    constexpr ImU32 kColGraphBg  = IM_COL32(10, 11, 13, 255);
-    constexpr ImU32 kColGrid     = IM_COL32(38, 41, 46, 255);
-    constexpr ImU32 kColGridMinor = IM_COL32(26, 28, 32, 255);
-    constexpr ImU32 kColWhite    = IM_COL32(241, 238, 226, 255);
-    constexpr ImU32 kColWhiteDim = IM_COL32(176, 174, 166, 255);
-    constexpr ImU32 kColCyan     = IM_COL32(40, 220, 235, 255);
-    constexpr ImU32 kColCyanDim  = IM_COL32(40, 220, 235, 90);
-    constexpr ImU32 kColCyanFill = IM_COL32(40, 180, 200, 42);
-    constexpr ImU32 kColRed      = IM_COL32(228, 48, 40, 255);
-    constexpr ImU32 kColRedFill  = IM_COL32(220, 40, 30, 110);
-    constexpr ImU32 kColYellow   = IM_COL32(255, 214, 40, 255);
-    constexpr ImU32 kColGreen    = IM_COL32(72, 200, 110, 255);
-    constexpr ImU32 kColBtn      = IM_COL32(38, 38, 41, 255);
-    constexpr ImU32 kColBtnHot   = IM_COL32(54, 54, 58, 255);
-    constexpr ImU32 kColBtnEdge  = IM_COL32(90, 90, 94, 255);
+    // Palette: the graphite chassis of the other Dusk DAF effects with one warm
+    // accent for what the plugin does (amber: the notches, an armed LEARN, a
+    // caught ring), warm silver for what the microphone hears, and white for
+    // the selection.
+    constexpr ImU32 kColHeader    = IM_COL32(14, 14, 15, 255);
+    constexpr ImU32 kColCard      = IM_COL32(27, 27, 29, 255);
+    constexpr ImU32 kColCardEdge  = IM_COL32(58, 57, 55, 255);
+    constexpr ImU32 kColInset     = IM_COL32(14, 14, 15, 255);   // graph, tracks, status
+    constexpr ImU32 kColGrid      = IM_COL32(40, 40, 42, 255);
+    constexpr ImU32 kColGridMinor = IM_COL32(26, 26, 28, 255);
+    constexpr ImU32 kColWhite     = IM_COL32(241, 238, 226, 255);
+    constexpr ImU32 kColWhiteDim  = IM_COL32(194, 190, 180, 255);
+    constexpr ImU32 kColLabel     = IM_COL32(164, 160, 151, 255);
+    constexpr ImU32 kColSilver    = IM_COL32(208, 202, 190, 215);
+    constexpr ImU32 kColSilverDim = IM_COL32(164, 160, 151, 255);
+    constexpr ImU32 kColSilverFill = IM_COL32(190, 184, 170, 30);
+    constexpr ImU32 kColAmber     = IM_COL32(255, 158, 48, 255);
+    constexpr ImU32 kColAmberDim  = IM_COL32(255, 158, 48, 130);
+    constexpr ImU32 kColAmberFill = IM_COL32(255, 150, 40, 56);
+    constexpr ImU32 kColAmberDeep = IM_COL32(70, 44, 16, 255);    // armed LEARN body
+    constexpr ImU32 kColInk       = IM_COL32(24, 18, 10, 255);    // text on amber
+    constexpr ImU32 kColGreen     = IM_COL32(110, 204, 120, 255);
+    constexpr ImU32 kColWarn      = IM_COL32(255, 92, 64, 255);   // RING NOT COVERED
+    constexpr ImU32 kColBtn       = IM_COL32(40, 40, 42, 255);
+    constexpr ImU32 kColBtnHot    = IM_COL32(56, 55, 53, 255);
+    constexpr ImU32 kColBtnEdge   = IM_COL32(84, 82, 78, 255);
+    constexpr ImU32 kColTrack     = IM_COL32(50, 49, 47, 255);
 
-    // Graph rectangle and axes.
-    constexpr float GX0 = 58.0f, GX1 = 902.0f, GY0 = 62.0f, GY1 = 334.0f;
-    constexpr float kRtaMinDb = -80.0f;        // analyser axis, 0 at the top
-    constexpr float kCurveMinDb = -24.0f;      // filter axis at rest, 0 at the top (extends for deep notches)
+    // Graph plot. Both axes leave room for their units above the 0 dB line
+    // and for frequency labels below the traces and numbered nodes.
+    constexpr float GX0 = 28.0f, GX1 = 1012.0f, GY0 = 64.0f, GY1 = 310.0f;
+    // Side gutters keep the end nodes and the traces clear of the dB labels.
+    constexpr float FX0 = GX0 + 36.0f, FX1 = GX1 - 36.0f;
+    constexpr float kNotchY0 = GY0 + 30.0f;
+    constexpr float kNotchY1 = GY1 - 28.0f;
+    constexpr float kRtaMinDb = -80.0f;
+    constexpr int   kCurvePoints = 480;
+    constexpr float kNodeR = 9.0f;
+    constexpr float kNodeHitR = 12.0f;
+
+    // Notch bank: one strip per notch slot.
+    constexpr float kBankX0 = 54.0f, kBankX1 = 700.0f;
+    constexpr float kStripW = (kBankX1 - kBankX0) / (float)ro::kMaxFilters;
+    constexpr float kStripY0 = 360.0f, kStripY1 = 554.0f;
+    constexpr float kBadgeY = 374.0f;
+    constexpr float kFaderY0 = 408.0f, kFaderY1 = 518.0f;
+
+    constexpr float kRippleSeconds = 0.9f;
+    constexpr float kKnobRingGap = 5.5f;       // knob body to its value ring
+
+    // The knob ring's angles: DuskPanel::knobAngle measures from 12 o'clock,
+    // ImDrawList::PathArcTo from +x.
+    float arcAngle(float t) { return duskdaf::DuskPanel::knobAngle(t) - 0.5f * kPi; }
 }
 
 class RingOutUI : public UI, public duskdaf::ParamHost
@@ -111,9 +142,9 @@ public:
         setGeometryConstraints((uint32_t)kDesignW, (uint32_t)kDesignH, true);
 
         static constexpr float kLabelSizes[] =
-            { 7.0f, 9.0f, 11.0f, 14.0f, 18.0f, 24.0f, 28.0f, 32.0f, 48.0f, 72.0f };
+            { 11.0f, 12.0f, 14.0f, 16.0f, 18.0f, 20.0f, 24.0f, 28.0f, 32.0f, 48.0f };
         static constexpr float kRegularSizes[] =
-            { 7.0f, 9.0f, 11.0f, 14.0f, 18.0f, 24.0f, 32.0f, 48.0f };
+            { 11.0f, 12.0f, 14.0f, 16.0f, 18.0f, 20.0f, 24.0f, 28.0f, 32.0f, 48.0f };
 
         GLint maxTextureSize = 0;
         glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize);
@@ -136,8 +167,17 @@ public:
         labelFont = labelFonts.pick(12.5f * getScaleFactor());
         panel.setFontSet(labelFonts);
 
-        rta.assign((size_t)(GX1 - GX0) + 1, kRtaMinDb);
+        rta.assign((size_t)(FX1 - FX0) + 1, kRtaMinDb);
         scanUserPresets();
+    }
+
+    // An editor closed while a LINK drag holds the mouse never sees the button
+    // come up, so end the follower's host gesture here; otherwise the host
+    // leaves CUT TRIM (or OUTPUT) in touch / write.
+    ~RingOutUI() override
+    {
+        if (linkFollowerOpen >= 0)
+            editParameter((uint32_t)linkFollowerOpen, false);
     }
 
 
@@ -193,6 +233,16 @@ protected:
 
         pullEngineState();
 
+        // ImGui owns the text in tooltips, menus and inline editors. Give those
+        // the same readable, scaled body face as the drawn panel labels.
+        ImFont* bodyFont = regularFonts.pick(14.0f * s);
+        if (bodyFont != nullptr) ImGui::PushFont(bodyFont);
+        ImGui::PushStyleColor(ImGuiCol_Text, kColWhite);
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, kColInset);
+        ImGui::PushStyleColor(ImGuiCol_Border, kColCardEdge);
+        ImGui::PushStyleColor(ImGuiCol_Header, kColAmberDeep);
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, IM_COL32(118, 74, 26, 255));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, IM_COL32(100, 62, 22, 255));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
         ImGui::SetNextWindowPos(ImVec2(0, 0));
@@ -203,6 +253,12 @@ protected:
                      ImGuiWindowFlags_NoScrollbar |
                      ImGuiWindowFlags_NoScrollWithMouse |
                      ImGuiWindowFlags_NoBackground);
+        ImGui::PopStyleVar(2);
+        // Zero padding belongs only to the absolute-positioned root panel;
+        // popovers need room around their text and controls.
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f * s, 8.0f * s));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f * s, 4.0f * s));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f * s, 6.0f * s));
 
         ImDrawList* dl = ImGui::GetWindowDrawList();
         dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), IM_COL32(8, 8, 8, 255));
@@ -213,13 +269,14 @@ protected:
             ImGui::BeginDisabled();
         drawHeader(dl);
         drawGraphCard(dl);
-        drawToolbar(dl);
-        drawFilterCard(dl);
-        drawCountdown(dl);
+        drawNotchBank(dl);
+        drawDetectCard(dl);
+        drawOutputCard(dl);
         if (values[kParamBypass] >= 0.5f)
         {
-            dl->AddRectFilled(P(0, 50), P(kDesignW, kDesignH), IM_COL32(0, 0, 0, 110));
-            text(dl, 0.5f * kDesignW, 190.0f, 22.0f, IM_COL32(230, 226, 214, 200), "BYPASSED", 0, true);
+            dl->AddRectFilled(P(0, 50), P(kDesignW, kDesignH), IM_COL32(0, 0, 0, 120));
+            duskdaf::spacedText(panel, dl, 0.5f * kDesignW, 172.0f, 22.0f,
+                                IM_COL32(230, 226, 214, 210), "BYPASSED", 0, 0.2f);
         }
         if (modalOpen)
             ImGui::EndDisabled();
@@ -229,8 +286,10 @@ protected:
 
         const duskdaf::ResizeGripState grip = panel.resizeGrip(dl, winW, winH, kDesignW, kDesignH);
 
+        ImGui::PopStyleVar(3);
         ImGui::End();
-        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor(6);
+        if (bodyFont != nullptr) ImGui::PopFont();
         textInputFocus.update(*this);
 
         if (grip.hot != gripCursorSet)
@@ -259,6 +318,9 @@ private:
     void pullEngineState()
     {
         const float dt = ImGui::GetIO().DeltaTime;
+        if (rippleSecondsLeft > 0.0f)
+            rippleSecondsLeft -= std::clamp(dt, 0.0f, 0.1f);
+
         RingOutDSP* const d = dsp();
         if (d == nullptr)
         {
@@ -266,8 +328,13 @@ private:
             outMeter.update(-100.0f, -100.0f, dt, meterStyle);
             return;
         }
+        const bool firstPull = !engineLive;
         engineLive = true;
         status = d->status();
+        // An editor opened on a running instance has not seen the engagements
+        // that happened while it was closed; it must not ripple the last one.
+        if (firstPull)
+            engagementsSeen = status.engagementCount;
         if (status.tableVersion != tableVersionSeen)
         {
             tableVersionSeen = status.tableVersion;
@@ -287,15 +354,20 @@ private:
             clampSelection();
             syncPresetSelection();
         }
-        // Flash the indicator of the filter the engine just placed or deepened.
+        // Ripple the notch the engine just placed or deepened. The table pull
+        // above has already brought that row in.
         if (status.engagementCount != engagementsSeen)
         {
             engagementsSeen = status.engagementCount;
-            flashRow = status.lastEngagedRow;
-            flashSecondsLeft = 0.7f;
+            const int row = status.lastEngagedRow;
+            if (row >= 0 && row < table.count)
+            {
+                rippleRow = row;
+                rippleRowId = table.id[row];
+                rippleHz = table.f[row].freqHz;
+                rippleSecondsLeft = kRippleSeconds;
+            }
         }
-        if (flashSecondsLeft > 0.0f)
-            flashSecondsLeft -= std::clamp(dt, 0.0f, 0.1f);
 
         inMeter.update(d->inputPeakDb(0), d->inputPeakDb(1), dt, meterStyle);
         outMeter.update(d->outputPeakDb(0), d->outputPeakDb(1), dt, meterStyle);
@@ -381,7 +453,7 @@ private:
         syncPresetSelection();
     }
 
-    // SETUP / ADD, over the same channel as the table edits.
+    // LEARN / CATCH, over the same channel as the table edits.
     void sendEngineCommand(ro::EditCommand::Kind kind)
     {
         ro::EditCommand c;
@@ -395,19 +467,96 @@ private:
     // writes only the field that changed: an engine deepen that landed since
     // the last pull survives a FREQ nudge.
     template <typename T>
-    void setSelectedFilter(T ro::Filter::* field, T value)
+    void setRowField(int row, T ro::Filter::* field, T value)
+    {
+        if (row < 0 || row >= table.count) return;
+        sendEdit(roFilterFieldCommand(table, row, field, value));
+    }
+
+    template <typename T>
+    void setSelectedFilter(T ro::Filter::* field, T value) { setRowField(selected, field, value); }
+
+    void addNotch()
+    {
+        ro::EditCommand c;
+        c.kind = ro::EditCommand::kAdd;
+        c.filter = ro::defaultFilter();
+        sendEdit(c);
+    }
+
+    void deleteSelected()
     {
         if (selected < 0 || selected >= table.count) return;
-        sendEdit(roFilterFieldCommand(table, selected, field, value));
+        ro::EditCommand c;
+        c.kind = ro::EditCommand::kDelete;
+        c.slot = selected;
+        sendEdit(c);
+    }
+
+    // CLEAR goes through the edit channel like every other table edit; the
+    // trigger parameter is for host automation and controller mapping. A
+    // trigger written from here could be swallowed by a host that forwards
+    // only control-port changes (an LV2 port already sitting at 1).
+    void clearNotches()
+    {
+        ro::EditCommand c;
+        c.kind = ro::EditCommand::kClear;
+        sendEdit(c);
     }
 
     //--- helpers -----------------------------------------------------------------
     ImVec2 P(float x, float y) const { return ImVec2(org.x + x * s, org.y + y * s); }
+    ImVec2 mouseDesign() const
+    {
+        const ImVec2 m = ImGui::GetIO().MousePos;
+        return ImVec2((m.x - org.x) / s, (m.y - org.y) / s);
+    }
+
+    // Pointer motion this frame in design px. The activation frame measures
+    // from the press, which can share a frame with motion before it.
+    ImVec2 dragDelta() const
+    {
+        const ImGuiIO& io = ImGui::GetIO();
+        const ImVec2 d = ImGui::IsItemActivated()
+            ? ImVec2(io.MousePos.x - io.MouseClickedPos[0].x, io.MousePos.y - io.MouseClickedPos[0].y)
+            : io.MouseDelta;
+        return ImVec2(d.x / s, d.y / s);
+    }
+
+    // Whole wheel notches since the last call for the same target, so a
+    // trackpad's fractional scroll steps once per notch's worth instead of once
+    // per frame. A new target starts from zero rather than inheriting another
+    // control's remainder. Targets: -1 - row for a graph node, row + 1 for a
+    // bank fader.
+    int takeWheelSteps(int target)
+    {
+        if (target != wheelTarget)
+        {
+            wheelTarget = target;
+            wheelAccum = 0.0f;
+        }
+        wheelAccum += ImGui::GetIO().MouseWheel;
+        const int steps = (int)wheelAccum;
+        wheelAccum -= (float)steps;
+        return steps;
+    }
+
+    static void tooltip(const char* txt)
+    {
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+            ImGui::SetTooltip("%s", txt);
+    }
 
     void text(ImDrawList* dl, float x, float y, float size, ImU32 col,
               const char* txt, int align, bool bold = false) const
     {
         panel.text(dl, x, y, size, col, txt, align, bold);
+    }
+
+    void spaced(ImDrawList* dl, float x, float y, float size, ImU32 col,
+                const char* txt, int align, float tracking = 0.14f) const
+    {
+        duskdaf::spacedText(panel, dl, x, y, size, col, txt, align, tracking);
     }
 
     void regularText(ImDrawList* dl, float x, float y, float size, ImU32 col,
@@ -425,19 +574,64 @@ private:
         dl->AddText(font, px, pos, col, txt);
     }
 
+    float regularWidth(float size, const char* txt) const
+    {
+        ImFont* font = regularFonts.pick(size * s);
+        if (font == nullptr) font = panel.pickFont(size * s);
+        return font->CalcTextSizeA(size * s, FLT_MAX, 0.0f, txt).x / s;
+    }
+
+    float boldWidth(float size, const char* txt) const
+    {
+        return panel.pickFont(size * s)->CalcTextSizeA(size * s, FLT_MAX, 0.0f, txt).x / s;
+    }
+
     static ImU32 fade(ImU32 c, float amount) { return duskdaf::scaleAlpha(c, amount); }
+
+    // Fills between a trace (screen space, x ascending) and a horizontal line
+    // as one strip of quads sharing their edges. A concave-polygon fill of the
+    // same shape degenerates wherever the trace lies on the line (an unnotched
+    // stretch at 0 dB, a silent analyser at its floor) and fills the wrong
+    // region; quads need no triangulation, and shared vertices leave no seams.
+    static void fillToLine(ImDrawList* dl, const ImVec2* pts, int n, float lineY, ImU32 col)
+    {
+        if (n < 2) return;
+        dl->PrimReserve((n - 1) * 6, n * 2);
+        const ImVec2 uv = dl->_Data->TexUvWhitePixel;
+        const unsigned base = dl->_VtxCurrentIdx;   // after PrimReserve, which may start a new vertex block
+        for (int i = 0; i < n; ++i)
+        {
+            dl->PrimWriteVtx(ImVec2(pts[i].x, lineY), uv, col);
+            dl->PrimWriteVtx(pts[i], uv, col);
+        }
+        for (int i = 0; i + 1 < n; ++i)
+        {
+            const unsigned a = base + 2u * (unsigned)i;
+            dl->PrimWriteIdx((ImDrawIdx)a);
+            dl->PrimWriteIdx((ImDrawIdx)(a + 1));
+            dl->PrimWriteIdx((ImDrawIdx)(a + 3));
+            dl->PrimWriteIdx((ImDrawIdx)a);
+            dl->PrimWriteIdx((ImDrawIdx)(a + 3));
+            dl->PrimWriteIdx((ImDrawIdx)(a + 2));
+        }
+    }
 
     void card(ImDrawList* dl, float x0, float y0, float x1, float y1) const
     {
-        dl->AddRectFilled(P(x0, y0), P(x1, y1), kColCard, 4.0f * s);
-        dl->AddRect(P(x0, y0), P(x1, y1), kColCardEdge, 4.0f * s, 0, 1.0f * s);
+        dl->AddRectFilled(P(x0, y0), P(x1, y1), kColCard, 6.0f * s);
+        dl->AddRect(P(x0, y0), P(x1, y1), kColCardEdge, 6.0f * s, 0, 1.0f * s);
+    }
+
+    void sectionTitle(ImDrawList* dl, float x, float y, const char* title) const
+    {
+        spaced(dl, x, y, 13.0f, kColWhiteDim, title, -1, 0.12f);
     }
 
     // Rectangular button. `lit` paints it in litCol; returns clicked. `heldOut`
     // reports press-and-hold for momentary controls.
     bool button(ImDrawList* dl, const char* id, float x0, float y0, float x1, float y1,
                 const char* label, bool lit, ImU32 litCol, bool enabled = true,
-                float textSize = 11.0f, bool* heldOut = nullptr)
+                float textSize = 10.5f, bool* heldOut = nullptr, const char* tip = nullptr)
     {
         const ImVec2 b0 = P(x0, y0), b1 = P(x1, y1);
         ImGui::SetCursorScreenPos(b0);
@@ -446,39 +640,48 @@ private:
         const bool hov = enabled && ImGui::IsItemHovered();
         const bool held = enabled && ImGui::IsItemActive();
         const bool clicked = enabled && ImGui::IsItemClicked();
+        if (tip != nullptr && enabled) tooltip(tip);
         if (!enabled) ImGui::EndDisabled();
         if (heldOut != nullptr) *heldOut = held;
 
         const ImU32 bg = lit ? litCol : (hov || held ? kColBtnHot : kColBtn);
-        dl->AddRectFilled(b0, b1, bg, 3.0f * s);
-        dl->AddRect(b0, b1, lit ? fade(litCol, 0.6f) : kColBtnEdge, 3.0f * s, 0, 1.0f * s);
-        const ImU32 ink = !enabled ? IM_COL32(110, 110, 108, 255)
-                        : lit ? IM_COL32(16, 16, 16, 255)
+        dl->AddRectFilled(b0, b1, bg, 4.0f * s);
+        dl->AddRect(b0, b1, lit ? fade(litCol, 0.7f) : kColBtnEdge, 4.0f * s, 0, 1.0f * s);
+        const ImU32 ink = !enabled ? IM_COL32(96, 95, 92, 255)
+                        : lit ? kColInk
                         : (hov ? kColWhite : kColWhiteDim);
-        text(dl, 0.5f * (x0 + x1), 0.5f * (y0 + y1 - textSize) - 0.5f, textSize, ink, label, 0, true);
+        spaced(dl, 0.5f * (x0 + x1), 0.5f * (y0 + y1 - textSize) - 0.5f, textSize, ink, label, 0, 0.10f);
         return clicked;
     }
 
-    bool roundButton(ImDrawList* dl, const char* id, float cx, float cy, float r,
-                     const char* label, bool lit, ImU32 litCol, bool enabled = true,
-                     float textSize = 10.0f)
+    // Two-position switch: a silver selection keeps detector sensitivity
+    // distinct from the amber LEARN / CATCH actions.
+    int segmentSwitch(ImDrawList* dl, const char* id, float x0, float y0, float x1, float y1,
+                      const char* left, const char* right, int index, const char* tip)
     {
-        const ImVec2 c = P(cx, cy);
-        ImGui::SetCursorScreenPos(ImVec2(c.x - r * s, c.y - r * s));
-        if (!enabled) ImGui::BeginDisabled();
-        ImGui::InvisibleButton(id, ImVec2(2.0f * r * s, 2.0f * r * s));
-        const bool hov = enabled && ImGui::IsItemHovered();
-        const bool clicked = enabled && ImGui::IsItemClicked();
-        if (!enabled) ImGui::EndDisabled();
-
-        dl->AddCircleFilled(c, (r + 2.5f) * s, IM_COL32(60, 60, 62, 255), 32);
-        dl->AddCircleFilled(c, (r + 1.0f) * s, IM_COL32(0, 0, 0, 255), 32);
-        dl->AddCircleFilled(c, r * s, lit ? litCol : (hov ? kColBtnHot : kColBtn), 32);
-        if (lit)
-            dl->AddCircleFilled(c, (r + 4.0f) * s, fade(litCol, 0.25f), 32);
-        const ImU32 ink = !enabled ? IM_COL32(110, 110, 108, 255)
-                        : lit ? IM_COL32(16, 16, 16, 255) : (hov ? kColWhite : kColWhiteDim);
-        text(dl, cx, cy - 0.5f * textSize - 0.5f, textSize, ink, label, 0, true);
+        const float xm = 0.5f * (x0 + x1);
+        dl->AddRectFilled(P(x0, y0), P(x1, y1), kColInset, 4.0f * s);
+        int clicked = -1;
+        ImGui::PushID(id);
+        for (int k = 0; k < 2; ++k)
+        {
+            const float sx0 = k == 0 ? x0 : xm, sx1 = k == 0 ? xm : x1;
+            ImGui::SetCursorScreenPos(P(sx0, y0));
+            ImGui::InvisibleButton(k == 0 ? "##a" : "##b", ImVec2((sx1 - sx0) * s, (y1 - y0) * s));
+            const bool hov = ImGui::IsItemHovered();
+            if (ImGui::IsItemClicked()) clicked = k;
+            tooltip(tip);
+            if (k == index)
+                dl->AddRectFilled(P(sx0 + 2.0f, y0 + 2.0f), P(sx1 - 2.0f, y1 - 2.0f), kColWhiteDim, 3.0f * s);
+            else if (hov)
+                dl->AddRectFilled(P(sx0 + 2.0f, y0 + 2.0f), P(sx1 - 2.0f, y1 - 2.0f), kColBtnHot, 3.0f * s);
+            const ImU32 ink = k == index ? kColInk : (hov ? kColWhite : kColWhiteDim);
+            constexpr float kTxt = 12.0f;
+            spaced(dl, 0.5f * (sx0 + sx1), 0.5f * (y0 + y1 - kTxt) - 0.5f, kTxt, ink,
+                   k == 0 ? left : right, 0, 0.10f);
+        }
+        ImGui::PopID();
+        dl->AddRect(P(x0, y0), P(x1, y1), kColBtnEdge, 4.0f * s, 0, 1.0f * s);
         return clicked;
     }
 
@@ -512,7 +715,7 @@ private:
         const bool hov = ImGui::IsItemHovered();
         dl->AddRectFilled(b0, b1, hov ? kColBtnHot : kColBtn, 2.0f * s);
         dl->AddRect(b0, b1, kColBtnEdge, 2.0f * s, 0, 1.0f * s);
-        constexpr float kTxt = 11.0f;
+        constexpr float kTxt = 13.0f;
         text(dl, 0.5f * (x0 + x1), 0.5f * (y0 + y1 - kTxt), kTxt,
              hov ? kColWhite : kColWhiteDim, label, 0, true);
         return ImGui::IsItemClicked();
@@ -543,7 +746,7 @@ private:
                                     IM_COL32(16, 16, 17, 255), IM_COL32(19, 19, 20, 255));
         dl->AddRect(P(kPlateX0, kPlateY0), P(kPlateX1, kPlateY1),
                     IM_COL32(185, 184, 180, 220), 3.5f * s, 0, 1.2f * s);
-        dl->AddLine(P(40, 37), P(308, 37), fade(kColRed, 0.8f), 1.2f * s);
+        dl->AddLine(P(40, 37), P(308, 37), fade(kColAmber, 0.8f), 1.2f * s);
 
         text(dl, 42, 10.0f, 24.0f, kColWhite, "RING OUT", -1, true);
         text(dl, 202, 14.0f, 20.0f, kColWhite, "RO-1", 0, true);
@@ -575,14 +778,14 @@ private:
         ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(48, 48, 51, 255));
         ImGui::PushStyleColor(ImGuiCol_FrameBgActive, IM_COL32(55, 55, 58, 255));
         ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(24, 24, 26, 255));
-        ImGui::PushStyleColor(ImGuiCol_Header, IM_COL32(110, 45, 38, 255));
-        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, IM_COL32(132, 57, 48, 255));
-        ImGui::PushStyleColor(ImGuiCol_HeaderActive, IM_COL32(92, 39, 34, 255));
-        ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(60, 28, 24, 255));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(110, 45, 38, 255));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(92, 39, 34, 255));
+        ImGui::PushStyleColor(ImGuiCol_Header, IM_COL32(118, 74, 26, 255));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, IM_COL32(144, 92, 34, 255));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, IM_COL32(100, 62, 22, 255));
+        ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(66, 42, 16, 255));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(118, 74, 26, 255));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(100, 62, 22, 255));
         ImGui::PushStyleColor(ImGuiCol_Text, kColWhite);
-        ImGui::PushStyleColor(ImGuiCol_NavHighlight, IM_COL32(160, 84, 70, 255));
+        ImGui::PushStyleColor(ImGuiCol_NavHighlight, IM_COL32(176, 116, 48, 255));
         const char* preview = (currentPreset >= 0 && currentPreset < kRoNumFactoryPresets)
                                   ? kRoFactoryPresetNames[currentPreset]
                                   : (!currentUserName.empty() ? currentUserName.c_str() : "Presets...");
@@ -634,9 +837,13 @@ private:
         ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(40, 40, 43, 255));
         ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(50, 50, 54, 255));
         ImGui::PushStyleColor(ImGuiCol_FrameBgActive, IM_COL32(56, 56, 60, 255));
-        ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(60, 28, 24, 255));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(110, 45, 38, 255));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(92, 39, 34, 255));
+        ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(66, 42, 16, 255));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(118, 74, 26, 255));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(100, 62, 22, 255));
+        ImGui::PushStyleColor(ImGuiCol_TitleBg, kColHeader);
+        ImGui::PushStyleColor(ImGuiCol_TitleBgActive, kColHeader);
+        ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, IM_COL32(0, 0, 0, 170));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 5.0f * s);
         if (ImGui::BeginPopupModal("Save Preset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
         {
             const bool appearing = ImGui::IsWindowAppearing();
@@ -660,35 +867,80 @@ private:
             if (cancel) { saveFailed = false; ImGui::CloseCurrentPopup(); }
             ImGui::EndPopup();
         }
-        ImGui::PopStyleColor(9);
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(12);
     }
 
     //--- graph card ----------------------------------------------------------------
     float rtaY(float db) const
     {
         const float ny = std::clamp(-db / -kRtaMinDb, 0.0f, 1.0f);   // 0 dB top .. -80 bottom
-        return GY0 + ny * (GY1 - GY0);
+        return kNotchY0 + ny * (kNotchY1 - kNotchY0);
     }
-    // The filter axis runs 0 .. curveMinDb, where curveMinDb is -24 dB unless a
-    // notch (cut plus GLOBAL AMP, or several notches stacked) goes deeper, in
-    // which case the axis extends in 12 dB steps so the display can still show
-    // what the engine is doing.
+    // The notch axis runs 0 .. curveMinDb: -24 dB unless a notch (cut plus CUT
+    // TRIM, or several notches stacked) goes deeper, then extended in 12 dB
+    // steps to at most -48 dB (roNotchAxisFloorDb); deeper points clip at the
+    // floor.
     float curveY(float db) const
     {
         const float ny = std::clamp(db / curveMinDb, 0.0f, 1.0f);
-        return GY0 + ny * (GY1 - GY0);
+        return kNotchY0 + ny * (kNotchY1 - kNotchY0);
     }
-    float freqX(float f) const { return GX0 + axis.toNorm(f) * (GX1 - GX0); }
+    float freqX(float f) const { return FX0 + axis.toNorm(f) * (FX1 - FX0); }
+
+    // A notch's node: at its effective depth when on, on the 0 dB line when off.
+    ImVec2 nodePos(int row) const
+    {
+        const ro::Filter& f = table.f[row];
+        const float db = f.on ? RingOutDSP::effectiveCutDb(f.cutDb, values[kParamGlobalAmp]) : 0.0f;
+        return ImVec2(freqX(f.freqHz), curveY(db));
+    }
+
+    // The node under a design-space point; the selected one wins a tie, so a
+    // notch stacked on another can always be dragged back out.
+    int nodeAt(ImVec2 m) const
+    {
+        const auto dist2 = [&](int i) {
+            const ImVec2 p = nodePos(i);
+            return (p.x - m.x) * (p.x - m.x) + (p.y - m.y) * (p.y - m.y);
+        };
+        constexpr float kHit2 = kNodeHitR * kNodeHitR;
+        if (selected >= 0 && selected < table.count && dist2(selected) <= kHit2)
+            return selected;
+        int best = -1;
+        float bestD2 = kHit2;
+        for (int i = 0; i < table.count; ++i)
+        {
+            const float d2 = dist2(i);
+            if (d2 <= bestD2) { bestD2 = d2; best = i; }
+        }
+        return best;
+    }
+
+    // The notch whose frequency is within a few pixels of x, at any height: a
+    // deep notch is easier to pick in its column than at its node.
+    int notchInColumn(float x) const
+    {
+        int best = -1;
+        float bestDx = 14.0f;
+        for (int i = 0; i < table.count; ++i)
+        {
+            const float dx = std::fabs(freqX(table.f[i].freqHz) - x);
+            if (dx < bestDx) { bestDx = dx; best = i; }
+        }
+        return best;
+    }
 
     void drawGraphCard(ImDrawList* dl)
     {
-        card(dl, 20, 56, 940, 352);
+        card(dl, 16, 56, 1024, 318);
+        updateCurve();               // the axis scale the drag below measures in
+        syncNotchAxis();
+        graphInteraction();
+        updateCurve();               // and the edits it just made
+        syncNotchAxis();
 
-        // Meters: a click resets the peak hold.
-        drawMeter(dl, "##inmeter", inMeter, 26, 66, 42, 328, "IN");
-        drawMeter(dl, "##outmeter", outMeter, 918, 66, 934, 328, "OUT");
-
-        dl->AddRectFilled(P(GX0, GY0), P(GX1, GY1), kColGraphBg);
+        dl->AddRectFilled(P(GX0, GY0), P(GX1, GY1), kColInset, 3.0f * s);
         dl->PushClipRect(P(GX0, GY0), P(GX1, GY1), true);
 
         // Grid: 1-2-5 rules labelled, the other integers of each decade faint.
@@ -698,331 +950,526 @@ private:
                 const float f = (float)m * decade;
                 if (f <= axis.minHz() || f >= axis.maxHz() || m == 2 || m == 5) continue;
                 const float x = freqX(f);
-                dl->AddLine(P(x, GY0), P(x, GY1), kColGridMinor, 1.0f * s);
+                dl->AddLine(P(x, kNotchY0), P(x, kNotchY1), kColGridMinor, 1.0f * s);
             }
         float grid[16];
         const int nGrid = axis.gridLines(grid, 16);
         for (int i = 0; i < nGrid; ++i)
         {
             const float x = freqX(grid[i]);
-            dl->AddLine(P(x, GY0), P(x, GY1), kColGrid, 1.0f * s);
+            dl->AddLine(P(x, kNotchY0), P(x, kNotchY1), kColGrid, 1.0f * s);
             char lbl[12];
             duskdaf::LogFreqAxis::label(grid[i], lbl, (int)sizeof(lbl));
-            regularText(dl, x, GY1 - 12.0f, 9.0f, IM_COL32(150, 154, 160, 255), lbl, 0);
+            regularText(dl, x, GY1 - 16.0f, 12.0f, kColLabel, lbl, 0);
         }
-        for (int db = -10; db > (int)kRtaMinDb; db -= 10)
+        for (int db = -20; db > (int)kRtaMinDb; db -= 20)
         {
             const float y = rtaY((float)db);
-            dl->AddLine(P(GX0, y), P(GX1, y), kColGrid, 1.0f * s);
+            dl->AddLine(P(FX0, y), P(FX1, y), kColGridMinor, 1.0f * s);
         }
-        // Left axis: analyser dB (cyan). Right axis: filter dB (red).
+        // Left axis: notch dB (amber), the graph's main reading. Right axis:
+        // analyser dBFS (silver).
+        {
+            const int step = roNotchAxisStepDb(curveMinDb);
+            for (int db = 0; db >= (int)curveMinDb; db -= step)
+            {
+                char b[8]; std::snprintf(b, sizeof(b), "%d", db);
+                regularText(dl, GX0 + 8.0f, curveY((float)db) - 6.0f, 12.0f, kColAmber, b, -1);
+            }
+        }
         for (int db = 0; db >= (int)kRtaMinDb; db -= 20)
         {
             char b[8]; std::snprintf(b, sizeof(b), "%d", db);
-            regularText(dl, GX0 + 4.0f, std::clamp(rtaY((float)db) - 5.0f, GY0 + 1.0f, GY1 - 12.0f),
-                        9.0f, kColCyanDim, b, -1);
+            regularText(dl, GX1 - 8.0f, rtaY((float)db) - 6.0f, 12.0f, kColSilverDim, b, 1);
         }
-        {
-            const int step = (int)(-curveMinDb) / 6;
-            for (int db = -step; db >= (int)curveMinDb; db -= step)
-            {
-                char b[8]; std::snprintf(b, sizeof(b), "%d", db);
-                regularText(dl, GX1 - 4.0f, std::clamp(curveY((float)db) - 5.0f, GY0 + 1.0f, GY1 - 12.0f),
-                            9.0f, fade(kColRed, 0.55f), b, 1);
-            }
-        }
+
+        text(dl, GX0 + 10.0f, GY0 + 6.0f, 12.0f, kColAmber, "CUT dB", -1, true);
+        regularText(dl, 0.5f * (GX0 + GX1), GY0 + 6.0f, 12.0f, kColLabel, "FREQUENCY (Hz)", 0);
+        text(dl, GX1 - 10.0f, GY0 + 6.0f, 12.0f, kColWhiteDim, "INPUT dBFS", 1, true);
 
         drawRta(dl);
-        drawFilterCurve(dl);
+        drawNotchCurve(dl);
+        drawRipple(dl);
+        drawNodes(dl);
+        if (table.count == 0 && values[kParamBypass] < 0.5f)
+            drawGraphHint(dl);
 
         dl->PopClipRect();
-        dl->AddRect(P(GX0, GY0), P(GX1, GY1), kColCardEdge, 0.0f, 0, 1.0f * s);
+        dl->AddRect(P(GX0, GY0), P(GX1, GY1), kColCardEdge, 3.0f * s, 0, 1.0f * s);
+    }
 
-        // Click on the graph selects the nearest filter (within a few pixels).
+    // The graph is a direct editor: a node drags (FREQ across, CUT up and down,
+    // Shift for fine), the wheel over a node sets its Q, a double-click
+    // switches it on or off, and a click selects it.
+    void graphInteraction()
+    {
+        const ImGuiIO& io = ImGui::GetIO();
         ImGui::SetCursorScreenPos(P(GX0, GY0));
-        ImGui::InvisibleButton("##graphpick", ImVec2((GX1 - GX0) * s, (GY1 - GY0) * s));
-        if (ImGui::IsItemClicked() && table.count > 0)
+        ImGui::InvisibleButton("##graph", ImVec2((GX1 - GX0) * s, (GY1 - GY0) * s));
+        const bool hovered = ImGui::IsItemHovered();
+        const bool active = ImGui::IsItemActive();
+        const ImVec2 m = mouseDesign();
+        hoverNode = hovered && !active ? nodeAt(m) : -1;
+        if (hoverNode >= 0)
+            tooltip("Drag: frequency and cut (Shift for fine)\nWheel: Q\nDouble-click: on / off");
+
+        if (ImGui::IsItemActivated())
         {
-            const float mx = (ImGui::GetIO().MousePos.x - org.x) / s;
-            int best = -1; float bestDx = 14.0f;
-            for (int i = 0; i < table.count; ++i)
+            const int hit = nodeAt(m);
+            if (hit >= 0)
+                beginDrag(hit);
+            else if (const int col = notchInColumn(m.x); col >= 0)
+                selected = col;   // a click, not a drag: only a node drags
+        }
+        dragRow = -1;
+        if (active && notchDrag.active)
+        {
+            const ImVec2 d = dragDelta();
+            const float octavesPerPx = std::log2(axis.maxHz() / axis.minHz()) / (FX1 - FX0);
+            const float dbPerPx = -curveMinDb / (kNotchY1 - kNotchY0);
+            // A switched-off notch sits on the 0 dB line whatever its cut, so a
+            // vertical drag would change it out of sight: on the graph it moves
+            // in frequency only (its fader still sets the cut).
+            const int row = notchDrag.resolve(table);
+            const bool cutShows = row >= 0 && table.f[row].on;
+            notchDrag.move(d.x * octavesPerPx, cutShows ? -d.y * dbPerPx : 0.0f, io.KeyShift);
+            applyDrag(true);
+        }
+        if (ImGui::IsItemDeactivated())
+            notchDrag.end();
+
+        if (hoverNode >= 0 && io.MouseWheel != 0.0f)
+        {
+            const int steps = takeWheelSteps(-1 - hoverNode);
+            if (steps != 0)
             {
-                const float dx = std::fabs(freqX(table.f[i].freqHz) - mx);
-                if (dx < bestDx) { bestDx = dx; best = i; }
+                selected = hoverNode;
+                const float q = table.f[hoverNode].q;
+                setRowField(hoverNode, &ro::Filter::q, ro::snapQ(q + (float)steps * (io.KeyShift ? 0.1f : 0.5f)));
             }
-            if (best >= 0) selected = best;
+        }
+
+        if (hovered && ImGui::IsMouseDoubleClicked(0))
+        {
+            const int hit = nodeAt(m);
+            if (hit >= 0)
+            {
+                selected = hit;
+                setRowField(hit, &ro::Filter::on, !table.f[hit].on);
+            }
         }
     }
 
-    void drawMeter(ImDrawList* dl, const char* id, duskdaf::LedLadder& meter,
-                   float x0, float y0, float x1, float y1, const char* label)
+    // Writes the fields the drag has moved since it last wrote, and nothing
+    // else: a FREQ-only drag leaves an engine deepen that landed meanwhile in
+    // place.
+    void applyDrag(bool withFreq)
     {
-        ImGui::SetCursorScreenPos(P(x0, y0));
-        ImGui::InvisibleButton(id, ImVec2((x1 - x0) * s, (y1 - y0) * s));
-        if (ImGui::IsItemClicked())
-            meter.reset(meter.displayDb(0) < meter.displayDb(1) ? meter.displayDb(1) : meter.displayDb(0));
-        dl->AddRectFilled(P(x0 - 2, y0 - 2), P(x1 + 2, y1 + 2), kColGraphBg, 2.0f * s);
-        meter.draw(panel, dl, x0, y0, x1, y1, meterStyle);
-        text(dl, 0.5f * (x0 + x1), y1 + 5.0f, 8.5f, kColWhiteDim, label, 0, true);
-        char pk[16];
-        std::snprintf(pk, sizeof(pk), "%.0f", (double)std::max(meter.peakDb(), kRtaMinDb));
-        regularText(dl, 0.5f * (x0 + x1), y0 - 9.0f, 8.0f, kColWhiteDim, pk, 0);
+        const int row = notchDrag.resolve(table);
+        if (row < 0) { notchDrag.end(); return; }
+        selected = row;
+        dragRow = row;
+        const float hz = notchDrag.freqHz(), cut = notchDrag.cutDb();
+        if (withFreq && hz != dragSentHz) { dragSentHz = hz; setRowField(row, &ro::Filter::freqHz, hz); }
+        if (cut != dragSentCut)           { dragSentCut = cut; setRowField(row, &ro::Filter::cutDb, cut); }
+    }
+
+    void beginDrag(int row)
+    {
+        selected = row;
+        notchDrag.begin(table, row);
+        dragSentHz = notchDrag.freqHz();
+        dragSentCut = notchDrag.cutDb();
+    }
+
+    // A value typed into the inspector commits in the very frame a press on
+    // the same notch's node or fader starts a drag (the press is what takes
+    // focus from the field), after the drag has already taken its snapshot.
+    // Take it again, or the drag's first move would write the old value back
+    // over the typed one. Only the press frame's motion is lost.
+    void rebaseDragOn(int row)
+    {
+        if (notchDrag.active && notchDrag.resolve(table) == row)
+            beginDrag(row);
     }
 
     void drawRta(ImDrawList* dl)
     {
         const int cols = (int)rta.size();
         if (cols < 2 || !engineLive || rtaTarget.empty()) return;
-        // One concave polygon (trace plus the two baseline corners) instead of a
-        // quad per column: a single fill call, and no per-column seams.
         std::vector<ImVec2>& pts = ptsScratch;
         pts.clear();
-        pts.reserve((size_t)cols + 2);
+        pts.reserve((size_t)cols);
         for (int c = 0; c < cols; ++c)
-            pts.push_back(P(GX0 + (float)c, rtaY(rta[(size_t)c])));
-        const float baseY = P(GX0, GY1).y;
-        pts.push_back(ImVec2(pts.back().x, baseY));
-        pts.push_back(ImVec2(pts.front().x, baseY));
-        dl->AddConcavePolyFilled(pts.data(), (int)pts.size(), kColCyanFill);
-        dl->AddPolyline(pts.data(), cols, kColCyan, 0, 1.3f * s);
+            pts.push_back(P(FX0 + (float)c, rtaY(rta[(size_t)c])));
+        fillToLine(dl, pts.data(), cols, P(FX0, kNotchY1).y, kColSilverFill);
+        dl->AddPolyline(pts.data(), cols, kColSilver, 0, 1.2f * s);
     }
 
-    // Composite response of the on filters, filled red down from the 0 dB line,
-    // one dot per filter at its notch, the selected one with a yellow cursor.
-    // The curve comes from the engine's own section design and response
-    // formula, evaluated once per change of table, trims or sample rate rather
-    // than every frame.
-    void drawFilterCurve(ImDrawList* dl)
+    // The composite response of the on filters, from the engine's own section
+    // design and response formula, evaluated once per change of table, trims
+    // or sample rate rather than every frame.
+    void updateCurve()
     {
         const float gq = values[kParamGlobalQ], amp = values[kParamGlobalAmp];
         const double sr = getSampleRate() > 1.0 ? getSampleRate() : 48000.0;
-
-        constexpr int N = 420;
-        bool anyOn = false;
-        for (int i = 0; i < table.count && !anyOn; ++i) anyOn = table.f[i].on;
-
-        if (curveStamp != tableStamp || curveGq != gq || curveAmp != amp || curveSr != sr
-            || curveDb.size() != (size_t)N)
+        if (curveStamp == tableStamp && curveGq == gq && curveAmp == amp && curveSr == sr
+            && curveDb.size() == (size_t)kCurvePoints)
+            return;
+        curveStamp = tableStamp; curveGq = gq; curveAmp = amp; curveSr = sr;
+        curveDb.resize((size_t)kCurvePoints);
+        curveAnyOn = false;
+        for (int i = 0; i < table.count && !curveAnyOn; ++i) curveAnyOn = table.f[i].on;
+        // Design each on filter once (the matched design is the costly part),
+        // then only evaluate magnitudes along the axis. A drag rebuilds this
+        // every frame.
+        duskaudio::DoubleBiquad sections[ro::kMaxFilters];
+        const int nSections = RingOutDSP::designSections(table, gq, amp, sr, sections, ro::kMaxFilters);
+        float deepest = 0.0f;
+        for (int i = 0; i < kCurvePoints; ++i)
         {
-            curveStamp = tableStamp; curveGq = gq; curveAmp = amp; curveSr = sr;
-            curveDb.resize((size_t)N);
-            // The engine's own response formula: design each on filter once (the
-            // matched design is the costly part), then only evaluate magnitudes
-            // along the axis. A knob drag rebuilds this every frame.
-            duskaudio::DoubleBiquad sections[ro::kMaxFilters];
-            const int nSections = RingOutDSP::designSections(table, gq, amp, sr, sections, ro::kMaxFilters);
-            float deepest = 0.0f;
-            for (int i = 0; i < N; ++i)
-            {
-                const float f = axis.fromNorm((float)i / (float)(N - 1));
-                curveDb[(size_t)i] = (float)RingOutDSP::sectionsResponseDb(sections, nSections, sr, (double)f);
-                deepest = std::min(deepest, curveDb[(size_t)i]);
-            }
-            for (int i = 0; i < table.count; ++i)
-                if (table.f[i].on)
-                    deepest = std::min(deepest, RingOutDSP::effectiveCutDb(table.f[i].cutDb, amp));
-            curveMinDb = -std::max(24.0f, 12.0f * std::ceil(-deepest / 12.0f));
-        }
-
-        if (anyOn)
-        {
-            std::vector<ImVec2>& pts = ptsScratch;
-            pts.clear();
-            pts.reserve(N);
-            for (int i = 0; i < N; ++i)
-            {
-                const float lx = (float)i / (float)(N - 1);
-                pts.push_back(P(GX0 + lx * (GX1 - GX0), curveY(curveDb[(size_t)i])));
-            }
-            // One concave polygon from the curve up to the 0 dB line, as the RTA
-            // fill does, instead of a quad per segment.
-            const float topY = P(GX0, GY0).y;
-            pts.push_back(ImVec2(pts.back().x, topY));
-            pts.push_back(ImVec2(pts.front().x, topY));
-            dl->AddConcavePolyFilled(pts.data(), (int)pts.size(), kColRedFill);
-            dl->AddPolyline(pts.data(), N, kColRed, 0, 1.6f * s);
-        }
-
-        // Selected filter: cursor line first so the dots sit on top.
-        if (selected >= 0 && selected < table.count)
-        {
-            const float x = freqX(table.f[selected].freqHz);
-            dl->AddLine(P(x, GY0), P(x, GY1), kColYellow, 1.4f * s);
+            const float f = axis.fromNorm((float)i / (float)(kCurvePoints - 1));
+            curveDb[(size_t)i] = (float)RingOutDSP::sectionsResponseDb(sections, nSections, sr, (double)f);
+            deepest = std::min(deepest, curveDb[(size_t)i]);
         }
         for (int i = 0; i < table.count; ++i)
+            if (table.f[i].on)
+                deepest = std::min(deepest, RingOutDSP::effectiveCutDb(table.f[i].cutDb, amp));
+        curveAxisTarget = roNotchAxisFloorDb(deepest);
+    }
+
+    // The axis follows the table except while a notch is being dragged: a
+    // rescale mid-gesture would move the node out from under the pointer and
+    // change the drag's dB-per-pixel halfway through. It catches up on release.
+    void syncNotchAxis()
+    {
+        if (!notchDrag.active)
+            curveMinDb = curveAxisTarget;
+    }
+
+    void drawNotchCurve(ImDrawList* dl)
+    {
+        dl->AddLine(P(FX0, kNotchY0), P(FX1, kNotchY0), fade(kColAmber, 0.3f), 1.0f * s);
+        if (!curveAnyOn || curveDb.size() != (size_t)kCurvePoints)
+            return;
+        std::vector<ImVec2>& pts = ptsScratch;
+        pts.clear();
+        pts.reserve((size_t)kCurvePoints);
+        for (int i = 0; i < kCurvePoints; ++i)
         {
-            const ro::Filter& f = table.f[i];
-            const float x = freqX(f.freqHz);
-            const float db = f.on ? RingOutDSP::effectiveCutDb(f.cutDb, amp) : 0.0f;
-            const ImVec2 c = P(x, curveY(db));
-            const bool sel = i == selected;
-            if (f.on)
-            {
-                dl->AddCircleFilled(c, 4.2f * s, sel ? kColYellow : kColCyan, 16);
-                dl->AddCircle(c, 4.2f * s, IM_COL32(0, 0, 0, 200), 16, 1.0f * s);
-            }
-            else
-            {
-                dl->AddCircle(c, 4.2f * s, sel ? kColYellow : kColCyanDim, 16, 1.4f * s);
-            }
+            const float lx = (float)i / (float)(kCurvePoints - 1);
+            pts.push_back(P(FX0 + lx * (FX1 - FX0), curveY(curveDb[(size_t)i])));
+        }
+        fillToLine(dl, pts.data(), kCurvePoints, P(FX0, kNotchY0).y, kColAmberFill);
+        dl->AddPolyline(pts.data(), kCurvePoints, kColAmber, 0, 1.8f * s);
+    }
+
+    // The row the last engine engagement touched, followed by id like a drag.
+    int rippleTarget() const
+    {
+        if (rippleRowId != 0)
+        {
+            for (int i = 0; i < table.count; ++i)
+                if (table.id[i] == rippleRowId) return i;
+            return -1;
+        }
+        return rippleRow < table.count ? rippleRow : -1;
+    }
+
+    // Two rings spreading from the notch the engine just placed or deepened.
+    void drawRipple(ImDrawList* dl)
+    {
+        if (rippleSecondsLeft <= 0.0f) return;
+        const int row = rippleTarget();
+        const ImVec2 p = row >= 0 ? nodePos(row) : ImVec2(freqX(rippleHz), kNotchY0);
+        const float t = 1.0f - rippleSecondsLeft / kRippleSeconds;
+        for (int k = 0; k < 2; ++k)
+        {
+            const float tk = t - 0.28f * (float)k;
+            if (tk < 0.0f || tk > 1.0f) continue;
+            const float r = kNodeR + 4.0f + 30.0f * tk;
+            dl->AddCircle(P(p.x, p.y), r * s, fade(kColAmber, 0.85f * (1.0f - tk)), 48,
+                          (2.2f * (1.0f - tk) + 0.6f) * s);
         }
     }
 
-    //--- toolbar -----------------------------------------------------------------
-    void drawToolbar(ImDrawList* dl)
+    void drawNodes(ImDrawList* dl)
     {
-        constexpr float y0 = 362.0f, y1 = 388.0f;
-        const bool live = engineLive;
-
-        text(dl, 30, 369.5f, 10.0f, kColWhiteDim, "SENSE", -1, true);
-        const bool high = values[kParamSense] >= 0.5f;
-        if (button(dl, "##senselow", 70, y0, 124, y1, "LOW", !high, kColCyan))
-            setP(kParamSense, 0.0f);
-        if (button(dl, "##sensehigh", 128, y0, 182, y1, "HIGH", high, kColCyan))
-            setP(kParamSense, 1.0f);
-
-        // SETUP: a trigger that arms the engine for a minute, or disarms it.
-        // Arming also puts GLOBAL Q and AMP back to their defaults, as the
-        // reference does. Those are editor edits the host sees; the plugin
-        // itself never rewrites one parameter because another moved (that
-        // fails AU validation).
-        // The engine buttons travel the edit channel, like RESET: the trigger
-        // parameters are for host automation and controllers, and a trigger
-        // written from the editor could be swallowed by a host that forwards
-        // only control-port changes.
-        // The button sends its INTENT (arm or disarm), never a toggle: the
-        // status it shows is a frame old, and a minute that expired in between
-        // must turn a stop into a harmless no-op rather than into a re-arm.
-        const bool setupOn = live && status.setupActive;
-        if (button(dl, "##setup", 230, y0, 430, y1, setupOn ? "SETUP  ON" : "SETUP", setupOn, kColRed, true, 12.0f))
-        {
-            if (!setupOn)
+        // The selected node last, so it sits on top of any it overlaps.
+        for (int pass = 0; pass < 2; ++pass)
+            for (int i = 0; i < table.count; ++i)
             {
-                setP(kParamGlobalQ, ro::kGlobalQDefault);
-                setP(kParamGlobalAmp, ro::kGlobalAmpDefault);
+                const bool sel = i == selected;
+                if (sel != (pass == 1)) continue;
+                const ro::Filter& f = table.f[i];
+                const ImVec2 p = nodePos(i);
+                const ImVec2 c = P(p.x, p.y);
+                const float r = kNodeR * s;
+                ImU32 ink;
+                if (f.on)
+                {
+                    dl->AddCircleFilled(c, r, kColAmber, 24);
+                    dl->AddCircle(c, r, IM_COL32(0, 0, 0, 170), 24, 1.0f * s);
+                    ink = kColInk;
+                }
+                else
+                {
+                    dl->AddCircleFilled(c, r, kColInset, 24);
+                    dl->AddCircle(c, r, kColAmberDim, 24, 1.4f * s);
+                    ink = kColAmberDim;
+                }
+                if (sel)
+                    dl->AddCircle(c, r + 3.0f * s, kColWhite, 28, 1.6f * s);
+                else if (i == hoverNode || i == dragRow)
+                    dl->AddCircle(c, r + 2.5f * s, fade(kColWhite, 0.45f), 28, 1.2f * s);
+                char num[4]; std::snprintf(num, sizeof(num), "%d", i + 1);
+                text(dl, p.x, p.y - 6.0f, 11.0f, ink, num, 0, true);
+                // Deeper than the axis shows, which happens while the axis holds
+                // still for a drag (one notch reaches -44 dB at most, inside the
+                // -48 dB cap): the node sits on the floor with an arrow saying it
+                // goes further, and the callout has the value.
+                if (f.on && RingOutDSP::effectiveCutDb(f.cutDb, values[kParamGlobalAmp]) < curveMinDb - 0.05f)
+                {
+                    const float ax = p.x + kNodeR + 4.0f;
+                    dl->AddTriangleFilled(P(ax, p.y - 3.0f), P(ax + 7.0f, p.y - 3.0f), P(ax + 3.5f, p.y + 3.0f),
+                                          kColAmber);
+                }
             }
-            sendEngineCommand(setupOn ? ro::EditCommand::kSetupOff : ro::EditCommand::kSetupOn);
-        }
+        if (selected >= 0 && selected < table.count)
+            drawCallout(dl, selected);
+    }
 
-        // ADD: hold to search. The engine also stops itself after one filter
-        // and the button turns green until it is released.
-        bool addHeld = false;
-        const bool addLit = live && (status.addSearching || status.addSatisfied);
-        const ImU32 addCol = (live && status.addSatisfied) ? kColGreen : IM_COL32(240, 150, 40, 255);
-        button(dl, "##add", 436, y0, 506, y1, "ADD", addLit, addCol, true, 11.0f, &addHeld);
-        if (addHeld != addHeldLocal)
-        {
-            addHeldLocal = addHeld;
-            addLeaseTimer = 0.0f;
-            sendEngineCommand(addHeld ? ro::EditCommand::kAddStart : ro::EditCommand::kAddStop);
-        }
-        // While held, keep the engine's lease alive. If the editor closes or
-        // stops drawing mid-press the lease lapses and the engine ends the
-        // search by itself, which is the only release it can rely on.
-        if (addHeldLocal)
-        {
-            addLeaseTimer += std::clamp(ImGui::GetIO().DeltaTime, 0.0f, 0.1f);
-            if (addLeaseTimer >= 0.5f)
-            {
-                addLeaseTimer = 0.0f;
-                sendEngineCommand(ro::EditCommand::kAddHold);
-            }
-        }
-
-        // RESET goes through the edit channel like every other table edit; the
-        // trigger parameter is for host automation and controller mapping. A
-        // trigger written from here could be swallowed by a host that forwards
-        // only control-port changes (an LV2 port already sitting at 1).
-        if (button(dl, "##reset", 530, y0, 600, y1, "RESET", false, kColRed))
-        {
-            ro::EditCommand c;
-            c.kind = ro::EditCommand::kClear;
-            sendEdit(c);
-        }
-
-        // Status read-out.
-        // The uncovered-ring report only exists while the engine listens, so it
-        // rides along with the listening line instead of competing with it.
-        const char* uncovered = (live && status.ringUncovered) ? "  RING NOT COVERED" : "";
-        char st[80] = "";
-        if (live && status.setupActive)
-        {
-            const int secs = (int)std::ceil(status.setupRemainingSeconds);
-            std::snprintf(st, sizeof(st), "LISTENING  %d:%02d%s", secs / 60, secs % 60, uncovered);
-        }
-        else if (live && status.addSearching)
-            std::snprintf(st, sizeof(st), "ADD: LISTENING%s", uncovered);
-        else if (live && status.addSatisfied)
-            std::snprintf(st, sizeof(st), "ADD: FILTER PLACED");
-        else if (live && status.setupExpired)
-            std::snprintf(st, sizeof(st), "SETUP ENDED: THE MINUTE IS UP");
-        else if (table.count > 0)
-            std::snprintf(st, sizeof(st), "%d FILTER%s", table.count, table.count == 1 ? "" : "S");
+    // The selected notch's values in a tag beside its node, flipped to the left
+    // near the right edge and kept clear of the frequency labels.
+    void drawCallout(ImDrawList* dl, int row)
+    {
+        const ro::Filter& f = table.f[row];
+        char num[4];
+        std::snprintf(num, sizeof(num), "%d", row + 1);
+        // The node sits at the depth after CUT TRIM; when the trim changes it,
+        // say both, or the tag would contradict the node it labels.
+        char cut[40];
+        const float effective = RingOutDSP::effectiveCutDb(f.cutDb, values[kParamGlobalAmp]);
+        if (f.on && std::fabs(effective - f.cutDb) > 0.05f)
+            std::snprintf(cut, sizeof(cut), "%.1f dB (%.1f with trim)", (double)f.cutDb, (double)effective);
         else
-            std::snprintf(st, sizeof(st), "NO FILTERS");
-        regularText(dl, 722, 368.0f, 11.0f, (live && (status.setupActive || status.addSearching)) ? kColRed : kColWhiteDim, st, 0);
-
-        // Filter navigation: clamped, never wrapping; from no selection both land on 1.
-        if (chevron(dl, "##prevfilter", 867, 375, 13.0f, true) && table.count > 0)
-            selected = selected < 0 ? 0 : std::max(0, selected - 1);
-        if (chevron(dl, "##nextfilter", 915, 375, 13.0f, false) && table.count > 0)
-            selected = selected < 0 ? 0 : std::min(table.count - 1, selected + 1);
+            std::snprintf(cut, sizeof(cut), "%.1f dB", (double)f.cutDb);
+        char body[96];
+        // "\xC2\xB7" is a middle dot (Latin-1, in the atlas).
+        std::snprintf(body, sizeof(body),
+                      f.freqHz < 1000.0f ? "  \xC2\xB7  %.1f Hz  \xC2\xB7  %s  \xC2\xB7  Q %.1f%s"
+                                         : "  \xC2\xB7  %.0f Hz  \xC2\xB7  %s  \xC2\xB7  Q %.1f%s",
+                      (double)f.freqHz, cut, (double)f.q, f.on ? "" : "  \xC2\xB7  OFF");
+        constexpr float kTxt = 13.0f, kPadX = 9.0f, kH = 26.0f, kGap = 15.0f;
+        const float wNum = boldWidth(kTxt, num), wBody = regularWidth(kTxt, body);
+        const float w = wNum + wBody + 2.0f * kPadX;
+        const ImVec2 p = nodePos(row);
+        // Clear of the clip arrow drawNodes puts beside a node below the floor.
+        const float gap = kGap + (f.on && effective < curveMinDb - 0.05f ? 12.0f : 0.0f);
+        float x = p.x + gap;
+        if (x + w > FX1) x = std::max(GX0 + 4.0f, p.x - gap - w);
+        const float y = std::clamp(p.y - 0.5f * kH, GY0 + 24.0f, GY1 - 28.0f - kH);
+        dl->AddRectFilled(P(x, y), P(x + w, y + kH), IM_COL32(20, 20, 21, 236), 4.0f * s);
+        dl->AddRect(P(x, y), P(x + w, y + kH), fade(kColWhite, 0.35f), 4.0f * s, 0, 1.0f * s);
+        text(dl, x + kPadX, y + 0.5f * (kH - kTxt) - 0.5f, kTxt, kColAmber, num, -1, true);
+        regularText(dl, x + kPadX + wNum, y + 0.5f * (kH - kTxt) - 0.5f, kTxt, kColWhite, body, -1);
     }
 
-    //--- filter card -----------------------------------------------------------------
-    void drawFilterCard(ImDrawList* dl)
+    void drawGraphHint(ImDrawList* dl)
     {
-        card(dl, 20, 400, 940, 578);
-        dl->AddLine(P(640, 410), P(640, 568), IM_COL32(20, 20, 22, 255), 1.4f * s);
+        const bool listening = engineLive && status.setupActive;
+        const char* line1 = listening ? "Listening. Raise the gain slowly."
+                                      : "Press LEARN and raise the gain slowly: Ring Out notches each ring it hears.";
+        const char* line2 = listening ? "Each ring it catches gets a notch here."
+                                      : "Or click + in the notch bank to place a notch by hand.";
+        const float hintW = std::max(regularWidth(16.0f, line1), regularWidth(14.0f, line2)) + 32.0f;
+        const float hintX = 0.5f * (GX0 + GX1 - hintW);
+        dl->AddRectFilled(P(hintX, 150.0f), P(hintX + hintW, 211.0f),
+                          IM_COL32(14, 14, 15, 238), 4.0f * s);
+        dl->AddRect(P(hintX, 150.0f), P(hintX + hintW, 211.0f), kColGrid, 4.0f * s, 0, 1.0f * s);
+        regularText(dl, 0.5f * (GX0 + GX1), 161.0f, 16.0f, kColWhiteDim, line1, 0);
+        regularText(dl, 0.5f * (GX0 + GX1), 185.0f, 14.0f, kColLabel, line2, 0);
+    }
 
-        // Indicators 1..20 and NEW.
-        text(dl, 330, 405, 11.0f, kColWhiteDim, "FILTERS", 0, true);
-        duskdaf::DuskPanel::LedStyle ledOn;
-        ledOn.onColor = kColCyan; ledOn.glowColor = IM_COL32(40, 220, 235, 70);
-        ledOn.offColor = IM_COL32(32, 44, 46, 255);
-        for (int i = 0; i < ro::kMaxFilters; ++i)
+    //--- notch bank ----------------------------------------------------------------
+    void drawNotchBank(ImDrawList* dl)
+    {
+        card(dl, 16, 326, 712, 628);
+        sectionTitle(dl, 32, 336, "NOTCHES");
+        char count[16];
+        std::snprintf(count, sizeof(count), "%d / %d", table.count, ro::kMaxFilters);
+        regularText(dl, 130, 336.0f, 12.0f, kColLabel, count, -1);
+        if (button(dl, "##clear", 640, 331, 700, 355, "CLEAR", false, kColAmber, table.count > 0, 12.0f,
+                   nullptr, "Remove every notch"))
+            clearNotches();
+
+        // One shared legend keeps each narrow strip readable without repeating
+        // units twenty times: Hz beside the frequency row, the fader scale, and
+        // dB beside the cut row. Both describe the per-notch CUT, before CUT TRIM.
+        regularText(dl, 46, 387.0f, 11.0f, kColLabel, "Hz", 1);
+        regularText(dl, 46, 524.0f, 11.0f, kColLabel, "dB", 1);
+        for (int t = 0; t <= 4; ++t)
         {
-            const float cx = 56.0f + (float)i * 27.0f, cy = 432.0f;
-            const bool exists = i < table.count;
-            const bool lit = exists && table.f[i].on;
-            char id[24]; std::snprintf(id, sizeof(id), "##led%d", i);
-            ImGui::SetCursorScreenPos(P(cx - 11.0f, cy - 11.0f));
-            ImGui::InvisibleButton(id, ImVec2(22.0f * s, 22.0f * s));
-            if (exists && ImGui::IsItemClicked())
-                selected = i;
-            if (exists && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0))
+            char db[8];
+            std::snprintf(db, sizeof(db), "%d", -5 * t);
+            const float y = kFaderY0 + (kFaderY1 - kFaderY0) * (float)t / 4.0f;
+            regularText(dl, 46, y - 6.0f, 11.0f, kColLabel, db, 1);
+        }
+
+        for (int i = 0; i < ro::kMaxFilters; ++i)
+            drawStrip(dl, i);
+
+        dl->AddLine(P(28, 561), P(700, 561), kColGridMinor, 1.0f * s);
+        drawInspector(dl);
+    }
+
+    // One notch slot: number badge, short frequency, CUT fader, cut and Q.
+    // An empty slot is a dim recess; the first empty one carries the "+" that
+    // places a new notch.
+    void drawStrip(ImDrawList* dl, int i)
+    {
+        const float x0 = kBankX0 + (float)i * kStripW, x1 = x0 + kStripW;
+        const float cx = 0.5f * (x0 + x1);
+        const bool exists = i < table.count;
+        const bool addSlot = i == table.count;
+        const bool sel = exists && i == selected;
+
+        dl->AddRectFilled(P(x0 + 1.5f, kStripY0), P(x1 - 1.5f, kStripY1),
+                          sel ? IM_COL32(46, 44, 40, 255)
+                              : exists ? IM_COL32(33, 33, 35, 255) : IM_COL32(23, 23, 25, 255),
+                          3.0f * s);
+        if (sel)
+            dl->AddRect(P(x0 + 1.5f, kStripY0), P(x1 - 1.5f, kStripY1), fade(kColWhite, 0.5f),
+                        3.0f * s, 0, 1.2f * s);
+
+        ImGui::PushID(i);
+
+        // Badge: click selects, double-click switches the notch on or off; on
+        // the "+" slot, a click adds a notch.
+        ImGui::SetCursorScreenPos(P(x0, kBadgeY - 13.0f));
+        ImGui::InvisibleButton("##badge", ImVec2(kStripW * s, 26.0f * s));
+        const bool badgeHot = ImGui::IsItemHovered();
+        if (exists)
+        {
+            if (ImGui::IsItemClicked()) selected = i;
+            if (badgeHot && ImGui::IsMouseDoubleClicked(0))
             {
                 selected = i;
-                setSelectedFilter(&ro::Filter::on, !table.f[i].on);
+                setRowField(i, &ro::Filter::on, !table.f[i].on);
             }
-            panel.led(dl, cx, cy, lit, 6.5f, ledOn);
-            if (exists && !lit)
-                dl->AddCircle(P(cx, cy), 6.5f * s, kColCyanDim, 20, 1.2f * s);  // exists, switched off
-            if (i == flashRow && flashSecondsLeft > 0.0f)
-                dl->AddCircleFilled(P(cx, cy), (9.0f + 6.0f * flashSecondsLeft) * s,
-                                    fade(kColRed, 0.5f * flashSecondsLeft), 24);   // the engine just touched this one
-            if (i == selected)
-                dl->AddCircle(P(cx, cy), 9.5f * s, kColYellow, 24, 1.8f * s);
-            char num[4]; std::snprintf(num, sizeof(num), "%d", i + 1);
-            regularText(dl, cx, 444.0f, 8.0f, i == selected ? kColYellow : kColWhiteDim, num, 0);
+            tooltip("Click: select\nDouble-click: on / off");
         }
-        if (roundButton(dl, "##new", 604, 432, 11.0f, "+", false, kColCyan, table.count < ro::kMaxFilters, 14.0f))
+        else if (addSlot)
         {
-            ro::EditCommand c;
-            c.kind = ro::EditCommand::kAdd;
-            c.filter = ro::defaultFilter();
-            sendEdit(c);
+            if (ImGui::IsItemClicked()) addNotch();
+            tooltip("Add a notch");
         }
-        regularText(dl, 604, 446.0f, 8.0f, kColWhiteDim, "NEW", 0);
 
-        // Selected filter controls.
+        const ImVec2 bc = P(cx, kBadgeY);
+        const float br = 9.5f * s;
+        char num[4]; std::snprintf(num, sizeof(num), "%d", i + 1);
+        if (exists)
+        {
+            const bool on = table.f[i].on;
+            if (on) dl->AddCircleFilled(bc, br, kColAmber, 24);
+            else    dl->AddCircle(bc, br, kColAmberDim, 24, 1.4f * s);
+            if (badgeHot) dl->AddCircle(bc, br + 2.0f * s, fade(kColWhite, 0.4f), 24, 1.0f * s);
+            text(dl, cx, kBadgeY - 6.0f, 11.0f, on ? kColInk : kColAmber, num, 0, true);
+            if (rippleSecondsLeft > 0.0f && rippleTarget() == i)
+                dl->AddCircleFilled(bc, br + 6.0f * s * (rippleSecondsLeft / kRippleSeconds),
+                                    fade(kColAmber, 0.45f * rippleSecondsLeft / kRippleSeconds), 24);
+        }
+        else if (addSlot)
+        {
+            dl->AddCircle(bc, br, badgeHot ? kColWhite : kColWhiteDim, 24, 1.3f * s);
+            const float a = 4.0f * s;
+            const ImU32 ink = badgeHot ? kColWhite : kColWhiteDim;
+            dl->AddLine(ImVec2(bc.x - a, bc.y), ImVec2(bc.x + a, bc.y), ink, 1.5f * s);
+            dl->AddLine(ImVec2(bc.x, bc.y - a), ImVec2(bc.x, bc.y + a), ink, 1.5f * s);
+        }
+        else
+            text(dl, cx, kBadgeY - 6.0f, 11.0f, IM_COL32(84, 82, 78, 255), num, 0, true);
+
+        // Fader track, drawn for every slot so the bank reads as twenty channels.
+        const float tx0 = cx - 2.5f, tx1 = cx + 2.5f;
+        dl->AddRectFilled(P(tx0, kFaderY0), P(tx1, kFaderY1), kColInset, 2.0f * s);
+        for (int t = 0; t <= 4; ++t)   // 0, -5, -10, -15, -20 dB
+        {
+            const float y = kFaderY0 + (kFaderY1 - kFaderY0) * (float)t / 4.0f;
+            dl->AddLine(P(cx - 9.0f, y), P(cx - 5.5f, y), exists ? kColTrack : kColGridMinor, 1.0f * s);
+        }
+
+        if (exists)
+            drawFader(dl, i, x0, x1, cx);
+
+        ImGui::PopID();
+    }
+
+    void drawFader(ImDrawList* dl, int i, float x0, float x1, float cx)
+    {
+        const ImGuiIO& io = ImGui::GetIO();
+        const float trackH = kFaderY1 - kFaderY0;
+
+        // The strip below the badge is the fader: drag for CUT (Shift for fine),
+        // wheel for half-dB steps, and a press selects the notch.
+        ImGui::SetCursorScreenPos(P(x0, kBadgeY + 13.0f));
+        ImGui::InvisibleButton("##fader", ImVec2((x1 - x0) * s, (kStripY1 - kBadgeY - 13.0f) * s));
+        const bool hov = ImGui::IsItemHovered();
+        const bool active = ImGui::IsItemActive();
+        if (ImGui::IsItemActivated())
+            beginDrag(i);
+        if (active && notchDrag.active)
+        {
+            notchDrag.move(0.0f, -dragDelta().y * (-ro::kCutMin / trackH), io.KeyShift);
+            applyDrag(false);
+        }
+        if (ImGui::IsItemDeactivated())
+            notchDrag.end();
+        if (hov && !active && io.MouseWheel != 0.0f)
+        {
+            const int steps = takeWheelSteps(i + 1);
+            if (steps != 0)
+            {
+                selected = i;
+                setRowField(i, &ro::Filter::cutDb,
+                            ro::snapCut(table.f[i].cutDb + (float)steps * (io.KeyShift ? 0.1f : 0.5f)));
+            }
+        }
+
+        const ro::Filter& f = table.f[i];
+        const bool sel = i == selected;
+        const float yCut = kFaderY0 + trackH * std::clamp(f.cutDb / ro::kCutMin, 0.0f, 1.0f);
+        if (yCut > kFaderY0 + 0.5f)
+            dl->AddRectFilled(P(cx - 2.5f, kFaderY0), P(cx + 2.5f, yCut),
+                              f.on ? kColAmber : kColTrack, 2.0f * s);
+        const bool hot = hov || active;
+        dl->AddRectFilled(P(cx - 9.0f, yCut - 3.5f), P(cx + 9.0f, yCut + 3.5f),
+                          hot ? IM_COL32(236, 232, 222, 255) : IM_COL32(196, 192, 182, 255), 2.0f * s);
+        dl->AddLine(P(cx - 6.0f, yCut), P(cx + 6.0f, yCut), IM_COL32(40, 38, 34, 255), 1.2f * s);
+
+        char hz[16];
+        roShortHz(f.freqHz, hz, (int)sizeof(hz));
+        regularText(dl, cx, 386.0f, 12.0f, sel ? kColWhite : kColWhiteDim, hz, 0);
+        char cut[16];
+        std::snprintf(cut, sizeof(cut), "%.1f", (double)f.cutDb);
+        regularText(dl, cx, 523.0f, 12.0f, sel ? kColWhite : kColWhiteDim, cut, 0);
+        char q[16];
+        std::snprintf(q, sizeof(q), "Q%.1f", (double)f.q);
+        regularText(dl, cx, 539.0f, 12.0f, kColLabel, q, 0);
+    }
+
+    // The selected notch's exact values: steppers with typed entry, ON, DELETE
+    // and previous / next.
+    void drawInspector(ImDrawList* dl)
+    {
         filterEditSelection.update(panel, table, selected);
         const bool haveSel = selected >= 0 && selected < table.count;
         const ro::Filter cur = haveSel ? table.f[selected] : ro::Filter();
-        if (roundButton(dl, "##on", 72, 490, 16.0f, "ON", haveSel && cur.on, kColCyan, haveSel))
-        {
-            setSelectedFilter(&ro::Filter::on, !cur.on);
-        }
+
+        char title[16] = "NOTCH";
+        if (haveSel)
+            std::snprintf(title, sizeof(title), "NOTCH %d", selected + 1);
+        spaced(dl, 32, 577, 12.0f, haveSel ? kColAmber : kColLabel, title, -1, 0.10f);
 
         duskdaf::StepperBoxRule cutRule, freqRule, qRule;
         cutRule.step = [](float v, int d, void*) { return ro::stepCut(v, d); };
@@ -1038,82 +1485,258 @@ private:
         qRule.minV = ro::kQMin; qRule.maxV = ro::kQMax;
 
         float cut = cur.cutDb, freq = cur.freqHz, q = cur.q;
-        constexpr float by0 = 476.0f, by1 = 504.0f;
-        if (duskdaf::stepperBox(panel, dl, "cut", 104, by0, 208, by1, cut, cutRule, "%.1f", haveSel))
-            setSelectedFilter(&ro::Filter::cutDb, cut);
+        constexpr float by0 = 570.0f, by1 = 596.0f;
+        duskdaf::StepperBoxStyle stepperStyle;
+        stepperStyle.textSize = 16.0f;
+        stepperStyle.text = kColWhite;
         // A tenth of a hertz below 1 kHz (a detected 66.3 Hz reads as such), whole
-        // hertz above where the control steps by 100.
-        if (duskdaf::stepperBox(panel, dl, "freq", 222, by0, 326, by1, freq, freqRule,
-                                freq < 1000.0f ? "%.1f" : "%.0f", haveSel))
+        // hertz above where the control steps by 100. With nothing selected the
+        // read-outs show a dash, not a default that looks like a notch at 24 Hz.
+        if (duskdaf::stepperBox(panel, dl, "freq", 128, by0, 238, by1, freq, freqRule,
+                                !haveSel ? "-" : freq < 1000.0f ? "%.1f" : "%.0f", haveSel, stepperStyle))
+        {
             setSelectedFilter(&ro::Filter::freqHz, freq);
-        if (duskdaf::stepperBox(panel, dl, "q", 340, by0, 444, by1, q, qRule, "%.1f", haveSel))
+            rebaseDragOn(selected);
+        }
+        if (duskdaf::stepperBox(panel, dl, "cut", 252, by0, 348, by1, cut, cutRule,
+                                haveSel ? "%.1f" : "-", haveSel, stepperStyle))
+        {
+            setSelectedFilter(&ro::Filter::cutDb, cut);
+            rebaseDragOn(selected);
+        }
+        if (duskdaf::stepperBox(panel, dl, "q", 362, by0, 446, by1, q, qRule,
+                                haveSel ? "%.1f" : "-", haveSel, stepperStyle))
             setSelectedFilter(&ro::Filter::q, q);
-        text(dl, 156, 509, 9.0f, kColWhiteDim, "CUT (dB)", 0, true);
-        text(dl, 274, 509, 9.0f, kColWhiteDim, "FREQ (Hz)", 0, true);
-        text(dl, 392, 509, 9.0f, kColWhiteDim, "Q", 0, true);
+        spaced(dl, 183, 601, 12.0f, kColLabel, "FREQ Hz", 0, 0.08f);
+        spaced(dl, 300, 601, 12.0f, kColLabel, "CUT dB", 0, 0.08f);
+        spaced(dl, 404, 601, 12.0f, kColLabel, "Q", 0, 0.08f);
 
-        if (roundButton(dl, "##del", 480, 490, 16.0f, "DEL", false, kColRed, haveSel))
-        {
-            ro::EditCommand c;
-            c.kind = ro::EditCommand::kDelete;
-            c.slot = selected;
-            sendEdit(c);
-        }
+        if (button(dl, "##on", 462, 571, 512, 595, cur.on || !haveSel ? "ON" : "OFF", haveSel && cur.on,
+                   kColAmber, haveSel, 12.0f, nullptr, "Switch the selected notch on or off"))
+            setSelectedFilter(&ro::Filter::on, !cur.on);
+        if (button(dl, "##delete", 522, 571, 598, 595, "DELETE", false, kColAmber, haveSel, 12.0f,
+                   nullptr, "Remove the selected notch"))
+            deleteSelected();
 
-        if (haveSel)
-        {
-            char info[48];
-            std::snprintf(info, sizeof(info), "FILTER %d", selected + 1);
-            regularText(dl, 72, 532.0f, 9.0f, kColYellow, info, 0);
-        }
-        regularText(dl, 300, 540.0f, 9.0f, IM_COL32(120, 120, 118, 255),
-                    "Double-click an indicator to switch a filter off.  Click the graph to select.", 0);
-
-        drawGlobals(dl);
+        // Previous / next: clamped, never wrapping; from no selection both land on 1.
+        if (chevron(dl, "##prevnotch", 646, 583, 11.0f, true) && table.count > 0)
+            selected = selected < 0 ? 0 : std::max(0, selected - 1);
+        if (chevron(dl, "##nextnotch", 680, 583, 11.0f, false) && table.count > 0)
+            selected = selected < 0 ? 0 : std::min(table.count - 1, selected + 1);
     }
 
-    // GLOBAL Q / AMP (+ LINK) and GAIN OUT. A global knob off its default wears a
-    // red rim, as the reference does.
-    void drawGlobals(ImDrawList* dl)
+    //--- detect card -----------------------------------------------------------------
+    void drawDetectCard(ImDrawList* dl)
     {
-        text(dl, 740, 405, 11.0f, kColWhiteDim, "GLOBAL", 0, true);
-        text(dl, 890, 405, 11.0f, kColWhiteDim, "GAIN OUT", 0, true);
+        card(dl, 720, 326, 1024, 470);
+        sectionTitle(dl, 736, 336, "DETECT");
+        const bool live = engineLive;
 
-        text(dl, 700, 440, 10.0f, kColWhite, "Q", 0, true);
-        text(dl, 780, 440, 10.0f, kColWhite, "AMP", 0, true);
+        // LEARN: arms the engine for a minute, or disarms it. Arming also puts
+        // Q SCALE and CUT TRIM back to their defaults, so the notches about to
+        // be placed are judged at face value. Those are editor edits the host
+        // sees; the plugin itself never rewrites one parameter because another
+        // moved (that fails AU validation).
+        // The engine buttons travel the edit channel, like CLEAR: the trigger
+        // parameters are for host automation and controllers, and a trigger
+        // written from the editor could be swallowed by a host that forwards
+        // only control-port changes.
+        // The button sends its INTENT (arm or disarm), never a toggle: the
+        // status it shows is a frame old, and a minute that expired in between
+        // must turn a stop into a harmless no-op rather than into a re-arm.
+        const bool learnOn = live && status.setupActive;
+        if (learnButton(dl, 790, 406, 38.0f, learnOn))
+        {
+            if (!learnOn)
+            {
+                setP(kParamGlobalQ, ro::kGlobalQDefault);
+                setP(kParamGlobalAmp, ro::kGlobalAmpDefault);
+            }
+            sendEngineCommand(learnOn ? ro::EditCommand::kSetupOff : ro::EditCommand::kSetupOn);
+        }
 
+        // CATCH: hold to search. The engine also stops itself after one notch
+        // and the button turns green until it is released.
+        bool catchHeld = false;
+        const bool catchLit = live && (status.addSearching || status.addSatisfied);
+        const ImU32 catchCol = (live && status.addSatisfied) ? kColGreen : kColAmber;
+        button(dl, "##catch", 850, 350, 1010, 380, "HOLD TO CATCH", catchLit, catchCol, true, 13.0f, &catchHeld,
+               "Hold while the system rings: places or deepens one notch, then stops");
+        if (catchHeld != catchHeldLocal)
+        {
+            catchHeldLocal = catchHeld;
+            catchLeaseTimer = 0.0f;
+            sendEngineCommand(catchHeld ? ro::EditCommand::kAddStart : ro::EditCommand::kAddStop);
+        }
+        // While held, keep the engine's lease alive. If the editor closes or
+        // stops drawing mid-press the lease lapses and the engine ends the
+        // search by itself, which is the only release it can rely on.
+        if (catchHeldLocal)
+        {
+            catchLeaseTimer += std::clamp(ImGui::GetIO().DeltaTime, 0.0f, 0.1f);
+            if (catchLeaseTimer >= 0.5f)
+            {
+                catchLeaseTimer = 0.0f;
+                sendEngineCommand(ro::EditCommand::kAddHold);
+            }
+        }
+
+        spaced(dl, 850, 386, 12.0f, kColLabel, "SENSITIVITY", -1, 0.10f);
+        const int high = values[kParamSense] >= 0.5f ? 1 : 0;
+        const int hit = segmentSwitch(dl, "##sense", 850, 401, 1010, 423, "LOW", "HIGH", high,
+                                      "Low: only clear, steady rings (ringing out before the show)\n"
+                                      "High: quieter and shorter rings too");
+        if (hit >= 0 && hit != high)
+            setP(kParamSense, (float)hit);
+
+        drawStatus(dl, 850, 434, 1010, 458);
+    }
+
+    // The round LEARN button with its countdown: the amber arc drains clockwise
+    // from twelve o'clock over the minute and the face shows the time left.
+    bool learnButton(ImDrawList* dl, float cx, float cy, float r, bool armed)
+    {
+        const ImVec2 c = P(cx, cy);
+        const float hit = r + 8.0f;
+        ImGui::SetCursorScreenPos(ImVec2(c.x - hit * s, c.y - hit * s));
+        ImGui::InvisibleButton("##learn", ImVec2(2.0f * hit * s, 2.0f * hit * s));
+        // The button is round: a press in a corner of its square must not arm
+        // the detector (and reset both trims).
+        const ImGuiIO& io = ImGui::GetIO();
+        const auto inside = [&](ImVec2 p) {
+            const float dx = p.x - c.x, dy = p.y - c.y;
+            return dx * dx + dy * dy <= (hit * s) * (hit * s);
+        };
+        const bool hov = ImGui::IsItemHovered() && inside(io.MousePos);
+        const bool clicked = ImGui::IsItemClicked() && inside(io.MouseClickedPos[0]);
+        if (hov)
+            tooltip(armed ? "Stop listening"
+                          : "Listen for one minute and notch every ring.\n"
+                            "Raise the gain slowly while it listens.");
+
+        const float ringR = (r + 7.0f) * s;
+        if (armed)
+        {
+            const float pulse = 0.5f + 0.5f * std::sin((float)ImGui::GetTime() * 4.0f);
+            dl->AddCircleFilled(c, ringR + 7.0f * s, fade(kColAmber, 0.05f + 0.06f * pulse), 64);
+        }
+        dl->AddCircle(c, ringR, armed ? kColTrack : fade(kColAmber, hov ? 0.8f : 0.5f),
+                      64, (armed ? 3.5f : 2.0f) * s);
+        if (armed)
+        {
+            const float frac = std::clamp(status.setupRemainingSeconds / ro::kSetupSeconds, 0.0f, 1.0f);
+            if (frac > 0.0f)
+            {
+                const float a0 = -0.5f * kPi;
+                dl->PathArcTo(c, ringR, a0, a0 + frac * 2.0f * kPi, 64);
+                dl->PathStroke(kColAmber, 0, 3.5f * s);
+            }
+        }
+        dl->AddCircleFilled(c, (r + 2.0f) * s, IM_COL32(10, 10, 11, 255), 48);
+        dl->AddCircleFilled(c, r * s, armed ? kColAmberDeep : (hov ? IM_COL32(60, 58, 54, 255)
+                                                                   : IM_COL32(46, 45, 42, 255)), 48);
+        dl->AddCircleFilled(ImVec2(c.x, c.y - r * 0.2f * s), r * 0.76f * s,
+                            IM_COL32(255, 255, 255, armed ? 8 : 12), 40);
+        dl->AddCircle(c, r * s, fade(kColAmber, armed || hov ? 0.8f : 0.5f), 48, 1.2f * s);
+
+        if (armed)
+        {
+            const int secs = (int)std::ceil(status.setupRemainingSeconds);
+            char t[12];
+            std::snprintf(t, sizeof(t), "%d:%02d", secs / 60, secs % 60);
+            text(dl, cx, cy - 18.0f, 24.0f, kColAmber, t, 0, true);
+            spaced(dl, cx, cy + 11.0f, 11.0f, kColAmber, "LEARNING", 0, 0.08f);
+        }
+        else
+        {
+            spaced(dl, cx, cy - 13.0f, 17.0f, kColWhite, "LEARN", 0, 0.10f);
+            regularText(dl, cx, cy + 11.0f, 12.0f, kColWhiteDim, "60 s", 0);
+        }
+        return clicked;
+    }
+
+    // One line saying what the engine is doing.
+    void drawStatus(ImDrawList* dl, float x0, float y0, float x1, float y1)
+    {
+        dl->AddRectFilled(P(x0, y0), P(x1, y1), kColInset, 3.0f * s);
+        dl->AddRect(P(x0, y0), P(x1, y1), kColGrid, 3.0f * s, 0, 1.0f * s);
+
+        const bool live = engineLive;
+        const bool listening = live && (status.setupActive || status.addSearching);
+        char st[48] = "";
+        ImU32 col = kColWhiteDim;
+        // The uncovered-ring report only exists while the engine listens, and
+        // it outranks the listening line: it is the one thing to act on.
+        if (listening && status.ringUncovered)
+        {
+            std::snprintf(st, sizeof(st), "RING NOT COVERED");
+            const float blink = 0.6f + 0.4f * std::sin((float)ImGui::GetTime() * 6.0f);
+            dl->AddRect(P(x0, y0), P(x1, y1), fade(kColWarn, blink), 3.0f * s, 0, 1.0f * s);
+            col = kColWarn;
+        }
+        else if (live && status.setupActive)
+        {
+            std::snprintf(st, sizeof(st), "LEARNING");
+            col = kColAmber;
+        }
+        else if (live && status.addSearching)
+        {
+            std::snprintf(st, sizeof(st), "CATCH: LISTENING");
+            col = kColAmber;
+        }
+        else if (live && status.addSatisfied)
+        {
+            std::snprintf(st, sizeof(st), "CATCH: NOTCH PLACED");
+            col = kColGreen;
+        }
+        else if (live && status.setupExpired)
+            std::snprintf(st, sizeof(st), "LEARN ENDED: MINUTE UP");
+        else if (table.count > 0)
+            std::snprintf(st, sizeof(st), "%d NOTCH%s", table.count, table.count == 1 ? "" : "ES");
+        else
+            std::snprintf(st, sizeof(st), "NO NOTCHES");
+        regularText(dl, 0.5f * (x0 + x1), 0.5f * (y0 + y1) - 6.5f, 13.0f, col, st, 0);
+    }
+
+    //--- output card ---------------------------------------------------------------
+    // Q SCALE and CUT TRIM act on every notch; LINK ties CUT TRIM to OUTPUT.
+    // A trim away from its default reads in amber.
+    void drawOutputCard(ImDrawList* dl)
+    {
+        card(dl, 720, 478, 1024, 628);
+
+        spaced(dl, 806, 484, 11.0f, kColLabel, "ALL NOTCHES", 0, 0.08f);
+        const ImU32 bracket = kColGrid;
+        dl->AddLine(P(746, 491), P(770, 491), bracket, 1.0f * s);
+        dl->AddLine(P(842, 491), P(866, 491), bracket, 1.0f * s);
+        dl->AddLine(P(746, 491), P(746, 497), bracket, 1.0f * s);
+        dl->AddLine(P(866, 491), P(866, 497), bracket, 1.0f * s);
+
+        constexpr float kKnobY = 553.0f;
         const float prevAmp = values[kParamGlobalAmp];
         const float prevGain = values[kParamGainOut];
         const bool link = values[kParamLink] >= 0.5f;
 
-        if (std::fabs(values[kParamGlobalQ] - ro::kGlobalQDefault) > 1.0e-4f)
-            dl->AddCircle(P(700, 480), 25.0f * s, kColRed, 48, 2.0f * s);
-        panel.knob("##globalq", kParamGlobalQ, ro::kGlobalQMin, ro::kGlobalQMax, 700, 480, 20.0f,
-                   values[kParamGlobalQ], ro::kGlobalQDefault, false, true, "%.1f", "", 0, false,
-                   true, nullptr, false, 1.0f, 0.0f, "Global Q", true);
+        // Fleet hit-target minimums: 42 px for the small knobs, 52 px for OUTPUT.
+        constexpr float kTrimX = 842.0f, kTrimR = 21.0f, kOutX = 932.0f, kOutR = 26.0f;
+        knobCell(dl, "##globalq", kParamGlobalQ, 770, kKnobY, kTrimR, "Q SCALE", "Q Scale",
+                 "Multiplies the Q of every notch: 0.5 makes every notch twice as wide");
+        const bool ampChanged = knobCell(dl, "##globalamp", kParamGlobalAmp, kTrimX, kKnobY, kTrimR,
+                                         "CUT TRIM", "Cut Trim",
+                                         "Added to every notch's cut: negative deepens them all");
+        const bool gainChanged = knobCell(dl, "##gainout", kParamGainOut, kOutX, kKnobY, kOutR,
+                                          "OUTPUT", "Output", "Output level");
 
-        if (std::fabs(values[kParamGlobalAmp] - ro::kGlobalAmpDefault) > 1.0e-4f)
-            dl->AddCircle(P(780, 480), 25.0f * s, kColRed, 48, 2.0f * s);
-        const bool ampChanged = panel.knob("##globalamp", kParamGlobalAmp, ro::kGlobalAmpMin, ro::kGlobalAmpMax,
-                                           780, 480, 20.0f, values[kParamGlobalAmp], ro::kGlobalAmpDefault,
-                                           false, true, "%+.1f", " dB", 0, false, true, nullptr, false,
-                                           1.0f, 0.0f, "Global Amp", true);
-
-        if (roundButton(dl, "##link", 740, 538, 9.0f, "", link, kColCyan))
+        // The chain sits between the two knobs it ties, reaching their rings.
+        if (linkToggle(dl, kTrimX + kTrimR + kKnobRingGap, kOutX - kOutR - kKnobRingGap, kKnobY, link))
             setP(kParamLink, link ? 0.0f : 1.0f);
-        text(dl, 740, 552, 8.5f, link ? kColCyan : kColWhiteDim, "LINK", 0, true);
 
-        const bool gainChanged = panel.knob("##gainout", kParamGainOut, ro::kGainOutMin, ro::kGainOutMax,
-                                            890, 480, 24.0f, values[kParamGainOut], ro::kGainOutDefault,
-                                            false, true, "%+.1f", " dB", IM_COL32(120, 36, 30, 255), false,
-                                            true, nullptr, false, 1.0f, 0.0f, "Gain Out", true);
-
-        // LINK: AMP and GAIN OUT move together in opposite directions, so a few dB
-        // more output gain means the same few dB deeper on every filter. An
-        // editor gesture coupling, like the reference's: both parameters reach
-        // the host as edits, the follower inside one gesture spanning the drag
-        // rather than a gesture per frame. Host automation of one knob moves
-        // only that knob (see RingOutPlugin.cpp, kParamLink).
+        // LINK: CUT TRIM and OUTPUT move together in opposite directions, so a
+        // few dB more output means the same few dB deeper on every notch. An
+        // editor gesture coupling: both parameters reach the host as edits, the
+        // follower inside one gesture spanning the drag rather than a gesture
+        // per frame. Host automation of one knob moves only that knob (see
+        // RingOutPlugin.cpp, kParamLink).
         //
         // A drag is a run of changes while the mouse button is down; the
         // follower gesture opens on the first such change and closes when the
@@ -1132,6 +1755,88 @@ private:
             else if (ampChanged)
                 setFollower(kParamGainOut, prevGain - (values[kParamGlobalAmp] - prevAmp));
         }
+
+        drawMeter(dl, "##inmeter", inMeter, 970, 500, 986, 596, "IN");
+        drawMeter(dl, "##outmeter", outMeter, 994, 500, 1010, 596, "OUT");
+    }
+
+    // A knob with its value arc, name above and read-out below. The arc runs
+    // from the default to the value, so an untouched trim shows no arc at all.
+    // The art is drawn before the gesture call (so it never paints over the
+    // knob's own type-entry field) and the read-out after it, which keeps the
+    // number exact during a drag. Returns whether the value changed.
+    bool knobCell(ImDrawList* dl, const char* id, uint32_t param, float cx, float cy, float r,
+                  const char* label, const char* name, const char* tip)
+    {
+        const RoParam& d = kRoParams[param];
+        const auto tOf = [&](float v) { return std::clamp((v - d.min) / (d.max - d.min), 0.0f, 1.0f); };
+        const bool offDefault = std::fabs(values[param] - d.def) > 1.0e-4f;
+
+        const ImVec2 c = P(cx, cy);
+        const float R = r * s, ringR = R + kKnobRingGap * s;
+        const float t = tOf(values[param]), tDef = tOf(d.def);
+        dl->PathArcTo(c, ringR, arcAngle(0.0f), arcAngle(1.0f), 48);
+        dl->PathStroke(kColTrack, 0, 2.6f * s);
+        if (std::fabs(t - tDef) > 0.002f)
+        {
+            dl->PathArcTo(c, ringR, arcAngle(std::min(t, tDef)), arcAngle(std::max(t, tDef)), 48);
+            dl->PathStroke(kColAmber, 0, 2.6f * s);
+        }
+        const float ad = duskdaf::DuskPanel::knobAngle(tDef);
+        dl->AddCircleFilled(ImVec2(c.x + std::sin(ad) * (ringR + 4.5f * s), c.y - std::cos(ad) * (ringR + 4.5f * s)),
+                            1.4f * s, kColLabel, 8);
+        dl->AddCircleFilled(ImVec2(c.x, c.y + 1.5f * s), R * 1.02f, IM_COL32(0, 0, 0, 120), 40);
+        dl->AddCircleFilled(c, R, IM_COL32(48, 47, 44, 255), 40);
+        dl->AddCircleFilled(ImVec2(c.x, c.y - R * 0.16f), R * 0.8f, IM_COL32(255, 255, 255, 12), 36);
+        dl->AddCircle(c, R, IM_COL32(86, 84, 79, 255), 40, 1.1f * s);
+        const float a = duskdaf::DuskPanel::knobAngle(t);
+        const ImVec2 dir(std::sin(a), -std::cos(a));
+        dl->AddLine(ImVec2(c.x + dir.x * R * 0.3f, c.y + dir.y * R * 0.3f),
+                    ImVec2(c.x + dir.x * R * 0.86f, c.y + dir.y * R * 0.86f),
+                    offDefault ? kColAmber : kColWhite, 2.0f * s);
+
+        const bool changed = panel.knob(id, param, d.min, d.max, cx, cy, r, values[param], d.def,
+                                        /*stepped*/ false, /*panelTicks*/ false, "%.2f", "",
+                                        /*faceColor*/ 0, /*bodyless*/ true, /*persistent*/ false, tip,
+                                        /*rightClickReset*/ false, 1.0f, 0.0f, name,
+                                        /*contextMenu*/ true, /*overrideText*/ nullptr,
+                                        /*hasExternalReadout*/ true);
+
+        spaced(dl, cx, cy - r - 23.0f, 12.0f, kColWhiteDim, label, 0, 0.08f);
+        char buf[24];
+        if (param == kParamGlobalQ)
+            std::snprintf(buf, sizeof(buf), "\xC3\x97%.2f", (double)values[param]);   // multiplication sign
+        else
+            std::snprintf(buf, sizeof(buf), "%+.1f dB", (double)values[param]);
+        const bool nowOff = std::fabs(values[param] - d.def) > 1.0e-4f;
+        regularText(dl, cx, cy + r + 9.0f, 13.0f, nowOff ? kColAmber : kColWhiteDim, buf, 0);
+        return changed;
+    }
+
+    // LINK as a chain between CUT TRIM and OUTPUT (whose rings end at x0 and
+    // x1): joined and amber, with a line out to each ring, when on; parted and
+    // grey when off.
+    bool linkToggle(ImDrawList* dl, float x0, float x1, float cy, bool on)
+    {
+        const float cx = 0.5f * (x0 + x1);
+        ImGui::SetCursorScreenPos(P(cx - 13.0f, cy - 13.0f));
+        ImGui::InvisibleButton("##link", ImVec2(26.0f * s, 30.0f * s));
+        const bool hov = ImGui::IsItemHovered();
+        const bool clicked = ImGui::IsItemClicked();
+        tooltip(on ? "LINK on: raising OUTPUT deepens every notch by the same amount"
+                   : "LINK: tie CUT TRIM to OUTPUT, in opposite directions");
+
+        const ImU32 col = on ? kColAmber : (hov ? kColWhiteDim : kColLabel);
+        if (on)
+        {
+            dl->AddLine(P(x0, cy), P(cx - 11.0f, cy), fade(kColAmber, 0.5f), 1.2f * s);
+            dl->AddLine(P(cx + 11.0f, cy), P(x1, cy), fade(kColAmber, 0.5f), 1.2f * s);
+        }
+        const float apart = on ? 3.0f : 7.5f;
+        dl->AddRect(P(cx - apart - 5.0f, cy - 3.5f), P(cx - apart + 5.0f, cy + 3.5f), col, 3.5f * s, 0, 1.6f * s);
+        dl->AddRect(P(cx + apart - 5.0f, cy - 3.5f), P(cx + apart + 5.0f, cy + 3.5f), col, 3.5f * s, 0, 1.6f * s);
+        spaced(dl, cx, cy + 10.0f, 11.0f, col, "LINK", 0, 0.08f);
+        return clicked;
     }
 
     // A follower write: inside the open drag gesture when there is one, opening
@@ -1150,17 +1855,20 @@ private:
             setP(param, value);
     }
 
-    void drawCountdown(ImDrawList* dl)
+    // Meters: a click resets the peak hold.
+    void drawMeter(ImDrawList* dl, const char* id, duskdaf::LedLadder& meter,
+                   float x0, float y0, float x1, float y1, const char* label)
     {
-        constexpr float x0 = 20.0f, x1 = 940.0f, y0 = 584.0f, y1 = 594.0f;
-        dl->AddRectFilled(P(x0, y0), P(x1, y1), IM_COL32(12, 12, 13, 255), 2.0f * s);
-        if (engineLive && status.setupActive)
-        {
-            const float frac = std::clamp(status.setupRemainingSeconds / ro::kSetupSeconds, 0.0f, 1.0f);
-            dl->AddRectFilled(P(x0 + 1.0f, y0 + 1.0f), P(x0 + 1.0f + (x1 - x0 - 2.0f) * frac, y1 - 1.0f),
-                              kColRed, 1.5f * s);
-        }
-        dl->AddRect(P(x0, y0), P(x1, y1), kColCardEdge, 2.0f * s, 0, 1.0f * s);
+        ImGui::SetCursorScreenPos(P(x0, y0));
+        ImGui::InvisibleButton(id, ImVec2((x1 - x0) * s, (y1 - y0) * s));
+        if (ImGui::IsItemClicked())
+            meter.reset(meter.displayDb(0) < meter.displayDb(1) ? meter.displayDb(1) : meter.displayDb(0));
+        dl->AddRectFilled(P(x0 - 2, y0 - 2), P(x1 + 2, y1 + 2), kColInset, 2.0f * s);
+        meter.draw(panel, dl, x0, y0, x1, y1, meterStyle);
+        spaced(dl, 0.5f * (x0 + x1), y1 + 5.0f, 11.0f, kColLabel, label, 0, 0.06f);
+        char pk[16];
+        std::snprintf(pk, sizeof(pk), "%.0f", (double)std::max(meter.peakDb(), kRtaMinDb));
+        regularText(dl, 0.5f * (x0 + x1), y0 - 14.0f, 11.0f, kColLabel, pk, 0);
     }
 
     //--- parameter plumbing ---------------------------------------------------------
@@ -1264,7 +1972,9 @@ private:
             table = up.filters;
             ++tableStamp;
         }
-        clampSelection();
+        // A different table: the old row number would now name an unrelated
+        // notch, so drop the selection as a factory preset does.
+        selected = -1;
         currentPreset = -1;
         currentUserName = up.name;
         currentUserPath = up.path;
@@ -1338,21 +2048,33 @@ private:
     unsigned tableStamp = 0;            // bumps on every change of the local mirror
     int selected = -1;
     RoFilterEditSelection filterEditSelection;
-    bool addHeldLocal = false;
-    float addLeaseTimer = 0.0f;
-    ro::Filter pendingSelect;           // the filter NEW added, to re-select after the pull
+    bool catchHeldLocal = false;
+    float catchLeaseTimer = 0.0f;
+    ro::Filter pendingSelect;           // the filter "+" added, to re-select after the pull
     int pendingSelectPulls = 0;         // pulls left to find it (the add may still be in flight)
-    unsigned engagementsSeen = 0;       // engine engagements already flashed
-    int flashRow = -1;
-    float flashSecondsLeft = 0.0f;
+    unsigned engagementsSeen = 0;       // engine engagements already rippled
+    int rippleRow = -1;                 // the notch the engine last engaged ...
+    uint32_t rippleRowId = 0;           // ... followed by id
+    float rippleHz = 0.0f;              // where to ripple if that row is gone
+    float rippleSecondsLeft = 0.0f;
     int linkFollowerOpen = -1;          // parameter whose LINK follower gesture is open
 
-    // Filter curve cache (drawFilterCurve).
+    // Direct editing (graph nodes, bank faders, wheel).
+    RoNotchDrag notchDrag;
+    float dragSentHz = 0.0f, dragSentCut = 0.0f;   // what the drag last wrote
+    int dragRow = -1;                   // row being dragged on the graph this frame
+    int hoverNode = -1;
+    float wheelAccum = 0.0f;
+    int wheelTarget = 0;                // see takeWheelSteps()
+
+    // Notch curve cache (updateCurve).
     std::vector<float> curveDb;
     unsigned curveStamp = ~0u;
     float curveGq = 0.0f, curveAmp = 0.0f;
     double curveSr = 0.0;
-    float curveMinDb = kCurveMinDb;     // bottom of the filter axis, extended for deep notches
+    bool curveAnyOn = false;
+    float curveMinDb = kRoNotchAxisRestDb;       // bottom of the notch axis as drawn
+    float curveAxisTarget = kRoNotchAxisRestDb;  // what the table asks for (see syncNotchAxis)
 
     duskdaf::LogFreqAxis axis { ro::kFreqMin, ro::kFreqMax };
     duskaudio::RingOutSpectrumFrame spectrum;
@@ -1363,7 +2085,7 @@ private:
     duskdaf::LedLadder inMeter, outMeter;
     duskdaf::LedLadderStyle meterStyle = [] {
         duskdaf::LedLadderStyle st;
-        st.segments = 40; st.gap = 1.5f; st.minDb = -80.0f; st.maxDb = 0.0f;
+        st.segments = 28; st.gap = 1.2f; st.minDb = -80.0f; st.maxDb = 0.0f;
         st.yellowFrom = 0.75f; st.redFrom = 0.9f; st.rounding = 1.0f;
         return st;
     }();
