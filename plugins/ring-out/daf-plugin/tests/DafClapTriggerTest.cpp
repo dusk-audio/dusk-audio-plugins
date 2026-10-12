@@ -436,11 +436,11 @@ int main(const int argc, const char* const* const argv)
         return 1;
     }
 
-    const Param* const setup = flushInstance.byName("Setup");
-    const Param* const add = flushInstance.byName("Add");
-    const Param* const reset = flushInstance.byName("Reset");
-    const Param* const gainOut = flushInstance.byName("Gain Out");
-    const Param* const globalQ = flushInstance.byName("Global Q");
+    const Param* const setup = flushInstance.byName("Learn");
+    const Param* const add = flushInstance.byName("Catch");
+    const Param* const reset = flushInstance.byName("Clear");
+    const Param* const gainOut = flushInstance.byName("Output");
+    const Param* const globalQ = flushInstance.byName("Q Scale");
     if (setup == nullptr || add == nullptr || reset == nullptr || gainOut == nullptr || globalQ == nullptr)
     {
         std::fprintf(stderr, "FAIL: the plugin is missing an expected parameter\n");

@@ -17,14 +17,14 @@
 
 enum RingOutParamId
 {
-    kParamSense = 0,     // 0 = Low, 1 = High
-    kParamSetup,         // trigger: arm the detection engine for 60 s, or disarm it
-    kParamAdd,           // trigger: search for one filter (10 s at most)
-    kParamReset,         // trigger: remove every filter
-    kParamGlobalQ,       // multiplier on every filter's Q, 0.2..10
-    kParamGlobalAmp,     // offset on every filter's cut, -24..+24 dB
-    kParamLink,          // AMP and GAIN OUT move together, in opposite directions
-    kParamGainOut,       // output trim, -24..+24 dB
+    kParamSense = 0,     // SENSITIVITY: 0 = Low, 1 = High
+    kParamSetup,         // LEARN trigger: arm the detection engine for 60 s, or disarm it
+    kParamAdd,           // CATCH trigger: search for one filter (10 s at most)
+    kParamReset,         // CLEAR trigger: remove every filter
+    kParamGlobalQ,       // Q SCALE: multiplier on every filter's Q, 0.2..10
+    kParamGlobalAmp,     // CUT TRIM: offset on every filter's cut, -24..+24 dB
+    kParamLink,          // CUT TRIM and OUTPUT move together, in opposite directions
+    kParamGainOut,       // OUTPUT trim, -24..+24 dB
     kParamBypass,        // host-designated bypass
     kParamInLevel,       // output parameter: input peak, dBFS
     kParamOutLevel,      // output parameter: output peak, dBFS
@@ -47,18 +47,20 @@ struct RoParam
 
 static constexpr RoParam kRoParams[kParamCount] =
 {
-    { "sense",      "Sense",        0.0f, 1.0f, 0.0f, RoParam::kBool },
-    // SETUP and ADD are triggers, like the reference's momentary buttons: a
-    // trigger is never part of a saved session, so a project saved while the
-    // detector was listening cannot re-arm it on a live PA when it is reloaded.
-    // The engine state they act on is read back through the editor.
-    { "setup",      "Setup",        0.0f, 1.0f, 0.0f, RoParam::kTrigger },
-    { "add",        "Add",          0.0f, 1.0f, 0.0f, RoParam::kTrigger },
-    { "reset",      "Reset",        0.0f, 1.0f, 0.0f, RoParam::kTrigger },
-    { "global_q",   "Global Q",     duskaudio::ringout::kGlobalQMin,   duskaudio::ringout::kGlobalQMax,   duskaudio::ringout::kGlobalQDefault,   RoParam::kFloat },
-    { "global_amp", "Global Amp",   duskaudio::ringout::kGlobalAmpMin, duskaudio::ringout::kGlobalAmpMax, duskaudio::ringout::kGlobalAmpDefault, RoParam::kFloat },
+    // The symbols are the saved-session and preset-file ABI from the first
+    // release and never change; the display names (renamed in 1.1) are free to.
+    { "sense",      "Sensitivity",  0.0f, 1.0f, 0.0f, RoParam::kBool },
+    // LEARN and CATCH are triggers, momentary actions: a trigger is never part
+    // of a saved session, so a project saved while the detector was listening
+    // cannot re-arm it on a live PA when it is reloaded. The engine state they
+    // act on is read back through the editor.
+    { "setup",      "Learn",        0.0f, 1.0f, 0.0f, RoParam::kTrigger },
+    { "add",        "Catch",        0.0f, 1.0f, 0.0f, RoParam::kTrigger },
+    { "reset",      "Clear",        0.0f, 1.0f, 0.0f, RoParam::kTrigger },
+    { "global_q",   "Q Scale",      duskaudio::ringout::kGlobalQMin,   duskaudio::ringout::kGlobalQMax,   duskaudio::ringout::kGlobalQDefault,   RoParam::kFloat },
+    { "global_amp", "Cut Trim",     duskaudio::ringout::kGlobalAmpMin, duskaudio::ringout::kGlobalAmpMax, duskaudio::ringout::kGlobalAmpDefault, RoParam::kFloat },
     { "link",       "Link",         0.0f, 1.0f, 0.0f, RoParam::kBool },
-    { "gain_out",   "Gain Out",     duskaudio::ringout::kGainOutMin,   duskaudio::ringout::kGainOutMax,   duskaudio::ringout::kGainOutDefault,   RoParam::kFloat },
+    { "gain_out",   "Output",       duskaudio::ringout::kGainOutMin,   duskaudio::ringout::kGainOutMax,   duskaudio::ringout::kGainOutDefault,   RoParam::kFloat },
     { "bypass",     "Bypass",       0.0f, 1.0f, 0.0f, RoParam::kBypass },
     { "in_level",   "Input Level",  -120.0f, 6.0f, -120.0f, RoParam::kOutput },
     { "out_level",  "Output Level", -120.0f, 6.0f, -120.0f, RoParam::kOutput },
