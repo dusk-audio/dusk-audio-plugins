@@ -6,8 +6,8 @@
 //
 // Two kinds of plugin data cross this boundary:
 //
-//   * host PARAMETERS (RingOutParams.hpp): SENSE, SETUP, ADD, RESET, the global
-//     Q / AMP / LINK, GAIN OUT, bypass, and the two meter outputs. Cached in
+//   * host PARAMETERS (RingOutParams.hpp): SENSITIVITY, LEARN, CATCH, CLEAR,
+//     Q SCALE, CUT TRIM, LINK, OUTPUT, bypass, and the two meter outputs. Cached in
 //     relaxed atomics for run() exactly like the other DAF plugins.
 //
 //   * the FILTER TABLE, as plugin STATE. The detection engine adds and deepens
@@ -109,7 +109,7 @@ protected:
     float getParameterValue(uint32_t index) const override
     {
         // Meters are clamped to their declared range: a hot float signal (or
-        // GAIN OUT at +24 dB) can peak well above the +6 dB the parameter
+        // OUTPUT at +24 dB) can peak well above the +6 dB the parameter
         // advertises, and wrappers normalise output values by that range.
         if (index == kParamInLevel)
             return std::min(kRoParams[index].max, std::max(dsp.inputPeakDb(0), dsp.inputPeakDb(1)));
@@ -133,7 +133,7 @@ protected:
         case kParamSense:     dsp.setSense(value >= 0.5f ? 1 : 0); break;
         case kParamSetup:
             // Trigger: each press arms the engine, or disarms it while it is
-            // listening. The GLOBAL Q / AMP reset that goes with arming is an
+            // listening. The Q SCALE / CUT TRIM reset that goes with arming is an
             // editor edit (RingOutUI.cpp), not done here: a plugin that
             // rewrites other parameters as a side effect fails AU validation
             // ("Parameter did not retain set value") and surprises every
@@ -144,7 +144,7 @@ protected:
         case kParamAdd:
             // Trigger from a host or controller: a tap that nobody releases,
             // so the search ends with its filter or after kAddSeconds. The
-            // editor's held ADD travels the edit channel instead.
+            // editor's held CATCH travels the edit channel instead.
             if (value >= 0.5f)
                 dsp.tapAdd();
             break;
@@ -154,8 +154,8 @@ protected:
         case kParamLink:
             // LINK is an editor gesture coupling (the two knobs move together),
             // deliberately not applied here: a processor-side coupling would
-            // fire on session restore (GAIN OUT is restored after LINK and
-            // would then shift the restored AMP) and would turn an automation
+            // fire on session restore (OUTPUT is restored after LINK and
+            // would then shift the restored CUT TRIM) and would turn an automation
             // lane for one parameter into silent writes to a second one.
             break;
         case kParamGainOut:   dsp.setGainOutDb(value);             break;
@@ -301,7 +301,7 @@ protected:
         dsp.processBlock(inputs, outputs, activeChannels, (int)frames);
         // DAF triggers retain the written value until run(), then return to
         // their default. Only retire their host-facing pulse: the engine owns
-        // SETUP/ADD lifetimes, and replaying a setter here would act on it.
+        // LEARN/CATCH lifetimes, and replaying a setter here would act on it.
         values[kParamSetup].store(kRoParams[kParamSetup].def, std::memory_order_relaxed);
         values[kParamAdd].store(kRoParams[kParamAdd].def, std::memory_order_relaxed);
         values[kParamReset].store(kRoParams[kParamReset].def, std::memory_order_relaxed);
@@ -309,7 +309,7 @@ protected:
 
 private:
     // Replays the cached controls into a freshly prepared engine. The meters are
-    // outputs and SETUP / ADD / RESET are triggers: none has a value to replay,
+    // outputs and LEARN / CATCH / CLEAR are triggers: none has a value to replay,
     // and replaying a trigger would act on it.
     void pushAllParams()
     {

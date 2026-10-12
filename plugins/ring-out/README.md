@@ -1,10 +1,11 @@
 # Ring Out
 
 Feedback eliminator for ringing out monitors and PA, built on DAF (Dusk Audio
-Framework) with a Dear ImGui editor. Modelled on the control surface of the
-classic feedback eliminators: one minute of SETUP to find the frequencies that
-ring, up to twenty notch filters, global Q and amplitude trims, and a LINK that
-trades output gain for cut depth.
+Framework) with a Dear ImGui editor. One minute of LEARN finds the frequencies
+that ring and notches them; CATCH places one more on demand; up to twenty
+notches live in a bank of strips with a CUT fader each and drag directly on the
+graph; Q SCALE and CUT TRIM act on all of them, and LINK trades output level for
+cut depth.
 
 ```
 plugins/ring-out/
@@ -60,7 +61,7 @@ caches a press from the plugin's own UI so its reset reaches the host. Against i
 clap-validator 0.4.1 runs clean (44 tests, 0 failed) on Linux, macOS and Windows;
 against `b5c242e2`, the same five tests fail on all three. `daf-plugin/tests/DafClapTriggerTest.cpp` asserts the
 five failures in miniature against the built `.clap`, plus the two things a fix
-must not trade away: the press still reaches the plugin (a RESET delivered through
+must not trade away: the press still reaches the plugin (a CLEAR delivered through
 `flush()` clears a loaded table) and a trigger stays out of the saved state.
 
 Do not persist triggers, change parameter flags to hide them, or weaken the
@@ -70,23 +71,36 @@ validator gate.
 
 | Control | Range | Default | Notes |
 |---|---|---|---|
-| SENSE | Low / High | Low | two detector threshold sets (see below) |
-| SETUP | trigger | | arms the engine for 60 s (or disarms it); it switches itself off; arming from the editor resets GLOBAL Q and AMP |
-| ADD | trigger | | from a host or controller: a search that ends with one filter placed or deepened, or after 10 s; from the editor: held for as long as the button is down |
-| RESET | trigger | | removes every filter |
+| SENSITIVITY (`sense`) | Low / High | Low | two detector threshold sets (see below) |
+| LEARN (`setup`) | trigger | | arms the engine for 60 s (or disarms it); it switches itself off; arming from the editor resets Q SCALE and CUT TRIM |
+| CATCH (`add`) | trigger | | from a host or controller: a search that ends with one filter placed or deepened, or after 10 s; from the editor: held for as long as the button is down |
+| CLEAR (`reset`) | trigger | | removes every filter |
 | filter CUT | -20 .. 0 dB, 0.1 dB steps | 0 | per filter |
 | filter FREQ | 24 Hz .. 20 kHz | 24 Hz | steps of 1 Hz to 500 Hz, 10 Hz to 1 kHz, 100 Hz above; the value itself is continuous |
 | filter Q | 0.5 .. 20, 0.1 steps | 2.5 | per filter |
-| GLOBAL Q | 0.2 .. 10 | 1.0 | multiplies every filter's Q; red rim when not at default |
-| GLOBAL AMP | -24 .. +24 dB | 0 | added to every filter's cut, clamped so a filter never boosts |
-| LINK | on / off | off | moving GAIN OUT by x dB moves AMP by -x dB and the other way round |
-| GAIN OUT | -24 .. +24 dB | 0 | |
+| Q SCALE (`global_q`) | 0.2 .. 10 | 1.0 | multiplies every filter's Q; amber read-out and arc when not at default |
+| CUT TRIM (`global_amp`) | -24 .. +24 dB | 0 | added to every filter's cut, clamped so a filter never boosts |
+| LINK (`link`) | on / off | off | moving OUTPUT by x dB moves CUT TRIM by -x dB and the other way round |
+| OUTPUT (`gain_out`) | -24 .. +24 dB | 0 | |
 | meters | -80 .. 0 dBFS | | peak hold, click to reset |
 
-NEW adds a filter at 24 Hz / 0 dB / Q 2.5, DEL removes the selected one and
-closes the gap, the indicators light for filters that are on, double-clicking an
-indicator switches that filter off, the < > buttons and a click on the graph
-select a filter.
+The editor's names are also the host display names (renamed in 1.1); the
+symbols in brackets are the saved-session ABI and never change.
+
+The notch bank has one strip per filter: number badge (amber when on, outlined
+when off; double-click switches it), short frequency, a CUT fader (drag, Shift
+for fine, wheel for 0.5 dB), cut and Q. The "+" on the first empty strip adds a
+filter at 24 Hz / 0 dB / Q 2.5; DELETE removes the selected one and the strips
+to its right close the gap. On the graph each filter is a numbered node at its
+depth after CUT TRIM: drag it across for FREQ (rounded to three significant
+figures) and up or down for CUT (Shift for fine; a switched-off filter drags in
+frequency only), wheel over it for Q, double-click to switch it. The notch axis
+runs to -24 dB, extends in 12 dB steps to a -48 dB cap, and holds still while a
+drag is in progress. The selected filter carries a callout with its exact values
+(and its depth after CUT TRIM when the trim is set) and gets FREQ / CUT / Q
+steppers with typed entry under the bank; the `< >` buttons and a click on a
+badge, strip, node or a filter's frequency column select a filter. A filter the
+engine has just placed or deepened ripples on the graph.
 
 ## Engine
 
@@ -139,9 +153,9 @@ again.
 
 `core/tests/RingOutDSPTest.cpp` covers the step rules, the text forms, notch
 accuracy, globals, block-size invariance, detection of a growing tone and its
-deepening, rejection of harmonic-rich and decaying tones, ADD and the SETUP
+deepening, rejection of harmonic-rich and decaying tones, CATCH and the LEARN
 timer, and a simulated acoustic loop (resonance plus 20 ms of delay, 2 dB over
-unity) that must run away without processing and settle with SETUP armed.
+unity) that must run away without processing and settle with LEARN armed.
 
 ## State model
 
@@ -161,41 +175,42 @@ seqlock (`DuskSeqLock.hpp`).
   commands rather than a table replace mean a filter the engine adds while the
   user drags a control is never clobbered by a stale copy.
 
-Host parameters (`daf-plugin/RingOutParams.hpp`, append-only): Sense, Setup
-(trigger), Add (trigger), Reset (trigger), Global Q, Global Amp, Link, Gain
-Out, Bypass, and the two meter outputs.
+Host parameters (`daf-plugin/RingOutParams.hpp`, append-only): Sensitivity,
+Learn (trigger), Catch (trigger), Clear (trigger), Q Scale, Cut Trim, Link,
+Output, Bypass, and the two meter outputs. The internal names (the `setup` /
+`add` symbols, `EditCommand::kSetupOn`, `Status::setupActive` and so on) keep
+the 1.0 vocabulary; only what a user reads changed.
 
-* SETUP and ADD are trigger parameters, like the reference's momentary
-  buttons. A trigger is never part of a saved session and `activate()`
+* LEARN and CATCH are trigger parameters, momentary actions. A trigger is never part of a saved session and `activate()`
   replays nothing for it, so neither a project saved while the detector was
   listening nor a block-size or rate change can re-arm it on a live PA. Each
-  SETUP press arms the engine or, while it is listening, disarms it; the
-  editor's button shows the engine's state. A controller's ADD trigger starts
-  a one-filter search that gives up after 10 s. The editor's ADD is a held
+  LEARN press arms the engine or, while it is listening, disarms it; the
+  editor's button shows the engine's state. A controller's CATCH trigger starts
+  a one-filter search that gives up after 10 s. The editor's CATCH is a held
   search over the edit channel: `addstart` on press, `addhold` every half
   second while down (a lease the engine lets lapse after 2 s if the editor
   closes or stops drawing mid-press), `addstop` on release.
-* The editor's SETUP, ADD and RESET buttons all go through the edit channel
+* The editor's LEARN, CATCH and CLEAR buttons all go through the edit channel
   (`setupon` / `setupoff`, `addstart` / `addstop`, `clear`), like every
   table edit; the three trigger parameters are for host automation and
   controller mapping. A trigger written from the editor could be swallowed
   by a host that forwards only control-port changes (an LV2 port already
-  sitting at 1). SETUP carries the editor's intent rather than a toggle, so
+  sitting at 1). LEARN carries the editor's intent rather than a toggle, so
   a minute that expired between frames turns a stop into a no-op rather than
   a re-arm. The countdowns pause while the plugin is bypassed. Each control's
   phase and countdown share one lock-free atomic word, so expiry from an older
   audio-thread snapshot cannot cancel a fresh start or lease renewal.
-* Arming SETUP from the editor also resets GLOBAL Q and AMP, as editor edits
+* Arming LEARN from the editor also resets Q SCALE and CUT TRIM, as editor edits
   the host sees. The plugin never rewrites one parameter because another
   moved: that fails AU validation ("Parameter did not retain set value") and
   surprises host automation. Arming from a mapped controller with the editor
   closed therefore leaves the trims where they are.
-* LINK is an editor gesture coupling, as on the reference: dragging either
-  knob sends both parameters to the host. It is deliberately not applied in
-  the processor, where it would fire on session restore (GAIN OUT is restored
-  after LINK and would shift the restored AMP) and would turn one automation
+* LINK is an editor gesture coupling: dragging either knob sends both
+  parameters to the host. It is deliberately not applied in the processor,
+  where it would fire on session restore (OUTPUT is restored after LINK and
+  would shift the restored CUT TRIM) and would turn one automation
   lane into silent writes to a second parameter.
-* RESET from a host's process callback never waits: `resetFilters()`
+* CLEAR from a host's process callback never waits: `resetFilters()`
   try-locks and otherwise leaves a request the audio thread honours at its
   next block.
 
@@ -228,23 +243,23 @@ clipping or limiter activity that would disguise whether the notch stopped a rin
 
 1. Record the plugin/build revision, host/format, sample rate and block size,
    microphone/wedge models and placement, routing, gain settings and other
-   processing. Use SENSE Low, LINK off, default globals, GAIN OUT 0 dB and an
-   empty table. With SETUP off, raise the send gradually to the first brief
+   processing. Use SENSITIVITY Low, LINK off, default trims, OUTPUT 0 dB and an
+   empty table. With LEARN off, raise the send gradually to the first brief
    repeatable ring, note its frequency and gain, then immediately back down.
-2. Return below that onset. Arm SETUP and raise GAIN OUT in approximately 1 dB
+2. Return below that onset. Arm LEARN and raise OUTPUT in approximately 1 dB
    steps, pausing at least two seconds between changes. At each ring, note its
    onset, the first filter placement, frequency/cut/Q, any deepening, and when
    it settles. Back down if a ring keeps growing, clipping begins, or RING NOT
-   COVERED appears. Stop after four to six filters; disarm and restore GAIN OUT
+   COVERED appears. Stop after four to six filters; disarm and restore OUTPUT
    to 0 dB before listening to speech and vocals.
 3. Compare filtered and unfiltered onset gain in separate controlled runs,
    returning below onset before changing bypass or clearing the table. Repeat
    each condition three times at the same placement, then vary microphone
    orientation or distance one change at a time. Log headroom gained and tonal
    damage separately; do not infer useful headroom just from the filter count.
-4. Test ADD on one repeatable ring: one press must add or deepen one filter,
+4. Test CATCH on one repeatable ring: one press must add or deepen one filter,
    release must stop searching, and another press may deepen it again. Confirm
-   SETUP timeout and that saving/reopening a session retains the table while
+   LEARN timeout and that saving/reopening a session retains the table while
    starting idle. Repeat with mono and stereo instances; for stereo, include a
    ring in either channel and opposite polarity in the recorded input replay.
 5. For a false-positive control, replay the dry recording through a separate
@@ -256,8 +271,8 @@ clipping or limiter activity that would disguise whether the notch stopped a rin
    sustained musical tones may trigger by design; record those limitations
    separately from complex-programme errors. Run High only after completing Low.
 
-For every event, retain timestamp, input/output peak levels, gain, SENSE,
-SETUP/ADD state, filter table before/after, audible outcome and the matching
+For every event, retain timestamp, input/output peak levels, gain, SENSITIVITY,
+LEARN/CATCH state, filter table before/after, audible outcome and the matching
 audio excerpt. Review misses (verified ring, no action), ineffective filters
 (action, ring persists), and false positives separately. A useful result needs
 repeatable suppression and measured headroom with acceptable tone; any clipping,
