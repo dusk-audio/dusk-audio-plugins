@@ -229,13 +229,13 @@ inline float optoElementStrength(float prNormalised) noexcept
 // 2026-10-07: the input element on (indices 47..51: pStrength 0 -> 1, the measured table as it is; pPrExp
 // 10 -> 0; pThresh .047 -> .0497, R13's -26.07 dBFS; pKnee .1 -> 0, a hard kink; pAsym .3 -> 0, its even
 // part alone). See kOptoElementStrengthDb.
-// 2026-10-08, twelfth-pass continuation. These scratch defaults qualified on every requested candidate table.
-// The measurements below are the ob1 qualification of these exact float32 defaults; final header-default
-// verification and the two scratch patches are recorded separately. The plugin source is not edited or approved
-// for landing by this history.
+// 2026-10-08, twelfth-pass calibration history for the defaults and laws below.
+// The measurements below describe that historical float32 calibration. Subsequent
+// changes are documented in the dated notes that follow; these measurements are
+// not a qualification of every later combination of defaults.
 //
-// Frozen candidate: direction2-original-bars-direction1.json, SHA-256
-// 109f64fbd516d29873c788b77f3aacb36f24446b0507f678c7b9a25438c8c850. The ob1 landing-form header's 78 cell
+// Frozen twelfth-pass parameter-set SHA-256:
+// 109f64fbd516d29873c788b77f3aacb36f24446b0507f678c7b9a25438c8c850. The corresponding header's 78 cell
 // defaults and both six-entry laws match this candidate at float32, including inherited defaults. The fitted two4
 // form with this candidate and the landing form with header defaults produced 28 of 28 byte-identical renders. FET
 // identity against mc2_lab_s11final3 was 136 of 136 renders.
@@ -275,13 +275,13 @@ inline float optoElementStrength(float prNormalised) noexcept
 // existing neighbor tests; generic controls do not prove those transitions. Reset clears the added channel
 // states through ChannelState{}. Complete native133 controls pass with no loss of the original124 passing rows.
 // Final header-default tables, OFF346 and FET136 identities, release passing-cell masks and the scratch patch
-// chain are retained in report-s12-final-obfinal20261008 and its linked evidence.
+// chain are retained with the 2026-10-08 twelfth-pass calibration evidence.
 //
-// Owner decisions remain open: the per-polarity charge law under the 09-30 no-classifier rule; patch33's unrelated
-// FET golden pair; elPolCredit above 1 as an unresolved model-policy flag (this candidate is below 1); the meter
-// reading the input element's loss; and the strength table not re-solved for the whole kink. This note makes none
-// of those decisions. The landing and patches are prepared for review only and are not applied to the plugin
-// source.
+// The cell uses separate polarity charge stores, and the meter includes the input
+// element's attenuation. The input element reuses its fixed strength table with
+// the whole kink. Charge credit is controlled by elPolCredit; the dated values
+// above describe their calibration stage. The following dated changes and the
+// defaults table together define the active model.
 // 2026-10-09, fifteenth pass: the release in the dark (indices 78..82, see process(): a limit on how fast the
 // conductance falls once the panel is not driven and the traps are full, and the floor's share of it held
 // meanwhile). 30 /s, 0.3 ms, 0.01, 0.25 s, 2 ms; nothing else changed. Read on a pilot through the silence after

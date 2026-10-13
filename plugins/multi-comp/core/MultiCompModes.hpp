@@ -293,12 +293,12 @@ inline constexpr bool kOptoLinkAtDriveDefault = true;
 // own tap, the side chain is worse (10 cells), and the tap's corner scanned
 // again at 3 / 4 / 6 / 7 / 8 / 10 Hz stays at 5: the first lobes of a low
 // burst ask for more, the settled low sines for less.
-// 2026-10-08 scratch FET four-cell calibration; original laws and states unchanged.
+// Active feedback-ratio constants from the 2026-10-08 four-cell calibration.
 // fbRatioExponent 1.2309229 -> 1.3369229; fbReleaseDepthRatioExponent -0.039199907 -> 0.010800093.
 // Defined synthetic cells at or above 1 dB: 4/4340 -> 0/4340; set9 worst 1.124395353 -> 0.996719298 dB.
 // Held-out knob positions: 0/192 at or above 1 dB; worst 0.987991886 dB. Primary bars passed.
-// Music, core and strict preservation are recorded separately.
-// Historical never-worse is not asserted; this unapplied scratch candidate still needs full qualification.
+// These are historical calibration measurements; later changes need their own gates.
+// The values below are the active defaults, including the later release-pot calibration.
 inline constexpr std::array<float, 73> kFetDynamicsDefaults{{
     0.03f, 0.002f, 5.0f, 0.42f, 0.46f, 0.65f,
     0.8f, 0.51f, 0.56f, 0.82f, 1.0f, 0.1f,
