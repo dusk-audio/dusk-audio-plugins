@@ -315,9 +315,21 @@ inline float optoElementStrength(float prNormalised) noexcept
 // Core recovery/frequency/knee/reset and lifecycle pass; off346 and FET136 are byte-identical. Remaining
 // held-out misses are the Limit 1 3 kHz row; the remaining short cell is the 10 ms Limit .8125 burst at40ms.
 // The seven history coefficients below are rounded to float; all production tables were requalified.
-// New strengths at indices 83/84 are disabled with zero; the light-law coordinates and table stay frozen.
-// kOptoCellDefaults order: elTauSeconds, lightCeiling, fastRelease, fastBimolecular, slowCharge, slowRelease, slowBimolecular, memoryCharge, memoryRelease, limitOutputMix, limitInputMix, compressInputMix, timeScaleLight, timeScaleExponent, depthWeighting, lowFrequencyFloor, lfTermGainDb, lfTermFrequency, lfTermGrSpan, conductanceTableOn, flashCharge, flashRelease, flashBimolecular, lfShelfDb, hFloor, lfLitTauAttack, lfLitTauRelease, lfLitLevelDb, lfLitSpanDb, lfLitFloor, lfLitLog, hChargeOnly, attackRateDbPerS, attackRatePower, attackRateTau, elFreqExponent, elFreqTau, hfPeakDb, lfPeakDb, midPeakDb, hf10kPeakDb, elRevHysteresis, elRevRelease, elFreqCorner, trapCapture, trapEmit, trapCapacity, pStrength, pPrExp, pThresh, pKnee, pAsym, lightTableStartDb, lightTableStepDb, lightSlopeAbove, conductanceTableStartDb, conductanceTableStepDb, conductanceSlopeAbove, prStart, prStep, prSlopeBelow, prGate, lfCutDb, lfCutFrequency, lfCutStartDb, lfCutSpanDb, lfCutTauAttack, lfCutTauSlow, lfCutTransSpanDb, lfCutHoldSeconds, lfCutMaxGapDb, lfCutCompWeight, elPolCap, elPolLeak, elPolKnee, elPolRefill, elPolCredit, elPolCapExp, darkRateCeiling, darkTau, darkLight, darkFloorTau, darkHoldSeconds, inputCouplingOn, darkHistoryStrength, darkHistoryBase, darkHistoryMemory, darkHistoryShoulder, darkHistoryShoulderMemory, darkHistoryLow, darkHistoryLowMemory, darkHistoryDensity
-inline constexpr std::array<float, 92> kOptoCellDefaults{{
+// Indices 83 (input coupling) and 84 (history strength) are on at 1; 0 at either restores patch 39's law. The
+// light-law coordinates and table stay frozen.
+// 2026-10-10, patch 41: long notes and short bursts. After 10 to 120 s notes at Limit patch 40 held too much
+// reduction (72 one-kHz notes with masters: 15 over 1 dB, worst +3.09 dB at Limit 1, 0 dBFS, 120 s, 315 ms after
+// the note; Compress within 0.61). The memory share was too saturated: darkHistoryMemory 3 -> 16.31,
+// darkHistoryShoulderMemory 2.30 -> 17.39, darkHistoryDensity 0.943 -> 5 (the share is bounded by 1 / (1 + 5)).
+// The ceiling's exposure weight is the traps' fill to the power darkTrapFillPower, 1.7349 from separate
+// 6 to 75 ms bursts (2 = patch 40). Patch 40 -> 41: long notes 15 -> 0 over (worst 0.988); short bursts 130
+// 1 -> 0 over (1.097 -> 0.968); held-out 416 5 over, worst 1.776 -> 1.772, RMS .3147 -> .3121; onset, E1, settled,
+// release 280 unchanged in their worst cells; blind 154 / 238 pass (worst .772 / .966); C2 .32856 -> .32844;
+// music 210 cells pass, worst tiers FIT .36766 -> .36724, VAL .55447 -> .55468, SEALED .50605 -> .50617 (the two
+// rises, +.00021 and +.00012 dB, are inside the .001 dB equality floor for pooled RMS the owner set 2026-10-10).
+// Remaining over 1 dB: the Limit 1 3 kHz row, first 60 ms (in-note high-frequency miss).
+// kOptoCellDefaults order: elTauSeconds, lightCeiling, fastRelease, fastBimolecular, slowCharge, slowRelease, slowBimolecular, memoryCharge, memoryRelease, limitOutputMix, limitInputMix, compressInputMix, timeScaleLight, timeScaleExponent, depthWeighting, lowFrequencyFloor, lfTermGainDb, lfTermFrequency, lfTermGrSpan, conductanceTableOn, flashCharge, flashRelease, flashBimolecular, lfShelfDb, hFloor, lfLitTauAttack, lfLitTauRelease, lfLitLevelDb, lfLitSpanDb, lfLitFloor, lfLitLog, hChargeOnly, attackRateDbPerS, attackRatePower, attackRateTau, elFreqExponent, elFreqTau, hfPeakDb, lfPeakDb, midPeakDb, hf10kPeakDb, elRevHysteresis, elRevRelease, elFreqCorner, trapCapture, trapEmit, trapCapacity, pStrength, pPrExp, pThresh, pKnee, pAsym, lightTableStartDb, lightTableStepDb, lightSlopeAbove, conductanceTableStartDb, conductanceTableStepDb, conductanceSlopeAbove, prStart, prStep, prSlopeBelow, prGate, lfCutDb, lfCutFrequency, lfCutStartDb, lfCutSpanDb, lfCutTauAttack, lfCutTauSlow, lfCutTransSpanDb, lfCutHoldSeconds, lfCutMaxGapDb, lfCutCompWeight, elPolCap, elPolLeak, elPolKnee, elPolRefill, elPolCredit, elPolCapExp, darkRateCeiling, darkTau, darkLight, darkFloorTau, darkHoldSeconds, inputCouplingOn, darkHistoryStrength, darkHistoryBase, darkHistoryMemory, darkHistoryShoulder, darkHistoryShoulderMemory, darkHistoryLow, darkHistoryLowMemory, darkHistoryDensity, darkTrapFillPower
+inline constexpr std::array<float, 93> kOptoCellDefaults{{
     2.11744767e-06f, 0.0f, 8.05137539f, 2.89539862f, 4.60660553f, 23.5234127f,
     0.586750925f, 0.00118519559f, 0.999977779f, 0.990760822f, 0.0365957224f, 2.38673383e-05f,
     19.8983517f, 0.326484203f, 1.0f, 1.0f, -1.21699251f, 379.874676f,
@@ -332,8 +344,8 @@ inline constexpr std::array<float, 92> kOptoCellDefaults{{
     0.000151601f, 0.00335447044f, 0.882035191f, 0.02f, 40.0f, 0.635185614f,
     1.031764415f, 107.610489f, 0.7941493488f, 6.07100083e-05f, 0.9903732738f, 0.0265073478f,
     27.87475932f, 0.0003f, 0.01f, 0.25f, 0.0005f, 1.0f,
-    1.0f, 0.1630389978f, 3.0f, 0.1077029304f, 2.302437043f, 0.2356715704f,
-    5.404491324e-18f, 0.9427563972f
+    1.0f, 0.1630389988f, 16.31156673f, 0.1077029333f, 17.38801884f, 0.2356715649f,
+    5.404491238e-18f, 5.0f, 1.734882487f
 }};
 
 inline constexpr std::array<float, 37> kOptoCellLightTable{{
@@ -409,6 +421,7 @@ struct OptoCellParams
     float darkHistoryStrength, darkHistoryBase, darkHistoryMemory;
     float darkHistoryShoulder, darkHistoryShoulderMemory, darkHistoryLow, darkHistoryLowMemory;
     float darkHistoryDensity;
+    float darkTrapFillPower;
     const float* lightTable;
     int lightTableSize;
     float lightTableStartDb, lightTableStepDb, lightSlopeAbove;
@@ -461,6 +474,7 @@ inline OptoCellParams optoCellParamsFrom(
     p.darkHistoryLow = values[89];
     p.darkHistoryLowMemory = values[90];
     p.darkHistoryDensity = values[91];
+    p.darkTrapFillPower = values[92];
     return p;
 }
 
@@ -986,8 +1000,9 @@ public:
             // The limit belongs to a cell whose traps are full. After a short burst the native unit lets go
             // much faster (opto/silence_short.py, 1 kHz at -8 dBFS into silence: 0.80 dB/ms after 2 ms,
             // 0.51 after 5 ms, 0.43 after 10 ms, 0.33 after 20 ms, 0.24 from 60 ms on), which is what this
-            // cell's capture into empty traps already gives; so the slowing is weighted by the square of
-            // the traps' fill, the exposure state the cell has.
+            // cell's capture into empty traps already gives; so the slowing is weighted by the traps' fill
+            // raised to darkTrapFillPower, the exposure state the cell has. The exponent was calibrated on
+            // separate 6/12/18/24/45/75 ms bursts; 2 restores the patch-40 ceiling's exposure law.
             const double law = std::max(lawLight, 0.0);
             const double darkLight = std::max(static_cast<double>(cellParams.darkLight), 1.0e-30);
             if (law >= darkLight) d.darkHold = darkHoldSamples;
@@ -1019,7 +1034,9 @@ public:
                     const double square = ratio * ratio;
                     const double filled = cellParams.trapCapture > 0.0f && cellParams.trapCapacity > 0.0f
                         ? std::clamp(d.trap / static_cast<double>(cellParams.trapCapacity), 0.0, 1.0) : 1.0;
-                    darkScale = 1.0 - releaseDark * filled * filled
+                    const double ownedFill = cellParams.darkTrapFillPower == 2.0f ? releaseDark * filled * filled
+                        : releaseDark * std::pow(filled, static_cast<double>(cellParams.darkTrapFillPower));
+                    darkScale = 1.0 - ownedFill
                         * (1.0 - 1.0 / std::sqrt(std::sqrt(1.0 + square * square)));
                 }
             }
