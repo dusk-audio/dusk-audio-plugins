@@ -1485,14 +1485,11 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
                 const float rightDetector = !external ? optoOwnPhases[1][p]
                     : actualOs == 1 ? sc1 : interpolateOversampledSidechain(
                         previousOptoOwnSidechain[1], sc1, phase, actualOs);
-                outputLeftPhases[p] = applyCoreDistortion(
-                    modes.process(mode, inputLeftPhases[p], 0, sc0, modeParams,
-                                  localBusMix, external, leftDetector, true),
-                    distortionType, distortionAmount);
-                outputRightPhases[p] = applyCoreDistortion(
-                    modes.process(mode, inputRightPhases[p], 1, sc1, modeParams,
-                                  localBusMix, external, rightDetector, true),
-                    distortionType, distortionAmount);
+                const auto pair = modes.processOptoLightPair(
+                    {{inputLeftPhases[p], inputRightPhases[p]}}, {{sc0, sc1}},
+                    modeParams, external, {{leftDetector, rightDetector}});
+                outputLeftPhases[p] = applyCoreDistortion(pair[0], distortionType, distortionAmount);
+                outputRightPhases[p] = applyCoreDistortion(pair[1], distortionType, distortionAmount);
             }
             out[0][i] = oversamplers[0].downsampleSample(outputLeftPhases.data());
             out[1][i] = oversamplers[1].downsampleSample(outputRightPhases.data());

@@ -709,12 +709,20 @@ public:
     template <typename ScaleCounter>
     void scaleCounters(const ScaleCounter&) noexcept {}
 
-    // withApplied = false (lab kernel only) skips the applied-gain floor blend, which feeds no state; every
-    // state update is identical, and the returned value is then the cell gain before the floor.
-    template <bool withApplied = true>
-    float process(int ch, float input, float /*compressed*/, float sidechain,
-                  bool external, float optoDetector, bool useOptoDetector,
-                  bool limit, float peakReduction) noexcept
+    // What one channel's side chain asks of the cell for this sample: the light after the frequency law, the
+    // light the drive alone asks for, the signed drive, and the floor's drive and band / input powers.
+    struct LightFrame
+    {
+        double light, lawLight, s, floorDrive;
+        float floorPower, inputPower;
+        bool inert;
+    };
+
+    // The channel's own side chain, up to the light. ownOnly: the caller links the pair behind this point
+    // (processLightPair), so the drive here is the channel's own.
+    LightFrame prepareLight(int ch, float input, float /*compressed*/, float sidechain,
+                            bool external, float optoDetector, bool useOptoDetector,
+                            bool limit, float peakReduction, bool ownOnly = false) noexcept
     {
         const size_t c = static_cast<size_t>(ch);
         auto& d = channels[c];
@@ -810,22 +818,12 @@ public:
         }
         // The input owns the floor and release laws; a coupling tail continues to supply light only.
         const double floorOwn = inert ? 0.0 : cachedSideChainGain * mix * levelAbs;
-        double floorDrive = floorOwn;
-        if (linkWeight > 0.0f)
+        double floorDrive = ownOnly ? d.floorOwn : floorOwn;
+        if (!ownOnly && linkWeight > 0.0f)
             floorDrive = std::max(d.floorOwn, static_cast<double>(linkWeight)
                 * (c == 0 ? channels[1].floorOwn : channels[0].floorOwnPrev));
         d.floorOwnPrev = d.floorOwn;
         d.floorOwn = floorOwn;
-        d.floorEl += elStep * (floorDrive - d.floorEl);
-        double floorLight = inert ? 0.0 : lightFor(d.floorEl);
-        if (cellParams.lightCeiling > 0.0f)
-            floorLight /= 1.0 + floorLight / static_cast<double>(cellParams.lightCeiling);
-        const double floorThreshold = std::max(static_cast<double>(cellParams.darkLight), 1.0e-30);
-        if (floorLight >= floorThreshold) d.floorInputHold = darkHoldSamples;
-        else if (d.floorInputHold > 0) --d.floorInputHold;
-        const double floorTarget = d.floorInputHold > 0 ? 0.0 : floorThreshold / (std::max(floorLight, 0.0) + floorThreshold);
-        d.floorDark[0] = floorTarget < d.floorDark[0] ? floorTarget : d.floorDark[0] + darkStep * (floorTarget - d.floorDark[0]);
-        d.floorDark[1] = d.floorDark[0] < d.floorDark[1] ? d.floorDark[0] : d.floorDark[1] + darkStep * (d.floorDark[0] - d.floorDark[1]);
         double s = inert ? 0.0 : cachedSideChainGain * static_cast<double>(loop);
         if (fluxLaw[0] > 0.0f)
         {   // side-chain flux limit (see kOptoFluxLimitDefaults); the scale comes from the flux up to n-1
@@ -858,19 +856,21 @@ public:
             if (cellParams.lfCutMaxGapDb > 0.0f)
                 d.driveSlow = std::max(d.driveSlow, d.driveDb - static_cast<double>(cellParams.lfCutMaxGapDb));
         }
-        // A linked pair is a diode-OR of the two side chains at the panel: each cell lights from the larger of its
-        // own rectified drive and its partner's, scaled by the link amount. Every filter and the polarity-reversal
-        // frequency law stay on the channel's own drive. Feeding one cell a sample-wise pick of the larger channel
-        // ahead of those instead adds reversals between the channels that neither drive has (quadrature sines read
-        // 0.6-1.1 dB deep against the native unit; 0.3-0.7 dB with this OR).
-        // The native unit's own law is not an instantaneous OR either (measured 2026-10-04: against an OR-driven
-        // dual-mono signal it reduces quadrature sines about 1 dB less and independent noise up to 1.2 dB more), so
-        // independent channels at deep Limit still read about 0.9 dB shallow here.
-        // Both drives are taken one sample back, so the two cells of a dual-mono pair light exactly alike: the
-        // caller runs channel 0 then channel 1 for each sample, and channel 0 has already stored this sample's.
+        // Stereo link. A linked pair goes through processLightPair: every filter and the frequency law stay on
+        // the channel's own drive, each channel forms its own light, and the two lights meet in a diode-OR behind
+        // this function (linkedFrame). Measured against the native unit on 2026-10-12, both channels, on stimuli
+        // whose channels differ in spectrum and level: an OR here at the rectified drive, with the frequency law
+        // behind it on each channel's own signal, left the quiet channel up to 16.5 dB off; the OR at the light
+        // reads within 0.9 dB there and on the eleven stationary stereo stimuli. Feeding one cell a sample-wise
+        // pick of the larger channel ahead of the filters adds reversals neither drive has (quadrature sines read
+        // 0.6-1.1 dB deep).
+        // The native law is not a plain OR either: with a mono low tone under a mid that differs between the
+        // channels, at deep Limit, it reduces up to 1.8 dB more than this does (Compress: within 0.3 dB).
+        // The drive is taken one sample back whenever a link amount is set, so a channel processed alone, a
+        // dual-mono pair and a linked pair with identical channels all light exactly alike.
         const double ownDrive = std::abs(s);
-        double panelDrive = ownDrive;
-        if (linkWeight > 0.0f)
+        double panelDrive = ownOnly ? d.panelOwn : ownDrive;
+        if (!ownOnly && linkWeight > 0.0f)
             panelDrive = std::max(d.panelOwn, static_cast<double>(linkWeight)
                                                   * (c == 0 ? channels[1].panelOwn : channels[0].panelOwnPrev));
         d.panelOwnPrev = d.panelOwn;
@@ -955,6 +955,32 @@ public:
                 }
             }
         }
+        d.estimatedFrequencyHz = estimatedFrequencyHz;
+        return {light, lawLight, s, floorDrive, d.floorPower, d.inputPower, inert};
+    }
+
+    // The cell behind the light: charge, populations, release, floor. withApplied = false (lab kernel only) skips
+    // the applied-gain floor blend, which feeds no state; every state update is identical, and the returned
+    // value is then the cell gain before the floor.
+    template <bool withApplied = true>
+    float advanceLight(int ch, const LightFrame& frame, bool limit) noexcept
+    {
+        auto& d = channels[static_cast<size_t>(ch)];
+        double light = frame.light;
+        const double lawLight = frame.lawLight;
+        const double s = frame.s;
+        const double floorDrive = frame.floorDrive;
+        const bool inert = frame.inert;
+        d.floorEl += elStep * (floorDrive - d.floorEl);
+        double floorLight = inert ? 0.0 : lightFor(d.floorEl);
+        if (cellParams.lightCeiling > 0.0f)
+            floorLight /= 1.0 + floorLight / static_cast<double>(cellParams.lightCeiling);
+        const double floorThreshold = std::max(static_cast<double>(cellParams.darkLight), 1.0e-30);
+        if (floorLight >= floorThreshold) d.floorInputHold = darkHoldSamples;
+        else if (d.floorInputHold > 0) --d.floorInputHold;
+        const double floorTarget = d.floorInputHold > 0 ? 0.0 : floorThreshold / (std::max(floorLight, 0.0) + floorThreshold);
+        d.floorDark[0] = floorTarget < d.floorDark[0] ? floorTarget : d.floorDark[0] + darkStep * (floorTarget - d.floorDark[0]);
+        d.floorDark[1] = d.floorDark[0] < d.floorDark[1] ? d.floorDark[0] : d.floorDark[1] + darkStep * (d.floorDark[0] - d.floorDark[1]);
         if (cellParams.elPolCap > 0.0f && cellParams.elPolRefill > 0.0f)
         {
             // The panel's charge. An electroluminescent panel emits while charge crosses the phosphor, and one
@@ -1017,7 +1043,6 @@ public:
             for (auto& spent : d.chargeSpent)
                 if (std::abs(spent) < 1.0e-30) spent = 0.0;   // no denormal tail
         }
-        d.estimatedFrequencyHz = estimatedFrequencyHz;
         double step = dt;
         if (cellParams.timeScaleLight > 0.0f && cellParams.hFloor > 0.0f)
         {
@@ -1168,7 +1193,7 @@ public:
         if (!withApplied) return applied;
         if (cellParams.lowFrequencyFloor != 0.0f)
         {
-            float floorShare = d.floorPower / std::max(d.inputPower, 1.0e-12f);
+            float floorShare = frame.floorPower / std::max(frame.inputPower, 1.0e-12f);
             if (floorLaw[2] != 1.0f) floorShare = std::pow(std::max(floorShare, 0.0f), floorLaw[2]);
             const float floorPowerRatio = std::clamp(floorShare * (limit ? floorLaw[5] : 1.0f), 0.0f, 1.0f);
             const float floorExponent = limit ? floorLaw[4] : floorLaw[3];
@@ -1203,6 +1228,60 @@ public:
         }
         d.gain = applied;
         OPTO_LAB_PROBE(ch, applied, d.cellGain);
+        return applied;
+    }
+
+    // One channel on its own: mono, or a pair with no link.
+    template <bool withApplied = true>
+    float process(int ch, float input, float compressed, float sidechain,
+                  bool external, float optoDetector, bool useOptoDetector,
+                  bool limit, float peakReduction) noexcept
+    {
+        return advanceLight<withApplied>(ch, prepareLight(ch, input, compressed,
+            sidechain, external, optoDetector, useOptoDetector, limit, peakReduction), limit);
+    }
+
+    bool linked() const noexcept { return linkWeight > 0.0f; }
+
+    // What a linked cell lights from: its own frame, or its partner's where the partner's light, scaled by the
+    // link amount, is the larger. One law for every link amount: at 0 a cell sees only itself, at 1 both cells
+    // see the same frame and so stay alike. The floor's band power is shared in proportion (half each at a full
+    // link); its input power takes the larger, with the link amount as an amplitude weight.
+    LightFrame linkedFrame(const LightFrame& own, const LightFrame& partner, bool partnerWinsTies) const noexcept
+    {
+        const double w = static_cast<double>(linkWeight);
+        const double partnerLight = w * partner.light;
+        LightFrame frame = (partnerWinsTies ? partnerLight >= own.light : partnerLight > own.light) ? partner : own;
+        frame.light = std::max(own.light, partnerLight);
+        frame.lawLight = std::max(own.lawLight, w * partner.lawLight);
+        frame.floorDrive = std::max(own.floorDrive, w * partner.floorDrive);
+        frame.floorPower = own.floorPower + 0.5f * linkWeight * (partner.floorPower - own.floorPower);
+        frame.inputPower = std::max(own.inputPower, linkWeight * linkWeight * partner.inputPower);
+        return frame;
+    }
+
+    // A linked stereo pair. Each channel forms its own light, with its own filters and frequency law; the two
+    // lights meet in a diode-OR (linkedFrame) and everything behind that point (charge, populations, floor)
+    // advances from the linked frame. Returns the gains to apply to this sample, as process() leaves them.
+    std::array<float, 2> processLightPair(const std::array<float, 2>& input,
+                                          const std::array<float, 2>& sidechain, bool external,
+                                          const std::array<float, 2>& detector, bool limit,
+                                          float peakReduction) noexcept
+    {
+        auto& left = channels[0];
+        auto& right = channels[1];
+        const std::array<float, 2> applied{{left.gain, right.gain}};
+        const auto ownLeft = prepareLight(0, input[0], 0.0f, sidechain[0], external, detector[0], true,
+                                          limit, peakReduction, true);
+        const auto ownRight = prepareLight(1, input[1], 0.0f, sidechain[1], external, detector[1], true,
+                                           limit, peakReduction, true);
+        const auto frameLeft = linkedFrame(ownLeft, ownRight, false);
+        const auto frameRight = linkedFrame(ownRight, ownLeft, true);
+        // The floor's input-power history is shared in the same proportion before its next update.
+        left.inputPower = frameLeft.inputPower;
+        right.inputPower = frameRight.inputPower;
+        advanceLight(0, frameLeft, limit);
+        advanceLight(1, frameRight, limit);
         return applied;
     }
 

@@ -43,9 +43,9 @@ inline constexpr bool kOptoToneSynthesisEnabled = false;
 // law and LF floor (C8, C9) are not affected.
 inline constexpr bool kOptoClassifierCorrectionsEnabled = false;
 
-// OPTO stereo link at the panel drive (OptoCell::setLinkWeight) instead of a
-// blend toward the sample-wise larger channel ahead of the cell. Off, the
-// linked detector is the blend, as before.
+// OPTO stereo link inside the cell, at the light (OptoCell::setLinkWeight,
+// processLightPair) instead of a blend toward the sample-wise larger channel
+// ahead of the cell. Off, the linked detector is the blend, as before.
 inline constexpr bool kOptoLinkAtDriveDefault = true;
 
 // Vintage-FET programme-dynamics constants, in one place so an offline lab can
@@ -733,6 +733,25 @@ public:
     // OPTO stereo link (see kOptoLinkAtDriveDefault). MultiCompDSP asks which
     // form is active and hands over the link amount once per sample.
     bool optoLinksAtDrive() const noexcept { return optoLinkAtDrive; }
+
+    // One stereo sample of OPTO. With a link amount set the two cells advance together from their linked
+    // light (OptoCell::processLightPair) and each channel's audio takes the gain that call hands back;
+    // without one, each channel runs on its own as before.
+    std::array<float, 2> processOptoLightPair(const std::array<float, 2>& input,
+                                              const std::array<float, 2>& sidechain,
+                                              const MultiCompParameterState& p, bool external,
+                                              const std::array<float, 2>& detector) noexcept
+    {
+        if (!optoCell.linked())
+            return {{processOpto(input[0], 0, sidechain[0], p, external, detector[0], true),
+                     processOpto(input[1], 1, sidechain[1], p, external, detector[1], true)}};
+        const auto oldGain = optoCell.processLightPair(input, sidechain, external,
+            detector, p.optoLimit.load(std::memory_order_relaxed),
+            p.optoPeakReduction.load(std::memory_order_relaxed));
+        return {{processOpto(input[0], 0, sidechain[0], p, external, detector[0], true, true, oldGain[0]),
+                 processOpto(input[1], 1, sidechain[1], p, external, detector[1], true, true, oldGain[1])}};
+    }
+
     void setOptoLinkWeight(float weight) noexcept
     {
         optoCell.setLinkWeight(optoLinkAtDrive ? weight : 0.0f);
@@ -2839,7 +2858,8 @@ private:
 
     float processOpto(float input, int ch, float sidechain,
                       const MultiCompParameterState& p, bool external,
-                      float optoDetector, bool useOptoDetector) noexcept
+                      float optoDetector, bool useOptoDetector,
+                      bool cellPreAdvanced = false, float pairGain = 1.0f) noexcept
     {
         auto& d = opto[ch];
         // Native opto leveler HF rise acts on the audio before harmonic generation:
@@ -2855,7 +2875,7 @@ private:
         // `gain` is the physical cell gain applied to this sample. Colour is
         // added later as a residual with no fundamental term, so the static
         // law no longer has to anticipate or invert a colour-stage level shift.
-        const float appliedGain = optoCell.gain(ch);
+        const float appliedGain = cellPreAdvanced ? pairGain : optoCell.gain(ch);
         // The cell's input element takes its term off the audio ahead of the
         // gain (zero while the element is off).
         const float compressed = (audio - optoCell.elementTerm(
@@ -2866,7 +2886,7 @@ private:
         // populations are OptoCell (MultiCompOptoCell.hpp). It advances this
         // channel to the gain for the next sample and leaves this sample's
         // detector level and dynamic reduction for the colour blend below.
-        optoCell.process(ch, input, compressed, sidechain, external,
+        if (!cellPreAdvanced) optoCell.process(ch, input, compressed, sidechain, external,
                          optoDetector, useOptoDetector, limit,
                          p.optoPeakReduction.load(std::memory_order_relaxed));
         const float dynamicGrDb = optoCell.dynamicGrDb(ch);
