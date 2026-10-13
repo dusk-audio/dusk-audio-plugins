@@ -4671,9 +4671,25 @@ void testGoldenVectors()
     // mode 7 .212109938/.815853894 -> .212110028/.815853953.
     // H-S2R 3500/12000 Hz audio control: BUS RMS .021881176 -> .021684144
     // (delta -.000197032); peak .349883616 unchanged. Re-recorded 2026-09-17.
-    constexpr float expectedRms[] = {0.042996734f, 0.021684144f,
+    // FET feedback gain computer (candidate C6: one capacitor on the rectified
+    // output, saturating slow population, depth-dependent release, second-order
+    // 9.88 Hz LF stage; fet-parity 2026-10-04): FET RMS .042996734 ->
+    // .047884170, peak .593003154 -> .609301269 (the build before this change
+    // printed .042997077/.593044102, inside the bound). Re-recorded 2026-10-04
+    // with the owner's approval; the five sibling modes print unchanged values.
+    // FET attack lag pole (fbAttackLagRatio / fbAttackLagSlope, fet-parity
+    // 2026-10-05): FET RMS .047884170 -> .048171215, peak .609301269 ->
+    // .644106686. Re-recorded 2026-10-06 with the owner's approval; the five
+    // sibling modes print unchanged values.
+    // FET attack turn-on in place of the lag pole (fbTurnOnDb / fbTurnOnBiasDb,
+    // lag ratio 0) and the Release pot taper (fbReleaseTaperEnd /
+    // fbReleaseTaperCurve; this vector's Release sits below the taper's range),
+    // fet-parity 2026-10-06: FET RMS .048171215 -> .047656160, peak
+    // .644106686 -> .611023188. Re-recorded 2026-10-06 with the owner's
+    // approval; the five sibling modes print unchanged values.
+    constexpr float expectedRms[] = {0.047656160f, 0.021684144f,
                                      0.615188122f, 0.195212007f, 0.172583029f, 0.212110028f};
-    constexpr float expectedPeak[] = {0.593003154f, 0.349883616f,
+    constexpr float expectedPeak[] = {0.611023188f, 0.349883616f,
                                       1.836065888f, 0.657659471f, 0.349556237f, 0.815853953f};
     std::puts("golden vectors: six JUCE-oracle modes, deterministic step/sine-burst RMS peak");
     for (size_t vectorIndex = 0; vectorIndex < std::size(modes); ++vectorIndex)

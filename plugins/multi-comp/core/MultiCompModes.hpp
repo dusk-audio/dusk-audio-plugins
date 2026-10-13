@@ -43,6 +43,386 @@ inline constexpr bool kOptoToneSynthesisEnabled = false;
 // law and LF floor (C8, C9) are not affected.
 inline constexpr bool kOptoClassifierCorrectionsEnabled = false;
 
+// OPTO stereo link at the panel drive (OptoCell::setLinkWeight) instead of a
+// blend toward the sample-wise larger channel ahead of the cell. Off, the
+// linked detector is the blend, as before.
+inline constexpr bool kOptoLinkAtDriveDefault = true;
+
+// Vintage-FET programme-dynamics constants, in one place so an offline lab can
+// change them at run time (MultiCompModes::setFetDynamicsParams, reached only
+// through MultiCompDSPTestAccess; the plugin never calls it and always runs the
+// defaults). Order: programmeActiveLevel, programmeSilenceHoldSeconds,
+// programmeExposureCapSeconds, exposureLowDrive[4], exposureMidDrive[4],
+// exposureHighDrive[4] (release multipliers at 0.01 / 0.1 / 1 / 5 s exposure),
+// slowRelease[3] and legacyFastRelease[3] (quadratics in the Release position).
+// New constants are appended, and each has a value, named with it below, at
+// which it is an exact no-op.
+// [21..25] detector charge (candidate C2, off at detChargeOn = 0): the level
+// detector charges through a finite attack (geometric in the Attack position
+// between detAttackSlowSeconds at 0 and detAttackFastSeconds at 1) and
+// discharges with detReleaseSeconds, instead of capturing every input peak
+// instantly; detGainDb recalibrates its sine reading onto the static law.
+// [26] detRatioExponent: the charge time is scaled by fetRatioAttackScale^e,
+// the feedback loop's faster effective attack at higher ratios.
+// [27..30] programme-state leak (candidate C1, off at stateLeakOn = 0): the
+// exposure clock runs only while the target reduction exceeds exposureGateDb
+// and otherwise decays with exposureDecaySeconds; the programme maximum decays
+// toward the present reduction with maxGrDecaySeconds. Off, both latch while
+// any signal is present and clear only after silence.
+// [31..32] slow-population share: slowTarget = min(base, slowTargetBaseDb +
+// slowTargetSlope * base + ratio and attack offsets) (production values).
+// [33..35] output low-frequency stage (candidate C4, off at lfHpOn = 0): a
+// second-order high-pass (lfHpFrequency, lfHpQ) in place of the 5 Hz
+// first-order stage; the reference's LF phase lead with flat magnitude.
+// [71..72] lfAheadHz, lfAheadQ: a second one AHEAD of the gain element
+// (documented after fbFloorOnApplied, below).
+// [36] detAnalyticOn (candidate C5, used only inside C2): the detector charges
+// from the analytic-signal magnitude |x + jH(x)| instead of |x|, which reads a
+// sine's amplitude without ripple at any frequency and needs no peak hold.
+// [37..70] feedback gain computer (candidate C6, off at fbOn = 0; ratios 4-20
+// only, All-buttons keeps the feed-forward arm). One capacitor c, in dB of
+// reduction, integrates the OUTPUT's overshoot above the level the static law
+// settles at, and leaks through the release:
+//   dc/dt = max(0, |out| / M(c + Q(c) + T(c)) - 1) / attack - c / release
+// (Q and T the settled sizes of the two slow populations, below; with
+// fbTailKneeDb the tail's term is what T adds through the gain element's law),
+// |out| the full-wave rectified output, read through the side chain's own
+// high-pass (fbTapHighPassHz, below). A linked pair is a diode-OR of the two
+// channels' rectifiers: each loop charges from the larger of its own and its
+// partner's magnitude, so the louder channel alone sets the reduction and two
+// equal independent channels read about 0.9 dB above one,
+// M the inverse of the measured static law, solved implicitly per sample.
+//   attack  = fbAttackSeconds * 10^(fbAttackSlope (0.5 - a) + fbAttackCurve (a - 0.5)^2)
+//             * fetRatioAttackScale^fbRatioExponent      (a = Attack position)
+//   release = fbReleaseSeconds * 10^(fbReleaseSlope (0.5 - r) + fbReleaseCurve (r - 0.5)^2)
+//             * fetRatioReleaseScale * (1 + reduction / depth)
+//                                                        (r = Release position)
+//   depth   = (fbReleaseDepthDb + fbReleaseDepthFastDb * max(0, 2 r - 1)^2)
+//             * (k / k at 4:1)^fbReleaseDepthRatioExponent,
+//             k = slope / (1 - slope) of the ratio's static law
+// The depth term is the reference's release slowing as the reduction deepens
+// (after a 1 s hold, 386 ms at 14 dB against 512 ms at 22 dB at 4:1; from
+// 25 dB it falls at about 43 dB/s at 4:1 and 60 dB/s at 20:1). Toward the fast
+// end of the Release knob that slowing fades (fbReleaseDepthFastDb, quadratic
+// from Release 0.5): 20-60 ms after a short burst to 28 dB at
+// Release 1 the reference has released 1.2-1.7 dB more than one depth for
+// every position gives, while Release 0 and 0.33 fit that one depth. (Zero
+// since 2026-10-06: with the Release pot law and the tail population, below,
+// a probe fit returns it to zero. It had been standing in for both.)
+// A slow population q adds to the reduction and follows
+//   Q(c) = fbSlowCeilingDb * tanh(fbSlowShare * c / fbSlowCeilingDb)
+// (up in fbSlowChargeSeconds, down in fbSlowReleaseRatio * release, with the
+// Release knob's factor raised to fbSlowReleaseKnobExponent instead of 1: the
+// reference's slow tail shortens far less than its release at the fast end of
+// the knob).
+// fbAttackLagRatio: the charging current reaches the capacitor through one
+// more pole, at fbAttackLagRatio * 10^(fbAttackLagSlope (0.5 - a)) * attack
+// seconds (ratio 0 = none): at the slow end
+// of the Attack knob the reference's first half millisecond is S-shaped
+// (5.0 / 8.0 / 12.7 / 16.1 dB at 0.25 / 0.5 / 1 / 2 ms into a 22 dB step at
+// Attack 0), where a single pole rises fastest at the start.
+// fbAttackLoadDb raises the threshold by that many dB at Attack 1, linearly
+// from Attack 0.5: the reference's settled sine reduction falls 0.3 dB at
+// Attack 0.75 and 0.5-0.8 dB at 1 (the fast end of the pot loading the
+// side chain), with nothing below 0.5. The slow population is
+// the programme-dependent release, a function of how long the reduction was
+// held and not of whether signal is present, and the reference's slow rise
+// toward its settled reduction: until q has charged the loop sits
+// (1 - slope) * Q below the static law, the same number of dB at 18 and at
+// 30 dB of reduction and about four times more at 4:1 than at 20:1. Replaces
+// the detector, the three populations, the exposure clock and the post-burst
+// assist.
+// fbTurnOnDb (0 = off), fbTurnOnBiasDb: a unit of overshoot charges by the share
+//   min(1, sqrt((reduction + 0.001 + fbTurnOnBiasDb * a^2) / fbTurnOnDb))
+// (reduction = fast charge plus slow population in dB, a = Attack position): a
+// turn-on of fixed width that the Attack knob biases into. What was read on
+// the reference, where the sample-to-sample rise can be resolved, is the
+// charge per unit of overshoot against the present reduction (20:1; dB : share
+// of the rate reached deep):
+//   Attack 0      0.25 : 0.14   1.2 : 0.32   2.5 : 0.50   4.7 : 0.70   9 up : 1
+//   Attack 0.0625 0.45 : 0.40   1.1 : 0.54   2.1 : 0.68   4.4 : 0.86
+//   Attack 0.125  0.67 : 0.60   1.1 : 0.68   2.2 : 0.81   4.1 : 0.93
+//   Attack 0.25   1.05 : 0.84   2.4 : 0.94   3.9 up : 1
+//   Attack 0.375 and above: flat.
+// Two of the reference's onsets at Attack 0 that differ in level and timing
+// fall on one curve in the reduction, and its burst from 8 dB of reduction
+// charges at the full rate from the first sample, which rules out a delay.
+// That reading fixed the form. The two constants are a fit of the probe tables
+// together with the attack law (tools fet/attack_fit.py, no music), not of the
+// reading: at their values the law is wider than the reading (0.43 / 0.60 /
+// 0.82 at 2.5 / 4.7 / 9 dB at Attack 0, 1 from 13.3 dB) and gone from Attack
+// 0.33. The mechanism is not identified (it reads like the pot's quiescent
+// current lifting the gain element toward conduction).
+// fbReleaseTaperEnd (1 = off), fbReleaseTaperCurve (0 or less = off): the
+// Release pot's dead travel at its fast end. Above the nominal position
+// n = 0.665955 the knob laws read
+//   r' = n + (1 - n) * min(1, (r - n) / (fbReleaseTaperEnd - n))^fbReleaseTaperCurve
+// for r, so every law is untouched at and below the nominal position and at 1.
+// Measured on the reference as the time to release half way after a 1 s tone
+// (ms at 4:1 / 20:1): 191 / 223, 119 / 140, 50 / 60, 36 / 44, 37 / 44 at
+// r = 0.666, 0.75, 0.833, 0.917, 1: a straight line in r from 0.12 to 0.85 with
+// flat ends, a linear pot in series with a fixed resistance. The end is the
+// end of that line; the curve puts 0.75 where r' = 0.80 sits on the release
+// law below, which is where its time is (0.833 then reads as r' = 0.965, 0.85
+// and up as 1). No probe cell was fitted. The quadratic through 0, 0.33, 0.666
+// and 1 alone was up to 1.7 times too slow between 0.75 and 0.95.
+// fbReleasePotFixed (0 = off), fbReleasePotStart, fbReleasePotEnd: the Release
+// knob as what those half-release times describe, a linear pot in series with
+// a fixed resistance, with dead travel at both ends. The release time is
+// proportional to
+//   fbReleasePotFixed + clamp((fbReleasePotEnd - r)
+//                             / (fbReleasePotEnd - fbReleasePotStart), 0, 1)
+// and replaces 10^(fbReleaseSlope (0.5 - r) + fbReleaseCurve (r - 0.5)^2)
+// wherever that factor is used (fbReleaseSeconds stays the value at r = 0.5);
+// the taper above is bypassed while it is on. Start and end are read off the
+// reference's half-release times at nine positions (ms at 4:1 / 20:1:
+// 686 / 790, 639 / 739, 491 / 571, 337 / 392, 191 / 223, 119 / 140, 50 / 60,
+// 36 / 44, 37 / 44 at r = 0, 0.167, 0.33, 0.5, 0.666, 0.75, 0.833, 0.917, 1):
+// the last sixth of the travel does nothing, the first eighth nearly nothing,
+// a straight line between. The fixed part is fitted with the release side on
+// the probe tables (tools fet/slow_fit.py, no music). The depth law's fast end
+// follows the travel as well: its knob term is 1 - travel / travel at 0.5
+// in place of max(0, 2 r - 1).
+// fbTailShare (0 = off), fbTailCurve, fbTailChargeSeconds,
+// fbTailReleaseSeconds, fbTailRatioExponent: a second slow population t whose
+// times ignore the Release knob. It follows
+//   T(c) = fbTailShare * (k / k at 4:1)^fbTailRatioExponent
+//          * c * (1 + fbTailCurve * c / 20)
+// up in fbTailChargeSeconds and down in fbTailReleaseSeconds, adds to the
+// reduction like q, and the threshold is read at c + Q(c) + T(c) (a negative
+// share or curve is read as 0). That is the tail as a dB population; with
+// fbTailKneeDb, below, T is a control value and adds through the gain
+// element's law instead. Measured on
+// the reference with trains of six 150 ms bursts 500 ms apart (probe set 9):
+// at Release 1 the reduction read 100-150 ms after a burst to 29 dB grows from
+// 4.1 dB after the first burst to 10.0 dB after the sixth, and after the sixth
+// it is still 6.0 / 4.5 / 3.6 / 3.1 dB at 250 / 450 / 650 / 800 ms. A part of
+// the reduction builds up over events and stays for about a second whatever
+// the knob says (2.6 dB after bursts to 17 dB; about 1.4 times less at 20:1
+// than at 4:1 at equal depth, hence the ratio exponent of the dB form; the
+// control form fits both ratios without it). The one slow
+// population that lets go with the knob held next to nothing between events
+// at Release 1, and programme there read 0.6-1.2 dB shallow.
+// fbTapHighPassHz (0 = a copy of the C4 stage, as before): the side chain
+// reads the driven signal through its own first-order high-pass. Measured on
+// sines of 15-30 Hz at Release 1, where the capacitor follows the waveform:
+// the reference's reduction peaks with the INPUT's phase; read behind the C4
+// stage it peaked with the output's, 56 degrees early at 15 Hz. The side chain
+// taps ahead of the stage that gives the output its low-frequency phase lead.
+// Settled low sines, beating pairs and noise bands from 10 to 240 Hz at two
+// depths and three Release positions (384 rows, probe set 8) then sit within
+// 0.5 dB (0.28 -> 0.16 dB rms); the corner is from a scan of 2 / 3 / 5 / 8 Hz
+// against those rows and the stationary tables.
+// fbTailKneeDb (0 = off): the tail population acts through the gain element's
+// control law, F(v) = v^2 / (4 knee) below v = 2 knee and v - knee above (dB of
+// reduction for a control value v). Its state is a control value v that
+// follows, first order both ways, the settled value T(c) above (with the
+// knee on, fbTailShare and fbTailCurve give T as a CONTROL value: a reservoir
+// whose settled value is a share of the fast charge). Its own reading is
+// t = F(v) dB, and on top of the rest of the reduction r = c + q it adds
+// F(Finv(r) + v) - r: t once the rest is gone, v under a deep rest. The
+// threshold reads the settled value of the same expression, so settled
+// sines stay on the static law. fbTailChargeSeconds and
+// fbTailReleaseSeconds are times of v (below the knee t itself moves twice
+// as fast). Read on the reference with the burst
+// trains of probe set 9 at 1 kHz (tools fet/memory_law.py): the memory left
+// 340 ms after bursts 1..6 at Release 1 is 0.89 / 2.16 / 3.25 / 4.07 / 4.66 /
+// 5.08 dB at 4:1, so its second step is larger than its first, which no
+// first-order population gives, while the steps of its square root shrink by
+// one factor (0.56-0.71 at 17 and 29 dB, 4:1 and 20:1); 60-100 ms after the
+// later bursts the reduction stands 1.0-1.2 dB above fast charge plus that
+// memory; and from rest at 20:1 the loop sits 0.5 dB under its settled level,
+// several times (1 - slope) (T - t). One law gives the three. The mechanism
+// is not identified (it reads like a reservoir on the gate node of a FET
+// whose channel opens quadratically near pinch-off).
+// On since 2026-10-06. A probe fit of the release side on the 1 kHz probes
+// (tools fet/mem_bench.py: sets 1-6 and the 1 kHz burst trains of set 9; no
+// music, and not the low carriers of set 9, whose windows after a burst read
+// the output stage) puts the knee at 9.85 dB and T at 0.557 c with no curve,
+// a linear reservoir, 1.30 s up and 3.93 s down in v, with the ratio
+// exponent at 0.044 (before, -0.229). The rest of the release side moved
+// with it: the knob-following population (share 0.99 -> 0.82, ceiling 10.9
+// -> 6.0 dB, charge 1.90 -> 2.12 s, release ratio 2.90 -> 2.64, knob exponent
+// 0.58 -> 0.19), the capacitor's release (0.2424 -> 0.2767 s at Release 0.5,
+// depth 18.5 -> 25.3 dB, depth ratio exponent -0.123 -> -0.039) and the pot's
+// fixed part (0.0687 -> 0.0698). Burst-train cells at or above 1 dB: 69 -> 20
+// of 3,240 (the 20: the first 5 ms frame of 40 Hz bursts at 20:1, low-carrier
+// windows after bursts at 4:1, and two cells 200-300 ms after a first burst
+// at 20:1, Release 0); long holds 0.21 -> 0.11 dB rms. Before: the tail as a
+// dB population, T = 0.150 c (1 + 1.069 c / 20), 1.151 s up, 3.593 s down.
+// fbFloorOnApplied (0 = off): the static law's plateau, the most reduction
+// the gain element gives, limits the reduction APPLIED, c + q + t (with
+// fbTailKneeDb: c + q + what the tail adds). Off, the
+// threshold M carries the plateau at the SETTLED reduction c + Q(c) + T(c),
+// which stops the charge short of it by the slow populations' settled size
+// for as long as they are empty: with the constants before this element
+// (Q alone, 15 dB at depth) a burst from rest that the reference takes to
+// 27.5 dB stopped at 24 dB (probe set 9; no earlier probe went that deep from
+// rest, set 5 sits on a bed that keeps the slow population charged).
+// lfAheadHz, lfAheadQ (0 Hz = none; needs lfHpOn): a second-order high-pass
+// on the audio AHEAD of the gain element; the C4 stage (lfHpFrequency,
+// lfHpQ) stays behind it. A linear capture gives the product of the two
+// only. What is behind the gain element rings when the gain steps, with
+// its own poles; what is ahead of it sees a stationary signal and does
+// nothing. So the split is read with a low tone under 1 kHz bursts
+// (probe set 10, tools fet/lf_under.py: half the difference of the two
+// polarities of the tone is its response alone), and the product on the
+// tails that low bursts 60 dB down leave when they end (set 9's low-level
+// renders, tools fet/lf_linear_fit.py, lf_split.py). The side chain keeps
+// its own tap filter (fbTapHighPassHz) on the driven signal, and the
+// shallow-knee colour terms keep reading the driven signal their peak
+// follower tracks (gained / kneePeak); the broadband and low colour terms
+// read the signal behind the gain element, so behind the section. The
+// sections act at every ratio, All-buttons included, as C4 does; the
+// probes above are 4:1 and 20:1.
+// On since 2026-10-07: C4 at 7.19 Hz, Q 0.719 and the section ahead at
+// 3.02 Hz, Q 0.695 (before: C4 alone at 9.88 Hz, Q 0.787, fitted on the phase
+// lead of a linear capture above 15 Hz, which it has, with a tail it has
+// not: 1.5 dB short 30-60 ms after a 40 Hz burst, 4 dB short at 60-100 ms).
+// The four numbers are one least-squares fit of the low-level tails of set 9
+// (window errors up to 1.5 dB -> within 0.04 dB) and of probe set 10 (error
+// of the tone's response after the onsets -15.1 -> -32.7 dB re the response;
+// the other way round, the 7 Hz pair ahead, is -6 dB, and a third section
+// fits to nothing). No compressing probe and no music is in that fit. What
+// the two sections then give, unfitted: burst-train cells at or above 1 dB
+// 20 -> 4 of 3,240 (the 4: the first 5 ms frame of a 40 Hz burst from rest
+// at 20:1, twice, and two cells 200-300 ms after a first burst at 20:1,
+// Release 0), sets 1-3 0.230 -> 0.190 dB rms, music pooled 0.269 / 0.369 /
+// 0.365 -> 0.261 / 0.315 / 0.285 dB (FIT / VAL / SEALED), held-out knob
+// positions 0.266 -> 0.260. Read through the section ahead instead of its
+// own tap, the side chain is worse (10 cells), and the tap's corner scanned
+// again at 3 / 4 / 6 / 7 / 8 / 10 Hz stays at 5: the first lobes of a low
+// burst ask for more, the settled low sines for less.
+// 2026-10-08 scratch FET four-cell calibration; original laws and states unchanged.
+// fbRatioExponent 1.2309229 -> 1.3369229; fbReleaseDepthRatioExponent -0.039199907 -> 0.010800093.
+// Defined synthetic cells at or above 1 dB: 4/4340 -> 0/4340; set9 worst 1.124395353 -> 0.996719298 dB.
+// Held-out knob positions: 0/192 at or above 1 dB; worst 0.987991886 dB. Primary bars passed.
+// Music, core and strict preservation are recorded separately.
+// Historical never-worse is not asserted; this unapplied scratch candidate still needs full qualification.
+inline constexpr std::array<float, 73> kFetDynamicsDefaults{{
+    0.03f, 0.002f, 5.0f, 0.42f, 0.46f, 0.65f,
+    0.8f, 0.51f, 0.56f, 0.82f, 1.0f, 0.1f,
+    0.7f, 1.0f, 1.24f, 2.0f, -2.17f, 0.82f,
+    2.0f, -1.82f, 0.12f, 0.0f, 0.001f, 1.0e-04f,
+    0.2f, 0.0f, 0.0f, 0.0f, 1.0f, 0.5f,
+    0.5f, 1.4f, 0.058f, 1.0f, 7.1905f, 0.7186f,
+    0.0f, 1.0f, 1.3517893e-04f, 1.1925094f, -1.5139126f, 1.3369229f,
+    0.2767359f, 1.042f, -0.958f, 0.8151464f, 5.9988933f, 2.1196837f,
+    2.63962f, 25.308857f, 0.010800093f, 0.1923526f, 0.6947493f, 0.0f,
+    0.0f, 1.7396628f, 13.263551f, 123.67461f, 0.85f, 1.17f,
+    0.069821596f, 0.12f, 0.85f, 0.55660456f, 0.0f, 1.3020016f,
+    3.9303212f, 5.0f, 1.0f, 0.043717176f, 9.846549f, 3.0176f,
+    0.6949f}};
+
+// C5 90-degree all-pass pair: first-order sections (p - s)/(p + s), pole
+// frequencies in Hz, mapped per sample rate by the plain bilinear transform.
+// Designed over 10 Hz - 80 kHz analog (tools fet/hilbert_design.py, N = 7):
+// worst 0.385 degrees from 10 Hz to 20 kHz at 48, 96 and 192 kHz, i.e. at most
+// 0.06 dB of envelope ripple on a sine.
+inline constexpr std::array<double, 7> kFetAnalyticPolesA{{
+    3.76893, 30.4727, 139.863, 647.436, 2958.52, 13204.8, 62040.4}};
+inline constexpr std::array<double, 7> kFetAnalyticPolesB{{
+    13.3725, 65.3493, 300.898, 1387.14, 6277.39, 27751.4, 217562.0}};
+
+struct FetDynamicsParams
+{
+    float programmeActiveLevel, programmeSilenceHoldSeconds, programmeExposureCapSeconds;
+    std::array<float, 4> exposureLowDrive, exposureMidDrive, exposureHighDrive;
+    std::array<float, 3> slowRelease, legacyFastRelease;
+    float detChargeOn, detAttackSlowSeconds, detAttackFastSeconds, detReleaseSeconds, detGainDb;
+    float detRatioExponent;
+    float stateLeakOn, exposureGateDb, exposureDecaySeconds, maxGrDecaySeconds;
+    float slowTargetBaseDb, slowTargetSlope;
+    float lfHpOn, lfHpFrequency, lfHpQ;
+    float detAnalyticOn;
+    float fbOn, fbAttackSeconds, fbAttackSlope, fbAttackCurve, fbRatioExponent;
+    float fbReleaseSeconds, fbReleaseSlope, fbReleaseCurve;
+    float fbSlowShare, fbSlowCeilingDb, fbSlowChargeSeconds, fbSlowReleaseRatio;
+    float fbReleaseDepthDb, fbReleaseDepthRatioExponent;
+    float fbSlowReleaseKnobExponent, fbAttackLoadDb;
+    float fbReleaseDepthFastDb, fbAttackLagRatio, fbAttackLagSlope;
+    float fbTurnOnDb, fbTurnOnBiasDb;
+    float fbReleaseTaperEnd, fbReleaseTaperCurve;
+    float fbReleasePotFixed, fbReleasePotStart, fbReleasePotEnd;
+    float fbTailShare, fbTailCurve, fbTailChargeSeconds, fbTailReleaseSeconds;
+    float fbTapHighPassHz, fbFloorOnApplied;
+    float fbTailRatioExponent;
+    float fbTailKneeDb;
+    float lfAheadHz, lfAheadQ;
+
+    static FetDynamicsParams fromArray(const std::array<float, kFetDynamicsDefaults.size()>& v) noexcept
+    {
+        FetDynamicsParams p{};
+        p.programmeActiveLevel = v[0];
+        p.programmeSilenceHoldSeconds = v[1];
+        p.programmeExposureCapSeconds = v[2];
+        for (size_t i = 0; i < 4; ++i)
+        {
+            p.exposureLowDrive[i] = v[3 + i];
+            p.exposureMidDrive[i] = v[7 + i];
+            p.exposureHighDrive[i] = v[11 + i];
+        }
+        for (size_t i = 0; i < 3; ++i)
+        {
+            p.slowRelease[i] = v[15 + i];
+            p.legacyFastRelease[i] = v[18 + i];
+        }
+        p.detChargeOn = v[21];
+        p.detAttackSlowSeconds = v[22];
+        p.detAttackFastSeconds = v[23];
+        p.detReleaseSeconds = v[24];
+        p.detGainDb = v[25];
+        p.detRatioExponent = v[26];
+        p.stateLeakOn = v[27];
+        p.exposureGateDb = v[28];
+        p.exposureDecaySeconds = v[29];
+        p.maxGrDecaySeconds = v[30];
+        p.slowTargetBaseDb = v[31];
+        p.slowTargetSlope = v[32];
+        p.lfHpOn = v[33];
+        p.lfHpFrequency = v[34];
+        p.lfHpQ = v[35];
+        p.detAnalyticOn = v[36];
+        p.fbOn = v[37];
+        p.fbAttackSeconds = v[38];
+        p.fbAttackSlope = v[39];
+        p.fbAttackCurve = v[40];
+        p.fbRatioExponent = v[41];
+        p.fbReleaseSeconds = v[42];
+        p.fbReleaseSlope = v[43];
+        p.fbReleaseCurve = v[44];
+        p.fbSlowShare = v[45];
+        p.fbSlowCeilingDb = v[46];
+        p.fbSlowChargeSeconds = v[47];
+        p.fbSlowReleaseRatio = v[48];
+        p.fbReleaseDepthDb = v[49];
+        p.fbReleaseDepthRatioExponent = v[50];
+        p.fbSlowReleaseKnobExponent = v[51];
+        p.fbAttackLoadDb = v[52];
+        p.fbReleaseDepthFastDb = v[53];
+        p.fbAttackLagRatio = v[54];
+        p.fbAttackLagSlope = v[55];
+        p.fbTurnOnDb = v[56];
+        p.fbTurnOnBiasDb = v[57];
+        p.fbReleaseTaperEnd = v[58];
+        p.fbReleaseTaperCurve = v[59];
+        p.fbReleasePotFixed = v[60];
+        p.fbReleasePotStart = v[61];
+        p.fbReleasePotEnd = v[62];
+        p.fbTailShare = v[63];
+        p.fbTailCurve = v[64];
+        p.fbTailChargeSeconds = v[65];
+        p.fbTailReleaseSeconds = v[66];
+        p.fbTapHighPassHz = v[67];
+        p.fbFloorOnApplied = v[68];
+        p.fbTailRatioExponent = v[69];
+        p.fbTailKneeDb = v[70];
+        p.lfAheadHz = v[71];
+        p.lfAheadQ = v[72];
+        return p;
+    }
+};
+
 class MultiCompModes
 {
 public:
@@ -70,6 +450,7 @@ public:
         for (auto& filter : optoPreHighPass) filter.reset();
         for (auto& filter : optoPostHighPass) filter.reset();
         for (auto& d : fet) d = FETState{};
+        updateFetDynamicsCoefficients();
         for (auto& d : vca) d = VCAState{};
         for (auto& d : bus) d = BusState{};
         for (auto& filter : busFeedbackCoupling) filter.reset();
@@ -110,6 +491,8 @@ public:
         for (auto& d : vca) d.phase = 0;
         transientShaper.setRate(sr);
         updateRateCoefficients(sr);
+        // The FET loop's high-passes are designed per rate as well.
+        updateFetDynamicsCoefficients();
         // The Opto fields below store elapsed or remaining samples. Preserve
         // their physical time when runtime oversampling changes the rate.
         const double counterScale = static_cast<double>(sr) / oldModeRate;
@@ -219,7 +602,7 @@ public:
         ch = std::clamp(ch, 0, 1);
         switch (mode)
         {
-            case MultiCompMode::Opto: return gainToDecibels(optoCell.gain(ch))
+            case MultiCompMode::Opto: return gainToDecibels(optoCell.meterGain(ch))
                 - opto[static_cast<size_t>(ch)].meterCorrectionDb;
             case MultiCompMode::FET: return gainToDecibels(
                 fet[ch].envelope * fet[ch].kneeGain
@@ -341,7 +724,101 @@ public:
         return kOptoStageLatencyHost;
     }
 
+    // OPTO stereo link (see kOptoLinkAtDriveDefault). MultiCompDSP asks which
+    // form is active and hands over the link amount once per sample.
+    bool optoLinksAtDrive() const noexcept { return optoLinkAtDrive; }
+    void setOptoLinkWeight(float weight) noexcept
+    {
+        optoCell.setLinkWeight(optoLinkAtDrive ? weight : 0.0f);
+    }
+    // Lab-only switches; the plugin always runs the defaults.
+    void setOptoLinkAtDrive(bool on) noexcept { optoLinkAtDrive = on; }
+    void setOptoFloorLaw(const std::array<float, 6>& law) noexcept { optoCell.setFloorLaw(law); }
+    void setOptoFluxLaw(const std::array<float, 6>& law) noexcept { optoCell.setFluxLaw(law); }
+    void setOptoCellConstants(const std::array<float, kOptoCellDefaults.size()>& values) noexcept
+    {
+        optoCell.setParams(optoCellParamsFrom(values));
+    }
+
+    // Candidate C6's stereo link (see kFetDynamicsDefaults). When the loop
+    // runs, MultiCompDSP hands each channel its partner's driven sample, already
+    // scaled by the link amount, before calling process(); one call per sample,
+    // consumed by processFET.
+    bool fetFeedbackActive(const MultiCompParameterState& p) const noexcept
+    {
+        return fetDynamics.fbOn > 0.5f
+            && std::clamp(p.fetRatio.load(std::memory_order_relaxed), 0, 4) != 4;
+    }
+    void setFetLinkPartner(int ch, float sample) noexcept
+    {
+        fetLinkPartner[static_cast<size_t>(std::clamp(ch, 0, 1))] = sample;
+    }
+
+    // Lab-only hook (see kFetDynamicsDefaults). Not real-time safe against a
+    // running block and never called by the plugin.
+    void setFetDynamicsParams(const FetDynamicsParams& params) noexcept
+    {
+        fetDynamics = params;
+        updateFetDynamicsCoefficients();
+    }
+
 private:
+    // Coefficients derived from fetDynamics at the mode rate. Double
+    // precision: a 10 Hz corner at 96 kHz puts the C4 poles within 1e-3 of the
+    // unit circle, and the lowest C5 all-pass pole sits at c = -0.9999.
+    void updateFetDynamicsCoefficients() noexcept
+    {
+        constexpr double pi = 3.14159265358979323846;
+        const double rate = fs * osFactor;
+        // RBJ high-pass, b0 b1 b2 a1 a2 normalised by a0.
+        const auto highPass = [rate](float hz, float q) noexcept {
+            const double w0 = 2.0 * pi * static_cast<double>(hz) / rate;
+            const double alpha = std::sin(w0) / (2.0 * static_cast<double>(q));
+            const double c = std::cos(w0), a0 = 1.0 + alpha;
+            return std::array<double, 5>{{(1.0 + c) / (2.0 * a0), -(1.0 + c) / a0, (1.0 + c) / (2.0 * a0),
+                                          -2.0 * c / a0, (1.0 - alpha) / a0}};
+        };
+        // C4, behind the gain element, and the section ahead of it.
+        fetLfHighPass = highPass(fetDynamics.lfHpFrequency, fetDynamics.lfHpQ);
+        fetLfAheadOn = fetDynamics.lfHpOn > 0.5f && fetDynamics.lfAheadHz > 0.0f
+            && fetDynamics.lfAheadQ > 0.0f;
+        fetLfAheadHighPass = fetLfAheadOn
+            ? highPass(fetDynamics.lfAheadHz, fetDynamics.lfAheadQ)
+            : std::array<double, 5>{{1.0, 0.0, 0.0, 0.0, 0.0}};
+        // The feedback detector's own high-pass (fbTapHighPassHz; 0 = the C4
+        // stage): first order, bilinear.
+        fetTapHighPass = fetLfHighPass;
+        if (fetDynamics.fbTapHighPassHz > 0.0f)
+        {
+            const double corner = std::min(
+                static_cast<double>(fetDynamics.fbTapHighPassHz), 0.45 * rate);
+            const double k = std::tan(pi * corner / rate);
+            const double pole = (1.0 - k) / (1.0 + k);
+            fetTapHighPass = {{0.5 * (1.0 + pole), -0.5 * (1.0 + pole), 0.0, -pole, 0.0}};
+        }
+        // C5: A(z) = (c + z^-1) / (1 + c z^-1), c = (2 pi f - 2 rate) / (2 pi f + 2 rate).
+        for (size_t i = 0; i < kFetAnalyticPolesA.size(); ++i)
+        {
+            const double pa = 2.0 * pi * kFetAnalyticPolesA[i], pb = 2.0 * pi * kFetAnalyticPolesB[i];
+            fetAnalyticA[i] = (pa - 2.0 * rate) / (pa + 2.0 * rate);
+            fetAnalyticB[i] = (pb - 2.0 * rate) / (pb + 2.0 * rate);
+        }
+    }
+
+    // One sample through a first-order all-pass chain; returns the chain output.
+    static double runAllPassChain(double x, const std::array<double, 7>& coeffs,
+                                  std::array<double, 7>& x1, std::array<double, 7>& y1) noexcept
+    {
+        for (size_t i = 0; i < coeffs.size(); ++i)
+        {
+            const double y = coeffs[i] * (x - y1[i]) + x1[i];
+            x1[i] = x;
+            y1[i] = y;
+            x = y;
+        }
+        return x;
+    }
+
     void configureOptoStage() noexcept
     {
         for (auto& d : opto)
@@ -423,6 +900,12 @@ private:
         float kneePeakHoldSeconds = 0;
         float kneeBaseHoldSeconds = 0;
         float fastGrDb = 0, intermediateGrDb = 0, slowGrDb = 0;
+        // Candidate C6: the slow population that ignores the Release knob. In
+        // double: one step of its seconds-long pole is below the float
+        // spacing of a state of a few dB from 96 kHz up. It is the tail's own
+        // reading; with fbTailKneeDb what the tail adds to the reduction is
+        // fetTailAppliedNow(), not this.
+        double slowTailGrDb = 0.0;
         float programmeExposureSeconds = 0, programmeMaximumGrDb = 0;
         float releaseMemory = 0, sag = 0, hf = 0, tilt = 0, subBass = 0;
         float colourPeak = 0, colourHighPassLow = 0, colourHighPassLower = 0;
@@ -432,6 +915,12 @@ private:
         float colourLowDc = 0, colourLowPrevSq = 0;
         float colourLowHarmonicDc = 0;
         float previousLevel = 0.0f, voltageSag = 0.0f, subBassHpState = 0.0f;
+        double lfHpZ1 = 0.0, lfHpZ2 = 0.0;
+        double lfAheadZ1 = 0.0, lfAheadZ2 = 0.0;
+        double feedbackHpZ1 = 0.0, feedbackHpZ2 = 0.0;
+        double partnerHpZ1 = 0.0, partnerHpZ2 = 0.0;
+        float feedbackLag = 0.0f;
+        std::array<double, 7> analyticAx{}, analyticAy{}, analyticBx{}, analyticBy{};
         int transient = 0, sagCounter = 0, programmeSilentSamples = 0;
         bool recoveryWasSupported = false;
     };
@@ -509,6 +998,14 @@ private:
     bool prepared = false;
     std::array<OptoState, 2> opto{};
     OptoCell optoCell;
+    FetDynamicsParams fetDynamics = FetDynamicsParams::fromArray(kFetDynamicsDefaults);
+    std::array<float, 2> fetLinkPartner{};
+    bool optoLinkAtDrive = kOptoLinkAtDriveDefault;
+    std::array<double, 5> fetLfHighPass{};
+    std::array<double, 5> fetTapHighPass{};
+    std::array<double, 5> fetLfAheadHighPass{{1.0, 0.0, 0.0, 0.0, 0.0}};
+    bool fetLfAheadOn = false;
+    std::array<double, 7> fetAnalyticA{}, fetAnalyticB{};
     std::array<OptoHfShelf, kChannels> optoShelf{};
     std::array<OptoSubsonicHighPass, kChannels> optoPreHighPass{}, optoPostHighPass{};
     std::array<FETState, 2> fet{};
@@ -1498,6 +1995,18 @@ private:
         return coefficients.back();
     }
 
+    // Constants of the settled sine law below, shared with its inverse.
+    static constexpr std::array<float, 5> kFetReductionSlopes{{
+        0.82857823f, 0.90319133f, 0.93707197f, 0.96619657f, 0.95953144f}};
+    static constexpr std::array<float, 5> kFetMeasuredThresholdsDb{{
+        -8.34012099f, -5.90065303f, -4.47645544f, -2.66788769f,
+        -4.74344379f}};
+    static constexpr std::array<float, 5> kFetKneeWidthsDb{{
+        14.12963324f, 7.19106925f, 1.87103644f, 4.83803856f,
+        4.87980041f}};
+    static constexpr std::array<float, 5> kFetMaximumDetectorLevelsDb{{
+        38.72f, 38.85f, 39.00f, 39.09f, 38.23f}};
+
     static float fetReferenceReductionDb(float inputLevelDb, int ratioIndex,
                                          float thresholdControlDb) noexcept
     {
@@ -1507,21 +2016,13 @@ private:
         // 0.032 dB or better for every button. Because this is a feed-forward
         // equivalent of the hardware feedback law, these are reduction slopes
         // (1 - 1/R), not the nominal faceplate ratios.
-        constexpr std::array<float, 5> reductionSlopes{{
-            0.82857823f, 0.90319133f, 0.93707197f, 0.96619657f, 0.95953144f}};
-        constexpr std::array<float, 5> measuredThresholdsDb{{
-            -8.34012099f, -5.90065303f, -4.47645544f, -2.66788769f,
-            -4.74344379f}};
-        constexpr std::array<float, 5> kneeWidthsDb{{
-            14.12963324f, 7.19106925f, 1.87103644f, 4.83803856f,
-            4.87980041f}};
         ratioIndex = std::clamp(ratioIndex, 0, 4);
-        const float slope = reductionSlopes[static_cast<size_t>(ratioIndex)];
+        const float slope = kFetReductionSlopes[static_cast<size_t>(ratioIndex)];
         // -10 dB is the reference-compatible extension setting. Moving the
         // extension shifts the measured transfer without changing its shape.
-        const float threshold = measuredThresholdsDb[static_cast<size_t>(ratioIndex)]
+        const float threshold = kFetMeasuredThresholdsDb[static_cast<size_t>(ratioIndex)]
             + thresholdControlDb + 10.0f;
-        const float width = kneeWidthsDb[static_cast<size_t>(ratioIndex)];
+        const float width = kFetKneeWidthsDb[static_cast<size_t>(ratioIndex)];
         const float kneeStart = threshold - width * 0.5f;
         if (inputLevelDb <= kneeStart) return 0.0f;
         // At the clockwise Input stop the installed unit stops adding reduction
@@ -1531,15 +2032,61 @@ private:
         // 8:1, 12:1, and 20:1. All-buttons reaches it at the 4:1 coordinate.
         // Holding the detector coordinate, rather than the computed reduction,
         // leaves the knee and every previously fitted row below +38.7 dB intact.
-        constexpr std::array<float, 5> maximumDetectorLevelsDb{{
-            38.72f, 38.85f, 39.00f, 39.09f, 38.23f}};
         inputLevelDb = std::min(
             inputLevelDb,
-            maximumDetectorLevelsDb[static_cast<size_t>(ratioIndex)]);
+            kFetMaximumDetectorLevelsDb[static_cast<size_t>(ratioIndex)]);
         if (inputLevelDb >= threshold + width * 0.5f)
             return slope * (inputLevelDb - threshold);
         const float position = inputLevelDb - kneeStart;
         return slope * position * position / (2.0f * width);
+    }
+
+    // The reduction at fetReferenceReductionDb's plateau: the most the law
+    // gives at this ratio and threshold.
+    static float fetStaticMaximumReductionDb(int ratioIndex,
+                                             float thresholdControlDb) noexcept
+    {
+        const size_t r = static_cast<size_t>(std::clamp(ratioIndex, 0, 4));
+        return kFetReductionSlopes[r] * (kFetMaximumDetectorLevelsDb[r]
+            - (kFetMeasuredThresholdsDb[r] + thresholdControlDb + 10.0f));
+    }
+
+    // Inverse of fetReferenceReductionDb on the output side (candidate C6):
+    // the driven OUTPUT level at which the law settles with `reductionDb`, and
+    // its slope in dB per dB of reduction. Past the detector-domain plateau the
+    // law adds no reduction, so the level rises steeply there instead of
+    // defining one. `plateau` = false leaves that out: the feedback loop then
+    // limits the reduction it applies instead (fbFloorOnApplied).
+    static float fetStaticOutputLevelDb(float reductionDb, int ratioIndex,
+                                        float thresholdControlDb,
+                                        float& slope,
+                                        bool plateau = true) noexcept
+    {
+        const size_t r = static_cast<size_t>(std::clamp(ratioIndex, 0, 4));
+        const float s = kFetReductionSlopes[r];
+        const float threshold = kFetMeasuredThresholdsDb[r]
+            + thresholdControlDb + 10.0f;
+        const float width = kFetKneeWidthsDb[r];
+        const float kneeStart = threshold - width * 0.5f;
+        const float maximumReduction
+            = s * (kFetMaximumDetectorLevelsDb[r] - threshold);
+        constexpr float plateauSlope = 100.0f;
+        if (plateau && reductionDb >= maximumReduction)
+        {
+            slope = plateauSlope;
+            return kFetMaximumDetectorLevelsDb[r] - maximumReduction
+                + plateauSlope * (reductionDb - maximumReduction);
+        }
+        if (reductionDb >= s * width * 0.5f)
+        {
+            slope = 1.0f / s - 1.0f;
+            return threshold + reductionDb * slope;
+        }
+        // Knee: reduction = s p^2 / (2 width), p the input's distance into it.
+        const float position = std::sqrt(
+            2.0f * width * std::max(reductionDb, 1.0e-9f) / s);
+        slope = width / (s * position) - 1.0f;
+        return kneeStart + position - std::max(reductionDb, 0.0f);
     }
 
     static float fetReferenceKneeOnsetDb(float inputLevelDb,
@@ -1709,6 +2256,22 @@ private:
         return memoryDb.back();
     }
 
+    static float fetRatioAttackScale(int ratioIndex) noexcept
+    {
+        return ratioIndex == 0 ? 1.0f
+            : ratioIndex == 1 ? 0.65f
+            : ratioIndex == 2 ? 0.45f
+            : ratioIndex == 3 ? 0.25f : 0.90f;
+    }
+
+    static float fetRatioReleaseScale(int ratioIndex) noexcept
+    {
+        return ratioIndex == 0 ? 1.0f
+            : ratioIndex == 1 ? 0.875f
+            : ratioIndex == 2 ? 0.842f
+            : ratioIndex == 3 ? 0.762f : 1.0f;
+    }
+
     static float fetAttackPosition(float legacyMilliseconds) noexcept
     {
         // Invert the existing descriptor's 0.3 skew to recover the host knob
@@ -1770,12 +2333,13 @@ private:
     }
 
     static float fetReleaseExposureScale(float exposureSeconds,
-                                         float maximumGrDb) noexcept
+                                         float maximumGrDb,
+                                         const FetDynamicsParams& dyn) noexcept
     {
         constexpr std::array<float, 4> exposures{{0.01f, 0.10f, 1.0f, 5.0f}};
-        constexpr std::array<float, 4> lowDrive{{0.42f, 0.46f, 0.65f, 0.80f}};
-        constexpr std::array<float, 4> midDrive{{0.51f, 0.56f, 0.82f, 1.00f}};
-        constexpr std::array<float, 4> highDrive{{0.10f, 0.70f, 1.00f, 1.24f}};
+        const std::array<float, 4>& lowDrive = dyn.exposureLowDrive;
+        const std::array<float, 4>& midDrive = dyn.exposureMidDrive;
+        const std::array<float, 4>& highDrive = dyn.exposureHighDrive;
         const auto interpolateExposure = [&exposures, exposureSeconds](
             const std::array<float, 4>& values) noexcept {
             if (exposureSeconds <= exposures.front()) return values.front();
@@ -2277,12 +2841,20 @@ private:
         // +.03/-.12/-.10/-.03 dB where a post-colour shelf predicts
         // +.12/+.30/+.51/+.72 (opto-shelf-placement-20260917). The detector
         // tap stays on the unshelved input.
-        const float audio = optoShelf[ch].process(input);
+        // What the cell works on: the input behind the first sub-audio
+        // high-pass when that sits ahead of the cell (kOptoPreHighPassAhead).
+        const float cellInput = kOptoPreHighPassAhead
+            ? optoPreHighPass[ch].process(input) : input;
+        const float audio = optoShelf[ch].process(cellInput);
         // `gain` is the physical cell gain applied to this sample. Colour is
         // added later as a residual with no fundamental term, so the static
         // law no longer has to anticipate or invert a colour-stage level shift.
         const float appliedGain = optoCell.gain(ch);
-        const float compressed = audio * appliedGain;
+        // The cell's input element takes its term off the audio ahead of the
+        // gain (zero while the element is off).
+        const float compressed = (audio - optoCell.elementTerm(
+            ch, cellInput, appliedGain,
+            p.optoPeakReduction.load(std::memory_order_relaxed))) * appliedGain;
         const bool limit = p.optoLimit.load(std::memory_order_relaxed);
         // Side-chain selection, level estimator, static law and cell
         // populations are OptoCell (MultiCompOptoCell.hpp). It advances this
@@ -2460,9 +3032,10 @@ private:
             d.meterGainDelay.process(1.0f, stageDelay);
             return 0.0f;
         }
-        // The native sub-audio high-passes bracket the output nonlinearity
-        // (MultiCompOptoShelf.hpp); the post high-pass removes the DC of the
-        // curve's asymmetry, as in native.
+        // The native sub-audio high-passes bracket the cell and the output
+        // nonlinearity (MultiCompOptoShelf.hpp: the first sits ahead of the
+        // cell); the post high-pass removes the DC of the curve's asymmetry,
+        // as in native.
         //
         // Cell ripple on the audio branch.  The cell's gain carries the
         // light's ripple at twice the tone frequency; its odd harmonics fall
@@ -2549,8 +3122,9 @@ private:
             * (rippleTerm * audio - d.rippleFundamentalMean);
         rippleTerm -= d.rippleFundamentalMean
             / std::max(d.audioPowerMean, 1.0e-12f) * audio;
-        const float out = optoPreHighPass[ch].process(
-            (compressed + rippleTerm + cellHarmonics) * makeup);
+        const float cellOutput = (compressed + rippleTerm + cellHarmonics) * makeup;
+        const float out = kOptoPreHighPassAhead
+            ? cellOutput : optoPreHighPass[ch].process(cellOutput);
         // Static, memoryless output stage (MultiCompOptoOutputStage.hpp),
         // fitted to the reference's PR 0 H1-H7 over every Gain's drive range.
         // It replaces the linear-to-0.7 segmented curve plus the G3 quadratic:
@@ -2814,6 +3388,382 @@ private:
         return gainLawOutput;
     }
 
+    // fbTailKneeDb: the control value of a reduction, the inverse of the law
+    // F(v) = v^2 / (4 knee) below v = 2 knee, v - knee above.
+    static float fetTailControl(float reductionDb, float knee) noexcept
+    {
+        const float r = std::max(reductionDb, 0.0f);
+        return r < knee ? 2.0f * std::sqrt(knee * r) : r + knee;
+    }
+
+    // What a tail population with control value `tailControl` adds on top of
+    // `rest` dB of reduction, F(Finv(rest) + tailControl) - rest; `restSlope`
+    // is its slope in the rest and `lawSlope` the law's own at that point.
+    static float fetTailApplied(float rest, float tailControl, float knee,
+                                float& restSlope, float& lawSlope) noexcept
+    {
+        const float r = std::max(rest, 0.0f);
+        const float vr = r < knee ? 2.0f * std::sqrt(knee * r) : r + knee;
+        const float v = vr + tailControl;
+        lawSlope = v < 2.0f * knee ? v / (2.0f * knee) : 1.0f;
+        // d v / d reduction is sqrt(knee / reduction) below the knee, unbounded
+        // at zero; the solver's coordinate (the square root of the charge)
+        // keeps the product finite, and the floor only bounds a Newton slope.
+        const float restInverse = r < knee
+            ? std::sqrt(knee / std::max(r, 1.0e-4f)) : 1.0f;
+        restSlope = lawSlope * restInverse - 1.0f;
+        return std::max(0.0f,
+            (v < 2.0f * knee ? v * v / (4.0f * knee) : v - knee) - r);
+    }
+
+    // fbTailKneeDb as used: 0 (off) unless it is a positive, finite number
+    // below 60 dB (a lab value that is not lands on off).
+    float fetTailKneeDb() const noexcept
+    {
+        const float knee = fetDynamics.fbTailKneeDb;
+        return knee > 0.0f && knee < 60.0f ? knee : 0.0f;
+    }
+
+    // What the tail population adds to the reduction right now: its own
+    // reading, or with fbTailKneeDb what that reading adds on the rest.
+    float fetTailAppliedNow(const FETState& d) const noexcept
+    {
+        const float tail = static_cast<float>(d.slowTailGrDb);
+        const float knee = fetTailKneeDb();
+        float restSlope = 0.0f, lawSlope = 0.0f;
+        return knee > 0.0f && tail > 0.0f
+            ? fetTailApplied(d.fastGrDb + d.slowGrDb,
+                             fetTailControl(tail, knee), knee,
+                             restSlope, lawSlope)
+            : tail;
+    }
+
+    // Candidate C6: one implicit step of the feedback gain computer (see
+    // kFetDynamicsDefaults). `magnitude` is the rectified driven signal BEFORE
+    // the gain; the output's is that times the gain being solved for. The
+    // charge lives in fastGrDb and the slow populations in slowGrDb and
+    // slowTailGrDb, all in dB of reduction (slowTailGrDb is the tail's own
+    // reading: with fbTailKneeDb it adds fetTailAppliedNow(), not that).
+    void advanceFetFeedback(FETState& d, float magnitude, int ratioIndex,
+                            float thresholdControlDb, float attackPosition,
+                            float releasePosition, float transientFactor,
+                            float sr) const noexcept
+    {
+        constexpr float dbToNeper = 0.11512925f;
+        constexpr float decade = 2.30258509f;
+        const float attackOffset = attackPosition - 0.5f;
+        const float tailDb = static_cast<float>(d.slowTailGrDb);
+        // fbTailKneeDb: the tail's own reading against what it adds.
+        const float kneeDb = fetTailKneeDb();
+        const bool kneeApplied = kneeDb > 0.0f && tailDb > 0.0f;
+        const float tailControl = kneeApplied
+            ? fetTailControl(tailDb, kneeDb) : 0.0f;
+        float tailAppliedDb = tailDb;
+        if (kneeApplied)
+        {
+            float restSlope = 0.0f, lawSlope = 0.0f;
+            tailAppliedDb = fetTailApplied(d.fastGrDb + d.slowGrDb, tailControl,
+                                           kneeDb, restSlope, lawSlope);
+        }
+        // The Release pot's dead travel at the fast end (fbReleaseTaperEnd,
+        // fbReleaseTaperCurve): above the nominal position the remaining
+        // travel is compressed onto the span up to the taper's end, so the
+        // knob laws below keep their values at and below the nominal position
+        // and at 1.
+        constexpr float nominalRelease = 0.66595459f;
+        const float releaseTravel = fetDynamics.fbReleaseTaperEnd < 1.0f
+                && fetDynamics.fbReleaseTaperCurve > 0.0f
+                && !(fetDynamics.fbReleasePotFixed > 0.0f)
+                && releasePosition > nominalRelease
+            ? nominalRelease + (1.0f - nominalRelease) * std::pow(
+                std::min(1.0f, (releasePosition - nominalRelease)
+                    / std::max(fetDynamics.fbReleaseTaperEnd - nominalRelease,
+                               1.0e-3f)),
+                fetDynamics.fbReleaseTaperCurve)
+            : releasePosition;
+        const float releaseOffset = releaseTravel - 0.5f;
+        const float attackSeconds = fetDynamics.fbAttackSeconds
+            * std::exp(decade * (fetDynamics.fbAttackCurve * attackOffset
+                                    * attackOffset
+                                 - fetDynamics.fbAttackSlope * attackOffset))
+            * std::pow(fetRatioAttackScale(ratioIndex),
+                       fetDynamics.fbRatioExponent);
+        const float ratioSlope
+            = kFetReductionSlopes[static_cast<size_t>(std::clamp(ratioIndex, 0, 4))];
+        // The Release knob's factor, in decades relative to its value at 0.5:
+        // the linear pot with its fixed resistance (fbReleasePotFixed), or the
+        // quadratic it replaces.
+        float releaseKnobDecades = fetDynamics.fbReleaseCurve
+            * releaseOffset * releaseOffset
+            - fetDynamics.fbReleaseSlope * releaseOffset;
+        float releaseFastEnd = std::max(0.0f, 2.0f * releaseOffset);
+        if (fetDynamics.fbReleasePotFixed > 0.0f)
+        {
+            const float potEnd = fetDynamics.fbReleasePotEnd;
+            // Floors first, so a non-finite lab value lands on them.
+            const float potSpan = std::max(
+                1.0e-3f, potEnd - fetDynamics.fbReleasePotStart);
+            const float travel = std::min(1.0f, std::max(
+                0.0f, (potEnd - releasePosition) / potSpan));
+            const float travelAtHalf = std::min(1.0f, std::max(
+                0.0f, (potEnd - 0.5f) / potSpan));
+            releaseKnobDecades = std::log10(
+                (fetDynamics.fbReleasePotFixed + travel)
+                / (fetDynamics.fbReleasePotFixed + travelAtHalf));
+            // Past the pot's end nothing moves, so the depth law's fast end
+            // follows the travel as well: 0 at Release 0.5, 1 at the end.
+            releaseFastEnd = std::max(
+                0.0f, 1.0f - travel / std::max(travelAtHalf, 1.0e-3f));
+        }
+        const float releaseDepthDb = (fetDynamics.fbReleaseDepthDb
+                + fetDynamics.fbReleaseDepthFastDb
+                    * releaseFastEnd * releaseFastEnd)
+            * std::pow(ratioSlope / (1.0f - ratioSlope)
+                           * (1.0f - kFetReductionSlopes[0]) / kFetReductionSlopes[0],
+                       fetDynamics.fbReleaseDepthRatioExponent);
+        const float releaseSeconds = fetDynamics.fbReleaseSeconds
+            * std::exp(decade * releaseKnobDecades)
+            * fetRatioReleaseScale(ratioIndex)
+            * (1.0f + (d.fastGrDb + d.slowGrDb + tailAppliedDb)
+                / std::max(releaseDepthDb, 1.0f));
+        // dB charged per sample per unit of relative overshoot.
+        const float fullCharge = 1.0f / (std::max(attackSeconds, 1.0e-7f) * sr);
+        // The lag pole (fbAttackLagRatio): this sample's overshoot enters with
+        // weight lagStep, the lagged current of the last sample carries the rest.
+        const float lagStep = fetDynamics.fbAttackLagRatio > 0.0f
+            ? 1.0f - std::exp(-1.0f / (fetDynamics.fbAttackLagRatio
+                * std::exp(-decade * fetDynamics.fbAttackLagSlope * attackOffset)
+                * std::max(attackSeconds, 1.0e-7f) * sr))
+            : 1.0f;
+        const float charge = fullCharge * lagStep;
+        const float leak = std::exp(
+            -1.0f / (std::max(releaseSeconds, 1.0e-4f) * sr));
+        // A sine settles with its peaks a little above the threshold: the
+        // tips, +/- phi around each peak, charge what the leak removes over
+        // the cycle, (2 / pi) (tan phi - phi) = c (1 - leak) / fullCharge. The
+        // threshold is lowered by that overshoot, 1 / cos phi, so the settled
+        // loop sits on the static law, which was measured with sines.
+        const float tipBalance = 1.57079633f * (1.0f - leak) / fullCharge;
+        const float slowShare = std::max(fetDynamics.fbSlowShare, 0.0f);
+        const float slowCeilingDb = std::max(fetDynamics.fbSlowCeilingDb, 1.0e-3f);
+        // The tail population's settled size, scaled by the ratio coordinate
+        // the release depth uses (1 at 4:1).
+        const float ratioCoordinate = ratioSlope / (1.0f - ratioSlope)
+            * (1.0f - kFetReductionSlopes[0]) / kFetReductionSlopes[0];
+        const float tailShare = std::max(fetDynamics.fbTailShare, 0.0f)
+            * (fetDynamics.fbTailRatioExponent != 0.0f
+                ? std::pow(ratioCoordinate, fetDynamics.fbTailRatioExponent)
+                : 1.0f);
+        const float tailCurve = std::max(fetDynamics.fbTailCurve, 0.0f) * 0.05f;
+        const auto settledTail = [tailShare, tailCurve](
+            float c, float& slope) noexcept {
+            slope = tailShare * (1.0f + 2.0f * tailCurve * c);
+            return tailShare * c * (1.0f + tailCurve * c);
+        };
+        const auto settledSlow = [slowShare, slowCeilingDb, &settledTail](
+            float c, float& slope) noexcept {
+            const float shape = std::tanh(slowShare * c / slowCeilingDb);
+            float tailSlope = 0.0f;
+            const float tail = settledTail(c, tailSlope);
+            slope = slowShare * (1.0f - shape * shape) + tailSlope;
+            return slowCeilingDb * shape + tail;
+        };
+        const float attackLoadDb = fetDynamics.fbAttackLoadDb
+            * std::max(0.0f, 2.0f * attackOffset);
+        const float levelDb = gainToDecibels(std::max(magnitude, 1.0e-12f));
+        const float slow = d.slowGrDb + tailDb;
+        // The lagged current of the last sample lands on top of the leak; the
+        // sum keeps the loop's 60 dB bound.
+        constexpr float maximumChargeDb = 60.0f;
+        const float released = std::min(maximumChargeDb, d.fastGrDb * leak
+            + fullCharge * (1.0f - lagStep) * d.feedbackLag);
+        // Turn-on (fbTurnOnDb, fbTurnOnBiasDb): the share of the overshoot that
+        // charges, the square root of the present reduction plus the Attack
+        // position's bias over the turn-on width, 1 above it. The floor keeps
+        // it off zero, so the charge leaves rest on the branch that rises
+        // (linearly in u) instead of staying at the root u = 0.
+        const bool floorOnApplied = fetDynamics.fbFloorOnApplied > 0.5f;
+        const float maximumReductionDb = fetStaticMaximumReductionDb(
+            ratioIndex, thresholdControlDb);
+        const float turnOnDb = fetDynamics.fbTurnOnDb;
+        const float turnOnBiasDb = 1.0e-3f + std::max(0.0f,
+            fetDynamics.fbTurnOnBiasDb) * attackPosition * attackPosition;
+        // Relative overshoot of the output above the threshold at charge c,
+        // and its derivative with respect to u = sqrt(c) (the tip term's own
+        // derivative is left to the bracket; near rest under the turn-on it is
+        // not small, and the bracket absorbs it). The static law's knee
+        // starts with infinite slope in c and a finite one in u. `weight` is
+        // the turn-on share at that charge and `weightSlope` its derivative.
+        const auto overshoot = [&](float u, float& derivative, float& weight,
+                                   float& weightSlope) noexcept {
+            const float c = u * u;
+            // What the slow populations add at this charge, and how fast
+            // that grows with it (fbTailKneeDb; otherwise their states).
+            float slowNow = slow, appliedSlope = 0.0f;
+            if (kneeApplied)
+            {
+                float lawSlope = 0.0f;
+                slowNow = d.slowGrDb + fetTailApplied(
+                    c + d.slowGrDb, tailControl, kneeDb, appliedSlope, lawSlope);
+            }
+            weight = 1.0f;
+            weightSlope = 0.0f;
+            if (turnOnDb > 0.0f)
+            {
+                const float position = (c + slowNow + turnOnBiasDb) / turnOnDb;
+                if (position < 1.0f)
+                {
+                    weight = std::sqrt(position);
+                    weightSlope = u * (1.0f + appliedSlope)
+                        / (turnOnDb * weight);
+                }
+            }
+            float slowSlope = 0.0f, levelSlope = 0.0f;
+            float settledSlowDb = settledSlow(c, slowSlope);
+            if (kneeDb > 0.0f && tailShare > 0.0f)
+            {
+                // The settled tail, a control value here, adds through the
+                // same law.
+                float tailSlope = 0.0f, restSlope = 0.0f, lawSlope = 0.0f;
+                const float tail = settledTail(c, tailSlope);
+                const float population = settledSlowDb - tail;
+                const float populationSlope = slowSlope - tailSlope;
+                settledSlowDb = population + fetTailApplied(
+                    c + population, tail, kneeDb, restSlope, lawSlope);
+                slowSlope = populationSlope
+                    + restSlope * (1.0f + populationSlope)
+                    + lawSlope * tailSlope;
+            }
+            const float settledReductionDb = c + settledSlowDb;
+            float settledLevelDb = attackLoadDb + fetStaticOutputLevelDb(
+                settledReductionDb, ratioIndex, thresholdControlDb, levelSlope,
+                !floorOnApplied);
+            // The gain element's floor belongs to the reduction applied,
+            // not to the settled one the threshold is read at.
+            float floorSlope = 0.0f;
+            if (floorOnApplied && c + slowNow > maximumReductionDb)
+            {
+                floorSlope = 100.0f;
+                settledLevelDb += floorSlope * (c + slowNow - maximumReductionDb);
+            }
+            // Series inverse of tan phi - phi; held where it stops rising.
+            // The tips charge through the turn-on share as well.
+            const float tip = std::min(
+                std::cbrt(3.0f * tipBalance * c / weight), 1.5f);
+            const float phase = tip - 0.13333333f * tip * tip * tip;
+            const float ratio = std::exp(dbToNeper
+                * (levelDb - (c + slowNow) / transientFactor - settledLevelDb))
+                / std::cos(phase);
+            derivative = -2.0f * u * ratio * dbToNeper
+                * ((1.0f + appliedSlope) / transientFactor
+                   + (1.0f + slowSlope) * levelSlope
+                   + floorSlope * (1.0f + appliedSlope));
+            return ratio - 1.0f;
+        };
+        float u = std::sqrt(std::max(released, 0.0f));
+        float slopeAtU = 0.0f, weightAtU = 1.0f, weightSlopeAtU = 0.0f;
+        const float initial = overshoot(u, slopeAtU, weightAtU, weightSlopeAtU);
+        float solvedOvershoot = initial;
+        float solvedWeight = weightAtU;
+        if (initial > 0.0f)
+        {
+            // h(u) = u^2 - released - charge * weight(u) * max(0, overshoot(u))
+            // has one root between the released charge and the explicit step
+            // at full weight. Under the turn-on it can fall before it rises,
+            // but wherever it is positive it rises (there charge * weight *
+            // overshoot <= c - released, which bounds the weight's own term
+            // below u). Newton, bisecting whenever a step leaves the bracket
+            // or stops halving.
+            float low = u;
+            float high = std::sqrt(std::min(
+                released + charge * initial, maximumChargeDb));
+            float value = -charge * weightAtU * initial;
+            float slope = 2.0f * u - charge
+                * (weightAtU * slopeAtU + weightSlopeAtU * initial);
+            float previousStep = high - low;
+            for (int iteration = 0; iteration < 16 && high - low > 1.0e-6f;
+                 ++iteration)
+            {
+                float next = slope > 0.0f ? u - value / slope : high + 1.0f;
+                if (!(next > low && next < high)
+                    || std::abs(next - u) > 0.5f * previousStep)
+                    next = 0.5f * (low + high);
+                previousStep = std::abs(next - u);
+                u = next;
+                const float over = overshoot(
+                    u, slopeAtU, weightAtU, weightSlopeAtU);
+                solvedOvershoot = over;
+                solvedWeight = weightAtU;
+                value = u * u - released
+                    - charge * weightAtU * std::max(over, 0.0f);
+                slope = 2.0f * u - (over > 0.0f
+                    ? charge * (weightAtU * slopeAtU + weightSlopeAtU * over)
+                    : 0.0f);
+                if (std::abs(value) < 1.0e-5f) break;
+                if (value < 0.0f) low = u; else high = u;
+            }
+        }
+        const float charged = u * u;
+        // The lag pole's own state, advanced from the overshoot at the solved
+        // charge. Recovering it as (charged - released) / fullCharge instead
+        // quantises a ~1e-5 dB increment to the capacitor's float spacing: the
+        // current then never decays and the release stalls at high rates.
+        d.feedbackLag += lagStep
+            * (solvedWeight * std::max(solvedOvershoot, 0.0f) - d.feedbackLag);
+        if (d.feedbackLag < 1.0e-30f) d.feedbackLag = 0.0f;
+        d.fastGrDb = charged;
+        d.intermediateGrDb = 0.0f;
+        float slowApplied = slow;
+        if (kneeApplied)
+        {
+            float restSlope = 0.0f, lawSlope = 0.0f;
+            slowApplied = d.slowGrDb + fetTailApplied(
+                charged + d.slowGrDb, tailControl, kneeDb, restSlope, lawSlope);
+        }
+        d.envelope = decibelsToGain(-(charged + slowApplied) / transientFactor);
+        float unusedSlope = 0.0f;
+        // The tail population follows its own settled size in its own times,
+        // whatever the Release knob says; the other one as before.
+        const float tailTarget = settledTail(charged, unusedSlope);
+        if (tailShare > 0.0f || d.slowTailGrDb > 0.0)
+        {
+            // The floor comes first so that a non-finite lab value lands on it.
+            // With fbTailKneeDb the target is a control value and so is the
+            // state that follows it; the reading F(v) is what is kept.
+            const double tailControlNow = static_cast<double>(tailControl);
+            const bool tailCharging = kneeDb > 0.0f
+                ? static_cast<double>(tailTarget) > tailControlNow
+                : tailTarget > tailDb;
+            const double tailSeconds = std::max(1.0e-4f,
+                tailCharging ? fetDynamics.fbTailChargeSeconds
+                             : fetDynamics.fbTailReleaseSeconds);
+            const double tailStep = std::exp(-1.0 / (tailSeconds * sr));
+            if (kneeDb > 0.0f)
+            {
+                const double knee = static_cast<double>(kneeDb);
+                const double held = std::max(d.slowTailGrDb, 0.0);
+                const double target = static_cast<double>(tailTarget);
+                const double state = target + ((held < knee
+                    ? 2.0 * std::sqrt(knee * held) : held + knee) - target)
+                    * tailStep;
+                d.slowTailGrDb = state < 2.0 * knee
+                    ? state * state / (4.0 * knee) : state - knee;
+            }
+            else
+                d.slowTailGrDb = tailTarget
+                    + (d.slowTailGrDb - tailTarget) * tailStep;
+            if (d.slowTailGrDb < 1.0e-30) d.slowTailGrDb = 0.0;
+        }
+        const float slowTarget = settledSlow(charged, unusedSlope) - tailTarget;
+        const float slowSeconds = slowTarget > d.slowGrDb
+            ? fetDynamics.fbSlowChargeSeconds
+            : fetDynamics.fbSlowReleaseRatio * releaseSeconds
+                * std::exp(decade * releaseKnobDecades
+                    * (fetDynamics.fbSlowReleaseKnobExponent - 1.0f));
+        d.slowGrDb = slowTarget + (d.slowGrDb - slowTarget)
+            * std::exp(-1.0f / (std::max(slowSeconds, 1.0e-4f) * sr));
+    }
+
     float processFET(float input, int ch, float sidechain,
                      const MultiCompParameterState& p, bool studio,
                      bool external, bool linked) noexcept
@@ -2837,7 +3787,21 @@ private:
         const int ratioIndex = std::clamp(p.fetRatio.load(std::memory_order_relaxed), 0, 4);
         const float ratios[5] = {studio ? 4.0f : 3.85f, studio ? 8.0f : 7.40f, studio ? 12.0f : 12.50f, studio ? 20.0f : 21.50f, studio ? 20.0f : 21.50f};
         const float ratio = ratios[ratioIndex];
-        const float compressed = gained * d.envelope;
+        // Candidate C6 (see kFetDynamicsDefaults); All-buttons keeps its arm.
+        const bool feedback = !studio && ratioIndex != 4
+            && fetDynamics.fbOn > 0.5f;
+        // The low-frequency section ahead of the gain element (lfAheadHz).
+        float gainedAhead = gained;
+        if (fetLfAheadOn && !studio)
+        {
+            const auto& c = fetLfAheadHighPass;
+            const double x = gained;
+            const double y = c[0] * x + d.lfAheadZ1;
+            d.lfAheadZ1 = c[1] * x - c[3] * y + d.lfAheadZ2;
+            d.lfAheadZ2 = c[2] * x - c[4] * y;
+            gainedAhead = static_cast<float>(y);
+        }
+        const float compressed = gainedAhead * d.envelope;
         float saturated = compressed;
         if (!studio)
         {
@@ -3022,6 +3986,7 @@ private:
         float detect = 0.0f;
         float kneeDetect = 0.0f;
         float vintageInstantLevel = 0.0f;
+        float feedbackMagnitude = 0.0f;
         bool vintageProgrammeActive = false;
         bool vintageProgrammeSupported = false;
         if (!studio)
@@ -3036,11 +4001,11 @@ private:
             // an active vintage stereo link consumes the sidechain prepared by
             // MultiCompDSP; using it unconditionally erased the first-cycle
             // overshoot by giving the detector unintended lookahead.
-            const float instantLevel = std::abs(
-                (external || linked) ? sidechain * inputGain
-                                     : transformedInput * inputGain);
+            const float detectorSignal = (external || linked)
+                ? sidechain * inputGain : transformedInput * inputGain;
+            const float instantLevel = std::abs(detectorSignal);
             vintageInstantLevel = instantLevel;
-            vintageProgrammeActive = instantLevel > 0.03f;
+            vintageProgrammeActive = instantLevel > fetDynamics.programmeActiveLevel;
             // The detector must reach the same upper-knob floor as the gain
             // cell; retaining 40 ms here held even a 25 ms phrase after it ended.
             const float peakReleaseSeconds = 0.040f + (0.004f - 0.040f)
@@ -3048,11 +4013,73 @@ private:
                     p.fetRelease.load(std::memory_order_relaxed)) - 1.25f, 0.0f, 1.0f)
                 * fetProgrammeReleaseDepth(d.programmeMaximumGrDb);
             const float peakReleaseCoeff = std::exp(-1.0f / (peakReleaseSeconds * sr));
-            if (instantLevel > d.peak)
-                d.peak = instantLevel;
+            if (feedback)
+            {
+                // Candidate C6: the loop below charges from this rectified
+                // signal times its own gain; no peak cell.
+                // It rectifies the audio path itself through the side
+                // chain's high-pass (fbTapHighPassHz: first order, a few
+                // hertz; at 0 a copy of the output's C4 stage, as before).
+                // The gain is slow against that corner, so the filter is
+                // applied ahead of it. The reference's gain ripple on
+                // 15-30 Hz sines sits at the input's phase, which puts its
+                // tap ahead of the stage that gives the output its
+                // low-frequency lead. The transformer-shaped copy the
+                // feed-forward detector reads loses the lows a kick drives
+                // the loop with. Full-wave, and OR-ed with the linked
+                // partner's (zero when unlinked or mono).
+                const auto& c = fetTapHighPass;
+                const auto highPass = [&c](double x, double& z1, double& z2) noexcept {
+                    const double y = c[0] * x + z1;
+                    z1 = c[1] * x - c[3] * y + z2;
+                    z2 = c[2] * x - c[4] * y;
+                    return y;
+                };
+                float& partnerSample = fetLinkPartner[static_cast<size_t>(ch)];
+                const double own = highPass(
+                    external ? sidechain * inputGain : gained,
+                    d.feedbackHpZ1, d.feedbackHpZ2);
+                const double partner = highPass(
+                    partnerSample * inputGain, d.partnerHpZ1, d.partnerHpZ2);
+                partnerSample = 0.0f;
+                feedbackMagnitude = static_cast<float>(
+                    std::max(std::abs(own), std::abs(partner)));
+                detect = feedbackMagnitude;
+            }
+            else if (fetDynamics.detChargeOn > 0.5f)
+            {
+                // Candidate C2: a charged detector. Instant capture reads dense
+                // broadband peaks that a finite-attack cap integrates over.
+                const float position = fetAttackPosition(
+                    p.fetAttack.load(std::memory_order_relaxed));
+                const float chargeSeconds = fetDynamics.detAttackSlowSeconds
+                    * std::pow(fetDynamics.detAttackFastSeconds
+                        / fetDynamics.detAttackSlowSeconds, position)
+                    * std::pow(fetRatioAttackScale(ratioIndex),
+                               fetDynamics.detRatioExponent);
+                float chargeLevel = instantLevel;
+                if (fetDynamics.detAnalyticOn > 0.5f)
+                {
+                    const double a = runAllPassChain(detectorSignal, fetAnalyticA,
+                                                      d.analyticAx, d.analyticAy);
+                    const double b = runAllPassChain(detectorSignal, fetAnalyticB,
+                                                     d.analyticBx, d.analyticBy);
+                    chargeLevel = static_cast<float>(std::sqrt(a * a + b * b));
+                }
+                const float coefficient = chargeLevel > d.peak
+                    ? std::exp(-1.0f / (chargeSeconds * sr))
+                    : std::exp(-1.0f / (fetDynamics.detReleaseSeconds * sr));
+                d.peak += (1.0f - coefficient) * (chargeLevel - d.peak);
+                detect = d.peak * decibelsToGain(fetDynamics.detGainDb);
+            }
             else
-                d.peak += (1.0f - peakReleaseCoeff) * (instantLevel - d.peak);
-            detect = d.peak;
+            {
+                if (instantLevel > d.peak)
+                    d.peak = instantLevel;
+                else
+                    d.peak += (1.0f - peakReleaseCoeff) * (instantLevel - d.peak);
+                detect = d.peak;
+            }
             const float kneeInstantLevel = std::abs(
                 (external || linked) ? sidechain * inputGain
                                      : input * inputGain);
@@ -3109,7 +4136,11 @@ private:
         float reduction = 0.0f;
         float kneeTargetReduction = 0.0f;
         float kneeHandoff = 1.0f;
-        if (!studio)
+        if (feedback)
+        {
+            // Candidate C6: the reduction comes from the loop further down.
+        }
+        else if (!studio)
         {
             const float detectorLevelDb = gainToDecibels(
                 std::max(detect, 1.0e-12f));
@@ -3192,8 +4223,31 @@ private:
         // Studio FET allows the JUCE expansion bump to survive below threshold.
         const float minimumReduction = !studio && ratioIndex == 4 ? -1.3f : -1.0f;
         reduction = std::clamp(reduction, minimumReduction, 60.0f);
-        if (!studio)
+        if (feedback)
         {
+            const float transientAmount
+                = p.fetTransient.load(std::memory_order_relaxed);
+            const float transientFactor = transientAmount > 0.01f
+                ? std::max(1.0f, transientShaper.process(input, ch, transientAmount))
+                : 1.0f;
+            advanceFetFeedback(
+                d, feedbackMagnitude, ratioIndex, thresholdControlDb,
+                fetAttackPosition(p.fetAttack.load(std::memory_order_relaxed)),
+                fetReleasePosition(p.fetRelease.load(std::memory_order_relaxed)),
+                transientFactor, sr);
+            d.recoveryGain = 1.0f;
+        }
+        else if (!studio)
+        {
+            // The loop's tail population has no counterpart in this arm. When
+            // the ratio leaves 4-20 with some of it held, this arm's slow
+            // population takes it over and releases it; dropped, the gain
+            // would step by that many dB, and kept, it would come back stale.
+            if (d.slowTailGrDb != 0.0)
+            {
+                d.slowGrDb += fetTailAppliedNow(d);
+                d.slowTailGrDb = 0.0;
+            }
             // The installed unit charges most of its reduction in the FET cell,
             // then adds a measured 2.2--3.4 dB programme-memory population with
             // a roughly 0.9 s time constant. Keeping both populations in dB
@@ -3212,7 +4266,8 @@ private:
                 : ratioIndex == 3 ? -1.20f : 1.90f;
             const float slowTarget = basePositiveReduction > 0.0f
                 ? std::min(basePositiveReduction,
-                    1.4f + 0.058f * basePositiveReduction
+                    fetDynamics.slowTargetBaseDb
+                        + fetDynamics.slowTargetSlope * basePositiveReduction
                         + ratioSlowOffset
                         + 0.8f * attackPosition2 * attackPosition2)
                 : 0.0f;
@@ -3238,10 +4293,7 @@ private:
                     intermediateTargetCeilingDb * intermediateDepth);
             const float longSlowTarget = ratioIndex == 4
                 ? slowTarget : slowTarget - intermediateTarget;
-            const float ratioAttackScale = ratioIndex == 0 ? 1.0f
-                : ratioIndex == 1 ? 0.65f
-                : ratioIndex == 2 ? 0.45f
-                : ratioIndex == 3 ? 0.25f : 0.90f;
+            const float ratioAttackScale = fetRatioAttackScale(ratioIndex);
             const float baseFastAttackSeconds
                 = (0.000047f - 0.000026f * attackPosition
                     - 0.000008f * attackPosition * attackPosition)
@@ -3307,7 +4359,7 @@ private:
             const float releasePosition = fetReleasePosition(
                 p.fetRelease.load(std::memory_order_relaxed));
             const int programmeSilenceHoldSamples = std::max(
-                1, static_cast<int>(std::lround(0.002f * sr)));
+                1, static_cast<int>(std::lround(fetDynamics.programmeSilenceHoldSeconds * sr)));
             if (vintageProgrammeActive)
                 d.programmeSilentSamples = 0;
             else
@@ -3358,23 +4410,40 @@ private:
                     static_cast<float>(fs));
                 d.recoveryGain = decibelsToGain(assistDb);
             }
-            if (vintageProgrammeSupported)
+            if (fetDynamics.stateLeakOn > 0.5f)
+            {
+                // Candidate C1: programme memory follows the compression
+                // history, not the mere presence of signal.
+                if (positiveReduction > fetDynamics.exposureGateDb)
+                    d.programmeExposureSeconds = std::min(
+                        fetDynamics.programmeExposureCapSeconds,
+                        d.programmeExposureSeconds + 1.0f / sr);
+                else
+                    d.programmeExposureSeconds *= std::exp(
+                        -1.0f / (fetDynamics.exposureDecaySeconds * sr));
+                d.programmeMaximumGrDb = positiveReduction >= d.programmeMaximumGrDb
+                    ? positiveReduction
+                    : positiveReduction
+                        + (d.programmeMaximumGrDb - positiveReduction)
+                            * std::exp(-1.0f / (fetDynamics.maxGrDecaySeconds * sr));
+            }
+            else if (vintageProgrammeSupported)
             {
                 d.programmeExposureSeconds = std::min(
-                    5.0f, d.programmeExposureSeconds + 1.0f / sr);
+                    fetDynamics.programmeExposureCapSeconds,
+                    d.programmeExposureSeconds + 1.0f / sr);
                 d.programmeMaximumGrDb = std::max(
                     d.programmeMaximumGrDb, positiveReduction);
             }
             const float exposureReleaseScale = fetReleaseExposureScale(
                 std::max(d.programmeExposureSeconds, 0.01f),
-                d.programmeMaximumGrDb);
-            const float ratioReleaseScale = ratioIndex == 0 ? 1.0f
-                : ratioIndex == 1 ? 0.875f
-                : ratioIndex == 2 ? 0.842f
-                : ratioIndex == 3 ? 0.762f : 1.0f;
+                d.programmeMaximumGrDb, fetDynamics);
+            const float ratioReleaseScale = fetRatioReleaseScale(ratioIndex);
             const float legacyFastReleaseSeconds
-                = (2.00f - 1.82f * releasePosition
-                    + 0.12f * releasePosition * releasePosition)
+                = (fetDynamics.legacyFastRelease[0]
+                    + fetDynamics.legacyFastRelease[1] * releasePosition
+                    + fetDynamics.legacyFastRelease[2] * releasePosition
+                        * releasePosition)
                     * ratioReleaseScale * exposureReleaseScale;
             const float mappedFastReleaseSeconds
                 = fetProgrammeFastReleaseSeconds(releasePosition)
@@ -3386,8 +4455,10 @@ private:
                         * fetProgrammeReleaseDepth(d.programmeMaximumGrDb);
             const float slowReleaseSeconds = ratioIndex == 4
                 ? 0.020f
-                : (2.00f - 2.17f * releasePosition
-                    + 0.82f * releasePosition * releasePosition)
+                : (fetDynamics.slowRelease[0]
+                    + fetDynamics.slowRelease[1] * releasePosition
+                    + fetDynamics.slowRelease[2] * releasePosition
+                        * releasePosition)
                     * ratioReleaseScale * exposureReleaseScale;
             const auto advance = [sr](float state, float target,
                                       float attackSeconds,
@@ -3501,7 +4572,34 @@ private:
             ? (studio ? 1.12f : 1.17f) : 1.0f;
         d.envelope = std::clamp(d.envelope, 0.001f, maximumEnvelope);
         if (!std::isfinite(d.envelope)) d.envelope = 1.0f;
-        if (!studio && ratioIndex == 0)
+        if (feedback)
+        {
+            // Candidate C6: the 4:1 knee onset as a function of the loop's own
+            // reduction. The settled input level that holds this reduction on
+            // the accepted law is read back, and the measured onset table's
+            // difference there is applied; no raw-input peak cell.
+            d.kneeBaseReductionDb = 0.0f;
+            d.kneeCorrectionDb = 0.0f;
+            if (ratioIndex == 0)
+            {
+                const float reductionDb = d.fastGrDb + d.slowGrDb
+                    + fetTailAppliedNow(d);
+                float unusedSlope = 0.0f;
+                const float settledInputDb = reductionDb
+                    + fetStaticOutputLevelDb(reductionDb, ratioIndex,
+                                             thresholdControlDb, unusedSlope);
+                const float handoff = std::clamp(
+                    settledInputDb - (thresholdControlDb + 10.0f) + 5.0f,
+                    0.0f, 1.0f);
+                d.kneeCorrectionDb = std::clamp(
+                    (reductionDb - fetReferenceKneeOnsetDb(
+                        settledInputDb, thresholdControlDb))
+                        * (1.0f - handoff * handoff * (3.0f - 2.0f * handoff)),
+                    -0.85f, 0.85f);
+            }
+            d.kneeGain = decibelsToGain(d.kneeCorrectionDb);
+        }
+        else if (!studio && ratioIndex == 0)
         {
             const float currentBaseReduction = std::max(
                 0.0f, -gainToDecibels(d.envelope));
@@ -3606,7 +4704,16 @@ private:
             ? 20.0f + std::clamp(grHpf / 20.0f, 0.0f, 1.0f) * 60.0f
             : 5.0f;
         const float hpfAlpha = 1.0f - std::exp(-2.0f * kDuskPi * hpfCutoff / sr);
-        if (!studio) { d.subBassHpState += hpfAlpha * (out - d.subBassHpState); out -= d.subBassHpState; }
+        if (!studio && fetDynamics.lfHpOn > 0.5f)
+        {
+            const auto& c = fetLfHighPass;
+            const double x = out;
+            const double y = c[0] * x + d.lfHpZ1;
+            d.lfHpZ1 = c[1] * x - c[3] * y + d.lfHpZ2;
+            d.lfHpZ2 = c[2] * x - c[4] * y;
+            out = static_cast<float>(y);
+        }
+        else if (!studio) { d.subBassHpState += hpfAlpha * (out - d.subBassHpState); out -= d.subBassHpState; }
         const float outputValue = p.fetOutput.load(std::memory_order_relaxed);
         const float outputGain = decibelsToGain(
             studio ? outputValue : fetOutputGainDb(outputValue));

@@ -1223,6 +1223,11 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
         // Only a linked stereo pair blends toward the linked detector; Dual
         // Mono, Mid-Side and mono keep each channel's own feed.
         const float optoLinkWeight = link ? linkAmount : 0.0f;
+        // OPTO can link inside the cell instead (kOptoLinkAtDriveDefault): the
+        // cell then gets each channel's own detector and the link amount.
+        const bool optoCellLink = link && mode == MultiCompMode::Opto && modes.optoLinksAtDrive();
+        const float optoBlendWeight = optoCellLink ? 0.0f : optoLinkWeight;
+        modes.setOptoLinkWeight(optoCellLink ? optoLinkWeight : 0.0f);
         if (mode == MultiCompMode::Bus && link)
         {
             std::array<float, 4> inputLeftPhases{}, inputRightPhases{};
@@ -1289,6 +1294,10 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
                 || alignedSc0 < nativeSignedMaximum - 1.0e-12f;
             const bool nativeRightUsesLinkedDetector = external
                 || alignedSc1 < nativeSignedMaximum - 1.0e-12f;
+            // Candidate C6 links inside its own loop: each channel gets its
+            // partner's driven sample at the audio's own phase instead of the
+            // signed maximum (see kFetDynamicsDefaults).
+            const bool feedbackLink = modes.fetFeedbackActive(modeParams);
             for (int phase = 0; phase < actualOs; ++phase)
             {
                 const float phaseSc0 = external
@@ -1315,16 +1324,25 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
                 const float rightSidechain = detectorSc1
                     + (fetLinkDetectorGain * signedMaximum - detectorSc1)
                         * linkAmount;
+                if (feedbackLink)
+                {
+                    modes.setFetLinkPartner(0, linkAmount * (external
+                        ? phaseSc1 : inputRightPhases[static_cast<size_t>(phase)]));
+                    modes.setFetLinkPartner(1, linkAmount * (external
+                        ? phaseSc0 : inputLeftPhases[static_cast<size_t>(phase)]));
+                }
                 outputLeftPhases[static_cast<size_t>(phase)] = applyCoreDistortion(
                     modes.process(
                         mode, inputLeftPhases[static_cast<size_t>(phase)], 0,
-                        leftSidechain, modeParams, localBusMix, external, 0.0f,
+                        feedbackLink ? phaseSc0 : leftSidechain,
+                        modeParams, localBusMix, external, 0.0f,
                         nativeLeftUsesLinkedDetector),
                     distortionType, distortionAmount);
                 outputRightPhases[static_cast<size_t>(phase)] = applyCoreDistortion(
                     modes.process(
                         mode, inputRightPhases[static_cast<size_t>(phase)], 1,
-                        rightSidechain, modeParams, localBusMix, external, 0.0f,
+                        feedbackLink ? phaseSc1 : rightSidechain,
+                        modeParams, localBusMix, external, 0.0f,
                         nativeRightUsesLinkedDetector),
                     distortionType, distortionAmount);
             }
@@ -1333,6 +1351,47 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
             previousOversampledSidechain = {{sc0, sc1}};
             previousOptoOwnSidechain = {{sc0, sc1}};
             previousOptoOwnSidechainValid = {{true, true}};
+            continue;
+        }
+        if (optoCellLink)
+        {
+            // The cell ORs the two panel drives sample by sample, so the pair
+            // advances together: channel 0 then channel 1 at every
+            // oversampling phase, each on its own detector.
+            std::array<float, 4> inputLeftPhases{}, inputRightPhases{};
+            std::array<float, 4> outputLeftPhases{}, outputRightPhases{};
+            oversamplers[0].upsampleSample(in[0][i], inputLeftPhases.data());
+            oversamplers[1].upsampleSample(in[1][i], inputRightPhases.data());
+            if (!previousOptoOwnSidechainValid[0] || !previousOptoOwnSidechainValid[1])
+            {
+                previousOptoOwnSidechain = {{sc0, sc1}};
+                previousOptoOwnSidechainValid = {{true, true}};
+            }
+            for (int phase = 0; phase < actualOs; ++phase)
+            {
+                const size_t p = static_cast<size_t>(phase);
+                const float leftDetector = !external ? optoOwnPhases[0][p]
+                    : actualOs == 1 ? sc0 : interpolateOversampledSidechain(
+                        previousOptoOwnSidechain[0], sc0, phase, actualOs);
+                const float rightDetector = !external ? optoOwnPhases[1][p]
+                    : actualOs == 1 ? sc1 : interpolateOversampledSidechain(
+                        previousOptoOwnSidechain[1], sc1, phase, actualOs);
+                outputLeftPhases[p] = applyCoreDistortion(
+                    modes.process(mode, inputLeftPhases[p], 0, sc0, modeParams,
+                                  localBusMix, external, leftDetector, true),
+                    distortionType, distortionAmount);
+                outputRightPhases[p] = applyCoreDistortion(
+                    modes.process(mode, inputRightPhases[p], 1, sc1, modeParams,
+                                  localBusMix, external, rightDetector, true),
+                    distortionType, distortionAmount);
+            }
+            out[0][i] = oversamplers[0].downsampleSample(outputLeftPhases.data());
+            out[1][i] = oversamplers[1].downsampleSample(outputRightPhases.data());
+            previousOversampledSidechain = {{
+                std::abs(sc0) * (1.0f - linkAmount) + scLevel * linkAmount,
+                std::abs(sc1) * (1.0f - linkAmount) + scLevel * linkAmount}};
+            previousOversampledSidechainValid = {{true, true}};
+            previousOptoOwnSidechain = {{sc0, sc1}};
             continue;
         }
         for (int ch = 0; ch < nCh; ++ch)
@@ -1373,7 +1432,7 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
                 out[ch][i] = oversamplers[ch].processSample(input, [&](float sample) noexcept {
                     const float optoOwnDetector = external ? ownSc : optoOwnPhases[channelIndex][0];
                     const float optoDetector = optoOwnDetector
-                        + (optoLinkedPhases[0] - optoOwnDetector) * optoLinkWeight;
+                        + (optoLinkedPhases[0] - optoOwnDetector) * optoBlendWeight;
                     return applyCoreDistortion(modes.process(
                                                    mode, sample, ch, sc, modeParams,
                                                    localMix, external, optoDetector,
@@ -1396,7 +1455,7 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
                         : optoOwnPhases[channelIndex][static_cast<size_t>(phase)];
                     const float optoDetector = optoOwnDetector
                         + (optoLinkedPhases[static_cast<size_t>(phase)]
-                           - optoOwnDetector) * optoLinkWeight;
+                           - optoOwnDetector) * optoBlendWeight;
                     return applyCoreDistortion(modes.process(
                                                    mode, sample, ch, osSc, modeParams,
                                                    localMix, external, optoDetector,
