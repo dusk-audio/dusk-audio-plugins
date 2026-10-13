@@ -100,9 +100,9 @@ inline constexpr double kOptoPostHighPassQ = 0.8207559790;
 // the gain recovers. A high-pass behind the gain cannot do that; one ahead
 // of it does, the cell multiplies its ring by a gain that is still moving.
 // The cell's input element reads behind it as well (tools
-// opto/element_place.py). The side chain's tap stays on the unfiltered
-// input (a 1 Hz corner is 0.14 dB at 4 Hz); the reference's does not react
-// to a DC offset, this one does, as before.
+// opto/element_place.py). The side-chain input feed uses the same high-pass
+// response; its sub-audio tail continues to drive the cell after a gated low
+// note. The pre-coupling input owns the floor hand-back and release laws.
 inline constexpr bool kOptoPreHighPassAhead = true;
 
 class OptoSubsonicHighPass

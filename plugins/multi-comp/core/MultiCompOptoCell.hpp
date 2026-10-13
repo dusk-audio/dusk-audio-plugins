@@ -33,6 +33,7 @@
 // setParams()/params()/primeEquilibrium()/lightAt()/conductanceAt()/elLevel() are lab-only hooks used by the
 // fitting kernel; OPTO_LAB_PROBE is empty unless a lab build defines it.
 #pragma once
+#include "MultiCompOptoShelf.hpp"
 #include "../../shared-daf/dsp/DuskFilters.hpp"
 
 #include <algorithm>
@@ -302,8 +303,21 @@ inline float optoElementStrength(float prNormalised) noexcept
 // (1.25 dB too little reduction in the note itself, as before).
 // The lab generator (tools repo, opto/pt_header.py) emits the 62-entry form and refuses to overwrite
 // a header that carries lfCutDb; port indices 62..71 there before regenerating.
-// kOptoCellDefaults order: elTauSeconds, lightCeiling, fastRelease, fastBimolecular, slowCharge, slowRelease, slowBimolecular, memoryCharge, memoryRelease, limitOutputMix, limitInputMix, compressInputMix, timeScaleLight, timeScaleExponent, depthWeighting, lowFrequencyFloor, lfTermGainDb, lfTermFrequency, lfTermGrSpan, conductanceTableOn, flashCharge, flashRelease, flashBimolecular, lfShelfDb, hFloor, lfLitTauAttack, lfLitTauRelease, lfLitLevelDb, lfLitSpanDb, lfLitFloor, lfLitLog, hChargeOnly, attackRateDbPerS, attackRatePower, attackRateTau, elFreqExponent, elFreqTau, hfPeakDb, lfPeakDb, midPeakDb, hf10kPeakDb, elRevHysteresis, elRevRelease, elFreqCorner, trapCapture, trapEmit, trapCapacity, pStrength, pPrExp, pThresh, pKnee, pAsym, lightTableStartDb, lightTableStepDb, lightSlopeAbove, conductanceTableStartDb, conductanceTableStepDb, conductanceSlopeAbove, prStart, prStep, prSlopeBelow, prGate, lfCutDb, lfCutFrequency, lfCutStartDb, lfCutSpanDb, lfCutTauAttack, lfCutTauSlow, lfCutTransSpanDb, lfCutHoldSeconds, lfCutMaxGapDb, lfCutCompWeight, elPolCap, elPolLeak, elPolKnee, elPolRefill, elPolCredit, elPolCapExp, darkRateCeiling, darkTau, darkLight, darkFloorTau, darkHoldSeconds
-inline constexpr std::array<float, 83> kOptoCellDefaults{{
+// 2026-10-10, patch 40: the measured 1.0108 Hz input high-pass also feeds the detector. Its gate-edge
+// tail explains the low-note contrasts; no follower or pulse element is added. The pre-coupling input owns
+// the floor hand-back and release laws. Measured master ceiling 27.87476 /s, existing two 0.3 ms stages,
+// hold 0.5 ms; a memory-population rate correction acts below 24 dB and reverses below 2.5 dB. Light-table
+// coordinates stay fixed. The floor/onset nine-constant joint fit moves each by at most 0.867 percent.
+// Qualified production build, original patch 39 -> candidate: release280 failures 2 -> 0 (worst 0.694 dB);
+// held-out416 35 -> 5 (worst 2.795 -> 1.776, RMS .6411 -> .3147); short130 3 -> 1 (1.192 -> 1.097).
+// Blind154 and blind238 both pass (worst .772 / .973); onset364, E1 84, settled186 pass. Music210 passes,
+// worst FIT/VAL/SEALED tiers .37093/.55776/.52088 -> .36766/.55447/.50605; C2 .39847 -> .32856.
+// Core recovery/frequency/knee/reset and lifecycle pass; off346 and FET136 are byte-identical. Remaining
+// held-out misses are the Limit 1 3 kHz row; the remaining short cell is the 10 ms Limit .8125 burst at40ms.
+// The seven history coefficients below are rounded to float; all production tables were requalified.
+// New strengths at indices 83/84 are disabled with zero; the light-law coordinates and table stay frozen.
+// kOptoCellDefaults order: elTauSeconds, lightCeiling, fastRelease, fastBimolecular, slowCharge, slowRelease, slowBimolecular, memoryCharge, memoryRelease, limitOutputMix, limitInputMix, compressInputMix, timeScaleLight, timeScaleExponent, depthWeighting, lowFrequencyFloor, lfTermGainDb, lfTermFrequency, lfTermGrSpan, conductanceTableOn, flashCharge, flashRelease, flashBimolecular, lfShelfDb, hFloor, lfLitTauAttack, lfLitTauRelease, lfLitLevelDb, lfLitSpanDb, lfLitFloor, lfLitLog, hChargeOnly, attackRateDbPerS, attackRatePower, attackRateTau, elFreqExponent, elFreqTau, hfPeakDb, lfPeakDb, midPeakDb, hf10kPeakDb, elRevHysteresis, elRevRelease, elFreqCorner, trapCapture, trapEmit, trapCapacity, pStrength, pPrExp, pThresh, pKnee, pAsym, lightTableStartDb, lightTableStepDb, lightSlopeAbove, conductanceTableStartDb, conductanceTableStepDb, conductanceSlopeAbove, prStart, prStep, prSlopeBelow, prGate, lfCutDb, lfCutFrequency, lfCutStartDb, lfCutSpanDb, lfCutTauAttack, lfCutTauSlow, lfCutTransSpanDb, lfCutHoldSeconds, lfCutMaxGapDb, lfCutCompWeight, elPolCap, elPolLeak, elPolKnee, elPolRefill, elPolCredit, elPolCapExp, darkRateCeiling, darkTau, darkLight, darkFloorTau, darkHoldSeconds, inputCouplingOn, darkHistoryStrength, darkHistoryBase, darkHistoryMemory, darkHistoryShoulder, darkHistoryShoulderMemory, darkHistoryLow, darkHistoryLowMemory, darkHistoryDensity
+inline constexpr std::array<float, 92> kOptoCellDefaults{{
     2.11744767e-06f, 0.0f, 8.05137539f, 2.89539862f, 4.60660553f, 23.5234127f,
     0.586750925f, 0.00118519559f, 0.999977779f, 0.990760822f, 0.0365957224f, 2.38673383e-05f,
     19.8983517f, 0.326484203f, 1.0f, 1.0f, -1.21699251f, 379.874676f,
@@ -314,11 +328,12 @@ inline constexpr std::array<float, 83> kOptoCellDefaults{{
     0.02f, 875.517212f, 62.0298299f, 3.32803035f, 14.1897856f, 0.896706104f,
     0.0f, 0.0497f, 0.0f, 1.0f, -58.541214f, 0.990164995f,
     0.082666399f, 0.0f, 0.1f, 0.0f, 0.3125f, 0.015625f,
-    59.1923887f, 0.15f,
-    0.0f, 67.6368847f, -36.5089119f, 1.00680706f, 0.000151601f, 0.00335447044f, 0.882035191f, 0.02f, 40.0f,
-    0.635185614f,
-    1.04078126f, 107.610489f, 0.787328303f, 6.07100083e-05f, 0.981866837f, 0.0265073478f,
-    30.0f, 0.0003f, 0.01f, 0.25f, 0.002f,
+    59.1923887f, 0.15f, 0.0f, 67.6368847f, -36.5089119f, 1.00680706f,
+    0.000151601f, 0.00335447044f, 0.882035191f, 0.02f, 40.0f, 0.635185614f,
+    1.031764415f, 107.610489f, 0.7941493488f, 6.07100083e-05f, 0.9903732738f, 0.0265073478f,
+    27.87475932f, 0.0003f, 0.01f, 0.25f, 0.0005f, 1.0f,
+    1.0f, 0.1630389978f, 3.0f, 0.1077029304f, 2.302437043f, 0.2356715704f,
+    5.404491324e-18f, 0.9427563972f
 }};
 
 inline constexpr std::array<float, 37> kOptoCellLightTable{{
@@ -387,6 +402,13 @@ struct OptoCellParams
     // The LF floor in the dark (see process()): the time over which the share of the cell's conductance that
     // the floor passes returns to all of it once the panel is not driven (seconds; 0 = off).
     float darkFloorTau;
+    // Input-side coupling and ownership of the release/floor laws (0 restores the original feed).
+    float inputCouplingOn;
+    // Log-rate correction below 24 dB, weighted by the existing dark state. The memory fraction is
+    // M / (M + darkHistoryDensity * C); no elapsed-note-time state is introduced. Strength 0 disables it.
+    float darkHistoryStrength, darkHistoryBase, darkHistoryMemory;
+    float darkHistoryShoulder, darkHistoryShoulderMemory, darkHistoryLow, darkHistoryLowMemory;
+    float darkHistoryDensity;
     const float* lightTable;
     int lightTableSize;
     float lightTableStartDb, lightTableStepDb, lightSlopeAbove;
@@ -430,6 +452,15 @@ inline OptoCellParams optoCellParamsFrom(
     p.elPolRefill = values[75]; p.elPolCredit = values[76]; p.elPolCapExp = values[77];
     p.darkRateCeiling = values[78]; p.darkTau = values[79]; p.darkLight = values[80]; p.darkFloorTau = values[81];
     p.darkHoldSeconds = values[82];
+    p.inputCouplingOn = values[83];
+    p.darkHistoryStrength = values[84];
+    p.darkHistoryBase = values[85];
+    p.darkHistoryMemory = values[86];
+    p.darkHistoryShoulder = values[87];
+    p.darkHistoryShoulderMemory = values[88];
+    p.darkHistoryLow = values[89];
+    p.darkHistoryLowMemory = values[90];
+    p.darkHistoryDensity = values[91];
     return p;
 }
 
@@ -458,7 +489,8 @@ inline OptoCellParams defaultOptoCellParams() noexcept { return optoCellParamsFr
 // +1.41 dB above 200 Hz). With it ahead the bands agree and the row reads what it is, +1.04 dB; the refit brings it
 // to +0.68 (186 rows, this build with the old law against the new: rms 0.282 -> 0.269 dB, worst 1.04 -> 0.82 dB).
 inline constexpr std::array<float, 6> kOptoFloorLawDefaults{{
-    42.2561226f, 3.14965916f, 1.2764231f, 1.5166204f, 1.64146042f, 1.43433166f}};
+    41.89003522f, 3.176946341f, 1.284316874f, 1.503481107f, 1.634105506f, 1.446758042f
+}};
 
 // Side-chain drive limit: the drive to the panel is scaled by
 //   (1 + (F / limit)^k)^(-beta / k),   F = held peak (release releaseSeconds) of the drive through a first-order
@@ -490,6 +522,7 @@ public:
     {
         sampleRate = static_cast<double>(sr);
         dt = 1.0 / sampleRate;
+        for (auto& f : couplingInput) f.prepare(sampleRate, kOptoPreHighPassHz, kOptoPreHighPassQ);
         // Production detector weighting (exact coefficients).
         const std::array<BiquadCoeffs, kWeightingSections> weightingCoeffs{{
             Biquad::shelf(sr, 319.1844220f, cellParams.lfShelfDb, 0.5894442553f, false),
@@ -578,7 +611,11 @@ public:
         // Truncated like the R14 hold; the clamp keeps a lab-set NaN or absurd value out of the int cast.
         const float darkHold = cellParams.darkHoldSeconds > 0.0f ? std::min(cellParams.darkHoldSeconds, 1.0f) : 0.0f;
         darkHoldSamples = static_cast<int>(static_cast<double>(darkHold) * sampleRate);
-        for (auto& channel : channels) channel.darkHold = std::min(channel.darkHold, darkHoldSamples);
+        for (auto& channel : channels)
+        {
+            channel.darkHold = std::min(channel.darkHold, darkHoldSamples);
+            channel.floorInputHold = std::min(channel.floorInputHold, darkHoldSamples);
+        }
         // Production LF floor energy path (exact coefficients).
         updateFloorBand();
         floorBandStep = 1.0f - std::exp(-6.283185307f * 1000.0f / sr);
@@ -624,6 +661,7 @@ public:
         for (auto& f : lfTermFilter) f.reset();
         for (auto& f : limitFloorFilter) f.reset();
         for (auto& f : lfCutFilter) f.reset();
+        for (auto& f : couplingInput) f.reset();
     }
 
     // The only sample counters are the R14 hold countdown and the dark state's; setRate() clamps each to its
@@ -664,6 +702,9 @@ public:
             ? static_cast<double>(cellParams.limitOutputMix) * gPrev + cellParams.limitInputMix
             : gPrev + cellParams.compressInputMix;
         float loop = static_cast<float>(mix * base);
+        const float coupled = couplingInput[c].process(base);
+        if (cellParams.inputCouplingOn != 0.0f)
+            loop = static_cast<float>(mix * coupled);
         if (cellParams.lfLitSpanDb > 0.0f)
         {
             // Lit-gated LF shelf: the LF sensitivity needs an illuminated photocell (tracked EL level at n-1).
@@ -727,6 +768,24 @@ public:
             cachedPrNorm = prNorm;
             cachedSideChainGain = sideChainGain(prNorm);
         }
+        // The input owns the floor and release laws; a coupling tail continues to supply light only.
+        const double floorOwn = inert ? 0.0 : cachedSideChainGain * mix * levelAbs;
+        double floorDrive = floorOwn;
+        if (linkWeight > 0.0f)
+            floorDrive = std::max(d.floorOwn, static_cast<double>(linkWeight)
+                * (c == 0 ? channels[1].floorOwn : channels[0].floorOwnPrev));
+        d.floorOwnPrev = d.floorOwn;
+        d.floorOwn = floorOwn;
+        d.floorEl += elStep * (floorDrive - d.floorEl);
+        double floorLight = inert ? 0.0 : lightFor(d.floorEl);
+        if (cellParams.lightCeiling > 0.0f)
+            floorLight /= 1.0 + floorLight / static_cast<double>(cellParams.lightCeiling);
+        const double floorThreshold = std::max(static_cast<double>(cellParams.darkLight), 1.0e-30);
+        if (floorLight >= floorThreshold) d.floorInputHold = darkHoldSamples;
+        else if (d.floorInputHold > 0) --d.floorInputHold;
+        const double floorTarget = d.floorInputHold > 0 ? 0.0 : floorThreshold / (std::max(floorLight, 0.0) + floorThreshold);
+        d.floorDark[0] = floorTarget < d.floorDark[0] ? floorTarget : d.floorDark[0] + darkStep * (floorTarget - d.floorDark[0]);
+        d.floorDark[1] = d.floorDark[0] < d.floorDark[1] ? d.floorDark[0] : d.floorDark[1] + darkStep * (d.floorDark[0] - d.floorDark[1]);
         double s = inert ? 0.0 : cachedSideChainGain * static_cast<double>(loop);
         if (fluxLaw[0] > 0.0f)
         {   // side-chain flux limit (see kOptoFluxLimitDefaults); the scale comes from the flux up to n-1
@@ -917,10 +976,9 @@ public:
             // and the limit comes on once the drive has been absent for darkHoldSeconds and about two darkTau
             // more: a countdown restarts at every sample whose light law is at or above darkLight, and only
             // when it has run out does what the law lacks of that, darkLight / (law + darkLight), go through
-            // two one-pole stages on the way up; it falls at once. A settled tone's drive is back within the
-            // hold after each zero crossing (2 ms covers a deep tone down to 4 Hz), so for it the state is
-            // exactly zero and every settled reading is the one it was. A held state of the drive's level, as
-            // the R14 envelope is, not a detector of anything in the signal.
+            // two one-pole stages on the way up; it falls at once. The 0.5 ms hold retains the settled-tone
+            // bar while reducing the excess loss after the cut. With input coupling enabled, the same
+            // input-owned state used by the floor drives this limit, so the coupling tail cannot disable it.
             // In that state the populations and the trap run on one slowed clock: with r the rate at which
             // the conductance would fall by the laws below, the clock is (1 + (r / ceiling)^4)^(-1/4), so it
             // falls by r where r is well under the ceiling and by the ceiling where r is over it, and the
@@ -937,7 +995,8 @@ public:
             const double target = d.darkHold > 0 ? 0.0 : darkLight / (law + darkLight);
             d.dark[0] = target < d.dark[0] ? target : d.dark[0] + darkStep * (target - d.dark[0]);
             d.dark[1] = d.dark[0] < d.dark[1] ? d.dark[0] : d.dark[1] + darkStep * (d.dark[0] - d.dark[1]);
-            if (cellParams.darkRateCeiling > 0.0f && d.dark[1] > 0.0)
+            const double releaseDark = cellParams.inputCouplingOn != 0.0f ? d.floorDark[1] : d.dark[1];
+            if (cellParams.darkRateCeiling > 0.0f && releaseDark > 0.0)
             {
                 const auto& g = d.population;
                 double loss = g[0] * (cellParams.fastRelease + cellParams.fastBimolecular * g[0])
@@ -960,8 +1019,33 @@ public:
                     const double square = ratio * ratio;
                     const double filled = cellParams.trapCapture > 0.0f && cellParams.trapCapacity > 0.0f
                         ? std::clamp(d.trap / static_cast<double>(cellParams.trapCapacity), 0.0, 1.0) : 1.0;
-                    darkScale = 1.0 - d.dark[1] * filled * filled
+                    darkScale = 1.0 - releaseDark * filled * filled
                         * (1.0 - 1.0 / std::sqrt(std::sqrt(1.0 + square * square)));
+                }
+            }
+        }
+        const double historyWeight = cellParams.inputCouplingOn != 0.0f ? d.floorDark[1] : d.dark[1];
+        if (cellParams.darkHistoryStrength > 0.0f && historyWeight > 0.0
+            && (cellParams.darkRateCeiling > 0.0f || cellParams.darkFloorTau > 0.0f))
+        {
+            const double density = d.population[0] + d.population[1] + d.population[2] + d.population[3];
+            if (density > 1.0e-30)
+            {
+                const double reduction = 8.685889638065035 * std::log1p(density);
+                if (reduction < 24.0)
+                {
+                    const auto tent = [reduction](double left, double peak, double right) {
+                        return std::max(0.0, std::min((reduction - left) / (peak - left),
+                                                     (right - reduction) / (right - peak)));
+                    };
+                    const std::array<double, 7> p{{cellParams.darkHistoryBase, cellParams.darkHistoryMemory,
+                        cellParams.darkHistoryShoulder, cellParams.darkHistoryShoulderMemory,
+                        cellParams.darkHistoryLow, cellParams.darkHistoryLowMemory, cellParams.darkHistoryDensity}};
+                    const double history = d.population[2] / (d.population[2] + std::max(p[6], 1.0e-30) * density);
+                    const double correction = (p[0] + p[1] * history) * tent(2.5, 6.5, 13.0)
+                        + (p[2] + p[3] * history) * tent(9.0, 16.0, 24.0)
+                        - ((1.0 - history) * p[4] + history * p[5]) * tent(0.0, 1.5, 2.5);
+                    darkScale *= std::exp(historyWeight * static_cast<double>(cellParams.darkHistoryStrength) * correction);
                 }
             }
         }
@@ -1032,7 +1116,7 @@ public:
                 const double cellConductance = 1.0 / std::max(d.cellGain, 1.0e-12) - 1.0;
                 const double passed = cellConductance > 1.0e-12
                     ? std::clamp((1.0 / static_cast<double>(applied) - 1.0) / cellConductance, 0.0, 1.0) : 1.0;
-                const double dark = d.dark[1];
+                const double dark = cellParams.inputCouplingOn != 0.0f ? d.floorDark[1] : d.dark[1];
                 if (dark > 0.0)
                 {
                     d.floorPassed += (1.0 - dark) * (passed - d.floorPassed) + dark * darkFloorStep * (1.0 - d.floorPassed);
@@ -1220,6 +1304,9 @@ private:
         // How long the panel has had no drive, through two stages (1 = dark, the state at rest).
         std::array<double, 2> dark{{1.0, 1.0}};
         int darkHold = 0;   // samples left before the dark state may build (restarted while the panel is driven)
+        double floorEl = 0.0, floorOwn = 0.0, floorOwnPrev = 0.0;
+        std::array<double, 2> floorDark{{1.0, 1.0}};
+        int floorInputHold = 0;
         double floorPassed = 1.0;   // the share of the cell's conductance the LF floor passes (1 = no floor)
         int reversalSign = 1, reversalCount = 0;
         std::array<double, kPopulations> population{};
@@ -1287,6 +1374,7 @@ private:
     std::array<Biquad, kChannels> lfTermFilter;
     std::array<Biquad, kChannels> limitFloorFilter;
     std::array<Biquad, kChannels> lfCutFilter;
+    std::array<OptoSubsonicHighPass, kChannels> couplingInput;
     double sampleRate = 0.0, dt = 1.0 / 96000.0, elStep = 0.0;
     double levelPeakAttack = 0.0, levelPeakRelease = 0.0;
     double cachedPrNorm = -1.0, cachedSideChainGain = 0.0;
