@@ -61,8 +61,13 @@ def _stage(path_or_array, name_hint: str) -> Path:
         src = Path(path_or_array)
         digest = hashlib.sha1(str(src).encode()).hexdigest()[:10]
         dst = STAGE / f"{name_hint}_{digest}.wav"
+        if dst.is_symlink() and not dst.exists():
+            dst.unlink(missing_ok=True)   # dangling link left by an earlier run; exists() follows it
         if not dst.exists():
-            dst.symlink_to(src)
+            try:
+                dst.symlink_to(src)
+            except FileExistsError:
+                pass       # a concurrent run staged it first
         return dst
     x = np.asarray(path_or_array, dtype=np.float32)
     digest = hashlib.sha1(x.tobytes()).hexdigest()[:12]
@@ -92,7 +97,11 @@ def _run(plugin: str, out: Path, inputs: list[Path], pr: float, gain: float,
         raise RuntimeError(f"AU host failed; see {out / 'log.txt'}")
     readbacks = M.READBACK.findall(r.stdout)
     want = dict(M.params(plugin, pr, gain, limit))
-    worst = max(abs(float(n) - want[nm]) for _i, nm, n, _d in readbacks if nm in want)
+    got = {nm: float(n) for _i, nm, n, _d in readbacks if nm in want}
+    missing = sorted(set(want) - set(got))
+    if missing:
+        raise RuntimeError(f"no parameter readback for {missing}; see {out / 'log.txt'}")
+    worst = max(abs(got[nm] - want[nm]) for nm in want)
     if worst > 1.23e-4:
         raise RuntimeError(f"parameter readback error {worst}")
     json.dump({"plugin": plugin, "component_binary_sha256": M.component_hash(plugin),

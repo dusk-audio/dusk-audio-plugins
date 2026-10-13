@@ -41,6 +41,76 @@ repo under `plugins/MultiComp/tests/programme_parity/kit/`; evidence stays in th
   confident answers. Only the hit count over many trials means anything.
 - End-to-end learned capture on a small corpus (closed 2026-10-02).
 
+## What the probe set must cover (2026-10-06: each line is an error several passes could not see)
+
+- **Every control position, not only the fitted ones.** The FET Release knob was 3.7 dB wrong between .75
+  and .95 while 0, .33, .666 and 1 fitted. Capture a few positions that enter no fit and keep them out.
+- **Music per cell, not only per tier.** Tiers under 1 dB hid sixteen FET cells above it, one clip at five
+  conditions among them. Print every cell at or above the bar by name.
+- **An event from rest, at the deepest setting.** A probe on a bed that already holds reduction keeps the
+  slow states charged. FET stopped 3-5 dB short on any deep burst from silence and no table showed it.
+- **A train of events, read between them and after the last.** What a single burst leaves behind says
+  nothing about what six leave: the FET reference builds 6 dB over six bursts at its fastest release.
+- **More than two frequencies in every dynamic table.** The OPTO onset table held 60 Hz and 1 kHz; the
+  element fitted on it was unconstrained from 80 to 400 Hz, where a kick drum is.
+- **Where in the cycle the gain moves.** Fold the reduction on a 15-45 Hz sine over the half-cycle (output
+  over the device's own low-level output at the same sample). The phase of the ripple says where the side
+  chain reads the signal and when the element responds; a level table cannot. FET read the wrong side of
+  a high-pass (56 degrees at 15 Hz); the OPTO reference lights right after the zero crossing at deep
+  settings.
+- **A linear reference that is linear.** A "no reduction" setting was still compressing. Use the same
+  stimulus 60 dB down at the same setting, per device.
+- **A music cell split by what the stimulus does, not only by what the reference's gain does.** The frames
+  where the reference's gain "moves fastest" were read as attacks for two passes; split by the stimulus
+  (onset, offset, low level, rest) 60 % of one OPTO cell's squared error sat in the frames after gated note
+  ENDS, where the stimulus is at -46 to -87 dBFS and the gate's own 20 Hz high-pass is still ringing above
+  its -60 dBFS keep rule. An element was built for the attacks and did not move the cell.
+- **Before adding a state, read the one you have through the device's law.** The FET reference leaves more
+  memory after its second burst than after its first; an exposure state was built for that. The square
+  root of the memory is first order: one state, read through a gain law that is quadratic at the bottom,
+  and the same law explained two other readings (the memory counting for more under a fast charge, the
+  loop sitting low from rest at the highest ratio).
+- **Fit a part of the model only on the cells that read that part.** Low-carrier windows after a burst
+  read the output stage; they judge a gain-computer fit and do not enter it.
+- **Which side of the gain element a filter sits on.** A linear capture gives the product of all linear
+  sections and nothing else. Step the gain with a burst the model already holds, under a steady low tone
+  50 dB below it, in both polarities: half the difference is the tone's response alone. What is behind
+  the gain element rings with its own poles when the gain steps; what is ahead of it does nothing. Read
+  the product itself on the tails that low bursts leave when they end, at a level too low to compress
+  (the FET path's low end was one second-order section fitted on phase; it is two, one each side, and
+  sixteen of the twenty burst-train cells left were that).
+- **What the device does once the stimulus is gone.** A gate that needs stimulus level cannot read the
+  gain after a note is cut. A pilot 60 dB under the note reads it, and the output's mean after the note
+  reads what the device was adding to the mean during it (the OPTO reference's one-sided clip: 3 % second
+  harmonic on programme at full Peak Reduction, and the step when the note ends was the last music cell).
+- **A table read through the model's kernel is only the plugin while nothing acts on the audio sample.**
+  Once an element does, read the same rows on what the plugin puts out, through the same extraction as
+  the reference's capture, and feed the kernel the audio.
+- **An element found late was inside every earlier fit.** The tables were fitted with its level in them;
+  adding it on top counts that twice. Split it: the part that changes level stays with the tables, the
+  part no table can hold is added (the OPTO clip is one-sided; its odd half is a loss of level, its even
+  half is the even harmonics and the step of the mean, and the even half is memoryless). Giving the loss
+  back through a gain instead needs a memory, and a memory leaves a bump behind every loud event. The
+  alternative is to refit every table that held it.
+- **A kink evaluated point by point folds.** Take the nonlinear term off the sample itself, averaged over
+  the line from the last sample (antiderivative form), not through a gain made from one sample and
+  applied to the next; and ask the reference how much it folds before deciding how clean to be.
+- **A new table at one level is one point of a law.** The OPTO release-into-silence table (five notes at
+  -8 dBFS) read eight cells over, the worst 2.25 dB; the same reading at -2 dBFS, at Limit 1 and at 3 kHz
+  (2026-10-09, `opto/silence_holdout.py`) read 6.7 dB, and showed what the table could not: the reference
+  never lets go faster than 0.245 dB/ms from any depth. Capture the level, the length and the control
+  positions around a table before fitting anything to it, and keep those captures out of the fit.
+- **Then ask where the law stops.** That limit holds after 60 ms of note and not after a 2-20 ms burst
+  (`opto/silence_short.py`: 0.80 dB/ms after 2 ms). An element built on the long notes alone read the
+  bursts 4 dB wrong and failed a core test that reads the same event on a bed. Probe the short side of
+  every time-dependent law before landing it.
+- **"Lit tables unchanged" is a measurement, not a property of the code.** A state meant to exist only in
+  silence built up inside the zero crossings of a 55 Hz sawtooth and moved two settled rows by 0.07 dB.
+  Run the settled table with each new element alone; one of the two elements was exact and the other was not.
+- **A hidden state shows when its mask goes.** After a low note the cell sat 2.7 dB deeper than the applied
+  gain (the LF floor's lift). Slowing the cell's release to the reference's exposed that as a slow release
+  after low notes only; the release table needed both elements together.
+
 ## Kit commands (tools repo, `programme_parity/kit/`)
 
 ```
@@ -48,7 +118,9 @@ repo under `plugins/MultiComp/tests/programme_parity/kit/`; evidence stays in th
 cmake --build build --target duskverb_render
 # capture a device over a clip directory at one setting (values 0..1, snapped to the UAD 1/32768 grid)
 python3 render.py 1176     OUT --stim CLIPS --set "Input=0.6,Ratio=0"                      --tag in60_r4
-python3 render.py mc2:fet  OUT --stim CLIPS --set "input=0.6,output=0.5,attack=0.5,release=0.5,ratio=0" --tag in60_r4
+python3 render.py mc2:fet  OUT --stim CLIPS --set "input=0.6,output=0.625916,attack=0.5,release=0.665955,ratio=0" --tag in60_r4
+# (FET knob map is identity on the normalised axis, fet/knob_map.py 2026-10-03: give MC-2 the 1176 values, Output
+#  included; Output 0.5 vs the 1176 neutral 0.625916 is 8.9 dB of linear gain)
 # where the residual is (lags measured on the first tag; pass a linear tag first, then pin them)
 python3 corpus_diff.py REF_ROOT DUT_ROOT --stim CLIPS --tags lin,in60_r4 --json diff.json
 # mechanism probes
