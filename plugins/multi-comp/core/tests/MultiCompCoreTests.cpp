@@ -1,6 +1,7 @@
 #include "MultiCompFetProgrammeFixtures.hpp"
 #include "../MultiCompDSP.hpp"
 #include "MultiCompOptoParityFixtures.hpp"
+#include "MultiCompVcaSwitchFixtures.hpp"
 #include "../../../shared-daf/dsp/DuskCrossover.hpp"
 
 #include <algorithm>
@@ -9707,33 +9708,60 @@ void testFetLowFrequencyColourSurface()
             "vintage FET low-frequency colour matches the measured reference across the reduction axis");
 }
 
-// The VCA mode's PULL/SC switch engages the measured VCA compressor sidechain tilt:
-// |H(f)| = sqrt(f / 276 Hz). Check the filter alone against that ideal at
-// 48 kHz, then that VCA mode actually routes a non-zero SC HP setting through
-// it (more reduction on a 3 kHz tone than on a 60 Hz tone at equal level,
-// the opposite of the other modes' high-pass which only ever removes lows).
+// The VCA PULL/SC switch selects the measured live detector response.
+// Test the actual route at three rates, then retain the original compression
+// routing checks below. Reference fixtures were captured independently.
 void testVcaSidechainTilt()
 {
-    duskaudio::vcaLaw::SidechainTilt tilt;
-    tilt.prepare(48000.0);
-    float worst = 0.0f;
-    for (const auto& point : duskaudio::vcaLaw::kSidechainTiltMeasured)
-    {
-        tilt.reset();
-        const int settle = 48000, measure = 48000;
-        double sumSq = 0.0;
-        for (int i = 0; i < settle + measure; ++i)
+    // Exercise the live detector route through Sidechain Listen, including
+    // the independent 20.02 Hz pole. The legacy SidechainTilt class is used
+    // only by the compile-time disabled-element identity control.
+    double worst = 0.0;
+    bool valid = true;
+    const auto measure = [&](double rate, double hz, double referenceDb) {
+        MultiCompDSP dsp;
+        dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::VCA));
+        dsp.setOversampling(1);
+        dsp.setMix(100.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::AutoMakeup, 0.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::SidechainHP, 120.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::GlobalSidechainListen, 1.0f);
+        dsp.prepare(rate, 512);
+        std::array<float, 512> input{}, outputLeft{}, outputRight{};
+        const float* inputs[] = {input.data(), input.data()};
+        float* outputs[] = {outputLeft.data(), outputRight.data()};
+        const int settle = static_cast<int>(rate);
+        const int total = 2 * settle;
+        double energy = 0.0;
+        constexpr double pi = 3.14159265358979323846;
+        for (int at = 0; at < total; at += 512)
         {
-            const float x = std::sin(2.0f * 3.14159265f * point.hz * static_cast<float>(i) / 48000.0f);
-            const float y = tilt.process(x);
-            if (i >= settle) sumSq += static_cast<double>(y) * y;
+            const int count = std::min(512, total - at);
+            for (int i = 0; i < count; ++i)
+                input[static_cast<size_t>(i)] = static_cast<float>(
+                    0.05 * std::sin(2.0 * pi * hz * (at + i) / rate));
+            dsp.processBlock(inputs, outputs, 2, count);
+            for (int i = 0; i < count; ++i)
+                if (at + i >= settle)
+                    energy += static_cast<double>(outputLeft[static_cast<size_t>(i)])
+                            * outputLeft[static_cast<size_t>(i)];
         }
-        const double rms = std::sqrt(sumSq / measure);
-        const double gainDb = 20.0 * std::log10(rms / std::sqrt(0.5));
-        worst = std::max(worst, static_cast<float>(std::abs(gainDb - point.db)));
-        std::printf("  tilt %6.0f Hz: %+.3f dB (measured %+.2f)\n", point.hz, gainDb, point.db);
-    }
-    require(worst < 0.30f, "VCA sidechain tilt matches the measured reference response within 0.30 dB from 40 Hz to 23.5 kHz");
+        const double gainDb = 10.0 * std::log10(energy / (settle * 0.00125));
+        valid = valid && energy > 1.0e-20 && std::isfinite(gainDb);
+        const double error = std::abs(gainDb - referenceDb);
+        worst = std::max(worst, error);
+        std::printf("  live VCA SC %.0f Hz host, %6.0f Hz: %+.9f dB "
+                    "(reference %+.9f, error %.9f)\n",
+                    rate, hz, gainDb, referenceDb, error);
+    };
+    for (const auto& point : duskaudio::vcaLaw::kSidechainTiltMeasured)
+        measure(48000.0, point.hz, point.db);
+    for (const auto& point : vcaSwitchTestFixtures::rateResponse)
+        measure(point.rate, point.hz, point.db);
+    std::printf("VCA live SC response worst %.9f dB (bound 0.30)\n", worst);
+    require(valid && worst < 0.30f,
+            "VCA live detector response matches the reference within 0.30 dB at all three rates");
 
     auto reductionAt = [](float freq, float sidechainHp) {
         MultiCompDSP dsp;
@@ -9772,50 +9800,140 @@ void testVcaSidechainTilt()
 
 void testVcaSidechainTiltEngagementLifecycle()
 {
+    using namespace vcaSwitchTestFixtures;
+    constexpr double rate = 48000.0;
     constexpr int blockSize = 64;
-    const auto configure = [](MultiCompDSP& dsp) {
-        dsp.prepare(48000.0, blockSize);
+    constexpr double pi = 3.14159265358979323846;
+    constexpr double dcBound = 0.2564342393964196;
+    constexpr double pilotBound = 0.1227871196935979;
+    double worstDc = 0.0, worstPilot = 0.0;
+    bool valid = true;
+
+    // All events are sample-timed at the captured boundaries. Each render
+    // has its own -60 dB master and the same two-second silent preroll.
+    const auto render = [&](const DcCase* dc, const PilotCase* pilot,
+                            int polarity, bool low) {
+        MultiCompDSP dsp;
         dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::VCA));
+        dsp.setOversampling(1);
+        dsp.setMix(100.0f);
         dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
-        dsp.setParameter(MultiCompDSP::Parameter::SidechainHP, 500.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::AutoMakeup, 0.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::VcaThreshold,
+                         pilot != nullptr ? -35.75f : -27.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::VcaRatio,
+                         pilot != nullptr ? 100.0f : 50.4944f);
+        dsp.setParameter(MultiCompDSP::Parameter::VcaOutput, 0.0f);
+        const bool initial = pilot != nullptr ? pilot->initial : dc->initial;
+        dsp.setParameter(MultiCompDSP::Parameter::SidechainHP,
+                         initial ? 120.0f : 0.0f);
+        dsp.prepare(rate, 512);
+        std::array<float, blockSize> input{}, left{}, right{};
+        const float* inputs[] = {input.data(), input.data()};
+        float* outputs[] = {left.data(), right.data()};
+        for (int at = 0; at < 96000; at += blockSize)
+            dsp.processBlock(inputs, outputs, 2, blockSize);
+        const int length = pilot != nullptr ? 144000 : 24000;
+        const int latency = dsp.getLatencySamples();
+        std::vector<float> result(static_cast<size_t>(length + latency));
+        const double amplitude = low ? 0.001 : 1.0;
+        for (int at = 0; at < length + latency; at += blockSize)
+        {
+            if (pilot != nullptr)
+            {
+                if (at == 48000 || at == 96000)
+                {
+                    const bool engaged = at == 48000 ? !initial : initial;
+                    dsp.setParameter(MultiCompDSP::Parameter::SidechainHP,
+                                     engaged ? 120.0f : 0.0f);
+                }
+            }
+            else
+            {
+                for (size_t event = 0; event < dc->events.size(); ++event)
+                    if (at == dc->events[event])
+                        dsp.setParameter(MultiCompDSP::Parameter::SidechainHP,
+                                         dc->values[event] ? 120.0f : 0.0f);
+            }
+            const int count = std::min(blockSize, length + latency - at);
+            for (int i = 0; i < count; ++i)
+            {
+                const int sample = at + i;
+                double value = 0.0;
+                if (pilot != nullptr && sample < length)
+                {
+                    const double t = sample / rate;
+                    value = std::pow(10.0, -18.0 / 20.0)
+                          * std::sin(2.0 * pi * pilot->hz * t + pilot->phase)
+                          + polarity * std::pow(10.0, pilot->pilotDb / 20.0)
+                          * std::sin(2.0 * pi * 11000.0 * t);
+                }
+                else if (dc != nullptr && sample < dc->length)
+                    value = 1.0;
+                input[static_cast<size_t>(i)] = static_cast<float>(value * amplitude);
+            }
+            dsp.processBlock(inputs, outputs, 2, count);
+            for (int i = 0; i < count; ++i)
+                result[static_cast<size_t>(at + i)] = left[static_cast<size_t>(i)];
+        }
+        result.erase(result.begin(), result.begin() + latency);
+        return result;
     };
-    const auto processConstant = [](MultiCompDSP& dsp, float value) {
-        std::array<float, blockSize> input{}, output{};
-        input.fill(value);
-        const float* inputs[] = {input.data()};
-        float* outputs[] = {output.data()};
-        dsp.processBlock(inputs, outputs, 1, blockSize);
-    };
 
-    MultiCompDSP switched;
-    configure(switched);
-    for (int block = 0; block < 20; ++block) processConstant(switched, 1.0f);
-    switched.setParameter(MultiCompDSP::Parameter::SidechainHP, 0.0f);
-    processConstant(switched, 0.0f);
-    switched.setParameter(MultiCompDSP::Parameter::SidechainHP, 500.0f);
-    processConstant(switched, 0.0f);
-    const float reenabledResidual = duskaudio::MultiCompDSPTestAccess::
-        advanceVcaSidechainTilt(switched, 0, 0.0f);
-
-    MultiCompDSP oneEnabledBlock, continuouslyEnabled;
-    configure(oneEnabledBlock);
-    configure(continuouslyEnabled);
-    processConstant(oneEnabledBlock, 1.0f);
-    processConstant(continuouslyEnabled, 1.0f);
-    processConstant(continuouslyEnabled, 1.0f);
-    const float oneBlockResidual = duskaudio::MultiCompDSPTestAccess::
-        advanceVcaSidechainTilt(oneEnabledBlock, 0, 0.0f);
-    const float continuousResidual = duskaudio::MultiCompDSPTestAccess::
-        advanceVcaSidechainTilt(continuouslyEnabled, 0, 0.0f);
-
-    std::printf("VCA tilt lifecycle: off->on residual %.9g; one/continuous block "
-                "residual %.9g/%.9g\n",
-                static_cast<double>(reenabledResidual),
-                static_cast<double>(oneBlockResidual),
-                static_cast<double>(continuousResidual));
-    require(reenabledResidual == 0.0f
-                && std::abs(continuousResidual - oneBlockResidual) > 1.0e-6f,
-            "VCA sidechain tilt resets only when its switch becomes engaged");
+    for (const auto& point : dcCases)
+    {
+        const auto main = render(&point, nullptr, 1, false);
+        const auto low = render(&point, nullptr, 1, true);
+        double worst = 0.0;
+        for (size_t row = 0; row < dcStarts.size(); ++row)
+        {
+            double numerator = 0.0, denominator = 0.0;
+            for (int i = 0; i < 16; ++i)
+            {
+                const size_t sample = static_cast<size_t>(dcStarts[row] + i);
+                const double master = 1000.0 * low[sample];
+                numerator += master * main[sample];
+                denominator += master * master;
+            }
+            const double gainDb = 20.0 * std::log10(std::abs(numerator / denominator));
+            valid = valid && denominator > 1.0e-30 && std::isfinite(gainDb);
+            worst = std::max(worst, std::abs(gainDb - point.expected[row]));
+        }
+        worstDc = std::max(worstDc, worst);
+        std::printf("VCA SC timed DC %s worst %.12f dB\n", point.name, worst);
+    }
+    for (const auto& point : pilotCases)
+    {
+        const auto plus = render(nullptr, &point, 1, false);
+        const auto minus = render(nullptr, &point, -1, false);
+        const auto plusLow = render(nullptr, &point, 1, true);
+        const auto minusLow = render(nullptr, &point, -1, true);
+        double worst = 0.0;
+        for (size_t row = 0; row < pilotStarts.size(); ++row)
+        {
+            double real = 0.0, imag = 0.0, masterReal = 0.0, masterImag = 0.0;
+            for (size_t i = 0; i < pilotCos.size(); ++i)
+            {
+                const size_t sample = static_cast<size_t>(pilotStarts[row]) + i;
+                const double value = 0.5 * (static_cast<double>(plus[sample]) - minus[sample]);
+                const double master = 500.0 * (static_cast<double>(plusLow[sample]) - minusLow[sample]);
+                real += pilotCos[i] * value;
+                imag += pilotSin[i] * value;
+                masterReal += pilotCos[i] * master;
+                masterImag += pilotSin[i] * master;
+            }
+            const double master = std::hypot(masterReal, masterImag);
+            const double gainDb = 20.0 * std::log10(std::hypot(real, imag) / master);
+            valid = valid && master > 1.0e-20 && std::isfinite(gainDb);
+            worst = std::max(worst, std::abs(gainDb - point.expected[row]));
+        }
+        worstPilot = std::max(worstPilot, worst);
+        std::printf("VCA SC timed pilot %s worst %.12f dB\n", point.name, worst);
+    }
+    std::printf("VCA SC switching: DC %.12f / %.12f, pilot %.12f / %.12f dB\n",
+                worstDc, dcBound, worstPilot, pilotBound);
+    require(valid && worstDc <= dcBound && worstPilot <= pilotBound,
+            "VCA sample-timed SC switching matches measured reference transitions");
 }
 
 // VCA compressor parity gate. Every expected number below was measured on the

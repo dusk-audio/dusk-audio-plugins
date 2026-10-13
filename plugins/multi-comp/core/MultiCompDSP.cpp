@@ -157,6 +157,8 @@ void MultiCompDSP::prepare(double sr, int blockSize)
     // for the finite FET post-burst helper, including repeated prepare calls.
     modes.clearFetPostBurstRecovery();
     modes.clearBusState();
+    if (vcaLaw::kLifecycleResetEnabled) modes.clearVcaState();
+    vcaLifecycleChannels = 0;
     truePeakDetector.prepare();
     truePeakDetector.setQuality(MultiCompTruePeakDetector::Quality::Standard4x);
     for (auto& os : oversamplers) { os.setFactor(4); os.prepare(maxBlock); os.reset(); }
@@ -171,7 +173,13 @@ void MultiCompDSP::prepare(double sr, int blockSize)
     for (auto& os : busExternalOversamplers) os.setFactor(initialOversampling);
     for (auto& f : sidechainFilters) f.prepare(sampleRate);
     for (auto& f : sidechainTilt) f.prepare(sampleRate);
+    for (auto& f : vcaScResponse) f.prepare(sampleRate);
+    vcaScResponseActive = false;
     for (auto& f : vcaOutputVoicing) f.prepare(sampleRate);
+    for (auto& f : vcaAudioCoupling) f.prepare(sampleRate, vcaLaw::kAudioCouplingHz);
+    for (auto& f : vcaDetectorCoupling) f.prepare(sampleRate, vcaLaw::kDetectorCouplingHz);
+    vcaDetectorCouplingActive = false;
+    vcaAudioCouplingActive = false;
     vcaVoicingActive = false;
     for (auto& f : sidechainEQ) f.prepare(sampleRate);
     for (auto& band : bands) for (auto& v : band) v.assign(static_cast<size_t>(maxBlock), 0.0f);
@@ -245,6 +253,7 @@ void MultiCompDSP::reset()
     busFadeControl = 0.0f;
     busFadeMeter.store(0.0f, std::memory_order_relaxed);
     modes.reset();
+    vcaLifecycleChannels = 0;
     truePeakDetector.prepare();
     for (auto& os : oversamplers) os.reset();
     optoLinkedDetectorUpsampler.reset();
@@ -252,7 +261,13 @@ void MultiCompDSP::reset()
     for (auto& os : busExternalOversamplers) os.reset();
     for (auto& f : sidechainFilters) f.reset();
     for (auto& f : sidechainTilt) f.reset();
+    for (auto& f : vcaScResponse) f.reset();
+    vcaScResponseActive = false;
     for (auto& f : vcaOutputVoicing) f.reset();
+    for (auto& f : vcaAudioCoupling) f.reset();
+    for (auto& f : vcaDetectorCoupling) f.reset();
+    vcaDetectorCouplingActive = false;
+    vcaAudioCouplingActive = false;
     vcaVoicingActive = false;
     for (auto& f : sidechainEQ) f.reset();
     resetCrossovers();
@@ -484,7 +499,48 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
         std::clamp(params.mode.load(std::memory_order_relaxed), 0, 7));
     // Observe other modes even through settled bypass and Multiband's early
     // return, so the next VCA block cannot reuse stale output-filter history.
+    if (vcaLaw::kLifecycleResetEnabled)
+    {
+        if (mode != MultiCompMode::VCA)
+            vcaLifecycleChannels = 0;
+        else
+        {
+            if (vcaLifecycleChannels == 0)
+            {
+                modes.clearVcaState();
+                for (auto& os : oversamplers) os.reset();
+            }
+            if (nCh == 1 && vcaLifecycleChannels != 1)
+            {
+                // Only the newly absent channel: active left histories and
+                // the shared bypass write clock continue without a reset.
+                modes.clearVcaState(1);
+                oversamplers[1].reset();
+                vcaOutputVoicing[1].reset();
+                sidechainEQ[1].reset();
+                std::fill(dryPathDelay[1].begin(), dryPathDelay[1].end(), 0.0f);
+                dryPathWrite[1] = 0;
+                std::fill(bypassDelay[1].begin(), bypassDelay[1].end(), 0.0f);
+                std::fill(globalLookahead[1].begin(), globalLookahead[1].end(), 0.0f);
+                globalLookaheadWrite[1] = 0;
+                std::fill(sidechainListenDelay[1].begin(), sidechainListenDelay[1].end(), 0.0f);
+                sidechainListenWrite[1] = 0;
+            }
+            vcaLifecycleChannels = nCh;
+        }
+    }
     if (mode != MultiCompMode::VCA) vcaVoicingActive = false;
+    if (mode != MultiCompMode::VCA)
+        vcaAudioCouplingActive = false;
+    else if (vcaLaw::kAudioCouplingStrength != 0.0f)
+    {
+        if (!vcaAudioCouplingActive)
+            for (auto& f : vcaAudioCoupling) f.reset();
+        vcaAudioCouplingActive = true;
+        // A reduced-channel block must not preserve the absent channel's
+        // coupling history for a later stereo block.
+        if (nCh == 1) vcaAudioCoupling[1].reset();
+    }
     if (mode != MultiCompMode::Bus)
     {
         busCompressionMeter.reset();
@@ -529,7 +585,7 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     const float sidechainHP = params.sidechainHP.load(std::memory_order_relaxed);
     // In VCA mode the SC HP control is the reference VCA compressor's PULL/SC switch: settings
     // at or above 1 Hz engage the reference's measured half-order tilt in
-    // place of the high-pass (MultiCompVcaLaw.hpp SidechainTilt).
+    // place of the high-pass (MultiCompVcaLaw.hpp SidechainResponse).
     const bool vcaSidechainTilt = mode == MultiCompMode::VCA;
     const bool vcaSidechainPathChanged = vcaSidechainTilt != lastVcaSidechainTilt;
     if (vcaSidechainPathChanged)
@@ -543,17 +599,45 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
             for (auto& f : sidechainFilters) f.reset();
         lastVcaSidechainTilt = vcaSidechainTilt;
     }
-    const bool vcaSidechainTiltEngaged = vcaSidechainTilt && sidechainHP >= 1.0f;
-    if (vcaSidechainTiltEngaged && !lastVcaSidechainTiltEngaged
-        && !vcaSidechainPathChanged)
+    // This section sees the selected raw L/R detector source before SC
+    // tilt/EQ, independently of the wet audio pole and M/S routing.
+    if (!vcaSidechainTilt)
+        vcaDetectorCouplingActive = false;
+    else if (vcaLaw::kDetectorCouplingStrength != 0.0f)
     {
-        // While PULL/SC is out the tilt is bypassed and retains its last
-        // history. Clear that stale history once, on the edge back to IN,
-        // before the first newly filtered sample. A mode entry already reset
-        // it in the path-change block above.
-        for (auto& f : sidechainTilt) f.reset();
+        if (!vcaDetectorCouplingActive)
+            for (auto& f : vcaDetectorCoupling) f.reset();
+        vcaDetectorCouplingActive = true;
+        if (nCh == 1) vcaDetectorCoupling[1].reset();
     }
-    lastVcaSidechainTiltEngaged = vcaSidechainTiltEngaged;
+    if (!vcaSidechainTilt)
+        vcaScResponseActive = false;
+    else if (vcaLaw::kScResponseStrength != 0.0f)
+    {
+        if (!vcaScResponseActive)
+            for (auto& filter : vcaScResponse)
+                filter.reset();
+        vcaScResponseActive = true;
+        if (nCh == 1)
+            vcaScResponse[1].reset();
+    }
+    // This legacy engage-reset policy exists only for the exact-off
+    // control. The live measured response runs continuously and ramps its
+    // selection weight; resetting it on an SC edge contradicts the captures.
+    if constexpr (vcaLaw::kScResponseStrength == 0.0f)
+    {
+        const bool vcaSidechainTiltEngaged = vcaSidechainTilt && sidechainHP >= 1.0f;
+        if (vcaSidechainTiltEngaged && !lastVcaSidechainTiltEngaged
+            && !vcaSidechainPathChanged)
+        {
+            // While PULL/SC is out the tilt is bypassed and retains its last
+            // history. Clear that stale history once, on the edge back to IN,
+            // before the first newly filtered sample. A mode entry already reset
+            // it in the path-change block above.
+            for (auto& f : sidechainTilt) f.reset();
+        }
+        lastVcaSidechainTiltEngaged = vcaSidechainTiltEngaged;
+    }
     for (int ch = 0; ch < nCh; ++ch)
     {
         const float* source = useExternalSidechain ? sidechain[ch] : in[ch];
@@ -563,7 +647,11 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
         for (int i = 0; i < nSamples; ++i)
         {
             float sample = source[i];
-            if (sidechainHP >= 1.0f)
+            if (vcaSidechainTilt)
+                sample = vcaDetectorCoupling[ch].process(sample, vcaLaw::kDetectorCouplingStrength);
+            if (vcaSidechainTilt && vcaLaw::kScResponseStrength != 0.0f)
+                sample = vcaScResponse[ch].process(sample, sidechainHP >= 1.0f);
+            else if (sidechainHP >= 1.0f)
                 sample = vcaSidechainTilt ? sidechainTilt[ch].process(sample)
                                           : sidechainFilters[ch].process(sample);
             processedSidechain[ch][static_cast<size_t>(i)] = sidechainEQ[ch].process(sample);
@@ -612,7 +700,28 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
             write = (write + 1) % size;
         }
     }
-    if (nCh > 1 && linkMode == 1)
+    // VCA coupling histories belong to physical L/R channels. Keep them
+    // ahead of the optional M/S transform so changing the routing cannot
+    // reinterpret stored low-frequency state. The dry copy above is unfiltered.
+    const bool coupleVcaAudio = mode == MultiCompMode::VCA
+        && vcaLaw::kAudioCouplingStrength != 0.0f;
+    if (coupleVcaAudio)
+    {
+        for (int i = 0; i < nSamples; ++i)
+        {
+            const float left = vcaAudioCoupling[0].process(
+                processingIn[0][i], vcaLaw::kAudioCouplingStrength);
+            const float right = nCh > 1 ? vcaAudioCoupling[1].process(
+                processingIn[1][i], vcaLaw::kAudioCouplingStrength) : left;
+            modeInput[0][static_cast<size_t>(i)] = nCh > 1 && linkMode == 1
+                ? (left + right) * 0.5f : left;
+            modeInput[1][static_cast<size_t>(i)] = nCh > 1 && linkMode == 1
+                ? (left - right) * 0.5f : right;
+        }
+        processingIn[0] = modeInput[0].data();
+        processingIn[1] = modeInput[1].data();
+    }
+    if (!coupleVcaAudio && nCh > 1 && linkMode == 1)
     {
         for (int i = 0; i < nSamples; ++i)
         {

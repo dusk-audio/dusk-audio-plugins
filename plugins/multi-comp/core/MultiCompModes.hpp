@@ -528,6 +528,12 @@ public:
         configureOptoStage();
     }
 
+    void clearVcaState(int channel = -1) noexcept
+    {
+        for (int ch = 0; ch < kChannels; ++ch)
+            if (channel < 0 || channel == ch) vca[ch] = VCAState{};
+    }
+
     // Rate caching is independent of a host lifecycle reset. Clear every BUS
     // history even when prepare() can reuse coefficients at the same rate.
     void clearBusState() noexcept
