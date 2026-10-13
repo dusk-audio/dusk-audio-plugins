@@ -328,8 +328,29 @@ inline float optoElementStrength(float prNormalised) noexcept
 // music 210 cells pass, worst tiers FIT .36766 -> .36724, VAL .55447 -> .55468, SEALED .50605 -> .50617 (the two
 // rises, +.00021 and +.00012 dB, are inside the .001 dB equality floor for pooled RMS the owner set 2026-10-10).
 // Remaining over 1 dB: the Limit 1 3 kHz row, first 60 ms (in-note high-frequency miss).
-// kOptoCellDefaults order: elTauSeconds, lightCeiling, fastRelease, fastBimolecular, slowCharge, slowRelease, slowBimolecular, memoryCharge, memoryRelease, limitOutputMix, limitInputMix, compressInputMix, timeScaleLight, timeScaleExponent, depthWeighting, lowFrequencyFloor, lfTermGainDb, lfTermFrequency, lfTermGrSpan, conductanceTableOn, flashCharge, flashRelease, flashBimolecular, lfShelfDb, hFloor, lfLitTauAttack, lfLitTauRelease, lfLitLevelDb, lfLitSpanDb, lfLitFloor, lfLitLog, hChargeOnly, attackRateDbPerS, attackRatePower, attackRateTau, elFreqExponent, elFreqTau, hfPeakDb, lfPeakDb, midPeakDb, hf10kPeakDb, elRevHysteresis, elRevRelease, elFreqCorner, trapCapture, trapEmit, trapCapacity, pStrength, pPrExp, pThresh, pKnee, pAsym, lightTableStartDb, lightTableStepDb, lightSlopeAbove, conductanceTableStartDb, conductanceTableStepDb, conductanceSlopeAbove, prStart, prStep, prSlopeBelow, prGate, lfCutDb, lfCutFrequency, lfCutStartDb, lfCutSpanDb, lfCutTauAttack, lfCutTauSlow, lfCutTransSpanDb, lfCutHoldSeconds, lfCutMaxGapDb, lfCutCompWeight, elPolCap, elPolLeak, elPolKnee, elPolRefill, elPolCredit, elPolCapExp, darkRateCeiling, darkTau, darkLight, darkFloorTau, darkHoldSeconds, inputCouplingOn, darkHistoryStrength, darkHistoryBase, darkHistoryMemory, darkHistoryShoulder, darkHistoryShoulderMemory, darkHistoryLow, darkHistoryLowMemory, darkHistoryDensity, darkTrapFillPower
-inline constexpr std::array<float, 93> kOptoCellDefaults{{
+// 2026-10-10, patch 42: the light plateau of a drive faster than 1 kHz. The native unit saturates on a 1 kHz
+// note (Limit 1, in-note reduction 39.81 / 41.16 / 41.97 / 42.51 dB at -8 / -6 / -4 / -2 dBFS) but reaches 45.5 dB
+// at 3 to 5 kHz; this cell's light table is flat above its entry 27 for every frequency, so hot notes of 1.5 to
+// 6 kHz stopped near 43 dB (20 notes at Limit .9 / 1, -8 / -2 dBFS: 15 over 1 dB, worst -2.26). Not the
+// per-polarity charge cap: a table that keeps rising moved 1 kHz by +1.7 dB. Above elSatKneeDb the light is
+// multiplied by 1 + elSatBoost x (speed - 1 - elSatMargin), coming in over elSatSpanDb; speed is the ratio of
+// 5 ms averages of slew power (through the 875 Hz corner) and level power, 1 for a settled 1 kHz sine, limited
+// to a settled tone's maximum. Forms that failed: a 5 ms copy of the per-sample ratio kept what preceded the
+// note and counted a 1 kHz burst as fast (7 of 288 burst readings over 1 dB); without a band limit the element
+// over-delivered from 7 to 10 kHz (blind notes at 8 / 12 kHz +1.17 / +1.13), and with a fade to 9 kHz one
+// blind note at 7.5 kHz ended 0.24 dB worse than before; so the element is confined to the band it was
+// calibrated in and fades out between elSatFadeLoKHz and elSatFadeHiKHz, read from the unfiltered slew
+// ratio. From 8 kHz up, at 1 kHz and below the knee nothing changes (within 0.01 dB; at a hot note's
+// onset the speed reads high for a fraction of a millisecond). Constants from 44 calibration notes only.
+// Patch 41 -> 42: held-out 416 5 -> 0 over, worst 1.772 -> 0.930, RMS 0.3121 -> 0.2600; calibration notes 1.5 to
+// 6 kHz worst 0.48; third blind HF set (17 notes, never fitted) 7 -> 0 over, worst 2.17 -> 0.85; short 130,
+// onset 364, E1 84, settled 186, release 280, blind 154 / 238, long notes 72, burst calibration 288, native
+// frequency 122 and recovery 20 pass; music 210 cells pass, worst tiers FIT / VAL / SEALED 0.36724 / 0.55468 / 0.50617
+// -> 0.36641 / 0.55285 / 0.50597; C2 0.32844 -> 0.32831. NOT fixed, older than this patch: hot notes above 7.5 kHz at Limit
+// (8 kHz up to -1.65 dB, 12 to 16 kHz -0.7 to -4.4 dB at -2 dBFS: the side-chain weighting up there and the
+// table's uneven top).
+// kOptoCellDefaults order: elTauSeconds, lightCeiling, fastRelease, fastBimolecular, slowCharge, slowRelease, slowBimolecular, memoryCharge, memoryRelease, limitOutputMix, limitInputMix, compressInputMix, timeScaleLight, timeScaleExponent, depthWeighting, lowFrequencyFloor, lfTermGainDb, lfTermFrequency, lfTermGrSpan, conductanceTableOn, flashCharge, flashRelease, flashBimolecular, lfShelfDb, hFloor, lfLitTauAttack, lfLitTauRelease, lfLitLevelDb, lfLitSpanDb, lfLitFloor, lfLitLog, hChargeOnly, attackRateDbPerS, attackRatePower, attackRateTau, elFreqExponent, elFreqTau, hfPeakDb, lfPeakDb, midPeakDb, hf10kPeakDb, elRevHysteresis, elRevRelease, elFreqCorner, trapCapture, trapEmit, trapCapacity, pStrength, pPrExp, pThresh, pKnee, pAsym, lightTableStartDb, lightTableStepDb, lightSlopeAbove, conductanceTableStartDb, conductanceTableStepDb, conductanceSlopeAbove, prStart, prStep, prSlopeBelow, prGate, lfCutDb, lfCutFrequency, lfCutStartDb, lfCutSpanDb, lfCutTauAttack, lfCutTauSlow, lfCutTransSpanDb, lfCutHoldSeconds, lfCutMaxGapDb, lfCutCompWeight, elPolCap, elPolLeak, elPolKnee, elPolRefill, elPolCredit, elPolCapExp, darkRateCeiling, darkTau, darkLight, darkFloorTau, darkHoldSeconds, inputCouplingOn, darkHistoryStrength, darkHistoryBase, darkHistoryMemory, darkHistoryShoulder, darkHistoryShoulderMemory, darkHistoryLow, darkHistoryLowMemory, darkHistoryDensity, darkTrapFillPower, elSatBoost, elSatMargin, elSatSpanDb, elSatKneeDb, elSatFadeLoKHz, elSatFadeHiKHz
+inline constexpr std::array<float, 99> kOptoCellDefaults{{
     2.11744767e-06f, 0.0f, 8.05137539f, 2.89539862f, 4.60660553f, 23.5234127f,
     0.586750925f, 0.00118519559f, 0.999977779f, 0.990760822f, 0.0365957224f, 2.38673383e-05f,
     19.8983517f, 0.326484203f, 1.0f, 1.0f, -1.21699251f, 379.874676f,
@@ -345,7 +366,8 @@ inline constexpr std::array<float, 93> kOptoCellDefaults{{
     1.031764415f, 107.610489f, 0.7941493488f, 6.07100083e-05f, 0.9903732738f, 0.0265073478f,
     27.87475932f, 0.0003f, 0.01f, 0.25f, 0.0005f, 1.0f,
     1.0f, 0.1630389988f, 16.31156673f, 0.1077029333f, 17.38801884f, 0.2356715649f,
-    5.404491238e-18f, 5.0f, 1.734882487f
+    5.404491238e-18f, 5.0f, 1.734882487f, 1.2f, 0.05f, 2.5f,
+    -33.3f, 6.0f, 7.5f
 }};
 
 inline constexpr std::array<float, 37> kOptoCellLightTable{{
@@ -422,6 +444,8 @@ struct OptoCellParams
     float darkHistoryShoulder, darkHistoryShoulderMemory, darkHistoryLow, darkHistoryLowMemory;
     float darkHistoryDensity;
     float darkTrapFillPower;
+    // The light plateau of a drive faster than 1 kHz (0 = off): see process().
+    float elSatBoost, elSatMargin, elSatSpanDb, elSatKneeDb, elSatFadeLoKHz, elSatFadeHiKHz;
     const float* lightTable;
     int lightTableSize;
     float lightTableStartDb, lightTableStepDb, lightSlopeAbove;
@@ -475,6 +499,8 @@ inline OptoCellParams optoCellParamsFrom(
     p.darkHistoryLowMemory = values[90];
     p.darkHistoryDensity = values[91];
     p.darkTrapFillPower = values[92];
+    p.elSatBoost = values[93]; p.elSatMargin = values[94]; p.elSatSpanDb = values[95]; p.elSatKneeDb = values[96];
+    p.elSatFadeLoKHz = values[97]; p.elSatFadeHiKHz = values[98];
     return p;
 }
 
@@ -885,6 +911,7 @@ public:
             // EL brightness frequency law (AC electroluminescence, light ~ f^kappa at a given drive amplitude):
             // the drive's slew-to-level mean-square ratio estimates (f / 1 kHz)^2, exactly 1 for a settled 1 kHz sine.
             double slew = (s - d.drivePrev) * slewNormalisation;
+            const double rawSlew = slew;   // ahead of the corner: (f / 1 kHz)^2 against the level for a settled sine
             if (cellParams.elFreqCorner > 0.0f)
             {   // EL brightness flattens above the corner: low-pass the slew before its mean square
                 d.slewLow += slewLowPassStep * (slew - d.slewLow);
@@ -896,6 +923,37 @@ public:
             const double ratio = std::clamp(d.slewPower / std::max(d.drivePower, 1.0e-30), 1.0e-4, 1.0e4);
             estimatedFrequencyHz = 1000.0 * std::sqrt(ratio);
             light *= std::pow(ratio, 0.5 * static_cast<double>(cellParams.elFreqExponent));
+            if (cellParams.elSatBoost > 0.0f)
+            {   // The plateau of the light table is higher for a drive faster than 1 kHz. Its speed is the
+                // ratio of two 5 ms power averages (a loud note outweighs what preceded it at once),
+                // limited to what a settled tone can reach, 1 + (corner / 1 kHz)^2. The element is confined
+                // to the band it was measured in: it fades out between elSatFadeLoKHz and elSatFadeHiKHz,
+                // read from the unfiltered slew-to-level ratio, (f / 1 kHz)^2.
+                const double satStep = std::min(dt / 0.005, 1.0);
+                d.satSlew += satStep * (slew * slew - d.satSlew);
+                d.satRaw += satStep * (rawSlew * rawSlew - d.satRaw);
+                d.satDrive += satStep * (s * s - d.satDrive);
+                if (d.satSlew < 1.0e-30) d.satSlew = 0.0;     // no denormal tail in silence
+                if (d.satRaw < 1.0e-30) d.satRaw = 0.0;
+                if (d.satDrive < 1.0e-30) d.satDrive = 0.0;
+                const double level = std::max(d.satDrive, 1.0e-30);
+                const double cornerKHz = cellParams.elFreqCorner > 0.0f ? 1.0e-3 * static_cast<double>(cellParams.elFreqCorner) : 1.0e3;
+                const double fast = std::min(d.satSlew / level, 1.0 + cornerKHz * cornerKHz)
+                    - 1.0 - static_cast<double>(cellParams.elSatMargin);
+                if (fast > 0.0 && d.el > 1.0e-30)
+                {
+                    const double above = (8.685889638065035 * std::log(d.el) - static_cast<double>(cellParams.elSatKneeDb))
+                        / std::max(static_cast<double>(cellParams.elSatSpanDb), 1.0e-6);
+                    const double lo = static_cast<double>(cellParams.elSatFadeLoKHz) * cellParams.elSatFadeLoKHz;
+                    const double hi = static_cast<double>(cellParams.elSatFadeHiKHz) * cellParams.elSatFadeHiKHz;
+                    const double fade = hi > lo ? std::clamp((hi - d.satRaw / level) / (hi - lo), 0.0, 1.0) : 1.0;
+                    if (above > 0.0 && fade > 0.0)
+                    {
+                        const double w = above >= 1.0 ? 1.0 : above * above * (3.0 - 2.0 * above);
+                        light *= 1.0 + static_cast<double>(cellParams.elSatBoost) * fast * w * fade;
+                    }
+                }
+            }
         }
         if (cellParams.elPolCap > 0.0f && cellParams.elPolRefill > 0.0f)
         {
@@ -1326,6 +1384,7 @@ private:
         int floorInputHold = 0;
         double floorPassed = 1.0;   // the share of the cell's conductance the LF floor passes (1 = no floor)
         int reversalSign = 1, reversalCount = 0;
+        double satSlew = 0.0, satRaw = 0.0, satDrive = 0.0;   // 5 ms power averages: slew, raw slew, level (HF plateau)
         std::array<double, kPopulations> population{};
         float gain = 1.0f;
         double elementInput = 0.0;   // elementTerm(): the last sample of the cell's input
