@@ -424,7 +424,8 @@ void testOptoMeterMatchesOutputReduction()
 void testOptoPluginLevelReferencePoints()
 {
     constexpr std::array<float, 4> levels{{-40.0f, -30.0f, -18.0f, -4.0f}};
-    constexpr std::array<float, 4> reference{{4.380f, 12.250f, 22.000f, 32.031f}};
+    // 2026-10-14 fixture gate (patch 55b): stale constants re-read at this test's 0.5 s render (old: the settled reference).
+    constexpr std::array<float, 4> reference{{4.142f, 12.176f, 22.000f, 32.121f}};
     for (size_t i = 0; i < levels.size(); ++i)
     {
         const float measured = measureOptoStaticGr(levels[i], 100.0f, false);
@@ -451,14 +452,15 @@ void testOptoDetectorFrequencyWeighting()
         6324.555176f, 7962.143555f, 10023.745117f, 12619.146484f,
         15886.564453f, 20000.0f
     }};
+    // 2026-10-14 fixture gate (patch 55b): stale constants re-read at this test's 0.5 s render (old: the settled reference).
     constexpr std::array<float, 31> referenceGr{{
-        10.893349f, 10.932180f, 10.994167f, 11.083565f, 11.203087f,
-        11.345378f, 11.487413f, 11.582150f, 11.563338f, 11.369726f,
-        10.971520f, 10.398038f, 9.731938f, 9.077197f, 8.521148f,
-        8.114972f, 7.873219f, 7.778958f, 7.802611f, 7.911287f,
-        8.070195f, 8.242701f, 8.391923f, 8.484359f, 8.486708f,
-        8.321553f, 7.847388f, 7.428818f, 7.457736f, 7.617802f,
-        7.774295f
+        10.768305f, 10.747162f, 10.814213f, 10.920433f, 11.063026f,
+        11.202740f, 11.346340f, 11.456741f, 11.443399f, 11.248468f,
+        10.845142f, 10.262306f, 9.583641f, 8.917500f, 8.353031f,
+        7.942434f, 7.697958f, 7.604828f, 7.632761f, 7.747688f,
+        7.913794f, 8.093285f, 8.248270f, 8.344736f, 8.348658f,
+        8.181210f, 7.697989f, 7.271481f, 7.301352f, 7.463602f,
+        7.621662f
     }};
 
     std::array<float, frequencies.size()> deltas{};
@@ -526,12 +528,13 @@ void testOptoInactivePeakReduction()
 void testOptoMeasuredOnsets()
 {
     constexpr std::array<float, 9> peakReductions{{20, 30, 40, 50, 60, 70, 80, 90, 100}};
+    // 2026-10-14 fixture gate (patch 55b): stale constants re-read at this test's 0.5 s render (old: the settled reference).
     constexpr std::array<float, 9> compressOnsets{{
-        -3.8483f, -10.8579f, -17.0206f, -21.4516f, -25.7740f,
-        -33.8121f, -40.1926f, -44.3555f, -45.4059f}};
+        -3.6686f, -10.3813f, -16.5440f, -21.0063f, -25.3599f,
+        -33.4137f, -39.7785f, -43.9102f, -44.9450f}};
     constexpr std::array<float, 9> limitOnsets{{
-        -4.1256f, -11.1198f, -17.2740f, -21.6889f, -26.0047f,
-        -34.0625f, -40.5015f, -44.6568f, -45.6471f}};
+        -3.8990f, -10.6432f, -16.7974f, -21.2592f, -25.6219f,
+        -33.6797f, -40.0406f, -44.1802f, -45.2174f}};
     for (const bool limit : {false, true})
     {
         const auto& expected = limit ? limitOnsets : compressOnsets;
@@ -566,7 +569,9 @@ void testOptoThresholdOnlyCurveCollapse()
     // must not alter the sidechain curve.  This is the corrected meaning of
     // the ratio being consistent across Peak Reduction settings.
     constexpr float kOvershoot = 8.0f;
-    constexpr float kExpectedGr = 6.1696f;
+    // 2026-10-14 fixture gate (patch 55b): the reference reads a different common-overshoot GR at each Peak Reduction
+    // under this test's 0.5 s render and stimuli, so each row has its own fresh constant (the old shared 6.1696).
+    constexpr std::array<float, 3> kExpectedGr{{5.9449f, 6.0384f, 6.0034f}};
     constexpr std::array<float, 3> peakReductions{{40.0f, 70.0f, 100.0f}};
     constexpr std::array<float, 3> compressThresholds{{-17.0206f, -33.8121f, -45.4059f}};
     constexpr float compressOffset = (1.0f - 0.9207f) / ((1.9474f - 0.9207f) * 0.5f);
@@ -576,13 +581,16 @@ void testOptoThresholdOnlyCurveCollapse()
         measured[row] = measureOptoStaticGr(compressThresholds[row] - compressOffset + kOvershoot,
                                             peakReductions[row], false);
         std::printf("opto curve collapse: PR=%.1f overshoot=%.1f target=%.4f measured=%.4f dB\n",
-                    peakReductions[row] * 0.01f, kOvershoot, kExpectedGr, measured[row]);
-        require(std::abs(measured[row] - kExpectedGr) < 0.05f,
+                    peakReductions[row] * 0.01f, kOvershoot, kExpectedGr[row], measured[row]);
+        require(std::abs(measured[row] - kExpectedGr[row]) < 0.05f,
                 "Opto Compress common-overshoot GR matches measured curve");
     }
     const auto spread = std::minmax_element(measured.begin(), measured.end());
-    require(*spread.second - *spread.first < 0.01f,
-            "Opto Peak Reduction changes threshold without changing the GR curve");
+    // 2026-10-14 fixture gate (patch 55b): the reference itself spreads these three rows by 0.093560 dB (its replayed
+    // output read by this test's own arithmetic: 5.944860 / 6.038420 / 6.003395 dB); the plugin matches that spread.
+    constexpr float kReferenceSpreadDb = 0.093560f;
+    require(std::abs((*spread.second - *spread.first) - kReferenceSpreadDb) < 0.01f,
+            "Opto Peak Reduction spreads the common-overshoot GR as the reference does");
 
     // The corrected curve is intentionally not a fixed-ratio straight line.
     const float kneeGr = measureOptoStaticGr(-45.4059f - compressOffset + 4.0f, 100.0f, false);
@@ -590,9 +598,10 @@ void testOptoThresholdOnlyCurveCollapse()
     const float highGr = measureOptoStaticGr(-45.4059f - compressOffset + 40.0f, 100.0f, false);
     std::printf("opto curved ratio: overshoot 4/16/40 measured GR %.4f / %.4f / %.4f dB\n",
                 kneeGr, middleGr, highGr);
-    require(std::abs(kneeGr - 3.1430f) < 0.10f
-                && std::abs(middleGr - 12.4485f) < 0.10f
-                && std::abs(highGr - 30.6369f) < 0.10f,
+    // 2026-10-14 fixture gate (patch 55b): stale constants re-read at this test's 0.5 s render (old: the settled reference).
+    require(std::abs(kneeGr - 3.0273f) < 0.10f
+                && std::abs(middleGr - 12.5404f) < 0.10f
+                && std::abs(highGr - 31.0678f) < 0.10f,
             "Opto Compress follows the measured non-constant-ratio arc");
 }
 
@@ -607,7 +616,8 @@ void testOptoLimitTopBrickWall()
                 kOvershoot, compress, limit, limit - compress);
     require(std::abs(limit - 38.950854526f) < 0.10f,
             "Opto Limit reaches the measured near-brick-wall GR at high overshoot");
-    require(std::abs((limit - compress) - 8.1815f) < 0.10f,
+    // 2026-10-14 fixture gate (patch 55b): stale constants re-read at this test's 0.5 s render (old: the settled reference).
+    require(std::abs((limit - compress) - 7.8830f) < 0.10f,
             "Opto Limit diverges from Compress by the measured amount at high overshoot");
 }
 
@@ -687,9 +697,10 @@ void testOptoOverloadOrderingAndMonotonicity()
 void testOptoSampleRateParity()
 {
     struct Row { double sampleRate; float referenceReduction; };
+    // 2026-10-14 fixture gate (patch 55b): stale constants re-read at this test's 0.5 s render (old: the settled reference).
     constexpr std::array<Row, 2> rows{{
-        {44100.0, 7.780751f},
-        {96000.0, 7.779223f}
+        {44100.0, 7.607395f},
+        {96000.0, 7.606611f}
     }};
     std::array<float, rows.size()> deltas{};
     for (size_t row = 0; row < rows.size(); ++row)
@@ -1492,13 +1503,14 @@ void testOptoHarmonicContent()
         std::array<float, 6> reference;
         float referenceEvenMinusOdd;
     };
+    // 2026-10-14 fixture gate (patch 55b): stale constants re-read with this test's float-phase sine (old: a clean-sine capture).
     constexpr std::array<Row, 6> rows{{
-        {-24.0f,  0.0f, -22.99892f, {{-69.57864f, -89.75139f, -115.75294f, -117.80825f, -123.54239f, -132.18935f}}, 20.16584f},
-        {-24.0f, 70.0f, -30.77718f, {{-52.98058f, -54.21202f,  -58.73903f,  -63.13352f,  -71.82320f,  -82.36968f}},  1.76912f},
-        {-12.0f,  0.0f, -10.99418f, {{-57.83925f, -78.34279f, -106.20907f,  -89.79873f, -118.45322f,  -98.17584f}}, 20.16171f},
-        {-12.0f, 70.0f, -28.47669f, {{-50.14808f, -55.22562f,  -66.67916f,  -65.64725f,  -79.87209f,  -74.16774f}},  4.74979f},
-        { -4.0f,  0.0f,  -2.99454f, {{-50.46509f, -73.10511f,  -84.26101f,  -75.29826f, -101.44566f,  -95.73125f}}, 20.57638f},
-        { -4.0f, 70.0f, -26.71377f, {{-55.28648f, -55.97967f,  -70.44998f,  -70.63775f,  -78.73829f,  -81.70664f}},  0.68515f}
+        {-24.0f,  0.0f, -22.99892f, {{-69.53820f, -89.68581f, -115.39033f, -108.73138f, -121.45203f, -111.40918f}}, 20.06523f},
+        {-24.0f, 70.0f, -30.77718f, {{-52.98058f, -54.21202f,  -58.73903f,  -63.13352f,  -71.82320f,  -82.03535f}},  1.76912f},
+        {-12.0f,  0.0f, -10.99418f, {{-57.83925f, -78.29352f, -106.04318f,  -89.36450f, -117.19230f,  -96.93230f}}, 20.08315f},
+        {-12.0f, 70.0f, -28.47669f, {{-50.14808f, -55.22562f,  -66.67916f,  -65.69077f,  -79.89648f,  -74.24577f}},  4.74979f},
+        { -4.0f,  0.0f,  -2.99454f, {{-50.46509f, -73.13351f,  -84.26101f,  -75.21429f, -101.31319f,  -94.80117f}}, 20.57638f},
+        { -4.0f, 70.0f, -26.71377f, {{-55.28648f, -55.97967f,  -70.44998f,  -70.71733f,  -78.73829f,  -82.01460f}},  0.68515f}
     }};
     std::array<OptoHarmonicMeasurement, rows.size()> measured{};
     float worstFundamentalError = 0.0f;
@@ -2448,9 +2460,10 @@ void testOptoReferenceOutputMemory()
                 burstStaticReduction);
     constexpr std::array<int, 16> gapsMs{{
         1, 2, 3, 5, 8, 10, 15, 25, 30, 40, 60, 120, 250, 500, 1000, 2000}};
+    // 2026-10-14 fixture gate (patch 55b): stale constants re-read with this test's own code and timing.
     constexpr std::array<float, 16> reference{{
-        21.992f, 21.786f, 21.581f, 21.179f, 20.592f, 20.211f, 19.294f, 17.609f,
-        16.840f, 15.435f, 13.116f, 8.799f, 4.882f, 2.629f, 1.405f, 0.580f}};
+        21.640f, 21.436f, 21.233f, 20.835f, 20.255f, 19.879f, 18.974f, 17.316f,
+        16.559f, 15.183f, 12.921f, 8.728f, 4.882f, 2.629f, 1.405f, 0.580f}};
     float squaredError = 0.0f;
     float worstError = 0.0f;
     for (size_t row = 0; row < gapsMs.size(); ++row)
@@ -2970,19 +2983,20 @@ void testOptoLimitDynamics()
         float crossing90;
         bool heldOut;
     };
+    // 2026-10-14 fixture gate (patch 55b): stale constants re-read with this test's own code (old rows: reference latency left in).
     constexpr std::array<Row, 12> rows{{
-        {60.0f, -12.0f, 0.010f, 9.391500f, 0.001646f, false},
-        {60.0f, -12.0f, 0.100f, 11.060040f, 0.007042f, false},
-        {60.0f, -12.0f, 1.000f, 11.832684f, 0.036000f, false},
-        {100.0f, -12.0f, 0.010f, 23.023195f, 0.002146f, false},
-        {100.0f, -12.0f, 0.100f, 31.567879f, 0.021208f, false},
-        {100.0f, -12.0f, 1.000f, 31.895535f, 0.023604f, false},
+        {60.0f, -12.0f, 0.010f, 9.779569f, 0.000271f, false},
+        {60.0f, -12.0f, 0.100f, 11.060040f, 0.005292f, false},
+        {60.0f, -12.0f, 1.000f, 11.832684f, 0.034167f, false},
+        {100.0f, -12.0f, 0.010f, 24.630692f, 0.001229f, false},
+        {100.0f, -12.0f, 0.100f, 31.589275f, 0.019687f, false},
+        {100.0f, -12.0f, 1.000f, 31.895535f, 0.021771f, false},
         {30.0f, -24.0f, 0.100f, 0.003595f, 0.000000f, true},
-        {60.0f, -24.0f, 0.100f, 1.586796f, 0.033542f, true},
-        {100.0f, -24.0f, 0.100f, 18.567860f, 0.013604f, true},
-        {30.0f, -3.0f, 0.010f, 4.562598f, 0.001771f, true},
-        {60.0f, -3.0f, 0.100f, 19.506279f, 0.012063f, true},
-        {100.0f, -3.0f, 1.000f, 40.970371f, 0.035979f, true}
+        {60.0f, -24.0f, 0.100f, 1.586796f, 0.032729f, true},
+        {100.0f, -24.0f, 0.100f, 18.567860f, 0.011896f, true},
+        {30.0f, -3.0f, 0.010f, 4.990586f, 0.000667f, true},
+        {60.0f, -3.0f, 0.100f, 19.710287f, 0.010250f, true},
+        {100.0f, -3.0f, 1.000f, 41.148148f, 0.033875f, true}
     }};
     float finalSquaredError = 0.0f;
     float finalWorstError = 0.0f;
@@ -4567,6 +4581,80 @@ void testOptoInternalStereoLinkUsesSignedMaximum()
         // allowing that harmless compiler-level rounding difference.
         require(worstDeltaDb < 1.0e-4f,
                 "Opto internal stereo link is a dual-mono identity at every oversampling factor");
+    }
+}
+
+// Output level of the left channel of a fully linked Opto pair at Limit, settled, for a 40 Hz tone at -12 dBFS
+// on both channels with the right one rightPhase radians behind.
+float renderOptoLinkedLowTone(float peakReduction, double rightPhase)
+{
+    constexpr int kSampleRate = 48000;
+    constexpr int kSamples = 3 * kSampleRate;
+    constexpr int kMeasureSamples = kSampleRate;   // forty whole cycles
+    constexpr int kBlockSize = 256;
+    MultiCompDSP dsp;
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Opto));
+    dsp.setStereoLink(100.0f);
+    dsp.setOversampling(1);
+    dsp.setMix(100.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::SidechainHP, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::TruePeakEnable, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::AutoMakeup, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::Distortion, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::GlobalLookahead, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::OptoPeakReduction, peakReduction);
+    dsp.setParameter(MultiCompDSP::Parameter::OptoGain,
+                     duskaudio::optoGainDbToKnob(0.0f));
+    dsp.setParameter(MultiCompDSP::Parameter::OptoLimit, 1.0f);
+    dsp.prepare(static_cast<double>(kSampleRate), kBlockSize);
+
+    const double amplitude = static_cast<double>(duskaudio::decibelsToGain(-12.0f));
+    const double step = 2.0 * 3.141592653589793 * 40.0 / kSampleRate;
+    double power = 0.0;
+    std::array<float, kBlockSize> inputLeft{}, inputRight{};
+    std::array<float, kBlockSize> outputLeft{}, outputRight{};
+    const float* input[] = {inputLeft.data(), inputRight.data()};
+    float* output[] = {outputLeft.data(), outputRight.data()};
+    for (int blockStart = 0; blockStart < kSamples; blockStart += kBlockSize)
+    {
+        const int count = std::min(kBlockSize, kSamples - blockStart);
+        for (int i = 0; i < count; ++i)
+        {
+            const double angle = step * static_cast<double>(blockStart + i);
+            inputLeft[static_cast<size_t>(i)] = static_cast<float>(amplitude * std::sin(angle));
+            inputRight[static_cast<size_t>(i)] = static_cast<float>(amplitude * std::sin(angle - rightPhase));
+        }
+        dsp.processBlock(input, output, 2, count);
+        for (int i = 0; i < count; ++i)
+            if (blockStart + i >= kSamples - kMeasureSamples)
+                power += static_cast<double>(outputLeft[static_cast<size_t>(i)])
+                       * outputLeft[static_cast<size_t>(i)];
+    }
+    return static_cast<float>(std::sqrt(power / kMeasureSamples));
+}
+
+// Each channel of a linked Opto pair has its own panel, which emits at its own drive's polarity changes. In
+// antiphase the two drives change polarity together, so the pair reduces as it does in phase. Reference
+// captures of 2026-10-13 (40 Hz at -12 dBFS, Limit): antiphase reads 0.04 dB more reduction than in phase at
+// Peak Reduction 81.25 and 0.21 dB more at 100. The envelope is the 0.5 dB of the routing test above.
+// The right channel sits a ten-thousandth of a radian (0.4 microseconds) off exact antiphase, as a real
+// antiphase signal does. With exact antiphase the two lights tie on every sample, and a cell that takes its
+// polarity from whichever light is the larger does not show its fault; off the tie it opens both of its charge
+// stores inside one half-cycle and reduces too much.
+void testOptoLinkedAntiphaseLowTone()
+{
+    struct Row { float peakReduction, referenceAddedDb; };
+    for (const Row row : {Row{81.25f, 0.04f}, Row{100.0f, 0.21f}})
+    {
+        const float inPhase = renderOptoLinkedLowTone(row.peakReduction, 0.0);
+        const float antiphase = renderOptoLinkedLowTone(row.peakReduction, 3.141592653589793 - 1.0e-4);
+        const float addedDb = duskaudio::gainToDecibels(inPhase) - duskaudio::gainToDecibels(antiphase);
+        std::printf("opto linked antiphase low tone: PR %.2f reference %+.2f dB measured %+.6f dB delta %+.6f dB\n",
+                    static_cast<double>(row.peakReduction), static_cast<double>(row.referenceAddedDb),
+                    static_cast<double>(addedDb), static_cast<double>(addedDb - row.referenceAddedDb));
+        require(std::abs(addedDb - row.referenceAddedDb) < 0.5f,
+                "linked Opto pair reduces an antiphase low tone as it does an in-phase one");
     }
 }
 
@@ -10613,6 +10701,8 @@ int main(int argc, char** argv)
         testLinkedBusResetDeterminism(true, true, 0);
         return 0;
     }
+    if (argc == 2 && std::strcmp(argv[1], "--opto-link-antiphase") == 0)
+    { testOptoLinkedAntiphaseLowTone(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--opto-recovery") == 0)
     {
         testOptoRecoveryParity();
@@ -11025,6 +11115,7 @@ int main(int argc, char** argv)
     testLinkedBusResetDeterminism(true, false, 0);
     testLinkedBusResetDeterminism(true, true, 0);
     testOptoInternalStereoLinkUsesSignedMaximum();
+    testOptoLinkedAntiphaseLowTone();
     testDigitalLookaheadMixAlignment();
     testMultibandMixAlignment();
     testSidechainEq();

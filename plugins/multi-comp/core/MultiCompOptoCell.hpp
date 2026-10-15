@@ -40,6 +40,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <type_traits>
 
 #ifndef OPTO_LAB_PROBE
 #define OPTO_LAB_PROBE(channel, appliedGain, cellGainValue)
@@ -47,117 +48,6 @@
 
 namespace duskaudio
 {
-
-inline constexpr std::array<float, 23> kOptoCompressCurve{{
-    0.9207f, 1.9474f, 3.1430f, 4.6974f, 6.1696f, 7.6165f,
-    9.2638f, 10.8676f, 12.4485f, 13.9366f, 15.7917f, 17.2499f,
-    19.0803f, 20.4897f, 22.3318f, 23.8425f, 25.2656f, 26.5058f,
-    28.2780f, 29.5828f, 30.6369f, 32.1649f, 32.9052f}};
-inline constexpr std::array<float, 23> kOptoLimitCurve{{
-    0.9379f, 1.9978f, 3.2454f, 4.8601f, 6.4467f, 8.0793f,
-    9.6964f, 11.7394f, 13.5249f, 15.2602f, 17.4341f, 19.2438f,
-    21.5010f, 23.3864f, 25.7863f, 27.9270f, 30.0609f, 32.0834f,
-    34.7103f, 36.8851f, 38.8184f, 40.5691f, 40.9082f}};
-
-inline float optoThresholdDb(float peakReduction, bool limit) noexcept
-{
-    // The reference knob is normalised 0..1; Multi-Comp exposes the same
-    // control as a displayed 0..100 percentage. Compress and Limit use
-    // their independently measured onset tables.
-    constexpr std::array<float, 9> compressThresholds{{
-        -3.8483f, -10.8579f, -17.0206f, -21.4516f, -25.7740f,
-        -33.8121f, -40.1926f, -44.3555f, -45.4059f}};
-    constexpr std::array<float, 9> limitThresholds{{
-        -4.1256f, -11.1198f, -17.2740f, -21.6889f, -26.0047f,
-        -34.0625f, -40.5015f, -44.6568f, -45.6471f}};
-    const auto& thresholds = limit ? limitThresholds : compressThresholds;
-    const auto& curve = limit ? kOptoLimitCurve : kOptoCompressCurve;
-    const float onsetOffset = (1.0f - curve[0])
-        / ((curve[1] - curve[0]) * 0.5f);
-    const float thresholdCorrection = -onsetOffset;
-    const float normalised = std::clamp(peakReduction * 0.01f, 0.0f, 1.0f);
-    if (normalised <= 0.1f) return 1000.0f;
-
-    // The first measured threshold is at 0.2.  Continue its measured
-    // 0.2->0.3 slope toward 0.1 so automation stays continuous while still
-    // leaving 0.0 and 0.1 inactive over the measured input range.
-    if (normalised < 0.2f)
-        return thresholds[0] + thresholdCorrection
-            + (normalised - 0.2f) * (thresholds[1] - thresholds[0]) * 10.0f;
-    if (normalised >= 1.0f) return thresholds.back() + thresholdCorrection;
-    // The original tenth-step sweep did not sample PR 0.55.  A dedicated
-    // steady-state capture there places the Compress threshold 0.53 dB
-    // below the linear 0.50 -> 0.60 interpolation (measured GR residuals
-    // were -0.239/-0.377/-0.500 dB at -24/-18/-12 dBFS).  Preserve the
-    // measured endpoints and interpolate through the new midpoint.
-    if (!limit && normalised >= 0.5f && normalised < 0.6f)
-    {
-        constexpr float midpointThreshold = -24.1428f;
-        if (normalised < 0.55f)
-            return thresholds[3] + thresholdCorrection
-                + (normalised - 0.5f)
-                    * (midpointThreshold - thresholds[3]) * 20.0f;
-        return midpointThreshold + thresholdCorrection
-            + (normalised - 0.55f)
-                * (thresholds[4] - midpointThreshold) * 20.0f;
-    }
-    const float position = (normalised - 0.2f) * 10.0f;
-    const size_t index = static_cast<size_t>(position);
-    const float fraction = position - static_cast<float>(index);
-    return thresholds[index] + thresholdCorrection
-        + fraction * (thresholds[index + 1] - thresholds[index]);
-}
-
-inline float optoCurveDb(float overshootDb, bool limit) noexcept
-{
-    const auto& curve = limit ? kOptoLimitCurve : kOptoCompressCurve;
-    const float position = overshootDb * 0.5f;
-    if (position <= 0.0f) {
-        if (limit) return std::max(0.0f, curve[0] + position * (curve[1] - curve[0]));
-        return curve[0] * std::exp(position * (curve[1] - curve[0]) / curve[0]);
-    }
-    if (position >= static_cast<float>(curve.size() - 1))
-    {
-        const float extraPosition
-            = position - static_cast<float>(curve.size() - 1);
-        if (limit)
-            return curve.back() + extraPosition
-                * (curve.back() - curve[curve.size() - 2]);
-
-        // Transition from the table's final measured slope to just below
-        // unity (1.90 dB GR per 2 dB input), then approach the Limit
-        // continuation smoothly. Both joins are C1: a hard slope change at
-        // the table edge and the old min() crossing produced unmeasured
-        // output-slope steps.
-        constexpr float compressInitialSlope = 1.90f;
-        constexpr float slopeTransitionPositions = 0.10f;
-        const float tableEndSlope = curve.back()
-            - curve[curve.size() - 2];
-        if (extraPosition < slopeTransitionPositions)
-            return curve.back() + tableEndSlope * extraPosition
-                + (compressInitialSlope - tableEndSlope)
-                    * extraPosition * extraPosition
-                    / (2.0f * slopeTransitionPositions);
-        const float limitSlope = kOptoLimitCurve.back()
-            - kOptoLimitCurve[kOptoLimitCurve.size() - 2];
-        const float limitContinuation = kOptoLimitCurve.back()
-            + extraPosition * limitSlope;
-        const float transitionValue = curve.back()
-            + slopeTransitionPositions
-                * (tableEndSlope + compressInitialSlope) * 0.5f;
-        const float limitAtTransition = kOptoLimitCurve.back()
-            + slopeTransitionPositions * limitSlope;
-        const float initialGap = limitAtTransition - transitionValue;
-        const float convergenceRate = (compressInitialSlope - limitSlope)
-            / initialGap;
-        return limitContinuation - initialGap
-            * std::exp(-convergenceRate
-                * (extraPosition - slopeTransitionPositions));
-    }
-    const size_t index = static_cast<size_t>(position);
-    const float fraction = position - static_cast<float>(index);
-    return curve[index] + fraction * (curve[index + 1] - curve[index]);
-}
 
 // The one-sided input element (OptoCell::elementTerm). The reference clips the positive side of the cell's
 // input softly above a fixed level, more the further Peak Reduction is turned up and the less the cell is
@@ -457,14 +347,39 @@ struct OptoCellParams
     float prStart, prStep, prSlopeBelow, prGate;
 };
 
+// Slots 0..51 of kOptoCellDefaults are the leading 52 floats of OptoCellParams, declared in slot order. Keep the two
+// in step: optoCellParamsFrom assigns them by name, the order comment above lists them by slot.
+static_assert(std::is_standard_layout_v<OptoCellParams>);
+static_assert(offsetof(OptoCellParams, pAsym) - offsetof(OptoCellParams, elTauSeconds) == 51 * sizeof(float),
+              "OptoCellParams: the 52 leading constants must stay contiguous floats in kOptoCellDefaults order");
+
 // Parameters from a kOptoCellDefaults-ordered array (the tables stay the built-in ones). The plugin runs the
-// defaults; a lab passes candidates through this.
+// defaults; a lab passes candidates through this. Slot k is the k-th name of the order comment above (the lab tools
+// address a constant by that name), and every slot is assigned by name.
 inline OptoCellParams optoCellParamsFrom(
     const std::array<float, kOptoCellDefaults.size()>& values) noexcept
 {
     OptoCellParams p{};
-    float* lead = &p.elTauSeconds;
-    for (int i = 0; i < 52; ++i) lead[i] = values[static_cast<size_t>(i)];
+    p.elTauSeconds = values[0]; p.lightCeiling = values[1];
+    p.fastRelease = values[2]; p.fastBimolecular = values[3];
+    p.slowCharge = values[4]; p.slowRelease = values[5]; p.slowBimolecular = values[6];
+    p.memoryCharge = values[7]; p.memoryRelease = values[8];
+    p.limitOutputMix = values[9]; p.limitInputMix = values[10]; p.compressInputMix = values[11];
+    p.timeScaleLight = values[12]; p.timeScaleExponent = values[13];
+    p.depthWeighting = values[14]; p.lowFrequencyFloor = values[15];
+    p.lfTermGainDb = values[16]; p.lfTermFrequency = values[17]; p.lfTermGrSpan = values[18];
+    p.conductanceTableOn = values[19];
+    p.flashCharge = values[20]; p.flashRelease = values[21]; p.flashBimolecular = values[22];
+    p.lfShelfDb = values[23]; p.hFloor = values[24];
+    p.lfLitTauAttack = values[25]; p.lfLitTauRelease = values[26];
+    p.lfLitLevelDb = values[27]; p.lfLitSpanDb = values[28];
+    p.lfLitFloor = values[29]; p.lfLitLog = values[30]; p.hChargeOnly = values[31];
+    p.attackRateDbPerS = values[32]; p.attackRatePower = values[33]; p.attackRateTau = values[34];
+    p.elFreqExponent = values[35]; p.elFreqTau = values[36];
+    p.hfPeakDb = values[37]; p.lfPeakDb = values[38]; p.midPeakDb = values[39]; p.hf10kPeakDb = values[40];
+    p.elRevHysteresis = values[41]; p.elRevRelease = values[42]; p.elFreqCorner = values[43];
+    p.trapCapture = values[44]; p.trapEmit = values[45]; p.trapCapacity = values[46];
+    p.pStrength = values[47]; p.pPrExp = values[48]; p.pThresh = values[49]; p.pKnee = values[50]; p.pAsym = values[51];
     p.lightTable = kOptoCellLightTable.data();
     p.lightTableSize = static_cast<int>(kOptoCellLightTable.size());
     p.lightTableStartDb = values[52];
@@ -856,16 +771,26 @@ public:
             if (cellParams.lfCutMaxGapDb > 0.0f)
                 d.driveSlow = std::max(d.driveSlow, d.driveDb - static_cast<double>(cellParams.lfCutMaxGapDb));
         }
-        // Stereo link. A linked pair goes through processLightPair: every filter and the frequency law stay on
-        // the channel's own drive, each channel forms its own light, and the two lights meet in a diode-OR behind
-        // this function (linkedFrame). Measured against the native unit on 2026-10-12, both channels, on stimuli
-        // whose channels differ in spectrum and level: an OR here at the rectified drive, with the frequency law
-        // behind it on each channel's own signal, left the quiet channel up to 16.5 dB off; the OR at the light
-        // reads within 0.9 dB there and on the eleven stationary stereo stimuli. Feeding one cell a sample-wise
-        // pick of the larger channel ahead of the filters adds reversals neither drive has (quadrature sines read
-        // 0.6-1.1 dB deep).
-        // The native law is not a plain OR either: with a mono low tone under a mid that differs between the
-        // channels, at deep Limit, it reduces up to 1.8 dB more than this does (Compress: within 0.3 dB).
+        // Stereo link. A linked pair goes through processLightPair: each channel keeps its own filters, frequency
+        // law and panel (emitLight), and the two panels' emissions meet in a diode-OR behind this function
+        // (linkedFrame). Measured against the native unit, both channels:
+        //   - 2026-10-12, channels that differ in spectrum and level: an OR here at the rectified drive, with the
+        //     frequency law behind it on each channel's own signal, left the quiet channel up to 16.5 dB off; the
+        //     OR behind the panels reads within 0.9 dB there and on the eleven stationary stereo stimuli. Feeding
+        //     one cell a sample-wise pick of the larger channel ahead of the filters adds reversals neither drive
+        //     has (quadrature sines read 0.6-1.1 dB deep).
+        //   - 2026-10-13, one low tone on both channels with a phase offset, at Limit: the native unit reduces
+        //     more as the offset grows to about 2 ms and then stays level out to 150 degrees (25 / 40 / 60 Hz:
+        //     1.9 / 2.2 / 2.7 dB more at Peak Reduction 81), and reads as in phase again at 180 degrees. That is
+        //     two panels, each emitting for about 2 ms after its own polarity change, with the steady light not
+        //     doubled. One panel lit by the larger of the two lights, its stores following whichever channel was
+        //     the larger, read 0.8-1.7 dB deep at 180 degrees and up to 2.3 dB shallow with a mono low tone under
+        //     a mid of the same level that differs between the channels.
+        // Known shortfall: at offsets of 60 to 120 degrees this cell reduces 0.7-1.7 dB more than the native unit
+        // (and up to 1.5 dB more with the low tone under a mid 6 dB below it). Here a settled low tone's emission
+        // follows the light law along the sine, about 7 ms at 40 Hz with nothing for a millisecond either side of
+        // a zero crossing, so the partner's light fills what the native unit's short burst leaves alone. A single
+        // channel does not show the emission's shape, only its sum.
         // The drive is taken one sample back whenever a link amount is set, so a channel processed alone, a
         // dual-mono pair and a linked pair with identical channels all light exactly alike.
         const double ownDrive = std::abs(s);
@@ -959,28 +884,12 @@ public:
         return {light, lawLight, s, floorDrive, d.floorPower, d.inputPower, inert};
     }
 
-    // The cell behind the light: charge, populations, release, floor. withApplied = false (lab kernel only) skips
-    // the applied-gain floor blend, which feeds no state; every state update is identical, and the returned
-    // value is then the cell gain before the floor.
-    template <bool withApplied = true>
-    float advanceLight(int ch, const LightFrame& frame, bool limit) noexcept
+    // The panel's emission: the light the channel's drive asks for (prepareLight), through the panel's charge
+    // stores, which the drive's polarity picks.
+    LightFrame emitLight(int ch, LightFrame frame) noexcept
     {
         auto& d = channels[static_cast<size_t>(ch)];
         double light = frame.light;
-        const double lawLight = frame.lawLight;
-        const double s = frame.s;
-        const double floorDrive = frame.floorDrive;
-        const bool inert = frame.inert;
-        d.floorEl += elStep * (floorDrive - d.floorEl);
-        double floorLight = inert ? 0.0 : lightFor(d.floorEl);
-        if (cellParams.lightCeiling > 0.0f)
-            floorLight /= 1.0 + floorLight / static_cast<double>(cellParams.lightCeiling);
-        const double floorThreshold = std::max(static_cast<double>(cellParams.darkLight), 1.0e-30);
-        if (floorLight >= floorThreshold) d.floorInputHold = darkHoldSamples;
-        else if (d.floorInputHold > 0) --d.floorInputHold;
-        const double floorTarget = d.floorInputHold > 0 ? 0.0 : floorThreshold / (std::max(floorLight, 0.0) + floorThreshold);
-        d.floorDark[0] = floorTarget < d.floorDark[0] ? floorTarget : d.floorDark[0] + darkStep * (floorTarget - d.floorDark[0]);
-        d.floorDark[1] = d.floorDark[0] < d.floorDark[1] ? d.floorDark[0] : d.floorDark[1] + darkStep * (d.floorDark[0] - d.floorDark[1]);
         if (cellParams.elPolCap > 0.0f && cellParams.elPolRefill > 0.0f)
         {
             // The panel's charge. An electroluminescent panel emits while charge crosses the phosphor, and one
@@ -1002,9 +911,9 @@ public:
             // a polarity that is held (G0 above). The cap itself grows a little with the drive, by
             // (light / elPolLeak)^elPolCapExp above that steady light (the measured step grows 17 % over 12 dB).
             // Nothing here detects or counts anything: the stores are continuous states, and the drive's sign
-            // picks one of them the way a rectifier picks a polarity. A linked pair lights from the larger
-            // drive (above) and spends the store of its own drive's polarity.
-            const size_t side = s >= 0.0 ? 0 : 1;
+            // picks one of them the way a rectifier picks a polarity. Each channel of a linked pair has
+            // its own stores, spent by its own drive (processLightPair).
+            const size_t side = frame.s >= 0.0 ? 0 : 1;
             const double leak = static_cast<double>(cellParams.elPolLeak);
             const double law = std::max(light, 0.0);
             double cap = static_cast<double>(cellParams.elPolCap);
@@ -1043,6 +952,31 @@ public:
             for (auto& spent : d.chargeSpent)
                 if (std::abs(spent) < 1.0e-30) spent = 0.0;   // no denormal tail
         }
+        frame.light = light;
+        return frame;
+    }
+
+    // The cell behind the panel's emission (emitLight): populations, release, floor. withApplied = false (lab kernel
+    // only) skips the applied-gain floor blend, which feeds no state; every state update is identical, and the returned
+    // value is then the cell gain before the floor.
+    template <bool withApplied = true>
+    float advanceLight(int ch, const LightFrame& frame, bool limit) noexcept
+    {
+        auto& d = channels[static_cast<size_t>(ch)];
+        const double light = frame.light;
+        const double lawLight = frame.lawLight;
+        const double floorDrive = frame.floorDrive;
+        const bool inert = frame.inert;
+        d.floorEl += elStep * (floorDrive - d.floorEl);
+        double floorLight = inert ? 0.0 : lightFor(d.floorEl);
+        if (cellParams.lightCeiling > 0.0f)
+            floorLight /= 1.0 + floorLight / static_cast<double>(cellParams.lightCeiling);
+        const double floorThreshold = std::max(static_cast<double>(cellParams.darkLight), 1.0e-30);
+        if (floorLight >= floorThreshold) d.floorInputHold = darkHoldSamples;
+        else if (d.floorInputHold > 0) --d.floorInputHold;
+        const double floorTarget = d.floorInputHold > 0 ? 0.0 : floorThreshold / (std::max(floorLight, 0.0) + floorThreshold);
+        d.floorDark[0] = floorTarget < d.floorDark[0] ? floorTarget : d.floorDark[0] + darkStep * (floorTarget - d.floorDark[0]);
+        d.floorDark[1] = d.floorDark[0] < d.floorDark[1] ? d.floorDark[0] : d.floorDark[1] + darkStep * (d.floorDark[0] - d.floorDark[1]);
         double step = dt;
         if (cellParams.timeScaleLight > 0.0f && cellParams.hFloor > 0.0f)
         {
@@ -1237,22 +1171,21 @@ public:
                   bool external, float optoDetector, bool useOptoDetector,
                   bool limit, float peakReduction) noexcept
     {
-        return advanceLight<withApplied>(ch, prepareLight(ch, input, compressed,
-            sidechain, external, optoDetector, useOptoDetector, limit, peakReduction), limit);
+        return advanceLight<withApplied>(ch, emitLight(ch, prepareLight(ch, input, compressed,
+            sidechain, external, optoDetector, useOptoDetector, limit, peakReduction)), limit);
     }
 
     bool linked() const noexcept { return linkWeight > 0.0f; }
 
-    // What a linked cell lights from: its own frame, or its partner's where the partner's light, scaled by the
-    // link amount, is the larger. One law for every link amount: at 0 a cell sees only itself, at 1 both cells
-    // see the same frame and so stay alike. The floor's band power is shared in proportion (half each at a full
-    // link); its input power takes the larger, with the link amount as an amplitude weight.
-    LightFrame linkedFrame(const LightFrame& own, const LightFrame& partner, bool partnerWinsTies) const noexcept
+    // What a linked cell is lit by: the larger of its own panel's emission and its partner's, the partner's scaled
+    // by the link amount. One law for every link amount: at 0 a cell sees only its own panel, at 1 both cells see
+    // the same light and so stay alike. The floor's band power is shared in proportion (half each at a full link);
+    // its input power takes the larger, with the link amount as an amplitude weight.
+    LightFrame linkedFrame(const LightFrame& own, const LightFrame& partner) const noexcept
     {
         const double w = static_cast<double>(linkWeight);
-        const double partnerLight = w * partner.light;
-        LightFrame frame = (partnerWinsTies ? partnerLight >= own.light : partnerLight > own.light) ? partner : own;
-        frame.light = std::max(own.light, partnerLight);
+        LightFrame frame = own;
+        frame.light = std::max(own.light, w * partner.light);
         frame.lawLight = std::max(own.lawLight, w * partner.lawLight);
         frame.floorDrive = std::max(own.floorDrive, w * partner.floorDrive);
         frame.floorPower = own.floorPower + 0.5f * linkWeight * (partner.floorPower - own.floorPower);
@@ -1260,9 +1193,10 @@ public:
         return frame;
     }
 
-    // A linked stereo pair. Each channel forms its own light, with its own filters and frequency law; the two
-    // lights meet in a diode-OR (linkedFrame) and everything behind that point (charge, populations, floor)
-    // advances from the linked frame. Returns the gains to apply to this sample, as process() leaves them.
+    // A linked stereo pair. Each channel has its own panel: its own filters, frequency law and charge stores, so
+    // each emits at its own drive's polarity changes. The two emissions meet in a diode-OR (linkedFrame) and
+    // everything behind that point (populations, release, floor) advances from the linked frame. Returns the
+    // gains to apply to this sample, as process() leaves them.
     std::array<float, 2> processLightPair(const std::array<float, 2>& input,
                                           const std::array<float, 2>& sidechain, bool external,
                                           const std::array<float, 2>& detector, bool limit,
@@ -1271,12 +1205,12 @@ public:
         auto& left = channels[0];
         auto& right = channels[1];
         const std::array<float, 2> applied{{left.gain, right.gain}};
-        const auto ownLeft = prepareLight(0, input[0], 0.0f, sidechain[0], external, detector[0], true,
-                                          limit, peakReduction, true);
-        const auto ownRight = prepareLight(1, input[1], 0.0f, sidechain[1], external, detector[1], true,
-                                           limit, peakReduction, true);
-        const auto frameLeft = linkedFrame(ownLeft, ownRight, false);
-        const auto frameRight = linkedFrame(ownRight, ownLeft, true);
+        const auto ownLeft = emitLight(0, prepareLight(0, input[0], 0.0f, sidechain[0], external, detector[0], true,
+                                                       limit, peakReduction, true));
+        const auto ownRight = emitLight(1, prepareLight(1, input[1], 0.0f, sidechain[1], external, detector[1], true,
+                                                        limit, peakReduction, true));
+        const auto frameLeft = linkedFrame(ownLeft, ownRight);
+        const auto frameRight = linkedFrame(ownRight, ownLeft);
         // The floor's input-power history is shared in the same proportion before its next update.
         left.inputPower = frameLeft.inputPower;
         right.inputPower = frameRight.inputPower;

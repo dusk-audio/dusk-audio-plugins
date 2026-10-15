@@ -924,7 +924,12 @@ private:
         int recoveryRatioIndex = 0;
         float kneePeakHoldSeconds = 0;
         float kneeBaseHoldSeconds = 0;
-        float fastGrDb = 0, intermediateGrDb = 0, slowGrDb = 0;
+        float fastGrDb = 0, intermediateGrDb = 0;
+        // In double: one step of its seconds-long pole is below the float
+        // spacing of a state of a few dB at high processing rates, and a
+        // float state then settles short of its target by a rate-dependent
+        // amount (4.66 against 5.00 dB at 192 kHz with 4x oversampling).
+        double slowGrDb = 0;
         // Candidate C6: the slow population that ignores the Release knob. In
         // double: one step of its seconds-long pole is below the float
         // spacing of a state of a few dB from 96 kHz up. It is the tail's own
@@ -2465,11 +2470,12 @@ private:
             * std::max(tailShape, 0.0f);
     }
 
-    // The colour blend's own copy of the measured PR 0.7 static law, so the
-    // output stage no longer reads the cell header (a replacement cell need
-    // not keep optoThresholdDb/optoCurveDb). The tables and the arithmetic
-    // are the 2026-08-21 Compress/Limit measurements exactly as the cell
-    // evaluates them at PR 70, which keeps the blend sample-identical.
+    // The colour blend's own copy of the measured PR 0.7 static law: the
+    // 2026-08-21 Compress/Limit measurements with the arithmetic the old
+    // static-curve cell applied at PR 70, which keeps the blend
+    // sample-identical. Nothing else in the core reads these tables; the
+    // cell's static-curve tables and functions were removed on 2026-10-14
+    // with the unused generated harmonics header that last called them.
     static constexpr std::array<float, 23> kOptoColourCompressCurve{{
         0.9207f, 1.9474f, 3.1430f, 4.6974f, 6.1696f, 7.6165f,
         9.2638f, 10.8676f, 12.4485f, 13.9366f, 15.7917f, 17.2499f,
@@ -4503,9 +4509,12 @@ private:
             d.intermediateGrDb = advance(
                 d.intermediateGrDb, intermediateTarget,
                 intermediateAttackSeconds, slowReleaseSeconds);
-            d.slowGrDb = advance(
-                d.slowGrDb, longSlowTarget,
-                longSlowAttackSeconds, slowReleaseSeconds);
+            const float slowTime = longSlowTarget > d.slowGrDb
+                ? longSlowAttackSeconds : slowReleaseSeconds;
+            const float slowCoefficient = std::exp(
+                -1.0f / (std::max(1.0e-6f, slowTime) * sr));
+            d.slowGrDb = longSlowTarget
+                + (d.slowGrDb - longSlowTarget) * slowCoefficient;
             d.envelope = decibelsToGain(
                 -(d.fastGrDb + d.intermediateGrDb + d.slowGrDb));
             if (!vintageProgrammeActive
