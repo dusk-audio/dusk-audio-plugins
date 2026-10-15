@@ -239,8 +239,24 @@ inline float optoElementStrength(float prNormalised) noexcept
 // -> 0.36641 / 0.55285 / 0.50597; C2 0.32844 -> 0.32831. NOT fixed, older than this patch: hot notes above 7.5 kHz at Limit
 // (8 kHz up to -1.65 dB, 12 to 16 kHz -0.7 to -4.4 dB at -2 dBFS: the side-chain weighting up there and the
 // table's uneven top).
-// kOptoCellDefaults order: elTauSeconds, lightCeiling, fastRelease, fastBimolecular, slowCharge, slowRelease, slowBimolecular, memoryCharge, memoryRelease, limitOutputMix, limitInputMix, compressInputMix, timeScaleLight, timeScaleExponent, depthWeighting, lowFrequencyFloor, lfTermGainDb, lfTermFrequency, lfTermGrSpan, conductanceTableOn, flashCharge, flashRelease, flashBimolecular, lfShelfDb, hFloor, lfLitTauAttack, lfLitTauRelease, lfLitLevelDb, lfLitSpanDb, lfLitFloor, lfLitLog, hChargeOnly, attackRateDbPerS, attackRatePower, attackRateTau, elFreqExponent, elFreqTau, hfPeakDb, lfPeakDb, midPeakDb, hf10kPeakDb, elRevHysteresis, elRevRelease, elFreqCorner, trapCapture, trapEmit, trapCapacity, pStrength, pPrExp, pThresh, pKnee, pAsym, lightTableStartDb, lightTableStepDb, lightSlopeAbove, conductanceTableStartDb, conductanceTableStepDb, conductanceSlopeAbove, prStart, prStep, prSlopeBelow, prGate, lfCutDb, lfCutFrequency, lfCutStartDb, lfCutSpanDb, lfCutTauAttack, lfCutTauSlow, lfCutTransSpanDb, lfCutHoldSeconds, lfCutMaxGapDb, lfCutCompWeight, elPolCap, elPolLeak, elPolKnee, elPolRefill, elPolCredit, elPolCapExp, darkRateCeiling, darkTau, darkLight, darkFloorTau, darkHoldSeconds, inputCouplingOn, darkHistoryStrength, darkHistoryBase, darkHistoryMemory, darkHistoryShoulder, darkHistoryShoulderMemory, darkHistoryLow, darkHistoryLowMemory, darkHistoryDensity, darkTrapFillPower, elSatBoost, elSatMargin, elSatSpanDb, elSatKneeDb, elSatFadeLoKHz, elSatFadeHiKHz
-inline constexpr std::array<float, 99> kOptoCellDefaults{{
+// 2026-10-15, the emission's shape within a cycle of the drive (indices 99..105: emitPeakExp 3, emitRiseGain 2,
+// emitFadeLoKHz .55, emitFadeHiKHz .85, emitFadeTopLoKHz 2, emitFadeTopHiKHz 3, emitConserveOn 1; see prepareLight (V),
+// emitLight and advanceLight). Measured on the native unit at 1 kHz (tools opto/h5): the gain ripple's 2f and 4f are in
+// phase at +85..+97 degrees to the tone and the fifth harmonic reads -70.6 dBc at -4 dBFS, Peak Reduction .7, where
+// this cell read -81.7: the law's hump along |s| was too wide. The light is now the law's times (|s| / A)^3 times
+// (1 + 2 rise)+, A the smaller of the last half-cycle's peak and the quadrature amplitude; a sine prior per table
+// entry and a per-cycle scale keep the clock-weighted charge, the release keeps the unshaped emission's clock, and the
+// shape is confined to .55-3 kHz and to drives within the table. Core harmonic rows at -24 / -12 / -4 dBFS, PR .7,
+// H3 / H5 / H7 (reference): -55.19 / -64.31 / -80.67 (-54.21 / -63.13 / -82.37), -55.42 / -66.52 / -75.65 (-55.23 /
+// -65.65 / -74.17), -54.73 / -69.20 / -81.34 (-55.98 / -70.64 / -81.71): every one within 1.7 dB; fifth at -4 dBFS
+// -81.7 -> -69.2. F1-1k ladder rms 0.103 / worst 0.33, unchanged; every core-test switch as before (0 regressions).
+// Gate screen against the previous defaults (tools triage/refit, label h5-r3 against p55): the only new cells over
+// 1 dB are the short-burst b010 at Limit .81, 40 ms (-0.9674 -> -1.0022) and the settled lf010_08 at Limit (-0.9945
+// -> -1.0007); pooled music +0.0013, eleven +0.007, short +0.005, E1 +0.006 dB; worst holdout / E1 / blind2 +0.007 /
+// +0.038 / +0.009, from hot 1 kHz notes, which read 0.004-0.014 dB deeper settled and 0.07-0.13 dB deeper in their
+// first 40 ms (not traced: the next OPTO item). Accepted by the owner under the patch-53 precedent.
+// kOptoCellDefaults order: elTauSeconds, lightCeiling, fastRelease, fastBimolecular, slowCharge, slowRelease, slowBimolecular, memoryCharge, memoryRelease, limitOutputMix, limitInputMix, compressInputMix, timeScaleLight, timeScaleExponent, depthWeighting, lowFrequencyFloor, lfTermGainDb, lfTermFrequency, lfTermGrSpan, conductanceTableOn, flashCharge, flashRelease, flashBimolecular, lfShelfDb, hFloor, lfLitTauAttack, lfLitTauRelease, lfLitLevelDb, lfLitSpanDb, lfLitFloor, lfLitLog, hChargeOnly, attackRateDbPerS, attackRatePower, attackRateTau, elFreqExponent, elFreqTau, hfPeakDb, lfPeakDb, midPeakDb, hf10kPeakDb, elRevHysteresis, elRevRelease, elFreqCorner, trapCapture, trapEmit, trapCapacity, pStrength, pPrExp, pThresh, pKnee, pAsym, lightTableStartDb, lightTableStepDb, lightSlopeAbove, conductanceTableStartDb, conductanceTableStepDb, conductanceSlopeAbove, prStart, prStep, prSlopeBelow, prGate, lfCutDb, lfCutFrequency, lfCutStartDb, lfCutSpanDb, lfCutTauAttack, lfCutTauSlow, lfCutTransSpanDb, lfCutHoldSeconds, lfCutMaxGapDb, lfCutCompWeight, elPolCap, elPolLeak, elPolKnee, elPolRefill, elPolCredit, elPolCapExp, darkRateCeiling, darkTau, darkLight, darkFloorTau, darkHoldSeconds, inputCouplingOn, darkHistoryStrength, darkHistoryBase, darkHistoryMemory, darkHistoryShoulder, darkHistoryShoulderMemory, darkHistoryLow, darkHistoryLowMemory, darkHistoryDensity, darkTrapFillPower, elSatBoost, elSatMargin, elSatSpanDb, elSatKneeDb, elSatFadeLoKHz, elSatFadeHiKHz, emitPeakExp, emitRiseGain, emitFadeLoKHz, emitFadeHiKHz, emitFadeTopLoKHz, emitFadeTopHiKHz, emitConserveOn
+inline constexpr std::array<float, 106> kOptoCellDefaults{{
     2.11744767e-06f, 0.0f, 8.05137539f, 2.89539862f, 4.60660553f, 23.5234127f,
     0.586750925f, 0.00118519559f, 0.999977779f, 0.990760822f, 0.0365957224f, 2.38673383e-05f,
     19.8983517f, 0.326484203f, 1.0f, 1.0f, -1.21699251f, 379.874676f,
@@ -257,7 +273,7 @@ inline constexpr std::array<float, 99> kOptoCellDefaults{{
     27.87475932f, 0.0003f, 0.01f, 0.25f, 0.0005f, 1.0f,
     1.0f, 0.1630389988f, 16.31156673f, 0.1077029333f, 17.38801884f, 0.2356715649f,
     5.404491238e-18f, 5.0f, 1.734882487f, 1.2f, 0.05f, 2.5f,
-    -33.3f, 6.0f, 7.5f
+    -33.3f, 6.0f, 7.5f, 3.0f, 2.0f, 0.55f, 0.85f, 2.0f, 3.0f, 1.0f
 }};
 
 inline constexpr std::array<float, 37> kOptoCellLightTable{{
@@ -336,6 +352,12 @@ struct OptoCellParams
     float darkTrapFillPower;
     // The light plateau of a drive faster than 1 kHz (0 = off): see process().
     float elSatBoost, elSatMargin, elSatSpanDb, elSatKneeDb, elSatFadeLoKHz, elSatFadeHiKHz;
+    // The emission's shape within a cycle of the drive (0 = the law's light as it is): see prepareLight().
+    float emitPeakExp, emitRiseGain, emitFadeLoKHz, emitFadeHiKHz, emitFadeTopLoKHz, emitFadeTopHiKHz;
+    // The shape's charge kept cycle by cycle on any waveform: see emitLight(). On (1) in the plugin; 0 is the lab's
+    // measurement of the shape without it, shipped the way the cell's other lab switches are (inputCouplingOn,
+    // conductanceTableOn, hChargeOnly).
+    float emitConserveOn;
     const float* lightTable;
     int lightTableSize;
     float lightTableStartDb, lightTableStepDb, lightSlopeAbove;
@@ -416,6 +438,9 @@ inline OptoCellParams optoCellParamsFrom(
     p.darkTrapFillPower = values[92];
     p.elSatBoost = values[93]; p.elSatMargin = values[94]; p.elSatSpanDb = values[95]; p.elSatKneeDb = values[96];
     p.elSatFadeLoKHz = values[97]; p.elSatFadeHiKHz = values[98];
+    p.emitPeakExp = values[99]; p.emitRiseGain = values[100]; p.emitFadeLoKHz = values[101]; p.emitFadeHiKHz = values[102];
+    p.emitFadeTopLoKHz = values[103]; p.emitFadeTopHiKHz = values[104];
+    p.emitConserveOn = values[105];
     return p;
 }
 
@@ -563,6 +588,60 @@ public:
         elementMeterStep = 1.0 - std::exp(-dt / 0.05);   // meterGain(): 50 ms running means
         darkStep = 1.0 - std::exp(-dt / std::max(static_cast<double>(cellParams.darkTau), 1.0e-6));
         darkFloorStep = cellParams.darkFloorTau > 0.0f ? 1.0 - std::exp(-dt / static_cast<double>(cellParams.darkFloorTau)) : 0.0;
+        emitLeak = std::exp(-dt / 0.005);   // prepareLight: the shape's half-cycle reference leaks in digital silence (5 ms)
+        emitPriorOn = false;
+        if (cellParams.emitPeakExp > 0.0f || cellParams.emitRiseGain != 0.0f)
+        {   // The prior per light-table entry: for a sine whose |s| peaks at that entry, the factor p that gives
+            // law x weight x p the law's own clock-weighted charge over the cycle (sum gate(l) l, below; midpoint rule
+            // over the half-cycle), continued 20 entries above the table's top. The weight sits where the law's hump
+            // is largest, so p is neither the weight's own mean nor a ratio of mean lights.
+            constexpr int kPoints = 512;
+            emitPriorSize = std::min(cellParams.lightTableSize + 20, static_cast<int>(emitPrior.size()));
+            for (int k = 0; k < emitPriorSize; ++k)
+            {
+                const double peakDb = cellParams.lightTableStartDb + cellParams.lightTableStepDb * k;
+                // The cell's clock reads the emitted light (advanceLight: step = dt x gate(light)), so what the
+                // populations receive over a cycle is sum gate(l) l, not sum l. The prior p conserves that:
+                // sum gate(law) law = sum gate(law w p) law w p, solved by a fixed point (the gate is a slowly
+                // varying power law). Without the gate this is the plain light ratio.
+                const auto gate = [this](double l) {
+                    if (!(cellParams.timeScaleLight > 0.0f) || l <= 0.0) return 1.0;
+                    const double r = std::pow(l / static_cast<double>(cellParams.timeScaleLight),
+                                              static_cast<double>(cellParams.timeScaleExponent));
+                    return cellParams.hFloor > 0.0f ? (static_cast<double>(cellParams.hFloor) + r) / (1.0 + r) : 1.0 / (1.0 + r);
+                };
+                std::array<double, kPoints> law{}, weight{};
+                double plain = 0.0;
+                for (int i = 0; i < kPoints; ++i)
+                {
+                    const double theta = 3.141592653589793 * (i + 0.5) / kPoints;
+                    const double sine = std::sin(theta);
+                    law[static_cast<size_t>(i)] = tableLookup(cellParams.lightTable, cellParams.lightTableSize, cellParams.lightTableStartDb,
+                                                              cellParams.lightTableStepDb, cellParams.lightSlopeAbove,
+                                                              peakDb + 8.685889638065035 * std::log(std::max(sine, 1.0e-12)));
+                    double w = cellParams.emitPeakExp > 0.0f ? std::pow(sine, static_cast<double>(cellParams.emitPeakExp)) : 1.0;
+                    w *= std::max(0.0, 1.0 + static_cast<double>(cellParams.emitRiseGain) * std::cos(theta));
+                    weight[static_cast<size_t>(i)] = w;
+                    plain += gate(law[static_cast<size_t>(i)]) * law[static_cast<size_t>(i)];
+                }
+                double prior = 1.0;
+                for (int iteration = 0; iteration < 8; ++iteration)
+                {
+                    double weighted = 0.0;
+                    for (int i = 0; i < kPoints; ++i)
+                    {
+                        const double l = law[static_cast<size_t>(i)] * weight[static_cast<size_t>(i)] * prior;
+                        weighted += gate(l) * l;
+                    }
+                    if (!(weighted > 0.0)) { prior = 1.0; break; }
+                    prior *= plain / weighted;
+                }
+                // Safety only: with the shipped constants every entry lies in 1.0 .. 2.36 (the largest at the table's
+                // top entry, 2026-10-15), far inside the clamp.
+                emitPrior[static_cast<size_t>(k)] = std::clamp(prior, 0.05, 20.0);
+            }
+            emitPriorOn = true;
+        }
         // Truncated like the R14 hold; the clamp keeps a lab-set NaN or absurd value out of the int cast.
         const float darkHold = cellParams.darkHoldSeconds > 0.0f ? std::min(cellParams.darkHoldSeconds, 1.0f) : 0.0f;
         darkHoldSamples = static_cast<int>(static_cast<double>(darkHold) * sampleRate);
@@ -631,6 +710,10 @@ public:
         double light, lawLight, s, floorDrive;
         float floorPower, inputPower;
         bool inert;
+        // The emission's shape (prepareLight): the faded weight, the sine prior (raw: emitLight fades it with its
+        // per-cycle scale) and the fade, applied behind the charge stores (emitLight); clockLight is the emission
+        // without the shape: the release side's clock.
+        double emitWeight = 1.0, emitPrior = 1.0, emitFade = 0.0, clockLight = 0.0;
     };
 
     // The channel's own side chain, up to the light. ownOnly: the caller links the pair behind this point
@@ -813,6 +896,129 @@ public:
         if (cellParams.lightCeiling > 0.0f)
             light = light / (1.0 + light / static_cast<double>(cellParams.lightCeiling));
         const double lawLight = light;   // what the drive asks of the panel, ahead of the frequency law and the charge stores
+        double emitWeight = 1.0, emitPriorValue = 1.0, emitFadeValue = 0.0;   // the emission's shape for this sample (emitLight applies it)
+        if (cellParams.emitPeakExp > 0.0f || cellParams.emitRiseGain != 0.0f)
+        {
+            // (V) The emission's shape within a cycle of the drive. Measured on the native unit (2026-10-14, tools
+            // opto/h5): on a settled 1 kHz sine its gain ripples at 2f and 4f with the two in phase, 85-97 degrees to
+            // the tone, the 4f one 10-15 dB under the 2f (third and fifth harmonics -56 / -71 dBc at -4 dBFS, Peak
+            // Reduction .7). This cell's light, the law's value along |s|, gave a 4f ripple 8-17 dB too weak (fifth
+            // -82 dBc there) and 20-50 degrees late: too wide a pulse, centred on the peak. Charge crosses the
+            // phosphor while the applied field outruns the polarisation the last half-cycle left, so the emission
+            // sits near the peak of |s| and leans onto its rise: the law's light times (|s| / A)^emitPeakExp times
+            // (1 + emitRiseGain d|s| / (omega A))+, A the reference amplitude. Faded in with the drive's frequency
+            // between emitFadeLoKHz and emitFadeHiKHz: at low frequencies the native unit's emission is a burst after
+            // the polarity change (the charge stores, emitLight), not a pulse at the peak, and the shape would move
+            // the settled reduction there.
+            // The frequency law and the plateau multiply the light after the shape is decided here (their factors are
+            // 1 on the settled 1 kHz sine the prior assumes); whatever they move is absorbed by the per-cycle charge
+            // conservation in emitLight, which compares the emission with and without the shape after both. A linked
+            // pair conserves each panel's own emission while the populations integrate the pair's OR'd light
+            // (linkedFrame); the stereo-link tables read the same with the shape as without it (tools triage/refit
+            // screen h5-r3 against the shape-off cell: link_low pooled 0.4697 -> 0.4694, link_high 0.3142 -> 0.3142,
+            // worst cells unchanged).
+            // The reference (2026-10-15) is the smaller of two readings of the drive's amplitude, each right where
+            // the other fails (native unit against this cell, tools triage/refit screens and the core suite):
+            //   - the quadrature amplitude A^2 = s^2 + (ds/dt / omega)^2, omega from the drive's slew-to-level
+            //     mean-square ratio: exact on a sine from its first sample and following a drive that falls inside
+            //     a half-cycle, but meaningless on broadband drive, where the weight became a random modulation of
+            //     the light (music at Peak Reduction 1 and Limit .81: 0.21-0.36 dB less reduction on seven clips);
+            //   - the peak of |s| over the last completed half-cycle (the polarisation the last half-cycle left):
+            //     bounded on any programme (music within 0.043 dB), but late on a falling drive: after a 2 ms event
+            //     at Compress .7 the feedback clamps inside the first half-cycle, the next one peaks at 0.76 of it
+            //     and emits a fraction of the law's charge (0.5-0.7 dB less reduction for over 10 ms; the core
+            //     suite's recovery row 0 read 1.14 dB against its 1.0 bar).
+            // On a settled sine the two agree. A drive beyond the reference A = min(the last half-cycle's peak, the
+            // quadrature amplitude), |s| > 1.0001 A (the first half-cycle of a louder note, a burst from silence, where
+            // the last half-cycle's peak is lower), has nothing to be shaped against and emits the law's light as it
+            // is, so a louder note is not flashed.
+            const double magnitude = std::abs(s);
+            const bool reversal = (s >= 0.0) != (d.emitLast >= 0.0);
+            const double slewRaw = (s - d.emitLast) * slewNormalisation;   // (f / 1 kHz) x the level on a sine
+            d.emitLast = std::isfinite(s) ? s : 0.0;
+            d.emitDrivePower += elFreqStep * (s * s - d.emitDrivePower);
+            d.emitSlewPower += elFreqStep * (slewRaw * slewRaw - d.emitSlewPower);
+            // No denormal tails in silence; a non-finite drive resets the estimator rather than sticking in it.
+            if (!(d.emitDrivePower >= 1.0e-30) || !std::isfinite(d.emitDrivePower)) d.emitDrivePower = 0.0;
+            if (!(d.emitSlewPower >= 1.0e-30) || !std::isfinite(d.emitSlewPower)) d.emitSlewPower = 0.0;
+            const double ratio = std::clamp(d.emitSlewPower / std::max(d.emitDrivePower, 1.0e-30), 1.0e-4, 1.0e4);
+            // The backward difference reads the slew half a sample early: for a sine of this frequency it is
+            // A cos(theta - phi), phi = pi f / rate, so the cosine part is (slew / sqrt(ratio) - s sin(phi)) / cos(phi).
+            const double halfTurn = std::min(3.141592653589793 * 1000.0 * std::sqrt(ratio) * dt, 1.2);
+            const double cosinePart = (slewRaw / std::sqrt(ratio) - s * std::sin(halfTurn)) / std::cos(halfTurn);
+            const double amplitude = std::sqrt(s * s + cosinePart * cosinePart);
+            // The last completed half-cycle's peak, kept per half-cycle of the drive and keyed on its sign like the
+            // charge stores; it leaks toward 0 (5 ms) only in digital silence, so any real signal refreshes it.
+            if (reversal)
+            {
+                d.emitPeakPrev = d.emitPeakCur;
+                d.emitPeakCur = 0.0;
+            }
+            d.emitPeakCur = std::max(d.emitPeakCur, magnitude);
+            if (!std::isfinite(d.emitPeakCur)) d.emitPeakCur = 0.0;   // a non-finite drive leaves no reference behind
+            if (!(magnitude > 1.0e-30))
+            {
+                d.emitPeakPrev *= emitLeak;
+                if (d.emitPeakPrev < 1.0e-30) d.emitPeakPrev = 0.0;   // no denormal tail
+            }
+            if (!std::isfinite(d.emitPeakPrev)) d.emitPeakPrev = 0.0;
+            const double reference = std::min(d.emitPeakPrev, amplitude);
+            const bool beyond = !(reference > 1.0e-30) || magnitude > 1.0001 * reference;
+            double w = 1.0;
+            if (!beyond)
+            {
+                if (cellParams.emitPeakExp > 0.0f)
+                    w = std::pow(std::min(magnitude / reference, 1.0), static_cast<double>(cellParams.emitPeakExp));
+                if (cellParams.emitRiseGain != 0.0f)
+                {
+                    const double rise = (s >= 0.0 ? cosinePart : -cosinePart) / amplitude;
+                    w *= std::max(0.0, 1.0 + static_cast<double>(cellParams.emitRiseGain) * std::clamp(rise, -1.0, 1.0));
+                }
+            }
+            // Confined to where it was measured: faded in with the drive's frequency between emitFadeLoKHz and
+            // emitFadeHiKHz, out again between emitFadeTopLoKHz and emitFadeTopHiKHz (the 1 kHz grid; the settled 4 kHz
+            // cells sit at their bound), and out over the 6 dB above the light table's top entry, where the law is its
+            // exponential continuation and a loud onset's first millisecond lives. Beyond the reference: none.
+            double fade = beyond ? 0.0 : 1.0;
+            if (cellParams.emitFadeHiKHz > cellParams.emitFadeLoKHz)
+            {
+                const double lo = static_cast<double>(cellParams.emitFadeLoKHz) * cellParams.emitFadeLoKHz;
+                const double hi = static_cast<double>(cellParams.emitFadeHiKHz) * cellParams.emitFadeHiKHz;
+                fade *= std::clamp((ratio - lo) / (hi - lo), 0.0, 1.0);
+            }
+            if (cellParams.emitFadeTopHiKHz > cellParams.emitFadeTopLoKHz)
+            {
+                const double lo = static_cast<double>(cellParams.emitFadeTopLoKHz) * cellParams.emitFadeTopLoKHz;
+                const double hi = static_cast<double>(cellParams.emitFadeTopHiKHz) * cellParams.emitFadeTopHiKHz;
+                fade *= std::clamp((hi - ratio) / (hi - lo), 0.0, 1.0);
+            }
+            const double referenceDb = reference > 1.0e-30 ? 8.685889638065035 * std::log(reference) : -1.0e3;
+            {
+                const double top = cellParams.lightTableStartDb + cellParams.lightTableStepDb * (cellParams.lightTableSize - 1);
+                fade *= std::clamp(1.0 - (referenceDb - top) / 6.0, 0.0, 1.0);
+            }
+            w = 1.0 + fade * (w - 1.0);
+            // The sine prior: the ratio of the law's clock-weighted charge over a sine's cycle to that of law x
+            // weight, at the reference amplitude (interpolated on the table's grid, continued 20 dB above its top).
+            // Carried raw: emitLight fades it with the shape, after its per-cycle scale (emitConserveOn).
+            double prior = 1.0;
+            if (emitPriorOn && !beyond)
+            {
+                const double position = (referenceDb - cellParams.lightTableStartDb) / cellParams.lightTableStepDb;
+                const int n = emitPriorSize;
+                if (position <= 0.0) prior = emitPrior[0];
+                else if (position >= n - 1) prior = emitPrior[static_cast<size_t>(n - 1)];
+                else
+                {
+                    const int k = static_cast<int>(position);
+                    const double f = position - k;
+                    prior = emitPrior[static_cast<size_t>(k)] + f * (emitPrior[static_cast<size_t>(k + 1)] - emitPrior[static_cast<size_t>(k)]);
+                }
+            }
+            emitWeight = w;
+            emitPriorValue = prior;
+            emitFadeValue = fade;
+        }
         double estimatedFrequencyHz = 1000.0;
         if (cellParams.elFreqExponent != 0.0f && cellParams.elRevHysteresis > 0.0f)
         {
@@ -881,7 +1087,11 @@ public:
             }
         }
         d.estimatedFrequencyHz = estimatedFrequencyHz;
-        return {light, lawLight, s, floorDrive, d.floorPower, d.inputPower, inert};
+        LightFrame frame{light, lawLight, s, floorDrive, d.floorPower, d.inputPower, inert};
+        frame.emitWeight = emitWeight;
+        frame.emitPrior = emitPriorValue;
+        frame.emitFade = emitFadeValue;
+        return frame;
     }
 
     // The panel's emission: the light the channel's drive asks for (prepareLight), through the panel's charge
@@ -890,6 +1100,7 @@ public:
     {
         auto& d = channels[static_cast<size_t>(ch)];
         double light = frame.light;
+        const size_t side = frame.s >= 0.0 ? 0 : 1;   // the drive's polarity: the charge store, and the shape's cycle
         if (cellParams.elPolCap > 0.0f && cellParams.elPolRefill > 0.0f)
         {
             // The panel's charge. An electroluminescent panel emits while charge crosses the phosphor, and one
@@ -913,7 +1124,6 @@ public:
             // Nothing here detects or counts anything: the stores are continuous states, and the drive's sign
             // picks one of them the way a rectifier picks a polarity. Each channel of a linked pair has
             // its own stores, spent by its own drive (processLightPair).
-            const size_t side = frame.s >= 0.0 ? 0 : 1;
             const double leak = static_cast<double>(cellParams.elPolLeak);
             const double law = std::max(light, 0.0);
             double cap = static_cast<double>(cellParams.elPolCap);
@@ -952,6 +1162,69 @@ public:
             for (auto& spent : d.chargeSpent)
                 if (std::abs(spent) < 1.0e-30) spent = 0.0;   // no denormal tail
         }
+        frame.clockLight = light;   // the panel's emission without the shape below
+        if (cellParams.emitPeakExp > 0.0f || cellParams.emitRiseGain != 0.0f)
+        {
+            // The shape (prepareLight): light x weight x the sine prior times its per-cycle scale, faded with the
+            // shape. The prior conserves the clock-weighted charge of a sine's cycle at the reference amplitude.
+            // 2026-10-15, emitConserveOn: the scale conserves it for any other waveform, cycle by cycle. With the
+            // prior alone (the 2026-10-14 form, whose amplitude came from a quadrature estimate) the native-unit
+            // tables read: the 55 Hz sawtooth rows of the settled table 0.1-0.7 dB more reduction (-0.56 .. -0.99 ->
+            // -1.02 .. -1.48 dB), pink noise at Peak Reduction .5 0.25 dB less (+0.75 -> +1.0 dB) (tools
+            // triage/refit screen h5-g4f9). So the charge is measured on the waveform itself: over each full cycle
+            // of the drive, closed on the change into the positive polarity (one update per cycle: the input element
+            // makes the two polarities unequal at high Peak Reduction, and an update per half-cycle would put a 1f
+            // modulation on the light), the sums of gate(l) l (gate = the populations' clock, timeScale) of the
+            // emission without the shape and with it give the scale c <- c (plain / applied)^m, held to [0.5, 2], m
+            // the cycle's charge-weighted mean fade: an unshaped passage neither moves c nor is moved by it, and c
+            // converges geometrically (slope 1 - fade x 0.67 .. 1, the gate's exponent). A running 3 ms correction
+            // wobbled inside a 2 ms level step and lost charge there; c moves only once a cycle has closed. A cycle
+            // that carried no light returns c to 1 and is not used, and in digital silence c relaxes to 1 with the
+            // 5 ms constant the half-cycle reference leaks with, so a note after silence starts from the sine prior.
+            // Nothing else resets it: a first form that also skipped every cycle touched by the dark state never
+            // moved c on a deeply reduced 55 Hz sawtooth (its slow zero crossing holds the drive under darkLight
+            // longer than darkHoldSeconds once per cycle), and those rows stayed 0.5 dB deep; without that skip they
+            // read within 0.004 dB of the shape-off cell. Per channel on the panel's own emission: a linked pair keeps
+            // it a property of each panel, and identical channels stay identical.
+            if (cellParams.emitConserveOn != 0.0f)
+            {
+                const int sideNow = static_cast<int>(side);
+                if (sideNow == 0 && d.emitSide == 1)
+                {
+                    // Known edge, kept as screened: a note that starts on its negative half after digital silence
+                    // closes its first window on that one half-cycle (on a sine the half-cycle's ratio equals the
+                    // cycle's; on asymmetric programme a one-cycle effect). Requiring both polarities lit moved quiet
+                    // programme instead (2026-10-15, tools triage/refit screen h5-review against h5-r3: music
+                    // Compress worst +0.004 dB, z_whiskey at Peak Reduction .5), so the window closes as before.
+                    if (!(d.emitSumPlain > 1.0e-30))
+                        d.emitScale = 1.0;
+                    else if (d.emitSumApplied > 1.0e-30)
+                        d.emitScale = std::clamp(d.emitScale * std::pow(d.emitSumPlain / d.emitSumApplied,
+                                                                        d.emitSumFade / d.emitSumPlain), 0.5, 2.0);
+                    if (!std::isfinite(d.emitScale)) d.emitScale = 1.0;
+                    d.emitSumPlain = d.emitSumApplied = d.emitSumFade = 0.0;
+                }
+                d.emitSide = sideNow;
+                if (!(std::abs(frame.s) > 1.0e-30))   // digital silence: c relaxes to 1 (5 ms)
+                    d.emitScale = 1.0 + (d.emitScale - 1.0) * emitLeak;
+            }
+            light *= frame.emitWeight * (1.0 + frame.emitFade * (frame.emitPrior * d.emitScale - 1.0));
+            // A pulse this narrow (about a tenth of a 1 kHz half-cycle) is integrated by the populations' first-order
+            // step with a rate-dependent error (0.1 dB between 2x and 4x on a 1 ms event at -0.25 dBFS); the charge
+            // term takes the trapezoid, the mean of this and the last emission (half a sample of delay, 5 us at 2x).
+            const double emitted = light;
+            light = emitted - 0.5 * frame.emitFade * (emitted - d.emitLastEmitted);   // faded with the shape
+            d.emitLastEmitted = std::isfinite(emitted) ? emitted : 0.0;
+            if (cellParams.emitConserveOn != 0.0f)
+            {   // the cycle's sums, on the clock the populations will run (advanceLight), the trapezoid included
+                const double plain = timeScale(frame.clockLight) * frame.clockLight;
+                d.emitSumPlain += plain;
+                d.emitSumApplied += timeScale(light) * light;
+                d.emitSumFade += frame.emitFade * plain;
+                if (!std::isfinite(d.emitSumPlain) || !std::isfinite(d.emitSumApplied) || !std::isfinite(d.emitSumFade))
+                    d.emitSumPlain = d.emitSumApplied = d.emitSumFade = 0.0;   // a non-finite emission resets the cycle
+            }
+        }
         frame.light = light;
         return frame;
     }
@@ -977,23 +1250,21 @@ public:
         const double floorTarget = d.floorInputHold > 0 ? 0.0 : floorThreshold / (std::max(floorLight, 0.0) + floorThreshold);
         d.floorDark[0] = floorTarget < d.floorDark[0] ? floorTarget : d.floorDark[0] + darkStep * (floorTarget - d.floorDark[0]);
         d.floorDark[1] = d.floorDark[0] < d.floorDark[1] ? d.floorDark[0] : d.floorDark[1] + darkStep * (d.floorDark[0] - d.floorDark[1]);
-        double step = dt;
-        if (cellParams.timeScaleLight > 0.0f && cellParams.hFloor > 0.0f)
-        {
-            const double r = std::pow(std::max(light, 0.0) / static_cast<double>(cellParams.timeScaleLight),
-                                      static_cast<double>(cellParams.timeScaleExponent));
-            step = dt * (static_cast<double>(cellParams.hFloor) + r) / (1.0 + r);
-        }
-        else if (cellParams.timeScaleLight > 0.0f && light > 0.0)
-            step = dt / (1.0 + std::pow(light / static_cast<double>(cellParams.timeScaleLight),
-                                        static_cast<double>(cellParams.timeScaleExponent)));
+        const double step = timeScale(light);
+        // While the emission is shaped (prepareLight (V)) the release side keeps the clock of the emission without
+        // the shape: the shape's longer dark gaps would otherwise run the release fast and lower the settled
+        // reduction (measured 2026-10-14, 1 kHz PR .7, -24 / -12 / -4 dBFS: 0.13 / 0.24 / 0.32 dB with one clock,
+        // 0.07 / 0.10 / 0.07 with the release on the unshaped emission). The charge keeps the emitted light's
+        // clock, with the prior conserving the clock-weighted charge over a cycle. Equal while the shape is off.
+        const bool shapedEmission = cellParams.emitPeakExp > 0.0f || cellParams.emitRiseGain != 0.0f;
+        const double stepRelease = shapedEmission ? timeScale(frame.clockLight) : step;
         // Attack-rate limit (measured native attack saturation, ratelaw map): charge slows when the
         // ripple-averaged GR rise rate (from previous samples) approaches Smax; ~0 at steady state.
         const double rateScale = (cellParams.attackRateDbPerS > 0.0f && d.grRateSmooth > 0.0)
             ? 1.0 / (1.0 + std::pow(d.grRateSmooth / static_cast<double>(cellParams.attackRateDbPerS),
                                     static_cast<double>(cellParams.attackRatePower)))
             : 1.0;
-        const double releaseBase = cellParams.hChargeOnly != 0.0f ? dt : step;
+        const double releaseBase = cellParams.hChargeOnly != 0.0f ? dt : stepRelease;
         double darkScale = 1.0;
         if (cellParams.darkRateCeiling > 0.0f || cellParams.darkFloorTau > 0.0f)
         {
@@ -1187,6 +1458,7 @@ public:
         LightFrame frame = own;
         frame.light = std::max(own.light, w * partner.light);
         frame.lawLight = std::max(own.lawLight, w * partner.lawLight);
+        frame.clockLight = std::max(own.clockLight, w * partner.clockLight);
         frame.floorDrive = std::max(own.floorDrive, w * partner.floorDrive);
         frame.floorPower = own.floorPower + 0.5f * linkWeight * (partner.floorPower - own.floorPower);
         frame.inputPower = std::max(own.inputPower, linkWeight * linkWeight * partner.inputPower);
@@ -1341,6 +1613,15 @@ public:
         d.drivePrev = 0.0;
         d.reversalPeak = el;
         d.slewLow = 0.0;
+        // The emission's shape (prepareLight, emitLight): its estimator settled like the frequency law's above, the
+        // half-cycle reference a settled sine of peak el, the charge scale at rest.
+        d.emitLast = 0.0;
+        d.emitDrivePower = d.emitSlewPower = el * el;
+        d.emitPeakPrev = d.emitPeakCur = el;
+        d.emitScale = 1.0;
+        d.emitSumPlain = d.emitSumApplied = d.emitSumFade = 0.0;
+        d.emitSide = 0;
+        d.emitLastEmitted = 0.0;
         if (cellParams.trapCapture > 0.0f)
         {
             const double g1 = population[1];
@@ -1398,6 +1679,18 @@ private:
         double floorPassed = 1.0;   // the share of the cell's conductance the LF floor passes (1 = no floor)
         int reversalSign = 1, reversalCount = 0;
         double satSlew = 0.0, satRaw = 0.0, satDrive = 0.0;   // 5 ms power averages: slew, raw slew, level (HF plateau)
+        // The emission's shape (prepareLight): the last drive sample and the mean squares of the drive and of its
+        // normalised slew (one pole, elFreqTau), its own copies so the shape does not depend on the frequency law.
+        double emitLast = 0.0, emitDrivePower = 0.0, emitSlewPower = 0.0;
+        // The shape's half-cycle reference (prepareLight): the peak of |s| over the last completed half-cycle of
+        // the drive (Prev) and over the current one so far (Cur).
+        double emitPeakPrev = 0.0, emitPeakCur = 0.0;
+        double emitLastEmitted = 0.0;   // the last shaped emission, for the charge term's trapezoid
+        // The shape's charge per cycle (emitLight): the scale on the sine prior, the current cycle's clock-weighted
+        // charge sums (without the shape, with it, and the first weighted by the fade), the drive's polarity at the
+        // last sample. At rest: scale 1, sums 0.
+        double emitScale = 1.0, emitSumPlain = 0.0, emitSumApplied = 0.0, emitSumFade = 0.0;
+        int emitSide = 0;
         std::array<double, kPopulations> population{};
         float gain = 1.0f;
         double elementInput = 0.0;   // elementTerm(): the last sample of the cell's input
@@ -1437,6 +1730,21 @@ private:
         const int k = std::min(static_cast<int>(position), n - 2);
         const double f = position - k;
         return t[k] + f * (t[k + 1] - t[k]);
+    }
+
+    // The populations' time step for a sample of light l (advanceLight; emitLight's charge sums use the same).
+    double timeScale(double l) const noexcept
+    {
+        if (cellParams.timeScaleLight > 0.0f && cellParams.hFloor > 0.0f)
+        {
+            const double r = std::pow(std::max(l, 0.0) / static_cast<double>(cellParams.timeScaleLight),
+                                      static_cast<double>(cellParams.timeScaleExponent));
+            return dt * (static_cast<double>(cellParams.hFloor) + r) / (1.0 + r);
+        }
+        if (cellParams.timeScaleLight > 0.0f && l > 0.0)
+            return dt / (1.0 + std::pow(l / static_cast<double>(cellParams.timeScaleLight),
+                                        static_cast<double>(cellParams.timeScaleExponent)));
+        return dt;
     }
 
     double lightFor(double el) const noexcept
@@ -1484,6 +1792,10 @@ private:
     double reversalRelease = 0.0, reversalHalfCycle1k = 48.0;
     double chargeRefillRate = 0.0, chargeRefillKeep = 1.0, elementMeterStep = 0.0, darkStep = 0.0, darkFloorStep = 0.0;
     double slewLowPassStep = 1.0, slewLowPassNormalisation = 1.0;
+    std::array<double, 64> emitPrior{};   // per light-table entry: law mean / (law x weight) mean on a sine
+    bool emitPriorOn = false;
+    double emitLeak = 1.0;
+    int emitPriorSize = 0;
     float floorHighPassStep = 0.0f, floorLowPassStep = 0.0f, floorBandStep = 0.0f, floorPowerStep = 0.0f;
 };
 
