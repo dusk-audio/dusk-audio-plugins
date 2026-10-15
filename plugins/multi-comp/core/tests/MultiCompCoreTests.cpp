@@ -780,6 +780,7 @@ struct OptoPedestalEventMeasurement
     int postEventMaximumOffsetMs = 0;
     int meterPostEventMaximumOffsetMs = 0;
     int signalStartSample = 0;
+    int alignedStartSample = 0;
     float meterEarlyTauMs = std::numeric_limits<float>::quiet_NaN();
     std::array<float, kOptoPedestalEventTracePoints> traceDb{};
     std::array<float, kOptoPedestalEventTracePoints> meterTraceDb{};
@@ -966,7 +967,14 @@ OptoPedestalEventMeasurement measureOptoPedestalEventCell(
 
     measurement.signalStartSample
         = locateOptoPedestalEventCarrierStart(withoutEventOutput);
-    const int eventOutputStart = measurement.signalStartSample + kEventStart;
+    // The windows follow the path's reported delay, not the located carrier start. Through the oversampled path
+    // the anti-alias FIR's pre-ringing runs ahead of the carrier (+-2e-5 .. 1e-4 from sample 19 at 2x and 4x), so
+    // the locator's "<= 0 then > 0" pair falls at 72 -> 73 while the carrier's zero sample is 73 (the reported
+    // latency; 1x and the replayed reference both locate 73). One sample early, the first window after a 2 ms
+    // event held the event's last output sample, 33 dB over the pedestal, and read the lift 3.3 dB under the
+    // cell's own gain (2026-10-15, -33 / 0 dBFS, PR .7: 11.45 against 14.74; the window two samples later 14.75).
+    measurement.alignedStartSample = withoutEvent.getLatencySamples();
+    const int eventOutputStart = measurement.alignedStartSample + kEventStart;
     for (int offsetMs = kOptoPedestalEventTraceStartMs;
          offsetMs < kOptoPedestalEventTraceStopMs; ++offsetMs)
     {
@@ -1115,7 +1123,7 @@ void reportOptoPedestalEventGrid()
         const auto& mine = grid.cells[row];
         std::printf("opto pedestal-event: %+.0f/%+.0f/%.2f | "
                     "%.6f/%.6f/%+.6f | %.6f/%.6f/%+.6f | "
-                    "%.6f/%.6f/%+.6f | %+dms/%+.6f dB pre %.6f dB start %d\n",
+                    "%.6f/%.6f/%+.6f | %+dms/%+.6f dB pre %.6f dB start %d aligned %d\n",
                     reference.pedestalDbfs, reference.eventDbfs,
                     reference.peakReduction,
                     reference.pedestalGrDb, mine.pedestalGrDb,
@@ -1126,7 +1134,8 @@ void reportOptoPedestalEventGrid()
                     mine.earlyTauMs - reference.earlyTauMs,
                     mine.postEventMaximumOffsetMs,
                     mine.postEventMaximumDb - mine.liftAtPlus2MsDb,
-                    mine.preEventMaximumAbsDb, mine.signalStartSample);
+                    mine.preEventMaximumAbsDb, mine.signalStartSample,
+                    mine.alignedStartSample);
         std::printf("  output incremental GR +0/+1/+2/+3ms "
                     "%.6f/%.6f/%.6f/%.6f dB; meter +2/+3/+10ms "
                     "%.6f/%.6f/%.6f dB tau %.6fms peak %+dms rise %+.6f dB\n",
