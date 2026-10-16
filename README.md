@@ -277,7 +277,10 @@ To use these plugins in Pro Tools, route the VST3 build through a wrapper such a
 
 ## Supporting Development
 
-These plugins are free and open source. If you'd like to support continued development, please consider becoming a [Patreon supporter](https://patreon.com/duskaudio). Supporters get their name in the About panel of every plugin (click the title bar to view credits).
+These plugins are free and open source.
+
+- **Hear about new releases:** [follow Dusk Audio free on Patreon](https://www.patreon.com/cw/DuskAudio).
+- **Support development:** [become a member](https://www.patreon.com/cw/DuskAudio/membership). Members get official Dusk Studio builds and their name in the About panel of every plugin (click the title bar to view credits).
 
 ## Shared Libraries
 

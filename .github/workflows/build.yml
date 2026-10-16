@@ -1273,6 +1273,10 @@ jobs:
             echo "- CLAP: Copy the \`.clap\` bundle from \`CLAP/\` to \`/Library/Audio/Plug-Ins/CLAP/\` or \`~/Library/Audio/Plug-Ins/CLAP/\`"
             echo ""
             echo "> macOS CLAP bundles are not Apple-notarized. On first load you may need to right-click → Open, or remove the quarantine flag with \`xattr -dr com.apple.quarantine /path/to/Plugin.clap\`."
+            echo ""
+            echo "### Stay in the loop"
+            echo ""
+            echo "Dusk Audio plugins are free and open source. [Follow Dusk Audio free on Patreon](https://www.patreon.com/cw/DuskAudio) to hear about new releases, or [become a member](https://www.patreon.com/cw/DuskAudio/membership) to support development and get official Dusk Studio builds."
 
             # Add plugin list for "all plugins" releases
             if [ "$PLUGIN_NAME" = "All Plugins" ]; then
