@@ -66,14 +66,13 @@ private:
     bool actionPressOwned = false;
 };
 
-// Per-tier accent colour, matched to the JUCE SupportersOverlay palette (HUGS is DAF-only, warm).
+// Per-tier accent colour, matched to the JUCE SupportersOverlay palette.
 inline ImU32 supporterTierColor(const char* title) noexcept
 {
-    if (std::strcmp(title, "CHAMPIONS") == 0)       return IM_COL32(255, 215,   0, 255);  // gold
-    if (std::strcmp(title, "PATRONS") == 0)         return IM_COL32(  0, 170, 255, 255);  // blue
-    if (std::strcmp(title, "SUPPORTERS") == 0)      return IM_COL32(106, 196, 126, 255);  // green
-    if (std::strcmp(title, "HUGS") == 0)            return IM_COL32(224, 156, 112, 255);  // warm peach
-    if (std::strcmp(title, "PAST SUPPORTERS") == 0) return IM_COL32(140, 140, 140, 255);  // grey
+    if (std::strcmp(title, "PATRONS") == 0)             return IM_COL32(255, 215,   0, 255);  // gold
+    if (std::strcmp(title, "SUPPORTERS") == 0)          return IM_COL32(  0, 170, 255, 255);  // blue
+    if (std::strcmp(title, "FOUNDING SUPPORTERS") == 0) return IM_COL32(106, 196, 126, 255);  // green
+    if (std::strcmp(title, "PAST SUPPORTERS") == 0)     return IM_COL32(140, 140, 140, 255);  // grey
     return IM_COL32(200, 200, 204, 255);
 }
 
