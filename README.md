@@ -281,6 +281,7 @@ These plugins are free and open source.
 
 - **Hear about new releases:** [follow Dusk Audio free on Patreon](https://www.patreon.com/cw/DuskAudio).
 - **Support development:** [become a member](https://www.patreon.com/cw/DuskAudio/membership). Members get official Dusk Studio builds and their name in the About panel of every plugin (click the title bar to view credits).
+- **One-time tip:** prefer not to subscribe? [Leave a tip on Ko-fi](https://ko-fi.com/duskaudio).
 
 ## Shared Libraries
 
