@@ -149,9 +149,9 @@ public:
             y += 14; // gap between tiers
         };
 
-        drawTier("CHAMPIONS",       PatreonCredits::champions,      juce::Colour(0xffffd700));
-        drawTier("PATRONS",         PatreonCredits::patrons,        juce::Colour(0xff00aaff));
-        drawTier("SUPPORTERS",      PatreonCredits::supporters,     juce::Colour(0xff6ac47e));
+        drawTier("PATRONS",             PatreonCredits::champions,  juce::Colour(0xffffd700));
+        drawTier("SUPPORTERS",          PatreonCredits::patrons,    juce::Colour(0xff00aaff));
+        drawTier("FOUNDING SUPPORTERS", PatreonCredits::supporters, juce::Colour(0xff6ac47e));
         drawTier("PAST SUPPORTERS", PatreonCredits::pastSupporters, juce::Colour(0xff606060), true);
 
         g.restoreState();
