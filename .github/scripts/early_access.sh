@@ -63,7 +63,7 @@ cmd_notes() {
     echo "### Stay in the loop"
     echo ""
     local perks="official Dusk Studio builds"
-    if [[ "${EARLY_ACCESS_DAYS:-0}" =~ ^[1-9][0-9]*$ ]]; then
+    if [ "${EARLY:-false}" = "true" ] && [[ "${EARLY_ACCESS_DAYS:-0}" =~ ^[1-9][0-9]*$ ]]; then
       perks="new releases ${EARLY_ACCESS_DAYS} days early and official Dusk Studio builds"
     fi
     echo "Dusk Audio plugins are free and open source. [Follow Dusk Audio free on Patreon](https://www.patreon.com/cw/DuskAudio) to hear about new releases, or [become a member](https://www.patreon.com/cw/DuskAudio/membership) to get ${perks}."
@@ -84,9 +84,14 @@ cmd_mirror() {
     echo ""
     grep -vE "$MARKER_RE" "$body"
   } > "$notes"
-  # Re-runs replace the mirror rather than failing on an existing tag.
-  gh release delete "$tag" -R "$EARLY_ACCESS_REPO" --yes --cleanup-tag 2>/dev/null || true
-  gh release create "$tag" "$@" -R "$EARLY_ACCESS_REPO" --title "$tag" --notes-file "$notes"
+  # A re-run updates the existing mirror in place, so a failed upload never
+  # leaves members without the build they already had.
+  if gh release view "$tag" -R "$EARLY_ACCESS_REPO" >/dev/null 2>&1; then
+    gh release upload "$tag" "$@" -R "$EARLY_ACCESS_REPO" --clobber
+    gh release edit "$tag" -R "$EARLY_ACCESS_REPO" --notes-file "$notes"
+  else
+    gh release create "$tag" "$@" -R "$EARLY_ACCESS_REPO" --title "$tag" --notes-file "$notes"
+  fi
 }
 
 cmd_publish_due() {
@@ -112,14 +117,20 @@ cmd_publish_due() {
   done < <(gh api "repos/$repo/releases" --paginate \
              --jq '.[] | select(.draft) | [.tag_name, (.body // "" | @base64)] | @tsv')
   echo "Published $published draft release(s)."
-  merge_website_branches "$today" "$early_dates"
+  if [ -n "$only" ] && [ "$published" -eq 0 ]; then
+    echo "::error::$only is not an early-access draft release; nothing was published."
+    exit 1
+  fi
+  merge_website_branches "$today" "$early_dates" "$only"
 }
 
 # /release-plugin pushes its website commit to early-access/<public date> instead
-# of main. Merge every branch whose date has arrived, plus the branch for any
-# release just published ahead of its date by hand.
+# of main. A scheduled run merges every branch whose date has arrived. A manual
+# run for one tag merges only that release's branch: other due branches wait for
+# the scheduled run that publishes their drafts, so the site never links to a
+# release that is still a draft.
 merge_website_branches() {
-  local today="$1" published_dates="$2" branch when
+  local today="$1" published_dates="$2" only="${3:-}" branch when
   if [ -z "${WEBSITE_TOKEN:-}" ]; then
     echo "::warning::WEBSITE_TOKEN is not set; website branches were not merged."
     return
@@ -127,7 +138,9 @@ merge_website_branches() {
   for branch in $(GH_TOKEN="$WEBSITE_TOKEN" gh api "repos/$WEBSITE_REPO/branches" --paginate \
                     --jq '.[].name | select(startswith("early-access/"))'); do
     when="${branch#early-access/}"
-    if [[ "$when" > "$today" ]] && [[ " $published_dates " != *" $when "* ]]; then
+    if [ -n "$only" ]; then
+      [[ " $published_dates " == *" $when "* ]] || continue
+    elif [[ "$when" > "$today" ]]; then
       continue
     fi
     echo "Merging website branch $branch"
