@@ -7,16 +7,26 @@
 # early-access-publish workflow flips the draft public on its date and merges the
 # website branch /release-plugin left for it.
 #
-#   early_access.sh plan TAG               -> GITHUB_OUTPUT early=true|false, public_on=YYYY-MM-DD
+# A prerelease tag (X.Y.Z-alpha1, -beta, -rc2, ...) is members-only instead: it
+# gets no public release at all, only the mirror, and has no public date. The
+# gate lists it while it is that plugin's newest mirrored release; the stable
+# release that follows goes through the normal window above.
+#
+#   early_access.sh plan TAG               -> GITHUB_OUTPUT early=true|false, members_only=true|false,
+#                                             public_on=YYYY-MM-DD (empty when members-only)
 #   early_access.sh notes BODY_FILE        -> append the Patreon section (+ public-on marker if early)
 #   early_access.sh mirror TAG BODY FILES… -> create the release in EARLY_ACCESS_REPO
 #   early_access.sh publish-due [TAG]      -> publish due drafts (or TAG now), merge website branches
 #
 # Env: EARLY_ACCESS_DAYS (repo variable; unset/0 = feature off), EARLY_ACCESS_REPO,
-#      HAS_EARLY_TOKEN, PUBLIC_ON, EARLY, GH_TOKEN, WEBSITE_TOKEN, GITHUB_REPOSITORY.
+#      HAS_EARLY_TOKEN, PUBLIC_ON, EARLY, MEMBERS_ONLY, GH_TOKEN, WEBSITE_TOKEN,
+#      GITHUB_REPOSITORY.
 set -euo pipefail
 
 MARKER_RE='<!-- early-access public-on=([0-9]{4}-[0-9]{2}-[0-9]{2}) -->'
+MEMBERS_ONLY_MARKER='<!-- early-access members-only -->'
+STABLE_TAG_RE='^[a-z0-9-]+-v[0-9]+\.[0-9]+\.[0-9]+$'
+PRERELEASE_TAG_RE='^[a-z0-9-]+-v[0-9]+\.[0-9]+\.[0-9]+-[A-Za-z0-9]+(\.[A-Za-z0-9]+)*$'
 WEBSITE_REPO="dusk-audio/dusk-audio.github.io"
 
 out() { if [ -n "${GITHUB_OUTPUT:-}" ]; then echo "$1" >> "$GITHUB_OUTPUT"; fi; echo "$1"; }
@@ -31,12 +41,13 @@ public_on_for_tag() {
 }
 
 cmd_plan() {
-  local tag="$1" days="${EARLY_ACCESS_DAYS:-0}" reason=""
+  local tag="$1" days="${EARLY_ACCESS_DAYS:-0}" reason="" members_only=false
   [[ "$days" =~ ^[0-9]+$ ]] || days=0
+  if [[ "$tag" =~ $PRERELEASE_TAG_RE ]]; then members_only=true; fi
   if [ "$days" -eq 0 ]; then
     reason="EARLY_ACCESS_DAYS is not set"
-  elif [[ ! "$tag" =~ ^[a-z0-9-]+-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    reason="$tag is not a stable single-plugin tag"
+  elif [[ ! "$tag" =~ $STABLE_TAG_RE ]] && [ "$members_only" != true ]; then
+    reason="$tag is not a single-plugin release tag"
   elif git tag -l --format='%(contents)' "$tag" | grep -qiE '^Early-Access:[[:space:]]*no[[:space:]]*$'; then
     reason="tag message opts out (Early-Access: no)"
   elif [ "${HAS_EARLY_TOKEN:-false}" != "true" ]; then
@@ -46,6 +57,14 @@ cmd_plan() {
   if [ -n "$reason" ]; then
     echo "Public release now: $reason."
     out "early=false"
+    out "members_only=false"
+    out "public_on="
+    return
+  fi
+  if [ "$members_only" = true ]; then
+    echo "Members-only prerelease: no public release until a stable tag."
+    out "early=true"
+    out "members_only=true"
     out "public_on="
     return
   fi
@@ -53,6 +72,7 @@ cmd_plan() {
   when=$(public_on_for_tag "$tag" "$days")
   echo "Early access: members now, public on $when."
   out "early=true"
+  out "members_only=false"
   out "public_on=$when"
 }
 
@@ -67,9 +87,12 @@ cmd_notes() {
       perks="new releases ${EARLY_ACCESS_DAYS} days early and official Dusk Studio builds"
     fi
     echo "Dusk Audio plugins are free and open source. [Follow Dusk Audio free on Patreon](https://www.patreon.com/cw/DuskAudio) to hear about new releases, or [become a member](https://www.patreon.com/cw/DuskAudio/membership) to get ${perks}."
-    if [ "${EARLY:-false}" = "true" ]; then
+    if [ "${MEMBERS_ONLY:-false}" = "true" ]; then
       echo ""
-      echo "<!-- early-access public-on=${PUBLIC_ON} -->"
+      echo "$MEMBERS_ONLY_MARKER"
+    elif [ "${EARLY:-false}" = "true" ]; then
+      echo ""
+      echo "<!-- early-access public-on=${PUBLIC_ON:?PUBLIC_ON is not set} -->"
     fi
   } >> "$body"
 }
@@ -77,12 +100,20 @@ cmd_notes() {
 cmd_mirror() {
   local tag="$1" body="$2"; shift 2
   : "${EARLY_ACCESS_REPO:?EARLY_ACCESS_REPO is not set}"
-  local notes
+  local notes pre=()
   notes=$(mktemp)
   {
-    echo "**Early access for Dusk Audio Patreon members.** Free for everyone on ${PUBLIC_ON}."
+    # builds-gate keys on these first lines: "Free for everyone on <date>" lists a
+    # release until that date, "Members-only prerelease" lists it while it is the
+    # plugin's newest.
+    if [ "${MEMBERS_ONLY:-false}" = "true" ]; then
+      echo "**Members-only prerelease for Dusk Audio Patreon members.** Not public until the stable release."
+      pre=(--prerelease)
+    else
+      echo "**Early access for Dusk Audio Patreon members.** Free for everyone on ${PUBLIC_ON:?PUBLIC_ON is not set}."
+    fi
     echo ""
-    grep -vE "$MARKER_RE" "$body"
+    grep -vE "$MARKER_RE|$MEMBERS_ONLY_MARKER" "$body"
   } > "$notes"
   # A re-run updates the existing mirror in place, so a failed upload never
   # leaves members without the build they already had.
@@ -90,7 +121,7 @@ cmd_mirror() {
     gh release upload "$tag" "$@" -R "$EARLY_ACCESS_REPO" --clobber
     gh release edit "$tag" -R "$EARLY_ACCESS_REPO" --notes-file "$notes"
   else
-    gh release create "$tag" "$@" -R "$EARLY_ACCESS_REPO" --title "$tag" --notes-file "$notes"
+    gh release create "$tag" "$@" -R "$EARLY_ACCESS_REPO" --title "$tag" --notes-file "$notes" "${pre[@]}"
   fi
 }
 

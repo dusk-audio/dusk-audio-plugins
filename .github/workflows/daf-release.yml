@@ -1008,10 +1008,13 @@ jobs:
         env:
           EARLY: ${{ steps.ea.outputs.early }}
           PUBLIC_ON: ${{ steps.ea.outputs.public_on }}
+          MEMBERS_ONLY: ${{ steps.ea.outputs.members_only }}
           EARLY_ACCESS_DAYS: ${{ vars.EARLY_ACCESS_DAYS }}
         run: .github/scripts/early_access.sh notes release_body.md
 
       - name: Publish Release
+        # A members-only prerelease gets no public release, only the mirror below.
+        if: steps.ea.outputs.members_only != 'true'
         uses: softprops/action-gh-release@v1
         with:
           files: artifacts/**/*.zip
@@ -1035,6 +1038,7 @@ jobs:
           GH_TOKEN: ${{ secrets.EARLY_ACCESS_TOKEN }}
           EARLY_ACCESS_REPO: ${{ vars.EARLY_ACCESS_REPO || 'dusk-audio/dusk-plugins-early' }}
           PUBLIC_ON: ${{ steps.ea.outputs.public_on }}
+          MEMBERS_ONLY: ${{ steps.ea.outputs.members_only }}
         run: |
           shopt -s globstar nullglob
           .github/scripts/early_access.sh mirror "${GITHUB_REF#refs/tags/}" release_body.md artifacts/**/*.zip
