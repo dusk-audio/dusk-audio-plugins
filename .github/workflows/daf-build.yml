@@ -1143,6 +1143,20 @@ jobs:
             echo "::error::Expected checksums for four ZIP assets"; exit 1
           fi
 
+      - name: Plan early access
+        id: ea
+        env:
+          EARLY_ACCESS_DAYS: ${{ vars.EARLY_ACCESS_DAYS }}
+          HAS_EARLY_TOKEN: ${{ secrets.EARLY_ACCESS_TOKEN != '' }}
+        run: .github/scripts/early_access.sh plan "${GITHUB_REF#refs/tags/}"
+
+      - name: Finish release notes
+        env:
+          EARLY: ${{ steps.ea.outputs.early }}
+          PUBLIC_ON: ${{ steps.ea.outputs.public_on }}
+          EARLY_ACCESS_DAYS: ${{ vars.EARLY_ACCESS_DAYS }}
+        run: .github/scripts/early_access.sh notes release_body.md
+
       - name: Publish Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2 (Node 24)
         with:
@@ -1151,5 +1165,17 @@ jobs:
             dist/SHA256SUMS
           generate_release_notes: true
           body_path: release_body.md
-          draft: false
+          draft: ${{ steps.ea.outputs.early == 'true' }}
           prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-alpha') || contains(github.ref, '-rc') }}
+
+      - name: Mirror to early access
+        # Members download this copy through the Patreon build gate until the
+        # draft above goes public (early-access-publish.yml).
+        if: steps.ea.outputs.early == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.EARLY_ACCESS_TOKEN }}
+          EARLY_ACCESS_REPO: ${{ vars.EARLY_ACCESS_REPO || 'dusk-audio/dusk-plugins-early' }}
+          PUBLIC_ON: ${{ steps.ea.outputs.public_on }}
+        run: |
+          shopt -s globstar nullglob
+          .github/scripts/early_access.sh mirror "${GITHUB_REF#refs/tags/}" release_body.md dist/**/*.zip dist/SHA256SUMS
