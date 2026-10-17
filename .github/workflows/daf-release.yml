@@ -997,6 +997,20 @@ jobs:
           } > release_body.md
           echo "=== staged zips ==="; find artifacts -name '*.zip'
 
+      - name: Plan early access
+        id: ea
+        env:
+          EARLY_ACCESS_DAYS: ${{ vars.EARLY_ACCESS_DAYS }}
+          HAS_EARLY_TOKEN: ${{ secrets.EARLY_ACCESS_TOKEN != '' }}
+        run: .github/scripts/early_access.sh plan "${GITHUB_REF#refs/tags/}"
+
+      - name: Finish release notes
+        env:
+          EARLY: ${{ steps.ea.outputs.early }}
+          PUBLIC_ON: ${{ steps.ea.outputs.public_on }}
+          EARLY_ACCESS_DAYS: ${{ vars.EARLY_ACCESS_DAYS }}
+        run: .github/scripts/early_access.sh notes release_body.md
+
       - name: Publish Release
         uses: softprops/action-gh-release@v1
         with:
@@ -1008,7 +1022,19 @@ jobs:
           # we want here.
           generate_release_notes: false
           body_path: release_body.md
-          draft: false
+          draft: ${{ steps.ea.outputs.early == 'true' }}
           # Derived from the validated tag suffix in the setup job (any
           # -<suffix> after X.Y.Z), not from a substring scan of the ref.
           prerelease: ${{ needs.setup.outputs.prerelease == 'true' }}
+
+      - name: Mirror to early access
+        # Members download this copy through the Patreon build gate until the
+        # draft above goes public (early-access-publish.yml).
+        if: steps.ea.outputs.early == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.EARLY_ACCESS_TOKEN }}
+          EARLY_ACCESS_REPO: ${{ vars.EARLY_ACCESS_REPO || 'dusk-audio/dusk-plugins-early' }}
+          PUBLIC_ON: ${{ steps.ea.outputs.public_on }}
+        run: |
+          shopt -s globstar nullglob
+          .github/scripts/early_access.sh mirror "${GITHUB_REF#refs/tags/}" release_body.md artifacts/**/*.zip

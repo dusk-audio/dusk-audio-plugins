@@ -1273,10 +1273,6 @@ jobs:
             echo "- CLAP: Copy the \`.clap\` bundle from \`CLAP/\` to \`/Library/Audio/Plug-Ins/CLAP/\` or \`~/Library/Audio/Plug-Ins/CLAP/\`"
             echo ""
             echo "> macOS CLAP bundles are not Apple-notarized. On first load you may need to right-click → Open, or remove the quarantine flag with \`xattr -dr com.apple.quarantine /path/to/Plugin.clap\`."
-            echo ""
-            echo "### Stay in the loop"
-            echo ""
-            echo "Dusk Audio plugins are free and open source. [Follow Dusk Audio free on Patreon](https://www.patreon.com/cw/DuskAudio) to hear about new releases, or [become a member](https://www.patreon.com/cw/DuskAudio/membership) to support development and get official Dusk Studio builds."
 
             # Add plugin list for "all plugins" releases
             if [ "$PLUGIN_NAME" = "All Plugins" ]; then
@@ -1307,6 +1303,20 @@ jobs:
             fi
           } > release_body.md
 
+      - name: Plan early access
+        id: ea
+        env:
+          EARLY_ACCESS_DAYS: ${{ vars.EARLY_ACCESS_DAYS }}
+          HAS_EARLY_TOKEN: ${{ secrets.EARLY_ACCESS_TOKEN != '' }}
+        run: .github/scripts/early_access.sh plan "${GITHUB_REF#refs/tags/}"
+
+      - name: Finish release notes
+        env:
+          EARLY: ${{ steps.ea.outputs.early }}
+          PUBLIC_ON: ${{ steps.ea.outputs.public_on }}
+          EARLY_ACCESS_DAYS: ${{ vars.EARLY_ACCESS_DAYS }}
+        run: .github/scripts/early_access.sh notes release_body.md
+
       - name: Publish Release
         uses: softprops/action-gh-release@v1
         with:
@@ -1314,11 +1324,24 @@ jobs:
             *.zip
           generate_release_notes: true
           body_path: release_body.md
-          draft: false
+          draft: ${{ steps.ea.outputs.early == 'true' }}
           prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-alpha') || contains(github.ref, '-rc') }}
 
+      - name: Mirror to early access
+        # Members download this copy through the Patreon build gate until the
+        # draft above goes public (early-access-publish.yml).
+        if: steps.ea.outputs.early == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.EARLY_ACCESS_TOKEN }}
+          EARLY_ACCESS_REPO: ${{ vars.EARLY_ACCESS_REPO || 'dusk-audio/dusk-plugins-early' }}
+          PUBLIC_ON: ${{ steps.ea.outputs.public_on }}
+        run: |
+          shopt -s globstar nullglob
+          .github/scripts/early_access.sh mirror "${GITHUB_REF#refs/tags/}" release_body.md *.zip
+
       - name: Update Website Version
-        if: ${{ needs.setup.outputs.plugin_name != 'All Plugins' }}
+        # Early-access releases reach the website when they go public.
+        if: ${{ needs.setup.outputs.plugin_name != 'All Plugins' && steps.ea.outputs.early != 'true' }}
         env:
           RELEASE_NAME: ${{ needs.setup.outputs.release_name }}
           PLUGIN_VERSION: ${{ needs.setup.outputs.plugin_version }}
