@@ -806,9 +806,9 @@ void testFetFaceplateContract()
         && source.find("visualOrder") != std::string::npos
         && source.find("row < 5") != std::string::npos;
     const bool exposesOnlyMixExtension =
-        source.find("fetTrimKnob(dl, \"fet_mix\"") != std::string::npos
-        && source.find("fetTrimKnob(dl, \"fet_threshold\"") == std::string::npos
-        && source.find("fetTrimKnob(dl, \"fet_trans\"") == std::string::npos
+        source.find("trimScrewKnob(dl, \"fet_mix\"") != std::string::npos
+        && source.find("trimScrewKnob(dl, \"fet_threshold\"") == std::string::npos
+        && source.find("trimScrewKnob(dl, \"fet_trans\"") == std::string::npos
         && source.find("drawFetCurveSwitch") == std::string::npos;
     const bool hasConcentricKnobSkirts =
         source.find("AddCircleFilled(center, r * 0.96f") != std::string::npos
@@ -1165,6 +1165,16 @@ void testOptoReferenceDisplayAndNoiseDefault()
                 && std::abs(multicompp::optoReferenceHostValue(72.0f)
                             - 70.0f) < 0.0001f,
             "Opto display text maps back without changing the stored domain");
+    float typed = -1.0f;
+    require(multicompp::parseOptoDisplayText("33", typed) && typed == 33.0f
+                && multicompp::parseOptoDisplayText("72.5", typed) && typed == 72.5f
+                && multicompp::parseOptoDisplayText("0", typed) && typed == 0.0f
+                && multicompp::parseOptoDisplayText("100", typed) && typed == 100.0f,
+            "Opto display text parses whole and decimal values");
+    for (const char* bad : {"", " 33", "33 ", "33,5", "abc", "101", "-1", "nan", "inf", "1e2x"})
+        require(!multicompp::parseOptoDisplayText(bad, typed),
+                "Opto display text rejects padding, locale commas, junk and out-of-range values");
+    require(!multicompp::parseOptoDisplayText(nullptr, typed), "Opto display text rejects a null string");
     const auto noise = multicompp::kParams[
         static_cast<size_t>(multicompp::ParamId::NoiseEnable)];
     duskaudio::MultiCompParameterState defaults;

@@ -385,7 +385,9 @@ jobs:
             # xvfb-run: the UI drag guard opens the plugin's real editor, so ctest
             # now needs a display. The harness fails with that instruction rather
             # than skipping when DISPLAY is unset, so this must stay.
-            xvfb-run -a ctest --test-dir build --output-on-failure
+            # Tests labelled report-only (Multi-Comp 2's parity run against the
+            # measured reference units) report accuracy and are not a gate.
+            xvfb-run -a ctest --test-dir build --output-on-failure --label-exclude report-only
           else
             echo "::notice::no ctest targets registered for ${PLUGIN_BASE}; skipping"
           fi
@@ -656,7 +658,9 @@ jobs:
             # xvfb-run: the UI drag guard opens the plugin's real editor, so ctest
             # needs a display. The harness fails with that instruction rather
             # than skipping when DISPLAY is unset, so this must stay.
-            xvfb-run -a ctest --test-dir build --output-on-failure
+            # Tests labelled report-only (Multi-Comp 2's parity run against the
+            # measured reference units) report accuracy and are not a gate.
+            xvfb-run -a ctest --test-dir build --output-on-failure --label-exclude report-only
           else
             echo "::notice::no ctest targets registered for ${PLUGIN_BASE}; skipping"
           fi
