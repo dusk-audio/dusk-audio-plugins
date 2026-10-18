@@ -4180,9 +4180,9 @@ void testLatencyMixBypassAndDigitalStereo()
                         "Digital latency reports AA plus global and mode lookahead");
             }
     latencyMatrix.setMode(static_cast<int>(duskaudio::MultiCompMode::FET));
-    require(latencyMatrix.getLatencySamples() == 547,
-            "mode change removes Digital lookahead while retaining global lookahead");
-    std::printf("latency matrix: os=off/2x/4x, global=0/10ms, digital=0/10ms; Digital max=1027 FET max=547\n");
+    require(latencyMatrix.getLatencySamples() == 67,
+            "mode change removes both the Digital and the global lookahead");
+    std::printf("latency matrix: os=off/2x/4x, global=0/10ms, digital=0/10ms; Digital max=1027 FET max=67\n");
 
     MultiCompDSP stereo;
     stereo.prepare(48000.0, 256);
@@ -4839,9 +4839,13 @@ void testGoldenVectors()
     // double, land10, sub-knee static law): FET RMS .047656160 -> .043774959,
     // peak .611023188 -> .553591609. Re-recorded 2026-10-17 with the owner's
     // approval; the five sibling modes stay within the bound.
-    constexpr float expectedRms[] = {0.043774959f, 0.021684144f,
+    // FET 4:1 release depth term and its recalibrated constants (2026-10-18):
+    // FET RMS .043774959 -> .043787036,
+    // peak .553591609 -> .553540170, inside the bound but re-recorded with the
+    // owner's approval so the next change has the full bound; siblings unchanged.
+    constexpr float expectedRms[] = {0.043787036f, 0.021684144f,
                                      0.615188122f, 0.195212007f, 0.172583029f, 0.212110028f};
-    constexpr float expectedPeak[] = {0.553591609f, 0.349883616f,
+    constexpr float expectedPeak[] = {0.553540170f, 0.349883616f,
                                       1.836065888f, 0.657659471f, 0.349556237f, 0.815853953f};
     std::puts("golden vectors: six JUCE-oracle modes, deterministic step/sine-burst RMS peak");
     for (size_t vectorIndex = 0; vectorIndex < std::size(modes); ++vectorIndex)
@@ -5188,6 +5192,61 @@ void testHiddenControlsStayOutOfModesWithoutThem()
                     != renderWithControl(mode, Parameter::SidechainHP, 0.0f),
                 "SC HP still acts on a face that shows it");
     std::puts("hidden controls: global Mix and SC HP act only where their face shows them");
+}
+
+// Global Lookahead belongs to the digital compressors. In the modes that follow
+// a hardware unit it used to delay the audio behind an undelayed detector and
+// add up to 10 ms of latency. It still adds its latency in Digital and Multiband.
+void testGlobalLookaheadOnlyInDigitalModes()
+{
+    using duskaudio::MultiCompMode;
+    using Parameter = MultiCompDSP::Parameter;
+    const auto latencyAt = [](MultiCompMode mode, float lookaheadMs) {
+        MultiCompDSP dsp;
+        dsp.prepare(48000.0, 256);
+        dsp.setMode(static_cast<int>(mode));
+        dsp.setParameter(Parameter::GlobalLookahead, lookaheadMs);
+        return dsp.getLatencySamples();
+    };
+    for (const MultiCompMode mode : {MultiCompMode::Opto, MultiCompMode::FET, MultiCompMode::VCA,
+                                     MultiCompMode::Bus, MultiCompMode::StudioFET, MultiCompMode::StudioVCA})
+    {
+        require(renderWithControl(mode, Parameter::GlobalLookahead, 10.0f)
+                    == renderWithControl(mode, Parameter::GlobalLookahead, 0.0f),
+                "Global Lookahead does not act in a mode that follows a hardware unit");
+        require(latencyAt(mode, 10.0f) == latencyAt(mode, 0.0f),
+                "Global Lookahead adds no latency in a mode that follows a hardware unit");
+    }
+    for (const MultiCompMode mode : {MultiCompMode::Digital, MultiCompMode::Multiband})
+        require(latencyAt(mode, 10.0f) == latencyAt(mode, 0.0f) + 480,
+                "Global Lookahead adds its 10 ms to the digital compressors' latency");
+    // A lookahead lets the detector hear the onset before the audio does, so
+    // the first 5 ms after the audio arrives already come out reduced. A plain
+    // delay of audio and detector together would leave the onset as loud as
+    // without it. Multiband with its own detector is such a delay today (open
+    // before 1.0.0), so only Digital is held to the lead; Multiband's reading is
+    // printed for reference.
+    // The audio must also arrive where the reported latency says: before it,
+    // from 240 to 70 samples ahead (clear of the anti-alias filter's
+    // pre-ringing), the output is silent, since the input starts at t = 0.
+    const auto peakDb = [](const std::vector<float>& out, size_t from, size_t to) {
+        float peak = 0.0f;
+        for (size_t i = from; i < to; ++i) peak = std::max(peak, std::abs(out[i]));
+        return 20.0f * std::log10(std::max(peak, 1.0e-9f));
+    };
+    const auto onsetPeakDb = [&](MultiCompMode mode, float lookaheadMs) {
+        const std::vector<float> out = renderWithControl(mode, Parameter::GlobalLookahead, lookaheadMs);
+        const size_t start = static_cast<size_t>(latencyAt(mode, lookaheadMs));
+        if (lookaheadMs > 0.0f)
+            require(peakDb(out, start - 240, start - 70) < -60.0f,
+                    "the delayed audio arrives no earlier than the reported latency");
+        return peakDb(out, start, start + 240);
+    };
+    const float digitalLead = onsetPeakDb(MultiCompMode::Digital, 0.0f) - onsetPeakDb(MultiCompMode::Digital, 10.0f);
+    const float multibandLead = onsetPeakDb(MultiCompMode::Multiband, 0.0f) - onsetPeakDb(MultiCompMode::Multiband, 10.0f);
+    require(digitalLead > 1.0f, "Global Lookahead lets Digital reduce the onset before it arrives");
+    std::printf("global lookahead: adds latency only in Digital and Multiband; onset lead Digital %.2f dB, "
+                "Multiband %.2f dB\n", digitalLead, multibandLead);
 }
 
 // Level in dB of one channel of `out` from `from` to the end.
@@ -9396,6 +9455,11 @@ void testFetDenseShallowLowFrequencyH3()
     // sub-knee static law): those changes moved these controls by up to 0.13 dB
     // GR, 0.03 dB H1, 5.5 dB H2 and 56.7 dB H5 (the old odd-order surrogates
     // left the arm). The reference fixtures and every bound are unchanged.
+    // H2 and H5 re-recorded 2026-10-18 with the owner's approval for the 4:1
+    // release depth term and the constants recalibrated with it: H2 moved up to
+    // 0.40 dB, H5 up to 1.25 dB above -120 dBc (up to 2.6 dB on the floor rows,
+    // which the floor rule below covers); GR and H1 stayed within 0.0003 dB and
+    // keep their 2026-10-17 values.
     constexpr std::array<double, 33> baselineRawReductionDb{{
         0.048090000, 0.070266000, 0.096089000, 0.125556000,
         0.158694000, 0.195467000, 0.235950000, 0.280101000,
@@ -9419,15 +9483,15 @@ void testFetDenseShallowLowFrequencyH3()
         -16.971918080,
     }};
     constexpr std::array<double, 33> baselineH2RelativeDb{{
-        -68.573423662, -68.327862051, -68.082666696, -67.837772722,
-        -67.593624088, -67.349836679, -67.106481303, -66.863286920,
-        -66.620531233, -66.378341637, -66.136215866, -65.894528595,
-        -65.673503224, -65.456368283, -65.245371125, -65.043741928,
-        -64.824834968, -64.588089429, -64.363228027, -64.362861597,
-        -64.339712301, -64.347145174, -64.284221855, -64.181729628,
-        -64.046749906, -63.827276242, -63.583371381, -63.231857824,
-        -62.768609534, -62.484457026, -61.665443018, -61.138676300,
-        -60.583767792,
+        -68.573348542, -68.327756445, -68.082536071, -67.837636070,
+        -67.593448756, -67.349586543, -67.106103300, -66.862895425,
+        -66.620136616, -66.377818150, -66.135655394, -65.893942243,
+        -65.672571747, -65.455459227, -65.245166230, -65.046768627,
+        -64.824187629, -64.571501916, -64.327515317, -64.310628834,
+        -64.261709990, -64.230813709, -64.131330845, -63.989674083,
+        -63.795653101, -63.522392837, -63.239720863, -62.851571403,
+        -62.365115719, -62.089898417, -61.271635692, -60.760172371,
+        -60.234037669,
     }};
     // 127-tap wide audio oversampler: H5 here sits at -107..-66 dBc, at the float
     // and alias floor, so the control moved by up to 0.128 dB at the quietest
@@ -9438,15 +9502,15 @@ void testFetDenseShallowLowFrequencyH3()
     // moved by up to 0.227 dB, those from -140 to -100 dBc by up to 0.034 dB,
     // those above -100 dBc by at most 0.0004 dB; GR, H1 and H2 within 2.2e-5 dB.
     constexpr std::array<double, 33> baselineH5RelativeDb{{
-        -149.785689700, -154.146423324, -156.043300823, -153.956157918,
-        -150.719381798, -145.545430413, -145.456869969, -141.684143539,
-        -139.185017487, -137.594549588, -135.043815356, -132.925339708,
-        -131.438477327, -129.537741197, -116.483355895, -100.178357430,
-        -94.749888603, -91.513361049, -88.991105885, -87.069921207,
-        -85.176327152, -83.986920871, -82.384508525, -80.959102759,
-        -79.691224873, -78.399859264, -77.333791068, -76.204069898,
-        -75.185747182, -74.510108848, -73.262520265, -72.462419888,
-        -71.770929330,
+        -150.184250075, -154.493473057, -156.818852101, -151.471155389,
+        -148.907509099, -143.693300930, -142.819396726, -139.632953422,
+        -137.572276706, -135.773712567, -133.504185513, -131.590727593,
+        -129.762809109, -128.126446776, -115.282615082, -98.932066429,
+        -93.541178805, -90.279103224, -87.855515823, -85.914422280,
+        -84.078142296, -82.885962140, -81.351497038, -79.999236815,
+        -78.765738602, -77.540911138, -76.519451472, -75.458391920,
+        -74.519338169, -73.881126247, -72.715454857, -71.968773163,
+        -71.340926717,
     }};
     constexpr float inputPosition = 0.8f;
     constexpr float inputGainDb = 38.603869f;
@@ -9610,39 +9674,43 @@ void testFetDenseBroadbandComplexH3()
     // Re-recorded 2026-10-17 with the owner's approval from the FET loop that
     // landed 2026-10-07..16: GR moved up to 0.06 dB, H1 0.08, H2 4.4, H5 15.4.
     // The reference fixtures and bounds are untouched.
+    // H2 and H5 re-recorded 2026-10-18 with the owner's approval for the 4:1
+    // release depth term and the constants recalibrated with it: H2 moved up to
+    // 0.069 dB, H5 up to 1.39 dB; GR and H1 stayed within 0.0023 dB and keep
+    // their 2026-10-17 values.
     constexpr std::array<Neighbour, 17> neighbours48{{
-        {0.846330, -18.626315520, -64.733995455, -114.803199034},
-        {1.001968, -18.215407559, -64.187923679, -102.191964244},
-        {2.585082, -16.985933187, -65.929493685, -91.987774057},
-        {6.901692, -15.421306350, -70.138241695, -83.767400628},
-        {8.990163, -14.911900936, -66.145186237, -77.448146712},
-        {11.861432, -14.396672708, -66.827840213, -80.995058922},
-        {13.918957, -13.859392458, -61.162737189, -76.052517796},
-        {16.808748, -13.368677435, -58.640390295, -79.201108640},
-        {18.832028, -12.802548301, -55.348040243, -74.215032124},
-        {21.735912, -12.338201913, -52.571989625, -77.660363501},
-        {23.730309, -11.755597186, -49.449932676, -73.008715825},
-        {26.624241, -11.308674453, -46.116109034, -76.559077347},
-        {28.587508, -10.716416646, -44.340549935, -72.212211835},
-        {30.991660, -10.195735497, -43.219158874, -71.928976872},
-        {31.451905, -10.276733980, -43.385359476, -75.853451377},
-        {33.372190, -9.673668439, -42.686434774, -71.640240975},
-        {34.616144, -9.585632681, -42.679627075, -75.412113285},
+        {0.846330, -18.626315520, -64.733591397, -113.416962477},
+        {1.001968, -18.215407559, -64.185391462, -101.220652966},
+        {2.585082, -16.985933187, -65.915616216, -91.546550932},
+        {6.901692, -15.421306350, -70.132739922, -83.753895795},
+        {8.990163, -14.911900936, -66.162815085, -77.463719877},
+        {11.861432, -14.396672708, -66.841464286, -81.025210536},
+        {13.918957, -13.859392458, -61.190401180, -76.104808777},
+        {16.808748, -13.368677435, -58.658634377, -79.323709718},
+        {18.832028, -12.802548301, -55.379119581, -74.333402539},
+        {21.735912, -12.338201913, -52.584091744, -77.895241253},
+        {23.730309, -11.755597186, -49.472219814, -73.247084981},
+        {26.624241, -11.308674453, -46.122566765, -77.018226252},
+        {28.587508, -10.716416646, -44.356411274, -72.662328267},
+        {30.991660, -10.195735497, -43.238051010, -72.508628110},
+        {31.451905, -10.276733980, -43.394197275, -76.605543142},
+        {33.372190, -9.673668439, -42.711553716, -72.366817909},
+        {34.616144, -9.585632681, -42.694097087, -76.520843212},
     }};
     constexpr std::array<Neighbour, 13> neighbours96{{
-        {0.845952, -18.623582624, -64.735344032, -114.903337710},
-        {2.582701, -16.980682721, -65.936063622, -91.877423753},
-        {6.897325, -15.414581577, -70.256720460, -83.848604483},
-        {8.985280, -14.904712165, -66.128834326, -77.516641392},
-        {11.856802, -14.389694516, -66.679350569, -81.044706839},
-        {16.804623, -13.362193930, -58.572783635, -79.277640491},
-        {18.826928, -12.795165923, -55.257053088, -74.302210092},
-        {21.731159, -12.331070568, -52.526232652, -77.726585069},
-        {26.619517, -11.301542176, -46.085635940, -76.629018553},
-        {28.582499, -10.709073542, -44.294004932, -72.309639465},
-        {31.447547, -10.269913615, -43.356603488, -75.921435644},
-        {33.367117, -9.666158347, -42.643562015, -71.743922236},
-        {34.612029, -9.578984614, -42.652695157, -75.501508763},
+        {0.845952, -18.623582624, -64.734967223, -113.514108185},
+        {2.582701, -16.980682721, -65.927345942, -91.536870589},
+        {6.897325, -15.414581577, -70.237400578, -83.826000133},
+        {8.985280, -14.904712165, -66.145898823, -77.531820322},
+        {11.856802, -14.389694516, -66.747884317, -81.162828907},
+        {16.804623, -13.362193930, -58.591043932, -79.411253589},
+        {18.826928, -12.795165923, -55.289825842, -74.427263713},
+        {21.731159, -12.331070568, -52.540925443, -77.934198404},
+        {26.619517, -11.301542176, -46.094475011, -77.079857326},
+        {28.582499, -10.709073542, -44.312299503, -72.739389011},
+        {31.447547, -10.269913615, -43.370805400, -76.795032238},
+        {33.367117, -9.666158347, -42.670423694, -72.459132381},
+        {34.612029, -9.578984614, -42.669298078, -76.587208039},
     }};
     constexpr float inputPosition = 0.8f;
     constexpr double inputGainDb = 38.603869;
@@ -11064,6 +11132,8 @@ int main(int argc, char** argv)
         return runParityTests();
     if (argc == 2 && std::strcmp(argv[1], "--hidden-controls") == 0)
     { testHiddenControlsStayOutOfModesWithoutThem(); return 0; }
+    if (argc == 2 && std::strcmp(argv[1], "--global-lookahead-scope") == 0)
+    { testGlobalLookaheadOnlyInDigitalModes(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--opto-recovery") == 0)
     {
         testOptoRecoveryParity();
@@ -11443,6 +11513,7 @@ int main(int argc, char** argv)
     testHighRateLowCornerFiltersStayStable();
     testModeReentryStartsFromRest();
     testHiddenControlsStayOutOfModesWithoutThem();
+    testGlobalLookaheadOnlyInDigitalModes();
     std::puts("Multi-Comp core tests: PASS");
     return 0;
 }

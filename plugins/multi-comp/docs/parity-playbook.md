@@ -141,11 +141,37 @@ go through `lab.py` (full DSP from a patched core copy, byte-exact baseline chec
 
 | Mode | Reference | Access | Existing probes and captures | First step |
 |---|---|---|---|---|
-| OPTO | UADx LA-2A | installed | campaign closed 2026-10-15; four synthetic-probe cells left over the bar, see `opto-known-deltas-2026-10-15.md` | Reopen only on a user report: `abx_kit.py focus` on that material first |
-| FET | UADx 1176 | installed | `fet/static_grid.py`, `fet/taper_sweep.py`; earlier campaign log in memory | Tiered ABX, then corpus_diff |
-| VCA | UADx dbx 160 | installed | `vca/` (18 scripts: tilt, onset, fits); VCA faceplate UI on branch `mc2/dbx160-vca-ui` | Tiered ABX, then corpus_diff |
+| OPTO | UADx LA-2A | installed | campaign closed 2026-10-15; four synthetic-probe readings left over the bar (phase and family screen tables, crest and short-charge fixture rows), plus the settled screen table's edge cell (1.0061 dB since 2026-10-18), see `opto-known-deltas-2026-10-15.md` | Reopen only on a user report: `abx_kit.py focus` on that material first |
+| FET | UADx 1176 | installed | `fet/static_grid.py`, `fet/taper_sweep.py`; earlier campaign log in memory. State 2026-10-18 (4:1 release depth term landed): 0 of 4,340 probe cells and 0 cells on all 18 music tiers over 1 dB; harmonic rows over 1 dB 7 of 156, worst +3.16 dB (H5 of 100 Hz at the bottom of the knee, 0.95 dB GR); the programme-recovery fixture reads 2.18 dB 50 ms after a short burst (rows 28-31; partial-regression bound 4.0) | Tiered ABX, then the 100 Hz knee rows and the after-burst release |
+| VCA | UADx dbx 160 | installed | `vca/` (18 scripts: tilt, onset, fits); VCA faceplate UI on branch `mc2/dbx160-vca-ui`. State 2026-10-12: 0 cells over 1 dB in every table (music 0 of 270, worst 0.073 dB) | Tiered ABX |
 | BUS | UADx SSL G | demo expired 2026-09-22, parked | `bus/` (137 scripts), accepted at the internal bar 2026-09-21 | Needs a licence before any capture |
 | Studio FET / VCA, Digital, Multiband | none | | | Not parity targets |
 
 Rules that stay: never loosen a test bound; no classifiers or hand corrections in the audio path; captures
 and candidate renders never enter a repo; the owner commits.
+
+## Open before the stable 1.0.0 (from the 1.0.0-alpha1 review, 2026-10-18)
+
+- FET ratio buttons switch without a crossfade; going to or from All jumps.
+- Global Lookahead in Multiband, with the internal detector, delays the detector along with the audio
+  (`processMultiband` splits the already delayed input), so it adds up to 10 ms of latency and no lead; with an
+  external sidechain the lead is real. Either split an undelayed copy for the detector or drop Multiband from
+  `globalLookaheadForMode`; `--global-lookahead-scope` prints Multiband's onset lead (0.00 dB today).
+- Latency moves with the mode (Opto +6 samples, Multiband -67, and Global Lookahead, up to 10 ms, now only in
+  Digital and Multiband) and the AU wrapper never tells the host; either hold the reported latency constant
+  across modes or add latency notification to the framework's AU wrapper.
+- Sixteen automatable parameters have no control on any face, four VCA parameters do nothing, and several host
+  names repeat (Threshold five times). FET and Studio FET share every `fet_*` parameter, so Curve and Transient
+  set on the Studio FET face act in FET mode.
+- FET Curve Measured with All: the small-signal gain sits 1.20 dB under the reference (pinned by
+  `testFetMeasuredCurveAllButtons`).
+- From code review, not yet measured: `MultiCompDSP::prepare()` at the same rate keeps most modes' state (the
+  plugin masks it: the framework deactivates first; the same-rate test runs no audio between the two prepares),
+  and the Studio VCA, Digital, FET All and Studio FET envelopes, and the FET feedback capacitor's leak (whose time
+  the 4:1 release depth term stretches up to about 40x at extreme depth), are float one-poles at the mode rate, so at
+  192 kHz and above with oversampling a long release may stall short of unity.
+- Dead weight: the legacy `SidechainTilt` class (kept only for a compile-time disabled-element control) and the
+  fixed-Hz branch in `MultiCompVcaLaw.hpp`; `MultiCompOptoFinalHarmonics.hpp` and
+  `MultiCompOptoLfDynamicHarmonics.hpp` (about 390 KB) are included nowhere.
+- The CLAP version string is empty (framework), and alpha and stable both report 1.0.0.
+- No user manual yet.

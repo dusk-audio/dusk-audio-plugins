@@ -16,6 +16,16 @@ void copyParameter(std::atomic<T>& destination, const std::atomic<T>& source) no
     destination.store(source.load(std::memory_order_relaxed), std::memory_order_relaxed);
 }
 
+// Global Lookahead belongs to the digital compressors (Digital, Multiband). The
+// modes that follow a hardware unit ignore it: a detector lead over the audio
+// has no counterpart there, so it adds neither delay nor latency. (Multiband's
+// own detector gets no lead yet, only the delay; see parity-playbook.md.)
+float globalLookaheadForMode(MultiCompMode mode, float milliseconds) noexcept
+{
+    return mode == MultiCompMode::Digital || mode == MultiCompMode::Multiband
+        ? std::clamp(milliseconds, 0.0f, 10.0f) : 0.0f;
+}
+
 float fetAttackPositionFromPlain(float legacyMilliseconds) noexcept
 {
     const float proportion = std::clamp(
@@ -568,8 +578,8 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     const int linkMode = std::clamp(params.stereoLinkMode.load(std::memory_order_relaxed), 0, 2);
     const int oversamplingSetting = params.oversampling.load(std::memory_order_relaxed);
     const int actualOversampling = oversamplingSetting == 2 ? 4 : oversamplingSetting == 1 ? 2 : 1;
-    const float globalLookaheadMs = std::clamp(
-        params.globalLookahead.load(std::memory_order_relaxed), 0.0f, 10.0f);
+    const float globalLookaheadMs = globalLookaheadForMode(
+        mode, params.globalLookahead.load(std::memory_order_relaxed));
     const float digitalLookaheadMs = std::clamp(
         params.digitalLookahead.load(std::memory_order_relaxed), 0.0f, 10.0f);
     const int blockLatency = latencySamplesForMode(mode, globalLookaheadMs, digitalLookaheadMs);
@@ -1936,7 +1946,7 @@ int MultiCompDSP::getLatencySamples() const noexcept
 int MultiCompDSP::latencySamplesForMode(MultiCompMode mode, float globalLookaheadMs,
                                         float digitalLookaheadMs) const noexcept
 {
-    const int lookahead = static_cast<int>(std::round(std::clamp(globalLookaheadMs, 0.0f, 10.0f)
+    const int lookahead = static_cast<int>(std::round(globalLookaheadForMode(mode, globalLookaheadMs)
         * 0.001f * static_cast<float>(sampleRate)));
     const int digital = mode == MultiCompMode::Digital
         ? static_cast<int>(std::round(std::clamp(digitalLookaheadMs, 0.0f, 10.0f)

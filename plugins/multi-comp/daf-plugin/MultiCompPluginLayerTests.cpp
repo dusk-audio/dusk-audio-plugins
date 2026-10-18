@@ -22,6 +22,7 @@
 
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -29,6 +30,7 @@
 #include <limits>
 #include <sstream>
 #include <string>
+#include <string_view>
 
 using duskaudio::MultiCompDSP;
 
@@ -1191,6 +1193,165 @@ void testOptoReferenceDisplayAndNoiseDefault()
     std::puts("Opto display: host 35/70 -> UAD 33/72; Analog Noise default: off");
 }
 
+// Sessions saved by the 1.0.0-alpha1 early-access build must keep loading in
+// every later build. The literal is that build's "parameters" state with every
+// control moved off its default (the generator of
+// testStrictStateValidationAndRoundTrip). It pins each stored symbol, the host
+// parameter index it answers to (AU, VST3 and CLAP automation bind by index), and
+// the v=6 value encoding. Leave it as written when the state version moves on:
+// the newer decoder must still accept it with every value intact.
+void testAlphaSessionStateStaysLoadable()
+{
+    static constexpr const char* kAlpha1MovedState =
+    "v=6;"
+    "mode=40e00000;"
+    "bypass=3f800000;"
+    "stereo_link=428a6667;"
+    "mix=41900000;"
+    "sidechain_hp=3ef3b646;"
+    "true_peak_enable=3f800000;"
+    "true_peak_quality=3f800000;"
+    "sidechain_enable=3f800000;"
+    "auto_makeup=3f800000;"
+    "distortion_type=40400000;"
+    "distortion_amount=427e6667;"
+    "oversampling=0;"
+    "global_lookahead=40866666;"
+    "opto_peak_reduction=428f3333;"
+    "opto_gain=41a33333;"
+    "opto_limit=3f800000;"
+    "fet_input=41de147b;"
+    "fet_output=c10a3d70;"
+    "fet_attack=3f147ae1;"
+    "fet_release=44727333;"
+    "fet_ratio=40800000;"
+    "fet_curve_mode=3f800000;"
+    "fet_transient=416ccccd;"
+    "fet_threshold=c20570a4;"
+    "vca_threshold=c164cccc;"
+    "vca_compression=41b66667;"
+    "vca_attack=41d1fb17;"
+    "vca_release=45802e67;"
+    "vca_output=c0f5c290;"
+    "vca_overeasy=3f800000;"
+    "vca_detector_mode=3f800000;"
+    "bus_threshold=c148a3d6;"
+    "bus_ratio=40000000;"
+    "bus_attack=0;"
+    "bus_release=0;"
+    "bus_makeup=41747ae2;"
+    "bus_mix=41c9999a;"
+    "studio_vca_threshold=c0e3d70d;"
+    "studio_vca_ratio=41098938;"
+    "studio_vca_attack=41c8cd9f;"
+    "studio_vca_release=451f5334;"
+    "studio_vca_output=c175c28f;"
+    "digital_threshold=c20d1eb8;"
+    "digital_ratio=3f353f7d;"
+    "digital_knee=407ae148;"
+    "digital_attack=3efbe76d;"
+    "digital_release=3f49ba5f;"
+    "digital_lookahead=4030a3d7;"
+    "digital_mix=4264ccce;"
+    "digital_output=418d4fe0;"
+    "digital_adaptive=3f800000;"
+    "mb_crossover_1=3f26e979;"
+    "mb_crossover_2=3e0f5c29;"
+    "mb_crossover_3=3edf3b65;"
+    "global_sidechain_listen=3f800000;"
+    "mb_mix=41b00000;"
+    "mb_output=3f449bc0;"
+    "noise_enable=3f800000;"
+    "sc_low_freq=3e99999a;"
+    "sc_low_gain=401374be;"
+    "sc_high_freq=3f645a1e;"
+    "sc_high_gain=c03851ec;"
+    "stereo_link_mode=40000000;"
+    "mb_threshold_0=c246b852;"
+    "mb_ratio_0=3eced916;"
+    "mb_attack_0=3f22d0e6;"
+    "mb_release_0=3f5e3540;"
+    "mb_makeup_0=c09fbe77;"
+    "mb_bypass_0=3f800000;"
+    "mb_solo_0=3f800000;"
+    "mb_enabled_0=0;"
+    "mb_threshold_1=c20d1eb8;"
+    "mb_ratio_1=3f24dd30;"
+    "mb_attack_1=3f604189;"
+    "mb_release_1=3e99999a;"
+    "mb_makeup_1=3f449ba8;"
+    "mb_bypass_1=3f800000;"
+    "mb_solo_1=3f800000;"
+    "mb_enabled_1=0;"
+    "mb_threshold_2=c1a70a3d;"
+    "mb_ratio_2=3f624dd4;"
+    "mb_attack_2=3e9db22d;"
+    "mb_release_2=3f0a3d71;"
+    "mb_makeup_2=40d0e564;"
+    "mb_bypass_2=3f800000;"
+    "mb_solo_2=3f800000;"
+    "mb_enabled_2=0;"
+    "mb_threshold_3=c0cf5c1f;"
+    "mb_ratio_3=3ea1cac1;"
+    "mb_attack_3=3f0c49ba;"
+    "mb_release_3=3f47ae15;"
+    "mb_makeup_3=c0e353f8;"
+    "mb_bypass_3=3f800000;"
+    "mb_solo_3=3f800000;"
+    "mb_enabled_3=0;"
+    "bus_headroom=0;"
+    "bus_fade_rate=3dcccccd;"
+    "bus_fade=3f800000;"
+    "opto_meter=40000000;"
+    "fet_meter=40000000";
+
+    multicompp::StateValues restored{};
+    require(multicompp::decodeState(kAlpha1MovedState, restored),
+            "a 1.0.0-alpha1 session state loads");
+
+    // The alpha1 layout: 63 base parameters at host indices 0..62, the 32 band
+    // parameters at 63..94, five meters at 95..99 (never stored) and the five
+    // extension parameters at 100..104.
+    std::string_view rest(kAlpha1MovedState);
+    rest.remove_prefix(rest.find(';') + 1);
+    int position = 0;
+    while (!rest.empty())
+    {
+        const size_t end = rest.find(';');
+        const std::string_view token = rest.substr(0, end);
+        const size_t equal = token.find('=');
+        require(equal != std::string_view::npos, "alpha1 state token has a value");
+        const int expectedIndex = position < 95 ? position : position + 5;
+        require(multicompp::stateIndexForId(token.substr(0, equal)) == expectedIndex,
+                "an alpha1 symbol answers to the host index it had in alpha1");
+        // The stored value is the float's bit pattern in hex. Read it here
+        // without the decoder under test, so a change there cannot move both
+        // sides of the comparison together.
+        const std::string hex(token.substr(equal + 1));
+        char* parsedEnd = nullptr;
+        const unsigned long bits = std::strtoul(hex.c_str(), &parsedEnd, 16);
+        require(!hex.empty() && parsedEnd == hex.c_str() + hex.size() && bits <= 0xffffffffUL,
+                "an alpha1 value is a 32-bit hex pattern");
+        const std::uint32_t pattern = static_cast<std::uint32_t>(bits);
+        float stored = 0.0f;
+        std::memcpy(&stored, &pattern, sizeof(stored));
+        require(std::memcmp(&stored, &restored[static_cast<size_t>(expectedIndex)], sizeof(stored)) == 0,
+                "an alpha1 value loads bit for bit");
+        ++position;
+        if (end == std::string_view::npos) break;
+        rest.remove_prefix(end + 1);
+    }
+    require(position == 100, "the alpha1 state stores 100 controls");
+    // Three values written out, as a host reads them: mode 7, FET ratio 4 and distortion type 3.
+    require(restored[static_cast<size_t>(multicompp::stateIndexForId("mode"))] == 7.0f,
+            "the alpha1 mode loads as 7");
+    require(restored[static_cast<size_t>(multicompp::stateIndexForId("fet_ratio"))] == 4.0f,
+            "the alpha1 FET ratio loads as 4");
+    require(restored[static_cast<size_t>(multicompp::stateIndexForId("distortion_type"))] == 3.0f,
+            "the alpha1 distortion type loads as 3");
+    std::puts("alpha1 session state: 100 symbols at their alpha1 host indices, values bit for bit");
+}
+
 int main(int argc, char** argv)
 {
     if (argc == 2 && std::strcmp(argv[1], "--fet-ui") == 0)
@@ -1220,6 +1381,7 @@ int main(int argc, char** argv)
     testFractionalEnumUiAndDspAgreement();
     testEditorMirrorSeedsFromCurrentPluginState();
     testFractionalIntegerAutomationStaysLoadable();
+    testAlphaSessionStateStaysLoadable();
     testOptoReferenceDisplayAndNoiseDefault();
     std::puts("Multi-Comp plugin-layer tests: PASS");
     return 0;

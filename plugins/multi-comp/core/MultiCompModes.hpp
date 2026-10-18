@@ -95,8 +95,10 @@ inline constexpr bool kOptoLinkAtDriveDefault = true;
 //   attack  = fbAttackSeconds * 10^(fbAttackSlope (0.5 - a) + fbAttackCurve (a - 0.5)^2)
 //             * fetRatioAttackScale^fbRatioExponent      (a = Attack position)
 //   release = fbReleaseSeconds * 10^(fbReleaseSlope (0.5 - r) + fbReleaseCurve (r - 0.5)^2)
-//             * fetRatioReleaseScale * (1 + reduction / depth)
+//             * fetRatioReleaseScale * (1 + reduction / depth [+ (held / De)^p])
 //                                                        (r = Release position)
+//             the bracketed term at 4:1 only: held = slow + tail reduction,
+//             De = fbReleaseDepthExtraDb, p = fbReleaseDepthExtraExponent
 //   depth   = (fbReleaseDepthDb + fbReleaseDepthFastDb * max(0, 2 r - 1)^2)
 //             * (k / k at 4:1)^fbReleaseDepthRatioExponent,
 //             k = slope / (1 - slope) of the ratio's static law
@@ -299,21 +301,28 @@ inline constexpr bool kOptoLinkAtDriveDefault = true;
 // Held-out knob positions: 0/192 at or above 1 dB; worst 0.987991886 dB. Primary bars passed.
 // These are historical calibration measurements; later changes need their own gates.
 // The values below are the active defaults, including the later release-pot calibration.
-inline constexpr std::array<float, 79> kFetDynamicsDefaults{{
+// 2026-10-18: slots 79 / 80 add the 4:1 release depth term (see releaseSeconds in
+// advanceFetFeedback), and twelve release-side constants were recalibrated with it
+// on the probe groups and switches: slots 38, 41, 42, 45, 46, 48, 51, 63, 65, 66, 73,
+// 76. Only 73 and 76 (the knee release factor) act at 4:1 alone, and 41
+// (fbRatioExponent) acts only away from 4:1; the other nine act at every feedback
+// ratio (4:1 to 20:1; All does not run the feedback loop). So 8:1 to 20:1 move too (a few hundredths of a dB on a burst train); the probe groups
+// and the music tiers cover every ratio: 0 cells over 1 dB.
+inline constexpr std::array<float, 81> kFetDynamicsDefaults{{
     0.03f, 0.002f, 5.0f, 0.42f, 0.46f, 0.65f,
     0.8f, 0.51f, 0.56f, 0.82f, 1.0f, 0.1f,
     0.7f, 1.0f, 1.24f, 2.0f, -2.17f, 0.82f,
     2.0f, -1.82f, 0.12f, 0.0f, 0.001f, 1.0e-04f,
     0.2f, 0.0f, 0.0f, 0.0f, 1.0f, 0.5f,
     0.5f, 1.4f, 0.058f, 1.0f, 7.1905f, 0.7186f,
-    0.0f, 1.0f, 0.000109248635f, 1.1925094f, -1.5139126f, 1.377548f,
-    0.27719915f, 1.042f, -0.958f, 0.9755126f, 4.641411f, 2.1196837f,
-    2.63962f, 25.308857f, 0.010800093f, 0.1923526f, 0.6947493f, 0.0f,
+    0.0f, 1.0f, 0.00010914402f, 1.1925094f, -1.5139126f, 1.3603765f,
+    0.2766029f, 1.042f, -0.958f, 0.97411793f, 4.7795935f, 2.1196837f,
+    2.6695828f, 25.308857f, 0.010800093f, 0.216308f, 0.6947493f, 0.0f,
     0.0f, 1.7396628f, 13.263551f, 123.67461f, 0.85f, 1.17f,
-    0.069821596f, 0.12f, 0.85f, 0.6094955f, 0.0f, 1.3020016f,
-    3.9303212f, 5.0f, 1.0f, 0.043717176f, 9.846549f, 3.0176f,
-    0.6949f, 5.8249526f, 0.72f, -0.1f, 0.4606911f, 0.4356033f,
-    0.3f}};
+    0.069821596f, 0.12f, 0.85f, 0.6051005f, 0.0f, 1.2920812f,
+    3.8620229f, 5.0f, 1.0f, 0.043717176f, 9.846549f, 3.0176f,
+    0.6949f, 5.42614f, 0.72f, -0.1f, 0.4097363f, 0.4356033f,
+    0.3f, 5.0102124f, 19.819176f}};
 
 // C5 90-degree all-pass pair: first-order sections (p - s)/(p + s), pole
 // frequencies in Hz, mapped per sample rate by the plain bilinear transform.
@@ -355,6 +364,7 @@ struct FetDynamicsParams
     float fbReleaseKneeKnobExponent;
     float fbChargeRiseOnly;
     float fbStaticK3KnobShare;
+    float fbReleaseDepthExtraExponent, fbReleaseDepthExtraDb;
 
     static FetDynamicsParams fromArray(const std::array<float, kFetDynamicsDefaults.size()>& v) noexcept
     {
@@ -431,6 +441,8 @@ struct FetDynamicsParams
         p.fbReleaseKneeKnobExponent = v[76];
         p.fbChargeRiseOnly = v[77];
         p.fbStaticK3KnobShare = v[78];
+        p.fbReleaseDepthExtraExponent = v[79];
+        p.fbReleaseDepthExtraDb = v[80];
         return p;
     }
 };
@@ -3717,11 +3729,34 @@ private:
             * std::pow(ratioSlope / (1.0f - ratioSlope)
                            * (1.0f - kFetReductionSlopes[0]) / kFetReductionSlopes[0],
                        fetDynamics.fbReleaseDepthRatioExponent);
+        // The leak slows with depth: 1 + G / D, and at 4:1 with
+        // fbReleaseDepthExtraExponent p > 0 the term (P / De)^p is added to that
+        // factor, 1 + G / D + (P / De)^p (De fbReleaseDepthExtraDb), P = slow +
+        // tail, the reduction the populations hold. The code applies it as the
+        // multiplier 1 + (P / De)^p / (1 + G / D), exactly 1 at the other ratios, so
+        // they and 4:1's verified rounding stay as they were.
+        // Measured on the reference unit at 4:1 (2026-10-15/16): its settled
+        // Release-proportional ripple, the gain's droop within a cycle, sits 0.3-0.8
+        // dB under the linear form's at 24-34 dB GR (fresh 1 kHz and 100 Hz grids);
+        // after a 3 s hold at 33 dB it lets go more slowly (the linear form was 1.2
+        // dB short at 0.5 s), while 20-300 ms after short deep bursts, which charge
+        // the fast capacitor but not the populations, it lets go no more slowly. So
+        // the slowing follows the charge held over time. 20:1 matches without it.
+        // Programme reads 0.001-0.009 dB worse pooled with it and the constants
+        // recalibrated alongside (no cell over 1 dB); that trade was accepted on
+        // 2026-10-18.
         const float releaseSeconds = fetDynamics.fbReleaseSeconds
             * std::exp(decade * releaseKnobDecades)
             * fetRatioReleaseScale(ratioIndex)
             * (1.0f + (d.fastGrDb + d.slowGrDb + tailAppliedDb)
-                / std::max(releaseDepthDb, 1.0f));
+                / std::max(releaseDepthDb, 1.0f))
+            * (fetDynamics.fbReleaseDepthExtraExponent > 0.0f && ratioIndex == 0
+                ? 1.0 + std::pow(std::max(0.0, (d.slowGrDb + tailAppliedDb)
+                    / std::max(fetDynamics.fbReleaseDepthExtraDb, 1.0f)),
+                    static_cast<double>(fetDynamics.fbReleaseDepthExtraExponent))
+                    / (1.0 + (d.fastGrDb + d.slowGrDb + tailAppliedDb)
+                        / std::max(releaseDepthDb, 1.0f))
+                : 1.0);
         // dB charged per sample per unit of relative overshoot.
         const float fullCharge = 1.0f / (std::max(attackSeconds, 1.0e-7f) * sr);
         // The lag pole (fbAttackLagRatio): this sample's overshoot enters with
