@@ -1165,6 +1165,13 @@ void testOptoReferenceDisplayAndNoiseDefault()
                 && std::abs(multicompp::optoReferenceHostValue(72.0f)
                             - 70.0f) < 0.0001f,
             "Opto display text maps back without changing the stored domain");
+    // Every whole readout a user can type shows itself again: the displayed
+    // text is the rounded readout of the host value the typed text selects.
+    for (int readout = 0; readout <= 100; ++readout)
+        require(std::nearbyint(multicompp::optoReferenceDisplayValue(
+                    multicompp::optoReferenceHostValue(static_cast<float>(readout))))
+                    == static_cast<float>(readout),
+                "Opto display text round-trips every whole readout, endpoints 1 and 99 included");
     float typed = -1.0f;
     require(multicompp::parseOptoDisplayText("33", typed) && typed == 33.0f
                 && multicompp::parseOptoDisplayText("72.5", typed) && typed == 72.5f

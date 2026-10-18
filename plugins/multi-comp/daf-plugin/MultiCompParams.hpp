@@ -88,9 +88,12 @@ inline bool usesOptoReferenceDisplay(uint32_t parameter) noexcept
 // UADx LA-2A control readout measured through the AU at 0.05-normalised
 // intervals. The central 5..95 region is affine; endpoints clamp. This is a
 // display conversion only: host values, state and automation remain 0..100.
+inline constexpr float kOptoReadoutHostOffset = 5.5555556f;
+inline constexpr float kOptoReadoutScale = 1.125f;
+
 inline float optoReferenceDisplayValue(float hostValue) noexcept
 {
-    return std::clamp((hostValue - 5.5555556f) * 1.125f, 0.0f, 100.0f);
+    return std::clamp((hostValue - kOptoReadoutHostOffset) * kOptoReadoutScale, 0.0f, 100.0f);
 }
 
 // Host-typed Opto display text ("0".."100", classic locale, nothing before or
@@ -116,25 +119,26 @@ inline float optoReferenceHostValue(float displayValue) noexcept
     const float display = std::clamp(displayValue, 0.0f, 100.0f);
     if (display <= 0.0f) return 0.0f;
     if (display >= 100.0f) return 100.0f;
-    // Invert the displayed integer anchors, not the unrounded affine line.
-    // Thus typing the UAD readout 33 or 72 selects the measured .35 or .70
-    // position exactly; host automation itself remains in the old 0..100
-    // domain.  The endpoint words Min/Max stay mapped to 0/100 above.
-    constexpr std::array<float, 19> displayed{{
+    // Between the 5 and 95 readouts, invert the displayed integer anchors, not
+    // the unrounded affine line: typing the UAD readout 33 or 72 selects the
+    // measured .35 or .70 position exactly. Host automation itself remains in
+    // the 0..100 domain, and the readouts 0 and 100 stay mapped to 0 / 100 above.
+    constexpr std::array<float, 18> displayed{{
         0, 5, 11, 16, 22, 28, 33, 39, 44, 50,
-        56, 61, 67, 72, 78, 84, 89, 95, 100}};
-    constexpr std::array<float, 19> host{{
+        56, 61, 67, 72, 78, 84, 89, 95}};
+    constexpr std::array<float, 18> host{{
         5, 10, 15, 20, 25, 30, 35, 40, 45, 50,
-        55, 60, 65, 70, 75, 80, 85, 90, 95}};
-    for (size_t upper = 1; upper < displayed.size(); ++upper)
-    {
-        if (display > displayed[upper]) continue;
-        const float fraction = (display - displayed[upper - 1])
-            / (displayed[upper] - displayed[upper - 1]);
-        return host[upper - 1]
-            + fraction * (host[upper] - host[upper - 1]);
-    }
-    return 100.0f;
+        55, 60, 65, 70, 75, 80, 85, 90}};
+    // Outside the 5 and 95 anchors the readout is the clamped affine line, and
+    // its exact inverse meets both anchors; interpolating towards the clamped
+    // 0 / 100 readouts there read typed 1 back as 0 and 99 as 100.
+    if (display < displayed[1] || display > displayed.back())
+        return display / kOptoReadoutScale + kOptoReadoutHostOffset;
+    size_t upper = 1;
+    while (display > displayed[upper]) ++upper;   // ends by 95: display <= displayed.back()
+    const float fraction = (display - displayed[upper - 1])
+        / (displayed[upper] - displayed[upper - 1]);
+    return host[upper - 1] + fraction * (host[upper] - host[upper - 1]);
 }
 static_assert(kParamCount == static_cast<int>(ParamId::Count));
 static_assert(kParamCount == 63);
