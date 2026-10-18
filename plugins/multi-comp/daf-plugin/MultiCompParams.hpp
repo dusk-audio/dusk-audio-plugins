@@ -9,6 +9,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <locale>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -60,7 +62,7 @@ inline constexpr std::array<Param, 63> kParams = {{
  {"global_lookahead","Lookahead","ms",0,10,0,CoreParameter::GlobalLookahead,false},
  {"opto_peak_reduction","Peak Reduction","%",0,100,0,CoreParameter::OptoPeakReduction,false}, {"opto_gain","Gain","%",0,100,duskaudio::kOptoGainUnityKnob,CoreParameter::OptoGain,false}, {"opto_limit","Limit Mode","",0,1,0,CoreParameter::OptoLimit,true},
  {"fet_input","Input","dB",-20,40,0,CoreParameter::FetInput,false}, {"fet_output","Output","dB",-20,20,0,CoreParameter::FetOutput,false}, {"fet_attack","Attack","ms",0.02f,80,0.2f,CoreParameter::FetAttack,false,0.01f,0.3f}, {"fet_release","Release","ms",50,1100,400,CoreParameter::FetRelease,false}, {"fet_ratio","Ratio",":1",0,4,0,CoreParameter::FetRatio,true}, {"fet_curve_mode","Curve Mode","",0,1,0,CoreParameter::FetCurve,true}, {"fet_transient","Transient","%",0,100,0,CoreParameter::FetTransient,false}, {"fet_threshold","Threshold","dB",-60,0,-10,CoreParameter::FetThreshold,false},
- {"vca_threshold","Threshold","dB",duskaudio::vcaLaw::kThresholdMinDb,duskaudio::vcaLaw::kThresholdMaxDb,duskaudio::vcaLaw::kThresholdDefaultDb,CoreParameter::VcaThreshold,false}, {"vca_compression","Compression","",duskaudio::vcaLaw::kCompressLaw.front().position,duskaudio::vcaLaw::kCompressLaw.back().position,duskaudio::vcaLaw::kCompressDefaultPosition,CoreParameter::VcaRatio,false}, {"vca_attack","Attack","ms",0.1f,50,1,CoreParameter::VcaAttack,false}, {"vca_release","Release","ms",10,5000,100,CoreParameter::VcaRelease,false}, {"vca_output","Output","dB",-20,20,0,CoreParameter::VcaOutput,false}, {"vca_overeasy","Over Easy","",0,1,0,CoreParameter::VcaOverEasy,true}, {"vca_detector_mode","VCA Detector","",0,1,0,CoreParameter::VcaClassicDetector,true},
+ {"vca_threshold","Threshold","dB",duskaudio::vcaLaw::kThresholdMinDb,duskaudio::vcaLaw::kThresholdMaxDb,duskaudio::vcaLaw::kThresholdDefaultDb,CoreParameter::VcaThreshold,false}, {"vca_compression","Compression","",duskaudio::vcaLaw::kCompressLaw.front().position,duskaudio::vcaLaw::kCompressLaw.back().position,duskaudio::vcaLaw::kCompressDefaultPosition,CoreParameter::VcaRatio,false}, {"vca_attack","Attack","ms",0.1f,50,1,CoreParameter::VcaAttack,false}, {"vca_release","Release","ms",10,5000,100,CoreParameter::VcaRelease,false}, {"vca_output","Output","dB",-20,20,0,CoreParameter::VcaOutput,false}, {"vca_overeasy","Soft Knee","",0,1,0,CoreParameter::VcaOverEasy,true}, {"vca_detector_mode","VCA Detector","",0,1,0,CoreParameter::VcaClassicDetector,true},
  {"bus_threshold","Threshold","dB",-30,15,0,CoreParameter::BusThreshold,false}, {"bus_ratio","Ratio",":1",0,2,0,CoreParameter::BusRatio,true}, {"bus_attack","Attack","",0,5,2,CoreParameter::BusAttack,true}, {"bus_release","Release","",0,4,1,CoreParameter::BusRelease,true}, {"bus_makeup","Makeup","dB",0,20,0,CoreParameter::BusMakeup,false}, {"bus_mix","Bus Mix","%",0,100,100,CoreParameter::BusMix,false},
  {"studio_vca_threshold","Threshold","dB",-40,20,-10,CoreParameter::StudioVcaThreshold,false}, {"studio_vca_ratio","Ratio",":1",1,10,3,CoreParameter::StudioVcaRatio,false}, {"studio_vca_attack","Attack","ms",0.3f,75,10,CoreParameter::StudioVcaAttack,false}, {"studio_vca_release","Release","ms",100,4000,300,CoreParameter::StudioVcaRelease,false}, {"studio_vca_output","Output","dB",-20,20,0,CoreParameter::StudioVcaOutput,false},
  {"digital_threshold","Threshold","dB",-60,0,-20,CoreParameter::DigitalThreshold,false}, {"digital_ratio","Ratio",":1",1,100,4,CoreParameter::DigitalRatio,false,0.1f,0.4f}, {"digital_knee","Knee","dB",0,20,6,CoreParameter::DigitalKnee,false}, {"digital_attack","Attack","ms",0.01f,500,10,CoreParameter::DigitalAttack,false,0.01f,0.3f}, {"digital_release","Release","ms",1,5000,100,CoreParameter::DigitalRelease,false,1,0.4f}, {"digital_lookahead","Lookahead","ms",0,10,0,CoreParameter::DigitalLookahead,false}, {"digital_mix","Mix","%",0,100,100,CoreParameter::DigitalMix,false}, {"digital_output","Output","dB",-24,24,0,CoreParameter::DigitalOutput,false}, {"digital_adaptive","Adaptive Release","",0,1,0,CoreParameter::DigitalAdaptive,true},
@@ -89,6 +91,24 @@ inline bool usesOptoReferenceDisplay(uint32_t parameter) noexcept
 inline float optoReferenceDisplayValue(float hostValue) noexcept
 {
     return std::clamp((hostValue - 5.5555556f) * 1.125f, 0.0f, 100.0f);
+}
+
+// Host-typed Opto display text ("0".."100", classic locale, nothing before or
+// after the number) to a display value. Floating-point std::from_chars would be
+// the natural parser, but libc++ marks it unavailable below the macOS
+// deployment target (see the state serialization note below).
+inline bool parseOptoDisplayText(const char* text, float& display)
+{
+    if (text == nullptr) return false;
+    std::istringstream in{std::string(text)};
+    in.imbue(std::locale::classic());
+    float parsed = 0.0f;
+    in >> std::noskipws >> parsed;
+    if (in.fail() || in.peek() != std::char_traits<char>::eof()
+        || !std::isfinite(parsed) || parsed < 0.0f || parsed > 100.0f)
+        return false;
+    display = parsed;
+    return true;
 }
 
 inline float optoReferenceHostValue(float displayValue) noexcept

@@ -1,6 +1,5 @@
 #include <array>
 #include <atomic>
-#include <charconv>
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
@@ -207,12 +206,8 @@ protected:
     bool getParameterValueFromText(uint32_t index, const char* text,
                                    float& value) const override
     {
-        if (!hasCustomParameterText(index) || !text) return false;
-        const char* end = text + std::strlen(text);
         float display = 0.0f;
-        const auto parsed = std::from_chars(text, end, display);
-        if (parsed.ec != std::errc{} || parsed.ptr != end
-            || !std::isfinite(display) || display < 0.0f || display > 100.0f)
+        if (!hasCustomParameterText(index) || !multicompp::parseOptoDisplayText(text, display))
             return false;
         value = multicompp::optoReferenceHostValue(display);
         return true;
