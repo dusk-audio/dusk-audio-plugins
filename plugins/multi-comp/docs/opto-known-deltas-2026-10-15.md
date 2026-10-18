@@ -1,9 +1,11 @@
 # Opto: known deltas against the UAD LA-2A at campaign close (2026-10-15)
 
 Owner decision 2026-10-15: OPTO ships as it stands. The four gate readings still over the 1.00 dB bar are recorded
-here with their root cause and left as known deltas. Everything else in the probe set (fifteen screen tables, the
-re-captured core fixtures, the release / onset / harmonic rows) is at or under the bar on the working tree that
-carries the 2026-10-15 emission shape (commit 743d2347).
+here with their root cause and left as known deltas. The rest of the probe set, by when it was read: the fifteen
+screen tables, re-run on the working tree that carries the 2026-10-15 emission shape (commit 743d2347), hold no other
+cell over the bar except two at its edge (settled 1.0007 dB, short 1.0022 dB); the fixture gate (the re-captured core
+fixtures: release, onset, harmonic, crest and short-charge rows) was last read in full on 2026-10-14, before that
+commit.
 
 Why they are left: the owner's blind ABX against the UAD on thirty real clips, including a kick-only round, was at
 chance (13 / 22 pairs, p = 0.26; `opto-abx-2026-10-03.md`). All four readings below come from synthetic probes that no
@@ -19,7 +21,10 @@ one lever left is a structural refit of the cell's time step, which the owner st
 
 Counts behind the worst cells: phase probe 25 of 162 cells over (all at Limit, 60-120 degrees, 25-40 Hz); family 63 of
 4,392 over (57 deeper, 6 shallower; 60 linked rows and 3 mono masters at 60 + 300 Hz Limit 100 and 25 + 150 Hz
-Limit 81); crest sweep 2 of 4 (20.0 dB crest 1.10, 23.8 dB 1.51); short charge 1 of 16 (the 1 ms -4 dBFS row 0.76).
+Limit 81); crest sweep 2 of 4 (20.0 dB crest 1.10, 23.8 dB 1.51); short charge 1 of the fixture gate's 16 rows over
+1.00 dB (the 1 ms -0.25 dBFS row in the table; the next two, 1 ms at -12 and at -4 dBFS, read 0.84 and 0.76). The phase
+and family counts are screen tables; the crest and short-charge readings are the fixture gate's last full read
+(`fixtures/compare-p55b.json`, 2026-10-14, before the emission shape landed), and no later read of them was made.
 
 ## Root cause, measured
 
@@ -48,8 +53,10 @@ the test code on 2026-10-15; its real shortfall is 0.3-1.0 dB and belongs to the
 ## What stays in place
 
 - The CTest bounds, the fifteen screen tables and the fixture gate keep their current bars; nothing is loosened. The
-  four rows above stay red in their report-only readers and the screen's "cells over" count stays 25 / 63 / 2 / 1 as
-  the never-worse base for any later OPTO change (`screen.py compare <cand> h5-r3`).
+  four rows above stay red in their report-only readers, and their "cells over" counts stay the never-worse base for
+  any later OPTO change: 25 / 63 on the screen's phase and family tables (`screen.py compare <cand> h5-r3`), 2 / 1 on
+  the fixture gate's crest and short-charge readers. The fixture gate's base dates from 2026-10-14, before the
+  emission shape: re-read it on the current tree before its first never-worse use.
 - The native captures stay (local, never in a repo) for a re-ABX if the cell is changed.
 - Reopen only on a user report that names material and setting: run `abx_kit.py focus` on that material first, then
   the time-step refit plan (`handoff/PLAN-MC2-OPTO-TIMELAW-REFIT-20261014.md`), never a per-channel link law.

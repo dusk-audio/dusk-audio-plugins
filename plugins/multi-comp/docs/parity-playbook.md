@@ -2,7 +2,9 @@
 
 Process that produced the OPTO result in one day, written down for FET, VCA and BUS. Tools live in the tools
 repo under `plugins/MultiComp/tests/programme_parity/kit/`; evidence stays in the local, ignored
-`build-multi-comp-1176/` tree. Every step below was run on OPTO on 2026-10-03 and reproduces today's tables.
+`build-multi-comp-1176/` tree. Every step of the loop below was run on OPTO on 2026-10-03 and reproduced that
+day's tables. The later sections are updates and carry their own dates: the probe set (2026-10-06, with lessons to
+2026-10-09) and the per-mode state (OPTO closed 2026-10-15).
 
 ## The loop
 
