@@ -4180,9 +4180,9 @@ void testLatencyMixBypassAndDigitalStereo()
                         "Digital latency reports AA plus global and mode lookahead");
             }
     latencyMatrix.setMode(static_cast<int>(duskaudio::MultiCompMode::FET));
-    require(latencyMatrix.getLatencySamples() == 547,
-            "mode change removes Digital lookahead while retaining global lookahead");
-    std::printf("latency matrix: os=off/2x/4x, global=0/10ms, digital=0/10ms; Digital max=1027 FET max=547\n");
+    require(latencyMatrix.getLatencySamples() == 67,
+            "mode change removes both the Digital and the global lookahead");
+    std::printf("latency matrix: os=off/2x/4x, global=0/10ms, digital=0/10ms; Digital max=1027 FET max=67\n");
 
     MultiCompDSP stereo;
     stereo.prepare(48000.0, 256);
@@ -5188,6 +5188,61 @@ void testHiddenControlsStayOutOfModesWithoutThem()
                     != renderWithControl(mode, Parameter::SidechainHP, 0.0f),
                 "SC HP still acts on a face that shows it");
     std::puts("hidden controls: global Mix and SC HP act only where their face shows them");
+}
+
+// Global Lookahead belongs to the digital compressors. In the modes that follow
+// a hardware unit it used to delay the audio behind an undelayed detector and
+// add up to 10 ms of latency. It still adds its latency in Digital and Multiband.
+void testGlobalLookaheadOnlyInDigitalModes()
+{
+    using duskaudio::MultiCompMode;
+    using Parameter = MultiCompDSP::Parameter;
+    const auto latencyAt = [](MultiCompMode mode, float lookaheadMs) {
+        MultiCompDSP dsp;
+        dsp.prepare(48000.0, 256);
+        dsp.setMode(static_cast<int>(mode));
+        dsp.setParameter(Parameter::GlobalLookahead, lookaheadMs);
+        return dsp.getLatencySamples();
+    };
+    for (const MultiCompMode mode : {MultiCompMode::Opto, MultiCompMode::FET, MultiCompMode::VCA,
+                                     MultiCompMode::Bus, MultiCompMode::StudioFET, MultiCompMode::StudioVCA})
+    {
+        require(renderWithControl(mode, Parameter::GlobalLookahead, 10.0f)
+                    == renderWithControl(mode, Parameter::GlobalLookahead, 0.0f),
+                "Global Lookahead does not act in a mode that follows a hardware unit");
+        require(latencyAt(mode, 10.0f) == latencyAt(mode, 0.0f),
+                "Global Lookahead adds no latency in a mode that follows a hardware unit");
+    }
+    for (const MultiCompMode mode : {MultiCompMode::Digital, MultiCompMode::Multiband})
+        require(latencyAt(mode, 10.0f) == latencyAt(mode, 0.0f) + 480,
+                "Global Lookahead adds its 10 ms to the digital compressors' latency");
+    // A lookahead lets the detector hear the onset before the audio does, so
+    // the first 5 ms after the audio arrives already come out reduced. A plain
+    // delay of audio and detector together would leave the onset as loud as
+    // without it. Multiband with its own detector is such a delay today (open
+    // before 1.0.0), so only Digital is held to the lead; Multiband's reading is
+    // printed for reference.
+    // The audio must also arrive where the reported latency says: before it,
+    // from 240 to 70 samples ahead (clear of the anti-alias filter's
+    // pre-ringing), the output is silent, since the input starts at t = 0.
+    const auto peakDb = [](const std::vector<float>& out, size_t from, size_t to) {
+        float peak = 0.0f;
+        for (size_t i = from; i < to; ++i) peak = std::max(peak, std::abs(out[i]));
+        return 20.0f * std::log10(std::max(peak, 1.0e-9f));
+    };
+    const auto onsetPeakDb = [&](MultiCompMode mode, float lookaheadMs) {
+        const std::vector<float> out = renderWithControl(mode, Parameter::GlobalLookahead, lookaheadMs);
+        const size_t start = static_cast<size_t>(latencyAt(mode, lookaheadMs));
+        if (lookaheadMs > 0.0f)
+            require(peakDb(out, start - 240, start - 70) < -60.0f,
+                    "the delayed audio arrives no earlier than the reported latency");
+        return peakDb(out, start, start + 240);
+    };
+    const float digitalLead = onsetPeakDb(MultiCompMode::Digital, 0.0f) - onsetPeakDb(MultiCompMode::Digital, 10.0f);
+    const float multibandLead = onsetPeakDb(MultiCompMode::Multiband, 0.0f) - onsetPeakDb(MultiCompMode::Multiband, 10.0f);
+    require(digitalLead > 1.0f, "Global Lookahead lets Digital reduce the onset before it arrives");
+    std::printf("global lookahead: adds latency only in Digital and Multiband; onset lead Digital %.2f dB, "
+                "Multiband %.2f dB\n", digitalLead, multibandLead);
 }
 
 // Level in dB of one channel of `out` from `from` to the end.
@@ -11064,6 +11119,8 @@ int main(int argc, char** argv)
         return runParityTests();
     if (argc == 2 && std::strcmp(argv[1], "--hidden-controls") == 0)
     { testHiddenControlsStayOutOfModesWithoutThem(); return 0; }
+    if (argc == 2 && std::strcmp(argv[1], "--global-lookahead-scope") == 0)
+    { testGlobalLookaheadOnlyInDigitalModes(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--opto-recovery") == 0)
     {
         testOptoRecoveryParity();
@@ -11443,6 +11500,7 @@ int main(int argc, char** argv)
     testHighRateLowCornerFiltersStayStable();
     testModeReentryStartsFromRest();
     testHiddenControlsStayOutOfModesWithoutThem();
+    testGlobalLookaheadOnlyInDigitalModes();
     std::puts("Multi-Comp core tests: PASS");
     return 0;
 }
