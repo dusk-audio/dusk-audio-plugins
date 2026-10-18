@@ -42,6 +42,11 @@ if(NOT CMAKE_CROSSCOMPILING)
     "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
   target_compile_features(MultiCompCoreTest PRIVATE cxx_std_17)
   add_test(NAME MultiCompCore COMMAND MultiCompCoreTest)
+  # Accuracy against the measured reference units: runs every such assertion
+  # and reports each failure, but is not a release gate (CI excludes the
+  # report-only label). See runParityTests() in MultiCompCoreTests.cpp.
+  add_test(NAME MultiCompParity COMMAND MultiCompCoreTest --parity)
+  set_tests_properties(MultiCompParity PROPERTIES LABELS report-only)
 
   add_executable(MultiCompBusControlTest ../core/tests/MultiCompBusControlTests.cpp ../core/MultiCompDSP.cpp)
   target_include_directories(MultiCompBusControlTest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../core" "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")

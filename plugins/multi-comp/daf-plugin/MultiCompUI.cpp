@@ -283,6 +283,7 @@ constexpr ImU32 kBandColors[4] = {
 using ParamId = multicompp::ParamId;
 constexpr uint32_t P_MODE = static_cast<uint32_t>(ParamId::Mode), P_BYPASS = static_cast<uint32_t>(ParamId::Bypass), P_MIX = static_cast<uint32_t>(ParamId::Mix);
 constexpr uint32_t P_SC_HP = static_cast<uint32_t>(ParamId::SidechainHP);
+constexpr uint32_t P_AUTO_MAKEUP = static_cast<uint32_t>(ParamId::AutoMakeup);
 #define MC_PID(name) static_cast<uint32_t>(ParamId::name)
 constexpr uint32_t P_OPTO_PEAK = MC_PID(OptoPeakReduction), P_OPTO_GAIN = MC_PID(OptoGain), P_OPTO_LIMIT = MC_PID(OptoLimit);
 constexpr uint32_t P_OPTO_METER = MC_PID(OptoMeter), P_FET_METER = MC_PID(FetMeter);
@@ -441,6 +442,13 @@ protected:
 
         ImDrawList* dl = ImGui::GetWindowDrawList();
         dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), IM_COL32(21, 22, 25, 255));
+        // Treat the supporters panel as a modal: the panel stays visible beneath
+        // its scrim but takes no clicks, wheel or drags (a click meant to close
+        // the overlay used to land on INIT, a mode button or a knob). Snapshot
+        // before drawHeader(), where a title click can open it.
+        const bool modalOpen = showSupporters;
+        if (modalOpen)
+            ImGui::BeginDisabled();
         drawHeader(dl);
 
         // The mode-panel drawing code retains its original internal coordinates;
@@ -449,6 +457,8 @@ protected:
         panel.begin(scale, ImVec2(origin.x, origin.y - kModeCanvasShiftY * scale),
                     labelFont, this);
         drawModePanel(dl);
+        if (modalOpen)
+            ImGui::EndDisabled();
 
         // Overlays and the resize grip live in the compact visible canvas.
         panel.begin(scale, origin, labelFont, this);
@@ -1055,7 +1065,7 @@ private:
                       "the mode toolbar layout must be revisited when modes change");
         const int selected = multicompp::ui_detail::choiceIndex(value(P_MODE), 8);
         constexpr float rowLeft = 20.0f;
-        constexpr float rowRight = 996.0f;
+        constexpr float rowRight = 896.0f;
         constexpr float gap = 3.0f;
         constexpr float buttonWidth =
             (rowRight - rowLeft - gap * static_cast<float>(modeCount - 1))
@@ -1091,8 +1101,25 @@ private:
             if (clicked && !active)
                 setValue(P_MODE, static_cast<float>(mode));
         }
-        panel.toggle("mc_bypass", P_BYPASS, 1008, kModeCanvasTop + 3,
-                     1098, kModeCanvasTop + 21, values[P_BYPASS], "BYPASS");
+        // Five factory presets engage Auto Makeup, which bypasses each face's
+        // manual makeup / output control; it needs a switch the user can see.
+        modeRowToggle(dl, "mc_auto_makeup", P_AUTO_MAKEUP, 908, 998, "AUTO MAKEUP");
+        modeRowToggle(dl, "mc_bypass", P_BYPASS, 1008, 1098, "BYPASS");
+    }
+
+    // The shared toggle with its label centred in the button. The shared
+    // widget sets its text right of centre and high to clear the LED, which
+    // these wide buttons do not need.
+    void modeRowToggle(ImDrawList* dl, const char* id, uint32_t p, float x0, float x1,
+                       const char* label)
+    {
+        constexpr float y0 = kModeCanvasTop + 3.0f, y1 = kModeCanvasTop + 21.0f;
+        constexpr float textSize = 10.0f;
+        panel.toggle(id, p, x0, y0, x1, y1, values[p], "");
+        const bool on = values[p] > 0.5f;
+        const duskdaf::Palette palette{};
+        panel.text(dl, 0.5f * (x0 + x1), 0.5f * (y0 + y1 - textSize), textSize,
+                   on ? palette.white : palette.whiteDim, label, 0, on);
     }
 
     void knob(ImDrawList* dl, const char* id, uint32_t p, float x, float y,
@@ -1152,11 +1179,15 @@ private:
     static float knobHostToPlain(float host, uint32_t p, void* context)
     {
         const float plain = static_cast<MultiCompUI*>(context)->plainValueForHost(p, host);
+        if (multicompp::usesOptoReferenceDisplay(p))
+            return multicompp::optoReferenceDisplayValue(plain);
         return p == P_BUS_HEADROOM ? 4.0f + 4.0f * plain : plain;
     }
 
     static float knobPlainToHost(float plain, uint32_t p, void* context)
     {
+        if (multicompp::usesOptoReferenceDisplay(p))
+            plain = multicompp::optoReferenceHostValue(plain);
         if (p == P_BUS_HEADROOM) plain = std::round((plain - 4.0f) / 4.0f);
         return static_cast<MultiCompUI*>(context)->hostValueForPlain(p, plain);
     }
@@ -1648,20 +1679,30 @@ private:
                 "ATTACK", false, "%.2f", "");
         fetKnob(dl, "fet_rel", P_FET_RELEASE, 559, 553, 23.0f,
                 "RELEASE", false, "%.2f", "");
-        drawFetRatioButtons(dl, 685, 418);
-        drawOptoMeter(dl, 743, 431, 234, 141,
+        // The VU sits vertically centred on the two button columns either
+        // side of it (ratio: five 27-high buttons at a 31 pitch; meter: four
+        // 32-high at a 38 pitch, both from kFetButtonsTop).
+        constexpr float kFetButtonsTop = 418.0f;
+        constexpr float ratioSpan = 4.0f * 31.0f + 27.0f, meterSpan = 3.0f * 38.0f + 32.0f;
+        constexpr float vuHeight = 141.0f;
+        constexpr float vuTop = kFetButtonsTop + 0.5f * (std::max(ratioSpan, meterSpan) - vuHeight);
+        drawFetRatioButtons(dl, 685, kFetButtonsTop);
+        drawOptoMeter(dl, 743, vuTop, 234, vuHeight,
                       multicompp::ui_detail::optoMeterDisplayValue(meter(kMeterMaster)));
         panel.text(dl, 860, top + 34, 14.0f, IM_COL32(234, 234, 221, 255),
                    "FET 76", 0, true);
         panel.text(dl, 860, top + 54, 8.0f, IM_COL32(177, 179, 170, 255),
                    "REFERENCE SERIES", 0, true);
-        panel.text(dl, 860, top + 241, 10.0f, IM_COL32(234, 234, 221, 255),
+        const float badge = vuTop + vuHeight + 13.0f;
+        panel.text(dl, 860, badge, 10.0f, IM_COL32(234, 234, 221, 255),
                    "MC-2", 0, true);
-        panel.text(dl, 860, top + 259, 9.2f, IM_COL32(202, 204, 194, 255),
+        panel.text(dl, 860, badge + 18.0f, 9.2f, IM_COL32(202, 204, 194, 255),
                    "LIMITING AMPLIFIER", 0, true);
-        drawFetMeterSwitch(dl, 1000, 418);
-        fetTrimKnob(dl, "fet_mix", P_MIX, 1048, 594, 13.0f,
-                    "MIX", "%.0f", "%");
+        drawFetMeterSwitch(dl, 1000, kFetButtonsTop);
+        // Under the meter-button column, level with the badge, labelled below
+        // like the face's other knobs so it does not read as a fifth meter row.
+        trimScrewKnob(dl, "fet_mix", P_MIX, 1010, badge + 19.0f, 13.0f,
+                    "MIX", "%.0f", "%", true);
     }
 
     void fetKnob(ImDrawList* dl, const char* id, uint32_t p,
@@ -1808,9 +1849,9 @@ private:
         fetKnobSplitter.Merge(dl);
     }
 
-    void fetTrimKnob(ImDrawList* dl, const char* id, uint32_t p,
+    void trimScrewKnob(ImDrawList* dl, const char* id, uint32_t p,
                      float x, float y, float radius, const char* label,
-                     const char* format, const char* suffix)
+                     const char* format, const char* suffix, bool labelBelow = false)
     {
         // The Opto face established the fleet contract for non-reference
         // controls: keep the full parameter available as a small set-screw trim
@@ -1863,7 +1904,7 @@ private:
                     ImVec2(center.x + pointer.x * r * 0.58f,
                            center.y + pointer.y * r * 0.58f),
                     IM_COL32(42, 43, 42, 255), 2.0f * scale);
-        panel.text(dl, x, y - 38.0f, 7.5f,
+        panel.text(dl, x, labelBelow ? y + radius + 9.0f : y - 38.0f, 7.5f,
                    IM_COL32(225, 226, 215, 255), label, 0, true);
         panel.text(dl, x - 27.0f, y - 5.0f, 10.0f,
                    IM_COL32(157, 160, 152, 255), "-", 0, true);
@@ -2117,16 +2158,22 @@ private:
         const float meterDb = vcaMeterSource == 0 ? inputDb + 12.0f
                             : vcaMeterSource == 1 ? levelMeterDb(true) + 12.0f
                             : meter(kMeterMaster);
-        duskdaf::drawVuMeter(panel, dl, 700, 364, 1046, 552, meterDb, vcaVuNeedle, scale,
-                             IM_COL32(40, 40, 42, 255), style);
+        using Meter = multicompp::ui_detail::VcaMeterRect;
+        duskdaf::drawVuMeter(panel, dl, Meter::x0, Meter::y0, Meter::x1, Meter::y1, meterDb,
+                             vcaVuNeedle, scale, IM_COL32(40, 40, 42, 255), style);
 
-        // Badge under the meter: model name with the MIX trim between the
-        // words, and the function line beneath.
-        spacedText(dl, 800, 574, 26.0f, IM_COL32(240, 240, 236, 255), "VCA", 0, 0.02f);
-        spacedText(dl, 868, 566, 8.0f, kVcaInk, "MIX", 0);
-        vcaTrim(dl, "vca_mix", P_MIX, 868, 590, 7.5f, nullptr, "%.0f", "%");
-        spacedText(dl, 934, 574, 26.0f, IM_COL32(240, 240, 236, 255), "160", 0, 0.02f);
-        spacedText(dl, 866, 618, 11.0f, kVcaInk, "COMPRESSOR/LIMITER", 0, 0.12f);
+        // Model line above the meter and badge below it, at the FET face's
+        // sizes and spacing; the MIX trim is the same set-screw as Opto and
+        // FET, in the column right of the meter, level with the badge.
+        constexpr float meterCentre = 0.5f * (Meter::x0 + Meter::x1);
+        constexpr ImU32 kVcaWhite = IM_COL32(240, 240, 236, 255);
+        spacedText(dl, meterCentre, 378.0f, 14.0f, kVcaWhite, "VCA 60", 0, 0.12f);
+        spacedText(dl, meterCentre, 398.0f, 8.0f, kVcaInk, "REFERENCE SERIES", 0, 0.12f);
+        const float badge = Meter::y1 + 13.0f;
+        spacedText(dl, meterCentre, badge, 10.0f, kVcaWhite, "MC-2", 0, 0.12f);
+        spacedText(dl, meterCentre, badge + 18.0f, 9.2f, kVcaInk, "COMPRESSOR/LIMITER", 0, 0.12f);
+        trimScrewKnob(dl, "vca_mix", P_MIX, 0.5f * (Meter::x1 + Layout::right - cheek), badge + 19.0f,
+                      13.0f, "MIX", "%.0f", "%", true);
     }
 
     void vcaPullSwitch(ImDrawList* dl, float x, float y)
@@ -2510,7 +2557,7 @@ private:
                 dl->AddCircle(panel.P(x, y), 6.0f * s, IM_COL32(142, 147, 140, 255), 24, s);
                 dl->AddLine(panel.P(x - 3, y + 3), panel.P(x + 3, y - 3), IM_COL32(138, 143, 135, 255), 1.4f * s);
             }
-        panel.text(dl, 560, 356, 22, ink, "G BUS COMPRESSOR", 0, true);
+        panel.text(dl, 560, 356, 22, ink, "BUS COMPRESSOR", 0, true);
         dl->AddRect(panel.P(69, 391), panel.P(1051, 633), ink, 6 * s, 0, 1.8f * s);
         dl->AddRectFilled(panel.P(430, 624), panel.P(690, 642), IM_COL32(57, 62, 59, 255));
         panel.text(dl, 560, 626, 13, ink, "STEREO BUS COMPRESSION", 0, true);

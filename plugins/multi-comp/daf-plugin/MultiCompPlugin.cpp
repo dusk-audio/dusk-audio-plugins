@@ -1,5 +1,7 @@
 #include <array>
 #include <atomic>
+#include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -123,9 +125,9 @@ protected:
             multicompp::resolveParameter(static_cast<int>(index),
                 [&](const multicompp::Param& d) {
                     p.name = d.name; p.symbol = d.id;
-                    // DAF has no arbitrary value<->text callback. Tapered parameters
-                    // therefore expose their honest normalized coordinate without a
-                    // misleading physical unit; the custom UI displays mapped units.
+                    // Tapered parameters expose their honest normalized coordinate;
+                    // the Opto controls add display-only callbacks below without
+                    // changing their host/state/automation domain.
                     p.unit = multicompp::hasSkew(d) ? "" : d.unit;
                     p.ranges.min = multicompp::hostMin(d); p.ranges.max = multicompp::hostMax(d);
                     p.ranges.def = multicompp::hostDefault(d);
@@ -183,6 +185,32 @@ protected:
         if (index >= multicompp::kMeterBand0 && index <= multicompp::kMeterBand3)
             return dsp.getBandGainReduction(static_cast<int>(index - multicompp::kMeterBand0));
         return 0.0f;
+    }
+
+    bool hasCustomParameterText(uint32_t index) const override
+    {
+        return multicompp::usesOptoReferenceDisplay(index);
+    }
+
+    bool getParameterValueText(uint32_t index, float value,
+                               char* text, uint32_t size) const override
+    {
+        if (!hasCustomParameterText(index) || !text || size == 0
+            || !std::isfinite(value)) return false;
+        const float display = std::nearbyint(
+            multicompp::optoReferenceDisplayValue(value));
+        const int written = std::snprintf(text, size, "%.0f", display);
+        return written >= 0 && static_cast<uint32_t>(written) < size;
+    }
+
+    bool getParameterValueFromText(uint32_t index, const char* text,
+                                   float& value) const override
+    {
+        float display = 0.0f;
+        if (!hasCustomParameterText(index) || !multicompp::parseOptoDisplayText(text, display))
+            return false;
+        value = multicompp::optoReferenceHostValue(display);
+        return true;
     }
 
     void setParameterValue(uint32_t index, float value) override

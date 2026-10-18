@@ -4,6 +4,8 @@
 #include "DearImGui/imgui.h"
 #include "MultiCompVcaMeter.hpp"
 #include "MultiCompVintageMeter.hpp"
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <limits>
 
@@ -31,18 +33,27 @@ bool drawCase(float size, const char* source, float db)
     const auto config = multicompp::ui_detail::vcaMeterScale(source);
     const auto style = multicompp::ui_detail::vcaMeterStyle();
     float needle = std::isfinite(db) ? duskdaf::vuDeflection(db, config) : 0.5f;
-    duskdaf::drawVuMeter(panel, dl, 700, 364, 1046, 552, db, needle, config,
+    using Meter = multicompp::ui_detail::VcaMeterRect;
+    duskdaf::drawVuMeter(panel, dl, Meter::x0, Meter::y0, Meter::x1, Meter::y1, db, needle, config,
                          IM_COL32(40, 40, 42, 255), style);
     ImGui::Render();
 
-    const auto lo = panel.P(707, 371), hi = panel.P(1039, 545);
+    // The face inside the bezel, and the arc drawVuMeter derives from it.
+    const float fx0 = Meter::x0 + 7, fy0 = Meter::y0 + 7, fx1 = Meter::x1 - 7, fy1 = Meter::y1 - 7;
+    const float cx = 0.5f * (fx0 + fx1), pivotY = fy1 + style.pivotBelowFace;
+    const float half = style.sweepHalfAngleDeg * 3.14159265f / 180.0f;
+    const float radius = std::min(pivotY - fy0 - style.radiusTopInset,
+                                  (fx1 - fx0) * 0.5f / std::max(std::sin(half), 0.2f) - 6.0f);
+    const auto lo = panel.P(fx0, fy0), hi = panel.P(fx1, fy1);
     const auto white = ImGui::GetIO().Fonts->TexUvWhitePixel;
     int inkVertices = 0, clippedInk = 0, labelVertices = 0;
     float tipY = std::numeric_limits<float>::infinity();
     bool arcVisible = false;
-    // Between the central -10 dB major and its next minor tick: only the
-    // continuous blue baseline should cover this point (design coordinates).
-    const auto arcProbe = panel.P(879.33f, 444.29f);
+    // Between the central -10 dB major and its next minor tick (1.6 degrees
+    // right of it): only the continuous blue baseline covers this point.
+    constexpr float probeAngle = 1.6f * 3.14159265f / 180.0f;
+    const auto arcProbe = panel.P(cx + 0.90f * radius * std::sin(probeAngle),
+                                  pivotY - 0.90f * radius * std::cos(probeAngle));
     for (const auto& cmd : dl->CmdBuffer)
     {
         for (unsigned i = 0; i < cmd.ElemCount; i += 3)
@@ -72,9 +83,13 @@ bool drawCase(float size, const char* source, float db)
                 arcVisible = true;
         }
     }
-    // Bounds cover the full sweep, not only the stationary zero position.
+    // Bounds cover the full sweep, not only the stationary zero position: the
+    // tip runs at 0.95 radius from straight up to the sweep's ends, and each
+    // bound keeps 5 % of the radius beyond that.
+    const float tipHighest = pivotY - 0.95f * radius;
+    const float tipLowest = pivotY - 0.95f * radius * std::cos(half);
     const bool ok = inkVertices > 100 && labelVertices > 100 && clippedInk == 0
-        && arcVisible && tipY > 420.0f && tipY < 480.0f
+        && arcVisible && tipY > tipHighest - 0.05f * radius && tipY < tipLowest + 0.05f * radius
         && std::isfinite(needle) && needle >= 0 && needle <= 1;
     std::printf("%s scale=%.2f source=%s db=%g ink=%d glyph=%d clipped=%d arc=%d tipY=%.3f\n",
                 ok ? "PASS" : "FAIL", size, source, db, inkVertices, labelVertices,

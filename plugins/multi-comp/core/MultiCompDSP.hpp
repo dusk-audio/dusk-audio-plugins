@@ -133,6 +133,8 @@ private:
     void processSidechainListenHistory(const float* const* sidechain, int nCh,
                                        int nSamples, int delay) noexcept;
     void resetAutoGainMeasurement() noexcept;
+    MultiCompMode currentMode() const noexcept;
+    float globalMixTarget(MultiCompMode mode) const noexcept;
     static float advanceFetStartupBlend(int& activeSamples,
                                         int fullCorrectionSamples,
                                         int correctionEndSamples) noexcept;
@@ -159,9 +161,17 @@ private:
     std::array<MultiCompSidechainFilter, kMaxChannels> sidechainFilters;
     std::array<vcaLaw::SidechainTilt, kMaxChannels> sidechainTilt;
     bool lastVcaSidechainTilt = false;   // which sidechain filter ran last block
+    // Used only by the disabled SC-response identity control.
     bool lastVcaSidechainTiltEngaged = false;
     std::array<vcaLaw::OutputVoicing, kMaxChannels> vcaOutputVoicing;
     bool vcaVoicingActive = false;
+    std::array<vcaLaw::LowFrequencyHighPass, kMaxChannels> vcaAudioCoupling;
+    bool vcaAudioCouplingActive = false;
+    std::array<vcaLaw::LowFrequencyHighPass, kMaxChannels> vcaDetectorCoupling;
+    bool vcaDetectorCouplingActive = false;
+    std::array<vcaLaw::SidechainResponse, kMaxChannels> vcaScResponse;
+    bool vcaScResponseActive = false;
+    int vcaLifecycleChannels = 0;
     std::array<MultiCompSidechainEQ, kMaxChannels> sidechainEQ;
 
     std::array<DuskCrossover, kMaxChannels> crossover1, crossover2, crossover3;
@@ -171,8 +181,8 @@ private:
     std::array<std::array<std::vector<float>, kMaxChannels>, kMultiCompBands> bands, sidechainBands;
     std::array<std::vector<float>, kMaxChannels> processedSidechain;
     std::array<std::vector<float>, kMaxChannels> modeInput;
-    // Scratch for the non-finite input guard. Written only when a block
-    // actually carries a non-finite sample; see sanitizeChannels.
+    // Scratch for the input guard. Written only when a block actually carries
+    // a non-finite or above-ceiling sample; see sanitizeChannels.
     std::array<std::vector<float>, kMaxChannels> sanitizedInput, sanitizedSidechain;
     std::vector<float> dry, bypassDry, fetStartupInput;
     std::vector<float> mixCurve, bypassCurve, autoGainCurve;

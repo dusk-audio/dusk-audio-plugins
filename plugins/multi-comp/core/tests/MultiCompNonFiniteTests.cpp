@@ -15,9 +15,25 @@
 //          sidechain, stereo and mono: every output sample finite, the faulted
 //          block itself still audible, meters finite, and the tail within
 //          kSingleFaultTailDb of a clean control render.
-//   burst  10 ms at 3e38 peak -- finite, but it overflows every mode: every
-//          output sample finite, the first block after the burst audible,
-//          meters finite, and the tail within kBurstTailDb of the control.
+//   burst  10 ms at 3e38 and at 1e20 peak, finite but not audio. Unguarded,
+//          3e38 overflows every mode's output and 1e20 overflows only squared
+//          detector powers, leaving a NaN detector behind a finite output
+//          (Opto held 0 dB of reduction until a host reset). Both are now
+//          stopped at the input ceiling (MultiCompHelpers.hpp, |x| >= 1024
+//          becomes silence), so these rows assert the ceiling: every output
+//          sample finite, the first block after the burst audible, meters
+//          finite, and the tail within kBurstTailDb of the control. Opto's
+//          Peak Reduction 70 run is the one a latched cell would show in.
+//          The two peaks render identically (both become silence); 1e20 is
+//          kept as the marker of the case output-only recovery could not see.
+//          Not asserted here: bursts just under the ceiling. At default input
+//          gain they are ordinary, very deep compression that releases at the
+//          mode's own rate. With mode input gain on top they can still
+//          overflow inside a stage and reach MultiCompDSP's output recovery
+//          (Studio FET, 1000 peak, +20 dB Input); measured 2026-10-03, that
+//          case leaves a 20 dB tail error at 0.5 s in two of three
+//          oversampling settings, so it cannot be asserted at kBurstTailDb
+//          and the recovery branch is not exercised by this file.
 //   param  every parameter (and every multiband band parameter, Mix and
 //          Stereo Link) set to +inf, -inf or NaN mid-render (a corrupt
 //          host automation value): every output sample finite, meters
@@ -34,13 +50,7 @@
 //          sample passed straight through process()'s own guard. No shipped
 //          path calls it today (the DSP uses process()); this keeps the
 //          public entry point from regressing.
-//   law    optoCurveDb on a NaN level reads as no reduction. The Opto PR 70
-//          burst renders reach that NaN, but a release build cannot see the
-//          undefined conversion it used to hit: the NaN target is discarded
-//          and the burst's output recovery masks the rest. Unguarded, the
-//          law returns NaN, so this fails without a sanitizer.
 #include "../MultiCompDSP.hpp"
-#include "../MultiCompOptoCell.hpp"
 #include "../../HardwareEmulation/WaveshaperCurves.h"
 
 #include <algorithm>
@@ -66,14 +76,19 @@ constexpr int kFaultSample = kFaultBlock * kBlock + 10;
 constexpr int kBurstLength = kRate / 100;        // 10 ms
 constexpr int kTailStart = kLength - kRate / 4;  // last 250 ms
 constexpr float kBurstPeak = 3.0e38f;
+// Above the squared-power overflow point (1.84e19 squared exceeds FLT_MAX) and below output overflow: the case
+// output-only recovery could not see. Measured unguarded on 2026-10-03, tail error one second later: Opto 18.9 dB,
+// FET 42.5, VCA 48.7, Bus 36.7.
+constexpr float kOverflowBurstPeak = 1.0e20f;
 // Measured worst on the guarded build: 0.000029 dB. One sample of a 0.25 sine
 // replaced by silence half a second before the tail; 0.01 dB leaves a wide
 // margin and still catches anything the fault leaves behind in state.
 constexpr double kSingleFaultTailDb = 0.01;
-// Measured worst: 0.271 dB (FET, whose programme-dependent release has 0.6 s
-// rather than 0.87 s of history once recovery has reset it); Opto at PR 70
-// 0.006 dB; every other mode 0.0000 dB. Unguarded, every mode misses by more
-// than 570 dB.
+// Measured worst with the input ceiling (2026-10-03): 0.00023 dB (FET main-in),
+// every other mode at or below 0.00004 dB; the burst is silence by the time a
+// stage sees it. Before the ceiling the worst was 0.271 dB (FET after a full
+// recovery reset), and unguarded every mode missed by more than 570 dB. The
+// bound is unchanged.
 constexpr double kBurstTailDb = 1.0;
 // -60 dBFS RMS: audio is flowing again. Not a level claim.
 constexpr double kAudibleRms = 1.0e-3;
@@ -256,22 +271,6 @@ int waveshaperFailures(const float (&faults)[3])
     return failures;
 }
 
-int optoLawFailures(float nan)
-{
-    // Read through a volatile so an unguarded law converts the NaN at run
-    // time instead of letting the optimiser fold a known constant.
-    volatile float level = nan;
-    int failures = 0, cases = 0;
-    for (const bool limit : {false, true})
-    {
-        ++cases;
-        if (!(duskaudio::optoCurveDb(level, limit) == 0.0f))
-            ++failures;
-    }
-    std::printf("law   optoCurveDb NaN level reads as no reduction  failing %d of %d  %s\n",
-                failures, cases, failures == 0 ? "PASS" : "FAIL");
-    return failures;
-}
 } // namespace
 
 int main()
@@ -297,8 +296,9 @@ int main()
                             score(parameter, render(mode, oversampling, channels, sidechain, Fault::Parameter, value),
                                   control, kSingleFaultTailDb);
                     if (channels == 2)
-                        score(burst, render(mode, oversampling, channels, sidechain, Fault::Burst, kBurstPeak),
-                              control, kBurstTailDb);
+                        for (const float peak : {kBurstPeak, kOverflowBurstPeak})
+                            score(burst, render(mode, oversampling, channels, sidechain, Fault::Burst, peak),
+                                  control, kBurstTailDb);
                 }
             print("fault", mode.name, path, single);
             print("burst", mode.name, path, burst);
@@ -307,7 +307,6 @@ int main()
             failures += single.failures + burst.failures + parameter.failures;
         }
     failures += waveshaperFailures(faults);
-    failures += optoLawFailures(faults[2]);
     std::printf("%s: %d failing case(s)\n", failures == 0 ? "PASS" : "FAIL", failures);
     return failures == 0 ? 0 : 1;
 }

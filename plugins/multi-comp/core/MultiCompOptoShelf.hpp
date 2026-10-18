@@ -91,6 +91,19 @@ inline constexpr double kOptoPreHighPassHz = 1.0107558853;
 inline constexpr double kOptoPreHighPassQ = 0.8388057050;
 inline constexpr double kOptoPostHighPassHz = 0.9890982535;
 inline constexpr double kOptoPostHighPassQ = 0.8207559790;
+// The first of the two acts on the input AHEAD of the cell (true), or on the
+// cell's output (false: where it was put when it was identified, at Peak
+// Reduction 0, where the cell is inert and the two places cannot be told
+// apart). Read on the reference after a low note is gated off (tools
+// opto/silence_probe.py): the sub-audio tail is not a scaled copy of the
+// linear one, its zero crossing comes 40 ms later and it keeps growing while
+// the gain recovers. A high-pass behind the gain cannot do that; one ahead
+// of it does, the cell multiplies its ring by a gain that is still moving.
+// The cell's input element reads behind it as well (tools
+// opto/element_place.py). The side-chain input feed uses the same high-pass
+// response; its sub-audio tail continues to drive the cell after a gated low
+// note. The pre-coupling input owns the floor hand-back and release laws.
+inline constexpr bool kOptoPreHighPassAhead = true;
 
 class OptoSubsonicHighPass
 {

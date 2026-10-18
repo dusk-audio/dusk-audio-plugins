@@ -54,6 +54,39 @@ inline void copyWithoutNonFinite(const float* source, float* destination,
     }
 }
 
+// Input ceiling. A finite sample at or above 2^10 (+60.2 dBFS) is not audio, and it is as destructive as a
+// NaN while leaving every output sample finite, so output-only recovery never fires: a 10 ms burst at 1e20
+// overflows the squared detector powers to inf (the Opto cell then holds 0 dB of reduction until a host
+// reset), and a burst anywhere from ~1e10 up parks the double envelopes and the sub-audio audio-path
+// high-passes so high that they take tens of seconds to drain. Same exponent-field trick as above: the
+// biased exponent of 2^10 is 0x89, so (bits & 0x7f800000) >= 0x89 << 23 if and only if |x| >= 1024 or x is
+// non-finite. Exact: nothing below the ceiling is touched. Per sample, not per block, so the result does not
+// depend on the host's block size; a burst that straddles the ceiling keeps its sub-ceiling samples. The guard
+// runs ahead of the bypass path too, so a settled bypass also emits silence for those samples.
+constexpr std::uint32_t kInputCeilingExponentBits = 0x89u << 23;   // |x| >= 1024
+
+inline bool blockIsAllAudio(const float* samples, int numSamples) noexcept
+{
+    std::uint32_t worstExponent = 0;
+    for (int i = 0; i < numSamples; ++i)
+    {
+        std::uint32_t bits = 0;
+        std::memcpy(&bits, samples + i, sizeof(bits));
+        worstExponent = std::max(worstExponent, bits & 0x7f800000u);
+    }
+    return worstExponent < kInputCeilingExponentBits;
+}
+
+inline void copyWithoutNonAudio(const float* source, float* destination, int numSamples) noexcept
+{
+    for (int i = 0; i < numSamples; ++i)
+    {
+        std::uint32_t bits = 0;
+        std::memcpy(&bits, source + i, sizeof(bits));
+        destination[i] = (bits & 0x7f800000u) >= kInputCeilingExponentBits ? 0.0f : source[i];
+    }
+}
+
 class MultiCompSidechainFilter
 {
 public:
@@ -72,7 +105,7 @@ public:
         {
             currentFrequency = f;
             currentQ = q;
-            filter.setCoeffs(Biquad::highPass(sampleRate, f, q));
+            filter.setHighPass(sampleRate, f, q);
         }
     }
 
@@ -87,7 +120,7 @@ private:
     double sampleRate = 44100.0;
     float currentFrequency = -1.0f;
     float currentQ = 0.707f;
-    Biquad filter;
+    GuardedBiquad filter;
 };
 
 // JUCE multicomp.cpp:575-690. Two RBJ shelves in TDF-II, after the sidechain
@@ -379,7 +412,10 @@ public:
 
     float getAllButtonsReduction(float overThresholdDb, bool measuredCurve) const noexcept
     {
-        const float index = std::clamp(overThresholdDb, 0.0f, 30.0f) * static_cast<float>(kAllButtonsSize - 1) / 30.0f;
+        // std::clamp passes NaN through; this form sends it to 0 dB and is
+        // identical to the clamp for every other value.
+        const float over = overThresholdDb >= 0.0f ? std::min(overThresholdDb, 30.0f) : 0.0f;
+        const float index = over * static_cast<float>(kAllButtonsSize - 1) / 30.0f;
         const int i0 = static_cast<int>(index), i1 = std::min(i0 + 1, kAllButtonsSize - 1);
         const float fraction = index - static_cast<float>(i0);
         const auto& curve = measuredCurve ? measured : modern;

@@ -125,6 +125,7 @@ namespace
             << "  --dump-nparams               Dump normalized parameter values\n"
             << "  --param NAME=VALUE            Set a displayed parameter value\n"
             << "  --nparam NAME=VALUE           Set a normalized parameter value\n"
+            << "                                (every NAME option also takes #INDEX, the --list-params index)\n"
             << "  --nparam-event NAME=VALUE@SEC Automate at an exact sample\n"
             << "  --meter-film STEM,START,STOP,STEP[,A:B:D[;A:B:D...]] Capture editor frames at rendered-sample times\n"
             << "  --print-params IDX|NAME,...   Log post-apply values of those parameters\n"
@@ -743,9 +744,23 @@ namespace
     // Locate parameter by display name. The AU wrapper hashes the original
     // string IDs to integers, but the display names survive — and they're
     // what the user sees in Logic too, so this also makes the test honest.
+    // "#N" addresses parameter N by its host index (as --list-params prints
+    // it): plugins that reuse a display name across modes ("Threshold",
+    // "Attack", ...) cannot be driven by name alone.
     juce::AudioProcessorParameter* findParam (juce::AudioPluginInstance& plugin, const juce::String& name)
     {
-        for (auto* p : plugin.getParameters())
+        const auto& params = plugin.getParameters();
+        if (name.startsWithChar ('#') && name.length() > 1
+            && name.substring (1).containsOnly ("0123456789"))
+        {
+            // parseInt, not getIntValue: an unchecked parse wraps on overflow and a
+            // wrapped value inside 0..size-1 would address the wrong parameter.
+            int index = -1;
+            if (! parseInt (name.substring (1), index))
+                return nullptr;
+            return index >= 0 && index < params.size() ? params[index] : nullptr;
+        }
+        for (auto* p : params)
         {
             if (p->getName (50) == name)
                 return p;

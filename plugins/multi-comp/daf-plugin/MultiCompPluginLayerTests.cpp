@@ -806,9 +806,9 @@ void testFetFaceplateContract()
         && source.find("visualOrder") != std::string::npos
         && source.find("row < 5") != std::string::npos;
     const bool exposesOnlyMixExtension =
-        source.find("fetTrimKnob(dl, \"fet_mix\"") != std::string::npos
-        && source.find("fetTrimKnob(dl, \"fet_threshold\"") == std::string::npos
-        && source.find("fetTrimKnob(dl, \"fet_trans\"") == std::string::npos
+        source.find("trimScrewKnob(dl, \"fet_mix\"") != std::string::npos
+        && source.find("trimScrewKnob(dl, \"fet_threshold\"") == std::string::npos
+        && source.find("trimScrewKnob(dl, \"fet_trans\"") == std::string::npos
         && source.find("drawFetCurveSwitch") == std::string::npos;
     const bool hasConcentricKnobSkirts =
         source.find("AddCircleFilled(center, r * 0.96f") != std::string::npos
@@ -1146,6 +1146,51 @@ void testFractionalIntegerAutomationStaysLoadable()
     std::puts("fractional integer automation: snapped on store, state stays loadable");
 }
 
+void testOptoReferenceDisplayAndNoiseDefault()
+{
+    constexpr std::array<float, 11> host{{
+        0.0f, 10.0f, 20.0f, 30.0f, 35.0f, 40.0f,
+        50.0f, 60.0f, 70.0f, 80.0f, 100.0f}};
+    constexpr std::array<float, 11> expected{{
+        0.0f, 5.0f, 16.0f, 28.0f, 33.0f, 39.0f,
+        50.0f, 61.0f, 72.0f, 84.0f, 100.0f}};
+    for (size_t i = 0; i < host.size(); ++i)
+        require(std::nearbyint(multicompp::optoReferenceDisplayValue(host[i]))
+                    == expected[i],
+                "Opto display follows the measured UAD control curve");
+    require(multicompp::optoReferenceHostValue(0.0f) == 0.0f
+                && multicompp::optoReferenceHostValue(100.0f) == 100.0f
+                && std::abs(multicompp::optoReferenceHostValue(33.0f)
+                            - 35.0f) < 0.0001f
+                && std::abs(multicompp::optoReferenceHostValue(72.0f)
+                            - 70.0f) < 0.0001f,
+            "Opto display text maps back without changing the stored domain");
+    // Every whole readout a user can type shows itself again: the displayed
+    // text is the rounded readout of the host value the typed text selects.
+    for (int readout = 0; readout <= 100; ++readout)
+        require(std::nearbyint(multicompp::optoReferenceDisplayValue(
+                    multicompp::optoReferenceHostValue(static_cast<float>(readout))))
+                    == static_cast<float>(readout),
+                "Opto display text round-trips every whole readout, endpoints 1 and 99 included");
+    float typed = -1.0f;
+    require(multicompp::parseOptoDisplayText("33", typed) && typed == 33.0f
+                && multicompp::parseOptoDisplayText("72.5", typed) && typed == 72.5f
+                && multicompp::parseOptoDisplayText("0", typed) && typed == 0.0f
+                && multicompp::parseOptoDisplayText("100", typed) && typed == 100.0f,
+            "Opto display text parses whole and decimal values");
+    for (const char* bad : {"", " 33", "33 ", "33,5", "abc", "101", "-1", "nan", "inf", "1e2x"})
+        require(!multicompp::parseOptoDisplayText(bad, typed),
+                "Opto display text rejects padding, locale commas, junk and out-of-range values");
+    require(!multicompp::parseOptoDisplayText(nullptr, typed), "Opto display text rejects a null string");
+    const auto noise = multicompp::kParams[
+        static_cast<size_t>(multicompp::ParamId::NoiseEnable)];
+    duskaudio::MultiCompParameterState defaults;
+    require(noise.def == 0.0f
+                && !defaults.noiseEnable.load(std::memory_order_relaxed),
+            "Analog Noise defaults off in both the AU descriptor and DSP state");
+    std::puts("Opto display: host 35/70 -> UAD 33/72; Analog Noise default: off");
+}
+
 int main(int argc, char** argv)
 {
     if (argc == 2 && std::strcmp(argv[1], "--fet-ui") == 0)
@@ -1175,6 +1220,7 @@ int main(int argc, char** argv)
     testFractionalEnumUiAndDspAgreement();
     testEditorMirrorSeedsFromCurrentPluginState();
     testFractionalIntegerAutomationStaysLoadable();
+    testOptoReferenceDisplayAndNoiseDefault();
     std::puts("Multi-Comp plugin-layer tests: PASS");
     return 0;
 }

@@ -147,7 +147,7 @@ struct MultiCompParameterState
     std::atomic<int> envelopeCurve{0};
     std::atomic<bool> globalSidechainListen{false};
     std::atomic<float> mbMix{100.0f}, mbOutput{0.0f};
-    std::atomic<bool> noiseEnable{true};
+    std::atomic<bool> noiseEnable{false};
     std::atomic<int> saturationMode{0};
     std::atomic<float> scLowFreq{100.0f}, scLowGain{0.0f}, scHighFreq{8000.0f}, scHighGain{0.0f};
     std::atomic<int> stereoLinkMode{0};

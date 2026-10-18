@@ -130,11 +130,80 @@ inline constexpr std::array<DetectorCalibrationPoint, 18> kDetectorCalibration{{
     {-16.0f, 0.2235f}, {-14.0f, 0.2401f}, {0.0f, 0.2401f},
 }};
 
+// 2026-10-11: independent Q FIT 1 kHz positive input levels, two ratios
+// and thresholds. Correction increments coincide to 0.002252 dB; the old
+// hold misses 2.361935 dB at +15 dB. Preserve the old domain through 0 dB.
+inline constexpr float kHotDetectorCalibrationStrength = 1.0f;
+inline constexpr std::array<DetectorCalibrationPoint, 6> kHotDetectorCalibration{{
+    {0.0f, 0.2401f},
+    {3.0f, 0.3871333165921654f},
+    {6.0f, 0.6474051045335686f},
+    {9.0f, 1.0665004629175474f},
+    {12.0f, 1.6975348429495067f},
+    {15.0f, 2.602034570012348f}
+}};
+
+// 2026-10-11: independent 48/96 kHz SC-off controls above +15 dB.
+// Holding the old endpoint misses 5.307492 dB of detector correction at
+// +24 dB. The continued increments agree across two rates, thresholds,
+// ratios and output gains within 0.004105 dB; output-gain control 2.21e-7 dB.
+// Fresh +23/+24/+25/+27 dB controls extend the outer derivative; the
+// rate/threshold/ratio/gain increment spread stays below 0.005709 dB.
+// Keep every existing calibration point through +15 dB unchanged.
+inline constexpr float kHotDetectorExtensionStrength = 1.0f;
+inline constexpr std::array<DetectorCalibrationPoint, 7> kHotDetectorExtension{{
+    {15.0f, 2.602034570012348f},
+    {18.0f, 3.862056652019314f},
+    {21.0f, 5.5854280533920875f},
+    {23.0f, 7.055962570744926f},
+    {24.0f, 7.909526279858181f},
+    {25.0f, 8.84947339770055f},
+    {27.0f, 11.03193047061749f},
+}};
+
 inline float detectorCorrectionDb(float inputPeakDb) noexcept
 {
     if (!std::isfinite(inputPeakDb)
         || inputPeakDb <= kDetectorCalibration.front().levelDb)
         return 0.0f;
+    if (kHotDetectorCalibrationStrength != 0.0f && inputPeakDb > 0.0f)
+    {
+        if constexpr (kHotDetectorExtensionStrength != 0.0f)
+        {
+            if (inputPeakDb > kHotDetectorExtension.front().levelDb)
+            {
+                for (size_t i = 1; i < kHotDetectorExtension.size(); ++i)
+                {
+                    const auto& a = kHotDetectorExtension[i - 1];
+                    const auto& b = kHotDetectorExtension[i];
+                    if (inputPeakDb <= b.levelDb)
+                    {
+                        const float t = (inputPeakDb - a.levelDb)
+                                      / (b.levelDb - a.levelDb);
+                        return a.correctionDb + (b.correctionDb - a.correctionDb) * t;
+                    }
+                }
+                // Continue the measured outer secant; a held endpoint would
+                // remove half the local derivative from an RMS ripple.
+                // The continuation beyond +27 dB has not been characterized.
+                const auto& a = kHotDetectorExtension[kHotDetectorExtension.size() - 2];
+                const auto& b = kHotDetectorExtension.back();
+                return b.correctionDb + (inputPeakDb - b.levelDb)
+                    * (b.correctionDb - a.correctionDb) / (b.levelDb - a.levelDb);
+            }
+        }
+        for (size_t i = 1; i < kHotDetectorCalibration.size(); ++i)
+        {
+            const auto& a = kHotDetectorCalibration[i - 1];
+            const auto& b = kHotDetectorCalibration[i];
+            if (inputPeakDb <= b.levelDb)
+            {
+                const float t = (inputPeakDb - a.levelDb) / (b.levelDb - a.levelDb);
+                return a.correctionDb + (b.correctionDb - a.correctionDb) * t;
+            }
+        }
+        return kHotDetectorCalibration.back().correctionDb;
+    }
     for (size_t i = 1; i < kDetectorCalibration.size(); ++i)
     {
         const auto& a = kDetectorCalibration[i - 1];
@@ -169,6 +238,61 @@ inline constexpr float kDetectorFloorDb = -91.1694352f;
 
 // OUTPUT GAIN: linear -20..+20 dB (probe_gain_law.py: matches the read-back to
 // 0.003 dB at every position) -- identical to the existing vca_output law.
+
+// VCA input coupling, measured 2026-10-11 (FIT family D and independent
+// polarity placement probes). One pole at 4.600266 Hz: maximum complex-fit
+// residual 0.000510 dB / 0.00571 degrees over 1--50 Hz at three levels.
+// Mix's dry path is untouched. Pre-gain placement residual 0.00398 versus
+// 0.06710 after the gain cell, normalized to the low-tone input amplitude.
+// Enabled after the complete disabled-element byte-identity control.
+// Strength zero retains the original sample path for repeatable controls.
+inline constexpr float kAudioCouplingStrength = 1.0f;
+inline constexpr double kAudioCouplingHz = 4.600266242421623;
+// 2026-10-11 baseline lifecycle controls: retained RMS caused 2.890826e-6
+// prepare mismatch; dormant audio/routing state caused 0.000405745 mono
+// return mismatch. Isolated clears give exact equality, including 24
+// wet/dry, bypass, listen and lookahead cases. No active-signal classifier.
+inline constexpr bool kLifecycleResetEnabled = true;
+
+// 2026-10-11 FIT H: one independent detector pole explains the complete
+// half-cycle shapes at 15--45 Hz, both levels and ratios, to 0.0100 dB.
+// Complex response residual: 0.002591 dB / 0.01660 degrees. The detector
+// branches before the audio pole; adding that pole gives 0.643 dB / 5.62
+// degree residual. The existing 35 ms RMS integrator and gain law stay put.
+inline constexpr float kDetectorCouplingStrength = 1.0f;
+inline constexpr double kDetectorCouplingHz = 20.02072895668114;
+
+// Native-rate VCA coupling section. Bilinear first-order response; its very
+// low corner is specified in Hz independently of the oversampling factor.
+class LowFrequencyHighPass
+{
+public:
+    void prepare(double rate, double cornerHz) noexcept
+    {
+        const double fs = std::isfinite(rate) && rate > 0.0 ? rate : 48000.0;
+        const double k = std::tan(3.14159265358979323846 * cornerHz / fs);
+        feed = 1.0 / (1.0 + k);
+        feedback = (1.0 - k) / (1.0 + k);
+        reset();
+    }
+
+    void reset() noexcept { previousInput = previousOutput = 0.0; }
+
+    float process(float input, float strength) noexcept
+    {
+        if (strength == 0.0f) return input;
+        const double y = feed * (static_cast<double>(input) - previousInput)
+                       + feedback * previousOutput;
+        previousInput = input;
+        previousOutput = y;
+        const float filtered = static_cast<float>(y);
+        return strength == 1.0f ? filtered : input + strength * (filtered - input);
+    }
+
+private:
+    double feed = 1.0, feedback = 0.0;
+    double previousInput = 0.0, previousOutput = 0.0;
+};
 
 // SC FILTER: the reference's sidechain filter is an on/off switch whose
 // engaged response is a half-order tilt, roughly |H(f)| = sqrt(f / 290 Hz),
@@ -212,6 +336,143 @@ inline constexpr std::array<SidechainTiltPoint, 25> kSidechainTiltMeasured{{
     {10000.0f, 15.54f}, {12000.0f, 16.28f}, {14000.0f, 16.98f}, {16000.0f, 17.64f}, {18000.0f, 18.23f},
     {20000.0f, 18.72f}, {21000.0f, 18.91f}, {22000.0f, 19.05f}, {23000.0f, 19.13f}, {23500.0f, 19.15f}}};
 
+
+
+// 2026-10-11 joint 44.1/48/96 kHz FIT response. The earlier 48 kHz-only
+// realization missed the new 96 kHz C table by 2.374 dB. The three-rate
+// response and independent short-pulse FIT residuals are documented in
+// rate-followup/impulse-fit/projected-blend-fit.json.
+// The lowest three measured sections and independent 20.020729 Hz pole
+// preserve Q's LF magnitude/phase. Higher poles use the common bilinear
+// mapping; no corner is clamped or selected from a host's Nyquist.
+// P's measured 49.348321 ms linear transition is unchanged.
+inline constexpr float kScResponseStrength = 1.0f;
+inline constexpr double kScTransitionMs = 49.34832034753578;
+inline constexpr std::array<double, 8> kScResponseZeroHz{{
+    5.756520018445299, 7.58503667171528, 45.27084620441695, 1266.126284916478,
+    311.6317223037134, 2828.6456577583094, 21804.85412256131, 27890.82245889833}};
+inline constexpr std::array<double, 8> kScResponsePoleHz{{
+    7.809181475826136, 16.760703575029417, 119.57010598264047, 751.986944483175,
+    1630.4376516346435, 7727.690864281121, 33403.22353937673, 40420.16378298945}};
+inline constexpr double kScResponseGainDb = 0.041299182276151536;
+
+// 2026-10-12: normalized SC ladder identified jointly from steady response
+// and independent short-pulse FIT data; no held DC/music/blind data fitted.
+// Corners are fractions of the host rate, with one bilinear realization.
+// The existing 20.020729 Hz detector pole is the fixed-Hz low-end part.
+// FIT magnitude residual 0.032699 dB; LF phase 0.025538 degrees.
+// Frozen-fit rate judgments: 88.2 kHz 0.044970 dB, 192 kHz
+// 0.045211 dB. Y pulse residual 0.313651 dB. The transition is unchanged.
+// Zero retains the previous response exactly for the complete off control.
+inline constexpr float kRateScaledScStrength = 1.0f;
+inline constexpr std::array<double, 8> kRateScaledScZeroFraction{{
+    0.00011748757161015158, 0.00038202801916710044, 0.00094843173487066, 0.007133710397707068,
+    0.007121114034996163, 0.04499253549690136, 0.1273179770248589, 0.32087446046258616}};
+inline constexpr std::array<double, 8> kRateScaledScPoleFraction{{
+    0.0003468442101471412, 0.0003893337437380088, 0.0025004424908011743, 0.016959087747612938,
+    0.007824830148745156, 0.11422228160671877, 0.13373338386774883, 0.4968844303753111}};
+inline constexpr double kRateScaledScGainDb = -19.501585521342495;
+
+class SidechainResponse
+{
+public:
+    void prepare(double sampleRate) noexcept
+    {
+        const double fs = std::isfinite(sampleRate) && sampleRate > 0.0
+                            ? sampleRate : 48000.0;
+        constexpr double pi = 3.14159265358979323846;
+        if constexpr (kRateScaledScStrength != 0.0f)
+        {
+            for (size_t i = 0; i < sections.size(); ++i)
+            {
+                const double kp = pi * kRateScaledScPoleFraction[i];
+                const double kz = pi * kRateScaledScZeroFraction[i];
+                const double pole = (1.0 - kp) / (1.0 + kp);
+                const double zero = (1.0 - kz) / (1.0 + kz);
+                auto& section = sections[i];
+                section.b0 = (1.0 - pole) / (1.0 - zero);
+                section.b1 = -section.b0 * zero;
+                section.a1 = -pole;
+            }
+            scale = std::pow(10.0, kRateScaledScGainDb / 20.0)
+                  * std::sqrt(fs / 48000.0);
+            step = 1.0 / (fs * kScTransitionMs * 0.001);
+            reset();
+            return;
+        }
+        const std::complex<double> atUnity =
+            std::polar(1.0, -2.0 * pi * kSidechainTiltUnityHz / fs);
+        std::complex<double> responseAtUnity{1.0, 0.0};
+        for (size_t i = 0; i < sections.size(); ++i)
+        {
+            const double zeroHz = kScResponseZeroHz[i];
+            const double poleHz = kScResponsePoleHz[i];
+            const double k = pi * poleHz / fs;
+            const double pole = i < 3 ? std::exp(-2.0 * k)
+                                      : (1.0 - k) / (1.0 + k);
+            const double nyquistGain = std::sqrt(
+                (1.0 + std::pow(0.5 * fs / zeroHz, 2.0))
+                / (1.0 + std::pow(0.5 * fs / poleHz, 2.0)));
+            const double a = nyquistGain * (1.0 + pole) / (1.0 - pole);
+            const double zero = (a - 1.0) / (a + 1.0);
+            auto& section = sections[i];
+            section.b0 = (1.0 - pole) / (1.0 - zero);
+            section.b1 = -section.b0 * zero;
+            section.a1 = -pole;
+            responseAtUnity *= (section.b0 + section.b1 * atUnity)
+                             / (1.0 + section.a1 * atUnity);
+        }
+        scale = std::pow(10.0, kScResponseGainDb / 20.0)
+              / std::abs(responseAtUnity);
+        step = 1.0 / (fs * kScTransitionMs * 0.001);
+        reset();
+    }
+
+    void reset() noexcept
+    {
+        for (auto& section : sections)
+            section.state = 0.0;
+        weight = 0.0;
+        initialized = false;
+    }
+
+    float process(float input, bool engaged) noexcept
+    {
+        const double target = engaged ? 1.0 : 0.0;
+        if (!initialized)
+        {
+            weight = target;
+            initialized = true;
+        }
+        if (weight < target)
+            weight = std::min(target, weight + step);
+        else if (weight > target)
+            weight = std::max(target, weight - step);
+
+        double filtered = input;
+        for (auto& section : sections)
+        {
+            const double y = section.b0 * filtered + section.state;
+            section.state = section.b1 * filtered - section.a1 * y;
+            filtered = y;
+        }
+        return static_cast<float>(static_cast<double>(input)
+                                  + weight * (filtered * scale - input));
+    }
+
+private:
+    struct Section
+    {
+        double b0 = 1.0, b1 = 0.0, a1 = 0.0, state = 0.0;
+    };
+    std::array<Section, 8> sections{};
+    double scale = 1.0, step = 1.0, weight = 0.0;
+    bool initialized = false;
+};
+
+// Retained only for kScResponseStrength == 0: this is the exact pre-patch-44
+// signal path required by the disabled-element byte-identity control.
+// The default VCA path uses SidechainResponse, never this legacy filter.
 class SidechainTilt
 {
 public:

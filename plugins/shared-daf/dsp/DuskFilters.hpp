@@ -238,6 +238,9 @@ public:
     void setCoeffs(const BiquadCoeffs& k) noexcept { c = k; }
     const BiquadCoeffs& coeffs() const noexcept    { return c; }
     void reset() noexcept { z1 = z2 = 0.0f; }
+    // TDF-II state, for handing a running section to another implementation.
+    std::pair<float, float> state() const noexcept { return { z1, z2 }; }
+    void setState(float s1, float s2) noexcept { z1 = s1; z2 = s2; }
 
     // Transposed Direct Form II — identical recurrence to juce::dsp::IIR::Filter.
     float process(float x) noexcept
@@ -630,6 +633,87 @@ private:
 
     BiquadCoeffs c;
     float z1 = 0.0f, z2 = 0.0f;
+};
+
+// A JUCE-form high- or low-pass section that runs Biquad's float path wherever
+// the float coefficients are safely stable, and a double-precision section
+// where they are not. Rounding a1 and a2 to float moves the poles of a low
+// corner at a high processing rate onto or past the unit circle: measured
+// unstable from a 352.8 kHz rate for 20 Hz corners, and for most corners up
+// to 500 Hz by 1.4 MHz. The float coefficients' Jury margin,
+// min(1 - a2, 1 + a1 + a2, 1 - a1 + a2), decides. At or under 192 kHz every
+// 20 Hz to 500 Hz corner keeps at least six float steps (6 * 2^-24) of margin,
+// so the switch point of three steps leaves those rates on the float path,
+// sample for sample identical to Biquad.
+class GuardedBiquad
+{
+public:
+    void setHighPass(double fs, float freq, float Q) noexcept { design(fs, freq, Q, true); }
+    void setLowPass(double fs, float freq, float Q) noexcept { design(fs, freq, Q, false); }
+
+    void reset() noexcept
+    {
+        section.reset();
+        d1 = d2 = 0.0;
+    }
+
+    bool usesDoublePrecision() const noexcept { return precise; }
+
+    float process(float x) noexcept
+    {
+        if (!precise)
+            return section.process(x);
+        const double in = static_cast<double>(x);
+        const double y = k[0] * in + d1;
+        d1 = k[1] * in - k[3] * y + d2;
+        d2 = k[2] * in - k[4] * y;
+        return static_cast<float>(y);
+    }
+
+private:
+    static constexpr double kMinFloatMargin = 3.0 / 16777216.0;
+
+    void design(double fs, float freq, float Q, bool high) noexcept
+    {
+        const BiquadCoeffs single = high ? Biquad::highPass(fs, freq, Q) : Biquad::lowPass(fs, freq, Q);
+        const double a1 = single.a1, a2 = single.a2;
+        const double margin = std::min(1.0 - a2, std::min(1.0 + a1 + a2, 1.0 - a1 + a2));
+        const bool wasPrecise = precise;
+        precise = !(margin >= kMinFloatMargin);
+        section.setCoeffs(single);
+        if (precise)
+        {
+            // Biquad::highPass / lowPass evaluated in double.
+            const double kPi = 3.14159265358979323846;
+            const double t = std::tan(kPi * static_cast<double>(nyquistSafeDesignHz(fs, freq)) / fs);
+            const double n = high ? t : 1.0 / t;
+            const double nSq = n * n;
+            const double invQ = 1.0 / static_cast<double>(Q);
+            const double c1 = 1.0 / (1.0 + invQ * n + nSq);
+            k[0] = c1;
+            k[1] = high ? -2.0 * c1 : 2.0 * c1;
+            k[2] = c1;
+            k[3] = high ? 2.0 * c1 * (nSq - 1.0) : 2.0 * c1 * (1.0 - nSq);
+            k[4] = c1 * (1.0 - invQ * n + nSq);
+        }
+        // Retuning across the switch point carries the running state over
+        // instead of clearing it, so a swept corner does not click.
+        if (precise && !wasPrecise)
+        {
+            const auto s = section.state();
+            d1 = s.first;
+            d2 = s.second;
+        }
+        else if (!precise && wasPrecise)
+        {
+            section.setState(static_cast<float>(d1), static_cast<float>(d2));
+        }
+    }
+
+    Biquad section;
+    double k[5] = { 1.0, 0.0, 0.0, 0.0, 0.0 };
+    double d1 = 0.0, d2 = 0.0;
+    bool precise = false;
 };
 
 } // namespace duskaudio

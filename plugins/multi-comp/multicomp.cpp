@@ -4654,7 +4654,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
 
     // Analog noise floor enable (optional for CPU savings)
     layout.add(std::make_unique<SnappingBoolParameter>(
-        "noise_enable", "Analog Noise", true));
+        "noise_enable", "Analog Noise", false));
 
     // Oversampling factor (0 = Off, 1 = 2x, 2 = 4x)
     layout.add(std::make_unique<juce::AudioParameterChoice>(
@@ -6983,7 +6983,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     // Only for analog modes - Digital and Multiband are meant to be completely transparent
     // This adds character and prevents complete digital silence
     auto* noiseEnableParam = parameters.getRawParameterValue("noise_enable");
-    bool noiseEnabled = noiseEnableParam ? (*noiseEnableParam > 0.5f) : true; // Default ON
+    bool noiseEnabled = noiseEnableParam ? (*noiseEnableParam > 0.5f) : false; // Default OFF
 
     // Skip noise for Digital (mode 6) and Multiband (mode 7) - they should be transparent
     auto* modeParam = parameters.getRawParameterValue("mode");
