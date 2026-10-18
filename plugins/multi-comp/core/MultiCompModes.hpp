@@ -584,6 +584,7 @@ public:
             case MultiCompMode::FET:
                 for (auto& d : fet) d = FETState{};
                 fetConvolution.reset();
+                transientShaper.reset();   // shared with Studio FET
                 for (int ch = 0; ch < kChannels; ++ch)
                 {
                     inputTransformerFet[ch].reset();
@@ -595,6 +596,7 @@ public:
                 break;
             case MultiCompMode::StudioFET:
                 for (auto& d : studioFet) d = StudioFETState{};
+                transientShaper.reset();   // shared with FET
                 for (int ch = 0; ch < kChannels; ++ch)
                 {
                     inputTransformerStudioFet[ch].reset();
