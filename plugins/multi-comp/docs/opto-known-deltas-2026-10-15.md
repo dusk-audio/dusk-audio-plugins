@@ -1,7 +1,8 @@
 # Opto: known deltas against the UAD LA-2A at campaign close (2026-10-15)
 
-Owner decision 2026-10-15: OPTO ships as it stands. The four fixture-gate readings still over the 1.00 dB bar are recorded
-here with their root cause and left as known deltas. The rest of the probe set, by when it was read: the fifteen
+Owner decision 2026-10-15: OPTO ships as it stands. The four readings still over the 1.00 dB bar (the phase and family
+screen tables, the crest and short-charge fixture-gate rows) are recorded here with their root cause and left as known
+deltas. The rest of the probe set, by when it was read: the fifteen
 screen tables, re-run on the working tree that carries the 2026-10-15 emission shape (commit 743d2347), hold no other
 cell over the bar except two at its edge (settled 1.0007 dB, short 1.0022 dB); the fixture gate (the re-captured core
 fixtures: release, onset, harmonic, crest and short-charge rows) was last read in full on 2026-10-14, before that

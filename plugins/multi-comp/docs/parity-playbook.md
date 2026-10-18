@@ -141,7 +141,7 @@ go through `lab.py` (full DSP from a patched core copy, byte-exact baseline chec
 
 | Mode | Reference | Access | Existing probes and captures | First step |
 |---|---|---|---|---|
-| OPTO | UADx LA-2A | installed | campaign closed 2026-10-15; four synthetic-probe fixture cells left over the bar, plus the settled screen table's edge cell (1.0061 dB since 2026-10-18), see `opto-known-deltas-2026-10-15.md` | Reopen only on a user report: `abx_kit.py focus` on that material first |
+| OPTO | UADx LA-2A | installed | campaign closed 2026-10-15; four synthetic-probe readings left over the bar (phase and family screen tables, crest and short-charge fixture rows), plus the settled screen table's edge cell (1.0061 dB since 2026-10-18), see `opto-known-deltas-2026-10-15.md` | Reopen only on a user report: `abx_kit.py focus` on that material first |
 | FET | UADx 1176 | installed | `fet/static_grid.py`, `fet/taper_sweep.py`; earlier campaign log in memory. State 2026-10-18 (4:1 release depth term landed): 0 of 4,340 probe cells and 0 cells on all 18 music tiers over 1 dB; harmonic rows over 1 dB 7 of 156, worst +3.16 dB (H5 of 100 Hz at the bottom of the knee, 0.95 dB GR); the programme-recovery fixture reads 2.18 dB 50 ms after a short burst (rows 28-31; partial-regression bound 4.0) | Tiered ABX, then the 100 Hz knee rows and the after-burst release |
 | VCA | UADx dbx 160 | installed | `vca/` (18 scripts: tilt, onset, fits); VCA faceplate UI on branch `mc2/dbx160-vca-ui`. State 2026-10-12: 0 cells over 1 dB in every table (music 0 of 270, worst 0.073 dB) | Tiered ABX |
 | BUS | UADx SSL G | demo expired 2026-09-22, parked | `bus/` (137 scripts), accepted at the internal bar 2026-09-21 | Needs a licence before any capture |
