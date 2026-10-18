@@ -299,20 +299,21 @@ inline constexpr bool kOptoLinkAtDriveDefault = true;
 // Held-out knob positions: 0/192 at or above 1 dB; worst 0.987991886 dB. Primary bars passed.
 // These are historical calibration measurements; later changes need their own gates.
 // The values below are the active defaults, including the later release-pot calibration.
-inline constexpr std::array<float, 73> kFetDynamicsDefaults{{
+inline constexpr std::array<float, 79> kFetDynamicsDefaults{{
     0.03f, 0.002f, 5.0f, 0.42f, 0.46f, 0.65f,
     0.8f, 0.51f, 0.56f, 0.82f, 1.0f, 0.1f,
     0.7f, 1.0f, 1.24f, 2.0f, -2.17f, 0.82f,
     2.0f, -1.82f, 0.12f, 0.0f, 0.001f, 1.0e-04f,
     0.2f, 0.0f, 0.0f, 0.0f, 1.0f, 0.5f,
     0.5f, 1.4f, 0.058f, 1.0f, 7.1905f, 0.7186f,
-    0.0f, 1.0f, 1.3517893e-04f, 1.1925094f, -1.5139126f, 1.3369229f,
-    0.2767359f, 1.042f, -0.958f, 0.8151464f, 5.9988933f, 2.1196837f,
+    0.0f, 1.0f, 0.000109248635f, 1.1925094f, -1.5139126f, 1.377548f,
+    0.27719915f, 1.042f, -0.958f, 0.9755126f, 4.641411f, 2.1196837f,
     2.63962f, 25.308857f, 0.010800093f, 0.1923526f, 0.6947493f, 0.0f,
     0.0f, 1.7396628f, 13.263551f, 123.67461f, 0.85f, 1.17f,
-    0.069821596f, 0.12f, 0.85f, 0.55660456f, 0.0f, 1.3020016f,
+    0.069821596f, 0.12f, 0.85f, 0.6094955f, 0.0f, 1.3020016f,
     3.9303212f, 5.0f, 1.0f, 0.043717176f, 9.846549f, 3.0176f,
-    0.6949f}};
+    0.6949f, 5.8249526f, 0.72f, -0.1f, 0.4606911f, 0.4356033f,
+    0.3f}};
 
 // C5 90-degree all-pass pair: first-order sections (p - s)/(p + s), pole
 // frequencies in Hz, mapped per sample rate by the plain bilinear transform.
@@ -349,6 +350,11 @@ struct FetDynamicsParams
     float fbTailRatioExponent;
     float fbTailKneeDb;
     float lfAheadHz, lfAheadQ;
+    float fbReleaseKneeShare, fbReleaseKneeDb;
+    float fbRectifierImbalance;
+    float fbReleaseKneeKnobExponent;
+    float fbChargeRiseOnly;
+    float fbStaticK3KnobShare;
 
     static FetDynamicsParams fromArray(const std::array<float, kFetDynamicsDefaults.size()>& v) noexcept
     {
@@ -419,6 +425,12 @@ struct FetDynamicsParams
         p.fbTailKneeDb = v[70];
         p.lfAheadHz = v[71];
         p.lfAheadQ = v[72];
+        p.fbReleaseKneeShare = v[73];
+        p.fbReleaseKneeDb = v[74];
+        p.fbRectifierImbalance = v[75];
+        p.fbReleaseKneeKnobExponent = v[76];
+        p.fbChargeRiseOnly = v[77];
+        p.fbStaticK3KnobShare = v[78];
         return p;
     }
 };
@@ -950,6 +962,7 @@ private:
         double feedbackHpZ1 = 0.0, feedbackHpZ2 = 0.0;
         double partnerHpZ1 = 0.0, partnerHpZ2 = 0.0;
         float feedbackLag = 0.0f;
+        float riseOnlyPreviousMagnitude = 0.0f;   // fbChargeRiseOnly
         std::array<double, 7> analyticAx{}, analyticAy{}, analyticBx{}, analyticBy{};
         int transient = 0, sagCounter = 0, programmeSilentSamples = 0;
         bool recoveryWasSupported = false;
@@ -1459,6 +1472,74 @@ private:
             0.003912f, 0.004212f, 0.003316f, 0.002510f, 0.002094f, 0.001966f,
             0.002194f, 0.003210f, 0.005215f, 0.006591f, 0.009206f, 0.012971f,
             0.016280f, 0.018549f}};
+        gainReductionDb = std::clamp(gainReductionDb, 0.0f, 40.0f);
+        for (size_t i = 1; i < reductionDb.size(); ++i)
+            if (gainReductionDb <= reductionDb[i])
+            {
+                const float fraction = (gainReductionDb - reductionDb[i - 1])
+                    / (reductionDb[i] - reductionDb[i - 1]);
+                return coefficients[i - 1]
+                    + fraction * (coefficients[i] - coefficients[i - 1]);
+            }
+        return coefficients.back();
+    }
+
+    static float fetFeedbackK3(float gainReductionDb) noexcept
+    {
+        // C6 arm only (2026-10-16). The 1176's harmonics are a static part, a
+        // function of the reduction alone, plus the side chain's ripple, which
+        // the C6 loop produces itself (proportional to the release rate). This
+        // is the static part: per capture point of fresh 1176 grids (1 kHz and
+        // 100 Hz, Inputs .2 / .4 / .8, six Release positions; no test row) the
+        // coefficient that closes the 1176's Release-independent part against
+        // the cell's own, in the call site's -gainToDecibels(envelope + 0.001f)
+        // coordinate; the three Inputs agree on one law. The older tables beside
+        // it were fitted to ripple-inclusive surfaces of the earlier smooth cell
+        // and stay with the arms that still run it (All-buttons, C6 off).
+        // Cubic (third harmonic), sign change near 23 dB GR.
+        constexpr std::array<float, 18> reductionDb{{
+            0.0f, 0.5f, 1.0f, 2.0f, 3.0f, 4.5f, 6.0f, 8.0f, 10.0f, 12.5f, 15.0f, 18.0f, 21.0f, 24.0f, 27.0f, 30.0f, 34.0f, 40.0f}};
+        constexpr std::array<float, 18> coefficients{{
+            -0.0037833666f, -0.0042293137f, -0.0047683814f, -0.0045133834f, -0.0042467434f, -0.0041645253f, -0.004137338f, -0.00410022f, -0.0040682144f, -0.0035717501f, -0.0029148753f, -0.0017307282f, -0.00040785203f, 1.9968795e-05f, -0.00047855233f, -0.0002712117f, 0.00094335334f, 0.0021579184f}};
+        gainReductionDb = std::clamp(gainReductionDb, 0.0f, 40.0f);
+        for (size_t i = 1; i < reductionDb.size(); ++i)
+            if (gainReductionDb <= reductionDb[i])
+            {
+                const float fraction = (gainReductionDb - reductionDb[i - 1])
+                    / (reductionDb[i] - reductionDb[i - 1]);
+                return coefficients[i - 1]
+                    + fraction * (coefficients[i] - coefficients[i - 1]);
+            }
+        return coefficients.back();
+    }
+
+    static float fetFeedbackK2(float gainReductionDb) noexcept
+    {
+        // C6 arm only: the even static part, as fetFeedbackK3 (negative below
+        // ~9 dB GR: the 1176's sub-knee second harmonic sits at 180 degrees).
+        constexpr std::array<float, 18> reductionDb{{
+            0.0f, 0.5f, 1.0f, 2.0f, 3.0f, 4.5f, 6.0f, 8.0f, 10.0f, 12.5f, 15.0f, 18.0f, 21.0f, 24.0f, 27.0f, 30.0f, 34.0f, 40.0f}};
+        constexpr std::array<float, 18> coefficients{{
+            -0.0037055267f, -0.003938718f, -0.0040902914f, -0.0029706408f, -0.0024666698f, -0.0020234112f, -0.0013229456f, -0.00048062025f, 0.00044876084f, 0.0016075863f, 0.0029288072f, 0.0044594146f, 0.006332474f, 0.009714308f, 0.014136585f, 0.016536158f, 0.01659756f, 0.016658964f}};
+        gainReductionDb = std::clamp(gainReductionDb, 0.0f, 40.0f);
+        for (size_t i = 1; i < reductionDb.size(); ++i)
+            if (gainReductionDb <= reductionDb[i])
+            {
+                const float fraction = (gainReductionDb - reductionDb[i - 1])
+                    / (reductionDb[i] - reductionDb[i - 1]);
+                return coefficients[i - 1]
+                    + fraction * (coefficients[i] - coefficients[i - 1]);
+            }
+        return coefficients.back();
+    }
+
+    static float fetFeedbackLowFrequencyK2(float gainReductionDb) noexcept
+    {
+        // C6 arm only: the 100 Hz even static part, as fetFeedbackK3.
+        constexpr std::array<float, 18> reductionDb{{
+            0.0f, 0.5f, 1.0f, 2.0f, 3.0f, 4.5f, 6.0f, 8.0f, 10.0f, 12.5f, 15.0f, 18.0f, 21.0f, 24.0f, 27.0f, 30.0f, 34.0f, 40.0f}};
+        constexpr std::array<float, 18> coefficients{{
+            -0.0005223149f, -0.0004777339f, -0.00043315292f, -0.00045875664f, -0.000630866f, -0.0010258019f, 9.901148e-05f, 0.0014718693f, 0.0021234842f, 0.0023899924f, 0.0021970607f, 0.0020121632f, 0.0020844045f, 0.0020459061f, 0.002141804f, 0.0021757928f, 0.0021054293f, 0.0020350656f}};
         gainReductionDb = std::clamp(gainReductionDb, 0.0f, 40.0f);
         for (size_t i = 1; i < reductionDb.size(); ++i)
             if (gainReductionDb <= reductionDb[i])
@@ -3529,6 +3610,9 @@ private:
             * releaseOffset * releaseOffset
             - fetDynamics.fbReleaseSlope * releaseOffset;
         float releaseFastEnd = std::max(0.0f, 2.0f * releaseOffset);
+        // log10 of the pot's resistance over its value at the fast end, i.e.
+        // log10(1 / k) for the release rate k relative to Release 0.85-1.
+        float releaseKnobFromFast = 0.0f;
         if (fetDynamics.fbReleasePotFixed > 0.0f)
         {
             const float potEnd = fetDynamics.fbReleasePotEnd;
@@ -3542,6 +3626,8 @@ private:
             releaseKnobDecades = std::log10(
                 (fetDynamics.fbReleasePotFixed + travel)
                 / (fetDynamics.fbReleasePotFixed + travelAtHalf));
+            releaseKnobFromFast = std::log10(
+                (fetDynamics.fbReleasePotFixed + travel) / fetDynamics.fbReleasePotFixed);
             // Past the pot's end nothing moves, so the depth law's fast end
             // follows the travel as well: 0 at Release 0.5, 1 at the end.
             releaseFastEnd = std::max(
@@ -3567,15 +3653,44 @@ private:
                 * std::exp(-decade * fetDynamics.fbAttackLagSlope * attackOffset)
                 * std::max(attackSeconds, 1.0e-7f) * sr))
             : 1.0f;
-        const float charge = fullCharge * lagStep;
+        // fbChargeRiseOnly s (0 = off): a diode-fed capacitor charges while the
+        // rectified drive rises; this share of the falling flank's charge is
+        // withheld. Measured on the 1176's ripple (2026-10-16): it turns the
+        // ripple's phase forward as the 1176's sits, without changing a settled
+        // sine's level (the tip balance below is told) or the first-cycle peak.
+        const float riseOnly = std::clamp(fetDynamics.fbChargeRiseOnly, 0.0f, 1.0f);
+        const bool driveFalling = magnitude < d.riseOnlyPreviousMagnitude;
+        d.riseOnlyPreviousMagnitude = magnitude;
+        const float charge = riseOnly > 0.0f && driveFalling
+            ? fullCharge * lagStep * (1.0f - riseOnly) : fullCharge * lagStep;
+        // Knee release (fbReleaseKneeShare a, fbReleaseKneeDb g0,
+        // fbReleaseKneeKnobExponent beta; a = 0 off). At 4:1, whose soft knee
+        // is the onset remap below, the fast capacitor lets go more slowly
+        // near the knee: its leak time x (1 + a (1 / k)^beta exp(-G / g0)), G the
+        // reduction the depth law reads, k the pot's release rate over its fast
+        // end. Read from the 1176's knee probes (100 Hz and 1 kHz, 1 dB steps
+        // across the knee, Release 0 / .5 / .666 / 1, 2026-10-15/16): its
+        // Release-proportional ripple there is 2.1x / 1.8x / 1.5x smaller than the
+        // plain cell's at 0.27 / 0.78 / 1.39 dB GR, and more so at slow Release
+        // positions (about k^0.4 on top of k). The same slowing is the 1176's
+        // last 10 % of a release step (rel90). 20:1 already matches without it.
+        const float kneeReleaseFactor = fetDynamics.fbReleaseKneeShare > 0.0f && ratioIndex == 0
+            ? 1.0f + fetDynamics.fbReleaseKneeShare
+                * std::exp(decade * fetDynamics.fbReleaseKneeKnobExponent * releaseKnobFromFast)
+                * std::exp(
+                -(d.fastGrDb + d.slowGrDb + tailAppliedDb)
+                    / std::max(fetDynamics.fbReleaseKneeDb, 1.0e-3f))
+            : 1.0f;
         const float leak = std::exp(
-            -1.0f / (std::max(releaseSeconds, 1.0e-4f) * sr));
+            -1.0f / (std::max(releaseSeconds * kneeReleaseFactor, 1.0e-4f) * sr));
         // A sine settles with its peaks a little above the threshold: the
         // tips, +/- phi around each peak, charge what the leak removes over
         // the cycle, (2 / pi) (tan phi - phi) = c (1 - leak) / fullCharge. The
         // threshold is lowered by that overshoot, 1 / cos phi, so the settled
         // loop sits on the static law, which was measured with sines.
-        const float tipBalance = 1.57079633f * (1.0f - leak) / fullCharge;
+        const float tipBalance = riseOnly > 0.0f
+            ? 1.57079633f * (1.0f - leak) / (fullCharge * (1.0f - 0.5f * riseOnly))
+            : 1.57079633f * (1.0f - leak) / fullCharge;
         const float slowShare = std::max(fetDynamics.fbSlowShare, 0.0f);
         const float slowCeilingDb = std::max(fetDynamics.fbSlowCeilingDb, 1.0e-3f);
         // The tail population's settled size, scaled by the ratio coordinate
@@ -3683,9 +3798,31 @@ private:
             const float tip = std::min(
                 std::cbrt(3.0f * tipBalance * c / weight), 1.5f);
             const float phase = tip - 0.13333333f * tip * tip * tip;
+            float tipRatio = 1.0f / std::cos(phase);
+            if (fetDynamics.fbRectifierImbalance != 0.0f)
+            {
+                // Two unequal tips per cycle share the charge one period needs
+                // (a tip charges ~ overshoot^1.5): the stronger half's overshoot
+                // x solves x^1.5 + max(0, (1 - e)(1 + x) - 1)^1.5 = 2 x0^1.5, x0
+                // the symmetric one, so a settled sine's stronger peak still
+                // sits on the static law.
+                const float e = std::min(std::abs(fetDynamics.fbRectifierImbalance), 0.9f);
+                const float x0 = std::max(tipRatio - 1.0f, 0.0f);
+                const float target = 2.0f * x0 * std::sqrt(x0);
+                float x = x0;
+                for (int k = 0; k < 6; ++k)
+                {
+                    const float weak = std::max(0.0f, (1.0f - e) * (1.0f + x) - 1.0f);
+                    const float g = x * std::sqrt(x) + weak * std::sqrt(weak) - target;
+                    const float gp = 1.5f * std::sqrt(x) + 1.5f * (1.0f - e) * std::sqrt(weak);
+                    if (!(gp > 0.0f)) break;
+                    x = std::max(0.0f, x - g / gp);
+                }
+                tipRatio = 1.0f + x;
+            }
             const float ratio = std::exp(dbToNeper
                 * (levelDb - (c + slowNow) / transientFactor - settledLevelDb))
-                / std::cos(phase);
+                * tipRatio;
             derivative = -2.0f * u * ratio * dbToNeper
                 * ((1.0f + appliedSlope) / transientFactor
                    + (1.0f + slowSlope) * levelSlope
@@ -3840,8 +3977,29 @@ private:
             // Vintage FET saturation is inside the feedback loop.  The
             // sidechain must see this signal, not the post-envelope shortcut.
             const float grDb = -gainToDecibels(d.envelope + 0.001f);
-            const float k2 = fetBroadbandK2(grDb);
-            const float k3 = fetBroadbandK3(grDb);
+            const float k2 = feedback ? fetFeedbackK2(grDb) : fetBroadbandK2(grDb);
+            const float k3 = feedback ? fetFeedbackK3(grDb) : fetBroadbandK3(grDb);
+            // fbStaticK3KnobShare rho3 (0 = off): the FET's static cubic grows with
+            // the Release pot's rate k (k = 1 at Release 0.85-1, 0.217 at the
+            // nominal position). Measured on the 1176 (2026-10-15 grids, the
+            // Release-axis split at 0 dB GR, 1 kHz and 100 Hz, Inputs .2 / .4 / .8):
+            // below the knee its third harmonic is S (1 + 0.30 k), the
+            // Release-proportional part in phase with the static one (-10.2 to
+            // -10.6 dB at k = 1) and no loop ripple to carry it; the FET's gate
+            // network ties to the control node through the pot. It acts on the
+            // settled domain the law was measured in (the source bounded at full
+            // scale); an onset's first-cycle excursion keeps the bounded cubic above.
+            float staticKnobK3 = 0.0f;
+            if (feedback && fetDynamics.fbStaticK3KnobShare != 0.0f)
+            {
+                const float potSpan = std::max(
+                    1.0e-3f, fetDynamics.fbReleasePotEnd - fetDynamics.fbReleasePotStart);
+                const float travel = std::min(1.0f, std::max(0.0f,
+                    (fetDynamics.fbReleasePotEnd - fetReleasePosition(
+                        p.fetRelease.load(std::memory_order_relaxed))) / potSpan));
+                staticKnobK3 = fetDynamics.fbStaticK3KnobShare * fetDynamics.fbReleasePotFixed
+                    / std::max(fetDynamics.fbReleasePotFixed + travel, 1.0e-6f);
+            }
             // `fetBroadbandK3` is a settled small-signal fit. On the first
             // uncompressed cycle, Input can drive this internal node tens of
             // times beyond every fitted row; extrapolating x^3 there creates
@@ -3857,6 +4015,7 @@ private:
                 saturated, -kFetBroadbandK3SourceLimit,
                 kFetBroadbandK3SourceLimit);
             const float sq = saturated * saturated;
+            const float saturatedBeforeColour = saturated;
             const float alpha = 1.0f / (1.0f + kDuskTwoPi * 10.0f / sr);
             const float h2 = alpha * (d.dc + sq - d.prevSq);
             d.dc = h2;
@@ -3888,7 +4047,7 @@ private:
             const float broadbandHarmonicDrive = std::clamp(
                 grDb / 14.0f, 0.0f, 1.0f);
             const float broadbandH5 = d.colourPeak * broadbandHarmonicDrive
-                * fetBroadbandK5(grDb)
+                * (feedback ? 0.0f : fetBroadbandK5(grDb))
                 * (16.0f * colour5 - 20.0f * colour3
                     + 5.0f * colourNormalised);
             // The hardware's low-frequency transformer asymmetry grows with
@@ -3914,7 +4073,8 @@ private:
                 * (d.colourLowDc + colourLowSq - d.colourLowPrevSq);
             d.colourLowDc = colourLowH2;
             d.colourLowPrevSq = colourLowSq;
-            const float lowFrequencyK2 = fetLowFrequencyK2(grDb);
+            const float lowFrequencyK2 = feedback
+                ? fetFeedbackLowFrequencyK2(grDb) : fetLowFrequencyK2(grDb);
             const float colourLowPeakRelease = std::exp(-1.0f / (0.1f * sr));
             const float colourLowerAbs = std::abs(d.colourLower);
             d.colourLowPeak = colourLowerAbs >= d.colourLowPeak
@@ -3930,8 +4090,10 @@ private:
             const float low4 = low2 * low2;
             const float low5 = low4 * lowNormalised;
             const float lowHarmonicDrive = std::clamp(grDb / 14.0f, 0.0f, 1.0f);
-            const float lowFrequencyK3 = fetLowFrequencyK3(grDb);
-            const float lowFrequencyK5 = fetLowFrequencyK5(grDb);
+            // The C6 loop's own ripple supplies the odd harmonics these fitted
+            // terms stood in for on the earlier cell (2026-10-15/16).
+            const float lowFrequencyK3 = feedback ? 0.0f : fetLowFrequencyK3(grDb);
+            const float lowFrequencyK5 = feedback ? 0.0f : fetLowFrequencyK5(grDb);
             const float lowT3 = 4.0f * low3 - 3.0f * lowNormalised;
             const float shallowNormalised = std::clamp(
                 gained / std::max(d.kneePeak, 1.0e-9f), -1.0f, 1.0f);
@@ -3962,7 +4124,7 @@ private:
             const float shallowDriveDb = gainToDecibels(
                 std::max(d.kneePeak, 1.0e-12f));
             const std::array<float, 4> shallowOddCorrection
-                = ratioIndex == 0
+                = ratioIndex == 0 && !feedback
                     ? fetShallowKneeOddCorrection(shallowDriveDb)
                     : std::array<float, 4>{{0.0f, 0.0f, 0.0f, 0.0f}};
             const float inputPosition = std::clamp(
@@ -3970,12 +4132,12 @@ private:
             const float releasePosition = fetReleasePosition(
                 p.fetRelease.load(std::memory_order_relaxed));
             const std::array<float, 4> broadbandComplexH3Correction
-                = ratioIndex == 0
+                = ratioIndex == 0 && !feedback
                     ? fetBroadbandComplexH3Correction(
                         inputPosition, releasePosition, shallowDriveDb, fs)
                     : std::array<float, 4>{{0.0f, 0.0f, 0.0f, 0.0f}};
             const std::array<float, 4> broadbandComplexH5Correction
-                = ratioIndex == 0
+                = ratioIndex == 0 && !feedback
                     ? fetBroadbandComplexH5Correction(
                         inputPosition, releasePosition, shallowDriveDb, fs)
                     : std::array<float, 4>{{0.0f, 0.0f, 0.0f, 0.0f}};
@@ -4005,6 +4167,11 @@ private:
             saturated += k2 * h2 + lowFrequencyK2 * colourLowH2
                 + k3 * k3Source * k3Source * k3Source
                 + broadbandH5 + lowHarmonics;
+            if (staticKnobK3 != 0.0f)
+            {
+                const float settledSource = std::clamp(saturatedBeforeColour, -1.0f, 1.0f);
+                saturated += k3 * staticKnobK3 * settledSource * settledSource * settledSource;
+            }
         }
 
         // FET junction capacitance choke in the feedback path.  Studio FET
@@ -4074,8 +4241,23 @@ private:
                 const double partner = highPass(
                     partnerSample * inputGain, d.partnerHpZ1, d.partnerHpZ2);
                 partnerSample = 0.0f;
+                // fbRectifierImbalance (eps; 0 = symmetric): the two halves of the
+                // full-wave rectifier do not weigh alike, eps < 0 the positive
+                // half weighted 1 + eps, eps > 0 the negative 1 - eps. Measured on
+                // the 1176 (2026-10-15/16): its second harmonic above the knee is
+                // mostly proportional to the release rate (a once-per-cycle ripple:
+                // the two polarities charge the capacitor unequally), its -42 dBFS
+                // attack is slower than a symmetric rectifier's, and its antiphase
+                // stereo link reads -0.126 dB at 997 Hz -12 dBFS (the partner
+                // supplies the strong half to the own channel's weak half-cycles).
+                const double imbalance = fetDynamics.fbRectifierImbalance;
+                const auto rectify = [imbalance](double x) noexcept {
+                    if (imbalance > 0.0 && x < 0.0) return -x * (1.0 - imbalance);
+                    if (imbalance < 0.0 && x > 0.0) return x * (1.0 + imbalance);
+                    return std::abs(x);
+                };
                 feedbackMagnitude = static_cast<float>(
-                    std::max(std::abs(own), std::abs(partner)));
+                    std::max(rectify(own), rectify(partner)));
                 detect = feedbackMagnitude;
             }
             else if (fetDynamics.detChargeOn > 0.5f)
