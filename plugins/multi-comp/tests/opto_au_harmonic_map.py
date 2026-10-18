@@ -330,13 +330,35 @@ def capture_frequency_grid(plugin: str, tag: str, grid: str,
         for pr, limit in settings:
             label = f"g{gain:.2f}_pr{pr:.2f}_{'limit' if limit else 'comp'}"
             destination = OUT / f"{grid}-captures" / tag / plugin / label
-            if (destination / "complete.json").exists() and not refresh:
+            manifest = destination / "complete.json"
+            if manifest.exists() and not refresh:
                 print(f"reuse {grid} {plugin} {label}")
                 if os.environ.get("OPTO_ARCHIVE_AFTER_CAPTURE", "1") == "1":
                     archive_audio_files(destination)
                 continue
+            # A filtered refresh re-renders only the selected stems; the others
+            # stay as the build that rendered them left them. One manifest must
+            # not stamp two builds, so refuse another build's captures, and on
+            # the same build keep the untouched stems' hashes in the manifest.
+            previous = None
+            if frequency_filter and manifest.exists():
+                try:
+                    previous = json.loads(manifest.read_text())
+                except ValueError as error:   # bad JSON or bad UTF-8
+                    raise RuntimeError(f"unreadable capture manifest {manifest}") from error
+            if previous is not None and previous.get(
+                    "component_binary_sha256") != component_hash(plugin):
+                # Unsetting the filter would reuse these captures; an empty
+                # filter refreshes every frequency.
+                raise RuntimeError(
+                    f"{destination} was captured by another {plugin} build; "
+                    "refresh every frequency: set OPTO_GRID_FREQUENCIES='' (empty)")
             print(f"capture {grid} {plugin} {label}", flush=True)
-            run_host(plugin, destination, inputs, pr, gain, limit)
+            complete = run_host(plugin, destination, inputs, pr, gain, limit)
+            if previous is not None:
+                for key in ("inputs", "outputs"):
+                    complete[key] = {**previous.get(key, {}), **complete[key]}
+                atomic_json(manifest, complete)
             if os.environ.get("OPTO_ARCHIVE_AFTER_CAPTURE", "1") == "1":
                 archive_audio_files(destination)
 
