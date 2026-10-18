@@ -31,21 +31,24 @@ enum ParamId
     // Physical 1..11 tempo-sync detent. Appended so the shipped semantic
     // kParamSyncDivision remains available for old sessions and automation.
     kParamEchoRateNote = 21,
-    kParamCount = 22
+    kParamNoise = 22,        // repro noise bed level above the captured floor; 0 = as captured
+    kParamHumFrequency = 23, // mains hum fundamental: 0 = 60 Hz, 1 = 50 Hz
+    kParamCount = 24
 };
 
-// Only IDs 0-14 have ever shipped (tags tape-echo-daf-v0.1.0 through v0.1.2);
-// those indices are saved-session ABI and must never move. IDs 15 and above
-// were added for the unreleased 1.0.0 and are still free to change until it
-// tags — which is why the retired Loop Splice slot was deleted outright rather
-// than kept as a hidden placeholder.
+// IDs 0-14 shipped in 0.1.x (tags tape-echo-daf-v0.1.0 through v0.1.2) and
+// IDs 15-21 in 1.0.x (tape-echo-2-v1.0.2 onward). All of those indices are
+// saved-session ABI and must never move; new parameters are appended.
 static_assert(kParamDryLevel == 9 && kParamBypass == 13 && kParamOutLevel == 14,
               "Tape Echo 0.1.x parameter IDs are part of the saved-session ABI");
 static_assert(kParamOutputVolume == 15 && kParamEchoPan == 16
               && kParamReverbPan == 17 && kParamInputSend == 18
               && kParamPeakLevel == 19 && kParamMix == 20
-              && kParamEchoRateNote == 21 && kParamCount == 22,
-              "Tape Echo 1.0.0 parameter layout must remain append-only");
+              && kParamEchoRateNote == 21,
+              "Tape Echo 1.0.x parameter IDs are part of the saved-session ABI");
+static_assert(kParamNoise == 22 && kParamHumFrequency == 23
+              && kParamCount == 24,
+              "Tape Echo parameter layout must remain append-only");
 
 // The compatibility pair is ORDER-DEPENDENT and that ordering is load-bearing.
 //
@@ -334,17 +337,21 @@ static constexpr TeParam kTeParams[kParamCount] =
     { "peak_level",     0.0f,  3.0f, 0.0f }, // kParamPeakLevel (output-only)
     { "mix",            0.0f,  1.0f, 0.5f }, // kParamMix
     { "echo_rate_note", 1.0f, 11.0f, 5.0f }, // kParamEchoRateNote (physical detent)
+    { "noise",          0.0f,  1.0f, 0.0f }, // kParamNoise
+    { "hum_frequency",  0.0f,  1.0f, 0.0f }, // kParamHumFrequency (0 = 60 Hz, 1 = 50 Hz)
 };
 
 // Parameters a preset (factory or user) is allowed to carry. The meter outputs
 // and the host-designated bypass are excluded: the meters are not controls, and
-// bypass must never be fought by a preset load.
+// bypass must never be fought by a preset load. Hum Frequency is excluded too:
+// it follows the player's mains region, not the sound being recalled.
 static inline bool teIsPresetParam(uint32_t index)
 {
     return index < kParamCount
         && index != kParamOutLevel
         && index != kParamPeakLevel
-        && index != kParamBypass;
+        && index != kParamBypass
+        && index != kParamHumFrequency;
 }
 
 // Requested head-1 delay for a division at the given tempo. The plugin wrapper
@@ -370,6 +377,7 @@ struct TapeEchoPreset
     float reverbPan = 0.5f;
     float inputSend = 1.0f;
     float mix = 0.5f;
+    float noise = 0.0f; // every factory preset keeps the captured noise floor
     // No bypass field: see teIsPresetParam — a recall never touches the
     // host-designated bypass, so a preset must not be able to carry one.
 };

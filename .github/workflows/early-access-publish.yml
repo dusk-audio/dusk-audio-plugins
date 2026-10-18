@@ -1,0 +1,40 @@
+name: Publish early-access releases
+
+# Plugin releases tagged while EARLY_ACCESS_DAYS is set go out as drafts and are
+# mirrored to the private early-access repo for Patreon members (see
+# .github/scripts/early_access.sh). This job makes each draft public on the date
+# in its release notes and merges the website branch /release-plugin left for it.
+
+on:
+  schedule:
+    - cron: '17 14 * * *'   # daily, 14:17 UTC
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Publish this tag now, ahead of its date (leave empty for the normal daily run)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: early-access-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Publish due releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Same PAT the JUCE release job uses to push website version bumps.
+          WEBSITE_TOKEN: ${{ secrets.GH_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: .github/scripts/early_access.sh publish-due "$TAG"

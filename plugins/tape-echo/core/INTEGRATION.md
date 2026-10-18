@@ -45,6 +45,12 @@ comparison can no longer be used as a null control. The bed is still gated by
 Power (bypass returns the input untouched) and by Mix = 0 (dry-only output
 carries no wet path at all).
 
+Noise scales that bed and is exactly unity at 0, so a render at Noise 0 and
+60 Hz hum is byte-identical to a build without the two controls; that pair is
+the null control for the noise path. Measured at the output with silent input
+and default Echo Volume, Mix and Output Volume (48 kHz, RMS): −138/−132/−126
+dBFS for New/Used/Old at Noise 0, and −78/−72/−66 dBFS at Noise 1.
+
 ## Parameter table
 
 | ID | Name          | Setter            | Range      | Default | Notes |
@@ -71,6 +77,8 @@ carries no wet path at all).
 | 19 | Record Peak   | `getRecordPeakLevel` | 0–3 (out) | —     | transient record-path peak with a 300 ms release |
 | 20 | Mix           | `setMix`          | 0–1        | 0.5     | dry/combined-wet crossfade; 0 = dry, 0.5 = both paths at unity, 1 = wet-only |
 | 21 | Echo Rate Note | (shell-level)    | 1–11 (int) | 5       | physical tempo-sync detent; its division table follows the leading active playback head, matching the reference tape echo |
+| 22 | Noise         | `setNoise`        | 0–1        | 0.0     | linear-in-dB lift of the whole repro noise bed (hum, bed, hiss): 0 = captured floor, 1 = +60 dB; multiplies with the Tape Age 1:2:4 law; 30 ms smoothing |
+| 23 | Hum Frequency | `setHumFrequency50` | 60/50 Hz | 60 Hz   | mains hum fundamental; harmonic weights unchanged; switching swaps the oscillator rotation only, so it is click-free; not a preset parameter |
 
 Mix uses a unity-overlap balance law so the 50% default reproduces the
 previous parallel dry-plus-wet output exactly. Below 50% the dry path remains

@@ -98,6 +98,18 @@ namespace
     constexpr float kAgeHumGain  = 0.000000923f;
     constexpr float kAgeBedGain  = 0.00000647f;
     constexpr float kAgeHissGain = 0.000001637f;
+    // The captured floor sits near -112 dBFS at Old, far below a hardware
+    // unit's. The Noise control raises the whole bed by up to this much; its
+    // minimum is exactly the captured level.
+    constexpr float kNoiseRangeDb = 60.0f;
+    constexpr float kHumHz[2] = { 60.0f, 50.0f };
+
+    // Exactly 1.0 at the control's minimum, so the default path multiplies the
+    // captured bed by one and stays bit-identical to builds without the knob.
+    inline float noiseGainFor(float noise01) noexcept
+    {
+        return std::pow(10.0f, kNoiseRangeDb * noise01 * (1.0f / 20.0f));
+    }
 
     constexpr float kTwoPi = 6.28318530717958647692f;
 
@@ -815,6 +827,7 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     wowFlutterSmoother.prepare(fs, 0.05f);
     powerSmoother.prepare(fs, 0.03f);
     ageSmoother.prepare(fs, 0.10f);
+    noiseGainSmoother.prepare(fs, 0.03f);
     hissVoice.setCoeffs(Biquad::lowPass(
         fs, safeBiquadFrequency(fs, 1912.5f), 0.70710678f));
     hissCeiling.setCoeffs(Biquad::shelf(
@@ -825,8 +838,11 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     ageBedLowPass.setCoeffs(Biquad::lowPass(
         fs, safeBiquadFrequency(fs, 427.7f), 3.0f));
     wobbleLP.setCutoff(5.0f, fs);
-    ageHumRotSin = std::sin(kTwoPi * 60.0f / (float)fs);
-    ageHumRotCos = std::cos(kTwoPi * 60.0f / (float)fs);
+    for (int i = 0; i < 2; ++i)
+    {
+        ageHumRateSin[i] = std::sin(kTwoPi * kHumHz[i] / (float)fs);
+        ageHumRateCos[i] = std::cos(kTwoPi * kHumHz[i] / (float)fs);
+    }
 
     // Snap smoothers to current parameter values so prepare() never glides.
     const auto& m = kModeTable[pMode.load(std::memory_order_relaxed) - 1];
@@ -852,6 +868,7 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     wowFlutterSmoother.snap(pWowFlutter.load(std::memory_order_relaxed));
     powerSmoother.snap(1.0f - pBypass.load(std::memory_order_relaxed));
     ageSmoother.snap(pTapeAge.load(std::memory_order_relaxed));
+    noiseGainSmoother.snap(noiseGainFor(pNoise.load(std::memory_order_relaxed)));
     lastPlaybackCutoff = -1.0f;
     lastAntiAliasCutoff = -1.0f;
     lastAgeContourDb = 999.0f;
@@ -1027,6 +1044,11 @@ void TapeEchoDSP::refreshBlockRateControls()
     wowFlutterSmoother.setTarget(pWowFlutter.load(std::memory_order_relaxed));
     powerSmoother.setTarget(1.0f - pBypass.load(std::memory_order_relaxed));
     ageSmoother.setTarget(pTapeAge.load(std::memory_order_relaxed));
+    noiseGainSmoother.setTarget(
+        noiseGainFor(pNoise.load(std::memory_order_relaxed)));
+    const int humIndex = pHum50.load(std::memory_order_relaxed) > 0.5f ? 1 : 0;
+    ageHumRotSin = ageHumRateSin[humIndex];
+    ageHumRotCos = ageHumRateCos[humIndex];
 
     // Playback bandwidth is proportional to tape speed. Tape condition splits
     // the wear into a broad 5 kHz shoulder and a steeper upper ceiling: this
@@ -1230,7 +1252,7 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             ageHumCos *= inverseMagnitude;
             ageHumRenormalize = 0u;
         }
-        const float reproAgeNoise = ageNoiseScale
+        const float reproAgeNoise = noiseGainSmoother.next() * ageNoiseScale
             * (kAgeHumGain * ageHum
                + kAgeBedGain
                    * ageBedLowPass.process(
@@ -1274,9 +1296,16 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                 - kPreampLatencySamples,
             4.0f, maxDelaySamples);
 
-        const float g1 = headGain[0].next() * kHeadTrim[0];
-        const float g2 = headGain[1].next() * kHeadTrim[1];
-        const float g3 = headGain[2].next() * kHeadTrim[2];
+        const float head1 = headGain[0].next();
+        const float head2 = headGain[1].next();
+        const float head3 = headGain[2].next();
+        const float g1 = head1 * kHeadTrim[0];
+        const float g2 = head2 * kHeadTrim[1];
+        const float g3 = head3 * kHeadTrim[2];
+        // The bed is repro-head noise: with no head selected (Reverb Only)
+        // nothing plays it back. Every head mode sums to at least 1, so this
+        // is unity there and only follows the 15 ms mode ramp to and from zero.
+        const float reproNoiseGate = std::min(1.0f, head1 + head2 + head3);
 
         // Intensity mapped past unity loop gain: > ~0.75 the loop exceeds
         // unity for small signals and the in-loop tape saturation clamps it
@@ -1681,7 +1710,7 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
 
         // Echo output path only: bass/treble shelves (dry and reverb
         // are unaffected, matching the hardware layout).
-        float echoWet = amplifiedHeadSum + reproAgeNoise;
+        float echoWet = amplifiedHeadSum + reproNoiseGate * reproAgeNoise;
         if (bassShelfActive)
             echoWet = ch.bassShelf.process(echoWet);
         if (trebleShelfActive)

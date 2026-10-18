@@ -1,0 +1,33 @@
+name: Early-access tests
+
+# Runs tests/check_early_access.sh (a fake gh and a throwaway repo; no network)
+# whenever the early-access script, its test, or a release workflow that calls
+# it changes.
+on:
+  pull_request:
+    paths:
+      - '.github/scripts/early_access.sh'
+      - 'tests/check_early_access.sh'
+      - '.github/workflows/build.yml'
+      - '.github/workflows/daf-build.yml'
+      - '.github/workflows/daf-release.yml'
+      - '.github/workflows/early-access-publish.yml'
+      - '.github/workflows/early-access-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  early-access:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Test early_access.sh
+        shell: bash
+        run: ./tests/check_early_access.sh

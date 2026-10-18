@@ -59,8 +59,8 @@ public:
     void setMultibandParameter(int band, MultibandParameter parameter, float value) noexcept;
     void setMode(int value) noexcept { setParameter(Parameter::Mode, static_cast<float>(value)); }
     void setBypass(bool value) noexcept { params.bypass.store(value, std::memory_order_relaxed); }
-    void setMix(float value) noexcept { params.mix.store(value, std::memory_order_relaxed); }
-    void setStereoLink(float value) noexcept { params.stereoLink.store(value, std::memory_order_relaxed); }
+    void setMix(float value) noexcept { setParameter(Parameter::Mix, value); }
+    void setStereoLink(float value) noexcept { setParameter(Parameter::StereoLink, value); }
     void setExternalSidechain(bool value) noexcept { params.externalSidechain.store(value, std::memory_order_relaxed); }
     void setOversampling(int value) noexcept { params.oversampling.store(value, std::memory_order_relaxed); }
 

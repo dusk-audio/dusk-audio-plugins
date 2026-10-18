@@ -25,7 +25,9 @@ the rotated pair, so setup is genuinely one-time.
 
 Behaviour:
   - Active patrons are bucketed by their highest entitled tier amount:
-    >= $10 champions, >= $5 patrons, >= $3 supporters, >= $1 hugs.
+    >= $10 PATRONS, >= $5 SUPPORTERS, >= $1 FOUNDING SUPPORTERS (the closed
+    $1 Hugs and $3 legacy tiers). See TIERS for the array each heading uses.
+  - The campaign creator's own membership is never credited.
   - Anyone listed in the current header who is no longer an active patron is
     moved to pastSupporters (existing pastSupporters entries are preserved).
   - This repo's plugins/shared/PatreonBackers.h is rewritten. Sibling checkouts
@@ -56,13 +58,18 @@ API = "https://www.patreon.com/api/oauth2/v2"
 TOKEN_URL = "https://www.patreon.com/api/oauth2/token"
 CONFIG_PATH = Path.home() / ".config" / "dusk-audio" / "patreon.json"
 
-TIERS = [  # (array name in the header, minimum cents)
-    ("champions", 1000),
-    ("patrons", 500),
-    ("supporters", 300),
-    ("hugs", 100),
+# Array names keep the original tier names so a DuskStudio build pinned to an
+# older plugins commit (DONOR_REV) still compiles; the heading each array is
+# shown under follows the current Patreon tier names.
+TIERS = [  # (array name in the header, credits heading, minimum cents)
+    ("champions",  "PATRONS",             1000),  # Patron $10
+    ("patrons",    "SUPPORTERS",           500),  # Supporter $5
+    ("supporters", "FOUNDING SUPPORTERS",  100),  # closed $1 Hugs / $3 legacy tiers
 ]
-ARRAY_NAMES = [name for name, _ in TIERS] + ["pastSupporters"]
+# Arrays no tier fills any more. Still written (empty) because older headers
+# and the DuskStudio supporters panel reference them.
+RETIRED_ARRAYS = ["hugs"]
+ARRAY_NAMES = [name for name, _, _ in TIERS] + RETIRED_ARRAYS + ["pastSupporters"]
 
 # Path from this repo's root to the header.
 HEADER_RELPATH = Path("plugins") / "shared" / "PatreonBackers.h"
@@ -72,8 +79,8 @@ HEADER_RELPATH = Path("plugins") / "shared" / "PatreonBackers.h"
 DAF_HEADER_RELPATH = Path("plugins") / "shared-daf" / "ui" / "PatreonBackersDaf.hpp"
 # Display titles for the DAF overlay, DERIVED from TIERS so the two can never
 # drift (a hand-maintained second list silently dropped tiers / KeyError'd in
-# generate_daf_header if edited out of sync). Title = tier name upper-cased.
-DAF_TIER_TITLES = [(name, name.upper()) for name, _ in TIERS]
+# generate_daf_header if edited out of sync).
+DAF_TIER_TITLES = [(name, heading) for name, heading, _ in TIERS]
 
 
 def write_config_secure(config):
@@ -134,22 +141,25 @@ def refresh_tokens(config):
 
 
 def fetch_members(config):
-    """Returns (active: {name: max_cents}, former: set of names)."""
+    """Returns (active: {name: max_cents}, former: set of names,
+    creator: set of names the campaign creator appears under)."""
     def run(token):
-        camps = api_get(f"{API}/campaigns", token)
+        camps = api_get(f"{API}/campaigns?include=creator", token)
         if not camps.get("data"):
             sys.exit("No campaign found for this token.")
         campaign_id = camps["data"][0]["id"]
+        creator_id = ((camps["data"][0].get("relationships", {})
+                       .get("creator", {}).get("data")) or {}).get("id")
 
         fields = urllib.parse.urlencode({
-            "include": "currently_entitled_tiers",
+            "include": "currently_entitled_tiers,user",
             "fields[member]": "full_name,patron_status",
             "fields[tier]": "amount_cents",
             "page[count]": "500",
         })
         url = f"{API}/campaigns/{campaign_id}/members?{fields}"
 
-        active, former = {}, set()
+        active, former, creator = {}, set(), set()
         while url:
             page = api_get(url, token)
             tier_cents = {
@@ -160,6 +170,11 @@ def fetch_members(config):
             for m in page.get("data", []):
                 name = (m["attributes"].get("full_name") or "").strip()
                 if not name:
+                    continue
+                user_id = ((m.get("relationships", {}).get("user", {})
+                            .get("data")) or {}).get("id")
+                if creator_id and user_id == creator_id:
+                    creator.add(name)
                     continue
                 status = m["attributes"].get("patron_status")
                 if status == "active_patron":
@@ -173,7 +188,7 @@ def fetch_members(config):
                 elif status in ("former_patron", "declined_patron"):
                     former.add(name)
             url = page.get("links", {}).get("next")
-        return active, former
+        return active, former, creator
 
     try:
         return run(config["access_token"])
@@ -407,7 +422,8 @@ def main():
     if not headers:
         sys.exit(f"No PatreonBackers.h found (looked for {repo_root / HEADER_RELPATH}).")
 
-    active, _former = fetch_members(config)
+    active, _former, creator = fetch_members(config)
+    creator = {overrides.get(n, n) for n in creator}
     # Apply display-name overrides, keeping the HIGHEST contribution when two
     # API names collapse to the same display name (a plain dict comprehension
     # would keep whichever happened to come last, dropping the higher tier).
@@ -417,9 +433,9 @@ def main():
         merged[display] = max(c, merged.get(display, 0))
     active = merged
 
-    new_tiers = {name: [] for name, _ in TIERS}
+    new_tiers = {name: [] for name, _, _ in TIERS}
     for name, cents in active.items():
-        for tier_name, min_cents in TIERS:  # ordered high to low
+        for tier_name, _, min_cents in TIERS:  # ordered high to low
             if cents >= min_cents:
                 new_tiers[tier_name].append(name)
                 break
@@ -444,20 +460,21 @@ def main():
     # Past supporters: keep the existing list, and move in anyone listed in
     # the canonical header's tiers who is no longer an active patron.
     previously_listed = set()
-    for name, _ in TIERS:
+    for name in [n for n, _, _ in TIERS] + RETIRED_ARRAYS:
         previously_listed.update(parse_array(canonical, name))
     past = parse_array(canonical, "pastSupporters")
     now_active = set(active.keys())
-    dropped = sorted((previously_listed - now_active) - set(past),
+    dropped = sorted((previously_listed - now_active) - set(past) - creator,
                      key=str.casefold)
     # Subtract now_active so a returning patron leaves pastSupporters
     # instead of being credited in two sections at once.
-    new_past = sorted((set(past) | set(dropped)) - now_active, key=str.casefold)
+    new_past = sorted((set(past) | set(dropped)) - now_active - creator,
+                      key=str.casefold)
 
     print("Active patrons by tier:")
-    for tier_name, _ in TIERS:
-        print(f"  {tier_name:14s} {', '.join(new_tiers[tier_name]) or '(none)'}")
-    print(f"  pastSupporters {', '.join(new_past) or '(none)'}")
+    for tier_name, heading, _ in TIERS:
+        print(f"  {heading:20s} {', '.join(new_tiers[tier_name]) or '(none)'}")
+    print(f"  {'PAST SUPPORTERS':20s} {', '.join(new_past) or '(none)'}")
     if dropped:
         print(f"Moved to past supporters: {', '.join(dropped)}")
 
@@ -471,8 +488,10 @@ def main():
 
     for header in headers:
         text = header.read_text(encoding="utf-8")
-        for tier_name, _ in TIERS:
+        for tier_name, _, _ in TIERS:
             text = replace_array(text, tier_name, new_tiers[tier_name])
+        for retired in RETIRED_ARRAYS:
+            text = replace_array(text, retired, [])
         text = replace_array(text, "pastSupporters", new_past)
         atomic_write_text(header, text)
         print(f"Updated {header}")

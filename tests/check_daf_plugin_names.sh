@@ -33,6 +33,7 @@ expected_slug_for() {
         plugins/multi-comp/daf-plugin/CMakeLists.txt)      echo "multi-comp-2" ;;
         plugins/multi-q/daf-plugin/CMakeLists.txt)         echo "multi-q-2" ;;
         plugins/tape-echo/daf-plugin/CMakeLists.txt)       echo "tape-echo-2" ;;
+        plugins/ring-out/daf-plugin/CMakeLists.txt)        echo "ring-out" ;;
         plugins/sunset-circuits/daf-plugin/CMakeLists.txt) echo "sunset-circuits" ;;
         *) echo "" ;;
     esac

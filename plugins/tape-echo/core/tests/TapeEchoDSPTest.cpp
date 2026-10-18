@@ -23,6 +23,54 @@ struct RenderResult
     bool zeroBlockStable = false;
 };
 
+// Idle noise floor at Tape Age Old: one channel of output for silent input.
+std::vector<double> renderNoiseFloor(float noise01, bool hum50, int mode = 1)
+{
+    constexpr int kSettle = 48000, kLength = 96000, kBlock = 256;
+    duskaudio::TapeEchoDSP dsp;
+    dsp.setMode(mode);
+    dsp.setTapeAge(1.0f);
+    dsp.setNoise(noise01);
+    dsp.setHumFrequency50(hum50);
+    dsp.prepare(kSampleRate, kBlock);
+
+    const std::vector<float> silence(kBlock, 0.0f);
+    std::vector<float> left(kBlock), right(kBlock);
+    std::vector<double> captured;
+    captured.reserve(kLength);
+    for (int offset = 0; offset < kSettle + kLength; offset += kBlock)
+    {
+        const float* inputs[] = { silence.data(), silence.data() };
+        float* outputs[] = { left.data(), right.data() };
+        dsp.processBlock(inputs, outputs, 2, kBlock);
+        if (offset >= kSettle)
+            captured.insert(captured.end(), left.begin(), left.end());
+    }
+    captured.resize(kLength);
+    return captured;
+}
+
+double rmsOf(const std::vector<double>& x)
+{
+    double sum = 0.0;
+    for (const double v : x)
+        sum += v * v;
+    return std::sqrt(sum / static_cast<double>(x.size()));
+}
+
+// Single-bin magnitude; the capture length makes 250 and 300 Hz exact bins.
+double toneMagnitude(const std::vector<double>& x, double hz)
+{
+    const double w = 2.0 * 3.14159265358979323846 * hz / kSampleRate;
+    double re = 0.0, im = 0.0;
+    for (size_t n = 0; n < x.size(); ++n)
+    {
+        re += x[n] * std::cos(w * static_cast<double>(n));
+        im += x[n] * std::sin(w * static_cast<double>(n));
+    }
+    return std::sqrt(re * re + im * im);
+}
+
 RenderResult renderWithBlockSize(int blockSize)
 {
     duskaudio::TapeEchoDSP dsp;
@@ -229,6 +277,26 @@ int main()
                   << " late=" << lateTail
                   << " earlyDecay=" << earlyDecay
                   << " lateDecay=" << lateDecay << '\n';
+        return 1;
+    }
+
+    // Noise spans the captured floor (0) to 60 dB above it (1), and the hum
+    // selector moves the fifth harmonic, the strongest line, from 300 to 250 Hz.
+    const std::vector<double> floor60 = renderNoiseFloor(0.0f, false);
+    const std::vector<double> loud60 = renderNoiseFloor(1.0f, false);
+    const std::vector<double> loud50 = renderNoiseFloor(1.0f, true);
+    const double noiseLiftDb = 20.0 * std::log10(rmsOf(loud60) / rmsOf(floor60));
+    const double fifth60 = toneMagnitude(loud60, 300.0) / toneMagnitude(loud60, 250.0);
+    const double fifth50 = toneMagnitude(loud50, 250.0) / toneMagnitude(loud50, 300.0);
+    // Reverb Only selects no playback head, so the repro bed must be absent.
+    const double reverbOnlyNoise = rmsOf(renderNoiseFloor(1.0f, false, 12));
+    if (rmsOf(floor60) <= 0.0 || std::fabs(noiseLiftDb - 60.0) > 0.5
+        || fifth60 < 4.0 || fifth50 < 4.0
+        || reverbOnlyNoise > 1.0e-3 * rmsOf(floor60))
+    {
+        std::cerr << "noise bed control failed: lift=" << noiseLiftDb
+                  << " dB fifth60=" << fifth60 << " fifth50=" << fifth50
+                  << " reverbOnly=" << reverbOnlyNoise << '\n';
         return 1;
     }
 

@@ -45,7 +45,8 @@ inline float fadeGain(float control) noexcept
         -151.0615694f, -155.2874859f, -159.5055128f, -163.7143597f, -167.9120702f, -172.0993118f, -176.2745348f, -180.4273549f,
         -184.5390828f, -188.5745815f, -192.4690611f, -196.1146075f, -199.3430205f, -201.9614864f, -203.8692437f, -205.1295645f,
         -220.0000000f}};
-    if (control <= 0.0f) return 1.0f;
+    // NaN fails both range tests and would reach the size_t conversion.
+    if (!std::isfinite(control) || control <= 0.0f) return 1.0f;
     if (control >= fadeControlMaximum) return 0.0f;
     const double scaled = static_cast<double>(control) * 128.0 / fadeControlMaximum;
     const size_t i = static_cast<size_t>(scaled);

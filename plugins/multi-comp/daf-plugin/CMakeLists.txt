@@ -6,6 +6,15 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/cmake/DuskDafPlugin.cmake")
+# Bit-identical DSP on every platform: no fused multiply-add. Clang fuses
+# a*b+c within an expression by default and GCC on arm64 across statements,
+# while x86-64 without FMA fuses nothing, so the same source rendered audio
+# that differed by ~70 float ulps between macOS and Linux and broke the
+# captured witnesses there. MSVC's default /fp:precise already does not
+# contract. Applies to the plugin and every test target below.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  add_compile_options(-ffp-contract=off)
+endif()
 daf_add_plugin(multi-comp-2
   TARGETS clap vst3 lv2 jack au
   # Keep MONOLITHIC: the UI uses the same-process meter bridge and LV2 must

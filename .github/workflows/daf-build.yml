@@ -31,6 +31,7 @@ on:
       - 'multi-q-2-v*'
       - 'multi-comp-2-v*'
       - 'duskverb-2-v*'
+      - 'ring-out-v*'
   workflow_dispatch:
     inputs:
       plugin:
@@ -46,6 +47,7 @@ on:
           - 'multi-q-2'
           - 'multi-comp-2'
           - 'duskverb-2'
+          - 'ring-out'
   pull_request:
     paths:
       - 'plugins/*/daf-plugin/**'
@@ -137,6 +139,7 @@ jobs:
             {"key":"multi-q-2","dir":"plugins/multi-q/daf-plugin","base":"multi-q-2","project":"MultiQ2DAF","au":"DsMq","uri":"https://dusk-audio.github.io/plugins/multi-q-2","name":"Multi-Q 2","tag":"multi-q-2-v","asset":"multi-q-2"}
             ,{"key":"multi-comp-2","dir":"plugins/multi-comp/daf-plugin","base":"multi-comp-2","project":"MultiComp2DAF","au":"DsMc","uri":"https://dusk-audio.github.io/plugins/multi-comp-2","name":"Multi-Comp 2","tag":"multi-comp-2-v","asset":"multi-comp-2"}
             ,{"key":"duskverb-2","dir":"plugins/DuskVerb/daf-plugin","base":"duskverb-2","project":"DuskVerb2DAF","au":"DsDv","uri":"https://dusk-audio.github.io/plugins/duskverb-2","name":"DuskVerb 2","tag":"duskverb-2-v","asset":"duskverb-2"}
+            ,{"key":"ring-out","dir":"plugins/ring-out/daf-plugin","base":"ring-out","project":"RingOutDAF","au":"DsRO","uri":"https://dusk-audio.github.io/plugins/ring-out","name":"Ring Out","tag":"ring-out-v","asset":"ring-out"}
           ]
           JSON
 
@@ -277,8 +280,11 @@ jobs:
           # The container starts on stock Ubuntu repositories by policy and
           # remains there. The timeout guards stalls, retries guard hard
           # failures, and the dpkg repair handles interrupted transactions.
+          # 180s for the index fetch: on a degraded mirror it ran past 90s on all
+          # three attempts (PR #300). Worst case 3 x (180 + 180) + 2 x 55 s, inside
+          # the job limit.
           prereqs() {
-            timeout 90 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
+            timeout 180 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
             timeout 180 apt-get install -y --no-install-recommends \
               -o Acquire::Retries=3 git ca-certificates
           }
@@ -554,8 +560,11 @@ jobs:
           # failures, and the dpkg repair handles interrupted transactions.
           # Inline because checkout cannot run until git is installed and the
           # shared script is not on disk yet.
+          # 180s for the index fetch: on a degraded mirror it ran past 90s on all
+          # three attempts (PR #300). Worst case 3 x (180 + 180) + 2 x 55 s, inside
+          # the job limit.
           prereqs() {
-            timeout 90 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
+            timeout 180 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
             timeout 180 apt-get install -y --no-install-recommends \
               -o Acquire::Retries=3 git ca-certificates
           }
@@ -1067,6 +1076,7 @@ jobs:
     if: needs.plan.outputs.is_release == 'true'
     permissions:
       contents: write
+      actions: write
     env:
       VERSION: ${{ needs.plan.outputs.version }}
       DISPLAY: ${{ needs.plan.outputs.rel_display }}
@@ -1138,7 +1148,24 @@ jobs:
             echo "::error::Expected checksums for four ZIP assets"; exit 1
           fi
 
+      - name: Plan early access
+        id: ea
+        env:
+          EARLY_ACCESS_DAYS: ${{ vars.EARLY_ACCESS_DAYS }}
+          HAS_EARLY_TOKEN: ${{ secrets.EARLY_ACCESS_TOKEN != '' }}
+        run: .github/scripts/early_access.sh plan "${GITHUB_REF#refs/tags/}"
+
+      - name: Finish release notes
+        env:
+          EARLY: ${{ steps.ea.outputs.early }}
+          PUBLIC_ON: ${{ steps.ea.outputs.public_on }}
+          MEMBERS_ONLY: ${{ steps.ea.outputs.members_only }}
+          EARLY_ACCESS_DAYS: ${{ vars.EARLY_ACCESS_DAYS }}
+        run: .github/scripts/early_access.sh notes release_body.md
+
       - name: Publish Release
+        # A members-only prerelease gets no public release, only the mirror below.
+        if: steps.ea.outputs.members_only != 'true'
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2 (Node 24)
         with:
           files: |
@@ -1146,5 +1173,33 @@ jobs:
             dist/SHA256SUMS
           generate_release_notes: true
           body_path: release_body.md
-          draft: false
+          draft: ${{ steps.ea.outputs.early == 'true' }}
           prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-alpha') || contains(github.ref, '-rc') }}
+
+      - name: Mirror to early access
+        # Members download this copy through the Patreon build gate until the
+        # draft above goes public (early-access-publish.yml).
+        if: steps.ea.outputs.early == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.EARLY_ACCESS_TOKEN }}
+          EARLY_ACCESS_REPO: ${{ vars.EARLY_ACCESS_REPO || 'dusk-audio/dusk-plugins-early' }}
+          PUBLIC_ON: ${{ steps.ea.outputs.public_on }}
+          MEMBERS_ONLY: ${{ steps.ea.outputs.members_only }}
+        run: |
+          shopt -s globstar nullglob
+          .github/scripts/early_access.sh mirror "${GITHUB_REF#refs/tags/}" release_body.md dist/**/*.zip dist/SHA256SUMS
+
+      - name: Delete early build artifacts
+        # Anyone signed in to GitHub can download a public run's artifacts, so
+        # early builds must not outlive the mirror. Skipped on failure so the
+        # job can still be re-run.
+        if: steps.ea.outputs.early == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" \
+            --jq '.artifacts[].id' |
+            while read -r id; do
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id"
+            done

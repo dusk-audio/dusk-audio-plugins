@@ -243,12 +243,7 @@ namespace
     // entry. The printed value is what the DSP receives for that knob position
     // (knob -> plain host value -> the JUCE quantisation chain), so the read-out
     // cannot disagree with the sound.
-    ImU32 fade(ImU32 c, float amount)
-    {
-        amount = std::clamp(amount, 0.0f, 1.0f);
-        const ImU32 a = (c >> 24) & 0xffu;
-        return (c & 0x00ffffffu) | ((ImU32)(a * amount + 0.5f) << 24);
-    }
+    ImU32 fade(ImU32 c, float amount) { return duskdaf::scaleAlpha(c, amount); }
 
     ImU32 blend(ImU32 a, ImU32 b, float t)
     {

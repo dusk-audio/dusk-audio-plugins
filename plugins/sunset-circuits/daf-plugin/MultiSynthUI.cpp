@@ -1653,6 +1653,15 @@ private:
         void* const inst = getPluginInstancePointer();
         if (inst == nullptr) return;
         const uint32_t sig = multiSynthGetMidiProgramSignal(inst);
+        // A program change from before this editor existed is already in the
+        // values the host handed it, along with any edits made since; replaying
+        // it would throw those edits away every time the editor is reopened.
+        if (! midiProgramSignalSeen)
+        {
+            midiProgramSignalSeen = true;
+            lastMidiProgramSignal = sig;
+            return;
+        }
         if (sig == lastMidiProgramSignal) return;
         lastMidiProgramSignal = sig;
         if (sig != 0u) applyPreset((int)(sig & 0xFFu));
@@ -4644,8 +4653,9 @@ private:
     // -1 = nothing recalled. programLoaded() (host->UI) only ever maps to factory.
     int    currentPreset = -1;
     // Last (sequence << 8 | program) seen from the shell's MIDI program-change
-    // signal; 0 matches its initial value, so an untouched plugin never syncs.
+    // signal, taken on the first frame so only changes made while open sync.
     uint32_t lastMidiProgramSignal = 0;
+    bool   midiProgramSignalSeen = false;
     bool   showMod = false;
     bool   modPopupWasOpen = false;   // a Source/Dest dropdown was up last frame
 
