@@ -1102,13 +1102,28 @@ jobs:
           # Changelog from the annotated tag message (skip first line = title).
           TAG_MESSAGE=$(git tag -l --format='%(contents)' "$TAG" 2>/dev/null || echo "")
           CHANGELOG=$(echo "$TAG_MESSAGE" | tail -n +2 | sed '/^$/d; 1{/^$/d}')
+          # The build jobs bundle the manual only when the website has one, so
+          # claim it only when every archive actually holds it. The listing is
+          # captured first rather than piped into `grep -q`, whose early exit
+          # can fail the pipeline with SIGPIPE wherever pipefail is on.
+          ZIPS=0; WITH_MANUAL=0
+          while IFS= read -r -d '' zip; do
+            ZIPS=$((ZIPS + 1))
+            LISTING=$(unzip -Z1 "$zip") || { echo "::warning::cannot list $zip"; LISTING=""; }
+            if grep -q -- '-manual\.pdf$' <<< "$LISTING"; then WITH_MANUAL=$((WITH_MANUAL + 1)); fi
+          done < <(find dist -type f -name '*.zip' -print0)
+          MANUAL_NOTE=""
+          if [ "$ZIPS" -gt 0 ] && [ "$WITH_MANUAL" -eq "$ZIPS" ]; then
+            MANUAL_NOTE=" Every archive also bundles the User Manual PDF."
+          fi
+          echo "archives: ${ZIPS}, with the manual: ${WITH_MANUAL}"
           {
             echo "## ${DISPLAY} v${VERSION}"
             echo ""
             if [ -n "$CHANGELOG" ]; then echo "$CHANGELOG"; echo ""; fi
             echo "### Installation"
             echo ""
-            echo "Linux and macOS zips contain \`VST3/\`, \`CLAP/\`, \`LV2/\` and (macOS only) \`AU/\`. The Windows zip contains \`VST3/\` and \`CLAP/\` (no AU or LV2). Every archive also bundles the User Manual PDF."
+            echo "Linux and macOS zips contain \`VST3/\`, \`CLAP/\`, \`LV2/\` and (macOS only) \`AU/\`. The Windows zip contains \`VST3/\` and \`CLAP/\` (no AU or LV2).${MANUAL_NOTE}"
             echo ""
             echo "**Linux (x86_64 and arm64):**"
             echo "- VST3: copy \`VST3/${BASE}.vst3\` to \`~/.vst3/\`"
