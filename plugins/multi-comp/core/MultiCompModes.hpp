@@ -865,7 +865,9 @@ private:
     // unit circle, and the lowest C5 all-pass pole sits at c = -0.9999.
     void updateFetDynamicsCoefficients() noexcept
     {
-        constexpr double pi = 3.14159265358979323846;
+        // static: MSVC rejects a lambda reading a non-static floating-point
+        // local constexpr it does not capture (C3493); clang and GCC accept it.
+        static constexpr double pi = 3.14159265358979323846;
         const double rate = fs * osFactor;
         // RBJ high-pass, b0 b1 b2 a1 a2 normalised by a0.
         const auto highPass = [rate](float hz, float q) noexcept {

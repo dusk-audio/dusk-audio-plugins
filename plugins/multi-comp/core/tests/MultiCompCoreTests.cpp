@@ -5207,8 +5207,10 @@ float tailLevelDb(const std::vector<float>& out, size_t from)
 void testModeReentryStartsFromRest()
 {
     using duskaudio::MultiCompMode;
-    constexpr double kRate = 48000.0;
-    constexpr int kBlock = 64;
+    // static: MSVC rejects the lambda below reading kRate (floating point)
+    // uncaptured (C3493); kBlock follows it.
+    static constexpr double kRate = 48000.0;
+    static constexpr int kBlock = 64;
     const auto configure = [](MultiCompDSP& dsp, MultiCompMode mode) {
         dsp.setMode(static_cast<int>(mode));
         dsp.setParameter(MultiCompDSP::Parameter::OptoPeakReduction, 80.0f);
