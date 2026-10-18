@@ -220,7 +220,7 @@ void MultiCompDSP::prepare(double sr, int blockSize)
     bypassWrite = 0;
     for (auto& line : sidechainListenDelay) line.assign(bypassDelaySize, 0.0f);
     sidechainListenWrite = {{0, 0}};
-    globalMixSmoother.prepare(sampleRate, 0.020f); globalMixSmoother.snap(params.mix.load(std::memory_order_relaxed) * 0.01f);
+    globalMixSmoother.prepare(sampleRate, 0.020f); globalMixSmoother.snap(globalMixTarget(currentMode()));
     autoGainMatcher.prepare(sampleRate);
     resetAutoGainMeasurement();
     autoGainSmoother.prepare(sampleRate, static_cast<float>(kAutoGainTransitionMs) * 0.001f); autoGainSmoother.snap(1.0f);
@@ -301,7 +301,7 @@ void MultiCompDSP::reset()
     multibandEnvelopes.fill(1.0f);
     activeBandMask = 0;
     rebuildMultibandTopology(0x0f);
-    globalMixSmoother.snap(params.mix.load(std::memory_order_relaxed) * 0.01f);
+    globalMixSmoother.snap(globalMixTarget(currentMode()));
     autoGainMatcher.reset();
     resetAutoGainMeasurement();
     autoGainSmoother.snap(1.0f);
@@ -582,7 +582,12 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     // every stage; it just emits the latency-aligned dry instead of the result.
     const bool settledBypass = requestedBypass && bypassSettled;
     const float* filteredSidechain[kMaxChannels] = {processedSidechain[0].data(), processedSidechain[1].data()};
-    const float sidechainHP = params.sidechainHP.load(std::memory_order_relaxed);
+    // Only the faces that carry this control (Opto SC HP, VCA PULL/SC, Bus SC
+    // FILTER) apply it. Elsewhere a value set on one of those faces acted
+    // unseen after a mode switch.
+    const bool modeHasSidechainHP = mode == MultiCompMode::Opto || mode == MultiCompMode::VCA
+        || mode == MultiCompMode::Bus;
+    const float sidechainHP = modeHasSidechainHP ? params.sidechainHP.load(std::memory_order_relaxed) : 0.0f;
     // In VCA mode the SC HP control is the reference VCA compressor's PULL/SC switch: settings
     // at or above 1 Hz engage the reference's measured half-order tilt in
     // place of the high-pass (MultiCompVcaLaw.hpp SidechainResponse).
@@ -735,7 +740,16 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     if (modeIndex != lastMode)
     {
         if (lastMode >= 0)
+        {
             autoGainHoldSamples = std::max(1, static_cast<int>(sampleRate * kAutoGainTransitionMs * 0.001));
+            // The entered mode starts from rest (MultiCompModes::clearModeState).
+            modes.clearModeState(mode);
+            if (mode == MultiCompMode::Multiband)
+            {
+                multibandEnvelopes.fill(1.0f);
+                resetCrossovers();
+            }
+        }
         lastMode = modeIndex;
         autoGainMatcher.reset();
         resetAutoGainMeasurement();
@@ -907,7 +921,7 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
                         out[ch][i]);
             }
     }
-    const float targetMix = std::clamp((isMulti ? params.mbMix.load(std::memory_order_relaxed) : params.mix.load(std::memory_order_relaxed)) * 0.01f, 0.0f, 1.0f);
+    const float targetMix = globalMixTarget(mode);
     globalMixSmoother.setTarget(targetMix);
     // The processed output carries the full reported latency (AA plus both
     // lookaheads). Keep the monitor history running even while Listen is off so
@@ -1139,6 +1153,22 @@ float MultiCompDSP::delayHostSidechain(int channel, float value, int delay) noex
     if (delay <= 0) return value;
     const int read = (hostSidechainWrite - delay + kHostSidechainRing) % kHostSidechainRing;
     return line[static_cast<size_t>(read)];
+}
+
+MultiCompMode MultiCompDSP::currentMode() const noexcept
+{
+    return static_cast<MultiCompMode>(std::clamp(params.mode.load(std::memory_order_relaxed), 0, 7));
+}
+
+// Bus and Digital apply the MIX on their own faces inside the mode
+// (busMixRamp, digitalMixRamp) and Multiband its MB Mix; the global Mix, which
+// those faces do not show, stays out of them.
+float MultiCompDSP::globalMixTarget(MultiCompMode mode) const noexcept
+{
+    const float percent = mode == MultiCompMode::Multiband ? params.mbMix.load(std::memory_order_relaxed)
+        : (mode == MultiCompMode::Bus || mode == MultiCompMode::Digital) ? 100.0f
+        : params.mix.load(std::memory_order_relaxed);
+    return std::clamp(percent * 0.01f, 0.0f, 1.0f);
 }
 
 void MultiCompDSP::resetAutoGainMeasurement() noexcept

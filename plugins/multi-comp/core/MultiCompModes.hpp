@@ -563,6 +563,64 @@ public:
         busConvolution.reset();
     }
 
+    // The mode being switched to starts from rest, like a freshly inserted
+    // compressor. Nothing advances a mode while another one is selected, so
+    // without this it resumed the reduction it held when it was left
+    // (measured: FET re-entered with about 12 dB of stale reduction, still
+    // 7 dB after 2 s). VCA has its own entry lifecycle in MultiCompDSP, and
+    // Multiband's band state lives there too.
+    void clearModeState(MultiCompMode mode) noexcept
+    {
+        switch (mode)
+        {
+            case MultiCompMode::Opto:
+                for (auto& d : opto) d = OptoState{};
+                configureOptoStage();
+                optoCell.reset();
+                for (auto& shelf : optoShelf) shelf.reset();
+                for (auto& filter : optoPreHighPass) filter.reset();
+                for (auto& filter : optoPostHighPass) filter.reset();
+                break;
+            case MultiCompMode::FET:
+                for (auto& d : fet) d = FETState{};
+                fetConvolution.reset();
+                for (int ch = 0; ch < kChannels; ++ch)
+                {
+                    inputTransformerFet[ch].reset();
+                    outputTransformerFet[ch].reset();
+                }
+                break;
+            case MultiCompMode::Bus:
+                clearBusState();
+                break;
+            case MultiCompMode::StudioFET:
+                for (auto& d : studioFet) d = StudioFETState{};
+                for (int ch = 0; ch < kChannels; ++ch)
+                {
+                    inputTransformerStudioFet[ch].reset();
+                    outputTransformerStudioFet[ch].reset();
+                }
+                break;
+            case MultiCompMode::StudioVCA:
+                for (auto& d : studioVca) d = StudioVCAState{};
+                for (int ch = 0; ch < kChannels; ++ch)
+                {
+                    inputTransformerStudioVca[ch].reset();
+                    outputTransformerStudioVca[ch].reset();
+                }
+                break;
+            case MultiCompMode::Digital:
+                for (auto& d : digital) d = DigitalState{};
+                for (auto& delay : digitalDelay)
+                    std::fill(delay.begin(), delay.end(), 0.0f);
+                digitalWrite.fill(0);
+                break;
+            case MultiCompMode::VCA:
+            case MultiCompMode::Multiband:
+                break;
+        }
+    }
+
     void reset() noexcept
     {
         for (auto& d : opto) d = OptoState{};
@@ -695,7 +753,7 @@ public:
             for (auto& filter : busSidechainHighPass) filter.reset();
         if (rate != busSidechainRate || hp != busSidechainHighPassFrequency)
             for (auto& filter : busSidechainHighPass)
-                filter.setCoeffs(Biquad::highPass(rate, std::max(hp, 20.0f), 0.5f));
+                filter.setHighPass(rate, std::max(hp, 20.0f), 0.5f);
         if (rate != busSidechainRate || lowF != busSidechainLowFrequency
             || lowG != busSidechainLowGain)
             for (auto& filter : busSidechainLowShelf)
@@ -1070,8 +1128,8 @@ private:
     // Reuse the shared filter; prepare/reset clear each channel's history,
     // and runtime oversampling changes refresh its pole without discarding it.
     std::array<DCBlocker, 2> busFeedbackCoupling;
-    std::array<Biquad, 2> busSidechainHighPass, busSidechainLowShelf,
-                          busSidechainHighShelf;
+    std::array<GuardedBiquad, 2> busSidechainHighPass;
+    std::array<Biquad, 2> busSidechainLowShelf, busSidechainHighShelf;
     float busSidechainRate = 0.0f;
     float busSidechainHighPassFrequency = -1.0f;
     float busSidechainLowFrequency = -1.0f, busSidechainLowGain = 0.0f;
@@ -3138,9 +3196,15 @@ private:
 
         if (makeup == 0.0f)
         {
-            // Keep the stage's delay lines moving so an unmute is clean.
+            // Keep the stage's delay lines and the output-side high-passes
+            // moving so an unmute is clean: the post high-pass follows the
+            // stage's zero-input output, and the pre high-pass advances with
+            // zero when it sits behind the cell (ahead of the cell it has
+            // already run on this sample's input above).
             const int stageDelay = d.stage.delaySamples();
-            d.stage.process(0.0f, optoOutputStageCurve);
+            if constexpr (!kOptoPreHighPassAhead)
+                optoPreHighPass[ch].process(0.0f);
+            optoPostHighPass[ch].process(d.stage.process(0.0f, optoOutputStageCurve));
             d.settledGainDelay.process(1.0f, stageDelay);
             d.meterGainDelay.process(1.0f, stageDelay);
             return 0.0f;

@@ -105,7 +105,7 @@ public:
         {
             currentFrequency = f;
             currentQ = q;
-            filter.setCoeffs(Biquad::highPass(sampleRate, f, q));
+            filter.setHighPass(sampleRate, f, q);
         }
     }
 
@@ -120,7 +120,7 @@ private:
     double sampleRate = 44100.0;
     float currentFrequency = -1.0f;
     float currentQ = 0.707f;
-    Biquad filter;
+    GuardedBiquad filter;
 };
 
 // JUCE multicomp.cpp:575-690. Two RBJ shelves in TDF-II, after the sidechain
@@ -412,7 +412,10 @@ public:
 
     float getAllButtonsReduction(float overThresholdDb, bool measuredCurve) const noexcept
     {
-        const float index = std::clamp(overThresholdDb, 0.0f, 30.0f) * static_cast<float>(kAllButtonsSize - 1) / 30.0f;
+        // std::clamp passes NaN through; this form sends it to 0 dB and is
+        // identical to the clamp for every other value.
+        const float over = overThresholdDb >= 0.0f ? std::min(overThresholdDb, 30.0f) : 0.0f;
+        const float index = over * static_cast<float>(kAllButtonsSize - 1) / 30.0f;
         const int i0 = static_cast<int>(index), i1 = std::min(i0 + 1, kAllButtonsSize - 1);
         const float fraction = index - static_cast<float>(i0);
         const auto& curve = measuredCurve ? measured : modern;

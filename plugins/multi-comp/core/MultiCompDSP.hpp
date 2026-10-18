@@ -133,6 +133,8 @@ private:
     void processSidechainListenHistory(const float* const* sidechain, int nCh,
                                        int nSamples, int delay) noexcept;
     void resetAutoGainMeasurement() noexcept;
+    MultiCompMode currentMode() const noexcept;
+    float globalMixTarget(MultiCompMode mode) const noexcept;
     static float advanceFetStartupBlend(int& activeSamples,
                                         int fullCorrectionSamples,
                                         int correctionEndSamples) noexcept;

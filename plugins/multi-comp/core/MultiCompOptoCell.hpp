@@ -495,7 +495,11 @@ public:
     static constexpr int kChannels = 2;
     static constexpr int kPopulations = 4;   // fast, slow, exposure memory, flash
 
-    OptoCell() noexcept { cellParams = defaultOptoCellParams(); }
+    OptoCell() noexcept
+    {
+        cellParams = defaultOptoCellParams();
+        buildEmitPrior();
+    }
 
     // Coefficients at the processing rate; history is kept.
     void setRate(float sr) noexcept
@@ -589,59 +593,6 @@ public:
         darkStep = 1.0 - std::exp(-dt / std::max(static_cast<double>(cellParams.darkTau), 1.0e-6));
         darkFloorStep = cellParams.darkFloorTau > 0.0f ? 1.0 - std::exp(-dt / static_cast<double>(cellParams.darkFloorTau)) : 0.0;
         emitLeak = std::exp(-dt / 0.005);   // prepareLight: the shape's half-cycle reference leaks in digital silence (5 ms)
-        emitPriorOn = false;
-        if (cellParams.emitPeakExp > 0.0f || cellParams.emitRiseGain != 0.0f)
-        {   // The prior per light-table entry: for a sine whose |s| peaks at that entry, the factor p that gives
-            // law x weight x p the law's own clock-weighted charge over the cycle (sum gate(l) l, below; midpoint rule
-            // over the half-cycle), continued 20 entries above the table's top. The weight sits where the law's hump
-            // is largest, so p is neither the weight's own mean nor a ratio of mean lights.
-            constexpr int kPoints = 512;
-            emitPriorSize = std::min(cellParams.lightTableSize + 20, static_cast<int>(emitPrior.size()));
-            for (int k = 0; k < emitPriorSize; ++k)
-            {
-                const double peakDb = cellParams.lightTableStartDb + cellParams.lightTableStepDb * k;
-                // The cell's clock reads the emitted light (advanceLight: step = dt x gate(light)), so what the
-                // populations receive over a cycle is sum gate(l) l, not sum l. The prior p conserves that:
-                // sum gate(law) law = sum gate(law w p) law w p, solved by a fixed point (the gate is a slowly
-                // varying power law). Without the gate this is the plain light ratio.
-                const auto gate = [this](double l) {
-                    if (!(cellParams.timeScaleLight > 0.0f) || l <= 0.0) return 1.0;
-                    const double r = std::pow(l / static_cast<double>(cellParams.timeScaleLight),
-                                              static_cast<double>(cellParams.timeScaleExponent));
-                    return cellParams.hFloor > 0.0f ? (static_cast<double>(cellParams.hFloor) + r) / (1.0 + r) : 1.0 / (1.0 + r);
-                };
-                std::array<double, kPoints> law{}, weight{};
-                double plain = 0.0;
-                for (int i = 0; i < kPoints; ++i)
-                {
-                    const double theta = 3.141592653589793 * (i + 0.5) / kPoints;
-                    const double sine = std::sin(theta);
-                    law[static_cast<size_t>(i)] = tableLookup(cellParams.lightTable, cellParams.lightTableSize, cellParams.lightTableStartDb,
-                                                              cellParams.lightTableStepDb, cellParams.lightSlopeAbove,
-                                                              peakDb + 8.685889638065035 * std::log(std::max(sine, 1.0e-12)));
-                    double w = cellParams.emitPeakExp > 0.0f ? std::pow(sine, static_cast<double>(cellParams.emitPeakExp)) : 1.0;
-                    w *= std::max(0.0, 1.0 + static_cast<double>(cellParams.emitRiseGain) * std::cos(theta));
-                    weight[static_cast<size_t>(i)] = w;
-                    plain += gate(law[static_cast<size_t>(i)]) * law[static_cast<size_t>(i)];
-                }
-                double prior = 1.0;
-                for (int iteration = 0; iteration < 8; ++iteration)
-                {
-                    double weighted = 0.0;
-                    for (int i = 0; i < kPoints; ++i)
-                    {
-                        const double l = law[static_cast<size_t>(i)] * weight[static_cast<size_t>(i)] * prior;
-                        weighted += gate(l) * l;
-                    }
-                    if (!(weighted > 0.0)) { prior = 1.0; break; }
-                    prior *= plain / weighted;
-                }
-                // Safety only: with the shipped constants every entry lies in 1.0 .. 2.36 (the largest at the table's
-                // top entry, 2026-10-15), far inside the clamp.
-                emitPrior[static_cast<size_t>(k)] = std::clamp(prior, 0.05, 20.0);
-            }
-            emitPriorOn = true;
-        }
         // Truncated like the R14 hold; the clamp keeps a lab-set NaN or absurd value out of the int cast.
         const float darkHold = cellParams.darkHoldSeconds > 0.0f ? std::min(cellParams.darkHoldSeconds, 1.0f) : 0.0f;
         darkHoldSamples = static_cast<int>(static_cast<double>(darkHold) * sampleRate);
@@ -1588,12 +1539,73 @@ public:
         return static_cast<float>(channels[static_cast<size_t>(ch)].estimatedFrequencyHz);
     }
 
+    // The emission prior depends on the cell's parameters only, never on the rate, so it is built here (on
+    // construction and setParams) and not in setRate: rebuilding it there cost about 2.9 ms on the audio
+    // thread at every oversampling change.
+    void buildEmitPrior() noexcept
+    {
+        emitPriorOn = false;
+        if (cellParams.emitPeakExp > 0.0f || cellParams.emitRiseGain != 0.0f)
+        {   // The prior per light-table entry: for a sine whose |s| peaks at that entry, the factor p that gives
+            // law x weight x p the law's own clock-weighted charge over the cycle (sum gate(l) l, below; midpoint rule
+            // over the half-cycle), continued 20 entries above the table's top. The weight sits where the law's hump
+            // is largest, so p is neither the weight's own mean nor a ratio of mean lights.
+            constexpr int kPoints = 512;
+            emitPriorSize = std::min(cellParams.lightTableSize + 20, static_cast<int>(emitPrior.size()));
+            for (int k = 0; k < emitPriorSize; ++k)
+            {
+                const double peakDb = cellParams.lightTableStartDb + cellParams.lightTableStepDb * k;
+                // The cell's clock reads the emitted light (advanceLight: step = dt x gate(light)), so what the
+                // populations receive over a cycle is sum gate(l) l, not sum l. The prior p conserves that:
+                // sum gate(law) law = sum gate(law w p) law w p, solved by a fixed point (the gate is a slowly
+                // varying power law). Without the gate this is the plain light ratio.
+                const auto gate = [this](double l) {
+                    if (!(cellParams.timeScaleLight > 0.0f) || l <= 0.0) return 1.0;
+                    const double r = std::pow(l / static_cast<double>(cellParams.timeScaleLight),
+                                              static_cast<double>(cellParams.timeScaleExponent));
+                    return cellParams.hFloor > 0.0f ? (static_cast<double>(cellParams.hFloor) + r) / (1.0 + r) : 1.0 / (1.0 + r);
+                };
+                std::array<double, kPoints> law{}, weight{};
+                double plain = 0.0;
+                for (int i = 0; i < kPoints; ++i)
+                {
+                    const double theta = 3.141592653589793 * (i + 0.5) / kPoints;
+                    const double sine = std::sin(theta);
+                    law[static_cast<size_t>(i)] = tableLookup(cellParams.lightTable, cellParams.lightTableSize, cellParams.lightTableStartDb,
+                                                              cellParams.lightTableStepDb, cellParams.lightSlopeAbove,
+                                                              peakDb + 8.685889638065035 * std::log(std::max(sine, 1.0e-12)));
+                    double w = cellParams.emitPeakExp > 0.0f ? std::pow(sine, static_cast<double>(cellParams.emitPeakExp)) : 1.0;
+                    w *= std::max(0.0, 1.0 + static_cast<double>(cellParams.emitRiseGain) * std::cos(theta));
+                    weight[static_cast<size_t>(i)] = w;
+                    plain += gate(law[static_cast<size_t>(i)]) * law[static_cast<size_t>(i)];
+                }
+                double prior = 1.0;
+                for (int iteration = 0; iteration < 8; ++iteration)
+                {
+                    double weighted = 0.0;
+                    for (int i = 0; i < kPoints; ++i)
+                    {
+                        const double l = law[static_cast<size_t>(i)] * weight[static_cast<size_t>(i)] * prior;
+                        weighted += gate(l) * l;
+                    }
+                    if (!(weighted > 0.0)) { prior = 1.0; break; }
+                    prior *= plain / weighted;
+                }
+                // Safety only: with the shipped constants every entry lies in 1.0 .. 2.36 (the largest at the table's
+                // top entry, 2026-10-15), far inside the clamp.
+                emitPrior[static_cast<size_t>(k)] = std::clamp(prior, 0.05, 20.0);
+            }
+            emitPriorOn = true;
+        }
+    }
+
     // ---- lab-only hooks (fitting kernel) ----
     void setParams(const OptoCellParams& p) noexcept
     {
         cellParams = p;
         cachedPrNorm = -1.0;
         cachedElementPr = -1.0;
+        buildEmitPrior();
         if (sampleRate > 0.0) setRate(static_cast<float>(sampleRate));
     }
     const OptoCellParams& params() const noexcept { return cellParams; }
@@ -1725,7 +1737,9 @@ private:
         if (levelDb >= top)
             return t[n - 1] * std::exp(slopeAbove * (levelDb - top));
         if (levelDb <= start - step) return 0.0;
-        if (levelDb < start) return t[0] * (levelDb - (start - step)) / step;
+        // Negated so a NaN level takes this branch (NaN out) rather than
+        // reaching the integer index below.
+        if (!(levelDb >= start)) return t[0] * (levelDb - (start - step)) / step;
         const double position = (levelDb - start) / step;
         const int k = std::min(static_cast<int>(position), n - 2);
         const double f = position - k;
