@@ -767,7 +767,7 @@ public:
         }
         // The input owns the floor and release laws; a coupling tail continues to supply light only.
         const double floorOwn = inert ? 0.0 : cachedSideChainGain * mix * levelAbs;
-        double floorDrive = ownOnly ? d.floorOwn : floorOwn;
+        double floorDrive = floorOwn;
         if (!ownOnly && linkWeight > 0.0f)
             floorDrive = std::max(d.floorOwn, static_cast<double>(linkWeight)
                 * (c == 0 ? channels[1].floorOwn : channels[0].floorOwnPrev));
@@ -825,10 +825,11 @@ public:
         // follows the light law along the sine, about 7 ms at 40 Hz with nothing for a millisecond either side of
         // a zero crossing, so the partner's light fills what the native unit's short burst leaves alone. A single
         // channel does not show the emission's shape, only its sum.
-        // The drive is taken one sample back whenever a link amount is set, so a channel processed alone, a
-        // dual-mono pair and a linked pair with identical channels all light exactly alike.
+        // A channel processed alone, a dual-mono pair and a linked pair (processLightPair, ownOnly) take the
+        // current sample's drive, so with identical channels they all light exactly alike. Only the legacy
+        // per-channel link below reads its own and its partner's drive a sample back.
         const double ownDrive = std::abs(s);
-        double panelDrive = ownOnly ? d.panelOwn : ownDrive;
+        double panelDrive = ownDrive;
         if (!ownOnly && linkWeight > 0.0f)
             panelDrive = std::max(d.panelOwn, static_cast<double>(linkWeight)
                                                   * (c == 0 ? channels[1].panelOwn : channels[0].panelOwnPrev));
