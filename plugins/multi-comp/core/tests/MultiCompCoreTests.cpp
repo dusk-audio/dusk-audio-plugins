@@ -9454,6 +9454,13 @@ void testFetDenseShallowLowFrequencyH3()
     constexpr double adjacentErrorStepBoundDb = 0.20;
     constexpr double phaseErrorBoundDegrees = 3.0;
     constexpr double neighbourMovementBoundDb = 0.02;
+    // H5 near the float floor depends on the libm build: the same source and
+    // flags read up to 0.06 dB apart at -150 dBc between macOS and glibc
+    // (Linux x86-64 and arm64), while every row above -140 dBc agreed within
+    // 0.008 dB. -120 dBc sits a margin above that measured -140 boundary: a
+    // baseline row at or below it must stay at or below it, and every row
+    // above it keeps the 0.02 dB bound.
+    constexpr double h5FloorRelativeDb = -120.0;
     double worstError = 0.0;
     double worstAdjacentErrorStep = 0.0;
     double worstPhaseErrorDegrees = 0.0;
@@ -9461,6 +9468,7 @@ void testFetDenseShallowLowFrequencyH3()
     double worstH1MovementDb = 0.0;
     double worstH2MovementDb = 0.0;
     double worstH5MovementDb = 0.0;
+    int h5RowsOffFloor = 0;
     double previousError = 0.0;
     for (size_t index = 0; index < referenceH3RelativeDb.size(); ++index)
     {
@@ -9488,9 +9496,12 @@ void testFetDenseShallowLowFrequencyH3()
         worstH2MovementDb = std::max(worstH2MovementDb,
             std::abs(measured.h2RelativeDb
                 - baselineH2RelativeDb[index]));
-        worstH5MovementDb = std::max(worstH5MovementDb,
-            std::abs(measured.h5Dbfs - measured.h1Dbfs
-                - baselineH5RelativeDb[index]));
+        const double h5RelativeDb = measured.h5Dbfs - measured.h1Dbfs;
+        if (baselineH5RelativeDb[index] > h5FloorRelativeDb)
+            worstH5MovementDb = std::max(worstH5MovementDb,
+                std::abs(h5RelativeDb - baselineH5RelativeDb[index]));
+        else if (!(h5RelativeDb <= h5FloorRelativeDb))
+            ++h5RowsOffFloor;
         if (index > 0)
             worstAdjacentErrorStep = std::max(
                 worstAdjacentErrorStep, std::abs(error - previousError));
@@ -9514,10 +9525,11 @@ void testFetDenseShallowLowFrequencyH3()
                 "(bound %.1f)\n",
                 worstPhaseErrorDegrees, phaseErrorBoundDegrees);
     std::printf("FET dense shallow H3 neighbours: GR %.9f H1 %.9f H2 %.9f "
-                "H5 %.9f dB movement (bound %.2f)\n",
+                "H5 %.9f dB movement (bound %.2f; H5 above %.0f dBc), "
+                "H5 floor rows off the floor %d\n",
                 worstReductionMovementDb, worstH1MovementDb,
                 worstH2MovementDb, worstH5MovementDb,
-                neighbourMovementBoundDb);
+                neighbourMovementBoundDb, h5FloorRelativeDb, h5RowsOffFloor);
     requireParity(worstError < worstErrorBoundDb
                       && worstAdjacentErrorStep < adjacentErrorStepBoundDb
                       && worstPhaseErrorDegrees < phaseErrorBoundDegrees,
@@ -9525,7 +9537,8 @@ void testFetDenseShallowLowFrequencyH3()
     require(worstReductionMovementDb < neighbourMovementBoundDb
                 && worstH1MovementDb < neighbourMovementBoundDb
                 && worstH2MovementDb < neighbourMovementBoundDb
-                && worstH5MovementDb < neighbourMovementBoundDb,
+                && worstH5MovementDb < neighbourMovementBoundDb
+                && h5RowsOffFloor == 0,
             "vintage FET dense shallow H3 leaves GR, H1, H2 and H5 of the disabled-cell controls unchanged");
 }
 
