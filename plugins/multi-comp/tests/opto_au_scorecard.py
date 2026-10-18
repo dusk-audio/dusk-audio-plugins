@@ -128,11 +128,30 @@ class Renderer:
         return OUT / "renders" / self.tag / self.plugin / \
             f"pr{pr:.6f}_g{gain:.6f}_{'limit' if limit else 'comp'}_ch{ch}"
 
+    def _current_stems(self, d: Path, component: str) -> set[str]:
+        """Stem names under d whose batch was rendered by the current component binary."""
+        current = set()
+        for complete in d.glob("_batch/*/complete.json"):
+            info = json.loads(complete.read_text())
+            if info.get("component_binary_sha256") == component:
+                current.update(Path(p).stem for p in info.get("inputs", []))
+        return current
+
     def run(self) -> None:
+        component = M.component_hash(self.plugin)
         jobs = []
         for key, stims in self.groups.items():
             d = self._dir(key)
-            missing = [s for s in sorted(stims) if not (d / f"s_{s.stem}_stem.wav").exists()]
+            # A stem whose batch record is missing or carries another build's
+            # hash is discarded and rendered again, never reused.
+            current = self._current_stems(d, component)
+            missing = []
+            for s in sorted(stims):
+                target = d / f"s_{s.stem}_stem.wav"
+                if target.exists() and s.stem not in current:
+                    target.unlink()
+                if not target.exists():
+                    missing.append(s)
             for i in range(0, len(missing), 64):
                 jobs.append((key, d, missing[i:i + 64]))
         print(f"{self.plugin}/{self.tag}: {len(jobs)} AU runs", flush=True)
@@ -510,12 +529,15 @@ def score(tag: str, crits) -> None:
         else:
             finishers[c] = globals()[c](R)
     R.run()
+    component = M.component_hash("mc2")
     result = {c: f() for c, f in finishers.items()}
+    for r in result.values():
+        r["component_binary_sha256"] = component   # per criterion: the merged card may span builds
     OUT.mkdir(parents=True, exist_ok=True)
     path = OUT / f"scorecard-{tag}.json"
     old = json.loads(path.read_text()) if path.exists() else {}
+    old.pop("component_binary_sha256", None)       # the old scoring-time hash of the whole card
     old.update(result)
-    old["component_binary_sha256"] = M.component_hash("mc2")
     path.write_text(json.dumps(old, indent=1, default=float) + "\n")
     for c, r in result.items():
         brief = {k: v for k, v in r.items() if k not in ("rows", "cells", "single_cells")}

@@ -500,8 +500,11 @@ def prepare_charge() -> list[dict]:
             signal[:] = envelope * np.sin(2.0 * np.pi * 1000.0 * sample / FS)
             stem = f"charge_n{duration:03d}_l{level:+06.2f}".replace("+", "p").replace("-", "m").replace(".", "p")
             path = directory / f"{stem}.wav"
-            sf.write(path, np.column_stack((signal, signal)).astype(np.float32),
-                     FS, subtype="FLOAT")
+            if not path.exists():
+                temporary = path.with_suffix(".tmp.wav")
+                sf.write(temporary, np.column_stack((signal, signal)).astype(np.float32),
+                         FS, subtype="FLOAT")
+                temporary.replace(path)
             records.append({"duration_samples": duration, "peak_dbfs": level,
                             "event_start_sample": event_start, "path": str(path),
                             "sha256": sha256(path)})
@@ -595,8 +598,11 @@ def prepare_lf() -> list[dict]:
             peak = 10.0 ** (level / 20.0)
             signal = peak * np.sin(2.0 * np.pi * frequency * sample / FS)
             path = directory / f"lf_f{frequency:04d}_l{level:+04d}.wav"
-            sf.write(path, np.column_stack((signal, signal)).astype(np.float32),
-                     FS, subtype="FLOAT")
+            if not path.exists():
+                temporary = path.with_suffix(".tmp.wav")
+                sf.write(temporary, np.column_stack((signal, signal)).astype(np.float32),
+                         FS, subtype="FLOAT")
+                temporary.replace(path)
             records.append({"frequency_hz": frequency, "input_dbfs": level,
                             "path": str(path), "sha256": sha256(path)})
     atomic_json(directory / "manifest.json", {"sample_rate": FS, "records": records})

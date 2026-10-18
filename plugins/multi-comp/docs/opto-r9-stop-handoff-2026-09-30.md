@@ -7,7 +7,7 @@ pass bar has been met.
 
 ## Repository state
 
-- Repository: `/Users/marckorte/projects/dusk-audio-plugins`
+- Repository: the `dusk-audio-plugins` checkout; paths below are relative to its root
 - Committed starting point: `775f1da1` (the user's R8 checkpoint)
 - Current installed AU binary SHA-256:
   `fd2534d6b399b49fa2347671bfbcb6b2320981d2b59e40e27d94cdb4203ece5c`

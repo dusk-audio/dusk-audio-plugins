@@ -139,6 +139,7 @@ go through `lab.py` (full DSP from a patched core copy, byte-exact baseline chec
 
 | Mode | Reference | Access | Existing probes and captures | First step |
 |---|---|---|---|---|
+| OPTO | UADx LA-2A | installed | campaign closed 2026-10-15; four synthetic-probe cells left over the bar, see `opto-known-deltas-2026-10-15.md` | Reopen only on a user report: `abx_kit.py focus` on that material first |
 | FET | UADx 1176 | installed | `fet/static_grid.py`, `fet/taper_sweep.py`; earlier campaign log in memory | Tiered ABX, then corpus_diff |
 | VCA | UADx dbx 160 | installed | `vca/` (18 scripts: tilt, onset, fits); VCA faceplate UI on branch `mc2/dbx160-vca-ui` | Tiered ABX, then corpus_diff |
 | BUS | UADx SSL G | demo expired 2026-09-22, parked | `bus/` (137 scripts), accepted at the internal bar 2026-09-21 | Needs a licence before any capture |

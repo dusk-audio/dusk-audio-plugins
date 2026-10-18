@@ -1,8 +1,7 @@
 # MC-2 Opto E2E: learned end-to-end capture of the UADx LA-2A — plan (2026-10-01)
 
-On approval this file is copied verbatim to
-`plugins/multi-comp/docs/opto-e2e-learned-plan-2026-10-01.md`. Plan mode only allows this
-path. Nothing is built before approval.
+This is the plan as approved on 2026-10-01 (written in plan mode, which allowed only this
+path). Nothing is built before approval.
 
 ## Context
 
@@ -406,10 +405,9 @@ the AU at the witness. That means two learned AU builds, installed one after the
 **Disk** (measured per tag): fresh captures ~50 GB + inputs ~5 GB + pilot ~6 GB + final
 evaluation ~24 GB ≈ **85 GB of 293 GiB free**. Nothing is archived or deleted.
 
-**First step after approval:**
-1. Copy this plan to `plugins/multi-comp/docs/opto-e2e-learned-plan-2026-10-01.md`.
-2. Update the auto memory: the new direction, a one-week box from approval, the physical
-   default, the pinned host gone, `z_` contaminated, existing captures Gain 0.25 only.
+**First step after approval:** update the auto memory: the new direction, a one-week box from
+approval, the physical default, the pinned host gone, `z_` contaminated, existing captures
+Gain 0.25 only.
 
 ## Verification (end-to-end)
 
