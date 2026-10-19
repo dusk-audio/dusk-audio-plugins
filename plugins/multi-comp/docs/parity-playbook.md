@@ -160,9 +160,11 @@ and candidate renders never enter a repo; the owner commits.
 - Latency moves with the mode (Opto +6 samples, Multiband -67, and Global Lookahead, up to 10 ms, now only in
   Digital and Multiband) and the AU wrapper never tells the host; either hold the reported latency constant
   across modes or add latency notification to the framework's AU wrapper.
-- Sixteen automatable parameters have no control on any face, four VCA parameters do nothing, and several host
-  names repeat (Threshold five times). FET and Studio FET share every `fet_*` parameter, so Curve and Transient
-  set on the Studio FET face act in FET mode.
+- Sixteen automatable parameters have no control on any face (the modern-face JUCE port puts Oversampling,
+  External Sidechain, SC Listen, Analog Noise and SC HP back on). FET and Studio FET share every `fet_*`
+  parameter, so Curve and Transient set on the Studio FET face act in FET mode. Done 2026-10-19: host names
+  carry their mode or band ("FET Threshold", "MB Low Ratio"), tapered controls and VCA Compression show plain
+  text with units, and the four inert VCA parameters are hidden (VST3 and CLAP need DAF #83 for the flag).
 - FET Curve Measured with All: the small-signal gain sits 1.20 dB under the reference (pinned by
   `testFetMeasuredCurveAllButtons`).
 - From code review, not yet measured: `MultiCompDSP::prepare()` at the same rate keeps most modes' state (the

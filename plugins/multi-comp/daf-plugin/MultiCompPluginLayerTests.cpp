@@ -22,6 +22,7 @@
 
 #include <array>
 #include <cctype>
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -32,6 +33,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 using duskaudio::MultiCompDSP;
 
@@ -1376,6 +1378,95 @@ void testAlphaSessionStateStaysLoadable()
     std::puts("alpha1 session state: 100 symbols at their alpha1 host indices, values bit for bit");
 }
 
+// Host-facing names and text. A host lists every control by name and shows its
+// value as text; "Threshold" appeared five times, and tapered controls read as
+// their 0..1 knob position ("Attack 0.160578" for 0.20 ms).
+void testHostNamesAndTaperedText()
+{
+    std::vector<std::string> names;
+    for (const auto& d : multicompp::kParams) names.emplace_back(d.name);
+    for (const auto& d : multicompp::kExtensionParams) names.emplace_back(d.name);
+    for (int band = 0; band < 4; ++band)
+        for (int field = 0; field < 8; ++field)
+            names.push_back(multicompp::bandHostName(multicompp::bandParam(field, band), band));
+    std::vector<std::string> sorted(names);
+    std::sort(sorted.begin(), sorted.end());
+    require(std::adjacent_find(sorted.begin(), sorted.end()) == sorted.end(),
+            "every host parameter name is unique");
+    require(multicompp::bandHostName(multicompp::bandParam(0, 1), 1) == "MB Low-Mid Threshold",
+            "band names lead with MB and the band");
+
+    int inert = 0;
+    for (int i = 0; i < multicompp::kTotalParamCount; i = multicompp::nextControlParameter(i))
+        inert += multicompp::isInertParameter(static_cast<uint32_t>(i)) ? 1 : 0;
+    require(inert == 4, "exactly the four fixed VCA controls are hidden as inert");
+
+    int tapered = 0;
+    for (int i = 0; i < multicompp::kTotalParamCount; i = multicompp::nextControlParameter(i))
+    {
+        multicompp::resolveParameter(i,
+            [&](const auto& d) {
+                if (!multicompp::hasSkew(d)) return;
+                ++tapered;
+                for (const float position : {0.0f, 0.25f, 0.5f, 0.75f, 1.0f})
+                {
+                    char text[64];
+                    require(multicompp::formatTaperedText(d, position, text, sizeof(text)),
+                            "a tapered control formats its text");
+                    float parsed = -1.0f;
+                    require(multicompp::parseTaperedText(d, text, parsed), "a tapered control parses its own text");
+                    const float plain = multicompp::hostToPlain(d, position);
+                    const float back = multicompp::hostToPlain(d, parsed);
+                    require(std::abs(back - plain) <= std::max(0.011f * std::abs(plain), 0.006f),
+                            "tapered text round-trips to the same value");
+                }
+            },
+            [&](const multicompp::BandParam& d, int) {
+                if (!multicompp::hasSkew(d)) return;
+                ++tapered;
+                char text[64];
+                require(multicompp::formatTaperedText(d, multicompp::hostDefault(d), text, sizeof(text))
+                            && std::string_view(text).find(d.unit) != std::string_view::npos,
+                        "a tapered band control shows its unit");
+            });
+    }
+    require(tapered == 23, "23 tapered controls get plain-value text");
+
+    const auto textOf = [](const auto& d, float plain) {
+        char text[64] = {};
+        multicompp::formatTaperedText(d, multicompp::plainToHost(d, plain), text, sizeof(text));
+        return std::string(text);
+    };
+    const auto& fetAttack = multicompp::kParams[static_cast<size_t>(multicompp::ParamId::FetAttack)];
+    const auto& crossover3 = multicompp::kParams[static_cast<size_t>(multicompp::ParamId::Crossover3)];
+    const auto& sidechainHp = multicompp::kParams[static_cast<size_t>(multicompp::ParamId::SidechainHP)];
+    require(textOf(fetAttack, 0.2f) == "0.20 ms", "FET Attack reads in milliseconds");
+    require(textOf(crossover3, 8000.0f) == "8 kHz", "a crossover reads in kHz from 1000 Hz up");
+    require(textOf(sidechainHp, 0.0f) == "Off", "SC HP at 0 Hz reads Off");
+    float host = -1.0f;
+    require(multicompp::parseTaperedText(crossover3, "8k", host)
+                && std::abs(multicompp::hostToPlain(crossover3, host) - 8000.0f) < 1.0f,
+            "a typed 8k sets 8000 Hz");
+    require(multicompp::parseTaperedText(sidechainHp, "off", host) && host == 0.0f, "a typed Off turns SC HP off");
+    require(!multicompp::parseTaperedText(fetAttack, "50 Hz", host), "a typed value in the wrong unit is rejected");
+    char vcaText[32] = {};
+    require(multicompp::formatVcaCompressionText(duskaudio::vcaLaw::compressPosition(4.0f), vcaText, sizeof(vcaText))
+                && std::string(vcaText) == "4.0:1",
+            "VCA Compression reads as the ratio on the face");
+    float position = -1.0f;
+    require(multicompp::parseVcaCompressionText("4:1", position)
+                && std::abs(duskaudio::vcaLaw::compressRatio(position) - 4.0f) < 0.01f,
+            "a typed 4:1 sets the 4:1 knob position");
+    require(multicompp::parseVcaCompressionText("INF", position)
+                && position == duskaudio::vcaLaw::kCompressLaw.back().position
+                && multicompp::formatVcaCompressionText(position, vcaText, sizeof(vcaText))
+                && std::string(vcaText) == "INF",
+            "INF reaches the end stop and reads INF");
+    require(!multicompp::parseVcaCompressionText("abc", position), "non-numeric VCA Compression text is rejected");
+    std::printf("host text: FET Attack %s, Crossover 3 %s, SC HP %s\n",
+                textOf(fetAttack, 0.2f).c_str(), textOf(crossover3, 8000.0f).c_str(), textOf(sidechainHp, 0.0f).c_str());
+}
+
 int main(int argc, char** argv)
 {
     if (argc == 2 && std::strcmp(argv[1], "--fet-ui") == 0)
@@ -1407,6 +1498,7 @@ int main(int argc, char** argv)
     testFractionalIntegerAutomationStaysLoadable();
     testAlphaSessionStateStaysLoadable();
     testOptoReferenceDisplayAndNoiseDefault();
+    testHostNamesAndTaperedText();
     std::puts("Multi-Comp plugin-layer tests: PASS");
     return 0;
 }
