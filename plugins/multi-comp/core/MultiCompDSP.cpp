@@ -1951,12 +1951,36 @@ int MultiCompDSP::latencySamplesForMode(MultiCompMode mode, float globalLookahea
     const int digital = mode == MultiCompMode::Digital
         ? static_cast<int>(std::round(std::clamp(digitalLookaheadMs, 0.0f, 10.0f)
             * 0.001f * static_cast<float>(sampleRate))) : 0;
+    return baseLatencyForMode(mode) + lookahead + digital;
+}
+
+int MultiCompDSP::baseLatencyForMode(MultiCompMode mode) const noexcept
+{
     // JUCE keeps PDC constant at the maximum anti-alias group delay.  The
     // multiband path is native-rate, so it contributes only lookahead here.
     const int antiAlias = mode == MultiCompMode::Multiband ? 0 : antiAliasLatency;
     // Opto's output stage is oversampled locally (MultiCompOptoStageOversampler.hpp).
     const int optoStage = mode == MultiCompMode::Opto ? kOptoStageLatencyHost : 0;
-    return antiAlias + lookahead + digital + optoStage;
+    return antiAlias + optoStage;
+}
+
+int MultiCompDSP::getMaximumLatencyPaddingSamples() const noexcept
+{
+    // The deepest base is Opto's; Multiband, with none, takes all of it.
+    return baseLatencyForMode(MultiCompMode::Opto);
+}
+
+int MultiCompDSP::getHostLatencySamples() const noexcept
+{
+    const auto mode = static_cast<MultiCompMode>(std::clamp(params.mode.load(std::memory_order_relaxed), 0, 7));
+    return getLatencySamples() + getMaximumLatencyPaddingSamples() - baseLatencyForMode(mode);
+}
+
+int MultiCompDSP::getLatencyPaddingSamples() const noexcept
+{
+    // The mode the last block ran in, which is what the caller is padding.
+    const int index = lastMode >= 0 ? lastMode : std::clamp(params.mode.load(std::memory_order_relaxed), 0, 7);
+    return getMaximumLatencyPaddingSamples() - baseLatencyForMode(static_cast<MultiCompMode>(index));
 }
 
 } // namespace duskaudio

@@ -48,6 +48,7 @@
 
 #include "DuskDenormals.hpp"
 #include "MultiCompDSP.hpp"
+#include "MultiCompLatencyPad.hpp"
 #include "MultiCompParams.hpp"
 #include "MultiCompProgramPresets.hpp"
 
@@ -224,6 +225,7 @@ public:
             push(index, value);
         }
         dsp.prepare(kRate, static_cast<int>(kMaxBlock));
+        latencyPad.prepare(dsp.getMaximumLatencyPaddingSamples());
         for (const auto& [index, value] : values)
             push(index, value);
     }
@@ -257,12 +259,13 @@ public:
                     dsp.processBlockExternal(audio, sidechain, outputs, 2, static_cast<int>(n));
                 else
                     dsp.processBlock(audio, outputs, 2, static_cast<int>(n));
+                latencyPad.process(outputs, 2, static_cast<int>(n), dsp.getLatencyPaddingSamples());
             }
             out.l.insert(out.l.end(), outL.begin(), outL.begin() + n);
             out.r.insert(out.r.end(), outR.begin(), outR.begin() + n);
             offset += n;
         }
-        out.latency = static_cast<float>(std::max(0, dsp.getLatencySamples()));
+        out.latency = static_cast<float>(std::max(0, dsp.getHostLatencySamples()));
         out.gainReduction = dsp.getGainReduction();
         return out;
     }
@@ -289,6 +292,7 @@ private:
     }
 
     duskaudio::MultiCompDSP dsp;
+    duskaudio::LatencyPad latencyPad;
     Settings values;
 };
 

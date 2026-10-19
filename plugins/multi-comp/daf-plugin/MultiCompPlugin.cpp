@@ -40,6 +40,7 @@ inline std::array<float, 3> orderedCrossovers(float f1, float f2, float f3) noex
 
 #include "DafPlugin.hpp"
 #include "MultiCompAccess.hpp"
+#include "../core/MultiCompLatencyPad.hpp"
 #include "MultiCompOutputVu.hpp"
 #include "MultiCompParams.hpp"
 #include "MultiCompProgramPresets.hpp"
@@ -266,10 +267,10 @@ protected:
             setParameterValue(static_cast<uint32_t>(i), state[static_cast<size_t>(i)]);
     }
 
-    void activate() override { dsp.prepare(getSampleRate(), static_cast<int>(getBufferSize())); outputVu.prepare(getSampleRate()); pushParameters(); updateLatency(); }
-    void deactivate() override { dsp.reset(); outputVu.reset(); }
-    void sampleRateChanged(double sr) override { dsp.prepare(sr, static_cast<int>(getBufferSize())); outputVu.prepare(sr); pushParameters(); updateLatency(); }
-    void bufferSizeChanged(uint32_t bs) override { dsp.prepare(getSampleRate(), static_cast<int>(bs)); outputVu.prepare(getSampleRate()); pushParameters(); updateLatency(); }
+    void activate() override { prepare(getSampleRate(), getBufferSize()); }
+    void deactivate() override { dsp.reset(); outputVu.reset(); latencyPad.reset(); }
+    void sampleRateChanged(double sr) override { prepare(sr, getBufferSize()); }
+    void bufferSizeChanged(uint32_t bs) override { prepare(getSampleRate(), bs); }
 
     void ioChanged(uint16_t in, uint16_t out) override
     {
@@ -297,6 +298,7 @@ protected:
             && multicompp::plugin_detail::hasStereoExternalSidechainPorts(activeInputs, inputs);
         if (useSc) { const float* sc[2] = {inputs[2], inputs[3]}; dsp.processBlockExternal(inputs, sc, outputs, activeChannels, static_cast<int>(frames)); }
         else dsp.processBlock(inputs, outputs, activeChannels, static_cast<int>(frames));
+        latencyPad.process(outputs, activeChannels, static_cast<int>(frames), dsp.getLatencyPaddingSamples());
         outputVu.process(outputs, activeChannels, static_cast<int>(frames));
         // setLatency() is documented as callable from run(). The CLAP wrapper
         // latches a change here and publishes it at the next activate(), which
@@ -321,10 +323,21 @@ private:
                 });
         }
     }
-    void updateLatency() { const int l = dsp.getLatencySamples(); if (l != lastLatency) { lastLatency = l; setLatency(static_cast<uint32_t>(l < 0 ? 0 : l)); } }
+    void prepare(double sampleRate, uint32_t bufferSize)
+    {
+        dsp.prepare(sampleRate, static_cast<int>(bufferSize));
+        outputVu.prepare(sampleRate);
+        latencyPad.prepare(dsp.getMaximumLatencyPaddingSamples());
+        pushParameters();
+        updateLatency();
+    }
+    // Constant across modes (see MultiCompDSP::getHostLatencySamples); only
+    // the lookahead controls move it.
+    void updateLatency() { const int l = dsp.getHostLatencySamples(); if (l != lastLatency) { lastLatency = l; setLatency(static_cast<uint32_t>(l < 0 ? 0 : l)); } }
 
     duskaudio::MultiCompDSP dsp;
     multicompp::OutputVu outputVu;
+    duskaudio::LatencyPad latencyPad;
     // Formats other than AU always present the full input set, and ioChanged()
     // is only called where a host narrows it, so the declared count is the
     // correct default rather than a placeholder.

@@ -88,6 +88,16 @@ public:
     // constant while the quality selector changes. Multiband is native-rate.
     int getLatencySamples() const noexcept;
 
+    // The latency still differs between modes (Opto's output stage adds a
+    // little, Multiband adds none), and a report that moves with the mode makes
+    // VST3 and CLAP hosts restart the plugin while AU hosts never hear of it.
+    // A plugin holds its report at getHostLatencySamples() by delaying each
+    // block's output by getLatencyPaddingSamples(): the deepest mode's latency
+    // minus that of the mode the block ran in. Only the lookaheads move it.
+    int getHostLatencySamples() const noexcept;
+    int getLatencyPaddingSamples() const noexcept;
+    int getMaximumLatencyPaddingSamples() const noexcept;
+
 private:
     friend struct MultiCompDSPTestAccess;
 
@@ -140,6 +150,8 @@ private:
                                         int correctionEndSamples) noexcept;
     int latencySamplesForMode(MultiCompMode mode, float globalLookaheadMs,
                               float digitalLookaheadMs) const noexcept;
+    // The part of a mode's latency its controls cannot change.
+    int baseLatencyForMode(MultiCompMode mode) const noexcept;
 
     MultiCompParameterState params;
     float busFadeControl = 0.0f;

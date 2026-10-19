@@ -1,5 +1,6 @@
 #include "MultiCompFetProgrammeFixtures.hpp"
 #include "../MultiCompDSP.hpp"
+#include "../MultiCompLatencyPad.hpp"
 #include "MultiCompOptoParityFixtures.hpp"
 #include "MultiCompVcaSwitchFixtures.hpp"
 #include "../../../shared-daf/dsp/DuskCrossover.hpp"
@@ -5530,6 +5531,65 @@ void testSidechainEq()
     require(std::isfinite(flat) && std::isfinite(boosted), "sidechain EQ meter finite");
     require(boosted < flat - 0.2f, "sidechain high shelf increases HF compression");
     std::printf("sidechain EQ: GR %.4f dB -> %.4f dB with +12 dB HF shelf\n", flat, boosted);
+}
+
+// The host sees one latency in every mode: each block's output is padded to the
+// deepest mode's latency, so switching modes never moves PDC (VST3 and CLAP hosts
+// restarted the plugin on every change, AU hosts never heard of one). Bypass
+// emits the latency-aligned input, so the padded output must be exactly the
+// input delayed by the reported latency.
+void testHostLatencyIsConstantAcrossModes()
+{
+    constexpr int kBlock = 256;
+    for (const double sampleRate : {48000.0, 96000.0})
+    {
+        for (const float digitalLookaheadMs : {0.0f, 2.0f})
+        {
+            int expected = -1;
+            for (int mode = 0; mode < 8; ++mode)
+            {
+                MultiCompDSP dsp;
+                duskaudio::LatencyPad pad;
+                dsp.setParameter(MultiCompDSP::Parameter::Oversampling, sampleRate > 50000.0 ? 2.0f : 1.0f);
+                dsp.prepare(sampleRate, kBlock);
+                pad.prepare(dsp.getMaximumLatencyPaddingSamples());
+                dsp.setMode(mode);
+                dsp.setParameter(MultiCompDSP::Parameter::DigitalLookahead, digitalLookaheadMs);
+                dsp.setBypass(true);
+                const int host = dsp.getHostLatencySamples();
+                if (mode != 6 && expected < 0) expected = host;
+                const int lookahead = mode == 6
+                    ? static_cast<int>(std::round(digitalLookaheadMs * 0.001f * static_cast<float>(sampleRate))) : 0;
+                std::printf("host latency: %.0f Hz lookahead %.0f ms mode %d core %d padding %d host %d\n",
+                            sampleRate, static_cast<double>(digitalLookaheadMs), mode,
+                            dsp.getLatencySamples(), host - dsp.getLatencySamples(), host);
+                require(host == expected + lookahead,
+                        "every mode reports the same host latency, plus Digital's own lookahead");
+
+                std::vector<float> input, output;
+                std::array<float, kBlock> left{}, outLeft{}, outRight{};
+                const float* in[] = {left.data(), left.data()};
+                float* out[] = {outLeft.data(), outRight.data()};
+                for (int block = 0; block < 200; ++block)
+                {
+                    for (int i = 0; i < kBlock; ++i)
+                    {
+                        const int n = block * kBlock + i;
+                        left[static_cast<size_t>(i)] = 0.25f * std::sin(0.031f * static_cast<float>(n))
+                            + 0.1f * std::sin(0.0071f * static_cast<float>(n));
+                    }
+                    dsp.processBlock(in, out, 2, kBlock);
+                    pad.process(out, 2, kBlock, dsp.getLatencyPaddingSamples());
+                    input.insert(input.end(), left.begin(), left.end());
+                    output.insert(output.end(), outLeft.begin(), outLeft.end());
+                }
+                bool aligned = true;
+                for (size_t n = static_cast<size_t>(sampleRate * 0.5); n < output.size() && aligned; ++n)
+                    aligned = output[n] == input[n - static_cast<size_t>(host)];
+                require(aligned, "bypassed output is the input delayed by exactly the host latency");
+            }
+        }
+    }
 }
 
 void testMultibandBypassAndZeroLatency()
@@ -11157,6 +11217,8 @@ int main(int argc, char** argv)
     { testClassicOversamplerByteIdentity(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--wide-response") == 0)
     { testWideOversamplerResponse(); return 0; }
+    if (argc == 2 && std::strcmp(argv[1], "--host-latency") == 0)
+    { testHostLatencyIsConstantAcrossModes(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--wide-latency") == 0)
     { testWideDigitalLatencyContract(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--wide-opto") == 0)
@@ -11564,6 +11626,7 @@ int main(int argc, char** argv)
     testMultibandMixAlignment();
     testSidechainEq();
     testMultibandBypassAndZeroLatency();
+    testHostLatencyIsConstantAcrossModes();
     testReprepareMultiband();
     testSameRateReprepare();
     testHighRateLowCornerFiltersStayStable();
