@@ -700,8 +700,8 @@ public:
             case MultiCompMode::VCA: return gainToDecibels(vca[ch].envelope);
             case MultiCompMode::Bus: return gainToDecibels(bus[ch].envelope);
             case MultiCompMode::StudioFET: return gainToDecibels(studioFet[ch].envelope);
-            case MultiCompMode::StudioVCA: return gainToDecibels(studioVca[ch].envelope);
-            case MultiCompMode::Digital: return gainToDecibels(digital[ch].envelope);
+            case MultiCompMode::StudioVCA: return gainToDecibels(static_cast<float>(studioVca[ch].envelope));
+            case MultiCompMode::Digital: return gainToDecibels(static_cast<float>(digital[ch].envelope));
             case MultiCompMode::Multiband: break;
         }
         return 0.0f;
@@ -1022,6 +1022,11 @@ private:
         // reading; with fbTailKneeDb what the tail adds to the reduction is
         // fetTailAppliedNow(), not this.
         double slowTailGrDb = 0.0;
+        // Studio FET's release arm runs `envelope` through this double copy:
+        // a step of its longest release is below the float spacing near unity
+        // gain at high processing rates. The arm resumes from `envelope`
+        // whenever anything else (clamp, reset) has moved it.
+        double studioEnvelope = 1.0;
         float programmeExposureSeconds = 0, programmeMaximumGrDb = 0;
         float releaseMemory = 0, sag = 0, hf = 0, tilt = 0, subBass = 0;
         float colourPeak = 0, colourHighPassLow = 0, colourHighPassLower = 0;
@@ -1104,10 +1109,16 @@ private:
     float busAudioControlSmoothingStep = 0;
     float busAudioControlSmoothingStep2 = 0;
     struct StudioFETState : FETState {};
-    struct StudioVCAState { float envelope = 1, rms = 0, previous = 0, smooth = 1; };
+    // The gain envelopes are double for the reason the FET slow populations
+    // are: at high processing rates one step of a long release is below the
+    // float spacing near unity gain, and a float envelope settles short of its
+    // target for good (Digital held 1.16 dB at 192 kHz with 4x oversampling
+    // and a 5 s release).
+    struct StudioVCAState { double envelope = 1; float rms = 0, previous = 0, smooth = 1; };
     struct DigitalState
     {
-        float envelope = 1, peak = 0, rms = 0, crest = 1;
+        double envelope = 1;
+        float peak = 0, rms = 0, crest = 1;
     };
 
     double fs = 48000.0;
@@ -4855,48 +4866,53 @@ private:
                 attack *= programFactor;
                 release *= programFactor;
             }
-            const float target = decibelsToGain(-reduction);
-            const float attackCoeff = std::exp(-1.0f / (
-                std::max(1.0e-5f, attack * sr)));
-            const float releaseCoeff = std::exp(-1.0f / (
-                std::max(1.0e-5f, release * sr)));
+            const double target = decibelsToGain(-reduction);
+            const double rate = fs * osFactor;
+            const double attackCoeff = std::exp(-1.0 / (
+                std::max(1.0e-5, static_cast<double>(attack) * rate)));
+            const double releaseCoeff = std::exp(-1.0 / (
+                std::max(1.0e-5, static_cast<double>(release) * rate)));
+            double envelope = static_cast<float>(d.studioEnvelope) == d.envelope
+                ? d.studioEnvelope : static_cast<double>(d.envelope);
             if (ratioIndex == 4)
             {
-                if (target < d.envelope)
+                if (target < envelope)
                 {
                     if (d.transient < 30)
                     {
-                        const float delayedAttack = attackCoeff * 0.5f + 0.5f;
-                        d.envelope = delayedAttack * d.envelope
-                            + (1.0f - delayedAttack) * target;
+                        const double delayedAttack = attackCoeff * 0.5 + 0.5;
+                        envelope = delayedAttack * envelope
+                            + (1.0 - delayedAttack) * target;
                         ++d.transient;
                     }
                     else
-                        d.envelope = attackCoeff * d.envelope
-                            + (1.0f - attackCoeff) * target;
+                        envelope = attackCoeff * envelope
+                            + (1.0 - attackCoeff) * target;
                 }
                 else
                 {
                     d.transient = 0;
-                    const float gr = -gainToDecibels(d.envelope + 0.001f);
+                    const float gr = -gainToDecibels(static_cast<float>(envelope) + 0.001f);
                     const float fastBase = 0.05f, fastMin = 0.025f;
                     const float scaleGr = std::clamp(gr / 20.0f, 0.0f, 1.0f);
                     const float fast = fastBase
                         - scaleGr * (fastBase - fastMin);
-                    const float fastCoeff = std::exp(-1.0f / (
-                        std::max(1.0e-5f, fast * sr)));
-                    const float effective = fastCoeff * scaleGr
-                        + releaseCoeff * (1.0f - scaleGr);
-                    d.envelope = effective * d.envelope
-                        + (1.0f - effective) * target;
+                    const double fastCoeff = std::exp(-1.0 / (
+                        std::max(1.0e-5, static_cast<double>(fast) * rate)));
+                    const double effective = fastCoeff * scaleGr
+                        + releaseCoeff * (1.0 - scaleGr);
+                    envelope = effective * envelope
+                        + (1.0 - effective) * target;
                 }
             }
-            else if (target < d.envelope)
-                d.envelope = attackCoeff * d.envelope
-                    + (1.0f - attackCoeff) * target;
+            else if (target < envelope)
+                envelope = attackCoeff * envelope
+                    + (1.0 - attackCoeff) * target;
             else
-                d.envelope = releaseCoeff * d.envelope
-                    + (1.0f - releaseCoeff) * target;
+                envelope = releaseCoeff * envelope
+                    + (1.0 - releaseCoeff) * target;
+            d.studioEnvelope = envelope;
+            d.envelope = static_cast<float>(envelope);
         }
         const float maximumEnvelope = ratioIndex == 4
             ? (studio ? 1.12f : 1.17f) : 1.0f;
@@ -5436,14 +5452,14 @@ private:
         d.previous = level;
         const float transientness = std::clamp(signalDelta * 15.0f, 0.0f, 1.0f);
         float releaseScale = 1.0f - transientness * 0.5f;
-        const float compressionDepth = std::clamp((1.0f - d.envelope) * 5.0f, 0.0f, 1.0f);
+        const float compressionDepth = std::clamp((1.0f - static_cast<float>(d.envelope)) * 5.0f, 0.0f, 1.0f);
         releaseScale *= 1.0f + compressionDepth * 0.3f * (1.0f - transientness);
         release *= releaseScale;
         const float target = decibelsToGain(-reduction);
-        const float c = std::exp(-1.0f / ((target < d.envelope ? attack : release) * sr));
-        d.envelope = c * d.envelope + (1.0f - c) * target;
+        const double c = std::exp(-1.0 / (static_cast<double>(target < d.envelope ? attack : release) * fs * osFactor));
+        d.envelope = c * d.envelope + (1.0 - c) * target;
         const float smooth = std::exp(-1.0f / (0.002f * sr));
-        d.smooth = smooth * d.smooth + (1.0f - smooth) * d.envelope;
+        d.smooth = smooth * d.smooth + (1.0f - smooth) * static_cast<float>(d.envelope);
         float out = transformed * d.smooth;
         if (std::abs(out) > 1.2f)
             out = std::copysign(1.2f + 0.3f * std::tanh((std::abs(out) - 1.2f) * 3.0f), out);
@@ -5493,9 +5509,9 @@ private:
             release *= multiplier;
         }
         const float target = decibelsToGain(-reduction), attack = std::max(0.0001f, p.digitalAttack.load(std::memory_order_relaxed) * 0.001f);
-        const float c = std::exp(-1.0f / ((target < d.envelope ? attack : release) * sr));
-        d.envelope = std::clamp(c * d.envelope + (1.0f - c) * target, 0.0001f, 1.0f);
-        const float wet = std::clamp(delayed * d.envelope * decibelsToGain(p.digitalOutput.load(std::memory_order_relaxed)), -2.0f, 2.0f);
+        const double c = std::exp(-1.0 / (static_cast<double>(target < d.envelope ? attack : release) * fs * osFactor));
+        d.envelope = std::clamp(c * d.envelope + (1.0 - c) * target, 0.0001, 1.0);
+        const float wet = std::clamp(delayed * static_cast<float>(d.envelope) * decibelsToGain(p.digitalOutput.load(std::memory_order_relaxed)), -2.0f, 2.0f);
         // The dry half of the local mix takes the same delayed sample as the wet
         // half; blending against the undelayed input combs by the lookahead time.
         return wet * mix + delayed * (1.0f - mix);
