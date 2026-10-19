@@ -2361,13 +2361,15 @@ private:
             const float bx1 = x + cells[static_cast<size_t>(i)].x1;
             const float by0 = y + capTop, by1 = y + capBottom;
             const char* label = multicompp::ui_detail::vcaMeterSourceLabel(i);
+            // The bezel below starts at capTop - 4 and is drawn after the
+            // label, so the bottom line has to finish clear of it.
             if (i == 2)
             {
-                spacedText(dl, 0.5f * (bx0 + bx1), y - 9.0f, 10.0f, kVcaInk, "GAIN", 0);
-                spacedText(dl, 0.5f * (bx0 + bx1), y + 2.0f, 10.0f, kVcaInk, "CHANGE", 0);
+                spacedText(dl, 0.5f * (bx0 + bx1), y - 16.0f, 10.0f, kVcaInk, "GAIN", 0);
+                spacedText(dl, 0.5f * (bx0 + bx1), y - 5.0f, 10.0f, kVcaInk, "CHANGE", 0);
             }
             else
-                spacedText(dl, 0.5f * (bx0 + bx1), y + 2.0f, 10.0f, kVcaInk, label, 0);
+                spacedText(dl, 0.5f * (bx0 + bx1), y - 5.0f, 10.0f, kVcaInk, label, 0);
             char id[32];
             std::snprintf(id, sizeof(id), "##vca_meter_source_%d", i);
             const ImVec2 b0 = panel.P(bx0, by0), b1 = panel.P(bx1, by1);
