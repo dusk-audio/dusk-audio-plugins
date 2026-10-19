@@ -93,8 +93,8 @@ if(UNIX AND NOT APPLE)
     endforeach()
 endif()
 
-# Auto-deploy the built CLAP/VST3/LV2 into the user plugin dirs after each build
-# (disable with -DDUSK_DAF_INSTALL_LOCAL=OFF).
+# Copies the built CLAP/VST3/LV2 into the user plugin dirs after each build
+# when configured with -DDUSK_DAF_INSTALL_LOCAL=ON.
 dusk_daf_install_local(sunset-circuits LV2_PROGRAMS)
 
 # The editor's knobs are the one thing pluginval and clap-validator never touch:

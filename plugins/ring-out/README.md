@@ -29,8 +29,8 @@ cmake --build plugins/ring-out/daf-plugin/build --target ring-out-au -j8
 auval -v aufx DsRO Dusk
 ```
 
-The build installs into the user plugin folders unless configured with
-`-DDUSK_DAF_INSTALL_LOCAL=OFF`. Identity: AU `aufx DsRO Dusk`, CLAP
+The build installs into the user plugin folders when configured with
+`-DDUSK_DAF_INSTALL_LOCAL=ON`. Identity: AU `aufx DsRO Dusk`, CLAP
 `com.duskaudio.ring-out`, LV2 `https://dusk-audio.github.io/plugins/ring-out`.
 
 ### Trigger parameters and the CLAP gate (2026-10-07 review)
