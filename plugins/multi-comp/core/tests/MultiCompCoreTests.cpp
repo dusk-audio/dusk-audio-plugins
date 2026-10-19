@@ -5137,6 +5137,60 @@ void testHighRateLowCornerFiltersStayStable()
     }
 }
 
+// Gain reduction 12 s into the longest release, after 2 s of heavy reduction.
+float gainReductionAfterLongRelease(duskaudio::MultiCompMode mode, double sampleRate, int oversampling)
+{
+    constexpr int kBlock = 512;
+    MultiCompDSP dsp;
+    dsp.setParameter(MultiCompDSP::Parameter::Oversampling, static_cast<float>(oversampling));
+    dsp.prepare(sampleRate, kBlock);
+    dsp.setMode(static_cast<int>(mode));
+    dsp.setParameter(MultiCompDSP::Parameter::FetInput, 30.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::FetRelease, 1100.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::StudioVcaThreshold, -35.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::StudioVcaRatio, 10.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::StudioVcaRelease, 4000.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalThreshold, -45.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalRatio, 20.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalRelease, 5000.0f);
+    std::array<float, kBlock> left{}, outLeft{}, outRight{};
+    const float* input[] = {left.data(), left.data()};
+    float* output[] = {outLeft.data(), outRight.data()};
+    constexpr double pi = 3.14159265358979323846;
+    const long total = static_cast<long>(14.0 * sampleRate);
+    double phase = 0.0;
+    for (long n = 0; n < total; n += kBlock)
+    {
+        for (int i = 0; i < kBlock; ++i)
+        {
+            const double amplitude = static_cast<double>(n + i) < 2.0 * sampleRate ? 0.5 : 0.00316;
+            left[static_cast<size_t>(i)] = static_cast<float>(amplitude * std::sin(phase));
+            phase += 2.0 * pi * 997.0 / sampleRate;
+        }
+        dsp.processBlock(input, output, 2, kBlock);
+    }
+    return dsp.getGainReduction();
+}
+
+// A release is a time, so how far it has recovered cannot depend on the rate it
+// runs at. Float gain envelopes broke that: one release step fell below the float
+// spacing near unity gain and the envelope settled short for good, by up to
+// 1.16 dB at 192 kHz with 4x oversampling.
+void testLongReleaseSettlesAtHighRates()
+{
+    using duskaudio::MultiCompMode;
+    for (const MultiCompMode mode : {MultiCompMode::StudioFET, MultiCompMode::StudioVCA,
+                                     MultiCompMode::Digital})
+    {
+        const float base = gainReductionAfterLongRelease(mode, 48000.0, 0);
+        const float high = gainReductionAfterLongRelease(mode, 192000.0, 2);
+        std::printf("long release: mode %d 48 kHz 1x %.4f dB, 192 kHz 4x %.4f dB\n",
+                    static_cast<int>(mode), base, high);
+        require(std::abs(high - base) < 0.01f,
+                "a long release recovers as far at 192 kHz with 4x oversampling as at 48 kHz");
+    }
+}
+
 // Stereo render of a two-tone programme; returns the left channel.
 std::vector<float> renderWithControl(duskaudio::MultiCompMode mode, MultiCompDSP::Parameter control, float value)
 {
@@ -11126,6 +11180,8 @@ int main(int argc, char** argv)
     { testOptoLinkedAntiphaseLowTone(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--high-rate-filters") == 0)
     { testHighRateLowCornerFiltersStayStable(); return 0; }
+    if (argc == 2 && std::strcmp(argv[1], "--long-release") == 0)
+    { testLongReleaseSettlesAtHighRates(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--mode-reentry") == 0)
     { testModeReentryStartsFromRest(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--parity") == 0)
@@ -11511,6 +11567,7 @@ int main(int argc, char** argv)
     testReprepareMultiband();
     testSameRateReprepare();
     testHighRateLowCornerFiltersStayStable();
+    testLongReleaseSettlesAtHighRates();
     testModeReentryStartsFromRest();
     testHiddenControlsStayOutOfModesWithoutThem();
     testGlobalLookaheadOnlyInDigitalModes();
