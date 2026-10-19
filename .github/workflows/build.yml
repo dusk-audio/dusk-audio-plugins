@@ -1234,10 +1234,10 @@ jobs:
           TAG="${GITHUB_REF#refs/tags/}"
           VERSION=$(echo "$TAG" | sed 's/.*-v/v/' | sed 's/^v//')
 
-          # Extract changelog from annotated tag message (skip the first line which is the title)
-          TAG_MESSAGE=$(git tag -l --format='%(contents)' "$TAG" 2>/dev/null || echo "")
-          # Remove the first line (tag title like "4K EQ v1.0.8") to avoid duplication with release title
-          CHANGELOG=$(echo "$TAG_MESSAGE" | tail -n +2 | sed '/^$/d; 1{/^$/d}')
+          # Changelog from the annotated tag message, without its title line (like
+          # "4K EQ v1.0.8") so it does not repeat the release title. The script
+          # re-fetches the annotated tag that checkout replaced.
+          CHANGELOG=$(.github/scripts/release_changelog.sh "$TAG")
 
           # Build release body with changelog + installation instructions
           {
