@@ -1226,13 +1226,10 @@ private:
         const int mode = multicompp::ui_detail::choiceIndex(value(P_MODE), 8);
         drawSection(dl, kModeCanvasTop, kModeCanvasBottom - 8, "");
         drawModeToolbar(dl);
-        if (mode == 0 || mode == 1 || mode == 2 || mode == 3)
-        {
-            // Opto, vintage FET, VCA and Bus own panel-integrated analogue meters.
-        }
-        else if (mode == 7)
-            drawMeter(dl, 1062, kModeCanvasTop + 42, 42, 92, meter(kMeterMaster), kAccent, "MASTER GR");
-        else
+        // Opto, vintage FET, VCA and Bus own panel-integrated analogue meters,
+        // and Multiband meters each band in its own strip (a master meter at
+        // the right edge sat under the crossover panel and the HIGH strip).
+        if (mode == 4 || mode == 5 || mode == 6)
             drawMeter(dl, 28, kModeCanvasTop + 42, 48, 300, meter(kMeterMaster), kAccent, "MASTER GR");
         // Deliberately exhaustive: adding a ninth mode must force a UI decision.
         switch (mode)
@@ -2693,8 +2690,8 @@ private:
             panel.toggle(bandId("mb_s"), base + 6,
                          x + 180, 640, x + 238, 666, values[base + 6], "SOLO");
         }
-        knob(dl, "mb_mix", P_MB_MIX, 900, 395, "MB MIX", "%.0f", "%");
-        knob(dl, "mb_out", P_MB_OUT, 1005, 395, "MB OUTPUT", "%.1f", " dB");
+        knob(dl, "mb_mix", P_MB_MIX, 900, 387, "MB MIX", "%.0f", "%");
+        knob(dl, "mb_out", P_MB_OUT, 1005, 387, "MB OUTPUT", "%.1f", " dB");
     }
 
     void crossover(ImDrawList* dl, uint32_t p, float x, const char* label)
