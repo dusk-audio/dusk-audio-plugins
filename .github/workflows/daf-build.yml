@@ -1099,9 +1099,9 @@ jobs:
       - name: Assemble release notes
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
-          # Changelog from the annotated tag message (skip first line = title).
-          TAG_MESSAGE=$(git tag -l --format='%(contents)' "$TAG" 2>/dev/null || echo "")
-          CHANGELOG=$(echo "$TAG_MESSAGE" | tail -n +2 | sed '/^$/d; 1{/^$/d}')
+          # Changelog from the annotated tag message (title line dropped); the
+          # script re-fetches the annotated tag that checkout replaced.
+          CHANGELOG=$(.github/scripts/release_changelog.sh "$TAG")
           # The build jobs bundle the manual only when the website has one, so
           # claim it only when every archive actually holds it. The listing is
           # captured first rather than piped into `grep -q`, whose early exit

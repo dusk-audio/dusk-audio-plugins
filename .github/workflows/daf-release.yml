@@ -978,8 +978,7 @@ jobs:
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
           VERSION="${TAG#sunset-circuits-v}"
-          TAG_MESSAGE=$(git tag -l --format='%(contents)' "$TAG" 2>/dev/null || echo "")
-          CHANGELOG=$(echo "$TAG_MESSAGE" | tail -n +2 | sed '/^$/d; 1{/^$/d}')
+          CHANGELOG=$(.github/scripts/release_changelog.sh "$TAG")
           {
             echo "## Sunset Circuits v${VERSION}"
             echo ""
