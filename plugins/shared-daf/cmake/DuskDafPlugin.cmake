@@ -172,12 +172,20 @@ function(dusk_daf_install_local plugin_name)
     # longer produces would stay in the bundle. (A host with the plugin loaded keeps
     # its mapped binary either way: CMake's copy writes a new file, where cp would
     # rewrite the loaded one in place.)
+    # Before 3.16, `cmake -E remove_directory` follows a symlink to a directory and
+    # empties what it points at, so an installed bundle linked into a build tree
+    # would lose the very files about to be copied. 3.16 removes just the link.
     if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.17)
         set(_rm_dir ${CMAKE_COMMAND} -E rm -rf)
         set(_rm_file ${CMAKE_COMMAND} -E rm -f)
-    else()
+    elseif(CMAKE_VERSION VERSION_GREATER_EQUAL 3.16)
         set(_rm_dir ${CMAKE_COMMAND} -E remove_directory)
         set(_rm_file ${CMAKE_COMMAND} -E remove -f)
+    else()
+        message(FATAL_ERROR
+            "DUSK_DAF_INSTALL_LOCAL needs CMake 3.16 or newer (this is ${CMAKE_VERSION}): "
+            "older `cmake -E remove_directory` deletes through symlinks. Configure with "
+            "-DDUSK_DAF_INSTALL_LOCAL=OFF, or use a newer CMake.")
     endif()
 
     if(TARGET ${plugin_name}-clap)
