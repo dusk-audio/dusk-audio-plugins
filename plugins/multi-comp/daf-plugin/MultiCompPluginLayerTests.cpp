@@ -804,7 +804,17 @@ void testFetFaceplateContract()
         && fetEnd != std::string::npos
         && source.find("drawOptoMeter(dl,", fetStart) < fetEnd
         && source.find("void drawFetMeter(") == std::string::npos
-        && source.find("mode == 0 || mode == 1") != std::string::npos;
+        && source.find("if (mode == 4 || mode == 5 || mode == 6)\n            drawMeter(") != std::string::npos;
+    // Multiband meters each band in its strip. Its master meter, drawn at the
+    // right edge, sat under the crossover panel and the HIGH strip.
+    const size_t multibandStart = source.find("void drawMultiband(");
+    const size_t multibandEnd = source.find("void crossover(", multibandStart);
+    const std::string multiband = multibandStart != std::string::npos && multibandEnd != std::string::npos
+        ? source.substr(multibandStart, multibandEnd - multibandStart) : std::string();
+    reviewCheck(source.find("\"MASTER GR\"") == source.rfind("\"MASTER GR\"")
+                    && multiband.find("drawMeter(") != std::string::npos
+                    && multiband.find("kMeterMaster") == std::string::npos,
+                "Multiband draws no master meter under its crossover panel");
     const bool hasFiveRatioButtons = source.find("drawFetRatioButtons(dl") != std::string::npos
         && source.find("visualOrder") != std::string::npos
         && source.find("row < 5") != std::string::npos;
