@@ -89,6 +89,13 @@ inline const char* vcaMeterSourceLabel(int source) noexcept
     }
 }
 
+// Mode toolbar captions, set in capitals like every other legend on the
+// panel. The host-facing enum labels stay kModes.
+inline constexpr std::array<const char*, 8> kModeTabLabels{{
+    "OPTO", "FET", "VCA", "BUS", "STUDIO FET", "STUDIO VCA", "DIGITAL", "MULTIBAND"}};
+static_assert(kModeTabLabels.size() == sizeof(kModes) / sizeof(kModes[0]),
+              "one toolbar caption per mode");
+
 inline float vcaSidechainSwitchTarget(bool currentlyEngaged,
                                       float currentHostValue,
                                       float& lastEngagedHostValue,
@@ -1097,7 +1104,7 @@ private:
                                   panel.P(x1 - 2.0f, y1), kHeaderGreen);
             panel.text(dl, 0.5f * (x0 + x1), y0 + 3.0f, 8.8f,
                        active || hovered ? kText : kDim,
-                       multicompp::kModes[mode], 0, true);
+                       multicompp::ui_detail::kModeTabLabels[static_cast<size_t>(mode)], 0, true);
             if (clicked && !active)
                 setValue(P_MODE, static_cast<float>(mode));
         }

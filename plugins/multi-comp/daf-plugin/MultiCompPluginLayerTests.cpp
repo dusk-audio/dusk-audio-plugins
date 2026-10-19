@@ -21,6 +21,7 @@
 #include "../../shared-daf/ui/DuskVuMeterGeometry.hpp"
 
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -1022,6 +1023,19 @@ void testOptoFaceplateContract()
                 && std::strcmp(multicompp::ui_detail::vcaMeterSourceLabel(2), "GAIN CHANGE") == 0
                 && multicompp::ui_detail::kVcaMeterSourceCount == 3,
             "VCA meter selector exposes the reference INPUT/OUTPUT/GAIN CHANGE sources");
+    {
+        bool captionsMatchModes = true;
+        for (size_t mode = 0; mode < multicompp::ui_detail::kModeTabLabels.size(); ++mode)
+        {
+            std::string upper = multicompp::kModes[mode];
+            for (char& c : upper)
+                c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            if (upper != multicompp::ui_detail::kModeTabLabels[mode])
+                captionsMatchModes = false;
+        }
+        require(captionsMatchModes,
+                "each mode toolbar caption is its host mode name in capitals");
+    }
     const auto vuUnitOffset = duskdaf::vuScreenOffset(100.0f, 0.0f, 1.0f);
     const auto vuLargeOffset = duskdaf::vuScreenOffset(100.0f, 0.0f, 1.5f);
     require(std::abs(std::hypot(vuUnitOffset.x, vuUnitOffset.y) - 100.0f) < 1.0e-5f
