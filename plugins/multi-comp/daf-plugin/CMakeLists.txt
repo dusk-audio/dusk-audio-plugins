@@ -109,6 +109,36 @@ if(NOT CMAKE_CROSSCOMPILING)
   target_compile_features(MultiCompPluginLayerTest PRIVATE cxx_std_17)
   add_test(NAME MultiCompPluginLayer COMMAND MultiCompPluginLayerTest)
 
+  # Hosts the built LV2 through lilv: DAF's LV2 port handling, the exported
+  # presets and the LV2 state interface, which the VST3, CLAP and pluginval
+  # runs never reach. Needs lilv. On Linux, where CI runs the tests, an LV2
+  # build without it fails to configure rather than going green with the
+  # test unregistered.
+  find_package(PkgConfig QUIET)
+  if(PkgConfig_FOUND)
+    pkg_check_modules(MULTICOMP_LILV QUIET IMPORTED_TARGET lilv-0)
+  endif()
+  if(TARGET multi-comp-2-lv2 AND NOT MULTICOMP_LILV_FOUND)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      message(FATAL_ERROR
+        "multi-comp-2: the LV2 host test needs the lilv-0 development files "
+        "(liblilv-dev). Install them, or build without the LV2 format.")
+    endif()
+    message(STATUS "MultiCompLv2 not registered: lilv-0 development files not found")
+  endif()
+  if(TARGET multi-comp-2-lv2 AND MULTICOMP_LILV_FOUND)
+    add_executable(MultiCompLv2Test MultiCompLv2Tests.cpp ../core/MultiCompDSP.cpp)
+    target_include_directories(MultiCompLv2Test PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../core"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+    target_compile_features(MultiCompLv2Test PRIVATE cxx_std_17)
+    target_link_libraries(MultiCompLv2Test PRIVATE PkgConfig::MULTICOMP_LILV)
+    add_dependencies(MultiCompLv2Test multi-comp-2-lv2)
+    add_test(NAME MultiCompLv2
+             COMMAND MultiCompLv2Test "${CMAKE_BINARY_DIR}/bin/multi-comp-2.lv2")
+  endif()
+
   add_executable(MultiCompVintageControlTest MultiCompVintageControlTests.cpp)
   target_include_directories(MultiCompVintageControlTest PRIVATE ${DUSK_DAF_INCLUDE_DIRS})
   add_test(NAME MultiCompVintageControls COMMAND MultiCompVintageControlTest)
