@@ -1,5 +1,6 @@
 #include "MultiCompFetProgrammeFixtures.hpp"
 #include "../MultiCompDSP.hpp"
+#include "../MultiCompLatencyPad.hpp"
 #include "MultiCompOptoParityFixtures.hpp"
 #include "MultiCompVcaSwitchFixtures.hpp"
 #include "../../../shared-daf/dsp/DuskCrossover.hpp"
@@ -5137,6 +5138,60 @@ void testHighRateLowCornerFiltersStayStable()
     }
 }
 
+// Gain reduction 12 s into the longest release, after 2 s of heavy reduction.
+float gainReductionAfterLongRelease(duskaudio::MultiCompMode mode, double sampleRate, int oversampling)
+{
+    constexpr int kBlock = 512;
+    MultiCompDSP dsp;
+    dsp.setParameter(MultiCompDSP::Parameter::Oversampling, static_cast<float>(oversampling));
+    dsp.prepare(sampleRate, kBlock);
+    dsp.setMode(static_cast<int>(mode));
+    dsp.setParameter(MultiCompDSP::Parameter::FetInput, 30.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::FetRelease, 1100.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::StudioVcaThreshold, -35.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::StudioVcaRatio, 10.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::StudioVcaRelease, 4000.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalThreshold, -45.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalRatio, 20.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalRelease, 5000.0f);
+    std::array<float, kBlock> left{}, outLeft{}, outRight{};
+    const float* input[] = {left.data(), left.data()};
+    float* output[] = {outLeft.data(), outRight.data()};
+    constexpr double pi = 3.14159265358979323846;
+    const long total = static_cast<long>(14.0 * sampleRate);
+    double phase = 0.0;
+    for (long n = 0; n < total; n += kBlock)
+    {
+        for (int i = 0; i < kBlock; ++i)
+        {
+            const double amplitude = static_cast<double>(n + i) < 2.0 * sampleRate ? 0.5 : 0.00316;
+            left[static_cast<size_t>(i)] = static_cast<float>(amplitude * std::sin(phase));
+            phase += 2.0 * pi * 997.0 / sampleRate;
+        }
+        dsp.processBlock(input, output, 2, kBlock);
+    }
+    return dsp.getGainReduction();
+}
+
+// A release is a time, so how far it has recovered cannot depend on the rate it
+// runs at. Float gain envelopes broke that: one release step fell below the float
+// spacing near unity gain and the envelope settled short for good, by up to
+// 1.16 dB at 192 kHz with 4x oversampling.
+void testLongReleaseSettlesAtHighRates()
+{
+    using duskaudio::MultiCompMode;
+    for (const MultiCompMode mode : {MultiCompMode::StudioFET, MultiCompMode::StudioVCA,
+                                     MultiCompMode::Digital})
+    {
+        const float base = gainReductionAfterLongRelease(mode, 48000.0, 0);
+        const float high = gainReductionAfterLongRelease(mode, 192000.0, 2);
+        std::printf("long release: mode %d 48 kHz 1x %.4f dB, 192 kHz 4x %.4f dB\n",
+                    static_cast<int>(mode), base, high);
+        require(std::abs(high - base) < 0.01f,
+                "a long release recovers as far at 192 kHz with 4x oversampling as at 48 kHz");
+    }
+}
+
 // Stereo render of a two-tone programme; returns the left channel.
 std::vector<float> renderWithControl(duskaudio::MultiCompMode mode, MultiCompDSP::Parameter control, float value)
 {
@@ -5476,6 +5531,65 @@ void testSidechainEq()
     require(std::isfinite(flat) && std::isfinite(boosted), "sidechain EQ meter finite");
     require(boosted < flat - 0.2f, "sidechain high shelf increases HF compression");
     std::printf("sidechain EQ: GR %.4f dB -> %.4f dB with +12 dB HF shelf\n", flat, boosted);
+}
+
+// The host sees one latency in every mode: each block's output is padded to the
+// deepest mode's latency, so switching modes never moves PDC (VST3 and CLAP hosts
+// restarted the plugin on every change, AU hosts never heard of one). Bypass
+// emits the latency-aligned input, so the padded output must be exactly the
+// input delayed by the reported latency.
+void testHostLatencyIsConstantAcrossModes()
+{
+    constexpr int kBlock = 256;
+    for (const double sampleRate : {48000.0, 96000.0})
+    {
+        for (const float digitalLookaheadMs : {0.0f, 2.0f})
+        {
+            int expected = -1;
+            for (int mode = 0; mode < 8; ++mode)
+            {
+                MultiCompDSP dsp;
+                duskaudio::LatencyPad pad;
+                dsp.setParameter(MultiCompDSP::Parameter::Oversampling, sampleRate > 50000.0 ? 2.0f : 1.0f);
+                dsp.prepare(sampleRate, kBlock);
+                pad.prepare(dsp.getMaximumLatencyPaddingSamples());
+                dsp.setMode(mode);
+                dsp.setParameter(MultiCompDSP::Parameter::DigitalLookahead, digitalLookaheadMs);
+                dsp.setBypass(true);
+                const int host = dsp.getHostLatencySamples();
+                if (mode != 6 && expected < 0) expected = host;
+                const int lookahead = mode == 6
+                    ? static_cast<int>(std::round(digitalLookaheadMs * 0.001f * static_cast<float>(sampleRate))) : 0;
+                std::printf("host latency: %.0f Hz lookahead %.0f ms mode %d core %d padding %d host %d\n",
+                            sampleRate, static_cast<double>(digitalLookaheadMs), mode,
+                            dsp.getLatencySamples(), host - dsp.getLatencySamples(), host);
+                require(host == expected + lookahead,
+                        "every mode reports the same host latency, plus Digital's own lookahead");
+
+                std::vector<float> input, output;
+                std::array<float, kBlock> left{}, outLeft{}, outRight{};
+                const float* in[] = {left.data(), left.data()};
+                float* out[] = {outLeft.data(), outRight.data()};
+                for (int block = 0; block < 200; ++block)
+                {
+                    for (int i = 0; i < kBlock; ++i)
+                    {
+                        const int n = block * kBlock + i;
+                        left[static_cast<size_t>(i)] = 0.25f * std::sin(0.031f * static_cast<float>(n))
+                            + 0.1f * std::sin(0.0071f * static_cast<float>(n));
+                    }
+                    dsp.processBlock(in, out, 2, kBlock);
+                    pad.process(out, 2, kBlock, dsp.getLatencyPaddingSamples());
+                    input.insert(input.end(), left.begin(), left.end());
+                    output.insert(output.end(), outLeft.begin(), outLeft.end());
+                }
+                bool aligned = true;
+                for (size_t n = static_cast<size_t>(sampleRate * 0.5); n < output.size() && aligned; ++n)
+                    aligned = output[n] == input[n - static_cast<size_t>(host)];
+                require(aligned, "bypassed output is the input delayed by exactly the host latency");
+            }
+        }
+    }
 }
 
 void testMultibandBypassAndZeroLatency()
@@ -11103,6 +11217,8 @@ int main(int argc, char** argv)
     { testClassicOversamplerByteIdentity(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--wide-response") == 0)
     { testWideOversamplerResponse(); return 0; }
+    if (argc == 2 && std::strcmp(argv[1], "--host-latency") == 0)
+    { testHostLatencyIsConstantAcrossModes(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--wide-latency") == 0)
     { testWideDigitalLatencyContract(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--wide-opto") == 0)
@@ -11126,6 +11242,8 @@ int main(int argc, char** argv)
     { testOptoLinkedAntiphaseLowTone(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--high-rate-filters") == 0)
     { testHighRateLowCornerFiltersStayStable(); return 0; }
+    if (argc == 2 && std::strcmp(argv[1], "--long-release") == 0)
+    { testLongReleaseSettlesAtHighRates(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--mode-reentry") == 0)
     { testModeReentryStartsFromRest(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--parity") == 0)
@@ -11508,9 +11626,11 @@ int main(int argc, char** argv)
     testMultibandMixAlignment();
     testSidechainEq();
     testMultibandBypassAndZeroLatency();
+    testHostLatencyIsConstantAcrossModes();
     testReprepareMultiband();
     testSameRateReprepare();
     testHighRateLowCornerFiltersStayStable();
+    testLongReleaseSettlesAtHighRates();
     testModeReentryStartsFromRest();
     testHiddenControlsStayOutOfModesWithoutThem();
     testGlobalLookaheadOnlyInDigitalModes();
