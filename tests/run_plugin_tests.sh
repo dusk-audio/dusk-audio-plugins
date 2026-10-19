@@ -229,15 +229,16 @@ run_audio_tests() {
 # Sunset Circuits (DAF) - core gate suite + pluginval on the built VST3
 #------------------------------------------------------------------------------
 
-# Prefer an installed bundle, fall back to the DAF build tree (which is where it
-# lands when the plugin is configured with -DDUSK_DAF_INSTALL_LOCAL=OFF).
+# Prefer the DAF build tree's bundle, the build under test, and fall back to an
+# installed one. Local installation is opt-in (-DDUSK_DAF_INSTALL_LOCAL=ON), so
+# an installed bundle can be older than the build.
 sunset_vst3_path() {
     local installed="$VST3_DIR/${SUNSET_BUNDLE}.vst3"
     local built="$PROJECT_DIR/plugins/sunset-circuits/daf-plugin/build/bin/${SUNSET_BUNDLE}.vst3"
-    if [ -d "$installed" ]; then
-        echo "$installed"
-    elif [ -d "$built" ]; then
+    if [ -d "$built" ]; then
         echo "$built"
+    elif [ -d "$installed" ]; then
+        echo "$installed"
     fi
 }
 
@@ -290,8 +291,9 @@ run_sunset_circuits_tests() {
         print_fail "VST3 binary missing: $so"
     fi
 
-    local lv2="$LV2_DIR/${SUNSET_BUNDLE}.lv2"
-    [ -d "$lv2" ] || lv2="$PROJECT_DIR/plugins/sunset-circuits/daf-plugin/build/bin/${SUNSET_BUNDLE}.lv2"
+    # Same order as sunset_vst3_path.
+    local lv2="$PROJECT_DIR/plugins/sunset-circuits/daf-plugin/build/bin/${SUNSET_BUNDLE}.lv2"
+    [ -d "$lv2" ] || lv2="$LV2_DIR/${SUNSET_BUNDLE}.lv2"
     if [ -f "$lv2/manifest.ttl" ]; then
         print_pass "LV2 manifest.ttl exists"
     else

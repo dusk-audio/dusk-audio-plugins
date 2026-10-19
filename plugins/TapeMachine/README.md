@@ -78,8 +78,8 @@ cmake --build plugins/TapeMachine/daf-plugin/build --target \
   tapemachine-2-vst3 tapemachine-2-clap tapemachine-2-lv2
 ```
 
-On macOS, add `tapemachine-2-au`. Local installation after building is enabled
-by default; configure with `-DDUSK_DAF_INSTALL_LOCAL=OFF` for packaging or CI.
+On macOS, add `tapemachine-2-au`. To install into the user plugin folders
+after each build, configure with `-DDUSK_DAF_INSTALL_LOCAL=ON`.
 
 ## Validation
 

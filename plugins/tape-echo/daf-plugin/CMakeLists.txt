@@ -47,8 +47,8 @@ target_compile_definitions(tape-echo-2 PUBLIC
     TE2_VERSION_MINOR=${PROJECT_VERSION_MINOR}
     TE2_VERSION_PATCH=${PROJECT_VERSION_PATCH})
 
-# Auto-deploy the built CLAP/VST3/LV2 into the user plugin dirs after each build
-# (disable with -DDUSK_DAF_INSTALL_LOCAL=OFF).
+# Copies the built CLAP/VST3/LV2 into the user plugin dirs after each build
+# when configured with -DDUSK_DAF_INSTALL_LOCAL=ON.
 dusk_daf_install_local(tape-echo-2 LV2_PROGRAMS)
 
 if(NOT CMAKE_CROSSCOMPILING)
