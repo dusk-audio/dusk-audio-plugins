@@ -1463,6 +1463,13 @@ void testHostNamesAndTaperedText()
                 && std::string(vcaText) == "INF",
             "INF reaches the end stop and reads INF");
     require(!multicompp::parseVcaCompressionText("abc", position), "non-numeric VCA Compression text is rejected");
+    // Past 88:1 the law still gives finite ratios before its slope reaches zero;
+    // they read as numbers so they round-trip, and only the stop reads INF.
+    require(multicompp::formatVcaCompressionText(duskaudio::vcaLaw::compressPosition(150.0f), vcaText, sizeof(vcaText))
+                && std::string(vcaText) == "150:1"
+                && multicompp::parseVcaCompressionText(vcaText, position)
+                && std::abs(duskaudio::vcaLaw::compressRatio(position) - 150.0f) < 1.0f,
+            "a finite ratio of 100:1 or more reads as a number and round-trips");
     std::printf("host text: FET Attack %s, Crossover 3 %s, SC HP %s\n",
                 textOf(fetAttack, 0.2f).c_str(), textOf(crossover3, 8000.0f).c_str(), textOf(sidechainHp, 0.0f).c_str());
 }

@@ -521,9 +521,8 @@ inline bool formatVcaCompressionText(float position, char* text, uint32_t size)
 {
     if (text == nullptr || size == 0 || !std::isfinite(position)) return false;
     const float ratio = duskaudio::vcaLaw::compressRatio(position);
-    const int written = std::isfinite(ratio) && ratio < 100.0f
-        ? std::snprintf(text, size, "%.1f:1", static_cast<double>(ratio))
-        : std::snprintf(text, size, "INF");
+    const int written = !std::isfinite(ratio) ? std::snprintf(text, size, "INF")
+        : std::snprintf(text, size, ratio < 100.0f ? "%.1f:1" : "%.0f:1", static_cast<double>(ratio));
     return written >= 0 && static_cast<uint32_t>(written) < size;
 }
 
