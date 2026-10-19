@@ -134,6 +134,9 @@ protected:
                     p.ranges.def = multicompp::hostDefault(d);
                     p.hints = kParameterIsAutomatable | (d.integer ? kParameterIsInteger : 0u);
                     using Id = multicompp::ParamId;
+                    // Kept for sessions that saved them, but no mode reads them:
+                    // the VCA face's attack, release, knee and detector are fixed.
+                    if (multicompp::isInertParameter(index)) p.hints |= kParameterIsHidden;
                     switch (static_cast<Id>(index))
                     {
                         case Id::Bypass: p.initDesignation(kParameterDesignationBypass); return;
@@ -159,12 +162,13 @@ protected:
                     }
                 },
                 [&](const multicompp::BandParam& d, int band) {
-                    p.name = String(d.name) + " " + (band == 0 ? "Low" : band == 1 ? "Low-Mid" : band == 2 ? "High-Mid" : "High");
+                    p.name = multicompp::bandHostName(d, band).c_str();
                     p.symbol = String(d.id) + "_" + std::to_string(band).c_str();
                     p.unit = multicompp::hasSkew(d) ? "" : d.unit;
                     p.ranges.min = multicompp::hostMin(d); p.ranges.max = multicompp::hostMax(d);
                     p.ranges.def = multicompp::hostDefault(d);
                     p.hints = kParameterIsAutomatable | (d.integer ? (kParameterIsInteger | kParameterIsBoolean) : 0u);
+                    if (d.integer) setEnum(p, multicompp::kOnOff, 2);
                 });
             return;
         }
@@ -190,7 +194,7 @@ protected:
 
     bool hasCustomParameterText(uint32_t index) const override
     {
-        return multicompp::usesOptoReferenceDisplay(index);
+        return multicompp::usesOptoReferenceDisplay(index) || isTapered(index) || isVcaCompression(index);
     }
 
     bool getParameterValueText(uint32_t index, float value,
@@ -198,6 +202,12 @@ protected:
     {
         if (!hasCustomParameterText(index) || !text || size == 0
             || !std::isfinite(value)) return false;
+        if (isVcaCompression(index))
+            return multicompp::formatVcaCompressionText(value, text, size);
+        if (isTapered(index))
+            return multicompp::resolveParameter(static_cast<int>(index),
+                [&](const multicompp::Param& d) { return multicompp::formatTaperedText(d, value, text, size); },
+                [&](const multicompp::BandParam& d, int) { return multicompp::formatTaperedText(d, value, text, size); });
         const float display = std::nearbyint(
             multicompp::optoReferenceDisplayValue(value));
         const int written = std::snprintf(text, size, "%.0f", display);
@@ -207,6 +217,12 @@ protected:
     bool getParameterValueFromText(uint32_t index, const char* text,
                                    float& value) const override
     {
+        if (isVcaCompression(index))
+            return multicompp::parseVcaCompressionText(text, value);
+        if (isTapered(index))
+            return multicompp::resolveParameter(static_cast<int>(index),
+                [&](const multicompp::Param& d) { return multicompp::parseTaperedText(d, text, value); },
+                [&](const multicompp::BandParam& d, int) { return multicompp::parseTaperedText(d, text, value); });
         float display = 0.0f;
         if (!hasCustomParameterText(index) || !multicompp::parseOptoDisplayText(text, display))
             return false;
@@ -307,6 +323,17 @@ protected:
     }
 
 private:
+    static bool isVcaCompression(uint32_t index) noexcept
+    {
+        return index == static_cast<uint32_t>(multicompp::ParamId::VcaRatio);
+    }
+    static bool isTapered(uint32_t index) noexcept
+    {
+        return multicompp::isControlParameter(static_cast<int>(index))
+            && multicompp::resolveParameter(static_cast<int>(index),
+                [](const multicompp::Param& d) { return multicompp::hasSkew(d); },
+                [](const multicompp::BandParam& d, int) { return multicompp::hasSkew(d); });
+    }
     static void setEnum(Parameter& p, const char* const* labels, int count)
     { p.enumValues.count = static_cast<uint8_t>(count); p.enumValues.restrictedMode = true; auto* e = new ParameterEnumerationValue[count]; for (int i = 0; i < count; ++i) e[i] = ParameterEnumerationValue(static_cast<float>(i), labels[i]); p.enumValues.values = e; }
     void pushParameters()
