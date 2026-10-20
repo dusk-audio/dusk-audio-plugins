@@ -68,6 +68,29 @@ protected:
         }
     }
 
+    bool hasCustomParameterText(uint32_t index) const override
+    { return index == PARAM_DETECTED_CHORD; }
+
+    bool getParameterValueText(uint32_t index, float value, char* text, uint32_t capacity) const override
+    {
+        if (text && capacity) text[0] = '\0';
+        if (!hasCustomParameterText(index) || !std::isfinite(value) || value < 0
+            || value > ChordAnalyzerText::maxLabelCode) return false;
+        return ChordAnalyzerText::formatLabel(static_cast<int>(std::nearbyint(value)), text, capacity);
+    }
+
+    bool getParameterValueFromText(uint32_t index, const char* text, float& value) const override
+    {
+        if (!hasCustomParameterText(index) || !text) return false;
+        std::size_t length = 0;
+        while (length < ChordAnalyzerText::labelTextCapacity && text[length]) ++length;
+        if (length == ChordAnalyzerText::labelTextCapacity) return false;
+        const int parsed = ChordAnalyzerText::labelToCode({text, length});
+        if (parsed < 0) return false;
+        value = static_cast<float>(parsed);
+        return true;
+    }
+
     float getParameterValue(uint32_t index) const override { return runtime.parameter(index); }
     void setParameterValue(uint32_t index, float value) override { runtime.setParameter(index, value); }
     void activate() override { runtime.prepare(getSampleRate()); }

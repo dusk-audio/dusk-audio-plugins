@@ -3,11 +3,40 @@
 #include <string_view>
 #include <algorithm>
 #include <utility>
+#include <charconv>
+#include <cstring>
 
 namespace duskaudio::chord
 {
 namespace
 {
+    const char* pitchName(int pitchClass, bool useFlats = false) noexcept
+    {
+        static constexpr const char* sharpNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+        static constexpr const char* flatNames[] = {"C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"};
+        pitchClass = ((pitchClass % 12) + 12) % 12;
+        return useFlats ? flatNames[pitchClass] : sharpNames[pitchClass];
+    }
+    struct LabelBuffer
+    {
+        char data[ChordAnalyzerText::labelTextCapacity]{};
+        std::size_t length = 0;
+        bool valid = true;
+        void append(std::string_view value) noexcept
+        {
+            if (!valid || value.size() >= sizeof(data) - length) {valid = false; return;}
+            std::memcpy(data + length, value.data(), value.size());
+            length += value.size(); data[length] = '\0';
+        }
+        bool copyTo(char* text, std::size_t capacity) const noexcept
+        {
+            if (!text || capacity == 0) return false;
+            text[0] = '\0';
+            if (!valid || length >= capacity) return false;
+            std::memcpy(text, data, length + 1); return true;
+        }
+    };
+
     std::string_view trimAscii(std::string_view text) noexcept
     {
         const auto space = [](char c) { return c == ' ' || (c >= '\t' && c <= '\r'); };
@@ -216,74 +245,90 @@ int ChordAnalyzerText::encodeLabel(const ChordFacts& chord, const int* notes, in
 
 std::string ChordAnalyzerText::decodeLabel(int code)
 {
-    // Hosts probe getText() with any value in range, so every code out of the
-    // encoder's image still has to produce something harmless.
+    char text[labelTextCapacity];
+    return formatLabel(code, text, sizeof(text)) ? std::string(text) : std::string("-");
+}
+
+bool ChordAnalyzerText::formatLabel(int code, char* text, std::size_t capacity) noexcept
+{
+    LabelBuffer label;
     if (code <= kLabelNone || code > maxLabelCode)
-        return "-";
-
-    if (code < kLabelDyadBase)
-        return noteToName(code - kLabelSingleBase);
-
-    if (code < kLabelUnknownBase)
+        label.append("-");
+    else if (code < kLabelDyadBase)
+    {
+        const int note = code - kLabelSingleBase;
+        label.append(pitchName(note));
+        char octave[8];
+        const auto result = std::to_chars(octave, octave + sizeof(octave), note / 12 - 1);
+        label.append({octave, static_cast<std::size_t>(result.ptr - octave)});
+    }
+    else if (code < kLabelUnknownBase)
     {
         int payload = code - kLabelDyadBase;
         const bool unison = (payload % 2) != 0;
         payload /= 2;
-        const int bass  = payload / 12;
-        const int upper = payload % 12;
-
-        const char* interval = (bass == upper) ? (unison ? "unison" : "octave")
-                                               : intervalName(((upper - bass) + 12) % 12);
-
-        return pitchClassToName(bass) + "+" + pitchClassToName(upper)
-             + " (" + interval + ")";
+        const int bass = payload / 12, upper = payload % 12;
+        label.append(pitchName(bass)); label.append("+"); label.append(pitchName(upper));
+        label.append(" (");
+        label.append(bass == upper ? (unison ? "unison" : "octave") : intervalName((upper - bass + 12) % 12));
+        label.append(")");
     }
-
-    if (code < kLabelChordBase)
-        return pitchClassToName(code - kLabelUnknownBase) + "?";
-
-    int payload = code - kLabelChordBase;
-    const int intervalMask = payload % kLabelMaskCount;
-    payload /= kLabelMaskCount;
-    const int bassInterval = payload % 12;
-    const int root         = payload / 12;
-
-    // Rebuild the sounding pitch classes, then run the same matching and
-    // naming analyze() runs. No second copy of the pattern table.
-    std::uint16_t pitchMask = static_cast<std::uint16_t>(1u << root);
-    for (int bit = 0; bit < kLabelMaskBits; ++bit)
-        if ((intervalMask & (1 << bit)) != 0)
-            pitchMask = static_cast<std::uint16_t>(pitchMask | (1u << ((root + bit + 1) % 12)));
-
-    const std::uint32_t intervals = intervalsFrom(pitchMask, root);
-    const int patternIndex = matchPattern(intervals);
-
-    if (patternIndex < 0)
-        return pitchClassToName(root) + "?";   // only reachable from a probed code
-
-    std::string label = pitchClassToName(root)
-                       + qualityToSuffix(chordPatterns[static_cast<size_t>(patternIndex)].quality)
-                       + describeAddedTones(patternIndex, intervals);
-
-    if (bassInterval != 0)
-        label += "/" + pitchClassToName((root + bassInterval) % 12);
-
-    return label;
+    else if (code < kLabelChordBase)
+    {
+        label.append(pitchName(code - kLabelUnknownBase)); label.append("?");
+    }
+    else
+    {
+        int payload = code - kLabelChordBase;
+        const int intervalMask = payload % kLabelMaskCount;
+        payload /= kLabelMaskCount;
+        const int bassInterval = payload % 12, root = payload / 12;
+        std::uint16_t pitchMask = static_cast<std::uint16_t>(1u << root);
+        for (int bit = 0; bit < kLabelMaskBits; ++bit)
+            if ((intervalMask & (1 << bit)) != 0)
+                pitchMask = static_cast<std::uint16_t>(pitchMask | (1u << ((root + bit + 1) % 12)));
+        const auto intervals = intervalsFrom(pitchMask, root);
+        const int patternIndex = matchPattern(intervals);
+        label.append(pitchName(root));
+        if (patternIndex < 0) label.append("?");
+        else
+        {
+            const auto& pattern = chordPatterns[static_cast<std::size_t>(patternIndex)];
+            label.append(qualitySuffix(pattern.quality));
+            const char* extras[13];
+            const int count = addedToneLabels(patternIndex, intervals, extras);
+            if (count != 0)
+            {
+                const bool add = !pattern.omitsFifth && count == 1 && pattern.intervals.size() <= 3;
+                label.append(add ? "add" : "(");
+                for (int i = 0; i < count; ++i)
+                {if (i) label.append(","); label.append(extras[i]);}
+                if (!add) label.append(")");
+            }
+            if (bassInterval != 0)
+            {label.append("/"); label.append(pitchName((root + bassInterval) % 12));}
+        }
+    }
+    return label.copyTo(text, capacity);
 }
 
 // Hosts may ask for a value from any label they previously rendered. Several
 // codes have the same text (e.g. C5 is a single note and a power chord), so this
 // returns a canonical representative with the same label, not the original code.
-int ChordAnalyzerText::labelToCode(std::string_view source)
+int ChordAnalyzerText::labelToCode(std::string_view source) noexcept
 {
     const auto text = trimAscii(source);
+    char buffer[labelTextCapacity];
+    const auto matches = [&](int code) noexcept {
+        return formatLabel(code, buffer, sizeof(buffer)) && text == buffer;
+    };
     if (text == "-") return kLabelNone;
 
     int root = -1;
     std::size_t rootLength = 0;
     for (int pitch = 0; pitch < 12; ++pitch)
     {
-        const auto name = pitchClassToName(pitch);
+        const std::string_view name = pitchName(pitch);
         if (name.size() > rootLength && startsWith(text, name))
         {
             root = pitch;
@@ -293,15 +338,15 @@ int ChordAnalyzerText::labelToCode(std::string_view source)
     if (root < 0) return -1;
 
     for (int note = root; note < 128; note += 12)
-        if (noteToName(note) == text) return kLabelSingleBase + note;
+        if (matches(kLabelSingleBase + note)) return kLabelSingleBase + note;
 
     if (text.find('+') != std::string_view::npos)
     {
         for (int code = kLabelDyadBase; code < kLabelUnknownBase; ++code)
-            if (decodeLabel(code) == text) return code;
+            if (matches(code)) return code;
         return -1;
     }
-    if (text == pitchClassToName(root) + "?") return kLabelUnknownBase + root;
+    if (text.substr(rootLength) == "?") return kLabelUnknownBase + root;
 
     int bassInterval = 0;
     const auto slash = text.rfind('/');
@@ -309,7 +354,7 @@ int ChordAnalyzerText::labelToCode(std::string_view source)
     {
         int bass = -1;
         for (int pitch = 0; pitch < 12; ++pitch)
-            if (text.substr(slash + 1) == pitchClassToName(pitch)) bass = pitch;
+            if (text.substr(slash + 1) == pitchName(pitch)) bass = pitch;
         if (bass < 0) return -1;
         bassInterval = (bass - root + 12) % 12;
     }
@@ -317,7 +362,7 @@ int ChordAnalyzerText::labelToCode(std::string_view source)
 
     for (std::size_t pattern = 0; pattern < chordPatterns.size(); ++pattern)
     {
-        const auto suffix = qualityToSuffix(chordPatterns[pattern].quality);
+        const std::string_view suffix = qualitySuffix(chordPatterns[pattern].quality);
         if (!startsWith(body, suffix)) continue;
         const auto extra = body.substr(suffix.size());
         auto pitches = kPatternMasks[pattern].pitches;
@@ -353,7 +398,7 @@ int ChordAnalyzerText::labelToCode(std::string_view source)
         const int code = kLabelChordBase + (root * 12 + bassInterval) * kLabelMaskCount + (pitches >> 1);
         // Reuse the authoritative decoder to reject ambiguous suffix matches,
         // malformed extras and spellings it could never have emitted.
-        if (decodeLabel(code) == text) return code;
+        if (matches(code)) return code;
     }
     return -1;
 }
@@ -408,7 +453,7 @@ const char* ChordAnalyzerText::intervalName(int semitones)
     }
 }
 
-std::string ChordAnalyzerText::describeAddedTones(int patternIndex, std::uint32_t intervals)
+int ChordAnalyzerText::addedToneLabels(int patternIndex, std::uint32_t intervals, const char** extras) noexcept
 {
     // Compare as pitch classes: intervalsFrom states a 9th as both 2 and 14,
     // and the patterns use the compound form, so a raw difference would report
@@ -416,7 +461,6 @@ std::string ChordAnalyzerText::describeAddedTones(int patternIndex, std::uint32_
     const PatternMask& m = kPatternMasks[static_cast<size_t>(patternIndex)];
 
     // At most one extra per pitch class, plus the "no5" marker.
-    const char* extras[13];
     int numExtras = 0;
 
     // Announce a missing fifth first, so it reads C9(no5,#11) rather than
@@ -434,6 +478,14 @@ std::string ChordAnalyzerText::describeAddedTones(int patternIndex, std::uint32_
             extras[numExtras++] = label;
     }
 
+    return numExtras;
+}
+
+std::string ChordAnalyzerText::describeAddedTones(int patternIndex, std::uint32_t intervals)
+{
+    const char* extras[13];
+    const int numExtras = addedToneLabels(patternIndex, intervals, extras);
+    const bool omitsFifth = chordPatterns[static_cast<std::size_t>(patternIndex)].omitsFifth;
     if (numExtras == 0)
         return {};
 
@@ -680,13 +732,7 @@ std::string ChordAnalyzerText::noteToName(int midiNote, bool useFlats)
 
 std::string ChordAnalyzerText::pitchClassToName(int pitchClass, bool useFlats)
 {
-    static const char* sharpNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
-    static const char* flatNames[] = {"C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"};
-
-    pitchClass = pitchClass % 12;
-    if (pitchClass < 0) pitchClass += 12;
-
-    return useFlats ? flatNames[pitchClass] : sharpNames[pitchClass];
+    return pitchName(pitchClass, useFlats);
 }
 
 int ChordAnalyzerText::nameToNote(std::string_view name)
@@ -757,6 +803,11 @@ std::string ChordAnalyzerText::qualityToString(ChordQuality quality)
 }
 
 std::string ChordAnalyzerText::qualityToSuffix(ChordQuality quality)
+{
+    return qualitySuffix(quality);
+}
+
+const char* ChordAnalyzerText::qualitySuffix(ChordQuality quality) noexcept
 {
     switch (quality)
     {

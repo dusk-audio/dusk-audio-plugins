@@ -41,9 +41,12 @@ consumes the remaining input and forwarding resumes on the next block.
 
 Five writable controls keep the desktop symbols, ordering and snapped values.
 Five transient detection outputs are read-only and excluded from saved host
-parameters. Small choice domains retain their displayed names; the large
-`detectedChord` code domain still needs a bounded, allocation-free custom text
-converter before editor/release completion. Host wrappers own parameter state;
+parameters. Small choice domains retain their displayed names. The large
+`detectedChord` domain uses bounded, allocation-free host text callbacks backed
+by the shared formatter/parser. Fractional host probes retain the shipping
+nearest-even rounding; malformed labels and insufficient buffers reject without
+truncation or numeric fallback. Legacy labels and canonical inverses remain
+unchanged throughout the full code domain. Host wrappers own parameter state;
 there are no plugin-owned state strings or factory programs at this stage.
 
 The shared `core/ChordMidiExport` library now builds the same format-1,
@@ -77,8 +80,8 @@ their different AU component types (`aumu` / `aumi`), native core/ABI tests and
 Linux editor screenshots/MIDI diagnostics. A multi-product build selects its AU
 component by product base, so the MIDI job cannot validate the instrument's AU.
 
-Remaining #183 work includes external MIDI-file drag interaction, encoded-label
-text callbacks, retained headless successor packaging, transactional state/program
+Remaining #183 work includes external MIDI-file drag interaction,
+retained headless successor packaging, transactional state/program
 acceptance, legacy CLAP output metadata, remaining native/real-DAW UI and MIDI
 validation, documentation/release sign-off and tagged downloadable artifacts.
 These in-progress products are not grounds to close the ticket.

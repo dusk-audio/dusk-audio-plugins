@@ -71,10 +71,30 @@ int main(int argc, char** argv)
     Model model;
     Hash analysis, suggestions, codec, utilities;
     int analyses = 0, queries = 0, labels = 0, roundTripFailures = 0;
+#if !defined(CHORD_ANALYZER_LEGACY_REFERENCE)
+    unsigned boundedFailures = 0;
+    std::size_t conversionAllocations = 0, longestLabel = 0;
+#endif
     for (int code = -1024; code <= Model::maxLabelCode + 1024; ++code)
     {
         const auto label = Model::decodeLabel(code);
         const int parsed = Model::labelToCode(label);
+#if !defined(CHORD_ANALYZER_LEGACY_REFERENCE)
+        std::array<char, Model::labelTextCapacity + 2> buffer;
+        buffer.fill('!');
+        ChordAllocationProbe::allocationCalls = 0;
+        ChordAllocationProbe::watchAllocations = true;
+        const bool formatted = Model::formatLabel(code, buffer.data() + 1, label.size() + 1);
+        const int boundedParsed = Model::labelToCode(label);
+        ChordAllocationProbe::watchAllocations = false;
+        conversionAllocations += ChordAllocationProbe::allocationCalls;
+        if (!formatted || std::string_view(buffer.data() + 1) != utf8(label) || boundedParsed != parsed
+            || buffer.front() != '!' || buffer[label.size() + 2] != '!') ++boundedFailures;
+        buffer.fill('!');
+        if (Model::formatLabel(code, buffer.data() + 1, label.size()) || buffer[1] != '\0'
+            || buffer.front() != '!' || buffer[label.size() + 1] != '!') ++boundedFailures;
+        longestLabel = std::max(longestLabel, label.size());
+#endif
         codec.word(static_cast<unsigned>(code)); codec.text(label); codec.word(static_cast<unsigned>(parsed));
         if (Model::decodeLabel(parsed) != label) ++roundTripFailures;
         ++labels;
@@ -167,6 +187,17 @@ int main(int argc, char** argv)
     check(encodingSum != 0 && ChordAllocationProbe::allocationCalls == 0,
           "numeric label encoding allocates nothing across all naming branches");
 #if !defined(CHORD_ANALYZER_LEGACY_REFERENCE)
+    check(boundedFailures == 0, "bounded codec matches every frozen label/inverse and respects exact/short buffer boundaries");
+    check(conversionAllocations == 0, "every bounded label format/parse call is allocation-free");
+    std::array<char, 8> untouched; untouched.fill('!');
+    check(!Model::formatLabel(61, nullptr, 0) && !Model::formatLabel(61, nullptr, 8)
+        && !Model::formatLabel(61, untouched.data(), 0) && untouched.front() == '!',
+        "null and zero-capacity formatting never writes");
+    check(Model::labelToCode("\t C7(#11)/E \r\n") >= 0 && Model::labelToCode("Caddgarbage") == -1
+        && Model::labelToCode("C7(#11)/H") == -1 && Model::labelToCode("C7(9,,13)") == -1,
+        "parser accepts retained whitespace and rejects malformed tensions and basses");
+    std::printf("Bounded labels: %d probes, longest %zu bytes, %u failures, %zu allocations\n",
+        labels, longestLabel, boundedFailures, conversionAllocations);
     const int note = 60;
     check(Model::encodeLabel(tonic, nullptr, 128, true) == 0
               && Model::encodeLabel(tonic, &note, -1, true) == 0,

@@ -35,8 +35,8 @@ struct ChordSuggestionText
 
 // Shared UTF-8 naming for desktop and DAF consumers. String/vector-returning
 // methods allocate and belong on the UI/host-control thread. The numeric core
-// and raw-note encodeLabel remain allocation-free; an audio
-// callback must never call the text-rendering or text-parsing methods.
+// and raw-note encodeLabel remain allocation-free. formatLabel and labelToCode
+// also use bounded scratch storage; string/vector-returning methods are not RT-safe.
 class ChordAnalyzerText : public ChordAnalyzerCore
 {
 public:
@@ -57,12 +57,19 @@ public:
     static int encodeLabel(const ChordFacts& chord, const int* notes, int count,
                            bool showInversions) noexcept;
     static std::string decodeLabel(int code);
+    // Includes the trailing NUL. Formatting fails without truncation; a usable
+    // destination is empty on failure. Invalid codes retain the legacy "-".
+    static constexpr std::size_t labelTextCapacity = 128;
+    static bool formatLabel(int code, char* text, std::size_t capacity) noexcept;
     // Canonical-label inverse: codes with identical text share a representative.
     // Parsers accept ASCII note spellings/whitespace; legacy adapters retain
     // their own Unicode input normalization before entering this boundary.
-    static int labelToCode(std::string_view text);
+    static int labelToCode(std::string_view text) noexcept;
 
 private:
+    static const char* qualitySuffix(ChordQuality quality) noexcept;
+    static int addedToneLabels(int patternIndex, std::uint32_t intervals,
+                              const char** extras) noexcept;
     static const char* tensionLabel(int semitonesFromRoot);
     static const char* intervalName(int semitones);
     static std::string describeAddedTones(int patternIndex, std::uint32_t intervals);

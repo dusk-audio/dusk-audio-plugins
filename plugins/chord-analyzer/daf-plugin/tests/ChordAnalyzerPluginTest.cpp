@@ -87,6 +87,70 @@ void block(PluginExporter& host, Sink& sink, const MidiEvent* events = nullptr,
     (void)in; (void)out; (void)sink;
 }
 
+void hostText(PluginExporter& host)
+{
+    struct Exposed : ChordAnalyzerPlugin
+    {
+        using ChordAnalyzerPlugin::getParameterValueText;
+        using ChordAnalyzerPlugin::getParameterValueFromText;
+    } direct;
+    for (unsigned id = 0; id < PARAM_COUNT; ++id)
+        check(host.hasCustomParameterText(id) == (id == PARAM_DETECTED_CHORD), "only the encoded chord output overrides host text");
+    char text[ChordAnalyzerText::labelTextCapacity];
+    float parsed = -99;
+    check(host.getParameterValueText(PARAM_DETECTED_CHORD, 61, text, sizeof(text)) && std::strcmp(text, "C4") == 0,
+          "host formats an encoded single note as its label");
+    check(host.getParameterValueFromText(PARAM_DETECTED_CHORD, " C7(#11)/E ", parsed)
+        && host.getParameterValueText(PARAM_DETECTED_CHORD, parsed, text, sizeof(text)) && std::strcmp(text, "C7(#11)/E") == 0,
+          "host parses and formats a complete tension/slash label");
+    check(host.getParameterValueText(PARAM_DETECTED_CHORD, 61.25f, text, sizeof(text)) && std::strcmp(text, "C4") == 0
+        && host.getParameterValueText(PARAM_DETECTED_CHORD, 61.75f, text, sizeof(text)) && std::strcmp(text, "C#4") == 0
+        && host.getParameterValueText(PARAM_DETECTED_CHORD, 60.5f, text, sizeof(text)) && std::strcmp(text, "B3") == 0
+        && host.getParameterValueText(PARAM_DETECTED_CHORD, 61.5f, text, sizeof(text)) && std::strcmp(text, "C#4") == 0,
+        "continuous-domain probes retain the shipping nearest-even label rounding");
+    parsed = -99;
+    check(!host.getParameterValueFromText(PARAM_DETECTED_CHORD, "Cgarbage", parsed) && parsed == -99
+        && !direct.getParameterValueFromText(PARAM_DETECTED_CHORD, nullptr, parsed) && parsed == -99,
+        "failed host parsing preserves the output and handles null text");
+    std::array<char, ChordAnalyzerText::labelTextCapacity + 1> longText; longText.fill('C'); longText.back() = '\0';
+    check(!host.getParameterValueFromText(PARAM_DETECTED_CHORD, longText.data(), parsed), "host parser rejects overlong input");
+    for (float value : {-1.0f, static_cast<float>(ChordAnalyzerText::maxLabelCode + 1),
+                        std::numeric_limits<float>::infinity(), std::numeric_limits<float>::quiet_NaN()})
+        check(!host.getParameterValueText(PARAM_DETECTED_CHORD, value, text, sizeof(text)), "invalid host label values reject conversion");
+    check(!direct.getParameterValueText(PARAM_DETECTED_CHORD, 61, nullptr, 8)
+        && !direct.getParameterValueText(PARAM_DETECTED_CHORD, 61, text, 0), "host text handles missing destinations");
+    char small[3] = {'!', '!', '!'};
+    check(!host.getParameterValueText(PARAM_DETECTED_CHORD, 61, small, 2) && small[0] == '\0' && small[2] == '!',
+          "host text never returns a truncated label or writes past capacity");
+    ChordAllocationProbe::allocationCalls = 0;
+    ChordAllocationProbe::watchAllocations = true;
+    const bool formatted = host.getParameterValueText(PARAM_DETECTED_CHORD, 100000, text, sizeof(text));
+    const bool decoded = formatted && host.getParameterValueFromText(PARAM_DETECTED_CHORD, text, parsed);
+    ChordAllocationProbe::watchAllocations = false;
+    check(decoded && ChordAllocationProbe::allocationCalls == 0, "actual host callbacks allocate no C/C++ memory");
+    std::atomic<unsigned> concurrentFailures{0};
+    std::array<std::thread, 4> readers;
+    for (unsigned worker = 0; worker < readers.size(); ++worker)
+        readers[worker] = std::thread([&, worker] {
+            char first[ChordAnalyzerText::labelTextCapacity], second[ChordAnalyzerText::labelTextCapacity];
+            ChordAllocationProbe::allocationCalls = 0;
+            ChordAllocationProbe::watchAllocations = true;
+            for (unsigned i = 0; i < 2500; ++i)
+            {
+                const auto code = static_cast<float>((i * 11773 + worker * 11939) % (ChordAnalyzerText::maxLabelCode + 1));
+                float value = -1;
+                if (!host.getParameterValueText(PARAM_DETECTED_CHORD, code, first, sizeof(first))
+                    || !host.getParameterValueFromText(PARAM_DETECTED_CHORD, first, value)
+                    || !host.getParameterValueText(PARAM_DETECTED_CHORD, value, second, sizeof(second))
+                    || std::strcmp(first, second) != 0) concurrentFailures.fetch_add(1);
+            }
+            ChordAllocationProbe::watchAllocations = false;
+            if (ChordAllocationProbe::allocationCalls != 0) concurrentFailures.fetch_add(1);
+        });
+    for (auto& reader : readers) reader.join();
+    check(concurrentFailures.load() == 0, "concurrent host text callbacks retain independent scratch buffers without allocation");
+}
+
 void metadataAndParameters(PluginExporter& host)
 {
     check(host.getParameterCount() == 10, "five retained inputs and five detection outputs");
@@ -340,6 +404,7 @@ int main()
     PluginExporter host(&sink, Sink::write, nullptr, nullptr);
     check(ChordAllocationProbe::positiveControl(), "allocation probe observes real allocations");
     metadataAndParameters(host);
+    hostText(host);
     host.activate();
     midiAndLifecycle(host, sink);
     recordingAndOverflow(host, sink);
