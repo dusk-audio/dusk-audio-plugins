@@ -3,6 +3,9 @@
 Configure this directory directly; the shipping JUCE products and native
 headless LV2 retain their existing identities and build paths.
 
+Linux builds also need the public LV2 SDK headers for the retained headless
+product. Its metadata/package checks use `lv2info` (lilv), `ldd` and `readelf`.
+
 ```sh
 cmake -S plugins/chord-analyzer/daf-plugin -B build-chord-analyzer-daf \
   -DCMAKE_BUILD_TYPE=Release -DDUSK_DAF_INSTALL_LOCAL=OFF
@@ -77,11 +80,15 @@ the elapsed clock and fallback host tempo reset on activation.
 
 The shared DAF CI/release workflow now registers both desktop products, including
 their different AU component types (`aumu` / `aumi`), native core/ABI tests and
-Linux editor screenshots/MIDI diagnostics. A multi-product build selects its AU
+Linux editor screenshots/MIDI diagnostics. On Linux it also builds/tests the
+retained native headless LV2 against the public LV2 SDK, without a JUCE checkout.
+Instrument-tag builds own separate headless x86_64/ARM64 archives with the shipping
+URI and 19-port ABI; package validation loads the extracted download. See
+[the headless guide](../lv2/README.md) for its independent, display-free build.
+A multi-product build selects its AU
 component by product base, so the MIDI job cannot validate the instrument's AU.
 
-Remaining #183 work includes external MIDI-file drag interaction,
-retained headless successor packaging, transactional state/program
-acceptance, legacy CLAP output metadata, remaining native/real-DAW UI and MIDI
+Remaining #183 work includes external MIDI-file drag interaction, transactional
+state/program acceptance, legacy CLAP output metadata, remaining native/real-DAW UI and MIDI
 validation, documentation/release sign-off and tagged downloadable artifacts.
 These in-progress products are not grounds to close the ticket.

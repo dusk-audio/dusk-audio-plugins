@@ -75,3 +75,16 @@ if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32 AND NOT APPLE)
         set_tests_properties(${plugin}Ui ${plugin}Resize PROPERTIES RUN_SERIAL TRUE)
     endforeach()
 endif()
+
+# Retain the shipping headless URI/19-port ABI alongside the desktop successors.
+# It is a native numeric-core LV2, with no JUCE, DAF UI or display dependency.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_path(CHORD_ANALYZER_LV2_HEADERS lv2/core/lv2.h
+        DOC "Directory containing the public LV2 SDK's lv2/ headers")
+    if(NOT CHORD_ANALYZER_LV2_HEADERS)
+        message(FATAL_ERROR "Install the LV2 SDK or set CHORD_ANALYZER_LV2_HEADERS")
+    endif()
+    include(../lv2/ChordAnalyzerHeadless.cmake)
+    chord_add_headless_lv2("${CMAKE_CURRENT_SOURCE_DIR}/../lv2" "${CHORD_ANALYZER_LV2_HEADERS}"
+        "${CMAKE_CURRENT_BINARY_DIR}/bin/Chord Analyzer Headless.lv2")
+endif()
