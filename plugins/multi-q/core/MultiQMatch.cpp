@@ -104,7 +104,7 @@ void MultiQMatch::reset()
     pendingStartReference.store(false, std::memory_order_relaxed);
     pendingStop.store(false, std::memory_order_relaxed);
     pendingClear.store(false, std::memory_order_relaxed);
-    pendingActivate.store(false, std::memory_order_relaxed);
+    pendingCorrection.store(PendingCorrection::None, std::memory_order_relaxed);
 }
 
 //==============================================================================
@@ -143,7 +143,9 @@ void MultiQMatch::audioThreadSync()
     }
 
     // Adopt a freshly-published correction (Inactive→Active or refresh).
-    if (pendingActivate.exchange(false, std::memory_order_acquire))
+    const PendingCorrection correctionCommand =
+        pendingCorrection.exchange(PendingCorrection::None, std::memory_order_acquire);
+    if (correctionCommand == PendingCorrection::Activate)
     {
         if (convState.load(std::memory_order_relaxed) == ConvState::Inactive)
         {
@@ -159,6 +161,13 @@ void MultiQMatch::audioThreadSync()
         }
         convState.store(ConvState::Active, std::memory_order_release);
         wetGain.setTargetValue(1.0f);
+    }
+    else if (correctionCommand == PendingCorrection::Deactivate)
+    {
+        if (convState.load(std::memory_order_relaxed) == ConvState::Inactive)
+            irActive.store(-1, std::memory_order_release);
+        else
+            convState.store(ConvState::Clearing, std::memory_order_release);
     }
 }
 
@@ -436,7 +445,7 @@ void MultiQMatch::installFIR()
     correctionLock.unlock();
 
     irActive.store(slot, std::memory_order_release);
-    pendingActivate.store(true, std::memory_order_release);
+    pendingCorrection.store(PendingCorrection::Activate, std::memory_order_release);
 }
 
 //==============================================================================
@@ -616,20 +625,31 @@ namespace
         return -1;
     }
 
-    std::vector<uint8_t> b64decode(const std::string& s)
+    bool b64decode(const std::string& s, std::vector<uint8_t>& out)
     {
-        std::vector<uint8_t> out;
-        out.reserve(s.size() * 3 / 4);
-        int buf = 0, bits = 0;
+        // Preserve legacy wrapped base64, but never silently discard arbitrary
+        // characters or bytes after padding from an untrusted host state.
+        std::string compact;
+        compact.reserve(s.size());
         for (char c : s)
+        {
+            if (c == ' ' || c == '\t' || c == '\r' || c == '\n') continue;
+            if (c != '=' && b64val(c) < 0) return false;
+            compact += c;
+        }
+        if (compact.size() % 4 != 0) return false;
+        out.reserve(s.size() * 3 / 4);
+        uint32_t buf = 0;
+        int bits = 0;
+        for (char c : compact)
         {
             if (c == '=' ) break;
             const int v = b64val(c);
-            if (v < 0) continue;
-            buf = (buf << 6) | v; bits += 6;
+            buf = (buf << 6) | static_cast<uint32_t>(v); bits += 6;
             if (bits >= 8) { bits -= 8; out.push_back((uint8_t)((buf >> bits) & 0xFF)); }
         }
-        return out;
+        // Also validates exact padding and unused bits in the final quantum.
+        return b64encode(out.data(), out.size()) == compact;
     }
 
     template<typename T> void put(std::vector<uint8_t>& v, const T& x)
@@ -659,12 +679,12 @@ std::string MultiQMatch::serialize() const
 
 bool MultiQMatch::deserialize(const std::string& base64)
 {
-    std::vector<uint8_t> blob = b64decode(base64);
+    std::vector<uint8_t> blob;
     const size_t expected = 4 + 5 * sizeof(int32_t)
                           + (size_t)NUM_BINS * sizeof(double) * 2
                           + (size_t)NUM_BINS * sizeof(float)
                           + (size_t)FIR_LENGTH * sizeof(float);
-    if (blob.size() < expected) return false;
+    if (!b64decode(base64, blob) || blob.size() != expected) return false;
     if (!(blob[0] == 'M' && blob[1] == 'Q' && blob[2] == 'M' && blob[3] == '1')) return false;
 
     size_t off = 4;
@@ -672,19 +692,42 @@ bool MultiQMatch::deserialize(const std::string& base64)
     int32_t hasCur, curFrames, hasRef, refFrames, hasCorr;
     getI(hasCur); getI(curFrames); getI(hasRef); getI(refFrames); getI(hasCorr);
 
-    learningTarget.store(Target::None, std::memory_order_release);
-    currentSpectrum.reset(); referenceSpectrum.reset();
+    if ((hasCur != 0 && hasCur != 1) || (hasRef != 0 && hasRef != 1)
+        || (hasCorr != 0 && hasCorr != 1) || curFrames < 0 || refFrames < 0
+        || (hasCur && curFrames < 3) || (hasRef && refFrames < 3)) return false;
 
-    for (int k = 0; k < NUM_BINS; ++k) { std::memcpy(&currentSpectrum.powerSum[(size_t)k],   blob.data() + off, sizeof(double)); off += sizeof(double); }
-    for (int k = 0; k < NUM_BINS; ++k) { std::memcpy(&referenceSpectrum.powerSum[(size_t)k], blob.data() + off, sizeof(double)); off += sizeof(double); }
-    currentSpectrum.frameCount = curFrames;   currentSpectrum.valid = hasCur && curFrames >= 3;
-    referenceSpectrum.frameCount = refFrames; referenceSpectrum.valid = hasRef && refFrames >= 3;
+    LearnedSpectrum current, reference;
+    std::array<float, NUM_BINS> curve;
+    std::array<float, FIR_LENGTH> fir;
+    for (auto* spectrum : {&current, &reference})
+        for (double& power : spectrum->powerSum)
+        {
+            std::memcpy(&power, blob.data() + off, sizeof(power)); off += sizeof(power);
+            if (!std::isfinite(power) || power < 0.0) return false;
+        }
+    for (float& value : curve)
+    {
+        std::memcpy(&value, blob.data() + off, sizeof(value)); off += sizeof(value);
+        if (!safeIsFinite(value)) return false;
+    }
+    for (float& value : fir)
+    {
+        std::memcpy(&value, blob.data() + off, sizeof(value)); off += sizeof(value);
+        if (!safeIsFinite(value)) return false;
+    }
+    current.frameCount = curFrames; current.valid = hasCur != 0;
+    reference.frameCount = refFrames; reference.valid = hasRef != 0;
+
+    // Commit only after the whole state has validated. Rejected state cannot
+    // stop learning, replace a spectrum, or poison the active convolution.
+    learningTarget.store(Target::None, std::memory_order_release);
+    currentSpectrum = current; referenceSpectrum = reference;
     currentSpectrumBuf.writeBuffer() = currentSpectrum;     currentSpectrumBuf.publish();
     referenceSpectrumBuf.writeBuffer() = referenceSpectrum; referenceSpectrumBuf.publish();
 
     correctionLock.lock();
-    for (int k = 0; k < NUM_BINS; ++k)  { std::memcpy(&correctionCurveDB[(size_t)k], blob.data() + off, sizeof(float)); off += sizeof(float); }
-    for (int i = 0; i < FIR_LENGTH; ++i) { std::memcpy(&correctionFIR[(size_t)i],    blob.data() + off, sizeof(float)); off += sizeof(float); }
+    correctionCurveDB = curve;
+    correctionFIR = fir;
     correctionLock.unlock();
 
     if (hasCorr)
@@ -695,6 +738,7 @@ bool MultiQMatch::deserialize(const std::string& base64)
     else
     {
         correctionValid.store(false, std::memory_order_release);
+        pendingCorrection.store(PendingCorrection::Deactivate, std::memory_order_release);
     }
     return true;
 }

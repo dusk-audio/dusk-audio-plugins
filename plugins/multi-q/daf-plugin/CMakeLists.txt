@@ -48,6 +48,17 @@ target_compile_definitions(multi-q-2 PUBLIC
 # when configured with -DDUSK_DAF_INSTALL_LOCAL=ON.
 dusk_daf_install_local(multi-q-2 LV2_PROGRAMS)
 
+if(NOT CMAKE_CROSSCOMPILING)
+    enable_testing()
+    add_executable(MultiQCoreFiltersTest ../tests/test_multiq_core_filters.cpp)
+    add_test(NAME MultiQCoreFilters COMMAND MultiQCoreFiltersTest)
+
+    add_executable(MultiQMatchStateTest
+        ../tests/test_multiq_match_state.cpp
+        ../core/MultiQMatch.cpp)
+    add_test(NAME MultiQMatchState COMMAND MultiQMatchStateTest)
+endif()
+
 # Fleet gates. Multi-Q 2 registered no ctest at all; see #148.
 #
 # No output-parameter gates: Multi-Q 2 exposes no output parameters. Its IN/OUT

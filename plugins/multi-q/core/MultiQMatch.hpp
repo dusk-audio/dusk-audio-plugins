@@ -234,7 +234,10 @@ private:
     // pending cross-thread requests (set on message thread, consumed on audio)
     std::atomic<bool> pendingStartCurrent{false}, pendingStartReference{false};
     std::atomic<bool> pendingStop{false}, pendingClear{false};
-    std::atomic<bool> pendingActivate{false};   // set by computeCorrection/deserialize
+    // One command prevents an older queued activation from reviving a later
+    // restore with no correction. Consumed only by the audio thread.
+    enum class PendingCorrection { None, Activate, Deactivate };
+    std::atomic<PendingCorrection> pendingCorrection{PendingCorrection::None};
 
     // convolver
     IRSpectra irSpectra[2];
