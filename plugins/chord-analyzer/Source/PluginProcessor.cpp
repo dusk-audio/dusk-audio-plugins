@@ -247,10 +247,9 @@ void ChordAnalyzerProcessor::changeProgramName(int /*index*/, const juce::String
 //==============================================================================
 void ChordAnalyzerProcessor::resetNoteState() noexcept
 {
-    sustainPedalDown = false;
+    midiNoteState.reset();
     for (auto& word : activeNoteWords)
         word.store(0, std::memory_order_release);
-    sustainedReleasedWords.fill(0);
     analysisQueueRead.store(
         analysisQueueWrite.load(std::memory_order_acquire),
         std::memory_order_release);
@@ -314,28 +313,6 @@ void ChordAnalyzerProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 }
 
 //==============================================================================
-bool ChordAnalyzerProcessor::activateNote(int note) noexcept
-{
-    if (note < 0 || note >= 128)
-        return false;
-    const size_t word = static_cast<size_t>(note / 64);
-    const uint64_t mask = uint64_t{1} << static_cast<unsigned>(note % 64);
-    const uint64_t previous =
-        activeNoteWords[word].fetch_or(mask, std::memory_order_acq_rel);
-    return (previous & mask) == 0;
-}
-
-bool ChordAnalyzerProcessor::deactivateNote(int note) noexcept
-{
-    if (note < 0 || note >= 128)
-        return false;
-    const size_t word = static_cast<size_t>(note / 64);
-    const uint64_t mask = uint64_t{1} << static_cast<unsigned>(note % 64);
-    const uint64_t previous =
-        activeNoteWords[word].fetch_and(~mask, std::memory_order_acq_rel);
-    return (previous & mask) != 0;
-}
-
 std::array<uint64_t, 2>
 ChordAnalyzerProcessor::snapshotActiveNoteWords() const noexcept
 {
@@ -387,70 +364,12 @@ bool ChordAnalyzerProcessor::dequeueAnalysisSnapshot(
 //==============================================================================
 void ChordAnalyzerProcessor::processMidiInput(const juce::MidiBuffer& midi)
 {
-    bool notesChanged = false;
-    const bool sustainEnabled = respectSustain.load();
-
+    bool notesChanged = midiNoteState.setRespectSustain(respectSustain.load(std::memory_order_acquire));
     for (const auto metadata : midi)
     {
-        const auto msg = metadata.getMessage();
-
-        if (msg.isNoteOn())
-        {
-            const int noteNumber = msg.getNoteNumber();
-            // Re-pressing a sustained-released note cancels its deferred release
-            const size_t word = static_cast<size_t>(noteNumber / 64);
-            const uint64_t mask =
-                uint64_t{1} << static_cast<unsigned>(noteNumber % 64);
-            sustainedReleasedWords[word] &= ~mask;
-            notesChanged = activateNote(noteNumber) || notesChanged;
-        }
-        else if (msg.isNoteOff())
-        {
-            const int noteNumber = msg.getNoteNumber();
-
-            if (sustainEnabled && sustainPedalDown)
-            {
-                // Defer the release: keep the active bit set until the pedal lifts.
-                const size_t word = static_cast<size_t>(noteNumber / 64);
-                const uint64_t mask =
-                    uint64_t{1} << static_cast<unsigned>(noteNumber % 64);
-                sustainedReleasedWords[word] |= mask;
-                continue;
-            }
-
-            notesChanged = deactivateNote(noteNumber) || notesChanged;
-        }
-        else if (msg.isController() && msg.getControllerNumber() == 64)
-        {
-            // Sustain pedal: MIDI convention is value >= 64 → down, < 64 → up
-            const bool wasDown   = sustainPedalDown;
-            const bool nowDown   = msg.getControllerValue() >= 64;
-            sustainPedalDown     = nowDown;
-
-            if (wasDown && ! nowDown)
-            {
-                // Pedal release: drop every note whose note-off was deferred.
-                // We always flush regardless of the current sustainEnabled state —
-                // those bits reflect real player-released note-offs from when
-                // sustain was on, and would otherwise stay stuck active
-                // if the user toggled "Respect Sustain" off while pedalling.
-                for (size_t word = 0; word < sustainedReleasedWords.size(); ++word)
-                {
-                    const uint64_t released = sustainedReleasedWords[word];
-                    const uint64_t previous = activeNoteWords[word].fetch_and(
-                        ~released, std::memory_order_acq_rel);
-                    notesChanged = (previous & released) != 0 || notesChanged;
-                    sustainedReleasedWords[word] = 0;
-                }
-            }
-        }
-        else if (msg.isAllNotesOff() || msg.isAllSoundOff())
-        {
-            for (auto& word : activeNoteWords)
-                notesChanged = word.exchange(0, std::memory_order_acq_rel) != 0
-                            || notesChanged;
-            sustainedReleasedWords.fill(0);
-        }
+        // A MidiMessage copy can allocate for SysEx. Inspect borrowed event
+        // bytes directly; the host's MidiBuffer stays untouched for passthrough.
+        notesChanged = midiNoteState.process(metadata.data, static_cast<uint32_t>(metadata.numBytes)) || notesChanged;
     }
 
     // Chord naming and suggestion generation build strings/vectors, so queue
@@ -461,6 +380,9 @@ void ChordAnalyzerProcessor::processMidiInput(const juce::MidiBuffer& midi)
     // NOT preserved: only the resulting end-of-block state is captured.
     if (notesChanged)
     {
+        const auto words = midiNoteState.snapshot();
+        for (size_t i = 0; i < words.size(); ++i)
+            activeNoteWords[i].store(words[i], std::memory_order_release);
         if (! enqueueAnalysisSnapshot(currentTimeSec.load(std::memory_order_relaxed)))
             analysisDirty.store(true, std::memory_order_release);
     }

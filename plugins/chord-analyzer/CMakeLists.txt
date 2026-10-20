@@ -148,6 +148,25 @@ target_include_directories(ChordAnalyzerHostTest
 target_compile_definitions(ChordAnalyzerHostTest
     PRIVATE $<TARGET_PROPERTY:ChordAnalyzer,COMPILE_DEFINITIONS>)
 
+function(chord_add_desktop_midi_test target product)
+    if(CMAKE_CROSSCOMPILING)
+        return()
+    endif()
+    add_executable(${target} tests/test_chord_midi_juce.cpp)
+    target_link_libraries(${target} PRIVATE ${product})
+    target_include_directories(${target} PRIVATE $<TARGET_PROPERTY:${product},INCLUDE_DIRECTORIES>)
+    target_compile_definitions(${target} PRIVATE $<TARGET_PROPERTY:${product},COMPILE_DEFINITIONS>)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_compile_definitions(${target} PRIVATE CHORD_TEST_WRAP_MALLOC=1)
+        # The linker interposes these calls. Do not let builtin assumptions
+        # reorder the probe's C++-new nesting flag across the wrapped malloc.
+        target_compile_options(${target} PRIVATE -fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc)
+        target_link_options(${target} PRIVATE -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc)
+    endif()
+    add_test(NAME ${target} COMMAND ${target})
+endfunction()
+chord_add_desktop_midi_test(ChordAnalyzerMidiJuceTest ChordAnalyzer)
+
 # Optimization for release builds
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -230,6 +249,7 @@ target_link_libraries(ChordAnalyzerMIDI
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags
 )
+chord_add_desktop_midi_test(ChordAnalyzerMidiEffectTest ChordAnalyzerMIDI)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -352,6 +372,7 @@ if("LV2" IN_LIST PLUGIN_FORMATS)
     endif()
 
     if(NOT CMAKE_CROSSCOMPILING)
+        chord_add_native_midi_test("${CMAKE_CURRENT_SOURCE_DIR}" "${LV2_SDK_DIR}")
         find_package(Python3 QUIET COMPONENTS Interpreter)
         if(Python3_Interpreter_FOUND)
             add_test(NAME ChordAnalyzerHeadless

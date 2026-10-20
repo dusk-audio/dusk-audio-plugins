@@ -247,7 +247,7 @@ jobs:
       # named them, so the unit checks and the host-side checks that guard #267
       # and #273 passed only when someone remembered to run them (GH #276).
       # The numeric model needs no JUCE. Legacy tests disable CURL, and all
-      # three need no display and take only a few seconds.
+      # need no display and take only a few seconds.
       #
       # Gated to the ChordAnalyzer row, which is in the matrix exactly when the
       # selector picked chord-analyzer or a fleet-wide path. That is one run per
@@ -261,10 +261,22 @@ jobs:
         run: |
           set -euo pipefail
           cmake --build build --config Release \
-            --target ChordAnalyzerTest ChordAnalyzerHostTest ChordAnalyzerCoreTest -j"$(nproc)"
+            --target ChordAnalyzerTest ChordAnalyzerHostTest ChordAnalyzerCoreTest \
+              ChordMidiNoteStateTest ChordAnalyzerMidiTest ChordAnalyzerMidiJuceTest -j"$(nproc)"
           ./build/plugins/chord-analyzer/core/ChordAnalyzerCoreTest
+          ./build/plugins/chord-analyzer/core/ChordMidiNoteStateTest
+          ./build/plugins/chord-analyzer/ChordAnalyzerMidiTest
+          ./build/plugins/chord-analyzer/ChordAnalyzerMidiJuceTest
           ./build/plugins/chord-analyzer/ChordAnalyzerTest
           ./build/plugins/chord-analyzer/ChordAnalyzerHostTest
+
+      # This row has already built the MIDI-effect shared library; reuse it
+      # rather than compiling that second JUCE library again in the audio row.
+      - name: Chord Analyzer MIDI-effect note handling
+        if: matrix.plugin == 'ChordAnalyzerMIDI'
+        run: |
+          cmake --build build --config Release --target ChordAnalyzerMidiEffectTest -j"$(nproc)"
+          ./build/plugins/chord-analyzer/ChordAnalyzerMidiEffectTest
 
       # lv2info comes from lilv-utils, which is the same lilv the reporting
       # host (Jalv on Zynthian) loads the bundle with. Stock Ubuntu package,

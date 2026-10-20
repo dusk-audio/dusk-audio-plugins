@@ -3,6 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "../../shared/CrashLog.h"
 #include "ChordAnalyzer.h"
+#include "../core/MidiNoteState.hpp"
 #include "ChordRecorder.h"
 #include <array>
 #include <atomic>
@@ -178,9 +179,8 @@ private:
     std::atomic<double> hostBPM{120.0};
 
     //==========================================================================
-    // Sustain pedal (CC 64) state — audio-thread only, mutated in processMidiInput.
-    bool sustainPedalDown = false;
-    std::array<uint64_t, 2> sustainedReleasedWords{};
+    // Shared bounded MIDI state; owned exclusively by the audio thread.
+    duskaudio::chord::MidiNoteState midiNoteState;
 
     //==========================================================================
     // Timing
@@ -203,8 +203,6 @@ private:
     // (so a re-prepare starts clean) and releaseResources (so a stopped
     // instance cannot retain held notes or a stuck pedal).
     void resetNoteState() noexcept;
-    bool activateNote(int note) noexcept;
-    bool deactivateNote(int note) noexcept;
     std::array<uint64_t, 2> snapshotActiveNoteWords() const noexcept;
     static std::vector<int> notesFromWords(const std::array<uint64_t, 2>& words);
     std::vector<int> snapshotActiveNotes() const;
