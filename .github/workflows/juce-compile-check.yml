@@ -246,7 +246,7 @@ jobs:
       # targets are EXCLUDE_FROM_ALL and previously no workflow
       # named them, so the unit checks and the host-side checks that guard #267
       # and #273 passed only when someone remembered to run them (GH #276).
-      # The numeric model needs no JUCE. Legacy tests disable CURL, and all
+      # The shared numeric/text models need no JUCE. Legacy tests disable CURL, and all
       # need no display and take only a few seconds.
       #
       # Gated to the ChordAnalyzer row, which is in the matrix exactly when the
@@ -262,8 +262,11 @@ jobs:
           set -euo pipefail
           cmake --build build --config Release \
             --target ChordAnalyzerTest ChordAnalyzerHostTest ChordAnalyzerCoreTest \
-              ChordMidiNoteStateTest ChordAnalyzerMidiTest ChordAnalyzerMidiJuceTest -j"$(nproc)"
+              ChordAnalyzerTextTest ChordAnalyzerTextAdapterTest ChordMidiNoteStateTest \
+              ChordAnalyzerMidiTest ChordAnalyzerMidiJuceTest -j"$(nproc)"
           ./build/plugins/chord-analyzer/core/ChordAnalyzerCoreTest
+          ./build/plugins/chord-analyzer/core/ChordAnalyzerTextTest
+          ./build/plugins/chord-analyzer/ChordAnalyzerTextAdapterTest
           ./build/plugins/chord-analyzer/core/ChordMidiNoteStateTest
           ./build/plugins/chord-analyzer/ChordAnalyzerMidiTest
           ./build/plugins/chord-analyzer/ChordAnalyzerMidiJuceTest

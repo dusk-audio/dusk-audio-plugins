@@ -97,7 +97,7 @@ target_compile_definitions(ChordAnalyzer
 # Link JUCE modules
 target_link_libraries(ChordAnalyzer
     PRIVATE
-        ChordAnalyzerCore
+        ChordAnalyzerText
         juce::juce_audio_basics
         juce::juce_audio_devices
         juce::juce_audio_formats
@@ -124,7 +124,7 @@ target_include_directories(ChordAnalyzerTest PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Source
 )
 target_link_libraries(ChordAnalyzerTest PRIVATE
-    ChordAnalyzerCore
+    ChordAnalyzerText
     juce::juce_core
 )
 target_compile_definitions(ChordAnalyzerTest PRIVATE
@@ -147,6 +147,17 @@ target_include_directories(ChordAnalyzerHostTest
     PRIVATE $<TARGET_PROPERTY:ChordAnalyzer,INCLUDE_DIRECTORIES>)
 target_compile_definitions(ChordAnalyzerHostTest
     PRIVATE $<TARGET_PROPERTY:ChordAnalyzer,COMPILE_DEFINITIONS>)
+
+# Run the same frozen text proof through the actual shipping JUCE adapter.
+# Reuse its shared code rather than compiling a second set of JUCE modules.
+if(NOT CMAKE_CROSSCOMPILING)
+    add_executable(ChordAnalyzerTextAdapterTest tests/test_chord_analyzer_text.cpp)
+    target_link_libraries(ChordAnalyzerTextAdapterTest PRIVATE ChordAnalyzer)
+    target_include_directories(ChordAnalyzerTextAdapterTest PRIVATE $<TARGET_PROPERTY:ChordAnalyzer,INCLUDE_DIRECTORIES>)
+    target_compile_definitions(ChordAnalyzerTextAdapterTest PRIVATE
+        CHORD_ANALYZER_LEGACY_REFERENCE=1 $<TARGET_PROPERTY:ChordAnalyzer,COMPILE_DEFINITIONS>)
+    add_test(NAME ChordAnalyzerTextAdapter COMMAND ChordAnalyzerTextAdapterTest)
+endif()
 
 function(chord_add_desktop_midi_test target product)
     if(CMAKE_CROSSCOMPILING)
@@ -232,7 +243,7 @@ target_compile_definitions(ChordAnalyzerMIDI
 
 target_link_libraries(ChordAnalyzerMIDI
     PRIVATE
-        ChordAnalyzerCore
+        ChordAnalyzerText
         juce::juce_audio_basics
         juce::juce_audio_devices
         juce::juce_audio_formats

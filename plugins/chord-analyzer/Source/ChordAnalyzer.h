@@ -1,7 +1,7 @@
 #pragma once
 
 #include <juce_core/juce_core.h>
-#include "../core/ChordAnalyzerCore.hpp"
+#include "../core/ChordAnalyzerText.hpp"
 #include <vector>
 
 // Keep the shipping source API and enum ordinals while using one numeric model.
@@ -51,10 +51,10 @@ struct ChordSuggestion
     float commonality = 0.5f;       // How common this progression is (0.0-1.0)
 };
 
-// JUCE display adapter. Recognition, key state and numeric suggestions belong
-// to the shared core; strings, history/UI structures and label formatting stay
-// here so old sessions and existing editor/host-parameter text do not change.
-class ChordAnalyzer : public duskaudio::chord::ChordAnalyzerCore
+// JUCE display adapter: numeric analysis, naming and encoded labels use the
+// same framework-free model available to DAF. Keep the shipping source
+// API and UTF-8/Unicode input conversions at this boundary.
+class ChordAnalyzer : public duskaudio::chord::ChordAnalyzerText
 {
 public:
     ChordAnalyzer() = default;
@@ -79,7 +79,7 @@ public:
     // integer; decodeLabel rebuilds the string from that integer and nothing
     // else, through the same naming helpers analyze() uses.
     //
-    // Value layout (the bases live in ChordAnalyzer.cpp):
+    // Value layout (the bases live in core/ChordAnalyzerText.cpp):
     //   0                no chord, "-"
     //   1 .. 128         single note, MIDI 0..127 (that label carries an octave)
     //   129 .. 416       two sounding pitch classes, "C+E (M3)", "C+C (octave)"
@@ -88,7 +88,7 @@ public:
     //
     // 295340 needs 19 bits, comfortably inside the 24-bit mantissa a float
     // NormalisableRange has to round-trip.
-    static constexpr int maxLabelCode = 295340;
+    static constexpr int maxLabelCode = duskaudio::chord::ChordAnalyzerText::maxLabelCode;
 
     // showInversions mirrors the editor's Show Inversions toggle: the slash
     // bass belongs to the label only while that toggle is on.
@@ -99,13 +99,5 @@ public:
     static int labelToCode(const juce::String& text);
 
 private:
-    static const char* tensionLabel(int semitonesFromRoot);
-    static const char* intervalName(int semitones);
-    static juce::String describeAddedTones(int patternIndex, std::uint32_t intervals);
-    juce::String getAccidental(int chordRoot) const;
-    juce::String degreeToRoman(int degree, bool uppercase) const;
-    juce::String buildRomanNumeral(int chordRoot, ChordQuality quality) const;
-    juce::String spellSeed(const SuggestionSeed& seed) const;
-    juce::String getSpellingForKey(int pitchClass) const;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ChordAnalyzer)
 };
