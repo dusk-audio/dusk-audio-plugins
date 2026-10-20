@@ -6,4 +6,4 @@
 # commit on every platform and records it in the job summary and release notes.
 # A full 40-character commit SHA holds every build on that commit (e.g. while
 # DAF main is broken). Put exactly one value on the first non-comment line.
-790e1701c48020e18579324e38d12b552d456d34
+65033cd57fd9af3cdce65a88b0f6675aafc6bae7
