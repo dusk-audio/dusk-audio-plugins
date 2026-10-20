@@ -74,6 +74,11 @@ FLEET_WIDE = (
 NON_JUCE_SUBTREES = ("/daf-plugin/", "/core/")
 JUCE_SHARED_CORES = ("plugins/chord-analyzer/core/",)
 
+# Exact cross-tree dependencies which do not reach the whole JUCE fleet.
+SHARED_HEADER_TARGETS = {
+    "plugins/shared-daf/dsp/DuskSeqLock.hpp": PLUGIN_DIRS["plugins/chord-analyzer/"],
+}
+
 
 def changed_files(base_ref: str) -> list[str]:
     """Files this PR touches, or an empty list if the range cannot be resolved."""
@@ -98,6 +103,7 @@ def select(files: list[str]) -> tuple[list[str], str]:
 
     selected: list[str] = []
     for path in files:
+        selected += [t for t in SHARED_HEADER_TARGETS.get(path, []) if t not in selected]
         if (any(sub in "/" + path for sub in NON_JUCE_SUBTREES)
                 and not path.startswith(JUCE_SHARED_CORES)):
             continue

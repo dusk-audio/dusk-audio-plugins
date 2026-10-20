@@ -36,6 +36,12 @@ if(NOT CMAKE_CROSSCOMPILING)
     target_link_libraries(ChordMidiNoteStateTest PRIVATE ChordAnalyzerCore)
     add_test(NAME ChordMidiNoteState COMMAND ChordMidiNoteStateTest)
 
+    find_package(Threads REQUIRED)
+    add_executable(ChordNoteSnapshotTest ../tests/test_note_snapshot.cpp)
+    target_link_libraries(ChordNoteSnapshotTest PRIVATE ChordAnalyzerCore Threads::Threads)
+    add_test(NAME ChordNoteSnapshot COMMAND ChordNoteSnapshotTest)
+    set_tests_properties(ChordNoteSnapshot PROPERTIES TIMEOUT 20)
+
     # Optional standalone ABI proof uses only the public LV2 headers, allowing
     # native Mac/MSVC tests without configuring or linking JUCE.
     if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND CHORD_ANALYZER_LV2_TEST_HEADERS)

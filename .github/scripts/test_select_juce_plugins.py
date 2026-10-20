@@ -10,6 +10,10 @@ class JuceSelection(unittest.TestCase):
         targets, _ = select(["plugins/chord-analyzer/core/ChordAnalyzerCore.cpp"])
         self.assertEqual(targets, ["ChordAnalyzer", "ChordAnalyzerMIDI"])
 
+    def test_shared_snapshot_header_selects_both_chord_products(self):
+        targets, _ = select(["plugins/shared-daf/dsp/DuskSeqLock.hpp"])
+        self.assertEqual(targets, ["ChordAnalyzer", "ChordAnalyzerMIDI"])
+
     def test_chord_daf_shell_stays_separate(self):
         targets, _ = select(["plugins/chord-analyzer/daf-plugin/ChordAnalyzerPlugin.cpp"])
         self.assertEqual(targets, [])

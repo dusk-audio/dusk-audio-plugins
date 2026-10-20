@@ -126,6 +126,7 @@ ChordAnalyzerProcessor::ChordAnalyzerProcessor()
     addParameter(detectedInversionParam);
     addParameter(detectedChordParam);
 
+    latestNoteSnapshot.store(PendingAnalysis{});
     startTimer(50);  // 20Hz publishing of detection results to host parameters
 }
 
@@ -253,8 +254,13 @@ void ChordAnalyzerProcessor::changeProgramName(int /*index*/, const juce::String
 void ChordAnalyzerProcessor::resetNoteState() noexcept
 {
     midiNoteState.reset();
-    for (auto& word : activeNoteWords)
-        word.store(0, std::memory_order_release);
+    {
+        // prepare/release run with audio stopped. Reset the UI fallback under
+        // its existing non-real-time lock; processBlock never takes this lock.
+        const juce::SpinLock::ScopedLockType lock(chordLock);
+        lastUiNoteSnapshot = {};
+        latestNoteSnapshot.store({{}, currentTimeSec.load(std::memory_order_relaxed)});
+    }
     analysisQueueRead.store(
         analysisQueueWrite.load(std::memory_order_acquire),
         std::memory_order_release);
@@ -318,14 +324,6 @@ void ChordAnalyzerProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 }
 
 //==============================================================================
-std::array<uint64_t, 2>
-ChordAnalyzerProcessor::snapshotActiveNoteWords() const noexcept
-{
-    return {
-        activeNoteWords[0].load(std::memory_order_acquire),
-        activeNoteWords[1].load(std::memory_order_acquire) };
-}
-
 std::vector<int> ChordAnalyzerProcessor::notesFromWords(
     const std::array<uint64_t, 2>& words)
 {
@@ -340,16 +338,22 @@ std::vector<int> ChordAnalyzerProcessor::notesFromWords(
 
 std::vector<int> ChordAnalyzerProcessor::snapshotActiveNotes() const
 {
-    return notesFromWords(snapshotActiveNoteWords());
+    PendingAnalysis snapshot;
+    {
+        const juce::SpinLock::ScopedLockType lock(chordLock);
+        if (latestNoteSnapshot.load(snapshot)) lastUiNoteSnapshot = snapshot;
+        else snapshot = lastUiNoteSnapshot;
+    }
+    return notesFromWords(snapshot.noteWords);
 }
 
-bool ChordAnalyzerProcessor::enqueueAnalysisSnapshot(double timeSec) noexcept
+bool ChordAnalyzerProcessor::enqueueAnalysisSnapshot(const PendingAnalysis& snapshot) noexcept
 {
     const size_t write = analysisQueueWrite.load(std::memory_order_relaxed);
     const size_t next = (write + 1) % analysisQueueCapacity;
     if (next == analysisQueueRead.load(std::memory_order_acquire))
         return false;
-    analysisQueue[write] = { snapshotActiveNoteWords(), timeSec };
+    analysisQueue[write] = snapshot;
     analysisQueueWrite.store(next, std::memory_order_release);
     return true;
 }
@@ -385,10 +389,9 @@ void ChordAnalyzerProcessor::processMidiInput(const juce::MidiBuffer& midi)
     // NOT preserved: only the resulting end-of-block state is captured.
     if (notesChanged)
     {
-        const auto words = midiNoteState.snapshot();
-        for (size_t i = 0; i < words.size(); ++i)
-            activeNoteWords[i].store(words[i], std::memory_order_release);
-        if (! enqueueAnalysisSnapshot(currentTimeSec.load(std::memory_order_relaxed)))
+        const PendingAnalysis snapshot{midiNoteState.snapshot(), currentTimeSec.load(std::memory_order_relaxed)};
+        latestNoteSnapshot.store(snapshot);
+        if (! enqueueAnalysisSnapshot(snapshot))
             analysisDirty.store(true, std::memory_order_release);
     }
 }
@@ -396,8 +399,9 @@ void ChordAnalyzerProcessor::processMidiInput(const juce::MidiBuffer& midi)
 //==============================================================================
 void ChordAnalyzerProcessor::updateAnalysis()
 {
-    updateAnalysis({ snapshotActiveNoteWords(),
-                     currentTimeSec.load(std::memory_order_relaxed) });
+    PendingAnalysis snapshot;
+    if (latestNoteSnapshot.load(snapshot)) updateAnalysis(snapshot);
+    else analysisDirty.store(true, std::memory_order_release);
 }
 
 void ChordAnalyzerProcessor::updateAnalysis(const PendingAnalysis& snapshot)

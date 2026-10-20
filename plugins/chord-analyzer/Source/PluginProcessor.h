@@ -4,6 +4,7 @@
 #include "../../shared/CrashLog.h"
 #include "ChordAnalyzer.h"
 #include "../core/MidiNoteState.hpp"
+#include "../core/NoteSnapshot.hpp"
 #include "ChordRecorder.h"
 #include <array>
 #include <atomic>
@@ -137,14 +138,10 @@ private:
 
     //==========================================================================
     // Active notes tracking
-    std::array<std::atomic<uint64_t>, 2> activeNoteWords{
-        std::atomic<uint64_t>{0}, std::atomic<uint64_t>{0} };
-
-    struct PendingAnalysis
-    {
-        std::array<uint64_t, 2> noteWords{};
-        double timeSec = 0.0;
-    };
+    using PendingAnalysis = duskaudio::chord::NoteSnapshot;
+    duskaudio::chord::NoteSnapshotMailbox latestNoteSnapshot;
+    // UI-only retention on a bounded read miss, guarded by chordLock.
+    mutable PendingAnalysis lastUiNoteSnapshot;
     static constexpr size_t analysisQueueCapacity = 64;
     std::array<PendingAnalysis, analysisQueueCapacity> analysisQueue{};
     std::atomic<size_t> analysisQueueWrite{0};
@@ -203,10 +200,9 @@ private:
     // (so a re-prepare starts clean) and releaseResources (so a stopped
     // instance cannot retain held notes or a stuck pedal).
     void resetNoteState() noexcept;
-    std::array<uint64_t, 2> snapshotActiveNoteWords() const noexcept;
     static std::vector<int> notesFromWords(const std::array<uint64_t, 2>& words);
     std::vector<int> snapshotActiveNotes() const;
-    bool enqueueAnalysisSnapshot(double timeSec) noexcept;
+    bool enqueueAnalysisSnapshot(const PendingAnalysis& snapshot) noexcept;
     bool dequeueAnalysisSnapshot(PendingAnalysis& snapshot) noexcept;
     void updateAnalysis();
     void updateAnalysis(const PendingAnalysis& snapshot);
