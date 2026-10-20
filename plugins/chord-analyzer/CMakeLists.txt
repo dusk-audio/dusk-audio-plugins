@@ -98,6 +98,7 @@ target_compile_definitions(ChordAnalyzer
 target_link_libraries(ChordAnalyzer
     PRIVATE
         ChordAnalyzerText
+        ChordMidiExport
         juce::juce_audio_basics
         juce::juce_audio_devices
         juce::juce_audio_formats
@@ -171,6 +172,14 @@ if(NOT CMAKE_CROSSCOMPILING)
     target_compile_definitions(ChordRecordingAdapterTest PRIVATE
         CHORD_ANALYZER_LEGACY_REFERENCE=1 $<TARGET_PROPERTY:ChordAnalyzer,COMPILE_DEFINITIONS>)
     add_test(NAME ChordRecordingAdapter COMMAND ChordRecordingAdapterTest)
+
+    add_executable(ChordMidiExportAdapterTest tests/test_chord_midi_export.cpp)
+    target_link_libraries(ChordMidiExportAdapterTest PRIVATE ChordAnalyzer)
+    target_include_directories(ChordMidiExportAdapterTest PRIVATE $<TARGET_PROPERTY:ChordAnalyzer,INCLUDE_DIRECTORIES>)
+    target_compile_definitions(ChordMidiExportAdapterTest PRIVATE
+        CHORD_EXPORT_LEGACY_REFERENCE=1 $<TARGET_PROPERTY:ChordAnalyzer,COMPILE_DEFINITIONS>)
+    add_test(NAME ChordMidiExportAdapter COMMAND ChordMidiExportAdapterTest)
+    set_tests_properties(ChordMidiExportAdapter PROPERTIES TIMEOUT 60)
 endif()
 
 function(chord_add_desktop_midi_test target product)
@@ -258,6 +267,7 @@ target_compile_definitions(ChordAnalyzerMIDI
 target_link_libraries(ChordAnalyzerMIDI
     PRIVATE
         ChordAnalyzerText
+        ChordMidiExport
         juce::juce_audio_basics
         juce::juce_audio_devices
         juce::juce_audio_formats

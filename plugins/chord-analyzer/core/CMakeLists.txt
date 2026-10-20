@@ -20,6 +20,10 @@ add_library(ChordAnalyzerRuntime STATIC ChordAnalyzerRuntime.cpp)
 target_link_libraries(ChordAnalyzerRuntime PUBLIC ChordAnalyzerText Threads::Threads)
 set_target_properties(ChordAnalyzerRuntime PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+add_library(ChordMidiExport STATIC ChordMidiExport.cpp)
+target_link_libraries(ChordMidiExport PUBLIC ChordAnalyzerText)
+set_target_properties(ChordMidiExport PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 function(chord_add_native_midi_test source_root lv2_headers)
     add_executable(ChordAnalyzerMidiTest "${source_root}/tests/test_chord_midi.cpp")
     target_include_directories(ChordAnalyzerMidiTest PRIVATE "${lv2_headers}")
@@ -44,6 +48,10 @@ if(NOT CMAKE_CROSSCOMPILING)
     add_executable(ChordHistoryTest ../tests/test_chord_history.cpp)
     target_link_libraries(ChordHistoryTest PRIVATE ChordAnalyzerText)
     add_test(NAME ChordHistory COMMAND ChordHistoryTest)
+
+    add_executable(ChordMidiExportTest ../tests/test_chord_midi_export.cpp)
+    target_link_libraries(ChordMidiExportTest PRIVATE ChordMidiExport Threads::Threads)
+    add_test(NAME ChordMidiExport COMMAND ChordMidiExportTest)
 
     add_executable(ChordMidiNoteStateTest ../tests/test_midi_note_state.cpp)
     target_link_libraries(ChordMidiNoteStateTest PRIVATE ChordAnalyzerCore)

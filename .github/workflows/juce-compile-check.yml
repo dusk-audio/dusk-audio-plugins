@@ -265,12 +265,15 @@ jobs:
             --target ChordAnalyzerTest ChordAnalyzerHostTest ChordAnalyzerCoreTest \
               ChordAnalyzerTextTest ChordAnalyzerTextAdapterTest ChordMidiNoteStateTest \
               ChordRecordingTest ChordRecordingAdapterTest ChordHistoryTest \
+              ChordMidiExportTest ChordMidiExportAdapterTest \
               ChordNoteSnapshotTest ChordSessionIntegrationTest ChordAnalyzerMidiTest ChordAnalyzerMidiJuceTest -j"$(nproc)"
           ./build/plugins/chord-analyzer/core/ChordAnalyzerCoreTest
           ./build/plugins/chord-analyzer/core/ChordAnalyzerTextTest
           ./build/plugins/chord-analyzer/ChordAnalyzerTextAdapterTest
           ./build/plugins/chord-analyzer/core/ChordRecordingTest
           ./build/plugins/chord-analyzer/ChordRecordingAdapterTest
+          ./build/plugins/chord-analyzer/core/ChordMidiExportTest
+          ./build/plugins/chord-analyzer/ChordMidiExportAdapterTest
           ./build/plugins/chord-analyzer/core/ChordHistoryTest
           ./build/plugins/chord-analyzer/ChordSessionIntegrationTest
           ./build/plugins/chord-analyzer/core/ChordMidiNoteStateTest
