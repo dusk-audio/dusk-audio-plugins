@@ -259,6 +259,85 @@ juce::String ChordAnalyzer::decodeLabel(int code)
     return label;
 }
 
+// Hosts may ask for a value from any label they previously rendered. Several
+// codes have the same text (e.g. C5 is a single note and a power chord), so this
+// returns a canonical representative with the same label, not the original code.
+int ChordAnalyzer::labelToCode(const juce::String& source)
+{
+    const juce::String text = source.trim();
+    if (text == "-") return kLabelNone;
+
+    int root = -1, rootLength = 0;
+    for (int pitch = 0; pitch < 12; ++pitch)
+    {
+        const auto name = pitchClassToName(pitch);
+        if (name.length() > rootLength && text.startsWith(name))
+        {
+            root = pitch;
+            rootLength = name.length();
+        }
+    }
+    if (root < 0) return -1;
+
+    for (int note = root; note < 128; note += 12)
+        if (noteToName(note) == text) return kLabelSingleBase + note;
+
+    if (text.containsChar('+'))
+    {
+        for (int code = kLabelDyadBase; code < kLabelUnknownBase; ++code)
+            if (decodeLabel(code) == text) return code;
+        return -1;
+    }
+    if (text == pitchClassToName(root) + "?") return kLabelUnknownBase + root;
+
+    int bassInterval = 0;
+    const int slash = text.lastIndexOfChar('/');
+    if (slash >= 0)
+    {
+        int bass = -1;
+        for (int pitch = 0; pitch < 12; ++pitch)
+            if (text.substring(slash + 1) == pitchClassToName(pitch)) bass = pitch;
+        if (bass < 0) return -1;
+        bassInterval = (bass - root + 12) % 12;
+    }
+    const auto body = text.substring(rootLength, slash >= 0 ? slash : text.length());
+
+    for (size_t pattern = 0; pattern < chordPatterns.size(); ++pattern)
+    {
+        const auto suffix = qualityToSuffix(chordPatterns[pattern].quality);
+        if (!body.startsWith(suffix)) continue;
+        const auto extra = body.substring(suffix.length());
+        auto pitches = kPatternMasks[pattern].pitches;
+        const auto addTension = [&pitches](const juce::String& token)
+        {
+            for (int interval = 1; interval < 12; ++interval)
+                if (token == tensionLabel(interval))
+                {
+                    pitches = static_cast<std::uint16_t>(pitches | (1u << interval));
+                    return true;
+                }
+            return false;
+        };
+        bool valid = true;
+        if (extra.isNotEmpty())
+        {
+            if (extra.startsWith("add")) valid = addTension(extra.substring(3));
+            else if (extra.startsWithChar('(') && extra.endsWithChar(')'))
+            {
+                for (const auto& token : juce::StringArray::fromTokens(extra.substring(1, extra.length() - 1), ",", ""))
+                    if (token != "no5") valid = addTension(token) && valid;
+            }
+            else valid = false;
+        }
+        if (!valid) continue;
+        const int code = kLabelChordBase + (root * 12 + bassInterval) * kLabelMaskCount + (pitches >> 1);
+        // Reuse the authoritative decoder to reject ambiguous suffix matches,
+        // malformed extras and spellings it could never have emitted.
+        if (decodeLabel(code) == text) return code;
+    }
+    return -1;
+}
+
 //==============================================================================
 
 juce::String ChordAnalyzer::getKeyName() const

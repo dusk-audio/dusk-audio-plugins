@@ -95,6 +95,9 @@ public:
     // bass belongs to the label only while that toggle is on.
     static int encodeLabel(const ChordInfo& chord, bool showInversions) noexcept;
     static juce::String decodeLabel(int code);
+    // Canonical inverse of decodeLabel; -1 means an unrecognized label.
+    // String parsing is for host/UI calls, never the audio callback.
+    static int labelToCode(const juce::String& text);
 
 private:
     static const char* tensionLabel(int semitonesFromRoot);

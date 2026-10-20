@@ -113,7 +113,12 @@ ChordAnalyzerProcessor::ChordAnalyzerProcessor()
         juce::NormalisableRange<float>(0.0f, static_cast<float>(ChordAnalyzer::maxLabelCode), 1.0f),
         0.0f,
         juce::AudioParameterFloatAttributes().withStringFromValueFunction(
-            [](float value, int) { return ChordAnalyzer::decodeLabel(juce::roundToInt(value)); }));
+            [](float value, int) { return ChordAnalyzer::decodeLabel(juce::roundToInt(value)); })
+            .withValueFromStringFunction([](const juce::String& text)
+            {
+                const int code = ChordAnalyzer::labelToCode(text);
+                return code >= 0 ? static_cast<float>(code) : text.getFloatValue();
+            }));
 
     addParameter(detectedRootParam);
     addParameter(detectedQualityParam);

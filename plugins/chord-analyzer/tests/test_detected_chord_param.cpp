@@ -49,6 +49,7 @@ static void testParameterRoundTrip(juce::RangedAudioParameter& chordParam)
 
     int normalisationFailures = 0;
     int textFailures = 0;
+    int reverseFailures = 0;
     int firstNormalisationFailure = -1;
     juce::String firstTextFailure;
 
@@ -74,6 +75,9 @@ static void testParameterRoundTrip(juce::RangedAudioParameter& chordParam)
                 firstTextFailure = "code " + juce::String(code)
                                  + ": expected \"" + expected + "\" got \"" + text + "\"";
         }
+
+        if (chordParam.getText(chordParam.getValueForText(text), 1024) != text)
+            ++reverseFailures;
     }
 
     std::cout << "       swept " << (ChordAnalyzer::maxLabelCode + 1)
@@ -88,6 +92,10 @@ static void testParameterRoundTrip(juce::RangedAudioParameter& chordParam)
 
     check("every code survives the float normalisation", normalisationFailures == 0);
     check("getText matches decodeLabel for every code", textFailures == 0);
+    std::cout << "       text/value/text conversion failures: " << reverseFailures << "\n";
+    check("every displayed label survives text/value/text conversion", reverseFailures == 0);
+    check("numeric label-code text remains accepted",
+          chordParam.getText(chordParam.getValueForText("50000"), 1024) == ChordAnalyzer::decodeLabel(50000));
 }
 
 // The same sweep through the live parameter object, the way the timer writes
