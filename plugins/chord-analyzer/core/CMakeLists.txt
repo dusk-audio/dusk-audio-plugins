@@ -41,6 +41,11 @@ if(NOT CMAKE_CROSSCOMPILING)
     target_link_libraries(ChordAnalyzerTextTest PRIVATE ChordAnalyzerText)
     add_test(NAME ChordAnalyzerText COMMAND ChordAnalyzerTextTest)
 
+    add_executable(ChordAnalyzerStateTest ../tests/test_chord_state.cpp)
+    target_link_libraries(ChordAnalyzerStateTest PRIVATE ChordAnalyzerRuntime)
+    add_test(NAME ChordAnalyzerState COMMAND ChordAnalyzerStateTest)
+    set_tests_properties(ChordAnalyzerState PROPERTIES TIMEOUT 20)
+
     add_executable(ChordRecordingTest ../tests/test_chord_recording.cpp)
     target_link_libraries(ChordRecordingTest PRIVATE ChordAnalyzerText)
     add_test(NAME ChordRecording COMMAND ChordRecordingTest)

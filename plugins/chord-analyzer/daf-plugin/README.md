@@ -49,8 +49,15 @@ parameters. Small choice domains retain their displayed names. The large
 by the shared formatter/parser. Fractional host probes retain the shipping
 nearest-even rounding; malformed labels and insufficient buffers reject without
 truncation or numeric fallback. Legacy labels and canonical inverses remain
-unchanged throughout the full code domain. Host wrappers own parameter state;
-there are no plugin-owned state strings or factory programs at this stage.
+unchanged throughout the full code domain. Host state carries one required,
+versioned `parameters` snapshot containing exactly the five input controls.
+Missing/duplicate keys, unknown fields, fractional enums and invalid ranges reject
+before any input changes. The validated controls publish in one lock-free word;
+individual host automation still edits one control while preserving its siblings.
+Held notes, recording/history and transient detection outputs stay outside that
+snapshot. There are no factory programs. Incomplete parameter-only states from
+earlier development builds reject; shipping legacy products keep their original
+state format and identities.
 
 The shared `core/ChordMidiExport` library now builds the same format-1,
 single-track 480-PPQ clips as the shipping writer. `chordBytes` and

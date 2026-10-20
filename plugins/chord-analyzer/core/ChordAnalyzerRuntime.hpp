@@ -1,6 +1,6 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
 #pragma once
-#include "ChordAnalyzerParams.hpp"
+#include "ChordAnalyzerState.hpp"
 #include "ChordHistory.hpp"
 #include "ChordRecorder.hpp"
 #include "MidiNoteState.hpp"
@@ -36,6 +36,8 @@ public:
 
     float parameter(unsigned index) const noexcept;
     void setParameter(unsigned index, float value) noexcept;
+    InputValues inputValues() const noexcept { return inputs.values(); }
+    bool restoreInputs(const InputValues& values) noexcept;
     // Host lifecycle only, while audio is stopped. Ends an active recording
     // at the old clock before resetting its timeline; retains session/history.
     void prepare(double sampleRate);
@@ -68,7 +70,8 @@ private:
     void analyzeLocked(const Frame& frame);
     void resetNotesLocked();
 
-    std::array<std::atomic<float>, PARAM_COUNT> parameters{};
+    InputState inputs;
+    std::array<std::atomic<float>, PARAM_COUNT - inputParameterCount> outputs{};
     MidiNoteState noteState;
     MidiNoteState::Words publishedWords{};
     double sampleRate = 44100.0;

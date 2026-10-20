@@ -350,6 +350,38 @@ void activeRecordingReprepare(PluginExporter& host, Sink& sink)
     host.setSampleRate(48000, true);
 }
 
+void completeState(PluginExporter& host, Sink& sink)
+{
+    auto& rt = runtime(host);
+    const std::string original = host.getStateValue("parameters").buffer();
+    check(host.getStateCount() == 1 && host.isParameterSnapshotState("parameters")
+          && (host.getStateHints(0u) & kStateIsRequired), "host state requires one complete parameter snapshot");
+    host.deactivate(); host.activate();
+    rt.clearRecording(); rt.clearHistory(); rt.startRecording(1000);
+    const std::array<MidiEvent, 3> notes{{event(0x90,60,100), event(0x90,64,100), event(0x90,67,100)}};
+    sink.clear(); block(host,sink,notes.data(),notes.size()); rt.flush();
+    bool populated = true;
+    for (unsigned i = inputParameterCount; i < PARAM_COUNT; ++i) populated &= host.getParameterValue(i) > 0;
+    check(populated, "state-boundary control has all five nonzero detection outputs");
+    const InputValues inputs{{6,1,1,0,0}};
+    const auto encoded = encodeInputState(inputs);
+    check(host.validateStateValue("parameters", encoded.c_str()), "complete input state validates before publication");
+    host.setState("parameters", encoded.c_str()); rt.flush();
+    check(rt.inputValues() == inputs && host.getStateValue("parameters") == encoded.c_str(),
+          "live state restore publishes and immediately saves all five inputs");
+    check(rt.view().notes == std::vector<int>({60,64,67}) && rt.view().recording && !rt.view().history.empty(),
+          "input recalls preserve held notes, recording and history");
+    check(!host.validateStateValue("parameters", "invalid") && !host.validateStateValue("parameters", ""),
+          "invalid and empty snapshots fail preflight");
+    host.setState("parameters", "invalid");
+    check(rt.inputValues() == inputs, "direct rejected state cannot change the accepted controls");
+    host.deactivate(); host.activate();
+    check(rt.inputValues() == inputs && rt.view().notes.empty() && !rt.view().recording,
+          "reactivation retains controls while clearing notes and ending recording");
+    host.setState("parameters", original.c_str());
+    check(host.getStateValue("parameters") == original.c_str(), "state test restores the original input configuration");
+}
+
 void concurrentPublication(PluginExporter& host, Sink& sink)
 {
     auto& rt = runtime(host);
@@ -410,6 +442,7 @@ int main()
     recordingAndOverflow(host, sink);
     backgroundWorker(host, sink);
     activeRecordingReprepare(host, sink);
+    completeState(host, sink);
     concurrentPublication(host, sink);
     host.deactivate();
     std::printf("DAF Chord Analyzer %s: %d checks, %d failures\n",

@@ -6,8 +6,7 @@ namespace duskaudio::chord
 {
 ChordAnalyzerRuntime::ChordAnalyzerRuntime()
 {
-    for (unsigned i = 0; i < PARAM_COUNT; ++i)
-        parameters[i].store(parameterSpecs[i].initial, std::memory_order_relaxed);
+    for (auto& output : outputs) output.store(0.0f, std::memory_order_relaxed);
     latest.store({});
     worker = std::thread([this] {
         std::unique_lock<std::mutex> lock(modelMutex);
@@ -31,14 +30,21 @@ ChordAnalyzerRuntime::~ChordAnalyzerRuntime()
 
 float ChordAnalyzerRuntime::parameter(unsigned index) const noexcept
 {
-    return index < PARAM_COUNT ? parameters[index].load(std::memory_order_relaxed) : 0.0f;
+    if (index < inputParameterCount) return inputs.values()[index];
+    return index < PARAM_COUNT ? outputs[index - inputParameterCount].load(std::memory_order_relaxed) : 0.0f;
 }
 
 void ChordAnalyzerRuntime::setParameter(unsigned index, float value) noexcept
 {
-    if (index >= inputParameterCount || !std::isfinite(value)) return;
-    parameters[index].store(snapParameter(index, value), std::memory_order_relaxed);
+    if (!inputs.set(index, value)) return;
     settingsDirty.store(true, std::memory_order_release);
+}
+
+bool ChordAnalyzerRuntime::restoreInputs(const InputValues& values) noexcept
+{
+    if (!inputs.restore(values)) return false;
+    settingsDirty.store(true, std::memory_order_release);
+    return true;
 }
 
 void ChordAnalyzerRuntime::prepare(double rate)
@@ -130,7 +136,8 @@ void ChordAnalyzerRuntime::analyzeLocked(const Frame& frame)
     for (int n = 0; n < 128; ++n)
         if (frame.words[static_cast<std::size_t>(n / 64)] & (std::uint64_t{1} << (n % 64)))
             model.notes.push_back(n);
-    analyzer.setKey(static_cast<int>(parameter(PARAM_KEY_ROOT)), parameter(PARAM_KEY_MODE) != 0.0f);
+    const auto settings = inputs.values();
+    analyzer.setKey(static_cast<int>(settings[PARAM_KEY_ROOT]), settings[PARAM_KEY_MODE] != 0.0f);
     auto chord = analyzer.analyze(model.notes);
     if (chord != model.chord)
     {
@@ -139,19 +146,19 @@ void ChordAnalyzerRuntime::analyzeLocked(const Frame& frame)
     }
     model.chord = std::move(chord);
     model.suggestions = analyzer.getSuggestions(model.chord,
-        static_cast<SuggestionCategory>(static_cast<int>(parameter(PARAM_SUGGESTION_LEVEL))));
+        static_cast<SuggestionCategory>(static_cast<int>(settings[PARAM_SUGGESTION_LEVEL])));
     const auto& c = model.chord;
     const bool valid = c.isValid;
-    const std::array<float, 5> outputs {{
+    const std::array<float, 5> detected {{
         valid && c.rootNote >= 0 ? static_cast<float>(c.rootNote + 1) : 0.0f,
         valid && c.quality != ChordQuality::Unknown ? static_cast<float>(static_cast<int>(c.quality) + 1) : 0.0f,
         valid && c.bassNote >= 0 ? static_cast<float>(c.bassNote + 1) : 0.0f,
         valid ? static_cast<float>(c.inversion + 1) : 0.0f,
         static_cast<float>(ChordAnalyzerText::encodeLabel(c, model.notes.data(),
-            static_cast<int>(model.notes.size()), parameter(PARAM_SHOW_INVERSIONS) != 0.0f))
+            static_cast<int>(model.notes.size()), settings[PARAM_SHOW_INVERSIONS] != 0.0f))
     }};
-    for (unsigned i = 0; i < outputs.size(); ++i)
-        parameters[inputParameterCount + i].store(outputs[i], std::memory_order_relaxed);
+    for (unsigned i = 0; i < detected.size(); ++i)
+        outputs[i].store(detected[i], std::memory_order_relaxed);
 }
 
 void ChordAnalyzerRuntime::flush()
@@ -183,7 +190,8 @@ void ChordAnalyzerRuntime::startRecording(std::int64_t unixMilliseconds)
     serviceLocked();
     if (recorder.isRecording()) return;
     recorder.startRecording(unixMilliseconds);
-    recorder.setKey(static_cast<int>(parameter(PARAM_KEY_ROOT)), parameter(PARAM_KEY_MODE) != 0.0f);
+    const auto settings = inputs.values();
+    recorder.setKey(static_cast<int>(settings[PARAM_KEY_ROOT]), settings[PARAM_KEY_MODE] != 0.0f);
     recorder.setTempo(hostTempo.load(std::memory_order_relaxed));
 }
 

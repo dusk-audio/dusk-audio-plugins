@@ -7,6 +7,7 @@
 #include "DuskDenormals.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 START_NAMESPACE_DAF
 using namespace duskaudio::chord;
@@ -14,7 +15,7 @@ using namespace duskaudio::chord;
 class ChordAnalyzerPlugin : public Plugin
 {
 public:
-    ChordAnalyzerPlugin() : Plugin(PARAM_COUNT, 0, 0) {}
+    ChordAnalyzerPlugin() : Plugin(PARAM_COUNT, 0, 1) {}
     ChordAnalyzerRuntime& runtimeForUI() noexcept { return runtime; }
 
 protected:
@@ -93,6 +94,32 @@ protected:
 
     float getParameterValue(uint32_t index) const override { return runtime.parameter(index); }
     void setParameterValue(uint32_t index, float value) override { runtime.setParameter(index, value); }
+
+    void initState(uint32_t index, State& state) override
+    {
+        if (index != 0) return;
+        state.key = "parameters";
+        state.label = "Chord Analyzer Parameters";
+        state.defaultValue = encodeInputState(runtime.inputValues()).c_str();
+        state.hints = kStateIsHostReadable | kStateIsParameterSnapshot | kStateIsRequired;
+    }
+    String getState(const char* key) const override
+    {
+        return key && std::strcmp(key, "parameters") == 0
+             ? String(encodeInputState(runtime.inputValues()).c_str()) : String();
+    }
+    bool validateStateValue(const char* key, const char* value) const override
+    {
+        InputValues inputs;
+        return key && value && std::strcmp(key, "parameters") == 0 && decodeInputState(value, inputs);
+    }
+    void setState(const char* key, const char* value) override
+    {
+        if (!key || !value || std::strcmp(key, "parameters") != 0) return;
+        InputValues inputs;
+        if (decodeInputState(value, inputs)) runtime.restoreInputs(inputs);
+    }
+
     void activate() override { runtime.prepare(getSampleRate()); }
     void deactivate() override { runtime.release(); }
 
