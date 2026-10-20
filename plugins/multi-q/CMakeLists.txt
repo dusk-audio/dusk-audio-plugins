@@ -502,3 +502,15 @@ if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
 
     add_dependencies(MultiQAnalogAccuracyTest MultiQ_All)
 endif()
+
+# Coefficient interpolation regression: compile the actual JUCE filter types.
+if(NOT CMAKE_CROSSCOMPILING)
+    add_executable(MultiQSmoothingJuceTest tests/test_multiq_smoothing.cpp)
+    target_compile_definitions(MultiQSmoothingJuceTest PRIVATE
+        MULTIQ_TEST_JUCE=1 $<TARGET_PROPERTY:MultiQ,COMPILE_DEFINITIONS>)
+    target_include_directories(MultiQSmoothingJuceTest PRIVATE
+        "${CMAKE_CURRENT_BINARY_DIR}/MultiQ_artefacts/JuceLibraryCode"
+        $<TARGET_PROPERTY:MultiQ,INCLUDE_DIRECTORIES>)
+    target_link_libraries(MultiQSmoothingJuceTest PRIVATE MultiQ)
+    add_test(NAME MultiQSmoothingJuce COMMAND MultiQSmoothingJuceTest)
+endif()

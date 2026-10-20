@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include "../shared-daf/dsp/DuskCoefficientRamp.hpp"
 #include "../shared/CrashLog.h"
 #include <array>
 #include <atomic>
@@ -87,23 +88,32 @@ struct CytomicSVF
     SVFCoeffs target;     // Target coefficients
     float smoothCoeff = 0.02f;  // Interpolation rate (~1ms at 44.1kHz)
     bool converged = true;      // Skip interpolation when coefficients match target
+    duskaudio::CoefficientRamp<6> coefficientRamp;
+
+    void resetRamp() noexcept
+    {
+        const float values[] = {coeffs.a1, coeffs.a2, coeffs.a3, coeffs.m0, coeffs.m1, coeffs.m2};
+        coefficientRamp.reset(values);
+    }
 
     void reset()
     {
-        ic1eq = 0.0f;
-        ic2eq = 0.0f;
+        ic1eq = ic2eq = 0.0f;
+        resetRamp();
     }
 
     void setTarget(const SVFCoeffs& t)
     {
+        if (converged) resetRamp();
         target = t;
-        converged = false;  // New target — need to interpolate
+        converged = false;
     }
 
     void snapToTarget()
     {
         coeffs = target;
         converged = true;
+        resetRamp();
     }
 
     void setSmoothCoeff(float c) { smoothCoeff = juce::jlimit(0.0f, 1.0f, c); }
@@ -111,27 +121,15 @@ struct CytomicSVF
     // Advance coefficient interpolation toward target (call once per sample)
     void stepSmoothing()
     {
-        if (!converged)
+        if (converged) return;
+        float current[] = {coeffs.a1, coeffs.a2, coeffs.a3, coeffs.m0, coeffs.m1, coeffs.m2};
+        const float desired[] = {target.a1, target.a2, target.a3, target.m0, target.m1, target.m2};
+        const bool settled = coefficientRamp.step(current, desired, smoothCoeff);
+        coeffs.a1 = current[0]; coeffs.a2 = current[1]; coeffs.a3 = current[2];
+        coeffs.m0 = current[3]; coeffs.m1 = current[4]; coeffs.m2 = current[5];
+        if (settled)
         {
-            float s = smoothCoeff;
-            coeffs.a1 += s * (target.a1 - coeffs.a1);
-            coeffs.a2 += s * (target.a2 - coeffs.a2);
-            coeffs.a3 += s * (target.a3 - coeffs.a3);
-            coeffs.m0 += s * (target.m0 - coeffs.m0);
-            coeffs.m1 += s * (target.m1 - coeffs.m1);
-            coeffs.m2 += s * (target.m2 - coeffs.m2);
-
-            constexpr float eps = 1e-7f;
-            if (std::abs(coeffs.a1 - target.a1) < eps &&
-                std::abs(coeffs.a2 - target.a2) < eps &&
-                std::abs(coeffs.a3 - target.a3) < eps &&
-                std::abs(coeffs.m0 - target.m0) < eps &&
-                std::abs(coeffs.m1 - target.m1) < eps &&
-                std::abs(coeffs.m2 - target.m2) < eps)
-            {
-                coeffs = target;
-                converged = true;
-            }
+            converged = true;
         }
     }
 
@@ -222,19 +220,37 @@ struct StereoBiquad
     BiquadCoeffs coeffs;       // current (smoothed) coefficients
     BiquadCoeffs target;       // target coefficients set by setCoeffs()
     float smoothCoeff = 0.02f; // per-sample: coeffs → target (~1ms at 44.1kHz, set via setSmoothCoeff)
+    bool converged = true;
+    duskaudio::CoefficientRamp<6> coefficientRamp;
     float s1L = 0.0f, s2L = 0.0f;
     float s1R = 0.0f, s2R = 0.0f;
 
-    void setCoeffs(const BiquadCoeffs& c) { target = c; }
-    void reset() { s1L = s2L = s1R = s2R = 0.0f; coeffs = target; }
-    void snapToTarget() { coeffs = target; }
+    void setCoeffs(const BiquadCoeffs& c) {
+        if (converged) coefficientRamp.reset(coeffs.coeffs);
+        target = c;
+        converged = false;
+    }
+    void reset() {
+        s1L = s2L = s1R = s2R = 0.0f;
+        coeffs = target;
+        converged = true;
+        coefficientRamp.reset(coeffs.coeffs);
+    }
+    void snapToTarget() {
+        coeffs = target;
+        converged = true;
+        coefficientRamp.reset(coeffs.coeffs);
+    }
     void setSmoothCoeff(float c) { smoothCoeff = c; }
 
     // Advance coefficient smoothing once per sample (call before processSampleL/R)
     void stepSmoothing()
     {
-        for (int i = 0; i < 6; ++i)
-            coeffs.coeffs[i] += smoothCoeff * (target.coeffs[i] - coeffs.coeffs[i]);
+        if (converged) return;
+        if (coefficientRamp.step(coeffs.coeffs, target.coeffs, smoothCoeff))
+        {
+            converged = true;
+        }
     }
 
     float processSampleL(float x)

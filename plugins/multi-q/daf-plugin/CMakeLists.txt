@@ -53,6 +53,9 @@ if(NOT CMAKE_CROSSCOMPILING)
     add_executable(MultiQCoreFiltersTest ../tests/test_multiq_core_filters.cpp)
     add_test(NAME MultiQCoreFilters COMMAND MultiQCoreFiltersTest)
 
+    add_executable(MultiQSmoothingTest ../tests/test_multiq_smoothing.cpp)
+    add_test(NAME MultiQSmoothing COMMAND MultiQSmoothingTest)
+
     add_executable(MultiQMatchStateTest
         ../tests/test_multiq_match_state.cpp
         ../core/MultiQMatch.cpp)
