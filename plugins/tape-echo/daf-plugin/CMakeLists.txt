@@ -65,6 +65,15 @@ if(NOT CMAKE_CROSSCOMPILING)
     target_compile_features(TapeEchoCoreTest PRIVATE cxx_std_17)
     add_test(NAME TapeEchoCore COMMAND TapeEchoCoreTest)
 
+    # Exercise the actual shell and DSP with DAF's in-process host. The rate
+    # probe pins the sync/off handoff even when a host load overlaps a block.
+    add_executable(TapeEchoRateHandoffTest
+        tests/TapeEchoRateHandoffTest.cpp
+        ../core/TapeEchoDSP.cpp
+        "${DAF_PATH}/daf/src/DafPlugin.cpp")
+    target_link_libraries(TapeEchoRateHandoffTest PRIVATE tape-echo-2)
+    add_test(NAME TapeEchoRateHandoff COMMAND TapeEchoRateHandoffTest)
+
     find_program(DUSK_SERDI_EXECUTABLE serdi)
     if(DUSK_SERDI_EXECUTABLE)
         add_test(NAME DuskFixLv2Presets
