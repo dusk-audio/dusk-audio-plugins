@@ -2,6 +2,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 
 namespace duskaudio::chord
@@ -44,7 +45,7 @@ public:
         auto& channel = channels[data[0] & 0x0f];
         if (kind == 0x80 || kind == 0x90)
         {
-            const auto word = data[1] / 64;
+            const std::size_t word = data[1] / 64u;
             const auto bit = std::uint64_t{1} << (data[1] % 64);
             if (kind == 0x90 && data[2] != 0)
             {
@@ -80,7 +81,7 @@ public:
         {
             // 123 and the note-off side effect of 124..127. This analyzer does
             // not synthesize voices or adopt a receiver's omni/mono/poly mode.
-            for (int word = 0; word < 2; ++word)
+            for (std::size_t word = 0; word < 2; ++word)
             {
                 if (respectSustain && channel.pedal) channel.deferred[word] |= channel.down[word];
                 else channel.deferred[word] = 0;
@@ -98,7 +99,7 @@ public:
         if (out == nullptr || capacity <= 0) return 0;
         int written = 0;
         for (int note = 0; note < 128 && written < capacity; ++note)
-            if ((sounding[note / 64] & (std::uint64_t{1} << (note % 64))) != 0) out[written++] = note;
+            if ((sounding[static_cast<std::size_t>(note / 64)] & (std::uint64_t{1} << (note % 64))) != 0) out[written++] = note;
         return written;
     }
 
@@ -112,7 +113,7 @@ private:
     {
         Words next{};
         for (const auto& channel : channels)
-            for (int word = 0; word < 2; ++word) next[word] |= channel.down[word] | channel.deferred[word];
+            for (std::size_t word = 0; word < 2; ++word) next[word] |= channel.down[word] | channel.deferred[word];
         const bool changed = next != sounding;
         sounding = next;
         return changed;
