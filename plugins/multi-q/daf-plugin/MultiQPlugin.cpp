@@ -14,6 +14,7 @@
 #include "MultiQProgramPresets.hpp"  // Digital factory presets (host programs)
 #include "MultiQVersion.hpp"
 #include "MultiQDSP.hpp"
+#include "DuskDenormals.hpp"
 #include "util/CrashLog.hpp"
 
 #include <atomic>
@@ -353,7 +354,10 @@ protected:
     //--- audio -----------------------------------------------------------------
     void run(const float** inputs, float** outputs, uint32_t frames) override
     {
-        // Hard bypass (the core has no bypass path in Phase 2): pass input through.
+        const duskaudio::ScopedFlushDenormals noDenormals;
+        if (frames == 0) return;
+
+        // Hard bypass: pass input through.
         // Bounded by activeChannels: a mono AU instance only owns outputs[0], and
         // touching outputs[1] there writes past the host's buffer list.
         if (values[kParamBypass].load(std::memory_order_relaxed) > 0.5f)

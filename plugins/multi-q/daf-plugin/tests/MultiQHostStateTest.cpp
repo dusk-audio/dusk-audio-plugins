@@ -2,10 +2,13 @@
 // #148: exercise actual host/UI state and lifecycle paths, beyond the Match core.
 #include "../MultiQPlugin.cpp"
 #include "src/DafPluginInternal.hpp"
+#include "DuskDenormals.hpp"
 
 #include <array>
 #include <atomic>
 #include <cstdio>
+#include <cstdint>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <thread>
@@ -23,6 +26,81 @@ void check(bool ok, const char* message)
 }
 
 std::string state(PluginExporter& host) { return host.getStateValue("matchData").buffer(); }
+
+uint64_t fpControl()
+{
+#if DUSK_HAS_SSE
+    return _mm_getcsr();
+#elif defined(__aarch64__)
+    uint64_t value; asm volatile("mrs %0, fpcr" : "=r"(value)); return value;
+#else
+    return 0;
+#endif
+}
+void setFpControl(uint64_t value)
+{
+#if DUSK_HAS_SSE
+    _mm_setcsr(static_cast<unsigned>(value));
+#elif defined(__aarch64__)
+    asm volatile("msr fpcr, %0" :: "r"(value));
+#else
+    (void)value;
+#endif
+}
+
+void denormals()
+{
+#if DUSK_HAS_SSE || defined(__aarch64__)
+    const uint64_t original = fpControl();
+#if DUSK_HAS_SSE
+    constexpr uint64_t flushMask = 0x8040;
+    const uint64_t cleanControl = original & ~uint64_t{0x3f}; // clear exception-status flags
+#else
+    constexpr uint64_t flushMask = uint64_t{1} << 24;
+    const uint64_t cleanControl = original;
+#endif
+    PluginExporter host(nullptr, nullptr, nullptr, nullptr); host.activate();
+    host.setParameterValue(kParamMasterGain, -6.0f);
+    std::array<float, 256> input{}, left{}, right{};
+    const float* inputs[] = {input.data(), input.data()};
+    float* outputs[] = {left.data(), right.data()};
+    input.fill(0.25f); host.run(inputs, outputs, uint32_t(input.size()));
+    check(std::abs(left.back() - 0.25f * std::pow(10.0f, -6.0f / 20.0f)) < 1e-6f,
+          "denormal probe exercises real master-gain arithmetic");
+    const uint32_t tinyBits = 0x00400000; // a nonzero subnormal, copied without FP arithmetic
+    float tiny; std::memcpy(&tiny, &tinyBits, sizeof(tiny));
+    for (bool callerFlush : {false, true})
+    {
+        input.fill(tiny);
+        setFpControl(callerFlush ? cleanControl | flushMask : cleanControl & ~flushMask);
+        const uint64_t before = fpControl();
+        host.run(inputs, outputs, uint32_t(input.size()));
+        const uint64_t after = fpControl();
+        bool zero = true;
+        for (size_t i = 0; i < input.size(); ++i)
+        {
+            uint32_t l, r; std::memcpy(&l, &left[i], sizeof(l)); std::memcpy(&r, &right[i], sizeof(r));
+            zero &= (l & 0x7fffffff) == 0 && (r & 0x7fffffff) == 0;
+        }
+        check(zero, "callback flushes subnormal arithmetic regardless of host FP settings");
+        check(after == before, "callback restores the caller's complete FP control state");
+        uint32_t outputBits; std::memcpy(&outputBits, &left.back(), sizeof(outputBits));
+        std::printf("Denormal control: callerFlush=%d, outputBits=0x%08x, FP restored=%d\n",
+                    callerFlush, outputBits, after == before);
+    }
+    host.setParameterValue(kParamBypass, 1.0f);
+    const uint64_t before = fpControl();
+    host.run(inputs, outputs, uint32_t(input.size()));
+    check(std::memcmp(input.data(), left.data(), sizeof(input)) == 0
+              && std::memcmp(input.data(), right.data(), sizeof(input)) == 0,
+          "hard bypass retains bit-exact subnormal payloads");
+    check(fpControl() == before, "bypass also restores caller FP control");
+    host.deactivate(); setFpControl(original);
+#else
+    std::fprintf(stderr, "Unsupported architecture for the required denormal-control probe\n");
+    check(false, "denormal test requires SSE or arm64 FP controls");
+#endif
+}
 
 void blocks(PluginExporter& host, int count = 8, bool reference = false, bool mono = false)
 {
@@ -174,6 +252,34 @@ void concurrentLifecycle(const std::string& valid)
                 reads.load(), computed.load(), invalid.load());
 }
 
+void zeroFrames(const std::string& valid)
+{
+    for (bool mono : {false, true})
+    {
+        PluginExporter host(nullptr, nullptr, nullptr, nullptr);
+        host.setAudioPortIO(mono ? 1 : 2, mono ? 1 : 2); host.activate();
+        host.setParameterValue(kParamEqType, float(duskaudio::EQType::Match));
+        host.setState("matchData", valid.c_str()); blocks(host, 8, false, mono);
+        check(host.getLatency() == Match::CONV_HOP, "zero-frame fixture has active Match latency");
+        std::array<float, 1> input{{0.25f}}, output{{-0.75f}};
+        const float* inputs[] = {input.data(), mono ? nullptr : input.data()};
+        float* outputs[] = {output.data(), mono ? nullptr : output.data()};
+        for (bool bypass : {false, true})
+        {
+            host.setParameterValue(kParamBypass, bypass ? 1.0f : 0.0f);
+            const uint32_t latency = host.getLatency();
+            const std::string before = state(host);
+            host.run(inputs, outputs, 0);
+            check(output[0] == -0.75f && host.getLatency() == latency && state(host) == before,
+                  "empty callback leaves buffers, state and latency unchanged");
+            host.run(nullptr, nullptr, 0);
+            check(host.getLatency() == latency && state(host) == before,
+                  "empty callback accepts absent channel arrays, including bypass");
+        }
+        host.deactivate();
+    }
+}
+
 void lifecycle()
 {
     PluginExporter host(nullptr, nullptr, nullptr, nullptr);
@@ -207,6 +313,7 @@ void lifecycle()
     inactiveUi(learned);
     monoAndBypass(learned);
     concurrentLifecycle(learned);
+    zeroFrames(learned);
 }
 
 void presetOwnership()
@@ -234,11 +341,17 @@ void presetOwnership()
 }
 }
 
-int main()
+int main(int argc, char** argv)
 {
     d_nextBufferSize = 256;
     d_nextSampleRate = 48000.0;
-    lifecycle(); presetOwnership();
+    if (argc == 2 && std::strcmp(argv[1], "--denormals") == 0) denormals();
+    else if (argc == 2 && std::strcmp(argv[1], "--zero") == 0)
+    {
+        PluginExporter host(nullptr, nullptr, nullptr, nullptr); host.activate();
+        const std::string learned = learn(host); host.deactivate(); zeroFrames(learned);
+    }
+    else { lifecycle(); presetOwnership(); denormals(); }
     std::printf("Multi-Q host state: %d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }
