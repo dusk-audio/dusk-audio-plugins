@@ -63,6 +63,13 @@ if(NOT CMAKE_CROSSCOMPILING)
         ../../shared-daf/dsp/FourKEQDSP.cpp)
     add_test(NAME MultiQDigitalOversampling COMMAND MultiQDigitalOversamplingTest)
 
+    add_executable(MultiQAutoGainTest
+        ../tests/test_multiq_auto_gain.cpp
+        ../core/MultiQDSP.cpp
+        ../core/MultiQMatch.cpp
+        ../../shared-daf/dsp/FourKEQDSP.cpp)
+    add_test(NAME MultiQAutoGain COMMAND MultiQAutoGainTest)
+
     add_executable(MultiQMatchStateTest
         ../tests/test_multiq_match_state.cpp
         ../core/MultiQMatch.cpp)

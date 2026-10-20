@@ -514,3 +514,15 @@ if(NOT CMAKE_CROSSCOMPILING)
     target_link_libraries(MultiQSmoothingJuceTest PRIVATE MultiQ)
     add_test(NAME MultiQSmoothingJuce COMMAND MultiQSmoothingJuceTest)
 endif()
+
+# Exercise the actual JUCE auto-gain path, including a return to neutral.
+if(NOT CMAKE_CROSSCOMPILING)
+    add_executable(MultiQAutoGainJuceTest tests/test_multiq_auto_gain.cpp)
+    target_compile_definitions(MultiQAutoGainJuceTest PRIVATE
+        MULTIQ_TEST_JUCE=1 $<TARGET_PROPERTY:MultiQ,COMPILE_DEFINITIONS>)
+    target_include_directories(MultiQAutoGainJuceTest PRIVATE
+        "${CMAKE_CURRENT_BINARY_DIR}/MultiQ_artefacts/JuceLibraryCode"
+        $<TARGET_PROPERTY:MultiQ,INCLUDE_DIRECTORIES>)
+    target_link_libraries(MultiQAutoGainJuceTest PRIVATE MultiQ)
+    add_test(NAME MultiQAutoGainJuce COMMAND MultiQAutoGainJuceTest)
+endif()
