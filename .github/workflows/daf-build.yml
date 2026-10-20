@@ -1029,6 +1029,18 @@ jobs:
           cmake --build build --config Release -j $env:NUMBER_OF_PROCESSORS `
             --target "$env:PLUGIN_BASE-vst3" "$env:PLUGIN_BASE-clap"
 
+      # #271 was invisible here because only plugin targets were compiled.
+      - name: Build and run Multi-Comp core tests (MSVC)
+        if: matrix.plugin.key == 'multi-comp-2'
+        working-directory: ${{ env.PLUGIN_DIR }}
+        shell: pwsh
+        run: |
+          cmake --build build --config Release -j $env:NUMBER_OF_PROCESSORS `
+            --target MultiCompCoreTest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ctest --test-dir build -C Release -R '^MultiCompCore$' `
+            --no-tests=error --output-on-failure
+
       - name: Package
         working-directory: ${{ env.PLUGIN_DIR }}
         shell: pwsh

@@ -1863,10 +1863,11 @@ measureOptoShortEventTrace(int eventSamples, float peakDbfs,
     // matched PR=0 control removes Gain/output-stage response; one complete
     // 1 kHz cycle at probe start measures retained cell charge without
     // averaging it into the subsequent release.
-    constexpr int kSampleRate = 48000;
+    // Static storage lets MSVC use these inside the captureless lambda below.
+    static constexpr int kSampleRate = 48000;
     constexpr int kBlockSize = 256;
     constexpr int kEventStart = kSampleRate / 10;
-    constexpr int kProbeSamples = kSampleRate / 1000;
+    static constexpr int kProbeSamples = kSampleRate / 1000;
     const int secondEventStart = repeatGapSamples > 0
         ? kEventStart + eventSamples + repeatGapSamples : kEventStart;
     const int eventEnd = secondEventStart + eventSamples;
@@ -6824,7 +6825,7 @@ void testFetDeepReleaseThroughKnee()
     // the FET campaign's local evidence (fet-colour-killtest-20261015, stale).
     // Bound: the campaign's 1.00 dB per cell.
     constexpr double sampleRate = 48000.0;
-    constexpr int blockSize = 256;
+    static constexpr int blockSize = 256; // MSVC: array extent inside the lambda
     constexpr int stepSample = 3 * 48000;
     constexpr int totalSamples = 7 * 48000;
     constexpr int frameSamples = 480;
@@ -7363,7 +7364,7 @@ void testFetStereoLinkPhaseLaw()
     // earlier -0.179579 is the unit at Release .66595459 (re-captured there:
     // -0.1796 at 10-14 s and at 36-40 s), not at the Release this test drives.
     constexpr int sampleRate = 48000;
-    constexpr int blockSize = 256;
+    static constexpr int blockSize = 256; // MSVC: array extent inside the lambda
     constexpr int totalSamples = 15 * sampleRate;
     constexpr int measureStart = 10 * sampleRate;
     constexpr int measureStop = 14 * sampleRate;
@@ -10377,7 +10378,7 @@ void testVcaSidechainTiltEngagementLifecycle()
 {
     using namespace vcaSwitchTestFixtures;
     constexpr double rate = 48000.0;
-    constexpr int blockSize = 64;
+    static constexpr int blockSize = 64; // MSVC: array extent inside the lambda
     constexpr double pi = 3.14159265358979323846;
     constexpr double dcBound = 0.2564342393964196;
     constexpr double pilotBound = 0.1227871196935979;
@@ -10520,7 +10521,7 @@ void testVcaSidechainTiltEngagementLifecycle()
 // campaign's achieved residuals so a regression, not the reference, fails.
 void testVcaLawParityGates()
 {
-    constexpr int kRate = 48000, kBlock = 512;
+    static constexpr int kRate = 48000, kBlock = 512; // MSVC: lambda array extent
     constexpr float kCompress4to1 = 50.4944f;
     auto makeDspAt = [&](float compression, float threshold) {
         auto dsp = std::make_unique<MultiCompDSP>();
