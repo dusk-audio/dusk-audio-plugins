@@ -31,8 +31,15 @@
 # define DAF_PLUGIN_VST3_CATEGORIES "Instrument|Tools"
 #endif
 
-// Initial, testable shells; editor integration is a separate #183 milestone.
-#define DAF_PLUGIN_HAS_UI 0
+#define DAF_PLUGIN_HAS_UI 1
+#define DAF_PLUGIN_WANT_DIRECT_ACCESS 1
+#define DAF_UI_USE_CUSTOM 1
+#define DAF_UI_CUSTOM_INCLUDE_PATH "DearImGui.hpp"
+#define DAF_UI_CUSTOM_WIDGET_TYPE DGL_NAMESPACE::ImGuiTopLevelWidget
+#define DAF_UI_DEFAULT_WIDTH 960
+#define DAF_UI_DEFAULT_HEIGHT 720
+#define DAF_UI_USER_RESIZABLE 1
+#define DAF_UI_FILE_BROWSER 1
 #define DAF_PLUGIN_IS_RT_SAFE 1
 #define DAF_PLUGIN_WANT_MIDI_INPUT 1
 #define DAF_PLUGIN_WANT_MIDI_OUTPUT 1

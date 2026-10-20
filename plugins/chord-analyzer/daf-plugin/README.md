@@ -6,12 +6,27 @@ headless LV2 retain their existing identities and build paths.
 ```sh
 cmake -S plugins/chord-analyzer/daf-plugin -B build-chord-analyzer-daf \
   -DCMAKE_BUILD_TYPE=Release -DDUSK_DAF_INSTALL_LOCAL=OFF
-cmake --build build-chord-analyzer-daf -j8
-ctest --test-dir build-chord-analyzer-daf --output-on-failure
+cmake --build build-chord-analyzer-daf --config Release -j8
+# Linux: run the real-editor tests on an isolated display.
+xvfb-run -a ctest --test-dir build-chord-analyzer-daf -C Release --output-on-failure
+# macOS / Windows:
+ctest --test-dir build-chord-analyzer-daf -C Release --output-on-failure
 ```
 
-Both successors currently build CLAP, VST3 and LV2, plus AU on macOS. They have
-generic host controls; the Dear ImGui editor is not implemented yet.
+Both successors build CLAP, VST3 and monolithic LV2, plus AU on macOS. They share
+a Dear ImGui editor with embedded Barlow fonts and a fixed 4:3 resize contract.
+The direct-access bridge supplies live chord names, Roman numerals, harmonic
+functions, held-note keyboard/staff displays, suggestions, history and recording
+state. Host gestures handle all five input controls; input callbacks preserve
+local edits while the host acknowledges them and follow host automation.
+
+History selection previews the original voicing with analysis/suggestions in the
+current key; Return to live restores incoming notes. Recording survives closing
+and reopening the editor. Chord and progression export capture their MIDI bytes
+before opening a save dialog. Platforms without a native saving dialog use an
+explicit-path form with replacement confirmation and cancellation. Completed
+progressions use their recorded tempo, while single voicings retain the shipping
+one-bar/120-BPM format. External file dragging still needs integration.
 
 | Product | Artifact | Unique ID | CLAP ID |
 | --- | --- | --- | --- |
@@ -40,7 +55,7 @@ directories and keep their files alive for asynchronous DAW imports. Explicit
 file writes report failure and truncate replaced destinations. Invalid pitches,
 computed timestamps and deltas outside SMF's four-byte VLQ domain reject the
 whole clip; nonfinite host tempo falls back to 120 BPM. All of this work belongs
-off the audio thread. The DAF editor/export interaction still needs wiring.
+off the audio thread. Both editors use this writer for their MIDI save actions.
 
 `ChordAnalyzerRuntime` owns fixed MIDI state and a 64-cell SPSC transition queue.
 A background consumer runs at 20 Hz even with the editor closed. Its formatted
@@ -57,8 +72,13 @@ also ends recording against the old clock before clearing held notes, pedals,
 cached frames and detection outputs. Completed sessions and history survive;
 the elapsed clock and fallback host tempo reset on activation.
 
-Remaining #183 work includes the complete direct-access editor, export/drag
-interaction, encoded-label text callbacks, retained
-headless successor packaging, transactional state/program acceptance, CI/release
-registration, AU/real-DAW validation and tagged downloadable artifacts. These
-initial shells are not a completed release or grounds to close the ticket.
+The shared DAF CI/release workflow now registers both desktop products, including
+their different AU component types (`aumu` / `aumi`), native core/ABI tests and
+Linux editor screenshots/MIDI diagnostics. A multi-product build selects its AU
+component by product base, so the MIDI job cannot validate the instrument's AU.
+
+Remaining #183 work includes external MIDI-file drag interaction, encoded-label
+text callbacks, retained headless successor packaging, transactional state/program
+acceptance, legacy CLAP output metadata, remaining native/real-DAW UI and MIDI
+validation, documentation/release sign-off and tagged downloadable artifacts.
+These in-progress products are not grounds to close the ticket.

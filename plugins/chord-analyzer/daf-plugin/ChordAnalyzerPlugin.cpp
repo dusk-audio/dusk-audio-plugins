@@ -3,6 +3,7 @@
 // shipping headless LV2 remains separate, with its original URI and 19 ports.
 #include "DafPlugin.hpp"
 #include "ChordAnalyzerRuntime.hpp"
+#include "ChordAnalyzerAccess.hpp"
 #include "DuskDenormals.hpp"
 #include <algorithm>
 #include <cmath>
@@ -114,3 +115,8 @@ private:
 
 Plugin* createPlugin() { return new ChordAnalyzerPlugin; }
 END_NAMESPACE_DAF
+
+duskaudio::chord::ChordAnalyzerRuntime* chordAnalyzerGetRuntime(void* plugin) noexcept
+{
+    return plugin ? &static_cast<DAF_NAMESPACE::ChordAnalyzerPlugin*>(plugin)->runtimeForUI() : nullptr;
+}
