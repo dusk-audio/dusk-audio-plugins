@@ -187,6 +187,18 @@ static void testStateExcludesOutputs(ChordAnalyzerProcessor& processor)
         ChordAnalyzerProcessor::PARAM_KEY_ROOT, ChordAnalyzerProcessor::PARAM_KEY_MODE,
         ChordAnalyzerProcessor::PARAM_SUGGESTION_LEVEL, ChordAnalyzerProcessor::PARAM_SHOW_INVERSIONS,
         ChordAnalyzerProcessor::PARAM_RESPECT_SUSTAIN};
+    // Seed every transient output so excluding them cannot pass merely because
+    // all five happen to be zero. Internal publishing must remain legal.
+    bool outputsPopulated = true;
+    for (const char* id : {ChordAnalyzerProcessor::PARAM_DETECTED_ROOT, ChordAnalyzerProcessor::PARAM_DETECTED_QUALITY,
+                          ChordAnalyzerProcessor::PARAM_DETECTED_BASS, ChordAnalyzerProcessor::PARAM_DETECTED_INVERSION,
+                          ChordAnalyzerProcessor::PARAM_DETECTED_CHORD})
+    {
+        auto* parameter = findParameter(processor, id);
+        parameter->setValueNotifyingHost(0.5f);
+        outputsPopulated &= parameter->getValue() > 0.0f;
+    }
+    check("engine can publish nonzero values to all five transient outputs", outputsPopulated);
     const std::array<float, 5> expected{6.0f, 1.0f, 1.0f, 0.0f, 0.0f};
     std::array<float, 5> original{};
     for (size_t i = 0; i < ids.size(); ++i)

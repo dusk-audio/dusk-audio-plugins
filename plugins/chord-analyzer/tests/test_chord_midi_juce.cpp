@@ -1,6 +1,7 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
 #include "AllocationProbe.hpp"
 #include "../Source/PluginProcessor.h"
+#include "../../shared/DuskClapOutputParameter.h"
 #include <array>
 #include <cstdio>
 #include <vector>
@@ -74,7 +75,29 @@ int main()
     ChordAllocationProbe::watchAllocations = false;
     check(ChordAllocationProbe::allocationCalls == 1, "direct C allocation positive control is observed");
 #endif
-    Fixture f; f.reset(); f.chord(); f.expect({60,64,67}, "the real desktop control chord is held");
+    Fixture f;
+    const std::array<const char*, 10> ids {{
+        ChordAnalyzerProcessor::PARAM_KEY_ROOT, ChordAnalyzerProcessor::PARAM_KEY_MODE,
+        ChordAnalyzerProcessor::PARAM_SUGGESTION_LEVEL, ChordAnalyzerProcessor::PARAM_SHOW_INVERSIONS,
+        ChordAnalyzerProcessor::PARAM_RESPECT_SUSTAIN, ChordAnalyzerProcessor::PARAM_DETECTED_ROOT,
+        ChordAnalyzerProcessor::PARAM_DETECTED_QUALITY, ChordAnalyzerProcessor::PARAM_DETECTED_BASS,
+        ChordAnalyzerProcessor::PARAM_DETECTED_INVERSION, ChordAnalyzerProcessor::PARAM_DETECTED_CHORD}};
+    const auto& parameters = f.processor.getParameters();
+    check(parameters.size() == static_cast<int>(ids.size()), "complete legacy input/output parameter set remains present");
+    for (int i = 0; i < parameters.size(); ++i)
+    {
+        auto* parameter = parameters[i];
+        auto* ranged = dynamic_cast<juce::RangedAudioParameter*>(parameter);
+        check(i < static_cast<int>(ids.size()) && ranged && ranged->paramID == ids[static_cast<std::size_t>(i)]
+            && parameter->getParameterIndex() == i, "legacy parameter IDs and index order remain stable");
+        const bool output = i >= 5;
+        check((dynamic_cast<DuskClapOutputParameterTag*>(parameter) != nullptr) == output,
+              "exactly the five transient outputs carry the CLAP read-only marker");
+        check(parameter->isAutomatable() == !output, "all five inputs remain automatable and transient outputs cannot be automated");
+        check(parameter->getCategory() == juce::AudioProcessorParameter::genericParameter,
+              "categorical/text outputs retain generic units instead of AU gain-meter semantics");
+    }
+    f.reset(); f.chord(); f.expect({60,64,67}, "the real desktop control chord is held");
     const int channels = f.processor.isMidiEffect() ? 0 : 2;
     check(f.processor.getTotalNumInputChannels() == channels && f.processor.getTotalNumOutputChannels() == channels,
           "both shipping audio-bus topologies remain unchanged");

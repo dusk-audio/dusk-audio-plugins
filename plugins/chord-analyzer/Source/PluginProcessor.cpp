@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "../../shared/DuskClapOutputParameter.h"
 
 //==============================================================================
 ChordAnalyzerProcessor::ChordAnalyzerProcessor()
@@ -76,16 +77,16 @@ ChordAnalyzerProcessor::ChordAnalyzerProcessor()
     const juce::StringArray inversionChoices(
         inversionChoiceLabels, inversionChoiceCount);
 
-    detectedRootParam = new juce::AudioParameterChoice(
+    detectedRootParam = new DuskClapOutputParameter<juce::AudioParameterChoice>(
         juce::ParameterID(PARAM_DETECTED_ROOT, 1),
         "Detected Root", pitchClassChoices, 0);
-    detectedQualityParam = new juce::AudioParameterChoice(
+    detectedQualityParam = new DuskClapOutputParameter<juce::AudioParameterChoice>(
         juce::ParameterID(PARAM_DETECTED_QUALITY, 1),
         "Detected Quality", qualityChoices, 0);
-    detectedBassParam = new juce::AudioParameterChoice(
+    detectedBassParam = new DuskClapOutputParameter<juce::AudioParameterChoice>(
         juce::ParameterID(PARAM_DETECTED_BASS, 1),
         "Detected Bass", pitchClassChoices, 0);
-    detectedInversionParam = new juce::AudioParameterChoice(
+    detectedInversionParam = new DuskClapOutputParameter<juce::AudioParameterChoice>(
         juce::ParameterID(PARAM_DETECTED_INVERSION, 1),
         "Detected Inversion", inversionChoices, 0);
 
@@ -107,7 +108,7 @@ ChordAnalyzerProcessor::ChordAnalyzerProcessor()
     // The lambda reads nothing but its argument. Hosts call getText() with
     // arbitrary values and cache the answers, so anything that peeked at the
     // live chord here would label cached values with the wrong chord.
-    detectedChordParam = new juce::AudioParameterFloat(
+    detectedChordParam = new DuskClapOutputParameter<juce::AudioParameterFloat>(
         juce::ParameterID(PARAM_DETECTED_CHORD, 1),
         "Detected Chord",
         juce::NormalisableRange<float>(0.0f, static_cast<float>(ChordAnalyzer::maxLabelCode), 1.0f),

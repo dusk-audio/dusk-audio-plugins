@@ -266,7 +266,8 @@ jobs:
               ChordAnalyzerTextTest ChordAnalyzerTextAdapterTest ChordMidiNoteStateTest \
               ChordRecordingTest ChordRecordingAdapterTest ChordHistoryTest \
               ChordMidiExportTest ChordMidiExportAdapterTest \
-              ChordNoteSnapshotTest ChordSessionIntegrationTest ChordAnalyzerMidiTest ChordAnalyzerMidiJuceTest -j"$(nproc)"
+              ChordNoteSnapshotTest ChordSessionIntegrationTest ChordAnalyzerMidiTest ChordAnalyzerMidiJuceTest \
+              ChordAnalyzerClapOutputTest -j"$(nproc)"
           ./build/plugins/chord-analyzer/core/ChordAnalyzerCoreTest
           ./build/plugins/chord-analyzer/core/ChordAnalyzerTextTest
           ./build/plugins/chord-analyzer/ChordAnalyzerTextAdapterTest
@@ -282,6 +283,8 @@ jobs:
           ./build/plugins/chord-analyzer/ChordAnalyzerMidiJuceTest
           ./build/plugins/chord-analyzer/ChordAnalyzerTest
           ./build/plugins/chord-analyzer/ChordAnalyzerHostTest
+          python3 .github/scripts/test_clap_output_wrapper.py
+          ctest --test-dir build -C Release -R '^ChordAnalyzerClapOutputs$' --no-tests=error --output-on-failure
 
       # This row has already built the MIDI-effect shared library; reuse it
       # rather than compiling that second JUCE library again in the audio row.

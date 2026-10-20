@@ -59,6 +59,14 @@ juce_add_plugin(ChordAnalyzer
 )
 
 apply_clap_extension(ChordAnalyzer chord-analyzer note-effect analyzer mono stereo)
+dusk_clap_enable_output_parameters(ChordAnalyzer)
+if(TARGET ChordAnalyzer_CLAP AND NOT CMAKE_CROSSCOMPILING)
+    add_executable(ChordAnalyzerClapOutputTest tests/test_chord_clap_outputs.cpp)
+    target_link_libraries(ChordAnalyzerClapOutputTest PRIVATE clap-core ${CMAKE_DL_LIBS})
+    add_dependencies(ChordAnalyzerClapOutputTest ChordAnalyzer_CLAP)
+    add_test(NAME ChordAnalyzerClapOutputs COMMAND ChordAnalyzerClapOutputTest $<TARGET_FILE:ChordAnalyzer_CLAP>)
+    set_tests_properties(ChordAnalyzerClapOutputs PROPERTIES TIMEOUT 30)
+endif()
 
 juce_generate_juce_header(ChordAnalyzer)
 
@@ -137,7 +145,7 @@ target_compile_definitions(ChordAnalyzerTest PRIVATE
 # Host-side test target for the "Detected Chord" output parameter. Links the
 # plugin's shared code so it exercises the real processor, the real parameter
 # object and the real 20 Hz publish path rather than a stand-in.
-add_executable(ChordAnalyzerHostTest EXCLUDE_FROM_ALL
+add_executable(ChordAnalyzerHostTest
     tests/test_detected_chord_param.cpp
 )
 target_link_libraries(ChordAnalyzerHostTest PRIVATE ChordAnalyzer)
@@ -148,6 +156,8 @@ target_include_directories(ChordAnalyzerHostTest
     PRIVATE $<TARGET_PROPERTY:ChordAnalyzer,INCLUDE_DIRECTORIES>)
 target_compile_definitions(ChordAnalyzerHostTest
     PRIVATE $<TARGET_PROPERTY:ChordAnalyzer,COMPILE_DEFINITIONS>)
+add_test(NAME ChordAnalyzerHost COMMAND ChordAnalyzerHostTest)
+set_tests_properties(ChordAnalyzerHost PROPERTIES TIMEOUT 30)
 
 # Run the same frozen text proof through the actual shipping JUCE adapter.
 # Reuse its shared code rather than compiling a second set of JUCE modules.

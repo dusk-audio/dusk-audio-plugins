@@ -88,7 +88,14 @@ URI and 19-port ABI; package validation loads the extracted download. See
 A multi-product build selects its AU
 component by product base, so the MIDI job cannot validate the instrument's AU.
 
+The retained JUCE CLAP also marks all five detection outputs read-only, using
+an explicit output-parameter tag and a private copy of its pinned adapter. The
+upstream checkout and other products' adapters remain unchanged. All five saved
+inputs remain automatable; detection outputs retain their choice/text units and
+stay out of saved state. A real-library regression checks the complete legacy
+ID/domain set and restores all five nondefault inputs.
+
 Remaining #183 work includes external MIDI-file drag interaction, transactional
-state/program acceptance, legacy CLAP output metadata, remaining native/real-DAW UI and MIDI
-validation, documentation/release sign-off and tagged downloadable artifacts.
+state/program acceptance, remaining native/real-DAW UI and MIDI validation,
+documentation/release sign-off and tagged downloadable artifacts.
 These in-progress products are not grounds to close the ticket.
