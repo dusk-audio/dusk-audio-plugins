@@ -69,6 +69,17 @@ if(NOT CMAKE_CROSSCOMPILING)
         ../core/MultiQMatch.cpp)
     target_link_libraries(MultiQMatchIRTest PRIVATE Threads::Threads)
     add_test(NAME MultiQMatchIR COMMAND MultiQMatchIRTest)
+
+    add_executable(MultiQHostStateTest
+        tests/MultiQHostStateTest.cpp
+        ../core/MultiQDSP.cpp
+        ../core/MultiQMatch.cpp
+        ../../shared-daf/dsp/FourKEQDSP.cpp
+        "${DAF_PATH}/daf/src/DafPlugin.cpp")
+    target_link_libraries(MultiQHostStateTest PRIVATE multi-q-2 Threads::Threads)
+    target_compile_definitions(MultiQHostStateTest PRIVATE DAF_PLUGIN_TARGET_CLAP)
+    add_test(NAME MultiQHostState COMMAND MultiQHostStateTest)
+    set_tests_properties(MultiQHostState PROPERTIES TIMEOUT 60)
 endif()
 
 # Fleet gates. Multi-Q 2 registered no ctest at all; see #148.

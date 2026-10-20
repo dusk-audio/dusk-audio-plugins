@@ -12,6 +12,7 @@
 #pragma once
 
 #include "DuskAccessBridge.hpp"
+#include <string>
 
 namespace duskaudio { class SpectrumRing; }
 
@@ -71,7 +72,7 @@ DUSK_WEAK bool multiQMatchHasCurrent(void* pluginInstancePointer) noexcept;
 DUSK_WEAK bool multiQMatchHasReference(void* pluginInstancePointer) noexcept;
 DUSK_WEAK bool multiQMatchHasCorrection(void* pluginInstancePointer) noexcept;
 
-// Curve getters for display — write up to n dB values (n <= 2049). Lock-free.
+// Non-RT curve getters for display — write up to n dB values (n <= 2049).
 DUSK_WEAK void multiQMatchGetCurrentDb(void* pluginInstancePointer, float* out, int n) noexcept;
 DUSK_WEAK void multiQMatchGetReferenceDb(void* pluginInstancePointer, float* out, int n) noexcept;
 DUSK_WEAK void multiQMatchGetCorrectionDb(void* pluginInstancePointer, float* out, int n) noexcept;
@@ -79,5 +80,5 @@ DUSK_WEAK void multiQMatchGetCorrectionDb(void* pluginInstancePointer, float* ou
 // Persisted UI preset-dropdown selection, encoded "digital,british,tube" (indices,
 // -1 = none). The editor pushes it with UI::setState("uiPresets", ...) on apply and
 // reads it back here on open so the dropdown survives an editor close/reopen and a
-// host save/reload. Null/empty out-of-process (split LV2 UI).
-DUSK_WEAK const char* multiQGetUiPresets(void* pluginInstancePointer) noexcept;
+// host save/reload. Returns an owned copy; empty out-of-process (split LV2 UI).
+DUSK_WEAK std::string multiQGetUiPresets(void* pluginInstancePointer) noexcept;

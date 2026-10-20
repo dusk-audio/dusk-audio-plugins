@@ -241,6 +241,9 @@ public:
     //     correction curve + FIR as a base64 blob, restored by deserialize(). ---
     std::string serialize() const;
     bool deserialize(const std::string& base64);
+    // Host preflight works before prepare(), without touching FFTs or live state.
+    static bool validateState(const std::string& base64);
+    static std::string emptyState();
 
 private:
     // Welch-method averaged periodogram (identical semantics to EQMatchProcessor).
@@ -272,6 +275,17 @@ private:
             }
         }
     };
+
+    struct DecodedState
+    {
+        LearnedSpectrum current, reference;
+        std::array<float, NUM_BINS> curve{};
+        std::array<float, FIR_LENGTH> fir{};
+        bool hasCorrection = false;
+    };
+    static constexpr size_t kStateBytes = 4 + 5 * sizeof(int32_t)
+        + NUM_BINS * sizeof(double) * 2 + NUM_BINS * sizeof(float) + FIR_LENGTH * sizeof(float);
+    static bool decodeState(const std::string& base64, DecodedState& state);
 
     enum class Target { None, Current, Reference };
 

@@ -777,15 +777,23 @@ std::string MultiQMatch::serialize() const
     return b64encode(blob.data(), blob.size());
 }
 
-bool MultiQMatch::deserialize(const std::string& base64)
+std::string MultiQMatch::emptyState()
 {
-    const std::lock_guard<MatchSpinLock> guard(updateLock);
+    std::vector<uint8_t> blob(kStateBytes, 0);
+    std::memcpy(blob.data(), "MQM1", 4);
+    return b64encode(blob.data(), blob.size());
+}
+
+bool MultiQMatch::validateState(const std::string& base64)
+{
+    DecodedState state;
+    return decodeState(base64, state);
+}
+
+bool MultiQMatch::decodeState(const std::string& base64, DecodedState& state)
+{
     std::vector<uint8_t> blob;
-    const size_t expected = 4 + 5 * sizeof(int32_t)
-                          + (size_t)NUM_BINS * sizeof(double) * 2
-                          + (size_t)NUM_BINS * sizeof(float)
-                          + (size_t)FIR_LENGTH * sizeof(float);
-    if (!b64decode(base64, blob) || blob.size() != expected) return false;
+    if (!b64decode(base64, blob) || blob.size() != kStateBytes) return false;
     if (!(blob[0] == 'M' && blob[1] == 'Q' && blob[2] == 'M' && blob[3] == '1')) return false;
 
     size_t off = 4;
@@ -797,31 +805,37 @@ bool MultiQMatch::deserialize(const std::string& base64)
         || (hasCorr != 0 && hasCorr != 1) || curFrames < 0 || refFrames < 0
         || (hasCur && curFrames < 3) || (hasRef && refFrames < 3)) return false;
 
-    LearnedSpectrum current, reference;
-    std::array<float, NUM_BINS> curve;
-    std::array<float, FIR_LENGTH> fir;
-    for (auto* spectrum : {&current, &reference})
+    for (auto* spectrum : {&state.current, &state.reference})
         for (double& power : spectrum->powerSum)
         {
             std::memcpy(&power, blob.data() + off, sizeof(power)); off += sizeof(power);
             if (!std::isfinite(power) || power < 0.0) return false;
         }
-    for (float& value : curve)
+    for (float& value : state.curve)
     {
         std::memcpy(&value, blob.data() + off, sizeof(value)); off += sizeof(value);
         if (!safeIsFinite(value)) return false;
     }
-    for (float& value : fir)
+    for (float& value : state.fir)
     {
         std::memcpy(&value, blob.data() + off, sizeof(value)); off += sizeof(value);
         if (!safeIsFinite(value)) return false;
     }
-    current.frameCount = curFrames; current.valid = hasCur != 0;
-    reference.frameCount = refFrames; reference.valid = hasRef != 0;
+    state.current.frameCount = curFrames; state.current.valid = hasCur != 0;
+    state.reference.frameCount = refFrames; state.reference.valid = hasRef != 0;
+    state.hasCorrection = hasCorr != 0;
+    return true;
+}
+
+bool MultiQMatch::deserialize(const std::string& base64)
+{
+    const std::lock_guard<MatchSpinLock> guard(updateLock);
+    DecodedState state;
+    if (!decodeState(base64, state)) return false;
 
     // Commit only after the whole state has validated. Rejected state cannot
     // stop learning, replace a spectrum, or poison the active convolution.
-    restoredCurrent = current; restoredReference = reference;
+    restoredCurrent = state.current; restoredReference = state.reference;
     ++restoreRevision;
     // This accepted restore supersedes older message-thread commands. Newer
     // starts/clear remain queued and run after its audio-thread adoption.
@@ -831,11 +845,11 @@ bool MultiQMatch::deserialize(const std::string& base64)
     pendingClear.store(kNoRequest, std::memory_order_relaxed);
 
     correctionLock.lock();
-    correctionCurveDB = curve;
-    correctionFIR = fir;
+    correctionCurveDB = state.curve;
+    correctionFIR = state.fir;
     correctionLock.unlock();
 
-    if (hasCorr)
+    if (state.hasCorrection)
     {
         correctionValid.store(true, std::memory_order_release);
         installFIR();   // rebuild partition spectra + request activation
