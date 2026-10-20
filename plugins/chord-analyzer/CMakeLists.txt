@@ -15,6 +15,8 @@ project(ChordAnalyzer VERSION ${CHORDANALYZER_VERSION})
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+add_subdirectory(core)
+
 # Build format options
 option(BUILD_VST3 "Build VST3 format" ON)
 option(BUILD_LV2 "Build LV2 format" ON)
@@ -95,6 +97,7 @@ target_compile_definitions(ChordAnalyzer
 # Link JUCE modules
 target_link_libraries(ChordAnalyzer
     PRIVATE
+        ChordAnalyzerCore
         juce::juce_audio_basics
         juce::juce_audio_devices
         juce::juce_audio_formats
@@ -121,6 +124,7 @@ target_include_directories(ChordAnalyzerTest PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Source
 )
 target_link_libraries(ChordAnalyzerTest PRIVATE
+    ChordAnalyzerCore
     juce::juce_core
 )
 target_compile_definitions(ChordAnalyzerTest PRIVATE
@@ -209,6 +213,7 @@ target_compile_definitions(ChordAnalyzerMIDI
 
 target_link_libraries(ChordAnalyzerMIDI
     PRIVATE
+        ChordAnalyzerCore
         juce::juce_audio_basics
         juce::juce_audio_devices
         juce::juce_audio_formats
@@ -276,26 +281,15 @@ if("LV2" IN_LIST PLUGIN_FORMATS)
 
     add_library(ChordAnalyzerHeadless_LV2 MODULE
         lv2/chord-analyzer-lv2.cpp
-        Source/ChordAnalyzer.cpp
     )
 
     target_include_directories(ChordAnalyzerHeadless_LV2 PRIVATE
-        Source
         "${LV2_SDK_DIR}"
     )
 
-    # juce_core compiles its networking (URL, WebInputStream) against libcurl
-    # unless JUCE_USE_CURL is off. Nothing here links curl, so without this the
-    # module carries fifteen unresolved curl_* symbols and Jalv refuses to load
-    # it on Zynthian (issue #284). The three other chord-analyzer targets have
-    # carried this define since they were written; only this one was missed.
-    target_compile_definitions(ChordAnalyzerHeadless_LV2 PRIVATE
-        JUCE_USE_CURL=0
-        JUCE_WEB_BROWSER=0
-    )
-
+    # Numeric analysis no longer links JUCE or its optional network backend.
     target_link_libraries(ChordAnalyzerHeadless_LV2 PRIVATE
-        juce::juce_core
+        ChordAnalyzerCore
     )
 
     # Make the loader's complaint a link error instead. A plugin module resolves
@@ -354,6 +348,16 @@ if("LV2" IN_LIST PLUGIN_FORMATS)
                     "${LV2_INSTALL_DIR}/Chord Analyzer Headless.lv2"
                 COMMENT "Installing Chord Analyzer Headless.lv2 to ${LV2_INSTALL_DIR}"
             )
+        endif()
+    endif()
+
+    if(NOT CMAKE_CROSSCOMPILING)
+        find_package(Python3 QUIET COMPONENTS Interpreter)
+        if(Python3_Interpreter_FOUND)
+            add_test(NAME ChordAnalyzerHeadless
+                COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_chord_analyzer_lv2.py"
+                    "$<TARGET_FILE:ChordAnalyzerHeadless_LV2>")
         endif()
     endif()
 endif()

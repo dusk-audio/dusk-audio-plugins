@@ -22,12 +22,19 @@
 #include <new>
 #include <vector>
 
-#include "../Source/ChordAnalyzer.h"
+#include "../core/ChordAnalyzerCore.hpp"
 
 #define CHORD_ANALYZER_HEADLESS_URI "https://dusk-audio.github.io/plugins/chord-analyzer-headless"
 
 namespace
 {
+using ChordAnalyzer = duskaudio::chord::ChordAnalyzerCore;
+using duskaudio::chord::ChordFacts;
+using duskaudio::chord::ChordQuality;
+using duskaudio::chord::SuggestionCategory;
+using duskaudio::chord::SuggestionFacts;
+using duskaudio::chord::kInversionSlashBass;
+
 enum PortIndex : uint32_t
 {
     PORT_MIDI_IN            = 0,
