@@ -16,7 +16,8 @@
 // lock-free impulse-response handoff and an aligned dry/wet crossfade.
 //
 // Thread model (mirrors MultiQ.cpp):
-//   * Message thread (UI bridge): requestStartLearn*/requestClear set atomics;
+//   * Non-RT host/UI calls are serialized by updateLock. Requests publish
+//     versioned commands; validated restores and IRs travel together.
 //     computeCorrection() runs the FFT-heavy correction+FIR build directly (learn
 //     is stopped by then) and lock-free-publishes the partition spectra.
 //   * Audio thread: audioThreadSync() consumes the pending atomics (so the
@@ -75,7 +76,7 @@ public:
         cleared_.store(true, std::memory_order_release);
     }
 
-    void publish() noexcept
+    bool publish() noexcept
     {
         const uint32_t current = published_.load(std::memory_order_relaxed);
         for (uint32_t i = 0; i < slots_.size(); ++i)
@@ -91,8 +92,9 @@ public:
             slots_[i].users.store(0, std::memory_order_release);
             published_.store(i, std::memory_order_release);
             cleared_.store(false, std::memory_order_release);
-            return;
+            return true;
         }
+        return false;
     }
 
     // Non-realtime readers only. A retry follows a moving publication; a
@@ -171,6 +173,7 @@ struct MatchSpinLock
 //==============================================================================
 class MultiQMatch
 {
+    friend struct MatchSnapshotTestAccess;
 public:
     static constexpr int FFT_ORDER = 12;               // 4096-point analysis FFT
     static constexpr int FFT_SIZE  = 1 << FFT_ORDER;   // 4096
@@ -188,16 +191,17 @@ public:
     MultiQMatch() = default;
 
     void prepare(double sampleRate, int maxBlockSize);
+    // Lifecycle only: audio and non-RT users must be quiescent for prepare/reset.
     void reset();
 
     double getSampleRate() const noexcept { return sampleRate; }
 
-    // --- message-thread control (UI bridge). These only set atomics; the audio
-    //     thread applies them in audioThreadSync() (MultiQ.cpp:511-535). --------
-    void requestStartLearnCurrent()   { pendingStartCurrent.store(true, std::memory_order_release); }
-    void requestStartLearnReference() { pendingStartReference.store(true, std::memory_order_release); }
-    void requestStopLearning()        { pendingStop.store(true, std::memory_order_release); }
-    void requestClear()               { pendingClear.store(true, std::memory_order_release); }
+    // --- non-RT control (host/UI). Serialize requests; the audio thread applies
+    //     them at its next boundary in audioThreadSync(). ----------------------
+    void requestStartLearnCurrent();
+    void requestStartLearnReference();
+    void requestStopLearning();
+    void requestClear();
 
     // Build the correction curve + FIR from the two learned spectra and lock-free
     // publish the partition spectra to the audio thread. Runs on the message
@@ -205,16 +209,16 @@ public:
     bool computeCorrection(float smoothingSemitones, float applyAmount,
                            float limitBoostDB, float limitCutDB, bool minimumPhase);
 
-    // --- learning-state queries (any thread) ----------------------------------
+    // --- learning-state queries (non-realtime, except the atomic target) ------
     bool isLearning() const          { return learningTarget.load(std::memory_order_acquire) != Target::None; }
     bool isLearningCurrent() const   { return learningTarget.load(std::memory_order_acquire) == Target::Current; }
     bool isLearningReference() const { return learningTarget.load(std::memory_order_acquire) == Target::Reference; }
     int  getLearningFrameCount() const;
-    bool hasCurrentSpectrum() const   { return currentSpectrumBuf.readBuffer().valid; }
-    bool hasReferenceSpectrum() const { return referenceSpectrumBuf.readBuffer().valid; }
+    bool hasCurrentSpectrum() const;
+    bool hasReferenceSpectrum() const;
     bool hasCorrectionCurve() const   { return correctionValid.load(std::memory_order_acquire); }
 
-    // dB spectra for UI display (write up to n = NUM_BINS values). Lock-free reads.
+    // dB spectra for non-RT UI display (write up to n = NUM_BINS values).
     void getCurrentSpectrumDB(float* out, int n) const;
     void getReferenceSpectrumDB(float* out, int n) const;
     void getCorrectionCurveDB(float* out, int n) const;
@@ -281,6 +285,8 @@ private:
     struct IRUpdate
     {
         IRSpectra spectra;
+        LearnedSpectrum current, reference;
+        uint64_t restoreRevision = 0;
         bool active = false;
         bool minimumPhase = true;
     };
@@ -304,6 +310,11 @@ private:
     void generateLinearPhaseFIR(const std::array<float, NUM_BINS>& curveDB);
     void generateMinimumPhaseFIR(const std::array<float, NUM_BINS>& curveDB);
     void installFIR();   // build partition spectra from correctionFIR + publish
+    void publishUpdate(); // include any not-yet-published learning restore
+    void syncUpdate(const IRUpdate* update); // audio-thread adoption
+    bool takeRequest(std::atomic<uint64_t>& request) noexcept; // audio, bounded
+    LearnedSpectrum currentForReaders() const;   // caller holds updateLock
+    LearnedSpectrum referenceForReaders() const; // caller holds updateLock
     void processHop(ChannelConv& c, const IRSpectra* H); // one 128-sample conv hop
     void doClearNow();   // audio-thread immediate clear of spectra/state
 
@@ -313,6 +324,15 @@ private:
     std::atomic<Target> learningTarget{Target::None};
     LearnedSpectrum currentSpectrum, referenceSpectrum; // audio-thread owned
     MatchSnapshot<LearnedSpectrum> currentSpectrumBuf, referenceSpectrumBuf;
+    // Only the audio thread writes the accumulators and their snapshot staging.
+    // Non-RT readers can see an accepted host restore before audio resumes. Its
+    // cache remains authoritative until audio has published BOTH snapshots.
+    LearnedSpectrum restoredCurrent, restoredReference; // updateLock, non-RT
+    uint64_t restoreRevision = 0;                       // updateLock, non-RT
+    std::atomic<uint64_t> publishedRestoreRevision{0};   // audio -> non-RT
+    uint64_t audioRestoreRevision = 0, restoreAckPending = 0; // audio only
+    // Serializes host/UI producers and FFT scratch use. Never acquired by audio.
+    mutable MatchSpinLock updateLock;
     std::array<float, FFT_SIZE> hannWindow{};
     std::vector<float> learningInput;   // circular input buffer (FFT_SIZE)
     int learningInputPos = 0;
@@ -333,9 +353,12 @@ private:
     FFTr2 fftGenMin;     // 8192 (min-phase cepstral gen)
     FFTr2 fftConv;       // 256  (convolver)
 
-    // pending cross-thread requests (set on message thread, consumed on audio)
-    std::atomic<bool> pendingStartCurrent{false}, pendingStartReference{false};
-    std::atomic<bool> pendingStop{false}, pendingClear{false};
+    // A command cannot run before the host restore it follows has been adopted.
+    // Separate flags would let a newer start/clear affect an older mailbox slot.
+    static constexpr uint64_t kNoRequest = UINT64_MAX;
+    static_assert(std::atomic<uint64_t>::is_always_lock_free, "Control requests cannot lock");
+    std::atomic<uint64_t> pendingStartCurrent{kNoRequest}, pendingStartReference{kNoRequest};
+    std::atomic<uint64_t> pendingStop{kNoRequest}, pendingClear{kNoRequest};
 
     // convolver
     MatchMailbox<IRUpdate> irUpdates;

@@ -59,6 +59,7 @@ if(NOT CMAKE_CROSSCOMPILING)
     add_test(NAME MultiQMatchState COMMAND MultiQMatchStateTest)
 
     find_package(Threads REQUIRED)
+    target_link_libraries(MultiQMatchStateTest PRIVATE Threads::Threads)
     add_executable(MultiQMatchSnapshotTest ../tests/test_multiq_match_snapshot.cpp)
     target_link_libraries(MultiQMatchSnapshotTest PRIVATE Threads::Threads)
     add_test(NAME MultiQMatchSnapshot COMMAND MultiQMatchSnapshotTest)

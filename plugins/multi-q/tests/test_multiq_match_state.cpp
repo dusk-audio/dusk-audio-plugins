@@ -5,14 +5,44 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <limits>
 #include <memory>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
+
+namespace duskaudio
+{
+struct MatchSnapshotTestAccess
+{
+    template <typename T>
+    static void pinSpares(MatchSnapshot<T>& snapshots, bool pin)
+    {
+        const uint32_t current = snapshots.published_.load();
+        for (uint32_t i = 0; i < snapshots.slots_.size(); ++i)
+            if (i != current) snapshots.slots_[i].users.store(pin ? 1u : 0u);
+    }
+    static void pinRestoreReaders(MultiQMatch& match, bool pin)
+    {
+        pinSpares(match.currentSpectrumBuf, pin);
+        pinSpares(match.referenceSpectrumBuf, pin);
+    }
+    // Deterministically park audio immediately after consuming its mailbox
+    // slot, then run a producer at the vulnerable boundary before adoption.
+    template <typename Producer>
+    static void splitSync(MultiQMatch& match, Producer producer)
+    {
+        const auto* update = match.irUpdates.consume();
+        producer();
+        match.syncUpdate(update);
+    }
+};
+}
 
 namespace
 {
@@ -184,6 +214,142 @@ void restoreEmpty(const std::string& valid)
           "deactivation keeps the incoming learned spectra for future correction");
     check(target->serialize() == withoutCorrection, "learned-only restore preserves all of its incoming content");
 }
+
+void liveRestore(const std::string& valid)
+{
+    auto target = std::make_unique<Match>(); target->prepare(48000.0, 256);
+    target->requestStartLearnCurrent(); target->audioThreadSync();
+    check(target->isLearningCurrent(), "live fixture really starts learning");
+    check(target->deserialize(valid), "live restore accepts a populated state");
+    check(target->isLearningCurrent(), "host restore leaves audio-owned learning untouched until sync");
+    check(target->serialize() == valid, "accepted pending restore can be saved before audio resumes");
+    check(target->hasCurrentSpectrum() && target->hasReferenceSpectrum(), "pending restored spectra are queryable");
+    // Computing before the audio callback must not replace the queued learning
+    // restore with an IR-only update.
+    check(target->computeCorrection(3.0f, 1.0f, 12.0f, 12.0f, true), "pending restored spectra can build a correction");
+    target->audioThreadSync();
+    check(!target->isLearning() && target->hasCurrentSpectrum() && target->hasReferenceSpectrum(),
+          "sync applies the learning restore even after a newer correction publication");
+
+    target->requestStartLearnCurrent();
+    check(target->deserialize(valid), "restore can supersede a queued learning start");
+    target->audioThreadSync();
+    check(!target->isLearning() && target->serialize() == valid, "newer restore cancels the older start");
+    target->requestClear();
+    check(target->deserialize(valid), "restore can supersede a queued clear");
+    target->audioThreadSync();
+    check(target->serialize() == valid && target->getLatencySamples() == Match::CONV_HOP,
+          "newer restore cancels the older clear");
+
+    check(target->deserialize(valid), "restore can precede a newer learning start");
+    target->requestStartLearnCurrent(); target->audioThreadSync();
+    check(target->isLearningCurrent() && !target->hasCurrentSpectrum() && target->hasReferenceSpectrum(),
+          "newer current-learning start resets only current after restoring reference");
+    target->requestStopLearning(); target->audioThreadSync();
+
+    check(target->deserialize(valid), "restore can precede a newer clear");
+    target->requestClear(); target->audioThreadSync();
+    check(!target->hasCurrentSpectrum() && !target->hasReferenceSpectrum() && !target->hasCorrectionCurve(),
+          "newer clear discards both restored spectra and correction");
+}
+
+void concurrentRestore(const std::string& valid)
+{
+    auto target = std::make_unique<Match>(); target->prepare(48000.0, 256);
+    check(target->deserialize(valid), "concurrent restore fixture loads"); target->audioThreadSync();
+    target->requestStartLearnCurrent(); target->audioThreadSync();
+    std::atomic<bool> running{true}, ready{false};
+    std::atomic<int> audioBlocks{0}, learnedBlocks{0}, readerStates{0}, invalidStates{0};
+    std::thread audio([&] {
+        std::array<float, 16384> input{};
+        for (size_t i = 0; i < input.size(); ++i) input[i] = 0.1f * std::sin(float(i) * 0.17f);
+        do
+        {
+            target->audioThreadSync();
+            const bool learning = target->isLearning();
+            target->feedLearningBlock(input.data(), int(input.size()));
+            if (learning) ++learnedBlocks;
+            ++audioBlocks;
+            ready.store(true, std::memory_order_release);
+            std::this_thread::yield();
+        } while (running.load(std::memory_order_acquire));
+    });
+    std::thread ui([&] {
+        auto verifier = std::make_unique<Match>(); verifier->prepare(48000.0, 256);
+        do
+        {
+            target->computeCorrection(3.0f, 1.0f, 12.0f, 12.0f, true);
+            if (!verifier->deserialize(target->serialize())) ++invalidStates;
+            ++readerStates;
+        } while (running.load(std::memory_order_acquire));
+    });
+    while (!ready.load(std::memory_order_acquire)) std::this_thread::yield();
+    bool accepted = true;
+    for (int i = 0; i < 100; ++i)
+    {
+        target->requestStartLearnCurrent();
+        std::this_thread::yield();
+        accepted &= target->deserialize(valid);
+    }
+    running.store(false, std::memory_order_release); audio.join(); ui.join();
+    check(accepted && audioBlocks > 0 && learnedBlocks > 0 && readerStates > 0 && invalidStates == 0,
+          "learning, host restores and UI compute/save can run concurrently");
+    check(target->deserialize(valid), "final state can replace all live work"); target->audioThreadSync();
+    check(target->serialize() == valid && !target->isLearning(), "final live restore is complete and stable");
+    target->reset(); target->audioThreadSync();
+    check(!target->hasCurrentSpectrum() && !target->hasReferenceSpectrum() && target->getLatencySamples() == 0,
+          "reset also discards the pending-restore cache");
+    std::printf("Live state restore: %d audio blocks (%d learning), %d UI states, %d invalid states\n",
+                audioBlocks.load(), learnedBlocks.load(), readerStates.load(), invalidStates.load());
+}
+
+void delayedPublication(const std::string& valid)
+{
+    auto target = std::make_unique<Match>(); target->prepare(48000.0, 256);
+    check(target->deserialize(valid), "parked-reader fixture loads"); target->audioThreadSync();
+    Bytes changed = decode(valid); put(changed, 24, 123.0);
+    const std::string different = encode(changed);
+    duskaudio::MatchSnapshotTestAccess::pinRestoreReaders(*target, true);
+    check(target->deserialize(different), "restore accepts different data while readers are parked");
+    target->audioThreadSync();
+    check(target->serialize() == different, "parked readers cannot discard an accepted restore");
+    target->requestStartLearnCurrent(); target->audioThreadSync();
+    check(!target->hasCurrentSpectrum() && target->hasReferenceSpectrum(),
+          "a newer learning start also invalidates the pending restore cache");
+    const std::string pending = target->serialize();
+    duskaudio::MatchSnapshotTestAccess::pinRestoreReaders(*target, false);
+    target->audioThreadSync();
+    check(target->serialize() == pending, "retry publishes the complete state after readers resume");
+}
+
+void racingCommands(const std::string& valid)
+{
+    auto target = std::make_unique<Match>(); target->prepare(48000.0, 256);
+    check(target->deserialize(valid), "split-boundary fixture queues a restore");
+    bool accepted = false;
+    duskaudio::MatchSnapshotTestAccess::splitSync(*target, [&] {
+        accepted = target->deserialize(valid);
+        target->requestStartLearnCurrent();
+    });
+    check(accepted && !target->isLearning(), "a newer start waits for its own restore revision");
+    target->audioThreadSync();
+    check(target->isLearningCurrent() && !target->hasCurrentSpectrum() && target->hasReferenceSpectrum(),
+          "the next boundary restores then starts learning without reviving old current data");
+
+    check(target->deserialize(valid), "clear-gap fixture restores both spectra"); target->audioThreadSync();
+    check(target->computeCorrection(3.0f, 1.0f, 12.0f, 12.0f, true), "first correction queues before split sync");
+    bool computed = false;
+    duskaudio::MatchSnapshotTestAccess::splitSync(*target, [&] {
+        computed = target->computeCorrection(3.0f, 0.5f, 12.0f, 12.0f, true);
+        target->requestClear();
+    });
+    target->audioThreadSync();
+    std::array<float, 256> silence{};
+    for (int i = 0; i < 8; ++i) target->process(silence.data(), nullptr, false, int(silence.size()));
+    check(computed && !target->hasCurrentSpectrum() && !target->hasReferenceSpectrum()
+              && !target->hasCorrectionCurve() && target->getLatencySamples() == 0,
+          "an IR published in the consume/clear gap cannot revive on the next block");
+}
 }
 
 int main()
@@ -192,6 +358,10 @@ int main()
     const std::string valid = learned->serialize();
     invalidStates(valid);
     restoreEmpty(valid);
+    liveRestore(valid);
+    concurrentRestore(valid);
+    delayedPublication(valid);
+    racingCommands(valid);
     std::printf("Multi-Q Match state: %d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }
