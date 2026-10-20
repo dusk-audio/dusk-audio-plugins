@@ -164,6 +164,13 @@ if(NOT CMAKE_CROSSCOMPILING)
     target_compile_definitions(ChordSessionIntegrationTest PRIVATE $<TARGET_PROPERTY:ChordAnalyzer,COMPILE_DEFINITIONS>)
     add_test(NAME ChordSessionIntegration COMMAND ChordSessionIntegrationTest)
     set_tests_properties(ChordSessionIntegration PROPERTIES TIMEOUT 20)
+
+    add_executable(ChordRecordingAdapterTest tests/test_chord_recording.cpp)
+    target_link_libraries(ChordRecordingAdapterTest PRIVATE ChordAnalyzer)
+    target_include_directories(ChordRecordingAdapterTest PRIVATE $<TARGET_PROPERTY:ChordAnalyzer,INCLUDE_DIRECTORIES>)
+    target_compile_definitions(ChordRecordingAdapterTest PRIVATE
+        CHORD_ANALYZER_LEGACY_REFERENCE=1 $<TARGET_PROPERTY:ChordAnalyzer,COMPILE_DEFINITIONS>)
+    add_test(NAME ChordRecordingAdapter COMMAND ChordRecordingAdapterTest)
 endif()
 
 function(chord_add_desktop_midi_test target product)

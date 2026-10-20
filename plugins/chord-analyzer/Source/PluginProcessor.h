@@ -6,6 +6,7 @@
 #include "../core/MidiNoteState.hpp"
 #include "../core/NoteSnapshot.hpp"
 #include "ChordRecorder.h"
+#include "../core/ChordHistory.hpp"
 #include <array>
 #include <atomic>
 
@@ -83,7 +84,7 @@ public:
     // Recent chord history — rolling window of distinct detected chords
     // (newest last). Always-on, independent of the recording session.
     // Capped at maxHistorySize entries so memory is bounded.
-    static constexpr int maxHistorySize = 32;
+    static constexpr int maxHistorySize = duskaudio::chord::maxChordHistorySize;
     std::vector<ChordInfo> getChordHistory() const;
     void clearChordHistory();
 
@@ -153,13 +154,8 @@ private:
     ChordInfo currentChord;
     std::vector<ChordSuggestion> currentSuggestions;
 
-    // Ring buffer (preallocated, no reallocation while publishing analysis).
-    // historyHead is the next write slot; historyCount is the number of
-    // valid entries (0..maxHistorySize). Logical order is oldest..newest
-    // = chordHistory[(historyHead - historyCount + N) % N .. historyHead).
-    std::array<ChordInfo, maxHistorySize> chordHistory{};
-    int historyHead = 0;
-    int historyCount = 0;
+    // Shared non-real-time history, protected by chordLock in this adapter.
+    duskaudio::chord::BasicChordHistory<ChordInfo> chordHistory;
     mutable juce::SpinLock chordLock;
 
     //==========================================================================
