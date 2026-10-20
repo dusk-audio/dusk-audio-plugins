@@ -56,6 +56,13 @@ if(NOT CMAKE_CROSSCOMPILING)
     add_executable(MultiQSmoothingTest ../tests/test_multiq_smoothing.cpp)
     add_test(NAME MultiQSmoothing COMMAND MultiQSmoothingTest)
 
+    add_executable(MultiQDigitalOversamplingTest
+        ../tests/test_multiq_digital_oversampling.cpp
+        ../core/MultiQDSP.cpp
+        ../core/MultiQMatch.cpp
+        ../../shared-daf/dsp/FourKEQDSP.cpp)
+    add_test(NAME MultiQDigitalOversampling COMMAND MultiQDigitalOversamplingTest)
+
     add_executable(MultiQMatchStateTest
         ../tests/test_multiq_match_state.cpp
         ../core/MultiQMatch.cpp)
