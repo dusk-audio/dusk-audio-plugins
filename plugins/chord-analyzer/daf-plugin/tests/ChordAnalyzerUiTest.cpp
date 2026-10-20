@@ -295,7 +295,9 @@ int main(int argc, char** argv)
     // desktop bus. All mouse/keyboard input belongs to the isolated X display.
     setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/dev/null", 1);
     Fixture f; f.artifacts = std::filesystem::absolute(argv[2]); std::filesystem::create_directories(f.artifacts);
-    const auto dragDirectory = f.artifacts / std::filesystem::u8path("drag temp #?% \xc3\xa9");
+    // Exercise URI-reserved paths outside the uploaded screenshot tree:
+    // artifact archives reject '?' even though X11 file paths permit it.
+    const auto dragDirectory = f.artifacts.parent_path().parent_path() / std::filesystem::u8path("drag temp #?% \xc3\xa9");
     std::filesystem::create_directories(dragDirectory); setenv("TMPDIR", dragDirectory.c_str(), 1);
     void* library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
     const auto* entry = library ? static_cast<const clap_plugin_entry_t*>(dlsym(library, "clap_entry")) : nullptr;
