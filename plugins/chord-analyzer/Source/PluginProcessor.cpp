@@ -622,6 +622,10 @@ void ChordAnalyzerProcessor::setStateInformation(const void* data, int sizeInByt
         if (xmlState->hasTagName(parameters.state.getType()))
         {
             parameters.replaceState(juce::ValueTree::fromXml(*xmlState));
+            // Refresh the host after the whole preset is installed. In the
+            // pinned CLAP wrapper this requests a value rescan;
+            // per-parameter output events alone leave the host's cache stale.
+            updateHostDisplay(juce::AudioProcessorListener::ChangeDetails().withProgramChanged(true));
         }
     }
 }

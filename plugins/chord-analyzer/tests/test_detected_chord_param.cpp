@@ -175,6 +175,19 @@ static void testStateExcludesOutputs(ChordAnalyzerProcessor& processor)
 {
     std::cout << "\n--- Saved state ---\n";
 
+    const std::array<const char*, 5> ids{
+        ChordAnalyzerProcessor::PARAM_KEY_ROOT, ChordAnalyzerProcessor::PARAM_KEY_MODE,
+        ChordAnalyzerProcessor::PARAM_SUGGESTION_LEVEL, ChordAnalyzerProcessor::PARAM_SHOW_INVERSIONS,
+        ChordAnalyzerProcessor::PARAM_RESPECT_SUSTAIN};
+    const std::array<float, 5> expected{6.0f, 1.0f, 1.0f, 0.0f, 0.0f};
+    std::array<float, 5> original{};
+    for (size_t i = 0; i < ids.size(); ++i)
+    {
+        auto* parameter = processor.getAPVTS().getParameter(ids[i]);
+        original[i] = parameter->getValue();
+        parameter->setValueNotifyingHost(parameter->convertTo0to1(expected[i]));
+    }
+
     juce::MemoryBlock state;
     processor.getStateInformation(state);
 
@@ -194,11 +207,57 @@ static void testStateExcludesOutputs(ChordAnalyzerProcessor& processor)
           && ! text.contains("detectedBass") && ! text.contains("detectedInversion"));
     check("state does carry the real parameters", text.contains("showInversions"));
 
-    // Loading it back must leave the detection outputs alone.
-    const juce::String before = processor.getParameters()[0]->getCurrentValueAsText();
-    processor.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
-    check("state reloads without changing an input parameter",
-          processor.getParameters()[0]->getCurrentValueAsText() == before);
+    ChordAnalyzerProcessor restored;
+    struct LoadProbe : juce::AudioProcessorListener
+    {
+        LoadProbe(const std::array<const char*, 5>& names, const std::array<float, 5>& values)
+            : ids(names), expected(values) {}
+        const std::array<const char*, 5>& ids;
+        const std::array<float, 5>& expected;
+        int notifications = 0;
+        bool complete = true;
+        void audioProcessorParameterChanged(juce::AudioProcessor*, int, float) override {}
+        void audioProcessorChanged(juce::AudioProcessor* p, const ChangeDetails& details) override
+        {
+            if (!details.programChanged) return;
+            ++notifications;
+            auto& loaded = static_cast<ChordAnalyzerProcessor&>(*p);
+            for (size_t i = 0; i < ids.size(); ++i)
+                complete &= loaded.getAPVTS().getRawParameterValue(ids[i])->load() == expected[i];
+            complete &= !details.latencyChanged && !details.parameterInfoChanged;
+        }
+    } probe(ids, expected);
+    restored.addListener(&probe);
+    restored.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+    bool inputsMatch = true;
+    for (size_t i = 0; i < ids.size(); ++i)
+        inputsMatch &= restored.getAPVTS().getRawParameterValue(ids[i])->load() == expected[i];
+    check("all five non-default inputs reload into a fresh instance", inputsMatch);
+    check("successful state load notifies the host once after all values are available",
+          probe.notifications == 1 && probe.complete);
+    bool outputsEmpty = true;
+    for (const char* id : {ChordAnalyzerProcessor::PARAM_DETECTED_ROOT, ChordAnalyzerProcessor::PARAM_DETECTED_QUALITY,
+                          ChordAnalyzerProcessor::PARAM_DETECTED_BASS, ChordAnalyzerProcessor::PARAM_DETECTED_INVERSION,
+                          ChordAnalyzerProcessor::PARAM_DETECTED_CHORD})
+        outputsEmpty &= findParameter(restored, id)->getValue() == 0.0f;
+    check("loading state into a fresh instance leaves every detection output at its own default", outputsEmpty);
+    juce::MemoryBlock resaved;
+    restored.getStateInformation(resaved);
+    check("save/load/save is byte-for-byte reproducible", state == resaved);
+
+    const int validNotifications = probe.notifications;
+    restored.setStateInformation(nullptr, 0);
+    juce::XmlElement wrongType("OtherPluginState");
+    juce::MemoryBlock wrongState;
+    juce::AudioProcessor::copyXmlToBinary(wrongType, wrongState);
+    restored.setStateInformation(wrongState.getData(), static_cast<int>(wrongState.getSize()));
+    restored.getStateInformation(resaved);
+    check("invalid or foreign state does not notify the host or change saved inputs",
+          probe.notifications == validNotifications && state == resaved);
+    restored.removeListener(&probe);
+
+    for (size_t i = 0; i < ids.size(); ++i)
+        processor.getAPVTS().getParameter(ids[i])->setValueNotifyingHost(original[i]);
 }
 
 //==============================================================================
