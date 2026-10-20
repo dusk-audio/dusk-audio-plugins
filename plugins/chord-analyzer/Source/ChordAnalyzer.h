@@ -266,7 +266,6 @@ private:
     {
         std::set<int> intervals;    // Semitone intervals from root
         ChordQuality quality;
-        juce::String suffix;
         int priority;               // Higher = preferred match
 
         // Set on the shapes that deliberately leave the fifth out. The fifth

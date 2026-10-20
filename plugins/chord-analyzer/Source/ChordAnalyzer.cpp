@@ -11,57 +11,57 @@
 // Reordering entries within a priority band changes chord names.
 const std::vector<ChordAnalyzer::ChordPattern> ChordAnalyzer::chordPatterns = {
     // Power chord (2 notes)
-    {{0, 7}, ChordQuality::Power5, "5", 1},
+    {{0, 7}, ChordQuality::Power5, 1},
 
     // Triads (3 notes)
-    {{0, 4, 7}, ChordQuality::Major, "", 10},
-    {{0, 3, 7}, ChordQuality::Minor, "m", 10},
-    {{0, 3, 6}, ChordQuality::Diminished, "dim", 10},
-    {{0, 4, 8}, ChordQuality::Augmented, "aug", 10},
-    {{0, 2, 7}, ChordQuality::Sus2, "sus2", 9},
-    {{0, 5, 7}, ChordQuality::Sus4, "sus4", 9},
+    {{0, 4, 7}, ChordQuality::Major, 10},
+    {{0, 3, 7}, ChordQuality::Minor, 10},
+    {{0, 3, 6}, ChordQuality::Diminished, 10},
+    {{0, 4, 8}, ChordQuality::Augmented, 10},
+    {{0, 2, 7}, ChordQuality::Sus2, 9},
+    {{0, 5, 7}, ChordQuality::Sus4, 9},
 
     // Sixth chords
-    {{0, 4, 7, 9}, ChordQuality::Major6, "6", 15},
-    {{0, 3, 7, 9}, ChordQuality::Minor6, "m6", 15},
+    {{0, 4, 7, 9}, ChordQuality::Major6, 15},
+    {{0, 3, 7, 9}, ChordQuality::Minor6, 15},
 
     // Seventh chords (4 notes)
-    {{0, 4, 7, 11}, ChordQuality::Major7, "maj7", 20},
-    {{0, 4, 7, 10}, ChordQuality::Dominant7, "7", 20},
-    {{0, 3, 7, 10}, ChordQuality::Minor7, "m7", 20},
-    {{0, 3, 7, 11}, ChordQuality::MinorMajor7, "mMaj7", 20},
-    {{0, 3, 6, 10}, ChordQuality::HalfDiminished7, "m7b5", 20},
-    {{0, 3, 6, 9}, ChordQuality::Diminished7, "dim7", 20},
-    {{0, 4, 8, 10}, ChordQuality::Augmented7, "aug7", 20},
-    {{0, 4, 8, 11}, ChordQuality::AugmentedMajor7, "augMaj7", 20},
-    {{0, 5, 7, 10}, ChordQuality::Dominant7Sus4, "7sus4", 19},
+    {{0, 4, 7, 11}, ChordQuality::Major7, 20},
+    {{0, 4, 7, 10}, ChordQuality::Dominant7, 20},
+    {{0, 3, 7, 10}, ChordQuality::Minor7, 20},
+    {{0, 3, 7, 11}, ChordQuality::MinorMajor7, 20},
+    {{0, 3, 6, 10}, ChordQuality::HalfDiminished7, 20},
+    {{0, 3, 6, 9}, ChordQuality::Diminished7, 20},
+    {{0, 4, 8, 10}, ChordQuality::Augmented7, 20},
+    {{0, 4, 8, 11}, ChordQuality::AugmentedMajor7, 20},
+    {{0, 5, 7, 10}, ChordQuality::Dominant7Sus4, 19},
 
     // Altered dominants
-    {{0, 4, 6, 10}, ChordQuality::Dominant7Flat5, "7b5", 21},
-    {{0, 4, 8, 10}, ChordQuality::Dominant7Sharp5, "7#5", 21},
-    {{0, 1, 4, 7, 10}, ChordQuality::Dominant7Flat9, "7b9", 25},
-    {{0, 3, 4, 7, 10}, ChordQuality::Dominant7Sharp9, "7#9", 25},
+    {{0, 4, 6, 10}, ChordQuality::Dominant7Flat5, 21},
+    {{0, 4, 8, 10}, ChordQuality::Dominant7Sharp5, 21},
+    {{0, 1, 4, 7, 10}, ChordQuality::Dominant7Flat9, 25},
+    {{0, 3, 4, 7, 10}, ChordQuality::Dominant7Sharp9, 25},
 
     // Add chords
-    {{0, 4, 7, 14}, ChordQuality::Add9, "add9", 16},
-    {{0, 4, 7, 17}, ChordQuality::Add11, "add11", 16},
+    {{0, 4, 7, 14}, ChordQuality::Add9, 16},
+    {{0, 4, 7, 17}, ChordQuality::Add11, 16},
 
     // Extended chords (5+ notes)
-    {{0, 4, 7, 10, 14}, ChordQuality::Dominant9, "9", 30},
-    {{0, 4, 7, 11, 14}, ChordQuality::Major9, "maj9", 30},
-    {{0, 3, 7, 10, 14}, ChordQuality::Minor9, "m9", 30},
+    {{0, 4, 7, 10, 14}, ChordQuality::Dominant9, 30},
+    {{0, 4, 7, 11, 14}, ChordQuality::Major9, 30},
+    {{0, 3, 7, 10, 14}, ChordQuality::Minor9, 30},
 
-    {{0, 4, 7, 10, 14, 17}, ChordQuality::Dominant11, "11", 35},
-    {{0, 4, 7, 11, 14, 17}, ChordQuality::Major11, "maj11", 35},
-    {{0, 3, 7, 10, 14, 17}, ChordQuality::Minor11, "m11", 35},
+    {{0, 4, 7, 10, 14, 17}, ChordQuality::Dominant11, 35},
+    {{0, 4, 7, 11, 14, 17}, ChordQuality::Major11, 35},
+    {{0, 3, 7, 10, 14, 17}, ChordQuality::Minor11, 35},
 
-    {{0, 4, 7, 10, 14, 17, 21}, ChordQuality::Dominant13, "13", 40},
-    {{0, 4, 7, 11, 14, 17, 21}, ChordQuality::Major13, "maj13", 40},
-    {{0, 3, 7, 10, 14, 17, 21}, ChordQuality::Minor13, "m13", 40},
+    {{0, 4, 7, 10, 14, 17, 21}, ChordQuality::Dominant13, 40},
+    {{0, 4, 7, 11, 14, 17, 21}, ChordQuality::Major13, 40},
+    {{0, 3, 7, 10, 14, 17, 21}, ChordQuality::Minor13, 40},
 
     // Simplified extended chords (without all tensions)
-    {{0, 4, 7, 10, 21}, ChordQuality::Dominant13, "13", 28},  // 13 without 9/11
-    {{0, 4, 7, 10, 17}, ChordQuality::Dominant11, "11", 28},  // 11 without 9
+    {{0, 4, 7, 10, 21}, ChordQuality::Dominant13, 28},  // 13 without 9/11
+    {{0, 4, 7, 10, 17}, ChordQuality::Dominant11, 28},  // 11 without 9
 
     // Voicings that drop the fifth. Standard practice on guitar and piano -
     // the fifth adds no colour, so it is the first tone to go - and the shell
@@ -88,14 +88,14 @@ const std::vector<ChordAnalyzer::ChordPattern> ChordAnalyzer::chordPatterns = {
     // and beat one at another root, which is the failure the paragraph above
     // describes. Chromatic clusters that pit a shell on the bass against a
     // four-tone shape elsewhere therefore still take the shell.
-    {{0, 4, 14},         ChordQuality::Add9,        "add9",   3, true},
-    {{0, 4, 10},         ChordQuality::Dominant7,   "7",      5, true},
-    {{0, 4, 11},         ChordQuality::Major7,      "maj7",   5, true},
-    {{0, 3, 10},         ChordQuality::Minor7,      "m7",     5, true},
-    {{0, 3, 11},         ChordQuality::MinorMajor7, "mMaj7",  5, true},
-    {{0, 4, 10, 14},     ChordQuality::Dominant9,   "9",      8, true},
-    {{0, 4, 11, 14},     ChordQuality::Major9,      "maj9",   8, true},
-    {{0, 3, 10, 14},     ChordQuality::Minor9,      "m9",     8, true},
+    {{0, 4, 14},         ChordQuality::Add9,   3, true},
+    {{0, 4, 10},         ChordQuality::Dominant7,      5, true},
+    {{0, 4, 11},         ChordQuality::Major7,   5, true},
+    {{0, 3, 10},         ChordQuality::Minor7,     5, true},
+    {{0, 3, 11},         ChordQuality::MinorMajor7,  5, true},
+    {{0, 4, 10, 14},     ChordQuality::Dominant9,      8, true},
+    {{0, 4, 11, 14},     ChordQuality::Major9,   8, true},
+    {{0, 3, 10, 14},     ChordQuality::Minor9,     8, true},
 };
 
 //==============================================================================
