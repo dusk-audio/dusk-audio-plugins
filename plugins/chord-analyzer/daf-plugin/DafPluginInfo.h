@@ -3,6 +3,9 @@
 
 #define DAF_PLUGIN_BRAND "Dusk Audio"
 #define DAF_PLUGIN_BRAND_ID Dusk
+// Unreleased successors use one host-visible VST3 identity on every platform.
+// Keep this opt-in local: enabling it for released plugins breaks Windows recall.
+#define DAF_VST3_CROSS_PLATFORM_UID
 #if CHORD_ANALYZER_DAF_MIDI_MODE
 # define DAF_PLUGIN_NAME "Chord Analyzer MIDI 2"
 # define DAF_PLUGIN_URI "https://dusk-audio.github.io/plugins/chord-analyzer-midi-2"
