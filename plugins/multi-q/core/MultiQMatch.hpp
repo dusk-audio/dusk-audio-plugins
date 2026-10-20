@@ -9,12 +9,11 @@
 // computation (reference/current, semitone smoothing, boost/cut limiting) and FIR
 // generation (minimum-phase cepstral or linear-phase). juce::dsp::FFT is replaced
 // by a self-contained radix-2 complex FFT (FFTr2); juce types by std; the
-// juce::SpinLock cross-thread transfer by the DoubleBuffer / atomic-published
-// pattern already used in the core.
+// juce::SpinLock cross-thread transfer by owned snapshots and a bounded mailbox.
 //
 // This class ALSO owns the FIR-correction convolution (JUCE used juce::dsp::
 // Convolution): an RT-safe uniformly-partitioned overlap-save FFT convolver with a
-// lock-free double-buffered impulse response and an aligned dry/wet crossfade.
+// lock-free impulse-response handoff and an aligned dry/wet crossfade.
 //
 // Thread model (mirrors MultiQ.cpp):
 //   * Message thread (UI bridge): requestStartLearn*/requestClear set atomics;
@@ -114,6 +113,41 @@ public:
             slot.users.fetch_sub(1, std::memory_order_release);
             return result;
         }
+    }
+};
+
+// Single producer / single consumer, latest complete value wins. Each side
+// owns one slot; an atomic exchange transfers the spare slot and its ownership.
+// Neither side can reuse the other's slot, even if that thread is parked.
+// The consumer makes one bounded exchange at a block boundary and retains its
+// returned value until the next consume(). reset() requires both sides stopped.
+template<typename T>
+class MatchMailbox
+{
+    static_assert(std::is_trivially_copyable<T>::value, "Mailbox values require plain data copies");
+    static_assert(std::atomic<uint32_t>::is_always_lock_free, "Mailbox publication cannot lock");
+    static constexpr uint32_t kDirty = 4;
+    std::array<T, 3> slots_{};
+    uint32_t writing_ = 2; // producer only
+    uint32_t reading_ = 0; // consumer only
+    std::atomic<uint32_t> middle_{1};
+public:
+    T& writeBuffer() noexcept { return slots_[writing_]; }
+    void publish() noexcept
+    {
+        writing_ = middle_.exchange(writing_ | kDirty, std::memory_order_acq_rel) & ~kDirty;
+    }
+    const T* consume() noexcept
+    {
+        if (!(middle_.load(std::memory_order_acquire) & kDirty)) return nullptr;
+        reading_ = middle_.exchange(reading_, std::memory_order_acq_rel) & ~kDirty;
+        return &slots_[reading_];
+    }
+    void reset() noexcept
+    {
+        for (auto& slot : slots_) slot = T{};
+        writing_ = 2; reading_ = 0;
+        middle_.store(1, std::memory_order_relaxed);
     }
 };
 
@@ -237,12 +271,18 @@ private:
 
     enum class Target { None, Current, Reference };
 
-    // Partition spectra of the correction FIR (audio-thread read, message-thread
-    // written into the inactive slot then atomically published via irActive).
+    // Immutable partition spectra handed from the message thread to audio.
     struct IRSpectra
     {
         std::array<std::array<float, CONV_FFT>, NUM_PART> re{};
         std::array<std::array<float, CONV_FFT>, NUM_PART> im{};
+    };
+
+    struct IRUpdate
+    {
+        IRSpectra spectra;
+        bool active = false;
+        bool minimumPhase = true;
     };
 
     // Per-channel overlap-save convolver state (FDL + sliding window + FIFOs).
@@ -296,15 +336,11 @@ private:
     // pending cross-thread requests (set on message thread, consumed on audio)
     std::atomic<bool> pendingStartCurrent{false}, pendingStartReference{false};
     std::atomic<bool> pendingStop{false}, pendingClear{false};
-    // One command prevents an older queued activation from reviving a later
-    // restore with no correction. Consumed only by the audio thread.
-    enum class PendingCorrection { None, Activate, Deactivate };
-    std::atomic<PendingCorrection> pendingCorrection{PendingCorrection::None};
 
     // convolver
-    IRSpectra irSpectra[2];
-    std::atomic<int> irActive{-1};      // published slot (>=0) or -1 = passthrough
-    int irWriteToggle = 0;              // message-thread next-slot picker
+    MatchMailbox<IRUpdate> irUpdates;
+    IRSpectra activeIR;                 // exclusively audio-owned, including fade-out
+    std::atomic<int> activeLatency{0};  // metadata adopted with the audio-owned IR
     ChannelConv convL, convR;
     int hopFill = 0;                    // shared 0..CONV_HOP sample counter
     std::array<float, CONV_FFT> convScratchRe{}, convScratchIm{}; // hop FFT scratch

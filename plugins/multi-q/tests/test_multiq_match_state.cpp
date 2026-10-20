@@ -150,8 +150,8 @@ void invalidStates(const std::string& valid)
 void restoreEmpty(const std::string& valid)
 {
     auto target = std::make_unique<Match>(); target->prepare(48000.0, 256);
-    Match empty; empty.prepare(48000.0, 256);
-    const std::string emptyState = empty.serialize();
+    auto empty = std::make_unique<Match>(); empty->prepare(48000.0, 256);
+    const std::string emptyState = empty->serialize();
     check(target->deserialize(valid), "valid populated state restores");
     target->audioThreadSync();
     check(target->serialize() == valid, "full valid state round-trips byte for byte");

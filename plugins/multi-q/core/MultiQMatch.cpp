@@ -90,9 +90,11 @@ void MultiQMatch::reset()
         correctionLock.unlock();
     }
     correctionValid.store(false, std::memory_order_release);
+    lastMinimumPhase = true;
 
-    irActive.store(-1, std::memory_order_release);
-    irWriteToggle = 0;
+    irUpdates.reset();
+    activeIR = IRSpectra{};
+    activeLatency.store(0, std::memory_order_release);
     convL.reset(); convR.reset();
     hopFill = 0;
     convState.store(ConvState::Inactive, std::memory_order_release);
@@ -102,7 +104,6 @@ void MultiQMatch::reset()
     pendingStartReference.store(false, std::memory_order_relaxed);
     pendingStop.store(false, std::memory_order_relaxed);
     pendingClear.store(false, std::memory_order_relaxed);
-    pendingCorrection.store(PendingCorrection::None, std::memory_order_relaxed);
 }
 
 //==============================================================================
@@ -112,7 +113,8 @@ void MultiQMatch::audioThreadSync()
 {
     // Order matches MultiQ.cpp:511-535 — clear, then stop before start so a
     // simultaneous start always wins.
-    if (pendingClear.exchange(false, std::memory_order_acquire))
+    const bool clearRequested = pendingClear.exchange(false, std::memory_order_acquire);
+    if (clearRequested)
     {
         doClearNow();
         pendingStartCurrent.store(false, std::memory_order_relaxed);
@@ -138,11 +140,14 @@ void MultiQMatch::audioThreadSync()
         learningTarget.store(Target::Reference, std::memory_order_release);
     }
 
-    // Adopt a freshly-published correction (Inactive→Active or refresh).
-    const PendingCorrection correctionCommand =
-        pendingCorrection.exchange(PendingCorrection::None, std::memory_order_acquire);
-    if (correctionCommand == PendingCorrection::Activate)
+    // Consume even on clear, so an older queued activation cannot revive it.
+    // The mailbox slot is immutable while consumed; copy to audio-owned storage
+    // so a later inactive update cannot recycle the IR still needed to fade out.
+    const IRUpdate* update = irUpdates.consume();
+    if (update != nullptr && !clearRequested && update->active)
     {
+        activeIR = update->spectra;
+        activeLatency.store(CONV_HOP + (update->minimumPhase ? 0 : FIR_LENGTH / 2), std::memory_order_release);
         if (convState.load(std::memory_order_relaxed) == ConvState::Inactive)
         {
             convL.reset(); convR.reset(); hopFill = 0;
@@ -158,11 +163,9 @@ void MultiQMatch::audioThreadSync()
         convState.store(ConvState::Active, std::memory_order_release);
         wetGain.setTargetValue(1.0f);
     }
-    else if (correctionCommand == PendingCorrection::Deactivate)
+    else if (update != nullptr && !clearRequested)
     {
-        if (convState.load(std::memory_order_relaxed) == ConvState::Inactive)
-            irActive.store(-1, std::memory_order_release);
-        else
+        if (convState.load(std::memory_order_relaxed) != ConvState::Inactive)
             convState.store(ConvState::Clearing, std::memory_order_release);
     }
 }
@@ -424,9 +427,8 @@ void MultiQMatch::generateMinimumPhaseFIR(const std::array<float, NUM_BINS>& cur
 //==============================================================================
 void MultiQMatch::installFIR()
 {
-    const int slot = irWriteToggle;
-    irWriteToggle ^= 1;
-    IRSpectra& dst = irSpectra[(size_t)slot];
+    IRUpdate& update = irUpdates.writeBuffer();
+    IRSpectra& dst = update.spectra;
 
     std::array<float, CONV_FFT> re{}, im{};
     correctionLock.lock();
@@ -440,8 +442,9 @@ void MultiQMatch::installFIR()
     }
     correctionLock.unlock();
 
-    irActive.store(slot, std::memory_order_release);
-    pendingCorrection.store(PendingCorrection::Activate, std::memory_order_release);
+    update.active = true;
+    update.minimumPhase = lastMinimumPhase;
+    irUpdates.publish();
 }
 
 //==============================================================================
@@ -501,8 +504,7 @@ void MultiQMatch::process(float* left, float* right, bool isStereo, int numSampl
     if (convState.load(std::memory_order_acquire) == ConvState::Inactive) return; // passthrough
     if (numSamples <= 0) return;
 
-    const int slot = irActive.load(std::memory_order_acquire);
-    const IRSpectra* H = (slot >= 0) ? &irSpectra[(size_t)slot] : nullptr;
+    const IRSpectra* H = &activeIR;
     const ConvState state = convState.load(std::memory_order_relaxed);
     wetGain.setTargetValue(state == ConvState::Clearing ? 0.0f : 1.0f);
 
@@ -544,7 +546,7 @@ void MultiQMatch::process(float* left, float* right, bool isStereo, int numSampl
     // Finalise a clear once the wet path has faded out.
     if (state == ConvState::Clearing && !wetGain.isSmoothing() && wetGain.getCurrentValue() < 1e-6f)
     {
-        irActive.store(-1, std::memory_order_release);
+        activeLatency.store(0, std::memory_order_release);
         convState.store(ConvState::Inactive, std::memory_order_release);
         convL.reset(); convR.reset(); hopFill = 0;
     }
@@ -566,16 +568,11 @@ void MultiQMatch::doClearNow()
     // Fade the convolver out (or drop immediately if inactive).
     if (convState.load(std::memory_order_relaxed) != ConvState::Inactive)
         convState.store(ConvState::Clearing, std::memory_order_release);
-    else
-        irActive.store(-1, std::memory_order_release);
 }
 
 int MultiQMatch::getLatencySamples() const noexcept
 {
-    if (convState.load(std::memory_order_acquire) == ConvState::Inactive) return 0;
-    int lat = CONV_HOP;
-    if (!lastMinimumPhase) lat += FIR_LENGTH / 2;   // linear-phase group delay (unused by the shell)
-    return lat;
+    return activeLatency.load(std::memory_order_acquire);
 }
 
 //==============================================================================
@@ -732,7 +729,8 @@ bool MultiQMatch::deserialize(const std::string& base64)
     else
     {
         correctionValid.store(false, std::memory_order_release);
-        pendingCorrection.store(PendingCorrection::Deactivate, std::memory_order_release);
+        irUpdates.writeBuffer().active = false;
+        irUpdates.publish();
     }
     return true;
 }
