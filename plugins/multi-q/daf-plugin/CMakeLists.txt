@@ -57,6 +57,11 @@ if(NOT CMAKE_CROSSCOMPILING)
         ../tests/test_multiq_match_state.cpp
         ../core/MultiQMatch.cpp)
     add_test(NAME MultiQMatchState COMMAND MultiQMatchStateTest)
+
+    find_package(Threads REQUIRED)
+    add_executable(MultiQMatchSnapshotTest ../tests/test_multiq_match_snapshot.cpp)
+    target_link_libraries(MultiQMatchSnapshotTest PRIVATE Threads::Threads)
+    add_test(NAME MultiQMatchSnapshot COMMAND MultiQMatchSnapshotTest)
 endif()
 
 # Fleet gates. Multi-Q 2 registered no ctest at all; see #148.

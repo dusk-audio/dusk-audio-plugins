@@ -36,23 +36,85 @@
 #include <cmath>
 #include <cstdint>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace duskaudio
 {
 
-// Lock-free single-writer / single-reader publish buffer (same contract as the
-// DoubleBuffer in EQMatchProcessor.h): the writer fills writeBuffer() then
-// publish()es; a reader always sees a fully-written snapshot via readBuffer().
+// Single writer, any number of readers. Readers receive an owned snapshot: an
+// audio writer must never reuse storage while a UI/state reader copies it.
+// Writer reservations and reader pins share one atomic word per slot, so a
+// reader that chose an old publication cannot overlap that slot's reuse.
+// The writer never waits. If all spare slots are pinned, skip that display
+// publication and retain the previous complete frame. Once readers quiesce,
+// the next publication includes all accumulated learning, not just its delta.
 template<typename T>
-struct MatchDoubleBuffer
+class MatchSnapshot
 {
-    std::array<T, 2> buffers{};
-    std::atomic<int> readIndex{0};
+    friend struct MatchSnapshotTestAccess;
+    static_assert(std::is_trivially_copyable<T>::value, "Snapshots require nonthrowing plain data copies");
+    static_assert(std::atomic<uint32_t>::is_always_lock_free, "Snapshot publication cannot lock");
+    static constexpr uint32_t kWriting = uint32_t{1} << 31;
+    struct Slot
+    {
+        T value{};
+        mutable std::atomic<uint32_t> users{0};
+    };
+    T pending_{}; // exclusively writer-owned
+    std::array<Slot, 3> slots_{};
+    std::atomic<uint32_t> published_{0};
+    std::atomic<bool> cleared_{true};
 
-    T& writeBuffer() { return buffers[(size_t)(1 - readIndex.load(std::memory_order_relaxed))]; }
-    void publish() { readIndex.fetch_xor(1, std::memory_order_release); }
-    const T& readBuffer() const { return buffers[(size_t)readIndex.load(std::memory_order_acquire)]; }
+public:
+    T& writeBuffer() noexcept { return pending_; }
+    // Clear is not a droppable display frame: stopped readers must not retain
+    // valid learned data after reset/start-learning/clear on the audio thread.
+    void clear() noexcept
+    {
+        pending_ = T{};
+        cleared_.store(true, std::memory_order_release);
+    }
+
+    void publish() noexcept
+    {
+        const uint32_t current = published_.load(std::memory_order_relaxed);
+        for (uint32_t i = 0; i < slots_.size(); ++i)
+        {
+            if (i == current) continue;
+            uint32_t unused = 0;
+            if (!slots_[i].users.compare_exchange_strong(
+                    unused, kWriting, std::memory_order_acquire, std::memory_order_relaxed))
+                continue;
+            slots_[i].value = pending_;
+            // Unlock before publishing: a reader never waits for a parked
+            // writer that has made its still-locked slot the current one.
+            slots_[i].users.store(0, std::memory_order_release);
+            published_.store(i, std::memory_order_release);
+            cleared_.store(false, std::memory_order_release);
+            return;
+        }
+    }
+
+    // Non-realtime readers only. A retry follows a moving publication; a
+    // parked writer cannot hold the published slot's reservation.
+    T readBuffer() const noexcept
+    {
+        for (;;)
+        {
+            if (cleared_.load(std::memory_order_acquire)) return T{};
+            const uint32_t index = published_.load(std::memory_order_acquire);
+            const auto& slot = slots_[index];
+            uint32_t users = slot.users.load(std::memory_order_relaxed);
+            if (users >= kWriting - 1) continue;
+            if (!slot.users.compare_exchange_weak(
+                    users, users + 1, std::memory_order_acquire, std::memory_order_relaxed))
+                continue;
+            const T result = slot.value;
+            slot.users.fetch_sub(1, std::memory_order_release);
+            return result;
+        }
+    }
 };
 
 // Minimal spin lock — used ONLY between non-realtime threads (message-thread
@@ -210,7 +272,7 @@ private:
     // learning
     std::atomic<Target> learningTarget{Target::None};
     LearnedSpectrum currentSpectrum, referenceSpectrum; // audio-thread owned
-    MatchDoubleBuffer<LearnedSpectrum> currentSpectrumBuf, referenceSpectrumBuf;
+    MatchSnapshot<LearnedSpectrum> currentSpectrumBuf, referenceSpectrumBuf;
     std::array<float, FFT_SIZE> hannWindow{};
     std::vector<float> learningInput;   // circular input buffer (FFT_SIZE)
     int learningInputPos = 0;

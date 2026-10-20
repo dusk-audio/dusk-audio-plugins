@@ -78,10 +78,8 @@ void MultiQMatch::reset()
     learningTarget.store(Target::None, std::memory_order_release);
     currentSpectrum.reset();
     referenceSpectrum.reset();
-    currentSpectrumBuf.writeBuffer().reset();   currentSpectrumBuf.publish();
-    currentSpectrumBuf.writeBuffer().reset();   currentSpectrumBuf.publish();
-    referenceSpectrumBuf.writeBuffer().reset(); referenceSpectrumBuf.publish();
-    referenceSpectrumBuf.writeBuffer().reset(); referenceSpectrumBuf.publish();
+    currentSpectrumBuf.clear();
+    referenceSpectrumBuf.clear();
     learningInputPos = 0;
     samplesSinceLastFrame = 0;
 
@@ -126,8 +124,7 @@ void MultiQMatch::audioThreadSync()
     if (pendingStartCurrent.exchange(false, std::memory_order_acquire))
     {
         currentSpectrum.reset();
-        currentSpectrumBuf.writeBuffer().reset(); currentSpectrumBuf.publish();
-        currentSpectrumBuf.writeBuffer().reset(); currentSpectrumBuf.publish();
+        currentSpectrumBuf.clear();
         learningInputPos = 0;
         samplesSinceLastFrame = -(FFT_SIZE - HOP_SIZE);
         learningTarget.store(Target::Current, std::memory_order_release);
@@ -135,8 +132,7 @@ void MultiQMatch::audioThreadSync()
     if (pendingStartReference.exchange(false, std::memory_order_acquire))
     {
         referenceSpectrum.reset();
-        referenceSpectrumBuf.writeBuffer().reset(); referenceSpectrumBuf.publish();
-        referenceSpectrumBuf.writeBuffer().reset(); referenceSpectrumBuf.publish();
+        referenceSpectrumBuf.clear();
         learningInputPos = 0;
         samplesSinceLastFrame = -(FFT_SIZE - HOP_SIZE);
         learningTarget.store(Target::Reference, std::memory_order_release);
@@ -559,10 +555,8 @@ void MultiQMatch::doClearNow()
     learningTarget.store(Target::None, std::memory_order_release);
     currentSpectrum.reset();
     referenceSpectrum.reset();
-    currentSpectrumBuf.writeBuffer().reset(); currentSpectrumBuf.publish();
-    currentSpectrumBuf.writeBuffer().reset(); currentSpectrumBuf.publish();
-    referenceSpectrumBuf.writeBuffer().reset(); referenceSpectrumBuf.publish();
-    referenceSpectrumBuf.writeBuffer().reset(); referenceSpectrumBuf.publish();
+    currentSpectrumBuf.clear();
+    referenceSpectrumBuf.clear();
 
     // correctionValid gates every reader of correctionCurveDB/correctionFIR (UI +
     // serialize), so clearing the flag is enough — leave the arrays untouched so
