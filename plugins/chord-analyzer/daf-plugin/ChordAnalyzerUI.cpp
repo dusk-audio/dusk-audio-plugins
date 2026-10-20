@@ -93,7 +93,8 @@ protected:
             // the UI mirror, retaining local edits between notifications.
             if (!inputsInitialized)
             {
-                for (unsigned i = 0; i < inputParameterCount; ++i) values[i] = engine->parameter(i);
+                const auto inputs = engine->inputValues();
+                for (unsigned i = 0; i < inputParameterCount; ++i) values[i] = inputs[i];
                 inputsInitialized = true;
             }
         }
