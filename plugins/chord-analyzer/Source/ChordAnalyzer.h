@@ -60,7 +60,6 @@ public:
     ChordAnalyzer() = default;
     ChordInfo analyze(const std::vector<int>& midiNotes);
     juce::String getKeyName() const;
-    juce::String getRomanNumeral(const ChordInfo& chord) const;
     std::vector<ChordSuggestion> getSuggestions(const ChordInfo& currentChord,
         SuggestionCategory maxLevel = SuggestionCategory::Advanced) const;
     static juce::String noteToName(int midiNote, bool useFlats = false);
