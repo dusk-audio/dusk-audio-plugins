@@ -639,7 +639,7 @@ std::vector<ChordSuggestion> ChordAnalyzer::getSuggestions(const ChordInfo& curr
     for (int i = 0; i < count; ++i)
     {
         ChordSuggestion s;
-        s.romanNumeral = seeds[i].romanNumeral;
+        s.romanNumeral = juce::String::fromUTF8(seeds[i].romanNumeral);
         s.chordName    = spellSeed(seeds[i]);
         s.category     = seeds[i].category;
         s.reason       = seeds[i].reason;

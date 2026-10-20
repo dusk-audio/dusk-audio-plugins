@@ -976,6 +976,14 @@ static void testSuggestionFacts()
     check("getSuggestionFacts agrees with getSuggestions", mismatches == 0);
     check("no list outruns maxSuggestions", longest <= ChordAnalyzer::maxSuggestions);
 
+    a.setKey(0, false);
+    const auto leadingTone = a.getSuggestions(a.analyze({62, 65, 69}), SuggestionCategory::Basic);
+    bool diminishedSpelling = false;
+    for (const auto& suggestion : leadingTone)
+        if (suggestion.chordName == "Bdim")
+            diminishedSpelling = suggestion.romanNumeral == juce::String::fromUTF8("vii\xC2\xB0");
+    check("leading-tone suggestion uses a UTF-8 degree sign", diminishedSpelling);
+
     // A buffer smaller than the list truncates rather than overruns. The LV2
     // wrapper passes four, and the generator can produce ten.
     a.setKey(0, false);
