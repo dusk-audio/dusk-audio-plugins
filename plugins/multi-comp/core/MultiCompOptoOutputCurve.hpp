@@ -39,6 +39,7 @@ inline constexpr float kT3 = 0.333333333f, kT5 = 0.2f, kT7 = 0.142857143f, kT9 =
 
 inline float asinhPart(float y) noexcept
 {
+    if (!(y == y)) return y;   // NaN stays NaN, so curve() lands it on node 0
     const float a = y < 0.0f ? -y : y;
     float r;
     if (a < 0.25f)
@@ -116,7 +117,8 @@ inline void curve4(const float* x, float* out) noexcept
     const float32x4_t logarithm = vaddq_f32(vmulq_f32(vcvtq_f32_s32(exponent), vdupq_n_f32(kLn2)),
                                             vmulq_f32(vdupq_n_f32(2.0f), odd));
     const float32x4_t r = vbslq_f32(vcltq_f32(a, vdupq_n_f32(0.25f)), series, logarithm);
-    const float32x4_t s = vbslq_f32(negative, vnegq_f32(r), r);
+    // NaN stays NaN (asinhPart), so the spline below lands it on node 0
+    const float32x4_t s = vbslq_f32(vceqq_f32(y, y), vbslq_f32(negative, vnegq_f32(r), r), y);
     // The spline
     constexpr int last = kOptoOutputStageLast;
     const float32x4_t raw = vdivq_f32(vaddq_f32(s, vdupq_n_f32(kOptoOutputStageSMax)), vdupq_n_f32(kOptoOutputStageStep));

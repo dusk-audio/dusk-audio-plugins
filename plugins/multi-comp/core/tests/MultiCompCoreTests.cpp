@@ -9678,6 +9678,10 @@ void testFetDenseBroadbandComplexH3()
     // release depth term and the constants recalibrated with it: H2 moved up to
     // 0.069 dB, H5 up to 1.39 dB; GR and H1 stayed within 0.0023 dB and keep
     // their 2026-10-17 values.
+    // neighbours96 re-recorded 2026-10-20 with the owner's ruling that FET runs
+    // a fixed ~96 kHz internal rate on 88.2/96 kHz hosts (CPU parity): GR moved
+    // up to 0.006 dB, H1 0.008, H2 0.104 (drive 0), H5 0.189 (drive +30);
+    // neighbours48 unchanged.
     // H5 re-recorded 2026-10-20 with the owner's ruling for the FET charge
     // solver's first Newton step spanning the bracket (CPU parity): the
     // quietest rows moved most (-10 dB drive, H5 near -113 dBc: 0.077 dB at

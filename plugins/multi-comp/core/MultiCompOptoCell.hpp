@@ -1498,7 +1498,7 @@ public:
                     const double fillPower = static_cast<double>(cellParams.darkTrapFillPower);
                     const D ownedFill = cellParams.darkTrapFillPower == 2.0f ? releaseDark * filled * filled
                         : releaseDark * expandedPow<L, double>(ch, filled, fillPower, &CellState::fillAt,
-                                                               &CellState::fillInverse, &CellState::fillValue);
+                                                               &CellState::fillInverse, &CellState::fillValue, slows);
                     const D slowed = Kd(1.0) - ownedFill * (Kd(1.0) - Kd(1.0) / vsqrt(vsqrt(Kd(1.0) + square * square)));
                     darkScale = L::sel(slows, slowed, darkScale);
                 }
@@ -1514,7 +1514,7 @@ public:
             {
                 const D reduction = Kd(8.685889638065035) * expandedLog<L>(ch, density, 1.0, &CellState::densityAt,
                                                                            &CellState::densityInverse,
-                                                                           &CellState::densityLog);
+                                                                           &CellState::densityLog, weighted);
                 const auto inRange = weighted && (reduction < Kd(24.0));
                 if (L::any(inRange))
                 {
@@ -1531,7 +1531,8 @@ public:
                         - ((Kd(1.0) - history) * Kd(p[4]) + history * Kd(p[5])) * tent(0.0, 1.5, 2.5);
                     darkScale = L::sel(inRange,
                         darkScale * expandedExp<L>(ch, historyWeight * Kd(static_cast<double>(cellParams.darkHistoryStrength))
-                                                           * correction, &CellState::historyAt, &CellState::historyExp),
+                                                           * correction, &CellState::historyAt, &CellState::historyExp,
+                                                   inRange),
                         darkScale);
                 }
             }
@@ -1624,16 +1625,28 @@ public:
                     const D floorGain = L::toD(applied);
                     const D passed = L::sel(cellConductance > Kd(1.0e-12),
                         vclamp((Kd(1.0) - floorGain) / (floorGain * cellConductance), Kd(0.0), Kd(1.0)), Kd(1.0));
-                    D floorPassed = get<L>(ch, &CellState::floorPassed);
+                    const D storedPassed = get<L>(ch, &CellState::floorPassed);
+                    D floorPassed = storedPassed;
                     const auto pending = get<L>(ch, &CellState::floorPassedPending) > L::i(0);
                     if (L::any(pending))
                         floorPassed = L::sel(pending, passedOf(get<L>(ch, &CellState::floorPassedGain),
                                                                get<L>(ch, &CellState::floorPassedFloorGain)), floorPassed);
-                    floorPassed = L::sel(darkened,
-                        floorPassed + ((Kd(1.0) - dark) * (passed - floorPassed) + dark * Kd(darkFloorStep) * (Kd(1.0) - floorPassed)),
-                        passed);
-                    put<L>(ch, &CellState::floorPassed, floorPassed);
-                    put<L>(ch, &CellState::floorPassedPending, L::i(0));
+                    floorPassed = floorPassed
+                        + ((Kd(1.0) - dark) * (passed - floorPassed) + dark * Kd(darkFloorStep) * (Kd(1.0) - floorPassed));
+                    if (L::all(darkened))
+                    {
+                        put<L>(ch, &CellState::floorPassed, floorPassed);
+                        put<L>(ch, &CellState::floorPassedPending, L::i(0));
+                    }
+                    else
+                    {   // a lane that is not darkened keeps its inputs pending, as on a step with no lane darkened
+                        put<L>(ch, &CellState::floorPassed, L::sel(darkened, floorPassed, storedPassed));
+                        put<L>(ch, &CellState::floorPassedGain,
+                               L::sel(darkened, get<L>(ch, &CellState::floorPassedGain), cellGain));
+                        put<L>(ch, &CellState::floorPassedFloorGain,
+                               L::sel(darkened, get<L>(ch, &CellState::floorPassedFloorGain), floorGain));
+                        put<L>(ch, &CellState::floorPassedPending, L::sel(darkened, L::i(0), L::i(1)));
+                    }
                     applied = L::sel(darkened, L::toF(Kd(1.0) / (Kd(1.0) + floorPassed * cellConductance)), applied);
                 }
             }
@@ -1992,6 +2005,9 @@ public:
     {
         cellParams = p;
         clockPower.setExponent(static_cast<double>(cellParams.timeScaleExponent));
+        // The frequency law's and the trap fill's expansions hold powers with the old exponents; the floor's
+        // restart on their own (floorExpansionMode).
+        state.freqLawInverse = state.fillInverse = OptoPair<double>{std::numeric_limits<double>::quiet_NaN()};
         cachedPrNorm = -1.0;
         cachedElementPr = -1.0;
         buildEmitPrior();
@@ -2218,10 +2234,12 @@ private:
     // x^y (float, y > 0) on its second-order expansion in u = x / x_c - 1 about the last exact evaluation x_c of the
     // channel (lane), redone once |u| passes kFloorPowTolerance: relative error <= |y (y - 1)(y - 2)| / 6 |u|^3.
     // x <= 0 gives 0 as std::pow does for these y; NaN passes through. The caller keeps y fixed while the
-    // expansion lives (an inverse of kStaleInverse forces a new evaluation).
+    // expansion lives (an inverse of kStaleInverse forces a new evaluation). `active`: the lanes whose value is
+    // used (the others keep their expansion).
     template <class L, class T>
     OPTO_FORCE_INLINE auto expandedPow(int ch, std::conditional_t<std::is_same_v<T, float>, typename L::F, typename L::D> x, T y,
-                     OptoPair<T> CellState::* at, OptoPair<T> CellState::* inverse, OptoPair<T> CellState::* value) noexcept
+                     OptoPair<T> CellState::* at, OptoPair<T> CellState::* inverse, OptoPair<T> CellState::* value,
+                     typename L::M active = L::m(true)) noexcept
     {
         using lanes::vabs;
         using V = decltype(x);
@@ -2229,7 +2247,7 @@ private:
         V reference = get<L>(ch, at), reciprocal = get<L>(ch, inverse), exact = get<L>(ch, value);
         V drift = (x - reference) * reciprocal;
         const auto positive = x > K(T(1.0e-30));
-        const auto stale = positive && !(vabs(drift) <= K(T(kFloorPowTolerance)));
+        const auto stale = active && positive && !(vabs(drift) <= K(T(kFloorPowTolerance)));
         if (L::any(stale))
         {
             reference = L::sel(stale, x, reference);
@@ -2249,14 +2267,17 @@ private:
 
     // exp(z) on its third-order expansion in d = z - z_c about the last exact evaluation z_c of the channel (lane),
     // redone once |d| passes kExpTolerance: relative error <= d^4 / 24. A z_c of NaN forces a new evaluation.
+    // `active`: the lanes whose value is used (the others keep their expansion).
     template <class L>
-    OPTO_FORCE_INLINE typename L::D expandedExp(int ch, typename L::D z, OptoPair<double> CellState::* at, OptoPair<double> CellState::* value) noexcept
+    OPTO_FORCE_INLINE typename L::D expandedExp(int ch, typename L::D z, OptoPair<double> CellState::* at,
+                                                OptoPair<double> CellState::* value,
+                                                typename L::M active = L::m(true)) noexcept
     {
         using lanes::vabs;
         const auto Kd = [](double v) noexcept { return L::d(v); };
         typename L::D reference = get<L>(ch, at), exact = get<L>(ch, value);
         typename L::D d = z - reference;
-        const auto stale = !(vabs(d) <= Kd(kExpTolerance));
+        const auto stale = active && !(vabs(d) <= Kd(kExpTolerance));
         if (L::any(stale))
         {
             reference = L::sel(stale, z, reference);

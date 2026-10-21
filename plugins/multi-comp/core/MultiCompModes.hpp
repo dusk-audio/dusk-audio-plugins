@@ -1979,10 +1979,11 @@ private:
     }
     // The three tables' rows packed for lanes (fetFeedbackColourT): the row's lower grid point and its interval,
     // and per table the value there and its rise to the next, the differences fetFeedbackColourRow / At take.
-    // Row 0 holds the last values with a zero rise, for NaN.
+    // Row 0 holds the last values with a zero rise, for NaN. One array, as the lanes read it four values at a time:
+    // low, span, k2, k2Rise | k3, k3Rise, lowK2, lowK2Rise.
     struct FetColourPacked
     {
-        float low, span, k2, k2Rise, k3, k3Rise, lowK2, lowK2Rise;
+        float v[8];
     };
     static const FetColourPacked& fetColourPackedRow(size_t row) noexcept
     {
@@ -1992,10 +1993,10 @@ private:
             const auto& b = kFetFeedbackK3Coefficients;
             const auto& c = kFetFeedbackLowFrequencyK2Coefficients;
             std::array<FetColourPacked, 18> rows{};
-            rows[0] = {0.0f, 1.0f, a.back(), 0.0f, b.back(), 0.0f, c.back(), 0.0f};
+            rows[0] = {{0.0f, 1.0f, a.back(), 0.0f, b.back(), 0.0f, c.back(), 0.0f}};
             for (size_t i = 1; i < rows.size(); ++i)
-                rows[i] = {g[i - 1], g[i] - g[i - 1], a[i - 1], a[i] - a[i - 1], b[i - 1], b[i] - b[i - 1],
-                           c[i - 1], c[i] - c[i - 1]};
+                rows[i] = {{g[i - 1], g[i] - g[i - 1], a[i - 1], a[i] - a[i - 1], b[i - 1], b[i] - b[i - 1],
+                            c[i - 1], c[i] - c[i - 1]}};
             return rows;
         }();
         return packed[row];
@@ -4355,8 +4356,8 @@ private:
         for (int lane = 0; lane < L::kLanes; ++lane)
             rows[lane] = &fetColourPackedRow(laneM<L>(number, lane) ? fetColourRowIndex(laneF<L>(g, lane)) : 0);
         F v[8];
-        lanes::vtranspose4(&rows[0]->low, &rows[L::kLanes - 1]->low, v);
-        lanes::vtranspose4(&rows[0]->k3, &rows[L::kLanes - 1]->k3, v + 4);
+        lanes::vtranspose4(&rows[0]->v[0], &rows[L::kLanes - 1]->v[0], v);
+        lanes::vtranspose4(&rows[0]->v[4], &rows[L::kLanes - 1]->v[4], v + 4);
         const F fraction = (g - v[0]) / v[1];
         k2 = v[2] + fraction * v[3];
         k3 = v[4] + fraction * v[5];
@@ -5259,9 +5260,12 @@ private:
         // moved: within 0.003 dB of its charge and slow population, the tail reading within 0.0002 dB, the same
         // tail-knee state, no transient shaping and the same knobs (holdCarryUnder). The carried ratio is the
         // evaluation's value without the drive times this step's drive, extrapolated to first order in the charge
-        // and the slow population (the exponent moves at most ~0.001 neper there: second-order error ~5e-7). It
-        // decides whether the step charges and seeds the solver in place of the bound and the first evaluation;
-        // the solver's evaluations stay exact, so a charging step still ends on a root within its tolerance.
+        // and the slow population. It does not follow the tip's dependence on the pre-step reduction (leak, release
+        // knee, 4:1 depth term), so its error is bounded by the validity window, not by the expansion: review
+        // 2026-10-21, ~25M carried steps at 44.1-192 kHz, 25 missed charges with exact overshoots <= 7e-5, output
+        // within 0.007 dB of exact evaluation in 5 ms windows above -80 dBFS. It decides whether the step charges
+        // and seeds the solver in place of the bound and the first evaluation; the solver's evaluations stay exact,
+        // so a charging step still ends on a root within its tolerance.
         const F charge0 = u * u;
         const F slowFloat = L::toF(s.slowGrDb);
         M carried = L::m(false);

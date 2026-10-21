@@ -43,9 +43,10 @@ inline bool blockIsAllFinite(const float* samples, int numSamples) noexcept
     return worstExponent != 0x7f800000u;
 }
 
-// max(start, |x[i]|) over a block of NaN-free samples. The maximum does not
-// depend on the order it is taken in, so the four-lane form gives the same
-// value as the plain loop.
+// max(start, |x[i]|) over a block, start not NaN. A NaN sample is passed over:
+// std::max(peak, NaN) keeps the peak, and the four-lane form takes maxNum,
+// which does the same. The maximum does not depend on the order it is taken
+// in, so the four-lane form gives the same value as the plain loop.
 inline float blockAbsPeak(const float* x, int n, float start) noexcept
 {
     float peak = start;
@@ -54,8 +55,8 @@ inline float blockAbsPeak(const float* x, int n, float start) noexcept
     if (n >= 4)
     {
         float32x4_t lanes = vdupq_n_f32(start);
-        for (; i + 4 <= n; i += 4) lanes = vmaxq_f32(lanes, vabsq_f32(vld1q_f32(x + i)));
-        peak = vmaxvq_f32(lanes);
+        for (; i + 4 <= n; i += 4) lanes = vmaxnmq_f32(lanes, vabsq_f32(vld1q_f32(x + i)));
+        peak = vmaxnmvq_f32(lanes);
     }
 #endif
     for (; i < n; ++i) peak = std::max(peak, std::abs(x[i]));
@@ -534,9 +535,11 @@ private:
 //
 // The record holds the last kRecord inputs filtered at a factor of 2 or 4 (at
 // factor 1 the upsampler keeps no history). A longer idle spell replays only
-// those from a reset: the halfband FIRs read at most 63 host samples back (the
-// 127-tap stage), and at 4x the inner stage only reaches the last few outer
-// outputs, so every tap a later output reads comes out of that span.
+// those: the halfband FIRs read at most 63 host samples back (the 127-tap
+// stage), and at 4x the inner stage only reaches the last few outer outputs,
+// so the replay rewrites every tap a later output reads. Nothing is reset: a
+// 4x inner stage that a replay at 2x does not step keeps its history, as it
+// does in an upsampler that runs throughout.
 template <class Upsampler>
 class LazyUpsampler
 {
@@ -567,7 +570,6 @@ public:
         record[static_cast<size_t>(recordWrite)] = input;
         recordWrite = (recordWrite + 1) & kRecordMask;
         if (recorded < kRecord) ++recorded;
-        else overflowed = true;
     }
     // idle() for each of n samples.
     void idleBlock(const float* input, int n) noexcept
@@ -581,7 +583,6 @@ public:
             position = (position + 1) & kRecordMask;
         }
         recordWrite = position;
-        if (recorded + n > kRecord) overflowed = true;
         recorded = std::min(recorded + n, kRecord);
     }
 
@@ -589,11 +590,10 @@ private:
     static constexpr int kRecord = 128;
     static constexpr int kRecordMask = kRecord - 1;
     static int normalised(int factor) noexcept { return factor == 4 ? 4 : factor == 2 ? 2 : 1; }
-    void clearRecord() noexcept { recorded = 0; overflowed = false; }
+    void clearRecord() noexcept { recorded = 0; }
     void catchUp() noexcept
     {
         if (recorded == 0) return;
-        if (overflowed) upsampler.reset();
         float phases[4];
         for (int k = recorded; k > 0; --k)
             upsampler.upsampleSample(record[static_cast<size_t>((recordWrite - k) & kRecordMask)], phases);
@@ -604,7 +604,6 @@ private:
     std::vector<float> blockScratch;   // upsampleBlock()
     std::array<float, kRecord> record{};
     int recordWrite = 0, recorded = 0;
-    bool overflowed = false;
 };
 
 class MultiCompLookupTables
