@@ -157,10 +157,19 @@ and candidate renders never enter a repo; the owner commits.
   (`processMultiband` splits the already delayed input), so it adds up to 10 ms of latency and no lead; with an
   external sidechain the lead is real. Either split an undelayed copy for the detector or drop Multiband from
   `globalLookaheadForMode`; `--global-lookahead-scope` prints Multiband's onset lead (0.00 dB today).
-- Latency held constant across modes (2026-10-19): the plugin pads each mode's output to Opto's latency
-  (`MultiCompLatencyPad.hpp`, `MultiCompDSP::getHostLatencySamples()`). Only the lookaheads (Global
-  Lookahead in Digital and Multiband, Digital's own) still move it, and the AU wrapper still never tells
-  the host when they do.
+- Latency held constant across modes (2026-10-19): each mode's output is padded to Opto's latency
+  (`MultiCompLatencyPad.hpp`, `MultiCompDSP::getHostLatencySamples()`; 73 samples at 44.1 / 48 kHz, 79 at
+  88.2 / 96, 91 at 176.4 / 192, where Opto's output stage runs at the fixed mode rate). Since 2026-10-21 the
+  DSP does it (`setHostLatencyPadding`, on in the plugin): the dry, bypass and listen paths are delayed straight
+  to the host latency, so a mode switch never moves them, and only the wet path is padded, ahead of Mix, where a
+  ducked switch changes its padding inside the mute. Multiband's dry is its split-band sum, so it gets the wet
+  path's padding in a pad of its own. With static controls, manual makeup and Analog Noise off, every mode's padded
+  output is its unpadded output delayed, bit for bit (the Mix ramps, the BUS fade and the noise run at host time,
+  after the pad). Auto makeup measures the padded signals, so its 64-sample windows fall elsewhere on the
+  programme: its gain is the one an unpadded render takes with the input starting a padding later (up to 0.5 dB
+  apart in the first seconds of pink noise, 0.01-0.06 dB after 8 s). Only the lookaheads (Global Lookahead in
+  Digital and Multiband, Digital's own) still move the report, and the AU wrapper still never tells the host when
+  they do.
 - Sixteen automatable parameters have no control on any face (the modern-face JUCE port puts Oversampling,
   External Sidechain, SC Listen, Analog Noise and SC HP back on). FET and Studio FET share every `fet_*`
   parameter, so Curve and Transient set on the Studio FET face act in FET mode. Done 2026-10-19: host names
@@ -190,7 +199,7 @@ From the CPU-parity review (2026-10-21; report in the tools repo, `mc2-alpha2-re
   before Multiband.
 - Entering VCA restarts the anti-alias filters, so its first ~1.4 ms is near silent; entering BUS from rest runs up
   to 14 dB above its steady level for ~10 ms.
-- `getLatencySamples()` reports the requested mode from the request on, also while the duck still holds the old one.
-- Windows: `MultiCompCoreTests.cpp` compiles only with `/Zc:lambda` under MSVC (a few lambdas read local constexpr
-  values), and `MultiCompPluginLayer` fails its `__FILE__` path check on backslashes; CI builds no tests on Windows.
-  On Windows ARM64 (`_M_ARM64`) `ScopedFlushDenormals` does nothing.
+- `getLatencySamples()` reports the requested mode from the request on, also while the duck still holds the old one
+  (with the lookaheads at 0 the host report, `getHostLatencySamples()`, is the same in every mode).
+- Windows: `MultiCompPluginLayer` fails its `__FILE__` path check on backslashes (CI runs only `MultiCompCore` on
+  Windows). On Windows ARM64 (`_M_ARM64`) `ScopedFlushDenormals` does nothing.
