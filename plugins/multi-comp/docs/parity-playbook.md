@@ -175,3 +175,19 @@ and candidate renders never enter a repo; the owner commits.
   `MultiCompOptoLfDynamicHarmonics.hpp` (about 390 KB) are included nowhere.
 - The CLAP version string is empty (framework), and alpha and stable both report 1.0.0.
 - No user manual yet.
+
+From the CPU-parity review (2026-10-21; report in the tools repo, `mc2-alpha2-review-2026-10-21.md`):
+- Mode switches during playback step the waveform wherever the latency changes between the two modes, and the
+  entered mode starts from rest (48 kHz VCA <-> Opto: 1.0-7.6x a tone's slope depending on the switch's phase;
+  alpha1 too). Only a switch that changes the anti-alias oversampler's factor (Opto / FET against the others at
+  88.2 kHz and above) is ducked (owner ruling); the same duck could cover every switch.
+- An Oversampling change replays the anti-alias path at its new factor without a duck, the mechanism the duck
+  removes from mode switches (5.6-11x at 48 kHz, 11-27x at 96 kHz; VCA, Digital, Opto). Leaving Multiband steps
+  11-39x at 96-192 kHz: the anti-alias latency goes from 0 to 67 samples and the path still holds its history from
+  before Multiband.
+- Entering VCA restarts the anti-alias filters, so its first ~1.4 ms is near silent; entering BUS from rest runs up
+  to 14 dB above its steady level for ~10 ms.
+- `getLatencySamples()` reports the requested mode from the request on, also while the duck still holds the old one.
+- Windows: `MultiCompCoreTests.cpp` compiles only with `/Zc:lambda` under MSVC (a few lambdas read local constexpr
+  values), and `MultiCompPluginLayer` fails its `__FILE__` path check on backslashes; CI builds no tests on Windows.
+  On Windows ARM64 (`_M_ARM64`) `ScopedFlushDenormals` does nothing.
