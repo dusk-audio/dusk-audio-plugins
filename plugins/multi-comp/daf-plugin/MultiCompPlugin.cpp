@@ -40,7 +40,6 @@ inline std::array<float, 3> orderedCrossovers(float f1, float f2, float f3) noex
 
 #include "DafPlugin.hpp"
 #include "MultiCompAccess.hpp"
-#include "../core/MultiCompLatencyPad.hpp"
 #include "MultiCompOutputVu.hpp"
 #include "MultiCompParams.hpp"
 #include "MultiCompProgramPresets.hpp"
@@ -63,6 +62,8 @@ public:
                 [](const multicompp::BandParam& d, int) { return multicompp::hostDefault(d); });
             values[static_cast<size_t>(i)].store(def, std::memory_order_relaxed);
         }
+        // One host latency in every mode (MultiCompDSP::getHostLatencySamples).
+        dsp.setHostLatencyPadding(true);
     }
 
     float gr() const noexcept { return dsp.getGainReduction(); }
@@ -284,7 +285,7 @@ protected:
     }
 
     void activate() override { prepare(getSampleRate(), getBufferSize()); }
-    void deactivate() override { dsp.reset(); outputVu.reset(); latencyPad.reset(); }
+    void deactivate() override { dsp.reset(); outputVu.reset(); }
     void sampleRateChanged(double sr) override { prepare(sr, getBufferSize()); }
     void bufferSizeChanged(uint32_t bs) override { prepare(getSampleRate(), bs); }
 
@@ -314,7 +315,6 @@ protected:
             && multicompp::plugin_detail::hasStereoExternalSidechainPorts(activeInputs, inputs);
         if (useSc) { const float* sc[2] = {inputs[2], inputs[3]}; dsp.processBlockExternal(inputs, sc, outputs, activeChannels, static_cast<int>(frames)); }
         else dsp.processBlock(inputs, outputs, activeChannels, static_cast<int>(frames));
-        latencyPad.process(outputs, activeChannels, static_cast<int>(frames), dsp.getLatencyPaddingSamples());
         outputVu.process(outputs, activeChannels, static_cast<int>(frames));
         // setLatency() is documented as callable from run(). The CLAP wrapper
         // latches a change here and publishes it at the next activate(), which
@@ -354,7 +354,6 @@ private:
     {
         dsp.prepare(sampleRate, static_cast<int>(bufferSize));
         outputVu.prepare(sampleRate);
-        latencyPad.prepare(dsp.getMaximumLatencyPaddingSamples());
         pushParameters();
         updateLatency();
     }
@@ -364,7 +363,6 @@ private:
 
     duskaudio::MultiCompDSP dsp;
     multicompp::OutputVu outputVu;
-    duskaudio::LatencyPad latencyPad;
     // Formats other than AU always present the full input set, and ioChanged()
     // is only called where a host narrows it, so the declared count is the
     // correct default rather than a placeholder.

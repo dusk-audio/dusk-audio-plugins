@@ -291,13 +291,19 @@ void MultiCompDSP::prepare(double sr, int blockSize)
     fetStartupInputPeak = {{0.0f, 0.0f}};
     fetStartupActiveSamples = {{0, 0}};
     fetStartupSilentSamples = {{0, 0}};
-    const size_t dryDelaySize = static_cast<size_t>(std::max(1, antiAliasLatency + static_cast<int>(std::ceil(sampleRate * 0.01)) + 1));
+    // The dry, bypass and listen histories reach the host latency with host
+    // latency padding on: the deepest mode's base latency (anti-alias plus
+    // Opto's output stage) instead of the anti-alias latency alone.
+    const int deepestBase = getMaximumLatencyPaddingSamples();
+    // Each lookahead is rounded on its own, so two of them can come to more
+    // than 20 ms rounded up (221 + 221 at 22.05 kHz).
+    const int longestLookahead = lookaheadSamples(10.0f);
+    const size_t dryDelaySize = static_cast<size_t>(std::max(1, deepestBase + longestLookahead + 1));
     for (auto& line : dryPathDelay) line.assign(dryDelaySize, 0.0f);
     dryPathWrite = {{0, 0}};
     // Raw bypass history must cover the largest runtime latency combination:
-    // global lookahead plus Digital lookahead, in addition to the AA maximum.
-    const size_t bypassDelaySize = static_cast<size_t>(std::max(1, antiAliasLatency
-        + static_cast<int>(std::ceil(sampleRate * 0.02)) + 1));
+    // global lookahead plus Digital lookahead, in addition to the deepest base.
+    const size_t bypassDelaySize = static_cast<size_t>(std::max(1, deepestBase + 2 * longestLookahead + 1));
     for (auto& line : bypassDelay) line.assign(bypassDelaySize, 0.0f);
     bypassWrite = 0;
     for (auto& line : sidechainListenDelay) line.assign(bypassDelaySize, 0.0f);
@@ -328,10 +334,14 @@ void MultiCompDSP::prepare(double sr, int blockSize)
     masterGR.store(0.0f, std::memory_order_relaxed);
     inputLevel.store(-60.0f, std::memory_order_relaxed);
     outputLevel.store(-60.0f, std::memory_order_relaxed);
+    latencyPad.prepare(getMaximumLatencyPaddingSamples(), maxBlock);
+    multibandDryPad.prepare(getMaximumLatencyPaddingSamples(), maxBlock);
 }
 
 void MultiCompDSP::reset()
 {
+    latencyPad.reset();
+    multibandDryPad.reset();
     busCompressionMeter.reset();
     busMeterReading.store(0.0f, std::memory_order_relaxed);
     busFadeControl = 0.0f;
@@ -577,7 +587,10 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
         if (switchDuckPosition > 0)
             switchDuckHeldMode = lastMode;              // audible: fade the old mode out first
         else
-            switchDuckMuted = kSwitchDuckMuteSamples;   // already silent: switch now, mute the realignment
+        {   // already silent: switch now, mute the realignment
+            switchDuckMuted = kSwitchDuckMuteSamples;
+            holdPaddingThroughSwitch(lastMode);
+        }
     }
     if (switchDuckHeldMode >= 0 && switchDuckPosition < nSamples)
     {
@@ -587,6 +600,7 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
         // withdrawn ends audible, and the rest then runs as any block does.
         if (switchDuckHeldMode >= 0 && switchDuckPosition == 0)
         {
+            holdPaddingThroughSwitch(switchDuckHeldMode);
             switchDuckHeldMode = -1;
             switchDuckMuted = kSwitchDuckMuteSamples;
         }
@@ -640,6 +654,8 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
                 globalLookaheadWrite[1] = 0;
                 std::fill(sidechainListenDelay[1].begin(), sidechainListenDelay[1].end(), 0.0f);
                 sidechainListenWrite[1] = 0;
+                latencyPad.clearChannel(1);
+                multibandDryPad.clearChannel(1);
             }
             vcaLifecycleChannels = nCh;
         }
@@ -684,6 +700,11 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     const float digitalLookaheadMs = std::clamp(
         params.digitalLookahead.load(std::memory_order_relaxed), 0.0f, 10.0f);
     const int blockLatency = latencySamplesForMode(mode, globalLookaheadMs, digitalLookaheadMs);
+    // With host latency padding the dry, bypass and listen paths are delayed
+    // straight to the host latency (blockLatency + this), which every mode
+    // shares, so a mode switch never moves them; the wet path gets the same
+    // padding on its own, before Mix (padWetPath).
+    const int hostPadding = hostLatencyPadding ? paddingForMode(static_cast<int>(mode)) : 0;
     const bool requestedBypass = params.bypass.load(std::memory_order_relaxed);
     const bool requestedSidechainListen = params.globalSidechainListen.load(std::memory_order_relaxed);
     sidechainListenRamp.setTarget(requestedSidechainListen ? 1.0f : 0.0f);
@@ -833,17 +854,15 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     // Capture the latency-aligned dry, but never emit it here: `out` may alias
     // `in`, and every stage below still has to read the untouched input. The
     // settled-bypass output is written from `bypassDry` at the end instead.
-    processLatencyHistory(in, nCh, nSamples, blockLatency);
+    processLatencyHistory(in, nCh, nSamples, blockLatency + hostPadding);
     const float* processingIn[kMaxChannels] = {in[0], nCh > 1 ? in[1] : in[0]};
-    const int globalLookaheadDelay = static_cast<int>(std::round(
-        globalLookaheadMs * 0.001f * static_cast<float>(sampleRate)));
+    const int globalLookaheadDelay = lookaheadSamples(globalLookaheadMs);
     prepareLookahead(in, processingIn, nCh, nSamples, globalLookaheadDelay);
-    const int digitalDryDelay = mode == MultiCompMode::Digital
-        ? static_cast<int>(std::round(digitalLookaheadMs * 0.001f * static_cast<float>(sampleRate))) : 0;
+    const int digitalDryDelay = mode == MultiCompMode::Digital ? lookaheadSamples(digitalLookaheadMs) : 0;
     // Opto's output stage runs 2x oversampled with a constant extra latency.
     const int optoStageDelay = mode == MultiCompMode::Opto ? optoStageLatencyHost(sampleRate) : 0;
-    const int dryDelay = mode == MultiCompMode::Multiband ? 0
-        : antiAliasLatency + digitalDryDelay + optoStageDelay;
+    const int dryDelay = (mode == MultiCompMode::Multiband ? 0
+        : antiAliasLatency + digitalDryDelay + optoStageDelay) + hostPadding;
     for (int ch = 0; ch < nCh; ++ch)
     {
         auto& line = dryPathDelay[static_cast<size_t>(ch)];
@@ -851,6 +870,12 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
         delayLineBlock(line.data(), size, dryPathWrite[static_cast<size_t>(ch)], std::min(dryDelay, size - 1),
                        processingIn[ch], dry.data() + static_cast<size_t>(ch * maxBlock), nSamples);
     }
+    // Multiband replaces this dry with its split-band sum and pads that after
+    // the M/S decode below; the other modes feed the same input to its pad,
+    // so entering Multiband reads the samples that came before, not silence.
+    const bool isMulti = mode == MultiCompMode::Multiband;
+    if (hostLatencyPadding && !isMulti)
+        multibandDryPad.feed(processingIn, nCh, nSamples);
     // VCA coupling histories belong to physical L/R channels. Keep them
     // ahead of the optional M/S transform so changing the routing cannot
     // reinterpret stored low-frequency state. The dry copy above is unfiltered.
@@ -923,7 +948,6 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     processRange(processingIn, filteredSidechain, out, nCh, nSamples,
                  useExternalSidechain, autoMakeup, mode, linkMode,
                  actualOversampling, digitalLookaheadMs);
-    const bool isMulti = mode == MultiCompMode::Multiband;
     if (nCh > 1 && linkMode == 1)
     {
         for (int i = 0; i < nSamples; ++i)
@@ -942,6 +966,12 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
                 dry[rightIndex] = dryMid - drySide;
             }
         }
+    }
+    if (hostLatencyPadding && isMulti)
+    {
+        // Decoded first: the pad's history stays in the L/R domain it is fed in.
+        float* dryChannels[kMaxChannels] = {dry.data(), dry.data() + maxBlock};
+        multibandDryPad.process(dryChannels, nCh, nSamples, hostPadding);
     }
     if (mode == MultiCompMode::FET)
     {
@@ -1100,12 +1130,13 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     if (advanceSwitchDuck(nSamples))
         for (int ch = 0; ch < nCh; ++ch)
             for (int i = 0; i < nSamples; ++i) out[ch][i] *= switchDuckCurve[static_cast<size_t>(i)];
+    padWetPath(out, nCh, nSamples);
     const float targetMix = globalMixTarget(mode);
     globalMixSmoother.setTarget(targetMix);
     // The processed output carries the full reported latency (AA plus both
     // lookaheads). Keep the monitor history running even while Listen is off so
     // either direction of the crossfade starts between time-aligned signals.
-    const int listenDelay = blockLatency;
+    const int listenDelay = blockLatency + hostPadding;
     processSidechainListenHistory(filteredSidechain, nCh, nSamples, listenDelay);
     // The gain stages after the mode (Mix, auto makeup, noise, BUS fade,
     // Listen, the bypass crossfade) run as one pass per channel. Their ramps
@@ -1295,6 +1326,40 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     firstBlock = false;
 }
 
+// Host latency padding of the wet path, ahead of Mix: lastMode is the mode this
+// part ran in; a ducked switch's held padding (holdPaddingThroughSwitch) runs
+// first. The dry, bypass and listen paths reach the host latency on their own.
+void MultiCompDSP::padWetPath(float* const* out, int nCh, int nSamples) noexcept
+{
+    if (!hostLatencyPadding) return;
+    int done = 0;
+    if (paddingHoldSamples > 0)
+    {
+        done = std::min(nSamples, paddingHoldSamples);
+        latencyPad.process(out, nCh, done, paddingForMode(paddingHoldMode));
+        paddingHoldSamples -= done;
+    }
+    if (done == nSamples) return;
+    float* rest[kMaxChannels] = {out[0] + done, nCh > 1 ? out[1] + done : out[0] + done};
+    latencyPad.process(rest, nCh, nSamples - done, getLatencyPaddingSamples());
+}
+
+// The padded output lags the DSP's by the old mode's padding, so at a ducked
+// switch it still plays the last of the fade-out: changing the padding there
+// would skip or replay those samples. The old padding stays until the deepest
+// padding has passed, inside the switch's mute, where both delays read
+// silence. Another switch in the meantime extends it from the same mode.
+void MultiCompDSP::holdPaddingThroughSwitch(int previousMode) noexcept
+{
+    if (paddingHoldSamples == 0) paddingHoldMode = previousMode;
+    paddingHoldSamples = getMaximumLatencyPaddingSamples();
+}
+
+int MultiCompDSP::paddingForMode(int mode) const noexcept
+{
+    return getMaximumLatencyPaddingSamples() - baseLatencyForMode(static_cast<MultiCompMode>(std::clamp(mode, 0, 7)));
+}
+
 void MultiCompDSP::processLatencyHistory(const float* const* in, int nCh,
                                          int nSamples, int delay) noexcept
 {
@@ -1354,6 +1419,8 @@ bool MultiCompDSP::switchChangesAudioFactor(int fromMode, int toMode) const noex
 
 void MultiCompDSP::resetSwitchDuck() noexcept
 {
+    paddingHoldMode = -1;
+    paddingHoldSamples = 0;
     switchDuckHeldMode = -1;
     switchDuckMuted = 0;
     switchDuckPosition = switchDuckFadeSamples;
@@ -2573,12 +2640,15 @@ int MultiCompDSP::getLatencySamples() const noexcept
 int MultiCompDSP::latencySamplesForMode(MultiCompMode mode, float globalLookaheadMs,
                                         float digitalLookaheadMs) const noexcept
 {
-    const int lookahead = static_cast<int>(std::round(globalLookaheadForMode(mode, globalLookaheadMs)
-        * 0.001f * static_cast<float>(sampleRate)));
+    const int lookahead = lookaheadSamples(globalLookaheadForMode(mode, globalLookaheadMs));
     const int digital = mode == MultiCompMode::Digital
-        ? static_cast<int>(std::round(std::clamp(digitalLookaheadMs, 0.0f, 10.0f)
-            * 0.001f * static_cast<float>(sampleRate))) : 0;
+        ? lookaheadSamples(std::clamp(digitalLookaheadMs, 0.0f, 10.0f)) : 0;
     return baseLatencyForMode(mode) + lookahead + digital;
+}
+
+int MultiCompDSP::lookaheadSamples(float milliseconds) const noexcept
+{
+    return static_cast<int>(std::round(milliseconds * 0.001f * static_cast<float>(sampleRate)));
 }
 
 int MultiCompDSP::baseLatencyForMode(MultiCompMode mode) const noexcept
@@ -2606,8 +2676,7 @@ int MultiCompDSP::getHostLatencySamples() const noexcept
 int MultiCompDSP::getLatencyPaddingSamples() const noexcept
 {
     // The mode the last block ran in, which is what the caller is padding.
-    const int index = lastMode >= 0 ? lastMode : std::clamp(params.mode.load(std::memory_order_relaxed), 0, 7);
-    return getMaximumLatencyPaddingSamples() - baseLatencyForMode(static_cast<MultiCompMode>(index));
+    return paddingForMode(lastMode >= 0 ? lastMode : params.mode.load(std::memory_order_relaxed));
 }
 
 } // namespace duskaudio

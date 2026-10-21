@@ -8,6 +8,7 @@
 #include "MultiCompVcaLaw.hpp"
 #include "MultiCompAutoGain.hpp"
 #include "MultiCompHelpers.hpp"
+#include "MultiCompLatencyPad.hpp"
 #include "../../shared-daf/dsp/DuskCrossover.hpp"
 #include "../../shared-daf/dsp/DuskDenormals.hpp"
 #include "../../shared-daf/dsp/DuskFilters.hpp"
@@ -91,9 +92,16 @@ public:
     // The latency still differs between modes (Opto's output stage adds a
     // little, Multiband adds none), and a report that moves with the mode makes
     // VST3 and CLAP hosts restart the plugin while AU hosts never hear of it.
-    // A plugin holds its report at getHostLatencySamples() by delaying each
-    // block's output by getLatencyPaddingSamples(): the deepest mode's latency
-    // minus that of the mode the block ran in. Only the lookaheads move it.
+    // A plugin holds its report at getHostLatencySamples() with host latency
+    // padding on: the dry, bypass and listen paths are delayed straight to the
+    // host latency, which every mode shares, so a mode switch never moves them
+    // (Multiband's split-band dry is padded like its wet path), and each
+    // part's wet path is delayed by getLatencyPaddingSamples(), the
+    // deepest mode's latency minus that of the mode the part ran in, ahead of
+    // Mix; a ducked switch keeps the old padding until its mute has covered the
+    // change. Only the lookaheads move the report. Off by default: the core
+    // tests read each mode's own latency.
+    void setHostLatencyPadding(bool enabled) noexcept { hostLatencyPadding = enabled; }
     int getHostLatencySamples() const noexcept;
     int getLatencyPaddingSamples() const noexcept;
     int getMaximumLatencyPaddingSamples() const noexcept;
@@ -166,6 +174,9 @@ private:
     bool switchChangesAudioFactor(int fromMode, int toMode) const noexcept;
     void resetSwitchDuck() noexcept;
     bool advanceSwitchDuck(int nSamples) noexcept;
+    void padWetPath(float* const* out, int nCh, int nSamples) noexcept;
+    void holdPaddingThroughSwitch(int previousMode) noexcept;
+    int paddingForMode(int mode) const noexcept;
     static float advanceFetStartupBlend(int& activeSamples,
                                         int fullCorrectionSamples,
                                         int correctionEndSamples) noexcept;
@@ -173,6 +184,8 @@ private:
                               float digitalLookaheadMs) const noexcept;
     // The part of a mode's latency its controls cannot change.
     int baseLatencyForMode(MultiCompMode mode) const noexcept;
+    // A lookahead in samples. The latency, the delays and the delay lines' sizes all round it here.
+    int lookaheadSamples(float milliseconds) const noexcept;
 
     MultiCompParameterState params;
     float busFadeControl = 0.0f;
@@ -297,6 +310,15 @@ private:
     int switchDuckPosition = 1;    // fade position in samples: 0 silent .. switchDuckFadeSamples full
     int switchDuckMuted = 0;       // samples still muted after the switch
     int switchDuckFadeSamples = 1;
+    // Host latency padding (setHostLatencyPadding): the wet path delayed to the
+    // deepest mode's latency, part by part. Multiband's dry is its split-band
+    // sum, built after the dry delay line, so it takes the same padding in a
+    // pad of its own, which the other modes keep fed with their dry input.
+    bool hostLatencyPadding = false;
+    LatencyPad latencyPad;
+    LatencyPad multibandDryPad;
+    int paddingHoldMode = -1;      // the mode whose padding a ducked switch keeps (holdPaddingThroughSwitch)
+    int paddingHoldSamples = 0;    // samples it keeps it for
     int autoGainHoldSamples = 0;
     double autoGainInputPower = 0.0;
     double autoGainOutputPower = 0.0;
