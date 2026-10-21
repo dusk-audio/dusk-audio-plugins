@@ -165,8 +165,12 @@ protected:
         draw->PushClipRect(point(36, 213), point(748, 234), true);
         text(38, 214, 14, dim, notes.empty() ? "MIDI input / all channels" : notes.c_str());
         draw->PopClipRect();
-        ImGui::SetCursorScreenPos(point(36, 212)); ImGui::InvisibleButton("noteNames", {710 * scale, 22 * scale});
-        if (!notes.empty()) tip(notes.c_str());
+        ImGui::SetCursorScreenPos(point(36, 127));
+        ImGui::BeginDisabled(!shown.isValid || shown.midiNotes.empty());
+        ImGui::InvisibleButton("chordDrag", {710 * scale, 107 * scale});
+        fileDragSource([&] {return midi::temporaryChordFile(shown);});
+        ImGui::EndDisabled();
+        tip((notes + "\nDrag this voicing into a DAW MIDI track, or use Save chord MIDI.").c_str());
         text(770, 125, 12, amber, previewing ? "HISTORY PREVIEW" : "LIVE ANALYSIS", true);
         if (button("Save chord MIDI...", 770, 153, 154, 34, shown.isValid && !shown.midiNotes.empty()))
             save(midi::chordBytes(shown), "chord.mid");
@@ -324,8 +328,10 @@ private:
         {
             if (i != 0) ImGui::SameLine();
             ImGui::PushID(static_cast<int>(i));
-            if (ImGui::Button(view.history[i].name.c_str(), {0, 26 * scale})) preview = view.history[i];
-            tip("Preview this chord and export its original voicing. Return to live follows incoming notes.");
+            const bool clicked = ImGui::Button(view.history[i].name.c_str(), {0, 26 * scale});
+            const bool dragged = fileDragSource([&] {return midi::temporaryChordFile(view.history[i]);});
+            if (clicked && !dragged) preview = view.history[i];
+            tip("Click to preview this chord. Drag it into a DAW MIDI track to export its original voicing.");
             ImGui::PopID();
         }
         ImGui::EndChild();
@@ -369,9 +375,40 @@ private:
             save(midi::sessionBytes(session.events, session.tempoBPM), "chord_progression.mid");
         }
         tip("Export completed chords at the recording's captured tempo. Stop first to include the held final chord.");
+        button("Drag MIDI", 462, 659, 118, 32, engine && view.recordedEvents > 0);
+        fileDragSource([&] {return midi::temporarySessionFile(engine->session());});
+        tip("Drag the progression into a DAW MIDI track at the recording's captured tempo. Stop first to include the held final chord.");
         char summary[128];
         std::snprintf(summary, sizeof(summary), "%s  /  %d events  /  Host %.1f BPM", view.recording ? "RECORDING" : "READY", view.recordedEvents, view.tempoBPM);
-        text(478, 666, 16, view.recording ? amber : dim, summary);
+        text(598, 666, 14, view.recording ? amber : dim, summary);
+    }
+    template<class MakeFile>
+    bool fileDragSource(MakeFile makeFile)
+    {
+        const ImGuiID item = ImGui::GetItemID();
+        if (ImGui::IsItemActivated()) {dragItem = item; dragConsumed = false;}
+        if (ImGui::IsItemActive() && dragItem == item && !dragConsumed
+            && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 4 * scale))
+        {
+            dragConsumed = true;
+            try
+            {
+                const auto file = makeFile();
+                if (file.empty()) status = "Could not create the MIDI clip.";
+                else
+                {
+                    const auto path = file.u8string();
+                    status = getWindow().startFileDrag(path.c_str())
+                           ? "Drop the MIDI clip into a DAW track."
+                           : "Could not start MIDI dragging. Use Save MIDI to export the clip.";
+                }
+            }
+            catch (...) {status = "Could not create the MIDI clip.";}
+            // The native drag owns the physical release, which may occur in
+            // another app. A consumed history drag must not become a click.
+            ImGui::GetIO().AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        }
+        return dragItem == item && dragConsumed;
     }
     void save(midi::Bytes bytes, const char* defaultName)
     {
@@ -454,6 +491,8 @@ private:
     std::string saveError;
     bool saveRequested = false, overwrite = false;
     bool inputsInitialized = false;
+    ImGuiID dragItem = 0;
+    bool dragConsumed = false;
     duskdaf::DuskImGuiTextInputFocus textInputFocus;
     duskdaf::CrispFontSet regular, bold;
     float scale = 1;

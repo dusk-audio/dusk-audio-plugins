@@ -2,6 +2,7 @@
 // Real CLAP editor + MIDI host. XTest drives controls and the no-portal save
 // form; screenshots and actual exported MIDI prove the UI consumes live data.
 #include "ChordMidiExport.hpp"
+#include "ChordAnalyzerFileDropTarget.hpp"
 #include <clap/entry.h>
 #include <clap/plugin.h>
 #include <clap/ext/gui.h>
@@ -164,6 +165,38 @@ struct Fixture
         XSync(display, False); pump(3);
     }
     void moveAway() {XTestFakeMotionEvent(display, -1, 950, 710, CurrentTime); pump(4);}
+    void dragPump(FileDropTarget& target, int count)
+    {for (int i = 0; i < count; ++i) {pump(1); target.pump();}}
+    void startDrag(FileDropTarget& target, int x, int y)
+    {
+        focus();
+        XTestFakeMotionEvent(display, -1, x, y, CurrentTime); XSync(display, False); dragPump(target, 3);
+        XTestFakeButtonEvent(display, 1, True, CurrentTime); XSync(display, False); dragPump(target, 3);
+        for (int step = 1; step <= 20; ++step)
+        {
+            XTestFakeMotionEvent(display, -1, x + (1100 - x) * step / 20, y + (150 - y) * step / 20, CurrentTime);
+            XSync(display, False); dragPump(target, 2);
+        }
+    }
+    std::filesystem::path dropFile(int x, int y, const midi::Bytes& expected)
+    {
+        FileDropTarget target(display);
+        const Atom clipboard = XInternAtom(display, "CLIPBOARD", False);
+        XSetSelectionOwner(display, clipboard, target.window, CurrentTime); XSync(display, False);
+        startDrag(target, x, y);
+        XTestFakeButtonEvent(display, 1, False, CurrentTime); XSync(display, False); dragPump(target, 20);
+        check(target.enters == 1 && target.offersUri && target.positions > 0 && target.copyOnly,
+              "real gesture advertises and negotiates a native file-URI copy");
+        check(target.drops == 1 && target.transfers == 1, "one real gesture delivers one native file drop");
+        const auto file = target.file();
+        check(!file.empty() && read(file) == expected, "the destination reads the exact captured MIDI bytes");
+        check(target.data.find("%20") != std::string::npos && target.data.find("%23") != std::string::npos
+              && target.data.find("%3F") != std::string::npos && target.data.find("%25") != std::string::npos,
+              "native URI encoding preserves reserved characters in the actual temporary file path");
+        check(XGetSelectionOwner(display, target.selection) == None, "finished transfer releases its native selection");
+        check(XGetSelectionOwner(display, clipboard) == target.window, "native dragging preserves the existing clipboard owner");
+        return file;
+    }
     void focus()
     {
         Window root, owner, *children = nullptr; unsigned count = 0;
@@ -262,6 +295,10 @@ int main(int argc, char** argv)
     // desktop bus. All mouse/keyboard input belongs to the isolated X display.
     setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/dev/null", 1);
     Fixture f; f.artifacts = std::filesystem::absolute(argv[2]); std::filesystem::create_directories(f.artifacts);
+    // Exercise URI-reserved paths outside the uploaded screenshot tree:
+    // artifact archives reject '?' even though X11 file paths permit it.
+    const auto dragDirectory = f.artifacts.parent_path().parent_path() / std::filesystem::u8path("drag temp #?% \xc3\xa9");
+    std::filesystem::create_directories(dragDirectory); setenv("TMPDIR", dragDirectory.c_str(), 1);
     void* library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
     const auto* entry = library ? static_cast<const clap_plugin_entry_t*>(dlsym(library, "clap_entry")) : nullptr;
     const bool loaded = entry && entry->init(argv[1]);
@@ -320,6 +357,26 @@ int main(int argc, char** argv)
     f.click(724, 405); check(read(single).size() == 7, "Cancel preserves the existing file");
     f.saveChord(single, true);
     check(read(single) == midi::chordBytes(chord({52, 55, 60})), "real Save chord action exports the exact played voicing");
+    f.dropFile(120, 150, midi::chordBytes(chord({52,55,60})));
+    {
+        FileDropTarget rejected(f.display, false);
+        f.startDrag(rejected, 120, 150);
+        XTestFakeButtonEvent(f.display, 1, False, CurrentTime); XSync(f.display, False); f.dragPump(rejected, 12);
+        check(rejected.enters == 1 && rejected.positions > 0 && rejected.drops == 0 && rejected.leaves == 1,
+              "a native target rejection cancels the drop without blocking the editor");
+        check(XGetSelectionOwner(f.display, rejected.selection) == None, "rejected drops release the selection");
+    }
+    {
+        FileDropTarget cancelled(f.display);
+        f.startDrag(cancelled, 120, 150);
+        const auto escape = XKeysymToKeycode(f.display, XK_Escape);
+        XTestFakeKeyEvent(f.display, escape, True, CurrentTime); XTestFakeKeyEvent(f.display, escape, False, CurrentTime);
+        XTestFakeButtonEvent(f.display, 1, False, CurrentTime); XSync(f.display, False); f.dragPump(cancelled, 12);
+        check(cancelled.enters == 1 && cancelled.drops == 0 && cancelled.leaves == 1,
+              "Escape cancels an accepted native drag before it drops");
+        check(XGetSelectionOwner(f.display, cancelled.selection) == None, "Escape releases native drag ownership");
+    }
+    f.dropFile(120, 150, midi::chordBytes(chord({52,55,60})));
 
     f.click(80, 675);
     const auto first = f.play({60, 64, 67});
@@ -348,12 +405,18 @@ int main(int argc, char** argv)
     f.moveAway();
     const auto liveKeys = f.pixels(20, 248, 506, 156);
     const auto liveSuggestions = f.pixels(20, 509, 920, 120);
+    f.dropFile(520, 675, sessionBytes);
+    f.dropFile(42, 460, midi::chordBytes(chord({52,55,60})));
+    f.moveAway();
+    check(f.pixels(20, 248, 506, 156) == liveKeys && f.pixels(20, 509, 920, 120) == liveSuggestions,
+          "a history drag exports its original voicing without becoming a preview click");
     f.click(42, 460); f.capture("preview.ppm");
     check(f.pixels(20, 248, 506, 156) != liveKeys, "history click previews its original note frame");
     check(f.pixels(20, 509, 920, 120) != liveSuggestions, "history preview recomputes suggestions for the previewed chord");
     const auto previewFile = f.artifacts / "preview.mid"; std::filesystem::remove(previewFile);
     f.saveChord(previewFile);
     check(read(previewFile) == midi::chordBytes(chord({52,55,60})), "history export preserves the original voiced chord");
+    f.dropFile(120, 150, midi::chordBytes(chord({52,55,60})));
     f.click(840, 208); f.moveAway();
     check(f.pixels(20, 248, 506, 156) == liveKeys, "Return to live safely restores incoming notes");
     check(f.pixels(20, 509, 920, 120) == liveSuggestions, "Return to live restores live harmonic suggestions");
@@ -390,7 +453,35 @@ int main(int argc, char** argv)
     check(f.value("Key Root") == 7 && f.pixels(24, 75, 120, 27) != beforeAutomation,
           "host automation updates the rendered selector after local editing");
     check(f.output.begins == 5 && f.output.ends == 5, "host automation does not create extra UI gestures");
-    f.gui->hide(f.plugin); f.gui->destroy(f.plugin);
+    {
+        FileDropTarget empty(f.display);
+        f.startDrag(empty, 120, 150);
+        XTestFakeButtonEvent(f.display, 1, False, CurrentTime); XSync(f.display, False); f.dragPump(empty, 5);
+        check(empty.enters == 0 && empty.drops == 0 && XGetSelectionOwner(f.display, empty.selection) == None,
+              "an empty live display cannot start a native MIDI drag");
+    }
+    f.play({60,64,67});
+    {
+        FileDropTarget previewTarget(f.display, true, true);
+        f.startDrag(previewTarget, 120, 150); f.dragPump(previewTarget, 12);
+        const auto exported = previewTarget.file();
+        const auto captured = midi::chordBytes(chord({60,64,67}));
+        check(previewTarget.transfers == 1 && !exported.empty() && read(exported) == captured,
+              "a native target can inspect the captured file before the button is released");
+        f.play({62,65,69}); f.dragPump(previewTarget, 4);
+        check(read(exported) == captured, "live note changes do not mutate the active drag's file");
+        f.gui->hide(f.plugin); f.gui->destroy(f.plugin); f.dragPump(previewTarget, 5);
+        check(previewTarget.drops == 0 && previewTarget.leaves == 1
+              && XGetSelectionOwner(f.display, previewTarget.selection) == None,
+              "closing the editor cancels the live native drag and releases its selection");
+        check(!exported.empty() && read(exported) == captured,
+              "the exported MIDI remains readable after its editor closes");
+        const int grab = XGrabPointer(f.display, previewTarget.window, False, ButtonReleaseMask,
+                                     GrabModeAsync, GrabModeAsync, None, None, CurrentTime);
+        check(grab == GrabSuccess, "editor teardown releases the native pointer grab");
+        if (grab == GrabSuccess) XUngrabPointer(f.display, CurrentTime);
+        XTestFakeButtonEvent(f.display, 1, False, CurrentTime); XSync(f.display, False);
+    }
     {std::thread t([&] {audioThread = true; f.plugin->stop_processing(f.plugin);}); t.join();}
     f.plugin->deactivate(f.plugin); f.plugin->destroy(f.plugin);
     XDestroyWindow(f.display, f.parent); XCloseDisplay(f.display); entry->deinit(); dlclose(library);

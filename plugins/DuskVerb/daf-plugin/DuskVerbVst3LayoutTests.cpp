@@ -299,14 +299,25 @@ int main(int argc, char **argv)
                     {
                         char units[129]{};
                         for (int j = 0; j < 128 && info.units[j]; ++j) units[j] = char(info.units[j]);
-                        check(std::strcmp(units, duskverb::hasSkew(d) ? "" : d.unit) == 0,
-                              "host units match physical versus normalized parameter domain");
+                        // Custom text already contains its unit. VST3 hosts append
+                        // this metadata, so only non-custom physical text uses it.
+                        const bool customText = d.enumLabels == nullptr;
+                        check(std::strcmp(units, customText || duskverb::hasSkew(d) ? "" : d.unit) == 0,
+                              "host units avoid duplicating custom value-text units");
                         ++checkedUnits;
                     }
                 if (std::strcmp(title, "Dry/Wet") == 0)
                 {
                     parameter.id = info.param_id;
                     foundMix = true;
+                    v3_str_128 formatted{};
+                    check(v3_cpp_obj(controller)->get_parameter_string_for_value(controller, info.param_id, 0.25,
+                                                                                 formatted) == V3_OK,
+                          "host receives custom mix value text");
+                    char text[129]{};
+                    for (int j = 0; j < 128 && formatted[j]; ++j) text[j] = char(formatted[j]);
+                    check(std::strcmp(text, "25.0%") == 0,
+                          "host mix value text includes exactly one percentage unit");
                 }
             }
             check(foundMix, "mix parameter enumerated");
