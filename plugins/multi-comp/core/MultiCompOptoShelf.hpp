@@ -123,6 +123,10 @@ public:
 
     void reset() noexcept { s1 = s2 = 0.0; }
 
+    // The coefficients, for a caller that keeps the state elsewhere (the OPTO cell's channel pairs).
+    struct Coefficients { double b0, b1, b2, a1, a2; };
+    Coefficients coefficients() const noexcept { return {b0, b1, b2, a1, a2}; }
+
     float process(float input) noexcept
     {
         const double x = input;
@@ -130,6 +134,21 @@ public:
         s1 = b1 * x - a1 * y + s2;
         s2 = b2 * x - a2 * y;
         return static_cast<float>(y);
+    }
+
+    // process() over n values of each of two filters, in place: the two recursions run interleaved, each with
+    // process()'s arithmetic and its state in registers for the block.
+    static void processPairBlock(OptoSubsonicHighPass& left, OptoSubsonicHighPass& right, float* x0, float* x1,
+                                 int n) noexcept
+    {
+        OptoSubsonicHighPass l = left, r = right;
+        for (int k = 0; k < n; ++k)
+        {
+            x0[k] = l.process(x0[k]);
+            x1[k] = r.process(x1[k]);
+        }
+        left.s1 = l.s1; left.s2 = l.s2;
+        right.s1 = r.s1; right.s2 = r.s2;
     }
 
 private:

@@ -48,7 +48,6 @@
 
 #include "DuskDenormals.hpp"
 #include "MultiCompDSP.hpp"
-#include "MultiCompLatencyPad.hpp"
 #include "MultiCompParams.hpp"
 #include "MultiCompProgramPresets.hpp"
 
@@ -219,13 +218,13 @@ public:
     explicit CoreRunner(const Settings& beforeActivation = {})
     {
         values = defaults();
+        dsp.setHostLatencyPadding(true);   // as the plugin runs it
         for (const auto& [index, value] : beforeActivation)
         {
             values[index] = value;
             push(index, value);
         }
         dsp.prepare(kRate, static_cast<int>(kMaxBlock));
-        latencyPad.prepare(dsp.getMaximumLatencyPaddingSamples());
         for (const auto& [index, value] : values)
             push(index, value);
     }
@@ -259,7 +258,6 @@ public:
                     dsp.processBlockExternal(audio, sidechain, outputs, 2, static_cast<int>(n));
                 else
                     dsp.processBlock(audio, outputs, 2, static_cast<int>(n));
-                latencyPad.process(outputs, 2, static_cast<int>(n), dsp.getLatencyPaddingSamples());
             }
             out.l.insert(out.l.end(), outL.begin(), outL.begin() + n);
             out.r.insert(out.r.end(), outR.begin(), outR.begin() + n);
@@ -292,7 +290,6 @@ private:
     }
 
     duskaudio::MultiCompDSP dsp;
-    duskaudio::LatencyPad latencyPad;
     Settings values;
 };
 

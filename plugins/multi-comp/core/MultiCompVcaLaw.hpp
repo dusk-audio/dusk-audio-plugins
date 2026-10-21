@@ -13,6 +13,9 @@
 #include <cmath>
 #include <complex>
 #include <limits>
+#if defined(__aarch64__)
+#include <arm_neon.h>
+#endif
 
 namespace duskaudio::vcaLaw
 {
@@ -161,60 +164,90 @@ inline constexpr std::array<DetectorCalibrationPoint, 7> kHotDetectorExtension{{
     {27.0f, 11.03193047061749f},
 }};
 
+// Every calibration knot above sits on a whole dB, so the segment holding a
+// level x is the one ending at the first knot at or above ceil(x). The three
+// tables join into one row per whole dB from -55 to +27 (base below 0, hot up
+// to +15, the extension above), each row holding its segment's two knots; the
+// interpolation is the arithmetic the per-table linear searches ran, so the
+// result is the same float, and a four-lane form (MultiCompModes) can read it.
+struct DetectorSegment { float aLevel, aCorrection, bLevel, bCorrection; };
+
+template <size_t N>
+constexpr bool knotsOnWholeDb(const std::array<DetectorCalibrationPoint, N>& knots)
+{
+    for (size_t i = 0; i < N; ++i)
+        if (knots[i].levelDb != static_cast<float>(static_cast<int>(knots[i].levelDb))
+            || (i > 0 && !(knots[i].levelDb > knots[i - 1].levelDb)))
+            return false;
+    return N >= 2;
+}
+
+static_assert(knotsOnWholeDb(kDetectorCalibration) && knotsOnWholeDb(kHotDetectorCalibration)
+                  && knotsOnWholeDb(kHotDetectorExtension),
+              "detector calibration knots must be increasing whole dB values");
+static_assert(kHotDetectorCalibrationStrength != 0.0f && kHotDetectorExtensionStrength != 0.0f,
+              "the joined segment table assumes both hot tables are on");
+static_assert(kDetectorCalibration.back().levelDb == 0.0f && kHotDetectorCalibration.front().levelDb == 0.0f
+                  && kHotDetectorCalibration.back().levelDb == kHotDetectorExtension.front().levelDb,
+              "the three tables must meet at 0 dB and at the extension's start");
+
+inline constexpr int kDetectorSegmentLowest =
+    static_cast<int>(kDetectorCalibration.front().levelDb) + 1;                         // -55
+inline constexpr int kDetectorSegmentHighest = static_cast<int>(kHotDetectorExtension.back().levelDb);   // +27
+
+template <size_t N>
+constexpr void addSegments(std::array<DetectorSegment, kDetectorSegmentHighest - kDetectorSegmentLowest + 1>& rows,
+                           const std::array<DetectorCalibrationPoint, N>& knots)
+{
+    for (int level = static_cast<int>(knots[0].levelDb) + 1;
+         level <= static_cast<int>(knots[N - 1].levelDb); ++level)
+    {
+        size_t i = 1;
+        while (static_cast<float>(level) > knots[i].levelDb) ++i;
+        rows[static_cast<size_t>(level - kDetectorSegmentLowest)]
+            = {knots[i - 1].levelDb, knots[i - 1].correctionDb, knots[i].levelDb, knots[i].correctionDb};
+    }
+}
+
+constexpr std::array<DetectorSegment, kDetectorSegmentHighest - kDetectorSegmentLowest + 1> detectorSegments()
+{
+    std::array<DetectorSegment, kDetectorSegmentHighest - kDetectorSegmentLowest + 1> rows{};
+    addSegments(rows, kDetectorCalibration);
+    addSegments(rows, kHotDetectorCalibration);
+    addSegments(rows, kHotDetectorExtension);
+    return rows;
+}
+
+inline constexpr auto kDetectorSegments = detectorSegments();
+
+// Interpolation inside a segment.
+inline float detectorSegmentCorrectionDb(const DetectorSegment& s, float levelDb) noexcept
+{
+    const float t = (levelDb - s.aLevel) / (s.bLevel - s.aLevel);
+    return s.aCorrection + (s.bCorrection - s.aCorrection) * t;
+}
+
+// Above the extension's last knot: its outer secant continued.
+inline float detectorExtrapolatedCorrectionDb(float inputPeakDb) noexcept
+{
+    // Continue the measured outer secant; a held endpoint would
+    // remove half the local derivative from an RMS ripple.
+    // The continuation beyond +27 dB has not been characterized.
+    const auto& a = kHotDetectorExtension[kHotDetectorExtension.size() - 2];
+    const auto& b = kHotDetectorExtension.back();
+    return b.correctionDb + (inputPeakDb - b.levelDb)
+        * (b.correctionDb - a.correctionDb) / (b.levelDb - a.levelDb);
+}
+
 inline float detectorCorrectionDb(float inputPeakDb) noexcept
 {
     if (!std::isfinite(inputPeakDb)
         || inputPeakDb <= kDetectorCalibration.front().levelDb)
         return 0.0f;
-    if (kHotDetectorCalibrationStrength != 0.0f && inputPeakDb > 0.0f)
-    {
-        if constexpr (kHotDetectorExtensionStrength != 0.0f)
-        {
-            if (inputPeakDb > kHotDetectorExtension.front().levelDb)
-            {
-                for (size_t i = 1; i < kHotDetectorExtension.size(); ++i)
-                {
-                    const auto& a = kHotDetectorExtension[i - 1];
-                    const auto& b = kHotDetectorExtension[i];
-                    if (inputPeakDb <= b.levelDb)
-                    {
-                        const float t = (inputPeakDb - a.levelDb)
-                                      / (b.levelDb - a.levelDb);
-                        return a.correctionDb + (b.correctionDb - a.correctionDb) * t;
-                    }
-                }
-                // Continue the measured outer secant; a held endpoint would
-                // remove half the local derivative from an RMS ripple.
-                // The continuation beyond +27 dB has not been characterized.
-                const auto& a = kHotDetectorExtension[kHotDetectorExtension.size() - 2];
-                const auto& b = kHotDetectorExtension.back();
-                return b.correctionDb + (inputPeakDb - b.levelDb)
-                    * (b.correctionDb - a.correctionDb) / (b.levelDb - a.levelDb);
-            }
-        }
-        for (size_t i = 1; i < kHotDetectorCalibration.size(); ++i)
-        {
-            const auto& a = kHotDetectorCalibration[i - 1];
-            const auto& b = kHotDetectorCalibration[i];
-            if (inputPeakDb <= b.levelDb)
-            {
-                const float t = (inputPeakDb - a.levelDb) / (b.levelDb - a.levelDb);
-                return a.correctionDb + (b.correctionDb - a.correctionDb) * t;
-            }
-        }
-        return kHotDetectorCalibration.back().correctionDb;
-    }
-    for (size_t i = 1; i < kDetectorCalibration.size(); ++i)
-    {
-        const auto& a = kDetectorCalibration[i - 1];
-        const auto& b = kDetectorCalibration[i];
-        if (inputPeakDb <= b.levelDb)
-        {
-            const float t = (inputPeakDb - a.levelDb) / (b.levelDb - a.levelDb);
-            return a.correctionDb + (b.correctionDb - a.correctionDb) * t;
-        }
-    }
-    return kDetectorCalibration.back().correctionDb;
+    if (inputPeakDb > kHotDetectorExtension.back().levelDb)
+        return detectorExtrapolatedCorrectionDb(inputPeakDb);
+    const int row = static_cast<int>(std::ceil(inputPeakDb)) - kDetectorSegmentLowest;
+    return detectorSegmentCorrectionDb(kDetectorSegments[static_cast<size_t>(row)], inputPeakDb);
 }
 
 // DETECTOR ONSET: the reference's RMS state cannot climb faster than a fixed
@@ -287,6 +320,44 @@ public:
         previousOutput = y;
         const float filtered = static_cast<float>(y);
         return strength == 1.0f ? filtered : input + strength * (filtered - input);
+    }
+
+    // process() on a left and a right filter over a block, in place. Each lane
+    // performs process()'s double arithmetic; the pair shares the instructions.
+    static void processPair(LowFrequencyHighPass& left, LowFrequencyHighPass& right,
+                            float* x0, float* x1, int n, float strength) noexcept
+    {
+        if (strength == 0.0f) return;
+#if defined(__aarch64__)
+        const float64x2_t feed = {left.feed, right.feed};
+        const float64x2_t feedback = {left.feedback, right.feedback};
+        float64x2_t previousInput = {left.previousInput, right.previousInput};
+        float64x2_t previousOutput = {left.previousOutput, right.previousOutput};
+        for (int i = 0; i < n; ++i)
+        {
+            const float32x2_t input = {x0[i], x1[i]};
+            const float64x2_t in = vcvt_f64_f32(input);
+            const float64x2_t y = vaddq_f64(vmulq_f64(feed, vsubq_f64(in, previousInput)),
+                                            vmulq_f64(feedback, previousOutput));
+            previousInput = in;
+            previousOutput = y;
+            float32x2_t filtered = vcvt_f32_f64(y);
+            if (strength != 1.0f)
+                filtered = vadd_f32(input, vmul_n_f32(vsub_f32(filtered, input), strength));
+            x0[i] = vget_lane_f32(filtered, 0);
+            x1[i] = vget_lane_f32(filtered, 1);
+        }
+        left.previousInput = vgetq_lane_f64(previousInput, 0);
+        right.previousInput = vgetq_lane_f64(previousInput, 1);
+        left.previousOutput = vgetq_lane_f64(previousOutput, 0);
+        right.previousOutput = vgetq_lane_f64(previousOutput, 1);
+#else
+        for (int i = 0; i < n; ++i)
+        {
+            x0[i] = left.process(x0[i], strength);
+            x1[i] = right.process(x1[i], strength);
+        }
+#endif
     }
 
 private:
@@ -460,12 +531,76 @@ public:
                                   + weight * (filtered * scale - input));
     }
 
+    // process() on a left and a right response over a block, in place. Each
+    // lane performs process()'s double arithmetic; the pair shares the instructions.
+    static void processPair(SidechainResponse& left, SidechainResponse& right,
+                            float* x0, float* x1, int n, bool engaged) noexcept
+    {
+        if (n <= 0) return;
+#if defined(__aarch64__)
+        const double targetValue = engaged ? 1.0 : 0.0;
+        for (SidechainResponse* r : {&left, &right})
+            if (!r->initialized)
+            {
+                r->weight = targetValue;
+                r->initialized = true;
+            }
+        constexpr size_t kSections = kSectionCount;
+        float64x2_t b0[kSections], b1[kSections], a1[kSections], state[kSections];
+        for (size_t k = 0; k < kSections; ++k)
+        {
+            b0[k] = float64x2_t{left.sections[k].b0, right.sections[k].b0};
+            b1[k] = float64x2_t{left.sections[k].b1, right.sections[k].b1};
+            a1[k] = float64x2_t{left.sections[k].a1, right.sections[k].a1};
+            state[k] = float64x2_t{left.sections[k].state, right.sections[k].state};
+        }
+        const float64x2_t target = vdupq_n_f64(targetValue);
+        const float64x2_t step = {left.step, right.step};
+        const float64x2_t scale = {left.scale, right.scale};
+        float64x2_t weight = {left.weight, right.weight};
+        for (int i = 0; i < n; ++i)
+        {
+            // weight < target: min(target, weight + step); weight > target: max(target, weight - step)
+            const float64x2_t rising = vminq_f64(target, vaddq_f64(weight, step));
+            const float64x2_t falling = vmaxq_f64(target, vsubq_f64(weight, step));
+            weight = vbslq_f64(vcltq_f64(weight, target), rising,
+                               vbslq_f64(vcgtq_f64(weight, target), falling, weight));
+            const float64x2_t input = vcvt_f64_f32(float32x2_t{x0[i], x1[i]});
+            float64x2_t filtered = input;
+            for (size_t k = 0; k < kSections; ++k)
+            {
+                const float64x2_t y = vaddq_f64(vmulq_f64(b0[k], filtered), state[k]);
+                state[k] = vsubq_f64(vmulq_f64(b1[k], filtered), vmulq_f64(a1[k], y));
+                filtered = y;
+            }
+            const float32x2_t out = vcvt_f32_f64(
+                vaddq_f64(input, vmulq_f64(weight, vsubq_f64(vmulq_f64(filtered, scale), input))));
+            x0[i] = vget_lane_f32(out, 0);
+            x1[i] = vget_lane_f32(out, 1);
+        }
+        for (size_t k = 0; k < kSections; ++k)
+        {
+            left.sections[k].state = vgetq_lane_f64(state[k], 0);
+            right.sections[k].state = vgetq_lane_f64(state[k], 1);
+        }
+        left.weight = vgetq_lane_f64(weight, 0);
+        right.weight = vgetq_lane_f64(weight, 1);
+#else
+        for (int i = 0; i < n; ++i)
+        {
+            x0[i] = left.process(x0[i], engaged);
+            x1[i] = right.process(x1[i], engaged);
+        }
+#endif
+    }
+
 private:
     struct Section
     {
         double b0 = 1.0, b1 = 0.0, a1 = 0.0, state = 0.0;
     };
-    std::array<Section, 8> sections{};
+    static constexpr size_t kSectionCount = 8;
+    std::array<Section, kSectionCount> sections{};
     double scale = 1.0, step = 1.0, weight = 0.0;
     bool initialized = false;
 };
@@ -603,6 +738,48 @@ public:
         const double z = lpB[0] * y + lpB[1] * lx1 - lpA1 * ly1;
         lx1 = y; ly1 = z;
         return static_cast<float>(z);
+    }
+
+    // process() on a left and a right voicing over a block, in place: each
+    // lane performs process()'s double arithmetic.
+    static void processPair(OutputVoicing& left, OutputVoicing& right, float* x0, float* x1, int n) noexcept
+    {
+#if defined(__aarch64__)
+        const auto pair = [](double l, double r) noexcept { return float64x2_t{l, r}; };
+        const float64x2_t b0 = pair(left.b[0], right.b[0]), b1 = pair(left.b[1], right.b[1]),
+                          b2 = pair(left.b[2], right.b[2]), a1 = pair(left.a[1], right.a[1]),
+                          a2 = pair(left.a[2], right.a[2]), l0 = pair(left.lpB[0], right.lpB[0]),
+                          l1 = pair(left.lpB[1], right.lpB[1]), la = pair(left.lpA1, right.lpA1);
+        float64x2_t px1 = pair(left.px1, right.px1), px2 = pair(left.px2, right.px2),
+                    py1 = pair(left.py1, right.py1), py2 = pair(left.py2, right.py2),
+                    lx1 = pair(left.lx1, right.lx1), ly1 = pair(left.ly1, right.ly1);
+        for (int i = 0; i < n; ++i)
+        {
+            const float64x2_t x = vcvt_f64_f32(float32x2_t{x0[i], x1[i]});
+            const float64x2_t y = vsubq_f64(vsubq_f64(vaddq_f64(vaddq_f64(vmulq_f64(b0, x), vmulq_f64(b1, px1)),
+                                                                vmulq_f64(b2, px2)),
+                                                      vmulq_f64(a1, py1)),
+                                            vmulq_f64(a2, py2));
+            px2 = px1; px1 = x; py2 = py1; py1 = y;
+            const float64x2_t z = vsubq_f64(vaddq_f64(vmulq_f64(l0, y), vmulq_f64(l1, lx1)), vmulq_f64(la, ly1));
+            lx1 = y; ly1 = z;
+            const float32x2_t out = vcvt_f32_f64(z);
+            x0[i] = vget_lane_f32(out, 0);
+            x1[i] = vget_lane_f32(out, 1);
+        }
+        left.px1 = vgetq_lane_f64(px1, 0); right.px1 = vgetq_lane_f64(px1, 1);
+        left.px2 = vgetq_lane_f64(px2, 0); right.px2 = vgetq_lane_f64(px2, 1);
+        left.py1 = vgetq_lane_f64(py1, 0); right.py1 = vgetq_lane_f64(py1, 1);
+        left.py2 = vgetq_lane_f64(py2, 0); right.py2 = vgetq_lane_f64(py2, 1);
+        left.lx1 = vgetq_lane_f64(lx1, 0); right.lx1 = vgetq_lane_f64(lx1, 1);
+        left.ly1 = vgetq_lane_f64(ly1, 0); right.ly1 = vgetq_lane_f64(ly1, 1);
+#else
+        for (int i = 0; i < n; ++i)
+        {
+            x0[i] = left.process(x0[i]);
+            x1[i] = right.process(x1[i]);
+        }
+#endif
     }
 
 private:

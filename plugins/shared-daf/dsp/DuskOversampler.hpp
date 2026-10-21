@@ -63,6 +63,18 @@ public:
         return acc;
     }
 
+    // out() right after a stuffed zero was pushed behind a real sample, as the
+    // zero-stuffing upsamplers below always do. Every side tap then reads a
+    // stuffed +0 (L/2 is odd for every halfband length 4m+3), so out() is the
+    // centre term plus a run of +-0 products. With a positive first tap those
+    // add up to exactly centre + 0.0f (only a -0 centre changes, to +0), so this
+    // returns the identical float without the NSide multiply-adds.
+    float outAfterStuffedZero() const noexcept
+    {
+        static_assert((L / 2) % 2 == 1, "zero-stuffed phases need an odd centre offset");
+        return 0.5f * buf[(pos - L / 2) & kMask] + 0.0f;
+    }
+
 private:
     float buf[kRing] = {};
     int   pos = 0;
@@ -105,6 +117,9 @@ namespace hbtaps
         0.0004730913f, -0.0003460624f, 0.0002470644f, -0.0001712807f,
         0.0001145247f, -0.0000730276f, 0.0000436856f, -0.0000314876f,
     };
+
+    // HalfbandFIR::outAfterStuffedZero() relies on the first side tap being positive.
+    static_assert(kA[0] > 0.0f && kB[0] > 0.0f && kAwide[0] > 0.0f, "first side tap must be positive");
 
     // Stage-A tap-set descriptors for OversamplerT. L = full tap length, NSide =
     // one-sided nonzero taps, taps = the set.
@@ -167,7 +182,7 @@ public:
         upA.push(x);
         const float a0 = 2.0f * upA.out(StageA::taps);
         upA.push(0.0f);
-        const float a1 = 2.0f * upA.out(StageA::taps);
+        const float a1 = 2.0f * upA.outAfterStuffedZero();
         if (factor == 2)
         {
             phases[0] = a0;
@@ -178,11 +193,11 @@ public:
         upB.push(a0);
         phases[0] = 2.0f * upB.out(hbtaps::kB);
         upB.push(0.0f);
-        phases[1] = 2.0f * upB.out(hbtaps::kB);
+        phases[1] = 2.0f * upB.outAfterStuffedZero();
         upB.push(a1);
         phases[2] = 2.0f * upB.out(hbtaps::kB);
         upB.push(0.0f);
-        phases[3] = 2.0f * upB.out(hbtaps::kB);
+        phases[3] = 2.0f * upB.outAfterStuffedZero();
     }
 
     float downsampleSample(const float* phases) noexcept
@@ -212,7 +227,7 @@ private:
     float process2x(float x, Fn&& f) noexcept
     {
         upA.push(x);        const float a0 = 2.0f * upA.out(StageA::taps);
-        upA.push(0.0f);     const float a1 = 2.0f * upA.out(StageA::taps);
+        upA.push(0.0f);     const float a1 = 2.0f * upA.outAfterStuffedZero();
         downA.push(f(a0));
         downA.push(f(a1));
         return downA.out(StageA::taps);
@@ -223,7 +238,7 @@ private:
     float process4xInner(float s, Fn&& f) noexcept
     {
         upB.push(s);        const float b0 = 2.0f * upB.out(hbtaps::kB);
-        upB.push(0.0f);     const float b1 = 2.0f * upB.out(hbtaps::kB);
+        upB.push(0.0f);     const float b1 = 2.0f * upB.outAfterStuffedZero();
         downB.push(f(b0));
         downB.push(f(b1));
         return downB.out(hbtaps::kB);

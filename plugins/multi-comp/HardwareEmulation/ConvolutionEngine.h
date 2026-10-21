@@ -95,6 +95,9 @@ public:
         }
     }
 
+    // True when the IR is the unit impulse: processSample then returns its input.
+    bool isUnity() const noexcept { return irLength <= 1 && impulseResponse[0] == 1.0f; }
+
     // Process a single sample
     float processSample(float input)
     {
@@ -320,6 +323,7 @@ public:
 
     int getLatency() const { return left.getLatency(); }
     bool isEnabled() const { return left.isEnabled(); }
+    bool isUnity() const noexcept { return left.isUnity() && right.isUnity(); }
 
 private:
     ShortConvolution left;

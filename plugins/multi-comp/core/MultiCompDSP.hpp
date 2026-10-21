@@ -8,6 +8,7 @@
 #include "MultiCompVcaLaw.hpp"
 #include "MultiCompAutoGain.hpp"
 #include "MultiCompHelpers.hpp"
+#include "MultiCompLatencyPad.hpp"
 #include "../../shared-daf/dsp/DuskCrossover.hpp"
 #include "../../shared-daf/dsp/DuskDenormals.hpp"
 #include "../../shared-daf/dsp/DuskFilters.hpp"
@@ -91,9 +92,16 @@ public:
     // The latency still differs between modes (Opto's output stage adds a
     // little, Multiband adds none), and a report that moves with the mode makes
     // VST3 and CLAP hosts restart the plugin while AU hosts never hear of it.
-    // A plugin holds its report at getHostLatencySamples() by delaying each
-    // block's output by getLatencyPaddingSamples(): the deepest mode's latency
-    // minus that of the mode the block ran in. Only the lookaheads move it.
+    // A plugin holds its report at getHostLatencySamples() with host latency
+    // padding on: the dry, bypass and listen paths are delayed straight to the
+    // host latency, which every mode shares, so a mode switch never moves them
+    // (Multiband's split-band dry is padded like its wet path), and each
+    // part's wet path is delayed by getLatencyPaddingSamples(), the
+    // deepest mode's latency minus that of the mode the part ran in, ahead of
+    // Mix; a ducked switch keeps the old padding until its mute has covered the
+    // change. Only the lookaheads move the report. Off by default: the core
+    // tests read each mode's own latency.
+    void setHostLatencyPadding(bool enabled) noexcept { hostLatencyPadding = enabled; }
     int getHostLatencySamples() const noexcept;
     int getLatencyPaddingSamples() const noexcept;
     int getMaximumLatencyPaddingSamples() const noexcept;
@@ -108,6 +116,10 @@ private:
     static constexpr int kAutoGainMeasurementWindow = 64;
     static constexpr int kCrossoverRampMs = 20;
     static constexpr int kCrossoverCoefficientInterval = 8;
+    // The mode-switch duck (switchDuck*): the fades, and the mute that covers the anti-alias path realigning on its
+    // new factor (the longest disturbance measured over every factor-changing switch, 88.2-192 kHz, plus margin).
+    static constexpr double kSwitchDuckFadeMs = 1.0;
+    static constexpr int kSwitchDuckMuteSamples = 128;
 
     // Replaces any non-finite sample with silence, into `scratch`, and returns
     // the channel pointers to use downstream. Returns `source` untouched when
@@ -123,6 +135,20 @@ private:
                       bool externalSidechain, bool autoMakeup,
                       MultiCompMode mode, int linkMode, int actualOversampling,
                       float digitalLookaheadMs);
+    void processVcaRange(const float* const* in, const float* const* sidechain,
+                         float* const* out, int nCh, int nSamples, float linkAmount, int linkMode,
+                         int hostSidechainDelay, float manualOutputDb,
+                         DistortionType distortionType, float distortionAmount) noexcept;
+    void processOptoRange(const float* const* in, const float* const* sidechain,
+                          float* const* out, int nCh, int nSamples, bool external, float linkAmount,
+                          int linkMode, int hostSidechainDelay, float manualOutputDb,
+                          DistortionType distortionType, float distortionAmount) noexcept;
+    void processFetRange(const float* const* in, const float* const* sidechain,
+                         float* const* out, int nCh, int nSamples, bool external, float linkAmount,
+                         int linkMode, int factor, int hostSidechainDelay, float manualOutputDb,
+                         DistortionType distortionType, float distortionAmount) noexcept;
+    void idleHostRateFeeds(const float* sc0, const float* sc1, int nSamples, int hostSidechainDelay,
+                           bool midSideDetector) noexcept;
     void syncModeParameters(MultiCompMode mode, float digitalLookaheadMs) noexcept;
     void prepareLookahead(const float* const* in, const float* (&processingIn)[kMaxChannels],
                           int nCh, int nSamples, int delay);
@@ -145,6 +171,12 @@ private:
     void resetAutoGainMeasurement() noexcept;
     MultiCompMode currentMode() const noexcept;
     float globalMixTarget(MultiCompMode mode) const noexcept;
+    bool switchChangesAudioFactor(int fromMode, int toMode) const noexcept;
+    void resetSwitchDuck() noexcept;
+    bool advanceSwitchDuck(int nSamples) noexcept;
+    void padWetPath(float* const* out, int nCh, int nSamples) noexcept;
+    void holdPaddingThroughSwitch(int previousMode) noexcept;
+    int paddingForMode(int mode) const noexcept;
     static float advanceFetStartupBlend(int& activeSamples,
                                         int fullCorrectionSamples,
                                         int correctionEndSamples) noexcept;
@@ -152,6 +184,8 @@ private:
                               float digitalLookaheadMs) const noexcept;
     // The part of a mode's latency its controls cannot change.
     int baseLatencyForMode(MultiCompMode mode) const noexcept;
+    // A lookahead in samples. The latency, the delays and the delay lines' sizes all round it here.
+    int lookaheadSamples(float milliseconds) const noexcept;
 
     MultiCompParameterState params;
     float busFadeControl = 0.0f;
@@ -166,9 +200,11 @@ private:
     // and silence laws were measured through that reconstruction, and its
     // gain is applied to the wide-FIR audio path pre-gain (feed-forward), so
     // this keeps every OPTO dynamic bit-identical while the audio path is flat.
-    Oversampler optoLinkedDetectorUpsampler;
-    std::array<Oversampler, kMaxChannels> optoOwnDetectorUpsamplers;
-    std::array<MultiCompAntiAliasing, kMaxChannels> busExternalOversamplers;
+    // Detector feeds read only in OPTO (the first two) or BUS (the third);
+    // other modes leave them idle (LazyUpsampler).
+    LazyUpsampler<MultiCompOversampler> optoLinkedDetectorUpsampler;
+    std::array<LazyUpsampler<MultiCompOversampler>, kMaxChannels> optoOwnDetectorUpsamplers;
+    std::array<LazyUpsampler<MultiCompAntiAliasing>, kMaxChannels> busExternalOversamplers;
     MultiCompTruePeakDetector truePeakDetector;
     std::array<MultiCompSidechainFilter, kMaxChannels> sidechainFilters;
     std::array<vcaLaw::SidechainTilt, kMaxChannels> sidechainTilt;
@@ -193,11 +229,32 @@ private:
     std::array<std::array<std::vector<float>, kMaxChannels>, kMultiCompBands> bands, sidechainBands;
     std::array<std::vector<float>, kMaxChannels> processedSidechain;
     std::array<std::vector<float>, kMaxChannels> modeInput;
+    // VCA block path (processVcaRange): each channel's detector feed, the
+    // output knob per host sample, and the cell gain per oversampled phase.
+    std::array<std::vector<float>, kMaxChannels> vcaSidechain;
+    std::vector<float> vcaOutputDbCurve, vcaEnvelopes, vcaLawScratch, vcaOutputGains, vcaPhases;
+    // The block paths' host-rate feeds (VCA, OPTO, FET): the aligned host
+    // sidechains, then scratch.
+    std::array<std::vector<float>, 3> vcaFeedScratch;
+    // The OPTO and FET block paths' audio and output per oversampled phase
+    // (one mode runs per block).
+    std::array<std::vector<float>, kMaxChannels> audioPhaseBlock, outputPhaseBlock;
+    // OPTO block path (processOptoRange): the detector feeds per oversampled
+    // phase, what the pre-stage hands the stage, and the Gain knob per host
+    // sample.
+    std::array<std::vector<float>, kMaxChannels> optoOwnPhaseBlock, optoOwnFeed;
+    std::vector<float> optoLinkedPhaseBlock, optoGainKnob;
+    std::array<std::vector<MultiCompModes::OptoStageFeed>, kMaxChannels> optoStageFeeds;
+    // FET block path (processFetRange): each channel's detector feed, the
+    // Output knob per host sample, and for the C6 loop each channel's detector
+    // feed and linked partner per oversampled phase.
+    std::array<std::vector<float>, kMaxChannels> fetSidechain, fetScPhases, fetPartnerPhases;
+    std::vector<float> fetOutputDbCurve;
     // Scratch for the input guard. Written only when a block actually carries
     // a non-finite or above-ceiling sample; see sanitizeChannels.
     std::array<std::vector<float>, kMaxChannels> sanitizedInput, sanitizedSidechain;
     std::vector<float> dry, bypassDry, fetStartupInput;
-    std::vector<float> mixCurve, bypassCurve, autoGainCurve;
+    std::vector<float> mixCurve, bypassCurve, autoGainCurve, listenCurve, fadeCurve, listenSource, switchDuckCurve;
     std::array<std::vector<float>, kMaxChannels> dryPathDelay;
     std::array<int, kMaxChannels> dryPathWrite{{0, 0}};
     std::array<std::vector<float>, kMaxChannels> bypassDelay;
@@ -245,6 +302,23 @@ private:
     bool lastAutoMakeup = false;
     bool firstBlock = true;
     int lastMode = -1;
+    // A mode switch that changes the audio anti-alias oversampler's factor (Opto and vintage FET against the other
+    // modes at 88.2 kHz and above, audioFactorForMode()) would replay that oversampler's delay line from the old
+    // factor: the old mode is held while its wet path fades out, the switch happens at silence, the realignment
+    // stays muted and the new mode fades in (processBlockExternal). Every other switch is instant.
+    int switchDuckHeldMode = -1;   // the old mode, processed while the wet path fades out; -1: none held
+    int switchDuckPosition = 1;    // fade position in samples: 0 silent .. switchDuckFadeSamples full
+    int switchDuckMuted = 0;       // samples still muted after the switch
+    int switchDuckFadeSamples = 1;
+    // Host latency padding (setHostLatencyPadding): the wet path delayed to the
+    // deepest mode's latency, part by part. Multiband's dry is its split-band
+    // sum, built after the dry delay line, so it takes the same padding in a
+    // pad of its own, which the other modes keep fed with their dry input.
+    bool hostLatencyPadding = false;
+    LatencyPad latencyPad;
+    LatencyPad multibandDryPad;
+    int paddingHoldMode = -1;      // the mode whose padding a ducked switch keeps (holdPaddingThroughSwitch)
+    int paddingHoldSamples = 0;    // samples it keeps it for
     int autoGainHoldSamples = 0;
     double autoGainInputPower = 0.0;
     double autoGainOutputPower = 0.0;
