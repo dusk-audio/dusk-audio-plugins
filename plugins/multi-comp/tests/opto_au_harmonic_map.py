@@ -191,7 +191,7 @@ def params(plugin: str, pr: float, gain: float, limit: bool) -> list[tuple[str, 
         ("SC HP Filter", 0.0), ("True Peak", 0.0), ("TP Quality", 0.0),
         ("External Sidechain", 0.0), ("Auto Makeup", 0.0), ("Distortion", 0.0),
         ("Distortion Amt", 0.5), ("Oversampling", 0.5), ("Lookahead", 0.0),
-        ("Peak Reduction", pr), ("Gain", gain), ("Limit Mode", float(limit)),
+        ("Opto Peak Reduction", pr), ("Opto Gain", gain), ("Opto Limit", float(limit)),
         ("SC Listen", 0.0), ("Analog Noise", 0.0), ("Link Mode", 0.0),
     ]
 
@@ -488,8 +488,10 @@ def sweep(plugin: str) -> None:
             gain = position if control == "gain" else 0.25
             dest = OUT / "parameter-sweep" / plugin / control / f"p{position:.2f}"
             complete = run_host(plugin, dest, [tone], pr, gain, False)
-            wanted = "Peak Reduct" if plugin == "uad" and control == "peak_reduction" \
-                else "Peak Reduction" if control == "peak_reduction" else "Gain"
+            if plugin == "uad":
+                wanted = "Peak Reduct" if control == "peak_reduction" else "Gain"
+            else:
+                wanted = "Opto Peak Reduction" if control == "peak_reduction" else "Opto Gain"
             rb = next(x for x in complete["readbacks"] if x["name"] == wanted)
             rows.append({"plugin": plugin, "control": control, "requested_normalised": position,
                          "readback_normalised": rb["normalised"], "display": rb["display"]})

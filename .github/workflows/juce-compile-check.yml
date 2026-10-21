@@ -45,6 +45,7 @@ on:
       # Shared code, the reason this workflow exists.
       - 'plugins/shared/**'
       - 'plugins/shared-daf/dsp/DuskFilters.hpp'
+      - 'plugins/shared-daf/dsp/DuskSeqLock.hpp'
       # The JUCE plugins themselves. Their own PRs were equally unbuilt, and
       # these paths are narrow enough that DAF-only work does not trigger them.
       - 'plugins/4k-eq/**'
@@ -71,14 +72,18 @@ on:
       # apt installer. Without these a PR editing only one of them never fires
       # this workflow, so the change lands untested by the jobs that execute it.
       - '.github/scripts/select_juce_plugins.py'
+      - '.github/scripts/test_select_juce_plugins.py'
       - '.github/scripts/apt_install.sh'
       # Subtract the DAF trees again. Several plugins above are wildcarded at
       # the plugin root, and 'plugins/4k-eq/**' matches 'plugins/4k-eq/daf-plugin/**'
       # too, so without these a DAF-only PR would fire all twelve JUCE jobs and
-      # daf-build.yml would build it a second time. Negations must come LAST:
-      # GitHub applies the patterns in order and the final match wins.
+      # daf-build.yml would build it a second time. GitHub applies patterns in
+      # order: subtract these after the plugin roots, then re-include the one
+      # core that this change shares with the legacy desktop adapters.
       - '!plugins/*/daf-plugin/**'
       - '!plugins/*/core/**'
+      # The extracted Chord Analyzer model also builds into both JUCE adapters.
+      - 'plugins/chord-analyzer/core/**'
   workflow_dispatch:
 
 # A PR that gets pushed twice should not run two fleets. Never applied to
@@ -113,6 +118,9 @@ jobs:
           # ...but not a credential left behind in .git/config afterwards. The
           # diff is local once the fetch is done. Matches the other workflows.
           persist-credentials: false
+
+      - name: Test plugin selection
+        run: python3 .github/scripts/test_select_juce_plugins.py
 
       - name: Pick plugins
         id: pick
@@ -209,14 +217,14 @@ jobs:
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DDUSK_COPY_AFTER_BUILD=OFF \
-            -DJUCE_PATH=$(pwd)/JUCE
+            -DJUCE_PATH="$(pwd)/JUCE"
 
       - name: Build ${{ matrix.plugin }} VST3
         # An unknown target fails here with a readable "No rule to make target"
         # rather than needing a guard step of its own.
         env:
           CCACHE_MAXSIZE: 350M
-        run: cmake --build build --config Release --target ${{ matrix.plugin }}_VST3 -j$(nproc)
+        run: cmake --build build --config Release --target ${{ matrix.plugin }}_VST3 -j"$(nproc)"
 
       - name: ccache statistics
         # Printed so a regression in hit rate is visible in the log rather than
@@ -235,12 +243,12 @@ jobs:
           fi
           echo "Built: $found"
 
-      # Chord Analyzer is the only plugin here with test executables of its own,
-      # and nothing ran them: both targets are EXCLUDE_FROM_ALL and no workflow
+      # Chord Analyzer has numeric-core, unit and host tests. The original two
+      # targets are EXCLUDE_FROM_ALL and previously no workflow
       # named them, so the unit checks and the host-side checks that guard #267
       # and #273 passed only when someone remembered to run them (GH #276).
-      # They are headless, build with JUCE_USE_CURL=0, need no display and take
-      # about three seconds between them.
+      # The shared numeric/text models need no JUCE. Legacy tests disable CURL, and all
+      # need no display and take only a few seconds.
       #
       # Gated to the ChordAnalyzer row, which is in the matrix exactly when the
       # selector picked chord-analyzer or a fleet-wide path. That is one run per
@@ -254,9 +262,37 @@ jobs:
         run: |
           set -euo pipefail
           cmake --build build --config Release \
-            --target ChordAnalyzerTest ChordAnalyzerHostTest -j"$(nproc)"
+            --target ChordAnalyzerTest ChordAnalyzerHostTest ChordAnalyzerCoreTest \
+              ChordAnalyzerTextTest ChordAnalyzerTextAdapterTest ChordMidiNoteStateTest \
+              ChordRecordingTest ChordRecordingAdapterTest ChordHistoryTest \
+              ChordMidiExportTest ChordMidiExportAdapterTest \
+              ChordNoteSnapshotTest ChordSessionIntegrationTest ChordAnalyzerMidiTest ChordAnalyzerMidiJuceTest \
+              ChordAnalyzerClapOutputTest -j"$(nproc)"
+          ./build/plugins/chord-analyzer/core/ChordAnalyzerCoreTest
+          ./build/plugins/chord-analyzer/core/ChordAnalyzerTextTest
+          ./build/plugins/chord-analyzer/ChordAnalyzerTextAdapterTest
+          ./build/plugins/chord-analyzer/core/ChordRecordingTest
+          ./build/plugins/chord-analyzer/ChordRecordingAdapterTest
+          ./build/plugins/chord-analyzer/core/ChordMidiExportTest
+          ./build/plugins/chord-analyzer/ChordMidiExportAdapterTest
+          ./build/plugins/chord-analyzer/core/ChordHistoryTest
+          ./build/plugins/chord-analyzer/ChordSessionIntegrationTest
+          ./build/plugins/chord-analyzer/core/ChordMidiNoteStateTest
+          ./build/plugins/chord-analyzer/core/ChordNoteSnapshotTest
+          ./build/plugins/chord-analyzer/ChordAnalyzerMidiTest
+          ./build/plugins/chord-analyzer/ChordAnalyzerMidiJuceTest
           ./build/plugins/chord-analyzer/ChordAnalyzerTest
           ./build/plugins/chord-analyzer/ChordAnalyzerHostTest
+          python3 .github/scripts/test_clap_output_wrapper.py
+          ctest --test-dir build -C Release -R '^ChordAnalyzerClapOutputs$' --no-tests=error --output-on-failure
+
+      # This row has already built the MIDI-effect shared library; reuse it
+      # rather than compiling that second JUCE library again in the audio row.
+      - name: Chord Analyzer MIDI-effect note handling
+        if: matrix.plugin == 'ChordAnalyzerMIDI'
+        run: |
+          cmake --build build --config Release --target ChordAnalyzerMidiEffectTest -j"$(nproc)"
+          ./build/plugins/chord-analyzer/ChordAnalyzerMidiEffectTest
 
       # lv2info comes from lilv-utils, which is the same lilv the reporting
       # host (Jalv on Zynthian) loads the bundle with. Stock Ubuntu package,
@@ -337,6 +373,7 @@ jobs:
             exit 1
           fi
           echo "All $count ports present."
+          python3 plugins/chord-analyzer/tests/test_chord_analyzer_lv2.py "$so"
 
   # plugins/shared/ now carries a substantial platform-specific branch:
   # CrashLog.h pulls in windows.h and compiles a whole SEH filter, CreateFileW

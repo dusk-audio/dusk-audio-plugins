@@ -14,11 +14,13 @@
 #include "MultiQProgramPresets.hpp"  // Digital factory presets (host programs)
 #include "MultiQVersion.hpp"
 #include "MultiQDSP.hpp"
+#include "DuskDenormals.hpp"
 #include "util/CrashLog.hpp"
 
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <mutex>
 #include <string>
 
 START_NAMESPACE_DAF
@@ -61,16 +63,19 @@ public:
     //--- Match spectrum-EQ UI bridge (message thread) --------------------------
     void matchStartLearnCurrentForUI(bool on) noexcept
     {
+        const StateGuard guard(stateMutex);
         if (on) dsp.matchProcessor().requestStartLearnCurrent();
         else    dsp.matchProcessor().requestStopLearning();
     }
     void matchStartLearnReferenceForUI(bool on) noexcept
     {
+        const StateGuard guard(stateMutex);
         if (on) dsp.matchProcessor().requestStartLearnReference();
         else    dsp.matchProcessor().requestStopLearning();
     }
     bool matchComputeForUI() noexcept
     {
+        const StateGuard guard(stateMutex);
         // Read the live Match params (mirrors MultiQ::computeMatchCorrection).
         auto f = [this](int i) { return values[i].load(std::memory_order_relaxed); };
         const float applyAmount = f(kParamMatchApply) / 100.0f;      // -1..+1
@@ -86,22 +91,34 @@ public:
         // is confined to run()/activate()).
         return ok;
     }
-    void matchClearForUI() noexcept { dsp.matchProcessor().requestClear(); }
+    void matchClearForUI() noexcept
+    { const StateGuard guard(stateMutex); dsp.matchProcessor().requestClear(); }
 
-    bool matchIsLearningForUI()          const noexcept { return dsp.matchProcessor().isLearning(); }
-    bool matchIsLearningCurrentForUI()   const noexcept { return dsp.matchProcessor().isLearningCurrent(); }
-    bool matchIsLearningReferenceForUI() const noexcept { return dsp.matchProcessor().isLearningReference(); }
-    int  matchFrameCountForUI()          const noexcept { return dsp.matchProcessor().getLearningFrameCount(); }
-    bool matchHasCurrentForUI()          const noexcept { return dsp.matchProcessor().hasCurrentSpectrum(); }
-    bool matchHasReferenceForUI()        const noexcept { return dsp.matchProcessor().hasReferenceSpectrum(); }
-    bool matchHasCorrectionForUI()       const noexcept { return dsp.matchProcessor().hasCorrectionCurve(); }
-    void matchGetCurrentDbForUI(float* out, int n)    const noexcept { dsp.matchProcessor().getCurrentSpectrumDB(out, n); }
-    void matchGetReferenceDbForUI(float* out, int n)  const noexcept { dsp.matchProcessor().getReferenceSpectrumDB(out, n); }
-    void matchGetCorrectionDbForUI(float* out, int n) const noexcept { dsp.matchProcessor().getCorrectionCurveDB(out, n); }
+    bool matchIsLearningForUI() const noexcept
+    { const StateGuard guard(stateMutex); return dsp.matchProcessor().isLearning(); }
+    bool matchIsLearningCurrentForUI() const noexcept
+    { const StateGuard guard(stateMutex); return dsp.matchProcessor().isLearningCurrent(); }
+    bool matchIsLearningReferenceForUI() const noexcept
+    { const StateGuard guard(stateMutex); return dsp.matchProcessor().isLearningReference(); }
+    int matchFrameCountForUI() const noexcept
+    { const StateGuard guard(stateMutex); return dsp.matchProcessor().getLearningFrameCount(); }
+    bool matchHasCurrentForUI() const noexcept
+    { const StateGuard guard(stateMutex); return dsp.matchProcessor().hasCurrentSpectrum(); }
+    bool matchHasReferenceForUI() const noexcept
+    { const StateGuard guard(stateMutex); return dsp.matchProcessor().hasReferenceSpectrum(); }
+    bool matchHasCorrectionForUI() const noexcept
+    { const StateGuard guard(stateMutex); return dsp.matchProcessor().hasCorrectionCurve(); }
+    void matchGetCurrentDbForUI(float* out, int n) const noexcept
+    { const StateGuard guard(stateMutex); dsp.matchProcessor().getCurrentSpectrumDB(out, n); }
+    void matchGetReferenceDbForUI(float* out, int n) const noexcept
+    { const StateGuard guard(stateMutex); dsp.matchProcessor().getReferenceSpectrumDB(out, n); }
+    void matchGetCorrectionDbForUI(float* out, int n) const noexcept
+    { const StateGuard guard(stateMutex); dsp.matchProcessor().getCorrectionCurveDB(out, n); }
 
     // Persisted UI dropdown selection ("d,b,t"), read back by the editor on open so
     // the preset dropdown reflects the loaded preset (see initState index 1).
-    const char* uiPresetsForUI() const noexcept { return uiPresetsStr.c_str(); }
+    std::string uiPresetsForUI() const
+    { const StateGuard guard(stateMutex); return uiPresetsStr; }
 
 protected:
     //--- metadata --------------------------------------------------------------
@@ -261,55 +278,69 @@ protected:
 
     String getState(const char* key) const override
     {
+        const StateGuard guard(stateMutex);
         if (std::strcmp(key, "matchData") == 0)
-            return String(dsp.matchProcessor().serialize().c_str());
+            return String(dspPrepared ? dsp.matchProcessor().serialize().c_str() : matchStateStr.c_str());
         if (std::strcmp(key, "uiPresets") == 0)
             return String(uiPresetsStr.c_str());
         return String();
     }
 
+    bool validateStateValue(const char* key, const char* value) const override
+    {
+        if (key == nullptr || value == nullptr) return false;
+        if (std::strcmp(key, "uiPresets") == 0) return true;
+        return std::strcmp(key, "matchData") == 0
+            && (value[0] == '\0' || duskaudio::MultiQMatch::validateState(value));
+    }
+
     void setState(const char* key, const char* value) override
     {
+        if (value == nullptr) return;
+        const StateGuard guard(stateMutex);
         if (std::strcmp(key, "uiPresets") == 0)
         {
-            uiPresetsStr = value != nullptr ? value : "";
+            uiPresetsStr = value;
             return;
         }
         if (std::strcmp(key, "matchData") != 0)
             return;
-        matchStateStr = value != nullptr ? value : "";
-        if (dspPrepared && !matchStateStr.empty())
-            dsp.matchProcessor().deserialize(matchStateStr);
+        const std::string candidate = value[0] != '\0' ? value : duskaudio::MultiQMatch::emptyState();
+        const bool accepted = dspPrepared ? dsp.matchProcessor().deserialize(candidate)
+                                          : duskaudio::MultiQMatch::validateState(candidate);
+        if (accepted) matchStateStr = candidate;
         // No setLatency() here (message thread). run() reports any FIR latency change.
     }
 
     //--- lifecycle -------------------------------------------------------------
     void activate() override
     {
-        dsp.prepare(getSampleRate(), (int)getBufferSize());
-        dspPrepared = true;
-        if (!matchStateStr.empty())
-            dsp.matchProcessor().deserialize(matchStateStr);
+        const StateGuard guard(stateMutex);
+        prepareDsp(getSampleRate(), getBufferSize());
         updateLatency();
     }
 
-    void deactivate() override { dsp.reset(); }
+    void deactivate() override
+    {
+        const StateGuard guard(stateMutex);
+        if (!dspPrepared) return;
+        // DAF has stopped processing. Flush queued UI commands before saving,
+        // so Clear or a just-loaded correction cannot be lost to the next prepare.
+        cacheMatchState();
+        // The editor remains usable while inactive. Keep its spectra/correction;
+        // activate() prepares fresh processing buffers before audio can resume.
+    }
 
     void sampleRateChanged(double newSampleRate) override
     {
-        dsp.prepare(newSampleRate, (int)getBufferSize());
-        // prepare() re-inits the Match processor (its reset() wipes the correction
-        // FIR), so restore the learned state like activate() does. setLatency() is
-        // left to run() (DAF contract — not called from this lifecycle path).
-        if (!matchStateStr.empty())
-            dsp.matchProcessor().deserialize(matchStateStr);
+        const StateGuard guard(stateMutex);
+        if (dspPrepared) prepareDsp(newSampleRate, getBufferSize());
     }
 
     void bufferSizeChanged(uint32_t newBufferSize) override
     {
-        dsp.prepare(getSampleRate(), (int)newBufferSize);
-        if (!matchStateStr.empty())
-            dsp.matchProcessor().deserialize(matchStateStr);
+        const StateGuard guard(stateMutex);
+        if (dspPrepared) prepareDsp(getSampleRate(), newBufferSize);
     }
 
     void ioChanged(uint16_t numInputs, uint16_t numOutputs) override
@@ -323,7 +354,10 @@ protected:
     //--- audio -----------------------------------------------------------------
     void run(const float** inputs, float** outputs, uint32_t frames) override
     {
-        // Hard bypass (the core has no bypass path in Phase 2): pass input through.
+        const duskaudio::ScopedFlushDenormals noDenormals;
+        if (frames == 0) return;
+
+        // Hard bypass: pass input through.
         // Bounded by activeChannels: a mono AU instance only owns outputs[0], and
         // touching outputs[1] there writes past the host's buffer list.
         if (values[kParamBypass].load(std::memory_order_relaxed) > 0.5f)
@@ -348,6 +382,24 @@ protected:
 private:
     using MultiQDSP = duskaudio::MultiQDSP;
     using EQType    = duskaudio::EQType;
+    using StateGuard = std::lock_guard<std::mutex>;
+
+    // Lifecycle callbacks run with audio stopped. All callers hold stateMutex;
+    // it also excludes non-RT UI/core accesses while prepare/reset replaces data.
+    void cacheMatchState()
+    {
+        dsp.matchProcessor().audioThreadSync();
+        dsp.matchProcessor().requestStopLearning();
+        dsp.matchProcessor().audioThreadSync();
+        matchStateStr = dsp.matchProcessor().serialize();
+    }
+    void prepareDsp(double sampleRate, uint32_t bufferSize)
+    {
+        if (dspPrepared) cacheMatchState();
+        dsp.prepare(sampleRate, static_cast<int>(bufferSize));
+        dspPrepared = true;
+        dsp.matchProcessor().deserialize(matchStateStr);
+    }
 
     // Snapshot the atomic value cache into the core's per-block Params struct.
     void fillParams(MultiQDSP::Params& p) const
@@ -455,7 +507,9 @@ private:
     std::atomic<float> values[kParamCount] = {};
     std::atomic<int>  soloBand{-1};    // -1 = no solo (UI-driven, see setSoloForUI)
     std::atomic<bool> deltaSolo{false};
-    std::string matchStateStr;         // cached Match blob (applied once DSP prepared)
+    // Non-RT host/UI/lifecycle only. run() never acquires this mutex.
+    mutable std::mutex stateMutex;
+    std::string matchStateStr = duskaudio::MultiQMatch::emptyState();
     std::string uiPresetsStr;          // persisted UI dropdown selection "d,b,t" (see initState)
     bool dspPrepared = false;
 
@@ -521,4 +575,4 @@ void multiQMatchGetReferenceDb(void* p, float* out, int n) noexcept  { if (p) as
 void multiQMatchGetCorrectionDb(void* p, float* out, int n) noexcept { if (p) asMq(p)->matchGetCorrectionDbForUI(out, n); }
 
 // Persisted UI preset-dropdown selection ("d,b,t"), read by the editor on open.
-const char* multiQGetUiPresets(void* p) noexcept { return p ? asMq(p)->uiPresetsForUI() : ""; }
+std::string multiQGetUiPresets(void* p) noexcept { return p ? asMq(p)->uiPresetsForUI() : std::string{}; }

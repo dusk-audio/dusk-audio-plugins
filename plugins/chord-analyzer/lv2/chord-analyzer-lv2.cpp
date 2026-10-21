@@ -20,14 +20,21 @@
 #include <algorithm>
 #include <cstring>
 #include <new>
-#include <vector>
-
-#include "../Source/ChordAnalyzer.h"
+#include "../core/ChordAnalyzerCore.hpp"
+#include "../core/MidiNoteState.hpp"
+#include "../../shared-daf/dsp/DuskDenormals.hpp"
 
 #define CHORD_ANALYZER_HEADLESS_URI "https://dusk-audio.github.io/plugins/chord-analyzer-headless"
 
 namespace
 {
+using ChordAnalyzer = duskaudio::chord::ChordAnalyzerCore;
+using duskaudio::chord::ChordFacts;
+using duskaudio::chord::ChordQuality;
+using duskaudio::chord::SuggestionCategory;
+using duskaudio::chord::SuggestionFacts;
+using duskaudio::chord::kInversionSlashBass;
+
 enum PortIndex : uint32_t
 {
     PORT_MIDI_IN            = 0,
@@ -79,7 +86,7 @@ struct ChordAnalyzerLV2
     float* suggestionPorts[kNumSuggestionPorts] = {};
 
     ChordAnalyzer    analyzer;
-    std::vector<int> activeNotes;
+    duskaudio::chord::MidiNoteState notes;
     ChordFacts       currentChord;
 
     // Last key context the suggestions were computed for. The suggestion set
@@ -94,9 +101,6 @@ struct ChordAnalyzerLV2
     // so a reactivated instance never shows a chord it no longer holds.
     bool detectedStale = true;
 
-    // Sustain pedal (CC 64) state — single audio thread, no synchronisation needed.
-    bool             sustainPedalDown = false;
-    std::vector<int> sustainedReleasedNotes;  // notes released while pedal was down
 };
 
 void publishDetectedChord (ChordAnalyzerLV2& self, const ChordFacts& chord)
@@ -176,8 +180,6 @@ LV2_Handle instantiate (const LV2_Descriptor*,
     }
 
     self->midiEventURID = self->map->map (self->map->handle, LV2_MIDI__MidiEvent);
-    self->activeNotes.reserve (16);
-    self->sustainedReleasedNotes.reserve (16);
 
     return static_cast<LV2_Handle> (self);
 }
@@ -210,14 +212,11 @@ void connect_port (LV2_Handle instance, uint32_t port, void* data)
 
 void activate (LV2_Handle instance)
 {
-    // LV2 core: activate() must reset every piece of state that depends on
-    // the instance's history. clear() keeps the reserved capacity, so run()
-    // stays allocation free afterwards.
+    // LV2 core: reset every piece of history before reactivation.
     auto* self = static_cast<ChordAnalyzerLV2*> (instance);
 
-    self->activeNotes.clear();
-    self->sustainedReleasedNotes.clear();
-    self->sustainPedalDown = false;
+    self->notes.reset();
+    self->analyzer.reset();
     self->currentChord     = ChordFacts{};
 
     self->suggestionKeyRoot    = -1;
@@ -226,9 +225,19 @@ void activate (LV2_Handle instance)
     self->detectedStale        = true;
 }
 
-void run (LV2_Handle instance, uint32_t /*nSamples*/)
+void run (LV2_Handle instance, uint32_t nSamples)
 {
+    const duskaudio::ScopedFlushDenormals noDenormals;
     auto* self = static_cast<ChordAnalyzerLV2*> (instance);
+
+    if (nSamples == 0)
+    {
+        // LV2 requires instantaneous control outputs even for an empty block.
+        // Publish cached results, then return without touching MIDI buffers.
+        publishDetectedChord (*self, self->currentChord);
+        publishSuggestions (*self);
+        return;
+    }
 
     if (self->midiIn == nullptr || self->midiOut == nullptr)
         return;
@@ -237,13 +246,6 @@ void run (LV2_Handle instance, uint32_t /*nSamples*/)
     // on the key and on the level, so a change to either has to refresh the
     // suggestion ports even when no note moved.
     bool suggestionsStale = false;
-
-    if (self->detectedStale)
-    {
-        publishDetectedChord (*self, self->currentChord);
-        self->detectedStale = false;
-        suggestionsStale    = true;
-    }
 
     if (self->keyRoot != nullptr && self->keyMode != nullptr)
     {
@@ -270,90 +272,42 @@ void run (LV2_Handle instance, uint32_t /*nSamples*/)
         }
     }
 
-    // Prepare output MIDI atom sequence — capacity is the size advertised by the host.
-    const uint32_t outCapacity = self->midiOut->atom.size;
-    lv2_atom_sequence_clear (self->midiOut);
-    self->midiOut->atom.type = self->midiIn->atom.type;
+    const bool sustainEnabled = (self->respectSustain != nullptr) && (*self->respectSustain) > 0.5f;
+    bool notesChanged = self->notes.setRespectSustain(sustainEnabled);
 
-    bool       notesChanged    = false;
-    const bool sustainEnabled  = (self->respectSustain != nullptr) && (*self->respectSustain) > 0.5f;
+    // Hosts may share storage between any input and output. Read every input
+    // control before publishing outputs that could overwrite those inputs.
+    if (self->detectedStale)
+    {
+        publishDetectedChord (*self, self->currentChord);
+        self->detectedStale = false;
+        suggestionsStale = true;
+    }
+
+    // An aliased MIDI sequence already is the exact pass-through result.
+    const bool inPlace = self->midiIn == self->midiOut;
+    const uint32_t outCapacity = self->midiOut->atom.size;
+    if (!inPlace)
+    {
+        lv2_atom_sequence_clear (self->midiOut);
+        self->midiOut->atom.type = self->midiIn->atom.type;
+        self->midiOut->body = self->midiIn->body; // preserve frame/beat timestamp units
+    }
 
     LV2_ATOM_SEQUENCE_FOREACH (self->midiIn, ev)
     {
-        // Forward every event so downstream synths still receive the MIDI stream
-        lv2_atom_sequence_append_event (self->midiOut, outCapacity, ev);
+        // The SDK helper checks the unpadded payload, but advances atom.size by
+        // the padded length. At an odd host capacity that can overstate size,
+        // then unsigned subtraction can admit another out-of-bounds event.
+        const uint64_t paddedSize = (uint64_t(sizeof(LV2_Atom_Event)) + ev->body.size + 7u) & ~uint64_t(7u);
+        if (!inPlace && self->midiOut->atom.size <= outCapacity
+            && paddedSize <= outCapacity - self->midiOut->atom.size)
+            lv2_atom_sequence_append_event (self->midiOut, outCapacity, ev);
 
         if (ev->body.type != self->midiEventURID)
             continue;
 
-        const auto* msg = reinterpret_cast<const uint8_t*> (ev + 1);
-        if (ev->body.size < 3)
-            continue;
-
-        const uint8_t status   = static_cast<uint8_t> (msg[0] & 0xF0);
-        const int     data1    = msg[1] & 0x7F;
-        const uint8_t data2    = msg[2] & 0x7F;
-
-        if (status == LV2_MIDI_MSG_NOTE_ON && data2 > 0)
-        {
-            // Re-pressing a sustained-released note cancels its deferred release
-            auto sustainedIt = std::find (self->sustainedReleasedNotes.begin(),
-                                          self->sustainedReleasedNotes.end(), data1);
-            if (sustainedIt != self->sustainedReleasedNotes.end())
-                self->sustainedReleasedNotes.erase (sustainedIt);
-
-            if (std::find (self->activeNotes.begin(), self->activeNotes.end(), data1) == self->activeNotes.end())
-            {
-                self->activeNotes.push_back (data1);
-                notesChanged = true;
-            }
-        }
-        else if (status == LV2_MIDI_MSG_NOTE_OFF
-                 || (status == LV2_MIDI_MSG_NOTE_ON && data2 == 0))
-        {
-            if (sustainEnabled && self->sustainPedalDown)
-            {
-                if (std::find (self->sustainedReleasedNotes.begin(),
-                               self->sustainedReleasedNotes.end(), data1)
-                    == self->sustainedReleasedNotes.end())
-                {
-                    self->sustainedReleasedNotes.push_back (data1);
-                }
-                continue;
-            }
-
-            auto it = std::find (self->activeNotes.begin(), self->activeNotes.end(), data1);
-            if (it != self->activeNotes.end())
-            {
-                self->activeNotes.erase (it);
-                notesChanged = true;
-            }
-        }
-        else if (status == LV2_MIDI_MSG_CONTROLLER && data1 == 64)
-        {
-            // Sustain pedal: MIDI convention is value >= 64 → down, < 64 → up
-            const bool wasDown = self->sustainPedalDown;
-            const bool nowDown = data2 >= 64;
-            self->sustainPedalDown = nowDown;
-
-            if (wasDown && ! nowDown)
-            {
-                // Always flush deferred releases on pedal-up regardless of
-                // sustainEnabled — entries here reflect real player note-offs
-                // captured while sustain was on, and would otherwise stay
-                // stuck in activeNotes if the user toggled the param off.
-                for (int sustainedNote : self->sustainedReleasedNotes)
-                {
-                    auto it = std::find (self->activeNotes.begin(), self->activeNotes.end(), sustainedNote);
-                    if (it != self->activeNotes.end())
-                    {
-                        self->activeNotes.erase (it);
-                        notesChanged = true;
-                    }
-                }
-                self->sustainedReleasedNotes.clear();
-            }
-        }
+        notesChanged = self->notes.process(reinterpret_cast<const uint8_t*> (ev + 1), ev->body.size) || notesChanged;
     }
 
     if (notesChanged)
@@ -362,8 +316,9 @@ void run (LV2_Handle instance, uint32_t /*nSamples*/)
         // plugin declares lv2:hardRTCapable. The numeric form allocates
         // nothing, and the display strings analyze() would build are unused
         // here - only the control ports are published.
-        const ChordFacts newChord = self->analyzer.analyzeFacts (self->activeNotes.data(),
-                                                                 static_cast<int> (self->activeNotes.size()));
+        std::array<int, 128> notes;
+        const int count = self->notes.copyNotes(notes.data(), int(notes.size()));
+        const ChordFacts newChord = self->analyzer.analyzeFacts(notes.data(), count);
         if (newChord != self->currentChord)
         {
             self->currentChord = newChord;

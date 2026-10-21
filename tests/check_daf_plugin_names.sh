@@ -27,6 +27,7 @@ cd "$REPO_ROOT"
 # forgetting this table.
 expected_slug_for() {
     case "$1" in
+        plugins/chord-analyzer/daf-plugin/CMakeLists.txt) echo "chord-analyzer-2 chord-analyzer-midi-2" ;;
         plugins/4k-eq/daf-plugin/CMakeLists.txt)           echo "4k-eq-2" ;;
         plugins/DuskVerb/daf-plugin/CMakeLists.txt)        echo "duskverb-2" ;;
         plugins/TapeMachine/daf-plugin/CMakeLists.txt)     echo "tapemachine-2" ;;
@@ -43,28 +44,33 @@ status=0
 found=0
 
 while IFS= read -r cmakelists; do
-    name=$(sed -nE 's/^[[:space:]]*daf_add_plugin\(([A-Za-z0-9_.+-]+).*/\1/p' "$cmakelists" | head -1)
-    [ -n "$name" ] || continue
-    found=$((found + 1))
+    while IFS= read -r name; do
+        [ -n "$name" ] || continue
+        found=$((found + 1))
 
-    # Rule 1: naming shape.
-    if ! printf '%s' "$name" | grep -qE '^[a-z0-9]+(-[a-z0-9]+)*$'; then
-        echo "ERROR: $cmakelists: daf_add_plugin($name) is not lowercase-hyphen form."
-        echo "       Compiled artefacts would ship as '$name.vst3' / '$name.clap'."
-        status=1
-    fi
+        # Rule 1: naming shape.
+        if ! printf '%s' "$name" | grep -qE '^[a-z0-9]+(-[a-z0-9]+)*$'; then
+            echo "ERROR: $cmakelists: daf_add_plugin($name) is not lowercase-hyphen form."
+            echo "       Compiled artefacts would ship as '$name.vst3' / '$name.clap'."
+            status=1
+        fi
 
-    # Rule 2: name matches the release slug.
-    expected=$(expected_slug_for "$cmakelists")
-    if [ -z "$expected" ]; then
-        echo "ERROR: $cmakelists: no expected slug recorded in $0."
-        echo "       Add a row to expected_slug_for() naming this plugin's release slug."
-        status=1
-    elif [ "$name" != "$expected" ]; then
-        echo "ERROR: $cmakelists: daf_add_plugin($name) != release slug '$expected'."
-        echo "       Artefacts, tag, zip and manual must all use '$expected'."
-        status=1
-    fi
+        # Rule 2: name matches the release slug.
+        expected=$(expected_slug_for "$cmakelists")
+        if [ -z "$expected" ]; then
+            echo "ERROR: $cmakelists: no expected slug recorded in $0."
+            echo "       Add a row to expected_slug_for() naming this plugin's release slug."
+            status=1
+        else
+            case " $expected " in
+                *" $name "*) ;;
+                *)
+                    echo "ERROR: $cmakelists: daf_add_plugin($name) is not an expected release slug ($expected)."
+                    status=1
+                    ;;
+            esac
+        fi
+    done < <(sed -nE 's/^[[:space:]]*daf_add_plugin\(([A-Za-z0-9_.+-]+).*/\1/p' "$cmakelists")
 done < <(git ls-files 'plugins/*/daf-plugin/CMakeLists.txt')
 
 if [ "$found" -eq 0 ]; then

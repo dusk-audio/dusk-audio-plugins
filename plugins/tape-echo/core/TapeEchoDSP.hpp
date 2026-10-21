@@ -238,6 +238,7 @@ public:
     float getRecordPeakLevel() const noexcept     { return recordPeak.load(std::memory_order_relaxed); }
 
 private:
+    friend struct TapeEchoDSPTestAccess;
     //--- helpers -------------------------------------------------------------
     static float clamp01(float v) noexcept  { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
     static float clampF(float v, float lo, float hi) noexcept { return v < lo ? lo : (v > hi ? hi : v); }

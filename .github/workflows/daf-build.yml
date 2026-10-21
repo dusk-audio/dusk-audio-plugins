@@ -8,7 +8,7 @@ name: DAF Plugins (build + release)
 # They do not go through the JUCE pipeline in build.yml.
 #
 # A single registry (see the "plan" step) drives a dynamic matrix:
-#   - PR touching plugin-local daf-plugin/core   -> build the touched plugin(s).
+#   - PR touching plugin-local source/tests      -> build the touched plugin(s).
 #   - PR touching shared-daf, this workflow, its gate scripts or the DAF revision
 #     (.github/daf-ref) -> build ALL DAF plugins. This is the shared-code safety
 #     net: shared-daf/ and DAF are compiled into every DAF plugin, so a change
@@ -32,6 +32,8 @@ on:
       - 'multi-comp-2-v*'
       - 'duskverb-2-v*'
       - 'ring-out-v*'
+      - 'chord-analyzer-2-v*'
+      - 'chord-analyzer-midi-2-v*'
   workflow_dispatch:
     inputs:
       plugin:
@@ -48,10 +50,14 @@ on:
           - 'multi-comp-2'
           - 'duskverb-2'
           - 'ring-out'
+          - 'chord-analyzer-2'
+          - 'chord-analyzer-midi-2'
   pull_request:
     paths:
       - 'plugins/*/daf-plugin/**'
       - 'plugins/*/core/**'
+      - 'plugins/chord-analyzer/lv2/**'
+      - 'plugins/chord-analyzer/tests/**'
       - 'plugins/DuskVerb/src/**'
       - 'plugins/shared-daf/**'
       - '.github/workflows/daf-build.yml'
@@ -74,7 +80,6 @@ on:
 # hold builds on a known revision (e.g. while DAF main is broken), put its full
 # SHA in .github/daf-ref. Local builds: docker/check_daf_checkout.sh.
 env:
-  AU_TYPE: aufx
   AU_MANUFACTURER: Dusk
 
 jobs:
@@ -111,6 +116,10 @@ jobs:
         shell: bash
         run: ./tests/check_provenance_guards.sh
 
+      - name: Test complete release asset sets
+        shell: bash
+        run: python3 .github/scripts/test_daf_release_checksums.py
+
       - name: Resolve DAF revision
         id: daf
         shell: bash
@@ -128,6 +137,7 @@ jobs:
           #         above is that the artefact name IS the release slug.
           # project: project(<name> ...) token, for the tag<->CMake version guard
           # au    : DISTRHO_PLUGIN_UNIQUE_ID (AU subtype code)
+          # au_type: AU component type; omitted for the default aufx effects
           # name  : human display name
           # tag   : release tag PREFIX (version is the suffix)
           # asset : release/website asset base (asset zip = <asset>-<os>.zip)
@@ -140,6 +150,8 @@ jobs:
             ,{"key":"multi-comp-2","dir":"plugins/multi-comp/daf-plugin","base":"multi-comp-2","project":"MultiComp2DAF","au":"DsMc","uri":"https://dusk-audio.github.io/plugins/multi-comp-2","name":"Multi-Comp 2","tag":"multi-comp-2-v","asset":"multi-comp-2"}
             ,{"key":"duskverb-2","dir":"plugins/DuskVerb/daf-plugin","base":"duskverb-2","project":"DuskVerb2DAF","au":"DsDv","uri":"https://dusk-audio.github.io/plugins/duskverb-2","name":"DuskVerb 2","tag":"duskverb-2-v","asset":"duskverb-2"}
             ,{"key":"ring-out","dir":"plugins/ring-out/daf-plugin","base":"ring-out","project":"RingOutDAF","au":"DsRO","uri":"https://dusk-audio.github.io/plugins/ring-out","name":"Ring Out","tag":"ring-out-v","asset":"ring-out"}
+            ,{"key":"chord-analyzer-2","dir":"plugins/chord-analyzer/daf-plugin","base":"chord-analyzer-2","project":"ChordAnalyzerDAF","au":"DsCA","au_type":"aumu","uri":"https://dusk-audio.github.io/plugins/chord-analyzer-2","name":"Chord Analyzer 2","tag":"chord-analyzer-2-v","asset":"chord-analyzer-2"}
+            ,{"key":"chord-analyzer-midi-2","dir":"plugins/chord-analyzer/daf-plugin","base":"chord-analyzer-midi-2","project":"ChordAnalyzerDAF","au":"DsCM","au_type":"aumi","uri":"https://dusk-audio.github.io/plugins/chord-analyzer-midi-2","name":"Chord Analyzer MIDI 2","tag":"chord-analyzer-midi-2-v","asset":"chord-analyzer-midi-2"}
           ]
           JSON
 
@@ -158,7 +170,7 @@ jobs:
             TAGPFX=$(jq -r '.tag'     <<<"$ENTRY")
             PROJECT=$(jq -r '.project' <<<"$ENTRY")
             PDIR=$(jq -r '.dir'       <<<"$ENTRY")
-            VERSION="${TAG#$TAGPFX}"
+            VERSION="${TAG#"$TAGPFX"}"
             # Guard: tag version must equal the CMake project() version (ignoring a
             # -beta/-rc suffix), else the release ships binaries whose embedded
             # version disagrees with the tag.
@@ -346,10 +358,10 @@ jobs:
             build-essential pkg-config cmake ninja-build zip unzip curl \
             libgl1-mesa-dev libx11-dev libxext-dev libxtst-dev libdbus-1-dev \
             libasound2 libfreetype6 \
-            xvfb python3 serdi lilv-utils liblilv-dev
+            xvfb python3 serdi lilv-utils liblilv-dev lv2-dev
           # Binaries, not packages: these come from several of the packages above
           # and a missing one should fail here rather than mid-gate.
-          for tool in cmake ninja zip unzip curl python3 serdi lv2info xvfb-run; do
+          for tool in cmake ninja zip unzip curl python3 serdi lv2info readelf ldd xvfb-run; do
             command -v "$tool" >/dev/null || { echo "::error::missing dependency: $tool"; exit 1; }
           done
 
@@ -397,6 +409,17 @@ jobs:
           else
             echo "::notice::no ctest targets registered for ${PLUGIN_BASE}; skipping"
           fi
+
+      - name: Upload chord editor diagnostics
+        if: always() && startsWith(matrix.plugin.key, 'chord-analyzer-')
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.plugin.asset }}-linux-ui-diagnostics
+          path: |
+            ${{ env.PLUGIN_DIR }}/build/ui-artifacts/
+            ${{ env.PLUGIN_DIR }}/build/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Validate CLAP (clap-validator gate)
         working-directory: ${{ env.PLUGIN_DIR }}
@@ -512,6 +535,24 @@ jobs:
           echo "=== staged ==="; find "${STAGE}" -maxdepth 2
           zip -r "${STAGE}.zip" "${STAGE}"
 
+      # The retained native headless product has its own download, as in the
+      # legacy release pipeline. Only the instrument job owns these two assets.
+      - name: Package and verify retained headless LV2 (linux)
+        if: matrix.plugin.key == 'chord-analyzer-2'
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          python3 ../lv2/package.py "build/bin/Chord Analyzer Headless.lv2" "chord-analyzer-headless-linux.zip"
+          python3 ../tests/test_chord_headless_bundle.py --archive "chord-analyzer-headless-linux.zip"
+
+      - name: Upload retained headless LV2 (linux)
+        if: matrix.plugin.key == 'chord-analyzer-2'
+        uses: actions/upload-artifact@v4
+        with:
+          name: chord-analyzer-headless-linux
+          path: ${{ env.PLUGIN_DIR }}/chord-analyzer-headless-linux.zip
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -621,10 +662,10 @@ jobs:
           .github/scripts/apt_install.sh \
             build-essential pkg-config cmake ninja-build zip curl \
             libgl1-mesa-dev libx11-dev libxext-dev libxtst-dev libdbus-1-dev \
-            xvfb python3 serdi liblilv-dev
+            xvfb python3 serdi lilv-utils liblilv-dev lv2-dev
           # Binaries, not packages: these come from several of the packages above
           # and a missing one should fail here rather than mid-gate.
-          for tool in cmake ninja zip curl python3 serdi xvfb-run; do
+          for tool in cmake ninja zip curl python3 serdi lv2info readelf ldd xvfb-run; do
             command -v "$tool" >/dev/null || { echo "::error::missing dependency: $tool"; exit 1; }
           done
 
@@ -699,6 +740,35 @@ jobs:
           echo "=== staged ==="; find "${STAGE}" -maxdepth 2
           zip -r "${STAGE}.zip" "${STAGE}"
 
+      - name: Upload chord editor diagnostics (ARM64)
+        if: always() && startsWith(matrix.plugin.key, 'chord-analyzer-')
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.plugin.asset }}-linux-arm64-ui-diagnostics
+          path: |
+            ${{ env.PLUGIN_DIR }}/build/ui-artifacts/
+            ${{ env.PLUGIN_DIR }}/build/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      # The retained native headless product has its own download, as in the
+      # legacy release pipeline. Only the instrument job owns these two assets.
+      - name: Package and verify retained headless LV2 (linux-arm64)
+        if: matrix.plugin.key == 'chord-analyzer-2'
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          python3 ../lv2/package.py "build/bin/Chord Analyzer Headless.lv2" "chord-analyzer-headless-linux-arm64.zip"
+          python3 ../tests/test_chord_headless_bundle.py --archive "chord-analyzer-headless-linux-arm64.zip"
+
+      - name: Upload retained headless LV2 (linux-arm64)
+        if: matrix.plugin.key == 'chord-analyzer-2'
+        uses: actions/upload-artifact@v4
+        with:
+          name: chord-analyzer-headless-linux-arm64
+          path: ${{ env.PLUGIN_DIR }}/chord-analyzer-headless-linux-arm64.zip
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Upload Linux ARM64 artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -725,6 +795,7 @@ jobs:
       PLUGIN_BASE: ${{ matrix.plugin.base }}
       ASSET: ${{ matrix.plugin.asset }}
       AU_SUBTYPE: ${{ matrix.plugin.au }}
+      AU_TYPE: ${{ matrix.plugin.au_type || 'aufx' }}
     steps:
       - name: Checkout plugins repo
         uses: actions/checkout@v4
@@ -764,12 +835,19 @@ jobs:
             --target "${PLUGIN_BASE}-au" "${PLUGIN_BASE}-vst3" \
                      "${PLUGIN_BASE}-clap" "${PLUGIN_BASE}-lv2"
 
+      - name: Run chord core and ABI tests (macOS)
+        if: startsWith(matrix.plugin.key, 'chord-analyzer-')
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          cmake --build build --config Release -j"$(sysctl -n hw.ncpu)"
+          ctest --test-dir build -C Release --no-tests=error --output-on-failure
+
       - name: Locate AU component
         id: findau
         working-directory: ${{ env.PLUGIN_DIR }}
         run: |
-          COMP=$(find build/bin -name '*.component' -type d | head -1)
-          if [ -z "$COMP" ]; then
+          COMP="build/bin/${PLUGIN_BASE}.component"
+          if [ ! -d "$COMP" ]; then
             echo "::error::No .component was built"; find build -maxdepth 3 -type d; exit 1
           fi
           echo "component=${COMP}" >> "$GITHUB_OUTPUT"
@@ -1029,6 +1107,27 @@ jobs:
           cmake --build build --config Release -j $env:NUMBER_OF_PROCESSORS `
             --target "$env:PLUGIN_BASE-vst3" "$env:PLUGIN_BASE-clap"
 
+      - name: Build and run chord core and ABI tests (MSVC)
+        if: startsWith(matrix.plugin.key, 'chord-analyzer-')
+        working-directory: ${{ env.PLUGIN_DIR }}
+        shell: pwsh
+        run: |
+          cmake --build build --config Release -j $env:NUMBER_OF_PROCESSORS
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ctest --test-dir build -C Release --no-tests=error --output-on-failure
+
+      # #271 was invisible here because only plugin targets were compiled.
+      - name: Build and run Multi-Comp core tests (MSVC)
+        if: matrix.plugin.key == 'multi-comp-2'
+        working-directory: ${{ env.PLUGIN_DIR }}
+        shell: pwsh
+        run: |
+          cmake --build build --config Release -j $env:NUMBER_OF_PROCESSORS `
+            --target MultiCompCoreTest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ctest --test-dir build -C Release -R '^MultiCompCore$' `
+            --no-tests=error --output-on-failure
+
       - name: Package
         working-directory: ${{ env.PLUGIN_DIR }}
         shell: pwsh
@@ -1099,9 +1198,9 @@ jobs:
       - name: Assemble release notes
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
-          # Changelog from the annotated tag message (skip first line = title).
-          TAG_MESSAGE=$(git tag -l --format='%(contents)' "$TAG" 2>/dev/null || echo "")
-          CHANGELOG=$(echo "$TAG_MESSAGE" | tail -n +2 | sed '/^$/d; 1{/^$/d}')
+          # Changelog from the annotated tag message (title line dropped); the
+          # script re-fetches the annotated tag that checkout replaced.
+          CHANGELOG=$(.github/scripts/release_changelog.sh "$TAG")
           # The build jobs bundle the manual only when the website has one, so
           # claim it only when every archive actually holds it. The listing is
           # captured first rather than piped into `grep -q`, whose early exit
@@ -1123,13 +1222,17 @@ jobs:
             if [ -n "$CHANGELOG" ]; then echo "$CHANGELOG"; echo ""; fi
             echo "### Installation"
             echo ""
-            echo "Linux and macOS zips contain \`VST3/\`, \`CLAP/\`, \`LV2/\` and (macOS only) \`AU/\`. The Windows zip contains \`VST3/\` and \`CLAP/\` (no AU or LV2).${MANUAL_NOTE}"
+            echo "Desktop Linux and macOS zips contain \`VST3/\`, \`CLAP/\`, \`LV2/\` and (macOS only) \`AU/\`. The Windows zip contains \`VST3/\` and \`CLAP/\` (no AU or LV2).${MANUAL_NOTE}"
             echo ""
             echo "**Linux (x86_64 and arm64):**"
             echo "- VST3: copy \`VST3/${BASE}.vst3\` to \`~/.vst3/\`"
             echo "- CLAP: copy \`CLAP/${BASE}.clap\` to \`~/.clap/\`"
             echo "- LV2: copy \`LV2/${BASE}.lv2\` to \`~/.lv2/\`"
             echo ""
+            if [ "$BASE" = "chord-analyzer-2" ]; then
+              echo "The separate \`chord-analyzer-headless-linux*.zip\` archives contain the retained native headless LV2, its installation guide and licenses. Copy \`LV2/Chord Analyzer Headless.lv2\` from the appropriate architecture's archive into the host's LV2 plugin directory. Its shipping URI and 19-port assignments are preserved."
+              echo ""
+            fi
             echo "**macOS (universal arm64/x86_64):**"
             echo "- AU: copy \`AU/${BASE}.component\` to \`~/Library/Audio/Plug-Ins/Components/\`"
             echo "- VST3: copy \`VST3/${BASE}.vst3\` to \`~/Library/Audio/Plug-Ins/VST3/\`"
@@ -1154,14 +1257,7 @@ jobs:
           # flattened to basenames), not by the dist/<artifact-dir>/… path, so
           # SHA256SUMS entries match the actual release asset filenames. Basenames
           # are unique: a release tag builds a single plugin.
-          : > dist/SHA256SUMS
-          find dist -type f -name '*.zip' -print0 \
-            | sort -z | while IFS= read -r -d '' f; do
-                ( cd "$(dirname "$f")" && shasum -a 256 "$(basename "$f")" )
-              done >> dist/SHA256SUMS
-          if [ "$(wc -l < dist/SHA256SUMS)" -ne 4 ]; then
-            echo "::error::Expected checksums for four ZIP assets"; exit 1
-          fi
+          .github/scripts/daf_release_checksums.sh "$ASSET" "$BASE" dist
 
       - name: Plan early access
         id: ea

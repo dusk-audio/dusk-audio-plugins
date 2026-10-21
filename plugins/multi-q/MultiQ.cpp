@@ -1566,11 +1566,12 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
 
                 targetGain = juce::jlimit(0.5f, 2.0f, targetGain);  // ±6dB max
 
-                // Dead zone: ignore corrections < 1% (~0.09 dB).
+                // Dead zone: collapse corrections < 1% (~0.09 dB) to unity.
                 // The oversampling AA filter has a tiny steady-state RMS effect
                 // that should not trigger autogain — only real EQ changes should.
-                if (std::abs(targetGain - 1.0f) > 0.01f)
-                    autoGainCompensation.setTargetValue(targetGain);
+                // Still publish unity so a preceding correction can release.
+                if (std::abs(targetGain - 1.0f) <= 0.01f) targetGain = 1.0f;
+                autoGainCompensation.setTargetValue(targetGain);
             }
 
             // Reset accumulators

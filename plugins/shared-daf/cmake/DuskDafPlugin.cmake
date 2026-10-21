@@ -99,11 +99,13 @@ static const unsigned int ${symbol}_len = ${_dusk_font_size}u;
     file(REMOVE "${out}.tmp")
 endfunction()
 
-# Copy the built CLAP/VST3/LV2 artefacts into the user plugin dirs after each
-# build, so hosts always load the freshly-built binary (DAF's ninja target only
+# Copy the built CLAP/VST3/LV2 (and AU) artefacts into the user plugin dirs after
+# each build, so hosts load the freshly built binary (DAF's ninja target only
 # writes to <build>/bin). Call AFTER daf_add_plugin with the plugin base name.
-# Disable with -DDUSK_DAF_INSTALL_LOCAL=OFF (e.g. on CI / release runners).
-option(DUSK_DAF_INSTALL_LOCAL "Copy built DAF plugins into the user plugin dirs after build" ON)
+# Opt-in, as JUCE's COPY_PLUGIN_AFTER_BUILD is: a build must not change what the
+# hosts on this machine load unless asked to. Enable with
+# -DDUSK_DAF_INSTALL_LOCAL=ON.
+option(DUSK_DAF_INSTALL_LOCAL "Copy built DAF plugins into the user plugin dirs after build" OFF)
 
 # LV2_PRESET_OMIT <symbol>...: control ports to leave out of the exported
 # factory presets.
@@ -165,6 +167,27 @@ function(dusk_daf_install_local plugin_name)
     endif()
     set(_bin "${CMAKE_BINARY_DIR}/bin")
 
+    # Remove the installed copy before copying, as JUCE's copyDir.cmake does:
+    # copy_directory merges, so a file an older build installed and this one no
+    # longer produces would stay in the bundle. (A host with the plugin loaded keeps
+    # its mapped binary either way: CMake's copy writes a new file, where cp would
+    # rewrite the loaded one in place.)
+    # Before 3.16, `cmake -E remove_directory` follows a symlink to a directory and
+    # empties what it points at, so an installed bundle linked into a build tree
+    # would lose the very files about to be copied. 3.16 removes just the link.
+    if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.17)
+        set(_rm_dir ${CMAKE_COMMAND} -E rm -rf)
+        set(_rm_file ${CMAKE_COMMAND} -E rm -f)
+    elseif(CMAKE_VERSION VERSION_GREATER_EQUAL 3.16)
+        set(_rm_dir ${CMAKE_COMMAND} -E remove_directory)
+        set(_rm_file ${CMAKE_COMMAND} -E remove -f)
+    else()
+        message(FATAL_ERROR
+            "DUSK_DAF_INSTALL_LOCAL needs CMake 3.16 or newer (this is ${CMAKE_VERSION}): "
+            "older `cmake -E remove_directory` deletes through symlinks. Configure with "
+            "-DDUSK_DAF_INSTALL_LOCAL=OFF, or use a newer CMake.")
+    endif()
+
     if(TARGET ${plugin_name}-clap)
         # macOS emits a .clap BUNDLE (directory, like VST3/LV2); Linux/Windows a
         # single-file .clap. Copy accordingly so the macOS install isn't a
@@ -172,13 +195,15 @@ function(dusk_daf_install_local plugin_name)
         if(CMAKE_HOST_APPLE)
             add_custom_command(TARGET ${plugin_name}-clap POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E make_directory "${_clap}"
+                COMMAND ${_rm_dir} "${_clap}/${plugin_name}.clap"
                 COMMAND ${CMAKE_COMMAND} -E copy_directory "${_bin}/${plugin_name}.clap" "${_clap}/${plugin_name}.clap"
                 COMMENT "Installing ${plugin_name}.clap -> ${_clap}"
                 VERBATIM)
         else()
             add_custom_command(TARGET ${plugin_name}-clap POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E make_directory "${_clap}"
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_bin}/${plugin_name}.clap" "${_clap}/${plugin_name}.clap"
+                COMMAND ${_rm_file} "${_clap}/${plugin_name}.clap"
+                COMMAND ${CMAKE_COMMAND} -E copy "${_bin}/${plugin_name}.clap" "${_clap}/${plugin_name}.clap"
                 COMMENT "Installing ${plugin_name}.clap -> ${_clap}"
                 VERBATIM)
         endif()
@@ -186,6 +211,7 @@ function(dusk_daf_install_local plugin_name)
     if(TARGET ${plugin_name}-vst3)
         add_custom_command(TARGET ${plugin_name}-vst3 POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E make_directory "${_vst3}"
+            COMMAND ${_rm_dir} "${_vst3}/${plugin_name}.vst3"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${_bin}/${plugin_name}.vst3" "${_vst3}/${plugin_name}.vst3"
             COMMENT "Installing ${plugin_name}.vst3 -> ${_vst3}"
             VERBATIM)
@@ -193,26 +219,21 @@ function(dusk_daf_install_local plugin_name)
     if(TARGET ${plugin_name}-lv2)
         add_custom_command(TARGET ${plugin_name}-lv2 POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E make_directory "${_lv2}"
+            COMMAND ${_rm_dir} "${_lv2}/${plugin_name}.lv2"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${_bin}/${plugin_name}.lv2" "${_lv2}/${plugin_name}.lv2"
             COMMENT "Installing ${plugin_name}.lv2 -> ${_lv2}"
             VERBATIM)
     endif()
     # AU is a macOS-only .component bundle; DAF only creates the -au target when
     # building on macOS, so this branch is inert (target absent) elsewhere.
-    # copy_directory MERGES, and the AU is code-signed: any file left over from an
-    # older build stays behind, is absent from the fresh _CodeSignature seal, and
-    # makes `codesign --verify` report "a sealed resource is missing or invalid" —
-    # which Apple's AU registrar turns into a component that loads nowhere. Wipe
-    # the installed bundle first so the copy is exactly what was signed.
+    # The AU has a second reason to be removed first: it is code-signed, and a file
+    # an older build left behind is absent from the fresh _CodeSignature seal and
+    # makes `codesign --verify` report "a sealed resource is missing or invalid",
+    # which Apple's AU registrar turns into a component that loads nowhere.
     if(TARGET ${plugin_name}-au)
-        if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.17)
-            set(_rm_installed_au ${CMAKE_COMMAND} -E rm -rf "${_au}/${plugin_name}.component")
-        else()
-            set(_rm_installed_au ${CMAKE_COMMAND} -E remove_directory "${_au}/${plugin_name}.component")
-        endif()
         add_custom_command(TARGET ${plugin_name}-au POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E make_directory "${_au}"
-            COMMAND ${_rm_installed_au}
+            COMMAND ${_rm_dir} "${_au}/${plugin_name}.component"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${_bin}/${plugin_name}.component" "${_au}/${plugin_name}.component"
             COMMAND /usr/bin/codesign --verify --deep --strict --verbose=2 "${_au}/${plugin_name}.component"
             COMMENT "Installing ${plugin_name}.component -> ${_au}"

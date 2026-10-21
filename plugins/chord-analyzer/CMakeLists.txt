@@ -15,6 +15,8 @@ project(ChordAnalyzer VERSION ${CHORDANALYZER_VERSION})
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+add_subdirectory(core)
+
 # Build format options
 option(BUILD_VST3 "Build VST3 format" ON)
 option(BUILD_LV2 "Build LV2 format" ON)
@@ -57,6 +59,14 @@ juce_add_plugin(ChordAnalyzer
 )
 
 apply_clap_extension(ChordAnalyzer chord-analyzer note-effect analyzer mono stereo)
+dusk_clap_enable_output_parameters(ChordAnalyzer)
+if(TARGET ChordAnalyzer_CLAP AND NOT CMAKE_CROSSCOMPILING)
+    add_executable(ChordAnalyzerClapOutputTest tests/test_chord_clap_outputs.cpp)
+    target_link_libraries(ChordAnalyzerClapOutputTest PRIVATE clap-core ${CMAKE_DL_LIBS})
+    add_dependencies(ChordAnalyzerClapOutputTest ChordAnalyzer_CLAP)
+    add_test(NAME ChordAnalyzerClapOutputs COMMAND ChordAnalyzerClapOutputTest $<TARGET_FILE:ChordAnalyzer_CLAP>)
+    set_tests_properties(ChordAnalyzerClapOutputs PROPERTIES TIMEOUT 30)
+endif()
 
 juce_generate_juce_header(ChordAnalyzer)
 
@@ -95,6 +105,8 @@ target_compile_definitions(ChordAnalyzer
 # Link JUCE modules
 target_link_libraries(ChordAnalyzer
     PRIVATE
+        ChordAnalyzerText
+        ChordMidiExport
         juce::juce_audio_basics
         juce::juce_audio_devices
         juce::juce_audio_formats
@@ -121,6 +133,7 @@ target_include_directories(ChordAnalyzerTest PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Source
 )
 target_link_libraries(ChordAnalyzerTest PRIVATE
+    ChordAnalyzerText
     juce::juce_core
 )
 target_compile_definitions(ChordAnalyzerTest PRIVATE
@@ -132,7 +145,7 @@ target_compile_definitions(ChordAnalyzerTest PRIVATE
 # Host-side test target for the "Detected Chord" output parameter. Links the
 # plugin's shared code so it exercises the real processor, the real parameter
 # object and the real 20 Hz publish path rather than a stand-in.
-add_executable(ChordAnalyzerHostTest EXCLUDE_FROM_ALL
+add_executable(ChordAnalyzerHostTest
     tests/test_detected_chord_param.cpp
 )
 target_link_libraries(ChordAnalyzerHostTest PRIVATE ChordAnalyzer)
@@ -143,6 +156,60 @@ target_include_directories(ChordAnalyzerHostTest
     PRIVATE $<TARGET_PROPERTY:ChordAnalyzer,INCLUDE_DIRECTORIES>)
 target_compile_definitions(ChordAnalyzerHostTest
     PRIVATE $<TARGET_PROPERTY:ChordAnalyzer,COMPILE_DEFINITIONS>)
+add_test(NAME ChordAnalyzerHost COMMAND ChordAnalyzerHostTest)
+set_tests_properties(ChordAnalyzerHost PROPERTIES TIMEOUT 30)
+
+# Run the same frozen text proof through the actual shipping JUCE adapter.
+# Reuse its shared code rather than compiling a second set of JUCE modules.
+if(NOT CMAKE_CROSSCOMPILING)
+    add_executable(ChordAnalyzerTextAdapterTest tests/test_chord_analyzer_text.cpp)
+    target_link_libraries(ChordAnalyzerTextAdapterTest PRIVATE ChordAnalyzer)
+    target_include_directories(ChordAnalyzerTextAdapterTest PRIVATE $<TARGET_PROPERTY:ChordAnalyzer,INCLUDE_DIRECTORIES>)
+    target_compile_definitions(ChordAnalyzerTextAdapterTest PRIVATE
+        CHORD_ANALYZER_LEGACY_REFERENCE=1 $<TARGET_PROPERTY:ChordAnalyzer,COMPILE_DEFINITIONS>)
+    add_test(NAME ChordAnalyzerTextAdapter COMMAND ChordAnalyzerTextAdapterTest)
+
+    add_executable(ChordSessionIntegrationTest tests/test_chord_session_juce.cpp)
+    target_link_libraries(ChordSessionIntegrationTest PRIVATE ChordAnalyzer)
+    target_include_directories(ChordSessionIntegrationTest PRIVATE $<TARGET_PROPERTY:ChordAnalyzer,INCLUDE_DIRECTORIES>)
+    target_compile_definitions(ChordSessionIntegrationTest PRIVATE $<TARGET_PROPERTY:ChordAnalyzer,COMPILE_DEFINITIONS>)
+    add_test(NAME ChordSessionIntegration COMMAND ChordSessionIntegrationTest)
+    set_tests_properties(ChordSessionIntegration PROPERTIES TIMEOUT 20)
+
+    add_executable(ChordRecordingAdapterTest tests/test_chord_recording.cpp)
+    target_link_libraries(ChordRecordingAdapterTest PRIVATE ChordAnalyzer)
+    target_include_directories(ChordRecordingAdapterTest PRIVATE $<TARGET_PROPERTY:ChordAnalyzer,INCLUDE_DIRECTORIES>)
+    target_compile_definitions(ChordRecordingAdapterTest PRIVATE
+        CHORD_ANALYZER_LEGACY_REFERENCE=1 $<TARGET_PROPERTY:ChordAnalyzer,COMPILE_DEFINITIONS>)
+    add_test(NAME ChordRecordingAdapter COMMAND ChordRecordingAdapterTest)
+
+    add_executable(ChordMidiExportAdapterTest tests/test_chord_midi_export.cpp)
+    target_link_libraries(ChordMidiExportAdapterTest PRIVATE ChordAnalyzer)
+    target_include_directories(ChordMidiExportAdapterTest PRIVATE $<TARGET_PROPERTY:ChordAnalyzer,INCLUDE_DIRECTORIES>)
+    target_compile_definitions(ChordMidiExportAdapterTest PRIVATE
+        CHORD_EXPORT_LEGACY_REFERENCE=1 $<TARGET_PROPERTY:ChordAnalyzer,COMPILE_DEFINITIONS>)
+    add_test(NAME ChordMidiExportAdapter COMMAND ChordMidiExportAdapterTest)
+    set_tests_properties(ChordMidiExportAdapter PROPERTIES TIMEOUT 60)
+endif()
+
+function(chord_add_desktop_midi_test target product)
+    if(CMAKE_CROSSCOMPILING)
+        return()
+    endif()
+    add_executable(${target} tests/test_chord_midi_juce.cpp)
+    target_link_libraries(${target} PRIVATE ${product})
+    target_include_directories(${target} PRIVATE $<TARGET_PROPERTY:${product},INCLUDE_DIRECTORIES>)
+    target_compile_definitions(${target} PRIVATE $<TARGET_PROPERTY:${product},COMPILE_DEFINITIONS>)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_compile_definitions(${target} PRIVATE CHORD_TEST_WRAP_MALLOC=1)
+        # The linker interposes these calls. Do not let builtin assumptions
+        # reorder the probe's C++-new nesting flag across the wrapped malloc.
+        target_compile_options(${target} PRIVATE -fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc)
+        target_link_options(${target} PRIVATE -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc)
+    endif()
+    add_test(NAME ${target} COMMAND ${target})
+endfunction()
+chord_add_desktop_midi_test(ChordAnalyzerMidiJuceTest ChordAnalyzer)
 
 # Optimization for release builds
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
@@ -209,6 +276,8 @@ target_compile_definitions(ChordAnalyzerMIDI
 
 target_link_libraries(ChordAnalyzerMIDI
     PRIVATE
+        ChordAnalyzerText
+        ChordMidiExport
         juce::juce_audio_basics
         juce::juce_audio_devices
         juce::juce_audio_formats
@@ -225,6 +294,7 @@ target_link_libraries(ChordAnalyzerMIDI
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags
 )
+chord_add_desktop_midi_test(ChordAnalyzerMidiEffectTest ChordAnalyzerMIDI)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -274,86 +344,7 @@ if("LV2" IN_LIST PLUGIN_FORMATS)
     endif()
     message(STATUS "ChordAnalyzerHeadless_LV2: using LV2 SDK at ${LV2_SDK_DIR}")
 
-    add_library(ChordAnalyzerHeadless_LV2 MODULE
-        lv2/chord-analyzer-lv2.cpp
-        Source/ChordAnalyzer.cpp
-    )
-
-    target_include_directories(ChordAnalyzerHeadless_LV2 PRIVATE
-        Source
-        "${LV2_SDK_DIR}"
-    )
-
-    # juce_core compiles its networking (URL, WebInputStream) against libcurl
-    # unless JUCE_USE_CURL is off. Nothing here links curl, so without this the
-    # module carries fifteen unresolved curl_* symbols and Jalv refuses to load
-    # it on Zynthian (issue #284). The three other chord-analyzer targets have
-    # carried this define since they were written; only this one was missed.
-    target_compile_definitions(ChordAnalyzerHeadless_LV2 PRIVATE
-        JUCE_USE_CURL=0
-        JUCE_WEB_BROWSER=0
-    )
-
-    target_link_libraries(ChordAnalyzerHeadless_LV2 PRIVATE
-        juce::juce_core
-    )
-
-    # Make the loader's complaint a link error instead. A plugin module resolves
-    # nothing from its host, so every symbol it references must be satisfied at
-    # link time; without this the linker is happy to emit a module that only
-    # fails once a host tries to dlopen it, which is exactly how #284 shipped.
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        target_link_options(ChordAnalyzerHeadless_LV2 PRIVATE
-            LINKER:--no-undefined)
-    endif()
-
-    set_target_properties(ChordAnalyzerHeadless_LV2 PROPERTIES
-        PREFIX ""
-        SUFFIX ".so"           # LV2 convention: .so on every platform (incl. macOS)
-        OUTPUT_NAME "ChordAnalyzerHeadless"
-        POSITION_INDEPENDENT_CODE ON
-    )
-
-    if(CMAKE_BUILD_TYPE STREQUAL "Release")
-        if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-            target_compile_options(ChordAnalyzerHeadless_LV2 PRIVATE -O3 -ffast-math -fno-finite-math-only)
-        endif()
-    endif()
-
-    # Assemble the .lv2 bundle (binary + manifest.ttl + chord-analyzer-headless.ttl)
-    set(CHORDANALYZER_HEADLESS_BUNDLE "${CMAKE_CURRENT_BINARY_DIR}/Chord Analyzer Headless.lv2")
-
-    add_custom_command(TARGET ChordAnalyzerHeadless_LV2 POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${CHORDANALYZER_HEADLESS_BUNDLE}"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "$<TARGET_FILE:ChordAnalyzerHeadless_LV2>"
-            "${CHORDANALYZER_HEADLESS_BUNDLE}/ChordAnalyzerHeadless.so"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_CURRENT_SOURCE_DIR}/lv2/manifest.ttl"
-            "${CHORDANALYZER_HEADLESS_BUNDLE}/manifest.ttl"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_CURRENT_SOURCE_DIR}/lv2/chord-analyzer-headless.ttl"
-            "${CHORDANALYZER_HEADLESS_BUNDLE}/chord-analyzer-headless.ttl"
-        COMMENT "Assembling Chord Analyzer Headless.lv2 bundle"
-    )
-
-    if(DUSK_COPY_AFTER_BUILD)
-        if(APPLE)
-            set(LV2_INSTALL_DIR "$ENV{HOME}/Library/Audio/Plug-Ins/LV2")
-        elseif(UNIX)
-            set(LV2_INSTALL_DIR "$ENV{HOME}/.lv2")
-        elseif(WIN32)
-            set(LV2_INSTALL_DIR "$ENV{APPDATA}/LV2")
-        endif()
-
-        if(DEFINED LV2_INSTALL_DIR)
-            add_custom_command(TARGET ChordAnalyzerHeadless_LV2 POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E make_directory "${LV2_INSTALL_DIR}"
-                COMMAND ${CMAKE_COMMAND} -E copy_directory
-                    "${CHORDANALYZER_HEADLESS_BUNDLE}"
-                    "${LV2_INSTALL_DIR}/Chord Analyzer Headless.lv2"
-                COMMENT "Installing Chord Analyzer Headless.lv2 to ${LV2_INSTALL_DIR}"
-            )
-        endif()
-    endif()
+    include(lv2/ChordAnalyzerHeadless.cmake)
+    chord_add_headless_lv2("${CMAKE_CURRENT_SOURCE_DIR}/lv2" "${LV2_SDK_DIR}"
+        "${CMAKE_CURRENT_BINARY_DIR}/Chord Analyzer Headless.lv2")
 endif()

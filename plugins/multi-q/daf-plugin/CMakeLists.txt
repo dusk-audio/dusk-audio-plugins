@@ -44,9 +44,60 @@ target_compile_definitions(multi-q-2 PUBLIC
     MQ2_VERSION_MINOR=${PROJECT_VERSION_MINOR}
     MQ2_VERSION_PATCH=${PROJECT_VERSION_PATCH})
 
-# Auto-deploy the built CLAP/VST3/LV2 into the user plugin dirs after each build
-# (disable with -DDUSK_DAF_INSTALL_LOCAL=OFF).
+# Copies the built CLAP/VST3/LV2 into the user plugin dirs after each build
+# when configured with -DDUSK_DAF_INSTALL_LOCAL=ON.
 dusk_daf_install_local(multi-q-2 LV2_PROGRAMS)
+
+if(NOT CMAKE_CROSSCOMPILING)
+    enable_testing()
+    add_executable(MultiQCoreFiltersTest ../tests/test_multiq_core_filters.cpp)
+    add_test(NAME MultiQCoreFilters COMMAND MultiQCoreFiltersTest)
+
+    add_executable(MultiQSmoothingTest ../tests/test_multiq_smoothing.cpp)
+    add_test(NAME MultiQSmoothing COMMAND MultiQSmoothingTest)
+
+    add_executable(MultiQDigitalOversamplingTest
+        ../tests/test_multiq_digital_oversampling.cpp
+        ../core/MultiQDSP.cpp
+        ../core/MultiQMatch.cpp
+        ../../shared-daf/dsp/FourKEQDSP.cpp)
+    add_test(NAME MultiQDigitalOversampling COMMAND MultiQDigitalOversamplingTest)
+
+    add_executable(MultiQAutoGainTest
+        ../tests/test_multiq_auto_gain.cpp
+        ../core/MultiQDSP.cpp
+        ../core/MultiQMatch.cpp
+        ../../shared-daf/dsp/FourKEQDSP.cpp)
+    add_test(NAME MultiQAutoGain COMMAND MultiQAutoGainTest)
+
+    add_executable(MultiQMatchStateTest
+        ../tests/test_multiq_match_state.cpp
+        ../core/MultiQMatch.cpp)
+    add_test(NAME MultiQMatchState COMMAND MultiQMatchStateTest)
+
+    find_package(Threads REQUIRED)
+    target_link_libraries(MultiQMatchStateTest PRIVATE Threads::Threads)
+    add_executable(MultiQMatchSnapshotTest ../tests/test_multiq_match_snapshot.cpp)
+    target_link_libraries(MultiQMatchSnapshotTest PRIVATE Threads::Threads)
+    add_test(NAME MultiQMatchSnapshot COMMAND MultiQMatchSnapshotTest)
+
+    add_executable(MultiQMatchIRTest
+        ../tests/test_multiq_match_ir.cpp
+        ../core/MultiQMatch.cpp)
+    target_link_libraries(MultiQMatchIRTest PRIVATE Threads::Threads)
+    add_test(NAME MultiQMatchIR COMMAND MultiQMatchIRTest)
+
+    add_executable(MultiQHostStateTest
+        tests/MultiQHostStateTest.cpp
+        ../core/MultiQDSP.cpp
+        ../core/MultiQMatch.cpp
+        ../../shared-daf/dsp/FourKEQDSP.cpp
+        "${DAF_PATH}/daf/src/DafPlugin.cpp")
+    target_link_libraries(MultiQHostStateTest PRIVATE multi-q-2 Threads::Threads)
+    target_compile_definitions(MultiQHostStateTest PRIVATE DAF_PLUGIN_TARGET_CLAP)
+    add_test(NAME MultiQHostState COMMAND MultiQHostStateTest)
+    set_tests_properties(MultiQHostState PROPERTIES TIMEOUT 60)
+endif()
 
 # Fleet gates. Multi-Q 2 registered no ctest at all; see #148.
 #

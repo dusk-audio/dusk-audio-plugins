@@ -69,7 +69,7 @@ ca:q-7s9      a lv2:ScalePoint ; rdfs:label "7#9" ; rdf:value 33 .
 <https://dusk-audio.github.io/plugins/chord-analyzer-headless>
     a lv2:Plugin , lv2:MIDIPlugin ;
     doap:name "Chord Analyzer Headless" ;
-    doap:license <http://opensource.org/licenses/MIT> ;
+    doap:license <https://spdx.org/licenses/GPL-3.0-or-later.html> ;
     doap:maintainer [
         a foaf:Person ;
         foaf:name "Dusk Audio" ;

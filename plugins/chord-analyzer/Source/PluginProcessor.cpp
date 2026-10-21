@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "../../shared/DuskClapOutputParameter.h"
 
 //==============================================================================
 ChordAnalyzerProcessor::ChordAnalyzerProcessor()
@@ -76,16 +77,16 @@ ChordAnalyzerProcessor::ChordAnalyzerProcessor()
     const juce::StringArray inversionChoices(
         inversionChoiceLabels, inversionChoiceCount);
 
-    detectedRootParam = new juce::AudioParameterChoice(
+    detectedRootParam = new DuskClapOutputParameter<juce::AudioParameterChoice>(
         juce::ParameterID(PARAM_DETECTED_ROOT, 1),
         "Detected Root", pitchClassChoices, 0);
-    detectedQualityParam = new juce::AudioParameterChoice(
+    detectedQualityParam = new DuskClapOutputParameter<juce::AudioParameterChoice>(
         juce::ParameterID(PARAM_DETECTED_QUALITY, 1),
         "Detected Quality", qualityChoices, 0);
-    detectedBassParam = new juce::AudioParameterChoice(
+    detectedBassParam = new DuskClapOutputParameter<juce::AudioParameterChoice>(
         juce::ParameterID(PARAM_DETECTED_BASS, 1),
         "Detected Bass", pitchClassChoices, 0);
-    detectedInversionParam = new juce::AudioParameterChoice(
+    detectedInversionParam = new DuskClapOutputParameter<juce::AudioParameterChoice>(
         juce::ParameterID(PARAM_DETECTED_INVERSION, 1),
         "Detected Inversion", inversionChoices, 0);
 
@@ -107,13 +108,18 @@ ChordAnalyzerProcessor::ChordAnalyzerProcessor()
     // The lambda reads nothing but its argument. Hosts call getText() with
     // arbitrary values and cache the answers, so anything that peeked at the
     // live chord here would label cached values with the wrong chord.
-    detectedChordParam = new juce::AudioParameterFloat(
+    detectedChordParam = new DuskClapOutputParameter<juce::AudioParameterFloat>(
         juce::ParameterID(PARAM_DETECTED_CHORD, 1),
         "Detected Chord",
         juce::NormalisableRange<float>(0.0f, static_cast<float>(ChordAnalyzer::maxLabelCode), 1.0f),
         0.0f,
         juce::AudioParameterFloatAttributes().withStringFromValueFunction(
-            [](float value, int) { return ChordAnalyzer::decodeLabel(juce::roundToInt(value)); }));
+            [](float value, int) { return ChordAnalyzer::decodeLabel(juce::roundToInt(value)); })
+            .withValueFromStringFunction([](const juce::String& text)
+            {
+                const int code = ChordAnalyzer::labelToCode(text);
+                return code >= 0 ? static_cast<float>(code) : text.getFloatValue();
+            }));
 
     addParameter(detectedRootParam);
     addParameter(detectedQualityParam);
@@ -121,6 +127,7 @@ ChordAnalyzerProcessor::ChordAnalyzerProcessor()
     addParameter(detectedInversionParam);
     addParameter(detectedChordParam);
 
+    latestNoteSnapshot.store(PendingAnalysis{});
     startTimer(50);  // 20Hz publishing of detection results to host parameters
 }
 
@@ -247,10 +254,14 @@ void ChordAnalyzerProcessor::changeProgramName(int /*index*/, const juce::String
 //==============================================================================
 void ChordAnalyzerProcessor::resetNoteState() noexcept
 {
-    sustainPedalDown = false;
-    for (auto& word : activeNoteWords)
-        word.store(0, std::memory_order_release);
-    sustainedReleasedWords.fill(0);
+    midiNoteState.reset();
+    {
+        // prepare/release run with audio stopped. Reset the UI fallback under
+        // its existing non-real-time lock; processBlock never takes this lock.
+        const juce::SpinLock::ScopedLockType lock(chordLock);
+        lastUiNoteSnapshot = {};
+        latestNoteSnapshot.store({{}, currentTimeSec.load(std::memory_order_relaxed)});
+    }
     analysisQueueRead.store(
         analysisQueueWrite.load(std::memory_order_acquire),
         std::memory_order_release);
@@ -314,36 +325,6 @@ void ChordAnalyzerProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 }
 
 //==============================================================================
-bool ChordAnalyzerProcessor::activateNote(int note) noexcept
-{
-    if (note < 0 || note >= 128)
-        return false;
-    const size_t word = static_cast<size_t>(note / 64);
-    const uint64_t mask = uint64_t{1} << static_cast<unsigned>(note % 64);
-    const uint64_t previous =
-        activeNoteWords[word].fetch_or(mask, std::memory_order_acq_rel);
-    return (previous & mask) == 0;
-}
-
-bool ChordAnalyzerProcessor::deactivateNote(int note) noexcept
-{
-    if (note < 0 || note >= 128)
-        return false;
-    const size_t word = static_cast<size_t>(note / 64);
-    const uint64_t mask = uint64_t{1} << static_cast<unsigned>(note % 64);
-    const uint64_t previous =
-        activeNoteWords[word].fetch_and(~mask, std::memory_order_acq_rel);
-    return (previous & mask) != 0;
-}
-
-std::array<uint64_t, 2>
-ChordAnalyzerProcessor::snapshotActiveNoteWords() const noexcept
-{
-    return {
-        activeNoteWords[0].load(std::memory_order_acquire),
-        activeNoteWords[1].load(std::memory_order_acquire) };
-}
-
 std::vector<int> ChordAnalyzerProcessor::notesFromWords(
     const std::array<uint64_t, 2>& words)
 {
@@ -358,16 +339,22 @@ std::vector<int> ChordAnalyzerProcessor::notesFromWords(
 
 std::vector<int> ChordAnalyzerProcessor::snapshotActiveNotes() const
 {
-    return notesFromWords(snapshotActiveNoteWords());
+    PendingAnalysis snapshot;
+    {
+        const juce::SpinLock::ScopedLockType lock(chordLock);
+        if (latestNoteSnapshot.load(snapshot)) lastUiNoteSnapshot = snapshot;
+        else snapshot = lastUiNoteSnapshot;
+    }
+    return notesFromWords(snapshot.noteWords);
 }
 
-bool ChordAnalyzerProcessor::enqueueAnalysisSnapshot(double timeSec) noexcept
+bool ChordAnalyzerProcessor::enqueueAnalysisSnapshot(const PendingAnalysis& snapshot) noexcept
 {
     const size_t write = analysisQueueWrite.load(std::memory_order_relaxed);
     const size_t next = (write + 1) % analysisQueueCapacity;
     if (next == analysisQueueRead.load(std::memory_order_acquire))
         return false;
-    analysisQueue[write] = { snapshotActiveNoteWords(), timeSec };
+    analysisQueue[write] = snapshot;
     analysisQueueWrite.store(next, std::memory_order_release);
     return true;
 }
@@ -387,70 +374,12 @@ bool ChordAnalyzerProcessor::dequeueAnalysisSnapshot(
 //==============================================================================
 void ChordAnalyzerProcessor::processMidiInput(const juce::MidiBuffer& midi)
 {
-    bool notesChanged = false;
-    const bool sustainEnabled = respectSustain.load();
-
+    bool notesChanged = midiNoteState.setRespectSustain(respectSustain.load(std::memory_order_acquire));
     for (const auto metadata : midi)
     {
-        const auto msg = metadata.getMessage();
-
-        if (msg.isNoteOn())
-        {
-            const int noteNumber = msg.getNoteNumber();
-            // Re-pressing a sustained-released note cancels its deferred release
-            const size_t word = static_cast<size_t>(noteNumber / 64);
-            const uint64_t mask =
-                uint64_t{1} << static_cast<unsigned>(noteNumber % 64);
-            sustainedReleasedWords[word] &= ~mask;
-            notesChanged = activateNote(noteNumber) || notesChanged;
-        }
-        else if (msg.isNoteOff())
-        {
-            const int noteNumber = msg.getNoteNumber();
-
-            if (sustainEnabled && sustainPedalDown)
-            {
-                // Defer the release: keep the active bit set until the pedal lifts.
-                const size_t word = static_cast<size_t>(noteNumber / 64);
-                const uint64_t mask =
-                    uint64_t{1} << static_cast<unsigned>(noteNumber % 64);
-                sustainedReleasedWords[word] |= mask;
-                continue;
-            }
-
-            notesChanged = deactivateNote(noteNumber) || notesChanged;
-        }
-        else if (msg.isController() && msg.getControllerNumber() == 64)
-        {
-            // Sustain pedal: MIDI convention is value >= 64 → down, < 64 → up
-            const bool wasDown   = sustainPedalDown;
-            const bool nowDown   = msg.getControllerValue() >= 64;
-            sustainPedalDown     = nowDown;
-
-            if (wasDown && ! nowDown)
-            {
-                // Pedal release: drop every note whose note-off was deferred.
-                // We always flush regardless of the current sustainEnabled state —
-                // those bits reflect real player-released note-offs from when
-                // sustain was on, and would otherwise stay stuck active
-                // if the user toggled "Respect Sustain" off while pedalling.
-                for (size_t word = 0; word < sustainedReleasedWords.size(); ++word)
-                {
-                    const uint64_t released = sustainedReleasedWords[word];
-                    const uint64_t previous = activeNoteWords[word].fetch_and(
-                        ~released, std::memory_order_acq_rel);
-                    notesChanged = (previous & released) != 0 || notesChanged;
-                    sustainedReleasedWords[word] = 0;
-                }
-            }
-        }
-        else if (msg.isAllNotesOff() || msg.isAllSoundOff())
-        {
-            for (auto& word : activeNoteWords)
-                notesChanged = word.exchange(0, std::memory_order_acq_rel) != 0
-                            || notesChanged;
-            sustainedReleasedWords.fill(0);
-        }
+        // A MidiMessage copy can allocate for SysEx. Inspect borrowed event
+        // bytes directly; the host's MidiBuffer stays untouched for passthrough.
+        notesChanged = midiNoteState.process(metadata.data, static_cast<uint32_t>(metadata.numBytes)) || notesChanged;
     }
 
     // Chord naming and suggestion generation build strings/vectors, so queue
@@ -461,7 +390,9 @@ void ChordAnalyzerProcessor::processMidiInput(const juce::MidiBuffer& midi)
     // NOT preserved: only the resulting end-of-block state is captured.
     if (notesChanged)
     {
-        if (! enqueueAnalysisSnapshot(currentTimeSec.load(std::memory_order_relaxed)))
+        const PendingAnalysis snapshot{midiNoteState.snapshot(), currentTimeSec.load(std::memory_order_relaxed)};
+        latestNoteSnapshot.store(snapshot);
+        if (! enqueueAnalysisSnapshot(snapshot))
             analysisDirty.store(true, std::memory_order_release);
     }
 }
@@ -469,8 +400,9 @@ void ChordAnalyzerProcessor::processMidiInput(const juce::MidiBuffer& midi)
 //==============================================================================
 void ChordAnalyzerProcessor::updateAnalysis()
 {
-    updateAnalysis({ snapshotActiveNoteWords(),
-                     currentTimeSec.load(std::memory_order_relaxed) });
+    PendingAnalysis snapshot;
+    if (latestNoteSnapshot.load(snapshot)) updateAnalysis(snapshot);
+    else analysisDirty.store(true, std::memory_order_release);
 }
 
 void ChordAnalyzerProcessor::updateAnalysis(const PendingAnalysis& snapshot)
@@ -508,18 +440,7 @@ void ChordAnalyzerProcessor::updateAnalysis(const PendingAnalysis& snapshot)
             // into a preallocated ring buffer so updates never need to shift
             // entries (the previous std::vector
             // push_back / erase(begin()) was both heap-touching and O(N)).
-            if (newChord.isValid && !newChord.name.isEmpty() && newChord.name != "-")
-            {
-                const int lastIdx = (historyHead - 1 + maxHistorySize) % maxHistorySize;
-                const bool isDup = historyCount > 0 && chordHistory[lastIdx] == newChord;
-                if (!isDup)
-                {
-                    chordHistory[historyHead] = newChord;
-                    historyHead = (historyHead + 1) % maxHistorySize;
-                    if (historyCount < maxHistorySize)
-                        ++historyCount;
-                }
-            }
+            chordHistory.append(newChord);
 
             // Record the chord if recording
             const juce::SpinLock::ScopedLockType recLock(recorderLock);
@@ -615,19 +536,13 @@ std::vector<ChordSuggestion> ChordAnalyzerProcessor::getCurrentSuggestions() con
 std::vector<ChordInfo> ChordAnalyzerProcessor::getChordHistory() const
 {
     const juce::SpinLock::ScopedLockType lock(chordLock);
-    std::vector<ChordInfo> out;
-    out.reserve(static_cast<size_t>(historyCount));
-    const int start = (historyHead - historyCount + maxHistorySize) % maxHistorySize;
-    for (int i = 0; i < historyCount; ++i)
-        out.push_back(chordHistory[(start + i) % maxHistorySize]);
-    return out;
+    return chordHistory.snapshot();
 }
 
 void ChordAnalyzerProcessor::clearChordHistory()
 {
     const juce::SpinLock::ScopedLockType lock(chordLock);
-    historyHead = 0;
-    historyCount = 0;
+    chordHistory.clear();
 }
 
 std::vector<int> ChordAnalyzerProcessor::getActiveNotes() const
@@ -700,6 +615,10 @@ void ChordAnalyzerProcessor::setStateInformation(const void* data, int sizeInByt
         if (xmlState->hasTagName(parameters.state.getType()))
         {
             parameters.replaceState(juce::ValueTree::fromXml(*xmlState));
+            // Refresh the host after the whole preset is installed. In the
+            // pinned CLAP wrapper this requests a value rescan;
+            // per-parameter output events alone leave the host's cache stale.
+            updateHostDisplay(juce::AudioProcessorListener::ChangeDetails().withProgramChanged(true));
         }
     }
 }

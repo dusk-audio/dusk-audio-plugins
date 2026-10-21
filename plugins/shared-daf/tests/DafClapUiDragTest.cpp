@@ -25,12 +25,10 @@
 //      point the user starts moving. Phase A alone would not have caught it.
 //
 // The assertion is what a HOST would have been told, not what was drawn and not
-// what get_value() reads back. A CLAP editor does not write its own DSP-side
-// values: it reports edits to the host, which feeds them back in. In a bare
-// harness nothing feeds them back, so get_value() sits still however far a knob
-// is dragged, and asserting on it would call every working editor broken. This
-// counts the CLAP_EVENT_PARAM_VALUE events the plugin pushes out instead, which
-// is the same evidence a DAW acts on.
+// what get_value() reads back. The current DAF wrapper also applies UI edits
+// locally while draining its queue, so DSP-side movement alone cannot prove
+// the host received the edit. This counts the CLAP_EVENT_PARAM_VALUE events the
+// plugin pushes out, which is the evidence a DAW uses to record automation.
 //
 // The knob's position comes in on the command line rather than being hunted for.
 // An earlier version swept a grid looking for anything that responded, which is
@@ -176,12 +174,8 @@ bool isOutput(const Param& p)
     return (p.flags & CLAP_PARAM_IS_READONLY) != 0 && p.module != "daf_reset";
 }
 
-// What the host would receive from the editor. A CLAP plugin's UI does not write
-// its own DSP-side parameter values: it tells the host, and the host feeds the
-// change back in. So clap_plugin_params.get_value() stays put no matter how far
-// a knob is dragged in a bare harness like this one, and asserting on it would
-// report every working editor as broken. The events below are the actual
-// evidence that a knob turned.
+// What the host receives from the editor. DAF may also apply these edits locally;
+// count the emitted events to prove the automation reaches the host as well.
 struct OutEvents {
     clap_output_events_t iface;
     std::vector<clap_id> paramValueIds;

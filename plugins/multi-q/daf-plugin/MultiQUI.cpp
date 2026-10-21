@@ -256,9 +256,9 @@ protected:
             if (multiQGetUiPresets != nullptr)
                 if (void* inst = getPluginInstancePointer())
                 {
-                    const char* strv = multiQGetUiPresets(inst);
+                    const std::string strv = multiQGetUiPresets(inst);
                     int d = -1, br = -1, tb = -1;
-                    if (strv && *strv && std::sscanf(strv, "%d,%d,%d", &d, &br, &tb) == 3)
+                    if (!strv.empty() && std::sscanf(strv.c_str(), "%d,%d,%d", &d, &br, &tb) == 3)
                     {
                         digPreset_    = (d  >= 0 && d  < mqprog::kNumDigitalPrograms) ? d  : -1;
                         currentPreset = (br >= 0 && br < mqprog::kNumBritishPrograms) ? br : -1;

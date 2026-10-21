@@ -8,6 +8,8 @@ on:
     paths:
       - '.github/scripts/early_access.sh'
       - 'tests/check_early_access.sh'
+      - '.github/scripts/release_changelog.sh'
+      - 'tests/check_release_changelog.sh'
       - '.github/workflows/build.yml'
       - '.github/workflows/daf-build.yml'
       - '.github/workflows/daf-release.yml'
@@ -31,3 +33,7 @@ jobs:
       - name: Test early_access.sh
         shell: bash
         run: ./tests/check_early_access.sh
+
+      - name: Test release_changelog.sh
+        shell: bash
+        run: ./tests/check_release_changelog.sh

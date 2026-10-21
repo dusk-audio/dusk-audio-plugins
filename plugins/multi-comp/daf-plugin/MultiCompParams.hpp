@@ -5,9 +5,11 @@
 #include "../core/MultiCompPresets.hpp"
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <charconv>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <locale>
 #include <sstream>
@@ -60,13 +62,13 @@ inline constexpr std::array<Param, 63> kParams = {{
  {"auto_makeup","Auto Makeup","",0,1,0,CoreParameter::AutoMakeup,true}, {"distortion_type","Distortion","",0,3,0,CoreParameter::Distortion,true},
  {"distortion_amount","Distortion Amt","%",0,100,50,CoreParameter::DistortionAmount,false}, {"oversampling","Oversampling","",0,2,1,CoreParameter::Oversampling,true},
  {"global_lookahead","Lookahead","ms",0,10,0,CoreParameter::GlobalLookahead,false},
- {"opto_peak_reduction","Peak Reduction","%",0,100,0,CoreParameter::OptoPeakReduction,false}, {"opto_gain","Gain","%",0,100,duskaudio::kOptoGainUnityKnob,CoreParameter::OptoGain,false}, {"opto_limit","Limit Mode","",0,1,0,CoreParameter::OptoLimit,true},
- {"fet_input","Input","dB",-20,40,0,CoreParameter::FetInput,false}, {"fet_output","Output","dB",-20,20,0,CoreParameter::FetOutput,false}, {"fet_attack","Attack","ms",0.02f,80,0.2f,CoreParameter::FetAttack,false,0.01f,0.3f}, {"fet_release","Release","ms",50,1100,400,CoreParameter::FetRelease,false}, {"fet_ratio","Ratio",":1",0,4,0,CoreParameter::FetRatio,true}, {"fet_curve_mode","Curve Mode","",0,1,0,CoreParameter::FetCurve,true}, {"fet_transient","Transient","%",0,100,0,CoreParameter::FetTransient,false}, {"fet_threshold","Threshold","dB",-60,0,-10,CoreParameter::FetThreshold,false},
- {"vca_threshold","Threshold","dB",duskaudio::vcaLaw::kThresholdMinDb,duskaudio::vcaLaw::kThresholdMaxDb,duskaudio::vcaLaw::kThresholdDefaultDb,CoreParameter::VcaThreshold,false}, {"vca_compression","Compression","",duskaudio::vcaLaw::kCompressLaw.front().position,duskaudio::vcaLaw::kCompressLaw.back().position,duskaudio::vcaLaw::kCompressDefaultPosition,CoreParameter::VcaRatio,false}, {"vca_attack","Attack","ms",0.1f,50,1,CoreParameter::VcaAttack,false}, {"vca_release","Release","ms",10,5000,100,CoreParameter::VcaRelease,false}, {"vca_output","Output","dB",-20,20,0,CoreParameter::VcaOutput,false}, {"vca_overeasy","Soft Knee","",0,1,0,CoreParameter::VcaOverEasy,true}, {"vca_detector_mode","VCA Detector","",0,1,0,CoreParameter::VcaClassicDetector,true},
- {"bus_threshold","Threshold","dB",-30,15,0,CoreParameter::BusThreshold,false}, {"bus_ratio","Ratio",":1",0,2,0,CoreParameter::BusRatio,true}, {"bus_attack","Attack","",0,5,2,CoreParameter::BusAttack,true}, {"bus_release","Release","",0,4,1,CoreParameter::BusRelease,true}, {"bus_makeup","Makeup","dB",0,20,0,CoreParameter::BusMakeup,false}, {"bus_mix","Bus Mix","%",0,100,100,CoreParameter::BusMix,false},
- {"studio_vca_threshold","Threshold","dB",-40,20,-10,CoreParameter::StudioVcaThreshold,false}, {"studio_vca_ratio","Ratio",":1",1,10,3,CoreParameter::StudioVcaRatio,false}, {"studio_vca_attack","Attack","ms",0.3f,75,10,CoreParameter::StudioVcaAttack,false}, {"studio_vca_release","Release","ms",100,4000,300,CoreParameter::StudioVcaRelease,false}, {"studio_vca_output","Output","dB",-20,20,0,CoreParameter::StudioVcaOutput,false},
- {"digital_threshold","Threshold","dB",-60,0,-20,CoreParameter::DigitalThreshold,false}, {"digital_ratio","Ratio",":1",1,100,4,CoreParameter::DigitalRatio,false,0.1f,0.4f}, {"digital_knee","Knee","dB",0,20,6,CoreParameter::DigitalKnee,false}, {"digital_attack","Attack","ms",0.01f,500,10,CoreParameter::DigitalAttack,false,0.01f,0.3f}, {"digital_release","Release","ms",1,5000,100,CoreParameter::DigitalRelease,false,1,0.4f}, {"digital_lookahead","Lookahead","ms",0,10,0,CoreParameter::DigitalLookahead,false}, {"digital_mix","Mix","%",0,100,100,CoreParameter::DigitalMix,false}, {"digital_output","Output","dB",-24,24,0,CoreParameter::DigitalOutput,false}, {"digital_adaptive","Adaptive Release","",0,1,0,CoreParameter::DigitalAdaptive,true},
- {"mb_crossover_1","Crossover 1","Hz",20,500,200,CoreParameter::Crossover1,false,1,0.4f}, {"mb_crossover_2","Crossover 2","Hz",200,5000,2000,CoreParameter::Crossover2,false,1,0.4f}, {"mb_crossover_3","Crossover 3","Hz",2000,16000,8000,CoreParameter::Crossover3,false,1,0.4f},
+ {"opto_peak_reduction","Opto Peak Reduction","%",0,100,0,CoreParameter::OptoPeakReduction,false}, {"opto_gain","Opto Gain","%",0,100,duskaudio::kOptoGainUnityKnob,CoreParameter::OptoGain,false}, {"opto_limit","Opto Limit","",0,1,0,CoreParameter::OptoLimit,true},
+ {"fet_input","FET Input","dB",-20,40,0,CoreParameter::FetInput,false}, {"fet_output","FET Output","dB",-20,20,0,CoreParameter::FetOutput,false}, {"fet_attack","FET Attack","ms",0.02f,80,0.2f,CoreParameter::FetAttack,false,0.01f,0.3f}, {"fet_release","FET Release","ms",50,1100,400,CoreParameter::FetRelease,false}, {"fet_ratio","FET Ratio",":1",0,4,0,CoreParameter::FetRatio,true}, {"fet_curve_mode","FET Curve","",0,1,0,CoreParameter::FetCurve,true}, {"fet_transient","FET Transient","%",0,100,0,CoreParameter::FetTransient,false}, {"fet_threshold","FET Threshold","dB",-60,0,-10,CoreParameter::FetThreshold,false},
+ {"vca_threshold","VCA Threshold","dB",duskaudio::vcaLaw::kThresholdMinDb,duskaudio::vcaLaw::kThresholdMaxDb,duskaudio::vcaLaw::kThresholdDefaultDb,CoreParameter::VcaThreshold,false}, {"vca_compression","VCA Compression","",duskaudio::vcaLaw::kCompressLaw.front().position,duskaudio::vcaLaw::kCompressLaw.back().position,duskaudio::vcaLaw::kCompressDefaultPosition,CoreParameter::VcaRatio,false}, {"vca_attack","VCA Attack","ms",0.1f,50,1,CoreParameter::VcaAttack,false}, {"vca_release","VCA Release","ms",10,5000,100,CoreParameter::VcaRelease,false}, {"vca_output","VCA Output","dB",-20,20,0,CoreParameter::VcaOutput,false}, {"vca_overeasy","VCA Soft Knee","",0,1,0,CoreParameter::VcaOverEasy,true}, {"vca_detector_mode","VCA Detector","",0,1,0,CoreParameter::VcaClassicDetector,true},
+ {"bus_threshold","Bus Threshold","dB",-30,15,0,CoreParameter::BusThreshold,false}, {"bus_ratio","Bus Ratio",":1",0,2,0,CoreParameter::BusRatio,true}, {"bus_attack","Bus Attack","",0,5,2,CoreParameter::BusAttack,true}, {"bus_release","Bus Release","",0,4,1,CoreParameter::BusRelease,true}, {"bus_makeup","Bus Makeup","dB",0,20,0,CoreParameter::BusMakeup,false}, {"bus_mix","Bus Mix","%",0,100,100,CoreParameter::BusMix,false},
+ {"studio_vca_threshold","Studio VCA Threshold","dB",-40,20,-10,CoreParameter::StudioVcaThreshold,false}, {"studio_vca_ratio","Studio VCA Ratio",":1",1,10,3,CoreParameter::StudioVcaRatio,false}, {"studio_vca_attack","Studio VCA Attack","ms",0.3f,75,10,CoreParameter::StudioVcaAttack,false}, {"studio_vca_release","Studio VCA Release","ms",100,4000,300,CoreParameter::StudioVcaRelease,false}, {"studio_vca_output","Studio VCA Output","dB",-20,20,0,CoreParameter::StudioVcaOutput,false},
+ {"digital_threshold","Digital Threshold","dB",-60,0,-20,CoreParameter::DigitalThreshold,false}, {"digital_ratio","Digital Ratio",":1",1,100,4,CoreParameter::DigitalRatio,false,0.1f,0.4f}, {"digital_knee","Digital Knee","dB",0,20,6,CoreParameter::DigitalKnee,false}, {"digital_attack","Digital Attack","ms",0.01f,500,10,CoreParameter::DigitalAttack,false,0.01f,0.3f}, {"digital_release","Digital Release","ms",1,5000,100,CoreParameter::DigitalRelease,false,1,0.4f}, {"digital_lookahead","Digital Lookahead","ms",0,10,0,CoreParameter::DigitalLookahead,false}, {"digital_mix","Digital Mix","%",0,100,100,CoreParameter::DigitalMix,false}, {"digital_output","Digital Output","dB",-24,24,0,CoreParameter::DigitalOutput,false}, {"digital_adaptive","Digital Adaptive Release","",0,1,0,CoreParameter::DigitalAdaptive,true},
+ {"mb_crossover_1","MB Crossover 1","Hz",20,500,200,CoreParameter::Crossover1,false,1,0.4f}, {"mb_crossover_2","MB Crossover 2","Hz",200,5000,2000,CoreParameter::Crossover2,false,1,0.4f}, {"mb_crossover_3","MB Crossover 3","Hz",2000,16000,8000,CoreParameter::Crossover3,false,1,0.4f},
  {"global_sidechain_listen","SC Listen","",0,1,0,CoreParameter::GlobalSidechainListen,true},
  {"mb_mix","MB Mix","%",0,100,100,CoreParameter::MbMix,false},
  {"mb_output","MB Output","dB",-24,24,0,CoreParameter::MbOutput,false},
@@ -78,6 +80,17 @@ inline constexpr std::array<Param, 63> kParams = {{
  {"stereo_link_mode","Link Mode","",0,2,0,CoreParameter::StereoLinkMode,true}
 }};
 inline constexpr int kParamCount = static_cast<int>(kParams.size());
+
+// Stored and automatable for the sessions that saved them, but no mode reads
+// them (the VCA face's attack, release, knee and detector are fixed), so they
+// are hidden from host parameter lists.
+inline constexpr bool isInertParameter(uint32_t parameter) noexcept
+{
+    return parameter == static_cast<uint32_t>(ParamId::VcaAttack)
+        || parameter == static_cast<uint32_t>(ParamId::VcaRelease)
+        || parameter == static_cast<uint32_t>(ParamId::VcaOverEasy)
+        || parameter == static_cast<uint32_t>(ParamId::VcaClassicDetector);
+}
 
 inline bool usesOptoReferenceDisplay(uint32_t parameter) noexcept
 {
@@ -175,9 +188,9 @@ inline constexpr int kMeterBand2 = kMeterMaster + 3;
 inline constexpr int kMeterBand3 = kMeterMaster + 4;
 inline constexpr int kExtensionBase = kMeterMaster + 5;
 inline constexpr std::array<Param, 5> kExtensionParams{{
- {"bus_headroom", "Headroom", "dB", 0, 6, 3, CoreParameter::BusHeadroom, true},
- {"bus_fade_rate", "Fade Rate", "s", 1, 60, 24.8f, CoreParameter::BusFadeRate, false, 0.1f, 0.5f, 6.0f},
- {"bus_fade", "Auto Fade", "", 0, 1, 0, CoreParameter::BusFade, true},
+ {"bus_headroom", "Bus Headroom", "dB", 0, 6, 3, CoreParameter::BusHeadroom, true},
+ {"bus_fade_rate", "Bus Fade Rate", "s", 1, 60, 24.8f, CoreParameter::BusFadeRate, false, 0.1f, 0.5f, 6.0f},
+ {"bus_fade", "Bus Auto Fade", "", 0, 1, 0, CoreParameter::BusFade, true},
  {"opto_meter", "Opto Meter", "", 0, 2, 0, CoreParameter::None, true},
  {"fet_meter", "FET Meter", "", 0, 2, 0, CoreParameter::None, true}
 }};
@@ -420,6 +433,121 @@ inline bool hostValueInRange(int index, float value) noexcept
         [value](const BandParam& d, int) {
             return hostValueInRange(value, hostMin(d), hostMax(d), d.integer);
         });
+}
+
+// Host names carry the mode or band they belong to: in a host's automation list
+// "Threshold" alone appeared five times. Symbols, and so sessions, are unchanged.
+inline constexpr const char* const kBandHostNames[4] = {"Low", "Low-Mid", "High-Mid", "High"};
+
+inline std::string bandHostName(const BandParam& d, int band)
+{
+    return std::string("MB ") + kBandHostNames[static_cast<size_t>(std::clamp(band, 0, 3))] + " " + d.name;
+}
+
+// A tapered control (hasSkew) reaches the host as its 0..1 knob position, so the
+// host's own text would read "0.160578" for 0.20 ms. Its text is the plain value
+// with its unit; the reported unit is empty for these, so nothing is appended.
+template <class Descriptor>
+inline bool formatTaperedText(const Descriptor& d, float hostValue, char* text, uint32_t size)
+{
+    if (text == nullptr || size == 0 || !std::isfinite(hostValue)) return false;
+    const float plain = hostToPlain(d, hostValue);
+    const std::string_view unit(d.unit);
+    int written = 0;
+    if (unit == "Hz" && d.min <= 0.0f && plain < 0.5f)
+        written = std::snprintf(text, size, "Off");
+    else if (unit == "Hz" && plain >= 1000.0f)
+    {
+        // "8 kHz", "1.25 kHz": two decimals at most, no trailing zeros.
+        char number[32];
+        std::snprintf(number, sizeof(number), "%.2f", static_cast<double>(plain * 0.001f));
+        std::string trimmed(number);
+        while (trimmed.back() == '0') trimmed.pop_back();
+        if (trimmed.back() == '.') trimmed.pop_back();
+        written = std::snprintf(text, size, "%s kHz", trimmed.c_str());
+    }
+    else if (unit == "Hz")
+        written = std::snprintf(text, size, "%.0f Hz", static_cast<double>(plain));
+    else if (unit == "ms")
+        written = std::snprintf(text, size, plain < 10.0f ? "%.2f ms" : plain < 100.0f ? "%.1f ms" : "%.0f ms",
+                                static_cast<double>(plain));
+    else if (unit == ":1")
+        written = std::snprintf(text, size, "%.1f:1", static_cast<double>(plain));
+    else
+        written = std::snprintf(text, size, "%.1f %s", static_cast<double>(plain), d.unit);
+    return written >= 0 && static_cast<uint32_t>(written) < size;
+}
+
+// Typed text back to a host value: a number in the classic locale, optionally
+// followed by the control's unit ("k" / "kHz" scale Hz); "Off" for a Hz control
+// whose range starts at 0. Any other suffix is rejected rather than guessed.
+template <class Descriptor>
+inline bool parseTaperedText(const Descriptor& d, const char* text, float& hostValue)
+{
+    if (text == nullptr) return false;
+    std::string input(text);
+    const auto notSpace = [](unsigned char c) { return !std::isspace(c); };
+    input.erase(input.begin(), std::find_if(input.begin(), input.end(), notSpace));
+    input.erase(std::find_if(input.rbegin(), input.rend(), notSpace).base(), input.end());
+    std::string lower(input);
+    for (char& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    const std::string_view unit(d.unit);
+    if (unit == "Hz" && d.min <= 0.0f && lower == "off")
+    {
+        hostValue = plainToHost(d, d.min);
+        return true;
+    }
+    std::istringstream in(input);
+    in.imbue(std::locale::classic());
+    float plain = 0.0f;
+    in >> plain;
+    if (in.fail() || !std::isfinite(plain)) return false;
+    std::string suffix;
+    std::getline(in, suffix);
+    suffix.erase(suffix.begin(), std::find_if(suffix.begin(), suffix.end(), notSpace));
+    for (char& c : suffix) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    std::string unitLower(unit);
+    for (char& c : unitLower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (unit == "Hz" && (suffix == "k" || suffix == "khz")) plain *= 1000.0f;
+    else if (!suffix.empty() && suffix != unitLower) return false;
+    hostValue = plainToHost(d, std::clamp(plain, d.min, d.max));
+    return true;
+}
+
+// VCA Compression is a knob position on the reference's measured law, so its
+// host value (0..100) means nothing to read; its text is the ratio the face
+// prints, "INF" from where the law's slope reaches zero.
+inline bool formatVcaCompressionText(float position, char* text, uint32_t size)
+{
+    if (text == nullptr || size == 0 || !std::isfinite(position)) return false;
+    const float ratio = duskaudio::vcaLaw::compressRatio(position);
+    const int written = !std::isfinite(ratio) ? std::snprintf(text, size, "INF")
+        : std::snprintf(text, size, ratio < 100.0f ? "%.1f:1" : "%.0f:1", static_cast<double>(ratio));
+    return written >= 0 && static_cast<uint32_t>(written) < size;
+}
+
+inline bool parseVcaCompressionText(const char* text, float& position)
+{
+    if (text == nullptr) return false;
+    std::string input(text);
+    for (char& c : input) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    input.erase(std::remove_if(input.begin(), input.end(), [](unsigned char c) { return std::isspace(c) != 0; }),
+                input.end());
+    if (input == "inf" || input == "inf:1")
+    {
+        position = duskaudio::vcaLaw::kCompressLaw.back().position;
+        return true;
+    }
+    std::istringstream in(input);
+    in.imbue(std::locale::classic());
+    float ratio = 0.0f;
+    in >> ratio;
+    if (in.fail() || !std::isfinite(ratio)) return false;
+    std::string suffix;
+    std::getline(in, suffix);
+    if (!suffix.empty() && suffix != ":1") return false;
+    position = duskaudio::vcaLaw::compressPosition(ratio);
+    return true;
 }
 
 // Complete-set transactional decoder. The caller's output is untouched unless

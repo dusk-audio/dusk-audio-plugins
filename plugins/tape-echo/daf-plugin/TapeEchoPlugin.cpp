@@ -3,6 +3,7 @@
 #include "DafPlugin.hpp"
 #include "TapeEchoAccess.hpp"
 #include "TapeEchoDSP.hpp"
+#include "DuskDenormals.hpp"
 #include "TapeEchoParams.hpp"
 #include "TapeEchoVersion.hpp"
 #include "util/CrashLog.hpp"
@@ -260,10 +261,10 @@ protected:
         switch (index)
         {
         case kParamBypass:      dsp.setBypass(value > 0.5f);      break;
+        // run() alone selects and publishes the effective motor rate. A host
+        // load must not race a synced block's later write to the DSP (#292).
         case kParamTempoSync:
-            if (value < 0.5f) // sync released: hand control back to the knob
-                dsp.setRepeatRate(values[kParamRepeatRate].load(std::memory_order_relaxed));
-            break;
+        case kParamRepeatRate:  break;
         case kParamSyncDivision:
             // Compatibility input: an old project may automate any semantic
             // division, including values the reference's eleven detents cannot
@@ -290,10 +291,6 @@ protected:
             // same physical detent. run() performs that lookup; neither public
             // parameter is rewritten as a side effect of changing Mode.
             dsp.setMode((int)(value + 0.5f));
-            break;
-        case kParamRepeatRate:
-            if (values[kParamTempoSync].load(std::memory_order_relaxed) < 0.5f)
-                dsp.setRepeatRate(value);
             break;
         case kParamIntensity:   dsp.setIntensity(value);          break;
         case kParamEchoLevel:   dsp.setEchoLevel(value);          break;
@@ -341,6 +338,10 @@ protected:
     //--- lifecycle ---------------------------------------------------------------
     void activate() override
     {
+        // Inactive setup: seed the smoother before prepare() snaps it. Live
+        // host edits only update the mirror; run() applies them per block.
+        if (values[kParamTempoSync].load(std::memory_order_relaxed) < 0.5f)
+            dsp.setRepeatRate(values[kParamRepeatRate].load(std::memory_order_relaxed));
         dsp.prepare(getSampleRate(), (int)getBufferSize());
         pushAllParams();
     }
@@ -349,6 +350,8 @@ protected:
 
     void sampleRateChanged(double newSampleRate) override
     {
+        if (values[kParamTempoSync].load(std::memory_order_relaxed) < 0.5f)
+            dsp.setRepeatRate(values[kParamRepeatRate].load(std::memory_order_relaxed));
         dsp.prepare(newSampleRate, (int)getBufferSize());
         pushAllParams();
     }
@@ -364,8 +367,12 @@ protected:
     //--- audio -------------------------------------------------------------------
     void run(const float** inputs, float** outputs, uint32_t frames) override
     {
-        float effectiveMs = duskaudio::TapeEchoDSP::delayMsForRepeatRate(
-            values[kParamRepeatRate].load(std::memory_order_relaxed));
+        duskaudio::ScopedFlushDenormals ftz;
+        if (frames == 0)
+            return;
+
+        float effectiveRate = values[kParamRepeatRate].load(std::memory_order_relaxed);
+        float effectiveMs = duskaudio::TapeEchoDSP::delayMsForRepeatRate(effectiveRate);
         bool outOfRange = false;
         if (values[kParamTempoSync].load(std::memory_order_relaxed) > 0.5f)
         {
@@ -422,10 +429,12 @@ protected:
 
             // Convert the clamped delay to the motor-speed knob's 0..1 range;
             // the DSP's inertia smoother turns tempo changes into tape glides.
-            dsp.setRepeatRate(
-                duskaudio::TapeEchoDSP::repeatRateForDelayMs((float)clampedMs));
+            effectiveRate = duskaudio::TapeEchoDSP::repeatRateForDelayMs((float)clampedMs);
             effectiveMs = (float)clampedMs;
         }
+        // Publish on every block, including sync-off and bypass. A sync change
+        // during this block can be stale for one block, never indefinitely.
+        dsp.setRepeatRate(effectiveRate);
         effectiveHead1DelayMs.store(effectiveMs, std::memory_order_relaxed);
         syncNoteOutOfRange.store(outOfRange, std::memory_order_relaxed);
 
@@ -433,6 +442,7 @@ protected:
     }
 
 private:
+    friend struct TapeEchoPluginTestAccess;
     void pushAllParams()
     {
         const bool preserveLegacy =

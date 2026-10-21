@@ -89,6 +89,13 @@ inline const char* vcaMeterSourceLabel(int source) noexcept
     }
 }
 
+// Mode toolbar captions, set in capitals like every other legend on the
+// panel. The host-facing enum labels stay kModes.
+inline constexpr std::array<const char*, 8> kModeTabLabels{{
+    "OPTO", "FET", "VCA", "BUS", "STUDIO FET", "STUDIO VCA", "DIGITAL", "MULTIBAND"}};
+static_assert(kModeTabLabels.size() == sizeof(kModes) / sizeof(kModes[0]),
+              "one toolbar caption per mode");
+
 inline float vcaSidechainSwitchTarget(bool currentlyEngaged,
                                       float currentHostValue,
                                       float& lastEngagedHostValue,
@@ -1097,7 +1104,7 @@ private:
                                   panel.P(x1 - 2.0f, y1), kHeaderGreen);
             panel.text(dl, 0.5f * (x0 + x1), y0 + 3.0f, 8.8f,
                        active || hovered ? kText : kDim,
-                       multicompp::kModes[mode], 0, true);
+                       multicompp::ui_detail::kModeTabLabels[static_cast<size_t>(mode)], 0, true);
             if (clicked && !active)
                 setValue(P_MODE, static_cast<float>(mode));
         }
@@ -1219,13 +1226,10 @@ private:
         const int mode = multicompp::ui_detail::choiceIndex(value(P_MODE), 8);
         drawSection(dl, kModeCanvasTop, kModeCanvasBottom - 8, "");
         drawModeToolbar(dl);
-        if (mode == 0 || mode == 1 || mode == 2 || mode == 3)
-        {
-            // Opto, vintage FET, VCA and Bus own panel-integrated analogue meters.
-        }
-        else if (mode == 7)
-            drawMeter(dl, 1062, kModeCanvasTop + 42, 42, 92, meter(kMeterMaster), kAccent, "MASTER GR");
-        else
+        // Opto, vintage FET, VCA and Bus own panel-integrated analogue meters,
+        // and Multiband meters each band in its own strip (a master meter at
+        // the right edge sat under the crossover panel and the HIGH strip).
+        if (mode == 4 || mode == 5 || mode == 6)
             drawMeter(dl, 28, kModeCanvasTop + 42, 48, 300, meter(kMeterMaster), kAccent, "MASTER GR");
         // Deliberately exhaustive: adding a ninth mode must force a UI decision.
         switch (mode)
@@ -1472,11 +1476,16 @@ private:
                                   center.y + 5.0f * panel.scale());
         dl->AddCircleFilled(shadowCenter, scaledRadius * 1.01f,
                             IM_COL32(0, 0, 0, 105), 56);
+        // The scallops turn with the pointer, so the whole body reads as one
+        // turning part; the shadow and the highlight arcs below stay put
+        // because the light does not move.
+        const float pointerAngle = duskdaf::DuskPanel::knobAngle(t);
         std::array<ImVec2, 96> rim{};
         for (int i = 0; i < 96; ++i)
         {
-            const float a = 2.0f * kUiPi * i / 96.0f;
-            const float rr = scaledRadius * (0.96f + 0.035f * std::cos(a * 16.0f));
+            const float local = 2.0f * kUiPi * i / 96.0f;
+            const float a = local + pointerAngle;
+            const float rr = scaledRadius * (0.96f + 0.035f * std::cos(local * 16.0f));
             rim[static_cast<size_t>(i)] = ImVec2(center.x + std::sin(a) * rr,
                                                  center.y - std::cos(a) * rr);
         }
@@ -1499,7 +1508,6 @@ private:
         dl->PathStroke(IM_COL32(112, 117, 110, 180), 0, 1.2f * panel.scale());
         dl->PathArcTo(center, scaledRadius * 0.88f, 0.2f, 2.8f, 32);
         dl->PathStroke(IM_COL32(5, 7, 6, 220), 0, 2.0f * panel.scale());
-        const float pointerAngle = duskdaf::DuskPanel::knobAngle(t);
         const ImVec2 pointer(std::sin(pointerAngle), -std::cos(pointerAngle));
         const ImVec2 across(pointer.y, -pointer.x);
         const auto ridge = [&](float along, float side) {
@@ -1797,10 +1805,14 @@ private:
         dl->PathStroke(IM_COL32(24, 25, 24, 110), 0, 1.8f * scale);
         dl->AddCircle(center, r, IM_COL32(31, 32, 31, 255), 56, 1.3f * scale);
         const float collarR = r * 0.69f;
+        // The knurling turns with the pointer; the skirt and cap highlights
+        // are lighting and stay put.
+        const float pointerAngle = duskdaf::DuskPanel::knobAngle(t);
         dl->AddCircleFilled(center, collarR, IM_COL32(20, 20, 20, 255), 52);
         for (int notch = 0; notch < 28; ++notch)
         {
-            const float angle = 2.0f * kUiPi * static_cast<float>(notch) / 28.0f;
+            const float angle = pointerAngle
+                + 2.0f * kUiPi * static_cast<float>(notch) / 28.0f;
             const ImVec2 direction(std::sin(angle), -std::cos(angle));
             dl->AddLine(ImVec2(center.x + direction.x * collarR * 0.78f,
                                center.y + direction.y * collarR * 0.78f),
@@ -1834,7 +1846,6 @@ private:
         dl->PathArcTo(center, capR * 0.78f, -2.50f, -0.65f, 22);
         dl->PathStroke(IM_COL32(255, 255, 251, 95), 0, 1.2f * scale);
         dl->AddCircle(center, capR, IM_COL32(44, 45, 44, 255), 48, 1.1f * scale);
-        const float pointerAngle = duskdaf::DuskPanel::knobAngle(t);
         const ImVec2 pointer(std::sin(pointerAngle), -std::cos(pointerAngle));
         dl->AddLine(ImVec2(center.x + pointer.x * r * 0.72f,
                            center.y + pointer.y * r * 0.72f),
@@ -2301,12 +2312,16 @@ private:
         }
 
         // Drop shadow, black serrated skirt, silver dome with radial brushing
-        // and a top-left highlight, dark pointer line to the cap edge.
+        // and a top-left highlight, dark pointer line to the cap edge. The
+        // serrations and brushing turn with the pointer; the shadow and
+        // highlights are lighting and stay put.
+        const float t = std::clamp((values[p] - hostMinV) / hostRange, 0.0f, 1.0f);
+        const float pointerAngle = duskdaf::DuskPanel::knobAngle(t);
         dl->AddCircleFilled(ImVec2(center.x + 3.0f * scale, center.y + 4.5f * scale), r * 1.03f, IM_COL32(0, 0, 0, 160), 64);
         dl->AddCircleFilled(center, r, IM_COL32(24, 24, 24, 255), 64);
         for (int tooth = 0; tooth < 72; ++tooth)
         {
-            const float a = 2.0f * kUiPi * static_cast<float>(tooth) / 72.0f;
+            const float a = pointerAngle + 2.0f * kUiPi * static_cast<float>(tooth) / 72.0f;
             const ImVec2 d(std::sin(a), -std::cos(a));
             dl->AddLine(ImVec2(center.x + d.x * r * 0.90f, center.y + d.y * r * 0.90f),
                         ImVec2(center.x + d.x * r, center.y + d.y * r),
@@ -2317,7 +2332,7 @@ private:
         dl->AddCircleFilled(ImVec2(center.x, center.y - capR * 0.06f), capR * 0.94f, IM_COL32(204, 206, 204, 255), 64);
         for (int spoke = 0; spoke < 96; ++spoke)
         {
-            const float a = 2.0f * kUiPi * static_cast<float>(spoke) / 96.0f;
+            const float a = pointerAngle + 2.0f * kUiPi * static_cast<float>(spoke) / 96.0f;
             const ImVec2 d(std::cos(a), std::sin(a));
             const int shade = (spoke * 7) % 5;
             dl->AddLine(ImVec2(center.x + d.x * capR * 0.18f, center.y + d.y * capR * 0.18f),
@@ -2329,8 +2344,6 @@ private:
         dl->PathArcTo(center, capR * 0.97f, 0.35f, 2.75f, 30);
         dl->PathStroke(IM_COL32(60, 62, 60, 170), 0, 1.6f * scale);
         dl->AddCircle(center, capR, IM_COL32(88, 90, 88, 255), 64, 1.1f * scale);
-        const float t = std::clamp((values[p] - hostMinV) / hostRange, 0.0f, 1.0f);
-        const float pointerAngle = duskdaf::DuskPanel::knobAngle(t);
         const ImVec2 pointer(std::sin(pointerAngle), -std::cos(pointerAngle));
         dl->AddLine(ImVec2(center.x + pointer.x * capR * 0.12f, center.y + pointer.y * capR * 0.12f),
                     ImVec2(center.x + pointer.x * capR * 0.97f, center.y + pointer.y * capR * 0.97f),
@@ -2352,13 +2365,15 @@ private:
             const float bx1 = x + cells[static_cast<size_t>(i)].x1;
             const float by0 = y + capTop, by1 = y + capBottom;
             const char* label = multicompp::ui_detail::vcaMeterSourceLabel(i);
+            // The bezel below starts at capTop - 4 and is drawn after the
+            // label, so the bottom line has to finish clear of it.
             if (i == 2)
             {
-                spacedText(dl, 0.5f * (bx0 + bx1), y - 9.0f, 10.0f, kVcaInk, "GAIN", 0);
-                spacedText(dl, 0.5f * (bx0 + bx1), y + 2.0f, 10.0f, kVcaInk, "CHANGE", 0);
+                spacedText(dl, 0.5f * (bx0 + bx1), y - 16.0f, 10.0f, kVcaInk, "GAIN", 0);
+                spacedText(dl, 0.5f * (bx0 + bx1), y - 5.0f, 10.0f, kVcaInk, "CHANGE", 0);
             }
             else
-                spacedText(dl, 0.5f * (bx0 + bx1), y + 2.0f, 10.0f, kVcaInk, label, 0);
+                spacedText(dl, 0.5f * (bx0 + bx1), y - 5.0f, 10.0f, kVcaInk, label, 0);
             char id[32];
             std::snprintf(id, sizeof(id), "##vca_meter_source_%d", i);
             const ImVec2 b0 = panel.P(bx0, by0), b1 = panel.P(bx1, by1);
@@ -2473,20 +2488,22 @@ private:
                        10.0f, IM_COL32(224, 226, 223, 255), labels[i], 0, true);
         }
         const ImVec2 c = panel.P(x, y);
+        // The skirt ribs turn with the pointer, so the whole knob reads as
+        // one turning part; the drop shadow stays put.
+        const float t = std::clamp((values[p] - lo) / std::max(hi - lo, 0.001f), 0.0f, 1.0f);
+        const float a = angle(t);
         dl->AddCircleFilled(panel.P(x + 3, y + 4), 26.0f * s, IM_COL32(0, 0, 0, 110), 48);
         dl->AddCircleFilled(c, 25.0f * s, IM_COL32(86, 89, 87, 255), 48);
         for (int i = 0; i < 16; ++i)
         {
-            const float a = i * 2.0f * kUiPi / 16.0f;
-            dl->AddLine(panel.P(x + 21.0f * std::sin(a), y - 21.0f * std::cos(a)),
-                        panel.P(x + 24.5f * std::sin(a), y - 24.5f * std::cos(a)),
+            const float rib = a + i * 2.0f * kUiPi / 16.0f;
+            dl->AddLine(panel.P(x + 21.0f * std::sin(rib), y - 21.0f * std::cos(rib)),
+                        panel.P(x + 24.5f * std::sin(rib), y - 24.5f * std::cos(rib)),
                         IM_COL32(144, 148, 144, 255), 3.0f * s);
         }
         dl->AddCircleFilled(c, 21.0f * s, IM_COL32(144, 148, 144, 255), 48);
         dl->AddCircle(c, 19.5f * s, IM_COL32(192, 196, 191, 180), 48, 1.2f * s);
         dl->AddCircleFilled(c, 18.0f * s, IM_COL32(165, 169, 164, 255), 48);
-        const float t = std::clamp((values[p] - lo) / std::max(hi - lo, 0.001f), 0.0f, 1.0f);
-        const float a = angle(t);
         dl->AddLine(panel.P(x + 3.0f * std::sin(a), y - 3.0f * std::cos(a)),
                     panel.P(x + 20.0f * std::sin(a), y - 20.0f * std::cos(a)),
                     IM_COL32(20, 23, 21, 255), 2.4f * s);
@@ -2673,8 +2690,8 @@ private:
             panel.toggle(bandId("mb_s"), base + 6,
                          x + 180, 640, x + 238, 666, values[base + 6], "SOLO");
         }
-        knob(dl, "mb_mix", P_MB_MIX, 900, 395, "MB MIX", "%.0f", "%");
-        knob(dl, "mb_out", P_MB_OUT, 1005, 395, "MB OUTPUT", "%.1f", " dB");
+        knob(dl, "mb_mix", P_MB_MIX, 900, 387, "MB MIX", "%.0f", "%");
+        knob(dl, "mb_out", P_MB_OUT, 1005, 387, "MB OUTPUT", "%.1f", " dB");
     }
 
     void crossover(ImDrawList* dl, uint32_t p, float x, const char* label)

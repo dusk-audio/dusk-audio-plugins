@@ -112,8 +112,8 @@ cmake --build plugins/4k-eq/daf-plugin/build --target \
 
 The target list above is for Linux. On Windows, build only `4k-eq-2-vst3`
 and `4k-eq-2-clap`. On macOS, use the Linux list and add
-`4k-eq-2-au`. Local installation after building is enabled by default;
-configure with `-DDUSK_DAF_INSTALL_LOCAL=OFF` for packaging or CI.
+`4k-eq-2-au`. To install into the user plugin folders after each build,
+configure with `-DDUSK_DAF_INSTALL_LOCAL=ON`.
 
 ## Installation
 

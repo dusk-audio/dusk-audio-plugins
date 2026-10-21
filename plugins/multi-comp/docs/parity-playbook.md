@@ -157,12 +157,15 @@ and candidate renders never enter a repo; the owner commits.
   (`processMultiband` splits the already delayed input), so it adds up to 10 ms of latency and no lead; with an
   external sidechain the lead is real. Either split an undelayed copy for the detector or drop Multiband from
   `globalLookaheadForMode`; `--global-lookahead-scope` prints Multiband's onset lead (0.00 dB today).
-- Latency moves with the mode (Opto +6 samples, Multiband -67, and Global Lookahead, up to 10 ms, now only in
-  Digital and Multiband) and the AU wrapper never tells the host; either hold the reported latency constant
-  across modes or add latency notification to the framework's AU wrapper.
-- Sixteen automatable parameters have no control on any face, four VCA parameters do nothing, and several host
-  names repeat (Threshold five times). FET and Studio FET share every `fet_*` parameter, so Curve and Transient
-  set on the Studio FET face act in FET mode.
+- Latency held constant across modes (2026-10-19): the plugin pads each mode's output to Opto's latency
+  (`MultiCompLatencyPad.hpp`, `MultiCompDSP::getHostLatencySamples()`). Only the lookaheads (Global
+  Lookahead in Digital and Multiband, Digital's own) still move it, and the AU wrapper still never tells
+  the host when they do.
+- Sixteen automatable parameters have no control on any face (the modern-face JUCE port puts Oversampling,
+  External Sidechain, SC Listen, Analog Noise and SC HP back on). FET and Studio FET share every `fet_*`
+  parameter, so Curve and Transient set on the Studio FET face act in FET mode. Done 2026-10-19: host names
+  carry their mode or band ("FET Threshold", "MB Low Ratio"), tapered controls and VCA Compression show plain
+  text with units, and the four inert VCA parameters are hidden (the VST3 and CLAP flag comes from DAF #83).
 - FET Curve Measured with All: the small-signal gain sits 1.20 dB under the reference (pinned by
   `testFetMeasuredCurveAllButtons`).
 - From code review, not yet measured: `MultiCompDSP::prepare()` at the same rate keeps most modes' state (the
