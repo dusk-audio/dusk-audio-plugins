@@ -45,9 +45,12 @@ commands are transient. Preserve default-only program semantics without adding
 a preset bank. Native formats must round-trip controls; importing the old
 JUCE-specific binary state is not part of the successor contract.
 
-The editor starts at 900×600, supports free aspect resizing from 720×480 to
-3840×2160, and refreshes at 30 Hz. Window-size preferences are separate from
-project control state and use the successor's own preference key.
+The editor starts at 900×600 and refreshes at 30 Hz. Its corner-resizer comfort
+floor is 720×480; the shared legacy helper separately permits host sizes down to
+1×1, with a 3840×2160 ceiling and no fixed aspect ratio. Preserve that distinction
+in native resize negotiation. Window-size preferences are separate from project
+control state and use the successor's own preference key; restored preferences
+are clamped to the comfort bounds as in the legacy helper.
 
 ## Existing work and calibration
 
