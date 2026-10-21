@@ -113,6 +113,20 @@ private:
                       bool externalSidechain, bool autoMakeup,
                       MultiCompMode mode, int linkMode, int actualOversampling,
                       float digitalLookaheadMs);
+    void processVcaRange(const float* const* in, const float* const* sidechain,
+                         float* const* out, int nCh, int nSamples, float linkAmount, int linkMode,
+                         int hostSidechainDelay, float manualOutputDb,
+                         DistortionType distortionType, float distortionAmount) noexcept;
+    void processOptoRange(const float* const* in, const float* const* sidechain,
+                          float* const* out, int nCh, int nSamples, bool external, float linkAmount,
+                          int linkMode, int hostSidechainDelay, float manualOutputDb,
+                          DistortionType distortionType, float distortionAmount) noexcept;
+    void processFetRange(const float* const* in, const float* const* sidechain,
+                         float* const* out, int nCh, int nSamples, bool external, float linkAmount,
+                         int linkMode, int factor, int hostSidechainDelay, float manualOutputDb,
+                         DistortionType distortionType, float distortionAmount) noexcept;
+    void idleHostRateFeeds(const float* sc0, const float* sc1, int nSamples, int hostSidechainDelay,
+                           bool midSideDetector) noexcept;
     void syncModeParameters(MultiCompMode mode, float digitalLookaheadMs) noexcept;
     void prepareLookahead(const float* const* in, const float* (&processingIn)[kMaxChannels],
                           int nCh, int nSamples, int delay);
@@ -154,9 +168,11 @@ private:
     // and silence laws were measured through that reconstruction, and its
     // gain is applied to the wide-FIR audio path pre-gain (feed-forward), so
     // this keeps every OPTO dynamic bit-identical while the audio path is flat.
-    Oversampler optoLinkedDetectorUpsampler;
-    std::array<Oversampler, kMaxChannels> optoOwnDetectorUpsamplers;
-    std::array<MultiCompAntiAliasing, kMaxChannels> busExternalOversamplers;
+    // Detector feeds read only in OPTO (the first two) or BUS (the third);
+    // other modes leave them idle (LazyUpsampler).
+    LazyUpsampler<MultiCompOversampler> optoLinkedDetectorUpsampler;
+    std::array<LazyUpsampler<MultiCompOversampler>, kMaxChannels> optoOwnDetectorUpsamplers;
+    std::array<LazyUpsampler<MultiCompAntiAliasing>, kMaxChannels> busExternalOversamplers;
     MultiCompTruePeakDetector truePeakDetector;
     std::array<MultiCompSidechainFilter, kMaxChannels> sidechainFilters;
     std::array<vcaLaw::SidechainTilt, kMaxChannels> sidechainTilt;
@@ -181,11 +197,32 @@ private:
     std::array<std::array<std::vector<float>, kMaxChannels>, kMultiCompBands> bands, sidechainBands;
     std::array<std::vector<float>, kMaxChannels> processedSidechain;
     std::array<std::vector<float>, kMaxChannels> modeInput;
+    // VCA block path (processVcaRange): each channel's detector feed, the
+    // output knob per host sample, and the cell gain per oversampled phase.
+    std::array<std::vector<float>, kMaxChannels> vcaSidechain;
+    std::vector<float> vcaOutputDbCurve, vcaEnvelopes, vcaLawScratch, vcaOutputGains, vcaPhases;
+    // The block paths' host-rate feeds (VCA, OPTO, FET): the aligned host
+    // sidechains, then scratch.
+    std::array<std::vector<float>, 3> vcaFeedScratch;
+    // The OPTO and FET block paths' audio and output per oversampled phase
+    // (one mode runs per block).
+    std::array<std::vector<float>, kMaxChannels> audioPhaseBlock, outputPhaseBlock;
+    // OPTO block path (processOptoRange): the detector feeds per oversampled
+    // phase, what the pre-stage hands the stage, and the Gain knob per host
+    // sample.
+    std::array<std::vector<float>, kMaxChannels> optoOwnPhaseBlock, optoOwnFeed;
+    std::vector<float> optoLinkedPhaseBlock, optoGainKnob;
+    std::array<std::vector<MultiCompModes::OptoStageFeed>, kMaxChannels> optoStageFeeds;
+    // FET block path (processFetRange): each channel's detector feed, the
+    // Output knob per host sample, and for the C6 loop each channel's detector
+    // feed and linked partner per oversampled phase.
+    std::array<std::vector<float>, kMaxChannels> fetSidechain, fetScPhases, fetPartnerPhases;
+    std::vector<float> fetOutputDbCurve;
     // Scratch for the input guard. Written only when a block actually carries
     // a non-finite or above-ceiling sample; see sanitizeChannels.
     std::array<std::vector<float>, kMaxChannels> sanitizedInput, sanitizedSidechain;
     std::vector<float> dry, bypassDry, fetStartupInput;
-    std::vector<float> mixCurve, bypassCurve, autoGainCurve;
+    std::vector<float> mixCurve, bypassCurve, autoGainCurve, listenCurve, fadeCurve, listenSource;
     std::array<std::vector<float>, kMaxChannels> dryPathDelay;
     std::array<int, kMaxChannels> dryPathWrite{{0, 0}};
     std::array<std::vector<float>, kMaxChannels> bypassDelay;

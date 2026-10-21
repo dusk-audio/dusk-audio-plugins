@@ -29,25 +29,51 @@
 //               g = (g_cell^k + (1 - g_cell^k) r^(k/2))^(1/k), returned for the NEXT sample.
 // With full stereo link g_L == g_R, so the per-channel cell forms the linked feedback side chain as
 // g_cell[n-1] * optoDetector. Interface as defined by T4-P1-CELL: process(...) returns the next-sample
-// gain; gain(), inputLevelDb(), dynamicGrDb() (the cell reduction before the LF floor, as production).
+// gain; gain(), dynamicGrDb() (the cell reduction before the LF floor, as production).
 // setParams()/params()/primeEquilibrium()/lightAt()/conductanceAt()/elLevel() are lab-only hooks used by the
 // fitting kernel; OPTO_LAB_PROBE is empty unless a lab build defines it.
 #pragma once
 #include "MultiCompOptoShelf.hpp"
+#include "MultiCompLaneMath.hpp"
+#include "MultiCompLanes.hpp"
 #include "../../shared-daf/dsp/DuskFilters.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <cstddef>
 #include <type_traits>
 
+// Functions the linked pair's step inlines whole (see prepareLightT).
+#if defined(_MSC_VER) && !defined(__clang__)
+#define OPTO_FORCE_INLINE __forceinline
+#elif defined(__GNUC__) || defined(__clang__)
+#define OPTO_FORCE_INLINE [[gnu::always_inline]]
+#else
+#define OPTO_FORCE_INLINE
+#endif
 #ifndef OPTO_LAB_PROBE
 #define OPTO_LAB_PROBE(channel, appliedGain, cellGainValue)
 #endif
 
 namespace duskaudio
 {
+// A value per channel of the OPTO cell's linked pair, adjacent (so a two-lane read or write is one access).
+template <class T>
+struct alignas(2 * sizeof(T)) OptoPair
+{
+    T v[2];
+    constexpr OptoPair() noexcept : v{} {}
+    constexpr OptoPair(T x) noexcept : v{x, x} {}
+    T& operator[](size_t c) noexcept { return v[c]; }
+    const T& operator[](size_t c) const noexcept { return v[c]; }
+};
+// A biquad section's TDF-II state for both channels: {z1 of channel 0, z1 of 1, z2 of 0, z2 of 1}.
+struct alignas(16) OptoBiquadState
+{
+    OptoPair<float> z1, z2;
+};
 
 // The one-sided input element (OptoCell::elementTerm). The reference clips the positive side of the cell's
 // input softly above a fixed level, more the further Peak Reduction is turned up and the less the cell is
@@ -163,7 +189,7 @@ inline float optoElementStrength(float prNormalised) noexcept
 // files remain unchanged. Active OPTO stereo-to-mono-to-stereo, active-to-inactive Peak Reduction, repeated
 // same-rate preparation with panel history, and OPTO-specific zero/one-sample blocks remain unverified by the
 // existing neighbor tests; generic controls do not prove those transitions. Reset clears the added channel
-// states through ChannelState{}. Complete native133 controls pass with no loss of the original124 passing rows.
+// states through CellState{}. Complete native133 controls pass with no loss of the original124 passing rows.
 // Final header-default tables, OFF346 and FET136 identities, release passing-cell masks and the scratch patch
 // chain are retained with the 2026-10-08 twelfth-pass calibration evidence.
 //
@@ -498,7 +524,9 @@ public:
     OptoCell() noexcept
     {
         cellParams = defaultOptoCellParams();
+        clockPower.setExponent(static_cast<double>(cellParams.timeScaleExponent));
         buildEmitPrior();
+        buildTableQuiet();
     }
 
     // Coefficients at the processing rate; history is kept.
@@ -506,6 +534,7 @@ public:
     {
         sampleRate = static_cast<double>(sr);
         dt = 1.0 / sampleRate;
+        invDt = sampleRate;   // 1 / dt for the stores' moved charge per second
         for (auto& f : couplingInput) f.prepare(sampleRate, kOptoPreHighPassHz, kOptoPreHighPassQ);
         // Production detector weighting (exact coefficients).
         const std::array<BiquadCoeffs, kWeightingSections> weightingCoeffs{{
@@ -584,7 +613,7 @@ public:
         // The clamp keeps a lab-set NaN or absurd value out of the int cast.
         const float holdSeconds = cellParams.lfCutHoldSeconds > 0.0f ? std::min(cellParams.lfCutHoldSeconds, 1.0f) : 0.0f;
         cutHoldSamples = static_cast<int>(static_cast<double>(holdSeconds) * sampleRate);
-        for (auto& channel : channels) channel.driveHold = std::min(channel.driveHold, cutHoldSamples);
+        for (auto& hold : state.driveHold.v) hold = std::min(hold, cutHoldSamples);
         // The panel's charge stores (see process()): per sample, the rate at which a store refills while the
         // drive has the other polarity and the share of what it has spent that is still spent after it.
         chargeRefillRate = cellParams.elPolRefill > 0.0f ? dt / static_cast<double>(cellParams.elPolRefill) : 0.0;
@@ -596,10 +625,10 @@ public:
         // Truncated like the R14 hold; the clamp keeps a lab-set NaN or absurd value out of the int cast.
         const float darkHold = cellParams.darkHoldSeconds > 0.0f ? std::min(cellParams.darkHoldSeconds, 1.0f) : 0.0f;
         darkHoldSamples = static_cast<int>(static_cast<double>(darkHold) * sampleRate);
-        for (auto& channel : channels)
+        for (size_t c = 0; c < kChannels; ++c)
         {
-            channel.darkHold = std::min(channel.darkHold, darkHoldSamples);
-            channel.floorInputHold = std::min(channel.floorInputHold, darkHoldSamples);
+            state.darkHold[c] = std::min(state.darkHold[c], darkHoldSamples);
+            state.floorInputHold[c] = std::min(state.floorInputHold[c], darkHoldSamples);
         }
         // Production LF floor energy path (exact coefficients).
         updateFloorBand();
@@ -607,8 +636,6 @@ public:
         for (auto& filter : limitFloorFilter)
             filter.setCoeffs(Biquad::lowPass(sr, 300.0f, 0.70710678f));
         floorPowerStep = 1.0f - std::exp(-1.0f / (0.050f * sr));
-        levelPeakAttack = std::exp(-1.0 / (0.000050 * sampleRate));
-        levelPeakRelease = std::exp(-1.0 / (0.040 * sampleRate));
         elStep = 1.0 - std::exp(-1.0 / (static_cast<double>(cellParams.elTauSeconds) * sampleRate));
     }
 
@@ -625,6 +652,8 @@ public:
     {
         const float sr = static_cast<float>(sampleRate);
         floorHighPassStep = 1.0f - std::exp(-6.283185307f * floorLaw[0] / sr);
+        floorLimitRatioScale = std::pow(floorLaw[5], 0.5f * floorLaw[4]);   // k^(e/2) in Limit
+        floorExpansionMode = -1;   // the blend's expansions start again
         floorLowPassStep = 1.0f - std::exp(-6.283185307f * floorLaw[1] / sr);
         fluxHighPassStep = 1.0 - std::exp(-6.283185307179586 * static_cast<double>(fluxLaw[1]) / sampleRate);
         fluxLowPassStep = 1.0 - std::exp(-6.283185307179586 * static_cast<double>(fluxLaw[2]) / sampleRate);
@@ -639,7 +668,7 @@ public:
 
     void reset() noexcept
     {
-        for (auto& c : channels) c = ChannelState{};
+        state = CellState{};
         for (auto& channel : loopWeighting) for (auto& f : channel) f.reset();
         for (auto& channel : levelWeighting) for (auto& f : channel) f.reset();
         for (auto& channel : depthWeighting) for (auto& f : channel) f.reset();
@@ -647,6 +676,10 @@ public:
         for (auto& f : limitFloorFilter) f.reset();
         for (auto& f : lfCutFilter) f.reset();
         for (auto& f : couplingInput) f.reset();
+        loopWeightingState = {};
+        levelWeightingState = {};
+        depthWeightingState = {};
+        lfTermState = limitFloorState = lfCutState = OptoBiquadState{};
     }
 
     // The only sample counters are the R14 hold countdown and the dark state's; setRate() clamps each to its
@@ -656,106 +689,228 @@ public:
 
     // What one channel's side chain asks of the cell for this sample: the light after the frequency law, the
     // light the drive alone asks for, the signed drive, and the floor's drive and band / input powers.
-    struct LightFrame
+    // One step's light on its way through the panel (prepareLight -> emitLight -> advanceLight), per lane:
+    // LightFrame is the one-lane frame.
+    template <class L> struct FrameT
     {
-        double light, lawLight, s, floorDrive;
-        float floorPower, inputPower;
+        using D = typename L::D;
+        using F = typename L::F;
+        D light, lawLight, s, floorDrive;
+        F floorPower, inputPower;
         bool inert;
         // The emission's shape (prepareLight): the faded weight, the sine prior (raw: emitLight fades it with its
         // per-cycle scale) and the fade, applied behind the charge stores (emitLight); clockLight is the emission
         // without the shape: the release side's clock.
-        double emitWeight = 1.0, emitPrior = 1.0, emitFade = 0.0, clockLight = 0.0;
+        D emitWeight = L::d(1.0), emitPrior = L::d(1.0), emitFade = L::d(0.0), clockLight = L::d(0.0);
+        // timeScale() of the two lights emitLight's charge sums already evaluated, with the lights they were
+        // evaluated at (NaN: none): advanceLight reuses a value whose light has not changed since (linkedFrame
+        // can replace the light with the partner's).
+        D scaledLight = L::d(std::numeric_limits<double>::quiet_NaN()), lightScale = L::d(0.0);
+        D scaledClockLight = L::d(std::numeric_limits<double>::quiet_NaN()), clockLightScale = L::d(0.0);
     };
+    using LightFrame = FrameT<lanes::Lane1>;
 
-    // The channel's own side chain, up to the light. ownOnly: the caller links the pair behind this point
-    // (processLightPair), so the drive here is the channel's own.
+    // The channel's own side chain, up to the light. A linked pair meets behind this point (processLightPair).
     LightFrame prepareLight(int ch, float input, float /*compressed*/, float sidechain,
                             bool external, float optoDetector, bool useOptoDetector,
-                            bool limit, float peakReduction, bool ownOnly = false) noexcept
+                            bool limit, float peakReduction) noexcept
     {
-        const size_t c = static_cast<size_t>(ch);
-        auto& d = channels[c];
-        const float base = useOptoDetector ? optoDetector : (external ? sidechain : input);
+        return prepareLightT<lanes::Lane1>(ch, input, sidechain, external, optoDetector, useOptoDetector,
+                                               limit, peakReduction);
+    }
+
+private:
+    struct CellState;   // defined with the cell's other state below
+public:
+    // ------------------------------------------------------------------------------------------------ lanes
+    // prepareLight() is written once over a lane policy (MultiCompLanes.hpp): Lane1 steps channel `ch`;
+    // Lane2 steps both channels of a linked pair at once (`ch` unused) with each lane performing
+    // exactly Lane1's arithmetic. State reads and writes go through get / put: with the state stored as channel
+    // pairs (CellState), a pair's read or write is one access.
+    template <class L, class T>
+    auto get(int ch, OptoPair<T> CellState::* field) const noexcept
+    {
+        const OptoPair<T>& pair = state.*field;
+        if constexpr (L::kLanes == 1) return pair[static_cast<size_t>(ch)];
+#if defined(__aarch64__)
+        else if constexpr (std::is_same_v<T, double>) return lanes::D2{vld1q_f64(pair.v)};
+        else if constexpr (std::is_same_v<T, float>) return lanes::F2{vld1_f32(pair.v)};
+        else return lanes::I2{vld1_s32(pair.v)};
+#endif
+    }
+    template <class L, class T, class V>
+    void put(int ch, OptoPair<T> CellState::* field, V value) noexcept
+    {
+        OptoPair<T>& pair = state.*field;
+        if constexpr (L::kLanes == 1) pair[static_cast<size_t>(ch)] = value;
+#if defined(__aarch64__)
+        else if constexpr (std::is_same_v<T, double>) vst1q_f64(pair.v, value.v);
+        else if constexpr (std::is_same_v<T, float>) vst1_f32(pair.v, value.v);
+        else vst1_s32(pair.v, value.v);
+#endif
+    }
+    template <class L, size_t N>
+    typename L::D getAt(int ch, std::array<OptoPair<double>, N> CellState::* field, size_t k) const noexcept
+    {
+        const OptoPair<double>& pair = (state.*field)[k];
+        if constexpr (L::kLanes == 1) return pair[static_cast<size_t>(ch)];
+#if defined(__aarch64__)
+        else return lanes::D2{vld1q_f64(pair.v)};
+#endif
+    }
+    template <class L, size_t N>
+    void putAt(int ch, std::array<OptoPair<double>, N> CellState::* field, size_t k, typename L::D value) noexcept
+    {
+        OptoPair<double>& pair = (state.*field)[k];
+        if constexpr (L::kLanes == 1) pair[static_cast<size_t>(ch)] = value;
+#if defined(__aarch64__)
+        else vst1q_f64(pair.v, value.v);
+#endif
+    }
+    // Biquad::process() for channel ch, or for both channels at once, on a section's coefficients (every channel's
+    // filter carries the same: setRate sets them alike) and the section's state in the cell (OptoBiquadState).
+    template <class L>
+    typename L::F biquad(const Biquad& section, OptoBiquadState& st, int ch, typename L::F x) noexcept
+    {
+        const auto& k = section.coeffs();
+        if constexpr (L::kLanes == 1)
+        {
+            const size_t c = static_cast<size_t>(ch);
+            const float y = k.b0 * x + st.z1[c];
+            st.z1[c] = k.b1 * x - k.a1 * y + st.z2[c];
+            st.z2[c] = k.b2 * x - k.a2 * y;
+            return y;
+        }
+#if defined(__aarch64__)
+        else
+        {
+            const float32x4_t z = vld1q_f32(st.z1.v);   // {z1 0, z1 1, z2 0, z2 1}
+            const auto s1 = lanes::F2{vget_low_f32(z)}, s2 = lanes::F2{vget_high_f32(z)};
+            const auto y = L::f(k.b0) * x + s1;
+            const auto n1 = L::f(k.b1) * x - L::f(k.a1) * y + s2;
+            const auto n2 = L::f(k.b2) * x - L::f(k.a2) * y;
+            vst1q_f32(st.z1.v, vcombine_f32(n1.v, n2.v));
+            return y;
+        }
+#endif
+    }
+    template <class V> static V vclamp(V v, V lo, V hi) noexcept
+    {   // std::clamp: (v < lo) ? lo : (hi < v) ? hi : v, NaN through
+        using lanes::Lane1;
+        if constexpr (std::is_same_v<V, double> || std::is_same_v<V, float>) return std::clamp(v, lo, hi);
+#if defined(__aarch64__)
+        else if constexpr (std::is_same_v<V, lanes::D2>)
+            return lanes::Lane2::sel(v < lo, lo, lanes::Lane2::sel(hi < v, hi, v));
+        else
+            return lanes::Lane2::sel(v < lo, lo, lanes::Lane2::sel(hi < v, hi, v));
+#endif
+    }
+
+    // prepareLightT(), emitLightRef() and advanceLightT() are forced inline (with their helpers): the pair's step
+    // (processLightPair) then keeps the frame in registers across the three (3 % of the OPTO step, 2026-10-21).
+    template <class L>
+    OPTO_FORCE_INLINE FrameT<L> prepareLightT(int ch, typename L::F input, typename L::F sidechain, bool external,
+                            typename L::F optoDetector, bool useOptoDetector, bool limit,
+                            float peakReduction) noexcept
+    {
+        using D = typename L::D;
+        using F = typename L::F;
+        using I = typename L::I;
+        using lanes::vmax; using lanes::vmin; using lanes::vabs; using lanes::vsqrt;
+        using lanes::visfinite;
+        const auto Kd = [](double x) noexcept { return L::d(x); };
+        const auto Kf = [](float x) noexcept { return L::f(x); };
+        const F base = useOptoDetector ? optoDetector : (external ? sidechain : input);
 
         // Production LF floor energies from the pre-gain detector; both mode paths advance.
-        d.floorHighPassLow += floorHighPassStep * (base - d.floorHighPassLow);
-        d.floorLow += floorLowPassStep * (base - d.floorHighPassLow - d.floorLow);
-        d.floorBandLow += floorBandStep * (d.floorLow - d.floorBandLow);
-        const float limitFloorSignal = limitFloorFilter[c].process(d.floorLow);
-        const float floorSignal = limit ? limitFloorSignal : d.floorBandLow;
-        d.floorPower += floorPowerStep * (floorSignal * floorSignal - d.floorPower);
-        d.inputPower += floorPowerStep * (base * base - d.inputPower);
+        F floorHighPassLow = get<L>(ch, &CellState::floorHighPassLow);
+        F floorLow = get<L>(ch, &CellState::floorLow);
+        F floorBandLow = get<L>(ch, &CellState::floorBandLow);
+        floorHighPassLow = floorHighPassLow + Kf(floorHighPassStep) * (base - floorHighPassLow);
+        floorLow = floorLow + Kf(floorLowPassStep) * (base - floorHighPassLow - floorLow);
+        floorBandLow = floorBandLow + Kf(floorBandStep) * (floorLow - floorBandLow);
+        put<L>(ch, &CellState::floorHighPassLow, floorHighPassLow);
+        put<L>(ch, &CellState::floorLow, floorLow);
+        put<L>(ch, &CellState::floorBandLow, floorBandLow);
+        const F limitFloorSignal = biquad<L>(limitFloorFilter[0], limitFloorState, ch, floorLow);
+        const F floorSignal = limit ? limitFloorSignal : floorBandLow;
+        F floorPower = get<L>(ch, &CellState::floorPower);
+        F inputPower = get<L>(ch, &CellState::inputPower);
+        floorPower = floorPower + Kf(floorPowerStep) * (floorSignal * floorSignal - floorPower);
+        inputPower = inputPower + Kf(floorPowerStep) * (base * base - inputPower);
+        put<L>(ch, &CellState::floorPower, floorPower);
+        put<L>(ch, &CellState::inputPower, inputPower);
 
         // Colour-stage level: pre-gain weighted detector through a 50 us / 40 ms peak follower.
-        float levelSignal = base;
-        for (auto& f : levelWeighting[c]) levelSignal = f.process(levelSignal);
-        const double levelAbs = std::abs(static_cast<double>(levelSignal) * levelNormalisation);
-        const double levelCoeff = levelAbs > d.levelPeak ? levelPeakAttack : levelPeakRelease;
-        d.levelPeak = levelAbs + (d.levelPeak - levelAbs) * levelCoeff;
+        F levelSignal = base;
+        for (size_t section = 0; section < kWeightingSections; ++section)
+            levelSignal = biquad<L>(levelWeighting[0][section], levelWeightingState[section], ch, levelSignal);
+        const D levelAbs = vabs(L::toD(levelSignal) * Kd(levelNormalisation));
 
         // Feedback side chain on the cell gain (before the floor).
-        const double gPrev = d.cellGain;
-        const double mix = limit
-            ? static_cast<double>(cellParams.limitOutputMix) * gPrev + cellParams.limitInputMix
-            : gPrev + cellParams.compressInputMix;
-        float loop = static_cast<float>(mix * base);
-        const float coupled = couplingInput[c].process(base);
-        if (cellParams.inputCouplingOn != 0.0f)
-            loop = static_cast<float>(mix * coupled);
+        const D gPrev = get<L>(ch, &CellState::cellGain);
+        const D mix = limit
+            ? Kd(static_cast<double>(cellParams.limitOutputMix)) * gPrev + Kd(cellParams.limitInputMix)
+            : gPrev + Kd(cellParams.compressInputMix);
+        F coupled = base;
+        {   // couplingInput's process() on the state in the cell (every channel's filter has the same coefficients)
+            const auto k = couplingInput[0].coefficients();
+            const D x = L::toD(base);
+            const D y = Kd(k.b0) * x + get<L>(ch, &CellState::couplingS1);
+            put<L>(ch, &CellState::couplingS1, Kd(k.b1) * x - Kd(k.a1) * y + get<L>(ch, &CellState::couplingS2));
+            put<L>(ch, &CellState::couplingS2, Kd(k.b2) * x - Kd(k.a2) * y);
+            coupled = L::toF(y);
+        }
+        F loop = L::toF(mix * L::toD(cellParams.inputCouplingOn != 0.0f ? coupled : base));
         if (cellParams.lfLitSpanDb > 0.0f)
         {
             // Lit-gated LF shelf: the LF sensitivity needs an illuminated photocell (tracked EL level at n-1).
-            for (size_t section = 1; section < kWeightingSections; ++section) loop = loopWeighting[c][section].process(loop);
-            loop *= weightingNormalisation14;
-            const float shelved = loopWeighting[c][0].process(loop) * shelfNormalisation;
-            const double litDb = cellParams.lfLitLog != 0.0f ? d.litLevel : 20.0 * std::log10(std::max(d.litLevel, 1.0e-12));
-            const float engage = std::clamp(static_cast<float>((litDb - (cellParams.lightTableStartDb + cellParams.lfLitLevelDb))
-                                                               / cellParams.lfLitSpanDb), 0.0f, 1.0f);
-            const float w = cellParams.lfLitFloor + (1.0f - cellParams.lfLitFloor) * engage;
-            loop += w * (shelved - loop);
+            for (size_t section = 1; section < kWeightingSections; ++section)
+                loop = biquad<L>(loopWeighting[0][section], loopWeightingState[section], ch, loop);
+            loop = loop * Kf(weightingNormalisation14);
+            const F shelved = biquad<L>(loopWeighting[0][0], loopWeightingState[0], ch, loop) * Kf(shelfNormalisation);
+            const D litLevel = get<L>(ch, &CellState::litLevel);
+            const D litDb = cellParams.lfLitLog != 0.0f ? litLevel
+                : Kd(20.0) * L::map([](double v) noexcept { return std::log10(v); }, vmax(litLevel, Kd(1.0e-12)));
+            const F engage = vclamp(L::toF((litDb - Kd(cellParams.lightTableStartDb + cellParams.lfLitLevelDb))
+                                           * Kd(invLfLitSpanDb)), Kf(0.0f), Kf(1.0f));
+            const F w = Kf(cellParams.lfLitFloor) + Kf(1.0f - cellParams.lfLitFloor) * engage;
+            loop = loop + w * (shelved - loop);
         }
         else
         {
-            for (auto& f : loopWeighting[c]) loop = f.process(loop);
-            loop *= weightingNormalisation;
+            for (size_t section = 0; section < kWeightingSections; ++section)
+                loop = biquad<L>(loopWeighting[0][section], loopWeightingState[section], ch, loop);
+            loop = loop * Kf(weightingNormalisation);
         }
         if (cellParams.lfCutDb != 0.0f)
-        {   // R14: LF loss in the side-chain drive at the onset of a loud passage (measured on the native unit:
-            // from dark, 60 Hz lags 1 kHz by 0 dB at -30 dBFS and by 11.5 dB at -4 dBFS, recovering within ~100 ms;
-            // once lit the LF response is the static one). Keyed on the drive envelope at n-1: an absolute drive
-            // gate times a transient gate (envelope above the slow tracker). The envelope holds each peak for
-            // lfCutHoldSeconds, which removes the per-cycle ripple that would otherwise keep the gate open on a
-            // settled low tone. It is exactly flat only open loop: in the feedback cell the drive peaks drift down
-            // by ~0.001 dB/s as the slow populations settle, the hold lapses a few times a second and the gate
-            // opens by at most a few percent. Measured with the 2026-10-03 constants (not re-measured after the
-            // 2026-10-05 refit), cut on against cut off, settled tone at PR 70: 60 Hz
-            // 0.002-0.005 dB, 30 Hz 0.01-0.03 dB, 25 Hz 0.02-0.04 dB, 15 Hz 0.04-0.10 dB (without the hold:
-            // 0.06-0.20 dB at 30-100 Hz).
-            const double driveDb = d.driveDb;
-            const float wAbs = std::clamp(static_cast<float>((driveDb - static_cast<double>(cellParams.lfCutStartDb))
-                                                            / std::max(static_cast<double>(cellParams.lfCutSpanDb), 1.0e-6)), 0.0f, 1.0f);
-            const float wTr = std::clamp(static_cast<float>((driveDb - d.driveSlow)
-                                                           / std::max(static_cast<double>(cellParams.lfCutTransSpanDb), 1.0e-6)), 0.0f, 1.0f);
-            const float wc = wAbs * wTr * (limit ? 1.0f : cellParams.lfCutCompWeight);
-            loop += wc * (lfCutFilter[c].process(loop) - loop);
+        {   // R14: LF loss in the side-chain drive at the onset of a loud passage (see prepareLight's notes)
+            const D driveDb = get<L>(ch, &CellState::driveDb);
+            const D driveSlow = get<L>(ch, &CellState::driveSlow);
+            const F wAbs = vclamp(L::toF((driveDb - Kd(static_cast<double>(cellParams.lfCutStartDb)))
+                                         / Kd(std::max(static_cast<double>(cellParams.lfCutSpanDb), 1.0e-6))), Kf(0.0f), Kf(1.0f));
+            const F wTr = vclamp(L::toF((driveDb - driveSlow)
+                                        / Kd(std::max(static_cast<double>(cellParams.lfCutTransSpanDb), 1.0e-6))), Kf(0.0f), Kf(1.0f));
+            const F wc = wAbs * wTr * Kf(limit ? 1.0f : cellParams.lfCutCompWeight);
+            loop = loop + wc * (biquad<L>(lfCutFilter[0], lfCutState, ch, loop) - loop);
         }
         // Production optoDepthWeighting, fed by the cell reduction at n-1; both mode paths advance.
-        const float priorReduction = static_cast<float>(d.grDb);
-        const float compressShelfWeight = std::clamp((priorReduction - 8.0f) / 20.0f, 0.0f, 1.0f);
-        const float limitShelfWeight = std::clamp((priorReduction - 12.0f) / 28.0f, 0.0f, 1.0f);
-        const float depthPeakWeight = std::clamp((priorReduction - 8.0f) / 8.0f, 0.0f, 1.0f);
-        auto& depth = depthWeighting[c];
-        float compressDetector = loop + compressShelfWeight * (depth[0].process(loop) - loop);
-        float limitDetector = loop + limitShelfWeight * (depth[2].process(loop) - loop);
-        compressDetector += depthPeakWeight * (depth[1].process(compressDetector) - compressDetector);
-        limitDetector += depthPeakWeight * (depth[3].process(limitDetector) - limitDetector);
+        const F priorReduction = L::toF(get<L>(ch, &CellState::grDb));
+        const F compressShelfWeight = vclamp((priorReduction - Kf(8.0f)) * Kf(1.0f / 20.0f), Kf(0.0f), Kf(1.0f));
+        const F limitShelfWeight = vclamp((priorReduction - Kf(12.0f)) * Kf(1.0f / 28.0f), Kf(0.0f), Kf(1.0f));
+        const F depthPeakWeight = vclamp((priorReduction - Kf(8.0f)) * Kf(0.125f), Kf(0.0f), Kf(1.0f));
+        F compressDetector = loop + compressShelfWeight * (biquad<L>(depthWeighting[0][0], depthWeightingState[0], ch, loop) - loop);
+        F limitDetector = loop + limitShelfWeight * (biquad<L>(depthWeighting[0][2], depthWeightingState[2], ch, loop) - loop);
+        compressDetector = compressDetector
+            + depthPeakWeight * (biquad<L>(depthWeighting[0][1], depthWeightingState[1], ch, compressDetector) - compressDetector);
+        limitDetector = limitDetector + depthPeakWeight * (biquad<L>(depthWeighting[0][3], depthWeightingState[3], ch, limitDetector) - limitDetector);
         if (cellParams.depthWeighting != 0.0f)
             loop = limit ? limitDetector : compressDetector;
         // LF detector-law term, fed by the same reduction at n-1.
         if (cellParams.lfTermGainDb != 0.0f)
         {
-            const float lfWeight = std::clamp(priorReduction / cellParams.lfTermGrSpan, 0.0f, 1.0f);
-            loop += lfWeight * (lfTermFilter[c].process(loop) - loop);
+            const F lfWeight = vclamp(priorReduction * Kf(invLfTermGrSpan), Kf(0.0f), Kf(1.0f));
+            loop = loop + lfWeight * (biquad<L>(lfTermFilter[0], lfTermState, ch, loop) - loop);
         }
 
         const double prNorm = std::clamp(static_cast<double>(peakReduction) * 0.01, 0.0, 1.0);
@@ -766,280 +921,307 @@ public:
             cachedSideChainGain = sideChainGain(prNorm);
         }
         // The input owns the floor and release laws; a coupling tail continues to supply light only.
-        const double floorOwn = inert ? 0.0 : cachedSideChainGain * mix * levelAbs;
-        double floorDrive = floorOwn;
-        if (!ownOnly && linkWeight > 0.0f)
-            floorDrive = std::max(d.floorOwn, static_cast<double>(linkWeight)
-                * (c == 0 ? channels[1].floorOwn : channels[0].floorOwnPrev));
-        d.floorOwnPrev = d.floorOwn;
-        d.floorOwn = floorOwn;
-        double s = inert ? 0.0 : cachedSideChainGain * static_cast<double>(loop);
+        const D floorOwn = inert ? Kd(0.0) : Kd(cachedSideChainGain) * mix * levelAbs;
+        const D floorDrive = floorOwn;
+        D s = inert ? Kd(0.0) : Kd(cachedSideChainGain) * L::toD(loop);
         if (fluxLaw[0] > 0.0f)
         {   // side-chain flux limit (see kOptoFluxLimitDefaults); the scale comes from the flux up to n-1
-            // (two pow per oversampled sample; the cell already spends several on the light and floor laws)
-            const double ratio = d.fluxPeak / static_cast<double>(fluxLaw[0]);
-            d.fluxHighPassLow += fluxHighPassStep * (s - d.fluxHighPassLow);
-            d.fluxLow += fluxLowPassStep * (s - d.fluxHighPassLow - d.fluxLow);
-            d.fluxPeak = std::max(std::abs(d.fluxLow), d.fluxPeak * fluxRelease);
-            if (std::abs(d.fluxHighPassLow) < 1.0e-30) d.fluxHighPassLow = 0.0;   // no denormal tails in silence
-            if (std::abs(d.fluxLow) < 1.0e-30) d.fluxLow = 0.0;
-            if (d.fluxPeak < 1.0e-30) d.fluxPeak = 0.0;
+            D fluxHighPassLow = get<L>(ch, &CellState::fluxHighPassLow);
+            D fluxLow = get<L>(ch, &CellState::fluxLow);
+            D fluxPeak = get<L>(ch, &CellState::fluxPeak);
+            const D ratio = fluxPeak / Kd(static_cast<double>(fluxLaw[0]));
+            fluxHighPassLow = fluxHighPassLow + Kd(fluxHighPassStep) * (s - fluxHighPassLow);
+            fluxLow = fluxLow + Kd(fluxLowPassStep) * (s - fluxHighPassLow - fluxLow);
+            fluxPeak = vmax(vabs(fluxLow), fluxPeak * Kd(fluxRelease));
+            fluxHighPassLow = L::sel(vabs(fluxHighPassLow) < Kd(1.0e-30), Kd(0.0), fluxHighPassLow);
+            fluxLow = L::sel(vabs(fluxLow) < Kd(1.0e-30), Kd(0.0), fluxLow);
+            fluxPeak = L::sel(fluxPeak < Kd(1.0e-30), Kd(0.0), fluxPeak);
+            put<L>(ch, &CellState::fluxHighPassLow, fluxHighPassLow);
+            put<L>(ch, &CellState::fluxLow, fluxLow);
+            put<L>(ch, &CellState::fluxPeak, fluxPeak);
             const double k = std::max(static_cast<double>(fluxLaw[5]), 1.0e-3);
-            s *= std::pow(1.0 + std::pow(ratio, k), -static_cast<double>(fluxLaw[3]) / k);
+            const double e = -static_cast<double>(fluxLaw[3]) / k;
+            s = s * L::map([k, e](double r) noexcept { return std::pow(1.0 + std::pow(r, k), e); }, ratio);
         }
         if (cellParams.lfCutDb != 0.0f)
         {
-            const double a = std::abs(s);
-            if (a >= d.driveEnv) { d.driveEnv = a + (d.driveEnv - a) * cutAttack; d.driveHold = cutHoldSamples; }
-            else if (d.driveHold > 0) --d.driveHold;
-            else
-            {
-                d.driveEnv = a + (d.driveEnv - a) * cutRelease;
-                if (d.driveEnv < 1.0e-30) d.driveEnv = 0.0;   // no denormal tail after release
-            }
-            d.driveDb = 20.0 * std::log10(std::max(d.driveEnv, kLfCutEnvelopeFloor));
-            d.driveSlow += cutSlowStep * (d.driveDb - d.driveSlow);
-            // The slow tracker trails the envelope by at most lfCutMaxGapDb, so the length of the cut is the same
-            // after any floor more than that far below the onset envelope (digital silence against a -90 dB
-            // floor: 0.005 dB at 100 ms). A floor closer than the cap shortens it (-60 dB: 0.12 dB, 9 ms).
+            const D a = vabs(s);
+            D driveEnv = get<L>(ch, &CellState::driveEnv);
+            I driveHold = get<L>(ch, &CellState::driveHold);
+            const auto attack = a >= driveEnv;
+            const auto holding = !attack && (driveHold > L::i(0));
+            D released = a + (driveEnv - a) * Kd(cutRelease);
+            released = L::sel(released < Kd(1.0e-30), Kd(0.0), released);   // no denormal tail after release
+            driveEnv = L::sel(attack, a + (driveEnv - a) * Kd(cutAttack), L::sel(holding, driveEnv, released));
+            driveHold = L::sel(attack, L::i(cutHoldSamples), L::sel(holding, driveHold - L::i(1), driveHold));
+            put<L>(ch, &CellState::driveEnv, driveEnv);
+            put<L>(ch, &CellState::driveHold, driveHold);
+            const D driveDb = Kd(20.0) * L::map([](double v) noexcept { return std::log10(v); },
+                                               vmax(driveEnv, Kd(kLfCutEnvelopeFloor)));
+            D driveSlow = get<L>(ch, &CellState::driveSlow);
+            driveSlow = driveSlow + Kd(cutSlowStep) * (driveDb - driveSlow);
             if (cellParams.lfCutMaxGapDb > 0.0f)
-                d.driveSlow = std::max(d.driveSlow, d.driveDb - static_cast<double>(cellParams.lfCutMaxGapDb));
+                driveSlow = vmax(driveSlow, driveDb - Kd(static_cast<double>(cellParams.lfCutMaxGapDb)));
+            put<L>(ch, &CellState::driveDb, driveDb);
+            put<L>(ch, &CellState::driveSlow, driveSlow);
         }
-        // Stereo link. A linked pair goes through processLightPair: each channel keeps its own filters, frequency
-        // law and panel (emitLight), and the two panels' emissions meet in a diode-OR behind this function
-        // (linkedFrame). Measured against the native unit, both channels:
-        //   - 2026-10-12, channels that differ in spectrum and level: an OR here at the rectified drive, with the
-        //     frequency law behind it on each channel's own signal, left the quiet channel up to 16.5 dB off; the
-        //     OR behind the panels reads within 0.9 dB there and on the eleven stationary stereo stimuli. Feeding
-        //     one cell a sample-wise pick of the larger channel ahead of the filters adds reversals neither drive
-        //     has (quadrature sines read 0.6-1.1 dB deep).
-        //   - 2026-10-13, one low tone on both channels with a phase offset, at Limit: the native unit reduces
-        //     more as the offset grows to about 2 ms and then stays level out to 150 degrees (25 / 40 / 60 Hz:
-        //     1.9 / 2.2 / 2.7 dB more at Peak Reduction 81), and reads as in phase again at 180 degrees. That is
-        //     two panels, each emitting for about 2 ms after its own polarity change, with the steady light not
-        //     doubled. One panel lit by the larger of the two lights, its stores following whichever channel was
-        //     the larger, read 0.8-1.7 dB deep at 180 degrees and up to 2.3 dB shallow with a mono low tone under
-        //     a mid of the same level that differs between the channels.
-        // Known shortfall: at offsets of 60 to 120 degrees this cell reduces 0.7-1.7 dB more than the native unit
-        // (and up to 1.5 dB more with the low tone under a mid 6 dB below it). Here a settled low tone's emission
-        // follows the light law along the sine, about 7 ms at 40 Hz with nothing for a millisecond either side of
-        // a zero crossing, so the partner's light fills what the native unit's short burst leaves alone. A single
-        // channel does not show the emission's shape, only its sum.
-        // A channel processed alone, a dual-mono pair and a linked pair (processLightPair, ownOnly) take the
-        // current sample's drive, so with identical channels they all light exactly alike. Only the legacy
-        // per-channel link below reads its own and its partner's drive a sample back.
-        const double ownDrive = std::abs(s);
-        double panelDrive = ownDrive;
-        if (!ownOnly && linkWeight > 0.0f)
-            panelDrive = std::max(d.panelOwn, static_cast<double>(linkWeight)
-                                                  * (c == 0 ? channels[1].panelOwn : channels[0].panelOwnPrev));
-        d.panelOwnPrev = d.panelOwn;
-        d.panelOwn = ownDrive;
-        d.el += elStep * (panelDrive - d.el);
-        if (cellParams.lfLitLog != 0.0f)
+        // The channel's own drive: a linked pair meets behind the panel (linkedFrame).
+        const D panelDrive = vabs(s);
+        D el = get<L>(ch, &CellState::el);
+        el = el + Kd(elStep) * (panelDrive - el);
+        put<L>(ch, &CellState::el, el);
+        // el in dB, read by the lit level and by the light table: the table's own argument wherever it reads (el above
+        // the table's quiet level, so above 1e-12).
+        const bool litInDb = cellParams.lfLitLog != 0.0f;
+        const D elLevelDb = litInDb || !inert ? Kd(8.685889638065035) * lanes::lanemath::log(vmax(el, Kd(1.0e-12)))
+                                              : Kd(0.0);
+        D litLevel = get<L>(ch, &CellState::litLevel);
+        if (litInDb)
         {
-            const double elDb = std::max(20.0 * std::log10(std::max(d.el, 1.0e-12)),
-                                         static_cast<double>(cellParams.lightTableStartDb) - 60.0);
-            d.litLevel = elDb + (d.litLevel - elDb) * (elDb > d.litLevel ? litAttack : litRelease);
+            const D elDb = vmax(elLevelDb, Kd(static_cast<double>(cellParams.lightTableStartDb) - 60.0));
+            litLevel = elDb + (litLevel - elDb) * L::sel(elDb > litLevel, Kd(litAttack), Kd(litRelease));
         }
         else
-            d.litLevel = d.el + (d.litLevel - d.el) * (d.el > d.litLevel ? litAttack : litRelease);
-        double light = inert ? 0.0 : lightFor(d.el);
+            litLevel = el + (litLevel - el) * L::sel(el > litLevel, Kd(litAttack), Kd(litRelease));
+        put<L>(ch, &CellState::litLevel, litLevel);
+        D light = inert ? Kd(0.0) : lightAtT<L>(el, elLevelDb);
         if (cellParams.lightCeiling > 0.0f)
-            light = light / (1.0 + light / static_cast<double>(cellParams.lightCeiling));
-        const double lawLight = light;   // what the drive asks of the panel, ahead of the frequency law and the charge stores
-        double emitWeight = 1.0, emitPriorValue = 1.0, emitFadeValue = 0.0;   // the emission's shape for this sample (emitLight applies it)
+            light = light / (Kd(1.0) + light / Kd(static_cast<double>(cellParams.lightCeiling)));
+        const D lawLight = light;   // what the drive asks of the panel, ahead of the frequency law and the charge stores
+        D emitWeight = Kd(1.0), emitPriorValue = Kd(1.0), emitFadeValue = Kd(0.0);
         if (cellParams.emitPeakExp > 0.0f || cellParams.emitRiseGain != 0.0f)
         {
-            // (V) The emission's shape within a cycle of the drive. Measured on the native unit (2026-10-14, tools
-            // opto/h5): on a settled 1 kHz sine its gain ripples at 2f and 4f with the two in phase, 85-97 degrees to
-            // the tone, the 4f one 10-15 dB under the 2f (third and fifth harmonics -56 / -71 dBc at -4 dBFS, Peak
-            // Reduction .7). This cell's light, the law's value along |s|, gave a 4f ripple 8-17 dB too weak (fifth
-            // -82 dBc there) and 20-50 degrees late: too wide a pulse, centred on the peak. Charge crosses the
-            // phosphor while the applied field outruns the polarisation the last half-cycle left, so the emission
-            // sits near the peak of |s| and leans onto its rise: the law's light times (|s| / A)^emitPeakExp times
-            // (1 + emitRiseGain d|s| / (omega A))+, A the reference amplitude. Faded in with the drive's frequency
-            // between emitFadeLoKHz and emitFadeHiKHz: at low frequencies the native unit's emission is a burst after
-            // the polarity change (the charge stores, emitLight), not a pulse at the peak, and the shape would move
-            // the settled reduction there.
-            // The frequency law and the plateau multiply the light after the shape is decided here (their factors are
-            // 1 on the settled 1 kHz sine the prior assumes); whatever they move is absorbed by the per-cycle charge
-            // conservation in emitLight, which compares the emission with and without the shape after both. A linked
-            // pair conserves each panel's own emission while the populations integrate the pair's OR'd light
-            // (linkedFrame); the stereo-link tables read the same with the shape as without it (tools triage/refit
-            // screen h5-r3 against the shape-off cell: link_low pooled 0.4697 -> 0.4694, link_high 0.3142 -> 0.3142,
-            // worst cells unchanged).
-            // The reference (2026-10-15) is the smaller of two readings of the drive's amplitude, each right where
-            // the other fails (native unit against this cell, tools triage/refit screens and the core suite):
-            //   - the quadrature amplitude A^2 = s^2 + (ds/dt / omega)^2, omega from the drive's slew-to-level
-            //     mean-square ratio: exact on a sine from its first sample and following a drive that falls inside
-            //     a half-cycle, but meaningless on broadband drive, where the weight became a random modulation of
-            //     the light (music at Peak Reduction 1 and Limit .81: 0.21-0.36 dB less reduction on seven clips);
-            //   - the peak of |s| over the last completed half-cycle (the polarisation the last half-cycle left):
-            //     bounded on any programme (music within 0.043 dB), but late on a falling drive: after a 2 ms event
-            //     at Compress .7 the feedback clamps inside the first half-cycle, the next one peaks at 0.76 of it
-            //     and emits a fraction of the law's charge (0.5-0.7 dB less reduction for over 10 ms; the core
-            //     suite's recovery row 0 read 1.14 dB against its 1.0 bar).
-            // On a settled sine the two agree. A drive beyond the reference A = min(the last half-cycle's peak, the
-            // quadrature amplitude), |s| > 1.0001 A (the first half-cycle of a louder note, a burst from silence, where
-            // the last half-cycle's peak is lower), has nothing to be shaped against and emits the law's light as it
-            // is, so a louder note is not flashed.
-            const double magnitude = std::abs(s);
-            const bool reversal = (s >= 0.0) != (d.emitLast >= 0.0);
-            const double slewRaw = (s - d.emitLast) * slewNormalisation;   // (f / 1 kHz) x the level on a sine
-            d.emitLast = std::isfinite(s) ? s : 0.0;
-            d.emitDrivePower += elFreqStep * (s * s - d.emitDrivePower);
-            d.emitSlewPower += elFreqStep * (slewRaw * slewRaw - d.emitSlewPower);
-            // No denormal tails in silence; a non-finite drive resets the estimator rather than sticking in it.
-            if (!(d.emitDrivePower >= 1.0e-30) || !std::isfinite(d.emitDrivePower)) d.emitDrivePower = 0.0;
-            if (!(d.emitSlewPower >= 1.0e-30) || !std::isfinite(d.emitSlewPower)) d.emitSlewPower = 0.0;
-            const double ratio = std::clamp(d.emitSlewPower / std::max(d.emitDrivePower, 1.0e-30), 1.0e-4, 1.0e4);
-            // The backward difference reads the slew half a sample early: for a sine of this frequency it is
-            // A cos(theta - phi), phi = pi f / rate, so the cosine part is (slew / sqrt(ratio) - s sin(phi)) / cos(phi).
-            const double halfTurn = std::min(3.141592653589793 * 1000.0 * std::sqrt(ratio) * dt, 1.2);
-            const double cosinePart = (slewRaw / std::sqrt(ratio) - s * std::sin(halfTurn)) / std::cos(halfTurn);
-            const double amplitude = std::sqrt(s * s + cosinePart * cosinePart);
-            // The last completed half-cycle's peak, kept per half-cycle of the drive and keyed on its sign like the
-            // charge stores; it leaks toward 0 (5 ms) only in digital silence, so any real signal refreshes it.
-            if (reversal)
+            // (V) The emission's shape within a cycle of the drive (see prepareLight's notes).
+            const D magnitude = vabs(s);
+            D emitLast = get<L>(ch, &CellState::emitLast);
+            const auto sPositive = s >= Kd(0.0);
+            const auto lastPositive = emitLast >= Kd(0.0);
+            const auto reversal = (sPositive && !lastPositive) || (!sPositive && lastPositive);
+            const D slewRaw = (s - emitLast) * Kd(slewNormalisation);
+            emitLast = L::sel(visfinite(s), s, Kd(0.0));
+            put<L>(ch, &CellState::emitLast, emitLast);
+            D emitDrivePower = get<L>(ch, &CellState::emitDrivePower);
+            D emitSlewPower = get<L>(ch, &CellState::emitSlewPower);
+            emitDrivePower = emitDrivePower + Kd(elFreqStep) * (s * s - emitDrivePower);
+            emitSlewPower = emitSlewPower + Kd(elFreqStep) * (slewRaw * slewRaw - emitSlewPower);
+            emitDrivePower = L::sel(!(emitDrivePower >= Kd(1.0e-30)) || !visfinite(emitDrivePower), Kd(0.0), emitDrivePower);
+            emitSlewPower = L::sel(!(emitSlewPower >= Kd(1.0e-30)) || !visfinite(emitSlewPower), Kd(0.0), emitSlewPower);
+            put<L>(ch, &CellState::emitDrivePower, emitDrivePower);
+            put<L>(ch, &CellState::emitSlewPower, emitSlewPower);
+            D emitPeakPrev = get<L>(ch, &CellState::emitPeakPrev);
+            D emitPeakCur = get<L>(ch, &CellState::emitPeakCur);
+            emitPeakPrev = L::sel(reversal, emitPeakCur, emitPeakPrev);
+            emitPeakCur = L::sel(reversal, Kd(0.0), emitPeakCur);
+            emitPeakCur = vmax(emitPeakCur, magnitude);
+            emitPeakCur = L::sel(visfinite(emitPeakCur), emitPeakCur, Kd(0.0));
             {
-                d.emitPeakPrev = d.emitPeakCur;
-                d.emitPeakCur = 0.0;
+                const auto silent = !(magnitude > Kd(1.0e-30));
+                D leaked = emitPeakPrev * Kd(emitLeak);
+                leaked = L::sel(leaked < Kd(1.0e-30), Kd(0.0), leaked);   // no denormal tail
+                emitPeakPrev = L::sel(silent, leaked, emitPeakPrev);
             }
-            d.emitPeakCur = std::max(d.emitPeakCur, magnitude);
-            if (!std::isfinite(d.emitPeakCur)) d.emitPeakCur = 0.0;   // a non-finite drive leaves no reference behind
-            if (!(magnitude > 1.0e-30))
+            emitPeakPrev = L::sel(visfinite(emitPeakPrev), emitPeakPrev, Kd(0.0));
+            put<L>(ch, &CellState::emitPeakPrev, emitPeakPrev);
+            put<L>(ch, &CellState::emitPeakCur, emitPeakCur);
+            // A lane whose light is exactly zero and whose last emission is zero takes nothing from the weight, the
+            // fade or the prior below: they multiply the zero light, and the charge term's trapezoid reads the fade
+            // against the zero last emission. With every lane so they are skipped, the state above still advancing;
+            // the shape's sin / cos and reference-log expansions then refresh from wherever the turn and the
+            // reference have moved (results change at the rounding level).
+            const auto shapeIdle = light == Kd(0.0) && get<L>(ch, &CellState::emitLastEmitted) == Kd(0.0);
+            if (!L::all(shapeIdle))
             {
-                d.emitPeakPrev *= emitLeak;
-                if (d.emitPeakPrev < 1.0e-30) d.emitPeakPrev = 0.0;   // no denormal tail
-            }
-            if (!std::isfinite(d.emitPeakPrev)) d.emitPeakPrev = 0.0;
-            const double reference = std::min(d.emitPeakPrev, amplitude);
-            const bool beyond = !(reference > 1.0e-30) || magnitude > 1.0001 * reference;
-            double w = 1.0;
-            if (!beyond)
-            {
-                if (cellParams.emitPeakExp > 0.0f)
-                    w = std::pow(std::min(magnitude / reference, 1.0), static_cast<double>(cellParams.emitPeakExp));
-                if (cellParams.emitRiseGain != 0.0f)
+                const D ratio = vclamp(emitSlewPower / vmax(emitDrivePower, Kd(1.0e-30)), Kd(1.0e-4), Kd(1.0e4));
+                const D halfTurn = vmin(Kd(3.141592653589793 * 1000.0) * vsqrt(ratio) * Kd(dt), Kd(1.2));
+                // sin and cos of the half turn on their second-order expansion about the last exact evaluation, which
+                // is redone (per lane) once the turn has moved kShapeTurnTolerance from it: error <= d^3 / 6.
+                D turnRef = get<L>(ch, &CellState::shapeTurn);
+                D sinRef = get<L>(ch, &CellState::shapeSin);
+                D cosRef = get<L>(ch, &CellState::shapeCos);
+                const auto turnStale = !(vabs(halfTurn - turnRef) <= Kd(kShapeTurnTolerance)) && !shapeIdle;
+                if (L::any(turnStale))
                 {
-                    const double rise = (s >= 0.0 ? cosinePart : -cosinePart) / amplitude;
-                    w *= std::max(0.0, 1.0 + static_cast<double>(cellParams.emitRiseGain) * std::clamp(rise, -1.0, 1.0));
+                    turnRef = L::sel(turnStale, halfTurn, turnRef);
+                    sinRef = L::sel(turnStale, L::map([](double v) noexcept { return std::sin(v); }, halfTurn), sinRef);
+                    cosRef = L::sel(turnStale, L::map([](double v) noexcept { return std::cos(v); }, halfTurn), cosRef);
+                    put<L>(ch, &CellState::shapeTurn, turnRef);
+                    put<L>(ch, &CellState::shapeSin, sinRef);
+                    put<L>(ch, &CellState::shapeCos, cosRef);
                 }
-            }
-            // Confined to where it was measured: faded in with the drive's frequency between emitFadeLoKHz and
-            // emitFadeHiKHz, out again between emitFadeTopLoKHz and emitFadeTopHiKHz (the 1 kHz grid; the settled 4 kHz
-            // cells sit at their bound), and out over the 6 dB above the light table's top entry, where the law is its
-            // exponential continuation and a loud onset's first millisecond lives. Beyond the reference: none.
-            double fade = beyond ? 0.0 : 1.0;
-            if (cellParams.emitFadeHiKHz > cellParams.emitFadeLoKHz)
-            {
-                const double lo = static_cast<double>(cellParams.emitFadeLoKHz) * cellParams.emitFadeLoKHz;
-                const double hi = static_cast<double>(cellParams.emitFadeHiKHz) * cellParams.emitFadeHiKHz;
-                fade *= std::clamp((ratio - lo) / (hi - lo), 0.0, 1.0);
-            }
-            if (cellParams.emitFadeTopHiKHz > cellParams.emitFadeTopLoKHz)
-            {
-                const double lo = static_cast<double>(cellParams.emitFadeTopLoKHz) * cellParams.emitFadeTopLoKHz;
-                const double hi = static_cast<double>(cellParams.emitFadeTopHiKHz) * cellParams.emitFadeTopHiKHz;
-                fade *= std::clamp((hi - ratio) / (hi - lo), 0.0, 1.0);
-            }
-            const double referenceDb = reference > 1.0e-30 ? 8.685889638065035 * std::log(reference) : -1.0e3;
-            {
-                const double top = cellParams.lightTableStartDb + cellParams.lightTableStepDb * (cellParams.lightTableSize - 1);
-                fade *= std::clamp(1.0 - (referenceDb - top) / 6.0, 0.0, 1.0);
-            }
-            w = 1.0 + fade * (w - 1.0);
-            // The sine prior: the ratio of the law's clock-weighted charge over a sine's cycle to that of law x
-            // weight, at the reference amplitude (interpolated on the table's grid, continued 20 dB above its top).
-            // Carried raw: emitLight fades it with the shape, after its per-cycle scale (emitConserveOn).
-            double prior = 1.0;
-            if (emitPriorOn && !beyond)
-            {
-                const double position = (referenceDb - cellParams.lightTableStartDb) / cellParams.lightTableStepDb;
-                const int n = emitPriorSize;
-                if (position <= 0.0) prior = emitPrior[0];
-                else if (position >= n - 1) prior = emitPrior[static_cast<size_t>(n - 1)];
-                else
+                const D turnStep = halfTurn - turnRef;
+                const D turnHalfSquare = Kd(0.5) * turnStep * turnStep;
+                const D sinTurn = sinRef + cosRef * turnStep - sinRef * turnHalfSquare;
+                const D cosTurn = cosRef - sinRef * turnStep - cosRef * turnHalfSquare;
+                const D cosinePart = (slewRaw / vsqrt(ratio) - s * sinTurn) / cosTurn;
+                const D amplitude = vsqrt(s * s + cosinePart * cosinePart);
+                const D reference = vmin(emitPeakPrev, amplitude);
+                const auto beyond = !(reference > Kd(1.0e-30)) || magnitude > Kd(1.0001) * reference;
+                D w = Kd(1.0);
+                if (!L::all(beyond))
                 {
-                    const int k = static_cast<int>(position);
-                    const double f = position - k;
-                    prior = emitPrior[static_cast<size_t>(k)] + f * (emitPrior[static_cast<size_t>(k + 1)] - emitPrior[static_cast<size_t>(k)]);
+                    D shaped = Kd(1.0);
+                    if (cellParams.emitPeakExp > 0.0f)
+                    {
+                        const double exponent = static_cast<double>(cellParams.emitPeakExp);
+                        const D v = vmin(magnitude / reference, Kd(1.0));
+                        shaped = exponent == 3.0 ? v * v * v   // the shipped exponent: two multiplies for the library power
+                            : L::map([exponent](double x) noexcept { return std::pow(x, exponent); }, v);
+                    }
+                    if (cellParams.emitRiseGain != 0.0f)
+                    {
+                        const D rise = L::sel(s >= Kd(0.0), cosinePart, -cosinePart) / amplitude;
+                        shaped = shaped * vmax(Kd(0.0), Kd(1.0) + Kd(static_cast<double>(cellParams.emitRiseGain))
+                                                               * vclamp(rise, Kd(-1.0), Kd(1.0)));
+                    }
+                    w = L::sel(beyond, w, shaped);
                 }
+                D fade = L::sel(beyond, Kd(0.0), Kd(1.0));
+                if (cellParams.emitFadeHiKHz > cellParams.emitFadeLoKHz)
+                {
+                    const double lo = static_cast<double>(cellParams.emitFadeLoKHz) * cellParams.emitFadeLoKHz;
+                    fade = fade * vclamp((ratio - Kd(lo)) * Kd(invFadeLowSpan), Kd(0.0), Kd(1.0));
+                }
+                if (cellParams.emitFadeTopHiKHz > cellParams.emitFadeTopLoKHz)
+                {
+                    const double hi = static_cast<double>(cellParams.emitFadeTopHiKHz) * cellParams.emitFadeTopHiKHz;
+                    fade = fade * vclamp((Kd(hi) - ratio) * Kd(invFadeTopSpan), Kd(0.0), Kd(1.0));
+                }
+                // An idle lane's expansion is not refreshed and may read NaN: its level is taken as the floor's.
+                const D referenceDb = L::sel(reference > Kd(1.0e-30) && !shapeIdle,
+                    Kd(8.685889638065035) * expandedLog<L>(ch, reference, 0.0, &CellState::referenceAt,
+                                                           &CellState::referenceInverse, &CellState::referenceLog,
+                                                           !shapeIdle),
+                    Kd(-1.0e3));
+                {
+                    const double top = cellParams.lightTableStartDb + cellParams.lightTableStepDb * (cellParams.lightTableSize - 1);
+                    fade = fade * vclamp(Kd(1.0) - (referenceDb - Kd(top)) * Kd(1.0 / 6.0), Kd(0.0), Kd(1.0));
+                }
+                w = Kd(1.0) + fade * (w - Kd(1.0));
+                D prior = Kd(1.0);
+                if (emitPriorOn && !L::all(beyond))
+                {
+                    const D lookedUp = emitPriorT<L>(referenceDb);
+                    prior = L::sel(beyond, prior, lookedUp);
+                }
+                // An idle lane takes the values the skip leaves (what its zero light multiplies must be finite).
+                emitWeight = L::sel(shapeIdle, Kd(1.0), w);
+                emitPriorValue = L::sel(shapeIdle, Kd(1.0), prior);
+                emitFadeValue = L::sel(shapeIdle, Kd(0.0), fade);
             }
-            emitWeight = w;
-            emitPriorValue = prior;
-            emitFadeValue = fade;
         }
-        double estimatedFrequencyHz = 1000.0;
+        D estimatedFrequencyHz = Kd(1000.0);
         if (cellParams.elFreqExponent != 0.0f && cellParams.elRevHysteresis > 0.0f)
         {
             // EL light is emitted at polarity reversals: the last completed half-cycle between significant
             // reversals (Schmitt trigger at +-h x peak |s|) sets (f / 1 kHz)^kappa, held to the next reversal.
-            const double magnitude = std::abs(s);
-            d.reversalPeak = magnitude > d.reversalPeak ? magnitude : d.reversalPeak * reversalRelease;
-            const double threshold = static_cast<double>(cellParams.elRevHysteresis) * d.reversalPeak;
-            ++d.reversalCount;
-            if ((d.reversalSign > 0 && s < -threshold) || (d.reversalSign < 0 && s > threshold))
+            const D magnitude = vabs(s);
+            D reversalPeak = get<L>(ch, &CellState::reversalPeak);
+            reversalPeak = L::sel(magnitude > reversalPeak, magnitude, reversalPeak * Kd(reversalRelease));
+            put<L>(ch, &CellState::reversalPeak, reversalPeak);
+            const D threshold = Kd(static_cast<double>(cellParams.elRevHysteresis)) * reversalPeak;
+            I reversalCount = get<L>(ch, &CellState::reversalCount) + L::i(1);
+            I reversalSign = get<L>(ch, &CellState::reversalSign);
+            D reversalPhi = get<L>(ch, &CellState::reversalPhi);
+            const auto flip = ((reversalSign > L::i(0)) && (s < -threshold)) || ((reversalSign < L::i(0)) && (s > threshold));
+            if (L::any(flip))
             {
-                d.reversalSign = -d.reversalSign;
-                d.reversalPhi = std::pow(reversalHalfCycle1k / static_cast<double>(d.reversalCount),
-                                         static_cast<double>(cellParams.elFreqExponent));
-                d.reversalCount = 0;
+                const double exponent = static_cast<double>(cellParams.elFreqExponent);
+                const D phi = L::map([this, exponent](double count) noexcept {
+                    return std::pow(reversalHalfCycle1k / count, exponent); }, L::fromI(reversalCount));
+                reversalSign = L::sel(flip, -reversalSign, reversalSign);
+                reversalPhi = L::sel(flip, phi, reversalPhi);
+                reversalCount = L::sel(flip, L::i(0), reversalCount);
             }
-            light *= d.reversalPhi;
+            put<L>(ch, &CellState::reversalCount, reversalCount);
+            put<L>(ch, &CellState::reversalSign, reversalSign);
+            put<L>(ch, &CellState::reversalPhi, reversalPhi);
+            light = light * reversalPhi;
         }
         else if (cellParams.elFreqExponent != 0.0f)
         {
             // EL brightness frequency law (AC electroluminescence, light ~ f^kappa at a given drive amplitude):
             // the drive's slew-to-level mean-square ratio estimates (f / 1 kHz)^2, exactly 1 for a settled 1 kHz sine.
-            double slew = (s - d.drivePrev) * slewNormalisation;
-            const double rawSlew = slew;   // ahead of the corner: (f / 1 kHz)^2 against the level for a settled sine
+            D slew = (s - get<L>(ch, &CellState::drivePrev)) * Kd(slewNormalisation);
+            const D rawSlew = slew;   // ahead of the corner: (f / 1 kHz)^2 against the level for a settled sine
             if (cellParams.elFreqCorner > 0.0f)
             {   // EL brightness flattens above the corner: low-pass the slew before its mean square
-                d.slewLow += slewLowPassStep * (slew - d.slewLow);
-                slew = d.slewLow * slewLowPassNormalisation;
+                D slewLow = get<L>(ch, &CellState::slewLow);
+                slewLow = slewLow + Kd(slewLowPassStep) * (slew - slewLow);
+                put<L>(ch, &CellState::slewLow, slewLow);
+                slew = slewLow * Kd(slewLowPassNormalisation);
             }
-            d.drivePrev = s;
-            d.drivePower += elFreqStep * (s * s - d.drivePower);
-            d.slewPower += elFreqStep * (slew * slew - d.slewPower);
-            const double ratio = std::clamp(d.slewPower / std::max(d.drivePower, 1.0e-30), 1.0e-4, 1.0e4);
-            estimatedFrequencyHz = 1000.0 * std::sqrt(ratio);
-            light *= std::pow(ratio, 0.5 * static_cast<double>(cellParams.elFreqExponent));
+            put<L>(ch, &CellState::drivePrev, s);
+            D drivePower = get<L>(ch, &CellState::drivePower);
+            D slewPower = get<L>(ch, &CellState::slewPower);
+            drivePower = drivePower + Kd(elFreqStep) * (s * s - drivePower);
+            slewPower = slewPower + Kd(elFreqStep) * (slew * slew - slewPower);
+            put<L>(ch, &CellState::drivePower, drivePower);
+            put<L>(ch, &CellState::slewPower, slewPower);
+            const D ratio = vclamp(slewPower / vmax(drivePower, Kd(1.0e-30)), Kd(1.0e-4), Kd(1.0e4));
+            estimatedFrequencyHz = Kd(1000.0) * vsqrt(ratio);
+            const double exponent = 0.5 * static_cast<double>(cellParams.elFreqExponent);
+            // ratio^exponent on its third-order expansion in u = ratio / reference - 1 about the last exact
+            // evaluation, redone (per lane) once |u| passes kFreqLawTolerance: relative error at most
+            // |e (e - 1)(e - 2)(e - 3)| / 24 |u|^4: 3e-6 for the shipped e = 0.18 at the 10 % tolerance (the second
+            // order it replaced allowed 6e-6 at 5 %).
+            // A lane whose light is exactly zero takes nothing from the law or the plateau boost below (they
+            // multiply the zero light): its expansion is not refreshed, and its light stays the zero it is.
+            const auto dark = light == Kd(0.0);
+            D lawRatio = get<L>(ch, &CellState::freqLawRatio);
+            D lawInverse = get<L>(ch, &CellState::freqLawInverse);
+            D lawValue = get<L>(ch, &CellState::freqLawValue);
+            D drift = (ratio - lawRatio) * lawInverse;
+            const auto lawStale = !(vabs(drift) <= Kd(kFreqLawTolerance)) && !dark;
+            if (L::any(lawStale))
+            {
+                lawRatio = L::sel(lawStale, ratio, lawRatio);
+                lawInverse = L::sel(lawStale, Kd(1.0) / ratio, lawInverse);
+                lawValue = L::sel(lawStale, lanes::lanemath::pow(ratio, exponent), lawValue);
+                drift = L::sel(lawStale, Kd(0.0), drift);
+                put<L>(ch, &CellState::freqLawRatio, lawRatio);
+                put<L>(ch, &CellState::freqLawInverse, lawInverse);
+                put<L>(ch, &CellState::freqLawValue, lawValue);
+            }
+            light = L::sel(dark, light,
+                light * (lawValue * (Kd(1.0) + drift * (Kd(exponent) + drift * (Kd(0.5 * exponent * (exponent - 1.0))
+                    + drift * Kd(exponent * (exponent - 1.0) * (exponent - 2.0) / 6.0))))));
             if (cellParams.elSatBoost > 0.0f)
-            {   // The plateau of the light table is higher for a drive faster than 1 kHz. Its speed is the
-                // ratio of two 5 ms power averages (a loud note outweighs what preceded it at once),
-                // limited to what a settled tone can reach, 1 + (corner / 1 kHz)^2. The element is confined
-                // to the band it was measured in: it fades out between elSatFadeLoKHz and elSatFadeHiKHz,
-                // read from the unfiltered slew-to-level ratio, (f / 1 kHz)^2.
+            {   // The plateau of the light table is higher for a drive faster than 1 kHz (see prepareLight's notes).
                 const double satStep = std::min(dt / 0.005, 1.0);
-                d.satSlew += satStep * (slew * slew - d.satSlew);
-                d.satRaw += satStep * (rawSlew * rawSlew - d.satRaw);
-                d.satDrive += satStep * (s * s - d.satDrive);
-                if (d.satSlew < 1.0e-30) d.satSlew = 0.0;     // no denormal tail in silence
-                if (d.satRaw < 1.0e-30) d.satRaw = 0.0;
-                if (d.satDrive < 1.0e-30) d.satDrive = 0.0;
-                const double level = std::max(d.satDrive, 1.0e-30);
+                D satSlew = get<L>(ch, &CellState::satSlew);
+                D satRaw = get<L>(ch, &CellState::satRaw);
+                D satDrive = get<L>(ch, &CellState::satDrive);
+                satSlew = satSlew + Kd(satStep) * (slew * slew - satSlew);
+                satRaw = satRaw + Kd(satStep) * (rawSlew * rawSlew - satRaw);
+                satDrive = satDrive + Kd(satStep) * (s * s - satDrive);
+                satSlew = L::sel(satSlew < Kd(1.0e-30), Kd(0.0), satSlew);     // no denormal tail in silence
+                satRaw = L::sel(satRaw < Kd(1.0e-30), Kd(0.0), satRaw);
+                satDrive = L::sel(satDrive < Kd(1.0e-30), Kd(0.0), satDrive);
+                put<L>(ch, &CellState::satSlew, satSlew);
+                put<L>(ch, &CellState::satRaw, satRaw);
+                put<L>(ch, &CellState::satDrive, satDrive);
+                const D level = vmax(satDrive, Kd(1.0e-30));
                 const double cornerKHz = cellParams.elFreqCorner > 0.0f ? 1.0e-3 * static_cast<double>(cellParams.elFreqCorner) : 1.0e3;
-                const double fast = std::min(d.satSlew / level, 1.0 + cornerKHz * cornerKHz)
-                    - 1.0 - static_cast<double>(cellParams.elSatMargin);
-                if (fast > 0.0 && d.el > 1.0e-30)
+                const D fast = vmin(satSlew / level, Kd(1.0 + cornerKHz * cornerKHz))
+                    - Kd(1.0) - Kd(static_cast<double>(cellParams.elSatMargin));
+                const auto lit = (fast > Kd(0.0)) && (el > Kd(1.0e-30)) && !dark;
+                if (L::any(lit))
                 {
-                    const double above = (8.685889638065035 * std::log(d.el) - static_cast<double>(cellParams.elSatKneeDb))
-                        / std::max(static_cast<double>(cellParams.elSatSpanDb), 1.0e-6);
+                    const D above = (Kd(8.685889638065035) * L::map([](double v) noexcept { return std::log(v); }, el)
+                                     - Kd(static_cast<double>(cellParams.elSatKneeDb)))
+                        / Kd(std::max(static_cast<double>(cellParams.elSatSpanDb), 1.0e-6));
                     const double lo = static_cast<double>(cellParams.elSatFadeLoKHz) * cellParams.elSatFadeLoKHz;
                     const double hi = static_cast<double>(cellParams.elSatFadeHiKHz) * cellParams.elSatFadeHiKHz;
-                    const double fade = hi > lo ? std::clamp((hi - d.satRaw / level) / (hi - lo), 0.0, 1.0) : 1.0;
-                    if (above > 0.0 && fade > 0.0)
-                    {
-                        const double w = above >= 1.0 ? 1.0 : above * above * (3.0 - 2.0 * above);
-                        light *= 1.0 + static_cast<double>(cellParams.elSatBoost) * fast * w * fade;
-                    }
+                    const D fadeSat = hi > lo ? vclamp((Kd(hi) - satRaw / level) / Kd(hi - lo), Kd(0.0), Kd(1.0)) : Kd(1.0);
+                    const auto boost = lit && (above > Kd(0.0)) && (fadeSat > Kd(0.0));
+                    const D w = L::sel(above >= Kd(1.0), Kd(1.0), above * above * (Kd(3.0) - Kd(2.0) * above));
+                    light = L::sel(boost,
+                        light * (Kd(1.0) + Kd(static_cast<double>(cellParams.elSatBoost)) * fast * w * fadeSat), light);
                 }
             }
         }
-        d.estimatedFrequencyHz = estimatedFrequencyHz;
-        LightFrame frame{light, lawLight, s, floorDrive, d.floorPower, d.inputPower, inert};
+        put<L>(ch, &CellState::estimatedFrequencyHz, estimatedFrequencyHz);
+        FrameT<L> frame{light, lawLight, s, floorDrive, floorPower, inputPower, inert};
         frame.emitWeight = emitWeight;
         frame.emitPrior = emitPriorValue;
         frame.emitFade = emitFadeValue;
@@ -1048,137 +1230,148 @@ public:
 
     // The panel's emission: the light the channel's drive asks for (prepareLight), through the panel's charge
     // stores, which the drive's polarity picks.
-    LightFrame emitLight(int ch, LightFrame frame) noexcept
+    LightFrame emitLight(int ch, LightFrame frame) noexcept { return emitLightT<lanes::Lane1>(ch, frame); }
+
+    // emitLight() over a lane policy (see prepareLightT): Lane2 runs both channels of a linked pair, each on its
+    // own drive's polarity and its own stores.
+    template <class L>
+    FrameT<L> emitLightT(int ch, FrameT<L> frame) noexcept
     {
-        auto& d = channels[static_cast<size_t>(ch)];
-        double light = frame.light;
-        const size_t side = frame.s >= 0.0 ? 0 : 1;   // the drive's polarity: the charge store, and the shape's cycle
+        emitLightRef<L>(ch, frame);
+        return frame;
+    }
+    // emitLightT() on the caller's frame (no frame copies on the pair's per-sample path).
+    template <class L>
+    OPTO_FORCE_INLINE void emitLightRef(int ch, FrameT<L>& frame) noexcept
+    {
+        using D = typename L::D;
+        using I = typename L::I;
+        using lanes::vmax; using lanes::vmin; using lanes::vabs; using lanes::visfinite;
+        const auto Kd = [](double x) noexcept { return L::d(x); };
+        D light = frame.light;
+        // The drive's polarity: side 1 (the negative store, and the shape's cycle) where !(s >= 0).
+        const auto negative = !(frame.s >= Kd(0.0));
         if (cellParams.elPolCap > 0.0f && cellParams.elPolRefill > 0.0f)
         {
-            // The panel's charge. An electroluminescent panel emits while charge crosses the phosphor, and one
-            // polarity of the drive can move only so much of it before the field of the moved charge stops the
-            // emission: elPolCap, in light x seconds. Measured on the native unit (tools opto/onset_modes.py,
-            // opto/lf_cycle.py): from dark, a 40 or an 80 Hz tone builds its reduction in steps, one per
-            // polarity change of the drive and the same at both frequencies, each within about 2 ms of the
-            // change, with no further fall until the next; the step hardly depends on the input level (17 %
-            // over 12 dB) and not on Limit / Compress; settled sines of 4 to 110 Hz at Limit read
-            // 1 / gain - 1 = G0 + c f.
-            // Two stores, one per polarity. chargeSpent[k] is what polarity k has moved. While the drive has
-            // polarity k the light law's value passes unchanged as long as more than elPolKnee x cap is still
-            // ahead of that store and tapers to nothing over that last share, so a drive that never spends its
-            // charge (a 1 kHz tone, any low level) is not touched. Meanwhile the OTHER store gets back what it
-            // has spent (time constant elPolRefill) and, in proportion to how lit the panel is
-            // (light / (light + elPolLeak)), runs on to a credit of elPolCredit x cap: the half-cycle after a
-            // lit one of the other polarity can move up to (1 + credit) x cap, the first one from dark only
-            // cap. Both stores return to zero at the fixed rate elPolLeak (light): that is the steady light of
-            // a polarity that is held (G0 above). The cap itself grows a little with the drive, by
-            // (light / elPolLeak)^elPolCapExp above that steady light (the measured step grows 17 % over 12 dB).
-            // Nothing here detects or counts anything: the stores are continuous states, and the drive's sign
-            // picks one of them the way a rectifier picks a polarity. Each channel of a linked pair has
-            // its own stores, spent by its own drive (processLightPair).
+            // The panel's charge: two stores, one per polarity (see the notes at emitLight's head).
             const double leak = static_cast<double>(cellParams.elPolLeak);
-            const double law = std::max(light, 0.0);
-            double cap = static_cast<double>(cellParams.elPolCap);
-            if (cellParams.elPolCapExp != 0.0f && leak > 0.0 && law > leak)
-                cap *= std::pow(law / leak, static_cast<double>(cellParams.elPolCapExp));
-            const double lit = leak > 0.0 ? law / (law + leak) : (law > 0.0 ? 1.0 : 0.0);
-            const double fullCredit = -static_cast<double>(cellParams.elPolCredit) * cap;
-            double other = d.chargeSpent[1 - side];
-            if (other > 0.0) other *= chargeRefillKeep;
-            if (other > fullCredit) other = fullCredit + (other - fullCredit) * std::exp(-chargeRefillRate * lit);
-            d.chargeSpent[1 - side] = other;
+            const D law = vmax(light, Kd(0.0));
+            D cap = Kd(static_cast<double>(cellParams.elPolCap));
+            if (cellParams.elPolCapExp != 0.0f && leak > 0.0)
+            {
+                const auto grows = law > Kd(leak);
+                if (L::any(grows))
+                {
+                    const double exponent = static_cast<double>(cellParams.elPolCapExp);
+                    const D scaled = cap * lanes::lanemath::pow(L::sel(grows, law / Kd(leak), Kd(1.0)), exponent);
+                    cap = L::sel(grows, scaled, cap);
+                }
+            }
+            const D fullCredit = Kd(-static_cast<double>(cellParams.elPolCredit)) * cap;
+            D spent0 = getAt<L>(ch, &CellState::chargeSpent, 0);
+            D spent1 = getAt<L>(ch, &CellState::chargeSpent, 1);
+            D other = L::sel(negative, spent0, spent1);
+            other = L::sel(other > Kd(0.0), other * Kd(chargeRefillKeep), other);
+            const auto refills = other > fullCredit;
+            if (L::any(refills))
+            {
+                const D lit = leak > 0.0 ? law / (law + Kd(leak)) : L::sel(law > Kd(0.0), Kd(1.0), Kd(0.0));
+                const D exponent = Kd(-chargeRefillRate) * lit;
+                const D refilled = fullCredit + (other - fullCredit)
+                    * L::sel(exponent == Kd(0.0), Kd(1.0), lanes::lanemath::exp(exponent));
+                other = L::sel(refills, refilled, other);
+            }
+            spent0 = L::sel(negative, other, spent0);
+            spent1 = L::sel(negative, spent1, other);
             if (leak > 0.0)
             {
                 const double drained = leak * dt;
-                for (auto& spent : d.chargeSpent)
-                    spent = spent > 0.0 ? std::max(spent - drained, 0.0) : std::min(spent + drained, 0.0);
+                spent0 = L::sel(spent0 > Kd(0.0), vmax(spent0 - Kd(drained), Kd(0.0)), vmin(spent0 + Kd(drained), Kd(0.0)));
+                spent1 = L::sel(spent1 > Kd(0.0), vmax(spent1 - Kd(drained), Kd(0.0)), vmin(spent1 + Kd(drained), Kd(0.0)));
             }
-            const double ahead = cap - d.chargeSpent[side];
-            if (ahead > 0.0)
+            D sideSpent = L::sel(negative, spent1, spent0);
+            const D ahead = cap - sideSpent;
+            const auto available = ahead > Kd(0.0);
+            // The taper is integrated exactly over the sample for a constant light.
+            const D taper = Kd(static_cast<double>(cellParams.elPolKnee)) * cap;
+            const D wanted = law * Kd(dt);
+            D moved = vmin(wanted, ahead);
+            const auto untapered = !(taper > Kd(0.0)) || (ahead - wanted >= taper);
+            if (L::any(available && !untapered))
             {
-                // The taper is integrated exactly over the sample for a constant light.
-                const double taper = static_cast<double>(cellParams.elPolKnee) * cap;
-                const double wanted = law * dt;
-                double moved;
-                if (!(taper > 0.0) || ahead - wanted >= taper)
-                    moved = std::min(wanted, ahead);
-                else if (ahead > taper)
-                    moved = (ahead - taper) + taper * (1.0 - std::exp(-(wanted - (ahead - taper)) / taper));
-                else
-                    moved = ahead * (1.0 - std::exp(-wanted / taper));
-                light = moved / dt;
-                d.chargeSpent[side] += moved;
+                const D intoTaper = (ahead - taper) + taper
+                    * (Kd(1.0) - L::map([](double v) noexcept { return std::exp(v); }, -(wanted - (ahead - taper)) / taper));
+                const D withinTaper = ahead
+                    * (Kd(1.0) - L::map([](double v) noexcept { return std::exp(v); }, -wanted / taper));
+                moved = L::sel(untapered, moved, L::sel(ahead > taper, intoTaper, withinTaper));
             }
-            else
-                light = 0.0;
-            for (auto& spent : d.chargeSpent)
-                if (std::abs(spent) < 1.0e-30) spent = 0.0;   // no denormal tail
+            light = L::sel(available, moved * Kd(invDt), Kd(0.0));
+            sideSpent = L::sel(available, sideSpent + moved, sideSpent);
+            spent0 = L::sel(negative, spent0, sideSpent);
+            spent1 = L::sel(negative, sideSpent, spent1);
+            spent0 = L::sel(vabs(spent0) < Kd(1.0e-30), Kd(0.0), spent0);   // no denormal tail
+            spent1 = L::sel(vabs(spent1) < Kd(1.0e-30), Kd(0.0), spent1);
+            putAt<L>(ch, &CellState::chargeSpent, 0, spent0);
+            putAt<L>(ch, &CellState::chargeSpent, 1, spent1);
         }
         frame.clockLight = light;   // the panel's emission without the shape below
         if (cellParams.emitPeakExp > 0.0f || cellParams.emitRiseGain != 0.0f)
         {
-            // The shape (prepareLight): light x weight x the sine prior times its per-cycle scale, faded with the
-            // shape. The prior conserves the clock-weighted charge of a sine's cycle at the reference amplitude.
-            // 2026-10-15, emitConserveOn: the scale conserves it for any other waveform, cycle by cycle. With the
-            // prior alone (the 2026-10-14 form, whose amplitude came from a quadrature estimate) the native-unit
-            // tables read: the 55 Hz sawtooth rows of the settled table 0.1-0.7 dB more reduction (-0.56 .. -0.99 ->
-            // -1.02 .. -1.48 dB), pink noise at Peak Reduction .5 0.25 dB less (+0.75 -> +1.0 dB) (tools
-            // triage/refit screen h5-g4f9). So the charge is measured on the waveform itself: over each full cycle
-            // of the drive, closed on the change into the positive polarity (one update per cycle: the input element
-            // makes the two polarities unequal at high Peak Reduction, and an update per half-cycle would put a 1f
-            // modulation on the light), the sums of gate(l) l (gate = the populations' clock, timeScale) of the
-            // emission without the shape and with it give the scale c <- c (plain / applied)^m, held to [0.5, 2], m
-            // the cycle's charge-weighted mean fade: an unshaped passage neither moves c nor is moved by it, and c
-            // converges geometrically (slope 1 - fade x 0.67 .. 1, the gate's exponent). A running 3 ms correction
-            // wobbled inside a 2 ms level step and lost charge there; c moves only once a cycle has closed. A cycle
-            // that carried no light returns c to 1 and is not used, and in digital silence c relaxes to 1 with the
-            // 5 ms constant the half-cycle reference leaks with, so a note after silence starts from the sine prior.
-            // Nothing else resets it: a first form that also skipped every cycle touched by the dark state never
-            // moved c on a deeply reduced 55 Hz sawtooth (its slow zero crossing holds the drive under darkLight
-            // longer than darkHoldSeconds once per cycle), and those rows stayed 0.5 dB deep; without that skip they
-            // read within 0.004 dB of the shape-off cell. Per channel on the panel's own emission: a linked pair keeps
-            // it a property of each panel, and identical channels stay identical.
+            // The shape (prepareLight) with its per-cycle charge conservation (see the notes at emitLight's head).
+            D scale = get<L>(ch, &CellState::emitScale);
+            D sumPlain = get<L>(ch, &CellState::emitSumPlain);
+            D sumApplied = get<L>(ch, &CellState::emitSumApplied);
+            D sumFade = get<L>(ch, &CellState::emitSumFade);
             if (cellParams.emitConserveOn != 0.0f)
             {
-                const int sideNow = static_cast<int>(side);
-                if (sideNow == 0 && d.emitSide == 1)
+                const I sideNow = L::sel(negative, L::i(1), L::i(0));
+                const I emitSide = get<L>(ch, &CellState::emitSide);
+                const auto closing = !negative && (emitSide == L::i(1));
+                if (L::any(closing))
                 {
-                    // Known edge, kept as screened: a note that starts on its negative half after digital silence
-                    // closes its first window on that one half-cycle (on a sine the half-cycle's ratio equals the
-                    // cycle's; on asymmetric programme a one-cycle effect). Requiring both polarities lit moved quiet
-                    // programme instead (2026-10-15, tools triage/refit screen h5-review against h5-r3: music
-                    // Compress worst +0.004 dB, z_whiskey at Peak Reduction .5), so the window closes as before.
-                    if (!(d.emitSumPlain > 1.0e-30))
-                        d.emitScale = 1.0;
-                    else if (d.emitSumApplied > 1.0e-30)
-                        d.emitScale = std::clamp(d.emitScale * std::pow(d.emitSumPlain / d.emitSumApplied,
-                                                                        d.emitSumFade / d.emitSumPlain), 0.5, 2.0);
-                    if (!std::isfinite(d.emitScale)) d.emitScale = 1.0;
-                    d.emitSumPlain = d.emitSumApplied = d.emitSumFade = 0.0;
+                    const D conserved = vclamp(scale * L::map([](double x, double y) noexcept { return lanes::lanemath::pow(x, y); },
+                                                              sumPlain / sumApplied, sumFade / sumPlain), Kd(0.5), Kd(2.0));
+                    D closed = L::sel(!(sumPlain > Kd(1.0e-30)), Kd(1.0),
+                                      L::sel(sumApplied > Kd(1.0e-30), conserved, scale));
+                    closed = L::sel(visfinite(closed), closed, Kd(1.0));
+                    scale = L::sel(closing, closed, scale);
+                    sumPlain = L::sel(closing, Kd(0.0), sumPlain);
+                    sumApplied = L::sel(closing, Kd(0.0), sumApplied);
+                    sumFade = L::sel(closing, Kd(0.0), sumFade);
                 }
-                d.emitSide = sideNow;
-                if (!(std::abs(frame.s) > 1.0e-30))   // digital silence: c relaxes to 1 (5 ms)
-                    d.emitScale = 1.0 + (d.emitScale - 1.0) * emitLeak;
+                put<L>(ch, &CellState::emitSide, sideNow);
+                const auto silent = !(vabs(frame.s) > Kd(1.0e-30));   // digital silence: c relaxes to 1 (5 ms)
+                scale = L::sel(silent, Kd(1.0) + (scale - Kd(1.0)) * Kd(emitLeak), scale);
+                put<L>(ch, &CellState::emitScale, scale);
             }
-            light *= frame.emitWeight * (1.0 + frame.emitFade * (frame.emitPrior * d.emitScale - 1.0));
-            // A pulse this narrow (about a tenth of a 1 kHz half-cycle) is integrated by the populations' first-order
-            // step with a rate-dependent error (0.1 dB between 2x and 4x on a 1 ms event at -0.25 dBFS); the charge
-            // term takes the trapezoid, the mean of this and the last emission (half a sample of delay, 5 us at 2x).
-            const double emitted = light;
-            light = emitted - 0.5 * frame.emitFade * (emitted - d.emitLastEmitted);   // faded with the shape
-            d.emitLastEmitted = std::isfinite(emitted) ? emitted : 0.0;
+            light = light * (frame.emitWeight * (Kd(1.0) + frame.emitFade * (frame.emitPrior * scale - Kd(1.0))));
+            // The charge term's trapezoid: the mean of this and the last emission (see emitLight's notes).
+            const D emitted = light;
+            light = emitted - Kd(0.5) * frame.emitFade * (emitted - get<L>(ch, &CellState::emitLastEmitted));
+            put<L>(ch, &CellState::emitLastEmitted, L::sel(visfinite(emitted), emitted, Kd(0.0)));
             if (cellParams.emitConserveOn != 0.0f)
             {   // the cycle's sums, on the clock the populations will run (advanceLight), the trapezoid included
-                const double plain = timeScale(frame.clockLight) * frame.clockLight;
-                d.emitSumPlain += plain;
-                d.emitSumApplied += timeScale(light) * light;
-                d.emitSumFade += frame.emitFade * plain;
-                if (!std::isfinite(d.emitSumPlain) || !std::isfinite(d.emitSumApplied) || !std::isfinite(d.emitSumFade))
-                    d.emitSumPlain = d.emitSumApplied = d.emitSumFade = 0.0;   // a non-finite emission resets the cycle
+                frame.scaledClockLight = frame.clockLight;
+                frame.clockLightScale = timeScaleT<L>(frame.clockLight);
+                frame.scaledLight = light;
+                // Where the shape leaves the emission as it was (weight 1, no fade) the light is the clock's.
+                const auto unshaped = light == frame.clockLight;
+                frame.lightScale = L::all(unshaped) ? frame.clockLightScale
+                    : L::sel(unshaped, frame.clockLightScale, timeScaleT<L>(light));
+                const D plain = frame.clockLightScale * frame.clockLight;
+                sumPlain = sumPlain + plain;
+                sumApplied = sumApplied + frame.lightScale * light;
+                sumFade = sumFade + frame.emitFade * plain;
+                const auto bad = !visfinite(sumPlain) || !visfinite(sumApplied) || !visfinite(sumFade);
+                sumPlain = L::sel(bad, Kd(0.0), sumPlain);   // a non-finite emission resets the cycle
+                sumApplied = L::sel(bad, Kd(0.0), sumApplied);
+                sumFade = L::sel(bad, Kd(0.0), sumFade);
+                put<L>(ch, &CellState::emitSumPlain, sumPlain);
+                put<L>(ch, &CellState::emitSumApplied, sumApplied);
+                put<L>(ch, &CellState::emitSumFade, sumFade);
             }
         }
         frame.light = light;
-        return frame;
     }
 
     // The cell behind the panel's emission (emitLight): populations, release, floor. withApplied = false (lab kernel
@@ -1187,204 +1380,273 @@ public:
     template <bool withApplied = true>
     float advanceLight(int ch, const LightFrame& frame, bool limit) noexcept
     {
-        auto& d = channels[static_cast<size_t>(ch)];
-        const double light = frame.light;
-        const double lawLight = frame.lawLight;
-        const double floorDrive = frame.floorDrive;
+        return advanceLightT<lanes::Lane1, withApplied>(ch, frame, limit);
+    }
+
+    // advanceLight() over a lane policy (see prepareLightT): Lane2 advances both channels of a linked pair.
+    template <class L, bool withApplied = true>
+    OPTO_FORCE_INLINE typename L::F advanceLightT(int ch, const FrameT<L>& frame, bool limit) noexcept
+    {
+        using D = typename L::D;
+        using F = typename L::F;
+        using I = typename L::I;
+        using lanes::vmax; using lanes::vmin; using lanes::vabs; using lanes::vsqrt;
+        using lanes::visfinite;
+        const auto Kd = [](double x) noexcept { return L::d(x); };
+        const auto Kf = [](float x) noexcept { return L::f(x); };
+        const auto Ki = [](int x) noexcept { return L::i(x); };
+        const D light = frame.light;
+        const D lawLight = frame.lawLight;
+        const D floorDrive = frame.floorDrive;
         const bool inert = frame.inert;
-        d.floorEl += elStep * (floorDrive - d.floorEl);
-        double floorLight = inert ? 0.0 : lightFor(d.floorEl);
+        D floorEl = get<L>(ch, &CellState::floorEl);
+        floorEl = floorEl + Kd(elStep) * (floorDrive - floorEl);
+        put<L>(ch, &CellState::floorEl, floorEl);
+        D floorLight = inert ? Kd(0.0) : lightForT<L>(floorEl);
         if (cellParams.lightCeiling > 0.0f)
-            floorLight /= 1.0 + floorLight / static_cast<double>(cellParams.lightCeiling);
+            floorLight = floorLight / (Kd(1.0) + floorLight / Kd(static_cast<double>(cellParams.lightCeiling)));
+        // The floor's input history (see advanceLight's notes): a hold, then two dark stages.
         const double floorThreshold = std::max(static_cast<double>(cellParams.darkLight), 1.0e-30);
-        if (floorLight >= floorThreshold) d.floorInputHold = darkHoldSamples;
-        else if (d.floorInputHold > 0) --d.floorInputHold;
-        const double floorTarget = d.floorInputHold > 0 ? 0.0 : floorThreshold / (std::max(floorLight, 0.0) + floorThreshold);
-        d.floorDark[0] = floorTarget < d.floorDark[0] ? floorTarget : d.floorDark[0] + darkStep * (floorTarget - d.floorDark[0]);
-        d.floorDark[1] = d.floorDark[0] < d.floorDark[1] ? d.floorDark[0] : d.floorDark[1] + darkStep * (d.floorDark[0] - d.floorDark[1]);
-        const double step = timeScale(light);
-        // While the emission is shaped (prepareLight (V)) the release side keeps the clock of the emission without
-        // the shape: the shape's longer dark gaps would otherwise run the release fast and lower the settled
-        // reduction (measured 2026-10-14, 1 kHz PR .7, -24 / -12 / -4 dBFS: 0.13 / 0.24 / 0.32 dB with one clock,
-        // 0.07 / 0.10 / 0.07 with the release on the unshaped emission). The charge keeps the emitted light's
-        // clock, with the prior conserving the clock-weighted charge over a cycle. Equal while the shape is off.
+        I floorInputHold = get<L>(ch, &CellState::floorInputHold);
+        const auto floorLit = floorLight >= Kd(floorThreshold);
+        floorInputHold = L::sel(floorLit, Ki(darkHoldSamples),
+                                L::sel(floorInputHold > Ki(0), floorInputHold - Ki(1), floorInputHold));
+        put<L>(ch, &CellState::floorInputHold, floorInputHold);
+        // While the input hold runs (the floor lit within darkHoldSamples) the target is 0 without its quotient.
+        const auto held = floorInputHold > Ki(0);
+        const D floorTarget = L::all(held) ? Kd(0.0) : L::sel(held, Kd(0.0),
+                                     Kd(floorThreshold) / (vmax(floorLight, Kd(0.0)) + Kd(floorThreshold)));
+        D floorDark0 = getAt<L>(ch, &CellState::floorDark, 0);
+        D floorDark1 = getAt<L>(ch, &CellState::floorDark, 1);
+        floorDark0 = L::sel(floorTarget < floorDark0, floorTarget, floorDark0 + Kd(darkStep) * (floorTarget - floorDark0));
+        floorDark1 = L::sel(floorDark0 < floorDark1, floorDark0, floorDark1 + Kd(darkStep) * (floorDark0 - floorDark1));
+        putAt<L>(ch, &CellState::floorDark, 0, floorDark0);
+        putAt<L>(ch, &CellState::floorDark, 1, floorDark1);
+        // The populations' clocks (emitLight evaluated them already unless the link replaced the light).
+        const auto fresh = light == frame.scaledLight;
+        const D step = L::all(fresh) ? frame.lightScale : L::sel(fresh, frame.lightScale, timeScaleT<L>(light));
         const bool shapedEmission = cellParams.emitPeakExp > 0.0f || cellParams.emitRiseGain != 0.0f;
-        const double stepRelease = shapedEmission ? timeScale(frame.clockLight) : step;
-        // Attack-rate limit (measured native attack saturation, ratelaw map): charge slows when the
-        // ripple-averaged GR rise rate (from previous samples) approaches Smax; ~0 at steady state.
-        const double rateScale = (cellParams.attackRateDbPerS > 0.0f && d.grRateSmooth > 0.0)
-            ? 1.0 / (1.0 + std::pow(d.grRateSmooth / static_cast<double>(cellParams.attackRateDbPerS),
-                                    static_cast<double>(cellParams.attackRatePower)))
-            : 1.0;
-        const double releaseBase = cellParams.hChargeOnly != 0.0f ? dt : stepRelease;
-        double darkScale = 1.0;
+        D stepRelease = step;
+        if (shapedEmission)
+        {
+            const auto freshClock = frame.clockLight == frame.scaledClockLight;
+            stepRelease = L::all(freshClock) ? frame.clockLightScale
+                : L::sel(freshClock, frame.clockLightScale, timeScaleT<L>(frame.clockLight));
+        }
+        D grRateSmooth = get<L>(ch, &CellState::grRateSmooth);
+        D rateScale = Kd(1.0);
+        if (cellParams.attackRateDbPerS > 0.0f)
+        {
+            const auto rising = grRateSmooth > Kd(0.0);
+            if (L::any(rising))
+            {
+                const double power = static_cast<double>(cellParams.attackRatePower);
+                const D limited = Kd(1.0) / (Kd(1.0) + L::map([power](double r) noexcept { return std::pow(r, power); },
+                    grRateSmooth / Kd(static_cast<double>(cellParams.attackRateDbPerS))));
+                rateScale = L::sel(rising, limited, rateScale);
+            }
+        }
+        const D releaseBase = cellParams.hChargeOnly != 0.0f ? Kd(dt) : stepRelease;
+        D population[kPopulations];
+        for (size_t k = 0; k < kPopulations; ++k) population[k] = getAt<L>(ch, &CellState::population, k);
+        D trap = get<L>(ch, &CellState::trap);
+        D dark0 = getAt<L>(ch, &CellState::dark, 0);
+        D dark1 = getAt<L>(ch, &CellState::dark, 1);
+        D darkScale = Kd(1.0);
         if (cellParams.darkRateCeiling > 0.0f || cellParams.darkFloorTau > 0.0f)
         {
-            // The release in the dark. Measured on the native unit (tools opto/silence_probe.py and
-            // opto/silence_holdout.py, a pilot through the silence after a note): into silence its reduction
-            // never leaves faster than about 0.245 dB/ms, from 27 dB and from 42 dB alike, after 60 ms of note
-            // or 2 s, at 70 Hz, 1 kHz or 3 kHz (the conductance falls by 28 /s at most). This cell's
-            // density-dependent release terms have no such limit: 41 /s from 33 dB, over 60 /s from 42 dB,
-            // 2 dB and 6 dB too little reduction 40 ms after the note. With a signal still driving the panel
-            // the same terms read the native unit's attack and its release (every lit table), so they stay,
-            // and the limit comes on once the drive has been absent for darkHoldSeconds and about two darkTau
-            // more: a countdown restarts at every sample whose light law is at or above darkLight, and only
-            // when it has run out does what the law lacks of that, darkLight / (law + darkLight), go through
-            // two one-pole stages on the way up; it falls at once. The 0.5 ms hold retains the settled-tone
-            // bar while reducing the excess loss after the cut. With input coupling enabled, the same
-            // input-owned state used by the floor drives this limit, so the coupling tail cannot disable it.
-            // In that state the populations and the trap run on one slowed clock: with r the rate at which
-            // the conductance would fall by the laws below, the clock is (1 + (r / ceiling)^4)^(-1/4), so it
-            // falls by r where r is well under the ceiling and by the ceiling where r is over it, and the
-            // shares of the populations move as they would have, only later.
-            // The limit belongs to a cell whose traps are full. After a short burst the native unit lets go
-            // much faster (opto/silence_short.py, 1 kHz at -8 dBFS into silence: 0.80 dB/ms after 2 ms,
-            // 0.51 after 5 ms, 0.43 after 10 ms, 0.33 after 20 ms, 0.24 from 60 ms on), which is what this
-            // cell's capture into empty traps already gives; so the slowing is weighted by the traps' fill
-            // raised to darkTrapFillPower, the exposure state the cell has. The exponent was calibrated on
-            // separate 6/12/18/24/45/75 ms bursts; 2 restores the patch-40 ceiling's exposure law.
-            const double law = std::max(lawLight, 0.0);
-            const double darkLight = std::max(static_cast<double>(cellParams.darkLight), 1.0e-30);
-            if (law >= darkLight) d.darkHold = darkHoldSamples;
-            else if (d.darkHold > 0) --d.darkHold;
-            const double target = d.darkHold > 0 ? 0.0 : darkLight / (law + darkLight);
-            d.dark[0] = target < d.dark[0] ? target : d.dark[0] + darkStep * (target - d.dark[0]);
-            d.dark[1] = d.dark[0] < d.dark[1] ? d.dark[0] : d.dark[1] + darkStep * (d.dark[0] - d.dark[1]);
-            const double releaseDark = cellParams.inputCouplingOn != 0.0f ? d.floorDark[1] : d.dark[1];
-            if (cellParams.darkRateCeiling > 0.0f && releaseDark > 0.0)
+            if (cellParams.inputCouplingOn == 0.0f)
+            {   // the drive's own dark stages; with the input coupling the input's (floorDark) own release instead
+                const D law = vmax(lawLight, Kd(0.0));
+                const double darkLight = std::max(static_cast<double>(cellParams.darkLight), 1.0e-30);
+                I darkHold = get<L>(ch, &CellState::darkHold);
+                darkHold = L::sel(law >= Kd(darkLight), Ki(darkHoldSamples),
+                                  L::sel(darkHold > Ki(0), darkHold - Ki(1), darkHold));
+                put<L>(ch, &CellState::darkHold, darkHold);
+                const D target = L::sel(darkHold > Ki(0), Kd(0.0), Kd(darkLight) / (law + Kd(darkLight)));
+                dark0 = L::sel(target < dark0, target, dark0 + Kd(darkStep) * (target - dark0));
+                dark1 = L::sel(dark0 < dark1, dark0, dark1 + Kd(darkStep) * (dark0 - dark1));
+                putAt<L>(ch, &CellState::dark, 0, dark0);
+                putAt<L>(ch, &CellState::dark, 1, dark1);
+            }
+            const D releaseDark = cellParams.inputCouplingOn != 0.0f ? floorDark1 : dark1;
+            // The ceiling slows only a lane in the dark (releaseDark > 0): none is, none is slowed, without the loss.
+            if (cellParams.darkRateCeiling > 0.0f && L::any(releaseDark > Kd(0.0)))
             {
-                const auto& g = d.population;
-                double loss = g[0] * (cellParams.fastRelease + cellParams.fastBimolecular * g[0])
-                    + g[1] * (cellParams.slowRelease + cellParams.slowBimolecular * g[1]);
-                if (cellParams.memoryCharge > 0.0f) loss += g[2] * cellParams.memoryRelease;
+                const auto& g = population;
+                D loss = g[0] * (Kd(cellParams.fastRelease) + Kd(cellParams.fastBimolecular) * g[0])
+                    + g[1] * (Kd(cellParams.slowRelease) + Kd(cellParams.slowBimolecular) * g[1]);
+                if (cellParams.memoryCharge > 0.0f) loss = loss + g[2] * Kd(cellParams.memoryRelease);
                 if (cellParams.flashCharge > 0.0f)
-                    loss += g[3] * (cellParams.flashRelease + cellParams.flashBimolecular * g[3]);
-                loss *= releaseBase / dt;
+                    loss = loss + g[3] * (Kd(cellParams.flashRelease) + Kd(cellParams.flashBimolecular) * g[3]);
+                loss = loss * (releaseBase * Kd(invDt));
                 if (cellParams.trapCapture > 0.0f)
                 {
-                    const double fill = cellParams.trapCapacity > 0.0f
-                        ? std::max(0.0, 1.0 - d.trap / static_cast<double>(cellParams.trapCapacity)) : 1.0;
-                    loss += static_cast<double>(cellParams.trapCapture) * fill * g[1]
-                        - static_cast<double>(cellParams.trapEmit) * d.trap;
+                    const D fill = cellParams.trapCapacity > 0.0f
+                        ? vmax(Kd(0.0), Kd(1.0) - trap * Kd(invTrapCapacity)) : Kd(1.0);
+                    loss = loss + (Kd(static_cast<double>(cellParams.trapCapture)) * fill * g[1]
+                                   - Kd(static_cast<double>(cellParams.trapEmit)) * trap);
                 }
-                const double conductanceNow = g[0] + g[1] + g[2] + g[3];
-                if (loss > 0.0 && conductanceNow > 1.0e-30)
+                const D conductanceNow = g[0] + g[1] + g[2] + g[3];
+                const auto slows = (releaseDark > Kd(0.0)) && (loss > Kd(0.0)) && (conductanceNow > Kd(1.0e-30));
+                if (L::any(slows))
                 {
-                    const double ratio = loss / (conductanceNow * static_cast<double>(cellParams.darkRateCeiling));
-                    const double square = ratio * ratio;
-                    const double filled = cellParams.trapCapture > 0.0f && cellParams.trapCapacity > 0.0f
-                        ? std::clamp(d.trap / static_cast<double>(cellParams.trapCapacity), 0.0, 1.0) : 1.0;
-                    const double ownedFill = cellParams.darkTrapFillPower == 2.0f ? releaseDark * filled * filled
-                        : releaseDark * std::pow(filled, static_cast<double>(cellParams.darkTrapFillPower));
-                    darkScale = 1.0 - ownedFill
-                        * (1.0 - 1.0 / std::sqrt(std::sqrt(1.0 + square * square)));
+                    const D ratio = loss / (conductanceNow * Kd(static_cast<double>(cellParams.darkRateCeiling)));
+                    const D square = ratio * ratio;
+                    const D filled = cellParams.trapCapture > 0.0f && cellParams.trapCapacity > 0.0f
+                        ? vclamp(trap * Kd(invTrapCapacity), Kd(0.0), Kd(1.0)) : Kd(1.0);
+                    const double fillPower = static_cast<double>(cellParams.darkTrapFillPower);
+                    const D ownedFill = cellParams.darkTrapFillPower == 2.0f ? releaseDark * filled * filled
+                        : releaseDark * expandedPow<L, double>(ch, filled, fillPower, &CellState::fillAt,
+                                                               &CellState::fillInverse, &CellState::fillValue);
+                    const D slowed = Kd(1.0) - ownedFill * (Kd(1.0) - Kd(1.0) / vsqrt(vsqrt(Kd(1.0) + square * square)));
+                    darkScale = L::sel(slows, slowed, darkScale);
                 }
             }
         }
-        const double historyWeight = cellParams.inputCouplingOn != 0.0f ? d.floorDark[1] : d.dark[1];
-        if (cellParams.darkHistoryStrength > 0.0f && historyWeight > 0.0
+        const D historyWeight = cellParams.inputCouplingOn != 0.0f ? floorDark1 : dark1;
+        if (cellParams.darkHistoryStrength > 0.0f
             && (cellParams.darkRateCeiling > 0.0f || cellParams.darkFloorTau > 0.0f))
         {
-            const double density = d.population[0] + d.population[1] + d.population[2] + d.population[3];
-            if (density > 1.0e-30)
+            const D density = population[0] + population[1] + population[2] + population[3];
+            const auto weighted = (historyWeight > Kd(0.0)) && (density > Kd(1.0e-30));
+            if (L::any(weighted))
             {
-                const double reduction = 8.685889638065035 * std::log1p(density);
-                if (reduction < 24.0)
+                const D reduction = Kd(8.685889638065035) * expandedLog<L>(ch, density, 1.0, &CellState::densityAt,
+                                                                           &CellState::densityInverse,
+                                                                           &CellState::densityLog);
+                const auto inRange = weighted && (reduction < Kd(24.0));
+                if (L::any(inRange))
                 {
-                    const auto tent = [reduction](double left, double peak, double right) {
-                        return std::max(0.0, std::min((reduction - left) / (peak - left),
-                                                     (right - reduction) / (right - peak)));
+                    const auto tent = [&reduction, &Kd](double left, double peak, double right) noexcept {
+                        return vmax(Kd(0.0), vmin((reduction - Kd(left)) * Kd(1.0 / (peak - left)),
+                                                  (Kd(right) - reduction) * Kd(1.0 / (right - peak))));
                     };
                     const std::array<double, 7> p{{cellParams.darkHistoryBase, cellParams.darkHistoryMemory,
                         cellParams.darkHistoryShoulder, cellParams.darkHistoryShoulderMemory,
                         cellParams.darkHistoryLow, cellParams.darkHistoryLowMemory, cellParams.darkHistoryDensity}};
-                    const double history = d.population[2] / (d.population[2] + std::max(p[6], 1.0e-30) * density);
-                    const double correction = (p[0] + p[1] * history) * tent(2.5, 6.5, 13.0)
-                        + (p[2] + p[3] * history) * tent(9.0, 16.0, 24.0)
-                        - ((1.0 - history) * p[4] + history * p[5]) * tent(0.0, 1.5, 2.5);
-                    darkScale *= std::exp(historyWeight * static_cast<double>(cellParams.darkHistoryStrength) * correction);
+                    const D history = population[2] / (population[2] + Kd(std::max(p[6], 1.0e-30)) * density);
+                    const D correction = (Kd(p[0]) + Kd(p[1]) * history) * tent(2.5, 6.5, 13.0)
+                        + (Kd(p[2]) + Kd(p[3]) * history) * tent(9.0, 16.0, 24.0)
+                        - ((Kd(1.0) - history) * Kd(p[4]) + history * Kd(p[5])) * tent(0.0, 1.5, 2.5);
+                    darkScale = L::sel(inRange,
+                        darkScale * expandedExp<L>(ch, historyWeight * Kd(static_cast<double>(cellParams.darkHistoryStrength))
+                                                           * correction, &CellState::historyAt, &CellState::historyExp),
+                        darkScale);
                 }
             }
         }
-        const double chargeStep = step * rateScale * darkScale;
-        const double releaseStep = releaseBase * darkScale;
-        const double trapStep = dt * darkScale;
-        d.population[0] = (d.population[0] + chargeStep * light)
-            / (1.0 + releaseStep * (cellParams.fastRelease + cellParams.fastBimolecular * d.population[0]));
-        d.population[1] = (d.population[1] + chargeStep * cellParams.slowCharge * light)
-            / (1.0 + releaseStep * (cellParams.slowRelease + cellParams.slowBimolecular * d.population[1]));
+        const D chargeStep = step * rateScale * darkScale;
+        const D releaseStep = releaseBase * darkScale;
+        const D trapStep = Kd(dt) * darkScale;
+        population[0] = (population[0] + chargeStep * light)
+            / (Kd(1.0) + releaseStep * (Kd(cellParams.fastRelease) + Kd(cellParams.fastBimolecular) * population[0]));
+        population[1] = (population[1] + chargeStep * Kd(cellParams.slowCharge) * light)
+            / (Kd(1.0) + releaseStep * (Kd(cellParams.slowRelease) + Kd(cellParams.slowBimolecular) * population[1]));
         if (cellParams.memoryCharge > 0.0f)
-            d.population[2] = (d.population[2] + chargeStep * cellParams.memoryCharge * light)
-                / (1.0 + releaseStep * cellParams.memoryRelease);
+            population[2] = (population[2] + chargeStep * Kd(cellParams.memoryCharge) * light)
+                / (Kd(1.0) + releaseStep * Kd(cellParams.memoryRelease));
         if (cellParams.flashCharge > 0.0f)
-            d.population[3] = (d.population[3] + chargeStep * cellParams.flashCharge * light)
-                / (1.0 + releaseStep * (cellParams.flashRelease + cellParams.flashBimolecular * d.population[3]));
+            population[3] = (population[3] + chargeStep * Kd(cellParams.flashCharge) * light)
+                / (Kd(1.0) + releaseStep * (Kd(cellParams.flashRelease) + Kd(cellParams.flashBimolecular) * population[3]));
         if (cellParams.trapCapture > 0.0f)
         {
-            // CdS trap filling: population-1 carriers are captured into traps and re-emitted. Capture equals
-            // emission at equilibrium (statics unchanged); filled traps sustain the conductance after exposure.
-            const double fill = cellParams.trapCapacity > 0.0f
-                ? std::max(0.0, 1.0 - d.trap / static_cast<double>(cellParams.trapCapacity)) : 1.0;
-            const double capture = static_cast<double>(cellParams.trapCapture) * fill * d.population[1] * trapStep;
-            const double emit = static_cast<double>(cellParams.trapEmit) * d.trap * trapStep;
-            d.population[1] = std::max(0.0, d.population[1] - capture + emit);
-            d.trap = std::max(0.0, d.trap + capture - emit);
+            const D fill = cellParams.trapCapacity > 0.0f
+                ? vmax(Kd(0.0), Kd(1.0) - trap * Kd(invTrapCapacity)) : Kd(1.0);
+            const D capture = Kd(static_cast<double>(cellParams.trapCapture)) * fill * population[1] * trapStep;
+            const D emit = Kd(static_cast<double>(cellParams.trapEmit)) * trap * trapStep;
+            population[1] = vmax(Kd(0.0), population[1] - capture + emit);
+            trap = vmax(Kd(0.0), trap + capture - emit);
         }
-        double conductance = 0.0;
-        for (auto& pop : d.population)
+        put<L>(ch, &CellState::trap, trap);
+        D conductance = Kd(0.0);
+        for (size_t k = 0; k < kPopulations; ++k)
         {
-            if (pop < 1.0e-30) pop = 0.0;          // no denormal tails after release
-            conductance += pop;
+            population[k] = L::sel(population[k] < Kd(1.0e-30), Kd(0.0), population[k]);   // no denormal tails
+            conductance = conductance + population[k];
+            putAt<L>(ch, &CellState::population, k, population[k]);
         }
-        if (cellParams.conductanceTableOn != 0.0f) conductance = conductanceFor(conductance);   // split static Psi
-        d.cellGain = 1.0 / (1.0 + conductance);
+        if (cellParams.conductanceTableOn != 0.0f)   // split static Psi
+            conductance = conductanceForT<L>(conductance);
+        const D cellGain = Kd(1.0) / (Kd(1.0) + conductance);
+        put<L>(ch, &CellState::cellGain, cellGain);
         {
-            const double newGr = 8.685889638065035 * std::log1p(conductance);
+            const D newGr = Kd(8.685889638065035) * expandedLog<L>(ch, conductance, 1.0, &CellState::grAt,
+                                                                   &CellState::grInverse, &CellState::grLog);
             if (cellParams.attackRateDbPerS > 0.0f)
-                d.grRateSmooth += attackRateStep * ((newGr - d.grDb) / dt - d.grRateSmooth);
-            d.grDb = newGr;
+                grRateSmooth = grRateSmooth + Kd(attackRateStep)
+                    * ((newGr - get<L>(ch, &CellState::grDb)) / Kd(dt) - grRateSmooth);
+            put<L>(ch, &CellState::grRateSmooth, grRateSmooth);
+            put<L>(ch, &CellState::grDb, newGr);
         }
 
-        // Production LF floor gain blend on the applied gain.
-        float applied = static_cast<float>(d.cellGain);
+        F applied = L::toF(cellGain);
         if (!withApplied) return applied;
         if (cellParams.lowFrequencyFloor != 0.0f)
         {
-            float floorShare = frame.floorPower / std::max(frame.inputPower, 1.0e-12f);
-            if (floorLaw[2] != 1.0f) floorShare = std::pow(std::max(floorShare, 0.0f), floorLaw[2]);
-            const float floorPowerRatio = std::clamp(floorShare * (limit ? floorLaw[5] : 1.0f), 0.0f, 1.0f);
+            // g' = (g^e + (1 - g^e) q)^(1/e) with q = min(1, k share^p)^(e/2) = min(1, k^(e/2) share^(p e/2)). Each
+            // power runs on its second-order expansion (expandedPow); the expansions belong to one mode's exponents.
+            if (static_cast<int>(limit) != floorExpansionMode)
+            {
+                state.floorShareInverse = state.floorGainInverse = state.floorInnerInverse = OptoPair<float>{kStaleInverse};
+                floorExpansionMode = static_cast<int>(limit);
+            }
+            const F floorShare = frame.floorPower / vmax(frame.inputPower, Kf(1.0e-12f));
             const float floorExponent = limit ? floorLaw[4] : floorLaw[3];
-            const float gainPower = std::pow(applied, floorExponent);
-            applied = std::pow(gainPower + (1.0f - gainPower)
-                * std::pow(floorPowerRatio, floorExponent * 0.5f), 1.0f / floorExponent);
-            if (!std::isfinite(applied)) applied = 1.0f;
+            const F floorRatioPower = vmin(Kf(limit ? floorLimitRatioScale : 1.0f)
+                * expandedPow<L, float>(ch, floorShare, floorLaw[2] * 0.5f * floorExponent, &CellState::floorShareAt,
+                                 &CellState::floorShareInverse, &CellState::floorShareValue), Kf(1.0f));
+            const F gainPower = expandedPow<L, float>(ch, applied, floorExponent, &CellState::floorGainAt,
+                                               &CellState::floorGainInverse, &CellState::floorGainValue);
+            applied = expandedPow<L, float>(ch, gainPower + (Kf(1.0f) - gainPower) * floorRatioPower, 1.0f / floorExponent,
+                                     &CellState::floorInnerAt, &CellState::floorInnerInverse,
+                                     &CellState::floorInnerValue);
+            applied = L::sel(visfinite(L::toD(applied)), applied, Kf(1.0f));
             if (cellParams.darkFloorTau > 0.0f)
             {
-                // The floor in the dark. The floor law reads the low band's share of the input, and with no
-                // input there is no share to read: both running powers fall together and the last share stays,
-                // so the blend above gives its lift back as the cell lets go, and the applied reduction leaves
-                // more slowly than the cell's. The native unit's release after a 50 or 100 Hz note is the one
-                // it has after a 1 kHz note from the same reduction (tools opto/silence_probe.py: 0.224 against
-                // 0.225 dB/ms from 27 dB), as if the low note had left the cell with that much less
-                // conductance. So while the panel is not driven (the state the release limit above comes on
-                // with) the share of the cell's conductance that the floor passes is kept, and
-                // returns to all of it over darkFloorTau; while it is driven it is the blend's own, sample by
-                // sample.
-                const double cellConductance = 1.0 / std::max(d.cellGain, 1.0e-12) - 1.0;
-                const double passed = cellConductance > 1.0e-12
-                    ? std::clamp((1.0 / static_cast<double>(applied) - 1.0) / cellConductance, 0.0, 1.0) : 1.0;
-                const double dark = cellParams.inputCouplingOn != 0.0f ? d.floorDark[1] : d.dark[1];
-                if (dark > 0.0)
-                {
-                    d.floorPassed += (1.0 - dark) * (passed - d.floorPassed) + dark * darkFloorStep * (1.0 - d.floorPassed);
-                    applied = static_cast<float>(1.0 / (1.0 + d.floorPassed * cellConductance));
+                // The share of the conductance the floor passes, for a gain and the floor's gain behind it.
+                const auto passedOf = [&Kd](D gain, D floorGain) noexcept {
+                    const D conductance = Kd(1.0) / vmax(gain, Kd(1.0e-12)) - Kd(1.0);
+                    return L::sel(conductance > Kd(1.0e-12),
+                        vclamp((Kd(1.0) / floorGain - Kd(1.0)) / conductance, Kd(0.0), Kd(1.0)), Kd(1.0));
+                };
+                const D dark = cellParams.inputCouplingOn != 0.0f ? floorDark1 : dark1;
+                const auto darkened = dark > Kd(0.0);
+                if (!L::any(darkened))
+                {   // floorPassed is passedOf(cellGain, applied): kept as its two inputs until a dark step reads it
+                    put<L>(ch, &CellState::floorPassedGain, cellGain);
+                    put<L>(ch, &CellState::floorPassedFloorGain, L::toD(applied));
+                    put<L>(ch, &CellState::floorPassedPending, L::i(1));
                 }
                 else
-                    d.floorPassed = passed;
+                {
+                    const D cellConductance = conductance;
+                    const D floorGain = L::toD(applied);
+                    const D passed = L::sel(cellConductance > Kd(1.0e-12),
+                        vclamp((Kd(1.0) - floorGain) / (floorGain * cellConductance), Kd(0.0), Kd(1.0)), Kd(1.0));
+                    D floorPassed = get<L>(ch, &CellState::floorPassed);
+                    const auto pending = get<L>(ch, &CellState::floorPassedPending) > L::i(0);
+                    if (L::any(pending))
+                        floorPassed = L::sel(pending, passedOf(get<L>(ch, &CellState::floorPassedGain),
+                                                               get<L>(ch, &CellState::floorPassedFloorGain)), floorPassed);
+                    floorPassed = L::sel(darkened,
+                        floorPassed + ((Kd(1.0) - dark) * (passed - floorPassed) + dark * Kd(darkFloorStep) * (Kd(1.0) - floorPassed)),
+                        passed);
+                    put<L>(ch, &CellState::floorPassed, floorPassed);
+                    put<L>(ch, &CellState::floorPassedPending, L::i(0));
+                    applied = L::sel(darkened, L::toF(Kd(1.0) / (Kd(1.0) + floorPassed * cellConductance)), applied);
+                }
             }
         }
-        d.gain = applied;
-        OPTO_LAB_PROBE(ch, applied, d.cellGain);
+        put<L>(ch, &CellState::gain, applied);
+        if constexpr (L::kLanes == 1) { OPTO_LAB_PROBE(ch, applied, cellGain); }
+#if defined(__aarch64__)
+        else
+        {
+            OPTO_LAB_PROBE(0, L::laneF(applied, 0), L::lane(cellGain, 0));
+            OPTO_LAB_PROBE(1, L::laneF(applied, 1), L::lane(cellGain, 1));
+        }
+#endif
         return applied;
     }
 
@@ -1426,24 +1688,60 @@ public:
                                           const std::array<float, 2>& detector, bool limit,
                                           float peakReduction) noexcept
     {
-        auto& left = channels[0];
-        auto& right = channels[1];
-        const std::array<float, 2> applied{{left.gain, right.gain}};
+        const std::array<float, 2> applied{{state.gain[0], state.gain[1]}};
+#if defined(__aarch64__)
+        // The whole step with the two channels in the lanes of one register: each lane performs exactly the
+        // single-channel arithmetic, and the diode-OR reads the partner from the other lane.
+        using P = lanes::Lane2;
+        FrameT<P> frame = prepareLightT<P>(0, P::f(input[0], input[1]), P::f(sidechain[0], sidechain[1]),
+                                           external, P::f(detector[0], detector[1]), true, limit, peakReduction);
+        emitLightRef<P>(0, frame);
+        linkFrameT<P>(frame);
+        // The floor's input-power history is shared in the same proportion before its next update.
+        put<P>(0, &CellState::inputPower, frame.inputPower);
+        advanceLightT<P>(0, frame, limit);
+#else
         const auto ownLeft = emitLight(0, prepareLight(0, input[0], 0.0f, sidechain[0], external, detector[0], true,
-                                                       limit, peakReduction, true));
+                                                       limit, peakReduction));
         const auto ownRight = emitLight(1, prepareLight(1, input[1], 0.0f, sidechain[1], external, detector[1], true,
-                                                        limit, peakReduction, true));
+                                                        limit, peakReduction));
         const auto frameLeft = linkedFrame(ownLeft, ownRight);
         const auto frameRight = linkedFrame(ownRight, ownLeft);
         // The floor's input-power history is shared in the same proportion before its next update.
-        left.inputPower = frameLeft.inputPower;
-        right.inputPower = frameRight.inputPower;
+        state.inputPower[0] = frameLeft.inputPower;
+        state.inputPower[1] = frameRight.inputPower;
         advanceLight(0, frameLeft, limit);
         advanceLight(1, frameRight, limit);
+#endif
         return applied;
     }
 
-    float gain(int ch) const noexcept { return channels[static_cast<size_t>(ch)].gain; }
+#if defined(__aarch64__)
+    // linkedFrame() for both channels of a pair at once, in place: lane k's partner is the other lane.
+    template <class L>
+    void linkFrameT(FrameT<L>& frame) const noexcept
+    {
+        using lanes::vmax;
+        const auto w = L::d(static_cast<double>(linkWeight));
+        frame.light = vmax(frame.light, w * L::swap(frame.light));
+        frame.lawLight = vmax(frame.lawLight, w * L::swap(frame.lawLight));
+        frame.clockLight = vmax(frame.clockLight, w * L::swap(frame.clockLight));
+        frame.floorDrive = vmax(frame.floorDrive, w * L::swap(frame.floorDrive));
+        frame.floorPower = frame.floorPower + L::f(0.5f * linkWeight) * (L::swap(frame.floorPower) - frame.floorPower);
+        frame.inputPower = vmax(frame.inputPower, L::f(linkWeight * linkWeight) * L::swap(frame.inputPower));
+        // timeScale() depends on the light alone: a lane whose light is now exactly the light its partner's
+        // step was evaluated at (a full link takes the partner's light unscaled) takes that step too, so
+        // advanceLight finds it fresh. A NaN (nothing evaluated) never compares equal.
+        const auto lightTaken = frame.light == L::swap(frame.scaledLight);
+        frame.lightScale = L::sel(lightTaken, L::swap(frame.lightScale), frame.lightScale);
+        frame.scaledLight = L::sel(lightTaken, frame.light, frame.scaledLight);
+        const auto clockTaken = frame.clockLight == L::swap(frame.scaledClockLight);
+        frame.clockLightScale = L::sel(clockTaken, L::swap(frame.clockLightScale), frame.clockLightScale);
+        frame.scaledClockLight = L::sel(clockTaken, frame.clockLight, frame.scaledClockLight);
+    }
+#endif
+
+    float gain(int ch) const noexcept { return state.gain[static_cast<size_t>(ch)]; }
     // What a reduction meter reads: the gain times the share of the input's own component the input element
     // leaves. That share is 1 - <sample x term> / <sample x sample>, both running means over about 50 ms: for
     // a sine, the element's loss at the fundamental. Exactly gain() while the element is off or is its even
@@ -1451,9 +1749,9 @@ public:
     // reads it.
     float meterGain(int ch) const noexcept
     {
-        const auto& d = channels[static_cast<size_t>(ch)];
-        if (!(d.elementPower > 1.0e-18)) return d.gain;
-        return d.gain * static_cast<float>(1.0 - std::clamp(d.elementTaken / d.elementPower, 0.0, 1.0));
+        const size_t c = static_cast<size_t>(ch);
+        if (!(state.elementPower[c] > 1.0e-18)) return state.gain[c];
+        return state.gain[c] * static_cast<float>(1.0 - std::clamp(state.elementTaken[c] / state.elementPower[c], 0.0, 1.0));
     }
 
     // (P) The input element for one sample of the cell's input: what the mode takes off that sample ahead of
@@ -1470,16 +1768,8 @@ public:
     float elementTerm(int ch, float input, float gain, float peakReduction) noexcept
     {
         if (!(cellParams.pStrength > 0.0f)) return 0.0f;
-        auto& d = channels[static_cast<size_t>(ch)];
-        const double prNorm = std::clamp(static_cast<double>(peakReduction) * 0.01, 0.0, 1.0);
-        if (prNorm != cachedElementPr)
-        {
-            cachedElementPr = prNorm;
-            const float pr = static_cast<float>(prNorm);
-            cachedElementStrength = prNorm <= static_cast<double>(cellParams.prGate) ? 0.0f
-                : cellParams.pStrength * optoElementStrength(pr)
-                    * (cellParams.pPrExp != 0.0f ? std::pow(pr, cellParams.pPrExp) : 1.0f);
-        }
+        const size_t c = static_cast<size_t>(ch);
+        updateElementStrength(peakReduction);
         const double threshold = cellParams.pThresh;
         const double knee = std::max(static_cast<double>(cellParams.pKnee) * threshold, 0.0);
         // One side of the kink and its integral, for a sample v counted toward that side.
@@ -1505,39 +1795,136 @@ public:
         const double x = input;
         const double up = 1.0 + static_cast<double>(cellParams.pAsym);
         const double down = 1.0 - static_cast<double>(cellParams.pAsym);
+        // At pAsym = 1 the lower side's weight is 0: its term is +-0 and never changes the sum, so it is skipped.
         const auto kinkIntegral = [&overIntegral, up, down](double v) noexcept {
-            return up * overIntegral(v) - down * overIntegral(-v);
+            return down != 0.0 ? up * overIntegral(v) - down * overIntegral(-v) : up * overIntegral(v);
         };
-        const double last = d.elementInput;
+        const double last = state.elementInput[c];
         const double step = x - last;
         const double middle = 0.5 * (x + last);
         // The kink's mean over the line between the two samples; at a step too small to divide by, its
         // value in the middle. Both ends are evaluated with the constants of this call, so a change of
-        // constants between two samples (a lab does that) leaves no stale integral behind.
-        const double kink = std::abs(step) > 1.0e-6
+        // constants between two samples (a lab does that) leaves no stale integral behind. With both ends
+        // under the knee's lower edge on every side the kink has, both integrals (and the middle's value) are
+        // +0, so the mean is the same signed zero without evaluating them.
+        const double lowerEdge = threshold - 0.5 * knee;
+        const bool below = x <= lowerEdge && last <= lowerEdge && (down == 0.0 || (-x <= lowerEdge && -last <= lowerEdge));
+        const double kink = below ? (std::abs(step) > 1.0e-6 ? 0.0 / step : 0.0)
+            : std::abs(step) > 1.0e-6
             ? (kinkIntegral(x) - kinkIntegral(last)) / step
-            : up * over(middle) + down * over(-middle);
-        d.elementInput = x;
+            : (down != 0.0 ? up * over(middle) + down * over(-middle) : up * over(middle));
+        state.elementInput[c] = x;
         const float z = cachedElementStrength * gain;
         const float term = static_cast<float>(0.5 * kink) * z / (1.0f + z);
         if (cellParams.pAsym != 0.0f)
         {   // For the meter (meterGain()): what the element takes of the input's own component, as running
             // means of sample x term and of sample x sample. The even part alone takes none of it.
-            d.elementTaken += elementMeterStep * (x * static_cast<double>(term) - d.elementTaken);
-            d.elementPower += elementMeterStep * (x * x - d.elementPower);
-            if (d.elementPower < 1.0e-30) d.elementTaken = d.elementPower = 0.0;   // no denormal tail
+            state.elementTaken[c] += elementMeterStep * (x * static_cast<double>(term) - state.elementTaken[c]);
+            state.elementPower[c] += elementMeterStep * (x * x - state.elementPower[c]);
+            if (state.elementPower[c] < 1.0e-30) state.elementTaken[c] = state.elementPower[c] = 0.0;   // no denormal tail
         }
         return term;
     }
-    // The colour-stage level of the last processed sample (converted on read; same value as a stored conversion).
-    float inputLevelDb(int ch) const noexcept
+    // elementTerm() for both channels of a pair at once (each lane its channel's arithmetic). The shipped element
+    // (no knee, the lower side's weight 0) runs in the lanes; any other runs channel by channel.
+    std::array<float, 2> elementTermPair(const std::array<float, 2>& input, const std::array<float, 2>& gain,
+                                         float peakReduction) noexcept
     {
-        return gainToDecibels(static_cast<float>(channels[static_cast<size_t>(ch)].levelPeak));
+        if (!(cellParams.pStrength > 0.0f)) return {{0.0f, 0.0f}};
+#if defined(__aarch64__)
+        const double knee = std::max(static_cast<double>(cellParams.pKnee) * cellParams.pThresh, 0.0);
+        if (knee == 0.0 && cellParams.pAsym == 1.0f)
+        {
+            using P = lanes::Lane2;
+            using D = P::D;
+            using F = P::F;
+            using lanes::vabs;
+            updateElementStrength(peakReduction);
+            const D threshold = P::d(static_cast<double>(cellParams.pThresh));
+            const D up = P::d(1.0 + static_cast<double>(cellParams.pAsym));
+            const D zero = P::d(0.0);
+            const D x = P::d(static_cast<double>(input[0]), static_cast<double>(input[1]));
+            const D last = get<P>(0, &CellState::elementInput);
+            const D step = x - last;
+            const auto big = vabs(step) > P::d(1.0e-6);
+            const auto below = x <= threshold && last <= threshold;
+            D kink;
+            if (P::all(below))
+                kink = P::sel(big, zero / step, zero);
+            else
+            {   // over() and overIntegral() without a knee: (v - threshold), 0.5 (v - threshold)^2 + 0 at and above it
+                const D dx = x - threshold, dl = last - threshold;
+                const D kneeTerm = P::d(knee * knee / 24.0);
+                const D integralX = P::sel(x >= threshold, P::d(0.5) * dx * dx + kneeTerm, zero);
+                const D integralLast = P::sel(last >= threshold, P::d(0.5) * dl * dl + kneeTerm, zero);
+                const D middle = P::d(0.5) * (x + last);
+                const D overMiddle = P::sel(middle >= threshold, middle - threshold, zero);
+                kink = P::sel(below, P::sel(big, zero / step, zero),
+                              P::sel(big, (up * integralX - up * integralLast) / step, up * overMiddle));
+            }
+            put<P>(0, &CellState::elementInput, x);
+            const F z = P::f(cachedElementStrength) * P::f(gain[0], gain[1]);
+            const F term = P::toF(P::d(0.5) * kink) * z / (P::f(1.0f) + z);
+            D taken = get<P>(0, &CellState::elementTaken), power = get<P>(0, &CellState::elementPower);
+            taken = taken + P::d(elementMeterStep) * (x * P::toD(term) - taken);
+            power = power + P::d(elementMeterStep) * (x * x - power);
+            const auto tiny = power < P::d(1.0e-30);   // no denormal tail
+            put<P>(0, &CellState::elementTaken, P::sel(tiny, zero, taken));
+            put<P>(0, &CellState::elementPower, P::sel(tiny, zero, power));
+            return {{P::laneF(term, 0), P::laneF(term, 1)}};
+        }
+#endif
+        return {{elementTerm(0, input[0], gain[0], peakReduction), elementTerm(1, input[1], gain[1], peakReduction)}};
     }
-    float dynamicGrDb(int ch) const noexcept { return static_cast<float>(channels[static_cast<size_t>(ch)].grDb); }
+    void updateElementStrength(float peakReduction) noexcept
+    {
+        const double prNorm = std::clamp(static_cast<double>(peakReduction) * 0.01, 0.0, 1.0);
+        if (prNorm != cachedElementPr)
+        {
+            cachedElementPr = prNorm;
+            const float pr = static_cast<float>(prNorm);
+            cachedElementStrength = prNorm <= static_cast<double>(cellParams.prGate) ? 0.0f
+                : cellParams.pStrength * optoElementStrength(pr)
+                    * (cellParams.pPrExp != 0.0f ? std::pow(pr, cellParams.pPrExp) : 1.0f);
+        }
+    }
+    float dynamicGrDb(int ch) const noexcept { return static_cast<float>(state.grDb[static_cast<size_t>(ch)]); }
     float estimatedFrequencyHz(int ch) const noexcept
     {
-        return static_cast<float>(channels[static_cast<size_t>(ch)].estimatedFrequencyHz);
+        return static_cast<float>(state.estimatedFrequencyHz[static_cast<size_t>(ch)]);
+    }
+
+    // The emission prior at a reference level (dB): linear between its entries, held beyond its ends. A pair reads
+    // both lanes at once, each lane with the one-lane arithmetic.
+    template <class L>
+    OPTO_FORCE_INLINE typename L::D emitPriorT(typename L::D referenceDb) const noexcept
+    {
+        const double start = cellParams.lightTableStartDb;
+        const int n = emitPriorSize;
+        if constexpr (L::kLanes == 1)
+        {
+            const double position = (referenceDb - start) * lightTableInvStep;
+            if (position <= 0.0) return emitPrior[0];
+            if (position >= n - 1) return emitPrior[static_cast<size_t>(n - 1)];
+            const int k = static_cast<int>(position);
+            const double f = position - k;
+            return emitPrior[static_cast<size_t>(k)] + f * (emitPrior[static_cast<size_t>(k + 1)] - emitPrior[static_cast<size_t>(k)]);
+        }
+#if defined(__aarch64__)
+        else
+        {
+            using D = typename L::D;
+            const D position = (referenceDb - L::d(start)) * L::d(lightTableInvStep);
+            // The interior's entry k = int(position); a lane at or beyond an end reads a valid pair it does not use.
+            const int64x2_t index = vcvtq_s64_f64(lanes::vmax(lanes::vmin(position, L::d(n - 2)), L::d(0.0)).v);
+            const float64x2_t pair0 = vld1q_f64(emitPrior.data() + vgetq_lane_s64(index, 0));
+            const float64x2_t pair1 = vld1q_f64(emitPrior.data() + vgetq_lane_s64(index, 1));
+            const D low{vzip1q_f64(pair0, pair1)}, high{vzip2q_f64(pair0, pair1)};
+            const D inner = low + (position - D{vcvtq_f64_s64(index)}) * (high - low);
+            return L::sel(position <= L::d(0.0), L::d(emitPrior[0]),
+                          L::sel(position >= L::d(n - 1), L::d(emitPrior[static_cast<size_t>(n - 1)]), inner));
+        }
+#endif
     }
 
     // The emission prior depends on the cell's parameters only, never on the rate, so it is built here (on
@@ -1604,61 +1991,67 @@ public:
     void setParams(const OptoCellParams& p) noexcept
     {
         cellParams = p;
+        clockPower.setExponent(static_cast<double>(cellParams.timeScaleExponent));
         cachedPrNorm = -1.0;
         cachedElementPr = -1.0;
         buildEmitPrior();
+        buildTableQuiet();
         if (sampleRate > 0.0) setRate(static_cast<float>(sampleRate));
     }
     const OptoCellParams& params() const noexcept { return cellParams; }
     void primeEquilibrium(int ch, double el, const double* population) noexcept
     {
-        auto& d = channels[static_cast<size_t>(ch)];
-        d.el = el;
-        d.litLevel = cellParams.lfLitLog != 0.0f ? std::max(20.0 * std::log10(std::max(el, 1.0e-12)), static_cast<double>(cellParams.lightTableStartDb) - 60.0) : el;
-        d.grRateSmooth = 0.0;
-        d.drivePower = el * el;
-        d.slewPower = el * el;
+        const size_t c = static_cast<size_t>(ch);
+        state.el[c] = el;
+        state.litLevel[c] = cellParams.lfLitLog != 0.0f ? std::max(20.0 * std::log10(std::max(el, 1.0e-12)), static_cast<double>(cellParams.lightTableStartDb) - 60.0) : el;
+        state.grRateSmooth[c] = 0.0;
+        state.drivePower[c] = el * el;
+        state.slewPower[c] = el * el;
         // R14 trackers settled at the primed drive, hold armed: no spurious onset cut. el must be the drive PEAK
         // (the envelope holds peaks); priming from an instantaneous |s| mid-cycle would read as a step up.
-        d.driveEnv = el;
-        d.driveDb = d.driveSlow = 20.0 * std::log10(std::max(el, kLfCutEnvelopeFloor));
-        d.driveHold = cutHoldSamples;
-        d.drivePrev = 0.0;
-        d.reversalPeak = el;
-        d.slewLow = 0.0;
+        state.driveEnv[c] = el;
+        state.driveDb[c] = state.driveSlow[c] = 20.0 * std::log10(std::max(el, kLfCutEnvelopeFloor));
+        state.driveHold[c] = cutHoldSamples;
+        state.drivePrev[c] = 0.0;
+        state.reversalPeak[c] = el;
+        state.slewLow[c] = 0.0;
         // The emission's shape (prepareLight, emitLight): its estimator settled like the frequency law's above, the
         // half-cycle reference a settled sine of peak el, the charge scale at rest.
-        d.emitLast = 0.0;
-        d.emitDrivePower = d.emitSlewPower = el * el;
-        d.emitPeakPrev = d.emitPeakCur = el;
-        d.emitScale = 1.0;
-        d.emitSumPlain = d.emitSumApplied = d.emitSumFade = 0.0;
-        d.emitSide = 0;
-        d.emitLastEmitted = 0.0;
+        state.emitLast[c] = 0.0;
+        state.emitDrivePower[c] = state.emitSlewPower[c] = el * el;
+        state.emitPeakPrev[c] = state.emitPeakCur[c] = el;
+        state.emitScale[c] = 1.0;
+        state.emitSumPlain[c] = state.emitSumApplied[c] = state.emitSumFade[c] = 0.0;
+        state.emitSide[c] = 0;
+        state.emitLastEmitted[c] = 0.0;
+        state.shapeTurn[c] = -1.0;
+        state.freqLawInverse[c] = state.referenceInverse[c] = state.grInverse[c] = std::numeric_limits<double>::quiet_NaN();
+        state.fillInverse[c] = state.densityInverse[c] = state.historyAt[c] = std::numeric_limits<double>::quiet_NaN();
+        state.floorShareInverse[c] = state.floorGainInverse[c] = state.floorInnerInverse[c] = kStaleInverse;
         if (cellParams.trapCapture > 0.0f)
         {
             const double g1 = population[1];
             const double kt = cellParams.trapCapture, kr = cellParams.trapEmit, tm = cellParams.trapCapacity;
-            d.trap = tm > 0.0 ? kt * g1 / (kr + kt * g1 / tm) : (kr > 0.0 ? kt * g1 / kr : 0.0);
+            state.trap[c] = tm > 0.0 ? kt * g1 / (kr + kt * g1 / tm) : (kr > 0.0 ? kt * g1 / kr : 0.0);
         }
         else
-            d.trap = 0.0;
-        d.reversalPhi = 1.0;
-        d.reversalSign = 1;
-        d.reversalCount = 0;
+            state.trap[c] = 0.0;
+        state.reversalPhi[c] = 1.0;
+        state.reversalSign[c] = 1;
+        state.reversalCount[c] = 0;
         double conductance = 0.0;
         for (int i = 0; i < kPopulations; ++i)
         {
-            d.population[static_cast<size_t>(i)] = population[i];
+            state.population[static_cast<size_t>(i)][c] = population[i];
             conductance += population[i];
         }
         if (cellParams.conductanceTableOn != 0.0f) conductance = conductanceFor(conductance);
-        d.cellGain = 1.0 / (1.0 + conductance);
-        d.gain = static_cast<float>(d.cellGain);
-        d.grDb = 8.685889638065035 * std::log1p(conductance);
+        state.cellGain[c] = 1.0 / (1.0 + conductance);
+        state.gain[c] = static_cast<float>(state.cellGain[c]);
+        state.grDb[c] = 8.685889638065035 * std::log1p(conductance);
     }
-    double cellGain(int ch) const noexcept { return channels[static_cast<size_t>(ch)].cellGain; }
-    double elLevel(int ch) const noexcept { return channels[static_cast<size_t>(ch)].el; }
+    double cellGain(int ch) const noexcept { return state.cellGain[static_cast<size_t>(ch)]; }
+    double elLevel(int ch) const noexcept { return state.el[static_cast<size_t>(ch)]; }
     double lightAt(double el) const noexcept { return lightFor(el); }
     double conductanceAt(double sumG) const noexcept { return conductanceFor(sumG); }
 
@@ -1669,47 +2062,78 @@ private:
     static constexpr double kLfCutEnvelopeRelease = 0.010;
     static constexpr double kLfCutEnvelopeFloor = 1.0e-12;
     static constexpr double kLfCutFloorDb = -240.0;   // 20 log10(kLfCutEnvelopeFloor); keep the two in step
+    // How far the shape's half turn (radians) and the frequency law's ratio (relative) may move from their last
+    // exact evaluation before prepareLight evaluates them again (second- and third-order expansions in between).
+    static constexpr double kShapeTurnTolerance = 0.01;
+    static constexpr double kFreqLawTolerance = 0.10;
+    static constexpr float kFloorPowTolerance = 0.05f;   // expandedPow: relative move of x before a new evaluation
+    static constexpr double kLogTolerance = 0.02;         // expandedLog: relative move before a new evaluation
+    static constexpr double kExpTolerance = 0.02;         // expandedExp: move of the exponent before a new evaluation
+    static constexpr float kStaleInverse = std::numeric_limits<float>::quiet_NaN();
 
-    struct ChannelState
+    // Both channels' state, each field a {channel 0, channel 1} pair: one lane reads its channel's element, a
+    // linked pair (lanes::Lane2) reads and writes both at once.
+    struct CellState
     {
-        double cellGain = 1.0, grDb = 0.0, el = 0.0, levelPeak = 0.0, litLevel = 0.0, grRateSmooth = 0.0;
+        OptoPair<double> cellGain{1.0}, grDb{0.0}, el{0.0}, litLevel{0.0}, grRateSmooth{0.0};
         // R14 drive trackers: peak-held envelope, its dB value, the slow dB tracker, and the hold countdown.
-        double driveEnv = 0.0, driveDb = kLfCutFloorDb, driveSlow = kLfCutFloorDb;
-        int driveHold = 0;
-        double panelOwn = 0.0, panelOwnPrev = 0.0;   // |side-chain drive| of the last two samples, for the linked pair
-        double estimatedFrequencyHz = 1000.0;
-        double drivePower = 0.0, slewPower = 0.0, drivePrev = 0.0;
-        double reversalPeak = 0.0, reversalPhi = 1.0, slewLow = 0.0, trap = 0.0;
-        double fluxHighPassLow = 0.0, fluxLow = 0.0, fluxPeak = 0.0;
+        OptoPair<double> driveEnv{0.0}, driveDb{kLfCutFloorDb}, driveSlow{kLfCutFloorDb};
+        OptoPair<int> driveHold{0};
+        OptoPair<double> estimatedFrequencyHz{1000.0};
+        OptoPair<double> drivePower{0.0}, slewPower{0.0}, drivePrev{0.0};
+        OptoPair<double> reversalPeak{0.0}, reversalPhi{1.0}, slewLow{0.0}, trap{0.0};
+        OptoPair<double> fluxHighPassLow{0.0}, fluxLow{0.0}, fluxPeak{0.0};
         // What each polarity of the drive has moved through the panel, light x seconds (below zero: credit).
-        std::array<double, 2> chargeSpent{};
+        std::array<OptoPair<double>, 2> chargeSpent{};
         // How long the panel has had no drive, through two stages (1 = dark, the state at rest).
-        std::array<double, 2> dark{{1.0, 1.0}};
-        int darkHold = 0;   // samples left before the dark state may build (restarted while the panel is driven)
-        double floorEl = 0.0, floorOwn = 0.0, floorOwnPrev = 0.0;
-        std::array<double, 2> floorDark{{1.0, 1.0}};
-        int floorInputHold = 0;
-        double floorPassed = 1.0;   // the share of the cell's conductance the LF floor passes (1 = no floor)
-        int reversalSign = 1, reversalCount = 0;
-        double satSlew = 0.0, satRaw = 0.0, satDrive = 0.0;   // 5 ms power averages: slew, raw slew, level (HF plateau)
+        std::array<OptoPair<double>, 2> dark{{OptoPair<double>{1.0}, OptoPair<double>{1.0}}};
+        OptoPair<int> darkHold{0};   // samples left before the dark state may build (restarted while the panel is driven)
+        OptoPair<double> floorEl{0.0};
+        OptoPair<double> couplingS1{0.0}, couplingS2{0.0};   // the input coupling high-pass (prepareLight)
+        std::array<OptoPair<double>, 2> floorDark{{OptoPair<double>{1.0}, OptoPair<double>{1.0}}};
+        OptoPair<int> floorInputHold{0};
+        OptoPair<double> floorPassed{1.0};   // the share of the cell's conductance the LF floor passes (1 = no floor)
+        // floorPassed while pending: passedOf() of these two (advanceLight keeps the inputs until a dark step reads it).
+        OptoPair<double> floorPassedGain{1.0}, floorPassedFloorGain{1.0};
+        OptoPair<int> floorPassedPending{0};
+        // The floor blend's powers (advanceLight, expandedPow): the share, the gain and the blend each with its last
+        // exact evaluation point, inverse (kStaleInverse: none) and value.
+        OptoPair<float> floorShareAt{1.0f}, floorShareInverse{kStaleInverse}, floorShareValue{1.0f};
+        OptoPair<float> floorGainAt{1.0f}, floorGainInverse{kStaleInverse}, floorGainValue{1.0f};
+        OptoPair<float> floorInnerAt{1.0f}, floorInnerInverse{kStaleInverse}, floorInnerValue{1.0f};
+        OptoPair<int> reversalSign{1}, reversalCount{0};
+        OptoPair<double> satSlew{0.0}, satRaw{0.0}, satDrive{0.0};   // 5 ms power averages: slew, raw slew, level (HF plateau)
         // The emission's shape (prepareLight): the last drive sample and the mean squares of the drive and of its
         // normalised slew (one pole, elFreqTau), its own copies so the shape does not depend on the frequency law.
-        double emitLast = 0.0, emitDrivePower = 0.0, emitSlewPower = 0.0;
+        OptoPair<double> emitLast{0.0}, emitDrivePower{0.0}, emitSlewPower{0.0};
         // The shape's half-cycle reference (prepareLight): the peak of |s| over the last completed half-cycle of
         // the drive (Prev) and over the current one so far (Cur).
-        double emitPeakPrev = 0.0, emitPeakCur = 0.0;
-        double emitLastEmitted = 0.0;   // the last shaped emission, for the charge term's trapezoid
+        OptoPair<double> emitPeakPrev{0.0}, emitPeakCur{0.0};
+        // The last exact evaluations behind the expansions in prepareLight: the shape's sin / cos of the half turn
+        // (turn < 0: none yet), the frequency law's power of the ratio and the shape reference's log (inverse NaN:
+        // none yet).
+        OptoPair<double> shapeTurn{-1.0}, shapeSin{0.0}, shapeCos{1.0};
+        OptoPair<double> referenceAt{1.0}, referenceInverse{std::numeric_limits<double>::quiet_NaN()}, referenceLog{0.0};
+        // The cell reduction's log1p of the conductance (advanceLight, expandedLog).
+        OptoPair<double> grAt{0.0}, grInverse{std::numeric_limits<double>::quiet_NaN()}, grLog{0.0};
+        // The dark ceiling's trap-fill power and the dark history's log1p of the density and exp of its
+        // correction (advanceLight: expandedPow, expandedLog, expandedExp; NaN: none yet).
+        OptoPair<double> fillAt{1.0}, fillInverse{std::numeric_limits<double>::quiet_NaN()}, fillValue{1.0};
+        OptoPair<double> densityAt{0.0}, densityInverse{std::numeric_limits<double>::quiet_NaN()}, densityLog{0.0};
+        OptoPair<double> historyAt{std::numeric_limits<double>::quiet_NaN()}, historyExp{1.0};
+        OptoPair<double> freqLawRatio{1.0}, freqLawInverse{std::numeric_limits<double>::quiet_NaN()}, freqLawValue{1.0};
+        OptoPair<double> emitLastEmitted{0.0};   // the last shaped emission, for the charge term's trapezoid
         // The shape's charge per cycle (emitLight): the scale on the sine prior, the current cycle's clock-weighted
         // charge sums (without the shape, with it, and the first weighted by the fade), the drive's polarity at the
         // last sample. At rest: scale 1, sums 0.
-        double emitScale = 1.0, emitSumPlain = 0.0, emitSumApplied = 0.0, emitSumFade = 0.0;
-        int emitSide = 0;
-        std::array<double, kPopulations> population{};
-        float gain = 1.0f;
-        double elementInput = 0.0;   // elementTerm(): the last sample of the cell's input
-        double elementTaken = 0.0, elementPower = 0.0;   // meterGain(): running means, see elementTerm()
-        float floorHighPassLow = 0.0f, floorLow = 0.0f, floorBandLow = 0.0f;
-        float floorPower = 0.0f, inputPower = 0.0f;
+        OptoPair<double> emitScale{1.0}, emitSumPlain{0.0}, emitSumApplied{0.0}, emitSumFade{0.0};
+        OptoPair<int> emitSide{0};
+        std::array<OptoPair<double>, kPopulations> population{};
+        OptoPair<float> gain{1.0f};
+        OptoPair<double> elementInput{0.0};   // elementTerm(): the last sample of the cell's input
+        OptoPair<double> elementTaken{0.0}, elementPower{0.0};   // meterGain(): running means, see elementTerm()
+        OptoPair<float> floorHighPassLow{0.0f}, floorLow{0.0f}, floorBandLow{0.0f};
+        OptoPair<float> floorPower{0.0f}, inputPower{0.0f};
     };
 
     double sideChainGain(double prNorm) const noexcept
@@ -1747,48 +2171,258 @@ private:
         return t[k] + f * (t[k + 1] - t[k]);
     }
 
-    // The populations' time step for a sample of light l (advanceLight; emitLight's charge sums use the same).
-    double timeScale(double l) const noexcept
+    // tableLookup() on the step's reciprocal (the per-sample reads; the table builders keep tableLookup()).
+    static double tableLookupInv(const float* t, int n, double start, double step, double invStep, double slopeAbove,
+                                 double levelDb) noexcept
     {
+        const double top = start + step * (n - 1);
+        if (levelDb >= top)
+            return t[n - 1] * std::exp(slopeAbove * (levelDb - top));
+        if (levelDb <= start - step) return 0.0;
+        if (!(levelDb >= start)) return t[0] * (levelDb - (start - step)) * invStep;
+        const double position = (levelDb - start) * invStep;
+        const int k = std::min(static_cast<int>(position), n - 2);
+        const double f = position - k;
+        return t[k] + f * (t[k + 1] - t[k]);
+    }
+
+    // ln(offset + a) (offset 0: ln a, a > 0; offset 1: log1p a, a >= 0) on its third-order expansion in
+    // u = (a - a_c) / (offset + a_c) about the last exact evaluation a_c of the channel (lane), redone once |u|
+    // passes kLogTolerance: error <= u^4 / 4. An inverse of NaN forces a new evaluation.
+    template <class L>
+    OPTO_FORCE_INLINE typename L::D expandedLog(int ch, typename L::D a, double offset, OptoPair<double> CellState::* at,
+                              OptoPair<double> CellState::* inverse, OptoPair<double> CellState::* value,
+                              typename L::M active = L::m(true)) noexcept
+    {
+        using lanes::vabs;
+        const auto Kd = [](double v) noexcept { return L::d(v); };
+        typename L::D reference = get<L>(ch, at), reciprocal = get<L>(ch, inverse), exact = get<L>(ch, value);
+        typename L::D u = (a - reference) * reciprocal;
+        // ln of a non-positive a is the caller's to mask; it is never evaluated (silence would do so every sample).
+        // `active`: the lanes whose value is used (the others keep their reference).
+        const auto stale = active && (offset != 0.0 ? a >= Kd(0.0) : a > Kd(1.0e-30)) && !(vabs(u) <= Kd(kLogTolerance));
+        if (L::any(stale))
+        {
+            reference = L::sel(stale, a, reference);
+            reciprocal = L::sel(stale, Kd(1.0) / (Kd(offset) + a), reciprocal);
+            exact = L::sel(stale, offset == 1.0 ? L::map([](double v) noexcept { return std::log1p(v); }, a)
+                                                : lanes::lanemath::log(a), exact);
+            u = L::sel(stale, Kd(0.0), u);
+            put<L>(ch, at, reference);
+            put<L>(ch, inverse, reciprocal);
+            put<L>(ch, value, exact);
+        }
+        return L::sel(a == a, exact + u * (Kd(1.0) - u * (Kd(0.5) - u * Kd(1.0 / 3.0))), a);   // NaN passes through
+    }
+
+    // x^y (float, y > 0) on its second-order expansion in u = x / x_c - 1 about the last exact evaluation x_c of the
+    // channel (lane), redone once |u| passes kFloorPowTolerance: relative error <= |y (y - 1)(y - 2)| / 6 |u|^3.
+    // x <= 0 gives 0 as std::pow does for these y; NaN passes through. The caller keeps y fixed while the
+    // expansion lives (an inverse of kStaleInverse forces a new evaluation).
+    template <class L, class T>
+    OPTO_FORCE_INLINE auto expandedPow(int ch, std::conditional_t<std::is_same_v<T, float>, typename L::F, typename L::D> x, T y,
+                     OptoPair<T> CellState::* at, OptoPair<T> CellState::* inverse, OptoPair<T> CellState::* value) noexcept
+    {
+        using lanes::vabs;
+        using V = decltype(x);
+        const auto K = [](T v) noexcept { if constexpr (std::is_same_v<T, float>) return L::f(v); else return L::d(v); };
+        V reference = get<L>(ch, at), reciprocal = get<L>(ch, inverse), exact = get<L>(ch, value);
+        V drift = (x - reference) * reciprocal;
+        const auto positive = x > K(T(1.0e-30));
+        const auto stale = positive && !(vabs(drift) <= K(T(kFloorPowTolerance)));
+        if (L::any(stale))
+        {
+            reference = L::sel(stale, x, reference);
+            reciprocal = L::sel(stale, K(T(1)) / x, reciprocal);
+            if constexpr (std::is_same_v<T, float>)
+                exact = L::sel(stale, L::mapF([y](float a, float) noexcept { return std::pow(a, y); }, x, x), exact);
+            else
+                exact = L::sel(stale, L::map([y](double a) noexcept { return std::pow(a, y); }, x), exact);
+            drift = L::sel(stale, K(T(0)), drift);
+            put<L>(ch, at, reference);
+            put<L>(ch, inverse, reciprocal);
+            put<L>(ch, value, exact);
+        }
+        const V expanded = exact * (K(T(1)) + drift * (K(y) + drift * K(T(0.5) * y * (y - T(1)))));
+        return L::sel(!(x >= x), x, L::sel(positive, expanded, K(T(0))));   // !(x >= x): NaN
+    }
+
+    // exp(z) on its third-order expansion in d = z - z_c about the last exact evaluation z_c of the channel (lane),
+    // redone once |d| passes kExpTolerance: relative error <= d^4 / 24. A z_c of NaN forces a new evaluation.
+    template <class L>
+    OPTO_FORCE_INLINE typename L::D expandedExp(int ch, typename L::D z, OptoPair<double> CellState::* at, OptoPair<double> CellState::* value) noexcept
+    {
+        using lanes::vabs;
+        const auto Kd = [](double v) noexcept { return L::d(v); };
+        typename L::D reference = get<L>(ch, at), exact = get<L>(ch, value);
+        typename L::D d = z - reference;
+        const auto stale = !(vabs(d) <= Kd(kExpTolerance));
+        if (L::any(stale))
+        {
+            reference = L::sel(stale, z, reference);
+            exact = L::sel(stale, L::map([](double v) noexcept { return std::exp(v); }, z), exact);
+            d = L::sel(stale, Kd(0.0), d);
+            put<L>(ch, at, reference);
+            put<L>(ch, value, exact);
+        }
+        return exact * (Kd(1.0) + d * (Kd(1.0) + d * (Kd(0.5) + d * Kd(1.0 / 6.0))));
+    }
+
+    // The populations' time step for a sample of light l (advanceLight; emitLight's charge sums use the same).
+    template <class L>
+    OPTO_FORCE_INLINE typename L::D timeScaleT(typename L::D l) const noexcept
+    {
+        const auto Kd = [](double x) noexcept { return L::d(x); };
+        using D = typename L::D;
         if (cellParams.timeScaleLight > 0.0f && cellParams.hFloor > 0.0f)
         {
-            const double r = std::pow(std::max(l, 0.0) / static_cast<double>(cellParams.timeScaleLight),
-                                      static_cast<double>(cellParams.timeScaleExponent));
-            return dt * (static_cast<double>(cellParams.hFloor) + r) / (1.0 + r);
+            const D v = lanes::vmax(l, Kd(0.0)) * Kd(invTimeScaleLight);
+            const auto zero = v == Kd(0.0);
+            const D r = L::sel(zero, Kd(0.0), clockPower(L::sel(zero, Kd(1.0), v)));
+            return Kd(dt) * (Kd(static_cast<double>(cellParams.hFloor)) + r) / (Kd(1.0) + r);
         }
-        if (cellParams.timeScaleLight > 0.0f && l > 0.0)
-            return dt / (1.0 + std::pow(l / static_cast<double>(cellParams.timeScaleLight),
-                                        static_cast<double>(cellParams.timeScaleExponent)));
-        return dt;
+        if (cellParams.timeScaleLight > 0.0f)
+        {
+            const auto lit = l > Kd(0.0);
+            if (!L::any(lit)) return Kd(dt);   // no light in any lane: the step is dt without evaluating the law
+            const D v = l * Kd(invTimeScaleLight);
+            const auto positive = v > Kd(0.0);
+            const D r = L::sel(positive, clockPower(L::sel(positive, v, Kd(1.0))), Kd(1.0));
+            return L::sel(lit, Kd(dt) / (Kd(1.0) + r), Kd(dt));
+        }
+        return Kd(dt);
     }
+    double timeScale(double l) const noexcept { return timeScaleT<lanes::Lane1>(l); }
 
-    double lightFor(double el) const noexcept
+    // The light and conductance tables. A pair reads both lanes' interior entries at once (tableLookup's other
+    // branches lane by lane); the logarithm is lanemath's, the same for one lane or two.
+    // The level at or below which a table reads 0: under its first point less a step (tableLookup), with a 1e-9
+    // margin. tableT's lanes there skip the logarithm and the read (exactly what they would have returned).
+    static double tableQuiet(double start, double step) noexcept
     {
-        if (el <= 1.0e-30) return 0.0;
-        return tableLookup(cellParams.lightTable, cellParams.lightTableSize, cellParams.lightTableStartDb,
-                           cellParams.lightTableStepDb, cellParams.lightSlopeAbove,
-                           8.685889638065035 * std::log(el));
+        return std::exp((start - step) / 8.685889638065035) * (1.0 - 1.0e-9);
     }
-
-    double conductanceFor(double sumG) const noexcept
+    void buildTableQuiet() noexcept
     {
-        if (sumG <= 1.0e-30) return 0.0;
-        return tableLookup(cellParams.conductanceTable, cellParams.conductanceTableSize,
-                           cellParams.conductanceTableStartDb, cellParams.conductanceTableStepDb,
-                           cellParams.conductanceSlopeAbove, 8.685889638065035 * std::log(sumG));
+        lightTableQuiet = tableQuiet(cellParams.lightTableStartDb, cellParams.lightTableStepDb);
+        // The per-sample divisions by parameters, as multiplications by their reciprocals.
+        lightTableInvStep = 1.0 / static_cast<double>(cellParams.lightTableStepDb);
+        conductanceTableInvStep = 1.0 / static_cast<double>(cellParams.conductanceTableStepDb);
+        invTimeScaleLight = 1.0 / static_cast<double>(cellParams.timeScaleLight);
+        invLfLitSpanDb = 1.0 / static_cast<double>(cellParams.lfLitSpanDb);
+        invLfTermGrSpan = 1.0f / cellParams.lfTermGrSpan;
+        invTrapCapacity = 1.0 / static_cast<double>(cellParams.trapCapacity);
+        {
+            const double lo = static_cast<double>(cellParams.emitFadeLoKHz) * cellParams.emitFadeLoKHz;
+            const double hi = static_cast<double>(cellParams.emitFadeHiKHz) * cellParams.emitFadeHiKHz;
+            invFadeLowSpan = 1.0 / (hi - lo);
+            const double topLo = static_cast<double>(cellParams.emitFadeTopLoKHz) * cellParams.emitFadeTopLoKHz;
+            const double topHi = static_cast<double>(cellParams.emitFadeTopHiKHz) * cellParams.emitFadeTopHiKHz;
+            invFadeTopSpan = 1.0 / (topHi - topLo);
+        }
+        conductanceTableQuiet = tableQuiet(cellParams.conductanceTableStartDb, cellParams.conductanceTableStepDb);
     }
+    template <class L>
+    OPTO_FORCE_INLINE typename L::D tableT(typename L::D x, const float* t, int n, double start, double step,
+                                                double invStep, double slopeAbove, double quiet) const noexcept
+    {
+        const auto Kd = [](double v) noexcept { return L::d(v); };
+        if constexpr (L::kLanes == 1)
+        {
+            if (x <= quiet) return 0.0;
+            return tableAtT<L>(x, 8.685889638065035 * lanes::lanemath::log(x), t, n, start, step, invStep, slopeAbove,
+                               quiet);
+        }
+#if defined(__aarch64__)
+        else
+        {
+            const auto silent = x <= Kd(quiet);
+            if (L::all(silent)) return Kd(0.0);
+            return tableAtT<L>(x, Kd(8.685889638065035) * lanes::lanemath::log(L::sel(silent, Kd(1.0), x)), t, n, start,
+                               step, invStep, slopeAbove, quiet);
+        }
+#endif
+    }
+    // tableT() with the level in dB already taken (8.685889638065035 ln x, for every lane above `quiet`).
+    template <class L>
+    OPTO_FORCE_INLINE typename L::D tableAtT(typename L::D x, typename L::D levelDb, const float* t, int n,
+                                                  double start, double step, double invStep, double slopeAbove,
+                                                  double quiet) const noexcept
+    {
+        const auto Kd = [](double v) noexcept { return L::d(v); };
+        if constexpr (L::kLanes == 1)
+        {
+            if (x <= quiet) return 0.0;
+            const double read = tableLookupInv(t, n, start, step, invStep, slopeAbove, levelDb);
+            return x <= 1.0e-30 ? 0.0 : read;
+        }
+#if defined(__aarch64__)
+        else
+        {
+            using D = typename L::D;
+            const auto silent = x <= Kd(quiet);
+            if (L::all(silent)) return Kd(0.0);
+            const double top = start + step * (n - 1);
+            D read;
+            if (L::any(levelDb >= Kd(top) && !silent))
+                read = L::map([t, n, start, step, invStep, slopeAbove](double db) noexcept {
+                    return tableLookupInv(t, n, start, step, invStep, slopeAbove, db); }, levelDb);
+            else
+            {   // tableLookupInv's branches below its top, for both lanes in its order: zero, the ramp, the interior
+                const D position = (levelDb - Kd(start)) * Kd(invStep);
+                // min(int(position), n - 2) as the truncation of min(position, n - 2); a lane below reads entry 0.
+                const int64x2_t index = vcvtq_s64_f64(lanes::vmax(lanes::vmin(position, Kd(n - 2)), Kd(0.0)).v);
+                const float32x2_t pair0 = vld1_f32(t + vgetq_lane_s64(index, 0));   // {t[k], t[k + 1]}, lane 0
+                const float32x2_t pair1 = vld1_f32(t + vgetq_lane_s64(index, 1));
+                const float32x2_t low = vzip1_f32(pair0, pair1), high = vzip2_f32(pair0, pair1);
+                const D f = position - D{vcvtq_f64_s64(index)};
+                const D interior = D{vcvt_f64_f32(low)} + f * D{vcvt_f64_f32(vsub_f32(high, low))};
+                const D ramp = Kd(static_cast<double>(t[0])) * (levelDb - Kd(start - step)) * Kd(invStep);
+                read = L::sel(levelDb <= Kd(start - step), Kd(0.0), L::sel(!(levelDb >= Kd(start)), ramp, interior));
+            }
+            return L::sel(x <= Kd(1.0e-30), Kd(0.0), L::sel(silent, Kd(0.0), read));
+        }
+#endif
+    }
+    template <class L>
+    typename L::D lightAtT(typename L::D el, typename L::D levelDb) const noexcept
+    {
+        return tableAtT<L>(el, levelDb, cellParams.lightTable, cellParams.lightTableSize, cellParams.lightTableStartDb,
+                           cellParams.lightTableStepDb, lightTableInvStep, cellParams.lightSlopeAbove, lightTableQuiet);
+    }
+    template <class L>
+    typename L::D lightForT(typename L::D el) const noexcept
+    {
+        return tableT<L>(el, cellParams.lightTable, cellParams.lightTableSize, cellParams.lightTableStartDb,
+                         cellParams.lightTableStepDb, lightTableInvStep, cellParams.lightSlopeAbove, lightTableQuiet);
+    }
+    template <class L>
+    typename L::D conductanceForT(typename L::D sumG) const noexcept
+    {
+        return tableT<L>(sumG, cellParams.conductanceTable, cellParams.conductanceTableSize,
+                         cellParams.conductanceTableStartDb, cellParams.conductanceTableStepDb, conductanceTableInvStep,
+                         cellParams.conductanceSlopeAbove, conductanceTableQuiet);
+    }
+    double lightFor(double el) const noexcept { return lightForT<lanes::Lane1>(el); }
+    double conductanceFor(double sumG) const noexcept { return conductanceForT<lanes::Lane1>(sumG); }
 
     OptoCellParams cellParams{};
-    std::array<ChannelState, kChannels> channels{};
+    double lightTableQuiet = 0.0, conductanceTableQuiet = 0.0;   // tableQuiet() of the two tables (buildTableQuiet)
+    float floorLimitRatioScale = 1.0f;   // the floor law's Limit ratio scale to the power e/2 (updateFloorBand)
+    int floorExpansionMode = -1;         // the mode (Limit) the floor blend's expansions were made for; -1: none
+    CellState state{};
     std::array<std::array<Biquad, kWeightingSections>, kChannels> loopWeighting;
     std::array<std::array<Biquad, kWeightingSections>, kChannels> levelWeighting;
     std::array<std::array<Biquad, 4>, kChannels> depthWeighting;
     std::array<Biquad, kChannels> lfTermFilter;
     std::array<Biquad, kChannels> limitFloorFilter;
     std::array<Biquad, kChannels> lfCutFilter;
+    // The sections' states (biquad()): the filters above hold the coefficients.
+    std::array<OptoBiquadState, kWeightingSections> loopWeightingState{}, levelWeightingState{};
+    std::array<OptoBiquadState, 4> depthWeightingState{};
+    OptoBiquadState lfTermState{}, limitFloorState{}, lfCutState{};
     std::array<OptoSubsonicHighPass, kChannels> couplingInput;
     double sampleRate = 0.0, dt = 1.0 / 96000.0, elStep = 0.0;
-    double levelPeakAttack = 0.0, levelPeakRelease = 0.0;
     double cachedPrNorm = -1.0, cachedSideChainGain = 0.0;
     // The input element (P): its strength at the knob's position (zero at and below prGate).
     double cachedElementPr = -1.0;
@@ -1810,6 +2444,11 @@ private:
     std::array<double, 64> emitPrior{};   // per light-table entry: law mean / (law x weight) mean on a sine
     bool emitPriorOn = false;
     double emitLeak = 1.0;
+    // Reciprocals of the per-sample divisors (buildTableQuiet, setRate).
+    double lightTableInvStep = 1.0, conductanceTableInvStep = 1.0, invTimeScaleLight = 1.0, invLfLitSpanDb = 1.0;
+    double invTrapCapacity = 1.0, invFadeLowSpan = 1.0, invFadeTopSpan = 1.0, invDt = 1.0;
+    float invLfTermGrSpan = 1.0f;
+    lanes::lanemath::FixedPower clockPower;   // timeScale()'s power of the light (timeScaleExponent; setParams)
     int emitPriorSize = 0;
     float floorHighPassStep = 0.0f, floorLowPassStep = 0.0f, floorBandStep = 0.0f, floorPowerStep = 0.0f;
 };

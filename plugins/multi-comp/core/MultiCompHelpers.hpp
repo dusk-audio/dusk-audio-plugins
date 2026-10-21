@@ -3,7 +3,7 @@
 #pragma once
 
 #include "MultiCompParams.hpp"
-#include "../../shared-daf/dsp/DuskOversampler.hpp"
+#include "MultiCompOversampler.hpp"
 #include "../../shared-daf/dsp/DuskFilters.hpp"
 
 #include <algorithm>
@@ -12,6 +12,9 @@
 #include <cstdint>
 #include <cstring>
 #include <vector>
+#if defined(__aarch64__)
+#include <arm_neon.h>
+#endif
 
 namespace duskaudio
 {
@@ -38,6 +41,25 @@ inline bool blockIsAllFinite(const float* samples, int numSamples) noexcept
         worstExponent = std::max(worstExponent, bits & 0x7f800000u);
     }
     return worstExponent != 0x7f800000u;
+}
+
+// max(start, |x[i]|) over a block of NaN-free samples. The maximum does not
+// depend on the order it is taken in, so the four-lane form gives the same
+// value as the plain loop.
+inline float blockAbsPeak(const float* x, int n, float start) noexcept
+{
+    float peak = start;
+    int i = 0;
+#if defined(__aarch64__)
+    if (n >= 4)
+    {
+        float32x4_t lanes = vdupq_n_f32(start);
+        for (; i + 4 <= n; i += 4) lanes = vmaxq_f32(lanes, vabsq_f32(vld1q_f32(x + i)));
+        peak = vmaxvq_f32(lanes);
+    }
+#endif
+    for (; i < n; ++i) peak = std::max(peak, std::abs(x[i]));
+    return peak;
 }
 
 // Substitute silence for the offending samples only. Everything finite in the
@@ -159,6 +181,47 @@ public:
     float process(float input) noexcept { return high.process(low.process(input)); }
     void reset() noexcept { low.reset(); high.reset(); }
 
+    // process() on a left and a right EQ over a block, in place: each lane
+    // runs Biquad::process()'s float arithmetic for both shelves.
+    static void processPair(MultiCompSidechainEQ& left, MultiCompSidechainEQ& right,
+                            float* x0, float* x1, int n) noexcept
+    {
+#if defined(__aarch64__)
+        struct Lanes { float32x2_t b0, b1, b2, a1, a2, z1, z2; };
+        const auto load = [](const Biquad& l, const Biquad& r) noexcept {
+            const auto& cl = l.coeffs();
+            const auto& cr = r.coeffs();
+            const auto sl = l.state();
+            const auto sr = r.state();
+            return Lanes{{cl.b0, cr.b0}, {cl.b1, cr.b1}, {cl.b2, cr.b2}, {cl.a1, cr.a1}, {cl.a2, cr.a2},
+                         {sl.first, sr.first}, {sl.second, sr.second}};
+        };
+        Lanes lo = load(left.low, right.low), hi = load(left.high, right.high);
+        const auto step = [](Lanes& f, float32x2_t x) noexcept {
+            const float32x2_t y = vadd_f32(vmul_f32(f.b0, x), f.z1);
+            f.z1 = vadd_f32(vsub_f32(vmul_f32(f.b1, x), vmul_f32(f.a1, y)), f.z2);
+            f.z2 = vsub_f32(vmul_f32(f.b2, x), vmul_f32(f.a2, y));
+            return y;
+        };
+        for (int i = 0; i < n; ++i)
+        {
+            const float32x2_t y = step(hi, step(lo, float32x2_t{x0[i], x1[i]}));
+            x0[i] = vget_lane_f32(y, 0);
+            x1[i] = vget_lane_f32(y, 1);
+        }
+        left.low.setState(vget_lane_f32(lo.z1, 0), vget_lane_f32(lo.z2, 0));
+        right.low.setState(vget_lane_f32(lo.z1, 1), vget_lane_f32(lo.z2, 1));
+        left.high.setState(vget_lane_f32(hi.z1, 0), vget_lane_f32(hi.z2, 0));
+        right.high.setState(vget_lane_f32(hi.z1, 1), vget_lane_f32(hi.z2, 1));
+#else
+        for (int i = 0; i < n; ++i)
+        {
+            x0[i] = left.process(x0[i]);
+            x1[i] = right.process(x1[i]);
+        }
+#endif
+    }
+
 private:
     double sampleRate = 44100.0;
     float lowFrequency = 100.0f, lowGain = 0.0f, highFrequency = 8000.0f, highGain = 0.0f;
@@ -273,13 +336,54 @@ inline float interpolateOversampledSidechain(float current, float next,
     return current + (next - current) * position;
 }
 
+// Ring-buffer index arithmetic without a per-sample integer division. Both
+// take an index in [0, size) and an offset in [0, size), as every delay line
+// here does, and return exactly what `(index + size) % size` and
+// `(index + 1) % size` returned.
+inline int wrapRingIndex(int index, int size) noexcept { return index < 0 ? index + size : index; }
+inline int advanceRingIndex(int index, int size) noexcept { return index + 1 == size ? 0 : index + 1; }
+
+// A ring-buffer delay line over a block, exactly as the per-sample loop
+//   line[write] = input[i]; output[i] = line[(write - delay) mod size]; advance write
+// leaves it: the first `delay` outputs come from the ring, the rest are the
+// block's own input `delay` samples back, and the block is written into the
+// ring afterwards. 0 <= delay < size; `output` may be null (history only) and
+// must not alias `input`.
+inline void delayLineBlock(float* line, int size, int& write, int delay,
+                           const float* input, float* output, int n) noexcept
+{
+    if (output != nullptr)
+    {
+        const int fromRing = std::min(delay, n);
+        int read = wrapRingIndex(write - delay, size);
+        for (int i = 0; i < fromRing; ++i)
+        {
+            output[i] = line[read];
+            read = advanceRingIndex(read, size);
+        }
+        if (n > fromRing)
+            std::memcpy(output + fromRing, input, static_cast<size_t>(n - fromRing) * sizeof(float));
+    }
+    // Only the last `size` samples of a long block survive in the ring.
+    const int skip = std::max(0, n - size);
+    int position = (write + skip) % size;
+    for (int i = skip; i < n;)
+    {
+        const int run = std::min(n - i, size - position);
+        std::memcpy(line + position, input + i, static_cast<size_t>(run) * sizeof(float));
+        i += run;
+        position = (position + run) % size;
+    }
+    write = (write + n) % size;
+}
+
 class MultiCompAntiAliasing
 {
 public:
     void prepare(int maxBlock) noexcept
     {
-        (void)maxBlock;
-        OversamplerWide maxOversampler;
+        blockScratch.assign(static_cast<size_t>(MultiCompOversamplerWide::blockScratch(std::max(1, maxBlock))), 0.0f);
+        MultiCompOversamplerWide maxOversampler;
         maxOversampler.setFactor(4);
         maxLatency = static_cast<int>(std::lround(maxOversampler.latency()));
         compensation.assign(static_cast<size_t>(std::max(1, maxLatency + 1)), 0.0f);
@@ -303,6 +407,8 @@ public:
             phaseDelay.fill(0.0f);
             phaseWritePosition = 0;
         }
+        compensationDelay = std::clamp(maxLatency - (oversamplingOff ? 0
+            : static_cast<int>(std::lround(oversampler.latency()))), 0, maxLatency);
     }
     void reset() noexcept
     {
@@ -323,12 +429,47 @@ public:
             const float processed = fn(sample);
             const float delayed = phaseDelay[static_cast<size_t>(phaseWritePosition)];
             phaseDelay[static_cast<size_t>(phaseWritePosition)] = processed;
-            phaseWritePosition = (phaseWritePosition + 1) % phaseDelaySamples;
+            phaseWritePosition = advanceRingIndex(phaseWritePosition, phaseDelaySamples);
             return delayed;
         });
         return compensateBaseRate(wet);
     }
     template <class Fn> float processSample(float input, Fn&& fn) noexcept { return process(input, static_cast<Fn&&>(fn)); }
+    // process() over a block, for a phase function that does not feed back
+    // into this oversampler: every sample up, fn(sample index, phase, value)
+    // on every phase, every sample down. Each filter sees the same values in
+    // the same order as per-sample process(). `phases` holds 4 * n floats.
+    template <class Fn> void processBlock(const float* input, float* output, int n,
+                                          float* phases, Fn&& fn) noexcept
+    {
+        const int phaseCount = oversampler.getFactor();
+        upsampleBlock(input, n, phases);
+        for (int i = 0; i < n; ++i)
+            for (int phase = 0; phase < phaseCount; ++phase)
+                phases[i * phaseCount + phase] = fn(i, phase, phases[i * phaseCount + phase]);
+        downsampleBlock(phases, n, output);
+    }
+    // upsampleSample() / downsampleSample() for n samples; phases interleaved,
+    // getFactor() per sample. downsampleBlock() consumes `phases`.
+    void upsampleBlock(const float* input, int n, float* phases) noexcept
+    {
+        oversampler.upsampleBlock(input, n, phases, blockScratch.data());
+    }
+    void downsampleBlock(float* phases, int n, float* output) noexcept
+    {
+        // downsampleSample()'s phase delay, phase by phase in order.
+        if (phaseDelaySamples > 0)
+            for (int k = 0; k < n * oversampler.getFactor(); ++k)
+            {
+                const float delayed = phaseDelay[static_cast<size_t>(phaseWritePosition)];
+                phaseDelay[static_cast<size_t>(phaseWritePosition)] = phases[k];
+                phaseWritePosition = advanceRingIndex(phaseWritePosition, phaseDelaySamples);
+                phases[k] = delayed;
+            }
+        oversampler.downsampleBlock(phases, n, output, blockScratch.data());
+        for (int i = 0; i < n; ++i)
+            output[i] = compensateBaseRate(output[i]);
+    }
     int getFactor() const noexcept { return oversampler.getFactor(); }
     void upsampleSample(float input, float* phases) noexcept
     {
@@ -342,7 +483,7 @@ public:
             {
                 const float delayed = phaseDelay[static_cast<size_t>(phaseWritePosition)];
                 phaseDelay[static_cast<size_t>(phaseWritePosition)] = phases[phase];
-                phaseWritePosition = (phaseWritePosition + 1) % phaseDelaySamples;
+                phaseWritePosition = advanceRingIndex(phaseWritePosition, phaseDelaySamples);
                 phases[phase] = delayed;
             }
         return compensateBaseRate(oversampler.downsampleSample(phases));
@@ -369,20 +510,101 @@ private:
     float compensateBaseRate(float wet) noexcept
     {
         if (compensation.empty() || maxLatency <= 0) return wet;
-        const int current = oversamplingOff ? 0 : static_cast<int>(std::lround(oversampler.latency()));
-        const int delay = std::clamp(maxLatency - current, 0, maxLatency);
+        const int size = static_cast<int>(compensation.size());
         compensation[static_cast<size_t>(writePosition)] = wet;
-        const int read = (writePosition - delay + static_cast<int>(compensation.size())) % static_cast<int>(compensation.size());
-        const float result = compensation[static_cast<size_t>(read)];
-        writePosition = (writePosition + 1) % static_cast<int>(compensation.size());
-        return delay > 0 ? result : wet;
+        const float result = compensation[static_cast<size_t>(wrapRingIndex(writePosition - compensationDelay, size))];
+        writePosition = advanceRingIndex(writePosition, size);
+        return compensationDelay > 0 ? result : wet;
     }
-    OversamplerWide oversampler;   // 127-tap stage A: flat to 20 kHz at 44.1 kHz
+    MultiCompOversamplerWide oversampler;   // 127-tap stage A: flat to 20 kHz at 44.1 kHz
     bool oversamplingOff = false, use4x = false;
     std::vector<float> compensation;
     int maxLatency = 0, writePosition = 0, factor = 2;
+    int compensationDelay = 0;   // maxLatency minus the current factor's FIR latency (setFactor)
+    std::vector<float> blockScratch;   // processBlock()
     std::array<float, 5> phaseDelay{};
     int phaseDelaySamples = 1, phaseWritePosition = 0;
+};
+
+// An upsample-only detector feed whose phases only some modes read (the BUS
+// sidechain, the OPTO detector feeds). While no one reads it, idle() records
+// the host sample instead of filtering it; the next upsampleSample() or factor
+// change first replays the record, so the filter history, and every phase it
+// hands out afterwards, is byte-identical to one that ran throughout.
+//
+// The record holds the last kRecord inputs filtered at a factor of 2 or 4 (at
+// factor 1 the upsampler keeps no history). A longer idle spell replays only
+// those from a reset: the halfband FIRs read at most 63 host samples back (the
+// 127-tap stage), and at 4x the inner stage only reaches the last few outer
+// outputs, so every tap a later output reads comes out of that span.
+template <class Upsampler>
+class LazyUpsampler
+{
+public:
+    void prepare(int maxBlock) noexcept { upsampler.prepare(maxBlock); clearRecord(); }
+    void reset() noexcept { upsampler.reset(); clearRecord(); }
+    void setFactor(int factor) noexcept
+    {
+        if (normalised(factor) != upsampler.getFactor()) catchUp();
+        upsampler.setFactor(factor);
+    }
+    void upsampleSample(float input, float* phases) noexcept
+    {
+        catchUp();
+        upsampler.upsampleSample(input, phases);
+    }
+    // upsampleSample() for n samples (MultiCompOversampler only); room for
+    // `maxBlock` samples is reserved by reserveBlock().
+    void reserveBlock(int maxBlock) { blockScratch.assign(static_cast<size_t>(Upsampler::blockScratch(std::max(1, maxBlock))), 0.0f); }
+    void upsampleBlock(const float* input, int n, float* phases) noexcept
+    {
+        catchUp();
+        upsampler.upsampleBlock(input, n, phases, blockScratch.data());
+    }
+    void idle(float input) noexcept
+    {
+        if (upsampler.getFactor() == 1) return;
+        record[static_cast<size_t>(recordWrite)] = input;
+        recordWrite = (recordWrite + 1) & kRecordMask;
+        if (recorded < kRecord) ++recorded;
+        else overflowed = true;
+    }
+    // idle() for each of n samples.
+    void idleBlock(const float* input, int n) noexcept
+    {
+        if (upsampler.getFactor() == 1 || n <= 0) return;
+        const int skip = std::max(0, n - kRecord);   // only the last kRecord survive
+        int position = (recordWrite + skip) & kRecordMask;
+        for (int i = skip; i < n; ++i)
+        {
+            record[static_cast<size_t>(position)] = input[i];
+            position = (position + 1) & kRecordMask;
+        }
+        recordWrite = position;
+        if (recorded + n > kRecord) overflowed = true;
+        recorded = std::min(recorded + n, kRecord);
+    }
+
+private:
+    static constexpr int kRecord = 128;
+    static constexpr int kRecordMask = kRecord - 1;
+    static int normalised(int factor) noexcept { return factor == 4 ? 4 : factor == 2 ? 2 : 1; }
+    void clearRecord() noexcept { recorded = 0; overflowed = false; }
+    void catchUp() noexcept
+    {
+        if (recorded == 0) return;
+        if (overflowed) upsampler.reset();
+        float phases[4];
+        for (int k = recorded; k > 0; --k)
+            upsampler.upsampleSample(record[static_cast<size_t>((recordWrite - k) & kRecordMask)], phases);
+        clearRecord();
+    }
+
+    Upsampler upsampler;
+    std::vector<float> blockScratch;   // upsampleBlock()
+    std::array<float, kRecord> record{};
+    int recordWrite = 0, recorded = 0;
+    bool overflowed = false;
 };
 
 class MultiCompLookupTables

@@ -131,6 +131,8 @@ public:
         return current;
     }
     float value() const noexcept { return current; }
+    // At the target: next() returns it and changes nothing.
+    bool arrived() const noexcept { return countdown <= 0; }
 
 private:
     float current = 0.0f, target = 0.0f, increment = 0.0f;

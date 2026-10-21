@@ -11,10 +11,12 @@
 #include "MultiCompParams.hpp"
 #include "MultiCompOptoShelf.hpp"
 #include "MultiCompOptoCell.hpp"
+#include "MultiCompOptoOutputCurve.hpp"
 #include "MultiCompOptoOutputStage.hpp"
 #include "MultiCompOptoStageOversampler.hpp"
 #include "MultiCompOptoStructuralHarmonics.hpp"
 #include "MultiCompHelpers.hpp"
+#include "MultiCompFastMath.hpp"
 #include "../../shared-daf/dsp/DuskCrossover.hpp"
 #include "../../shared-daf/dsp/DuskFilters.hpp"
 #include "MultiCompHardware.hpp"
@@ -22,7 +24,25 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
+#include <limits>
 #include <vector>
+
+// A function the compiler must not inline: the rare refresh paths of the per-sample memos, so the check in front of
+// them stays small enough to inline into the per-sample code.
+#if defined(_MSC_VER)
+#define MC2_NOINLINE __declspec(noinline)
+#else
+#define MC2_NOINLINE __attribute__((noinline))
+#endif
+// A branch that is rarely taken: its work (an exact library evaluation) stays behind the branch instead of being
+// computed speculatively and selected away.
+#if defined(__GNUC__) || defined(__clang__)
+#define MC2_UNLIKELY(condition) __builtin_expect(static_cast<bool>(condition), false)
+#else
+#define MC2_UNLIKELY(condition) (condition)
+#endif
 
 namespace duskaudio
 {
@@ -452,8 +472,11 @@ class MultiCompModes
 public:
     static constexpr int kChannels = 2;
 
-    void prepare(double sampleRate, int /*maxBlock*/, int oversamplingFactor)
+    void prepare(double sampleRate, int maxBlock, int oversamplingFactor)
     {
+        // optoStageBlock(): stage input, two gain curves and the stage's own scratch, for 4x phases.
+        const int phases = 4 * std::max(1, maxBlock);
+        optoStageScratch.assign(static_cast<size_t>(3 * phases + OptoStageOversampler::blockScratch(phases)), 0.0f);
         const double newFs = sampleRate > 0.0 ? sampleRate : 48000.0;
         const int newFactor = oversamplingFactor == 4 ? 4 : (oversamplingFactor == 2 ? 2 : 1);
         // The skip is only safe once the one-time work below has actually run.
@@ -687,6 +710,88 @@ public:
         return input;
     }
 
+    // The VCA on one channel for a block: the cell gain of every oversampled
+    // phase (envelopes[i * osFactor + phase]), the values processVCA reaches
+    // phase by phase, in three passes: the detector, each phase's aligned
+    // power, then the gain law on all of them (independent iterations, four
+    // at a time). The knobs are block-constant here (the DSP syncs them once
+    // per block). `lawScratch` holds numSamples + 64 floats.
+    void vcaBlockEnvelopes(int ch, const float* sidechain, int numSamples,
+                           const MultiCompParameterState& p, float* envelopes,
+                           float* lawScratch) noexcept
+    {
+        auto& d = vca[static_cast<size_t>(std::clamp(ch, 0, 1))];
+        const float thresholdDb = vcaThresholdDb(p);
+        const float slope = vcaSlopeFor(p);
+        if (d.phase != 0 || numSamples <= 0)
+        {   // mid-sample (never in the DSP's block path): phase by phase
+            for (int i = 0; i < numSamples; ++i)
+                for (int phase = 0; phase < osFactor; ++phase)
+                    envelopes[i * osFactor + phase] = advanceVcaEnvelope(d, sidechain[i], thresholdDb, slope);
+            return;
+        }
+        // The phases' read positions in the power history (advanceVcaEnvelope).
+        const float upDelay = osFactor == 4 ? 33.25f : osFactor == 2 ? 31.5f : 0.0f;
+        std::array<unsigned, 4> whole{};
+        std::array<float, 4> fraction{};
+        for (int phase = 0; phase < osFactor; ++phase)
+        {
+            const float delay = std::max(upDelay - static_cast<float>(phase) / osFactor, 0.0f);
+            whole[static_cast<size_t>(phase)] = static_cast<unsigned>(delay);
+            fraction[static_cast<size_t>(phase)] = delay - static_cast<float>(whole[static_cast<size_t>(phase)]);
+        }
+        // Pass 1: the detector, one history sample per host sample, kept in
+        // order behind the 64 the ring held before the block.
+        constexpr int kHistory = 64;
+        float* power = lawScratch;
+        for (int age = kHistory - 1; age >= 0; --age)
+            power[kHistory - 1 - age] = d.rmsHistory[(d.rmsWrite - static_cast<unsigned>(age)) & 63u];
+        {   // pushVcaDetector() with the state in registers; the ring takes the block's tail.
+            const float rmsCoeff = vcaRmsCoeff, oneMinusCoeff = 1.0f - vcaRmsCoeff;
+            const float floorPower = vcaDetectorFloorPower, rise = vcaDetectorRise;
+            float rms = d.rms;
+            for (int i = 0; i < numSamples; ++i)
+            {
+                const float previous = std::max(rms, floorPower);
+                rms = std::min(previous * rmsCoeff + sidechain[i] * sidechain[i] * oneMinusCoeff,
+                               previous * rise);
+                if (!std::isfinite(rms)) rms = 0.0f;
+                power[kHistory + i] = rms;
+            }
+            d.rms = rms;
+            for (int i = std::max(0, numSamples - kHistory); i < numSamples; ++i)
+                d.rmsHistory[(d.rmsWrite + 1u + static_cast<unsigned>(i)) & 63u] = power[kHistory + i];
+            d.rmsWrite = (d.rmsWrite + static_cast<unsigned>(numSamples)) & 63u;
+        }
+        // Pass 2: each phase's aligned power, interpolated between history
+        // samples exactly as advanceVcaEnvelope does.
+        for (int phase = 0; phase < osFactor; ++phase)
+        {
+            const float* recent = power + kHistory - static_cast<int>(whole[static_cast<size_t>(phase)]);
+            const float f = fraction[static_cast<size_t>(phase)];
+            float* aligned = envelopes + phase;
+            for (int i = 0; i < numSamples; ++i)
+                aligned[i * osFactor] = recent[i] + (recent[i - 1] - recent[i]) * f;
+        }
+        // Pass 3: the law on every phase, in place.
+        vcaLawGains(envelopes, envelopes, numSamples * osFactor, thresholdDb, slope);
+        d.envelope = envelopes[numSamples * osFactor - 1];
+    }
+
+    // The VCA output gain for a knob value (one-entry cache: the knob moves
+    // per host sample only while the auto-makeup ramp runs).
+    float vcaOutputGainFor(float outputDb) noexcept
+    {
+        if (!(outputDb == vcaOutputDb))
+        {
+            vcaOutputDb = outputDb;
+            vcaOutputGain = decibelsToGain(outputDb);
+        }
+        return vcaOutputGain;
+    }
+
+    int oversamplingFactor() const noexcept { return osFactor; }
+
     float gainReduction(MultiCompMode mode, int ch) const noexcept
     {
         ch = std::clamp(ch, 0, 1);
@@ -809,9 +914,18 @@ public:
     }
 
     // Opto's output-stage oversampling adds a constant latency (host samples).
-    static constexpr int optoStageLatencySamples() noexcept
+    int optoStageLatencySamples() const noexcept
     {
-        return kOptoStageLatencyHost;
+        return optoStageLatencyHost(fs);
+    }
+    // The Oversampling setting's factor (1, 2 or 4). At a fast host it exceeds Opto's mode factor
+    // (fixedRateModeFactor()); the output stage oversamples when the setting asks for it. Until it is set the stage
+    // follows the mode factor.
+    void setOptoSettingFactor(int settingFactor) noexcept
+    {
+        if (settingFactor == optoSettingFactor) return;
+        optoSettingFactor = settingFactor;
+        configureOptoStage();
     }
 
     // OPTO stereo link (see kOptoLinkAtDriveDefault). MultiCompDSP asks which
@@ -821,6 +935,119 @@ public:
     // One stereo sample of OPTO. With a link amount set the two cells advance together from their linked
     // light (OptoCell::processLightPair) and each channel's audio takes the gain that call hands back;
     // without one, each channel runs on its own as before.
+    // What processOptoPreStage() hands the output stage for one phase.
+    struct OptoStageFeed
+    {
+        float input = 0.0f;         // the stage's input
+        float settledGain = 1.0f;   // the settled-power correction, before its delay
+        float meterGain = 1.0f;     // the gain-law corrections, before their delay
+        bool muted = false;         // Gain at zero: the stage runs on silence, the output is 0
+    };
+
+    // processOptoLightPair() / process(Opto, ...) up to the output stage, for the
+    // DSP's block path: the stage then runs over the block (optoStageBlock()).
+    void optoPreStagePair(const std::array<float, 2>& input, const std::array<float, 2>& sidechain,
+                          const MultiCompParameterState& p, bool external,
+                          const std::array<float, 2>& detector, OptoStageFeed& left, OptoStageFeed& right) noexcept
+    {
+        if (!optoCell.linked())
+        {
+            processOptoPreStage(input[0], 0, sidechain[0], p, external, detector[0], true, false, 1.0f, left);
+            processOptoPreStage(input[1], 1, sidechain[1], p, external, detector[1], true, false, 1.0f, right);
+            return;
+        }
+        const auto oldGain = optoCell.processLightPair(input, sidechain, external,
+            detector, p.optoLimit.load(std::memory_order_relaxed),
+            p.optoPeakReduction.load(std::memory_order_relaxed));
+        if constexpr (!kOptoToneSynthesisEnabled && !kOptoClassifierCorrectionsEnabled && kOptoPreHighPassAhead)
+        {   // processOptoPreStage()'s shipped path for both channels (the element's lanes at once)
+            const std::array<float, 2> cellInput{{optoPreHighPass[0].process(input[0]), optoPreHighPass[1].process(input[1])}};
+            const std::array<float, 2> audio{{optoShelf[0].process(cellInput[0]), optoShelf[1].process(cellInput[1])}};
+            const auto term = optoCell.elementTermPair(cellInput, oldGain, p.optoPeakReduction.load(std::memory_order_relaxed));
+            const float gainKnob = p.optoGain.load(std::memory_order_relaxed);
+            if (!(gainKnob == optoMakeupKnob))
+            {
+                optoMakeupKnob = gainKnob;
+                optoMakeup = optoKnobToLinearGain(gainKnob);
+            }
+            const float makeup = optoMakeup;
+            OptoStageFeed* feeds[2] = {&left, &right};
+            for (size_t c = 0; c < 2; ++c)
+            {
+                if (makeup == 0.0f)
+                    *feeds[c] = OptoStageFeed{0.0f, 1.0f, 1.0f, true};
+                else
+                {
+                    const float compressed = (audio[c] - term[c]) * oldGain[c];
+                    feeds[c]->input = (compressed + 0.0f) * makeup;
+                    feeds[c]->muted = false;
+                    feeds[c]->settledGain = 1.0f;
+                    feeds[c]->meterGain = 1.0f;
+                }
+            }
+            return;
+        }
+        processOptoPreStage(input[0], 0, sidechain[0], p, external, detector[0], true, true, oldGain[0], left);
+        processOptoPreStage(input[1], 1, sidechain[1], p, external, detector[1], true, true, oldGain[1], right);
+    }
+    void optoPreStage(float input, int ch, float sidechain, const MultiCompParameterState& p, bool external,
+                      float optoDetector, bool useOptoDetector, OptoStageFeed& feed) noexcept
+    {
+        processOptoPreStage(input, std::clamp(ch, 0, 1), sidechain, p, external, optoDetector, useOptoDetector,
+                            false, 1.0f, feed);
+    }
+    // optoStageSample() for `count` consecutive phases of one channel (count
+    // at most 4 x the prepared block): each stage element over the block, in
+    // optoStageSample()'s order per phase.
+    void optoStageBlock(int ch, const OptoStageFeed* feeds, int count, float* outputs) noexcept
+    {
+        if (count <= 0) return;
+        const size_t c = static_cast<size_t>(std::clamp(ch, 0, 1));
+        optoStageCurveBlock(c, feeds, count, outputs);
+        for (int k = 0; k < count; ++k) outputs[k] = optoPostHighPass[c].process(outputs[k]);
+        optoStageGainBlock(c, feeds, count, outputs);
+    }
+    // optoStageBlock() for both channels: each channel's arithmetic unchanged, with the two post high-passes
+    // (recursions bound by their own latency) interleaved in one loop.
+    void optoStageBlockPair(const OptoStageFeed* feeds0, const OptoStageFeed* feeds1, int count, float* outputs0,
+                            float* outputs1) noexcept
+    {
+        if (count <= 0) return;
+        optoStageCurveBlock(0, feeds0, count, outputs0);
+        optoStageCurveBlock(1, feeds1, count, outputs1);
+        OptoSubsonicHighPass::processPairBlock(optoPostHighPass[0], optoPostHighPass[1], outputs0, outputs1, count);
+        optoStageGainBlock(0, feeds0, count, outputs0);
+        optoStageGainBlock(1, feeds1, count, outputs1);
+    }
+    // optoStageBlock()'s steps ahead of and behind the post high-pass.
+    void optoStageCurveBlock(size_t c, const OptoStageFeed* feeds, int count, float* outputs) noexcept
+    {
+        float* stage = optoStageScratch.data();
+        float* work = stage + count;
+        for (int k = 0; k < count; ++k) stage[k] = feeds[k].muted ? 0.0f : feeds[k].input;
+        opto[c].stage.processBlock(stage, outputs, count, optocurve::OutputCurve{}, work);
+    }
+    void optoStageGainBlock(size_t c, const OptoStageFeed* feeds, int count, float* outputs) noexcept
+    {
+        auto& d = opto[c];
+        float* settled = optoStageScratch.data();
+        float* meter = settled + count;
+        for (int k = 0; k < count; ++k)
+        {
+            const bool muted = feeds[k].muted;
+            settled[k] = muted ? 1.0f : feeds[k].settledGain;
+            meter[k] = muted ? 1.0f : feeds[k].meterGain;
+        }
+        const int stageDelay = d.stage.delaySamples();
+        const bool settledUnity = d.settledGainDelay.processBlock(settled, count, stageDelay);
+        const bool meterUnity = d.meterGainDelay.processBlock(meter, count, stageDelay);
+        if (settledUnity && meterUnity)   // x * 1 * 1 is x
+            for (int k = 0; k < count; ++k) outputs[k] = feeds[k].muted ? 0.0f : outputs[k];
+        else
+            for (int k = 0; k < count; ++k)
+                outputs[k] = feeds[k].muted ? 0.0f : outputs[k] * settled[k] * meter[k];
+    }
+
     std::array<float, 2> processOptoLightPair(const std::array<float, 2>& input,
                                               const std::array<float, 2>& sidechain,
                                               const MultiCompParameterState& p, bool external,
@@ -850,9 +1077,10 @@ public:
     }
 
     // Candidate C6's stereo link (see kFetDynamicsDefaults). When the loop
-    // runs, MultiCompDSP hands each channel its partner's driven sample, already
-    // scaled by the link amount, before calling process(); one call per sample,
-    // consumed by processFET.
+    // runs, a caller that steps process() sample by sample hands each channel
+    // its partner's driven sample, already scaled by the link amount, before
+    // the call; one per sample, consumed by processFET. MultiCompDSP passes
+    // the partners to processFetC6Block instead.
     bool fetFeedbackActive(const MultiCompParameterState& p) const noexcept
     {
         return fetDynamics.fbOn > 0.5f
@@ -863,11 +1091,42 @@ public:
         fetLinkPartner[static_cast<size_t>(std::clamp(ch, 0, 1))] = sample;
     }
 
+    // processFET's C6 arm (fetFeedbackActive) over a block of oversampled samples, for MultiCompDSP's FET block
+    // path: `channelCount` channels (1 or 2), each one's audio, detector feed and linked partner per oversampled
+    // sample k = i * factor + phase (partner null: zero, as unlinked), the Output knob in dB per host sample, the
+    // results into `out`. A stereo pair runs in two-lane registers on arm64 (MultiCompLanes.hpp), channel by
+    // channel elsewhere; either way each channel ends exactly as processFET called sample by sample leaves it.
+    void processFetC6Block(int channelCount, const MultiCompParameterState& p, bool external, int samples,
+                           int factor, const float* outputDb, const float* const* audio,
+                           const float* const* sidechain, const float* const* partner, float* const* out) noexcept
+    {
+        // MC2_FET_SINGLE_LANE (verification builds only) steps a pair one channel at a time, so the two-lane
+        // path can be byte-compared against it.
+#if defined(__aarch64__) && !defined(MC2_FET_SINGLE_LANE)
+        if (channelCount == 2)
+        {
+            const int channels[2] = {0, 1};
+            fetC6Run<lanes::Lane2>(channels, p, external, samples, factor, outputDb, audio, sidechain, partner, out);
+            return;
+        }
+#endif
+        for (int ch = 0; ch < std::min(channelCount, 2); ++ch)
+        {
+            const int channels[1] = {ch};
+            const float* const partnerOf[1] = {partner != nullptr ? partner[ch] : nullptr};
+            fetC6Run<lanes::Lane1>(channels, p, external, samples, factor, outputDb, audio + ch, sidechain + ch,
+                                   partner != nullptr ? partnerOf : nullptr, out + ch);
+        }
+    }
+
     // Lab-only hook (see kFetDynamicsDefaults). Not real-time safe against a
     // running block and never called by the plugin.
     void setFetDynamicsParams(const FetDynamicsParams& params) noexcept
     {
         fetDynamics = params;
+        fetFeedbackTerms.valid = false;
+        for (auto& d : fet) d.carry.valid = false;
+        fetStaticKnobK3Memo.valid = false;
         updateFetDynamicsCoefficients();
     }
 
@@ -932,8 +1191,9 @@ private:
 
     void configureOptoStage() noexcept
     {
+        const bool oversampled = (optoSettingFactor > 0 ? optoSettingFactor : osFactor) >= 2;
         for (auto& d : opto)
-            d.stage.setFactor(osFactor);
+            d.stage.configure(osFactor, optoStageLatencyHost(fs), oversampled);
     }
 
     // The output stage's own state. The detector, estimator and cell state
@@ -995,12 +1255,53 @@ private:
         bool shortEventEnabled = false;
         bool shortEventConsumed = false;
     };
+    // One tolerance-refreshed expansion's anchor: the last argument the function was evaluated at exactly (NaN:
+    // none yet), its value there, and what the series needs besides (an inverse or a sine).
+    struct FetExpansion
+    {
+        float at = std::numeric_limits<float>::quiet_NaN(), value = 0.0f, aux = 0.0f;
+    };
+    struct FetExpansionD
+    {
+        double at = std::numeric_limits<double>::quiet_NaN(), value = 0.0;
+    };
+    // expandedDepthPow's anchor: the last exact evaluation point, its inverse (NaN: none yet), exponent and value.
+    struct FetPowExpansion
+    {
+        double at = 0.0, inverse = std::numeric_limits<double>::quiet_NaN(), exponent = 0.0, value = 0.0;
+    };
+    // The knobs a carried C6 evaluation (FETState::FetCarry) was taken under.
+    struct FetCarryKey
+    {
+        int ratioIndex = -1;
+        float thresholdControlDb = 0.0f, attackPosition = 0.0f, releasePosition = 0.0f, sr = 0.0f;
+    };
     struct FETState
     {
+        // The C6 loop's last exact overshoot evaluation (advanceFetFeedback), carried to the next steps: its point
+        // (u, its charge, the slow population and the tail reading), its value without the drive, and its slopes.
+        struct FetCarry
+        {
+            bool valid = false, kneeApplied = false;
+            float u = 0.0f, charge = 0.0f, slow = 0.0f, tail = 0.0f, quotient = 0.0f, levelSlope = 0.0f;
+            float slowSlope = 0.0f, weight = 1.0f, weightSlope = 0.0f;
+            FetCarryKey key;
+        } carry;
+        // Expansions of the C6 loop's slowly moving arguments (see expandedTanh and the others): the slow law's
+        // tanh, the tip's cube root and cosine and the overshoot's exponential in the charge solve, the knee
+        // release's exponential (double), the envelope's dB-to-gain and the colour stage's gain-to-dB.
+        FetExpansion slowShapeExpansion, tipCbrtExpansion, tipCosExpansion, overshootExpExpansion;
+        FetExpansion envelopeGainExpansion, colourGrDbExpansion;
+        FetExpansionD kneeExpExpansion;
+        FetPowExpansion depthPowExpansion;   // the 4:1 depth term's power (expandedDepthPow)
         float envelope = 1, previous = 0, dc = 0, prevSq = 0, peak = 0;
         float kneePeak = 0;
         float kneeBaseReductionDb = 0;
         float kneeCorrectionDb = 0, kneeGain = 1;
+        // The C6 knee gain for the last knee correction it was evaluated at (bit for bit).
+        std::uint32_t kneeGainKey = 0;
+        bool kneeGainValid = false;
+        float kneeGainValue = 1.0f;
         float recoveryPreviousInstantLevel = 0;
         float recoveryMaximumLevelDrop = 0;
         float recoveryMaximumGrDb = 0, recoveryElapsedSeconds = 0;
@@ -1112,6 +1413,7 @@ private:
 
     double fs = 48000.0;
     int osFactor = 1;
+    int optoSettingFactor = 0;   // setOptoSettingFactor(); 0: not set
     bool prepared = false;
     std::array<OptoState, 2> opto{};
     OptoCell optoCell;
@@ -1154,6 +1456,10 @@ private:
     std::array<int, 2> digitalWrite{{0, 0}};
 
     std::array<HardwareEmulation::TransformerEmulation, 2> inputTransformerFet, outputTransformerFet;
+    // The vintage input transformer feeds only the arms off the C6 loop (All-buttons; the loop switched off), so
+    // the loop leaves it unstepped (owner, 2026-10-20) and marks it resting: the next sample off the loop resets
+    // it first, so it starts from rest rather than from a stale history.
+    std::array<bool, 2> fetInputTransformerResting{};
     std::array<HardwareEmulation::TransformerEmulation, 2> inputTransformerBus, outputTransformerBus;
     std::array<HardwareEmulation::TransformerEmulation, 2> inputTransformerStudioFet, outputTransformerStudioFet;
     std::array<HardwareEmulation::TransformerEmulation, 2> inputTransformerStudioVca, outputTransformerStudioVca;
@@ -1162,8 +1468,20 @@ private:
     MultiCompLookupTables lookupTables;
 
     float optoInvSampleRate = 1.0f / 48000.0f;
+    float optoMakeupKnob = std::numeric_limits<float>::quiet_NaN(), optoMakeup = 1.0f;   // processOptoPreStage()
+    std::vector<float> optoStageScratch;   // optoStageBlock()
     // VCA detector onset limit (MultiCompVcaLaw.hpp), refreshed with the rate.
     float vcaDetectorFloorPower = 0.0f, vcaDetectorRise = 1.0f;
+    // 35 ms: the single-constant fit to the reference step family gave
+    // 31 ms (attack) / 35 ms (release); at 33 ms our attack and release
+    // both read 1-7 ms fast against the reference, so the constant sits
+    // at the release fit.
+    static constexpr float kVcaRmsSeconds = 0.035f;
+    float vcaRmsCoeff = 0.0f;   // host-rate pole of the RMS integrator, refreshed with the rate
+    // The COMPRESSION law and the output gain only move with their knobs; the
+    // per-sample path reads them through these one-entry caches.
+    float vcaSlopePosition = std::numeric_limits<float>::quiet_NaN(), vcaSlope = 0.0f;
+    float vcaOutputDb = std::numeric_limits<float>::quiet_NaN(), vcaOutputGain = 1.0f;
     float optoColourPeakRelease = 0;
     float optoShortEventRelease = 0;
     float optoEventDropSlowRelease = 0;
@@ -1177,7 +1495,12 @@ private:
     int optoShortEventQuietSamples = 1;
     int optoShortEventArmSamples = 1;
     int optoShortEventRecurringMaxSamples = 1;
+    int optoTonePeriodMaxSamples = 1, optoToneMinimumPeriod = 2, optoToneMaximumPeriod = 2;
+    int optoLongEventAgeMaxSamples = 1, optoShortEventGapSamples = 1, optoShortEventAgeMaxSamples = 1;
     float fetTilt = 0, fetHardwareGain = 1.0f;
+    float fetColourCorner250 = 0.0f, fetColourPeakRelease = 0.0f, fetLowT3Corner300 = 0.0f;   // updateRateCoefficients
+    float fetColourDcAlpha = 0.0f;                                                            // updateRateCoefficients
+    bool fetConvolutionUnity = false;   // the FET convolution's IR is the unit impulse (prepare)
     float busHardwareGain = 1.0f;
     std::array<float, 3> fetHardwareGains{{1.0f, 1.0f, 1.0f}};
     std::array<float, 3> busHardwareGains{{1.0f, 1.0f, 1.0f}};
@@ -1211,6 +1534,7 @@ private:
             preparePair(inputTransformerStudioVca[ch], outputTransformerStudioVca[ch], svp, true);
         }
         fetConvolution.prepare(rate); fetConvolution.loadTransformerIR(HardwareEmulation::ShortConvolution::TransformerType::FET);
+        fetConvolutionUnity = fetConvolution.isUnity();
         busConvolution.prepare(rate); busConvolution.loadTransformerIR(HardwareEmulation::ShortConvolution::TransformerType::Console_Bus);
         cacheHardwareGains();
         updateHardwareRate(rate);
@@ -1257,6 +1581,7 @@ private:
         // The VCA detector runs once per host sample, so its limit uses fs.
         vcaDetectorFloorPower = std::pow(10.0f, vcaLaw::kDetectorFloorDb * 0.1f);
         vcaDetectorRise = std::pow(10.0f, vcaLaw::kDetectorRiseDbPerMs * 100.0f / static_cast<float>(fs));
+        vcaRmsCoeff = std::exp(-1.0f / (kVcaRmsSeconds * static_cast<float>(fs)));
         optoCell.setRate(sr);
         optoColourPeakRelease = std::exp(-optoInvSampleRate / 0.040f);
         optoShortEventRelease = std::exp(-optoInvSampleRate / 0.030f);
@@ -1282,7 +1607,57 @@ private:
             std::lround(0.075f * sr)));
         optoShortEventRecurringMaxSamples = std::max(1, static_cast<int>(
             std::lround(0.600f * sr)));
+        // Sample counts processOpto compares against on every sample, in the
+        // form it always computed them.
+        optoTonePeriodMaxSamples = std::max(1, static_cast<int>(std::lround(0.050f / optoInvSampleRate)));
+        optoToneMinimumPeriod = std::max(2, static_cast<int>(
+            std::lround(1.0f / (20000.0f * optoInvSampleRate))));
+        optoToneMaximumPeriod = std::max(optoToneMinimumPeriod, static_cast<int>(
+            std::lround(1.0f / (20.0f * optoInvSampleRate))));
+        optoLongEventAgeMaxSamples = std::max(1, static_cast<int>(std::lround(4.0f / optoInvSampleRate)));
+        optoShortEventGapSamples = std::max(1, static_cast<int>(std::lround(0.002f / optoInvSampleRate)));
+        optoShortEventAgeMaxSamples = std::max(1, static_cast<int>(std::lround(0.100f / optoInvSampleRate)));
         fetTilt = 1.0f - std::exp(-2.0f * kDuskPi * 800.0f / sr);
+        // processFET's colour-stage one-poles, in the form it computed them on every sample.
+        fetColourCorner250 = 1.0f - std::exp(-2.0f * kDuskPi * 250.0f / sr);
+        fetColourPeakRelease = std::exp(-1.0f / (0.1f * sr));
+        fetLowT3Corner300 = 1.0f - std::exp(-2.0f * kDuskPi * 300.0f / sr);
+        fetColourDcAlpha = 1.0f / (1.0f + kDuskTwoPi * 10.0f / sr);
+    }
+
+    // A knob law's value for the last knob value it was evaluated at (bit for bit): the laws below are pure
+    // functions of one knob, so the memo returns exactly what evaluating them again would.
+    struct FetKnobMemo
+    {
+        std::uint32_t key = 0;
+        bool valid = false;
+        float value = 0.0f;
+    };
+    // processFET's knob laws (memoized): Input and Output gain (vintage, Studio), threshold gain, Attack and
+    // Release positions.
+    std::array<FetKnobMemo, 2> fetInputGainMemo{}, fetOutputGainMemo{};
+    FetKnobMemo fetThresholdGainMemo, fetAttackPositionMemo, fetReleasePositionMemo;
+    FetKnobMemo fetStaticKnobK3Memo;   // fbStaticK3KnobShare's Release law (cleared with the dynamics)
+    float fetReleasePositionOf(const MultiCompParameterState& p) noexcept
+    {
+        return memoized(fetReleasePositionMemo, p.fetRelease.load(std::memory_order_relaxed),
+                        [](float v) noexcept { return fetReleasePosition(v); });
+    }
+    template <class Fn>
+    static float memoized(FetKnobMemo& memo, float x, Fn&& law) noexcept
+    {
+        std::uint32_t bits;
+        std::memcpy(&bits, &x, sizeof bits);
+        if (memo.valid && memo.key == bits) return memo.value;
+        return memoRefresh(memo, bits, x, law);
+    }
+    template <class Fn>
+    MC2_NOINLINE static float memoRefresh(FetKnobMemo& memo, std::uint32_t bits, float x, Fn& law) noexcept
+    {
+        memo.key = bits;
+        memo.value = law(x);
+        memo.valid = true;
+        return memo.value;
     }
 
     static int hardwareGainIndex(int factor) noexcept
@@ -1558,6 +1933,80 @@ private:
         return coefficients.back();
     }
 
+    // fetFeedbackK3 / K2 / LowFrequencyK2: one reduction grid (dB, the call site's
+    // -gainToDecibels(envelope + 0.001f) coordinate) and the three coefficient tables on it.
+    static constexpr std::array<float, 18> kFetFeedbackColourGridDb{{
+        0.0f, 0.5f, 1.0f, 2.0f, 3.0f, 4.5f, 6.0f, 8.0f, 10.0f, 12.5f, 15.0f, 18.0f, 21.0f, 24.0f, 27.0f, 30.0f, 34.0f, 40.0f}};
+    static constexpr std::array<float, 18> kFetFeedbackK3Coefficients{{
+        -0.0037833666f, -0.0042293137f, -0.0047683814f, -0.0045133834f, -0.0042467434f, -0.0041645253f, -0.004137338f, -0.00410022f, -0.0040682144f, -0.0035717501f, -0.0029148753f, -0.0017307282f, -0.00040785203f, 1.9968795e-05f, -0.00047855233f, -0.0002712117f, 0.00094335334f, 0.0021579184f}};
+    static constexpr std::array<float, 18> kFetFeedbackK2Coefficients{{
+        -0.0037055267f, -0.003938718f, -0.0040902914f, -0.0029706408f, -0.0024666698f, -0.0020234112f, -0.0013229456f, -0.00048062025f, 0.00044876084f, 0.0016075863f, 0.0029288072f, 0.0044594146f, 0.006332474f, 0.009714308f, 0.014136585f, 0.016536158f, 0.01659756f, 0.016658964f}};
+    static constexpr std::array<float, 18> kFetFeedbackLowFrequencyK2Coefficients{{
+        -0.0005223149f, -0.0004777339f, -0.00043315292f, -0.00045875664f, -0.000630866f, -0.0010258019f, 9.901148e-05f, 0.0014718693f, 0.0021234842f, 0.0023899924f, 0.0021970607f, 0.0020121632f, 0.0020844045f, 0.0020459061f, 0.002141804f, 0.0021757928f, 0.0021054293f, 0.0020350656f}};
+    // The grid row a reduction falls in (clamped to 0..40 dB) and its fraction of the interval below it; row 18
+    // past the last point (NaN lands there). One search serves all three tables.
+    struct FetColourRow
+    {
+        size_t row;
+        float fraction;
+    };
+    // The row of a reduction already clamped to 0..40 dB (not NaN), from its half-dB cell ceil(2 g): every grid
+    // point is a multiple of 0.5 dB, so a reduction in ((j - 1) / 2, j / 2] has the row of j / 2, the first grid
+    // point at or above it -- the row a search from the bottom finds.
+    static size_t fetColourRowIndex(float clampedReductionDb) noexcept
+    {
+        static constexpr std::array<std::uint8_t, 81> rows = [] {
+            std::array<std::uint8_t, 81> table{};
+            for (size_t j = 0; j < table.size(); ++j)
+            {
+                size_t i = 1;
+                while (i + 1 < kFetFeedbackColourGridDb.size()
+                       && kFetFeedbackColourGridDb[i] < 0.5f * static_cast<float>(j))
+                    ++i;
+                table[j] = static_cast<std::uint8_t>(i);
+            }
+            return table;
+        }();
+        return rows[static_cast<size_t>(std::ceil(2.0f * clampedReductionDb))];
+    }
+    static FetColourRow fetFeedbackColourRow(float gainReductionDb) noexcept
+    {
+        const auto& grid = kFetFeedbackColourGridDb;
+        gainReductionDb = std::clamp(gainReductionDb, 0.0f, 40.0f);
+        if (!(gainReductionDb == gainReductionDb)) return {grid.size(), 0.0f};   // NaN: past the last row
+        const size_t i = fetColourRowIndex(gainReductionDb);
+        return {i, (gainReductionDb - grid[i - 1]) / (grid[i] - grid[i - 1])};
+    }
+    // The three tables' rows packed for lanes (fetFeedbackColourT): the row's lower grid point and its interval,
+    // and per table the value there and its rise to the next, the differences fetFeedbackColourRow / At take.
+    // Row 0 holds the last values with a zero rise, for NaN.
+    struct FetColourPacked
+    {
+        float low, span, k2, k2Rise, k3, k3Rise, lowK2, lowK2Rise;
+    };
+    static const FetColourPacked& fetColourPackedRow(size_t row) noexcept
+    {
+        static constexpr std::array<FetColourPacked, 18> packed = [] {
+            const auto& g = kFetFeedbackColourGridDb;
+            const auto& a = kFetFeedbackK2Coefficients;
+            const auto& b = kFetFeedbackK3Coefficients;
+            const auto& c = kFetFeedbackLowFrequencyK2Coefficients;
+            std::array<FetColourPacked, 18> rows{};
+            rows[0] = {0.0f, 1.0f, a.back(), 0.0f, b.back(), 0.0f, c.back(), 0.0f};
+            for (size_t i = 1; i < rows.size(); ++i)
+                rows[i] = {g[i - 1], g[i] - g[i - 1], a[i - 1], a[i] - a[i - 1], b[i - 1], b[i] - b[i - 1],
+                           c[i - 1], c[i] - c[i - 1]};
+            return rows;
+        }();
+        return packed[row];
+    }
+    static float fetFeedbackColourAt(const std::array<float, 18>& coefficients, FetColourRow at) noexcept
+    {
+        return at.row < coefficients.size()
+            ? coefficients[at.row - 1] + at.fraction * (coefficients[at.row] - coefficients[at.row - 1])
+            : coefficients.back();
+    }
+
     static float fetFeedbackK3(float gainReductionDb) noexcept
     {
         // C6 arm only (2026-10-16). The 1176's harmonics are a static part, a
@@ -1571,59 +2020,20 @@ private:
         // it were fitted to ripple-inclusive surfaces of the earlier smooth cell
         // and stay with the arms that still run it (All-buttons, C6 off).
         // Cubic (third harmonic), sign change near 23 dB GR.
-        constexpr std::array<float, 18> reductionDb{{
-            0.0f, 0.5f, 1.0f, 2.0f, 3.0f, 4.5f, 6.0f, 8.0f, 10.0f, 12.5f, 15.0f, 18.0f, 21.0f, 24.0f, 27.0f, 30.0f, 34.0f, 40.0f}};
-        constexpr std::array<float, 18> coefficients{{
-            -0.0037833666f, -0.0042293137f, -0.0047683814f, -0.0045133834f, -0.0042467434f, -0.0041645253f, -0.004137338f, -0.00410022f, -0.0040682144f, -0.0035717501f, -0.0029148753f, -0.0017307282f, -0.00040785203f, 1.9968795e-05f, -0.00047855233f, -0.0002712117f, 0.00094335334f, 0.0021579184f}};
-        gainReductionDb = std::clamp(gainReductionDb, 0.0f, 40.0f);
-        for (size_t i = 1; i < reductionDb.size(); ++i)
-            if (gainReductionDb <= reductionDb[i])
-            {
-                const float fraction = (gainReductionDb - reductionDb[i - 1])
-                    / (reductionDb[i] - reductionDb[i - 1]);
-                return coefficients[i - 1]
-                    + fraction * (coefficients[i] - coefficients[i - 1]);
-            }
-        return coefficients.back();
+        return fetFeedbackColourAt(kFetFeedbackK3Coefficients, fetFeedbackColourRow(gainReductionDb));
     }
 
     static float fetFeedbackK2(float gainReductionDb) noexcept
     {
         // C6 arm only: the even static part, as fetFeedbackK3 (negative below
         // ~9 dB GR: the 1176's sub-knee second harmonic sits at 180 degrees).
-        constexpr std::array<float, 18> reductionDb{{
-            0.0f, 0.5f, 1.0f, 2.0f, 3.0f, 4.5f, 6.0f, 8.0f, 10.0f, 12.5f, 15.0f, 18.0f, 21.0f, 24.0f, 27.0f, 30.0f, 34.0f, 40.0f}};
-        constexpr std::array<float, 18> coefficients{{
-            -0.0037055267f, -0.003938718f, -0.0040902914f, -0.0029706408f, -0.0024666698f, -0.0020234112f, -0.0013229456f, -0.00048062025f, 0.00044876084f, 0.0016075863f, 0.0029288072f, 0.0044594146f, 0.006332474f, 0.009714308f, 0.014136585f, 0.016536158f, 0.01659756f, 0.016658964f}};
-        gainReductionDb = std::clamp(gainReductionDb, 0.0f, 40.0f);
-        for (size_t i = 1; i < reductionDb.size(); ++i)
-            if (gainReductionDb <= reductionDb[i])
-            {
-                const float fraction = (gainReductionDb - reductionDb[i - 1])
-                    / (reductionDb[i] - reductionDb[i - 1]);
-                return coefficients[i - 1]
-                    + fraction * (coefficients[i] - coefficients[i - 1]);
-            }
-        return coefficients.back();
+        return fetFeedbackColourAt(kFetFeedbackK2Coefficients, fetFeedbackColourRow(gainReductionDb));
     }
 
     static float fetFeedbackLowFrequencyK2(float gainReductionDb) noexcept
     {
         // C6 arm only: the 100 Hz even static part, as fetFeedbackK3.
-        constexpr std::array<float, 18> reductionDb{{
-            0.0f, 0.5f, 1.0f, 2.0f, 3.0f, 4.5f, 6.0f, 8.0f, 10.0f, 12.5f, 15.0f, 18.0f, 21.0f, 24.0f, 27.0f, 30.0f, 34.0f, 40.0f}};
-        constexpr std::array<float, 18> coefficients{{
-            -0.0005223149f, -0.0004777339f, -0.00043315292f, -0.00045875664f, -0.000630866f, -0.0010258019f, 9.901148e-05f, 0.0014718693f, 0.0021234842f, 0.0023899924f, 0.0021970607f, 0.0020121632f, 0.0020844045f, 0.0020459061f, 0.002141804f, 0.0021757928f, 0.0021054293f, 0.0020350656f}};
-        gainReductionDb = std::clamp(gainReductionDb, 0.0f, 40.0f);
-        for (size_t i = 1; i < reductionDb.size(); ++i)
-            if (gainReductionDb <= reductionDb[i])
-            {
-                const float fraction = (gainReductionDb - reductionDb[i - 1])
-                    / (reductionDb[i] - reductionDb[i - 1]);
-                return coefficients[i - 1]
-                    + fraction * (coefficients[i] - coefficients[i - 1]);
-            }
-        return coefficients.back();
+        return fetFeedbackColourAt(kFetFeedbackLowFrequencyK2Coefficients, fetFeedbackColourRow(gainReductionDb));
     }
 
     static float fetBroadbandK3(float gainReductionDb) noexcept
@@ -2247,6 +2657,20 @@ private:
                                         float& slope,
                                         bool plateau = true) noexcept
     {
+        return fetStaticOutputLevelDbT<lanes::Lane1>(reductionDb, ratioIndex, thresholdControlDb, slope, plateau);
+    }
+    // Whether a branch some lane may take is evaluated: on one lane exactly when it is taken (the scalar
+    // branch); on two always, each lane then selecting its own (cheaper than a data-dependent branch).
+    template <class L> static bool takes(typename L::M m) noexcept
+    {
+        if constexpr (L::kLanes == 1) return m; else { (void) m; return true; }
+    }
+    // The same over a lane policy (MultiCompLanes.hpp).
+    template <class L>
+    static typename L::F fetStaticOutputLevelDbT(typename L::F reductionDb, int ratioIndex, float thresholdControlDb,
+                                                 typename L::F& slope, bool plateau = true) noexcept
+    {
+        using lanes::vmax; using lanes::vsqrt;
         const size_t r = static_cast<size_t>(std::clamp(ratioIndex, 0, 4));
         const float s = kFetReductionSlopes[r];
         const float threshold = kFetMeasuredThresholdsDb[r]
@@ -2256,22 +2680,28 @@ private:
         const float maximumReduction
             = s * (kFetMaximumDetectorLevelsDb[r] - threshold);
         constexpr float plateauSlope = 100.0f;
-        if (plateau && reductionDb >= maximumReduction)
+        const auto onPlateau = L::m(plateau) && reductionDb >= L::f(maximumReduction);
+        const auto inKnee = !onPlateau && !(reductionDb >= L::f(s * width * 0.5f));
+        const float linearSlope = 1.0f / s - 1.0f;
+        slope = L::f(linearSlope);
+        auto level = L::f(threshold) + reductionDb * slope;
+        // The knee and plateau branches are taken for stretches (quiet or very deep reductions), so a branch on
+        // any lane predicts well and saves both lanes the knee's square root and divisions in the linear range.
+        if (MC2_UNLIKELY(L::any(inKnee)))
         {
-            slope = plateauSlope;
-            return kFetMaximumDetectorLevelsDb[r] - maximumReduction
-                + plateauSlope * (reductionDb - maximumReduction);
+            // Knee: reduction = s p^2 / (2 width), p the input's distance into it.
+            const auto position = vsqrt(
+                L::f(2.0f * width) * vmax(reductionDb, L::f(1.0e-9f)) / L::f(s));
+            slope = L::sel(inKnee, L::f(width) / (L::f(s) * position) - L::f(1.0f), slope);
+            level = L::sel(inKnee, L::f(kneeStart) + position - vmax(reductionDb, L::f(0.0f)), level);
         }
-        if (reductionDb >= s * width * 0.5f)
+        if (MC2_UNLIKELY(L::any(onPlateau)))
         {
-            slope = 1.0f / s - 1.0f;
-            return threshold + reductionDb * slope;
+            slope = L::sel(onPlateau, L::f(plateauSlope), slope);
+            level = L::sel(onPlateau, L::f(kFetMaximumDetectorLevelsDb[r] - maximumReduction)
+                + L::f(plateauSlope) * (reductionDb - L::f(maximumReduction)), level);
         }
-        // Knee: reduction = s p^2 / (2 width), p the input's distance into it.
-        const float position = std::sqrt(
-            2.0f * width * std::max(reductionDb, 1.0e-9f) / s);
-        slope = width / (s * position) - 1.0f;
-        return kneeStart + position - std::max(reductionDb, 0.0f);
+        return level;
     }
 
     static float fetReferenceKneeOnsetDb(float inputLevelDb,
@@ -3032,6 +3462,23 @@ private:
                       float optoDetector, bool useOptoDetector,
                       bool cellPreAdvanced = false, float pairGain = 1.0f) noexcept
     {
+        OptoStageFeed feed;
+        processOptoPreStage(input, ch, sidechain, p, external, optoDetector, useOptoDetector,
+                            cellPreAdvanced, pairGain, feed);
+        return optoStageSample(ch, feed);
+    }
+
+    // OPTO for one oversampled phase, everything ahead of the output stage:
+    // the cell, the colour and harmonic terms and every gain correction. What
+    // the stage and the gains behind it need goes into `feed`; optoStageSample()
+    // (or optoStageBlock() over many phases) finishes the sample. The output
+    // stage, its high-pass and the two aligned gain delays read nothing the
+    // corrections compute from them, so they can run later.
+    void processOptoPreStage(float input, int ch, float sidechain,
+                             const MultiCompParameterState& p, bool external,
+                             float optoDetector, bool useOptoDetector,
+                             bool cellPreAdvanced, float pairGain, OptoStageFeed& feed) noexcept
+    {
         auto& d = opto[ch];
         // Native opto leveler HF rise acts on the audio before harmonic generation:
         // 1 -> 4 kHz fundamentals at -6 dBFS / PR 0 move H2..H5 by
@@ -3061,8 +3508,36 @@ private:
                          optoDetector, useOptoDetector, limit,
                          p.optoPeakReduction.load(std::memory_order_relaxed));
         const float dynamicGrDb = optoCell.dynamicGrDb(ch);
-        const float makeup = optoKnobToLinearGain(
-            p.optoGain.load(std::memory_order_relaxed));
+        const float gainKnob = p.optoGain.load(std::memory_order_relaxed);
+        if (!(gainKnob == optoMakeupKnob))   // a pure function of the knob: evaluated when it moves (NaN: always)
+        {
+            optoMakeupKnob = gainKnob;
+            optoMakeup = optoKnobToLinearGain(gainKnob);
+        }
+        const float makeup = optoMakeup;
+        if constexpr (!kOptoToneSynthesisEnabled && !kOptoClassifierCorrectionsEnabled)
+        {
+            // The shipped state. With the tone synthesizer and the classifier
+            // corrections off, the trackers below feed nothing the output
+            // hears: the ripple and harmonic terms are zero, the settled and
+            // meter corrections unity (meterCorrectionDb stays 0). They are not
+            // run. `+ 0.0f` is the zero terms' sum, so a -0 compressed sample
+            // leaves as +0 exactly as before.
+            if (makeup == 0.0f)
+            {
+                if constexpr (!kOptoPreHighPassAhead)
+                    optoPreHighPass[ch].process(0.0f);
+                feed = OptoStageFeed{0.0f, 1.0f, 1.0f, true};
+                return;
+            }
+            const float cellOutput = (compressed + 0.0f) * makeup;
+            feed.input = kOptoPreHighPassAhead
+                ? cellOutput : optoPreHighPass[ch].process(cellOutput);
+            feed.muted = false;
+            feed.settledGain = 1.0f;
+            feed.meterGain = 1.0f;
+            return;
+        }
         const float toneInputAbs = std::abs(input);
         if (toneInputAbs >= d.toneInputPeak)
         {
@@ -3073,9 +3548,7 @@ private:
             --d.toneInputPeakHold;
         else
             d.toneInputPeak *= optoColourPeakRelease;
-        d.tonePeriodSamples = std::min(
-            d.tonePeriodSamples + 1,
-            std::max(1, static_cast<int>(std::lround(0.050f / optoInvSampleRate))));
+        d.tonePeriodSamples = std::min(d.tonePeriodSamples + 1, optoTonePeriodMaxSamples);
         const int toneInputSign = input >= 0.0f ? 1 : -1;
         d.cycleInputPeak = std::max(d.cycleInputPeak, toneInputAbs);
         if (d.toneInputSign < 0 && toneInputSign > 0)
@@ -3096,10 +3569,8 @@ private:
             }
             d.previousCycleInputPeak = d.cycleInputPeak;
             d.cycleInputPeak = toneInputAbs;
-            const int minimumPeriod = std::max(2, static_cast<int>(
-                std::lround(1.0f / (20000.0f * optoInvSampleRate))));
-            const int maximumPeriod = std::max(minimumPeriod, static_cast<int>(
-                std::lround(1.0f / (20.0f * optoInvSampleRate))));
+            const int minimumPeriod = optoToneMinimumPeriod;
+            const int maximumPeriod = optoToneMaximumPeriod;
             if (d.tonePeriodSamples >= minimumPeriod
                 && d.tonePeriodSamples <= maximumPeriod
                 && d.toneInputPeak > 1.0e-8f)
@@ -3224,16 +3695,13 @@ private:
         {
             // Keep the stage's delay lines and the output-side high-passes
             // moving so an unmute is clean: the post high-pass follows the
-            // stage's zero-input output, and the pre high-pass advances with
-            // zero when it sits behind the cell (ahead of the cell it has
-            // already run on this sample's input above).
-            const int stageDelay = d.stage.delaySamples();
+            // stage's zero-input output (optoStageSample), and the pre
+            // high-pass advances with zero when it sits behind the cell (ahead
+            // of the cell it has already run on this sample's input above).
             if constexpr (!kOptoPreHighPassAhead)
                 optoPreHighPass[ch].process(0.0f);
-            optoPostHighPass[ch].process(d.stage.process(0.0f, optoOutputStageCurve));
-            d.settledGainDelay.process(1.0f, stageDelay);
-            d.meterGainDelay.process(1.0f, stageDelay);
-            return 0.0f;
+            feed = OptoStageFeed{0.0f, 1.0f, 1.0f, true};
+            return;
         }
         // The native sub-audio high-passes bracket the cell and the output
         // nonlinearity (MultiCompOptoShelf.hpp: the first sits ahead of the
@@ -3251,8 +3719,6 @@ private:
         // tone-tracking low-pass only separates ripple from the envelope.
         const float rippleGain = appliedGain
             - static_cast<float>(d.rippleGainLow2);
-        const float inputPeakDb = gainToDecibels(
-            std::max(d.toneInputPeak, 1.0e-12f));
         const float harmonicPeakReduction = p.optoPeakReduction.load(
             std::memory_order_relaxed);
         // Armed with the harmonic synthesizer (100 ms of periodic tone):
@@ -3270,43 +3736,46 @@ private:
         // transients and ordinary programme material.
         const float toneSine = std::clamp(
             audio / std::max(d.toneInputPeak, 1.0e-12f), -2.0f, 2.0f);
-        const float phaseStep = 6.2831853071795864769f
-            * harmonicFrequencyHz * optoInvSampleRate;
-        const float phaseStepSine = std::sin(phaseStep);
-        float toneCosine = 0.0f;
-        if (std::abs(phaseStepSine) > 1.0e-5f)
-            toneCosine = (toneSine * std::cos(phaseStep)
-                - d.toneInputPrevious) / phaseStepSine;
+        const float previousToneSine = d.toneInputPrevious;
         d.toneInputPrevious = toneSine;
-        const float phaseMagnitude = std::sqrt(
-            toneSine * toneSine + toneCosine * toneCosine);
-        const float phaseScale = phaseMagnitude > 1.0e-5f
-            ? 1.0f / phaseMagnitude : 0.0f;
-        const float unitSine = toneSine * phaseScale;
-        const float unitCosine = toneCosine * phaseScale;
-        float harmonicSine = 0.0f;
-        float harmonicCosine = 1.0f;
-        std::array<float, 6> sineBases{};
-        std::array<float, 6> cosineBases{};
-        size_t harmonicIndex = 0;
-        for (int harmonic = 1; harmonic <= 7; ++harmonic)
-        {
-            const float nextCosine = harmonicCosine * unitCosine
-                - harmonicSine * unitSine;
-            const float nextSine = harmonicSine * unitCosine
-                + harmonicCosine * unitSine;
-            harmonicCosine = nextCosine;
-            harmonicSine = nextSine;
-            if (harmonic >= 2)
-            {
-                sineBases[harmonicIndex] = harmonicSine;
-                cosineBases[harmonicIndex] = harmonicCosine;
-                ++harmonicIndex;
-            }
-        }
         float cellHarmonics = 0.0f;
         if (harmonicsArmed)
-        {
+        {   // The phase oscillator and its harmonic bases feed only the armed synthesizer.
+            const float phaseStep = 6.2831853071795864769f
+                * harmonicFrequencyHz * optoInvSampleRate;
+            const float phaseStepSine = std::sin(phaseStep);
+            float toneCosine = 0.0f;
+            if (std::abs(phaseStepSine) > 1.0e-5f)
+                toneCosine = (toneSine * std::cos(phaseStep)
+                    - previousToneSine) / phaseStepSine;
+            const float phaseMagnitude = std::sqrt(
+                toneSine * toneSine + toneCosine * toneCosine);
+            const float phaseScale = phaseMagnitude > 1.0e-5f
+                ? 1.0f / phaseMagnitude : 0.0f;
+            const float unitSine = toneSine * phaseScale;
+            const float unitCosine = toneCosine * phaseScale;
+            float harmonicSine = 0.0f;
+            float harmonicCosine = 1.0f;
+            std::array<float, 6> sineBases{};
+            std::array<float, 6> cosineBases{};
+            size_t harmonicIndex = 0;
+            for (int harmonic = 1; harmonic <= 7; ++harmonic)
+            {
+                const float nextCosine = harmonicCosine * unitCosine
+                    - harmonicSine * unitSine;
+                const float nextSine = harmonicSine * unitCosine
+                    + harmonicCosine * unitSine;
+                harmonicCosine = nextCosine;
+                harmonicSine = nextSine;
+                if (harmonic >= 2)
+                {
+                    sineBases[harmonicIndex] = harmonicSine;
+                    cosineBases[harmonicIndex] = harmonicCosine;
+                    ++harmonicIndex;
+                }
+            }
+            const float inputPeakDb = gainToDecibels(
+                std::max(d.toneInputPeak, 1.0e-12f));
             const auto shape = optoStructuralHarmonics(
                 harmonicFrequencyHz, inputPeakDb, harmonicPeakReduction, limit);
             const float cellFundamental = d.toneInputPeak * d.gainMean;
@@ -3332,9 +3801,8 @@ private:
         // fitted to the reference's PR 0 H1-H7 over every Gain's drive range.
         // It replaces the linear-to-0.7 segmented curve plus the G3 quadratic:
         // their abrupt knee switched harmonics on within 0.3 dB of drive.
-        const int stageDelay = d.stage.delaySamples();
-        const float shapedOutput = optoPostHighPass[ch].process(
-            d.stage.process(out, optoOutputStageCurve));
+        feed.input = out;
+        feed.muted = false;
         // R5's added harmonic power moved the marginal 82.41 Hz / -24 dBFS /
         // PR 100 Compress settled cell from +0.481 to +0.503 dB.  Restore the
         // audio-path power (not the detector state) with a sub-0.03 dB LF-only
@@ -3350,18 +3818,15 @@ private:
             ? 0.0f
             : 0.027f * prSquared * prSquared
                 / (1.0f + settledFrequencySquared * settledFrequencySquared);
-        const float settledOutput = shapedOutput * d.settledGainDelay.process(
-            kOptoClassifierCorrectionsEnabled
-                ? 1.0f + 0.115129255f * settledCorrectionDb : 1.0f, stageDelay);
+        feed.settledGain = kOptoClassifierCorrectionsEnabled
+            ? 1.0f + 0.115129255f * settledCorrectionDb : 1.0f;
 
         const float frequencyHz = d.toneMeasuredFrequencyHz;
         constexpr float shortEventThreshold = 0.0316227766f; // -30 dBFS
         const bool shortEventLoud = std::abs(input) > shortEventThreshold;
         if (d.longEventReleaseActive)
             d.longEventReleaseAgeSamples = std::min(
-                d.longEventReleaseAgeSamples + 1,
-                std::max(1, static_cast<int>(std::lround(
-                    4.0f / optoInvSampleRate))));
+                d.longEventReleaseAgeSamples + 1, optoLongEventAgeMaxSamples);
         if (!d.shortEventActive && !shortEventLoud)
             d.shortEventSilenceSamples = std::min(
                 d.shortEventSilenceSamples + 1,
@@ -3371,8 +3836,7 @@ private:
             if (!d.shortEventActive)
             {
                 const bool recurringEvent = d.shortEventSilenceSamples
-                        >= std::max(1, static_cast<int>(std::lround(
-                            0.002f / optoInvSampleRate)))
+                        >= optoShortEventGapSamples
                     && d.shortEventSilenceSamples
                         < optoShortEventRecurringMaxSamples
                     && d.shortEventPreviousCorrectionDb > 0.0f;
@@ -3408,9 +3872,7 @@ private:
         if (d.shortEventActive)
         {
             d.shortEventAgeSamples = std::min(
-                d.shortEventAgeSamples + 1,
-                std::max(1, static_cast<int>(std::lround(
-                    0.100f / optoInvSampleRate))));
+                d.shortEventAgeSamples + 1, optoShortEventAgeMaxSamples);
             if (shortEventLoud)
                 d.shortEventLastLoudAgeSamples = d.shortEventAgeSamples;
             d.shortEventPowerMean += (input * input - d.shortEventPowerMean)
@@ -3585,18 +4047,45 @@ private:
             + eventDropCorrectionDb
             + eventDropSlowCorrectionDb + lfSettledPowerCorrectionDb
             + hfMidPrCorrectionDb + limitMidPrCorrectionDb;
-        const float gainLawOutput = settledOutput * d.meterGainDelay.process(
-            decibelsToGain(-d.meterCorrectionDb), stageDelay);
-
-        return gainLawOutput;
+        feed.meterGain = decibelsToGain(-d.meterCorrectionDb);
     }
+
+    // The output stage behind processOptoPreStage(): the static curve at twice
+    // the mode rate, its high-pass, and the settled and meter corrections
+    // delayed to meet the stage's output.
+    float optoStageSample(int ch, const OptoStageFeed& feed) noexcept
+    {
+        auto& d = opto[static_cast<size_t>(ch)];
+        const int stageDelay = d.stage.delaySamples();
+        if (feed.muted)
+        {
+            optoPostHighPass[ch].process(d.stage.process(0.0f, optocurve::OutputCurve{}));
+            d.settledGainDelay.process(1.0f, stageDelay);
+            d.meterGainDelay.process(1.0f, stageDelay);
+            return 0.0f;
+        }
+        const float shapedOutput = optoPostHighPass[ch].process(
+            d.stage.process(feed.input, optocurve::OutputCurve{}));
+        const float settledOutput = shapedOutput * d.settledGainDelay.process(feed.settledGain, stageDelay);
+        return settledOutput * d.meterGainDelay.process(feed.meterGain, stageDelay);
+    }
+
 
     // fbTailKneeDb: the control value of a reduction, the inverse of the law
     // F(v) = v^2 / (4 knee) below v = 2 knee, v - knee above.
     static float fetTailControl(float reductionDb, float knee) noexcept
     {
-        const float r = std::max(reductionDb, 0.0f);
-        return r < knee ? 2.0f * std::sqrt(knee * r) : r + knee;
+        return fetTailControlT<lanes::Lane1>(reductionDb, knee);
+    }
+    template <class L>
+    static typename L::F fetTailControlT(typename L::F reductionDb, float knee) noexcept
+    {
+        using lanes::vmax; using lanes::vsqrt;
+        const auto r = vmax(reductionDb, L::f(0.0f));
+        const auto below = r < L::f(knee);
+        auto control = r + L::f(knee);
+        if (MC2_UNLIKELY(takes<L>(below))) control = L::sel(below, L::f(2.0f) * vsqrt(L::f(knee) * r), control);
+        return control;
     }
 
     // What a tail population with control value `tailControl` adds on top of
@@ -3605,18 +4094,35 @@ private:
     static float fetTailApplied(float rest, float tailControl, float knee,
                                 float& restSlope, float& lawSlope) noexcept
     {
-        const float r = std::max(rest, 0.0f);
-        const float vr = r < knee ? 2.0f * std::sqrt(knee * r) : r + knee;
-        const float v = vr + tailControl;
-        lawSlope = v < 2.0f * knee ? v / (2.0f * knee) : 1.0f;
+        return fetTailAppliedT<lanes::Lane1>(rest, tailControl, knee, restSlope, lawSlope);
+    }
+    template <class L>
+    static typename L::F fetTailAppliedT(typename L::F rest, typename L::F tailControl, float knee,
+                                         typename L::F& restSlope, typename L::F& lawSlope) noexcept
+    {
+        using lanes::vmax; using lanes::vsqrt;
+        const auto K = [](float x) noexcept { return L::f(x); };
+        const auto r = vmax(rest, K(0.0f));
+        const auto below = r < K(knee);
+        const bool anyBelow = MC2_UNLIKELY(takes<L>(below));
+        auto vr = r + K(knee);
+        if (anyBelow) vr = L::sel(below, K(2.0f) * vsqrt(K(knee) * r), vr);
+        const auto v = vr + tailControl;
+        const auto belowLaw = v < K(2.0f * knee);
+        lawSlope = K(1.0f);
+        auto law = v - K(knee);
+        if (MC2_UNLIKELY(takes<L>(belowLaw)))
+        {
+            lawSlope = L::sel(belowLaw, v * K(0.5f / knee), lawSlope);
+            law = L::sel(belowLaw, v * v * K(0.25f / knee), law);
+        }
         // d v / d reduction is sqrt(knee / reduction) below the knee, unbounded
         // at zero; the solver's coordinate (the square root of the charge)
         // keeps the product finite, and the floor only bounds a Newton slope.
-        const float restInverse = r < knee
-            ? std::sqrt(knee / std::max(r, 1.0e-4f)) : 1.0f;
-        restSlope = lawSlope * restInverse - 1.0f;
-        return std::max(0.0f,
-            (v < 2.0f * knee ? v * v / (4.0f * knee) : v - knee) - r);
+        auto restInverse = K(1.0f);
+        if (anyBelow) restInverse = L::sel(below, vsqrt(K(knee) / vmax(r, K(1.0e-4f))), restInverse);
+        restSlope = lawSlope * restInverse - K(1.0f);
+        return vmax(K(0.0f), law - r);
     }
 
     // fbTailKneeDb as used: 0 (off) unless it is a positive, finite number
@@ -3641,33 +4147,60 @@ private:
             : tail;
     }
 
-    // Candidate C6: one implicit step of the feedback gain computer (see
-    // kFetDynamicsDefaults). `magnitude` is the rectified driven signal BEFORE
-    // the gain; the output's is that times the gain being solved for. The
-    // charge lives in fastGrDb and the slow populations in slowGrDb and
-    // slowTailGrDb, all in dB of reduction (slowTailGrDb is the tail's own
-    // reading: with fbTailKneeDb it adds fetTailAppliedNow(), not that).
-    void advanceFetFeedback(FETState& d, float magnitude, int ratioIndex,
-                            float thresholdControlDb, float attackPosition,
-                            float releasePosition, float transientFactor,
-                            float sr) const noexcept
+    // advanceFetFeedback's terms that depend only on Ratio, Threshold, Attack, Release, the rate and the
+    // dynamics constants. fetFeedbackKnobTerms() evaluates them with advanceFetFeedback's own expressions
+    // and again only when one of those inputs changes (bit for bit), so every value is the one the step
+    // computed for itself. Both channels share them.
+    struct FetFeedbackTerms
     {
-        constexpr float dbToNeper = 0.11512925f;
+        bool valid = false;
+        int ratioIndex = 0;
+        float thresholdControlDb = 0.0f, attackPosition = 0.0f, releasePosition = 0.0f, sr = 0.0f;
+        float releaseDepthDb = 0.0f;
+        float releaseScale = 0.0f;      // fbReleaseSeconds x the Release knob's factor x the ratio's scale
+        float fullCharge = 0.0f, lagStep = 1.0f;
+        float kneeKnob = 0.0f;          // fbReleaseKneeShare x the knee release's knob factor (4:1)
+        double kneeDeepDb = 0.0;        // past this reduction kneeKnob exp(-G / g0) < 2^-25 (+ 0.01 dB margin)
+        float tipDenominator = 1.0f;    // fullCharge, or fullCharge (1 - riseOnly / 2)
+        float ratioCoordinate = 0.0f, tailShare = 0.0f;
+        float attackLoadDb = 0.0f, maximumReductionDb = 0.0f, turnOnBiasDb = 0.0f;
+        double tailStepCharging = 0.0, tailStepReleasing = 0.0;
+        float slowReleaseKnob = 0.0f;   // the slow population's release knob factor
+        float slowChargeStep = 0.0f;
+    };
+    mutable FetFeedbackTerms fetFeedbackTerms;   // advanceFetFeedback's knob terms (fetFeedbackKnobTerms)
+
+    static bool sameBits(float a, float b) noexcept
+    {
+        std::uint32_t x, y;
+        std::memcpy(&x, &a, sizeof x);
+        std::memcpy(&y, &b, sizeof y);
+        return x == y;
+    }
+
+    const FetFeedbackTerms& fetFeedbackKnobTerms(int ratioIndex, float thresholdControlDb, float attackPosition,
+                                                 float releasePosition, float sr) const noexcept
+    {
+        const auto& t = fetFeedbackTerms;
+        if (t.valid && t.ratioIndex == ratioIndex && sameBits(t.thresholdControlDb, thresholdControlDb)
+            && sameBits(t.attackPosition, attackPosition) && sameBits(t.releasePosition, releasePosition)
+            && sameBits(t.sr, sr))
+            return t;
+        return refreshFetFeedbackKnobTerms(ratioIndex, thresholdControlDb, attackPosition, releasePosition, sr);
+    }
+    MC2_NOINLINE const FetFeedbackTerms& refreshFetFeedbackKnobTerms(int ratioIndex, float thresholdControlDb,
+                                                                      float attackPosition, float releasePosition,
+                                                                      float sr) const noexcept
+    {
+        auto& t = fetFeedbackTerms;
+        t.valid = true;
+        t.ratioIndex = ratioIndex;
+        t.thresholdControlDb = thresholdControlDb;
+        t.attackPosition = attackPosition;
+        t.releasePosition = releasePosition;
+        t.sr = sr;
         constexpr float decade = 2.30258509f;
         const float attackOffset = attackPosition - 0.5f;
-        const float tailDb = static_cast<float>(d.slowTailGrDb);
-        // fbTailKneeDb: the tail's own reading against what it adds.
-        const float kneeDb = fetTailKneeDb();
-        const bool kneeApplied = kneeDb > 0.0f && tailDb > 0.0f;
-        const float tailControl = kneeApplied
-            ? fetTailControl(tailDb, kneeDb) : 0.0f;
-        float tailAppliedDb = tailDb;
-        if (kneeApplied)
-        {
-            float restSlope = 0.0f, lawSlope = 0.0f;
-            tailAppliedDb = fetTailApplied(d.fastGrDb + d.slowGrDb, tailControl,
-                                           kneeDb, restSlope, lawSlope);
-        }
         // The Release pot's dead travel at the fast end (fbReleaseTaperEnd,
         // fbReleaseTaperCurve): above the nominal position the remaining
         // travel is compressed onto the span up to the taper's end, so the
@@ -3723,12 +4256,760 @@ private:
             releaseFastEnd = std::max(
                 0.0f, 1.0f - travel / std::max(travelAtHalf, 1.0e-3f));
         }
-        const float releaseDepthDb = (fetDynamics.fbReleaseDepthDb
+        t.releaseDepthDb = (fetDynamics.fbReleaseDepthDb
                 + fetDynamics.fbReleaseDepthFastDb
                     * releaseFastEnd * releaseFastEnd)
             * std::pow(ratioSlope / (1.0f - ratioSlope)
                            * (1.0f - kFetReductionSlopes[0]) / kFetReductionSlopes[0],
                        fetDynamics.fbReleaseDepthRatioExponent);
+        t.releaseScale = fetDynamics.fbReleaseSeconds
+            * std::exp(decade * releaseKnobDecades)
+            * fetRatioReleaseScale(ratioIndex);
+        t.fullCharge = 1.0f / (std::max(attackSeconds, 1.0e-7f) * sr);
+        t.lagStep = fetDynamics.fbAttackLagRatio > 0.0f
+            ? 1.0f - std::exp(-1.0f / (fetDynamics.fbAttackLagRatio
+                * std::exp(-decade * fetDynamics.fbAttackLagSlope * attackOffset)
+                * std::max(attackSeconds, 1.0e-7f) * sr))
+            : 1.0f;
+        const float riseOnly = std::clamp(fetDynamics.fbChargeRiseOnly, 0.0f, 1.0f);
+        t.tipDenominator = riseOnly > 0.0f ? t.fullCharge * (1.0f - 0.5f * riseOnly) : t.fullCharge;
+        t.kneeKnob = fetDynamics.fbReleaseKneeShare
+            * std::exp(decade * fetDynamics.fbReleaseKneeKnobExponent * releaseKnobFromFast);
+        t.kneeDeepDb = t.kneeKnob > 0.0f
+            ? static_cast<double>(std::max(fetDynamics.fbReleaseKneeDb, 1.0e-3f))
+                * (std::log(static_cast<double>(t.kneeKnob)) + 25.0 * 0.6931471805599453) + 0.01
+            : 0.0;
+        t.ratioCoordinate = ratioSlope / (1.0f - ratioSlope)
+            * (1.0f - kFetReductionSlopes[0]) / kFetReductionSlopes[0];
+        t.tailShare = std::max(fetDynamics.fbTailShare, 0.0f)
+            * (fetDynamics.fbTailRatioExponent != 0.0f
+                ? std::pow(t.ratioCoordinate, fetDynamics.fbTailRatioExponent)
+                : 1.0f);
+        t.attackLoadDb = fetDynamics.fbAttackLoadDb
+            * std::max(0.0f, 2.0f * attackOffset);
+        t.maximumReductionDb = fetStaticMaximumReductionDb(
+            ratioIndex, thresholdControlDb);
+        t.turnOnBiasDb = 1.0e-3f + std::max(0.0f,
+            fetDynamics.fbTurnOnBiasDb) * attackPosition * attackPosition;
+        const double tailSecondsCharging = std::max(1.0e-4f, fetDynamics.fbTailChargeSeconds);
+        const double tailSecondsReleasing = std::max(1.0e-4f, fetDynamics.fbTailReleaseSeconds);
+        t.tailStepCharging = std::exp(-1.0 / (tailSecondsCharging * sr));
+        t.tailStepReleasing = std::exp(-1.0 / (tailSecondsReleasing * sr));
+        t.slowReleaseKnob = std::exp(decade * releaseKnobDecades
+            * (fetDynamics.fbSlowReleaseKnobExponent - 1.0f));
+        t.slowChargeStep = std::exp(-1.0f / (std::max(fetDynamics.fbSlowChargeSeconds, 1.0e-4f) * sr));
+        return t;
+    }
+
+    // ---------------------------------------------------------------------------------------------------------
+    // Candidate C6 over a lane policy (MultiCompLanes.hpp; CPU-parity campaign 2026-10-20). processFET's vintage
+    // arm with the loop on (fbOn, ratios 4-20) is written once, as fetC6Step<L>: Lane1 steps one channel, Lane2
+    // the two channels of a stereo pair at once (arm64). Every lane performs exactly the single-channel
+    // arithmetic in the same order, with the same library calls per lane; a branch the scalar arm takes per
+    // channel is a per-lane select, and work the scalar arm skips on a channel (an expansion's exact
+    // re-evaluation, a solver iteration) neither runs for that lane nor changes its state. A pair step therefore
+    // leaves each channel, and its output, exactly as a single step would.
+
+    template <class L> static float laneF(typename L::F x, int k) noexcept { return L::laneF(x, k); }
+    template <class L> static double laneD(typename L::D x, int k) noexcept { return L::lane(x, k); }
+    template <class L> static bool laneM(typename L::M x, int k) noexcept { return L::laneM(x, k); }
+    template <class L> static typename L::F lanesF(const float* v) noexcept
+    {
+        if constexpr (L::kLanes == 1) return L::f(v[0]); else return L::f(v[0], v[1]);
+    }
+    template <class L> static typename L::D lanesD(const double* v) noexcept
+    {
+        if constexpr (L::kLanes == 1) return L::d(v[0]); else return L::d(v[0], v[1]);
+    }
+    template <class L> static typename L::M lanesM(const bool* v) noexcept
+    {
+        if constexpr (L::kLanes == 1) return L::m(v[0]); else return L::m(v[0], v[1]);
+    }
+    // fn(lane) on the lanes where `on` is set, `keep` on the others: a branch the scalar arm takes per channel.
+    template <class L, class Fn> static typename L::F whereF(typename L::M on, typename L::F keep, Fn&& fn) noexcept
+    {
+        float v[L::kLanes];
+        for (int k = 0; k < L::kLanes; ++k) v[k] = laneM<L>(on, k) ? fn(k) : laneF<L>(keep, k);
+        return lanesF<L>(v);
+    }
+    template <class L, class Fn> static typename L::D whereD(typename L::M on, typename L::D keep, Fn&& fn) noexcept
+    {
+        double v[L::kLanes];
+        for (int k = 0; k < L::kLanes; ++k) v[k] = laneM<L>(on, k) ? fn(k) : laneD<L>(keep, k);
+        return lanesD<L>(v);
+    }
+
+    // fetFeedbackK2 / K3 / LowFrequencyK2 at each lane's reduction: fetFeedbackColourRow's row and
+    // fetFeedbackColourAt's arithmetic, lane by lane, on the packed rows (a NaN lane reads row 0 at fraction 0,
+    // the last values, as At returns them past the last row).
+    template <class L>
+    static void fetFeedbackColourT(typename L::F grDb, typename L::F& k2, typename L::F& k3,
+                                   typename L::F& lowK2) noexcept
+    {
+        using F = typename L::F;
+        const F zero = L::f(0.0f), top = L::f(40.0f);
+        const F clamped = L::sel(grDb < zero, zero, L::sel(top < grDb, top, grDb));   // std::clamp
+        const auto number = clamped == clamped;
+        const F g = L::sel(number, clamped, zero);
+        const FetColourPacked* rows[L::kLanes];
+        for (int lane = 0; lane < L::kLanes; ++lane)
+            rows[lane] = &fetColourPackedRow(laneM<L>(number, lane) ? fetColourRowIndex(laneF<L>(g, lane)) : 0);
+        F v[8];
+        lanes::vtranspose4(&rows[0]->low, &rows[L::kLanes - 1]->low, v);
+        lanes::vtranspose4(&rows[0]->k3, &rows[L::kLanes - 1]->k3, v + 4);
+        const F fraction = (g - v[0]) / v[1];
+        k2 = v[2] + fraction * v[3];
+        k3 = v[4] + fraction * v[5];
+        lowK2 = v[6] + fraction * v[7];
+    }
+
+    // The expansions' anchors (FETState's FetExpansion, FetExpansionD, FetPowExpansion) in lanes.
+    template <class L> struct FetExpansionLanes { typename L::F at, value, aux; };
+    template <class L> struct FetExpansionDLanes { typename L::D at, value; };
+    template <class L> struct FetPowExpansionLanes { typename L::D at, inverse, exponent, value; };
+
+    // exp(z) for the small arguments of the one-pole steps: the cubic series where |z| < 1e-2 (its error under
+    // z^4 / 24 < 4.2e-10 relative, far below a float's resolution), the library elsewhere.
+    template <class L>
+    static typename L::F smallExpT(typename L::F z) noexcept
+    {
+        using lanes::vabs;
+        auto y = L::f(1.0f) + z * (L::f(1.0f) + z * (L::f(0.5f) + z * L::f(0.166666667f)));
+        const auto library = !(vabs(z) < L::f(1.0e-2f));
+        if (MC2_UNLIKELY(L::any(library)))
+            y = whereF<L>(library, y, [&](int k) noexcept { return std::exp(laneF<L>(z, k)); });
+        return y;
+    }
+
+    // Tolerance-refreshed expansions (as the OPTO cell's, 2026-10-20): the function is evaluated exactly at an
+    // anchor and followed on its Taylor series until the argument moves past the tolerance, then evaluated
+    // exactly again. Per channel state, so a linked pair still equals two single channels. Errors at the
+    // tolerance: exp and dB-to-gain 4.2e-10, cube root 6.6e-9 (relative); tanh 1.7e-9, cosine 4.2e-10 and
+    // gain-to-dB 2.2e-8 dB (absolute). NaN refreshes and passes through. `active`: the lanes this evaluation is
+    // for; the others keep their anchors (their values are not used).
+    template <class L>
+    static typename L::F expandedTanhT(FetExpansionLanes<L>& e, typename L::F x, typename L::M active) noexcept
+    {
+        using lanes::vabs;
+        auto h = x - e.at;
+        const auto refresh = active && !(vabs(h) <= L::f(0.01f));
+        if (L::any(refresh))
+        {
+            e.at = L::sel(refresh, x, e.at);
+            e.value = whereF<L>(refresh, e.value, [&](int k) noexcept { return std::tanh(laneF<L>(x, k)); });
+            h = L::sel(refresh, L::f(0.0f), h);
+        }
+        const auto t = e.value;
+        return t + (L::f(1.0f) - t * t) * h * (L::f(1.0f) + h * (-t + h * (t * t - L::f(0.333333333f))));
+    }
+    template <class L>
+    static typename L::F expandedExpT(FetExpansionLanes<L>& e, typename L::F x, typename L::M active) noexcept
+    {
+        using lanes::vabs;
+        auto h = x - e.at;
+        const auto refresh = active && !(vabs(h) <= L::f(0.01f));
+        if (L::any(refresh))
+        {
+            e.at = L::sel(refresh, x, e.at);
+            e.value = whereF<L>(refresh, e.value, [&](int k) noexcept { return std::exp(laneF<L>(x, k)); });
+            h = L::sel(refresh, L::f(0.0f), h);
+        }
+        return e.value * (L::f(1.0f) + h * (L::f(1.0f) + h * (L::f(0.5f) + h * L::f(0.166666667f))));
+    }
+    template <class L>
+    static typename L::D expandedExpDT(FetExpansionDLanes<L>& e, typename L::D x, typename L::M active) noexcept
+    {
+        using lanes::vabs;
+        auto h = x - e.at;
+        const auto refresh = active && !(vabs(h) <= L::d(0.01));
+        if (L::any(refresh))
+        {
+            e.at = L::sel(refresh, x, e.at);
+            e.value = whereD<L>(refresh, e.value, [&](int k) noexcept { return std::exp(laneD<L>(x, k)); });
+            h = L::sel(refresh, L::d(0.0), h);
+        }
+        return e.value * (L::d(1.0) + h * (L::d(1.0) + h * (L::d(0.5) + h * L::d(1.0 / 6.0))));
+    }
+    // x > 0 (relative tolerance 2%); zero, negative and NaN arguments are evaluated exactly.
+    template <class L>
+    static typename L::F expandedCbrtT(FetExpansionLanes<L>& e, typename L::F x, typename L::M active) noexcept
+    {
+        using lanes::vabs;
+        const auto exact = !(x > L::f(1.0e-30f));
+        auto u = (x - e.at) * e.aux;
+        const auto refresh = active && !exact && !(vabs(u) <= L::f(0.02f));
+        if (L::any(refresh))
+        {
+            e.at = L::sel(refresh, x, e.at);
+            e.aux = L::sel(refresh, L::f(1.0f) / x, e.aux);
+            e.value = whereF<L>(refresh, e.value, [&](int k) noexcept { return std::cbrt(laneF<L>(x, k)); });
+            u = L::sel(refresh, L::f(0.0f), u);
+        }
+        auto y = e.value * (L::f(1.0f) + u * (L::f(0.333333333f) + u * (L::f(-0.111111111f) + u * L::f(0.0617283951f))));
+        if (MC2_UNLIKELY(L::any(exact)))
+            y = whereF<L>(exact, y, [&](int k) noexcept { return std::cbrt(laneF<L>(x, k)); });
+        return y;
+    }
+    // cos and sin of one argument through one function for every lane: the compiler may turn the pair into one
+    // sincos call, whose sine can differ from sinf's in the last place, so a single channel and each lane of a
+    // pair must take the same route.
+    MC2_NOINLINE static void cosAndSin(float x, float& cosine, float& sine) noexcept
+    {
+        cosine = std::cos(x);
+        sine = std::sin(x);
+    }
+    template <class L>
+    static typename L::F expandedCosT(FetExpansionLanes<L>& e, typename L::F x, typename L::M active) noexcept
+    {
+        using lanes::vabs;
+        auto h = x - e.at;
+        const auto refresh = active && !(vabs(h) <= L::f(0.01f));
+        if (L::any(refresh))
+        {
+            float cosine[L::kLanes], sine[L::kLanes];
+            for (int k = 0; k < L::kLanes; ++k)
+            {
+                cosine[k] = laneF<L>(e.value, k);
+                sine[k] = laneF<L>(e.aux, k);
+                if (laneM<L>(refresh, k)) cosAndSin(laneF<L>(x, k), cosine[k], sine[k]);
+            }
+            e.at = L::sel(refresh, x, e.at);
+            e.value = lanesF<L>(cosine);
+            e.aux = lanesF<L>(sine);
+            h = L::sel(refresh, L::f(0.0f), h);
+        }
+        return e.value * (L::f(1.0f) - L::f(0.5f) * h * h) - e.aux * h * (L::f(1.0f) - L::f(0.166666667f) * h * h);
+    }
+    // decibelsToGain (tolerance 0.01 neper, 0.087 dB).
+    template <class L>
+    static typename L::F expandedDecibelsToGainT(FetExpansionLanes<L>& e, typename L::F db,
+                                                 typename L::M active) noexcept
+    {
+        using lanes::vabs;
+        auto h = (db - e.at) * L::f(0.115129255f);
+        const auto refresh = active && !(vabs(h) <= L::f(0.01f));
+        if (L::any(refresh))
+        {
+            e.at = L::sel(refresh, db, e.at);
+            e.value = whereF<L>(refresh, e.value, [&](int k) noexcept { return decibelsToGain(laneF<L>(db, k)); });
+            h = L::sel(refresh, L::f(0.0f), h);
+        }
+        return e.value * (L::f(1.0f) + h * (L::f(1.0f) + h * (L::f(0.5f) + h * L::f(0.166666667f))));
+    }
+    // gainToDecibels for gains above its 1e-9 floor (relative tolerance 1%); at or below it, exact.
+    template <class L>
+    static typename L::F expandedGainToDecibelsT(FetExpansionLanes<L>& e, typename L::F gain,
+                                                 typename L::M active) noexcept
+    {
+        using lanes::vabs;
+        const auto exact = !(gain > L::f(1.0e-9f));
+        auto u = (gain - e.at) * e.aux;
+        const auto refresh = active && !exact && !(vabs(u) <= L::f(0.01f));
+        if (L::any(refresh))
+        {
+            e.at = L::sel(refresh, gain, e.at);
+            e.aux = L::sel(refresh, L::f(1.0f) / gain, e.aux);
+            e.value = whereF<L>(refresh, e.value, [&](int k) noexcept { return gainToDecibels(laneF<L>(gain, k)); });
+            u = L::sel(refresh, L::f(0.0f), u);
+        }
+        auto y = e.value + L::f(8.68588964f) * u * (L::f(1.0f) - u * (L::f(0.5f) - u * L::f(0.333333333f)));
+        if (MC2_UNLIKELY(L::any(exact)))
+            y = whereF<L>(exact, y, [&](int k) noexcept { return gainToDecibels(laneF<L>(gain, k)); });
+        return y;
+    }
+
+    // x^y (x >= 0, y > 0) for the 4:1 depth term, whose x (the populations' reduction over its scale) moves
+    // over seconds: the third-order expansion in u = x / x_c - 1 about the last exact evaluation x_c, redone
+    // once |u| passes 2% or y changes. Relative error <= |y (y - 1)(y - 2)(y - 3)| / 24 u^4: 8.1e-7 at the
+    // shipped y (5.01). x = 0 gives 0 as std::pow does; NaN passes through.
+    template <class L>
+    static typename L::D expandedDepthPowT(FetPowExpansionLanes<L>& e, typename L::D x, double y,
+                                           typename L::M active) noexcept
+    {
+        using lanes::vabs;
+        const auto exact = !(x > L::d(1.0e-30));
+        auto u = (x - e.at) * e.inverse;
+        const auto refresh = active && !exact && (!(vabs(u) <= L::d(0.02)) || !(L::d(y) == e.exponent));
+        if (L::any(refresh))
+        {
+            e.at = L::sel(refresh, x, e.at);
+            e.inverse = L::sel(refresh, L::d(1.0) / x, e.inverse);
+            e.exponent = L::sel(refresh, L::d(y), e.exponent);
+            e.value = whereD<L>(refresh, e.value, [&](int k) noexcept { return std::pow(laneD<L>(x, k), y); });
+            u = L::sel(refresh, L::d(0.0), u);
+        }
+        const auto expanded = e.value * (L::d(1.0) + u * (L::d(y) + u * (L::d(0.5 * y * (y - 1.0))
+            + u * L::d(y * (y - 1.0) * (y - 2.0) / 6.0))));
+        return L::sel(exact, L::sel(x == x, L::d(0.0), x), expanded);
+    }
+
+    // The per-channel state the C6 arm reads and writes, in lanes. Loaded from FETState before a run of
+    // samples and stored after; the arm's constants (intermediateGrDb, recoveryGain, kneeBaseReductionDb) are
+    // written on store.
+    template <class L>
+    struct FetC6Lanes
+    {
+        typename L::F envelope, fastGrDb, feedbackLag, riseOnlyPreviousMagnitude, tilt;
+        typename L::F dc, prevSq, colourHighPassLow, colourHighPassLower, colourPeak, colourLow, colourLower;
+        typename L::F colourLowPeak, colourLowDc, colourLowPrevSq, colourLowHarmonicDc, kneeCorrectionDb, kneeGain;
+        typename L::F subBassHpState;
+        typename L::D slowGrDb, slowTailGrDb, lfAheadZ1, lfAheadZ2, feedbackHpZ1, feedbackHpZ2, partnerHpZ1;
+        typename L::D partnerHpZ2, lfHpZ1, lfHpZ2;
+        FetExpansionLanes<L> slowShape, tipCbrt, tipCos, overshootExp, envelopeGain, colourGrDb;
+        FetExpansionDLanes<L> kneeExp;
+        FetPowExpansionLanes<L> depthPow;
+        // The carried evaluation (FETState::FetCarry) and its knob key, per lane.
+        typename L::M carryValid, carryKnee;
+        typename L::F carryU, carryCharge, carrySlow, carryTail, carryQuotient, carryLevelSlope, carrySlowSlope;
+        typename L::F carryWeight, carryWeightSlope;
+        FetCarryKey carryKey[L::kLanes];
+        // The knee gain's memo (FETState::kneeGainKey / Valid / Value), per lane.
+        std::uint32_t kneeGainKey[L::kLanes];
+        bool kneeGainValid[L::kLanes];
+        float kneeGainValue[L::kLanes];
+    };
+    template <class L>
+    static void loadC6(FetC6Lanes<L>& s, FETState* const* d) noexcept
+    {
+        constexpr int n = L::kLanes;
+        const auto f = [d](float FETState::* m) noexcept {
+            float v[L::kLanes];
+            for (int k = 0; k < L::kLanes; ++k) v[k] = d[k]->*m;
+            return lanesF<L>(v);
+        };
+        const auto g = [d](double FETState::* m) noexcept {
+            double v[L::kLanes];
+            for (int k = 0; k < L::kLanes; ++k) v[k] = d[k]->*m;
+            return lanesD<L>(v);
+        };
+        const auto x = [d](FetExpansion FETState::* m) noexcept {
+            float at[L::kLanes], value[L::kLanes], aux[L::kLanes];
+            for (int k = 0; k < L::kLanes; ++k)
+            {
+                at[k] = (d[k]->*m).at;
+                value[k] = (d[k]->*m).value;
+                aux[k] = (d[k]->*m).aux;
+            }
+            return FetExpansionLanes<L>{lanesF<L>(at), lanesF<L>(value), lanesF<L>(aux)};
+        };
+        s.envelope = f(&FETState::envelope); s.fastGrDb = f(&FETState::fastGrDb);
+        s.feedbackLag = f(&FETState::feedbackLag); s.riseOnlyPreviousMagnitude = f(&FETState::riseOnlyPreviousMagnitude);
+        s.tilt = f(&FETState::tilt); s.dc = f(&FETState::dc); s.prevSq = f(&FETState::prevSq);
+        s.colourHighPassLow = f(&FETState::colourHighPassLow); s.colourHighPassLower = f(&FETState::colourHighPassLower);
+        s.colourPeak = f(&FETState::colourPeak); s.colourLow = f(&FETState::colourLow);
+        s.colourLower = f(&FETState::colourLower); s.colourLowPeak = f(&FETState::colourLowPeak);
+        s.colourLowDc = f(&FETState::colourLowDc); s.colourLowPrevSq = f(&FETState::colourLowPrevSq);
+        s.colourLowHarmonicDc = f(&FETState::colourLowHarmonicDc); s.kneeCorrectionDb = f(&FETState::kneeCorrectionDb);
+        s.kneeGain = f(&FETState::kneeGain); s.subBassHpState = f(&FETState::subBassHpState);
+        s.slowGrDb = g(&FETState::slowGrDb); s.slowTailGrDb = g(&FETState::slowTailGrDb);
+        s.lfAheadZ1 = g(&FETState::lfAheadZ1); s.lfAheadZ2 = g(&FETState::lfAheadZ2);
+        s.feedbackHpZ1 = g(&FETState::feedbackHpZ1); s.feedbackHpZ2 = g(&FETState::feedbackHpZ2);
+        s.partnerHpZ1 = g(&FETState::partnerHpZ1); s.partnerHpZ2 = g(&FETState::partnerHpZ2);
+        s.lfHpZ1 = g(&FETState::lfHpZ1); s.lfHpZ2 = g(&FETState::lfHpZ2);
+        s.slowShape = x(&FETState::slowShapeExpansion); s.tipCbrt = x(&FETState::tipCbrtExpansion);
+        s.tipCos = x(&FETState::tipCosExpansion); s.overshootExp = x(&FETState::overshootExpExpansion);
+        s.envelopeGain = x(&FETState::envelopeGainExpansion); s.colourGrDb = x(&FETState::colourGrDbExpansion);
+        double at[n], value[n], inverse[n], exponent[n], depthValue[n];
+        for (int k = 0; k < n; ++k)
+        {
+            at[k] = d[k]->kneeExpExpansion.at;
+            value[k] = d[k]->kneeExpExpansion.value;
+            inverse[k] = d[k]->depthPowExpansion.inverse;
+            exponent[k] = d[k]->depthPowExpansion.exponent;
+            depthValue[k] = d[k]->depthPowExpansion.value;
+            s.kneeGainKey[k] = d[k]->kneeGainKey;
+            s.kneeGainValid[k] = d[k]->kneeGainValid;
+            s.kneeGainValue[k] = d[k]->kneeGainValue;
+        }
+        s.kneeExp = {lanesD<L>(at), lanesD<L>(value)};
+        {
+            bool valid[n], knee[n];
+            float u[n], charge[n], slow[n], tail[n], quotient[n], levelSlope[n], slowSlope[n], weight[n], weightSlope[n];
+            for (int k = 0; k < n; ++k)
+            {
+                const auto& carry = d[k]->carry;
+                valid[k] = carry.valid; knee[k] = carry.kneeApplied; u[k] = carry.u; charge[k] = carry.charge;
+                slow[k] = carry.slow; tail[k] = carry.tail; quotient[k] = carry.quotient;
+                levelSlope[k] = carry.levelSlope; slowSlope[k] = carry.slowSlope; weight[k] = carry.weight;
+                weightSlope[k] = carry.weightSlope; s.carryKey[k] = carry.key;
+            }
+            s.carryValid = lanesM<L>(valid); s.carryKnee = lanesM<L>(knee);
+            s.carryU = lanesF<L>(u); s.carryCharge = lanesF<L>(charge); s.carrySlow = lanesF<L>(slow);
+            s.carryTail = lanesF<L>(tail); s.carryQuotient = lanesF<L>(quotient);
+            s.carryLevelSlope = lanesF<L>(levelSlope); s.carrySlowSlope = lanesF<L>(slowSlope);
+            s.carryWeight = lanesF<L>(weight); s.carryWeightSlope = lanesF<L>(weightSlope);
+        }
+        for (int k = 0; k < n; ++k) at[k] = d[k]->depthPowExpansion.at;
+        s.depthPow = {lanesD<L>(at), lanesD<L>(inverse), lanesD<L>(exponent), lanesD<L>(depthValue)};
+    }
+    template <class L>
+    static void storeC6(const FetC6Lanes<L>& s, FETState* const* d) noexcept
+    {
+        constexpr int n = L::kLanes;
+        const auto f = [d](float FETState::* m, typename L::F v) noexcept {
+            for (int k = 0; k < L::kLanes; ++k) d[k]->*m = laneF<L>(v, k);
+        };
+        const auto g = [d](double FETState::* m, typename L::D v) noexcept {
+            for (int k = 0; k < L::kLanes; ++k) d[k]->*m = laneD<L>(v, k);
+        };
+        const auto x = [d](FetExpansion FETState::* m, const FetExpansionLanes<L>& v) noexcept {
+            for (int k = 0; k < L::kLanes; ++k)
+                d[k]->*m = FetExpansion{laneF<L>(v.at, k), laneF<L>(v.value, k), laneF<L>(v.aux, k)};
+        };
+        f(&FETState::envelope, s.envelope); f(&FETState::fastGrDb, s.fastGrDb);
+        f(&FETState::feedbackLag, s.feedbackLag); f(&FETState::riseOnlyPreviousMagnitude, s.riseOnlyPreviousMagnitude);
+        f(&FETState::tilt, s.tilt); f(&FETState::dc, s.dc); f(&FETState::prevSq, s.prevSq);
+        f(&FETState::colourHighPassLow, s.colourHighPassLow); f(&FETState::colourHighPassLower, s.colourHighPassLower);
+        f(&FETState::colourPeak, s.colourPeak); f(&FETState::colourLow, s.colourLow);
+        f(&FETState::colourLower, s.colourLower); f(&FETState::colourLowPeak, s.colourLowPeak);
+        f(&FETState::colourLowDc, s.colourLowDc); f(&FETState::colourLowPrevSq, s.colourLowPrevSq);
+        f(&FETState::colourLowHarmonicDc, s.colourLowHarmonicDc); f(&FETState::kneeCorrectionDb, s.kneeCorrectionDb);
+        f(&FETState::kneeGain, s.kneeGain); f(&FETState::subBassHpState, s.subBassHpState);
+        g(&FETState::slowGrDb, s.slowGrDb); g(&FETState::slowTailGrDb, s.slowTailGrDb);
+        g(&FETState::lfAheadZ1, s.lfAheadZ1); g(&FETState::lfAheadZ2, s.lfAheadZ2);
+        g(&FETState::feedbackHpZ1, s.feedbackHpZ1); g(&FETState::feedbackHpZ2, s.feedbackHpZ2);
+        g(&FETState::partnerHpZ1, s.partnerHpZ1); g(&FETState::partnerHpZ2, s.partnerHpZ2);
+        g(&FETState::lfHpZ1, s.lfHpZ1); g(&FETState::lfHpZ2, s.lfHpZ2);
+        x(&FETState::slowShapeExpansion, s.slowShape); x(&FETState::tipCbrtExpansion, s.tipCbrt);
+        x(&FETState::tipCosExpansion, s.tipCos); x(&FETState::overshootExpExpansion, s.overshootExp);
+        x(&FETState::envelopeGainExpansion, s.envelopeGain); x(&FETState::colourGrDbExpansion, s.colourGrDb);
+        for (int k = 0; k < n; ++k)
+        {
+            d[k]->kneeExpExpansion = FetExpansionD{laneD<L>(s.kneeExp.at, k), laneD<L>(s.kneeExp.value, k)};
+            d[k]->depthPowExpansion = FetPowExpansion{laneD<L>(s.depthPow.at, k), laneD<L>(s.depthPow.inverse, k),
+                                                      laneD<L>(s.depthPow.exponent, k), laneD<L>(s.depthPow.value, k)};
+            d[k]->kneeGainKey = s.kneeGainKey[k];
+            d[k]->kneeGainValid = s.kneeGainValid[k];
+            d[k]->kneeGainValue = s.kneeGainValue[k];
+            auto& carry = d[k]->carry;
+            carry.valid = laneM<L>(s.carryValid, k); carry.kneeApplied = laneM<L>(s.carryKnee, k);
+            carry.u = laneF<L>(s.carryU, k); carry.charge = laneF<L>(s.carryCharge, k);
+            carry.slow = laneF<L>(s.carrySlow, k); carry.tail = laneF<L>(s.carryTail, k);
+            carry.quotient = laneF<L>(s.carryQuotient, k); carry.levelSlope = laneF<L>(s.carryLevelSlope, k);
+            carry.slowSlope = laneF<L>(s.carrySlowSlope, k); carry.weight = laneF<L>(s.carryWeight, k);
+            carry.weightSlope = laneF<L>(s.carryWeightSlope, k); carry.key = s.carryKey[k];
+            d[k]->intermediateGrDb = 0.0f;
+            d[k]->recoveryGain = 1.0f;
+            d[k]->kneeBaseReductionDb = 0.0f;
+        }
+    }
+
+    // The knob-derived values a C6 sample shares between its lanes, through the memos processFET reads them by.
+    struct FetC6Knobs
+    {
+        float inputGain = 1.0f, thresholdControlDb = 0.0f, attackPosition = 0.0f, releasePosition = 0.0f;
+        float staticKnobK3 = 0.0f, outputGain = 1.0f, sr = 0.0f;
+        int ratioIndex = 0;
+        bool external = false;
+    };
+    FetC6Knobs fetC6Knobs(const MultiCompParameterState& p, bool external, float outputDb) noexcept
+    {
+        FetC6Knobs k;
+        k.inputGain = memoized(fetInputGainMemo[0], p.fetInput.load(std::memory_order_relaxed), [](float v) noexcept {
+            return decibelsToGain(fetInputGainDb(v)); });
+        k.ratioIndex = std::clamp(p.fetRatio.load(std::memory_order_relaxed), 0, 4);
+        k.thresholdControlDb = p.fetThreshold.load(std::memory_order_relaxed);
+        k.attackPosition = memoized(fetAttackPositionMemo, p.fetAttack.load(std::memory_order_relaxed),
+                                    [](float v) noexcept { return fetAttackPosition(v); });
+        k.releasePosition = fetReleasePositionOf(p);
+        // fbStaticK3KnobShare rho3 (0 = off): the FET's static cubic grows with
+        // the Release pot's rate k (k = 1 at Release 0.85-1, 0.217 at the
+        // nominal position). Measured on the 1176 (2026-10-15 grids, the
+        // Release-axis split at 0 dB GR, 1 kHz and 100 Hz, Inputs .2 / .4 / .8):
+        // below the knee its third harmonic is S (1 + 0.30 k), the
+        // Release-proportional part in phase with the static one (-10.2 to
+        // -10.6 dB at k = 1) and no loop ripple to carry it; the FET's gate
+        // network ties to the control node through the pot. It acts on the
+        // settled domain the law was measured in (the source bounded at full
+        // scale); an onset's first-cycle excursion keeps the bounded cubic above.
+        if (fetDynamics.fbStaticK3KnobShare != 0.0f)
+            k.staticKnobK3 = memoized(fetStaticKnobK3Memo, k.releasePosition, [this](float releasePosition) noexcept {
+                const float potSpan = std::max(
+                    1.0e-3f, fetDynamics.fbReleasePotEnd - fetDynamics.fbReleasePotStart);
+                const float travel = std::min(1.0f, std::max(0.0f,
+                    (fetDynamics.fbReleasePotEnd - releasePosition) / potSpan));
+                return fetDynamics.fbStaticK3KnobShare * fetDynamics.fbReleasePotFixed
+                    / std::max(fetDynamics.fbReleasePotFixed + travel, 1.0e-6f);
+            });
+        k.outputGain = memoized(fetOutputGainMemo[0], outputDb, [](float v) noexcept {
+            return decibelsToGain(fetOutputGainDb(v)); });
+        k.sr = static_cast<float>(fs * osFactor);
+        k.external = external;
+        return k;
+    }
+
+    // A carried evaluation holds only under the knobs it was taken with: a lane whose key differs drops it.
+    template <class L>
+    static void holdCarryUnder(FetC6Lanes<L>& s, const FetC6Knobs& k) noexcept
+    {
+        const FetCarryKey key{k.ratioIndex, k.thresholdControlDb, k.attackPosition, k.releasePosition, k.sr};
+        bool held[L::kLanes];
+        for (int lane = 0; lane < L::kLanes; ++lane)
+        {
+            const FetCarryKey& had = s.carryKey[lane];
+            held[lane] = had.ratioIndex == key.ratioIndex && sameBits(had.thresholdControlDb, key.thresholdControlDb)
+                && sameBits(had.attackPosition, key.attackPosition) && sameBits(had.releasePosition, key.releasePosition)
+                && sameBits(had.sr, key.sr);
+            s.carryKey[lane] = key;
+        }
+        s.carryValid = s.carryValid && lanesM<L>(held);
+    }
+
+    // One C6 sample on the lanes' channels (`channels[lane]`): the colour stage, the detector, the loop, the knee
+    // and the output stage of processFET's vintage arm. `partnerSample` is the linked partner's driven sample
+    // (MultiCompDSP's link feed, zero when unlinked or mono), `transientFactor` the transient shaper's factor.
+    template <class L>
+    typename L::F fetC6Step(FetC6Lanes<L>& s, const FetC6Knobs& k, const int* channels, typename L::F input,
+                            typename L::F sidechain, typename L::F partnerSample,
+                            typename L::F transientFactor) noexcept
+    {
+        using F = typename L::F;
+        using D = typename L::D;
+        using lanes::vmax; using lanes::vabs; using lanes::visfinite;
+        const auto Kf = [](float x) noexcept { return L::f(x); };
+        const auto Kd = [](double x) noexcept { return L::d(x); };
+        const auto clampF = [](F v, F lo, F hi) noexcept { return L::sel(v < lo, lo, L::sel(hi < v, hi, v)); };
+        const auto all = L::m(true);
+        const float sr = k.sr;
+        const F gained = input * Kf(k.inputGain);
+        // The low-frequency section ahead of the gain element (lfAheadHz).
+        F gainedAhead = gained;
+        if (fetLfAheadOn)
+        {
+            const auto& c = fetLfAheadHighPass;
+            const D x = L::toD(gained);
+            const D y = Kd(c[0]) * x + s.lfAheadZ1;
+            s.lfAheadZ1 = Kd(c[1]) * x - Kd(c[3]) * y + s.lfAheadZ2;
+            s.lfAheadZ2 = Kd(c[2]) * x - Kd(c[4]) * y;
+            gainedAhead = L::toF(y);
+        }
+        const F compressed = gainedAhead * s.envelope;
+        F saturated = compressed;
+        // Vintage FET saturation is inside the feedback loop. The sidechain must see this signal, not the
+        // post-envelope shortcut (see processFET for the colour stage's measurements).
+        const F grDb = -expandedGainToDecibelsT<L>(s.colourGrDb, s.envelope + Kf(0.001f), all);
+        F k2, k3, lowFrequencyK2;
+        fetFeedbackColourT<L>(grDb, k2, k3, lowFrequencyK2);
+        constexpr float kFetBroadbandK3SourceLimit = 8.0f;
+        const F k3Source = clampF(saturated, Kf(-kFetBroadbandK3SourceLimit), Kf(kFetBroadbandK3SourceLimit));
+        const F sq = saturated * saturated;
+        const F saturatedBeforeColour = saturated;
+        const F alpha = Kf(fetColourDcAlpha);
+        const F h2 = alpha * (s.dc + sq - s.prevSq);
+        s.dc = h2;
+        s.prevSq = sq;
+        const F colourHighPassCoeff = Kf(fetColourCorner250);
+        s.colourHighPassLow = s.colourHighPassLow + colourHighPassCoeff * (saturated - s.colourHighPassLow);
+        F colourHighPassed = saturated - s.colourHighPassLow;
+        s.colourHighPassLower = s.colourHighPassLower
+            + colourHighPassCoeff * (colourHighPassed - s.colourHighPassLower);
+        colourHighPassed = colourHighPassed - s.colourHighPassLower;
+        const F colourPeakRelease = Kf(fetColourPeakRelease);
+        const F colourHighPassedAbs = vabs(colourHighPassed);
+        s.colourPeak = L::sel(colourHighPassedAbs >= s.colourPeak, colourHighPassedAbs,
+                              colourHighPassedAbs + (s.colourPeak - colourHighPassedAbs) * colourPeakRelease);
+        // The C6 arm's broadband fifth is zero (fetBroadbandK5 stays with the arms that run the earlier cell), and
+        // so are the low band's third and fifth (below): their terms are left out. Each was 0 times a finite value,
+        // a signed zero, which left the sums unchanged (no output bit moved over the identity scenarios and the
+        // lane fuzz). The high-passed peak above keeps running for the All-buttons arm.
+        const F colourLowCoeff = Kf(fetColourCorner250);
+        s.colourLow = s.colourLow + colourLowCoeff * (saturated - s.colourLow);
+        s.colourLower = s.colourLower + colourLowCoeff * (s.colourLow - s.colourLower);
+        const F colourLowSq = s.colourLower * s.colourLower;
+        const F colourLowH2 = alpha * (s.colourLowDc + colourLowSq - s.colourLowPrevSq);
+        s.colourLowDc = colourLowH2;
+        s.colourLowPrevSq = colourLowSq;
+        const F colourLowPeakRelease = Kf(fetColourPeakRelease);
+        const F colourLowerAbs = vabs(s.colourLower);
+        s.colourLowPeak = L::sel(colourLowerAbs >= s.colourLowPeak, colourLowerAbs,
+                                 colourLowerAbs + (s.colourLowPeak - colourLowerAbs) * colourLowPeakRelease);
+        const F lowNormalised = clampF(s.colourLower / vmax(s.colourLowPeak, Kf(1.0e-9f)), Kf(-1.0f), Kf(1.0f));
+        const F low2 = lowNormalised * lowNormalised;
+        const F low4 = low2 * low2;
+        const F lowHarmonicDrive = clampF(grDb / Kf(14.0f), Kf(0.0f), Kf(1.0f));
+        // The C6 loop's own ripple supplies the odd harmonics the fitted K3 / K5 terms stood in for on the
+        // earlier cell (2026-10-15/16): only the even term runs on this arm.
+        F lowHarmonics = s.colourLowPeak * lowHarmonicDrive * (Kf(0.0037f) * (Kf(8.0f) * low4 - Kf(8.0f) * low2));
+        // (The shallow-knee cell runs only with the loop off: processFET.)
+        s.colourLowHarmonicDc = s.colourLowHarmonicDc + (Kf(1.0f) - alpha) * (lowHarmonics - s.colourLowHarmonicDc);
+        lowHarmonics = lowHarmonics - s.colourLowHarmonicDc;
+        saturated = saturated + (k2 * h2 + lowFrequencyK2 * colourLowH2
+            + k3 * k3Source * k3Source * k3Source
+            + lowHarmonics);
+        if (k.staticKnobK3 != 0.0f)
+        {
+            const F settledSource = clampF(saturatedBeforeColour, Kf(-1.0f), Kf(1.0f));
+            saturated = saturated + k3 * Kf(k.staticKnobK3) * settledSource * settledSource * settledSource;
+        }
+
+        // Candidate C6: the loop below charges from the audio path itself, rectified through the side chain's
+        // high-pass (fbTapHighPassHz), OR-ed with the linked partner's (zero when unlinked or mono); see
+        // processFET's notes. fbRectifierImbalance (eps; 0 = symmetric): eps < 0 weights the positive half
+        // 1 + eps, eps > 0 the negative 1 - eps.
+        const auto& c = fetTapHighPass;
+        const auto highPass = [&c, Kd](D x, D& z1, D& z2) noexcept {
+            const D y = Kd(c[0]) * x + z1;
+            z1 = Kd(c[1]) * x - Kd(c[3]) * y + z2;
+            z2 = Kd(c[2]) * x - Kd(c[4]) * y;
+            return y;
+        };
+        const D own = highPass(L::toD(k.external ? sidechain * Kf(k.inputGain) : gained),
+                               s.feedbackHpZ1, s.feedbackHpZ2);
+        const D partner = highPass(L::toD(partnerSample * Kf(k.inputGain)), s.partnerHpZ1, s.partnerHpZ2);
+        const double imbalance = fetDynamics.fbRectifierImbalance;
+        const auto rectify = [imbalance, Kd](D x) noexcept {
+            if (imbalance > 0.0) return L::sel(x < Kd(0.0), -x * Kd(1.0 - imbalance), vabs(x));
+            if (imbalance < 0.0) return L::sel(x > Kd(0.0), x * Kd(1.0 + imbalance), vabs(x));
+            return vabs(x);
+        };
+        const F feedbackMagnitude = L::toF(vmax(rectify(own), rectify(partner)));
+        // The tilt keeps running for the All-buttons arm, which reads it.
+        s.tilt = s.tilt + Kf(fetTilt) * (feedbackMagnitude - s.tilt);
+        advanceFetFeedback<L>(s, feedbackMagnitude, k, transientFactor);
+        // Below All-buttons the envelope's ceiling is 1.
+        s.envelope = clampF(s.envelope, Kf(0.001f), Kf(1.0f));
+        s.envelope = L::sel(visfinite(s.envelope), s.envelope, Kf(1.0f));
+
+        // Candidate C6: the 4:1 knee onset as a function of the loop's own reduction. The settled input level
+        // that holds this reduction on the accepted law is read back, and the measured onset table's difference
+        // there is applied; no raw-input peak cell.
+        s.kneeCorrectionDb = Kf(0.0f);
+        // Past the handoff (input level >= threshold + 6 dB) the correction is 0. The settled input level rises
+        // with the reduction and the tail population only adds to it, so the other two populations read on the
+        // law bound it from below: when that bound clears the handoff by 0.01 dB on every lane, nothing below
+        // can change the correction.
+        bool kneeCorrects = k.ratioIndex == 0;
+        if (kneeCorrects)
+        {
+            const F lowerReduction = L::toF(L::toD(s.fastGrDb) + s.slowGrDb);
+            F lowerSlope;
+            const F lowerInput = lowerReduction
+                + fetStaticOutputLevelDbT<L>(lowerReduction, k.ratioIndex, k.thresholdControlDb, lowerSlope);
+            kneeCorrects = !L::all(lowerInput >= Kf(k.thresholdControlDb + 6.01f));
+        }
+        if (kneeCorrects)
+        {
+            const float kneeDb = fetTailKneeDb();
+            const F tail = L::toF(s.slowTailGrDb);
+            F tailApplied = tail;
+            const auto tailHeld = tail > Kf(0.0f);
+            if (kneeDb > 0.0f && takes<L>(tailHeld))
+            {
+                F restSlope, lawSlope;
+                const F applied = fetTailAppliedT<L>(L::toF(L::toD(s.fastGrDb) + s.slowGrDb),
+                                                     fetTailControlT<L>(tail, kneeDb), kneeDb, restSlope, lawSlope);
+                tailApplied = L::sel(tailHeld, applied, tail);
+            }
+            const F reductionDb = L::toF(L::toD(s.fastGrDb) + s.slowGrDb + L::toD(tailApplied));
+            F unusedSlope;
+            const F settledInputDb = reductionDb
+                + fetStaticOutputLevelDbT<L>(reductionDb, k.ratioIndex, k.thresholdControlDb, unusedSlope);
+            const F handoff = clampF(settledInputDb - Kf(k.thresholdControlDb + 10.0f) + Kf(5.0f), Kf(0.0f), Kf(1.0f));
+            // Past the handoff (handoff 1) the factor below is 0 and the correction stays 0.
+            const auto inKnee = !(handoff >= Kf(1.0f));
+            if (L::any(inKnee))
+            {
+                const F onset = whereF<L>(inKnee, Kf(0.0f), [&](int lane) noexcept {
+                    return fetReferenceKneeOnsetDb(laneF<L>(settledInputDb, lane), k.thresholdControlDb); });
+                s.kneeCorrectionDb = L::sel(inKnee,
+                    clampF((reductionDb - onset) * (Kf(1.0f) - handoff * handoff * (Kf(3.0f) - Kf(2.0f) * handoff)),
+                           Kf(-0.85f), Kf(0.85f)),
+                    s.kneeCorrectionDb);
+            }
+        }
+        {
+            float gains[L::kLanes];
+            for (int lane = 0; lane < L::kLanes; ++lane)
+            {
+                const float correction = laneF<L>(s.kneeCorrectionDb, lane);
+                std::uint32_t bits;
+                std::memcpy(&bits, &correction, sizeof bits);
+                if (!s.kneeGainValid[lane] || s.kneeGainKey[lane] != bits)
+                {
+                    s.kneeGainKey[lane] = bits;
+                    s.kneeGainValue[lane] = decibelsToGain(correction);
+                    s.kneeGainValid[lane] = true;
+                }
+                gains[lane] = s.kneeGainValue[lane];
+            }
+            s.kneeGain = lanesF<L>(gains);
+        }
+
+        // The output stage. The sag gain (All-buttons only) and this arm's recovery gain are 1; the products stay
+        // (with denormals flushed, x * 1 is not x for a subnormal x).
+        F out = saturated * Kf(1.0f);
+        out = out * (s.kneeGain * Kf(1.0f));
+        if (!fetConvolutionUnity)
+            out = whereF<L>(all, out, [&](int lane) noexcept {
+                return fetConvolution.processSample(laneF<L>(out, lane), channels[lane]); });
+        out = out * Kf(fetHardwareGain);
+        if (fetDynamics.lfHpOn > 0.5f)
+        {
+            const auto& h = fetLfHighPass;
+            const D x = L::toD(out);
+            const D y = Kd(h[0]) * x + s.lfHpZ1;
+            s.lfHpZ1 = Kd(h[1]) * x - Kd(h[3]) * y + s.lfHpZ2;
+            s.lfHpZ2 = Kd(h[2]) * x - Kd(h[4]) * y;
+            out = L::toF(y);
+        }
+        else
+        {
+            const float hpfAlpha = 1.0f - std::exp(-2.0f * kDuskPi * 5.0f / sr);
+            s.subBassHpState = s.subBassHpState + Kf(hpfAlpha) * (out - s.subBassHpState);
+            out = out - s.subBassHpState;
+        }
+        // The installed model is linear throughout the measured steady range, then bends startup peaks toward a
+        // ~7.1 linear ceiling (processFET documents the fit).
+        const F drivenOutput = out * Kf(k.outputGain);
+        constexpr float ceilingKnee = 1.97879118f;
+        constexpr float ceilingSpan = 5.16417142f;
+        constexpr float ceilingScale = 6.11998526f;
+        const auto above = !(vabs(drivenOutput) <= Kf(ceilingKnee));
+        if (!MC2_UNLIKELY(L::any(above))) return drivenOutput;
+        return whereF<L>(above, drivenOutput, [&](int lane) noexcept {
+            const float driven = laneF<L>(drivenOutput, lane);
+            const float limited = ceilingKnee + ceilingSpan * (2.0f / kDuskPi)
+                * std::atan((std::abs(driven) - ceilingKnee) / ceilingScale);
+            return std::copysign(limited, driven); });
+    }
+
+    // Candidate C6: one implicit step of the feedback gain computer (see
+    // kFetDynamicsDefaults), on the lanes' channels. `magnitude` is the rectified driven signal BEFORE the
+    // envelope (the loop applies it), fastGrDb the charged capacitor, slowGrDb / slowTailGrDb the slow
+    // populations; all in dB of reduction.
+    template <class L>
+    void advanceFetFeedback(FetC6Lanes<L>& s, typename L::F magnitude, const FetC6Knobs& k,
+                             typename L::F transientFactor) const noexcept
+    {
+        using F = typename L::F;
+        using D = typename L::D;
+        using M = typename L::M;
+        using lanes::vmax; using lanes::vmin; using lanes::vabs; using lanes::vsqrt;
+        const auto Kf = [](float x) noexcept { return L::f(x); };
+        const auto Kd = [](double x) noexcept { return L::d(x); };
+        const auto all = L::m(true);
+        // Without the transient shaper every lane's factor is exactly 1, and x / 1 is x: the divisions below are
+        // then left out (a block-constant branch).
+        const bool unitTransient = L::all(transientFactor == Kf(1.0f));
+        const int ratioIndex = k.ratioIndex;
+        const float sr = k.sr;
+        constexpr float dbToNeper = 0.11512925f;
+        const FetFeedbackTerms& terms = fetFeedbackKnobTerms(ratioIndex, k.thresholdControlDb, k.attackPosition,
+                                                             k.releasePosition, sr);
+        const F tailDb = L::toF(s.slowTailGrDb);
+        // fbTailKneeDb: the tail's own reading against what it adds.
+        const float kneeDb = fetTailKneeDb();
+        const M kneeApplied = L::m(kneeDb > 0.0f) && tailDb > Kf(0.0f);
+        F tailControl = Kf(0.0f);
+        F tailAppliedDb = tailDb;
+        if (L::any(kneeApplied))
+        {
+            tailControl = L::sel(kneeApplied, fetTailControlT<L>(tailDb, kneeDb), tailControl);
+            F restSlope, lawSlope;
+            tailAppliedDb = L::sel(kneeApplied,
+                fetTailAppliedT<L>(L::toF(L::toD(s.fastGrDb) + s.slowGrDb), tailControl, kneeDb, restSlope, lawSlope),
+                tailDb);
+        }
         // The leak slows with depth: 1 + G / D, and at 4:1 with
         // fbReleaseDepthExtraExponent p > 0 the term (P / De)^p is added to that
         // factor, 1 + G / D + (P / De)^p (De fbReleaseDepthExtraDb), P = slow +
@@ -3745,37 +5026,37 @@ private:
         // Programme reads 0.001-0.009 dB worse pooled with it and the constants
         // recalibrated alongside (no cell over 1 dB); that trade was accepted on
         // 2026-10-18.
-        const float releaseSeconds = fetDynamics.fbReleaseSeconds
-            * std::exp(decade * releaseKnobDecades)
-            * fetRatioReleaseScale(ratioIndex)
-            * (1.0f + (d.fastGrDb + d.slowGrDb + tailAppliedDb)
-                / std::max(releaseDepthDb, 1.0f))
-            * (fetDynamics.fbReleaseDepthExtraExponent > 0.0f && ratioIndex == 0
-                ? 1.0 + std::pow(std::max(0.0, (d.slowGrDb + tailAppliedDb)
-                    / std::max(fetDynamics.fbReleaseDepthExtraDb, 1.0f)),
-                    static_cast<double>(fetDynamics.fbReleaseDepthExtraExponent))
-                    / (1.0 + (d.fastGrDb + d.slowGrDb + tailAppliedDb)
-                        / std::max(releaseDepthDb, 1.0f))
-                : 1.0);
+        const float releaseDepthDb = terms.releaseDepthDb;
+        const D reductionSum = L::toD(s.fastGrDb) + s.slowGrDb + L::toD(tailAppliedDb);
+        // Divisions by block-constant values on the path to the leak are multiplications by their reciprocals
+        // (double; the products land on the same floats but for rare last-place ties).
+        const D depthRatio = reductionSum * Kd(1.0 / static_cast<double>(std::max(releaseDepthDb, 1.0f)));
+        // (1 + G / D) (1 + (P / De)^p / (1 + G / D)) is 1 + G / D + (P / De)^p: summed instead (double; the float
+        // result moves only at last-place ties), which saves the division.
+        D extraDepth = Kd(0.0);
+        if (fetDynamics.fbReleaseDepthExtraExponent > 0.0f && ratioIndex == 0)
+            extraDepth = expandedDepthPowT<L>(s.depthPow,
+                    vmax(Kd(0.0), (s.slowGrDb + L::toD(tailAppliedDb))
+                        * Kd(1.0 / static_cast<double>(std::max(fetDynamics.fbReleaseDepthExtraDb, 1.0f)))),
+                    static_cast<double>(fetDynamics.fbReleaseDepthExtraExponent), all);
+        const F releaseSeconds = L::toF(Kd(static_cast<double>(terms.releaseScale))
+            * ((Kd(1.0) + depthRatio) + extraDepth));
         // dB charged per sample per unit of relative overshoot.
-        const float fullCharge = 1.0f / (std::max(attackSeconds, 1.0e-7f) * sr);
+        const float fullCharge = terms.fullCharge;
         // The lag pole (fbAttackLagRatio): this sample's overshoot enters with
         // weight lagStep, the lagged current of the last sample carries the rest.
-        const float lagStep = fetDynamics.fbAttackLagRatio > 0.0f
-            ? 1.0f - std::exp(-1.0f / (fetDynamics.fbAttackLagRatio
-                * std::exp(-decade * fetDynamics.fbAttackLagSlope * attackOffset)
-                * std::max(attackSeconds, 1.0e-7f) * sr))
-            : 1.0f;
+        const float lagStep = terms.lagStep;
         // fbChargeRiseOnly s (0 = off): a diode-fed capacitor charges while the
         // rectified drive rises; this share of the falling flank's charge is
         // withheld. Measured on the 1176's ripple (2026-10-16): it turns the
         // ripple's phase forward as the 1176's sits, without changing a settled
         // sine's level (the tip balance below is told) or the first-cycle peak.
         const float riseOnly = std::clamp(fetDynamics.fbChargeRiseOnly, 0.0f, 1.0f);
-        const bool driveFalling = magnitude < d.riseOnlyPreviousMagnitude;
-        d.riseOnlyPreviousMagnitude = magnitude;
-        const float charge = riseOnly > 0.0f && driveFalling
-            ? fullCharge * lagStep * (1.0f - riseOnly) : fullCharge * lagStep;
+        const M driveFalling = magnitude < s.riseOnlyPreviousMagnitude;
+        s.riseOnlyPreviousMagnitude = magnitude;
+        const F charge = riseOnly > 0.0f
+            ? L::sel(driveFalling, Kf(fullCharge * lagStep * (1.0f - riseOnly)), Kf(fullCharge * lagStep))
+            : Kf(fullCharge * lagStep);
         // Knee release (fbReleaseKneeShare a, fbReleaseKneeDb g0,
         // fbReleaseKneeKnobExponent beta; a = 0 off). At 4:1, whose soft knee
         // is the onset remap below, the fast capacitor lets go more slowly
@@ -3787,131 +5068,133 @@ private:
         // plain cell's at 0.27 / 0.78 / 1.39 dB GR, and more so at slow Release
         // positions (about k^0.4 on top of k). The same slowing is the 1176's
         // last 10 % of a release step (rel90). 20:1 already matches without it.
-        const float kneeReleaseFactor = fetDynamics.fbReleaseKneeShare > 0.0f && ratioIndex == 0
-            ? 1.0f + fetDynamics.fbReleaseKneeShare
-                * std::exp(decade * fetDynamics.fbReleaseKneeKnobExponent * releaseKnobFromFast)
-                * std::exp(
-                -(d.fastGrDb + d.slowGrDb + tailAppliedDb)
-                    / std::max(fetDynamics.fbReleaseKneeDb, 1.0e-3f))
-            : 1.0f;
-        const float leak = std::exp(
-            -1.0f / (std::max(releaseSeconds * kneeReleaseFactor, 1.0e-4f) * sr));
+        // Past terms.kneeDeepDb the knee term is under 2^-25 and the float factor is exactly 1: lanes there skip
+        // the exponential (its anchor then refreshes later, from wherever the reduction returns to).
+        F kneeReleaseFactor = Kf(1.0f);
+        if (fetDynamics.fbReleaseKneeShare > 0.0f && ratioIndex == 0)
+        {
+            const M deep = reductionSum > Kd(terms.kneeDeepDb);
+            if (!L::all(deep))
+                kneeReleaseFactor = L::sel(deep, Kf(1.0f), L::toF(Kd(1.0) + Kd(static_cast<double>(terms.kneeKnob))
+                    * expandedExpDT<L>(s.kneeExp,
+                        -reductionSum * Kd(1.0 / static_cast<double>(std::max(fetDynamics.fbReleaseKneeDb, 1.0e-3f))),
+                        !deep)));
+        }
+        const F leak = smallExpT<L>(
+            Kf(-1.0f) / (vmax(releaseSeconds * kneeReleaseFactor, Kf(1.0e-4f)) * Kf(sr)));
         // A sine settles with its peaks a little above the threshold: the
         // tips, +/- phi around each peak, charge what the leak removes over
         // the cycle, (2 / pi) (tan phi - phi) = c (1 - leak) / fullCharge. The
         // threshold is lowered by that overshoot, 1 / cos phi, so the settled
         // loop sits on the static law, which was measured with sines.
-        const float tipBalance = riseOnly > 0.0f
-            ? 1.57079633f * (1.0f - leak) / (fullCharge * (1.0f - 0.5f * riseOnly))
-            : 1.57079633f * (1.0f - leak) / fullCharge;
+        const F tipBalance = Kf(1.57079633f) * (Kf(1.0f) - leak) * Kf(1.0f / terms.tipDenominator);
         const float slowShare = std::max(fetDynamics.fbSlowShare, 0.0f);
         const float slowCeilingDb = std::max(fetDynamics.fbSlowCeilingDb, 1.0e-3f);
         // The tail population's settled size, scaled by the ratio coordinate
         // the release depth uses (1 at 4:1).
-        const float ratioCoordinate = ratioSlope / (1.0f - ratioSlope)
-            * (1.0f - kFetReductionSlopes[0]) / kFetReductionSlopes[0];
-        const float tailShare = std::max(fetDynamics.fbTailShare, 0.0f)
-            * (fetDynamics.fbTailRatioExponent != 0.0f
-                ? std::pow(ratioCoordinate, fetDynamics.fbTailRatioExponent)
-                : 1.0f);
+        const float tailShare = terms.tailShare;
         const float tailCurve = std::max(fetDynamics.fbTailCurve, 0.0f) * 0.05f;
-        const auto settledTail = [tailShare, tailCurve](
-            float c, float& slope) noexcept {
-            slope = tailShare * (1.0f + 2.0f * tailCurve * c);
-            return tailShare * c * (1.0f + tailCurve * c);
+        const auto settledTail = [tailShare, tailCurve, Kf](F c, F& slope) noexcept {
+            slope = Kf(tailShare) * (Kf(1.0f) + Kf(2.0f * tailCurve) * c);
+            return Kf(tailShare) * c * (Kf(1.0f) + Kf(tailCurve) * c);
         };
-        const auto settledSlow = [slowShare, slowCeilingDb, &settledTail](
-            float c, float& slope) noexcept {
-            const float shape = std::tanh(slowShare * c / slowCeilingDb);
-            float tailSlope = 0.0f;
-            const float tail = settledTail(c, tailSlope);
-            slope = slowShare * (1.0f - shape * shape) + tailSlope;
-            return slowCeilingDb * shape + tail;
+        const auto settledSlow = [&s, slowShare, slowCeilingDb, &settledTail, Kf](F c, F& slope, M active) noexcept {
+            const F shape = expandedTanhT<L>(s.slowShape, Kf(slowShare) * c / Kf(slowCeilingDb), active);
+            F tailSlope;
+            const F tail = settledTail(c, tailSlope);
+            slope = Kf(slowShare) * (Kf(1.0f) - shape * shape) + tailSlope;
+            return Kf(slowCeilingDb) * shape + tail;
         };
-        const float attackLoadDb = fetDynamics.fbAttackLoadDb
-            * std::max(0.0f, 2.0f * attackOffset);
-        const float levelDb = gainToDecibels(std::max(magnitude, 1.0e-12f));
-        const float slow = d.slowGrDb + tailDb;
+        const float attackLoadDb = terms.attackLoadDb;
+        // The overshoot's drive term in linear form: exp(dbToNeper (levelDb - A)), levelDb the floored magnitude in
+        // dB, is that magnitude times exp(-dbToNeper A). No logarithm per sample, and the exponential's argument
+        // then moves only as fast as the charge (its expansion seldom refreshes).
+        const F drive = vmax(magnitude, Kf(1.0e-9f));
+        const F slow = L::toF(s.slowGrDb + L::toD(tailDb));
         // The lagged current of the last sample lands on top of the leak; the
         // sum keeps the loop's 60 dB bound.
         constexpr float maximumChargeDb = 60.0f;
-        const float released = std::min(maximumChargeDb, d.fastGrDb * leak
-            + fullCharge * (1.0f - lagStep) * d.feedbackLag);
+        const F released = vmin(Kf(maximumChargeDb), s.fastGrDb * leak
+            + Kf(fullCharge * (1.0f - lagStep)) * s.feedbackLag);
         // Turn-on (fbTurnOnDb, fbTurnOnBiasDb): the share of the overshoot that
         // charges, the square root of the present reduction plus the Attack
         // position's bias over the turn-on width, 1 above it. The floor keeps
         // it off zero, so the charge leaves rest on the branch that rises
         // (linearly in u) instead of staying at the root u = 0.
         const bool floorOnApplied = fetDynamics.fbFloorOnApplied > 0.5f;
-        const float maximumReductionDb = fetStaticMaximumReductionDb(
-            ratioIndex, thresholdControlDb);
+        const float maximumReductionDb = terms.maximumReductionDb;
         const float turnOnDb = fetDynamics.fbTurnOnDb;
-        const float turnOnBiasDb = 1.0e-3f + std::max(0.0f,
-            fetDynamics.fbTurnOnBiasDb) * attackPosition * attackPosition;
+        const float turnOnBiasDb = terms.turnOnBiasDb;
         // Relative overshoot of the output above the threshold at charge c,
         // and its derivative with respect to u = sqrt(c) (the tip term's own
         // derivative is left to the bracket; near rest under the turn-on it is
         // not small, and the bracket absorbs it). The static law's knee
         // starts with infinite slope in c and a finite one in u. `weight` is
         // the turn-on share at that charge and `weightSlope` its derivative.
-        const auto overshoot = [&](float u, float& derivative, float& weight,
-                                   float& weightSlope) noexcept {
-            const float c = u * u;
+        // quotient: the ratio without the drive; levelSlope / slowSlope: the exponent's slopes in the charge and the
+        // slow population (no transient shaping), which a carried evaluation extrapolates with.
+        struct Evaluation { F over, derivative, weight, weightSlope, quotient, levelSlope, slowSlope; };
+        const auto overshoot = [&](F u, M active) noexcept {
+            Evaluation r;
+            const F c = u * u;
             // What the slow populations add at this charge, and how fast
             // that grows with it (fbTailKneeDb; otherwise their states).
-            float slowNow = slow, appliedSlope = 0.0f;
-            if (kneeApplied)
+            F slowNow = slow, appliedSlope = Kf(0.0f);
+            if (L::any(kneeApplied))
             {
-                float lawSlope = 0.0f;
-                slowNow = d.slowGrDb + fetTailApplied(
-                    c + d.slowGrDb, tailControl, kneeDb, appliedSlope, lawSlope);
+                F restSlope, lawSlope;
+                const F applied = fetTailAppliedT<L>(L::toF(L::toD(c) + s.slowGrDb), tailControl, kneeDb,
+                                                     restSlope, lawSlope);
+                slowNow = L::sel(kneeApplied, L::toF(s.slowGrDb + L::toD(applied)), slow);
+                appliedSlope = L::sel(kneeApplied, restSlope, Kf(0.0f));
             }
-            weight = 1.0f;
-            weightSlope = 0.0f;
+            r.weight = Kf(1.0f);
+            r.weightSlope = Kf(0.0f);
             if (turnOnDb > 0.0f)
             {
-                const float position = (c + slowNow + turnOnBiasDb) / turnOnDb;
-                if (position < 1.0f)
+                const F position = (c + slowNow + Kf(turnOnBiasDb)) / Kf(turnOnDb);
+                const M under = position < Kf(1.0f);
+                if (L::any(under))
                 {
-                    weight = std::sqrt(position);
-                    weightSlope = u * (1.0f + appliedSlope)
-                        / (turnOnDb * weight);
+                    const F weight = vsqrt(position);
+                    r.weight = L::sel(under, weight, r.weight);
+                    r.weightSlope = L::sel(under, u * (Kf(1.0f) + appliedSlope) / (Kf(turnOnDb) * weight),
+                                           r.weightSlope);
                 }
             }
-            float slowSlope = 0.0f, levelSlope = 0.0f;
-            float settledSlowDb = settledSlow(c, slowSlope);
+            F slowSlope, levelSlope;
+            F settledSlowDb = settledSlow(c, slowSlope, active);
             if (kneeDb > 0.0f && tailShare > 0.0f)
             {
                 // The settled tail, a control value here, adds through the
                 // same law.
-                float tailSlope = 0.0f, restSlope = 0.0f, lawSlope = 0.0f;
-                const float tail = settledTail(c, tailSlope);
-                const float population = settledSlowDb - tail;
-                const float populationSlope = slowSlope - tailSlope;
-                settledSlowDb = population + fetTailApplied(
-                    c + population, tail, kneeDb, restSlope, lawSlope);
+                F tailSlope, restSlope, lawSlope;
+                const F tail = settledTail(c, tailSlope);
+                const F population = settledSlowDb - tail;
+                const F populationSlope = slowSlope - tailSlope;
+                settledSlowDb = population + fetTailAppliedT<L>(c + population, tail, kneeDb, restSlope, lawSlope);
                 slowSlope = populationSlope
-                    + restSlope * (1.0f + populationSlope)
+                    + restSlope * (Kf(1.0f) + populationSlope)
                     + lawSlope * tailSlope;
             }
-            const float settledReductionDb = c + settledSlowDb;
-            float settledLevelDb = attackLoadDb + fetStaticOutputLevelDb(
-                settledReductionDb, ratioIndex, thresholdControlDb, levelSlope,
-                !floorOnApplied);
+            const F settledReductionDb = c + settledSlowDb;
+            F settledLevelDb = Kf(attackLoadDb) + fetStaticOutputLevelDbT<L>(
+                settledReductionDb, ratioIndex, k.thresholdControlDb, levelSlope, !floorOnApplied);
             // The gain element's floor belongs to the reduction applied,
             // not to the settled one the threshold is read at.
-            float floorSlope = 0.0f;
-            if (floorOnApplied && c + slowNow > maximumReductionDb)
+            F floorSlope = Kf(0.0f);
+            if (floorOnApplied)
             {
-                floorSlope = 100.0f;
-                settledLevelDb += floorSlope * (c + slowNow - maximumReductionDb);
+                const M overFloor = c + slowNow > Kf(maximumReductionDb);
+                floorSlope = L::sel(overFloor, Kf(100.0f), floorSlope);
+                settledLevelDb = L::sel(overFloor,
+                    settledLevelDb + Kf(100.0f) * (c + slowNow - Kf(maximumReductionDb)), settledLevelDb);
             }
             // Series inverse of tan phi - phi; held where it stops rising.
             // The tips charge through the turn-on share as well.
-            const float tip = std::min(
-                std::cbrt(3.0f * tipBalance * c / weight), 1.5f);
-            const float phase = tip - 0.13333333f * tip * tip * tip;
-            float tipRatio = 1.0f / std::cos(phase);
+            const F tip = vmin(expandedCbrtT<L>(s.tipCbrt, Kf(3.0f) * tipBalance * c / r.weight, active), Kf(1.5f));
+            const F phase = tip - Kf(0.13333333f) * tip * tip * tip;
+            F tipRatio = Kf(1.0f) / expandedCosT<L>(s.tipCos, phase, active);
             if (fetDynamics.fbRectifierImbalance != 0.0f)
             {
                 // Two unequal tips per cycle share the charge one period needs
@@ -3920,34 +5203,151 @@ private:
                 // the symmetric one, so a settled sine's stronger peak still
                 // sits on the static law.
                 const float e = std::min(std::abs(fetDynamics.fbRectifierImbalance), 0.9f);
-                const float x0 = std::max(tipRatio - 1.0f, 0.0f);
-                const float target = 2.0f * x0 * std::sqrt(x0);
-                float x = x0;
-                for (int k = 0; k < 6; ++k)
+                const F x0 = vmax(tipRatio - Kf(1.0f), Kf(0.0f));
+                const F target = Kf(2.0f) * x0 * vsqrt(x0);
+                // While the weaker tip does not charge ((1 - e)(1 + x) <= 1) the root is x = 2^(2/3) x0; past
+                // that, Newton from there. At the shipped e (0.1), against Newton's six steps from x0 over every
+                // float x0 up to 1.05: tipRatio within 1.8e-7 relative (the six steps themselves sit within
+                // 4.9e-8 of the converged root; 2026-10-20).
+                F x = Kf(1.58740105f) * x0;
+                M newton = Kf(1.0f - e) * (Kf(1.0f) + x) - Kf(1.0f) > Kf(0.0f);
+                for (int step = 0; step < 3 && L::any(newton); ++step)
                 {
-                    const float weak = std::max(0.0f, (1.0f - e) * (1.0f + x) - 1.0f);
-                    const float g = x * std::sqrt(x) + weak * std::sqrt(weak) - target;
-                    const float gp = 1.5f * std::sqrt(x) + 1.5f * (1.0f - e) * std::sqrt(weak);
-                    if (!(gp > 0.0f)) break;
-                    x = std::max(0.0f, x - g / gp);
+                    const F weak = vmax(Kf(0.0f), Kf(1.0f - e) * (Kf(1.0f) + x) - Kf(1.0f));
+                    const F g = x * vsqrt(x) + weak * vsqrt(weak) - target;
+                    const F gp = Kf(1.5f) * vsqrt(x) + Kf(1.5f * (1.0f - e)) * vsqrt(weak);
+                    newton = newton && gp > Kf(0.0f);
+                    x = L::sel(newton, vmax(Kf(0.0f), x - g / gp), x);
                 }
-                tipRatio = 1.0f + x;
+                tipRatio = Kf(1.0f) + x;
             }
-            const float ratio = std::exp(dbToNeper
-                * (levelDb - (c + slowNow) / transientFactor - settledLevelDb))
-                * tipRatio;
-            derivative = -2.0f * u * ratio * dbToNeper
-                * ((1.0f + appliedSlope) / transientFactor
-                   + (1.0f + slowSlope) * levelSlope
-                   + floorSlope * (1.0f + appliedSlope));
-            return ratio - 1.0f;
+            const F growth = expandedExpT<L>(s.overshootExp, Kf(-dbToNeper)
+                * ((unitTransient ? c + slowNow : (c + slowNow) / transientFactor) + settledLevelDb), active);
+            const F ratio = drive * growth * tipRatio;
+            const F bracket = (unitTransient ? Kf(1.0f) + appliedSlope : (Kf(1.0f) + appliedSlope) / transientFactor)
+                + (Kf(1.0f) + slowSlope) * levelSlope
+                + floorSlope * (Kf(1.0f) + appliedSlope);
+            r.derivative = Kf(-2.0f) * u * ratio * Kf(dbToNeper) * bracket;
+            r.over = ratio - Kf(1.0f);
+            r.quotient = growth * tipRatio;
+            r.levelSlope = bracket;
+            r.slowSlope = (Kf(1.0f) + appliedSlope) * (Kf(1.0f) + floorSlope);
+            return r;
         };
-        float u = std::sqrt(std::max(released, 0.0f));
-        float slopeAtU = 0.0f, weightAtU = 1.0f, weightSlopeAtU = 0.0f;
-        const float initial = overshoot(u, slopeAtU, weightAtU, weightSlopeAtU);
-        float solvedOvershoot = initial;
-        float solvedWeight = weightAtU;
-        if (initial > 0.0f)
+        F u = vsqrt(vmax(released, Kf(0.0f)));
+        // Steps that cannot overshoot skip the evaluation: the loop charges only around peaks, and on programme
+        // about four steps in five sit well under the point where it would. A lane is quiet when an upper bound on
+        // log2 of the ratio below stays under 0 (with a 0.002 margin, 0.012 dB, for rounding and the expansions):
+        // - the exponent (c + slowNow) + settledLevelDb is at least c + slowNowLow + attackLoadDb + the static law
+        //   (nondecreasing) at c + the settled populations' lower bounds, the floor's term being >= 0. slowNow is
+        //   `slow` exactly without the tail's knee; with it, at least the slow population, plus the tail's control
+        //   value once the rest is past the knee, where the law adds exactly that (to rounding: 1e-4 dB margin).
+        //   The settled slow population is at least its ceiling x tanh's lower bound x / (1 + x), and the settled
+        //   tail at least tailShare c, through its law once the rest is past the knee (0.99999 covers rounding);
+        // - log2 of the drive is at most its exponent and mantissa fraction + 0.0861 (lanes::vlog2Above);
+        // - the tip ratio is at most 2.6027 (tip <= 1.5, so phase <= 1.05; the imbalance's x <= 2^(2/3) x0), or
+        //   1 + k q / (1 - q), q = phase^2 / 2, from cos p >= 1 - p^2 / 2 with the tip bounded by its cube root's
+        //   tangent at the expansion's anchor (above a concave function) at a weight no larger than the
+        //   evaluation's (the slow population alone in the turn-on position).
+        // A quiet lane's overshoot is <= 0, so it does not solve and its lag input, weight x max(0, overshoot), is
+        // 0 either way. What changes is that its tip cube root, tip cosine and overshoot exp expansions are not
+        // refreshed on those steps: results move at the rounding level. The decision is per lane and the
+        // evaluation masks quiet lanes' expansions, so a pair still equals two single channels. Only lanes whose
+        // transient factor is 1 (no transient shaping on this step) are bounded.
+        const M unitLanes = transientFactor == Kf(1.0f);
+        // A lane carries its last exact evaluation (FETState::FetCarry) while the state it was taken at has hardly
+        // moved: within 0.003 dB of its charge and slow population, the tail reading within 0.0002 dB, the same
+        // tail-knee state, no transient shaping and the same knobs (holdCarryUnder). The carried ratio is the
+        // evaluation's value without the drive times this step's drive, extrapolated to first order in the charge
+        // and the slow population (the exponent moves at most ~0.001 neper there: second-order error ~5e-7). It
+        // decides whether the step charges and seeds the solver in place of the bound and the first evaluation;
+        // the solver's evaluations stay exact, so a charging step still ends on a root within its tolerance.
+        const F charge0 = u * u;
+        const F slowFloat = L::toF(s.slowGrDb);
+        M carried = L::m(false);
+        if (L::any(s.carryValid))
+            carried = s.carryValid && unitLanes && ((kneeApplied && s.carryKnee) || !(kneeApplied || s.carryKnee))
+                && vabs(charge0 - s.carryCharge) <= Kf(3.0e-3f) && vabs(slowFloat - s.carrySlow) <= Kf(3.0e-3f)
+                && vabs(tailDb - s.carryTail) <= Kf(2.0e-4f);
+        const M bounded = unitLanes && !carried;
+        M quiet = L::m(false);
+        if (L::any(bounded))
+        {
+            const F c = charge0;
+            F slowNowLow = L::sel(kneeApplied, L::toF(s.slowGrDb), slow);
+            if (L::any(kneeApplied))
+                slowNowLow = L::sel(kneeApplied && L::toF(L::toD(c) + s.slowGrDb) >= Kf(kneeDb),
+                    L::toF(s.slowGrDb + L::toD(vmax(Kf(0.0f), tailControl - Kf(1.0e-4f)))), slowNowLow);
+            const F x = Kf(slowShare) * c / Kf(slowCeilingDb);
+            const F settledLow = Kf(slowCeilingDb) * x / (Kf(1.0f) + x) * Kf(0.99999f);
+            const F tailLow = Kf(tailShare) * c * Kf(0.99999f);
+            const F settledAdd = kneeDb > 0.0f && tailShare > 0.0f
+                ? L::sel(c + settledLow >= Kf(kneeDb), tailLow, Kf(0.0f)) : tailLow;
+            F unusedSlope;
+            const F levelLow = c + slowNowLow + Kf(attackLoadDb)
+                + fetStaticOutputLevelDbT<L>(c + settledLow + settledAdd, ratioIndex, k.thresholdControlDb,
+                                             unusedSlope, !floorOnApplied);
+            const F room = levelLow * Kf(1.0f / 6.02059991f) - Kf(0.002f) - lanes::vlog2Above(drive);
+            quiet = bounded && Kf(1.3840f) < room;
+            if (!L::all(quiet) && L::any(bounded && room > Kf(0.0f)))
+            {
+                F weightLow = Kf(1.0f);
+                if (turnOnDb > 0.0f)
+                    weightLow = vsqrt(vmin(Kf(1.0f), (c + slowNowLow + Kf(turnOnBiasDb)) * Kf(0.999999f / turnOnDb)));
+                const F argument = Kf(3.0f) * tipBalance * c / weightLow;
+                const auto& anchor = s.tipCbrt;
+                const F tip = vmin(anchor.value
+                        * (Kf(1.0f) + (argument - anchor.at) * anchor.aux * Kf(0.333333343f)), Kf(1.5f))
+                    * Kf(1.000001f);
+                const F phase = tip - Kf(0.13333333f) * tip * tip * tip;
+                const F q = Kf(0.5f) * phase * phase;
+                const float tipFactor = (fetDynamics.fbRectifierImbalance != 0.0f ? 1.58740105f : 1.0f)
+                    * 1.44269504f * 1.0001f;
+                quiet = quiet || (bounded && Kf(tipFactor) * q / (Kf(1.0f) - q) < room);
+            }
+        }
+        const auto keepCarry = [&](const Evaluation& e, F at, M lanesOn) noexcept {
+            const M on = lanesOn && unitLanes;
+            s.carryValid = s.carryValid || on;
+            s.carryKnee = L::sel(on, kneeApplied, s.carryKnee);
+            s.carryU = L::sel(on, at, s.carryU);
+            s.carryCharge = L::sel(on, at * at, s.carryCharge);
+            s.carrySlow = L::sel(on, slowFloat, s.carrySlow);
+            s.carryTail = L::sel(on, tailDb, s.carryTail);
+            s.carryQuotient = L::sel(on, e.quotient, s.carryQuotient);
+            s.carryLevelSlope = L::sel(on, e.levelSlope, s.carryLevelSlope);
+            s.carrySlowSlope = L::sel(on, e.slowSlope, s.carrySlowSlope);
+            s.carryWeight = L::sel(on, e.weight, s.carryWeight);
+            s.carryWeightSlope = L::sel(on, e.weightSlope, s.carryWeightSlope);
+        };
+        Evaluation first{Kf(-1.0f), Kf(0.0f), Kf(1.0f), Kf(0.0f), Kf(0.0f), Kf(0.0f), Kf(0.0f)};
+        const M evaluated = !carried && !quiet;
+        if (L::any(evaluated))
+        {
+            const Evaluation e = overshoot(u, evaluated);
+            keepCarry(e, u, evaluated);
+            first.over = L::sel(evaluated, e.over, first.over);
+            first.weight = L::sel(evaluated, e.weight, first.weight);
+            first.weightSlope = L::sel(evaluated, e.weightSlope, first.weightSlope);
+            first.derivative = L::sel(evaluated, e.derivative, first.derivative);
+        }
+        if (L::any(carried))
+        {
+            const F exponent = Kf(dbToNeper) * (s.carryLevelSlope * (charge0 - s.carryCharge)
+                + s.carrySlowSlope * (slowFloat - s.carrySlow));
+            const F ratio = drive * s.carryQuotient * (Kf(1.0f) - exponent + Kf(0.5f) * exponent * exponent);
+            first.over = L::sel(carried, ratio - Kf(1.0f), first.over);
+            first.weight = L::sel(carried, vmin(Kf(1.0f), s.carryWeight + s.carryWeightSlope * (u - s.carryU)),
+                                  first.weight);
+            first.weightSlope = L::sel(carried, s.carryWeightSlope, first.weightSlope);
+            first.derivative = L::sel(carried, Kf(-2.0f) * u * ratio * Kf(dbToNeper) * s.carryLevelSlope,
+                                      first.derivative);
+        }
+        const F initial = first.over;
+        F solvedOvershoot = initial;
+        F solvedWeight = first.weight;
+        const M solve = initial > Kf(0.0f);
+        if (L::any(solve))
         {
             // h(u) = u^2 - released - charge * weight(u) * max(0, overshoot(u))
             // has one root between the released charge and the explicit step
@@ -3955,95 +5355,156 @@ private:
             // but wherever it is positive it rises (there charge * weight *
             // overshoot <= c - released, which bounds the weight's own term
             // below u). Newton, bisecting whenever a step leaves the bracket
-            // or stops halving.
-            float low = u;
-            float high = std::sqrt(std::min(
-                released + charge * initial, maximumChargeDb));
-            float value = -charge * weightAtU * initial;
-            float slope = 2.0f * u - charge
-                * (weightAtU * slopeAtU + weightSlopeAtU * initial);
-            float previousStep = high - low;
-            for (int iteration = 0; iteration < 16 && high - low > 1.0e-6f;
-                 ++iteration)
+            // or stops halving. Each lane iterates as the scalar loop would; a lane that has stopped keeps its
+            // values and its expansions' anchors. The first step may span the whole bracket: it lands near the
+            // explicit step times the turn-on weight, which above half weight a half-bracket limit turned into a
+            // bisection and five more evaluations (owner ruling 2026-10-20: the faster path is allowed although
+            // it stops at a different point within the tolerance than the earlier solver did).
+            F low = u;
+            F high = vsqrt(vmin(released + charge * initial, Kf(maximumChargeDb)));
+            F value = -charge * first.weight * initial;
+            F slope = Kf(2.0f) * u - charge * (first.weight * first.derivative + first.weightSlope * initial);
+            F previousStep = Kf(2.0f) * (high - low);
+            M active = solve && high - low > Kf(1.0e-6f);
+            for (int iteration = 0; iteration < 16 && L::any(active); ++iteration)
             {
-                float next = slope > 0.0f ? u - value / slope : high + 1.0f;
-                if (!(next > low && next < high)
-                    || std::abs(next - u) > 0.5f * previousStep)
-                    next = 0.5f * (low + high);
-                previousStep = std::abs(next - u);
-                u = next;
-                const float over = overshoot(
-                    u, slopeAtU, weightAtU, weightSlopeAtU);
-                solvedOvershoot = over;
-                solvedWeight = weightAtU;
-                value = u * u - released
-                    - charge * weightAtU * std::max(over, 0.0f);
-                slope = 2.0f * u - (over > 0.0f
-                    ? charge * (weightAtU * slopeAtU + weightSlopeAtU * over)
-                    : 0.0f);
-                if (std::abs(value) < 1.0e-5f) break;
-                if (value < 0.0f) low = u; else high = u;
+                F next = L::sel(slope > Kf(0.0f), u - value / slope, high + Kf(1.0f));
+                const M bisect = !(next > low && next < high) || vabs(next - u) > Kf(0.5f) * previousStep;
+                next = L::sel(bisect, Kf(0.5f) * (low + high), next);
+                previousStep = L::sel(active, vabs(next - u), previousStep);
+                u = L::sel(active, next, u);
+                const Evaluation e = overshoot(u, active);
+                keepCarry(e, u, active);
+                solvedOvershoot = L::sel(active, e.over, solvedOvershoot);
+                solvedWeight = L::sel(active, e.weight, solvedWeight);
+                const F valueNow = u * u - released - charge * e.weight * vmax(e.over, Kf(0.0f));
+                const F slopeNow = Kf(2.0f) * u - L::sel(e.over > Kf(0.0f),
+                    charge * (e.weight * e.derivative + e.weightSlope * e.over), Kf(0.0f));
+                value = L::sel(active, valueNow, value);
+                slope = L::sel(active, slopeNow, slope);
+                const M stay = active && !(vabs(valueNow) < Kf(1.0e-5f));
+                const M below = valueNow < Kf(0.0f);
+                low = L::sel(stay && below, u, low);
+                high = L::sel(stay && !below, u, high);
+                active = stay && high - low > Kf(1.0e-6f);
             }
         }
-        const float charged = u * u;
+        const F charged = u * u;
         // The lag pole's own state, advanced from the overshoot at the solved
         // charge. Recovering it as (charged - released) / fullCharge instead
         // quantises a ~1e-5 dB increment to the capacitor's float spacing: the
         // current then never decays and the release stalls at high rates.
-        d.feedbackLag += lagStep
-            * (solvedWeight * std::max(solvedOvershoot, 0.0f) - d.feedbackLag);
-        if (d.feedbackLag < 1.0e-30f) d.feedbackLag = 0.0f;
-        d.fastGrDb = charged;
-        d.intermediateGrDb = 0.0f;
-        float slowApplied = slow;
-        if (kneeApplied)
+        s.feedbackLag = s.feedbackLag + Kf(lagStep) * (solvedWeight * vmax(solvedOvershoot, Kf(0.0f)) - s.feedbackLag);
+        s.feedbackLag = L::sel(s.feedbackLag < Kf(1.0e-30f), Kf(0.0f), s.feedbackLag);
+        s.fastGrDb = charged;
+        F slowApplied = slow;
+        if (L::any(kneeApplied))
         {
-            float restSlope = 0.0f, lawSlope = 0.0f;
-            slowApplied = d.slowGrDb + fetTailApplied(
-                charged + d.slowGrDb, tailControl, kneeDb, restSlope, lawSlope);
+            F restSlope, lawSlope;
+            const F applied = fetTailAppliedT<L>(L::toF(L::toD(charged) + s.slowGrDb), tailControl, kneeDb,
+                                                 restSlope, lawSlope);
+            slowApplied = L::sel(kneeApplied, L::toF(s.slowGrDb + L::toD(applied)), slow);
         }
-        d.envelope = decibelsToGain(-(charged + slowApplied) / transientFactor);
-        float unusedSlope = 0.0f;
+        s.envelope = expandedDecibelsToGainT<L>(s.envelopeGain, unitTransient ? -(charged + slowApplied)
+                                                                              : -(charged + slowApplied) / transientFactor, all);
+        F unusedSlope;
         // The tail population follows its own settled size in its own times,
         // whatever the Release knob says; the other one as before.
-        const float tailTarget = settledTail(charged, unusedSlope);
-        if (tailShare > 0.0f || d.slowTailGrDb > 0.0)
+        const F tailTarget = settledTail(charged, unusedSlope);
+        const M tailRuns = L::m(tailShare > 0.0f) || s.slowTailGrDb > Kd(0.0);
+        if (L::any(tailRuns))
         {
             // The floor comes first so that a non-finite lab value lands on it.
             // With fbTailKneeDb the target is a control value and so is the
             // state that follows it; the reading F(v) is what is kept.
-            const double tailControlNow = static_cast<double>(tailControl);
-            const bool tailCharging = kneeDb > 0.0f
-                ? static_cast<double>(tailTarget) > tailControlNow
-                : tailTarget > tailDb;
-            const double tailSeconds = std::max(1.0e-4f,
-                tailCharging ? fetDynamics.fbTailChargeSeconds
-                             : fetDynamics.fbTailReleaseSeconds);
-            const double tailStep = std::exp(-1.0 / (tailSeconds * sr));
+            const D target = L::toD(tailTarget);
+            const M tailCharging = kneeDb > 0.0f ? target > L::toD(tailControl) : tailTarget > tailDb;
+            const D tailStep = L::sel(tailCharging, Kd(terms.tailStepCharging), Kd(terms.tailStepReleasing));
+            D next;
             if (kneeDb > 0.0f)
             {
                 const double knee = static_cast<double>(kneeDb);
-                const double held = std::max(d.slowTailGrDb, 0.0);
-                const double target = static_cast<double>(tailTarget);
-                const double state = target + ((held < knee
-                    ? 2.0 * std::sqrt(knee * held) : held + knee) - target)
-                    * tailStep;
-                d.slowTailGrDb = state < 2.0 * knee
-                    ? state * state / (4.0 * knee) : state - knee;
+                const D held = vmax(s.slowTailGrDb, Kd(0.0));
+                const M heldBelow = held < Kd(knee);
+                D control = held + Kd(knee);
+                if (MC2_UNLIKELY(takes<L>(heldBelow))) control = L::sel(heldBelow, Kd(2.0) * vsqrt(Kd(knee) * held), control);
+                const D state = target + (control - target) * tailStep;
+                const M stateBelow = state < Kd(2.0 * knee);
+                next = state - Kd(knee);
+                if (MC2_UNLIKELY(takes<L>(stateBelow))) next = L::sel(stateBelow, state * state / Kd(4.0 * knee), next);
             }
             else
-                d.slowTailGrDb = tailTarget
-                    + (d.slowTailGrDb - tailTarget) * tailStep;
-            if (d.slowTailGrDb < 1.0e-30) d.slowTailGrDb = 0.0;
+                next = target + (s.slowTailGrDb - target) * tailStep;
+            next = L::sel(next < Kd(1.0e-30), Kd(0.0), next);
+            s.slowTailGrDb = L::sel(tailRuns, next, s.slowTailGrDb);
         }
-        const float slowTarget = settledSlow(charged, unusedSlope) - tailTarget;
-        const float slowSeconds = slowTarget > d.slowGrDb
-            ? fetDynamics.fbSlowChargeSeconds
-            : fetDynamics.fbSlowReleaseRatio * releaseSeconds
-                * std::exp(decade * releaseKnobDecades
-                    * (fetDynamics.fbSlowReleaseKnobExponent - 1.0f));
-        d.slowGrDb = slowTarget + (d.slowGrDb - slowTarget)
-            * std::exp(-1.0f / (std::max(slowSeconds, 1.0e-4f) * sr));
+        const F slowTarget = settledSlow(charged, unusedSlope, all) - tailTarget;
+        const M slowCharging = L::toD(slowTarget) > s.slowGrDb;
+        F slowStep = Kf(terms.slowChargeStep);
+        if (takes<L>(!slowCharging))
+            slowStep = L::sel(slowCharging, slowStep,
+                smallExpT<L>(Kf(-1.0f) / (vmax(Kf(fetDynamics.fbSlowReleaseRatio) * releaseSeconds
+                    * Kf(terms.slowReleaseKnob), Kf(1.0e-4f)) * Kf(sr))));
+        s.slowGrDb = L::toD(slowTarget) + (s.slowGrDb - L::toD(slowTarget)) * L::toD(slowStep);
+    }
+
+    // processFET's C6 arm over a run of oversampled samples on the lanes' channels, their state held in lanes
+    // throughout (processFetC6Block).
+    template <class L>
+    void fetC6Run(const int* channels, const MultiCompParameterState& p, bool external, int samples, int factor,
+                  const float* outputDb, const float* const* audio, const float* const* sidechain,
+                  const float* const* partner, float* const* out) noexcept
+    {
+        constexpr int n = L::kLanes;
+        FETState* state[n];
+        for (int lane = 0; lane < n; ++lane)
+        {
+            state[lane] = &fet[static_cast<size_t>(channels[lane])];
+            fetInputTransformerResting[static_cast<size_t>(channels[lane])] = true;
+        }
+        FetC6Lanes<L> lanesState;
+        loadC6(lanesState, state);
+        const float transientAmount = p.fetTransient.load(std::memory_order_relaxed);
+        for (int i = 0; i < samples; ++i)
+        {
+            const FetC6Knobs knobs = fetC6Knobs(p, external, outputDb[i]);
+            holdCarryUnder<L>(lanesState, knobs);
+            for (int phase = 0; phase < factor; ++phase)
+            {
+                const int k = i * factor + phase;
+                float input[n], sc[n], partnerSample[n];
+                for (int lane = 0; lane < n; ++lane)
+                {
+                    input[lane] = audio[lane][k];
+                    sc[lane] = sidechain[lane][k];
+                    partnerSample[lane] = partner != nullptr ? partner[lane][k] : 0.0f;
+                }
+                // The transient shaper's factor, 1 without it (built in a register: a per-lane fill of 1 became a
+                // library call per sample).
+                auto transientFactor = L::f(1.0f);
+                if (transientAmount > 0.01f)
+                {
+                    float transient[n];
+                    for (int lane = 0; lane < n; ++lane)
+                        transient[lane] = std::max(1.0f, transientShaper.process(input[lane], channels[lane],
+                                                                                 transientAmount));
+                    transientFactor = lanesF<L>(transient);
+                }
+                const auto y = fetC6Step<L>(lanesState, knobs, channels, lanesF<L>(input), lanesF<L>(sc),
+                                            lanesF<L>(partnerSample), transientFactor);
+                for (int lane = 0; lane < n; ++lane) out[lane][k] = laneF<L>(y, lane);
+            }
+        }
+        storeC6(lanesState, state);
+    }
+
+    // The colour stage's gain-to-dB on one channel's anchor, for processFET's arms off the C6 loop.
+    static float expandedGainToDecibels(FetExpansion& e, float gain) noexcept
+    {
+        FetExpansionLanes<lanes::Lane1> lane{e.at, e.value, e.aux};
+        const float y = expandedGainToDecibelsT<lanes::Lane1>(lane, gain, true);
+        e = FetExpansion{lane.at, lane.value, lane.aux};
+        return y;
     }
 
     float processFET(float input, int ch, float sidechain,
@@ -4055,23 +5516,48 @@ private:
         auto& inT = studio ? inputTransformerStudioFet[ch] : inputTransformerFet[ch];
         auto& outT = studio ? outputTransformerStudioFet[ch] : outputTransformerFet[ch];
         const float inputValue = p.fetInput.load(std::memory_order_relaxed);
-        const float inputGain = decibelsToGain(
-            studio ? inputValue : fetInputGainDb(inputValue));
+        const float inputGain = memoized(fetInputGainMemo[studio ? 1 : 0], inputValue, [studio](float v) noexcept {
+            return decibelsToGain(studio ? v : fetInputGainDb(v)); });
         // Equivalent source-level/Input combinations have the same measured
         // vintage output spectrum. The generic transformer saturates far
         // earlier than this unit when driven by its 40 dB Input range, so the
         // calibrated vintage coloration below owns the audio stage. Its subtly
         // shaped signal remains useful to the unlinked detector. Studio FET
         // retains its established transformer-before-gain audio topology.
-        const float transformedInput = inT.processSample(input, ch);
-        const float gained = studio ? transformedInput * inputGain
-                                    : input * inputGain;
         const int ratioIndex = std::clamp(p.fetRatio.load(std::memory_order_relaxed), 0, 4);
         const float ratios[5] = {studio ? 4.0f : 3.85f, studio ? 8.0f : 7.40f, studio ? 12.0f : 12.50f, studio ? 20.0f : 21.50f, studio ? 20.0f : 21.50f};
         const float ratio = ratios[ratioIndex];
         // Candidate C6 (see kFetDynamicsDefaults); All-buttons keeps its arm.
         const bool feedback = !studio && ratioIndex != 4
             && fetDynamics.fbOn > 0.5f;
+        if (feedback)
+        {
+            fetInputTransformerResting[static_cast<size_t>(ch)] = true;
+            // The colour stage, the detector, the loop, the knee and the output stage on this channel
+            // (fetC6Step). MultiCompDSP's FET block path steps the same arm a block at a time (processFetC6Block).
+            FETState* const state[1] = {&d};
+            FetC6Lanes<lanes::Lane1> lanesState;
+            loadC6(lanesState, state);
+            float& partnerSample = fetLinkPartner[static_cast<size_t>(ch)];
+            const float partner = partnerSample;
+            partnerSample = 0.0f;
+            const float transientAmount = p.fetTransient.load(std::memory_order_relaxed);
+            const float transientFactor = transientAmount > 0.01f
+                ? std::max(1.0f, transientShaper.process(input, ch, transientAmount)) : 1.0f;
+            const FetC6Knobs knobs = fetC6Knobs(p, external, p.fetOutput.load(std::memory_order_relaxed));
+            holdCarryUnder<lanes::Lane1>(lanesState, knobs);
+            const float out = fetC6Step<lanes::Lane1>(lanesState, knobs, &ch, input, sidechain, partner, transientFactor);
+            storeC6(lanesState, state);
+            return out;
+        }
+        if (!studio && fetInputTransformerResting[static_cast<size_t>(ch)])
+        {
+            inT.reset();
+            fetInputTransformerResting[static_cast<size_t>(ch)] = false;
+        }
+        const float transformedInput = inT.processSample(input, ch);
+        const float gained = studio ? transformedInput * inputGain
+                                    : input * inputGain;
         // The low-frequency section ahead of the gain element (lfAheadHz).
         float gainedAhead = gained;
         if (fetLfAheadOn && !studio)
@@ -4089,30 +5575,10 @@ private:
         {
             // Vintage FET saturation is inside the feedback loop.  The
             // sidechain must see this signal, not the post-envelope shortcut.
-            const float grDb = -gainToDecibels(d.envelope + 0.001f);
-            const float k2 = feedback ? fetFeedbackK2(grDb) : fetBroadbandK2(grDb);
-            const float k3 = feedback ? fetFeedbackK3(grDb) : fetBroadbandK3(grDb);
-            // fbStaticK3KnobShare rho3 (0 = off): the FET's static cubic grows with
-            // the Release pot's rate k (k = 1 at Release 0.85-1, 0.217 at the
-            // nominal position). Measured on the 1176 (2026-10-15 grids, the
-            // Release-axis split at 0 dB GR, 1 kHz and 100 Hz, Inputs .2 / .4 / .8):
-            // below the knee its third harmonic is S (1 + 0.30 k), the
-            // Release-proportional part in phase with the static one (-10.2 to
-            // -10.6 dB at k = 1) and no loop ripple to carry it; the FET's gate
-            // network ties to the control node through the pot. It acts on the
-            // settled domain the law was measured in (the source bounded at full
-            // scale); an onset's first-cycle excursion keeps the bounded cubic above.
-            float staticKnobK3 = 0.0f;
-            if (feedback && fetDynamics.fbStaticK3KnobShare != 0.0f)
-            {
-                const float potSpan = std::max(
-                    1.0e-3f, fetDynamics.fbReleasePotEnd - fetDynamics.fbReleasePotStart);
-                const float travel = std::min(1.0f, std::max(0.0f,
-                    (fetDynamics.fbReleasePotEnd - fetReleasePosition(
-                        p.fetRelease.load(std::memory_order_relaxed))) / potSpan));
-                staticKnobK3 = fetDynamics.fbStaticK3KnobShare * fetDynamics.fbReleasePotFixed
-                    / std::max(fetDynamics.fbReleasePotFixed + travel, 1.0e-6f);
-            }
+            const float grDb = -expandedGainToDecibels(d.colourGrDbExpansion, d.envelope + 0.001f);
+            const float k2 = fetBroadbandK2(grDb);
+            const float k3 = fetBroadbandK3(grDb);
+            const float lowFrequencyK2 = fetLowFrequencyK2(grDb);
             // `fetBroadbandK3` is a settled small-signal fit. On the first
             // uncompressed cycle, Input can drive this internal node tens of
             // times beyond every fitted row; extrapolating x^3 there creates
@@ -4128,8 +5594,7 @@ private:
                 saturated, -kFetBroadbandK3SourceLimit,
                 kFetBroadbandK3SourceLimit);
             const float sq = saturated * saturated;
-            const float saturatedBeforeColour = saturated;
-            const float alpha = 1.0f / (1.0f + kDuskTwoPi * 10.0f / sr);
+            const float alpha = fetColourDcAlpha;
             const float h2 = alpha * (d.dc + sq - d.prevSq);
             d.dc = h2;
             d.prevSq = sq;
@@ -4137,15 +5602,14 @@ private:
             // Chebyshev T5 term contributes fifth harmonic without folding a
             // large cubic back into the independently fitted K3 surface or
             // duplicating the low-frequency transformer term.
-            const float colourHighPassCoeff = 1.0f
-                - std::exp(-2.0f * kDuskPi * 250.0f / sr);
+            const float colourHighPassCoeff = fetColourCorner250;
             d.colourHighPassLow += colourHighPassCoeff
                 * (saturated - d.colourHighPassLow);
             float colourHighPassed = saturated - d.colourHighPassLow;
             d.colourHighPassLower += colourHighPassCoeff
                 * (colourHighPassed - d.colourHighPassLower);
             colourHighPassed -= d.colourHighPassLower;
-            const float colourPeakRelease = std::exp(-1.0f / (0.1f * sr));
+            const float colourPeakRelease = fetColourPeakRelease;
             const float colourHighPassedAbs = std::abs(colourHighPassed);
             d.colourPeak = colourHighPassedAbs >= d.colourPeak
                 ? colourHighPassedAbs
@@ -4160,7 +5624,7 @@ private:
             const float broadbandHarmonicDrive = std::clamp(
                 grDb / 14.0f, 0.0f, 1.0f);
             const float broadbandH5 = d.colourPeak * broadbandHarmonicDrive
-                * (feedback ? 0.0f : fetBroadbandK5(grDb))
+                * fetBroadbandK5(grDb)
                 * (16.0f * colour5 - 20.0f * colour3
                     + 5.0f * colourNormalised);
             // The hardware's low-frequency transformer asymmetry grows with
@@ -4177,8 +5641,7 @@ private:
             // Wave 9 fit carries the 39-row 1 kHz set as a constraint for
             // exactly this reason, and lands it at 0.2335 dB worst against the
             // 0.2625 dB it inherited.
-            const float colourLowCoeff = 1.0f
-                - std::exp(-2.0f * kDuskPi * 250.0f / sr);
+            const float colourLowCoeff = fetColourCorner250;
             d.colourLow += colourLowCoeff * (saturated - d.colourLow);
             d.colourLower += colourLowCoeff * (d.colourLow - d.colourLower);
             const float colourLowSq = d.colourLower * d.colourLower;
@@ -4186,9 +5649,7 @@ private:
                 * (d.colourLowDc + colourLowSq - d.colourLowPrevSq);
             d.colourLowDc = colourLowH2;
             d.colourLowPrevSq = colourLowSq;
-            const float lowFrequencyK2 = feedback
-                ? fetFeedbackLowFrequencyK2(grDb) : fetLowFrequencyK2(grDb);
-            const float colourLowPeakRelease = std::exp(-1.0f / (0.1f * sr));
+            const float colourLowPeakRelease = fetColourPeakRelease;
             const float colourLowerAbs = std::abs(d.colourLower);
             d.colourLowPeak = colourLowerAbs >= d.colourLowPeak
                 ? colourLowerAbs
@@ -4203,102 +5664,100 @@ private:
             const float low4 = low2 * low2;
             const float low5 = low4 * lowNormalised;
             const float lowHarmonicDrive = std::clamp(grDb / 14.0f, 0.0f, 1.0f);
-            // The C6 loop's own ripple supplies the odd harmonics these fitted
-            // terms stood in for on the earlier cell (2026-10-15/16).
-            const float lowFrequencyK3 = feedback ? 0.0f : fetLowFrequencyK3(grDb);
-            const float lowFrequencyK5 = feedback ? 0.0f : fetLowFrequencyK5(grDb);
+            const float lowFrequencyK3 = fetLowFrequencyK3(grDb);
+            const float lowFrequencyK5 = fetLowFrequencyK5(grDb);
             const float lowT3 = 4.0f * low3 - 3.0f * lowNormalised;
-            const float shallowNormalised = std::clamp(
-                gained / std::max(d.kneePeak, 1.0e-9f), -1.0f, 1.0f);
-            const float shallowNormalised2
-                = shallowNormalised * shallowNormalised;
-            const float shallowNormalised3
-                = shallowNormalised2 * shallowNormalised;
-            const float shallowT3 = 4.0f * shallowNormalised2
-                * shallowNormalised - 3.0f * shallowNormalised;
-            const float shallowT5 = 16.0f * shallowNormalised3
-                    * shallowNormalised2
-                - 20.0f * shallowNormalised3
-                + 5.0f * shallowNormalised;
-            const float lowT3LagCoeff = 1.0f
-                - std::exp(-2.0f * kDuskPi * 300.0f / sr);
-            d.shallowT3Lag += lowT3LagCoeff
-                * (shallowT3 - d.shallowT3Lag);
-            d.shallowT3Lower += lowT3LagCoeff
-                * (d.shallowT3Lag - d.shallowT3Lower);
-            d.shallowT3Lowest += lowT3LagCoeff
-                * (d.shallowT3Lower - d.shallowT3Lowest);
-            d.shallowT5Lag += lowT3LagCoeff
-                * (shallowT5 - d.shallowT5Lag);
-            d.shallowT5Lower += lowT3LagCoeff
-                * (d.shallowT5Lag - d.shallowT5Lower);
-            d.shallowT5Lowest += lowT3LagCoeff
-                * (d.shallowT5Lower - d.shallowT5Lowest);
-            const float shallowDriveDb = gainToDecibels(
-                std::max(d.kneePeak, 1.0e-12f));
-            const std::array<float, 4> shallowOddCorrection
-                = ratioIndex == 0 && !feedback
-                    ? fetShallowKneeOddCorrection(shallowDriveDb)
-                    : std::array<float, 4>{{0.0f, 0.0f, 0.0f, 0.0f}};
-            const float inputPosition = std::clamp(
-                (inputValue + 20.0f) / 60.0f, 0.0f, 1.0f);
-            const float releasePosition = fetReleasePosition(
-                p.fetRelease.load(std::memory_order_relaxed));
-            const std::array<float, 4> broadbandComplexH3Correction
-                = ratioIndex == 0 && !feedback
-                    ? fetBroadbandComplexH3Correction(
-                        inputPosition, releasePosition, shallowDriveDb, fs)
-                    : std::array<float, 4>{{0.0f, 0.0f, 0.0f, 0.0f}};
-            const std::array<float, 4> broadbandComplexH5Correction
-                = ratioIndex == 0 && !feedback
-                    ? fetBroadbandComplexH5Correction(
-                        inputPosition, releasePosition, shallowDriveDb, fs)
-                    : std::array<float, 4>{{0.0f, 0.0f, 0.0f, 0.0f}};
             float lowHarmonics = d.colourLowPeak * lowHarmonicDrive
                 * (lowFrequencyK3 * lowT3
                     + 0.0037f * (8.0f * low4 - 8.0f * low2)
                     + lowFrequencyK5 * (16.0f * low5 - 20.0f * low3
                         + 5.0f * lowNormalised));
-            lowHarmonics += d.colourLowPeak
-                * (shallowOddCorrection[0] * d.shallowT3Lag
-                    + shallowOddCorrection[1] * d.shallowT3Lower
-                    + shallowOddCorrection[2] * d.shallowT5Lag
-                    + shallowOddCorrection[3] * d.shallowT5Lower);
-            lowHarmonics += d.kneePeak
-                * (broadbandComplexH3Correction[0] * shallowT3
-                    + broadbandComplexH3Correction[1] * d.shallowT3Lag
-                    + broadbandComplexH3Correction[2] * d.shallowT3Lower
-                    + broadbandComplexH3Correction[3] * d.shallowT3Lowest);
-            lowHarmonics += d.kneePeak
-                * (broadbandComplexH5Correction[0] * shallowT5
-                    + broadbandComplexH5Correction[1] * d.shallowT5Lag
-                    + broadbandComplexH5Correction[2] * d.shallowT5Lower
-                    + broadbandComplexH5Correction[3] * d.shallowT5Lowest);
+            // The shallow-knee cell (its T3 / T5 lags and corrections, on the knee peak below): only 4:1 with
+            // the C6 loop off (fbOn) reads it. With the loop on, as shipped, no ratio does, so it does not run.
+            if (!(fetDynamics.fbOn > 0.5f))
+            {
+                const float shallowNormalised = std::clamp(
+                    gained / std::max(d.kneePeak, 1.0e-9f), -1.0f, 1.0f);
+                const float shallowNormalised2
+                    = shallowNormalised * shallowNormalised;
+                const float shallowNormalised3
+                    = shallowNormalised2 * shallowNormalised;
+                const float shallowT3 = 4.0f * shallowNormalised2
+                    * shallowNormalised - 3.0f * shallowNormalised;
+                const float shallowT5 = 16.0f * shallowNormalised3
+                        * shallowNormalised2
+                    - 20.0f * shallowNormalised3
+                    + 5.0f * shallowNormalised;
+                const float lowT3LagCoeff = fetLowT3Corner300;
+                d.shallowT3Lag += lowT3LagCoeff
+                    * (shallowT3 - d.shallowT3Lag);
+                d.shallowT3Lower += lowT3LagCoeff
+                    * (d.shallowT3Lag - d.shallowT3Lower);
+                d.shallowT3Lowest += lowT3LagCoeff
+                    * (d.shallowT3Lower - d.shallowT3Lowest);
+                d.shallowT5Lag += lowT3LagCoeff
+                    * (shallowT5 - d.shallowT5Lag);
+                d.shallowT5Lower += lowT3LagCoeff
+                    * (d.shallowT5Lag - d.shallowT5Lower);
+                d.shallowT5Lowest += lowT3LagCoeff
+                    * (d.shallowT5Lower - d.shallowT5Lowest);
+                const float shallowDriveDb = gainToDecibels(
+                    std::max(d.kneePeak, 1.0e-12f));
+                const std::array<float, 4> shallowOddCorrection
+                    = ratioIndex == 0
+                        ? fetShallowKneeOddCorrection(shallowDriveDb)
+                        : std::array<float, 4>{{0.0f, 0.0f, 0.0f, 0.0f}};
+                const float inputPosition = std::clamp(
+                    (inputValue + 20.0f) / 60.0f, 0.0f, 1.0f);
+                const float releasePosition = fetReleasePositionOf(p);
+                const std::array<float, 4> broadbandComplexH3Correction
+                    = ratioIndex == 0
+                        ? fetBroadbandComplexH3Correction(
+                            inputPosition, releasePosition, shallowDriveDb, fs)
+                        : std::array<float, 4>{{0.0f, 0.0f, 0.0f, 0.0f}};
+                const std::array<float, 4> broadbandComplexH5Correction
+                    = ratioIndex == 0
+                        ? fetBroadbandComplexH5Correction(
+                            inputPosition, releasePosition, shallowDriveDb, fs)
+                        : std::array<float, 4>{{0.0f, 0.0f, 0.0f, 0.0f}};
+                lowHarmonics += d.colourLowPeak
+                    * (shallowOddCorrection[0] * d.shallowT3Lag
+                        + shallowOddCorrection[1] * d.shallowT3Lower
+                        + shallowOddCorrection[2] * d.shallowT5Lag
+                        + shallowOddCorrection[3] * d.shallowT5Lower);
+                lowHarmonics += d.kneePeak
+                    * (broadbandComplexH3Correction[0] * shallowT3
+                        + broadbandComplexH3Correction[1] * d.shallowT3Lag
+                        + broadbandComplexH3Correction[2] * d.shallowT3Lower
+                        + broadbandComplexH3Correction[3] * d.shallowT3Lowest);
+                lowHarmonics += d.kneePeak
+                    * (broadbandComplexH5Correction[0] * shallowT5
+                        + broadbandComplexH5Correction[1] * d.shallowT5Lag
+                        + broadbandComplexH5Correction[2] * d.shallowT5Lower
+                        + broadbandComplexH5Correction[3] * d.shallowT5Lowest);
+            }
             d.colourLowHarmonicDc += (1.0f - alpha)
                 * (lowHarmonics - d.colourLowHarmonicDc);
             lowHarmonics -= d.colourLowHarmonicDc;
             saturated += k2 * h2 + lowFrequencyK2 * colourLowH2
                 + k3 * k3Source * k3Source * k3Source
                 + broadbandH5 + lowHarmonics;
-            if (staticKnobK3 != 0.0f)
-            {
-                const float settledSource = std::clamp(saturatedBeforeColour, -1.0f, 1.0f);
-                saturated += k3 * staticKnobK3 * settledSource * settledSource * settledSource;
-            }
         }
 
-        // FET junction capacitance choke in the feedback path.  Studio FET
-        // uses the unsaturated compressed signal here, matching its JUCE class.
-        const float feedbackInput = studio ? compressed : saturated;
-        const float grDb = -gainToDecibels(d.envelope + 0.001f);
-        const float grNorm = std::clamp(grDb / 20.0f, 0.0f, 1.0f);
-        const float corner = 20000.0f - grNorm * 2000.0f;
-        const float chokeCoeff = 1.0f - std::exp(-2.0f * kDuskPi * corner / sr);
-        d.hf += chokeCoeff * (feedbackInput - d.hf);
+        // FET junction capacitance choke in the feedback path: Studio FET's
+        // detector (vintage reads no d.hf). It uses the unsaturated compressed
+        // signal here, matching its JUCE class.
+        if (studio)
+        {
+            const float grDb = -gainToDecibels(d.envelope + 0.001f);
+            const float grNorm = std::clamp(grDb / 20.0f, 0.0f, 1.0f);
+            const float corner = 20000.0f - grNorm * 2000.0f;
+            const float chokeCoeff = 1.0f - std::exp(-2.0f * kDuskPi * corner / sr);
+            d.hf += chokeCoeff * (compressed - d.hf);
+        }
         float detect = 0.0f;
         float kneeDetect = 0.0f;
         float vintageInstantLevel = 0.0f;
-        float feedbackMagnitude = 0.0f;
         bool vintageProgrammeActive = false;
         bool vintageProgrammeSupported = false;
         if (!studio)
@@ -4318,62 +5777,7 @@ private:
             const float instantLevel = std::abs(detectorSignal);
             vintageInstantLevel = instantLevel;
             vintageProgrammeActive = instantLevel > fetDynamics.programmeActiveLevel;
-            // The detector must reach the same upper-knob floor as the gain
-            // cell; retaining 40 ms here held even a 25 ms phrase after it ended.
-            const float peakReleaseSeconds = 0.040f + (0.004f - 0.040f)
-                * std::clamp(2.5f * fetReleasePosition(
-                    p.fetRelease.load(std::memory_order_relaxed)) - 1.25f, 0.0f, 1.0f)
-                * fetProgrammeReleaseDepth(d.programmeMaximumGrDb);
-            const float peakReleaseCoeff = std::exp(-1.0f / (peakReleaseSeconds * sr));
-            if (feedback)
-            {
-                // Candidate C6: the loop below charges from this rectified
-                // signal times its own gain; no peak cell.
-                // It rectifies the audio path itself through the side
-                // chain's high-pass (fbTapHighPassHz: first order, a few
-                // hertz; at 0 a copy of the output's C4 stage, as before).
-                // The gain is slow against that corner, so the filter is
-                // applied ahead of it. The reference's gain ripple on
-                // 15-30 Hz sines sits at the input's phase, which puts its
-                // tap ahead of the stage that gives the output its
-                // low-frequency lead. The transformer-shaped copy the
-                // feed-forward detector reads loses the lows a kick drives
-                // the loop with. Full-wave, and OR-ed with the linked
-                // partner's (zero when unlinked or mono).
-                const auto& c = fetTapHighPass;
-                const auto highPass = [&c](double x, double& z1, double& z2) noexcept {
-                    const double y = c[0] * x + z1;
-                    z1 = c[1] * x - c[3] * y + z2;
-                    z2 = c[2] * x - c[4] * y;
-                    return y;
-                };
-                float& partnerSample = fetLinkPartner[static_cast<size_t>(ch)];
-                const double own = highPass(
-                    external ? sidechain * inputGain : gained,
-                    d.feedbackHpZ1, d.feedbackHpZ2);
-                const double partner = highPass(
-                    partnerSample * inputGain, d.partnerHpZ1, d.partnerHpZ2);
-                partnerSample = 0.0f;
-                // fbRectifierImbalance (eps; 0 = symmetric): the two halves of the
-                // full-wave rectifier do not weigh alike, eps < 0 the positive
-                // half weighted 1 + eps, eps > 0 the negative 1 - eps. Measured on
-                // the 1176 (2026-10-15/16): its second harmonic above the knee is
-                // mostly proportional to the release rate (a once-per-cycle ripple:
-                // the two polarities charge the capacitor unequally), its -42 dBFS
-                // attack is slower than a symmetric rectifier's, and its antiphase
-                // stereo link reads -0.126 dB at 997 Hz -12 dBFS (the partner
-                // supplies the strong half to the own channel's weak half-cycles).
-                const double imbalance = fetDynamics.fbRectifierImbalance;
-                const auto rectify = [imbalance](double x) noexcept {
-                    if (imbalance > 0.0 && x < 0.0) return -x * (1.0 - imbalance);
-                    if (imbalance < 0.0 && x > 0.0) return x * (1.0 + imbalance);
-                    return std::abs(x);
-                };
-                feedbackMagnitude = static_cast<float>(
-                    std::max(rectify(own), rectify(partner)));
-                detect = feedbackMagnitude;
-            }
-            else if (fetDynamics.detChargeOn > 0.5f)
+            if (fetDynamics.detChargeOn > 0.5f)
             {
                 // Candidate C2: a charged detector. Instant capture reads dense
                 // broadband peaks that a finite-attack cap integrates over.
@@ -4404,34 +5808,46 @@ private:
                 if (instantLevel > d.peak)
                     d.peak = instantLevel;
                 else
+                {
+                    // The detector must reach the same upper-knob floor as the gain
+                    // cell; retaining 40 ms here held even a 25 ms phrase after it ended.
+                    const float peakReleaseSeconds = 0.040f + (0.004f - 0.040f)
+                        * std::clamp(2.5f * fetReleasePositionOf(p) - 1.25f, 0.0f, 1.0f)
+                        * fetProgrammeReleaseDepth(d.programmeMaximumGrDb);
+                    const float peakReleaseCoeff = std::exp(-1.0f / (peakReleaseSeconds * sr));
                     d.peak += (1.0f - peakReleaseCoeff) * (instantLevel - d.peak);
+                }
                 detect = d.peak;
             }
-            const float kneeInstantLevel = std::abs(
-                (external || linked) ? sidechain * inputGain
-                                     : input * inputGain);
-            const float kneePeakRelease = std::exp(
-                -1.0f / (0.250f * sr));
-            constexpr float kneeHoldSeconds = 0.030f;
-            const float sampleSeconds = 1.0f / sr;
-            const auto advanceHeldPeak = [kneePeakRelease, kneeHoldSeconds,
-                                          sampleSeconds](
-                float inputLevel, float& peak,
-                float& holdSeconds) noexcept {
-                if (inputLevel >= peak)
-                {
-                    peak = inputLevel;
-                    holdSeconds = kneeHoldSeconds;
-                }
-                else if (holdSeconds > 0.0f)
-                    holdSeconds = std::max(0.0f, holdSeconds - sampleSeconds);
-                else
-                    peak = inputLevel
-                        + (peak - inputLevel) * kneePeakRelease;
-            };
-            advanceHeldPeak(kneeInstantLevel, d.kneePeak,
-                            d.kneePeakHoldSeconds);
-            kneeDetect = d.kneePeak;
+            // The knee's raw-input peak: read by 4:1 with the C6 loop off only (as the shallow-knee cell).
+            if (!(fetDynamics.fbOn > 0.5f))
+            {
+                const float kneeInstantLevel = std::abs(
+                    (external || linked) ? sidechain * inputGain
+                                         : input * inputGain);
+                const float kneePeakRelease = std::exp(
+                    -1.0f / (0.250f * sr));
+                constexpr float kneeHoldSeconds = 0.030f;
+                const float sampleSeconds = 1.0f / sr;
+                const auto advanceHeldPeak = [kneePeakRelease, kneeHoldSeconds,
+                                              sampleSeconds](
+                    float inputLevel, float& peak,
+                    float& holdSeconds) noexcept {
+                    if (inputLevel >= peak)
+                    {
+                        peak = inputLevel;
+                        holdSeconds = kneeHoldSeconds;
+                    }
+                    else if (holdSeconds > 0.0f)
+                        holdSeconds = std::max(0.0f, holdSeconds - sampleSeconds);
+                    else
+                        peak = inputLevel
+                            + (peak - inputLevel) * kneePeakRelease;
+                };
+                advanceHeldPeak(kneeInstantLevel, d.kneePeak,
+                                d.kneePeakHoldSeconds);
+                kneeDetect = d.kneePeak;
+            }
         }
         else if (external)
             detect = std::abs(sidechain * inputGain);
@@ -4459,15 +5875,12 @@ private:
         // offset into the base threshold here.
         const float thresholdControlDb = studio
             ? -10.0f : p.fetThreshold.load(std::memory_order_relaxed);
-        const float threshold = decibelsToGain(thresholdControlDb);
+        const float threshold = memoized(fetThresholdGainMemo, thresholdControlDb,
+                                         [](float v) noexcept { return decibelsToGain(v); });
         float reduction = 0.0f;
         float kneeTargetReduction = 0.0f;
         float kneeHandoff = 1.0f;
-        if (feedback)
-        {
-            // Candidate C6: the reduction comes from the loop further down.
-        }
-        else if (!studio)
+        if (!studio)
         {
             const float detectorLevelDb = gainToDecibels(
                 std::max(detect, 1.0e-12f));
@@ -4550,21 +5963,7 @@ private:
         // Studio FET allows the JUCE expansion bump to survive below threshold.
         const float minimumReduction = !studio && ratioIndex == 4 ? -1.3f : -1.0f;
         reduction = std::clamp(reduction, minimumReduction, 60.0f);
-        if (feedback)
-        {
-            const float transientAmount
-                = p.fetTransient.load(std::memory_order_relaxed);
-            const float transientFactor = transientAmount > 0.01f
-                ? std::max(1.0f, transientShaper.process(input, ch, transientAmount))
-                : 1.0f;
-            advanceFetFeedback(
-                d, feedbackMagnitude, ratioIndex, thresholdControlDb,
-                fetAttackPosition(p.fetAttack.load(std::memory_order_relaxed)),
-                fetReleasePosition(p.fetRelease.load(std::memory_order_relaxed)),
-                transientFactor, sr);
-            d.recoveryGain = 1.0f;
-        }
-        else if (!studio)
+        if (!studio)
         {
             // The loop's tail population has no counterpart in this arm. When
             // the ratio leaves 4-20 with some of it held, this arm's slow
@@ -4683,8 +6082,7 @@ private:
             const float longSlowAttackSeconds
                 = ratioIndex != 4 && intermediateTarget > 0.0f
                     ? slowAttackSeconds * 1.08f : slowAttackSeconds;
-            const float releasePosition = fetReleasePosition(
-                p.fetRelease.load(std::memory_order_relaxed));
+            const float releasePosition = fetReleasePositionOf(p);
             const int programmeSilenceHoldSamples = std::max(
                 1, static_cast<int>(std::lround(fetDynamics.programmeSilenceHoldSeconds * sr)));
             if (vintageProgrammeActive)
@@ -4902,34 +6300,7 @@ private:
             ? (studio ? 1.12f : 1.17f) : 1.0f;
         d.envelope = std::clamp(d.envelope, 0.001f, maximumEnvelope);
         if (!std::isfinite(d.envelope)) d.envelope = 1.0f;
-        if (feedback)
-        {
-            // Candidate C6: the 4:1 knee onset as a function of the loop's own
-            // reduction. The settled input level that holds this reduction on
-            // the accepted law is read back, and the measured onset table's
-            // difference there is applied; no raw-input peak cell.
-            d.kneeBaseReductionDb = 0.0f;
-            d.kneeCorrectionDb = 0.0f;
-            if (ratioIndex == 0)
-            {
-                const float reductionDb = d.fastGrDb + d.slowGrDb
-                    + fetTailAppliedNow(d);
-                float unusedSlope = 0.0f;
-                const float settledInputDb = reductionDb
-                    + fetStaticOutputLevelDb(reductionDb, ratioIndex,
-                                             thresholdControlDb, unusedSlope);
-                const float handoff = std::clamp(
-                    settledInputDb - (thresholdControlDb + 10.0f) + 5.0f,
-                    0.0f, 1.0f);
-                d.kneeCorrectionDb = std::clamp(
-                    (reductionDb - fetReferenceKneeOnsetDb(
-                        settledInputDb, thresholdControlDb))
-                        * (1.0f - handoff * handoff * (3.0f - 2.0f * handoff)),
-                    -0.85f, 0.85f);
-            }
-            d.kneeGain = decibelsToGain(d.kneeCorrectionDb);
-        }
-        else if (!studio && ratioIndex == 0)
+        if (!studio && ratioIndex == 0)
         {
             const float currentBaseReduction = std::max(
                 0.0f, -gainToDecibels(d.envelope));
@@ -5028,12 +6399,7 @@ private:
         // vintage spectrum is generated explicitly above; passing it through
         // that transformer introduced a non-physical H2 cancellation notch.
         if (studio) out = outT.processSample(out, ch);
-        if (!studio) out = fetConvolution.processSample(out, ch) * fetHardwareGain;
-        const float grHpf = -gainToDecibels(d.envelope + 0.001f);
-        const float hpfCutoff = studio
-            ? 20.0f + std::clamp(grHpf / 20.0f, 0.0f, 1.0f) * 60.0f
-            : 5.0f;
-        const float hpfAlpha = 1.0f - std::exp(-2.0f * kDuskPi * hpfCutoff / sr);
+        if (!studio) out = (fetConvolutionUnity ? out : fetConvolution.processSample(out, ch)) * fetHardwareGain;
         if (!studio && fetDynamics.lfHpOn > 0.5f)
         {
             const auto& c = fetLfHighPass;
@@ -5043,10 +6409,15 @@ private:
             d.lfHpZ2 = c[2] * x - c[4] * y;
             out = static_cast<float>(y);
         }
-        else if (!studio) { d.subBassHpState += hpfAlpha * (out - d.subBassHpState); out -= d.subBassHpState; }
+        else if (!studio)
+        {
+            const float hpfAlpha = 1.0f - std::exp(-2.0f * kDuskPi * 5.0f / sr);
+            d.subBassHpState += hpfAlpha * (out - d.subBassHpState);
+            out -= d.subBassHpState;
+        }
         const float outputValue = p.fetOutput.load(std::memory_order_relaxed);
-        const float outputGain = decibelsToGain(
-            studio ? outputValue : fetOutputGainDb(outputValue));
+        const float outputGain = memoized(fetOutputGainMemo[studio ? 1 : 0], outputValue, [studio](float v) noexcept {
+            return decibelsToGain(studio ? v : fetOutputGainDb(v)); });
         // The installed model is linear throughout the measured steady range,
         // then bends startup peaks toward a ~7.1 linear ceiling. The previous
         // hard +/-2 guard flattened both the level sweep and its harmonics.
@@ -5066,8 +6437,135 @@ private:
         return std::copysign(limited, drivenOutput);
     }
 
-    float processVCA(float input, int ch, float sidechain,
-                     const MultiCompParameterState& p, bool /*external*/) noexcept
+    // The VCA's static law for one detector power: RMS level in dB, the
+    // measured detector correction, the knee, the gain. The logarithm and the
+    // exponential are MultiCompFastMath's, so the four-lane block form below
+    // (vcaLawGains) gives the same value for every power.
+    static float vcaLawRawDb(float power) noexcept
+    {
+        // 10 log10 of the power, floored at -180 dB: 20 log10 of the RMS level.
+        return kTenLog10Of2 * fastmath::log2(std::max(power, 1.0e-18f));
+    }
+    static float vcaLawExponent(float rawDetectorDb, float thresholdDb, float slope) noexcept
+    {
+        // The calibration campaign specifies sine levels in peak dBFS, while
+        // the RMS detector is 3.0103 dB lower. Select the measured correction
+        // in the campaign's domain, then apply it to the detector's dB value.
+        const float detectorDb = rawDetectorDb
+            + vcaLaw::detectorCorrectionDb(rawDetectorDb + 3.0103f);
+        const float over = detectorDb - thresholdDb;
+        const float reduction = over > 0.0f ? std::min(over * (1.0f - slope), 60.0f) : 0.0f;
+        return (-reduction) * kLog2Of10Over20;   // the gain is 2 to this power
+    }
+    static float vcaLawGain(float power, float thresholdDb, float slope) noexcept
+    {
+        return fastmath::exp2(vcaLawExponent(vcaLawRawDb(power), thresholdDb, slope));
+    }
+    static void vcaLawGains(const float* power, float* gain, int n, float thresholdDb, float slope) noexcept
+    {
+        int k = 0;
+        for (; k + 4 <= n; k += 4)
+        {
+            float floored[4], log2Power[4], exponent[4];
+            for (int lane = 0; lane < 4; ++lane) floored[lane] = std::max(power[k + lane], 1.0e-18f);
+            fastmath::log2x4(floored, log2Power);
+            vcaLawExponents4(log2Power, thresholdDb, slope, exponent);
+            fastmath::exp2x4(exponent, gain + k);
+        }
+        for (; k < n; ++k) gain[k] = vcaLawGain(power[k], thresholdDb, slope);
+    }
+    static constexpr float kTenLog10Of2 = 3.01029996f, kLog2Of10Over20 = 0.166096405f;
+
+    // vcaLawExponent(kTenLog10Of2 * log2Power[lane], ...) for four lanes, lane by
+    // lane the same operations (the correction's segment rows are read per lane).
+    static void vcaLawExponents4(const float* log2Power, float thresholdDb, float slope, float* exponent) noexcept
+    {
+#if defined(__aarch64__)
+        const float32x4_t raw = vmulq_f32(vdupq_n_f32(kTenLog10Of2), vld1q_f32(log2Power));
+        const float32x4_t level = vaddq_f32(raw, vdupq_n_f32(3.0103f));
+        float levels[4];
+        vst1q_f32(levels, level);
+        // Rows for lanes inside the table; a lane outside (no correction below
+        // the table, the extrapolated secant above it, non-finite) is redone below.
+        float aLevel[4], aCorrection[4], bLevel[4], bCorrection[4];
+        bool inside[4];
+        for (int lane = 0; lane < 4; ++lane)
+        {
+            const float x = levels[lane];
+            inside[lane] = x > vcaLaw::kDetectorCalibration.front().levelDb
+                && x <= vcaLaw::kHotDetectorExtension.back().levelDb;   // false for NaN
+            const int row = inside[lane] ? static_cast<int>(std::ceil(x)) - vcaLaw::kDetectorSegmentLowest : 0;
+            const auto& segment = vcaLaw::kDetectorSegments[static_cast<size_t>(row)];
+            aLevel[lane] = segment.aLevel; aCorrection[lane] = segment.aCorrection;
+            bLevel[lane] = segment.bLevel; bCorrection[lane] = segment.bCorrection;
+        }
+        const float32x4_t a = vld1q_f32(aLevel), ac = vld1q_f32(aCorrection);
+        const float32x4_t t = vdivq_f32(vsubq_f32(level, a), vsubq_f32(vld1q_f32(bLevel), a));
+        float32x4_t correction = vaddq_f32(ac, vmulq_f32(vsubq_f32(vld1q_f32(bCorrection), ac), t));
+        float corrections[4];
+        vst1q_f32(corrections, correction);
+        for (int lane = 0; lane < 4; ++lane)
+            if (!inside[lane]) corrections[lane] = vcaLaw::detectorCorrectionDb(levels[lane]);
+        correction = vld1q_f32(corrections);
+        const float32x4_t over = vsubq_f32(vaddq_f32(raw, correction), vdupq_n_f32(thresholdDb));
+        const float32x4_t reduction = vbslq_f32(vcgtq_f32(over, vdupq_n_f32(0.0f)),
+            vminq_f32(vmulq_f32(over, vdupq_n_f32(1.0f - slope)), vdupq_n_f32(60.0f)), vdupq_n_f32(0.0f));
+        vst1q_f32(exponent, vmulq_f32(vnegq_f32(reduction), vdupq_n_f32(kLog2Of10Over20)));
+#else
+        for (int lane = 0; lane < 4; ++lane)
+            exponent[lane] = vcaLawExponent(kTenLog10Of2 * log2Power[lane], thresholdDb, slope);
+#endif
+    }
+
+    // THRESHOLD reads in dB and the measured onset for a sine sits 0.26 dB
+    // above the knob text (knee fit -26.742 dBFS for '-27.0'); the RMS of a
+    // full-scale sine is 3.01 dB below its peak, and our own fixed-tau onset
+    // read 0.03 dB low, hence +0.29 on top of the RMS-vs-peak offset.
+    static float vcaThresholdDb(const MultiCompParameterState& p) noexcept
+    {
+        return p.vcaThreshold.load(std::memory_order_relaxed) - 3.0103f + 0.29f;
+    }
+
+    // COMPRESSION is a knob position; the applied ratio comes from the
+    // measured law (INF at the stop). Hard knee to within the measured
+    // 0.2 dB soft region.
+    float vcaSlopeFor(const MultiCompParameterState& p) noexcept
+    {
+        const float position = p.vcaRatio.load(std::memory_order_relaxed);
+        if (!(position == vcaSlopePosition))
+        {
+            vcaSlopePosition = position;
+            vcaSlope = vcaLaw::compressSlope(position);
+        }
+        return vcaSlope;
+    }
+
+    // The VCA detector's host-rate step: one sample into the RMS integrator
+    // and the power history.
+    void pushVcaDetector(VCAState& d, float sidechain) noexcept
+    {
+        const float rmsCoeff = vcaRmsCoeff;
+        // The state climbs at most vcaDetectorRise per sample from its
+        // floor; energy arriving faster is discarded (MultiCompVcaLaw.hpp,
+        // DETECTOR ONSET).
+        const float previous = std::max(d.rms, vcaDetectorFloorPower);
+        d.rms = std::min(previous * rmsCoeff + sidechain * sidechain * (1.0f - rmsCoeff),
+                         previous * vcaDetectorRise);
+        // A finite but absurd input (|x| > 1.8e19) overflows the power
+        // state to infinity within one block; the aligned-history read
+        // below would then interpolate inf - inf = NaN and the gain cell
+        // would sit at unity with finite output, so the shared non-finite
+        // latch never fires. Drop such a state before it enters the
+        // history; the integrator recharges from the floor. Byte-identical
+        // for every finite state.
+        if (!std::isfinite(d.rms)) d.rms = 0.0f;
+        d.rmsWrite = (d.rmsWrite + 1u) & 63u;
+        d.rmsHistory[d.rmsWrite] = d.rms;
+    }
+
+    // One oversampled phase of the VCA: the detector advances on the native
+    // phase; returns the cell gain for this phase (also kept in d.envelope).
+    float advanceVcaEnvelope(VCAState& d, float sidechain, float thresholdDb, float slope) noexcept
     {
         // VCA compressor model (reference campaign 2026-09-01). The unit is a true-RMS
         // detector driving the gain directly: one first-order power integrator,
@@ -5078,44 +6576,20 @@ private:
         // noise -- an RMS detector with no crest sensitivity. The attack/release,
         // Over Easy and detector-mode parameters stay host-visible for state
         // compatibility but the reference has no such controls; they are inert.
-        auto& d = vca[ch];
         // The DSP supplies the selected, filtered, linked native sample on
         // every phase. Integrate power once: interpolating the detector
         // waveform first changes its high-frequency RMS. The audio reaches
         // this gain cell later, through the upsampling FIR. Applying today's
         // power to that delayed audio adds unintended lookahead: the measured
         // 50 Hz burst reads 7.57 dB at 1x but 7.78 dB at 4x (reference 7.60 dB).
-        const bool nativePhase = d.phase == 0;
-        if (nativePhase)
-        {
-            // 35 ms: the single-constant fit to the reference step family gave
-            // 31 ms (attack) / 35 ms (release); at 33 ms our attack and release
-            // both read 1-7 ms fast against the reference, so the constant sits
-            // at the release fit.
-            constexpr float rmsSeconds = 0.035f;
-            const float rmsCoeff = std::exp(-1.0f / (rmsSeconds * static_cast<float>(fs)));
-            // The state climbs at most vcaDetectorRise per sample from its
-            // floor; energy arriving faster is discarded (MultiCompVcaLaw.hpp,
-            // DETECTOR ONSET).
-            const float previous = std::max(d.rms, vcaDetectorFloorPower);
-            d.rms = std::min(previous * rmsCoeff + sidechain * sidechain * (1.0f - rmsCoeff),
-                             previous * vcaDetectorRise);
-            // A finite but absurd input (|x| > 1.8e19) overflows the power
-            // state to infinity within one block; the aligned-history read
-            // below would then interpolate inf - inf = NaN and the gain cell
-            // would sit at unity with finite output, so the shared non-finite
-            // latch never fires. Drop such a state before it enters the
-            // history; the integrator recharges from the floor. Byte-identical
-            // for every finite state.
-            if (!std::isfinite(d.rms)) d.rms = 0.0f;
-            d.rmsWrite = (d.rmsWrite + 1u) & 63u;
-            d.rmsHistory[d.rmsWrite] = d.rms;
-        }
+        if (d.phase == 0) pushVcaDetector(d, sidechain);
         // The wide 127-tap DuskOversampler's upsampling group delays are 63
         // samples at 2x, and 2*63 + 7 at 4x (31.5 / 33.25 host samples; the
         // classic 47-tap stage gave 11.5 / 13.25). Read that same time in the
         // native power history (the 64-entry ring covers it);
         // interpolate power across phases before converting it to gain.
+        // (Interpolating gains between whole-sample law points instead moved
+        // an onset table cell 0.20 dB toward the bar, 2026-10-19.)
         // The ring stays in host samples when oversampling is automated.
         const float upDelay = osFactor == 4 ? 33.25f : osFactor == 2 ? 31.5f : 0.0f;
         // Never negative for a phase inside the current factor; the clamp only
@@ -5127,35 +6601,23 @@ private:
         const float older = d.rmsHistory[(d.rmsWrite - whole - 1u) & 63u];
         const float alignedRms = recent + (older - recent) * fraction;
         d.phase = (d.phase + 1) % osFactor;
-        const float level = std::sqrt(std::max(alignedRms, 0.0f));
-        // THRESHOLD reads in dB and the measured onset for a sine sits 0.26 dB
-        // above the knob text (knee fit -26.742 dBFS for '-27.0'); the RMS of a
-        // full-scale sine is 3.01 dB below its peak, and our own fixed-tau onset
-        // read 0.03 dB low, hence +0.29 on top of the RMS-vs-peak offset.
-        const float thresholdDb = p.vcaThreshold.load(std::memory_order_relaxed) - 3.0103f + 0.29f;
-        // COMPRESSION is a knob position; the applied ratio comes from the
-        // measured law (INF at the stop). Hard knee to within the measured
-        // 0.2 dB soft region.
-        const float slope = vcaLaw::compressSlope(p.vcaRatio.load(std::memory_order_relaxed));
-        const float rawDetectorDb = gainToDecibels(std::max(level, 1.0e-9f));
-        // The calibration campaign specifies sine levels in peak dBFS, while
-        // the RMS detector is 3.0103 dB lower. Select the measured correction
-        // in the campaign's domain, then apply it to the detector's dB value.
-        const float detectorDb = rawDetectorDb
-            + vcaLaw::detectorCorrectionDb(rawDetectorDb + 3.0103f);
-        const float over = detectorDb - thresholdDb;
-        const float reduction = over > 0.0f ? std::min(over * (1.0f - slope), 60.0f) : 0.0f;
         // The reference adds no even-order or fifth harmonic at all (H2/H4 at
         // the numerical floor across the 100-cell static grid) and its H3
         // (~-69 dBc) is what this detector's own 2 kHz ripple imposes on a
         // 1 kHz carrier, so the gain is applied clean.
-        d.envelope = decibelsToGain(-reduction);
+        d.envelope = vcaLawGain(alignedRms, thresholdDb, slope);
+        return d.envelope;
+    }
+
+    float processVCA(float input, int ch, float sidechain,
+                     const MultiCompParameterState& p, bool /*external*/) noexcept
+    {
+        const float envelope = advanceVcaEnvelope(vca[ch], sidechain, vcaThresholdDb(p), vcaSlopeFor(p));
         // The reference's output gain remains linear at +20 dB: a -0.1 dBFS
         // unity-ratio sine peaks at 9.888659 (2026-09-07 capture). A +/-2
         // guard here clips ordinary makeup gain and loses 11.26 dB RMS on
         // that row. Preserve the floating-point headroom of the measured unit.
-        return input * d.envelope
-            * decibelsToGain(p.vcaOutput.load(std::memory_order_relaxed));
+        return input * envelope * vcaOutputGainFor(p.vcaOutput.load(std::memory_order_relaxed));
     }
 
     float busFeedbackMagnitude(BusState& d, int ch) noexcept
