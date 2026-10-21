@@ -98,6 +98,10 @@ private:
     static constexpr int kAutoGainMeasurementWindow = 64;
     static constexpr int kCrossoverRampMs = 20;
     static constexpr int kCrossoverCoefficientInterval = 8;
+    // The mode-switch duck (switchDuck*): the fades, and the mute that covers the anti-alias path realigning on its
+    // new factor (the longest disturbance measured over every factor-changing switch, 88.2-192 kHz, plus margin).
+    static constexpr double kSwitchDuckFadeMs = 1.0;
+    static constexpr int kSwitchDuckMuteSamples = 128;
 
     // Replaces any non-finite sample with silence, into `scratch`, and returns
     // the channel pointers to use downstream. Returns `source` untouched when
@@ -149,6 +153,9 @@ private:
     void resetAutoGainMeasurement() noexcept;
     MultiCompMode currentMode() const noexcept;
     float globalMixTarget(MultiCompMode mode) const noexcept;
+    bool switchChangesAudioFactor(int fromMode, int toMode) const noexcept;
+    void resetSwitchDuck() noexcept;
+    bool advanceSwitchDuck(int nSamples) noexcept;
     static float advanceFetStartupBlend(int& activeSamples,
                                         int fullCorrectionSamples,
                                         int correctionEndSamples) noexcept;
@@ -222,7 +229,7 @@ private:
     // a non-finite or above-ceiling sample; see sanitizeChannels.
     std::array<std::vector<float>, kMaxChannels> sanitizedInput, sanitizedSidechain;
     std::vector<float> dry, bypassDry, fetStartupInput;
-    std::vector<float> mixCurve, bypassCurve, autoGainCurve, listenCurve, fadeCurve, listenSource;
+    std::vector<float> mixCurve, bypassCurve, autoGainCurve, listenCurve, fadeCurve, listenSource, switchDuckCurve;
     std::array<std::vector<float>, kMaxChannels> dryPathDelay;
     std::array<int, kMaxChannels> dryPathWrite{{0, 0}};
     std::array<std::vector<float>, kMaxChannels> bypassDelay;
@@ -270,6 +277,14 @@ private:
     bool lastAutoMakeup = false;
     bool firstBlock = true;
     int lastMode = -1;
+    // A mode switch that changes the audio anti-alias oversampler's factor (Opto and vintage FET against the other
+    // modes at 88.2 kHz and above, audioFactorForMode()) would replay that oversampler's delay line from the old
+    // factor: the old mode is held while its wet path fades out, the switch happens at silence, the realignment
+    // stays muted and the new mode fades in (processBlockExternal). Every other switch is instant.
+    int switchDuckHeldMode = -1;   // the old mode, processed while the wet path fades out; -1: none held
+    int switchDuckPosition = 1;    // fade position in samples: 0 silent .. switchDuckFadeSamples full
+    int switchDuckMuted = 0;       // samples still muted after the switch
+    int switchDuckFadeSamples = 1;
     int autoGainHoldSamples = 0;
     double autoGainInputPower = 0.0;
     double autoGainOutputPower = 0.0;

@@ -28,6 +28,21 @@ float globalLookaheadForMode(MultiCompMode mode, float milliseconds) noexcept
         ? std::clamp(milliseconds, 0.0f, 10.0f) : 0.0f;
 }
 
+// The Oversampling parameter's factor: 0 off, 1 2x, 2 4x.
+int oversamplingFactorForSetting(int setting) noexcept
+{
+    return setting == 2 ? 4 : setting == 1 ? 2 : 1;
+}
+
+// The audio anti-alias oversampler's factor for a mode. Opto and vintage FET keep the mode rate of a 44.1 / 48 kHz
+// host (fixedRateModeFactor()): their side chains are designed and fitted at the default 2x setting's mode rate
+// there and depend on it (the FET loop since 2026-10-20). Every other mode runs the setting.
+int audioFactorForMode(MultiCompMode mode, int settingFactor, double hostRate) noexcept
+{
+    return mode == MultiCompMode::Opto || mode == MultiCompMode::FET
+        ? fixedRateModeFactor(settingFactor, hostRate) : settingFactor;
+}
+
 // The curve of n next() calls. A smoother whose step leaves its value's bits unchanged has a fixed state and
 // returns that value for good; a linear ramp that has arrived returns its target without moving. Either way the
 // rest of the block is that value.
@@ -189,16 +204,10 @@ void MultiCompDSP::prepare(double sr, int blockSize)
     busCompressionMeter.prepare(sampleRate);
     busMeterReading.store(0.0f, std::memory_order_relaxed);
     maxBlock = std::max(1, blockSize);
-    const int oversamplingSetting = params.oversampling.load(std::memory_order_relaxed);
-    const int settingOversampling = oversamplingSetting == 2 ? 4
-                                  : oversamplingSetting == 1 ? 2 : 1;
-    // Opto and vintage FET keep the mode rate of a 44.1 / 48 kHz host (fixedRateModeFactor()); every other
-    // mode runs the setting.
-    const int preparedMode = std::clamp(params.mode.load(std::memory_order_relaxed), 0, 7);
-    const bool preparedFixedRate = preparedMode == static_cast<int>(MultiCompMode::Opto)
-        || preparedMode == static_cast<int>(MultiCompMode::FET);
-    const int initialOversampling = preparedFixedRate ? fixedRateModeFactor(settingOversampling, sampleRate)
-                                                      : settingOversampling;
+    const int settingOversampling = oversamplingFactorForSetting(params.oversampling.load(std::memory_order_relaxed));
+    const int initialOversampling = audioFactorForMode(
+        static_cast<MultiCompMode>(std::clamp(params.mode.load(std::memory_order_relaxed), 0, 7)),
+        settingOversampling, sampleRate);
     modes.setOptoSettingFactor(settingOversampling);
     modes.prepare(sampleRate, maxBlock, initialOversampling);
     // MultiCompModes::prepare deliberately preserves state when its rate and
@@ -268,6 +277,7 @@ void MultiCompDSP::prepare(double sr, int blockSize)
     listenCurve.assign(static_cast<size_t>(maxBlock), 0.0f);
     listenSource.assign(static_cast<size_t>(maxBlock), 0.0f);
     fadeCurve.assign(static_cast<size_t>(maxBlock), 1.0f);
+    switchDuckCurve.assign(static_cast<size_t>(maxBlock), 1.0f);
     for (auto& line : delayedInput) line.assign(static_cast<size_t>(maxBlock), 0.0f);
     const size_t lookaheadSize = static_cast<size_t>(std::ceil(sampleRate * 0.01)) + 1u;
     for (auto& line : globalLookahead) line.assign(lookaheadSize, 0.0f);
@@ -303,6 +313,8 @@ void MultiCompDSP::prepare(double sr, int blockSize)
     bypassRamp.prepare(sampleRate, static_cast<float>(kBypassRampMs) * 0.001f); bypassRamp.snap(0.0f);
     sidechainListenRamp.prepare(sampleRate, static_cast<float>(kSidechainListenRampMs) * 0.001f);
     sidechainListenRamp.snap(params.globalSidechainListen.load(std::memory_order_relaxed) ? 1.0f : 0.0f);
+    switchDuckFadeSamples = std::max(1, static_cast<int>(std::lround(sampleRate * kSwitchDuckFadeMs * 0.001)));
+    resetSwitchDuck();
     bypassSettled = false; lastBypass = false; lastExternalSidechain = false;
     lastAutoMakeup = false; firstBlock = true; lastMode = -1; autoGainHoldSamples = 0;
     lastVcaSidechainTilt = false;
@@ -388,6 +400,7 @@ void MultiCompDSP::reset()
     lastAutoMakeup = false;
     firstBlock = true;
     lastMode = -1;
+    resetSwitchDuck();
     lastVcaSidechainTilt = false;
     lastVcaSidechainTiltEngaged = false;
     autoGainHoldSamples = 0;
@@ -534,23 +547,50 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
 {
     if (in == nullptr || out == nullptr || nSamples <= 0 || nCh <= 0 || dry.empty()) return;
     nCh = std::min(nCh, kMaxChannels);
+    // Samples [offset, offset + count) of this block as a block of their own.
+    const auto processPart = [&](int offset, int count) {
+        const float* inPart[kMaxChannels] = {in[0] + offset, nCh > 1 ? in[1] + offset : in[0] + offset};
+        const float* scPart[kMaxChannels] = {nullptr, nullptr};
+        if (sidechain != nullptr)
+        {
+            scPart[0] = sidechain[0] + offset;
+            scPart[1] = nCh > 1 ? sidechain[1] + offset : sidechain[0] + offset;
+        }
+        float* outPart[kMaxChannels] = {out[0] + offset, nCh > 1 ? out[1] + offset : out[0] + offset};
+        processBlockExternal(inPart, sidechain != nullptr ? scPart : nullptr, outPart, nCh, count);
+    };
     if (nSamples > maxBlock)
     {
-        int offset = 0;
-        while (offset < nSamples)
+        for (int offset = 0; offset < nSamples; offset += maxBlock)
+            processPart(offset, std::min(maxBlock, nSamples - offset));
+        return;
+    }
+    // A switch that changes the audio anti-alias factor holds the old mode while its wet path fades out
+    // (switchDuck*). Where the fade reaches silence inside this block, the block runs in two parts: the old mode
+    // up to silence, the new one after it.
+    const int requestedMode = std::clamp(params.mode.load(std::memory_order_relaxed), 0, 7);
+    if (requestedMode == switchDuckHeldMode)
+        switchDuckHeldMode = -1;   // switched back before silence: no switch, the fade turns round
+    else if (switchDuckHeldMode < 0 && !firstBlock && lastMode >= 0 && requestedMode != lastMode
+             && switchChangesAudioFactor(lastMode, requestedMode))
+    {
+        if (switchDuckPosition > 0)
+            switchDuckHeldMode = lastMode;              // audible: fade the old mode out first
+        else
+            switchDuckMuted = kSwitchDuckMuteSamples;   // already silent: switch now, mute the realignment
+    }
+    if (switchDuckHeldMode >= 0 && switchDuckPosition < nSamples)
+    {
+        const int silentAt = switchDuckPosition;
+        if (silentAt > 0) processPart(0, silentAt);
+        // The switch happens at silence only: a part that reset (non-finite recovery) or saw the request
+        // withdrawn ends audible, and the rest then runs as any block does.
+        if (switchDuckHeldMode >= 0 && switchDuckPosition == 0)
         {
-            const int count = std::min(maxBlock, nSamples - offset);
-            const float* inChunk[kMaxChannels] = {in[0] + offset, nCh > 1 ? in[1] + offset : in[0] + offset};
-            const float* scChunk[kMaxChannels] = {nullptr, nullptr};
-            if (sidechain != nullptr)
-            {
-                scChunk[0] = sidechain[0] + offset;
-                scChunk[1] = nCh > 1 ? sidechain[1] + offset : sidechain[0] + offset;
-            }
-            float* outChunk[kMaxChannels] = {out[0] + offset, nCh > 1 ? out[1] + offset : out[0] + offset};
-            processBlockExternal(inChunk, sidechain != nullptr ? scChunk : nullptr, outChunk, nCh, count);
-            offset += count;
+            switchDuckHeldMode = -1;
+            switchDuckMuted = kSwitchDuckMuteSamples;
         }
+        processPart(silentAt, nSamples - silentAt);
         return;
     }
     ScopedFlushDenormals guard;
@@ -571,8 +611,7 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     float blockInputPeak = 0.0f;
     for (int ch = 0; ch < nCh; ++ch)
         blockInputPeak = blockAbsPeak(in[ch], nSamples, blockInputPeak);
-    const MultiCompMode mode = static_cast<MultiCompMode>(
-        std::clamp(params.mode.load(std::memory_order_relaxed), 0, 7));
+    const MultiCompMode mode = static_cast<MultiCompMode>(switchDuckHeldMode >= 0 ? switchDuckHeldMode : requestedMode);
     // Observe other modes even through settled bypass and Multiband's early
     // return, so the next VCA block cannot reuse stale output-filter history.
     if (vcaLaw::kLifecycleResetEnabled)
@@ -637,13 +676,8 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
                 fetStartupInput.data() + static_cast<size_t>(ch * maxBlock));
     }
     const int linkMode = std::clamp(params.stereoLinkMode.load(std::memory_order_relaxed), 0, 2);
-    const int oversamplingSetting = params.oversampling.load(std::memory_order_relaxed);
-    const int settingOversampling = oversamplingSetting == 2 ? 4 : oversamplingSetting == 1 ? 2 : 1;
-    // Opto and vintage FET keep the mode rate of a 44.1 / 48 kHz host (fixedRateModeFactor()): their side
-    // chains are designed and fitted at the default 2x setting's mode rate there and depend on it (the FET
-    // loop since 2026-10-20). Every other mode runs the setting.
-    const int actualOversampling = mode == MultiCompMode::Opto || mode == MultiCompMode::FET
-        ? fixedRateModeFactor(settingOversampling, sampleRate) : settingOversampling;
+    const int settingOversampling = oversamplingFactorForSetting(params.oversampling.load(std::memory_order_relaxed));
+    const int actualOversampling = audioFactorForMode(mode, settingOversampling, sampleRate);
     modes.setOptoSettingFactor(settingOversampling);
     const float globalLookaheadMs = globalLookaheadForMode(
         mode, params.globalLookahead.load(std::memory_order_relaxed));
@@ -1062,6 +1096,10 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
                         out[ch][i]);
             }
     }
+    // The mode-switch duck shapes the wet path only, ahead of Mix (switchDuck*).
+    if (advanceSwitchDuck(nSamples))
+        for (int ch = 0; ch < nCh; ++ch)
+            for (int i = 0; i < nSamples; ++i) out[ch][i] *= switchDuckCurve[static_cast<size_t>(i)];
     const float targetMix = globalMixTarget(mode);
     globalMixSmoother.setTarget(targetMix);
     // The processed output carries the full reported latency (AA plus both
@@ -1301,6 +1339,42 @@ float MultiCompDSP::delayHostSidechain(int channel, float value, int delay) noex
 MultiCompMode MultiCompDSP::currentMode() const noexcept
 {
     return static_cast<MultiCompMode>(std::clamp(params.mode.load(std::memory_order_relaxed), 0, 7));
+}
+
+// Whether a switch between two modes changes the audio anti-alias oversampler's factor at the current setting
+// and rate. Multiband never runs that oversampler, so its switches stay instant.
+bool MultiCompDSP::switchChangesAudioFactor(int fromMode, int toMode) const noexcept
+{
+    const auto multiband = static_cast<int>(MultiCompMode::Multiband);
+    if (fromMode == multiband || toMode == multiband) return false;
+    const int setting = oversamplingFactorForSetting(params.oversampling.load(std::memory_order_relaxed));
+    return audioFactorForMode(static_cast<MultiCompMode>(fromMode), setting, sampleRate)
+        != audioFactorForMode(static_cast<MultiCompMode>(toMode), setting, sampleRate);
+}
+
+void MultiCompDSP::resetSwitchDuck() noexcept
+{
+    switchDuckHeldMode = -1;
+    switchDuckMuted = 0;
+    switchDuckPosition = switchDuckFadeSamples;
+}
+
+// The block's wet gain into switchDuckCurve, advancing the duck: down while the old mode is held, held at 0 while
+// muted, then up (a smoothstep of the position: no slope step at either end). False, and the curve untouched,
+// while the duck is idle.
+bool MultiCompDSP::advanceSwitchDuck(int nSamples) noexcept
+{
+    if (switchDuckHeldMode < 0 && switchDuckMuted == 0 && switchDuckPosition >= switchDuckFadeSamples) return false;
+    const float inverseFade = 1.0f / static_cast<float>(switchDuckFadeSamples);
+    for (int i = 0; i < nSamples; ++i)
+    {
+        if (switchDuckHeldMode >= 0) { if (switchDuckPosition > 0) --switchDuckPosition; }
+        else if (switchDuckMuted > 0) --switchDuckMuted;
+        else if (switchDuckPosition < switchDuckFadeSamples) ++switchDuckPosition;
+        const float x = static_cast<float>(switchDuckPosition) * inverseFade;
+        switchDuckCurve[static_cast<size_t>(i)] = x * x * (3.0f - 2.0f * x);
+    }
+    return true;
 }
 
 // Bus and Digital apply the MIX on their own faces inside the mode

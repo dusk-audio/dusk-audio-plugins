@@ -5330,6 +5330,355 @@ void testModeReentryStartsFromRest()
     }
 }
 
+// The tone the mode-switch tests run: 1 kHz at -6 dBFS.
+std::vector<float> modeSwitchTone(double sampleRate, int samples)
+{
+    std::vector<float> tone(static_cast<size_t>(samples));
+    for (int n = 0; n < samples; ++n)
+        tone[static_cast<size_t>(n)] = static_cast<float>(
+            0.5 * std::sin(2.0 * 3.141592653589793 * 1000.0 * n / sampleRate));
+    return tone;
+}
+
+struct ModeRequest
+{
+    int sample;
+    duskaudio::MultiCompMode mode;
+};
+
+// `input` on both channels through one instance at near-unity settings (no mode compresses the tone; FET's Input
+// at -20 dB keeps it linear, 20 dB down; every Multiband band at 0 dB and 1:1), starting in the first request's
+// mode. Each later request is made at its sample: the host splits its block there and carries on from it, so a
+// request lands mid-block unless it falls a multiple of `block` after the one before. Returns the left channel.
+std::vector<float> renderModeRequests(double sampleRate, int oversampling, int block,
+                                      const std::vector<ModeRequest>& requests, const std::vector<float>& input,
+                                      float fetInputDb = -20.0f)
+{
+    using Parameter = MultiCompDSP::Parameter;
+    MultiCompDSP dsp;
+    dsp.setOversampling(oversampling);
+    dsp.setMode(static_cast<int>(requests.front().mode));
+    // The duck shapes the wet path ahead of Mix; at 100 % that is the output.
+    dsp.setMix(100.0f);
+    dsp.setParameter(Parameter::OptoPeakReduction, 0.0f);
+    dsp.setParameter(Parameter::FetInput, fetInputDb);
+    dsp.setParameter(Parameter::VcaThreshold, 0.0f);
+    dsp.setParameter(Parameter::StudioVcaThreshold, 0.0f);
+    dsp.setParameter(Parameter::DigitalThreshold, 0.0f);
+    for (int band = 0; band < duskaudio::kMultiCompBands; ++band)
+    {
+        dsp.setMultibandParameter(band, MultiCompDSP::MultibandParameter::Threshold, 0.0f);
+        dsp.setMultibandParameter(band, MultiCompDSP::MultibandParameter::Ratio, 1.0f);
+    }
+    dsp.prepare(sampleRate, block);
+    const int total = static_cast<int>(input.size());
+    std::vector<float> left(input.size()), right(input.size());
+    size_t next = 1;
+    for (int position = 0; position < total;)
+    {
+        for (; next < requests.size() && requests[next].sample <= position; ++next)
+            dsp.setMode(static_cast<int>(requests[next].mode));
+        int count = std::min(block, total - position);
+        if (next < requests.size()) count = std::min(count, requests[next].sample - position);
+        const float* inputs[] = {input.data() + position, input.data() + position};
+        float* outputs[] = {left.data() + position, right.data() + position};
+        dsp.processBlock(inputs, outputs, 2, count);
+        position += count;
+    }
+    return left;
+}
+
+// One segment per request, the mode's own renders included, so every render shares its samples (the same tone
+// from sample 0) with the ones it is compared with. Odd, so a request never falls on a block boundary of a chain
+// (21 samples into a 32-sample block, 85 into a 256-sample one); 11 ms even at 192 kHz, four times the longest duck.
+constexpr int kModeSwitchSegment = 2133;
+
+// The modes of `sequence` over the tone, a segment each: mode k is requested at sample k * kModeSwitchSegment.
+std::vector<float> renderModeSwitchSequence(double sampleRate, int oversampling, int block,
+                                            const std::vector<duskaudio::MultiCompMode>& sequence)
+{
+    std::vector<ModeRequest> requests;
+    for (size_t k = 0; k < sequence.size(); ++k)
+        requests.push_back({static_cast<int>(k) * kModeSwitchSegment, sequence[k]});
+    return renderModeRequests(sampleRate, oversampling, block, requests,
+                              modeSwitchTone(sampleRate, kModeSwitchSegment * static_cast<int>(sequence.size())));
+}
+
+// The largest step |x[n] - x[n - 1]| over n in [from, to).
+float largestStepBetween(const std::vector<float>& x, int from, int to)
+{
+    float step = 0.0f;
+    for (int n = from; n < to; ++n)
+        step = std::max(step, std::abs(x[static_cast<size_t>(n)] - x[static_cast<size_t>(n - 1)]));
+    return step;
+}
+
+// The largest difference |a[n] - b[n]| over n in [from, to).
+float largestDifferenceBetween(const std::vector<float>& a, const std::vector<float>& b, int from, int to)
+{
+    float difference = 0.0f;
+    for (int n = from; n < to; ++n)
+        difference = std::max(difference, std::abs(a[static_cast<size_t>(n)] - b[static_cast<size_t>(n)]));
+    return difference;
+}
+
+// The peak |x[n]| over n in [from, to).
+float peakBetween(const std::vector<float>& x, int from, int to)
+{
+    float value = 0.0f;
+    for (int n = from; n < to; ++n) value = std::max(value, std::abs(x[static_cast<size_t>(n)]));
+    return value;
+}
+
+// A switch's click: its largest step |y[n] - y[n-1]| after the request, over the larger of the two modes' steady
+// slopes (the largest step of each mode's own render after its first segment). A tone of amplitude A steps at most
+// A w per sample (w = 2 pi 1 kHz / fs). The duck's 1 ms smoothstep moves the gain at most 1.5 / F per sample
+// (F = fs x 1 ms), so a faded tone steps at most A w + 1.5 A / F = A w (1 + 1.5 / 2 pi): 1.24 times the steady
+// slope, and 1.3 leaves room for the two modes' slightly different levels. A replayed or skipped stretch of the
+// waveform jumps by up to 2 A, up to fs / (pi 1 kHz) times the slope: 31x at 96 kHz, 61x at 192 kHz (2.9x to 49x
+// measured without the duck).
+constexpr float kModeSwitchClickBound = 1.3f;
+// A switch completes when, over the second half of the segment after its request, the output is the entered mode's
+// own render to within 0.05. Without this a duck that never let the new mode back in, or a request never acted on,
+// would pass the click and level checks. The two modes of each switch tested differ there by 0.377 or more (Opto's
+// extra latency is 45 degrees of the tone at every rate, Multiband has none, FET runs 20 dB down), except VCA and
+// Digital, which render alike; entering from rest leaves under 0.005.
+constexpr float kModeSwitchSettledTolerance = 0.05f;
+
+// Opto and vintage FET keep the mode rate of a 44.1 / 48 kHz host and every other mode runs the Oversampling
+// setting, so from 88.2 kHz up a switch between the two kinds changes the audio anti-alias oversampler's factor.
+// The output then replayed part of that oversampler's history and jumped forward: a click, up to 49x the tone's
+// steady slope below. Such a switch is now ducked (owner ruling 2026-10-21): the old mode fades out over 1 ms, the
+// switch happens at silence, the realignment stays muted and the new mode fades in. A switch that keeps the
+// factor stays instant.
+void testModeSwitchDuckOnlyWhereAntiAliasFactorChanges()
+{
+    using duskaudio::MultiCompMode;
+    constexpr std::array<const char*, duskaudio::kMultiCompModes> kModeNames{{
+        "OPTO", "FET", "VCA", "BUS", "Studio FET", "Studio VCA", "Digital", "Multiband"}};
+    const auto settingName = [](int oversampling) {
+        return oversampling == kOversampling4xSetting ? "4x" : oversampling == kOversampling2xSetting ? "2x" : "off";
+    };
+
+    // Switches that keep the factor must stay instant. At 48 kHz every mode runs the setting; from 88.2 kHz up Opto
+    // and FET share one factor and VCA and Digital another, and with Oversampling off all run 1x; Multiband never
+    // runs the anti-alias path, so no switch into or out of it is ducked. A duck holds the wet path (with Mix at
+    // 100 %, the output) silent for 128 samples after its 1 ms fade, so the millisecond after the first reads 0 (at
+    // 192 kHz, where the silence is 0.67 ms, a quarter or less); an instant switch reads the entered mode's own level
+    // in every one. The first millisecond is not read: entering VCA restarts the anti-alias filters, which refill
+    // over their latency (1.4 ms at 48 kHz), so it starts near silent even when instant. Each millisecond's peak,
+    // over the entered mode's own peak in the same millisecond, must stay above one half up to 10 ms after the
+    // request. (getLatencySamples() cannot tell the two apart: it reports the requested mode from the request on,
+    // ducked or not.)
+    struct KeepFactorChain
+    {
+        double sampleRate;
+        int oversampling;
+        std::vector<MultiCompMode> modes;
+    };
+    const std::vector<MultiCompMode> highRateKeep{
+        MultiCompMode::Opto, MultiCompMode::FET, MultiCompMode::Opto, MultiCompMode::Multiband,
+        MultiCompMode::Digital, MultiCompMode::VCA, MultiCompMode::Digital, MultiCompMode::Multiband,
+        MultiCompMode::FET};
+    const std::vector<KeepFactorChain> keepFactor{
+        {48000.0, kOversampling2xSetting, {MultiCompMode::VCA, MultiCompMode::Opto, MultiCompMode::VCA}},
+        {48000.0, kOversampling4xSetting, {MultiCompMode::VCA, MultiCompMode::Opto, MultiCompMode::VCA}},
+        {96000.0, kOversamplingOffSetting, {MultiCompMode::Opto, MultiCompMode::VCA, MultiCompMode::Opto}},
+        {96000.0, kOversampling2xSetting, highRateKeep},
+        {192000.0, kOversampling4xSetting, highRateKeep}};
+    float keepSettled = 0.0f, keepLeastLevel = std::numeric_limits<float>::max();
+    int keepSwitches = 0;
+    for (const KeepFactorChain& keep : keepFactor)
+    {
+        const int millisecond = static_cast<int>(std::lround(keep.sampleRate * 0.001));
+        std::array<std::vector<float>, duskaudio::kMultiCompModes> alone;
+        for (const MultiCompMode mode : keep.modes)
+            if (alone[static_cast<size_t>(mode)].empty())
+                alone[static_cast<size_t>(mode)] = renderModeSwitchSequence(
+                    keep.sampleRate, keep.oversampling, 256, std::vector<MultiCompMode>(keep.modes.size(), mode));
+        for (const int block : {32, 256})
+        {
+            const std::vector<float> out = renderModeSwitchSequence(keep.sampleRate, keep.oversampling, block,
+                                                                    keep.modes);
+            float chainLeast = std::numeric_limits<float>::max(), chainSettled = 0.0f;
+            size_t leastSwitch = 1;
+            for (size_t k = 1; k < keep.modes.size(); ++k)
+            {
+                const std::vector<float>& entered = alone[static_cast<size_t>(keep.modes[k])];
+                const int request = static_cast<int>(k) * kModeSwitchSegment;
+                for (int window = 1; window < 10; ++window)
+                {
+                    const int from = request + window * millisecond;
+                    const int to = from + millisecond;
+                    const float level = peakBetween(out, from, to) / peakBetween(entered, from, to);
+                    if (level < chainLeast)
+                    {
+                        chainLeast = level;
+                        leastSwitch = k;
+                    }
+                }
+                chainSettled = std::max(chainSettled, largestDifferenceBetween(
+                    out, entered, request + kModeSwitchSegment / 2, request + kModeSwitchSegment));
+                ++keepSwitches;
+            }
+            std::printf("mode-switch duck: %3.0f kHz %-3s block %3d, factor kept: least level %.4f (%s>%s), "
+                        "settled %.1e\n",
+                        keep.sampleRate / 1000.0, settingName(keep.oversampling), block, chainLeast,
+                        kModeNames[static_cast<size_t>(keep.modes[leastSwitch - 1])],
+                        kModeNames[static_cast<size_t>(keep.modes[leastSwitch])], chainSettled);
+            keepLeastLevel = std::min(keepLeastLevel, chainLeast);
+            keepSettled = std::max(keepSettled, chainSettled);
+        }
+    }
+    require(keepSettled < kModeSwitchSettledTolerance,
+            "a mode switch that keeps the anti-alias factor completes into the entered mode");
+    require(keepLeastLevel > 0.5f, "a mode switch that keeps the anti-alias factor is instant, not ducked");
+
+    // Every switch between a fixed-rate mode (Opto, FET) and one that runs the setting (VCA, Studio VCA, Digital),
+    // both ways, at 96 and 192 kHz and both settings: one chain, so each request leaves a steady mode that was
+    // itself entered through a duck. BUS is left out: entered from rest it runs up to 14 dB above its steady level
+    // for about 10 ms, at 48 kHz too where nothing is ducked: a level transient, not a click. Multiband never runs
+    // the anti-alias path. Each switch's click must stay under kModeSwitchClickBound.
+    const std::vector<MultiCompMode> chain{
+        MultiCompMode::Opto, MultiCompMode::VCA, MultiCompMode::FET, MultiCompMode::StudioVCA,
+        MultiCompMode::Opto, MultiCompMode::Digital, MultiCompMode::FET, MultiCompMode::VCA,
+        MultiCompMode::Opto, MultiCompMode::StudioVCA, MultiCompMode::FET, MultiCompMode::Digital,
+        MultiCompMode::Opto};
+    float worstClick = 0.0f, changeSettled = 0.0f;
+    int changeSwitches = 0;
+    for (const double sampleRate : {96000.0, 192000.0})
+        for (const int oversampling : {kOversampling2xSetting, kOversampling4xSetting})
+        {
+            std::array<std::vector<float>, duskaudio::kMultiCompModes> alone;
+            std::array<float, duskaudio::kMultiCompModes> steadySlope{};
+            for (const MultiCompMode mode : {MultiCompMode::Opto, MultiCompMode::FET, MultiCompMode::VCA,
+                                             MultiCompMode::StudioVCA, MultiCompMode::Digital})
+            {
+                std::vector<float>& own = alone[static_cast<size_t>(mode)];
+                own = renderModeSwitchSequence(sampleRate, oversampling, 256,
+                                               std::vector<MultiCompMode>(chain.size(), mode));
+                steadySlope[static_cast<size_t>(mode)] = largestStepBetween(own, kModeSwitchSegment,
+                                                                            static_cast<int>(own.size()));
+            }
+            for (const int block : {32, 256})
+            {
+                const std::vector<float> out = renderModeSwitchSequence(sampleRate, oversampling, block, chain);
+                float chainWorst = 0.0f, chainLeast = std::numeric_limits<float>::max(), chainSettled = 0.0f;
+                size_t worstSwitch = 1;
+                for (size_t k = 1; k < chain.size(); ++k)
+                {
+                    const size_t from = static_cast<size_t>(chain[k - 1]);
+                    const size_t to = static_cast<size_t>(chain[k]);
+                    const int request = static_cast<int>(k) * kModeSwitchSegment;
+                    const float click = largestStepBetween(out, request, request + kModeSwitchSegment)
+                        / std::max(steadySlope[from], steadySlope[to]);
+                    if (click > chainWorst)
+                    {
+                        chainWorst = click;
+                        worstSwitch = k;
+                    }
+                    chainLeast = std::min(chainLeast, click);
+                    chainSettled = std::max(chainSettled, largestDifferenceBetween(
+                        out, alone[to], request + kModeSwitchSegment / 2, request + kModeSwitchSegment));
+                    ++changeSwitches;
+                }
+                std::printf("mode-switch duck: %3.0f kHz %-3s block %3d, factor changes: click worst %.2fx (%s>%s) "
+                            "least %.2fx, settled %.1e\n",
+                            sampleRate / 1000.0, settingName(oversampling), block, chainWorst,
+                            kModeNames[static_cast<size_t>(chain[worstSwitch - 1])],
+                            kModeNames[static_cast<size_t>(chain[worstSwitch])], chainLeast, chainSettled);
+                worstClick = std::max(worstClick, chainWorst);
+                changeSettled = std::max(changeSettled, chainSettled);
+            }
+        }
+    require(changeSettled < kModeSwitchSettledTolerance,
+            "a mode switch that changes the anti-alias factor completes into the entered mode");
+    require(worstClick < kModeSwitchClickBound, "a mode switch that changes the anti-alias factor does not click");
+    std::printf("mode-switch duck: %d switches that keep the factor stay instant (least level %.4f); %d that change "
+                "it step at most %.2fx the steady slope\n", keepSwitches, keepLeastLevel, changeSwitches, worstClick);
+}
+
+// The duck's state at two awkward moments, 2x setting, each request starting a host block of up to 256 samples:
+// A. A recovery reset inside the fade-out (96 kHz). Studio FET with +20 dB of Input overflows within about 40
+//    samples of a 1000-peak burst, the way finite input still reaches MultiCompDSP's output recovery (see
+//    MultiCompNonFiniteTests.cpp). A burst spanning exactly the 1 ms fade-out of a switch to Opto therefore faults
+//    inside it: the recovery silences that part and resets the duck. A mute armed after the part regardless counted
+//    down at full gain, and a Digital request inside it switched at full gain, 14x the steady slope here. The part
+//    must leave the duck as reset() left it, so the Digital request 104 samples later is ducked like any other.
+// B. A factor-changing request 120 samples into the 128-sample mute of another (Opto to Digital and back, and the
+//    reverse, at 96 and 192 kHz). It switches at once, at silence, and must re-arm the mute for its own
+//    realignment: left to the first switch's last 8 samples of mute it stepped 7.7x to 14x the steady slope.
+void testModeSwitchDuckRearmsAndSurvivesRecovery()
+{
+    using duskaudio::MultiCompMode;
+    const auto ownRender = [](double sampleRate, MultiCompMode mode) {
+        return renderModeSwitchSequence(sampleRate, kOversampling2xSetting, 256, std::vector<MultiCompMode>(3, mode));
+    };
+    const auto steadySlope = [](const std::vector<float>& own) {
+        return largestStepBetween(own, kModeSwitchSegment, static_cast<int>(own.size()));
+    };
+    // Opto and Digital alone at each rate; three segments outlast every render below.
+    const std::array<double, 2> rates{{96000.0, 192000.0}};
+    std::array<std::vector<float>, 2> opto, digital;
+    for (size_t r = 0; r < rates.size(); ++r)
+    {
+        opto[r] = ownRender(rates[r], MultiCompMode::Opto);
+        digital[r] = ownRender(rates[r], MultiCompMode::Digital);
+    }
+
+    constexpr int kFadeAt96k = 96;
+    const int optoAt = kModeSwitchSegment;
+    const int digitalAt = optoAt + kFadeAt96k + 104;
+    const int faultTotal = digitalAt + kModeSwitchSegment;
+    std::vector<float> faultInput = modeSwitchTone(rates[0], faultTotal);
+    for (int n = optoAt; n < optoAt + kFadeAt96k; ++n)
+        faultInput[static_cast<size_t>(n)] = (n / 24) % 2 != 0 ? 1000.0f : -1000.0f;
+    const std::vector<float> fault = renderModeRequests(
+        rates[0], kOversampling2xSetting, 256,
+        {{0, MultiCompMode::StudioFET}, {optoAt, MultiCompMode::Opto}, {digitalAt, MultiCompMode::Digital}},
+        faultInput, 20.0f);
+    const float faultPartPeak = peakBetween(fault, optoAt, optoAt + kFadeAt96k);
+    const float faultClick = largestStepBetween(fault, digitalAt, faultTotal)
+        / std::max(steadySlope(opto[0]), steadySlope(digital[0]));
+    const float faultSettled = largestDifferenceBetween(fault, digital[0], digitalAt + kModeSwitchSegment / 2,
+                                                        faultTotal);
+    std::printf("mode-switch duck:  96 kHz 2x, recovery inside the fade-out to OPTO: fade-out peak %.3g; Digital "
+                "requested after it: click %.2fx, settled %.1e\n", faultPartPeak, faultClick, faultSettled);
+
+    float muteClick = 0.0f, muteSettled = 0.0f;
+    for (size_t r = 0; r < rates.size(); ++r)
+    {
+        const int backAt = kModeSwitchSegment + static_cast<int>(std::lround(rates[r] * 0.001)) + 120;
+        const int total = backAt + kModeSwitchSegment;
+        const float slope = std::max(steadySlope(opto[r]), steadySlope(digital[r]));
+        for (const bool fromOpto : {true, false})
+        {
+            const MultiCompMode first = fromOpto ? MultiCompMode::Opto : MultiCompMode::Digital;
+            const MultiCompMode second = fromOpto ? MultiCompMode::Digital : MultiCompMode::Opto;
+            const std::vector<float> out = renderModeRequests(
+                rates[r], kOversampling2xSetting, 256, {{0, first}, {kModeSwitchSegment, second}, {backAt, first}},
+                modeSwitchTone(rates[r], total));
+            const float click = largestStepBetween(out, backAt, total) / slope;
+            const float settled = largestDifferenceBetween(out, fromOpto ? opto[r] : digital[r],
+                                                           backAt + kModeSwitchSegment / 2, total);
+            std::printf("mode-switch duck: %3.0f kHz 2x, %s>%s, back 120 samples into its mute: click %.2fx, "
+                        "settled %.1e\n", rates[r] / 1000.0, fromOpto ? "OPTO" : "Digital",
+                        fromOpto ? "Digital" : "OPTO", click, settled);
+            muteClick = std::max(muteClick, click);
+            muteSettled = std::max(muteSettled, settled);
+        }
+    }
+    require(faultPartPeak == 0.0f,
+            "the burst overflows Studio FET inside the fade-out, so the recovery resets the duck there");
+    require(std::max(faultSettled, muteSettled) < kModeSwitchSettledTolerance,
+            "a switch requested after a recovered fade-out or inside a mute completes into the entered mode");
+    require(faultClick < kModeSwitchClickBound,
+            "a factor-changing request after a recovery inside the fade-out does not click");
+    require(muteClick < kModeSwitchClickBound, "a factor-changing request inside the mute of another does not click");
+    std::printf("mode-switch duck: a request after a recovered fade-out steps %.2fx, one inside a mute at most %.2fx "
+                "the steady slope\n", faultClick, muteClick);
+}
+
 float renderMultibandTone(float mix, float frequency)
 {
     MultiCompDSP dsp;
@@ -11427,6 +11776,24 @@ int main(int argc, char** argv)
         std::puts("Multi-Comp bypass-toggle continuity test: PASS");
         return 0;
     }
+    // Also in the default run below; separately reachable so the break-first
+    // proof can run them against the core without the mode-switch duck.
+    if (argc == 2 && std::strcmp(argv[1], "--mode-switch-duck") == 0)
+    {
+        testModeSwitchDuckOnlyWhereAntiAliasFactorChanges();
+        testModeSwitchDuckRearmsAndSurvivesRecovery();
+        std::puts("Multi-Comp mode-switch duck tests: PASS");
+        return 0;
+    }
+    // The second alone: its checks have to be shown failing on cores that
+    // fail the first before reaching it (no duck at all, a duck that never
+    // fades back in).
+    if (argc == 2 && std::strcmp(argv[1], "--mode-switch-duck-edges") == 0)
+    {
+        testModeSwitchDuckRearmsAndSurvivesRecovery();
+        std::puts("Multi-Comp mode-switch duck edge test: PASS");
+        return 0;
+    }
     assertMode = AssertMode::GateRun;
     testOptoDriveApplicability();
     testVcaSidechainTilt();
@@ -11521,6 +11888,8 @@ int main(int argc, char** argv)
     testSameRateReprepare();
     testHighRateLowCornerFiltersStayStable();
     testModeReentryStartsFromRest();
+    testModeSwitchDuckOnlyWhereAntiAliasFactorChanges();
+    testModeSwitchDuckRearmsAndSurvivesRecovery();
     testHiddenControlsStayOutOfModesWithoutThem();
     testGlobalLookaheadOnlyInDigitalModes();
     std::puts("Multi-Comp core tests: PASS");
