@@ -79,8 +79,9 @@ inline void drawVintageMeter(duskdaf::DuskPanel& panel, ImDrawList* dl,
                  IM_COL32(188, 192, 184, 160), s);
     const float x0 = x + frame, y0 = y + frame, x1 = x + w - frame, y1 = y + h - frame;
     const auto cfg = vintageVuScale(sublabel);
-    // Initialise to this frame's DSP value: the shared renderer then adds no
-    // extra envelope/return delay to the measured Opto or FET gain reduction.
+    // Initialise to this frame's reading (on the GR source, the plugin's needle
+    // movement, MultiCompGainReductionNeedle.hpp): the shared renderer then adds
+    // no envelope of its own on top.
     float needle = vintageVuDeflection(db);
     duskdaf::drawVuMeter(panel, dl, x0, y0, x1, y1, db, needle, cfg,
                          IM_COL32(140, 141, 123, 150), style);

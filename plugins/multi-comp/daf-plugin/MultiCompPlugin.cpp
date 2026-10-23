@@ -41,6 +41,7 @@ inline std::array<float, 3> orderedCrossovers(float f1, float f2, float f3) noex
 #include "DafPlugin.hpp"
 #include "MultiCompAccess.hpp"
 #include "MultiCompOutputVu.hpp"
+#include "MultiCompGainReductionNeedle.hpp"
 #include "MultiCompParams.hpp"
 #include "MultiCompProgramPresets.hpp"
 #include "MultiCompVersion.hpp"
@@ -71,6 +72,8 @@ public:
     float inputLevel() const noexcept { return dsp.getInputLevel(); }
     float outputLevel() const noexcept { return dsp.getOutputLevel(); }
     float outputVuLevel() const noexcept { return outputVu.levelDb(); }
+    float gainReductionNeedle() const noexcept { return grNeedle.levelDb(); }
+    float vcaGainReductionNeedle() const noexcept { return vcaGrNeedle.levelDb(); }
     float busMeterReading() const noexcept { return dsp.getBusMeterReading(); }
     float busFadePosition() const noexcept { return dsp.getBusFadePosition(); }
     // The UI's view of a parameter. Crossovers report the frequency the DSP
@@ -285,7 +288,7 @@ protected:
     }
 
     void activate() override { prepare(getSampleRate(), getBufferSize()); }
-    void deactivate() override { dsp.reset(); outputVu.reset(); }
+    void deactivate() override { dsp.reset(); outputVu.reset(); grNeedle.reset(); vcaGrNeedle.reset(); needleMode = -1; }
     void sampleRateChanged(double sr) override { prepare(sr, getBufferSize()); }
     void bufferSizeChanged(uint32_t bs) override { prepare(getSampleRate(), bs); }
 
@@ -316,6 +319,19 @@ protected:
         if (useSc) { const float* sc[2] = {inputs[2], inputs[3]}; dsp.processBlockExternal(inputs, sc, outputs, activeChannels, static_cast<int>(frames)); }
         else dsp.processBlock(inputs, outputs, activeChannels, static_cast<int>(frames));
         outputVu.process(outputs, activeChannels, static_cast<int>(frames));
+        const float gainReduction = dsp.getGainReduction();
+        const long mode = std::lround(values[static_cast<size_t>(multicompp::ParamId::Mode)].load(std::memory_order_relaxed));
+        if (mode != needleMode)
+        {   // a mode switch brings another face's meter into view: it already reads the gain reduction
+            needleMode = mode;
+            grNeedle.snap(gainReduction);
+            vcaGrNeedle.snap(gainReduction);
+        }
+        else
+        {
+            grNeedle.process(gainReduction, static_cast<int>(frames));
+            vcaGrNeedle.process(gainReduction, static_cast<int>(frames));
+        }
         // setLatency() is documented as callable from run(). The CLAP wrapper
         // latches a change here and publishes it at the next activate(), which
         // is the only point the CLAP spec allows the latency to move.
@@ -354,6 +370,9 @@ private:
     {
         dsp.prepare(sampleRate, static_cast<int>(bufferSize));
         outputVu.prepare(sampleRate);
+        grNeedle.prepare(sampleRate);
+        vcaGrNeedle.prepare(sampleRate);
+        needleMode = -1;
         pushParameters();
         updateLatency();
     }
@@ -363,6 +382,8 @@ private:
 
     duskaudio::MultiCompDSP dsp;
     multicompp::OutputVu outputVu;
+    multicompp::GainReductionNeedle grNeedle{multicompp::kVuNeedle};        // Opto and FET faces
+    multicompp::GainReductionNeedle vcaGrNeedle{multicompp::kVcaNeedle};    // VCA face
     // Formats other than AU always present the full input set, and ioChanged()
     // is only called where a host narrows it, so the declared count is the
     // correct default rather than a placeholder.
@@ -370,6 +391,7 @@ private:
     int activeChannels = DAF_PLUGIN_NUM_OUTPUTS;
     std::array<std::atomic<float>, multicompp::kTotalParamCount> values{};
     int lastLatency = -1;
+    long needleMode = -1;   // the mode the needles last moved in (run() snaps them on a switch)
     DAF_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MultiCompPlugin)
 };
 
@@ -382,6 +404,8 @@ float multiCompGetBandGainReduction(void* p, int band) noexcept { return p ? asM
 float multiCompGetInputLevel(void* p) noexcept { return p ? asMultiComp(p)->inputLevel() : -60.0f; }
 float multiCompGetOutputLevel(void* p) noexcept { return p ? asMultiComp(p)->outputLevel() : -60.0f; }
 float multiCompGetOutputVuLevel(void* p) noexcept { return p ? asMultiComp(p)->outputVuLevel() : -120.0f; }
+float multiCompGetGainReductionNeedle(void* p) noexcept { return p ? asMultiComp(p)->gainReductionNeedle() : 0.0f; }
+float multiCompGetVcaGainReductionNeedle(void* p) noexcept { return p ? asMultiComp(p)->vcaGainReductionNeedle() : 0.0f; }
 float multiCompGetBusMeterReading(void* p) noexcept { return p ? asMultiComp(p)->busMeterReading() : 0.0f; }
 float multiCompGetBusFadePosition(void* p) noexcept { return p ? asMultiComp(p)->busFadePosition() : 0.0f; }
 float multiCompGetParameterValue(void* p, uint32_t index) noexcept
