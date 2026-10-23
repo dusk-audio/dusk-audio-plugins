@@ -288,7 +288,7 @@ protected:
     }
 
     void activate() override { prepare(getSampleRate(), getBufferSize()); }
-    void deactivate() override { dsp.reset(); outputVu.reset(); grNeedle.reset(); vcaGrNeedle.reset(); needleMode = -1; }
+    void deactivate() override { dsp.reset(); outputVu.reset(); grNeedle.reset(); vcaGrNeedle.reset(); }
     void sampleRateChanged(double sr) override { prepare(sr, getBufferSize()); }
     void bufferSizeChanged(uint32_t bs) override { prepare(getSampleRate(), bs); }
 
@@ -320,7 +320,7 @@ protected:
         else dsp.processBlock(inputs, outputs, activeChannels, static_cast<int>(frames));
         outputVu.process(outputs, activeChannels, static_cast<int>(frames));
         const float gainReduction = dsp.getGainReduction();
-        const long mode = std::lround(values[static_cast<size_t>(multicompp::ParamId::Mode)].load(std::memory_order_relaxed));
+        const long mode = currentMode();
         if (mode != needleMode)
         {   // a mode switch brings another face's meter into view: it already reads the gain reduction
             needleMode = mode;
@@ -372,7 +372,7 @@ private:
         outputVu.prepare(sampleRate);
         grNeedle.prepare(sampleRate);
         vcaGrNeedle.prepare(sampleRate);
-        needleMode = -1;
+        needleMode = currentMode();   // needles start at rest and move; only a later switch snaps them
         pushParameters();
         updateLatency();
     }
@@ -392,6 +392,10 @@ private:
     std::array<std::atomic<float>, multicompp::kTotalParamCount> values{};
     int lastLatency = -1;
     long needleMode = -1;   // the mode the needles last moved in (run() snaps them on a switch)
+    long currentMode() const noexcept
+    {
+        return std::lround(values[static_cast<size_t>(multicompp::ParamId::Mode)].load(std::memory_order_relaxed));
+    }
     DAF_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MultiCompPlugin)
 };
 
