@@ -5,5 +5,7 @@ DUSK_WEAK float multiCompGetBandGainReduction(void* pluginInstancePointer, int b
 DUSK_ACCESS_DECL(float, multiCompGetInputLevel);
 DUSK_ACCESS_DECL(float, multiCompGetOutputLevel);
 DUSK_ACCESS_DECL(float, multiCompGetOutputVuLevel);
+DUSK_ACCESS_DECL(float, multiCompGetGainReductionNeedle);
+DUSK_ACCESS_DECL(float, multiCompGetVcaGainReductionNeedle);
 DUSK_ACCESS_DECL(float, multiCompGetBusFadePosition);
 DUSK_ACCESS_DECL(float, multiCompGetBusMeterReading);

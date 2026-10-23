@@ -118,9 +118,11 @@ inline float optoMeterNeedleAngle(float gainReductionDb) noexcept
 
 inline float optoMeterDisplayValue(float gainReductionDb) noexcept
 {
-    // The Opto gain cell already carries the measured opto leveler attack and release.
-    // The separate display decay was not measured from the reference and made
-    // the needle return materially later than the audio. Keep only a finite guard.
+    // Only a finite guard. The Opto and FET needles' movement runs in the plugin
+    // on the audio clock (MultiCompGainReductionNeedle.hpp, a VU movement measured
+    // against both references). (A UI-side one-pole lag of 300 ms once stood here:
+    // a VU reaches 99% in 300 ms, so that pole returned the needle about four
+    // times too late.)
     return std::isfinite(gainReductionDb) ? gainReductionDb : 0.0f;
 }
 
@@ -235,6 +237,7 @@ inline void refreshParameterMirror(std::array<float, N>& values,
 #include "DuskImGuiWidgets.hpp"
 #include "DuskKnobRing.hpp"
 #include "DuskVuMeter.hpp"
+#include "MultiCompGainReductionNeedle.hpp"
 #include "MultiCompVcaMeter.hpp"
 #include "MultiCompVintageMeter.hpp"
 #include "DuskSupportersOverlay.hpp"
@@ -1334,7 +1337,7 @@ private:
         optoModeSwitch(dl, 119, top + 210.0f);
         optoKnob(dl, "opto_gain", P_OPTO_GAIN, 322, top + 180.0f, 39.0f, "GAIN");
         drawOptoMeter(dl, 441, top + 61.0f, 238, 141,
-                      multicompp::ui_detail::optoMeterDisplayValue(meter(kMeterMaster)));
+                      multicompp::ui_detail::optoMeterDisplayValue(needleGainReduction()));
         optoKnob(dl, "opto_peak", P_OPTO_PEAK, 794, top + 180.0f, 39.0f,
                  "PEAK REDUCTION");
         optoKnob(dl, "opto_sc_hp", P_SC_HP, 989, top + 114.0f, 13.0f,
@@ -1696,7 +1699,7 @@ private:
         constexpr float vuTop = kFetButtonsTop + 0.5f * (std::max(ratioSpan, meterSpan) - vuHeight);
         drawFetRatioButtons(dl, 685, kFetButtonsTop);
         drawOptoMeter(dl, 743, vuTop, 234, vuHeight,
-                      multicompp::ui_detail::optoMeterDisplayValue(meter(kMeterMaster)));
+                      multicompp::ui_detail::optoMeterDisplayValue(needleGainReduction()));
         panel.text(dl, 860, top + 34, 14.0f, IM_COL32(234, 234, 221, 255),
                    "FET 76", 0, true);
         panel.text(dl, 860, top + 54, 8.0f, IM_COL32(177, 179, 170, 255),
@@ -2165,10 +2168,13 @@ private:
         // -12 dBFS, fleet calibration) or gain change per the selected source.
         const auto scale = multicompp::ui_detail::vcaMeterScale(
             multicompp::ui_detail::vcaMeterSourceLabel(vcaMeterSource));
-        const auto style = multicompp::ui_detail::vcaMeterStyle();
+        // Gain change reads the plugin's needle movement (MultiCompGainReductionNeedle.hpp),
+        // so the widget's cosmetic pole is off for it.
+        auto style = multicompp::ui_detail::vcaMeterStyle();
+        style.smoothNeedle = vcaMeterSource != 2 || !hasNeedles();
         const float meterDb = vcaMeterSource == 0 ? inputDb + 12.0f
                             : vcaMeterSource == 1 ? levelMeterDb(true) + 12.0f
-                            : meter(kMeterMaster);
+                            : vcaNeedleGainReduction();
         using Meter = multicompp::ui_detail::VcaMeterRect;
         duskdaf::drawVuMeter(panel, dl, Meter::x0, Meter::y0, Meter::x1, Meter::y1, meterDb,
                              vcaVuNeedle, scale, IM_COL32(40, 40, 42, 255), style);
@@ -2739,6 +2745,32 @@ private:
                 return multiCompGetBandGainReduction(instance, static_cast<int>(p - kMeterBand0));
         }
         return values[p];
+    }
+
+    // The Opto and FET needles' VU movement (MultiCompGainReductionNeedle.hpp).
+    // A UI without the plugin instance (split LV2) draws the raw reading instead.
+    float needleGainReduction() const
+    {
+        void* const instance = getPluginInstancePointer();
+        return instance != nullptr && multiCompGetGainReductionNeedle != nullptr
+            ? multiCompGetGainReductionNeedle(instance) : meter(kMeterMaster);
+    }
+
+    // The needles live in the plugin; a UI without the instance (split LV2) has none.
+    bool hasNeedles() const
+    {
+        return getPluginInstancePointer() != nullptr && multiCompGetVcaGainReductionNeedle != nullptr
+            && multiCompGetGainReductionNeedle != nullptr;
+    }
+
+    // The VCA face's gain-change needle (kVcaNeedle). Without the instance the raw
+    // reading still goes through the dial's law, so the face reads the same scale.
+    float vcaNeedleGainReduction() const
+    {
+        void* const instance = getPluginInstancePointer();
+        return instance != nullptr && multiCompGetVcaGainReductionNeedle != nullptr
+            ? multiCompGetVcaGainReductionNeedle(instance)
+            : static_cast<float>(multicompp::dialReading(multicompp::kVcaNeedle, meter(kMeterMaster)));
     }
 
     void drawMeter(ImDrawList* dl, float x, float y, float w, float h, float gr, ImU32 color, const char* label)

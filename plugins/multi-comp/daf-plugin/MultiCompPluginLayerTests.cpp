@@ -57,6 +57,13 @@ void require(bool condition, const char* message)
 }
 
 int reviewFailureCount = 0;
+size_t occurrences(const std::string& text, const char* needle)
+{
+    size_t n = 0;
+    for (size_t at = text.find(needle); at != std::string::npos; at = text.find(needle, at + 1)) ++n;
+    return n;
+}
+
 void reviewCheck(bool condition, const char* message)
 {
     if (!condition) { std::fprintf(stderr, "FAIL: %s\n", message); ++reviewFailureCount; }
@@ -744,13 +751,7 @@ void testShippingUiUsesConformingHeaderWithoutUtilityBands()
 {
     const std::string source = readSiblingSource("MultiCompUI.cpp");
     const std::string info = readSiblingSource("DafPluginInfo.h");
-    auto countText = [&source](const char* text) {
-        size_t count = 0;
-        for (size_t at = source.find(text); at != std::string::npos;
-             at = source.find(text, at + 1))
-            ++count;
-        return count;
-    };
+    auto countText = [&source](const char* text) { return occurrences(source, text); };
     const bool drawsGlobalBand = source.find("drawGlobal(dl);") != std::string::npos;
     const bool drawsSidechainBand = source.find("drawSidechain(dl);") != std::string::npos;
     const bool hasConformingIdentity = source.find("\"MULTI-COMP\"") != std::string::npos
@@ -1093,14 +1094,43 @@ void testOptoFaceplateContract()
                 && std::abs(minusTwentyVu - 0.07079458f) < 0.00001f
                 && multicompp::ui_detail::vintageVuDeflection(3.0f) == 1.0f,
             "vintage VU voltage scale reserves the red zone beyond unity gain reduction");
-    const bool drawsRawGainReduction = source.find(
-        "optoMeterDisplayValue(meter(kMeterMaster))") != std::string::npos;
+    // The Opto and FET needles are the VU movement the plugin runs on the audio
+    // clock, the VCA gain change its quicker needle (MultiCompGainReductionNeedle.hpp);
+    // none keeps a display envelope of its own in the UI.
+    const auto count = [&source](const char* text) { return occurrences(source, text); };
+    const std::string plugin = readSiblingSource("MultiCompPlugin.cpp");
+    const bool facesDrawNeedle = count("optoMeterDisplayValue(needleGainReduction())") == 2
+        && count("optoMeterDisplayValue(meter(kMeterMaster))") == 0;
     const bool keepsDisplayEnvelope = source.find("optoMeterBallisticStep")
             != std::string::npos
         || source.find("optoMeterGainReductionDb") != std::string::npos;
+    const bool pluginRunsNeedle = plugin.find("const float gainReduction = dsp.getGainReduction();") != std::string::npos
+        && plugin.find("grNeedle.process(gainReduction, static_cast<int>(frames));") != std::string::npos
+        && plugin.find("vcaGrNeedle.process(gainReduction, static_cast<int>(frames));") != std::string::npos
+        && plugin.find("outputVu.reset(); grNeedle.reset(); vcaGrNeedle.reset();") != std::string::npos
+        && plugin.find("grNeedle.prepare(sampleRate);") != std::string::npos
+        && plugin.find("vcaGrNeedle.prepare(sampleRate);") != std::string::npos
+        && plugin.find("grNeedle{multicompp::kVuNeedle}") != std::string::npos
+        && plugin.find("vcaGrNeedle{multicompp::kVcaNeedle}") != std::string::npos
+        && plugin.find("grNeedle.snap(gainReduction);") != std::string::npos
+        && plugin.find("vcaGrNeedle.snap(gainReduction);") != std::string::npos
+        // each accessor returns its own needle
+        && plugin.find("float gainReductionNeedle() const noexcept { return grNeedle.levelDb(); }") != std::string::npos
+        && plugin.find("float vcaGainReductionNeedle() const noexcept { return vcaGrNeedle.levelDb(); }") != std::string::npos
+        && plugin.find("multiCompGetGainReductionNeedle(void* p) noexcept { return p ? asMultiComp(p)->gainReductionNeedle()")
+               != std::string::npos
+        && plugin.find("multiCompGetVcaGainReductionNeedle(void* p) noexcept { return p ? asMultiComp(p)->vcaGainReductionNeedle()")
+               != std::string::npos;
+    // The VCA face's gain change reads its own needle with the widget's cosmetic pole off.
+    const bool vcaDrawsNeedle = count(": vcaNeedleGainReduction();") == 1
+        && count("style.smoothNeedle = vcaMeterSource != 2 || !hasNeedles();") == 1
+        && count("? multiCompGetGainReductionNeedle(instance) : meter(kMeterMaster)") == 1
+        && count("? multiCompGetVcaGainReductionNeedle(instance)\n") == 1
+        && count(": static_cast<float>(multicompp::dialReading(multicompp::kVcaNeedle, meter(kMeterMaster)));") == 1;
     reviewCheck(attackDisplay == -20.0f && releaseDisplay == 0.0f
-                    && drawsRawGainReduction && !keepsDisplayEnvelope,
-                "Opto needle follows raw DSP gain reduction without added display lag or state");
+                    && facesDrawNeedle && !keepsDisplayEnvelope
+                    && pluginRunsNeedle && vcaDrawsNeedle,
+                "Opto/FET needles are the audio-clock VU movement, the VCA gain change its own measured needle, no UI display envelope");
     reviewCheck(std::strcmp(multicompp::ui_detail::optoKnobValueSuffix(), "") == 0,
                 "Opto knob value bubbles show unitless 0-100 values");
     const float idleReadout = multicompp::ui_detail::optoMeterReadoutAmount(0.0f);

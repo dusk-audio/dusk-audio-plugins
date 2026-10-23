@@ -1,4 +1,5 @@
 #include "MultiCompOutputVu.hpp"
+#include "MultiCompGainReductionNeedle.hpp"
 #define MULTICOMP_UI_LOGIC_TEST
 #include "MultiCompUI.cpp"
 #undef MULTICOMP_UI_LOGIC_TEST
@@ -96,6 +97,125 @@ bool lifecycle()
         && afterSilence == -120 && afterInvalid == -120 && std::abs(recovered - left) < 0.001f;
     std::printf("VU lifecycle right=%.6f left=%.6f antiphase=%.6f mono=%.1f stereo-restored=%.1f reset=%.1f reset-sample=%.1f prepare=%.1f twice=%.1f recovered=%.6f\n",
                 right, left, antiphase, monoSilence, restoredStereo, reset, afterReset, prepared, preparedTwice, recovered);
+    return ok;
+}
+
+// A needle's step response: 99% of its travel at the ballistics' time, 1.25%
+// overshoot, at every sample rate and block size. The Opto and FET needle is the
+// IEC 60268-17 VU movement (300 ms, linear in voltage); the VCA one reaches 99% in
+// 140 ms and is linear in decibels, like its dial. The steps stay above the VCA
+// law's knee, so they test the movement alone.
+bool needleStep(const NeedleBallistics& b, const char* name, double expectedMs)
+{
+    bool ok = true;
+    // Position on the movement's own axis: linear gain, or decibels.
+    const auto axis = [&b](double db) { return b.linearInVoltage ? std::pow(10.0, db * 0.05) : db; };
+    const auto travel = [&](const GainReductionNeedle& n, double from, double to) {
+        return (axis(n.levelDb()) - axis(from)) / (axis(to) - axis(from));
+    };
+    float reference = 0;
+    for (int rate : {44100, 48000, 96000, 192000})
+    {
+        GainReductionNeedle n{b}; n.prepare(rate);
+        int first99 = -1; double peak = 0;
+        for (int i = 1; i <= rate; ++i)   // one-sample blocks: the finest timing
+        {
+            n.process(-3.5f, 1);
+            const double f = travel(n, 0.0, -3.5);
+            if (first99 < 0 && f >= 0.99) first99 = i;
+            peak = std::max(peak, f);
+        }
+        const double ms = 1000.0 * first99 / rate;
+        int back99 = -1; double backPeakDb = 0;
+        for (int i = 1; i <= rate; ++i)   // and back to rest
+        {
+            n.process(0.0f, 1);
+            if (back99 < 0 && travel(n, -3.5, 0.0) >= 0.99) back99 = i;
+            backPeakDb = std::max(backPeakDb, static_cast<double>(n.levelDb()));
+        }
+        const double backMs = 1000.0 * back99 / rate;
+        float unitBlock = 0, worstPartition = 0;
+        for (int block : {1, 64, 257, 4096})
+        {
+            GainReductionNeedle p{b}; p.prepare(rate);
+            const int total = static_cast<int>(std::lround(rate * expectedMs * 0.001));
+            for (int done = 0; done < total; done += block) p.process(-3.5f, std::min(block, total - done));
+            if (block == 1) unitBlock = p.levelDb();
+            worstPartition = std::max(worstPartition, std::abs(p.levelDb() - unitBlock));
+        }
+        if (rate == 44100) reference = unitBlock;
+        std::printf("%s needle rate=%d 99%%=%.3f ms overshoot=%.4f%% return 99%%=%.3f ms return peak=%+.4f dB "
+                    "at %.0f ms=%.6f dB partitionDelta=%.2g rateDelta=%.2g\n",
+                    name, rate, ms, 100 * (peak - 1), backMs, backPeakDb, expectedMs, unitBlock, worstPartition,
+                    unitBlock - reference);
+        ok &= std::abs(ms - expectedMs) < 0.5 && peak > 1.010 && peak < 1.015
+            && std::abs(backMs - expectedMs) < 0.5 && backPeakDb > 0
+            && backPeakDb < (b.linearInVoltage ? 0.04 : 0.05)   // 1.25% of the 3.5 dB return: 0.036 / 0.044 dB
+            && worstPartition < 1.0e-5f && std::abs(unitBlock - reference) < 1.0e-4f;
+    }
+    return ok;
+}
+
+bool needle()
+{
+    bool ok = needleStep(kVuNeedle, "VU", 300.0) && needleStep(kVcaNeedle, "VCA", 140.0);
+    // The VCA dial's static law, settled: 1:1 to the knee, 0.817 dB per dB beyond (-20 dB reads -17.05).
+    for (const auto& [gr, reads] : std::array<std::pair<float, float>, 3>{{{-3.0f, -3.0f}, {-20.0f, -17.0537f},
+                                                                          {-30.0f, -25.2237f}}})
+    {
+        GainReductionNeedle settled{kVcaNeedle}; settled.prepare(48000);
+        for (int i = 0; i < 20; ++i) settled.process(gr, 4800);
+        std::printf("VCA needle law: %.1f dB settles at %.4f (expected %.4f)\n", gr, settled.levelDb(), reads);
+        ok &= std::abs(settled.levelDb() - reads) < 1.0e-3f;
+    }
+    // The law alone (the UI's fallback without a plugin instance uses it on the raw reading).
+    ok &= dialReading(kVcaNeedle, -3.0) == -3.0 && std::abs(dialReading(kVcaNeedle, -20.0) + 17.0537) < 1.0e-9
+        && dialReading(kVcaNeedle, NAN) == 0.0 && dialReading(kVuNeedle, -20.0) == -20.0;
+    // The VU needle has no law: it settles on the gain reduction itself.
+    GainReductionNeedle unity{kVuNeedle}; unity.prepare(48000);
+    for (int i = 0; i < 40; ++i) unity.process(-20.0f, 4800);
+    ok &= std::abs(unity.levelDb() + 20.0f) < 1.0e-3f;
+    // A kick's 10 ms of 6 dB gain reduction (15 blocks of 32 at 48 kHz) barely
+    // moves the VU needle: -0.2492 dB, where a needle drawn from the cell reads 6 dB.
+    GainReductionNeedle kick{kVuNeedle}; kick.prepare(48000);
+    float deepest = 0;
+    for (int beat = 0; beat < 4; ++beat)
+        for (int block = 0; block < 24000 / 32; ++block)
+        {
+            kick.process(block < 15 ? -6.0f : 0.0f, 32);
+            deepest = std::min(deepest, kick.levelDb());
+        }
+    // Lifecycle: empty blocks change nothing; a non-finite reading is no gain
+    // reduction; reset() and prepare() put the needle at rest at once.
+    for (const auto* b : {&kVuNeedle, &kVcaNeedle})
+    {
+        GainReductionNeedle life{*b}; life.prepare(48000);
+        const float fresh = life.levelDb();
+        life.process(-6.0f, 4800); const float moved = life.levelDb();
+        life.process(-6.0f, 0); life.process(-6.0f, -5);
+        const float afterEmpty = life.levelDb();
+        life.reset(); const float reset = life.levelDb();
+        life.process(NAN, 4800); life.process(INFINITY, 4800); life.process(-INFINITY, 4800);
+        const float afterInvalid = life.levelDb();
+        life.process(-6.0f, 4800); life.prepare(96000); const float prepared = life.levelDb();
+        ok &= fresh == 0 && moved < -1 && afterEmpty == moved && reset == 0 && std::isfinite(afterInvalid)
+            && std::abs(afterInvalid) < 1.0e-3f && prepared == 0;
+        std::printf("%s needle lifecycle fresh=%.1f moved=%.4f empty=%.4f reset=%.1f invalid=%.6f prepare=%.1f\n",
+                    b->linearInVoltage ? "VU" : "VCA", fresh, moved, afterEmpty, reset, afterInvalid, prepared);
+    }
+    ok &= std::abs(deepest + 0.249210f) < 1.0e-4f;
+    // A mode switch snaps the new face's needle onto its reading at once; a VU
+    // movement stops at zero volts and nothing publishes below -60 dB.
+    GainReductionNeedle vu{kVuNeedle}, vca{kVcaNeedle}; vu.prepare(48000); vca.prepare(48000);
+    vu.snap(-10.0f); vca.snap(-10.0f);
+    const float snappedVu = vu.levelDb(), snappedVca = vca.levelDb();
+    float lowest = 0;
+    for (int i = 0; i < 96; ++i) { vu.process(-60.0f, 1000); lowest = std::min(lowest, vu.levelDb()); }   // 2 s
+    std::printf("needle snap VU=%.4f VCA=%.4f (law -8.8837); -60 dB step lowest published %.3f, settles %.3f\n",
+                snappedVu, snappedVca, lowest, vu.levelDb());
+    ok &= std::abs(snappedVu + 10.0f) < 1.0e-4f && std::abs(snappedVca + 8.8837f) < 1.0e-4f
+        && lowest >= -60.0f && std::abs(vu.levelDb() + 60.0f) < 1.0e-3f;
+    std::printf("VU needle kick 10 ms x 6 dB deepest=%.4f dB\n", deepest);
     return ok;
 }
 
@@ -209,7 +329,7 @@ bool identity()
 int main(int argc, char** argv)
 {
     struct Test { const char* name; bool (*run)(); };
-    const Test tests[]{{"response", response}, {"lifecycle", lifecycle}, {"calibration", calibration},
+    const Test tests[]{{"response", response}, {"lifecycle", lifecycle}, {"needle", needle}, {"calibration", calibration},
                        {"switching", switching}, {"state-roundtrip", stateRoundtrip},
                        {"state-reject", stateReject}, {"identity", identity}};
     bool passed = true;
