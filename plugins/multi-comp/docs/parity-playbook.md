@@ -187,6 +187,12 @@ and candidate renders never enter a repo; the owner commits.
   `MultiCompOptoLfDynamicHarmonics.hpp` (about 390 KB) are included nowhere.
 - The CLAP version string is empty (framework), and alpha and stable both report 1.0.0.
 - No user manual yet.
+- GR needles (2026-10-22, `daf-plugin/MultiCompGainReductionNeedle.hpp`): the plugin feeds them the DSP's
+  block-end gain reduction once per host block, so a transient reads up to a block early and, at large buffers,
+  slightly deep (a 6 dB kick: about 0.1 dB at 512 samples, 0.5 dB VU / 0.9 dB VCA at 2048). The fix is a block
+  mean of the gain in the OPTO/FET/VCA paths (linear for the VU needle, dB for VCA), measured against CPU parity.
+  The FET needle reads true GR: the reference 1176's meter is not a function of GR (its drive has dynamics of its
+  own; tools `needle_meter/README.md` has the kill-tests and a measurement plan).
 
 From the CPU-parity review (2026-10-21; report in the tools repo, `mc2-alpha2-review-2026-10-21.md`):
 - Mode switches during playback step the waveform wherever the latency changes between the two modes, and the
