@@ -1125,7 +1125,8 @@ void testOptoFaceplateContract()
     const bool vcaDrawsNeedle = count(": vcaNeedleGainReduction();") == 1
         && count("style.smoothNeedle = vcaMeterSource != 2 || !hasNeedles();") == 1
         && count("? multiCompGetGainReductionNeedle(instance) : meter(kMeterMaster)") == 1
-        && count("? multiCompGetVcaGainReductionNeedle(instance) : meter(kMeterMaster)") == 1;
+        && count("? multiCompGetVcaGainReductionNeedle(instance)\n") == 1
+        && count(": static_cast<float>(multicompp::dialReading(multicompp::kVcaNeedle, meter(kMeterMaster)));") == 1;
     reviewCheck(attackDisplay == -20.0f && releaseDisplay == 0.0f
                     && facesDrawNeedle && !keepsDisplayEnvelope
                     && pluginRunsNeedle && vcaDrawsNeedle,

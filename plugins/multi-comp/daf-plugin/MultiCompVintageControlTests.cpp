@@ -168,6 +168,9 @@ bool needle()
         std::printf("VCA needle law: %.1f dB settles at %.4f (expected %.4f)\n", gr, settled.levelDb(), reads);
         ok &= std::abs(settled.levelDb() - reads) < 1.0e-3f;
     }
+    // The law alone (the UI's fallback without a plugin instance uses it on the raw reading).
+    ok &= dialReading(kVcaNeedle, -3.0) == -3.0 && std::abs(dialReading(kVcaNeedle, -20.0) + 17.0537) < 1.0e-9
+        && dialReading(kVcaNeedle, NAN) == 0.0 && dialReading(kVuNeedle, -20.0) == -20.0;
     // The VU needle has no law: it settles on the gain reduction itself.
     GainReductionNeedle unity{kVuNeedle}; unity.prepare(48000);
     for (int i = 0; i < 40; ++i) unity.process(-20.0f, 4800);

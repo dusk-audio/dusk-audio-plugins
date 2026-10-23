@@ -47,6 +47,13 @@ inline constexpr NeedleBallistics kVuNeedle{0.8127169864, 13.5119126, true};    
 inline constexpr NeedleBallistics kVcaNeedle{0.8127169864, 13.5119126 * 300.0 / 140.0, false,
                                              -3.9, 0.817};                        // 99% at 140 ms, measured law
 
+// Where a gain reduction settles on the dial (the meter law; non-finite reads as none).
+inline double dialReading(const NeedleBallistics& b, double gainReductionDb) noexcept
+{
+    const double db = std::isfinite(gainReductionDb) ? gainReductionDb : 0.0;
+    return db < b.lawKneeDb ? b.lawKneeDb + b.lawSlope * (db - b.lawKneeDb) : db;
+}
+
 class GainReductionNeedle
 {
 public:
@@ -101,9 +108,7 @@ private:
     double rest() const noexcept { return ballistics.linearInVoltage ? 1.0 : 0.0; }
     double targetFor(float gainReductionDb) const noexcept
     {
-        double db = std::isfinite(gainReductionDb) ? static_cast<double>(gainReductionDb) : 0.0;
-        if (db < ballistics.lawKneeDb)
-            db = ballistics.lawKneeDb + ballistics.lawSlope * (db - ballistics.lawKneeDb);
+        const double db = dialReading(ballistics, gainReductionDb);
         return ballistics.linearInVoltage ? std::pow(10.0, 0.05 * db) : db;
     }
     void publish() noexcept

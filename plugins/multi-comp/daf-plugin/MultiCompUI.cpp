@@ -237,6 +237,7 @@ inline void refreshParameterMirror(std::array<float, N>& values,
 #include "DuskImGuiWidgets.hpp"
 #include "DuskKnobRing.hpp"
 #include "DuskVuMeter.hpp"
+#include "MultiCompGainReductionNeedle.hpp"
 #include "MultiCompVcaMeter.hpp"
 #include "MultiCompVintageMeter.hpp"
 #include "DuskSupportersOverlay.hpp"
@@ -2762,12 +2763,14 @@ private:
             && multiCompGetGainReductionNeedle != nullptr;
     }
 
-    // The VCA face's gain-change needle (kVcaNeedle); raw reading without the instance.
+    // The VCA face's gain-change needle (kVcaNeedle). Without the instance the raw
+    // reading still goes through the dial's law, so the face reads the same scale.
     float vcaNeedleGainReduction() const
     {
         void* const instance = getPluginInstancePointer();
         return instance != nullptr && multiCompGetVcaGainReductionNeedle != nullptr
-            ? multiCompGetVcaGainReductionNeedle(instance) : meter(kMeterMaster);
+            ? multiCompGetVcaGainReductionNeedle(instance)
+            : static_cast<float>(multicompp::dialReading(multicompp::kVcaNeedle, meter(kMeterMaster)));
     }
 
     void drawMeter(ImDrawList* dl, float x, float y, float w, float h, float gr, ImU32 color, const char* label)
