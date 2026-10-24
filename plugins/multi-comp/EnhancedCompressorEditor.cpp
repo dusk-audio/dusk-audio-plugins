@@ -546,6 +546,16 @@ void EnhancedCompressorEditor::setupFETPanel()
     if (params.getRawParameterValue("mix"))
         fetPanel.mixAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             params, "mix", *fetPanel.mixKnob);
+
+    // The buttons are a custom control, so they need a ParameterAttachment to
+    // show fet_ratio when the editor opens and to follow host changes (#326).
+    if (auto* ratioParam = params.getParameter("fet_ratio"))
+    {
+        fetPanel.ratioAttachment = std::make_unique<juce::ParameterAttachment>(
+            *ratioParam,
+            [this](float ratioIndex) { fetPanel.ratioButtons->setSelectedRatio(juce::roundToInt(ratioIndex)); });
+        fetPanel.ratioAttachment->sendInitialUpdate();
+    }
 }
 
 void EnhancedCompressorEditor::setupVCAPanel()
@@ -1686,14 +1696,9 @@ void EnhancedCompressorEditor::comboBoxChanged(juce::ComboBox* comboBoxThatHasCh
 
 void EnhancedCompressorEditor::ratioChanged(int ratioIndex)
 {
-    // Handle FET ratio button changes
-    // Map to parameter value if needed
-    auto& params = processor.getParameters();
-    if (auto* ratioParam = params.getParameter("fet_ratio"))
-    {
-        float normalizedValue = ratioIndex / 4.0f;
-        ratioParam->setValueNotifyingHost(normalizedValue);
-    }
+    // A click is one complete host gesture, so touch/latch automation records it
+    if (fetPanel.ratioAttachment)
+        fetPanel.ratioAttachment->setValueAsCompleteGesture(static_cast<float>(ratioIndex));
 }
 
 void EnhancedCompressorEditor::presetChanged(int /*presetIndex*/, int targetMode)

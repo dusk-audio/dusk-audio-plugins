@@ -253,6 +253,9 @@ if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
     # --- Issue #240: host-edge resizing must preserve the proportional UI ---
     multicomp_add_functional_test(MultiCompEditorResizeTest tests/test_editor_resize.cpp)
 
+    # --- Issue #326: FET ratio buttons must show fet_ratio when the editor opens ---
+    multicomp_add_functional_test(MultiCompFetRatioSyncTest tests/test_fet_ratio_ui_sync.cpp)
+
     # --- Parameter fuzz (pluginval "Fuzz parameters" replica; run under ASan) ---
     multicomp_add_functional_test(MultiCompParamFuzzTest tests/test_param_fuzz.cpp)
 endif()
