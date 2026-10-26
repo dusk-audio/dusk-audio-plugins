@@ -1453,6 +1453,12 @@ private:
     int busDrivePosition = -1;
     float busDriveValue = 1.0f;
     float busCeilingScale = busCeilingReference;   // busCeilingReference / busDriveValue
+    // The same for the makeup gain (renderBusOutput) and the control's charge
+    // and discharge coefficients (advanceBusEnvelope): each is recomputed only
+    // when its inputs change, by the same expression, so it is the same float.
+    float busMakeupMemoDb = 0.0f, busMakeupMemoGain = 1.0f;   // decibelsToGain(0) is exactly 1
+    float busChargeMemoAttack = -1.0f, busChargeMemoRate = -1.0f, busChargeMemo = 0.0f;
+    float busDischargeMemoRelease = -1.0f, busDischargeMemoRate = -1.0f, busDischargeMemo = 0.0f;
     // The compressed feedback signal has its own low-frequency coupling.
     // Reuse the shared filter; prepare/reset clear each channel's history,
     // and runtime oversampling changes refresh its pole without discarding it.
@@ -6754,6 +6760,37 @@ private:
         return 0.33f * rc0 + gamma * (std::log1p(leak / leakScale) - std::log1p(leak0 / leakScale));
     }
 
+    float busChargeCoefficient(float attack, float sr) noexcept
+    {
+        if (attack != busChargeMemoAttack || sr != busChargeMemoRate)
+        {
+            busChargeMemoAttack = attack;
+            busChargeMemoRate = sr;
+            busChargeMemo = 1.0f - std::exp(-1.0f / std::max(1.0f, attack * sr));
+        }
+        return busChargeMemo;
+    }
+
+    float busDischargeCoefficient(float release, float sr) noexcept
+    {
+        if (release != busDischargeMemoRelease || sr != busDischargeMemoRate)
+        {
+            busDischargeMemoRelease = release;
+            busDischargeMemoRate = sr;
+            busDischargeMemo = std::exp(-1.0f / std::max(1.0f, release * sr));
+        }
+        return busDischargeMemo;
+    }
+
+    // advanceBusEnvelope's reset test reads only whether 10^(-control / 20) is
+    // finite: smoothBusAudioGain overwrites the envelope it would give. At or
+    // above -700 dB that is at most 1e35, finite with any libm; lower (or
+    // non-finite) controls evaluate it as before.
+    static bool busControlGainFinite(float controlDb) noexcept
+    {
+        return controlDb >= -700.0f || std::isfinite(decibelsToGain(-controlDb));
+    }
+
     void smoothBusAudioGain(BusState& d) noexcept
     {
         d.smoothControlDb += busAudioControlSmoothingStep
@@ -6809,16 +6846,15 @@ private:
             // the slow reservoir between charge and decay distorts early release.
             const float current = d.fixedControlDb;
             const float slow = d.autoSlowDb;
-            const float charge = 1.0f - std::exp(-1.0f / std::max(1.0f, attack * sr));
+            const float charge = busChargeCoefficient(attack, sr);
             d.fixedControlDb = float(busAutoStep[0]*current + busAutoStep[1]*slow + busAutoStep[4])
                 + std::max(0.0f, reduction - std::max(0.0f, current)) * charge;
             d.autoSlowDb = float(busAutoStep[2]*current + busAutoStep[3]*slow + busAutoStep[5]);
-            d.envelope = decibelsToGain(-d.fixedControlDb);
             // Test the reservoirs, not only the envelope: decibelsToGain(-inf)
             // is 0, which is finite, so an envelope-only guard would leave a
             // non-finite reservoir latched at digital silence. The fixed-release
             // branch below already uses this two-sided form.
-            if (!std::isfinite(d.envelope) || !std::isfinite(d.fixedControlDb)
+            if (!busControlGainFinite(d.fixedControlDb) || !std::isfinite(d.fixedControlDb)
                 || !std::isfinite(d.autoSlowDb))
             { d.envelope = 1; d.autoSlowDb = 0; d.fixedControlDb = 0; }
             d.detectorEnvelope = decibelsToGain(-busDetectorExponent * d.fixedControlDb);
@@ -6836,15 +6872,14 @@ private:
             // holdouts are in the 2026-09-09 BUS release measurement report.
             const float bias = 0.33f * release;
             const float currentReduction = busChargeOffset(d.fixedControlDb, bias, release) + d.fixedControlDb;
-            const float discharge = std::exp(-1.0f / std::max(1.0f, release * sr));
-            const float charge = 1.0f - std::exp(-1.0f / std::max(1.0f, attack * sr));
+            const float discharge = busDischargeCoefficient(release, sr);
+            const float charge = busChargeCoefficient(attack, sr);
             // A lower release setting can leave control below the new bias.
             // Let it settle through release; it must not trigger fast charge.
             d.fixedControlDb = d.fixedControlDb * discharge - bias * (1.0f - discharge)
                 + std::max(0.0f, reduction - std::max(0.0f, currentReduction)) * charge;
-            d.envelope = decibelsToGain(-d.fixedControlDb);
         }
-        if (!std::isfinite(d.envelope) || !std::isfinite(d.fixedControlDb))
+        if (!busControlGainFinite(d.fixedControlDb) || !std::isfinite(d.fixedControlDb))
         { d.envelope = 1.0f; d.fixedControlDb = 0.0f; }
         d.detectorEnvelope = decibelsToGain(-busDetectorExponent * d.fixedControlDb);
         smoothBusAudioGain(d);
@@ -6870,8 +6905,13 @@ private:
             * d.detectorEnvelope;
         d.compressed = busFeedbackCoupling[static_cast<size_t>(ch)].process(feedbackInput);
         out = outputTransformerBus[ch].processSample(out, ch);
-        out = busConvolution.processSample(out, ch) * busHardwareGain
-            * decibelsToGain(p.busMakeup.load(std::memory_order_relaxed));
+        const float makeupDb = p.busMakeup.load(std::memory_order_relaxed);
+        if (makeupDb != busMakeupMemoDb)
+        {
+            busMakeupMemoDb = makeupDb;
+            busMakeupMemoGain = decibelsToGain(makeupDb);
+        }
+        out = busConvolution.processSample(out, ch) * busHardwareGain * busMakeupMemoGain;
         out = busOutputCeiling(out * (1.0f / busCeilingReference)) * busCeilingScale;
         // Native ceiling is inside headroom compensation, after makeup.
         // HR4 permits ~13.1 linear output; HR28 clips near 0.83.
