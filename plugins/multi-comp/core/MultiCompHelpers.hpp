@@ -556,9 +556,10 @@ private:
 // factor 1 the upsampler keeps no history). A longer idle spell replays only
 // those: the halfband FIRs read at most 63 host samples back (the 127-tap
 // stage), and at 4x the inner stage only reaches the last few outer outputs,
-// so the replay rewrites every tap a later output reads. Nothing is reset: a
-// 4x inner stage that a replay at 2x does not step keeps its history, as it
-// does in an upsampler that runs throughout.
+// so the replay rewrites every tap a later output reads. A stage that a factor
+// does not step (both at 1x, the 4x inner stage at 2x) restarts from rest when
+// the factor next steps it (PolyphaseOversampler::setFactor), as it does in an
+// upsampler that runs throughout.
 template <class Upsampler>
 class LazyUpsampler
 {

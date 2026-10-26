@@ -5321,68 +5321,141 @@ float tailLevelDb(const std::vector<float>& out, size_t from)
 void testModeReentryStartsFromRest()
 {
     using duskaudio::MultiCompMode;
-    // static: MSVC rejects the lambda below reading kRate (floating point)
-    // uncaptured (C3493); kBlock follows it.
-    static constexpr double kRate = 48000.0;
+    // static: MSVC rejects a lambda reading a constant uncaptured (C3493).
     static constexpr int kBlock = 64;
-    const auto configure = [](MultiCompDSP& dsp, MultiCompMode mode) {
+    const auto configure = [](MultiCompDSP& dsp, MultiCompMode mode, double rate, int oversampling) {
         dsp.setMode(static_cast<int>(mode));
+        dsp.setOversampling(oversampling);
         dsp.setParameter(MultiCompDSP::Parameter::OptoPeakReduction, 80.0f);
         dsp.setParameter(MultiCompDSP::Parameter::FetInput, 20.0f);
         dsp.setParameter(MultiCompDSP::Parameter::BusThreshold, -12.0f);
         dsp.setParameter(MultiCompDSP::Parameter::DigitalThreshold, -24.0f);
         dsp.setParameter(MultiCompDSP::Parameter::StudioVcaThreshold, -24.0f);
-        dsp.prepare(kRate, kBlock);
+        dsp.prepare(rate, kBlock);
     };
     struct Driver
     {
         MultiCompDSP& dsp;
+        double rate;
         double phase = 0.0;
         void run(double seconds, float amplitude, std::vector<float>* capture = nullptr)
         {
             std::array<float, kBlock> left{}, right{}, outLeft{}, outRight{};
             const float* input[] = {left.data(), right.data()};
             float* output[] = {outLeft.data(), outRight.data()};
-            const int blocks = static_cast<int>(seconds * kRate / kBlock);
+            const int blocks = static_cast<int>(seconds * rate / kBlock);
             for (int block = 0; block < blocks; ++block)
             {
                 for (int i = 0; i < kBlock; ++i)
                 {
                     left[static_cast<size_t>(i)] = right[static_cast<size_t>(i)]
                         = amplitude * static_cast<float>(std::sin(phase));
-                    phase += 2.0 * 3.141592653589793 * 1000.0 / kRate;
+                    phase += 2.0 * 3.141592653589793 * 1000.0 / rate;
                 }
                 dsp.processBlock(input, output, 2, kBlock);
                 if (capture) capture->insert(capture->end(), outLeft.begin(), outLeft.end());
             }
         }
     };
-    for (int m = 0; m < 8; ++m)
-    {
-        const auto mode = static_cast<MultiCompMode>(m);
-        const auto other = mode == MultiCompMode::Opto ? MultiCompMode::FET : MultiCompMode::Opto;
-        MultiCompDSP fresh, reentered;
-        configure(fresh, mode);
-        configure(reentered, mode);
-        std::vector<float> freshOut, reenteredOut;
-        Driver freshDriver{fresh};
-        freshDriver.run(0.3, 0.01f, &freshOut);
-        Driver driver{reentered};
-        driver.run(2.0, 0.5f);
-        reentered.setMode(static_cast<int>(other));
-        driver.run(2.0, 0.5f);
-        driver.run(0.5, 0.01f);
-        reentered.setMode(m);
-        // Same quiet tone, phase-aligned with the fresh render's start.
-        driver.phase = 0.0;
-        driver.run(0.3, 0.01f, &reenteredOut);
-        const size_t from = static_cast<size_t>(0.010 * kRate);
-        const float freshDb = tailLevelDb(freshOut, from);
-        const float reenteredDb = tailLevelDb(reenteredOut, from);
-        std::printf("mode re-entry: mode %d via %d fresh %.3f dB re-entered %.3f dB\n",
-                    m, static_cast<int>(other), freshDb, reenteredDb);
-        require(std::abs(reenteredDb - freshDb) < 0.1f, "a re-entered mode starts from rest");
-    }
+    // Each mode is re-entered from another that ran the loud passage, at the 2x and 4x settings: Opto (FET for Opto
+    // itself); Multiband, which runs none of the anti-alias stages and detector feeds; and at 96 kHz vintage FET,
+    // which runs at the host rate there (and Opto and FET at 2x under the 4x setting, leaving the 4x inner stage
+    // idle). Re-entered after such a spell, a mode must not start from the audio before it.
+    for (const double rate : {48000.0, 96000.0})
+        for (const int oversampling : {kOversampling2xSetting, kOversampling4xSetting})
+        for (int m = 0; m < 8; ++m)
+        {
+            const auto mode = static_cast<MultiCompMode>(m);
+            std::vector<MultiCompMode> vias{mode == MultiCompMode::Opto ? MultiCompMode::FET : MultiCompMode::Opto};
+            if (mode != MultiCompMode::Multiband) vias.push_back(MultiCompMode::Multiband);
+            if (rate > 48000.0 && mode != MultiCompMode::FET && mode != MultiCompMode::Opto)
+                vias.push_back(MultiCompMode::FET);
+            for (const MultiCompMode other : vias)
+            {
+                MultiCompDSP fresh, reentered;
+                configure(fresh, mode, rate, oversampling);
+                configure(reentered, mode, rate, oversampling);
+                std::vector<float> freshOut, reenteredOut;
+                Driver freshDriver{fresh, rate};
+                freshDriver.run(0.3, 0.01f, &freshOut);
+                Driver driver{reentered, rate};
+                driver.run(2.0, 0.5f);
+                reentered.setMode(static_cast<int>(other));
+                driver.run(2.0, 0.5f);
+                driver.run(0.5, 0.01f);
+                reentered.setMode(m);
+                // Same quiet tone, phase-aligned with the fresh render's start.
+                driver.phase = 0.0;
+                driver.run(0.3, 0.01f, &reenteredOut);
+                const size_t from = static_cast<size_t>(0.010 * rate);
+                const float freshDb = tailLevelDb(freshOut, from);
+                const float reenteredDb = tailLevelDb(reenteredOut, from);
+                std::printf("mode re-entry %.0f Hz %s: mode %d via %d fresh %.3f dB re-entered %.3f dB\n",
+                            rate, oversampling == kOversampling4xSetting ? "4x" : "2x", m, static_cast<int>(other),
+                            freshDb, reenteredDb);
+                require(std::abs(reenteredDb - freshDb) < 0.1f, "a re-entered mode starts from rest");
+            }
+        }
+}
+
+// An Oversampling change during playback restarts a stage the new factor steps and the old one did not (both from
+// Off, the 4x inner stage from 2x): it held the audio from before, and used to replay it. A 1 kHz tone, loud for 1 s
+// and then quiet, is switched to the lower setting for 0.5 s of the quiet part and back: the 20 ms after the return
+// must not rise more than 6 dB above the settled quiet level (a stale stage replayed the loud passage some 30 dB
+// over it).
+void testOversamplingRiseDoesNotReplayStaleAudio()
+{
+    using duskaudio::MultiCompMode;
+    static constexpr int kBlock = 64;
+    struct Toggle { int high, low; const char* name; };
+    const Toggle toggles[] = {{kOversampling2xSetting, kOversamplingOffSetting, "2x/Off/2x"},
+                              {kOversampling4xSetting, kOversampling2xSetting, "4x/2x/4x"}};
+    float worst = -std::numeric_limits<float>::infinity();
+    for (const double rate : {48000.0, 96000.0})
+        for (const Toggle& toggle : toggles)
+            for (const MultiCompMode mode : {MultiCompMode::VCA, MultiCompMode::Bus, MultiCompMode::Digital,
+                                             MultiCompMode::FET})
+            {
+                MultiCompDSP dsp;
+                dsp.setMode(static_cast<int>(mode));
+                dsp.setOversampling(toggle.high);
+                dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+                dsp.prepare(rate, kBlock);
+                std::vector<float> out;
+                double phase = 0.0;
+                const auto run = [&](double seconds, float amplitude) {
+                    std::array<float, kBlock> left{}, right{}, outLeft{}, outRight{};
+                    const float* input[] = {left.data(), right.data()};
+                    float* output[] = {outLeft.data(), outRight.data()};
+                    for (int block = 0; block < static_cast<int>(seconds * rate / kBlock); ++block)
+                    {
+                        for (int i = 0; i < kBlock; ++i)
+                        {
+                            left[static_cast<size_t>(i)] = right[static_cast<size_t>(i)]
+                                = amplitude * static_cast<float>(std::sin(phase));
+                            phase += 2.0 * 3.141592653589793 * 1000.0 / rate;
+                        }
+                        dsp.processBlock(input, output, 2, kBlock);
+                        out.insert(out.end(), outLeft.begin(), outLeft.end());
+                    }
+                };
+                run(1.0, 0.5f);
+                dsp.setOversampling(toggle.low);
+                run(0.5, 0.01f);
+                const size_t back = out.size();
+                dsp.setOversampling(toggle.high);
+                run(0.3, 0.01f);
+                float after = 0.0f, settled = 0.0f;
+                for (size_t i = back; i < back + static_cast<size_t>(0.020 * rate); ++i)
+                    after = std::max(after, std::abs(out[i]));
+                for (size_t i = out.size() - static_cast<size_t>(0.1 * rate); i < out.size(); ++i)
+                    settled = std::max(settled, std::abs(out[i]));
+                const float overDb = 20.0f * std::log10(std::max(after, 1.0e-9f) / std::max(settled, 1.0e-9f));
+                std::printf("oversampling rise %.0f Hz %s mode %d: 20 ms after the return %+.2f dB over settled\n",
+                            rate, toggle.name, static_cast<int>(mode), overDb);
+                worst = std::max(worst, overDb);
+            }
+    require(worst <= 6.0f, "an Oversampling change does not replay the audio from before it");
 }
 
 // The tone the mode-switch tests run: 1 kHz at -6 dBFS.
@@ -12088,6 +12161,8 @@ int main(int argc, char** argv)
     { testLongReleaseSettlesAtHighRates(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--mode-reentry") == 0)
     { testModeReentryStartsFromRest(); return 0; }
+    if (argc == 2 && std::strcmp(argv[1], "--oversampling-rise") == 0)
+    { testOversamplingRiseDoesNotReplayStaleAudio(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--parity") == 0)
         return runParityTests();
     if (argc == 2 && std::strcmp(argv[1], "--hidden-controls") == 0)
@@ -12497,6 +12572,7 @@ int main(int argc, char** argv)
     testHighRateLowCornerFiltersStayStable();
     testLongReleaseSettlesAtHighRates();
     testModeReentryStartsFromRest();
+    testOversamplingRiseDoesNotReplayStaleAudio();
     testModeSwitchDuckOnlyWhereAntiAliasFactorChanges();
     testModeSwitchDuckRearmsAndSurvivesRecovery();
     testModeSwitchDuckPaddedToHostLatency();

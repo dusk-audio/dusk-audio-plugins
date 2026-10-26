@@ -923,6 +923,16 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
                 multibandEnvelopes.fill(1.0f);
                 resetCrossovers();
             }
+            // Multiband runs none of the anti-alias stages, the detector feeds or the host sidechain alignment: they
+            // still hold the audio from before it, which the entered mode must not start from.
+            if (lastMode == static_cast<int>(MultiCompMode::Multiband))
+            {
+                for (auto& os : oversamplers) os.reset();
+                optoLinkedDetectorUpsampler.reset();
+                for (auto& upsampler : optoOwnDetectorUpsamplers) upsampler.reset();
+                for (auto& upsampler : busExternalOversamplers) upsampler.reset();
+                for (auto& line : hostSidechainHistory) line.fill(0.0f);
+            }
         }
         lastMode = modeIndex;
         autoGainMatcher.reset();
