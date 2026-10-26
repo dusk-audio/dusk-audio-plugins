@@ -78,6 +78,9 @@ void forEachPresetParam(const duskaudio::MultiCompPreset& preset,
             setParameter(P::StudioVcaAttack, preset.attack);
             setParameter(P::StudioVcaRelease, preset.release);
             setParameter(P::StudioVcaOutput, preset.makeup);
+            // The program's release is a fixed time; the input stays at unity.
+            setParameter(P::StudioVcaInput, 0.0f);
+            setParameter(P::StudioVcaAutoRelease, 0.0f);
             break;
         case 6:
             setParameter(P::DigitalThreshold, preset.threshold);

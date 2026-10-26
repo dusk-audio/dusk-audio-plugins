@@ -48,7 +48,8 @@ enum class ParamId : uint32_t {
  MbMix, MbOutput, NoiseEnable, ScLowFreq, ScLowGain, ScHighFreq,
  ScHighGain, StereoLinkMode, Count,
  // Append after the original five meter IDs; existing automation IDs stay fixed.
- BusHeadroom = 100, BusFadeRate, BusFade, OptoMeter, FetMeter
+ BusHeadroom = 100, BusFadeRate, BusFade, OptoMeter, FetMeter,
+ StudioVcaInput, StudioVcaAutoRelease, StudioVcaMeter
 };
 
 // Single source of truth for host symbols, physical ranges/defaults, JUCE taper
@@ -66,7 +67,7 @@ inline constexpr std::array<Param, 63> kParams = {{
  {"fet_input","FET Input","dB",-20,40,0,CoreParameter::FetInput,false}, {"fet_output","FET Output","dB",-20,20,0,CoreParameter::FetOutput,false}, {"fet_attack","FET Attack","ms",0.02f,80,0.2f,CoreParameter::FetAttack,false,0.01f,0.3f}, {"fet_release","FET Release","ms",50,1100,400,CoreParameter::FetRelease,false}, {"fet_ratio","FET Ratio",":1",0,4,0,CoreParameter::FetRatio,true}, {"fet_curve_mode","FET Curve","",0,1,0,CoreParameter::FetCurve,true}, {"fet_transient","FET Transient","%",0,100,0,CoreParameter::FetTransient,false}, {"fet_threshold","FET Threshold","dB",-60,0,-10,CoreParameter::FetThreshold,false},
  {"vca_threshold","VCA Threshold","dB",duskaudio::vcaLaw::kThresholdMinDb,duskaudio::vcaLaw::kThresholdMaxDb,duskaudio::vcaLaw::kThresholdDefaultDb,CoreParameter::VcaThreshold,false}, {"vca_compression","VCA Compression","",duskaudio::vcaLaw::kCompressLaw.front().position,duskaudio::vcaLaw::kCompressLaw.back().position,duskaudio::vcaLaw::kCompressDefaultPosition,CoreParameter::VcaRatio,false}, {"vca_attack","VCA Attack","ms",0.1f,50,1,CoreParameter::VcaAttack,false}, {"vca_release","VCA Release","ms",10,5000,100,CoreParameter::VcaRelease,false}, {"vca_output","VCA Output","dB",-20,20,0,CoreParameter::VcaOutput,false}, {"vca_overeasy","VCA Soft Knee","",0,1,0,CoreParameter::VcaOverEasy,true}, {"vca_detector_mode","VCA Detector","",0,1,0,CoreParameter::VcaClassicDetector,true},
  {"bus_threshold","Bus Threshold","dB",-30,15,0,CoreParameter::BusThreshold,false}, {"bus_ratio","Bus Ratio",":1",0,2,0,CoreParameter::BusRatio,true}, {"bus_attack","Bus Attack","",0,5,2,CoreParameter::BusAttack,true}, {"bus_release","Bus Release","",0,4,1,CoreParameter::BusRelease,true}, {"bus_makeup","Bus Makeup","dB",0,20,0,CoreParameter::BusMakeup,false}, {"bus_mix","Bus Mix","%",0,100,100,CoreParameter::BusMix,false},
- {"studio_vca_threshold","Studio VCA Threshold","dB",-40,20,-10,CoreParameter::StudioVcaThreshold,false}, {"studio_vca_ratio","Studio VCA Ratio",":1",1,10,3,CoreParameter::StudioVcaRatio,false}, {"studio_vca_attack","Studio VCA Attack","ms",0.3f,75,10,CoreParameter::StudioVcaAttack,false}, {"studio_vca_release","Studio VCA Release","ms",100,4000,300,CoreParameter::StudioVcaRelease,false}, {"studio_vca_output","Studio VCA Output","dB",-20,20,0,CoreParameter::StudioVcaOutput,false},
+ {"studio_vca_threshold","Studio VCA Threshold","dB",-50,20,-10,CoreParameter::StudioVcaThreshold,false}, {"studio_vca_ratio","Studio VCA Ratio",":1",1,50,1.5f,CoreParameter::StudioVcaRatio,false}, {"studio_vca_attack","Studio VCA Attack","ms",0.1805f,75,7.2305f,CoreParameter::StudioVcaAttack,false}, {"studio_vca_release","Studio VCA Release","ms",100,4000,1000,CoreParameter::StudioVcaRelease,false}, {"studio_vca_output","Studio VCA Make Up","dB",-20,40,0,CoreParameter::StudioVcaOutput,false},
  {"digital_threshold","Digital Threshold","dB",-60,0,-20,CoreParameter::DigitalThreshold,false}, {"digital_ratio","Digital Ratio",":1",1,100,4,CoreParameter::DigitalRatio,false,0.1f,0.4f}, {"digital_knee","Digital Knee","dB",0,20,6,CoreParameter::DigitalKnee,false}, {"digital_attack","Digital Attack","ms",0.01f,500,10,CoreParameter::DigitalAttack,false,0.01f,0.3f}, {"digital_release","Digital Release","ms",1,5000,100,CoreParameter::DigitalRelease,false,1,0.4f}, {"digital_lookahead","Digital Lookahead","ms",0,10,0,CoreParameter::DigitalLookahead,false}, {"digital_mix","Digital Mix","%",0,100,100,CoreParameter::DigitalMix,false}, {"digital_output","Digital Output","dB",-24,24,0,CoreParameter::DigitalOutput,false}, {"digital_adaptive","Digital Adaptive Release","",0,1,0,CoreParameter::DigitalAdaptive,true},
  {"mb_crossover_1","MB Crossover 1","Hz",20,500,200,CoreParameter::Crossover1,false,1,0.4f}, {"mb_crossover_2","MB Crossover 2","Hz",200,5000,2000,CoreParameter::Crossover2,false,1,0.4f}, {"mb_crossover_3","MB Crossover 3","Hz",2000,16000,8000,CoreParameter::Crossover3,false,1,0.4f},
  {"global_sidechain_listen","SC Listen","",0,1,0,CoreParameter::GlobalSidechainListen,true},
@@ -187,15 +188,19 @@ inline constexpr int kMeterBand1 = kMeterMaster + 2;
 inline constexpr int kMeterBand2 = kMeterMaster + 3;
 inline constexpr int kMeterBand3 = kMeterMaster + 4;
 inline constexpr int kExtensionBase = kMeterMaster + 5;
-inline constexpr std::array<Param, 5> kExtensionParams{{
+inline constexpr std::array<Param, 8> kExtensionParams{{
  {"bus_headroom", "Bus Headroom", "dB", 0, 6, 3, CoreParameter::BusHeadroom, true},
  {"bus_fade_rate", "Bus Fade Rate", "s", 1, 60, 24.8f, CoreParameter::BusFadeRate, false, 0.1f, 0.5f, 6.0f},
  {"bus_fade", "Bus Auto Fade", "", 0, 1, 0, CoreParameter::BusFade, true},
  {"opto_meter", "Opto Meter", "", 0, 2, 0, CoreParameter::None, true},
- {"fet_meter", "FET Meter", "", 0, 2, 0, CoreParameter::None, true}
+ {"fet_meter", "FET Meter", "", 0, 2, 0, CoreParameter::None, true},
+ {"studio_vca_input", "Studio VCA Input", "dB", -18, 18, 0, CoreParameter::StudioVcaInput, false},
+ {"studio_vca_auto_release", "Studio VCA Auto Release", "", 0, 1, 1, CoreParameter::StudioVcaAutoRelease, true},
+ {"studio_vca_meter", "Studio VCA Meter", "", 0, 1, 0, CoreParameter::None, true}
 }};
 inline constexpr int kTotalParamCount = kExtensionBase + static_cast<int>(kExtensionParams.size());
 inline constexpr int kVintageMeterBase = static_cast<int>(ParamId::OptoMeter);
+inline constexpr int kStudioVcaExtensionBase = static_cast<int>(ParamId::StudioVcaInput);
 static_assert(kExtensionBase == static_cast<int>(ParamId::BusHeadroom));
 inline constexpr bool isControlParameter(int index) noexcept
 {
@@ -304,6 +309,37 @@ inline constexpr const char* const kBusRatios[3] = {"2:1", "4:1", "10:1"};
 inline constexpr const char* const kBusAttack[6] = {"0.1ms", "0.3ms", "1ms", "3ms", "10ms", "30ms"};
 inline constexpr const char* const kBusRelease[5] = {"0.1s", "0.3s", "0.6s", "1.2s", "Auto"};
 inline constexpr const char* const kLinkMode[3] = {"Stereo","Mid-Side","Dual Mono"};
+inline constexpr const char* const kStudioVcaMeterModes[2] = {"Input", "Output"};
+
+// The labels a host shows for a switch or stepped control (count 0 for the others); a boolean one reads Off / On.
+struct SwitchLabels { const char* const* labels; int count; bool boolean; };
+inline SwitchLabels switchLabels(ParamId id) noexcept
+{
+    switch (id)
+    {
+        case ParamId::Mode: return {kModes, 8, false};
+        case ParamId::TruePeakEnable: case ParamId::ExternalSidechain: case ParamId::AutoMakeup:
+        case ParamId::OptoLimit: case ParamId::VcaOverEasy: case ParamId::DigitalAdaptive:
+        case ParamId::GlobalSidechainListen: case ParamId::NoiseEnable: case ParamId::BusFade:
+        case ParamId::StudioVcaAutoRelease:
+            return {kOnOff, 2, true};
+        case ParamId::TruePeakQuality: return {kTruePeakQuality, 2, false};
+        case ParamId::Distortion: return {kDistortion, 4, false};
+        case ParamId::Oversampling: return {kOversampling, 3, false};
+        case ParamId::FetRatio: return {kRatios, 5, false};
+        case ParamId::OptoMeter: return {kOptoMeterModes, 3, false};
+        case ParamId::FetMeter: return {kFetMeterModes, 3, false};
+        case ParamId::FetCurve: return {kFetCurve, 2, false};
+        case ParamId::VcaClassicDetector: return {kVcaDetector, 2, false};
+        case ParamId::BusRatio: return {kBusRatios, 3, false};
+        case ParamId::BusAttack: return {kBusAttack, 6, false};
+        case ParamId::BusRelease: return {kBusRelease, 5, false};
+        case ParamId::BusHeadroom: return {kBusHeadroom, 7, false};
+        case ParamId::StereoLinkMode: return {kLinkMode, 3, false};
+        case ParamId::StudioVcaMeter: return {kStudioVcaMeterModes, 2, false};
+        default: return {nullptr, 0, false};
+    }
+}
 
 // State serialization, shared so the plugin and the UI cannot drift apart the
 // way their preset application once did.
@@ -320,7 +356,11 @@ inline constexpr const char* const kLinkMode[3] = {"Stereo","Mid-Side","Dual Mon
 // from -38..+12 dB to -55..0 dB. Version-3 states are still loaded: the legacy
 // ratio is converted to the knob position that applies the same ratio, and the
 // threshold is clamped into the new range.
-inline constexpr int kStateVersion = 6;
+// Version 7 (2026-10-26) appends the Studio VCA Input, Auto Release and meter controls; older states load with their
+// defaults, except Auto Release, which they load off (their Release control set the release). Studio VCA's five
+// original controls only widened, so every value an older state holds stays valid.
+inline constexpr int kStateVersion = 7;
+inline constexpr int kPreStudioVcaStateVersion = 6;
 inline constexpr int kPreMeterStateVersion = 5;
 inline constexpr int kPreBusStateVersion = 4;
 inline constexpr int kLegacyVcaStateVersion = 3;
@@ -345,7 +385,7 @@ inline int stateVersionOf(std::string_view state) noexcept
 inline bool stateVersionSupported(std::string_view state) noexcept
 {
     const int version = stateVersionOf(state);
-    return version == kStateVersion || version == kPreMeterStateVersion
+    return version == kStateVersion || version == kPreStudioVcaStateVersion || version == kPreMeterStateVersion
         || version == kPreBusStateVersion || version == kLegacyVcaStateVersion;
 }
 
@@ -563,9 +603,14 @@ inline bool decodeState(std::string_view state, StateValues& out) noexcept
     std::array<bool, static_cast<size_t>(kTotalParamCount)> seen{};
     const int version = stateVersionOf(state);
     const int firstAbsent = version < kPreMeterStateVersion ? kExtensionBase
-                          : version < kStateVersion ? kVintageMeterBase : kTotalParamCount;
+                          : version < kPreStudioVcaStateVersion ? kVintageMeterBase
+                          : version < kStateVersion ? kStudioVcaExtensionBase : kTotalParamCount;
     for (int i = firstAbsent; i < kTotalParamCount; ++i)
         decoded[static_cast<size_t>(i)] = hostDefault(kExtensionParams[static_cast<size_t>(i - kExtensionBase)]);
+    // Before version 7 Studio VCA's Release control always set the release: an older session keeps it working
+    // (Auto Release, on for a new instance, would ignore it).
+    if (version < kStateVersion)
+        decoded[static_cast<size_t>(ParamId::StudioVcaAutoRelease)] = 0.0f;
     size_t begin = versionEnd + 1;
     while (begin < state.size())
     {

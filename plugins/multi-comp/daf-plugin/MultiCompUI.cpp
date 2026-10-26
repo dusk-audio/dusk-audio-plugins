@@ -7,6 +7,8 @@
 #include "MultiCompVintageMeterGeometry.hpp"
 #include "MultiCompVintageMeterControls.hpp"
 #include "../core/MultiCompVcaLaw.hpp"
+#include "../core/MultiCompStudioVcaLaw.hpp"
+#include "../../shared-daf/ui/DuskValueText.hpp"
 
 #include <algorithm>
 #include <array>
@@ -58,11 +60,12 @@ inline constexpr float vcaFaceplateAspect() noexcept
 
 inline float designHeightForMode(float hostValue) noexcept
 {
-    // Opto, vintage FET, VCA and Bus are hardware faces on the compact canvas; the
-    // modern modes still need the original tall control surface. Keeping the
-    // decision here gives fractional host automation the same rounding rule
-    // as the DSP and mode picker.
-    return choiceIndex(hostValue, 8) <= 3 ? 380.0f : 486.0f;
+    // Opto, vintage FET, VCA, Bus and Studio VCA are hardware faces on the
+    // compact canvas; the modern modes still need the original tall control
+    // surface. Keeping the decision here gives fractional host automation the
+    // same rounding rule as the DSP and mode picker.
+    const int mode = choiceIndex(hostValue, 8);
+    return mode <= 3 || mode == 5 ? 380.0f : 486.0f;
 }
 
 // VCA-compressor-style threshold lamps: BELOW lights while the programme sits under the
@@ -226,6 +229,77 @@ inline void refreshParameterMirror(std::array<float, N>& values,
     for (uint32_t index = 0; index < count; ++index)
         values[index] = readParameter(index);
 }
+// Studio VCA face dials: the reference panel's knob travel (0..1) for a control's plain value, and back. Ratio and
+// Attack follow the reference's own dial laws (MultiCompStudioVcaLaw.hpp); the others are linear. The host ranges are
+// wider than the panel's (they keep older sessions' values: threshold up to +20 dB, ratio from 1:1, attack to 75 ms,
+// make-up from -20 dB), so such a value pins the dial at the end it lies beyond; typed entry still reaches it.
+inline float studioVcaDialPosition(uint32_t parameter, float plain) noexcept
+{
+    namespace law = duskaudio::studioVcaLaw;
+    const auto linear = [plain](float lo, float hi) { return std::clamp((plain - lo) / (hi - lo), 0.0f, 1.0f); };
+    switch (static_cast<ParamId>(parameter))
+    {
+        case ParamId::StudioVcaThreshold: return linear(-50.0f, -10.0f);
+        case ParamId::StudioVcaRatio: return law::knobForRatio(plain);
+        case ParamId::StudioVcaAttack: return law::knobForAttackMs(plain);
+        case ParamId::StudioVcaRelease: return linear(100.0f, 4000.0f);
+        case ParamId::StudioVcaOutput: return linear(0.0f, 40.0f);
+        case ParamId::StudioVcaInput: return linear(-18.0f, 18.0f);
+        case ParamId::Mix: return linear(0.0f, 100.0f);
+        default: return 0.0f;
+    }
+}
+
+inline float studioVcaDialPlain(uint32_t parameter, float position) noexcept
+{
+    namespace law = duskaudio::studioVcaLaw;
+    const float t = std::clamp(position, 0.0f, 1.0f);
+    const auto linear = [t](float lo, float hi) { return lo + (hi - lo) * t; };
+    switch (static_cast<ParamId>(parameter))
+    {
+        case ParamId::StudioVcaThreshold: return linear(-50.0f, -10.0f);
+        case ParamId::StudioVcaRatio: return law::ratioForKnob(t);
+        case ParamId::StudioVcaAttack: return law::attackMsForKnob(t);
+        case ParamId::StudioVcaRelease: return linear(100.0f, 4000.0f);
+        case ParamId::StudioVcaOutput: return linear(0.0f, 40.0f);
+        case ParamId::StudioVcaInput: return linear(-18.0f, 18.0f);
+        case ParamId::Mix: return linear(0.0f, 100.0f);
+        default: return 0.0f;
+    }
+}
+
+// A value typed into a Studio VCA dial, in the control's plain unit (Release in ms). The unit may be left out, as the
+// readout prints it, or named: dB (or db), :1, ms, %, and for Release s (the dial's unit, also a bare number's) or ms.
+inline bool studioVcaTypedPlain(const char* text, uint32_t parameter, float& plain) noexcept
+{
+    namespace entry = duskdaf::value_text;
+    const char* end = nullptr;
+    float typed = 0.0f;
+    if (!entry::parseDecimal(text, end, typed)) return false;
+    const bool bare = entry::finish(end, "");
+    plain = typed;
+    switch (static_cast<ParamId>(parameter))
+    {
+        case ParamId::StudioVcaRelease:
+            if (entry::suffix(end, "ms")) return true;
+            plain = typed * 1000.0f;
+            return bare || entry::suffix(end, "s");
+        case ParamId::StudioVcaRatio: return bare || entry::suffix(end, ":1");
+        case ParamId::StudioVcaAttack: return bare || entry::suffix(end, "ms");
+        case ParamId::Mix: return bare || entry::suffix(end, "%");
+        default: return bare || entry::suffix(end, "dB", "db");
+    }
+}
+
+// The Studio VCA face's needles, as the reference's sweep (measured 2026-10-26): +-30 degrees from straight up over
+// minDb..maxDb, linear in dB (the I/O meter -60..0, 1 degree per dB; gain reduction -20..0, 3 degrees per dB),
+// pinned at the ends; a non-finite reading rests at the left.
+inline float studioVcaNeedleDegrees(float db, float minDb, float maxDb) noexcept
+{
+    const float t = std::isfinite(db) ? std::clamp((db - minDb) / (maxDb - minDb), 0.0f, 1.0f) : 0.0f;
+    return -30.0f + 60.0f * t;
+}
+
 } // namespace multicompp::ui_detail
 
 #ifndef MULTICOMP_UI_LOGIC_TEST
@@ -307,6 +381,8 @@ constexpr uint32_t P_BUS_HEADROOM = MC_PID(BusHeadroom), P_BUS_FADE_RATE = MC_PI
 constexpr uint32_t P_BUS_FADE = MC_PID(BusFade), P_BUS_SC = MC_PID(SidechainHP);
 constexpr uint32_t P_SVCA_THRESHOLD = MC_PID(StudioVcaThreshold), P_SVCA_RATIO = MC_PID(StudioVcaRatio), P_SVCA_ATTACK = MC_PID(StudioVcaAttack);
 constexpr uint32_t P_SVCA_RELEASE = MC_PID(StudioVcaRelease), P_SVCA_OUT = MC_PID(StudioVcaOutput);
+constexpr uint32_t P_SVCA_INPUT = MC_PID(StudioVcaInput), P_SVCA_AUTO = MC_PID(StudioVcaAutoRelease);
+constexpr uint32_t P_SVCA_METER = MC_PID(StudioVcaMeter);
 constexpr uint32_t P_DIG_THRESHOLD = MC_PID(DigitalThreshold), P_DIG_RATIO = MC_PID(DigitalRatio), P_DIG_KNEE = MC_PID(DigitalKnee), P_DIG_ATTACK = MC_PID(DigitalAttack);
 constexpr uint32_t P_DIG_RELEASE = MC_PID(DigitalRelease), P_DIG_LOOK = MC_PID(DigitalLookahead), P_DIG_MIX = MC_PID(DigitalMix), P_DIG_OUT = MC_PID(DigitalOutput);
 constexpr uint32_t P_DIG_ADAPT = MC_PID(DigitalAdaptive), P_X1 = MC_PID(Crossover1), P_X2 = MC_PID(Crossover2), P_X3 = MC_PID(Crossover3);
@@ -504,6 +580,7 @@ private:
     float vcaLastScHp = 1.0f;
     float busVuNeedle = 0.0f;
     ImDrawListSplitter busKnobSplitter;
+    ImDrawListSplitter studioVcaKnobSplitter;
     duskdaf::CrispFontSet fontSet;
     ImFont* labelFont = nullptr;
     duskdaf::SupportersOverlay supporters;
@@ -1229,10 +1306,11 @@ private:
         const int mode = multicompp::ui_detail::choiceIndex(value(P_MODE), 8);
         drawSection(dl, kModeCanvasTop, kModeCanvasBottom - 8, "");
         drawModeToolbar(dl);
-        // Opto, vintage FET, VCA and Bus own panel-integrated analogue meters,
-        // and Multiband meters each band in its own strip (a master meter at
-        // the right edge sat under the crossover panel and the HIGH strip).
-        if (mode == 4 || mode == 5 || mode == 6)
+        // Opto, vintage FET, VCA, Bus and Studio VCA own panel-integrated
+        // analogue meters, and Multiband meters each band in its own strip (a
+        // master meter at the right edge sat under the crossover panel and the
+        // HIGH strip).
+        if (mode == 4 || mode == 6)
             drawMeter(dl, 28, kModeCanvasTop + 42, 48, 300, meter(kMeterMaster), kAccent, "MASTER GR");
         // Deliberately exhaustive: adding a ninth mode must force a UI decision.
         switch (mode)
@@ -2642,15 +2720,329 @@ private:
         panel.text(dl, 929, 610, 10, ink, "AUTO FADE", 0, true);
     }
 
+    // Studio VCA face: the reference studio VCA compressor's panel, laid out from its own proportions (its 1776 x
+    // 568 px panel onto the 1120 x 310 face: x 0.631 and y 0.546 per px; round parts use the y scale). The dials
+    // follow the reference's travel and printed scales (ui_detail::studioVcaDialPosition); the meters are its I/O
+    // meter (INPUT/OUTPUT switch, threshold mark on INPUT) and gain reduction meter. Label STUDIO VCA, no marks.
+    struct StudioVcaMark { float plain; const char* label; };
+    static constexpr ImU32 kSvcaInk = IM_COL32(246, 232, 226, 255);
+
     void drawStudioVca(ImDrawList* dl)
     {
-        knob(dl, "sv_thr", P_SVCA_THRESHOLD, 150, 380, "THRESHOLD", "%.1f", " dB");
-        knob(dl, "sv_ratio", P_SVCA_RATIO, 300, 380, "RATIO", "%.1f", ":1");
-        knob(dl, "sv_att", P_SVCA_ATTACK, 450, 380, "ATTACK", "%.1f", " ms");
-        knob(dl, "sv_rel", P_SVCA_RELEASE, 600, 380, "RELEASE", "%.0f", " ms");
-        knob(dl, "sv_out", P_SVCA_OUT, 750, 380, "OUTPUT", "%.1f", " dB");
-        knob(dl, "sv_mix", P_MIX, 900, 380, "MIX", "%.0f", "%");
-        panel.text(dl, 560, 500, 12, IM_COL32(220, 120, 125, 255), "RMS detection, soft knee, precision VCA control", 0);
+        drawStudioVcaPanel(dl);
+        const float s = panel.scale();
+        // The engraved S-curve across the meter bay, behind both meters.
+        dl->AddBezierCubic(panel.P(511, 623), panel.P(707, 623), panel.P(663, 382), panel.P(859, 382),
+                           IM_COL32(255, 120, 105, 70), 2.6f * s, 48);
+        dl->AddBezierCubic(panel.P(510, 622), panel.P(706, 622), panel.P(662, 381), panel.P(858, 381),
+                           IM_COL32(70, 6, 6, 230), 1.7f * s, 48);
+
+        static constexpr StudioVcaMark inputMarks[] = {{-18, "-18"}, {-12, "-12"}, {-6, "-6"}, {0, "0"},
+                                                       {6, "+6"}, {12, "+12"}, {18, "+18"}};
+        static constexpr StudioVcaMark ratioMarks[] = {{1.5f, "1.5:1"}, {2, "2:1"}, {3, "3:1"}, {5, "5:1"},
+                                                       {10, "10:1"}, {50, nullptr}};   // nullptr: the infinity mark
+        static constexpr StudioVcaMark thresholdMarks[] = {{-50, "-50"}, {-40, "-40"}, {-30, "-30"},
+                                                           {-20, "-20"}, {-10, "-10"}};
+        static constexpr StudioVcaMark attackMarks[] = {{0.1805f, "FAST"}, {70.6865f, "SLOW"}};
+        static constexpr StudioVcaMark releaseMarks[] = {{100, "0.1"}, {1000, "1"}, {2000, "2"}, {3000, "3"},
+                                                         {4000, "4"}};
+        static constexpr StudioVcaMark makeupMarks[] = {{0, "0"}, {10, "10"}, {20, "20"}, {30, "30"}, {40, "40"}};
+        static constexpr StudioVcaMark mixMarks[] = {{0, "0"}, {100, "100"}};
+        studioVcaKnob(dl, "sv_in", P_SVCA_INPUT, 77, 550, 25, "INPUT", inputMarks, 7);
+        studioVcaKnob(dl, "sv_ratio", P_SVCA_RATIO, 230, 429, 25, "RATIO", ratioMarks, 6);
+        studioVcaKnob(dl, "sv_att", P_SVCA_ATTACK, 230, 550, 25, "ATTACK", attackMarks, 2);
+        studioVcaKnob(dl, "sv_thr", P_SVCA_THRESHOLD, 390, 429, 25, "THRESHOLD", thresholdMarks, 5);
+        studioVcaKnob(dl, "sv_rel", P_SVCA_RELEASE, 390, 550, 25, "RELEASE", releaseMarks, 5);
+        studioVcaKnob(dl, "sv_out", P_SVCA_OUT, 1013, 428, 25, "MAKE UP GAIN", makeupMarks, 5);
+        studioVcaKnob(dl, "sv_mix", P_MIX, 1013, 554, 22, "DRY/WET", mixMarks, 2);
+        panel.text(dl, 230, 476, 11.0f, kSvcaInk, "RATIO", 0, true);
+        panel.text(dl, 390, 476, 11.0f, kSvcaInk, "THRESHOLD", 0, true);
+        panel.text(dl, 77, 603, 11.0f, kSvcaInk, "INPUT", 0, true);
+        panel.text(dl, 230, 603, 11.0f, kSvcaInk, "ATTACK", 0, true);
+        panel.text(dl, 390, 603, 11.0f, kSvcaInk, "RELEASE", 0, true);
+        panel.text(dl, 1013, 469, 11.0f, kSvcaInk, "MAKE UP", 0, true);
+        panel.text(dl, 1013, 482, 11.0f, kSvcaInk, "GAIN", 0, true);
+        panel.text(dl, 1013, 603, 11.0f, kSvcaInk, "DRY/WET", 0, true);
+        panel.text(dl, 824, 603, 11.0f, kSvcaInk, "GAIN REDUCTION", 0, true);
+
+        studioVcaLamp(dl, "sv_auto", P_SVCA_AUTO, 308, 487);
+        panel.text(dl, 308, 503, 10.0f, kSvcaInk, "AUTO", 0, true);
+        panel.text(dl, 308, 515, 10.0f, kSvcaInk, "RELEASE", 0, true);
+
+        // I/O meter: the input after the Input control, or the output; on INPUT a red mark shows the threshold.
+        static constexpr StudioVcaMark ioScale[] = {{-60, "-60"}, {-50, "-50"}, {-40, "-40"}, {-30, "-30"},
+                                                    {-20, "-20"}, {-10, "-10"}, {0, "0"}};
+        static constexpr StudioVcaMark grScale[] = {{-20, "-20"}, {-15, "-15"}, {-10, "-10"}, {-5, "-5"},
+                                                    {0, "0"}};
+        void* const instance = getPluginInstancePointer();
+        const bool outputMeter = values[P_SVCA_METER] >= 0.5f;
+        const auto level = outputMeter ? multiCompGetStudioVcaOutputLevel : multiCompGetStudioVcaInputLevel;
+        const float ioDb = instance != nullptr && level != nullptr ? level(instance) : -120.0f;
+        const float threshold = plainValueForHost(P_SVCA_THRESHOLD, values[P_SVCA_THRESHOLD]);
+        studioVcaMeter(dl, 561, 459, ioScale, 7, -60.0f, 0.0f, ioDb,
+                       outputMeter ? std::numeric_limits<float>::quiet_NaN() : threshold);
+        studioVcaSwitch(dl, "sv_meter", P_SVCA_METER, 561, 558);
+        studioVcaMeter(dl, 825, 510, grScale, 5, -20.0f, 0.0f, meter(kMeterMaster),
+                       std::numeric_limits<float>::quiet_NaN());
+    }
+
+    // Red brushed panel with rack ears and the engraved STUDIO VCA label.
+    void drawStudioVcaPanel(ImDrawList* dl)
+    {
+        const float s = panel.scale();
+        dl->AddRectFilledMultiColor(panel.P(0, 344), panel.P(1120, 654),
+                                    IM_COL32(214, 46, 38, 255), IM_COL32(196, 38, 32, 255),
+                                    IM_COL32(150, 24, 22, 255), IM_COL32(168, 30, 26, 255));
+        // Horizontal brushing: deterministic hairlines, lighter and darker.
+        uint32_t grain = 0x53564341u;
+        for (float y = 345.0f; y < 653.0f; y += 1.5f)
+        {
+            grain = grain * 1664525u + 1013904223u;
+            const int shade = static_cast<int>((grain >> 24) & 31u);
+            dl->AddLine(panel.P(0, y), panel.P(1120, y),
+                        (grain & 1u) ? IM_COL32(255, 170, 160, shade / 2) : IM_COL32(60, 0, 0, shade), 0.8f * s);
+        }
+        dl->AddLine(panel.P(0, 345), panel.P(1120, 345), IM_COL32(255, 150, 135, 150), 1.5f * s);
+        dl->AddLine(panel.P(0, 653), panel.P(1120, 653), IM_COL32(70, 6, 6, 220), 1.5f * s);
+        // Rack ears: a slot in each corner.
+        for (float x : {16.0f, 1104.0f})
+            for (float y : {353.0f, 644.0f})
+            {
+                dl->AddRectFilled(panel.P(x - 11, y - 5.5f), panel.P(x + 11, y + 5.5f), IM_COL32(28, 4, 4, 255),
+                                  5.5f * s);
+                dl->AddRect(panel.P(x - 11, y - 5.5f), panel.P(x + 11, y + 5.5f), IM_COL32(255, 130, 115, 90),
+                            5.5f * s, 0, 0.8f * s);
+            }
+        // Engraved label where the reference prints its model numeral: highlight, shadow, then the face.
+        struct Layer { float dx, dy; ImU32 colour; };
+        static constexpr Layer layers[] = {{-0.8f, -0.8f, IM_COL32(255, 135, 120, 120)},
+                                           {1.4f, 1.6f, IM_COL32(85, 8, 8, 230)},
+                                           {0.0f, 0.0f, IM_COL32(176, 28, 25, 255)}};
+        for (const Layer& layer : layers)
+        {
+            panel.text(dl, 82 + layer.dx, 396 + layer.dy, 19.0f, layer.colour, "STUDIO", 0, true);
+            panel.text(dl, 82 + layer.dx, 420 + layer.dy, 40.0f, layer.colour, "VCA", 0, true);
+        }
+    }
+
+    // A chrome dial with the reference's dark grip bar, in the dial's own travel; marks printed around it.
+    void studioVcaKnob(ImDrawList* dl, const char* id, uint32_t p, float x, float y, float radius,
+                       const char* name, const StudioVcaMark* marks, int markCount)
+    {
+        char readout[32];
+        studioVcaReadout(p, plainValueForHost(p, values[p]), readout, sizeof(readout));
+        studioVcaKnobSplitter.Split(dl, 2);
+        studioVcaKnobSplitter.SetCurrentChannel(dl, 1);
+        panel.knob(id, p, hostMinimum(p), hostMaximum(p), x, y, radius, values[p], hostDefaultValue(p),
+                   false, false, "%.3f", "", 0, true, false, nullptr, false, 1.0f, 0.0f, name, true,
+                   readout, false, 0.0f, 0.0f, false, true, 9.5f, true, false,
+                   &studioVcaHostToDial, &studioVcaDialToHost, this, true, &studioVcaParseText);
+        studioVcaKnobSplitter.SetCurrentChannel(dl, 0);
+        const float s = panel.scale();
+        const ImVec2 c = panel.P(x, y);
+        const float r = radius * s;
+        for (int i = 0; i < markCount; ++i)
+        {
+            const float angle = duskdaf::DuskPanel::knobAngle(multicompp::ui_detail::studioVcaDialPosition(p, marks[i].plain));
+            const float lx = x + std::sin(angle) * (radius + 15.0f);
+            const float ly = y - std::cos(angle) * (radius + 15.0f) - 5.5f;
+            if (marks[i].label != nullptr)
+                panel.text(dl, lx, ly, 9.5f, kSvcaInk, marks[i].label, 0, false);
+            else
+                studioVcaInfinityMark(dl, lx, ly + 5.5f);
+        }
+        dl->AddCircleFilled(ImVec2(c.x + 2.0f * s, c.y + 3.5f * s), r * 1.06f, IM_COL32(60, 0, 0, 140), 40);
+        dl->AddCircleFilled(c, r * 1.04f, IM_COL32(26, 26, 28, 255), 40);
+        gradientDisc(dl, c, r, -0.6f, IM_COL32(236, 236, 238, 255), IM_COL32(86, 86, 92, 255));
+        gradientDisc(dl, c, r * 0.86f, 2.5f, IM_COL32(222, 222, 226, 255), IM_COL32(120, 120, 126, 255));
+        const float angle = duskdaf::DuskPanel::knobAngle(
+            multicompp::ui_detail::studioVcaDialPosition(p, plainValueForHost(p, values[p])));
+        const ImVec2 d(std::sin(angle), -std::cos(angle));
+        const ImVec2 a(c.x - d.x * r * 0.84f, c.y - d.y * r * 0.84f), b(c.x + d.x * r * 0.84f, c.y + d.y * r * 0.84f);
+        dl->AddLine(a, b, IM_COL32(52, 52, 56, 255), r * 0.36f);
+        const ImVec2 n(-d.y * r * 0.16f, d.x * r * 0.16f);
+        dl->AddLine(ImVec2(a.x + n.x, a.y + n.y), ImVec2(b.x + n.x, b.y + n.y), IM_COL32(150, 150, 156, 200), s);
+        dl->AddLine(ImVec2(a.x - n.x, a.y - n.y), ImVec2(b.x - n.x, b.y - n.y), IM_COL32(20, 20, 22, 220), s);
+        dl->AddCircle(c, r * 1.04f, IM_COL32(10, 10, 12, 255), 40, s);
+        studioVcaKnobSplitter.Merge(dl);
+    }
+
+    // The infinity sign the font lacks, then ":1", centred on (x, y).
+    void studioVcaInfinityMark(ImDrawList* dl, float x, float y)
+    {
+        const float s = panel.scale();
+        constexpr int points = 32;
+        ImVec2 path[points];
+        for (int i = 0; i < points; ++i)
+        {
+            const float t = 2.0f * duskdaf::DuskPanel::kPi * static_cast<float>(i) / points;
+            const float k = 1.0f + std::sin(t) * std::sin(t);
+            path[i] = panel.P(x - 6.0f + 5.0f * std::cos(t) / k, y + 5.0f * std::sin(t) * std::cos(t) / k);
+        }
+        dl->AddPolyline(path, points, kSvcaInk, ImDrawFlags_Closed, 1.3f * s);
+        panel.text(dl, x + 0.5f, y - 5.5f, 9.5f, kSvcaInk, ":1", -1, false);
+    }
+
+    // The AUTO RELEASE lamp button.
+    void studioVcaLamp(ImDrawList* dl, const char* id, uint32_t p, float x, float y)
+    {
+        const float s = panel.scale();
+        const bool on = values[p] >= 0.5f;
+        ImGui::SetCursorScreenPos(panel.P(x - 13, y - 13));
+        const bool clicked = ImGui::InvisibleButton(id, ImVec2(26 * s, 26 * s));
+        const ImVec2 c = panel.P(x, y);
+        if (on) dl->AddCircleFilled(c, 17.0f * s, IM_COL32(255, 70, 50, 70), 32);
+        dl->AddCircleFilled(c, 13.0f * s, IM_COL32(52, 4, 4, 255), 32);
+        gradientDisc(dl, c, 11.0f * s, -0.6f, on ? IM_COL32(255, 150, 130, 255) : IM_COL32(170, 40, 36, 255),
+                     on ? IM_COL32(220, 20, 16, 255) : IM_COL32(92, 10, 10, 255));
+        dl->AddCircleFilled(ImVec2(c.x - 3.5f * s, c.y - 3.5f * s), 3.0f * s,
+                            on ? IM_COL32(255, 235, 225, 200) : IM_COL32(255, 160, 150, 70), 16);
+        if (clicked) setValue(p, on ? 0.0f : 1.0f);
+    }
+
+    // The INPUT/OUTPUT meter switch: a pill with the lit ball on the selected side.
+    void studioVcaSwitch(ImDrawList* dl, const char* id, uint32_t p, float x, float y)
+    {
+        const float s = panel.scale();
+        const bool output = values[p] >= 0.5f;
+        ImGui::SetCursorScreenPos(panel.P(x - 22, y - 10));
+        const bool clicked = ImGui::InvisibleButton(id, ImVec2(44 * s, 20 * s));
+        dl->AddRectFilled(panel.P(x - 22, y - 10), panel.P(x + 22, y + 10), IM_COL32(24, 4, 4, 255), 10.0f * s);
+        dl->AddRect(panel.P(x - 22, y - 10), panel.P(x + 22, y + 10), IM_COL32(255, 120, 105, 80), 10.0f * s, 0, s);
+        const ImVec2 ball = panel.P(output ? x + 11 : x - 11, y);
+        gradientDisc(dl, ball, 8.0f * s, -0.6f, IM_COL32(255, 196, 120, 255), IM_COL32(200, 92, 24, 255));
+        panel.text(dl, x - 28, y - 6, 10.0f, kSvcaInk, "INPUT", 1, true);
+        panel.text(dl, x + 28, y - 6, 10.0f, kSvcaInk, "OUTPUT", -1, true);
+        if (clicked) setValue(p, output ? 0.0f : 1.0f);
+    }
+
+    // One of the face's round meters, the reference's geometry: the needle pivots below the window centre and
+    // sweeps +-30 degrees over minDb..maxDb (ui_detail::studioVcaNeedleDegrees); the dark lower half hides its foot.
+    // markDb (NaN = none) draws the red threshold mark.
+    void studioVcaMeter(ImDrawList* dl, float cx, float cy, const StudioVcaMark* scale, int count,
+                        float minDb, float maxDb, float valueDb, float markDb)
+    {
+        const float s = panel.scale();
+        constexpr float bezel = 72.0f, face = 64.0f, split = 8.0f, pivotDrop = 61.0f, arc = 92.0f;   // arc top at 0.49 face
+        const ImVec2 c = panel.P(cx, cy);
+        dl->AddCircleFilled(ImVec2(c.x + 2.0f * s, c.y + 3.0f * s), (bezel + 2.0f) * s, IM_COL32(60, 0, 0, 150), 64);
+        gradientDisc(dl, c, bezel * s, -0.5f, IM_COL32(150, 24, 22, 255), IM_COL32(70, 6, 6, 255), 64);
+        dl->AddCircle(c, (bezel - 3.0f) * s, IM_COL32(255, 120, 105, 60), 64, s);
+        dl->AddCircleFilled(c, (face + 2.0f) * s, IM_COL32(16, 10, 8, 255), 64);
+        // Cream window above the split line, dark below it.
+        dl->AddCircleFilled(c, face * s, IM_COL32(38, 26, 20, 255), 64);
+        constexpr int segments = 48;
+        ImVec2 window[segments + 1];
+        const float limit = duskdaf::DuskPanel::kPi - std::acos(split / face);   // from straight up to the split
+        for (int i = 0; i <= segments; ++i)
+        {
+            const float a = -limit + 2.0f * limit * static_cast<float>(i) / segments;
+            window[i] = panel.P(cx + face * std::sin(a), cy - face * std::cos(a));
+        }
+        dl->AddConvexPolyFilled(window, segments + 1, IM_COL32(236, 204, 150, 255));
+        dl->PushClipRect(panel.P(cx - face, cy - face), panel.P(cx + face, cy + split), true);
+        dl->AddCircleFilled(panel.P(cx, cy - 6), 30.0f * s, IM_COL32(255, 196, 110, 60), 32);   // lamp glow
+        dl->PopClipRect();
+        // Scale: an arc about the pivot, ticks and numerals (design coordinates).
+        const float px = cx, py = cy + pivotDrop;
+        const auto at = [&](float degrees, float radius) {
+            const float a = degrees * duskdaf::DuskPanel::kPi / 180.0f;
+            return panel.P(px + std::sin(a) * radius, py - std::cos(a) * radius);
+        };
+        dl->PathArcTo(panel.P(px, py), arc * s, (-90.0f - 30.0f) * duskdaf::DuskPanel::kPi / 180.0f,
+                      (-90.0f + 30.0f) * duskdaf::DuskPanel::kPi / 180.0f, 32);
+        dl->PathStroke(IM_COL32(30, 20, 12, 255), 0, 1.6f * s);
+        for (int i = 0; i < count; ++i)
+        {
+            const float degrees = multicompp::ui_detail::studioVcaNeedleDegrees(scale[i].plain, minDb, maxDb);
+            dl->AddLine(at(degrees, arc), at(degrees, arc + 6.0f), IM_COL32(30, 20, 12, 255), 1.4f * s);
+            const float a = degrees * duskdaf::DuskPanel::kPi / 180.0f;
+            panel.text(dl, px + std::sin(a) * (arc + 10.0f), py - std::cos(a) * (arc + 10.0f) - 4.25f, 8.5f,
+                       IM_COL32(30, 20, 12, 255), scale[i].label, 0, false);
+        }
+        panel.text(dl, cx + 44, cy - 13, 11.0f, IM_COL32(30, 20, 12, 255), "VU", 0, true);
+        // Needles, clipped to the window; the window's lower edge is where the dark half hides their feet.
+        dl->PushClipRect(panel.P(cx - face, cy - face), panel.P(cx + face, cy + split), true);
+        if (std::isfinite(markDb))
+            dl->AddLine(panel.P(px, py), at(multicompp::ui_detail::studioVcaNeedleDegrees(markDb, minDb, maxDb), arc - 3.0f),
+                        IM_COL32(214, 30, 24, 255), 1.6f * s);
+        dl->AddLine(panel.P(px, py), at(multicompp::ui_detail::studioVcaNeedleDegrees(valueDb, minDb, maxDb), arc - 3.0f),
+                    IM_COL32(16, 14, 12, 255), 1.8f * s);
+        dl->PopClipRect();
+        // Glass: a soft reflection band on the right.
+        dl->AddRectFilledMultiColor(panel.P(cx + 22, cy - 58), panel.P(cx + 44, cy + split),
+                                    IM_COL32(255, 255, 255, 40), IM_COL32(255, 255, 255, 10),
+                                    IM_COL32(255, 255, 255, 0), IM_COL32(255, 255, 255, 20));
+    }
+
+    // A disc lit along `angle` (radians from straight up): `lit` on that side, `shade` opposite.
+    static void gradientDisc(ImDrawList* dl, ImVec2 c, float r, float angle, ImU32 lit, ImU32 shade,
+                             int segments = 48)
+    {
+        const ImVec4 a = ImGui::ColorConvertU32ToFloat4(lit), b = ImGui::ColorConvertU32ToFloat4(shade);
+        const auto mix = [&](float t) {
+            return ImGui::ColorConvertFloat4ToU32(ImVec4(b.x + (a.x - b.x) * t, b.y + (a.y - b.y) * t,
+                                                         b.z + (a.z - b.z) * t, b.w + (a.w - b.w) * t));
+        };
+        const ImVec2 uv = ImGui::GetIO().Fonts->TexUvWhitePixel;
+        const ImVec2 dir(std::sin(angle), -std::cos(angle));
+        dl->PrimReserve(segments * 3, segments + 1);
+        const unsigned int base = dl->_VtxCurrentIdx;
+        dl->PrimWriteVtx(c, uv, mix(0.5f));
+        for (int i = 0; i < segments; ++i)
+        {
+            const float t = 2.0f * duskdaf::DuskPanel::kPi * static_cast<float>(i) / segments;
+            const ImVec2 p(c.x + r * std::cos(t), c.y + r * std::sin(t));
+            dl->PrimWriteVtx(p, uv, mix(0.5f + 0.5f * ((p.x - c.x) * dir.x + (p.y - c.y) * dir.y) / r));
+        }
+        for (int i = 0; i < segments; ++i)
+        {
+            dl->PrimWriteIdx(static_cast<ImDrawIdx>(base));
+            dl->PrimWriteIdx(static_cast<ImDrawIdx>(base + 1 + i));
+            dl->PrimWriteIdx(static_cast<ImDrawIdx>(base + 1 + (i + 1) % segments));
+        }
+    }
+
+    // The dial's value as the reference prints it (Release in seconds), with locale-free decimals, so the typed-
+    // entry field it seeds parses back (studioVcaParseText).
+    static void studioVcaReadout(uint32_t p, float plain, char* text, size_t size)
+    {
+        const auto fixed = [&](float v, int decimals, const char* unit) {
+            const float scale = decimals == 2 ? 100.0f : decimals == 1 ? 10.0f : 1.0f;
+            const long scaled = std::lround(std::fabs(v) * scale);
+            const long whole = static_cast<long>(scaled / static_cast<long>(scale));
+            const long part = scaled % static_cast<long>(scale);
+            const char* sign = v < 0.0f && scaled != 0 ? "-" : "";
+            if (decimals == 0) std::snprintf(text, size, "%s%ld%s", sign, whole, unit);
+            else std::snprintf(text, size, decimals == 2 ? "%s%ld.%02ld%s" : "%s%ld.%01ld%s", sign, whole, part, unit);
+        };
+        if (p == P_SVCA_RATIO) fixed(plain, 1, ":1");
+        else if (p == P_SVCA_ATTACK) fixed(plain, 2, " ms");
+        else if (p == P_SVCA_RELEASE) fixed(plain * 0.001f, 2, " s");
+        else if (p == P_MIX) fixed(plain, 0, "%");
+        else fixed(plain, 1, " dB");
+    }
+
+    static float studioVcaHostToDial(float host, uint32_t p, void* context)
+    {
+        const float plain = static_cast<MultiCompUI*>(context)->plainValueForHost(p, host);
+        return multicompp::ui_detail::studioVcaDialPosition(p, plain);
+    }
+
+    static float studioVcaDialToHost(float position, uint32_t p, void* context)
+    {
+        const float plain = multicompp::ui_detail::studioVcaDialPlain(p, position);
+        return static_cast<MultiCompUI*>(context)->hostValueForPlain(p, plain);
+    }
+
+    // Typed entry in the readout's units (Release in seconds), with or without the unit; any value of the
+    // control's full range, including those beyond the dial's travel.
+    static bool studioVcaParseText(const char* text, uint32_t p, void* context, float& host)
+    {
+        float plain = 0.0f;
+        if (!multicompp::ui_detail::studioVcaTypedPlain(text, p, plain)) return false;
+        host = static_cast<MultiCompUI*>(context)->hostValueForPlain(p, plain);
+        return true;
     }
 
     void drawDigital(ImDrawList* dl)

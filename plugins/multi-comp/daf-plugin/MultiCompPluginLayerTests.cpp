@@ -314,7 +314,8 @@ void testFactoryPresetOwnership()
          12, false},
         {{ParamId::Mode, ParamId::Mix, ParamId::SidechainHP, ParamId::AutoMakeup,
           ParamId::StudioVcaThreshold, ParamId::StudioVcaRatio, ParamId::StudioVcaAttack,
-          ParamId::StudioVcaRelease, ParamId::StudioVcaOutput}, 9, false},
+          ParamId::StudioVcaRelease, ParamId::StudioVcaOutput, ParamId::StudioVcaInput,
+          ParamId::StudioVcaAutoRelease}, 11, false},
         {{ParamId::Mode, ParamId::Mix, ParamId::SidechainHP, ParamId::AutoMakeup,
           ParamId::DigitalThreshold, ParamId::DigitalRatio, ParamId::DigitalKnee,
           ParamId::DigitalAttack, ParamId::DigitalRelease, ParamId::DigitalLookahead,
@@ -808,7 +809,7 @@ void testFetFaceplateContract()
         && fetEnd != std::string::npos
         && source.find("drawOptoMeter(dl,", fetStart) < fetEnd
         && source.find("void drawFetMeter(") == std::string::npos
-        && source.find("if (mode == 4 || mode == 5 || mode == 6)\n            drawMeter(") != std::string::npos;
+        && source.find("if (mode == 4 || mode == 6)\n            drawMeter(") != std::string::npos;
     // Multiband meters each band in its strip. Its master meter, drawn at the
     // right edge, sat under the crossover panel and the HIGH strip.
     const size_t multibandStart = source.find("void drawMultiband(");
@@ -1016,8 +1017,13 @@ void testOptoFaceplateContract()
                 && multicompp::ui_detail::designHeightForMode(2.6f) == 380.0f
                 && multicompp::ui_detail::designHeightForMode(3.4f) == 380.0f
                 && multicompp::ui_detail::designHeightForMode(3.6f) == 486.0f
+                && multicompp::ui_detail::designHeightForMode(4.4f) == 486.0f
+                && multicompp::ui_detail::designHeightForMode(4.6f) == 380.0f
+                && multicompp::ui_detail::designHeightForMode(5.4f) == 380.0f
+                && multicompp::ui_detail::designHeightForMode(5.6f) == 486.0f
                 && multicompp::ui_detail::designHeightForMode(7.0f) == 486.0f,
-            "Opto, vintage FET, VCA, and Bus use rack-height canvases while the other modes keep the full canvas");
+            "Opto, vintage FET, VCA, Bus and Studio VCA use rack-height canvases while the other modes keep the full "
+            "canvas");
     {
         using Vca = multicompp::ui_detail::VcaFaceplateLayout;
         const float vcaAspect = multicompp::ui_detail::vcaFaceplateAspect();
@@ -1406,7 +1412,38 @@ void testAlphaSessionStateStaysLoadable()
             "the alpha1 FET ratio loads as 4");
     require(restored[static_cast<size_t>(multicompp::stateIndexForId("distortion_type"))] == 3.0f,
             "the alpha1 distortion type loads as 3");
+    // The controls appended since load as a session of its day ran: Studio VCA Input 0 dB, Auto Release off (its
+    // Release control set the release), meter 0.
+    require(restored[static_cast<size_t>(multicompp::stateIndexForId("studio_vca_input"))] == 0.0f
+                && restored[static_cast<size_t>(multicompp::stateIndexForId("studio_vca_auto_release"))] == 0.0f
+                && restored[static_cast<size_t>(multicompp::stateIndexForId("studio_vca_meter"))] == 0.0f,
+            "the alpha1 session loads Studio VCA Input 0 dB, Auto Release off and meter 0");
     std::puts("alpha1 session state: 100 symbols at their alpha1 host indices, values bit for bit");
+}
+
+// Every switch and stepped control shows its labels in a host (switchLabels(), which initParameter() reads): a
+// complete mask over the table's integer controls, so an appended switch cannot ship as a bare 0..1 slider.
+void testEverySwitchHasHostLabels()
+{
+    int switches = 0;
+    for (int i = 0; i < multicompp::kTotalParamCount; i = multicompp::nextControlParameter(i))
+        switches += multicompp::resolveParameter(i,
+            [i](const multicompp::Param& d) {
+                const auto id = static_cast<multicompp::ParamId>(i);
+                if (!d.integer || id == multicompp::ParamId::Bypass) return 0;
+                const multicompp::SwitchLabels labels = multicompp::switchLabels(id);
+                const int steps = static_cast<int>(std::lround(d.max - d.min)) + 1;
+                if (labels.labels == nullptr || labels.count != steps)
+                    std::fprintf(stderr, "%s: %d host labels for %d steps\n", d.id, labels.count, steps);
+                require(labels.labels != nullptr && labels.count == steps,
+                        "every switch and stepped control has one host label per step");
+                require(!labels.boolean || (steps == 2 && std::strcmp(labels.labels[1], "On") == 0),
+                        "a boolean switch reads Off / On");
+                return 1;
+            },
+            [](const multicompp::BandParam&, int) { return 0; });
+    std::printf("host labels: %d switch and stepped controls\n", switches);
+    require(switches > 0, "the label check reached the switches");
 }
 
 // Host-facing names and text. A host lists every control by name and shows its
@@ -1537,6 +1574,7 @@ int main(int argc, char** argv)
     testAlphaSessionStateStaysLoadable();
     testOptoReferenceDisplayAndNoiseDefault();
     testHostNamesAndTaperedText();
+    testEverySwitchHasHostLabels();
     std::puts("Multi-Comp plugin-layer tests: PASS");
     return 0;
 }

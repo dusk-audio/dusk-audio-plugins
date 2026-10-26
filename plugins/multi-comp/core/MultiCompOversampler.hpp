@@ -208,7 +208,7 @@ template <class Stage>
 class PolyphaseOversampler
 {
 public:
-    // A stage that did not run still holds the audio from before it stopped, which a 1x mode (Opto and
+    // A stage that did not run still holds the audio from before it stopped, which a 1x mode (Studio VCA; Opto and
     // vintage FET from 88.2 kHz up) or a spell at a lower Oversampling setting can make minutes old: leaving factor 1
     // starts both stages from rest, a rise from 2x to 4x the inner one (it idles at 2x).
     void setFactor(int f) noexcept

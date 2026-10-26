@@ -54,6 +54,7 @@ inline std::array<float, 3> orderedCrossovers(float f1, float f2, float f3) noex
 #include "MultiCompGainReductionNeedle.hpp"
 #include "MultiCompParams.hpp"
 #include "MultiCompProgramPresets.hpp"
+#include "MultiCompStudioVcaMeter.hpp"
 #include "MultiCompVersion.hpp"
 #include "util/CrashLog.hpp"
 
@@ -84,6 +85,8 @@ public:
     float outputVuLevel() const noexcept { return outputVu.levelDb(); }
     float gainReductionNeedle() const noexcept { return grNeedle.levelDb(); }
     float vcaGainReductionNeedle() const noexcept { return vcaGrNeedle.levelDb(); }
+    float studioVcaInputLevel() const noexcept { return studioVcaInputMeter.levelDb(); }
+    float studioVcaOutputLevel() const noexcept { return studioVcaOutputMeter.levelDb(); }
     float busMeterReading() const noexcept { return dsp.getBusMeterReading(); }
     float busFadePosition() const noexcept { return dsp.getBusFadePosition(); }
     // The UI's view of a parameter. Crossovers report the frequency the DSP
@@ -151,28 +154,16 @@ protected:
                     // Kept for sessions that saved them, but no mode reads them:
                     // the VCA face's attack, release, knee and detector are fixed.
                     if (multicompp::isInertParameter(index)) p.hints |= kParameterIsHidden;
-                    switch (static_cast<Id>(index))
+                    if (static_cast<Id>(index) == Id::Bypass)
                     {
-                        case Id::Bypass: p.initDesignation(kParameterDesignationBypass); return;
-                        case Id::Mode: setEnum(p, multicompp::kModes, 8); break;
-                        case Id::TruePeakEnable: case Id::ExternalSidechain: case Id::AutoMakeup:
-                        case Id::OptoLimit: case Id::VcaOverEasy: case Id::DigitalAdaptive:
-                        case Id::GlobalSidechainListen: case Id::NoiseEnable: case Id::BusFade:
-                            setEnum(p, multicompp::kOnOff, 2); p.hints |= kParameterIsBoolean; break;
-                        case Id::TruePeakQuality: setEnum(p, multicompp::kTruePeakQuality, 2); break;
-                        case Id::Distortion: setEnum(p, multicompp::kDistortion, 4); break;
-                        case Id::Oversampling: setEnum(p, multicompp::kOversampling, 3); break;
-                        case Id::FetRatio: setEnum(p, multicompp::kRatios, 5); break;
-                        case Id::OptoMeter: setEnum(p, multicompp::kOptoMeterModes, 3); break;
-                        case Id::FetMeter: setEnum(p, multicompp::kFetMeterModes, 3); break;
-                        case Id::FetCurve: setEnum(p, multicompp::kFetCurve, 2); break;
-                        case Id::VcaClassicDetector: setEnum(p, multicompp::kVcaDetector, 2); break;
-                        case Id::BusRatio: setEnum(p, multicompp::kBusRatios, 3); break;
-                        case Id::BusAttack: setEnum(p, multicompp::kBusAttack, 6); break;
-                        case Id::BusRelease: setEnum(p, multicompp::kBusRelease, 5); break;
-                        case Id::BusHeadroom: setEnum(p, multicompp::kBusHeadroom, 7); break;
-                        case Id::StereoLinkMode: setEnum(p, multicompp::kLinkMode, 3); break;
-                        default: break;
+                        p.initDesignation(kParameterDesignationBypass);
+                        return;
+                    }
+                    const multicompp::SwitchLabels labels = multicompp::switchLabels(static_cast<Id>(index));
+                    if (labels.count > 0)
+                    {
+                        setEnum(p, labels.labels, labels.count);
+                        if (labels.boolean) p.hints |= kParameterIsBoolean;
                     }
                 },
                 [&](const multicompp::BandParam& d, int band) {
@@ -298,7 +289,11 @@ protected:
     }
 
     void activate() override { prepare(getSampleRate(), getBufferSize()); }
-    void deactivate() override { dsp.reset(); outputVu.reset(); grNeedle.reset(); vcaGrNeedle.reset(); }
+    void deactivate() override
+    {
+        dsp.reset(); outputVu.reset(); grNeedle.reset(); vcaGrNeedle.reset();
+        studioVcaInputMeter.reset(); studioVcaOutputMeter.reset();
+    }
     void sampleRateChanged(double sr) override { prepare(sr, getBufferSize()); }
     void bufferSizeChanged(uint32_t bs) override { prepare(getSampleRate(), bs); }
 
@@ -325,6 +320,14 @@ protected:
             updateLatency();
             return;
         }
+        const long mode = currentMode();
+        // The Studio VCA face's level meters (that face only). The input is read before processing: the host may
+        // hand the same buffers for input and output.
+        const bool studioVcaMeters = mode == static_cast<long>(duskaudio::MultiCompMode::StudioVCA);
+        float studioVcaInputPeak = 0.0f;
+        if (studioVcaMeters)
+            for (int ch = 0; ch < activeChannels; ++ch)
+                studioVcaInputPeak = duskaudio::blockAbsPeak(inputs[ch], static_cast<int>(frames), studioVcaInputPeak);
         const int sidechainWidth = values[static_cast<size_t>(multicompp::ParamId::ExternalSidechain)].load(std::memory_order_relaxed) > 0.5f
             ? multicompp::plugin_detail::externalSidechainWidth(activeInputs, activeChannels, inputs) : 0;
         if (sidechainWidth > 0)
@@ -344,17 +347,26 @@ protected:
         else dsp.processBlock(inputs, outputs, activeChannels, static_cast<int>(frames));
         outputVu.process(outputs, activeChannels, static_cast<int>(frames));
         const float gainReduction = dsp.getGainReduction();
-        const long mode = currentMode();
         if (mode != needleMode)
         {   // a mode switch brings another face's meter into view: it already reads the gain reduction
             needleMode = mode;
             grNeedle.snap(gainReduction);
             vcaGrNeedle.snap(gainReduction);
+            studioVcaInputMeter.reset();
+            studioVcaOutputMeter.reset();
         }
         else
         {
             grNeedle.process(gainReduction, static_cast<int>(frames));
             vcaGrNeedle.process(gainReduction, static_cast<int>(frames));
+        }
+        if (studioVcaMeters)
+        {
+            float outputPeak = 0.0f;
+            for (int ch = 0; ch < activeChannels; ++ch)
+                outputPeak = duskaudio::blockAbsPeak(outputs[ch], static_cast<int>(frames), outputPeak);
+            studioVcaInputMeter.process(studioVcaInputPeak * studioVcaInputGain(), static_cast<int>(frames));
+            studioVcaOutputMeter.process(outputPeak, static_cast<int>(frames));
         }
         // setLatency() is documented as callable from run(). The CLAP wrapper
         // latches a change here and publishes it at the next activate(), which
@@ -397,6 +409,8 @@ private:
         outputVu.prepare(sampleRate);
         grNeedle.prepare(sampleRate);
         vcaGrNeedle.prepare(sampleRate);
+        studioVcaInputMeter.prepare(sampleRate);
+        studioVcaOutputMeter.prepare(sampleRate);
         needleMode = currentMode();   // needles start at rest and move; only a later switch snaps them
         pushParameters();
         updateLatency();
@@ -409,6 +423,7 @@ private:
     multicompp::OutputVu outputVu;
     multicompp::GainReductionNeedle grNeedle{multicompp::kVuNeedle};        // Opto and FET faces
     multicompp::GainReductionNeedle vcaGrNeedle{multicompp::kVcaNeedle};    // VCA face
+    multicompp::StudioVcaLevelMeter studioVcaInputMeter, studioVcaOutputMeter;   // Studio VCA face
     std::vector<float> monoSidechain;   // run(): a mono instance's key from a stereo sidechain, its mid
     // Formats other than AU always present the full input set, and ioChanged()
     // is only called where a host narrows it, so the declared count is the
@@ -421,6 +436,16 @@ private:
     long currentMode() const noexcept
     {
         return std::lround(values[static_cast<size_t>(multicompp::ParamId::Mode)].load(std::memory_order_relaxed));
+    }
+    // The Studio VCA Input control as a linear gain (the input meter reads after it).
+    float studioVcaInputGain() const noexcept
+    {
+        constexpr int index = static_cast<int>(multicompp::ParamId::StudioVcaInput);
+        const float host = values[static_cast<size_t>(index)].load(std::memory_order_relaxed);
+        const float db = multicompp::resolveParameter(index,
+            [host](const multicompp::Param& d) { return multicompp::hostToPlain(d, host); },
+            [](const multicompp::BandParam&, int) { return 0.0f; });
+        return duskaudio::decibelsToGain(db);
     }
     DAF_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MultiCompPlugin)
 };
@@ -436,6 +461,8 @@ float multiCompGetOutputLevel(void* p) noexcept { return p ? asMultiComp(p)->out
 float multiCompGetOutputVuLevel(void* p) noexcept { return p ? asMultiComp(p)->outputVuLevel() : -120.0f; }
 float multiCompGetGainReductionNeedle(void* p) noexcept { return p ? asMultiComp(p)->gainReductionNeedle() : 0.0f; }
 float multiCompGetVcaGainReductionNeedle(void* p) noexcept { return p ? asMultiComp(p)->vcaGainReductionNeedle() : 0.0f; }
+float multiCompGetStudioVcaInputLevel(void* p) noexcept { return p ? asMultiComp(p)->studioVcaInputLevel() : -120.0f; }
+float multiCompGetStudioVcaOutputLevel(void* p) noexcept { return p ? asMultiComp(p)->studioVcaOutputLevel() : -120.0f; }
 float multiCompGetBusMeterReading(void* p) noexcept { return p ? asMultiComp(p)->busMeterReading() : 0.0f; }
 float multiCompGetBusFadePosition(void* p) noexcept { return p ? asMultiComp(p)->busFadePosition() : 0.0f; }
 float multiCompGetParameterValue(void* p, uint32_t index) noexcept
