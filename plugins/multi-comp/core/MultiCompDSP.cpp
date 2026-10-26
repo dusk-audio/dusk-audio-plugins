@@ -1687,42 +1687,6 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
             optoOwnDetectorUpsamplers[0].idle(optoOwnFeed0);
             optoOwnDetectorUpsamplers[1].idle(optoOwnFeed1);
         }
-        if (mode == MultiCompMode::Bus && link)
-        {
-            std::array<float, 4> inputLeftPhases{}, inputRightPhases{};
-            std::array<float, 4> outputLeftPhases{}, outputRightPhases{};
-            oversamplers[0].upsampleSample(in[0][i], inputLeftPhases.data());
-            oversamplers[1].upsampleSample(in[1][i], inputRightPhases.data());
-            for (int phase = 0; phase < actualOs; ++phase)
-            {
-                const float phaseSc0 = busExternalPhases[0][static_cast<size_t>(phase)];
-                const float phaseSc1 = busExternalPhases[1][static_cast<size_t>(phase)];
-                modes.processBusPair(
-                    inputLeftPhases[static_cast<size_t>(phase)],
-                    inputRightPhases[static_cast<size_t>(phase)],
-                    phaseSc0, phaseSc1, modeParams, localBusMix,
-                    external, linkAmount,
-                    outputLeftPhases[static_cast<size_t>(phase)],
-                    outputRightPhases[static_cast<size_t>(phase)]);
-                outputLeftPhases[static_cast<size_t>(phase)] = applyCoreDistortion(
-                    outputLeftPhases[static_cast<size_t>(phase)],
-                    distortionType, distortionAmount);
-                outputRightPhases[static_cast<size_t>(phase)] = applyCoreDistortion(
-                    outputRightPhases[static_cast<size_t>(phase)],
-                    distortionType, distortionAmount);
-            }
-            out[0][i] = oversamplers[0].downsampleSample(outputLeftPhases.data());
-            out[1][i] = oversamplers[1].downsampleSample(outputRightPhases.data());
-            // The generic per-channel path is skipped this sample, so its
-            // carried endpoints stop tracking the input.  Invalidate them here
-            // and let the next generic sample re-seed instead of interpolating
-            // from an arbitrarily old value when the link is switched off.
-            previousOversampledSidechainValid = {{false, false}};
-            previousOptoOwnSidechainValid = {{false, false}};
-            busCompressionMeter.process(bypassSettled ? 0.0f
-                : -std::min(modes.gainReduction(mode, 0), modes.gainReduction(mode, 1)));
-            continue;
-        }
         if (optoCellLink)
         {
             // The cell ORs the two panel drives sample by sample, so the pair

@@ -6784,8 +6784,9 @@ private:
 
     // advanceBusEnvelope's reset test reads only whether 10^(-control / 20) is
     // finite: smoothBusAudioGain overwrites the envelope it would give. At or
-    // above -700 dB that is at most 1e35, finite with any libm; lower (or
-    // non-finite) controls evaluate it as before.
+    // above -700 dB that is at most 1e35, finite with any libm; lower controls
+    // and NaN evaluate it as before (+inf passes here, as 10^-inf = 0 is finite,
+    // and the caller's own isfinite test of the control resets it).
     static bool busControlGainFinite(float controlDb) noexcept
     {
         return controlDb >= -700.0f || std::isfinite(decibelsToGain(-controlDb));
