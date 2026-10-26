@@ -314,7 +314,8 @@ void testFactoryPresetOwnership()
          12, false},
         {{ParamId::Mode, ParamId::Mix, ParamId::SidechainHP, ParamId::AutoMakeup,
           ParamId::StudioVcaThreshold, ParamId::StudioVcaRatio, ParamId::StudioVcaAttack,
-          ParamId::StudioVcaRelease, ParamId::StudioVcaOutput}, 9, false},
+          ParamId::StudioVcaRelease, ParamId::StudioVcaOutput, ParamId::StudioVcaInput,
+          ParamId::StudioVcaAutoRelease}, 11, false},
         {{ParamId::Mode, ParamId::Mix, ParamId::SidechainHP, ParamId::AutoMakeup,
           ParamId::DigitalThreshold, ParamId::DigitalRatio, ParamId::DigitalKnee,
           ParamId::DigitalAttack, ParamId::DigitalRelease, ParamId::DigitalLookahead,
@@ -667,32 +668,33 @@ void testCrossoverOrderingDoesNotRatchet()
                 "lowering Crossover 1 again returns the displayed neighbours");
 }
 
-// One case per DAF_PLUGIN_EXTRA_IO layout. The { 2, 2 } row is the one the
-// output count could not express: it is stereo, so a channel-count test would
-// have called it sidechain-capable and read two elements past the end of the
-// array the host supplied.
+// One case per layout ioChanged() reports: the DAF_PLUGIN_EXTRA_IO ones and
+// DAF_PLUGIN_SIDECHAIN_ON_EXTRA_IO's main layouts plus a mono or stereo
+// sidechain. The { 2, 2 } row is the one the output count alone could not
+// express: it is stereo, so a channel-count test would have called it
+// sidechain-capable and read two elements past the end of the array the host
+// supplied. Ports keep their declared positions, so the absent ones read silence.
 void testRunGuardsSidechainPortsPerLayout()
 {
-    float main = 0.1f, sidechain = 0.8f;
+    float main = 0.1f, silent = 0.0f, sidechain = 0.8f;
     const float* monoInputs[] = {&main};
     const float* stereoInputs[] = {&main, &main};
-    const float* sidechainInputs[] = {&main, &main, &sidechain, &sidechain};
-    const bool externalArmed = true;
-    const bool monoUsesSidechain = externalArmed
-        && multicompp::plugin_detail::hasStereoExternalSidechainPorts(1, monoInputs);
-    const bool stereoUsesSidechain = externalArmed
-        && multicompp::plugin_detail::hasStereoExternalSidechainPorts(2, stereoInputs);
-    const bool fullUsesSidechain = externalArmed
-        && multicompp::plugin_detail::hasStereoExternalSidechainPorts(4, sidechainInputs);
-    std::printf("external sidechain armed: 1-in uses aux ports %s; 2-in %s; 4-in %s\n",
-                monoUsesSidechain ? "yes" : "no", stereoUsesSidechain ? "yes" : "no",
-                fullUsesSidechain ? "yes" : "no");
-    reviewCheck(!monoUsesSidechain,
-                "mono run path does not index absent stereo sidechain ports");
-    reviewCheck(!stereoUsesSidechain,
-                "stereo-insert run path does not index absent sidechain ports");
-    reviewCheck(fullUsesSidechain,
-                "full input layout still accepts its external sidechain ports");
+    const float* fullInputs[] = {&main, &main, &sidechain, &sidechain};
+    const float* monoKeyedMonoInputs[] = {&main, &silent, &sidechain, &silent};
+    const float* monoKeyedStereoInputs[] = {&main, &silent, &sidechain, &sidechain};
+    const float* stereoKeyedMonoInputs[] = {&main, &main, &sidechain, &silent};
+    struct Row { const char* name; int inputs, mainChannels; const float* const* ports; int width; };
+    const Row rows[] = {{"1-in mono", 1, 1, monoInputs, 0}, {"2-in stereo", 2, 2, stereoInputs, 0},
+                        {"4-in stereo + stereo key", 4, 2, fullInputs, 2},
+                        {"2-in mono + mono key (Logic mono track)", 2, 1, monoKeyedMonoInputs, 1},
+                        {"3-in mono + stereo key", 3, 1, monoKeyedStereoInputs, 2},
+                        {"3-in stereo + mono key", 3, 2, stereoKeyedMonoInputs, 1}};
+    for (const Row& row : rows)
+    {
+        const int width = multicompp::plugin_detail::externalSidechainWidth(row.inputs, row.mainChannels, row.ports);
+        std::printf("external sidechain armed: %s uses %d sidechain port(s)\n", row.name, width);
+        reviewCheck(width == row.width, "each reported layout reads exactly the sidechain ports it has");
+    }
 }
 
 void testQuantisedFineStepFallsBackToRestingPrecision()
@@ -807,7 +809,7 @@ void testFetFaceplateContract()
         && fetEnd != std::string::npos
         && source.find("drawOptoMeter(dl,", fetStart) < fetEnd
         && source.find("void drawFetMeter(") == std::string::npos
-        && source.find("if (mode == 4 || mode == 5 || mode == 6)\n            drawMeter(") != std::string::npos;
+        && source.find("if (mode == 4 || mode == 6)\n            drawMeter(") != std::string::npos;
     // Multiband meters each band in its strip. Its master meter, drawn at the
     // right edge, sat under the crossover panel and the HIGH strip.
     const size_t multibandStart = source.find("void drawMultiband(");
@@ -1015,8 +1017,13 @@ void testOptoFaceplateContract()
                 && multicompp::ui_detail::designHeightForMode(2.6f) == 380.0f
                 && multicompp::ui_detail::designHeightForMode(3.4f) == 380.0f
                 && multicompp::ui_detail::designHeightForMode(3.6f) == 486.0f
+                && multicompp::ui_detail::designHeightForMode(4.4f) == 486.0f
+                && multicompp::ui_detail::designHeightForMode(4.6f) == 380.0f
+                && multicompp::ui_detail::designHeightForMode(5.4f) == 380.0f
+                && multicompp::ui_detail::designHeightForMode(5.6f) == 486.0f
                 && multicompp::ui_detail::designHeightForMode(7.0f) == 486.0f,
-            "Opto, vintage FET, VCA, and Bus use rack-height canvases while the other modes keep the full canvas");
+            "Opto, vintage FET, VCA, Bus and Studio VCA use rack-height canvases while the other modes keep the full "
+            "canvas");
     {
         using Vca = multicompp::ui_detail::VcaFaceplateLayout;
         const float vcaAspect = multicompp::ui_detail::vcaFaceplateAspect();
@@ -1405,7 +1412,38 @@ void testAlphaSessionStateStaysLoadable()
             "the alpha1 FET ratio loads as 4");
     require(restored[static_cast<size_t>(multicompp::stateIndexForId("distortion_type"))] == 3.0f,
             "the alpha1 distortion type loads as 3");
+    // The controls appended since load as a session of its day ran: Studio VCA Input 0 dB, Auto Release off (its
+    // Release control set the release), meter 0.
+    require(restored[static_cast<size_t>(multicompp::stateIndexForId("studio_vca_input"))] == 0.0f
+                && restored[static_cast<size_t>(multicompp::stateIndexForId("studio_vca_auto_release"))] == 0.0f
+                && restored[static_cast<size_t>(multicompp::stateIndexForId("studio_vca_meter"))] == 0.0f,
+            "the alpha1 session loads Studio VCA Input 0 dB, Auto Release off and meter 0");
     std::puts("alpha1 session state: 100 symbols at their alpha1 host indices, values bit for bit");
+}
+
+// Every switch and stepped control shows its labels in a host (switchLabels(), which initParameter() reads): a
+// complete mask over the table's integer controls, so an appended switch cannot ship as a bare 0..1 slider.
+void testEverySwitchHasHostLabels()
+{
+    int switches = 0;
+    for (int i = 0; i < multicompp::kTotalParamCount; i = multicompp::nextControlParameter(i))
+        switches += multicompp::resolveParameter(i,
+            [i](const multicompp::Param& d) {
+                const auto id = static_cast<multicompp::ParamId>(i);
+                if (!d.integer || id == multicompp::ParamId::Bypass) return 0;
+                const multicompp::SwitchLabels labels = multicompp::switchLabels(id);
+                const int steps = static_cast<int>(std::lround(d.max - d.min)) + 1;
+                if (labels.labels == nullptr || labels.count != steps)
+                    std::fprintf(stderr, "%s: %d host labels for %d steps\n", d.id, labels.count, steps);
+                require(labels.labels != nullptr && labels.count == steps,
+                        "every switch and stepped control has one host label per step");
+                require(!labels.boolean || (steps == 2 && std::strcmp(labels.labels[1], "On") == 0),
+                        "a boolean switch reads Off / On");
+                return 1;
+            },
+            [](const multicompp::BandParam&, int) { return 0; });
+    std::printf("host labels: %d switch and stepped controls\n", switches);
+    require(switches > 0, "the label check reached the switches");
 }
 
 // Host-facing names and text. A host lists every control by name and shows its
@@ -1536,6 +1574,7 @@ int main(int argc, char** argv)
     testAlphaSessionStateStaysLoadable();
     testOptoReferenceDisplayAndNoiseDefault();
     testHostNamesAndTaperedText();
+    testEverySwitchHasHostLabels();
     std::puts("Multi-Comp plugin-layer tests: PASS");
     return 0;
 }

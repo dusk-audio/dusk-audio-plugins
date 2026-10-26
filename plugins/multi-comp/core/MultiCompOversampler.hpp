@@ -4,7 +4,9 @@
 // Same tap sets, latency and history semantics as OversamplerT (the 2x stage is
 // the 127-tap wide set or the 47-tap classic set, the 4x inner stage the 15-tap
 // set), and the same arithmetic: every output is OversamplerT's, bit for bit
-// (the plugin builds with -ffp-contract=off). What differs is the work:
+// (the plugin builds with -ffp-contract=off), except across a factor change that
+// steps a stage again after it idled: setFactor() restarts it from rest, where
+// OversamplerT keeps its old history. What differs otherwise is the work:
 //   - zero-stuffing is implicit. Each stage keeps the dense histories it reads
 //     (host-rate inputs going up; the two phase streams coming down), so the
 //     zero slots are never read. The terms they contributed to
@@ -200,12 +202,22 @@ private:
 };
 
 // Drop-in for OversamplerT<Stage> (factor 1 / 2 / 4, processSample, the split
-// upsampleSample / downsampleSample form, latency()).
+// upsampleSample / downsampleSample form, latency()); see setFactor() for the one
+// difference.
 template <class Stage>
 class PolyphaseOversampler
 {
 public:
-    void setFactor(int f) noexcept { factor = (f == 4) ? 4 : (f == 2 ? 2 : 1); }
+    // A stage that did not run still holds the audio from before it stopped, which a 1x mode (Studio VCA; Opto and
+    // vintage FET from 88.2 kHz up) or a spell at a lower Oversampling setting can make minutes old: leaving factor 1
+    // starts both stages from rest, a rise from 2x to 4x the inner one (it idles at 2x).
+    void setFactor(int f) noexcept
+    {
+        const int next = (f == 4) ? 4 : (f == 2 ? 2 : 1);
+        if (factor == 1 && next != 1) reset();
+        else if (factor == 2 && next == 4) inner.reset();
+        factor = next;
+    }
     int getFactor() const noexcept { return factor; }
     void reset() noexcept { outer.reset(); inner.reset(); }
 

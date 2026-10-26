@@ -304,6 +304,7 @@ public:
             std::snprintf(valueEditBuf_, sizeof(valueEditBuf_), "%s", seedText);
         else
             std::snprintf(valueEditBuf_, sizeof(valueEditBuf_), "%.4g", (double) curValue);
+        std::memcpy(valueEditSeed_, valueEditBuf_, sizeof(valueEditSeed_));
         valueEditInvalid_ = false;
         valueEditFocus_ = true;
     }
@@ -362,6 +363,14 @@ public:
         // Escape wins over deactivation: InputText can report both in the same
         // frame, and committing here would turn a cancel into an edit.
         if (escaped)
+        {
+            valueEditId_.clear();
+            valueEditInvalid_ = false;
+            return false;
+        }
+        // Committing the seed text (untouched, or edited back to it) is no edit: parsing the rounded seed back would
+        // move the value.
+        if ((entered || committed) && std::strcmp(valueEditBuf_, valueEditSeed_) == 0)
         {
             valueEditId_.clear();
             valueEditInvalid_ = false;
@@ -465,9 +474,13 @@ public:
         };
         const float dragMinimum = dragInDisplayDomain ? displayValue(minV) : minV;
         const float dragMaximum = dragInDisplayDomain ? displayValue(maxV) : maxV;
-        const auto beginDragValue = [&]() {
-            dragValue = dragInDisplayDomain ? displayValue(value) : value;
+        // The coordinate a gesture starts from, inside the drag domain: a value beyond the travel (a host range wider
+        // than the knob's, as the BUS dials keep for older sessions) starts at the end it lies beyond.
+        const auto dragCoordinateOf = [&](float v) {
+            const float coordinate = dragInDisplayDomain ? displayValue(v) : v;
+            return coordinate < dragMinimum ? dragMinimum : (coordinate > dragMaximum ? dragMaximum : coordinate);
         };
+        const auto beginDragValue = [&]() { dragValue = dragCoordinateOf(value); };
 
         ImGui::SetCursorScreenPos(ImVec2(c.x - R, c.y - R));
         ImGui::InvisibleButton(id, ImVec2(2.0f * R, 2.0f * R));
@@ -505,14 +518,26 @@ public:
                 // Activation can share a frame with pointer movement before the press.
                 const float deltaY = ImGui::IsItemActivated()
                     ? io.MousePos.y - io.MouseClickedPos[0].y : io.MouseDelta.y;
-                dragValue = dragKnobCoordinate(dragValue, deltaY,
-                                               dragMinimum, dragMaximum,
-                                               ImGui::GetIO().KeyShift);
-                if (stepped && dragInDisplayDomain) dragValue = std::round(dragValue);
-                float nv = dragInDisplayDomain ? valueFromDisplay(dragValue) : dragValue;
-                nv = nv < minV ? minV : (nv > maxV ? maxV : nv);
-                if (stepped && !dragInDisplayDomain) nv = std::round(nv);
-                if (nv != value) { value = nv; host->setParam(param, nv); changed = true; }
+                // Only movement edits. A press alone would write the value back through the drag domain: a value
+                // beyond a display domain narrower than the host range (a dial's travel) would jump to its end,
+                // and any other could come back a rounding step off.
+                // A coordinate pinned at an end of the drag domain edits nothing either: a value beyond the travel
+                // stays put while the drag pushes it further out.
+                const float dragFrom = dragValue;
+                if (deltaY != 0.0f)
+                {
+                    dragValue = dragKnobCoordinate(dragValue, deltaY,
+                                                   dragMinimum, dragMaximum,
+                                                   ImGui::GetIO().KeyShift);
+                    if (stepped && dragInDisplayDomain) dragValue = std::round(dragValue);
+                }
+                if (dragValue != dragFrom)
+                {
+                    float nv = dragInDisplayDomain ? valueFromDisplay(dragValue) : dragValue;
+                    nv = nv < minV ? minV : (nv > maxV ? maxV : nv);
+                    if (stepped && !dragInDisplayDomain) nv = std::round(nv);
+                    if (nv != value) { value = nv; host->setParam(param, nv); changed = true; }
+                }
             }
             if (ImGui::IsItemDeactivated()) { if (!modResetActive_) host->endEdit(param); modResetActive_ = false; }
 
@@ -548,15 +573,16 @@ public:
                     const float dragRange = dragMaximum - dragMinimum;
                     const float wheelStep = ImGui::GetIO().KeyShift
                         ? dragRange * 0.004f : dragRange * 0.02f;
-                    float wheelValue = dragInDisplayDomain ? displayValue(value) : value;
-                    wheelValue += wheel * (stepped ? 1.0f : wheelStep);
+                    const float wheelFrom = dragCoordinateOf(value);
+                    float wheelValue = wheelFrom + wheel * (stepped ? 1.0f : wheelStep);
                     wheelValue = wheelValue < dragMinimum ? dragMinimum
                         : (wheelValue > dragMaximum ? dragMaximum : wheelValue);
                     if (stepped && dragInDisplayDomain) wheelValue = std::round(wheelValue);
                     float nv = dragInDisplayDomain ? valueFromDisplay(wheelValue) : wheelValue;
                     nv = nv < minV ? minV : (nv > maxV ? maxV : nv);
                     if (stepped && !dragInDisplayDomain) nv = std::round(nv);
-                    if (nv != value)
+                    // As for a drag: a wheel step pushing a coordinate pinned at an end edits nothing.
+                    if (wheelValue != wheelFrom && nv != value)
                     {
                         host->beginEdit(param); value = nv;
                         host->setParam(param, nv); host->endEdit(param); changed = true;
@@ -900,6 +926,7 @@ private:
     // Inline value-entry state (double-click a knob to type a value).
     std::string valueEditId_;
     char        valueEditBuf_[32] = { 0 };
+    char        valueEditSeed_[32] = { 0 };   // what openValueEdit() put in valueEditBuf_
     bool        valueEditFocus_ = false;
     bool        valueEditInvalid_ = false;
     bool        modResetActive_ = false; // Ctrl/Cmd+click reset in progress (suppress drag)

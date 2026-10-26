@@ -152,6 +152,149 @@ bool drawNeedlePolicy()
     std::printf("%s needle policy BUS %.8f overtravel %.8f default %.8f\n",ok?"PASS":"FAIL",immediate,overtravel,sibling);
     return ok;
 }
+
+// The shared knob edits only when its coordinate moves. A dial whose travel is narrower than its host range (the
+// Studio VCA and BUS faces keep wider host ranges for older sessions) used to write a value beyond its travel back
+// as the travel's end on a plain press, or on a drag pushing it further out: here +10 dB on a dial that ends at
+// -10 dB. A drag the other way brings it onto the travel.
+struct CountingHost final : duskdaf::ParamHost
+{
+    int writes = 0;
+    void beginEdit(uint32_t) override {}
+    void endEdit(uint32_t) override {}
+    void setParam(uint32_t, float) override { ++writes; }
+};
+
+float travelPosition(float value, uint32_t, void*) { return std::clamp((value + 50.0f) / 40.0f, 0.0f, 1.0f); }
+float travelValue(float position, uint32_t, void*) { return -50.0f + 40.0f * position; }
+
+bool knobWritesOnlyOnMovement()
+{
+    CountingHost host;
+    duskdaf::DuskPanel panel;
+    float value = 10.0f;
+    const auto frame = [&](float x, float y, bool down) {
+        auto& io = ImGui::GetIO();
+        io.AddMousePosEvent(x, y);
+        io.AddMouseButtonEvent(0, down);
+        ImGui::NewFrame();
+        ImGui::SetNextWindowPos(ImVec2(0, 0));
+        ImGui::SetNextWindowSize(io.DisplaySize);
+        ImGui::Begin("knob", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove
+                                      | ImGuiWindowFlags_NoSavedSettings);
+        panel.begin(1.0f, ImVec2(0, 0), ImGui::GetFont(), &host);
+        panel.knob("##travel", 0, -50.0f, 20.0f, 100.0f, 100.0f, 30.0f, value, -10.0f, false, true, "%.1f", " dB",
+                   0, false, false, nullptr, false, 1.0f, 0.0f, nullptr, false, nullptr, false, 0.0f, 0.0f, false,
+                   false, 9.5f, false, false, travelPosition, travelValue, nullptr, true);
+        ImGui::End();
+        ImGui::Render();
+    };
+    frame(100, 100, false);
+    frame(100, 100, true);    // press
+    frame(100, 100, true);    // hold still
+    frame(100, 100, false);   // release
+    const int pressWrites = host.writes;
+    const float pressed = value;
+    for (int i = 0; i < 60; ++i) frame(100, 100, false);   // past the double-click time
+    frame(100, 100, true);
+    frame(100, 80, true);     // drag up 20 px: further out
+    frame(100, 80, false);
+    const int outwardWrites = host.writes - pressWrites;
+    const float outward = value;
+    for (int i = 0; i < 60; ++i) frame(100, 100, false);
+    frame(100, 100, true);
+    frame(100, 120, true);    // drag down 20 px: onto the travel
+    frame(100, 120, false);
+    const bool ok = pressWrites == 0 && pressed == 10.0f && outwardWrites == 0 && outward == 10.0f
+        && host.writes > 0 && value >= -50.0f && value < -10.0f;
+    std::printf("%s knob press without movement: %d writes, value %.2f; outward drag %d writes, %.2f; inward drag "
+                "%.2f\n", ok ? "PASS" : "FAIL", pressWrites, pressed, outwardWrites, outward, value);
+    return ok;
+}
+
+// The same for a knob without a display transform whose host range is wider than its own (the BUS face keeps
+// Threshold down to -30 dB for older sessions on a dial from -15 dB): -25 dB stays put through a press, a drag and
+// a wheel step further out, and a drag inward starts from the dial's end.
+bool knobBeyondItsRangeStaysPut()
+{
+    CountingHost host;
+    duskdaf::DuskPanel panel;
+    float value = -25.0f;
+    const auto frame = [&](float x, float y, bool down, float wheel = 0.0f) {
+        auto& io = ImGui::GetIO();
+        io.AddMousePosEvent(x, y);
+        io.AddMouseButtonEvent(0, down);
+        if (wheel != 0.0f) io.AddMouseWheelEvent(0.0f, wheel);
+        ImGui::NewFrame();
+        ImGui::SetNextWindowPos(ImVec2(0, 0));
+        ImGui::SetNextWindowSize(io.DisplaySize);
+        ImGui::Begin("knob", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove
+                                      | ImGuiWindowFlags_NoSavedSettings);
+        panel.begin(1.0f, ImVec2(0, 0), ImGui::GetFont(), &host);
+        panel.knob("##wide", 1, -15.0f, 15.0f, 100.0f, 100.0f, 30.0f, value, 0.0f);
+        ImGui::End();
+        ImGui::Render();
+    };
+    const auto idle = [&]() { for (int i = 0; i < 60; ++i) frame(100, 100, false); };   // past double-click time
+    frame(100, 100, false);
+    frame(100, 100, true); frame(100, 100, true); frame(100, 100, false);       // press
+    idle();
+    frame(100, 100, true); frame(100, 120, true); frame(100, 120, false);       // drag down 20 px: further out
+    idle();
+    frame(100, 100, false, -1.0f); frame(100, 100, false);                      // wheel down: further out
+    const int outwardWrites = host.writes;
+    const float outward = value;
+    idle();
+    frame(100, 100, true); frame(100, 80, true); frame(100, 80, false);         // drag up 20 px: onto the dial
+    const bool ok = outwardWrites == 0 && outward == -25.0f && host.writes > 0 && value > -15.0f && value <= 15.0f;
+    std::printf("%s knob beyond its range: press, outward drag and wheel %d writes, %.2f; inward drag %.2f\n",
+                ok ? "PASS" : "FAIL", outwardWrites, outward, value);
+    return ok;
+}
+
+// Committing a value editor's seed text, untouched (Enter) or edited back to it (then a click away), is no edit: the
+// seed is the value rounded for display, and parsing it back would move the value (7.2305 seeds "7.231"). Typing
+// another value still commits.
+bool valueEditEnterOnSeedIsNoEdit()
+{
+    duskdaf::DuskPanel panel;
+    int commits = 0;
+    float committed = 0.0f;
+    const auto frame = [&](bool enter, const char* typed, bool clickAway = false, bool backspace = false) {
+        auto& io = ImGui::GetIO();
+        io.AddKeyEvent(ImGuiKey_Enter, enter);
+        io.AddKeyEvent(ImGuiKey_Backspace, backspace);
+        if (typed != nullptr) io.AddInputCharactersUTF8(typed);
+        io.AddMousePosEvent(clickAway ? 3000.0f : 100.0f, clickAway ? 1900.0f : 100.0f);
+        io.AddMouseButtonEvent(0, clickAway);
+        ImGui::NewFrame();
+        ImGui::SetNextWindowPos(ImVec2(0, 0));
+        ImGui::SetNextWindowSize(io.DisplaySize);
+        ImGui::Begin("edit", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove
+                                      | ImGuiWindowFlags_NoSavedSettings);
+        panel.begin(1.0f, ImVec2(0, 0), ImGui::GetFont(), nullptr);
+        float out = 0.0f;
+        if (panel.valueEdit("##seed", 100.0f, 100.0f, 30.0f, out)) { ++commits; committed = out; }
+        ImGui::End();
+        ImGui::Render();
+    };
+    panel.openValueEdit("##seed", 7.2305f);
+    frame(false, nullptr); frame(false, nullptr); frame(true, nullptr); frame(false, nullptr);
+    const bool seedNoEdit = commits == 0 && !panel.isEditingValue("##seed");
+    panel.openValueEdit("##seed", 7.2305f);
+    frame(false, nullptr); frame(false, nullptr); frame(false, "9");          // an edit: "9"
+    frame(false, nullptr, false, true); frame(false, nullptr);                 // backspace: ""
+    frame(false, "7.231");                                                     // back to the seed
+    frame(false, nullptr, true); frame(false, nullptr); frame(false, nullptr); // click away
+    const bool retypedNoEdit = commits == 0 && !panel.isEditingValue("##seed");
+    panel.openValueEdit("##seed", 7.2305f);
+    frame(false, nullptr); frame(false, nullptr); frame(false, "8"); frame(true, nullptr); frame(false, nullptr);
+    const bool ok = seedNoEdit && retypedNoEdit && commits == 1 && committed == 8.0f;
+    std::printf("%s value editor: Enter on the seed %s, the seed typed back and clicked away %s, typed 8 commits "
+                "%d x %.4f\n", ok ? "PASS" : "FAIL", seedNoEdit ? "closes without an edit" : "EDITED",
+                retypedNoEdit ? "closes without an edit" : "EDITED", commits, committed);
+    return ok;
+}
 } // namespace
 
 int main()
@@ -166,6 +309,9 @@ int main()
     int width, height;
     io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
     bool ok = drawNeedlePolicy();
+    ok = knobWritesOnlyOnMovement() && ok;
+    ok = knobBeyondItsRangeStaysPut() && ok;
+    ok = valueEditEnterOnSeedIsNoEdit() && ok;
     for (float size : {1.0f, 1.25f, 1.8f, 2.0f, 3.0f})
         for (const char* source : {"INPUT", "OUTPUT", "GAIN CHANGE"})
             for (float db : {-80.0f, -40.0f, -20.0f, 0.0f, 20.0f, 40.0f,

@@ -182,7 +182,9 @@ struct MultiCompParameterState
     std::atomic<float> busFadeRate{24.8f};
     std::atomic<bool> busFade{false};
 
-    std::atomic<float> studioVcaThreshold{-10.0f}, studioVcaRatio{3.0f}, studioVcaAttack{10.0f}, studioVcaRelease{300.0f}, studioVcaOutput{0.0f};
+    std::atomic<float> studioVcaThreshold{-10.0f}, studioVcaRatio{1.5f}, studioVcaAttack{7.2305f}, studioVcaRelease{1000.0f}, studioVcaOutput{0.0f};
+    std::atomic<float> studioVcaInput{0.0f};
+    std::atomic<bool> studioVcaAutoRelease{true};
 
     std::atomic<float> digitalThreshold{-20.0f}, digitalRatio{4.0f}, digitalKnee{6.0f}, digitalAttack{10.0f}, digitalRelease{100.0f}, digitalLookahead{0.0f}, digitalMix{100.0f}, digitalOutput{0.0f};
     std::atomic<bool> digitalAdaptive{false};

@@ -45,6 +45,7 @@ public:
         MbMix, MbOutput, NoiseEnable, SaturationMode, ScLowFreq, ScLowGain,
         ScHighFreq, ScHighGain, StereoLinkMode,
         BusHeadroom, BusFadeRate, BusFade,
+        StudioVcaInput, StudioVcaAutoRelease,
         None // Host-persisted display controls have no audio parameter binding.
     };
     enum class MultibandParameter { Threshold, Ratio, Attack, Release, Makeup, Bypass, Solo, Enabled };
@@ -117,7 +118,8 @@ private:
     static constexpr int kCrossoverRampMs = 20;
     static constexpr int kCrossoverCoefficientInterval = 8;
     // The mode-switch duck (switchDuck*): the fades, and the mute that covers the anti-alias path realigning on its
-    // new factor (the longest disturbance measured over every factor-changing switch, 88.2-192 kHz, plus margin).
+    // new factor (the longest disturbance measured over every factor-changing switch, 88.2-192 kHz, plus margin;
+    // the switches into and out of Studio VCA and Opto at 44.1 / 48 kHz stay inside it too).
     static constexpr double kSwitchDuckFadeMs = 1.0;
     static constexpr int kSwitchDuckMuteSamples = 128;
 
@@ -147,8 +149,16 @@ private:
                          float* const* out, int nCh, int nSamples, bool external, float linkAmount,
                          int linkMode, int factor, int hostSidechainDelay, float manualOutputDb,
                          DistortionType distortionType, float distortionAmount) noexcept;
+    void processStudioVcaRange(const float* const* in, const float* const* sidechain,
+                               float* const* out, int nCh, int nSamples, bool external, float linkAmount,
+                               int linkMode, int hostSidechainDelay, float manualOutputDb,
+                               DistortionType distortionType, float distortionAmount) noexcept;
+    void processBusRange(const float* const* in, const float* const* sidechain,
+                         float* const* out, int nSamples, bool external, float linkAmount, int factor,
+                         int hostSidechainDelay, float manualOutputDb,
+                         DistortionType distortionType, float distortionAmount) noexcept;
     void idleHostRateFeeds(const float* sc0, const float* sc1, int nSamples, int hostSidechainDelay,
-                           bool midSideDetector) noexcept;
+                           bool midSideDetector, bool idleBusFeed = true) noexcept;
     void syncModeParameters(MultiCompMode mode, float digitalLookaheadMs) noexcept;
     void prepareLookahead(const float* const* in, const float* (&processingIn)[kMaxChannels],
                           int nCh, int nSamples, int delay);
@@ -171,7 +181,7 @@ private:
     void resetAutoGainMeasurement() noexcept;
     MultiCompMode currentMode() const noexcept;
     float globalMixTarget(MultiCompMode mode) const noexcept;
-    bool switchChangesAudioFactor(int fromMode, int toMode) const noexcept;
+    bool switchChangesAudioPath(int fromMode, int toMode) const noexcept;
     void resetSwitchDuck() noexcept;
     bool advanceSwitchDuck(int nSamples) noexcept;
     void padWetPath(float* const* out, int nCh, int nSamples) noexcept;
@@ -250,6 +260,14 @@ private:
     // feed and linked partner per oversampled phase.
     std::array<std::vector<float>, kMaxChannels> fetSidechain, fetScPhases, fetPartnerPhases;
     std::vector<float> fetOutputDbCurve;
+    // BUS block path (processBusRange): the external-detector feed per
+    // oversampled phase, and the makeup and Mix ramps per host sample.
+    std::array<std::vector<float>, kMaxChannels> busScPhases;
+    std::vector<float> busOutputDbCurve, busMixCurve;
+    // Studio VCA block path (processStudioVcaRange): each channel's detector level and gain per host sample, and the
+    // makeup per host sample (dB, then linear).
+    std::array<std::vector<float>, kMaxChannels> studioVcaLevels, studioVcaGainCurves;
+    std::vector<float> studioVcaMakeupDb, studioVcaMakeupGain;
     // Scratch for the input guard. Written only when a block actually carries
     // a non-finite or above-ceiling sample; see sanitizeChannels.
     std::array<std::vector<float>, kMaxChannels> sanitizedInput, sanitizedSidechain;
@@ -302,10 +320,11 @@ private:
     bool lastAutoMakeup = false;
     bool firstBlock = true;
     int lastMode = -1;
-    // A mode switch that changes the audio anti-alias oversampler's factor (Opto and vintage FET against the other
-    // modes at 88.2 kHz and above, audioFactorForMode()) would replay that oversampler's delay line from the old
-    // factor: the old mode is held while its wet path fades out, the switch happens at silence, the realignment
-    // stays muted and the new mode fades in (processBlockExternal). Every other switch is instant.
+    // A mode switch that changes the audio path (switchChangesAudioPath(): the anti-alias oversampler's factor, as
+    // Studio VCA against the oversampled modes or Opto and vintage FET against the others at 88.2 kHz and up, or
+    // Opto's output stage) would replay that oversampler's delay line from the old factor or step the latency: the
+    // old mode is held while its wet path fades out, the switch happens at silence, the realignment stays muted
+    // and the new mode fades in (processBlockExternal). Every other switch is instant.
     int switchDuckHeldMode = -1;   // the old mode, processed while the wet path fades out; -1: none held
     int switchDuckPosition = 1;    // fade position in samples: 0 silent .. switchDuckFadeSamples full
     int switchDuckMuted = 0;       // samples still muted after the switch

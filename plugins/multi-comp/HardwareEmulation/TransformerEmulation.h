@@ -56,6 +56,10 @@ public:
     {
         profile = newProfile;
         enabled = profile.hasTransformer;
+        // No saturation, hysteresis or harmonics: only the filters shape the
+        // signal (the conditions mirror processSample's own tests).
+        colourless = profile.saturationAmount == 0.0f && !(profile.hysteresisAmount > 0.0f)
+            && profile.harmonics.h2 <= 0.0f && profile.harmonics.h3 <= 0.0f && profile.harmonics.h4 <= 0.0f;
         updateDCBlocker(profile.dcBlockingFreq);
         updateHFRolloff(profile.highFreqRolloff);
     }
@@ -77,23 +81,36 @@ public:
 
         float hfContent = estimateHighFrequencyContent(input, channel);
 
-        // LF saturates more (transformer core physics — subtle effect)
-        float lfMultiplier = profile.lowFreqSaturation * (1.0f - hfContent * 0.15f);
-
-        float driven = input * lfMultiplier;
-        float saturated = applyTransformerSaturation(driven);
-        float output = input + (saturated - input) * profile.saturationAmount;
-
-        // Magnetic hysteresis
-        if (profile.hysteresisAmount > 0.0f)
+        float output;
+        if (colourless && input != 0.0f && std::isfinite(input))
         {
-            float hystDelta = profile.hysteresisAmount * hysteresisState[channel];
-            output += hystDelta;
-            hysteresisState[channel] = hysteresisState[channel] * 0.95f
-                                     + (output - input) * 0.05f;
+            // input + (saturated - input) * 0: the waveshaper never returns a
+            // non-finite value (a non-finite drive gives 0), so with a finite
+            // input the product is a signed zero and the sum is the nonzero
+            // input itself. A zero or non-finite input takes the full path
+            // below, which decides the sign of zero and the NaN.
+            output = input;
         }
+        else
+        {
+            // LF saturates more (transformer core physics — subtle effect)
+            float lfMultiplier = profile.lowFreqSaturation * (1.0f - hfContent * 0.15f);
 
-        output = addHarmonics(output, profile.harmonics);
+            float driven = input * lfMultiplier;
+            float saturated = applyTransformerSaturation(driven);
+            output = input + (saturated - input) * profile.saturationAmount;
+
+            // Magnetic hysteresis
+            if (profile.hysteresisAmount > 0.0f)
+            {
+                float hystDelta = profile.hysteresisAmount * hysteresisState[channel];
+                output += hystDelta;
+                hysteresisState[channel] = hysteresisState[channel] * 0.95f
+                                         + (output - input) * 0.05f;
+            }
+
+            output = addHarmonics(output, profile.harmonics);
+        }
 
         if (hfRolloffEnabled)
             output = applyHFRolloff(output, channel);
@@ -124,6 +141,7 @@ private:
     double sampleRate = 44100.0;
     int numChannels = 2;
     bool enabled = false;
+    bool colourless = false;   // setProfile()
 
     // DC blocker state
     float dcBlockerCoeff = 0.999f;

@@ -1,6 +1,7 @@
 #include "MultiCompFetProgrammeFixtures.hpp"
 #include "../MultiCompDSP.hpp"
 #include "MultiCompOptoParityFixtures.hpp"
+#include "MultiCompStudioVcaFixtures.hpp"
 #include "MultiCompVcaSwitchFixtures.hpp"
 #include "../../../shared-daf/dsp/DuskCrossover.hpp"
 
@@ -4844,10 +4845,13 @@ void testGoldenVectors()
     // FET RMS .043774959 -> .043787036,
     // peak .553591609 -> .553540170, inside the bound but re-recorded with the
     // owner's approval so the next change has the full bound; siblings unchanged.
+    // Studio VCA converted to the measured studio VCA reference (peak detector, measured static law and release /
+    // attack laws, host rate; 2026-10-26, owner's conversion request): Studio VCA RMS .195212007 -> .161433503,
+    // peak .657659471 -> .349220395; siblings unchanged, bound unchanged.
     constexpr float expectedRms[] = {0.043787036f, 0.021684144f,
-                                     0.615188122f, 0.195212007f, 0.172583029f, 0.212110028f};
+                                     0.615188122f, 0.161433503f, 0.172583029f, 0.212110028f};
     constexpr float expectedPeak[] = {0.553540170f, 0.349883616f,
-                                      1.836065888f, 0.657659471f, 0.349556237f, 0.815853953f};
+                                      1.836065888f, 0.349220395f, 0.349556237f, 0.815853953f};
     std::puts("golden vectors: six JUCE-oracle modes, deterministic step/sine-burst RMS peak");
     for (size_t vectorIndex = 0; vectorIndex < std::size(modes); ++vectorIndex)
     {
@@ -5321,68 +5325,143 @@ float tailLevelDb(const std::vector<float>& out, size_t from)
 void testModeReentryStartsFromRest()
 {
     using duskaudio::MultiCompMode;
-    // static: MSVC rejects the lambda below reading kRate (floating point)
-    // uncaptured (C3493); kBlock follows it.
-    static constexpr double kRate = 48000.0;
+    // static: MSVC rejects a lambda reading a constant uncaptured (C3493).
     static constexpr int kBlock = 64;
-    const auto configure = [](MultiCompDSP& dsp, MultiCompMode mode) {
+    const auto configure = [](MultiCompDSP& dsp, MultiCompMode mode, double rate, int oversampling) {
         dsp.setMode(static_cast<int>(mode));
+        dsp.setOversampling(oversampling);
         dsp.setParameter(MultiCompDSP::Parameter::OptoPeakReduction, 80.0f);
         dsp.setParameter(MultiCompDSP::Parameter::FetInput, 20.0f);
         dsp.setParameter(MultiCompDSP::Parameter::BusThreshold, -12.0f);
         dsp.setParameter(MultiCompDSP::Parameter::DigitalThreshold, -24.0f);
         dsp.setParameter(MultiCompDSP::Parameter::StudioVcaThreshold, -24.0f);
-        dsp.prepare(kRate, kBlock);
+        dsp.prepare(rate, kBlock);
     };
     struct Driver
     {
         MultiCompDSP& dsp;
+        double rate;
         double phase = 0.0;
         void run(double seconds, float amplitude, std::vector<float>* capture = nullptr)
         {
             std::array<float, kBlock> left{}, right{}, outLeft{}, outRight{};
             const float* input[] = {left.data(), right.data()};
             float* output[] = {outLeft.data(), outRight.data()};
-            const int blocks = static_cast<int>(seconds * kRate / kBlock);
+            const int blocks = static_cast<int>(seconds * rate / kBlock);
             for (int block = 0; block < blocks; ++block)
             {
                 for (int i = 0; i < kBlock; ++i)
                 {
                     left[static_cast<size_t>(i)] = right[static_cast<size_t>(i)]
                         = amplitude * static_cast<float>(std::sin(phase));
-                    phase += 2.0 * 3.141592653589793 * 1000.0 / kRate;
+                    phase += 2.0 * 3.141592653589793 * 1000.0 / rate;
                 }
                 dsp.processBlock(input, output, 2, kBlock);
                 if (capture) capture->insert(capture->end(), outLeft.begin(), outLeft.end());
             }
         }
     };
-    for (int m = 0; m < 8; ++m)
-    {
-        const auto mode = static_cast<MultiCompMode>(m);
-        const auto other = mode == MultiCompMode::Opto ? MultiCompMode::FET : MultiCompMode::Opto;
-        MultiCompDSP fresh, reentered;
-        configure(fresh, mode);
-        configure(reentered, mode);
-        std::vector<float> freshOut, reenteredOut;
-        Driver freshDriver{fresh};
-        freshDriver.run(0.3, 0.01f, &freshOut);
-        Driver driver{reentered};
-        driver.run(2.0, 0.5f);
-        reentered.setMode(static_cast<int>(other));
-        driver.run(2.0, 0.5f);
-        driver.run(0.5, 0.01f);
-        reentered.setMode(m);
-        // Same quiet tone, phase-aligned with the fresh render's start.
-        driver.phase = 0.0;
-        driver.run(0.3, 0.01f, &reenteredOut);
-        const size_t from = static_cast<size_t>(0.010 * kRate);
-        const float freshDb = tailLevelDb(freshOut, from);
-        const float reenteredDb = tailLevelDb(reenteredOut, from);
-        std::printf("mode re-entry: mode %d via %d fresh %.3f dB re-entered %.3f dB\n",
-                    m, static_cast<int>(other), freshDb, reenteredDb);
-        require(std::abs(reenteredDb - freshDb) < 0.1f, "a re-entered mode starts from rest");
-    }
+    // Each mode is re-entered from another that ran the loud passage, at the 2x and 4x settings: Opto (FET for Opto
+    // itself); Studio VCA, which runs at the host rate while the anti-alias stages and detector feeds of the
+    // oversampled modes sit idle; Multiband, which runs none of them; and at 96 kHz vintage FET, which runs at the
+    // host rate there (and Opto and FET at 2x under the 4x setting, leaving the 4x inner stage idle). Re-entered
+    // after such a spell, a mode must not start from the audio before it.
+    for (const double rate : {48000.0, 96000.0})
+        for (const int oversampling : {kOversampling2xSetting, kOversampling4xSetting})
+        for (int m = 0; m < 8; ++m)
+        {
+            const auto mode = static_cast<MultiCompMode>(m);
+            std::vector<MultiCompMode> vias{mode == MultiCompMode::Opto ? MultiCompMode::FET : MultiCompMode::Opto};
+            if (mode != MultiCompMode::StudioVCA) vias.push_back(MultiCompMode::StudioVCA);
+            if (mode != MultiCompMode::Multiband) vias.push_back(MultiCompMode::Multiband);
+            if (rate > 48000.0 && mode != MultiCompMode::FET && mode != MultiCompMode::Opto)
+                vias.push_back(MultiCompMode::FET);
+            for (const MultiCompMode other : vias)
+            {
+                MultiCompDSP fresh, reentered;
+                configure(fresh, mode, rate, oversampling);
+                configure(reentered, mode, rate, oversampling);
+                std::vector<float> freshOut, reenteredOut;
+                Driver freshDriver{fresh, rate};
+                freshDriver.run(0.3, 0.01f, &freshOut);
+                Driver driver{reentered, rate};
+                driver.run(2.0, 0.5f);
+                reentered.setMode(static_cast<int>(other));
+                driver.run(2.0, 0.5f);
+                driver.run(0.5, 0.01f);
+                reentered.setMode(m);
+                // Same quiet tone, phase-aligned with the fresh render's start.
+                driver.phase = 0.0;
+                driver.run(0.3, 0.01f, &reenteredOut);
+                const size_t from = static_cast<size_t>(0.010 * rate);
+                const float freshDb = tailLevelDb(freshOut, from);
+                const float reenteredDb = tailLevelDb(reenteredOut, from);
+                std::printf("mode re-entry %.0f Hz %s: mode %d via %d fresh %.3f dB re-entered %.3f dB\n",
+                            rate, oversampling == kOversampling4xSetting ? "4x" : "2x", m, static_cast<int>(other),
+                            freshDb, reenteredDb);
+                require(std::abs(reenteredDb - freshDb) < 0.1f, "a re-entered mode starts from rest");
+            }
+        }
+}
+
+// An Oversampling change during playback restarts a stage the new factor steps and the old one did not (both from
+// Off, the 4x inner stage from 2x): it held the audio from before, and used to replay it. A 1 kHz tone, loud for 1 s
+// and then quiet, is switched to the lower setting for 0.5 s of the quiet part and back: the 20 ms after the return
+// must not rise more than 6 dB above the settled quiet level (a stale stage replayed the loud passage some 30 dB
+// over it).
+void testOversamplingRiseDoesNotReplayStaleAudio()
+{
+    using duskaudio::MultiCompMode;
+    static constexpr int kBlock = 64;
+    struct Toggle { int high, low; const char* name; };
+    const Toggle toggles[] = {{kOversampling2xSetting, kOversamplingOffSetting, "2x/Off/2x"},
+                              {kOversampling4xSetting, kOversampling2xSetting, "4x/2x/4x"}};
+    float worst = -std::numeric_limits<float>::infinity();
+    for (const double rate : {48000.0, 96000.0})
+        for (const Toggle& toggle : toggles)
+            for (const MultiCompMode mode : {MultiCompMode::VCA, MultiCompMode::Bus, MultiCompMode::Digital,
+                                             MultiCompMode::FET})
+            {
+                MultiCompDSP dsp;
+                dsp.setMode(static_cast<int>(mode));
+                dsp.setOversampling(toggle.high);
+                dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+                dsp.prepare(rate, kBlock);
+                std::vector<float> out;
+                double phase = 0.0;
+                const auto run = [&](double seconds, float amplitude) {
+                    std::array<float, kBlock> left{}, right{}, outLeft{}, outRight{};
+                    const float* input[] = {left.data(), right.data()};
+                    float* output[] = {outLeft.data(), outRight.data()};
+                    for (int block = 0; block < static_cast<int>(seconds * rate / kBlock); ++block)
+                    {
+                        for (int i = 0; i < kBlock; ++i)
+                        {
+                            left[static_cast<size_t>(i)] = right[static_cast<size_t>(i)]
+                                = amplitude * static_cast<float>(std::sin(phase));
+                            phase += 2.0 * 3.141592653589793 * 1000.0 / rate;
+                        }
+                        dsp.processBlock(input, output, 2, kBlock);
+                        out.insert(out.end(), outLeft.begin(), outLeft.end());
+                    }
+                };
+                run(1.0, 0.5f);
+                dsp.setOversampling(toggle.low);
+                run(0.5, 0.01f);
+                const size_t back = out.size();
+                dsp.setOversampling(toggle.high);
+                run(0.3, 0.01f);
+                float after = 0.0f, settled = 0.0f;
+                for (size_t i = back; i < back + static_cast<size_t>(0.020 * rate); ++i)
+                    after = std::max(after, std::abs(out[i]));
+                for (size_t i = out.size() - static_cast<size_t>(0.1 * rate); i < out.size(); ++i)
+                    settled = std::max(settled, std::abs(out[i]));
+                const float overDb = 20.0f * std::log10(std::max(after, 1.0e-9f) / std::max(settled, 1.0e-9f));
+                std::printf("oversampling rise %.0f Hz %s mode %d: 20 ms after the return %+.2f dB over settled\n",
+                            rate, toggle.name, static_cast<int>(mode), overDb);
+                worst = std::max(worst, overDb);
+            }
+    require(worst <= 6.0f, "an Oversampling change does not replay the audio from before it");
 }
 
 // The tone the mode-switch tests run: 1 kHz at -6 dBFS.
@@ -5534,9 +5613,11 @@ void testModeSwitchDuckOnlyWhereAntiAliasFactorChanges()
 {
     using duskaudio::MultiCompMode;
 
-    // Switches that keep the factor must stay instant. At 48 kHz every mode runs the setting; from 88.2 kHz up Opto
-    // and FET share one factor and VCA and Digital another, and with Oversampling off all run 1x; Multiband never
-    // runs the anti-alias path, so no switch into or out of it is ducked. A duck holds the wet path (with Mix at
+    // Switches that keep the audio path must stay instant. At 48 kHz the modes that run the setting (VCA, BUS,
+    // Digital; FET at 2x) share its factor and Studio VCA runs 1x; from 88.2 kHz up FET and Studio VCA share one
+    // factor and VCA and Digital another; with Oversampling off all run 1x; a switch into or out of Opto changes the
+    // path at every rate (its output stage's latency). Multiband never runs the anti-alias path, so no switch into
+    // or out of it is ducked. A duck holds the wet path (with Mix at
     // 100 %, the output) silent for 128 samples after its 1 ms fade, so the millisecond after the first reads 0 (at
     // 192 kHz, where the silence is 0.67 ms, a quarter or less); an instant switch reads the entered mode's own level
     // in every one. The first millisecond is not read: entering VCA restarts the anti-alias filters, which refill
@@ -5551,13 +5632,15 @@ void testModeSwitchDuckOnlyWhereAntiAliasFactorChanges()
         std::vector<MultiCompMode> modes;
     };
     const std::vector<MultiCompMode> highRateKeep{
-        MultiCompMode::Opto, MultiCompMode::FET, MultiCompMode::Opto, MultiCompMode::Multiband,
+        MultiCompMode::FET, MultiCompMode::StudioVCA, MultiCompMode::FET, MultiCompMode::Multiband,
         MultiCompMode::Digital, MultiCompMode::VCA, MultiCompMode::Digital, MultiCompMode::Multiband,
-        MultiCompMode::FET};
+        MultiCompMode::Opto, MultiCompMode::Multiband, MultiCompMode::StudioVCA};
     const std::vector<KeepFactorChain> keepFactor{
-        {48000.0, kOversampling2xSetting, {MultiCompMode::VCA, MultiCompMode::Opto, MultiCompMode::VCA}},
-        {48000.0, kOversampling4xSetting, {MultiCompMode::VCA, MultiCompMode::Opto, MultiCompMode::VCA}},
-        {96000.0, kOversamplingOffSetting, {MultiCompMode::Opto, MultiCompMode::VCA, MultiCompMode::Opto}},
+        {48000.0, kOversampling2xSetting, {MultiCompMode::VCA, MultiCompMode::FET, MultiCompMode::Digital,
+                                           MultiCompMode::VCA}},
+        {48000.0, kOversampling4xSetting, {MultiCompMode::VCA, MultiCompMode::Digital, MultiCompMode::VCA}},
+        {96000.0, kOversamplingOffSetting, {MultiCompMode::VCA, MultiCompMode::StudioVCA, MultiCompMode::Digital,
+                                            MultiCompMode::VCA}},
         {96000.0, kOversampling2xSetting, highRateKeep},
         {192000.0, kOversampling4xSetting, highRateKeep}};
     float keepSettled = 0.0f, keepLeastLevel = std::numeric_limits<float>::max();
@@ -5608,21 +5691,32 @@ void testModeSwitchDuckOnlyWhereAntiAliasFactorChanges()
             "a mode switch that keeps the anti-alias factor completes into the entered mode");
     require(keepLeastLevel > 0.5f, "a mode switch that keeps the anti-alias factor is instant, not ducked");
 
-    // Every switch between a fixed-rate mode (Opto, FET) and one that runs the setting (VCA, Studio VCA, Digital),
-    // both ways, at 96 and 192 kHz and both settings: one chain, so each request leaves a steady mode that was
-    // itself entered through a duck. BUS is left out: entered from rest it runs up to 14 dB above its steady level
-    // for about 10 ms, at 48 kHz too where nothing is ducked: a level transient, not a click. Multiband never runs
-    // the anti-alias path. Each switch's click must stay under kModeSwitchClickBound.
+    // Every switch between a mode at the host-rate side (Opto and FET at 96 / 192 kHz, Studio VCA always) and one that
+    // runs the setting (VCA, Digital), both ways, at 96 and 192 kHz and both settings: one chain, so each request
+    // leaves a steady mode that was itself entered through a duck. At 44.1 and 48 kHz, where Opto and FET run the 2x
+    // setting's rate, Studio VCA's switches to and from every other mode change the factor: a chain through it. BUS
+    // is left out: entered from rest it runs up to 14 dB above its steady level for about 10 ms, at 48 kHz too where
+    // nothing is ducked: a level transient, not a click. Multiband never runs the anti-alias path. Each switch's
+    // click must stay under kModeSwitchClickBound.
     const std::vector<MultiCompMode> chain{
-        MultiCompMode::Opto, MultiCompMode::VCA, MultiCompMode::FET, MultiCompMode::StudioVCA,
-        MultiCompMode::Opto, MultiCompMode::Digital, MultiCompMode::FET, MultiCompMode::VCA,
-        MultiCompMode::Opto, MultiCompMode::StudioVCA, MultiCompMode::FET, MultiCompMode::Digital,
+        MultiCompMode::Opto, MultiCompMode::VCA, MultiCompMode::FET, MultiCompMode::Digital,
+        MultiCompMode::StudioVCA, MultiCompMode::VCA, MultiCompMode::Opto, MultiCompMode::Digital,
+        MultiCompMode::FET, MultiCompMode::VCA, MultiCompMode::StudioVCA, MultiCompMode::Digital,
         MultiCompMode::Opto};
+    const std::vector<MultiCompMode> hostRateChain{
+        MultiCompMode::StudioVCA, MultiCompMode::VCA, MultiCompMode::StudioVCA, MultiCompMode::FET,
+        MultiCompMode::StudioVCA, MultiCompMode::Digital, MultiCompMode::StudioVCA, MultiCompMode::Opto,
+        MultiCompMode::StudioVCA};
+    struct ChangeChain { double sampleRate; const std::vector<MultiCompMode>* modes; };
+    const ChangeChain changeChains[] = {{96000.0, &chain}, {192000.0, &chain},
+                                        {44100.0, &hostRateChain}, {48000.0, &hostRateChain}};
     float worstClick = 0.0f, changeSettled = 0.0f;
     int changeSwitches = 0;
-    for (const double sampleRate : {96000.0, 192000.0})
+    for (const ChangeChain& changeChain : changeChains)
         for (const int oversampling : {kOversampling2xSetting, kOversampling4xSetting})
         {
+            const double sampleRate = changeChain.sampleRate;
+            const std::vector<MultiCompMode>& modes = *changeChain.modes;
             std::array<std::vector<float>, duskaudio::kMultiCompModes> alone;
             std::array<float, duskaudio::kMultiCompModes> steadySlope{};
             for (const MultiCompMode mode : {MultiCompMode::Opto, MultiCompMode::FET, MultiCompMode::VCA,
@@ -5630,19 +5724,19 @@ void testModeSwitchDuckOnlyWhereAntiAliasFactorChanges()
             {
                 std::vector<float>& own = alone[static_cast<size_t>(mode)];
                 own = renderModeSwitchSequence(sampleRate, oversampling, 256,
-                                               std::vector<MultiCompMode>(chain.size(), mode));
+                                               std::vector<MultiCompMode>(modes.size(), mode));
                 steadySlope[static_cast<size_t>(mode)] = largestStepBetween(own, kModeSwitchSegment,
                                                                             static_cast<int>(own.size()));
             }
             for (const int block : {32, 256})
             {
-                const std::vector<float> out = renderModeSwitchSequence(sampleRate, oversampling, block, chain);
+                const std::vector<float> out = renderModeSwitchSequence(sampleRate, oversampling, block, modes);
                 float chainWorst = 0.0f, chainLeast = std::numeric_limits<float>::max(), chainSettled = 0.0f;
                 size_t worstSwitch = 1;
-                for (size_t k = 1; k < chain.size(); ++k)
+                for (size_t k = 1; k < modes.size(); ++k)
                 {
-                    const size_t from = static_cast<size_t>(chain[k - 1]);
-                    const size_t to = static_cast<size_t>(chain[k]);
+                    const size_t from = static_cast<size_t>(modes[k - 1]);
+                    const size_t to = static_cast<size_t>(modes[k]);
                     const int request = static_cast<int>(k) * kModeSwitchSegment;
                     const float click = largestStepBetween(out, request, request + kModeSwitchSegment)
                         / std::max(steadySlope[from], steadySlope[to]);
@@ -5659,8 +5753,8 @@ void testModeSwitchDuckOnlyWhereAntiAliasFactorChanges()
                 std::printf("mode-switch duck: %3.0f kHz %-3s block %3d, factor changes: click worst %.2fx (%s>%s) "
                             "least %.2fx, settled %.1e\n",
                             sampleRate / 1000.0, oversamplingSettingName(oversampling), block, chainWorst,
-                            kModeSwitchModeNames[static_cast<size_t>(chain[worstSwitch - 1])],
-                            kModeSwitchModeNames[static_cast<size_t>(chain[worstSwitch])], chainLeast, chainSettled);
+                            kModeSwitchModeNames[static_cast<size_t>(modes[worstSwitch - 1])],
+                            kModeSwitchModeNames[static_cast<size_t>(modes[worstSwitch])], chainLeast, chainSettled);
                 worstClick = std::max(worstClick, chainWorst);
                 changeSettled = std::max(changeSettled, chainSettled);
             }
@@ -5754,11 +5848,13 @@ void testModeSwitchDuckRearmsAndSurvivesRecovery()
 }
 
 // MultiCompPlugin holds every mode's output at the deepest mode's latency (setHostLatencyPadding), so the host hears
-// one latency in every mode. Of the anti-alias modes only Opto's base latency differs (its output stage: 12 samples
-// at 88.2 / 96 kHz, 24 at 176.4 / 192 kHz), so a ducked switch to or from Opto changes the padding too, and the
-// output the host plays must not click either. Every such switch, both ways, at 88.2, 96, 176.4 and 192 kHz and both
-// settings, with 32- and 512-sample host blocks on a fixed grid (every request mid-block), against each mode's own
-// padded render: padded renders all play at the host latency, so they line up sample for sample. Padding each host
+// one latency in every mode. Of the anti-alias modes only Opto's base latency differs (its output stage: 6 samples
+// at 44.1 / 48 kHz, 12 at 88.2 / 96 kHz, 24 at 176.4 / 192 kHz), so every switch to or from Opto is ducked and
+// changes the padding too, and the output the host plays must not click either. Every such switch, both ways (VCA,
+// Studio VCA, Digital and FET), at 44.1, 48, 88.2, 96, 176.4 and 192 kHz and both settings, with 32- and 512-sample
+// host blocks on a fixed grid (every request mid-block), against each mode's own padded render: padded renders all
+// play at the host latency, so they line up sample for sample. (Instant VCA / FET <-> Opto switches stepped 6.6-7x
+// the steady slope at 44.1 / 48 kHz and 12-29x at 88.2-176.4 kHz before 2026-10-26.) Padding each host
 // block with the padding of the mode it ended in (the plugin's own pad before the DSP took it over) moved a ducked
 // switch's fade-out by the padding change: up to 22x the steady slope.
 void testModeSwitchDuckPaddedToHostLatency()
@@ -5766,18 +5862,18 @@ void testModeSwitchDuckPaddedToHostLatency()
     using duskaudio::MultiCompMode;
     const std::vector<MultiCompMode> chain{
         MultiCompMode::Opto, MultiCompMode::VCA, MultiCompMode::Opto, MultiCompMode::StudioVCA,
-        MultiCompMode::Opto, MultiCompMode::Digital, MultiCompMode::Opto};
+        MultiCompMode::Opto, MultiCompMode::Digital, MultiCompMode::Opto, MultiCompMode::FET, MultiCompMode::Opto};
     // The padding is in effect only if Opto's padded render lines up with its partners': unpadded they stand 0.377
     // or more apart (Opto's extra latency is 45 degrees of the tone), padded they differ by their voicing alone.
     float alignment = 0.0f, worstClick = 0.0f, worstSettled = 0.0f;
     int switches = 0;
-    for (const double sampleRate : {88200.0, 96000.0, 176400.0, 192000.0})
+    for (const double sampleRate : {44100.0, 48000.0, 88200.0, 96000.0, 176400.0, 192000.0})
         for (const int oversampling : {kOversampling2xSetting, kOversampling4xSetting})
         {
             std::array<std::vector<float>, duskaudio::kMultiCompModes> padded;
             std::array<float, duskaudio::kMultiCompModes> steadySlope{};
             for (const MultiCompMode mode : {MultiCompMode::Opto, MultiCompMode::VCA, MultiCompMode::StudioVCA,
-                                             MultiCompMode::Digital})
+                                             MultiCompMode::Digital, MultiCompMode::FET})
             {
                 std::vector<float>& own = padded[static_cast<size_t>(mode)];
                 own = renderModeSwitchSequence(sampleRate, oversampling, 256,
@@ -5786,6 +5882,8 @@ void testModeSwitchDuckPaddedToHostLatency()
                                                                             static_cast<int>(own.size()));
             }
             const std::vector<float>& opto = padded[static_cast<size_t>(MultiCompMode::Opto)];
+            // FET's own voicing stands 0.45 apart from Opto's at this level, so it takes part in the switch checks
+            // below but not in this alignment check, which needs partners near Opto's level.
             for (const MultiCompMode partner : {MultiCompMode::VCA, MultiCompMode::StudioVCA, MultiCompMode::Digital})
                 alignment = std::max(alignment, largestDifferenceBetween(opto, padded[static_cast<size_t>(partner)],
                                                                          kModeSwitchSegment,
@@ -11974,6 +12072,365 @@ void testAtomicControlSnapshotsAreSingleLoad()
     std::puts("atomic snapshots: oversampling/global lookahead/Digital lookahead loaded once per block");
 }
 
+// Studio VCA against the reference studio VCA compressor's sample-accurate square-wave traces
+// (MultiCompStudioVcaFixtures.hpp). The reference is a zero-latency digital gain; the core runs the mode at the host
+// rate (audioFactorForMode() gives 1) behind the anti-alias stage's common latency, so the gain the core applied to
+// input sample i is output[i + latency] / input[i]. These are gate assertions (require): the mode is the reference's
+// measured laws (MultiCompStudioVcaLaw.hpp), and the rows are read from the probes those laws were measured on, so
+// each bound is on the difference from the native reading at the same sample (the statics: the same 50 ms window).
+constexpr int kStudioVcaSamplesPerMs = static_cast<int>(studioVcaFixtures::kSampleRate) / 1000;
+
+struct StudioVcaSetting
+{
+    float thresholdDb = -40.0f, ratio = 50.0f, attackMs = 0.1805f, releaseMs = 100.0f;
+    bool autoRelease = false;
+    int oversampling = kOversampling2xSetting;
+};
+
+struct StudioVcaRender
+{
+    std::vector<float> left, right;
+    int latency = 0;
+};
+
+// The probe's stimulus: a 100 Hz square at 48 kHz, positive while (n mod 480) < 240, through `steps` (each length
+// truncated to whole samples, as the probe does), cut to `length` samples. Matches the probe's WAV files bit for bit
+// (compared on macOS).
+std::vector<float> studioVcaSquare(const studioVcaFixtures::Step* steps, size_t count, size_t length)
+{
+    std::vector<float> x;
+    x.reserve(length);
+    for (size_t s = 0; s < count && x.size() < length; ++s)
+    {
+        const float level = static_cast<float>(std::pow(10.0, steps[s].dbfs / 20.0));
+        const size_t samples = static_cast<size_t>(steps[s].seconds * studioVcaFixtures::kSampleRate);
+        for (size_t k = 0; k < samples && x.size() < length; ++k)
+            x.push_back(x.size() % studioVcaFixtures::kSquarePeriod < studioVcaFixtures::kSquarePeriod / 2
+                            ? level : -level);
+    }
+    requireStructure(x.size() == length, "Studio VCA stimulus sequence covers the render");
+    return x;
+}
+
+template <size_t N>
+std::vector<float> studioVcaSquare(const std::array<studioVcaFixtures::Step, N>& steps, size_t length)
+{
+    return studioVcaSquare(steps.data(), N, length);
+}
+
+// The first sample of step `index` of a sequence.
+template <size_t N>
+int studioVcaStepStart(const std::array<studioVcaFixtures::Step, N>& steps, int index)
+{
+    size_t start = 0;
+    for (int s = 0; s < index; ++s)
+        start += static_cast<size_t>(steps[static_cast<size_t>(s)].seconds * studioVcaFixtures::kSampleRate);
+    return static_cast<int>(start);
+}
+
+StudioVcaRender renderStudioVca(const StudioVcaSetting& setting, const std::vector<float>& left,
+                                const std::vector<float>& right)
+{
+    MultiCompDSP dsp;
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::StudioVCA));
+    dsp.setOversampling(setting.oversampling);
+    dsp.setMix(100.0f);
+    dsp.setStereoLink(100.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::StudioVcaThreshold, setting.thresholdDb);
+    dsp.setParameter(MultiCompDSP::Parameter::StudioVcaRatio, setting.ratio);
+    dsp.setParameter(MultiCompDSP::Parameter::StudioVcaAttack, setting.attackMs);
+    dsp.setParameter(MultiCompDSP::Parameter::StudioVcaRelease, setting.releaseMs);
+    dsp.setParameter(MultiCompDSP::Parameter::StudioVcaOutput, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::StudioVcaInput, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::StudioVcaAutoRelease, setting.autoRelease ? 1.0f : 0.0f);
+    constexpr int block = 512;
+    dsp.prepare(studioVcaFixtures::kSampleRate, block);
+    StudioVcaRender render;
+    render.latency = dsp.getLatencySamples();
+    render.left.assign(left.size(), 0.0f);
+    render.right.assign(right.size(), 0.0f);
+    for (size_t start = 0; start < left.size(); start += block)
+    {
+        const int count = static_cast<int>(std::min<size_t>(block, left.size() - start));
+        const float* in[] = {left.data() + start, right.data() + start};
+        float* out[] = {render.left.data() + start, render.right.data() + start};
+        dsp.processBlock(in, out, 2, count);
+    }
+    return render;
+}
+
+// The gain (dB) the core applied to input sample i: the output `latency` samples later over the input.
+double studioVcaGainDb(const std::vector<float>& input, const std::vector<float>& output, int latency, int i)
+{
+    requireStructure(i >= 0 && static_cast<size_t>(i + latency) < output.size()
+                         && input[static_cast<size_t>(i)] != 0.0f,
+                     "Studio VCA gain is read inside the render, on a non-zero input sample");
+    return 20.0 * std::log10(std::abs(static_cast<double>(output[static_cast<size_t>(i + latency)])
+                                      / static_cast<double>(input[static_cast<size_t>(i)])));
+}
+
+// (a) Static law: the probe's staircase at threshold -50 dBFS, attack 0.1805 ms, release 100 ms, Auto off, make-up 0,
+// 2x oversampling; each step read as the mean gain of its last 50 ms, as the probe reads it. Within 0.02 dB of the
+// native reading at ratio 1.5, 3 and 50 (knob 0, .4, 1) and 5 dB under, at, 10 and 30 dB over threshold.
+void testStudioVcaStaticsMatchReference()
+{
+    namespace fx = studioVcaFixtures;
+    const size_t stepSamples = static_cast<size_t>(fx::kStaircaseStepSeconds * fx::kSampleRate);
+    std::vector<fx::Step> staircase;
+    for (int k = 0; k <= 70; ++k)
+        staircase.push_back({fx::kStaircaseFirstDbfs + k, fx::kStaircaseStepSeconds});
+    const std::vector<float> input = studioVcaSquare(staircase.data(), staircase.size(),
+                                                     staircase.size() * stepSamples);
+    double worst = 0.0;
+    for (size_t first = 0; first < fx::statics.size(); first += 4)
+    {
+        StudioVcaSetting setting;
+        setting.thresholdDb = static_cast<float>(fx::kStaticsThresholdDb);
+        setting.ratio = static_cast<float>(fx::statics[first].ratio);
+        const StudioVcaRender render = renderStudioVca(setting, input, input);
+        for (size_t row = first; row < first + 4; ++row)
+        {
+            const fx::StaticPoint& point = fx::statics[row];
+            requireStructure(point.ratio == fx::statics[first].ratio, "Studio VCA statics rows come four per ratio");
+            const int step = static_cast<int>(std::lround(point.inputDbfs - fx::kStaircaseFirstDbfs));
+            const int end = static_cast<int>(static_cast<size_t>(step + 1) * stepSamples);
+            double sum = 0.0;
+            for (int i = end - fx::kStaticsReadSamples; i < end; ++i)
+                sum += studioVcaGainDb(input, render.left, render.latency, i);
+            const double gain = sum / fx::kStaticsReadSamples;
+            worst = std::max(worst, std::abs(gain - point.gainDb));
+            std::printf("Studio VCA static: ratio %4.1f (knob %.2f) %+5.1f dBFS (%+5.1f over) gain %+.5f dB, "
+                        "native %+.5f, error %+.5f\n", point.ratio, point.knob, point.inputDbfs,
+                        point.inputDbfs - fx::kStaticsThresholdDb, gain, point.gainDb, gain - point.gainDb);
+            require(std::abs(gain - point.gainDb) <= 0.02,
+                    "Studio VCA static gain is within 0.02 dB of the reference studio VCA compressor");
+        }
+    }
+    std::printf("Studio VCA statics: worst error %.5f dB (bound 0.02)\n", worst);
+}
+
+// One trace comparison: the core's gain at each row's sample within `bound` dB of the native reading there.
+template <size_t N>
+void requireStudioVcaTrace(const char* name, const std::vector<float>& input, const StudioVcaRender& render,
+                           int event, const std::array<studioVcaFixtures::TracePoint, N>& trace, double bound,
+                           const char* message)
+{
+    for (const auto& point : trace)
+    {
+        requireStructure(point.sample == event + point.msAfter * kStudioVcaSamplesPerMs,
+                         "Studio VCA trace row sits at its event + ms");
+        const double gain = studioVcaGainDb(input, render.left, render.latency, point.sample);
+        std::printf("Studio VCA %s: %4d ms after the event gain %+.5f dB, native %+.5f, error %+.5f (bound %.2f)\n",
+                    name, point.msAfter, gain, point.gainDb, gain - point.gainDb, bound);
+        require(std::abs(gain - point.gainDb) <= bound, message);
+    }
+}
+
+// (b) Fixed release, 1 s: the -10 -> -40 dBFS step at threshold -40, ratio 50, attack 0.1805 ms, Auto off. Within
+// 0.05 dB of the native trace 50, 300 and 900 ms into the release.
+void testStudioVcaFixedReleaseMatchesReference()
+{
+    namespace fx = studioVcaFixtures;
+    const int event = studioVcaStepStart(fx::releaseSequence, fx::kReleaseEventStep);
+    const std::vector<float> input = studioVcaSquare(fx::releaseSequence,
+                                                     static_cast<size_t>(event + 1000 * kStudioVcaSamplesPerMs));
+    StudioVcaSetting setting;
+    setting.thresholdDb = static_cast<float>(fx::kReleaseThresholdDb);
+    setting.releaseMs = static_cast<float>(fx::kReleaseSeconds * 1000.0);
+    const StudioVcaRender render = renderStudioVca(setting, input, input);
+    requireStudioVcaTrace("release 1 s", input, render, event, fx::releaseTrace, 0.05,
+                          "Studio VCA fixed release follows the reference trace within 0.05 dB");
+}
+
+// (c) Attack 35.431 ms (the reference's attack knob at .75): the -40 -> -10 dBFS step at threshold -40, ratio 50,
+// release 100 ms, Auto off. Within 0.05 dB of the native trace 10, 36 and 100 ms into the attack.
+void testStudioVcaAttackMatchesReference()
+{
+    namespace fx = studioVcaFixtures;
+    const int event = studioVcaStepStart(fx::attackSequence, fx::kAttackEventStep);
+    const std::vector<float> input = studioVcaSquare(fx::attackSequence,
+                                                     static_cast<size_t>(event + 200 * kStudioVcaSamplesPerMs));
+    StudioVcaSetting setting;
+    setting.thresholdDb = static_cast<float>(fx::kAttackThresholdDb);
+    setting.attackMs = static_cast<float>(fx::kAttackKnobMs);
+    setting.releaseMs = static_cast<float>(fx::kAttackReleaseSeconds * 1000.0);
+    const StudioVcaRender render = renderStudioVca(setting, input, input);
+    requireStudioVcaTrace("attack 35.431 ms", input, render, event, fx::attackTrace, 0.05,
+                          "Studio VCA attack follows the reference trace within 0.05 dB");
+}
+
+// (d) Auto Release: -10 dBFS bursts on a -40 dBFS bed at threshold -40, ratio 50, attack 0.1805 ms. The recovery after
+// the 10 ms and the 3 s burst within 0.3 dB of the native trace 100, 600 and 1200 ms after each burst ends.
+void testStudioVcaAutoReleaseMatchesReference()
+{
+    namespace fx = studioVcaFixtures;
+    const int shortEnd = studioVcaStepStart(fx::autoSequence, fx::kAutoShortBurstEndStep);
+    const int longEnd = studioVcaStepStart(fx::autoSequence, fx::kAutoLongBurstEndStep);
+    const std::vector<float> input = studioVcaSquare(fx::autoSequence,
+                                                     static_cast<size_t>(longEnd + 1300 * kStudioVcaSamplesPerMs));
+    StudioVcaSetting setting;
+    setting.thresholdDb = static_cast<float>(fx::kAutoThresholdDb);
+    setting.releaseMs = 1000.0f;
+    setting.autoRelease = true;
+    const StudioVcaRender render = renderStudioVca(setting, input, input);
+    requireStudioVcaTrace("Auto after 10 ms burst", input, render, shortEnd, fx::autoAfterShortBurst, 0.3,
+                          "Studio VCA Auto Release recovers from a 10 ms burst within 0.3 dB of the reference");
+    requireStudioVcaTrace("Auto after 3 s burst", input, render, longEnd, fx::autoAfterLongBurst, 0.3,
+                          "Studio VCA Auto Release recovers from a 3 s burst within 0.3 dB of the reference");
+}
+
+// (e) Linked detector: the reference detects the louder channel's peak and applies one gain to both. At Stereo Link
+// 100 % a channel 40 dB under the other (on its own at most -50 dBFS, 10 dB under the threshold, where the static law
+// is still 0 dB) takes the loud channel's gain on every sample within 0.01 dB, through an attack, a hold and a release
+// (threshold -40, ratio 50, attack 0.1805 ms, release 100 ms); either way round.
+void testStudioVcaLinkedDetectorSharesGain()
+{
+    namespace fx = studioVcaFixtures;
+    // The attack sequence's first 2.5 s: 1 s at -40 dBFS, 1 s at -10 dBFS, 0.5 s back at -40 dBFS.
+    const int holdEnd = studioVcaStepStart(fx::attackSequence, 2);
+    const std::vector<float> loud = studioVcaSquare(fx::attackSequence,
+                                                    static_cast<size_t>(holdEnd + 500 * kStudioVcaSamplesPerMs));
+    std::vector<float> quiet(loud.size());
+    const float quietScale = static_cast<float>(std::pow(10.0, -40.0 / 20.0));
+    for (size_t i = 0; i < loud.size(); ++i) quiet[i] = loud[i] * quietScale;
+    for (const bool loudLeft : {true, false})
+    {
+        StudioVcaSetting setting;
+        const StudioVcaRender render = loudLeft ? renderStudioVca(setting, loud, quiet)
+                                                : renderStudioVca(setting, quiet, loud);
+        const std::vector<float>& loudOut = loudLeft ? render.left : render.right;
+        const std::vector<float>& quietOut = loudLeft ? render.right : render.left;
+        double worst = 0.0, deepest = 0.0;
+        for (int i = 0; i + render.latency < static_cast<int>(loud.size()); ++i)
+        {
+            const double loudGain = studioVcaGainDb(loud, loudOut, render.latency, i);
+            deepest = std::min(deepest, loudGain);
+            worst = std::max(worst, std::abs(studioVcaGainDb(quiet, quietOut, render.latency, i) - loudGain));
+        }
+        std::printf("Studio VCA link: loud %s, deepest gain %+.4f dB, quiet channel's worst difference %.6f dB\n",
+                    loudLeft ? "left" : "right", deepest, worst);
+        // The depth keeps the comparison from passing on two uncompressed channels.
+        require(deepest < -25.0 && worst <= 0.01,
+                "Studio VCA linked detector applies the loud channel's gain reduction to the quiet one");
+    }
+}
+
+// (e2) Mid-Side with an external key: processBlock encodes the audio into mid and side, and the external key must be
+// encoded the same way. A pure-side programme (L = -R at -50 dBFS, under the threshold) keyed by a loud pure-mid
+// sidechain (L = R at -10 dBFS): the mid detector hears the key, the side detector hears nothing, so the side audio
+// passes untouched (within 0.01 dB). A side detector reading the key's right channel would duck it by some 35 dB.
+// And the key is heard: the mid reduces by some 30 dB (the meter must read at least 20), where an ignored or silent
+// key would leave the side untouched too.
+void testStudioVcaMidSideEncodesExternalKey()
+{
+    namespace fx = studioVcaFixtures;
+    MultiCompDSP dsp;
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::StudioVCA));
+    dsp.setOversampling(kOversampling2xSetting);
+    dsp.setMix(100.0f);
+    dsp.setStereoLink(100.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::StereoLinkMode, 1.0f);   // Mid-Side
+    dsp.setExternalSidechain(true);
+    dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::StudioVcaThreshold, -40.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::StudioVcaRatio, 50.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::StudioVcaAttack, 0.1805f);
+    dsp.setParameter(MultiCompDSP::Parameter::StudioVcaRelease, 100.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::StudioVcaAutoRelease, 0.0f);
+    constexpr int block = 512;
+    dsp.prepare(fx::kSampleRate, block);
+    const int latency = dsp.getLatencySamples();
+    const size_t length = static_cast<size_t>(fx::kSampleRate);   // 1 s
+    const float quiet = static_cast<float>(std::pow(10.0, -50.0 / 20.0));
+    const float loud = static_cast<float>(std::pow(10.0, -10.0 / 20.0));
+    std::vector<float> left(length), right(length), key(length), outLeft(length), outRight(length);
+    for (size_t i = 0; i < length; ++i)
+    {
+        const bool high = i % fx::kSquarePeriod < fx::kSquarePeriod / 2;
+        left[i] = high ? quiet : -quiet;
+        right[i] = -left[i];
+        key[i] = high ? loud : -loud;
+    }
+    for (size_t start = 0; start < length; start += block)
+    {
+        const int count = static_cast<int>(std::min<size_t>(block, length - start));
+        const float* in[] = {left.data() + start, right.data() + start};
+        const float* sc[] = {key.data() + start, key.data() + start};
+        float* out[] = {outLeft.data() + start, outRight.data() + start};
+        dsp.processBlockExternal(in, sc, out, 2, count);
+    }
+    double worst = 0.0;
+    for (int i = static_cast<int>(length) / 2; i + latency < static_cast<int>(length); ++i)
+        worst = std::max({worst, std::abs(studioVcaGainDb(left, outLeft, latency, i)),
+                          std::abs(studioVcaGainDb(right, outRight, latency, i))});
+    const float keyedReduction = dsp.getGainReduction();
+    std::printf("Studio VCA Mid-Side external key: side programme's worst gain change %.6f dB, mid reduction "
+                "%.2f dB\n", worst, keyedReduction);
+    require(worst <= 0.01, "Studio VCA in Mid-Side encodes the external key: a mid-only key leaves the side alone");
+    require(keyedReduction <= -20.0f, "Studio VCA in Mid-Side hears the external key on the mid");
+}
+
+// (f) Host rate: the reference has no oversampling, and the mode runs at the host rate at every Oversampling
+// setting, so 1x, 2x and 4x render the same samples at the same latency, bit for bit. A stereo programme through an
+// attack, a hold and an Auto release, the channels 6 dB apart (threshold -40, ratio 3, attack 7.375 ms, Auto on).
+// And nothing filters between the input and its gain:
+// over the last period of a settled square every sample carries the same gain (within 1e-4 dB), where an
+// anti-alias filter would ring at each edge.
+void testStudioVcaRunsAtHostRate()
+{
+    namespace fx = studioVcaFixtures;
+    // The attack sequence's first 2.5 s: 1 s at -40 dBFS, 1 s at -10 dBFS, 0.5 s back at -40 dBFS.
+    const int holdEnd = studioVcaStepStart(fx::attackSequence, 2);
+    const std::vector<float> left = studioVcaSquare(fx::attackSequence,
+                                                    static_cast<size_t>(holdEnd + 500 * kStudioVcaSamplesPerMs));
+    std::vector<float> right(left.size());
+    const float rightScale = static_cast<float>(std::pow(10.0, -6.0 / 20.0));
+    for (size_t i = 0; i < left.size(); ++i) right[i] = left[i] * rightScale;
+    StudioVcaSetting setting;
+    setting.ratio = 3.0f;
+    setting.attackMs = 7.375f;
+    setting.releaseMs = 1000.0f;
+    setting.autoRelease = true;
+    std::array<StudioVcaRender, 3> renders;
+    for (int os = kOversamplingOffSetting; os <= kOversampling4xSetting; ++os)
+    {
+        setting.oversampling = os;
+        renders[static_cast<size_t>(os)] = renderStudioVca(setting, left, right);
+    }
+    bool identical = true;
+    for (int os = kOversampling2xSetting; os <= kOversampling4xSetting; ++os)
+    {
+        const StudioVcaRender& render = renders[static_cast<size_t>(os)];
+        const bool sameLeft = std::memcmp(render.left.data(), renders[0].left.data(),
+                                          render.left.size() * sizeof(float)) == 0;
+        const bool sameRight = std::memcmp(render.right.data(), renders[0].right.data(),
+                                           render.right.size() * sizeof(float)) == 0;
+        std::printf("Studio VCA host rate: setting %d latency %d (off: %d), samples bit-identical to off: %s\n", os,
+                    render.latency, renders[0].latency, sameLeft && sameRight ? "yes" : "no");
+        identical = identical && render.latency == renders[0].latency && sameLeft && sameRight;
+    }
+    require(identical, "Studio VCA renders the same samples at the same latency at every Oversampling setting");
+    // The last period of the 1 s hold at -10 dBFS, at the default 2x setting.
+    const StudioVcaRender& twice = renders[static_cast<size_t>(kOversampling2xSetting)];
+    double spread = 0.0;
+    for (const bool useLeft : {true, false})
+    {
+        const std::vector<float>& in = useLeft ? left : right;
+        const std::vector<float>& out = useLeft ? twice.left : twice.right;
+        double lowest = std::numeric_limits<double>::infinity(), highest = -lowest;
+        for (int i = holdEnd - fx::kSquarePeriod; i < holdEnd; ++i)
+        {
+            const double gain = studioVcaGainDb(in, out, twice.latency, i);
+            lowest = std::min(lowest, gain);
+            highest = std::max(highest, gain);
+        }
+        spread = std::max(spread, highest - lowest);
+    }
+    std::printf("Studio VCA host rate: settled square, per-sample gain spread over one period %.3g dB\n", spread);
+    require(spread <= 1.0e-4, "Studio VCA applies one gain per input sample, with no filter between");
+}
+
 // Report-only: every test that compares against measured reference data, and
 // the mixed tests whose reference assertions use requireParity().
 int runParityTests()
@@ -12088,6 +12545,8 @@ int main(int argc, char** argv)
     { testLongReleaseSettlesAtHighRates(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--mode-reentry") == 0)
     { testModeReentryStartsFromRest(); return 0; }
+    if (argc == 2 && std::strcmp(argv[1], "--oversampling-rise") == 0)
+    { testOversamplingRiseDoesNotReplayStaleAudio(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--parity") == 0)
         return runParityTests();
     if (argc == 2 && std::strcmp(argv[1], "--hidden-controls") == 0)
@@ -12112,6 +12571,20 @@ int main(int argc, char** argv)
     if (argc == 2 && std::strcmp(argv[1], "--opto-reset") == 0)
     {
         testOptoResetClearsSpectralAndEventState();
+        return 0;
+    }
+    // Also in the default run below; separately reachable so the break-first proof can run it against the parent
+    // core without the rest of the suite.
+    if (argc == 2 && std::strcmp(argv[1], "--studio-vca") == 0)
+    {
+        testStudioVcaStaticsMatchReference();
+        testStudioVcaFixedReleaseMatchesReference();
+        testStudioVcaAttackMatchesReference();
+        testStudioVcaAutoReleaseMatchesReference();
+        testStudioVcaLinkedDetectorSharesGain();
+        testStudioVcaMidSideEncodesExternalKey();
+        testStudioVcaRunsAtHostRate();
+        std::puts("Multi-Comp Studio VCA reference tests: PASS");
         return 0;
     }
     if (argc == 2 && std::strcmp(argv[1], "--vca-alignment") == 0)
@@ -12497,12 +12970,20 @@ int main(int argc, char** argv)
     testHighRateLowCornerFiltersStayStable();
     testLongReleaseSettlesAtHighRates();
     testModeReentryStartsFromRest();
+    testOversamplingRiseDoesNotReplayStaleAudio();
     testModeSwitchDuckOnlyWhereAntiAliasFactorChanges();
     testModeSwitchDuckRearmsAndSurvivesRecovery();
     testModeSwitchDuckPaddedToHostLatency();
     testModeSwitchKeepsDryPathsAtHostLatency();
     testHiddenControlsStayOutOfModesWithoutThem();
     testGlobalLookaheadOnlyInDigitalModes();
+    testStudioVcaStaticsMatchReference();
+    testStudioVcaFixedReleaseMatchesReference();
+    testStudioVcaAttackMatchesReference();
+    testStudioVcaAutoReleaseMatchesReference();
+    testStudioVcaLinkedDetectorSharesGain();
+    testStudioVcaMidSideEncodesExternalKey();
+    testStudioVcaRunsAtHostRate();
     std::puts("Multi-Comp core tests: PASS");
     return 0;
 }

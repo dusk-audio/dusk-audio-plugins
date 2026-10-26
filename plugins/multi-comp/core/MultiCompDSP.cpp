@@ -36,9 +36,12 @@ int oversamplingFactorForSetting(int setting) noexcept
 
 // The audio anti-alias oversampler's factor for a mode. Opto and vintage FET keep the mode rate of a 44.1 / 48 kHz
 // host (fixedRateModeFactor()): their side chains are designed and fitted at the default 2x setting's mode rate
-// there and depend on it (the FET loop since 2026-10-20). Every other mode runs the setting.
+// there and depend on it (the FET loop since 2026-10-20). Studio VCA runs at the host rate at every setting: its
+// reference has no oversampling, and its gain modulation (and what that aliases) is part of the measured sound.
+// Every other mode runs the setting.
 int audioFactorForMode(MultiCompMode mode, int settingFactor, double hostRate) noexcept
 {
+    if (mode == MultiCompMode::StudioVCA) return 1;
     return mode == MultiCompMode::Opto || mode == MultiCompMode::FET
         ? fixedRateModeFactor(settingFactor, hostRate) : settingFactor;
 }
@@ -258,6 +261,13 @@ void MultiCompDSP::prepare(double sr, int blockSize)
     for (auto& v : fetScPhases) v.assign(static_cast<size_t>(maxBlock * 4), 0.0f);
     for (auto& v : fetPartnerPhases) v.assign(static_cast<size_t>(maxBlock * 4), 0.0f);
     fetOutputDbCurve.assign(static_cast<size_t>(maxBlock), 0.0f);
+    for (auto& v : busScPhases) v.assign(static_cast<size_t>(maxBlock * 4), 0.0f);
+    busOutputDbCurve.assign(static_cast<size_t>(maxBlock), 0.0f);
+    busMixCurve.assign(static_cast<size_t>(maxBlock), 0.0f);
+    for (auto& v : studioVcaLevels) v.assign(static_cast<size_t>(maxBlock), 0.0f);
+    for (auto& v : studioVcaGainCurves) v.assign(static_cast<size_t>(maxBlock), 1.0f);
+    studioVcaMakeupDb.assign(static_cast<size_t>(maxBlock), 0.0f);
+    studioVcaMakeupGain.assign(static_cast<size_t>(maxBlock), 1.0f);
     for (auto& v : optoOwnFeed) v.assign(static_cast<size_t>(maxBlock), 0.0f);
     optoLinkedPhaseBlock.assign(static_cast<size_t>(maxBlock * 4), 0.0f);
     optoGainKnob.assign(static_cast<size_t>(maxBlock), 0.0f);
@@ -475,6 +485,8 @@ void MultiCompDSP::setParameter(Parameter parameter, float value) noexcept
         case Parameter::StudioVcaAttack: params.studioVcaAttack.store(value, std::memory_order_relaxed); break;
         case Parameter::StudioVcaRelease: params.studioVcaRelease.store(value, std::memory_order_relaxed); break;
         case Parameter::StudioVcaOutput: params.studioVcaOutput.store(value, std::memory_order_relaxed); break;
+        case Parameter::StudioVcaInput: params.studioVcaInput.store(value, std::memory_order_relaxed); break;
+        case Parameter::StudioVcaAutoRelease: params.studioVcaAutoRelease.store(b, std::memory_order_relaxed); break;
         case Parameter::DigitalThreshold: params.digitalThreshold.store(value, std::memory_order_relaxed); break;
         case Parameter::DigitalRatio: params.digitalRatio.store(value, std::memory_order_relaxed); break;
         case Parameter::DigitalKnee: params.digitalKnee.store(value, std::memory_order_relaxed); break;
@@ -575,14 +587,14 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
             processPart(offset, std::min(maxBlock, nSamples - offset));
         return;
     }
-    // A switch that changes the audio anti-alias factor holds the old mode while its wet path fades out
+    // A switch that changes the audio path (switchChangesAudioPath) holds the old mode while its wet path fades out
     // (switchDuck*). Where the fade reaches silence inside this block, the block runs in two parts: the old mode
     // up to silence, the new one after it.
     const int requestedMode = std::clamp(params.mode.load(std::memory_order_relaxed), 0, 7);
     if (requestedMode == switchDuckHeldMode)
         switchDuckHeldMode = -1;   // switched back before silence: no switch, the fade turns round
     else if (switchDuckHeldMode < 0 && !firstBlock && lastMode >= 0 && requestedMode != lastMode
-             && switchChangesAudioFactor(lastMode, requestedMode))
+             && switchChangesAudioPath(lastMode, requestedMode))
     {
         if (switchDuckPosition > 0)
             switchDuckHeldMode = lastMode;              // audible: fade the old mode out first
@@ -919,6 +931,16 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
             {
                 multibandEnvelopes.fill(1.0f);
                 resetCrossovers();
+            }
+            // Multiband runs none of the anti-alias stages, the detector feeds or the host sidechain alignment: they
+            // still hold the audio from before it, which the entered mode must not start from.
+            if (lastMode == static_cast<int>(MultiCompMode::Multiband))
+            {
+                for (auto& os : oversamplers) os.reset();
+                optoLinkedDetectorUpsampler.reset();
+                for (auto& upsampler : optoOwnDetectorUpsamplers) upsampler.reset();
+                for (auto& upsampler : busExternalOversamplers) upsampler.reset();
+                for (auto& line : hostSidechainHistory) line.fill(0.0f);
             }
         }
         lastMode = modeIndex;
@@ -1406,15 +1428,22 @@ MultiCompMode MultiCompDSP::currentMode() const noexcept
     return static_cast<MultiCompMode>(std::clamp(params.mode.load(std::memory_order_relaxed), 0, 7));
 }
 
-// Whether a switch between two modes changes the audio anti-alias oversampler's factor at the current setting
-// and rate. Multiband never runs that oversampler, so its switches stay instant.
-bool MultiCompDSP::switchChangesAudioFactor(int fromMode, int toMode) const noexcept
+// Whether a switch between two modes changes the audio path ahead of the output: the anti-alias oversampler's
+// factor at the current setting and rate, or whether Opto's output stage is in the path (it adds latency at every
+// rate, 6 host samples at 44.1 / 48 kHz and 12 at 88.2 / 96 kHz, which the other modes take as wet-path padding).
+// An instant switch swaps a running stage for a pad line and plays as a step: before 2026-10-26 VCA / FET <-> Opto
+// stepped 6.6-7x the steady slope at 44.1 / 48 kHz and 12-29x at 88.2-176.4 kHz. Multiband never runs the
+// oversampler, so its switches stay instant.
+bool MultiCompDSP::switchChangesAudioPath(int fromMode, int toMode) const noexcept
 {
     const auto multiband = static_cast<int>(MultiCompMode::Multiband);
     if (fromMode == multiband || toMode == multiband) return false;
     const int setting = oversamplingFactorForSetting(params.oversampling.load(std::memory_order_relaxed));
-    return audioFactorForMode(static_cast<MultiCompMode>(fromMode), setting, sampleRate)
-        != audioFactorForMode(static_cast<MultiCompMode>(toMode), setting, sampleRate);
+    if (audioFactorForMode(static_cast<MultiCompMode>(fromMode), setting, sampleRate)
+        != audioFactorForMode(static_cast<MultiCompMode>(toMode), setting, sampleRate))
+        return true;
+    const auto opto = static_cast<int>(MultiCompMode::Opto);
+    return (fromMode == opto) != (toMode == opto);
 }
 
 void MultiCompDSP::resetSwitchDuck() noexcept
@@ -1523,6 +1552,8 @@ void MultiCompDSP::syncModeParameters(MultiCompMode mode, float digitalLookahead
             copyParameter(modeParams.studioVcaAttack, params.studioVcaAttack);
             copyParameter(modeParams.studioVcaRelease, params.studioVcaRelease);
             copyParameter(modeParams.studioVcaOutput, params.studioVcaOutput);
+            copyParameter(modeParams.studioVcaInput, params.studioVcaInput);
+            copyParameter(modeParams.studioVcaAutoRelease, params.studioVcaAutoRelease);
             break;
         case MultiCompMode::Digital:
             copyParameter(modeParams.digitalThreshold, params.digitalThreshold);
@@ -1595,8 +1626,16 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
     if (mode == MultiCompMode::FET)
         processFetRange(in, sidechain, out, nCh, nSamples, external, linkAmount, linkMode, actualOs,
                         hostSidechainDelay, manualOutputDb, distortionType, distortionAmount);
+    if (mode == MultiCompMode::StudioVCA)
+        processStudioVcaRange(in, sidechain, out, nCh, nSamples, external, linkAmount, linkMode, hostSidechainDelay,
+                              manualOutputDb, distortionType, distortionAmount);
+    // BUS takes the block path as a linked stereo pair (the default layout).
+    const bool busBlockPath = mode == MultiCompMode::Bus && linkMode == 0 && linkAmount > 0.0001f && nCh > 1;
+    if (busBlockPath)
+        processBusRange(in, sidechain, out, nSamples, external, linkAmount, actualOs, hostSidechainDelay,
+                        manualOutputDb, distortionType, distortionAmount);
     const bool blockPath = mode == MultiCompMode::VCA || mode == MultiCompMode::Opto
-        || mode == MultiCompMode::FET;
+        || mode == MultiCompMode::FET || mode == MultiCompMode::StudioVCA || busBlockPath;
     for (int i = 0; i < nSamples && !blockPath; ++i)
     {
         const float scaledOutputDb = manualOutputDb * manualMakeupScaleRamp.next();
@@ -1678,42 +1717,6 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
         {
             optoOwnDetectorUpsamplers[0].idle(optoOwnFeed0);
             optoOwnDetectorUpsamplers[1].idle(optoOwnFeed1);
-        }
-        if (mode == MultiCompMode::Bus && link)
-        {
-            std::array<float, 4> inputLeftPhases{}, inputRightPhases{};
-            std::array<float, 4> outputLeftPhases{}, outputRightPhases{};
-            oversamplers[0].upsampleSample(in[0][i], inputLeftPhases.data());
-            oversamplers[1].upsampleSample(in[1][i], inputRightPhases.data());
-            for (int phase = 0; phase < actualOs; ++phase)
-            {
-                const float phaseSc0 = busExternalPhases[0][static_cast<size_t>(phase)];
-                const float phaseSc1 = busExternalPhases[1][static_cast<size_t>(phase)];
-                modes.processBusPair(
-                    inputLeftPhases[static_cast<size_t>(phase)],
-                    inputRightPhases[static_cast<size_t>(phase)],
-                    phaseSc0, phaseSc1, modeParams, localBusMix,
-                    external, linkAmount,
-                    outputLeftPhases[static_cast<size_t>(phase)],
-                    outputRightPhases[static_cast<size_t>(phase)]);
-                outputLeftPhases[static_cast<size_t>(phase)] = applyCoreDistortion(
-                    outputLeftPhases[static_cast<size_t>(phase)],
-                    distortionType, distortionAmount);
-                outputRightPhases[static_cast<size_t>(phase)] = applyCoreDistortion(
-                    outputRightPhases[static_cast<size_t>(phase)],
-                    distortionType, distortionAmount);
-            }
-            out[0][i] = oversamplers[0].downsampleSample(outputLeftPhases.data());
-            out[1][i] = oversamplers[1].downsampleSample(outputRightPhases.data());
-            // The generic per-channel path is skipped this sample, so its
-            // carried endpoints stop tracking the input.  Invalidate them here
-            // and let the next generic sample re-seed instead of interpolating
-            // from an arbitrarily old value when the link is switched off.
-            previousOversampledSidechainValid = {{false, false}};
-            previousOptoOwnSidechainValid = {{false, false}};
-            busCompressionMeter.process(bypassSettled ? 0.0f
-                : -std::min(modes.gainReduction(mode, 0), modes.gainReduction(mode, 1)));
-            continue;
         }
         if (optoCellLink)
         {
@@ -1917,11 +1920,13 @@ void MultiCompDSP::processVcaRange(const float* const* in, const float* const* s
 }
 
 // The host-rate bookkeeping of the per-sample loop for a mode that reads none of
-// the detector feeds (VCA, FET): the host sidechain history advances by its
+// the detector feeds (VCA, FET, Studio VCA): the host sidechain history advances by its
 // alignment delay (the aligned samples land in vcaFeedScratch[0] and [1]) and
-// every detector feed keeps its history (LazyUpsampler).
+// every detector feed keeps its history (LazyUpsampler; at 1x there is none to
+// keep, and a stage restarts from rest when a factor steps it again). BUS reads its own
+// feed and passes idleBusFeed = false.
 void MultiCompDSP::idleHostRateFeeds(const float* sc0, const float* sc1, int nSamples, int hostSidechainDelay,
-                                     bool midSideDetector) noexcept
+                                     bool midSideDetector, bool idleBusFeed) noexcept
 {
     float* aligned0 = vcaFeedScratch[0].data();
     float* aligned1 = vcaFeedScratch[1].data();
@@ -1931,8 +1936,11 @@ void MultiCompDSP::idleHostRateFeeds(const float* sc0, const float* sc1, int nSa
     write = hostSidechainWrite;
     delayLineBlock(hostSidechainHistory[1].data(), kHostSidechainRing, write, hostSidechainDelay, sc1, aligned1, nSamples);
     hostSidechainWrite = write;
-    busExternalOversamplers[0].idleBlock(sc0, nSamples);
-    busExternalOversamplers[1].idleBlock(sc1, nSamples);
+    if (idleBusFeed)
+    {
+        busExternalOversamplers[0].idleBlock(sc0, nSamples);
+        busExternalOversamplers[1].idleBlock(sc1, nSamples);
+    }
     for (int i = 0; i < nSamples; ++i)
         feed[i] = std::abs(aligned0[i]) >= std::abs(aligned1[i]) ? aligned0[i] : aligned1[i];
     optoLinkedDetectorUpsampler.idleBlock(feed, nSamples);
@@ -1942,6 +1950,154 @@ void MultiCompDSP::idleHostRateFeeds(const float* sc0, const float* sc1, int nSa
     if (midSideDetector)
         for (int i = 0; i < nSamples; ++i) feed[i] = (aligned0[i] - aligned1[i]) * 0.5f;
     optoOwnDetectorUpsamplers[1].idleBlock(midSideDetector ? feed : aligned1, nSamples);
+}
+
+// Studio VCA mode's share of processRange: the reference is a zero-latency digital compressor with no
+// oversampling, so the mode runs at the host rate (audioFactorForMode() gives 1) and its anti-alias stage only adds
+// the common latency. The per-sample loop's bookkeeping as blocks, each channel's detector level (the linked peak:
+// a channel's own peak blended toward the louder channel's by the Stereo Link amount; the audio input, or the
+// external sidechain when one is in use), each channel's gain from MultiCompModes::studioVcaGains() (one for both
+// channels of a fully linked pair), then the audio times the input gain, that gain and the makeup. Every input read
+// happens before the first output write, so `out` may alias `in` or `sidechain`.
+void MultiCompDSP::processStudioVcaRange(const float* const* in, const float* const* sidechain,
+                                         float* const* out, int nCh, int nSamples, bool external, float linkAmount,
+                                         int linkMode, int hostSidechainDelay, float manualOutputDb,
+                                         DistortionType distortionType, float distortionAmount) noexcept
+{
+    if (nSamples <= 0) return;
+    const bool link = linkMode == 0 && linkAmount > 0.0001f && nCh > 1;
+    const bool midSideDetector = linkMode == 1 && nCh > 1;
+    // The OPTO cell links only in OPTO mode.
+    modes.setOptoLinkWeight(0.0f);
+    // processBlock has already applied the HP and shelf EQ to the sidechain.
+    const float* sc0 = sidechain != nullptr ? sidechain[0] : in[0];
+    const float* sc1 = nCh > 1 ? (sidechain != nullptr ? sidechain[1] : in[1]) : sc0;
+    float* makeupDb = studioVcaMakeupDb.data();
+    float* makeup = studioVcaMakeupGain.data();
+    for (int i = 0; i < nSamples; ++i)
+        makeupDb[i] = manualOutputDb * manualMakeupScaleRamp.next();
+    for (int i = 0; i < nSamples; ++i)
+        makeup[i] = i > 0 && makeupDb[i] == makeupDb[i - 1] ? makeup[i - 1] : decibelsToGain(makeupDb[i]);
+    modeParams.studioVcaOutput.store(makeupDb[nSamples - 1], std::memory_order_relaxed);
+    idleHostRateFeeds(sc0, sc1, nSamples, hostSidechainDelay, midSideDetector);
+    // Each channel's detector level and gain. A fully linked pair whose gain computers agree (from a reset on, they
+    // do) computes one gain for both. In the Mid-Side layout processBlock has encoded the audio, not the external
+    // sidechain: encode it the same way (into the feed scratch, free once idleHostRateFeeds has run).
+    const float* detector0 = external ? sc0 : in[0];
+    const float* detector1 = nCh > 1 ? (external ? sc1 : in[1]) : detector0;
+    if (external && midSideDetector)
+    {
+        float* mid = vcaFeedScratch[0].data();
+        float* side = vcaFeedScratch[1].data();
+        for (int i = 0; i < nSamples; ++i)
+        {
+            mid[i] = (sc0[i] + sc1[i]) * 0.5f;
+            side[i] = (sc0[i] - sc1[i]) * 0.5f;
+        }
+        detector0 = mid;
+        detector1 = side;
+    }
+    const bool fullLink = link && linkAmount >= 1.0f;
+    const int computed = fullLink && modes.studioVcaChannelsAgree() ? 1 : nCh;
+    for (int ch = 0; ch < computed; ++ch)
+    {
+        float* level = studioVcaLevels[static_cast<size_t>(ch)].data();
+        const float* own = ch == 0 ? detector0 : detector1;
+        if (fullLink)
+            for (int i = 0; i < nSamples; ++i) level[i] = std::max(std::abs(detector0[i]), std::abs(detector1[i]));
+        else if (link)
+            for (int i = 0; i < nSamples; ++i)
+            {
+                const float mine = std::abs(own[i]);
+                const float linked = std::max(std::abs(detector0[i]), std::abs(detector1[i]));
+                level[i] = mine + (linked - mine) * linkAmount;
+            }
+        else
+            for (int i = 0; i < nSamples; ++i) level[i] = std::abs(own[i]);
+        modes.studioVcaGains(ch, level, nSamples, modeParams, studioVcaGainCurves[static_cast<size_t>(ch)].data());
+    }
+    if (computed < nCh) modes.studioVcaShareChannel();
+    // The carried endpoints the other modes' interpolated detectors start from, as the per-sample loop leaves them.
+    const int last = nSamples - 1;
+    for (int ch = 0; ch < nCh; ++ch)
+    {
+        const size_t c = static_cast<size_t>(ch);
+        const float own = ch == 0 ? sc0[last] : sc1[last];
+        const float scLevel = std::max(std::abs(sc0[last]), std::abs(sc1[last]));
+        previousOversampledSidechain[c] = link ? std::abs(own) * (1.0f - linkAmount) + scLevel * linkAmount
+            : linkMode == 1 && nCh > 1 ? (ch == 0 ? (sc0[last] + sc1[last]) * 0.5f : (sc0[last] - sc1[last]) * 0.5f)
+            : own;
+        previousOversampledSidechainValid[c] = true;
+        previousOptoOwnSidechain[c] = own;
+        previousOptoOwnSidechainValid[c] = true;
+    }
+    const float inputGain = modes.studioVcaInputGain(modeParams);
+    for (int ch = 0; ch < nCh; ++ch)
+    {
+        const float* gains = studioVcaGainCurves[static_cast<size_t>(std::min(ch, computed - 1))].data();
+        oversamplers[static_cast<size_t>(ch)].processBlock(in[ch], out[ch], nSamples, audioPhaseBlock[0].data(),
+            [&](int i, int /*phase*/, float sample) noexcept {
+                return applyCoreDistortion(sample * inputGain * gains[i] * makeup[i], distortionType, distortionAmount);
+            });
+    }
+}
+
+// BUS mode's share of processRange for a linked stereo pair (the default
+// layout), a block at a time: the per-sample loop's bookkeeping as blocks, the
+// audio and the external-detector feed up the oversampler as blocks, the pair
+// sample by sample in between (it feeds back on itself), then the audio down.
+// Dual Mono, Mid-Side, an unlinked pair and mono keep the per-sample loop.
+// Every sidechain read happens before the first output write, so `out` may
+// alias `in` or `sidechain`. Byte-identical to the per-sample loop.
+void MultiCompDSP::processBusRange(const float* const* in, const float* const* sidechain,
+                                   float* const* out, int nSamples, bool external, float linkAmount,
+                                   int factor, int hostSidechainDelay, float manualOutputDb,
+                                   DistortionType distortionType, float distortionAmount) noexcept
+{
+    if (nSamples <= 0) return;
+    // The OPTO cell links only in OPTO mode.
+    modes.setOptoLinkWeight(0.0f);
+    // processBlock has already applied the HP and shelf EQ to the sidechain.
+    const float* sc0 = sidechain != nullptr ? sidechain[0] : in[0];
+    const float* sc1 = sidechain != nullptr ? sidechain[1] : in[1];
+    float* outputDb = busOutputDbCurve.data();
+    float* mix = busMixCurve.data();
+    for (int i = 0; i < nSamples; ++i)
+        outputDb[i] = manualOutputDb * manualMakeupScaleRamp.next();
+    for (int i = 0; i < nSamples; ++i)
+        mix[i] = busMixRamp.next();
+    idleHostRateFeeds(sc0, sc1, nSamples, hostSidechainDelay, false, false);
+    float* scLeft = busScPhases[0].data();
+    float* scRight = busScPhases[1].data();
+    busExternalOversamplers[0].upsampleOwnBlock(sc0, nSamples, scLeft);
+    busExternalOversamplers[1].upsampleOwnBlock(sc1, nSamples, scRight);
+    float* inputLeft = audioPhaseBlock[0].data();
+    float* inputRight = audioPhaseBlock[1].data();
+    float* outputLeft = outputPhaseBlock[0].data();
+    float* outputRight = outputPhaseBlock[1].data();
+    oversamplers[0].upsampleBlock(in[0], nSamples, inputLeft);
+    oversamplers[1].upsampleBlock(in[1], nSamples, inputRight);
+    for (int i = 0; i < nSamples; ++i)
+    {
+        modeParams.busMakeup.store(outputDb[i], std::memory_order_relaxed);
+        for (int phase = 0; phase < factor; ++phase)
+        {
+            const int k = i * factor + phase;
+            modes.processBusPair(inputLeft[k], inputRight[k], scLeft[k], scRight[k], modeParams, mix[i],
+                                 external, linkAmount, outputLeft[k], outputRight[k]);
+            outputLeft[k] = applyCoreDistortion(outputLeft[k], distortionType, distortionAmount);
+            outputRight[k] = applyCoreDistortion(outputRight[k], distortionType, distortionAmount);
+        }
+        busCompressionMeter.process(bypassSettled ? 0.0f
+            : -std::min(modes.gainReduction(MultiCompMode::Bus, 0), modes.gainReduction(MultiCompMode::Bus, 1)));
+    }
+    // The generic per-channel path's carried endpoints stopped tracking the
+    // input: its next sample re-seeds them instead of interpolating from an
+    // arbitrarily old value when the link is switched off.
+    previousOversampledSidechainValid = {{false, false}};
+    previousOptoOwnSidechainValid = {{false, false}};
+    oversamplers[0].downsampleBlock(outputLeft, nSamples, out[0]);
+    oversamplers[1].downsampleBlock(outputRight, nSamples, out[1]);
 }
 
 // Vintage FET mode's share of processRange, a block at a time: the per-sample

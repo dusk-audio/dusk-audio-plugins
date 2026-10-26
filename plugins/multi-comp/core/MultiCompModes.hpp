@@ -8,6 +8,7 @@
 
 
 #include "MultiCompVcaLaw.hpp"
+#include "MultiCompStudioVcaLaw.hpp"
 #include "MultiCompParams.hpp"
 #include "MultiCompOptoShelf.hpp"
 #include "MultiCompOptoCell.hpp"
@@ -502,7 +503,7 @@ public:
         for (auto& d : bus) d = BusState{};
         for (auto& filter : busFeedbackCoupling) filter.reset();
         for (auto& d : studioFet) d = StudioFETState{};
-        for (auto& d : studioVca) d = StudioVCAState{};
+        for (auto& d : studioVca) d = studioVcaLaw::GainComputer{};
         for (auto& d : digital) d = DigitalState{};
         for (auto& filter : busSidechainHighPass) filter.reset();
         for (auto& filter : busSidechainLowShelf) filter.reset();
@@ -639,12 +640,7 @@ public:
                 }
                 break;
             case MultiCompMode::StudioVCA:
-                for (auto& d : studioVca) d = StudioVCAState{};
-                for (int ch = 0; ch < kChannels; ++ch)
-                {
-                    inputTransformerStudioVca[ch].reset();
-                    outputTransformerStudioVca[ch].reset();
-                }
+                for (auto& d : studioVca) d = studioVcaLaw::GainComputer{};
                 break;
             case MultiCompMode::Digital:
                 for (auto& d : digital) d = DigitalState{};
@@ -670,7 +666,7 @@ public:
         for (auto& d : vca) d = VCAState{};
         clearBusState();
         for (auto& d : studioFet) d = StudioFETState{};
-        for (auto& d : studioVca) d = StudioVCAState{};
+        for (auto& d : studioVca) d = studioVcaLaw::GainComputer{};
         for (auto& d : digital) d = DigitalState{};
         for (auto& filter : busSidechainHighPass) filter.reset();
         for (auto& filter : busSidechainLowShelf) filter.reset();
@@ -703,7 +699,8 @@ public:
             case MultiCompMode::Bus: return processBus(input, ch, sc, p, localMix, external);
             case MultiCompMode::StudioFET: return processFET(
                 input, ch, sc, p, true, external, false);
-            case MultiCompMode::StudioVCA: return processStudioVCA(input, ch, sc, p, external);
+            // Studio VCA runs a block at a time at the host rate (MultiCompDSP::processStudioVcaRange).
+            case MultiCompMode::StudioVCA: return input;
             case MultiCompMode::Digital: return processDigital(input, ch, sc, p, localMix, external);
             case MultiCompMode::Multiband: return input;
         }
@@ -805,7 +802,7 @@ public:
             case MultiCompMode::VCA: return gainToDecibels(vca[ch].envelope);
             case MultiCompMode::Bus: return gainToDecibels(bus[ch].envelope);
             case MultiCompMode::StudioFET: return gainToDecibels(studioFet[ch].envelope);
-            case MultiCompMode::StudioVCA: return gainToDecibels(static_cast<float>(studioVca[ch].envelope));
+            case MultiCompMode::StudioVCA: return static_cast<float>(studioVca[ch].attack);
             case MultiCompMode::Digital: return gainToDecibels(static_cast<float>(digital[ch].envelope));
             case MultiCompMode::Multiband: break;
         }
@@ -911,6 +908,81 @@ public:
         right.externalCompressed = sidechainRight * drive * right.detectorEnvelope;
         outputLeft = renderBusOutput(inputLeft, 0, p, mix);
         outputRight = renderBusOutput(inputRight, 1, p, mix);
+    }
+
+    // Studio VCA at the host rate (the mode's factor is 1; MultiCompDSP::processStudioVcaRange): one channel's gain
+    // for n samples from its detector levels (linear peak, before the input gain), as linear factors in `gains`.
+    // `levels` is scratch (it ends up holding the levels over threshold in dB). The caller applies the input gain
+    // to the audio as well (studioVcaInputGain()).
+    void studioVcaGains(int ch, float* levels, int n, const MultiCompParameterState& p, float* gains) noexcept
+    {
+        const float threshold = p.studioVcaThreshold.load(std::memory_order_relaxed);
+        const studioVcaLaw::StaticLaw& law = studioVcaStaticLawFor(p);
+        const float inputGain = studioVcaInputGain(p);
+        const studioVcaLaw::Coefficients& c = studioVcaCoefficientsFor(p);
+        auto& g = studioVca[static_cast<size_t>(std::clamp(ch, 0, 1))];
+        // 20 log10(level * input gain) - threshold, four lanes at a time; the floor (-240 dBFS) is far below
+        // every setting's knee.
+        float* overDb = levels;
+        for (int i = 0; i < n; ++i) overDb[i] = std::max(levels[i] * inputGain, 1.0e-12f);
+        int k = 0;
+        for (; k + 4 <= n; k += 4) fastmath::log2x4(overDb + k, overDb + k);
+        for (; k < n; ++k) overDb[k] = fastmath::log2(overDb[k]);
+        for (int i = 0; i < n; ++i) overDb[i] = kTwentyLog10Of2 * overDb[i] - threshold;
+        // The gain computer feeds back on itself, so it runs sample by sample; its gain in dB becomes a power of
+        // two, four lanes at a time.
+        g.run(n, [&](int i) noexcept { return law.gainDb(overDb[i]); }, c, gains);
+        for (int i = 0; i < n; ++i) gains[i] *= kLog2Of10Over20;
+        k = 0;
+        for (; k + 4 <= n; k += 4) fastmath::exp2x4(gains + k, gains + k);
+        for (; k < n; ++k) gains[k] = fastmath::exp2(gains[k]);
+    }
+
+    // Whether the two channels' gain computers hold the same state, as a fully linked pair's do from a reset on.
+    // Such a pair needs one computation: channel 0's, which studioVcaShareChannel() then hands to channel 1. The
+    // Auto rate state counts even under fixed release, which leaves it alone: a pair whose rates parted in Auto
+    // under a partial link or Dual / Mid-Side keeps computing both channels (same output) until a reset.
+    bool studioVcaChannelsAgree() const noexcept { return studioVca[0] == studioVca[1]; }
+    void studioVcaShareChannel() noexcept { studioVca[1] = studioVca[0]; }
+
+    float studioVcaInputGain(const MultiCompParameterState& p) noexcept
+    {
+        const float inputDb = p.studioVcaInput.load(std::memory_order_relaxed);
+        if (inputDb != studioVcaInputDb)
+        {
+            studioVcaInputDb = inputDb;
+            studioVcaInputGainValue = decibelsToGain(inputDb);
+        }
+        return studioVcaInputGainValue;
+    }
+
+    const studioVcaLaw::StaticLaw& studioVcaStaticLawFor(const MultiCompParameterState& p) noexcept
+    {
+        const float ratio = p.studioVcaRatio.load(std::memory_order_relaxed);
+        if (ratio != studioVcaStaticLawRatio)
+        {
+            studioVcaStaticLawRatio = ratio;
+            studioVcaStaticLaw.set(ratio);
+        }
+        return studioVcaStaticLaw;
+    }
+
+    const studioVcaLaw::Coefficients& studioVcaCoefficientsFor(const MultiCompParameterState& p) noexcept
+    {
+        const float attack = p.studioVcaAttack.load(std::memory_order_relaxed);
+        const float release = p.studioVcaRelease.load(std::memory_order_relaxed);
+        const bool autoRelease = p.studioVcaAutoRelease.load(std::memory_order_relaxed);
+        const double rate = fs * osFactor;
+        if (attack != studioVcaCoefficientAttack || release != studioVcaCoefficientRelease
+            || autoRelease != studioVcaCoefficientAuto || rate != studioVcaCoefficientRate)
+        {
+            studioVcaCoefficientAttack = attack;
+            studioVcaCoefficientRelease = release;
+            studioVcaCoefficientAuto = autoRelease;
+            studioVcaCoefficientRate = rate;
+            studioVcaCoefficients = studioVcaLaw::coefficients(attack, release, autoRelease, rate);
+        }
+        return studioVcaCoefficients;
     }
 
     // Opto's output-stage oversampling adds a constant latency (host samples).
@@ -1415,7 +1487,6 @@ private:
     // float spacing near unity gain, and a float envelope settles short of its
     // target for good (Digital held 1.16 dB at 192 kHz with 4x oversampling
     // and a 5 s release).
-    struct StudioVCAState { double envelope = 1; float rms = 0, previous = 0, smooth = 1; };
     struct DigitalState
     {
         double envelope = 1;
@@ -1442,7 +1513,15 @@ private:
     std::array<VCAState, 2> vca{};
     std::array<BusState, 2> bus{};
     std::array<StudioFETState, 2> studioFet{};
-    std::array<StudioVCAState, 2> studioVca{};
+    std::array<studioVcaLaw::GainComputer, 2> studioVca{};
+    // studioVcaGains()'s static law, coefficients and input gain, recomputed only when their inputs change.
+    studioVcaLaw::StaticLaw studioVcaStaticLaw{};
+    float studioVcaStaticLawRatio = -1.0f;
+    studioVcaLaw::Coefficients studioVcaCoefficients{};
+    float studioVcaCoefficientAttack = -1.0f, studioVcaCoefficientRelease = -1.0f;
+    double studioVcaCoefficientRate = -1.0;
+    bool studioVcaCoefficientAuto = false;
+    float studioVcaInputDb = 0.0f, studioVcaInputGainValue = 1.0f;   // decibelsToGain(0) is exactly 1
     std::array<DigitalState, 2> digital{};
     // busLaw::headroomDrive() is a std::pow evaluated two to three times per
     // channel per oversampled sample for a value that only changes when the
@@ -1453,6 +1532,12 @@ private:
     int busDrivePosition = -1;
     float busDriveValue = 1.0f;
     float busCeilingScale = busCeilingReference;   // busCeilingReference / busDriveValue
+    // The same for the makeup gain (renderBusOutput) and the control's charge
+    // and discharge coefficients (advanceBusEnvelope): each is recomputed only
+    // when its inputs change, by the same expression, so it is the same float.
+    float busMakeupMemoDb = 0.0f, busMakeupMemoGain = 1.0f;   // decibelsToGain(0) is exactly 1
+    float busChargeMemoAttack = -1.0f, busChargeMemoRate = -1.0f, busChargeMemo = 0.0f;
+    float busDischargeMemoRelease = -1.0f, busDischargeMemoRate = -1.0f, busDischargeMemo = 0.0f;
     // The compressed feedback signal has its own low-frequency coupling.
     // Reuse the shared filter; prepare/reset clear each channel's history,
     // and runtime oversampling changes refresh its pole without discarding it.
@@ -1473,7 +1558,6 @@ private:
     std::array<bool, 2> fetInputTransformerResting{};
     std::array<HardwareEmulation::TransformerEmulation, 2> inputTransformerBus, outputTransformerBus;
     std::array<HardwareEmulation::TransformerEmulation, 2> inputTransformerStudioFet, outputTransformerStudioFet;
-    std::array<HardwareEmulation::TransformerEmulation, 2> inputTransformerStudioVca, outputTransformerStudioVca;
     HardwareEmulation::StereoConvolution fetConvolution, busConvolution;
     MultiCompTransientShaper transientShaper;
     MultiCompLookupTables lookupTables;
@@ -1536,13 +1620,11 @@ private:
         bp.inputTransformer.harmonics = {};
         bp.outputTransformer.harmonics = {};
         const auto& sfp = HardwareEmulation::HardwareProfiles::getStudioFET();
-        const auto& svp = HardwareEmulation::HardwareProfiles::getStudioVCA();
         for (int ch = 0; ch < 2; ++ch)
         {
             preparePair(inputTransformerFet[ch], outputTransformerFet[ch], fp, true);
             preparePair(inputTransformerBus[ch], outputTransformerBus[ch], bp, true);
             preparePair(inputTransformerStudioFet[ch], outputTransformerStudioFet[ch], sfp, true);
-            preparePair(inputTransformerStudioVca[ch], outputTransformerStudioVca[ch], svp, true);
         }
         fetConvolution.prepare(rate); fetConvolution.loadTransformerIR(HardwareEmulation::ShortConvolution::TransformerType::FET);
         fetConvolutionUnity = fetConvolution.isUnity();
@@ -1688,7 +1770,6 @@ private:
         updatePairs(inputTransformerFet, outputTransformerFet);
         updatePairs(inputTransformerBus, outputTransformerBus);
         updatePairs(inputTransformerStudioFet, outputTransformerStudioFet);
-        updatePairs(inputTransformerStudioVca, outputTransformerStudioVca);
     }
 
     void cacheHardwareGains()
@@ -1759,7 +1840,6 @@ private:
             inputTransformerFet[ch].reset(); outputTransformerFet[ch].reset();
             inputTransformerBus[ch].reset(); outputTransformerBus[ch].reset();
             inputTransformerStudioFet[ch].reset(); outputTransformerStudioFet[ch].reset();
-            inputTransformerStudioVca[ch].reset(); outputTransformerStudioVca[ch].reset();
         }
     }
 
@@ -6494,7 +6574,7 @@ private:
         }
         for (; k < n; ++k) gain[k] = vcaLawGain(power[k], thresholdDb, slope);
     }
-    static constexpr float kTenLog10Of2 = 3.01029996f, kLog2Of10Over20 = 0.166096405f;
+    static constexpr float kTenLog10Of2 = 3.01029996f, kTwentyLog10Of2 = 6.02059991f, kLog2Of10Over20 = 0.166096405f;
 
     // vcaLawExponent(kTenLog10Of2 * log2Power[lane], ...) for four lanes, lane by
     // lane the same operations (the correction's segment rows are read per lane).
@@ -6754,6 +6834,38 @@ private:
         return 0.33f * rc0 + gamma * (std::log1p(leak / leakScale) - std::log1p(leak0 / leakScale));
     }
 
+    float busChargeCoefficient(float attack, float sr) noexcept
+    {
+        if (attack != busChargeMemoAttack || sr != busChargeMemoRate)
+        {
+            busChargeMemoAttack = attack;
+            busChargeMemoRate = sr;
+            busChargeMemo = 1.0f - std::exp(-1.0f / std::max(1.0f, attack * sr));
+        }
+        return busChargeMemo;
+    }
+
+    float busDischargeCoefficient(float release, float sr) noexcept
+    {
+        if (release != busDischargeMemoRelease || sr != busDischargeMemoRate)
+        {
+            busDischargeMemoRelease = release;
+            busDischargeMemoRate = sr;
+            busDischargeMemo = std::exp(-1.0f / std::max(1.0f, release * sr));
+        }
+        return busDischargeMemo;
+    }
+
+    // advanceBusEnvelope's reset test reads only whether 10^(-control / 20) is
+    // finite: smoothBusAudioGain overwrites the envelope it would give. At or
+    // above -700 dB that is at most 1e35, finite with any libm; lower controls
+    // and NaN evaluate it as before (+inf passes here, as 10^-inf = 0 is finite,
+    // and the caller's own isfinite test of the control resets it).
+    static bool busControlGainFinite(float controlDb) noexcept
+    {
+        return controlDb >= -700.0f || std::isfinite(decibelsToGain(-controlDb));
+    }
+
     void smoothBusAudioGain(BusState& d) noexcept
     {
         d.smoothControlDb += busAudioControlSmoothingStep
@@ -6809,16 +6921,15 @@ private:
             // the slow reservoir between charge and decay distorts early release.
             const float current = d.fixedControlDb;
             const float slow = d.autoSlowDb;
-            const float charge = 1.0f - std::exp(-1.0f / std::max(1.0f, attack * sr));
+            const float charge = busChargeCoefficient(attack, sr);
             d.fixedControlDb = float(busAutoStep[0]*current + busAutoStep[1]*slow + busAutoStep[4])
                 + std::max(0.0f, reduction - std::max(0.0f, current)) * charge;
             d.autoSlowDb = float(busAutoStep[2]*current + busAutoStep[3]*slow + busAutoStep[5]);
-            d.envelope = decibelsToGain(-d.fixedControlDb);
             // Test the reservoirs, not only the envelope: decibelsToGain(-inf)
             // is 0, which is finite, so an envelope-only guard would leave a
             // non-finite reservoir latched at digital silence. The fixed-release
             // branch below already uses this two-sided form.
-            if (!std::isfinite(d.envelope) || !std::isfinite(d.fixedControlDb)
+            if (!busControlGainFinite(d.fixedControlDb) || !std::isfinite(d.fixedControlDb)
                 || !std::isfinite(d.autoSlowDb))
             { d.envelope = 1; d.autoSlowDb = 0; d.fixedControlDb = 0; }
             d.detectorEnvelope = decibelsToGain(-busDetectorExponent * d.fixedControlDb);
@@ -6836,15 +6947,14 @@ private:
             // holdouts are in the 2026-09-09 BUS release measurement report.
             const float bias = 0.33f * release;
             const float currentReduction = busChargeOffset(d.fixedControlDb, bias, release) + d.fixedControlDb;
-            const float discharge = std::exp(-1.0f / std::max(1.0f, release * sr));
-            const float charge = 1.0f - std::exp(-1.0f / std::max(1.0f, attack * sr));
+            const float discharge = busDischargeCoefficient(release, sr);
+            const float charge = busChargeCoefficient(attack, sr);
             // A lower release setting can leave control below the new bias.
             // Let it settle through release; it must not trigger fast charge.
             d.fixedControlDb = d.fixedControlDb * discharge - bias * (1.0f - discharge)
                 + std::max(0.0f, reduction - std::max(0.0f, currentReduction)) * charge;
-            d.envelope = decibelsToGain(-d.fixedControlDb);
         }
-        if (!std::isfinite(d.envelope) || !std::isfinite(d.fixedControlDb))
+        if (!busControlGainFinite(d.fixedControlDb) || !std::isfinite(d.fixedControlDb))
         { d.envelope = 1.0f; d.fixedControlDb = 0.0f; }
         d.detectorEnvelope = decibelsToGain(-busDetectorExponent * d.fixedControlDb);
         smoothBusAudioGain(d);
@@ -6870,8 +6980,13 @@ private:
             * d.detectorEnvelope;
         d.compressed = busFeedbackCoupling[static_cast<size_t>(ch)].process(feedbackInput);
         out = outputTransformerBus[ch].processSample(out, ch);
-        out = busConvolution.processSample(out, ch) * busHardwareGain
-            * decibelsToGain(p.busMakeup.load(std::memory_order_relaxed));
+        const float makeupDb = p.busMakeup.load(std::memory_order_relaxed);
+        if (makeupDb != busMakeupMemoDb)
+        {
+            busMakeupMemoDb = makeupDb;
+            busMakeupMemoGain = decibelsToGain(makeupDb);
+        }
+        out = busConvolution.processSample(out, ch) * busHardwareGain * busMakeupMemoGain;
         out = busOutputCeiling(out * (1.0f / busCeilingReference)) * busCeilingScale;
         // Native ceiling is inside headroom compensation, after makeup.
         // HR4 permits ~13.1 linear output; HR28 clips near 0.83.
@@ -6890,47 +7005,6 @@ private:
         advanceBusEnvelope(d, level, p, sr);
         d.externalCompressed = sidechain * busDrive(p) * d.detectorEnvelope;
         return renderBusOutput(input, ch, p, mix);
-    }
-
-    float processStudioVCA(float input, int ch, float sidechain, const MultiCompParameterState& p, bool external) noexcept
-    {
-        auto& d = studioVca[ch];
-        const float sr = static_cast<float>(fs * osFactor);
-        const float transformed = inputTransformerStudioVca[ch].processSample(input, ch);
-        const float x = external ? sidechain : input;
-        const float rc = std::exp(-1.0f / (0.010f * sr));
-        d.rms = rc * d.rms + (1.0f - rc) * x * x;
-        const float level = std::sqrt(std::max(0.0f, d.rms));
-        const float threshold = decibelsToGain(p.studioVcaThreshold.load(std::memory_order_relaxed));
-        const float ratio = std::max(1.0f, p.studioVcaRatio.load(std::memory_order_relaxed));
-        constexpr float kneeWidth = 6.0f;
-        const float start = threshold * decibelsToGain(-kneeWidth * 0.5f), end = threshold * decibelsToGain(kneeWidth * 0.5f);
-        float reduction = 0.0f;
-        if (level > start)
-        {
-            if (level < end) { const float pos = (level - start) / (end - start); reduction = gainToDecibels(level / threshold) * (1.0f - 1.0f / (1.0f + (ratio - 1.0f) * pos * pos)); }
-            else reduction = gainToDecibels(level / threshold) * (1.0f - 1.0f / ratio);
-        }
-        reduction = std::clamp(reduction, 0.0f, 40.0f);
-        const float attack = std::clamp(p.studioVcaAttack.load(std::memory_order_relaxed) * 0.001f, 0.0003f, 0.075f);
-        float release = std::clamp(p.studioVcaRelease.load(std::memory_order_relaxed) * 0.001f, 0.1f, 4.0f);
-        const float signalDelta = std::abs(level - d.previous);
-        d.previous = level;
-        const float transientness = std::clamp(signalDelta * 15.0f, 0.0f, 1.0f);
-        float releaseScale = 1.0f - transientness * 0.5f;
-        const float compressionDepth = std::clamp((1.0f - static_cast<float>(d.envelope)) * 5.0f, 0.0f, 1.0f);
-        releaseScale *= 1.0f + compressionDepth * 0.3f * (1.0f - transientness);
-        release *= releaseScale;
-        const float target = decibelsToGain(-reduction);
-        const double c = std::exp(-1.0 / (static_cast<double>(target < d.envelope ? attack : release) * fs * osFactor));
-        d.envelope = c * d.envelope + (1.0 - c) * target;
-        const float smooth = std::exp(-1.0f / (0.002f * sr));
-        d.smooth = smooth * d.smooth + (1.0f - smooth) * static_cast<float>(d.envelope);
-        float out = transformed * d.smooth;
-        if (std::abs(out) > 1.2f)
-            out = std::copysign(1.2f + 0.3f * std::tanh((std::abs(out) - 1.2f) * 3.0f), out);
-        out = outputTransformerStudioVca[ch].processSample(out, ch);
-        return std::clamp(out * decibelsToGain(p.studioVcaOutput.load(std::memory_order_relaxed)), -2.0f, 2.0f);
     }
 
     float processDigital(float input, int ch, float sidechain, const MultiCompParameterState& p, float mix, bool /*external*/) noexcept
