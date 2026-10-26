@@ -147,8 +147,12 @@ private:
                          float* const* out, int nCh, int nSamples, bool external, float linkAmount,
                          int linkMode, int factor, int hostSidechainDelay, float manualOutputDb,
                          DistortionType distortionType, float distortionAmount) noexcept;
+    void processBusRange(const float* const* in, const float* const* sidechain,
+                         float* const* out, int nSamples, bool external, float linkAmount, int factor,
+                         int hostSidechainDelay, float manualOutputDb,
+                         DistortionType distortionType, float distortionAmount) noexcept;
     void idleHostRateFeeds(const float* sc0, const float* sc1, int nSamples, int hostSidechainDelay,
-                           bool midSideDetector) noexcept;
+                           bool midSideDetector, bool idleBusFeed = true) noexcept;
     void syncModeParameters(MultiCompMode mode, float digitalLookaheadMs) noexcept;
     void prepareLookahead(const float* const* in, const float* (&processingIn)[kMaxChannels],
                           int nCh, int nSamples, int delay);
@@ -250,6 +254,10 @@ private:
     // feed and linked partner per oversampled phase.
     std::array<std::vector<float>, kMaxChannels> fetSidechain, fetScPhases, fetPartnerPhases;
     std::vector<float> fetOutputDbCurve;
+    // BUS block path (processBusRange): the external-detector feed per
+    // oversampled phase, and the makeup and Mix ramps per host sample.
+    std::array<std::vector<float>, kMaxChannels> busScPhases;
+    std::vector<float> busOutputDbCurve, busMixCurve;
     // Scratch for the input guard. Written only when a block actually carries
     // a non-finite or above-ceiling sample; see sanitizeChannels.
     std::array<std::vector<float>, kMaxChannels> sanitizedInput, sanitizedSidechain;

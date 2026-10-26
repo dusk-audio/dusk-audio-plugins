@@ -564,6 +564,13 @@ public:
         catchUp();
         upsampler.upsampleBlock(input, n, phases, blockScratch.data());
     }
+    // upsampleSample() for n samples through an upsampler that keeps its own
+    // block scratch (MultiCompAntiAliasing).
+    void upsampleOwnBlock(const float* input, int n, float* phases) noexcept
+    {
+        catchUp();
+        upsampler.upsampleBlock(input, n, phases);
+    }
     void idle(float input) noexcept
     {
         if (upsampler.getFactor() == 1) return;
