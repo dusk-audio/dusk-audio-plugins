@@ -667,32 +667,33 @@ void testCrossoverOrderingDoesNotRatchet()
                 "lowering Crossover 1 again returns the displayed neighbours");
 }
 
-// One case per DAF_PLUGIN_EXTRA_IO layout. The { 2, 2 } row is the one the
-// output count could not express: it is stereo, so a channel-count test would
-// have called it sidechain-capable and read two elements past the end of the
-// array the host supplied.
+// One case per layout ioChanged() reports: the DAF_PLUGIN_EXTRA_IO ones and
+// DAF_PLUGIN_SIDECHAIN_ON_EXTRA_IO's main layouts plus a mono or stereo
+// sidechain. The { 2, 2 } row is the one the output count alone could not
+// express: it is stereo, so a channel-count test would have called it
+// sidechain-capable and read two elements past the end of the array the host
+// supplied. Ports keep their declared positions, so the absent ones read silence.
 void testRunGuardsSidechainPortsPerLayout()
 {
-    float main = 0.1f, sidechain = 0.8f;
+    float main = 0.1f, silent = 0.0f, sidechain = 0.8f;
     const float* monoInputs[] = {&main};
     const float* stereoInputs[] = {&main, &main};
-    const float* sidechainInputs[] = {&main, &main, &sidechain, &sidechain};
-    const bool externalArmed = true;
-    const bool monoUsesSidechain = externalArmed
-        && multicompp::plugin_detail::hasStereoExternalSidechainPorts(1, monoInputs);
-    const bool stereoUsesSidechain = externalArmed
-        && multicompp::plugin_detail::hasStereoExternalSidechainPorts(2, stereoInputs);
-    const bool fullUsesSidechain = externalArmed
-        && multicompp::plugin_detail::hasStereoExternalSidechainPorts(4, sidechainInputs);
-    std::printf("external sidechain armed: 1-in uses aux ports %s; 2-in %s; 4-in %s\n",
-                monoUsesSidechain ? "yes" : "no", stereoUsesSidechain ? "yes" : "no",
-                fullUsesSidechain ? "yes" : "no");
-    reviewCheck(!monoUsesSidechain,
-                "mono run path does not index absent stereo sidechain ports");
-    reviewCheck(!stereoUsesSidechain,
-                "stereo-insert run path does not index absent sidechain ports");
-    reviewCheck(fullUsesSidechain,
-                "full input layout still accepts its external sidechain ports");
+    const float* fullInputs[] = {&main, &main, &sidechain, &sidechain};
+    const float* monoKeyedMonoInputs[] = {&main, &silent, &sidechain, &silent};
+    const float* monoKeyedStereoInputs[] = {&main, &silent, &sidechain, &sidechain};
+    const float* stereoKeyedMonoInputs[] = {&main, &main, &sidechain, &silent};
+    struct Row { const char* name; int inputs, mainChannels; const float* const* ports; int width; };
+    const Row rows[] = {{"1-in mono", 1, 1, monoInputs, 0}, {"2-in stereo", 2, 2, stereoInputs, 0},
+                        {"4-in stereo + stereo key", 4, 2, fullInputs, 2},
+                        {"2-in mono + mono key (Logic mono track)", 2, 1, monoKeyedMonoInputs, 1},
+                        {"3-in mono + stereo key", 3, 1, monoKeyedStereoInputs, 2},
+                        {"3-in stereo + mono key", 3, 2, stereoKeyedMonoInputs, 1}};
+    for (const Row& row : rows)
+    {
+        const int width = multicompp::plugin_detail::externalSidechainWidth(row.inputs, row.mainChannels, row.ports);
+        std::printf("external sidechain armed: %s uses %d sidechain port(s)\n", row.name, width);
+        reviewCheck(width == row.width, "each reported layout reads exactly the sidechain ports it has");
+    }
 }
 
 void testQuantisedFineStepFallsBackToRestingPrecision()

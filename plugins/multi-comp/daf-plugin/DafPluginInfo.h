@@ -16,9 +16,16 @@
 // The three total-port layouts are stereo with external sidechain, plain
 // stereo, and mono. DAF's AU wrapper projects these onto the main input bus for
 // host channel-capability matching and exposes ports 2-3 on a separate input
-// element. run() still picks the sidechain path from the total active input
-// count reported by ioChanged(), not from the output count.
+// element. The processing width is the output count; run() picks the sidechain
+// path when ioChanged() reports the sidechain pair on top of the main inputs.
 #define DAF_PLUGIN_EXTRA_IO     { 2, 2 }, { 1, 1 },
+// The sidechain element may run mono and join any main layout: Logic sets
+// every input element of a mono track to one channel and abandons a unit that
+// refuses one (no editor, no audio), then connects both elements; ioChanged()
+// reports the main inputs plus the sidechain's width (2, 1 on a Logic mono
+// track; 3, 1 when a stereo key drives a mono main). The sidechain stays on
+// ports 2-3, a mono one on port 2.
+#define DAF_PLUGIN_SIDECHAIN_ON_EXTRA_IO 1
 #define DAF_PLUGIN_HAS_UI       1
 #define DAF_PLUGIN_IS_RT_SAFE   1
 #define DAF_PLUGIN_WANT_DIRECT_ACCESS 1

@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -5,18 +6,22 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <vector>
 
 namespace multicompp::plugin_detail
 {
-// The aux ports exist only on the full DAF_PLUGIN_NUM_INPUTS layout. The
-// output count cannot stand in for that: the AU { 2, 2 } layout is stereo out
-// with a two-channel input element, so a test against the channel count would
-// index inputs[2]/inputs[3] past the end of a two-element array.
-inline bool hasStereoExternalSidechainPorts(int activeInputs,
-                                            const float* const* inputs) noexcept
+// The external sidechain's width, 0 (none), 1 or 2: the inputs the host reports
+// on top of the main ones. Its ports keep their positions, 2-3, a mono sidechain
+// on port 2. The output count cannot stand in for it: the AU { 2, 2 } layout is
+// stereo without a sidechain, so a test against the channel count would read
+// inputs[2] / inputs[3] as a key the host never feeds.
+inline int externalSidechainWidth(int activeInputs, int mainChannels,
+                                  const float* const* inputs) noexcept
 {
-    return activeInputs >= 4 && inputs != nullptr
-        && inputs[2] != nullptr && inputs[3] != nullptr;
+    const int width = std::clamp(activeInputs - mainChannels, 0, 2);
+    if (width == 0 || inputs == nullptr || inputs[2] == nullptr || (width == 2 && inputs[3] == nullptr))
+        return 0;
+    return width;
 }
 
 // The crossover frequencies the DSP will actually use, given the three the host
@@ -39,6 +44,11 @@ inline std::array<float, 3> orderedCrossovers(float f1, float f2, float f3) noex
 #ifndef MULTICOMP_PLUGIN_LOGIC_TEST
 
 #include "DafPlugin.hpp"
+// DafPluginInfo.h opts into DAF_PLUGIN_SIDECHAIN_ON_EXTRA_IO, which an older DAF ignores without a word: the AU would
+// refuse Logic's mono tracks again (no editor, no audio there).
+#if DAF_PLUGIN_SIDECHAIN_ON_EXTRA_IO && !defined(DAF_SUPPORTS_SIDECHAIN_ON_EXTRA_IO)
+#error "Multi-Comp 2 needs a DAF with DAF_PLUGIN_SIDECHAIN_ON_EXTRA_IO (the AU on Logic mono tracks)"
+#endif
 #include "MultiCompAccess.hpp"
 #include "MultiCompOutputVu.hpp"
 #include "MultiCompGainReductionNeedle.hpp"
@@ -294,13 +304,14 @@ protected:
 
     void ioChanged(uint16_t in, uint16_t out) override
     {
-        // DAF_PLUGIN_EXTRA_IO permits { 4, 2 }, { 2, 2 } and { 1, 1 }. The
-        // input count is kept separately from the processing width because the
-        // two disagree on { 4, 2 }, where the extra pair is the sidechain and
-        // not audio to compress. DAF calls this while deactivated, so run()
-        // observes a stable pair.
+        // DAF_PLUGIN_EXTRA_IO permits { 4, 2 }, { 2, 2 } and { 1, 1 }, and
+        // DAF_PLUGIN_SIDECHAIN_ON_EXTRA_IO any of the main layouts plus a mono
+        // or stereo sidechain ({ 2, 1 }, { 3, 1 }, { 3, 2 }). The processing
+        // width is the output count; the input count is kept separately because
+        // the sidechain is not audio to compress. DAF calls this while
+        // deactivated, so run() observes a stable pair.
         activeInputs = static_cast<int>(in);
-        activeChannels = (in == 1 && out == 1) ? 1 : 2;
+        activeChannels = out == 1 ? 1 : 2;
     }
 
     void run(const float** inputs, float** outputs, uint32_t frames) override
@@ -314,9 +325,22 @@ protected:
             updateLatency();
             return;
         }
-        const bool useSc = values[static_cast<size_t>(multicompp::ParamId::ExternalSidechain)].load(std::memory_order_relaxed) > 0.5f
-            && multicompp::plugin_detail::hasStereoExternalSidechainPorts(activeInputs, inputs);
-        if (useSc) { const float* sc[2] = {inputs[2], inputs[3]}; dsp.processBlockExternal(inputs, sc, outputs, activeChannels, static_cast<int>(frames)); }
+        const int sidechainWidth = values[static_cast<size_t>(multicompp::ParamId::ExternalSidechain)].load(std::memory_order_relaxed) > 0.5f
+            ? multicompp::plugin_detail::externalSidechainWidth(activeInputs, activeChannels, inputs) : 0;
+        if (sidechainWidth > 0)
+        {
+            // A mono sidechain keys every channel; a stereo one keys a mono instance by its mid, the usual mono
+            // downmix of a key. (Hosts never pass more frames than the prepared block; one that did would key
+            // the mono instance by the left channel.)
+            const float* sc[2] = {inputs[2], sidechainWidth == 2 ? inputs[3] : inputs[2]};
+            if (activeChannels == 1 && sidechainWidth == 2 && frames <= monoSidechain.size())
+            {
+                for (uint32_t i = 0; i < frames; ++i)
+                    monoSidechain[i] = 0.5f * (inputs[2][i] + inputs[3][i]);
+                sc[0] = sc[1] = monoSidechain.data();
+            }
+            dsp.processBlockExternal(inputs, sc, outputs, activeChannels, static_cast<int>(frames));
+        }
         else dsp.processBlock(inputs, outputs, activeChannels, static_cast<int>(frames));
         outputVu.process(outputs, activeChannels, static_cast<int>(frames));
         const float gainReduction = dsp.getGainReduction();
@@ -369,6 +393,7 @@ private:
     void prepare(double sampleRate, uint32_t bufferSize)
     {
         dsp.prepare(sampleRate, static_cast<int>(bufferSize));
+        monoSidechain.assign(bufferSize, 0.0f);
         outputVu.prepare(sampleRate);
         grNeedle.prepare(sampleRate);
         vcaGrNeedle.prepare(sampleRate);
@@ -384,6 +409,7 @@ private:
     multicompp::OutputVu outputVu;
     multicompp::GainReductionNeedle grNeedle{multicompp::kVuNeedle};        // Opto and FET faces
     multicompp::GainReductionNeedle vcaGrNeedle{multicompp::kVcaNeedle};    // VCA face
+    std::vector<float> monoSidechain;   // run(): a mono instance's key from a stereo sidechain, its mid
     // Formats other than AU always present the full input set, and ioChanged()
     // is only called where a host narrows it, so the declared count is the
     // correct default rather than a placeholder.

@@ -39,6 +39,7 @@ struct CallbackState
 {
     UInt32 expectedBus = 0;
     UInt32 calls = 0;
+    float key[2] = {0.8f, 0.8f};   // the sidechain bus's left and right samples (the main bus reads 0.1)
 };
 
 OSStatus renderInput(void* refCon,
@@ -58,7 +59,7 @@ OSStatus renderInput(void* refCon,
                 "AU supplies allocated storage to each input callback");
         float* const samples = static_cast<float*>(data->mBuffers[channel].mData);
         for (UInt32 frame = 0; frame < frames; ++frame)
-            samples[frame] = state.expectedBus == 0 ? 0.1f : 0.8f;
+            samples[frame] = state.expectedBus == 0 ? 0.1f : state.key[channel == 0 ? 0 : 1];
     }
     return noErr;
 }
@@ -195,12 +196,6 @@ int main()
                               kAudioUnitScope_Output, 0, &monoFormat, sizeof(monoFormat)),
                   "output bus accepts matching mono");
 
-    const AURenderCallbackStruct sidechainCallback = {renderInput, &callbackStates[1]};
-    require(setProperty(interface, kAudioUnitProperty_SetRenderCallback,
-                        kAudioUnitScope_Input, 1, &sidechainCallback,
-                        sizeof(sidechainCallback)) == kAudioUnitErr_FormatNotSupported,
-            "unsupported mono-main plus stereo-sidechain layout is rejected");
-
     requireStatus(initialize(interface), "AU initializes in its advertised mono layout");
     storage.numberBuffers = 1;
     requireStatus(render(interface, &flags, &timestamp, 0, frames,
@@ -209,6 +204,23 @@ int main()
     require(callbackStates[0].calls == 3 && callbackStates[1].calls == 1,
             "mono render pulls only the one-channel main bus");
     requireStatus(uninitialize(interface), "AU uninitializes after mono render");
+
+    // A mono instance keyed by the stereo sidechain (DAF_PLUGIN_SIDECHAIN_ON_EXTRA_IO).
+    const AURenderCallbackStruct sidechainCallback = {renderInput, &callbackStates[1]};
+    requireStatus(setProperty(interface, kAudioUnitProperty_SetRenderCallback,
+                              kAudioUnitScope_Input, 1, &sidechainCallback, sizeof(sidechainCallback)),
+                  "a mono main accepts the stereo sidechain");
+    requireStatus(initialize(interface), "AU initializes as a mono instance keyed by the stereo sidechain");
+    requireStatus(render(interface, &flags, &timestamp, 0, frames,
+                         reinterpret_cast<AudioBufferList*>(&storage)),
+                  "AU renders as a mono instance keyed by the stereo sidechain");
+    require(callbackStates[0].calls == 4 && callbackStates[1].calls == 2,
+            "mono keyed render pulls the main and the sidechain bus");
+    requireStatus(uninitialize(interface), "AU uninitializes after mono keyed render");
+    const AURenderCallbackStruct sidechainOff{};
+    requireStatus(setProperty(interface, kAudioUnitProperty_SetRenderCallback,
+                              kAudioUnitScope_Input, 1, &sidechainOff, sizeof(sidechainOff)),
+                  "sidechain disconnects from the mono instance");
 
     monoFormat.mChannelsPerFrame = 2;
     requireStatus(setProperty(interface, kAudioUnitProperty_StreamFormat,
@@ -255,6 +267,99 @@ int main()
     require(connectedLevel < disconnectedLevel * 0.8f,
             "sidechain bus samples reach the plugin's external detector ports");
 
+    // A stereo main keyed by a mono sidechain (2 + 1): the one key channel keys both main channels, each on its own
+    // (unlinked, so the left key cannot reach the right channel through the link).
+    requireStatus(setParameter(interface, static_cast<AudioUnitParameterID>(multicompp::ParamId::StereoLink),
+                               kAudioUnitScope_Global, 0, 0.0f, 0),
+                  "stereo link opens for the mono-key probe");
+    AudioStreamBasicDescription keyFormat{};
+    dataSize = sizeof(keyFormat);
+    requireStatus(getProperty(interface, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 1, &keyFormat,
+                              &dataSize),
+                  "sidechain format reads before narrowing it");
+    keyFormat.mChannelsPerFrame = 1;
+    requireStatus(setProperty(interface, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 1, &keyFormat,
+                              sizeof(keyFormat)),
+                  "a stereo main takes a mono sidechain");
+    requireStatus(initialize(interface), "AU initializes as a stereo instance keyed by a mono sidechain");
+    for (int block = 0; block < 200; ++block)
+        requireStatus(render(interface, &flags, &timestamp, 0, frames,
+                             reinterpret_cast<AudioBufferList*>(&storage)),
+                      "mono-keyed stereo routing probe renders");
+    const float monoKeyLeft = std::abs(left[frames - 1]), monoKeyRight = std::abs(right[frames - 1]);
+    requireStatus(uninitialize(interface), "AU uninitializes after the mono-keyed stereo probe");
+    std::printf("AU stereo main, mono sidechain: left %.6f, right %.6f (disconnected %.6f)\n",
+                static_cast<double>(monoKeyLeft), static_cast<double>(monoKeyRight),
+                static_cast<double>(disconnectedLevel));
+    require(monoKeyLeft < disconnectedLevel * 0.8f && monoKeyRight < disconnectedLevel * 0.8f,
+            "a mono sidechain keys both channels of a stereo main");
+    keyFormat.mChannelsPerFrame = 2;
+    requireStatus(setProperty(interface, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 1, &keyFormat,
+                              sizeof(keyFormat)),
+                  "the sidechain returns to stereo");
+    requireStatus(setParameter(interface, static_cast<AudioUnitParameterID>(multicompp::ParamId::StereoLink),
+                               kAudioUnitScope_Global, 0, 100.0f, 0),
+                  "stereo link returns to 100");
+
+    // A host that connects the stereo sidechain first and then narrows the main bus and the output to mono (Logic's
+    // own order follows further down): the unit must initialize as a mono instance (it used to fail with
+    // kAudioUnitErr_FormatNotSupported) and its detector must hear the stereo key.
+    monoFormat.mChannelsPerFrame = 1;
+    requireStatus(setProperty(interface, kAudioUnitProperty_StreamFormat,
+                              kAudioUnitScope_Input, 0, &monoFormat, sizeof(monoFormat)),
+                  "main input narrows to mono with the sidechain connected");
+    requireStatus(setProperty(interface, kAudioUnitProperty_StreamFormat,
+                              kAudioUnitScope_Output, 0, &monoFormat, sizeof(monoFormat)),
+                  "output narrows to mono with the sidechain connected");
+    storage.numberBuffers = 1;
+    requireStatus(initialize(interface), "AU initializes on a mono track with the sidechain connected first");
+    for (int block = 0; block < 200; ++block)
+        requireStatus(render(interface, &flags, &timestamp, 0, frames,
+                             reinterpret_cast<AudioBufferList*>(&storage)),
+                      "mono keyed routing probe renders");
+    const float monoConnectedLevel = std::abs(left[frames - 1]);
+    requireStatus(uninitialize(interface), "AU uninitializes after mono keyed routing probe");
+    // The mono instance hears the stereo key's mid: a key of 1.6 on the left alone has the same mid as 0.8 on both
+    // sides and must render the same samples (its left channel alone would key twice as hard).
+    callbackStates[1].key[0] = 1.6f;
+    callbackStates[1].key[1] = 0.0f;
+    requireStatus(initialize(interface), "AU initializes for the one-sided key on the mono instance");
+    for (int block = 0; block < 200; ++block)
+        requireStatus(render(interface, &flags, &timestamp, 0, frames,
+                             reinterpret_cast<AudioBufferList*>(&storage)),
+                      "mono instance renders keyed by a one-sided stereo key");
+    const float oneSidedKeyLevel = std::abs(left[frames - 1]);
+    requireStatus(uninitialize(interface), "AU uninitializes after the one-sided key probe");
+    callbackStates[1].key[0] = callbackStates[1].key[1] = 0.8f;
+    std::printf("AU mono instance, stereo key: centred %.6f, one-sided with the same mid %.6f\n",
+                static_cast<double>(monoConnectedLevel), static_cast<double>(oneSidedKeyLevel));
+    require(oneSidedKeyLevel == monoConnectedLevel, "a mono instance hears a stereo key's mid");
+    requireStatus(setProperty(interface, kAudioUnitProperty_SetRenderCallback,
+                              kAudioUnitScope_Input, 1, &sidechainOff, sizeof(sidechainOff)),
+                  "sidechain disconnects for the mono reference");
+    requireStatus(initialize(interface), "AU initializes as a plain mono instance");
+    for (int block = 0; block < 200; ++block)
+        requireStatus(render(interface, &flags, &timestamp, 0, frames,
+                             reinterpret_cast<AudioBufferList*>(&storage)),
+                      "mono unkeyed routing probe renders");
+    const float monoDisconnectedLevel = std::abs(left[frames - 1]);
+    requireStatus(uninitialize(interface), "AU uninitializes after mono unkeyed routing probe");
+    std::printf("AU mono sidechain routing: disconnected %.6f, connected %.6f\n",
+                static_cast<double>(monoDisconnectedLevel), static_cast<double>(monoConnectedLevel));
+    require(monoConnectedLevel < monoDisconnectedLevel * 0.8f,
+            "a mono instance's detector hears the stereo sidechain");
+    monoFormat.mChannelsPerFrame = 2;
+    requireStatus(setProperty(interface, kAudioUnitProperty_StreamFormat,
+                              kAudioUnitScope_Input, 0, &monoFormat, sizeof(monoFormat)),
+                  "main input returns to stereo after the mono keyed probe");
+    requireStatus(setProperty(interface, kAudioUnitProperty_StreamFormat,
+                              kAudioUnitScope_Output, 0, &monoFormat, sizeof(monoFormat)),
+                  "output returns to stereo after the mono keyed probe");
+    requireStatus(setProperty(interface, kAudioUnitProperty_SetRenderCallback,
+                              kAudioUnitScope_Input, 1, &sidechainCallback, sizeof(sidechainCallback)),
+                  "sidechain reconnects after the mono keyed probe");
+    storage.numberBuffers = 2;
+
     AudioStreamBasicDescription sidechainFormat{};
     dataSize = sizeof(sidechainFormat);
     requireStatus(getProperty(interface, kAudioUnitProperty_StreamFormat,
@@ -274,9 +379,68 @@ int main()
             "disabled sidechain bus is not pulled despite retaining its callback");
     requireStatus(uninitialize(interface), "AU uninitializes after disabled-sidechain render");
 
+    // Logic's mono track (traced in Logic 2026-10-26): every input element set to one channel, then the output,
+    // initialize, and only then both elements connected. The sidechain element used to refuse the mono format, and
+    // Logic abandoned the unit (no editor, no audio).
+    const AURenderCallbackStruct mainOff{};
+    requireStatus(setProperty(interface, kAudioUnitProperty_SetRenderCallback,
+                              kAudioUnitScope_Input, 0, &mainOff, sizeof(mainOff)),
+                  "main callback disconnects before the Logic mono-track sequence");
+    requireStatus(setProperty(interface, kAudioUnitProperty_SetRenderCallback,
+                              kAudioUnitScope_Input, 1, &sidechainOff, sizeof(sidechainOff)),
+                  "sidechain callback disconnects before the Logic mono-track sequence");
+    AudioStreamBasicDescription logicMono{};
+    dataSize = sizeof(logicMono);
+    requireStatus(getProperty(interface, kAudioUnitProperty_StreamFormat,
+                              kAudioUnitScope_Input, 0, &logicMono, &dataSize),
+                  "main format reads before the Logic mono-track sequence");
+    logicMono.mChannelsPerFrame = 1;
+    requireStatus(setProperty(interface, kAudioUnitProperty_StreamFormat,
+                              kAudioUnitScope_Input, 0, &logicMono, sizeof(logicMono)),
+                  "Logic mono track: the main element takes one channel");
+    requireStatus(setProperty(interface, kAudioUnitProperty_StreamFormat,
+                              kAudioUnitScope_Input, 1, &logicMono, sizeof(logicMono)),
+                  "Logic mono track: the sidechain element takes one channel");
+    requireStatus(setProperty(interface, kAudioUnitProperty_StreamFormat,
+                              kAudioUnitScope_Output, 0, &logicMono, sizeof(logicMono)),
+                  "Logic mono track: the output takes one channel");
+    requireStatus(initialize(interface), "Logic mono track: the unit initializes");
+    const AURenderCallbackStruct mainCallback = {renderInput, &callbackStates[0]};
+    requireStatus(setProperty(interface, kAudioUnitProperty_SetRenderCallback,
+                              kAudioUnitScope_Input, 0, &mainCallback, sizeof(mainCallback)),
+                  "Logic mono track: the main element connects while initialized");
+    requireStatus(setProperty(interface, kAudioUnitProperty_SetRenderCallback,
+                              kAudioUnitScope_Input, 1, &sidechainCallback, sizeof(sidechainCallback)),
+                  "Logic mono track: the mono sidechain connects while initialized");
+    storage.numberBuffers = 1;
+    for (int block = 0; block < 200; ++block)
+        requireStatus(render(interface, &flags, &timestamp, 0, frames,
+                             reinterpret_cast<AudioBufferList*>(&storage)),
+                      "Logic mono track renders keyed by its mono sidechain");
+    const float logicKeyedLevel = std::abs(left[frames - 1]);
+    requireStatus(uninitialize(interface), "AU uninitializes after the keyed Logic mono-track render");
+    requireStatus(setProperty(interface, kAudioUnitProperty_SetRenderCallback,
+                              kAudioUnitScope_Input, 1, &sidechainOff, sizeof(sidechainOff)),
+                  "Logic mono track: the sidechain disconnects for the reference");
+    requireStatus(initialize(interface), "Logic mono track: the unkeyed reference initializes");
+    for (int block = 0; block < 200; ++block)
+        requireStatus(render(interface, &flags, &timestamp, 0, frames,
+                             reinterpret_cast<AudioBufferList*>(&storage)),
+                      "Logic mono track renders unkeyed");
+    const float logicUnkeyedLevel = std::abs(left[frames - 1]);
+    requireStatus(uninitialize(interface), "AU uninitializes after the unkeyed Logic mono-track render");
+    std::printf("AU Logic mono track: unkeyed %.6f, keyed by the mono sidechain %.6f\n",
+                static_cast<double>(logicUnkeyedLevel), static_cast<double>(logicKeyedLevel));
+    require(logicKeyedLevel < logicUnkeyedLevel * 0.8f,
+            "on a Logic mono track the detector hears the mono sidechain");
+    // The stereo key's mid is the mono key's level: a key of 0.8 on both sides (the mono instance earlier) keys
+    // exactly as a mono key of 0.8 here, where a sum of the sides would key 6 dB harder.
+    require(logicKeyedLevel == monoConnectedLevel, "a stereo key keys a mono instance by its mid, not its sum");
+
     requireStatus(interface->Close(interface), "AU interface closes");
     dlclose(image);
 
-    std::puts("AU sidechain buses: stereo dual-bus, disconnected, disabled, and mono paths passed");
+    std::puts("AU sidechain buses: stereo dual-bus, disconnected, disabled, mono, mono keyed and Logic mono-track "
+              "paths passed");
     return 0;
 }
