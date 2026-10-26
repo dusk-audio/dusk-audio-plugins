@@ -384,6 +384,7 @@ public:
     void prepare(int maxBlock) noexcept
     {
         blockScratch.assign(static_cast<size_t>(MultiCompOversamplerWide::blockScratch(std::max(1, maxBlock))), 0.0f);
+        decimated.assign(static_cast<size_t>(std::max(1, maxBlock)), 0.0f);
         MultiCompOversamplerWide maxOversampler;
         maxOversampler.setFactor(4);
         maxLatency = static_cast<int>(std::lround(maxOversampler.latency()));
@@ -467,9 +468,15 @@ public:
                 phaseWritePosition = advanceRingIndex(phaseWritePosition, phaseDelaySamples);
                 phases[k] = delayed;
             }
-        oversampler.downsampleBlock(phases, n, output, blockScratch.data());
-        for (int i = 0; i < n; ++i)
-            output[i] = compensateBaseRate(output[i]);
+        // compensateBaseRate() for every sample: delayLineBlock() is the same ring a block at a time. At 1x the
+        // phases are the host-rate samples already.
+        if (oversampler.getFactor() == 1)
+        {
+            compensateBaseRateBlock(phases, output, n);
+            return;
+        }
+        oversampler.downsampleBlock(phases, n, decimated.data(), blockScratch.data());
+        compensateBaseRateBlock(decimated.data(), output, n);
     }
     int getFactor() const noexcept { return oversampler.getFactor(); }
     void upsampleSample(float input, float* phases) noexcept
@@ -517,12 +524,24 @@ private:
         writePosition = advanceRingIndex(writePosition, size);
         return compensationDelay > 0 ? result : wet;
     }
+    // compensateBaseRate() for n samples; `output` must not alias `wet`.
+    void compensateBaseRateBlock(const float* wet, float* output, int n) noexcept
+    {
+        if (compensation.empty() || maxLatency <= 0)
+        {
+            std::memcpy(output, wet, static_cast<size_t>(n) * sizeof(float));
+            return;
+        }
+        delayLineBlock(compensation.data(), static_cast<int>(compensation.size()), writePosition,
+                       compensationDelay, wet, output, n);
+    }
     MultiCompOversamplerWide oversampler;   // 127-tap stage A: flat to 20 kHz at 44.1 kHz
     bool oversamplingOff = false, use4x = false;
     std::vector<float> compensation;
     int maxLatency = 0, writePosition = 0, factor = 2;
     int compensationDelay = 0;   // maxLatency minus the current factor's FIR latency (setFactor)
     std::vector<float> blockScratch;   // processBlock()
+    std::vector<float> decimated;      // downsampleBlock(): the host-rate samples before compensateBaseRateBlock()
     std::array<float, 5> phaseDelay{};
     int phaseDelaySamples = 1, phaseWritePosition = 0;
 };
