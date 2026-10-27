@@ -329,7 +329,17 @@ inline constexpr bool kOptoLinkAtDriveDefault = true;
 // (fbRatioExponent) acts only away from 4:1; the other nine act at every feedback
 // ratio (4:1 to 20:1; All does not run the feedback loop). So 8:1 to 20:1 move too (a few hundredths of a dB on a burst train); the probe groups
 // and the music tiers cover every ratio: 0 cells over 1 dB.
-inline constexpr std::array<float, 81> kFetDynamicsDefaults{{
+// [81] fbSloAttackScale (0 = none), [82] fbSloLoadDb: an SLO detent at the Attack knob's counter-clockwise stop
+// (position exactly 0): the loop's attack time times the scale, and the threshold raised by the load, as
+// fbAttackLoadDb raises it at the clockwise end. FET BLACK has none (0); FET BLUE's are in kFetBlueDynamicsDefaults.
+// [83] fbTailInputLimit (0 = off), [84] fbTailInputReleaseSeconds: the tail population charges no further than its
+// settled size at the reduction the signal's own level settles to, read through the voice's static law from a peak
+// follower on the detector's magnitude (instant up, down in [84]). Read off the fast charge alone, a tail still below
+// its target keeps filling after the signal stops while the charge releases (slowly at the slow end of Release), and
+// the reduction deepens; with the limit it stops filling as the signal falls, and lets go with the charge as before.
+// While the signal holds, the limit sits above the target (the charge stays under the static reduction by the
+// populations' share), so steady signals settle as without it. FET BLUE: on.
+inline constexpr std::array<float, 85> kFetDynamicsDefaults{{
     0.03f, 0.002f, 5.0f, 0.42f, 0.46f, 0.65f,
     0.8f, 0.51f, 0.56f, 0.82f, 1.0f, 0.1f,
     0.7f, 1.0f, 1.24f, 2.0f, -2.17f, 0.82f,
@@ -343,7 +353,7 @@ inline constexpr std::array<float, 81> kFetDynamicsDefaults{{
     0.069821596f, 0.12f, 0.85f, 0.6051005f, 0.0f, 1.2920812f,
     3.8620229f, 5.0f, 1.0f, 0.043717176f, 9.846549f, 3.0176f,
     0.6949f, 5.42614f, 0.72f, -0.1f, 0.4097363f, 0.4356033f,
-    0.3f, 5.0102124f, 19.819176f}};
+    0.3f, 5.0102124f, 19.819176f, 0.0f, 0.0f, 0.0f, 0.02f}};
 
 // C5 90-degree all-pass pair: first-order sections (p - s)/(p + s), pole
 // frequencies in Hz, mapped per sample rate by the plain bilinear transform.
@@ -386,6 +396,7 @@ struct FetDynamicsParams
     float fbChargeRiseOnly;
     float fbStaticK3KnobShare;
     float fbReleaseDepthExtraExponent, fbReleaseDepthExtraDb;
+    float fbSloAttackScale, fbSloLoadDb, fbTailInputLimit, fbTailInputReleaseSeconds;
 
     static FetDynamicsParams fromArray(const std::array<float, kFetDynamicsDefaults.size()>& v) noexcept
     {
@@ -464,9 +475,260 @@ struct FetDynamicsParams
         p.fbStaticK3KnobShare = v[78];
         p.fbReleaseDepthExtraExponent = v[79];
         p.fbReleaseDepthExtraDb = v[80];
+        p.fbSloAttackScale = v[81];
+        p.fbSloLoadDb = v[82];
+        p.fbTailInputLimit = v[83];
+        p.fbTailInputReleaseSeconds = v[84];
         return p;
     }
 };
+
+// FET BLUE's dynamics constants (mode 4; kFetDynamicsDefaults is FET BLACK's). The same feedback loop, refitted
+// 2026-10-26 to a second reference FET compressor on its own probes (tools fet_ae/dyn_fit.py, variant A; report
+// handoff/reports/fet-ae-step1-2026-10-26.md), music never fitted: the 30-clip corpus at 4:1 and 20:1, light to
+// heavy drive, then reads 0 of 180 cells over 1 dB; the release and tail constants refitted on 2026-10-27 with the
+// tail limit (last item). Twenty-five slots differ from FET BLACK's:
+// - [45] fbSlowShare 0: the reference has no release memory, and with the population on, the fit built its slow
+//   attack creep from it, which also charges over a long passage (its staircase statics sat 0.6 dB deeper than its
+//   own 1 s bursts at the same level, where the reference's agree to 0.06 dB).
+// - [38]-[42], [49], [52], [53], [63], [65], [66], [70], [73], [74]: the attack and release laws, the ratio
+//   exponent of the attack, the depth law and the tail population, fitted on the reference's 4 kHz bursts (4:1 at
+//   every Attack and Release position, 20:1, 0 dBFS bursts) and its 1 kHz staircases (4:1, 8:1, 20:1).
+// - [34], [35], [71], [72]: the two low-frequency sections, fitted to its 2-2000 Hz response below threshold
+//   (tools fet_ae/lf.py), within 0.003 dB and 0.03 degrees from 2.5 Hz to 1 kHz: a Butterworth 4.20 Hz Q 0.708 and
+//   a resonant 3.77 Hz Q 1.675 (+2.3 dB at 5 Hz). The sweep reads only their product; the order is the amplifier's
+//   DC step at a burst's end (Ratio None, 0 dBFS, Input .375), which rings out through the resonant one alone
+//   (residual 0.9e-3 of a 7.0e-3 transient; through the Butterworth 3.4e-3, through both 6.7e-3): it is C4, behind
+//   the gain element and the amplifier, and the Butterworth sits ahead.
+// - [78] fbStaticK3KnobShare 0: FET BLACK's measured static cubic belongs to its colour stage (FetVoice).
+// - [81] fbSloAttackScale 3.988, [82] fbSloLoadDb 1.789: the Attack knob's SLO detent (its counter-clockwise stop),
+//   a slower attack and a raised threshold, fitted to the reference's Attack-0 bursts alone (4:1, Input .5; tools
+//   fet_ae/slo_fit.py): attack / hold / release 0.54 / 0.13 / 0.45 dB rms (6.4 dB worst frame without the detent,
+//   1.4 dB rms hold with the attack scale alone: the reference settles 1.3 dB shallower at SLO).
+// - [83] fbTailInputLimit on, [84] 0.036 s: the reference never deepens its reduction after a burst ends (171 ms of
+//   1 kHz at 0.8 peak, Input .5, every single button, Release 0 / '5' / 1; tools fet_ae/release0.py), where the tail
+//   still filling from the fast charge deepened FET BLUE's by up to 1.2 dB at Release 0; nor does it hold its
+//   reduction up after a short burst (300 ms after 30 / 100 / 300 ms bursts at Release '5' it reads within 0.5 dB
+//   of one level, where FET BLUE read 2.6 dB deeper after the shortest). With
+//   the limit, [42], [49], [50], [53], [63], [65], [66], [70] and [73] (and FetVoice's release scales) refitted on
+//   those probes, the bursts above and the corpus's FIT clips at 2:1 / 4:1 / 20:1, light to heavy (blue_fit.py,
+//   attack constants held): probe cells with a frame 1 dB off 25 -> 21 of 80, release 0.95 -> 0.30 dB rms; corpus
+//   pooled 0.372 -> 0.334 dB, 0 of 270 cells over 1 dB (VAL and SEALED clips never fitted). The fit also turned
+//   the 4:1 knee release mostly off ([73] 15.2 -> 0.34) and made the depth law's ratio exponent [50] 1.09.
+// FET BLACK's [43], [44] (unused while the Release pot law, [60], is on) and [54], [55] (no lag) are kept: the
+// fitted values there rendered byte-identically.
+inline constexpr std::array<float, 85> kFetBlueDynamicsDefaults{{
+    0.03f, 0.002f, 5.0f, 0.42f, 0.46f, 0.65f,
+    0.8f, 0.51f, 0.56f, 0.82f, 1.0f, 0.1f,
+    0.7f, 1.0f, 1.24f, 2.0f, -2.17f, 0.82f,
+    2.0f, -1.82f, 0.12f, 0.0f, 0.001f, 1.0e-04f,
+    0.2f, 0.0f, 0.0f, 0.0f, 1.0f, 0.5f,
+    0.5f, 1.4f, 0.058f, 1.0f, 3.7668848f, 1.67501724f,
+    0.0f, 1.0f, 8.23298979e-05f, 1.32719922f, -1.35175562f, 0.86418885f,
+    0.460866213f, 1.042f, -0.958f, 0.0f, 4.7795935f, 2.1196837f,
+    2.6695828f, 71.9732056f, 1.08718872f, 0.216308f, -0.214574963f, 23.4785976f,
+    0.0f, 1.7396628f, 13.263551f, 123.67461f, 0.85f, 1.17f,
+    0.069821596f, 0.12f, 0.85f, 0.958768249f, 0.0f, 0.414279848f,
+    0.790935993f, 5.0f, 1.0f, 0.043717176f, 16.7711658f, 4.19861269f,
+    0.70767647f, 0.335850686f, 0.543351114f, -0.1f, 0.4097363f, 0.4356033f,
+    0.0f, 5.0102124f, 19.819176f, 3.98787689f, 1.789222f, 1.0f, 0.0355880819f}};
+
+// The two FET modes are one engine with two measured voices: FET BLACK (mode 1), the reference the C6 campaign
+// fitted, and FET BLUE (mode 4), measured 2026-10-26/27 (tools fet_ae/: laws.py, tables.py, static_fit.py). A
+// voice holds what differs between them besides their dynamics constants: the settled sine law per Ratio position
+// (fetReferenceReductionDb: reduction slope, threshold and quadratic knee width in the driven level at the
+// reference threshold control, -10 dB, and the detector plateau), each position's scale on the loop's attack and
+// release times, and the Input and Output pot laws (dB relative to the clockwise stop at the 17 nodes k / 16, plus
+// the absolute trims).
+inline constexpr int kFetVoiceRatios = 11;   // the most Ratio positions a voice has (FET BLUE's)
+struct FetVoice
+{
+    int ratioCount;
+    // The 4:1 position: the depth and tail laws read every ratio relative to it, and the 4:1-only terms (the
+    // release depth extra, the knee release, the knee correction) run there.
+    int unitRatio;
+    int allButtons;      // the All-buttons position, which keeps the feed-forward arm (-1: none)
+    int noReduction;     // the position that takes the gain element out (-1: none)
+    // FET BLACK's measured chain: the C6 campaign's colour stage, its 4:1 knee correction and the output stage's
+    // convolution and hardware gain. FET BLUE's are not these.
+    bool measuredChain;
+    std::array<float, kFetVoiceRatios> reductionSlopes, thresholdsDb, kneeWidthsDb, maximumDetectorLevelsDb;
+    std::array<float, kFetVoiceRatios> attackScales, releaseScales;
+    // Each position's linear gain re the 4:1's (the ratio network loads the circuit), applied after the gain element.
+    std::array<float, kFetVoiceRatios> ratioGainsDb;
+    std::array<float, 17> inputRelativeDb, outputRelativeDb;
+    float inputTrimDb, outputTrimDb;
+    // The side-chain filter the SC Filter switch puts ahead of the detector's rectifier (0 sections: no switch): an
+    // analog prototype, gain * prod (s + 2 pi zero) / (s + 2 pi pole), its corners prewarped to the loop's rate.
+    int scFilterSections;
+    std::array<float, 3> scFilterZerosHz, scFilterPolesHz;
+    float scFilterGainDb;
+    // The amplifier behind the gain element (0 pieces: none, the signal passes): x, the signal over the driven level
+    // of a 0 dBFS sine at the reference Input (amplifierReferenceDb), through a cubic per piece between breakpoints
+    // (c0 + c1 d + c2 d^2 + c3 d^3, d = x - break), and the end pieces' tangents past the ends.
+    int amplifierPieces;
+    const float* amplifierBreaks;                  // amplifierPieces + 1
+    const std::array<float, 4>* amplifierCubics;
+    float amplifierReferenceDb;
+};
+
+// FET BLACK: Ratio 4:1, 8:1, 12:1, 20:1, All. The settled law collapses onto one input axis whether the level is
+// reached with the source or the Input control; a quadratic knee fits it to 0.032 dB or better for every button.
+// These are reduction slopes (1 - 1/R), the feed-forward equivalent of the feedback law, not the nominal ratios.
+// At the clockwise Input stop the unit stops adding reduction near the top of every ratio's detector domain (the
+// plateau). Input / Output: the native reference's pots, 2026-09-16, 17 nodes (fet-programme-20260911/
+// HYPOTHESES.md H15, make_fet_taper_core.py: taper-sweep/native-90 Input at -90 dBFS, taper-sweep/native Output at
+// -54 dBFS); sweep residual rounds to 0.000 dB, old-node agreement <= .002 / .01 dB. Input 0 is -41.95 dB, not mute.
+// The Input trim, 39.850671 = 40.0 - 0.149329, removes the vintage chain's frequency-flat +0.149329 dB excess ahead
+// of the detector, where it was measured to live (see fetInputGainDb); the Output trim includes the measured linear
+// loss of the convolution chain.
+inline constexpr FetVoice kFetBlackVoice{
+    5, 0, 4, -1, true,
+    {{0.82857823f, 0.90319133f, 0.93707197f, 0.96619657f, 0.95953144f}},
+    {{-8.34012099f, -5.90065303f, -4.47645544f, -2.66788769f, -4.74344379f}},
+    {{14.12963324f, 7.19106925f, 1.87103644f, 4.83803856f, 4.87980041f}},
+    {{38.72f, 38.85f, 39.00f, 39.09f, 38.23f}},
+    {{1.0f, 0.65f, 0.45f, 0.25f, 0.90f}},
+    {{1.0f, 0.875f, 0.842f, 0.762f, 1.0f}},
+    {{}},
+    {{-41.949972f, -40.349972f, -37.919972f, -35.199972f,
+      -27.579973f, -25.519973f, -23.209974f, -17.159975f,
+      -13.389977f, -9.519981f, -8.019983f, -6.429985f,
+      -4.549989f, -0.419998f, -0.090000f, -0.030000f,
+      0.000000f}},
+    {{-99.990001f, -91.940000f, -66.070001f, -56.780000f,
+      -47.990000f, -39.920000f, -33.170000f, -27.200001f,
+      -21.810001f, -16.860000f, -12.900000f, -9.240000f,
+      -6.060000f, -3.500000f, -1.529999f, -0.150000f,
+      0.000000f}},
+    39.850671f, 4.360566f,
+    0, {{}}, {{}}, 0.0f,
+    0, nullptr, nullptr, 0.0f};
+
+// FET BLUE's amplifier, behind the gain element and ahead of the Output pot, read off the reference's waveform with
+// the gain element out (Ratio None; tools fet_ae/preamp_curve.py): 1 kHz staircases at Input .375 / .5 / .625 / .75 /
+// 1, drive -40..+21.3 dB, every step's output against its input, one cubic B-spline (knots log-spaced to 0.005)
+// fitted with a free DC per step (the low section behind it removes the even term's DC, which moves with the
+// level) and every level weighted alike. The sines it predicts: gain change, H2, H3 within 0.01 / 0.1 / 0.1 dB of
+// the reference from -40 to 0 dBFS at Input .375 (-0.00 / -64.6 / -74.6 dBc at -40, -1.43 / -33.3 / -27.6 at 0),
+// H5 within 2.7 dB; its DC step at 0 dBFS (-0.023) is the one the post-burst transient needs (-0.025, below).
+// Memoryless: the reference's H2 / H3 are the same at 50 Hz..5 kHz and sit at a curve's own phase (-179 deg).
+inline constexpr std::array<float, 59> kFetBlueAmplifierBreaks{{
+    -11.6144857f, -8.89057827f, -6.80549955f, -5.20942736f, -3.98767734f, -3.05246019f,
+    -2.33657646f, -1.78858674f, -1.36911523f, -1.04802108f, -0.802232027f, -0.614087164f,
+    -0.470067263f, -0.359823883f, -0.275435567f, -0.210838541f, -0.161391258f, -0.123540685f,
+    -0.0945670828f, -0.0723885745f, -0.0554115139f, -0.0424160287f, -0.0324683338f, -0.0248536393f,
+    -0.0190247949f, -0.0145629719f, -0.0111475652f, -0.00853316206f, -0.00653190725f, 0.0f,
+    0.00653190725f, 0.00853316206f, 0.0111475652f, 0.0145629719f, 0.0190247949f, 0.0248536393f,
+    0.0324683338f, 0.0424160287f, 0.0554115139f, 0.0723885745f, 0.0945670828f, 0.123540685f,
+    0.161391258f, 0.210838541f, 0.275435567f, 0.359823883f, 0.470067263f, 0.614087164f,
+    0.802232027f, 1.04802108f, 1.36911523f, 1.78858674f, 2.33657646f, 3.05246019f,
+    3.98767734f, 5.20942736f, 6.80549955f, 8.89057827f, 11.6144857f}};
+inline constexpr std::array<std::array<float, 4>, 58> kFetBlueAmplifierCubics{{
+    {{-1.20368552f, 0.0141279018f, -0.0104253301f, 0.00192192779f}},
+    {{-1.20371187f, 0.000112858092f, 0.00528013334f, -0.00192120764f}},
+    {{-1.19793665f, -0.00292581227f, -0.00673747435f, 0.00396597525f}},
+    {{-1.20364451f, 0.00587651785f, 0.0122524705f, -0.010114219f}},
+    {{-1.19662094f, -0.00947625097f, -0.0248186793f, 0.028182039f}},
+    {{-1.2041384f, 0.0180487018f, 0.0542502962f, -0.0886189789f}},
+    {{-1.19592774f, -0.0405263565f, -0.136072338f, 0.365822673f}},
+    {{-1.19879854f, 0.13990289f, 0.465328932f, -0.0956353694f}},
+    {{-1.06529438f, 0.479804367f, 0.344980001f, -0.253374279f}},
+    {{-0.884052098f, 0.62297672f, 0.100908972f, 0.300038844f}},
+    {{-0.720379949f, 0.726959407f, 0.322147727f, -0.252162099f}},
+    {{-0.573882103f, 0.821401834f, 0.179818675f, 0.169156387f}},
+    {{-0.451348841f, 0.883722544f, 0.252904326f, -0.286554545f}},
+    {{-0.351234555f, 0.929036558f, 0.158132121f, 0.0513582304f}},
+    {{-0.271677703f, 0.956822813f, 0.171134233f, -0.313281536f}},
+    {{-0.209240153f, 0.975010574f, 0.110423073f, -0.0236176327f}},
+    {{-0.160761386f, 0.985757589f, 0.106919587f, -0.350900561f}},
+    {{-0.123315752f, 0.992343366f, 0.0670742244f, -0.0560780987f}},
+    {{-0.0945090503f, 0.996088862f, 0.062199872f, -0.378398508f}},
+    {{-0.0723908097f, 0.998289526f, 0.0370229222f, -0.0753105581f}},
+    {{-0.055432491f, 0.99948144f, 0.0331872664f, -0.418778539f}},
+    {{-0.0424390621f, 1.00013185f, 0.0168605782f, 0.0151019692f}},
+    {{-0.0324883722f, 1.00047183f, 0.0173112676f, -0.78293556f}},
+    {{-0.0248694271f, 1.00059927f, -0.000574176491f, 1.15539646f}},
+    {{-0.0190368798f, 1.00071025f, 0.019629702f, -4.73978949f}},
+    {{-0.0145719172f, 1.00060236f, -0.0438146181f, 16.5043087f}},
+    {{-0.0111543061f, 1.00088072f, 0.125292167f, -42.812088f}},
+    {{-0.00853751041f, 1.00065792f, -0.210491925f, 49.4944534f}},
+    {{-0.0065353848f, 1.00041008f, 0.0866611376f, -10.401165f}},
+    {{0.0f, 1.00021088f, -0.117157191f, -10.6995697f}},
+    {{0.00652530417f, 0.997310877f, -0.326822966f, 51.7204208f}},
+    {{0.00852028374f, 0.996624172f, -0.0163057111f, -43.6103821f}},
+    {{0.0111249695f, 0.995644689f, -0.358350992f, 17.0355816f}},
+    {{0.0145219993f, 0.993793011f, -0.183800668f, -4.50339556f}},
+    {{0.0189520698f, 0.991883874f, -0.244080752f, 1.2887603f}},
+    {{0.0247255694f, 0.989169836f, -0.221544802f, -0.368999153f}},
+    {{0.0322447866f, 0.985731661f, -0.229974255f, 0.0654852986f}},
+    {{0.0420278497f, 0.981175661f, -0.228019968f, 0.0142680453f}},
+    {{0.054740224f, 0.975256443f, -0.227463707f, -0.0501541309f}},
+    {{0.0712314025f, 0.967489719f, -0.230018109f, 0.0423853248f}},
+    {{0.0925762132f, 0.95734936f, -0.22719799f, -0.0406022556f}},
+    {{0.120122351f, 0.944081604f, -0.230727166f, 0.0267055184f}},
+    {{0.155527279f, 0.926730096f, -0.227694705f, -0.0142254457f}},
+    {{0.200793117f, 0.904107988f, -0.229804933f, 0.0147462357f}},
+    {{0.258240849f, 0.874603152f, -0.226947248f, -0.00261329487f}},
+    {{0.330429405f, 0.836243927f, -0.227608845f, 0.026358353f}},
+    {{0.419888794f, 0.787020206f, -0.218891338f, 0.00124553929f}},
+    {{0.528698921f, 0.724048316f, -0.218353197f, 0.041876208f}},
+    {{0.657474399f, 0.64633131f, -0.194716811f, 0.00976541732f}},
+    {{0.804717243f, 0.552382648f, -0.187516108f, 0.0555291027f}},
+    {{0.964589238f, 0.44913739f, -0.134025902f, 0.0185337719f}},
+    {{1.13077486f, 0.346480727f, -0.110702731f, 0.0510140173f}},
+    {{1.29579425f, 0.271110207f, -0.0268372502f, 0.00122115074f}},
+    {{1.4765718f, 0.234562993f, -0.024214644f, -0.037167009f}},
+    {{1.64435875f, 0.0917488337f, -0.128492311f, 0.0449903496f}},
+    {{1.6467036f, -0.0207544584f, 0.0364086069f, -0.0113838399f}},
+    {{1.66004133f, 0.00846791547f, -0.0180996731f, 0.00519200508f}},
+    {{1.6460737f, 0.000706986175f, 0.0143775446f, -0.00535501074f}}}};
+
+// FET BLUE: Ratio None, 2:1, 4:1, 8:1, 20:1 and the two-button pairs 2:1+4:1, 4:1+8:1, 8:1+20:1, 2:1+8:1,
+// 4:1+20:1, 2:1+20:1, in the reference's own order. Its staircases at Input .25 / .375 / .5 / .625 fall on one curve
+// per position in the driven level within 0.02 dB (the knee onsets of 20:1 and 2:1+20:1 within 0.4 dB, the
+// staircase's 2 dB grid), so the law reads the driven signal alone, as FET BLACK's does; the quadratic knee fits
+// them within 0.11 / 0.24 dB rms / worst at 2:1, 0.11 / 0.26 at 4:1, 0.05 / 0.13 at 8:1, 0.05 / 0.12 at 20:1 and
+// 0.11-0.17 / 0.29-0.53 for the pairs (tools fet_ae/static_fit.py). No row reaches a plateau (the hottest drives
+// 30.2 dB): 39 dB, inside FET BLACK's 38.2-39.1, stands in for it. None keeps the threshold out of reach.
+// Attack scales: 4:1, 8:1 and 20:1 as FET BLACK's, which the dynamics fit ran with; 2:1 and the pairs, not yet
+// measured, take the single button nearest them in reduction slope. Release scales: fitted with the tail limit
+// (kFetBlueDynamicsDefaults, 2026-10-27) on bursts at every single button: 2:1 1.00, 8:1 1.01, 20:1 0.92; each pair
+// takes its larger button's, not yet measured.
+// Linear gain per position re 4:1: the first step of every staircase (-60 dBFS) at Input .25 / .375 / .5 / .625
+// agrees within 0.003 dB (tools fet_ae/ratio_gain.py); the pairs sit up to 1.75 dB above the single buttons.
+// Input / Output: both pots are piecewise linear on the same 17 nodes (every 1/64 position lies on the line between
+// its 1/16 neighbours to the 0.01 dB the capture reads; tools fet_ae/tables.py). The Input trim puts its drive at
+// Input .375 where FET BLACK's is (37.940697 = 39.850671 - 1.909974; the laws read -21.30 and -23.209974 dB there),
+// the coordinate the static law above was fitted in.
+// SC Filter: a +3 dB/octave tilt on the detector from 30 Hz to 16 kHz, 0 dB near 285 Hz (the settled reduction of
+// -10 dBFS tones at 4:1, Input .5, on against off, over the law's 0.853 slope: -9.3 dB at 30 Hz, +5.8 at 1 kHz,
+// +19 at 16 kHz; tools fet_ae/scf.py). Three shelves fit it within 0.17 dB to 6 kHz (scf_fit.py; above 8 kHz the
+// reading itself wobbles by 1 dB) and hold their gain above 13 kHz instead of rising on into the oversampled band.
+// The gain is set through the loop itself: the fit's 20.39 dB took the law's 0.853 slope, and on the core the switch's
+// effect read 0.3-0.5 dB short at every frequency; 20.9 dB puts 100 Hz / 300 Hz / 1 kHz / 4 kHz within 0.09 dB of
+// the reference (core test --fet-blue).
+inline constexpr FetVoice kFetBlueVoice{
+    11, 2, -1, 0, false,
+    {{0.5f, 0.79688776f, 0.8532685f, 0.9116469f, 0.95496702f, 0.83355302f, 0.90210825f, 0.94584674f,
+      0.88981092f, 0.93952757f, 0.93441933f}},
+    {{200.0f, -8.246829f, -7.6200333f, -5.9402471f, -3.4424005f, -7.8006115f, -8.362071f, -7.4400568f,
+      -7.935461f, -7.1974735f, -5.4538617f}},
+    {{1.0f, 8.7895947f, 7.058898f, 3.0427685f, 1.3793365f, 8.6681347f, 5.0340247f, 3.7372067f,
+      5.7460027f, 4.3816304f, 5.0832062f}},
+    {{239.0f, 39.0f, 39.0f, 39.0f, 39.0f, 39.0f, 39.0f, 39.0f, 39.0f, 39.0f, 39.0f}},
+    {{1.0f, 1.0f, 1.0f, 0.65f, 0.25f, 1.0f, 0.65f, 0.25f, 0.65f, 0.25f, 0.25f}},
+    {{1.0f, 0.999883831f, 1.0f, 1.01148355f, 0.923112452f, 1.0f, 1.01148355f, 0.923112452f, 1.01148355f,
+      0.923112452f, 0.923112452f}},
+    {{-0.1006f, -0.1002f, 0.0f, 0.1003f, -0.3004f, -0.0386f, 1.2816f, 1.7017f, 1.7516f, 1.7517f, 1.3517f}},
+    {{-36.30f, -34.50f, -30.50f, -28.80f, -26.10f, -22.10f, -21.30f, -16.70f, -13.50f,
+      -9.20f, -7.70f, -6.20f, -4.10f, -0.50f, -0.30f, -0.10f, 0.0f}},
+    {{-100.0f, -61.90f, -45.80f, -40.30f, -35.70f, -31.40f, -28.70f, -26.90f, -26.00f,
+      -25.20f, -20.80f, -18.10f, -14.80f, -9.00f, -3.40f, -0.01f, 0.0f}},
+    37.940697f, 4.360566f,
+    3, {{40.489922f, 373.68417f, 3357.3923f}}, {{126.97172f, 1118.7278f, 13168.484f}}, 20.9f,
+    static_cast<int>(kFetBlueAmplifierCubics.size()), kFetBlueAmplifierBreaks.data(), kFetBlueAmplifierCubics.data(),
+    16.640697f};
 
 class MultiCompModes
 {
@@ -502,7 +764,7 @@ public:
         for (auto& d : vca) d = VCAState{};
         for (auto& d : bus) d = BusState{};
         for (auto& filter : busFeedbackCoupling) filter.reset();
-        for (auto& d : studioFet) d = StudioFETState{};
+        for (auto& d : fetBlue) d = FETState{};
         for (auto& d : studioVca) d = studioVcaLaw::GainComputer{};
         for (auto& d : digital) d = DigitalState{};
         for (auto& filter : busSidechainHighPass) filter.reset();
@@ -620,7 +882,7 @@ public:
             case MultiCompMode::FET:
                 for (auto& d : fet) d = FETState{};
                 fetConvolution.reset();
-                transientShaper.reset();   // shared with Studio FET
+                transientShaper.reset();
                 for (int ch = 0; ch < kChannels; ++ch)
                 {
                     inputTransformerFet[ch].reset();
@@ -630,14 +892,8 @@ public:
             case MultiCompMode::Bus:
                 clearBusState();
                 break;
-            case MultiCompMode::StudioFET:
-                for (auto& d : studioFet) d = StudioFETState{};
-                transientShaper.reset();   // shared with FET
-                for (int ch = 0; ch < kChannels; ++ch)
-                {
-                    inputTransformerStudioFet[ch].reset();
-                    outputTransformerStudioFet[ch].reset();
-                }
+            case MultiCompMode::FetBlue:
+                for (auto& d : fetBlue) d = FETState{};
                 break;
             case MultiCompMode::StudioVCA:
                 for (auto& d : studioVca) d = studioVcaLaw::GainComputer{};
@@ -665,7 +921,7 @@ public:
         for (auto& d : fet) d = FETState{};
         for (auto& d : vca) d = VCAState{};
         clearBusState();
-        for (auto& d : studioFet) d = StudioFETState{};
+        for (auto& d : fetBlue) d = FETState{};
         for (auto& d : studioVca) d = studioVcaLaw::GainComputer{};
         for (auto& d : digital) d = DigitalState{};
         for (auto& filter : busSidechainHighPass) filter.reset();
@@ -693,12 +949,14 @@ public:
         {
             case MultiCompMode::Opto: return processOpto(
                 input, ch, sc, p, external, optoDetector, useOptoDetector);
-            case MultiCompMode::FET: return processFET(
-                input, ch, sc, p, false, external, useOptoDetector);
+            case MultiCompMode::FET:
+                selectFetVoice(0);
+                return processFET(input, ch, sc, p, external, useOptoDetector);
             case MultiCompMode::VCA: return processVCA(input, ch, sc, p, external);
             case MultiCompMode::Bus: return processBus(input, ch, sc, p, localMix, external);
-            case MultiCompMode::StudioFET: return processFET(
-                input, ch, sc, p, true, external, false);
+            case MultiCompMode::FetBlue:
+                selectFetVoice(1);
+                return processFET(input, ch, sc, p, external, useOptoDetector);
             // Studio VCA runs a block at a time at the host rate (MultiCompDSP::processStudioVcaRange).
             case MultiCompMode::StudioVCA: return input;
             case MultiCompMode::Digital: return processDigital(input, ch, sc, p, localMix, external);
@@ -801,7 +1059,7 @@ public:
                     * fet[ch].recoveryGain);
             case MultiCompMode::VCA: return gainToDecibels(vca[ch].envelope);
             case MultiCompMode::Bus: return gainToDecibels(bus[ch].envelope);
-            case MultiCompMode::StudioFET: return gainToDecibels(studioFet[ch].envelope);
+            case MultiCompMode::FetBlue: return gainToDecibels(fetBlue[ch].envelope);
             case MultiCompMode::StudioVCA: return static_cast<float>(studioVca[ch].attack);
             case MultiCompMode::Digital: return gainToDecibels(static_cast<float>(digital[ch].envelope));
             case MultiCompMode::Multiband: break;
@@ -1155,18 +1413,38 @@ public:
     // the partners to processFetC6Block instead.
     bool fetFeedbackActive(const MultiCompParameterState& p) const noexcept
     {
-        return fetDynamics.fbOn > 0.5f
-            && std::clamp(p.fetRatio.load(std::memory_order_relaxed), 0, 4) != 4;
+        return fetDynamics.fbOn > 0.5f && fetRatioIndex(p) != fetVoice->allButtons;
+    }
+    // The active voice's Ratio position: FET BLACK's control (4:1, 8:1, 12:1, 20:1, All) or FET BLUE's (FetVoice).
+    int fetRatioIndex(const MultiCompParameterState& p) const noexcept
+    {
+        const int position = fetVoiceIndex == 1 ? p.fetBlueRatio.load(std::memory_order_relaxed)
+                                                : p.fetRatio.load(std::memory_order_relaxed);
+        return std::clamp(position, 0, fetVoice->ratioCount - 1);
+    }
+    // Enters a FET voice (0 FET BLACK, 1 FET BLUE): its constants, the coefficients derived from them and fresh
+    // knob caches. MultiCompDSP runs the old mode to silence and enters the new one from rest, so the voices never
+    // share a block; each keeps its own channel states (fet, fetBlue).
+    void selectFetVoice(int voice) noexcept
+    {
+        voice = voice == 1 ? 1 : 0;
+        if (voice == fetVoiceIndex) return;
+        fetVoiceIndex = voice;
+        fetVoice = voice == 1 ? &kFetBlueVoice : &kFetBlackVoice;
+        fetDynamics = fetVoiceDynamics[static_cast<size_t>(voice)];
+        fetFeedbackTerms.valid = false;
+        fetStaticKnobK3Memo.valid = false;
+        updateFetDynamicsCoefficients();
     }
     void setFetLinkPartner(int ch, float sample) noexcept
     {
         fetLinkPartner[static_cast<size_t>(std::clamp(ch, 0, 1))] = sample;
     }
 
-    // processFET's C6 arm (fetFeedbackActive) over a block of oversampled samples, for MultiCompDSP's FET block
-    // path: `channelCount` channels (1 or 2), each one's audio, detector feed and linked partner per oversampled
-    // sample k = i * factor + phase (partner null: zero, as unlinked), the Output knob in dB per host sample, the
-    // results into `out`. A stereo pair runs in two-lane registers on arm64 (MultiCompLanes.hpp), channel by
+    // processFET's C6 arm (fetFeedbackActive) for the active voice over a block of oversampled samples, for
+    // MultiCompDSP's FET block path: `channelCount` channels (1 or 2), each one's audio, detector feed and linked
+    // partner per oversampled sample k = i * factor + phase (partner null: zero, as unlinked), the Output knob in dB
+    // per host sample, the results into `out`. A stereo pair runs in two-lane registers on arm64 (MultiCompLanes.hpp), channel by
     // channel elsewhere; either way each channel ends exactly as processFET called sample by sample leaves it.
     void processFetC6Block(int channelCount, const MultiCompParameterState& p, bool external, int samples,
                            int factor, const float* outputDb, const float* const* audio,
@@ -1193,11 +1471,14 @@ public:
 
     // Lab-only hook (see kFetDynamicsDefaults). Not real-time safe against a
     // running block and never called by the plugin.
-    void setFetDynamicsParams(const FetDynamicsParams& params) noexcept
+    void setFetDynamicsParams(const FetDynamicsParams& params, int voice = 0) noexcept
     {
+        voice = voice == 1 ? 1 : 0;
+        fetVoiceDynamics[static_cast<size_t>(voice)] = params;
+        for (auto& d : voice == 1 ? fetBlue : fet) d.carry.valid = false;
+        if (voice != fetVoiceIndex) return;
         fetDynamics = params;
         fetFeedbackTerms.valid = false;
-        for (auto& d : fet) d.carry.valid = false;
         fetStaticKnobK3Memo.valid = false;
         updateFetDynamicsCoefficients();
     }
@@ -1238,6 +1519,22 @@ private:
             const double pole = (1.0 - k) / (1.0 + k);
             fetTapHighPass = {{0.5 * (1.0 + pole), -0.5 * (1.0 + pole), 0.0, -pole, 0.0}};
         }
+        // The voice's side-chain filter: each shelf (s + wz) / (s + wp), its corners prewarped, bilinear; the
+        // sections a voice leaves out pass the signal through.
+        fetScFilter.fill({{1.0, 0.0, 0.0}});
+        for (int i = 0; i < fetVoice->scFilterSections; ++i)
+        {
+            const auto prewarp = [rate](float hz) noexcept {
+                return 2.0 * rate * std::tan(pi * std::min(static_cast<double>(hz), 0.45 * rate) / rate);
+            };
+            const double wz = prewarp(fetVoice->scFilterZerosHz[static_cast<size_t>(i)]);
+            const double wp = prewarp(fetVoice->scFilterPolesHz[static_cast<size_t>(i)]);
+            const double k = 2.0 * rate;
+            fetScFilter[static_cast<size_t>(i)] = {{(k + wz) / (k + wp), (wz - k) / (k + wp), (wp - k) / (k + wp)}};
+        }
+        fetScFilterGain = std::pow(10.0, static_cast<double>(fetVoice->scFilterGainDb) / 20.0);
+        fetAmplifierReference = decibelsToGain(fetVoice->amplifierReferenceDb);
+        fetAmplifierInverse = 1.0f / fetAmplifierReference;
         // C5: A(z) = (c + z^-1) / (1 + c z^-1), c = (2 pi f - 2 rate) / (2 pi f + 2 rate).
         for (size_t i = 0; i < kFetAnalyticPolesA.size(); ++i)
         {
@@ -1395,13 +1692,9 @@ private:
         // reading; with fbTailKneeDb what the tail adds to the reduction is
         // fetTailAppliedNow(), not this.
         double slowTailGrDb = 0.0;
-        // Studio FET's release arm runs `envelope` through this double copy:
-        // a step of its longest release is below the float spacing near unity
-        // gain at high processing rates. The arm resumes from `envelope`
-        // whenever anything else (clamp, reset) has moved it.
-        double studioEnvelope = 1.0;
         float programmeExposureSeconds = 0, programmeMaximumGrDb = 0;
-        float releaseMemory = 0, sag = 0, hf = 0, tilt = 0, subBass = 0;
+        float tailInputPeak = 0;   // fbTailInputLimit's peak follower on the detector
+        float releaseMemory = 0, sag = 0, tilt = 0, subBass = 0;
         float colourPeak = 0, colourHighPassLow = 0, colourHighPassLower = 0;
         float colourLow = 0, colourLower = 0, colourLowPeak = 0;
         float shallowT3Lag = 0, shallowT3Lower = 0, shallowT3Lowest = 0;
@@ -1413,6 +1706,9 @@ private:
         double lfAheadZ1 = 0.0, lfAheadZ2 = 0.0;
         double feedbackHpZ1 = 0.0, feedbackHpZ2 = 0.0;
         double partnerHpZ1 = 0.0, partnerHpZ2 = 0.0;
+        // The voice's side-chain filter (FetVoice::scFilterSections) on the detector and its linked partner.
+        double scFilterZ1 = 0.0, scFilterZ2 = 0.0, scFilterZ3 = 0.0;
+        double scFilterPartnerZ1 = 0.0, scFilterPartnerZ2 = 0.0, scFilterPartnerZ3 = 0.0;
         float feedbackLag = 0.0f;
         float riseOnlyPreviousMagnitude = 0.0f;   // fbChargeRiseOnly
         std::array<double, 7> analyticAx{}, analyticAy{}, analyticBx{}, analyticBy{};
@@ -1481,7 +1777,6 @@ private:
     static constexpr float busAudioControlSmoothingHz2 = 12000.0f;
     float busAudioControlSmoothingStep = 0;
     float busAudioControlSmoothingStep2 = 0;
-    struct StudioFETState : FETState {};
     // The gain envelopes are double for the reason the FET slow populations
     // are: at high processing rates one step of a long release is below the
     // float spacing near unity gain, and a float envelope settles short of its
@@ -1499,11 +1794,23 @@ private:
     bool prepared = false;
     std::array<OptoState, 2> opto{};
     OptoCell optoCell;
-    FetDynamicsParams fetDynamics = FetDynamicsParams::fromArray(kFetDynamicsDefaults);
+    // The FET voice processFET and the C6 arm run (selectFetVoice), and each voice's dynamics constants: fetDynamics
+    // is the active voice's copy.
+    std::array<FetDynamicsParams, 2> fetVoiceDynamics{{FetDynamicsParams::fromArray(kFetDynamicsDefaults),
+                                                       FetDynamicsParams::fromArray(kFetBlueDynamicsDefaults)}};
+    int fetVoiceIndex = 0;
+    const FetVoice* fetVoice = &kFetBlackVoice;
+    FetDynamicsParams fetDynamics = fetVoiceDynamics[0];
     std::array<float, 2> fetLinkPartner{};
     bool optoLinkAtDrive = kOptoLinkAtDriveDefault;
     std::array<double, 5> fetLfHighPass{};
     std::array<double, 5> fetTapHighPass{};
+    // The active voice's side-chain filter at the mode rate: per section b0, b1, a1 (transposed direct form II), and
+    // the prototype's gain (updateFetDynamicsCoefficients).
+    std::array<std::array<double, 3>, 3> fetScFilter{};
+    double fetScFilterGain = 1.0;
+    // The active voice's amplifier reference level (FetVoice::amplifierReferenceDb) and its inverse.
+    float fetAmplifierReference = 1.0f, fetAmplifierInverse = 1.0f;
     std::array<double, 5> fetLfAheadHighPass{{1.0, 0.0, 0.0, 0.0, 0.0}};
     bool fetLfAheadOn = false;
     std::array<double, 7> fetAnalyticA{}, fetAnalyticB{};
@@ -1512,7 +1819,7 @@ private:
     std::array<FETState, 2> fet{};
     std::array<VCAState, 2> vca{};
     std::array<BusState, 2> bus{};
-    std::array<StudioFETState, 2> studioFet{};
+    std::array<FETState, 2> fetBlue{};
     std::array<studioVcaLaw::GainComputer, 2> studioVca{};
     // studioVcaGains()'s static law, coefficients and input gain, recomputed only when their inputs change.
     studioVcaLaw::StaticLaw studioVcaStaticLaw{};
@@ -1557,7 +1864,6 @@ private:
     // it first, so it starts from rest rather than from a stale history.
     std::array<bool, 2> fetInputTransformerResting{};
     std::array<HardwareEmulation::TransformerEmulation, 2> inputTransformerBus, outputTransformerBus;
-    std::array<HardwareEmulation::TransformerEmulation, 2> inputTransformerStudioFet, outputTransformerStudioFet;
     HardwareEmulation::StereoConvolution fetConvolution, busConvolution;
     MultiCompTransientShaper transientShaper;
     MultiCompLookupTables lookupTables;
@@ -1619,12 +1925,10 @@ private:
         bp.inputTransformer.hysteresisAmount = bp.outputTransformer.hysteresisAmount = 0;
         bp.inputTransformer.harmonics = {};
         bp.outputTransformer.harmonics = {};
-        const auto& sfp = HardwareEmulation::HardwareProfiles::getStudioFET();
         for (int ch = 0; ch < 2; ++ch)
         {
             preparePair(inputTransformerFet[ch], outputTransformerFet[ch], fp, true);
             preparePair(inputTransformerBus[ch], outputTransformerBus[ch], bp, true);
-            preparePair(inputTransformerStudioFet[ch], outputTransformerStudioFet[ch], sfp, true);
         }
         fetConvolution.prepare(rate); fetConvolution.loadTransformerIR(HardwareEmulation::ShortConvolution::TransformerType::FET);
         fetConvolutionUnity = fetConvolution.isUnity();
@@ -1731,6 +2035,8 @@ private:
     std::array<FetKnobMemo, 2> fetInputGainMemo{}, fetOutputGainMemo{};
     FetKnobMemo fetThresholdGainMemo, fetAttackPositionMemo, fetReleasePositionMemo;
     FetKnobMemo fetStaticKnobK3Memo;   // fbStaticK3KnobShare's Release law (cleared with the dynamics)
+    FetKnobMemo fetHeadroomGainMemo;   // FET BLUE's Headroom drive
+    FetKnobMemo fetRatioGainMemo;      // FET BLUE's linear gain per Ratio position
     float fetReleasePositionOf(const MultiCompParameterState& p) noexcept
     {
         return memoized(fetReleasePositionMemo, p.fetRelease.load(std::memory_order_relaxed),
@@ -1769,7 +2075,6 @@ private:
         };
         updatePairs(inputTransformerFet, outputTransformerFet);
         updatePairs(inputTransformerBus, outputTransformerBus);
-        updatePairs(inputTransformerStudioFet, outputTransformerStudioFet);
     }
 
     void cacheHardwareGains()
@@ -1839,35 +2144,17 @@ private:
         {
             inputTransformerFet[ch].reset(); outputTransformerFet[ch].reset();
             inputTransformerBus[ch].reset(); outputTransformerBus[ch].reset();
-            inputTransformerStudioFet[ch].reset(); outputTransformerStudioFet[ch].reset();
         }
     }
 
-    // Native reference FET limiter Input/Output, 2026-09-16: 17 nodes at k/16,
-    // relative to the clockwise stop. fet-programme-20260911/HYPOTHESES.md H15
-    // and make_fet_taper_core.py: taper-sweep/native-90 Input (-90 dBFS),
-    // taper-sweep/native Output (-54 dBFS). Sweep residual rounds to 0.000 dB;
-    // old-node agreement <= .002/.01 dB, off-node errors reached 2.23/.37 dB.
-    // Input 0 is -41.95 dB relative, not mute. Legacy host ranges retain knob
-    // positions; Studio FET still uses their original dB meaning.
+    // The nodes of the voices' Input and Output pot laws (FetVoice), at k/16 of the legacy host ranges, which keep
+    // their knob positions: a position is (dB + 20) / 60 on Input and (dB + 20) / 40 on Output.
     inline static constexpr std::array<float, 17> kFetControlPositions{{
         0.000000f, 0.062500f, 0.125000f, 0.187500f,
         0.250000f, 0.312500f, 0.375000f, 0.437500f,
         0.500000f, 0.562500f, 0.625000f, 0.687500f,
         0.750000f, 0.812500f, 0.875000f, 0.937500f,
         1.000000f}};
-    inline static constexpr std::array<float, 17> kFetInputRelativeDb{{
-        -41.949972f, -40.349972f, -37.919972f, -35.199972f,
-        -27.579973f, -25.519973f, -23.209974f, -17.159975f,
-        -13.389977f, -9.519981f, -8.019983f, -6.429985f,
-        -4.549989f, -0.419998f, -0.090000f, -0.030000f,
-        0.000000f}};
-    inline static constexpr std::array<float, 17> kFetOutputRelativeDb{{
-        -99.990001f, -91.940000f, -66.070001f, -56.780000f,
-        -47.990000f, -39.920000f, -33.170000f, -27.200001f,
-        -21.810001f, -16.860000f, -12.900000f, -9.240000f,
-        -6.060000f, -3.500000f, -1.529999f, -0.150000f,
-        0.000000f}};
 
     // Vintage-FET attack drive law. Six measured points, no extrapolation:
     // see the note at the use site in processFET. The abscissa is the SETTLED
@@ -1924,10 +2211,10 @@ private:
         return values.back();
     }
 
-    static float fetInputGainDb(float legacyValueDb) noexcept
+    static float fetInputGainDb(const FetVoice& voice, float legacyValueDb) noexcept
     {
         const float position = (legacyValueDb + 20.0f) / 60.0f;
-        // 39.850671 = 40.0 - 0.149329. The vintage chain carried a
+        // FET BLACK's trim, 39.850671 = 40.0 - 0.149329. The vintage chain carried a
         // frequency-flat +0.149329 dB (x1.017341) gain excess against the
         // reference: ten zero-gain-reduction operating points spanning 89 dB of
         // output level reproduce it to 2.6e-05 dB, and the zero-GR frequency
@@ -1955,15 +2242,15 @@ private:
         // `fetBroadbandK2` was NOT, and this sentence used to claim both were.
         // It has since been re-fitted in its own right against a dense measured
         // surface -- see the note there.
-        return 39.850671f + fetControlLaw(position, kFetInputRelativeDb);
+        return voice.inputTrimDb + fetControlLaw(position, voice.inputRelativeDb);
     }
 
-    static float fetOutputGainDb(float legacyValueDb) noexcept
+    static float fetOutputGainDb(const FetVoice& voice, float legacyValueDb) noexcept
     {
         const float position = (legacyValueDb + 20.0f) / 40.0f;
-        // Absolute trim includes the measured linear convolution-chain loss;
-        // the relative pot law above remains the independently fitted result.
-        return 4.360566f + fetControlLaw(position, kFetOutputRelativeDb);
+        // FET BLACK's absolute trim includes the measured linear convolution-chain loss;
+        // the relative pot law remains the independently fitted result.
+        return voice.outputTrimDb + fetControlLaw(position, voice.outputRelativeDb);
     }
 
     static float fetBroadbandK2(float gainReductionDb) noexcept
@@ -2682,34 +2969,18 @@ private:
         return coefficients.back();
     }
 
-    // Constants of the settled sine law below, shared with its inverse.
-    static constexpr std::array<float, 5> kFetReductionSlopes{{
-        0.82857823f, 0.90319133f, 0.93707197f, 0.96619657f, 0.95953144f}};
-    static constexpr std::array<float, 5> kFetMeasuredThresholdsDb{{
-        -8.34012099f, -5.90065303f, -4.47645544f, -2.66788769f,
-        -4.74344379f}};
-    static constexpr std::array<float, 5> kFetKneeWidthsDb{{
-        14.12963324f, 7.19106925f, 1.87103644f, 4.83803856f,
-        4.87980041f}};
-    static constexpr std::array<float, 5> kFetMaximumDetectorLevelsDb{{
-        38.72f, 38.85f, 39.00f, 39.09f, 38.23f}};
-
-    static float fetReferenceReductionDb(float inputLevelDb, int ratioIndex,
+    // The voice's settled sine law (FetVoice): a quadratic knee on the driven level, reduction slopes (1 - 1/R)
+    // rather than the nominal faceplate ratios, as the law is the feed-forward equivalent of the feedback one.
+    static float fetReferenceReductionDb(const FetVoice& voice, float inputLevelDb, int ratioIndex,
                                          float thresholdControlDb) noexcept
     {
-        // The installed reference FET limiter's settled sine transfer collapses onto one input
-        // axis regardless of whether the level is reached with the source or
-        // Input control. A conventional quadratic knee fits that surface to
-        // 0.032 dB or better for every button. Because this is a feed-forward
-        // equivalent of the hardware feedback law, these are reduction slopes
-        // (1 - 1/R), not the nominal faceplate ratios.
-        ratioIndex = std::clamp(ratioIndex, 0, 4);
-        const float slope = kFetReductionSlopes[static_cast<size_t>(ratioIndex)];
+        ratioIndex = std::clamp(ratioIndex, 0, voice.ratioCount - 1);
+        const float slope = voice.reductionSlopes[static_cast<size_t>(ratioIndex)];
         // -10 dB is the reference-compatible extension setting. Moving the
         // extension shifts the measured transfer without changing its shape.
-        const float threshold = kFetMeasuredThresholdsDb[static_cast<size_t>(ratioIndex)]
+        const float threshold = voice.thresholdsDb[static_cast<size_t>(ratioIndex)]
             + thresholdControlDb + 10.0f;
-        const float width = kFetKneeWidthsDb[static_cast<size_t>(ratioIndex)];
+        const float width = voice.kneeWidthsDb[static_cast<size_t>(ratioIndex)];
         const float kneeStart = threshold - width * 0.5f;
         if (inputLevelDb <= kneeStart) return 0.0f;
         // At the clockwise Input stop the installed unit stops adding reduction
@@ -2721,7 +2992,7 @@ private:
         // leaves the knee and every previously fitted row below +38.7 dB intact.
         inputLevelDb = std::min(
             inputLevelDb,
-            kFetMaximumDetectorLevelsDb[static_cast<size_t>(ratioIndex)]);
+            voice.maximumDetectorLevelsDb[static_cast<size_t>(ratioIndex)]);
         if (inputLevelDb >= threshold + width * 0.5f)
             return slope * (inputLevelDb - threshold);
         const float position = inputLevelDb - kneeStart;
@@ -2730,12 +3001,12 @@ private:
 
     // The reduction at fetReferenceReductionDb's plateau: the most the law
     // gives at this ratio and threshold.
-    static float fetStaticMaximumReductionDb(int ratioIndex,
+    static float fetStaticMaximumReductionDb(const FetVoice& voice, int ratioIndex,
                                              float thresholdControlDb) noexcept
     {
-        const size_t r = static_cast<size_t>(std::clamp(ratioIndex, 0, 4));
-        return kFetReductionSlopes[r] * (kFetMaximumDetectorLevelsDb[r]
-            - (kFetMeasuredThresholdsDb[r] + thresholdControlDb + 10.0f));
+        const size_t r = static_cast<size_t>(std::clamp(ratioIndex, 0, voice.ratioCount - 1));
+        return voice.reductionSlopes[r] * (voice.maximumDetectorLevelsDb[r]
+            - (voice.thresholdsDb[r] + thresholdControlDb + 10.0f));
     }
 
     // Inverse of fetReferenceReductionDb on the output side (candidate C6):
@@ -2744,12 +3015,13 @@ private:
     // law adds no reduction, so the level rises steeply there instead of
     // defining one. `plateau` = false leaves that out: the feedback loop then
     // limits the reduction it applies instead (fbFloorOnApplied).
-    static float fetStaticOutputLevelDb(float reductionDb, int ratioIndex,
+    static float fetStaticOutputLevelDb(const FetVoice& voice, float reductionDb, int ratioIndex,
                                         float thresholdControlDb,
                                         float& slope,
                                         bool plateau = true) noexcept
     {
-        return fetStaticOutputLevelDbT<lanes::Lane1>(reductionDb, ratioIndex, thresholdControlDb, slope, plateau);
+        return fetStaticOutputLevelDbT<lanes::Lane1>(voice, reductionDb, ratioIndex, thresholdControlDb, slope,
+                                                     plateau);
     }
     // Whether a branch some lane may take is evaluated: on one lane exactly when it is taken (the scalar
     // branch); on two always, each lane then selecting its own (cheaper than a data-dependent branch).
@@ -2759,18 +3031,19 @@ private:
     }
     // The same over a lane policy (MultiCompLanes.hpp).
     template <class L>
-    static typename L::F fetStaticOutputLevelDbT(typename L::F reductionDb, int ratioIndex, float thresholdControlDb,
-                                                 typename L::F& slope, bool plateau = true) noexcept
+    static typename L::F fetStaticOutputLevelDbT(const FetVoice& voice, typename L::F reductionDb, int ratioIndex,
+                                                 float thresholdControlDb, typename L::F& slope,
+                                                 bool plateau = true) noexcept
     {
         using lanes::vmax; using lanes::vsqrt;
-        const size_t r = static_cast<size_t>(std::clamp(ratioIndex, 0, 4));
-        const float s = kFetReductionSlopes[r];
-        const float threshold = kFetMeasuredThresholdsDb[r]
+        const size_t r = static_cast<size_t>(std::clamp(ratioIndex, 0, voice.ratioCount - 1));
+        const float s = voice.reductionSlopes[r];
+        const float threshold = voice.thresholdsDb[r]
             + thresholdControlDb + 10.0f;
-        const float width = kFetKneeWidthsDb[r];
+        const float width = voice.kneeWidthsDb[r];
         const float kneeStart = threshold - width * 0.5f;
         const float maximumReduction
-            = s * (kFetMaximumDetectorLevelsDb[r] - threshold);
+            = s * (voice.maximumDetectorLevelsDb[r] - threshold);
         constexpr float plateauSlope = 100.0f;
         const auto onPlateau = L::m(plateau) && reductionDb >= L::f(maximumReduction);
         const auto inKnee = !onPlateau && !(reductionDb >= L::f(s * width * 0.5f));
@@ -2790,7 +3063,7 @@ private:
         if (MC2_UNLIKELY(L::any(onPlateau)))
         {
             slope = L::sel(onPlateau, L::f(plateauSlope), slope);
-            level = L::sel(onPlateau, L::f(kFetMaximumDetectorLevelsDb[r] - maximumReduction)
+            level = L::sel(onPlateau, L::f(voice.maximumDetectorLevelsDb[r] - maximumReduction)
                 + L::f(plateauSlope) * (reductionDb - L::f(maximumReduction)), level);
         }
         return level;
@@ -2846,7 +3119,7 @@ private:
         constexpr float joinLevelDb = -4.0f;
         const float shiftedJoinLevelDb = joinLevelDb + thresholdShift;
         const float joinedReduction = fetReferenceReductionDb(
-            shiftedJoinLevelDb, 0, thresholdControlDb);
+            kFetBlackVoice, shiftedJoinLevelDb, 0, thresholdControlDb);
         if (level < joinLevelDb)
         {
             const float fraction = (level - lastLevelDb)
@@ -2854,7 +3127,7 @@ private:
             return reductionDb.back()
                 + fraction * (joinedReduction - reductionDb.back());
         }
-        return fetReferenceReductionDb(inputLevelDb, 0, thresholdControlDb);
+        return fetReferenceReductionDb(kFetBlackVoice, inputLevelDb, 0, thresholdControlDb);
     }
 
     static float fetAllProcessorCorrectionDb(float inputLevelDb) noexcept
@@ -2963,20 +3236,14 @@ private:
         return memoryDb.back();
     }
 
-    static float fetRatioAttackScale(int ratioIndex) noexcept
+    static float fetRatioAttackScale(const FetVoice& voice, int ratioIndex) noexcept
     {
-        return ratioIndex == 0 ? 1.0f
-            : ratioIndex == 1 ? 0.65f
-            : ratioIndex == 2 ? 0.45f
-            : ratioIndex == 3 ? 0.25f : 0.90f;
+        return voice.attackScales[static_cast<size_t>(std::clamp(ratioIndex, 0, voice.ratioCount - 1))];
     }
 
-    static float fetRatioReleaseScale(int ratioIndex) noexcept
+    static float fetRatioReleaseScale(const FetVoice& voice, int ratioIndex) noexcept
     {
-        return ratioIndex == 0 ? 1.0f
-            : ratioIndex == 1 ? 0.875f
-            : ratioIndex == 2 ? 0.842f
-            : ratioIndex == 3 ? 0.762f : 1.0f;
+        return voice.releaseScales[static_cast<size_t>(std::clamp(ratioIndex, 0, voice.ratioCount - 1))];
     }
 
     static float fetAttackPosition(float legacyMilliseconds) noexcept
@@ -4257,6 +4524,7 @@ private:
         float ratioCoordinate = 0.0f, tailShare = 0.0f;
         float attackLoadDb = 0.0f, maximumReductionDb = 0.0f, turnOnBiasDb = 0.0f;
         double tailStepCharging = 0.0, tailStepReleasing = 0.0;
+        float tailInputDecay = 0.0f;    // fbTailInputLimit's peak follower, per sample
         float slowReleaseKnob = 0.0f;   // the slow population's release knob factor
         float slowChargeStep = 0.0f;
     };
@@ -4310,14 +4578,20 @@ private:
                 fetDynamics.fbReleaseTaperCurve)
             : releasePosition;
         const float releaseOffset = releaseTravel - 0.5f;
-        const float attackSeconds = fetDynamics.fbAttackSeconds
+        float attackSeconds = fetDynamics.fbAttackSeconds
             * std::exp(decade * (fetDynamics.fbAttackCurve * attackOffset
                                     * attackOffset
                                  - fetDynamics.fbAttackSlope * attackOffset))
-            * std::pow(fetRatioAttackScale(ratioIndex),
+            * std::pow(fetRatioAttackScale(*fetVoice, ratioIndex),
                        fetDynamics.fbRatioExponent);
+        // fbSloAttackScale (0 = none): the Attack knob's SLO detent at its counter-clockwise stop (FET BLUE).
+        if (fetDynamics.fbSloAttackScale > 0.0f && attackPosition <= 0.0f)
+            attackSeconds *= fetDynamics.fbSloAttackScale;
+        const FetVoice& voice = *fetVoice;
         const float ratioSlope
-            = kFetReductionSlopes[static_cast<size_t>(std::clamp(ratioIndex, 0, 4))];
+            = voice.reductionSlopes[static_cast<size_t>(std::clamp(ratioIndex, 0, voice.ratioCount - 1))];
+        // The depth and tail laws read the ratio as k / k at the voice's 4:1, k = slope / (1 - slope).
+        const float unitSlope = voice.reductionSlopes[static_cast<size_t>(voice.unitRatio)];
         // The Release knob's factor, in decades relative to its value at 0.5:
         // the linear pot with its fixed resistance (fbReleasePotFixed), or the
         // quadratic it replaces.
@@ -4352,11 +4626,11 @@ private:
                 + fetDynamics.fbReleaseDepthFastDb
                     * releaseFastEnd * releaseFastEnd)
             * std::pow(ratioSlope / (1.0f - ratioSlope)
-                           * (1.0f - kFetReductionSlopes[0]) / kFetReductionSlopes[0],
+                           * (1.0f - unitSlope) / unitSlope,
                        fetDynamics.fbReleaseDepthRatioExponent);
         t.releaseScale = fetDynamics.fbReleaseSeconds
             * std::exp(decade * releaseKnobDecades)
-            * fetRatioReleaseScale(ratioIndex);
+            * fetRatioReleaseScale(voice, ratioIndex);
         t.fullCharge = 1.0f / (std::max(attackSeconds, 1.0e-7f) * sr);
         t.lagStep = fetDynamics.fbAttackLagRatio > 0.0f
             ? 1.0f - std::exp(-1.0f / (fetDynamics.fbAttackLagRatio
@@ -4372,21 +4646,25 @@ private:
                 * (std::log(static_cast<double>(t.kneeKnob)) + 25.0 * 0.6931471805599453) + 0.01
             : 0.0;
         t.ratioCoordinate = ratioSlope / (1.0f - ratioSlope)
-            * (1.0f - kFetReductionSlopes[0]) / kFetReductionSlopes[0];
+            * (1.0f - unitSlope) / unitSlope;
         t.tailShare = std::max(fetDynamics.fbTailShare, 0.0f)
             * (fetDynamics.fbTailRatioExponent != 0.0f
                 ? std::pow(t.ratioCoordinate, fetDynamics.fbTailRatioExponent)
                 : 1.0f);
         t.attackLoadDb = fetDynamics.fbAttackLoadDb
             * std::max(0.0f, 2.0f * attackOffset);
+        // fbSloLoadDb: the SLO detent loads the side chain as well, a threshold raise there (FET BLUE).
+        if (fetDynamics.fbSloAttackScale > 0.0f && attackPosition <= 0.0f)
+            t.attackLoadDb += fetDynamics.fbSloLoadDb;
         t.maximumReductionDb = fetStaticMaximumReductionDb(
-            ratioIndex, thresholdControlDb);
+            voice, ratioIndex, thresholdControlDb);
         t.turnOnBiasDb = 1.0e-3f + std::max(0.0f,
             fetDynamics.fbTurnOnBiasDb) * attackPosition * attackPosition;
         const double tailSecondsCharging = std::max(1.0e-4f, fetDynamics.fbTailChargeSeconds);
         const double tailSecondsReleasing = std::max(1.0e-4f, fetDynamics.fbTailReleaseSeconds);
         t.tailStepCharging = std::exp(-1.0 / (tailSecondsCharging * sr));
         t.tailStepReleasing = std::exp(-1.0 / (tailSecondsReleasing * sr));
+        t.tailInputDecay = std::exp(-1.0f / (std::max(fetDynamics.fbTailInputReleaseSeconds, 1.0e-4f) * sr));
         t.slowReleaseKnob = std::exp(decade * releaseKnobDecades
             * (fetDynamics.fbSlowReleaseKnobExponent - 1.0f));
         t.slowChargeStep = std::exp(-1.0f / (std::max(fetDynamics.fbSlowChargeSeconds, 1.0e-4f) * sr));
@@ -4641,12 +4919,13 @@ private:
     template <class L>
     struct FetC6Lanes
     {
-        typename L::F envelope, fastGrDb, feedbackLag, riseOnlyPreviousMagnitude, tilt;
+        typename L::F envelope, fastGrDb, feedbackLag, riseOnlyPreviousMagnitude, tilt, tailInputPeak;
         typename L::F dc, prevSq, colourHighPassLow, colourHighPassLower, colourPeak, colourLow, colourLower;
         typename L::F colourLowPeak, colourLowDc, colourLowPrevSq, colourLowHarmonicDc, kneeCorrectionDb, kneeGain;
         typename L::F subBassHpState;
         typename L::D slowGrDb, slowTailGrDb, lfAheadZ1, lfAheadZ2, feedbackHpZ1, feedbackHpZ2, partnerHpZ1;
         typename L::D partnerHpZ2, lfHpZ1, lfHpZ2;
+        typename L::D scFilterZ1, scFilterZ2, scFilterZ3, scFilterPartnerZ1, scFilterPartnerZ2, scFilterPartnerZ3;
         FetExpansionLanes<L> slowShape, tipCbrt, tipCos, overshootExp, envelopeGain, colourGrDb;
         FetExpansionDLanes<L> kneeExp;
         FetPowExpansionLanes<L> depthPow;
@@ -4687,6 +4966,7 @@ private:
         s.envelope = f(&FETState::envelope); s.fastGrDb = f(&FETState::fastGrDb);
         s.feedbackLag = f(&FETState::feedbackLag); s.riseOnlyPreviousMagnitude = f(&FETState::riseOnlyPreviousMagnitude);
         s.tilt = f(&FETState::tilt); s.dc = f(&FETState::dc); s.prevSq = f(&FETState::prevSq);
+        s.tailInputPeak = f(&FETState::tailInputPeak);
         s.colourHighPassLow = f(&FETState::colourHighPassLow); s.colourHighPassLower = f(&FETState::colourHighPassLower);
         s.colourPeak = f(&FETState::colourPeak); s.colourLow = f(&FETState::colourLow);
         s.colourLower = f(&FETState::colourLower); s.colourLowPeak = f(&FETState::colourLowPeak);
@@ -4698,6 +4978,9 @@ private:
         s.feedbackHpZ1 = g(&FETState::feedbackHpZ1); s.feedbackHpZ2 = g(&FETState::feedbackHpZ2);
         s.partnerHpZ1 = g(&FETState::partnerHpZ1); s.partnerHpZ2 = g(&FETState::partnerHpZ2);
         s.lfHpZ1 = g(&FETState::lfHpZ1); s.lfHpZ2 = g(&FETState::lfHpZ2);
+        s.scFilterZ1 = g(&FETState::scFilterZ1); s.scFilterZ2 = g(&FETState::scFilterZ2);
+        s.scFilterZ3 = g(&FETState::scFilterZ3); s.scFilterPartnerZ1 = g(&FETState::scFilterPartnerZ1);
+        s.scFilterPartnerZ2 = g(&FETState::scFilterPartnerZ2); s.scFilterPartnerZ3 = g(&FETState::scFilterPartnerZ3);
         s.slowShape = x(&FETState::slowShapeExpansion); s.tipCbrt = x(&FETState::tipCbrtExpansion);
         s.tipCos = x(&FETState::tipCosExpansion); s.overshootExp = x(&FETState::overshootExpExpansion);
         s.envelopeGain = x(&FETState::envelopeGainExpansion); s.colourGrDb = x(&FETState::colourGrDbExpansion);
@@ -4751,6 +5034,7 @@ private:
         f(&FETState::envelope, s.envelope); f(&FETState::fastGrDb, s.fastGrDb);
         f(&FETState::feedbackLag, s.feedbackLag); f(&FETState::riseOnlyPreviousMagnitude, s.riseOnlyPreviousMagnitude);
         f(&FETState::tilt, s.tilt); f(&FETState::dc, s.dc); f(&FETState::prevSq, s.prevSq);
+        f(&FETState::tailInputPeak, s.tailInputPeak);
         f(&FETState::colourHighPassLow, s.colourHighPassLow); f(&FETState::colourHighPassLower, s.colourHighPassLower);
         f(&FETState::colourPeak, s.colourPeak); f(&FETState::colourLow, s.colourLow);
         f(&FETState::colourLower, s.colourLower); f(&FETState::colourLowPeak, s.colourLowPeak);
@@ -4762,6 +5046,9 @@ private:
         g(&FETState::feedbackHpZ1, s.feedbackHpZ1); g(&FETState::feedbackHpZ2, s.feedbackHpZ2);
         g(&FETState::partnerHpZ1, s.partnerHpZ1); g(&FETState::partnerHpZ2, s.partnerHpZ2);
         g(&FETState::lfHpZ1, s.lfHpZ1); g(&FETState::lfHpZ2, s.lfHpZ2);
+        g(&FETState::scFilterZ1, s.scFilterZ1); g(&FETState::scFilterZ2, s.scFilterZ2);
+        g(&FETState::scFilterZ3, s.scFilterZ3); g(&FETState::scFilterPartnerZ1, s.scFilterPartnerZ1);
+        g(&FETState::scFilterPartnerZ2, s.scFilterPartnerZ2); g(&FETState::scFilterPartnerZ3, s.scFilterPartnerZ3);
         x(&FETState::slowShapeExpansion, s.slowShape); x(&FETState::tipCbrtExpansion, s.tipCbrt);
         x(&FETState::tipCosExpansion, s.tipCos); x(&FETState::overshootExpExpansion, s.overshootExp);
         x(&FETState::envelopeGainExpansion, s.envelopeGain); x(&FETState::colourGrDbExpansion, s.colourGrDb);
@@ -4793,14 +5080,18 @@ private:
         float staticKnobK3 = 0.0f, outputGain = 1.0f, sr = 0.0f;
         int ratioIndex = 0;
         bool external = false;
+        bool scFilter = false;   // the voice's side-chain filter switched in (FET BLUE's SC Filter)
     };
     FetC6Knobs fetC6Knobs(const MultiCompParameterState& p, bool external, float outputDb) noexcept
     {
         FetC6Knobs k;
-        k.inputGain = memoized(fetInputGainMemo[0], p.fetInput.load(std::memory_order_relaxed), [](float v) noexcept {
-            return decibelsToGain(fetInputGainDb(v)); });
-        k.ratioIndex = std::clamp(p.fetRatio.load(std::memory_order_relaxed), 0, 4);
-        k.thresholdControlDb = p.fetThreshold.load(std::memory_order_relaxed);
+        const FetVoice* voice = fetVoice;
+        const size_t memo = static_cast<size_t>(fetVoiceIndex);
+        k.inputGain = memoized(fetInputGainMemo[memo], p.fetInput.load(std::memory_order_relaxed),
+                               [voice](float v) noexcept { return decibelsToGain(fetInputGainDb(*voice, v)); });
+        k.ratioIndex = fetRatioIndex(p);
+        // FET BLUE has no Threshold extension: it reads the reference-compatible -10 dB.
+        k.thresholdControlDb = fetVoiceIndex == 1 ? -10.0f : p.fetThreshold.load(std::memory_order_relaxed);
         k.attackPosition = memoized(fetAttackPositionMemo, p.fetAttack.load(std::memory_order_relaxed),
                                     [](float v) noexcept { return fetAttackPosition(v); });
         k.releasePosition = fetReleasePositionOf(p);
@@ -4823,8 +5114,22 @@ private:
                 return fetDynamics.fbStaticK3KnobShare * fetDynamics.fbReleasePotFixed
                     / std::max(fetDynamics.fbReleasePotFixed + travel, 1.0e-6f);
             });
-        k.outputGain = memoized(fetOutputGainMemo[0], outputDb, [](float v) noexcept {
-            return decibelsToGain(fetOutputGainDb(v)); });
+        k.outputGain = memoized(fetOutputGainMemo[memo], outputDb,
+                                [voice](float v) noexcept { return decibelsToGain(fetOutputGainDb(*voice, v)); });
+        if (fetVoiceIndex == 1)
+        {
+            // FET BLUE's Headroom: each 4 dB step past 16 dB drives the gain element 4 dB harder and trims the output
+            // back, so the gain below threshold stays (its reduction curve moves 4 dB per step, its linear gain does
+            // not; tools fet_ae step 0).
+            const float headroomGain = memoized(fetHeadroomGainMemo,
+                static_cast<float>(p.fetBlueHeadroom.load(std::memory_order_relaxed)),
+                [](float step) noexcept { return decibelsToGain(4.0f * (step - 3.0f)); });
+            k.inputGain *= headroomGain;
+            k.outputGain /= headroomGain;
+            k.outputGain *= memoized(fetRatioGainMemo, static_cast<float>(k.ratioIndex), [voice](float position) noexcept {
+                return decibelsToGain(voice->ratioGainsDb[static_cast<size_t>(position)]); });
+            k.scFilter = p.fetBlueScFilter.load(std::memory_order_relaxed);
+        }
         k.sr = static_cast<float>(fs * osFactor);
         k.external = external;
         return k;
@@ -4847,38 +5152,48 @@ private:
         s.carryValid = s.carryValid && lanesM<L>(held);
     }
 
-    // One C6 sample on the lanes' channels (`channels[lane]`): the colour stage, the detector, the loop, the knee
-    // and the output stage of processFET's vintage arm. `partnerSample` is the linked partner's driven sample
-    // (MultiCompDSP's link feed, zero when unlinked or mono), `transientFactor` the transient shaper's factor.
+    // The active voice's amplifier (FetVoice::amplifierPieces) on one sample behind the gain element.
+    float fetAmplifierSample(float y) const noexcept
+    {
+        const FetVoice& v = *fetVoice;
+        const float x = y * fetAmplifierInverse;
+        const float* breaks = v.amplifierBreaks;
+        const int last = v.amplifierPieces;
+        if (x <= breaks[0])
+        {
+            const auto& c = v.amplifierCubics[0];
+            return (c[0] + c[1] * (x - breaks[0])) * fetAmplifierReference;
+        }
+        if (x >= breaks[last])
+        {
+            const auto& c = v.amplifierCubics[static_cast<size_t>(last - 1)];
+            const float d = breaks[last] - breaks[last - 1];
+            const float end = ((c[3] * d + c[2]) * d + c[1]) * d + c[0];
+            const float slope = (3.0f * c[3] * d + 2.0f * c[2]) * d + c[1];
+            return (end + slope * (x - breaks[last])) * fetAmplifierReference;
+        }
+        int low = 0, high = last;            // breaks[low] <= x < breaks[high]
+        while (high - low > 1)
+        {
+            const int middle = (low + high) / 2;
+            if (breaks[middle] <= x) low = middle; else high = middle;
+        }
+        const auto& c = v.amplifierCubics[static_cast<size_t>(low)];
+        const float d = x - breaks[low];
+        return (((c[3] * d + c[2]) * d + c[1]) * d + c[0]) * fetAmplifierReference;
+    }
+
+    // FET BLACK's measured colour stage on the C6 arm (FetVoice::measuredChain): `compressed`, the signal behind
+    // the gain element, with its measured even and odd terms added.
     template <class L>
-    typename L::F fetC6Step(FetC6Lanes<L>& s, const FetC6Knobs& k, const int* channels, typename L::F input,
-                            typename L::F sidechain, typename L::F partnerSample,
-                            typename L::F transientFactor) noexcept
+    typename L::F fetC6MeasuredColour(FetC6Lanes<L>& s, const FetC6Knobs& k, typename L::F compressed) noexcept
     {
         using F = typename L::F;
-        using D = typename L::D;
-        using lanes::vmax; using lanes::vabs; using lanes::visfinite;
+        using lanes::vmax; using lanes::vabs;
         const auto Kf = [](float x) noexcept { return L::f(x); };
-        const auto Kd = [](double x) noexcept { return L::d(x); };
         const auto clampF = [](F v, F lo, F hi) noexcept { return L::sel(v < lo, lo, L::sel(hi < v, hi, v)); };
         const auto all = L::m(true);
-        const float sr = k.sr;
-        const F gained = input * Kf(k.inputGain);
-        // The low-frequency section ahead of the gain element (lfAheadHz).
-        F gainedAhead = gained;
-        if (fetLfAheadOn)
-        {
-            const auto& c = fetLfAheadHighPass;
-            const D x = L::toD(gained);
-            const D y = Kd(c[0]) * x + s.lfAheadZ1;
-            s.lfAheadZ1 = Kd(c[1]) * x - Kd(c[3]) * y + s.lfAheadZ2;
-            s.lfAheadZ2 = Kd(c[2]) * x - Kd(c[4]) * y;
-            gainedAhead = L::toF(y);
-        }
-        const F compressed = gainedAhead * s.envelope;
         F saturated = compressed;
-        // Vintage FET saturation is inside the feedback loop. The sidechain must see this signal, not the
-        // post-envelope shortcut (see processFET for the colour stage's measurements).
         const F grDb = -expandedGainToDecibelsT<L>(s.colourGrDb, s.envelope + Kf(0.001f), all);
         F k2, k3, lowFrequencyK2;
         fetFeedbackColourT<L>(grDb, k2, k3, lowFrequencyK2);
@@ -4933,6 +5248,46 @@ private:
             const F settledSource = clampF(saturatedBeforeColour, Kf(-1.0f), Kf(1.0f));
             saturated = saturated + k3 * Kf(k.staticKnobK3) * settledSource * settledSource * settledSource;
         }
+        return saturated;
+    }
+
+    // One C6 sample on the lanes' channels (`channels[lane]`): the colour stage, the detector, the loop, the knee
+    // and the output stage of processFET's vintage arm. `partnerSample` is the linked partner's driven sample
+    // (MultiCompDSP's link feed, zero when unlinked or mono), `transientFactor` the transient shaper's factor.
+    template <class L>
+    typename L::F fetC6Step(FetC6Lanes<L>& s, const FetC6Knobs& k, const int* channels, typename L::F input,
+                            typename L::F sidechain, typename L::F partnerSample,
+                            typename L::F transientFactor) noexcept
+    {
+        using F = typename L::F;
+        using D = typename L::D;
+        using lanes::vmax; using lanes::vabs; using lanes::visfinite;
+        const auto Kf = [](float x) noexcept { return L::f(x); };
+        const auto Kd = [](double x) noexcept { return L::d(x); };
+        const auto clampF = [](F v, F lo, F hi) noexcept { return L::sel(v < lo, lo, L::sel(hi < v, hi, v)); };
+        const auto all = L::m(true);
+        const float sr = k.sr;
+        const F gained = input * Kf(k.inputGain);
+        // The low-frequency section ahead of the gain element (lfAheadHz).
+        F gainedAhead = gained;
+        if (fetLfAheadOn)
+        {
+            const auto& c = fetLfAheadHighPass;
+            const D x = L::toD(gained);
+            const D y = Kd(c[0]) * x + s.lfAheadZ1;
+            s.lfAheadZ1 = Kd(c[1]) * x - Kd(c[3]) * y + s.lfAheadZ2;
+            s.lfAheadZ2 = Kd(c[2]) * x - Kd(c[4]) * y;
+            gainedAhead = L::toF(y);
+        }
+        const F compressed = gainedAhead * s.envelope;
+        // Vintage FET saturation is inside the feedback loop. The sidechain must see this signal, not the
+        // post-envelope shortcut (see processFET for the colour stage's measurements).
+        F saturated = compressed;
+        if (fetVoice->measuredChain)
+            saturated = fetC6MeasuredColour<L>(s, k, compressed);
+        else if (fetVoice->amplifierPieces > 0)
+            saturated = whereF<L>(all, compressed, [&](int lane) noexcept {
+                return fetAmplifierSample(laneF<L>(compressed, lane)); });
 
         // Candidate C6: the loop below charges from the audio path itself, rectified through the side chain's
         // high-pass (fbTapHighPassHz), OR-ed with the linked partner's (zero when unlinked or mono); see
@@ -4945,9 +5300,31 @@ private:
             z2 = Kd(c[2]) * x - Kd(c[4]) * y;
             return y;
         };
-        const D own = highPass(L::toD(k.external ? sidechain * Kf(k.inputGain) : gained),
-                               s.feedbackHpZ1, s.feedbackHpZ2);
-        const D partner = highPass(L::toD(partnerSample * Kf(k.inputGain)), s.partnerHpZ1, s.partnerHpZ2);
+        D own = highPass(L::toD(k.external ? sidechain * Kf(k.inputGain) : gained),
+                         s.feedbackHpZ1, s.feedbackHpZ2);
+        D partner = highPass(L::toD(partnerSample * Kf(k.inputGain)), s.partnerHpZ1, s.partnerHpZ2);
+        if (fetVoice->scFilterSections > 0)
+        {
+            // The voice's side-chain filter (FetVoice) runs on both taps whether or not its switch is in, so the
+            // switch takes effect without a transient.
+            const auto shelf = [Kd](const std::array<double, 3>& c, D x, D& z) noexcept {
+                const D y = Kd(c[0]) * x + z;
+                z = Kd(c[1]) * x - Kd(c[2]) * y;
+                return y;
+            };
+            const auto filter = [&](D x, D& z1, D& z2, D& z3) noexcept {
+                x = shelf(fetScFilter[0], x, z1);
+                x = shelf(fetScFilter[1], x, z2);
+                return shelf(fetScFilter[2], x, z3) * Kd(fetScFilterGain);
+            };
+            const D ownFiltered = filter(own, s.scFilterZ1, s.scFilterZ2, s.scFilterZ3);
+            const D partnerFiltered = filter(partner, s.scFilterPartnerZ1, s.scFilterPartnerZ2, s.scFilterPartnerZ3);
+            if (k.scFilter)
+            {
+                own = ownFiltered;
+                partner = partnerFiltered;
+            }
+        }
         const double imbalance = fetDynamics.fbRectifierImbalance;
         const auto rectify = [imbalance, Kd](D x) noexcept {
             if (imbalance > 0.0) return L::sel(x < Kd(0.0), -x * Kd(1.0 - imbalance), vabs(x));
@@ -4970,13 +5347,13 @@ private:
         // with the reduction and the tail population only adds to it, so the other two populations read on the
         // law bound it from below: when that bound clears the handoff by 0.01 dB on every lane, nothing below
         // can change the correction.
-        bool kneeCorrects = k.ratioIndex == 0;
+        bool kneeCorrects = fetVoice->measuredChain && k.ratioIndex == fetVoice->unitRatio;
         if (kneeCorrects)
         {
             const F lowerReduction = L::toF(L::toD(s.fastGrDb) + s.slowGrDb);
             F lowerSlope;
             const F lowerInput = lowerReduction
-                + fetStaticOutputLevelDbT<L>(lowerReduction, k.ratioIndex, k.thresholdControlDb, lowerSlope);
+                + fetStaticOutputLevelDbT<L>(*fetVoice, lowerReduction, k.ratioIndex, k.thresholdControlDb, lowerSlope);
             kneeCorrects = !L::all(lowerInput >= Kf(k.thresholdControlDb + 6.01f));
         }
         if (kneeCorrects)
@@ -4995,7 +5372,7 @@ private:
             const F reductionDb = L::toF(L::toD(s.fastGrDb) + s.slowGrDb + L::toD(tailApplied));
             F unusedSlope;
             const F settledInputDb = reductionDb
-                + fetStaticOutputLevelDbT<L>(reductionDb, k.ratioIndex, k.thresholdControlDb, unusedSlope);
+                + fetStaticOutputLevelDbT<L>(*fetVoice, reductionDb, k.ratioIndex, k.thresholdControlDb, unusedSlope);
             const F handoff = clampF(settledInputDb - Kf(k.thresholdControlDb + 10.0f) + Kf(5.0f), Kf(0.0f), Kf(1.0f));
             // Past the handoff (handoff 1) the factor below is 0 and the correction stays 0.
             const auto inKnee = !(handoff >= Kf(1.0f));
@@ -5031,10 +5408,13 @@ private:
         // (with denormals flushed, x * 1 is not x for a subnormal x).
         F out = saturated * Kf(1.0f);
         out = out * (s.kneeGain * Kf(1.0f));
-        if (!fetConvolutionUnity)
-            out = whereF<L>(all, out, [&](int lane) noexcept {
-                return fetConvolution.processSample(laneF<L>(out, lane), channels[lane]); });
-        out = out * Kf(fetHardwareGain);
+        if (fetVoice->measuredChain)
+        {
+            if (!fetConvolutionUnity)
+                out = whereF<L>(all, out, [&](int lane) noexcept {
+                    return fetConvolution.processSample(laneF<L>(out, lane), channels[lane]); });
+            out = out * Kf(fetHardwareGain);
+        }
         if (fetDynamics.lfHpOn > 0.5f)
         {
             const auto& h = fetLfHighPass;
@@ -5126,7 +5506,7 @@ private:
         // (1 + G / D) (1 + (P / De)^p / (1 + G / D)) is 1 + G / D + (P / De)^p: summed instead (double; the float
         // result moves only at last-place ties), which saves the division.
         D extraDepth = Kd(0.0);
-        if (fetDynamics.fbReleaseDepthExtraExponent > 0.0f && ratioIndex == 0)
+        if (fetDynamics.fbReleaseDepthExtraExponent > 0.0f && ratioIndex == fetVoice->unitRatio)
             extraDepth = expandedDepthPowT<L>(s.depthPow,
                     vmax(Kd(0.0), (s.slowGrDb + L::toD(tailAppliedDb))
                         * Kd(1.0 / static_cast<double>(std::max(fetDynamics.fbReleaseDepthExtraDb, 1.0f)))),
@@ -5163,7 +5543,7 @@ private:
         // Past terms.kneeDeepDb the knee term is under 2^-25 and the float factor is exactly 1: lanes there skip
         // the exponential (its anchor then refreshes later, from wherever the reduction returns to).
         F kneeReleaseFactor = Kf(1.0f);
-        if (fetDynamics.fbReleaseKneeShare > 0.0f && ratioIndex == 0)
+        if (fetDynamics.fbReleaseKneeShare > 0.0f && ratioIndex == fetVoice->unitRatio)
         {
             const M deep = reductionSum > Kd(terms.kneeDeepDb);
             if (!L::all(deep))
@@ -5271,7 +5651,7 @@ private:
             }
             const F settledReductionDb = c + settledSlowDb;
             F settledLevelDb = Kf(attackLoadDb) + fetStaticOutputLevelDbT<L>(
-                settledReductionDb, ratioIndex, k.thresholdControlDb, levelSlope, !floorOnApplied);
+                *fetVoice, settledReductionDb, ratioIndex, k.thresholdControlDb, levelSlope, !floorOnApplied);
             // The gain element's floor belongs to the reduction applied,
             // not to the settled one the threshold is read at.
             F floorSlope = Kf(0.0f);
@@ -5380,7 +5760,7 @@ private:
                 ? L::sel(c + settledLow >= Kf(kneeDb), tailLow, Kf(0.0f)) : tailLow;
             F unusedSlope;
             const F levelLow = c + slowNowLow + Kf(attackLoadDb)
-                + fetStaticOutputLevelDbT<L>(c + settledLow + settledAdd, ratioIndex, k.thresholdControlDb,
+                + fetStaticOutputLevelDbT<L>(*fetVoice, c + settledLow + settledAdd, ratioIndex, k.thresholdControlDb,
                                              unusedSlope, !floorOnApplied);
             const F room = levelLow * Kf(1.0f / 6.02059991f) - Kf(0.002f) - lanes::vlog2Above(drive);
             quiet = bounded && Kf(1.3840f) < room;
@@ -5505,7 +5885,32 @@ private:
         F unusedSlope;
         // The tail population follows its own settled size in its own times,
         // whatever the Release knob says; the other one as before.
-        const F tailTarget = settledTail(charged, unusedSlope);
+        const F tailSettled = settledTail(charged, unusedSlope);
+        F tailTarget = tailSettled;
+        if (fetDynamics.fbTailInputLimit > 0.5f)
+        {
+            // fbTailInputLimit: the tail charges no further than its settled size at the charge the signal's own
+            // level settles to (the voice's static reduction at its peak follower, the threshold load included).
+            // While the signal holds, that is above the settled size at the present charge, which the rest of the
+            // reduction keeps under it; once the signal falls, the tail stops filling. A tail above it is not
+            // pulled down: it lets go toward its settled size at the present charge, as without the limit. Lanes
+            // whose tail is not charging keep their target as it is (the limit cannot bind there).
+            s.tailInputPeak = vmax(magnitude, s.tailInputPeak * Kf(terms.tailInputDecay));
+            const F held = kneeDb > 0.0f ? tailControl : tailDb;
+            const M charging = tailTarget > held;
+            if (L::any(charging))
+            {
+                const FetVoice& voice = *fetVoice;
+                const float levelOffsetDb = attackLoadDb;
+                const float thresholdControlDb = k.thresholdControlDb;
+                const F inputReduction = L::mapF([&voice, levelOffsetDb, ratioIndex, thresholdControlDb](float peak) {
+                    return fetReferenceReductionDb(voice, 20.0f * std::log10(std::max(peak, 1.0e-9f)) - levelOffsetDb,
+                                                   ratioIndex, thresholdControlDb);
+                }, s.tailInputPeak);
+                tailTarget = L::sel(charging, vmin(tailTarget, vmax(settledTail(inputReduction, unusedSlope), held)),
+                                    tailTarget);
+            }
+        }
         const M tailRuns = L::m(tailShare > 0.0f) || s.slowTailGrDb > Kd(0.0);
         if (L::any(tailRuns))
         {
@@ -5533,7 +5938,7 @@ private:
             next = L::sel(next < Kd(1.0e-30), Kd(0.0), next);
             s.slowTailGrDb = L::sel(tailRuns, next, s.slowTailGrDb);
         }
-        const F slowTarget = settledSlow(charged, unusedSlope, all) - tailTarget;
+        const F slowTarget = settledSlow(charged, unusedSlope, all) - tailSettled;
         const M slowCharging = L::toD(slowTarget) > s.slowGrDb;
         F slowStep = Kf(terms.slowChargeStep);
         if (takes<L>(!slowCharging))
@@ -5554,12 +5959,13 @@ private:
         FETState* state[n];
         for (int lane = 0; lane < n; ++lane)
         {
-            state[lane] = &fet[static_cast<size_t>(channels[lane])];
+            state[lane] = &(fetVoiceIndex == 1 ? fetBlue : fet)[static_cast<size_t>(channels[lane])];
             fetInputTransformerResting[static_cast<size_t>(channels[lane])] = true;
         }
         FetC6Lanes<L> lanesState;
         loadC6(lanesState, state);
-        const float transientAmount = p.fetTransient.load(std::memory_order_relaxed);
+        // FET BLACK's Transient extension; FET BLUE has none.
+        const float transientAmount = fetVoiceIndex == 0 ? p.fetTransient.load(std::memory_order_relaxed) : 0.0f;
         for (int i = 0; i < samples; ++i)
         {
             const FetC6Knobs knobs = fetC6Knobs(p, external, outputDb[i]);
@@ -5602,31 +6008,17 @@ private:
         return y;
     }
 
+    // One sample of the active FET voice (selectFetVoice) on channel `ch`. Both voices run candidate C6 (see
+    // kFetDynamicsDefaults); FET BLACK's All-buttons, and FET BLACK with the loop switched off, keep the vintage
+    // arm below.
     float processFET(float input, int ch, float sidechain,
-                     const MultiCompParameterState& p, bool studio,
+                     const MultiCompParameterState& p,
                      bool external, bool linked) noexcept
     {
-        auto& d = studio ? static_cast<FETState&>(studioFet[ch]) : fet[ch];
         const float sr = static_cast<float>(fs * osFactor);
-        auto& inT = studio ? inputTransformerStudioFet[ch] : inputTransformerFet[ch];
-        auto& outT = studio ? outputTransformerStudioFet[ch] : outputTransformerFet[ch];
-        const float inputValue = p.fetInput.load(std::memory_order_relaxed);
-        const float inputGain = memoized(fetInputGainMemo[studio ? 1 : 0], inputValue, [studio](float v) noexcept {
-            return decibelsToGain(studio ? v : fetInputGainDb(v)); });
-        // Equivalent source-level/Input combinations have the same measured
-        // vintage output spectrum. The generic transformer saturates far
-        // earlier than this unit when driven by its 40 dB Input range, so the
-        // calibrated vintage coloration below owns the audio stage. Its subtly
-        // shaped signal remains useful to the unlinked detector. Studio FET
-        // retains its established transformer-before-gain audio topology.
-        const int ratioIndex = std::clamp(p.fetRatio.load(std::memory_order_relaxed), 0, 4);
-        const float ratios[5] = {studio ? 4.0f : 3.85f, studio ? 8.0f : 7.40f, studio ? 12.0f : 12.50f, studio ? 20.0f : 21.50f, studio ? 20.0f : 21.50f};
-        const float ratio = ratios[ratioIndex];
-        // Candidate C6 (see kFetDynamicsDefaults); All-buttons keeps its arm.
-        const bool feedback = !studio && ratioIndex != 4
-            && fetDynamics.fbOn > 0.5f;
-        if (feedback)
+        if (fetFeedbackActive(p))
         {
+            auto& d = fetVoiceIndex == 1 ? fetBlue[ch] : fet[ch];
             fetInputTransformerResting[static_cast<size_t>(ch)] = true;
             // The colour stage, the detector, the loop, the knee and the output stage on this channel
             // (fetC6Step). MultiCompDSP's FET block path steps the same arm a block at a time (processFetC6Block).
@@ -5636,7 +6028,8 @@ private:
             float& partnerSample = fetLinkPartner[static_cast<size_t>(ch)];
             const float partner = partnerSample;
             partnerSample = 0.0f;
-            const float transientAmount = p.fetTransient.load(std::memory_order_relaxed);
+            // FET BLACK's Transient extension; FET BLUE has none.
+            const float transientAmount = fetVoiceIndex == 0 ? p.fetTransient.load(std::memory_order_relaxed) : 0.0f;
             const float transientFactor = transientAmount > 0.01f
                 ? std::max(1.0f, transientShaper.process(input, ch, transientAmount)) : 1.0f;
             const FetC6Knobs knobs = fetC6Knobs(p, external, p.fetOutput.load(std::memory_order_relaxed));
@@ -5645,17 +6038,27 @@ private:
             storeC6(lanesState, state);
             return out;
         }
-        if (!studio && fetInputTransformerResting[static_cast<size_t>(ch)])
+        auto& d = fet[ch];
+        auto& inT = inputTransformerFet[ch];
+        const float inputValue = p.fetInput.load(std::memory_order_relaxed);
+        const float inputGain = memoized(fetInputGainMemo[0], inputValue, [](float v) noexcept {
+            return decibelsToGain(fetInputGainDb(kFetBlackVoice, v)); });
+        // Equivalent source-level/Input combinations have the same measured
+        // vintage output spectrum. The generic transformer saturates far
+        // earlier than this unit when driven by its 40 dB Input range, so the
+        // calibrated vintage coloration below owns the audio stage. Its subtly
+        // shaped signal remains useful to the unlinked detector.
+        const int ratioIndex = std::clamp(p.fetRatio.load(std::memory_order_relaxed), 0, 4);
+        if (fetInputTransformerResting[static_cast<size_t>(ch)])
         {
             inT.reset();
             fetInputTransformerResting[static_cast<size_t>(ch)] = false;
         }
         const float transformedInput = inT.processSample(input, ch);
-        const float gained = studio ? transformedInput * inputGain
-                                    : input * inputGain;
+        const float gained = input * inputGain;
         // The low-frequency section ahead of the gain element (lfAheadHz).
         float gainedAhead = gained;
-        if (fetLfAheadOn && !studio)
+        if (fetLfAheadOn)
         {
             const auto& c = fetLfAheadHighPass;
             const double x = gained;
@@ -5666,7 +6069,6 @@ private:
         }
         const float compressed = gainedAhead * d.envelope;
         float saturated = compressed;
-        if (!studio)
         {
             // Vintage FET saturation is inside the feedback loop.  The
             // sidechain must see this signal, not the post-envelope shortcut.
@@ -5839,23 +6241,11 @@ private:
                 + broadbandH5 + lowHarmonics;
         }
 
-        // FET junction capacitance choke in the feedback path: Studio FET's
-        // detector (vintage reads no d.hf). It uses the unsaturated compressed
-        // signal here, matching its JUCE class.
-        if (studio)
-        {
-            const float grDb = -gainToDecibels(d.envelope + 0.001f);
-            const float grNorm = std::clamp(grDb / 20.0f, 0.0f, 1.0f);
-            const float corner = 20000.0f - grNorm * 2000.0f;
-            const float chokeCoeff = 1.0f - std::exp(-2.0f * kDuskPi * corner / sr);
-            d.hf += chokeCoeff * (compressed - d.hf);
-        }
         float detect = 0.0f;
         float kneeDetect = 0.0f;
         float vintageInstantLevel = 0.0f;
         bool vintageProgrammeActive = false;
         bool vintageProgrammeSupported = false;
-        if (!studio)
         {
             // The static reference law above is expressed on the signal driven
             // by Input, before gain reduction. Its feedback topology has the
@@ -5881,7 +6271,7 @@ private:
                 const float chargeSeconds = fetDynamics.detAttackSlowSeconds
                     * std::pow(fetDynamics.detAttackFastSeconds
                         / fetDynamics.detAttackSlowSeconds, position)
-                    * std::pow(fetRatioAttackScale(ratioIndex),
+                    * std::pow(fetRatioAttackScale(kFetBlackVoice, ratioIndex),
                                fetDynamics.detRatioExponent);
                 float chargeLevel = instantLevel;
                 if (fetDynamics.detAnalyticOn > 0.5f)
@@ -5944,38 +6334,17 @@ private:
                 kneeDetect = d.kneePeak;
             }
         }
-        else if (external)
-            detect = std::abs(sidechain * inputGain);
-        else if (ratioIndex == 4)
-        {
-            const float thresholdForPeak = decibelsToGain(studio ? -10.0f : p.fetThreshold.load(std::memory_order_relaxed));
-            float instantLevel = std::abs(d.hf);
-            const float detCeiling = thresholdForPeak * 1.5f;
-            if (instantLevel > detCeiling)
-                instantLevel = detCeiling + (instantLevel - detCeiling) / (1.0f + (instantLevel - detCeiling));
-            const float peakAttackCoeff = std::exp(-1.0f / (0.00005f * sr));
-            const float peakReleaseCoeff = std::exp(-1.0f / (0.005f * sr));
-            if (instantLevel > d.peak)
-                d.peak += (1.0f - peakAttackCoeff) * (instantLevel - d.peak);
-            else
-                d.peak += (1.0f - peakReleaseCoeff) * (instantLevel - d.peak);
-            detect = d.peak;
-        }
-        else
-            detect = std::abs(d.hf);
         d.tilt += fetTilt * (detect - d.tilt);
         detect = std::max(detect + (detect - d.tilt) * 0.35f, 0.0f);
         // JUCE applies the all-buttons threshold shift exactly once below via
         // abiThreshold = threshold * 0.5f.  Do not fold a second -6.0206 dB
         // offset into the base threshold here.
-        const float thresholdControlDb = studio
-            ? -10.0f : p.fetThreshold.load(std::memory_order_relaxed);
+        const float thresholdControlDb = p.fetThreshold.load(std::memory_order_relaxed);
         const float threshold = memoized(fetThresholdGainMemo, thresholdControlDb,
                                          [](float v) noexcept { return decibelsToGain(v); });
         float reduction = 0.0f;
         float kneeTargetReduction = 0.0f;
         float kneeHandoff = 1.0f;
-        if (!studio)
         {
             const float detectorLevelDb = gainToDecibels(
                 std::max(detect, 1.0e-12f));
@@ -6021,11 +6390,11 @@ private:
                     // below supplies only the difference to the measured knee,
                     // so every harmonic ratio remains on its fitted axis.
                     reduction = fetReferenceReductionDb(
-                        detectorLevelDb, ratioIndex, thresholdControlDb);
+                        kFetBlackVoice, detectorLevelDb, ratioIndex, thresholdControlDb);
                 }
                 else
                     reduction = fetReferenceReductionDb(
-                        detectorLevelDb, ratioIndex, thresholdControlDb);
+                        kFetBlackVoice, detectorLevelDb, ratioIndex, thresholdControlDb);
                 if (ratioIndex == 4)
                     reduction += fetAllProcessorCorrectionDb(detectorLevelDb);
             }
@@ -6033,32 +6402,8 @@ private:
                 reduction /= std::max(1.0f, transientShaper.process(
                     input, ch, p.fetTransient.load(std::memory_order_relaxed)));
         }
-        else if (ratioIndex == 4)
-        {
-            const float abiThreshold = threshold * 0.5f;
-            if (detect > abiThreshold)
-            {
-                const float over = gainToDecibels(detect / abiThreshold);
-                reduction = lookupTables.getAllButtonsReduction(over, p.fetCurve.load(std::memory_order_relaxed) != 0);
-                if (p.fetTransient.load(std::memory_order_relaxed) > 0.01f)
-                    reduction /= std::max(1.0f, transientShaper.process(input, ch, p.fetTransient.load(std::memory_order_relaxed)));
-                reduction = std::min(reduction, 30.0f);
-            }
-            else if (studio)
-            {
-                const float below = -gainToDecibels(std::max(detect, 0.0001f) / abiThreshold);
-                if (below > 0.0f && below < 3.0f) reduction = -std::sin((below / 3.0f) * kDuskPi);
-            }
-        }
-        else if (detect > threshold)
-        {
-            const float over = gainToDecibels(detect / threshold);
-            reduction = std::min(over * (1.0f - 1.0f / ratio), 60.0f);
-        }
-        // Studio FET allows the JUCE expansion bump to survive below threshold.
-        const float minimumReduction = !studio && ratioIndex == 4 ? -1.3f : -1.0f;
+        const float minimumReduction = ratioIndex == 4 ? -1.3f : -1.0f;
         reduction = std::clamp(reduction, minimumReduction, 60.0f);
-        if (!studio)
         {
             // The loop's tail population has no counterpart in this arm. When
             // the ratio leaves 4-20 with some of it held, this arm's slow
@@ -6114,7 +6459,7 @@ private:
                     intermediateTargetCeilingDb * intermediateDepth);
             const float longSlowTarget = ratioIndex == 4
                 ? slowTarget : slowTarget - intermediateTarget;
-            const float ratioAttackScale = fetRatioAttackScale(ratioIndex);
+            const float ratioAttackScale = fetRatioAttackScale(kFetBlackVoice, ratioIndex);
             const float baseFastAttackSeconds
                 = (0.000047f - 0.000026f * attackPosition
                     - 0.000008f * attackPosition * attackPosition)
@@ -6258,7 +6603,7 @@ private:
             const float exposureReleaseScale = fetReleaseExposureScale(
                 std::max(d.programmeExposureSeconds, 0.01f),
                 d.programmeMaximumGrDb, fetDynamics);
-            const float ratioReleaseScale = fetRatioReleaseScale(ratioIndex);
+            const float ratioReleaseScale = fetRatioReleaseScale(kFetBlackVoice, ratioIndex);
             const float legacyFastReleaseSeconds
                 = (fetDynamics.legacyFastRelease[0]
                     + fetDynamics.legacyFastRelease[1] * releasePosition
@@ -6313,94 +6658,11 @@ private:
                 d.programmeMaximumGrDb = 0.0f;
             }
         }
-        else
-        {
-            const float minRelease = 0.05f, maxRelease = 1.1f;
-            float attack = std::max(0.0001f,
-                p.fetAttack.load(std::memory_order_relaxed) * 0.001f);
-            const float releaseNorm = std::clamp(
-                p.fetRelease.load(std::memory_order_relaxed) / 1100.0f,
-                0.0f, 1.0f);
-            float release = minRelease * std::pow(
-                maxRelease / minRelease, releaseNorm);
-            if (ratioIndex == 4)
-            {
-                attack = std::max(0.0002f, attack * 2.0f);
-                release *= 1.0f + std::clamp(
-                    reduction / 20.0f, 0.0f, 1.0f) * 0.5f;
-                const float memoryDecay = std::exp(-1.0f / (0.5f * sr));
-                d.releaseMemory *= memoryDecay;
-                if (d.transient == 0 && reduction > 3.0f)
-                    d.releaseMemory = std::min(1.0f, d.releaseMemory + 0.15f);
-                release *= 1.0f + d.releaseMemory * 0.3f;
-            }
-            const float programFactor = std::clamp(
-                1.0f + reduction * 0.05f, 0.5f, 2.0f);
-            const float signalDelta = std::abs(detect - d.previousLevel);
-            d.previousLevel = detect;
-            if (signalDelta > 0.1f)
-            {
-                attack *= 0.8f;
-                release *= 1.2f;
-            }
-            else
-            {
-                attack *= programFactor;
-                release *= programFactor;
-            }
-            const double target = decibelsToGain(-reduction);
-            const double rate = fs * osFactor;
-            const double attackCoeff = std::exp(-1.0 / (
-                std::max(1.0e-5, static_cast<double>(attack) * rate)));
-            const double releaseCoeff = std::exp(-1.0 / (
-                std::max(1.0e-5, static_cast<double>(release) * rate)));
-            double envelope = static_cast<float>(d.studioEnvelope) == d.envelope
-                ? d.studioEnvelope : static_cast<double>(d.envelope);
-            if (ratioIndex == 4)
-            {
-                if (target < envelope)
-                {
-                    if (d.transient < 30)
-                    {
-                        const double delayedAttack = attackCoeff * 0.5 + 0.5;
-                        envelope = delayedAttack * envelope
-                            + (1.0 - delayedAttack) * target;
-                        ++d.transient;
-                    }
-                    else
-                        envelope = attackCoeff * envelope
-                            + (1.0 - attackCoeff) * target;
-                }
-                else
-                {
-                    d.transient = 0;
-                    const float gr = -gainToDecibels(static_cast<float>(envelope) + 0.001f);
-                    const float fastBase = 0.05f, fastMin = 0.025f;
-                    const float scaleGr = std::clamp(gr / 20.0f, 0.0f, 1.0f);
-                    const float fast = fastBase
-                        - scaleGr * (fastBase - fastMin);
-                    const double fastCoeff = std::exp(-1.0 / (
-                        std::max(1.0e-5, static_cast<double>(fast) * rate)));
-                    const double effective = fastCoeff * scaleGr
-                        + releaseCoeff * (1.0 - scaleGr);
-                    envelope = effective * envelope
-                        + (1.0 - effective) * target;
-                }
-            }
-            else if (target < envelope)
-                envelope = attackCoeff * envelope
-                    + (1.0 - attackCoeff) * target;
-            else
-                envelope = releaseCoeff * envelope
-                    + (1.0 - releaseCoeff) * target;
-            d.studioEnvelope = envelope;
-            d.envelope = static_cast<float>(envelope);
-        }
         const float maximumEnvelope = ratioIndex == 4
-            ? (studio ? 1.12f : 1.17f) : 1.0f;
+            ? 1.17f : 1.0f;
         d.envelope = std::clamp(d.envelope, 0.001f, maximumEnvelope);
         if (!std::isfinite(d.envelope)) d.envelope = 1.0f;
-        if (!studio && ratioIndex == 0)
+        if (ratioIndex == 0)
         {
             const float currentBaseReduction = std::max(
                 0.0f, -gainToDecibels(d.envelope));
@@ -6466,7 +6728,7 @@ private:
             d.kneeGain = 1.0f;
         }
         float sagGain = 1.0f;
-        if (ratioIndex == 4 && !studio
+        if (ratioIndex == 4
             && p.fetCurve.load(std::memory_order_relaxed) != 0)
         {
             const float gr = -gainToDecibels(d.envelope + 0.001f);
@@ -6479,28 +6741,10 @@ private:
             sagGain = decibelsToGain(-d.voltageSag);
         }
         float out = saturated;
-        if (studio)
-        {
-            out = gained * d.envelope;
-            const float outputGrDb = -gainToDecibels(d.envelope + 0.001f);
-            const float outputGrNorm = std::clamp(outputGrDb / 20.0f, 0.0f, 1.0f);
-            const float scale = 0.3f;
-            const float k2 = (ratioIndex == 4 ? 0.04f + outputGrNorm * 0.12f : 0.004f) * scale;
-            const float k3 = (ratioIndex == 4 ? 0.005f + outputGrNorm * 0.015f : 0.001f) * scale;
-            const float sq = out * out;
-            const float hp = (d.dc + sq - d.prevSq) / (1.0f + kDuskTwoPi * 10.0f / sr);
-            d.dc = hp;
-            d.prevSq = sq;
-            out += k2 * hp + k3 * out * out * out;
-        }
         out *= sagGain;
-        if (!studio) out *= d.kneeGain * d.recoveryGain;
-        // Studio FET keeps the generic output-transformer model. The measured
-        // vintage spectrum is generated explicitly above; passing it through
-        // that transformer introduced a non-physical H2 cancellation notch.
-        if (studio) out = outT.processSample(out, ch);
-        if (!studio) out = (fetConvolutionUnity ? out : fetConvolution.processSample(out, ch)) * fetHardwareGain;
-        if (!studio && fetDynamics.lfHpOn > 0.5f)
+        out *= d.kneeGain * d.recoveryGain;
+        out = (fetConvolutionUnity ? out : fetConvolution.processSample(out, ch)) * fetHardwareGain;
+        if (fetDynamics.lfHpOn > 0.5f)
         {
             const auto& c = fetLfHighPass;
             const double x = out;
@@ -6509,15 +6753,15 @@ private:
             d.lfHpZ2 = c[2] * x - c[4] * y;
             out = static_cast<float>(y);
         }
-        else if (!studio)
+        else
         {
             const float hpfAlpha = 1.0f - std::exp(-2.0f * kDuskPi * 5.0f / sr);
             d.subBassHpState += hpfAlpha * (out - d.subBassHpState);
             out -= d.subBassHpState;
         }
         const float outputValue = p.fetOutput.load(std::memory_order_relaxed);
-        const float outputGain = memoized(fetOutputGainMemo[studio ? 1 : 0], outputValue, [studio](float v) noexcept {
-            return decibelsToGain(studio ? v : fetOutputGainDb(v)); });
+        const float outputGain = memoized(fetOutputGainMemo[0], outputValue, [](float v) noexcept {
+            return decibelsToGain(fetOutputGainDb(kFetBlackVoice, v)); });
         // The installed model is linear throughout the measured steady range,
         // then bends startup peaks toward a ~7.1 linear ceiling. The previous
         // hard +/-2 guard flattened both the level sweep and its harmonics.

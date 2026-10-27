@@ -49,7 +49,8 @@ enum class ParamId : uint32_t {
  ScHighGain, StereoLinkMode, Count,
  // Append after the original five meter IDs; existing automation IDs stay fixed.
  BusHeadroom = 100, BusFadeRate, BusFade, OptoMeter, FetMeter,
- StudioVcaInput, StudioVcaAutoRelease, StudioVcaMeter
+ StudioVcaInput, StudioVcaAutoRelease, StudioVcaMeter,
+ FetBlueRatio, FetBlueScFilter, FetBlueHeadroom
 };
 
 // Single source of truth for host symbols, physical ranges/defaults, JUCE taper
@@ -188,7 +189,7 @@ inline constexpr int kMeterBand1 = kMeterMaster + 2;
 inline constexpr int kMeterBand2 = kMeterMaster + 3;
 inline constexpr int kMeterBand3 = kMeterMaster + 4;
 inline constexpr int kExtensionBase = kMeterMaster + 5;
-inline constexpr std::array<Param, 8> kExtensionParams{{
+inline constexpr std::array<Param, 11> kExtensionParams{{
  {"bus_headroom", "Bus Headroom", "dB", 0, 6, 3, CoreParameter::BusHeadroom, true},
  {"bus_fade_rate", "Bus Fade Rate", "s", 1, 60, 24.8f, CoreParameter::BusFadeRate, false, 0.1f, 0.5f, 6.0f},
  {"bus_fade", "Bus Auto Fade", "", 0, 1, 0, CoreParameter::BusFade, true},
@@ -196,11 +197,17 @@ inline constexpr std::array<Param, 8> kExtensionParams{{
  {"fet_meter", "FET Meter", "", 0, 2, 0, CoreParameter::None, true},
  {"studio_vca_input", "Studio VCA Input", "dB", -18, 18, 0, CoreParameter::StudioVcaInput, false},
  {"studio_vca_auto_release", "Studio VCA Auto Release", "", 0, 1, 1, CoreParameter::StudioVcaAutoRelease, true},
- {"studio_vca_meter", "Studio VCA Meter", "", 0, 1, 0, CoreParameter::None, true}
+ {"studio_vca_meter", "Studio VCA Meter", "", 0, 1, 0, CoreParameter::None, true},
+ // FET BLUE's own controls (it shares Input, Output, Attack and Release with FET BLACK): Ratio in the reference's
+ // order (kFetBlueRatios; 2:1 its default), the side-chain filter, Headroom 4..28 dB (16 its default).
+ {"fet_blue_ratio", "FET Blue Ratio", "", 0, 10, 1, CoreParameter::FetBlueRatio, true},
+ {"fet_blue_sc_filter", "FET Blue SC Filter", "", 0, 1, 0, CoreParameter::FetBlueScFilter, true},
+ {"fet_blue_headroom", "FET Blue Headroom", "dB", 0, 6, 3, CoreParameter::FetBlueHeadroom, true}
 }};
 inline constexpr int kTotalParamCount = kExtensionBase + static_cast<int>(kExtensionParams.size());
 inline constexpr int kVintageMeterBase = static_cast<int>(ParamId::OptoMeter);
 inline constexpr int kStudioVcaExtensionBase = static_cast<int>(ParamId::StudioVcaInput);
+inline constexpr int kFetBlueExtensionBase = static_cast<int>(ParamId::FetBlueRatio);
 static_assert(kExtensionBase == static_cast<int>(ParamId::BusHeadroom));
 inline constexpr bool isControlParameter(int index) noexcept
 {
@@ -294,9 +301,11 @@ inline float hostToPlain(const Descriptor& d, float value) noexcept
 template <class Descriptor>
 inline float hostDefault(const Descriptor& d) noexcept { return plainToHost(d, d.def); }
 
-inline constexpr const char* const kModes[8] = {"Opto","FET","VCA","Bus","Studio FET","Studio VCA","Digital","Multiband"};
+inline constexpr const char* const kModes[8] = {"Opto","FET Black","VCA","Bus","FET Blue","Studio VCA","Digital","Multiband"};
 inline constexpr const char* const kOnOff[2] = {"Off","On"};
 inline constexpr const char* const kRatios[5] = {"4:1","8:1","12:1","20:1","All"};
+inline constexpr const char* const kFetBlueRatios[11] = {"None","2:1","4:1","8:1","20:1","2:1+4:1","4:1+8:1",
+                                                         "8:1+20:1","2:1+8:1","4:1+20:1","2:1+20:1"};
 inline constexpr const char* const kOptoMeterModes[3] = {"GR", "Output +10", "Output +4"};
 inline constexpr const char* const kFetMeterModes[3] = {"GR", "Output +8", "Output +4"};
 inline constexpr const char* const kOversampling[3] = {"Off","2x","4x"};
@@ -321,12 +330,13 @@ inline SwitchLabels switchLabels(ParamId id) noexcept
         case ParamId::TruePeakEnable: case ParamId::ExternalSidechain: case ParamId::AutoMakeup:
         case ParamId::OptoLimit: case ParamId::VcaOverEasy: case ParamId::DigitalAdaptive:
         case ParamId::GlobalSidechainListen: case ParamId::NoiseEnable: case ParamId::BusFade:
-        case ParamId::StudioVcaAutoRelease:
+        case ParamId::StudioVcaAutoRelease: case ParamId::FetBlueScFilter:
             return {kOnOff, 2, true};
         case ParamId::TruePeakQuality: return {kTruePeakQuality, 2, false};
         case ParamId::Distortion: return {kDistortion, 4, false};
         case ParamId::Oversampling: return {kOversampling, 3, false};
         case ParamId::FetRatio: return {kRatios, 5, false};
+        case ParamId::FetBlueRatio: return {kFetBlueRatios, 11, false};
         case ParamId::OptoMeter: return {kOptoMeterModes, 3, false};
         case ParamId::FetMeter: return {kFetMeterModes, 3, false};
         case ParamId::FetCurve: return {kFetCurve, 2, false};
@@ -334,7 +344,7 @@ inline SwitchLabels switchLabels(ParamId id) noexcept
         case ParamId::BusRatio: return {kBusRatios, 3, false};
         case ParamId::BusAttack: return {kBusAttack, 6, false};
         case ParamId::BusRelease: return {kBusRelease, 5, false};
-        case ParamId::BusHeadroom: return {kBusHeadroom, 7, false};
+        case ParamId::BusHeadroom: case ParamId::FetBlueHeadroom: return {kBusHeadroom, 7, false};
         case ParamId::StereoLinkMode: return {kLinkMode, 3, false};
         case ParamId::StudioVcaMeter: return {kStudioVcaMeterModes, 2, false};
         default: return {nullptr, 0, false};
@@ -359,7 +369,11 @@ inline SwitchLabels switchLabels(ParamId id) noexcept
 // Version 7 (2026-10-26) appends the Studio VCA Input, Auto Release and meter controls; older states load with their
 // defaults, except Auto Release, which they load off (their Release control set the release). Studio VCA's five
 // original controls only widened, so every value an older state holds stays valid.
-inline constexpr int kStateVersion = 7;
+// Version 8 (2026-10-27) appends FET BLUE's Ratio, SC Filter and Headroom; older states load with their defaults.
+// Mode 4, a generic Studio FET before, is FET BLUE from this version: it keeps its index and the FET controls it
+// shares, so a session saved in mode 4 reopens in FET BLUE.
+inline constexpr int kStateVersion = 8;
+inline constexpr int kPreFetBlueStateVersion = 7;
 inline constexpr int kPreStudioVcaStateVersion = 6;
 inline constexpr int kPreMeterStateVersion = 5;
 inline constexpr int kPreBusStateVersion = 4;
@@ -385,8 +399,8 @@ inline int stateVersionOf(std::string_view state) noexcept
 inline bool stateVersionSupported(std::string_view state) noexcept
 {
     const int version = stateVersionOf(state);
-    return version == kStateVersion || version == kPreStudioVcaStateVersion || version == kPreMeterStateVersion
-        || version == kPreBusStateVersion || version == kLegacyVcaStateVersion;
+    return version == kStateVersion || version == kPreFetBlueStateVersion || version == kPreStudioVcaStateVersion
+        || version == kPreMeterStateVersion || version == kPreBusStateVersion || version == kLegacyVcaStateVersion;
 }
 
 // Version-3 `vca_ratio`: skew 0.3 over 1..120, stored in its normalized host
@@ -604,12 +618,13 @@ inline bool decodeState(std::string_view state, StateValues& out) noexcept
     const int version = stateVersionOf(state);
     const int firstAbsent = version < kPreMeterStateVersion ? kExtensionBase
                           : version < kPreStudioVcaStateVersion ? kVintageMeterBase
-                          : version < kStateVersion ? kStudioVcaExtensionBase : kTotalParamCount;
+                          : version < kPreFetBlueStateVersion ? kStudioVcaExtensionBase
+                          : version < kStateVersion ? kFetBlueExtensionBase : kTotalParamCount;
     for (int i = firstAbsent; i < kTotalParamCount; ++i)
         decoded[static_cast<size_t>(i)] = hostDefault(kExtensionParams[static_cast<size_t>(i - kExtensionBase)]);
     // Before version 7 Studio VCA's Release control always set the release: an older session keeps it working
     // (Auto Release, on for a new instance, would ignore it).
-    if (version < kStateVersion)
+    if (version < kPreFetBlueStateVersion)
         decoded[static_cast<size_t>(ParamId::StudioVcaAutoRelease)] = 0.0f;
     size_t begin = versionEnd + 1;
     while (begin < state.size())

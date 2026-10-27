@@ -42,7 +42,7 @@ int oversamplingFactorForSetting(int setting) noexcept
 int audioFactorForMode(MultiCompMode mode, int settingFactor, double hostRate) noexcept
 {
     if (mode == MultiCompMode::StudioVCA) return 1;
-    return mode == MultiCompMode::Opto || mode == MultiCompMode::FET
+    return mode == MultiCompMode::Opto || mode == MultiCompMode::FET || mode == MultiCompMode::FetBlue
         ? fixedRateModeFactor(settingFactor, hostRate) : settingFactor;
 }
 
@@ -487,6 +487,9 @@ void MultiCompDSP::setParameter(Parameter parameter, float value) noexcept
         case Parameter::StudioVcaOutput: params.studioVcaOutput.store(value, std::memory_order_relaxed); break;
         case Parameter::StudioVcaInput: params.studioVcaInput.store(value, std::memory_order_relaxed); break;
         case Parameter::StudioVcaAutoRelease: params.studioVcaAutoRelease.store(b, std::memory_order_relaxed); break;
+        case Parameter::FetBlueRatio: params.fetBlueRatio.store(std::clamp(static_cast<int>(std::round(value)), 0, 10), std::memory_order_relaxed); break;
+        case Parameter::FetBlueScFilter: params.fetBlueScFilter.store(b, std::memory_order_relaxed); break;
+        case Parameter::FetBlueHeadroom: params.fetBlueHeadroom.store(std::clamp(static_cast<int>(std::round(value)), 0, 6), std::memory_order_relaxed); break;
         case Parameter::DigitalThreshold: params.digitalThreshold.store(value, std::memory_order_relaxed); break;
         case Parameter::DigitalRatio: params.digitalRatio.store(value, std::memory_order_relaxed); break;
         case Parameter::DigitalKnee: params.digitalKnee.store(value, std::memory_order_relaxed); break;
@@ -1316,12 +1319,14 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     }
     if (requestedBypass && bypassRamp.value() >= 1.0f) bypassSettled = true;
     // Recovery. Before the input ceiling, finite input could overflow inside a
-    // stage (measured with a 10 ms burst: Studio FET from about 3e3 peak, Studio
-    // VCA from 1e13, FET from 1e20, the other modes only near FLT_MAX). Input at
-    // or above 1024 no longer gets this far, but a sub-ceiling burst with mode
-    // input gain on top still does (Studio FET, 1000 peak, +20 dB Input), as
-    // would a fault that arises inside a stage. Once one reaches the output it
-    // is latched in the same histories the input guard protects.
+    // stage (measured with a 10 ms burst: the generic Studio FET that was mode 4
+    // until 2026-10-27 from about 3e3 peak, Studio VCA from 1e13, FET from 1e20,
+    // the other modes only near FLT_MAX). Input at or above 1024 no longer gets
+    // this far, and since FET BLUE replaced Studio FET no sub-ceiling burst with
+    // mode input gain on top does either (Studio FET's 1000 peak at +20 dB Input
+    // peaks at 1.45 in FET BLUE); a fault that arises inside a stage still
+    // would. Once one reaches the output it is latched in the same histories the
+    // input guard protects.
     // Emit silence for the faulted block and clear every history exactly as a
     // host reset() would, so the next block starts from a defined state instead
     // of carrying NaN for ever. This sees only faults that reach the output: an
@@ -1519,7 +1524,7 @@ void MultiCompDSP::syncModeParameters(MultiCompMode mode, float digitalLookahead
             copyParameter(modeParams.optoLimit, params.optoLimit);
             break;
         case MultiCompMode::FET:
-        case MultiCompMode::StudioFET:
+        case MultiCompMode::FetBlue:
             copyParameter(modeParams.fetInput, params.fetInput);
             copyParameter(modeParams.fetOutput, params.fetOutput);
             copyParameter(modeParams.fetAttack, params.fetAttack);
@@ -1528,6 +1533,9 @@ void MultiCompDSP::syncModeParameters(MultiCompMode mode, float digitalLookahead
             copyParameter(modeParams.fetCurve, params.fetCurve);
             copyParameter(modeParams.fetTransient, params.fetTransient);
             copyParameter(modeParams.fetThreshold, params.fetThreshold);
+            copyParameter(modeParams.fetBlueRatio, params.fetBlueRatio);
+            copyParameter(modeParams.fetBlueScFilter, params.fetBlueScFilter);
+            copyParameter(modeParams.fetBlueHeadroom, params.fetBlueHeadroom);
             break;
         case MultiCompMode::VCA:
             copyParameter(modeParams.vcaThreshold, params.vcaThreshold);
@@ -1608,7 +1616,7 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
     {
         case MultiCompMode::Opto: manualOutputDb = optoKnobToGainDb(params.optoGain.load(std::memory_order_relaxed)); break;
         case MultiCompMode::FET:
-        case MultiCompMode::StudioFET: manualOutputDb = params.fetOutput.load(std::memory_order_relaxed); break;
+        case MultiCompMode::FetBlue: manualOutputDb = params.fetOutput.load(std::memory_order_relaxed); break;
         case MultiCompMode::VCA: manualOutputDb = params.vcaOutput.load(std::memory_order_relaxed); break;
         case MultiCompMode::Bus: manualOutputDb = params.busMakeup.load(std::memory_order_relaxed); break;
         case MultiCompMode::StudioVCA: manualOutputDb = params.studioVcaOutput.load(std::memory_order_relaxed); break;
@@ -1623,8 +1631,8 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
     if (mode == MultiCompMode::Opto)
         processOptoRange(in, sidechain, out, nCh, nSamples, external, linkAmount, linkMode, hostSidechainDelay,
                          manualOutputDb, distortionType, distortionAmount);
-    if (mode == MultiCompMode::FET)
-        processFetRange(in, sidechain, out, nCh, nSamples, external, linkAmount, linkMode, actualOs,
+    if (mode == MultiCompMode::FET || mode == MultiCompMode::FetBlue)
+        processFetRange(mode, in, sidechain, out, nCh, nSamples, external, linkAmount, linkMode, actualOs,
                         hostSidechainDelay, manualOutputDb, distortionType, distortionAmount);
     if (mode == MultiCompMode::StudioVCA)
         processStudioVcaRange(in, sidechain, out, nCh, nSamples, external, linkAmount, linkMode, hostSidechainDelay,
@@ -1635,7 +1643,8 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
         processBusRange(in, sidechain, out, nSamples, external, linkAmount, actualOs, hostSidechainDelay,
                         manualOutputDb, distortionType, distortionAmount);
     const bool blockPath = mode == MultiCompMode::VCA || mode == MultiCompMode::Opto
-        || mode == MultiCompMode::FET || mode == MultiCompMode::StudioVCA || busBlockPath;
+        || mode == MultiCompMode::FET || mode == MultiCompMode::FetBlue || mode == MultiCompMode::StudioVCA
+        || busBlockPath;
     for (int i = 0; i < nSamples && !blockPath; ++i)
     {
         const float scaledOutputDb = manualOutputDb * manualMakeupScaleRamp.next();
@@ -1643,7 +1652,7 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
         {
             case MultiCompMode::Opto: modeParams.optoGain.store(optoGainDbToKnob(scaledOutputDb), std::memory_order_relaxed); break;
             case MultiCompMode::FET:
-            case MultiCompMode::StudioFET: modeParams.fetOutput.store(scaledOutputDb, std::memory_order_relaxed); break;
+            case MultiCompMode::FetBlue: modeParams.fetOutput.store(scaledOutputDb, std::memory_order_relaxed); break;
             case MultiCompMode::VCA: modeParams.vcaOutput.store(scaledOutputDb, std::memory_order_relaxed); break;
             case MultiCompMode::Bus: modeParams.busMakeup.store(scaledOutputDb, std::memory_order_relaxed); break;
             case MultiCompMode::StudioVCA: modeParams.studioVcaOutput.store(scaledOutputDb, std::memory_order_relaxed); break;
@@ -2108,13 +2117,15 @@ void MultiCompDSP::processBusRange(const float* const* in, const float* const* s
 // partner's upsampled input. Every sidechain read happens before the first
 // output write, so `out` may alias `in` or `sidechain`. Byte-identical to the
 // per-sample loop.
-void MultiCompDSP::processFetRange(const float* const* in, const float* const* sidechain,
+void MultiCompDSP::processFetRange(MultiCompMode mode, const float* const* in, const float* const* sidechain,
                                    float* const* out, int nCh, int nSamples, bool external,
                                    float linkAmount, int linkMode, int factor, int hostSidechainDelay,
                                    float manualOutputDb, DistortionType distortionType,
                                    float distortionAmount) noexcept
 {
     if (nSamples <= 0) return;
+    // FET (FET BLACK) and FetBlue run one engine with two voices (MultiCompModes::selectFetVoice).
+    modes.selectFetVoice(mode == MultiCompMode::FetBlue ? 1 : 0);
     const bool link = linkMode == 0 && linkAmount > 0.0001f && nCh > 1;
     const bool midSideDetector = linkMode == 1 && nCh > 1;
     // The OPTO cell links only in OPTO mode.
@@ -2236,7 +2247,7 @@ void MultiCompDSP::processFetRange(const float* const* in, const float* const* s
                         modeParams.fetOutput.store(outputDb[i], std::memory_order_relaxed);
                     const float osSc = factor == 1 ? sc[i]
                         : interpolateOversampledSidechain(i == 0 ? carriedSc : sc[i - 1], sc[i], phase, factor);
-                    return distort(modes.process(MultiCompMode::FET, sample, ch, osSc, modeParams,
+                    return distort(modes.process(mode, sample, ch, osSc, modeParams,
                                                  1.0f, external, 0.0f, false));
                 });
             previousOversampledSidechain[c] = sc[nSamples - 1];
@@ -2299,9 +2310,9 @@ void MultiCompDSP::processFetRange(const float* const* in, const float* const* s
                 + (fetLinkDetectorGain * signedMaximum - detectorSc0) * linkAmount;
             const float rightSidechain = detectorSc1
                 + (fetLinkDetectorGain * signedMaximum - detectorSc1) * linkAmount;
-            outputLeft[k] = distort(modes.process(MultiCompMode::FET, inputLeft[k], 0, leftSidechain, modeParams,
+            outputLeft[k] = distort(modes.process(mode, inputLeft[k], 0, leftSidechain, modeParams,
                                                   1.0f, external, 0.0f, nativeLeftUsesLinkedDetector));
-            outputRight[k] = distort(modes.process(MultiCompMode::FET, inputRight[k], 1, rightSidechain, modeParams,
+            outputRight[k] = distort(modes.process(mode, inputRight[k], 1, rightSidechain, modeParams,
                                                    1.0f, external, 0.0f, nativeRightUsesLinkedDetector));
         }
         previousOversampledSidechain = {{sc0[i], sc1[i]}};

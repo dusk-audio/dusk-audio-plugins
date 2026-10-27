@@ -46,6 +46,7 @@ public:
         ScHighFreq, ScHighGain, StereoLinkMode,
         BusHeadroom, BusFadeRate, BusFade,
         StudioVcaInput, StudioVcaAutoRelease,
+        FetBlueRatio, FetBlueScFilter, FetBlueHeadroom,
         None // Host-persisted display controls have no audio parameter binding.
     };
     enum class MultibandParameter { Threshold, Ratio, Attack, Release, Makeup, Bypass, Solo, Enabled };
@@ -145,7 +146,7 @@ private:
                           float* const* out, int nCh, int nSamples, bool external, float linkAmount,
                           int linkMode, int hostSidechainDelay, float manualOutputDb,
                           DistortionType distortionType, float distortionAmount) noexcept;
-    void processFetRange(const float* const* in, const float* const* sidechain,
+    void processFetRange(MultiCompMode mode, const float* const* in, const float* const* sidechain,
                          float* const* out, int nCh, int nSamples, bool external, float linkAmount,
                          int linkMode, int factor, int hostSidechainDelay, float manualOutputDb,
                          DistortionType distortionType, float distortionAmount) noexcept;

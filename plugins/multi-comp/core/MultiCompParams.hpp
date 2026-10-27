@@ -13,7 +13,9 @@
 namespace duskaudio
 {
 
-enum class MultiCompMode : int { Opto = 0, FET, VCA, Bus, StudioFET, StudioVCA, Digital, Multiband };
+// FET is FET BLACK and FetBlue FET BLUE (until 2026-10-27 mode 4 was a generic Studio FET); the host labels are in
+// daf-plugin/MultiCompParams.hpp kModes.
+enum class MultiCompMode : int { Opto = 0, FET, VCA, Bus, FetBlue, StudioVCA, Digital, Multiband };
 enum class DistortionType : int { Off = 0, Soft, Hard, Clip };
 
 constexpr int kMultiCompModes = 8;
@@ -168,6 +170,11 @@ struct MultiCompParameterState
     std::atomic<float> fetInput{0.0f}, fetOutput{0.0f}, fetAttack{0.2f}, fetRelease{400.0f};
     std::atomic<int> fetRatio{0}, fetCurve{0};
     std::atomic<float> fetTransient{0.0f}, fetThreshold{-10.0f};
+    // FET BLUE shares Input, Output, Attack and Release with FET BLACK and has its own Ratio (FetVoice positions,
+    // 1 = 2:1, the reference's default), side-chain filter and Headroom (4..28 dB in 4 dB steps; 3 = 16 dB).
+    std::atomic<int> fetBlueRatio{1};
+    std::atomic<bool> fetBlueScFilter{false};
+    std::atomic<int> fetBlueHeadroom{3};
 
     // vcaRatio retains its core identifier; its value is the measured
     // compression knob position, shared with the host parameter descriptor.

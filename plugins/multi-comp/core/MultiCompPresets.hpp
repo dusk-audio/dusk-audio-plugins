@@ -16,7 +16,7 @@ struct MultiCompPreset
     int mode;
     float threshold, ratio, attack, release, makeup, mix, sidechainHP;
     bool autoMakeup;
-    int fetRatio, busAttack, busRelease;
+    int fetRatio, busAttack, busRelease;   // fetRatio: the mode's own Ratio position (FET BLUE's 3 is 8:1)
     float vcaOverEasy, peakReduction;
     bool limitMode;
 };
@@ -24,7 +24,7 @@ struct MultiCompPreset
 inline constexpr std::array<MultiCompPreset, 13> kMultiCompPresets = {{
     {"Smooth Opto Vocal", "Vocals", 0, -18, 4, 10, 300, 5, 100, 60, false, 0, 2, 2, 0, 50, false},
     {"Vocal Presence", "Vocals", 1, -20, 4, 0.5f, 60, -11, 100, 100, false, 0, 2, 2, 0, 0, false},
-    {"Modern Pop Control", "Vocals", 4, -15, 4, 0.3f, 120, 3, 100, 90, true, 1, 2, 2, 0, 0, false},
+    {"Modern Pop Control", "Vocals", 4, -15, 4, 0.3f, 120, 3, 100, 90, true, 3, 2, 2, 0, 0, false},
     {"Classic Drum Glue", "Drums", 3, -15, 4, 30, 100, 3, 100, 90, true, 0, 5, 4, 0, 0, false},
     {"Room Nuke (FET All)", "Drums", 1, -24, 20, 0.8f, 150, -8, 100, 60, false, 4, 2, 2, 0, 0, false},
     {"Snare Snap", "Drums", 2, -18, 4, 15, 50, 4, 100, 100, false, 0, 2, 2, 0, 0, false},
@@ -38,7 +38,7 @@ inline constexpr std::array<MultiCompPreset, 13> kMultiCompPresets = {{
 }};
 
 inline constexpr const char* const kMultiCompModeNames[kMultiCompModes] = {
-    "Opto", "FET", "VCA", "Bus", "Studio FET", "Studio VCA", "Digital", "Multiband"
+    "Opto", "FET Black", "VCA", "Bus", "FET Blue", "Studio VCA", "Digital", "Multiband"
 };
 
 } // namespace duskaudio

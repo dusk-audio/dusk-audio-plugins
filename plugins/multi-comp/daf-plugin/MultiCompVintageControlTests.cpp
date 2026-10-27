@@ -17,6 +17,9 @@ constexpr int bypass = static_cast<int>(ParamId::Bypass);
 constexpr int studioVcaInput = static_cast<int>(ParamId::StudioVcaInput);
 constexpr int studioVcaAutoRelease = static_cast<int>(ParamId::StudioVcaAutoRelease);
 constexpr int studioVcaMeter = static_cast<int>(ParamId::StudioVcaMeter);
+constexpr int fetBlueRatio = static_cast<int>(ParamId::FetBlueRatio);
+constexpr int fetBlueScFilter = static_cast<int>(ParamId::FetBlueScFilter);
+constexpr int fetBlueHeadroom = static_cast<int>(ParamId::FetBlueHeadroom);
 
 StateValues defaults()
 {
@@ -331,15 +334,45 @@ bool stateStudioVca()
     return roundTrip && v6Defaults && missingRejected;
 }
 
+// Version 8 appends FET BLUE's Ratio, SC Filter and Headroom (108-110): they round-trip exactly, a version-7 state (a
+// mode-4 session among them, until then Studio FET) loads them at their defaults (2:1, off, 16 dB) with every other
+// value as saved, and a state missing one of them is rejected.
+bool stateFetBlue()
+{
+    auto values = defaults(); values[opto] = 1; values[fet] = 2;
+    values[static_cast<int>(ParamId::Mode)] = 4; values[static_cast<int>(ParamId::FetInput)] = 12.5f;
+    values[fetBlueRatio] = 7; values[fetBlueScFilter] = 1; values[fetBlueHeadroom] = 5;
+    const auto current = encodeState(values);
+    StateValues decoded{};
+    const bool roundTrip = fetBlueRatio == 108 && fetBlueScFilter == 109 && fetBlueHeadroom == 110
+        && decodeState(current, decoded) && decoded == values;
+    auto v7 = current.substr(0, current.find(";fet_blue_ratio=")); v7.replace(0, v7.find(';'), "v=7");
+    auto expected = values;
+    expected[fetBlueRatio] = 1; expected[fetBlueScFilter] = 0; expected[fetBlueHeadroom] = 3;
+    decoded = {};
+    const bool v7Defaults = decodeState(v7, decoded) && decoded == expected;
+    bool missingRejected = true;
+    for (const char* key : {"fet_blue_ratio", "fet_blue_sc_filter", "fet_blue_headroom"})
+    {
+        const auto missing = withoutKey(current, key);
+        auto destination = values;
+        missingRejected &= !missing.empty() && !decodeState(missing, destination) && destination == values;
+    }
+    std::printf("state: FET BLUE ratio/SC filter/headroom exact: %s; v7 (mode 4) loads 2:1, off, 16 dB: %s; "
+                "missing one rejected: %s\n", roundTrip ? "yes" : "NO", v7Defaults ? "yes" : "NO",
+                missingRejected ? "yes" : "NO");
+    return roundTrip && v7Defaults && missingRejected;
+}
+
 bool stateReject()
 {
     auto values = defaults(); values[opto] = 2; values[fet] = 1;
     const auto valid = encodeState(values);
-    auto v5 = valid.substr(0, valid.find(";opto_meter=")); v5.replace(0, 3, "v=5");
+    auto v5 = valid.substr(0, valid.find(";opto_meter=")); v5.replace(0, v5.find(';'), "v=5");
     auto missing = valid.substr(0, valid.find(";fet_meter="));
     auto fractionalValues = values; fractionalValues[fet] = 0.5f;
     const auto fractional = encodeState(fractionalValues);
-    auto future = valid; future.replace(0, 3, "v=8");
+    auto future = valid; future.replace(0, future.find(';'), "v=" + std::to_string(kStateVersion + 1));
     bool ok = true;
     for (const auto& bad : {v5 + valid.substr(valid.find(";opto_meter=")), missing, fractional, future,
                             valid + valid.substr(valid.find(";opto_meter=")), valid + ";unknown=3f800000"})
@@ -500,7 +533,8 @@ int main(int argc, char** argv)
     struct Test { const char* name; bool (*run)(); };
     const Test tests[]{{"response", response}, {"lifecycle", lifecycle}, {"needle", needle}, {"calibration", calibration},
                        {"switching", switching}, {"state-roundtrip", stateRoundtrip},
-                       {"state-reject", stateReject}, {"state-studio-vca", stateStudioVca}, {"identity", identity},
+                       {"state-reject", stateReject}, {"state-studio-vca", stateStudioVca},
+                       {"state-fet-blue", stateFetBlue}, {"identity", identity},
                        {"studio-vca-meter", studioVcaLevelMeter}, {"studio-vca-dials", studioVcaDials},
                        {"studio-vca-entry", studioVcaEntry}};
     bool passed = true;

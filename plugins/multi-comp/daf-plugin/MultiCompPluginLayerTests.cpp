@@ -310,8 +310,8 @@ void testFactoryPresetOwnership()
           ParamId::BusMakeup, ParamId::BusMix, ParamId::BusHeadroom, ParamId::BusFadeRate, ParamId::BusFade}, 13, false},
         {{ParamId::Mode, ParamId::Mix, ParamId::SidechainHP, ParamId::AutoMakeup,
           ParamId::FetInput, ParamId::FetOutput, ParamId::FetAttack, ParamId::FetRelease,
-          ParamId::FetRatio, ParamId::FetCurve, ParamId::FetTransient, ParamId::FetThreshold},
-         12, false},
+          ParamId::FetBlueRatio, ParamId::FetBlueScFilter, ParamId::FetBlueHeadroom},
+         11, false},
         {{ParamId::Mode, ParamId::Mix, ParamId::SidechainHP, ParamId::AutoMakeup,
           ParamId::StudioVcaThreshold, ParamId::StudioVcaRatio, ParamId::StudioVcaAttack,
           ParamId::StudioVcaRelease, ParamId::StudioVcaOutput, ParamId::StudioVcaInput,
@@ -369,8 +369,23 @@ void testFactoryPresetOwnership()
                 expect(multicompp::ParamId::OptoLimit, preset.limitMode ? 1.0f : 0.0f,
                        "Opto preset applies Limit");
                 break;
-            case 1:
             case 4:
+                expect(multicompp::ParamId::FetInput, -preset.threshold,
+                       "FET BLUE preset applies Input");
+                expect(multicompp::ParamId::FetOutput, preset.makeup,
+                       "FET BLUE preset applies Output");
+                expect(multicompp::ParamId::FetAttack, preset.attack,
+                       "FET BLUE preset applies Attack");
+                expect(multicompp::ParamId::FetRelease, preset.release,
+                       "FET BLUE preset applies Release");
+                expect(multicompp::ParamId::FetBlueRatio, static_cast<float>(preset.fetRatio),
+                       "FET BLUE preset applies its Ratio");
+                expect(multicompp::ParamId::FetBlueScFilter, 0.0f,
+                       "FET BLUE preset resets SC Filter to the reference's default");
+                expect(multicompp::ParamId::FetBlueHeadroom, 3.0f,
+                       "FET BLUE preset resets Headroom to the reference's default");
+                break;
+            case 1:
                 expect(multicompp::ParamId::FetInput, -preset.threshold,
                        "FET preset applies Input");
                 expect(multicompp::ParamId::FetOutput, preset.makeup,
@@ -808,8 +823,7 @@ void testFetFaceplateContract()
     const bool reusesOptoMeter = fetStart != std::string::npos
         && fetEnd != std::string::npos
         && source.find("drawOptoMeter(dl,", fetStart) < fetEnd
-        && source.find("void drawFetMeter(") == std::string::npos
-        && source.find("if (mode == 4)\n            drawMeter(") != std::string::npos;
+        && source.find("void drawFetMeter(") == std::string::npos;
     // Multiband meters each band in its own meter. A master meter, drawn at the
     // left edge, would sit under the INPUT ladder.
     const size_t multibandStart = source.find("void drawMultiband(");
@@ -831,12 +845,17 @@ void testFetFaceplateContract()
     const bool hasConcentricKnobSkirts =
         source.find("AddCircleFilled(center, r * 0.96f") != std::string::npos
         && source.find("center.x - r * 0.13f") == std::string::npos;
-    const size_t studioBranch = source.find("if (studio)");
-    const size_t vintageFace = source.find("constexpr float left = 0.0f",
-                                           studioBranch);
-    const bool keepsStudioDistinct = studioBranch != std::string::npos
-        && vintageFace != std::string::npos && studioBranch < vintageFace
-        && source.find("\"sf_in\"", studioBranch) < vintageFace;
+    // FET BLUE (mode 4) runs on FET BLACK's face with its own ratio buttons (one or two lit), side-chain filter and
+    // Headroom, and no separate meter.
+    namespace ud = multicompp::ui_detail;
+    const bool blueSharesFace = source.find("case 4: drawFet(dl, true)") != std::string::npos
+        && source.find("drawFetBlueRatioButtons(dl") != std::string::npos
+        && source.find("\"fet_blue_hr\"") != std::string::npos
+        && source.find("kModeCanvasTop + 42, 48, 300") == std::string::npos
+        && ud::fetBlueRatioAfterPress(0, 0) == 1 && ud::fetBlueRatioAfterPress(1, 1) == 5
+        && ud::fetBlueRatioAfterPress(5, 2) == 3 && ud::fetBlueRatioAfterPress(5, 1) == 1
+        && ud::fetBlueRatioAfterPress(4, 3) == 0 && ud::fetBlueRatioAfterPress(3, 0) == 8
+        && ud::fetBlueRatioAfterPress(9, 3) == 2 && ud::fetBlueRatioAfterPress(2, 4) == 2;
     const auto attack = static_cast<uint32_t>(multicompp::ParamId::FetAttack);
     const auto release = static_cast<uint32_t>(multicompp::ParamId::FetRelease);
     const auto input = static_cast<uint32_t>(multicompp::ParamId::FetInput);
@@ -853,17 +872,17 @@ void testFetFaceplateContract()
         && multicompp::ui_detail::fetTimingHostValue(4.0f, release) == 575.0f
         && !multicompp::ui_detail::fetTimingUsesDialReadout(input);
     std::printf("FET faceplate: identity=%s opto-meter=%s ratios=%s mix-only=%s "
-                "concentric-knobs=%s studio-distinct=%s timing-readout=%s\n",
+                "concentric-knobs=%s blue-face=%s timing-readout=%s\n",
                 hasBlackFaceIdentity ? "yes" : "no",
                 reusesOptoMeter ? "yes" : "no",
                 hasFiveRatioButtons ? "yes" : "no",
                 exposesOnlyMixExtension ? "yes" : "no",
                 hasConcentricKnobSkirts ? "yes" : "no",
-                keepsStudioDistinct ? "yes" : "no",
+                blueSharesFace ? "yes" : "no",
                 timingReadoutUsesDialPosition ? "1-7" : "legacy-ms");
     require(hasBlackFaceIdentity && reusesOptoMeter && hasFiveRatioButtons
                 && exposesOnlyMixExtension && hasConcentricKnobSkirts
-                && keepsStudioDistinct && timingReadoutUsesDialPosition,
+                && blueSharesFace && timingReadoutUsesDialPosition,
             "vintage FET uses 1-7 timing readouts while preserving its hardware faceplate");
 }
 
@@ -1008,23 +1027,20 @@ void testOptoFaceplateContract()
                 && Layout::top == 344.0f && Layout::bottom == 654.0f
                 && std::abs(aspect - referenceAspect) < 0.01f,
             "Opto faceplate fills the complete mode canvas below the toolbar");
-    require(multicompp::ui_detail::designHeightForMode(0.0f) == 380.0f
-                && multicompp::ui_detail::designHeightForMode(0.4f) == 380.0f
-                && multicompp::ui_detail::designHeightForMode(0.6f) == 380.0f
-                && multicompp::ui_detail::designHeightForMode(1.4f) == 380.0f
-                && multicompp::ui_detail::designHeightForMode(1.6f) == 380.0f
-                && multicompp::ui_detail::designHeightForMode(2.4f) == 380.0f
-                && multicompp::ui_detail::designHeightForMode(2.6f) == 380.0f
-                && multicompp::ui_detail::designHeightForMode(3.4f) == 380.0f
-                && multicompp::ui_detail::designHeightForMode(3.6f) == 486.0f
-                && multicompp::ui_detail::designHeightForMode(4.4f) == 486.0f
-                && multicompp::ui_detail::designHeightForMode(4.6f) == 380.0f
-                && multicompp::ui_detail::designHeightForMode(5.4f) == 380.0f
-                && multicompp::ui_detail::designHeightForMode(5.6f) == 640.0f
-                && multicompp::ui_detail::designHeightForMode(6.4f) == 640.0f
-                && multicompp::ui_detail::designHeightForMode(7.0f) == 640.0f,
-            "Opto, vintage FET, VCA, Bus and Studio VCA use rack-height canvases, Studio FET the full canvas, and "
-            "Digital and Multiband the original editor's height");
+    // One canvas for every mode: the faceplates fill it below the 48 px header and the mode toolbar (mode canvas
+    // 322..654 shown at 48..380), and the Digital and Multiband faces fit it in visible-canvas y.
+    {
+        using Modern = multicompp::ui_detail::ModernFaceLayout;
+        require(multicompp::ui_detail::kDesignHeight == 380.0f
+                    && multicompp::ui_detail::kDesignHeight == 48.0f + (Layout::bottom - 322.0f),
+                "every mode shares the rack-height canvas the faceplates fill");
+        require(Modern::top >= 70.0f && Modern::bottom <= multicompp::ui_detail::kDesignHeight - 8.0f
+                    && Modern::top < Modern::titleY && Modern::titleY < Modern::meterTitleY
+                    && Modern::meterTitleY < Modern::meterTop && Modern::meterTop < Modern::meterBottom
+                    && Modern::meterBottom < Modern::meterReadoutY && Modern::meterReadoutY < Modern::descriptionY
+                    && Modern::descriptionY < Modern::bottom,
+                "the Digital and Multiband faces fit the rack-height canvas below the mode toolbar");
+    }
     {
         using Vca = multicompp::ui_detail::VcaFaceplateLayout;
         const float vcaAspect = multicompp::ui_detail::vcaFaceplateAspect();
