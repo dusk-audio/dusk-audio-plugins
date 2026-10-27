@@ -339,7 +339,15 @@ inline constexpr bool kOptoLinkAtDriveDefault = true;
 // the reduction deepens; with the limit it stops filling as the signal falls, and lets go with the charge as before.
 // While the signal holds, the limit sits above the target (the charge stays under the static reduction by the
 // populations' share), so steady signals settle as without it. FET BLUE: on.
-inline constexpr std::array<float, 85> kFetDynamicsDefaults{{
+// [85] fbTipReferenceShare w (0 = off): the tip balance (advanceFetFeedback) lowers the threshold by the overshoot a
+// settled sine's tips need to recharge what the leak removes over a cycle. Told the present leak, it holds a settled
+// sine on the static law at every Release position, but the static law was read at the nominal position ('5'), and a
+// loop that is not told its leak settles shallower toward the fast end of the knob, where its tips must overshoot
+// further, and deeper toward the slow end, on the attack's time scale. With w the threshold is told (1 - leak) +
+// w (leak - the nominal position's leak at the same reduction): at 1 a faster release's extra overshoot is the loop's
+// own, and the nominal position is untouched (the two leaks agree bit for bit there). No constant of its own: the size
+// is the attack and release laws'. FET BLACK: off.
+inline constexpr std::array<float, 86> kFetDynamicsDefaults{{
     0.03f, 0.002f, 5.0f, 0.42f, 0.46f, 0.65f,
     0.8f, 0.51f, 0.56f, 0.82f, 1.0f, 0.1f,
     0.7f, 1.0f, 1.24f, 2.0f, -2.17f, 0.82f,
@@ -353,7 +361,7 @@ inline constexpr std::array<float, 85> kFetDynamicsDefaults{{
     0.069821596f, 0.12f, 0.85f, 0.6051005f, 0.0f, 1.2920812f,
     3.8620229f, 5.0f, 1.0f, 0.043717176f, 9.846549f, 3.0176f,
     0.6949f, 5.42614f, 0.72f, -0.1f, 0.4097363f, 0.4356033f,
-    0.3f, 5.0102124f, 19.819176f, 0.0f, 0.0f, 0.0f, 0.02f}};
+    0.3f, 5.0102124f, 19.819176f, 0.0f, 0.0f, 0.0f, 0.02f, 0.0f}};
 
 // C5 90-degree all-pass pair: first-order sections (p - s)/(p + s), pole
 // frequencies in Hz, mapped per sample rate by the plain bilinear transform.
@@ -397,6 +405,7 @@ struct FetDynamicsParams
     float fbStaticK3KnobShare;
     float fbReleaseDepthExtraExponent, fbReleaseDepthExtraDb;
     float fbSloAttackScale, fbSloLoadDb, fbTailInputLimit, fbTailInputReleaseSeconds;
+    float fbTipReferenceShare;
 
     static FetDynamicsParams fromArray(const std::array<float, kFetDynamicsDefaults.size()>& v) noexcept
     {
@@ -479,6 +488,7 @@ struct FetDynamicsParams
         p.fbSloLoadDb = v[82];
         p.fbTailInputLimit = v[83];
         p.fbTailInputReleaseSeconds = v[84];
+        p.fbTipReferenceShare = v[85];
         return p;
     }
 };
@@ -487,7 +497,8 @@ struct FetDynamicsParams
 // 2026-10-26 to a second reference FET compressor on its own probes (tools fet_ae/dyn_fit.py, variant A; report
 // handoff/reports/fet-ae-step1-2026-10-26.md), music never fitted: the 30-clip corpus at 4:1 and 20:1, light to
 // heavy drive, then reads 0 of 180 cells over 1 dB; the release and tail constants refitted on 2026-10-27 with the
-// tail limit (last item). Twenty-five slots differ from FET BLACK's:
+// tail limit, and the tip balance referred to the nominal Release (the last two items). Twenty-six slots differ
+// from FET BLACK's:
 // - [45] fbSlowShare 0: the reference has no release memory, and with the population on, the fit built its slow
 //   attack creep from it, which also charges over a long passage (its staircase statics sat 0.6 dB deeper than its
 //   own 1 s bursts at the same level, where the reference's agree to 0.06 dB).
@@ -515,9 +526,18 @@ struct FetDynamicsParams
 //   attack constants held): probe cells with a frame 1 dB off 25 -> 21 of 80, release 0.95 -> 0.30 dB rms; corpus
 //   pooled 0.372 -> 0.334 dB, 0 of 270 cells over 1 dB (VAL and SEALED clips never fitted). The fit also turned
 //   the 4:1 knee release mostly off ([73] 15.2 -> 0.34) and made the depth law's ratio exponent [50] 1.09.
+// - [85] fbTipReferenceShare 1: the reference settles shallower at fast Release and deeper at slow within 20 ms of an
+//   onset (171 ms 1 kHz bursts at 0.8 peak, Input .5, Attack .126: Release 1 sits 1.83 / 1.89 / 1.42 / 1.14 dB
+//   shallower than Release 0 20 ms in at 2:1 / 4:1 / 8:1 / 20:1, where FET BLUE's tip balance held -0.04 to +0.23);
+//   on programme at Release 1 FET BLUE read deeper on every clip, about 1 dB at 2:1 and 4:1. On, nothing refitted
+//   (tools fet_ae/tipref.py, music_release.py; captures never fitted): the corpus at Release 1, 2:1 to 20:1, light to
+//   heavy, 139 -> 13 of 360 cells over 1 dB; at Release 0 2 -> 4 of 360 (two cells at 1.01 / 1.03, pooled 0.40 ->
+//   0.38); probe cells with a frame 1 dB off 11 -> 8 of 65; at Release .666 every render is unchanged bit for bit.
+//   Release 0's hold after a long hot burst (testFetBlueReleasesWithoutDeepening's rows) reads 0.4 dB deeper: the
+//   tail's creep there is a separate element, open.
 // FET BLACK's [43], [44] (unused while the Release pot law, [60], is on) and [54], [55] (no lag) are kept: the
 // fitted values there rendered byte-identically.
-inline constexpr std::array<float, 85> kFetBlueDynamicsDefaults{{
+inline constexpr std::array<float, 86> kFetBlueDynamicsDefaults{{
     0.03f, 0.002f, 5.0f, 0.42f, 0.46f, 0.65f,
     0.8f, 0.51f, 0.56f, 0.82f, 1.0f, 0.1f,
     0.7f, 1.0f, 1.24f, 2.0f, -2.17f, 0.82f,
@@ -531,7 +551,7 @@ inline constexpr std::array<float, 85> kFetBlueDynamicsDefaults{{
     0.069821596f, 0.12f, 0.85f, 0.958768249f, 0.0f, 0.414279848f,
     0.790935993f, 5.0f, 1.0f, 0.043717176f, 16.7711658f, 4.19861269f,
     0.70767647f, 0.335850686f, 0.543351114f, -0.1f, 0.4097363f, 0.4356033f,
-    0.0f, 5.0102124f, 19.819176f, 3.98787689f, 1.789222f, 1.0f, 0.0355880819f}};
+    0.0f, 5.0102124f, 19.819176f, 3.98787689f, 1.789222f, 1.0f, 0.0355880819f, 1.0f}};
 
 // The two FET modes are one engine with two measured voices: FET BLACK (mode 1), the reference the C6 campaign
 // fitted, and FET BLUE (mode 4), measured 2026-10-26/27 (tools fet_ae/: laws.py, tables.py, static_fit.py). A
@@ -4517,6 +4537,8 @@ private:
         float thresholdControlDb = 0.0f, attackPosition = 0.0f, releasePosition = 0.0f, sr = 0.0f;
         float releaseDepthDb = 0.0f;
         float releaseScale = 0.0f;      // fbReleaseSeconds x the Release knob's factor x the ratio's scale
+        // fbTipReferenceShare: releaseScale and releaseDepthDb at the nominal Release position (0 while it is off)
+        float releaseScaleNominal = 0.0f, releaseDepthDbNominal = 0.0f;
         float fullCharge = 0.0f, lagStep = 1.0f;
         float kneeKnob = 0.0f;          // fbReleaseKneeShare x the knee release's knob factor (4:1)
         double kneeDeepDb = 0.0;        // past this reduction kneeKnob exp(-G / g0) < 2^-25 (+ 0.01 dB margin)
@@ -4548,11 +4570,31 @@ private:
             return t;
         return refreshFetFeedbackKnobTerms(ratioIndex, thresholdControlDb, attackPosition, releasePosition, sr);
     }
+    // The Release knob's nominal position ('5'): the voices' static laws were read there, and the taper and the tip
+    // reference (fbReleaseTaperEnd, fbTipReferenceShare) refer to it.
+    static constexpr float fetNominalRelease = 0.66595459f;
+
     MC2_NOINLINE const FetFeedbackTerms& refreshFetFeedbackKnobTerms(int ratioIndex, float thresholdControlDb,
                                                                       float attackPosition, float releasePosition,
                                                                       float sr) const noexcept
     {
         auto& t = fetFeedbackTerms;
+        t = fetFeedbackKnobTermsAt(ratioIndex, thresholdControlDb, attackPosition, releasePosition, sr);
+        // fbTipReferenceShare: the release laws at the nominal position too, by the same code, so that the two
+        // leaks agree bit for bit there.
+        if (fetDynamics.fbTipReferenceShare > 0.0f)
+        {
+            const FetFeedbackTerms nominal
+                = fetFeedbackKnobTermsAt(ratioIndex, thresholdControlDb, attackPosition, fetNominalRelease, sr);
+            t.releaseScaleNominal = nominal.releaseScale;
+            t.releaseDepthDbNominal = nominal.releaseDepthDb;
+        }
+        return t;
+    }
+    FetFeedbackTerms fetFeedbackKnobTermsAt(int ratioIndex, float thresholdControlDb, float attackPosition,
+                                            float releasePosition, float sr) const noexcept
+    {
+        FetFeedbackTerms t;
         t.valid = true;
         t.ratioIndex = ratioIndex;
         t.thresholdControlDb = thresholdControlDb;
@@ -4566,7 +4608,7 @@ private:
         // travel is compressed onto the span up to the taper's end, so the
         // knob laws below keep their values at and below the nominal position
         // and at 1.
-        constexpr float nominalRelease = 0.66595459f;
+        constexpr float nominalRelease = fetNominalRelease;
         const float releaseTravel = fetDynamics.fbReleaseTaperEnd < 1.0f
                 && fetDynamics.fbReleaseTaperCurve > 0.0f
                 && !(fetDynamics.fbReleasePotFixed > 0.0f)
@@ -5559,7 +5601,20 @@ private:
         // the cycle, (2 / pi) (tan phi - phi) = c (1 - leak) / fullCharge. The
         // threshold is lowered by that overshoot, 1 / cos phi, so the settled
         // loop sits on the static law, which was measured with sines.
-        const F tipBalance = Kf(1.57079633f) * (Kf(1.0f) - leak) * Kf(1.0f / terms.tipDenominator);
+        // fbTipReferenceShare w: the threshold is told (1 - leak) + w (leak - nominalLeak), nominalLeak the nominal
+        // Release position's at this reduction; at 1 the loop sits on the static law there only, and settles
+        // shallower where it leaks faster.
+        F tipLeak = Kf(1.0f) - leak;
+        if (fetDynamics.fbTipReferenceShare > 0.0f)
+        {
+            const F nominalSeconds = L::toF(Kd(static_cast<double>(terms.releaseScaleNominal))
+                * ((Kd(1.0) + reductionSum * Kd(1.0 / static_cast<double>(std::max(terms.releaseDepthDbNominal, 1.0f))))
+                   + extraDepth));
+            const F nominalLeak = smallExpT<L>(
+                Kf(-1.0f) / (vmax(nominalSeconds * kneeReleaseFactor, Kf(1.0e-4f)) * Kf(sr)));
+            tipLeak = tipLeak + Kf(fetDynamics.fbTipReferenceShare) * (leak - nominalLeak);
+        }
+        const F tipBalance = Kf(1.57079633f) * tipLeak * Kf(1.0f / terms.tipDenominator);
         const float slowShare = std::max(fetDynamics.fbSlowShare, 0.0f);
         const float slowCeilingDb = std::max(fetDynamics.fbSlowCeilingDb, 1.0e-3f);
         // The tail population's settled size, scaled by the ratio coordinate
