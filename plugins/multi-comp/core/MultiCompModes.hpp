@@ -7273,7 +7273,13 @@ private:
         float reduction = 0.0f;
         if (knee > 0.0f && db > threshold - knee * 0.5f)
         {
-            if (db < threshold + knee * 0.5f) { const float pos = (db - threshold + knee * 0.5f) / knee; reduction = (db - threshold) * (1.0f - 1.0f / (1.0f + (ratio - 1.0f) * pos * pos)) * pos; }
+            // The quadratic joins zero reduction with the full-ratio line,
+            // matching both value and slope at the two knee boundaries.
+            if (db < threshold + knee * 0.5f)
+            {
+                const float distance = db - threshold + knee * 0.5f;
+                reduction = (1.0f - 1.0f / ratio) * distance * distance / (2.0f * knee);
+            }
             else reduction = (db - threshold) * (1.0f - 1.0f / ratio);
         }
         else if (db > threshold) reduction = (db - threshold) * (1.0f - 1.0f / ratio);
@@ -7281,7 +7287,11 @@ private:
         float release = std::max(0.001f, p.digitalRelease.load(std::memory_order_relaxed) * 0.001f);
         if (p.digitalAdaptive.load(std::memory_order_relaxed))
         {
-            const float absolute = std::abs(input);
+            // The routed detector already carries the stereo-link blend or
+            // the channel's independent/M-S key. Derive programme timing from
+            // that same signal, so a common key gets a common release even
+            // after the main channels have had different crest histories.
+            const float absolute = detect;
             const float peakCoeff = std::exp(-1.0f / (0.1f * sr));
             d.peak = absolute > d.peak ? absolute : peakCoeff * d.peak + (1.0f - peakCoeff) * absolute;
             const float rmsCoeff = std::exp(-1.0f / (0.3f * sr));
@@ -7292,7 +7302,7 @@ private:
                                                      : 1.0f - std::min(1.0f, (d.crest - 6.0f) / 6.0f) * 0.67f;
             release *= multiplier;
         }
-        const float target = decibelsToGain(-reduction), attack = std::max(0.0001f, p.digitalAttack.load(std::memory_order_relaxed) * 0.001f);
+        const float target = decibelsToGain(-reduction), attack = std::max(0.00001f, p.digitalAttack.load(std::memory_order_relaxed) * 0.001f);
         const double c = std::exp(-1.0 / (static_cast<double>(target < d.envelope ? attack : release) * fs * osFactor));
         d.envelope = std::clamp(c * d.envelope + (1.0 - c) * target, 0.0001, 1.0);
         const float wet = std::clamp(delayed * static_cast<float>(d.envelope) * decibelsToGain(p.digitalOutput.load(std::memory_order_relaxed)), -2.0f, 2.0f);

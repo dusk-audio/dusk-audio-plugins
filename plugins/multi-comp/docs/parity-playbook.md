@@ -153,10 +153,9 @@ and candidate renders never enter a repo; the owner commits.
 ## Open before the stable 1.0.0 (from the 1.0.0-alpha1 review, 2026-10-18)
 
 - FET ratio buttons switch without a crossfade; going to or from All jumps.
-- Global Lookahead in Multiband, with the internal detector, delays the detector along with the audio
-  (`processMultiband` splits the already delayed input), so it adds up to 10 ms of latency and no lead; with an
-  external sidechain the lead is real. Either split an undelayed copy for the detector or drop Multiband from
-  `globalLookaheadForMode`; `--global-lookahead-scope` prints Multiband's onset lead (0.00 dB today).
+- Global Lookahead in Multiband fixed 2026-10-27: its detector splits the undelayed filtered key while the
+  audio splits the delayed input, for both internal and external keys. `MultiCompModernRegression` checks
+  transient anticipation and aligned dry/wet paths, including M/S and host latency padding.
 - Latency held constant across modes (2026-10-19): each mode's output is padded to Opto's latency
   (`MultiCompLatencyPad.hpp`, `MultiCompDSP::getHostLatencySamples()`; 73 samples at 44.1 / 48 kHz, 79 at
   88.2 / 96, 91 at 176.4 / 192, where Opto's output stage runs at the fixed mode rate). Since 2026-10-21 the

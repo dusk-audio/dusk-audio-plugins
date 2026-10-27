@@ -4728,7 +4728,7 @@ void testDigitalLookaheadMixAlignment()
     }
 }
 
-void testGoldenVectors()
+void testGoldenVectors(int selectedMode = -1)
 {
     constexpr int kSamples = 4096;
     // These vectors were recorded from this extracted core. They detect drift
@@ -4863,14 +4863,19 @@ void testGoldenVectors()
     // FET BLUE replaces the generic Studio FET in mode 4 (the FET loop with its own measured voice; 2026-10-27,
     // owner's request): mode-4 RMS .615188122 -> .061227035, peak 1.836065888 -> .488671184; siblings unchanged,
     // bound unchanged.
+    // Digital / Multiband re-recorded 2026-10-27 after independent soft-knee
+    // and flat-recombination regressions established the corrected laws.
+    // Restoring the old knee / uncompensated splits fails these same bounds;
+    // all six hardware modes also byte-null against the pre-fix step/burst.
     constexpr float expectedRms[] = {0.043787036f, 0.021684144f,
-                                     0.061227035f, 0.161433503f, 0.172583029f, 0.212110028f};
+                                     0.061227035f, 0.161433503f, 0.172472671f, 0.213454589f};
     constexpr float expectedPeak[] = {0.553540170f, 0.349883616f,
-                                      0.488671184f, 0.349220395f, 0.349556237f, 0.815853953f};
+                                      0.488671184f, 0.349220395f, 0.349556237f, 0.820877731f};
     std::puts("golden vectors: six JUCE-oracle modes, deterministic step/sine-burst RMS peak");
     for (size_t vectorIndex = 0; vectorIndex < std::size(modes); ++vectorIndex)
     {
         const int mode = static_cast<int>(modes[vectorIndex]);
+        if (selectedMode >= 0 && mode != selectedMode) continue;
         MultiCompDSP dsp;
         dsp.prepare(48000.0, 256);
         dsp.setOversampling(0);
@@ -4953,7 +4958,7 @@ void testMultibandEnabledTopology()
     const float bypassed = renderSoloedLowBand(true, true);
     std::printf("multiband Enabled topology: disabled-solo RMS %.9g; bypassed-solo RMS %.9g\n",
                 disabled, bypassed);
-    require(disabled < 1.0e-8f, "disabled band is absent from the recombination");
+    require(disabled > 0.1f, "Solo on a disabled band leaves the active bands audible");
     require(bypassed > 0.1f, "bypassed band remains audible without compression");
 
     MultiCompDSP minimumTwo;
@@ -5243,7 +5248,7 @@ std::vector<float> renderWithControl(duskaudio::MultiCompMode mode, MultiCompDSP
 }
 
 // The global Mix and SC HP act only on the faces that show them. Bus and
-// Digital carry their own MIX and Multiband its MB Mix; only Opto, VCA and Bus
+// Digital carry their own MIX and Multiband its MB Mix; Opto, VCA, Bus and Digital
 // carry the sidechain high-pass. Before, a Mix or SC HP set on one face kept
 // acting, unseen, after switching to a mode without that control.
 void testHiddenControlsStayOutOfModesWithoutThem()
@@ -5257,11 +5262,11 @@ void testHiddenControlsStayOutOfModesWithoutThem()
                 != renderWithControl(MultiCompMode::Opto, Parameter::Mix, 100.0f),
             "the global Mix still acts on a face that shows it");
     for (const MultiCompMode mode : {MultiCompMode::FET, MultiCompMode::FetBlue, MultiCompMode::StudioVCA,
-                                     MultiCompMode::Digital, MultiCompMode::Multiband})
+                                     MultiCompMode::Multiband})
         require(renderWithControl(mode, Parameter::SidechainHP, 300.0f)
                     == renderWithControl(mode, Parameter::SidechainHP, 0.0f),
                 "SC HP does not act in a mode whose face has no sidechain filter");
-    for (const MultiCompMode mode : {MultiCompMode::Opto, MultiCompMode::VCA, MultiCompMode::Bus})
+    for (const MultiCompMode mode : {MultiCompMode::Opto, MultiCompMode::VCA, MultiCompMode::Bus, MultiCompMode::Digital})
         require(renderWithControl(mode, Parameter::SidechainHP, 300.0f)
                     != renderWithControl(mode, Parameter::SidechainHP, 0.0f),
                 "SC HP still acts on a face that shows it");
@@ -5297,9 +5302,7 @@ void testGlobalLookaheadOnlyInDigitalModes()
     // A lookahead lets the detector hear the onset before the audio does, so
     // the first 5 ms after the audio arrives already come out reduced. A plain
     // delay of audio and detector together would leave the onset as loud as
-    // without it. Multiband with its own detector is such a delay today (open
-    // before 1.0.0), so only Digital is held to the lead; Multiband's reading is
-    // printed for reference.
+    // without it. Both digital modes must provide a detector lead.
     // The audio must also arrive where the reported latency says: before it,
     // from 240 to 70 samples ahead (clear of the anti-alias filter's
     // pre-ringing), the output is silent, since the input starts at t = 0.
@@ -5319,6 +5322,7 @@ void testGlobalLookaheadOnlyInDigitalModes()
     const float digitalLead = onsetPeakDb(MultiCompMode::Digital, 0.0f) - onsetPeakDb(MultiCompMode::Digital, 10.0f);
     const float multibandLead = onsetPeakDb(MultiCompMode::Multiband, 0.0f) - onsetPeakDb(MultiCompMode::Multiband, 10.0f);
     require(digitalLead > 1.0f, "Global Lookahead lets Digital reduce the onset before it arrives");
+    require(multibandLead > 1.0f, "Global Lookahead lets Multiband reduce the onset before it arrives");
     std::printf("global lookahead: adds latency only in Digital and Multiband; onset lead Digital %.2f dB, "
                 "Multiband %.2f dB\n", digitalLead, multibandLead);
 }
@@ -12782,6 +12786,12 @@ void testFetBlueScFilterTiltsTheDetector()
 
 int main(int argc, char** argv)
 {
+    if (argc == 2 && std::strcmp(argv[1], "--golden-digital") == 0)
+    { testGoldenVectors(static_cast<int>(duskaudio::MultiCompMode::Digital)); return 0; }
+    if (argc == 2 && std::strcmp(argv[1], "--golden-multiband") == 0)
+    { testGoldenVectors(static_cast<int>(duskaudio::MultiCompMode::Multiband)); return 0; }
+    if (argc == 2 && std::strcmp(argv[1], "--multiband-topology") == 0)
+    { testMultibandEnabledTopology(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--wide-classic") == 0)
     { testClassicOversamplerByteIdentity(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--wide-response") == 0)

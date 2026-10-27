@@ -432,7 +432,9 @@ inline unsigned multibandShownBands(const bool enabled[4]) noexcept
 
 #ifndef MULTICOMP_UI_LOGIC_TEST
 
+#ifndef MULTICOMP_UI_TEST_HOST
 #include "DafUI.hpp"
+#endif
 #include "MultiCompAccess.hpp"
 #include "MultiCompVersion.hpp"
 #include "DuskImGuiFont.hpp"
@@ -624,8 +626,23 @@ public:
         scanUserPresets();
     }
 
-    void beginEdit(uint32_t idx) override { editParameter(idx, true); }
-    void endEdit(uint32_t idx) override { editParameter(idx, false); }
+    ~MultiCompUI() override { finishModernEdits(true); }
+
+    void beginEdit(uint32_t idx) override
+    {
+        if (drawingModernControl) modernEditsOpen[idx] = true;
+        editParameter(idx, true);
+    }
+    void endEdit(uint32_t idx) override
+    {
+        if (drawingModernControl)
+        {
+            // A hidden/disabled control may already have closed its gesture.
+            if (!modernEditsOpen[idx]) return;
+            modernEditsOpen[idx] = false;
+        }
+        editParameter(idx, false);
+    }
     void setParam(uint32_t idx, float value) override
     {
         if (!multicompp::isControlParameter(static_cast<int>(idx))) return;
@@ -674,18 +691,7 @@ protected:
     void onImGuiDisplay() override
     {
         seedParameterMirror();
-        // The crossovers are only submitted in Multiband mode. If the host
-        // switches Mode away mid-drag the widget stops being drawn, so ImGui
-        // never reports IsItemDeactivated for it: the gesture would stay open on
-        // the host and the mirror would skip that crossover for the rest of the
-        // session. Close it here instead, from the fact that nothing re-armed
-        // the flag on the previous frame.
-        if (draggedCrossover != kNoCrossover && !draggedCrossoverStillDrawn)
-        {
-            editParameter(draggedCrossover, false);
-            draggedCrossover = kNoCrossover;
-        }
-        draggedCrossoverStillDrawn = false;
+        modernEditsDrawn.fill(false);
 
         const float winW = static_cast<float>(getWidth());
         const float winH = static_cast<float>(getHeight());
@@ -752,6 +758,7 @@ protected:
 
         const duskdaf::ResizeGripState grip =
             panel.resizeGrip(dl, winW, winH, kDesignW, kDesignH, 0.5f);
+        finishModernEdits(false);
         ImGui::End();
         ImGui::PopStyleVar(2);
         // A host can service the request synchronously, so never resize from
@@ -762,6 +769,10 @@ protected:
 
 private:
     std::array<float, multicompp::kTotalParamCount> values{};
+    // Only Digital/Multiband controls opt in. A host mode/band/Auto Makeup
+    // change can remove a held widget before ImGui reports deactivation.
+    std::array<bool, multicompp::kTotalParamCount> modernEditsOpen{}, modernEditsDrawn{};
+    bool drawingModernControl = false;
     duskdaf::DuskPanel panel;
     ImDrawListSplitter optoKnobSplitter;
     ImDrawListSplitter fetKnobSplitter;
@@ -784,9 +795,6 @@ private:
     // The crossover handle under an active drag. Owns both the open automation
     // gesture and the mirror's skip, so the two cannot disagree.
     uint32_t draggedCrossover = kNoCrossover;
-    // Set by crossoverFader() on every frame it submits the held handle, and read
-    // once per frame to notice a handle that stopped being drawn mid-drag.
-    bool draggedCrossoverStillDrawn = false;
     // The held crossover's place on its logarithmic travel, moved by the drag.
     float crossoverDragPosition = 0.0f;
     // Digital and Multiband display state (UI only, never host parameters).
@@ -816,6 +824,29 @@ private:
     bool saveFailed = false;
 
     float value(uint32_t p) const { return values[p]; }
+
+    void finishModernEdits(bool closeAll)
+    {
+        for (size_t p = 0; p < modernEditsOpen.size(); ++p)
+            if (modernEditsOpen[p] && (closeAll || !modernEditsDrawn[p]))
+            {
+                editParameter(static_cast<uint32_t>(p), false);
+                modernEditsOpen[p] = false;
+                if (p == draggedCrossover) draggedCrossover = kNoCrossover;
+                if (p == P_SC_HP) sidechainHpReset = false;
+            }
+    }
+
+    bool modernManualOutputAvailable() const
+    {
+        if (values[P_AUTO_MAKEUP] <= 0.5f) return true;
+        if (values[static_cast<uint32_t>(ParamId::ExternalSidechain)] <= 0.5f) return false;
+        void* const instance = getPluginInstancePointer();
+        // The split/out-of-process fallback has only the requested key source.
+        // Monolithic formats can mirror the detector the core actually uses.
+        return instance == nullptr || multiCompGetExternalSidechainActive == nullptr
+            || multiCompGetExternalSidechainActive(instance) > 0.5f;
+    }
 
     void clearPresetSelection(bool atDefaults)
     {
@@ -3601,9 +3632,16 @@ private:
         // Drawn before the widget, so a typed-value editor it opens lands on top.
         drawMetallicKnob(dl, x, y, r, hi > lo ? (values[p] - lo) / (hi - lo) : 0.0f, opacity);
         if (!applicable) ImGui::BeginDisabled();
+        modernEditsDrawn[p] = applicable;
+        drawingModernControl = true;
+        // The selected band's knobs reuse their captions. Give each parameter
+        // its own active ID so a disappearing band cannot redirect a held drag.
+        ImGui::PushID(static_cast<int>(p));
         panel.knob(id, p, lo, hi, x, y, r, values[p], hostDefaultValue(p), false, false, "%.2f", suffix, 0, true,
                    false, nullptr, false, 1.0f, 0.0f, nullptr, false, nullptr, true, 0.0f, 0.0f, false, false, 9.5f,
                    false, false, &knobHostToPlain, &knobPlainToHost, this);
+        ImGui::PopID();
+        drawingModernControl = false;
         if (!applicable) ImGui::EndDisabled();
         textCentred(dl, x, nameCentreY, nameSize, colourWithAlpha(nameColour, opacity * static_cast<float>(
                         (nameColour >> IM_COL32_A_SHIFT) & 0xFFu) / 255.0f), name, true);
@@ -3783,11 +3821,13 @@ private:
     {
         const float s = panel.scale();
         const uint32_t p = P_SC_HP;
+        modernEditsDrawn[p] = true;
         const float lo = hostMinimum(p), hi = hostMaximum(p);
         ImGui::SetCursorScreenPos(panel.P(x - 14.0f, trackTop - 8.0f));
         ImGui::InvisibleButton("##dig_sc_hp", ImVec2(28.0f * s, (trackBottom - trackTop + 16.0f) * s));
         if (ImGui::IsItemActivated())
         {
+            modernEditsOpen[p] = true;
             editParameter(p, true);
             sidechainHpReset = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
             if (sidechainHpReset) setParam(p, hostDefaultValue(p));
@@ -3801,7 +3841,8 @@ private:
         }
         if (ImGui::IsItemDeactivated())
         {
-            editParameter(p, false);
+            if (modernEditsOpen[p]) editParameter(p, false);
+            modernEditsOpen[p] = false;
             sidechainHpReset = false;
         }
         const float position = hi > lo ? std::clamp((values[p] - lo) / (hi - lo), 0.0f, 1.0f) : 0.0f;
@@ -3870,7 +3911,7 @@ private:
         knobAt("dig_rel", P_DIG_RELEASE, 4, row1, "RELEASE", 0, " ms", true);
         knobAt("dig_look", P_DIG_LOOK, 0, row2, "LOOKAHEAD", 1, " ms", true);
         knobAt("dig_mix", P_DIG_MIX, 1, row2, "MIX", 0, " %", true);
-        knobAt("dig_out", P_DIG_OUT, 2, row2, "OUTPUT", 1, " dB", values[P_AUTO_MAKEUP] <= 0.5f);
+        knobAt("dig_out", P_DIG_OUT, 2, row2, "OUTPUT", 1, " dB", modernManualOutputAvailable());
         illuminatedToggle(dl, "##dig_adapt", P_DIG_ADAPT, column(3) - 40.0f, faceY(row2 - 15.0f), column(4) + 40.0f,
                           faceY(row2 + 15.0f), "ADAPTIVE RELEASE");
     }
@@ -3969,6 +4010,7 @@ private:
     void crossoverFader(ImDrawList* dl, uint32_t p, float centreX, float top, float bottom, ImU32 lowColour,
                         ImU32 highColour)
     {
+        modernEditsDrawn[p] = true;
         const float s = panel.scale();
         const float minHz = plainValueForHost(p, hostMinimum(p)), maxHz = plainValueForHost(p, hostMaximum(p));
         const float trackTop = top, trackBottom = bottom - 22.0f;
@@ -3978,13 +4020,13 @@ private:
         ImGui::PopID();
         if (ImGui::IsItemActivated())
         {
+            modernEditsOpen[p] = true;
             editParameter(p, true);
             draggedCrossover = p;
             if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) setParam(p, hostDefaultValue(p));
             crossoverDragPosition = multicompp::ui_detail::crossoverFaderPosition(
                 plainValueForHost(p, values[p]), minHz, maxHz);
         }
-        if (draggedCrossover == p) draggedCrossoverStillDrawn = true;
         const float deltaY = ImGui::GetIO().MouseDelta.y / s;
         if (ImGui::IsItemActive() && deltaY != 0.0f)
         {
@@ -3996,7 +4038,8 @@ private:
         }
         if (ImGui::IsItemDeactivated())
         {
-            editParameter(p, false);
+            if (modernEditsOpen[p]) editParameter(p, false);
+            modernEditsOpen[p] = false;
             // Released: the pending write has had the gesture to land, and the
             // next refresh adopts whatever ordering the DSP settled on.
             if (draggedCrossover == p) draggedCrossover = kNoCrossover;
@@ -4081,7 +4124,13 @@ private:
             if (bandButton(dl, "##mb_enable", x0 + 2.5f, faceY(116.0f), x0 + stripWidth - 2.5f, faceY(136.0f),
                                bandName(b), enabled[b] ? kBandColors[b] : IM_COL32(0x2A, 0x2A, 0x2A, 255),
                                kModernText, tooltip, enabled[b], !locked))
+            {
+                // Clear Solo first, while its control is still visible. Host
+                // automation/restored disabled Solo is also ignored by the DSP.
+                const uint32_t solo = enable - 1;
+                if (enabled[b] && values[solo] > 0.5f) setHostValue(solo, 0.0f);
                 setHostValue(enable, enabled[b] ? 0.0f : 1.0f);
+            }
             ImGui::PopID();
         }
         textCentred(dl, 0.5f * (sectionLeft + sectionRight), faceY(342.0f), 10.0f, kDim,
@@ -4170,7 +4219,7 @@ private:
         knobAt("mb_att", base + 2, 0.5f, row1, "ATTACK", 1, " ms", true);
         knobAt("mb_rel", base + 3, 1.5f, row1, "RELEASE", 0, " ms", true);
         knobAt("mb_makeup", base + 4, -1.0f, row2, "MAKE-UP", 1, " dB", true);
-        knobAt("mb_out", P_MB_OUT, 0.0f, row2, "OUTPUT", 1, " dB", values[P_AUTO_MAKEUP] <= 0.5f);
+        knobAt("mb_out", P_MB_OUT, 0.0f, row2, "OUTPUT", 1, " dB", modernManualOutputAvailable());
         knobAt("mb_mix", P_MB_MIX, 1.0f, row2, "MIX", 0, "%", true);
     }
 

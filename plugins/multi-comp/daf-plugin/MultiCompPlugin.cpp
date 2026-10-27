@@ -83,6 +83,10 @@ public:
     float inputLevel() const noexcept { return dsp.getInputLevel(); }
     float outputLevel() const noexcept { return dsp.getOutputLevel(); }
     float outputVuLevel() const noexcept { return outputVu.levelDb(); }
+    float externalSidechainActive() const noexcept
+    {
+        return externalSidechainInUse.load(std::memory_order_acquire) ? 1.0f : 0.0f;
+    }
     float gainReductionNeedle() const noexcept { return grNeedle.levelDb(); }
     float vcaGainReductionNeedle() const noexcept { return vcaGrNeedle.levelDb(); }
     float studioVcaInputLevel() const noexcept { return studioVcaInputMeter.levelDb(); }
@@ -302,6 +306,7 @@ protected:
         dsp.reset(); outputVu.reset(); grNeedle.reset(); vcaGrNeedle.reset();
         studioVcaInputMeter.reset(); studioVcaOutputMeter.reset();
         resetChannelLevels();
+        externalSidechainInUse.store(false, std::memory_order_release);
     }
     void sampleRateChanged(double sr) override { prepare(sr, getBufferSize()); }
     void bufferSizeChanged(uint32_t bs) override { prepare(getSampleRate(), bs); }
@@ -316,6 +321,7 @@ protected:
         // deactivated, so run() observes a stable pair.
         activeInputs = static_cast<int>(in);
         activeChannels = out == 1 ? 1 : 2;
+        externalSidechainInUse.store(false, std::memory_order_release);
     }
 
     void run(const float** inputs, float** outputs, uint32_t frames) override
@@ -346,6 +352,7 @@ protected:
                 channelInputPeak[ch] = duskaudio::blockAbsPeak(inputs[ch], static_cast<int>(frames), 0.0f);
         const int sidechainWidth = values[static_cast<size_t>(multicompp::ParamId::ExternalSidechain)].load(std::memory_order_relaxed) > 0.5f
             ? multicompp::plugin_detail::externalSidechainWidth(activeInputs, activeChannels, inputs) : 0;
+        externalSidechainInUse.store(sidechainWidth > 0, std::memory_order_release);
         if (sidechainWidth > 0)
         {
             // A mono sidechain keys every channel; a stereo one keys a mono instance by its mid, the usual mono
@@ -430,6 +437,7 @@ private:
     }
     void prepare(double sampleRate, uint32_t bufferSize)
     {
+        externalSidechainInUse.store(false, std::memory_order_release);
         dsp.prepare(sampleRate, static_cast<int>(bufferSize));
         monoSidechain.assign(bufferSize, 0.0f);
         outputVu.prepare(sampleRate);
@@ -452,6 +460,9 @@ private:
     multicompp::StudioVcaLevelMeter studioVcaInputMeter, studioVcaOutputMeter;   // Studio VCA face
     // Digital and Multiband faces: each channel's last block peak in dB (-60 floor), as the original editor read them.
     std::atomic<float> inputChannelDb[2] = {{-60.0f}, {-60.0f}}, outputChannelDb[2] = {{-60.0f}, {-60.0f}};
+    // UI control availability follows the detector the audio callback actually
+    // uses, including a requested external key whose host bus is disconnected.
+    std::atomic<bool> externalSidechainInUse{false};
     static float peakDb(float peak) noexcept { return peak > 1.0e-5f ? duskaudio::gainToDecibels(peak) : -60.0f; }
     void resetChannelLevels() noexcept
     {
@@ -496,6 +507,7 @@ float multiCompGetBandGainReduction(void* p, int band) noexcept { return p ? asM
 float multiCompGetInputLevel(void* p) noexcept { return p ? asMultiComp(p)->inputLevel() : -60.0f; }
 float multiCompGetOutputLevel(void* p) noexcept { return p ? asMultiComp(p)->outputLevel() : -60.0f; }
 float multiCompGetOutputVuLevel(void* p) noexcept { return p ? asMultiComp(p)->outputVuLevel() : -120.0f; }
+float multiCompGetExternalSidechainActive(void* p) noexcept { return p ? asMultiComp(p)->externalSidechainActive() : 0.0f; }
 float multiCompGetGainReductionNeedle(void* p) noexcept { return p ? asMultiComp(p)->gainReductionNeedle() : 0.0f; }
 float multiCompGetVcaGainReductionNeedle(void* p) noexcept { return p ? asMultiComp(p)->vcaGainReductionNeedle() : 0.0f; }
 float multiCompGetStudioVcaInputLevel(void* p) noexcept { return p ? asMultiComp(p)->studioVcaInputLevel() : -120.0f; }
