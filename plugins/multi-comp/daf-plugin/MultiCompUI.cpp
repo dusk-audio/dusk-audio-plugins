@@ -58,13 +58,12 @@ inline constexpr float vcaFaceplateAspect() noexcept
         / (VcaFaceplateLayout::bottom - VcaFaceplateLayout::top);
 }
 
-// Every mode's face shares one rack-height canvas (1120 x 380), so a mode change never resizes the window: a mode
-// whose canvas differed from the opening size showed up shrunken in Logic (#240). Digital and Multiband, once on the
-// original editor's 640 px height, keep its controls and meters at this height.
+// Every mode shares one rack-height canvas (1120 x 380), so a mode change never resizes the window: a mode
+// whose canvas differed from the opening size showed up shrunken in Logic (#240).
 inline constexpr float kDesignHeight = 380.0f;
 
-// The Digital and Multiband faces' frame, in visible-canvas y (0 = the top of the header): the body below the mode
-// toolbar with its title and foot line, and the INPUT / OUTPUT meters' title, frame and readout.
+// Digital and Multiband content bounds in visible-canvas y (0 = the top of the header).
+// The rack shell extends to the canvas edges; its lettering keeps an 8 px bottom margin.
 struct ModernFaceLayout
 {
     static constexpr float top = 72.0f, bottom = 372.0f;
@@ -489,12 +488,12 @@ constexpr ImU32 kOptoInk = IM_COL32(31, 32, 31, 255);
 constexpr ImU32 kOptoRed = IM_COL32(151, 25, 31, 255);
 constexpr ImU32 kVcaInk = IM_COL32(228, 229, 224, 255);
 constexpr ImU32 kVcaInkDim = IM_COL32(168, 170, 166, 255);
-// The Digital and Multiband faces keep the original editor's palette.
-constexpr ImU32 kModernText = IM_COL32(0xE0, 0xE0, 0xE0, 255);
-constexpr ImU32 kDigitalCyan = IM_COL32(0x00, 0xD4, 0xFF, 255);
+// Silkscreen and small functional accents on the Digital / Multiband rack faces.
+constexpr ImU32 kModernText = IM_COL32(228, 229, 224, 255);
+constexpr ImU32 kDigitalCyan = IM_COL32(121, 185, 191, 255);
 constexpr ImU32 kBandColors[4] = {
-    IM_COL32(0xFF, 0x6B, 0x6B, 255), IM_COL32(0xFF, 0xD9, 0x3D, 255),
-    IM_COL32(0x6B, 0xCB, 0x77, 255), IM_COL32(0x4D, 0x96, 0xFF, 255)
+    IM_COL32(205, 127, 117, 255), IM_COL32(210, 187, 116, 255),
+    IM_COL32(137, 177, 141, 255), IM_COL32(127, 162, 196, 255)
 };
 
 // Parameter indices are aliases of the single table order in MultiCompParams.hpp.
@@ -529,7 +528,7 @@ constexpr uint32_t kMeterBand0 = static_cast<uint32_t>(multicompp::kMeterBand0);
 
 const char* bandName(int band)
 {
-    static const char* names[] = {"Low", "Lo-Mid", "Hi-Mid", "High"};
+    static const char* names[] = {"LOW", "LO-MID", "HI-MID", "HIGH"};
     return names[band < 0 ? 0 : band > 3 ? 3 : band];
 }
 
@@ -3405,7 +3404,7 @@ private:
         return true;
     }
 
-    // ---- Digital and Multiband: the original editor's faces ---------------------------------------------------
+    // ---- Digital and Multiband rack faces -------------------------------------------------------------------
     // Both carry the JUCE editor's controls, meters and drawing (EnhancedCompressorEditor, ModernCompressorPanels.h,
     // AnalogLookAndFeel.cpp) on the rack-height canvas every mode shares: the INPUT and OUTPUT meters keep their
     // distance from the window edges, and what the original stacked between them sits side by side (Digital: the
@@ -3420,27 +3419,38 @@ private:
         panel.text(dl, x, centreY - 0.5f * size, size, colour, text, 0, bold);
     }
 
-    // The face's background, the original window frame (a 2 px edge a shade under the mode colour and a 1 px bevel
-    // above it), the glowing title and the one-line description at the foot.
-    void drawModernBody(ImDrawList* dl, ImU32 background, ImU32 modeColour, const char* title, ImU32 titleColour,
-                        const char* description)
+    // Same full-width rack, mounting ears and printed lettering as the hardware faces.
+    // Kept local to these two modes so their finish does not alter the reference panels.
+    void drawModernBody(ImDrawList* dl, const char* title, const char* description)
     {
         using Layout = multicompp::ui_detail::ModernFaceLayout;
         const float s = panel.scale();
-        const float top = faceY(Layout::top), bottom = faceY(Layout::bottom), titleY = faceY(Layout::titleY);
-        dl->AddRectFilled(panel.P(10, top), panel.P(kDesignW - 10, bottom), background, 4.0f * s);
-        dl->AddRect(panel.P(11, top + 1), panel.P(kDesignW - 11, bottom - 1), colourDarker(modeColour, 0.3f),
-                    4.0f * s, 0, 2.0f * s);
-        dl->AddRect(panel.P(12.5f, top + 2.5f), panel.P(kDesignW - 12.5f, bottom - 2.5f),
-                    colourBrighter(modeColour, 0.2f), 3.0f * s, 0, 1.0f * s);
-        for (int dx = -1; dx <= 1; ++dx)
-            for (int dy = -1; dy <= 1; ++dy)
-                if (dx != 0 || dy != 0)
-                    textCentred(dl, kDesignW * 0.5f + static_cast<float>(dx), titleY + static_cast<float>(dy), 22.0f,
-                                colourWithAlpha(titleColour, 0.15f), title, true);
-        textCentred(dl, kDesignW * 0.5f, titleY, 22.0f, titleColour, title, true);
-        textCentred(dl, kDesignW * 0.5f, faceY(Layout::descriptionY), 11.0f, colourWithAlpha(titleColour, 0.5f),
-                    description, false);
+        const float top = faceY(70), bottom = faceY(kDesignH), titleY = faceY(Layout::titleY);
+        dl->AddRectFilled(panel.P(0, top), panel.P(kDesignW, bottom), IM_COL32(37, 39, 38, 255));
+        gradientRect(dl, panel.P(32, top + 1), panel.P(kDesignW - 32, bottom - 1), 0,
+                     panel.P(32, top), panel.P(32, bottom), IM_COL32(48, 51, 50, 255), IM_COL32(24, 27, 26, 255));
+        for (int row = 1; row < 155; ++row)
+        {
+            const float y = top + 2.0f * static_cast<float>(row);
+            dl->AddLine(panel.P(33, y), panel.P(kDesignW - 33, y),
+                        row % 3 == 0 ? IM_COL32(255, 255, 255, 3) : IM_COL32(0, 0, 0, 8), s);
+        }
+        for (float x : {32.0f, kDesignW - 32.0f})
+        {
+            dl->AddLine(panel.P(x, top), panel.P(x, bottom), IM_COL32(8, 10, 9, 255), 1.5f * s);
+            dl->AddLine(panel.P(x + 1, top), panel.P(x + 1, bottom), IM_COL32(107, 112, 108, 80), s);
+        }
+        dl->AddLine(panel.P(0, top + 1), panel.P(kDesignW, top + 1), IM_COL32(123, 129, 124, 150), s);
+        dl->AddLine(panel.P(0, bottom - 2), panel.P(kDesignW, bottom - 2), IM_COL32(6, 8, 7, 255), 2 * s);
+        for (float x : {17.0f, kDesignW - 17.0f})
+            for (float y : {top + 22.0f, bottom - 23.0f})
+                drawOptoScrew(dl, x, y, 5.0f);
+        duskdaf::spacedText(panel, dl, kDesignW * 0.5f, titleY - 8.0f, 16.0f, kModernText, title, 0, 0.12f);
+        panel.text(dl, 111, titleY - 5, 10, kDim, "MC-2", -1, true);
+        panel.text(dl, 1009, titleY - 5, 10, kDim, "PRECISION SERIES", 1, true);
+        dl->AddLine(panel.P(111, faceY(106)), panel.P(1009, faceY(106)), IM_COL32(120, 128, 122, 100), s);
+        duskdaf::spacedText(panel, dl, kDesignW * 0.5f, faceY(Layout::descriptionY) - 5, 10, kDim,
+                           description, 0, 0.12f);
     }
 
     // One LED of the INPUT/OUTPUT ladders (LEDMeter::drawLEDSegment).
@@ -3543,9 +3553,8 @@ private:
         drawLevelMeter(dl, kDesignW - 83.0f, outputLadder, "OUTPUT", outputReadout.shownDb);
     }
 
-    // The original metallic knob (AnalogLookAndFeelBase::drawMetallicKnob): drop shadow, metal bezel and ring, a
-    // lit body and cap, a white pointer bar and eleven ticks over 0.8 pi either side of straight up. `opacity`
-    // fades it the way the original dims a control Auto Makeup overrides.
+    // Silver cap on a serrated black skirt, with the shared gesture layer's exact pointer travel.
+    // Auto Makeup dims the complete control, including its printed scale.
     void drawMetallicKnob(ImDrawList* dl, float x, float y, float r, float position, float opacity)
     {
         const float s = panel.scale();
@@ -3553,35 +3562,31 @@ private:
             return colourWithAlpha(colour, opacity * static_cast<float>((colour >> IM_COL32_A_SHIFT) & 0xFFu) / 255.0f);
         };
         const ImVec2 c = panel.P(x, y);
-        constexpr ImU32 kBody = IM_COL32(0x4A, 0x4A, 0x4A, 255);
-        dl->AddCircleFilled(panel.P(x + 2, y + 2), r * s, fade(IM_COL32(0x0A, 0x0A, 0x14, 128)), 64);
-        gradientCircle(dl, c, (r + 3.0f) * s, panel.P(x - r, y), panel.P(x + r, y), fade(IM_COL32(0x8A, 0x8A, 0x8A, 255)),
-                       fade(IM_COL32(0x3A, 0x3A, 0x3A, 255)));
-        dl->AddCircle(c, (r + 2.0f) * s, fade(IM_COL32(0xBA, 0xBA, 0xBA, 255)), 64, 1.0f * s);
-        gradientCircle(dl, c, r * s, panel.P(x, y - r), panel.P(x, y + r), fade(colourBrighter(kBody, 0.3f)),
-                       fade(colourDarker(kBody, 0.3f)));
-        const float cap = 0.4f * r;
-        gradientCircle(dl, c, cap * s, panel.P(x - cap, y - cap), panel.P(x + cap, y + cap),
-                       fade(IM_COL32(0x6A, 0x6A, 0x6A, 255)), fade(IM_COL32(0x2A, 0x2A, 0x2A, 255)));
-        // JUCE rotary angles: 0 straight up, clockwise.
-        constexpr float kStart = 1.2f * kUiPi, kEnd = 2.8f * kUiPi;
-        const auto rotated = [&](float angle, float lx, float ly) {
-            const float cs = std::cos(angle), sn = std::sin(angle);
-            return panel.P(x + lx * cs - ly * sn, y + lx * sn + ly * cs);
-        };
-        const float angle = kStart + std::clamp(position, 0.0f, 1.0f) * (kEnd - kStart);
-        const ImVec2 pointer[4] = {rotated(angle, -3, -r + 6), rotated(angle, 3, -r + 6),
-                                   rotated(angle, 3, -r + 6 + 0.5f * r), rotated(angle, -3, -r + 6 + 0.5f * r)};
-        dl->AddPolyline(pointer, 4, fade(IM_COL32_BLACK), ImDrawFlags_Closed, 1.5f * s);
-        dl->AddConvexPolyFilled(pointer, 4, fade(IM_COL32_WHITE));
-        for (int i = 0; i < 11; ++i)
+        dl->AddCircleFilled(panel.P(x + 2, y + 3), (r + 2) * s, fade(IM_COL32(0, 0, 0, 150)), 64);
+        dl->AddCircleFilled(c, (r + 1) * s, fade(IM_COL32(12, 14, 13, 255)), 64);
+        const float angle = duskdaf::DuskPanel::knobAngle(std::clamp(position, 0.0f, 1.0f));
+        for (int tooth = 0; tooth < 48; ++tooth)
         {
-            const float tick = kStart + static_cast<float>(i) / 10.0f * (kEnd - kStart);
-            const float length = (i == 0 || i == 10 || i == 5) ? 0.15f * r : 0.1f * r;
-            const ImVec2 mark[4] = {rotated(tick, -1, -r - 8), rotated(tick, 1, -r - 8),
-                                    rotated(tick, 1, -r - 8 + length), rotated(tick, -1, -r - 8 + length)};
-            dl->AddConvexPolyFilled(mark, 4, fade(colourWithAlpha(kModernText, 0.6f)));
+            const float a = angle + 2 * kUiPi * static_cast<float>(tooth) / 48;
+            dl->AddLine(panel.P(x + r * 0.85f * std::sin(a), y - r * 0.85f * std::cos(a)),
+                        panel.P(x + r * std::sin(a), y - r * std::cos(a)),
+                        fade(tooth % 2 ? IM_COL32(83, 87, 83, 255) : IM_COL32(20, 23, 21, 255)), 1.4f * s);
         }
+        const float cap = r * 0.81f;
+        gradientCircle(dl, c, cap * s, panel.P(x - cap, y - cap), panel.P(x + cap, y + cap),
+                       fade(IM_COL32(226, 229, 220, 255)), fade(IM_COL32(127, 133, 126, 255)));
+        dl->AddCircle(c, cap * s, fade(IM_COL32(227, 230, 222, 190)), 64, s);
+        dl->AddLine(panel.P(x + cap * 0.20f * std::sin(angle), y - cap * 0.20f * std::cos(angle)),
+                    panel.P(x + cap * 0.92f * std::sin(angle), y - cap * 0.92f * std::cos(angle)),
+                    fade(IM_COL32(29, 33, 29, 255)), 2.0f * s);
+        duskdaf::KnobRingStyle ring;
+        ring.markInner = 4; ring.markOuter = 8;
+        ring.markColor = fade(IM_COL32(193, 199, 189, 220));
+        ring.minorColor = fade(IM_COL32(151, 159, 149, 180));
+        ring.minorInner = 5; ring.minorOuter = 7;
+        for (int i = 0; i < 11; ++i)
+            duskdaf::drawKnobRingMark(panel, dl, x, y, r, static_cast<float>(i) / 10, nullptr, ring,
+                                     i != 0 && i != 5 && i != 10);
     }
 
     // A Digital or Multiband control: the metallic knob, its name above and its value below (the original slider's
@@ -3601,14 +3606,14 @@ private:
                    false, false, &knobHostToPlain, &knobPlainToHost, this);
         if (!applicable) ImGui::EndDisabled();
         textCentred(dl, x, nameCentreY, nameSize, colourWithAlpha(nameColour, opacity * static_cast<float>(
-                        (nameColour >> IM_COL32_A_SHIFT) & 0xFFu) / 255.0f), name, false);
+                        (nameColour >> IM_COL32_A_SHIFT) & 0xFFu) / 255.0f), name, true);
         char text[48];
         std::snprintf(text, sizeof(text), "%.*f%s", decimals,
                       static_cast<double>(knobHostToPlain(values[p], p, this)), suffix);
         textCentred(dl, x, valueCentreY, 13.0f, colourWithAlpha(IM_COL32_WHITE, opacity), text, true);
     }
 
-    // The Digital face's illuminated push button (AnalogLookAndFeelBase::drawIlluminatedToggleButton, cyan theme).
+    // Recessed hardware switch with a separate status lamp, matching the rack's silkscreen.
     void illuminatedToggle(ImDrawList* dl, const char* id, uint32_t p, float x0, float y0, float x1, float y1,
                            const char* label)
     {
@@ -3618,30 +3623,15 @@ private:
         if (ImGui::InvisibleButton(id, ImVec2(hit1.x - hit0.x, hit1.y - hit0.y)))
             setHostValue(p, values[p] > 0.5f ? 0.0f : 1.0f);
         const bool on = values[p] > 0.5f, down = ImGui::IsItemActive(), hovered = ImGui::IsItemHovered();
-        const float bx0 = x0 + 2, by0 = y0 + 2, bx1 = x1 - 2, by1 = y1 - 2;
-        dl->AddRectFilled(panel.P(bx0, by0), panel.P(bx1, by1), IM_COL32(0x0A, 0x0A, 0x1E, 255), 4.0f * s);
-        const ImVec2 i0 = panel.P(bx0 + 2, by0 + 2), i1 = panel.P(bx1 - 2, by1 - 2);
-        if (on)
-        {
-            gradientRect(dl, i0, i1, 3.0f * s, i0, ImVec2(i0.x, i1.y), IM_COL32(0x00, 0xDD, 0xFF, 255),
-                         IM_COL32(0x00, 0xAA, 0xCC, 255));
-            dl->AddRectFilled(panel.P(bx0 - 1, by0 - 1), panel.P(bx1 + 1, by1 + 1), IM_COL32(0x00, 0xDD, 0xFF, 51),
-                              5.0f * s);
-        }
-        else
-        {
-            constexpr ImU32 kOffBottom = IM_COL32(0x1A, 0x1A, 0x2E, 255);
-            gradientRect(dl, i0, i1, 3.0f * s, i0, ImVec2(i0.x, i1.y), IM_COL32(0x2A, 0x2A, 0x3E, 255), kOffBottom);
-            dl->AddRect(panel.P(bx0 + 3, by0 + 3), panel.P(bx1 - 3, by1 - 3), colourDarker(kOffBottom, 0.3f), 2.0f * s,
-                        0, 1.0f * s);
-            dl->AddLine(panel.P(bx0 + 6, by0 + 4), panel.P(bx1 - 6, by0 + 4), IM_COL32(255, 255, 255, 0x20), 1.0f * s);
-        }
-        if (down)
-            dl->AddRectFilled(i0, i1, IM_COL32(0, 0, 0, 0x20), 3.0f * s);
-        else if (hovered && !on)
-            dl->AddRectFilled(i0, i1, IM_COL32(255, 255, 255, 0x10), 3.0f * s);
-        textCentred(dl, 0.5f * (x0 + x1), 0.5f * (y0 + y1), 11.0f,
-                    on ? IM_COL32(0x00, 0x15, 0x20, 255) : IM_COL32(0xBB, 0xCC, 0xDD, 255), label, true);
+        dl->AddRectFilled(hit0, hit1, IM_COL32(9, 12, 10, 255), 2 * s);
+        const ImVec2 i0 = panel.P(x0 + 2, y0 + 2), i1 = panel.P(x1 - 2, y1 - 2);
+        const ImU32 topColour = down ? IM_COL32(39, 44, 41, 255) : IM_COL32(76, 83, 77, 255);
+        gradientRect(dl, i0, i1, s, i0, ImVec2(i0.x, i1.y), topColour, IM_COL32(31, 36, 32, 255));
+        dl->AddRect(hit0, hit1, hovered ? kModernText : IM_COL32(117, 125, 116, 255), 2 * s, 0, s);
+        const float cy = 0.5f * (y0 + y1);
+        dl->AddCircleFilled(panel.P(x0 + 13, cy), 4 * s, IM_COL32(10, 13, 10, 255), 16);
+        dl->AddCircleFilled(panel.P(x0 + 13, cy), 2.6f * s, on ? kDigitalCyan : IM_COL32(60, 77, 67, 255), 16);
+        textCentred(dl, 0.5f * (x0 + x1) + 5, cy, 11, kModernText, label, true);
     }
 
     // The Digital face's gain-reduction VU (AnalogVUMeter::paint) in the rectangle given, needle from digitalVu.
@@ -3649,11 +3639,13 @@ private:
     {
         const float s = panel.scale();
         const float sf = std::max(0.5f, std::min((x1 - x0) / 400.0f, (y1 - y0) / 250.0f));
-        dl->AddRectFilled(panel.P(x0, y0), panel.P(x1, y1), IM_COL32(0xB4, 0xB4, 0xB4, 255), 3.0f * sf * s);
-        const float ix0 = x0 + 2 * sf, iy0 = y0 + 2 * sf, ix1 = x1 - 2 * sf, iy1 = y1 - 2 * sf;
+        gradientRect(dl, panel.P(x0, y0), panel.P(x1, y1), 3 * s, panel.P(x0, y0), panel.P(x0, y1),
+                     IM_COL32(101, 109, 99, 255), IM_COL32(22, 27, 23, 255));
+        const float ix0 = x0 + 6, iy0 = y0 + 6, ix1 = x1 - 6, iy1 = y1 - 6;
         dl->AddRectFilled(panel.P(ix0, iy0), panel.P(ix1, iy1), IM_COL32(0x3A, 0x3A, 0x3A, 255), 2.0f * sf * s);
         const float fx0 = ix0 + 3 * sf, fy0 = iy0 + 3 * sf, fx1 = ix1 - 3 * sf, fy1 = iy1 - 3 * sf;
-        dl->AddRectFilled(panel.P(fx0, fy0), panel.P(fx1, fy1), IM_COL32(0xF8, 0xF4, 0xE6, 255), 2.0f * sf * s);
+        gradientRect(dl, panel.P(fx0, fy0), panel.P(fx1, fy1), 2 * sf * s, panel.P(fx0, fy0), panel.P(fx0, fy1),
+                     IM_COL32(234, 222, 187, 255), IM_COL32(211, 193, 146, 255));
         dl->PushClipRect(panel.P(fx0, fy0), panel.P(fx1, fy1), true);
         const float cx = 0.5f * (fx0 + fx1), pivotY = fy1 - 3 * sf;
         const float length = std::min((fx1 - fx0) * 0.49f, (fy1 - fy0) * 0.88f);
@@ -3814,17 +3806,16 @@ private:
         }
         const float position = hi > lo ? std::clamp((values[p] - lo) / (hi - lo), 0.0f, 1.0f) : 0.0f;
         const float thumbY = trackBottom - position * (trackBottom - trackTop);
-        // LookAndFeel_V4's dark scheme: widget background track, highlighted-fill value track, default-fill thumb.
-        dl->AddRectFilled(panel.P(x - 3, trackTop - 3), panel.P(x + 3, trackBottom + 3), IM_COL32(0x26, 0x32, 0x38, 255),
-                          3.0f * s);
-        dl->AddRectFilled(panel.P(x - 3, thumbY - 3), panel.P(x + 3, trackBottom + 3), IM_COL32(0x18, 0x1F, 0x22, 255),
-                          3.0f * s);
-        dl->AddCircleFilled(panel.P(x, thumbY), 6.0f * s, IM_COL32(0x42, 0xA2, 0xC8, 255), 24);
-        textCentred(dl, x, trackTop - 18.0f, 13.75f, kDigitalCyan, "SC HP", true);
+        dl->AddRectFilled(panel.P(x - 3, trackTop - 3), panel.P(x + 3, trackBottom + 3), IM_COL32(8, 11, 9, 255), s);
+        dl->AddLine(panel.P(x + 4, trackTop), panel.P(x + 4, trackBottom), IM_COL32(98, 107, 97, 150), s);
+        const ImVec2 t0 = panel.P(x - 10, thumbY - 5), t1 = panel.P(x + 10, thumbY + 5);
+        gradientRect(dl, t0, t1, s, t0, ImVec2(t0.x, t1.y), IM_COL32(207, 213, 202, 255), IM_COL32(110, 119, 108, 255));
+        dl->AddLine(panel.P(x - 7, thumbY), panel.P(x + 7, thumbY), IM_COL32(32, 39, 32, 255), s);
+        textCentred(dl, x, trackTop - 18.0f, 11, kModernText, "SC HP", true);
         const float hz = knobHostToPlain(values[p], p, this);
         char text[16];
         if (hz < 1.0f)
-            std::snprintf(text, sizeof(text), "Off");
+            std::snprintf(text, sizeof(text), "OFF");
         else
             std::snprintf(text, sizeof(text), "%.0f Hz", static_cast<double>(hz));
         textCentred(dl, x, trackBottom + 20.0f, 13.0f, IM_COL32_WHITE, text, true);
@@ -3834,9 +3825,9 @@ private:
     {
         const float s = panel.scale();
         const float dt = ImGui::GetIO().DeltaTime;
-        drawModernBody(dl, IM_COL32(8, 8, 8, 255), IM_COL32(0x1A, 0x1A, 0x2E, 255), "DIGITAL COMPRESSOR", kDigitalCyan,
-                       "Transparent | Precise | Zero Coloration");
+        drawModernBody(dl, "DIGITAL COMPRESSOR", "PRECISION DYNAMICS");
         drawLevelMeters(dl, dt);
+        dl->AddLine(panel.P(533, faceY(122)), panel.P(533, faceY(338)), IM_COL32(121, 130, 122, 100), s);
 
         // Gain reduction: the VU, or its 4-second history; a click on either (or the caption) swaps them.
         const float gr = meter(kMeterMaster);
@@ -3848,7 +3839,7 @@ private:
             grHistoryWrite = (grHistoryWrite + 1) % static_cast<int>(grHistory.size());
         }
         // Left of centre: the display, its caption and the side-chain high-pass beside it.
-        constexpr float vuX0 = 112, vuX1 = 452, vuTop = 110, vuBottom = 280, captionBottom = 300;
+        constexpr float vuX0 = 112, vuX1 = 452, vuTop = 122, vuBottom = 280, captionBottom = 302;
         ImGui::SetCursorScreenPos(panel.P(vuX0, faceY(vuTop)));
         if (ImGui::InvisibleButton("##dig_vu", ImVec2((vuX1 - vuX0) * s, (captionBottom - vuTop) * s)))
             digitalShowsHistory = !digitalShowsHistory;
@@ -3858,38 +3849,36 @@ private:
             drawDigitalVu(dl, vuX0, faceY(vuTop), vuX1, faceY(vuBottom));
         dl->AddRectFilled(panel.P(vuX0 + 2, faceY(vuBottom + 2)), panel.P(vuX1 - 2, faceY(captionBottom - 2)),
                           IM_COL32(0, 0, 0, 0x30), 3.0f * s);
-        const char* caption = digitalShowsHistory ? "GR HISTORY (click)" : "LEVEL (click)";
+        const char* caption = digitalShowsHistory ? "HISTORY / CLICK FOR VU" : "VU / CLICK FOR HISTORY";
         constexpr float captionY = 0.5f * (vuBottom + captionBottom);
-        textCentred(dl, 0.5f * (vuX0 + vuX1) + 1, faceY(captionY) + 1, 11.0f, IM_COL32(0, 0, 0, 0x40), caption, true);
-        textCentred(dl, 0.5f * (vuX0 + vuX1), faceY(captionY), 11.0f, IM_COL32(0xE0, 0x90, 0x40, 255), caption, true);
-        textCentred(dl, 0.5f * (vuX0 + vuX1), faceY(316.0f), 13.0f, kDigitalCyan, "GAIN REDUCTION", true);
+        textCentred(dl, 0.5f * (vuX0 + vuX1), faceY(captionY), 10, kDim, caption, true);
+        duskdaf::spacedText(panel, dl, 0.5f * (vuX0 + vuX1), faceY(318), 11, kModernText, "GAIN REDUCTION", 0, 0.10f);
         sidechainHpSlider(dl, 492.0f, faceY(132.0f), faceY(282.0f));
 
         // Right of it, the original's two rows of knobs: five columns 94 apart.
-        constexpr float r = 24.0f, row1 = 172.0f, row2 = 284.0f;
+        constexpr float r = 27.0f, row1 = 180.0f, row2 = 286.0f;
         const auto column = [](int i) { return 770.0f + 94.0f * static_cast<float>(i - 2); };
         const auto knobAt = [&](const char* id, uint32_t p, int col, float row, const char* name, int decimals,
                                 const char* suffix, bool applicable) {
-            modernKnob(dl, id, p, column(col), faceY(row), r, name, faceY(row - 40.0f), 13.0f, kModernText, decimals,
-                       suffix, faceY(row + 37.0f), applicable);
+            modernKnob(dl, id, p, column(col), faceY(row), r, name, faceY(row - 44.0f), 11.0f, kModernText, decimals,
+                       suffix, faceY(row + 39.0f), applicable);
         };
-        knobAt("dig_thr", P_DIG_THRESHOLD, 0, row1, "Threshold", 1, " dB", true);
-        knobAt("dig_ratio", P_DIG_RATIO, 1, row1, "Ratio", 1, ":1", true);
-        knobAt("dig_knee", P_DIG_KNEE, 2, row1, "Knee", 1, " dB", true);
-        knobAt("dig_att", P_DIG_ATTACK, 3, row1, "Attack", 2, " ms", true);
-        knobAt("dig_rel", P_DIG_RELEASE, 4, row1, "Release", 0, " ms", true);
-        knobAt("dig_look", P_DIG_LOOK, 0, row2, "Lookahead", 1, " ms", true);
-        knobAt("dig_mix", P_DIG_MIX, 1, row2, "Mix", 0, " %", true);
-        knobAt("dig_out", P_DIG_OUT, 2, row2, "Output", 1, " dB", values[P_AUTO_MAKEUP] <= 0.5f);
+        knobAt("dig_thr", P_DIG_THRESHOLD, 0, row1, "THRESHOLD", 1, " dB", true);
+        knobAt("dig_ratio", P_DIG_RATIO, 1, row1, "RATIO", 1, ":1", true);
+        knobAt("dig_knee", P_DIG_KNEE, 2, row1, "KNEE", 1, " dB", true);
+        knobAt("dig_att", P_DIG_ATTACK, 3, row1, "ATTACK", 2, " ms", true);
+        knobAt("dig_rel", P_DIG_RELEASE, 4, row1, "RELEASE", 0, " ms", true);
+        knobAt("dig_look", P_DIG_LOOK, 0, row2, "LOOKAHEAD", 1, " ms", true);
+        knobAt("dig_mix", P_DIG_MIX, 1, row2, "MIX", 0, " %", true);
+        knobAt("dig_out", P_DIG_OUT, 2, row2, "OUTPUT", 1, " dB", values[P_AUTO_MAKEUP] <= 0.5f);
         illuminatedToggle(dl, "##dig_adapt", P_DIG_ADAPT, column(3) - 40.0f, faceY(row2 - 15.0f), column(4) + 40.0f,
-                          faceY(row2 + 15.0f), "Adaptive Release");
+                          faceY(row2 + 15.0f), "ADAPTIVE RELEASE");
     }
 
-    // A juce::TextButton under LookAndFeel_V4 (the Multiband face's band, enable, bypass and solo buttons): the fill
-    // a touch desaturated, a 6 px corner, the scheme's outline; hover and press contrast it a little. Returns true
-    // on a click.
-    bool juceTextButton(ImDrawList* dl, const char* id, float x0, float y0, float x1, float y1, const char* label,
-                        ImU32 fill, ImU32 textColour, const char* tooltip, bool enabled = true)
+    // Compact rack switches. A colored underline identifies an active band / bypass / solo;
+    // neutral caps and printed legends keep color from overwhelming the faceplate.
+    bool bandButton(ImDrawList* dl, const char* id, float x0, float y0, float x1, float y1, const char* label,
+                    ImU32 fill, ImU32 textColour, const char* tooltip, bool active, bool enabled = true)
     {
         const float s = panel.scale();
         const ImVec2 b0 = panel.P(x0, y0), b1 = panel.P(x1, y1);
@@ -3900,25 +3889,15 @@ private:
         if (tooltip != nullptr && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip | ImGuiHoveredFlags_AllowWhenDisabled))
             ImGui::SetTooltip("%s", tooltip);
         if (!enabled) ImGui::EndDisabled();
-        ImVec4 rgba = ImGui::ColorConvertU32ToFloat4(fill);
-        float h = 0.0f, sat = 0.0f, v = 0.0f;
-        ImGui::ColorConvertRGBtoHSV(rgba.x, rgba.y, rgba.z, h, sat, v);
-        ImGui::ColorConvertHSVtoRGB(h, sat * 0.9f, v, rgba.x, rgba.y, rgba.z);
-        rgba.w *= enabled ? 1.0f : 0.5f;
-        ImU32 base = ImGui::ColorConvertFloat4ToU32(rgba);
-        if (down || hovered)
-        {
-            // Colour::contrasting: overlay black on a light fill, white on a dark one.
-            const float brightness = std::sqrt(0.241f * rgba.x * rgba.x + 0.691f * rgba.y * rgba.y + 0.068f * rgba.z * rgba.z);
-            const float amount = down ? 0.2f : 0.05f;
-            const ImU32 over = brightness >= 0.5f ? IM_COL32(0, 0, 0, 255) : IM_COL32(255, 255, 255, 255);
-            base = colourWithAlpha(colourMix(base, over, amount), rgba.w + amount * (1.0f - rgba.w));
-        }
         const ImVec2 f0 = panel.P(x0 + 0.5f, y0 + 0.5f), f1 = panel.P(x1 - 0.5f, y1 - 0.5f);
-        dl->AddRectFilled(f0, f1, base, 6.0f * s);
-        dl->AddRect(f0, f1, IM_COL32(0x8E, 0x98, 0x9B, 255), 6.0f * s, 0, 1.0f * s);
-        textCentred(dl, 0.5f * (x0 + x1), 0.5f * (y0 + y1), std::min(16.0f, (y1 - y0) * 0.6f),
-                    enabled ? textColour : colourWithAlpha(textColour, 0.5f), label, false);
+        const ImU32 cap = down ? IM_COL32(34, 40, 35, 255) : hovered ? IM_COL32(88, 96, 86, 255) : IM_COL32(65, 73, 65, 255);
+        gradientRect(dl, f0, f1, 1.5f * s, f0, ImVec2(f0.x, f1.y), cap, IM_COL32(26, 32, 27, 255));
+        dl->AddRect(f0, f1, active ? fill : IM_COL32(102, 113, 101, 190), 1.5f * s, 0, s);
+        if (active)
+            dl->AddRectFilled(panel.P(x0 + 3, y1 - 3), panel.P(x1 - 3, y1 - 1), fill);
+        const ImU32 ink = active ? kModernText : textColour;
+        textCentred(dl, 0.5f * (x0 + x1), 0.5f * (y0 + y1) - 1, std::min(11.0f, (y1 - y0) * 0.55f),
+                    enabled ? ink : colourWithAlpha(ink, 0.55f), label, true);
         return clicked && enabled;
     }
 
@@ -4064,14 +4043,9 @@ private:
     {
         const float s = panel.scale();
         const float dt = ImGui::GetIO().DeltaTime;
-        drawModernBody(dl, IM_COL32(13, 13, 13, 255), IM_COL32(0x2A, 0x2A, 0x2A, 255), "MULTI-COMP", kModernText,
-                       "4-Band Multiband Compression");
+        drawModernBody(dl, "MULTIBAND COMPRESSOR", "FOUR-BAND DYNAMICS");
         drawLevelMeters(dl, dt);
-
-        constexpr float panelLeft = 100.0f, panelRight = 1020.0f, panelTop = 104.0f, panelBottom = 348.0f;
-        const ImVec2 b0 = panel.P(panelLeft, faceY(panelTop)), b1 = panel.P(panelRight, faceY(panelBottom));
-        gradientRect(dl, b0, b1, 0.0f, b0, ImVec2(b0.x, b1.y), IM_COL32(0x24, 0x24, 0x2E, 255),
-                     IM_COL32(0x1A, 0x1A, 0x22, 255));
+        dl->AddLine(panel.P(620, faceY(122)), panel.P(620, faceY(338)), IM_COL32(121, 130, 122, 100), s);
 
         bool enabled[4] = {};
         int enabledCount = 0;
@@ -4091,7 +4065,7 @@ private:
 
         // Left, the bands. Enable strip: all four bands at fixed quarters, so a hidden band stays reachable; the last
         // two enabled bands are locked on.
-        constexpr float sectionLeft = 160.0f, sectionRight = 680.0f;
+        constexpr float sectionLeft = 144.0f, sectionRight = 600.0f;
         constexpr float stripWidth = (sectionRight - sectionLeft) / 4.0f;
         for (int b = 0; b < 4; ++b)
         {
@@ -4104,24 +4078,24 @@ private:
                 std::snprintf(tooltip, sizeof(tooltip), "Enable / disable %s band", bandName(b));
             ImGui::PushID(b);
             const float x0 = sectionLeft + static_cast<float>(b) * stripWidth;
-            if (juceTextButton(dl, "##mb_enable", x0 + 2.5f, faceY(108.0f), x0 + stripWidth - 2.5f, faceY(128.0f),
+            if (bandButton(dl, "##mb_enable", x0 + 2.5f, faceY(116.0f), x0 + stripWidth - 2.5f, faceY(136.0f),
                                bandName(b), enabled[b] ? kBandColors[b] : IM_COL32(0x2A, 0x2A, 0x2A, 255),
-                               enabled[b] ? IM_COL32_BLACK : IM_COL32(0x88, 0x88, 0x88, 255), tooltip, !locked))
+                               kModernText, tooltip, enabled[b], !locked))
                 setHostValue(enable, enabled[b] ? 0.0f : 1.0f);
             ImGui::PopID();
         }
-        textCentred(dl, 0.5f * (sectionLeft + sectionRight), faceY(338.0f), 11.0f, IM_COL32(255, 255, 255, 179),
+        textCentred(dl, 0.5f * (sectionLeft + sectionRight), faceY(342.0f), 10.0f, kDim,
                     "GAIN REDUCTION", true);
 
         // dB scale beside the meters.
-        constexpr float meterTop = 160.0f, meterBottom = 298.0f, faderBottom = 326.0f;
+        constexpr float meterTop = 170.0f, meterBottom = 298.0f, faderBottom = 326.0f;
         for (const float db : {0.0f, -3.0f, -6.0f, -10.0f, -15.0f, -20.0f})
         {
             const float y = meterTop + (-db / 20.0f) * (meterBottom - meterTop);
-            dl->AddRectFilled(panel.P(149.0f, faceY(y)), panel.P(155.0f, faceY(y) + 1), IM_COL32(255, 255, 255, 128));
+            dl->AddRectFilled(panel.P(sectionLeft - 11, faceY(y)), panel.P(sectionLeft - 5, faceY(y) + 1), IM_COL32(255, 255, 255, 128));
             char text[8];
             std::snprintf(text, sizeof(text), "%d", static_cast<int>(db));
-            panel.text(dl, 147.0f, faceY(y) - 5.0f, 10.0f, IM_COL32(255, 255, 255, 179), text, 1);
+            panel.text(dl, sectionLeft - 13, faceY(y) - 5.0f, 10.0f, IM_COL32(255, 255, 255, 179), text, 1);
         }
 
         // Band slots: only the bands shown share the width.
@@ -4130,8 +4104,8 @@ private:
         {
             const int band = slots[slot];
             const float sx = sectionLeft + static_cast<float>(slot) * slotWidth;
-            dl->AddRectFilled(panel.P(sx + 1, faceY(132.0f)), panel.P(sx + slotWidth - 1, faceY(faderBottom)),
-                              colourWithAlpha(kBandColors[band], band == selectedBand ? 0.08f : 0.03f));
+            dl->AddRectFilled(panel.P(sx + 1, faceY(140.0f)), panel.P(sx + slotWidth - 1, faceY(faderBottom)),
+                              colourWithAlpha(kBandColors[band], band == selectedBand ? 0.06f : 0.02f));
         }
         for (int slot = 0; slot < slotCount; ++slot)
         {
@@ -4139,25 +4113,25 @@ private:
             const uint32_t base = static_cast<uint32_t>(multicompp::kBandBase + band * 8);
             const float sx = sectionLeft + static_cast<float>(slot) * slotWidth;
             const float mx0 = sx + 8.0f, mx1 = sx + slotWidth - 8.0f;
-            constexpr float buttonTop = 134.0f, buttonBottom = 154.0f, small = 24.0f, gap = 3.0f;
+            constexpr float buttonTop = 142.0f, buttonBottom = 162.0f, small = 21.0f, gap = 3.0f;
             const float tabRight = mx1 - 2.0f * (small + gap);
             ImGui::PushID(band);
-            if (juceTextButton(dl, "##mb_tab", mx0, faceY(buttonTop), tabRight, faceY(buttonBottom), bandName(band),
+            if (bandButton(dl, "##mb_tab", mx0, faceY(buttonTop), tabRight, faceY(buttonBottom), bandName(band),
                                band == selectedBand ? kBandColors[band] : colourWithAlpha(kBandColors[band], 0.3f),
-                               IM_COL32_WHITE, nullptr))
+                               kModernText, nullptr, band == selectedBand))
                 selectedBand = band;
             char tooltip[48];
             const bool bypassed = values[base + 5] > 0.5f, soloed = values[base + 6] > 0.5f;
             std::snprintf(tooltip, sizeof(tooltip), "Bypass %s band", bandName(band));
-            if (juceTextButton(dl, "##mb_bypass", tabRight + gap, faceY(buttonTop), tabRight + gap + small,
+            if (bandButton(dl, "##mb_bypass", tabRight + gap, faceY(buttonTop), tabRight + gap + small,
                                faceY(buttonBottom), "B",
                                bypassed ? IM_COL32(0xFF, 0x8C, 0x42, 255) : IM_COL32(0x3A, 0x3A, 0x3A, 255),
-                               bypassed ? IM_COL32_BLACK : IM_COL32(0xAA, 0xAA, 0xAA, 255), tooltip))
+                               bypassed ? IM_COL32_BLACK : IM_COL32(0xAA, 0xAA, 0xAA, 255), tooltip, bypassed))
                 setHostValue(base + 5, bypassed ? 0.0f : 1.0f);
             std::snprintf(tooltip, sizeof(tooltip), "Solo %s band", bandName(band));
-            if (juceTextButton(dl, "##mb_solo", mx1 - small, faceY(buttonTop), mx1, faceY(buttonBottom), "S",
+            if (bandButton(dl, "##mb_solo", mx1 - small, faceY(buttonTop), mx1, faceY(buttonBottom), "S",
                                soloed ? IM_COL32(0xFF, 0xCC, 0x00, 255) : IM_COL32(0x3A, 0x3A, 0x3A, 255),
-                               soloed ? IM_COL32_BLACK : IM_COL32(0xAA, 0xAA, 0xAA, 255), tooltip))
+                               soloed ? IM_COL32_BLACK : IM_COL32(0xAA, 0xAA, 0xAA, 255), tooltip, soloed))
                 setHostValue(base + 6, soloed ? 0.0f : 1.0f);
             ImGui::PopID();
             drawBandMeter(dl, band, mx0, faceY(meterTop), mx1, faceY(meterBottom), band == selectedBand);
@@ -4173,38 +4147,31 @@ private:
 
         // Right, the selected band: its tab over its knobs.
         const ImU32 bandColour = kBandColors[selectedBand];
-        constexpr float knobsCentre = 855.0f;
-        constexpr float tagLeft = knobsCentre - 90.0f, tagRight = knobsCentre + 90.0f, tagTop = 108.0f, tagBottom = 134.0f;
-        constexpr float corner = 6.0f;
-        dl->AddRectFilled(panel.P(tagLeft + 2, faceY(tagTop + 2)), panel.P(tagRight + 2, faceY(tagBottom + 2)),
-                          IM_COL32(0, 0, 0, 102), corner * s);
-        const ImVec2 t0 = panel.P(tagLeft, faceY(tagTop)), t1 = panel.P(tagRight, faceY(tagBottom));
-        gradientRect(dl, t0, t1, corner * s, t0, ImVec2(t0.x, t1.y), IM_COL32(0x2E, 0x2E, 0x2E, 255),
-                     IM_COL32(0x22, 0x22, 0x22, 255));
-        dl->AddRectFilled(panel.P(tagLeft, faceY(tagBottom - corner)), panel.P(tagRight, faceY(tagBottom)), bandColour,
-                          2.0f * s);
-        dl->AddRect(t0, t1, colourWithAlpha(bandColour, 0.6f), corner * s, 0, 1.5f * s);
+        constexpr float knobsCentre = 812.0f;
+        constexpr float tagLeft = 652, tagRight = 972, tagTop = 116, tagBottom = 136;
+        dl->AddLine(panel.P(tagLeft, faceY(tagBottom)), panel.P(tagRight, faceY(tagBottom)),
+                    colourWithAlpha(bandColour, 0.6f), s);
         char tag[24];
-        std::snprintf(tag, sizeof(tag), "%s Band", bandName(selectedBand));
-        textCentred(dl, 0.5f * (tagLeft + tagRight), faceY(0.5f * (tagTop + tagBottom - corner)), 15.0f, IM_COL32_WHITE,
+        std::snprintf(tag, sizeof(tag), "%s BAND", bandName(selectedBand));
+        textCentred(dl, knobsCentre, faceY(0.5f * (tagTop + tagBottom)), 12.0f, bandColour,
                     tag, true);
 
         // Seven knobs: the selected band's four timing and level controls, then its makeup with the multiband output
-        // and mix, two rows 72 apart.
+        // and mix, arranged in two rows with the same controls as Digital.
         const uint32_t base = static_cast<uint32_t>(multicompp::kBandBase + selectedBand * 8);
-        constexpr float knobR = 20.0f, row1 = 190.0f, row2 = 288.0f;
+        constexpr float knobR = 25.0f, row1 = 194.0f, row2 = 294.0f;
         const auto knobAt = [&](const char* id, uint32_t p, float column, float row, const char* name, int decimals,
                                 const char* suffix, bool applicable) {
-            modernKnob(dl, id, p, knobsCentre + 72.0f * column, faceY(row), knobR, name, faceY(row - 34.0f), 11.0f,
-                       IM_COL32(255, 255, 255, 204), decimals, suffix, faceY(row + 32.0f), applicable);
+            modernKnob(dl, id, p, knobsCentre + 92.0f * column, faceY(row), knobR, name, faceY(row - 40.0f), 11.0f,
+                       kModernText, decimals, suffix, faceY(row + 35.0f), applicable);
         };
-        knobAt("mb_thr", base, -1.5f, row1, "Threshold", 1, " dB", true);
-        knobAt("mb_ratio", base + 1, -0.5f, row1, "Ratio", 1, ":1", true);
-        knobAt("mb_att", base + 2, 0.5f, row1, "Attack", 1, " ms", true);
-        knobAt("mb_rel", base + 3, 1.5f, row1, "Release", 0, " ms", true);
-        knobAt("mb_makeup", base + 4, -1.0f, row2, "Makeup", 1, " dB", true);
-        knobAt("mb_out", P_MB_OUT, 0.0f, row2, "Output", 1, " dB", values[P_AUTO_MAKEUP] <= 0.5f);
-        knobAt("mb_mix", P_MB_MIX, 1.0f, row2, "Mix", 0, "%", true);
+        knobAt("mb_thr", base, -1.5f, row1, "THRESHOLD", 1, " dB", true);
+        knobAt("mb_ratio", base + 1, -0.5f, row1, "RATIO", 1, ":1", true);
+        knobAt("mb_att", base + 2, 0.5f, row1, "ATTACK", 1, " ms", true);
+        knobAt("mb_rel", base + 3, 1.5f, row1, "RELEASE", 0, " ms", true);
+        knobAt("mb_makeup", base + 4, -1.0f, row2, "MAKE-UP", 1, " dB", true);
+        knobAt("mb_out", P_MB_OUT, 0.0f, row2, "OUTPUT", 1, " dB", values[P_AUTO_MAKEUP] <= 0.5f);
+        knobAt("mb_mix", P_MB_MIX, 1.0f, row2, "MIX", 0, "%", true);
     }
 
     // Clears the Digital and Multiband faces' meters when one of them comes into view, so nothing replays from the
