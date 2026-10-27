@@ -61,11 +61,12 @@ inline constexpr float vcaFaceplateAspect() noexcept
 inline float designHeightForMode(float hostValue) noexcept
 {
     // Opto, vintage FET, VCA, Bus and Studio VCA are hardware faces on the
-    // compact canvas; the modern modes still need the original tall control
-    // surface. Keeping the decision here gives fractional host automation the
-    // same rounding rule as the DSP and mode picker.
+    // compact canvas; Studio FET keeps the original tall control surface, and
+    // Digital and Multiband the original editor's full height (its meters run
+    // the height of the window). Keeping the decision here gives fractional
+    // host automation the same rounding rule as the DSP and mode picker.
     const int mode = choiceIndex(hostValue, 8);
-    return mode <= 3 || mode == 5 ? 380.0f : 486.0f;
+    return mode <= 3 || mode == 5 ? 380.0f : mode >= 6 ? 640.0f : 486.0f;
 }
 
 // VCA-compressor-style threshold lamps: BELOW lights while the programme sits under the
@@ -300,6 +301,131 @@ inline float studioVcaNeedleDegrees(float db, float minDb, float maxDb) noexcept
     return -30.0f + 60.0f * t;
 }
 
+// The Digital and Multiband faces follow the original JUCE editor (EnhancedCompressorEditor, ModernCompressorPanels.h,
+// AnalogLookAndFeel.cpp). Their moving parts keep its timing, transcribed here frame-rate independent.
+
+// The number under an INPUT / OUTPUT ladder (EnhancedCompressorEditor::updateMeters): every 0.2 s it jumps up to the
+// loudest reading since the last update, or else falls 1.2 dB (6 dB/s), never below -60 dB.
+struct LevelReadout
+{
+    float shownDb = -60.0f, peakDb = -60.0f, clock = 0.0f;
+};
+
+inline void advanceLevelReadout(LevelReadout& readout, float db, float dtSeconds) noexcept
+{
+    if (std::isfinite(db)) readout.peakDb = std::max(readout.peakDb, db);
+    readout.clock += std::clamp(dtSeconds, 0.0f, 0.1f);
+    if (readout.clock < 0.2f) return;
+    readout.clock -= 0.2f;
+    readout.shownDb = std::max(readout.peakDb > readout.shownDb ? readout.peakDb : readout.shownDb - 1.2f, -60.0f);
+    readout.peakDb = -60.0f;
+}
+
+// The Digital face's gain-reduction VU (AnalogVUMeter::timerCallback, 60 Hz steps): -20..+3 dB over 0..1, 50 ms
+// attack and 150 ms release blended with a slightly underdamped spring (about 1 % overshoot), and a peak marker that
+// holds the deepest reading for 2 s.
+struct VuNeedle
+{
+    float position = 20.0f / 23.0f, velocity = 0.0f, pending = 0.0f;
+    float peakDb = 0.0f, peakHold = 0.0f, peakPosition = 20.0f / 23.0f;
+};
+
+inline float vuNeedlePositionForDb(float db) noexcept
+{
+    const float clamped = std::isfinite(db) ? std::clamp(db, -20.0f, 3.0f) : 0.0f;
+    return (clamped + 20.0f) / 23.0f;
+}
+
+inline void advanceVuNeedle(VuNeedle& needle, float grDb, float dtSeconds) noexcept
+{
+    constexpr float kStep = 1.0f / 60.0f;
+    const float target = std::isfinite(grDb) ? grDb : 0.0f;
+    if (target < needle.peakDb)
+    {
+        needle.peakDb = target;
+        needle.peakHold = 2.0f;
+    }
+    needle.pending = std::min(needle.pending + std::clamp(dtSeconds, 0.0f, 0.25f), 0.25f);
+    while (needle.pending >= kStep)
+    {
+        needle.pending -= kStep;
+        const float targetPosition = vuNeedlePositionForDb(std::abs(target) < 0.001f ? 0.0f : target);
+        const float displacement = targetPosition - needle.position;
+        const float timeConstantMs = displacement < 0.0f ? 50.0f : 150.0f;
+        const float coefficient = 1.0f - std::exp(-1000.0f * kStep / timeConstantMs);
+        const float acceleration = displacement * 200.0f - needle.velocity * 0.65f * 2.0f * std::sqrt(200.0f);
+        needle.velocity += acceleration * kStep;
+        needle.position += needle.velocity * kStep;
+        needle.position += coefficient * (targetPosition - needle.position) * 0.4f;
+        needle.position = std::clamp(needle.position, 0.0f, 1.0f);
+        if (std::abs(needle.velocity) < 0.0005f && std::abs(displacement) < 0.001f)
+            needle.velocity = 0.0f;
+        if (needle.peakHold > 0.0f)
+        {
+            needle.peakHold -= kStep;
+            if (needle.peakHold <= 0.0f) needle.peakDb = target;
+        }
+        needle.peakPosition = vuNeedlePositionForDb(needle.peakDb);
+    }
+}
+
+// A Multiband band's gain-reduction ladder (MultibandCompressorPanel::setBandGainReduction, 30 Hz steps): half way to
+// a deeper reading per step, 15 % back per step, and a peak that holds for 30 steps (1 s) before falling 5 % per step.
+struct BandGrMeter
+{
+    float shownDb = 0.0f, peakDb = 0.0f, pending = 0.0f;
+    int peakHoldSteps = 0;
+};
+
+inline void advanceBandGrMeter(BandGrMeter& meter, float grDb, float dtSeconds) noexcept
+{
+    constexpr float kStep = 1.0f / 30.0f;
+    const float target = std::isfinite(grDb) ? grDb : 0.0f;
+    meter.pending = std::min(meter.pending + std::clamp(dtSeconds, 0.0f, 0.25f), 0.25f);
+    while (meter.pending >= kStep)
+    {
+        meter.pending -= kStep;
+        meter.shownDb += (target - meter.shownDb) * (target < meter.shownDb ? 0.5f : 0.15f);
+        if (-meter.shownDb > -meter.peakDb)
+        {
+            meter.peakDb = meter.shownDb;
+            meter.peakHoldSteps = 30;
+        }
+        else if (meter.peakHoldSteps > 0)
+            --meter.peakHoldSteps;
+        else
+            meter.peakDb *= 0.95f;
+    }
+}
+
+// A Multiband crossover fader's travel (CrossoverFader): the frequency's place between the control's limits on a
+// logarithmic axis, 0 at the lowest frequency, and back.
+inline float crossoverFaderPosition(float hz, float minHz, float maxHz) noexcept
+{
+    const float lo = std::max(0.1f, minHz), hi = std::max(lo + 0.1f, maxHz);
+    return std::log(std::clamp(hz, lo, hi) / lo) / std::log(hi / lo);
+}
+
+inline float crossoverFaderFrequency(float position, float minHz, float maxHz) noexcept
+{
+    const float lo = std::max(0.1f, minHz), hi = std::max(lo + 0.1f, maxHz);
+    return lo * std::pow(hi / lo, std::clamp(position, 0.0f, 1.0f));
+}
+
+// The bands the Multiband face shows: the enabled ones, repaired to at least two the way the DSP repairs its
+// snapshot (MultiCompDSP's multiband block adds the lowest disabled bands), so the face never shows fewer bands
+// than are playing. Bit b set = band b shown.
+inline unsigned multibandShownBands(const bool enabled[4]) noexcept
+{
+    unsigned mask = 0;
+    int count = 0;
+    for (int band = 0; band < 4; ++band)
+        if (enabled[band]) { mask |= 1u << band; ++count; }
+    for (int band = 0; band < 4 && count < 2; ++band)
+        if ((mask & (1u << band)) == 0) { mask |= 1u << band; ++count; }
+    return mask;
+}
+
 } // namespace multicompp::ui_detail
 
 #ifndef MULTICOMP_UI_LOGIC_TEST
@@ -310,6 +436,7 @@ inline float studioVcaNeedleDegrees(float db, float minDb, float maxDb) noexcept
 #include "DuskImGuiFont.hpp"
 #include "DuskImGuiWidgets.hpp"
 #include "DuskKnobRing.hpp"
+#include "DuskLedMeter.hpp"
 #include "DuskVuMeter.hpp"
 #include "MultiCompGainReductionNeedle.hpp"
 #include "MultiCompVcaMeter.hpp"
@@ -358,9 +485,12 @@ constexpr ImU32 kOptoInk = IM_COL32(31, 32, 31, 255);
 constexpr ImU32 kOptoRed = IM_COL32(151, 25, 31, 255);
 constexpr ImU32 kVcaInk = IM_COL32(228, 229, 224, 255);
 constexpr ImU32 kVcaInkDim = IM_COL32(168, 170, 166, 255);
+// The Digital and Multiband faces keep the original editor's palette.
+constexpr ImU32 kModernText = IM_COL32(0xE0, 0xE0, 0xE0, 255);
+constexpr ImU32 kDigitalCyan = IM_COL32(0x00, 0xD4, 0xFF, 255);
 constexpr ImU32 kBandColors[4] = {
-    IM_COL32(92, 165, 235, 255), IM_COL32(92, 205, 150, 255),
-    IM_COL32(232, 185, 74, 255), IM_COL32(224, 100, 93, 255)
+    IM_COL32(0xFF, 0x6B, 0x6B, 255), IM_COL32(0xFF, 0xD9, 0x3D, 255),
+    IM_COL32(0x6B, 0xCB, 0x77, 255), IM_COL32(0x4D, 0x96, 0xFF, 255)
 };
 
 // Parameter indices are aliases of the single table order in MultiCompParams.hpp.
@@ -394,8 +524,80 @@ constexpr uint32_t kMeterBand0 = static_cast<uint32_t>(multicompp::kMeterBand0);
 
 const char* bandName(int band)
 {
-    static const char* names[] = {"LOW", "LO-MID", "HI-MID", "HIGH"};
+    static const char* names[] = {"Low", "Lo-Mid", "Hi-Mid", "High"};
     return names[band < 0 ? 0 : band > 3 ? 3 : band];
+}
+
+// The original editor's colour arithmetic (juce::Colour), for the Digital and Multiband faces.
+ImU32 colourWithAlpha(ImU32 colour, float alpha)
+{
+    const auto a = static_cast<unsigned>(std::lround(std::clamp(alpha, 0.0f, 1.0f) * 255.0f));
+    return (colour & ~IM_COL32_A_MASK) | (a << IM_COL32_A_SHIFT);
+}
+
+ImU32 colourBrighter(ImU32 colour, float amount)
+{
+    const float k = 1.0f / (1.0f + amount);
+    const auto channel = [&](int shift) {
+        const float v = static_cast<float>((colour >> shift) & 0xFFu);
+        return static_cast<unsigned>(255.0f - k * (255.0f - v)) << shift;
+    };
+    return channel(IM_COL32_R_SHIFT) | channel(IM_COL32_G_SHIFT) | channel(IM_COL32_B_SHIFT)
+         | (colour & IM_COL32_A_MASK);
+}
+
+ImU32 colourDarker(ImU32 colour, float amount)
+{
+    const float k = 1.0f / (1.0f + amount);
+    const auto channel = [&](int shift) {
+        return static_cast<unsigned>(k * static_cast<float>((colour >> shift) & 0xFFu)) << shift;
+    };
+    return channel(IM_COL32_R_SHIFT) | channel(IM_COL32_G_SHIFT) | channel(IM_COL32_B_SHIFT)
+         | (colour & IM_COL32_A_MASK);
+}
+
+ImU32 colourMix(ImU32 from, ImU32 to, float t)
+{
+    const float k = std::clamp(t, 0.0f, 1.0f);
+    const auto channel = [&](int shift) {
+        const float a = static_cast<float>((from >> shift) & 0xFFu), b = static_cast<float>((to >> shift) & 0xFFu);
+        return static_cast<unsigned>(std::lround(a + (b - a) * k)) << shift;
+    };
+    return channel(IM_COL32_R_SHIFT) | channel(IM_COL32_G_SHIFT) | channel(IM_COL32_B_SHIFT)
+         | channel(IM_COL32_A_SHIFT);
+}
+
+// Recolours the vertices drawn since `firstVertex` with the linear gradient from c0 at p0 to c1 at p1 (a
+// juce::ColourGradient), keeping each vertex's own alpha as coverage so anti-aliased edges stay soft.
+void shadeLinear(ImDrawList* dl, int firstVertex, ImVec2 p0, ImVec2 p1, ImU32 c0, ImU32 c1)
+{
+    const ImVec4 a = ImGui::ColorConvertU32ToFloat4(c0), b = ImGui::ColorConvertU32ToFloat4(c1);
+    const ImVec2 axis(p1.x - p0.x, p1.y - p0.y);
+    const float lengthSquared = axis.x * axis.x + axis.y * axis.y;
+    for (int i = firstVertex; i < dl->VtxBuffer.Size; ++i)
+    {
+        ImDrawVert& vertex = dl->VtxBuffer[i];
+        const float t = lengthSquared > 0.0f
+            ? std::clamp(((vertex.pos.x - p0.x) * axis.x + (vertex.pos.y - p0.y) * axis.y) / lengthSquared, 0.0f, 1.0f)
+            : 0.0f;
+        const float coverage = static_cast<float>((vertex.col >> IM_COL32_A_SHIFT) & 0xFFu) / 255.0f;
+        vertex.col = ImGui::ColorConvertFloat4ToU32(ImVec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t,
+                                                           a.z + (b.z - a.z) * t, (a.w + (b.w - a.w) * t) * coverage));
+    }
+}
+
+void gradientRect(ImDrawList* dl, ImVec2 a, ImVec2 b, float rounding, ImVec2 p0, ImVec2 p1, ImU32 c0, ImU32 c1)
+{
+    const int first = dl->VtxBuffer.Size;
+    dl->AddRectFilled(a, b, IM_COL32_WHITE, rounding);
+    shadeLinear(dl, first, p0, p1, c0, c1);
+}
+
+void gradientCircle(ImDrawList* dl, ImVec2 c, float r, ImVec2 p0, ImVec2 p1, ImU32 c0, ImU32 c1)
+{
+    const int first = dl->VtxBuffer.Size;
+    dl->AddCircleFilled(c, r, IM_COL32_WHITE, 64);
+    shadeLinear(dl, first, p0, p1, c0, c1);
 }
 }
 
@@ -594,9 +796,23 @@ private:
     // The crossover handle under an active drag. Owns both the open automation
     // gesture and the mirror's skip, so the two cannot disagree.
     uint32_t draggedCrossover = kNoCrossover;
-    // Set by crossover() on every frame it submits the held handle, and read
+    // Set by crossoverFader() on every frame it submits the held handle, and read
     // once per frame to notice a handle that stopped being drawn mid-drag.
     bool draggedCrossoverStillDrawn = false;
+    // The held crossover's place on its logarithmic travel, moved by the drag.
+    float crossoverDragPosition = 0.0f;
+    // Digital and Multiband display state (UI only, never host parameters).
+    int facedMode = -1;
+    duskdaf::LedLadder inputLadder, outputLadder;
+    multicompp::ui_detail::LevelReadout inputReadout, outputReadout;
+    multicompp::ui_detail::VuNeedle digitalVu;
+    bool digitalShowsHistory = false;
+    std::array<float, 128> grHistory{};
+    int grHistoryWrite = 0;
+    float grHistoryClock = 0.0f;
+    bool sidechainHpReset = false;
+    int selectedBand = 0;
+    std::array<multicompp::ui_detail::BandGrMeter, 4> bandGrMeters{};
     int currentPreset = -1;
     bool defaultsActive = true;
     std::string currentUserName;
@@ -1304,13 +1520,19 @@ private:
     void drawModePanel(ImDrawList* dl)
     {
         const int mode = multicompp::ui_detail::choiceIndex(value(P_MODE), 8);
-        drawSection(dl, kModeCanvasTop, kModeCanvasBottom - 8, "");
+        const float canvasBottom = std::max(kModeCanvasBottom,
+            kModeCanvasShiftY + multicompp::ui_detail::designHeightForMode(value(P_MODE)));
+        drawSection(dl, kModeCanvasTop, canvasBottom - 8, "");
         drawModeToolbar(dl);
-        // Opto, vintage FET, VCA, Bus and Studio VCA own panel-integrated
-        // analogue meters, and Multiband meters each band in its own strip (a
-        // master meter at the right edge sat under the crossover panel and the
-        // HIGH strip).
-        if (mode == 4 || mode == 6)
+        if (mode != facedMode)
+        {
+            facedMode = mode;
+            resetModernFaces();
+        }
+        // Every other face carries its own gain-reduction metering: the
+        // hardware faces' analogue meters, Digital's VU and Multiband's band
+        // meters.
+        if (mode == 4)
             drawMeter(dl, 28, kModeCanvasTop + 42, 48, 300, meter(kMeterMaster), kAccent, "MASTER GR");
         // Deliberately exhaustive: adding a ninth mode must force a UI decision.
         switch (mode)
@@ -2739,8 +2961,8 @@ private:
 
         static constexpr StudioVcaMark inputMarks[] = {{-18, "-18"}, {-12, "-12"}, {-6, "-6"}, {0, "0"},
                                                        {6, "+6"}, {12, "+12"}, {18, "+18"}};
-        static constexpr StudioVcaMark ratioMarks[] = {{1.5f, "1.5:1"}, {2, "2:1"}, {3, "3:1"}, {5, "5:1"},
-                                                       {10, "10:1"}, {50, nullptr}};   // nullptr: the infinity mark
+        static constexpr StudioVcaMark ratioMarks[] = {{1.5f, "1.5"}, {2, "2"}, {3, "3"}, {5, "5"},
+                                                       {10, "10"}, {50, nullptr}};   // nullptr: the infinity mark
         static constexpr StudioVcaMark thresholdMarks[] = {{-50, "-50"}, {-40, "-40"}, {-30, "-30"},
                                                            {-20, "-20"}, {-10, "-10"}};
         static constexpr StudioVcaMark attackMarks[] = {{0.1805f, "FAST"}, {70.6865f, "SLOW"}};
@@ -2825,7 +3047,10 @@ private:
         }
     }
 
-    // A chrome dial with the reference's dark grip bar, in the dial's own travel; marks printed around it.
+    // A Studio VCA dial as the reference draws it: a polished chrome knob in a dark recessed well, crossed along its
+    // pointer by a flat grip bar with a cream index cup near the pointer end, and a cream dot at each scale mark with
+    // its numeral further out. The light is fixed at the upper right: the chrome's reflections and the well stay put
+    // while the bar turns, and the bar's lit and shaded edges follow the light.
     void studioVcaKnob(ImDrawList* dl, const char* id, uint32_t p, float x, float y, float radius,
                        const char* name, const StudioVcaMark* marks, int markCount)
     {
@@ -2844,30 +3069,169 @@ private:
         for (int i = 0; i < markCount; ++i)
         {
             const float angle = duskdaf::DuskPanel::knobAngle(multicompp::ui_detail::studioVcaDialPosition(p, marks[i].plain));
-            const float lx = x + std::sin(angle) * (radius + 15.0f);
-            const float ly = y - std::cos(angle) * (radius + 15.0f) - 5.5f;
+            dl->AddCircleFilled(ImVec2(c.x + std::sin(angle) * r * 1.21f, c.y - std::cos(angle) * r * 1.21f),
+                                0.032f * r, kSvcaInk, 12);
+            // The numeral further out, clear of its dot even beside the dial, where a label is at its widest.
+            const float lx = x + std::sin(angle) * (radius + 16.0f);
+            const float ly = y - std::cos(angle) * (radius + 16.0f) - 5.5f;
             if (marks[i].label != nullptr)
                 panel.text(dl, lx, ly, 9.5f, kSvcaInk, marks[i].label, 0, false);
             else
                 studioVcaInfinityMark(dl, lx, ly + 5.5f);
         }
-        dl->AddCircleFilled(ImVec2(c.x + 2.0f * s, c.y + 3.5f * s), r * 1.06f, IM_COL32(60, 0, 0, 140), 40);
-        dl->AddCircleFilled(c, r * 1.04f, IM_COL32(26, 26, 28, 255), 40);
-        gradientDisc(dl, c, r, -0.6f, IM_COL32(236, 236, 238, 255), IM_COL32(86, 86, 92, 255));
-        gradientDisc(dl, c, r * 0.86f, 2.5f, IM_COL32(222, 222, 226, 255), IM_COL32(120, 120, 126, 255));
+        studioVcaWell(dl, c, r);
+        studioVcaChrome(dl, c, r);
         const float angle = duskdaf::DuskPanel::knobAngle(
             multicompp::ui_detail::studioVcaDialPosition(p, plainValueForHost(p, values[p])));
-        const ImVec2 d(std::sin(angle), -std::cos(angle));
-        const ImVec2 a(c.x - d.x * r * 0.84f, c.y - d.y * r * 0.84f), b(c.x + d.x * r * 0.84f, c.y + d.y * r * 0.84f);
-        dl->AddLine(a, b, IM_COL32(52, 52, 56, 255), r * 0.36f);
-        const ImVec2 n(-d.y * r * 0.16f, d.x * r * 0.16f);
-        dl->AddLine(ImVec2(a.x + n.x, a.y + n.y), ImVec2(b.x + n.x, b.y + n.y), IM_COL32(150, 150, 156, 200), s);
-        dl->AddLine(ImVec2(a.x - n.x, a.y - n.y), ImVec2(b.x - n.x, b.y - n.y), IM_COL32(20, 20, 22, 220), s);
-        dl->AddCircle(c, r * 1.04f, IM_COL32(10, 10, 12, 255), 40, s);
+        studioVcaGripBar(dl, c, r, ImVec2(std::sin(angle), -std::cos(angle)), s);
         studioVcaKnobSplitter.Merge(dl);
     }
 
-    // The infinity sign the font lacks, then ":1", centred on (x, y).
+    // The Studio VCA face's light: a unit vector toward the upper right (screen axes, y down).
+    static constexpr float kSvcaLightX = 0.70710678f, kSvcaLightY = -0.70710678f;
+
+    // The point `distance` from q along the light (screen pixels; negative: away from it).
+    static ImVec2 studioVcaTowardLight(ImVec2 q, float distance)
+    {
+        return ImVec2(q.x + distance * kSvcaLightX, q.y + distance * kSvcaLightY);
+    }
+
+    static constexpr int kSvcaRound = 64;   // points on a Studio VCA dial's round outlines
+
+    // An ellipse round `centre` with semi-axes `along` the light and `across` it, as kSvcaRound points, clockwise on
+    // screen as an anti-aliased fill wants them.
+    static void studioVcaOval(ImVec2 centre, float along, float across, ImVec2* out)
+    {
+        for (int i = 0; i < kSvcaRound; ++i)
+        {
+            const float phi = 2.0f * duskdaf::DuskPanel::kPi * static_cast<float>(i) / kSvcaRound;
+            const float a = along * std::cos(phi), b = across * std::sin(phi);
+            out[i] = ImVec2(centre.x + a * kSvcaLightX - b * kSvcaLightY, centre.y + a * kSvcaLightY + b * kSvcaLightX);
+        }
+    }
+
+    // The recess the dial sits in: near-black maroon, wider and darker toward the upper left, its lower right lip
+    // catching the light.
+    static void studioVcaWell(ImDrawList* dl, ImVec2 c, float r)
+    {
+        const ImVec2 centre(c.x - 0.018f * r, c.y - 0.018f * r);
+        const float radius = 1.085f * r;
+        dl->AddCircleFilled(ImVec2(centre.x + 0.035f * r, centre.y + 0.035f * r), radius,
+                            IM_COL32(255, 128, 112, 140), kSvcaRound);
+        const float diagonal = 0.70710678f * radius;
+        gradientCircle(dl, centre, radius, ImVec2(centre.x - diagonal, centre.y - diagonal),
+                       ImVec2(centre.x + diagonal, centre.y + diagonal), IM_COL32(22, 5, 7, 255),
+                       IM_COL32(58, 15, 17, 255));
+    }
+
+    // The polished chrome top, a shallow dome mirroring its surroundings under the fixed light: the red panel as a
+    // brownish grey toward the lower left, then light silver bands, each a disc set further toward the light so its
+    // edge is a hard curved reflection line, a large near-white highlight in the upper right, and the polished edge
+    // lit toward the light. None of it turns with the dial.
+    static void studioVcaChrome(ImDrawList* dl, ImVec2 c, float r)
+    {
+        // Each band's offset toward the light and radius, in knob radii, and its colours at the edges away from and
+        // toward the light.
+        struct Band { float offset, radius; ImU32 shaded, lit; };
+        static constexpr Band bands[] = {
+            {0.0f, 1.0f, IM_COL32(146, 126, 121, 255), IM_COL32(186, 166, 161, 255)},    // the panel, mirrored
+            {0.12f, 0.86f, IM_COL32(126, 120, 118, 255), IM_COL32(196, 190, 187, 255)},  // the dark horizon band
+            {0.2f, 0.78f, IM_COL32(198, 193, 190, 255), IM_COL32(222, 218, 215, 255)}};  // the light silver
+        for (const Band& band : bands)
+        {
+            const ImVec2 centre = studioVcaTowardLight(c, band.offset * r);
+            gradientCircle(dl, centre, band.radius * r, studioVcaTowardLight(centre, -band.radius * r),
+                           studioVcaTowardLight(centre, band.radius * r), band.shaded, band.lit);
+        }
+        ImVec2 outline[kSvcaRound];
+        const ImVec2 spot = studioVcaTowardLight(c, 0.48f * r);
+        studioVcaOval(spot, 0.36f * r, 0.6f * r, outline);
+        dl->AddConvexPolyFilled(outline, kSvcaRound, IM_COL32(255, 255, 255, 60));
+        studioVcaOval(spot, 0.26f * r, 0.48f * r, outline);
+        dl->AddConvexPolyFilled(outline, kSvcaRound, IM_COL32(251, 251, 249, 240));
+        constexpr float upperRight = -0.25f * duskdaf::DuskPanel::kPi;   // ImGui arc angles: clockwise from +x
+        dl->PathArcTo(c, 0.98f * r, upperRight - 1.0f, upperRight + 1.0f, 24);
+        dl->PathStroke(IM_COL32(255, 250, 246, 150), ImDrawFlags_None, 0.035f * r);
+        dl->PathArcTo(c, 0.98f * r, upperRight + duskdaf::DuskPanel::kPi - 1.0f,
+                      upperRight + duskdaf::DuskPanel::kPi + 1.0f, 24);
+        dl->PathStroke(IM_COL32(60, 30, 28, 150), ImDrawFlags_None, 0.035f * r);
+    }
+
+    // The flat grip bar across the full diameter along the pointer d: its shadow on the chrome, an olive grey top
+    // lighter toward the light, a bright line on the edge facing the light and a dark one opposite, and the index.
+    static void studioVcaGripBar(ImDrawList* dl, ImVec2 c, float r, ImVec2 d, float s)
+    {
+        const ImVec2 n(-d.y, d.x);
+        const float facing = n.x * kSvcaLightX + n.y * kSvcaLightY;   // how squarely the +n edge faces the light
+        const float half = 0.30f * r, reach = 0.985f * r;
+        constexpr int arcPoints = 8;
+        ImVec2 outline[2 * arcPoints];
+        int count = studioVcaSlab(c, reach, d, -0.09f * r * facing, half, outline, arcPoints);
+        dl->AddConvexPolyFilled(outline, count, IM_COL32(24, 10, 8, 80));
+        count = studioVcaSlab(c, reach, d, 0.0f, half, outline, arcPoints);
+        const int topVertices = dl->VtxBuffer.Size;
+        dl->AddConvexPolyFilled(outline, count, IM_COL32_WHITE);
+        shadeLinear(dl, topVertices, studioVcaTowardLight(c, -r), studioVcaTowardLight(c, r),
+                    IM_COL32(106, 100, 90, 255), IM_COL32(136, 130, 119, 255));
+        const auto edge = [&](float side, ImU32 colour, float width) {
+            const float k = side * (half - 0.5f * width);
+            const float along = std::sqrt(reach * reach - k * k) - 0.5f * width;
+            dl->AddLine(ImVec2(c.x + n.x * k - d.x * along, c.y + n.y * k - d.y * along),
+                        ImVec2(c.x + n.x * k + d.x * along, c.y + n.y * k + d.y * along), colour, width);
+        };
+        const float litSide = facing >= 0.0f ? 1.0f : -1.0f, strength = std::fabs(facing);
+        edge(litSide, colourMix(IM_COL32(240, 236, 226, 70), IM_COL32(240, 236, 226, 240), strength), 0.9f * s);
+        edge(-litSide, colourMix(IM_COL32(28, 24, 20, 70), IM_COL32(28, 24, 20, 220), strength), 1.1f * s);
+        studioVcaIndexCup(dl, c, r, d, s);
+    }
+
+    // The pointer index: a small cream cup engraved near the bar's pointer end, open toward the rim.
+    static void studioVcaIndexCup(ImDrawList* dl, ImVec2 c, float r, ImVec2 d, float s)
+    {
+        const ImVec2 n(-d.y, d.x);
+        const float bowl = 0.065f * r, leg = 0.05f * r, at = 0.74f * r;
+        const auto point = [&](float along, float side) {
+            return ImVec2(c.x + d.x * along + n.x * side, c.y + d.y * along + n.y * side);
+        };
+        constexpr int arcPoints = 9;
+        ImVec2 cup[arcPoints + 2];
+        cup[0] = point(at + leg, bowl);
+        for (int i = 0; i < arcPoints; ++i)
+        {
+            const float beta = duskdaf::DuskPanel::kPi * static_cast<float>(i) / (arcPoints - 1);
+            cup[i + 1] = point(at - bowl * std::sin(beta), bowl * std::cos(beta));
+        }
+        cup[arcPoints + 1] = point(at + leg, -bowl);
+        ImVec2 groove[arcPoints + 2];   // the engraving's shaded wall, on its side toward the light
+        for (int i = 0; i < arcPoints + 2; ++i)
+            groove[i] = ImVec2(cup[i].x + 0.5f * s * kSvcaLightX, cup[i].y + 0.5f * s * kSvcaLightY);
+        dl->AddPolyline(groove, arcPoints + 2, IM_COL32(40, 32, 26, 150), ImDrawFlags_None, s);
+        dl->AddPolyline(cup, arcPoints + 2, IM_COL32(246, 238, 216, 255), ImDrawFlags_None, s);
+    }
+
+    // The part of the disc (c, r) between the lines at offset - halfWidth and offset + halfWidth along n, which is d
+    // turned a quarter clockwise: the grip bar (d its axis) and its shadow. Writes 2 * arcPoints points, clockwise on
+    // screen as an anti-aliased fill wants them, and returns that count. Both lines must cut the disc
+    // (|offset| + halfWidth < r).
+    static int studioVcaSlab(ImVec2 c, float r, ImVec2 d, float offset, float halfWidth, ImVec2* out, int arcPoints)
+    {
+        const ImVec2 n(-d.y, d.x);
+        const float low = std::asin((offset - halfWidth) / r), high = std::asin((offset + halfWidth) / r);
+        int count = 0;
+        const auto arc = [&](float from, float to) {
+            for (int i = 0; i < arcPoints; ++i)
+            {
+                const float phi = from + (to - from) * static_cast<float>(i) / static_cast<float>(arcPoints - 1);
+                out[count++] = ImVec2(c.x + r * (std::cos(phi) * d.x + std::sin(phi) * n.x),
+                                      c.y + r * (std::cos(phi) * d.y + std::sin(phi) * n.y));
+            }
+        };
+        arc(low, high);
+        arc(duskdaf::DuskPanel::kPi - high, duskdaf::DuskPanel::kPi - low);
+        return count;
+    }
+
+    // The infinity sign the font lacks, centred on (x, y).
     void studioVcaInfinityMark(ImDrawList* dl, float x, float y)
     {
         const float s = panel.scale();
@@ -2877,10 +3241,9 @@ private:
         {
             const float t = 2.0f * duskdaf::DuskPanel::kPi * static_cast<float>(i) / points;
             const float k = 1.0f + std::sin(t) * std::sin(t);
-            path[i] = panel.P(x - 6.0f + 5.0f * std::cos(t) / k, y + 5.0f * std::sin(t) * std::cos(t) / k);
+            path[i] = panel.P(x + 5.0f * std::cos(t) / k, y + 5.0f * std::sin(t) * std::cos(t) / k);
         }
         dl->AddPolyline(path, points, kSvcaInk, ImDrawFlags_Closed, 1.3f * s);
-        panel.text(dl, x + 0.5f, y - 5.5f, 9.5f, kSvcaInk, ":1", -1, false);
     }
 
     // The AUTO RELEASE lamp button.
@@ -3045,77 +3408,607 @@ private:
         return true;
     }
 
+    // ---- Digital and Multiband: the original editor's faces ---------------------------------------------------
+    // Both transcribe the JUCE editor (EnhancedCompressorEditor, ModernCompressorPanels.h, AnalogLookAndFeel.cpp)
+    // at its 1.25 layout scale, one design pixel per editor pixel: the INPUT and OUTPUT meters keep their distance
+    // from the window edges and everything between them is centred, so the controls sit where they did. Positions
+    // are written in visible-canvas coordinates (0 = the top of the header); faceY() moves them onto the mode canvas.
+    static constexpr float faceY(float visibleY) noexcept { return visibleY + kModeCanvasShiftY; }
+
+    // A line of text centred on (x, centreY).
+    void textCentred(ImDrawList* dl, float x, float centreY, float size, ImU32 colour, const char* text, bool bold)
+    {
+        panel.text(dl, x, centreY - 0.5f * size, size, colour, text, 0, bold);
+    }
+
+    // The face's background, the original window frame (a 2 px edge a shade under the mode colour and a 1 px bevel
+    // above it), the glowing title and the one-line description at the foot.
+    void drawModernBody(ImDrawList* dl, ImU32 background, ImU32 modeColour, const char* title, ImU32 titleColour,
+                        const char* description)
+    {
+        const float s = panel.scale();
+        dl->AddRectFilled(panel.P(10, faceY(72)), panel.P(kDesignW - 10, faceY(630)), background, 4.0f * s);
+        dl->AddRect(panel.P(11, faceY(73)), panel.P(kDesignW - 11, faceY(629)), colourDarker(modeColour, 0.3f),
+                    4.0f * s, 0, 2.0f * s);
+        dl->AddRect(panel.P(12.5f, faceY(74.5f)), panel.P(kDesignW - 12.5f, faceY(627.5f)),
+                    colourBrighter(modeColour, 0.2f), 3.0f * s, 0, 1.0f * s);
+        for (int dx = -1; dx <= 1; ++dx)
+            for (int dy = -1; dy <= 1; ++dy)
+                if (dx != 0 || dy != 0)
+                    textCentred(dl, kDesignW * 0.5f + static_cast<float>(dx), faceY(92) + static_cast<float>(dy), 25.0f,
+                                colourWithAlpha(titleColour, 0.15f), title, true);
+        textCentred(dl, kDesignW * 0.5f, faceY(92), 25.0f, titleColour, title, true);
+        textCentred(dl, kDesignW * 0.5f, faceY(614), 12.5f, colourWithAlpha(titleColour, 0.5f), description, false);
+    }
+
+    // One LED of the INPUT/OUTPUT ladders (LEDMeter::drawLEDSegment).
+    void drawLedSegment(ImDrawList* dl, float x0, float y0, float x1, float y1, bool lit, bool peak,
+                        const duskdaf::LedLadderColors& colours)
+    {
+        const float s = panel.scale();
+        const float h = y1 - y0;
+        const ImVec2 a = panel.P(x0, y0), b = panel.P(x1, y1);
+        if (lit)
+        {
+            dl->AddRectFilled(panel.P(x0 - 6, y0 - 6), panel.P(x1 + 6, y1 + 6), colourWithAlpha(colours.glow, 0.25f),
+                              4.0f * s);
+            dl->AddRectFilled(panel.P(x0 - 4, y0 - 4), panel.P(x1 + 4, y1 + 4), colourWithAlpha(colours.glow, 0.4f),
+                              3.0f * s);
+            gradientRect(dl, a, b, 2.0f * s, a, ImVec2(a.x, b.y), colourBrighter(colours.lit, 0.2f),
+                         colourDarker(colours.lit, 0.3f));
+            const ImVec2 h0 = panel.P(x0 + 1, y0 + 1), h1 = panel.P(x1 - 1, y0 + 1 + 0.4f * h);
+            gradientRect(dl, h0, h1, 1.5f * s, h0, ImVec2(h0.x, h1.y), IM_COL32(255, 255, 255, 89),
+                         IM_COL32(255, 255, 255, 0));
+        }
+        else if (peak)
+        {
+            dl->AddRectFilled(panel.P(x0 - 2, y0 - 2), panel.P(x1 + 2, y1 + 2), colourWithAlpha(colours.glow, 0.2f),
+                              3.0f * s);
+            const ImU32 body = colourMix(colours.lit, colours.unlit, 0.3f);
+            gradientRect(dl, a, b, 2.0f * s, a, ImVec2(a.x, b.y), colourBrighter(body, 0.1f), colourDarker(body, 0.2f));
+            dl->AddRectFilled(panel.P(x0 + 1, y0 + 1), panel.P(x1 - 1, y0 + 1 + 0.4f * h), IM_COL32(255, 255, 255, 51),
+                              1.5f * s);
+        }
+        else
+        {
+            gradientRect(dl, a, b, 2.0f * s, a, ImVec2(a.x, b.y), colourBrighter(colours.unlit, 0.15f),
+                         colourDarker(colours.unlit, 0.1f));
+            dl->AddRect(panel.P(x0 + 0.5f, y0 + 0.5f), panel.P(x1 - 0.5f, y1 - 0.5f), IM_COL32(0, 0, 0, 102), 2.0f * s,
+                        0, 0.5f * s);
+            dl->AddRectFilled(panel.P(x0 + 1, y0 + 1), panel.P(x1 - 1, y0 + 1 + 0.3f * h), IM_COL32(255, 255, 255, 13),
+                              1.5f * s);
+        }
+    }
+
+    // One INPUT/OUTPUT meter (LEDMeter in stereo, with LEDMeterStyle's title and readout): a recessed frame, two
+    // twelve-LED columns over -60..+6 dB with L/R legends, the title above and the peak readout below.
+    void drawLevelMeter(ImDrawList* dl, float x0, const duskdaf::LedLadder& ladder, const char* title, float readoutDb)
+    {
+        const float s = panel.scale();
+        const float x1 = x0 + 40.0f, y0 = faceY(134.5f), y1 = faceY(582.0f);
+        textCentred(dl, 0.5f * (x0 + x1), faceY(117.5f), 15.0f, kModernText, title, true);
+        const ImVec2 a = panel.P(x0, y0), b = panel.P(x1, y1);
+        dl->AddRectFilled(a, b, IM_COL32(0x0A, 0x0A, 0x0A, 255), 4.0f * s);
+        gradientRect(dl, a, panel.P(x1, y0 + 15.0f), 4.0f * s, a, panel.P(x0, y0 + 10.0f), IM_COL32(0, 0, 0, 153),
+                     IM_COL32(0, 0, 0, 0));
+        dl->AddRect(a, b, IM_COL32(0x2A, 0x2A, 0x2A, 255), 4.0f * s, 0, 1.0f * s);
+        constexpr int kLeds = 12;
+        constexpr float kGap = 2.0f;
+        const float columnWidth = (40.0f - 2.0f) * 0.5f;
+        const duskdaf::LedLadderStyle style;
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            const float cx0 = x0 + static_cast<float>(ch) * (columnWidth + 2.0f);
+            const float lx0 = cx0 + 3.0f, lx1 = cx0 + columnWidth - 3.0f, ly0 = y0 + 3.0f, ly1 = y1 - 12.0f - 3.0f;
+            const float ledHeight = ((ly1 - ly0) - (kLeds - 1) * kGap) / kLeds;
+            const auto ledsFor = [](float db) {
+                return static_cast<int>(std::clamp((db + 60.0f) / 66.0f, 0.0f, 1.0f) * static_cast<float>(kLeds));
+            };
+            const int lit = ledsFor(ladder.displayDb(ch)), peak = ledsFor(ladder.peakDb(ch)) - 1;
+            for (int i = 0; i < kLeds; ++i)
+            {
+                const float top = ly1 - static_cast<float>(i + 1) * (ledHeight + kGap) + kGap;
+                drawLedSegment(dl, lx0, top, lx1, top + ledHeight, i < lit, i == peak && i >= lit,
+                               duskdaf::ledLadderColors(static_cast<float>(i) / kLeds, style));
+            }
+            textCentred(dl, cx0 + 0.5f * columnWidth, y1 - 6.0f, 8.0f, IM_COL32(128, 128, 128, 153),
+                        ch == 0 ? "L" : "R", false);
+        }
+        char text[24];
+        std::snprintf(text, sizeof(text), "%.1f dB", static_cast<double>(readoutDb));
+        textCentred(dl, 0.5f * (x0 + x1), faceY(601.0f), 15.0f, IM_COL32(0xCC, 0xCC, 0xCC, 255), text, true);
+    }
+
+    // The INPUT and OUTPUT meters of both faces: per-channel block peaks from the plugin, the shared LED ladder's
+    // ballistics (the original meter's), and the readout's peak-then-fall behaviour.
+    void drawLevelMeters(ImDrawList* dl, float dt)
+    {
+        float in[2] = {-60.0f, -60.0f}, out[2] = {-60.0f, -60.0f};
+        void* const instance = getPluginInstancePointer();
+        if (instance != nullptr && multiCompGetInputChannelLevel != nullptr && multiCompGetOutputChannelLevel != nullptr)
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                in[ch] = multiCompGetInputChannelLevel(instance, ch);
+                out[ch] = multiCompGetOutputChannelLevel(instance, ch);
+            }
+        inputLadder.update(in[0], in[1], dt);
+        outputLadder.update(out[0], out[1], dt);
+        multicompp::ui_detail::advanceLevelReadout(inputReadout, std::max(in[0], in[1]), dt);
+        multicompp::ui_detail::advanceLevelReadout(outputReadout, std::max(out[0], out[1]), dt);
+        drawLevelMeter(dl, 43.0f, inputLadder, "INPUT", inputReadout.shownDb);
+        drawLevelMeter(dl, kDesignW - 83.0f, outputLadder, "OUTPUT", outputReadout.shownDb);
+    }
+
+    // The original metallic knob (AnalogLookAndFeelBase::drawMetallicKnob): drop shadow, metal bezel and ring, a
+    // lit body and cap, a white pointer bar and eleven ticks over 0.8 pi either side of straight up. `opacity`
+    // fades it the way the original dims a control Auto Makeup overrides.
+    void drawMetallicKnob(ImDrawList* dl, float x, float y, float r, float position, float opacity)
+    {
+        const float s = panel.scale();
+        const auto fade = [opacity](ImU32 colour) {
+            return colourWithAlpha(colour, opacity * static_cast<float>((colour >> IM_COL32_A_SHIFT) & 0xFFu) / 255.0f);
+        };
+        const ImVec2 c = panel.P(x, y);
+        constexpr ImU32 kBody = IM_COL32(0x4A, 0x4A, 0x4A, 255);
+        dl->AddCircleFilled(panel.P(x + 2, y + 2), r * s, fade(IM_COL32(0x0A, 0x0A, 0x14, 128)), 64);
+        gradientCircle(dl, c, (r + 3.0f) * s, panel.P(x - r, y), panel.P(x + r, y), fade(IM_COL32(0x8A, 0x8A, 0x8A, 255)),
+                       fade(IM_COL32(0x3A, 0x3A, 0x3A, 255)));
+        dl->AddCircle(c, (r + 2.0f) * s, fade(IM_COL32(0xBA, 0xBA, 0xBA, 255)), 64, 1.0f * s);
+        gradientCircle(dl, c, r * s, panel.P(x, y - r), panel.P(x, y + r), fade(colourBrighter(kBody, 0.3f)),
+                       fade(colourDarker(kBody, 0.3f)));
+        const float cap = 0.4f * r;
+        gradientCircle(dl, c, cap * s, panel.P(x - cap, y - cap), panel.P(x + cap, y + cap),
+                       fade(IM_COL32(0x6A, 0x6A, 0x6A, 255)), fade(IM_COL32(0x2A, 0x2A, 0x2A, 255)));
+        // JUCE rotary angles: 0 straight up, clockwise.
+        constexpr float kStart = 1.2f * kUiPi, kEnd = 2.8f * kUiPi;
+        const auto rotated = [&](float angle, float lx, float ly) {
+            const float cs = std::cos(angle), sn = std::sin(angle);
+            return panel.P(x + lx * cs - ly * sn, y + lx * sn + ly * cs);
+        };
+        const float angle = kStart + std::clamp(position, 0.0f, 1.0f) * (kEnd - kStart);
+        const ImVec2 pointer[4] = {rotated(angle, -3, -r + 6), rotated(angle, 3, -r + 6),
+                                   rotated(angle, 3, -r + 6 + 0.5f * r), rotated(angle, -3, -r + 6 + 0.5f * r)};
+        dl->AddPolyline(pointer, 4, fade(IM_COL32_BLACK), ImDrawFlags_Closed, 1.5f * s);
+        dl->AddConvexPolyFilled(pointer, 4, fade(IM_COL32_WHITE));
+        for (int i = 0; i < 11; ++i)
+        {
+            const float tick = kStart + static_cast<float>(i) / 10.0f * (kEnd - kStart);
+            const float length = (i == 0 || i == 10 || i == 5) ? 0.15f * r : 0.1f * r;
+            const ImVec2 mark[4] = {rotated(tick, -1, -r - 8), rotated(tick, 1, -r - 8),
+                                    rotated(tick, 1, -r - 8 + length), rotated(tick, -1, -r - 8 + length)};
+            dl->AddConvexPolyFilled(mark, 4, fade(colourWithAlpha(kModernText, 0.6f)));
+        }
+    }
+
+    // A Digital or Multiband control: the metallic knob, its name above and its value below (the original slider's
+    // text box: white, bold, the parameter's decimals and suffix). A control Auto Makeup overrides is dimmed and
+    // locked, as in the original.
+    void modernKnob(ImDrawList* dl, const char* id, uint32_t p, float x, float y, float r, const char* name,
+                    float nameCentreY, float nameSize, ImU32 nameColour, int decimals, const char* suffix,
+                    float valueCentreY, bool applicable = true)
+    {
+        const float lo = hostMinimum(p), hi = hostMaximum(p);
+        const float opacity = applicable ? 1.0f : 0.4f;
+        // Drawn before the widget, so a typed-value editor it opens lands on top.
+        drawMetallicKnob(dl, x, y, r, hi > lo ? (values[p] - lo) / (hi - lo) : 0.0f, opacity);
+        if (!applicable) ImGui::BeginDisabled();
+        panel.knob(id, p, lo, hi, x, y, r, values[p], hostDefaultValue(p), false, false, "%.2f", suffix, 0, true,
+                   false, nullptr, false, 1.0f, 0.0f, nullptr, false, nullptr, true, 0.0f, 0.0f, false, false, 9.5f,
+                   false, false, &knobHostToPlain, &knobPlainToHost, this);
+        if (!applicable) ImGui::EndDisabled();
+        textCentred(dl, x, nameCentreY, nameSize, colourWithAlpha(nameColour, opacity * static_cast<float>(
+                        (nameColour >> IM_COL32_A_SHIFT) & 0xFFu) / 255.0f), name, false);
+        char text[48];
+        std::snprintf(text, sizeof(text), "%.*f%s", decimals,
+                      static_cast<double>(knobHostToPlain(values[p], p, this)), suffix);
+        textCentred(dl, x, valueCentreY, 13.0f, colourWithAlpha(IM_COL32_WHITE, opacity), text, true);
+    }
+
+    // The Digital face's illuminated push button (AnalogLookAndFeelBase::drawIlluminatedToggleButton, cyan theme).
+    void illuminatedToggle(ImDrawList* dl, const char* id, uint32_t p, float x0, float y0, float x1, float y1,
+                           const char* label)
+    {
+        const float s = panel.scale();
+        const ImVec2 hit0 = panel.P(x0, y0), hit1 = panel.P(x1, y1);
+        ImGui::SetCursorScreenPos(hit0);
+        if (ImGui::InvisibleButton(id, ImVec2(hit1.x - hit0.x, hit1.y - hit0.y)))
+            setHostValue(p, values[p] > 0.5f ? 0.0f : 1.0f);
+        const bool on = values[p] > 0.5f, down = ImGui::IsItemActive(), hovered = ImGui::IsItemHovered();
+        const float bx0 = x0 + 2, by0 = y0 + 2, bx1 = x1 - 2, by1 = y1 - 2;
+        dl->AddRectFilled(panel.P(bx0, by0), panel.P(bx1, by1), IM_COL32(0x0A, 0x0A, 0x1E, 255), 4.0f * s);
+        const ImVec2 i0 = panel.P(bx0 + 2, by0 + 2), i1 = panel.P(bx1 - 2, by1 - 2);
+        if (on)
+        {
+            gradientRect(dl, i0, i1, 3.0f * s, i0, ImVec2(i0.x, i1.y), IM_COL32(0x00, 0xDD, 0xFF, 255),
+                         IM_COL32(0x00, 0xAA, 0xCC, 255));
+            dl->AddRectFilled(panel.P(bx0 - 1, by0 - 1), panel.P(bx1 + 1, by1 + 1), IM_COL32(0x00, 0xDD, 0xFF, 51),
+                              5.0f * s);
+        }
+        else
+        {
+            constexpr ImU32 kOffBottom = IM_COL32(0x1A, 0x1A, 0x2E, 255);
+            gradientRect(dl, i0, i1, 3.0f * s, i0, ImVec2(i0.x, i1.y), IM_COL32(0x2A, 0x2A, 0x3E, 255), kOffBottom);
+            dl->AddRect(panel.P(bx0 + 3, by0 + 3), panel.P(bx1 - 3, by1 - 3), colourDarker(kOffBottom, 0.3f), 2.0f * s,
+                        0, 1.0f * s);
+            dl->AddLine(panel.P(bx0 + 6, by0 + 4), panel.P(bx1 - 6, by0 + 4), IM_COL32(255, 255, 255, 0x20), 1.0f * s);
+        }
+        if (down)
+            dl->AddRectFilled(i0, i1, IM_COL32(0, 0, 0, 0x20), 3.0f * s);
+        else if (hovered && !on)
+            dl->AddRectFilled(i0, i1, IM_COL32(255, 255, 255, 0x10), 3.0f * s);
+        textCentred(dl, 0.5f * (x0 + x1), 0.5f * (y0 + y1), 11.0f,
+                    on ? IM_COL32(0x00, 0x15, 0x20, 255) : IM_COL32(0xBB, 0xCC, 0xDD, 255), label, true);
+    }
+
+    // The Digital face's gain-reduction VU (AnalogVUMeter::paint) in the rectangle given, needle from digitalVu.
+    void drawDigitalVu(ImDrawList* dl, float x0, float y0, float x1, float y1)
+    {
+        const float s = panel.scale();
+        const float sf = std::max(0.5f, std::min((x1 - x0) / 400.0f, (y1 - y0) / 250.0f));
+        dl->AddRectFilled(panel.P(x0, y0), panel.P(x1, y1), IM_COL32(0xB4, 0xB4, 0xB4, 255), 3.0f * sf * s);
+        const float ix0 = x0 + 2 * sf, iy0 = y0 + 2 * sf, ix1 = x1 - 2 * sf, iy1 = y1 - 2 * sf;
+        dl->AddRectFilled(panel.P(ix0, iy0), panel.P(ix1, iy1), IM_COL32(0x3A, 0x3A, 0x3A, 255), 2.0f * sf * s);
+        const float fx0 = ix0 + 3 * sf, fy0 = iy0 + 3 * sf, fx1 = ix1 - 3 * sf, fy1 = iy1 - 3 * sf;
+        dl->AddRectFilled(panel.P(fx0, fy0), panel.P(fx1, fy1), IM_COL32(0xF8, 0xF4, 0xE6, 255), 2.0f * sf * s);
+        dl->PushClipRect(panel.P(fx0, fy0), panel.P(fx1, fy1), true);
+        const float cx = 0.5f * (fx0 + fx1), pivotY = fy1 - 3 * sf;
+        const float length = std::min((fx1 - fx0) * 0.49f, (fy1 - fy0) * 0.88f);
+        constexpr float kStart = -2.7f, kEnd = -0.44f;   // screen angles, the scale's left and right ends
+        const auto at = [&](float angle, float radius) {
+            return panel.P(cx + radius * std::cos(angle), pivotY + radius * std::sin(angle));
+        };
+        // The original strokes this arc with JUCE's clockwise-from-up arc convention while every tick, label and the
+        // needle use these screen angles, which leaves it on the left of the face; it belongs under the ticks.
+        dl->PathClear();
+        for (int i = 0; i <= 48; ++i)
+            dl->PathLineTo(at(kStart + (kEnd - kStart) * static_cast<float>(i) / 48.0f, length * 0.95f));
+        dl->PathStroke(IM_COL32(0x1A, 0x1A, 0x1A, 179), 0, 2.0f * sf * s);
+        static constexpr float kMarks[] = {-20, -10, -7, -5, -3, -2, -1, 0, 1, 2, 3};
+        for (const float db : kMarks)
+        {
+            const float angle = kStart + (db + 20.0f) / 23.0f * (kEnd - kStart);
+            const bool major = db != 2.0f;
+            const ImU32 ink = db >= 0.0f ? IM_COL32(0xD4, 0x2C, 0x2C, 255) : IM_COL32(0x2A, 0x2A, 0x2A, 255);
+            dl->AddLine(at(angle, length * 0.95f), at(angle, length * 0.95f + (major ? 10.0f : 6.0f) * sf), ink,
+                        (major ? 2.0f : 1.0f) * sf * s);
+            if (db > 0.0f) continue;
+            const float radius = length * 0.72f;
+            const float labelY = std::max(pivotY + radius * std::sin(angle), fy0 + 5 * sf + 7.5f * sf);
+            char text[8];
+            std::snprintf(text, sizeof(text), "%d", static_cast<int>(db));
+            textCentred(dl, cx + radius * std::cos(angle), labelY, std::max(10.0f, 14.0f * sf), ink, text, false);
+        }
+        for (const int percent : {0, 100})
+        {
+            const float angle = kStart + static_cast<float>(percent) / 100.0f * (kEnd - kStart);
+            const float radius = length * 1.15f;
+            textCentred(dl, cx + radius * std::cos(angle), pivotY + radius * std::sin(angle) + 5 * sf,
+                        std::max(7.0f, 9.0f * sf), IM_COL32(0x60, 0x60, 0x60, 255), percent == 0 ? "0%" : "100%", false);
+        }
+        textCentred(dl, cx, pivotY - length * 0.4f + 10 * sf, std::max(18.0f, 24.0f * sf), IM_COL32(0x2A, 0x2A, 0x2A, 255),
+                    "VU", false);
+        dl->AddLine(panel.P(cx, pivotY), at(kStart + digitalVu.position * (kEnd - kStart), length * 0.96f),
+                    IM_COL32_BLACK, 1.5f * sf * s);
+        if (digitalVu.peakPosition < digitalVu.position - 0.02f)
+        {
+            const ImVec2 mark = at(kStart + digitalVu.peakPosition * (kEnd - kStart), length * 0.92f);
+            dl->AddCircleFilled(mark, 2.0f * sf * s, IM_COL32(0xFF, 0x33, 0x33, 255), 16);
+            dl->AddLine(panel.P(cx, pivotY), mark, IM_COL32(0xFF, 0x33, 0x33, 0x60), 0.5f * sf * s);
+        }
+        dl->AddCircleFilled(panel.P(cx, pivotY), 3.0f * sf * s, IM_COL32_BLACK, 16);
+        dl->PopClipRect();
+        // Glass: a faint highlight over the top fifth.
+        const float gx0 = ix0 + sf, gy0 = iy0 + sf, gx1 = ix1 - sf, gy1 = iy1 - sf;
+        const ImVec2 h0 = panel.P(gx0 + 10 * sf, gy0 + 5 * sf), h1 = panel.P(gx1 - 10 * sf, gy0 + (gy1 - gy0) * 0.2f - 5 * sf);
+        gradientRect(dl, h0, h1, 3.0f * sf * s, h0, ImVec2(h0.x, h1.y), IM_COL32(255, 255, 255, 0x20),
+                     IM_COL32(255, 255, 255, 0));
+    }
+
+    // The Digital face's gain-reduction history (GRHistoryGraph::paint): the last 128 readings at 30 Hz (about 4 s)
+    // as a filled trace over 0..-30 dB, with the deepest reading marked.
+    void drawGrHistory(ImDrawList* dl, float x0, float y0, float x1, float y1)
+    {
+        const float s = panel.scale();
+        const float sf = std::max(0.5f, std::min((x1 - x0) / 400.0f, (y1 - y0) / 250.0f));
+        dl->AddRectFilled(panel.P(x0, y0), panel.P(x1, y1), IM_COL32(0x60, 0x60, 0x60, 255), 4.0f * sf * s);
+        const float ix0 = x0 + 2 * sf, iy0 = y0 + 2 * sf, ix1 = x1 - 2 * sf, iy1 = y1 - 2 * sf;
+        gradientRect(dl, panel.P(ix0, iy0), panel.P(ix1, iy1), 3.0f * sf * s, panel.P(ix0, iy0), panel.P(ix0, iy1),
+                     IM_COL32(0x1A, 0x1A, 0x1E, 255), IM_COL32(0x10, 0x10, 0x14, 255));
+        const float gx0 = ix0 + 38 * sf, gy0 = iy0 + 10 * sf, gx1 = ix1 - 10 * sf, gy1 = iy1 - 24 * sf;
+        const auto rowOf = [&](float db) { return gy0 + std::clamp(-db / 30.0f, 0.0f, 1.0f) * (gy1 - gy0); };
+        const float labelSize = std::max(8.0f, 9.0f * sf);
+        static constexpr float kRows[] = {0, -6, -12, -18, -24, -30};
+        for (const float db : kRows)
+        {
+            const float y = rowOf(db);
+            dl->AddRectFilled(panel.P(gx0, y), panel.P(gx1, y + 1),
+                              db == 0.0f ? IM_COL32(0x50, 0x50, 0x50, 255) : IM_COL32(0x2A, 0x2A, 0x2E, 255));
+            char text[8];
+            std::snprintf(text, sizeof(text), "%d", static_cast<int>(db));
+            panel.text(dl, ix0 + 26 * sf, y - 0.5f * labelSize, labelSize,
+                       db == 0.0f ? IM_COL32(0xAA, 0xAA, 0xAA, 255) : IM_COL32(0x70, 0x70, 0x70, 255), text, 1);
+        }
+        for (int i = 1; i < 4; ++i)
+        {
+            const float x = gx0 + (gx1 - gx0) * static_cast<float>(i) / 4.0f;
+            dl->AddRectFilled(panel.P(x, gy0), panel.P(x + 1, gy1), IM_COL32(0x2A, 0x2A, 0x2E, 255));
+        }
+        constexpr int kCount = static_cast<int>(std::tuple_size<decltype(grHistory)>::value);
+        ImVec2 trace[kCount];
+        float deepest = 0.0f;
+        for (int i = 0; i < kCount; ++i)
+        {
+            const float gr = grHistory[static_cast<size_t>((grHistoryWrite + i) % kCount)];
+            deepest = std::min(deepest, gr);
+            trace[i] = panel.P(gx0 + (gx1 - gx0) * static_cast<float>(i) / (kCount - 1), rowOf(gr));
+        }
+        // The fill hangs from the 0 dB line: one trapezoid per step (each convex), shaded as one gradient, without
+        // anti-aliased fringes that would seam the joins.
+        const ImDrawListFlags flags = dl->Flags;
+        dl->Flags &= ~ImDrawListFlags_AntiAliasedFill;
+        const int firstVertex = dl->VtxBuffer.Size;
+        const float zeroRow = panel.P(0, gy0).y;
+        for (int i = 0; i + 1 < kCount; ++i)
+        {
+            const ImVec2 step[4] = {ImVec2(trace[i].x, zeroRow), ImVec2(trace[i + 1].x, zeroRow), trace[i + 1], trace[i]};
+            dl->AddConvexPolyFilled(step, 4, IM_COL32_WHITE);
+        }
+        dl->Flags = flags;
+        shadeLinear(dl, firstVertex, panel.P(gx0, gy0), panel.P(gx0, gy1), IM_COL32(0x00, 0xCC, 0x77, 230),
+                    IM_COL32(0x00, 0x33, 0x22, 179));
+        dl->AddPolyline(trace, kCount, IM_COL32(0x00, 0xFF, 0x88, 0x30), 0, 4.0f * sf * s);
+        dl->AddPolyline(trace, kCount, IM_COL32(0x00, 0xFF, 0x88, 255), 0, 1.5f * sf * s);
+        dl->AddRectFilled(panel.P(gx1, gy0), panel.P(gx1 + 1, gy1), IM_COL32(0xFF, 0xAA, 0x00, 255));
+        if (deepest < -0.5f)
+        {
+            const float y = rowOf(deepest);
+            dl->AddRectFilled(panel.P(gx0, y), panel.P(gx1, y + 1), IM_COL32(0xFF, 0x66, 0x66, 0x80));
+            char text[16];
+            std::snprintf(text, sizeof(text), "%.1fdB", static_cast<double>(deepest));
+            panel.text(dl, gx1 - 2 * sf, y - 6 * sf - 0.5f * labelSize, labelSize, IM_COL32(0xFF, 0x66, 0x66, 255), text,
+                       1, true);
+        }
+        // Time legends. The original also prints "~4 sec" over the same corner as "now"; the two overlap there.
+        const float legendTop = gy1 + 8 * sf - 0.5f * labelSize;
+        constexpr ImU32 kLegend = IM_COL32(0x70, 0x70, 0x70, 255);
+        panel.text(dl, gx0, legendTop, labelSize, kLegend, "-4s", -1);
+        panel.text(dl, 0.5f * (gx0 + gx1), legendTop, labelSize, kLegend, "-2s", 0);
+        panel.text(dl, gx1, legendTop, labelSize, kLegend, "now", 1);
+        const float tx0 = gx0 + (gx1 - gx0) * 0.2f, tx1 = gx0 + (gx1 - gx0) * 0.8f, ty0 = gy0 + 4 * sf;
+        const float ty1 = ty0 + 18 * sf;
+        dl->AddRectFilled(panel.P(tx0, ty0), panel.P(tx1, ty1), IM_COL32(0x1A, 0x1A, 0x1A, 0xDD), 3.0f * s);
+        textCentred(dl, 0.5f * (tx0 + tx1), 0.5f * (ty0 + ty1), std::max(11.0f, 14.0f * sf), IM_COL32_WHITE,
+                    "GR HISTORY", true);
+    }
+
+    // The sidechain high-pass as the original's vertical slider beside the VU (a LookAndFeel_V4 linear slider):
+    // click or drag along the track; a double-click returns the default.
+    void sidechainHpSlider(ImDrawList* dl, float x, float trackTop, float trackBottom)
+    {
+        const float s = panel.scale();
+        const uint32_t p = P_SC_HP;
+        const float lo = hostMinimum(p), hi = hostMaximum(p);
+        ImGui::SetCursorScreenPos(panel.P(x - 14.0f, trackTop - 8.0f));
+        ImGui::InvisibleButton("##dig_sc_hp", ImVec2(28.0f * s, (trackBottom - trackTop + 16.0f) * s));
+        if (ImGui::IsItemActivated())
+        {
+            editParameter(p, true);
+            sidechainHpReset = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+            if (sidechainHpReset) setParam(p, hostDefaultValue(p));
+        }
+        if (ImGui::IsItemActive() && !sidechainHpReset && hi > lo)
+        {
+            const float mouseY = (ImGui::GetIO().MousePos.y - panel.P(0, 0).y) / s;
+            const float position = std::clamp((trackBottom - mouseY) / (trackBottom - trackTop), 0.0f, 1.0f);
+            const float host = lo + position * (hi - lo);
+            if (host != values[p]) setParam(p, host);
+        }
+        if (ImGui::IsItemDeactivated())
+        {
+            editParameter(p, false);
+            sidechainHpReset = false;
+        }
+        const float position = hi > lo ? std::clamp((values[p] - lo) / (hi - lo), 0.0f, 1.0f) : 0.0f;
+        const float thumbY = trackBottom - position * (trackBottom - trackTop);
+        // LookAndFeel_V4's dark scheme: widget background track, highlighted-fill value track, default-fill thumb.
+        dl->AddRectFilled(panel.P(x - 3, trackTop - 3), panel.P(x + 3, trackBottom + 3), IM_COL32(0x26, 0x32, 0x38, 255),
+                          3.0f * s);
+        dl->AddRectFilled(panel.P(x - 3, thumbY - 3), panel.P(x + 3, trackBottom + 3), IM_COL32(0x18, 0x1F, 0x22, 255),
+                          3.0f * s);
+        dl->AddCircleFilled(panel.P(x, thumbY), 6.0f * s, IM_COL32(0x42, 0xA2, 0xC8, 255), 24);
+        textCentred(dl, x, trackTop - 18.0f, 13.75f, kDigitalCyan, "SC HP", true);
+        const float hz = knobHostToPlain(values[p], p, this);
+        char text[16];
+        if (hz < 1.0f)
+            std::snprintf(text, sizeof(text), "Off");
+        else
+            std::snprintf(text, sizeof(text), "%.0f Hz", static_cast<double>(hz));
+        textCentred(dl, x, trackBottom + 20.0f, 13.0f, IM_COL32_WHITE, text, true);
+    }
+
     void drawDigital(ImDrawList* dl)
     {
-        knob(dl, "dig_thr", P_DIG_THRESHOLD, 120, 380, "THRESHOLD", "%.1f", " dB");
-        knob(dl, "dig_ratio", P_DIG_RATIO, 250, 380, "RATIO", "%.1f", ":1");
-        knob(dl, "dig_knee", P_DIG_KNEE, 380, 380, "KNEE", "%.1f", " dB");
-        knob(dl, "dig_att", P_DIG_ATTACK, 510, 380, "ATTACK", "%.2f", " ms");
-        knob(dl, "dig_rel", P_DIG_RELEASE, 640, 380, "RELEASE", "%.0f", " ms");
-        knob(dl, "dig_look", P_DIG_LOOK, 770, 380, "LOOKAHEAD", "%.1f", " ms");
-        knob(dl, "dig_mix", P_DIG_MIX, 900, 380, "MIX", "%.0f", "%");
-        knob(dl, "dig_out", P_DIG_OUT, 1030, 380, "OUTPUT", "%.1f", " dB");
-        panel.toggle("dig_adapt", P_DIG_ADAPT, 475, 448, 645, 475, values[P_DIG_ADAPT], "ADAPTIVE RELEASE");
-    }
+        const float s = panel.scale();
+        const float dt = ImGui::GetIO().DeltaTime;
+        drawModernBody(dl, IM_COL32(8, 8, 8, 255), IM_COL32(0x1A, 0x1A, 0x2E, 255), "DIGITAL COMPRESSOR", kDigitalCyan,
+                       "Transparent | Precise | Zero Coloration");
+        drawLevelMeters(dl, dt);
 
-    void drawMultiband(ImDrawList* dl)
-    {
-        const float left = 28, right = kDesignW - 28, top = 342, bottom = 445;
-        dl->AddRectFilled(panel.P(left, top), panel.P(right, bottom), IM_COL32(22, 24, 29, 255), 5 * panel.scale());
-        panel.text(dl, 40, top + 10, 10, kDim, "CROSSOVERS / GAIN REDUCTION", -1, true);
-        crossover(dl, P_X1, 180, "XOVER 1");
-        crossover(dl, P_X2, 430, "XOVER 2");
-        crossover(dl, P_X3, 680, "XOVER 3");
-        for (int b = 0; b < 4; ++b)
+        // Gain reduction: the VU, or its 4-second history; a click on either (or the caption) swaps them.
+        const float gr = meter(kMeterMaster);
+        multicompp::ui_detail::advanceVuNeedle(digitalVu, gr, dt);
+        grHistoryClock = std::min(grHistoryClock + std::max(dt, 0.0f), 0.25f);
+        for (; grHistoryClock >= 1.0f / 30.0f; grHistoryClock -= 1.0f / 30.0f)
         {
-            char id[16];
-            auto bandId = [&id, b](const char* prefix) { std::snprintf(id, sizeof(id), "%s%d", prefix, b); return id; };
-            const float x = 46 + b * 264.0f;
-            const uint32_t base = static_cast<uint32_t>(multicompp::kBandBase + b * 8);
-            dl->AddRectFilled(panel.P(x, 462), panel.P(x + 250, 730), IM_COL32(30, 32, 38, 255), 5 * panel.scale());
-            dl->AddRect(panel.P(x, 462), panel.P(x + 250, 730), kBandColors[b], 5 * panel.scale(), 0, panel.scale());
-            panel.text(dl, x + 12, 475, 12, kBandColors[b], bandName(b), -1, true);
-            panel.toggle(bandId("mb_en"), base + 7,
-                         x + 112, 470, x + 178, 494, values[base + 7], "ENABLE");
-            panel.toggle(bandId("mb_bp"), base + 5,
-                         x + 182, 470, x + 238, 494, values[base + 5], "BYP");
-            drawMeter(dl, x + 22, 510, 26, 190, meter(kMeterBand0 + static_cast<uint32_t>(b)), kBandColors[b], "GR");
-            knob(dl, bandId("mb_t"), base, x + 75, 550, "THRESH", "%.1f", " dB");
-            knob(dl, bandId("mb_r"), base + 1, x + 145, 550, "RATIO", "%.1f", ":1");
-            knob(dl, bandId("mb_a"), base + 2, x + 215, 550, "ATTACK", "%.1f", " ms");
-            knob(dl, bandId("mb_rel"), base + 3, x + 75, 650, "RELEASE", "%.0f", " ms");
-            knob(dl, bandId("mb_m"), base + 4, x + 145, 650, "MAKEUP", "%.1f", " dB");
-            panel.toggle(bandId("mb_s"), base + 6,
-                         x + 180, 640, x + 238, 666, values[base + 6], "SOLO");
+            grHistory[static_cast<size_t>(grHistoryWrite)] = std::isfinite(gr) ? gr : 0.0f;
+            grHistoryWrite = (grHistoryWrite + 1) % static_cast<int>(grHistory.size());
         }
-        knob(dl, "mb_mix", P_MB_MIX, 900, 387, "MB MIX", "%.0f", "%");
-        knob(dl, "mb_out", P_MB_OUT, 1005, 387, "MB OUTPUT", "%.1f", " dB");
+        constexpr float vuX0 = 287, vuX1 = 833, vuTop = 112, vuBottom = 292, captionBottom = 318;
+        ImGui::SetCursorScreenPos(panel.P(vuX0, faceY(vuTop)));
+        if (ImGui::InvisibleButton("##dig_vu", ImVec2((vuX1 - vuX0) * s, (captionBottom - vuTop) * s)))
+            digitalShowsHistory = !digitalShowsHistory;
+        if (digitalShowsHistory)
+            drawGrHistory(dl, vuX0, faceY(vuTop), vuX1, faceY(vuBottom));
+        else
+            drawDigitalVu(dl, vuX0, faceY(vuTop), vuX1, faceY(vuBottom));
+        dl->AddRectFilled(panel.P(vuX0 + 2, faceY(vuBottom + 2)), panel.P(vuX1 - 2, faceY(captionBottom - 2)),
+                          IM_COL32(0, 0, 0, 0x30), 3.0f * s);
+        const char* caption = digitalShowsHistory ? "GR HISTORY (click)" : "LEVEL (click)";
+        constexpr float captionY = 0.5f * (vuBottom + captionBottom);
+        textCentred(dl, 0.5f * (vuX0 + vuX1) + 1, faceY(captionY) + 1, 11.0f, IM_COL32(0, 0, 0, 0x40), caption, true);
+        textCentred(dl, 0.5f * (vuX0 + vuX1), faceY(captionY), 11.0f, IM_COL32(0xE0, 0x90, 0x40, 255), caption, true);
+        textCentred(dl, kDesignW * 0.5f, faceY(334.5f), 15.0f, kDigitalCyan, "GAIN REDUCTION", true);
+        sidechainHpSlider(dl, 891.0f, faceY(134.5f), faceY(290.25f));
+
+        // Two rows of the original's knobs: five columns 136 apart, centred on the window.
+        constexpr float r = 33.0f, row1 = 418.5f, row2 = 548.0f;
+        const auto column = [](int i) { return kDesignW * 0.5f + 136.0f * static_cast<float>(i - 2); };
+        const auto knobAt = [&](const char* id, uint32_t p, int col, float row, const char* name, int decimals,
+                                const char* suffix, bool applicable) {
+            modernKnob(dl, id, p, column(col), faceY(row), r, name, faceY(row - 49.0f), 15.0f, kModernText, decimals,
+                       suffix, faceY(row + 48.5f), applicable);
+        };
+        knobAt("dig_thr", P_DIG_THRESHOLD, 0, row1, "Threshold", 1, " dB", true);
+        knobAt("dig_ratio", P_DIG_RATIO, 1, row1, "Ratio", 1, ":1", true);
+        knobAt("dig_knee", P_DIG_KNEE, 2, row1, "Knee", 1, " dB", true);
+        knobAt("dig_att", P_DIG_ATTACK, 3, row1, "Attack", 2, " ms", true);
+        knobAt("dig_rel", P_DIG_RELEASE, 4, row1, "Release", 0, " ms", true);
+        knobAt("dig_look", P_DIG_LOOK, 0, row2, "Lookahead", 1, " ms", true);
+        knobAt("dig_mix", P_DIG_MIX, 1, row2, "Mix", 0, " %", true);
+        knobAt("dig_out", P_DIG_OUT, 2, row2, "Output", 1, " dB", values[P_AUTO_MAKEUP] <= 0.5f);
+        illuminatedToggle(dl, "##dig_adapt", P_DIG_ADAPT, column(3) - 62.0f, faceY(row2 - 5.0f), column(3) + 64.0f,
+                          faceY(row2 + 25.0f), "Adaptive Release");
     }
 
-    void crossover(ImDrawList* dl, uint32_t p, float x, const char* label)
+    // A juce::TextButton under LookAndFeel_V4 (the Multiband face's band, enable, bypass and solo buttons): the fill
+    // a touch desaturated, a 6 px corner, the scheme's outline; hover and press contrast it a little. Returns true
+    // on a click.
+    bool juceTextButton(ImDrawList* dl, const char* id, float x0, float y0, float x1, float y1, const char* label,
+                        ImU32 fill, ImU32 textColour, const char* tooltip, bool enabled = true)
     {
-        const float trackStart = x - 100.0f;
-        const float trackEnd = x + 100.0f;
-        const float physicalValue = multicompp::hostToPlain(multicompp::kParams[p], values[p]);
-        const float t = std::clamp(values[p], 0.0f, 1.0f);
-        const float handleX = trackStart + t * (trackEnd - trackStart);
-        dl->AddLine(panel.P(trackStart, 392), panel.P(trackEnd, 392), IM_COL32(70, 75, 84, 255), 4 * panel.scale());
-        dl->AddLine(panel.P(handleX, 376), panel.P(handleX, 408), kAccent, 3 * panel.scale());
-        panel.text(dl, handleX, 414, 9, kText, label, 0, true);
-        char text[32]; std::snprintf(text, sizeof(text), "%.0f Hz", static_cast<double>(physicalValue));
-        panel.text(dl, handleX, 428, 9, kDim, text, 0);
-        ImGui::SetCursorScreenPos(panel.P(handleX - 12, 365));
-        char handleId[48];
-        std::snprintf(handleId, sizeof(handleId), "##mc_%s", label);
-        ImGui::InvisibleButton(handleId, ImVec2(24 * panel.scale(), 54 * panel.scale()));
-        if (ImGui::IsItemActivated()) { editParameter(p, true); draggedCrossover = p; }
-        if (draggedCrossover == p) draggedCrossoverStillDrawn = true;
-        if (ImGui::IsItemActive())
+        const float s = panel.scale();
+        const ImVec2 b0 = panel.P(x0, y0), b1 = panel.P(x1, y1);
+        if (!enabled) ImGui::BeginDisabled();
+        ImGui::SetCursorScreenPos(b0);
+        const bool clicked = ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
+        const bool down = ImGui::IsItemActive(), hovered = ImGui::IsItemHovered();
+        if (tooltip != nullptr && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip | ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("%s", tooltip);
+        if (!enabled) ImGui::EndDisabled();
+        ImVec4 rgba = ImGui::ColorConvertU32ToFloat4(fill);
+        float h = 0.0f, sat = 0.0f, v = 0.0f;
+        ImGui::ColorConvertRGBtoHSV(rgba.x, rgba.y, rgba.z, h, sat, v);
+        ImGui::ColorConvertHSVtoRGB(h, sat * 0.9f, v, rgba.x, rgba.y, rgba.z);
+        rgba.w *= enabled ? 1.0f : 0.5f;
+        ImU32 base = ImGui::ColorConvertFloat4ToU32(rgba);
+        if (down || hovered)
         {
-            const float mouseX = (ImGui::GetMousePos().x - panel.P(0, 0).x) / panel.scale();
-            const float normalized = std::clamp(
-                (mouseX - trackStart) / (trackEnd - trackStart), 0.0f, 1.0f);
-            setParam(p, normalized);
+            // Colour::contrasting: overlay black on a light fill, white on a dark one.
+            const float brightness = std::sqrt(0.241f * rgba.x * rgba.x + 0.691f * rgba.y * rgba.y + 0.068f * rgba.z * rgba.z);
+            const float amount = down ? 0.2f : 0.05f;
+            const ImU32 over = brightness >= 0.5f ? IM_COL32(0, 0, 0, 255) : IM_COL32(255, 255, 255, 255);
+            base = colourWithAlpha(colourMix(base, over, amount), rgba.w + amount * (1.0f - rgba.w));
+        }
+        const ImVec2 f0 = panel.P(x0 + 0.5f, y0 + 0.5f), f1 = panel.P(x1 - 0.5f, y1 - 0.5f);
+        dl->AddRectFilled(f0, f1, base, 6.0f * s);
+        dl->AddRect(f0, f1, IM_COL32(0x8E, 0x98, 0x9B, 255), 6.0f * s, 0, 1.0f * s);
+        textCentred(dl, 0.5f * (x0 + x1), 0.5f * (y0 + y1), std::min(16.0f, (y1 - y0) * 0.6f),
+                    enabled ? textColour : colourWithAlpha(textColour, 0.5f), label, false);
+        return clicked && enabled;
+    }
+
+    // One band's gain-reduction meter (MultibandCompressorPanel::drawBandMeter): twenty LEDs lit from the top over
+    // 0..-20 dB, warming from the band's colour to red, a white peak, a value pill, the border bright when selected.
+    void drawBandMeter(ImDrawList* dl, int band, float x0, float y0, float x1, float y1, bool selected)
+    {
+        const float s = panel.scale();
+        const ImU32 colour = kBandColors[band];
+        const auto& m = bandGrMeters[static_cast<size_t>(band)];
+        if (selected)
+            dl->AddRectFilled(panel.P(x0 - 4, y0 - 4), panel.P(x1 + 4, y1 + 4), colourWithAlpha(colour, 0.2f), 6.0f * s);
+        const ImVec2 a = panel.P(x0, y0), b = panel.P(x1, y1);
+        gradientRect(dl, a, b, 5.0f * s, a, ImVec2(a.x, b.y), IM_COL32(0x0C, 0x0C, 0x0C, 255),
+                     IM_COL32(0x18, 0x18, 0x18, 255));
+        dl->AddRect(panel.P(x0 + 1, y0 + 1), panel.P(x1 - 1, y1 - 1), IM_COL32(0, 0, 0, 128), 4.0f * s, 0, 1.0f * s);
+        constexpr int kSegments = 20;
+        constexpr float kGap = 2.5f;
+        constexpr ImU32 kYellow = IM_COL32(0xFF, 0xDD, 0x00, 255), kOrange = IM_COL32(0xFF, 0x88, 0x00, 255);
+        const float mx0 = x0 + 4, mx1 = x1 - 4, my0 = y0 + 4, my1 = y1 - 4;
+        const float segmentHeight = ((my1 - my0) - (kSegments - 1) * kGap) / kSegments;
+        const auto segmentsFor = [](float db) {
+            return static_cast<int>(std::clamp(-db / 20.0f, 0.0f, 1.0f) * static_cast<float>(kSegments));
+        };
+        const int lit = segmentsFor(m.shownDb), peak = segmentsFor(m.peakDb);
+        for (int seg = 0; seg < kSegments; ++seg)
+        {
+            const float top = my0 + static_cast<float>(seg) * (segmentHeight + kGap);
+            const ImVec2 s0 = panel.P(mx0, top), s1 = panel.P(mx1, top + segmentHeight);
+            if (seg < lit)
+            {
+                const float intensity = static_cast<float>(seg) / kSegments;
+                const ImU32 c = intensity < 0.4f ? colourBrighter(colour, 0.2f)
+                    : intensity < 0.6f ? colourMix(colour, kYellow, (intensity - 0.4f) * 5.0f)
+                    : intensity < 0.8f ? colourMix(kYellow, kOrange, (intensity - 0.6f) * 5.0f)
+                    : colourMix(kOrange, IM_COL32(0xFF, 0x33, 0x33, 255), (intensity - 0.8f) * 5.0f);
+                gradientRect(dl, s0, s1, 2.0f * s, s0, ImVec2(s0.x, s1.y), colourBrighter(c, 0.4f), colourDarker(c, 0.1f));
+                dl->AddRectFilled(panel.P(mx0 + 2, top + 1), panel.P(mx1 - 2, top + 2.5f),
+                                  colourWithAlpha(colourBrighter(c, 0.7f), 0.4f));
+            }
+            else if (seg == peak && peak > 0)
+            {
+                dl->AddRectFilled(panel.P(mx0 - 1, top - 1), panel.P(mx1 + 1, top + segmentHeight + 1),
+                                  IM_COL32(255, 255, 255, 77), 3.0f * s);
+                dl->AddRectFilled(s0, s1, IM_COL32_WHITE, 2.0f * s);
+            }
+            else
+            {
+                dl->AddRectFilled(s0, s1, IM_COL32(0x24, 0x24, 0x29, 255), 2.0f * s);
+                dl->AddRectFilled(panel.P(mx0 + 2, top + 1), panel.P(mx1 - 2, top + 2), IM_COL32(0x30, 0x30, 0x36, 255));
+            }
+        }
+        dl->AddRect(a, b, colourWithAlpha(colour, selected ? 1.0f : 0.5f), 5.0f * s, 0, (selected ? 2.5f : 1.5f) * s);
+        const float px0 = x0 + 6, px1 = x1 - 6, py0 = y1 - 30, py1 = y1 - 5;
+        const ImVec2 p0 = panel.P(px0, py0), p1 = panel.P(px1, py1);
+        gradientRect(dl, p0, p1, 4.0f * s, p0, ImVec2(p0.x, p1.y), IM_COL32(0x0A, 0x0A, 0x0A, 255),
+                     IM_COL32(0x1A, 0x1A, 0x1A, 255));
+        dl->AddRect(p0, p1, colourWithAlpha(colour, 0.5f), 4.0f * s, 0, 1.0f * s);
+        char text[24];
+        std::snprintf(text, sizeof(text), "%.1f dB", static_cast<double>(m.shownDb));
+        const float cx = 0.5f * (px0 + px1), cy = 0.5f * (py0 + py1);
+        textCentred(dl, cx + 1, cy + 1, 15.0f, IM_COL32(0, 0, 0, 128), text, true);
+        textCentred(dl, cx, cy, 15.0f, IM_COL32_WHITE, text, true);
+    }
+
+    // A crossover handle between two band meters (CrossoverFader): a track in the two bands' colours and a grip on
+    // a logarithmic frequency axis. Drag up to raise the frequency (the whole travel spans the control's range);
+    // a double-click returns the default.
+    void crossoverFader(ImDrawList* dl, uint32_t p, float centreX, float top, float bottom, ImU32 lowColour,
+                        ImU32 highColour)
+    {
+        const float s = panel.scale();
+        const float minHz = plainValueForHost(p, hostMinimum(p)), maxHz = plainValueForHost(p, hostMaximum(p));
+        const float trackTop = top, trackBottom = bottom - 22.0f;
+        ImGui::PushID(static_cast<int>(p));
+        ImGui::SetCursorScreenPos(panel.P(centreX - 35.0f, top));
+        ImGui::InvisibleButton("##crossover", ImVec2(70.0f * s, (bottom - top) * s));
+        ImGui::PopID();
+        if (ImGui::IsItemActivated())
+        {
+            editParameter(p, true);
+            draggedCrossover = p;
+            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) setParam(p, hostDefaultValue(p));
+            crossoverDragPosition = multicompp::ui_detail::crossoverFaderPosition(
+                plainValueForHost(p, values[p]), minHz, maxHz);
+        }
+        if (draggedCrossover == p) draggedCrossoverStillDrawn = true;
+        const float deltaY = ImGui::GetIO().MouseDelta.y / s;
+        if (ImGui::IsItemActive() && deltaY != 0.0f)
+        {
+            // CrossoverFader::mouseDrag: the travel's height in pixels spans the whole logarithmic range.
+            crossoverDragPosition = std::clamp(crossoverDragPosition - deltaY / (trackBottom - (trackTop + 4.0f)),
+                                               0.0f, 1.0f);
+            setParam(p, hostValueForPlain(p, multicompp::ui_detail::crossoverFaderFrequency(crossoverDragPosition,
+                                                                                            minHz, maxHz)));
         }
         if (ImGui::IsItemDeactivated())
         {
@@ -3124,6 +4017,202 @@ private:
             // next refresh adopts whatever ordering the DSP settled on.
             if (draggedCrossover == p) draggedCrossover = kNoCrossover;
         }
+        const bool hot = ImGui::IsItemHovered() || ImGui::IsItemActive();
+        dl->AddRectFilled(panel.P(centreX - 6, trackTop), panel.P(centreX + 6, trackBottom),
+                          IM_COL32(0x1A, 0x1A, 0x1A, 255), 4.0f * s);
+        const ImVec2 g0 = panel.P(centreX - 4, trackTop + 2), g1 = panel.P(centreX + 4, trackBottom - 2);
+        gradientRect(dl, g0, g1, 3.0f * s, g0, ImVec2(g0.x, g1.y), colourWithAlpha(highColour, 0.3f),
+                     colourWithAlpha(lowColour, 0.3f));
+        const float hz = plainValueForHost(p, values[p]);
+        // The grip's travel is inset by half its height, so it stays inside the fader at either end.
+        const float travelTop = trackTop + 9.0f, travelBottom = trackBottom - 9.0f;
+        const float gripY = travelBottom - multicompp::ui_detail::crossoverFaderPosition(hz, minHz, maxHz)
+                                               * (travelBottom - travelTop);
+        const float gx0 = centreX - 13.0f, gy0 = gripY - 9.0f;
+        dl->AddRectFilled(panel.P(gx0 + 1, gy0 + 2), panel.P(gx0 + 27, gy0 + 20), IM_COL32(0, 0, 0, 102), 4.0f * s);
+        const ImU32 grip = hot ? kDigitalCyan : IM_COL32(0x40, 0x40, 0x50, 255);
+        const ImVec2 t0 = panel.P(gx0, gy0), t1 = panel.P(gx0 + 26, gy0 + 18);
+        gradientRect(dl, t0, t1, 4.0f * s, t0, ImVec2(t0.x, t1.y), colourBrighter(grip, 0.3f), colourDarker(grip, 0.2f));
+        for (int i = -1; i <= 1; ++i)
+        {
+            const float y = gripY + 4.0f * static_cast<float>(i);
+            dl->AddRectFilled(panel.P(gx0 + 6, y), panel.P(gx0 + 20, y + 1), IM_COL32(255, 255, 255, 128));
+        }
+        dl->AddRect(t0, t1, hot ? kDigitalCyan : IM_COL32(255, 255, 255, 77), 4.0f * s, 0, 1.5f * s);
+        if (hot)
+        {
+            const ImU32 arrow = colourWithAlpha(kDigitalCyan, 0.8f);
+            dl->AddTriangleFilled(panel.P(centreX, trackTop - 2), panel.P(centreX + 5, trackTop + 5),
+                                  panel.P(centreX - 5, trackTop + 5), arrow);
+            dl->AddTriangleFilled(panel.P(centreX, trackBottom + 2), panel.P(centreX - 5, trackBottom - 5),
+                                  panel.P(centreX + 5, trackBottom - 5), arrow);
+        }
+        char text[24];
+        if (hz >= 1000.0f)
+            std::snprintf(text, sizeof(text), "%.1f kHz", static_cast<double>(hz / 1000.0f));
+        else
+            std::snprintf(text, sizeof(text), "%d Hz", static_cast<int>(hz));
+        textCentred(dl, centreX, bottom - 10.0f, 12.0f, hot ? kDigitalCyan : IM_COL32(255, 255, 255, 230), text, true);
+    }
+
+    void drawMultiband(ImDrawList* dl)
+    {
+        const float s = panel.scale();
+        const float dt = ImGui::GetIO().DeltaTime;
+        drawModernBody(dl, IM_COL32(13, 13, 13, 255), IM_COL32(0x2A, 0x2A, 0x2A, 255), "MULTI-COMP", kModernText,
+                       "4-Band Multiband Compression");
+        drawLevelMeters(dl, dt);
+
+        constexpr float panelLeft = 137.5f, panelRight = 982.5f, panelTop = 109.0f, panelBottom = 610.0f;
+        const ImVec2 b0 = panel.P(panelLeft, faceY(panelTop)), b1 = panel.P(panelRight, faceY(panelBottom));
+        gradientRect(dl, b0, b1, 0.0f, b0, ImVec2(b0.x, b1.y), IM_COL32(0x24, 0x24, 0x2E, 255),
+                     IM_COL32(0x1A, 0x1A, 0x22, 255));
+
+        bool enabled[4] = {};
+        int enabledCount = 0;
+        for (int b = 0; b < 4; ++b)
+        {
+            enabled[b] = values[static_cast<size_t>(multicompp::kBandBase + b * 8 + 7)] > 0.5f;
+            enabledCount += enabled[b] ? 1 : 0;
+            multicompp::ui_detail::advanceBandGrMeter(bandGrMeters[static_cast<size_t>(b)],
+                                                     meter(kMeterBand0 + static_cast<uint32_t>(b)), dt);
+        }
+        const unsigned shown = multicompp::ui_detail::multibandShownBands(enabled);
+        int slots[4] = {};
+        int slotCount = 0;
+        for (int b = 0; b < 4; ++b)
+            if ((shown & (1u << b)) != 0) slots[slotCount++] = b;
+        if ((shown & (1u << selectedBand)) == 0) selectedBand = slots[0];
+
+        // Enable strip: all four bands at fixed quarters, so a hidden band stays reachable; the last two enabled
+        // bands are locked on.
+        constexpr float sectionLeft = 181.25f, sectionRight = 976.25f;
+        constexpr float stripWidth = (sectionRight - sectionLeft) / 4.0f;
+        for (int b = 0; b < 4; ++b)
+        {
+            const uint32_t enable = static_cast<uint32_t>(multicompp::kBandBase + b * 8 + 7);
+            const bool locked = enabled[b] && enabledCount <= 2;
+            char tooltip[64];
+            if (locked)
+                std::snprintf(tooltip, sizeof(tooltip), "Multiband requires at least 2 enabled bands");
+            else
+                std::snprintf(tooltip, sizeof(tooltip), "Enable / disable %s band", bandName(b));
+            ImGui::PushID(b);
+            const float x0 = sectionLeft + static_cast<float>(b) * stripWidth;
+            if (juceTextButton(dl, "##mb_enable", x0 + 2.5f, faceY(116.25f), x0 + stripWidth - 2.5f, faceY(141.75f),
+                               bandName(b), enabled[b] ? kBandColors[b] : IM_COL32(0x2A, 0x2A, 0x2A, 255),
+                               enabled[b] ? IM_COL32_BLACK : IM_COL32(0x88, 0x88, 0x88, 255), tooltip, !locked))
+                setHostValue(enable, enabled[b] ? 0.0f : 1.0f);
+            ImGui::PopID();
+        }
+        textCentred(dl, 0.5f * (sectionLeft + sectionRight), faceY(157.75f), 13.75f, IM_COL32(255, 255, 255, 179),
+                    "GAIN REDUCTION", true);
+
+        // dB scale beside the meters.
+        constexpr float meterTop = 215.25f, meterBottom = 418.75f;
+        for (const float db : {0.0f, -3.0f, -6.0f, -10.0f, -15.0f, -20.0f})
+        {
+            const float y = meterTop + (-db / 20.0f) * (meterBottom - meterTop);
+            dl->AddRectFilled(panel.P(169.0f, faceY(y)), panel.P(175.0f, faceY(y) + 1), IM_COL32(255, 255, 255, 128));
+            char text[8];
+            std::snprintf(text, sizeof(text), "%d", static_cast<int>(db));
+            panel.text(dl, 167.0f, faceY(y) - 5.625f, 11.25f, IM_COL32(255, 255, 255, 179), text, 1);
+        }
+
+        // Band slots: only the bands shown share the width.
+        const float slotWidth = (sectionRight - sectionLeft) / static_cast<float>(slotCount);
+        for (int slot = 0; slot < slotCount; ++slot)
+        {
+            const int band = slots[slot];
+            const float sx = sectionLeft + static_cast<float>(slot) * slotWidth;
+            dl->AddRectFilled(panel.P(sx + 1, faceY(172.75f)), panel.P(sx + slotWidth - 1, faceY(448.75f)),
+                              colourWithAlpha(kBandColors[band], band == selectedBand ? 0.08f : 0.03f));
+        }
+        for (int slot = 0; slot < slotCount; ++slot)
+        {
+            const int band = slots[slot];
+            const uint32_t base = static_cast<uint32_t>(multicompp::kBandBase + band * 8);
+            const float sx = sectionLeft + static_cast<float>(slot) * slotWidth;
+            const float mx0 = sx + 8.0f, mx1 = sx + slotWidth - 8.0f;
+            constexpr float buttonTop = 172.75f, buttonBottom = 205.25f, small = 30.0f, gap = 3.75f;
+            const float tabRight = mx1 - 2.0f * (small + gap);
+            ImGui::PushID(band);
+            if (juceTextButton(dl, "##mb_tab", mx0, faceY(buttonTop), tabRight, faceY(buttonBottom), bandName(band),
+                               band == selectedBand ? kBandColors[band] : colourWithAlpha(kBandColors[band], 0.3f),
+                               IM_COL32_WHITE, nullptr))
+                selectedBand = band;
+            char tooltip[48];
+            const bool bypassed = values[base + 5] > 0.5f, soloed = values[base + 6] > 0.5f;
+            std::snprintf(tooltip, sizeof(tooltip), "Bypass %s band", bandName(band));
+            if (juceTextButton(dl, "##mb_bypass", tabRight + gap, faceY(buttonTop), tabRight + gap + small,
+                               faceY(buttonBottom), "B",
+                               bypassed ? IM_COL32(0xFF, 0x8C, 0x42, 255) : IM_COL32(0x3A, 0x3A, 0x3A, 255),
+                               bypassed ? IM_COL32_BLACK : IM_COL32(0xAA, 0xAA, 0xAA, 255), tooltip))
+                setHostValue(base + 5, bypassed ? 0.0f : 1.0f);
+            std::snprintf(tooltip, sizeof(tooltip), "Solo %s band", bandName(band));
+            if (juceTextButton(dl, "##mb_solo", mx1 - small, faceY(buttonTop), mx1, faceY(buttonBottom), "S",
+                               soloed ? IM_COL32(0xFF, 0xCC, 0x00, 255) : IM_COL32(0x3A, 0x3A, 0x3A, 255),
+                               soloed ? IM_COL32_BLACK : IM_COL32(0xAA, 0xAA, 0xAA, 255), tooltip))
+                setHostValue(base + 6, soloed ? 0.0f : 1.0f);
+            ImGui::PopID();
+            drawBandMeter(dl, band, mx0, faceY(meterTop), mx1, faceY(meterBottom), band == selectedBand);
+        }
+        // A crossover handle on each boundary between neighbouring shown bands: the crossover below the upper band.
+        for (int slot = 0; slot + 1 < slotCount; ++slot)
+        {
+            const int boundary = slots[slot + 1] - 1;
+            crossoverFader(dl, P_X1 + static_cast<uint32_t>(boundary),
+                           sectionLeft + static_cast<float>(slot + 1) * slotWidth, faceY(meterTop), faceY(446.25f),
+                           kBandColors[boundary], kBandColors[boundary + 1]);
+        }
+
+        // The selected band's tab, between the meters and the knobs.
+        const ImU32 bandColour = kBandColors[selectedBand];
+        constexpr float tagLeft = 472.5f, tagRight = 647.5f, tagTop = 457.5f, tagBottom = 487.5f, corner = 6.25f;
+        dl->AddRectFilled(panel.P(tagLeft + 2, faceY(tagTop + 2)), panel.P(tagRight + 2, faceY(tagBottom + 2)),
+                          IM_COL32(0, 0, 0, 102), corner * s);
+        const ImVec2 t0 = panel.P(tagLeft, faceY(tagTop)), t1 = panel.P(tagRight, faceY(tagBottom));
+        gradientRect(dl, t0, t1, corner * s, t0, ImVec2(t0.x, t1.y), IM_COL32(0x2E, 0x2E, 0x2E, 255),
+                     IM_COL32(0x22, 0x22, 0x22, 255));
+        dl->AddRectFilled(panel.P(tagLeft, faceY(tagBottom - corner)), panel.P(tagRight, faceY(tagBottom)), bandColour,
+                          2.0f * s);
+        dl->AddRect(t0, t1, colourWithAlpha(bandColour, 0.6f), corner * s, 0, 1.5f * s);
+        char tag[24];
+        std::snprintf(tag, sizeof(tag), "%s Band", bandName(selectedBand));
+        textCentred(dl, 0.5f * (tagLeft + tagRight), faceY(0.5f * (tagTop + tagBottom - corner)), 16.25f, IM_COL32_WHITE,
+                    tag, true);
+
+        // Seven knobs: the selected band's five, then the multiband output and mix.
+        const uint32_t base = static_cast<uint32_t>(multicompp::kBandBase + selectedBand * 8);
+        constexpr float knobY = 539.4f, knobR = 23.375f, nameY = 500.0f, valueY = 573.75f;
+        const auto knobAt = [&](const char* id, uint32_t p, int col, const char* name, int decimals, const char* suffix,
+                                bool applicable) {
+            const float x = panelLeft + (panelRight - panelLeft) / 7.0f * (static_cast<float>(col) + 0.5f);
+            modernKnob(dl, id, p, x, faceY(knobY), knobR, name, faceY(nameY), 11.0f, IM_COL32(255, 255, 255, 204),
+                       decimals, suffix, faceY(valueY), applicable);
+        };
+        knobAt("mb_thr", base, 0, "Threshold", 1, " dB", true);
+        knobAt("mb_ratio", base + 1, 1, "Ratio", 1, ":1", true);
+        knobAt("mb_att", base + 2, 2, "Attack", 1, " ms", true);
+        knobAt("mb_rel", base + 3, 3, "Release", 0, " ms", true);
+        knobAt("mb_makeup", base + 4, 4, "Makeup", 1, " dB", true);
+        knobAt("mb_out", P_MB_OUT, 5, "Output", 1, " dB", values[P_AUTO_MAKEUP] <= 0.5f);
+        knobAt("mb_mix", P_MB_MIX, 6, "Mix", 0, "%", true);
+    }
+
+    // Clears the Digital and Multiband faces' meters when one of them comes into view, so nothing replays from the
+    // last time it was shown.
+    void resetModernFaces()
+    {
+        inputLadder.reset();
+        outputLadder.reset();
+        inputReadout = {};
+        outputReadout = {};
+        digitalVu = {};
+        grHistory.fill(0.0f);
+        grHistoryWrite = 0;
+        grHistoryClock = 0.0f;
+        bandGrMeters = {};
     }
 
     float meter(uint32_t p) const

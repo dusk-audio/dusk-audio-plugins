@@ -809,17 +809,17 @@ void testFetFaceplateContract()
         && fetEnd != std::string::npos
         && source.find("drawOptoMeter(dl,", fetStart) < fetEnd
         && source.find("void drawFetMeter(") == std::string::npos
-        && source.find("if (mode == 4 || mode == 6)\n            drawMeter(") != std::string::npos;
-    // Multiband meters each band in its strip. Its master meter, drawn at the
-    // right edge, sat under the crossover panel and the HIGH strip.
+        && source.find("if (mode == 4)\n            drawMeter(") != std::string::npos;
+    // Multiband meters each band in its own meter. A master meter, drawn at the
+    // left edge, would sit under the INPUT ladder.
     const size_t multibandStart = source.find("void drawMultiband(");
-    const size_t multibandEnd = source.find("void crossover(", multibandStart);
+    const size_t multibandEnd = source.find("void resetModernFaces(", multibandStart);
     const std::string multiband = multibandStart != std::string::npos && multibandEnd != std::string::npos
         ? source.substr(multibandStart, multibandEnd - multibandStart) : std::string();
     reviewCheck(source.find("\"MASTER GR\"") == source.rfind("\"MASTER GR\"")
-                    && multiband.find("drawMeter(") != std::string::npos
+                    && multiband.find("drawBandMeter(") != std::string::npos
                     && multiband.find("kMeterMaster") == std::string::npos,
-                "Multiband draws no master meter under its crossover panel");
+                "Multiband meters each band and draws no master meter");
     const bool hasFiveRatioButtons = source.find("drawFetRatioButtons(dl") != std::string::npos
         && source.find("visualOrder") != std::string::npos
         && source.find("row < 5") != std::string::npos;
@@ -1020,10 +1020,11 @@ void testOptoFaceplateContract()
                 && multicompp::ui_detail::designHeightForMode(4.4f) == 486.0f
                 && multicompp::ui_detail::designHeightForMode(4.6f) == 380.0f
                 && multicompp::ui_detail::designHeightForMode(5.4f) == 380.0f
-                && multicompp::ui_detail::designHeightForMode(5.6f) == 486.0f
-                && multicompp::ui_detail::designHeightForMode(7.0f) == 486.0f,
-            "Opto, vintage FET, VCA, Bus and Studio VCA use rack-height canvases while the other modes keep the full "
-            "canvas");
+                && multicompp::ui_detail::designHeightForMode(5.6f) == 640.0f
+                && multicompp::ui_detail::designHeightForMode(6.4f) == 640.0f
+                && multicompp::ui_detail::designHeightForMode(7.0f) == 640.0f,
+            "Opto, vintage FET, VCA, Bus and Studio VCA use rack-height canvases, Studio FET the full canvas, and "
+            "Digital and Multiband the original editor's height");
     {
         using Vca = multicompp::ui_detail::VcaFaceplateLayout;
         const float vcaAspect = multicompp::ui_detail::vcaFaceplateAspect();
@@ -1542,6 +1543,89 @@ void testHostNamesAndTaperedText()
                 textOf(fetAttack, 0.2f).c_str(), textOf(crossover3, 8000.0f).c_str(), textOf(sidechainHp, 0.0f).c_str());
 }
 
+// The Digital and Multiband faces keep the original editor's display timing (EnhancedCompressorEditor::updateMeters,
+// AnalogVUMeter::timerCallback, MultibandCompressorPanel::setBandGainReduction, CrossoverFader), stepped on fixed
+// ticks so a 144 Hz display moves them as a 60 Hz one does.
+void testModernFaceTiming()
+{
+    namespace ui = multicompp::ui_detail;
+    const auto run = [](auto& state, auto advance, float value, float seconds, float fps) {
+        const int frames = static_cast<int>(std::lround(seconds * fps));
+        for (int i = 0; i < frames; ++i) advance(state, value, 1.0f / fps);
+    };
+
+    // Level readout: a peak shows at the next 0.2 s update, then the number falls 1.2 dB an update, never below -60.
+    ui::LevelReadout readout;
+    ui::advanceLevelReadout(readout, -6.0f, 0.1f);
+    const bool waitsForUpdate = readout.shownDb == -60.0f;
+    ui::advanceLevelReadout(readout, -40.0f, 0.1f);
+    const bool showsPeak = readout.shownDb == -6.0f;
+    run(readout, ui::advanceLevelReadout, -40.0f, 1.0f, 10.0f);
+    const bool falls = std::abs(readout.shownDb - (-6.0f - 5.0f * 1.2f)) < 1.0e-4f;
+    run(readout, ui::advanceLevelReadout, -100.0f, 30.0f, 10.0f);
+    const bool floors = readout.shownDb == -60.0f;
+    require(waitsForUpdate && showsPeak && falls && floors,
+            "Digital/Multiband readouts jump to the peak each 0.2 s and fall 1.2 dB an update to -60 dB");
+
+    // VU needle: rests at 0 dB, moves in the same 60 Hz steps at any frame rate (mid-swing at 144 Hz it sits exactly
+    // where the 60 Hz needle sat after the same number of steps), settles on the reading, and its peak mark holds
+    // the deepest reading for 2 s.
+    const ui::VuNeedle rest{};
+    ui::VuNeedle at144;
+    run(at144, ui::advanceVuNeedle, -10.0f, 0.1f, 144.0f);
+    ui::VuNeedle at60;
+    bool sameSteps = false;
+    for (int i = 0; i < 12 && !sameSteps; ++i)
+    {
+        ui::advanceVuNeedle(at60, -10.0f, 1.0f / 60.0f);
+        sameSteps = at60.position == at144.position && at60.velocity == at144.velocity;
+    }
+    const bool midSwing = std::abs(at144.position - 10.0f / 23.0f) > 0.02f;
+    run(at60, ui::advanceVuNeedle, -10.0f, 1.0f, 60.0f);
+    const bool settles = std::abs(rest.position - 20.0f / 23.0f) < 1.0e-6f && sameSteps && midSwing
+        && std::abs(at60.position - 10.0f / 23.0f) < 0.005f;
+    ui::VuNeedle peak;
+    run(peak, ui::advanceVuNeedle, -15.0f, 0.5f, 60.0f);
+    run(peak, ui::advanceVuNeedle, 0.0f, 1.0f, 60.0f);
+    const bool holds = peak.peakDb == -15.0f;
+    run(peak, ui::advanceVuNeedle, 0.0f, 1.0f, 60.0f);
+    const bool releases = peak.peakDb == 0.0f && std::abs(peak.position - 20.0f / 23.0f) < 0.005f;
+    require(settles && holds && releases,
+            "Digital VU needle settles at the original's rate at any frame rate and holds its peak mark for 2 s");
+
+    // Band meter, per 30 Hz step: half way down to a deeper reading, 15 % back up, a peak held 30 steps then 5 %
+    // a step.
+    constexpr float step = 1.0f / 30.0f;
+    ui::BandGrMeter band;
+    ui::advanceBandGrMeter(band, -10.0f, step);
+    const bool attack = std::abs(band.shownDb + 5.0f) < 1.0e-5f && band.peakDb == band.shownDb;
+    ui::advanceBandGrMeter(band, 0.0f, step);
+    const bool release = std::abs(band.shownDb + 4.25f) < 1.0e-5f;
+    for (int i = 0; i < 29; ++i) ui::advanceBandGrMeter(band, 0.0f, step);
+    const bool peakHeld = band.peakDb == -5.0f;
+    ui::advanceBandGrMeter(band, 0.0f, step);
+    const bool peakFalls = std::abs(band.peakDb + 4.75f) < 1.0e-5f;
+    require(attack && release && peakHeld && peakFalls,
+            "Multiband band meters keep the original's 30 Hz attack, release and peak hold");
+
+    // Crossover handles travel a logarithmic axis between the control's limits.
+    const bool logAxis = std::abs(ui::crossoverFaderPosition(20.0f, 20.0f, 500.0f)) < 1.0e-6f
+        && std::abs(ui::crossoverFaderPosition(500.0f, 20.0f, 500.0f) - 1.0f) < 1.0e-6f
+        && std::abs(ui::crossoverFaderPosition(100.0f, 20.0f, 500.0f) - 0.5f) < 1.0e-5f
+        && std::abs(ui::crossoverFaderFrequency(0.5f, 2000.0f, 16000.0f) - std::sqrt(2000.0f * 16000.0f)) < 0.01f
+        && std::abs(ui::crossoverFaderPosition(ui::crossoverFaderFrequency(0.3f, 200.0f, 5000.0f), 200.0f, 5000.0f)
+                    - 0.3f) < 1.0e-5f;
+    require(logAxis, "Multiband crossover handles map their travel to frequency logarithmically");
+
+    // The face shows at least two bands, repaired as the DSP repairs its snapshot (lowest disabled bands first).
+    const bool none[4] = {false, false, false, false}, highOnly[4] = {false, false, false, true};
+    const bool all[4] = {true, true, true, true}, outer[4] = {true, false, false, true};
+    require(ui::multibandShownBands(none) == 0x3u && ui::multibandShownBands(highOnly) == 0x9u
+                && ui::multibandShownBands(all) == 0xFu && ui::multibandShownBands(outer) == 0x9u,
+            "Multiband shows the enabled bands, never fewer than the two the DSP plays");
+    std::puts("Digital/Multiband faces: original readout, VU, band-meter and crossover timing");
+}
+
 int main(int argc, char** argv)
 {
     if (argc == 2 && std::strcmp(argv[1], "--fet-ui") == 0)
@@ -1575,6 +1659,7 @@ int main(int argc, char** argv)
     testOptoReferenceDisplayAndNoiseDefault();
     testHostNamesAndTaperedText();
     testEverySwitchHasHostLabels();
+    testModernFaceTiming();
     std::puts("Multi-Comp plugin-layer tests: PASS");
     return 0;
 }

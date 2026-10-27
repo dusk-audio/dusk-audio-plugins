@@ -86,6 +86,14 @@ public:
     float gainReductionNeedle() const noexcept { return grNeedle.levelDb(); }
     float vcaGainReductionNeedle() const noexcept { return vcaGrNeedle.levelDb(); }
     float studioVcaInputLevel() const noexcept { return studioVcaInputMeter.levelDb(); }
+    float inputChannelLevel(int channel) const noexcept
+    {
+        return inputChannelDb[channel == 1 ? 1 : 0].load(std::memory_order_relaxed);
+    }
+    float outputChannelLevel(int channel) const noexcept
+    {
+        return outputChannelDb[channel == 1 ? 1 : 0].load(std::memory_order_relaxed);
+    }
     float studioVcaOutputLevel() const noexcept { return studioVcaOutputMeter.levelDb(); }
     float busMeterReading() const noexcept { return dsp.getBusMeterReading(); }
     float busFadePosition() const noexcept { return dsp.getBusFadePosition(); }
@@ -293,6 +301,7 @@ protected:
     {
         dsp.reset(); outputVu.reset(); grNeedle.reset(); vcaGrNeedle.reset();
         studioVcaInputMeter.reset(); studioVcaOutputMeter.reset();
+        resetChannelLevels();
     }
     void sampleRateChanged(double sr) override { prepare(sr, getBufferSize()); }
     void bufferSizeChanged(uint32_t bs) override { prepare(getSampleRate(), bs); }
@@ -328,6 +337,13 @@ protected:
         if (studioVcaMeters)
             for (int ch = 0; ch < activeChannels; ++ch)
                 studioVcaInputPeak = duskaudio::blockAbsPeak(inputs[ch], static_cast<int>(frames), studioVcaInputPeak);
+        // The Digital and Multiband faces' INPUT and OUTPUT ladders read each channel's block peak (those faces only).
+        const bool channelMeters = mode == static_cast<long>(duskaudio::MultiCompMode::Digital)
+            || mode == static_cast<long>(duskaudio::MultiCompMode::Multiband);
+        float channelInputPeak[2] = {0.0f, 0.0f};
+        if (channelMeters)
+            for (int ch = 0; ch < activeChannels; ++ch)
+                channelInputPeak[ch] = duskaudio::blockAbsPeak(inputs[ch], static_cast<int>(frames), 0.0f);
         const int sidechainWidth = values[static_cast<size_t>(multicompp::ParamId::ExternalSidechain)].load(std::memory_order_relaxed) > 0.5f
             ? multicompp::plugin_detail::externalSidechainWidth(activeInputs, activeChannels, inputs) : 0;
         if (sidechainWidth > 0)
@@ -354,12 +370,22 @@ protected:
             vcaGrNeedle.snap(gainReduction);
             studioVcaInputMeter.reset();
             studioVcaOutputMeter.reset();
+            resetChannelLevels();
         }
         else
         {
             grNeedle.process(gainReduction, static_cast<int>(frames));
             vcaGrNeedle.process(gainReduction, static_cast<int>(frames));
         }
+        if (channelMeters)
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                // A mono instance shows its one channel on both columns.
+                const int source = std::min(ch, activeChannels - 1);
+                inputChannelDb[ch].store(peakDb(channelInputPeak[source]), std::memory_order_relaxed);
+                outputChannelDb[ch].store(peakDb(duskaudio::blockAbsPeak(outputs[source], static_cast<int>(frames), 0.0f)),
+                                          std::memory_order_relaxed);
+            }
         if (studioVcaMeters)
         {
             float outputPeak = 0.0f;
@@ -424,6 +450,17 @@ private:
     multicompp::GainReductionNeedle grNeedle{multicompp::kVuNeedle};        // Opto and FET faces
     multicompp::GainReductionNeedle vcaGrNeedle{multicompp::kVcaNeedle};    // VCA face
     multicompp::StudioVcaLevelMeter studioVcaInputMeter, studioVcaOutputMeter;   // Studio VCA face
+    // Digital and Multiband faces: each channel's last block peak in dB (-60 floor), as the original editor read them.
+    std::atomic<float> inputChannelDb[2] = {{-60.0f}, {-60.0f}}, outputChannelDb[2] = {{-60.0f}, {-60.0f}};
+    static float peakDb(float peak) noexcept { return peak > 1.0e-5f ? duskaudio::gainToDecibels(peak) : -60.0f; }
+    void resetChannelLevels() noexcept
+    {
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            inputChannelDb[ch].store(-60.0f, std::memory_order_relaxed);
+            outputChannelDb[ch].store(-60.0f, std::memory_order_relaxed);
+        }
+    }
     std::vector<float> monoSidechain;   // run(): a mono instance's key from a stereo sidechain, its mid
     // Formats other than AU always present the full input set, and ioChanged()
     // is only called where a host narrows it, so the declared count is the
@@ -463,6 +500,14 @@ float multiCompGetGainReductionNeedle(void* p) noexcept { return p ? asMultiComp
 float multiCompGetVcaGainReductionNeedle(void* p) noexcept { return p ? asMultiComp(p)->vcaGainReductionNeedle() : 0.0f; }
 float multiCompGetStudioVcaInputLevel(void* p) noexcept { return p ? asMultiComp(p)->studioVcaInputLevel() : -120.0f; }
 float multiCompGetStudioVcaOutputLevel(void* p) noexcept { return p ? asMultiComp(p)->studioVcaOutputLevel() : -120.0f; }
+float multiCompGetInputChannelLevel(void* p, int channel) noexcept
+{
+    return p ? asMultiComp(p)->inputChannelLevel(channel) : -60.0f;
+}
+float multiCompGetOutputChannelLevel(void* p, int channel) noexcept
+{
+    return p ? asMultiComp(p)->outputChannelLevel(channel) : -60.0f;
+}
 float multiCompGetBusMeterReading(void* p) noexcept { return p ? asMultiComp(p)->busMeterReading() : 0.0f; }
 float multiCompGetBusFadePosition(void* p) noexcept { return p ? asMultiComp(p)->busFadePosition() : 0.0f; }
 float multiCompGetParameterValue(void* p, uint32_t index) noexcept
