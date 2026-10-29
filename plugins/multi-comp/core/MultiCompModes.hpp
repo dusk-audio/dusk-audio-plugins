@@ -329,9 +329,10 @@ inline constexpr bool kOptoLinkAtDriveDefault = true;
 // (fbRatioExponent) acts only away from 4:1; the other nine act at every feedback
 // ratio (4:1 to 20:1; All does not run the feedback loop). So 8:1 to 20:1 move too (a few hundredths of a dB on a burst train); the probe groups
 // and the music tiers cover every ratio: 0 cells over 1 dB.
-// [81] fbSloAttackScale (0 = none), [82] fbSloLoadDb: an SLO detent at the Attack knob's counter-clockwise stop
-// (position exactly 0): the loop's attack time times the scale, and the threshold raised by the load, as
-// fbAttackLoadDb raises it at the clockwise end. FET BLACK has none (0); FET BLUE's are in kFetBlueDynamicsDefaults.
+// [81] fbSloAttackScale, [82] fbSloLoadDb: retired 2026-10-27. The SLO detent at the Attack knob's counter-clockwise
+// stop (position exactly 0) is a voice property now, per Ratio position (FetVoice::sloAttackScales, sloLoadDb): the
+// loop's attack time times the scale, and the threshold raised by the load, as fbAttackLoadDb raises it at the
+// clockwise end. The two slots keep the 4:1 values they were fitted as and are not read.
 // [83] fbTailInputLimit (0 = off), [84] fbTailInputReleaseSeconds: the tail population charges no further than its
 // settled size at the reduction the signal's own level settles to, read through the voice's static law from a peak
 // follower on the detector's magnitude (instant up, down in [84]). Read off the fast charge alone, a tail still below
@@ -512,10 +513,11 @@ struct FetDynamicsParams
 //   (residual 0.9e-3 of a 7.0e-3 transient; through the Butterworth 3.4e-3, through both 6.7e-3): it is C4, behind
 //   the gain element and the amplifier, and the Butterworth sits ahead.
 // - [78] fbStaticK3KnobShare 0: FET BLACK's measured static cubic belongs to its colour stage (FetVoice).
-// - [81] fbSloAttackScale 3.988, [82] fbSloLoadDb 1.789: the Attack knob's SLO detent (its counter-clockwise stop),
-//   a slower attack and a raised threshold, fitted to the reference's Attack-0 bursts alone (4:1, Input .5; tools
-//   fet_ae/slo_fit.py): attack / hold / release 0.54 / 0.13 / 0.45 dB rms (6.4 dB worst frame without the detent,
-//   1.4 dB rms hold with the attack scale alone: the reference settles 1.3 dB shallower at SLO).
+// - [81] fbSloAttackScale 3.988, [82] fbSloLoadDb 1.789 (retired, now kFetBlueVoice's 4:1 SLO entries): the Attack
+//   knob's SLO detent (its counter-clockwise stop), a slower attack and a raised threshold, fitted to the reference's
+//   Attack-0 bursts alone (4:1, Input .5; tools fet_ae/slo_fit.py): attack / hold / release 0.54 / 0.13 / 0.45 dB rms
+//   (6.4 dB worst frame without the detent, 1.4 dB rms hold with the attack scale alone: the reference settles 1.3 dB
+//   shallower at SLO).
 // - [83] fbTailInputLimit on, [84] 0.036 s: the reference never deepens its reduction after a burst ends (171 ms of
 //   1 kHz at 0.8 peak, Input .5, every single button, Release 0 / '5' / 1; tools fet_ae/release0.py), where the tail
 //   still filling from the fast charge deepened FET BLUE's by up to 1.2 dB at Release 0; nor does it hold its
@@ -590,6 +592,18 @@ struct FetVoice
     const float* amplifierBreaks;                  // amplifierPieces + 1
     const std::array<float, 4>* amplifierCubics;
     float amplifierReferenceDb;
+    // The Release knob's load toward its fast end, per position: the threshold raise per decade the knob's release
+    // factor sits below its value at the nominal position (faster), and the tip reference's share there
+    // (fbTipReferenceShare times this). 0 / 1: no load, the share as is. Only read while fbTipReferenceShare is on.
+    std::array<float, kFetVoiceRatios> fastReleaseLoadDb, fastReleaseTipShares;
+    // The Attack knob's SLO detent per position, at Attack position 0: the scale on the loop's attack time (0: no
+    // detent) and the threshold raise; and whether the tip balance is told the knob's charge without the detent's
+    // scale, so the slower charge's larger tip overshoot is the loop's own (it grows with depth; a threshold raise
+    // does not).
+    std::array<float, kFetVoiceRatios> sloAttackScales, sloLoadDb;
+    std::array<bool, kFetVoiceRatios> sloTipKnobCharge;
+    // The turn-on law's bias at the SLO detent, in place of fbTurnOnBiasDb times the Attack position squared (0 there).
+    float sloTurnOnBiasDb;
 };
 
 // FET BLACK: Ratio 4:1, 8:1, 12:1, 20:1, All. The settled law collapses onto one input axis whether the level is
@@ -623,7 +637,9 @@ inline constexpr FetVoice kFetBlackVoice{
       0.000000f}},
     39.850671f, 4.360566f,
     0, {{}}, {{}}, 0.0f,
-    0, nullptr, nullptr, 0.0f};
+    0, nullptr, nullptr, 0.0f,
+    {{}}, {{1.0f, 1.0f, 1.0f, 1.0f, 1.0f}},
+    {{}}, {{}}, {{}}, 0.0f};
 
 // FET BLUE's amplifier, behind the gain element and ahead of the Output pot, read off the reference's waveform with
 // the gain element out (Ratio None; tools fet_ae/preamp_curve.py): 1 kHz staircases at Input .375 / .5 / .625 / .75 /
@@ -717,6 +733,40 @@ inline constexpr std::array<std::array<float, 4>, 58> kFetBlueAmplifierCubics{{
 // takes its larger button's, not yet measured.
 // Linear gain per position re 4:1: the first step of every staircase (-60 dBFS) at Input .25 / .375 / .5 / .625
 // agrees within 0.003 dB (tools fet_ae/ratio_gain.py); the pairs sit up to 1.75 dB above the single buttons.
+// Fast-Release load (2026-10-27): at Release 1 the reference's settled law sits shallower than at the nominal
+// position, by 0.9 / 0.8 / 0.55 / 0.17 dB on 1 kHz staircases (moderate depth) and 1.4 / 1.27 / 1.03 / 0.61 dB on
+// 171 ms bursts at 0.8 peak (deep) at 2:1 / 4:1 / 8:1 / 20:1 (tools fet_ae/stairs_release.py). The tip balance
+// referred to the nominal Release gives the deep shift but falls short at moderate depth, where programme sits
+// (Release-1 music read about 1 dB deep at 2:1 and 4:1 on every clip). Each single button's tip share and threshold
+// raise per decade toward the fast end are solved on those two readings (release_load.py fit2; 2:1's share sits at
+// its bound, leaving 0.11 dB on each); each pair takes its larger button's. The music at Release 0 / 1, never
+// fitted, then reads 17 -> 5 of 720 cells over 1 dB (Release 1: 13 -> 1). A trade the owner accepted on 2026-10-27:
+// the probe table keeps its 8 of 65 cells over and gains on attack and hold, but its release rms goes .219 -> .224,
+// all of it in the 4:1 Release-1 probes (the 300 ms hot burst's release, over before, 1.32 -> 1.39).
+// SLO per position (2026-10-27): the reference's detent settles shallower than its Attack .5 law by 1.10 / 1.04 /
+// 0.51 / 0.27 dB at 2:1 / 4:1 / 8:1 / 20:1 (1 kHz staircases), where one 4:1 threshold raise read 0.2-1.2 dB off at
+// the other buttons. 1 and 4 kHz agree within 0.1 dB; depth matters, so each single button's attack scale and
+// threshold raise are one least-squares fit over the staircases and the attack and hold of four bursts (1 / 4 kHz,
+// 0.8 peak and -10 dBFS; tools fet_ae/slo_stairs.py fit3, all FIT captures). 4:1 keeps the constants it was fitted
+// with (slo_fit.py): they hold within 0.23 dB on every new reading, and the joint fit's would cost that fit's table
+// (worst frame 1.77 -> 2.18). Pairs take their larger button's, None the 4:1 values. The music at Attack 0, never
+// fitted, then reads 71 -> 11 of 360 cells over 1 dB (pooled 0.75 -> 0.48); Attack 1 and the nominal are untouched.
+// At 8:1 and 20:1 (and the pairs that take them) the detent's shift grows with depth (20:1 light read +0.59 dB
+// shallow on programme with one threshold raise): there the tip balance is told the knob's charge, not the
+// detent's, so the slower charge's larger tip overshoot is the loop's own, and the refit leaves almost no threshold
+// raise (0.13 / 0 dB; scales 3.87 / 5.48; fit rms 0.155 -> 0.076 and 0.223 -> 0.123; tools fet_ae/slo_tip.py).
+// Attack-0 music then reads 11 -> 6 cells over 1 dB (20:1 light 5 -> 0). At 2:1 and 4:1 the same form fits the
+// tones no better and reads deeper on heavy programme (-0.57 -> -0.66, -0.46 -> -0.62), so they keep the raise.
+// The detent charges without the turn-on's slowing (sloTurnOnBiasDb 1000 dB, far past fbTurnOnDb's 13.3): the
+// turn-on's bias grows with the Attack position squared, so at the detent it slowed every onset from rest, which the
+// SLO scales were fitted on, and on programme, where events arrive with reduction already present and the turn-on
+// share is 1, the detent charged too fast: FET BLUE read 0.34-0.97 dB too deep in the first 50 ms of a step from a
+// compressing bed at SLO, 0.01-0.26 at Attack .5 (tools fet_ae/slo_depth.py). Without the turn-on and refitted on
+// every FIT reading at SLO (staircases, four corners, the depth steps; slo_tip.py fit_depth) the scales are 9.95 /
+// 6.67 / 5.11 / 6.75 and the raises 1.74 / 1.60 / 0.02 / 0 dB at 2:1 / 4:1 / 8:1 / 20:1; the Attack-0 music, never
+// fitted, reads 6 -> 0 of 360 cells over 1 dB (pooled 0.46 -> 0.25, worst 1.31 -> 0.60). 4:1 moves now: slo_fit.py's
+// own table goes attack 0.40 -> 0.25, worst frame 1.77 -> 0.44 / 1.51 -> 0.47, and hold 0.14 -> 0.15 / 0.13 -> 0.16,
+// release 0.06 -> 0.08 rms.
 // Input / Output: both pots are piecewise linear on the same 17 nodes (every 1/64 position lies on the line between
 // its 1/16 neighbours to the 0.01 dB the capture reads; tools fet_ae/tables.py). The Input trim puts its drive at
 // Input .375 where FET BLACK's is (37.940697 = 39.850671 - 1.909974; the laws read -21.30 and -23.209974 dB there),
@@ -748,7 +798,14 @@ inline constexpr FetVoice kFetBlueVoice{
     37.940697f, 4.360566f,
     3, {{40.489922f, 373.68417f, 3357.3923f}}, {{126.97172f, 1118.7278f, 13168.484f}}, 20.9f,
     static_cast<int>(kFetBlueAmplifierCubics.size()), kFetBlueAmplifierBreaks.data(), kFetBlueAmplifierCubics.data(),
-    16.640697f};
+    16.640697f,
+    {{0.0f, 1.62178f, 1.60713f, 0.72379f, 0.14723f, 1.60713f, 0.72379f, 0.14723f, 0.72379f, 0.14723f, 0.14723f}},
+    {{1.0f, 0.0f, 0.0f, 0.54115f, 0.74994f, 0.0f, 0.54115f, 0.74994f, 0.54115f, 0.74994f, 0.74994f}},
+    {{3.98787689f, 9.95360f, 6.66961f, 5.10960f, 6.74596f, 6.66961f, 5.10960f, 6.74596f, 5.10960f, 6.74596f,
+      6.74596f}},
+    {{1.789222f, 1.74080f, 1.59649f, 0.02420f, 0.0f, 1.59649f, 0.02420f, 0.0f, 0.02420f, 0.0f, 0.0f}},
+    {{false, false, false, true, true, false, true, true, true, true, true}},
+    1000.0f};
 
 class MultiCompModes
 {
@@ -4539,6 +4596,8 @@ private:
         float releaseScale = 0.0f;      // fbReleaseSeconds x the Release knob's factor x the ratio's scale
         // fbTipReferenceShare: releaseScale and releaseDepthDb at the nominal Release position (0 while it is off)
         float releaseScaleNominal = 0.0f, releaseDepthDbNominal = 0.0f;
+        float releaseDecades = 0.0f;    // the Release knob's factor, in decades relative to its value at 0.5
+        float tipShare = 0.0f;          // fbTipReferenceShare, times the voice's fast-Release share past nominal
         float fullCharge = 0.0f, lagStep = 1.0f;
         float kneeKnob = 0.0f;          // fbReleaseKneeShare x the knee release's knob factor (4:1)
         double kneeDeepDb = 0.0;        // past this reduction kneeKnob exp(-G / g0) < 2^-25 (+ 0.01 dB margin)
@@ -4580,6 +4639,7 @@ private:
     {
         auto& t = fetFeedbackTerms;
         t = fetFeedbackKnobTermsAt(ratioIndex, thresholdControlDb, attackPosition, releasePosition, sr);
+        t.tipShare = fetDynamics.fbTipReferenceShare;
         // fbTipReferenceShare: the release laws at the nominal position too, by the same code, so that the two
         // leaks agree bit for bit there.
         if (fetDynamics.fbTipReferenceShare > 0.0f)
@@ -4588,6 +4648,14 @@ private:
                 = fetFeedbackKnobTermsAt(ratioIndex, thresholdControlDb, attackPosition, fetNominalRelease, sr);
             t.releaseScaleNominal = nominal.releaseScale;
             t.releaseDepthDbNominal = nominal.releaseDepthDb;
+            // The Release knob's load toward its fast end (FetVoice::fastReleaseLoadDb, fastReleaseTipShares).
+            const float faster = nominal.releaseDecades - t.releaseDecades;
+            if (faster > 0.0f)
+            {
+                const auto position = static_cast<size_t>(std::clamp(ratioIndex, 0, fetVoice->ratioCount - 1));
+                t.attackLoadDb += fetVoice->fastReleaseLoadDb[position] * faster;
+                t.tipShare *= fetVoice->fastReleaseTipShares[position];
+            }
         }
         return t;
     }
@@ -4626,9 +4694,13 @@ private:
                                  - fetDynamics.fbAttackSlope * attackOffset))
             * std::pow(fetRatioAttackScale(*fetVoice, ratioIndex),
                        fetDynamics.fbRatioExponent);
-        // fbSloAttackScale (0 = none): the Attack knob's SLO detent at its counter-clockwise stop (FET BLUE).
-        if (fetDynamics.fbSloAttackScale > 0.0f && attackPosition <= 0.0f)
-            attackSeconds *= fetDynamics.fbSloAttackScale;
+        // The Attack knob's SLO detent at its counter-clockwise stop (FET BLUE): its attack scale and threshold raise
+        // per Ratio position (FetVoice::sloAttackScales, sloLoadDb; a 0 scale is no detent).
+        const auto voicePosition = static_cast<size_t>(std::clamp(ratioIndex, 0, fetVoice->ratioCount - 1));
+        const bool slo = attackPosition <= 0.0f && fetVoice->sloAttackScales[voicePosition] > 0.0f;
+        const float knobAttackSeconds = attackSeconds;
+        if (slo)
+            attackSeconds *= fetVoice->sloAttackScales[voicePosition];
         const FetVoice& voice = *fetVoice;
         const float ratioSlope
             = voice.reductionSlopes[static_cast<size_t>(std::clamp(ratioIndex, 0, voice.ratioCount - 1))];
@@ -4673,6 +4745,7 @@ private:
         t.releaseScale = fetDynamics.fbReleaseSeconds
             * std::exp(decade * releaseKnobDecades)
             * fetRatioReleaseScale(voice, ratioIndex);
+        t.releaseDecades = releaseKnobDecades;
         t.fullCharge = 1.0f / (std::max(attackSeconds, 1.0e-7f) * sr);
         t.lagStep = fetDynamics.fbAttackLagRatio > 0.0f
             ? 1.0f - std::exp(-1.0f / (fetDynamics.fbAttackLagRatio
@@ -4681,6 +4754,12 @@ private:
             : 1.0f;
         const float riseOnly = std::clamp(fetDynamics.fbChargeRiseOnly, 0.0f, 1.0f);
         t.tipDenominator = riseOnly > 0.0f ? t.fullCharge * (1.0f - 0.5f * riseOnly) : t.fullCharge;
+        // FetVoice::sloTipKnobCharge: at the SLO detent the tips are told the knob's charge, not the detent's.
+        if (slo && fetVoice->sloTipKnobCharge[voicePosition])
+        {
+            const float knobCharge = 1.0f / (std::max(knobAttackSeconds, 1.0e-7f) * sr);
+            t.tipDenominator = riseOnly > 0.0f ? knobCharge * (1.0f - 0.5f * riseOnly) : knobCharge;
+        }
         t.kneeKnob = fetDynamics.fbReleaseKneeShare
             * std::exp(decade * fetDynamics.fbReleaseKneeKnobExponent * releaseKnobFromFast);
         t.kneeDeepDb = t.kneeKnob > 0.0f
@@ -4695,13 +4774,16 @@ private:
                 : 1.0f);
         t.attackLoadDb = fetDynamics.fbAttackLoadDb
             * std::max(0.0f, 2.0f * attackOffset);
-        // fbSloLoadDb: the SLO detent loads the side chain as well, a threshold raise there (FET BLUE).
-        if (fetDynamics.fbSloAttackScale > 0.0f && attackPosition <= 0.0f)
-            t.attackLoadDb += fetDynamics.fbSloLoadDb;
+        // The SLO detent loads the side chain as well, a threshold raise there (FET BLUE).
+        if (slo)
+            t.attackLoadDb += fetVoice->sloLoadDb[voicePosition];
         t.maximumReductionDb = fetStaticMaximumReductionDb(
             voice, ratioIndex, thresholdControlDb);
         t.turnOnBiasDb = 1.0e-3f + std::max(0.0f,
             fetDynamics.fbTurnOnBiasDb) * attackPosition * attackPosition;
+        // At the SLO detent the turn-on law takes the voice's own bias (FetVoice::sloTurnOnBiasDb).
+        if (slo)
+            t.turnOnBiasDb = 1.0e-3f + fetVoice->sloTurnOnBiasDb;
         const double tailSecondsCharging = std::max(1.0e-4f, fetDynamics.fbTailChargeSeconds);
         const double tailSecondsReleasing = std::max(1.0e-4f, fetDynamics.fbTailReleaseSeconds);
         t.tailStepCharging = std::exp(-1.0 / (tailSecondsCharging * sr));
@@ -5605,14 +5687,14 @@ private:
         // Release position's at this reduction; at 1 the loop sits on the static law there only, and settles
         // shallower where it leaks faster.
         F tipLeak = Kf(1.0f) - leak;
-        if (fetDynamics.fbTipReferenceShare > 0.0f)
+        if (terms.tipShare > 0.0f)
         {
             const F nominalSeconds = L::toF(Kd(static_cast<double>(terms.releaseScaleNominal))
                 * ((Kd(1.0) + reductionSum * Kd(1.0 / static_cast<double>(std::max(terms.releaseDepthDbNominal, 1.0f))))
                    + extraDepth));
             const F nominalLeak = smallExpT<L>(
                 Kf(-1.0f) / (vmax(nominalSeconds * kneeReleaseFactor, Kf(1.0e-4f)) * Kf(sr)));
-            tipLeak = tipLeak + Kf(fetDynamics.fbTipReferenceShare) * (leak - nominalLeak);
+            tipLeak = tipLeak + Kf(terms.tipShare) * (leak - nominalLeak);
         }
         const F tipBalance = Kf(1.57079633f) * tipLeak * Kf(1.0f / terms.tipDenominator);
         const float slowShare = std::max(fetDynamics.fbSlowShare, 0.0f);
