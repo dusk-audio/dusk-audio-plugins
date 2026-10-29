@@ -530,19 +530,23 @@ bool studioVcaEntry()
 
 // FET BLUE's Attack detent (ui_detail::fetAttackAtSlo, fetSloAttackTypedHost). The face must name SLO exactly where
 // the DSP takes it: the core reads the plain value the host position converts to through its position law,
-// pow(clamp((ms - 0.02) / (80 - 0.02)), 0.3) (MultiCompModes::fetAttackPosition), and engages SLO at position 0.
-// The descriptor carries that law's ends, and over every host position the face's test agrees with the law's. As on
-// the reference, the detent is the stop alone: no interval snaps the slow end's travel onto it (with JUCE's 0.01 ms
-// interval the bottom 5.5 % of the travel read SLO). Typed entry takes the detent's name, a dial reading, or nothing
-// else.
+// duskaudio::fetAttackPositionFromMilliseconds (core MultiCompParams.hpp, pow(clamp((ms - min) / (max - min)), skew),
+// the one law both DSP sites read), and engages SLO at position 0. The descriptor carries that law's ends and skew
+// (kFetAttackMinMs, kFetAttackMaxMs, kFetAttackSkew), and over every host position the face's test agrees with the
+// core's own law, not a copy of it. As on the reference, the detent is the stop alone: no interval snaps the slow
+// end's travel onto it (with JUCE's 0.01 ms interval the bottom 5.5 % of the travel read SLO). Typed entry takes the
+// detent's name, a dial reading, or nothing else.
 bool fetBlueSlo()
 {
     const auto attack = static_cast<uint32_t>(ParamId::FetAttack);
     const Param& descriptor = kParams[attack];
-    const auto corePosition = [](float milliseconds) {
-        return std::pow(std::clamp((milliseconds - 0.02f) / (80.0f - 0.02f), 0.0f, 1.0f), 0.3f);
-    };
     bool ok = descriptor.min == 0.02f && descriptor.max == 80.0f && descriptor.skew == 0.3f;
+    const bool coreLaw = descriptor.min == duskaudio::kFetAttackMinMs && descriptor.max == duskaudio::kFetAttackMaxMs
+        && descriptor.skew == duskaudio::kFetAttackSkew;
+    std::printf("FET BLUE SLO: descriptor %.4g..%.4g ms skew %.4g, the core's law %.4g..%.4g ms skew %.4g\n",
+                descriptor.min, descriptor.max, descriptor.skew, duskaudio::kFetAttackMinMs,
+                duskaudio::kFetAttackMaxMs, duskaudio::kFetAttackSkew);
+    ok &= coreLaw;
     int atSlo = 0, disagree = 0, lastAtSlo = -1;
     constexpr int steps = 100000;
     for (int i = 0; i <= steps; ++i)
@@ -551,7 +555,7 @@ bool fetBlueSlo()
         const bool face = ui_detail::fetAttackAtSlo(plain);
         atSlo += face ? 1 : 0;
         if (face) lastAtSlo = i;
-        disagree += face != (corePosition(plain) <= 0.0f) ? 1 : 0;
+        disagree += face != (duskaudio::fetAttackPositionFromMilliseconds(plain) <= 0.0f) ? 1 : 0;
     }
     const float detentEnd = static_cast<float>(lastAtSlo) / static_cast<float>(steps);
     ok &= disagree == 0 && atSlo > 0 && detentEnd < 0.001f;

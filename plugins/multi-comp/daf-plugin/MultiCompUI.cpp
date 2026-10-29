@@ -164,15 +164,15 @@ inline float fetTimingHostValue(float dialValue, uint32_t parameter) noexcept
 
 // FET BLUE's Attack has the reference's SLO detent at its counter-clockwise stop: the loop takes its slower attack
 // and raised threshold (FetVoice::sloAttackScales, sloLoadDb) while the attack position is 0, i.e. while the plain
-// value the DSP receives sits on the descriptor's minimum, which the core's position law (0.02..80 ms, skew 0.3)
-// maps to 0.
+// value the DSP receives sits on the descriptor's minimum. The face reads the core's own position law
+// (duskaudio::fetAttackPositionFromMilliseconds), so it names SLO exactly where the DSP engages it.
 // The reference names that stop SLO in its own readout. The face prints SLO there, and its readout and typed entry
 // name the detent.
 inline constexpr const char* kFetSloText = "SLO";
 
 inline bool fetAttackAtSlo(float plainMilliseconds) noexcept
 {
-    return plainMilliseconds <= kParams[static_cast<size_t>(ParamId::FetAttack)].min;
+    return duskaudio::fetAttackPositionFromMilliseconds(plainMilliseconds) <= 0.0f;
 }
 
 // Typed entry on FET BLUE's Attack, returning the host value: SLO (SLO, slo or Slo) selects the detent; a number is a

@@ -3362,11 +3362,7 @@ private:
 
     static float fetAttackPosition(float legacyMilliseconds) noexcept
     {
-        // Invert the existing descriptor's 0.3 skew to recover the host knob
-        // position without changing its saved-state or automation domain.
-        const float proportion = std::clamp(
-            (legacyMilliseconds - 0.02f) / (80.0f - 0.02f), 0.0f, 1.0f);
-        return std::pow(proportion, 0.3f);
+        return fetAttackPositionFromMilliseconds(legacyMilliseconds);
     }
 
     static float fetAttackKnobScale(float attackPosition,

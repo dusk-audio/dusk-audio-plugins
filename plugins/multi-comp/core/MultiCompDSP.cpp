@@ -74,13 +74,6 @@ void fillRampCurve(LinearRamp& ramp, float* curve, int n) noexcept
     for (int i = 0; i < n; ++i) curve[i] = ramp.next();
 }
 
-float fetAttackPositionFromPlain(float legacyMilliseconds) noexcept
-{
-    const float proportion = std::clamp(
-        (legacyMilliseconds - 0.02f) / (80.0f - 0.02f), 0.0f, 1.0f);
-    return std::pow(proportion, 0.3f);
-}
-
 // The installed unit's first-cycle output peak SATURATES. Twelve dB of extra
 // input moves it +8.83 dB from -30 to -18 dBFS but only +1.63 dB from -18 to
 // -6 dBFS (Attack 0.00, 4 kHz reference peaks 0.9672 / 2.6765 / 3.2279). That
@@ -1013,7 +1006,7 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
         // The correction is gone 0.5 ms after the aligned output onset. The
         // higher-carrier gate resolves and separately constrains the small
         // overlap with its first attack-shape samples.
-        const float attackPosition = fetAttackPositionFromPlain(
+        const float attackPosition = fetAttackPositionFromMilliseconds(
             params.fetAttack.load(std::memory_order_relaxed));
         const int ratioIndex = std::clamp(
             params.fetRatio.load(std::memory_order_relaxed), 0, 4);

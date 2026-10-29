@@ -26,6 +26,19 @@ inline float clampFinite(float value, float lo, float hi, float fallback) noexce
     return std::isfinite(value) ? std::clamp(value, lo, hi) : fallback;
 }
 
+// The FET Attack control's legacy plain domain (ms) and skew; daf-plugin's fet_attack descriptor carries them.
+inline constexpr float kFetAttackMinMs = 0.02f, kFetAttackMaxMs = 80.0f, kFetAttackSkew = 0.3f;
+
+// The FET Attack knob's position (0 at the counter-clockwise stop, where FET BLUE's SLO detent engages, to 1) from
+// its plain value: the descriptor's skew inverted, so the saved-state and automation domain stay as they were. The
+// one law the DSP and the face both read.
+inline float fetAttackPositionFromMilliseconds(float milliseconds) noexcept
+{
+    const float proportion = std::clamp(
+        (milliseconds - kFetAttackMinMs) / (kFetAttackMaxMs - kFetAttackMinMs), 0.0f, 1.0f);
+    return std::pow(proportion, kFetAttackSkew);
+}
+
 struct OptoGainPoint
 {
     float knob;
