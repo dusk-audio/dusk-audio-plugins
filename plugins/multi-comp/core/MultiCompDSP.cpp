@@ -852,7 +852,11 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
             processedSidechain[ch][static_cast<size_t>(i)] = sidechainEQ[ch].process(sample);
         }
     }
-    const bool useTruePeak = params.truePeakEnable.load(std::memory_order_relaxed);
+    // Multiband splits its key into bands after this point. On its internal key True Peak's copysign(peak, x)
+    // waveform would put the high band's peaks into every lower band's detector (cymbals pumping the bass), so
+    // that key stays as filtered, as the band audio was; an external key keeps it, as the JUCE version does.
+    const bool useTruePeak = params.truePeakEnable.load(std::memory_order_relaxed)
+        && (mode != MultiCompMode::Multiband || useExternalSidechain);
     truePeakDetector.setQuality(params.truePeakQuality.load(std::memory_order_relaxed) == 1
                                     ? MultiCompTruePeakDetector::Quality::High8x
                                     : MultiCompTruePeakDetector::Quality::Standard4x);
@@ -2573,9 +2577,11 @@ void MultiCompDSP::processMultiband(const float* const* input, const float* cons
     else
         for (int i = 0; i < nSamples; ++i)
             multibandOutputGains[static_cast<size_t>(i)] = decibelsToGain(mbOutputDb * manualMakeupScaleRamp.next());
-    // A reduced-channel callback must not retain the absent channel's split or
-    // phase-compensation histories for a subsequent stereo block.
+    // A reduced-channel callback must not retain the absent channel's split,
+    // phase-compensation or band-envelope histories for a subsequent stereo
+    // block: that channel resumes from rest.
     if (nCh == 1)
+    {
         for (int boundary = 0; boundary < 3; ++boundary)
         {
             crossoverForBoundary(boundary, 1, false).reset();
@@ -2586,6 +2592,9 @@ void MultiCompDSP::processMultiband(const float* const* input, const float* cons
                 sidechainMultibandPhase[static_cast<size_t>(band)][static_cast<size_t>(boundary)][1].reset();
             }
         }
+        for (int band = 0; band < kMultiCompBands; ++band)
+            multibandEnvelopes[static_cast<size_t>(band * kMaxChannels + 1)] = 1.0f;
+    }
     for (int band = 0; band < kMultiCompBands; ++band)
         if ((activeBandMask & static_cast<std::uint8_t>(1u << band)) == 0)
             for (int ch = 0; ch < nCh; ++ch)

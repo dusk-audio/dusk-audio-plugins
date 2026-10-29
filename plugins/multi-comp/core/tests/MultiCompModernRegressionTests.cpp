@@ -480,6 +480,136 @@ void testCrossoverLifecycle()
     std::printf("crossover lifecycle: resetDelta=%.9g reprepareDelta=%.9g restoredTopologyTail=%.9g resumedRightPeak=%.9g warmRms=%.9g\n", largestResetDelta, largestPrepareDelta, topologyTail, resumedRight, warmLevel);
     check("Multiband crossover and detector histories clear on reset, prepare, topology reactivation and reduced channels", warmLevel > 0.001 && largestResetDelta < 1.0e-7 && largestPrepareDelta < 1.0e-7 && topologyTail < 1.0e-7 && resumedRight < 1.0e-7);
 }
+
+// Amplitude of the `hz` component of `samples` over [start, end).
+double toneLevel(const std::vector<float>& samples, float hz, int start, int end)
+{
+    double real = 0.0, imag = 0.0;
+    for (int i = start; i < end; ++i)
+    {
+        const double phase = 2.0 * kPi * hz * i / kRate;
+        real += samples[static_cast<size_t>(i)] * std::sin(phase);
+        imag += samples[static_cast<size_t>(i)] * std::cos(phase);
+    }
+    return 2.0 * std::hypot(real, imag) / (end - start);
+}
+
+// True Peak reshapes a key the host supplies; Multiband's internal key is its own band split, which True Peak
+// leaves alone. Through the True Peak transform a 15 kHz tone at -6 dBFS reads as a square at its peak level whose
+// aliases land in the low bands, so with the 100 Hz tone below every threshold any change in it is the
+// transform's. Internal key: True Peak on renders the True Peak off audio. External key: the transform still acts.
+void testMultibandTruePeakKey()
+{
+    constexpr int count = kRate, start = kRate / 2;
+    const float crest = static_cast<float>(std::pow(10.0, -6.0 / 20.0));
+    double largestInternalDelta = 0.0, smallestExternalDelta = 1.0, largestInternalLowDb = 0.0;
+    double smallestExternalLowDb = 1000.0, smallestLowLevel = 1.0;
+    float weakestCompression = -100.0f;
+    for (int channels : {1, 2})
+        for (float quality : {0.0f, 1.0f})
+            for (bool external : {false, true})
+            {
+                std::array<Render, 2> results;
+                for (int truePeak = 0; truePeak < 2; ++truePeak)
+                {
+                    MultiCompDSP dsp;
+                    configure(dsp, MultiCompMode::Multiband, true);
+                    dsp.setParameter(P::TruePeakEnable, static_cast<float>(truePeak));
+                    dsp.setParameter(P::TruePeakQuality, quality);
+                    dsp.setExternalSidechain(external);
+                    dsp.prepare(kRate, kBlock);
+                    results[static_cast<size_t>(truePeak)] = renderPrepared(dsp, count, channels, external,
+                        [crest](int sample, int, float& input, float& key)
+                        { input = tone(sample, 15000.0f, crest) + tone(sample, 100.0f, 0.01f); key = input; });
+                }
+                double renderDelta = 0.0, lowChangeDb = 0.0;
+                for (int ch = 0; ch < channels; ++ch)
+                {
+                    const auto& off = results[0].audio[static_cast<size_t>(ch)];
+                    const auto& on = results[1].audio[static_cast<size_t>(ch)];
+                    renderDelta = std::max(renderDelta, delta(off, on));
+                    const double offLow = toneLevel(off, 100.0f, start, count);
+                    smallestLowLevel = std::min(smallestLowLevel, offLow);
+                    lowChangeDb = std::max(lowChangeDb, std::abs(20.0 * std::log10(toneLevel(on, 100.0f, start, count) / offLow)));
+                }
+                weakestCompression = std::max(weakestCompression, results[0].reduction);
+                if (external)
+                {
+                    smallestExternalDelta = std::min(smallestExternalDelta, renderDelta);
+                    smallestExternalLowDb = std::min(smallestExternalLowDb, lowChangeDb);
+                }
+                else
+                {
+                    largestInternalDelta = std::max(largestInternalDelta, renderDelta);
+                    largestInternalLowDb = std::max(largestInternalLowDb, lowChangeDb);
+                }
+                std::printf("Multiband True Peak key: channels=%d quality=%d external=%d onVsOffDelta=%.9g lowToneChange=%.9g dB offGR=%.9g dB\n",
+                            channels, static_cast<int>(quality), external, renderDelta, lowChangeDb, results[0].reduction);
+            }
+    std::printf("Multiband True Peak key: internal delta=%.9g lowChange=%.9g dB; external delta=%.9g lowChange=%.9g dB; weakestGR=%.9g dB lowTone=%.9g\n",
+                largestInternalDelta, largestInternalLowDb, smallestExternalDelta, smallestExternalLowDb, weakestCompression, smallestLowLevel);
+    check("True Peak leaves Multiband's internal key alone and still shapes an external key", largestInternalDelta < 1.0e-7
+          && smallestExternalDelta > 1.0e-3 && smallestExternalLowDb > 1.0 && weakestCompression < -6.0f && smallestLowLevel > 0.005);
+}
+
+// RMS of `samples` over [start, start + length), in dB.
+double windowDb(const std::vector<float>& samples, int start, int length)
+{
+    double energy = 0.0;
+    for (int i = start; i < start + length; ++i)
+        energy += static_cast<double>(samples[static_cast<size_t>(i)]) * samples[static_cast<size_t>(i)];
+    return 10.0 * std::log10(std::max(energy / length, 1.0e-30));
+}
+
+// A reduced-channel (mono) callback returns channel 1's band envelopes to rest, as it already does that channel's
+// filters, so stereo resumed after it starts the right channel from rest whatever that channel compressed before.
+// The right channel compresses hard (1 kHz at -6 dBFS, bands at -30 dB 8:1), then the host sends mono callbacks,
+// then stereo with the right channel at -40 dBFS, below every knee. Over the first 100 ms of the resumed stereo the
+// right channel's 10 ms levels must match a control whose right channel was silent before the same mono period. A
+// fresh instance given only the resumed stereo is a second from-rest render: the bound is the larger of 0.01 dB
+// and ten times the two controls' own disagreement.
+void testMultibandMonoResume()
+{
+    constexpr int stereoBefore = 8192, monoCallbacks = 8, resumed = 8192, window = kRate / 100, windows = 10;
+    const auto render = [](bool rightCompressed, bool history)
+    {
+        MultiCompDSP dsp;
+        configure(dsp, MultiCompMode::Multiband, true);
+        dsp.prepare(kRate, kBlock);
+        float reduction = 0.0f;
+        if (history)
+        {
+            reduction = renderPrepared(dsp, stereoBefore, 2, false,
+                [rightCompressed](int sample, int ch, float& input, float& key)
+                {
+                    input = ch == 0 ? tone(sample, 600.0f, 0.01f) : rightCompressed ? tone(sample, 1000.0f, 0.5f) : 0.0f;
+                    key = input;
+                }).reduction;
+            renderPrepared(dsp, monoCallbacks * kBlock, 1, false,
+                [](int sample, int, float& input, float& key) { input = tone(sample + stereoBefore, 600.0f, 0.01f); key = input; });
+        }
+        auto result = renderPrepared(dsp, resumed, 2, false,
+            [](int sample, int ch, float& input, float& key) { input = tone(sample, ch == 0 ? 600.0f : 1000.0f, 0.01f); key = input; });
+        result.reduction = std::min(result.reduction, reduction);
+        return result;
+    };
+    const Render stale = render(true, true), control = render(false, true), fresh = render(false, false);
+    double resumeError = 0.0, controlSpread = 0.0, deepestResume = 0.0;
+    for (int w = 0; w < windows; ++w)
+    {
+        const double reference = windowDb(control.audio[1], w * window, window);
+        const double staleDb = windowDb(stale.audio[1], w * window, window);
+        resumeError = std::max(resumeError, std::abs(staleDb - reference));
+        controlSpread = std::max(controlSpread, std::abs(windowDb(fresh.audio[1], w * window, window) - reference));
+        deepestResume = std::min(deepestResume, staleDb - reference);
+    }
+    const double bound = std::max(0.01, 10.0 * controlSpread);
+    const double restingLevel = windowDb(control.audio[1], resumed - window, window);
+    std::printf("Multiband mono resume: right channel over the first 100 ms error=%.9g dB (deepest %.9g dB) bound=%.9g dB controlSpread=%.9g dB beforeGR=%.9g dB restingLevel=%.9g dB\n",
+                resumeError, deepestResume, bound, controlSpread, stale.reduction, restingLevel);
+    check("a mono callback returns the right channel's band envelopes to rest for the stereo that follows",
+          stale.reduction < -6.0f && restingLevel > -45.0 && resumeError <= bound);
+}
 }
 
 int main(int argc, char** argv)
@@ -493,6 +623,8 @@ int main(int argc, char** argv)
     if (selected("--disabled-solo")) testDisabledSolo();
     if (selected("--mix-alignment")) testMixAlignment();
     if (selected("--crossover-lifecycle")) testCrossoverLifecycle();
+    if (selected("--true-peak-key")) testMultibandTruePeakKey();
+    if (selected("--mono-resume")) testMultibandMonoResume();
     std::printf("Modern compressor regression failures: %d\n", failures);
     return failures == 0 ? 0 : 1;
 }
