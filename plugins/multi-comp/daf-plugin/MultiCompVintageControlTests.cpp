@@ -528,6 +528,56 @@ bool studioVcaEntry()
     return ok;
 }
 
+// FET BLUE's Attack detent (ui_detail::fetAttackAtSlo, fetSloAttackTypedHost). The face must name SLO exactly where
+// the DSP takes it: the core reads the plain value the host position converts to through its position law,
+// pow(clamp((ms - 0.02) / (80 - 0.02)), 0.3) (MultiCompModes::fetAttackPosition), and engages SLO at position 0.
+// The descriptor carries that law's ends, and over every host position the face's test agrees with the law's. As on
+// the reference, the detent is the stop alone: no interval snaps the slow end's travel onto it (with JUCE's 0.01 ms
+// interval the bottom 5.5 % of the travel read SLO). Typed entry takes the detent's name, a dial reading, or nothing
+// else.
+bool fetBlueSlo()
+{
+    const auto attack = static_cast<uint32_t>(ParamId::FetAttack);
+    const Param& descriptor = kParams[attack];
+    const auto corePosition = [](float milliseconds) {
+        return std::pow(std::clamp((milliseconds - 0.02f) / (80.0f - 0.02f), 0.0f, 1.0f), 0.3f);
+    };
+    bool ok = descriptor.min == 0.02f && descriptor.max == 80.0f && descriptor.skew == 0.3f;
+    int atSlo = 0, disagree = 0, lastAtSlo = -1;
+    constexpr int steps = 100000;
+    for (int i = 0; i <= steps; ++i)
+    {
+        const float plain = hostToPlain(descriptor, static_cast<float>(i) / static_cast<float>(steps));
+        const bool face = ui_detail::fetAttackAtSlo(plain);
+        atSlo += face ? 1 : 0;
+        if (face) lastAtSlo = i;
+        disagree += face != (corePosition(plain) <= 0.0f) ? 1 : 0;
+    }
+    const float detentEnd = static_cast<float>(lastAtSlo) / static_cast<float>(steps);
+    ok &= disagree == 0 && atSlo > 0 && detentEnd < 0.001f;
+    std::printf("FET BLUE SLO: %d of %d host positions at the detent (up to %.5f of the travel), %d disagreeing "
+                "with the core's law\n", atSlo, steps + 1, detentEnd, disagree);
+
+    struct Case { const char* text; bool valid; float host; };
+    const Case cases[] = {
+        {"SLO", true, 0.0f}, {" slo ", true, 0.0f}, {"Slo", true, 0.0f}, {"4", true, 0.5f}, {"4.00", true, 0.5f},
+        {"7", true, 1.0f}, {"1", true, 0.0f}, {"SLOW", false, 0.0f}, {"4 ms", false, 0.0f}, {"", false, 0.0f}};
+    for (const Case& c : cases)
+    {
+        float host = -1.0f;
+        const bool valid = ui_detail::fetSloAttackTypedHost(c.text, host);
+        const bool good = valid == c.valid && (!valid || std::abs(host - c.host) < 1.0e-6f);
+        if (!good) std::printf("  \"%s\": %s %.6f\n", c.text, valid ? "accepted" : "refused", host);
+        ok &= good;
+    }
+    // The readout's own text at the detent parses back to the detent.
+    float host = -1.0f;
+    ok &= ui_detail::fetSloAttackTypedHost(ui_detail::kFetSloText, host)
+        && ui_detail::fetAttackAtSlo(hostToPlain(descriptor, host));
+    std::printf("FET BLUE SLO typed entry: %zu cases\n", std::size(cases));
+    return ok;
+}
+
 int main(int argc, char** argv)
 {
     struct Test { const char* name; bool (*run)(); };
@@ -536,7 +586,7 @@ int main(int argc, char** argv)
                        {"state-reject", stateReject}, {"state-studio-vca", stateStudioVca},
                        {"state-fet-blue", stateFetBlue}, {"identity", identity},
                        {"studio-vca-meter", studioVcaLevelMeter}, {"studio-vca-dials", studioVcaDials},
-                       {"studio-vca-entry", studioVcaEntry}};
+                       {"studio-vca-entry", studioVcaEntry}, {"fet-blue-slo", fetBlueSlo}};
     bool passed = true;
     int selected = 0;
     for (const auto& test : tests)
