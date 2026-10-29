@@ -657,20 +657,25 @@ public:
         scanUserPresets();
     }
 
-    ~MultiCompUI() override { finishModernEdits(true); }
+    ~MultiCompUI() override { finishTrackedEdits(true); }
 
     void beginEdit(uint32_t idx) override
     {
-        if (drawingModernControl) modernEditsOpen[idx] = true;
+        if (drawingTrackedControl)
+        {
+            trackedEditsOpen[idx] = true;
+            trackedEditOwners[idx] = drawingTrackedId;
+            trackedEditsDrawn[idx] = true;
+        }
         editParameter(idx, true);
     }
     void endEdit(uint32_t idx) override
     {
-        if (drawingModernControl)
+        if (drawingTrackedControl)
         {
             // A hidden/disabled control may already have closed its gesture.
-            if (!modernEditsOpen[idx]) return;
-            modernEditsOpen[idx] = false;
+            if (!trackedEditsOpen[idx]) return;
+            trackedEditsOpen[idx] = false;
         }
         editParameter(idx, false);
     }
@@ -722,7 +727,7 @@ protected:
     void onImGuiDisplay() override
     {
         seedParameterMirror();
-        modernEditsDrawn.fill(false);
+        trackedEditsDrawn.fill(false);
 
         const float winW = static_cast<float>(getWidth());
         const float winH = static_cast<float>(getHeight());
@@ -789,7 +794,7 @@ protected:
 
         const duskdaf::ResizeGripState grip =
             panel.resizeGrip(dl, winW, winH, kDesignW, kDesignH, 0.5f);
-        finishModernEdits(false);
+        finishTrackedEdits(false);
         ImGui::End();
         ImGui::PopStyleVar(2);
         // A host can service the request synchronously, so never resize from
@@ -800,10 +805,15 @@ protected:
 
 private:
     std::array<float, multicompp::kTotalParamCount> values{};
-    // Only Digital/Multiband controls opt in. A host mode/band/Auto Makeup
-    // change can remove a held widget before ImGui reports deactivation.
-    std::array<bool, multicompp::kTotalParamCount> modernEditsOpen{}, modernEditsDrawn{};
-    bool drawingModernControl = false;
+    // Every knob opts in (beginTrackedControl), and so do Digital/Multiband's own
+    // drag controls. A host mode/band/Auto Makeup change can remove a held widget
+    // before ImGui reports deactivation; finishTrackedEdits then closes its gesture.
+    // A gesture belongs to the widget that opened it (its ImGui ID): another
+    // face's control for the same parameter does not hold it open.
+    std::array<bool, multicompp::kTotalParamCount> trackedEditsOpen{}, trackedEditsDrawn{};
+    std::array<ImGuiID, multicompp::kTotalParamCount> trackedEditOwners{};
+    bool drawingTrackedControl = false;
+    ImGuiID drawingTrackedId = 0;
     duskdaf::DuskPanel panel;
     ImDrawListSplitter optoKnobSplitter;
     ImDrawListSplitter fetKnobSplitter;
@@ -856,13 +866,29 @@ private:
 
     float value(uint32_t p) const { return values[p]; }
 
-    void finishModernEdits(bool closeAll)
+    // A drawn control holds its parameter's open gesture only if it is the widget
+    // that opened it; `drawn` false (a disabled control) holds nothing.
+    void markTrackedDrawn(uint32_t p, ImGuiID widget, bool drawn) noexcept
     {
-        for (size_t p = 0; p < modernEditsOpen.size(); ++p)
-            if (modernEditsOpen[p] && (closeAll || !modernEditsDrawn[p]))
+        if (drawn && trackedEditsOpen[p] && trackedEditOwners[p] == widget) trackedEditsDrawn[p] = true;
+    }
+    // Around a knob's draw, in the ID scope the knob itself uses: `id` is its
+    // widget id, so a gesture it opens is recorded as its own.
+    void beginTrackedControl(uint32_t p, const char* id, bool drawn) noexcept
+    {
+        drawingTrackedId = ImGui::GetID(id);
+        drawingTrackedControl = true;
+        markTrackedDrawn(p, drawingTrackedId, drawn);
+    }
+    void endTrackedControl() noexcept { drawingTrackedControl = false; }
+
+    void finishTrackedEdits(bool closeAll)
+    {
+        for (size_t p = 0; p < trackedEditsOpen.size(); ++p)
+            if (trackedEditsOpen[p] && (closeAll || !trackedEditsDrawn[p]))
             {
                 editParameter(static_cast<uint32_t>(p), false);
-                modernEditsOpen[p] = false;
+                trackedEditsOpen[p] = false;
                 if (p == draggedCrossover) draggedCrossover = kNoCrossover;
                 if (p == P_SC_HP) sidechainHpReset = false;
             }
@@ -1457,11 +1483,13 @@ private:
               bool applicable = true)
     {
         if (!applicable) ImGui::BeginDisabled();
+        beginTrackedControl(p, id, applicable);
         panel.knob(id, p, hostMinimum(p), hostMaximum(p), x, y, 25, values[p],
                    hostDefaultValue(p), false, true,
                    fmt, suffix, kPanelRaised, false, true, nullptr, false, 1.0f, 0.0f,
                    nullptr, false, nullptr, false, 0.0f, 0.0f, false, false, 9.5f,
                    false, false, &knobHostToPlain, &knobPlainToHost, this);
+        endTrackedControl();
         if (!applicable)
         {
             ImGui::EndDisabled();
@@ -1711,12 +1739,14 @@ private:
         // in the same frame. The active-only bubble exposes shift-fine values.
         optoKnobSplitter.Split(dl, 2);
         optoKnobSplitter.SetCurrentChannel(dl, 1);
+        beginTrackedControl(p, id, true);
         panel.knob(id, p, hostMinimum(p), hostMaximum(p), x, y, radius,
                    values[p], hostDefaultValue(p), false, false, format, suffix,
                    0, true, false, nullptr, false, 1.0f, 0.0f, label, true,
                    nullptr, false, 0.0f, 0.0f, false, true, 9.5f, true, false,
                    &knobHostToPlain, &knobPlainToHost, this,
                    multicompp::ui_detail::optoKnobUsesPlainDomainDrag(p));
+        endTrackedControl();
         optoKnobSplitter.SetCurrentChannel(dl, 0);
 
         const float plain = plainValueForHost(p, values[p]);
@@ -2092,6 +2122,7 @@ private:
         fetKnobSplitter.SetCurrentChannel(dl, 1);
         const bool timingDial = multicompp::ui_detail::fetTimingUsesDialReadout(p);
         const bool atSlo = sloDetent && multicompp::ui_detail::fetAttackAtSlo(plainValueForHost(p, values[p]));
+        beginTrackedControl(p, id, true);
         panel.knob(id, p, hostMinimum(p), hostMaximum(p), x, y, radius,
                    values[p], hostDefaultValue(p), false, false, format, suffix,
                    0, true, false, nullptr, false, 1.0f, 0.0f, label, true,
@@ -2100,6 +2131,7 @@ private:
                    timingDial ? &fetTimingHostToDial : &knobHostToPlain,
                    timingDial ? &fetTimingDialToHost : &knobPlainToHost,
                    this, true, sloDetent ? &fetSloAttackParseText : nullptr);
+        endTrackedControl();
         fetKnobSplitter.SetCurrentChannel(dl, 0);
 
         const float plain = plainValueForHost(p, values[p]);
@@ -2242,11 +2274,13 @@ private:
         // without letting it compete with the hardware's primary controls.
         fetKnobSplitter.Split(dl, 2);
         fetKnobSplitter.SetCurrentChannel(dl, 1);
+        beginTrackedControl(p, id, true);
         panel.knob(id, p, hostMinimum(p), hostMaximum(p), x, y, radius,
                    values[p], hostDefaultValue(p), false, false, format, suffix,
                    0, true, false, nullptr, false, 1.0f, 0.0f, label, true,
                    nullptr, false, 0.0f, 0.0f, false, true, 8.0f, true, false,
                    &knobHostToPlain, &knobPlainToHost, this, true);
+        endTrackedControl();
         fetKnobSplitter.SetCurrentChannel(dl, 0);
 
         const float plain = plainValueForHost(p, values[p]);
@@ -2603,11 +2637,13 @@ private:
     {
         vcaKnobSplitter.Split(dl, 2);
         vcaKnobSplitter.SetCurrentChannel(dl, 1);
+        beginTrackedControl(p, id, true);
         panel.knob(id, p, hostMinimum(p), hostMaximum(p), x, y, radius,
                    values[p], hostDefaultValue(p), false, false, format, suffix,
                    0, true, false, nullptr, false, 1.0f, 0.0f, label ? label : "MIX", true,
                    nullptr, false, 0.0f, 0.0f, false, true, 8.0f, true, false,
                    &knobHostToPlain, &knobPlainToHost, this, true);
+        endTrackedControl();
         vcaKnobSplitter.SetCurrentChannel(dl, 0);
         const float hostMinV = hostMinimum(p);
         const float hostRange = std::max(hostMaximum(p) - hostMinV, 1.0e-6f);
@@ -2648,11 +2684,13 @@ private:
         const bool dragInDisplay = toDisplay == &knobHostToPlain;
         vcaKnobSplitter.Split(dl, 2);
         vcaKnobSplitter.SetCurrentChannel(dl, 1);
+        beginTrackedControl(p, id, true);
         panel.knob(id, p, hostMinimum(p), hostMaximum(p), x, y, radius,
                    values[p], hostDefaultValue(p), false, false, format, suffix,
                    0, true, false, nullptr, false, 1.0f, 0.0f, label, true,
                    nullptr, false, 0.0f, 0.0f, false, true, 9.5f, true, false,
                    toDisplay, fromDisplay, this, dragInDisplay);
+        endTrackedControl();
         vcaKnobSplitter.SetCurrentChannel(dl, 0);
 
         const float hostMinV = hostMinimum(p);
@@ -2816,11 +2854,13 @@ private:
         const char* choiceText = p == P_BUS_ATTACK ? multicompp::kBusAttack[choice]
             : p == P_BUS_RELEASE ? multicompp::kBusRelease[choice]
             : p == P_BUS_RATIO ? multicompp::kBusRatios[choice] : nullptr;
+        beginTrackedControl(p, id, true);
         panel.knob(id, p, lo, hi, x, y, radius, values[p], hostDefaultValue(p),
                    discrete, false, discrete ? "%.0f" : "%.1f", suffix,
                    0, true, false, nullptr, false, 1.0f, 0.0f, label, !discrete,
                    choiceText, false, 0.0f, 0.0f, false, true, 10.0f, true, false,
                    &knobHostToPlain, &knobPlainToHost, this, !discrete);
+        endTrackedControl();
         // These are switches. Offer their actual timing/ratio labels instead of
         // a numeric editor that would interpret a typed value as an enum index.
         if (discrete)
@@ -3128,10 +3168,12 @@ private:
         studioVcaReadout(p, plainValueForHost(p, values[p]), readout, sizeof(readout));
         studioVcaKnobSplitter.Split(dl, 2);
         studioVcaKnobSplitter.SetCurrentChannel(dl, 1);
+        beginTrackedControl(p, id, true);
         panel.knob(id, p, hostMinimum(p), hostMaximum(p), x, y, radius, values[p], hostDefaultValue(p),
                    false, false, "%.3f", "", 0, true, false, nullptr, false, 1.0f, 0.0f, name, true,
                    readout, false, 0.0f, 0.0f, false, true, 9.5f, true, false,
                    &studioVcaHostToDial, &studioVcaDialToHost, this, true, &studioVcaParseText);
+        endTrackedControl();
         studioVcaKnobSplitter.SetCurrentChannel(dl, 0);
         const float s = panel.scale();
         const ImVec2 c = panel.P(x, y);
@@ -3675,16 +3717,15 @@ private:
         // Drawn before the widget, so a typed-value editor it opens lands on top.
         drawMetallicKnob(dl, x, y, r, hi > lo ? (values[p] - lo) / (hi - lo) : 0.0f, opacity);
         if (!applicable) ImGui::BeginDisabled();
-        modernEditsDrawn[p] = applicable;
-        drawingModernControl = true;
         // The selected band's knobs reuse their captions. Give each parameter
         // its own active ID so a disappearing band cannot redirect a held drag.
         ImGui::PushID(static_cast<int>(p));
+        beginTrackedControl(p, id, applicable);
         panel.knob(id, p, lo, hi, x, y, r, values[p], hostDefaultValue(p), false, false, "%.2f", suffix, 0, true,
                    false, nullptr, false, 1.0f, 0.0f, nullptr, false, nullptr, true, 0.0f, 0.0f, false, false, 9.5f,
                    false, false, &knobHostToPlain, &knobPlainToHost, this);
+        endTrackedControl();
         ImGui::PopID();
-        drawingModernControl = false;
         if (!applicable) ImGui::EndDisabled();
         textCentred(dl, x, nameCentreY, nameSize, colourWithAlpha(nameColour, opacity * static_cast<float>(
                         (nameColour >> IM_COL32_A_SHIFT) & 0xFFu) / 255.0f), name, true);
@@ -3864,13 +3905,16 @@ private:
     {
         const float s = panel.scale();
         const uint32_t p = P_SC_HP;
-        modernEditsDrawn[p] = true;
+        const ImGuiID widget = ImGui::GetID("##dig_sc_hp");
+        markTrackedDrawn(p, widget, true);
         const float lo = hostMinimum(p), hi = hostMaximum(p);
         ImGui::SetCursorScreenPos(panel.P(x - 14.0f, trackTop - 8.0f));
         ImGui::InvisibleButton("##dig_sc_hp", ImVec2(28.0f * s, (trackBottom - trackTop + 16.0f) * s));
         if (ImGui::IsItemActivated())
         {
-            modernEditsOpen[p] = true;
+            trackedEditsOpen[p] = true;
+            trackedEditOwners[p] = widget;
+            trackedEditsDrawn[p] = true;
             editParameter(p, true);
             sidechainHpReset = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
             if (sidechainHpReset) setParam(p, hostDefaultValue(p));
@@ -3884,8 +3928,8 @@ private:
         }
         if (ImGui::IsItemDeactivated())
         {
-            if (modernEditsOpen[p]) editParameter(p, false);
-            modernEditsOpen[p] = false;
+            if (trackedEditsOpen[p]) editParameter(p, false);
+            trackedEditsOpen[p] = false;
             sidechainHpReset = false;
         }
         const float position = hi > lo ? std::clamp((values[p] - lo) / (hi - lo), 0.0f, 1.0f) : 0.0f;
@@ -4053,17 +4097,20 @@ private:
     void crossoverFader(ImDrawList* dl, uint32_t p, float centreX, float top, float bottom, ImU32 lowColour,
                         ImU32 highColour)
     {
-        modernEditsDrawn[p] = true;
         const float s = panel.scale();
         const float minHz = plainValueForHost(p, hostMinimum(p)), maxHz = plainValueForHost(p, hostMaximum(p));
         const float trackTop = top, trackBottom = bottom - 22.0f;
         ImGui::PushID(static_cast<int>(p));
+        const ImGuiID widget = ImGui::GetID("##crossover");
+        markTrackedDrawn(p, widget, true);
         ImGui::SetCursorScreenPos(panel.P(centreX - 35.0f, top));
         ImGui::InvisibleButton("##crossover", ImVec2(70.0f * s, (bottom - top) * s));
         ImGui::PopID();
         if (ImGui::IsItemActivated())
         {
-            modernEditsOpen[p] = true;
+            trackedEditsOpen[p] = true;
+            trackedEditOwners[p] = widget;
+            trackedEditsDrawn[p] = true;
             editParameter(p, true);
             draggedCrossover = p;
             if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) setParam(p, hostDefaultValue(p));
@@ -4081,8 +4128,8 @@ private:
         }
         if (ImGui::IsItemDeactivated())
         {
-            if (modernEditsOpen[p]) editParameter(p, false);
-            modernEditsOpen[p] = false;
+            if (trackedEditsOpen[p]) editParameter(p, false);
+            trackedEditsOpen[p] = false;
             // Released: the pending write has had the gesture to land, and the
             // next refresh adopts whatever ordering the DSP settled on.
             if (draggedCrossover == p) draggedCrossover = kNoCrossover;

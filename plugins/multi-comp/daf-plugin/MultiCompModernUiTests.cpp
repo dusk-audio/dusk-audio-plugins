@@ -28,6 +28,8 @@ class UI
 public:
     struct Event { uint32_t parameter; float value; };
     std::vector<Event> writes, gestures;
+    // Also receives every gesture event, for a test that outlives the editor.
+    std::vector<Event>* gestureLog = nullptr;
     TestInstance state;
     void* instance = nullptr;
     UI(uint32_t, uint32_t) {}
@@ -41,7 +43,11 @@ public:
     void setGeometryConstraints(uint32_t, uint32_t, bool) {}
     void* getPluginInstancePointer() const { return instance; }
     void repaint() {}
-    void editParameter(uint32_t p, bool begin) { gestures.push_back({p, begin ? 1.0f : 0.0f}); }
+    void editParameter(uint32_t p, bool begin)
+    {
+        gestures.push_back({p, begin ? 1.0f : 0.0f});
+        if (gestureLog != nullptr) gestureLog->push_back({p, begin ? 1.0f : 0.0f});
+    }
     void setParameterValue(uint32_t p, float value) { state.parameters[p] = value; writes.push_back({p, value}); }
 protected:
     virtual void parameterChanged(uint32_t, float) {}
@@ -183,15 +189,27 @@ constexpr std::array<Control, 19> controls{{
     {7, pid(ParamId::Crossover2), 372, 220}, {7, pid(ParamId::Crossover3), 486, 220}
 }};
 
-void gestures(bool switched)
+// A knob of every hardware face, where the editor draws it at the default size (the faces' canvas sits 274 px
+// higher on screen than its own coordinates). Each starts away from the top of its travel (Mix at 50 %), so the
+// hold's upward drag writes. FET's Mix trim is one of four faces' controls for the same parameter: Opto, VCA and
+// Studio VCA draw their own elsewhere, so a gesture must follow the control, not the parameter.
+constexpr std::array<Control, 8> hardwareControls{{
+    {0, pid(ParamId::OptoPeakReduction), 794, 250}, {1, pid(ParamId::FetInput), 177, 227},
+    {2, pid(ParamId::VcaThreshold), 171, 204}, {3, pid(ParamId::BusThreshold), 409, 175},
+    {4, pid(ParamId::FetAttack), 559, 164}, {4, pid(ParamId::FetBlueHeadroom), 955, 322},
+    {5, pid(ParamId::StudioVcaRatio), 230, 155}, {1, pid(ParamId::Mix), 1010, 322}
+}};
+
+template <size_t N>
+void gestures(const std::array<Control, N>& table, bool switched)
 {
-    for (const auto& c : controls)
+    for (const auto& c : table)
     {
       for (int destination = 0; destination < (switched ? 8 : 1); ++destination)
       {
         if (switched && destination == c.mode) continue;
         Host h(c.mode);
-        if (c.p == pid(ParamId::DigitalMix) || c.p == pid(ParamId::MbMix))
+        if (c.p == pid(ParamId::DigitalMix) || c.p == pid(ParamId::MbMix) || c.p == pid(ParamId::Mix))
             h.ui.parameter(c.p, 50);
         h.hold(c.x, c.y);
         if (switched) h.ui.parameter(pid(ParamId::Mode), static_cast<float>(destination));
@@ -207,6 +225,72 @@ void gestures(bool switched)
         check(h.balanced(c.p) && h.writes(c.p) > 0,
               switched ? "mode change closes held gesture" : "ordinary drag writes and closes gesture");
       }
+    }
+}
+
+// A hardware knob's gesture closes once its control is no longer drawn, as a Digital or Multiband control's does:
+// host Mode automation hides it mid-drag, or the editor closes. A drag that stays on the knob keeps one gesture open
+// across all its frames.
+void hardwareHidden()
+{
+    const uint32_t mode = pid(ParamId::Mode), headroom = pid(ParamId::FetBlueHeadroom);
+    const uint32_t attack = pid(ParamId::FetAttack);
+    {
+        // FET BLUE's Headroom trim is held; the host moves to FET (no trim there), then Opto, the pointer is
+        // released there, and the host returns to FET BLUE.
+        Host h(4); h.hold(955, 322);
+        h.ui.parameter(mode, 1); h.frame(955, 297, true); h.frame(955, 292, true);
+        h.ui.parameter(mode, 0); h.frame(955, 287, true); h.frame(955, 287); h.frame();
+        h.ui.parameter(mode, 4); h.frame(); h.frame();
+        std::printf("hidden Headroom trim begins=%d ends=%d writes=%d\n", h.count(h.ui.gestures, headroom, 1),
+                    h.count(h.ui.gestures, headroom, 0), h.writes(headroom));
+        check(h.balanced(headroom) && h.writes(headroom) > 0,
+              "FET BLUE's Headroom trim closes its gesture when Mode automation hides it");
+    }
+    {
+        // FET BLUE's Attack is held; the host moves to Opto.
+        Host h(4); h.hold(559, 164);
+        h.ui.parameter(mode, 0); h.frame(559, 139, true); h.frame(559, 134, true); h.frame(559, 134); h.frame();
+        h.ui.parameter(mode, 4); h.frame(); h.frame();
+        std::printf("hidden FET Attack begins=%d ends=%d writes=%d\n", h.count(h.ui.gestures, attack, 1),
+                    h.count(h.ui.gestures, attack, 0), h.writes(attack));
+        check(h.balanced(attack) && h.writes(attack) > 0,
+              "FET Attack closes its gesture when Mode automation hides it");
+    }
+    {
+        // A drag held over several frames: one gesture, open until the release.
+        Host h(4); h.hold(559, 164);
+        bool open = true;
+        for (int f = 1; f <= 6; ++f)
+        {
+            h.frame(559, 144.0f - 4.0f * static_cast<float>(f), true);
+            open = open && h.count(h.ui.gestures, attack, 1) == 1 && h.count(h.ui.gestures, attack, 0) == 0;
+        }
+        const int heldWrites = h.writes(attack);
+        h.frame(559, 120); h.frame();
+        std::printf("held FET Attack drag openThroughout=%d writes=%d begins=%d ends=%d\n", open, heldWrites,
+                    h.count(h.ui.gestures, attack, 1), h.count(h.ui.gestures, attack, 0));
+        check(open && heldWrites > 1 && h.balanced(attack),
+              "a multi-frame drag of a hardware knob sends exactly one begin and one end");
+    }
+}
+
+// Closing the editor mid-drag closes the held gesture: a Digital knob (closed already) and a hardware knob.
+void editorClosedMidDrag()
+{
+    for (const Control& c : {controls[0], hardwareControls[4], hardwareControls[0]})
+    {
+        std::vector<DAF::UI::Event> events;
+        {
+            Host h(c.mode);
+            h.ui.gestureLog = &events;
+            h.hold(c.x, c.y);
+        }
+        int begins = 0, ends = 0;
+        for (const auto& event : events)
+            if (event.parameter == c.p) ++(event.value == 1 ? begins : ends);
+        std::printf("editor closed mid-drag mode=%d p=%u begins=%d ends=%d\n", c.mode, c.p, begins, ends);
+        check(begins == 1 && ends == 1, "closing the editor closes a held knob's gesture");
     }
 }
 
@@ -276,8 +360,12 @@ int main(int argc, char** argv)
     const char* only = argc > 1 ? argv[1] : "all";
     const auto run = [&](const char* name) { return std::strcmp(only, "all") == 0 || std::strcmp(only, name) == 0; };
     if (run("solo")) hiddenSolo();
-    if (run("switch")) gestures(true);
-    if (run("drag")) gestures(false);
+    if (run("switch")) gestures(controls, true);
+    if (run("drag")) gestures(controls, false);
+    if (run("hardware-switch")) gestures(hardwareControls, true);
+    if (run("hardware-drag")) gestures(hardwareControls, false);
+    if (run("hardware-hidden")) hardwareHidden();
+    if (run("editor-close")) editorClosedMidDrag();
     if (run("hidden")) hiddenControls();
     if (run("output")) outputAccess();
     if (run("numeric")) numericOwnership();
