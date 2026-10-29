@@ -243,6 +243,14 @@ void testAdaptiveLink()
                 renderDifference(independent, zeroLink), renderDifference(mono, independent, 1),
                 channelDifference(independent), channelDifference(partialLink), channelDifference(fullyLinked),
                 renderDifference(ms, msZeroLink));
+    // The unequal keys keep Dual Mono's channels apart, so its equalities below are not vacuous; the link amount
+    // closes that gap in order, to nothing at 100 %.
+    check(renderDifference(independent, zeroLink) < 1.0e-8 && renderDifference(mono, independent, 1) < 1.0e-8
+              && renderDifference(ms, msZeroLink) < 1.0e-8 && channelDifference(independent) > 1.0e-3
+              && channelDifference(fullyLinked) < 1.0e-8
+              && channelDifference(partialLink) > channelDifference(fullyLinked)
+              && channelDifference(partialLink) < channelDifference(independent),
+          "Adaptive Digital: Dual Mono is 0% link, mono is Dual Mono's left, Mid-Side ignores the link amount");
 
     const auto fresh = renderAdaptive(true, true, 2, 0, 100.0f, 2);
     const auto reset = renderAdaptive(true, true, 2, 0, 100.0f, 2, true, false, 1);
@@ -255,6 +263,8 @@ void testAdaptiveLink()
             reentryError = std::max(reentryError, static_cast<double>(std::abs(fresh.output[ch][n] - reentry.output[ch][n])));
     std::printf("adaptive lifecycle: reset_delta=%.9g reentry_release_delta=%.9g fresh_release_peak=%.9g\n",
                 resetError, reentryError, fresh.output[0][fresh.releaseAt + 4800]);
+    check(resetError < 1.0e-8 && reentryError < 1.0e-8 && std::abs(fresh.output[0][fresh.releaseAt + 4800]) > 1.0e-3f,
+          "Adaptive Digital starts from rest after reset() and after re-entry from a Multiband block");
 }
 } // namespace
 
