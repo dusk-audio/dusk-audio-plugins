@@ -4869,8 +4869,10 @@ void testGoldenVectors(int selectedMode = -1)
     // all six hardware modes also byte-null against the pre-fix step/burst.
     // FET BLUE's tip balance referred to the nominal Release (fbTipReferenceShare; 2026-10-27, owner's approval):
     // mode-4 RMS .061227035 -> .059194174, peak unchanged; siblings unchanged, bound unchanged.
+    // FET BLUE's creep element and the constants refitted with it (fbCreepShare, refit 8; 2026-10-29, owner's
+    // approval): mode-4 RMS .059194174 -> .057669543, peak unchanged; siblings unchanged, bound unchanged.
     constexpr float expectedRms[] = {0.043787036f, 0.021684144f,
-                                     0.059194174f, 0.161433503f, 0.172472671f, 0.213454589f};
+                                     0.057669543f, 0.161433503f, 0.172472671f, 0.213454589f};
     constexpr float expectedPeak[] = {0.553540170f, 0.349883616f,
                                       0.488671184f, 0.349220395f, 0.349556237f, 0.820877731f};
     std::puts("golden vectors: six JUCE-oracle modes, deterministic step/sine-burst RMS peak");

@@ -348,7 +348,15 @@ inline constexpr bool kOptoLinkAtDriveDefault = true;
 // w (leak - the nominal position's leak at the same reduction): at 1 a faster release's extra overshoot is the loop's
 // own, and the nominal position is untouched (the two leaks agree bit for bit there). No constant of its own: the size
 // is the attack and release laws'. FET BLACK: off.
-inline constexpr std::array<float, 86> kFetDynamicsDefaults{{
+// [86] fbCreepShare k (0 = off), [87] fbCreepCeilingDb, [88] fbCreepChargeSeconds, [89] fbCreepReleaseSeconds: an
+// element that acts on the threshold alone. Its state z (FETState::creepGrDb) follows X(c) = ceiling tanh(k c /
+// ceiling) at the charged state, up in [88] and down in [89], and the threshold is read max(0, X(c) - z) deeper than
+// the settled populations put it. While z lags X after an onset, the loop sits (1 - slope) times that deficit under
+// the static law and creeps onto it as z charges, on z's time scale and by the same amount at every Attack and
+// Release position. Nothing is applied: the gain is the charge and the populations, as without it, and settled
+// z = X(c), so the static law is untouched. An applied population cannot carry such a creep at shallow depth: its
+// creep is (1 - slope) times its own deficit, which there would have to exceed the whole reduction. FET BLACK: off.
+inline constexpr std::array<float, 90> kFetDynamicsDefaults{{
     0.03f, 0.002f, 5.0f, 0.42f, 0.46f, 0.65f,
     0.8f, 0.51f, 0.56f, 0.82f, 1.0f, 0.1f,
     0.7f, 1.0f, 1.24f, 2.0f, -2.17f, 0.82f,
@@ -362,7 +370,7 @@ inline constexpr std::array<float, 86> kFetDynamicsDefaults{{
     0.069821596f, 0.12f, 0.85f, 0.6051005f, 0.0f, 1.2920812f,
     3.8620229f, 5.0f, 1.0f, 0.043717176f, 9.846549f, 3.0176f,
     0.6949f, 5.42614f, 0.72f, -0.1f, 0.4097363f, 0.4356033f,
-    0.3f, 5.0102124f, 19.819176f, 0.0f, 0.0f, 0.0f, 0.02f, 0.0f}};
+    0.3f, 5.0102124f, 19.819176f, 0.0f, 0.0f, 0.0f, 0.02f, 0.0f, 0.0f, 20.0f, 0.145f, 0.145f}};
 
 // C5 90-degree all-pass pair: first-order sections (p - s)/(p + s), pole
 // frequencies in Hz, mapped per sample rate by the plain bilinear transform.
@@ -407,6 +415,7 @@ struct FetDynamicsParams
     float fbReleaseDepthExtraExponent, fbReleaseDepthExtraDb;
     float fbSloAttackScale, fbSloLoadDb, fbTailInputLimit, fbTailInputReleaseSeconds;
     float fbTipReferenceShare;
+    float fbCreepShare, fbCreepCeilingDb, fbCreepChargeSeconds, fbCreepReleaseSeconds;
 
     static FetDynamicsParams fromArray(const std::array<float, kFetDynamicsDefaults.size()>& v) noexcept
     {
@@ -490,6 +499,10 @@ struct FetDynamicsParams
         p.fbTailInputLimit = v[83];
         p.fbTailInputReleaseSeconds = v[84];
         p.fbTipReferenceShare = v[85];
+        p.fbCreepShare = v[86];
+        p.fbCreepCeilingDb = v[87];
+        p.fbCreepChargeSeconds = v[88];
+        p.fbCreepReleaseSeconds = v[89];
         return p;
     }
 };
@@ -498,11 +511,12 @@ struct FetDynamicsParams
 // 2026-10-26 to a second reference FET compressor on its own probes (tools fet_ae/dyn_fit.py, variant A; report
 // handoff/reports/fet-ae-step1-2026-10-26.md), music never fitted: the 30-clip corpus at 4:1 and 20:1, light to
 // heavy drive, then reads 0 of 180 cells over 1 dB; the release and tail constants refitted on 2026-10-27 with the
-// tail limit, and the tip balance referred to the nominal Release (the last two items). Twenty-six slots differ
-// from FET BLACK's:
-// - [45] fbSlowShare 0: the reference has no release memory, and with the population on, the fit built its slow
-//   attack creep from it, which also charges over a long passage (its staircase statics sat 0.6 dB deeper than its
-//   own 1 s bursts at the same level, where the reference's agree to 0.06 dB).
+// tail limit, the tip balance referred to the nominal Release, and on 2026-10-29 the creep element with the release,
+// tail and slow-population constants refitted around it (the last three items). Thirty-two slots differ from FET
+// BLACK's:
+// - [45] fbSlowShare (0 until the creep element, the last item): without that element the fit built its slow
+//   attack creep from the population, which also charges over a long passage (its staircase statics sat 0.6 dB
+//   deeper than its own 1 s bursts at the same level, where the reference's agree to 0.06 dB).
 // - [38]-[42], [49], [52], [53], [63], [65], [66], [70], [73], [74]: the attack and release laws, the ratio
 //   exponent of the attack, the depth law and the tail population, fitted on the reference's 4 kHz bursts (4:1 at
 //   every Attack and Release position, 20:1, 0 dBFS bursts) and its 1 kHz staircases (4:1, 8:1, 20:1).
@@ -518,7 +532,8 @@ struct FetDynamicsParams
 //   Attack-0 bursts alone (4:1, Input .5; tools fet_ae/slo_fit.py): attack / hold / release 0.54 / 0.13 / 0.45 dB rms
 //   (6.4 dB worst frame without the detent, 1.4 dB rms hold with the attack scale alone: the reference settles 1.3 dB
 //   shallower at SLO).
-// - [83] fbTailInputLimit on, [84] 0.036 s: the reference never deepens its reduction after a burst ends (171 ms of
+// - [83] fbTailInputLimit on, [84] 0.036 s (refitted with the creep element, the last item): the reference never
+//   deepens its reduction after a burst ends (171 ms of
 //   1 kHz at 0.8 peak, Input .5, every single button, Release 0 / '5' / 1; tools fet_ae/release0.py), where the tail
 //   still filling from the fast charge deepened FET BLUE's by up to 1.2 dB at Release 0; nor does it hold its
 //   reduction up after a short burst (300 ms after 30 / 100 / 300 ms bursts at Release '5' it reads within 0.5 dB
@@ -536,10 +551,26 @@ struct FetDynamicsParams
 //   heavy, 139 -> 13 of 360 cells over 1 dB; at Release 0 2 -> 4 of 360 (two cells at 1.01 / 1.03, pooled 0.40 ->
 //   0.38); probe cells with a frame 1 dB off 11 -> 8 of 65; at Release .666 every render is unchanged bit for bit.
 //   Release 0's hold after a long hot burst (testFetBlueReleasesWithoutDeepening's rows) reads 0.4 dB deeper: the
-//   tail's creep there is a separate element, open.
+//   tail's creep there is a separate element (the next item).
+// - [86]-[89] the creep element on (2026-10-29): k 0.88, ceiling 6.83 dB, charge 0.148 s, release at the 1e-4 s floor
+//   (the data does not identify it: at 0.145 s every FIT table reads the same to 0.01 dB). The reference creeps onto
+//   its static law after an onset as one exponential, about 145 ms from 20 ms on, by the same amount at every Attack
+//   and Release position and nearly the same at every depth (+1.6 dB at 20 ms for 10.5 dB of reduction, +2.6 for
+//   32.7 at 4:1; tools fet_ae/creep.py). Without the element the fits built that creep from a large slow tail ([63]
+//   0.96 of the charge), which overshot at Release 0: the hold after a long hot burst read up to 2.65 dB deep. With
+//   it, [42], [45], [47], [48], [49], [50], [63], [66], [70], [73], [84] and FetVoice's release scales refitted ([65]
+//   held for the SC Filter row) on the probes, the Release 0 / '5' / 1 events, the release0 bursts, the length
+//   captures, a depth sweep of 1 s bursts and the corpus's FIT clips (blue_fit.py, refit 8): the tail falls to 0.42,
+//   the hot-burst rows go 13 -> 0 of 16 over 1 dB (worst 0.72), probe cells with a frame 1 dB off 8 -> 6 of 65
+//   (attack 0.262 -> 0.225, release 0.224 -> 0.204 dB rms; statics 0.072 -> 0.075), and the music, never fitted, at
+//   Release 0 4 -> 0 and at Release 1 1 -> 1 of 360 cells over 1 dB (z_mysong01 1.09 dB, at 20:1 now, 4:1 before);
+//   nominal, Attack 0 and Attack 1 stay at 0, and every grid's pooled error falls. A trade the owner accepted on
+//   2026-10-29 against a bar of 2 probe cells and 0 music cells. What is left is FET BLUE's own short-event release
+//   at fast Release, as before the refit: 50 ms after a 20 ms hit at Release 1 it reads 1.1-2.45 dB deeper than the
+//   reference, which has let go by then. Open.
 // FET BLACK's [43], [44] (unused while the Release pot law, [60], is on) and [54], [55] (no lag) are kept: the
 // fitted values there rendered byte-identically.
-inline constexpr std::array<float, 86> kFetBlueDynamicsDefaults{{
+inline constexpr std::array<float, 90> kFetBlueDynamicsDefaults{{
     0.03f, 0.002f, 5.0f, 0.42f, 0.46f, 0.65f,
     0.8f, 0.51f, 0.56f, 0.82f, 1.0f, 0.1f,
     0.7f, 1.0f, 1.24f, 2.0f, -2.17f, 0.82f,
@@ -547,13 +578,14 @@ inline constexpr std::array<float, 86> kFetBlueDynamicsDefaults{{
     0.2f, 0.0f, 0.0f, 0.0f, 1.0f, 0.5f,
     0.5f, 1.4f, 0.058f, 1.0f, 3.7668848f, 1.67501724f,
     0.0f, 1.0f, 8.23298979e-05f, 1.32719922f, -1.35175562f, 0.86418885f,
-    0.460866213f, 1.042f, -0.958f, 0.0f, 4.7795935f, 2.1196837f,
-    2.6695828f, 71.9732056f, 1.08718872f, 0.216308f, -0.214574963f, 23.4785976f,
+    0.425894797f, 1.042f, -0.958f, 0.183070436f, 4.7795935f, 0.0921036452f,
+    0.73367101f, 72.3883743f, 0.965562284f, 0.216308f, -0.214574963f, 23.4785976f,
     0.0f, 1.7396628f, 13.263551f, 123.67461f, 0.85f, 1.17f,
-    0.069821596f, 0.12f, 0.85f, 0.958768249f, 0.0f, 0.414279848f,
-    0.790935993f, 5.0f, 1.0f, 0.043717176f, 16.7711658f, 4.19861269f,
-    0.70767647f, 0.335850686f, 0.543351114f, -0.1f, 0.4097363f, 0.4356033f,
-    0.0f, 5.0102124f, 19.819176f, 3.98787689f, 1.789222f, 1.0f, 0.0355880819f, 1.0f}};
+    0.069821596f, 0.12f, 0.85f, 0.423109114f, 0.0f, 0.414279848f,
+    0.922730625f, 5.0f, 1.0f, 0.043717176f, 13.8013239f, 4.19861269f,
+    0.70767647f, 0.186178476f, 0.543351114f, -0.1f, 0.4097363f, 0.4356033f,
+    0.0f, 5.0102124f, 19.819176f, 3.98787689f, 1.789222f, 1.0f, 0.254028618f, 1.0f,
+    0.882158995f, 6.83269262f, 0.147758424f, 1.0e-04f}};
 
 // The two FET modes are one engine with two measured voices: FET BLACK (mode 1), the reference the C6 campaign
 // fitted, and FET BLUE (mode 4), measured 2026-10-26/27 (tools fet_ae/: laws.py, tables.py, static_fit.py). A
@@ -729,8 +761,8 @@ inline constexpr std::array<std::array<float, 4>, 58> kFetBlueAmplifierCubics{{
 // 30.2 dB): 39 dB, inside FET BLACK's 38.2-39.1, stands in for it. None keeps the threshold out of reach.
 // Attack scales: 4:1, 8:1 and 20:1 as FET BLACK's, which the dynamics fit ran with; 2:1 and the pairs, not yet
 // measured, take the single button nearest them in reduction slope. Release scales: fitted with the tail limit
-// (kFetBlueDynamicsDefaults, 2026-10-27) on bursts at every single button: 2:1 1.00, 8:1 1.01, 20:1 0.92; each pair
-// takes its larger button's, not yet measured.
+// (kFetBlueDynamicsDefaults, 2026-10-27) on bursts at every single button, refitted with the creep element
+// (2026-10-29): 2:1 1.010, 8:1 1.044, 20:1 0.965; each pair takes its larger button's, not yet measured.
 // Linear gain per position re 4:1: the first step of every staircase (-60 dBFS) at Input .25 / .375 / .5 / .625
 // agrees within 0.003 dB (tools fet_ae/ratio_gain.py); the pairs sit up to 1.75 dB above the single buttons.
 // Fast-Release load (2026-10-27): at Release 1 the reference's settled law sits shallower than at the nominal
@@ -788,8 +820,8 @@ inline constexpr FetVoice kFetBlueVoice{
       5.7460027f, 4.3816304f, 5.0832062f}},
     {{239.0f, 39.0f, 39.0f, 39.0f, 39.0f, 39.0f, 39.0f, 39.0f, 39.0f, 39.0f, 39.0f}},
     {{1.0f, 1.0f, 1.0f, 0.65f, 0.25f, 1.0f, 0.65f, 0.25f, 0.65f, 0.25f, 0.25f}},
-    {{1.0f, 0.999883831f, 1.0f, 1.01148355f, 0.923112452f, 1.0f, 1.01148355f, 0.923112452f, 1.01148355f,
-      0.923112452f, 0.923112452f}},
+    {{1.0f, 1.00962508f, 1.0f, 1.0437808f, 0.965197444f, 1.0f, 1.0437808f, 0.965197444f, 1.0437808f,
+      0.965197444f, 0.965197444f}},
     {{-0.1006f, -0.1002f, 0.0f, 0.1003f, -0.3004f, -0.0386f, 1.2816f, 1.7017f, 1.7516f, 1.7517f, 1.3517f}},
     {{-36.30f, -34.50f, -30.50f, -28.80f, -26.10f, -22.10f, -21.30f, -16.70f, -13.50f,
       -9.20f, -7.70f, -6.20f, -4.10f, -0.50f, -0.30f, -0.10f, 0.0f}},
@@ -1725,19 +1757,21 @@ private:
     struct FETState
     {
         // The C6 loop's last exact overshoot evaluation (advanceFetFeedback), carried to the next steps: its point
-        // (u, its charge, the slow population and the tail reading), its value without the drive, and its slopes.
+        // (u, its charge, the slow population, the tail reading and the creep element's state), its value without
+        // the drive, and its slopes.
         struct FetCarry
         {
             bool valid = false, kneeApplied = false;
             float u = 0.0f, charge = 0.0f, slow = 0.0f, tail = 0.0f, quotient = 0.0f, levelSlope = 0.0f;
-            float slowSlope = 0.0f, weight = 1.0f, weightSlope = 0.0f;
+            float slowSlope = 0.0f, weight = 1.0f, weightSlope = 0.0f, creep = 0.0f;
             FetCarryKey key;
         } carry;
         // Expansions of the C6 loop's slowly moving arguments (see expandedTanh and the others): the slow law's
         // tanh, the tip's cube root and cosine and the overshoot's exponential in the charge solve, the knee
-        // release's exponential (double), the envelope's dB-to-gain and the colour stage's gain-to-dB.
+        // release's exponential (double), the envelope's dB-to-gain, the colour stage's gain-to-dB and the creep
+        // element's tanh.
         FetExpansion slowShapeExpansion, tipCbrtExpansion, tipCosExpansion, overshootExpExpansion;
-        FetExpansion envelopeGainExpansion, colourGrDbExpansion;
+        FetExpansion envelopeGainExpansion, colourGrDbExpansion, creepShapeExpansion;
         FetExpansionD kneeExpExpansion;
         FetPowExpansion depthPowExpansion;   // the 4:1 depth term's power (expandedDepthPow)
         float envelope = 1, previous = 0, dc = 0, prevSq = 0, peak = 0;
@@ -1769,6 +1803,9 @@ private:
         // reading; with fbTailKneeDb what the tail adds to the reduction is
         // fetTailAppliedNow(), not this.
         double slowTailGrDb = 0.0;
+        // fbCreepShare's state z, in dB of the threshold's reading: nothing
+        // applied. In double, as the populations.
+        double creepGrDb = 0.0;
         float programmeExposureSeconds = 0, programmeMaximumGrDb = 0;
         float tailInputPeak = 0;   // fbTailInputLimit's peak follower on the detector
         float releaseMemory = 0, sag = 0, tilt = 0, subBass = 0;
@@ -4605,6 +4642,7 @@ private:
         float ratioCoordinate = 0.0f, tailShare = 0.0f;
         float attackLoadDb = 0.0f, maximumReductionDb = 0.0f, turnOnBiasDb = 0.0f;
         double tailStepCharging = 0.0, tailStepReleasing = 0.0;
+        double creepStepCharging = 0.0, creepStepReleasing = 0.0;   // fbCreepShare's state, per sample
         float tailInputDecay = 0.0f;    // fbTailInputLimit's peak follower, per sample
         float slowReleaseKnob = 0.0f;   // the slow population's release knob factor
         float slowChargeStep = 0.0f;
@@ -4788,6 +4826,10 @@ private:
         const double tailSecondsReleasing = std::max(1.0e-4f, fetDynamics.fbTailReleaseSeconds);
         t.tailStepCharging = std::exp(-1.0 / (tailSecondsCharging * sr));
         t.tailStepReleasing = std::exp(-1.0 / (tailSecondsReleasing * sr));
+        const double creepSecondsCharging = std::max(1.0e-4f, fetDynamics.fbCreepChargeSeconds);
+        const double creepSecondsReleasing = std::max(1.0e-4f, fetDynamics.fbCreepReleaseSeconds);
+        t.creepStepCharging = std::exp(-1.0 / (creepSecondsCharging * sr));
+        t.creepStepReleasing = std::exp(-1.0 / (creepSecondsReleasing * sr));
         t.tailInputDecay = std::exp(-1.0f / (std::max(fetDynamics.fbTailInputReleaseSeconds, 1.0e-4f) * sr));
         t.slowReleaseKnob = std::exp(decade * releaseKnobDecades
             * (fetDynamics.fbSlowReleaseKnobExponent - 1.0f));
@@ -5048,15 +5090,15 @@ private:
         typename L::F colourLowPeak, colourLowDc, colourLowPrevSq, colourLowHarmonicDc, kneeCorrectionDb, kneeGain;
         typename L::F subBassHpState;
         typename L::D slowGrDb, slowTailGrDb, lfAheadZ1, lfAheadZ2, feedbackHpZ1, feedbackHpZ2, partnerHpZ1;
-        typename L::D partnerHpZ2, lfHpZ1, lfHpZ2;
+        typename L::D partnerHpZ2, lfHpZ1, lfHpZ2, creepGrDb;
         typename L::D scFilterZ1, scFilterZ2, scFilterZ3, scFilterPartnerZ1, scFilterPartnerZ2, scFilterPartnerZ3;
-        FetExpansionLanes<L> slowShape, tipCbrt, tipCos, overshootExp, envelopeGain, colourGrDb;
+        FetExpansionLanes<L> slowShape, tipCbrt, tipCos, overshootExp, envelopeGain, colourGrDb, creepShape;
         FetExpansionDLanes<L> kneeExp;
         FetPowExpansionLanes<L> depthPow;
         // The carried evaluation (FETState::FetCarry) and its knob key, per lane.
         typename L::M carryValid, carryKnee;
         typename L::F carryU, carryCharge, carrySlow, carryTail, carryQuotient, carryLevelSlope, carrySlowSlope;
-        typename L::F carryWeight, carryWeightSlope;
+        typename L::F carryWeight, carryWeightSlope, carryCreep;
         FetCarryKey carryKey[L::kLanes];
         // The knee gain's memo (FETState::kneeGainKey / Valid / Value), per lane.
         std::uint32_t kneeGainKey[L::kLanes];
@@ -5098,6 +5140,7 @@ private:
         s.colourLowHarmonicDc = f(&FETState::colourLowHarmonicDc); s.kneeCorrectionDb = f(&FETState::kneeCorrectionDb);
         s.kneeGain = f(&FETState::kneeGain); s.subBassHpState = f(&FETState::subBassHpState);
         s.slowGrDb = g(&FETState::slowGrDb); s.slowTailGrDb = g(&FETState::slowTailGrDb);
+        s.creepGrDb = g(&FETState::creepGrDb);
         s.lfAheadZ1 = g(&FETState::lfAheadZ1); s.lfAheadZ2 = g(&FETState::lfAheadZ2);
         s.feedbackHpZ1 = g(&FETState::feedbackHpZ1); s.feedbackHpZ2 = g(&FETState::feedbackHpZ2);
         s.partnerHpZ1 = g(&FETState::partnerHpZ1); s.partnerHpZ2 = g(&FETState::partnerHpZ2);
@@ -5108,6 +5151,7 @@ private:
         s.slowShape = x(&FETState::slowShapeExpansion); s.tipCbrt = x(&FETState::tipCbrtExpansion);
         s.tipCos = x(&FETState::tipCosExpansion); s.overshootExp = x(&FETState::overshootExpExpansion);
         s.envelopeGain = x(&FETState::envelopeGainExpansion); s.colourGrDb = x(&FETState::colourGrDbExpansion);
+        s.creepShape = x(&FETState::creepShapeExpansion);
         double at[n], value[n], inverse[n], exponent[n], depthValue[n];
         for (int k = 0; k < n; ++k)
         {
@@ -5123,20 +5167,22 @@ private:
         s.kneeExp = {lanesD<L>(at), lanesD<L>(value)};
         {
             bool valid[n], knee[n];
-            float u[n], charge[n], slow[n], tail[n], quotient[n], levelSlope[n], slowSlope[n], weight[n], weightSlope[n];
+            float u[n], charge[n], slow[n], tail[n], quotient[n], levelSlope[n], slowSlope[n], weight[n];
+            float weightSlope[n], creep[n];
             for (int k = 0; k < n; ++k)
             {
                 const auto& carry = d[k]->carry;
                 valid[k] = carry.valid; knee[k] = carry.kneeApplied; u[k] = carry.u; charge[k] = carry.charge;
                 slow[k] = carry.slow; tail[k] = carry.tail; quotient[k] = carry.quotient;
                 levelSlope[k] = carry.levelSlope; slowSlope[k] = carry.slowSlope; weight[k] = carry.weight;
-                weightSlope[k] = carry.weightSlope; s.carryKey[k] = carry.key;
+                weightSlope[k] = carry.weightSlope; creep[k] = carry.creep; s.carryKey[k] = carry.key;
             }
             s.carryValid = lanesM<L>(valid); s.carryKnee = lanesM<L>(knee);
             s.carryU = lanesF<L>(u); s.carryCharge = lanesF<L>(charge); s.carrySlow = lanesF<L>(slow);
             s.carryTail = lanesF<L>(tail); s.carryQuotient = lanesF<L>(quotient);
             s.carryLevelSlope = lanesF<L>(levelSlope); s.carrySlowSlope = lanesF<L>(slowSlope);
             s.carryWeight = lanesF<L>(weight); s.carryWeightSlope = lanesF<L>(weightSlope);
+            s.carryCreep = lanesF<L>(creep);
         }
         for (int k = 0; k < n; ++k) at[k] = d[k]->depthPowExpansion.at;
         s.depthPow = {lanesD<L>(at), lanesD<L>(inverse), lanesD<L>(exponent), lanesD<L>(depthValue)};
@@ -5166,6 +5212,7 @@ private:
         f(&FETState::colourLowHarmonicDc, s.colourLowHarmonicDc); f(&FETState::kneeCorrectionDb, s.kneeCorrectionDb);
         f(&FETState::kneeGain, s.kneeGain); f(&FETState::subBassHpState, s.subBassHpState);
         g(&FETState::slowGrDb, s.slowGrDb); g(&FETState::slowTailGrDb, s.slowTailGrDb);
+        g(&FETState::creepGrDb, s.creepGrDb);
         g(&FETState::lfAheadZ1, s.lfAheadZ1); g(&FETState::lfAheadZ2, s.lfAheadZ2);
         g(&FETState::feedbackHpZ1, s.feedbackHpZ1); g(&FETState::feedbackHpZ2, s.feedbackHpZ2);
         g(&FETState::partnerHpZ1, s.partnerHpZ1); g(&FETState::partnerHpZ2, s.partnerHpZ2);
@@ -5176,6 +5223,7 @@ private:
         x(&FETState::slowShapeExpansion, s.slowShape); x(&FETState::tipCbrtExpansion, s.tipCbrt);
         x(&FETState::tipCosExpansion, s.tipCos); x(&FETState::overshootExpExpansion, s.overshootExp);
         x(&FETState::envelopeGainExpansion, s.envelopeGain); x(&FETState::colourGrDbExpansion, s.colourGrDb);
+        x(&FETState::creepShapeExpansion, s.creepShape);
         for (int k = 0; k < n; ++k)
         {
             d[k]->kneeExpExpansion = FetExpansionD{laneD<L>(s.kneeExp.at, k), laneD<L>(s.kneeExp.value, k)};
@@ -5191,6 +5239,7 @@ private:
             carry.quotient = laneF<L>(s.carryQuotient, k); carry.levelSlope = laneF<L>(s.carryLevelSlope, k);
             carry.slowSlope = laneF<L>(s.carrySlowSlope, k); carry.weight = laneF<L>(s.carryWeight, k);
             carry.weightSlope = laneF<L>(s.carryWeightSlope, k); carry.key = s.carryKey[k];
+            carry.creep = laneF<L>(s.carryCreep, k);
             d[k]->intermediateGrDb = 0.0f;
             d[k]->recoveryGain = 1.0f;
             d[k]->kneeBaseReductionDb = 0.0f;
@@ -5572,7 +5621,8 @@ private:
     // Candidate C6: one implicit step of the feedback gain computer (see
     // kFetDynamicsDefaults), on the lanes' channels. `magnitude` is the rectified driven signal BEFORE the
     // envelope (the loop applies it), fastGrDb the charged capacitor, slowGrDb / slowTailGrDb the slow
-    // populations; all in dB of reduction.
+    // populations; all in dB of reduction. creepGrDb, the creep element's state, is in dB of the threshold's
+    // reading and adds no reduction.
     template <class L>
     void advanceFetFeedback(FetC6Lanes<L>& s, typename L::F magnitude, const FetC6Knobs& k,
                              typename L::F transientFactor) const noexcept
@@ -5714,6 +5764,12 @@ private:
             slope = Kf(slowShare) * (Kf(1.0f) - shape * shape) + tailSlope;
             return Kf(slowCeilingDb) * shape + tail;
         };
+        // fbCreepShare k (see kFetDynamicsDefaults): the threshold is read max(0, X(c) - z) deeper, X(c) = ceiling
+        // tanh(k c / ceiling) and z the element's state. Off (k = 0), every use below is left out (block-constant).
+        const bool creepOn = fetDynamics.fbCreepShare > 0.0f;
+        const float creepShare = std::max(fetDynamics.fbCreepShare, 0.0f);
+        const float creepCeilingDb = std::max(fetDynamics.fbCreepCeilingDb, 1.0e-3f);
+        const F creepZ = L::toF(s.creepGrDb);
         const float attackLoadDb = terms.attackLoadDb;
         // The overshoot's drive term in linear form: exp(dbToNeper (levelDb - A)), levelDb the floored magnitude in
         // dB, is that magnitude times exp(-dbToNeper A). No logarithm per sample, and the exponential's argument
@@ -5786,7 +5842,17 @@ private:
                     + restSlope * (Kf(1.0f) + populationSlope)
                     + lawSlope * tailSlope;
             }
-            const F settledReductionDb = c + settledSlowDb;
+            // The creep element's deficit at this charge, and how fast that grows with it (0 where z has caught up).
+            F creepSlope = Kf(0.0f), creepDeficitDb = Kf(0.0f);
+            if (creepOn)
+            {
+                const F shape = expandedTanhT<L>(s.creepShape, Kf(creepShare) * c / Kf(creepCeilingDb), active);
+                const F deficit = Kf(creepCeilingDb) * shape - creepZ;
+                const M shortOf = deficit > Kf(0.0f);
+                creepDeficitDb = L::sel(shortOf, deficit, Kf(0.0f));
+                creepSlope = L::sel(shortOf, Kf(creepShare) * (Kf(1.0f) - shape * shape), Kf(0.0f));
+            }
+            const F settledReductionDb = creepOn ? c + settledSlowDb + creepDeficitDb : c + settledSlowDb;
             F settledLevelDb = Kf(attackLoadDb) + fetStaticOutputLevelDbT<L>(
                 *fetVoice, settledReductionDb, ratioIndex, k.thresholdControlDb, levelSlope, !floorOnApplied);
             // The gain element's floor belongs to the reduction applied,
@@ -5834,7 +5900,7 @@ private:
                 * ((unitTransient ? c + slowNow : (c + slowNow) / transientFactor) + settledLevelDb), active);
             const F ratio = drive * growth * tipRatio;
             const F bracket = (unitTransient ? Kf(1.0f) + appliedSlope : (Kf(1.0f) + appliedSlope) / transientFactor)
-                + (Kf(1.0f) + slowSlope) * levelSlope
+                + (creepOn ? Kf(1.0f) + slowSlope + creepSlope : Kf(1.0f) + slowSlope) * levelSlope
                 + floorSlope * (Kf(1.0f) + appliedSlope);
             r.derivative = Kf(-2.0f) * u * ratio * Kf(dbToNeper) * bracket;
             r.over = ratio - Kf(1.0f);
@@ -5857,7 +5923,9 @@ private:
         // - the tip ratio is at most 2.6027 (tip <= 1.5, so phase <= 1.05; the imbalance's x <= 2^(2/3) x0), or
         //   1 + k q / (1 - q), q = phase^2 / 2, from cos p >= 1 - p^2 / 2 with the tip bounded by its cube root's
         //   tangent at the expansion's anchor (above a concave function) at a weight no larger than the
-        //   evaluation's (the slow population alone in the turn-on position).
+        //   evaluation's (the slow population alone in the turn-on position);
+        // - the creep element's deficit (fbCreepShare) is >= 0 and the law nondecreasing, so leaving it out keeps
+        //   the bound below.
         // A quiet lane's overshoot is <= 0, so it does not solve and its lag input, weight x max(0, overshoot), is
         // 0 either way. What changes is that its tip cube root, tip cosine and overshoot exp expansions are not
         // refreshed on those steps: results move at the rounding level. The decision is per lane and the
@@ -5865,13 +5933,14 @@ private:
         // transient factor is 1 (no transient shaping on this step) are bounded.
         const M unitLanes = transientFactor == Kf(1.0f);
         // A lane carries its last exact evaluation (FETState::FetCarry) while the state it was taken at has hardly
-        // moved: within 0.003 dB of its charge and slow population, the tail reading within 0.0002 dB, the same
-        // tail-knee state, no transient shaping and the same knobs (holdCarryUnder). The carried ratio is the
-        // evaluation's value without the drive times this step's drive, extrapolated to first order in the charge
-        // and the slow population. It does not follow the tip's dependence on the pre-step reduction (leak, release
-        // knee, 4:1 depth term), so its error is bounded by the validity window, not by the expansion: review
-        // 2026-10-21, ~25M carried steps at 44.1-192 kHz, 25 missed charges with exact overshoots <= 7e-5, output
-        // within 0.007 dB of exact evaluation in 5 ms windows above -80 dBFS. It decides whether the step charges
+        // moved: within 0.003 dB of its charge and slow population, the tail reading (and the creep element's state,
+        // fbCreepShare) within 0.0002 dB, the same tail-knee state, no transient shaping and the same knobs
+        // (holdCarryUnder). The carried ratio is the evaluation's value without the drive times this step's drive,
+        // extrapolated to first order in the charge and the slow population. It does not follow the tip's
+        // dependence on the pre-step reduction (leak, release knee, 4:1 depth term), so its error is bounded by the
+        // validity window, not by the expansion: review 2026-10-21 (before the creep element), ~25M carried steps at
+        // 44.1-192 kHz, 25 missed charges with exact overshoots <= 7e-5, output within 0.007 dB of exact evaluation
+        // in 5 ms windows above -80 dBFS. It decides whether the step charges
         // and seeds the solver in place of the bound and the first evaluation; the solver's evaluations stay exact,
         // so a charging step still ends on a root within its tolerance.
         const F charge0 = u * u;
@@ -5881,6 +5950,8 @@ private:
             carried = s.carryValid && unitLanes && ((kneeApplied && s.carryKnee) || !(kneeApplied || s.carryKnee))
                 && vabs(charge0 - s.carryCharge) <= Kf(3.0e-3f) && vabs(slowFloat - s.carrySlow) <= Kf(3.0e-3f)
                 && vabs(tailDb - s.carryTail) <= Kf(2.0e-4f);
+        if (creepOn && L::any(carried))
+            carried = carried && vabs(creepZ - s.carryCreep) <= Kf(2.0e-4f);
         const M bounded = unitLanes && !carried;
         M quiet = L::m(false);
         if (L::any(bounded))
@@ -5931,6 +6002,7 @@ private:
             s.carrySlowSlope = L::sel(on, e.slowSlope, s.carrySlowSlope);
             s.carryWeight = L::sel(on, e.weight, s.carryWeight);
             s.carryWeightSlope = L::sel(on, e.weightSlope, s.carryWeightSlope);
+            if (creepOn) s.carryCreep = L::sel(on, creepZ, s.carryCreep);
         };
         Evaluation first{Kf(-1.0f), Kf(0.0f), Kf(1.0f), Kf(0.0f), Kf(0.0f), Kf(0.0f), Kf(0.0f)};
         const M evaluated = !carried && !quiet;
@@ -6083,6 +6155,15 @@ private:
                 smallExpT<L>(Kf(-1.0f) / (vmax(Kf(fetDynamics.fbSlowReleaseRatio) * releaseSeconds
                     * Kf(terms.slowReleaseKnob), Kf(1.0e-4f)) * Kf(sr))));
         s.slowGrDb = L::toD(slowTarget) + (s.slowGrDb - L::toD(slowTarget)) * L::toD(slowStep);
+        if (creepOn)
+        {
+            // The creep element's z follows X at the charged state, up in fbCreepChargeSeconds and down in
+            // fbCreepReleaseSeconds.
+            const D target = L::toD(Kf(creepCeilingDb)
+                * expandedTanhT<L>(s.creepShape, Kf(creepShare) * charged / Kf(creepCeilingDb), all));
+            const D step = L::sel(target > s.creepGrDb, Kd(terms.creepStepCharging), Kd(terms.creepStepReleasing));
+            s.creepGrDb = target + (s.creepGrDb - target) * step;
+        }
     }
 
     // processFET's C6 arm over a run of oversampled samples on the lanes' channels, their state held in lanes
