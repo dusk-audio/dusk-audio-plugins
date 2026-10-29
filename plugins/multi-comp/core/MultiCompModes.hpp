@@ -532,8 +532,8 @@ struct FetDynamicsParams
 //   Attack-0 bursts alone (4:1, Input .5; tools fet_ae/slo_fit.py): attack / hold / release 0.54 / 0.13 / 0.45 dB rms
 //   (6.4 dB worst frame without the detent, 1.4 dB rms hold with the attack scale alone: the reference settles 1.3 dB
 //   shallower at SLO).
-// - [83] fbTailInputLimit on, [84] 0.036 s (refitted with the creep element, the last item): the reference never
-//   deepens its reduction after a burst ends (171 ms of
+// - [83] fbTailInputLimit on, [84] 0.254 s (0.036 s as fitted here; refitted with the creep element, the last item):
+//   the reference never deepens its reduction after a burst ends (171 ms of
 //   1 kHz at 0.8 peak, Input .5, every single button, Release 0 / '5' / 1; tools fet_ae/release0.py), where the tail
 //   still filling from the fast charge deepened FET BLUE's by up to 1.2 dB at Release 0; nor does it hold its
 //   reduction up after a short burst (300 ms after 30 / 100 / 300 ms bursts at Release '5' it reads within 0.5 dB
@@ -5325,7 +5325,9 @@ private:
         s.carryValid = s.carryValid && lanesM<L>(held);
     }
 
-    // The active voice's amplifier (FetVoice::amplifierPieces) on one sample behind the gain element.
+    // The active voice's amplifier (FetVoice::amplifierPieces) on one sample behind the gain element. Past the
+    // fitted range it holds its end values: the last piece's end tangent turns down (-0.04 at FET BLUE's top), and
+    // extended along it the output fell as the drive rose and crossed zero near 4.5 times the edge.
     float fetAmplifierSample(float y) const noexcept
     {
         const FetVoice& v = *fetVoice;
@@ -5333,17 +5335,12 @@ private:
         const float* breaks = v.amplifierBreaks;
         const int last = v.amplifierPieces;
         if (x <= breaks[0])
-        {
-            const auto& c = v.amplifierCubics[0];
-            return (c[0] + c[1] * (x - breaks[0])) * fetAmplifierReference;
-        }
+            return v.amplifierCubics[0][0] * fetAmplifierReference;
         if (x >= breaks[last])
         {
             const auto& c = v.amplifierCubics[static_cast<size_t>(last - 1)];
             const float d = breaks[last] - breaks[last - 1];
-            const float end = ((c[3] * d + c[2]) * d + c[1]) * d + c[0];
-            const float slope = (3.0f * c[3] * d + 2.0f * c[2]) * d + c[1];
-            return (end + slope * (x - breaks[last])) * fetAmplifierReference;
+            return (((c[3] * d + c[2]) * d + c[1]) * d + c[0]) * fetAmplifierReference;
         }
         int low = 0, high = last;            // breaks[low] <= x < breaks[high]
         while (high - low > 1)

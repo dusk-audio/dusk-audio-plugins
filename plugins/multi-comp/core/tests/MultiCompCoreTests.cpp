@@ -12532,11 +12532,12 @@ struct FetBlueSetting
     int headroom = 3;       // 16 dB
     bool scFilter = false;
     float attackPosition = 0.5f, releasePosition = 0.66595459f;
+    float outputDb = -20.0f + 40.0f * 0.62591552734375f;   // the reference's Output .6259
 };
 
-// `input` on both channels through FET BLUE at 48 kHz, the reference's knobs (Output .6259; Attack and Release at
-// the setting's positions, as the legacy plain values those positions read). Returns the left channel and the
-// latency.
+// `input` on both channels through FET BLUE at 48 kHz, the reference's knobs (Output .6259 unless the setting says
+// otherwise; Attack and Release at the setting's positions, as the legacy plain values those positions read).
+// Returns the left channel and the latency.
 std::vector<float> renderFetBlue(const FetBlueSetting& setting, const std::vector<float>& input, int& latency)
 {
     using P = MultiCompDSP::Parameter;
@@ -12544,7 +12545,7 @@ std::vector<float> renderFetBlue(const FetBlueSetting& setting, const std::vecto
     dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::FetBlue));
     dsp.setMix(100.0f);
     dsp.setParameter(P::FetInput, -20.0f + 60.0f * setting.inputPosition);
-    dsp.setParameter(P::FetOutput, -20.0f + 40.0f * 0.62591552734375f);
+    dsp.setParameter(P::FetOutput, setting.outputDb);
     dsp.setParameter(P::FetAttack, 0.02f + 79.98f * std::pow(setting.attackPosition, 1.0f / 0.3f));
     dsp.setParameter(P::FetRelease, 50.0f + 1050.0f * setting.releasePosition);
     dsp.setParameter(P::FetBlueRatio, static_cast<float>(setting.ratio));
@@ -12766,6 +12767,54 @@ void testFetBlueAmplifierMatchesReference()
     }
 }
 
+// Past its fitted table the amplifier holds its end values, so driving it harder never takes level away or turns
+// a crest over. Extended along its end pieces' tangents, the positive side turned down past the table and crossed
+// zero. Ratio None (the gain element out), Input fully clockwise, Output 0 dB, Headroom 28 dB (its maximum, the
+// hardest drive): a 1 kHz staircase from -24 to +12 dBFS in 3 dB steps, each step's settled part read. The output's
+// fundamental never falls as the input rises, and at the input's crests (n = 12 and 36 mod 48) the output keeps the
+// input's polarity.
+void testFetBlueAmplifierHoldsPastItsTable()
+{
+    std::vector<float> levels;
+    for (int level = -24; level <= 12; level += 3) levels.push_back(static_cast<float>(level));
+    constexpr double seconds = 0.6;
+    const std::vector<float> input = fetBlueSteps(1000.0, levels, seconds);
+    FetBlueSetting setting;
+    setting.ratio = 0; setting.inputPosition = 1.0f; setting.outputDb = 0.0f; setting.headroom = 6;
+    int latency = 0;
+    const std::vector<float> output = renderFetBlue(setting, input, latency);
+    const size_t step = static_cast<size_t>(seconds * 48000.0);
+    double previous = 0.0, worstFallDb = 0.0;
+    float lowestPositiveCrest = std::numeric_limits<float>::infinity();
+    float highestNegativeCrest = -std::numeric_limits<float>::infinity();
+    for (size_t k = 0; k < levels.size(); ++k)
+    {
+        const size_t end = 24000 + (k + 1) * step - 960, from = end - 14400 + 960;
+        requireStructure(end + static_cast<size_t>(latency) <= output.size(), "the staircase covers every read step");
+        const double fundamental = fetBlueLockIn(output, 1000.0, from, end, latency);
+        float positiveCrest = std::numeric_limits<float>::infinity();
+        float negativeCrest = -std::numeric_limits<float>::infinity();
+        for (size_t n = from; n < end; ++n)
+        {
+            const float y = output[n + static_cast<size_t>(latency)];
+            if (n % 48 == 12) positiveCrest = std::min(positiveCrest, y);
+            if (n % 48 == 36) negativeCrest = std::max(negativeCrest, y);
+        }
+        if (k > 0) worstFallDb = std::max(worstFallDb, 20.0 * std::log10(previous / fundamental));
+        std::printf("FET BLUE amplifier past its table: input %+5.1f dBFS fundamental %+8.3f dBFS (step %+7.3f dB), "
+                    "output at the crests %+.4f / %+.4f\n", levels[k], 20.0 * std::log10(fundamental),
+                    k > 0 ? 20.0 * std::log10(fundamental / previous) : 0.0, positiveCrest, negativeCrest);
+        lowestPositiveCrest = std::min(lowestPositiveCrest, positiveCrest);
+        highestNegativeCrest = std::max(highestNegativeCrest, negativeCrest);
+        previous = fundamental;
+    }
+    std::printf("FET BLUE amplifier past its table: largest fall %.4f dB, lowest positive crest %+.4f, highest "
+                "negative crest %+.4f\n", worstFallDb, lowestPositiveCrest, highestNegativeCrest);
+    require(worstFallDb <= 0.0, "FET BLUE's output fundamental never falls as its amplifier is driven harder");
+    require(lowestPositiveCrest > 0.0f && highestNegativeCrest < 0.0f,
+            "FET BLUE's amplifier keeps the input's polarity at every drive");
+}
+
 // The SC Filter: the settled gain with it in minus out, -10 dBFS tones, 4:1, Input .5.
 void testFetBlueScFilterTiltsTheDetector()
 {
@@ -12881,11 +12930,15 @@ int main(int argc, char** argv)
         testFetBlueHeadroomMovesTheDrive();
         testFetBlueRatioGainsMatchReference();
         testFetBlueAmplifierMatchesReference();
+        testFetBlueAmplifierHoldsPastItsTable();
         testFetBlueScFilterTiltsTheDetector();
         testFetBlueReleasesWithoutDeepening();
         std::puts("Multi-Comp FET BLUE reference tests: PASS");
         return 0;
     }
+    // Also under --fet-blue and in the default run; separately reachable for its break-first proof.
+    if (argc == 2 && std::strcmp(argv[1], "--fet-blue-amplifier-hold") == 0)
+    { testFetBlueAmplifierHoldsPastItsTable(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--studio-vca") == 0)
     {
         testStudioVcaStaticsMatchReference();
@@ -13299,6 +13352,7 @@ int main(int argc, char** argv)
     testFetBlueHeadroomMovesTheDrive();
     testFetBlueRatioGainsMatchReference();
     testFetBlueAmplifierMatchesReference();
+    testFetBlueAmplifierHoldsPastItsTable();
     testFetBlueScFilterTiltsTheDetector();
     testFetBlueReleasesWithoutDeepening();
     std::puts("Multi-Comp core tests: PASS");
