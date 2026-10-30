@@ -698,13 +698,25 @@ protected:
             syncPresetSelection();
     }
 
+    // A restored state arrives as its text. With the plugin reachable the controls are read back from it instead, so
+    // the face shows what it runs: DAF's LV2 wrapper applies the ports a host restores with the state over it on the
+    // first run, so the two can differ.
     void stateChanged(const char* key, const char* state) override
     {
         if (key == nullptr || state == nullptr || std::strcmp(key, "parameters") != 0) return;
-        multicompp::StateValues decoded{};
-        if (!multicompp::decodeState(state, decoded)) return;
-        for (int i = 0; i < multicompp::kTotalParamCount; i = multicompp::nextControlParameter(i))
-            values[static_cast<size_t>(i)] = decoded[static_cast<size_t>(i)];
+        void* const instance = multiCompGetParameterValue != nullptr ? getPluginInstancePointer() : nullptr;
+        if (instance != nullptr)
+        {
+            for (int i = 0; i < multicompp::kTotalParamCount; i = multicompp::nextControlParameter(i))
+                values[static_cast<size_t>(i)] = multiCompGetParameterValue(instance, static_cast<uint32_t>(i));
+        }
+        else
+        {
+            multicompp::StateValues decoded{};
+            if (!multicompp::decodeState(state, decoded)) return;
+            for (int i = 0; i < multicompp::kTotalParamCount; i = multicompp::nextControlParameter(i))
+                values[static_cast<size_t>(i)] = decoded[static_cast<size_t>(i)];
+        }
         syncPresetSelection();
         repaint();
     }
