@@ -213,6 +213,7 @@ void MultiCompDSP::prepare(double sr, int blockSize)
     if (vcaLaw::kLifecycleResetEnabled) modes.clearVcaState();
     vcaLifecycleChannels = 0;
     truePeakDetector.prepare();
+    truePeakActive = false;
     truePeakDetector.setQuality(MultiCompTruePeakDetector::Quality::Standard4x);
     for (auto& os : oversamplers) { os.setFactor(4); os.prepare(maxBlock); os.reset(); }
     for (auto& os : busExternalOversamplers) { os.setFactor(4); os.prepare(maxBlock); }
@@ -352,6 +353,7 @@ void MultiCompDSP::reset()
     modes.reset();
     vcaLifecycleChannels = 0;
     truePeakDetector.prepare();
+    truePeakActive = false;
     for (auto& os : oversamplers) os.reset();
     optoLinkedDetectorUpsampler.reset();
     for (auto& os : optoOwnDetectorUpsamplers) os.reset();
@@ -853,6 +855,10 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     truePeakDetector.setQuality(params.truePeakQuality.load(std::memory_order_relaxed) == 1
                                     ? MultiCompTruePeakDetector::Quality::High8x
                                     : MultiCompTruePeakDetector::Quality::Standard4x);
+    // An idle detector (True Peak off, or Multiband's internal key) still holds the audio from before it stopped;
+    // it starts again from rest, not from that.
+    if (useTruePeak && !truePeakActive) truePeakDetector.reset();
+    truePeakActive = useTruePeak;
     if (useTruePeak)
     {
         for (int ch = 0; ch < nCh; ++ch)

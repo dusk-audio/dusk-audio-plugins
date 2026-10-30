@@ -8,6 +8,15 @@
 #include <cstring>
 #include <vector>
 
+namespace duskaudio
+{
+struct MultiCompDSPTestAccess
+{
+    // What a fresh True Peak detector holds: empty histories. Between blocks only.
+    static void restartTruePeak(MultiCompDSP& dsp) noexcept { dsp.truePeakDetector.prepare(); }
+};
+} // namespace duskaudio
+
 namespace
 {
 using duskaudio::MultiCompDSP;
@@ -610,6 +619,123 @@ void testMultibandMonoResume()
     check("a mono callback returns the right channel's band envelopes to rest for the stereo that follows",
           stale.reduction < -6.0f && restingLevel > -45.0 && resumeError <= bound);
 }
+
+// One stretch of programme: the mode, True Peak, the external key, the 1 kHz tone's peak level and its length.
+struct Phase
+{
+    MultiCompMode mode;
+    bool truePeak;
+    bool externalKey;
+    float level;
+    int samples;
+};
+
+// The phases in order on one instance, the tone continuous across them on both channels and as the external key.
+// Returns the last phase's audio, with the deepest gain reduction of the phases before it. `restart` hands the last
+// phase a fresh True Peak detector (MultiCompDSPTestAccess::restartTruePeak) as it begins.
+Render renderPhases(const std::vector<Phase>& phases, bool restart)
+{
+    MultiCompDSP dsp;
+    configure(dsp, phases.front().mode, true);
+    // The fastest Digital and band attacks, and Opto well into its range, so a key that reads stale peaks pulls the
+    // gain down within those few samples.
+    dsp.setParameter(P::DigitalAttack, 0.01f);
+    for (int band = 0; band < 4; ++band) dsp.setMultibandParameter(band, B::Attack, 0.1f);
+    dsp.setParameter(P::OptoPeakReduction, 80.0f);
+    dsp.prepare(kRate, kBlock);
+    Render result;
+    int start = 0;
+    for (size_t p = 0; p < phases.size(); ++p)
+    {
+        const Phase& phase = phases[p];
+        const bool last = p + 1 == phases.size();
+        dsp.setMode(static_cast<int>(phase.mode));
+        dsp.setParameter(P::TruePeakEnable, phase.truePeak ? 1.0f : 0.0f);
+        dsp.setExternalSidechain(phase.externalKey);
+        if (last && restart) duskaudio::MultiCompDSPTestAccess::restartTruePeak(dsp);
+        const Render part = renderPrepared(dsp, phase.samples, 2, phase.externalKey,
+            [&phase, start](int sample, int, float& input, float& key) { input = key = tone(start + sample, 1000.0f, phase.level); });
+        if (last) result.audio = part.audio;
+        else result.reduction = std::min(result.reduction, part.reduction);
+        start += phase.samples;
+    }
+    return result;
+}
+
+// The largest difference of 10 ms levels over the first `windows` windows of both channels, in dB.
+double windowError(const Render& a, const Render& b, int windows)
+{
+    constexpr int window = kRate / 100;
+    double error = 0.0;
+    for (int ch = 0; ch < 2; ++ch)
+        for (int w = 0; w < windows; ++w)
+            error = std::max(error, std::abs(windowDb(a.audio[static_cast<size_t>(ch)], w * window, window)
+                                             - windowDb(b.audio[static_cast<size_t>(ch)], w * window, window)));
+    return error;
+}
+
+// True Peak's detector reads a 16-sample history per channel, and nothing reads it while Multiband keys from its own
+// band split or while True Peak is off. When it is read again it must start from rest, not from the audio before
+// that idle stretch, which its first samples read as peaks: a loud programme played before Multiband pulled the next
+// mode down by as much as 18 dB over its first 10 ms. A 1 kHz tone throughout, True Peak on unless stated.
+//   [a] Digital, then Opto: the mode with the tone at -0.9 dBFS, Multiband on its internal key at -40 dBFS, then the
+//       mode again at -40 dBFS. Over its first 120 ms both channels' 10 ms levels must match a control whose tone
+//       before Multiband was -40 dBFS. A second control, silent before Multiband, is a second from-rest render: the
+//       bound is the larger of 0.01 dB and ten times the two controls' own disagreement.
+//   [b] Digital with True Peak switched off after the loud tone and on again at -40 dBFS: the render must equal,
+//       sample for sample, the same render given a fresh detector where True Peak comes back.
+//   [c] Multiband on its external key (the loud tone), then its internal key, then its external key again at
+//       -40 dBFS: the same, where the external key comes back.
+void testTruePeakRestart()
+{
+    constexpr int loud = 12288, idle = 24576, after = 6144, windows = 12;
+    constexpr float loudLevel = 0.9f, quietLevel = 0.01f;
+    for (MultiCompMode mode : {MultiCompMode::Digital, MultiCompMode::Opto})
+    {
+        const auto programme = [mode](float before) {
+            return std::vector<Phase>{{mode, true, false, before, loud},
+                                      {MultiCompMode::Multiband, true, false, quietLevel, idle},
+                                      {mode, true, false, quietLevel, after}};
+        };
+        const Render stale = renderPhases(programme(loudLevel), false);
+        const Render control = renderPhases(programme(quietLevel), false);
+        const Render silent = renderPhases(programme(0.0f), false);
+        const double error = windowError(stale, control, windows);
+        const double controlSpread = windowError(silent, control, windows);
+        const double bound = std::max(0.01, 10.0 * controlSpread);
+        const double firstWindow = windowDb(stale.audio[0], 0, kRate / 100) - windowDb(control.audio[0], 0, kRate / 100);
+        const double level = windowDb(control.audio[0], 0, windows * kRate / 100);
+        std::printf("True Peak after Multiband's internal key: mode=%d first 120 ms error=%.9g dB (first 10 ms %.9g dB) bound=%.9g dB controlSpread=%.9g dB beforeGR=%.9g dB level=%.9g dB\n",
+                    static_cast<int>(mode), error, firstWindow, bound, controlSpread, stale.reduction, level);
+        check(mode == MultiCompMode::Digital
+                  ? "Digital entered from Multiband's internal key starts True Peak from rest"
+                  : "Opto entered from Multiband's internal key starts True Peak from rest",
+              stale.reduction < -6.0f && level > -50.0 && error <= bound);
+    }
+
+    const auto exactRestart = [](const char* name, const std::vector<Phase>& phases)
+    {
+        const Render stale = renderPhases(phases, false);
+        const Render fresh = renderPhases(phases, true);
+        double difference = 0.0;
+        for (int ch = 0; ch < 2; ++ch)
+            difference = std::max(difference, delta(stale.audio[static_cast<size_t>(ch)], fresh.audio[static_cast<size_t>(ch)]));
+        const double level = windowDb(fresh.audio[0], 0, windows * kRate / 100);
+        std::printf("True Peak %s: largest difference from a fresh detector=%.9g (worst 10 ms level over the first 120 ms %.9g dB) beforeGR=%.9g dB level=%.9g dB\n",
+                    name, difference, windowError(stale, fresh, windows), stale.reduction, level);
+        return stale.reduction < -6.0f && level > -50.0 && difference == 0.0;
+    };
+    check("True Peak switched off and on again in Digital restarts its detector",
+          exactRestart("off and on again in Digital",
+                       {{MultiCompMode::Digital, true, false, loudLevel, loud},
+                        {MultiCompMode::Digital, false, false, quietLevel, idle},
+                        {MultiCompMode::Digital, true, false, quietLevel, after}}));
+    check("Multiband's external key after its internal key restarts the True Peak detector",
+          exactRestart("on Multiband's external key after its internal key",
+                       {{MultiCompMode::Multiband, true, true, loudLevel, loud},
+                        {MultiCompMode::Multiband, true, false, quietLevel, idle},
+                        {MultiCompMode::Multiband, true, true, quietLevel, after}}));
+}
 }
 
 int main(int argc, char** argv)
@@ -625,6 +751,7 @@ int main(int argc, char** argv)
     if (selected("--crossover-lifecycle")) testCrossoverLifecycle();
     if (selected("--true-peak-key")) testMultibandTruePeakKey();
     if (selected("--mono-resume")) testMultibandMonoResume();
+    if (selected("--true-peak-restart")) testTruePeakRestart();
     std::printf("Modern compressor regression failures: %d\n", failures);
     return failures == 0 ? 0 : 1;
 }

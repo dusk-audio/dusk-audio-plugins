@@ -217,6 +217,7 @@ private:
     std::array<LazyUpsampler<MultiCompOversampler>, kMaxChannels> optoOwnDetectorUpsamplers;
     std::array<LazyUpsampler<MultiCompAntiAliasing>, kMaxChannels> busExternalOversamplers;
     MultiCompTruePeakDetector truePeakDetector;
+    bool truePeakActive = false;   // the detector ran last block (an idle one restarts from rest)
     std::array<MultiCompSidechainFilter, kMaxChannels> sidechainFilters;
     std::array<vcaLaw::SidechainTilt, kMaxChannels> sidechainTilt;
     bool lastVcaSidechainTilt = false;   // which sidechain filter ran last block
