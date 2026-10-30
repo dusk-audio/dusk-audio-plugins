@@ -5,6 +5,7 @@
 #include "MultiCompUI.cpp"
 #undef MULTICOMP_UI_LOGIC_TEST
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -334,9 +335,9 @@ bool stateStudioVca()
     return roundTrip && v6Defaults && missingRejected;
 }
 
-// Version 8 appends FET BLUE's Ratio, SC Filter and Headroom (108-110): they round-trip exactly, a version-7 state (a
-// mode-4 session among them, until then Studio FET) loads them at their defaults (2:1, off, 16 dB) with every other
-// value as saved, and a state missing one of them is rejected.
+// Version 8 appends FET BLUE's Ratio, SC Filter and Headroom (108-110): they round-trip exactly, a version-7 state
+// loads them at their defaults (2:1, off, 16 dB) with every other value as saved except a mode-4 session's Mode (a
+// Studio FET until then), which reopens in FET (stateOldFetSessions), and a state missing one of them is rejected.
 bool stateFetBlue()
 {
     auto values = defaults(); values[opto] = 1; values[fet] = 2;
@@ -349,6 +350,7 @@ bool stateFetBlue()
     auto v7 = current.substr(0, current.find(";fet_blue_ratio=")); v7.replace(0, v7.find(';'), "v=7");
     auto expected = values;
     expected[fetBlueRatio] = 1; expected[fetBlueScFilter] = 0; expected[fetBlueHeadroom] = 3;
+    expected[static_cast<int>(ParamId::Mode)] = 1;
     decoded = {};
     const bool v7Defaults = decodeState(v7, decoded) && decoded == expected;
     bool missingRejected = true;
@@ -358,10 +360,62 @@ bool stateFetBlue()
         auto destination = values;
         missingRejected &= !missing.empty() && !decodeState(missing, destination) && destination == values;
     }
-    std::printf("state: FET BLUE ratio/SC filter/headroom exact: %s; v7 (mode 4) loads 2:1, off, 16 dB: %s; "
+    std::printf("state: FET BLUE ratio/SC filter/headroom exact: %s; v7 (mode 4) loads FET, 2:1, off, 16 dB: %s; "
                 "missing one rejected: %s\n", roundTrip ? "yes" : "NO", v7Defaults ? "yes" : "NO",
                 missingRejected ? "yes" : "NO");
     return roundTrip && v7Defaults && missingRejected;
+}
+
+// Mode 4 was a generic Studio FET until version 8 gave its index to FET BLUE. A session saved in mode 4 by version 7
+// or older reopens in FET (FET BLACK), every other value loading as it would had the session been saved in FET; a
+// version-8 session in mode 4 stays in FET BLUE; an older session in any other mode keeps its mode.
+bool stateOldFetSessions()
+{
+    const auto modeIndex = static_cast<size_t>(ParamId::Mode);
+    // `values` as version `version` saved them: the current text up to the first key that version lacks. Version 3
+    // stored the VCA's ratio as vca_ratio in its old normalized domain (0.331491 is 4:1; MultiCompPluginLayerTests).
+    const auto savedBy = [](StateValues values, int version) {
+        const char* firstAbsent = version >= kPreFetBlueStateVersion ? ";fet_blue_ratio="
+            : version >= kPreStudioVcaStateVersion ? ";studio_vca_input="
+            : version >= kPreMeterStateVersion ? ";opto_meter=" : ";bus_headroom=";
+        if (version == kLegacyVcaStateVersion) values[static_cast<size_t>(ParamId::VcaRatio)] = 0.331491f;
+        auto state = encodeState(values);
+        state = state.substr(0, state.find(firstAbsent));
+        state.replace(0, state.find(';'), "v=" + std::to_string(version));
+        if (version == kLegacyVcaStateVersion)
+            state.replace(state.find(";vca_compression="), std::strlen(";vca_compression="), ";vca_ratio=");
+        return state;
+    };
+    auto values = defaults(); values[opto] = 1; values[fet] = 2;
+    // Host values: Attack's skewed range is stored as its knob position.
+    values[static_cast<int>(ParamId::FetInput)] = 12.5f; values[static_cast<int>(ParamId::FetAttack)] = 0.4f;
+    values[static_cast<int>(ParamId::FetRatio)] = 2; values[static_cast<int>(ParamId::Mix)] = 60.0f;
+    const auto inMode = [&values](int mode) { auto v = values; v[modeIndex] = static_cast<float>(mode); return v; };
+
+    bool olderToFet = true, otherModesKept = true;
+    for (int version : {kPreFetBlueStateVersion, kPreStudioVcaStateVersion, kPreMeterStateVersion,
+                        kPreBusStateVersion, kLegacyVcaStateVersion})
+    {
+        StateValues fromModeFour{}, fromFet{};
+        const bool decoded = decodeState(savedBy(inMode(4), version), fromModeFour)
+            && decodeState(savedBy(inMode(1), version), fromFet);
+        const bool toFet = decoded && fromModeFour[modeIndex] == 1.0f && fromModeFour == fromFet;
+        std::printf("state: v%d mode-4 session loads mode %.0f, every other value as in FET: %s\n", version,
+                    decoded ? fromModeFour[modeIndex] : -1.0f, toFet ? "yes" : "NO");
+        olderToFet &= toFet;
+        for (int mode = 0; mode < 8; ++mode)
+        {
+            if (mode == 4) continue;
+            StateValues other{};
+            otherModesKept &= decodeState(savedBy(inMode(mode), version), other)
+                && other[modeIndex] == static_cast<float>(mode);
+        }
+    }
+    StateValues current{};
+    const bool currentKept = decodeState(encodeState(inMode(4)), current) && current == inMode(4);
+    std::printf("state: v8 mode 4 stays FET BLUE: %s; older sessions in other modes keep them: %s\n",
+                currentKept ? "yes" : "NO", otherModesKept ? "yes" : "NO");
+    return olderToFet && currentKept && otherModesKept;
 }
 
 bool stateReject()
@@ -588,7 +642,8 @@ int main(int argc, char** argv)
     const Test tests[]{{"response", response}, {"lifecycle", lifecycle}, {"needle", needle}, {"calibration", calibration},
                        {"switching", switching}, {"state-roundtrip", stateRoundtrip},
                        {"state-reject", stateReject}, {"state-studio-vca", stateStudioVca},
-                       {"state-fet-blue", stateFetBlue}, {"identity", identity},
+                       {"state-fet-blue", stateFetBlue}, {"state-old-fet-sessions", stateOldFetSessions},
+                       {"identity", identity},
                        {"studio-vca-meter", studioVcaLevelMeter}, {"studio-vca-dials", studioVcaDials},
                        {"studio-vca-entry", studioVcaEntry}, {"fet-blue-slo", fetBlueSlo}};
     bool passed = true;
