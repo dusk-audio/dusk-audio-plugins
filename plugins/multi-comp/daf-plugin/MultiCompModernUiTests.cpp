@@ -110,6 +110,15 @@ struct Host
     DAF::MultiCompUI ui;
     explicit Host(int mode)
     {
+        // In the plugin the host backend builds the font atlas. Without one, an editor that found no system font
+        // (a bare Linux container) leaves it empty, and ImGui::NewFrame needs a built atlas: give it ImGui's own.
+        // An editor that loaded its face built the atlas already and is left as it is.
+        ImFontAtlas& fonts = *ImGui::GetIO().Fonts;
+        if (!fonts.IsBuilt())
+        {
+            if (fonts.Fonts.empty()) fonts.AddFontDefault();
+            fonts.Build();
+        }
         for (int i = 0; i < multicompp::kTotalParamCount; i = multicompp::nextControlParameter(i))
             ui.state.parameters[static_cast<size_t>(i)] = multicompp::resolveParameter(i,
                 [](const multicompp::Param& p) { return multicompp::hostDefault(p); },
