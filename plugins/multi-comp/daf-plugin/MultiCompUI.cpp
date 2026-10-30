@@ -935,15 +935,7 @@ private:
 
     bool parameterMatches(int index, float expected) const
     {
-        const float range = multicompp::resolveParameter(index,
-            [](const multicompp::Param& d) {
-                return multicompp::hostMax(d) - multicompp::hostMin(d);
-            },
-            [](const multicompp::BandParam& d, int) {
-                return multicompp::hostMax(d) - multicompp::hostMin(d);
-            });
-        return std::fabs(values[static_cast<size_t>(index)] - expected)
-            <= std::max(1.0e-6f, range * 1.0e-5f);
+        return multicompp::hostValueMatches(index, values[static_cast<size_t>(index)], expected);
     }
 
     bool matchesDefaults() const
@@ -963,24 +955,8 @@ private:
 
     int deriveFactoryPreset() const
     {
-        for (size_t presetIndex = 0;
-             presetIndex < multicompp::kFactoryPresets.size(); ++presetIndex)
-        {
-            bool matches = true;
-            const auto& expanded = multicompp::kExpandedFactoryPresets[presetIndex];
-            for (int parameterIndex = 0;
-                 parameterIndex < multicompp::kTotalParamCount && matches;
-                 parameterIndex = multicompp::nextControlParameter(parameterIndex))
-                if (multicompp::presetOwnsParam(
-                        static_cast<int>(presetIndex),
-                        static_cast<uint32_t>(parameterIndex))
-                    && !parameterMatches(
-                        parameterIndex,
-                        expanded.hostValues[static_cast<size_t>(parameterIndex)]))
-                    matches = false;
-            if (matches) return static_cast<int>(presetIndex);
-        }
-        return -1;
+        return multicompp::matchingFactoryPreset(
+            [this](int index) { return values[static_cast<size_t>(index)]; });
     }
 
     int deriveUserPreset() const

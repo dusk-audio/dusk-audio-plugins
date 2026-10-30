@@ -181,6 +181,34 @@ if(NOT CMAKE_CROSSCOMPILING)
     add_test(NAME MultiCompAU COMMAND MultiCompAUTest)
   endif()
 
+  # Restores sessions through the built VST3, CLAP and AU as each host format
+  # restores one: the "parameters" state, then the wrapper's parameter list.
+  # An alpha session (state version 6, mode 4) must reopen in FET, a factory
+  # program must come back, and a newer state must be refused. Loads the
+  # binaries with dlopen, as the output-parameter gates do: not on Windows.
+  if(NOT WIN32)
+    add_executable(MultiCompSessionRestoreTest MultiCompSessionRestoreTests.cpp)
+    target_include_directories(MultiCompSessionRestoreTest PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../core"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp"
+      "${DAF_PATH}/daf/src")
+    target_compile_features(MultiCompSessionRestoreTest PRIVATE cxx_std_17)
+    target_link_libraries(MultiCompSessionRestoreTest PRIVATE ${CMAKE_DL_LIBS})
+    add_dependencies(MultiCompSessionRestoreTest multi-comp-2-vst3 multi-comp-2-clap)
+    add_test(NAME MultiCompVst3SessionRestore
+             COMMAND MultiCompSessionRestoreTest --vst3 "$<TARGET_FILE:multi-comp-2-vst3>")
+    add_test(NAME MultiCompClapSessionRestore
+             COMMAND MultiCompSessionRestoreTest --clap "$<TARGET_FILE:multi-comp-2-clap>")
+    if(APPLE)
+      target_link_libraries(MultiCompSessionRestoreTest PRIVATE
+        "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreFoundation")
+      add_dependencies(MultiCompSessionRestoreTest multi-comp-2-au)
+      add_test(NAME MultiCompAUSessionRestore
+               COMMAND MultiCompSessionRestoreTest --au "$<TARGET_FILE:multi-comp-2-au>")
+    endif()
+  endif()
+
   add_executable(DuskUserPresetStoreTest
     ../../shared-daf/ui/tests/DuskUserPresetStoreTest.cpp)
   target_include_directories(DuskUserPresetStoreTest PRIVATE

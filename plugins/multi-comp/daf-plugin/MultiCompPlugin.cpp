@@ -279,8 +279,34 @@ protected:
         });
     }
 
+    // The factory program the controls read (the editor names its preset the same way), or -1. A restore from the
+    // state alone does not replay the saved program, so the wrappers read it back from here.
+    int32_t getCurrentProgram() const override
+    {
+        return multicompp::matchingFactoryPreset(
+            [this](int index) { return values[static_cast<size_t>(index)].load(std::memory_order_relaxed); });
+    }
+
+    // The state is a complete parameter snapshot (decodeState migrates older versions, e.g. a mode-4 session saved
+    // before FET BLUE opens in FET), so the VST3, CLAP and AU wrappers restore from it alone instead of replaying a
+    // saved parameter list over it. A state that does not decode (one a newer build wrote, say) is refused and the
+    // instance keeps what it had, as DuskVerb's. LV2 applies the ports a host restores with the state over it on the
+    // first run, so there an old mode-4 session reopens in FET BLUE.
     void initState(uint32_t index, State& state) override
-    { if (index == 0) { state.key = "parameters"; state.label = "Multi-Comp Parameters"; state.defaultValue = ""; state.hints = kStateIsHostReadable; } }
+    {
+        if (index != 0) return;
+        state.key = "parameters";
+        state.label = "Multi-Comp Parameters";
+        state.defaultValue = "";
+        state.hints = kStateIsHostReadable | kStateIsParameterSnapshot;
+    }
+
+    bool validateStateValue(const char* key, const char* value) const override
+    {
+        multicompp::StateValues state{};
+        return key != nullptr && value != nullptr && std::strcmp(key, "parameters") == 0
+            && multicompp::decodeState(value, state);
+    }
 
     String getState(const char* key) const override
     {
