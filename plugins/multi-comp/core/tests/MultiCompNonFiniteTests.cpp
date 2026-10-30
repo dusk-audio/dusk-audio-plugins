@@ -28,12 +28,11 @@
 //          kept as the marker of the case output-only recovery could not see.
 //          Not asserted here: bursts just under the ceiling. At default input
 //          gain they are ordinary, very deep compression that releases at the
-//          mode's own rate. With mode input gain on top they can still
-//          overflow inside a stage and reach MultiCompDSP's output recovery
-//          (Studio FET, 1000 peak, +20 dB Input); measured 2026-10-03, that
-//          case leaves a 20 dB tail error at 0.5 s in two of three
-//          oversampling settings, so it cannot be asserted at kBurstTailDb
-//          and the recovery branch is not exercised by this file.
+//          mode's own rate. Until 2026-10-27 mode input gain on top could
+//          still overflow the generic Studio FET (1000 peak, +20 dB Input) and
+//          reach MultiCompDSP's output recovery; FET BLUE, which replaced it,
+//          does not. The recovery branch is not exercised by this file (the
+//          mode-switch duck test injects a fault to reach it).
 //   param  every parameter (and every multiband band parameter, Mix and
 //          Stereo Link) set to +inf, -inf or NaN mid-render (a corrupt
 //          host automation value): every output sample finite, meters
@@ -102,7 +101,7 @@ struct ModeCase
 };
 constexpr ModeCase kModeCases[] = {
     {0, 0.0f, "Opto"}, {0, 70.0f, "Opto PR70"}, {1, 0.0f, "FET"}, {2, 0.0f, "VCA"},
-    {3, 0.0f, "Bus"}, {4, 0.0f, "StudioFET"}, {5, 0.0f, "StudioVCA"}, {6, 0.0f, "Digital"},
+    {3, 0.0f, "Bus"}, {4, 0.0f, "FetBlue"}, {5, 0.0f, "StudioVCA"}, {6, 0.0f, "Digital"},
     {7, 0.0f, "Multiband"}};
 
 enum class Fault { None, Sample, Burst, Parameter };

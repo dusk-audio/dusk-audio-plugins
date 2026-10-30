@@ -281,6 +281,8 @@ class MultiCompTruePeakDetector
 public:
     static constexpr int TAPS_PER_PHASE = 12;
     void prepare() noexcept { for (auto& c : channels) c = Channel{}; initialize(); }
+    // The channels' histories and peaks to rest, the coefficients kept (realtime-safe).
+    void reset() noexcept { for (auto& c : channels) c = Channel{}; }
     enum class Quality { Standard4x, High8x };
     void setQuality(Quality quality) noexcept { oversamplingFactor = quality == Quality::High8x ? 8 : 4; }
     float processSample(float sample, int channel) noexcept

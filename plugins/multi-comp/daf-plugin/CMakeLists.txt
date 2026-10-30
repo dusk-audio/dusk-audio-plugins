@@ -42,6 +42,15 @@ if(NOT CMAKE_CROSSCOMPILING)
     "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
   target_compile_features(MultiCompCoreTest PRIVATE cxx_std_17)
   add_test(NAME MultiCompCore COMMAND MultiCompCoreTest)
+  foreach(regression IN ITEMS DigitalRegression ModernRegression)
+    add_executable(MultiComp${regression}Test
+      ../core/tests/MultiComp${regression}Tests.cpp ../core/MultiCompDSP.cpp)
+    target_include_directories(MultiComp${regression}Test PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}/../core"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+    target_compile_features(MultiComp${regression}Test PRIVATE cxx_std_17)
+    add_test(NAME MultiComp${regression} COMMAND MultiComp${regression}Test)
+  endforeach()
   # Accuracy against the measured reference units: runs every such assertion
   # and reports each failure, but is not a release gate (CI excludes the
   # report-only label). See runParityTests() in MultiCompCoreTests.cpp.
@@ -150,6 +159,15 @@ if(NOT CMAKE_CROSSCOMPILING)
     "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_widgets.cpp")
   target_include_directories(MultiCompMeterRenderTest PRIVATE ${DUSK_DAF_INCLUDE_DIRS})
   add_test(NAME MultiCompMeterRender COMMAND MultiCompMeterRenderTest)
+
+  add_executable(MultiCompModernUiTest MultiCompModernUiTests.cpp
+    "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui.cpp"
+    "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_draw.cpp"
+    "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_tables.cpp"
+    "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_widgets.cpp")
+  target_include_directories(MultiCompModernUiTest PRIVATE ${DUSK_DAF_INCLUDE_DIRS})
+  target_compile_features(MultiCompModernUiTest PRIVATE cxx_std_17)
+  add_test(NAME MultiCompModernUi COMMAND MultiCompModernUiTest)
 
   if(APPLE)
     add_executable(MultiCompAUTest MultiCompAUTests.cpp)

@@ -20,8 +20,7 @@ void copyParameter(std::atomic<T>& destination, const std::atomic<T>& source) no
 
 // Global Lookahead belongs to the digital compressors (Digital, Multiband). The
 // modes that follow a hardware unit ignore it: a detector lead over the audio
-// has no counterpart there, so it adds neither delay nor latency. (Multiband's
-// own detector gets no lead yet, only the delay; see parity-playbook.md.)
+// has no counterpart there, so it adds neither delay nor latency.
 float globalLookaheadForMode(MultiCompMode mode, float milliseconds) noexcept
 {
     return mode == MultiCompMode::Digital || mode == MultiCompMode::Multiband
@@ -42,7 +41,7 @@ int oversamplingFactorForSetting(int setting) noexcept
 int audioFactorForMode(MultiCompMode mode, int settingFactor, double hostRate) noexcept
 {
     if (mode == MultiCompMode::StudioVCA) return 1;
-    return mode == MultiCompMode::Opto || mode == MultiCompMode::FET
+    return mode == MultiCompMode::Opto || mode == MultiCompMode::FET || mode == MultiCompMode::FetBlue
         ? fixedRateModeFactor(settingFactor, hostRate) : settingFactor;
 }
 
@@ -73,13 +72,6 @@ void fillRampCurve(LinearRamp& ramp, float* curve, int n) noexcept
         return;
     }
     for (int i = 0; i < n; ++i) curve[i] = ramp.next();
-}
-
-float fetAttackPositionFromPlain(float legacyMilliseconds) noexcept
-{
-    const float proportion = std::clamp(
-        (legacyMilliseconds - 0.02f) / (80.0f - 0.02f), 0.0f, 1.0f);
-    return std::pow(proportion, 0.3f);
 }
 
 // The installed unit's first-cycle output peak SATURATES. Twelve dB of extra
@@ -221,6 +213,7 @@ void MultiCompDSP::prepare(double sr, int blockSize)
     if (vcaLaw::kLifecycleResetEnabled) modes.clearVcaState();
     vcaLifecycleChannels = 0;
     truePeakDetector.prepare();
+    truePeakActive = false;
     truePeakDetector.setQuality(MultiCompTruePeakDetector::Quality::Standard4x);
     for (auto& os : oversamplers) { os.setFactor(4); os.prepare(maxBlock); os.reset(); }
     for (auto& os : busExternalOversamplers) { os.setFactor(4); os.prepare(maxBlock); }
@@ -277,6 +270,7 @@ void MultiCompDSP::prepare(double sr, int blockSize)
     for (auto& v : sanitizedInput) v.assign(static_cast<size_t>(maxBlock), 0.0f);
     for (auto& v : sanitizedSidechain) v.assign(static_cast<size_t>(maxBlock), 0.0f);
     for (auto& v : crossoverCurves) v.assign(static_cast<size_t>(maxBlock), 0.0f);
+    multibandOutputGains.assign(static_cast<size_t>(maxBlock), 1.0f);
     dry.assign(static_cast<size_t>(maxBlock * kMaxChannels), 0.0f);
     bypassDry.assign(static_cast<size_t>(maxBlock * kMaxChannels), 0.0f);
     fetStartupInput.assign(
@@ -359,6 +353,7 @@ void MultiCompDSP::reset()
     modes.reset();
     vcaLifecycleChannels = 0;
     truePeakDetector.prepare();
+    truePeakActive = false;
     for (auto& os : oversamplers) os.reset();
     optoLinkedDetectorUpsampler.reset();
     for (auto& os : optoOwnDetectorUpsamplers) os.reset();
@@ -377,6 +372,7 @@ void MultiCompDSP::reset()
     resetCrossovers();
     for (auto& band : bands) for (auto& v : band) std::fill(v.begin(), v.end(), 0.0f);
     for (auto& band : sidechainBands) for (auto& v : band) std::fill(v.begin(), v.end(), 0.0f);
+    std::fill(multibandOutputGains.begin(), multibandOutputGains.end(), 1.0f);
     for (auto& v : processedSidechain) std::fill(v.begin(), v.end(), 0.0f);
     for (auto& v : modeInput) std::fill(v.begin(), v.end(), 0.0f);
     for (auto& v : sanitizedInput) std::fill(v.begin(), v.end(), 0.0f);
@@ -487,6 +483,9 @@ void MultiCompDSP::setParameter(Parameter parameter, float value) noexcept
         case Parameter::StudioVcaOutput: params.studioVcaOutput.store(value, std::memory_order_relaxed); break;
         case Parameter::StudioVcaInput: params.studioVcaInput.store(value, std::memory_order_relaxed); break;
         case Parameter::StudioVcaAutoRelease: params.studioVcaAutoRelease.store(b, std::memory_order_relaxed); break;
+        case Parameter::FetBlueRatio: params.fetBlueRatio.store(std::clamp(static_cast<int>(std::round(value)), 0, 10), std::memory_order_relaxed); break;
+        case Parameter::FetBlueScFilter: params.fetBlueScFilter.store(b, std::memory_order_relaxed); break;
+        case Parameter::FetBlueHeadroom: params.fetBlueHeadroom.store(std::clamp(static_cast<int>(std::round(value)), 0, 6), std::memory_order_relaxed); break;
         case Parameter::DigitalThreshold: params.digitalThreshold.store(value, std::memory_order_relaxed); break;
         case Parameter::DigitalRatio: params.digitalRatio.store(value, std::memory_order_relaxed); break;
         case Parameter::DigitalKnee: params.digitalKnee.store(value, std::memory_order_relaxed); break;
@@ -731,11 +730,11 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     // every stage; it just emits the latency-aligned dry instead of the result.
     const bool settledBypass = requestedBypass && bypassSettled;
     const float* filteredSidechain[kMaxChannels] = {processedSidechain[0].data(), processedSidechain[1].data()};
-    // Only the faces that carry this control (Opto SC HP, VCA PULL/SC, Bus SC
-    // FILTER) apply it. Elsewhere a value set on one of those faces acted
+    // Only faces that carry this control (Opto / Digital SC HP, VCA PULL/SC,
+    // Bus SC FILTER) apply it. Elsewhere a value set on one of those faces acted
     // unseen after a mode switch.
     const bool modeHasSidechainHP = mode == MultiCompMode::Opto || mode == MultiCompMode::VCA
-        || mode == MultiCompMode::Bus;
+        || mode == MultiCompMode::Bus || mode == MultiCompMode::Digital;
     const float sidechainHP = modeHasSidechainHP ? params.sidechainHP.load(std::memory_order_relaxed) : 0.0f;
     // In VCA mode the SC HP control is the reference VCA compressor's PULL/SC switch: settings
     // at or above 1 Hz engage the reference's measured half-order tilt in
@@ -848,10 +847,18 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
             processedSidechain[ch][static_cast<size_t>(i)] = sidechainEQ[ch].process(sample);
         }
     }
-    const bool useTruePeak = params.truePeakEnable.load(std::memory_order_relaxed);
+    // Multiband splits its key into bands after this point. On its internal key True Peak's copysign(peak, x)
+    // waveform would put the high band's peaks into every lower band's detector (cymbals pumping the bass), so
+    // that key stays as filtered, as the band audio was; an external key keeps it, as the JUCE version does.
+    const bool useTruePeak = params.truePeakEnable.load(std::memory_order_relaxed)
+        && (mode != MultiCompMode::Multiband || useExternalSidechain);
     truePeakDetector.setQuality(params.truePeakQuality.load(std::memory_order_relaxed) == 1
                                     ? MultiCompTruePeakDetector::Quality::High8x
                                     : MultiCompTruePeakDetector::Quality::Standard4x);
+    // An idle detector (True Peak off, or Multiband's internal key) still holds the audio from before it stopped;
+    // it starts again from rest, not from that.
+    if (useTruePeak && !truePeakActive) truePeakDetector.reset();
+    truePeakActive = useTruePeak;
     if (useTruePeak)
     {
         for (int ch = 0; ch < nCh; ++ch)
@@ -1005,7 +1012,7 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
         // The correction is gone 0.5 ms after the aligned output onset. The
         // higher-carrier gate resolves and separately constrains the small
         // overlap with its first attack-shape samples.
-        const float attackPosition = fetAttackPositionFromPlain(
+        const float attackPosition = fetAttackPositionFromMilliseconds(
             params.fetAttack.load(std::memory_order_relaxed));
         const int ratioIndex = std::clamp(
             params.fetRatio.load(std::memory_order_relaxed), 0, 4);
@@ -1316,12 +1323,14 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     }
     if (requestedBypass && bypassRamp.value() >= 1.0f) bypassSettled = true;
     // Recovery. Before the input ceiling, finite input could overflow inside a
-    // stage (measured with a 10 ms burst: Studio FET from about 3e3 peak, Studio
-    // VCA from 1e13, FET from 1e20, the other modes only near FLT_MAX). Input at
-    // or above 1024 no longer gets this far, but a sub-ceiling burst with mode
-    // input gain on top still does (Studio FET, 1000 peak, +20 dB Input), as
-    // would a fault that arises inside a stage. Once one reaches the output it
-    // is latched in the same histories the input guard protects.
+    // stage (measured with a 10 ms burst: the generic Studio FET that was mode 4
+    // until 2026-10-27 from about 3e3 peak, Studio VCA from 1e13, FET from 1e20,
+    // the other modes only near FLT_MAX). Input at or above 1024 no longer gets
+    // this far, and since FET BLUE replaced Studio FET no sub-ceiling burst with
+    // mode input gain on top does either (Studio FET's 1000 peak at +20 dB Input
+    // peaks at 1.45 in FET BLUE); a fault that arises inside a stage still
+    // would. Once one reaches the output it is latched in the same histories the
+    // input guard protects.
     // Emit silence for the faulted block and clear every history exactly as a
     // host reset() would, so the next block starts from a defined state instead
     // of carrying NaN for ever. This sees only faults that reach the output: an
@@ -1519,7 +1528,7 @@ void MultiCompDSP::syncModeParameters(MultiCompMode mode, float digitalLookahead
             copyParameter(modeParams.optoLimit, params.optoLimit);
             break;
         case MultiCompMode::FET:
-        case MultiCompMode::StudioFET:
+        case MultiCompMode::FetBlue:
             copyParameter(modeParams.fetInput, params.fetInput);
             copyParameter(modeParams.fetOutput, params.fetOutput);
             copyParameter(modeParams.fetAttack, params.fetAttack);
@@ -1528,6 +1537,9 @@ void MultiCompDSP::syncModeParameters(MultiCompMode mode, float digitalLookahead
             copyParameter(modeParams.fetCurve, params.fetCurve);
             copyParameter(modeParams.fetTransient, params.fetTransient);
             copyParameter(modeParams.fetThreshold, params.fetThreshold);
+            copyParameter(modeParams.fetBlueRatio, params.fetBlueRatio);
+            copyParameter(modeParams.fetBlueScFilter, params.fetBlueScFilter);
+            copyParameter(modeParams.fetBlueHeadroom, params.fetBlueHeadroom);
             break;
         case MultiCompMode::VCA:
             copyParameter(modeParams.vcaThreshold, params.vcaThreshold);
@@ -1599,8 +1611,9 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
     {
         previousOversampledSidechainValid = {{false, false}};
         previousOptoOwnSidechainValid = {{false, false}};
-        for (int i = 0; i < nSamples; ++i) (void)manualMakeupScaleRamp.next();
-        processMultiband(in, external ? sidechain : nullptr, out, nCh, nSamples);
+        // The detector stays ahead of the delayed audio even with an internal
+        // key. The filtered feed is in L/R; Multiband routes it to M/S itself.
+        processMultiband(in, sidechain, out, nCh, nSamples, linkMode);
         return;
     }
     float manualOutputDb = 0.0f;
@@ -1608,7 +1621,7 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
     {
         case MultiCompMode::Opto: manualOutputDb = optoKnobToGainDb(params.optoGain.load(std::memory_order_relaxed)); break;
         case MultiCompMode::FET:
-        case MultiCompMode::StudioFET: manualOutputDb = params.fetOutput.load(std::memory_order_relaxed); break;
+        case MultiCompMode::FetBlue: manualOutputDb = params.fetOutput.load(std::memory_order_relaxed); break;
         case MultiCompMode::VCA: manualOutputDb = params.vcaOutput.load(std::memory_order_relaxed); break;
         case MultiCompMode::Bus: manualOutputDb = params.busMakeup.load(std::memory_order_relaxed); break;
         case MultiCompMode::StudioVCA: manualOutputDb = params.studioVcaOutput.load(std::memory_order_relaxed); break;
@@ -1623,8 +1636,8 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
     if (mode == MultiCompMode::Opto)
         processOptoRange(in, sidechain, out, nCh, nSamples, external, linkAmount, linkMode, hostSidechainDelay,
                          manualOutputDb, distortionType, distortionAmount);
-    if (mode == MultiCompMode::FET)
-        processFetRange(in, sidechain, out, nCh, nSamples, external, linkAmount, linkMode, actualOs,
+    if (mode == MultiCompMode::FET || mode == MultiCompMode::FetBlue)
+        processFetRange(mode, in, sidechain, out, nCh, nSamples, external, linkAmount, linkMode, actualOs,
                         hostSidechainDelay, manualOutputDb, distortionType, distortionAmount);
     if (mode == MultiCompMode::StudioVCA)
         processStudioVcaRange(in, sidechain, out, nCh, nSamples, external, linkAmount, linkMode, hostSidechainDelay,
@@ -1635,7 +1648,8 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
         processBusRange(in, sidechain, out, nSamples, external, linkAmount, actualOs, hostSidechainDelay,
                         manualOutputDb, distortionType, distortionAmount);
     const bool blockPath = mode == MultiCompMode::VCA || mode == MultiCompMode::Opto
-        || mode == MultiCompMode::FET || mode == MultiCompMode::StudioVCA || busBlockPath;
+        || mode == MultiCompMode::FET || mode == MultiCompMode::FetBlue || mode == MultiCompMode::StudioVCA
+        || busBlockPath;
     for (int i = 0; i < nSamples && !blockPath; ++i)
     {
         const float scaledOutputDb = manualOutputDb * manualMakeupScaleRamp.next();
@@ -1643,7 +1657,7 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
         {
             case MultiCompMode::Opto: modeParams.optoGain.store(optoGainDbToKnob(scaledOutputDb), std::memory_order_relaxed); break;
             case MultiCompMode::FET:
-            case MultiCompMode::StudioFET: modeParams.fetOutput.store(scaledOutputDb, std::memory_order_relaxed); break;
+            case MultiCompMode::FetBlue: modeParams.fetOutput.store(scaledOutputDb, std::memory_order_relaxed); break;
             case MultiCompMode::VCA: modeParams.vcaOutput.store(scaledOutputDb, std::memory_order_relaxed); break;
             case MultiCompMode::Bus: modeParams.busMakeup.store(scaledOutputDb, std::memory_order_relaxed); break;
             case MultiCompMode::StudioVCA: modeParams.studioVcaOutput.store(scaledOutputDb, std::memory_order_relaxed); break;
@@ -2108,13 +2122,15 @@ void MultiCompDSP::processBusRange(const float* const* in, const float* const* s
 // partner's upsampled input. Every sidechain read happens before the first
 // output write, so `out` may alias `in` or `sidechain`. Byte-identical to the
 // per-sample loop.
-void MultiCompDSP::processFetRange(const float* const* in, const float* const* sidechain,
+void MultiCompDSP::processFetRange(MultiCompMode mode, const float* const* in, const float* const* sidechain,
                                    float* const* out, int nCh, int nSamples, bool external,
                                    float linkAmount, int linkMode, int factor, int hostSidechainDelay,
                                    float manualOutputDb, DistortionType distortionType,
                                    float distortionAmount) noexcept
 {
     if (nSamples <= 0) return;
+    // FET (FET BLACK) and FetBlue run one engine with two voices (MultiCompModes::selectFetVoice).
+    modes.selectFetVoice(mode == MultiCompMode::FetBlue ? 1 : 0);
     const bool link = linkMode == 0 && linkAmount > 0.0001f && nCh > 1;
     const bool midSideDetector = linkMode == 1 && nCh > 1;
     // The OPTO cell links only in OPTO mode.
@@ -2236,7 +2252,7 @@ void MultiCompDSP::processFetRange(const float* const* in, const float* const* s
                         modeParams.fetOutput.store(outputDb[i], std::memory_order_relaxed);
                     const float osSc = factor == 1 ? sc[i]
                         : interpolateOversampledSidechain(i == 0 ? carriedSc : sc[i - 1], sc[i], phase, factor);
-                    return distort(modes.process(MultiCompMode::FET, sample, ch, osSc, modeParams,
+                    return distort(modes.process(mode, sample, ch, osSc, modeParams,
                                                  1.0f, external, 0.0f, false));
                 });
             previousOversampledSidechain[c] = sc[nSamples - 1];
@@ -2299,9 +2315,9 @@ void MultiCompDSP::processFetRange(const float* const* in, const float* const* s
                 + (fetLinkDetectorGain * signedMaximum - detectorSc0) * linkAmount;
             const float rightSidechain = detectorSc1
                 + (fetLinkDetectorGain * signedMaximum - detectorSc1) * linkAmount;
-            outputLeft[k] = distort(modes.process(MultiCompMode::FET, inputLeft[k], 0, leftSidechain, modeParams,
+            outputLeft[k] = distort(modes.process(mode, inputLeft[k], 0, leftSidechain, modeParams,
                                                   1.0f, external, 0.0f, nativeLeftUsesLinkedDetector));
-            outputRight[k] = distort(modes.process(MultiCompMode::FET, inputRight[k], 1, rightSidechain, modeParams,
+            outputRight[k] = distort(modes.process(mode, inputRight[k], 1, rightSidechain, modeParams,
                                                    1.0f, external, 0.0f, nativeRightUsesLinkedDetector));
         }
         previousOversampledSidechain = {{sc0[i], sc1[i]}};
@@ -2490,7 +2506,7 @@ void MultiCompDSP::processOptoRange(const float* const* in, const float* const* 
 }
 
 void MultiCompDSP::processMultiband(const float* const* input, const float* const* sidechain,
-                                    float* const* output, int nCh, int nSamples)
+                                    float* const* output, int nCh, int nSamples, int linkMode)
 {
     updateCrossoverTargets();
     std::array<float, 3> coefficientFrequencies{{crossoverRamps[0].value(),
@@ -2550,9 +2566,34 @@ void MultiCompDSP::processMultiband(const float* const* input, const float* cons
         attacks[bandIndex] = std::max(0.0001f, params.mbAttack[bandIndex].load(std::memory_order_relaxed) * 0.001f);
         releases[bandIndex] = std::max(0.001f, params.mbRelease[bandIndex].load(std::memory_order_relaxed) * 0.001f);
         makeupGains[bandIndex] = decibelsToGain(params.mbMakeup[bandIndex].load(std::memory_order_relaxed));
-        anySolo = anySolo || solos[bandIndex];
+        // Restored or automated state can retain Solo on a disabled band. An
+        // inaudible band must not mute every band that is actually present.
+        anySolo = anySolo || (solos[bandIndex] && (activeBandMask & (1u << band)) != 0);
     }
-    const float mbOutputGain = decibelsToGain(params.mbOutput.load(std::memory_order_relaxed));
+    const float mbOutputDb = params.mbOutput.load(std::memory_order_relaxed);
+    if (manualMakeupScaleRamp.arrived())
+        std::fill_n(multibandOutputGains.begin(), nSamples, decibelsToGain(mbOutputDb * manualMakeupScaleRamp.next()));
+    else
+        for (int i = 0; i < nSamples; ++i)
+            multibandOutputGains[static_cast<size_t>(i)] = decibelsToGain(mbOutputDb * manualMakeupScaleRamp.next());
+    // A reduced-channel callback must not retain the absent channel's split,
+    // phase-compensation or band-envelope histories for a subsequent stereo
+    // block: that channel resumes from rest.
+    if (nCh == 1)
+    {
+        for (int boundary = 0; boundary < 3; ++boundary)
+        {
+            crossoverForBoundary(boundary, 1, false).reset();
+            crossoverForBoundary(boundary, 1, true).reset();
+            for (int band = 0; band < kMultiCompBands - 1; ++band)
+            {
+                multibandPhase[static_cast<size_t>(band)][static_cast<size_t>(boundary)][1].reset();
+                sidechainMultibandPhase[static_cast<size_t>(band)][static_cast<size_t>(boundary)][1].reset();
+            }
+        }
+        for (int band = 0; band < kMultiCompBands; ++band)
+            multibandEnvelopes[static_cast<size_t>(band * kMaxChannels + 1)] = 1.0f;
+    }
     for (int band = 0; band < kMultiCompBands; ++band)
         if ((activeBandMask & static_cast<std::uint8_t>(1u << band)) == 0)
             for (int ch = 0; ch < nCh; ++ch)
@@ -2576,20 +2617,42 @@ void MultiCompDSP::processMultiband(const float* const* input, const float* cons
                 float low = 0.0f, high = 0.0f;
                 crossoverForBoundary(stageBoundaryIndices[static_cast<size_t>(stage)], ch, false)
                     .processStandard(running, low, high);
-                bands[static_cast<size_t>(enabledBandIndices[static_cast<size_t>(stage)])]
+                const size_t band = static_cast<size_t>(enabledBandIndices[static_cast<size_t>(stage)]);
+                for (int later = stage + 1; later < numActiveStages; ++later)
+                {
+                    float phaseLow, phaseHigh;
+                    const size_t boundary = static_cast<size_t>(stageBoundaryIndices[static_cast<size_t>(later)]);
+                    auto& phase = multibandPhase[band][boundary][static_cast<size_t>(ch)];
+                    phase.setFrequency(crossoverCurves[boundary][static_cast<size_t>(i)]);
+                    phase.processStandard(low, phaseLow, phaseHigh);
+                    low = phaseLow + phaseHigh;
+                }
+                bands[band]
                      [static_cast<size_t>(ch)][static_cast<size_t>(i)] = low;
                 running = high;
             }
             bands[static_cast<size_t>(topBandIndex)][static_cast<size_t>(ch)][static_cast<size_t>(i)] = running;
             if (sidechain != nullptr)
             {
-                float scRunning = sidechain[std::min(ch, nCh - 1)][i];
+                float scRunning = nCh > 1 && linkMode == 1
+                    ? (sidechain[0][i] + (ch == 0 ? sidechain[1][i] : -sidechain[1][i])) * 0.5f
+                    : sidechain[std::min(ch, nCh - 1)][i];
                 for (int stage = 0; stage < numActiveStages; ++stage)
                 {
                     float low = 0.0f, high = 0.0f;
                     crossoverForBoundary(stageBoundaryIndices[static_cast<size_t>(stage)], ch, true)
                         .processStandard(scRunning, low, high);
-                    sidechainBands[static_cast<size_t>(enabledBandIndices[static_cast<size_t>(stage)])]
+                    const size_t band = static_cast<size_t>(enabledBandIndices[static_cast<size_t>(stage)]);
+                    for (int later = stage + 1; later < numActiveStages; ++later)
+                    {
+                        float phaseLow, phaseHigh;
+                        const size_t boundary = static_cast<size_t>(stageBoundaryIndices[static_cast<size_t>(later)]);
+                        auto& phase = sidechainMultibandPhase[band][boundary][static_cast<size_t>(ch)];
+                        phase.setFrequency(crossoverCurves[boundary][static_cast<size_t>(i)]);
+                        phase.processStandard(low, phaseLow, phaseHigh);
+                        low = phaseLow + phaseHigh;
+                    }
+                    sidechainBands[band]
                                   [static_cast<size_t>(ch)][static_cast<size_t>(i)] = low;
                     scRunning = high;
                 }
@@ -2670,7 +2733,7 @@ void MultiCompDSP::processMultiband(const float* const* input, const float* cons
         {
             float sum = 0.0f;
             for (int band = 0; band < kMultiCompBands; ++band) sum += bands[static_cast<size_t>(band)][static_cast<size_t>(ch)][static_cast<size_t>(i)];
-            sum *= mbOutputGain;
+            sum *= multibandOutputGains[static_cast<size_t>(i)];
             float limited = sum;
             if (std::abs(limited) > 1.5f)
                 limited = std::copysign(1.5f + 0.5f * std::tanh((std::abs(limited) - 1.5f) * 2.0f), limited);
@@ -2703,6 +2766,13 @@ void MultiCompDSP::prepareCrossovers() noexcept
         {
             crossoverForBoundary(boundary, ch, false).prepare(sampleRate, frequencies[static_cast<size_t>(boundary)]);
             crossoverForBoundary(boundary, ch, true).prepare(sampleRate, frequencies[static_cast<size_t>(boundary)]);
+            for (int band = 0; band < kMultiCompBands - 1; ++band)
+            {
+                multibandPhase[static_cast<size_t>(band)][static_cast<size_t>(boundary)][static_cast<size_t>(ch)]
+                    .prepare(sampleRate, frequencies[static_cast<size_t>(boundary)]);
+                sidechainMultibandPhase[static_cast<size_t>(band)][static_cast<size_t>(boundary)][static_cast<size_t>(ch)]
+                    .prepare(sampleRate, frequencies[static_cast<size_t>(boundary)]);
+            }
         }
 }
 
@@ -2720,6 +2790,13 @@ void MultiCompDSP::resetCrossovers() noexcept
             detector.setFrequency(frequencies[static_cast<size_t>(boundary)]);
             audio.reset();
             detector.reset();
+            for (int band = 0; band < kMultiCompBands - 1; ++band)
+                for (auto* filters : {&multibandPhase, &sidechainMultibandPhase})
+                {
+                    auto& phase = (*filters)[static_cast<size_t>(band)][static_cast<size_t>(boundary)][static_cast<size_t>(ch)];
+                    phase.setFrequency(frequencies[static_cast<size_t>(boundary)]);
+                    phase.reset();
+                }
         }
 }
 
@@ -2741,9 +2818,15 @@ DuskCrossover& MultiCompDSP::crossoverForBoundary(int boundary, int channel, boo
 void MultiCompDSP::rebuildMultibandTopology(std::uint8_t mask) noexcept
 {
     std::array<bool, kMultiCompBands - 1> oldActivePools{};
+    std::array<std::array<bool, kMultiCompBands - 1>, kMultiCompBands - 1> oldPhasePaths{};
     if (activeBandMask != 0)
         for (int stage = 0; stage < numActiveStages; ++stage)
+        {
             oldActivePools[static_cast<size_t>(stageBoundaryIndices[static_cast<size_t>(stage)])] = true;
+            for (int later = stage + 1; later < numActiveStages; ++later)
+                oldPhasePaths[static_cast<size_t>(enabledBandIndices[static_cast<size_t>(stage)])]
+                             [static_cast<size_t>(stageBoundaryIndices[static_cast<size_t>(later)])] = true;
+        }
 
     activeBandMask = mask;
     numEnabledBands = 0;
@@ -2766,6 +2849,17 @@ void MultiCompDSP::rebuildMultibandTopology(std::uint8_t mask) noexcept
         const int boundary = enabledBandIndices[static_cast<size_t>(stage + 1)] - 1;
         stageBoundaryIndices[static_cast<size_t>(stage)] = boundary;
         newActivePools[static_cast<size_t>(boundary)] = true;
+        const size_t band = static_cast<size_t>(enabledBandIndices[static_cast<size_t>(stage)]);
+        for (int later = stage + 1; later < numActiveStages; ++later)
+        {
+            const size_t laterBoundary = static_cast<size_t>(enabledBandIndices[static_cast<size_t>(later + 1)] - 1);
+            if (!oldPhasePaths[band][laterBoundary])
+                for (int ch = 0; ch < kMaxChannels; ++ch)
+                {
+                    multibandPhase[band][laterBoundary][static_cast<size_t>(ch)].reset();
+                    sidechainMultibandPhase[band][laterBoundary][static_cast<size_t>(ch)].reset();
+                }
+        }
     }
     for (int boundary = 0; boundary < kMultiCompBands - 1; ++boundary)
         if (newActivePools[static_cast<size_t>(boundary)] && !oldActivePools[static_cast<size_t>(boundary)])

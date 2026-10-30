@@ -38,7 +38,6 @@ void forEachPresetParam(const duskaudio::MultiCompPreset& preset,
             setParameter(P::OptoLimit, preset.limitMode ? 1.0f : 0.0f);
             break;
         case 1:
-        case 4:
             setParameter(P::FetInput, -preset.threshold);
             setParameter(P::FetOutput, preset.makeup);
             setParameter(P::FetAttack, preset.attack);
@@ -47,6 +46,17 @@ void forEachPresetParam(const duskaudio::MultiCompPreset& preset,
             setParameter(P::FetCurve, kParams[static_cast<size_t>(ParamId::FetCurve)].def);
             setParameter(P::FetTransient, kParams[static_cast<size_t>(ParamId::FetTransient)].def);
             setParameter(P::FetThreshold, kParams[static_cast<size_t>(ParamId::FetThreshold)].def);
+            break;
+        case 4:
+            // FET BLUE shares Input, Output, Attack and Release with FET BLACK; Ratio, SC Filter and Headroom are
+            // its own.
+            setParameter(P::FetInput, -preset.threshold);
+            setParameter(P::FetOutput, preset.makeup);
+            setParameter(P::FetAttack, preset.attack);
+            setParameter(P::FetRelease, preset.release);
+            setParameter(P::FetBlueRatio, static_cast<float>(preset.fetRatio));
+            setParameter(P::FetBlueScFilter, 0.0f);   // the reference's defaults: filter off, 16 dB headroom
+            setParameter(P::FetBlueHeadroom, 3.0f);
             break;
         case 2:
             setParameter(P::VcaThreshold, preset.threshold);

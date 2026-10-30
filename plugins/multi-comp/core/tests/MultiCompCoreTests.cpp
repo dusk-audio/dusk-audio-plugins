@@ -1,6 +1,7 @@
 #include "MultiCompFetProgrammeFixtures.hpp"
 #include "../MultiCompDSP.hpp"
 #include "MultiCompOptoParityFixtures.hpp"
+#include "MultiCompFetBlueFixtures.hpp"
 #include "MultiCompStudioVcaFixtures.hpp"
 #include "MultiCompVcaSwitchFixtures.hpp"
 #include "../../../shared-daf/dsp/DuskCrossover.hpp"
@@ -15,6 +16,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <limits>
 #include <sstream>
 #include <string>
@@ -47,6 +49,16 @@ struct MultiCompDSPTestAccess
     {
         return {{dsp.modes.fetPostBurstRecoveryGain(0),
                  dsp.modes.fetPostBurstRecoveryGain(1)}};
+    }
+
+    // A fault arising inside a stage, the output recovery's remaining trigger (no sub-ceiling input overflows a
+    // mode since FET BLUE replaced Studio FET): FET BLUE's low section loses its corner, so its next output sample
+    // is NaN. Between blocks only, as setFetDynamicsParams requires.
+    static void faultFetBlue(MultiCompDSP& dsp) noexcept
+    {
+        auto params = FetDynamicsParams::fromArray(kFetBlueDynamicsDefaults);
+        params.lfHpFrequency = std::numeric_limits<float>::quiet_NaN();
+        dsp.modes.setFetDynamicsParams(params, 1);
     }
 
     static void setFetStartupState(
@@ -3235,7 +3247,7 @@ void testStaticCurves()
 {
     const duskaudio::MultiCompMode modes[] = {
         duskaudio::MultiCompMode::Opto, duskaudio::MultiCompMode::FET, duskaudio::MultiCompMode::VCA,
-        duskaudio::MultiCompMode::Bus, duskaudio::MultiCompMode::StudioFET, duskaudio::MultiCompMode::StudioVCA,
+        duskaudio::MultiCompMode::Bus, duskaudio::MultiCompMode::FetBlue, duskaudio::MultiCompMode::StudioVCA,
         duskaudio::MultiCompMode::Digital, duskaudio::MultiCompMode::Multiband};
     for (auto mode : modes)
     {
@@ -3263,7 +3275,7 @@ void configureStrongCompression(MultiCompDSP& dsp, int mode)
             dsp.setParameter(MultiCompDSP::Parameter::OptoPeakReduction, 100.0f);
             break;
         case duskaudio::MultiCompMode::FET:
-        case duskaudio::MultiCompMode::StudioFET:
+        case duskaudio::MultiCompMode::FetBlue:
             dsp.setParameter(MultiCompDSP::Parameter::FetInput, 10.0f);
             dsp.setParameter(MultiCompDSP::Parameter::FetThreshold, -30.0f);
             dsp.setParameter(MultiCompDSP::Parameter::FetAttack, 0.1f);
@@ -3556,7 +3568,7 @@ void configureBypassToggleMode(MultiCompDSP& dsp, duskaudio::MultiCompMode mode)
                 dsp.setMultibandParameter(band, Band::Ratio, 4.0f);
             }
             break;
-        case duskaudio::MultiCompMode::StudioFET:
+        case duskaudio::MultiCompMode::FetBlue:
         case duskaudio::MultiCompMode::StudioVCA:
             break;
     }
@@ -4716,7 +4728,7 @@ void testDigitalLookaheadMixAlignment()
     }
 }
 
-void testGoldenVectors()
+void testGoldenVectors(int selectedMode = -1)
 {
     constexpr int kSamples = 4096;
     // These vectors were recorded from this extracted core. They detect drift
@@ -4732,7 +4744,7 @@ void testGoldenVectors()
     // static and control laws already differ from the JUCE implementation.
     constexpr duskaudio::MultiCompMode modes[] = {
         duskaudio::MultiCompMode::FET,
-        duskaudio::MultiCompMode::Bus, duskaudio::MultiCompMode::StudioFET,
+        duskaudio::MultiCompMode::Bus, duskaudio::MultiCompMode::FetBlue,
         duskaudio::MultiCompMode::StudioVCA, duskaudio::MultiCompMode::Digital,
         duskaudio::MultiCompMode::Multiband};
     // Re-recorded 2026-08-19: affected hardware modes encoded stale oversampling-rate coefficients.
@@ -4848,14 +4860,26 @@ void testGoldenVectors()
     // Studio VCA converted to the measured studio VCA reference (peak detector, measured static law and release /
     // attack laws, host rate; 2026-10-26, owner's conversion request): Studio VCA RMS .195212007 -> .161433503,
     // peak .657659471 -> .349220395; siblings unchanged, bound unchanged.
+    // FET BLUE replaces the generic Studio FET in mode 4 (the FET loop with its own measured voice; 2026-10-27,
+    // owner's request): mode-4 RMS .615188122 -> .061227035, peak 1.836065888 -> .488671184; siblings unchanged,
+    // bound unchanged.
+    // Digital / Multiband re-recorded 2026-10-27 after independent soft-knee
+    // and flat-recombination regressions established the corrected laws.
+    // Restoring the old knee / uncompensated splits fails these same bounds;
+    // all six hardware modes also byte-null against the pre-fix step/burst.
+    // FET BLUE's tip balance referred to the nominal Release (fbTipReferenceShare; 2026-10-27, owner's approval):
+    // mode-4 RMS .061227035 -> .059194174, peak unchanged; siblings unchanged, bound unchanged.
+    // FET BLUE's creep element and the constants refitted with it (fbCreepShare, refit 8; 2026-10-29, owner's
+    // approval): mode-4 RMS .059194174 -> .057669543, peak unchanged; siblings unchanged, bound unchanged.
     constexpr float expectedRms[] = {0.043787036f, 0.021684144f,
-                                     0.615188122f, 0.161433503f, 0.172583029f, 0.212110028f};
+                                     0.057669543f, 0.161433503f, 0.172472671f, 0.213454589f};
     constexpr float expectedPeak[] = {0.553540170f, 0.349883616f,
-                                      1.836065888f, 0.349220395f, 0.349556237f, 0.815853953f};
+                                      0.488671184f, 0.349220395f, 0.349556237f, 0.820877731f};
     std::puts("golden vectors: six JUCE-oracle modes, deterministic step/sine-burst RMS peak");
     for (size_t vectorIndex = 0; vectorIndex < std::size(modes); ++vectorIndex)
     {
         const int mode = static_cast<int>(modes[vectorIndex]);
+        if (selectedMode >= 0 && mode != selectedMode) continue;
         MultiCompDSP dsp;
         dsp.prepare(48000.0, 256);
         dsp.setOversampling(0);
@@ -4938,7 +4962,7 @@ void testMultibandEnabledTopology()
     const float bypassed = renderSoloedLowBand(true, true);
     std::printf("multiband Enabled topology: disabled-solo RMS %.9g; bypassed-solo RMS %.9g\n",
                 disabled, bypassed);
-    require(disabled < 1.0e-8f, "disabled band is absent from the recombination");
+    require(disabled > 0.1f, "Solo on a disabled band leaves the active bands audible");
     require(bypassed > 0.1f, "bypassed band remains audible without compression");
 
     MultiCompDSP minimumTwo;
@@ -5184,7 +5208,7 @@ float gainReductionAfterLongRelease(duskaudio::MultiCompMode mode, double sample
 void testLongReleaseSettlesAtHighRates()
 {
     using duskaudio::MultiCompMode;
-    for (const MultiCompMode mode : {MultiCompMode::StudioFET, MultiCompMode::StudioVCA,
+    for (const MultiCompMode mode : {MultiCompMode::FetBlue, MultiCompMode::StudioVCA,
                                      MultiCompMode::Digital})
     {
         const float base = gainReductionAfterLongRelease(mode, 48000.0, 0);
@@ -5228,7 +5252,7 @@ std::vector<float> renderWithControl(duskaudio::MultiCompMode mode, MultiCompDSP
 }
 
 // The global Mix and SC HP act only on the faces that show them. Bus and
-// Digital carry their own MIX and Multiband its MB Mix; only Opto, VCA and Bus
+// Digital carry their own MIX and Multiband its MB Mix; Opto, VCA, Bus and Digital
 // carry the sidechain high-pass. Before, a Mix or SC HP set on one face kept
 // acting, unseen, after switching to a mode without that control.
 void testHiddenControlsStayOutOfModesWithoutThem()
@@ -5241,12 +5265,12 @@ void testHiddenControlsStayOutOfModesWithoutThem()
     require(renderWithControl(MultiCompMode::Opto, Parameter::Mix, 40.0f)
                 != renderWithControl(MultiCompMode::Opto, Parameter::Mix, 100.0f),
             "the global Mix still acts on a face that shows it");
-    for (const MultiCompMode mode : {MultiCompMode::FET, MultiCompMode::StudioFET, MultiCompMode::StudioVCA,
-                                     MultiCompMode::Digital, MultiCompMode::Multiband})
+    for (const MultiCompMode mode : {MultiCompMode::FET, MultiCompMode::FetBlue, MultiCompMode::StudioVCA,
+                                     MultiCompMode::Multiband})
         require(renderWithControl(mode, Parameter::SidechainHP, 300.0f)
                     == renderWithControl(mode, Parameter::SidechainHP, 0.0f),
                 "SC HP does not act in a mode whose face has no sidechain filter");
-    for (const MultiCompMode mode : {MultiCompMode::Opto, MultiCompMode::VCA, MultiCompMode::Bus})
+    for (const MultiCompMode mode : {MultiCompMode::Opto, MultiCompMode::VCA, MultiCompMode::Bus, MultiCompMode::Digital})
         require(renderWithControl(mode, Parameter::SidechainHP, 300.0f)
                     != renderWithControl(mode, Parameter::SidechainHP, 0.0f),
                 "SC HP still acts on a face that shows it");
@@ -5268,7 +5292,7 @@ void testGlobalLookaheadOnlyInDigitalModes()
         return dsp.getLatencySamples();
     };
     for (const MultiCompMode mode : {MultiCompMode::Opto, MultiCompMode::FET, MultiCompMode::VCA,
-                                     MultiCompMode::Bus, MultiCompMode::StudioFET, MultiCompMode::StudioVCA})
+                                     MultiCompMode::Bus, MultiCompMode::FetBlue, MultiCompMode::StudioVCA})
     {
         require(renderWithControl(mode, Parameter::GlobalLookahead, 10.0f)
                     == renderWithControl(mode, Parameter::GlobalLookahead, 0.0f),
@@ -5282,9 +5306,7 @@ void testGlobalLookaheadOnlyInDigitalModes()
     // A lookahead lets the detector hear the onset before the audio does, so
     // the first 5 ms after the audio arrives already come out reduced. A plain
     // delay of audio and detector together would leave the onset as loud as
-    // without it. Multiband with its own detector is such a delay today (open
-    // before 1.0.0), so only Digital is held to the lead; Multiband's reading is
-    // printed for reference.
+    // without it. Both digital modes must provide a detector lead.
     // The audio must also arrive where the reported latency says: before it,
     // from 240 to 70 samples ahead (clear of the anti-alias filter's
     // pre-ringing), the output is silent, since the input starts at t = 0.
@@ -5304,6 +5326,7 @@ void testGlobalLookaheadOnlyInDigitalModes()
     const float digitalLead = onsetPeakDb(MultiCompMode::Digital, 0.0f) - onsetPeakDb(MultiCompMode::Digital, 10.0f);
     const float multibandLead = onsetPeakDb(MultiCompMode::Multiband, 0.0f) - onsetPeakDb(MultiCompMode::Multiband, 10.0f);
     require(digitalLead > 1.0f, "Global Lookahead lets Digital reduce the onset before it arrives");
+    require(multibandLead > 1.0f, "Global Lookahead lets Multiband reduce the onset before it arrives");
     std::printf("global lookahead: adds latency only in Digital and Multiband; onset lead Digital %.2f dB, "
                 "Multiband %.2f dB\n", digitalLead, multibandLead);
 }
@@ -5497,7 +5520,8 @@ enum class ModeRenderPath { Wet, Dry, Bypass, Listen };
 std::vector<float> renderModeRequests(double sampleRate, int oversampling, int block,
                                       const std::vector<ModeRequest>& requests, const std::vector<float>& input,
                                       float fetInputDb = -20.0f, ModeRenderHost host = ModeRenderHost::Core,
-                                      ModeRenderPath path = ModeRenderPath::Wet)
+                                      ModeRenderPath path = ModeRenderPath::Wet,
+                                      const std::function<void(MultiCompDSP&, int)>& beforeBlock = {})
 {
     using Parameter = MultiCompDSP::Parameter;
     MultiCompDSP dsp;
@@ -5530,6 +5554,7 @@ std::vector<float> renderModeRequests(double sampleRate, int oversampling, int b
         if (next < requests.size()) count = std::min(count, requests[next].sample - position);
         const float* inputs[] = {input.data() + position, input.data() + position};
         float* outputs[] = {left.data() + position, right.data() + position};
+        if (beforeBlock) beforeBlock(dsp, position);
         dsp.processBlock(inputs, outputs, 2, count);
         position += count;
     }
@@ -5596,7 +5621,7 @@ constexpr float kModeSwitchClickBound = 1.3f;
 constexpr float kModeSwitchSettledTolerance = 0.05f;
 
 constexpr std::array<const char*, duskaudio::kMultiCompModes> kModeSwitchModeNames{{
-    "OPTO", "FET", "VCA", "BUS", "Studio FET", "Studio VCA", "Digital", "Multiband"}};
+    "OPTO", "FET BLACK", "VCA", "BUS", "FET BLUE", "Studio VCA", "Digital", "Multiband"}};
 
 const char* oversamplingSettingName(int oversampling)
 {
@@ -5767,12 +5792,12 @@ void testModeSwitchDuckOnlyWhereAntiAliasFactorChanges()
 }
 
 // The duck's state at two awkward moments, 2x setting, each request starting a host block of up to 256 samples:
-// A. A recovery reset inside the fade-out (96 kHz). Studio FET with +20 dB of Input overflows within about 40
-//    samples of a 1000-peak burst, the way finite input still reaches MultiCompDSP's output recovery (see
-//    MultiCompNonFiniteTests.cpp). A burst spanning exactly the 1 ms fade-out of a switch to Opto therefore faults
-//    inside it: the recovery silences that part and resets the duck. A mute armed after the part regardless counted
-//    down at full gain, and a Digital request inside it switched at full gain, 14x the steady slope here. The part
-//    must leave the duck as reset() left it, so the Digital request 104 samples later is ducked like any other.
+// A. A recovery reset inside the fade-out (96 kHz). FET BLUE faults (MultiCompDSPTestAccess::faultFetBlue) as the
+//    1 ms fade-out of a switch to Opto starts, so its output turns NaN inside it: the recovery silences that part and
+//    resets the duck. (Until 2026-10-27 a 1000-peak burst through Studio FET at +20 dB Input overflowed there; no
+//    sub-ceiling input overflows a mode now.) A mute armed after the part regardless counted down at full gain, and
+//    a Digital request inside it switched at full gain, 14x the steady slope here. The part must leave the duck as
+//    reset() left it, so the Digital request 104 samples later is ducked like any other.
 // B. A factor-changing request 120 samples into the 128-sample mute of another (Opto to Digital and back, and the
 //    reverse, at 96 and 192 kHz). It switches at once, at silence, and must re-arm the mute for its own
 //    realignment: left to the first switch's last 8 samples of mute it stepped 7.7x to 14x the steady slope.
@@ -5798,13 +5823,13 @@ void testModeSwitchDuckRearmsAndSurvivesRecovery()
     const int optoAt = kModeSwitchSegment;
     const int digitalAt = optoAt + kFadeAt96k + 104;
     const int faultTotal = digitalAt + kModeSwitchSegment;
-    std::vector<float> faultInput = modeSwitchTone(rates[0], faultTotal);
-    for (int n = optoAt; n < optoAt + kFadeAt96k; ++n)
-        faultInput[static_cast<size_t>(n)] = (n / 24) % 2 != 0 ? 1000.0f : -1000.0f;
     const std::vector<float> fault = renderModeRequests(
         rates[0], kOversampling2xSetting, 256,
-        {{0, MultiCompMode::StudioFET}, {optoAt, MultiCompMode::Opto}, {digitalAt, MultiCompMode::Digital}},
-        faultInput, 20.0f);
+        {{0, MultiCompMode::FetBlue}, {optoAt, MultiCompMode::Opto}, {digitalAt, MultiCompMode::Digital}},
+        modeSwitchTone(rates[0], faultTotal), -20.0f, ModeRenderHost::Core, ModeRenderPath::Wet,
+        [optoAt](MultiCompDSP& dsp, int position) {
+            if (position == optoAt) duskaudio::MultiCompDSPTestAccess::faultFetBlue(dsp);
+        });
     const float faultPartPeak = peakBetween(fault, optoAt, optoAt + kFadeAt96k);
     const float faultClick = largestStepBetween(fault, digitalAt, faultTotal)
         / std::max(steadySlope(opto[0]), steadySlope(digital[0]));
@@ -5837,7 +5862,7 @@ void testModeSwitchDuckRearmsAndSurvivesRecovery()
         }
     }
     require(faultPartPeak == 0.0f,
-            "the burst overflows Studio FET inside the fade-out, so the recovery resets the duck there");
+            "FET BLUE faults inside the fade-out, so the recovery resets the duck there");
     require(std::max(faultSettled, muteSettled) < kModeSwitchSettledTolerance,
             "a switch requested after a recovered fade-out or inside a mute completes into the entered mode");
     require(faultClick < kModeSwitchClickBound,
@@ -6631,7 +6656,7 @@ void setModeOutput(MultiCompDSP& dsp, int mode, bool high)
             dsp.setParameter(MultiCompDSP::Parameter::OptoGain,
                              duskaudio::optoGainDbToKnob(db)); break;
         case duskaudio::MultiCompMode::FET:
-        case duskaudio::MultiCompMode::StudioFET:
+        case duskaudio::MultiCompMode::FetBlue:
             dsp.setParameter(MultiCompDSP::Parameter::FetOutput, db); break;
         case duskaudio::MultiCompMode::VCA:
             dsp.setParameter(MultiCompDSP::Parameter::VcaOutput, db); break;
@@ -7049,7 +7074,7 @@ void testHardwareRateRefreshAfterOversamplingChange()
 {
     const duskaudio::MultiCompMode hardwareModes[] = {
         duskaudio::MultiCompMode::Opto, duskaudio::MultiCompMode::FET,
-        duskaudio::MultiCompMode::Bus, duskaudio::MultiCompMode::StudioFET,
+        duskaudio::MultiCompMode::Bus, duskaudio::MultiCompMode::FetBlue,
         duskaudio::MultiCompMode::StudioVCA};
     duskaudio::MultiCompParameterState parameters;
     parameters.optoPeakReduction.store(0.0f, std::memory_order_relaxed);
@@ -12433,6 +12458,8 @@ void testStudioVcaRunsAtHostRate()
 
 // Report-only: every test that compares against measured reference data, and
 // the mixed tests whose reference assertions use requireParity().
+void testFetBlueReleasesWithoutDeepening();   // FET BLUE's tests follow below
+
 int runParityTests()
 {
     assertMode = AssertMode::ReportRun;
@@ -12490,12 +12517,339 @@ int runParityTests()
     testFetAttackAcceleratesWithDrive();
     testFetDenseShallowLowFrequencyH3();
     testFetDenseBroadbandComplexH3();
+    testFetBlueReleasesWithoutDeepening();
     std::printf("Multi-Comp parity (report-only): %d failed assertion(s)\n", reportedFailures);
     return reportedFailures == 0 ? 0 : 1;
 }
 
+// ---- FET BLUE (mode 4): the second reference FET compressor's measured voice (MultiCompFetBlueFixtures.hpp) ----
+constexpr double kFetBluePi = 3.14159265358979323846;
+
+struct FetBlueSetting
+{
+    float inputPosition = 0.375f;
+    int ratio = 2;          // FetVoice position: 0 None, 1 2:1, 2 4:1, 3 8:1, 4 20:1
+    int headroom = 3;       // 16 dB
+    bool scFilter = false;
+    float attackPosition = 0.5f, releasePosition = 0.66595459f;
+    float outputDb = -20.0f + 40.0f * 0.62591552734375f;   // the reference's Output .6259
+};
+
+// `input` on both channels through FET BLUE at 48 kHz, the reference's knobs (Output .6259 unless the setting says
+// otherwise; Attack and Release at the setting's positions, as the legacy plain values those positions read).
+// Returns the left channel and the latency.
+std::vector<float> renderFetBlue(const FetBlueSetting& setting, const std::vector<float>& input, int& latency)
+{
+    using P = MultiCompDSP::Parameter;
+    MultiCompDSP dsp;
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::FetBlue));
+    dsp.setMix(100.0f);
+    dsp.setParameter(P::FetInput, -20.0f + 60.0f * setting.inputPosition);
+    dsp.setParameter(P::FetOutput, setting.outputDb);
+    dsp.setParameter(P::FetAttack, 0.02f + 79.98f * std::pow(setting.attackPosition, 1.0f / 0.3f));
+    dsp.setParameter(P::FetRelease, 50.0f + 1050.0f * setting.releasePosition);
+    dsp.setParameter(P::FetBlueRatio, static_cast<float>(setting.ratio));
+    dsp.setParameter(P::FetBlueHeadroom, static_cast<float>(setting.headroom));
+    dsp.setParameter(P::FetBlueScFilter, setting.scFilter ? 1.0f : 0.0f);
+    dsp.prepare(48000.0, 512);
+    std::vector<float> left(input.size()), right(input.size());
+    for (size_t position = 0; position < input.size(); position += 512)
+    {
+        const int count = static_cast<int>(std::min<size_t>(512, input.size() - position));
+        const float* inputs[] = {input.data() + position, input.data() + position};
+        float* outputs[] = {left.data() + position, right.data() + position};
+        dsp.processBlock(inputs, outputs, 2, count);
+    }
+    latency = dsp.getLatencySamples();
+    return left;
+}
+
+// Sine steps at `hz`: `levels` dBFS each `seconds` long, after 0.5 s of silence.
+std::vector<float> fetBlueSteps(double hz, const std::vector<float>& levels, double seconds)
+{
+    const size_t step = static_cast<size_t>(seconds * 48000.0), start = 24000;
+    std::vector<float> x(start + levels.size() * step, 0.0f);
+    for (size_t k = 0; k < levels.size(); ++k)
+        for (size_t i = 0; i < step; ++i)
+        {
+            const size_t n = start + k * step + i;
+            x[n] = static_cast<float>(std::pow(10.0, levels[k] / 20.0)
+                                      * std::sin(2.0 * kFetBluePi * hz * static_cast<double>(n) / 48000.0));
+        }
+    return x;
+}
+
+// The `hz` component's amplitude of y (read `latency` later) and of x over [from, to) samples.
+double fetBlueLockIn(const std::vector<float>& x, double hz, size_t from, size_t to, int latency = 0)
+{
+    double re = 0.0, im = 0.0;
+    for (size_t n = from; n < to; ++n)
+    {
+        const double phase = 2.0 * kFetBluePi * hz * static_cast<double>(n) / 48000.0;
+        const double v = x[n + static_cast<size_t>(latency)];
+        re += v * std::cos(phase); im -= v * std::sin(phase);
+    }
+    return 2.0 * std::sqrt(re * re + im * im) / static_cast<double>(to - from);
+}
+
+// The settled gain (dB) of step k of fetBlueSteps(.., seconds): its last 0.3 s but 20 ms.
+double fetBlueStepGainDb(const std::vector<float>& x, const std::vector<float>& y, int latency, double hz, size_t k,
+                         double seconds)
+{
+    const size_t step = static_cast<size_t>(seconds * 48000.0), end = 24000 + (k + 1) * step - 960;
+    const size_t from = end - 14400 + 960;
+    return 20.0 * std::log10(fetBlueLockIn(y, hz, from, end, latency) / fetBlueLockIn(x, hz, from, end));
+}
+
+std::vector<float> fetBlueStaircaseLevels()
+{
+    std::vector<float> levels;
+    for (int level = -60; level <= 0; level += 2) levels.push_back(static_cast<float>(level));
+    return levels;
+}
+
+// Statics: the settled reduction on the 1 kHz staircase at 2:1, 4:1 and 20:1, Input .375.
+void testFetBlueStaticsMatchReference()
+{
+    namespace fx = fetBlueFixtures;
+    const std::vector<float> levels = fetBlueStaircaseLevels();
+    const std::vector<float> input = fetBlueSteps(1000.0, levels, 0.6);
+    double worst = 0.0;
+    for (const int ratio : {1, 2, 4})
+    {
+        FetBlueSetting setting; setting.ratio = ratio;
+        int latency = 0;
+        const std::vector<float> output = renderFetBlue(setting, input, latency);
+        const double floor = fetBlueStepGainDb(input, output, latency, 1000.0, 0, 0.6);
+        for (const auto& row : fx::statics)
+        {
+            if (row.ratio != ratio) continue;
+            const size_t k = static_cast<size_t>(std::lround((row.levelDbfs + 60.0f) / 2.0f));
+            const double reduction = fetBlueStepGainDb(input, output, latency, 1000.0, k, 0.6) - floor;
+            worst = std::max(worst, std::abs(reduction - row.reductionDb));
+            std::printf("FET BLUE static: ratio position %d %+5.1f dBFS reduction %+7.3f dB, reference %+7.3f\n",
+                        ratio, row.levelDbfs, reduction, row.reductionDb);
+            require(std::abs(reduction - row.reductionDb) <= fx::kStaticsBoundDb,
+                    "FET BLUE's settled reduction is within 0.3 dB of the reference");
+        }
+    }
+    std::printf("FET BLUE statics: worst %.3f dB (bound %.2f)\n", worst, fx::kStaticsBoundDb);
+}
+
+// Release from the slow end: after a burst the reduction lets go without deepening first (the reference's readings
+// at Release 0, where a tail population still filling from the fast charge deepened it by up to 1.2 dB). Mechanism:
+// 50 and 150 ms after the burst the reduction is no deeper than at its end, and 300 ms after it every ratio has let
+// go of some of it. Reference accuracy (requireParity): each reading within the campaign's 1.00 dB cell bar, on a
+// held-out burst (fixtures: releaseFromSlowEnd).
+void testFetBlueReleasesWithoutDeepening()
+{
+    namespace fx = fetBlueFixtures;
+    constexpr double hz = 2000.0;
+    constexpr size_t start = 24000, burst = 12000, total = start + burst + 72000;
+    std::vector<float> input(total);
+    for (size_t n = 0; n < total; ++n)
+    {
+        const double amplitude = n >= start && n < start + burst ? 0.6 : 0.01;
+        input[n] = static_cast<float>(amplitude
+                                      * std::sin(2.0 * kFetBluePi * hz * static_cast<double>(n) / 48000.0));
+    }
+    constexpr size_t end = 750;   // the frame the burst ends at (750.0 ms)
+    double worst = 0.0;
+    for (const auto& row : fx::releaseFromSlowEnd)
+    {
+        FetBlueSetting setting;
+        setting.ratio = row.ratio; setting.inputPosition = 0.5f;
+        setting.attackPosition = 0.126f; setting.releasePosition = 0.0f;
+        int latency = 0;
+        const std::vector<float> output = renderFetBlue(setting, input, latency);
+        const auto frame = [&](size_t m) {
+            return 20.0 * std::log10(fetBlueLockIn(output, hz, 48 * m, 48 * m + 48, latency)
+                                     / fetBlueLockIn(input, hz, 48 * m, 48 * m + 48));
+        };
+        std::vector<double> bed;
+        for (size_t m = 100; m < 480; ++m) bed.push_back(frame(m));
+        std::sort(bed.begin(), bed.end());
+        const double reference = 0.5 * (bed[bed.size() / 2 - 1] + bed[bed.size() / 2]);
+        const std::array<std::pair<size_t, float>, 4> readings{{
+            {end - 2, row.endDb}, {end + 50, row.after50Db}, {end + 150, row.after150Db}, {end + 300, row.after300Db}}};
+        for (const auto& [m, expected] : readings)
+        {
+            const double gain = frame(m) - reference;
+            worst = std::max(worst, std::abs(gain - expected));
+            std::printf("FET BLUE release from the slow end: ratio position %d frame %4zu ms gain %+7.2f dB, "
+                        "reference %+7.2f\n", row.ratio, m, gain, expected);
+            requireParity(std::abs(gain - expected) <= fx::kReleaseBoundDb,
+                          "FET BLUE releases from the slow end within 1 dB of the reference");
+        }
+        const double endGain = frame(end - 2) - reference;
+        for (const size_t m : {end + 50, end + 150})
+            require(frame(m) - reference >= endGain,
+                    "FET BLUE's reduction does not deepen after a burst's end at Release 0");
+        require(frame(end + 300) - reference > endGain,
+                "FET BLUE lets go of its reduction within 300 ms of a burst's end at Release 0");
+    }
+    std::printf("FET BLUE release from the slow end: worst %.2f dB (bound %.2f)\n", worst, fx::kReleaseBoundDb);
+}
+
+// Headroom: a drive offset (its reduction curve moves 4 dB a step; the reference's rows at 8 and 24 dB).
+void testFetBlueHeadroomMovesTheDrive()
+{
+    namespace fx = fetBlueFixtures;
+    const std::vector<float> levels = fetBlueStaircaseLevels();
+    const std::vector<float> input = fetBlueSteps(1000.0, levels, 0.6);
+    std::array<double, 7> linearGain{};
+    for (const int step : {3, 1, 5})
+    {
+        FetBlueSetting setting; setting.headroom = step;
+        int latency = 0;
+        const std::vector<float> output = renderFetBlue(setting, input, latency);
+        const double floor = fetBlueStepGainDb(input, output, latency, 1000.0, 0, 0.6);
+        linearGain[static_cast<size_t>(step)] = floor;
+        for (const auto& row : fx::headroom)
+        {
+            if (row.step != step) continue;
+            const size_t k = static_cast<size_t>(std::lround((row.levelDbfs + 60.0f) / 2.0f));
+            const double reduction = fetBlueStepGainDb(input, output, latency, 1000.0, k, 0.6) - floor;
+            std::printf("FET BLUE headroom step %d %+5.1f dBFS reduction %+7.3f dB, reference %+7.3f\n", step,
+                        row.levelDbfs, reduction, row.reductionDb);
+            require(std::abs(reduction - row.reductionDb) <= fx::kStaticsBoundDb,
+                    "FET BLUE's Headroom moves its reduction curve as the reference's does");
+        }
+    }
+    const double linearSpread = std::max(std::abs(linearGain[1] - linearGain[3]), std::abs(linearGain[5] - linearGain[3]));
+    std::printf("FET BLUE headroom: linear gain moves %.5f dB across 8 / 16 / 24 dB\n", linearSpread);
+    require(linearSpread <= 0.001, "FET BLUE's Headroom leaves the gain below threshold where it was");
+}
+
+// The linear gain of every Ratio position re 4:1.
+void testFetBlueRatioGainsMatchReference()
+{
+    namespace fx = fetBlueFixtures;
+    const std::vector<float> input = fetBlueSteps(1000.0, {-60.0f}, 0.6);
+    std::array<double, 11> gain{};
+    for (int ratio = 0; ratio < 11; ++ratio)
+    {
+        FetBlueSetting setting; setting.ratio = ratio;
+        int latency = 0;
+        const std::vector<float> output = renderFetBlue(setting, input, latency);
+        gain[static_cast<size_t>(ratio)] = fetBlueStepGainDb(input, output, latency, 1000.0, 0, 0.6);
+    }
+    for (int ratio = 0; ratio < 11; ++ratio)
+    {
+        const double relative = gain[static_cast<size_t>(ratio)] - gain[2];
+        std::printf("FET BLUE ratio position %2d: linear gain %+.4f dB re 4:1, reference %+.4f\n", ratio, relative,
+                    fx::ratioGainsDb[static_cast<size_t>(ratio)]);
+        require(std::abs(relative - fx::ratioGainsDb[static_cast<size_t>(ratio)]) <= fx::kRatioGainBoundDb,
+                "FET BLUE's linear gain per Ratio position is the reference's");
+    }
+}
+
+// The amplifier with the gain element out: gain change, H2 and H3 at 1 kHz.
+void testFetBlueAmplifierMatchesReference()
+{
+    namespace fx = fetBlueFixtures;
+    std::vector<float> levels;
+    for (int level = -40; level <= 0; level += 4) levels.push_back(static_cast<float>(level));
+    const std::vector<float> input = fetBlueSteps(1000.0, levels, 1.0);
+    FetBlueSetting setting; setting.ratio = 0;
+    int latency = 0;
+    const std::vector<float> output = renderFetBlue(setting, input, latency);
+    const double floor = fetBlueStepGainDb(input, output, latency, 1000.0, 0, 1.0);
+    for (const auto& row : fx::amplifier)
+    {
+        const size_t k = static_cast<size_t>(std::lround((row.levelDbfs + 40.0f) / 4.0f));
+        const size_t end = 24000 + (k + 1) * 48000 - 960, from = end - 14400 + 960;
+        const double h1 = fetBlueLockIn(output, 1000.0, from, end, latency);
+        const double h2 = 20.0 * std::log10(fetBlueLockIn(output, 2000.0, from, end, latency) / h1);
+        const double h3 = 20.0 * std::log10(fetBlueLockIn(output, 3000.0, from, end, latency) / h1);
+        const double change = fetBlueStepGainDb(input, output, latency, 1000.0, k, 1.0) - floor;
+        std::printf("FET BLUE amplifier %+5.1f dBFS: gain change %+.3f dB (reference %+.2f), H2 %.1f dBc (%.1f), "
+                    "H3 %.1f dBc (%.1f)\n", row.levelDbfs, change, row.gainChangeDb, h2, row.h2Dbc, h3, row.h3Dbc);
+        require(std::abs(change - row.gainChangeDb) <= fx::kAmplifierGainBoundDb
+                    && std::abs(h2 - row.h2Dbc) <= fx::kAmplifierHarmonicBoundDb
+                    && std::abs(h3 - row.h3Dbc) <= fx::kAmplifierHarmonicBoundDb,
+                "FET BLUE's amplifier compresses and colours as the reference's does");
+    }
+}
+
+// Past its fitted table the amplifier holds its end values, so driving it harder never takes level away or turns
+// a crest over. Extended along its end pieces' tangents, the positive side turned down past the table and crossed
+// zero. Ratio None (the gain element out), Input fully clockwise, Output 0 dB, Headroom 28 dB (its maximum, the
+// hardest drive): a 1 kHz staircase from -24 to +12 dBFS in 3 dB steps, each step's settled part read. The output's
+// fundamental never falls as the input rises, and at the input's crests (n = 12 and 36 mod 48) the output keeps the
+// input's polarity.
+void testFetBlueAmplifierHoldsPastItsTable()
+{
+    std::vector<float> levels;
+    for (int level = -24; level <= 12; level += 3) levels.push_back(static_cast<float>(level));
+    constexpr double seconds = 0.6;
+    const std::vector<float> input = fetBlueSteps(1000.0, levels, seconds);
+    FetBlueSetting setting;
+    setting.ratio = 0; setting.inputPosition = 1.0f; setting.outputDb = 0.0f; setting.headroom = 6;
+    int latency = 0;
+    const std::vector<float> output = renderFetBlue(setting, input, latency);
+    const size_t step = static_cast<size_t>(seconds * 48000.0);
+    double previous = 0.0, worstFallDb = 0.0;
+    float lowestPositiveCrest = std::numeric_limits<float>::infinity();
+    float highestNegativeCrest = -std::numeric_limits<float>::infinity();
+    for (size_t k = 0; k < levels.size(); ++k)
+    {
+        const size_t end = 24000 + (k + 1) * step - 960, from = end - 14400 + 960;
+        requireStructure(end + static_cast<size_t>(latency) <= output.size(), "the staircase covers every read step");
+        const double fundamental = fetBlueLockIn(output, 1000.0, from, end, latency);
+        float positiveCrest = std::numeric_limits<float>::infinity();
+        float negativeCrest = -std::numeric_limits<float>::infinity();
+        for (size_t n = from; n < end; ++n)
+        {
+            const float y = output[n + static_cast<size_t>(latency)];
+            if (n % 48 == 12) positiveCrest = std::min(positiveCrest, y);
+            if (n % 48 == 36) negativeCrest = std::max(negativeCrest, y);
+        }
+        if (k > 0) worstFallDb = std::max(worstFallDb, 20.0 * std::log10(previous / fundamental));
+        std::printf("FET BLUE amplifier past its table: input %+5.1f dBFS fundamental %+8.3f dBFS (step %+7.3f dB), "
+                    "output at the crests %+.4f / %+.4f\n", levels[k], 20.0 * std::log10(fundamental),
+                    k > 0 ? 20.0 * std::log10(fundamental / previous) : 0.0, positiveCrest, negativeCrest);
+        lowestPositiveCrest = std::min(lowestPositiveCrest, positiveCrest);
+        highestNegativeCrest = std::max(highestNegativeCrest, negativeCrest);
+        previous = fundamental;
+    }
+    std::printf("FET BLUE amplifier past its table: largest fall %.4f dB, lowest positive crest %+.4f, highest "
+                "negative crest %+.4f\n", worstFallDb, lowestPositiveCrest, highestNegativeCrest);
+    require(worstFallDb <= 0.0, "FET BLUE's output fundamental never falls as its amplifier is driven harder");
+    require(lowestPositiveCrest > 0.0f && highestNegativeCrest < 0.0f,
+            "FET BLUE's amplifier keeps the input's polarity at every drive");
+}
+
+// The SC Filter: the settled gain with it in minus out, -10 dBFS tones, 4:1, Input .5.
+void testFetBlueScFilterTiltsTheDetector()
+{
+    namespace fx = fetBlueFixtures;
+    for (const auto& row : fx::scFilter)
+    {
+        const std::vector<float> input = fetBlueSteps(row.hz, {-10.0f}, 1.0);
+        std::array<double, 2> gain{};
+        for (const bool on : {false, true})
+        {
+            FetBlueSetting setting; setting.inputPosition = 0.5f; setting.scFilter = on;
+            int latency = 0;
+            const std::vector<float> output = renderFetBlue(setting, input, latency);
+            gain[on ? 1 : 0] = fetBlueStepGainDb(input, output, latency, row.hz, 0, 1.0);
+        }
+        std::printf("FET BLUE SC Filter %5.0f Hz: in minus out %+.2f dB, reference %+.2f\n", row.hz,
+                    gain[1] - gain[0], row.onMinusOffDb);
+        require(std::abs(gain[1] - gain[0] - row.onMinusOffDb) <= fx::kScFilterBoundDb,
+                "FET BLUE's SC Filter tilts the detector as the reference's does");
+    }
+}
+
 int main(int argc, char** argv)
 {
+    if (argc == 2 && std::strcmp(argv[1], "--golden-digital") == 0)
+    { testGoldenVectors(static_cast<int>(duskaudio::MultiCompMode::Digital)); return 0; }
+    if (argc == 2 && std::strcmp(argv[1], "--golden-multiband") == 0)
+    { testGoldenVectors(static_cast<int>(duskaudio::MultiCompMode::Multiband)); return 0; }
+    if (argc == 2 && std::strcmp(argv[1], "--multiband-topology") == 0)
+    { testMultibandEnabledTopology(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--wide-classic") == 0)
     { testClassicOversamplerByteIdentity(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--wide-response") == 0)
@@ -12575,6 +12929,21 @@ int main(int argc, char** argv)
     }
     // Also in the default run below; separately reachable so the break-first proof can run it against the parent
     // core without the rest of the suite.
+    if (argc == 2 && std::strcmp(argv[1], "--fet-blue") == 0)
+    {
+        testFetBlueStaticsMatchReference();
+        testFetBlueHeadroomMovesTheDrive();
+        testFetBlueRatioGainsMatchReference();
+        testFetBlueAmplifierMatchesReference();
+        testFetBlueAmplifierHoldsPastItsTable();
+        testFetBlueScFilterTiltsTheDetector();
+        testFetBlueReleasesWithoutDeepening();
+        std::puts("Multi-Comp FET BLUE reference tests: PASS");
+        return 0;
+    }
+    // Also under --fet-blue and in the default run; separately reachable for its break-first proof.
+    if (argc == 2 && std::strcmp(argv[1], "--fet-blue-amplifier-hold") == 0)
+    { testFetBlueAmplifierHoldsPastItsTable(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--studio-vca") == 0)
     {
         testStudioVcaStaticsMatchReference();
@@ -12984,6 +13353,13 @@ int main(int argc, char** argv)
     testStudioVcaLinkedDetectorSharesGain();
     testStudioVcaMidSideEncodesExternalKey();
     testStudioVcaRunsAtHostRate();
+    testFetBlueStaticsMatchReference();
+    testFetBlueHeadroomMovesTheDrive();
+    testFetBlueRatioGainsMatchReference();
+    testFetBlueAmplifierMatchesReference();
+    testFetBlueAmplifierHoldsPastItsTable();
+    testFetBlueScFilterTiltsTheDetector();
+    testFetBlueReleasesWithoutDeepening();
     std::puts("Multi-Comp core tests: PASS");
     return 0;
 }

@@ -17,6 +17,9 @@ constexpr int bypass = static_cast<int>(ParamId::Bypass);
 constexpr int studioVcaInput = static_cast<int>(ParamId::StudioVcaInput);
 constexpr int studioVcaAutoRelease = static_cast<int>(ParamId::StudioVcaAutoRelease);
 constexpr int studioVcaMeter = static_cast<int>(ParamId::StudioVcaMeter);
+constexpr int fetBlueRatio = static_cast<int>(ParamId::FetBlueRatio);
+constexpr int fetBlueScFilter = static_cast<int>(ParamId::FetBlueScFilter);
+constexpr int fetBlueHeadroom = static_cast<int>(ParamId::FetBlueHeadroom);
 
 StateValues defaults()
 {
@@ -331,15 +334,45 @@ bool stateStudioVca()
     return roundTrip && v6Defaults && missingRejected;
 }
 
+// Version 8 appends FET BLUE's Ratio, SC Filter and Headroom (108-110): they round-trip exactly, a version-7 state (a
+// mode-4 session among them, until then Studio FET) loads them at their defaults (2:1, off, 16 dB) with every other
+// value as saved, and a state missing one of them is rejected.
+bool stateFetBlue()
+{
+    auto values = defaults(); values[opto] = 1; values[fet] = 2;
+    values[static_cast<int>(ParamId::Mode)] = 4; values[static_cast<int>(ParamId::FetInput)] = 12.5f;
+    values[fetBlueRatio] = 7; values[fetBlueScFilter] = 1; values[fetBlueHeadroom] = 5;
+    const auto current = encodeState(values);
+    StateValues decoded{};
+    const bool roundTrip = fetBlueRatio == 108 && fetBlueScFilter == 109 && fetBlueHeadroom == 110
+        && decodeState(current, decoded) && decoded == values;
+    auto v7 = current.substr(0, current.find(";fet_blue_ratio=")); v7.replace(0, v7.find(';'), "v=7");
+    auto expected = values;
+    expected[fetBlueRatio] = 1; expected[fetBlueScFilter] = 0; expected[fetBlueHeadroom] = 3;
+    decoded = {};
+    const bool v7Defaults = decodeState(v7, decoded) && decoded == expected;
+    bool missingRejected = true;
+    for (const char* key : {"fet_blue_ratio", "fet_blue_sc_filter", "fet_blue_headroom"})
+    {
+        const auto missing = withoutKey(current, key);
+        auto destination = values;
+        missingRejected &= !missing.empty() && !decodeState(missing, destination) && destination == values;
+    }
+    std::printf("state: FET BLUE ratio/SC filter/headroom exact: %s; v7 (mode 4) loads 2:1, off, 16 dB: %s; "
+                "missing one rejected: %s\n", roundTrip ? "yes" : "NO", v7Defaults ? "yes" : "NO",
+                missingRejected ? "yes" : "NO");
+    return roundTrip && v7Defaults && missingRejected;
+}
+
 bool stateReject()
 {
     auto values = defaults(); values[opto] = 2; values[fet] = 1;
     const auto valid = encodeState(values);
-    auto v5 = valid.substr(0, valid.find(";opto_meter=")); v5.replace(0, 3, "v=5");
+    auto v5 = valid.substr(0, valid.find(";opto_meter=")); v5.replace(0, v5.find(';'), "v=5");
     auto missing = valid.substr(0, valid.find(";fet_meter="));
     auto fractionalValues = values; fractionalValues[fet] = 0.5f;
     const auto fractional = encodeState(fractionalValues);
-    auto future = valid; future.replace(0, 3, "v=8");
+    auto future = valid; future.replace(0, future.find(';'), "v=" + std::to_string(kStateVersion + 1));
     bool ok = true;
     for (const auto& bad : {v5 + valid.substr(valid.find(";opto_meter=")), missing, fractional, future,
                             valid + valid.substr(valid.find(";opto_meter=")), valid + ";unknown=3f800000"})
@@ -495,14 +528,69 @@ bool studioVcaEntry()
     return ok;
 }
 
+// FET BLUE's Attack detent (ui_detail::fetAttackAtSlo, fetSloAttackTypedHost). The face must name SLO exactly where
+// the DSP takes it: the core reads the plain value the host position converts to through its position law,
+// duskaudio::fetAttackPositionFromMilliseconds (core MultiCompParams.hpp, pow(clamp((ms - min) / (max - min)), skew),
+// the one law both DSP sites read), and engages SLO at position 0. The descriptor carries that law's ends and skew
+// (kFetAttackMinMs, kFetAttackMaxMs, kFetAttackSkew), and over every host position the face's test agrees with the
+// core's own law, not a copy of it. As on the reference, the detent is the stop alone: no interval snaps the slow
+// end's travel onto it (with JUCE's 0.01 ms interval the bottom 5.5 % of the travel read SLO). Typed entry takes the
+// detent's name, a dial reading, or nothing else.
+bool fetBlueSlo()
+{
+    const auto attack = static_cast<uint32_t>(ParamId::FetAttack);
+    const Param& descriptor = kParams[attack];
+    bool ok = descriptor.min == 0.02f && descriptor.max == 80.0f && descriptor.skew == 0.3f;
+    const bool coreLaw = descriptor.min == duskaudio::kFetAttackMinMs && descriptor.max == duskaudio::kFetAttackMaxMs
+        && descriptor.skew == duskaudio::kFetAttackSkew;
+    std::printf("FET BLUE SLO: descriptor %.4g..%.4g ms skew %.4g, the core's law %.4g..%.4g ms skew %.4g\n",
+                descriptor.min, descriptor.max, descriptor.skew, duskaudio::kFetAttackMinMs,
+                duskaudio::kFetAttackMaxMs, duskaudio::kFetAttackSkew);
+    ok &= coreLaw;
+    int atSlo = 0, disagree = 0, lastAtSlo = -1;
+    constexpr int steps = 100000;
+    for (int i = 0; i <= steps; ++i)
+    {
+        const float plain = hostToPlain(descriptor, static_cast<float>(i) / static_cast<float>(steps));
+        const bool face = ui_detail::fetAttackAtSlo(plain);
+        atSlo += face ? 1 : 0;
+        if (face) lastAtSlo = i;
+        disagree += face != (duskaudio::fetAttackPositionFromMilliseconds(plain) <= 0.0f) ? 1 : 0;
+    }
+    const float detentEnd = static_cast<float>(lastAtSlo) / static_cast<float>(steps);
+    ok &= disagree == 0 && atSlo > 0 && detentEnd < 0.001f;
+    std::printf("FET BLUE SLO: %d of %d host positions at the detent (up to %.5f of the travel), %d disagreeing "
+                "with the core's law\n", atSlo, steps + 1, detentEnd, disagree);
+
+    struct Case { const char* text; bool valid; float host; };
+    const Case cases[] = {
+        {"SLO", true, 0.0f}, {" slo ", true, 0.0f}, {"Slo", true, 0.0f}, {"4", true, 0.5f}, {"4.00", true, 0.5f},
+        {"7", true, 1.0f}, {"1", true, 0.0f}, {"SLOW", false, 0.0f}, {"4 ms", false, 0.0f}, {"", false, 0.0f}};
+    for (const Case& c : cases)
+    {
+        float host = -1.0f;
+        const bool valid = ui_detail::fetSloAttackTypedHost(c.text, host);
+        const bool good = valid == c.valid && (!valid || std::abs(host - c.host) < 1.0e-6f);
+        if (!good) std::printf("  \"%s\": %s %.6f\n", c.text, valid ? "accepted" : "refused", host);
+        ok &= good;
+    }
+    // The readout's own text at the detent parses back to the detent.
+    float host = -1.0f;
+    ok &= ui_detail::fetSloAttackTypedHost(ui_detail::kFetSloText, host)
+        && ui_detail::fetAttackAtSlo(hostToPlain(descriptor, host));
+    std::printf("FET BLUE SLO typed entry: %zu cases\n", std::size(cases));
+    return ok;
+}
+
 int main(int argc, char** argv)
 {
     struct Test { const char* name; bool (*run)(); };
     const Test tests[]{{"response", response}, {"lifecycle", lifecycle}, {"needle", needle}, {"calibration", calibration},
                        {"switching", switching}, {"state-roundtrip", stateRoundtrip},
-                       {"state-reject", stateReject}, {"state-studio-vca", stateStudioVca}, {"identity", identity},
+                       {"state-reject", stateReject}, {"state-studio-vca", stateStudioVca},
+                       {"state-fet-blue", stateFetBlue}, {"identity", identity},
                        {"studio-vca-meter", studioVcaLevelMeter}, {"studio-vca-dials", studioVcaDials},
-                       {"studio-vca-entry", studioVcaEntry}};
+                       {"studio-vca-entry", studioVcaEntry}, {"fet-blue-slo", fetBlueSlo}};
     bool passed = true;
     int selected = 0;
     for (const auto& test : tests)

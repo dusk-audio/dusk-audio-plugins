@@ -145,7 +145,9 @@ go through `lab.py` (full DSP from a patched core copy, byte-exact baseline chec
 | FET | UADx 1176 | installed | `fet/static_grid.py`, `fet/taper_sweep.py`; earlier campaign log in memory. State 2026-10-18 (4:1 release depth term landed): 0 of 4,340 probe cells and 0 cells on all 18 music tiers over 1 dB; harmonic rows over 1 dB 7 of 156, worst +3.16 dB (H5 of 100 Hz at the bottom of the knee, 0.95 dB GR); the programme-recovery fixture reads 2.18 dB 50 ms after a short burst (rows 28-31; partial-regression bound 4.0) | Tiered ABX, then the 100 Hz knee rows and the after-burst release |
 | VCA | UADx dbx 160 | installed | `vca/` (18 scripts: tilt, onset, fits); VCA faceplate UI on branch `mc2/dbx160-vca-ui`. State 2026-10-12: 0 cells over 1 dB in every table (music 0 of 270, worst 0.073 dB) | Tiered ABX |
 | BUS | UADx SSL G | demo expired 2026-09-22, parked | `bus/` (137 scripts), accepted at the internal bar 2026-09-21 | Needs a licence before any capture |
-| Studio FET / VCA, Digital, Multiband | none | | | Not parity targets |
+| FET BLUE | second measured FET reference | installed | `fet_ae/` in the tools repo; fixtures `MultiCompFetBlueFixtures.hpp`. State 2026-10-29: `--fet-blue` passes (16 hot-burst rows within 1 dB, worst 0.72); probe cells 6 of 65 over 1 dB; held-out music 1 of 1,710 cells over (Release 1, 20:1 heavy, 1.09 dB) | The release 50 ms after a short hit at Release 1 (1.1-2.45 dB too deep at every ratio) |
+| Studio VCA | measured studio VCA reference | installed | State 2026-10-26: music 0 of 540 cells over 1 dB | Tiered ABX |
+| Digital, Multiband | none | | | Not parity targets |
 
 Rules that stay: never loosen a test bound; no classifiers or hand corrections in the audio path; captures
 and candidate renders never enter a repo; the owner commits.
@@ -153,10 +155,9 @@ and candidate renders never enter a repo; the owner commits.
 ## Open before the stable 1.0.0 (from the 1.0.0-alpha1 review, 2026-10-18)
 
 - FET ratio buttons switch without a crossfade; going to or from All jumps.
-- Global Lookahead in Multiband, with the internal detector, delays the detector along with the audio
-  (`processMultiband` splits the already delayed input), so it adds up to 10 ms of latency and no lead; with an
-  external sidechain the lead is real. Either split an undelayed copy for the detector or drop Multiband from
-  `globalLookaheadForMode`; `--global-lookahead-scope` prints Multiband's onset lead (0.00 dB today).
+- Global Lookahead in Multiband fixed 2026-10-27: its detector splits the undelayed filtered key while the
+  audio splits the delayed input, for both internal and external keys. `MultiCompModernRegression` checks
+  transient anticipation and aligned dry/wet paths, including M/S and host latency padding.
 - Latency held constant across modes (2026-10-19): each mode's output is padded to Opto's latency
   (`MultiCompLatencyPad.hpp`, `MultiCompDSP::getHostLatencySamples()`; 73 samples at 44.1 / 48 kHz, 79 at
   88.2 / 96, 91 at 176.4 / 192, where Opto's output stage runs at the fixed mode rate). Since 2026-10-21 the
@@ -171,15 +172,18 @@ and candidate renders never enter a repo; the owner commits.
   Digital and Multiband, Digital's own) still move the report, and the AU wrapper still never tells the host when
   they do.
 - Sixteen automatable parameters have no control on any face (the modern-face JUCE port puts Oversampling,
-  External Sidechain, SC Listen, Analog Noise and SC HP back on). FET and Studio FET share every `fet_*`
-  parameter, so Curve and Transient set on the Studio FET face act in FET mode. Done 2026-10-19: host names
+  External Sidechain, SC Listen, Analog Noise and SC HP back on). FET BLUE shares FET's Input, Output, Attack
+  and Release and has its own `fet_blue_*` Ratio, SC Filter and Headroom; Curve and Transient act in FET only.
+  Sessions saved in mode 4 before FET BLUE (Studio FET) reopen in FET BLUE with its own Ratio, SC Filter and
+  Headroom defaults (a release note; reopening them in FET needs a state-restore change in DAF first). Done
+  2026-10-19: host names
   carry their mode or band ("FET Threshold", "MB Low Ratio"), tapered controls and VCA Compression show plain
   text with units, and the four inert VCA parameters are hidden (the VST3 and CLAP flag comes from DAF #83).
 - FET Curve Measured with All: the small-signal gain sits 1.20 dB under the reference (pinned by
   `testFetMeasuredCurveAllButtons`).
 - From code review, not yet measured: `MultiCompDSP::prepare()` at the same rate keeps most modes' state (the
   plugin masks it: the framework deactivates first; the same-rate test runs no audio between the two prepares),
-  and the Studio VCA, Digital, FET All and Studio FET envelopes, and the FET feedback capacitor's leak (whose time
+  and the Studio VCA, Digital and FET All envelopes, and the FET feedback capacitor's leak (whose time
   the 4:1 release depth term stretches up to about 40x at extreme depth), are float one-poles at the mode rate, so at
   192 kHz and above with oversampling a long release may stall short of unity.
 - Dead weight: the legacy `SidechainTilt` class (kept only for a compile-time disabled-element control) and the
