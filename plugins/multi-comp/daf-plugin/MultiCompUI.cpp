@@ -3621,7 +3621,7 @@ private:
         gradientRect(dl, a, panel.P(x1, y0 + 15.0f), 4.0f * s, a, panel.P(x0, y0 + 10.0f), IM_COL32(0, 0, 0, 153),
                      IM_COL32(0, 0, 0, 0));
         dl->AddRect(a, b, IM_COL32(0x2A, 0x2A, 0x2A, 255), 4.0f * s, 0, 1.0f * s);
-        constexpr int kLeds = 12;
+        static constexpr int kLeds = 12;   // static: the lambda below reads it uncaptured (MSVC C3493)
         constexpr float kGap = 2.0f;
         const float columnWidth = (40.0f - 2.0f) * 0.5f;
         const duskdaf::LedLadderStyle style;
@@ -4042,7 +4042,7 @@ private:
         gradientRect(dl, a, b, 5.0f * s, a, ImVec2(a.x, b.y), IM_COL32(0x0C, 0x0C, 0x0C, 255),
                      IM_COL32(0x18, 0x18, 0x18, 255));
         dl->AddRect(panel.P(x0 + 1, y0 + 1), panel.P(x1 - 1, y1 - 1), IM_COL32(0, 0, 0, 128), 4.0f * s, 0, 1.0f * s);
-        constexpr int kSegments = 20;
+        static constexpr int kSegments = 20;   // static: read uncaptured by segmentsFor (MSVC C3493)
         constexpr float kGap = 1.5f;
         constexpr ImU32 kYellow = IM_COL32(0xFF, 0xDD, 0x00, 255), kOrange = IM_COL32(0xFF, 0x88, 0x00, 255);
         const float mx0 = x0 + 4, mx1 = x1 - 4, my0 = y0 + 4, my1 = y1 - 4;
@@ -4252,8 +4252,8 @@ private:
             const uint32_t base = static_cast<uint32_t>(multicompp::kBandBase + band * 8);
             const float sx = sectionLeft + static_cast<float>(slot) * slotWidth;
             const float mx0 = sx + 8.0f, mx1 = sx + slotWidth - 8.0f;
-            constexpr float buttonTop = 142.0f, buttonBottom = 162.0f, small = 21.0f, gap = 3.0f;
-            const float tabRight = mx1 - 2.0f * (small + gap);
+            constexpr float buttonTop = 142.0f, buttonBottom = 162.0f, smallButton = 21.0f, gap = 3.0f;
+            const float tabRight = mx1 - 2.0f * (smallButton + gap);
             ImGui::PushID(band);
             if (bandButton(dl, "##mb_tab", mx0, faceY(buttonTop), tabRight, faceY(buttonBottom), bandName(band),
                                band == selectedBand ? kBandColors[band] : colourWithAlpha(kBandColors[band], 0.3f),
@@ -4262,13 +4262,13 @@ private:
             char tooltip[48];
             const bool bypassed = values[base + 5] > 0.5f, soloed = values[base + 6] > 0.5f;
             std::snprintf(tooltip, sizeof(tooltip), "Bypass %s band", bandName(band));
-            if (bandButton(dl, "##mb_bypass", tabRight + gap, faceY(buttonTop), tabRight + gap + small,
+            if (bandButton(dl, "##mb_bypass", tabRight + gap, faceY(buttonTop), tabRight + gap + smallButton,
                                faceY(buttonBottom), "B",
                                bypassed ? IM_COL32(0xFF, 0x8C, 0x42, 255) : IM_COL32(0x3A, 0x3A, 0x3A, 255),
                                bypassed ? IM_COL32_BLACK : IM_COL32(0xAA, 0xAA, 0xAA, 255), tooltip, bypassed))
                 setHostValue(base + 5, bypassed ? 0.0f : 1.0f);
             std::snprintf(tooltip, sizeof(tooltip), "Solo %s band", bandName(band));
-            if (bandButton(dl, "##mb_solo", mx1 - small, faceY(buttonTop), mx1, faceY(buttonBottom), "S",
+            if (bandButton(dl, "##mb_solo", mx1 - smallButton, faceY(buttonTop), mx1, faceY(buttonBottom), "S",
                                soloed ? IM_COL32(0xFF, 0xCC, 0x00, 255) : IM_COL32(0x3A, 0x3A, 0x3A, 255),
                                soloed ? IM_COL32_BLACK : IM_COL32(0xAA, 0xAA, 0xAA, 255), tooltip, soloed))
                 setHostValue(base + 6, soloed ? 0.0f : 1.0f);
