@@ -782,7 +782,7 @@ jobs:
   # -------------------------------------------------------------------------
   build-macos:
     needs: plan
-    runs-on: macos-14  # ARM64 (M1)
+    runs-on: macos-15  # ARM64 (M1)
     timeout-minutes: 30
     permissions:
       contents: read
