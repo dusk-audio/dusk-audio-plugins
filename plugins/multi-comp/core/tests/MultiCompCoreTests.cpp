@@ -12638,8 +12638,9 @@ void testFetBlueStaticsMatchReference()
 
 // Release from the slow end: after a burst the reduction lets go without deepening first (the reference's readings
 // at Release 0, where a tail population still filling from the fast charge deepened it by up to 1.2 dB). Mechanism:
-// 300 ms after the burst every ratio has let go of some of it. Reference accuracy (requireParity): each reading
-// within the campaign's 1.00 dB cell bar, on a held-out burst (fixtures: releaseFromSlowEnd).
+// 50 and 150 ms after the burst the reduction is no deeper than at its end, and 300 ms after it every ratio has let
+// go of some of it. Reference accuracy (requireParity): each reading within the campaign's 1.00 dB cell bar, on a
+// held-out burst (fixtures: releaseFromSlowEnd).
 void testFetBlueReleasesWithoutDeepening()
 {
     namespace fx = fetBlueFixtures;
@@ -12680,7 +12681,11 @@ void testFetBlueReleasesWithoutDeepening()
             requireParity(std::abs(gain - expected) <= fx::kReleaseBoundDb,
                           "FET BLUE releases from the slow end within 1 dB of the reference");
         }
-        require(frame(end + 300) - reference > frame(end - 2) - reference,
+        const double endGain = frame(end - 2) - reference;
+        for (const size_t m : {end + 50, end + 150})
+            require(frame(m) - reference >= endGain,
+                    "FET BLUE's reduction does not deepen after a burst's end at Release 0");
+        require(frame(end + 300) - reference > endGain,
                 "FET BLUE lets go of its reduction within 300 ms of a burst's end at Release 0");
     }
     std::printf("FET BLUE release from the slow end: worst %.2f dB (bound %.2f)\n", worst, fx::kReleaseBoundDb);
