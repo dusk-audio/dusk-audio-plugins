@@ -1205,13 +1205,19 @@ RatioButtonGroup::~RatioButtonGroup()
 {
 }
 
-void RatioButtonGroup::setSelectedRatio(int index)
+void RatioButtonGroup::setSelectedRatio(int index, juce::NotificationType notification)
 {
-    if (index >= 0 && index < ratioLabels.size())
-    {
-        currentRatio = index;
-        repaint();
-    }
+    // Listeners are called synchronously; there is no AsyncUpdater here.
+    jassert(notification != juce::sendNotificationAsync);
+
+    if (index < 0 || index >= ratioLabels.size() || index == currentRatio)
+        return;
+
+    currentRatio = index;
+    repaint();
+
+    if (notification != juce::dontSendNotification)
+        listeners.call(&Listener::ratioChanged, currentRatio);
 }
 
 void RatioButtonGroup::setAccentColor(juce::Colour color)
@@ -1313,12 +1319,7 @@ void RatioButtonGroup::mouseDown(const juce::MouseEvent& e)
     {
         if (buttonBounds[static_cast<size_t>(i)].contains(e.getPosition()))
         {
-            if (i != currentRatio)
-            {
-                currentRatio = i;
-                repaint();
-                listeners.call(&Listener::ratioChanged, currentRatio);
-            }
+            setSelectedRatio(i, juce::sendNotificationSync);
             break;
         }
     }
