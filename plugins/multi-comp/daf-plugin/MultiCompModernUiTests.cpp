@@ -36,6 +36,7 @@ public:
     virtual ~UI() = default;
     void draw() { onImGuiDisplay(); }
     void parameter(uint32_t p, float v) { state.parameters[p] = v; parameterChanged(p, v); }
+    void restore(const char* key, const char* value) { stateChanged(key, value); }
     uint32_t getWidth() const { return 1120; }
     uint32_t getHeight() const { return 380; }
     float getScaleFactor() const { return 1; }
@@ -351,6 +352,36 @@ void outputAccess()
         }
 }
 
+// A restored state reaches the editor as its text, and the plugin need not run what the text decodes to: DAF's LV2
+// wrapper applies the ports a host restores with the state over it. The face follows the plugin when the editor can
+// reach it, the text when it cannot. FET BLUE's Headroom trim is drawn only on its face.
+void restoredFace()
+{
+    const uint32_t mode = pid(ParamId::Mode), headroom = pid(ParamId::FetBlueHeadroom);
+    multicompp::StateValues saved{};
+    for (int i = 0; i < multicompp::kTotalParamCount; i = multicompp::nextControlParameter(i))
+        saved[static_cast<size_t>(i)] = multicompp::resolveParameter(i,
+            [](const multicompp::Param& p) { return multicompp::hostDefault(p); },
+            [](const multicompp::BandParam& p, int) { return multicompp::hostDefault(p); });
+    struct Case { const char* name; float savedMode; bool reachable; float running; bool blueFace; };
+    const Case cases[] = {
+        {"FET saved, the plugin runs FET BLUE", 1, true, 4, true},
+        {"FET BLUE saved, the plugin runs FET", 4, true, 1, false},
+        {"FET BLUE saved, editor without the plugin", 4, false, 0, true},
+    };
+    for (const auto& c : cases)
+    {
+        // An open editor has read the plugin once (its first frame) before the host restores the session.
+        Host h(c.reachable ? 4 : 1);
+        if (c.reachable) { h.ui.instance = &h.ui.state; h.frame(); h.ui.state.parameters[mode] = c.running; }
+        saved[mode] = c.savedMode;
+        h.ui.restore("parameters", multicompp::encodeState(saved).c_str());
+        h.frame(); h.drag(955, 322);
+        std::printf("restored face %s: Headroom writes=%d\n", c.name, h.writes(headroom));
+        check((h.writes(headroom) > 0) == c.blueFace, "a restored state's face follows the plugin");
+    }
+}
+
 void numericOwnership()
 {
     Host h(7);
@@ -378,6 +409,7 @@ int main(int argc, char** argv)
     if (run("hidden")) hiddenControls();
     if (run("output")) outputAccess();
     if (run("numeric")) numericOwnership();
+    if (run("restore")) restoredFace();
     std::printf("modern UI failures=%d\n", failures);
     return failures == 0 ? 0 : 1;
 }

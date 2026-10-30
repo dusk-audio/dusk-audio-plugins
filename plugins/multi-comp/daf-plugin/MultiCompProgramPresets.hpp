@@ -190,4 +190,34 @@ void applyFactoryPresetToHostParameters(uint32_t presetIndex,
             setHostParameter(parameterIndex,
                              preset.hostValues[static_cast<size_t>(parameterIndex)]);
 }
+
+// A control reads `expected` when within 1e-5 of its host range (at least 1e-6): host round trips of a preset's
+// writes land there, an edit does not.
+inline bool hostValueMatches(int parameterIndex, float actual, float expected) noexcept
+{
+    const float range = resolveParameter(parameterIndex,
+        [](const Param& d) { return hostMax(d) - hostMin(d); },
+        [](const BandParam& d, int) { return hostMax(d) - hostMin(d); });
+    return std::fabs(actual - expected) <= std::max(1.0e-6f, range * 1.0e-5f);
+}
+
+// The factory preset whose controls all read its values (hostValueMatches), or -1. `hostValue(index)` reads a
+// control's current host value. The editor names its preset by this, and the plugin reports it as its current
+// program, so a session restored from its state still names the preset it was saved on.
+template <class HostValue>
+int matchingFactoryPreset(HostValue&& hostValue)
+{
+    for (size_t presetIndex = 0; presetIndex < kExpandedFactoryPresets.size(); ++presetIndex)
+    {
+        const auto& preset = kExpandedFactoryPresets[presetIndex];
+        bool matches = true;
+        for (int parameterIndex = 0; parameterIndex < kTotalParamCount && matches;
+             parameterIndex = nextControlParameter(parameterIndex))
+            if (preset.ownsParameter[static_cast<size_t>(parameterIndex)])
+                matches = hostValueMatches(parameterIndex, hostValue(parameterIndex),
+                                           preset.hostValues[static_cast<size_t>(parameterIndex)]);
+        if (matches) return static_cast<int>(presetIndex);
+    }
+    return -1;
+}
 } // namespace multicompp

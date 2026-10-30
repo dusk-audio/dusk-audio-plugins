@@ -698,13 +698,25 @@ protected:
             syncPresetSelection();
     }
 
+    // A restored state arrives as its text. With the plugin reachable the controls are read back from it instead, so
+    // the face shows what it runs: DAF's LV2 wrapper applies the ports a host restores with the state over it on the
+    // first run, so the two can differ.
     void stateChanged(const char* key, const char* state) override
     {
         if (key == nullptr || state == nullptr || std::strcmp(key, "parameters") != 0) return;
-        multicompp::StateValues decoded{};
-        if (!multicompp::decodeState(state, decoded)) return;
-        for (int i = 0; i < multicompp::kTotalParamCount; i = multicompp::nextControlParameter(i))
-            values[static_cast<size_t>(i)] = decoded[static_cast<size_t>(i)];
+        void* const instance = multiCompGetParameterValue != nullptr ? getPluginInstancePointer() : nullptr;
+        if (instance != nullptr)
+        {
+            for (int i = 0; i < multicompp::kTotalParamCount; i = multicompp::nextControlParameter(i))
+                values[static_cast<size_t>(i)] = multiCompGetParameterValue(instance, static_cast<uint32_t>(i));
+        }
+        else
+        {
+            multicompp::StateValues decoded{};
+            if (!multicompp::decodeState(state, decoded)) return;
+            for (int i = 0; i < multicompp::kTotalParamCount; i = multicompp::nextControlParameter(i))
+                values[static_cast<size_t>(i)] = decoded[static_cast<size_t>(i)];
+        }
         syncPresetSelection();
         repaint();
     }
@@ -923,15 +935,7 @@ private:
 
     bool parameterMatches(int index, float expected) const
     {
-        const float range = multicompp::resolveParameter(index,
-            [](const multicompp::Param& d) {
-                return multicompp::hostMax(d) - multicompp::hostMin(d);
-            },
-            [](const multicompp::BandParam& d, int) {
-                return multicompp::hostMax(d) - multicompp::hostMin(d);
-            });
-        return std::fabs(values[static_cast<size_t>(index)] - expected)
-            <= std::max(1.0e-6f, range * 1.0e-5f);
+        return multicompp::hostValueMatches(index, values[static_cast<size_t>(index)], expected);
     }
 
     bool matchesDefaults() const
@@ -951,24 +955,8 @@ private:
 
     int deriveFactoryPreset() const
     {
-        for (size_t presetIndex = 0;
-             presetIndex < multicompp::kFactoryPresets.size(); ++presetIndex)
-        {
-            bool matches = true;
-            const auto& expanded = multicompp::kExpandedFactoryPresets[presetIndex];
-            for (int parameterIndex = 0;
-                 parameterIndex < multicompp::kTotalParamCount && matches;
-                 parameterIndex = multicompp::nextControlParameter(parameterIndex))
-                if (multicompp::presetOwnsParam(
-                        static_cast<int>(presetIndex),
-                        static_cast<uint32_t>(parameterIndex))
-                    && !parameterMatches(
-                        parameterIndex,
-                        expanded.hostValues[static_cast<size_t>(parameterIndex)]))
-                    matches = false;
-            if (matches) return static_cast<int>(presetIndex);
-        }
-        return -1;
+        return multicompp::matchingFactoryPreset(
+            [this](int index) { return values[static_cast<size_t>(index)]; });
     }
 
     int deriveUserPreset() const

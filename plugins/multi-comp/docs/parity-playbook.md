@@ -174,9 +174,10 @@ and candidate renders never enter a repo; the owner commits.
 - Sixteen automatable parameters have no control on any face (the modern-face JUCE port puts Oversampling,
   External Sidechain, SC Listen, Analog Noise and SC HP back on). FET BLUE shares FET's Input, Output, Attack
   and Release and has its own `fet_blue_*` Ratio, SC Filter and Headroom; Curve and Transient act in FET only.
-  Sessions saved in mode 4 before FET BLUE (Studio FET) reopen in FET BLUE with its own Ratio, SC Filter and
-  Headroom defaults (a release note; reopening them in FET needs a state-restore change in DAF first). Done
-  2026-10-19: host names
+  Sessions saved in mode 4 before FET BLUE (Studio FET, state version 7 and older) reopen in FET in VST3, CLAP
+  and AU (`MultiCompSessionRestoreTest`); in LV2 the host's restored Mode port wins and they reopen in FET BLUE,
+  the editor's face included (`MultiCompModernUiTest restore`).
+  Done 2026-10-19: host names
   carry their mode or band ("FET Threshold", "MB Low Ratio"), tapered controls and VCA Compression show plain
   text with units, and the four inert VCA parameters are hidden (the VST3 and CLAP flag comes from DAF #83).
 - FET Curve Measured with All: the small-signal gain sits 1.20 dB under the reference (pinned by

@@ -374,8 +374,9 @@ inline SwitchLabels switchLabels(ParamId id) noexcept
 // defaults, except Auto Release, which they load off (their Release control set the release). Studio VCA's five
 // original controls only widened, so every value an older state holds stays valid.
 // Version 8 (2026-10-27) appends FET BLUE's Ratio, SC Filter and Headroom; older states load with their defaults.
-// Mode 4, a generic Studio FET before, is FET BLUE from this version: it keeps its index and the FET controls it
-// shares, so a session saved in mode 4 reopens in FET BLUE.
+// Mode 4, a generic Studio FET before, is FET BLUE from this version. An older state saved in mode 4 reopens in FET
+// (mode 1), which reads every fet_* control that state set (Ratio with All, Curve, Transient); in FET BLUE its
+// Ratio, depth and level would have changed to FET BLUE's defaults.
 inline constexpr int kStateVersion = 8;
 inline constexpr int kPreFetBlueStateVersion = 7;
 inline constexpr int kPreStudioVcaStateVersion = 6;
@@ -668,6 +669,11 @@ inline bool decodeState(std::string_view state, StateValues& out) noexcept
     if (begin != state.size()) return false;
     for (int i = 0; i < kTotalParamCount; i = nextControlParameter(i))
         if (i < firstAbsent && !seen[static_cast<size_t>(i)]) return false;
+    // Mode 4 was Studio FET before version 8: such a session reopens in FET (see kStateVersion).
+    float& mode = decoded[static_cast<size_t>(ParamId::Mode)];
+    if (version <= kPreFetBlueStateVersion
+        && std::lround(mode) == static_cast<long>(duskaudio::MultiCompMode::FetBlue))
+        mode = static_cast<float>(duskaudio::MultiCompMode::FET);
     out = decoded;
     return true;
 }
