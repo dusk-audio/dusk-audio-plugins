@@ -386,21 +386,38 @@ void parameterContract(Instance& instance, const std::vector<ParamMeta>& metadat
     for (size_t i = 0; i < metadata.size() && i < static_cast<size_t>(duskverb::kNumParams); ++i)
     {
         const auto& desc = duskverb::paramDesc(static_cast<int>(i));
+        const clap_id id = metadata[i].info.id;
+        const double lo = metadata[i].info.min_value;
+        const double hi = metadata[i].info.max_value;
+        const double def = duskverb::hostDefault(desc);
+        char what[160];
+        // DAF drops a host value that is not finite, or too large for a float, before it
+        // reaches the plugin (dusk-audio/DAF#103), so the parameter keeps what it had.
+        // Hold the end of the range farther from the default, so a reset to the default
+        // cannot pass for the value being kept.
+        instance.set(id, def - lo < hi - def ? hi : lo);
+        const double held = instance.get(id);
+        std::snprintf(what, sizeof(what), "%s holds a value away from its default", desc.id);
+        check(std::abs(held - def) > 2e-6, what);
         for (const double invalid : {std::numeric_limits<double>::quiet_NaN(),
                                      std::numeric_limits<double>::infinity(),
-                                    -std::numeric_limits<double>::infinity()})
+                                    -std::numeric_limits<double>::infinity(),
+                                     std::numeric_limits<double>::max(),
+                                    -std::numeric_limits<double>::max()})
         {
-            instance.set(metadata[i].info.id, invalid);
-            checkNear(instance.get(metadata[i].info.id), duskverb::hostDefault(desc), 2e-6,
-                      "invalid host numbers fall back to the parameter default");
+            instance.set(id, invalid);
+            std::snprintf(what, sizeof(what), "invalid host number %g leaves %s unchanged", invalid, desc.id);
+            checkNear(instance.get(id), held, 2e-6, what);
         }
+        // The state contract runs on this instance next, so put the parameter back at its
+        // default (a snapping one is set again just below).
+        instance.set(id, def);
         if (!desc.integer && desc.interval <= 0.0f) continue;
-        const double sent = metadata[i].info.min_value
-                          + (metadata[i].info.max_value - metadata[i].info.min_value) * 0.4137;
-        instance.set(metadata[i].info.id, sent);
+        const double sent = lo + (hi - lo) * 0.4137;
+        instance.set(id, sent);
         const double expected = duskverb::snapHostValue(desc, static_cast<float>(sent));
-        checkNear(instance.get(metadata[i].info.id), expected, 2e-6,
-                  "integer/interval host setter snaps on CLAP readback");
+        std::snprintf(what, sizeof(what), "%s snaps a host value on CLAP readback", desc.id);
+        checkNear(instance.get(id), expected, 2e-6, what);
     }
 }
 
