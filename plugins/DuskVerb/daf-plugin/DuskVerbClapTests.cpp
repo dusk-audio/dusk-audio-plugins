@@ -393,22 +393,31 @@ void parameterContract(Instance& instance, const std::vector<ParamMeta>& metadat
         char what[160];
         // DAF drops a host value that is not finite, or too large for a float, before it
         // reaches the plugin (dusk-audio/DAF#103), so the parameter keeps what it had.
-        // Hold the end of the range farther from the default, so a reset to the default
-        // cannot pass for the value being kept.
-        instance.set(id, def - lo < hi - def ? hi : lo);
-        const double held = instance.get(id);
-        std::snprintf(what, sizeof(what), "%s holds a value away from its default", desc.id);
-        check(std::abs(held - def) > 2e-6, what);
-        for (const double invalid : {std::numeric_limits<double>::quiet_NaN(),
-                                     std::numeric_limits<double>::infinity(),
-                                    -std::numeric_limits<double>::infinity(),
-                                     std::numeric_limits<double>::max(),
-                                    -std::numeric_limits<double>::max()})
+        // Hold each end of the range in turn, so that neither a clamp toward either end nor
+        // a reset to the default (at least one held end differs from it) can pass for the
+        // value being kept.
+        bool heldAwayFromDefault = false;
+        for (const double rangeEnd : {lo, hi})
         {
-            instance.set(id, invalid);
-            std::snprintf(what, sizeof(what), "invalid host number %g leaves %s unchanged", invalid, desc.id);
-            checkNear(instance.get(id), held, 2e-6, what);
+            instance.set(id, rangeEnd);
+            const double held = instance.get(id);
+            std::snprintf(what, sizeof(what), "%s holds its range end %g", desc.id, rangeEnd);
+            checkNear(held, rangeEnd, 2e-6, what);
+            heldAwayFromDefault = heldAwayFromDefault || std::abs(held - def) > 2e-6;
+            for (const double invalid : {std::numeric_limits<double>::quiet_NaN(),
+                                         std::numeric_limits<double>::infinity(),
+                                        -std::numeric_limits<double>::infinity(),
+                                         std::numeric_limits<double>::max(),
+                                        -std::numeric_limits<double>::max()})
+            {
+                instance.set(id, invalid);
+                std::snprintf(what, sizeof(what), "invalid host number %g leaves %s at %g",
+                              invalid, desc.id, held);
+                checkNear(instance.get(id), held, 2e-6, what);
+            }
         }
+        std::snprintf(what, sizeof(what), "%s holds a range end away from its default", desc.id);
+        check(heldAwayFromDefault, what);
         // The state contract runs on this instance next, so put the parameter back at its
         // default (a snapping one is set again just below).
         instance.set(id, def);
