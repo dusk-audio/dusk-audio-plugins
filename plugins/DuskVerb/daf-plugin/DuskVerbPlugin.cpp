@@ -52,26 +52,6 @@ public:
         const auto sound = controls_.sound();
         return (uint64_t(sound.epoch) << 1) | uint64_t(sound.edited);
     }
-    void  applyPresetConfig(int index) noexcept
-    {
-        // Compatibility bridge while editors migrate to complete state recall.
-        // It now publishes an immutable snapshot; it never touches live engines.
-        auto state = controls_.snapshot();
-        const auto& presets = getFactoryPresets();
-        if (index >= static_cast<int>(presets.size())) return;
-        state.presetName = index < 0 ? "" : presets[index].name;
-        state.sixAP = {};
-        if (index >= 0)
-        {
-            const auto& preset = presets[index];
-            state.sixAP.densityBaseline = preset.sixAPDensityBaseline;
-            state.sixAP.bloomCeiling = preset.sixAPBloomCeiling;
-            state.sixAP.earlyMix = preset.sixAPEarlyMix;
-            state.sixAP.outputTrim = preset.sixAPOutputTrim;
-            std::copy_n(preset.sixAPBloomStagger, 6, state.sixAP.bloomStagger);
-        }
-        controls_.publish(state);
-    }
 
 protected:
     const char* getLabel() const override       { return "DuskVerb2"; }
@@ -342,12 +322,9 @@ float duskVerbGetInputLevelL (void* p) noexcept { return p ? asDuskVerb(p)->inpu
 float duskVerbGetInputLevelR (void* p) noexcept { return p ? asDuskVerb(p)->inputLevelR()  : -100.0f; }
 float duskVerbGetOutputLevelL(void* p) noexcept { return p ? asDuskVerb(p)->outputLevelL() : -100.0f; }
 float duskVerbGetOutputLevelR(void* p) noexcept { return p ? asDuskVerb(p)->outputLevelR() : -100.0f; }
-int   duskVerbGetCurrentProgram(void* p) noexcept { return p ? asDuskVerb(p)->currentProgram() : -1; }
 int   duskVerbGetTailHistory(void* p, float* dest, int maxCount) noexcept
 { return p ? asDuskVerb(p)->tailHistory(dest, maxCount) : 0; }
 float duskVerbGetCpuLoad(void* p) noexcept { return p ? asDuskVerb(p)->cpuLoad() : 0.0f; }
-void  duskVerbApplyPresetConfig(void* p, int index) noexcept
-{ if (p) asDuskVerb(p)->applyPresetConfig(index); }
 bool duskVerbReadSnapshot(void* p, duskverb::StateValues& state)
 { if (!p) return false; state = asDuskVerb(p)->snapshot(); return true; }
 duskverb::EditorState* duskVerbEditorState(void* p) noexcept

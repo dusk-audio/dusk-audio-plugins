@@ -351,6 +351,18 @@ protected:
 
     void programLoaded(uint32_t index) override
     {
+        // The DSP owns the preset identity: loadProgram and setState both set it
+        // and both publish a new state revision. The CLAP and VST3 wrappers also
+        // call this every time the editor opens, with their own cached program,
+        // which is 0 until the host picks one and is left alone by a user-preset
+        // restore or a preset chosen in this editor. Trusting that index drew
+        // "Vocal Plate" over every other identity on reopen, so follow the DSP;
+        // a real host program change arrives there as a new revision.
+        if (duskVerbStateRevision != nullptr && duskVerbReadSnapshot != nullptr)
+        {
+            syncFromBridge();
+            return;
+        }
         const auto& presets = getFactoryPresets();
         if (index >= presets.size())
             return;
@@ -363,7 +375,6 @@ protected:
         // the value the DSP has already left behind. Store only: the plugin
         // applied these itself when the host called loadProgram.
         mirrorPreset(presets[index]);
-        lastBridgeProgram_ = (int)index;
         presetModified_ = false;
     }
 
@@ -683,27 +694,6 @@ private:
         });
     }
 
-    // Which factory preset's name-keyed engine configuration the DSP currently
-    // holds. This is NOT the same as currentPreset_: it survives knob edits,
-    // because editing a knob does not undo the post-tank EQ and modulation
-    // topology the preset installed. -1 means "defaults".
-    int bridgeProgram() const
-    {
-        return duskVerbGetCurrentProgram != nullptr
-             ? duskVerbGetCurrentProgram(getPluginInstancePointer()) : -1;
-    }
-
-    // Adopt the DSP's current program without acting on it, so the next
-    // syncFromBridge() only reacts to a change that came from somewhere else.
-    void latchBridgeProgram() { lastBridgeProgram_ = bridgeProgram(); }
-
-    void setPresetConfig(int index)
-    {
-        if (duskVerbApplyPresetConfig != nullptr)
-            duskVerbApplyPresetConfig(getPluginInstancePointer(), index);
-        lastBridgeProgram_ = index;
-    }
-
     // The DSP owns the authoritative program index (loadProgram and setState
     // both set it), so a session restore or a host program change shows up here
     // even though neither routes through programLoaded on every format.
@@ -743,6 +733,10 @@ private:
         for (int i = 0; i < duskverb::kNumParams; ++i)
             values_[i] = duskverb::hostToKnob(duskverb::paramDesc(i), state.params[i]);
         currentUserName_ = state.userName;
+        // The highlighted library file belongs to the name it was loaded or
+        // saved under. Any other identity arriving here (a host restore, an A/B
+        // swap, a factory program) is not that file, so stop highlighting it.
+        if (currentUserName_ != currentUserPathName_) currentUserPath_.clear();
         currentPreset_ = -1;
         if (currentUserName_.empty())
         {
@@ -751,7 +745,6 @@ private:
                 if (state.presetName == presets[i].name) currentPreset_ = static_cast<int>(i);
         }
         presetModified_ = state.edited;
-        lastBridgeProgram_ = bridgeProgram();
     }
 
     void recallSnapshot(duskverb::StateValues state)
@@ -1214,6 +1207,7 @@ private:
         state.userName = saved.name;
         recallSnapshot(state);
         currentUserPath_ = saved.path;
+        currentUserPathName_ = state.userName;
         scanUserPresets();
         return true;
     }
@@ -1235,6 +1229,7 @@ private:
         state.edited = false;
         recallSnapshot(state);
         currentUserPath_ = preset.path;
+        currentUserPathName_ = state.userName;
         presetError_.clear();
     }
 
@@ -1768,8 +1763,8 @@ private:
     bool   gripCursorSet_ = false;
 
     int         currentPreset_ = -1;
-    int         lastBridgeProgram_ = -2;
     std::string currentUserName_, currentUserPath_;
+    std::string currentUserPathName_;   // the name currentUserPath_ was loaded or saved under
     std::vector<UserPreset> userPresets_;
     char        saveBuf_[64] = {};
     bool        saveFailed_ = false;

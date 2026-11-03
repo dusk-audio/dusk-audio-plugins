@@ -10,8 +10,8 @@
 //     which is what the JUCE editor's TailMeter drew (it sampled the output
 //     level on a 15 Hz timer into a 200-frame history). Reading the DSP's own
 //     ring instead makes the trace independent of the UI frame rate.
-//   * the current program index, so the preset name in the top bar follows a
-//     program change made by the host rather than by the UI.
+//   * the complete state snapshot and its revision, so the preset name in the
+//     top bar follows a program change or restore made by the host.
 //
 // Parameter values are NOT here: the UI reads and writes those through DAF's
 // own parameter API (editParameter/setParameterValue), as every other Dusk DAF
@@ -48,7 +48,6 @@ DUSK_ACCESS_DECL(float, duskVerbGetInputLevelL);
 DUSK_ACCESS_DECL(float, duskVerbGetInputLevelR);
 DUSK_ACCESS_DECL(float, duskVerbGetOutputLevelL);
 DUSK_ACCESS_DECL(float, duskVerbGetOutputLevelR);
-DUSK_ACCESS_DECL(int,   duskVerbGetCurrentProgram);
 
 // Processing load as a FRACTION of real time: the wall-clock duration of run()
 // divided by the duration of the block it produced, smoothed with a slow
@@ -58,31 +57,6 @@ DUSK_ACCESS_DECL(int,   duskVerbGetCurrentProgram);
 // scheduling hiccup inflates one sample of it, which is exactly what the
 // smoothing is for. Returns 0 when the bridge is unavailable.
 DUSK_ACCESS_DECL(float, duskVerbGetCpuLoad);
-
-// Applies ONLY the name-keyed engine configuration of factory preset `index`
-// (post-tank EQ bands, modulation topology, FDN base delays, per-band trims,
-// the SixAP brightness set) -- the half of a factory preset that is NOT in the
-// parameter set and therefore cannot be recalled by writing parameters.
-//
-// Why the editor needs this at all: DAF gives a UI no way to ask the plugin to
-// load a program (DafUI.hpp has editParameter/setParameterValue/setState and
-// nothing else), and the editor must not load one behind the host's back
-// either -- every value a preset moves has to arrive as a real parameter edit
-// or the host's cache, its automation lanes and its undo stack all go stale.
-// So the editor writes the parameters itself, the ordinary way, and calls this
-// for the remainder. Order matters and is the same as Plugin::loadProgram():
-// parameters first, this second, because the armed swap reads the parameter
-// values when it reconfigures the idle engine.
-//
-// A NEGATIVE index means "no preset identity": the engine config is reset to
-// defaults, exactly as restoring a session that carries no preset name does.
-// That is what the editor's INIT needs, and what an A/B snapshot taken before
-// any preset was loaded restores.
-//
-// Message thread only, and safe there: DuskVerbDSP::applyFactoryPresetConfig
-// publishes through an atomic and lets the audio thread do the reconfiguration
-// at the top of its next block. An index past the end is ignored.
-DUSK_WEAK void duskVerbApplyPresetConfig(void* pluginInstancePointer, int index) noexcept;
 
 // Copies up to `maxCount` frames of output-peak dB into `dest`, oldest first,
 // and returns how many were written (0 when the bridge is unavailable). The
