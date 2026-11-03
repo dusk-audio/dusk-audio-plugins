@@ -15,7 +15,23 @@ Update 2026-11-03: the owner reopened OPTO. Two corrections to this record:
 - The fixture gate read cited below (`compare-p55b`, 2026-10-14) also has 10 of its 32 harmonic rows over 1.00 dB, with the worst at H5 of -4 dBFS, PR 70. This record omitted them. The core harmonic test's own bar is 2 dB per harmonic.
   - That read predates the emission shape.
   - The partial re-read of 2026-10-15 still puts three H3/H5 rows more than 1 dB off.
-The fixture gate gets a full re-read on the current tree before any OPTO change.
+
+Full re-read on main, 2026-11-03 (the first since 2026-10-14). 14 of 8,628 fixture rows are over 1.00 dB; harmonic rows count at 1.00 dB from now on (owner ruling 2026-11-03):
+
+| family | rows over 1.00 dB | worst |
+|---|---|---|
+| short charge | 3 of 16 | 1 ms at -0.25 / -4 / -12 dBFS: 1.93 / 1.31 / 1.11 dB, MC-2 short |
+| short release | 4 of 28 | 48 samples at -4 dBFS: 1.31 dB |
+| harmonics | 4 of 32 | H5 of -12 dBFS at PR 70: 1.85 dB |
+| crest | 2 of 4 | 23.8 dB crest: 1.40 dB |
+| pedestal | 1 of 32 | 1.0002 dB |
+
+How the 2026-10-14 counts became these:
+- The 2026-10-15 emission shape (743d2347) cleared 7 harmonic rows. It also took 0.55 dB of charge from a 1 ms burst, which grew the short-event rows from 1 to 7.
+- The 2026-10-18 linked-drive change (83b2b5bc) took the pedestal row over the bar.
+- The gate was not re-read after either change, so neither move was seen when it landed. From now on the fixture gate is re-read after every OPTO landing.
+
+The screen is unchanged since 2026-10-21: 89 cells over (phase 25, family 63, settled 1). Two-tone IMD (423 of 1,205 cells) and the slow sweep (302 of 2,391) are over the 2 dB report bar.
 
 Why they are left: the owner's blind ABX against the UAD on thirty real clips, including a kick-only round, was at
 chance (13 / 22 pairs, p = 0.26; `opto-abx-2026-10-03.md`). All four readings below come from synthetic probes that no
