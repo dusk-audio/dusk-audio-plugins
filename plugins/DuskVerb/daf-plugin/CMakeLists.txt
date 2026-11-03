@@ -165,6 +165,7 @@ enable_testing()
     endif()
     add_test(NAME DuskVerbCore COMMAND DuskVerbCoreTest)
 
+
     add_executable(DuskVerbPluginLayerTest
         DuskVerbPluginLayerTests.cpp
         ../core/DuskVerbDSP.cpp
@@ -185,7 +186,9 @@ enable_testing()
     add_executable(DuskVerbStateCodecTest DuskVerbStateCodecTests.cpp)
     add_executable(DuskVerbControlStateTest DuskVerbControlStateTests.cpp)
     add_executable(DuskVerbValueTextTest DuskVerbValueTextTests.cpp)
-    foreach(testTarget DuskVerbParameterTest DuskVerbStateCodecTest DuskVerbControlStateTest DuskVerbValueTextTest)
+    add_executable(DuskVerbEditorIdentityTest DuskVerbEditorIdentityTests.cpp)
+    foreach(testTarget DuskVerbParameterTest DuskVerbStateCodecTest DuskVerbControlStateTest DuskVerbValueTextTest
+                       DuskVerbEditorIdentityTest)
         target_include_directories(${testTarget} PRIVATE
             "${CMAKE_CURRENT_SOURCE_DIR}/../src"
             "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")

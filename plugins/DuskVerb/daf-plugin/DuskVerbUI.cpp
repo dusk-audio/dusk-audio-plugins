@@ -40,6 +40,7 @@
 
 #include "DafUI.hpp"
 #include "DuskVerbAccess.hpp"
+#include "DuskVerbEditorIdentity.hpp"
 #include "DuskVerbFormat.hpp"
 #include "DuskVerbPresetImport.hpp"
 #include "DuskVerbVersion.hpp"
@@ -368,11 +369,11 @@ protected:
         // Automation does not publish a new snapshot revision. Read its edited
         // status here so host edits show the same marker as native gestures,
         // without treating a factory-program parameter burst as an edit.
-        if (!presetModified_ && duskVerbReadSnapshot != nullptr)
+        if (!identity_.modified && duskVerbReadSnapshot != nullptr)
         {
             duskverb::StateValues state;
             if (duskVerbReadSnapshot(getPluginInstancePointer(), state))
-                presetModified_ = state.edited;
+                identity_.modified = state.edited;
         }
         // Deliberately does NOT clear the displayed preset identity, unlike an
         // edit made here. A host program change is delivered as a burst of these
@@ -383,31 +384,28 @@ protected:
 
     void programLoaded(uint32_t index) override
     {
-        // The DSP owns the preset identity: loadProgram and setState both set it
-        // and both publish a new state revision. The CLAP and VST3 wrappers also
-        // call this every time the editor opens, with their own cached program,
-        // which is 0 until the host picks one and is left alone by a user-preset
-        // restore or a preset chosen in this editor. Trusting that index drew
-        // "Vocal Plate" over every other identity on reopen, so follow the DSP;
-        // a real host program change arrives there as a new revision.
+        // The plugin owns the preset identity. EditorIdentity::programLoaded()
+        // takes its snapshot over the wrapper's cached index whenever the bridge
+        // can read one (see there for why); a real host program change arrives
+        // in that snapshot as a new revision.
         if (duskVerbStateRevision != nullptr && duskVerbReadSnapshot != nullptr)
         {
-            syncFromBridge();
+            // With the bridge the wrapper's index is never trusted, even if this
+            // read fails: the next revision brings the identity instead.
+            duskverb::StateValues snapshot;
+            if (duskVerbReadSnapshot(getPluginInstancePointer(), snapshot))
+                identity_.programLoaded((int)index, &snapshot);
+            syncFromBridge();   // the knob values, when the state moved
             return;
         }
-        const auto& presets = getFactoryPresets();
-        if (index >= presets.size())
-            return;
-        currentPreset_ = (int)index;
-        currentUserName_.clear();
-        currentUserPath_.clear();
+        identity_.programLoaded((int)index, nullptr);
         // A host-driven program change does not deliver parameterChanged() for
         // the values it moved (the VST3 wrapper flags only the program index),
         // so mirror the preset into the local cache or every knob keeps drawing
         // the value the DSP has already left behind. Store only: the plugin
         // applied these itself when the host called loadProgram.
-        mirrorPreset(presets[index]);
-        presetModified_ = false;
+        const auto& presets = getFactoryPresets();
+        if (index < presets.size()) mirrorPreset(presets[index]);
     }
 
     // Every design size the panel draws, per weight, so that at any scale the
@@ -692,24 +690,11 @@ private:
     // came from — losing the name also loses the "step to the next one from
     // here" that the chevrons depend on. The name is flagged instead, and the
     // combo and the header print "<name> *" until a recall clears the flag.
-    void markPresetModified() { presetModified_ = true; }
+    void markPresetModified() { identity_.modified = true; }
 
     // Preview text for the header combo: the factory name, else the user preset
     // name, else nothing loaded — with a trailing marker while edited.
-    const char* presetPreview()
-    {
-        const auto& presets = getFactoryPresets();
-        const char* name = nullptr;
-        if (currentPreset_ >= 0 && currentPreset_ < (int)presets.size())
-            name = presets[(size_t)currentPreset_].name;
-        else if (!currentUserName_.empty())
-            name = currentUserName_.c_str();
-        if (name == nullptr)
-            return "Presets...";
-        std::snprintf(previewBuf_, sizeof(previewBuf_), "%s%s", name,
-                      presetModified_ ? " *" : "");
-        return previewBuf_;
-    }
+    const char* presetPreview() { return identity_.preview(previewBuf_, sizeof(previewBuf_)); }
 
     void mirrorPreset(const FactoryPreset& preset)
     {
@@ -750,8 +735,8 @@ private:
         // Include the latest gesture even if the host has not echoed it yet.
         for (int i = 0; i < duskverb::kNumParams; ++i)
             state.params[i] = duskverb::knobToHost(duskverb::paramDesc(i), values_[i]);
-        state.userName = currentUserName_;
-        state.edited = presetModified_;
+        state.userName = identity_.userName;
+        state.edited = identity_.modified;
         return state;
     }
 
@@ -759,29 +744,31 @@ private:
     {
         for (int i = 0; i < duskverb::kNumParams; ++i)
             values_[i] = duskverb::hostToKnob(duskverb::paramDesc(i), state.params[i]);
-        currentUserName_ = state.userName;
-        // The highlighted library file belongs to the name it was loaded or
-        // saved under. Any other identity arriving here (a host restore, an A/B
-        // swap, a factory program) is not that file, so stop highlighting it.
-        if (currentUserName_ != currentUserPathName_) currentUserPath_.clear();
-        currentPreset_ = -1;
-        if (currentUserName_.empty())
-        {
-            const auto& presets = getFactoryPresets();
-            for (size_t i = 0; i < presets.size(); ++i)
-                if (state.presetName == presets[i].name) currentPreset_ = static_cast<int>(i);
-        }
-        presetModified_ = state.edited;
+        identity_.adopt(state);
     }
 
-    void recallSnapshot(duskverb::StateValues state)
+    // Recall a complete state through the plugin. The plugin's codec refuses a
+    // state it cannot read, and setState() then keeps the old sound, so the
+    // editor checks first and mirrors only a state the plugin will take.
+    bool recallSnapshot(duskverb::StateValues state)
     {
         state.params[duskverb::Bypass] = values_[duskverb::Bypass];
         const auto encoded = duskverb::encodeState(state);
+        duskverb::StateValues accepted = duskverb::makeDefaultState();
+        if (!duskverb::decodeState(encoded, accepted))
+        {
+            presetError_ = "This sound could not be recalled. Current settings were kept.";
+            return false;
+        }
+        // A header button acts on its press, before an open value field gets its
+        // focus-loss commit, so a typed value would land on the sound recalled
+        // here. The recall wins: the field closes without committing.
+        panel_.cancelValueEdit();
         setState("parameters", encoded.c_str());
         mirrorSnapshot(state);
         lastStateRevision_ = duskVerbStateRevision != nullptr
                            ? duskVerbStateRevision(getPluginInstancePointer()) : 0;
+        return true;
     }
 
     //======================================================================
@@ -912,6 +899,9 @@ private:
         if (ImGui::IsItemClicked()) panel_.openValueEdit(id, values_[p], buf);
         if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_TextInput);
         ImGui::PopID();
+        // Whether knob() draws its button this frame: it does not while the
+        // field is open, and then the last item is the field, not the knob.
+        const bool buttonDrawn = !panel_.isEditingValue(id);
         panel_.knob(id, (uint32_t)p, lo, hi, cx, cy, r, values_[p], duskverb::knobDefault(d),
                     /*stepped*/ false, /*panelTicks*/ false, "%.2f", "",
                     /*faceColor*/ 0, /*bodyless*/ true, /*persistent*/ false,
@@ -921,13 +911,14 @@ private:
                     /*nameOnHover*/ false, /*doubleClickReset*/ false, 9.5f,
                     /*bubbleOnActiveOnly*/ false, /*omitCenterTick*/ false,
                     &knobToPlainCb, &plainToKnobCb, this, /*dragInDisplayDomain*/ false, &parseKnobText);
-        // knob()'s InvisibleButton is the last item unless its type-entry field
-        // is open, which knob() submits after it (a popup or tooltip restores the
-        // item state when it ends). While the field is open the knob has no
-        // hover or drag state of its own.
+        // knob()'s button is the last item when it was drawn and no field opened
+        // in this same frame (a popup or tooltip restores the item state when it
+        // ends). A field opened this frame is neither active nor hovered yet, and
+        // the pointer is skipped for it anyway. While the field is open the knob
+        // has no hover or drag state of its own.
         const bool editing = panel_.isEditingValue(id);
-        const bool live = !editing && ImGui::IsItemActive();
-        const bool hot  = live || (!editing && ImGui::IsItemHovered());
+        const bool live = buttonDrawn && ImGui::IsItemActive();
+        const bool hot  = live || (buttonDrawn && ImGui::IsItemHovered());
         if (!editing)
             knobPointer(dl, cx, cy, r, knobT(p), /*hero*/ false, hot, inactive);
 
@@ -1128,7 +1119,7 @@ private:
         if (headerButton(dl, "##dv_init", 587, 635, "INIT")) initDefaults();
         if (headerButton(dl, "##dv_save", 642, 690, "SAVE"))
         {
-            std::snprintf(saveBuf_, sizeof(saveBuf_), "%s", currentUserName_.c_str());
+            std::snprintf(saveBuf_, sizeof(saveBuf_), "%s", identity_.userName.c_str());
             ImGui::OpenPopup("Save DuskVerb Preset");
         }
         drawSaveModal();
@@ -1161,7 +1152,7 @@ private:
                     ImGui::SeparatorText(fp.category);
                     lastCategory = fp.category;
                 }
-                const bool selected = (int)i == currentPreset_;
+                const bool selected = (int)i == identity_.factory;
                 if (ImGui::Selectable(fp.name, selected))
                 {
                     applyPreset((int)i);
@@ -1179,7 +1170,7 @@ private:
                     ImGui::PushID((int)i);
                     const UserPreset& up = userPresets_[i];
                     if (ImGui::Selectable(up.name.c_str(),
-                                          currentPreset_ < 0 && up.path == currentUserPath_))
+                                          identity_.factory < 0 && up.path == identity_.userPath))
                     {
                         loadUserPreset(up);
                         ImGui::CloseCurrentPopup();
@@ -1217,7 +1208,7 @@ private:
         loadUserPreset({path.stem().string(), path.string()});
         // Import recalls the sound. Save creates a DuskVerb 2 library copy;
         // the original file remains owned by the original plugin/library.
-        if (presetError_.empty()) currentUserPath_.clear();
+        if (presetError_.empty()) identity_.forgetUserFile();
     }
 
     void drawAbButtons(ImDrawList* dl)
@@ -1251,14 +1242,24 @@ private:
         state.activeSlot = slot;
         if (!state.valid[slot])
         {
+            // Like a recall (which closes it itself when it succeeds): an open
+            // value field closes without committing, so a typed value never
+            // lands in the new slot by accident of the click order.
+            panel_.cancelValueEdit();
             captureSlot(slot);
             return;
         }
-        recallSnapshot(state.slots[slot]);
+        if (!recallSnapshot(state.slots[slot]))
+        {
+            // The plugin kept the other slot's sound, so the editor stays on it.
+            activeSlot_ = slot ^ 1;
+            state.activeSlot = activeSlot_;
+        }
     }
 
     void copyActiveToOther()
     {
+        panel_.cancelValueEdit();   // as switchToSlot: the copy and the live sound stay equal
         captureSlot(activeSlot_ ^ 1);
         copiedFlash_ = 1.0f;
     }
@@ -1283,15 +1284,14 @@ private:
         state.sixAP.earlyMix = preset.sixAPEarlyMix;
         state.sixAP.outputTrim = preset.sixAPOutputTrim;
         std::copy_n(preset.sixAPBloomStagger, 6, state.sixAP.bloomStagger);
-        recallSnapshot(state);
-        currentUserPath_.clear();
+        if (recallSnapshot(state)) identity_.forgetUserFile();
     }
 
     // Clamped, never wrapping: stepping off either end parks on the end preset.
     void stepPreset(int direction)
     {
         const int count = (int)getFactoryPresets().size();
-        int i = currentPreset_ < 0 ? (direction < 0 ? 0 : -1) : currentPreset_;
+        int i = identity_.factory < 0 ? (direction < 0 ? 0 : -1) : identity_.factory;
         i = std::clamp(i + direction, 0, count - 1);
         applyPreset(i);
     }
@@ -1303,8 +1303,7 @@ private:
     // one exception, as everywhere else — it belongs to the host.
     void initDefaults()
     {
-        recallSnapshot(duskverb::makeDefaultState());
-        currentUserPath_.clear();
+        if (recallSnapshot(duskverb::makeDefaultState())) identity_.forgetUserFile();
     }
 
     //--- user preset library --------------------------------------------------
@@ -1333,7 +1332,9 @@ private:
     {
         auto state = captureSnapshot();
         state.userName = duskdaf::normaliseUserPresetName(rawName);
-        if (state.userName.empty() || state.userName.find_first_of("\r\n") != std::string::npos)
+        // The name the plugin's codec takes: printable text. A pasted control
+        // character (ImGui lets DEL through a paste) is refused here.
+        if (state.userName.empty() || !duskverb::validUserName(state.userName))
             return false;
         state.edited = false;
         const auto saved = duskdaf::writeUserPreset(
@@ -1341,9 +1342,8 @@ private:
             [&state](std::ostream& output) { output << duskverb::encodeState(state) << '\n'; }, allowReplace);
         if (!saved) return false;
         state.userName = saved.name;
-        recallSnapshot(state);
-        currentUserPath_ = saved.path;
-        currentUserPathName_ = state.userName;
+        if (!recallSnapshot(state)) return false;
+        identity_.userFileOpened(saved.path);
         scanUserPresets();
         return true;
     }
@@ -1361,11 +1361,12 @@ private:
             presetError_ = "This preset is incomplete or invalid. Current settings were kept.";
             return;
         }
-        if (state.userName.empty()) state.userName = preset.name;
+        // A file name can hold bytes a preset name may not (a tab, say); such a
+        // sound loads unnamed rather than with a name the plugin would refuse.
+        if (state.userName.empty() && duskverb::validUserName(preset.name)) state.userName = preset.name;
         state.edited = false;
-        recallSnapshot(state);
-        currentUserPath_ = preset.path;
-        currentUserPathName_ = state.userName;
+        if (!recallSnapshot(state)) return;
+        identity_.userFileOpened(preset.path);
         presetError_.clear();
     }
 
@@ -1477,10 +1478,10 @@ private:
                 std::error_code error;
                 std::filesystem::remove(deletePath_, error);
                 deleteFailed_ = bool(error);
-                if (!error && currentUserPath_ == deletePath_)
+                if (!error && identity_.userPath == deletePath_)
                 {
                     // Deleting a library file does not erase the active sound's identity.
-                    currentUserPath_.clear();
+                    identity_.forgetUserFile();
                 }
                 if (!error) { scanUserPresets(); ImGui::CloseCurrentPopup(); }
             }
@@ -1706,15 +1707,15 @@ private:
         knobBody(dl, kHeroCx, kHeroCy, kHeroR, /*hero*/ true, /*inactive*/ false);
         char decaySeed[48];
         formatPlainValue(currentEngine(), duskverb::Decay, plainOf(duskverb::Decay), decaySeed, sizeof(decaySeed));
+        const bool buttonDrawn = !panel_.isEditingValue("##dvk_decay");   // see knobCell()
         panel_.knob("##dvk_decay", (uint32_t)duskverb::Decay, lo, hi, kHeroCx, kHeroCy, kHeroR,
                     values_[duskverb::Decay], duskverb::knobDefault(d),
                     false, false, "%.2f", "", 0, true, false, tooltipFor(currentEngine(), duskverb::Decay),
                     false, 1.0f, 0.0f, d.name, true, decaySeed, true, 0.0f, 0.0f,
                     false, false, 9.5f, false, false,
                     &knobToPlainCb, &plainToKnobCb, this, false, &parseKnobText);
-        const bool editing = panel_.isEditingValue("##dvk_decay");   // see knobCell()
-        const bool hot = !editing && (ImGui::IsItemActive() || ImGui::IsItemHovered());
-        if (!editing)
+        const bool hot = buttonDrawn && (ImGui::IsItemActive() || ImGui::IsItemHovered());
+        if (!panel_.isEditingValue("##dvk_decay"))
             knobPointer(dl, kHeroCx, kHeroCy, kHeroR, knobT(duskverb::Decay), /*hero*/ true, hot, false);
         duskdaf::spacedText(panel_, dl, kHeroCx, kHeroCy - kHeroR - kLegendGap, kTypeLegend,
                             kTheme.legend, "DECAY", 0, kLegendTracking);
@@ -1963,14 +1964,11 @@ private:
     ImVec2 org_ = ImVec2(0, 0);
     bool   gripCursorSet_ = false;
 
-    int         currentPreset_ = -1;
-    std::string currentUserName_, currentUserPath_;
-    std::string currentUserPathName_;   // the name currentUserPath_ was loaded or saved under
+    duskverb::ui::EditorIdentity identity_;   // what the header names, which file the list highlights
     std::vector<UserPreset> userPresets_;
     char        saveBuf_[64] = {};
     bool        saveFailed_ = false;
     bool        deleteRequested_ = false;
-    bool        presetModified_ = false;
     std::string presetError_;
     bool importRequested_ = false;
     bool overwriteAccepted_ = false;
