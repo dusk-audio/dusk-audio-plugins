@@ -226,9 +226,11 @@ void testProgramApply()
 
 
 // The editor's read-outs against the JUCE editor's rules (DuskVerbEditor::
-// formatValue and the per-engine valueOverride lambdas), string for string:
-// decay switches ms/s at 1 s, frequencies switch Hz/kHz at 1 kHz with two
-// decimals below 100 Hz, dB one decimal, multipliers two decimals + "x",
+// formatValue and the per-engine valueOverride lambdas), string for string,
+// except frequency precision (owner rule, 2026-11-03):
+// decay switches ms/s at 1 s, frequencies print whole hertz below 1 kHz and
+// kilohertz with one decimal from there (LFO rates keep two decimals), dB one
+// decimal, multipliers two decimals + "x",
 // percentages one decimal, and the Gated / Shimmer engines re-purpose four knobs
 // into ms / dB / st / % read-outs.
 void testReadoutFormatting()
@@ -244,12 +246,18 @@ void testReadoutFormatting()
         { hall, duskverb::Decay,        0.689f,    "689 ms" },
         { hall, duskverb::Decay,        4.82f,     "4.82 s" },
         { hall, duskverb::Decay,        1.0f,      "1.00 s" },
-        { hall, duskverb::LoCut,        30.0f,     "30.00 Hz" },
+        { hall, duskverb::LoCut,        30.0f,     "30 Hz" },
+        { hall, duskverb::LoCut,        29.6f,     "30 Hz" },
         { hall, duskverb::Crossover,    392.516f,  "393 Hz" },
-        { hall, duskverb::HighCrossover, 2196.6f,  "2.20 kHz" },
-        { hall, duskverb::HiCut,        17597.19f, "17.60 kHz" },
-        { hall, duskverb::MonoBelow,    20.0f,     "20.00 Hz" },
-        { hall, duskverb::ModRate,      1.51f,     "1.51 Hz" },
+        { hall, duskverb::Crossover,    999.4f,    "999 Hz" },
+        { hall, duskverb::Crossover,    999.6f,    "1.0 kHz" },   // the switch follows the rounded value
+        { hall, duskverb::Crossover,    1049.9f,   "1.0 kHz" },
+        { hall, duskverb::HighCrossover, 2196.6f,  "2.2 kHz" },
+        { hall, duskverb::HiCut,        17597.19f, "17.6 kHz" },
+        { hall, duskverb::HiCut,        20000.0f,  "20.0 kHz" },
+        { hall, duskverb::MonoBelow,    20.0f,     "20 Hz" },
+        { hall, duskverb::ModRate,      1.51f,     "1.51 Hz" },   // an LFO rate keeps two decimals
+        { hall, duskverb::ModRate,      0.15f,     "0.15 Hz" },
         { hall, duskverb::GainTrim,     1.9f,      "1.9 dB" },
         { hall, duskverb::GainTrim,     -3.0f,     "-3.0 dB" },
         { hall, duskverb::BassMult,     1.03f,     "1.03x" },

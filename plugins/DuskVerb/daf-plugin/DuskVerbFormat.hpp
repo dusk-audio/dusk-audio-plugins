@@ -2,7 +2,9 @@
 //
 // DuskVerbFormat.hpp — how DuskVerb 2's editor prints a value and names a knob,
 // kept out of the ImGui file so DuskVerbPluginLayerTests can hold it to the
-// JUCE editor's formatValue() / valueOverride / relabel rules string for string.
+// JUCE editor's formatValue() / valueOverride / relabel rules string for string,
+// apart from frequency precision (see formatPlainValue). The plugin prints host
+// parameter text with the same function, so a DAW shows what the editor shows.
 
 #pragma once
 
@@ -66,8 +68,10 @@ inline ValueStyle valueStyleFor(int p)
     }
 }
 
-// Transcribed from DuskVerbEditor's formatValue(). Decay switches ms/s at
-// 1 s, frequencies switch Hz/kHz at 1 kHz and gain two decimals below 100 Hz.
+// Transcribed from DuskVerbEditor's formatValue(), with one deliberate change
+// (owner, 2026-11-03): frequencies print whole hertz below 1 kHz ("393 Hz") and
+// kilohertz with one decimal from there ("17.6 kHz"), where JUCE printed two
+// decimals below 100 Hz and above 1 kHz. Decay switches ms/s at 1 s.
 // Per-engine value-text overrides, transcribed from DuskVerbEditor's
 // valueOverride lambdas: the Gated engine re-purposes mod_depth / mod_rate /
 // diffusion / mid_mult as ATTACK / RELEASE / HOLD / THRESHOLD and the Shimmer
@@ -75,6 +79,16 @@ inline ValueStyle valueStyleFor(int p)
 // print the unit the engine actually applies (ms, dB, st, %) rather than the
 // raw parameter. The parameter values themselves are untouched.
 inline float displayNumber(EngineType engine, int p, float plain) noexcept;
+
+// The Hz/kHz switch is decided on the ROUNDED value, so 999.6 Hz prints
+// "1.0 kHz", and every path that shows or reads a frequency (the printed text,
+// the display number, a bare number typed over it) agrees on the unit.
+inline bool showsKiloHertz(float hz) noexcept { return std::lround(hz) >= 1000; }
+
+// Sub-audio rates keep two decimals; whole hertz would print 0.15 Hz as
+// "0 Hz". A rate is a range whose top is 100 Hz or less: in practice the LFO
+// rates, which top out at 10 Hz.
+inline bool isRateHertz(const duskverb::ParamDesc& d) noexcept { return d.max <= 100.0f; }
 inline bool formatEngineOverride(EngineType e, int p, float v, char* out, size_t n)
 {
     if (e == EngineType::NonLinear)
@@ -163,7 +177,7 @@ inline float displayNumber(EngineType engine, int p, float plain) noexcept
     if (std::strcmp(d.unit, "s") == 0)
         return plain < 1.0f ? plain * 1000.0f : plain;
     if (std::strcmp(d.unit, "Hz") == 0)
-        return plain >= 1000.0f ? plain / 1000.0f : plain;
+        return showsKiloHertz(plain) ? plain / 1000.0f : plain;
     return plain;
 }
 
@@ -187,7 +201,7 @@ inline float plainFromDisplayNumber(EngineType engine, int p, float number,
     if (std::strcmp(d.unit, "s") == 0)
         return currentPlain < 1.0f ? number / 1000.0f : number;
     if (std::strcmp(d.unit, "Hz") == 0)
-        return currentPlain >= 1000.0f ? number * 1000.0f : number;
+        return showsKiloHertz(currentPlain) ? number * 1000.0f : number;
     return number;
 }
 
@@ -226,7 +240,7 @@ inline bool parsePlainValue(EngineType engine, int p, const char* text,
     else if (std::strcmp(d.unit, "ms") == 0) { accepted = bare || has("ms") || has("s"); converted = milliseconds; }
     else if (std::strcmp(d.unit, "Hz") == 0)
     {
-        const bool adaptiveKHz = currentPlain >= 1000.0f;
+        const bool adaptiveKHz = showsKiloHertz(currentPlain);
         accepted = bare || has("Hz") || has("kHz");
         if (accepted && bare) converted = adaptiveKHz ? number * 1000.0f : number;
         else if (accepted && has("kHz")) converted = number * 1000.0f;
@@ -260,11 +274,10 @@ inline void formatPlainValue(EngineType engine, int p, float v, char* out, size_
     if (std::strcmp(d.unit, "ms") == 0) { std::snprintf(out, n, "%d ms", (int)std::lround(v)); return; }
     if (std::strcmp(d.unit, "Hz") == 0)
     {
-        // Choose precision from the rounded display value so host-domain
-        // conversion noise cannot alternate between "100 Hz" and "100.00 Hz".
-        if (v >= 1000.0f) { char number[32]; formatFixed(v / 1000.0, 2, number, sizeof(number)); std::snprintf(out, n, "%s kHz", number); }
-        else if (std::lround(v * 100.0f) < 10000) { char number[32]; formatFixed(v, 2, number, sizeof(number)); std::snprintf(out, n, "%s Hz", number); }
-        else                  std::snprintf(out, n, "%d Hz", (int)std::lround(v));
+        char number[32];
+        if (isRateHertz(d))         { formatFixed(v, 2, number, sizeof(number)); std::snprintf(out, n, "%s Hz", number); }
+        else if (showsKiloHertz(v)) { formatFixed(v / 1000.0, 1, number, sizeof(number)); std::snprintf(out, n, "%s kHz", number); }
+        else                        std::snprintf(out, n, "%d Hz", (int)std::lround(v));
         return;
     }
     if (std::strcmp(d.unit, "dB") == 0) { char number[32]; formatFixed(v, 1, number, sizeof(number)); std::snprintf(out, n, "%s dB", number); return; }
