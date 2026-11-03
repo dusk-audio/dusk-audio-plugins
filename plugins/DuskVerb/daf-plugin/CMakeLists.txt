@@ -241,4 +241,4 @@ dusk_daf_add_resize_test(duskverb-2)
 # coordinates ARE window coordinates there). Keep this in step with kHeroCx /
 # kHeroCy in DuskVerbUI.cpp: if a layout pass moves the knob, phase A of the
 # harness fails and names the coordinate to update.
-dusk_daf_add_ui_drag_test(duskverb-2 570 318)
+dusk_daf_add_ui_drag_test(duskverb-2 736 168)

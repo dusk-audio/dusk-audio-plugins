@@ -8,12 +8,19 @@
 // scaled uniformly; the window is aspect-locked with a 1050 x 700 minimum, which
 // is on the same ratio (see DafPluginInfo.h for why that matters).
 //
-// Layout, top to bottom:
-//   * header: name, preset, engine, INIT/SAVE, A/B, COPY, help
+// The face is a studio reverb processor: a graphite faceplate with printed
+// legends, one recessed amber display, and controls in signal-flow order. Every
+// colour is a Theme role, every text size a type-scale entry, and every control
+// sits on an eight-column grid (DECAY on the line between two columns). Layout,
+// top to bottom:
+//   * the Dusk DAF top row: nameplate, preset browser, INIT/SAVE, A/B, COPY,
+//     help, brand
 //   * IN and OUT LED rails down the full body height
-//   * INPUT / FILTER | OUTPUT HISTORY / DECAY / SIZE | OUTPUT / EARLY REFLECTIONS
-//   * full-width DAMPING and TONAL CORRECTION
-//   * MODULATION | MACRO
+//   * row A: display (engine, decay time, annunciators, output history) |
+//     DECAY | SIZE | FREEZE and the engine's own switch (GATE or TONAL)
+//   * row B: INPUT | EARLY REFLECTIONS | MODULATION (GATE on the Gated engine)
+//   * row C: DAMPING | MACRO
+//   * row D: FILTER | OUTPUT
 //
 // PARAMETER DOMAIN. The knobs work in the HOST domain, which for a tapered
 // parameter is the normalised 0..1 coordinate (see DuskVerbParamTable.hpp:
@@ -75,53 +82,77 @@ namespace
     constexpr float kMinH = 700.0f;
     constexpr float kMinScale = kMinW / kDesignW;
 
-    constexpr ImU32 kPageBg     = IM_COL32(11, 17, 23, 255);
-    constexpr ImU32 kCardBg     = IM_COL32(16, 24, 32, 255);
-    constexpr ImU32 kCardEdge   = IM_COL32(43, 57, 68, 255);
-    constexpr ImU32 kCardEdgeHi = IM_COL32(73, 91, 104, 255);
-    constexpr ImU32 kDim        = IM_COL32(163, 177, 190, 255);
-    constexpr ImU32 kText       = IM_COL32(243, 234, 216, 255);
-    constexpr ImU32 kAccent     = IM_COL32(189, 239, 87, 255);
-    constexpr ImU32 kRingTrack  = IM_COL32(35, 47, 59, 255);
-    constexpr ImU32 kKnobTop    = IM_COL32(43, 57, 70, 255);
-    constexpr ImU32 kKnobBottom = IM_COL32(17, 25, 33, 255);
-    constexpr ImU32 kKnobRim    = IM_COL32(69, 87, 102, 255);
-    constexpr ImU32 kPointer    = IM_COL32(244, 231, 201, 255);
-    constexpr ImU32 kStripBg    = IM_COL32(21, 31, 41, 255);
-    constexpr ImU32 kHeaderBg   = IM_COL32(10, 16, 22, 255);
-    constexpr ImU32 kLabelInk   = IM_COL32(225, 229, 235, 255);
-    constexpr ImU32 kValueInk   = IM_COL32(220, 246, 139, 255);
+    // The faceplate palette. Every colour on the panel is one of these roles or
+    // a blend of two of them; nothing below picks its own RGB. Amber is the one
+    // accent. It marks state (the display, a lit LED, a knob under the hand) and
+    // tints the nameplate rule, which every DAF port draws in its own accent.
+    struct Theme
+    {
+        ImU32 face      = IM_COL32( 44,  44,  46, 255);  // anodised graphite faceplate
+        ImU32 faceDeep  = IM_COL32( 26,  26,  28, 255);  // header band, wells around caps
+        ImU32 well      = IM_COL32( 12,  11,  10, 255);  // display glass, meter wells
+        ImU32 legend    = IM_COL32(212, 208, 198, 255);  // silk-screen print
+        ImU32 legendDim = IM_COL32(124, 121, 114, 255);  // scale ticks, group brackets
+        ImU32 value     = IM_COL32(238, 235, 227, 255);  // read-outs, nameplate, pointers
+        ImU32 amber     = IM_COL32(255, 170,  62, 255);  // the accent
+        ImU32 signal    = IM_COL32(124, 196,  96, 255);  // meter safe zone
+        ImU32 alarm     = IM_COL32(238,  74,  56, 255);  // meter clip, errors
+    };
+    constexpr Theme kTheme{};
 
-    // Larger native font sizes preserve readability at the minimum window.
-    constexpr float kLabelPx = 18.0f, kValuePx = 22.0f;
-    constexpr float kLabelSmallPx = 18.0f, kValueSmallPx = 22.0f;
-    constexpr float kComboPx = 18.0f;
-    constexpr float kHeroValuePx = 30.0f, kHeroUnitPx = 18.0f;
-    constexpr float kMeterPx = 14.0f;
+    // Type scale in design px. Semibold for print (legends, brackets, buttons,
+    // combos, nameplate), regular for numbers; the font bakes list exactly these.
+    // The floor is the SMALLEST window (0.875x): there a control legend still
+    // renders near 16 px and a read-out near 18 px, as large as the stock DAW
+    // plugins this sits beside. Readability sets these sizes, not looks.
+    constexpr float kTypeSmall   = 16.0f;   // header buttons, combo previews, brackets, captions, rails
+    constexpr float kTypeLegend  = 18.0f;   // control legends; popup rows; tooltip, modal and help text
+    constexpr float kTypeValue   = 20.0f;   // knob read-outs; decay unit
+    constexpr float kTypeVersion = 14.0f;   // nameplate version (family top row)
+    constexpr float kTypeBadge   = 20.0f;   // nameplate model badge (family top row)
+    constexpr float kTypeBrand   = 22.0f;   // DUSK AUDIO (family top row)
+    constexpr float kTypeTitle   = 24.0f;   // nameplate title (family top row); engine name
+    constexpr float kTypeHero    = 52.0f;   // decay digits in the display
+    constexpr float kTypeOverlaySmall = 12.0f;   // DuskSupportersOverlay's 9.5-12 px text
+    // Letter spacing as a fraction of the size: control legends barely
+    // tracked, group brackets and display captions set wide.
+    constexpr float kLegendTracking = 0.05f, kBracketTracking = 0.16f;
     constexpr float kPi = 3.14159265358979f;
 
-    constexpr float kHeaderH = 62.0f;
-    constexpr float kRailLX0 = 12.0f, kRailLX1 = 42.0f;
-    constexpr float kRailRX0 = 1158.0f, kRailRX1 = 1188.0f;
-    constexpr float kBodyX0 = 52.0f, kBodyX1 = 1148.0f;
-    constexpr float kRow1Y0 = 76.0f, kRow1Y1 = 188.0f;
-    constexpr float kRow2Y0 = 76.0f, kRow2Y1 = 270.0f;
-    constexpr float kRow3Y0 = 455.0f, kRow3Y1 = 623.0f;
-    constexpr float kRow4Y0 = 631.0f, kRow4Y1 = 784.0f;
-    constexpr float kInputX0 = 52.0f, kInputX1 = 440.0f;
-    constexpr float kFiltX0 = 52.0f, kFiltX1 = 440.0f;
-    constexpr float kOutX0 = 800.0f, kOutX1 = 1148.0f;
-    constexpr float kDampX0 = 52.0f, kDampX1 = 1148.0f;
-    constexpr float kTimeX0 = 455.0f, kTimeX1 = 785.0f;
-    constexpr float kErX0 = 800.0f, kErX1 = 1148.0f;
-    constexpr float kModX0 = 52.0f, kModX1 = 475.0f;
-    constexpr float kMacroX0 = 490.0f, kMacroX1 = 1148.0f;
-    constexpr float kKnobR = 34.0f, kKnobSmallR = 28.0f;
-    constexpr float kKnobErR = 34.0f, kKnobDampR = 34.0f;
-    constexpr float kHeroR = 73.0f;
-    constexpr float kRow2Cy = 190.0f, kRow3Cy = 572.0f, kRow4Cy = 740.0f;
-    constexpr float kHeroCx = 570.0f, kHeroCy = 318.0f;
-    constexpr float kLabelDy = 48.0f, kValueDy = 29.0f;
+    // Header: the Dusk DAF top row (Tape Echo 2 geometry; brand 87 px from the
+    // right edge). One 25 px band centred on y = 24.
+    constexpr float kHeaderH = 48.0f;
+    constexpr float kBandY0 = 11.5f, kBandY1 = 36.5f;
+
+    // Eight equal columns between the meter rails. Every control centres on
+    // one, except DECAY, which spans two.
+    constexpr float kGridX0 = 56.0f, kColW = 136.0f;
+    constexpr float colX(int c) { return kGridX0 + kColW * ((float)c + 0.5f); }
+    constexpr float colL(int c) { return kGridX0 + kColW * (float)c; }
+
+    // Row A carries the display and the tank; B..D are knob rows that share
+    // one vertical rhythm: bracket, legend, knob centre, read-out.
+    constexpr float kRowB0 = 288.0f, kRowC0 = 458.0f, kRowD0 = 628.0f;
+    constexpr float kBracketDy = 12.0f, kLegendDy = 28.0f, kKnobDy = 96.0f, kValueDy = 134.0f;
+
+    // Knob sizes by importance, plus the space the printed scale and the text
+    // keep from the knob body.
+    constexpr float kHeroR = 64.0f, kPrimaryR = 33.0f, kKnobR = 28.0f;
+    constexpr float kTickGap = 4.0f, kTickMinor = 7.0f, kTickMajor = 10.0f;
+    constexpr float kLegendGap = 40.0f;   // legend top sits this far above the knob body
+    constexpr float kValueGap  = 6.0f;    // read-out top sits this far below it
+
+    // Row A.
+    constexpr float kDispX0 = 60.0f, kDispX1 = 596.0f, kDispY0 = 66.0f, kDispY1 = 270.0f;
+    constexpr float kHeroCx = colL(5), kHeroCy = 168.0f;   // (736, 168): CMakeLists aims the UI drag test here
+    constexpr float kSizeCx = colX(6);
+    constexpr float kSwitchCx = colX(7);
+    constexpr float kCapW = 46.0f, kCapH = 24.0f;         // LED push-button cap
+
+    // Meter rails, outside the grid.
+    constexpr float kRailLX0 = 14.0f, kRailLX1 = 40.0f;
+    constexpr float kRailRX0 = 1160.0f, kRailRX1 = 1186.0f;
+    constexpr float kRailY0 = 82.0f, kRailY1 = 766.0f;
 
     using namespace duskverb::ui;   // formatPlainValue / formatDecayParts / labelFor
 
@@ -249,10 +280,19 @@ namespace
         return ch(a, b, 0) | ch(a, b, 8) | ch(a, b, 16) | ch(a, b, 24);
     }
 
-    // DuskPanel::knobAngle measures from 12 o'clock with the pointer direction
-    // (sin a, -cos a); ImDrawList::PathArcTo measures from +x. Same dial, 90°
-    // apart.
-    float arcAngle(float t) { return duskdaf::DuskPanel::knobAngle(t) - 0.5f * kPi; }
+    // Material tones: knob caps and buttons, lit from above, and the amber
+    // levels of the display. Derived from the theme so a palette change carries
+    // them with it.
+    ImU32 capTop()     { return blend(kTheme.face, kTheme.legend, 0.20f); }
+    ImU32 capBottom()  { return blend(kTheme.faceDeep, kTheme.face, 0.35f); }
+    ImU32 capRim()     { return blend(kTheme.face, kTheme.legend, 0.36f); }
+    ImU32 shadow()     { return fade(kTheme.well, 0.55f); }
+    ImU32 buttonFill() { return blend(kTheme.faceDeep, kTheme.face, 0.60f); }
+    ImU32 buttonHot()  { return blend(kTheme.face, kTheme.legendDim, 0.14f); }
+    ImU32 buttonEdge() { return blend(kTheme.face, kTheme.legendDim, 0.55f); }
+    ImU32 amberDim()   { return blend(kTheme.well, kTheme.amber, 0.55f); }
+    ImU32 amberGhost() { return blend(kTheme.well, kTheme.amber, 0.30f); }   // unlit segment
+    ImU32 amberRow(float t) { return blend(kTheme.faceDeep, kTheme.amber, t); }
 
 } // namespace
 
@@ -303,9 +343,9 @@ public:
         bakeFonts(1.0f);
 
         duskdaf::Palette pal;
-        pal.white    = kText;
-        pal.whiteDim = kDim;
-        pal.accent   = kAccent;
+        pal.white    = kTheme.value;
+        pal.whiteDim = kTheme.legend;
+        pal.accent   = kTheme.amber;
         panel_.setPalette(pal);
 
         for (float& f : tail_) f = -100.0f;
@@ -373,10 +413,11 @@ protected:
     // Every design size the panel draws, per weight, so that at any scale the
     // requested pixel size lands on a baked face exactly (CrispFontSet::pick
     // then scales by 1.0). Sizes are design px; bakeFonts multiplies by scale.
+    // kTypeLegend also covers the 18 px title DuskSupportersOverlay draws.
     static constexpr float kLabelDesignSizes[] =
-        { 14.0f, 16.0f, kLabelPx, kLabelPx + 1.0f, 20.0f, 22.0f, 24.0f, 30.0f, 36.0f };
+        { kTypeOverlaySmall, kTypeSmall, kTypeLegend, kTypeBadge, kTypeBrand, kTypeTitle };
     static constexpr float kValueDesignSizes[] =
-        { kMeterPx, kValueSmallPx, kValuePx, kHeroUnitPx, 16.0f, kHeroValuePx };
+        { kTypeVersion, kTypeSmall, kTypeLegend, kTypeValue, kTypeHero };
 
     void bakeFonts(float scale)
     {
@@ -390,7 +431,7 @@ protected:
         duskdaf::loadEmbeddedCrispFontSets(requests, 2, sets, scale, (int)maxTextureSize_);
         labelFonts_ = sets[0];
         valueFonts_ = sets[1];
-        labelFont_  = labelFonts_.pick(kLabelPx * scale);
+        labelFont_  = labelFonts_.pick(kTypeLegend * scale);
         panel_.setFontSet(labelFonts_);
         bakedScale_ = scale;
     }
@@ -430,23 +471,23 @@ protected:
                      ImGuiWindowFlags_NoBackground);
 
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), kPageBg);
+        dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), kTheme.face);
 
         // Stock-ImGui text that this file does not place itself — above all the
         // knob tooltips, which DuskPanel::knob raises internally — would
         // otherwise render in ImGui's 13 px default face, unscaled and blurry at
         // every zoom but one. A body font for the whole window fixes those; the
         // combos and the modals push their own on top of it.
-        ImFont* bodyFont = panel_.pickFont(kComboPx * s_);
+        ImFont* bodyFont = panel_.pickFont(kTypeLegend * s_);
         if (bodyFont != nullptr) ImGui::PushFont(bodyFont);
         // Same reasoning for the tooltip CHROME: ImGui's own popup colours and
         // its unscaled 8 px padding give a pale, cramped box that clips its own
         // descenders on this panel. Pushed after Begin so it reaches only the
         // windows opened later in the frame (tooltips, popups); the combos and
         // the modals still push their own on top.
-        ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(0x12, 0x17, 0x20, 246));
-        ImGui::PushStyleColor(ImGuiCol_Border, fade(kAccent, 0.40f));
-        ImGui::PushStyleColor(ImGuiCol_Text, kText);
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, fade(kTheme.faceDeep, 0.97f));
+        ImGui::PushStyleColor(ImGuiCol_Border, kTheme.legendDim);
+        ImGui::PushStyleColor(ImGuiCol_Text, kTheme.value);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(9.0f * s_, 7.0f * s_));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 4.0f * s_);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f * s_);
@@ -475,15 +516,15 @@ protected:
 
         drawHeader(dl);
         drawRails(dl);
-        drawEnvelopeCard(dl);
-        drawInputCard(dl);
-        drawFilterCard(dl);
-        drawOutputCard(dl);
-        drawDampingCard(dl);
-        drawTimeCard(dl);
-        drawEarlyCard(dl);
-        drawModulationCard(dl);
-        drawMacroCard(dl);
+        drawDisplay(dl);
+        drawTank(dl);
+        drawInputSection(dl);
+        drawEarlySection(dl);
+        drawModulationSection(dl);
+        drawDampingSection(dl);
+        drawMacroSection(dl);
+        drawFilterSection(dl);
+        drawOutputSection(dl);
         drawDeleteModal();
         drawPresetErrorModal();
 
@@ -549,6 +590,16 @@ private:
         ImFont* font = set.pick(px);
         if (font == nullptr) font = panel_.pickFont(px);
         return font->CalcTextSizeA(px, FLT_MAX, 0.0f, txt).x / s_;
+    }
+
+    // Ascent in design px of the face a size resolves to, so two sizes can
+    // share a baseline.
+    float ascent(const duskdaf::CrispFontSet& set, float size) const
+    {
+        const float px = size * s_;
+        ImFont* font = set.pick(px);
+        if (font == nullptr) font = panel_.pickFont(px);
+        return font->Ascent * (px / font->FontSize) / s_;
     }
 
     void valueText(ImDrawList* dl, float x, float y, float size, ImU32 col,
@@ -736,89 +787,128 @@ private:
     //======================================================================
     // primitive widgets
     //======================================================================
-    void card(ImDrawList* dl, float x0, float y0, float x1, float y1,
-              const char* title, bool hero = false) const
+    // Width in design px of a letter-spaced string, as spacedText() sets it.
+    float spacedWidth(float size, const char* txt, float tracking) const
     {
-        dl->AddRectFilled(P(x0, y0), P(x1, y1), kCardBg, 9.0f * s_);
-        dl->AddRect(P(x0, y0), P(x1, y1), hero ? kCardEdgeHi : kCardEdge, 9.0f * s_);
-        if (title == nullptr) return;
-        const float size = 20.0f;
-        ImFont* font = panel_.pickFont(size * s_);
-        const float width = font->CalcTextSizeA(size * s_, FLT_MAX, 0.0f, title).x / s_
-                          + static_cast<float>(std::strlen(title)) * 1.8f;
-        duskdaf::spacedText(panel_, dl, x0 + 20.0f, y0 + 12.0f, size, kText, title, -1, 0.14f);
-        if (x0 + width + 42.0f < x1 - 18.0f)
-            dl->AddLine(P(x0 + width + 42.0f, y0 + 22.0f), P(x1 - 18.0f, y0 + 22.0f), kCardEdgeHi, s_);
+        const float px = size * s_;
+        ImFont* font = panel_.pickFont(px);
+        float total = 0.0f;
+        for (const char* c = txt; *c; ++c)
+            total += font->CalcTextSizeA(px, FLT_MAX, 0.0f, c, c + 1).x + (c[1] ? tracking * px : 0.0f);
+        return total / s_;
     }
 
-    void knobArt(ImDrawList* dl, float cx, float cy, float r, float t, bool hero) const
+    // A printed group bracket over grid columns col0..col1: a hairline with
+    // turned-down ends and the group name set into it, the way a faceplate
+    // groups its controls.
+    void bracket(ImDrawList* dl, int col0, int col1, float rowY0, const char* title) const
     {
-        const ImVec2 c = P(cx, cy);
-        const float R = r * s_;
-        const float ringR = R + (hero ? 11.0f : 7.0f) * s_;
-        const float ringW = (hero ? 6.0f : 3.2f) * s_;
-        const float a0 = arcAngle(0.0f), a1 = arcAngle(1.0f), av = arcAngle(t);
-
-        dl->PathArcTo(c, ringR, a0, a1, 64);
-        dl->PathStroke(kRingTrack, 0, ringW);
-
-        if (hero)   // a soft bloom under the hero arc
-        {
-            dl->PathArcTo(c, ringR, a0, av, 64);
-            dl->PathStroke(fade(kAccent, 0.20f), 0, ringW + 6.0f * s_);
-        }
-        if (t > 0.0005f)
-        {
-            dl->PathArcTo(c, ringR, a0, av, 64);
-            dl->PathStroke(kAccent, 0, ringW);
-        }
-
-        // Body: a dark disc lit from the top. Horizontal strips analytically
-        // clipped to the circle give a smooth response with no concentric
-        // banding, and stay sharp at every scale because it is geometry.
-        dl->AddCircleFilled(ImVec2(c.x, c.y + 1.5f * s_), R * 1.02f,
-                            IM_COL32(0, 0, 0, 120), 48);
-        const int bands = std::max(14, (int)(2.0f * R));
-        for (int i = 0; i <= bands; ++i)
-        {
-            const float u = -0.999f + 1.998f * (float)i / (float)bands;
-            const float half = std::sqrt(std::max(0.0f, 1.0f - u * u)) * R;
-            const ImU32 col = blend(kKnobTop, kKnobBottom, 0.5f * (u + 1.0f));
-            dl->AddLine(ImVec2(c.x - half, c.y + u * R), ImVec2(c.x + half, c.y + u * R),
-                        col, 1.15f);
-        }
-        dl->AddCircle(c, R, kKnobRim, 48, 1.1f * s_);
-
-        const float a = duskdaf::DuskPanel::knobAngle(t);
-        const ImVec2 dir(std::sin(a), -std::cos(a));
-        dl->AddLine(ImVec2(c.x + dir.x * R * 0.34f, c.y + dir.y * R * 0.34f),
-                    ImVec2(c.x + dir.x * R * 0.88f, c.y + dir.y * R * 0.88f),
-                    kPointer, (hero ? 3.0f : 2.0f) * s_);
+        const float x0 = colL(col0) + 10.0f, x1 = colL(col1 + 1) - 10.0f;
+        const float y = rowY0 + kBracketDy;
+        const float cx = 0.5f * (x0 + x1);
+        const float half = 0.5f * spacedWidth(kTypeSmall, title, kBracketTracking) + 9.0f;
+        dl->AddLine(P(x0, y), P(cx - half, y), kTheme.legendDim, s_);
+        dl->AddLine(P(cx + half, y), P(x1, y), kTheme.legendDim, s_);
+        dl->AddLine(P(x0, y), P(x0, y + 6.0f), kTheme.legendDim, s_);
+        dl->AddLine(P(x1, y), P(x1, y + 6.0f), kTheme.legendDim, s_);
+        duskdaf::spacedText(panel_, dl, cx, y - 9.0f, kTypeSmall, kTheme.legend, title, 0,
+                            kBracketTracking);
     }
 
-    // One complete knob cell: art, gestures, name and live read-out.
-    // The art is drawn BEFORE the gesture call (so a knob never paints over its
-    // own type-entry field) and the read-out AFTER it, which is what keeps the
-    // number exact during a drag while the pointer lags by a single frame.
-    void knobCell(ImDrawList* dl, int p, float cx, float cy, float r,
-                  const char* name, float labelPx = kLabelPx,
-                  float valuePx = kValuePx, float tracking = 0.12f)
+    float knobT(int p) const
     {
         const duskverb::ParamDesc& d = duskverb::paramDesc(p);
         const float lo = duskverb::knobMin(d), hi = duskverb::knobMax(d);
-        const float t = hi > lo ? std::clamp((values_[p] - lo) / (hi - lo), 0.0f, 1.0f) : 0.0f;
-        knobArt(dl, cx, cy, r, t, /*hero*/ false);   // the hero is laid out by hand
+        return hi > lo ? std::clamp((values_[p] - lo) / (hi - lo), 0.0f, 1.0f) : 0.0f;
+    }
+
+    // The knob body: printed scale, shadow, skirt and a cap lit from above. The
+    // pointer is drawn separately, after the gesture call, because it lights up
+    // while the knob is under the hand.
+    void knobBody(ImDrawList* dl, float cx, float cy, float r, bool hero, bool inactive) const
+    {
+        const ImVec2 c = P(cx, cy);
+        const float R = r * s_;
+        const float a = inactive ? 0.45f : 1.0f;
+
+        const int ticks = hero ? 31 : 11;
+        for (int i = 0; i < ticks; ++i)
+        {
+            const bool major = hero ? (i % 5 == 0) : (i == 0 || i == ticks - 1);
+            const float ang = duskdaf::DuskPanel::knobAngle((float)i / (float)(ticks - 1));
+            const ImVec2 d(std::sin(ang), -std::cos(ang));
+            const float r0 = R + kTickGap * s_;
+            const float r1 = R + (major ? kTickMajor : kTickMinor) * s_;
+            dl->AddLine(ImVec2(c.x + d.x * r0, c.y + d.y * r0), ImVec2(c.x + d.x * r1, c.y + d.y * r1),
+                        fade(kTheme.legendDim, a), (major ? 1.5f : 1.0f) * s_);
+        }
+
+        dl->AddCircleFilled(ImVec2(c.x, c.y + 2.0f * s_), R * 1.03f, fade(shadow(), a), 48);
+        dl->AddCircleFilled(c, R, fade(kTheme.faceDeep, a), 48);
+
+        // Cap: horizontal strips analytically clipped to the circle give a smooth
+        // top-lit response with no radial banding, and stay sharp at every scale
+        // because it is geometry.
+        const float capR = R * (hero ? 0.86f : 0.90f);
+        const ImU32 top = fade(capTop(), a), bottom = fade(capBottom(), a);
+        const int bands = std::max(14, (int)(2.0f * capR));
+        for (int i = 0; i <= bands; ++i)
+        {
+            const float u = -0.999f + 1.998f * (float)i / (float)bands;
+            const float half = std::sqrt(std::max(0.0f, 1.0f - u * u)) * capR;
+            dl->AddLine(ImVec2(c.x - half, c.y + u * capR), ImVec2(c.x + half, c.y + u * capR),
+                        blend(top, bottom, 0.5f * (u + 1.0f)), 1.15f);
+        }
+        // A catch-light on the upper rim only: the light is above the panel.
+        dl->PathArcTo(c, capR, -0.92f * kPi, -0.08f * kPi, 32);
+        dl->PathStroke(fade(capRim(), a), 0, 1.0f * s_);
+
+        if (hero)   // the one big machined knob gets a knurled skirt
+            for (int i = 0; i < 60; ++i)
+            {
+                const float ang = (float)i / 60.0f * 2.0f * kPi;
+                const ImVec2 d(std::cos(ang), std::sin(ang));
+                dl->AddLine(ImVec2(c.x + d.x * capR * 1.03f, c.y + d.y * capR * 1.03f),
+                            ImVec2(c.x + d.x * R * 0.97f, c.y + d.y * R * 0.97f),
+                            fade(kTheme.face, a), 1.0f * s_);
+            }
+    }
+
+    void knobPointer(ImDrawList* dl, float cx, float cy, float r, float t,
+                     bool hero, bool hot, bool inactive) const
+    {
+        const ImVec2 c = P(cx, cy);
+        const float R = r * s_;
+        const float ang = duskdaf::DuskPanel::knobAngle(t);
+        const ImVec2 d(std::sin(ang), -std::cos(ang));
+        const ImU32 ink = hot ? kTheme.amber : (inactive ? fade(kTheme.value, 0.45f) : kTheme.value);
+        dl->AddLine(ImVec2(c.x + d.x * R * 0.30f, c.y + d.y * R * 0.30f),
+                    ImVec2(c.x + d.x * R * 0.82f, c.y + d.y * R * 0.82f),
+                    ink, (hero ? 3.4f : 2.4f) * s_);
+    }
+
+    // One complete knob: printed legend, body, gestures, pointer and read-out.
+    // The body is drawn BEFORE the gesture call (so a knob never paints over its
+    // own type-entry field), the pointer and read-out AFTER it, which keeps the
+    // number exact during a drag and lets the pointer light while the knob is
+    // under the hand. `inactive` greys a knob the current mode overrides (DRY /
+    // WET under BUS); it stays editable.
+    void knobCell(ImDrawList* dl, int p, float cx, float cy, float r,
+                  float legendY, float valueY, const char* name, bool inactive = false)
+    {
+        const duskverb::ParamDesc& d = duskverb::paramDesc(p);
+        const float lo = duskverb::knobMin(d), hi = duskverb::knobMax(d);
+        knobBody(dl, cx, cy, r, /*hero*/ false, inactive);
 
         char buf[48];
         formatPlainValue(currentEngine(), p, plainOf(p), buf, sizeof(buf));
         char id[24];
         std::snprintf(id, sizeof(id), "##dvk%d", p);
-        // Labels and numeric readouts are direct entry targets too. This opens
-        // the same edit field as the knob body, with the same unit parser.
+        // The read-out is a direct entry target too: the same edit field as the
+        // knob body, with the same unit parser.
         ImGui::PushID(p);
-        ImGui::SetCursorScreenPos(P(cx - r - 6.0f, cy - r - kLabelDy - 3.0f));
-        ImGui::InvisibleButton("##value_entry", ImVec2((2.0f * r + 12.0f) * s_,
-                                                       (kLabelDy - 3.0f) * s_));
+        ImGui::SetCursorScreenPos(P(cx - 0.5f * kColW + 10.0f, valueY - 2.0f));
+        ImGui::InvisibleButton("##value_entry", ImVec2((kColW - 20.0f) * s_, (kTypeValue + 6.0f) * s_));
         if (ImGui::IsItemClicked()) panel_.openValueEdit(id, values_[p], buf);
         if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_TextInput);
         ImGui::PopID();
@@ -831,76 +921,93 @@ private:
                     /*nameOnHover*/ false, /*doubleClickReset*/ false, 9.5f,
                     /*bubbleOnActiveOnly*/ false, /*omitCenterTick*/ false,
                     &knobToPlainCb, &plainToKnobCb, this, /*dragInDisplayDomain*/ false, &parseKnobText);
+        // knob()'s InvisibleButton is the last item unless its type-entry field
+        // is open, which knob() submits after it (a popup or tooltip restores the
+        // item state when it ends). While the field is open the knob has no
+        // hover or drag state of its own.
+        const bool editing = panel_.isEditingValue(id);
+        const bool live = !editing && ImGui::IsItemActive();
+        const bool hot  = live || (!editing && ImGui::IsItemHovered());
+        if (!editing)
+            knobPointer(dl, cx, cy, r, knobT(p), /*hero*/ false, hot, inactive);
 
         formatPlainValue(currentEngine(), p, plainOf(p), buf, sizeof(buf));
         if (name != nullptr)
-            duskdaf::spacedText(panel_, dl, cx, cy - r - kLabelDy, labelPx, kLabelInk,
-                                name, 0, tracking);
-        valueText(dl, cx, cy - r - kValueDy, valuePx, kValueInk, buf, 0);
+            duskdaf::spacedText(panel_, dl, cx, legendY, kTypeLegend,
+                                inactive ? kTheme.legendDim : kTheme.legend, name, 0, kLegendTracking);
+        valueText(dl, cx, valueY, kTypeValue,
+                  live ? kTheme.amber : (inactive ? kTheme.legendDim : kTheme.value), buf, 0);
     }
 
-    // Dark strip with a caption and a pill switch at its right end. This is what
-    // the mockup uses for FREEZE / BUS / GATE / TONAL CORRECTION.
-    void switchStrip(ImDrawList* dl, const char* id, int p,
-                     float x0, float y0, float x1, float y1, const char* caption)
+    // A knob on the grid of a knob row, on that row's shared text lines.
+    void rowKnob(ImDrawList* dl, int p, int col, float rowY0, float r, const char* name,
+                 bool inactive = false)
+    {
+        knobCell(dl, p, colX(col), rowY0 + kKnobDy, r, rowY0 + kLegendDy, rowY0 + kValueDy,
+                 name, inactive);
+    }
+
+    // A latching push button with an LED, its legend printed above it the way a
+    // knob's is. The LED is amber while on; the cap darkens while held.
+    void ledButton(ImDrawList* dl, const char* id, int p, float cx, float legendY,
+                   float capCy, const char* legend, const char* legend2 = nullptr)
     {
         const bool on = values_[p] > 0.5f;
+        const float x0 = cx - 0.5f * kCapW, x1 = cx + 0.5f * kCapW;
+        const float y0 = capCy - 0.5f * kCapH, y1 = capCy + 0.5f * kCapH;
         ImGui::SetCursorScreenPos(P(x0, y0));
-        ImGui::InvisibleButton(id, ImVec2((x1 - x0) * s_, (y1 - y0) * s_));
+        ImGui::InvisibleButton(id, ImVec2(kCapW * s_, kCapH * s_));
         const bool hovered = ImGui::IsItemHovered();
+        const bool held = ImGui::IsItemActive();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
             ImGui::SetTooltip("%s", tooltipFor(currentEngine(), p));
         if (ImGui::IsItemClicked())
             setP(p, on ? 0.0f : 1.0f);
 
-        dl->AddRectFilled(P(x0, y0), P(x1, y1), kStripBg, 5.0f * s_);
-        dl->AddRect(P(x0, y0), P(x1, y1), on ? fade(kAccent, 0.55f)
-                                             : (hovered ? kKnobRim : kCardEdge),
-                    5.0f * s_, 0, 1.0f * s_);
-        duskdaf::spacedText(panel_, dl, x0 + 12.0f, 0.5f * (y0 + y1) - 5.5f, kLabelPx,
-                            on ? kAccent : kLabelInk, caption, -1, 0.14f);
+        dl->AddRectFilled(P(x0 - 3.0f, y0 - 3.0f), P(x1 + 3.0f, y1 + 3.0f), kTheme.faceDeep, 4.0f * s_);
+        const ImU32 top = held ? capBottom() : (hovered ? blend(capTop(), kTheme.legend, 0.10f) : capTop());
+        dl->AddRectFilled(P(x0, y0), P(x1, y1), capBottom(), 2.5f * s_);
+        dl->AddRectFilled(P(x0, y0), P(x1, 0.5f * (y0 + y1)), top, 2.5f * s_, ImDrawFlags_RoundCornersTop);
+        dl->AddLine(P(x0 + 2.0f, y0 + 0.5f), P(x1 - 2.0f, y0 + 0.5f), capRim(), s_);
 
-        const float cy = 0.5f * (y0 + y1);
-        const float tx1 = x1 - 9.0f, tx0 = tx1 - 30.0f, th = 7.0f;
-        dl->AddRectFilled(P(tx0, cy - th), P(tx1, cy + th),
-                          on ? fade(kAccent, 0.35f) : IM_COL32(0x22, 0x27, 0x31, 255),
-                          th * s_);
-        dl->AddCircleFilled(P(on ? tx1 - th : tx0 + th, cy), (th - 1.5f) * s_,
-                            on ? kAccent : IM_COL32(0x6a, 0x73, 0x82, 255), 20);
+        const ImVec2 led = P(cx, capCy);
+        if (on) dl->AddCircleFilled(led, 6.5f * s_, fade(kTheme.amber, 0.20f), 20);
+        dl->AddCircleFilled(led, 4.8f * s_, kTheme.well, 16);
+        dl->AddCircleFilled(led, 3.4f * s_, on ? kTheme.amber : amberGhost(), 16);
+
+        duskdaf::spacedText(panel_, dl, cx, legendY, kTypeLegend, kTheme.legend, legend, 0,
+                            kLegendTracking);
+        if (legend2 != nullptr)
+            duskdaf::spacedText(panel_, dl, cx, legendY + kTypeLegend + 2.0f, kTypeLegend,
+                                kTheme.legend, legend2, 0, kLegendTracking);
     }
 
-    // The fleet's small header button. Returns true on click.
+    // The family's header button on the 25 px band; `lit` marks a latched state
+    // (the active A/B slot, the open help overlay).
     bool headerButton(ImDrawList* dl, const char* id, float x0, float x1,
                       const char* caption, bool lit = false)
     {
-        constexpr float y0 = 16.0f, y1 = 46.0f;
-        ImGui::SetCursorScreenPos(P(x0, y0));
-        ImGui::InvisibleButton(id, ImVec2((x1 - x0) * s_, (y1 - y0) * s_));
+        ImGui::SetCursorScreenPos(P(x0, kBandY0));
+        ImGui::InvisibleButton(id, ImVec2((x1 - x0) * s_, (kBandY1 - kBandY0) * s_));
         const bool hovered = ImGui::IsItemHovered();
-        dl->AddRectFilled(P(x0, y0), P(x1, y1),
-                          lit ? IM_COL32(0x2c, 0x55, 0x3a, 255)
-                              : (hovered ? IM_COL32(54, 54, 58, 255) : IM_COL32(38, 38, 41, 255)),
-                          2.0f * s_);
-        dl->AddRect(P(x0, y0), P(x1, y1),
-                    lit ? kAccent : IM_COL32(90, 90, 94, 255), 2.0f * s_, 0, 1.0f * s_);
-        panel_.text(dl, 0.5f * (x0 + x1), 21.0f, 18.0f,
-                    lit ? kAccent : (hovered ? kText : kDim), caption, 0, true);
+        dl->AddRectFilled(P(x0, kBandY0), P(x1, kBandY1), hovered ? buttonHot() : buttonFill(), 2.0f * s_);
+        dl->AddRect(P(x0, kBandY0), P(x1, kBandY1), lit ? amberDim() : buttonEdge(), 2.0f * s_, 0, s_);
+        label(dl, 0.5f * (x0 + x1), kBandY0 + 3.5f, kTypeSmall,
+              lit ? kTheme.amber : (hovered ? kTheme.value : kTheme.legend), caption, 0);
         return ImGui::IsItemClicked();
     }
 
     bool headerChevron(ImDrawList* dl, const char* id, float cx, bool left)
     {
-        constexpr float cy = 31.0f, halfH = 15.0f;
-        const ImVec2 b0 = P(cx - 9.5f, cy - halfH), b1 = P(cx + 9.5f, cy + halfH);
+        const ImVec2 b0 = P(cx - 9.5f, kBandY0), b1 = P(cx + 9.5f, kBandY1);
         ImGui::SetCursorScreenPos(b0);
         ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
         const bool hovered = ImGui::IsItemHovered();
-        dl->AddRectFilled(b0, b1, hovered ? IM_COL32(54, 54, 58, 255) : IM_COL32(38, 38, 41, 255),
-                          2.0f * s_);
-        dl->AddRect(b0, b1, IM_COL32(90, 90, 94, 255), 2.0f * s_, 0, s_);
-        const ImVec2 c = P(cx, cy);
+        dl->AddRectFilled(b0, b1, hovered ? buttonHot() : buttonFill(), 2.0f * s_);
+        dl->AddRect(b0, b1, buttonEdge(), 2.0f * s_, 0, s_);
+        const ImVec2 c = P(cx, 0.5f * (kBandY0 + kBandY1));
         const float d = 4.3f * s_;
-        const ImU32 ink = hovered ? kText : kDim;
+        const ImU32 ink = hovered ? kTheme.value : kTheme.legend;
         if (left)
             dl->AddTriangleFilled(ImVec2(c.x + d * 0.5f, c.y - d), ImVec2(c.x + d * 0.5f, c.y + d),
                                   ImVec2(c.x - d * 0.7f, c.y), ink);
@@ -912,9 +1019,15 @@ private:
 
     // Combo styling shared by the preset, engine and sync dropdowns. Returns
     // true while the popup is open; the caller emits the rows and calls
-    // endCombo().
+    // endCombo(). The Display skin sets the engine selector into the amber
+    // glass; `lit` puts a panel combo's own text in amber while its mode is on.
+    // Rows always print in the value ink.
+    enum class ComboSkin { Panel, Display };
+
     bool beginCombo(const char* id, float x0, float y0, float x1, float y1,
-                    const char* preview, float fontSize = kComboPx)
+                    const char* preview, float fontSize = kTypeSmall,
+                    ComboSkin skin = ComboSkin::Panel, bool lit = false,
+                    ImGuiComboFlags flags = 0)
     {
         ImGui::SetCursorScreenPos(P(x0, y0));
         ImGui::SetNextItemWidth((x1 - x0) * s_);
@@ -924,32 +1037,55 @@ private:
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
                             ImVec2(6.0f * s_,
                                    std::max(0.0f, 0.5f * (bandH - ImGui::GetFontSize()))));
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(38, 38, 41, 255));
-        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(48, 48, 51, 255));
-        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, IM_COL32(55, 55, 58, 255));
-        ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(24, 24, 26, 255));
-        ImGui::PushStyleColor(ImGuiCol_Header, IM_COL32(76, 103, 48, 255));
-        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, IM_COL32(92, 124, 58, 255));
-        ImGui::PushStyleColor(ImGuiCol_HeaderActive, IM_COL32(62, 85, 39, 255));
-        ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(46, 46, 50, 255));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(58, 58, 62, 255));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(40, 40, 44, 255));
-        ImGui::PushStyleColor(ImGuiCol_Text, kText);
-        ImGui::PushStyleColor(ImGuiCol_NavHighlight, kAccent);
+        const bool glass = skin == ComboSkin::Display;
+        const ImU32 frame = glass ? kTheme.well : buttonFill();
+        const ImU32 hot   = glass ? blend(kTheme.well, kTheme.amber, 0.08f) : buttonHot();
+        // Counted, not written out: a count that drifts by one leaks a style
+        // push every frame and ImGui paints an error window over the editor.
+        comboColors_ = 0;
+        const auto color = [this](ImGuiCol index, ImU32 value)
+        { ImGui::PushStyleColor(index, value); ++comboColors_; };
+        color(ImGuiCol_FrameBg, frame);
+        color(ImGuiCol_FrameBgHovered, hot);
+        color(ImGuiCol_FrameBgActive, hot);
+        color(ImGuiCol_Button, frame);
+        color(ImGuiCol_ButtonHovered, hot);
+        color(ImGuiCol_ButtonActive, hot);
+        color(ImGuiCol_PopupBg, kTheme.faceDeep);
+        color(ImGuiCol_Header, amberRow(0.34f));
+        color(ImGuiCol_HeaderHovered, amberRow(0.44f));
+        color(ImGuiCol_HeaderActive, amberRow(0.26f));
+        color(ImGuiCol_Separator, kTheme.legendDim);
+        color(ImGuiCol_NavHighlight, kTheme.amber);
+        color(ImGuiCol_Text, glass || lit ? kTheme.amber : kTheme.value);
         // BeginCombo otherwise caps its popup at eight rows; an explicit
         // identity constraint lets the whole preset list show at once.
         ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(FLT_MAX, FLT_MAX));
-        comboOpen_ = ImGui::BeginCombo(id, preview);
+        comboOpen_ = ImGui::BeginCombo(id, preview, flags);
+        // The row ink is pushed inside the popup and popped before it ends:
+        // ImGui checks the style stack when a window ends.
+        comboRowInk_ = comboOpen_ && (glass || lit);
+        if (comboRowInk_) ImGui::PushStyleColor(ImGuiCol_Text, kTheme.value);
+        // Rows print at the legend size, larger than a header preview, so the
+        // whole preset list stays readable at the smallest window. Pushed and
+        // popped inside the popup for the same reason as the row ink.
+        comboRowFont_ = comboOpen_ ? panel_.pickFont(kTypeLegend * s_) : nullptr;
+        if (comboRowFont_ != nullptr) ImGui::PushFont(comboRowFont_);
         return comboOpen_;
     }
 
     void endCombo()
     {
+        if (comboRowFont_ != nullptr) ImGui::PopFont();
+        if (comboRowInk_) ImGui::PopStyleColor();
         if (comboOpen_) ImGui::EndCombo();
-        ImGui::PopStyleColor(12);
+        ImGui::PopStyleColor(comboColors_);
         ImGui::PopStyleVar();
         if (comboFont_ != nullptr) ImGui::PopFont();
         comboOpen_ = false;
+        comboRowInk_ = false;
+        comboRowFont_ = nullptr;
+        comboColors_ = 0;
         comboFont_ = nullptr;
     }
 
@@ -958,32 +1094,56 @@ private:
     //======================================================================
     void drawHeader(ImDrawList* dl)
     {
-        dl->AddRectFilled(P(0, 0), P(kDesignW, kHeaderH), kHeaderBg);
-        dl->AddLine(P(0, kHeaderH), P(kDesignW, kHeaderH), kCardEdgeHi, s_);
-        duskdaf::spacedText(panel_, dl, 64, 13, 36, kText, "DUSKVERB 2", -1, 0.16f);
-        ImGui::SetCursorScreenPos(P(60, 12));
-        ImGui::InvisibleButton("##dv_titlecredits", ImVec2(245.0f * s_, 38.0f * s_));
+        dl->AddRectFilled(P(0, 0), P(kDesignW, kHeaderH), kTheme.faceDeep);
+        dl->AddRectFilled(P(0, 0), P(kDesignW, 3.0f), blend(kTheme.face, kTheme.legend, 0.5f));
+        dl->AddLine(P(0, kHeaderH), P(kDesignW, kHeaderH), buttonEdge(), 1.2f * s_);
+        dl->AddLine(P(0, kHeaderH + 1.0f), P(kDesignW, kHeaderH + 1.0f), shadow(), s_);
+
+        // Nameplate: title, model badge and version on one plate, the accent
+        // rule tying them together. Tape Echo 2 geometry, like every DAF port.
+        constexpr float kPlateX0 = 28.0f, kPlateX1 = 318.0f, kPlateY0 = 8.0f, kPlateY1 = 40.0f;
+        const ImU32 plateTop = blend(kTheme.faceDeep, kTheme.face, 0.55f);
+        const ImU32 plateLow = blend(kTheme.well, kTheme.faceDeep, 0.50f);
+        dl->AddRectFilledMultiColor(P(kPlateX0, kPlateY0), P(kPlateX1, kPlateY1),
+                                    plateTop, plateTop, plateLow, plateLow);
+        dl->AddRect(P(kPlateX0, kPlateY0), P(kPlateX1, kPlateY1),
+                    fade(blend(kTheme.legend, kTheme.legendDim, 0.35f), 0.86f), 3.5f * s_, 0, 1.2f * s_);
+        dl->AddLine(P(40, 37), P(308, 37), fade(kTheme.amber, 0.82f), 1.2f * s_);
+        label(dl, 42, 10, kTypeTitle, kTheme.value, "DUSKVERB", -1);
+        label(dl, 202, 14, kTypeBadge, kTheme.value, "DV-2", 0);
+        valueText(dl, 306, 20, kTypeVersion, kTheme.legend, "v" DUSKVERB2_VERSION_STRING, 1);
+        label(dl, kDesignW - 87.0f, 12, kTypeBrand, kTheme.value, "DUSK AUDIO", 0);
+
+        // Clicking the nameplate opens the supporters panel, as on every port.
+        ImGui::SetCursorScreenPos(P(kPlateX0, kPlateY0));
+        ImGui::InvisibleButton("##dv_titlecredits",
+                               ImVec2((kPlateX1 - kPlateX0) * s_, (kPlateY1 - kPlateY0) * s_));
         if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         if (ImGui::IsItemClicked()) { supporters_.resetInteraction(); showSupporters_ = true; }
-        if (headerChevron(dl, "##dv_prev", 335, true)) stepPreset(-1);
-        if (headerChevron(dl, "##dv_next", 575, false)) stepPreset(1);
+
+        // Preset browser on the band: < [combo] > INIT SAVE.
+        if (headerChevron(dl, "##dv_prev", 350.5f, true)) stepPreset(-1);
+        if (headerChevron(dl, "##dv_next", 569.5f, false)) stepPreset(1);
         drawPresetCombo();
-        drawEngineCombo(dl);
-        if (headerButton(dl, "##dv_init", 842, 896, "INIT")) initDefaults();
-        if (headerButton(dl, "##dv_save", 905, 960, "SAVE"))
+        if (headerButton(dl, "##dv_init", 587, 635, "INIT")) initDefaults();
+        if (headerButton(dl, "##dv_save", 642, 690, "SAVE"))
         {
             std::snprintf(saveBuf_, sizeof(saveBuf_), "%s", currentUserName_.c_str());
             ImGui::OpenPopup("Save DuskVerb Preset");
         }
         drawSaveModal();
+
+        // This plugin's own buttons, clear of the brand: a 12 px group break
+        // after SAVE, A / B / COPY on the 8 px rhythm, another 12 px break before
+        // help.
         drawAbButtons(dl);
-        if (headerButton(dl, "##dv_help", 1122, 1148, "?", showHelp_)) showHelp_ = !showHelp_;
+        if (headerButton(dl, "##dv_help", 854, 880, "?", showHelp_)) showHelp_ = !showHelp_;
     }
 
     void drawPresetCombo()
     {
         const auto& presets = getFactoryPresets();
-        if (beginCombo("##dv_presets", 346, 16, 564, 46, presetPreview()))
+        if (beginCombo("##dv_presets", 364, kBandY0, 556, kBandY1, presetPreview()))
         {
             if (ImGui::Selectable("Import preset..."))
                 importRequested_ = true;
@@ -1066,12 +1226,12 @@ private:
         if (flashing) copiedFlash_ -= ImGui::GetIO().DeltaTime;
         for (int slot = 0; slot < 2; ++slot)
         {
-            const float x0 = 971.0f + static_cast<float>(slot) * 42.0f;
+            const float x0 = 702.0f + static_cast<float>(slot) * 38.0f;
             char id[16]; std::snprintf(id, sizeof(id), "##dv_ab%d", slot);
-            if (headerButton(dl, id, x0, x0 + 34.0f, slot == 0 ? "A" : "B", slot == activeSlot_)
+            if (headerButton(dl, id, x0, x0 + 30.0f, slot == 0 ? "A" : "B", slot == activeSlot_)
                 && slot != activeSlot_) switchToSlot(slot);
         }
-        if (headerButton(dl, "##dv_copy", 1056, 1113, flashing ? "COPIED" : "COPY")) copyActiveToOther();
+        if (headerButton(dl, "##dv_copy", 778, 842, flashing ? "COPIED" : "COPY")) copyActiveToOther();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
             ImGui::SetTooltip("Copy %s to %s without switching", activeSlot_ == 0 ? "A" : "B", activeSlot_ == 0 ? "B" : "A");
     }
@@ -1216,7 +1376,7 @@ private:
     // uncrisp face.
     int pushModalStyle()
     {
-        modalFont_ = panel_.pickFont(kComboPx * s_);
+        modalFont_ = panel_.pickFont(kTypeLegend * s_);
         if (modalFont_ != nullptr) ImGui::PushFont(modalFont_);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f * s_, 14.0f * s_));
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(9.0f * s_, 6.0f * s_));
@@ -1230,18 +1390,20 @@ private:
         int colors = 0;
         const auto color = [&colors](ImGuiCol index, ImU32 value)
         { ImGui::PushStyleColor(index, value); ++colors; };
-        color(ImGuiCol_PopupBg, IM_COL32(0x14, 0x19, 0x22, 252));
-        color(ImGuiCol_TitleBg, IM_COL32(0x14, 0x19, 0x22, 255));
-        color(ImGuiCol_TitleBgActive, IM_COL32(0x1c, 0x24, 0x2e, 255));
-        color(ImGuiCol_ModalWindowDimBg, IM_COL32(8, 11, 16, 190));
-        color(ImGuiCol_Text, kText);
-        color(ImGuiCol_Border, fade(kAccent, 0.35f));
-        color(ImGuiCol_FrameBg, IM_COL32(0x1d, 0x23, 0x2d, 255));
-        color(ImGuiCol_FrameBgHovered, IM_COL32(0x25, 0x2c, 0x38, 255));
-        color(ImGuiCol_FrameBgActive, IM_COL32(0x2a, 0x32, 0x3f, 255));
-        color(ImGuiCol_Button, IM_COL32(0x2c, 0x55, 0x3a, 255));
-        color(ImGuiCol_ButtonHovered, IM_COL32(0x3c, 0x73, 0x4e, 255));
-        color(ImGuiCol_ButtonActive, IM_COL32(0x24, 0x45, 0x30, 255));
+        color(ImGuiCol_PopupBg, kTheme.faceDeep);
+        color(ImGuiCol_TitleBg, kTheme.faceDeep);
+        color(ImGuiCol_TitleBgActive, kTheme.face);
+        color(ImGuiCol_ModalWindowDimBg, fade(kTheme.well, 0.75f));
+        color(ImGuiCol_Text, kTheme.value);
+        color(ImGuiCol_Border, buttonEdge());
+        color(ImGuiCol_FrameBg, kTheme.well);
+        color(ImGuiCol_FrameBgHovered, blend(kTheme.well, kTheme.legendDim, 0.12f));
+        color(ImGuiCol_FrameBgActive, blend(kTheme.well, kTheme.legendDim, 0.18f));
+        color(ImGuiCol_Button, buttonFill());
+        color(ImGuiCol_ButtonHovered, buttonHot());
+        color(ImGuiCol_ButtonActive, capBottom());
+        color(ImGuiCol_CheckMark, kTheme.amber);
+        color(ImGuiCol_TextSelectedBg, fade(kTheme.amber, 0.35f));
         return colors;
     }
 
@@ -1286,7 +1448,7 @@ private:
                 else                          { saveFailed_ = true; }
             }
             if (saveFailed_)
-                ImGui::TextColored(ImVec4(0.90f, 0.42f, 0.35f, 1.0f),
+                ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kTheme.alarm),
                                    "Could not save. Try a different name.");
             if (cancel) { saveFailed_ = false; ImGui::CloseCurrentPopup(); }
             ImGui::EndPopup();
@@ -1368,87 +1530,151 @@ private:
         drawRail(dl, kRailRX0, kRailRX1, "OUT", outMeter_);
     }
 
+    // A recessed LED well: legend above, held peak below.
     void drawRail(ImDrawList* dl, float x0, float x1, const char* title,
                   const duskdaf::LedLadder& meter) const
     {
-        const float y0 = kRow1Y0, y1 = kRow4Y1;
-        card(dl, x0, y0, x1, y1, nullptr);
-        duskdaf::spacedText(panel_, dl, 0.5f * (x0 + x1), y0 + 5.0f, 14.0f, kText, title, 0, 0.08f);
-        meter.draw(panel_, dl, x0 + 6.0f, y0 + 28.0f, x1 - 6.0f, y1 - 26.0f, meterStyle_);
+        const float cx = 0.5f * (x0 + x1);
+        duskdaf::spacedText(panel_, dl, cx, kRailY0 - 24.0f, kTypeSmall, kTheme.legend, title, 0,
+                            kLegendTracking);
+        dl->AddRectFilled(P(x0, kRailY0), P(x1, kRailY1), kTheme.well, 3.0f * s_);
+        dl->AddLine(P(x0 + 2.0f, kRailY1 + 1.0f), P(x1 - 2.0f, kRailY1 + 1.0f),
+                    fade(kTheme.legendDim, 0.55f), s_);
+        meter.draw(panel_, dl, x0 + 3.0f, kRailY0 + 4.0f, x1 - 3.0f, kRailY1 - 4.0f, meterStyle_);
 
         char buf[16];
         const float peak = meter.peakDb();
         if (peak <= meterStyle_.minDb + 0.5f) std::snprintf(buf, sizeof(buf), "-inf");
         else                                  std::snprintf(buf, sizeof(buf), "%.0f", (double)peak);
-        valueText(dl, 0.5f * (x0 + x1), y1 - 20.0f, kMeterPx,
-                  peak > -1.0f ? IM_COL32(0xf8, 0x71, 0x71, 255) : kValueInk, buf, 0);
+        valueText(dl, cx, kRailY1 + 7.0f, kTypeSmall, peak > -1.0f ? kTheme.alarm : kTheme.legend, buf, 0);
     }
 
     //======================================================================
-    // Central output history and CPU readback; this is not a measured RT60.
+    // row A: the display and the tank
     //======================================================================
-    void drawEnvelopeCard(ImDrawList* dl)
+    // The signature element: one recessed amber display carrying the engine, the
+    // decay time, the mode annunciators and the output history. The engine name
+    // is the engine selector and the digits are the decay entry target. The
+    // history is the output peak the DSP samples at 15 Hz, not a measured RT60.
+    void drawDisplay(ImDrawList* dl)
     {
-        card(dl, kTimeX0, kRow1Y0, kTimeX1, kRow1Y1, nullptr);
+        dl->AddRectFilled(P(kDispX0, kDispY0), P(kDispX1, kDispY1), kTheme.faceDeep, 6.0f * s_);
+        const float gx0 = kDispX0 + 7.0f, gx1 = kDispX1 - 7.0f;
+        const float gy0 = kDispY0 + 7.0f, gy1 = kDispY1 - 7.0f;
+        dl->AddRectFilled(P(gx0, gy0), P(gx1, gy1), kTheme.well, 3.0f * s_);
+        // The glass sits below the faceplate, lit from above: a catch-light on
+        // its lower lip.
+        dl->AddLine(P(gx0 + 3.0f, gy1 + 1.0f), P(gx1 - 3.0f, gy1 + 1.0f),
+                    fade(kTheme.legendDim, 0.55f), s_);
 
-        // The title and CPU readout sit above the live history trace.
-        const float px0 = kTimeX0 + 12.0f, px1 = kTimeX1 - 12.0f;
-        const float py0 = kRow1Y0 + 36.0f, py1 = kRow1Y1 - 6.0f;
+        const float ix0 = gx0 + 16.0f, ix1 = gx1 - 16.0f;
+        duskdaf::spacedText(panel_, dl, ix0, gy0 + 9.0f, kTypeSmall, amberDim(), "ENGINE", -1,
+                            kBracketTracking);
+        drawEngineCombo(dl, ix0 - 6.0f, gy0 + 32.0f, gy0 + 66.0f);
+        drawDecayReadout(dl, ix1, gy0 + 2.0f);
 
-        // Faint grid, proportional to the mockup's 50 x 25 px at 1500 wide.
-        for (float x = px0 + 35.0f; x < px1; x += 35.0f)
-            dl->AddLine(P(x, py0), P(x, py1), IM_COL32(0x1a, 0x20, 0x2a, 255), 1.0f);
-        for (float y = py0 + 15.0f; y < py1; y += 15.0f)
-            dl->AddLine(P(px0, y), P(px1, y), IM_COL32(0x1a, 0x20, 0x2a, 255), 1.0f);
+        // Annunciators: lit while the mode is on, a ghost segment otherwise.
+        const float annY = gy0 + 80.0f;
+        const int sync = std::clamp((int)std::lround(values_[duskverb::PredelaySync]), 0, 6);
+        const struct { const char* text; bool on; } flags[] = {
+            { "FREEZE", values_[duskverb::Freeze] > 0.5f },
+            { "SYNC",   sync != 0 },
+            { "BUS",    values_[duskverb::BusMode] > 0.5f },
+        };
+        float ax = ix0;
+        for (const auto& flag : flags)
+        {
+            duskdaf::spacedText(panel_, dl, ax, annY, kTypeSmall,
+                                flag.on ? kTheme.amber : amberGhost(), flag.text, -1, kBracketTracking);
+            ax += spacedWidth(kTypeSmall, flag.text, kBracketTracking) + 18.0f;
+        }
+        const float cpu = duskVerbGetCpuLoad != nullptr
+                        ? duskVerbGetCpuLoad(getPluginInstancePointer()) : 0.0f;
+        char cpuText[32];
+        std::snprintf(cpuText, sizeof(cpuText), "CPU %.1f%%", (double)std::clamp(cpu * 100.0f, 0.0f, 999.0f));
+        valueText(dl, ix1, annY, kTypeSmall, amberDim(), cpuText, 1);
+
+        drawHistory(dl, ix0, annY + 26.0f, ix1, gy1 - 12.0f);
+    }
+
+    // Decay time right-aligned at xRight, digits and unit on one baseline. The
+    // digits open the same type-entry field as the DECAY knob.
+    void drawDecayReadout(ImDrawList* dl, float xRight, float top)
+    {
+        char number[24], unit[8];
+        formatDecayParts(plainOf(duskverb::Decay), number, sizeof(number), unit, sizeof(unit));
+        const float numW  = textWidth(valueFonts_, kTypeHero, number);
+        const float unitW = textWidth(valueFonts_, kTypeValue, unit);
+        const float unitX = xRight - unitW;
+        const float numX  = unitX - 6.0f - numW;
+        valueText(dl, numX, top, kTypeHero, kTheme.amber, number, -1);
+        valueText(dl, unitX, top + ascent(valueFonts_, kTypeHero) - ascent(valueFonts_, kTypeValue),
+                  kTypeValue, amberDim(), unit, -1);
+
+        char seed[48];
+        formatPlainValue(currentEngine(), duskverb::Decay, plainOf(duskverb::Decay), seed, sizeof(seed));
+        ImGui::SetCursorScreenPos(P(numX - 8.0f, top));
+        ImGui::InvisibleButton("##decay_value_entry", ImVec2((xRight - numX + 8.0f) * s_, kTypeHero * s_));
+        if (ImGui::IsItemClicked()) panel_.openValueEdit("##dvk_decay", values_[duskverb::Decay], seed);
+        if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_TextInput);
+    }
+
+    void drawHistory(ImDrawList* dl, float x0, float y0, float x1, float y1)
+    {
+        // Faint divisions: the graticule of a scope, so the trace has a scale.
+        const ImU32 grid = fade(kTheme.amber, 0.08f);
+        for (int i = 1; i < 8; ++i)
+        {
+            const float x = x0 + (x1 - x0) * (float)i / 8.0f;
+            dl->AddLine(P(x, y0), P(x, y1), grid, 1.0f);
+        }
+        for (int i = 1; i < 4; ++i)
+        {
+            const float y = y0 + (y1 - y0) * (float)i / 4.0f;
+            dl->AddLine(P(x0, y), P(x1, y), grid, 1.0f);
+        }
 
         // The DSP samples output peak dB at a fixed 15 Hz cadence, independent
         // of audio block size and editor frame rate.
         int frames = 0;
         if (duskVerbGetTailHistory != nullptr)
             frames = duskVerbGetTailHistory(getPluginInstancePointer(), tail_, kTailFrames);
-        if (frames < 2) frames = 0;
+        if (frames < 2) return;
 
         // Same dB -> y curve as the JUCE TailMeter: -60..0 dB with a 1.6 power
         // so the interesting -40..0 band gets most of the height.
         const auto dbToY = [&](float db)
         {
             const float clamped = std::clamp(db, -60.0f, 0.0f);
-            return py1 - std::pow((clamped + 60.0f) / 60.0f, 1.6f) * (py1 - py0);
+            return y1 - std::pow((clamped + 60.0f) / 60.0f, 1.6f) * (y1 - y0);
         };
-
-        if (frames >= 2)
+        const float step = (x1 - x0) / (float)(frames - 1);
+        for (int i = 0; i < frames - 1; ++i)
         {
-            const float step = (px1 - px0) / (float)(frames - 1);
-            for (int i = 0; i < frames - 1; ++i)
-            {
-                const float xa = px0 + step * (float)i, xb = xa + step;
-                const float ya = dbToY(tail_[i]), yb = dbToY(tail_[i + 1]);
-                dl->AddQuadFilled(P(xa, ya), P(xb, yb), P(xb, py1), P(xa, py1),
-                                  fade(kAccent, 0.22f));
-            }
-            dl->PathClear();
-            for (int i = 0; i < frames; ++i)
-                dl->PathLineTo(P(px0 + step * (float)i, dbToY(tail_[i])));
-            dl->PathStroke(kAccent, 0, 1.4f * s_);
+            const float xa = x0 + step * (float)i, xb = xa + step;
+            dl->AddQuadFilled(P(xa, dbToY(tail_[i])), P(xb, dbToY(tail_[i + 1])), P(xb, y1), P(xa, y1),
+                              fade(kTheme.amber, 0.16f));
         }
-
-        duskdaf::spacedText(panel_, dl, kTimeX0 + 14.0f, kRow1Y0 + 11.0f, 16.0f, kLabelInk,
-                            "OUTPUT HISTORY", -1, 0.12f);
-        const float cpu = duskVerbGetCpuLoad != nullptr
-                        ? duskVerbGetCpuLoad(getPluginInstancePointer()) : 0.0f;
-        char cpuText[32];
-        std::snprintf(cpuText, sizeof(cpuText), "CPU %.1f%%", (double)std::clamp(cpu * 100.0f, 0.0f, 999.0f));
-        valueText(dl, kTimeX1 - 14.0f, kRow1Y0 + 11.0f, 16.0f, kAccent, cpuText, 1);
+        dl->PathClear();
+        for (int i = 0; i < frames; ++i)
+            dl->PathLineTo(P(x0 + step * (float)i, dbToY(tail_[i])));
+        dl->PathStroke(kTheme.amber, 0, 1.4f * s_);
     }
 
-    void drawEngineCombo(ImDrawList* dl)
+    void drawEngineCombo(ImDrawList* dl, float x0, float y0, float y1)
     {
         const int current = std::clamp((int)std::lround(values_[duskverb::Algorithm]),
                                        0, getNumAlgorithms() - 1);
-        duskdaf::spacedText(panel_, dl, 660.0f, 24.0f, kLabelPx, kDim,
-                            "ENGINE", 1, 0.14f);
-        if (beginCombo("##dv_engine", 674, 16, 813, 46,
-                       getAlgorithmConfig(current).name, kComboPx))
+        const char* name = getAlgorithmConfig(current).name;
+        const float nameW = textWidth(labelFonts_, kTypeTitle, name);
+        const float x1 = x0 + 6.0f + nameW + 26.0f;
+        const bool open = beginCombo("##dv_engine", x0, y0, x1, y1, name, kTypeTitle,
+                                     ComboSkin::Display, false, ImGuiComboFlags_NoArrowButton);
+        const ImVec2 c = P(x0 + 6.0f + nameW + 13.0f, 0.5f * (y0 + y1) + 1.0f);
+        const float d = 4.0f * s_;
+        dl->AddTriangleFilled(ImVec2(c.x - d, c.y - 0.6f * d), ImVec2(c.x + d, c.y - 0.6f * d),
+                              ImVec2(c.x, c.y + 0.6f * d), amberDim());
+        if (open)
         {
             for (int i = 0; i < getNumAlgorithms(); ++i)
             {
@@ -1468,21 +1694,62 @@ private:
         endCombo();
     }
 
-    //======================================================================
-    // row 2
-    //======================================================================
-    void drawInputCard(ImDrawList* dl)
+    // DECAY, SIZE and FREEZE, and below FREEZE the one switch the current engine
+    // adds: GATE on the Gated engine, TONAL CORRECTION on the Hall engine
+    // (gateApplies() / tonalCorrectionApplies(), the previous face's rules).
+    // Elsewhere neither is shown. The decay value lives in the display, beside
+    // the knob.
+    void drawTank(ImDrawList* dl)
     {
-        card(dl, kInputX0, kRow2Y0, kInputX1, kRow2Y1, "INPUT");
-        knobCell(dl, duskverb::Predelay, 150.0f, kRow2Cy, kKnobR, "PRE-DELAY");
-        knobCell(dl, duskverb::Saturation, 342.0f, kRow2Cy, kKnobR, "SATURATION");
+        const duskverb::ParamDesc& d = duskverb::paramDesc(duskverb::Decay);
+        const float lo = duskverb::knobMin(d), hi = duskverb::knobMax(d);
+        knobBody(dl, kHeroCx, kHeroCy, kHeroR, /*hero*/ true, /*inactive*/ false);
+        char decaySeed[48];
+        formatPlainValue(currentEngine(), duskverb::Decay, plainOf(duskverb::Decay), decaySeed, sizeof(decaySeed));
+        panel_.knob("##dvk_decay", (uint32_t)duskverb::Decay, lo, hi, kHeroCx, kHeroCy, kHeroR,
+                    values_[duskverb::Decay], duskverb::knobDefault(d),
+                    false, false, "%.2f", "", 0, true, false, tooltipFor(currentEngine(), duskverb::Decay),
+                    false, 1.0f, 0.0f, d.name, true, decaySeed, true, 0.0f, 0.0f,
+                    false, false, 9.5f, false, false,
+                    &knobToPlainCb, &plainToKnobCb, this, false, &parseKnobText);
+        const bool editing = panel_.isEditingValue("##dvk_decay");   // see knobCell()
+        const bool hot = !editing && (ImGui::IsItemActive() || ImGui::IsItemHovered());
+        if (!editing)
+            knobPointer(dl, kHeroCx, kHeroCy, kHeroR, knobT(duskverb::Decay), /*hero*/ true, hot, false);
+        duskdaf::spacedText(panel_, dl, kHeroCx, kHeroCy - kHeroR - kLegendGap, kTypeLegend,
+                            kTheme.legend, "DECAY", 0, kLegendTracking);
 
+        const float legendY = kHeroCy - kPrimaryR - kLegendGap;
+        knobCell(dl, duskverb::Size, kSizeCx, kHeroCy, kPrimaryR, legendY,
+                 kHeroCy + kPrimaryR + kValueGap, "SIZE");
+
+        ledButton(dl, "##dv_freeze", duskverb::Freeze, kSwitchCx, legendY, legendY + 38.0f, "FREEZE");
+        if (gateApplies())
+            ledButton(dl, "##dv_gate", duskverb::GateEnabled, kSwitchCx,
+                      legendY + 78.0f, legendY + 116.0f, "GATE");
+        else if (tonalCorrectionApplies())   // two lines: one does not fit the column at this size
+            ledButton(dl, "##dv_tonal", duskverb::TonalCorrection, kSwitchCx,
+                      legendY + 78.0f, legendY + 136.0f, "TONAL", "CORRECTION");
+    }
+
+    //======================================================================
+    // row B: INPUT | EARLY REFLECTIONS | MODULATION
+    //======================================================================
+    void drawInputSection(ImDrawList* dl)
+    {
+        bracket(dl, 0, 2, kRowB0, "INPUT");
+        // PRE-DELAY stays lit under SYNC: the DSP follows a note value only
+        // while the host supplies a tempo, and falls back to this knob otherwise,
+        // which the editor cannot see. The lit selector shows the mode instead.
         const int sync = std::clamp((int)std::lround(values_[duskverb::PredelaySync]), 0, 6);
-        dl->AddRectFilled(P(68, 237), P(424, 263), kStripBg, 4.0f * s_);
-        duskdaf::spacedText(panel_, dl, 78, 243, 16, sync != 0 ? kAccent : kLabelInk,
-                            sync != 0 ? "SYNC / FREE VALUE RETAINED" : "PRE-DELAY SYNC", -1, 0.06f);
-        if (beginCombo("##dv_sync", 308, 236, 424, 264,
-                       duskverb::kPreDelaySyncLabels[sync], kComboPx))
+        rowKnob(dl, duskverb::Predelay, 0, kRowB0, kPrimaryR, "PRE-DELAY");
+
+        const float cx = colX(1), cy = kRowB0 + kKnobDy;
+        duskdaf::spacedText(panel_, dl, cx, kRowB0 + kLegendDy, kTypeLegend, kTheme.legend,
+                            "SYNC", 0, kLegendTracking);
+        dl->AddRectFilled(P(cx - 53.0f, cy - 16.0f), P(cx + 53.0f, cy + 16.0f), kTheme.faceDeep, 4.0f * s_);
+        if (beginCombo("##dv_sync", cx - 50.0f, cy - 13.0f, cx + 50.0f, cy + 13.0f,
+                       duskverb::kPreDelaySyncLabels[sync], kTypeSmall, ComboSkin::Panel, sync != 0))
         {
             for (int i = 0; i < 7; ++i)
                 if (ImGui::Selectable(duskverb::kPreDelaySyncLabels[i], i == sync))
@@ -1492,125 +1759,74 @@ private:
                 }
         }
         endCombo();
+
+        rowKnob(dl, duskverb::Saturation, 2, kRowB0, kKnobR, "SATURATION");
     }
 
-    void drawFilterCard(ImDrawList* dl)
+    void drawEarlySection(ImDrawList* dl)
     {
-        card(dl, kFiltX0, 282, kFiltX1, 444, "FILTER");
-        knobCell(dl, duskverb::LoCut, 104, 394, kKnobSmallR, "LOW CUT");
-        knobCell(dl, duskverb::HiCut, 200, 394, kKnobSmallR, "HIGH CUT");
-        knobCell(dl, duskverb::MonoBelow, 296, 394, kKnobSmallR, "MONO BELOW", 18, 22, 0.03f);
-        knobCell(dl, duskverb::MonoBelowDepth, 392, 394, kKnobSmallR, "MONO DEPTH", 18, 22, 0.03f);
+        bracket(dl, 3, 5, kRowB0, "EARLY REFLECTIONS");
+        rowKnob(dl, duskverb::ErLevel, 3, kRowB0, kKnobR, "ER LEVEL");
+        rowKnob(dl, duskverb::ErSize,  4, kRowB0, kKnobR, "ER SIZE");
+        rowKnob(dl, duskverb::Diffusion, 5, kRowB0, kKnobR,
+                labelFor(currentEngine(), duskverb::Diffusion, "DIFFUSION"));
     }
 
-    void drawOutputCard(ImDrawList* dl)
-    {
-        card(dl, kOutX0, kRow2Y0, kOutX1, kRow2Y1, "OUTPUT");
-        knobCell(dl, duskverb::Mix, 866.0f, kRow2Cy, kKnobR, "DRY / WET");
-        knobCell(dl, duskverb::Width, 976.0f, kRow2Cy, kKnobR, "WIDTH");
-        knobCell(dl, duskverb::GainTrim, 1086.0f, kRow2Cy, kKnobR, "TRIM");
-        switchStrip(dl, "##dv_bus", duskverb::BusMode, kOutX0 + 16.0f, 238.0f,
-                    kOutX1 - 16.0f, 263.0f, values_[duskverb::BusMode] > 0.5f ? "BUS / 100% WET" : "BUS");
-    }
-
-    //======================================================================
-    // row 3
-    //======================================================================
-    void drawDampingCard(ImDrawList* dl)
-    {
-        card(dl, kDampX0, kRow3Y0, kDampX1, kRow3Y1, "DAMPING");
-        // Five evenly spaced controls share the full-width damping section.
-        const float lp = kLabelSmallPx, vp = kValueSmallPx, tr = 0.07f;
-        knobCell(dl, duskverb::BassMult,      160.0f, kRow3Cy, kKnobDampR, "BASS MULT",   lp, vp, tr);
-        knobCell(dl, duskverb::MidMult,       315.0f, kRow3Cy, kKnobDampR, labelFor(currentEngine(), duskverb::MidMult, "MID MULT"), lp, vp, tr);
-        knobCell(dl, duskverb::Damping,       470.0f, kRow3Cy, kKnobDampR, "TREBLE MULT", lp, vp, tr);
-        knobCell(dl, duskverb::Crossover,     625.0f, kRow3Cy, kKnobDampR, "LOW XOVER",   lp, vp, tr);
-        knobCell(dl, duskverb::HighCrossover, 780.0f, kRow3Cy, kKnobDampR, "HIGH XOVER",  lp, vp, tr);
-
-        // Only the Hall engines run the octave feedback network this corrects,
-        // so it is hidden everywhere else rather than shown as a dead switch.
-        if (tonalCorrectionApplies())
-            switchStrip(dl, "##dv_tonal", duskverb::TonalCorrection,
-                        885.0f, 532.0f, 1128.0f, 570.0f, "TONAL CORRECTION");
-    }
-
-    void drawTimeCard(ImDrawList* dl)
-    {
-        card(dl, kTimeX0, 201, kTimeX1, 444, nullptr);
-
-        duskdaf::spacedText(panel_, dl, kHeroCx, kHeroCy - kHeroR - 39.0f, kLabelPx + 1.0f,
-                            kValueInk, "DECAY", 0, 0.18f);
-        const duskverb::ParamDesc& d = duskverb::paramDesc(duskverb::Decay);
-        const float lo = duskverb::knobMin(d), hi = duskverb::knobMax(d);
-        const float t = std::clamp((values_[duskverb::Decay] - lo) / (hi - lo), 0.0f, 1.0f);
-        knobArt(dl, kHeroCx, kHeroCy, kHeroR, t, true);
-        char decaySeed[48];
-        formatPlainValue(currentEngine(), duskverb::Decay, plainOf(duskverb::Decay), decaySeed, sizeof(decaySeed));
-        ImGui::SetCursorScreenPos(P(kHeroCx - 78.0f, kHeroCy + kHeroR + 15.0f));
-        ImGui::InvisibleButton("##decay_value_entry", ImVec2(156.0f * s_, 40.0f * s_));
-        if (ImGui::IsItemClicked()) panel_.openValueEdit("##dvk_decay", values_[duskverb::Decay], decaySeed);
-        if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_TextInput);
-        panel_.knob("##dvk_decay", (uint32_t)duskverb::Decay, lo, hi, kHeroCx, kHeroCy, kHeroR,
-                    values_[duskverb::Decay], duskverb::knobDefault(d),
-                    false, false, "%.2f", "", 0, true, false, tooltipFor(currentEngine(), duskverb::Decay),
-                    false, 1.0f, 0.0f, d.name, true, decaySeed, true, 0.0f, 0.0f,
-                    false, false, 9.5f, false, false,
-                    &knobToPlainCb, &plainToKnobCb, this, false, &parseKnobText);
-
-        char number[24], unit[8];
-        formatDecayParts(plainOf(duskverb::Decay), number, sizeof(number), unit, sizeof(unit));
-        const float numW  = textWidth(valueFonts_, kHeroValuePx, number);
-        ImFont* small = panel_.pickFont(kHeroUnitPx * s_);
-        const float unitW = small->CalcTextSizeA(kHeroUnitPx * s_, FLT_MAX, 0.0f, unit).x / s_;
-        const float totalW = numW + 6.0f + unitW;
-        const float valueY = kHeroCy + kHeroR + 20.0f;
-        valueText(dl, kHeroCx - totalW * 0.5f, valueY, kHeroValuePx, kAccent, number, -1);
-        panel_.text(dl, kHeroCx - totalW * 0.5f + numW + 6.0f,
-                    valueY + kHeroValuePx - kHeroUnitPx - 3.0f,
-                    kHeroUnitPx, fade(kAccent, 0.78f), unit, -1, true);
-
-        knobCell(dl, duskverb::Size, 710.0f, 318.0f, kKnobR, "SIZE");
-
-        // FREEZE owns the bottom strip; on the Gated engine it shares the row
-        // with the gate switch, which is dead on every other engine and so is
-        // not shown there.
-        if (gateApplies())
-        {
-            switchStrip(dl, "##dv_freeze", duskverb::Freeze, 657.0f, 372.0f, 772.0f, 401.0f, "FREEZE");
-            switchStrip(dl, "##dv_gate", duskverb::GateEnabled, 657.0f, 407.0f, 772.0f, 436.0f, "GATE");
-        }
-        else
-        {
-            switchStrip(dl, "##dv_freeze", duskverb::Freeze, 657.0f, 386.0f, 772.0f, 421.0f, "FREEZE");
-        }
-    }
-
-    void drawEarlyCard(ImDrawList* dl)
-    {
-        card(dl, kErX0, 282, kErX1, 444, "EARLY REFLECTIONS");
-        knobCell(dl, duskverb::ErLevel,   866.0f, 402.0f, kKnobErR, "ER LEVEL");
-        knobCell(dl, duskverb::ErSize,    976.0f, 402.0f, kKnobErR, "ER SIZE");
-        knobCell(dl, duskverb::Diffusion, 1086.0f, 402.0f, kKnobErR, labelFor(currentEngine(), duskverb::Diffusion, "DIFFUSION"));
-    }
-
-    //======================================================================
-    // row 4
-    //======================================================================
-    void drawModulationCard(ImDrawList* dl)
+    void drawModulationSection(ImDrawList* dl)
     {
         // Re-titled GATE on the Gated engine, where these two knobs are the
         // gate's ATTACK and RELEASE (the JUCE editor does the same).
-        card(dl, kModX0, kRow4Y0, kModX1, kRow4Y1, gateApplies() ? "GATE" : "MODULATION");
-        knobCell(dl, duskverb::ModDepth, 172.0f, kRow4Cy, 30.0f, labelFor(currentEngine(), duskverb::ModDepth, "DEPTH"));
-        knobCell(dl, duskverb::ModRate,  340.0f, kRow4Cy, 30.0f, labelFor(currentEngine(), duskverb::ModRate, "RATE"));
+        bracket(dl, 6, 7, kRowB0, gateApplies() ? "GATE" : "MODULATION");
+        rowKnob(dl, duskverb::ModDepth, 6, kRowB0, kKnobR,
+                labelFor(currentEngine(), duskverb::ModDepth, "DEPTH"));
+        rowKnob(dl, duskverb::ModRate, 7, kRowB0, kKnobR,
+                labelFor(currentEngine(), duskverb::ModRate, "RATE"));
     }
 
-    void drawMacroCard(ImDrawList* dl)
+    //======================================================================
+    // row C: DAMPING | MACRO
+    //======================================================================
+    void drawDampingSection(ImDrawList* dl)
     {
-        card(dl, kMacroX0, kRow4Y0, kMacroX1, kRow4Y1, "MACRO");
-        knobCell(dl, duskverb::Tone,      636.0f, kRow4Cy, 30.0f, "TONE");
-        knobCell(dl, duskverb::Character, 819.0f, kRow4Cy, 30.0f, "CHARACTER");
-        knobCell(dl, duskverb::Duck,      1002.0f, kRow4Cy, 30.0f, "DUCK");
+        bracket(dl, 0, 4, kRowC0, "DAMPING");
+        rowKnob(dl, duskverb::BassMult,      0, kRowC0, kKnobR, "BASS MULT");
+        rowKnob(dl, duskverb::MidMult,       1, kRowC0, kKnobR,
+                labelFor(currentEngine(), duskverb::MidMult, "MID MULT"));
+        rowKnob(dl, duskverb::Damping,       2, kRowC0, kKnobR, "TREBLE MULT");
+        rowKnob(dl, duskverb::Crossover,     3, kRowC0, kKnobR, "LOW XOVER");
+        rowKnob(dl, duskverb::HighCrossover, 4, kRowC0, kKnobR, "HIGH XOVER");
+    }
+
+    void drawMacroSection(ImDrawList* dl)
+    {
+        bracket(dl, 5, 7, kRowC0, "MACRO");
+        rowKnob(dl, duskverb::Tone,      5, kRowC0, kKnobR, "TONE");
+        rowKnob(dl, duskverb::Character, 6, kRowC0, kKnobR, "CHARACTER");
+        rowKnob(dl, duskverb::Duck,      7, kRowC0, kKnobR, "DUCK");
+    }
+
+    //======================================================================
+    // row D: FILTER | OUTPUT
+    //======================================================================
+    void drawFilterSection(ImDrawList* dl)
+    {
+        bracket(dl, 0, 3, kRowD0, "FILTER");
+        rowKnob(dl, duskverb::LoCut,          0, kRowD0, kKnobR, "LOW CUT");
+        rowKnob(dl, duskverb::HiCut,          1, kRowD0, kKnobR, "HIGH CUT");
+        rowKnob(dl, duskverb::MonoBelow,      2, kRowD0, kKnobR, "MONO BELOW");
+        rowKnob(dl, duskverb::MonoBelowDepth, 3, kRowD0, kKnobR, "MONO DEPTH");
+    }
+
+    void drawOutputSection(ImDrawList* dl)
+    {
+        bracket(dl, 4, 7, kRowD0, "OUTPUT");
+        // BUS outputs 100% wet whatever DRY / WET says, so that knob greys
+        // while BUS is on.
+        const bool bus = values_[duskverb::BusMode] > 0.5f;
+        rowKnob(dl, duskverb::Width,    4, kRowD0, kKnobR, "WIDTH");
+        rowKnob(dl, duskverb::Mix,      5, kRowD0, kPrimaryR, "DRY / WET", bus);
+        rowKnob(dl, duskverb::GainTrim, 6, kRowD0, kKnobR, "TRIM");
+        ledButton(dl, "##dv_bus", duskverb::BusMode, colX(7), kRowD0 + kLegendDy, kRowD0 + kKnobDy, "BUS");
     }
 
     //======================================================================
@@ -1647,16 +1863,16 @@ private:
 
     void drawHelpOverlay(ImDrawList* dl, float winW, float winH)
     {
-        dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), IM_COL32(8, 11, 16, 228));
+        dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), fade(kTheme.well, 0.90f));
         // No input blocker here: it is submitted with the other modal blockers
         // before the controls, because an InvisibleButton submitted at this
         // point loses ImGui's hover race to the already-submitted knobs.
 
         const float px0 = 230.0f, py0 = 96.0f, px1 = 970.0f, py1 = 716.0f;
         const float cx = 0.5f * (px0 + px1);
-        dl->AddRectFilled(P(px0, py0), P(px1, py1), IM_COL32(0x14, 0x19, 0x22, 246), 10.0f * s_);
-        dl->AddRect(P(px0, py0), P(px1, py1), fade(kAccent, 0.45f), 10.0f * s_, 0, 1.2f * s_);
-        duskdaf::spacedText(panel_, dl, cx, py0 + 16.0f, 24.0f, kValueInk, "DUSKVERB 2", 0, 0.20f);
+        dl->AddRectFilled(P(px0, py0), P(px1, py1), kTheme.faceDeep, 8.0f * s_);
+        dl->AddRect(P(px0, py0), P(px1, py1), buttonEdge(), 8.0f * s_, 0, s_);
+        label(dl, cx, py0 + 18.0f, kTypeTitle, kTheme.value, "DUSKVERB 2", 0);
 
         struct Row { const char* key; const char* text; };
         static const Row left[] = {
@@ -1679,27 +1895,27 @@ private:
             { "Right-click a user preset", "Delete it" },
             { "A / B",         "Switch complete sound snapshots" },
             { "COPY",          "Copy active sound to the other slot" },
-            { "Click DUSKVERB", "Supporters" },
+            { "Click the nameplate", "Supporters" },
             { "?  or Shift + /", "Show or hide this" },
         };
-        const float top = py0 + 56.0f, lineH = 26.0f;
+        const float top = py0 + 60.0f, lineH = 28.0f;
         for (int i = 0; i < (int)(sizeof(left) / sizeof(left[0])); ++i)
         {
-            panel_.text(dl, cx - 24.0f, top + (float)i * lineH, 18.0f, kAccent, left[i].key, 1, true);
-            valueText(dl, cx - 14.0f, top + (float)i * lineH, kComboPx, kLabelInk, left[i].text, -1);
+            label(dl, cx - 24.0f, top + (float)i * lineH, kTypeLegend, kTheme.value, left[i].key, 1);
+            valueText(dl, cx - 14.0f, top + (float)i * lineH, kTypeLegend, kTheme.legend, left[i].text, -1);
         }
         const float top2 = top + 8.0f * lineH;
         for (int i = 0; i < (int)(sizeof(right) / sizeof(right[0])); ++i)
         {
-            panel_.text(dl, cx - 24.0f, top2 + (float)i * lineH, 18.0f, kAccent, right[i].key, 1, true);
-            valueText(dl, cx - 14.0f, top2 + (float)i * lineH, kComboPx, kLabelInk, right[i].text, -1);
+            label(dl, cx - 24.0f, top2 + (float)i * lineH, kTypeLegend, kTheme.value, right[i].key, 1);
+            valueText(dl, cx - 14.0f, top2 + (float)i * lineH, kTypeLegend, kTheme.legend, right[i].text, -1);
         }
 
-        valueText(dl, cx, py1 - 62.0f, kComboPx, kDim,
-                  "GATE appears on the Gated engine; TONAL CORRECTION on the Hall engines.", 0);
-        valueText(dl, cx, py1 - 44.0f, kComboPx, kDim,
+        valueText(dl, cx, py1 - 80.0f, kTypeLegend, kTheme.legendDim,
+                  "GATE appears on the Gated engine; TONAL CORRECTION on the Hall engine.", 0);
+        valueText(dl, cx, py1 - 56.0f, kTypeLegend, kTheme.legendDim,
                   "MONO DEPTH is always visible in FILTER. COPY preserves the active slot.", 0);
-        valueText(dl, cx, py1 - 24.0f, 14.0f, kDim,
+        valueText(dl, cx, py1 - 28.0f, kTypeSmall, kTheme.legendDim,
                   "Press any key to dismiss", 0);
     }
 
@@ -1719,17 +1935,26 @@ private:
     ImFont* comboFont_ = nullptr;
     ImFont* modalFont_ = nullptr;
     bool    comboOpen_ = false;
+    bool    comboRowInk_ = false;
+    ImFont* comboRowFont_ = nullptr;
+    int     comboColors_ = 0;
     duskdaf::DuskImGuiTextInputFocus textInputFocus_;
     duskdaf::SupportersOverlay supporters_;
 
     duskdaf::LedLadderStyle meterStyle_ = [] {
         duskdaf::LedLadderStyle st;
-        // Full-body rails extend beside Modulation/Macro. A finer ladder keeps
-        // the long meters readable while the colour zones stay
-        // at the same FRACTIONS of the scale (see DuskLedMeter.hpp).
+        // Full-body rails: a finer ladder keeps the long meters readable while
+        // the colour zones stay at the same FRACTIONS of the scale (see
+        // DuskLedMeter.hpp). The zones take the panel's LED colours, unbloomed.
         st.segments = 24;
         st.gap = 2.0f;
-        st.rounding = 1.5f;
+        st.rounding = 1.0f;
+        st.glow = false;
+        const auto zone = [](ImU32 lit)
+        { return duskdaf::LedLadderColors{ lit, blend(kTheme.well, lit, 0.11f), lit }; };
+        st.greenZone  = zone(kTheme.signal);
+        st.yellowZone = zone(kTheme.amber);
+        st.redZone    = zone(kTheme.alarm);
         return st;
     }();
     duskdaf::LedLadder inMeter_, outMeter_;
