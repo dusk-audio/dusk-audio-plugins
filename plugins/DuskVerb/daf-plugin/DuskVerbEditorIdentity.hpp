@@ -22,6 +22,8 @@ struct EditorIdentity
     std::string userName;        // user preset name, empty for none
     std::string userPath;        // the library file the preset list highlights
     std::string userPathName;    // the name userPath was loaded or saved under
+    std::string presetName;      // the factory identity the sound carries (a user preset keeps
+                                 // the one it was made from); the DSP's engine config follows it
     bool        modified = false;
 
     // Adopt the identity a state snapshot carries: its user preset name, else
@@ -29,6 +31,7 @@ struct EditorIdentity
     void adopt(const StateValues& state)
     {
         userName = state.userName;
+        presetName = state.presetName;
         // The highlighted library file belongs to the name it was loaded or
         // saved under. Any other identity arriving here (a host restore, an A/B
         // swap, a factory program) is not that file, so stop highlighting it.
@@ -60,6 +63,7 @@ struct EditorIdentity
         }
         if (index < 0 || index >= static_cast<int>(getFactoryPresets().size())) return;
         factory = index;
+        presetName = getFactoryPresets()[static_cast<size_t>(index)].name;
         userName.clear();
         userPath.clear();
         modified = false;

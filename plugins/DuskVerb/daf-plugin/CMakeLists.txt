@@ -165,6 +165,20 @@ enable_testing()
     endif()
     add_test(NAME DuskVerbCore COMMAND DuskVerbCoreTest)
 
+    add_executable(DuskVerbTonalCorrectionTest
+        DuskVerbTonalCorrectionTests.cpp
+        ../core/DuskVerbDSP.cpp
+        ../core/DuskVerbPresetEngineConfig.cpp
+        ${DUSKVERB_ENGINE_SOURCES})
+    target_include_directories(DuskVerbTonalCorrectionTest PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../core"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+    target_compile_features(DuskVerbTonalCorrectionTest PRIVATE cxx_std_17)
+    if(NOT MSVC)
+        target_compile_options(DuskVerbTonalCorrectionTest PRIVATE -O2)
+    endif()
+    add_test(NAME DuskVerbTonalCorrection COMMAND DuskVerbTonalCorrectionTest)
 
     add_executable(DuskVerbPluginLayerTest
         DuskVerbPluginLayerTests.cpp

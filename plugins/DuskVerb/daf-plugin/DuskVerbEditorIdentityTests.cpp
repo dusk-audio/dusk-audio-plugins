@@ -78,12 +78,26 @@ int main()
         id.userFileOpened("/library/Mine.dvpreset");
         id.programLoaded(3, nullptr);
         check(id.factory == 3 && id.userName.empty() && id.userPath.empty() && !id.modified
-                  && previewIs(id, presets[3].name),
+                  && id.presetName == presets[3].name && previewIs(id, presets[3].name),
               "a host program change without a bridge adopts the index");
         id.programLoaded(static_cast<int>(presets.size()), nullptr);
         check(id.factory == 3, "an index past the end changes nothing");
         id.programLoaded(-1, nullptr);
         check(id.factory == 3, "a negative index changes nothing");
+    }
+
+    // A user preset names itself in the header but keeps the factory identity it
+    // was made from, which is what the DSP's engine config (and so TONAL
+    // CORRECTION's visibility) follows.
+    {
+        EditorIdentity id;
+        auto mine = userSound("Mine");
+        mine.presetName = presets[4].name;
+        id.adopt(mine);
+        check(id.factory == -1 && id.userName == "Mine" && id.presetName == presets[4].name,
+              "a user preset keeps its factory identity");
+        id.adopt(duskverb::makeDefaultState());
+        check(id.presetName.empty(), "INIT clears the factory identity");
     }
 
     // The highlighted library file follows the name it was opened under.

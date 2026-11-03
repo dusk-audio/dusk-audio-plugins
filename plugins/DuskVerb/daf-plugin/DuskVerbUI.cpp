@@ -41,6 +41,7 @@
 #include "DafUI.hpp"
 #include "DuskVerbAccess.hpp"
 #include "DuskVerbEditorIdentity.hpp"
+#include "DuskVerbTonalCorrection.hpp"
 #include "DuskVerbFormat.hpp"
 #include "DuskVerbPresetImport.hpp"
 #include "DuskVerbVersion.hpp"
@@ -259,9 +260,10 @@ namespace
                 return "Reverb space. Switching here changes the DSP\n"
                        "without overwriting your knob values.";
             case duskverb::TonalCorrection:
-                return "Hall engines only: flattens the decay-coupled steady-state energy of the\n"
-                       "octave feedback network. Helps a space whose tail has drifted bright\n"
-                       "or dark; off is the as-voiced preset.";
+                return "Flattens the decay-coupled steady-state energy of the octave feedback\n"
+                       "network. Helps a space whose tail has drifted bright or dark; off is the\n"
+                       "as-voiced preset. Shown only where it acts: the Vocal Plate, Ambience and\n"
+                       "Tiled Room sounds on the Hall and Tiled Room engines.";
             default:
                 return duskverb::paramDesc(p).name;
         }
@@ -679,10 +681,11 @@ private:
     }
 
     bool gateApplies() const { return currentEngine() == EngineType::NonLinear; }
+    // Where the switch changes the sound: an engine that runs the AccurateHall
+    // tank, with a preset identity that installs its octave decay curve.
     bool tonalCorrectionApplies() const
     {
-        const EngineType e = currentEngine();
-        return e == EngineType::AccurateHall || e == EngineType::AccurateHall32;
+        return duskverb::ui::tonalCorrectionActs(currentEngine(), identity_.presetName);
     }
 
     // A panel edit does NOT throw the preset name away. The JUCE editor kept it,
@@ -1696,10 +1699,10 @@ private:
     }
 
     // DECAY, SIZE and FREEZE, and below FREEZE the one switch the current engine
-    // adds: GATE on the Gated engine, TONAL CORRECTION on the Hall engine
-    // (gateApplies() / tonalCorrectionApplies(), the previous face's rules).
-    // Elsewhere neither is shown. The decay value lives in the display, beside
-    // the knob.
+    // adds: GATE on the Gated engine (gateApplies()), TONAL CORRECTION wherever
+    // the switch changes the sound (tonalCorrectionApplies(), measured and held
+    // to the DSP by DuskVerbTonalCorrectionTests). Elsewhere neither is shown.
+    // The decay value lives in the display, beside the knob.
     void drawTank(ImDrawList* dl)
     {
         const duskverb::ParamDesc& d = duskverb::paramDesc(duskverb::Decay);
@@ -1913,7 +1916,7 @@ private:
         }
 
         valueText(dl, cx, py1 - 80.0f, kTypeLegend, kTheme.legendDim,
-                  "GATE appears on the Gated engine; TONAL CORRECTION on the Hall engine.", 0);
+                  "GATE shows on the Gated engine; TONAL CORRECTION only where it acts.", 0);
         valueText(dl, cx, py1 - 56.0f, kTypeLegend, kTheme.legendDim,
                   "MONO DEPTH is always visible in FILTER. COPY preserves the active slot.", 0);
         valueText(dl, cx, py1 - 28.0f, kTypeSmall, kTheme.legendDim,
