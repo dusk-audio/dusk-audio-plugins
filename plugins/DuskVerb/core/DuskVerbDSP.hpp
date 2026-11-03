@@ -108,9 +108,11 @@ public:
     // resets that engine config to defaults, so a preset previously applied to
     // this reused instance cannot leak into the restored session.
     //
-    // This is the JUCE setStateInformation() behaviour exactly, including the
-    // consequence that a matched preset's applyEngineConfig() re-asserts the
-    // PRESET's SixAP brightness over the state's at swap time.
+    // One deliberate difference from JUCE's setStateInformation(): there, a
+    // matched preset's applyEngineConfig() re-asserts the PRESET's SixAP
+    // brightness over the state's at swap time. Here performPresetSwap()
+    // pushes the state's SixAP values after applyEngineConfig(), so a restored
+    // custom snapshot keeps its own.
     void restorePresetIdentity (const FactoryPreset* preset);
 
     const FactoryPreset* lastAppliedPreset() const noexcept
