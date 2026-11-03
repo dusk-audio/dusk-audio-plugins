@@ -56,9 +56,6 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <iomanip>
-#include <locale>
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -238,11 +235,6 @@ namespace
         }
     }
 
-    // DuskPanel::knob gesture domain (the knob domain: JUCE-skew normalised for
-    // tapered parameters, plain otherwise) -> printed value, and back for typed
-    // entry. The printed value is what the DSP receives for that knob position
-    // (knob -> plain host value -> the JUCE quantisation chain), so the read-out
-    // cannot disagree with the sound.
     ImU32 fade(ImU32 c, float amount) { return duskdaf::scaleAlpha(c, amount); }
 
     ImU32 blend(ImU32 a, ImU32 b, float t)
@@ -537,7 +529,6 @@ private:
     // small helpers
     //======================================================================
     ImVec2 P(float x, float y) const { return ImVec2(org_.x + x * s_, org_.y + y * s_); }
-    float  sc() const { return s_; }
 
     void label(ImDrawList* dl, float x, float y, float size, ImU32 col,
                const char* txt, int align) const
@@ -589,9 +580,8 @@ private:
     // Flags the preset as edited for the same reason ParamHost::setParam does — a
     // switch, an engine change or a sync division the user moved means the panel
     // is no longer exactly the preset it names. The recall paths (a factory
-    // preset, a user preset, INIT, an A/B swap) all drive this in a loop and then
-    // set the identity they want AFTERWARDS, clearing the flag, so they are
-    // unaffected by it being raised here.
+    // preset, a user preset, INIT, an A/B swap) do not come through here: they
+    // go through recallSnapshot(), which sets the identity and the flag whole.
     void setP(int p, float knobValue)
     {
         if (p < 0 || p >= duskverb::kNumParams || !std::isfinite(knobValue))
@@ -605,16 +595,6 @@ private:
         editParameter((uint32_t)p, false);
     }
 
-    void setPlain(int p, float plainValue)
-    {
-        setP(p, duskverb::plainToKnob(duskverb::paramDesc(p), plainValue));
-    }
-
-    // A parameter a preset, INIT or an A/B swap is allowed to move. Bypass is
-    // the host's, never a preset's — recalling a preset must not un-bypass the
-    // plugin, and neither must swapping snapshots.
-    static bool isRecallable(int p) { return p != duskverb::Bypass; }
-
     EngineType currentEngine() const
     {
         int idx = (int)std::lround(values_[duskverb::Algorithm]);
@@ -622,6 +602,11 @@ private:
         return getAlgorithmConfig(idx).engine;
     }
 
+    // DuskPanel::knob gesture domain (the knob domain: JUCE-skew normalised for
+    // tapered parameters, plain otherwise) -> printed value, and back for typed
+    // entry. The printed value is what the DSP receives for that knob position
+    // (knob -> plain host value -> the JUCE quantisation chain), so the read-out
+    // cannot disagree with the sound.
     static float knobToPlainCb(float knob, uint32_t param, void* context)
     {
         auto& ui = *static_cast<DuskVerbUI*>(context);
@@ -657,15 +642,6 @@ private:
     // here" that the chevrons depend on. The name is flagged instead, and the
     // combo and the header print "<name> *" until a recall clears the flag.
     void markPresetModified() { presetModified_ = true; }
-
-    // The genuine "nothing is loaded" state: only INIT and a failed recall.
-    void clearPresetIdentity()
-    {
-        currentPreset_ = -1;
-        currentUserName_.clear();
-        currentUserPath_.clear();
-        presetModified_ = false;
-    }
 
     // Preview text for the header combo: the factory name, else the user preset
     // name, else nothing loaded — with a trailing marker while edited.
