@@ -139,10 +139,9 @@ int main()
               && out.params[Algorithm] == static_cast<float>(algorithm) && out.userName == "My Hall");
         // Saved after JUCE restored an old v2 session: setStateInformation had
         // already migrated the index and left stateVersion=2 in parameters.state.
-        // This fixture writes bass_choke with a value. JUCE writes a parameter
-        // the restored tree did not contain (left at its default) as a bare
-        // PARAM, which the importer rejects (see the note at its engine-order
-        // rule).
+        // This fixture writes bass_choke with a value; JUCE writes a parameter
+        // the restored tree did not contain as a bare PARAM, which the
+        // restoredV2File cases below cover.
         CHECK(decodeJucePreset(userPresetFile(" stateVersion=\"2\"", algorithm), out)
               && out.params[Algorithm] == static_cast<float>(algorithm));
     }
@@ -174,6 +173,127 @@ int main()
                             "sixAPDensityBaseline=\"&broken;\"");
     CHECK(!decodeJucePreset(malformedConfig, sentinel) && same(sentinel, untouched));
     CHECK(!decodeJucePreset("<!DOCTYPE x><DuskVerb/>", sentinel));
+    // Anything an importer accepts must survive the state codec unchanged: the
+    // editor mirrors what it recalls, so a state the codec refuses would show a
+    // sound and a name the plugin never took.
+    const auto codecKeeps = [](const StateValues& s) {
+        StateValues back = makeDefaultState();
+        return decodeState(encodeState(s), back) && same(s, back);
+    };
+    CHECK(decodeJucePreset(userPresetFile("", 3), out) && codecKeeps(out));
+    CHECK(decodeUserPreset("name=Header Name\n" + good, out) && codecKeeps(out));
+
+    // The file JUCE really writes after restoring an old v2 session: a parameter
+    // the restored tree did not contain is a bare <PARAM id=.../> (JUCE leaves it
+    // at its default and never flushes a value), and JUCE loads it as that
+    // default. setStateInformation already migrated the engine index, so it
+    // imports unchanged.
+    const auto inV2Tree = [](int i) {
+        switch (i)
+        {
+        case Algorithm: case Decay: case Predelay: case Size: case Damping: case BassMult:
+        case Crossover: case Diffusion: case ModDepth: case ModRate: case ErLevel: case ErSize:
+        case Mix: case LoCut: case HiCut: case Width: case Freeze: case PredelaySync: case BusMode:
+        case Bypass: case MidMult: case HighCrossover: case Saturation: case GainTrim: case MonoBelow:
+        case GateEnabled:
+            return true;
+        default:
+            return false;
+        }
+    };
+    const auto restoredV2File = [&](int algorithm) {
+        std::string file = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\n<DuskVerb stateVersion=\"2\""
+                           " presetName=\"Old Session\" pluginName=\"DuskVerb\">\n";
+        for (int i = 0; i < kNumParams; ++i)
+        {
+            file += "  <PARAM id=\"" + std::string(paramDesc(i).id) + "\"";
+            if (inV2Tree(i))
+                file += " value=\"" + (i == Algorithm ? std::to_string(algorithm) + ".0"
+                                                      : std::to_string(paramDesc(i).def)) + "\"";
+            file += "/>\n";
+        }
+        return file + "</DuskVerb>\n";
+    };
+    const StateValues defaults = makeDefaultState();
+    for (int algorithm = 0; algorithm < paramDesc(Algorithm).enumCount; ++algorithm)
+    {
+        CHECK(decodeJucePreset(restoredV2File(algorithm), out)
+              && out.params[Algorithm] == static_cast<float>(algorithm)
+              && out.params[BassChoke] == defaults.params[BassChoke]
+              && out.params[TonalCorrection] == defaults.params[TonalCorrection]
+              && out.userName == "Old Session" && codecKeeps(out));
+        // bass_choke present only as a bare element still marks the new engine
+        // order: reading presence from the value would migrate an index JUCE has
+        // already migrated.
+        std::string bareChoke = userPresetFile("", algorithm);
+        const size_t at = bareChoke.find("<PARAM id=\"bass_choke\" value=\"");
+        bareChoke.replace(at, bareChoke.find("/>", at) - at, "<PARAM id=\"bass_choke\"");
+        CHECK(decodeJucePreset(bareChoke, out) && out.params[Algorithm] == static_cast<float>(algorithm));
+    }
+    // JUCE stamps the current stateVersion on save but never flushes a value
+    // into a bare PARAM, so reopening a restored v2 session and saving it gives
+    // stateVersion 4 with bare PARAMs. Version 4 requires all 92 parameters, so
+    // a bare one must count as present.
+    for (int algorithm : {0, 3, 10})
+    {
+        std::string v4 = restoredV2File(algorithm);
+        v4.replace(v4.find("stateVersion=\"2\""), std::strlen("stateVersion=\"2\""), "stateVersion=\"4\"");
+        CHECK(decodeJucePreset(v4, out) && out.params[Algorithm] == static_cast<float>(algorithm)
+              && out.params[TonalCorrection] == defaults.params[TonalCorrection] && codecKeeps(out));
+    }
+    {
+        // A bare algorithm is its default, which is already in the new engine
+        // order: only a valued index is migrated, even without bass_choke.
+        std::string bareAlgorithm = userPresetFile("", 3);
+        size_t at = bareAlgorithm.find("<PARAM id=\"bass_choke\"");
+        bareAlgorithm.erase(at, bareAlgorithm.find('\n', at) + 1 - at);
+        at = bareAlgorithm.find("<PARAM id=\"algorithm\" value=\"");
+        bareAlgorithm.replace(at, bareAlgorithm.find("/>", at) - at, "<PARAM id=\"algorithm\"");
+        CHECK(decodeJucePreset(bareAlgorithm, out) && out.params[Algorithm] == defaults.params[Algorithm]);
+    }
+    {
+        // Still refused: a parameter twice (bare and valued), an unknown bare id,
+        // an empty value (not the same as no value), and a PARAM whose value
+        // attribute is misspelled: bare means exactly <PARAM id="..."/>.
+        std::string twice = userPresetFile("", 3);
+        twice.insert(twice.find("</DuskVerb>"), "  <PARAM id=\"mix\"/>\n");
+        CHECK(!decodeJucePreset(twice, sentinel) && same(sentinel, untouched));
+        std::string unknown = userPresetFile("", 3);
+        unknown.insert(unknown.find("</DuskVerb>"), "  <PARAM id=\"no_such_parameter\"/>\n");
+        CHECK(!decodeJucePreset(unknown, sentinel) && same(sentinel, untouched));
+        std::string empty = userPresetFile("", 3);
+        const size_t at = empty.find("<PARAM id=\"mix\" value=\"");
+        empty.replace(at, empty.find("/>", at) - at, "<PARAM id=\"mix\" value=\"\"");
+        CHECK(!decodeJucePreset(empty, sentinel) && same(sentinel, untouched));
+        for (const char* misspelled : {"valeu", "Value"})
+        {
+            std::string typo = userPresetFile("", 3);
+            const size_t m = typo.find("<PARAM id=\"mix\" value=\"");
+            typo.replace(m + std::strlen("<PARAM id=\"mix\" "), 5, misspelled);
+            CHECK(!decodeJucePreset(typo, sentinel) && same(sentinel, untouched));
+        }
+    }
+
+    // A user name is printable text. The state codec refuses a control byte or
+    // DEL, so every importer refuses one too.
+    for (const char* bad : {"My\x01Hall", "My\tHall", "My\x7fHall"})
+    {
+        std::string juce = userPresetFile("", 3);
+        juce.replace(juce.find("presetName=\"My Hall\""), std::strlen("presetName=\"My Hall\""),
+                     std::string("presetName=\"") + bad + "\"");
+        CHECK(!decodeJucePreset(juce, sentinel) && same(sentinel, untouched));
+        CHECK(!decodeUserPreset(std::string("name=") + bad + "\n" + good, sentinel) && same(sentinel, untouched));
+    }
+    {
+        // The older key=value .dvpreset layout carries its name the same way.
+        std::string legacy = "name=Bad\x02Name\n";
+        for (int i = 0; i < kNumParams; ++i)
+            if (i != Bypass)
+                legacy += std::string(paramDesc(i).id) + "=" + std::to_string(paramDesc(i).def) + "\n";
+        CHECK(!decodeUserPreset(legacy, sentinel) && same(sentinel, untouched));
+        legacy.replace(0, legacy.find('\n'), "name=Good Name");
+        CHECK(decodeUserPreset(legacy, out) && out.userName == "Good Name" && codecKeeps(out));
+    }
     std::printf("codec tests: %s\n", failures == 0 ? "PASS" : "FAIL");
     return failures == 0 ? 0 : 1;
 }

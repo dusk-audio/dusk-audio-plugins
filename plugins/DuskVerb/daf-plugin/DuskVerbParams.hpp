@@ -217,6 +217,17 @@ inline std::string encodeState(const StateValues& v)
     return state;
 }
 
+// A user preset name is printable text: no C0 control byte and no DEL. The
+// state codec refuses anything else, so every decoder that fills userName
+// checks the same rule; otherwise the editor would mirror a recalled name (and
+// sound) the plugin then refused.
+inline bool validUserName(std::string_view name) noexcept
+{
+    for (unsigned char c : name)
+        if (c < 0x20 || c == 0x7f) return false;
+    return true;
+}
+
 // Complete-set transactional decoder: `out` is untouched unless every
 // parameter key appears exactly once with a finite, in-range value. A
 // half-applied state is worse than a rejected one.
@@ -263,8 +274,7 @@ inline bool decodeState(std::string_view state, StateValues& out) noexcept
         {
             if (userSeen || !decodeHexText(value, decoded.userName)) return false;
             userSeen = true;
-            for (unsigned char c : decoded.userName)
-                if (c < 0x20 || c == 0x7f) return false;
+            if (!validUserName(decoded.userName)) return false;
         }
         else if (key == "@edited")
         {
