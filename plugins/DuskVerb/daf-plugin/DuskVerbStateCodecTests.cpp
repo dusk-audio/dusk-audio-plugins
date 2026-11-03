@@ -119,6 +119,33 @@ int main()
         modernIncomplete[modernIncomplete.find("stateVersion=\"") + 14] = '4';
         CHECK(!decodeJucePreset(modernIncomplete, sentinel) && same(sentinel, untouched));
     }
+    // A JUCE user preset file, as UserPresetManager::saveUserPreset writes it:
+    // parameters.copyState() plus its own root attributes. A fresh JUCE instance
+    // never stamps stateVersion on parameters.state, and JUCE's loadUserPreset
+    // replaces the state without migrating, so every index here is already in
+    // the current (post-f95ecfc) engine order and must import unchanged.
+    const auto userPresetFile = [](const char* rootAttrs, int algorithm) {
+        std::string file = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\n<DuskVerb";
+        file += rootAttrs;
+        file += " presetName=\"My Hall\" savedAt=\"2026-09-01T10:00:00.000+02:00\" pluginName=\"DuskVerb\">\n";
+        for (int i = 0; i < kNumParams; ++i)
+            file += "  <PARAM id=\"" + std::string(paramDesc(i).id) + "\" value=\""
+                + (i == Algorithm ? std::to_string(algorithm) + ".0" : std::to_string(paramDesc(i).def)) + "\"/>\n";
+        return file + "</DuskVerb>\n";
+    };
+    for (int algorithm = 0; algorithm < paramDesc(Algorithm).enumCount; ++algorithm)
+    {
+        CHECK(decodeJucePreset(userPresetFile("", algorithm), out)
+              && out.params[Algorithm] == static_cast<float>(algorithm) && out.userName == "My Hall");
+        // Saved after JUCE restored an old v2 session: setStateInformation had
+        // already migrated the index and left stateVersion=2 in parameters.state.
+        // This fixture writes bass_choke with a value. JUCE writes a parameter
+        // the restored tree did not contain (left at its default) as a bare
+        // PARAM, which the importer rejects (see the note at its engine-order
+        // rule).
+        CHECK(decodeJucePreset(userPresetFile(" stateVersion=\"2\"", algorithm), out)
+              && out.params[Algorithm] == static_cast<float>(algorithm));
+    }
     const char* legacyNames[] = {"dpvHfShelfGainDb", "dpvHfShelfFreqHz", "dpvStructHfDampHz",
         "dpvBoxCutGainDb", "dpvBoxCutFreqHz", "dpvBassShelfGainDb", "dpvBassShelfFreqHz"};
     const int legacyParams[] = {DpvHfShelfDb, DpvHfShelfHz, DpvStructHfDampHz,

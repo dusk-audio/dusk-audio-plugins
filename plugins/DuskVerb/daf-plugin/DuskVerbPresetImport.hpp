@@ -234,8 +234,6 @@ inline bool decodeJucePreset(std::string_view xml, StateValues& out)
         float f = 0.0f; if (!parseClassicFloat(value, f)) return false;
         if (!plainValueInRange(paramDesc(index), f)) return false;
         f = plainToHost(paramDesc(index), f);
-        if (version < 3 && index == Algorithm)
-            f = static_cast<float>(migrateLegacyAlgorithmIndex(static_cast<int>(f)));
         if (!hostValueInRange(paramDesc(index), f)) return false;
         decoded.params[static_cast<size_t>(index)] = f;
         seen[static_cast<size_t>(index)] = true; p = e + 1;
@@ -291,6 +289,24 @@ inline bool decodeJucePreset(std::string_view xml, StateValues& out)
     };
     for (int i = 0; i < kNumParams; ++i)
         if (!seen[static_cast<size_t>(i)] && required(i)) return false;
+    // f95ecfc reordered the engine enum and added bass_choke in the same commit
+    // (0.5.5; no release has one without the other). A file is written from the
+    // live parameter tree, which in 0.5.5+ always holds bass_choke, so its
+    // index names the engine that build was playing, in the new order; only a
+    // file without bass_choke stores the old order. stateVersion cannot decide
+    // it: UserPresetManager files from a fresh JUCE instance carry none, a file
+    // saved after a session restore carries the restored session's (already
+    // migrated) version, and JUCE loads both without migrating. For a genuine
+    // session state the two rules agree, since v3 requires bass_choke.
+    // `seen` marks only a PARAM that carried a value. JUCE writes a parameter
+    // the restored tree did not contain (left at its default) as a bare
+    // <PARAM id=.../>, and the value check above rejects such a file outright.
+    // If that is ever relaxed to read a bare PARAM as its default, bass_choke's
+    // PRESENCE must still count here, or an index JUCE already migrated gets
+    // migrated a second time.
+    if (seen[Algorithm] && !seen[BassChoke])
+        decoded.params[Algorithm] = static_cast<float>(
+            migrateLegacyAlgorithmIndex(static_cast<int>(decoded.params[Algorithm])));
     out = std::move(decoded); return true;
 }
 
