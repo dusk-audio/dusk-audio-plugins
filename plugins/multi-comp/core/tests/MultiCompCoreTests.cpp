@@ -1742,10 +1742,11 @@ void reportOptoCrestResponse()
                 noise.crestDb, noise.reductionDb, noise.reductionDb - sine.reductionDb);
 }
 
-OptoCrestResult measureOptoCrestSweepPoint(int burstSamples)
+OptoCrestResult measureOptoCrestSweepPoint(int burstSamples, float* rightReductionDb = nullptr)
 {
     // Identical to the reference extraction: constant -24 dBFS RMS, 1 kHz
-    // bursts every 50 ms, settled over seconds 5.0-7.5.
+    // bursts every 50 ms, settled over seconds 5.0-7.5. The result reads the
+    // left channel; `rightReductionDb`, when given, receives the right's.
     constexpr int kSampleRate = 48000;
     constexpr int kBlockSize = 256;
     constexpr int kPeriodSamples = 50 * kSampleRate / 1000;
@@ -1783,6 +1784,8 @@ OptoCrestResult measureOptoCrestSweepPoint(int burstSamples)
     std::array<float, kBlockSize> activeLeft{}, activeRight{};
     double controlPower = 0.0;
     double activePower = 0.0;
+    double controlPowerRight = 0.0;
+    double activePowerRight = 0.0;
     for (int blockStart = 0; blockStart < kTotalSamples; blockStart += kBlockSize)
     {
         const int count = std::min(kBlockSize, kTotalSamples - blockStart);
@@ -1800,8 +1803,14 @@ OptoCrestResult measureOptoCrestSweepPoint(int burstSamples)
                 * controlLeft[static_cast<size_t>(i)];
             activePower += static_cast<double>(activeLeft[static_cast<size_t>(i)])
                 * activeLeft[static_cast<size_t>(i)];
+            controlPowerRight += static_cast<double>(controlRight[static_cast<size_t>(i)])
+                * controlRight[static_cast<size_t>(i)];
+            activePowerRight += static_cast<double>(activeRight[static_cast<size_t>(i)])
+                * activeRight[static_cast<size_t>(i)];
         }
     }
+    if (rightReductionDb != nullptr)
+        *rightReductionDb = 10.0f * std::log10(static_cast<float>(controlPowerRight / activePowerRight));
     return {duskaudio::gainToDecibels(peak / kTargetRms),
             10.0f * std::log10(static_cast<float>(controlPower / activePower))};
 }
@@ -1814,6 +1823,11 @@ void testOptoCrestSweep()
     constexpr std::array<float, 4> referenceGrDb{{10.192f, 14.070f,
                                                    11.328f, 8.520f}};
     constexpr size_t kHeldOutRow = 2;
+    // Both channels carry the identical signal, so the linked pair must reduce them alike (2026-11-03: the right
+    // channel is read too). kLinkSymmetryDb is the file's dual-mono identity bound
+    // (testOptoInternalStereoLinkUsesSignedMaximum); main 92e1e201 reads R - L = 0 exactly on all four rows.
+    constexpr float kLinkSymmetryDb = 1.0e-4f;
+    float worstSymmetryDb = 0.0f;
     std::array<OptoCrestResult, burstSamples.size()> measured{};
     float fittedSquaredError = 0.0f;
     float fittedWorstError = 0.0f;
@@ -1821,13 +1835,20 @@ void testOptoCrestSweep()
     bool finiteAndCorrectCrest = true;
     for (size_t row = 0; row < burstSamples.size(); ++row)
     {
-        measured[row] = measureOptoCrestSweepPoint(burstSamples[row]);
+        float rightReductionDb = 0.0f;
+        measured[row] = measureOptoCrestSweepPoint(burstSamples[row], &rightReductionDb);
         const float delta = measured[row].reductionDb - referenceGrDb[row];
         std::printf("opto crest sweep: crest %.6f dB reference %.3f dB "
                     "measured %.6f dB delta %+.6f dB%s\n",
                     measured[row].crestDb, referenceGrDb[row],
                     measured[row].reductionDb, delta,
                     row == kHeldOutRow ? " (held out)" : "");
+        const float symmetryDb = rightReductionDb - measured[row].reductionDb;
+        std::printf("opto crest sweep right channel: crest %.6f dB R GR %.6f dB R-L %+.9f dB (symmetry bound %.1e)\n",
+                    measured[row].crestDb, rightReductionDb, symmetryDb, static_cast<double>(kLinkSymmetryDb));
+        worstSymmetryDb = std::max(worstSymmetryDb,
+                                   std::isfinite(symmetryDb) ? std::abs(symmetryDb)
+                                                             : std::numeric_limits<float>::infinity());
         finiteAndCorrectCrest = finiteAndCorrectCrest
             && std::isfinite(measured[row].reductionDb)
             && std::abs(measured[row].crestDb - referenceCrestDb[row]) < 0.02f;
@@ -1859,6 +1880,8 @@ void testOptoCrestSweep()
                 && fittedRmsError < 0.85f && fittedWorstError < 1.40f
                 && std::abs(heldOutError) < 1.10f,
             "Opto linked-stereo crest sweep preserves its measured shape and bounded residual");
+    require(worstSymmetryDb < kLinkSymmetryDb,
+            "Opto linked-stereo crest sweep reduces both channels of an identical signal alike");
 }
 
 constexpr std::array<int, 7> kOptoShortEventTraceOffsets{{
@@ -4639,8 +4662,9 @@ void testOptoInternalStereoLinkUsesSignedMaximum()
 }
 
 // Output level of the left channel of a fully linked Opto pair at Limit, settled, for a 40 Hz tone at -12 dBFS
-// on both channels with the right one rightPhase radians behind.
-float renderOptoLinkedLowTone(float peakReduction, double rightPhase)
+// on both channels with the right one rightPhase radians behind. `rightRms`, when given, receives the right
+// channel's output level over the same window.
+float renderOptoLinkedLowTone(float peakReduction, double rightPhase, float* rightRms = nullptr)
 {
     constexpr int kSampleRate = 48000;
     constexpr int kSamples = 3 * kSampleRate;
@@ -4666,6 +4690,7 @@ float renderOptoLinkedLowTone(float peakReduction, double rightPhase)
     const double amplitude = static_cast<double>(duskaudio::decibelsToGain(-12.0f));
     const double step = 2.0 * 3.141592653589793 * 40.0 / kSampleRate;
     double power = 0.0;
+    double rightPower = 0.0;
     std::array<float, kBlockSize> inputLeft{}, inputRight{};
     std::array<float, kBlockSize> outputLeft{}, outputRight{};
     const float* input[] = {inputLeft.data(), inputRight.data()};
@@ -4682,9 +4707,15 @@ float renderOptoLinkedLowTone(float peakReduction, double rightPhase)
         dsp.processBlock(input, output, 2, count);
         for (int i = 0; i < count; ++i)
             if (blockStart + i >= kSamples - kMeasureSamples)
+            {
                 power += static_cast<double>(outputLeft[static_cast<size_t>(i)])
                        * outputLeft[static_cast<size_t>(i)];
+                rightPower += static_cast<double>(outputRight[static_cast<size_t>(i)])
+                            * outputRight[static_cast<size_t>(i)];
+            }
     }
+    if (rightRms != nullptr)
+        *rightRms = static_cast<float>(std::sqrt(rightPower / kMeasureSamples));
     return static_cast<float>(std::sqrt(power / kMeasureSamples));
 }
 
@@ -4698,18 +4729,42 @@ float renderOptoLinkedLowTone(float peakReduction, double rightPhase)
 // stores inside one half-cycle and reduces too much.
 void testOptoLinkedAntiphaseLowTone()
 {
+    // Both channels are read (2026-11-03). Both inputs are the same -12 dBFS 40 Hz tone (the antiphase right one
+    // 0.4 microseconds off the tie, so the larger light alternates every quarter cycle), so the linked pair must
+    // apply the same gain to both: the right output level has to equal the left's. kLinkSymmetryDb is the file's
+    // dual-mono identity bound (testOptoInternalStereoLinkUsesSignedMaximum). Main 92e1e201 reads R - L = 0
+    // exactly in phase and +0.0000305 / +0.0000343 dB in antiphase (PR 81.25 / 100), the off-tie offset's own
+    // asymmetry, 2.9x inside the bound.
+    constexpr float kLinkSymmetryDb = 1.0e-4f;
+    float worstSymmetryDb = 0.0f;
     struct Row { float peakReduction, referenceAddedDb; };
     for (const Row row : {Row{81.25f, 0.04f}, Row{100.0f, 0.21f}})
     {
-        const float inPhase = renderOptoLinkedLowTone(row.peakReduction, 0.0);
-        const float antiphase = renderOptoLinkedLowTone(row.peakReduction, 3.141592653589793 - 1.0e-4);
+        float inPhaseRight = 0.0f, antiphaseRight = 0.0f;
+        const float inPhase = renderOptoLinkedLowTone(row.peakReduction, 0.0, &inPhaseRight);
+        const float antiphase = renderOptoLinkedLowTone(row.peakReduction, 3.141592653589793 - 1.0e-4,
+                                                        &antiphaseRight);
         const float addedDb = duskaudio::gainToDecibels(inPhase) - duskaudio::gainToDecibels(antiphase);
+        const float inPhaseSymmetryDb = duskaudio::gainToDecibels(inPhaseRight) - duskaudio::gainToDecibels(inPhase);
+        const float antiphaseSymmetryDb = duskaudio::gainToDecibels(antiphaseRight)
+                                        - duskaudio::gainToDecibels(antiphase);
         std::printf("opto linked antiphase low tone: PR %.2f reference %+.2f dB measured %+.6f dB delta %+.6f dB\n",
                     static_cast<double>(row.peakReduction), static_cast<double>(row.referenceAddedDb),
                     static_cast<double>(addedDb), static_cast<double>(addedDb - row.referenceAddedDb));
+        std::printf("opto linked antiphase low tone right channel: PR %.2f in-phase R-L %+.9f dB, antiphase R-L "
+                    "%+.9f dB (symmetry bound %.1e)\n", static_cast<double>(row.peakReduction),
+                    static_cast<double>(inPhaseSymmetryDb), static_cast<double>(antiphaseSymmetryDb),
+                    static_cast<double>(kLinkSymmetryDb));
         require(std::abs(addedDb - row.referenceAddedDb) < 0.5f,
                 "linked Opto pair reduces an antiphase low tone as it does an in-phase one");
+        for (const float symmetryDb : {inPhaseSymmetryDb, antiphaseSymmetryDb})
+            worstSymmetryDb = std::max(worstSymmetryDb,
+                                       std::isfinite(symmetryDb) ? std::abs(symmetryDb)
+                                                                 : std::numeric_limits<float>::infinity());
     }
+    // After every left-channel check, so a right-channel failure cannot hide one.
+    require(worstSymmetryDb < kLinkSymmetryDb,
+            "linked Opto pair applies the same gain to both channels of an equal low tone");
 }
 
 void testDigitalLookaheadMixAlignment()
@@ -7583,12 +7638,14 @@ void testFetMeasuredStaticSurface()
         int ratio;
         float referenceOutputDbfs;
     };
+    // referenceOutputDbfs: the reference unit at Release .5, the Release renderReferenceFetRmsDb drives, captured
+    // 2026-11-03 (fet/fixture_truth/capture_release_half.py), replacing the Release .666 capture.
     constexpr std::array<Point, 5> points{{
-        {0.8f, -24.0f, 0, -15.926712f},
-        {0.8f, -6.0f, 0, -12.854822f},
-        {0.8f, -12.0f, 1, -14.280624f},
-        {0.6f, -12.0f, 3, -13.415414f},
-        {0.8f, -6.0f, 4, -14.918762f}
+        {0.8f, -24.0f, 0, -15.837827f},
+        {0.8f, -6.0f, 0, -12.803393f},
+        {0.8f, -12.0f, 1, -14.180103f},
+        {0.6f, -12.0f, 3, -13.338784f},
+        {0.8f, -6.0f, 4, -14.629725f}
     }};
     float worstError = 0.0f;
     for (const auto& point : points)
@@ -7653,7 +7710,8 @@ double renderFetKneeFundamentalDb(double frequencyHz, float inputDbfs,
 void testFetKneeOnsetMatchesReference()
 {
     // Wave 27's independently repeated 100 Hz and 1 kHz captures agree within
-    // 0.00564 dB at every selected point: this is a common static-knee shape,
+    // 0.00564 dB at every selected point (the 2026-11-03 captures below within
+    // 0.005907 dB): this is a common static-knee shape,
     // not the deeper ratio/frequency detector surface that the joint LF shelf
     // experiment rejected. The old representative static grid skipped this
     // interval and therefore let the quadratic knee start up to 0.72 dB early.
@@ -7663,16 +7721,19 @@ void testFetKneeOnsetMatchesReference()
         double reference100HzDb;
         double reference1kHzDb;
     };
+    // Reference reductions (here and heldOut below): the reference unit at Release .5, the Release
+    // renderFetKneeFundamentalDb drives, captured 2026-11-03 (fet/fixture_truth/capture_release_half.py), replacing the
+    // Release .666 capture.
     constexpr std::array<Point, 9> points{{
-        {-14.00f, 0.001054856, 0.001054679},
-        {-12.75f, 0.001418202, 0.001419694},
-        {-11.00f, 0.002144157, 0.002144161},
-        {-10.50f, 0.009454543, 0.010022404},
-        {-10.00f, 0.135284617, 0.129645572},
-        { -9.00f, 0.590613455, 0.589745640},
-        { -8.00f, 1.167230576, 1.167031554},
-        { -7.00f, 1.809697156, 1.808799028},
-        { -6.00f, 2.486826948, 2.483171013},
+        {-14.00f, 0.004711683, 0.004711655},
+        {-12.75f, 0.005054800, 0.005056311},
+        {-11.00f, 0.005741572, 0.005741545},
+        {-10.50f, 0.006103224, 0.005990560},
+        {-10.00f, 0.061205434, 0.062041438},
+        { -9.00f, 0.474184054, 0.468277469},
+        { -8.00f, 1.039435331, 1.037149534},
+        { -7.00f, 1.677899185, 1.677547148},
+        { -6.00f, 2.354394745, 2.354901056},
     }};
     constexpr float controlInputPosition = 0.2f;
     constexpr float controlSourceDbfs = -36.0f;
@@ -7713,7 +7774,8 @@ void testFetKneeOnsetMatchesReference()
                     point.reference100HzDb, reduction100, error100,
                     point.reference1kHzDb, reduction1k, error1k);
     }
-    // Wave 24 independently measured the same -6 dB endpoint at 40 and 60 Hz.
+    // Wave 24 independently measured the same -6 dB endpoint at 40 and 60 Hz
+    // (re-captured 2026-11-03 at Release .5 with the rows above).
     // Both are held out from the 1 kHz knee table, as is the 100 Hz curve above.
     struct HeldOutFrequency
     {
@@ -7721,8 +7783,8 @@ void testFetKneeOnsetMatchesReference()
         double referenceReductionDb;
     };
     constexpr std::array<HeldOutFrequency, 2> heldOut{{
-        {40.0, 2.476338413},
-        {60.0, 2.487113619},
+        {40.0, 2.354092094},
+        {60.0, 2.355031025},
     }};
     for (const auto& point : heldOut)
     {
@@ -7852,12 +7914,14 @@ void testFetMaximumReductionSaturation()
     // Live-reference 3.0--4.5 second windows. The All-buttons -3 dBFS point is
     // intentionally not replaced by its later asymptote: this helper and the
     // campaign ceiling gate both measure this practical five-second window.
+    // The reference unit at Release .5, the Release renderReferenceFetRmsDb drives, captured 2026-11-03
+    // (fet/fixture_truth/capture_release_half.py), replacing the Release .666 capture.
     constexpr std::array<Point, 5> points{{
-        {0,  0.718774f,  2.253437f},
-        {1, -0.450040f,  0.856189f},
-        {2, -0.557974f,  0.505468f},
-        {3,  0.014880f,  0.857770f},
-        {4, -1.918019f, -0.552185f},
+        {0,  0.762884f,  2.250785f},
+        {1, -0.365135f,  0.852764f},
+        {2, -0.484583f,  0.502162f},
+        {3,  0.064584f,  0.852961f},
+        {4, -1.631302f, -0.562747f},
     }};
     float worstBelowError = 0.0f;
     float worstSaturatedError = 0.0f;
@@ -7901,10 +7965,12 @@ void testFetAllButtonsSettlingWindows()
         float referenceEarlyDbfs;
         float referenceLateDbfs;
     };
+    // Both windows: the reference unit at Release .5, the Release prepareReferenceFet drives, captured 2026-11-03
+    // (fet/fixture_truth/capture_release_half.py), replacing the Release .666 capture.
     constexpr std::array<Point, 3> points{{
-        {0,  0.0f,  2.253437f,  2.253322f},
-        {4, -3.0f, -1.918019f, -2.620076f},
-        {4,  0.0f, -0.552185f, -0.562661f},
+        {0,  0.0f,  2.250785f,  2.250509f},
+        {4, -3.0f, -1.631302f, -2.329948f},
+        {4,  0.0f, -0.562747f, -0.569839f},
     }};
     float worstEarlyError = 0.0f;
     float worstLateError = 0.0f;
@@ -8101,11 +8167,14 @@ void testFetAllButtonsKneeTransition()
     // at detector fractions 0.32 / 0.54 / 0.76 of the segment.
     constexpr float kInputGainDb = 40.0f - 20.790574f;
     struct Point { float internalDb; float referenceOutputDbfs; bool inNewSegment; };
+    // referenceOutputDbfs and kReferenceSubKneeStepDb below: the reference unit at Release .5, the Release
+    // renderReferenceFetRmsDb drives, captured 2026-11-03 (fet/fixture_truth/capture_release_half.py), replacing the
+    // Release .666 capture.
     constexpr std::array<Point, 7> points{{
-        {-8.0f, -18.461636f, false}, {-7.7f, -18.161981f, true},
-        {-7.5f, -17.962224f, true}, {-7.3f, -17.766153f, true},
-        {-7.0f, -17.528762f, false}, {-6.5f, -17.312539f, false},
-        {-6.0f, -17.187491f, false}}};
+        {-8.0f, -18.460937f, false}, {-7.7f, -18.161231f, true},
+        {-7.5f, -17.961440f, true}, {-7.3f, -17.761656f, true},
+        {-7.0f, -17.462004f, false}, {-6.5f, -17.012848f, false},
+        {-6.0f, -16.816740f, false}}};
     std::array<float, 7> measured{};
     float worstError = 0.0f;
     float worstSegmentError = 0.0f;
@@ -8125,13 +8194,14 @@ void testFetAllButtonsKneeTransition()
 
     // The sub-knee step is the mechanism itself, and it is scalar-immune: the
     // reference generates no reduction at all up to -7.5 dB internal, so a
-    // 0.5 dB source step must come back as 0.499412 dB. A correction table
+    // 0.5 dB source step must come back as 0.499496 dB (0.499412 at Release
+    // .666). A correction table
     // whose plateau ends at -8.145 instead of at the measured knee start
     // returns 0.313541 here -- 0.186 dB of compression the reference does not
     // produce -- while every absolute level in the row stays plausible, which
     // is how it survived. Both bounds are set by that defect: 3.7x under it on
     // the step and 4.2x under the 0.334 dB absolute error it caused.
-    constexpr float kReferenceSubKneeStepDb = 0.499412f;
+    constexpr float kReferenceSubKneeStepDb = 0.499496f;
     const float subKneeStep = measured[2] - measured[0];
     std::printf("FET All-buttons sub-knee 0.5 dB step: reference %+.6f measured %+.6f error %+.6f dB\n",
                 kReferenceSubKneeStepDb, subKneeStep,
@@ -8285,10 +8355,12 @@ void testFetInternalStereoLinkReference()
         std::sqrt(leftPower / measured)));
     const float rightDb = duskaudio::gainToDecibels(static_cast<float>(
         std::sqrt(rightPower / measured)));
+    // Reference levels (printed and asserted): the reference unit at Release .5, the Release prepareReferenceFet
+    // drives, captured 2026-11-03 (fet/fixture_truth/capture_release_half.py), replacing the Release .666 capture.
     std::printf("FET internal stereo link: reference %.6f/%.6f measured %.6f/%.6f dBFS\n",
-                -13.877202f, -31.875823f, leftDb, rightDb);
-    require(std::abs(leftDb + 13.877202f) < 0.20f
-                && std::abs(rightDb + 31.875823f) < 0.20f,
+                -13.810075f, -31.808861f, leftDb, rightDb);
+    require(std::abs(leftDb + 13.810075f) < 0.20f
+                && std::abs(rightDb + 31.808861f) < 0.20f,
             "vintage FET internal link reproduces the asymmetric stereo reference");
 }
 
@@ -8307,12 +8379,19 @@ void testFetStereoLinkPhaseLaw()
     constexpr int totalSamples = 15 * sampleRate;
     constexpr int measureStart = 10 * sampleRate;
     constexpr int measureStop = 14 * sampleRate;
-    const auto measure = [&](float rightScale, float& reductionDb) {
+    // Both channels are read (2026-11-03). With an equal right channel, in phase or in antiphase, the two inputs
+    // have the same magnitude sample for sample, so the linked pair must apply the left channel's gain to the right:
+    // the right output level has to equal the left's. kLinkSymmetryDb is the file's dual-mono identity bound
+    // (testOptoInternalStereoLinkUsesSignedMaximum); main 92e1e201 reads R - L = 0 exactly in phase and in
+    // antiphase. Left-only has a silent right input, so its right channel is printed, not asserted.
+    constexpr float kLinkSymmetryDb = 1.0e-4f;
+    const auto measure = [&](float rightScale, float& reductionDb, float& rightDb) {
         MultiCompDSP dsp;
         prepareReferenceFet(dsp, sampleRate, blockSize);
         std::array<float, blockSize> left{}, right{};
         std::array<float, blockSize> outputLeft{}, outputRight{};
         double leftPower = 0.0;
+        double rightPower = 0.0;
         int measured = 0;
         for (int offset = 0; offset < totalSamples; offset += blockSize)
         {
@@ -8334,12 +8413,16 @@ void testFetStereoLinkPhaseLaw()
                 {
                     const float value = outputLeft[static_cast<size_t>(sample)];
                     leftPower += static_cast<double>(value) * value;
+                    const float valueRight = outputRight[static_cast<size_t>(sample)];
+                    rightPower += static_cast<double>(valueRight) * valueRight;
                     ++measured;
                 }
         }
         require(measured == measureStop - measureStart,
                 "FET stereo phase-law window is complete");
         reductionDb = dsp.getGainReduction();
+        rightDb = duskaudio::gainToDecibels(static_cast<float>(
+            std::sqrt(rightPower / measured)));
         return duskaudio::gainToDecibels(static_cast<float>(
             std::sqrt(leftPower / measured)));
     };
@@ -8347,9 +8430,12 @@ void testFetStereoLinkPhaseLaw()
     float leftOnlyReductionDb = 0.0f;
     float inPhaseReductionDb = 0.0f;
     float antiphaseReductionDb = 0.0f;
-    const float leftOnlyDb = measure(0.0f, leftOnlyReductionDb);
-    const float inPhaseDb = measure(1.0f, inPhaseReductionDb);
-    const float antiphaseDb = measure(-1.0f, antiphaseReductionDb);
+    float leftOnlyRightDb = 0.0f;
+    float inPhaseRightDb = 0.0f;
+    float antiphaseRightDb = 0.0f;
+    const float leftOnlyDb = measure(0.0f, leftOnlyReductionDb, leftOnlyRightDb);
+    const float inPhaseDb = measure(1.0f, inPhaseReductionDb, inPhaseRightDb);
+    const float antiphaseDb = measure(-1.0f, antiphaseReductionDb, antiphaseRightDb);
     const float inPhaseResponseDb = inPhaseDb - leftOnlyDb;
     const float antiphaseResponseDb = antiphaseDb - leftOnlyDb;
     std::printf("FET stereo phase law: left-only %.9f in-phase %.9f "
@@ -8359,14 +8445,25 @@ void testFetStereoLinkPhaseLaw()
                 antiphaseDb, antiphaseResponseDb,
                 leftOnlyReductionDb, inPhaseReductionDb,
                 antiphaseReductionDb);
+    std::printf("FET stereo phase law right channel: left-only %.9f (silent input, report only), "
+                "in-phase %.9f R-L %+.9f, antiphase %.9f R-L %+.9f dB (symmetry bound %.1e)\n",
+                leftOnlyRightDb, inPhaseRightDb, inPhaseRightDb - inPhaseDb,
+                antiphaseRightDb, antiphaseRightDb - antiphaseDb,
+                static_cast<double>(kLinkSymmetryDb));
     require(std::abs(inPhaseResponseDb) < 0.02f,
             "vintage FET equal in-phase link remains identical to left-only");
     requireParity(std::abs(antiphaseResponseDb + 0.126416f) < 0.03f,
             "vintage FET antiphase link reproduces the measured signed-maximum response");
+    // Each right-channel check takes the class of the left-channel check of the same case, after all of those.
+    require(std::abs(inPhaseRightDb - inPhaseDb) < kLinkSymmetryDb,
+            "vintage FET equal in-phase link applies the left channel's gain to the right");
+    requireParity(std::abs(antiphaseRightDb - antiphaseDb) < kLinkSymmetryDb,
+            "vintage FET equal antiphase link applies the left channel's gain to the right");
 }
 
+// Returns the left output level; `rightLevelDb`, when given, receives the right output level over the same window.
 float renderFetDenseStereoLevelDb(double sampleRate, float rightDbfs,
-                                  float phaseCycles)
+                                  float phaseCycles, float* rightLevelDb = nullptr)
 {
     constexpr int blockSize = 512;
     const int totalSamples = static_cast<int>(std::lround(15.0 * sampleRate));
@@ -8384,6 +8481,7 @@ float renderFetDenseStereoLevelDb(double sampleRate, float rightDbfs,
     const double rightAmplitude = rightDbfs <= -150.0f
         ? 0.0 : duskaudio::decibelsToGain(rightDbfs);
     double power = 0.0;
+    double rightPower = 0.0;
     int measured = 0;
     for (int offset = 0; offset < totalSamples; offset += blockSize)
     {
@@ -8406,9 +8504,14 @@ float renderFetDenseStereoLevelDb(double sampleRate, float rightDbfs,
             {
                 const double value = outputLeft[static_cast<size_t>(sample)];
                 power += value * value;
+                const double valueRight = outputRight[static_cast<size_t>(sample)];
+                rightPower += valueRight * valueRight;
                 ++measured;
             }
     }
+    if (rightLevelDb != nullptr)
+        *rightLevelDb = duskaudio::gainToDecibels(static_cast<float>(
+            std::sqrt(rightPower / measured)));
     return duskaudio::gainToDecibels(static_cast<float>(
         std::sqrt(power / measured)));
 }
@@ -8433,13 +8536,22 @@ void testFetDenseStereoPhaseParity()
         {96000.0, -12.0f, 0.375f, -0.178920248f},
         {96000.0, -18.0f, 0.250f,  0.000000000f},
     }};
-    const float baseline48 = renderFetDenseStereoLevelDb(48000.0, -160.0f, 0.0f);
-    const float baseline96 = renderFetDenseStereoLevelDb(96000.0, -160.0f, 0.0f);
+    // The right channel is read too (2026-11-03) and printed, not asserted: no row is symmetric between the
+    // channels (a quarter or eighth cycle apart, 6 dB apart, or a silent right), and the fixtures are left-only.
+    // "R-L applied gain" is (right output - right input) - (left output - left input) in dB; main 92e1e201 reads
+    // -0.00007 at a quarter cycle and +0.0030 / -0.0032 dB at an eighth / three eighths (the ripple meets the
+    // two channels at different phases).
+    float baselineRight48 = 0.0f, baselineRight96 = 0.0f;
+    const float baseline48 = renderFetDenseStereoLevelDb(48000.0, -160.0f, 0.0f, &baselineRight48);
+    const float baseline96 = renderFetDenseStereoLevelDb(96000.0, -160.0f, 0.0f, &baselineRight96);
+    std::printf("FET dense stereo right channel: silent-right baselines 48/96 kHz R %.3f/%.3f dBFS (report only)\n",
+                baselineRight48, baselineRight96);
     float worstError = 0.0f;
     for (const auto& row : rows)
     {
+        float rightLevel = 0.0f;
         const float level = renderFetDenseStereoLevelDb(
-            row.sampleRate, row.rightDbfs, row.phaseCycles);
+            row.sampleRate, row.rightDbfs, row.phaseCycles, &rightLevel);
         const float baseline = row.sampleRate == 48000.0
             ? baseline48 : baseline96;
         const float response = level - baseline;
@@ -8449,6 +8561,10 @@ void testFetDenseStereoPhaseParity()
                     "response reference/measured %.9f/%.9f error %+.9f dB\n",
                     row.sampleRate, row.rightDbfs, row.phaseCycles,
                     row.referenceResponseDb, response, error);
+        std::printf("FET dense stereo right channel: rate %.0f right %.1f phase %.3f R %.9f dBFS, "
+                    "R-L applied gain %+.9f dB (report only)\n",
+                    row.sampleRate, row.rightDbfs, row.phaseCycles, rightLevel,
+                    (rightLevel - row.rightDbfs) - (level + 12.0f));
     }
     std::printf("FET dense stereo: worst absolute response error %.9f dB\n",
                 worstError);
@@ -8853,7 +8969,6 @@ void testFetLoopStateLifecycle()
 // that), the gate is the normalised curve RMS, and a colour change that moves
 // tau at -6 dBFS while curve RMS moves 6e-06 is behaving correctly. Do not
 // re-tune the attack law against it.
-constexpr float kFetCampaignLatencySamples48k = 67.0f;
 
 struct FetAttackMeasurement
 {
@@ -9006,8 +9121,9 @@ FetAttackMeasurement measureFetAttack(float driveDbfs, float attackPosition = 0.
     }
 
     const auto envelope = quadratureEnvelope(mono, sampleRate, carrierHz);
-    const int latency = static_cast<int>(std::lround(
-        kFetCampaignLatencySamples48k * sampleRate / 48000.0));
+    // The core's own latency (2026-11-03): 67 host samples at every rate and oversampling setting, where the
+    // former 67 scaled by the rate was right at 48 kHz only (62 at 44.1 kHz, 134 at 96 kHz).
+    const int latency = dsp.getLatencySamples();
     const auto gainDb = [&envelope](int index, double referencePeakDbfs) {
         return 20.0 * std::log10(std::max(envelope[static_cast<size_t>(index)], 1.0e-30))
             - referencePeakDbfs;
@@ -9679,8 +9795,8 @@ FetStartupProbeResult renderFetStartupProbe(const FetStartupProbeConfig& cfg)
                     result.left.data() + offset);
     }
 
-    const int latency = static_cast<int>(std::lround(
-        kFetCampaignLatencySamples48k * sr / 48000.0));
+    // The core's own latency, as in measureFetAttack (2026-11-03): 67 scaled by the rate missed it off 48 kHz.
+    const int latency = dsp.getLatencySamples();
     const auto peakOver = [&result, total](int from, int to) {
         double peak = 0.0;
         for (int n = std::max(0, from); n < std::min(total, to); ++n)
@@ -10368,13 +10484,19 @@ void testFetBroadbandHarmonicSurface()
         double referenceH2RelativeDb;
         double previousErrorDb;          // what the pre-Wave-8 table read here
     };
+    // referenceH2RelativeDb: the reference unit at Release .5, the Release measureFetHarmonics drives here, captured
+    // 2026-11-03 (fet/fixture_truth/capture_release_half.py), replacing the Release .666 capture; previousErrorDb is
+    // still what the pre-Wave-8 table read against that capture.
+    // reductionDb: MC-2's own envelope coordinate, re-recorded 2026-11-03 on main 92e1e201 (owner ruling) on the two
+    // rows that had moved 0.02 dB or more (i0.8 at -24 and -12 dBFS); a tripwire for model changes, not a reference
+    // value.
     constexpr std::array<Point, 6> points{{
-        {0.2f, -36.0f,  -0.009, -83.991595, -0.2590},
-        {0.4f, -30.0f,   0.557, -65.114341, -1.3251},
-        {0.8f, -36.0f,   8.984, -65.319662, +3.1241},
-        {0.6f, -24.0f,  12.800, -61.448271, +5.1379},
-        {0.8f, -24.0f,  18.864, -54.794383, +3.7694},
-        {0.8f, -12.0f,  28.663, -43.927124, -0.4908}}};
+        {0.2f, -36.0f,  -0.009, -84.249036, -0.2590},
+        {0.4f, -30.0f,   0.557, -65.372397, -1.3251},
+        {0.8f, -36.0f,   8.984, -70.061319, +3.1241},
+        {0.6f, -24.0f,  12.800, -64.049115, +5.1379},
+        {0.8f, -24.0f,  18.832, -55.723509, +3.7694},
+        {0.8f, -12.0f,  28.587, -44.246593, -0.4908}}};
 
     // Set by what it has to catch, not by taste. The table this replaced read
     // 5.14 dB high at the fourth point and 3.77 at the fifth; the campaign's
@@ -10426,6 +10548,9 @@ void testFetBroadbandOddHarmonicSurface()
     };
     // Internal model coordinates re-recorded with the accepted deep release law;
     // native harmonic values and coordinate/harmonic bounds remain unchanged.
+    // reductionDb: MC-2's own envelope coordinate, re-recorded 2026-11-03 on main 92e1e201 (owner ruling) on the four
+    // rows that had moved 0.02 dB or more (i0.8 at -24 to -6 dBFS); a tripwire for model changes, not a reference
+    // value.
     constexpr std::array<Point, 10> points{{
         {0.2f, -18.0f, 0.3543, -83.185967, +2.4514},
         {0.8f, -48.0f, 1.0175, -78.547980, +1.5210},
@@ -10433,10 +10558,10 @@ void testFetBroadbandOddHarmonicSurface()
         {0.4f, -18.0f, 7.7103, -68.541805, +0.3595},
         {1.0f, -36.0f, 10.0111, -67.305299, +0.4806},
         {0.8f, -30.0f, 13.9271, -66.683950, +1.9392},
-        {0.8f, -24.0f, 18.8576, -67.067362, +3.7122},
-        {0.8f, -18.0f, 23.7641, -67.007091, +5.1897},
-        {0.8f, -12.0f, 28.6294, -66.239258, +6.1158},
-        {0.8f,  -6.0f, 33.4247, -65.841835, +7.5232}}};
+        {0.8f, -24.0f, 18.8314, -67.067362, +3.7122},
+        {0.8f, -18.0f, 23.7292, -67.007091, +5.1897},
+        {0.8f, -12.0f, 28.5869, -66.239258, +6.1158},
+        {0.8f,  -6.0f, 33.3708, -65.841835, +7.5232}}};
 
     // The fitted table predicts 0.090 dB worst over all 36 scoreable dense
     // rows. 0.25 dB leaves 0.16 dB for render/fit error, is 4x tighter than the
@@ -10476,31 +10601,33 @@ void testFetDenseShallowLowFrequencyH3()
     // unchanged and this is the red gate for re-keying only the shallow T3
     // lookup coordinate. All 33 reference rows are above the -92 dBc floor;
     // phase is H3 normalised to the measured H1 phase in the retained reference WAVs.
+    // Both reference arrays: the reference unit at Release .5, the Release measureFetHarmonics drives here, captured
+    // 2026-11-03 (fet/fixture_truth/capture_release_half.py), replacing the Release .666 capture.
     constexpr std::array<double, 33> referenceH3RelativeDb{{
-        -87.5355661498, -87.0345848794, -86.5351668744,
-        -86.0312293496, -85.5273531539, -85.0280479681,
-        -84.5333143309, -84.0341295974, -83.5338373029,
-        -83.0330680840, -82.5339559301, -82.0337489982,
-        -81.5355197908, -81.0348656644, -80.5314591569,
-        -79.8022302194, -78.4827434384, -76.7603074239,
-        -74.9308655682, -73.1561258963, -71.5103369991,
-        -70.0956033502, -68.8039456730, -67.6385917602,
-        -66.5862012345, -65.6257125540, -64.7530959602,
-        -63.9492703885, -63.2050707290, -62.4919866483,
-        -61.8479698190, -61.2448072109, -60.6779950280,
+        -88.0463028572, -87.5465113715, -87.0471115877,
+        -86.5461577007, -86.0433110354, -85.5402815042,
+        -85.0468823430, -84.5480046069, -84.0470253614,
+        -83.5459237560, -83.0461826736, -82.5456590745,
+        -82.0496637730, -81.5496919939, -81.0502678466,
+        -80.5517518009, -79.9892275796, -79.2021499445,
+        -78.2039346546, -77.0403528742, -75.7885449485,
+        -74.5560675313, -73.4163988952, -72.3235140018,
+        -71.3095311303, -70.3703596509, -69.4952187428,
+        -68.7179931372, -67.9550337400, -67.2728424810,
+        -66.5850591278, -65.9701460905, -65.3891995505,
     }};
     constexpr std::array<double, 33> referenceH3PhaseDegrees{{
-        164.574386210, 164.568754298, 164.587209264,
-        164.583462881, 164.555582900, 164.581018951,
-        164.559148355, 164.563333155, 164.565172531,
-        164.564831551, 164.567394428, 164.581083527,
-        164.567890256, 164.565486682, 162.609175403,
-        151.692183566, 137.444247340, 125.704337058,
-        116.545006349, 109.996295484, 105.443832946,
-        101.992914880, 99.447364997, 97.455138422,
-        95.971594935, 94.726141534, 93.789663654,
-        93.000992621, 92.347180306, 91.808287130,
-        91.337563273, 90.975973893, 90.682247744,
+        164.597113269, 164.596505616, 164.608624879,
+        164.594021048, 164.604135499, 164.609210697,
+        164.601729568, 164.596858379, 164.588771446,
+        164.587734136, 164.595788247, 164.593593454,
+        164.583005686, 164.591597766, 164.578777601,
+        163.405184818, 156.623427828, 147.089941418,
+        138.167826083, 129.889434419, 122.996523854,
+        117.586674851, 113.114319225, 109.637842206,
+        106.760421313, 104.466285171, 102.644841801,
+        101.041509081, 99.606467313, 98.538733472,
+        97.569135078, 96.690022680, 95.901441432,
     }};
     // Wave 31 disabled-cell controls. The complex H3 correction must not move
     // the detector coordinate, fundamental, H2, or H5 while closing H3.
@@ -10997,25 +11124,32 @@ void testFetLowFrequencyOddHarmonicSurface()
     };
     // Internal model coordinates re-recorded with the accepted deep release law;
     // native harmonic values and coordinate/harmonic bounds remain unchanged.
+    // referenceH3RelativeDb, 100 Hz rows: the reference unit at Release .5, the Release this test drives them at,
+    // captured 2026-11-03 (fet/fixture_truth/capture_release_half.py), replacing the Release .666 capture;
+    // previousErrorDb is still what the constant term read against that capture. The 1 kHz guard rows drive Release
+    // .66595459 and keep their capture at that Release.
+    // reductionDb: MC-2's own envelope coordinate, re-recorded 2026-11-03 on main 92e1e201 (owner ruling) on the ten
+    // rows that had moved 0.02 dB or more (the seven 100 Hz rows from i0.7 -46 to i0.8 -30 dBFS in table order; 1 kHz
+    // i0.4 -9, i0.8 -24 and -12 dBFS); a tripwire for model changes, not a reference value.
     constexpr std::array<Point, 18> points{{
-        {100.0, 0.3f, -30.0f, -0.0087, -91.700375, +0.5559},
-        {100.0, 0.7f, -46.0f, 0.2378, -83.943235, +0.7112},
-        {100.0, 0.6f, -42.0f, 0.5373, -81.075196, +4.9007},
-        {100.0, 0.3f, -24.0f, 0.7234, -78.962196, +5.5109},
-        {100.0, 0.9f, -48.0f, 1.3622, -67.407430, -0.2529},
-        {100.0, 0.2f, -12.0f, 2.5753, -60.225389, -1.4289},
-        {100.0, 0.8f, -36.0f, 8.9210, -50.600997, +0.0783},
-        {100.0, 0.8f, -30.0f, 13.8515, -48.872046, +2.3465},
-        {100.0, 0.8f, -18.0f, 23.6915, -47.030741, +0.6235},
-        {100.0, 0.9f,  -7.5f, 33.1003, -46.020733, -0.4754},
-        {100.0, 1.0f,  -6.0f, 34.3368, -46.009239, -0.5075},
+        {100.0, 0.3f, -30.0f, -0.0087, -92.202142, +0.5559},
+        {100.0, 0.7f, -46.0f, 0.2709, -84.454143, +0.7112},
+        {100.0, 0.6f, -42.0f, 0.5837, -81.587764, +4.9007},
+        {100.0, 0.3f, -24.0f, 0.7765, -80.190916, +5.5109},
+        {100.0, 0.9f, -48.0f, 1.4427, -72.072476, -0.2529},
+        {100.0, 0.2f, -12.0f, 2.6069, -64.915361, -1.4289},
+        {100.0, 0.8f, -36.0f, 8.9706, -55.093522, +0.0783},
+        {100.0, 0.8f, -30.0f, 13.8994, -53.295327, +2.3465},
+        {100.0, 0.8f, -18.0f, 23.6915, -51.454582, +0.6235},
+        {100.0, 0.9f,  -7.5f, 33.1003, -50.405527, -0.4754},
+        {100.0, 1.0f,  -6.0f, 34.3368, -50.382845, -0.5075},
         {1000.0, 0.4f, -30.0f, 0.5570, -81.411229, -0.0501},
         {1000.0, 0.6f, -36.0f, 3.2494, -72.802041, -0.0073},
         {1000.0, 0.8f, -36.0f, 8.9865, -67.758380, -0.0895},
         {1000.0, 0.8f, -30.0f, 13.9271, -66.683950, +0.0055},
-        {1000.0, 0.4f,  -9.0f, 15.1388, -66.685792, -0.0476},
-        {1000.0, 0.8f, -24.0f, 18.8576, -67.067362, +0.0040},
-        {1000.0, 0.8f, -12.0f, 28.6294, -66.239258, -0.0394}}};
+        {1000.0, 0.4f,  -9.0f, 15.1118, -66.685792, -0.0476},
+        {1000.0, 0.8f, -24.0f, 18.8314, -67.067362, +0.0040},
+        {1000.0, 0.8f, -12.0f, 28.5869, -66.239258, -0.0394}}};
 
     constexpr double kLowFrequencyBoundDb = 0.75;
     constexpr double kBroadbandGuardDb = 0.98;
@@ -11070,18 +11204,24 @@ void testFetLowFrequencyFifthHarmonicSurface()
         double referenceH5RelativeDb;
         double previousErrorDb;          // the constant +0.00255 T5 term
     };
+    // referenceH5RelativeDb: the reference unit at Release .5, the Release measureFetHarmonics drives here, captured
+    // 2026-11-03 (fet/fixture_truth/capture_release_half.py), replacing the Release .666 capture; previousErrorDb is
+    // still what the constant term read against that capture.
+    // reductionDb: MC-2's own envelope coordinate, re-recorded 2026-11-03 on main 92e1e201 (owner ruling) on the nine
+    // rows that had moved 0.02 dB or more (all but i0.9 -18 and i1.0 -6 dBFS); a tripwire for model changes, not a
+    // reference value.
     constexpr std::array<Point, 11> points{{
-        {0.5f, -36.0f,  0.8882, -83.281606, +6.3542},
-        {0.8f, -48.0f,  0.9345, -81.697045, +5.2159},
-        {0.2f, -15.0f,  1.1328, -77.026211, +2.2414},
-        {0.8f, -46.0f,  1.7057, -70.430321, -0.7602},
-        {0.8f, -45.0f,  2.1781, -67.616563, -1.4404},
-        {0.6f, -36.0f,  3.1896, -64.403196, -1.1304},
-        {0.2f,  -6.0f,  6.9247, -58.897481, +0.0256},
-        {0.9f, -36.0f,  9.8790, -56.672763, +0.8281},
-        {0.8f, -30.0f, 13.8515, -55.670300, +2.7093},
-        {0.9f, -18.0f, 24.6525, -53.815062, +0.9463},
-        {1.0f,  -6.0f, 34.3368, -52.992012, +0.1356}}};
+        {0.5f, -36.0f,  0.9484, -90.987147, +6.3542},
+        {0.8f, -48.0f,  0.9970, -88.884948, +5.2159},
+        {0.2f, -15.0f,  1.2018, -83.040411, +2.2414},
+        {0.8f, -46.0f,  1.8025, -75.539205, -0.7602},
+        {0.8f, -45.0f,  2.2973, -72.466079, -1.4404},
+        {0.6f, -36.0f,  3.2339, -69.007902, -1.1304},
+        {0.2f,  -6.0f,  6.9784, -63.150014, +0.0256},
+        {0.9f, -36.0f,  9.9393, -60.754836, +0.8281},
+        {0.8f, -30.0f, 13.8994, -59.678216, +2.7093},
+        {0.9f, -18.0f, 24.6525, -57.669255, +0.9463},
+        {1.0f,  -6.0f, 34.3368, -56.734153, +0.1356}}};
 
     constexpr double kBoundDb = 0.20;
     double worstError = 0.0;
@@ -11124,17 +11264,20 @@ void testFetBroadbandFifthHarmonicSurface()
         double referenceH5RelativeDb;
         double previousErrorDb;          // after the fitted low-T5 path
     };
+    // reductionDb: MC-2's own envelope coordinate, re-recorded 2026-11-03 on main 92e1e201 (owner ruling) on the six
+    // rows that had moved 0.02 dB or more (i0.7 -36 dBFS and the five from i0.6 -18 dBFS on); a tripwire for model
+    // changes, not a reference value.
     constexpr std::array<Point, 10> points{{
         {0.2f, -12.0f,  2.6305, -86.169521, -3.5774},
         {0.6f, -36.0f,  3.2496, -84.117415, -3.7298},
-        {0.7f, -36.0f,  5.0243, -80.818005, -3.7525},
+        {0.7f, -36.0f,  5.0584, -80.818005, -3.7525},
         {0.8f, -36.0f,  8.9830, -77.202513, -3.6191},
         {0.4f, -12.0f, 12.6634, -75.951320, -3.5684},
-        {0.6f, -18.0f, 17.7317, -74.841900, -3.6337},
-        {0.6f, -12.0f, 22.6659, -73.960898, -3.7055},
-        {0.6f,  -6.0f, 27.5467, -73.353275, -3.7455},
-        {0.8f,  -9.0f, 31.0579, -73.005279, -3.7882},
-        {0.8f,  -6.0f, 33.4397, -72.684400, -3.9067}}};
+        {0.6f, -18.0f, 17.7074, -74.841900, -3.6337},
+        {0.6f, -12.0f, 22.6102, -73.960898, -3.7055},
+        {0.6f,  -6.0f, 27.4795, -73.353275, -3.7455},
+        {0.8f,  -9.0f, 30.9908, -73.005279, -3.7882},
+        {0.8f,  -6.0f, 33.3708, -72.684400, -3.9067}}};
 
     constexpr double kBoundDb = 0.25;
     double worstError = 0.0;
@@ -11190,14 +11333,20 @@ void testFetLowFrequencyColourSurface()
     // test carries the honest residual rather than sampling around it. The
     // 18.7912 and 33.3699 anchors are the two rows the sixteen-row campaign
     // grid failed on, at +1.5999 and -0.4610.
+    // referenceH2RelativeDb: the reference unit at Release .5, the Release measureFetHarmonics drives here, captured
+    // 2026-11-03 (fet/fixture_truth/capture_release_half.py), replacing the Release .666 capture; previousErrorDb is
+    // still what the pre-Wave-9 law read against that capture.
+    // reductionDb: MC-2's own envelope coordinate, re-recorded 2026-11-03 on main 92e1e201 (owner ruling) on the five
+    // rows that had moved 0.02 dB or more (all but i0.2 -36 and i0.8 -24 dBFS; the paragraph above names anchors by
+    // their earlier coordinates); a tripwire for model changes, not a reference value.
     constexpr std::array<Point, 7> points{{
-        {0.2f, -36.0f,  -0.009, -83.993408, -0.0168},
-        {0.8f, -48.0f,   0.934, -64.008370, +1.1667},
-        {0.8f, -45.0f,   2.178, -56.347350, -1.9758},
-        {0.2f,  -6.0f,   6.918, -47.274840, -0.6102},
-        {0.6f, -24.0f,  12.726, -43.761082, +1.9464},
-        {0.8f, -24.0f,  18.791, -41.975760, +1.5999},
-        {0.8f,  -6.0f,  33.370, -37.552714, -0.4610}}};
+        {0.2f, -36.0f,  -0.009, -84.247797, -0.0168},
+        {0.8f, -48.0f,   0.997, -64.590317, +1.1667},
+        {0.8f, -45.0f,   2.297, -60.547523, -1.9758},
+        {0.2f,  -6.0f,   6.978, -52.019404, -0.6102},
+        {0.6f, -24.0f,  12.773, -48.341409, +1.9464},
+        {0.8f, -24.0f,  18.791, -46.264563, +1.5999},
+        {0.8f,  -6.0f,  33.346, -40.123754, -0.4610}}};
 
     // Set by what it has to catch. The law this replaced read 2.07 dB out at
     // 100 Hz and 1.97 at the third anchor; the campaign's harmonic gate is
