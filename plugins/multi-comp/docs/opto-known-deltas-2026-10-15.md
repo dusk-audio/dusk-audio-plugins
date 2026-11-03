@@ -10,6 +10,13 @@ commit. Since the linked pair takes the current sample's drive (2026-10-18, comm
 table's edge cell reads 1.0061 dB, so it is over the bar too, and the short screen table has no cell over it (the
 short-charge fixture delta below is a separate reading).
 
+Update 2026-11-03: the owner reopened OPTO. Two corrections to this record:
+- After the 2026-10-20/21 CPU work, the settled edge cell reads 1.0066 dB. That move is inside the 0.01 dB screen floor.
+- The fixture gate read cited below (`compare-p55b`, 2026-10-14) also has 10 of its 32 harmonic rows over 1.00 dB, with the worst at H5 of -4 dBFS, PR 70. This record omitted them. The core harmonic test's own bar is 2 dB per harmonic.
+  - That read predates the emission shape.
+  - The partial re-read of 2026-10-15 still puts three H3/H5 rows more than 1 dB off.
+The fixture gate gets a full re-read on the current tree before any OPTO change.
+
 Why they are left: the owner's blind ABX against the UAD on thirty real clips, including a kick-only round, was at
 chance (13 / 22 pairs, p = 0.26; `opto-abx-2026-10-03.md`). All four readings below come from synthetic probes that no
 clip in that corpus resembles. Every cheap mechanism that could have moved them has been measured and falsified; the
