@@ -39,11 +39,16 @@ some controls change labels or availability to match the selected engine.
 | Macro | Tone, Character and Duck provide broader sound adjustments. |
 
 **Freeze** holds the reverb. The gated engine also exposes its **Gate** switch.
-**Tonal Correction** appears for the Hall engines that support it.
+**Tonal Correction** appears only where it changes the sound: the Vocal Plate,
+Ambience and Tiled Room sounds on the Hall and Tiled Room engines (and on the
+older hall engines a restored session may still use).
 
-The side meters show input and output levels. **Output History** shows recent
-output level; it is not a measured RT60 graph. The central decay readout is the
-parameter setting, not a guarantee of a measured acoustic decay time.
+The display at the top left shows the engine (click its name to choose another),
+the decay time (click it to type a value), the **Freeze**, **Sync** and **Bus**
+indicators, and **Output History**. Output History shows recent output level; it
+is not a measured RT60 graph, and the decay readout is the parameter setting, not
+a guarantee of a measured acoustic decay time. The side meters show input and
+output levels.
 
 ## Editing Values
 
