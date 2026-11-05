@@ -26,12 +26,18 @@ inline int fetMeterButton(float choice, bool bypass) noexcept
 
 // OFF uses the same bypass parameter as the shell and host. A meter selection
 // restores processing; choosing OFF preserves the previous meter reference.
-template <class SetValue>
-void selectFetMeterButton(int row, SetValue&& setValue)
+// Only what the press changes is written: pressing the lit button again records
+// no host edit (no undo step, no automation point).
+template <class GetValue, class SetValue>
+void selectFetMeterButton(int row, GetValue&& getValue, SetValue&& setValue)
 {
     if (row < 0 || row > 3) return;
-    if (row != 3) setValue(static_cast<uint32_t>(ParamId::FetMeter), static_cast<float>(row));
-    setValue(static_cast<uint32_t>(ParamId::Bypass), row == 3 ? 1.0f : 0.0f);
+    const auto write = [&](ParamId id, float value) {
+        const uint32_t p = static_cast<uint32_t>(id);
+        if (getValue(p) != value) setValue(p, value);
+    };
+    if (row != 3) write(ParamId::FetMeter, static_cast<float>(row));
+    write(ParamId::Bypass, row == 3 ? 1.0f : 0.0f);
 }
 
 // FET BLUE's ratio buttons, 2:1, 4:1, 8:1 and 20:1 (bits 0..3), are pressed one at a time or two together: the lit

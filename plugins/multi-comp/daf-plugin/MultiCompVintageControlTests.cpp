@@ -252,17 +252,24 @@ bool switching()
     {
         auto values = defaults(); values[fet] = 2; values[bypass] = row == 3 ? 0 : 1;
         const auto before = values;
-        ui_detail::selectFetMeterButton(row, [&](uint32_t p, float v) { values[p] = v; });
+        const auto get = [&](uint32_t p) { return values[p]; };
+        ui_detail::selectFetMeterButton(row, get, [&](uint32_t p, float v) { values[p] = v; });
         ok &= values[fet] == (row == 3 ? 2 : row) && values[bypass] == (row == 3 ? 1 : 0)
             && ui_detail::fetMeterButton(values[fet], values[bypass] != 0) == row;
         for (int i = 0; i < kTotalParamCount; ++i)
             if (i != fet && i != bypass) ok &= values[static_cast<size_t>(i)] == before[static_cast<size_t>(i)];
+        // Pressing the lit button again writes nothing: no host edit, no undo step, no automation point.
+        int again = 0;
+        ui_detail::selectFetMeterButton(row, get, [&](uint32_t, float) { ++again; });
+        ok &= again == 0;
     }
     int writes = 0;
-    ui_detail::selectFetMeterButton(-1, [&](uint32_t, float) { ++writes; });
-    ui_detail::selectFetMeterButton(4, [&](uint32_t, float) { ++writes; });
+    const auto none = [](uint32_t) { return 0.0f; };
+    ui_detail::selectFetMeterButton(-1, none, [&](uint32_t, float) { ++writes; });
+    ui_detail::selectFetMeterButton(4, none, [&](uint32_t, float) { ++writes; });
     ok &= writes == 0 && ui_detail::vintageMeterChoice(0.6f) == 1 && ui_detail::vintageMeterChoice(1.6f) == 2;
-    std::puts("FET switching: GR/+8/+4 enable, OFF bypasses and preserves reference; unrelated controls unchanged");
+    std::puts("FET switching: GR/+8/+4 enable, OFF bypasses and preserves reference; unrelated controls unchanged; "
+              "the lit button writes nothing");
     return ok;
 }
 

@@ -654,6 +654,7 @@ public:
         fontSet = duskdaf::loadCrispFontSet(kFontSizes, 7, getScaleFactor());
         labelFont = fontSet.primary();
         panel.setFontSet(fontSet);
+        vcaLastScHp = hostValueForPlain(P_SC_HP, kVcaPullScFirstHz);
         scanUserPresets();
     }
 
@@ -834,7 +835,11 @@ private:
     // buttons): UI state, deliberately not a host parameter.
     int vcaMeterSource = 2;
     float vcaVuNeedle = 0.0f;
-    float vcaLastScHp = 1.0f;
+    // The cutoff PULL/SC restores when it goes in (host value; any 1 Hz or more engages it). Until the switch has
+    // been in during this editor's life, 20 Hz: it engages the switch, and as the sidechain high-pass the Opto, Bus
+    // and Digital faces share it is close to transparent there (the range's top, 500 Hz, was the old first value).
+    static constexpr float kVcaPullScFirstHz = 20.0f;
+    float vcaLastScHp = 0.0f;
     float busVuNeedle = 0.0f;
     ImDrawListSplitter busKnobSplitter;
     ImDrawListSplitter studioVcaKnobSplitter;
@@ -1952,7 +1957,8 @@ private:
             ImGui::SetCursorScreenPos(panel.P(cx - 16, y - 4));
             ImGui::PushID(i);
             ImGui::InvisibleButton("##opto_meter", ImVec2(32 * panel.scale(), 24 * panel.scale()));
-            if (ImGui::IsItemClicked()) setValue(P_OPTO_METER, static_cast<float>(i));
+            // The lit button again writes nothing (no undo step, no automation point).
+            if (ImGui::IsItemClicked() && selected != i) setValue(P_OPTO_METER, static_cast<float>(i));
             ImGui::PopID();
             panel.text(dl, cx, y, 9.0f, kOptoInk, labels[static_cast<size_t>(i)], 0, selected == i);
             if (selected == i)
@@ -2376,7 +2382,8 @@ private:
             ImGui::PushID(row);
             ImGui::InvisibleButton("##fet_meter", ImVec2(59 * panel.scale(), 34 * panel.scale()));
             if (ImGui::IsItemClicked())
-                multicompp::ui_detail::selectFetMeterButton(row, [this](uint32_t p, float v) { setValue(p, v); });
+                multicompp::ui_detail::selectFetMeterButton(row, [this](uint32_t p) { return values[p]; },
+                                                            [this](uint32_t p, float v) { setValue(p, v); });
             ImGui::PopID();
             dl->AddRectFilled(panel.P(x + 2.0f, y0 + 3.0f),
                               panel.P(x + 23.0f, y0 + 35.0f),
@@ -3709,9 +3716,14 @@ private:
         // its own active ID so a disappearing band cannot redirect a held drag.
         ImGui::PushID(static_cast<int>(p));
         beginTrackedControl(p, id, applicable);
-        panel.knob(id, p, lo, hi, x, y, r, values[p], hostDefaultValue(p), false, false, "%.2f", suffix, 0, true,
-                   false, nullptr, false, 1.0f, 0.0f, nullptr, false, nullptr, true, 0.0f, 0.0f, false, false, 9.5f,
-                   false, false, &knobHostToPlain, &knobPlainToHost, this);
+        // Made inapplicable while held (Auto Makeup or the external key switched by automation), the knob is not
+        // submitted this frame: ImGui drops an active item it no longer sees, while a disabled one stays active,
+        // and writing, as long as the pointer is off it; its gesture closes with the frame (finishTrackedEdits).
+        const bool heldWhileInapplicable = !applicable && trackedEditsOpen[p] && trackedEditOwners[p] == drawingTrackedId;
+        if (!heldWhileInapplicable)
+            panel.knob(id, p, lo, hi, x, y, r, values[p], hostDefaultValue(p), false, false, "%.2f", suffix, 0, true,
+                       false, nullptr, false, 1.0f, 0.0f, nullptr, false, nullptr, true, 0.0f, 0.0f, false, false, 9.5f,
+                       false, false, &knobHostToPlain, &knobPlainToHost, this);
         endTrackedControl();
         ImGui::PopID();
         if (!applicable) ImGui::EndDisabled();

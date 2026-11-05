@@ -326,7 +326,34 @@ void hiddenControls()
                     out.count(out.ui.gestures, p, 1), out.count(out.ui.gestures, p, 0), before, out.writes(p));
         check(out.balanced(p) && before > 0 && before == out.writes(p),
               "Auto Makeup closes output gesture and prevents further writes");
+        // The same with the pointer dragged off the knob first. ImGui drops a disabled active item only while the
+        // pointer is over it, so off the knob it stayed active and kept writing after its gesture had closed, with
+        // no gesture around the writes.
+        Host far(mode);
+        far.hold(x, y); far.frame(x, y - 90, true);
+        const int held = far.writes(p);
+        far.ui.parameter(pid(ParamId::AutoMakeup), 1);
+        far.frame(x, y - 120, true); far.frame(x, y - 150, true); far.frame(x, y - 150); far.frame();
+        std::printf("disabled output off the knob mode=%d begins=%d ends=%d before=%d after=%d\n", mode,
+                    far.count(far.ui.gestures, p, 1), far.count(far.ui.gestures, p, 0), held, far.writes(p));
+        check(far.balanced(p) && held > 0 && held == far.writes(p),
+              "Auto Makeup closes output gesture and prevents further writes with the pointer off the knob");
     }
+}
+
+// VCA's PULL/SC switch, pressed in a fresh editor, puts the shared sidechain cutoff at 20 Hz: it engages the switch
+// and stays close to transparent as the high-pass of the Opto, Bus and Digital faces. Its first value used to be the
+// range's top, 500 Hz, which those faces then applied after a mode change.
+void vcaPullScFirstValue()
+{
+    Host h(2);
+    h.click(171, 320);
+    const uint32_t p = pid(ParamId::SidechainHP);
+    float hz = -1.0f;
+    for (const auto& event : h.ui.writes)
+        if (event.parameter == p) hz = multicompp::hostToPlain(multicompp::kParams[p], event.value);
+    std::printf("VCA PULL/SC first press: SC HP %.2f Hz\n", static_cast<double>(hz));
+    check(std::abs(hz - 20.0f) < 0.5f, "a fresh PULL/SC press engages the switch at a 20 Hz cutoff");
 }
 
 void outputAccess()
@@ -408,6 +435,7 @@ int main(int argc, char** argv)
     if (run("editor-close")) editorClosedMidDrag();
     if (run("hidden")) hiddenControls();
     if (run("output")) outputAccess();
+    if (run("pull-sc")) vcaPullScFirstValue();
     if (run("numeric")) numericOwnership();
     if (run("restore")) restoredFace();
     std::printf("modern UI failures=%d\n", failures);
