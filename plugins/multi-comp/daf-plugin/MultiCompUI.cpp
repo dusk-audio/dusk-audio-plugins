@@ -2010,7 +2010,6 @@ private:
         multicompp::ui_detail::VintageMeterScale meterScale;
         meterScale.detail = Layout::meterW / 238.0f;
         meterScale.tickLabel = 14.0f;
-        meterScale.legend = 20.0f;
         meterScale.sublabel = 13.0f;
         meterScale.percent = 13.0f;
         meterScale.vu = 16.0f;

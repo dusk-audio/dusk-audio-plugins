@@ -17,7 +17,7 @@ inline duskdaf::VuScaleConfig vintageVuScale(const char* sublabel = "GAIN REDUCT
     cfg.ticks = ticks;
     cfg.tickCount = static_cast<int>(std::size(ticks));
     cfg.redFromDb = 0.1f;
-    cfg.legend = "DUSK";
+    cfg.legend = nullptr;   // no brand on the meter face (owner 2026-11-05); the sublabel takes the legend's place
     cfg.sublabel = sublabel;
     cfg.deflection = [](float db, const duskdaf::VuScaleConfig&) { return vintageVuDeflection(db); };
     return cfg;
@@ -48,7 +48,7 @@ inline duskdaf::VuStyle vintageVuStyle(bool opto) noexcept
     style.majorTickLength = -10;
     style.minorTickLength = -6;
     style.tickLabelSize = 8.0f;
-    style.legendSize = 13;
+    style.legendSize = 0.0f;   // no legend: the sublabel moves up into its place
     style.sublabelSize = 6.8f;
     style.legendOffset = 0.46f;
     style.needleWidth = 1.9f;
@@ -61,7 +61,6 @@ struct VintageMeterScale
 {
     float detail = 1.0f;
     float tickLabel = 8.0f;   // the dB scale
-    float legend = 13.0f;     // DUSK
     float sublabel = 6.8f;    // GAIN REDUCTION, OUTPUT +10, ...
     float percent = 6.5f;     // the second printed scale
     float vu = 9.0f;          // the VU marks in the corners
@@ -85,7 +84,6 @@ inline void drawVintageMeter(duskdaf::DuskPanel& panel, ImDrawList* dl,
     style.minorTickLength *= d;
     style.needleWidth *= d;
     style.tickLabelSize = scale.tickLabel;
-    style.legendSize = scale.legend;
     style.sublabelSize = scale.sublabel;
     if (!powered)
     {

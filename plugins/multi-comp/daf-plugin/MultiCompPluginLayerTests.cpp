@@ -783,8 +783,11 @@ void testShippingUiUsesConformingHeaderWithoutUtilityBands()
     const bool hasCompactDefaultHeight =
         info.find("#define DAF_UI_DEFAULT_WIDTH        1200") != std::string::npos
         && info.find("#define DAF_UI_DEFAULT_HEIGHT       480") != std::string::npos;
+    // The brand is the header's alone: no meter face carries it either (owner 2026-11-05).
+    const std::string vintageMeter = readSiblingSource("MultiCompVintageMeter.hpp");
     const bool hasSingleHeaderIdentity = countText("\"DUSK AUDIO\"") == 1
-        && source.find("\"DUSK\"") == std::string::npos;
+        && source.find("\"DUSK\"") == std::string::npos
+        && vintageMeter.find("\"DUSK\"") == std::string::npos;
     const bool hasSimplifiedOptoTitle =
         source.find("\"LEVELING AMPLIFIER\"") != std::string::npos
         && source.find("\"OPTICAL LEVELING AMPLIFIER\"") == std::string::npos;
