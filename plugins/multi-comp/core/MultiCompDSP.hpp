@@ -189,11 +189,18 @@ private:
         int mode = -1;
         int oversampling = 0;
         int fetRatio = 0;
+        // The lookaheads (ms, as their parameters hold them), held with the rest while a switch fades out: a preset
+        // or INIT that writes Mode and Lookahead together moves every delay line at the switch, in silence, not at
+        // the request. A lookahead change on its own is not a switch (switchChangesAudioPath): it applies at once,
+        // so a dragged or automated lookahead never gates the output.
+        float globalLookahead = 0.0f;
+        float digitalLookahead = 0.0f;
     };
     bool switchChangesAudioPath(const SwitchConfig& from, const SwitchConfig& to) const noexcept;
     void armSwitchDuckDryPaths(const SwitchConfig& from, const SwitchConfig& to) noexcept;
     bool switchDuckFadesDryPaths() const noexcept { return switchDuckDryMix || switchDuckDryLatency; }
-    int reportedLatencyForMode(int mode) const noexcept;
+    int reportedLatencyFor(const SwitchConfig& config) const noexcept;
+    int switchMuteSamples(const SwitchConfig& to) const noexcept;
     void resetSwitchDuck() noexcept;
     bool advanceSwitchDuck(int nSamples) noexcept;
     void padWetPath(float* const* out, int nCh, int nSamples) noexcept;
@@ -343,6 +350,9 @@ private:
     int lastMode = -1;
     int lastOversamplingSetting = 0;   // the Oversampling setting the last block ran with
     int lastFetRatio = 0;              // FET BLACK's Ratio position the last block ran with
+    float lastGlobalLookahead = 0.0f;  // the lookaheads the last block ran with (ms)
+    float lastDigitalLookahead = 0.0f;
+    unsigned switchDuckSwitches = 0;   // switches the duck has made (tests: MultiCompDSPTestAccess)
     int blockFetRatio = 0;             // the Ratio position this block runs FET BLACK with (syncModeParameters)
     // A switch that changes the audio path (switchChangesAudioPath()) is ducked: every mode switch (owner ruling
     // 2026-11-05; until then only those that changed the anti-alias oversampler's factor or brought Opto's output
@@ -354,7 +364,7 @@ private:
     SwitchConfig switchDuckHeld;   // the old configuration, processed while the fade runs; mode -1: none held
     int switchDuckPosition = 1;    // wet fade position in samples: 0 silent .. switchDuckFadeSamples full
     int switchDuckDryPosition = 1; // the dry paths' fade position, same scale; full unless they are ducked
-    int switchDuckMuted = 0;       // samples still muted after the switch
+    int switchDuckMuted = 0;       // samples still muted after the switch (switchMuteSamples)
     int switchDuckFadeSamples = 1;
     // The dry paths a switch moves, faded with the wet path until the duck is idle again: Mix's dry when Multiband
     // comes in or goes (its dry is the split-band sum) or the reported latency moves (a lookahead counts in one

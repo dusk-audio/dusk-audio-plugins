@@ -606,6 +606,8 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     requested.mode = std::clamp(params.mode.load(std::memory_order_relaxed), 0, 7);
     requested.oversampling = std::clamp(params.oversampling.load(std::memory_order_relaxed), 0, 2);
     requested.fetRatio = params.fetRatio.load(std::memory_order_relaxed);   // read as fetRatioIndex() reads it
+    requested.globalLookahead = params.globalLookahead.load(std::memory_order_relaxed);
+    requested.digitalLookahead = params.digitalLookahead.load(std::memory_order_relaxed);
     if (switchDuckHeld.mode >= 0)
     {
         if (!switchChangesAudioPath(switchDuckHeld, requested))
@@ -615,16 +617,19 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     }
     else if (!firstBlock && lastMode >= 0)
     {
-        const SwitchConfig last{lastMode, lastOversamplingSetting, lastFetRatio};
+        const SwitchConfig last{lastMode, lastOversamplingSetting, lastFetRatio, lastGlobalLookahead,
+                                lastDigitalLookahead};
         if (switchChangesAudioPath(last, requested))
         {
             armSwitchDuckDryPaths(last, requested);
             if (switchDuckPosition > 0 || (switchDuckFadesDryPaths() && switchDuckDryPosition > 0))
                 switchDuckHeld = last;                  // audible: fade the old configuration out first
             else
-            {   // already silent: switch now, mute the realignment
-                switchDuckMuted = kSwitchDuckMuteSamples;
+            {   // already silent: switch now, mute the realignment. A held switch is made here too: once its fade is
+                // silent, the part after the silence (processPart) finds it again.
+                switchDuckMuted = switchMuteSamples(requested);
                 holdPaddingThroughSwitch(lastMode);
+                ++switchDuckSwitches;
             }
         }
     }
@@ -639,7 +644,7 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
         {
             holdPaddingThroughSwitch(switchDuckHeld.mode);
             switchDuckHeld.mode = -1;
-            switchDuckMuted = kSwitchDuckMuteSamples;
+            switchDuckMuted = switchMuteSamples(requested);
         }
         processPart(silentAt, nSamples - silentAt);
         return;
@@ -736,10 +741,8 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     const int settingOversampling = oversamplingFactorForSetting(oversamplingSetting);
     const int actualOversampling = audioFactorForMode(mode, settingOversampling, sampleRate);
     modes.setOptoSettingFactor(settingOversampling);
-    const float globalLookaheadMs = globalLookaheadForMode(
-        mode, params.globalLookahead.load(std::memory_order_relaxed));
-    const float digitalLookaheadMs = std::clamp(
-        params.digitalLookahead.load(std::memory_order_relaxed), 0.0f, 10.0f);
+    const float globalLookaheadMs = globalLookaheadForMode(mode, running.globalLookahead);
+    const float digitalLookaheadMs = std::clamp(running.digitalLookahead, 0.0f, 10.0f);
     const int blockLatency = latencySamplesForMode(mode, globalLookaheadMs, digitalLookaheadMs);
     // With host latency padding the dry, bypass and listen paths are delayed
     // straight to the host latency (blockLatency + this), which every mode
@@ -993,6 +996,8 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     }
     lastOversamplingSetting = oversamplingSetting;
     lastFetRatio = blockFetRatio;
+    lastGlobalLookahead = running.globalLookahead;
+    lastDigitalLookahead = running.digitalLookahead;
     if (useExternalSidechain != lastExternalSidechain)
     {
         lastExternalSidechain = useExternalSidechain;
@@ -1529,7 +1534,7 @@ void MultiCompDSP::armSwitchDuckDryPaths(const SwitchConfig& from, const SwitchC
         switchDuckDryMix = false;
         switchDuckDryLatency = false;
     }
-    const bool latencyMoves = reportedLatencyForMode(from.mode) != reportedLatencyForMode(to.mode);
+    const bool latencyMoves = reportedLatencyFor(from) != reportedLatencyFor(to);
     const auto multiband = static_cast<int>(MultiCompMode::Multiband);
     const bool multibandDry = (from.mode == multiband) != (to.mode == multiband);
     if (!latencyMoves && !multibandDry) return;
@@ -1538,14 +1543,26 @@ void MultiCompDSP::armSwitchDuckDryPaths(const SwitchConfig& from, const SwitchC
     switchDuckDryLatency = switchDuckDryLatency || latencyMoves;
 }
 
-// The latency the host is told for a mode at the current lookahead settings: getHostLatencySamples() with host
+// The latency the host is told for a configuration, its mode at its lookaheads: getHostLatencySamples() with host
 // latency padding, getLatencySamples() without. Every dry path is delayed by it.
-int MultiCompDSP::reportedLatencyForMode(int mode) const noexcept
+int MultiCompDSP::reportedLatencyFor(const SwitchConfig& config) const noexcept
 {
-    const auto m = static_cast<MultiCompMode>(std::clamp(mode, 0, 7));
-    const int latency = latencySamplesForMode(m, params.globalLookahead.load(std::memory_order_relaxed),
-                                              params.digitalLookahead.load(std::memory_order_relaxed));
+    const auto m = static_cast<MultiCompMode>(std::clamp(config.mode, 0, 7));
+    const int latency = latencySamplesForMode(m, config.globalLookahead, config.digitalLookahead);
     return hostLatencyPadding ? latency + getMaximumLatencyPaddingSamples() - baseLatencyForMode(m) : latency;
+}
+
+// The silence a switch keeps once it is made: long enough for the entered configuration's own delays to pass what
+// they held from before it. kSwitchDuckMuteSamples covers the anti-alias filters' realignment; Digital's own
+// lookahead delays the audio inside the mode, so its seam comes out that much later (in a fade it clicked). The dry
+// paths keep the same silence: Mix's dry is taken after the Global lookahead, so a switch between modes that count it
+// differently leaves a seam in its delay line as well, which a shorter dry mute let out (3.6x at Mix 50 %, Opto 5.3
+// ms into Digital at 3.1 ms of its own).
+int MultiCompDSP::switchMuteSamples(const SwitchConfig& to) const noexcept
+{
+    const bool digital = std::clamp(to.mode, 0, 7) == static_cast<int>(MultiCompMode::Digital);
+    return kSwitchDuckMuteSamples
+        + (digital ? lookaheadSamples(std::clamp(to.digitalLookahead, 0.0f, 10.0f)) : 0);
 }
 
 void MultiCompDSP::resetSwitchDuck() noexcept

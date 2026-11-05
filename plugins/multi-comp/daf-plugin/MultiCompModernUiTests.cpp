@@ -37,10 +37,12 @@ public:
     void draw() { onImGuiDisplay(); }
     void parameter(uint32_t p, float v) { state.parameters[p] = v; parameterChanged(p, v); }
     void restore(const char* key, const char* value) { stateChanged(key, value); }
-    uint32_t getWidth() const { return 1200; }
-    uint32_t getHeight() const { return 480; }
+    uint32_t width = 1200, height = 480;   // the editor window (Host sets a letterboxed one)
+    uint32_t getWidth() const { return width; }
+    uint32_t getHeight() const { return height; }
     float getScaleFactor() const { return 1; }
-    void setSize(uint32_t, uint32_t) {}
+    uint32_t sizeRequests = 0;
+    void setSize(uint32_t, uint32_t) { ++sizeRequests; }
     void setGeometryConstraints(uint32_t, uint32_t, bool) {}
     void* getPluginInstancePointer() const { return instance; }
     void repaint() {}
@@ -105,12 +107,16 @@ struct Host
             auto& io = ImGui::GetIO();
             io.IniFilename = nullptr; io.LogFilename = nullptr;
             io.DisplaySize = ImVec2(1200, 480); io.DeltaTime = 1.0f / 60.0f;
+            io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;   // as DAF runs ImGui (DearImGui.cpp)
         }
         ~Context() { ImGui::DestroyContext(context); }
     } context;
     DAF::MultiCompUI ui;
-    explicit Host(int mode)
+    explicit Host(int mode, uint32_t width = 1200, uint32_t height = 480)
     {
+        ui.width = width;
+        ui.height = height;
+        ImGui::GetIO().DisplaySize = ImVec2(static_cast<float>(width), static_cast<float>(height));
         // In the plugin the host backend builds the font atlas. Without one, an editor that found no system font
         // (a bare Linux container) leaves it empty, and ImGui::NewFrame needs a built atlas: give it ImGui's own.
         // An editor that loaded its face built the atlas already and is left as it is.
@@ -140,7 +146,7 @@ struct Host
         canvas(x, y, down);
     }
     // The pointer at (x, y) on the 1200 x 480 canvas itself: the header, the mode row and the settings drawer.
-    void canvas(float x, float y, bool down = false)
+    void canvas(float x = -100, float y = -100, bool down = false)
     {
         ImGui::SetCurrentContext(context.context);
         auto& io = ImGui::GetIO();
@@ -464,6 +470,106 @@ void settingsDrawer()
     }
 }
 
+// The drawer against Escape, the external key and the resize grip, in canvas coordinates. With keyboard navigation
+// on, as DAF runs ImGui, Escape that cancels a held knob or closes the preset list is ImGui's: it used to close the
+// drawer too, since ImGui takes the press inside NewFrame, before the drawer sees it. TRUE PEAK in Multiband follows
+// the key the plugin has, not the one requested (the DSP ignores it without one). The resize grip works with the
+// drawer open, whose window covers the grip's corner.
+void drawerKeysAndCorner()
+{
+    const uint32_t distortion = pid(ParamId::Distortion), lowFreq = pid(ParamId::ScLowFreq),
+                   truePeak = pid(ParamId::TruePeakEnable), externalKey = pid(ParamId::ExternalSidechain);
+    const auto escape = [](Host& h, float x, float y, bool down) {
+        ImGui::SetCurrentContext(h.context.context);
+        ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape, true);
+        h.canvas(x, y, down);
+        ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape, false);
+        h.canvas(x, y, down);
+    };
+    // Open: a press on a DRIVE button that is not lit writes Distortion (CLIP, or SOFT once CLIP is lit).
+    const auto drawerOpen = [distortion](Host& h) {
+        const bool clip = h.ui.state.parameters[distortion] != 3.0f;
+        const float value = clip ? 3.0f : 1.0f;
+        const int before = h.count(h.ui.writes, distortion, value);
+        h.canvasClick(418, clip ? 442 : 374);
+        return h.count(h.ui.writes, distortion, value) > before;
+    };
+
+    Host held(2);
+    held.canvasClick(1134, 67);                                   // SETTINGS
+    held.canvas(286, 230); held.canvas(286, 230, true); held.canvas(286, 210, true);   // LOW FREQ held
+    escape(held, 286, 210, true);
+    held.canvas(286, 210); held.canvas();
+    const bool heldBalanced = held.balanced(lowFreq);
+    const bool openAfterHeld = drawerOpen(held);
+    held.canvasClick(560, 24);                                    // the preset list
+    ImGui::SetCurrentContext(held.context.context);
+    const bool listOpened = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
+    escape(held, -100, -100, false);
+    const bool listClosed = !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
+    const bool openAfterList = drawerOpen(held);
+    escape(held, -100, -100, false);
+    const bool closedByEscape = !drawerOpen(held);
+    std::printf("drawer Escape: knob held -> drawer open %d (gesture balanced %d); preset list %d/%d -> drawer open "
+                "%d; Escape alone -> closed %d\n", openAfterHeld, heldBalanced, listOpened, listClosed,
+                openAfterList, closedByEscape);
+    check(openAfterHeld && heldBalanced, "Escape that cancels a held drawer knob leaves the drawer open");
+    check(listOpened && listClosed && openAfterList, "Escape that closes the preset list leaves the drawer open");
+    check(closedByEscape, "Escape on its own closes the drawer");
+
+    Host key(7);
+    key.ui.instance = &key.ui.state;
+    key.ui.state.externalActive = false;
+    key.ui.parameter(externalKey, 1.0f);
+    key.canvasClick(1134, 67);
+    key.canvasClick(716, 222);                                    // TRUE PEAK, key requested, none connected
+    const int requestedOnly = key.writes(truePeak);
+    key.ui.state.externalActive = true;
+    key.canvas();
+    key.canvasClick(716, 222);                                    // TRUE PEAK, key connected
+    const int connected = key.writes(truePeak);
+    std::printf("drawer TRUE PEAK in Multiband: key requested only -> %d writes, key connected -> %d\n",
+                requestedOnly, connected);
+    check(requestedOnly == 0 && connected > 0, "Multiband's TRUE PEAK follows the key the plugin has");
+
+    Host grip(0);
+    grip.canvasClick(1134, 67);
+    grip.canvas(1193, 473); grip.canvas(1193, 473, true); grip.canvas(1233, 498, true); grip.canvas(1233, 498);
+    grip.canvas();
+    const uint32_t sized = grip.ui.sizeRequests;
+    const bool openAfterGrip = drawerOpen(grip);
+    std::printf("drawer resize grip: %u size requests, drawer open after %d\n", sized, openAfterGrip);
+    check(sized > 0 && openAfterGrip, "the resize grip works with the drawer open, and leaves it open");
+
+    // Letterboxed windows: the canvas is centred, and the grip stays in the window's own corner.
+    for (const auto size : {std::array<uint32_t, 2>{{1400, 480}}, std::array<uint32_t, 2>{{1200, 600}}})
+    {
+        Host box(0, size[0], size[1]);
+        const float ox = (static_cast<float>(size[0]) - 1200.0f) * 0.5f, oy = (static_cast<float>(size[1]) - 480.0f) * 0.5f;
+        box.canvasClick(1134 + ox, 67 + oy);                      // SETTINGS
+        const float cx = static_cast<float>(size[0]) - 7.0f, cy = static_cast<float>(size[1]) - 7.0f;
+        box.canvas(cx, cy); box.canvas(cx, cy, true); box.canvas(cx + 40, cy + 25, true); box.canvas(cx + 40, cy + 25);
+        box.canvas();
+        // Open: DRIVE: CLIP, in this window's coordinates.
+        const int clipBefore = box.count(box.ui.writes, distortion, 3);
+        box.canvasClick(418 + ox, 442 + oy);
+        const bool open = box.count(box.ui.writes, distortion, 3) > clipBefore;
+        std::printf("drawer resize grip in a %ux%u window: %u size requests, drawer open after %d\n", size[0],
+                    size[1], box.ui.sizeRequests, open);
+        check(box.ui.sizeRequests > 0 && open, "the resize grip works with the drawer open in a letterboxed window");
+    }
+
+    // A press on the scrim in the frame the pointer arrives (from a drawer knob) closes the drawer.
+    Host scrim(0);
+    scrim.canvasClick(1134, 67);
+    scrim.canvas(286, 230);                                       // over LOW FREQ
+    scrim.canvas(8, 300, true); scrim.canvas(8, 300);              // to the scrim's margin and pressed, one frame
+    scrim.canvas();
+    const bool closedByScrim = !drawerOpen(scrim);
+    std::printf("drawer scrim press in the pointer's first frame there: closed %d\n", closedByScrim);
+    check(closedByScrim, "a press on the scrim closes the drawer in the pointer's first frame there");
+}
+
 void numericOwnership()
 {
     Host h(7);
@@ -492,6 +598,7 @@ int main(int argc, char** argv)
     if (run("output")) outputAccess();
     if (run("pull-sc")) vcaPullScFirstValue();
     if (run("drawer")) settingsDrawer();
+    if (run("drawer-keys")) drawerKeysAndCorner();
     if (run("numeric")) numericOwnership();
     if (run("restore")) restoredFace();
     std::printf("modern UI failures=%d\n", failures);

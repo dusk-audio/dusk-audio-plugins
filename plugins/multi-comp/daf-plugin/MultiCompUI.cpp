@@ -831,23 +831,33 @@ protected:
                                            "Multi-Comp 2", MULTICOMP2_VERSION_STRING,
                                            &supporters);
 
-        const duskdaf::ResizeGripState grip =
-            panel.resizeGrip(dl, winW, winH, kDesignW, kDesignH, 1.0f);   // the design size is the minimum
+        // The design size is the minimum. With the drawer open the grip is the drawer's (drawSettingsDrawer).
+        duskdaf::ResizeGripState grip;
+        if (!drawerOpen)
+            grip = panel.resizeGrip(dl, winW, winH, kDesignW, kDesignH, 1.0f);
         ImGui::End();
         if (drawerOpen)
         {
-            ImGui::SetNextWindowPos(panel.P(0.0f, kFaceTop));
-            ImGui::SetNextWindowSize(ImVec2(kDesignW * scale, (kDesignH - kFaceTop) * scale));
+            // From below the mode row to the window's own corner, letterboxed or not: the drawer covers the face, and
+            // the grip in that corner goes with it.
+            const float drawerTop = panel.P(0.0f, kFaceTop).y;
+            ImGui::SetNextWindowPos(ImVec2(0.0f, drawerTop));
+            ImGui::SetNextWindowSize(ImVec2(winW, winH - drawerTop));
             ImGui::Begin("##MultiComp2Settings", nullptr,
                          ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                          ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar |
                          ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground |
                          ImGuiWindowFlags_NoSavedSettings);
-            drawSettingsDrawer(ImGui::GetWindowDrawList());
+            grip = drawSettingsDrawer(ImGui::GetWindowDrawList(), winW, winH);
             ImGui::End();
         }
         // After every window: a control drawn in either one keeps its gesture this frame.
         finishTrackedEdits(false);
+        // What owned Escape this frame, for the drawer's next one: with keyboard navigation on (DAF turns it on),
+        // ImGui's own Escape handling cancels a held control or closes a popup inside NewFrame, before the drawer
+        // sees the key.
+        escapeOwnedLastFrame = ImGui::GetIO().WantTextInput || ImGui::IsAnyItemActive()
+            || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
         ImGui::PopStyleVar(2);
         // A host can service the request synchronously, so never resize from
         // inside the active ImGui window.
@@ -887,6 +897,7 @@ private:
     duskdaf::SupportersOverlay supporters;
     bool showSupporters = false;
     bool showSettings = false;   // the settings drawer (drawSettingsDrawer)
+    bool escapeOwnedLastFrame = false;   // a typed value, a held control or a popup had Escape last frame
     bool geometryDiagnosticLogged = false;
     bool parameterMirrorSeeded = false;
     static constexpr uint32_t kNoCrossover = ~uint32_t(0);
@@ -951,15 +962,19 @@ private:
             }
     }
 
-    bool modernManualOutputAvailable() const
+    // The external key the detector actually uses: requested, and connected. The split/out-of-process fallback has
+    // only the requested key source; monolithic formats can mirror the detector the core actually uses.
+    bool externalKeyInUse() const
     {
-        if (values[P_AUTO_MAKEUP] <= 0.5f) return true;
         if (values[static_cast<uint32_t>(ParamId::ExternalSidechain)] <= 0.5f) return false;
         void* const instance = getPluginInstancePointer();
-        // The split/out-of-process fallback has only the requested key source.
-        // Monolithic formats can mirror the detector the core actually uses.
         return instance == nullptr || multiCompGetExternalSidechainActive == nullptr
             || multiCompGetExternalSidechainActive(instance) > 0.5f;
+    }
+
+    bool modernManualOutputAvailable() const
+    {
+        return values[P_AUTO_MAKEUP] <= 0.5f || externalKeyInUse();
     }
 
     void clearPresetSelection(bool atDefaults)
@@ -1613,7 +1628,9 @@ private:
         if (!applicable) ImGui::EndDisabled();
     }
 
-    void drawSettingsDrawer(ImDrawList* dl)
+    // Draws the drawer and the resize grip in its window (winW x winH: the editor window), and returns the grip's
+    // state.
+    duskdaf::ResizeGripState drawSettingsDrawer(ImDrawList* dl, float winW, float winH)
     {
         using L = DrawerLayout;
         const float s = panel.scale();
@@ -1650,8 +1667,8 @@ private:
         static constexpr const char* kOversamplingShort[3] = {"OFF", "2X", "4X"};
         drawerSegments(dl, "##set_os", pid(ParamId::Oversampling), 800.0f, L::rowA + 36.0f, 64.0f,
                        kOversamplingShort, 3, false, mode != 5 && mode != 7);
-        // Multiband reads True Peak only on an external key (MultiCompDSP: the detector feed).
-        const bool truePeakApplies = mode != 7 || values[pid(ParamId::ExternalSidechain)] > 0.5f;
+        // Multiband reads True Peak only on an external key it actually has (MultiCompDSP: the detector feed).
+        const bool truePeakApplies = mode != 7 || externalKeyInUse();
         illuminatedToggle(dl, "##set_tp", pid(ParamId::TruePeakEnable), 640.0f, L::rowA + 76.0f, 792.0f,
                           L::rowA + 76.0f + L::buttonH, "TRUE PEAK", L::legendSize, truePeakApplies);
         static constexpr const char* kTruePeakShort[2] = {"4X", "8X"};
@@ -1690,17 +1707,19 @@ private:
                        kCurveShort, 2, true,
                        fetBlack && multicompp::ui_detail::choiceIndex(values[pid(ParamId::FetRatio)], 5) == 4);
 
-        // The panel's background keeps the pointer from the scrim; the scrim closes the drawer.
+        // The resize grip, then the panel's background, then the scrim: the first item under the pointer takes it, so
+        // the grip keeps its corner, the panel keeps the pointer from the scrim, and the scrim closes the drawer.
+        const duskdaf::ResizeGripState grip = panel.resizeGrip(dl, winW, winH, kDesignW, kDesignH, 1.0f);
         ImGui::SetCursorScreenPos(panel.P(L::x0, L::y0));
         ImGui::InvisibleButton("##settings_panel", ImVec2((L::x1 - L::x0) * s, (L::y1 - L::y0) * s));
         ImGui::SetCursorScreenPos(panel.P(0, kFaceTop));
         if (ImGui::InvisibleButton("##settings_scrim", ImVec2(kDesignW * s, (kDesignH - kFaceTop) * s)))
             showSettings = false;
-        // Escape closes the drawer unless something else owns it: a typed value being entered, a held control or
-        // an open popup (the save dialog) take it first.
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive()
-            && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId))
+        // Escape closes the drawer unless something else owned it last frame: a typed value being entered, a held
+        // control or an open popup (the preset list, the save dialog) take it first.
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !escapeOwnedLastFrame)
             showSettings = false;
+        return grip;
     }
 
     void knob(ImDrawList* dl, const char* id, uint32_t p, float x, float y,

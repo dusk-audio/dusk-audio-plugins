@@ -27,6 +27,10 @@ namespace duskaudio
 {
 struct MultiCompDSPTestAccess
 {
+    // The switches the duck has made at its silence (MultiCompDSP::switchDuckSwitches). The output alone cannot tell
+    // a ducked switch from one into a path that restarts near-silent on its own (VCA's anti-alias filters, the way
+    // out of Multiband), so the switch tests count them too.
+    static unsigned duckedSwitches(const MultiCompDSP& dsp) noexcept { return dsp.switchDuckSwitches; }
 
 
     // The vintage FET envelope gain, in dB, straight off the mode state --
@@ -5904,12 +5908,20 @@ void testEveryModeSwitchIsDucked()
                 config.sampleRate, config.oversampling, 256, static_cast<MultiCompMode>(mode), {}, input);
             ownStep[static_cast<size_t>(mode)] = largestStepBetween(alone[static_cast<size_t>(mode)], 1, total);
         }
+        // The duck's switch count as each switch is requested, and at the end (MultiCompDSPTestAccess).
+        std::vector<unsigned> duckedAt(chain.size() + 1, 0);
         std::vector<ParameterRequest> requests;
         for (size_t k = 1; k < chain.size(); ++k)
         {
             const int mode = static_cast<int>(chain[k]);
-            requests.push_back({static_cast<int>(k) * segment, [mode](MultiCompDSP& dsp) { dsp.setMode(mode); }});
+            requests.push_back({static_cast<int>(k) * segment, [mode, k, &duckedAt](MultiCompDSP& dsp) {
+                duckedAt[k] = duskaudio::MultiCompDSPTestAccess::duckedSwitches(dsp);
+                dsp.setMode(mode);
+            }});
         }
+        requests.push_back({total - 1, [&duckedAt](MultiCompDSP& dsp) {
+            duckedAt.back() = duskaudio::MultiCompDSPTestAccess::duckedSwitches(dsp);
+        }});
         for (const int block : {32, 256})
         {
             const std::vector<float> out = renderParameterRequests(config.sampleRate, config.oversampling, block,
@@ -5929,12 +5941,16 @@ void testEveryModeSwitchIsDucked()
                 }
                 chainSettled = std::max(chainSettled, largestDifferenceBetween(
                     out, alone[to], request + segment / 2, request + segment));
-                if (!wentQuietBetween(out, request, request + segment / 2))
+                // Through the duck: the output goes quiet, and the duck made exactly this one switch.
+                const unsigned duckedThen = k + 1 < chain.size() ? duckedAt[k + 1] : duckedAt.back();
+                const bool switchedByDuck = duckedThen - duckedAt[k] == 1;
+                if (!wentQuietBetween(out, request, request + segment / 2) || !switchedByDuck)
                 {
                     ++unducked;
-                    std::printf("mode-switch duck: %3.0f kHz %-3s block %3d, %s>%s did not go quiet\n",
+                    std::printf("mode-switch duck: %3.0f kHz %-3s block %3d, %s>%s %s\n",
                                 config.sampleRate / 1000.0, oversamplingSettingName(config.oversampling), block,
-                                kModeSwitchModeNames[from], kModeSwitchModeNames[to]);
+                                kModeSwitchModeNames[from], kModeSwitchModeNames[to],
+                                switchedByDuck ? "did not go quiet" : "was not switched by the duck");
                 }
                 ++switches;
             }
@@ -6530,6 +6546,177 @@ void testLatencyMovingSwitchDucksTheDryPaths()
     require(bypassOff == 0, "after the switch, a settled bypass is the input delayed by the entered mode's latency");
 }
 
+// A preset or INIT writes Mode and the lookaheads in one request. The duck holds the old lookaheads with the old mode
+// until its silence, so every delay line moves at the switch, in silence; at the request, the bypass and dry paths
+// stepped by the whole old lookahead with no fade. A lookahead change on its own is not a switch: it applies at once
+// (a dragged or automated lookahead must never gate the output, testLookaheadRampNeverGates), and where the mode
+// ignores the lookahead nothing moves. Digital's own lookahead delays the audio inside the mode, so a switch into it
+// keeps the wet path silent until what that delay held from before has passed (switchMuteSamples); in a fade it
+// clicked. Padded as the plugin runs, 48 kHz 2x, blocks 32 and 256, bypassed and at Mix 50 % (MB Mix 50 %).
+// Lookaheads of 5.3, 3.1 and 2.1 ms, so no latency step is a whole number of the tone's periods.
+void testLookaheadMovesWithTheSwitch()
+{
+    using duskaudio::MultiCompMode;
+    using Parameter = MultiCompDSP::Parameter;
+    constexpr double kRate = 48000.0;
+    struct Step { MultiCompMode mode; float globalMs; float digitalMs; };
+    const std::vector<Step> steps{
+        {MultiCompMode::Digital, 5.3f, 0.0f},
+        {MultiCompMode::Opto, 0.0f, 0.0f},        // Mode and lookaheads in one request (INIT, a preset)
+        {MultiCompMode::Opto, 5.3f, 3.1f},        // Opto ignores both: nothing moves
+        {MultiCompMode::Digital, 5.3f, 3.1f},     // into Digital at its own lookahead
+        {MultiCompMode::Multiband, 2.1f, 3.1f},   // Mode and Global Lookahead
+        {MultiCompMode::VCA, 0.0f, 0.0f},
+        {MultiCompMode::Digital, 0.0f, 3.1f},
+        {MultiCompMode::Digital, 5.3f, 3.1f}};    // a lookahead change alone: at once, not a switch
+    const auto setStep = [](MultiCompDSP& dsp, const Step& step) {
+        dsp.setMode(static_cast<int>(step.mode));
+        dsp.setParameter(Parameter::GlobalLookahead, step.globalMs);
+        dsp.setParameter(Parameter::DigitalLookahead, step.digitalMs);
+    };
+    std::vector<int> latency;
+    for (const Step& step : steps)
+    {
+        MultiCompDSP probe;
+        probe.setHostLatencyPadding(true);
+        probe.setOversampling(kOversampling2xSetting);
+        setStep(probe, step);
+        probe.prepare(kRate, 256);
+        latency.push_back(probe.getHostLatencySamples());
+    }
+    bool chainAsMeant = true;
+    for (size_t k = 1; k < steps.size(); ++k)
+        chainAsMeant = chainAsMeant && (latency[k] != latency[k - 1]) == (k != 2)
+            && (std::abs(latency[k] - latency[k - 1]) % 48 != 0) == (k != 2);
+    require(chainAsMeant, "every step but Opto's ignored lookaheads moves the host latency, by no whole tone period");
+
+    const int segment = switchTestSegment(kRate);
+    const int total = segment * static_cast<int>(steps.size());
+    const std::vector<float> input = modeSwitchTone(kRate, total);
+    const float toneStep = largestStepBetween(input, 1, total);
+    std::vector<unsigned> duckedAt(steps.size() + 1, 0);
+    std::vector<ParameterRequest> requests;
+    for (size_t k = 1; k < steps.size(); ++k)
+    {
+        const Step step = steps[k];
+        requests.push_back({static_cast<int>(k) * segment, [step, k, &duckedAt, setStep](MultiCompDSP& dsp) {
+            duckedAt[k] = duskaudio::MultiCompDSPTestAccess::duckedSwitches(dsp);
+            setStep(dsp, step);
+        }});
+    }
+    requests.push_back({total - 1, [&duckedAt](MultiCompDSP& dsp) {
+        duckedAt.back() = duskaudio::MultiCompDSPTestAccess::duckedSwitches(dsp);
+    }});
+    const Step first = steps.front();
+    const std::function<void(MultiCompDSP&)> start = [first](MultiCompDSP& dsp) {
+        dsp.setParameter(Parameter::GlobalLookahead, first.globalMs);
+        dsp.setParameter(Parameter::DigitalLookahead, first.digitalMs);
+    };
+    const std::function<void(MultiCompDSP&)> startHalfMix = [first](MultiCompDSP& dsp) {
+        dsp.setParameter(Parameter::GlobalLookahead, first.globalMs);
+        dsp.setParameter(Parameter::DigitalLookahead, first.digitalMs);
+        dsp.setMix(50.0f);
+        dsp.setParameter(Parameter::MbMix, 50.0f);
+    };
+    int wrong = 0, bypassOff = 0;
+    float worstClick = 0.0f;
+    for (const int block : {32, 256})
+        for (const bool bypassed : {true, false})
+        {
+            const std::vector<float> out = renderParameterRequests(
+                kRate, kOversampling2xSetting, block, first.mode, requests, input, -20.0f, ModeRenderHost::Plugin,
+                bypassed ? ModeRenderPath::Bypass : ModeRenderPath::Wet, {}, bypassed ? start : startHalfMix);
+            for (size_t k = 1; k < steps.size(); ++k)
+            {
+                const int request = static_cast<int>(k) * segment;
+                const bool switches = steps[k].mode != steps[k - 1].mode;
+                const unsigned duckedThen = k + 1 < steps.size() ? duckedAt[k + 1] : duckedAt.back();
+                const bool switchedByDuck = duckedThen - duckedAt[k] == 1;
+                const bool quiet = wentQuietBetween(out, request, request + segment / 2);
+                const float click = largestStepBetween(out, request, request + segment) / toneStep;
+                // Bypassed: the input delayed by the new latency once a switch has settled, and at once otherwise.
+                int off = 0;
+                if (bypassed)
+                    for (int n = switches ? request + segment / 2 : request; n < request + segment; ++n)
+                        if (out[static_cast<size_t>(n)] != input[static_cast<size_t>(n - latency[k])]) ++off;
+                std::printf("lookahead with switch: block %3d %s %s %.1f/%.1f ms > %s %.1f/%.1f ms (latency %d>%d): "
+                            "%s%s, step %.2fx, %d off\n", block, bypassed ? "bypassed" : "Mix 50 %",
+                            kModeSwitchModeNames[static_cast<size_t>(steps[k - 1].mode)],
+                            static_cast<double>(steps[k - 1].globalMs), static_cast<double>(steps[k - 1].digitalMs),
+                            kModeSwitchModeNames[static_cast<size_t>(steps[k].mode)],
+                            static_cast<double>(steps[k].globalMs), static_cast<double>(steps[k].digitalMs),
+                            latency[k - 1], latency[k], quiet ? "ducked" : "not ducked",
+                            switchedByDuck ? " (by the duck)" : "", static_cast<double>(click), off);
+                if (quiet != switches || switchedByDuck != switches) ++wrong;
+                if (switches) worstClick = std::max(worstClick, click);
+                bypassOff += off;
+            }
+        }
+    require(wrong == 0, "a mode switch that carries lookahead changes is ducked, and a lookahead change alone is not");
+    require(worstClick < kModeSwitchClickBound, "a mode switch that carries lookahead changes does not click");
+    require(bypassOff == 0, "a settled bypass plays the input delayed by the latency of the configuration it runs");
+}
+
+// A dragged or automated lookahead must never gate the output: a lookahead change on its own applies at once. A
+// version that ducked every latency-moving lookahead change muted the whole of an automated ramp, since each change
+// restarted the duck's mute before the last had ended. Global Lookahead ramped from 0.5 to 9.5 ms over one second, a
+// new value every 256 samples, in Digital with its own lookahead at 0 and at 3.1 ms, padded, bypassed and at Mix 50 %:
+// no 1 ms window of the output falls under 10 % of the tone's level, and the duck makes no switch.
+void testLookaheadRampNeverGates()
+{
+    using duskaudio::MultiCompMode;
+    using Parameter = MultiCompDSP::Parameter;
+    constexpr double kRate = 48000.0;
+    constexpr int kRampStart = 4800, kRampSamples = 48000, kStep = 256, kWindow = 48;
+    const int total = kRampStart + kRampSamples + 4800;
+    const std::vector<float> input = modeSwitchTone(kRate, total);
+    int gated = 0, windows = 0;
+    unsigned ducked = 0;
+    for (const float digitalMs : {0.0f, 3.1f})
+        for (const bool bypassed : {true, false})
+        {
+            unsigned duckedAtEnd = 0;
+            std::vector<ParameterRequest> requests;
+            for (int n = kRampStart; n < kRampStart + kRampSamples; n += kStep)
+            {
+                const float ms = 0.5f + 9.0f * static_cast<float>(n - kRampStart) / static_cast<float>(kRampSamples);
+                requests.push_back({n, [ms](MultiCompDSP& dsp) { dsp.setParameter(Parameter::GlobalLookahead, ms); }});
+            }
+            requests.push_back({total - 1, [&duckedAtEnd](MultiCompDSP& dsp) {
+                duckedAtEnd = duskaudio::MultiCompDSPTestAccess::duckedSwitches(dsp);
+            }});
+            const std::function<void(MultiCompDSP&)> setup = [digitalMs, bypassed](MultiCompDSP& dsp) {
+                dsp.setParameter(Parameter::GlobalLookahead, 0.5f);
+                dsp.setParameter(Parameter::DigitalLookahead, digitalMs);
+                if (!bypassed)
+                {
+                    dsp.setMix(50.0f);
+                    dsp.setParameter(Parameter::MbMix, 50.0f);
+                }
+            };
+            const std::vector<float> out = renderParameterRequests(
+                kRate, kOversampling2xSetting, 256, MultiCompMode::Digital, requests, input, -20.0f,
+                ModeRenderHost::Plugin, bypassed ? ModeRenderPath::Bypass : ModeRenderPath::Wet, {}, setup);
+            int runGated = 0, runWindows = 0;
+            for (int n = kRampStart; n + kWindow <= kRampStart + kRampSamples + 2400; n += kWindow)
+            {
+                float peak = 0.0f;
+                for (int i = n; i < n + kWindow; ++i) peak = std::max(peak, std::abs(out[static_cast<size_t>(i)]));
+                ++runWindows;
+                if (peak < 0.05f) ++runGated;   // 10 % of the tone's 0.5
+            }
+            std::printf("lookahead ramp: Digital lookahead %.1f ms, %s: %d of %d 1 ms windows gated, %u ducked "
+                        "switches\n", static_cast<double>(digitalMs), bypassed ? "bypassed" : "Mix 50 %", runGated,
+                        runWindows, duckedAtEnd);
+            gated += runGated;
+            windows += runWindows;
+            ducked += duckedAtEnd;
+        }
+    require(gated == 0, "a ramped lookahead never gates the output");
+    require(ducked == 0, "a lookahead change on its own is not a switch");
+    std::printf("lookahead ramp: %d windows, none gated, no switch\n", windows);
+}
+
 float renderMultibandTone(float mix, float frequency)
 {
     MultiCompDSP dsp;
@@ -6866,7 +7053,7 @@ void testMultibandDryPaddedToHostLatency()
                                                      static_cast<int>(MultiCompMode::Multiband));
             const size_t request = static_cast<size_t>(kModeSwitchSegment);
             int off = 0;
-            bool silent = false;
+            bool silent = true;
             float worstStep = 0.0f, inputStep = 0.0f;
             for (size_t ch = 0; ch < 2; ++ch)
             {
@@ -6883,7 +7070,7 @@ void testMultibandDryPaddedToHostLatency()
                     if (y * x < 0.0f || std::abs(y) > std::abs(x)) ++off;   // the delayed input, attenuated
                     quietRun = y == 0.0f ? quietRun + 1 : 0;
                 }
-                silent = silent || quietRun >= 32;
+                silent = silent && quietRun >= 32;   // every channel
                 for (size_t m = request; m < total; ++m)
                 {
                     worstStep = std::max(worstStep, std::abs(out[ch][m] - out[ch][m - 1]));
@@ -13851,6 +14038,19 @@ int main(int argc, char** argv)
         std::puts("Multi-Comp latency-moving switch duck test: PASS");
         return 0;
     }
+    if (argc == 2 && std::strcmp(argv[1], "--lookahead-ramp") == 0)
+    {
+        testLookaheadRampNeverGates();
+        std::puts("Multi-Comp lookahead ramp test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--lookahead-switch-duck") == 0)
+    {
+        testLookaheadMovesWithTheSwitch();
+        testLookaheadRampNeverGates();
+        std::puts("Multi-Comp lookahead switch duck tests: PASS");
+        return 0;
+    }
     if (argc == 2 && std::strcmp(argv[1], "--mode-switch-duck") == 0)
     {
         testEveryModeSwitchIsDucked();
@@ -13860,6 +14060,8 @@ int main(int argc, char** argv)
         testOversamplingChangeIsDucked();
         testFetAllButtonsSwitchIsDucked();
         testLatencyMovingSwitchDucksTheDryPaths();
+        testLookaheadMovesWithTheSwitch();
+        testLookaheadRampNeverGates();
         std::puts("Multi-Comp mode-switch duck tests: PASS");
         return 0;
     }
@@ -13980,6 +14182,8 @@ int main(int argc, char** argv)
     testOversamplingChangeIsDucked();
     testFetAllButtonsSwitchIsDucked();
     testLatencyMovingSwitchDucksTheDryPaths();
+    testLookaheadMovesWithTheSwitch();
+    testLookaheadRampNeverGates();
     testHiddenControlsStayOutOfModesWithoutThem();
     testGlobalLookaheadOnlyInDigitalModes();
     testStudioVcaStaticsMatchReference();
