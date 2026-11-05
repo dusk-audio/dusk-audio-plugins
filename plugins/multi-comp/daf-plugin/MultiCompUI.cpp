@@ -1847,6 +1847,60 @@ private:
         }
     }
 
+    // OPTO 2A's colours by role (kOptoInk and kOptoRed are its legend ink and red), sampled from the face as it
+    // was drawn before the tokens; the legends keep kOptoInk.
+    struct OptoTheme
+    {
+        // The rack panel: frame, ears, brushed plate, edges and mounting slots
+        static constexpr ImU32 dropShadow = IM_COL32(0, 0, 0, 145);
+        static constexpr ImU32 rackFrame = IM_COL32(21, 23, 24, 255);
+        static constexpr ImU32 ear = IM_COL32(143, 147, 147, 255);
+        static constexpr ImU32 plateTopLeft = IM_COL32(218, 220, 218, 255);
+        static constexpr ImU32 plateTopRight = IM_COL32(211, 213, 211, 255);
+        static constexpr ImU32 plateBottomRight = IM_COL32(199, 201, 199, 255);
+        static constexpr ImU32 plateBottomLeft = IM_COL32(207, 209, 207, 255);
+        static constexpr ImU32 brushLight = IM_COL32(255, 255, 252, 5);
+        static constexpr ImU32 brushDark = IM_COL32(74, 78, 78, 4);
+        static constexpr ImU32 earSeam = IM_COL32(54, 58, 59, 210);
+        static constexpr ImU32 earSeamHighlight = IM_COL32(255, 255, 255, 115);
+        static constexpr ImU32 plateTopEdge = IM_COL32(255, 255, 255, 160);
+        static constexpr ImU32 plateBottomEdge = IM_COL32(23, 25, 26, 220);
+        static constexpr ImU32 rackSlot = IM_COL32(7, 8, 8, 255);
+        static constexpr ImU32 rackSlotHighlight = IM_COL32(255, 255, 255, 38);
+        // Panel screws (drawOptoScrew; the VCA face uses them too)
+        static constexpr ImU32 screwShadow = IM_COL32(0, 0, 0, 105);
+        static constexpr ImU32 screwRim = IM_COL32(86, 90, 90, 255);
+        static constexpr ImU32 screwHead = IM_COL32(206, 208, 205, 255);
+        static constexpr ImU32 screwHeadEdge = IM_COL32(60, 63, 63, 255);
+        static constexpr ImU32 screwSlot = IM_COL32(57, 59, 58, 255);
+        static constexpr ImU32 screwGlint = IM_COL32(255, 255, 255, 170);
+        // The SC HP and MIX set screws
+        static constexpr ImU32 setScrewShadow = IM_COL32(0, 0, 0, 90);
+        static constexpr ImU32 setScrewNut = IM_COL32(116, 119, 117, 255);
+        static constexpr ImU32 setScrewHead = IM_COL32(210, 212, 208, 255);
+        static constexpr ImU32 setScrewEdge = IM_COL32(57, 59, 58, 255);
+        static constexpr ImU32 setScrewSlot = IM_COL32(47, 49, 48, 255);
+        // The GAIN and PEAK REDUCTION knobs
+        static constexpr ImU32 knobShadow = IM_COL32(0, 0, 0, 105);
+        static constexpr ImU32 knobSkirt = IM_COL32(22, 24, 23, 255);
+        static constexpr ImU32 knobCap = IM_COL32(37, 39, 37, 255);
+        static constexpr ImU32 knobCapHighlight = IM_COL32(112, 117, 110, 180);
+        static constexpr ImU32 knobCapShade = IM_COL32(5, 7, 6, 220);
+        static constexpr ImU32 knobBar = IM_COL32(14, 16, 15, 255);
+        static constexpr ImU32 knobBarEdge = IM_COL32(98, 103, 96, 180);
+        static constexpr ImU32 knobPointer = IM_COL32(242, 243, 233, 255);
+        // The LIMIT / COMPRESS toggle
+        static constexpr ImU32 toggleNutShadow = IM_COL32(0, 0, 0, 115);
+        static constexpr ImU32 toggleNut = IM_COL32(121, 124, 121, 255);
+        static constexpr ImU32 toggleBushing = IM_COL32(49, 51, 50, 255);
+        static constexpr ImU32 toggleBushingRim = IM_COL32(225, 226, 221, 190);
+        static constexpr ImU32 toggleLeverShadow = IM_COL32(0, 0, 0, 130);
+        static constexpr ImU32 toggleLever = IM_COL32(163, 165, 160, 255);
+        static constexpr ImU32 toggleLeverHighlight = IM_COL32(245, 245, 238, 215);
+        static constexpr ImU32 toggleTip = IM_COL32(180, 182, 176, 255);
+        static constexpr ImU32 toggleTipEdge = IM_COL32(48, 50, 49, 255);
+    };
+
     void drawOpto(ImDrawList* dl)
     {
         using Layout = multicompp::ui_detail::OptoFaceplateLayout;
@@ -1859,23 +1913,23 @@ private:
         // but uses physical rack construction and hardware depth. Keep all
         // branding original to Dusk rather than reproducing a reference unit.
         dl->AddRectFilled(panel.P(left + 5, top + 8), panel.P(right + 5, bottom + 8),
-                          IM_COL32(0, 0, 0, 145), 4.0f * panel.scale());
+                          OptoTheme::dropShadow, 4.0f * panel.scale());
         dl->AddRectFilled(panel.P(left, top), panel.P(right, bottom),
-                          IM_COL32(21, 23, 24, 255), 3.0f * panel.scale());
+                          OptoTheme::rackFrame, 3.0f * panel.scale());
 
         constexpr float earWidth = 46.0f;
         const float faceLeft = left + earWidth;
         const float faceRight = right - earWidth;
         dl->AddRectFilled(panel.P(left + 3, top + 3), panel.P(faceLeft, bottom - 3),
-                          IM_COL32(143, 147, 147, 255), 2.0f * panel.scale());
+                          OptoTheme::ear, 2.0f * panel.scale());
         dl->AddRectFilled(panel.P(faceRight, top + 3), panel.P(right - 3, bottom - 3),
-                          IM_COL32(143, 147, 147, 255), 2.0f * panel.scale());
+                          OptoTheme::ear, 2.0f * panel.scale());
         dl->AddRectFilledMultiColor(panel.P(faceLeft, top + 3),
                                     panel.P(faceRight, bottom - 3),
-                                    IM_COL32(218, 220, 218, 255),
-                                    IM_COL32(211, 213, 211, 255),
-                                    IM_COL32(199, 201, 199, 255),
-                                    IM_COL32(207, 209, 207, 255));
+                                    OptoTheme::plateTopLeft,
+                                    OptoTheme::plateTopRight,
+                                    OptoTheme::plateBottomRight,
+                                    OptoTheme::plateBottomLeft);
 
         // Deterministic one-pixel strokes keep the panel feeling like brushed
         // aluminium without requiring a resolution-specific bitmap texture.
@@ -1884,22 +1938,22 @@ private:
         {
             const int variation = (row * 37) % 5;
             const ImU32 shade = variation < 2
-                ? IM_COL32(255, 255, 252, 5)
-                : IM_COL32(74, 78, 78, 4);
+                ? OptoTheme::brushLight
+                : OptoTheme::brushDark;
             dl->AddLine(panel.P(left + 5.0f, static_cast<float>(row)),
                         panel.P(right - 5.0f, static_cast<float>(row)),
                         shade, panel.scale());
         }
         dl->AddLine(panel.P(faceLeft, top + 4), panel.P(faceLeft, bottom - 4),
-                    IM_COL32(54, 58, 59, 210), 1.5f * panel.scale());
+                    OptoTheme::earSeam, 1.5f * panel.scale());
         dl->AddLine(panel.P(faceRight, top + 4), panel.P(faceRight, bottom - 4),
-                    IM_COL32(54, 58, 59, 210), 1.5f * panel.scale());
+                    OptoTheme::earSeam, 1.5f * panel.scale());
         dl->AddLine(panel.P(faceLeft + 1, top + 5), panel.P(faceLeft + 1, bottom - 5),
-                    IM_COL32(255, 255, 255, 115), panel.scale());
+                    OptoTheme::earSeamHighlight, panel.scale());
         dl->AddLine(panel.P(left + 4, top + 4), panel.P(right - 4, top + 4),
-                    IM_COL32(255, 255, 255, 160), 1.2f * panel.scale());
+                    OptoTheme::plateTopEdge, 1.2f * panel.scale());
         dl->AddLine(panel.P(left + 4, bottom - 4), panel.P(right - 4, bottom - 4),
-                    IM_COL32(23, 25, 26, 220), 2.0f * panel.scale());
+                    OptoTheme::plateBottomEdge, 2.0f * panel.scale());
 
         // Rack-ear slots are intentionally clipped by the panel edge, like a
         // photographed 19-inch unit sitting in a dark rack.
@@ -1907,16 +1961,16 @@ private:
         {
             dl->AddRectFilled(panel.P(left - 7.0f, slotY - 9.0f),
                               panel.P(left + 23.0f, slotY + 9.0f),
-                              IM_COL32(7, 8, 8, 255), 9.0f * panel.scale());
+                              OptoTheme::rackSlot, 9.0f * panel.scale());
             dl->AddRectFilled(panel.P(right - 23.0f, slotY - 9.0f),
                               panel.P(right + 7.0f, slotY + 9.0f),
-                              IM_COL32(7, 8, 8, 255), 9.0f * panel.scale());
+                              OptoTheme::rackSlot, 9.0f * panel.scale());
             dl->AddLine(panel.P(left - 2.0f, slotY - 6.0f),
                         panel.P(left + 19.0f, slotY - 6.0f),
-                        IM_COL32(255, 255, 255, 38), panel.scale());
+                        OptoTheme::rackSlotHighlight, panel.scale());
             dl->AddLine(panel.P(right - 19.0f, slotY - 6.0f),
                         panel.P(right + 2.0f, slotY - 6.0f),
-                        IM_COL32(255, 255, 255, 38), panel.scale());
+                        OptoTheme::rackSlotHighlight, panel.scale());
         }
 
         for (const ImVec2 screw : {ImVec2(faceLeft + 28, top + 20),
@@ -1951,16 +2005,16 @@ private:
         const float scale = panel.scale();
         const ImVec2 center = panel.P(x, y);
         dl->AddCircleFilled(ImVec2(center.x + 2.2f * scale, center.y + 3.2f * scale),
-                            radius * scale, IM_COL32(0, 0, 0, 105), 28);
+                            radius * scale, OptoTheme::screwShadow, 28);
         dl->AddCircleFilled(center, radius * scale,
-                            IM_COL32(86, 90, 90, 255), 28);
+                            OptoTheme::screwRim, 28);
         dl->AddCircleFilled(ImVec2(center.x - 0.8f * scale, center.y - 1.0f * scale),
                             (radius - 1.2f) * scale,
-                            IM_COL32(206, 208, 205, 255), 28);
+                            OptoTheme::screwHead, 28);
         dl->AddCircle(center, (radius - 1.2f) * scale,
-                      IM_COL32(60, 63, 63, 255), 28, 0.9f * scale);
+                      OptoTheme::screwHeadEdge, 28, 0.9f * scale);
         const float slot = radius * 0.55f * scale;
-        const ImU32 slotDark = IM_COL32(57, 59, 58, 255);
+        const ImU32 slotDark = OptoTheme::screwSlot;
         dl->AddLine(ImVec2(center.x - slot, center.y - slot),
                     ImVec2(center.x + slot, center.y + slot),
                     slotDark, 1.3f * scale);
@@ -1969,7 +2023,7 @@ private:
                     slotDark, 1.3f * scale);
         dl->AddCircleFilled(ImVec2(center.x - radius * 0.30f * scale,
                                    center.y - radius * 0.34f * scale),
-                            1.15f * scale, IM_COL32(255, 255, 255, 170), 12);
+                            1.15f * scale, OptoTheme::screwGlint, 12);
     }
 
     void optoKnob(ImDrawList* dl, const char* id, uint32_t p, float x, float y,
@@ -2020,11 +2074,11 @@ private:
                 point.x += 2.0f * panel.scale();
                 point.y += 3.0f * panel.scale();
             }
-            dl->AddConvexPolyFilled(shadow.data(), 6, IM_COL32(0, 0, 0, 90));
-            dl->AddConvexPolyFilled(nut.data(), 6, IM_COL32(116, 119, 117, 255));
+            dl->AddConvexPolyFilled(shadow.data(), 6, OptoTheme::setScrewShadow);
+            dl->AddConvexPolyFilled(nut.data(), 6, OptoTheme::setScrewNut);
             dl->AddCircleFilled(center, scaledRadius,
-                                IM_COL32(210, 212, 208, 255), 32);
-            dl->AddCircle(center, scaledRadius, IM_COL32(57, 59, 58, 255),
+                                OptoTheme::setScrewHead, 32);
+            dl->AddCircle(center, scaledRadius, OptoTheme::setScrewEdge,
                           32, 1.2f * panel.scale());
             const float slotAngle = duskdaf::DuskPanel::knobAngle(t);
             const ImVec2 slot(std::sin(slotAngle), -std::cos(slotAngle));
@@ -2032,7 +2086,7 @@ private:
                                center.y - slot.y * scaledRadius * 0.63f),
                         ImVec2(center.x + slot.x * scaledRadius * 0.63f,
                                center.y + slot.y * scaledRadius * 0.63f),
-                        IM_COL32(47, 49, 48, 255), 2.4f * panel.scale());
+                        OptoTheme::setScrewSlot, 2.4f * panel.scale());
             panel.text(dl, x, y - 40.0f, 9.0f, kOptoInk, label, 0, true);
             panel.text(dl, x - 31.0f, y - 4.0f, 12.0f, kOptoInk, "-", 0, true);
             panel.text(dl, x + 31.0f, y - 4.0f, 12.0f, kOptoInk, "+", 0, true);
@@ -2079,7 +2133,7 @@ private:
         const ImVec2 shadowCenter(center.x + 3.0f * panel.scale(),
                                   center.y + 5.0f * panel.scale());
         dl->AddCircleFilled(shadowCenter, scaledRadius * 1.01f,
-                            IM_COL32(0, 0, 0, 105), 56);
+                            OptoTheme::knobShadow, 56);
         // The scallops turn with the pointer, so the whole body reads as one
         // turning part; the shadow and the highlight arcs below stay put
         // because the light does not move.
@@ -2098,20 +2152,20 @@ private:
         dl->PrimReserve(96 * 3, 97);
         const unsigned int rimBase = dl->_VtxCurrentIdx;
         const ImVec2 rimUv = ImGui::GetIO().Fonts->TexUvWhitePixel;
-        dl->PrimWriteVtx(center, rimUv, IM_COL32(22, 24, 23, 255));
+        dl->PrimWriteVtx(center, rimUv, OptoTheme::knobSkirt);
         for (const auto& point : rim)
-            dl->PrimWriteVtx(point, rimUv, IM_COL32(22, 24, 23, 255));
+            dl->PrimWriteVtx(point, rimUv, OptoTheme::knobSkirt);
         for (int i = 0; i < 96; ++i)
         {
             dl->PrimWriteIdx(static_cast<ImDrawIdx>(rimBase));
             dl->PrimWriteIdx(static_cast<ImDrawIdx>(rimBase + 1 + i));
             dl->PrimWriteIdx(static_cast<ImDrawIdx>(rimBase + 1 + (i + 1) % 96));
         }
-        dl->AddCircleFilled(center, scaledRadius * 0.86f, IM_COL32(37, 39, 37, 255), 64);
+        dl->AddCircleFilled(center, scaledRadius * 0.86f, OptoTheme::knobCap, 64);
         dl->PathArcTo(center, scaledRadius * 0.86f, -2.8f, -0.35f, 32);
-        dl->PathStroke(IM_COL32(112, 117, 110, 180), 0, 1.2f * panel.scale());
+        dl->PathStroke(OptoTheme::knobCapHighlight, 0, 1.2f * panel.scale());
         dl->PathArcTo(center, scaledRadius * 0.88f, 0.2f, 2.8f, 32);
-        dl->PathStroke(IM_COL32(5, 7, 6, 220), 0, 2.0f * panel.scale());
+        dl->PathStroke(OptoTheme::knobCapShade, 0, 2.0f * panel.scale());
         const ImVec2 pointer(std::sin(pointerAngle), -std::cos(pointerAngle));
         const ImVec2 across(pointer.y, -pointer.x);
         const auto ridge = [&](float along, float side) {
@@ -2119,11 +2173,11 @@ private:
                           center.y + scaledRadius * (pointer.y * along + across.y * side));
         };
         dl->AddQuadFilled(ridge(-0.79f, -0.17f), ridge(0.91f, -0.10f),
-                          ridge(0.91f, 0.10f), ridge(-0.79f, 0.17f), IM_COL32(14, 16, 15, 255));
+                          ridge(0.91f, 0.10f), ridge(-0.79f, 0.17f), OptoTheme::knobBar);
         dl->AddLine(ridge(-0.68f, -0.12f), ridge(0.87f, -0.08f),
-                    IM_COL32(98, 103, 96, 180), 1.5f * panel.scale());
+                    OptoTheme::knobBarEdge, 1.5f * panel.scale());
         dl->AddLine(ridge(0.48f, 0.0f), ridge(0.93f, 0.0f),
-                    IM_COL32(242, 243, 233, 255), 1.8f * panel.scale());
+                    OptoTheme::knobPointer, 1.8f * panel.scale());
         panel.text(dl, x, y + radius + 37.0f, 10.5f,
                    kOptoInk, label, 0, true);
         optoKnobSplitter.Merge(dl);
@@ -2160,26 +2214,26 @@ private:
             point.x += 2.0f * panel.scale();
             point.y += 4.0f * panel.scale();
         }
-        dl->AddConvexPolyFilled(nutShadow.data(), 6, IM_COL32(0, 0, 0, 115));
-        dl->AddConvexPolyFilled(nut.data(), 6, IM_COL32(121, 124, 121, 255));
+        dl->AddConvexPolyFilled(nutShadow.data(), 6, OptoTheme::toggleNutShadow);
+        dl->AddConvexPolyFilled(nut.data(), 6, OptoTheme::toggleNut);
         dl->AddCircleFilled(base, 8.5f * panel.scale(),
-                            IM_COL32(49, 51, 50, 255), 32);
+                            OptoTheme::toggleBushing, 32);
         dl->AddCircle(base, 8.5f * panel.scale(),
-                      IM_COL32(225, 226, 221, 190), 32, panel.scale());
+                      OptoTheme::toggleBushingRim, 32, panel.scale());
         const float leverY = y + (limit ? -16.0f : 16.0f);
         const float leverX = x + (limit ? -3.0f : 4.0f);
         dl->AddLine(panel.P(x + 2.0f, y + 3.0f),
                     panel.P(leverX + 2.0f, leverY + 4.0f),
-                    IM_COL32(0, 0, 0, 130), 6.0f * panel.scale());
+                    OptoTheme::toggleLeverShadow, 6.0f * panel.scale());
         dl->AddLine(base, panel.P(leverX, leverY),
-                    IM_COL32(163, 165, 160, 255), 4.5f * panel.scale());
+                    OptoTheme::toggleLever, 4.5f * panel.scale());
         dl->AddLine(panel.P(x - 1.5f, y - 1.5f),
                     panel.P(leverX - 1.5f, leverY - 1.5f),
-                    IM_COL32(245, 245, 238, 215), 2.0f * panel.scale());
+                    OptoTheme::toggleLeverHighlight, 2.0f * panel.scale());
         dl->AddCircleFilled(panel.P(leverX, leverY), 4.5f * panel.scale(),
-                            IM_COL32(180, 182, 176, 255), 28);
+                            OptoTheme::toggleTip, 28);
         dl->AddCircle(panel.P(leverX, leverY), 4.5f * panel.scale(),
-                      IM_COL32(48, 50, 49, 255), 28, 1.0f * panel.scale());
+                      OptoTheme::toggleTipEdge, 28, 1.0f * panel.scale());
     }
 
     void drawOptoMeter(ImDrawList* dl, float x, float y, float w, float h, float gr)
