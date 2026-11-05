@@ -118,7 +118,7 @@ private:
     static constexpr int kAutoGainMeasurementWindow = 64;
     static constexpr int kCrossoverRampMs = 20;
     static constexpr int kCrossoverCoefficientInterval = 8;
-    // The mode-switch duck (switchDuck*): the fades, and the mute that covers the anti-alias path realigning on its
+    // The switch duck (switchDuck*): the fades, and the mute that covers the anti-alias path realigning on its
     // new factor (the longest disturbance measured over every factor-changing switch, 88.2-192 kHz, plus margin;
     // the switches into and out of Studio VCA and Opto at 44.1 / 48 kHz stay inside it too).
     static constexpr double kSwitchDuckFadeMs = 1.0;
@@ -182,7 +182,18 @@ private:
     void resetAutoGainMeasurement() noexcept;
     MultiCompMode currentMode() const noexcept;
     float globalMixTarget(MultiCompMode mode) const noexcept;
-    bool switchChangesAudioPath(int fromMode, int toMode) const noexcept;
+    // What a block runs in, as far as a switch is concerned: the mode, the Oversampling setting (0..2) and FET
+    // BLACK's Ratio position (its All position runs the feed-forward arm, every other one the loop).
+    struct SwitchConfig
+    {
+        int mode = -1;
+        int oversampling = 0;
+        int fetRatio = 0;
+    };
+    bool switchChangesAudioPath(const SwitchConfig& from, const SwitchConfig& to) const noexcept;
+    void armSwitchDuckDryPaths(const SwitchConfig& from, const SwitchConfig& to) noexcept;
+    bool switchDuckFadesDryPaths() const noexcept { return switchDuckDryMix || switchDuckDryLatency; }
+    int reportedLatencyForMode(int mode) const noexcept;
     void resetSwitchDuck() noexcept;
     bool advanceSwitchDuck(int nSamples) noexcept;
     void padWetPath(float* const* out, int nCh, int nSamples) noexcept;
@@ -281,7 +292,8 @@ private:
     // a non-finite or above-ceiling sample; see sanitizeChannels.
     std::array<std::vector<float>, kMaxChannels> sanitizedInput, sanitizedSidechain;
     std::vector<float> dry, bypassDry, fetStartupInput;
-    std::vector<float> mixCurve, bypassCurve, autoGainCurve, listenCurve, fadeCurve, listenSource, switchDuckCurve;
+    std::vector<float> mixCurve, bypassCurve, autoGainCurve, listenCurve, fadeCurve, listenSource, switchDuckCurve,
+        switchDuckDryCurve;
     std::array<std::vector<float>, kMaxChannels> dryPathDelay;
     std::array<int, kMaxChannels> dryPathWrite{{0, 0}};
     std::array<std::vector<float>, kMaxChannels> bypassDelay;
@@ -329,15 +341,27 @@ private:
     bool lastAutoMakeup = false;
     bool firstBlock = true;
     int lastMode = -1;
-    // A mode switch that changes the audio path (switchChangesAudioPath(): the anti-alias oversampler's factor, as
-    // Studio VCA against the oversampled modes or Opto and vintage FET against the others at 88.2 kHz and up, or
-    // Opto's output stage) would replay that oversampler's delay line from the old factor or step the latency: the
-    // old mode is held while its wet path fades out, the switch happens at silence, the realignment stays muted
-    // and the new mode fades in (processBlockExternal). Every other switch is instant.
-    int switchDuckHeldMode = -1;   // the old mode, processed while the wet path fades out; -1: none held
-    int switchDuckPosition = 1;    // fade position in samples: 0 silent .. switchDuckFadeSamples full
+    int lastOversamplingSetting = 0;   // the Oversampling setting the last block ran with
+    int lastFetRatio = 0;              // FET BLACK's Ratio position the last block ran with
+    int blockFetRatio = 0;             // the Ratio position this block runs FET BLACK with (syncModeParameters)
+    // A switch that changes the audio path (switchChangesAudioPath()) is ducked: every mode switch (owner ruling
+    // 2026-11-05; until then only those that changed the anti-alias oversampler's factor or brought Opto's output
+    // stage in or out, ruling 2026-10-21), an Oversampling change that changes the mode's path, and FET BLACK's
+    // Ratio into or out of All. Instant, each replayed or skipped part of a delay line, restarted a filter from rest
+    // or swapped a running state for one at rest under the audio. The old configuration is held while the wet
+    // path fades out, the switch happens at silence, the realignment stays muted and the new configuration fades
+    // in (processBlockExternal). A switch that also moves the dry paths fades them too (switchDuckDry*).
+    SwitchConfig switchDuckHeld;   // the old configuration, processed while the fade runs; mode -1: none held
+    int switchDuckPosition = 1;    // wet fade position in samples: 0 silent .. switchDuckFadeSamples full
+    int switchDuckDryPosition = 1; // the dry paths' fade position, same scale; full unless they are ducked
     int switchDuckMuted = 0;       // samples still muted after the switch
     int switchDuckFadeSamples = 1;
+    // The dry paths a switch moves, faded with the wet path until the duck is idle again: Mix's dry when Multiband
+    // comes in or goes (its dry is the split-band sum) or the reported latency moves (a lookahead counts in one
+    // mode and not the other, or, without host latency padding, any two base latencies); the bypass and listen
+    // paths when the latency moves, since their delay lines then change length.
+    bool switchDuckDryMix = false;
+    bool switchDuckDryLatency = false;
     // Host latency padding (setHostLatencyPadding): the wet path delayed to the
     // deepest mode's latency, part by part. Multiband's dry is its split-band
     // sum, built after the dry delay line, so it takes the same padding in a
