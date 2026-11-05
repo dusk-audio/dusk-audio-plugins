@@ -22,12 +22,12 @@ IMAGE_NAME="dusk-plugins-builder"
 # Plugin lookup functions (compatible with bash 3.2 on macOS)
 get_plugin_target() {
     case "$1" in
-        4keq|eq) echo "FourKEQ_All" ;;
+        4keq|4k-eq|eq) echo "FourKEQ_All" ;;
         multicomp|multi-comp|compressor|comp) echo "MultiComp_All" ;;
         tape|tapemachine) echo "TapeMachine_All" ;;
         groovemind|groove) echo "GrooveMind_All" ;;
         harmonic) echo "HarmonicGeneratorPlugin_All" ;;
-        convolution|impulse|ir) echo "ConvolutionReverb_All" ;;
+        convolution|convolution-reverb|impulse|ir) echo "ConvolutionReverb_All" ;;
         multiq|multi-q|meq) echo "MultiQ_All" ;;
         tapeecho|tape-echo|echo) echo "TapeEcho_All" ;;
         chordanalyzer|chord-analyzer|chord|analyze) echo "ChordAnalyzer_All" ;;
@@ -40,12 +40,12 @@ get_plugin_target() {
 
 get_plugin_name() {
     case "$1" in
-        4keq|eq) echo "4K EQ" ;;
+        4keq|4k-eq|eq) echo "4K EQ" ;;
         multicomp|multi-comp|compressor|comp) echo "Multi-Comp" ;;
         tape|tapemachine) echo "TapeMachine" ;;
         groovemind|groove) echo "GrooveMind" ;;
         harmonic) echo "Harmonic Generator" ;;
-        convolution|impulse|ir) echo "Convolution Reverb" ;;
+        convolution|convolution-reverb|impulse|ir) echo "Convolution Reverb" ;;
         multiq|multi-q|meq) echo "Multi-Q" ;;
         tapeecho|tape-echo|echo) echo "Tape Echo" ;;
         chordanalyzer|chord-analyzer|chord|analyze) echo "Chord Analyzer" ;;
@@ -164,12 +164,12 @@ show_help() {
     echo "  --help       Show this help message"
     echo ""
     echo "Plugin shortcuts:"
-    echo "  4keq, eq           4K EQ"
+    echo "  4keq, 4k-eq, eq    4K EQ"
     echo "  multicomp, multi-comp, compressor, comp   Multi-Comp"
     echo "  tape, tapemachine  TapeMachine"
     echo "  groovemind, groove GrooveMind"
     echo "  harmonic           Harmonic Generator"
-    echo "  convolution, impulse, ir  Convolution Reverb"
+    echo "  convolution, convolution-reverb, impulse, ir  Convolution Reverb"
     echo "  multiq, multi-q, meq   Multi-Q (Universal EQ)"
     echo "  tapeecho, tape-echo, echo   Tape Echo"
     echo "  chordanalyzer, chord-analyzer, chord, analyze   Chord Analyzer"

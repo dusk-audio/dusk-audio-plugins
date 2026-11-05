@@ -53,21 +53,21 @@ public:
 
         const int n      = static_cast<int> (history_.size());
         const int chipW  = juce::jmax (kMinChipWidth,
-                                       (bounds.getWidth() - kStripPad * 2)
+                                       (bounds.getWidth() - kStripPadX * 2)
                                          / juce::jmax (1, juce::jmin (n, kMaxVisibleChips)));
-        const int chipH  = bounds.getHeight() - kStripPad * 2;
+        const int chipH  = bounds.getHeight() - kStripPadY * 2;
 
         // Determine the visible window — we always show the most recent
         // chord at the right edge, fitting as many older entries as the
         // strip width allows.
-        const int maxFit = juce::jmax (1, (bounds.getWidth() - kStripPad * 2) / chipW);
+        const int maxFit = juce::jmax (1, (bounds.getWidth() - kStripPadX * 2) / chipW);
         const int firstVisible = juce::jmax (0, n - maxFit);
 
         for (int i = firstVisible; i < n; ++i)
         {
             const int displayIdx = i - firstVisible;
-            const int x = bounds.getX() + kStripPad + displayIdx * chipW;
-            const int y = bounds.getY() + kStripPad;
+            const int x = bounds.getX() + kStripPadX + displayIdx * chipW;
+            const int y = bounds.getY() + kStripPadY;
             const juce::Rectangle<int> chip (x, y, chipW - kChipGap, chipH);
 
             // Newer chords get higher alpha; oldest fades to ~0.35.
@@ -133,7 +133,12 @@ public:
 private:
     static constexpr int kMinChipWidth     = 56;
     static constexpr int kMaxVisibleChips  = 16;
-    static constexpr int kStripPad         = 6;
+    static constexpr int kStripPadX        = 6;
+    // The editor gives the strip 30px. A 6px pad on both edges left an 18px
+    // chip for two lines of text, so the roman numeral overflowed its box and
+    // collided with the chord name. Vertical breathing room comes from the
+    // chip's own rounded-rect inset instead.
+    static constexpr int kStripPadY        = 2;
     static constexpr int kChipGap          = 4;
 
     std::vector<ChordInfo> history_;
@@ -147,17 +152,17 @@ private:
 
         const auto bounds = getLocalBounds();
         const int chipW   = juce::jmax (kMinChipWidth,
-                                        (bounds.getWidth() - kStripPad * 2)
+                                        (bounds.getWidth() - kStripPadX * 2)
                                           / juce::jmax (1, juce::jmin (n, kMaxVisibleChips)));
-        const int chipH        = bounds.getHeight() - kStripPad * 2;
-        const int maxFit       = juce::jmax (1, (bounds.getWidth() - kStripPad * 2) / chipW);
+        const int chipH        = bounds.getHeight() - kStripPadY * 2;
+        const int maxFit       = juce::jmax (1, (bounds.getWidth() - kStripPadX * 2) / chipW);
         const int firstVisible = juce::jmax (0, n - maxFit);
 
-        const int relY = pt.getY() - bounds.getY() - kStripPad;
+        const int relY = pt.getY() - bounds.getY() - kStripPadY;
         if (relY < 0 || relY >= chipH)
             return -1;
 
-        const int relX = pt.getX() - bounds.getX() - kStripPad;
+        const int relX = pt.getX() - bounds.getX() - kStripPadX;
         if (relX < 0)
             return -1;
         const int displayIdx = relX / chipW;
@@ -196,16 +201,29 @@ private:
         const auto textDim    = ChordAnalyzerLookAndFeel::Colors::textDim
                                   .withMultipliedAlpha (alpha);
 
-        const int nameH = juce::jmax (16, bounds.getHeight() / 2 + 4);
+        // Both font sizes are derived from the chip height rather than fixed at
+        // 15/11pt. A fixed size larger than its share of a short chip does not
+        // clip - JUCE centres the baseline and lets the glyphs run outside the
+        // rectangle - so the two lines used to overlap whenever the strip was
+        // short. The upper clamps keep the original proportions once there is
+        // room for them.
+        const bool  hasRoman  = chord.romanNumeral.isNotEmpty();
+        const float chipH     = static_cast<float> (bounds.getHeight());
+        const float nameFont  = juce::jlimit (9.0f, 15.0f,
+                                              hasRoman ? chipH * 0.52f : chipH * 0.70f);
+
+        const int nameH = hasRoman ? juce::roundToInt (chipH * 0.58f)
+                                   : bounds.getHeight();
         auto nameRect = bounds.removeFromTop (nameH);
         g.setColour (textBright);
-        g.setFont (juce::Font (juce::FontOptions (15.0f)).boldened());
+        g.setFont (juce::Font (juce::FontOptions (nameFont)).boldened());
         g.drawText (chord.name, nameRect, juce::Justification::centred, true);
 
-        if (chord.romanNumeral.isNotEmpty())
+        if (hasRoman)
         {
+            const float romanFont = juce::jlimit (8.0f, 11.0f, chipH * 0.34f);
             g.setColour (textDim);
-            g.setFont (juce::Font (juce::FontOptions (11.0f)));
+            g.setFont (juce::Font (juce::FontOptions (romanFont)));
             g.drawText (chord.romanNumeral, bounds, juce::Justification::centred, true);
         }
     }
