@@ -2296,6 +2296,80 @@ private:
         }
     }
 
+    // FET BLACK's and FET BLUE's face colours by role, sampled from the face as it was drawn before the tokens (the shading of the knob cap's facets is computed).
+    struct FetTheme
+    {
+        // The rack panel: plate, edge, grain, ears, slots and screws
+        static constexpr ImU32 dropShadow = IM_COL32(0, 0, 0, 150);
+        static constexpr ImU32 plateTopLeft = IM_COL32(27, 28, 27, 255);
+        static constexpr ImU32 plateTopRight = IM_COL32(17, 18, 18, 255);
+        static constexpr ImU32 plateBottomRight = IM_COL32(7, 8, 8, 255);
+        static constexpr ImU32 plateBottomLeft = IM_COL32(13, 14, 14, 255);
+        static constexpr ImU32 plateEdge = IM_COL32(114, 116, 111, 255);
+        static constexpr ImU32 grainLight = IM_COL32(255, 255, 255, 3);
+        static constexpr ImU32 grainDark = IM_COL32(0, 0, 0, 5);
+        static constexpr ImU32 ear = IM_COL32(35, 36, 35, 255);
+        static constexpr ImU32 earSeam = IM_COL32(104, 106, 101, 180);
+        static constexpr ImU32 rackSlot = IM_COL32(2, 3, 3, 255);
+        static constexpr ImU32 screwHead = IM_COL32(130, 132, 127, 255);
+        static constexpr ImU32 screwSlot = IM_COL32(38, 39, 38, 255);
+        // The badge and nameplate
+        static constexpr ImU32 badgeInk = IM_COL32(234, 234, 221, 255);
+        static constexpr ImU32 badgeSeries = IM_COL32(177, 179, 170, 255);
+        static constexpr ImU32 badgeNameplate = IM_COL32(202, 204, 194, 255);
+        // The RATIO and METER columns
+        static constexpr ImU32 columnLegend = IM_COL32(230, 231, 219, 255);
+        static constexpr ImU32 buttonShadow = IM_COL32(0, 0, 0, 130);
+        static constexpr ImU32 buttonIdle = IM_COL32(31, 31, 29, 255);
+        static constexpr ImU32 buttonHover = IM_COL32(52, 52, 49, 255);
+        static constexpr ImU32 buttonLit = IM_COL32(24, 24, 23, 255);
+        static constexpr ImU32 buttonEdge = IM_COL32(91, 92, 87, 255);
+        static constexpr ImU32 lamp = IM_COL32(226, 151, 61, 255);
+        static constexpr ImU32 lampRed = IM_COL32(160, 48, 34, 255);
+        static constexpr ImU32 buttonLabel = IM_COL32(228, 228, 216, 255);
+        static constexpr ImU32 buttonLabelLit = IM_COL32(246, 224, 177, 255);
+        static constexpr ImU32 meterButtonShadow = IM_COL32(0, 0, 0, 145);
+        static constexpr ImU32 meterButton = IM_COL32(29, 29, 28, 255);
+        static constexpr ImU32 meterButtonEdge = IM_COL32(87, 88, 84, 255);
+        static constexpr ImU32 meterButtonLabel = IM_COL32(227, 227, 215, 255);
+        // The knobs: scale, skirt, collar, cap and pointer
+        static constexpr ImU32 ringMark = IM_COL32(229, 230, 219, 240);
+        static constexpr ImU32 ringLabel = IM_COL32(232, 232, 220, 255);
+        static constexpr ImU32 ringDot = IM_COL32(230, 230, 218, 255);
+        static constexpr ImU32 knobShadow = IM_COL32(0, 0, 0, 150);
+        static constexpr ImU32 skirtEdge = IM_COL32(66, 67, 66, 255);
+        static constexpr ImU32 skirt = IM_COL32(32, 34, 32, 255);
+        static constexpr ImU32 skirtInner = IM_COL32(24, 26, 24, 255);
+        static constexpr ImU32 skirtCore = IM_COL32(23, 25, 23, 255);
+        static constexpr ImU32 skirtHighlight = IM_COL32(158, 162, 153, 80);
+        static constexpr ImU32 skirtShade = IM_COL32(24, 25, 24, 110);
+        static constexpr ImU32 skirtRim = IM_COL32(31, 32, 31, 255);
+        static constexpr ImU32 collar = IM_COL32(20, 20, 20, 255);
+        static constexpr ImU32 knurl = IM_COL32(75, 79, 71, 100);
+        static constexpr ImU32 capBase = IM_COL32(111, 112, 110, 255);
+        static constexpr ImU32 capCentre = IM_COL32(181, 182, 179, 255);
+        static constexpr ImU32 capHighlight = IM_COL32(255, 255, 251, 95);
+        static constexpr ImU32 capRim = IM_COL32(44, 45, 44, 255);
+        static constexpr ImU32 pointer = IM_COL32(229, 230, 218, 255);
+        static constexpr ImU32 knobLegend = IM_COL32(235, 235, 222, 255);
+    };
+
+    // The trim set screws (trimScrewKnob: FET's Mix and FET BLUE's Headroom, VCA's Mix).
+    struct TrimScrewTheme
+    {
+        // Nut, head, face, slot and the legend with its travel marks
+        static constexpr ImU32 shadow = IM_COL32(0, 0, 0, 120);
+        static constexpr ImU32 nut = IM_COL32(94, 96, 93, 255);
+        static constexpr ImU32 head = IM_COL32(116, 118, 115, 255);
+        static constexpr ImU32 face = IM_COL32(190, 192, 188, 255);
+        static constexpr ImU32 highlight = IM_COL32(247, 248, 242, 80);
+        static constexpr ImU32 rim = IM_COL32(43, 44, 43, 255);
+        static constexpr ImU32 slot = IM_COL32(42, 43, 42, 255);
+        static constexpr ImU32 legend = IM_COL32(225, 226, 215, 255);
+        static constexpr ImU32 minus = IM_COL32(157, 160, 152, 255);
+        static constexpr ImU32 plus = IM_COL32(210, 212, 201, 255);
+    };
+
     // FET BLACK's face, and for now FET BLUE's on the same panel (`blue`: its own ratio buttons, side-chain
     // filter and Headroom; it shares Input, Output, Attack and Release).
     void drawFet(ImDrawList* dl, bool blue)
@@ -2303,38 +2377,38 @@ private:
         constexpr float left = 0.0f, right = 1120.0f;
         constexpr float top = 344.0f, bottom = 654.0f;
         dl->AddRectFilled(panel.P(left + 5, top + 7), panel.P(right + 5, bottom + 7),
-                          IM_COL32(0, 0, 0, 150), 4.0f * panel.scale());
+                          FetTheme::dropShadow, 4.0f * panel.scale());
         dl->AddRectFilledMultiColor(panel.P(left, top), panel.P(right, bottom),
-                                    IM_COL32(27, 28, 27, 255),
-                                    IM_COL32(17, 18, 18, 255),
-                                    IM_COL32(7, 8, 8, 255),
-                                    IM_COL32(13, 14, 14, 255));
+                                    FetTheme::plateTopLeft,
+                                    FetTheme::plateTopRight,
+                                    FetTheme::plateBottomRight,
+                                    FetTheme::plateBottomLeft);
         dl->AddRect(panel.P(left, top), panel.P(right, bottom),
-                    IM_COL32(114, 116, 111, 255), 4.0f * panel.scale(), 0,
+                    FetTheme::plateEdge, 4.0f * panel.scale(), 0,
                     1.3f * panel.scale());
         for (int row = static_cast<int>(top + 4); row < static_cast<int>(bottom); row += 4)
             dl->AddLine(panel.P(left + 3, static_cast<float>(row)),
                         panel.P(right - 3, static_cast<float>(row)),
-                        row % 8 == 0 ? IM_COL32(255, 255, 255, 3)
-                                     : IM_COL32(0, 0, 0, 5), panel.scale());
+                        row % 8 == 0 ? FetTheme::grainLight
+                                     : FetTheme::grainDark, panel.scale());
         // Rack ears and mounting slots use the same full-face construction as
         // Opto mode so switching hardware models feels like swapping rack units.
         dl->AddRectFilled(panel.P(left, top), panel.P(left + 38.0f, bottom),
-                          IM_COL32(35, 36, 35, 255));
+                          FetTheme::ear);
         dl->AddRectFilled(panel.P(right - 38.0f, top), panel.P(right, bottom),
-                          IM_COL32(35, 36, 35, 255));
+                          FetTheme::ear);
         dl->AddLine(panel.P(left + 38.0f, top), panel.P(left + 38.0f, bottom),
-                    IM_COL32(104, 106, 101, 180), panel.scale());
+                    FetTheme::earSeam, panel.scale());
         dl->AddLine(panel.P(right - 38.0f, top), panel.P(right - 38.0f, bottom),
-                    IM_COL32(104, 106, 101, 180), panel.scale());
+                    FetTheme::earSeam, panel.scale());
         for (const float slotY : {top + 62.0f, bottom - 62.0f})
         {
             dl->AddRectFilled(panel.P(-9.0f, slotY - 9.0f),
                               panel.P(23.0f, slotY + 9.0f),
-                              IM_COL32(2, 3, 3, 255), 8.0f * panel.scale());
+                              FetTheme::rackSlot, 8.0f * panel.scale());
             dl->AddRectFilled(panel.P(right - 23.0f, slotY - 9.0f),
                               panel.P(right + 9.0f, slotY + 9.0f),
-                              IM_COL32(2, 3, 3, 255), 8.0f * panel.scale());
+                              FetTheme::rackSlot, 8.0f * panel.scale());
         }
         for (const ImVec2 screw : {ImVec2(left + 73, top + 18),
                                    ImVec2(right - 73, top + 18),
@@ -2342,10 +2416,10 @@ private:
                                    ImVec2(right - 73, bottom - 18)})
         {
             dl->AddCircleFilled(panel.P(screw.x, screw.y), 5.5f * panel.scale(),
-                                IM_COL32(130, 132, 127, 255), 24);
+                                FetTheme::screwHead, 24);
             dl->AddLine(panel.P(screw.x - 3.0f, screw.y),
                         panel.P(screw.x + 3.0f, screw.y),
-                        IM_COL32(38, 39, 38, 255), panel.scale());
+                        FetTheme::screwSlot, panel.scale());
         }
 
         // Match the reference unit's left-to-right reading order: two large gain
@@ -2372,14 +2446,14 @@ private:
             drawFetRatioButtons(dl, 685, kFetButtonsTop);
         drawOptoMeter(dl, 743, vuTop, 234, vuHeight,
                       multicompp::ui_detail::optoMeterDisplayValue(needleGainReduction()));
-        panel.text(dl, 860, top + 34, 14.0f, IM_COL32(234, 234, 221, 255),
+        panel.text(dl, 860, top + 34, 14.0f, FetTheme::badgeInk,
                    blue ? "FET BLUE" : "FET 76", 0, true);
-        panel.text(dl, 860, top + 54, 8.0f, IM_COL32(177, 179, 170, 255),
+        panel.text(dl, 860, top + 54, 8.0f, FetTheme::badgeSeries,
                    "REFERENCE SERIES", 0, true);
         const float badge = vuTop + vuHeight + 13.0f;
-        panel.text(dl, 860, badge, 10.0f, IM_COL32(234, 234, 221, 255),
+        panel.text(dl, 860, badge, 10.0f, FetTheme::badgeInk,
                    "MC-2", 0, true);
-        panel.text(dl, 860, badge + 18.0f, 9.2f, IM_COL32(202, 204, 194, 255),
+        panel.text(dl, 860, badge + 18.0f, 9.2f, FetTheme::badgeNameplate,
                    "LIMITING AMPLIFIER", 0, true);
         drawFetMeterSwitch(dl, 1000, kFetButtonsTop);
         // Under the meter-button column, level with the badge, labelled below
@@ -2397,7 +2471,7 @@ private:
     {
         const int position = multicompp::ui_detail::choiceIndex(value(P_FET_BLUE_RATIO), 11);
         const int lit = multicompp::ui_detail::fetBlueRatioButtons(position);
-        panel.text(dl, x + 14, y - 23, 8.5f, IM_COL32(230, 231, 219, 255), "RATIO", 0, true);
+        panel.text(dl, x + 14, y - 23, 8.5f, FetTheme::columnLegend, "RATIO", 0, true);
         constexpr std::array<int, 4> visualButton{{3, 2, 1, 0}};
         constexpr std::array<const char*, 5> visualLabels{{"20", "8", "4", "2", "SC"}};
         for (int row = 0; row < 5; ++row)
@@ -2413,17 +2487,17 @@ private:
             const int button = filterRow ? -1 : visualButton[static_cast<size_t>(row)];
             const bool active = filterRow ? value(P_FET_BLUE_SC) >= 0.5f : (lit & (1 << button)) != 0;
             dl->AddRectFilled(panel.P(x + 2.0f, y0 + 3.0f), panel.P(x + 31.0f, y0 + 30.0f),
-                              IM_COL32(0, 0, 0, 130), 1.5f * panel.scale());
+                              FetTheme::buttonShadow, 1.5f * panel.scale());
             dl->AddRectFilled(p0, p1,
-                              active ? IM_COL32(24, 24, 23, 255)
-                                     : ImGui::IsItemHovered() ? IM_COL32(52, 52, 49, 255) : IM_COL32(31, 31, 29, 255),
+                              active ? FetTheme::buttonLit
+                                     : ImGui::IsItemHovered() ? FetTheme::buttonHover : FetTheme::buttonIdle,
                               1.5f * panel.scale());
-            dl->AddRect(p0, p1, IM_COL32(91, 92, 87, 255), 1.5f * panel.scale(), 0, panel.scale());
+            dl->AddRect(p0, p1, FetTheme::buttonEdge, 1.5f * panel.scale(), 0, panel.scale());
             if (active)
                 dl->AddRectFilled(panel.P(x + 1.0f, y0 + 2.0f), panel.P(x + 3.0f, y0 + 25.0f),
-                                  filterRow ? IM_COL32(160, 48, 34, 255) : IM_COL32(226, 151, 61, 255));
+                                  filterRow ? FetTheme::lampRed : FetTheme::lamp);
             panel.text(dl, x - 10.0f, y0 + 7.0f, 8.0f,
-                       active ? IM_COL32(246, 224, 177, 255) : IM_COL32(228, 228, 216, 255),
+                       active ? FetTheme::buttonLabelLit : FetTheme::buttonLabel,
                        visualLabels[static_cast<size_t>(row)], 1, true);
             if (!clicked) continue;
             if (filterRow)
@@ -2482,9 +2556,9 @@ private:
             duskdaf::KnobRingStyle ring;
             ring.markInner = 4.0f;   ring.markOuter = 10.0f;  ring.markThickness = 1.25f;
             ring.minorInner = 7.0f;  ring.minorOuter = 10.0f; ring.minorThickness = 0.75f;
-            ring.markColor = IM_COL32(229, 230, 219, 240);
+            ring.markColor = FetTheme::ringMark;
             ring.labelOffset = 19.0f; ring.labelNudgeY = -3.0f; ring.labelSize = 7.3f;
-            ring.labelColor = IM_COL32(232, 232, 220, 255);
+            ring.labelColor = FetTheme::ringLabel;
             ring.labelCentred = true;
             for (int tick = 0; tick <= 16; ++tick)
             {
@@ -2505,9 +2579,9 @@ private:
             ring.markOuter = 7.0f;   ring.minorOuter = 7.0f;
             ring.dotRadius = 1.45f;  ring.minorDotRadius = 0.85f;
             ring.dotSegments = 10;
-            ring.markColor = IM_COL32(230, 230, 218, 255);
+            ring.markColor = FetTheme::ringDot;
             ring.labelOffset = 15.0f; ring.labelNudgeY = -3.0f; ring.labelSize = 7.0f;
-            ring.labelColor = IM_COL32(232, 232, 220, 255);
+            ring.labelColor = FetTheme::ringLabel;
             ring.labelCentred = true;
             for (int tick = 0; tick <= 6; ++tick)
             {
@@ -2523,21 +2597,21 @@ private:
         // machined cap. Keep every structural circle on the exact center; the
         // previous offset 91% disk read as a second gray knob at upper left.
         dl->AddCircleFilled(ImVec2(center.x + 3.0f * scale, center.y + 4.0f * scale),
-                            r * 1.01f, IM_COL32(0, 0, 0, 150), 56);
-        dl->AddCircleFilled(center, r, IM_COL32(66, 67, 66, 255), 56);
-        dl->AddCircleFilled(center, r * 0.96f, IM_COL32(32, 34, 32, 255), 56);
-        dl->AddCircleFilled(center, r * 0.83f, IM_COL32(24, 26, 24, 255), 56);
-        dl->AddCircleFilled(center, r * 0.75f, IM_COL32(23, 25, 23, 255), 56);
+                            r * 1.01f, FetTheme::knobShadow, 56);
+        dl->AddCircleFilled(center, r, FetTheme::skirtEdge, 56);
+        dl->AddCircleFilled(center, r * 0.96f, FetTheme::skirt, 56);
+        dl->AddCircleFilled(center, r * 0.83f, FetTheme::skirtInner, 56);
+        dl->AddCircleFilled(center, r * 0.75f, FetTheme::skirtCore, 56);
         dl->PathArcTo(center, r * 0.90f, -2.55f, -0.55f, 30);
-        dl->PathStroke(IM_COL32(158, 162, 153, 80), 0, 1.5f * scale);
+        dl->PathStroke(FetTheme::skirtHighlight, 0, 1.5f * scale);
         dl->PathArcTo(center, r * 0.91f, 0.55f, 2.55f, 30);
-        dl->PathStroke(IM_COL32(24, 25, 24, 110), 0, 1.8f * scale);
-        dl->AddCircle(center, r, IM_COL32(31, 32, 31, 255), 56, 1.3f * scale);
+        dl->PathStroke(FetTheme::skirtShade, 0, 1.8f * scale);
+        dl->AddCircle(center, r, FetTheme::skirtRim, 56, 1.3f * scale);
         const float collarR = r * 0.69f;
         // The knurling turns with the pointer; the skirt and cap highlights
         // are lighting and stay put.
         const float pointerAngle = duskdaf::DuskPanel::knobAngle(t);
-        dl->AddCircleFilled(center, collarR, IM_COL32(20, 20, 20, 255), 52);
+        dl->AddCircleFilled(center, collarR, FetTheme::collar, 52);
         for (int notch = 0; notch < 28; ++notch)
         {
             const float angle = pointerAngle
@@ -2547,17 +2621,17 @@ private:
                                center.y + direction.y * collarR * 0.78f),
                         ImVec2(center.x + direction.x * collarR,
                                center.y + direction.y * collarR),
-                        IM_COL32(75, 79, 71, 100), 1.0f * scale);
+                        FetTheme::knurl, 1.0f * scale);
         }
         const float capR = r * 0.49f;
-        dl->AddCircleFilled(center, capR, IM_COL32(111, 112, 110, 255), 48);
+        dl->AddCircleFilled(center, capR, FetTheme::capBase, 48);
         constexpr int facets = 96;
         // Interpolate the metal highlight across one mesh. Anti-aliasing each
         // triangle separately would expose bright spokes between the facets.
         dl->PrimReserve(facets * 3, facets + 1);
         const unsigned int capBase = dl->_VtxCurrentIdx;
         const ImVec2 capUv = ImGui::GetIO().Fonts->TexUvWhitePixel;
-        dl->PrimWriteVtx(center, capUv, IM_COL32(181, 182, 179, 255));
+        dl->PrimWriteVtx(center, capUv, FetTheme::capCentre);
         for (int i = 0; i < facets; ++i)
         {
             const float a = i * 2.0f * kUiPi / facets;
@@ -2573,19 +2647,19 @@ private:
             dl->PrimWriteIdx(static_cast<ImDrawIdx>(capBase + 1 + (i + 1) % facets));
         }
         dl->PathArcTo(center, capR * 0.78f, -2.50f, -0.65f, 22);
-        dl->PathStroke(IM_COL32(255, 255, 251, 95), 0, 1.2f * scale);
-        dl->AddCircle(center, capR, IM_COL32(44, 45, 44, 255), 48, 1.1f * scale);
+        dl->PathStroke(FetTheme::capHighlight, 0, 1.2f * scale);
+        dl->AddCircle(center, capR, FetTheme::capRim, 48, 1.1f * scale);
         const ImVec2 pointer(std::sin(pointerAngle), -std::cos(pointerAngle));
         dl->AddLine(ImVec2(center.x + pointer.x * r * 0.72f,
                            center.y + pointer.y * r * 0.72f),
                     ImVec2(center.x + pointer.x * r * 0.94f,
                            center.y + pointer.y * r * 0.94f),
-                    IM_COL32(229, 230, 218, 255), 2.0f * scale);
+                    FetTheme::pointer, 2.0f * scale);
 
         panel.text(dl, x, gainScale ? y + radius + 27.0f
                                     : y + (label[0] == 'A' ? -50.0f : 39.0f),
                    gainScale ? 10.5f : 9.5f,
-                   IM_COL32(235, 235, 222, 255), label, 0, true);
+                   FetTheme::knobLegend, label, 0, true);
         fetKnobSplitter.Merge(dl);
     }
 
@@ -2631,34 +2705,34 @@ private:
             point.x += 2.0f * scale;
             point.y += 3.0f * scale;
         }
-        dl->AddConvexPolyFilled(shadow.data(), 6, IM_COL32(0, 0, 0, 120));
-        dl->AddConvexPolyFilled(nut.data(), 6, IM_COL32(94, 96, 93, 255));
-        dl->AddCircleFilled(center, r, IM_COL32(116, 118, 115, 255), 32);
+        dl->AddConvexPolyFilled(shadow.data(), 6, TrimScrewTheme::shadow);
+        dl->AddConvexPolyFilled(nut.data(), 6, TrimScrewTheme::nut);
+        dl->AddCircleFilled(center, r, TrimScrewTheme::head, 32);
         dl->AddCircleFilled(center, r * 0.84f,
-                            IM_COL32(190, 192, 188, 255), 32);
+                            TrimScrewTheme::face, 32);
         dl->PathArcTo(center, r * 0.70f, -2.45f, -0.75f, 18);
-        dl->PathStroke(IM_COL32(247, 248, 242, 80), 0, panel.scale());
-        dl->AddCircle(center, r, IM_COL32(43, 44, 43, 255), 32, 1.1f * scale);
+        dl->PathStroke(TrimScrewTheme::highlight, 0, panel.scale());
+        dl->AddCircle(center, r, TrimScrewTheme::rim, 32, 1.1f * scale);
         const float angle = duskdaf::DuskPanel::knobAngle(t);
         const ImVec2 pointer(std::sin(angle), -std::cos(angle));
         dl->AddLine(ImVec2(center.x - pointer.x * r * 0.58f,
                            center.y - pointer.y * r * 0.58f),
                     ImVec2(center.x + pointer.x * r * 0.58f,
                            center.y + pointer.y * r * 0.58f),
-                    IM_COL32(42, 43, 42, 255), 2.0f * scale);
+                    TrimScrewTheme::slot, 2.0f * scale);
         panel.text(dl, x, labelBelow ? y + radius + 9.0f : y - 38.0f, 7.5f,
-                   IM_COL32(225, 226, 215, 255), label, 0, true);
+                   TrimScrewTheme::legend, label, 0, true);
         panel.text(dl, x - 27.0f, y - 5.0f, 10.0f,
-                   IM_COL32(157, 160, 152, 255), "-", 0, true);
+                   TrimScrewTheme::minus, "-", 0, true);
         panel.text(dl, x + 27.0f, y - 5.0f, 10.0f,
-                   IM_COL32(210, 212, 201, 255), "+", 0, true);
+                   TrimScrewTheme::plus, "+", 0, true);
         fetKnobSplitter.Merge(dl);
     }
 
     void drawFetRatioButtons(ImDrawList* dl, float x, float y)
     {
         const int selected = multicompp::ui_detail::choiceIndex(value(P_FET_RATIO), 5);
-        panel.text(dl, x + 14, y - 23, 8.5f, IM_COL32(230, 231, 219, 255),
+        panel.text(dl, x + 14, y - 23, 8.5f, FetTheme::columnLegend,
                    "RATIO", 0, true);
         constexpr std::array<int, 5> visualOrder{{3, 2, 1, 0, 4}};
         constexpr std::array<const char*, 5> visualLabels{{
@@ -2677,23 +2751,23 @@ private:
             const bool active = index == selected;
             dl->AddRectFilled(panel.P(x + 2.0f, y0 + 3.0f),
                               panel.P(x + 31.0f, y0 + 30.0f),
-                              IM_COL32(0, 0, 0, 130), 1.5f * panel.scale());
+                              FetTheme::buttonShadow, 1.5f * panel.scale());
             dl->AddRectFilled(p0, p1,
-                              active ? IM_COL32(24, 24, 23, 255)
+                              active ? FetTheme::buttonLit
                                      : ImGui::IsItemHovered()
-                                         ? IM_COL32(52, 52, 49, 255)
-                                         : IM_COL32(31, 31, 29, 255),
+                                         ? FetTheme::buttonHover
+                                         : FetTheme::buttonIdle,
                               1.5f * panel.scale());
-            dl->AddRect(p0, p1, IM_COL32(91, 92, 87, 255),
+            dl->AddRect(p0, p1, FetTheme::buttonEdge,
                         1.5f * panel.scale(), 0, panel.scale());
             if (active)
                 dl->AddRectFilled(panel.P(x + 1.0f, y0 + 2.0f),
                                   panel.P(x + 3.0f, y0 + 25.0f),
-                                  index == 4 ? IM_COL32(160, 48, 34, 255)
-                                             : IM_COL32(226, 151, 61, 255));
+                                  index == 4 ? FetTheme::lampRed
+                                             : FetTheme::lamp);
             panel.text(dl, x - 10.0f, y0 + 7.0f, 8.0f,
-                       active ? IM_COL32(246, 224, 177, 255)
-                              : IM_COL32(228, 228, 216, 255),
+                       active ? FetTheme::buttonLabelLit
+                              : FetTheme::buttonLabel,
                        visualLabels[static_cast<size_t>(row)], 1, true);
             if (clicked && !active) setValue(P_FET_RATIO, static_cast<float>(index));
         }
@@ -2703,7 +2777,7 @@ private:
     {
         const int selected = multicompp::ui_detail::fetMeterButton(values[P_FET_METER], values[P_BYPASS] >= 0.5f);
         panel.text(dl, x + 10.0f, y - 24.0f, 8.5f,
-                   IM_COL32(230, 231, 219, 255), "METER", 0, true);
+                   FetTheme::columnLegend, "METER", 0, true);
         constexpr std::array<const char*, 4> labels{{"GR", "+8", "+4", "OFF"}};
         for (int row = 0; row < 4; ++row)
         {
@@ -2717,19 +2791,19 @@ private:
             ImGui::PopID();
             dl->AddRectFilled(panel.P(x + 2.0f, y0 + 3.0f),
                               panel.P(x + 23.0f, y0 + 35.0f),
-                              IM_COL32(0, 0, 0, 145), 1.5f * panel.scale());
+                              FetTheme::meterButtonShadow, 1.5f * panel.scale());
             dl->AddRectFilled(panel.P(x, y0), panel.P(x + 20.0f, y0 + 32.0f),
-                              IM_COL32(29, 29, 28, 255), 1.5f * panel.scale());
+                              FetTheme::meterButton, 1.5f * panel.scale());
             dl->AddRect(panel.P(x, y0), panel.P(x + 20.0f, y0 + 32.0f),
-                        IM_COL32(87, 88, 84, 255), 1.5f * panel.scale(), 0,
+                        FetTheme::meterButtonEdge, 1.5f * panel.scale(), 0,
                         panel.scale());
             if (row == selected)
                 dl->AddRectFilled(panel.P(x + 1.0f, y0 + 2.0f),
                                   panel.P(x + 3.0f, y0 + 30.0f),
-                                  IM_COL32(226, 151, 61, 255));
+                                  FetTheme::lamp);
             panel.text(dl, x + 31.0f, y0 + 9.0f, 8.0f,
-                       row == selected ? IM_COL32(246, 224, 177, 255)
-                                : IM_COL32(227, 227, 215, 255),
+                       row == selected ? FetTheme::buttonLabelLit
+                                : FetTheme::meterButtonLabel,
                        labels[static_cast<size_t>(row)], -1, true);
         }
     }
