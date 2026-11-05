@@ -457,3 +457,49 @@ macro(dusk_daf_add_resize_test _dusk_rs_plugin)
         set_tests_properties(${_dusk_rs_plugin}Resize PROPERTIES TIMEOUT 300)
     endif()
 endmacro()
+
+# ---------------------------------------------------------------------------------------------------------------------
+# CLAP factory-preset guard
+#
+# DAF publishes a plugin's programs to CLAP hosts through the preset-discovery
+# factory and loads them through the preset-load extension. clap-validator's own
+# preset-discovery tests deadlock on any plugin that does (a validator bug, see
+# .github/scripts/daf_clap_validate.py, which skips them), so this harness is what
+# covers that path: it crawls the factory, loads every preset through the plugin's
+# own .clap, and processes audio after each load. See DafClapPresetsTest.cpp.
+#
+# Call this for EVERY plugin with DAF_PLUGIN_WANT_PROGRAMS. Inert against a DAF
+# that predates CLAP factory presets (it has no discovery header), so the guard can
+# land before the DAF pin that turns the feature on. Same platform limits and
+# macro-not-function reasoning as the guards above.
+macro(dusk_daf_add_clap_preset_test _dusk_cp_plugin)
+    if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
+        if(NOT TARGET ${_dusk_cp_plugin}-clap)
+            message(FATAL_ERROR
+                "dusk_daf_add_clap_preset_test(${_dusk_cp_plugin}): no target ${_dusk_cp_plugin}-clap. "
+                "Call this after daf_add_plugin, with the plugin base name, and with clap in TARGETS.")
+        endif()
+    endif()
+
+    if(CMAKE_CROSSCOMPILING OR WIN32)
+        message(STATUS "CLAP preset test skipped for ${_dusk_cp_plugin} (unsupported platform)")
+    elseif(NOT EXISTS "${DAF_PATH}/daf/src/clap/factory/preset-discovery.h")
+        message(STATUS "CLAP preset test skipped for ${_dusk_cp_plugin} (this DAF has no CLAP factory presets)")
+    else()
+        enable_testing()
+
+        add_executable(${_dusk_cp_plugin}ClapPresetsTest
+            "${DUSK_SHARED_DAF_DIR}/tests/DafClapPresetsTest.cpp")
+        target_include_directories(${_dusk_cp_plugin}ClapPresetsTest PRIVATE "${DAF_PATH}/daf/src")
+        target_compile_features(${_dusk_cp_plugin}ClapPresetsTest PRIVATE cxx_std_17)
+        target_link_libraries(${_dusk_cp_plugin}ClapPresetsTest PRIVATE ${CMAKE_DL_LIBS})
+        add_dependencies(${_dusk_cp_plugin}ClapPresetsTest ${_dusk_cp_plugin}-clap)
+
+        add_test(NAME ${_dusk_cp_plugin}ClapPresets
+                 COMMAND ${_dusk_cp_plugin}ClapPresetsTest "$<TARGET_FILE:${_dusk_cp_plugin}-clap>")
+        # Runs in well under a second. The path it guards is the one the validator
+        # deadlocks in, and CI's ctest sets no --timeout, so a hang must fail rather
+        # than stall the job.
+        set_tests_properties(${_dusk_cp_plugin}ClapPresets PROPERTIES TIMEOUT 120)
+    endif()
+endmacro()

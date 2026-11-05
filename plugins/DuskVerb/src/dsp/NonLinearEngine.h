@@ -60,6 +60,9 @@ public:
     void setBassMultiply      (float mult);
     void setMidMultiply       (float mult);    // → gate THRESHOLD
     void setTrebleMultiply    (float mult);
+    // The hall's high-band decay multiplier. setTrebleMultiply reaches only
+    // FDNReverb::trebleMultiply_, which its loop never reads; this one does.
+    void setAirTrebleMultiply (float mult) { fdn_.setAirTrebleMultiply (mult); }
     void setCrossoverFreq     (float hz);
     void setHighCrossoverFreq (float hz);
     void setSaturation        (float amount);

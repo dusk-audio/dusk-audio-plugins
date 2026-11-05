@@ -57,6 +57,9 @@ public:
     void setSustainLimiterLow (float loHz, float hiHz, float threshDb, float maxCutDb,
                                float atkMs, float relFastMs, float relSlowMs);
     void setModRate (float hz);
+    // Delay-mod LFO rates: each line at its own rate, 0.95x-1.05x around the Mod Rate (the
+    // default; prepare() sets it and clearBuffers() keeps it), or every line at the Mod Rate.
+    void setModRateSpread (bool spread);
     void setSize (float size);
     void setFreeze (bool frozen);
 
@@ -140,7 +143,12 @@ public:
     void setStructuralLFDamping (float hz);
     void setDualSlope (float ratio, int fastCount, float fastGain);
     void setStereoCoupling (float amount);
-    void setFeedbackModDepth (float depth);
+    // Time-varying feedback matrix: after the mix, each line pair (2k, 2k+1) turns by
+    // theta_k(t) = peakRad * sin(phase_k), one slow LFO per pair at rateHz times a fixed spread.
+    // The turn is orthogonal at every sample, so the mix stays lossless and the decay design
+    // holds; the modes move instead of ringing in place, without the Doppler of a delay-read
+    // wander (setModeSmear). peakRad 0 = off: the loop runs its instantiation without the turn.
+    void setFeedbackRotation (float peakRad, float rateHz);
     // Phase 3 (VH->0): per-line energy-following high-shelf (TimeVaryingDamping).
     // earlyMult applies to HF above crossoverHz when a line's circulating energy
     // is fresh (early decay), lateMult when decayed. earlyMult<lateMult => faster
@@ -183,6 +191,15 @@ public:
     // the target and never affects audio. Default all-flat → AccurateHall ≡ FDN.
     static constexpr int kNumOctaveBands = 9;   // ISO octaves 63 Hz..16 kHz
     void setOctaveT60 (int band, float seconds);
+    // Read-only view of the octave targets as last set, and whether any is engaged. Member
+    // templates on purpose: the explicit instantiations in FDNReverb.cpp do not emit them, so
+    // that translation unit compiles exactly as before (as plain members they moved GCC's
+    // register allocation in two existing functions there).
+    template <typename = void>
+    float getOctaveT60 (int band) const noexcept
+    { return band >= 0 && band < kNumOctaveBands ? octaveT60_[band] : 0.0f; }
+    template <typename = void>
+    bool  isOctaveT60Active() const noexcept { return octaveGEQActive_; }
 
     // Decay-knob coupling for the octave-GEQ path. The per-octave T60 targets
     // define the decay SHAPE; this reference is the broadband decay at which
@@ -202,6 +219,11 @@ public:
     void clearBuffers();
 
 private:
+    // process() body; Rotate compiles the feedback turn in (setFeedbackRotation).
+    template <bool Rotate>
+    void processLoop (const float* inputL, const float* inputR,
+                      float* outputL, float* outputR, int numSamples);
+
     static constexpr double kBaseSampleRate = 44100.0;
     static constexpr float kTwoPi = 6.283185307179586f;
     static constexpr float kOutputLevel = 1.121f;     // 1/sqrt(8) * 2.0 * 1.585 — consolidated output scaling
@@ -598,7 +620,7 @@ private:
     float smearRateHz_       = 0.08f;
     bool  smearActive_       = false;
     float sizeParam_ = 1.0f;
-    float feedbackModDepth_ = 0.0f;
+    float fbRotPeak_ = 0.0f;   // setFeedbackRotation peak angle (rad); the rest of its state is at the end
     float crossoverModDepth_ = 0.0f;
     float baseLowCrossoverCoeff_ = 0.0f;
     float baseHighCrossoverCoeff_ = 0.0f;
@@ -632,6 +654,26 @@ private:
     bool  octaveGEQActive_ = false;
     float octaveDecayRef_ = 0.0f;   // <=0 → octave scale 1.0 (legacy)
     bool  tonalCorrEnabled_ = false;   // Jot tonal-correction opt-in (AccurateHall). Default off = bit-null.
+
+    // Time-varying feedback matrix (setFeedbackRotation), its own loop instantiation. Kept
+    // after every other member so none of theirs moves: under -ffast-math a shifted array can
+    // change how a vectorised sum is ordered, and the loop without the turn must stay bit-null.
+    // Angles are computed every kFbRotBlock samples and interpolated per sample.
+    static constexpr int kFbRotBlock = 32;
+    float fbRotRateHz_ = 1.0f;
+    float fbRotPhase_  [N / 2] {};   // per-pair LFO phase (rad)
+    float fbRotInc_    [N / 2] {};   // per-pair phase advance per control block (rad)
+    float fbRotCos_    [N / 2] {};   // the pair turn now
+    float fbRotSin_    [N / 2] {};
+    float fbRotCosStep_[N / 2] {};   // per-sample increments to the next control point
+    float fbRotSinStep_[N / 2] {};
+    int   fbRotCounter_ = 0;         // samples left in the control block
+    bool  fbRotActive_  = false;     // fbRotPeak_ > 0: process() runs processLoop<true>
+
+    void  resetFeedbackRotation();   // phases to their seeds, the turn to none (it ramps from there)
+    void  advanceFeedbackRotation(); // the next control point's angle and the steps to it
+
+    bool modRateSpread_ = true;      // setModRateSpread; last for the same reason as the turn's members
 };
 
 // Backward-compatible alias. Every existing consumer (DuskVerbEngine::fdn_,

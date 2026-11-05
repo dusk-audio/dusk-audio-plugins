@@ -57,7 +57,11 @@ for kind, declaration in declarations:
         limits = ["0.0f", "1.0f", "1.0f", "1.0f"]
     elif kind == "Choice" and len(args) == 4:
         if args[2] == "algorithmNames":
-            maximum = "getNumAlgorithms() - 1"
+            # The one documented divergence: DuskVerb 2 appends its own engines after the
+            # shared ones inside a fixed number of slots, so its choice list runs to
+            # kNumAlgorithmSlots - 1 where the legacy plugin's ends at
+            # getNumAlgorithms() - 1. The shared prefix is pinned below.
+            maximum = "duskverb::kNumAlgorithmSlots - 1"
         elif re.fullmatch(r'juce::StringArray\s*\{.*\}', args[2], re.S):
             maximum = str(len(re.findall(r'"[^"\\]*"', args[2])) - 1)
         else:
@@ -80,6 +84,9 @@ int main() {
  };
  const auto& table = duskverb::paramTable();
  int failures = 0;
+ if (getNumAlgorithms() != duskverb::kNumSharedAlgorithms) {
+  std::printf("FAIL the legacy plugin has %d algorithms, DuskVerb 2 shares %d\\n", getNumAlgorithms(), duskverb::kNumSharedAlgorithms); ++failures;
+ }
  if (table.size() != std::size(expected)) return 1;
  for (size_t i = 0; i < table.size(); ++i) {
   const auto& a = table[i]; const auto& b = expected[i];
@@ -88,7 +95,7 @@ int main() {
    std::printf("FAIL JUCE/DAF layout index %zu: %s / %s\\n", i, a.id, b.id); ++failures;
   }
  }
- if (!failures) std::puts("PASS all 92 ordered IDs, ranges, intervals, skews and defaults match JUCE");
+ if (!failures) std::puts("PASS all 92 ordered IDs, ranges, intervals, skews and defaults match JUCE (algorithm: shared prefix plus DuskVerb 2's own engines and reserved slots)");
  return failures ? 1 : 0;
 }
 ''', encoding="utf-8")

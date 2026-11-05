@@ -107,3 +107,4 @@ endif()
 # vacuously.
 dusk_daf_add_ui_drag_test(multi-q-2 323 618)   # Digital-mode GAIN knob
 dusk_daf_add_resize_test(multi-q-2)
+dusk_daf_add_clap_preset_test(multi-q-2)

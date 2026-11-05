@@ -6,6 +6,8 @@
 
 #pragma once
 
+class DuskVerbEngine;
+
 namespace duskverb
 {
 
@@ -21,5 +23,10 @@ void primeTuningEnvCache() noexcept;
 // gain edge-detect can re-issue setPostTankEQBand() with the same centres.
 // `name` may be "" — that yields the default centres.
 void resolvePteqFreqQ (const char* name, float fOut[4], float qOut[4]) noexcept;
+
+// The ParallelMultiband bands and the mode smear as FactoryPreset::applyEngineConfig installs them
+// for a preset without rows. DuskVerb 2's preset-less swap installs these: the shared
+// DuskVerbEngine::reapplyNeutralEngineConfig leaves them as the last preset set them.
+void applyNeutralPmbAndModeSmear (DuskVerbEngine& engine) noexcept;
 
 } // namespace duskverb

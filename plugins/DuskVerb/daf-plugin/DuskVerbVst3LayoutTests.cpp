@@ -322,7 +322,8 @@ int main(int argc, char **argv)
             }
             check(foundMix, "mix parameter enumerated");
             check(checkedUnits == duskverb::kNumParams, "all parameter unit metadata checked");
-            check(programSteps == 19, "twenty host factory programs enumerated");
+            check(programSteps == static_cast<int>(duskverb::dv2FactoryPresets().size()) - 1,
+                  "every factory program enumerated");
             v3_cpp_obj(controller)->set_parameter_normalised(controller, programId, 2.0 / programSteps);
             StateStream saved;
             check(v3_cpp_obj(component)->get_state(component, saved.handle()) == V3_OK,

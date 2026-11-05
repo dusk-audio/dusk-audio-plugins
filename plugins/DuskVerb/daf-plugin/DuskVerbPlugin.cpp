@@ -27,7 +27,7 @@ class DuskVerbPlugin final : public Plugin
 public:
     DuskVerbPlugin()
         : Plugin(duskverb::kTotalParamCount,
-                 static_cast<uint32_t>(duskverb::factoryPresetCount()), 1)
+                 static_cast<uint32_t>(duskverb::factoryPresetCount()), 2)
     {
         for (int i = 0; i < duskverb::kNumParams; ++i)
         {
@@ -42,8 +42,6 @@ public:
     float outputLevelL() const noexcept { return dsp_.getOutputLevelL(); }
     float outputLevelR() const noexcept { return dsp_.getOutputLevelR(); }
     int   currentProgram() const noexcept { return controls_.sound().program; }
-    int   tailHistory(float* dest, int maxCount) const noexcept
-    { return dsp_.getTailHistory(dest, maxCount); }
     float cpuLoad() const noexcept { return cpuLoad_.load(std::memory_order_relaxed); }
     duskverb::StateValues snapshot() const { return controls_.snapshot(); }
     duskverb::EditorState* editorState() noexcept { return &editorState_; }
@@ -51,26 +49,6 @@ public:
     {
         const auto sound = controls_.sound();
         return (uint64_t(sound.epoch) << 1) | uint64_t(sound.edited);
-    }
-    void  applyPresetConfig(int index) noexcept
-    {
-        // Compatibility bridge while editors migrate to complete state recall.
-        // It now publishes an immutable snapshot; it never touches live engines.
-        auto state = controls_.snapshot();
-        const auto& presets = getFactoryPresets();
-        if (index >= static_cast<int>(presets.size())) return;
-        state.presetName = index < 0 ? "" : presets[index].name;
-        state.sixAP = {};
-        if (index >= 0)
-        {
-            const auto& preset = presets[index];
-            state.sixAP.densityBaseline = preset.sixAPDensityBaseline;
-            state.sixAP.bloomCeiling = preset.sixAPBloomCeiling;
-            state.sixAP.earlyMix = preset.sixAPEarlyMix;
-            state.sixAP.outputTrim = preset.sixAPOutputTrim;
-            std::copy_n(preset.sixAPBloomStagger, 6, state.sixAP.bloomStagger);
-        }
-        controls_.publish(state);
     }
 
 protected:
@@ -152,7 +130,7 @@ protected:
         const auto& desc = duskverb::paramDesc(index);
         const int algorithm = static_cast<int>(controls_.parameter(duskverb::Algorithm));
         char formatted[96];
-        duskverb::ui::formatPlainValue(getAlgorithmConfig(algorithm).engine, index,
+        duskverb::ui::formatPlainValue(duskverb::controlEngine(algorithm), index,
                                       duskverb::dspFromHost(desc, value), formatted, sizeof(formatted));
         if (std::strlen(formatted) >= size) { text[0] = '\0'; return false; }
         std::memcpy(text, formatted, std::strlen(formatted) + 1);
@@ -165,7 +143,7 @@ protected:
         const auto& desc = duskverb::paramDesc(index);
         const int algorithm = static_cast<int>(controls_.parameter(duskverb::Algorithm));
         float plain;
-        if (!duskverb::ui::parsePlainValue(getAlgorithmConfig(algorithm).engine, index, text,
+        if (!duskverb::ui::parsePlainValue(duskverb::controlEngine(algorithm), index, text,
               duskverb::dspFromHost(desc, controls_.parameter(index)), plain)) return false;
         value = duskverb::plainToHost(desc, plain);
         return true;
@@ -174,7 +152,7 @@ protected:
     // ── Programs ────────────────────────────────────────────────────────────
     void initProgramName(uint32_t index, String& name) override
     {
-        const auto& presets = getFactoryPresets();
+        const auto& presets = duskverb::dv2FactoryPresets();
         if (index < presets.size()) name = presets[index].name;
     }
 
@@ -188,29 +166,50 @@ protected:
     // ── State ───────────────────────────────────────────────────────────────
     void initState(uint32_t index, State& state) override
     {
-        if (index != 0) return;
-        state.key = "parameters";
-        state.label = "DuskVerb Parameters";
-        state.defaultValue = "";
-        state.hints = kStateIsHostReadable | kStateIsParameterSnapshot;
+        if (index == 0)
+        {
+            state.key = "parameters";
+            state.label = "DuskVerb Parameters";
+            state.defaultValue = "";
+            state.hints = kStateIsHostReadable | kStateIsParameterSnapshot;
+        }
+        else if (index == 1)
+        {
+            // MIX LOCK: the instance's, saved with the session but outside the
+            // sound (DuskVerbParams.hpp isMixLockParam). A session from before it
+            // existed restores unlocked.
+            state.key = "mix_lock";
+            state.label = "Mix Lock";
+            state.defaultValue = "0";
+            state.hints = 0;
+        }
     }
 
     String getState(const char* key) const override
     {
+        if (std::strcmp(key, "mix_lock") == 0) return String(controls_.mixLock() ? "1" : "0");
         if (std::strcmp(key, "parameters") != 0) return String();
         return String(duskverb::encodeState(controls_.snapshot()).c_str());
     }
 
     bool validateStateValue(const char* key, const char* value) const override
     {
+        if (key == nullptr || value == nullptr) return false;
+        if (std::strcmp(key, "mix_lock") == 0)
+            return std::strcmp(value, "0") == 0 || std::strcmp(value, "1") == 0;
         duskverb::StateValues state;
-        return key != nullptr && value != nullptr && std::strcmp(key, "parameters") == 0
-            && duskverb::decodeState(value, state);
+        return std::strcmp(key, "parameters") == 0 && duskverb::decodeState(value, state);
     }
 
     void setState(const char* key, const char* value) override
     {
-        if (std::strcmp(key, "parameters") != 0 || value == nullptr) return;
+        if (value == nullptr) return;
+        if (std::strcmp(key, "mix_lock") == 0)
+        {
+            controls_.setMixLock(std::strcmp(value, "1") == 0);
+            return;
+        }
+        if (std::strcmp(key, "parameters") != 0) return;
         duskverb::StateValues state{};
         if (!duskverb::decodeState(value, state)) return;   // all-or-nothing
 
@@ -236,6 +235,8 @@ protected:
     // JUCE build clears nothing on deactivate, and matching it is what keeps the
     // per-preset null test bit-identical across a host deactivate/reactivate.
     void deactivate() override { dsp_.releaseResources(); }
+    // Host reset (CLAP reset, AU Reset), on the audio thread: silence the tank now.
+    void reset() override { dsp_.clearState(); }
     void sampleRateChanged(double sr) override
     {
         synchronizeControls(true);
@@ -342,12 +343,7 @@ float duskVerbGetInputLevelL (void* p) noexcept { return p ? asDuskVerb(p)->inpu
 float duskVerbGetInputLevelR (void* p) noexcept { return p ? asDuskVerb(p)->inputLevelR()  : -100.0f; }
 float duskVerbGetOutputLevelL(void* p) noexcept { return p ? asDuskVerb(p)->outputLevelL() : -100.0f; }
 float duskVerbGetOutputLevelR(void* p) noexcept { return p ? asDuskVerb(p)->outputLevelR() : -100.0f; }
-int   duskVerbGetCurrentProgram(void* p) noexcept { return p ? asDuskVerb(p)->currentProgram() : -1; }
-int   duskVerbGetTailHistory(void* p, float* dest, int maxCount) noexcept
-{ return p ? asDuskVerb(p)->tailHistory(dest, maxCount) : 0; }
 float duskVerbGetCpuLoad(void* p) noexcept { return p ? asDuskVerb(p)->cpuLoad() : 0.0f; }
-void  duskVerbApplyPresetConfig(void* p, int index) noexcept
-{ if (p) asDuskVerb(p)->applyPresetConfig(index); }
 bool duskVerbReadSnapshot(void* p, duskverb::StateValues& state)
 { if (!p) return false; state = asDuskVerb(p)->snapshot(); return true; }
 duskverb::EditorState* duskVerbEditorState(void* p) noexcept

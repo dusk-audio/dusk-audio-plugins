@@ -104,3 +104,4 @@ dusk_daf_install_local(sunset-circuits LV2_PROGRAMS)
 # (dusk-audio/plugins#233 follow-up).
 dusk_daf_add_ui_drag_test(sunset-circuits 425 232)   # FILTER CUTOFF knob
 dusk_daf_add_resize_test(sunset-circuits)
+dusk_daf_add_clap_preset_test(sunset-circuits)

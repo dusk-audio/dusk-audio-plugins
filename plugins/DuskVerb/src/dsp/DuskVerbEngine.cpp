@@ -293,6 +293,11 @@ void DuskVerbEngine::clearAllBuffers()
     airShelfFilter_.reset();
     lowShelfFilter_.reset();
     postTankEQ_.reset();
+    // The output match EQ (setOutputMatchEQ) is the last stateful filter on the wet
+    // path, and only designMatchEQ() zeroed it: a host reset left the 9 presets that
+    // use it ringing through it for a block (Black Hole at -52.8 dBFS).
+    matchEQL_.reset();
+    matchEQR_.reset();
     erBusLowShelf_.reset();
     erBusHighShelf_.reset();
     tankSplitLpL_ = tankSplitLpR_ = 0.0f;
@@ -623,6 +628,22 @@ void DuskVerbEngine::setModulationTopology (DspUtils::ModulationTopology t)
     quad_.setModulationTopology (t);
 }
 
+void DuskVerbEngine::setFDNDualSlope (float ratio, float fastGain)
+{
+    // A mixture of two decay rates, half the lines fast (FDNReverb::setDualSlope takes 8 or none):
+    // a long release is the slow half's, a burst loses the fast half early.
+    const int fastLines = ratio > 0.0f ? 8 : 0;
+    fdn_.setDualSlope (ratio, fastLines, fastGain); accurateHall_.setDualSlope (ratio, fastLines, fastGain);
+}
+
+void DuskVerbEngine::setFeedbackRotation (float peakRad, float rateHz)
+{
+    fdn_.setFeedbackRotation (peakRad, rateHz); accurateHall_.setFeedbackRotation (peakRad, rateHz);
+    shimmer_.setReverbFeedbackRotation (peakRad, rateHz);
+    multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setFeedbackRotation (peakRad, rateHz); });
+    dattorro_.setCrossFeedRotation (peakRad, rateHz);
+}
+
 void DuskVerbEngine::setPerLineDecayTilt (float shortLineScale, float longLineScale)
 {
     // Phase α: only FDN has the per-line decay-tilt path. QuadTank uses
@@ -729,6 +750,24 @@ void DuskVerbEngine::setPmbStereoImageBias (float amount)
     // actually carries the input side. 0 = off = bit-identical. No preset calls
     // this yet; enablement waits on the ear pass.
     pmb_.setStereoImageBias (amount);
+}
+
+void DuskVerbEngine::setPmbDecorrelatedSide (bool on)
+{
+    // DuskVerb 2 only (ParallelMultibandTank::setDecorrelatedSide): the legacy build
+    // never calls it, and off is bit-identical.
+    pmb_.setDecorrelatedSide (on);
+}
+
+void DuskVerbEngine::setPmbModeSmearBandShare (int band, float share)
+{
+    pmb_.setModeSmearBandShare (band, share);
+}
+
+void DuskVerbEngine::setPmbDensifierCoeff (int band, float k)
+{
+    // DuskVerb 2 only (ParallelMultibandTank::setDensifierCoeff): the legacy build never calls it.
+    pmb_.setDensifierCoeff (band, k);
 }
 
 void DuskVerbEngine::setPostSteer (float amount)
@@ -1056,6 +1095,7 @@ void DuskVerbEngine::setBuildupTimeScale     (float s)   { buildupDiffuser_.setT
 void DuskVerbEngine::setBuildupPostTank      (bool b)    { buildupPostTank_ = b; }
 void DuskVerbEngine::setSparseFieldTailGain (float gain) { sparseTailGain_ = std::clamp (gain, 0.0f, 1.0f); }
 void DuskVerbEngine::setSparseERGain        (float gain) { sparseERGain_   = std::clamp (gain, 0.0f, 2.0f); }
+void DuskVerbEngine::setSparseERTone        (float hz)   { sparseField_.setToneLowpassHz (hz); }
 void DuskVerbEngine::setSparseERDuck (float amount, float holdMs, float thresh)
 {
     sparseERDuckAmount_ = std::clamp (amount, 0.0f, 1.0f);
@@ -1139,12 +1179,14 @@ void DuskVerbEngine::setFDNBaseDelays (const int* delays)
     // default (kDefaultDelays — log-spaced primes 1151..6451 samples).
     if (delays == nullptr) return;
     fdn_.setBaseDelays (delays); accurateHall_.setBaseDelays (delays);
+    shimmer_.setReverbBaseDelays (delays);   // the Shimmer hall is a 16-line FDN too (Deep Blue Day, Phase C7)
     multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setBaseDelays (delays); });
 }
 
 void DuskVerbEngine::resetFDNBaseDelays()
 {
     fdn_.resetBaseDelays(); accurateHall_.resetBaseDelays();
+    shimmer_.resetReverbBaseDelays();
     multibandFdn_.forEachTank ([](FDNReverb& tk){ tk.resetBaseDelays(); });
 }
 
@@ -2135,6 +2177,7 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             sparseField_.process (tankInL_.data(), tankInR_.data(),
                                   sparseOutL_.data(), sparseOutR_.data(), numSamples,
                                   sourceSide_.data());
+            sparseField_.applyTone (sparseOutL_.data(), sparseOutR_.data(), numSamples);
             applyEarlyTankDuck (numSamples);
             if (sparseERDuckAmount_ > 0.0f)
             {

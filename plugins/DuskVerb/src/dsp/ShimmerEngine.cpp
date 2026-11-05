@@ -229,6 +229,10 @@ void ShimmerEngine::prepare (double sampleRate, int maxBlockSize)
     // Hall reverb baseline: long, lush, slightly dark (period-correct
     // for the late-1970s digital hall hardware character that the original Eno/Lanois rig used).
     reverb_.prepare (sampleRate, maxBlockSize);
+    // Every line at one delay-mod rate. Mod Rate drives the cascade feedback here (setModRate), so
+    // the tank never gets it, and the presets on this engine were voiced that way: until 2026-10-28
+    // every preset load left the tank's lines at one rate (FDNReverb::clearBuffers dropped the spread).
+    reverb_.setModRateSpread (false);
     reverb_.setDecayTime         (4.0f);
     reverb_.setSize              (0.75f);
     reverb_.setBassMultiply      (1.10f);
@@ -445,6 +449,9 @@ void ShimmerEngine::setLoopHiLimiter (float loHz, float hiHz, float ratioThrDb, 
 
 void ShimmerEngine::setUseDenseReverb (bool on) { useDenseReverb_ = on; }
 void ShimmerEngine::setUseTailSpin    (bool on) { useTailSpin_ = on; }
+void ShimmerEngine::setReverbBaseDelays (const int* delays) { reverb_.setBaseDelays (delays); }
+void ShimmerEngine::resetReverbBaseDelays() { reverb_.resetBaseDelays(); }
+void ShimmerEngine::setReverbFeedbackRotation (float peakRad, float rateHz) { reverb_.setFeedbackRotation (peakRad, rateHz); }
 void ShimmerEngine::setTailNoise      (float gain, float hpHz, float lpHz) { noiseGain_ = gain; tailNoise_.setGain (gain); tailNoise_.setBand (hpHz, lpHz); }
 void ShimmerEngine::setNoiseSustainDuck (float amt)
 {

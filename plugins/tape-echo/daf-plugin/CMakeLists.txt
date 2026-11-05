@@ -91,4 +91,5 @@ endif()
 # (#231). The macro handles the cross-compile skip and enable_testing() itself.
 dusk_daf_add_output_param_tests(tape-echo-2)
 dusk_daf_add_ui_drag_test(tape-echo-2 37 232)   # INPUT knob
+dusk_daf_add_clap_preset_test(tape-echo-2)
 dusk_daf_add_resize_test(tape-echo-2)

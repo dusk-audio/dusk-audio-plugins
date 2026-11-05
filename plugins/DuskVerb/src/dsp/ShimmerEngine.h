@@ -68,6 +68,10 @@ public:
     void setBassMultiply      (float mult);
     void setMidMultiply       (float mult);
     void setTrebleMultiply    (float mult);
+    // The FDN tank's high-band decay multiplier. setTrebleMultiply reaches only
+    // FDNReverb::trebleMultiply_, which its loop never reads; this one does.
+    // (The DenseHall tank, when selected, reads setTrebleMultiply itself.)
+    void setAirTrebleMultiply (float mult) { reverb_.setAirTrebleMultiply (mult); }
     void setCrossoverFreq     (float hz);
     void setHighCrossoverFreq (float hz);
     void setSaturation        (float amount);
@@ -77,6 +81,9 @@ public:
     void setDownOctaveMix     (float mix);     // octave-DOWN voice level (0 = off/bit-null) — the warm low reference shimmer has, DV's up-only voices lacked
     void setSubOctaveMix      (float mix);     // octave-DOWN-2 voice (×0.25 → 250 Hz from 1 kHz); 0 = off/bit-null — reaches the deep lows in ONE step where the −1 oct cascade dies out
     void setFeedbackHpfHz     (float hz);      // feedback-loop HPF corner; lower = the low cascade survives (default 60; ~35 keeps killing the 12 Hz grain rumble)
+    void setReverbBaseDelays  (const int* delays);   // its FDN hall's 16 base delays (DuskVerbEngine::setFDNBaseDelays reaches it too)
+    void resetReverbBaseDelays();                    // back to the FDN's default table
+    void setReverbFeedbackRotation (float peakRad, float rateHz);   // its FDN hall's time-varying feedback matrix (DuskVerbEngine::setFeedbackRotation reaches it); 0 = off
     void setStereoMod         (float rateHz, float depth);  // wet-output stereo chorus/ensemble (anti-phase modulated delay); depth 0 = bypassed/bit-null. Matches REF Black Hole's moving stereo field.
     void setHFAir             (float mix);   // post-loop +12 st air voice (genuine >12 kHz air); mix 0 = bit-null
     void setModeSmear         (float depthSamples, float rateHz);  // deep+slow FDN mode-smear on the reverb tail (anti-boing); depth 0 = off/bit-null
