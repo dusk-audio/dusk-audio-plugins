@@ -441,12 +441,14 @@ void restoredFace()
 
 // The settings drawer, in canvas coordinates. Opened from the mode row in every mode, its controls take the pointer
 // from the face under them (the face's disabled items kept the hover, and the drawer's buttons did nothing), and a
-// click on the mode row leaves it above the face (the face's window, raised by the click, hid the drawer and took
-// its pointer). CLOSE gives the face back.
+// click on the header or the mode row's switches leaves it above the face (the face's window, raised by the click,
+// hid the drawer and took its pointer). Choosing a mode closes it and shows that mode's face (owner 2026-11-05), and
+// so does CLOSE.
 void settingsDrawer()
 {
     const uint32_t distortion = pid(ParamId::Distortion), linkMode = pid(ParamId::StereoLinkMode),
-                   lowFreq = pid(ParamId::ScLowFreq), modeId = pid(ParamId::Mode);
+                   lowFreq = pid(ParamId::ScLowFreq), modeId = pid(ParamId::Mode),
+                   autoMakeup = pid(ParamId::AutoMakeup);
     for (int mode = 0; mode < 8; ++mode)
     {
         Host h(mode);
@@ -454,25 +456,41 @@ void settingsDrawer()
         h.canvasClick(418, 374);                          // DRIVE: SOFT
         h.canvasClick(243, 374);                          // STEREO: MID-SIDE
         h.canvasDrag(286, 230);                           // SIDECHAIN: LOW FREQ
-        const int next = (mode + 1) % 8;
-        h.canvasClick(16.0f + 104.0f * next + 50.0f, 67); // another mode, the drawer open
+        h.canvasClick(923, 67);                           // AUTO MAKEUP, the drawer open
         h.canvasClick(418, 408);                          // DRIVE: HARD
         int others = 0;
         for (const auto& event : h.ui.writes)
             others += event.parameter != distortion && event.parameter != linkMode && event.parameter != lowFreq
-                && event.parameter != modeId;
+                && event.parameter != autoMakeup;
         const bool drive = h.count(h.ui.writes, distortion, 1) == 1 && h.count(h.ui.writes, distortion, 2) == 1;
         const bool link = h.count(h.ui.writes, linkMode, 1) == 1;
         const bool knob = h.writes(lowFreq) > 0 && h.balanced(lowFreq);
+        const bool aboveFace = h.writes(autoMakeup) == 1;
+        // A mode chosen closes the drawer: the press where CLIP was lands on the face, not on the drawer.
+        const int next = (mode + 1) % 8;
+        h.canvasClick(16.0f + 104.0f * next + 50.0f, 67);
         const bool switched = h.count(h.ui.writes, modeId, static_cast<float>(next)) == 1;
+        int driveWrites = h.writes(distortion);
+        h.canvasClick(418, 442);
+        const bool closedByMode = h.writes(distortion) == driveWrites;
+        // So does the lit mode's own tab, and CLOSE.
+        h.canvasClick(1134, 67);
+        h.canvasClick(16.0f + 104.0f * next + 50.0f, 67);
+        driveWrites = h.writes(distortion);
+        h.canvasClick(418, 442);
+        const bool closedByLitTab = h.writes(distortion) == driveWrites;
+        h.canvasClick(1134, 67);
         h.canvasClick(1120, 114);                         // CLOSE
-        const int driveWrites = h.writes(distortion);
-        h.canvasClick(418, 442);                          // where CLIP was
-        const bool closed = h.writes(distortion) == driveWrites;
-        std::printf("drawer mode=%d drive=%d link=%d knob=%d switched=%d others=%d closed=%d\n", mode, drive, link,
-                    knob, switched, others, closed);
-        check(drive && link && knob && switched && others == 0 && closed,
+        driveWrites = h.writes(distortion);
+        h.canvasClick(418, 442);
+        const bool closedByClose = h.writes(distortion) == driveWrites;
+        std::printf("drawer mode=%d drive=%d link=%d knob=%d above=%d others=%d switched=%d closed by mode=%d "
+                    "lit tab=%d CLOSE=%d\n", mode, drive, link, knob, aboveFace, others, switched, closedByMode,
+                    closedByLitTab, closedByClose);
+        check(drive && link && knob && aboveFace && others == 0,
               "the settings drawer's controls answer in every mode and stay above the face");
+        check(switched && closedByMode && closedByLitTab && closedByClose,
+              "choosing a mode, the lit one included, closes the settings drawer, and so does CLOSE");
     }
 }
 

@@ -1486,8 +1486,12 @@ private:
             std::snprintf(id, sizeof(id), "##mc_mode_button_%d", mode);
             const bool active = mode == selected;
             if (rowTab(dl, id, x0, x0 + tabWidth,
-                       multicompp::ui_detail::kModeTabLabels[static_cast<size_t>(mode)], active) && !active)
-                setValue(P_MODE, static_cast<float>(mode));
+                       multicompp::ui_detail::kModeTabLabels[static_cast<size_t>(mode)], active))
+            {
+                // A mode chosen shows its face: the settings drawer closes (owner 2026-11-05), the lit tab too.
+                showSettings = false;
+                if (!active) setValue(P_MODE, static_cast<float>(mode));
+            }
         }
         // Five factory presets engage Auto Makeup, which bypasses each face's
         // manual makeup / output control; it needs a switch the user can see.
