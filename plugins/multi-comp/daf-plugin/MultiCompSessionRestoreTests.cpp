@@ -491,10 +491,20 @@ public:
         if (v3_cpp_obj_query_interface(instance.component, v3_edit_controller_iid, &instance.controller) != V3_OK
             || instance.controller == nullptr)
             return false;
+        // A stepped control's value text is its label ("4:1", "All"); a unit on it reads twice in a host that
+        // appends units ("4:1 :1"). Checked once per binary.
+        std::string steppedWithUnit;
+        int stepped = 0;
         for (int32_t i = 0, count = v3_cpp_obj(instance.controller)->get_parameter_count(instance.controller); i < count; ++i)
         {
             v3_param_info info = {};
             if (v3_cpp_obj(instance.controller)->get_parameter_info(instance.controller, i, &info) != V3_OK) return false;
+            if (info.step_count > 0 && (info.flags & V3_PARAM_PROGRAM_CHANGE) == 0)
+            {
+                ++stepped;
+                if (!asciiOf(info.units).empty())
+                    steppedWithUnit += " \"" + asciiOf(info.title) + "\" (" + asciiOf(info.units) + ")";
+            }
             if ((info.flags & V3_PARAM_PROGRAM_CHANGE) != 0)
             {
                 instance.programId = info.param_id;
@@ -503,6 +513,10 @@ public:
             else
                 instance.ids.add(asciiOf(info.title), info.param_id);
         }
+        if (!unitsChecked)
+            check(steppedWithUnit.empty(), "VST3: none of the %d stepped controls reports a unit%s", stepped,
+                  steppedWithUnit.c_str());
+        unitsChecked = true;
         return instance.ids.complete();
     }
 
@@ -565,6 +579,8 @@ public:
     }
 
 private:
+    bool unitsChecked = false;
+
     // One edit, in plain units, delivered in a zero-frame process().
     bool send(Instance& instance, v3_param_id id, double plain)
     {

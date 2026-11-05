@@ -7,6 +7,7 @@
 #include <array>
 #include <cctype>
 #include <charconv>
+#include <clocale>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -317,7 +318,7 @@ inline constexpr const char* const kDistortion[4] = {"Off","Soft","Hard","Clip"}
 inline constexpr const char* const kTruePeakQuality[2] = {"4x (Standard)","8x (High)"};
 inline constexpr const char* const kFetCurve[2] = {"Modern", "Measured"};
 inline constexpr const char* const kVcaDetector[2] = {"Adaptive", "Classic"};
-inline constexpr const char* const kBusHeadroom[7] = {"4", "8", "12", "16", "20", "24", "28"};
+inline constexpr const char* const kBusHeadroom[7] = {"4 dB", "8 dB", "12 dB", "16 dB", "20 dB", "24 dB", "28 dB"};
 inline constexpr const char* const kBusRatios[3] = {"2:1", "4:1", "10:1"};
 inline constexpr const char* const kBusAttack[6] = {"0.1ms", "0.3ms", "1ms", "3ms", "10ms", "30ms"};
 inline constexpr const char* const kBusRelease[5] = {"0.1s", "0.3s", "0.6s", "1.2s", "Auto"};
@@ -503,6 +504,22 @@ inline std::string bandHostName(const BandParam& d, int band)
     return std::string("MB ") + kBandHostNames[static_cast<size_t>(std::clamp(band, 0, 3))] + " " + d.name;
 }
 
+// printf's %f writes the C library's LC_NUMERIC decimal point, and a host can set
+// that to a comma: "0,20 ms" in a German-locale Qt host, and "8, kHz" once the kHz
+// trim below met it. Host text uses '.' in every locale, as the parsers below
+// (classic locale) read it back.
+inline void useDotDecimalPoint(char* text) noexcept
+{
+    const char* const point = std::localeconv()->decimal_point;
+    if (text == nullptr || point == nullptr || point[0] == '\0' || std::strcmp(point, ".") == 0) return;
+    const size_t pointLength = std::strlen(point);
+    if (char* const found = std::strstr(text, point))
+    {
+        *found = '.';
+        std::memmove(found + 1, found + pointLength, std::strlen(found + pointLength) + 1);
+    }
+}
+
 // A tapered control (hasSkew) reaches the host as its 0..1 knob position, so the
 // host's own text would read "0.160578" for 0.20 ms. Its text is the plain value
 // with its unit; the reported unit is empty for these, so nothing is appended.
@@ -520,6 +537,7 @@ inline bool formatTaperedText(const Descriptor& d, float hostValue, char* text, 
         // "8 kHz", "1.25 kHz": two decimals at most, no trailing zeros.
         char number[32];
         std::snprintf(number, sizeof(number), "%.2f", static_cast<double>(plain * 0.001f));
+        useDotDecimalPoint(number);
         std::string trimmed(number);
         while (trimmed.back() == '0') trimmed.pop_back();
         if (trimmed.back() == '.') trimmed.pop_back();
@@ -534,7 +552,9 @@ inline bool formatTaperedText(const Descriptor& d, float hostValue, char* text, 
         written = std::snprintf(text, size, "%.1f:1", static_cast<double>(plain));
     else
         written = std::snprintf(text, size, "%.1f %s", static_cast<double>(plain), d.unit);
-    return written >= 0 && static_cast<uint32_t>(written) < size;
+    if (written < 0 || static_cast<uint32_t>(written) >= size) return false;
+    useDotDecimalPoint(text);
+    return true;
 }
 
 // Typed text back to a host value: a number in the classic locale, optionally
@@ -582,7 +602,9 @@ inline bool formatVcaCompressionText(float position, char* text, uint32_t size)
     const float ratio = duskaudio::vcaLaw::compressRatio(position);
     const int written = !std::isfinite(ratio) ? std::snprintf(text, size, "INF")
         : std::snprintf(text, size, ratio < 100.0f ? "%.1f:1" : "%.0f:1", static_cast<double>(ratio));
-    return written >= 0 && static_cast<uint32_t>(written) < size;
+    if (written < 0 || static_cast<uint32_t>(written) >= size) return false;
+    useDotDecimalPoint(text);
+    return true;
 }
 
 inline bool parseVcaCompressionText(const char* text, float& position)

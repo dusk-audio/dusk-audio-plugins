@@ -22,6 +22,7 @@
 
 #include <array>
 #include <cctype>
+#include <clocale>
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -1559,6 +1560,50 @@ void testHostNamesAndTaperedText()
                 textOf(fetAttack, 0.2f).c_str(), textOf(crossover3, 8000.0f).c_str(), textOf(sidechainHp, 0.0f).c_str());
 }
 
+// Host text in a comma-decimal locale. A host process that sets LC_NUMERIC (Qt and GTK hosts on Linux follow the
+// user's locale) made printf write "0,20 ms", and the kHz trim turned 8000 Hz into "8, kHz"; the parsers read the
+// classic locale, so the host's own text did not read back. Host text is '.'-decimal in every locale.
+void testHostTextIgnoresTheNumericLocale()
+{
+    const char* const previous = std::setlocale(LC_NUMERIC, nullptr);
+    const std::string restore = previous != nullptr ? previous : "C";
+    const char* commaLocale = nullptr;
+    for (const char* name : {"de_DE.UTF-8", "de_DE.utf8", "de_DE", "fr_FR.UTF-8", "fr_FR.utf8", "nl_NL.UTF-8"})
+        if (std::setlocale(LC_NUMERIC, name) != nullptr && std::strcmp(std::localeconv()->decimal_point, ",") == 0)
+        {
+            commaLocale = name;
+            break;
+        }
+    if (commaLocale == nullptr)
+    {
+        std::setlocale(LC_NUMERIC, restore.c_str());
+        reviewCheck(false, "a comma-decimal locale is installed for the host-text locale check");
+        return;
+    }
+    const auto textOf = [](const auto& d, float plain) {
+        char text[64] = {};
+        multicompp::formatTaperedText(d, multicompp::plainToHost(d, plain), text, sizeof(text));
+        return std::string(text);
+    };
+    const auto& fetAttack = multicompp::kParams[static_cast<size_t>(multicompp::ParamId::FetAttack)];
+    const auto& crossover3 = multicompp::kParams[static_cast<size_t>(multicompp::ParamId::Crossover3)];
+    const std::string attack = textOf(fetAttack, 0.2f), crossover = textOf(crossover3, 8000.0f),
+                      crossoverHalf = textOf(crossover3, 8500.0f);
+    char vcaText[32] = {};
+    const bool vcaFormatted = multicompp::formatVcaCompressionText(
+        duskaudio::vcaLaw::compressPosition(4.0f), vcaText, sizeof(vcaText));
+    float host = -1.0f;
+    const bool attackParsed = multicompp::parseTaperedText(fetAttack, attack.c_str(), host)
+        && std::abs(multicompp::hostToPlain(fetAttack, host) - 0.2f) < 0.006f;
+    std::setlocale(LC_NUMERIC, restore.c_str());
+    std::printf("host text in %s: FET Attack %s, Crossover 3 %s / %s, VCA Compression %s\n", commaLocale,
+                attack.c_str(), crossover.c_str(), crossoverHalf.c_str(), vcaText);
+    require(attack == "0.20 ms", "FET Attack reads 0.20 ms in a comma-decimal locale");
+    require(crossover == "8 kHz" && crossoverHalf == "8.5 kHz", "a crossover reads 8 kHz / 8.5 kHz in a comma-decimal locale");
+    require(vcaFormatted && std::string(vcaText) == "4.0:1", "VCA Compression reads 4.0:1 in a comma-decimal locale");
+    require(attackParsed, "the host's own text reads back in a comma-decimal locale");
+}
+
 // The Digital and Multiband faces keep the original editor's display timing (EnhancedCompressorEditor::updateMeters,
 // AnalogVUMeter::timerCallback, MultibandCompressorPanel::setBandGainReduction, CrossoverFader), stepped on fixed
 // ticks so a 144 Hz display moves them as a 60 Hz one does.
@@ -1674,6 +1719,7 @@ int main(int argc, char** argv)
     testAlphaSessionStateStaysLoadable();
     testOptoReferenceDisplayAndNoiseDefault();
     testHostNamesAndTaperedText();
+    testHostTextIgnoresTheNumericLocale();
     testEverySwitchHasHostLabels();
     testModernFaceTiming();
     std::puts("Multi-Comp plugin-layer tests: PASS");

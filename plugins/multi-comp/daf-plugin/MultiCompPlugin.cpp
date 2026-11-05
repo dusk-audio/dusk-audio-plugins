@@ -176,6 +176,9 @@ protected:
                     {
                         setEnum(p, labels.labels, labels.count);
                         if (labels.boolean) p.hints |= kParameterIsBoolean;
+                        // A label is the whole value text ("4:1", "All"): a host that appends the unit would show
+                        // "4:1 :1".
+                        p.unit = "";
                     }
                 },
                 [&](const multicompp::BandParam& d, int band) {
