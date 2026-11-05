@@ -40,6 +40,7 @@ public:
         writePos_ = 0;
         prepared_ = true;
         buildTaps();
+        designTone();
     }
 
     void setSizeScale (float s)   { sizeScale_  = std::max (0.05f, s); if (prepared_) buildTaps(); }
@@ -181,4 +182,70 @@ private:
     float burst2Ms_   = 115.0f;   // second density cluster centre (0 = off)
     float burst2Gain_ = 0.0f;     // GAIN bump at burst2Ms_ (the discrete late tap; 0 = off, bit-null)
     float stereoInputAmount_ = 0.0f;
+
+public:
+    // DuskVerb 2: a 4th-order Butterworth low-pass on the field's output, for a reference whose early
+    // field is darker than this broadband one. Blade Runner 224's anchor sits 14 dB under it at
+    // 12.5-16 kHz through its first 50 ms, where this field is the early energy (Phase C5,
+    // 2026-10-27). 0 Hz: off, and applyTone() returns at once. The engine runs it on the field's
+    // output after process(); process() and every member above are untouched (DenseHallReverb.h
+    // says why the new state goes last).
+    void setToneLowpassHz (float hz) noexcept
+    {
+        toneHz_ = hz > 0.0f ? hz : 0.0f;
+        designTone();
+    }
+
+#if defined (_MSC_VER)
+    __declspec (noinline)
+#else
+    __attribute__ ((noinline))
+#endif
+    void applyTone (float* l, float* r, int n) noexcept
+    {
+        if (! toneOn_)
+            return;
+        float* const io[2] = { l, r };
+        for (int c = 0; c < 2; ++c)
+            for (int k = 0; k < 2; ++k)
+            {
+                const double* b = toneCoeffs_[k];
+                double z1 = toneState_[c][k][0], z2 = toneState_[c][k][1];
+                for (int i = 0; i < n; ++i)
+                {
+                    const double x = io[c][i], y = b[0] * x + z1;
+                    z1 = b[1] * x - b[3] * y + z2;
+                    z2 = b[2] * x - b[4] * y;
+                    io[c][i] = static_cast<float> (y);
+                }
+                toneState_[c][k][0] = z1;
+                toneState_[c][k][1] = z2;
+            }
+    }
+
+private:
+    // The two RBJ low-pass sections of the Butterworth (Q 0.5412, 1.3066) at toneHz_, at rest. A
+    // corner at or above the designers' ceiling has nothing to remove: off.
+    void designTone() noexcept
+    {
+        toneOn_ = toneHz_ > 0.0f && static_cast<double> (toneHz_) < 0.4998 * sampleRate_;
+        for (auto& side : toneState_) for (auto& sec : side) sec[0] = sec[1] = 0.0;
+        if (! toneOn_)
+            return;
+        constexpr double kQ[2] = { 0.54119610014619698, 1.3065629648763766 };
+        const double w0 = 2.0 * 3.14159265358979323846 * toneHz_ / sampleRate_, cw = std::cos (w0);
+        for (int k = 0; k < 2; ++k)
+        {
+            const double alpha = std::sin (w0) / (2.0 * kQ[k]), inv = 1.0 / (1.0 + alpha);
+            toneCoeffs_[k][0] = toneCoeffs_[k][2] = 0.5 * (1.0 - cw) * inv;
+            toneCoeffs_[k][1] = (1.0 - cw) * inv;
+            toneCoeffs_[k][3] = -2.0 * cw * inv;
+            toneCoeffs_[k][4] = (1.0 - alpha) * inv;
+        }
+    }
+
+    float  toneHz_ = 0.0f;
+    bool   toneOn_ = false;
+    double toneCoeffs_[2][5] {};       // per section: b0 b1 b2 a1 a2
+    double toneState_[2][2][2] {};     // [side][section][z1 z2]
 };

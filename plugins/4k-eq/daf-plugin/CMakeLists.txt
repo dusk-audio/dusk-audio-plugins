@@ -149,3 +149,4 @@ endif()
 dusk_daf_add_output_param_tests(4k-eq-2)
 dusk_daf_add_ui_drag_test(4k-eq-2 258 274)   # LF gain knob
 dusk_daf_add_resize_test(4k-eq-2 684 23)     # GRAPH button collapses the design
+dusk_daf_add_clap_preset_test(4k-eq-2)

@@ -326,6 +326,8 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
     rightTank_.savedAP1Mod = 0.0f;
     softOnsetEnvL_ = (softOnsetMs_ > 0.0f) ? 0.0f : 1.0f;
     limiterEnv_    = 0.0f;
+    setCrossFeedRotation (xfRotPeak_, xfRotRateHz_);   // the rates for the new sample rate
+    resetCrossFeedRotation();
 }
 
 // -----------------------------------------------------------------------
@@ -333,6 +335,19 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
 void DattorroTank::process (const float* inputL, const float* inputR,
                             float* outputL, float* outputR, int numSamples,
                             const float* sourceSide)
+{
+    // The cross-feed turn is compiled into its own instantiation rather than branched on in the
+    // loop: a runtime guard in this recursive loop moves the codegen of everything around it.
+    if (xfRotActive_)
+        processLoop<true> (inputL, inputR, outputL, outputR, numSamples, sourceSide);
+    else
+        processLoop<false> (inputL, inputR, outputL, outputR, numSamples, sourceSide);
+}
+
+template <bool Rotate>
+void DattorroTank::processLoop (const float* inputL, const float* inputR,
+                                float* outputL, float* outputR, int numSamples,
+                                const float* sourceSide)
 {
     if (! prepared_)
         return;
@@ -549,6 +564,24 @@ void DattorroTank::process (const float* inputL, const float* inputR,
         // Save right tank's cross-feed state before left tank overwrites it
         float rightCrossFeed = rightTank_.crossFeedState;
         float leftCrossFeed = leftTank_.crossFeedState;
+
+        // Time-varying cross-feed (setCrossFeedRotation): the left half takes s*left + c*right,
+        // the right half c*left - s*right (orthogonal; at 0 the figure-8 above). Held still while
+        // frozen, like every other modulator, so a frozen tank does not move.
+        if constexpr (Rotate)
+        {
+            if (! frozen_)
+            {
+                if (--xfRotCounter_ <= 0)
+                    advanceCrossFeedRotation();
+                xfRotCos_ += xfRotCosStep_;
+                xfRotSin_ += xfRotSinStep_;
+                const float toLeft  = xfRotSin_ * leftCrossFeed + xfRotCos_ * rightCrossFeed;
+                const float toRight = xfRotCos_ * leftCrossFeed - xfRotSin_ * rightCrossFeed;
+                rightCrossFeed = toLeft;    // processTank (leftTank_, ...) below reads this one
+                leftCrossFeed  = toRight;
+            }
+        }
 
         processTank (leftTank_, rightCrossFeed, +1.0f);
         processTank (rightTank_, leftCrossFeed, -1.0f);
@@ -784,6 +817,49 @@ void DattorroTank::setModeSmear (float depthSamples, float rateHz)
     leftTank_ .smearLfo2.setDepth (smearDepthSamples_); leftTank_ .smearLfo2.setRate (smearRateHz_ * 1.11f);
     rightTank_.smearLfo1.setDepth (smearDepthSamples_); rightTank_.smearLfo1.setRate (smearRateHz_ * 0.93f);
     rightTank_.smearLfo2.setDepth (smearDepthSamples_); rightTank_.smearLfo2.setRate (smearRateHz_ * 1.04f);
+}
+
+void DattorroTank::setCrossFeedRotation (float peakRad, float rateHz)
+{
+    xfRotPeak_   = std::clamp (peakRad, 0.0f, 1.5707964f);
+    xfRotRateHz_ = std::clamp (rateHz, 0.01f, 10.0f);
+    xfRotActive_ = xfRotPeak_ > 1.0e-6f;
+    if (! prepared_)
+        return;
+    // Two incommensurate sines so the turn never repeats.
+    const float blockRad = kTwoPi * xfRotRateHz_ * static_cast<float> (kXfRotBlock)
+                         / static_cast<float> (sampleRate_);
+    xfRotInc_[0] = blockRad;
+    xfRotInc_[1] = blockRad * 1.6180339887498949f;
+}
+
+void DattorroTank::resetCrossFeedRotation()
+{
+    // Phases to their seeds and the turn to none: the first control block ramps it to the angle
+    // there, as it does when the turn is first set on, so a cleared tank replays a fresh one.
+    xfRotPhase_[0] = 0.0f;
+    xfRotPhase_[1] = 2.0f;
+    xfRotCos_ = 1.0f;
+    xfRotSin_ = 0.0f;
+    xfRotCosStep_ = xfRotSinStep_ = 0.0f;
+    xfRotCounter_ = 0;
+}
+
+void DattorroTank::advanceCrossFeedRotation()
+{
+    // Interpolating the cosine and sine between control points leaves the turn just inside the
+    // unit circle mid-block: never a gain above 1, and each control point is back on the circle.
+    xfRotCounter_ = kXfRotBlock;
+    constexpr float inv = 1.0f / static_cast<float> (kXfRotBlock);
+    for (int k = 0; k < 2; ++k)
+    {
+        xfRotPhase_[k] += xfRotInc_[k];
+        if (xfRotPhase_[k] >= kTwoPi)
+            xfRotPhase_[k] -= kTwoPi;
+    }
+    const float theta = xfRotPeak_ * (0.6f * std::sin (xfRotPhase_[0]) + 0.4f * std::sin (xfRotPhase_[1]));
+    xfRotCosStep_ = (std::cos (theta) - xfRotCos_) * inv;
+    xfRotSinStep_ = (std::sin (theta) - xfRotSin_) * inv;
 }
 
 void DattorroTank::setLimiter (float thresholdDb, float releaseMs)
@@ -1183,6 +1259,7 @@ void DattorroTank::clearBuffers()
     susLimKey_.clear();
     susLimMidRed_ = susLimLowRed_ = 0.0f;
     susLimMidAcc_ = susLimLowAcc_ = 0.0f;
+    resetCrossFeedRotation();
     // Mode-smear LFOs — reseed to prepare()'s deterministic phase (the clearTank
     // lambda above already does this for the mode-breaking LFOs), then re-apply
     // depth/rate (prepare(seed) leaves depth at 0).

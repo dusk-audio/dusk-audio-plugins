@@ -52,3 +52,4 @@ dusk_daf_install_local(tapemachine-2 LV2_PROGRAMS)
 dusk_daf_add_output_param_tests(tapemachine-2)
 dusk_daf_add_ui_drag_test(tapemachine-2 72 330)   # INPUT knob
 dusk_daf_add_resize_test(tapemachine-2)
+dusk_daf_add_clap_preset_test(tapemachine-2)

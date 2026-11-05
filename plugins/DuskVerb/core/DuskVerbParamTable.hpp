@@ -33,6 +33,7 @@
 #pragma once
 
 #include "../src/FactoryPresets.h"
+#include "DuskVerbAlgorithms.hpp"
 
 #include <algorithm>
 #include <array>
@@ -145,15 +146,20 @@ enum ParamId : int
 };
 
 // ── Enumerated value labels ─────────────────────────────────────────────────
-// kAlgorithmLabels mirrors getAlgorithmConfig(i).name for i in [0, 16). Kept as
-// a literal list (rather than built from AlgorithmConfig.h at runtime) so the
-// table stays constexpr; a static_assert in the core tests re-checks it against
-// the engine table.
-inline constexpr const char* const kAlgorithmLabels[16] = {
+// kAlgorithmLabels mirrors algorithmLabel(i) (DuskVerbAlgorithms.hpp) for every one
+// of the kNumAlgorithmSlots slots: the shared engines' getAlgorithmConfig(i).name for
+// i in [0, kNumSharedAlgorithms), DuskVerb 2's own engines, then "Reserved" up to the
+// fixed slot count. Kept as a literal list (rather than built at runtime) so the
+// table stays constexpr; the core tests re-check it against both.
+inline constexpr const char* const kAlgorithmLabels[kNumAlgorithmSlots] = {
     "Plate", "Vintage Plate", "Smooth Plate", "Chamber",
     "Studio", "Spring", "Gated", "Shimmer",
     "Vintage Hall", "Reverse", "Hall", "Sparse",
-    "Concert Hall", "Tiled Room", "Dense Hall", "Parallel Hall"
+    "Concert Hall", "Tiled Room", "Dense Hall", "Parallel Hall",
+    "Nonlinear", "Reserved", "Reserved", "Reserved",
+    "Reserved", "Reserved", "Reserved", "Reserved",
+    "Reserved", "Reserved", "Reserved", "Reserved",
+    "Reserved", "Reserved", "Reserved", "Reserved"
 };
 inline constexpr const char* const kPreDelaySyncLabels[7] = {
     "Free", "1/32", "1/16", "1/8", "1/4", "1/2", "1/1"
@@ -183,7 +189,7 @@ inline const std::array<ParamDesc, kNumParams>& paramTable()
     static const std::array<ParamDesc, kNumParams> table = [] {
         const FactoryPreset& fp0 = getFactoryPresets().front();
         return std::array<ParamDesc, kNumParams> {{
-            { "algorithm", "Algorithm", "", 0.0f, 15.0f, 1.0f, 1.0f, (float) fp0.algorithm, true, kAlgorithmLabels, 16 },
+            { "algorithm", "Algorithm", "", 0.0f, (float) (kNumAlgorithmSlots - 1), 1.0f, 1.0f, (float) fp0.algorithm, true, kAlgorithmLabels, kNumAlgorithmSlots },
             { "mix", "Dry/Wet", "", 0.0f, 1.0f, 0.0f, 1.0f, fp0.mix, false, nullptr, 0 },
             { "bus_mode", "Bus Mode", "", 0.0f, 1.0f, 1.0f, 1.0f, (fp0.busMode ? 1.0f : 0.0f), true, kOnOffLabels, 2 },
             { "bypass", "Bypass", "", 0.0f, 1.0f, 1.0f, 1.0f, (false ? 1.0f : 0.0f), true, kOnOffLabels, 2 },
@@ -349,6 +355,10 @@ inline float dspFromHost(const ParamDesc& d, float host) noexcept
     const float d1 = cvFrom01(d, hasSkew(d) ? host : cvTo01(d, host));
     return cvFrom01(d, cvTo01(d, d1));
 }
+
+// A plain value as the DSP holds it once a recall has written it: through the host coordinate
+// and back, exactly as a factory row arrives.
+inline float dspFromPlain(const ParamDesc& d, float plain) noexcept { return dspFromHost(d, plainToHost(d, plain)); }
 
 inline float hostDefault(const ParamDesc& d) noexcept { return plainToHost(d, d.def); }
 

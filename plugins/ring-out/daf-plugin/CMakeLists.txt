@@ -135,6 +135,7 @@ endif()
 dusk_daf_add_output_param_tests(ring-out)
 dusk_daf_add_ui_drag_test(ring-out 932 553)   # OUTPUT knob
 dusk_daf_add_resize_test(ring-out)
+dusk_daf_add_clap_preset_test(ring-out)
 
 # SETUP / ADD / RESET as a host sees them, against the built .clap: the five
 # clap-validator 0.4.1 failures in miniature, and the two things a fix must not

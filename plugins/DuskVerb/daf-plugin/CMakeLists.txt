@@ -37,6 +37,26 @@ set(DUSKVERB_ENGINE_SOURCES
     ../src/dsp/DattorroPlateVintage.cpp
     ../src/dsp/ReverseRoomEngine.cpp)
 
+# DuskVerb 2's own framework-free DSP: the core (shared with nothing but these targets, except
+# DuskVerbPresetEngineConfig.cpp, which the legacy plugin compiles too) and the engines only
+# DuskVerb 2 has. Every target that compiles DuskVerbDSP.cpp takes this whole list.
+set(DUSKVERB2_DSP_SOURCES
+    ../core/DuskVerbDSP.cpp
+    ../core/DuskVerbPresetEngineConfig.cpp
+    ../core/dsp/NonLinBurstEngine.cpp)
+
+# Tuning hooks for local tuning builds, never a release: with this ON, the DUSKVERB2_EARLYFIELD,
+# DUSKVERB2_OCTAVETRIM and DUSKVERB2_BANDLIMIT environment variables replace DuskVerb 2's
+# early-field, octave-trim and band-limit tables for every preset that loads
+# (core/DuskVerbDv2Voicing.hpp). OFF, DuskVerbDSP never reads
+# them. Like the sources above, every target that compiles DuskVerbDSP.cpp takes these definitions.
+option(DUSKVERB2_TUNING_HOOKS "Let DUSKVERB2_* environment variables override DuskVerb 2's voicing (tuning builds only)" OFF)
+if(DUSKVERB2_TUNING_HOOKS)
+    set(DUSKVERB2_DSP_DEFINITIONS DUSKVERB2_TUNING_HOOKS=1)
+else()
+    set(DUSKVERB2_DSP_DEFINITIONS DUSKVERB2_TUNING_HOOKS=0)
+endif()
+
 # The editor bundles Barlow Condensed so its metrics are identical on every OS.
 # The faces live once in plugins/shared-daf/fonts; dusk_daf_embed_font turns them
 # into C arrays under the build tree, so this plugin does not commit a second,
@@ -59,8 +79,7 @@ daf_add_plugin(duskverb-2
     UI_TYPE opengl
     FILES_DSP
         DuskVerbPlugin.cpp
-        ../core/DuskVerbDSP.cpp
-        ../core/DuskVerbPresetEngineConfig.cpp
+        ${DUSKVERB2_DSP_SOURCES}
         ${DUSKVERB_ENGINE_SOURCES}
     FILES_UI
         DuskVerbUI.cpp
@@ -103,7 +122,8 @@ endif()
 target_compile_definitions(duskverb-2 PUBLIC
     DUSKVERB2_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
     DUSKVERB2_VERSION_MINOR=${PROJECT_VERSION_MINOR}
-    DUSKVERB2_VERSION_PATCH=${PROJECT_VERSION_PATCH})
+    DUSKVERB2_VERSION_PATCH=${PROJECT_VERSION_PATCH}
+    ${DUSKVERB2_DSP_DEFINITIONS})
 
 # Copies the built CLAP/VST3/LV2 into the user plugin dirs after each build
 # when configured with -DDUSK_DAF_INSTALL_LOCAL=ON.
@@ -152,8 +172,7 @@ enable_testing()
 
     add_executable(DuskVerbCoreTest
         ../core/tests/DuskVerbCoreTests.cpp
-        ../core/DuskVerbDSP.cpp
-        ../core/DuskVerbPresetEngineConfig.cpp
+        ${DUSKVERB2_DSP_SOURCES}
         ${DUSKVERB_ENGINE_SOURCES})
     target_include_directories(DuskVerbCoreTest PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/../core"
@@ -165,10 +184,49 @@ enable_testing()
     endif()
     add_test(NAME DuskVerbCore COMMAND DuskVerbCoreTest)
 
+    # The scaler that keeps the damping card live on the table-voiced engines.
+    add_executable(DuskVerbDampingKnobTest
+        ../core/tests/DuskVerbDampingKnobTests.cpp
+        ${DUSKVERB2_DSP_SOURCES}
+        ${DUSKVERB_ENGINE_SOURCES})
+    target_include_directories(DuskVerbDampingKnobTest PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../core"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+    target_compile_features(DuskVerbDampingKnobTest PRIVATE cxx_std_17)
+    if(NOT MSVC)
+        target_compile_options(DuskVerbDampingKnobTest PRIVATE -O2)
+    endif()
+    add_test(NAME DuskVerbDampingKnobs COMMAND DuskVerbDampingKnobTest)
+
+    # Every control the editor draws either changes the render on every program and engine or
+    # is declared dead (and drawn dimmed) by DuskVerbKnobLiveness.hpp.
+    add_executable(DuskVerbControlLivenessTest
+        ../core/tests/DuskVerbControlLivenessTests.cpp
+        ${DUSKVERB2_DSP_SOURCES}
+        ${DUSKVERB_ENGINE_SOURCES})
+    target_include_directories(DuskVerbControlLivenessTest PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../core"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+    target_compile_features(DuskVerbControlLivenessTest PRIVATE cxx_std_17)
+    if(NOT MSVC)
+        target_compile_options(DuskVerbControlLivenessTest PRIVATE -O2)
+    endif()
+    add_test(NAME DuskVerbControlLiveness COMMAND DuskVerbControlLivenessTest)
+
+    add_executable(NonLinBurstEngineTest
+        ../core/tests/NonLinBurstEngineTests.cpp
+        ../core/dsp/NonLinBurstEngine.cpp)
+    target_compile_features(NonLinBurstEngineTest PRIVATE cxx_std_17)
+    if(NOT MSVC)
+        target_compile_options(NonLinBurstEngineTest PRIVATE -O2)
+    endif()
+    add_test(NAME NonLinBurstEngine COMMAND NonLinBurstEngineTest)
+
     add_executable(DuskVerbPluginLayerTest
         DuskVerbPluginLayerTests.cpp
-        ../core/DuskVerbDSP.cpp
-        ../core/DuskVerbPresetEngineConfig.cpp
+        ${DUSKVERB2_DSP_SOURCES}
         ${DUSKVERB_ENGINE_SOURCES})
     target_include_directories(DuskVerbPluginLayerTest PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -180,6 +238,82 @@ enable_testing()
         target_compile_options(DuskVerbPluginLayerTest PRIVATE -O2)
     endif()
     add_test(NAME DuskVerbPluginLayer COMMAND DuskVerbPluginLayerTest)
+
+    # The TONE graph's mapping, hit-testing and drag arithmetic (DuskVerbToneGraph.hpp).
+    add_executable(DuskVerbToneGraphTest DuskVerbToneGraphTests.cpp)
+    target_include_directories(DuskVerbToneGraphTest PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/ui")
+    target_compile_features(DuskVerbToneGraphTest PRIVATE cxx_std_17)
+    add_test(NAME DuskVerbToneGraph COMMAND DuskVerbToneGraphTest)
+
+    # The early field (DuskVerbEarlyField.hpp) with its voicing table and tuning-hook parser
+    # (DuskVerbDv2Voicing.hpp). `DuskVerbEarlyFieldTest --dump-layout CONFIG` prints the tap
+    # layout, for the check against the tools repo's model (classic_lab/earlyfield_screen.py).
+    add_executable(DuskVerbEarlyFieldTest ../core/tests/DuskVerbEarlyFieldTests.cpp)
+    # The field inside DuskVerbDSP: a preset without one renders exactly as with the field off,
+    # in either build; the field reaches the output where its layout says.
+    add_executable(DuskVerbEarlyFieldDspTest
+        ../core/tests/DuskVerbEarlyFieldDspTests.cpp
+        ${DUSKVERB2_DSP_SOURCES}
+        ${DUSKVERB_ENGINE_SOURCES})
+    # The octave trim on the wet (DuskVerbOctaveTrim.hpp) with its voicing table and tuning-hook
+    # parser. `DuskVerbOctaveTrimTest --dump-response GAINS` prints its measured magnitude beside
+    # the formula's, for the check against the tools repo's model (cascade_db).
+    add_executable(DuskVerbOctaveTrimTest ../core/tests/DuskVerbOctaveTrimTests.cpp)
+    # The trim inside DuskVerbDSP: a preset without one renders as a flat trim does, in either
+    # build; with one, the render is the stage run over the summed wet, swapped with the engines.
+    add_executable(DuskVerbOctaveTrimDspTest
+        ../core/tests/DuskVerbOctaveTrimDspTests.cpp
+        ${DUSKVERB2_DSP_SOURCES}
+        ${DUSKVERB_ENGINE_SOURCES})
+    # The band limit on the wet after the trim (DuskVerbBandLimit.hpp): the stage against its closed
+    # form at three rates, the voicing table and hook parser, and inside DuskVerbDSP a render with
+    # one is the stage over the same render without one.
+    add_executable(DuskVerbBandLimitTest
+        ../core/tests/DuskVerbBandLimitTests.cpp
+        ${DUSKVERB2_DSP_SOURCES}
+        ${DUSKVERB_ENGINE_SOURCES})
+    # DuskVerb 2's preset recall (DuskVerbPresets.hpp): the rows with Decay's reading and the
+    # overrides over them; the host sees the measured RT60 while the engines still get the row's
+    # decay there, bit for bit, and in proportion around it.
+    add_executable(DuskVerbPresetRecallTest
+        ../core/tests/DuskVerbPresetRecallTests.cpp
+        ${DUSKVERB2_DSP_SOURCES}
+        ${DUSKVERB_ENGINE_SOURCES})
+    # ParallelMultibandTank's decorrelated side on the tank alone: L + R unchanged, the tail
+    # decorrelated on mono and stereo input, equal L/R power, nothing undelayed.
+    add_executable(DuskVerbPmbSideTest ../core/tests/DuskVerbPmbSideTests.cpp)
+    # The tanks' time-varying feedback matrix (FDNReverb's line pairs, DattorroTank's cross-feed) on
+    # each tank alone: off is the tank without it, bit for bit; on keeps the decay, at its limits
+    # too, and replays.
+    add_executable(DuskVerbFeedbackRotationTest ../core/tests/DuskVerbFeedbackRotationTests.cpp
+        ../src/dsp/FDNReverb.cpp ../src/dsp/DattorroTank.cpp ../src/dsp/OctaveGEQDesign.cpp)
+    foreach(testTarget DuskVerbEarlyFieldTest DuskVerbEarlyFieldDspTest DuskVerbOctaveTrimTest DuskVerbOctaveTrimDspTest
+                       DuskVerbBandLimitTest DuskVerbPresetRecallTest DuskVerbPmbSideTest DuskVerbFeedbackRotationTest)
+        target_include_directories(${testTarget} PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/../core"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+        target_compile_features(${testTarget} PRIVATE cxx_std_17)
+        if(NOT MSVC)
+            target_compile_options(${testTarget} PRIVATE -O2)
+        endif()
+    endforeach()
+    add_test(NAME DuskVerbEarlyField COMMAND DuskVerbEarlyFieldTest)
+    add_test(NAME DuskVerbEarlyFieldDsp COMMAND DuskVerbEarlyFieldDspTest)
+    add_test(NAME DuskVerbOctaveTrim COMMAND DuskVerbOctaveTrimTest)
+    add_test(NAME DuskVerbOctaveTrimDsp COMMAND DuskVerbOctaveTrimDspTest)
+    add_test(NAME DuskVerbBandLimit COMMAND DuskVerbBandLimitTest)
+    add_test(NAME DuskVerbPresetRecall COMMAND DuskVerbPresetRecallTest)
+    add_test(NAME DuskVerbPmbSide COMMAND DuskVerbPmbSideTest)
+    add_test(NAME DuskVerbFeedbackRotation COMMAND DuskVerbFeedbackRotationTest)
+
+    foreach(testTarget DuskVerbCoreTest DuskVerbDampingKnobTest DuskVerbControlLivenessTest DuskVerbPluginLayerTest
+                       DuskVerbEarlyFieldDspTest DuskVerbOctaveTrimDspTest DuskVerbBandLimitTest DuskVerbPresetRecallTest)
+        target_compile_definitions(${testTarget} PRIVATE ${DUSKVERB2_DSP_DEFINITIONS})
+    endforeach()
 
     add_executable(DuskVerbParameterTest DuskVerbParameterTests.cpp)
     add_executable(DuskVerbStateCodecTest DuskVerbStateCodecTests.cpp)
@@ -241,4 +375,5 @@ dusk_daf_add_resize_test(duskverb-2)
 # coordinates ARE window coordinates there). Keep this in step with kHeroCx /
 # kHeroCy in DuskVerbUI.cpp: if a layout pass moves the knob, phase A of the
 # harness fails and names the coordinate to update.
-dusk_daf_add_ui_drag_test(duskverb-2 570 318)
+dusk_daf_add_ui_drag_test(duskverb-2 525 159)   # the DECAY hero, in window px at the default size
+dusk_daf_add_clap_preset_test(duskverb-2)

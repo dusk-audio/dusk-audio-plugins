@@ -122,8 +122,8 @@ inline bool formatEngineOverride(EngineType e, int p, float v, char* out, size_t
     return false;
 }
 
-// Per-engine knob names, transcribed from DuskVerbEditor::updateEngine...:
-// Spring re-labels DEPTH/RATE/DIFFUSION as SPRING LEN/DRIP/CHIRP, Shimmer as
+// Per-engine knob names: Spring re-labels DEPTH/RATE/DIFFUSION as LENGTH/DRIP/
+// CHIRP (under the SPRING card title, so LENGTH is the spring's), Shimmer as
 // PITCH/FEEDBACK, the Gated engine as ATTACK/RELEASE/HOLD and MID MULT as
 // THRESHOLD. Everything else keeps its universal name.
 inline const char* labelFor(EngineType e, int p, const char* universal)
@@ -132,12 +132,44 @@ inline const char* labelFor(EngineType e, int p, const char* universal)
                gated  = e == EngineType::NonLinear;
     switch (p)
     {
-        case duskverb::ModDepth:  return spring ? "SPRING LEN" : shimmer ? "PITCH"    : gated ? "ATTACK"  : universal;
+        case duskverb::ModDepth:  return spring ? "LENGTH"     : shimmer ? "PITCH"    : gated ? "ATTACK"  : universal;
         case duskverb::ModRate:   return spring ? "DRIP"       : shimmer ? "FEEDBACK" : gated ? "RELEASE" : universal;
         case duskverb::Diffusion: return gated  ? "HOLD"       : spring  ? "CHIRP"    : universal;
         case duskverb::MidMult:   return gated  ? "THRESHOLD"  : universal;
         default:                  return universal;
     }
+}
+
+// The engine card: the editor's bottom-row card that holds every control an
+// engine re-purposes, so a re-labelled knob never sits under a card title that
+// contradicts it (HOLD is not an early reflection, THRESHOLD is not a damping
+// band). A parameter listed here is drawn in the card; its home slot (Diffusion
+// in SPACE, Mid Multiply in TONE) shows an inert placeholder instead.
+struct EngineCard
+{
+    const char* title;
+    int params[4];
+    int count;
+};
+
+inline EngineCard engineCard(EngineType e) noexcept
+{
+    using namespace duskverb;
+    switch (e)
+    {
+        case EngineType::NonLinear: return { "GATE",       { ModDepth, ModRate, Diffusion, MidMult }, 4 };
+        case EngineType::Spring:    return { "SPRING",     { ModDepth, ModRate, Diffusion, 0 },       3 };
+        case EngineType::Shimmer:   return { "SHIMMER",    { ModDepth, ModRate, 0, 0 },               2 };
+        default:                    return { "MODULATION", { ModDepth, ModRate, 0, 0 },               2 };
+    }
+}
+
+inline bool inEngineCard(EngineType e, int p) noexcept
+{
+    const EngineCard card = engineCard(e);
+    for (int i = 0; i < card.count; ++i)
+        if (card.params[i] == p) return true;
+    return false;
 }
 
 inline float displayNumber(EngineType engine, int p, float plain) noexcept

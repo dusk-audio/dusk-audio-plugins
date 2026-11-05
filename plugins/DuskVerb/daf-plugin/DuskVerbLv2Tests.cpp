@@ -204,7 +204,7 @@ int main(int argc, char **argv)
         run();
         state->save(instance, Host::store, &host, 0, features);
         check(duskverb::decodeState(host.state, observed)
-                  && observed.presetName == getFactoryPresets()[5].name && !observed.edited,
+                  && observed.presetName == duskverb::dv2FactoryPresets()[5].name && !observed.edited,
               "deferred refresh and host control echo preserve selected program identity");
         descriptor->deactivate(instance);
         descriptor->cleanup(instance);

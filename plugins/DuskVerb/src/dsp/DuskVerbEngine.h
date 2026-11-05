@@ -305,6 +305,8 @@ public:
     // Phase α: per-line frequency-indexed decay scaling on the FDN engine.
     // No-op for non-FDN engines. Defaults 1.0 / 1.0 = backward identical.
     void setPerLineDecayTilt (float shortLineScale, float longLineScale);
+    void setFDNDualSlope (float ratio, float fastGain);   // DuskVerb 2: FDNReverb::setDualSlope on the FDN/AccurateHall tanks: half the lines at RT60 x ratio (0: off)
+    void setFeedbackRotation (float peakRad, float rateHz);   // DuskVerb 2: the tanks' time-varying feedback matrix (FDNReverb::setFeedbackRotation on the FDN, AccurateHall, Shimmer hall and multiband tanks; DattorroTank::setCrossFeedRotation); 0: off
 
     // AccurateHall (algo 10) only: per-octave T60 target (band 0..8 = 63 Hz..
     // 16 kHz). Routes to accurateHall_.setOctaveT60. No-op on every other
@@ -350,6 +352,9 @@ public:
                                float atkMs, float relFastMs, float relSlowMs);
     void setPmbBand (int b, float t60s, float level, float direct, float width);   // ParallelMultiband (algo 15) per-band config; no-op elsewhere
     void setPmbStereoImageBias (float amount);   // #123 source-side energy lean; 0 = off = bit-identical
+    void setPmbDecorrelatedSide (bool on);       // DuskVerb 2: band side from line 1's read (equal mid/side power); off = bit-identical
+    void setPmbModeSmearBandShare (int band, float share);   // DuskVerb 2: a band's share of the mode smear depth (1, the default, = all)
+    void setPmbDensifierCoeff (int band, float k);           // DuskVerb 2: a band's in-loop allpass coefficient (below 0: the tank's 0.55)
     // #123 engine-agnostic source-side ILD steer keyed off the clean dry-input
     // balance. The scalar compatibility path precedes output width; measured
     // three-band profiles are the final stereo operation. amount 0 is bit-null.
@@ -411,6 +416,7 @@ public:
     void setBuildupPostTank       (bool b);        // true = diffuse tank OUTPUT (builds onset, tail/T60 intact); false = INPUT (Bright Hall)
     void setSparseFieldTailGain   (float gain);
     void setSparseERGain          (float gain);   // algo 13 composite: ER level in the mix
+    void setSparseERTone          (float hz);     // DuskVerb 2: 4th-order low-pass on the DenseHall composite's sparse ER (0 = off)
     void setSparseERDuck          (float amount, float holdMs, float thresh);   // transient-gate the sparse ER (0 = off = bit-null)
     void setEarlyTankDuck         (float amount, float holdMs, float thresh);   // suppress the dense tank for the early-reflection window so discrete ER stands out (0 = off = bit-null)
     // Diffused discrete early reflections (DenseHall clarity/un-masking comb).
@@ -534,6 +540,25 @@ public:
     // Late-tank state stays cleared (it's algorithm-specific; pre-filling
     // would feed wrong-coefficient history into a different topology).
     void copyInputHistoryFrom (const DuskVerbEngine& other);
+
+    // Read-only views of the per-band decay tables a preset installs, and two
+    // forwarders, for DuskVerb 2's damping-knob scaler (no legacy caller). The
+    // Dattorro table is read from the plate tank; setDattorroOctaveT60 writes the
+    // same values to the vintage plate's tank.
+    float getDattorroOctaveT60 (int band) const noexcept      { return dattorro_.getOctaveT60 (band); }
+    bool  isDattorroOctaveT60Active() const noexcept          { return dattorro_.isOctaveT60Active(); }
+    float getAccurateHallOctaveT60 (int band) const noexcept  { return accurateHall_.getOctaveT60 (band); }
+    bool  isAccurateHallOctaveT60Active() const noexcept      { return accurateHall_.isOctaveT60Active(); }
+    float getDenseHallOctaveT60 (int band) const noexcept     { return denseHall_.getOctaveT60 (band); }
+    bool  isDenseHallOctaveT60Active() const noexcept         { return denseHall_.isOctaveT60Active(); }
+    float getPmbBandT60    (int b) const noexcept             { return pmb_.getBandT60 (b); }
+    float getPmbBandLevel  (int b) const noexcept             { return pmb_.getBandLevel (b); }
+    float getPmbBandDirect (int b) const noexcept             { return pmb_.getBandDirect (b); }
+    float getPmbBandWidth  (int b) const noexcept             { return pmb_.getBandWidth (b); }
+    // The high-band decay multiplier of the FDN inside the Gated and Shimmer
+    // engines, which setAirTrebleMultiply above does not reach.
+    void setNonLinearAirTrebleMultiply (float mult)           { nonLinear_.setAirTrebleMultiply (mult); }
+    void setShimmerAirTrebleMultiply (float mult)             { shimmer_.setAirTrebleMultiply (mult); }
 
 private:
     // Engines (all owned; only one runs at a time).
