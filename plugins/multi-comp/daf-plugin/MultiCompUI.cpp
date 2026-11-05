@@ -58,9 +58,15 @@ inline constexpr float vcaFaceplateAspect() noexcept
         / (VcaFaceplateLayout::bottom - VcaFaceplateLayout::top);
 }
 
-// Every mode shares one rack-height canvas (1120 x 380), so a mode change never resizes the window: a mode
-// whose canvas differed from the opening size showed up shrunken in Logic (#240).
-inline constexpr float kDesignHeight = 380.0f;
+// Every mode shares one canvas, so a mode change never resizes the window: a mode whose canvas differed from the
+// opening size showed up shrunken in Logic (#240). 1200 x 480 since 2026-11-05 (owner direction: text readable at
+// the smallest window, which is this size), the default and the minimum.
+inline constexpr float kDesignWidth = 1200.0f;
+inline constexpr float kDesignHeight = 480.0f;
+// The canvas the faces were authored on (1120 x 380). A face not yet laid out for the current canvas is drawn on it
+// as before and placed into the current face area by one uniform scale (MultiCompUI::beginLegacyFace).
+inline constexpr float kFaceCanvasWidth = 1120.0f;
+inline constexpr float kFaceCanvasHeight = 380.0f;
 
 // Digital and Multiband content bounds in visible-canvas y (0 = the top of the header).
 // The rack shell extends to the canvas edges; its lettering keeps an 8 px bottom margin.
@@ -496,9 +502,19 @@ START_NAMESPACE_DAF
 
 namespace
 {
-constexpr float kDesignW = 1120.0f;
+constexpr float kDesignW = multicompp::ui_detail::kDesignWidth;
 constexpr float kDesignH = multicompp::ui_detail::kDesignHeight;
 constexpr float kHeaderH = 48.0f;
+// The mode row under the header, and the face area under it (design coordinates).
+constexpr float kModeRowY0 = 53.0f, kModeRowY1 = 81.0f;
+constexpr float kFaceTop = 86.0f;
+// A face still authored on the 1120 x 380 canvas spans visible-canvas y 70..380 there; it is scaled to the current
+// width and centred in the face area (beginLegacyFace).
+constexpr float kLegacyFaceW = multicompp::ui_detail::kFaceCanvasWidth;
+constexpr float kLegacyFaceH = multicompp::ui_detail::kFaceCanvasHeight;
+constexpr float kLegacyFaceTopY = 70.0f;
+constexpr float kLegacyFaceScale = kDesignW / kLegacyFaceW;
+constexpr float kLegacyFaceY = kFaceTop + 0.5f * ((kDesignH - kFaceTop) - (kLegacyFaceH - kLegacyFaceTopY) * kLegacyFaceScale);
 // Mode panels were authored in the original 760 px canvas. Translate that
 // canvas upward so every mode keeps its internal proportions while the retired
 // Global and Sidechain bands disappear completely from the visible layout.
@@ -650,8 +666,11 @@ public:
                 [](const multicompp::BandParam& d, int) { return multicompp::hostDefault(d); });
 
         setGeometryConstraints(static_cast<uint32_t>(kDesignW), static_cast<uint32_t>(kDesignH), true);
-        static const float kFontSizes[] = {9.f, 11.f, 13.f, 16.f, 20.f, 26.f, 30.f};
-        fontSet = duskdaf::loadCrispFontSet(kFontSizes, 7, getScaleFactor());
+        // The type scale (owner direction 2026-11-05): 16 legends, 17 values, 20 sections, 14 the family's version
+        // line, 22 / 24 the header's brand and title, 30 face titles. 9 to 13 remain for the faces not yet laid out
+        // for this canvas (beginLegacyFace).
+        static const float kFontSizes[] = {9.f, 11.f, 13.f, 14.f, 16.f, 17.f, 20.f, 22.f, 24.f, 30.f};
+        fontSet = duskdaf::loadCrispFontSet(kFontSizes, 10, getScaleFactor());
         labelFont = fontSet.primary();
         panel.setFontSet(fontSet);
         vcaLastScHp = hostValueForPlain(P_SC_HP, kVcaPullScFirstHz);
@@ -787,18 +806,23 @@ protected:
         if (modalOpen)
             ImGui::BeginDisabled();
         drawHeader(dl);
+        drawModeRow(dl);
 
-        // The mode-panel drawing code retains its original internal coordinates;
-        // translate only that canvas so removing the two utility bands does not
-        // perturb the carefully tuned per-mode layouts or hit targets.
-        panel.begin(scale, ImVec2(origin.x, origin.y - kModeCanvasShiftY * scale),
-                    labelFont, this);
+        // The settings drawer is modal to the face under it: the face stays drawn but takes no input.
+        const bool drawerOpen = showSettings;
+        if (drawerOpen && !modalOpen)
+            ImGui::BeginDisabled();
+        beginLegacyFace(scale, origin);
         drawModePanel(dl);
+        panel.begin(scale, origin, labelFont, this);
+        if (drawerOpen && !modalOpen)
+            ImGui::EndDisabled();
+        if (drawerOpen)
+            drawSettingsDrawer(dl);
         if (modalOpen)
             ImGui::EndDisabled();
 
-        // Overlays and the resize grip live in the compact visible canvas.
-        panel.begin(scale, origin, labelFont, this);
+        // Overlays and the resize grip live in the design canvas.
 
         if (showSupporters)
             duskdaf::drawSupportersOverlay(panel, dl, kDesignW, kDesignH, showSupporters,
@@ -806,7 +830,7 @@ protected:
                                            &supporters);
 
         const duskdaf::ResizeGripState grip =
-            panel.resizeGrip(dl, winW, winH, kDesignW, kDesignH, 0.5f);
+            panel.resizeGrip(dl, winW, winH, kDesignW, kDesignH, 1.0f);   // the design size is the minimum
         finishTrackedEdits(false);
         ImGui::End();
         ImGui::PopStyleVar(2);
@@ -847,6 +871,7 @@ private:
     ImFont* labelFont = nullptr;
     duskdaf::SupportersOverlay supporters;
     bool showSupporters = false;
+    bool showSettings = false;   // the settings drawer (drawSettingsDrawer)
     bool geometryDiagnosticLogged = false;
     bool parameterMirrorSeeded = false;
     static constexpr uint32_t kNoCrossover = ~uint32_t(0);
@@ -1051,8 +1076,8 @@ private:
 
     void drawSection(ImDrawList* dl, float y0, float y1, const char* title)
     {
-        dl->AddRectFilled(panel.P(8, y0), panel.P(kDesignW - 8, y1), kPanel, 5.0f * panel.scale());
-        dl->AddRect(panel.P(8, y0), panel.P(kDesignW - 8, y1), kLine, 5.0f * panel.scale(), 0, panel.scale());
+        dl->AddRectFilled(panel.P(8, y0), panel.P(kLegacyFaceW - 8, y1), kPanel, 5.0f * panel.scale());
+        dl->AddRect(panel.P(8, y0), panel.P(kLegacyFaceW - 8, y1), kLine, 5.0f * panel.scale(), 0, panel.scale());
         if (title != nullptr && title[0] != '\0')
             panel.text(dl, 22, y0 + 10, 11, kAccent, title, -1, true);
     }
@@ -1137,7 +1162,7 @@ private:
                           2.0f * panel.scale());
         dl->AddRect(b0, b1, IM_COL32(90, 90, 94, 255), 2.0f * panel.scale(), 0,
                     panel.scale());
-        panel.text(dl, 0.5f * (x0 + x1), 18.5f, 11.0f,
+        panel.text(dl, 0.5f * (x0 + x1), 16.0f, 16.0f,
                    hovered ? kText : kDim, label, 0, true);
         return ImGui::IsItemClicked();
     }
@@ -1177,7 +1202,7 @@ private:
                     IM_COL32(116, 145, 75, 210), 1.2f * panel.scale());
         panel.text(dl, 42, 10, 24, kText, "MULTI-COMP", -1, true);
         panel.text(dl, 244, 14, 20, kText, "MC-2", 0, true);
-        panel.text(dl, 346, 20, 11, kDim, "v" MULTICOMP2_VERSION_STRING, 1);
+        panel.text(dl, 346, 18, 14, kDim, "v" MULTICOMP2_VERSION_STRING, 1);
         panel.text(dl, kDesignW - 34, 12, 22, kText, "DUSK AUDIO", 1, true);
 
         ImGui::SetCursorScreenPos(panel.P(plateX0, plateY0));
@@ -1190,13 +1215,13 @@ private:
         }
 
         if (headerChevron(dl, "##mc_presetprev", 390.5f, true)) stepPreset(-1);
-        if (headerChevron(dl, "##mc_presetnext", 697.5f, false)) stepPreset(1);
+        if (headerChevron(dl, "##mc_presetnext", 737.5f, false)) stepPreset(1);
 
         constexpr float bandY0 = 11.5f, bandY1 = 36.5f;
         constexpr float bandH = bandY1 - bandY0;
         ImGui::SetCursorScreenPos(panel.P(404, bandY0));
-        ImGui::SetNextItemWidth(280.0f * panel.scale());
-        ImFont* presetFont = fontSet.pick(13.0f * panel.scale());
+        ImGui::SetNextItemWidth(320.0f * panel.scale());
+        ImFont* presetFont = fontSet.pick(17.0f * panel.scale());
         if (presetFont != nullptr) ImGui::PushFont(presetFont);
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
                             ImVec2(7.0f * panel.scale(),
@@ -1249,8 +1274,8 @@ private:
         ImGui::PopStyleVar();
         if (presetFont != nullptr) ImGui::PopFont();
 
-        if (headerTextButton(dl, "##mc_init", 716, 772, "INIT")) initDefaults();
-        if (headerTextButton(dl, "##mc_save", 780, 836, "SAVE"))
+        if (headerTextButton(dl, "##mc_init", 756, 820, "INIT")) initDefaults();
+        if (headerTextButton(dl, "##mc_save", 828, 892, "SAVE"))
         {
             std::snprintf(saveBuf, sizeof(saveBuf), "%s", currentUserName.c_str());
             ImGui::OpenPopup("Save Multi-Comp Preset");
@@ -1406,54 +1431,50 @@ private:
         defaultsActive = false;
     }
 
-    void drawModeToolbar(ImDrawList* dl)
+    // The mode row under the header, in design coordinates: the eight mode tabs, then AUTO MAKEUP, BYPASS and
+    // SETTINGS (the drawer). 16 px captions, the legend floor at the minimum window.
+    void drawModeRow(ImDrawList* dl)
     {
         constexpr int modeCount = static_cast<int>(
             sizeof(multicompp::kModes) / sizeof(multicompp::kModes[0]));
         static_assert(modeCount == 8,
-                      "the mode toolbar layout must be revisited when modes change");
+                      "the mode row layout must be revisited when modes change");
         const int selected = multicompp::ui_detail::choiceIndex(value(P_MODE), 8);
-        constexpr float rowLeft = 20.0f;
-        constexpr float rowRight = 896.0f;
-        constexpr float gap = 3.0f;
-        constexpr float buttonWidth =
-            (rowRight - rowLeft - gap * static_cast<float>(modeCount - 1))
-            / static_cast<float>(modeCount);
-        constexpr float y0 = kModeCanvasTop + 3.0f;
-        constexpr float y1 = kModeCanvasTop + 21.0f;
+        constexpr float rowLeft = 16.0f, tabWidth = 100.0f, gap = 4.0f;
         for (int mode = 0; mode < modeCount; ++mode)
         {
-            const float x0 = rowLeft + static_cast<float>(mode) * (buttonWidth + gap);
-            const float x1 = x0 + buttonWidth;
-            const ImVec2 b0 = panel.P(x0, y0);
-            const ImVec2 b1 = panel.P(x1, y1);
+            const float x0 = rowLeft + static_cast<float>(mode) * (tabWidth + gap);
             char id[32];
             std::snprintf(id, sizeof(id), "##mc_mode_button_%d", mode);
-            ImGui::SetCursorScreenPos(b0);
-            const bool clicked = ImGui::InvisibleButton(
-                id, ImVec2(b1.x - b0.x, b1.y - b0.y));
-            const bool hovered = ImGui::IsItemHovered();
             const bool active = mode == selected;
-            const ImU32 fill = active ? kHeaderGreenDark
-                : hovered ? kPanelRaised : IM_COL32(24, 25, 29, 255);
-            const ImU32 outline = active
-                ? IM_COL32(103, 132, 75, 255) : kLine;
-            dl->AddRectFilled(b0, b1, fill, 2.0f * panel.scale());
-            dl->AddRect(b0, b1, outline, 2.0f * panel.scale(), 0,
-                        panel.scale());
-            if (active)
-                dl->AddRectFilled(panel.P(x0 + 2.0f, y1 - 2.0f),
-                                  panel.P(x1 - 2.0f, y1), kHeaderGreen);
-            panel.text(dl, 0.5f * (x0 + x1), y0 + 3.0f, 8.8f,
-                       active || hovered ? kText : kDim,
-                       multicompp::ui_detail::kModeTabLabels[static_cast<size_t>(mode)], 0, true);
-            if (clicked && !active)
+            if (rowTab(dl, id, x0, x0 + tabWidth,
+                       multicompp::ui_detail::kModeTabLabels[static_cast<size_t>(mode)], active) && !active)
                 setValue(P_MODE, static_cast<float>(mode));
         }
         // Five factory presets engage Auto Makeup, which bypasses each face's
         // manual makeup / output control; it needs a switch the user can see.
-        modeRowToggle(dl, "mc_auto_makeup", P_AUTO_MAKEUP, 908, 998, "AUTO MAKEUP");
-        modeRowToggle(dl, "mc_bypass", P_BYPASS, 1008, 1098, "BYPASS");
+        modeRowToggle(dl, "mc_auto_makeup", P_AUTO_MAKEUP, 858, 988, "AUTO MAKEUP");
+        modeRowToggle(dl, "mc_bypass", P_BYPASS, 994, 1078, "BYPASS");
+        if (rowTab(dl, "##mc_settings", 1084, kDesignW - 16, "SETTINGS", showSettings))
+            showSettings = !showSettings;
+    }
+
+    // A mode-row tab (or a button in its style, y0..y1): lit while `active`, a 16 px caption. True when clicked.
+    bool rowTab(ImDrawList* dl, const char* id, float x0, float x1, const char* label, bool active,
+                float y0 = kModeRowY0, float y1 = kModeRowY1)
+    {
+        const ImVec2 b0 = panel.P(x0, y0), b1 = panel.P(x1, y1);
+        ImGui::SetCursorScreenPos(b0);
+        const bool clicked = ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
+        const bool hovered = ImGui::IsItemHovered();
+        const ImU32 fill = active ? kHeaderGreenDark : hovered ? kPanelRaised : IM_COL32(24, 25, 29, 255);
+        const ImU32 outline = active ? IM_COL32(103, 132, 75, 255) : kLine;
+        dl->AddRectFilled(b0, b1, fill, 2.0f * panel.scale());
+        dl->AddRect(b0, b1, outline, 2.0f * panel.scale(), 0, panel.scale());
+        if (active)
+            dl->AddRectFilled(panel.P(x0 + 2.0f, y1 - 2.0f), panel.P(x1 - 2.0f, y1), kHeaderGreen);
+        textCentred(dl, 0.5f * (x0 + x1), 0.5f * (y0 + y1), 16.0f, active || hovered ? kText : kDim, label, true);
+        return clicked;
     }
 
     // The shared toggle with its label centred in the button. The shared
@@ -1462,13 +1483,199 @@ private:
     void modeRowToggle(ImDrawList* dl, const char* id, uint32_t p, float x0, float x1,
                        const char* label)
     {
-        constexpr float y0 = kModeCanvasTop + 3.0f, y1 = kModeCanvasTop + 21.0f;
-        constexpr float textSize = 10.0f;
-        panel.toggle(id, p, x0, y0, x1, y1, values[p], "");
+        panel.toggle(id, p, x0, kModeRowY0, x1, kModeRowY1, values[p], "");
         const bool on = values[p] > 0.5f;
         const duskdaf::Palette palette{};
-        panel.text(dl, 0.5f * (x0 + x1), 0.5f * (y0 + y1 - textSize), textSize,
-                   on ? palette.white : palette.whiteDim, label, 0, on);
+        textCentred(dl, 0.5f * (x0 + x1) + 5.0f, 0.5f * (kModeRowY0 + kModeRowY1), 16.0f,
+                    on ? palette.white : palette.whiteDim, label, on);
+    }
+
+    // A face still authored on the 1120 x 380 canvas, in its own mode-canvas coordinates (faceY(), kModeCanvas*),
+    // scaled uniformly to the design width and centred in the face area. Each face leaves this as it is laid out for
+    // the current canvas (owner direction 2026-11-05).
+    void beginLegacyFace(float scale, ImVec2 origin)
+    {
+        const float faceScale = scale * kLegacyFaceScale;
+        panel.begin(faceScale,
+                    ImVec2(origin.x, origin.y + kLegacyFaceY * scale - (kLegacyFaceTopY + kModeCanvasShiftY) * faceScale),
+                    labelFont, this);
+    }
+
+    // ---- Settings drawer ------------------------------------------------------------------------------------------
+    // The parameters no face carries (owner direction 2026-11-05), over the face area and modal to it: SETTINGS in
+    // the mode row opens and closes it, and so do its X and a click on the face area outside it. Legends at 16 px and
+    // values at 17 px, the readability floor at the minimum window. A control the current mode ignores stays where
+    // it is, greyed, so the drawer reads the same in every mode.
+    struct DrawerTheme
+    {
+        static constexpr ImU32 scrim = IM_COL32(8, 9, 10, 205);
+        static constexpr ImU32 panel = IM_COL32(30, 32, 36, 252);
+        static constexpr ImU32 edge = IM_COL32(88, 92, 102, 255);
+        static constexpr ImU32 rule = IM_COL32(64, 68, 76, 255);
+        static constexpr ImU32 legend = IM_COL32(214, 217, 222, 255);
+        static constexpr ImU32 note = IM_COL32(150, 156, 166, 255);
+        static constexpr ImU32 segment = IM_COL32(24, 25, 29, 255);
+        static constexpr ImU32 segmentHover = IM_COL32(43, 46, 54, 255);
+        static constexpr ImU32 segmentOn = IM_COL32(39, 57, 24, 255);      // the mode row's lit tab
+        static constexpr ImU32 segmentOnEdge = IM_COL32(103, 132, 75, 255);
+    };
+    struct DrawerLayout
+    {
+        static constexpr float x0 = 16.0f, y0 = 92.0f, x1 = kDesignW - 16.0f, y1 = kDesignH - 8.0f;
+        static constexpr float rowA = 132.0f, rowB = 292.0f;   // the two rows' group headings
+        static constexpr float legendSize = 16.0f, valueSize = 17.0f, knobRadius = 22.0f;
+        static constexpr float buttonH = 28.0f;
+    };
+
+    static constexpr uint32_t pid(ParamId id) noexcept { return static_cast<uint32_t>(id); }
+
+    // A group heading with its rule, from x0 to x1 at y.
+    void drawerHeading(ImDrawList* dl, float x0, float x1, float y, const char* title)
+    {
+        panel.text(dl, x0, y, DrawerLayout::legendSize, DrawerTheme::legend, title, -1, true);
+        dl->AddLine(panel.P(x0, y + 22.0f), panel.P(x1, y + 22.0f), DrawerTheme::rule, panel.scale());
+    }
+
+    // The drawer's knobs: the metallic knob with its 16 px legend above and the 17 px value below, in the host's
+    // own text for the value (the units and kHz rule the host shows).
+    void drawerKnob(ImDrawList* dl, const char* id, uint32_t p, float x, float y, const char* legend, bool applicable)
+    {
+        char text[48] = {};
+        multicompp::resolveParameter(static_cast<int>(p),
+            [&](const multicompp::Param& d) {
+                if (multicompp::hasSkew(d))
+                    multicompp::formatTaperedText(d, values[p], text, sizeof(text));
+                else
+                {
+                    const float plain = multicompp::hostToPlain(d, values[p]);
+                    const std::string_view unit(d.unit);
+                    std::snprintf(text, sizeof(text), unit == "%" ? "%.0f %%" : unit.empty() ? "%.0f" : "%.1f %s",
+                                  static_cast<double>(plain), d.unit);
+                    multicompp::useDotDecimalPoint(text);
+                }
+            },
+            [](const multicompp::BandParam&, int) {});
+        modernKnob(dl, id, p, x, y, DrawerLayout::knobRadius, legend, y - 40.0f, DrawerLayout::legendSize,
+                   DrawerTheme::legend, 0, "", y + 40.0f, applicable, DrawerLayout::valueSize, text);
+    }
+
+    // A row of exclusive buttons for a stepped parameter (labels in step order); the lit one is its value. A press
+    // on the lit one writes nothing.
+    void drawerSegments(ImDrawList* dl, const char* id, uint32_t p, float x0, float y0, float width,
+                        const char* const* labels, int count, bool vertical, bool applicable)
+    {
+        const int selected = multicompp::ui_detail::choiceIndex(values[p], count);
+        constexpr float gap = 6.0f;
+        const float opacity = applicable ? 1.0f : 0.4f;
+        if (!applicable) ImGui::BeginDisabled();
+        for (int i = 0; i < count; ++i)
+        {
+            const float bx0 = vertical ? x0 : x0 + static_cast<float>(i) * (width + gap);
+            const float by0 = vertical ? y0 + static_cast<float>(i) * (DrawerLayout::buttonH + gap) : y0;
+            const ImVec2 b0 = panel.P(bx0, by0), b1 = panel.P(bx0 + width, by0 + DrawerLayout::buttonH);
+            ImGui::PushID(id);
+            ImGui::PushID(i);
+            ImGui::SetCursorScreenPos(b0);
+            const bool clicked = ImGui::InvisibleButton("##segment", ImVec2(b1.x - b0.x, b1.y - b0.y));
+            const bool hovered = ImGui::IsItemHovered();
+            ImGui::PopID();
+            ImGui::PopID();
+            const bool lit = i == selected;
+            dl->AddRectFilled(b0, b1, colourWithAlpha(lit ? DrawerTheme::segmentOn
+                                                          : hovered ? DrawerTheme::segmentHover : DrawerTheme::segment,
+                                                      opacity), 2.0f * panel.scale());
+            dl->AddRect(b0, b1, colourWithAlpha(lit ? DrawerTheme::segmentOnEdge : DrawerTheme::edge, opacity),
+                        2.0f * panel.scale(), 0, panel.scale());
+            textCentred(dl, bx0 + 0.5f * width, by0 + 0.5f * DrawerLayout::buttonH, DrawerLayout::legendSize,
+                        colourWithAlpha(lit || hovered ? kText : kDim, opacity), labels[i], true);
+            if (clicked && !lit) setValue(p, static_cast<float>(i));
+        }
+        if (!applicable) ImGui::EndDisabled();
+    }
+
+    void drawSettingsDrawer(ImDrawList* dl)
+    {
+        using L = DrawerLayout;
+        const float s = panel.scale();
+        const int mode = multicompp::ui_detail::choiceIndex(value(P_MODE), 8);
+        const bool digitalModes = mode == 6 || mode == 7;
+        const bool fetBlack = mode == 1;
+
+        // Scrim over the face area, then the panel. The scrim is submitted last so the panel's own items keep
+        // the pointer; a click that reaches it closes the drawer.
+        dl->AddRectFilled(panel.P(0, kFaceTop), panel.P(kDesignW, kDesignH), DrawerTheme::scrim);
+        dl->AddRectFilled(panel.P(L::x0, L::y0), panel.P(L::x1, L::y1), DrawerTheme::panel, 4.0f * s);
+        dl->AddRect(panel.P(L::x0, L::y0), panel.P(L::x1, L::y1), DrawerTheme::edge, 4.0f * s, 0, s);
+        panel.text(dl, 40.0f, L::y0 + 8.0f, 20.0f, kText, "SETTINGS", -1, true);
+        if (rowTab(dl, "##mc_settings_close", L::x1 - 112.0f, L::x1 - 16.0f, "CLOSE", false, L::y0 + 8.0f,
+                   L::y0 + 8.0f + L::buttonH))
+            showSettings = false;
+
+        // Row A: SIDECHAIN (the detector's input), PROCESSING.
+        drawerHeading(dl, 40.0f, 596.0f, L::rowA, "SIDECHAIN");
+        illuminatedToggle(dl, "##set_ext_sc", pid(ParamId::ExternalSidechain), 40.0f, L::rowA + 36.0f, 216.0f,
+                          L::rowA + 36.0f + L::buttonH, "EXTERNAL KEY", L::legendSize);
+        illuminatedToggle(dl, "##set_sc_listen", pid(ParamId::GlobalSidechainListen), 40.0f, L::rowA + 76.0f, 216.0f,
+                          L::rowA + 76.0f + L::buttonH, "SC LISTEN", L::legendSize);
+        const float knobY = L::rowA + 98.0f;
+        drawerKnob(dl, "##set_sc_low_freq", pid(ParamId::ScLowFreq), 286.0f, knobY, "LOW FREQ", true);
+        drawerKnob(dl, "##set_sc_low_gain", pid(ParamId::ScLowGain), 384.0f, knobY, "LOW GAIN", true);
+        drawerKnob(dl, "##set_sc_high_freq", pid(ParamId::ScHighFreq), 482.0f, knobY, "HIGH FREQ", true);
+        drawerKnob(dl, "##set_sc_high_gain", pid(ParamId::ScHighGain), 568.0f, knobY, "HIGH GAIN", true);
+
+        drawerHeading(dl, 632.0f, L::x1 - 24.0f, L::rowA, "PROCESSING");
+        // Studio VCA runs at the host rate at every setting and Multiband runs no oversampler.
+        panel.text(dl, 640.0f, L::rowA + 41.0f, L::legendSize, colourWithAlpha(DrawerTheme::legend,
+                   mode == 5 || mode == 7 ? 0.4f : 1.0f), "OVERSAMPLING", -1, true);
+        static constexpr const char* kOversamplingShort[3] = {"OFF", "2X", "4X"};
+        drawerSegments(dl, "##set_os", pid(ParamId::Oversampling), 800.0f, L::rowA + 36.0f, 64.0f,
+                       kOversamplingShort, 3, false, mode != 5 && mode != 7);
+        illuminatedToggle(dl, "##set_tp", pid(ParamId::TruePeakEnable), 640.0f, L::rowA + 76.0f, 792.0f,
+                          L::rowA + 76.0f + L::buttonH, "TRUE PEAK", L::legendSize);
+        static constexpr const char* kTruePeakShort[2] = {"4X", "8X"};
+        drawerSegments(dl, "##set_tp_q", pid(ParamId::TruePeakQuality), 800.0f, L::rowA + 76.0f, 64.0f,
+                       kTruePeakShort, 2, false, values[pid(ParamId::TruePeakEnable)] > 0.5f);
+        // Digital and Multiband add no noise (MultiCompDSP: addNoise).
+        illuminatedToggle(dl, "##set_noise", pid(ParamId::NoiseEnable), 640.0f, L::rowA + 116.0f, 792.0f,
+                          L::rowA + 116.0f + L::buttonH, "ANALOG NOISE", L::legendSize, !digitalModes);
+
+        // Row B: STEREO, DRIVE, LOOKAHEAD, FET BLACK.
+        const float rowBKnobY = L::rowB + 96.0f, rowBButtonsY = L::rowB + 34.0f;
+        drawerHeading(dl, 40.0f, 330.0f, L::rowB, "STEREO");
+        drawerKnob(dl, "##set_link", pid(ParamId::StereoLink), 90.0f, rowBKnobY, "LINK", mode != 7);
+        static constexpr const char* kLinkShort[3] = {"STEREO", "MID-SIDE", "DUAL MONO"};
+        drawerSegments(dl, "##set_link_mode", pid(ParamId::StereoLinkMode), 168.0f, rowBButtonsY, 150.0f,
+                       kLinkShort, 3, true, true);
+
+        drawerHeading(dl, 362.0f, 600.0f, L::rowB, "DRIVE");
+        static constexpr const char* kDriveShort[4] = {"OFF", "SOFT", "HARD", "CLIP"};
+        drawerSegments(dl, "##set_drive", pid(ParamId::Distortion), 370.0f, rowBButtonsY, 96.0f,
+                       kDriveShort, 4, true, true);
+        drawerKnob(dl, "##set_drive_amt", pid(ParamId::DistortionAmount), 540.0f, rowBKnobY, "AMOUNT",
+                   values[pid(ParamId::Distortion)] > 0.5f);
+
+        drawerHeading(dl, 632.0f, 820.0f, L::rowB, "LOOKAHEAD");
+        drawerKnob(dl, "##set_lookahead", pid(ParamId::GlobalLookahead), 726.0f, rowBKnobY, "TIME", digitalModes);
+        if (!digitalModes)
+            textCentred(dl, 726.0f, rowBKnobY + 62.0f, L::legendSize, DrawerTheme::note, "DIGITAL, MULTIBAND", true);
+
+        drawerHeading(dl, 852.0f, L::x1 - 24.0f, L::rowB, "FET BLACK");
+        drawerKnob(dl, "##set_fet_threshold", pid(ParamId::FetThreshold), 904.0f, rowBKnobY, "THRESHOLD", fetBlack);
+        drawerKnob(dl, "##set_fet_transient", pid(ParamId::FetTransient), 1004.0f, rowBKnobY, "TRANSIENT", fetBlack);
+        // Curve shapes the All buttons' law only (MultiCompModes: the measured extension at ratio All).
+        static constexpr const char* kCurveShort[2] = {"MODERN", "MEASURED"};
+        drawerSegments(dl, "##set_fet_curve", pid(ParamId::FetCurve), 1064.0f, rowBButtonsY, 96.0f,
+                       kCurveShort, 2, true,
+                       fetBlack && multicompp::ui_detail::choiceIndex(values[pid(ParamId::FetRatio)], 5) == 4);
+
+        // The panel's background keeps the pointer from the scrim; the scrim closes the drawer.
+        ImGui::SetCursorScreenPos(panel.P(L::x0, L::y0));
+        ImGui::InvisibleButton("##settings_panel", ImVec2((L::x1 - L::x0) * s, (L::y1 - L::y0) * s));
+        ImGui::SetCursorScreenPos(panel.P(0, kFaceTop));
+        if (ImGui::InvisibleButton("##settings_scrim", ImVec2(kDesignW * s, (kDesignH - kFaceTop) * s)))
+            showSettings = false;
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+            showSettings = false;
     }
 
     void knob(ImDrawList* dl, const char* id, uint32_t p, float x, float y,
@@ -1575,7 +1782,6 @@ private:
     {
         const int mode = multicompp::ui_detail::choiceIndex(value(P_MODE), 8);
         drawSection(dl, kModeCanvasTop, kModeCanvasBottom - 8, "");
-        drawModeToolbar(dl);
         if (mode != facedMode)
         {
             facedMode = mode;
@@ -3536,31 +3742,31 @@ private:
     {
         using Layout = multicompp::ui_detail::ModernFaceLayout;
         const float s = panel.scale();
-        const float top = faceY(70), bottom = faceY(kDesignH), titleY = faceY(Layout::titleY);
-        dl->AddRectFilled(panel.P(0, top), panel.P(kDesignW, bottom), IM_COL32(37, 39, 38, 255));
-        gradientRect(dl, panel.P(32, top + 1), panel.P(kDesignW - 32, bottom - 1), 0,
+        const float top = faceY(70), bottom = faceY(kLegacyFaceH), titleY = faceY(Layout::titleY);
+        dl->AddRectFilled(panel.P(0, top), panel.P(kLegacyFaceW, bottom), IM_COL32(37, 39, 38, 255));
+        gradientRect(dl, panel.P(32, top + 1), panel.P(kLegacyFaceW - 32, bottom - 1), 0,
                      panel.P(32, top), panel.P(32, bottom), IM_COL32(48, 51, 50, 255), IM_COL32(24, 27, 26, 255));
         for (int row = 1; row < 155; ++row)
         {
             const float y = top + 2.0f * static_cast<float>(row);
-            dl->AddLine(panel.P(33, y), panel.P(kDesignW - 33, y),
+            dl->AddLine(panel.P(33, y), panel.P(kLegacyFaceW - 33, y),
                         row % 3 == 0 ? IM_COL32(255, 255, 255, 3) : IM_COL32(0, 0, 0, 8), s);
         }
-        for (float x : {32.0f, kDesignW - 32.0f})
+        for (float x : {32.0f, kLegacyFaceW - 32.0f})
         {
             dl->AddLine(panel.P(x, top), panel.P(x, bottom), IM_COL32(8, 10, 9, 255), 1.5f * s);
             dl->AddLine(panel.P(x + 1, top), panel.P(x + 1, bottom), IM_COL32(107, 112, 108, 80), s);
         }
-        dl->AddLine(panel.P(0, top + 1), panel.P(kDesignW, top + 1), IM_COL32(123, 129, 124, 150), s);
-        dl->AddLine(panel.P(0, bottom - 2), panel.P(kDesignW, bottom - 2), IM_COL32(6, 8, 7, 255), 2 * s);
-        for (float x : {17.0f, kDesignW - 17.0f})
+        dl->AddLine(panel.P(0, top + 1), panel.P(kLegacyFaceW, top + 1), IM_COL32(123, 129, 124, 150), s);
+        dl->AddLine(panel.P(0, bottom - 2), panel.P(kLegacyFaceW, bottom - 2), IM_COL32(6, 8, 7, 255), 2 * s);
+        for (float x : {17.0f, kLegacyFaceW - 17.0f})
             for (float y : {top + 22.0f, bottom - 23.0f})
                 drawOptoScrew(dl, x, y, 5.0f);
-        duskdaf::spacedText(panel, dl, kDesignW * 0.5f, titleY - 8.0f, 16.0f, kModernText, title, 0, 0.12f);
+        duskdaf::spacedText(panel, dl, kLegacyFaceW * 0.5f, titleY - 8.0f, 16.0f, kModernText, title, 0, 0.12f);
         panel.text(dl, 111, titleY - 5, 10, kDim, "MC-2", -1, true);
         panel.text(dl, 1009, titleY - 5, 10, kDim, "PRECISION SERIES", 1, true);
         dl->AddLine(panel.P(111, faceY(106)), panel.P(1009, faceY(106)), IM_COL32(120, 128, 122, 100), s);
-        duskdaf::spacedText(panel, dl, kDesignW * 0.5f, faceY(Layout::descriptionY) - 5, 10, kDim,
+        duskdaf::spacedText(panel, dl, kLegacyFaceW * 0.5f, faceY(Layout::descriptionY) - 5, 10, kDim,
                            description, 0, 0.12f);
     }
 
@@ -3661,7 +3867,7 @@ private:
         multicompp::ui_detail::advanceLevelReadout(inputReadout, std::max(in[0], in[1]), dt);
         multicompp::ui_detail::advanceLevelReadout(outputReadout, std::max(out[0], out[1]), dt);
         drawLevelMeter(dl, 43.0f, inputLadder, "INPUT", inputReadout.shownDb);
-        drawLevelMeter(dl, kDesignW - 83.0f, outputLadder, "OUTPUT", outputReadout.shownDb);
+        drawLevelMeter(dl, kLegacyFaceW - 83.0f, outputLadder, "OUTPUT", outputReadout.shownDb);
     }
 
     // Silver cap on a serrated black skirt, with the shared gesture layer's exact pointer travel.
@@ -3705,7 +3911,8 @@ private:
     // locked, as in the original.
     void modernKnob(ImDrawList* dl, const char* id, uint32_t p, float x, float y, float r, const char* name,
                     float nameCentreY, float nameSize, ImU32 nameColour, int decimals, const char* suffix,
-                    float valueCentreY, bool applicable = true)
+                    float valueCentreY, bool applicable = true, float valueSize = 13.0f,
+                    const char* valueText = nullptr)
     {
         const float lo = hostMinimum(p), hi = hostMaximum(p);
         const float opacity = applicable ? 1.0f : 0.4f;
@@ -3730,20 +3937,24 @@ private:
         textCentred(dl, x, nameCentreY, nameSize, colourWithAlpha(nameColour, opacity * static_cast<float>(
                         (nameColour >> IM_COL32_A_SHIFT) & 0xFFu) / 255.0f), name, true);
         char text[48];
-        std::snprintf(text, sizeof(text), "%.*f%s", decimals,
-                      static_cast<double>(knobHostToPlain(values[p], p, this)), suffix);
-        textCentred(dl, x, valueCentreY, 13.0f, colourWithAlpha(IM_COL32_WHITE, opacity), text, true);
+        if (valueText == nullptr)
+            std::snprintf(text, sizeof(text), "%.*f%s", decimals,
+                          static_cast<double>(knobHostToPlain(values[p], p, this)), suffix);
+        textCentred(dl, x, valueCentreY, valueSize, colourWithAlpha(IM_COL32_WHITE, opacity),
+                    valueText != nullptr ? valueText : text, true);
     }
 
     // Recessed hardware switch with a separate status lamp, matching the rack's silkscreen.
     void illuminatedToggle(ImDrawList* dl, const char* id, uint32_t p, float x0, float y0, float x1, float y1,
-                           const char* label)
+                           const char* label, float labelSize = 11.0f, bool enabled = true)
     {
         const float s = panel.scale();
         const ImVec2 hit0 = panel.P(x0, y0), hit1 = panel.P(x1, y1);
         ImGui::SetCursorScreenPos(hit0);
+        if (!enabled) ImGui::BeginDisabled();
         if (ImGui::InvisibleButton(id, ImVec2(hit1.x - hit0.x, hit1.y - hit0.y)))
             setHostValue(p, values[p] > 0.5f ? 0.0f : 1.0f);
+        if (!enabled) ImGui::EndDisabled();
         const bool on = values[p] > 0.5f, down = ImGui::IsItemActive(), hovered = ImGui::IsItemHovered();
         dl->AddRectFilled(hit0, hit1, IM_COL32(9, 12, 10, 255), 2 * s);
         const ImVec2 i0 = panel.P(x0 + 2, y0 + 2), i1 = panel.P(x1 - 2, y1 - 2);
@@ -3753,7 +3964,8 @@ private:
         const float cy = 0.5f * (y0 + y1);
         dl->AddCircleFilled(panel.P(x0 + 13, cy), 4 * s, IM_COL32(10, 13, 10, 255), 16);
         dl->AddCircleFilled(panel.P(x0 + 13, cy), 2.6f * s, on ? kDigitalCyan : IM_COL32(60, 77, 67, 255), 16);
-        textCentred(dl, 0.5f * (x0 + x1) + 5, cy, 11, kModernText, label, true);
+        textCentred(dl, 0.5f * (x0 + x1) + 5, cy, labelSize, colourWithAlpha(kModernText, enabled ? 1.0f : 0.4f),
+                    label, true);
     }
 
     // The Digital face's gain-reduction VU (AnalogVUMeter::paint) in the rectangle given, needle from digitalVu.

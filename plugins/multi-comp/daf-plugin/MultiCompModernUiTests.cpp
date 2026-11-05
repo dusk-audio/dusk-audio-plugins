@@ -11,11 +11,11 @@
 #define MULTICOMP_UI_TEST_HOST
 #define START_NAMESPACE_DAF namespace DAF {
 #define END_NAMESPACE_DAF }
-#define DAF_UI_DEFAULT_WIDTH 1120
-#define DAF_UI_DEFAULT_HEIGHT 380
+#define DAF_UI_DEFAULT_WIDTH 1200
+#define DAF_UI_DEFAULT_HEIGHT 480
 using GLint = int;
 constexpr int GL_VIEWPORT = 0;
-inline void glGetIntegerv(int, GLint* p) { p[0] = p[1] = 0; p[2] = 1120; p[3] = 380; }
+inline void glGetIntegerv(int, GLint* p) { p[0] = p[1] = 0; p[2] = 1200; p[3] = 480; }
 namespace DAF
 {
 struct TestInstance
@@ -37,8 +37,8 @@ public:
     void draw() { onImGuiDisplay(); }
     void parameter(uint32_t p, float v) { state.parameters[p] = v; parameterChanged(p, v); }
     void restore(const char* key, const char* value) { stateChanged(key, value); }
-    uint32_t getWidth() const { return 1120; }
-    uint32_t getHeight() const { return 380; }
+    uint32_t getWidth() const { return 1200; }
+    uint32_t getHeight() const { return 480; }
     float getScaleFactor() const { return 1; }
     void setSize(uint32_t, uint32_t) {}
     void setGeometryConstraints(uint32_t, uint32_t, bool) {}
@@ -104,7 +104,7 @@ struct Host
             ImGui::SetCurrentContext(context);
             auto& io = ImGui::GetIO();
             io.IniFilename = nullptr; io.LogFilename = nullptr;
-            io.DisplaySize = ImVec2(1120, 380); io.DeltaTime = 1.0f / 60.0f;
+            io.DisplaySize = ImVec2(1200, 480); io.DeltaTime = 1.0f / 60.0f;
         }
         ~Context() { ImGui::DestroyContext(context); }
     } context;
@@ -127,10 +127,18 @@ struct Host
         ui.parameter(pid(ParamId::Mode), static_cast<float>(mode));
         frame(); frame();
     }
+    // The pointer at (x, y) in a face's own 1120 x 380 canvas, where the controls below were measured: each face
+    // is still drawn there and scaled into the face area of the current canvas (MultiCompUI::beginLegacyFace).
+    // A negative position stays off the window.
     void frame(float x = -100, float y = -100, bool down = false)
     {
         ImGui::SetCurrentContext(context.context);
         auto& io = ImGui::GetIO();
+        if (x >= 0.0f && y >= 0.0f)
+        {
+            x *= DAF::kLegacyFaceScale;
+            y = DAF::kLegacyFaceY + (y - DAF::kLegacyFaceTopY) * DAF::kLegacyFaceScale;
+        }
         io.AddMousePosEvent(x, y); io.AddMouseButtonEvent(0, down);
         ImGui::NewFrame(); ui.draw(); ImGui::Render();
     }

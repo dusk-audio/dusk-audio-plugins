@@ -779,8 +779,10 @@ void testShippingUiUsesConformingHeaderWithoutUtilityBands()
         && source.find("##mc_presetnext") != std::string::npos
         && source.find("##mc_init") != std::string::npos
         && source.find("##mc_save") != std::string::npos;
+    // 1200 x 480 since 2026-11-05: the minimum window at which every legend and value meets the readability floor.
     const bool hasCompactDefaultHeight =
-        info.find("#define DAF_UI_DEFAULT_HEIGHT       380") != std::string::npos;
+        info.find("#define DAF_UI_DEFAULT_WIDTH        1200") != std::string::npos
+        && info.find("#define DAF_UI_DEFAULT_HEIGHT       480") != std::string::npos;
     const bool hasSingleHeaderIdentity = countText("\"DUSK AUDIO\"") == 1
         && source.find("\"DUSK\"") == std::string::npos;
     const bool hasSimplifiedOptoTitle =
@@ -793,7 +795,7 @@ void testShippingUiUsesConformingHeaderWithoutUtilityBands()
     const bool hasModeDropdown = source.find("ImGui::BeginCombo(\"##mc_mode\"")
         != std::string::npos;
 
-    std::printf("header conformity: global=%s sidechain=%s identity=%s actions=%s height380=%s "
+    std::printf("header conformity: global=%s sidechain=%s identity=%s actions=%s height480=%s "
                 "single-brand=%s opto-title=%s\n",
                 drawsGlobalBand ? "drawn" : "removed",
                 drawsSidechainBand ? "drawn" : "removed",
@@ -1028,14 +1030,16 @@ void testOptoFaceplateContract()
                 && Layout::top == 344.0f && Layout::bottom == 654.0f
                 && std::abs(aspect - referenceAspect) < 0.01f,
             "Opto faceplate fills the complete mode canvas below the toolbar");
-    // One canvas for every mode: the faceplates fill it below the 48 px header and the mode toolbar (mode canvas
-    // 322..654 shown at 48..380), and the Digital and Multiband faces fit it in visible-canvas y.
+    // One canvas for every mode (1200 x 480 since 2026-11-05). A face not yet laid out for it is drawn on the face
+    // canvas it was authored on, which the faceplates fill below the 48 px header and the mode toolbar (mode canvas
+    // 322..654 shown at 48..380), and the Digital and Multiband faces fit in visible-canvas y.
     {
         using Modern = multicompp::ui_detail::ModernFaceLayout;
-        require(multicompp::ui_detail::kDesignHeight == 380.0f
-                    && multicompp::ui_detail::kDesignHeight == 48.0f + (Layout::bottom - 322.0f),
+        require(multicompp::ui_detail::kDesignWidth == 1200.0f && multicompp::ui_detail::kDesignHeight == 480.0f
+                    && multicompp::ui_detail::kFaceCanvasHeight == 380.0f
+                    && multicompp::ui_detail::kFaceCanvasHeight == 48.0f + (Layout::bottom - 322.0f),
                 "every mode shares the rack-height canvas the faceplates fill");
-        require(Modern::top >= 70.0f && Modern::bottom <= multicompp::ui_detail::kDesignHeight - 8.0f
+        require(Modern::top >= 70.0f && Modern::bottom <= multicompp::ui_detail::kFaceCanvasHeight - 8.0f
                     && Modern::top < Modern::titleY && Modern::titleY < Modern::meterTitleY
                     && Modern::meterTitleY < Modern::meterTop && Modern::meterTop < Modern::meterBottom
                     && Modern::meterBottom < Modern::meterReadoutY && Modern::meterReadoutY < Modern::descriptionY
