@@ -320,12 +320,15 @@ void MultiCompDSP::prepare(double sr, int blockSize)
     manualMakeupScaleRamp.snap(params.autoMakeup.load(std::memory_order_relaxed) ? 0.0f : 1.0f);
     busMixRamp.prepare(sampleRate, 0.020f); busMixRamp.snap(params.busMix.load(std::memory_order_relaxed) * 0.01f);
     digitalMixRamp.prepare(sampleRate, 0.020f); digitalMixRamp.snap(params.digitalMix.load(std::memory_order_relaxed) * 0.01f);
-    bypassRamp.prepare(sampleRate, static_cast<float>(kBypassRampMs) * 0.001f); bypassRamp.snap(0.0f);
+    // Bypass starts where its parameter is, as in reset(): an instance activated (or a bounce started) while
+    // bypassed emits the aligned dry from its first sample instead of crossfading out of processed audio.
+    const bool bypassed = params.bypass.load(std::memory_order_relaxed);
+    bypassRamp.prepare(sampleRate, static_cast<float>(kBypassRampMs) * 0.001f); bypassRamp.snap(bypassed ? 1.0f : 0.0f);
     sidechainListenRamp.prepare(sampleRate, static_cast<float>(kSidechainListenRampMs) * 0.001f);
     sidechainListenRamp.snap(params.globalSidechainListen.load(std::memory_order_relaxed) ? 1.0f : 0.0f);
     switchDuckFadeSamples = std::max(1, static_cast<int>(std::lround(sampleRate * kSwitchDuckFadeMs * 0.001)));
     resetSwitchDuck();
-    bypassSettled = false; lastBypass = false; lastExternalSidechain = false;
+    bypassSettled = bypassed; lastBypass = bypassed; lastExternalSidechain = false;
     lastAutoMakeup = false; firstBlock = true; lastMode = -1; autoGainHoldSamples = 0;
     lastVcaSidechainTilt = false;
     lastVcaSidechainTiltEngaged = false;

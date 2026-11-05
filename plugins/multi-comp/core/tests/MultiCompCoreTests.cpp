@@ -3733,6 +3733,111 @@ void testBypassToggleResumesWithoutGlitch()
     std::puts("bypass toggle: all six modes resume bit-identically after the 30 ms crossfade");
 }
 
+// A session saved bypassed reopens with Bypass already on when the host activates the instance, and an offline
+// bounce prepares it again the same way. Until 2026-11-05 prepare() started the bypass ramp at "processed"
+// whatever the parameter said (reset() already followed it), so every such activation crossfaded out of the
+// processed signal over the 30 ms ramp. The contract: an instance prepared while bypassed emits the
+// latency-aligned input from its first sample, bit for bit, in every mode; so does one prepared again (a host
+// deactivate / activate) after it ran processed and was then bypassed. Exact equality, as in the toggle test:
+// both sides come from one binary with nothing in between.
+void testBypassAtActivationEmitsAlignedDry()
+{
+    constexpr int blockSize = 256;
+    constexpr int sampleRate = 48000;
+    constexpr int totalSamples = sampleRate / 4;              // 250 ms, well past the 30 ms ramp
+    constexpr int rampSamples = 30 * sampleRate / 1000;       // kBypassRampMs
+    constexpr std::array<const char*, duskaudio::kMultiCompModes> kNames{{
+        "OPTO", "FET BLACK", "VCA", "BUS", "FET BLUE", "Studio VCA", "Digital", "Multiband"}};
+    std::vector<float> inputLeft, inputRight;
+    makeBypassToggleStimulus(inputLeft, inputRight, totalSamples, sampleRate);
+
+    const auto render = [&](MultiCompDSP& dsp, std::vector<float>& left, std::vector<float>& right) {
+        left.assign(inputLeft.size(), 0.0f);
+        right.assign(inputRight.size(), 0.0f);
+        std::array<float, blockSize> blockLeft{}, blockRight{}, blockOutLeft{}, blockOutRight{};
+        const float* inputs[] = {blockLeft.data(), blockRight.data()};
+        float* outputs[] = {blockOutLeft.data(), blockOutRight.data()};
+        for (int start = 0; start < totalSamples; start += blockSize)
+        {
+            const int count = std::min(blockSize, totalSamples - start);
+            std::copy_n(inputLeft.begin() + start, count, blockLeft.begin());
+            std::copy_n(inputRight.begin() + start, count, blockRight.begin());
+            dsp.processBlock(inputs, outputs, 2, count);
+            std::copy_n(blockOutLeft.begin(), count, left.begin() + start);
+            std::copy_n(blockOutRight.begin(), count, right.begin() + start);
+        }
+    };
+    // Largest |output - input delayed by the latency| over [from, to).
+    const auto fromAlignedDry = [&](const std::vector<float>& left, const std::vector<float>& right,
+                                    int latency, int from, int to) {
+        float worst = 0.0f;
+        for (int i = from; i < to; ++i)
+        {
+            const float dryLeft = i >= latency ? inputLeft[static_cast<size_t>(i - latency)] : 0.0f;
+            const float dryRight = i >= latency ? inputRight[static_cast<size_t>(i - latency)] : 0.0f;
+            worst = std::max(worst, std::abs(left[static_cast<size_t>(i)] - dryLeft));
+            worst = std::max(worst, std::abs(right[static_cast<size_t>(i)] - dryRight));
+        }
+        return worst;
+    };
+
+    for (int modeIndex = 0; modeIndex < duskaudio::kMultiCompModes; ++modeIndex)
+    {
+        const auto mode = static_cast<duskaudio::MultiCompMode>(modeIndex);
+        const std::string label = std::string("bypass at activation [")
+            + kNames[static_cast<size_t>(modeIndex)] + "] ";
+        const auto configure = [&](MultiCompDSP& dsp) {
+            dsp.setMode(modeIndex);
+            dsp.setOversampling(kOversampling2xSetting);
+            configureBypassToggleMode(dsp, mode);
+        };
+
+        // Control: processed, the ramp window differs from the aligned dry, so a crossfade out of it is visible.
+        std::vector<float> processedLeft, processedRight;
+        MultiCompDSP processed;
+        configure(processed);
+        processed.prepare(sampleRate, blockSize);
+        render(processed, processedLeft, processedRight);
+        const float processedDifference = fromAlignedDry(processedLeft, processedRight,
+                                                         processed.getLatencySamples(), 0, rampSamples);
+
+        // A: bypassed before the first prepare.
+        std::vector<float> freshLeft, freshRight;
+        MultiCompDSP fresh;
+        configure(fresh);
+        fresh.setBypass(true);
+        fresh.prepare(sampleRate, blockSize);
+        render(fresh, freshLeft, freshRight);
+        const float freshDifference = fromAlignedDry(freshLeft, freshRight, fresh.getLatencySamples(),
+                                                     0, totalSamples);
+
+        // B: ran processed, then bypassed, then prepared again.
+        std::vector<float> againLeft, againRight;
+        MultiCompDSP again;
+        configure(again);
+        again.prepare(sampleRate, blockSize);
+        render(again, againLeft, againRight);
+        again.setBypass(true);
+        again.prepare(sampleRate, blockSize);
+        render(again, againLeft, againRight);
+        const float againDifference = fromAlignedDry(againLeft, againRight, again.getLatencySamples(),
+                                                     0, totalSamples);
+
+        std::printf("bypass at activation %-10s latency %3d | processed vs dry in the ramp %.3e | "
+                    "bypassed at first prepare %.3e | re-prepared bypassed %.3e\n",
+                    kNames[static_cast<size_t>(modeIndex)], fresh.getLatencySamples(),
+                    static_cast<double>(processedDifference), static_cast<double>(freshDifference),
+                    static_cast<double>(againDifference));
+        require(processedDifference > 1.0e-3f,
+                (label + "the processed render differs from the dry inside the ramp window").c_str());
+        require(freshDifference == 0.0f,
+                (label + "prepared while bypassed, the output is the aligned input from sample 0").c_str());
+        require(againDifference == 0.0f,
+                (label + "prepared again while bypassed, the output is the aligned input from sample 0").c_str());
+    }
+    std::puts("bypass at activation: every mode emits the aligned input from its first sample");
+}
+
 float renderNeutralSine(int oversampling, float mix, float frequency = 997.0f)
 {
     MultiCompDSP dsp;
@@ -13369,6 +13474,14 @@ int main(int argc, char** argv)
         std::puts("Multi-Comp bypass-toggle continuity test: PASS");
         return 0;
     }
+    // Also in the default run below; separately reachable so the break-first proof can run it against the core
+    // whose prepare() started the bypass ramp at "processed".
+    if (argc == 2 && std::strcmp(argv[1], "--bypass-activation") == 0)
+    {
+        testBypassAtActivationEmitsAlignedDry();
+        std::puts("Multi-Comp bypass-at-activation test: PASS");
+        return 0;
+    }
     // Also in the default run below; separately reachable so the break-first
     // proof can run them against the core without the mode-switch duck.
     if (argc == 2 && std::strcmp(argv[1], "--mode-switch-duck") == 0)
@@ -13458,6 +13571,7 @@ int main(int argc, char** argv)
     testEnvelopeAndReset();
     testMixBypassAndBlockEdges();
     testBypassToggleResumesWithoutGlitch();
+    testBypassAtActivationEmitsAlignedDry();
     testClassicOversamplerByteIdentity();
     testWideOversamplerResponse();
     testWideDigitalLatencyContract();

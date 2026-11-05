@@ -30,6 +30,10 @@
 //       carries non-default values. This build cannot decode that state, and a state it cannot decode is refused
 //       whole (a half-applied session is worse than a refused one): the restore fails and the instance stays as it
 //       was, every control and its saved state as before the attempt.
+//   [6] CLAP only, the one format here driven with audio: a session saved bypassed plays the latency-aligned input
+//       from its first sample. Until 2026-11-05 MultiCompDSP::prepare() started the bypass ramp at "processed"
+//       whatever the Bypass control said, so every activation of a bypassed instance (a reopened session, an
+//       offline bounce) played 30 ms of processed audio first.
 //
 //   MultiCompSessionRestoreTest --vst3 <binary inside multi-comp-2.vst3>
 //   MultiCompSessionRestoreTest --clap <binary inside multi-comp-2.clap>
@@ -52,6 +56,8 @@
 #include <dlfcn.h>
 
 #include "clap/entry.h"
+#include "clap/ext/audio-ports.h"
+#include "clap/ext/latency.h"
 #include "clap/ext/params.h"
 #include "clap/ext/state.h"
 #include "clap/factory/plugin-factory.h"
@@ -720,6 +726,76 @@ public:
         return instance.state->load(instance.plugin, &stream);
     }
 
+    // Activates the instance at 48 kHz, plays the stereo input through its main port in 256-frame blocks with every
+    // other input port silent, then deactivates it. Gives back the main output and the latency the plugin reported
+    // at activation.
+    bool render(Instance& instance, const std::vector<float>& left, const std::vector<float>& right,
+                std::vector<float>& outLeft, std::vector<float>& outRight, uint32_t& latency)
+    {
+        constexpr double kRate = 48000.0;
+        constexpr uint32_t kBlock = 256;
+        const auto* const ports = static_cast<const clap_plugin_audio_ports_t*>(
+            instance.plugin->get_extension(instance.plugin, CLAP_EXT_AUDIO_PORTS));
+        const auto* const latencyExtension = static_cast<const clap_plugin_latency_t*>(
+            instance.plugin->get_extension(instance.plugin, CLAP_EXT_LATENCY));
+        if (ports == nullptr || latencyExtension == nullptr) return false;
+        struct Port { std::vector<std::vector<float>> channels; std::vector<float*> pointers; };
+        const auto makePorts = [&](bool input, std::vector<Port>& made, std::vector<clap_audio_buffer_t>& buffers) {
+            const uint32_t count = ports->count(instance.plugin, input);
+            made.resize(count);
+            buffers.assign(count, clap_audio_buffer_t{});
+            for (uint32_t p = 0; p < count; ++p)
+            {
+                clap_audio_port_info_t info = {};
+                if (!ports->get(instance.plugin, p, input, &info)) return false;
+                made[p].channels.assign(info.channel_count, std::vector<float>(kBlock, 0.0f));
+                for (auto& channel : made[p].channels) made[p].pointers.push_back(channel.data());
+                buffers[p].data32 = made[p].pointers.data();
+                buffers[p].channel_count = info.channel_count;
+            }
+            return count > 0 && made[0].channels.size() >= 2;
+        };
+        std::vector<Port> inPorts, outPorts;
+        std::vector<clap_audio_buffer_t> inBuffers, outBuffers;
+        if (!makePorts(true, inPorts, inBuffers) || !makePorts(false, outPorts, outBuffers)) return false;
+        if (!instance.plugin->activate(instance.plugin, kRate, 1, kBlock)) return false;
+        latency = latencyExtension->get(instance.plugin);
+        if (!instance.plugin->start_processing(instance.plugin))
+        {
+            instance.plugin->deactivate(instance.plugin);
+            return false;
+        }
+        clap_input_events_t noEvents = {nullptr, [](const clap_input_events_t*) -> uint32_t { return 0; },
+            [](const clap_input_events_t*, uint32_t) -> const clap_event_header_t* { return nullptr; }};
+        clap_output_events_t anyEvents = {nullptr, [](const clap_output_events_t*, const clap_event_header_t*) {
+            return true; }};
+        const size_t total = left.size();
+        outLeft.assign(total, 0.0f);
+        outRight.assign(total, 0.0f);
+        bool processed = true;
+        for (size_t start = 0; start < total && processed; start += kBlock)
+        {
+            const uint32_t frames = static_cast<uint32_t>(std::min<size_t>(kBlock, total - start));
+            std::copy_n(left.begin() + static_cast<std::ptrdiff_t>(start), frames, inPorts[0].channels[0].begin());
+            std::copy_n(right.begin() + static_cast<std::ptrdiff_t>(start), frames, inPorts[0].channels[1].begin());
+            clap_process_t process = {};
+            process.steady_time = static_cast<int64_t>(start);
+            process.frames_count = frames;
+            process.audio_inputs = inBuffers.data();
+            process.audio_outputs = outBuffers.data();
+            process.audio_inputs_count = static_cast<uint32_t>(inBuffers.size());
+            process.audio_outputs_count = static_cast<uint32_t>(outBuffers.size());
+            process.in_events = &noEvents;
+            process.out_events = &anyEvents;
+            processed = instance.plugin->process(instance.plugin, &process) != CLAP_PROCESS_ERROR;
+            std::copy_n(outPorts[0].channels[0].begin(), frames, outLeft.begin() + static_cast<std::ptrdiff_t>(start));
+            std::copy_n(outPorts[0].channels[1].begin(), frames, outRight.begin() + static_cast<std::ptrdiff_t>(start));
+        }
+        instance.plugin->stop_processing(instance.plugin);
+        instance.plugin->deactivate(instance.plugin);
+        return processed;
+    }
+
 private:
     void* library = nullptr;
     const clap_plugin_entry_t* entry = nullptr;
@@ -1100,6 +1176,52 @@ void runNewerSession(Format& format)
 
 // ---- the cases -----------------------------------------------------------------------------------------------------
 
+// [6] See the file comment. FET BLACK at +30 dB Input, so the processed output is far from the dry: the control render
+// (not bypassed) must differ from the aligned input, the bypassed one must not differ at all.
+void runBypassedActivation(ClapFormat& format)
+{
+    constexpr size_t kSamples = 12000;   // 250 ms at 48 kHz, well past the 30 ms bypass ramp
+    std::vector<float> left(kSamples), right(kSamples);
+    for (size_t i = 0; i < kSamples; ++i)
+    {
+        const double t = static_cast<double>(i) / 48000.0;
+        left[i] = static_cast<float>(0.4 * std::sin(6.283185307179586 * 220.0 * t));
+        right[i] = static_cast<float>(0.3 * std::sin(6.283185307179586 * 330.0 * t + 0.7));
+    }
+    float difference[2] = {-1.0f, -1.0f};
+    uint32_t latencies[2] = {0, 0};
+    for (int bypassed = 0; bypassed < 2; ++bypassed)
+    {
+        ClapFormat::Form form;
+        ClapFormat::Instance writer;
+        if (!format.create(writer)) { check(false, "CLAP bypassed activation: create the saving instance"); return; }
+        format.set(writer, indexOf(ParamId::Mode), 1.0f);
+        format.set(writer, indexOf(ParamId::FetInput), 30.0f);
+        format.set(writer, indexOf(ParamId::Bypass), static_cast<float>(bypassed));
+        const bool saved = format.save(writer, form);
+        format.destroy(writer);
+        ClapFormat::Instance reader;
+        std::vector<float> outLeft, outRight;
+        const bool rendered = saved && format.create(reader) && format.restore(reader, form)
+            && format.render(reader, left, right, outLeft, outRight, latencies[bypassed]);
+        format.destroy(reader);
+        if (!rendered) { check(false, "CLAP bypassed activation: save, restore and render (bypass %d)", bypassed); return; }
+        const size_t latency = latencies[bypassed];
+        float worst = 0.0f;
+        for (size_t i = 0; i < kSamples; ++i)
+        {
+            const float dryLeft = i >= latency ? left[i - latency] : 0.0f;
+            const float dryRight = i >= latency ? right[i - latency] : 0.0f;
+            worst = std::max(worst, std::max(std::abs(outLeft[i] - dryLeft), std::abs(outRight[i] - dryRight)));
+        }
+        difference[bypassed] = worst;
+    }
+    check(difference[0] > 1.0e-3f, "CLAP control: a session saved processing plays processed audio (%.3e from the "
+          "aligned input, latency %u)", static_cast<double>(difference[0]), latencies[0]);
+    check(difference[1] == 0.0f, "CLAP: a session saved bypassed plays the aligned input from its first sample "
+          "(%.3e, latency %u)", static_cast<double>(difference[1]), latencies[1]);
+}
+
 template <class Format>
 void run(Format& format)
 {
@@ -1134,6 +1256,7 @@ int main(int argc, char** argv)
         ClapFormat format(argv[2]);
         if (!format.ok()) { std::fprintf(stderr, "FAIL: %s is not a loadable CLAP\n", argv[2]); return 1; }
         run(format);
+        runBypassedActivation(format);
     }
 #ifdef __APPLE__
     else if (flag == "--au")
