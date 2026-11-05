@@ -7,7 +7,6 @@
 #include <array>
 #include <cctype>
 #include <charconv>
-#include <clocale>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -504,20 +503,30 @@ inline std::string bandHostName(const BandParam& d, int band)
     return std::string("MB ") + kBandHostNames[static_cast<size_t>(std::clamp(band, 0, 3))] + " " + d.name;
 }
 
-// printf's %f writes the C library's LC_NUMERIC decimal point, and a host can set
-// that to a comma: "0,20 ms" in a German-locale Qt host, and "8, kHz" once the kHz
-// trim below met it. Host text uses '.' in every locale, as the parsers below
-// (classic locale) read it back.
-inline void useDotDecimalPoint(char* text) noexcept
+// A fixed-point number with '.' as its decimal point whatever the C library's
+// LC_NUMERIC says: printf's %f follows it, and a host can set a comma ("0,20 ms"
+// in a German-locale Qt host, "8, kHz" once the kHz trim met it). Host text uses
+// '.', as the parsers below (classic locale) read it back. No locale is queried,
+// so threads formatting at once cannot disturb each other: the separator is
+// whatever printf put between the whole digits and the `decimals` last ones.
+inline int formatFixed(char* text, size_t size, double value, int decimals) noexcept
 {
-    const char* const point = std::localeconv()->decimal_point;
-    if (text == nullptr || point == nullptr || point[0] == '\0' || std::strcmp(point, ".") == 0) return;
-    const size_t pointLength = std::strlen(point);
-    if (char* const found = std::strstr(text, point))
+    decimals = std::clamp(decimals, 0, 6);
+    char number[64];
+    const int written = std::snprintf(number, sizeof(number), "%.*f", decimals, value);
+    if (written < 0 || static_cast<size_t>(written) >= sizeof(number)) return -1;
+    if (decimals > 0 && std::isfinite(value) && written > decimals)
     {
-        *found = '.';
-        std::memmove(found + 1, found + pointLength, std::strlen(found + pointLength) + 1);
+        const size_t fraction = static_cast<size_t>(written - decimals);
+        size_t integerEnd = number[0] == '-' ? 1 : 0;
+        while (integerEnd < fraction && std::isdigit(static_cast<unsigned char>(number[integerEnd]))) ++integerEnd;
+        if (integerEnd < fraction)
+        {
+            number[integerEnd] = '.';
+            std::memmove(number + integerEnd + 1, number + fraction, static_cast<size_t>(decimals) + 1);
+        }
     }
+    return std::snprintf(text, size, "%s", number);
 }
 
 // A tapered control (hasSkew) reaches the host as its 0..1 knob position, so the
@@ -536,25 +545,21 @@ inline bool formatTaperedText(const Descriptor& d, float hostValue, char* text, 
     {
         // "8 kHz", "1.25 kHz": two decimals at most, no trailing zeros.
         char number[32];
-        std::snprintf(number, sizeof(number), "%.2f", static_cast<double>(plain * 0.001f));
-        useDotDecimalPoint(number);
+        if (formatFixed(number, sizeof(number), static_cast<double>(plain * 0.001f), 2) < 0) return false;
         std::string trimmed(number);
         while (trimmed.back() == '0') trimmed.pop_back();
         if (trimmed.back() == '.') trimmed.pop_back();
         written = std::snprintf(text, size, "%s kHz", trimmed.c_str());
     }
-    else if (unit == "Hz")
-        written = std::snprintf(text, size, "%.0f Hz", static_cast<double>(plain));
-    else if (unit == "ms")
-        written = std::snprintf(text, size, plain < 10.0f ? "%.2f ms" : plain < 100.0f ? "%.1f ms" : "%.0f ms",
-                                static_cast<double>(plain));
-    else if (unit == ":1")
-        written = std::snprintf(text, size, "%.1f:1", static_cast<double>(plain));
     else
-        written = std::snprintf(text, size, "%.1f %s", static_cast<double>(plain), d.unit);
-    if (written < 0 || static_cast<uint32_t>(written) >= size) return false;
-    useDotDecimalPoint(text);
-    return true;
+    {
+        char number[32];
+        const int decimals = unit == "Hz" ? 0 : unit == "ms" ? (plain < 10.0f ? 2 : plain < 100.0f ? 1 : 0) : 1;
+        if (formatFixed(number, sizeof(number), static_cast<double>(plain), decimals) < 0) return false;
+        written = unit == ":1" ? std::snprintf(text, size, "%s:1", number)
+                               : std::snprintf(text, size, "%s %s", number, d.unit);
+    }
+    return written >= 0 && static_cast<uint32_t>(written) < size;
 }
 
 // Typed text back to a host value: a number in the classic locale, optionally
@@ -600,11 +605,15 @@ inline bool formatVcaCompressionText(float position, char* text, uint32_t size)
 {
     if (text == nullptr || size == 0 || !std::isfinite(position)) return false;
     const float ratio = duskaudio::vcaLaw::compressRatio(position);
-    const int written = !std::isfinite(ratio) ? std::snprintf(text, size, "INF")
-        : std::snprintf(text, size, ratio < 100.0f ? "%.1f:1" : "%.0f:1", static_cast<double>(ratio));
-    if (written < 0 || static_cast<uint32_t>(written) >= size) return false;
-    useDotDecimalPoint(text);
-    return true;
+    if (!std::isfinite(ratio))
+    {
+        const int written = std::snprintf(text, size, "INF");
+        return written >= 0 && static_cast<uint32_t>(written) < size;
+    }
+    char number[32];
+    if (formatFixed(number, sizeof(number), static_cast<double>(ratio), ratio < 100.0f ? 1 : 0) < 0) return false;
+    const int written = std::snprintf(text, size, "%s:1", number);
+    return written >= 0 && static_cast<uint32_t>(written) < size;
 }
 
 inline bool parseVcaCompressionText(const char* text, float& position)

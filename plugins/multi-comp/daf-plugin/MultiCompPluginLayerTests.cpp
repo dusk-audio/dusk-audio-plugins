@@ -1572,7 +1572,7 @@ void testHostTextIgnoresTheNumericLocale()
     const char* const previous = std::setlocale(LC_NUMERIC, nullptr);
     const std::string restore = previous != nullptr ? previous : "C";
     const char* commaLocale = nullptr;
-    for (const char* name : {"de_DE.UTF-8", "de_DE.utf8", "de_DE", "fr_FR.UTF-8", "fr_FR.utf8", "nl_NL.UTF-8"})
+    for (const char* name : {"de_DE.UTF-8", "de_DE.utf8", "de_DE", "fr_FR.UTF-8", "fr_FR.utf8", "nl_NL.UTF-8", "de-DE"})
         if (std::setlocale(LC_NUMERIC, name) != nullptr && std::strcmp(std::localeconv()->decimal_point, ",") == 0)
         {
             commaLocale = name;
@@ -1581,7 +1581,11 @@ void testHostTextIgnoresTheNumericLocale()
     if (commaLocale == nullptr)
     {
         std::setlocale(LC_NUMERIC, restore.c_str());
-        reviewCheck(false, "a comma-decimal locale is installed for the host-text locale check");
+#if defined(__APPLE__)
+        require(false, "macOS ships a comma-decimal locale for the host-text locale check");
+#else
+        std::puts("SKIP host text in a comma-decimal locale: none installed");
+#endif
         return;
     }
     const auto textOf = [](const auto& d, float plain) {

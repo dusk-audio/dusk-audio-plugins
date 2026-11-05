@@ -132,15 +132,25 @@ struct Host
     // A negative position stays off the window.
     void frame(float x = -100, float y = -100, bool down = false)
     {
-        ImGui::SetCurrentContext(context.context);
-        auto& io = ImGui::GetIO();
         if (x >= 0.0f && y >= 0.0f)
         {
             x *= DAF::kLegacyFaceScale;
             y = DAF::kLegacyFaceY + (y - DAF::kLegacyFaceTopY) * DAF::kLegacyFaceScale;
         }
+        canvas(x, y, down);
+    }
+    // The pointer at (x, y) on the 1200 x 480 canvas itself: the header, the mode row and the settings drawer.
+    void canvas(float x, float y, bool down = false)
+    {
+        ImGui::SetCurrentContext(context.context);
+        auto& io = ImGui::GetIO();
         io.AddMousePosEvent(x, y); io.AddMouseButtonEvent(0, down);
         ImGui::NewFrame(); ui.draw(); ImGui::Render();
+    }
+    void canvasClick(float x, float y) { canvas(x, y); canvas(x, y, true); canvas(x, y); }
+    void canvasDrag(float x, float y)
+    {
+        canvas(x, y); canvas(x, y, true); canvas(x, y - 20, true); canvas(x, y - 20); canvas(-100, -100);
     }
     void click(float x, float y) { frame(x, y); frame(x, y, true); frame(x, y); }
     void hold(float x, float y) { frame(x, y); frame(x, y, true); frame(x, y - 20, true); }
@@ -417,6 +427,43 @@ void restoredFace()
     }
 }
 
+// The settings drawer, in canvas coordinates. Opened from the mode row in every mode, its controls take the pointer
+// from the face under them (the face's disabled items kept the hover, and the drawer's buttons did nothing), and a
+// click on the mode row leaves it above the face (the face's window, raised by the click, hid the drawer and took
+// its pointer). CLOSE gives the face back.
+void settingsDrawer()
+{
+    const uint32_t distortion = pid(ParamId::Distortion), linkMode = pid(ParamId::StereoLinkMode),
+                   lowFreq = pid(ParamId::ScLowFreq), modeId = pid(ParamId::Mode);
+    for (int mode = 0; mode < 8; ++mode)
+    {
+        Host h(mode);
+        h.canvasClick(1134, 67);                          // SETTINGS
+        h.canvasClick(418, 374);                          // DRIVE: SOFT
+        h.canvasClick(243, 374);                          // STEREO: MID-SIDE
+        h.canvasDrag(286, 230);                           // SIDECHAIN: LOW FREQ
+        const int next = (mode + 1) % 8;
+        h.canvasClick(16.0f + 104.0f * next + 50.0f, 67); // another mode, the drawer open
+        h.canvasClick(418, 408);                          // DRIVE: HARD
+        int others = 0;
+        for (const auto& event : h.ui.writes)
+            others += event.parameter != distortion && event.parameter != linkMode && event.parameter != lowFreq
+                && event.parameter != modeId;
+        const bool drive = h.count(h.ui.writes, distortion, 1) == 1 && h.count(h.ui.writes, distortion, 2) == 1;
+        const bool link = h.count(h.ui.writes, linkMode, 1) == 1;
+        const bool knob = h.writes(lowFreq) > 0 && h.balanced(lowFreq);
+        const bool switched = h.count(h.ui.writes, modeId, static_cast<float>(next)) == 1;
+        h.canvasClick(1120, 114);                         // CLOSE
+        const int driveWrites = h.writes(distortion);
+        h.canvasClick(418, 442);                          // where CLIP was
+        const bool closed = h.writes(distortion) == driveWrites;
+        std::printf("drawer mode=%d drive=%d link=%d knob=%d switched=%d others=%d closed=%d\n", mode, drive, link,
+                    knob, switched, others, closed);
+        check(drive && link && knob && switched && others == 0 && closed,
+              "the settings drawer's controls answer in every mode and stay above the face");
+    }
+}
+
 void numericOwnership()
 {
     Host h(7);
@@ -444,6 +491,7 @@ int main(int argc, char** argv)
     if (run("hidden")) hiddenControls();
     if (run("output")) outputAccess();
     if (run("pull-sc")) vcaPullScFirstValue();
+    if (run("drawer")) settingsDrawer();
     if (run("numeric")) numericOwnership();
     if (run("restore")) restoredFace();
     std::printf("modern UI failures=%d\n", failures);

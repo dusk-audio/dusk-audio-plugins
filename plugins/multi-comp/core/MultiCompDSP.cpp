@@ -600,14 +600,20 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     // A switch that changes the audio path (switchChangesAudioPath) holds the old configuration while its wet path,
     // and any dry path the switch moves, fades out (switchDuck*). Where the fade reaches silence inside this block,
     // the block runs in two parts: the old configuration up to silence, the new one after it.
-    // The configuration the parameters ask for: one snapshot of each for the whole block (SwitchConfig).
+    // The configuration the parameters ask for (SwitchConfig), read once here; each part a switch splits the block
+    // into reads it again (processPart).
     SwitchConfig requested;
     requested.mode = std::clamp(params.mode.load(std::memory_order_relaxed), 0, 7);
     requested.oversampling = std::clamp(params.oversampling.load(std::memory_order_relaxed), 0, 2);
     requested.fetRatio = params.fetRatio.load(std::memory_order_relaxed);   // read as fetRatioIndex() reads it
-    if (switchDuckHeld.mode >= 0 && !switchChangesAudioPath(switchDuckHeld, requested))
-        switchDuckHeld.mode = -1;   // switched back before silence: no switch, the fade turns round
-    else if (switchDuckHeld.mode < 0 && !firstBlock && lastMode >= 0)
+    if (switchDuckHeld.mode >= 0)
+    {
+        if (!switchChangesAudioPath(switchDuckHeld, requested))
+            switchDuckHeld.mode = -1;   // switched back before silence: no switch, the fade turns round
+        else
+            armSwitchDuckDryPaths(switchDuckHeld, requested);   // retargeted: the new target may move a dry path
+    }
+    else if (!firstBlock && lastMode >= 0)
     {
         const SwitchConfig last{lastMode, lastOversamplingSetting, lastFetRatio};
         if (switchChangesAudioPath(last, requested))
@@ -1516,6 +1522,13 @@ bool MultiCompDSP::switchChangesAudioPath(const SwitchConfig& from, const Switch
 // is idle again; a dry fade starts from full gain.
 void MultiCompDSP::armSwitchDuckDryPaths(const SwitchConfig& from, const SwitchConfig& to) noexcept
 {
+    // Flags left by a duck that has finished, but not yet been released by an idle block, belong to that switch.
+    if (switchDuckHeld.mode < 0 && switchDuckMuted == 0 && switchDuckPosition >= switchDuckFadeSamples
+        && switchDuckDryPosition >= switchDuckFadeSamples)
+    {
+        switchDuckDryMix = false;
+        switchDuckDryLatency = false;
+    }
     const bool latencyMoves = reportedLatencyForMode(from.mode) != reportedLatencyForMode(to.mode);
     const auto multiband = static_cast<int>(MultiCompMode::Multiband);
     const bool multibandDry = (from.mode == multiband) != (to.mode == multiband);

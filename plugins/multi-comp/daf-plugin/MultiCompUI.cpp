@@ -790,11 +790,13 @@ protected:
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
         ImGui::SetNextWindowPos(ImVec2(0, 0));
         ImGui::SetNextWindowSize(ImVec2(winW, winH));
+        // NoBringToFrontOnFocus: a click on the header or the mode row must not raise the face above the settings
+        // drawer's window (it would hide the drawer and take its pointer).
         ImGui::Begin("##MultiComp2", nullptr,
                      ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
-                     ImGuiWindowFlags_NoBackground);
+                     ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoBringToFrontOnFocus);
 
         ImDrawList* dl = ImGui::GetWindowDrawList();
         dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), IM_COL32(21, 22, 25, 255));
@@ -808,17 +810,17 @@ protected:
         drawHeader(dl);
         drawModeRow(dl);
 
-        // The settings drawer is modal to the face under it: the face stays drawn but takes no input.
-        const bool drawerOpen = showSettings;
-        if (drawerOpen && !modalOpen)
+        // The settings drawer is modal to the face under it: the face stays drawn but takes no input, and the
+        // drawer is a window of its own above it (below), so no face item under the pointer can take the hover
+        // from the drawer's controls (disabled ImGui items still claim it where they overlap).
+        const bool drawerOpen = showSettings && !modalOpen;
+        if (drawerOpen)
             ImGui::BeginDisabled();
         beginLegacyFace(scale, origin);
         drawModePanel(dl);
         panel.begin(scale, origin, labelFont, this);
-        if (drawerOpen && !modalOpen)
-            ImGui::EndDisabled();
         if (drawerOpen)
-            drawSettingsDrawer(dl);
+            ImGui::EndDisabled();
         if (modalOpen)
             ImGui::EndDisabled();
 
@@ -831,8 +833,21 @@ protected:
 
         const duskdaf::ResizeGripState grip =
             panel.resizeGrip(dl, winW, winH, kDesignW, kDesignH, 1.0f);   // the design size is the minimum
-        finishTrackedEdits(false);
         ImGui::End();
+        if (drawerOpen)
+        {
+            ImGui::SetNextWindowPos(panel.P(0.0f, kFaceTop));
+            ImGui::SetNextWindowSize(ImVec2(kDesignW * scale, (kDesignH - kFaceTop) * scale));
+            ImGui::Begin("##MultiComp2Settings", nullptr,
+                         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar |
+                         ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground |
+                         ImGuiWindowFlags_NoSavedSettings);
+            drawSettingsDrawer(ImGui::GetWindowDrawList());
+            ImGui::End();
+        }
+        // After every window: a control drawn in either one keeps its gesture this frame.
+        finishTrackedEdits(false);
         ImGui::PopStyleVar(2);
         // A host can service the request synchronously, so never resize from
         // inside the active ImGui window.
@@ -1212,6 +1227,7 @@ private:
         {
             supporters.resetInteraction();
             showSupporters = true;
+            showSettings = false;
         }
 
         if (headerChevron(dl, "##mc_presetprev", 390.5f, true)) stepPreset(-1);
@@ -1503,7 +1519,7 @@ private:
 
     // ---- Settings drawer ------------------------------------------------------------------------------------------
     // The parameters no face carries (owner direction 2026-11-05), over the face area and modal to it: SETTINGS in
-    // the mode row opens and closes it, and so do its X and a click on the face area outside it. Legends at 16 px and
+    // the mode row opens and closes it, and so do its CLOSE button, a click on the face area outside it and Escape. Legends at 16 px and
     // values at 17 px, the readability floor at the minimum window. A control the current mode ignores stays where
     // it is, greyed, so the drawer reads the same in every mode.
     struct DrawerTheme
@@ -1547,11 +1563,15 @@ private:
                     multicompp::formatTaperedText(d, values[p], text, sizeof(text));
                 else
                 {
-                    const float plain = multicompp::hostToPlain(d, values[p]);
                     const std::string_view unit(d.unit);
-                    std::snprintf(text, sizeof(text), unit == "%" ? "%.0f %%" : unit.empty() ? "%.0f" : "%.1f %s",
-                                  static_cast<double>(plain), d.unit);
-                    multicompp::useDotDecimalPoint(text);
+                    char number[32] = {};
+                    if (multicompp::formatFixed(number, sizeof(number),
+                                                static_cast<double>(multicompp::hostToPlain(d, values[p])),
+                                                unit.empty() || unit == "%" ? 0 : 1) < 0)
+                        return;
+                    if (unit.empty()) std::snprintf(text, sizeof(text), "%s", number);
+                    else if (unit == "%") std::snprintf(text, sizeof(text), "%s %%", number);
+                    else std::snprintf(text, sizeof(text), "%s %s", number, d.unit);
                 }
             },
             [](const multicompp::BandParam&, int) {});
@@ -1630,11 +1650,13 @@ private:
         static constexpr const char* kOversamplingShort[3] = {"OFF", "2X", "4X"};
         drawerSegments(dl, "##set_os", pid(ParamId::Oversampling), 800.0f, L::rowA + 36.0f, 64.0f,
                        kOversamplingShort, 3, false, mode != 5 && mode != 7);
+        // Multiband reads True Peak only on an external key (MultiCompDSP: the detector feed).
+        const bool truePeakApplies = mode != 7 || values[pid(ParamId::ExternalSidechain)] > 0.5f;
         illuminatedToggle(dl, "##set_tp", pid(ParamId::TruePeakEnable), 640.0f, L::rowA + 76.0f, 792.0f,
-                          L::rowA + 76.0f + L::buttonH, "TRUE PEAK", L::legendSize);
+                          L::rowA + 76.0f + L::buttonH, "TRUE PEAK", L::legendSize, truePeakApplies);
         static constexpr const char* kTruePeakShort[2] = {"4X", "8X"};
         drawerSegments(dl, "##set_tp_q", pid(ParamId::TruePeakQuality), 800.0f, L::rowA + 76.0f, 64.0f,
-                       kTruePeakShort, 2, false, values[pid(ParamId::TruePeakEnable)] > 0.5f);
+                       kTruePeakShort, 2, false, truePeakApplies && values[pid(ParamId::TruePeakEnable)] > 0.5f);
         // Digital and Multiband add no noise (MultiCompDSP: addNoise).
         illuminatedToggle(dl, "##set_noise", pid(ParamId::NoiseEnable), 640.0f, L::rowA + 116.0f, 792.0f,
                           L::rowA + 116.0f + L::buttonH, "ANALOG NOISE", L::legendSize, !digitalModes);
@@ -1674,7 +1696,10 @@ private:
         ImGui::SetCursorScreenPos(panel.P(0, kFaceTop));
         if (ImGui::InvisibleButton("##settings_scrim", ImVec2(kDesignW * s, (kDesignH - kFaceTop) * s)))
             showSettings = false;
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+        // Escape closes the drawer unless something else owns it: a typed value being entered, a held control or
+        // an open popup (the save dialog) take it first.
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive()
+            && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId))
             showSettings = false;
     }
 
