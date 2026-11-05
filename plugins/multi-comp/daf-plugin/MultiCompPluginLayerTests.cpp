@@ -779,10 +779,10 @@ void testShippingUiUsesConformingHeaderWithoutUtilityBands()
         && source.find("##mc_presetnext") != std::string::npos
         && source.find("##mc_init") != std::string::npos
         && source.find("##mc_save") != std::string::npos;
-    // 1200 x 480 since 2026-11-05: the minimum window at which every legend and value meets the readability floor.
+    // 1200 x 420 since 2026-11-05: the minimum window at which every legend and value meets the readability floor.
     const bool hasCompactDefaultHeight =
         info.find("#define DAF_UI_DEFAULT_WIDTH        1200") != std::string::npos
-        && info.find("#define DAF_UI_DEFAULT_HEIGHT       480") != std::string::npos;
+        && info.find("#define DAF_UI_DEFAULT_HEIGHT       420") != std::string::npos;
     // The brand is the header's alone: no meter face carries it either (owner 2026-11-05).
     const std::string vintageMeter = readSiblingSource("MultiCompVintageMeter.hpp");
     const bool hasSingleHeaderIdentity = countText("\"DUSK AUDIO\"") == 1
@@ -798,7 +798,7 @@ void testShippingUiUsesConformingHeaderWithoutUtilityBands()
     const bool hasModeDropdown = source.find("ImGui::BeginCombo(\"##mc_mode\"")
         != std::string::npos;
 
-    std::printf("header conformity: global=%s sidechain=%s identity=%s actions=%s height480=%s "
+    std::printf("header conformity: global=%s sidechain=%s identity=%s actions=%s height420=%s "
                 "single-brand=%s opto-title=%s\n",
                 drawsGlobalBand ? "drawn" : "removed",
                 drawsSidechainBand ? "drawn" : "removed",
@@ -1028,7 +1028,7 @@ void testOptoFaceplateContract()
 {
     using Layout = multicompp::ui_detail::OptoFaceplateLayout;
     constexpr float referenceAspect = 1120.0f / 310.0f;
-    // OPTO is laid out on the 1200 x 480 canvas (2026-11-05): its faceplate spans the width below the mode row and
+    // OPTO is laid out on the 1200 x 420 canvas (2026-11-05): its faceplate spans the width below the mode row and
     // keeps every control inside it, the dials clear of the meter and the trims.
     require(Layout::left == 0.0f && Layout::right == multicompp::ui_detail::kDesignWidth
                 && Layout::top >= 86.0f && Layout::bottom <= multicompp::ui_detail::kDesignHeight
@@ -1037,13 +1037,13 @@ void testOptoFaceplateContract()
                 && Layout::peakX + Layout::dialRadius < Layout::trimX - Layout::trimRadius
                 && Layout::left + Layout::ear < Layout::switchX && Layout::trimX < Layout::right - Layout::ear,
             "Opto faceplate fills the canvas below the mode row and keeps its controls apart");
-    // One canvas for every mode (1200 x 480 since 2026-11-05). A face not yet laid out for it is drawn on the face
+    // One canvas for every mode (1200 x 420 since 2026-11-05). A face not yet laid out for it is drawn on the face
     // canvas it was authored on, which the faceplates fill below the 48 px header and the mode toolbar (mode canvas
     // 322..654 shown at 48..380), and the Digital and Multiband faces fit in visible-canvas y.
     {
         using Modern = multicompp::ui_detail::ModernFaceLayout;
         using Vca = multicompp::ui_detail::VcaFaceplateLayout;
-        require(multicompp::ui_detail::kDesignWidth == 1200.0f && multicompp::ui_detail::kDesignHeight == 480.0f
+        require(multicompp::ui_detail::kDesignWidth == 1200.0f && multicompp::ui_detail::kDesignHeight == 420.0f
                     && multicompp::ui_detail::kFaceCanvasHeight == 380.0f
                     && multicompp::ui_detail::kFaceCanvasHeight == 48.0f + (Vca::bottom - 322.0f),
                 "every mode shares the rack-height canvas the faceplates fill");

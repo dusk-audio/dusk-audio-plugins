@@ -12,10 +12,10 @@
 #define START_NAMESPACE_DAF namespace DAF {
 #define END_NAMESPACE_DAF }
 #define DAF_UI_DEFAULT_WIDTH 1200
-#define DAF_UI_DEFAULT_HEIGHT 480
+#define DAF_UI_DEFAULT_HEIGHT 420
 using GLint = int;
 constexpr int GL_VIEWPORT = 0;
-inline void glGetIntegerv(int, GLint* p) { p[0] = p[1] = 0; p[2] = 1200; p[3] = 480; }
+inline void glGetIntegerv(int, GLint* p) { p[0] = p[1] = 0; p[2] = 1200; p[3] = 420; }
 namespace DAF
 {
 struct TestInstance
@@ -37,7 +37,7 @@ public:
     void draw() { onImGuiDisplay(); }
     void parameter(uint32_t p, float v) { state.parameters[p] = v; parameterChanged(p, v); }
     void restore(const char* key, const char* value) { stateChanged(key, value); }
-    uint32_t width = 1200, height = 480;   // the editor window (Host sets a letterboxed one)
+    uint32_t width = 1200, height = 420;   // the editor window (Host sets a letterboxed one)
     uint32_t getWidth() const { return width; }
     uint32_t getHeight() const { return height; }
     float getScaleFactor() const { return 1; }
@@ -106,13 +106,13 @@ struct Host
             ImGui::SetCurrentContext(context);
             auto& io = ImGui::GetIO();
             io.IniFilename = nullptr; io.LogFilename = nullptr;
-            io.DisplaySize = ImVec2(1200, 480); io.DeltaTime = 1.0f / 60.0f;
+            io.DisplaySize = ImVec2(1200, 420); io.DeltaTime = 1.0f / 60.0f;
             io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;   // as DAF runs ImGui (DearImGui.cpp)
         }
         ~Context() { ImGui::DestroyContext(context); }
     } context;
     DAF::MultiCompUI ui;
-    explicit Host(int mode, uint32_t width = 1200, uint32_t height = 480)
+    explicit Host(int mode, uint32_t width = 1200, uint32_t height = 420)
     {
         ui.width = width;
         ui.height = height;
@@ -135,7 +135,7 @@ struct Host
         frame(); frame();
     }
     // The face the pointer positions below belong to (the mode the host was opened in, unless a test says). A face
-    // laid out on the 1200 x 480 canvas (OPTO) takes canvas coordinates as they are.
+    // laid out on the 1200 x 420 canvas (OPTO) takes canvas coordinates as they are.
     int faceMode = 0;
     static bool canvasFace(int mode) noexcept { return mode == 0; }
     // The pointer at (x, y) on the face of faceMode: a face still authored on its own 1120 x 380 canvas, where its
@@ -150,7 +150,9 @@ struct Host
         }
         canvas(x, y, down);
     }
-    // The pointer at (x, y) on the 1200 x 480 canvas itself: the header, the mode row and the settings drawer.
+    // The pointer at (x, y) on the 1200 x 420 canvas itself: the header, the mode row and the settings drawer.
+    // The drawer's controls, from its layout: DRIVE is a 2 x 2 grid (OFF SOFT / HARD CLIP) at y 318 and 352, MID-SIDE
+    // (243, 352), LOW FREQ (286, 218), EXTERNAL KEY (128, 178), TRUE PEAK (716, 212), CLOSE (1120, 114).
     void canvas(float x = -100, float y = -100, bool down = false)
     {
         ImGui::SetCurrentContext(context.context);
@@ -453,11 +455,11 @@ void settingsDrawer()
     {
         Host h(mode);
         h.canvasClick(1134, 67);                          // SETTINGS
-        h.canvasClick(418, 374);                          // DRIVE: SOFT
-        h.canvasClick(243, 374);                          // STEREO: MID-SIDE
-        h.canvasDrag(286, 230);                           // SIDECHAIN: LOW FREQ
+        h.canvasClick(405, 352);                          // DRIVE: SOFT
+        h.canvasClick(243, 352);                          // STEREO: MID-SIDE
+        h.canvasDrag(286, 218);                           // SIDECHAIN: LOW FREQ
         h.canvasClick(923, 67);                           // AUTO MAKEUP, the drawer open
-        h.canvasClick(418, 408);                          // DRIVE: HARD
+        h.canvasClick(481, 318);                          // DRIVE: HARD
         int others = 0;
         for (const auto& event : h.ui.writes)
             others += event.parameter != distortion && event.parameter != linkMode && event.parameter != lowFreq
@@ -471,18 +473,18 @@ void settingsDrawer()
         h.canvasClick(16.0f + 104.0f * next + 50.0f, 67);
         const bool switched = h.count(h.ui.writes, modeId, static_cast<float>(next)) == 1;
         int driveWrites = h.writes(distortion);
-        h.canvasClick(418, 442);
+        h.canvasClick(481, 352);                          // where CLIP is
         const bool closedByMode = h.writes(distortion) == driveWrites;
         // So does the lit mode's own tab, and CLOSE.
         h.canvasClick(1134, 67);
         h.canvasClick(16.0f + 104.0f * next + 50.0f, 67);
         driveWrites = h.writes(distortion);
-        h.canvasClick(418, 442);
+        h.canvasClick(481, 352);
         const bool closedByLitTab = h.writes(distortion) == driveWrites;
         h.canvasClick(1134, 67);
         h.canvasClick(1120, 114);                         // CLOSE
         driveWrites = h.writes(distortion);
-        h.canvasClick(418, 442);
+        h.canvasClick(481, 352);
         const bool closedByClose = h.writes(distortion) == driveWrites;
         std::printf("drawer mode=%d drive=%d link=%d knob=%d above=%d others=%d switched=%d closed by mode=%d "
                     "lit tab=%d CLOSE=%d\n", mode, drive, link, knob, aboveFace, others, switched, closedByMode,
@@ -515,15 +517,15 @@ void drawerKeysAndCorner()
         const bool clip = h.ui.state.parameters[distortion] != 3.0f;
         const float value = clip ? 3.0f : 1.0f;
         const int before = h.count(h.ui.writes, distortion, value);
-        h.canvasClick(418, clip ? 442 : 374);
+        h.canvasClick(clip ? 481 : 405, 352);
         return h.count(h.ui.writes, distortion, value) > before;
     };
 
     Host held(2);
     held.canvasClick(1134, 67);                                   // SETTINGS
-    held.canvas(286, 230); held.canvas(286, 230, true); held.canvas(286, 210, true);   // LOW FREQ held
-    escape(held, 286, 210, true);
-    held.canvas(286, 210); held.canvas();
+    held.canvas(286, 218); held.canvas(286, 218, true); held.canvas(286, 198, true);   // LOW FREQ held
+    escape(held, 286, 198, true);
+    held.canvas(286, 198); held.canvas();
     const bool heldBalanced = held.balanced(lowFreq);
     const bool openAfterHeld = drawerOpen(held);
     held.canvasClick(560, 24);                                    // the preset list
@@ -546,11 +548,11 @@ void drawerKeysAndCorner()
     key.ui.state.externalActive = false;
     key.ui.parameter(externalKey, 1.0f);
     key.canvasClick(1134, 67);
-    key.canvasClick(716, 222);                                    // TRUE PEAK, key requested, none connected
+    key.canvasClick(716, 212);                                    // TRUE PEAK, key requested, none connected
     const int requestedOnly = key.writes(truePeak);
     key.ui.state.externalActive = true;
     key.canvas();
-    key.canvasClick(716, 222);                                    // TRUE PEAK, key connected
+    key.canvasClick(716, 212);                                    // TRUE PEAK, key connected
     const int connected = key.writes(truePeak);
     std::printf("drawer TRUE PEAK in Multiband: key requested only -> %d writes, key connected -> %d\n",
                 requestedOnly, connected);
@@ -558,7 +560,7 @@ void drawerKeysAndCorner()
 
     Host grip(0);
     grip.canvasClick(1134, 67);
-    grip.canvas(1193, 473); grip.canvas(1193, 473, true); grip.canvas(1233, 498, true); grip.canvas(1233, 498);
+    grip.canvas(1193, 413); grip.canvas(1193, 413, true); grip.canvas(1233, 438, true); grip.canvas(1233, 438);
     grip.canvas();
     const uint32_t sized = grip.ui.sizeRequests;
     const bool openAfterGrip = drawerOpen(grip);
@@ -566,17 +568,17 @@ void drawerKeysAndCorner()
     check(sized > 0 && openAfterGrip, "the resize grip works with the drawer open, and leaves it open");
 
     // Letterboxed windows: the canvas is centred, and the grip stays in the window's own corner.
-    for (const auto size : {std::array<uint32_t, 2>{{1400, 480}}, std::array<uint32_t, 2>{{1200, 600}}})
+    for (const auto size : {std::array<uint32_t, 2>{{1400, 420}}, std::array<uint32_t, 2>{{1200, 540}}})
     {
         Host box(0, size[0], size[1]);
-        const float ox = (static_cast<float>(size[0]) - 1200.0f) * 0.5f, oy = (static_cast<float>(size[1]) - 480.0f) * 0.5f;
+        const float ox = (static_cast<float>(size[0]) - 1200.0f) * 0.5f, oy = (static_cast<float>(size[1]) - 420.0f) * 0.5f;
         box.canvasClick(1134 + ox, 67 + oy);                      // SETTINGS
         const float cx = static_cast<float>(size[0]) - 7.0f, cy = static_cast<float>(size[1]) - 7.0f;
         box.canvas(cx, cy); box.canvas(cx, cy, true); box.canvas(cx + 40, cy + 25, true); box.canvas(cx + 40, cy + 25);
         box.canvas();
         // Open: DRIVE: CLIP, in this window's coordinates.
         const int clipBefore = box.count(box.ui.writes, distortion, 3);
-        box.canvasClick(418 + ox, 442 + oy);
+        box.canvasClick(481 + ox, 352 + oy);
         const bool open = box.count(box.ui.writes, distortion, 3) > clipBefore;
         std::printf("drawer resize grip in a %ux%u window: %u size requests, drawer open after %d\n", size[0],
                     size[1], box.ui.sizeRequests, open);
@@ -586,7 +588,7 @@ void drawerKeysAndCorner()
     // A press on the scrim in the frame the pointer arrives (from a drawer knob) closes the drawer.
     Host scrim(0);
     scrim.canvasClick(1134, 67);
-    scrim.canvas(286, 230);                                       // over LOW FREQ
+    scrim.canvas(286, 218);                                       // over LOW FREQ
     scrim.canvas(8, 300, true); scrim.canvas(8, 300);              // to the scrim's margin and pressed, one frame
     scrim.canvas();
     const bool closedByScrim = !drawerOpen(scrim);

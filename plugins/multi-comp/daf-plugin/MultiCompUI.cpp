@@ -32,18 +32,18 @@ struct OptoFaceplateLayout
 {
     static constexpr float left = 0.0f;
     static constexpr float right = 1200.0f;
-    static constexpr float top = 90.0f;        // below the mode row (86)
-    static constexpr float bottom = 476.0f;
+    static constexpr float top = 88.0f;        // below the mode row (86)
+    static constexpr float bottom = 418.0f;
     static constexpr float ear = 44.0f;        // each rack ear
-    static constexpr float dialY = 280.0f;     // GAIN and PEAK REDUCTION, their centres
+    static constexpr float dialY = 250.0f;     // GAIN and PEAK REDUCTION, their centres
     static constexpr float dialRadius = 54.0f;
     static constexpr float gainX = 330.0f;
     static constexpr float peakX = 870.0f;
-    static constexpr float meterX = 440.0f, meterY = 128.0f, meterW = 320.0f, meterH = 190.0f;   // the VU
-    static constexpr float meterSwitchY = 360.0f;   // GR / +10 / +4, their text
-    static constexpr float switchX = 150.0f, switchY = 280.0f;   // LIMIT / COMPRESS, the toggle's pivot, level with the dials
-    static constexpr float trimX = 1062.0f, scHpY = 200.0f, mixY = 330.0f, trimRadius = 17.0f;   // set screws
-    static constexpr float brandX = 72.0f, brandY = 140.0f;   // LEVELING AMPLIFIER
+    static constexpr float meterX = 455.0f, meterY = 122.0f, meterW = 290.0f, meterH = 164.0f;   // the VU
+    static constexpr float meterSwitchY = 324.0f;   // GR / +10 / +4, their text
+    static constexpr float switchX = 150.0f, switchY = 250.0f;   // LIMIT / COMPRESS, the toggle's pivot, level with the dials
+    static constexpr float trimX = 1062.0f, scHpY = 172.0f, mixY = 290.0f, trimRadius = 17.0f;   // set screws
+    static constexpr float brandX = 72.0f, brandY = 112.0f;   // LEVELING AMPLIFIER
 };
 
 // The VCA face shares the rack-height canvas with the FET face (1120 x 310; the Opto face had it too until it was
@@ -69,7 +69,7 @@ inline constexpr float vcaFaceplateAspect() noexcept
 // opening size showed up shrunken in Logic (#240). 1200 x 480 since 2026-11-05 (owner direction: text readable at
 // the smallest window, which is this size), the default and the minimum.
 inline constexpr float kDesignWidth = 1200.0f;
-inline constexpr float kDesignHeight = 480.0f;
+inline constexpr float kDesignHeight = 420.0f;   // 1200 x 420 since 2026-11-05 (was 480): the faces' spare plate cut
 // The canvas the faces were authored on (1120 x 380). A face not yet laid out for the current canvas is drawn on it
 // as before and placed into the current face area by one uniform scale (MultiCompUI::beginLegacyFace).
 inline constexpr float kFaceCanvasWidth = 1120.0f;
@@ -1555,7 +1555,6 @@ private:
         static constexpr ImU32 edge = IM_COL32(88, 92, 102, 255);
         static constexpr ImU32 rule = IM_COL32(64, 68, 76, 255);
         static constexpr ImU32 legend = IM_COL32(214, 217, 222, 255);
-        static constexpr ImU32 note = IM_COL32(150, 156, 166, 255);
         static constexpr ImU32 segment = IM_COL32(24, 25, 29, 255);
         static constexpr ImU32 segmentHover = IM_COL32(43, 46, 54, 255);
         static constexpr ImU32 segmentOn = IM_COL32(39, 57, 24, 255);      // the mode row's lit tab
@@ -1564,7 +1563,8 @@ private:
     struct DrawerLayout
     {
         static constexpr float x0 = 16.0f, y0 = 92.0f, x1 = kDesignW - 16.0f, y1 = kDesignH - 8.0f;
-        static constexpr float rowA = 132.0f, rowB = 292.0f;   // the two rows' group headings
+        static constexpr float rowA = 134.0f, rowB = 274.0f;   // the two rows' group headings
+        static constexpr float rowPitch = 34.0f;                // between a group's button rows
         static constexpr float legendSize = 16.0f, valueSize = 17.0f, knobRadius = 22.0f;
         static constexpr float buttonH = 28.0f;
     };
@@ -1580,7 +1580,8 @@ private:
 
     // The drawer's knobs: the metallic knob with its 16 px legend above and the 17 px value below, in the host's
     // own text for the value (the units and kHz rule the host shows).
-    void drawerKnob(ImDrawList* dl, const char* id, uint32_t p, float x, float y, const char* legend, bool applicable)
+    void drawerKnob(ImDrawList* dl, const char* id, uint32_t p, float x, float y, const char* legend, bool applicable,
+                    const char* inapplicableNote = nullptr)
     {
         char text[48] = {};
         multicompp::resolveParameter(static_cast<int>(p),
@@ -1601,14 +1602,17 @@ private:
                 }
             },
             [](const multicompp::BandParam&, int) {});
-        modernKnob(dl, id, p, x, y, DrawerLayout::knobRadius, legend, y - 40.0f, DrawerLayout::legendSize,
-                   DrawerTheme::legend, 0, "", y + 40.0f, applicable, DrawerLayout::valueSize, text);
+        // A control the mode ignores may say so where its value goes (`inapplicableNote`).
+        modernKnob(dl, id, p, x, y, DrawerLayout::knobRadius, legend, y - 42.0f, DrawerLayout::legendSize,
+                   DrawerTheme::legend, 0, "", y + 28.0f, applicable, DrawerLayout::valueSize,
+                   !applicable && inapplicableNote != nullptr ? inapplicableNote : text);
     }
 
     // A row of exclusive buttons for a stepped parameter (labels in step order); the lit one is its value. A press
     // on the lit one writes nothing.
+    // `perColumn` (vertical only): that many buttons a column, the next column to the right (DRIVE's 2 x 2).
     void drawerSegments(ImDrawList* dl, const char* id, uint32_t p, float x0, float y0, float width,
-                        const char* const* labels, int count, bool vertical, bool applicable)
+                        const char* const* labels, int count, bool vertical, bool applicable, int perColumn = 0)
     {
         const int selected = multicompp::ui_detail::choiceIndex(values[p], count);
         constexpr float gap = 6.0f;
@@ -1616,8 +1620,11 @@ private:
         if (!applicable) ImGui::BeginDisabled();
         for (int i = 0; i < count; ++i)
         {
-            const float bx0 = vertical ? x0 : x0 + static_cast<float>(i) * (width + gap);
-            const float by0 = vertical ? y0 + static_cast<float>(i) * (DrawerLayout::buttonH + gap) : y0;
+            const int column = vertical && perColumn > 0 ? i / perColumn : 0;
+            const int row = vertical && perColumn > 0 ? i % perColumn : i;
+            const float bx0 = vertical ? x0 + static_cast<float>(column) * (width + gap)
+                                       : x0 + static_cast<float>(i) * (width + gap);
+            const float by0 = vertical ? y0 + static_cast<float>(row) * (DrawerLayout::buttonH + gap) : y0;
             const ImVec2 b0 = panel.P(bx0, by0), b1 = panel.P(bx0 + width, by0 + DrawerLayout::buttonH);
             ImGui::PushID(id);
             ImGui::PushID(i);
@@ -1661,11 +1668,12 @@ private:
 
         // Row A: SIDECHAIN (the detector's input), PROCESSING.
         drawerHeading(dl, 40.0f, 596.0f, L::rowA, "SIDECHAIN");
-        illuminatedToggle(dl, "##set_ext_sc", pid(ParamId::ExternalSidechain), 40.0f, L::rowA + 36.0f, 216.0f,
-                          L::rowA + 36.0f + L::buttonH, "EXTERNAL KEY", L::legendSize);
-        illuminatedToggle(dl, "##set_sc_listen", pid(ParamId::GlobalSidechainListen), 40.0f, L::rowA + 76.0f, 216.0f,
-                          L::rowA + 76.0f + L::buttonH, "SC LISTEN", L::legendSize);
-        const float knobY = L::rowA + 98.0f;
+        const float row1 = L::rowA + 30.0f, row2 = row1 + L::rowPitch, row3 = row2 + L::rowPitch;
+        illuminatedToggle(dl, "##set_ext_sc", pid(ParamId::ExternalSidechain), 40.0f, row1, 216.0f,
+                          row1 + L::buttonH, "EXTERNAL KEY", L::legendSize);
+        illuminatedToggle(dl, "##set_sc_listen", pid(ParamId::GlobalSidechainListen), 40.0f, row2, 216.0f,
+                          row2 + L::buttonH, "SC LISTEN", L::legendSize);
+        const float knobY = L::rowA + 84.0f;
         drawerKnob(dl, "##set_sc_low_freq", pid(ParamId::ScLowFreq), 286.0f, knobY, "LOW FREQ", true);
         drawerKnob(dl, "##set_sc_low_gain", pid(ParamId::ScLowGain), 384.0f, knobY, "LOW GAIN", true);
         drawerKnob(dl, "##set_sc_high_freq", pid(ParamId::ScHighFreq), 482.0f, knobY, "HIGH FREQ", true);
@@ -1673,24 +1681,24 @@ private:
 
         drawerHeading(dl, 632.0f, L::x1 - 24.0f, L::rowA, "PROCESSING");
         // Studio VCA runs at the host rate at every setting and Multiband runs no oversampler.
-        panel.text(dl, 640.0f, L::rowA + 41.0f, L::legendSize, colourWithAlpha(DrawerTheme::legend,
+        panel.text(dl, 640.0f, row1 + 6.0f, L::legendSize, colourWithAlpha(DrawerTheme::legend,
                    mode == 5 || mode == 7 ? 0.4f : 1.0f), "OVERSAMPLING", -1, true);
         static constexpr const char* kOversamplingShort[3] = {"OFF", "2X", "4X"};
-        drawerSegments(dl, "##set_os", pid(ParamId::Oversampling), 800.0f, L::rowA + 36.0f, 64.0f,
+        drawerSegments(dl, "##set_os", pid(ParamId::Oversampling), 800.0f, row1, 64.0f,
                        kOversamplingShort, 3, false, mode != 5 && mode != 7);
         // Multiband reads True Peak only on an external key it actually has (MultiCompDSP: the detector feed).
         const bool truePeakApplies = mode != 7 || externalKeyInUse();
-        illuminatedToggle(dl, "##set_tp", pid(ParamId::TruePeakEnable), 640.0f, L::rowA + 76.0f, 792.0f,
-                          L::rowA + 76.0f + L::buttonH, "TRUE PEAK", L::legendSize, truePeakApplies);
+        illuminatedToggle(dl, "##set_tp", pid(ParamId::TruePeakEnable), 640.0f, row2, 792.0f,
+                          row2 + L::buttonH, "TRUE PEAK", L::legendSize, truePeakApplies);
         static constexpr const char* kTruePeakShort[2] = {"4X", "8X"};
-        drawerSegments(dl, "##set_tp_q", pid(ParamId::TruePeakQuality), 800.0f, L::rowA + 76.0f, 64.0f,
+        drawerSegments(dl, "##set_tp_q", pid(ParamId::TruePeakQuality), 800.0f, row2, 64.0f,
                        kTruePeakShort, 2, false, truePeakApplies && values[pid(ParamId::TruePeakEnable)] > 0.5f);
         // Digital and Multiband add no noise (MultiCompDSP: addNoise).
-        illuminatedToggle(dl, "##set_noise", pid(ParamId::NoiseEnable), 640.0f, L::rowA + 116.0f, 792.0f,
-                          L::rowA + 116.0f + L::buttonH, "ANALOG NOISE", L::legendSize, !digitalModes);
+        illuminatedToggle(dl, "##set_noise", pid(ParamId::NoiseEnable), 640.0f, row3, 792.0f,
+                          row3 + L::buttonH, "ANALOG NOISE", L::legendSize, !digitalModes);
 
         // Row B: STEREO, DRIVE, LOOKAHEAD, FET BLACK.
-        const float rowBKnobY = L::rowB + 96.0f, rowBButtonsY = L::rowB + 34.0f;
+        const float rowBKnobY = L::rowB + 84.0f, rowBButtonsY = L::rowB + 30.0f;
         drawerHeading(dl, 40.0f, 330.0f, L::rowB, "STEREO");
         drawerKnob(dl, "##set_link", pid(ParamId::StereoLink), 90.0f, rowBKnobY, "LINK", mode != 7);
         static constexpr const char* kLinkShort[3] = {"STEREO", "MID-SIDE", "DUAL MONO"};
@@ -1699,15 +1707,14 @@ private:
 
         drawerHeading(dl, 362.0f, 600.0f, L::rowB, "DRIVE");
         static constexpr const char* kDriveShort[4] = {"OFF", "SOFT", "HARD", "CLIP"};
-        drawerSegments(dl, "##set_drive", pid(ParamId::Distortion), 370.0f, rowBButtonsY, 96.0f,
-                       kDriveShort, 4, true, true);
-        drawerKnob(dl, "##set_drive_amt", pid(ParamId::DistortionAmount), 540.0f, rowBKnobY, "AMOUNT",
+        drawerSegments(dl, "##set_drive", pid(ParamId::Distortion), 370.0f, rowBButtonsY, 70.0f,
+                       kDriveShort, 4, true, true, 2);
+        drawerKnob(dl, "##set_drive_amt", pid(ParamId::DistortionAmount), 560.0f, rowBKnobY, "AMOUNT",
                    values[pid(ParamId::Distortion)] > 0.5f);
 
         drawerHeading(dl, 632.0f, 820.0f, L::rowB, "LOOKAHEAD");
-        drawerKnob(dl, "##set_lookahead", pid(ParamId::GlobalLookahead), 726.0f, rowBKnobY, "TIME", digitalModes);
-        if (!digitalModes)
-            textCentred(dl, 726.0f, rowBKnobY + 62.0f, L::legendSize, DrawerTheme::note, "DIGITAL, MULTIBAND", true);
+        drawerKnob(dl, "##set_lookahead", pid(ParamId::GlobalLookahead), 726.0f, rowBKnobY, "TIME", digitalModes,
+                   "DIGITAL, MULTIBAND");
 
         drawerHeading(dl, 852.0f, L::x1 - 24.0f, L::rowB, "FET BLACK");
         drawerKnob(dl, "##set_fet_threshold", pid(ParamId::FetThreshold), 904.0f, rowBKnobY, "THRESHOLD", fetBlack);
@@ -1844,7 +1851,13 @@ private:
             facedMode = mode;
             resetModernFaces();
         }
+        // A face's own canvas reaches above the face area (the band its old toolbar had): clipped to the face area,
+        // or its backdrop covers the mode row.
+        const ImVec2 faceMin = panel.P(0.0f, kFaceTop), faceMax = panel.P(kDesignW, kDesignH);
+        bool clipped = false;
         const auto legacyFace = [&] {
+            dl->PushClipRect(faceMin, faceMax, true);
+            clipped = true;
             beginLegacyFace(scale, origin);
             drawSection(dl, kModeCanvasTop, kModeCanvasBottom - 8, "");
         };
@@ -1862,6 +1875,8 @@ private:
             case 6: legacyFace(); drawDigital(dl); break;
             case 7: legacyFace(); drawMultiband(dl); break;
         }
+        if (clipped)
+            dl->PopClipRect();
     }
 
     // OPTO 2A's colours by role (kOptoInk and kOptoRed are its legend ink and red), sampled from the face as it
@@ -1991,11 +2006,11 @@ private:
         }
 
         const float centre = 0.5f * (left + right);
-        for (const ImVec2 screw : {ImVec2(faceLeft + 28, top + 18),
-                                   ImVec2(faceRight - 28, top + 18),
-                                   ImVec2(faceLeft + 28, bottom - 18),
-                                   ImVec2(centre, bottom - 18),
-                                   ImVec2(faceRight - 28, bottom - 18)})
+        for (const ImVec2 screw : {ImVec2(faceLeft + 28, top + 16),
+                                   ImVec2(faceRight - 28, top + 16),
+                                   ImVec2(faceLeft + 28, bottom - 16),
+                                   ImVec2(centre, bottom - 16),
+                                   ImVec2(faceRight - 28, bottom - 16)})
             drawOptoScrew(dl, screw.x, screw.y, 8.0f);
 
         // The nameplate (24) with its rule, the series under it (13, silk), the model badge at the top (20).
@@ -2007,7 +2022,7 @@ private:
         dl->AddLine(panel.P(Layout::brandX, Layout::brandY + 30),
                     panel.P(Layout::brandX + nameplateWidth, Layout::brandY + 30), kOptoRed, 2.0f * panel.scale());
         spacedText(dl, Layout::brandX, Layout::brandY + 38, 13.0f, kOptoInk, "MC-2 OPTICAL", -1, 0.12f);
-        spacedText(dl, centre, top + 8, 20.0f, kOptoInk, "OPTO 2A", 0, 0.10f);
+        spacedText(dl, centre, top + 6, 20.0f, kOptoInk, "OPTO 2A", 0, 0.10f);
 
         optoModeSwitch(dl, Layout::switchX, Layout::switchY);
         optoKnob(dl, "opto_gain", P_OPTO_GAIN, Layout::gainX, Layout::dialY, Layout::dialRadius, "GAIN");
