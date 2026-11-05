@@ -25,22 +25,29 @@ inline int choiceIndex(float hostValue, int count) noexcept
     return std::clamp(static_cast<int>(std::round(hostValue)), 0, count - 1);
 }
 
+// OPTO 2A, laid out on the 1200 x 480 canvas at the readability floor (owner direction 2026-11-05: legends 16 px,
+// values 17 px, the hero legends 20 and the nameplate 24, design px = screen px at the minimum window). Canvas
+// coordinates; text y is the top of the text.
 struct OptoFaceplateLayout
 {
     static constexpr float left = 0.0f;
-    static constexpr float right = 1120.0f;
-    static constexpr float top = 344.0f;
-    static constexpr float bottom = 654.0f;
+    static constexpr float right = 1200.0f;
+    static constexpr float top = 90.0f;        // below the mode row (86)
+    static constexpr float bottom = 476.0f;
+    static constexpr float ear = 44.0f;        // each rack ear
+    static constexpr float dialY = 280.0f;     // GAIN and PEAK REDUCTION, their centres
+    static constexpr float dialRadius = 54.0f;
+    static constexpr float gainX = 330.0f;
+    static constexpr float peakX = 870.0f;
+    static constexpr float meterX = 440.0f, meterY = 128.0f, meterW = 320.0f, meterH = 190.0f;   // the VU
+    static constexpr float meterSwitchY = 360.0f;   // GR / +10 / +4, their text
+    static constexpr float switchX = 150.0f, switchY = 280.0f;   // LIMIT / COMPRESS, the toggle's pivot, level with the dials
+    static constexpr float trimX = 1062.0f, scHpY = 200.0f, mixY = 330.0f, trimRadius = 17.0f;   // set screws
+    static constexpr float brandX = 72.0f, brandY = 140.0f;   // LEVELING AMPLIFIER
 };
 
-inline constexpr float optoFaceplateAspect() noexcept
-{
-    return (OptoFaceplateLayout::right - OptoFaceplateLayout::left)
-        / (OptoFaceplateLayout::bottom - OptoFaceplateLayout::top);
-}
-
-// The VCA face shares the rack-height canvas with the Opto and FET faces
-// (1120 x 310). The reference VCA compressor's own ~2.5:1 proportions were tried on the tall
+// The VCA face shares the rack-height canvas with the FET face (1120 x 310; the Opto face had it too until it was
+// laid out on the 1200 x 480 canvas). The reference VCA compressor's own ~2.5:1 proportions were tried on the tall
 // canvas (2026-09-01) and abandoned: the AU wrapper's resize path leaves the
 // GL view at half size / the host keeps the old window (#240), so a mode
 // whose canvas differs from the opening size shows up shrunken in Logic.
@@ -673,6 +680,7 @@ public:
         fontSet = duskdaf::loadCrispFontSet(kFontSizes, 10, getScaleFactor());
         labelFont = fontSet.primary();
         panel.setFontSet(fontSet);
+        panel.setValueBubbleTextSize(17.0f);   // the readability floor's value size
         vcaLastScHp = hostValueForPlain(P_SC_HP, kVcaPullScFirstHz);
         scanUserPresets();
     }
@@ -816,8 +824,7 @@ protected:
         const bool drawerOpen = showSettings && !modalOpen;
         if (drawerOpen)
             ImGui::BeginDisabled();
-        beginLegacyFace(scale, origin);
-        drawModePanel(dl);
+        drawModePanel(dl, scale, origin);
         panel.begin(scale, origin, labelFont, this);
         if (drawerOpen)
             ImGui::EndDisabled();
@@ -1822,28 +1829,34 @@ private:
         return multicompp::ui_detail::fetSloAttackTypedHost(text, host);
     }
 
-    void drawModePanel(ImDrawList* dl)
+    // The face of the current mode. OPTO is laid out on the canvas itself (scale and origin are the canvas
+    // transform, as the caller left it); the other faces are still drawn on the face canvas they were authored on
+    // (beginLegacyFace) until each is laid out at the readability floor.
+    void drawModePanel(ImDrawList* dl, float scale, ImVec2 origin)
     {
         const int mode = multicompp::ui_detail::choiceIndex(value(P_MODE), 8);
-        drawSection(dl, kModeCanvasTop, kModeCanvasBottom - 8, "");
         if (mode != facedMode)
         {
             facedMode = mode;
             resetModernFaces();
         }
+        const auto legacyFace = [&] {
+            beginLegacyFace(scale, origin);
+            drawSection(dl, kModeCanvasTop, kModeCanvasBottom - 8, "");
+        };
         // Every face carries its own gain-reduction metering: the hardware
         // faces' analogue meters, Digital's VU and Multiband's band meters.
         // Deliberately exhaustive: adding a ninth mode must force a UI decision.
         switch (mode)
         {
             case 0: drawOpto(dl); break;
-            case 1: drawFet(dl, false); break;
-            case 2: drawVca(dl); break;
-            case 3: drawBus(dl); break;
-            case 4: drawFet(dl, true); break;
-            case 5: drawStudioVca(dl); break;
-            case 6: drawDigital(dl); break;
-            case 7: drawMultiband(dl); break;
+            case 1: legacyFace(); drawFet(dl, false); break;
+            case 2: legacyFace(); drawVca(dl); break;
+            case 3: legacyFace(); drawBus(dl); break;
+            case 4: legacyFace(); drawFet(dl, true); break;
+            case 5: legacyFace(); drawStudioVca(dl); break;
+            case 6: legacyFace(); drawDigital(dl); break;
+            case 7: legacyFace(); drawMultiband(dl); break;
         }
     }
 
@@ -1917,7 +1930,7 @@ private:
         dl->AddRectFilled(panel.P(left, top), panel.P(right, bottom),
                           OptoTheme::rackFrame, 3.0f * panel.scale());
 
-        constexpr float earWidth = 46.0f;
+        constexpr float earWidth = Layout::ear;
         const float faceLeft = left + earWidth;
         const float faceRight = right - earWidth;
         dl->AddRectFilled(panel.P(left + 3, top + 3), panel.P(faceLeft, bottom - 3),
@@ -1973,31 +1986,41 @@ private:
                         OptoTheme::rackSlotHighlight, panel.scale());
         }
 
-        for (const ImVec2 screw : {ImVec2(faceLeft + 28, top + 20),
-                                   ImVec2(faceRight - 28, top + 20),
-                                   ImVec2(faceLeft + 28, bottom - 20),
-                                   ImVec2(560.0f, bottom - 20),
-                                   ImVec2(faceRight - 28, bottom - 20)})
-            drawOptoScrew(dl, screw.x, screw.y, 7.0f);
+        const float centre = 0.5f * (left + right);
+        for (const ImVec2 screw : {ImVec2(faceLeft + 28, top + 18),
+                                   ImVec2(faceRight - 28, top + 18),
+                                   ImVec2(faceLeft + 28, bottom - 18),
+                                   ImVec2(centre, bottom - 18),
+                                   ImVec2(faceRight - 28, bottom - 18)})
+            drawOptoScrew(dl, screw.x, screw.y, 8.0f);
 
-        panel.text(dl, 127, top + 57, 15.0f, kOptoRed,
-                   "LEVELING AMPLIFIER", -1, true);
-        dl->AddLine(panel.P(127, top + 79), panel.P(325, top + 79),
-                    kOptoRed, 1.5f * panel.scale());
-        spacedText(dl, 127, top + 86, 8.5f, kOptoInk, "MC-2 OPTICAL", -1, 0.12f);
-        spacedText(dl, 560, top + 25, 13.0f, kOptoInk, "OPTO 2A", 0, 0.10f);
+        // The nameplate (24) with its rule, the series under it (13, silk), the model badge at the top (20).
+        constexpr const char* nameplate = "LEVELING AMPLIFIER";
+        panel.text(dl, Layout::brandX, Layout::brandY, 24.0f, kOptoRed, nameplate, -1, true);
+        const float nameplateSize = 24.0f * panel.scale();
+        const float nameplateWidth = panel.pickFont(nameplateSize)->CalcTextSizeA(
+            nameplateSize, FLT_MAX, 0.0f, nameplate).x / panel.scale();
+        dl->AddLine(panel.P(Layout::brandX, Layout::brandY + 30),
+                    panel.P(Layout::brandX + nameplateWidth, Layout::brandY + 30), kOptoRed, 2.0f * panel.scale());
+        spacedText(dl, Layout::brandX, Layout::brandY + 38, 13.0f, kOptoInk, "MC-2 OPTICAL", -1, 0.12f);
+        spacedText(dl, centre, top + 8, 20.0f, kOptoInk, "OPTO 2A", 0, 0.10f);
 
-        optoModeSwitch(dl, 119, top + 210.0f);
-        optoKnob(dl, "opto_gain", P_OPTO_GAIN, 322, top + 180.0f, 39.0f, "GAIN");
-        drawOptoMeter(dl, 441, top + 61.0f, 238, 141,
-                      multicompp::ui_detail::optoMeterDisplayValue(needleGainReduction()));
-        optoKnob(dl, "opto_peak", P_OPTO_PEAK, 794, top + 180.0f, 39.0f,
-                 "PEAK REDUCTION");
-        optoKnob(dl, "opto_sc_hp", P_SC_HP, 989, top + 114.0f, 13.0f,
+        optoModeSwitch(dl, Layout::switchX, Layout::switchY);
+        optoKnob(dl, "opto_gain", P_OPTO_GAIN, Layout::gainX, Layout::dialY, Layout::dialRadius, "GAIN");
+        multicompp::ui_detail::VintageMeterScale meterScale;
+        meterScale.detail = Layout::meterW / 238.0f;
+        meterScale.tickLabel = 14.0f;
+        meterScale.legend = 20.0f;
+        meterScale.sublabel = 13.0f;
+        meterScale.percent = 13.0f;
+        meterScale.vu = 16.0f;
+        drawOptoMeter(dl, Layout::meterX, Layout::meterY, Layout::meterW, Layout::meterH,
+                      multicompp::ui_detail::optoMeterDisplayValue(needleGainReduction()), meterScale);
+        optoKnob(dl, "opto_peak", P_OPTO_PEAK, Layout::peakX, Layout::dialY, Layout::dialRadius, "PEAK REDUCTION");
+        optoKnob(dl, "opto_sc_hp", P_SC_HP, Layout::trimX, Layout::scHpY, Layout::trimRadius,
                  "SC HP", false, "%.0f", " Hz");
-        optoKnob(dl, "opto_mix", P_MIX, 989, top + 222.0f, 13.0f,
-                 "MIX", false);
-        drawOptoMeterSwitch(dl, 560, top + 238);
+        optoKnob(dl, "opto_mix", P_MIX, Layout::trimX, Layout::mixY, Layout::trimRadius, "MIX", false);
+        drawOptoMeterSwitch(dl, Layout::meterX + 0.5f * Layout::meterW, Layout::meterSwitchY);
     }
 
     void drawOptoScrew(ImDrawList* dl, float x, float y, float radius)
@@ -2087,9 +2110,10 @@ private:
                         ImVec2(center.x + slot.x * scaledRadius * 0.63f,
                                center.y + slot.y * scaledRadius * 0.63f),
                         OptoTheme::setScrewSlot, 2.4f * panel.scale());
-            panel.text(dl, x, y - 40.0f, 9.0f, kOptoInk, label, 0, true);
-            panel.text(dl, x - 31.0f, y - 4.0f, 12.0f, kOptoInk, "-", 0, true);
-            panel.text(dl, x + 31.0f, y - 4.0f, 12.0f, kOptoInk, "+", 0, true);
+            // Legend (16) above, the travel marks (16) either side, and SC HP's cutoff (17) under it.
+            panel.text(dl, x, y - radius * 1.22f - 26.0f, 16.0f, kOptoInk, label, 0, true);
+            panel.text(dl, x - radius - 27.0f, y - 9.0f, 16.0f, kOptoInk, "-", 0, true);
+            panel.text(dl, x + radius + 27.0f, y - 9.0f, 16.0f, kOptoInk, "+", 0, true);
             if (p == P_SC_HP)
             {
                 char cutoff[20];
@@ -2098,27 +2122,29 @@ private:
                 else
                     std::snprintf(cutoff, sizeof(cutoff), "%.0f Hz",
                                   static_cast<double>(plain));
-                panel.text(dl, x, y + 28.0f, 7.5f, kOptoInk, cutoff, 0, true);
+                panel.text(dl, x, y + radius * 1.22f + 8.0f, 17.0f, kOptoInk, cutoff, 0, true);
             }
             optoKnobSplitter.Merge(dl);
             return;
         }
 
+        // The dial's numerals at the legend size (16): the end stops and every other ten, every mark kept (the
+        // readability floor's rule for a dial that cannot carry every numeral at 16).
         constexpr std::array<const char*, 11> scaleLabels{{
-            "0", "10", "20", "30", "40", "50",
-            "60", "70", "80", "90", "100"}};
+            "0", nullptr, "20", nullptr, "40", nullptr,
+            "60", nullptr, "80", nullptr, "100"}};
         // Three tiers of mark, so the styles differ only by how far in they
         // start; the placement comes from the shared ring either way.
         duskdaf::KnobRingStyle ring;
-        ring.markOuter = 12.0f;   ring.minorOuter = 12.0f;
-        ring.markInner = 4.0f;    ring.markThickness = 1.45f;
-        ring.minorThickness = 0.75f;
+        ring.markOuter = 15.0f;   ring.minorOuter = 15.0f;
+        ring.markInner = 5.0f;    ring.markThickness = 1.8f;
+        ring.minorThickness = 1.0f;
         ring.markColor = kOptoInk;
-        ring.labelOffset = 23.0f; ring.labelNudgeY = -4.0f; ring.labelSize = 7.8f;
+        ring.labelOffset = 31.0f; ring.labelNudgeY = -9.0f; ring.labelSize = 16.0f;
         ring.labelColor = kOptoInk;
         ring.labelCentred = true;
-        duskdaf::KnobRingStyle medium = ring;   medium.minorInner = 6.0f;
-        duskdaf::KnobRingStyle fine = ring;     fine.minorInner = 8.0f;
+        duskdaf::KnobRingStyle medium = ring;   medium.minorInner = 8.0f;
+        duskdaf::KnobRingStyle fine = ring;     fine.minorInner = 10.0f;
 
         for (int tick = 0; tick <= 50; ++tick)
         {
@@ -2178,15 +2204,15 @@ private:
                     OptoTheme::knobBarEdge, 1.5f * panel.scale());
         dl->AddLine(ridge(0.48f, 0.0f), ridge(0.93f, 0.0f),
                     OptoTheme::knobPointer, 1.8f * panel.scale());
-        panel.text(dl, x, y + radius + 37.0f, 10.5f,
+        panel.text(dl, x, y + radius + 46.0f, 20.0f,
                    kOptoInk, label, 0, true);
         optoKnobSplitter.Merge(dl);
     }
 
     void optoModeSwitch(ImDrawList* dl, float x, float y)
     {
-        const ImVec2 p0 = panel.P(x - 48.0f, y - 77.0f);
-        const ImVec2 p1 = panel.P(x + 48.0f, y + 74.0f);
+        const ImVec2 p0 = panel.P(x - 52.0f, y - 70.0f);
+        const ImVec2 p1 = panel.P(x + 52.0f, y + 70.0f);
         ImGui::SetCursorScreenPos(p0);
         ImGui::InvisibleButton("##opto_comp_limit", ImVec2(p1.x - p0.x, p1.y - p0.y));
         if (ImGui::IsItemClicked())
@@ -2195,8 +2221,8 @@ private:
         const bool limit = multicompp::ui_detail::choiceIndex(
             values[P_OPTO_LIMIT], 2) == 1;
 
-        panel.text(dl, x, y - 40, 9.5f, kOptoInk, multicompp::ui_detail::optoModeLabel(1), 0, limit);
-        panel.text(dl, x, y + 30, 9.5f, kOptoInk, multicompp::ui_detail::optoModeLabel(0), 0, !limit);
+        panel.text(dl, x, y - 66, 16.0f, kOptoInk, multicompp::ui_detail::optoModeLabel(1), 0, limit);
+        panel.text(dl, x, y + 48, 16.0f, kOptoInk, multicompp::ui_detail::optoModeLabel(0), 0, !limit);
 
         const ImVec2 base = panel.P(x, y);
         std::array<ImVec2, 6> nut{};
@@ -2205,8 +2231,8 @@ private:
             const float angle = kUiPi / 6.0f + static_cast<float>(point)
                 * kUiPi / 3.0f;
             nut[static_cast<size_t>(point)] = ImVec2(
-                base.x + std::cos(angle) * 13.0f * panel.scale(),
-                base.y + std::sin(angle) * 13.0f * panel.scale());
+                base.x + std::cos(angle) * 17.0f * panel.scale(),
+                base.y + std::sin(angle) * 17.0f * panel.scale());
         }
         std::array<ImVec2, 6> nutShadow = nut;
         for (auto& point : nutShadow)
@@ -2216,27 +2242,28 @@ private:
         }
         dl->AddConvexPolyFilled(nutShadow.data(), 6, OptoTheme::toggleNutShadow);
         dl->AddConvexPolyFilled(nut.data(), 6, OptoTheme::toggleNut);
-        dl->AddCircleFilled(base, 8.5f * panel.scale(),
+        dl->AddCircleFilled(base, 11.0f * panel.scale(),
                             OptoTheme::toggleBushing, 32);
-        dl->AddCircle(base, 8.5f * panel.scale(),
+        dl->AddCircle(base, 11.0f * panel.scale(),
                       OptoTheme::toggleBushingRim, 32, panel.scale());
-        const float leverY = y + (limit ? -16.0f : 16.0f);
-        const float leverX = x + (limit ? -3.0f : 4.0f);
-        dl->AddLine(panel.P(x + 2.0f, y + 3.0f),
-                    panel.P(leverX + 2.0f, leverY + 4.0f),
-                    OptoTheme::toggleLeverShadow, 6.0f * panel.scale());
+        const float leverY = y + (limit ? -22.0f : 22.0f);
+        const float leverX = x + (limit ? -4.0f : 5.0f);
+        dl->AddLine(panel.P(x + 2.5f, y + 4.0f),
+                    panel.P(leverX + 2.5f, leverY + 5.0f),
+                    OptoTheme::toggleLeverShadow, 8.0f * panel.scale());
         dl->AddLine(base, panel.P(leverX, leverY),
-                    OptoTheme::toggleLever, 4.5f * panel.scale());
-        dl->AddLine(panel.P(x - 1.5f, y - 1.5f),
-                    panel.P(leverX - 1.5f, leverY - 1.5f),
-                    OptoTheme::toggleLeverHighlight, 2.0f * panel.scale());
-        dl->AddCircleFilled(panel.P(leverX, leverY), 4.5f * panel.scale(),
+                    OptoTheme::toggleLever, 6.0f * panel.scale());
+        dl->AddLine(panel.P(x - 2.0f, y - 2.0f),
+                    panel.P(leverX - 2.0f, leverY - 2.0f),
+                    OptoTheme::toggleLeverHighlight, 2.5f * panel.scale());
+        dl->AddCircleFilled(panel.P(leverX, leverY), 6.0f * panel.scale(),
                             OptoTheme::toggleTip, 28);
-        dl->AddCircle(panel.P(leverX, leverY), 4.5f * panel.scale(),
+        dl->AddCircle(panel.P(leverX, leverY), 6.0f * panel.scale(),
                       OptoTheme::toggleTipEdge, 28, 1.0f * panel.scale());
     }
 
-    void drawOptoMeter(ImDrawList* dl, float x, float y, float w, float h, float gr)
+    void drawOptoMeter(ImDrawList* dl, float x, float y, float w, float h, float gr,
+                       const multicompp::ui_detail::VintageMeterScale& scale = {})
     {
         const bool opto = multicompp::ui_detail::choiceIndex(values[P_MODE], 8) == 0;
         const int choice = multicompp::ui_detail::vintageMeterChoice(values[opto ? P_OPTO_METER : P_FET_METER]);
@@ -2247,26 +2274,26 @@ private:
         const char* label = !powered ? "OFF" : choice == 0 ? "GAIN REDUCTION"
                           : choice == 2 ? "OUTPUT +4" : opto ? "OUTPUT +10" : "OUTPUT +8";
         multicompp::ui_detail::drawVintageMeter(panel, dl, x, y, w, h,
-            multicompp::ui_detail::vintageMeterDb(opto, choice, gr, output), opto, label, powered);
+            multicompp::ui_detail::vintageMeterDb(opto, choice, gr, output), opto, label, powered, scale);
     }
 
     void drawOptoMeterSwitch(ImDrawList* dl, float x, float y)
     {
         const int selected = multicompp::ui_detail::vintageMeterChoice(values[P_OPTO_METER]);
         constexpr std::array<const char*, 3> labels{{"GR", "+10", "+4"}};
-        panel.text(dl, x, y - 19, 8.0f, kOptoInk, "METER", 0, true);
+        panel.text(dl, x, y - 24, 16.0f, kOptoInk, "METER", 0, true);
         for (int i = 0; i < 3; ++i)
         {
-            const float cx = x + (i - 1) * 36.0f;
-            ImGui::SetCursorScreenPos(panel.P(cx - 16, y - 4));
+            const float cx = x + (i - 1) * 64.0f;
+            ImGui::SetCursorScreenPos(panel.P(cx - 26, y - 4));
             ImGui::PushID(i);
-            ImGui::InvisibleButton("##opto_meter", ImVec2(32 * panel.scale(), 24 * panel.scale()));
+            ImGui::InvisibleButton("##opto_meter", ImVec2(52 * panel.scale(), 30 * panel.scale()));
             // The lit button again writes nothing (no undo step, no automation point).
             if (ImGui::IsItemClicked() && selected != i) setValue(P_OPTO_METER, static_cast<float>(i));
             ImGui::PopID();
-            panel.text(dl, cx, y, 9.0f, kOptoInk, labels[static_cast<size_t>(i)], 0, selected == i);
+            panel.text(dl, cx, y, 16.0f, kOptoInk, labels[static_cast<size_t>(i)], 0, selected == i);
             if (selected == i)
-                dl->AddLine(panel.P(cx - 10, y + 14), panel.P(cx + 10, y + 14), kOptoRed, 1.5f * panel.scale());
+                dl->AddLine(panel.P(cx - 16, y + 22), panel.P(cx + 16, y + 22), kOptoRed, 2.0f * panel.scale());
         }
     }
 

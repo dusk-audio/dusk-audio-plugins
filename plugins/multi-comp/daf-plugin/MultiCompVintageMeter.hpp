@@ -55,16 +55,38 @@ inline duskdaf::VuStyle vintageVuStyle(bool opto) noexcept
     return style;
 }
 
+// A meter drawn larger than the faces' 238 x 141 (the Opto face at the readability floor): its geometry follows
+// `detail` (bezel, insets, ticks, needle) and its text the sizes given. The defaults draw the faces' meter as it was.
+struct VintageMeterScale
+{
+    float detail = 1.0f;
+    float tickLabel = 8.0f;   // the dB scale
+    float legend = 13.0f;     // DUSK
+    float sublabel = 6.8f;    // GAIN REDUCTION, OUTPUT +10, ...
+    float percent = 6.5f;     // the second printed scale
+    float vu = 9.0f;          // the VU marks in the corners
+};
+
 inline void drawVintageMeter(duskdaf::DuskPanel& panel, ImDrawList* dl,
                                           float x, float y, float w, float h,
                                           float db, bool opto,
-                                          const char* sublabel = "GAIN REDUCTION", bool powered = true)
+                                          const char* sublabel = "GAIN REDUCTION", bool powered = true,
+                                          const VintageMeterScale& scale = VintageMeterScale())
 {
     const float s = panel.scale();
-    dl->AddRectFilled(panel.P(x + 3, y + 4), panel.P(x + w + 3, y + h + 4),
-                       IM_COL32(0, 0, 0, 95), 2 * s);
-    const float frame = opto ? 10.0f : 3.0f;
+    const float d = scale.detail;
+    dl->AddRectFilled(panel.P(x + 3 * d, y + 4 * d), panel.P(x + w + 3 * d, y + h + 4 * d),
+                       IM_COL32(0, 0, 0, 95), 2 * s * d);
+    const float frame = (opto ? 10.0f : 3.0f) * d;
     auto style = vintageVuStyle(opto);
+    style.pivotBelowFace *= d;
+    style.radiusTopInset *= d;
+    style.majorTickLength *= d;
+    style.minorTickLength *= d;
+    style.needleWidth *= d;
+    style.tickLabelSize = scale.tickLabel;
+    style.legendSize = scale.legend;
+    style.sublabelSize = scale.sublabel;
     if (!powered)
     {
         style.faceBase = IM_COL32(167, 155, 113, 255);
@@ -86,7 +108,7 @@ inline void drawVintageMeter(duskdaf::DuskPanel& panel, ImDrawList* dl,
     duskdaf::drawVuMeter(panel, dl, x0, y0, x1, y1, db, needle, cfg,
                          IM_COL32(140, 141, 123, 150), style);
 
-    const float fx0 = x0 + 7, fx1 = x1 - 7, fy0 = y0 + 7, fy1 = y1 - 7;
+    const float fx0 = x0 + 7 * d, fx1 = x1 - 7 * d, fy0 = y0 + 7 * d, fy1 = y1 - 7 * d;
     const float cx = (fx0 + fx1) * 0.5f, py = fy1 + style.pivotBelowFace;
     const float half = style.sweepHalfAngleDeg * 0.0174532925199433f;
     const float radius = std::min(py - fy0 - style.radiusTopInset,
@@ -99,11 +121,11 @@ inline void drawVintageMeter(duskdaf::DuskPanel& panel, ImDrawList* dl,
         const float angle = vintageVuNeedleAngle(db);
         char label[8]; std::snprintf(label, sizeof(label), "%d", percent);
         panel.text(dl, cx + std::sin(angle) * radius * 0.71f,
-                    py - std::cos(angle) * radius * 0.71f - 4,
-                    6.5f, style.ink, label, 0);
+                    py - std::cos(angle) * radius * 0.71f - 4 * scale.percent / 6.5f,
+                    scale.percent, style.ink, label, 0);
     }
-    panel.text(dl, fx0 + 7, fy0 + 8, 9.0f, style.ink, "VU", -1);
-    panel.text(dl, fx1 - 7, fy0 + 8, 9.0f, style.hot, "VU", 1);
+    panel.text(dl, fx0 + 7 * d, fy0 + 8 * d, scale.vu, style.ink, "VU", -1);
+    panel.text(dl, fx1 - 7 * d, fy0 + 8 * d, scale.vu, style.hot, "VU", 1);
     dl->PopClipRect();
 }
 }

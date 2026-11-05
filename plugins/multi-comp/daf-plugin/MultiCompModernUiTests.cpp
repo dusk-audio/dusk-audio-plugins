@@ -131,14 +131,19 @@ struct Host
                 [](const multicompp::Param& p) { return multicompp::hostDefault(p); },
                 [](const multicompp::BandParam& p, int) { return multicompp::hostDefault(p); });
         ui.parameter(pid(ParamId::Mode), static_cast<float>(mode));
+        faceMode = mode;
         frame(); frame();
     }
-    // The pointer at (x, y) in a face's own 1120 x 380 canvas, where the controls below were measured: each face
-    // is still drawn there and scaled into the face area of the current canvas (MultiCompUI::beginLegacyFace).
-    // A negative position stays off the window.
+    // The face the pointer positions below belong to (the mode the host was opened in, unless a test says). A face
+    // laid out on the 1200 x 480 canvas (OPTO) takes canvas coordinates as they are.
+    int faceMode = 0;
+    static bool canvasFace(int mode) noexcept { return mode == 0; }
+    // The pointer at (x, y) on the face of faceMode: a face still authored on its own 1120 x 380 canvas, where its
+    // controls below were measured, is drawn there and scaled into the face area of the current canvas
+    // (MultiCompUI::beginLegacyFace). A negative position stays off the window.
     void frame(float x = -100, float y = -100, bool down = false)
     {
-        if (x >= 0.0f && y >= 0.0f)
+        if (x >= 0.0f && y >= 0.0f && !canvasFace(faceMode))
         {
             x *= DAF::kLegacyFaceScale;
             y = DAF::kLegacyFaceY + (y - DAF::kLegacyFaceTopY) * DAF::kLegacyFaceScale;
@@ -228,7 +233,8 @@ constexpr std::array<Control, 19> controls{{
 // hold's upward drag writes. FET's Mix trim is one of four faces' controls for the same parameter: Opto, VCA and
 // Studio VCA draw their own elsewhere, so a gesture must follow the control, not the parameter.
 constexpr std::array<Control, 8> hardwareControls{{
-    {0, pid(ParamId::OptoPeakReduction), 794, 250}, {1, pid(ParamId::FetInput), 177, 227},
+    {0, pid(ParamId::OptoPeakReduction), multicompp::ui_detail::OptoFaceplateLayout::peakX,
+     multicompp::ui_detail::OptoFaceplateLayout::dialY}, {1, pid(ParamId::FetInput), 177, 227},
     {2, pid(ParamId::VcaThreshold), 171, 204}, {3, pid(ParamId::BusThreshold), 409, 175},
     {4, pid(ParamId::FetAttack), 559, 164}, {4, pid(ParamId::FetBlueHeadroom), 955, 322},
     {5, pid(ParamId::StudioVcaRatio), 230, 155}, {1, pid(ParamId::Mix), 1010, 322}

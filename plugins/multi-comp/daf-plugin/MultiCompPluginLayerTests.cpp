@@ -851,7 +851,7 @@ void testFetFaceplateContract()
     // FET BLUE (mode 4) runs on FET BLACK's face with its own ratio buttons (one or two lit), side-chain filter and
     // Headroom, and no separate meter.
     namespace ud = multicompp::ui_detail;
-    const bool blueSharesFace = source.find("case 4: drawFet(dl, true)") != std::string::npos
+    const bool blueSharesFace = source.find("case 4: legacyFace(); drawFet(dl, true)") != std::string::npos
         && source.find("drawFetBlueRatioButtons(dl") != std::string::npos
         && source.find("\"fet_blue_hr\"") != std::string::npos
         && source.find("kModeCanvasTop + 42, 48, 300") == std::string::npos
@@ -1025,19 +1025,24 @@ void testOptoFaceplateContract()
 {
     using Layout = multicompp::ui_detail::OptoFaceplateLayout;
     constexpr float referenceAspect = 1120.0f / 310.0f;
-    const float aspect = multicompp::ui_detail::optoFaceplateAspect();
-    require(Layout::left == 0.0f && Layout::right == 1120.0f
-                && Layout::top == 344.0f && Layout::bottom == 654.0f
-                && std::abs(aspect - referenceAspect) < 0.01f,
-            "Opto faceplate fills the complete mode canvas below the toolbar");
+    // OPTO is laid out on the 1200 x 480 canvas (2026-11-05): its faceplate spans the width below the mode row and
+    // keeps every control inside it, the dials clear of the meter and the trims.
+    require(Layout::left == 0.0f && Layout::right == multicompp::ui_detail::kDesignWidth
+                && Layout::top >= 86.0f && Layout::bottom <= multicompp::ui_detail::kDesignHeight
+                && Layout::meterX + Layout::meterW < Layout::peakX - Layout::dialRadius
+                && Layout::gainX + Layout::dialRadius < Layout::meterX
+                && Layout::peakX + Layout::dialRadius < Layout::trimX - Layout::trimRadius
+                && Layout::left + Layout::ear < Layout::switchX && Layout::trimX < Layout::right - Layout::ear,
+            "Opto faceplate fills the canvas below the mode row and keeps its controls apart");
     // One canvas for every mode (1200 x 480 since 2026-11-05). A face not yet laid out for it is drawn on the face
     // canvas it was authored on, which the faceplates fill below the 48 px header and the mode toolbar (mode canvas
     // 322..654 shown at 48..380), and the Digital and Multiband faces fit in visible-canvas y.
     {
         using Modern = multicompp::ui_detail::ModernFaceLayout;
+        using Vca = multicompp::ui_detail::VcaFaceplateLayout;
         require(multicompp::ui_detail::kDesignWidth == 1200.0f && multicompp::ui_detail::kDesignHeight == 480.0f
                     && multicompp::ui_detail::kFaceCanvasHeight == 380.0f
-                    && multicompp::ui_detail::kFaceCanvasHeight == 48.0f + (Layout::bottom - 322.0f),
+                    && multicompp::ui_detail::kFaceCanvasHeight == 48.0f + (Vca::bottom - 322.0f),
                 "every mode shares the rack-height canvas the faceplates fill");
         require(Modern::top >= 70.0f && Modern::bottom <= multicompp::ui_detail::kFaceCanvasHeight - 8.0f
                     && Modern::top < Modern::titleY && Modern::titleY < Modern::meterTitleY
@@ -1168,10 +1173,11 @@ void testOptoFaceplateContract()
                 && multicompp::ui_detail::optoMeterReadoutAmount(1.0f) == 0.0f
                 && multicompp::ui_detail::optoMeterReadoutAmount(-150.0f) == 99.9f,
             "Opto GR readout is positive, bounded, and never displays negative zero");
-    std::printf("opto faceplate: aspect %.6f reference %.6f; meter scale=voltage VU "
+    std::printf("opto faceplate: %.0f x %.0f on the canvas; meter scale=voltage VU "
                 "with red overload marks; meter angles "
                 "0/10/20 dB %.6f/%.6f/%.6f rad; modes %s/%s\n",
-                aspect, referenceAspect, zero, ten, twenty,
+                static_cast<double>(Layout::right - Layout::left), static_cast<double>(Layout::bottom - Layout::top),
+                zero, ten, twenty,
                 multicompp::ui_detail::optoModeLabel(0.0f),
                 multicompp::ui_detail::optoModeLabel(1.0f));
 }

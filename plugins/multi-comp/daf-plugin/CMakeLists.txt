@@ -227,5 +227,5 @@ endif()
 # opto_peak_reduction is 0 and the Opto cell does not compress, so a run that
 # only feeds noise cannot tell working meters from dead ones.
 dusk_daf_add_output_param_tests(multi-comp-2 "Opto Peak Reduction=0.8")
-dusk_daf_add_ui_drag_test(multi-comp-2 307 296)   # Opto GAIN knob (default face), design coordinates of the 1200 x 480 canvas
+dusk_daf_add_ui_drag_test(multi-comp-2 330 270)   # Opto GAIN knob (default face), design coordinates of the 1200 x 480 canvas
 dusk_daf_add_resize_test(multi-comp-2)

@@ -238,10 +238,14 @@ public:
     // list. A modal/overlay must therefore stop the knob being hovered in the first
     // place — submit a full-window InvisibleButton BEFORE the controls so it wins
     // ImGui's hover race (see FourKEQUI's "modalblock").
+    // The value bubble's text size in design pixels (12 unless a plugin asks for more: Multi-Comp 2 sets its
+    // readability floor, 17).
+    void setValueBubbleTextSize(float size) noexcept { bubbleTextSize = size; }
+
     void valueBubble(float cx, float cy, float r, const char* txt) const
     {
         ImDrawList* dl = ImGui::GetForegroundDrawList();
-        const float fs = 12.0f * s;
+        const float fs = bubbleTextSize * s;
         ImFont* font = pickFont(fs);
         const ImVec2 ts = font->CalcTextSizeA(fs, FLT_MAX, 0.0f, txt);
         const float padX = 7.0f * s, padY = 4.0f * s, gap = 7.0f * s, tail = 5.0f * s;
@@ -920,6 +924,7 @@ private:
     Palette pal;
     CrispFontSet fontSet;  // multi-size faces; pickFont() chooses nearest
     float dragValue = 0.0f;
+    float bubbleTextSize = 12.0f;  // valueBubble(), design pixels (setValueBubbleTextSize)
     float gripStartScale_ = 1.0f;  // resizeGrip(): scale when the drag started
     uint32_t gripReqW_ = 0, gripReqH_ = 0;  // resizeGrip(): last size asked of the host
 
