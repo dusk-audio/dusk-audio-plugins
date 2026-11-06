@@ -1039,20 +1039,39 @@ void testOptoFaceplateContract()
                 && Layout::peakX + Layout::dialRadius < Layout::trimX - Layout::trimRadius
                 && Layout::left + Layout::ear < Layout::switchX && Layout::trimX < Layout::right - Layout::ear,
             "Opto faceplate fills the canvas below the mode row and keeps its controls apart");
-    // One canvas for every mode (1120 x 380, owner 2026-11-05). A face not yet laid out for it is drawn on the face
-    // canvas it was authored on, which its faceplate fills below the 48 px header and the mode toolbar (mode canvas
-    // 322..654 shown at 48..380), and the Digital and Multiband faces fit in visible-canvas y.
+    // One canvas for every mode (1120 x 380, owner 2026-11-05). The Digital and Multiband faces stack their title row,
+    // meters, knob rows and foot line inside the rack below the mode row (2026-11-06), each knob's name (16) and value
+    // (17) clear of the rows next to it: a row's values at least 12 px above the next row's names, where 4 px read as
+    // one value-and-name pair.
     {
         using Modern = multicompp::ui_detail::ModernFaceLayout;
-        require(multicompp::ui_detail::kDesignWidth == 1120.0f && multicompp::ui_detail::kDesignHeight == 380.0f
-                    && multicompp::ui_detail::kFaceCanvasHeight == 380.0f,
-                "every mode shares the rack-height canvas the faceplates fill");
-        require(Modern::top >= 70.0f && Modern::bottom <= multicompp::ui_detail::kFaceCanvasHeight - 8.0f
-                    && Modern::top < Modern::titleY && Modern::titleY < Modern::meterTitleY
-                    && Modern::meterTitleY < Modern::meterTop && Modern::meterTop < Modern::meterBottom
-                    && Modern::meterBottom < Modern::meterReadoutY && Modern::meterReadoutY < Modern::descriptionY
-                    && Modern::descriptionY < Modern::bottom,
-                "the Digital and Multiband faces fit the rack-height canvas below the mode toolbar");
+        require(multicompp::ui_detail::kDesignWidth == 1120.0f && multicompp::ui_detail::kDesignHeight == 380.0f,
+                "every mode shares the 1120 x 380 canvas");
+        constexpr float dR = Modern::digitalKnobRadius, mR = Modern::multibandKnobRadius;
+        require(Modern::top >= multicompp::ui_detail::kFaceAreaTop && Modern::bottom <= multicompp::ui_detail::kDesignHeight
+                    && Modern::top < Modern::titleY && Modern::titleY + 16.0f < Modern::ruleY
+                    && Modern::ruleY < Modern::meterTitleY && Modern::meterTitleY + 16.0f < Modern::meterTop
+                    && Modern::meterTop < Modern::meterBottom && Modern::meterBottom < Modern::meterReadoutY
+                    && Modern::meterReadoutY + 17.0f < Modern::descriptionY
+                    && Modern::descriptionY + 13.0f < Modern::bottom
+                    && Modern::ruleY < Modern::nameTop(Modern::digitalRow1Y, dR)
+                    && Modern::valueTop(Modern::digitalRow1Y, dR) + 17.0f + 12.0f
+                           < Modern::nameTop(Modern::digitalRow2Y, dR)
+                    && Modern::valueTop(Modern::digitalRow2Y, dR) + 17.0f < Modern::descriptionY
+                    && Modern::bandTagRuleY < Modern::nameTop(Modern::multibandRow1Y, mR)
+                    && Modern::valueTop(Modern::multibandRow1Y, mR) + 17.0f + 12.0f
+                           < Modern::nameTop(Modern::multibandRow2Y, mR)
+                    && Modern::valueTop(Modern::multibandRow2Y, mR) + 17.0f < Modern::descriptionY
+                    && Modern::enableY1 < Modern::tabY0 && Modern::tabY1 < Modern::bandMeterTop
+                    && Modern::bandMeterBottom < Modern::faderBottom && Modern::faderBottom < Modern::bandLegendY
+                    && Modern::bandLegendY + 16.0f < Modern::descriptionY
+                    && Modern::inputMeterX + Modern::meterW < Modern::vuX0 && Modern::vuX1 < Modern::scHpX
+                    && Modern::scHpX < Modern::digitalDividerX
+                    && Modern::inputMeterX + Modern::meterW < Modern::bandsX0
+                    && Modern::bandsX1 < Modern::multibandDividerX
+                    && Modern::digitalColumnX(4) + dR < Modern::outputMeterX
+                    && Modern::multibandKnobX(1.5f) + mR < Modern::outputMeterX,
+                "the Digital and Multiband faces fit the canvas below the mode row, their rows clear of each other");
     }
     {
         // VCA is laid out on the canvas too (2026-11-06): its faceplate spans the width below the mode row, the

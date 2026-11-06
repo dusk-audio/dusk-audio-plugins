@@ -210,13 +210,46 @@ struct StudioVcaFaceplateLayout
     static constexpr float grX = 838.0f, grY = 234.0f;                          // the gain reduction meter
 };
 
-// Digital and Multiband content bounds in visible-canvas y (0 = the top of the header).
-// The rack shell extends to the canvas edges; its lettering keeps an 8 px bottom margin.
+// The Digital and Multiband faces on the 1120 x 380 canvas at the readability floor (canvas coordinates; a text y is
+// its top). Both carry the title row, the INPUT and OUTPUT meters at the rack's edges and the foot line; Digital puts
+// the gain reduction display, the side-chain high-pass and two rows of knobs between the meters, Multiband the band
+// meters and the selected band's knobs. A knob's name (16) and value (17) clear its ring of ticks (radius + 8).
 struct ModernFaceLayout
 {
-    static constexpr float top = 72.0f, bottom = 372.0f;
-    static constexpr float titleY = 89.0f, descriptionY = 361.0f;
-    static constexpr float meterTitleY = 112.0f, meterTop = 122.0f, meterBottom = 322.0f, meterReadoutY = 337.0f;
+    static constexpr float top = kFaceAreaTop + 1.0f, bottom = kDesignHeight - 2.0f;   // the rack
+    static constexpr float ear = 32.0f;                                                   // its ears
+    static constexpr float titleY = 81.0f, ruleY = 102.0f;          // the name (16), the rule under the title row
+    static constexpr float printX0 = 111.0f, printX1 = 1009.0f;     // MC-2 and the series line (13), the rule's ends
+    static constexpr float descriptionY = 358.0f;                   // the foot line (13)
+    // INPUT and OUTPUT: the title (16), the LEDs and the readout (17)
+    static constexpr float meterTitleY = 106.0f, meterTop = 126.0f, meterBottom = 312.0f, meterReadoutY = 316.0f;
+    static constexpr float inputMeterX = 43.0f, outputMeterX = 1037.0f, meterW = 40.0f;
+    static constexpr float knobRing = 8.0f, knobTextGap = 2.0f;
+    static constexpr float nameTop(float y, float r) noexcept { return y - r - knobRing - knobTextGap - 16.0f; }
+    static constexpr float valueTop(float y, float r) noexcept { return y + r + knobRing + knobTextGap; }
+    // Digital: the display with its caption band, the side-chain high-pass, and the knobs in two rows of five
+    static constexpr float vuX0 = 112.0f, vuX1 = 452.0f, vuTop = 110.0f, vuBottom = 268.0f, captionBottom = 292.0f;
+    static constexpr float grLegendY = 298.0f;                      // GAIN REDUCTION
+    static constexpr float scHpX = 492.0f, scHpTrackTop = 132.0f, scHpTrackBottom = 270.0f;
+    static constexpr float digitalDividerX = 533.0f;
+    static constexpr float digitalKnobRadius = 27.0f, digitalRow1Y = 161.0f, digitalRow2Y = 288.0f;
+    static constexpr float digitalColumnX(int i) noexcept { return 582.0f + 94.0f * static_cast<float>(i); }
+    // Multiband: the enable strip, each band's tab with B and S, its meter and the crossover faders between them
+    static constexpr float bandsX0 = 144.0f, bandsX1 = 600.0f;
+    static constexpr float enableY0 = 108.0f, enableY1 = 134.0f, tabY0 = 138.0f, tabY1 = 164.0f;
+    static constexpr float bandSwitchW = 18.0f, bandSwitchGap = 3.0f;
+    static constexpr float bandMeterTop = 170.0f, bandMeterBottom = 298.0f, faderBottom = 326.0f;
+    static constexpr float bandLegendY = 330.0f;                    // GAIN REDUCTION
+    static constexpr float multibandDividerX = 620.0f;
+    static constexpr float bandTagY = 106.0f, bandTagRuleY = 127.0f;   // LOW BAND (16) and its rule
+    static constexpr float multibandKnobRadius = 22.0f, multibandRow1Y = 180.0f, multibandRow2Y = 294.0f;
+    static constexpr float multibandKnobX(float column) noexcept { return 812.0f + 92.0f * column; }
+    // The centre of the slot of `slot` of `slots` shown bands, and the boundary to its right.
+    static constexpr float bandSlotWidth(int slots) noexcept { return (bandsX1 - bandsX0) / static_cast<float>(slots); }
+    static constexpr float bandBoundaryX(int slot, int slots) noexcept
+    {
+        return bandsX0 + static_cast<float>(slot + 1) * bandSlotWidth(slots);
+    }
 };
 
 // VCA-compressor-style threshold lamps: BELOW lights while the programme sits under the
@@ -2010,8 +2043,8 @@ private:
             case 3: drawBus(dl); break;
             case 4: drawFet(dl, true); break;
             case 5: drawStudioVca(dl); break;
-            case 6: legacyFace(); drawDigital(dl); break;
-            case 7: legacyFace(); drawMultiband(dl); break;
+            case 6: drawDigital(dl); break;
+            case 7: drawMultiband(dl); break;
         }
         if (clipped)
             dl->PopClipRect();
@@ -4348,12 +4381,10 @@ private:
 
     // ---- Digital and Multiband rack faces -------------------------------------------------------------------
     // Both carry the JUCE editor's controls, meters and drawing (EnhancedCompressorEditor, ModernCompressorPanels.h,
-    // AnalogLookAndFeel.cpp) on the rack-height canvas every mode shares: the INPUT and OUTPUT meters keep their
-    // distance from the window edges, and what the original stacked between them sits side by side (Digital: the
-    // gain-reduction display, the side-chain high-pass, the two rows of knobs; Multiband: the band meters and the
-    // selected band's knobs). Positions are written in visible-canvas coordinates (0 = the top of the header);
-    // faceY() moves them onto the mode canvas.
-    static constexpr float faceY(float visibleY) noexcept { return visibleY + kModeCanvasShiftY; }
+    // AnalogLookAndFeel.cpp) on the canvas every mode shares: the INPUT and OUTPUT meters keep their distance from the
+    // window edges, and what the original stacked between them sits side by side (Digital: the gain-reduction
+    // display, the side-chain high-pass, the two rows of knobs; Multiband: the band meters and the selected band's
+    // knobs). Positions come from ui_detail::ModernFaceLayout.
 
     // The Digital and Multiband faces' colours by role (kModernText, kDigitalCyan, kDim and kBandColors are their
     // lettering and accents), sampled from the faces as they were drawn before the tokens.
@@ -4488,32 +4519,33 @@ private:
     {
         using Layout = multicompp::ui_detail::ModernFaceLayout;
         const float s = panel.scale();
-        const float top = faceY(70), bottom = faceY(kLegacyFaceH), titleY = faceY(Layout::titleY);
-        dl->AddRectFilled(panel.P(0, top), panel.P(kLegacyFaceW, bottom), ModernTheme::rack);
-        gradientRect(dl, panel.P(32, top + 1), panel.P(kLegacyFaceW - 32, bottom - 1), 0,
-                     panel.P(32, top), panel.P(32, bottom), ModernTheme::plateTop, ModernTheme::plateBottom);
-        for (int row = 1; row < 155; ++row)
+        constexpr float top = Layout::top, bottom = Layout::bottom, width = kDesignW, ear = Layout::ear;
+        dl->AddRectFilled(panel.P(0, top), panel.P(width, bottom), ModernTheme::rack);
+        gradientRect(dl, panel.P(ear, top + 1), panel.P(width - ear, bottom - 1), 0,
+                     panel.P(ear, top), panel.P(ear, bottom), ModernTheme::plateTop, ModernTheme::plateBottom);
+        for (int row = 1; top + 2.0f * static_cast<float>(row) < bottom - 1.0f; ++row)
         {
             const float y = top + 2.0f * static_cast<float>(row);
-            dl->AddLine(panel.P(33, y), panel.P(kLegacyFaceW - 33, y),
+            dl->AddLine(panel.P(ear + 1, y), panel.P(width - ear - 1, y),
                         row % 3 == 0 ? ModernTheme::grainLight : ModernTheme::grainDark, s);
         }
-        for (float x : {32.0f, kLegacyFaceW - 32.0f})
+        for (float x : {ear, width - ear})
         {
             dl->AddLine(panel.P(x, top), panel.P(x, bottom), ModernTheme::earSeam, 1.5f * s);
             dl->AddLine(panel.P(x + 1, top), panel.P(x + 1, bottom), ModernTheme::earSeamHighlight, s);
         }
-        dl->AddLine(panel.P(0, top + 1), panel.P(kLegacyFaceW, top + 1), ModernTheme::topEdge, s);
-        dl->AddLine(panel.P(0, bottom - 2), panel.P(kLegacyFaceW, bottom - 2), ModernTheme::bottomEdge, 2 * s);
-        for (float x : {17.0f, kLegacyFaceW - 17.0f})
-            for (float y : {top + 22.0f, bottom - 23.0f})
+        dl->AddLine(panel.P(0, top + 1), panel.P(width, top + 1), ModernTheme::topEdge, s);
+        dl->AddLine(panel.P(0, bottom - 2), panel.P(width, bottom - 2), ModernTheme::bottomEdge, 2 * s);
+        for (float x : {0.5f * ear + 1.0f, width - 0.5f * ear - 1.0f})
+            for (float y : {top + 20.0f, bottom - 21.0f})
                 drawOptoScrew(dl, x, y, 5.0f);
-        duskdaf::spacedText(panel, dl, kLegacyFaceW * 0.5f, titleY - 8.0f, 16.0f, kModernText, title, 0, 0.12f);
-        panel.text(dl, 111, titleY - 5, 10, kDim, "MC-2", -1, true);
-        panel.text(dl, 1009, titleY - 5, 10, kDim, "PRECISION SERIES", 1, true);
-        dl->AddLine(panel.P(111, faceY(106)), panel.P(1009, faceY(106)), ModernTheme::titleRule, s);
-        duskdaf::spacedText(panel, dl, kLegacyFaceW * 0.5f, faceY(Layout::descriptionY) - 5, 10, kDim,
-                           description, 0, 0.12f);
+        // The name at the legend size (16); MC-2, the series and the foot line are small print (13).
+        duskdaf::spacedText(panel, dl, width * 0.5f, Layout::titleY, 16.0f, kModernText, title, 0, 0.12f);
+        panel.text(dl, Layout::printX0, Layout::titleY + 2.0f, 13.0f, kDim, "MC-2", -1, true);
+        panel.text(dl, Layout::printX1, Layout::titleY + 2.0f, 13.0f, kDim, "PRECISION SERIES", 1, true);
+        dl->AddLine(panel.P(Layout::printX0, Layout::ruleY), panel.P(Layout::printX1, Layout::ruleY),
+                    ModernTheme::titleRule, s);
+        duskdaf::spacedText(panel, dl, width * 0.5f, Layout::descriptionY, 13.0f, kDim, description, 0, 0.12f);
     }
 
     // One LED of the INPUT/OUTPUT ladders (LEDMeter::drawLEDSegment).
@@ -4561,8 +4593,8 @@ private:
     {
         using Layout = multicompp::ui_detail::ModernFaceLayout;
         const float s = panel.scale();
-        const float x1 = x0 + 40.0f, y0 = faceY(Layout::meterTop), y1 = faceY(Layout::meterBottom);
-        textCentred(dl, 0.5f * (x0 + x1), faceY(Layout::meterTitleY), 13.0f, kModernText, title, true);
+        const float x1 = x0 + Layout::meterW, y0 = Layout::meterTop, y1 = Layout::meterBottom;
+        panel.text(dl, 0.5f * (x0 + x1), Layout::meterTitleY, 16.0f, kModernText, title, 0, true);
         const ImVec2 a = panel.P(x0, y0), b = panel.P(x1, y1);
         dl->AddRectFilled(a, b, ModernTheme::meterWell, 4.0f * s);
         gradientRect(dl, a, panel.P(x1, y0 + 15.0f), 4.0f * s, a, panel.P(x0, y0 + 10.0f), ModernTheme::meterShade,
@@ -4575,7 +4607,8 @@ private:
         for (int ch = 0; ch < 2; ++ch)
         {
             const float cx0 = x0 + static_cast<float>(ch) * (columnWidth + 2.0f);
-            const float lx0 = cx0 + 3.0f, lx1 = cx0 + columnWidth - 3.0f, ly0 = y0 + 3.0f, ly1 = y1 - 12.0f - 3.0f;
+            // The L / R legend (13, small print) under each column.
+            const float lx0 = cx0 + 3.0f, lx1 = cx0 + columnWidth - 3.0f, ly0 = y0 + 3.0f, ly1 = y1 - 16.0f - 3.0f;
             const float ledHeight = ((ly1 - ly0) - (kLeds - 1) * kGap) / kLeds;
             const auto ledsFor = [](float db) {
                 return static_cast<int>(std::clamp((db + 60.0f) / 66.0f, 0.0f, 1.0f) * static_cast<float>(kLeds));
@@ -4587,13 +4620,12 @@ private:
                 drawLedSegment(dl, lx0, top, lx1, top + ledHeight, i < lit, i == peak && i >= lit,
                                duskdaf::ledLadderColors(static_cast<float>(i) / kLeds, style));
             }
-            textCentred(dl, cx0 + 0.5f * columnWidth, y1 - 6.0f, 8.0f, ModernTheme::channelLegend,
+            textCentred(dl, cx0 + 0.5f * columnWidth, y1 - 10.0f, 13.0f, ModernTheme::channelLegend,
                         ch == 0 ? "L" : "R", false);
         }
         char text[24];
         std::snprintf(text, sizeof(text), "%.1f dB", static_cast<double>(readoutDb));
-        textCentred(dl, 0.5f * (x0 + x1), faceY(Layout::meterReadoutY), 13.0f, ModernTheme::meterReadout, text,
-                    true);
+        panel.text(dl, 0.5f * (x0 + x1), Layout::meterReadoutY, 17.0f, ModernTheme::meterReadout, text, 0, true);
     }
 
     // The INPUT and OUTPUT meters of both faces: per-channel block peaks from the plugin, the shared LED ladder's
@@ -4612,8 +4644,9 @@ private:
         outputLadder.update(out[0], out[1], dt);
         multicompp::ui_detail::advanceLevelReadout(inputReadout, std::max(in[0], in[1]), dt);
         multicompp::ui_detail::advanceLevelReadout(outputReadout, std::max(out[0], out[1]), dt);
-        drawLevelMeter(dl, 43.0f, inputLadder, "INPUT", inputReadout.shownDb);
-        drawLevelMeter(dl, kLegacyFaceW - 83.0f, outputLadder, "OUTPUT", outputReadout.shownDb);
+        using Layout = multicompp::ui_detail::ModernFaceLayout;
+        drawLevelMeter(dl, Layout::inputMeterX, inputLadder, "INPUT", inputReadout.shownDb);
+        drawLevelMeter(dl, Layout::outputMeterX, outputLadder, "OUTPUT", outputReadout.shownDb);
     }
 
     // Silver cap on a serrated black skirt, with the shared gesture layer's exact pointer travel.
@@ -4690,9 +4723,19 @@ private:
                     valueText != nullptr ? valueText : text, true);
     }
 
+    // A Digital or Multiband face's knob: its name at the legend size (16) above its ring of ticks and its value at
+    // the value size (17) below it (ModernFaceLayout).
+    void faceKnob(ImDrawList* dl, const char* id, uint32_t p, float x, float y, float r, const char* name,
+                  int decimals, const char* suffix, bool applicable)
+    {
+        using Layout = multicompp::ui_detail::ModernFaceLayout;
+        modernKnob(dl, id, p, x, y, r, name, Layout::nameTop(y, r) + 8.0f, 16.0f, kModernText, decimals, suffix,
+                   Layout::valueTop(y, r) + 8.5f, applicable, 17.0f);
+    }
+
     // Recessed hardware switch with a separate status lamp, matching the rack's silkscreen.
     void illuminatedToggle(ImDrawList* dl, const char* id, uint32_t p, float x0, float y0, float x1, float y1,
-                           const char* label, float labelSize = 11.0f, bool enabled = true)
+                           const char* label, float labelSize = 16.0f, bool enabled = true)
     {
         const float s = panel.scale();
         const ImVec2 hit0 = panel.P(x0, y0), hit1 = panel.P(x1, y1);
@@ -4747,19 +4790,20 @@ private:
             const ImU32 ink = db >= 0.0f ? ModernTheme::vuHot : ModernTheme::vuInk;
             dl->AddLine(at(angle, length * 0.95f), at(angle, length * 0.95f + (major ? 10.0f : 6.0f) * sf), ink,
                         (major ? 2.0f : 1.0f) * sf * s);
-            if (db > 0.0f) continue;
+            // Numerals at 14 (the meter scale's size). -2 and -1 keep their ticks only: at 14 they overlap -3 and 0.
+            if (db > 0.0f || db == -2.0f || db == -1.0f) continue;
             const float radius = length * 0.72f;
             const float labelY = std::max(pivotY + radius * std::sin(angle), fy0 + 5 * sf + 7.5f * sf);
             char text[8];
             std::snprintf(text, sizeof(text), "%d", static_cast<int>(db));
-            textCentred(dl, cx + radius * std::cos(angle), labelY, std::max(10.0f, 14.0f * sf), ink, text, false);
+            textCentred(dl, cx + radius * std::cos(angle), labelY, 14.0f, ink, text, false);
         }
         for (const int percent : {0, 100})
         {
             const float angle = kStart + static_cast<float>(percent) / 100.0f * (kEnd - kStart);
             const float radius = length * 1.15f;
             textCentred(dl, cx + radius * std::cos(angle), pivotY + radius * std::sin(angle) + 5 * sf,
-                        std::max(7.0f, 9.0f * sf), ModernTheme::vuPercent, percent == 0 ? "0%" : "100%", false);
+                        13.0f, ModernTheme::vuPercent, percent == 0 ? "0%" : "100%", false);
         }
         textCentred(dl, cx, pivotY - length * 0.4f + 10 * sf, std::max(18.0f, 24.0f * sf), ModernTheme::vuInk,
                     "VU", false);
@@ -4790,9 +4834,10 @@ private:
         const float ix0 = x0 + 2 * sf, iy0 = y0 + 2 * sf, ix1 = x1 - 2 * sf, iy1 = y1 - 2 * sf;
         gradientRect(dl, panel.P(ix0, iy0), panel.P(ix1, iy1), 3.0f * sf * s, panel.P(ix0, iy0), panel.P(ix0, iy1),
                      ModernTheme::historyTop, ModernTheme::historyBottom);
-        const float gx0 = ix0 + 38 * sf, gy0 = iy0 + 10 * sf, gx1 = ix1 - 10 * sf, gy1 = iy1 - 24 * sf;
+        // The scale's and the time legends' numerals at 14 (a meter scale), the title at 16.
+        constexpr float labelSize = 14.0f;
+        const float gx0 = ix0 + 34.0f, gy0 = iy0 + 10.0f, gx1 = ix1 - 10.0f, gy1 = iy1 - 22.0f;
         const auto rowOf = [&](float db) { return gy0 + std::clamp(-db / 30.0f, 0.0f, 1.0f) * (gy1 - gy0); };
-        const float labelSize = std::max(8.0f, 9.0f * sf);
         static constexpr float kRows[] = {0, -6, -12, -18, -24, -30};
         for (const float db : kRows)
         {
@@ -4801,7 +4846,7 @@ private:
                               db == 0.0f ? ModernTheme::historyZero : ModernTheme::historyGrid);
             char text[8];
             std::snprintf(text, sizeof(text), "%d", static_cast<int>(db));
-            panel.text(dl, ix0 + 26 * sf, y - 0.5f * labelSize, labelSize,
+            panel.text(dl, gx0 - 5.0f, y - 0.5f * labelSize, labelSize,
                        db == 0.0f ? ModernTheme::historyZeroLabel : ModernTheme::historyLabel, text, 1);
         }
         for (int i = 1; i < 4; ++i)
@@ -4845,14 +4890,14 @@ private:
                        1, true);
         }
         // Time legends. The original also prints "~4 sec" over the same corner as "now"; the two overlap there.
-        const float legendTop = gy1 + 8 * sf - 0.5f * labelSize;
+        const float legendTop = gy1 + 3.0f;
         panel.text(dl, gx0, legendTop, labelSize, ModernTheme::historyLabel, "-4s", -1);
         panel.text(dl, 0.5f * (gx0 + gx1), legendTop, labelSize, ModernTheme::historyLabel, "-2s", 0);
         panel.text(dl, gx1, legendTop, labelSize, ModernTheme::historyLabel, "now", 1);
-        const float tx0 = gx0 + (gx1 - gx0) * 0.2f, tx1 = gx0 + (gx1 - gx0) * 0.8f, ty0 = gy0 + 4 * sf;
-        const float ty1 = ty0 + 18 * sf;
+        const float tx0 = gx0 + (gx1 - gx0) * 0.2f, tx1 = gx0 + (gx1 - gx0) * 0.8f, ty0 = gy0 + 4.0f;
+        const float ty1 = ty0 + 22.0f;
         dl->AddRectFilled(panel.P(tx0, ty0), panel.P(tx1, ty1), ModernTheme::historyTitleBack, 3.0f * s);
-        textCentred(dl, 0.5f * (tx0 + tx1), 0.5f * (ty0 + ty1), std::max(11.0f, 14.0f * sf), ModernTheme::historyTitle,
+        textCentred(dl, 0.5f * (tx0 + tx1), 0.5f * (ty0 + ty1), 16.0f, ModernTheme::historyTitle,
                     "GR HISTORY", true);
     }
 
@@ -4896,23 +4941,25 @@ private:
         const ImVec2 t0 = panel.P(x - 10, thumbY - 5), t1 = panel.P(x + 10, thumbY + 5);
         gradientRect(dl, t0, t1, s, t0, ImVec2(t0.x, t1.y), ModernTheme::thumbTop, ModernTheme::thumbBottom);
         dl->AddLine(panel.P(x - 7, thumbY), panel.P(x + 7, thumbY), ModernTheme::thumbLine, s);
-        textCentred(dl, x, trackTop - 18.0f, 11, kModernText, "SC HP", true);
+        textCentred(dl, x, trackTop - 18.0f, 16.0f, kModernText, "SC HP", true);
         const float hz = knobHostToPlain(values[p], p, this);
         char text[16];
         if (hz < 1.0f)
             std::snprintf(text, sizeof(text), "OFF");
         else
             std::snprintf(text, sizeof(text), "%.0f Hz", static_cast<double>(hz));
-        textCentred(dl, x, trackBottom + 20.0f, 13.0f, ModernTheme::value, text, true);
+        textCentred(dl, x, trackBottom + 20.0f, 17.0f, ModernTheme::value, text, true);
     }
 
     void drawDigital(ImDrawList* dl)
     {
         const float s = panel.scale();
         const float dt = ImGui::GetIO().DeltaTime;
+        using Layout = multicompp::ui_detail::ModernFaceLayout;
         drawModernBody(dl, "DIGITAL COMPRESSOR", "PRECISION DYNAMICS");
         drawLevelMeters(dl, dt);
-        dl->AddLine(panel.P(533, faceY(122)), panel.P(533, faceY(338)), ModernTheme::sectionRule, s);
+        dl->AddLine(panel.P(Layout::digitalDividerX, Layout::vuTop), panel.P(Layout::digitalDividerX, Layout::captionBottom + 30.0f),
+                    ModernTheme::sectionRule, s);
 
         // Gain reduction: the VU, or its 4-second history; a click on either (or the caption) swaps them.
         const float gr = meter(kMeterMaster);
@@ -4924,29 +4971,30 @@ private:
             grHistoryWrite = (grHistoryWrite + 1) % static_cast<int>(grHistory.size());
         }
         // Left of centre: the display, its caption and the side-chain high-pass beside it.
-        constexpr float vuX0 = 112, vuX1 = 452, vuTop = 122, vuBottom = 280, captionBottom = 302;
-        ImGui::SetCursorScreenPos(panel.P(vuX0, faceY(vuTop)));
+        constexpr float vuX0 = Layout::vuX0, vuX1 = Layout::vuX1, vuTop = Layout::vuTop, vuBottom = Layout::vuBottom;
+        constexpr float captionBottom = Layout::captionBottom;
+        ImGui::SetCursorScreenPos(panel.P(vuX0, vuTop));
         if (ImGui::InvisibleButton("##dig_vu", ImVec2((vuX1 - vuX0) * s, (captionBottom - vuTop) * s)))
             digitalShowsHistory = !digitalShowsHistory;
         if (digitalShowsHistory)
-            drawGrHistory(dl, vuX0, faceY(vuTop), vuX1, faceY(vuBottom));
+            drawGrHistory(dl, vuX0, vuTop, vuX1, vuBottom);
         else
-            drawDigitalVu(dl, vuX0, faceY(vuTop), vuX1, faceY(vuBottom));
-        dl->AddRectFilled(panel.P(vuX0 + 2, faceY(vuBottom + 2)), panel.P(vuX1 - 2, faceY(captionBottom - 2)),
+            drawDigitalVu(dl, vuX0, vuTop, vuX1, vuBottom);
+        dl->AddRectFilled(panel.P(vuX0 + 2, vuBottom + 2), panel.P(vuX1 - 2, captionBottom - 2),
                           ModernTheme::captionShade, 3.0f * s);
         const char* caption = digitalShowsHistory ? "HISTORY / CLICK FOR VU" : "VU / CLICK FOR HISTORY";
         constexpr float captionY = 0.5f * (vuBottom + captionBottom);
-        textCentred(dl, 0.5f * (vuX0 + vuX1), faceY(captionY), 10, kDim, caption, true);
-        duskdaf::spacedText(panel, dl, 0.5f * (vuX0 + vuX1), faceY(318), 11, kModernText, "GAIN REDUCTION", 0, 0.10f);
-        sidechainHpSlider(dl, 492.0f, faceY(132.0f), faceY(282.0f));
+        textCentred(dl, 0.5f * (vuX0 + vuX1), captionY, 16.0f, kDim, caption, true);
+        duskdaf::spacedText(panel, dl, 0.5f * (vuX0 + vuX1), Layout::grLegendY, 16.0f, kModernText, "GAIN REDUCTION", 0,
+                            0.10f);
+        sidechainHpSlider(dl, Layout::scHpX, Layout::scHpTrackTop, Layout::scHpTrackBottom);
 
         // Right of it, the original's two rows of knobs: five columns 94 apart.
-        constexpr float r = 27.0f, row1 = 180.0f, row2 = 286.0f;
-        const auto column = [](int i) { return 770.0f + 94.0f * static_cast<float>(i - 2); };
+        constexpr float r = Layout::digitalKnobRadius, row1 = Layout::digitalRow1Y, row2 = Layout::digitalRow2Y;
+        const auto column = [](int i) { return Layout::digitalColumnX(i); };
         const auto knobAt = [&](const char* id, uint32_t p, int col, float row, const char* name, int decimals,
                                 const char* suffix, bool applicable) {
-            modernKnob(dl, id, p, column(col), faceY(row), r, name, faceY(row - 44.0f), 11.0f, kModernText, decimals,
-                       suffix, faceY(row + 39.0f), applicable);
+            faceKnob(dl, id, p, column(col), row, r, name, decimals, suffix, applicable);
         };
         knobAt("dig_thr", P_DIG_THRESHOLD, 0, row1, "THRESHOLD", 1, " dB", true);
         knobAt("dig_ratio", P_DIG_RATIO, 1, row1, "RATIO", 1, ":1", true);
@@ -4956,8 +5004,8 @@ private:
         knobAt("dig_look", P_DIG_LOOK, 0, row2, "LOOKAHEAD", 1, " ms", true);
         knobAt("dig_mix", P_DIG_MIX, 1, row2, "MIX", 0, " %", true);
         knobAt("dig_out", P_DIG_OUT, 2, row2, "OUTPUT", 1, " dB", modernManualOutputAvailable());
-        illuminatedToggle(dl, "##dig_adapt", P_DIG_ADAPT, column(3) - 40.0f, faceY(row2 - 15.0f), column(4) + 40.0f,
-                          faceY(row2 + 15.0f), "ADAPTIVE RELEASE");
+        illuminatedToggle(dl, "##dig_adapt", P_DIG_ADAPT, column(3) - 40.0f, row2 - 15.0f, column(4) + 40.0f,
+                          row2 + 15.0f, "ADAPTIVE RELEASE");
     }
 
     // Compact rack switches. A colored underline identifies an active band / bypass / solo;
@@ -4981,7 +5029,7 @@ private:
         if (active)
             dl->AddRectFilled(panel.P(x0 + 3, y1 - 3), panel.P(x1 - 3, y1 - 1), fill);
         const ImU32 ink = active ? kModernText : textColour;
-        textCentred(dl, 0.5f * (x0 + x1), 0.5f * (y0 + y1) - 1, std::min(11.0f, (y1 - y0) * 0.55f),
+        textCentred(dl, 0.5f * (x0 + x1), 0.5f * (y0 + y1) - 1, std::min(16.0f, (y1 - y0) - 10.0f),
                     enabled ? ink : colourWithAlpha(ink, 0.55f), label, true);
         return clicked && enabled;
     }
@@ -5035,7 +5083,7 @@ private:
             }
         }
         dl->AddRect(a, b, colourWithAlpha(colour, selected ? 1.0f : 0.5f), 5.0f * s, 0, (selected ? 2.5f : 1.5f) * s);
-        const float px0 = x0 + 6, px1 = x1 - 6, py0 = y1 - 24, py1 = y1 - 4;
+        const float px0 = x0 + 6, px1 = x1 - 6, py0 = y1 - 26, py1 = y1 - 4;
         const ImVec2 p0 = panel.P(px0, py0), p1 = panel.P(px1, py1);
         gradientRect(dl, p0, p1, 4.0f * s, p0, ImVec2(p0.x, p1.y), ModernTheme::pillTop,
                      ModernTheme::pillBottom);
@@ -5043,8 +5091,8 @@ private:
         char text[24];
         std::snprintf(text, sizeof(text), "%.1f dB", static_cast<double>(m.shownDb));
         const float cx = 0.5f * (px0 + px1), cy = 0.5f * (py0 + py1);
-        textCentred(dl, cx + 1, cy + 1, 12.5f, ModernTheme::valueShadow, text, true);
-        textCentred(dl, cx, cy, 12.5f, ModernTheme::value, text, true);
+        textCentred(dl, cx + 1, cy + 1, 17.0f, ModernTheme::valueShadow, text, true);
+        textCentred(dl, cx, cy, 17.0f, ModernTheme::value, text, true);
     }
 
     // A crossover handle between two band meters (CrossoverFader): a track in the two bands' colours and a grip on
@@ -5125,16 +5173,18 @@ private:
             std::snprintf(text, sizeof(text), "%.1f kHz", static_cast<double>(hz / 1000.0f));
         else
             std::snprintf(text, sizeof(text), "%d Hz", static_cast<int>(hz));
-        textCentred(dl, centreX, bottom - 10.0f, 12.0f, hot ? kDigitalCyan : ModernTheme::faderLabel, text, true);
+        textCentred(dl, centreX, bottom - 10.0f, 17.0f, hot ? kDigitalCyan : ModernTheme::faderLabel, text, true);
     }
 
     void drawMultiband(ImDrawList* dl)
     {
         const float s = panel.scale();
         const float dt = ImGui::GetIO().DeltaTime;
+        using Layout = multicompp::ui_detail::ModernFaceLayout;
         drawModernBody(dl, "MULTIBAND COMPRESSOR", "FOUR-BAND DYNAMICS");
         drawLevelMeters(dl, dt);
-        dl->AddLine(panel.P(620, faceY(122)), panel.P(620, faceY(338)), ModernTheme::sectionRule, s);
+        dl->AddLine(panel.P(Layout::multibandDividerX, Layout::enableY0), panel.P(Layout::multibandDividerX, Layout::faderBottom),
+                    ModernTheme::sectionRule, s);
 
         bool enabled[4] = {};
         int enabledCount = 0;
@@ -5154,7 +5204,7 @@ private:
 
         // Left, the bands. Enable strip: all four bands at fixed quarters, so a hidden band stays reachable; the last
         // two enabled bands are locked on.
-        constexpr float sectionLeft = 144.0f, sectionRight = 600.0f;
+        constexpr float sectionLeft = Layout::bandsX0, sectionRight = Layout::bandsX1;
         constexpr float stripWidth = (sectionRight - sectionLeft) / 4.0f;
         for (int b = 0; b < 4; ++b)
         {
@@ -5167,7 +5217,7 @@ private:
                 std::snprintf(tooltip, sizeof(tooltip), "Enable / disable %s band", bandName(b));
             ImGui::PushID(b);
             const float x0 = sectionLeft + static_cast<float>(b) * stripWidth;
-            if (bandButton(dl, "##mb_enable", x0 + 2.5f, faceY(116.0f), x0 + stripWidth - 2.5f, faceY(136.0f),
+            if (bandButton(dl, "##mb_enable", x0 + 2.5f, Layout::enableY0, x0 + stripWidth - 2.5f, Layout::enableY1,
                                bandName(b), enabled[b] ? kBandColors[b] : ModernTheme::bandOff,
                                kModernText, tooltip, enabled[b], !locked))
             {
@@ -5179,18 +5229,20 @@ private:
             }
             ImGui::PopID();
         }
-        textCentred(dl, 0.5f * (sectionLeft + sectionRight), faceY(342.0f), 10.0f, kDim,
-                    "GAIN REDUCTION", true);
+        panel.text(dl, 0.5f * (sectionLeft + sectionRight), Layout::bandLegendY, 16.0f, kDim, "GAIN REDUCTION", 0,
+                   true);
 
-        // dB scale beside the meters.
-        constexpr float meterTop = 170.0f, meterBottom = 298.0f, faderBottom = 326.0f;
+        // dB scale beside the meters, its numerals at 14 (a meter scale); -3 keeps its tick only, as at 14 it meets 0.
+        constexpr float meterTop = Layout::bandMeterTop, meterBottom = Layout::bandMeterBottom;
+        constexpr float faderBottom = Layout::faderBottom;
         for (const float db : {0.0f, -3.0f, -6.0f, -10.0f, -15.0f, -20.0f})
         {
             const float y = meterTop + (-db / 20.0f) * (meterBottom - meterTop);
-            dl->AddRectFilled(panel.P(sectionLeft - 11, faceY(y)), panel.P(sectionLeft - 5, faceY(y) + 1), ModernTheme::scaleTick);
+            dl->AddRectFilled(panel.P(sectionLeft - 11, y), panel.P(sectionLeft - 5, y + 1), ModernTheme::scaleTick);
+            if (db == -3.0f) continue;
             char text[8];
             std::snprintf(text, sizeof(text), "%d", static_cast<int>(db));
-            panel.text(dl, sectionLeft - 13, faceY(y) - 5.0f, 10.0f, ModernTheme::scaleLabel, text, 1);
+            panel.text(dl, sectionLeft - 13, y - 7.0f, 14.0f, ModernTheme::scaleLabel, text, 1);
         }
 
         // Band slots: only the bands shown share the width.
@@ -5199,7 +5251,7 @@ private:
         {
             const int band = slots[slot];
             const float sx = sectionLeft + static_cast<float>(slot) * slotWidth;
-            dl->AddRectFilled(panel.P(sx + 1, faceY(140.0f)), panel.P(sx + slotWidth - 1, faceY(faderBottom)),
+            dl->AddRectFilled(panel.P(sx + 1, Layout::tabY0 - 2.0f), panel.P(sx + slotWidth - 1, faderBottom),
                               colourWithAlpha(kBandColors[band], band == selectedBand ? 0.06f : 0.02f));
         }
         for (int slot = 0; slot < slotCount; ++slot)
@@ -5208,57 +5260,56 @@ private:
             const uint32_t base = static_cast<uint32_t>(multicompp::kBandBase + band * 8);
             const float sx = sectionLeft + static_cast<float>(slot) * slotWidth;
             const float mx0 = sx + 8.0f, mx1 = sx + slotWidth - 8.0f;
-            constexpr float buttonTop = 142.0f, buttonBottom = 162.0f, smallButton = 21.0f, gap = 3.0f;
+            constexpr float buttonTop = Layout::tabY0, buttonBottom = Layout::tabY1;
+            constexpr float smallButton = Layout::bandSwitchW, gap = Layout::bandSwitchGap;
             const float tabRight = mx1 - 2.0f * (smallButton + gap);
             ImGui::PushID(band);
-            if (bandButton(dl, "##mb_tab", mx0, faceY(buttonTop), tabRight, faceY(buttonBottom), bandName(band),
+            if (bandButton(dl, "##mb_tab", mx0, buttonTop, tabRight, buttonBottom, bandName(band),
                                band == selectedBand ? kBandColors[band] : colourWithAlpha(kBandColors[band], 0.3f),
                                kModernText, nullptr, band == selectedBand))
                 selectedBand = band;
             char tooltip[48];
             const bool bypassed = values[base + 5] > 0.5f, soloed = values[base + 6] > 0.5f;
             std::snprintf(tooltip, sizeof(tooltip), "Bypass %s band", bandName(band));
-            if (bandButton(dl, "##mb_bypass", tabRight + gap, faceY(buttonTop), tabRight + gap + smallButton,
-                               faceY(buttonBottom), "B",
+            if (bandButton(dl, "##mb_bypass", tabRight + gap, buttonTop, tabRight + gap + smallButton,
+                               buttonBottom, "B",
                                bypassed ? ModernTheme::bypassLit : ModernTheme::switchOff,
                                bypassed ? ModernTheme::switchLegendLit : ModernTheme::switchLegend, tooltip, bypassed))
                 setHostValue(base + 5, bypassed ? 0.0f : 1.0f);
             std::snprintf(tooltip, sizeof(tooltip), "Solo %s band", bandName(band));
-            if (bandButton(dl, "##mb_solo", mx1 - smallButton, faceY(buttonTop), mx1, faceY(buttonBottom), "S",
+            if (bandButton(dl, "##mb_solo", mx1 - smallButton, buttonTop, mx1, buttonBottom, "S",
                                soloed ? ModernTheme::soloLit : ModernTheme::switchOff,
                                soloed ? ModernTheme::switchLegendLit : ModernTheme::switchLegend, tooltip, soloed))
                 setHostValue(base + 6, soloed ? 0.0f : 1.0f);
             ImGui::PopID();
-            drawBandMeter(dl, band, mx0, faceY(meterTop), mx1, faceY(meterBottom), band == selectedBand);
+            drawBandMeter(dl, band, mx0, meterTop, mx1, meterBottom, band == selectedBand);
         }
         // A crossover handle on each boundary between neighbouring shown bands: the crossover below the upper band.
         for (int slot = 0; slot + 1 < slotCount; ++slot)
         {
             const int boundary = slots[slot + 1] - 1;
             crossoverFader(dl, P_X1 + static_cast<uint32_t>(boundary),
-                           sectionLeft + static_cast<float>(slot + 1) * slotWidth, faceY(meterTop), faceY(faderBottom),
+                           Layout::bandBoundaryX(slot, slotCount), meterTop, faderBottom,
                            kBandColors[boundary], kBandColors[boundary + 1]);
         }
 
         // Right, the selected band: its tab over its knobs.
         const ImU32 bandColour = kBandColors[selectedBand];
-        constexpr float knobsCentre = 812.0f;
-        constexpr float tagLeft = 652, tagRight = 972, tagTop = 116, tagBottom = 136;
-        dl->AddLine(panel.P(tagLeft, faceY(tagBottom)), panel.P(tagRight, faceY(tagBottom)),
+        constexpr float knobsCentre = Layout::multibandKnobX(0.0f);
+        constexpr float tagLeft = Layout::multibandKnobX(-1.75f), tagRight = Layout::multibandKnobX(1.75f);
+        dl->AddLine(panel.P(tagLeft, Layout::bandTagRuleY), panel.P(tagRight, Layout::bandTagRuleY),
                     colourWithAlpha(bandColour, 0.6f), s);
         char tag[24];
         std::snprintf(tag, sizeof(tag), "%s BAND", bandName(selectedBand));
-        textCentred(dl, knobsCentre, faceY(0.5f * (tagTop + tagBottom)), 12.0f, bandColour,
-                    tag, true);
+        panel.text(dl, knobsCentre, Layout::bandTagY, 16.0f, bandColour, tag, 0, true);
 
         // Seven knobs: the selected band's four timing and level controls, then its makeup with the multiband output
         // and mix, arranged in two rows with the same controls as Digital.
         const uint32_t base = static_cast<uint32_t>(multicompp::kBandBase + selectedBand * 8);
-        constexpr float knobR = 25.0f, row1 = 194.0f, row2 = 294.0f;
+        constexpr float knobR = Layout::multibandKnobRadius, row1 = Layout::multibandRow1Y, row2 = Layout::multibandRow2Y;
         const auto knobAt = [&](const char* id, uint32_t p, float column, float row, const char* name, int decimals,
                                 const char* suffix, bool applicable) {
-            modernKnob(dl, id, p, knobsCentre + 92.0f * column, faceY(row), knobR, name, faceY(row - 40.0f), 11.0f,
-                       kModernText, decimals, suffix, faceY(row + 35.0f), applicable);
+            faceKnob(dl, id, p, Layout::multibandKnobX(column), row, knobR, name, decimals, suffix, applicable);
         };
         knobAt("mb_thr", base, -1.5f, row1, "THRESHOLD", 1, " dB", true);
         knobAt("mb_ratio", base + 1, -0.5f, row1, "RATIO", 1, ":1", true);

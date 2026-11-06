@@ -192,6 +192,25 @@ void check(bool ok, const char* name)
     failures += ok ? 0 : 1;
 }
 
+// The Digital and Multiband faces' controls, from their layout (ModernFaceLayout).
+namespace Modern
+{
+using L = multicompp::ui_detail::ModernFaceLayout;
+constexpr float dRow1 = L::digitalRow1Y, dRow2 = L::digitalRow2Y;
+constexpr float mRow1 = L::multibandRow1Y, mRow2 = L::multibandRow2Y;
+constexpr float d(int column) { return L::digitalColumnX(column); }
+constexpr float m(float column) { return L::multibandKnobX(column); }
+constexpr float faderY = 0.5f * (L::bandMeterTop + L::faderBottom);
+constexpr float enableY = 0.5f * (L::enableY0 + L::enableY1), tabY = 0.5f * (L::tabY0 + L::tabY1);
+// The middle of band b's enable button, and of the tab of the band in `slot` with four bands shown.
+constexpr float enableX(int b) { return L::bandsX0 + L::bandSlotWidth(4) * (static_cast<float>(b) + 0.5f); }
+constexpr float tabX(int slot)
+{
+    return L::bandsX0 + L::bandSlotWidth(4) * static_cast<float>(slot) + 8.0f
+        + 0.5f * (L::bandSlotWidth(4) - 16.0f - 2.0f * (L::bandSwitchW + L::bandSwitchGap));
+}
+}
+
 void hiddenSolo()
 {
     for (int b = 0; b < 4; ++b)
@@ -200,7 +219,7 @@ void hiddenSolo()
         h.ui.parameter(band(b, 6), 1);
         const uint32_t siblingSolo = band((b + 1) % 4, 6);
         h.ui.parameter(siblingSolo, 1);
-        h.click(201.0f + 114.0f * b, 126);
+        h.click(Modern::enableX(b), Modern::enableY);
         int soloAt = -1, disableAt = -1;
         for (size_t i = 0; i < h.ui.writes.size(); ++i)
         {
@@ -217,16 +236,22 @@ void hiddenSolo()
 
 struct Control { int mode; uint32_t p; float x, y; };
 constexpr std::array<Control, 19> controls{{
-    {6, pid(ParamId::DigitalThreshold), 582, 180}, {6, pid(ParamId::DigitalRatio), 676, 180},
-    {6, pid(ParamId::DigitalKnee), 770, 180}, {6, pid(ParamId::DigitalAttack), 864, 180},
-    {6, pid(ParamId::DigitalRelease), 958, 180}, {6, pid(ParamId::DigitalLookahead), 582, 286},
-    {6, pid(ParamId::DigitalMix), 676, 286}, {6, pid(ParamId::DigitalOutput), 770, 286},
-    {6, pid(ParamId::SidechainHP), 492, 200},
-    {7, band(0, 0), 674, 194}, {7, band(0, 1), 766, 194},
-    {7, band(0, 2), 858, 194}, {7, band(0, 3), 950, 194},
-    {7, band(0, 4), 720, 294}, {7, pid(ParamId::MbOutput), 812, 294},
-    {7, pid(ParamId::MbMix), 904, 294}, {7, pid(ParamId::Crossover1), 258, 220},
-    {7, pid(ParamId::Crossover2), 372, 220}, {7, pid(ParamId::Crossover3), 486, 220}
+    {6, pid(ParamId::DigitalThreshold), Modern::d(0), Modern::dRow1},
+    {6, pid(ParamId::DigitalRatio), Modern::d(1), Modern::dRow1},
+    {6, pid(ParamId::DigitalKnee), Modern::d(2), Modern::dRow1},
+    {6, pid(ParamId::DigitalAttack), Modern::d(3), Modern::dRow1},
+    {6, pid(ParamId::DigitalRelease), Modern::d(4), Modern::dRow1},
+    {6, pid(ParamId::DigitalLookahead), Modern::d(0), Modern::dRow2},
+    {6, pid(ParamId::DigitalMix), Modern::d(1), Modern::dRow2},
+    {6, pid(ParamId::DigitalOutput), Modern::d(2), Modern::dRow2},
+    {6, pid(ParamId::SidechainHP), Modern::L::scHpX, 0.5f * (Modern::L::scHpTrackTop + Modern::L::scHpTrackBottom)},
+    {7, band(0, 0), Modern::m(-1.5f), Modern::mRow1}, {7, band(0, 1), Modern::m(-0.5f), Modern::mRow1},
+    {7, band(0, 2), Modern::m(0.5f), Modern::mRow1}, {7, band(0, 3), Modern::m(1.5f), Modern::mRow1},
+    {7, band(0, 4), Modern::m(-1.0f), Modern::mRow2}, {7, pid(ParamId::MbOutput), Modern::m(0.0f), Modern::mRow2},
+    {7, pid(ParamId::MbMix), Modern::m(1.0f), Modern::mRow2},
+    {7, pid(ParamId::Crossover1), Modern::L::bandBoundaryX(0, 4), Modern::faderY},
+    {7, pid(ParamId::Crossover2), Modern::L::bandBoundaryX(1, 4), Modern::faderY},
+    {7, pid(ParamId::Crossover3), Modern::L::bandBoundaryX(2, 4), Modern::faderY}
 }};
 
 // A knob of every hardware face, where the editor draws it at the default size (a face still on the canvas it was
@@ -353,9 +378,10 @@ void editorClosedMidDrag()
 void hiddenControls()
 {
     // Host automation can hide the selected band while its threshold is held.
-    Host h(7); h.hold(674, 194);
+    const float tx = Modern::m(-1.5f), ty = Modern::mRow1;
+    Host h(7); h.hold(tx, ty);
     h.ui.parameter(band(0, 7), 0);
-    h.frame(674, 169, true); h.frame(674, 164, true); h.frame(674, 164); h.frame();
+    h.frame(tx, ty - 25, true); h.frame(tx, ty - 30, true); h.frame(tx, ty - 30); h.frame();
     std::printf("hidden band begins=%d ends=%d nextBandWrites=%d\n", h.count(h.ui.gestures, band(0, 0), 1),
                 h.count(h.ui.gestures, band(0, 0), 0), h.writes(band(1, 0)));
     check(h.balanced(band(0, 0)) && h.writes(band(1, 0)) == 0,
@@ -364,7 +390,7 @@ void hiddenControls()
     {
         Host out(mode);
         const uint32_t p = pid(mode == 6 ? ParamId::DigitalOutput : ParamId::MbOutput);
-        const float x = mode == 6 ? 770 : 812, y = mode == 6 ? 286 : 294;
+        const float x = mode == 6 ? Modern::d(2) : Modern::m(0.0f), y = mode == 6 ? Modern::dRow2 : Modern::mRow2;
         out.hold(x, y); const int before = out.writes(p);
         out.ui.parameter(pid(ParamId::AutoMakeup), 1);
         out.frame(x, y - 25, true); out.frame(x, y - 30, true); out.frame(x, y - 30); out.frame();
@@ -416,7 +442,7 @@ void outputAccess()
             const uint32_t p = pid(mode == 6 ? ParamId::DigitalOutput : ParamId::MbOutput);
             const bool external = request != 0 && (connected < 0 || active);
             const bool editable = !automatic || external;
-            h.drag(mode == 6 ? 770 : 812, mode == 6 ? 286 : 294);
+            h.drag(mode == 6 ? Modern::d(2) : Modern::m(0.0f), mode == 6 ? Modern::dRow2 : Modern::mRow2);
             const bool ok = editable ? h.writes(p) > 0 && h.balanced(p)
                                      : h.writes(p) == 0 && h.ui.gestures.empty();
             std::printf("output mode=%d auto=%d request=%d connection=%d editable=%d writes=%d\n",
@@ -644,9 +670,9 @@ void drawerKeysAndCorner()
 void numericOwnership()
 {
     Host h(7);
-    h.click(674, 194); h.click(674, 194); h.frame();
+    h.click(Modern::m(-1.5f), Modern::mRow1); h.click(Modern::m(-1.5f), Modern::mRow1); h.frame();
     ImGui::GetIO().AddInputCharactersUTF8("-35"); h.frame(); h.frame();
-    h.click(290, 152); h.frame();
+    h.click(Modern::tabX(1), Modern::tabY); h.frame();   // LO-MID's tab
     const int own = h.count(h.ui.writes, band(0, 0), -35);
     const int sibling = h.writes(band(1, 0));
     std::printf("numeric band change ownWrites=%d replacementWrites=%d\n", own, sibling);
