@@ -1092,6 +1092,26 @@ void testOptoFaceplateContract()
                     && Bus::col3 < Bus::col4 && Bus::col4 + Bus::labelRadius < Bus::frameX1,
                 "BUS faceplate fills the canvas below the mode row and keeps its controls apart");
     }
+    {
+        // STUDIO VCA is laid out on the canvas too (2026-11-06): its plate spans the width below the mode row, the
+        // round meters sit inside it between the THRESHOLD and MAKE UP GAIN columns, apart from each other and the
+        // dials' numerals, and the switch and the bottom legends clear the meters.
+        using Svca = multicompp::ui_detail::StudioVcaFaceplateLayout;
+        constexpr float reach = Svca::dialRadius + Svca::numeralOffset;   // a dial's numeral anchors
+        require(Svca::left == 0.0f && Svca::right == multicompp::ui_detail::kDesignWidth
+                    && Svca::top >= multicompp::ui_detail::kFaceAreaTop
+                    && Svca::bottom <= multicompp::ui_detail::kDesignHeight
+                    && Svca::left < Svca::inputX - reach && Svca::inputX < Svca::ratioX
+                    && Svca::ratioX < Svca::lampX && Svca::lampX < Svca::thresholdX
+                    && Svca::thresholdX + reach < Svca::ioX - Svca::meterRadius
+                    && Svca::ioX + Svca::meterRadius < Svca::grX - Svca::meterRadius
+                    && Svca::grX + Svca::meterRadius < Svca::makeupX - reach && Svca::makeupX + reach < Svca::right
+                    && Svca::top < Svca::ioY - Svca::meterRadius && Svca::ioY + Svca::meterRadius < Svca::switchY
+                    && Svca::top < Svca::grY - Svca::meterRadius
+                    && Svca::grY + Svca::meterRadius < Svca::row2Y + Svca::legendDrop
+                    && Svca::row2Y + Svca::legendDrop + 16.0f < Svca::bottom,
+                "Studio VCA faceplate fills the canvas below the mode row and keeps its controls apart");
+    }
 
     require(!multicompp::ui_detail::vcaSignalAboveThreshold(-30.0f, -10.0f)
                 && multicompp::ui_detail::vcaSignalAboveThreshold(-10.0f, -10.0f)

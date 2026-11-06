@@ -246,7 +246,8 @@ constexpr std::array<Control, 8> hardwareControls{{
      multicompp::ui_detail::FetFaceplateLayout::attackY},
     {4, pid(ParamId::FetBlueHeadroom), multicompp::ui_detail::FetFaceplateLayout::blueTrimX,
      multicompp::ui_detail::FetFaceplateLayout::blueHeadroomY},
-    {5, pid(ParamId::StudioVcaRatio), 230, 155},
+    {5, pid(ParamId::StudioVcaRatio), multicompp::ui_detail::StudioVcaFaceplateLayout::ratioX,
+     multicompp::ui_detail::StudioVcaFaceplateLayout::row1Y},
     {1, pid(ParamId::Mix), multicompp::ui_detail::FetFaceplateLayout::blackMixX,
      multicompp::ui_detail::FetFaceplateLayout::blackMixY}
 }};

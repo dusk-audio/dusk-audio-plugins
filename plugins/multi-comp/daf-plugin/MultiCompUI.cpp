@@ -191,6 +191,25 @@ struct BusFaceplateLayout
     static constexpr float trimRadius = 13.0f;                            // HR
 };
 
+// The Studio VCA face on the 1120 x 380 canvas at the readability floor (canvas coordinates; text y is its top), in
+// its reference unit's arrangement: the engraved name over INPUT, RATIO over ATTACK and THRESHOLD over RELEASE with
+// AUTO RELEASE between them, the I/O meter with its switch and the gain reduction meter on the S-curve, MAKE UP GAIN
+// over DRY/WET. The meters are larger than the reference's (bezel 90, was 72) so their numerals reach 14.
+struct StudioVcaFaceplateLayout
+{
+    static constexpr float left = 0.0f, right = kDesignWidth, top = kFaceAreaTop + 1.0f, bottom = kDesignHeight - 2.0f;
+    static constexpr float row1Y = 148.0f, row2Y = 283.0f;                     // the dials' centres
+    static constexpr float inputX = 86.0f, ratioX = 240.0f, thresholdX = 398.0f, makeupX = 1013.0f;
+    static constexpr float dialRadius = 25.0f, mixRadius = 22.0f;
+    static constexpr float numeralOffset = 20.0f;                               // the numerals' anchors, past the edge
+    static constexpr float legendDrop = 46.0f;                                  // a legend's top, below its dial
+    static constexpr float nameX = inputX, nameY = 96.0f;                      // STUDIO (20) over VCA (40)
+    static constexpr float lampX = 308.0f, lampY = 206.0f;                      // AUTO RELEASE, its legend under it
+    static constexpr float meterRadius = 90.0f;                                 // the round meters' bezels
+    static constexpr float ioX = 568.0f, ioY = 168.0f, switchY = 284.0f;        // the I/O meter and its switch
+    static constexpr float grX = 838.0f, grY = 234.0f;                          // the gain reduction meter
+};
+
 // Digital and Multiband content bounds in visible-canvas y (0 = the top of the header).
 // The rack shell extends to the canvas edges; its lettering keeps an 8 px bottom margin.
 struct ModernFaceLayout
@@ -1959,9 +1978,9 @@ private:
         return multicompp::ui_detail::fetSloAttackTypedHost(text, host);
     }
 
-    // The face of the current mode. OPTO, FET BLACK, FET BLUE, VCA and BUS are laid out on the canvas itself (scale
-    // and origin are the canvas transform, as the caller left it); the other faces are still drawn on the face canvas
-    // they were authored on (beginLegacyFace) until each is laid out at the readability floor.
+    // The face of the current mode. OPTO, FET BLACK, FET BLUE, VCA, BUS and STUDIO VCA are laid out on the canvas
+    // itself (scale and origin are the canvas transform, as the caller left it); DIGITAL and MULTIBAND are still drawn
+    // on the face canvas they were authored on (beginLegacyFace) until each is laid out at the readability floor.
     void drawModePanel(ImDrawList* dl, float scale, ImVec2 origin)
     {
         const int mode = multicompp::ui_detail::choiceIndex(value(P_MODE), 8);
@@ -1990,7 +2009,7 @@ private:
             case 2: drawVca(dl); break;
             case 3: drawBus(dl); break;
             case 4: drawFet(dl, true); break;
-            case 5: legacyFace(); drawStudioVca(dl); break;
+            case 5: drawStudioVca(dl); break;
             case 6: legacyFace(); drawDigital(dl); break;
             case 7: legacyFace(); drawMultiband(dl); break;
         }
@@ -3839,12 +3858,18 @@ private:
 
     void drawStudioVca(ImDrawList* dl)
     {
+        using Layout = multicompp::ui_detail::StudioVcaFaceplateLayout;
         drawStudioVcaPanel(dl);
         const float s = panel.scale();
-        // The engraved S-curve across the meter bay, behind both meters.
-        dl->AddBezierCubic(panel.P(511, 623), panel.P(707, 623), panel.P(663, 382), panel.P(859, 382),
+        // The engraved S-curve across the meter bay, from under the I/O meter's switch to above the gain reduction
+        // meter, behind both meters.
+        constexpr float curveY0 = Layout::bottom - 26.0f, curveY1 = Layout::top + 19.0f;
+        constexpr float curveX0 = Layout::ioX - 30.0f, curveX1 = Layout::grX + 43.0f;   // clear of OUTPUT
+        dl->AddBezierCubic(panel.P(curveX0 + 1, curveY0 + 1), panel.P(curveX0 + 201, curveY0 + 1),
+                           panel.P(curveX1 - 195, curveY1 + 1), panel.P(curveX1 + 1, curveY1 + 1),
                            StudioVcaTheme::curveHighlight, 2.6f * s, 48);
-        dl->AddBezierCubic(panel.P(510, 622), panel.P(706, 622), panel.P(662, 381), panel.P(858, 381),
+        dl->AddBezierCubic(panel.P(curveX0, curveY0), panel.P(curveX0 + 200, curveY0),
+                           panel.P(curveX1 - 196, curveY1), panel.P(curveX1, curveY1),
                            StudioVcaTheme::curve, 1.7f * s, 48);
 
         static constexpr StudioVcaMark inputMarks[] = {{-18, "-18"}, {-12, "-12"}, {-6, "-6"}, {0, "0"},
@@ -3858,65 +3883,73 @@ private:
                                                          {4000, "4"}};
         static constexpr StudioVcaMark makeupMarks[] = {{0, "0"}, {10, "10"}, {20, "20"}, {30, "30"}, {40, "40"}};
         static constexpr StudioVcaMark mixMarks[] = {{0, "0"}, {100, "100"}};
-        studioVcaKnob(dl, "sv_in", P_SVCA_INPUT, 77, 550, 25, "INPUT", inputMarks, 7);
-        studioVcaKnob(dl, "sv_ratio", P_SVCA_RATIO, 230, 429, 25, "RATIO", ratioMarks, 6);
-        studioVcaKnob(dl, "sv_att", P_SVCA_ATTACK, 230, 550, 25, "ATTACK", attackMarks, 2);
-        studioVcaKnob(dl, "sv_thr", P_SVCA_THRESHOLD, 390, 429, 25, "THRESHOLD", thresholdMarks, 5);
-        studioVcaKnob(dl, "sv_rel", P_SVCA_RELEASE, 390, 550, 25, "RELEASE", releaseMarks, 5);
-        studioVcaKnob(dl, "sv_out", P_SVCA_OUT, 1013, 428, 25, "MAKE UP GAIN", makeupMarks, 5);
-        studioVcaKnob(dl, "sv_mix", P_MIX, 1013, 554, 22, "DRY/WET", mixMarks, 2);
-        panel.text(dl, 230, 476, 11.0f, StudioVcaTheme::ink, "RATIO", 0, true);
-        panel.text(dl, 390, 476, 11.0f, StudioVcaTheme::ink, "THRESHOLD", 0, true);
-        panel.text(dl, 77, 603, 11.0f, StudioVcaTheme::ink, "INPUT", 0, true);
-        panel.text(dl, 230, 603, 11.0f, StudioVcaTheme::ink, "ATTACK", 0, true);
-        panel.text(dl, 390, 603, 11.0f, StudioVcaTheme::ink, "RELEASE", 0, true);
-        panel.text(dl, 1013, 469, 11.0f, StudioVcaTheme::ink, "MAKE UP", 0, true);
-        panel.text(dl, 1013, 482, 11.0f, StudioVcaTheme::ink, "GAIN", 0, true);
-        panel.text(dl, 1013, 603, 11.0f, StudioVcaTheme::ink, "DRY/WET", 0, true);
-        panel.text(dl, 824, 603, 11.0f, StudioVcaTheme::ink, "GAIN REDUCTION", 0, true);
+        constexpr float row1 = Layout::row1Y, row2 = Layout::row2Y, r = Layout::dialRadius;
+        studioVcaKnob(dl, "sv_in", P_SVCA_INPUT, Layout::inputX, row2, r, "INPUT", inputMarks, 7);
+        studioVcaKnob(dl, "sv_ratio", P_SVCA_RATIO, Layout::ratioX, row1, r, "RATIO", ratioMarks, 6);
+        studioVcaKnob(dl, "sv_att", P_SVCA_ATTACK, Layout::ratioX, row2, r, "ATTACK", attackMarks, 2);
+        studioVcaKnob(dl, "sv_thr", P_SVCA_THRESHOLD, Layout::thresholdX, row1, r, "THRESHOLD", thresholdMarks, 5);
+        studioVcaKnob(dl, "sv_rel", P_SVCA_RELEASE, Layout::thresholdX, row2, r, "RELEASE", releaseMarks, 5);
+        studioVcaKnob(dl, "sv_out", P_SVCA_OUT, Layout::makeupX, row1, r, "MAKE UP GAIN", makeupMarks, 5);
+        studioVcaKnob(dl, "sv_mix", P_MIX, Layout::makeupX, row2, Layout::mixRadius, "DRY/WET", mixMarks, 2);
+        // The legends at 16, one line each, level across a row.
+        const auto legend = [&](float x, float y, const char* text) {
+            panel.text(dl, x, y + Layout::legendDrop, 16.0f, StudioVcaTheme::ink, text, 0, true);
+        };
+        legend(Layout::ratioX, row1, "RATIO");
+        legend(Layout::thresholdX, row1, "THRESHOLD");
+        legend(Layout::makeupX, row1, "MAKE UP GAIN");
+        legend(Layout::inputX, row2, "INPUT");
+        legend(Layout::ratioX, row2, "ATTACK");
+        legend(Layout::thresholdX, row2, "RELEASE");
+        legend(Layout::makeupX, row2, "DRY/WET");
+        legend(Layout::grX, row2, "GAIN REDUCTION");
 
-        studioVcaLamp(dl, "sv_auto", P_SVCA_AUTO, 308, 487);
-        panel.text(dl, 308, 503, 10.0f, StudioVcaTheme::ink, "AUTO", 0, true);
-        panel.text(dl, 308, 515, 10.0f, StudioVcaTheme::ink, "RELEASE", 0, true);
+        studioVcaLamp(dl, "sv_auto", P_SVCA_AUTO, Layout::lampX, Layout::lampY);
+        // Two lines, as the reference prints it: on one the legend ran into RELEASE's numerals.
+        panel.text(dl, Layout::lampX, Layout::lampY + 20.0f, 16.0f, StudioVcaTheme::ink, "AUTO", 0, true);
+        panel.text(dl, Layout::lampX, Layout::lampY + 36.0f, 16.0f, StudioVcaTheme::ink, "RELEASE", 0, true);
 
         // I/O meter: the input after the Input control, or the output; on INPUT a red mark shows the threshold.
-        static constexpr StudioVcaMark ioScale[] = {{-60, "-60"}, {-50, "-50"}, {-40, "-40"}, {-30, "-30"},
-                                                    {-20, "-20"}, {-10, "-10"}, {0, "0"}};
-        static constexpr StudioVcaMark grScale[] = {{-20, "-20"}, {-15, "-15"}, {-10, "-10"}, {-5, "-5"},
+        // Every mark has its tick and every other its numeral: all of them at 14 overlap on the 60 degree scale.
+        static constexpr StudioVcaMark ioScale[] = {{-60, "-60"}, {-50, nullptr}, {-40, "-40"}, {-30, nullptr},
+                                                    {-20, "-20"}, {-10, nullptr}, {0, "0"}};
+        static constexpr StudioVcaMark grScale[] = {{-20, "-20"}, {-15, nullptr}, {-10, "-10"}, {-5, nullptr},
                                                     {0, "0"}};
         void* const instance = getPluginInstancePointer();
         const bool outputMeter = values[P_SVCA_METER] >= 0.5f;
         const auto level = outputMeter ? multiCompGetStudioVcaOutputLevel : multiCompGetStudioVcaInputLevel;
         const float ioDb = instance != nullptr && level != nullptr ? level(instance) : -120.0f;
         const float threshold = plainValueForHost(P_SVCA_THRESHOLD, values[P_SVCA_THRESHOLD]);
-        studioVcaMeter(dl, 561, 459, ioScale, 7, -60.0f, 0.0f, ioDb,
+        studioVcaMeter(dl, Layout::ioX, Layout::ioY, ioScale, 7, -60.0f, 0.0f, ioDb,
                        outputMeter ? std::numeric_limits<float>::quiet_NaN() : threshold);
-        studioVcaSwitch(dl, "sv_meter", P_SVCA_METER, 561, 558);
-        studioVcaMeter(dl, 825, 510, grScale, 5, -20.0f, 0.0f, meter(kMeterMaster),
+        studioVcaSwitch(dl, "sv_meter", P_SVCA_METER, Layout::ioX, Layout::switchY);
+        studioVcaMeter(dl, Layout::grX, Layout::grY, grScale, 5, -20.0f, 0.0f, meter(kMeterMaster),
                        std::numeric_limits<float>::quiet_NaN());
     }
 
     // Red brushed panel with rack ears and the engraved STUDIO VCA label.
     void drawStudioVcaPanel(ImDrawList* dl)
     {
+        using Layout = multicompp::ui_detail::StudioVcaFaceplateLayout;
+        constexpr float left = Layout::left, right = Layout::right, top = Layout::top, bottom = Layout::bottom;
         const float s = panel.scale();
-        dl->AddRectFilledMultiColor(panel.P(0, 344), panel.P(1120, 654),
+        dl->AddRectFilledMultiColor(panel.P(left, top), panel.P(right, bottom),
                                     StudioVcaTheme::panelTopLeft, StudioVcaTheme::panelTopRight,
                                     StudioVcaTheme::panelBottomRight, StudioVcaTheme::panelBottomLeft);
         // Horizontal brushing: deterministic hairlines, lighter and darker.
         uint32_t grain = 0x53564341u;
-        for (float y = 345.0f; y < 653.0f; y += 1.5f)
+        for (float y = top + 1.0f; y < bottom - 1.0f; y += 1.5f)
         {
             grain = grain * 1664525u + 1013904223u;
             const int shade = static_cast<int>((grain >> 24) & 31u);
-            dl->AddLine(panel.P(0, y), panel.P(1120, y),
+            dl->AddLine(panel.P(left, y), panel.P(right, y),
                         (grain & 1u) ? colourWithAlpha(StudioVcaTheme::brushLight, static_cast<float>(shade / 2) / 255.0f) : colourWithAlpha(StudioVcaTheme::brushDark, static_cast<float>(shade) / 255.0f), 0.8f * s);
         }
-        dl->AddLine(panel.P(0, 345), panel.P(1120, 345), StudioVcaTheme::topEdge, 1.5f * s);
-        dl->AddLine(panel.P(0, 653), panel.P(1120, 653), StudioVcaTheme::bottomEdge, 1.5f * s);
+        dl->AddLine(panel.P(left, top + 1.0f), panel.P(right, top + 1.0f), StudioVcaTheme::topEdge, 1.5f * s);
+        dl->AddLine(panel.P(left, bottom - 1.0f), panel.P(right, bottom - 1.0f), StudioVcaTheme::bottomEdge, 1.5f * s);
         // Rack ears: a slot in each corner.
-        for (float x : {16.0f, 1104.0f})
-            for (float y : {353.0f, 644.0f})
+        for (float x : {left + 16.0f, right - 16.0f})
+            for (float y : {top + 9.0f, bottom - 10.0f})
             {
                 dl->AddRectFilled(panel.P(x - 11, y - 5.5f), panel.P(x + 11, y + 5.5f), StudioVcaTheme::earSlot,
                                   5.5f * s);
@@ -3930,8 +3963,9 @@ private:
                                            {0.0f, 0.0f, StudioVcaTheme::engraveFace}};
         for (const Layer& layer : layers)
         {
-            panel.text(dl, 82 + layer.dx, 396 + layer.dy, 19.0f, layer.colour, "STUDIO", 0, true);
-            panel.text(dl, 82 + layer.dx, 420 + layer.dy, 40.0f, layer.colour, "VCA", 0, true);
+            panel.text(dl, Layout::nameX + layer.dx, Layout::nameY + layer.dy, 20.0f, layer.colour, "STUDIO", 0, true);
+            panel.text(dl, Layout::nameX + layer.dx, Layout::nameY + 24.0f + layer.dy, 40.0f, layer.colour, "VCA", 0,
+                       true);
         }
     }
 
@@ -3961,13 +3995,17 @@ private:
             const float angle = duskdaf::DuskPanel::knobAngle(multicompp::ui_detail::studioVcaDialPosition(p, marks[i].plain));
             dl->AddCircleFilled(ImVec2(c.x + std::sin(angle) * r * 1.21f, c.y - std::cos(angle) * r * 1.21f),
                                 0.032f * r, StudioVcaTheme::ink, 12);
-            // The numeral further out, clear of its dot even beside the dial, where a label is at its widest.
-            const float lx = x + std::sin(angle) * (radius + 16.0f);
-            const float ly = y - std::cos(angle) * (radius + 16.0f) - 5.5f;
+            // The numeral further out at the legend size (16): those left of the dial end at their anchor and those
+            // right of it start there, so the widest clear their dots.
+            constexpr float offset = multicompp::ui_detail::StudioVcaFaceplateLayout::numeralOffset;
+            const float dx = std::sin(angle);
+            const float lx = x + dx * (radius + offset);
+            const float ly = y - std::cos(angle) * (radius + offset) - 8.0f;
+            const int align = dx < -0.25f ? 1 : (dx > 0.25f ? -1 : 0);
             if (marks[i].label != nullptr)
-                panel.text(dl, lx, ly, 9.5f, StudioVcaTheme::ink, marks[i].label, 0, false);
+                panel.text(dl, lx, ly, 16.0f, StudioVcaTheme::ink, marks[i].label, align, false);
             else
-                studioVcaInfinityMark(dl, lx, ly + 5.5f);
+                studioVcaInfinityMark(dl, lx + 8.0f * static_cast<float>(-align), ly + 8.0f);
         }
         studioVcaWell(dl, c, r);
         studioVcaChrome(dl, c, r);
@@ -4131,9 +4169,9 @@ private:
         {
             const float t = 2.0f * duskdaf::DuskPanel::kPi * static_cast<float>(i) / points;
             const float k = 1.0f + std::sin(t) * std::sin(t);
-            path[i] = panel.P(x + 5.0f * std::cos(t) / k, y + 5.0f * std::sin(t) * std::cos(t) / k);
+            path[i] = panel.P(x + 8.0f * std::cos(t) / k, y + 8.0f * std::sin(t) * std::cos(t) / k);
         }
-        dl->AddPolyline(path, points, StudioVcaTheme::ink, ImDrawFlags_Closed, 1.3f * s);
+        dl->AddPolyline(path, points, StudioVcaTheme::ink, ImDrawFlags_Closed, 1.8f * s);
     }
 
     // The AUTO RELEASE lamp button.
@@ -4158,25 +4196,30 @@ private:
     {
         const float s = panel.scale();
         const bool output = values[p] >= 0.5f;
-        ImGui::SetCursorScreenPos(panel.P(x - 22, y - 10));
-        const bool clicked = ImGui::InvisibleButton(id, ImVec2(44 * s, 20 * s));
-        dl->AddRectFilled(panel.P(x - 22, y - 10), panel.P(x + 22, y + 10), StudioVcaTheme::switchWell, 10.0f * s);
-        dl->AddRect(panel.P(x - 22, y - 10), panel.P(x + 22, y + 10), StudioVcaTheme::switchRim, 10.0f * s, 0, s);
-        const ImVec2 ball = panel.P(output ? x + 11 : x - 11, y);
-        gradientDisc(dl, ball, 8.0f * s, -0.6f, StudioVcaTheme::ballLit, StudioVcaTheme::ballShade);
-        panel.text(dl, x - 28, y - 6, 10.0f, StudioVcaTheme::ink, "INPUT", 1, true);
-        panel.text(dl, x + 28, y - 6, 10.0f, StudioVcaTheme::ink, "OUTPUT", -1, true);
+        ImGui::SetCursorScreenPos(panel.P(x - 26, y - 12));
+        const bool clicked = ImGui::InvisibleButton(id, ImVec2(52 * s, 24 * s));
+        dl->AddRectFilled(panel.P(x - 26, y - 12), panel.P(x + 26, y + 12), StudioVcaTheme::switchWell, 12.0f * s);
+        dl->AddRect(panel.P(x - 26, y - 12), panel.P(x + 26, y + 12), StudioVcaTheme::switchRim, 12.0f * s, 0, s);
+        const ImVec2 ball = panel.P(output ? x + 13 : x - 13, y);
+        gradientDisc(dl, ball, 9.5f * s, -0.6f, StudioVcaTheme::ballLit, StudioVcaTheme::ballShade);
+        panel.text(dl, x - 34, y - 8, 16.0f, StudioVcaTheme::ink, "INPUT", 1, true);
+        panel.text(dl, x + 34, y - 8, 16.0f, StudioVcaTheme::ink, "OUTPUT", -1, true);
         if (clicked) setValue(p, output ? 0.0f : 1.0f);
     }
 
-    // One of the face's round meters, the reference's geometry: the needle pivots below the window centre and
-    // sweeps +-30 degrees over minDb..maxDb (ui_detail::studioVcaNeedleDegrees); the dark lower half hides its foot.
+    // One of the face's round meters, the reference's geometry scaled to the layout's bezel: the needle pivots below
+    // the window centre and sweeps +-30 degrees over minDb..maxDb (ui_detail::studioVcaNeedleDegrees); the dark lower
+    // half hides its foot. Ticks and numerals (14) stand outside the scale's arc, beyond the needle's reach; the end
+    // numerals reach inward from their anchors so they stay in the window, and a mark without a label is a tick alone.
     // markDb (NaN = none) draws the red threshold mark.
     void studioVcaMeter(ImDrawList* dl, float cx, float cy, const StudioVcaMark* scale, int count,
                         float minDb, float maxDb, float valueDb, float markDb)
     {
         const float s = panel.scale();
-        constexpr float bezel = 72.0f, face = 64.0f, split = 8.0f, pivotDrop = 61.0f, arc = 92.0f;   // arc top at 0.49 face
+        constexpr float k = multicompp::ui_detail::StudioVcaFaceplateLayout::meterRadius / 72.0f;
+        constexpr float bezel = 72.0f * k, face = 64.0f * k, split = 8.0f * k, pivotDrop = 61.0f * k;
+        constexpr float arc = 92.0f * k;   // arc top at 0.49 face
+        constexpr float tick = 4.0f * k, numeralSize = 14.0f, numeralRadius = arc + tick + 2.0f + 0.5f * numeralSize;
         const ImVec2 c = panel.P(cx, cy);
         dl->AddCircleFilled(ImVec2(c.x + 2.0f * s, c.y + 3.0f * s), (bezel + 2.0f) * s, StudioVcaTheme::meterShadow, 64);
         gradientDisc(dl, c, bezel * s, -0.5f, StudioVcaTheme::bezelLit, StudioVcaTheme::bezelShade, 64);
@@ -4194,7 +4237,7 @@ private:
         }
         dl->AddConvexPolyFilled(window, segments + 1, StudioVcaTheme::window);
         dl->PushClipRect(panel.P(cx - face, cy - face), panel.P(cx + face, cy + split), true);
-        dl->AddCircleFilled(panel.P(cx, cy - 6), 30.0f * s, StudioVcaTheme::windowGlow, 32);   // lamp glow
+        dl->AddCircleFilled(panel.P(cx, cy - 6.0f * k), 30.0f * k * s, StudioVcaTheme::windowGlow, 32);   // lamp glow
         dl->PopClipRect();
         // Scale: an arc about the pivot, ticks and numerals (design coordinates).
         const float px = cx, py = cy + pivotDrop;
@@ -4208,12 +4251,17 @@ private:
         for (int i = 0; i < count; ++i)
         {
             const float degrees = multicompp::ui_detail::studioVcaNeedleDegrees(scale[i].plain, minDb, maxDb);
-            dl->AddLine(at(degrees, arc), at(degrees, arc + 6.0f), StudioVcaTheme::scaleInk, 1.4f * s);
-            const float a = degrees * duskdaf::DuskPanel::kPi / 180.0f;
-            panel.text(dl, px + std::sin(a) * (arc + 10.0f), py - std::cos(a) * (arc + 10.0f) - 4.25f, 8.5f,
-                       StudioVcaTheme::scaleInk, scale[i].label, 0, false);
+            dl->AddLine(at(degrees, arc), at(degrees, arc + tick), StudioVcaTheme::scaleInk, 1.4f * s);
+            if (scale[i].label == nullptr)
+                continue;
+            const float a = degrees * duskdaf::DuskPanel::kPi / 180.0f, dx = std::sin(a);
+            panel.text(dl, px + dx * numeralRadius, py - std::cos(a) * numeralRadius - 0.5f * numeralSize,
+                       numeralSize, StudioVcaTheme::scaleInk, scale[i].label, dx < -0.25f ? -1 : (dx > 0.25f ? 1 : 0),
+                       false);
         }
-        panel.text(dl, cx + 44, cy - 13, 11.0f, StudioVcaTheme::scaleInk, "VU", 0, true);
+        // VU in the window's middle, under the arc: at the right, where the reference prints it, the gain reduction
+        // meter's needle crossed it at rest.
+        panel.text(dl, cx, cy - 13.0f * k - 8.0f, 16.0f, StudioVcaTheme::scaleInk, "VU", 0, true);
         // Needles, clipped to the window; the window's lower edge is where the dark half hides their feet.
         dl->PushClipRect(panel.P(cx - face, cy - face), panel.P(cx + face, cy + split), true);
         if (std::isfinite(markDb))
@@ -4223,7 +4271,7 @@ private:
                     StudioVcaTheme::needle, 1.8f * s);
         dl->PopClipRect();
         // Glass: a soft reflection band on the right.
-        dl->AddRectFilledMultiColor(panel.P(cx + 22, cy - 58), panel.P(cx + 44, cy + split),
+        dl->AddRectFilledMultiColor(panel.P(cx + 22.0f * k, cy - 58.0f * k), panel.P(cx + 44.0f * k, cy + split),
                                     StudioVcaTheme::glassTopLeft, StudioVcaTheme::glassTopRight,
                                     StudioVcaTheme::glassBottomRight, StudioVcaTheme::glassBottomLeft);
     }
