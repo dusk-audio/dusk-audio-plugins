@@ -25,30 +25,122 @@ inline int choiceIndex(float hostValue, int count) noexcept
     return std::clamp(static_cast<int>(std::round(hostValue)), 0, count - 1);
 }
 
-// OPTO 2A, laid out on the 1200 x 480 canvas at the readability floor (owner direction 2026-11-05: legends 16 px,
+// Every mode shares one canvas, so a mode change never resizes the window: a mode whose canvas differed from the
+// opening size showed up shrunken in Logic (#240). 1120 x 380, the default and the minimum (owner 2026-11-05: one
+// size for every mode, the original one; its 1120 x 308 face area has the proportions of the reference leveling
+// amplifier's own window). Design px are screen px at that size, so the readability floor (legends 16 px, values
+// 17 px) is met in design px.
+inline constexpr float kDesignWidth = 1120.0f;
+inline constexpr float kDesignHeight = 380.0f;
+// The canvas the faces were authored on (the same 1120 x 380). A face not yet laid out at the readability floor is
+// drawn on it as before and placed into the face area by one uniform scale (MultiCompUI::beginLegacyFace).
+inline constexpr float kFaceCanvasWidth = 1120.0f;
+inline constexpr float kFaceCanvasHeight = 380.0f;
+
+// The mode row under the header: the eight mode tabs, then AUTO MAKEUP, BYPASS and SETTINGS (16 px captions).
+struct ModeRowLayout
+{
+    static constexpr float y0 = 46.0f, y1 = 70.0f;
+    static constexpr float tabLeft = 16.0f, tabWidth = 92.0f, tabGap = 4.0f;
+    static constexpr float autoMakeupX0 = 790.0f, autoMakeupX1 = 912.0f;
+    static constexpr float bypassX0 = 918.0f, bypassX1 = 1004.0f;
+    static constexpr float settingsX0 = 1010.0f, settingsX1 = kDesignWidth - 16.0f;
+    static constexpr float tabX0(int mode) noexcept { return tabLeft + static_cast<float>(mode) * (tabWidth + tabGap); }
+    static constexpr float centreY = 0.5f * (y0 + y1);
+};
+
+// The face area under the mode row (canvas y).
+inline constexpr float kFaceAreaTop = 72.0f;
+
+// The settings drawer over the face area (canvas coordinates; text y is its top). Row A: SIDECHAIN, PROCESSING.
+// Row B: STEREO, DRIVE, LOOKAHEAD, FET BLACK.
+struct SettingsDrawerLayout
+{
+    static constexpr float x0 = 16.0f, y0 = kFaceAreaTop + 4.0f, x1 = kDesignWidth - 16.0f, y1 = kDesignHeight - 4.0f;
+    static constexpr float legendSize = 16.0f, valueSize = 17.0f, knobRadius = 22.0f;
+    static constexpr float buttonH = 28.0f, segmentGap = 6.0f;
+    static constexpr float titleY = y0 + 6.0f;                                // SETTINGS, and CLOSE beside it
+    static constexpr float closeX0 = x1 - 112.0f, closeX1 = x1 - 16.0f;
+    static constexpr float rowA = 114.0f, rowB = 244.0f;                       // the two rows' group headings
+    static constexpr float rowPitch = 32.0f;                                   // between a group's button rows
+    static constexpr float rowAButtonsY = rowA + 28.0f, rowAKnobY = rowA + 76.0f;
+    static constexpr float rowBButtonsY = rowB + 28.0f, rowBKnobY = rowB + 76.0f;
+    // Row A: SIDECHAIN (the key's buttons, then the SC EQ knobs) and PROCESSING (a toggle, then its segments)
+    static constexpr float sidechainX0 = 40.0f, sidechainX1 = 560.0f, keyX0 = 40.0f, keyX1 = 200.0f;
+    static constexpr float lowFreqX = 262.0f, lowGainX = 352.0f, highFreqX = 442.0f, highGainX = 528.0f;
+    static constexpr float processingX0 = 590.0f, processingX1 = x1 - 24.0f;
+    static constexpr float processingToggleX0 = 598.0f, processingToggleX1 = 742.0f;
+    static constexpr float processingSegmentsX = 750.0f, processingSegmentW = 64.0f;
+    // Row B
+    static constexpr float stereoX0 = 40.0f, stereoX1 = 290.0f, linkX = 84.0f, linkModeX = 150.0f;
+    static constexpr float linkModeW = 130.0f;
+    static constexpr float driveX0 = 310.0f, driveX1 = 540.0f, driveGridX = 318.0f, driveW = 64.0f;
+    static constexpr float amountX = 500.0f;
+    static constexpr float lookaheadX0 = 560.0f, lookaheadX1 = 740.0f, lookaheadX = 650.0f;
+    static constexpr float fetX0 = 760.0f, fetX1 = x1 - 24.0f, thresholdX = 810.0f, transientX = 906.0f;
+    static constexpr float curveX = 970.0f, curveW = 92.0f;
+    // The centre of segment `i` of a vertical group at (x, y) of `perColumn` buttons a column (0: one column).
+    static constexpr float segmentCentreX(float x, float width, int i, int perColumn) noexcept
+    {
+        return x + static_cast<float>(perColumn > 0 ? i / perColumn : 0) * (width + segmentGap) + 0.5f * width;
+    }
+    static constexpr float segmentCentreY(float y, int i, int perColumn) noexcept
+    {
+        return y + static_cast<float>(perColumn > 0 ? i % perColumn : i) * (buttonH + segmentGap) + 0.5f * buttonH;
+    }
+};
+
+// OPTO 2A, laid out on the 1120 x 380 canvas at the readability floor (owner direction 2026-11-05: legends 16 px,
 // values 17 px, the hero legends 20 and the nameplate 24, design px = screen px at the minimum window). Canvas
 // coordinates; text y is the top of the text.
 struct OptoFaceplateLayout
 {
     static constexpr float left = 0.0f;
-    static constexpr float right = 1200.0f;
-    static constexpr float top = 88.0f;        // below the mode row (86)
-    static constexpr float bottom = 418.0f;
-    static constexpr float ear = 44.0f;        // each rack ear
-    static constexpr float dialY = 250.0f;     // GAIN and PEAK REDUCTION, their centres
-    static constexpr float dialRadius = 54.0f;
-    static constexpr float gainX = 330.0f;
-    static constexpr float peakX = 870.0f;
-    static constexpr float meterX = 455.0f, meterY = 122.0f, meterW = 290.0f, meterH = 164.0f;   // the VU
-    static constexpr float meterSwitchY = 324.0f;   // GR / +10 / +4, their text
-    static constexpr float switchX = 150.0f, switchY = 250.0f;   // LIMIT / COMPRESS, the toggle's pivot, level with the dials
-    static constexpr float trimX = 1062.0f, scHpY = 172.0f, mixY = 290.0f, trimRadius = 17.0f;   // set screws
-    static constexpr float brandX = 72.0f, brandY = 112.0f;   // LEVELING AMPLIFIER
+    static constexpr float right = kDesignWidth;
+    static constexpr float top = kFaceAreaTop + 1.0f;
+    static constexpr float bottom = kDesignHeight - 2.0f;
+    static constexpr float ear = 40.0f;        // each rack ear
+    static constexpr float dialY = 228.0f;     // GAIN and PEAK REDUCTION, their centres
+    static constexpr float dialRadius = 48.0f;
+    static constexpr float ringLabelOffset = 29.0f;   // the numerals' centres, past the dial's edge
+    static constexpr float legendDrop = 40.0f;        // the hero legend's top, below the dial's edge
+    static constexpr float gainX = 306.0f;
+    static constexpr float peakX = 814.0f;
+    static constexpr float meterX = 431.0f, meterY = 104.0f, meterW = 258.0f, meterH = 146.0f;   // the VU
+    static constexpr float meterSwitchY = 284.0f;   // GR / +10 / +4, their text
+    static constexpr float switchX = 140.0f, switchY = 228.0f;   // LIMIT / COMPRESS, the toggle's pivot, level with the dials
+    static constexpr float trimX = 994.0f, scHpY = 152.0f, mixY = 264.0f, trimRadius = 15.0f;   // set screws
+    static constexpr float brandX = 68.0f, brandY = 97.0f;   // LEVELING AMPLIFIER
 };
 
-// The VCA face shares the rack-height canvas with the FET face (1120 x 310; the Opto face had it too until it was
-// laid out on the 1200 x 480 canvas). The reference VCA compressor's own ~2.5:1 proportions were tried on the tall
-// canvas (2026-09-01) and abandoned: the AU wrapper's resize path leaves the
+// FET BLACK and FET BLUE on the 1120 x 380 canvas at the readability floor (canvas coordinates; text y is its top).
+// FET BLUE follows its reference unit's arrangement (owner 2026-11-05): HR and MIX trims between INPUT and OUTPUT,
+// and a blue meter section.
+struct FetFaceplateLayout
+{
+    static constexpr float left = 0.0f, right = kDesignWidth, top = kFaceAreaTop + 1.0f, bottom = kDesignHeight - 2.0f;
+    static constexpr float ear = 36.0f;
+    static constexpr float dialY = 228.0f, dialRadius = 44.0f;             // INPUT and OUTPUT
+    static constexpr float ringLabelOffset = 28.0f;                       // their numerals' centres, past the edge
+    static constexpr float legendDrop = 40.0f;                            // INPUT / OUTPUT's top, below the edge
+    static constexpr float blackInputX = 148.0f, blackOutputX = 356.0f;
+    static constexpr float blueInputX = 132.0f, blueOutputX = 372.0f;
+    static constexpr float blueTrimX = 252.0f, blueHeadroomY = 168.0f, blueMixY = 290.0f;   // HR and MIX
+    static constexpr float trimRadius = 13.0f;
+    static constexpr float timingX = 512.0f;                              // ATTACK over RELEASE
+    static constexpr float attackY = 158.0f, releaseY = 296.0f, timingRadius = 20.0f;
+    static constexpr float blackRatioX = 600.0f, blueRatioX = 594.0f;     // the RATIO column's buttons
+    static constexpr float buttonsY = 124.0f;                             // RATIO and METER columns, first button
+    static constexpr float meterX = 664.0f, meterW = 252.0f, meterH = 150.0f;   // the VU
+    static constexpr float blackMeterY = 124.0f, blueMeterY = 112.0f;
+    static constexpr float blueSectionX0 = 650.0f, blueSectionX1 = 930.0f;
+    static constexpr float meterButtonsX = 948.0f;                        // the METER column's buttons
+    static constexpr float blackMixX = 976.0f, blackMixY = 310.0f;
+};
+
+// The VCA face keeps the rack-height canvas it was authored on (1120 x 310, as the Opto and FET faces have). The
+// reference VCA compressor's own ~2.5:1 proportions were tried on
+// the tall canvas (2026-09-01) and abandoned: the AU wrapper's resize path leaves the
 // GL view at half size / the host keeps the old window (#240), so a mode
 // whose canvas differs from the opening size shows up shrunken in Logic.
 struct VcaFaceplateLayout
@@ -64,16 +156,6 @@ inline constexpr float vcaFaceplateAspect() noexcept
     return (VcaFaceplateLayout::right - VcaFaceplateLayout::left)
         / (VcaFaceplateLayout::bottom - VcaFaceplateLayout::top);
 }
-
-// Every mode shares one canvas, so a mode change never resizes the window: a mode whose canvas differed from the
-// opening size showed up shrunken in Logic (#240). 1200 x 480 since 2026-11-05 (owner direction: text readable at
-// the smallest window, which is this size), the default and the minimum.
-inline constexpr float kDesignWidth = 1200.0f;
-inline constexpr float kDesignHeight = 420.0f;   // 1200 x 420 since 2026-11-05 (was 480): the faces' spare plate cut
-// The canvas the faces were authored on (1120 x 380). A face not yet laid out for the current canvas is drawn on it
-// as before and placed into the current face area by one uniform scale (MultiCompUI::beginLegacyFace).
-inline constexpr float kFaceCanvasWidth = 1120.0f;
-inline constexpr float kFaceCanvasHeight = 380.0f;
 
 // Digital and Multiband content bounds in visible-canvas y (0 = the top of the header).
 // The rack shell extends to the canvas edges; its lettering keeps an 8 px bottom margin.
@@ -511,12 +593,13 @@ namespace
 {
 constexpr float kDesignW = multicompp::ui_detail::kDesignWidth;
 constexpr float kDesignH = multicompp::ui_detail::kDesignHeight;
-constexpr float kHeaderH = 48.0f;
+constexpr float kHeaderH = 44.0f;   // the title row
 // The mode row under the header, and the face area under it (design coordinates).
-constexpr float kModeRowY0 = 53.0f, kModeRowY1 = 81.0f;
-constexpr float kFaceTop = 86.0f;
-// A face still authored on the 1120 x 380 canvas spans visible-canvas y 70..380 there; it is scaled to the current
-// width and centred in the face area (beginLegacyFace).
+constexpr float kModeRowY0 = multicompp::ui_detail::ModeRowLayout::y0;
+constexpr float kModeRowY1 = multicompp::ui_detail::ModeRowLayout::y1;
+constexpr float kFaceTop = multicompp::ui_detail::kFaceAreaTop;
+// A face still authored on the 1120 x 380 canvas spans visible-canvas y 70..380 there, under a 48 px header; it is
+// scaled to the current width and centred in the face area (beginLegacyFace).
 constexpr float kLegacyFaceW = multicompp::ui_detail::kFaceCanvasWidth;
 constexpr float kLegacyFaceH = multicompp::ui_detail::kFaceCanvasHeight;
 constexpr float kLegacyFaceTopY = 70.0f;
@@ -527,7 +610,8 @@ constexpr float kLegacyFaceY = kFaceTop + 0.5f * ((kDesignH - kFaceTop) - (kLega
 // Global and Sidechain bands disappear completely from the visible layout.
 constexpr float kModeCanvasTop = 322.0f;
 constexpr float kModeCanvasBottom = 760.0f;
-constexpr float kModeCanvasShiftY = kModeCanvasTop - kHeaderH;
+constexpr float kLegacyHeaderH = 48.0f;   // the header the faces' canvas was authored under
+constexpr float kModeCanvasShiftY = kModeCanvasTop - kLegacyHeaderH;
 constexpr float kUiPi = duskdaf::DuskPanel::kPi;
 // Set to true only while collecting a host geometry measurement.
 constexpr bool kGeometryDiagnosticEnabled = false;
@@ -1160,7 +1244,7 @@ private:
 
     bool headerChevron(ImDrawList* dl, const char* id, float cx, bool left)
     {
-        constexpr float cy = 24.0f;
+        constexpr float cy = 22.0f;
         constexpr float halfH = 12.5f;
         const ImVec2 b0 = panel.P(cx - 9.5f, cy - halfH);
         const ImVec2 b1 = panel.P(cx + 9.5f, cy + halfH);
@@ -1189,7 +1273,7 @@ private:
     bool headerTextButton(ImDrawList* dl, const char* id, float x0, float x1,
                           const char* label)
     {
-        constexpr float y0 = 11.5f, y1 = 36.5f;
+        constexpr float y0 = 9.5f, y1 = 34.5f;
         const ImVec2 b0 = panel.P(x0, y0), b1 = panel.P(x1, y1);
         ImGui::SetCursorScreenPos(b0);
         ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
@@ -1222,11 +1306,11 @@ private:
                                     IM_COL32(155, 154, 151, 255),
                                     IM_COL32(91, 91, 91, 255),
                                     IM_COL32(118, 118, 116, 255));
-        dl->AddLine(panel.P(0, 48), panel.P(kDesignW, 48),
+        dl->AddLine(panel.P(0, kHeaderH), panel.P(kDesignW, kHeaderH),
                     IM_COL32(91, 90, 88, 255), 1.2f * panel.scale());
 
         constexpr float plateX0 = 28.0f, plateX1 = 358.0f;
-        constexpr float plateY0 = 8.0f, plateY1 = 40.0f;
+        constexpr float plateY0 = 6.0f, plateY1 = 38.0f;
         dl->AddRectFilledMultiColor(panel.P(plateX0, plateY0), panel.P(plateX1, plateY1),
                                     IM_COL32(37, 37, 38, 255),
                                     IM_COL32(29, 29, 30, 255),
@@ -1235,12 +1319,12 @@ private:
         dl->AddRect(panel.P(plateX0, plateY0), panel.P(plateX1, plateY1),
                     IM_COL32(185, 184, 180, 220), 3.5f * panel.scale(), 0,
                     1.2f * panel.scale());
-        dl->AddLine(panel.P(40, 37), panel.P(348, 37),
+        dl->AddLine(panel.P(40, 35), panel.P(348, 35),
                     IM_COL32(116, 145, 75, 210), 1.2f * panel.scale());
-        panel.text(dl, 42, 10, 24, kText, "MULTI-COMP", -1, true);
-        panel.text(dl, 244, 14, 20, kText, "MC-2", 0, true);
-        panel.text(dl, 346, 18, 14, kDim, "v" MULTICOMP2_VERSION_STRING, 1);
-        panel.text(dl, kDesignW - 34, 12, 22, kText, "DUSK AUDIO", 1, true);
+        panel.text(dl, 42, 8, 24, kText, "MULTI-COMP", -1, true);
+        panel.text(dl, 244, 12, 20, kText, "MC-2", 0, true);
+        panel.text(dl, 346, 16, 14, kDim, "v" MULTICOMP2_VERSION_STRING, 1);
+        panel.text(dl, kDesignW - 34, 10, 22, kText, "DUSK AUDIO", 1, true);
 
         ImGui::SetCursorScreenPos(panel.P(plateX0, plateY0));
         if (ImGui::InvisibleButton("##mc_titlecredits",
@@ -1255,7 +1339,7 @@ private:
         if (headerChevron(dl, "##mc_presetprev", 390.5f, true)) stepPreset(-1);
         if (headerChevron(dl, "##mc_presetnext", 737.5f, false)) stepPreset(1);
 
-        constexpr float bandY0 = 11.5f, bandY1 = 36.5f;
+        constexpr float bandY0 = 9.5f, bandY1 = 34.5f;
         constexpr float bandH = bandY1 - bandY0;
         ImGui::SetCursorScreenPos(panel.P(404, bandY0));
         ImGui::SetNextItemWidth(320.0f * panel.scale());
@@ -1477,15 +1561,15 @@ private:
             sizeof(multicompp::kModes) / sizeof(multicompp::kModes[0]));
         static_assert(modeCount == 8,
                       "the mode row layout must be revisited when modes change");
+        using Row = multicompp::ui_detail::ModeRowLayout;
         const int selected = multicompp::ui_detail::choiceIndex(value(P_MODE), 8);
-        constexpr float rowLeft = 16.0f, tabWidth = 100.0f, gap = 4.0f;
         for (int mode = 0; mode < modeCount; ++mode)
         {
-            const float x0 = rowLeft + static_cast<float>(mode) * (tabWidth + gap);
+            const float x0 = Row::tabX0(mode);
             char id[32];
             std::snprintf(id, sizeof(id), "##mc_mode_button_%d", mode);
             const bool active = mode == selected;
-            if (rowTab(dl, id, x0, x0 + tabWidth,
+            if (rowTab(dl, id, x0, x0 + Row::tabWidth,
                        multicompp::ui_detail::kModeTabLabels[static_cast<size_t>(mode)], active))
             {
                 // A mode chosen shows its face: the settings drawer closes (owner 2026-11-05), the lit tab too.
@@ -1495,9 +1579,9 @@ private:
         }
         // Five factory presets engage Auto Makeup, which bypasses each face's
         // manual makeup / output control; it needs a switch the user can see.
-        modeRowToggle(dl, "mc_auto_makeup", P_AUTO_MAKEUP, 858, 988, "AUTO MAKEUP");
-        modeRowToggle(dl, "mc_bypass", P_BYPASS, 994, 1078, "BYPASS");
-        if (rowTab(dl, "##mc_settings", 1084, kDesignW - 16, "SETTINGS", showSettings))
+        modeRowToggle(dl, "mc_auto_makeup", P_AUTO_MAKEUP, Row::autoMakeupX0, Row::autoMakeupX1, "AUTO MAKEUP");
+        modeRowToggle(dl, "mc_bypass", P_BYPASS, Row::bypassX0, Row::bypassX1, "BYPASS");
+        if (rowTab(dl, "##mc_settings", Row::settingsX0, Row::settingsX1, "SETTINGS", showSettings))
             showSettings = !showSettings;
     }
 
@@ -1560,14 +1644,7 @@ private:
         static constexpr ImU32 segmentOn = IM_COL32(39, 57, 24, 255);      // the mode row's lit tab
         static constexpr ImU32 segmentOnEdge = IM_COL32(103, 132, 75, 255);
     };
-    struct DrawerLayout
-    {
-        static constexpr float x0 = 16.0f, y0 = 92.0f, x1 = kDesignW - 16.0f, y1 = kDesignH - 8.0f;
-        static constexpr float rowA = 134.0f, rowB = 274.0f;   // the two rows' group headings
-        static constexpr float rowPitch = 34.0f;                // between a group's button rows
-        static constexpr float legendSize = 16.0f, valueSize = 17.0f, knobRadius = 22.0f;
-        static constexpr float buttonH = 28.0f;
-    };
+    using DrawerLayout = multicompp::ui_detail::SettingsDrawerLayout;
 
     static constexpr uint32_t pid(ParamId id) noexcept { return static_cast<uint32_t>(id); }
 
@@ -1615,16 +1692,15 @@ private:
                         const char* const* labels, int count, bool vertical, bool applicable, int perColumn = 0)
     {
         const int selected = multicompp::ui_detail::choiceIndex(values[p], count);
-        constexpr float gap = 6.0f;
+        constexpr float gap = DrawerLayout::segmentGap;
         const float opacity = applicable ? 1.0f : 0.4f;
         if (!applicable) ImGui::BeginDisabled();
         for (int i = 0; i < count; ++i)
         {
-            const int column = vertical && perColumn > 0 ? i / perColumn : 0;
-            const int row = vertical && perColumn > 0 ? i % perColumn : i;
-            const float bx0 = vertical ? x0 + static_cast<float>(column) * (width + gap)
+            const float bx0 = vertical ? DrawerLayout::segmentCentreX(x0, width, i, perColumn) - 0.5f * width
                                        : x0 + static_cast<float>(i) * (width + gap);
-            const float by0 = vertical ? y0 + static_cast<float>(row) * (DrawerLayout::buttonH + gap) : y0;
+            const float by0 = vertical ? DrawerLayout::segmentCentreY(y0, i, perColumn) - 0.5f * DrawerLayout::buttonH
+                                       : y0;
             const ImVec2 b0 = panel.P(bx0, by0), b1 = panel.P(bx0 + width, by0 + DrawerLayout::buttonH);
             ImGui::PushID(id);
             ImGui::PushID(i);
@@ -1661,67 +1737,68 @@ private:
         dl->AddRectFilled(panel.P(0, kFaceTop), panel.P(kDesignW, kDesignH), DrawerTheme::scrim);
         dl->AddRectFilled(panel.P(L::x0, L::y0), panel.P(L::x1, L::y1), DrawerTheme::panel, 4.0f * s);
         dl->AddRect(panel.P(L::x0, L::y0), panel.P(L::x1, L::y1), DrawerTheme::edge, 4.0f * s, 0, s);
-        panel.text(dl, 40.0f, L::y0 + 8.0f, 20.0f, kText, "SETTINGS", -1, true);
-        if (rowTab(dl, "##mc_settings_close", L::x1 - 112.0f, L::x1 - 16.0f, "CLOSE", false, L::y0 + 8.0f,
-                   L::y0 + 8.0f + L::buttonH))
+        panel.text(dl, L::sidechainX0, L::titleY, 20.0f, kText, "SETTINGS", -1, true);
+        if (rowTab(dl, "##mc_settings_close", L::closeX0, L::closeX1, "CLOSE", false, L::titleY,
+                   L::titleY + L::buttonH))
             showSettings = false;
 
         // Row A: SIDECHAIN (the detector's input), PROCESSING.
-        drawerHeading(dl, 40.0f, 596.0f, L::rowA, "SIDECHAIN");
-        const float row1 = L::rowA + 30.0f, row2 = row1 + L::rowPitch, row3 = row2 + L::rowPitch;
-        illuminatedToggle(dl, "##set_ext_sc", pid(ParamId::ExternalSidechain), 40.0f, row1, 216.0f,
+        drawerHeading(dl, L::sidechainX0, L::sidechainX1, L::rowA, "SIDECHAIN");
+        const float row1 = L::rowAButtonsY, row2 = row1 + L::rowPitch, row3 = row2 + L::rowPitch;
+        illuminatedToggle(dl, "##set_ext_sc", pid(ParamId::ExternalSidechain), L::keyX0, row1, L::keyX1,
                           row1 + L::buttonH, "EXTERNAL KEY", L::legendSize);
-        illuminatedToggle(dl, "##set_sc_listen", pid(ParamId::GlobalSidechainListen), 40.0f, row2, 216.0f,
+        illuminatedToggle(dl, "##set_sc_listen", pid(ParamId::GlobalSidechainListen), L::keyX0, row2, L::keyX1,
                           row2 + L::buttonH, "SC LISTEN", L::legendSize);
-        const float knobY = L::rowA + 84.0f;
-        drawerKnob(dl, "##set_sc_low_freq", pid(ParamId::ScLowFreq), 286.0f, knobY, "LOW FREQ", true);
-        drawerKnob(dl, "##set_sc_low_gain", pid(ParamId::ScLowGain), 384.0f, knobY, "LOW GAIN", true);
-        drawerKnob(dl, "##set_sc_high_freq", pid(ParamId::ScHighFreq), 482.0f, knobY, "HIGH FREQ", true);
-        drawerKnob(dl, "##set_sc_high_gain", pid(ParamId::ScHighGain), 568.0f, knobY, "HIGH GAIN", true);
+        drawerKnob(dl, "##set_sc_low_freq", pid(ParamId::ScLowFreq), L::lowFreqX, L::rowAKnobY, "LOW FREQ", true);
+        drawerKnob(dl, "##set_sc_low_gain", pid(ParamId::ScLowGain), L::lowGainX, L::rowAKnobY, "LOW GAIN", true);
+        drawerKnob(dl, "##set_sc_high_freq", pid(ParamId::ScHighFreq), L::highFreqX, L::rowAKnobY, "HIGH FREQ", true);
+        drawerKnob(dl, "##set_sc_high_gain", pid(ParamId::ScHighGain), L::highGainX, L::rowAKnobY, "HIGH GAIN", true);
 
-        drawerHeading(dl, 632.0f, L::x1 - 24.0f, L::rowA, "PROCESSING");
+        drawerHeading(dl, L::processingX0, L::processingX1, L::rowA, "PROCESSING");
         // Studio VCA runs at the host rate at every setting and Multiband runs no oversampler.
-        panel.text(dl, 640.0f, row1 + 6.0f, L::legendSize, colourWithAlpha(DrawerTheme::legend,
+        panel.text(dl, L::processingToggleX0, row1 + 6.0f, L::legendSize, colourWithAlpha(DrawerTheme::legend,
                    mode == 5 || mode == 7 ? 0.4f : 1.0f), "OVERSAMPLING", -1, true);
         static constexpr const char* kOversamplingShort[3] = {"OFF", "2X", "4X"};
-        drawerSegments(dl, "##set_os", pid(ParamId::Oversampling), 800.0f, row1, 64.0f,
-                       kOversamplingShort, 3, false, mode != 5 && mode != 7);
+        drawerSegments(dl, "##set_os", pid(ParamId::Oversampling), L::processingSegmentsX, row1,
+                       L::processingSegmentW, kOversamplingShort, 3, false, mode != 5 && mode != 7);
         // Multiband reads True Peak only on an external key it actually has (MultiCompDSP: the detector feed).
         const bool truePeakApplies = mode != 7 || externalKeyInUse();
-        illuminatedToggle(dl, "##set_tp", pid(ParamId::TruePeakEnable), 640.0f, row2, 792.0f,
-                          row2 + L::buttonH, "TRUE PEAK", L::legendSize, truePeakApplies);
+        illuminatedToggle(dl, "##set_tp", pid(ParamId::TruePeakEnable), L::processingToggleX0, row2,
+                          L::processingToggleX1, row2 + L::buttonH, "TRUE PEAK", L::legendSize, truePeakApplies);
         static constexpr const char* kTruePeakShort[2] = {"4X", "8X"};
-        drawerSegments(dl, "##set_tp_q", pid(ParamId::TruePeakQuality), 800.0f, row2, 64.0f,
-                       kTruePeakShort, 2, false, truePeakApplies && values[pid(ParamId::TruePeakEnable)] > 0.5f);
+        drawerSegments(dl, "##set_tp_q", pid(ParamId::TruePeakQuality), L::processingSegmentsX, row2,
+                       L::processingSegmentW, kTruePeakShort, 2, false,
+                       truePeakApplies && values[pid(ParamId::TruePeakEnable)] > 0.5f);
         // Digital and Multiband add no noise (MultiCompDSP: addNoise).
-        illuminatedToggle(dl, "##set_noise", pid(ParamId::NoiseEnable), 640.0f, row3, 792.0f,
-                          row3 + L::buttonH, "ANALOG NOISE", L::legendSize, !digitalModes);
+        illuminatedToggle(dl, "##set_noise", pid(ParamId::NoiseEnable), L::processingToggleX0, row3,
+                          L::processingToggleX1, row3 + L::buttonH, "ANALOG NOISE", L::legendSize, !digitalModes);
 
         // Row B: STEREO, DRIVE, LOOKAHEAD, FET BLACK.
-        const float rowBKnobY = L::rowB + 84.0f, rowBButtonsY = L::rowB + 30.0f;
-        drawerHeading(dl, 40.0f, 330.0f, L::rowB, "STEREO");
-        drawerKnob(dl, "##set_link", pid(ParamId::StereoLink), 90.0f, rowBKnobY, "LINK", mode != 7);
+        drawerHeading(dl, L::stereoX0, L::stereoX1, L::rowB, "STEREO");
+        drawerKnob(dl, "##set_link", pid(ParamId::StereoLink), L::linkX, L::rowBKnobY, "LINK", mode != 7);
         static constexpr const char* kLinkShort[3] = {"STEREO", "MID-SIDE", "DUAL MONO"};
-        drawerSegments(dl, "##set_link_mode", pid(ParamId::StereoLinkMode), 168.0f, rowBButtonsY, 150.0f,
-                       kLinkShort, 3, true, true);
+        drawerSegments(dl, "##set_link_mode", pid(ParamId::StereoLinkMode), L::linkModeX, L::rowBButtonsY,
+                       L::linkModeW, kLinkShort, 3, true, true);
 
-        drawerHeading(dl, 362.0f, 600.0f, L::rowB, "DRIVE");
+        drawerHeading(dl, L::driveX0, L::driveX1, L::rowB, "DRIVE");
         static constexpr const char* kDriveShort[4] = {"OFF", "SOFT", "HARD", "CLIP"};
-        drawerSegments(dl, "##set_drive", pid(ParamId::Distortion), 370.0f, rowBButtonsY, 70.0f,
+        drawerSegments(dl, "##set_drive", pid(ParamId::Distortion), L::driveGridX, L::rowBButtonsY, L::driveW,
                        kDriveShort, 4, true, true, 2);
-        drawerKnob(dl, "##set_drive_amt", pid(ParamId::DistortionAmount), 560.0f, rowBKnobY, "AMOUNT",
+        drawerKnob(dl, "##set_drive_amt", pid(ParamId::DistortionAmount), L::amountX, L::rowBKnobY, "AMOUNT",
                    values[pid(ParamId::Distortion)] > 0.5f);
 
-        drawerHeading(dl, 632.0f, 820.0f, L::rowB, "LOOKAHEAD");
-        drawerKnob(dl, "##set_lookahead", pid(ParamId::GlobalLookahead), 726.0f, rowBKnobY, "TIME", digitalModes,
-                   "DIGITAL, MULTIBAND");
+        drawerHeading(dl, L::lookaheadX0, L::lookaheadX1, L::rowB, "LOOKAHEAD");
+        drawerKnob(dl, "##set_lookahead", pid(ParamId::GlobalLookahead), L::lookaheadX, L::rowBKnobY, "TIME",
+                   digitalModes, "DIGITAL, MULTIBAND");
 
-        drawerHeading(dl, 852.0f, L::x1 - 24.0f, L::rowB, "FET BLACK");
-        drawerKnob(dl, "##set_fet_threshold", pid(ParamId::FetThreshold), 904.0f, rowBKnobY, "THRESHOLD", fetBlack);
-        drawerKnob(dl, "##set_fet_transient", pid(ParamId::FetTransient), 1004.0f, rowBKnobY, "TRANSIENT", fetBlack);
+        drawerHeading(dl, L::fetX0, L::fetX1, L::rowB, "FET BLACK");
+        drawerKnob(dl, "##set_fet_threshold", pid(ParamId::FetThreshold), L::thresholdX, L::rowBKnobY, "THRESHOLD",
+                   fetBlack);
+        drawerKnob(dl, "##set_fet_transient", pid(ParamId::FetTransient), L::transientX, L::rowBKnobY, "TRANSIENT",
+                   fetBlack);
         // Curve shapes the All buttons' law only (MultiCompModes: the measured extension at ratio All).
         static constexpr const char* kCurveShort[2] = {"MODERN", "MEASURED"};
-        drawerSegments(dl, "##set_fet_curve", pid(ParamId::FetCurve), 1064.0f, rowBButtonsY, 96.0f,
+        drawerSegments(dl, "##set_fet_curve", pid(ParamId::FetCurve), L::curveX, L::rowBButtonsY, L::curveW,
                        kCurveShort, 2, true,
                        fetBlack && multicompp::ui_detail::choiceIndex(values[pid(ParamId::FetRatio)], 5) == 4);
 
@@ -1840,9 +1917,9 @@ private:
         return multicompp::ui_detail::fetSloAttackTypedHost(text, host);
     }
 
-    // The face of the current mode. OPTO is laid out on the canvas itself (scale and origin are the canvas
-    // transform, as the caller left it); the other faces are still drawn on the face canvas they were authored on
-    // (beginLegacyFace) until each is laid out at the readability floor.
+    // The face of the current mode. OPTO, FET BLACK and FET BLUE are laid out on the canvas itself (scale and origin
+    // are the canvas transform, as the caller left it); the other faces are still drawn on the face canvas they were
+    // authored on (beginLegacyFace) until each is laid out at the readability floor.
     void drawModePanel(ImDrawList* dl, float scale, ImVec2 origin)
     {
         const int mode = multicompp::ui_detail::choiceIndex(value(P_MODE), 8);
@@ -1867,10 +1944,10 @@ private:
         switch (mode)
         {
             case 0: drawOpto(dl); break;
-            case 1: legacyFace(); drawFet(dl, false); break;
+            case 1: drawFet(dl, false); break;
             case 2: legacyFace(); drawVca(dl); break;
             case 3: legacyFace(); drawBus(dl); break;
-            case 4: legacyFace(); drawFet(dl, true); break;
+            case 4: drawFet(dl, true); break;
             case 5: legacyFace(); drawStudioVca(dl); break;
             case 6: legacyFace(); drawDigital(dl); break;
             case 7: legacyFace(); drawMultiband(dl); break;
@@ -2158,7 +2235,8 @@ private:
         ring.markInner = 5.0f;    ring.markThickness = 1.8f;
         ring.minorThickness = 1.0f;
         ring.markColor = kOptoInk;
-        ring.labelOffset = 31.0f; ring.labelNudgeY = -9.0f; ring.labelSize = 16.0f;
+        ring.labelOffset = multicompp::ui_detail::OptoFaceplateLayout::ringLabelOffset;
+        ring.labelNudgeY = -9.0f; ring.labelSize = 16.0f;
         ring.labelColor = kOptoInk;
         ring.labelCentred = true;
         duskdaf::KnobRingStyle medium = ring;   medium.minorInner = 8.0f;
@@ -2222,7 +2300,7 @@ private:
                     OptoTheme::knobBarEdge, 1.5f * panel.scale());
         dl->AddLine(ridge(0.48f, 0.0f), ridge(0.93f, 0.0f),
                     OptoTheme::knobPointer, 1.8f * panel.scale());
-        panel.text(dl, x, y + radius + 46.0f, 20.0f,
+        panel.text(dl, x, y + radius + multicompp::ui_detail::OptoFaceplateLayout::legendDrop, 20.0f,
                    kOptoInk, label, 0, true);
         optoKnobSplitter.Merge(dl);
     }
@@ -2332,6 +2410,12 @@ private:
         static constexpr ImU32 rackSlot = IM_COL32(2, 3, 3, 255);
         static constexpr ImU32 screwHead = IM_COL32(130, 132, 127, 255);
         static constexpr ImU32 screwSlot = IM_COL32(38, 39, 38, 255);
+        // FET BLUE's blue meter section (its reference unit's colour; our own lettering)
+        static constexpr ImU32 blueSectionTop = IM_COL32(30, 112, 182, 255);
+        static constexpr ImU32 blueSectionBottom = IM_COL32(18, 84, 146, 255);
+        static constexpr ImU32 blueSectionEdge = IM_COL32(10, 46, 82, 255);
+        static constexpr ImU32 blueSectionHighlight = IM_COL32(150, 196, 236, 110);
+        static constexpr ImU32 blueInk = IM_COL32(240, 245, 250, 255);
         // The badge and nameplate
         static constexpr ImU32 badgeInk = IM_COL32(234, 234, 221, 255);
         static constexpr ImU32 badgeSeries = IM_COL32(177, 179, 170, 255);
@@ -2389,99 +2473,97 @@ private:
         static constexpr ImU32 plus = IM_COL32(210, 212, 201, 255);
     };
 
-    // FET BLACK's face, and for now FET BLUE's on the same panel (`blue`: its own ratio buttons, side-chain
-    // filter and Headroom; it shares Input, Output, Attack and Release).
+    // FET BLACK's face, and FET BLUE's (`blue`): the same rack panel, INPUT, OUTPUT, ATTACK and RELEASE. FET BLUE
+    // has its own ratio buttons with the side-chain filter's, HR and MIX between INPUT and OUTPUT and a blue meter
+    // section, as its reference unit does.
     void drawFet(ImDrawList* dl, bool blue)
     {
-        constexpr float left = 0.0f, right = 1120.0f;
-        constexpr float top = 344.0f, bottom = 654.0f;
-        dl->AddRectFilled(panel.P(left + 5, top + 7), panel.P(right + 5, bottom + 7),
-                          FetTheme::dropShadow, 4.0f * panel.scale());
-        dl->AddRectFilledMultiColor(panel.P(left, top), panel.P(right, bottom),
-                                    FetTheme::plateTopLeft,
-                                    FetTheme::plateTopRight,
-                                    FetTheme::plateBottomRight,
-                                    FetTheme::plateBottomLeft);
-        dl->AddRect(panel.P(left, top), panel.P(right, bottom),
-                    FetTheme::plateEdge, 4.0f * panel.scale(), 0,
-                    1.3f * panel.scale());
+        using Layout = multicompp::ui_detail::FetFaceplateLayout;
+        constexpr float left = Layout::left, right = Layout::right;
+        constexpr float top = Layout::top, bottom = Layout::bottom, ear = Layout::ear;
+        const float s = panel.scale();
+        dl->AddRectFilled(panel.P(left + 5, top + 7), panel.P(right + 5, bottom + 7), FetTheme::dropShadow, 4.0f * s);
+        dl->AddRectFilledMultiColor(panel.P(left, top), panel.P(right, bottom), FetTheme::plateTopLeft,
+                                    FetTheme::plateTopRight, FetTheme::plateBottomRight, FetTheme::plateBottomLeft);
+        dl->AddRect(panel.P(left, top), panel.P(right, bottom), FetTheme::plateEdge, 4.0f * s, 0, 1.3f * s);
         for (int row = static_cast<int>(top + 4); row < static_cast<int>(bottom); row += 4)
-            dl->AddLine(panel.P(left + 3, static_cast<float>(row)),
-                        panel.P(right - 3, static_cast<float>(row)),
-                        row % 8 == 0 ? FetTheme::grainLight
-                                     : FetTheme::grainDark, panel.scale());
-        // Rack ears and mounting slots use the same full-face construction as
-        // Opto mode so switching hardware models feels like swapping rack units.
-        dl->AddRectFilled(panel.P(left, top), panel.P(left + 38.0f, bottom),
-                          FetTheme::ear);
-        dl->AddRectFilled(panel.P(right - 38.0f, top), panel.P(right, bottom),
-                          FetTheme::ear);
-        dl->AddLine(panel.P(left + 38.0f, top), panel.P(left + 38.0f, bottom),
-                    FetTheme::earSeam, panel.scale());
-        dl->AddLine(panel.P(right - 38.0f, top), panel.P(right - 38.0f, bottom),
-                    FetTheme::earSeam, panel.scale());
+            dl->AddLine(panel.P(left + 3, static_cast<float>(row)), panel.P(right - 3, static_cast<float>(row)),
+                        row % 8 == 0 ? FetTheme::grainLight : FetTheme::grainDark, s);
+        // Rack ears and mounting slots, the same construction as the Opto face.
+        dl->AddRectFilled(panel.P(left, top), panel.P(left + ear, bottom), FetTheme::ear);
+        dl->AddRectFilled(panel.P(right - ear, top), panel.P(right, bottom), FetTheme::ear);
+        dl->AddLine(panel.P(left + ear, top), panel.P(left + ear, bottom), FetTheme::earSeam, s);
+        dl->AddLine(panel.P(right - ear, top), panel.P(right - ear, bottom), FetTheme::earSeam, s);
         for (const float slotY : {top + 62.0f, bottom - 62.0f})
         {
-            dl->AddRectFilled(panel.P(-9.0f, slotY - 9.0f),
-                              panel.P(23.0f, slotY + 9.0f),
-                              FetTheme::rackSlot, 8.0f * panel.scale());
-            dl->AddRectFilled(panel.P(right - 23.0f, slotY - 9.0f),
-                              panel.P(right + 9.0f, slotY + 9.0f),
-                              FetTheme::rackSlot, 8.0f * panel.scale());
+            dl->AddRectFilled(panel.P(-9.0f, slotY - 9.0f), panel.P(23.0f, slotY + 9.0f), FetTheme::rackSlot, 8.0f * s);
+            dl->AddRectFilled(panel.P(right - 23.0f, slotY - 9.0f), panel.P(right + 9.0f, slotY + 9.0f),
+                              FetTheme::rackSlot, 8.0f * s);
         }
-        for (const ImVec2 screw : {ImVec2(left + 73, top + 18),
-                                   ImVec2(right - 73, top + 18),
-                                   ImVec2(left + 73, bottom - 18),
-                                   ImVec2(right - 73, bottom - 18)})
+        for (const ImVec2 screw : {ImVec2(left + 73, top + 18), ImVec2(right - 73, top + 18),
+                                   ImVec2(left + 73, bottom - 18), ImVec2(right - 73, bottom - 18)})
         {
-            dl->AddCircleFilled(panel.P(screw.x, screw.y), 5.5f * panel.scale(),
-                                FetTheme::screwHead, 24);
-            dl->AddLine(panel.P(screw.x - 3.0f, screw.y),
-                        panel.P(screw.x + 3.0f, screw.y),
-                        FetTheme::screwSlot, panel.scale());
+            dl->AddCircleFilled(panel.P(screw.x, screw.y), 6.5f * s, FetTheme::screwHead, 24);
+            dl->AddLine(panel.P(screw.x - 3.5f, screw.y), panel.P(screw.x + 3.5f, screw.y), FetTheme::screwSlot, s);
         }
 
-        // Match the reference unit's left-to-right reading order: two large gain
-        // controls, vertically paired timing controls, ratio buttons, the same
-        // VU assembly proven in Opto mode, then the fixed GR meter bank.
-        fetKnob(dl, "fet_in", P_FET_IN, 177, 501, 48.0f,
-                "INPUT", true, "%.1f", " dB");
-        fetKnob(dl, "fet_out", P_FET_OUT, 397, 501, 48.0f,
-                "OUTPUT", true, "%.1f", " dB");
-        fetKnob(dl, "fet_att", P_FET_ATTACK, 559, 438, 23.0f,
-                "ATTACK", false, "%.2f", "", blue);
-        fetKnob(dl, "fet_rel", P_FET_RELEASE, 559, 553, 23.0f,
-                "RELEASE", false, "%.2f", "");
-        // The VU sits vertically centred on the two button columns either
-        // side of it (ratio: five 27-high buttons at a 31 pitch; meter: four
-        // 32-high at a 38 pitch, both from kFetButtonsTop).
-        constexpr float kFetButtonsTop = 418.0f;
-        constexpr float ratioSpan = 4.0f * 31.0f + 27.0f, meterSpan = 3.0f * 38.0f + 32.0f;
-        constexpr float vuHeight = 141.0f;
-        constexpr float vuTop = kFetButtonsTop + 0.5f * (std::max(ratioSpan, meterSpan) - vuHeight);
+        // The reference unit's reading order: the two gain controls, the timing pair, the ratio buttons, the VU
+        // and the meter buttons.
+        const float inputX = blue ? Layout::blueInputX : Layout::blackInputX;
+        const float outputX = blue ? Layout::blueOutputX : Layout::blackOutputX;
+        const float timingX = Layout::timingX;
+        fetKnob(dl, "fet_in", P_FET_IN, inputX, Layout::dialY, Layout::dialRadius, "INPUT", true, "%.1f", " dB");
+        fetKnob(dl, "fet_out", P_FET_OUT, outputX, Layout::dialY, Layout::dialRadius, "OUTPUT", true, "%.1f", " dB");
+        fetKnob(dl, "fet_att", P_FET_ATTACK, timingX, Layout::attackY, Layout::timingRadius, "ATTACK", false, "%.2f",
+                "", blue);
+        fetKnob(dl, "fet_rel", P_FET_RELEASE, timingX, Layout::releaseY, Layout::timingRadius, "RELEASE", false,
+                "%.2f", "");
+
+        multicompp::ui_detail::VintageMeterScale meterScale;
+        meterScale.detail = Layout::meterW / 238.0f;
+        meterScale.tickLabel = 14.0f;
+        meterScale.sublabel = 13.0f;
+        meterScale.percent = 13.0f;
+        meterScale.vu = 16.0f;
+        const float meterCentre = Layout::meterX + 0.5f * Layout::meterW;
+        const float reading = multicompp::ui_detail::optoMeterDisplayValue(needleGainReduction());
         if (blue)
-            drawFetBlueRatioButtons(dl, 685, kFetButtonsTop);
+        {
+            trimScrewKnob(dl, "fet_blue_hr", P_FET_BLUE_HEADROOM, Layout::blueTrimX, Layout::blueHeadroomY,
+                          Layout::trimRadius, "HR", "%.0f", " dB", false, true);
+            trimScrewKnob(dl, "fet_mix", P_MIX, Layout::blueTrimX, Layout::blueMixY, Layout::trimRadius,
+                          "MIX", "%.0f", "%", true, true);
+            drawFetBlueRatioButtons(dl, Layout::blueRatioX, Layout::buttonsY);
+            // The blue meter section, top to bottom: the series mark, the VU, the nameplate.
+            const ImVec2 b0 = panel.P(Layout::blueSectionX0, top + 4), b1 = panel.P(Layout::blueSectionX1, bottom - 4);
+            dl->AddRectFilledMultiColor(b0, b1, FetTheme::blueSectionTop, FetTheme::blueSectionTop,
+                                        FetTheme::blueSectionBottom, FetTheme::blueSectionBottom);
+            dl->AddRect(b0, b1, FetTheme::blueSectionEdge, 2.0f * s, 0, 1.5f * s);
+            dl->AddLine(ImVec2(b0.x + s, b0.y + s), ImVec2(b1.x - s, b0.y + s), FetTheme::blueSectionHighlight, s);
+            spacedText(dl, meterCentre, top + 10, 16.0f, FetTheme::blueInk, "MC-2", 0, 0.16f);
+            drawOptoMeter(dl, Layout::meterX, Layout::blueMeterY, Layout::meterW, Layout::meterH, reading, meterScale);
+            spacedText(dl, meterCentre, Layout::blueMeterY + Layout::meterH + 16, 16.0f, FetTheme::blueInk,
+                       "LIMITING AMPLIFIER", 0, 0.12f);
+            panel.text(dl, meterCentre, Layout::blueMeterY + Layout::meterH + 38, 30.0f, FetTheme::blueInk,
+                       "FET BLUE", 0, true);
+        }
         else
-            drawFetRatioButtons(dl, 685, kFetButtonsTop);
-        drawOptoMeter(dl, 743, vuTop, 234, vuHeight,
-                      multicompp::ui_detail::optoMeterDisplayValue(needleGainReduction()));
-        panel.text(dl, 860, top + 34, 14.0f, FetTheme::badgeInk,
-                   blue ? "FET BLUE" : "FET 76", 0, true);
-        panel.text(dl, 860, top + 54, 8.0f, FetTheme::badgeSeries,
-                   "REFERENCE SERIES", 0, true);
-        const float badge = vuTop + vuHeight + 13.0f;
-        panel.text(dl, 860, badge, 10.0f, FetTheme::badgeInk,
-                   "MC-2", 0, true);
-        panel.text(dl, 860, badge + 18.0f, 9.2f, FetTheme::badgeNameplate,
-                   "LIMITING AMPLIFIER", 0, true);
-        drawFetMeterSwitch(dl, 1000, kFetButtonsTop);
-        // Under the meter-button column, level with the badge, labelled below
-        // like the face's other knobs so it does not read as a fifth meter row.
-        trimScrewKnob(dl, "fet_mix", P_MIX, 1010, badge + 19.0f, 13.0f,
-                    "MIX", "%.0f", "%", true);
-        if (blue)
-            trimScrewKnob(dl, "fet_blue_hr", P_FET_BLUE_HEADROOM, 955, badge + 19.0f, 13.0f,
-                          "HEADROOM", "%.0f", " dB", true);
+        {
+            drawFetRatioButtons(dl, Layout::blackRatioX, Layout::buttonsY);
+            panel.text(dl, meterCentre, top + 6, 20.0f, FetTheme::badgeInk, "FET 76", 0, true);
+            panel.text(dl, meterCentre, top + 28, 13.0f, FetTheme::badgeSeries, "REFERENCE SERIES", 0, true);
+            drawOptoMeter(dl, Layout::meterX, Layout::blackMeterY, Layout::meterW, Layout::meterH, reading,
+                          meterScale);
+            panel.text(dl, meterCentre, Layout::blackMeterY + Layout::meterH + 10, 20.0f, FetTheme::badgeInk,
+                       "MC-2", 0, true);
+            panel.text(dl, meterCentre, Layout::blackMeterY + Layout::meterH + 34, 16.0f, FetTheme::badgeNameplate,
+                       "LIMITING AMPLIFIER", 0, true);
+            // Under the meter buttons, labelled below like the face's other knobs so it does not read as a fifth
+            // meter row.
+            trimScrewKnob(dl, "fet_mix", P_MIX, Layout::blackMixX, Layout::blackMixY, Layout::trimRadius,
+                          "MIX", "%.0f", "%", true, true);
+        }
+        drawFetMeterSwitch(dl, Layout::meterButtonsX, Layout::buttonsY);
     }
 
     // FET BLUE's ratio column: 20:1, 8:1, 4:1, 2:1 from the top, pressed alone or two together
@@ -2490,22 +2572,22 @@ private:
     {
         const int position = multicompp::ui_detail::choiceIndex(value(P_FET_BLUE_RATIO), 11);
         const int lit = multicompp::ui_detail::fetBlueRatioButtons(position);
-        panel.text(dl, x + 14, y - 23, 8.5f, FetTheme::columnLegend, "RATIO", 0, true);
+        panel.text(dl, x + 17, y - 26, 16.0f, FetTheme::columnLegend, "RATIO", 0, true);
         constexpr std::array<int, 4> visualButton{{3, 2, 1, 0}};
         constexpr std::array<const char*, 5> visualLabels{{"20", "8", "4", "2", "SC"}};
         for (int row = 0; row < 5; ++row)
         {
             const bool filterRow = row == 4;
-            const float y0 = y + static_cast<float>(row) * 31.0f;
+            const float y0 = y + static_cast<float>(row) * 32.0f;
             const ImVec2 p0 = panel.P(x, y0);
-            const ImVec2 p1 = panel.P(x + 28.0f, y0 + 27.0f);
+            const ImVec2 p1 = panel.P(x + 34.0f, y0 + 26.0f);
             char id[40];
             std::snprintf(id, sizeof(id), "##fet_blue_ratio_button_%d", row);
             ImGui::SetCursorScreenPos(p0);
             const bool clicked = ImGui::InvisibleButton(id, ImVec2(p1.x - p0.x, p1.y - p0.y));
             const int button = filterRow ? -1 : visualButton[static_cast<size_t>(row)];
             const bool active = filterRow ? value(P_FET_BLUE_SC) >= 0.5f : (lit & (1 << button)) != 0;
-            dl->AddRectFilled(panel.P(x + 2.0f, y0 + 3.0f), panel.P(x + 31.0f, y0 + 30.0f),
+            dl->AddRectFilled(panel.P(x + 2.0f, y0 + 3.0f), panel.P(x + 37.0f, y0 + 29.0f),
                               FetTheme::buttonShadow, 1.5f * panel.scale());
             dl->AddRectFilled(p0, p1,
                               active ? FetTheme::buttonLit
@@ -2513,9 +2595,9 @@ private:
                               1.5f * panel.scale());
             dl->AddRect(p0, p1, FetTheme::buttonEdge, 1.5f * panel.scale(), 0, panel.scale());
             if (active)
-                dl->AddRectFilled(panel.P(x + 1.0f, y0 + 2.0f), panel.P(x + 3.0f, y0 + 25.0f),
+                dl->AddRectFilled(panel.P(x + 2.0f, y0 + 3.0f), panel.P(x + 5.0f, y0 + 23.0f),
                                   filterRow ? FetTheme::lampRed : FetTheme::lamp);
-            panel.text(dl, x - 10.0f, y0 + 7.0f, 8.0f,
+            panel.text(dl, x - 8.0f, y0 + 5.0f, 16.0f,
                        active ? FetTheme::buttonLabelLit : FetTheme::buttonLabel,
                        visualLabels[static_cast<size_t>(row)], 1, true);
             if (!clicked) continue;
@@ -2573,10 +2655,12 @@ private:
             constexpr std::array<const char*, 9> labels{{
                 "INF", "48", "36", "30", "24", "18", "12", "6", "0"}};
             duskdaf::KnobRingStyle ring;
-            ring.markInner = 4.0f;   ring.markOuter = 10.0f;  ring.markThickness = 1.25f;
-            ring.minorInner = 7.0f;  ring.minorOuter = 10.0f; ring.minorThickness = 0.75f;
+            // Every numeral at the legend size (16): the arc has room for all nine.
+            ring.markInner = 5.0f;   ring.markOuter = 12.0f;  ring.markThickness = 1.6f;
+            ring.minorInner = 8.0f;  ring.minorOuter = 12.0f; ring.minorThickness = 1.0f;
             ring.markColor = FetTheme::ringMark;
-            ring.labelOffset = 19.0f; ring.labelNudgeY = -3.0f; ring.labelSize = 7.3f;
+            ring.labelOffset = multicompp::ui_detail::FetFaceplateLayout::ringLabelOffset;
+            ring.labelNudgeY = -9.0f; ring.labelSize = 16.0f;
             ring.labelColor = FetTheme::ringLabel;
             ring.labelCentred = true;
             for (int tick = 0; tick <= 16; ++tick)
@@ -2595,11 +2679,11 @@ private:
                 sloDetent ? multicompp::ui_detail::kFetSloText : "1", "3", "5", "7"}};
             duskdaf::KnobRingStyle ring;
             ring.dotMarks = true;
-            ring.markOuter = 7.0f;   ring.minorOuter = 7.0f;
-            ring.dotRadius = 1.45f;  ring.minorDotRadius = 0.85f;
+            ring.markOuter = 9.0f;   ring.minorOuter = 9.0f;
+            ring.dotRadius = 2.0f;   ring.minorDotRadius = 1.2f;
             ring.dotSegments = 10;
             ring.markColor = FetTheme::ringDot;
-            ring.labelOffset = 15.0f; ring.labelNudgeY = -3.0f; ring.labelSize = 7.0f;
+            ring.labelOffset = 20.0f; ring.labelNudgeY = -9.0f; ring.labelSize = 16.0f;
             ring.labelColor = FetTheme::ringLabel;
             ring.labelCentred = true;
             for (int tick = 0; tick <= 6; ++tick)
@@ -2675,16 +2759,20 @@ private:
                            center.y + pointer.y * r * 0.94f),
                     FetTheme::pointer, 2.0f * scale);
 
-        panel.text(dl, x, gainScale ? y + radius + 27.0f
-                                    : y + (label[0] == 'A' ? -50.0f : 39.0f),
-                   gainScale ? 10.5f : 9.5f,
+        // INPUT and OUTPUT (20) under their dials; ATTACK (16) above its dial and RELEASE (16) under it, clear of
+        // their numerals.
+        panel.text(dl, x, gainScale ? y + radius + multicompp::ui_detail::FetFaceplateLayout::legendDrop
+                                    : y + (label[0] == 'A' ? -radius - 39.0f : radius + 21.0f),
+                   gainScale ? 20.0f : 16.0f,
                    FetTheme::knobLegend, label, 0, true);
         fetKnobSplitter.Merge(dl);
     }
 
+    // floorText: the legend and travel marks at the readability floor (16 px, the faces laid out on the canvas);
+    // false keeps the VCA face's own small lettering.
     void trimScrewKnob(ImDrawList* dl, const char* id, uint32_t p,
                      float x, float y, float radius, const char* label,
-                     const char* format, const char* suffix, bool labelBelow = false)
+                     const char* format, const char* suffix, bool labelBelow = false, bool floorText = false)
     {
         // The Opto face established the fleet contract for non-reference
         // controls: keep the full parameter available as a small set-screw trim
@@ -2739,19 +2827,30 @@ private:
                     ImVec2(center.x + pointer.x * r * 0.58f,
                            center.y + pointer.y * r * 0.58f),
                     TrimScrewTheme::slot, 2.0f * scale);
-        panel.text(dl, x, labelBelow ? y + radius + 9.0f : y - 38.0f, 7.5f,
-                   TrimScrewTheme::legend, label, 0, true);
-        panel.text(dl, x - 27.0f, y - 5.0f, 10.0f,
-                   TrimScrewTheme::minus, "-", 0, true);
-        panel.text(dl, x + 27.0f, y - 5.0f, 10.0f,
-                   TrimScrewTheme::plus, "+", 0, true);
+        if (floorText)
+        {
+            const float nut = radius * 1.18f;
+            panel.text(dl, x, labelBelow ? y + nut + 5.0f : y - nut - 21.0f, 16.0f,
+                       TrimScrewTheme::legend, label, 0, true);
+            panel.text(dl, x - nut - 15.0f, y - 9.0f, 16.0f, TrimScrewTheme::minus, "-", 0, true);
+            panel.text(dl, x + nut + 15.0f, y - 9.0f, 16.0f, TrimScrewTheme::plus, "+", 0, true);
+        }
+        else
+        {
+            panel.text(dl, x, labelBelow ? y + radius + 9.0f : y - 38.0f, 7.5f,
+                       TrimScrewTheme::legend, label, 0, true);
+            panel.text(dl, x - 27.0f, y - 5.0f, 10.0f,
+                       TrimScrewTheme::minus, "-", 0, true);
+            panel.text(dl, x + 27.0f, y - 5.0f, 10.0f,
+                       TrimScrewTheme::plus, "+", 0, true);
+        }
         fetKnobSplitter.Merge(dl);
     }
 
     void drawFetRatioButtons(ImDrawList* dl, float x, float y)
     {
         const int selected = multicompp::ui_detail::choiceIndex(value(P_FET_RATIO), 5);
-        panel.text(dl, x + 14, y - 23, 8.5f, FetTheme::columnLegend,
+        panel.text(dl, x + 17, y - 26, 16.0f, FetTheme::columnLegend,
                    "RATIO", 0, true);
         constexpr std::array<int, 5> visualOrder{{3, 2, 1, 0, 4}};
         constexpr std::array<const char*, 5> visualLabels{{
@@ -2759,9 +2858,9 @@ private:
         for (int row = 0; row < 5; ++row)
         {
             const int index = visualOrder[static_cast<size_t>(row)];
-            const float y0 = y + static_cast<float>(row) * 31.0f;
+            const float y0 = y + static_cast<float>(row) * 32.0f;
             const ImVec2 p0 = panel.P(x, y0);
-            const ImVec2 p1 = panel.P(x + 28.0f, y0 + 27.0f);
+            const ImVec2 p1 = panel.P(x + 34.0f, y0 + 26.0f);
             char id[32];
             std::snprintf(id, sizeof(id), "##fet_ratio_button_%d", index);
             ImGui::SetCursorScreenPos(p0);
@@ -2769,7 +2868,7 @@ private:
                 id, ImVec2(p1.x - p0.x, p1.y - p0.y));
             const bool active = index == selected;
             dl->AddRectFilled(panel.P(x + 2.0f, y0 + 3.0f),
-                              panel.P(x + 31.0f, y0 + 30.0f),
+                              panel.P(x + 37.0f, y0 + 29.0f),
                               FetTheme::buttonShadow, 1.5f * panel.scale());
             dl->AddRectFilled(p0, p1,
                               active ? FetTheme::buttonLit
@@ -2780,11 +2879,11 @@ private:
             dl->AddRect(p0, p1, FetTheme::buttonEdge,
                         1.5f * panel.scale(), 0, panel.scale());
             if (active)
-                dl->AddRectFilled(panel.P(x + 1.0f, y0 + 2.0f),
-                                  panel.P(x + 3.0f, y0 + 25.0f),
+                dl->AddRectFilled(panel.P(x + 2.0f, y0 + 3.0f),
+                                  panel.P(x + 5.0f, y0 + 23.0f),
                                   index == 4 ? FetTheme::lampRed
                                              : FetTheme::lamp);
-            panel.text(dl, x - 10.0f, y0 + 7.0f, 8.0f,
+            panel.text(dl, x - 8.0f, y0 + 5.0f, 16.0f,
                        active ? FetTheme::buttonLabelLit
                               : FetTheme::buttonLabel,
                        visualLabels[static_cast<size_t>(row)], 1, true);
@@ -2795,32 +2894,32 @@ private:
     void drawFetMeterSwitch(ImDrawList* dl, float x, float y)
     {
         const int selected = multicompp::ui_detail::fetMeterButton(values[P_FET_METER], values[P_BYPASS] >= 0.5f);
-        panel.text(dl, x + 10.0f, y - 24.0f, 8.5f,
+        panel.text(dl, x + 26.0f, y - 26.0f, 16.0f,
                    FetTheme::columnLegend, "METER", 0, true);
         constexpr std::array<const char*, 4> labels{{"GR", "+8", "+4", "OFF"}};
         for (int row = 0; row < 4; ++row)
         {
-            const float y0 = y + static_cast<float>(row) * 38.0f;
+            const float y0 = y + static_cast<float>(row) * 36.0f;
             ImGui::SetCursorScreenPos(panel.P(x, y0));
             ImGui::PushID(row);
-            ImGui::InvisibleButton("##fet_meter", ImVec2(59 * panel.scale(), 34 * panel.scale()));
+            ImGui::InvisibleButton("##fet_meter", ImVec2(72 * panel.scale(), 32 * panel.scale()));
             if (ImGui::IsItemClicked())
                 multicompp::ui_detail::selectFetMeterButton(row, [this](uint32_t p) { return values[p]; },
                                                             [this](uint32_t p, float v) { setValue(p, v); });
             ImGui::PopID();
             dl->AddRectFilled(panel.P(x + 2.0f, y0 + 3.0f),
-                              panel.P(x + 23.0f, y0 + 35.0f),
+                              panel.P(x + 29.0f, y0 + 33.0f),
                               FetTheme::meterButtonShadow, 1.5f * panel.scale());
-            dl->AddRectFilled(panel.P(x, y0), panel.P(x + 20.0f, y0 + 32.0f),
+            dl->AddRectFilled(panel.P(x, y0), panel.P(x + 26.0f, y0 + 30.0f),
                               FetTheme::meterButton, 1.5f * panel.scale());
-            dl->AddRect(panel.P(x, y0), panel.P(x + 20.0f, y0 + 32.0f),
+            dl->AddRect(panel.P(x, y0), panel.P(x + 26.0f, y0 + 30.0f),
                         FetTheme::meterButtonEdge, 1.5f * panel.scale(), 0,
                         panel.scale());
             if (row == selected)
-                dl->AddRectFilled(panel.P(x + 1.0f, y0 + 2.0f),
-                                  panel.P(x + 3.0f, y0 + 30.0f),
+                dl->AddRectFilled(panel.P(x + 2.0f, y0 + 3.0f),
+                                  panel.P(x + 5.0f, y0 + 27.0f),
                                   FetTheme::lamp);
-            panel.text(dl, x + 31.0f, y0 + 9.0f, 8.0f,
+            panel.text(dl, x + 34.0f, y0 + 7.0f, 16.0f,
                        row == selected ? FetTheme::buttonLabelLit
                                 : FetTheme::meterButtonLabel,
                        labels[static_cast<size_t>(row)], -1, true);
