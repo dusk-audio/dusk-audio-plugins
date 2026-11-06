@@ -3762,7 +3762,80 @@ private:
     // follow the reference's travel and printed scales (ui_detail::studioVcaDialPosition); the meters are its I/O
     // meter (INPUT/OUTPUT switch, threshold mark on INPUT) and gain reduction meter. Label STUDIO VCA, no marks.
     struct StudioVcaMark { float plain; const char* label; };
-    static constexpr ImU32 kSvcaInk = IM_COL32(246, 232, 226, 255);
+
+    // The Studio VCA face's colours by role, sampled from the face as it was drawn before the tokens.
+    struct StudioVcaTheme
+    {
+        // The red brushed panel, its edges, rack-ear slots and the engraved label; the S-curve
+        static constexpr ImU32 panelTopLeft = IM_COL32(214, 46, 38, 255);
+        static constexpr ImU32 panelTopRight = IM_COL32(196, 38, 32, 255);
+        static constexpr ImU32 panelBottomRight = IM_COL32(150, 24, 22, 255);
+        static constexpr ImU32 panelBottomLeft = IM_COL32(168, 30, 26, 255);
+        static constexpr ImU32 brushLight = IM_COL32(255, 170, 160, 255);   // each hairline sets its own alpha
+        static constexpr ImU32 brushDark = IM_COL32(60, 0, 0, 255);
+        static constexpr ImU32 topEdge = IM_COL32(255, 150, 135, 150);
+        static constexpr ImU32 bottomEdge = IM_COL32(70, 6, 6, 220);
+        static constexpr ImU32 earSlot = IM_COL32(28, 4, 4, 255);
+        static constexpr ImU32 earSlotRim = IM_COL32(255, 130, 115, 90);
+        static constexpr ImU32 engraveHighlight = IM_COL32(255, 135, 120, 120);
+        static constexpr ImU32 engraveShadow = IM_COL32(85, 8, 8, 230);
+        static constexpr ImU32 engraveFace = IM_COL32(176, 28, 25, 255);
+        static constexpr ImU32 curveHighlight = IM_COL32(255, 120, 105, 70);
+        static constexpr ImU32 curve = IM_COL32(70, 6, 6, 230);
+        static constexpr ImU32 ink = IM_COL32(246, 232, 226, 255);          // legends, numerals and scale dots
+        // The dials: well, chrome bands and highlights, grip bar and its index cup
+        static constexpr ImU32 wellRim = IM_COL32(255, 128, 112, 140);
+        static constexpr ImU32 wellDark = IM_COL32(22, 5, 7, 255);
+        static constexpr ImU32 wellLight = IM_COL32(58, 15, 17, 255);
+        static constexpr ImU32 chromePanelShaded = IM_COL32(146, 126, 121, 255);
+        static constexpr ImU32 chromePanelLit = IM_COL32(186, 166, 161, 255);
+        static constexpr ImU32 chromeHorizonShaded = IM_COL32(126, 120, 118, 255);
+        static constexpr ImU32 chromeHorizonLit = IM_COL32(196, 190, 187, 255);
+        static constexpr ImU32 chromeSilverShaded = IM_COL32(198, 193, 190, 255);
+        static constexpr ImU32 chromeSilverLit = IM_COL32(222, 218, 215, 255);
+        static constexpr ImU32 chromeHalo = IM_COL32(255, 255, 255, 60);
+        static constexpr ImU32 chromeHighlight = IM_COL32(251, 251, 249, 240);
+        static constexpr ImU32 chromeRimLit = IM_COL32(255, 250, 246, 150);
+        static constexpr ImU32 chromeRimShaded = IM_COL32(60, 30, 28, 150);
+        static constexpr ImU32 barShadow = IM_COL32(24, 10, 8, 80);
+        static constexpr ImU32 barShaded = IM_COL32(106, 100, 90, 255);
+        static constexpr ImU32 barLit = IM_COL32(136, 130, 119, 255);
+        static constexpr ImU32 barEdgeLitFaint = IM_COL32(240, 236, 226, 70);
+        static constexpr ImU32 barEdgeLit = IM_COL32(240, 236, 226, 240);
+        static constexpr ImU32 barEdgeShadedFaint = IM_COL32(28, 24, 20, 70);
+        static constexpr ImU32 barEdgeShaded = IM_COL32(28, 24, 20, 220);
+        static constexpr ImU32 cupGroove = IM_COL32(40, 32, 26, 150);
+        static constexpr ImU32 cup = IM_COL32(246, 238, 216, 255);
+        // The AUTO RELEASE lamp and the INPUT/OUTPUT switch
+        static constexpr ImU32 lampGlow = IM_COL32(255, 70, 50, 70);
+        static constexpr ImU32 lampWell = IM_COL32(52, 4, 4, 255);
+        static constexpr ImU32 lampLitHigh = IM_COL32(255, 150, 130, 255);
+        static constexpr ImU32 lampLitLow = IM_COL32(220, 20, 16, 255);
+        static constexpr ImU32 lampHigh = IM_COL32(170, 40, 36, 255);
+        static constexpr ImU32 lampLow = IM_COL32(92, 10, 10, 255);
+        static constexpr ImU32 lampSpecularLit = IM_COL32(255, 235, 225, 200);
+        static constexpr ImU32 lampSpecular = IM_COL32(255, 160, 150, 70);
+        static constexpr ImU32 switchWell = IM_COL32(24, 4, 4, 255);
+        static constexpr ImU32 switchRim = IM_COL32(255, 120, 105, 80);
+        static constexpr ImU32 ballLit = IM_COL32(255, 196, 120, 255);
+        static constexpr ImU32 ballShade = IM_COL32(200, 92, 24, 255);
+        // The round meters: shadow, bezel, window, scale, needles and glass
+        static constexpr ImU32 meterShadow = IM_COL32(60, 0, 0, 150);
+        static constexpr ImU32 bezelLit = IM_COL32(150, 24, 22, 255);
+        static constexpr ImU32 bezelShade = IM_COL32(70, 6, 6, 255);
+        static constexpr ImU32 bezelRing = IM_COL32(255, 120, 105, 60);
+        static constexpr ImU32 faceRim = IM_COL32(16, 10, 8, 255);
+        static constexpr ImU32 faceDark = IM_COL32(38, 26, 20, 255);
+        static constexpr ImU32 window = IM_COL32(236, 204, 150, 255);
+        static constexpr ImU32 windowGlow = IM_COL32(255, 196, 110, 60);
+        static constexpr ImU32 scaleInk = IM_COL32(30, 20, 12, 255);
+        static constexpr ImU32 thresholdMark = IM_COL32(214, 30, 24, 255);
+        static constexpr ImU32 needle = IM_COL32(16, 14, 12, 255);
+        static constexpr ImU32 glassTopLeft = IM_COL32(255, 255, 255, 40);
+        static constexpr ImU32 glassTopRight = IM_COL32(255, 255, 255, 10);
+        static constexpr ImU32 glassBottomRight = IM_COL32(255, 255, 255, 0);
+        static constexpr ImU32 glassBottomLeft = IM_COL32(255, 255, 255, 20);
+    };
 
     void drawStudioVca(ImDrawList* dl)
     {
@@ -3770,9 +3843,9 @@ private:
         const float s = panel.scale();
         // The engraved S-curve across the meter bay, behind both meters.
         dl->AddBezierCubic(panel.P(511, 623), panel.P(707, 623), panel.P(663, 382), panel.P(859, 382),
-                           IM_COL32(255, 120, 105, 70), 2.6f * s, 48);
+                           StudioVcaTheme::curveHighlight, 2.6f * s, 48);
         dl->AddBezierCubic(panel.P(510, 622), panel.P(706, 622), panel.P(662, 381), panel.P(858, 381),
-                           IM_COL32(70, 6, 6, 230), 1.7f * s, 48);
+                           StudioVcaTheme::curve, 1.7f * s, 48);
 
         static constexpr StudioVcaMark inputMarks[] = {{-18, "-18"}, {-12, "-12"}, {-6, "-6"}, {0, "0"},
                                                        {6, "+6"}, {12, "+12"}, {18, "+18"}};
@@ -3792,19 +3865,19 @@ private:
         studioVcaKnob(dl, "sv_rel", P_SVCA_RELEASE, 390, 550, 25, "RELEASE", releaseMarks, 5);
         studioVcaKnob(dl, "sv_out", P_SVCA_OUT, 1013, 428, 25, "MAKE UP GAIN", makeupMarks, 5);
         studioVcaKnob(dl, "sv_mix", P_MIX, 1013, 554, 22, "DRY/WET", mixMarks, 2);
-        panel.text(dl, 230, 476, 11.0f, kSvcaInk, "RATIO", 0, true);
-        panel.text(dl, 390, 476, 11.0f, kSvcaInk, "THRESHOLD", 0, true);
-        panel.text(dl, 77, 603, 11.0f, kSvcaInk, "INPUT", 0, true);
-        panel.text(dl, 230, 603, 11.0f, kSvcaInk, "ATTACK", 0, true);
-        panel.text(dl, 390, 603, 11.0f, kSvcaInk, "RELEASE", 0, true);
-        panel.text(dl, 1013, 469, 11.0f, kSvcaInk, "MAKE UP", 0, true);
-        panel.text(dl, 1013, 482, 11.0f, kSvcaInk, "GAIN", 0, true);
-        panel.text(dl, 1013, 603, 11.0f, kSvcaInk, "DRY/WET", 0, true);
-        panel.text(dl, 824, 603, 11.0f, kSvcaInk, "GAIN REDUCTION", 0, true);
+        panel.text(dl, 230, 476, 11.0f, StudioVcaTheme::ink, "RATIO", 0, true);
+        panel.text(dl, 390, 476, 11.0f, StudioVcaTheme::ink, "THRESHOLD", 0, true);
+        panel.text(dl, 77, 603, 11.0f, StudioVcaTheme::ink, "INPUT", 0, true);
+        panel.text(dl, 230, 603, 11.0f, StudioVcaTheme::ink, "ATTACK", 0, true);
+        panel.text(dl, 390, 603, 11.0f, StudioVcaTheme::ink, "RELEASE", 0, true);
+        panel.text(dl, 1013, 469, 11.0f, StudioVcaTheme::ink, "MAKE UP", 0, true);
+        panel.text(dl, 1013, 482, 11.0f, StudioVcaTheme::ink, "GAIN", 0, true);
+        panel.text(dl, 1013, 603, 11.0f, StudioVcaTheme::ink, "DRY/WET", 0, true);
+        panel.text(dl, 824, 603, 11.0f, StudioVcaTheme::ink, "GAIN REDUCTION", 0, true);
 
         studioVcaLamp(dl, "sv_auto", P_SVCA_AUTO, 308, 487);
-        panel.text(dl, 308, 503, 10.0f, kSvcaInk, "AUTO", 0, true);
-        panel.text(dl, 308, 515, 10.0f, kSvcaInk, "RELEASE", 0, true);
+        panel.text(dl, 308, 503, 10.0f, StudioVcaTheme::ink, "AUTO", 0, true);
+        panel.text(dl, 308, 515, 10.0f, StudioVcaTheme::ink, "RELEASE", 0, true);
 
         // I/O meter: the input after the Input control, or the output; on INPUT a red mark shows the threshold.
         static constexpr StudioVcaMark ioScale[] = {{-60, "-60"}, {-50, "-50"}, {-40, "-40"}, {-30, "-30"},
@@ -3828,8 +3901,8 @@ private:
     {
         const float s = panel.scale();
         dl->AddRectFilledMultiColor(panel.P(0, 344), panel.P(1120, 654),
-                                    IM_COL32(214, 46, 38, 255), IM_COL32(196, 38, 32, 255),
-                                    IM_COL32(150, 24, 22, 255), IM_COL32(168, 30, 26, 255));
+                                    StudioVcaTheme::panelTopLeft, StudioVcaTheme::panelTopRight,
+                                    StudioVcaTheme::panelBottomRight, StudioVcaTheme::panelBottomLeft);
         // Horizontal brushing: deterministic hairlines, lighter and darker.
         uint32_t grain = 0x53564341u;
         for (float y = 345.0f; y < 653.0f; y += 1.5f)
@@ -3837,24 +3910,24 @@ private:
             grain = grain * 1664525u + 1013904223u;
             const int shade = static_cast<int>((grain >> 24) & 31u);
             dl->AddLine(panel.P(0, y), panel.P(1120, y),
-                        (grain & 1u) ? IM_COL32(255, 170, 160, shade / 2) : IM_COL32(60, 0, 0, shade), 0.8f * s);
+                        (grain & 1u) ? colourWithAlpha(StudioVcaTheme::brushLight, static_cast<float>(shade / 2) / 255.0f) : colourWithAlpha(StudioVcaTheme::brushDark, static_cast<float>(shade) / 255.0f), 0.8f * s);
         }
-        dl->AddLine(panel.P(0, 345), panel.P(1120, 345), IM_COL32(255, 150, 135, 150), 1.5f * s);
-        dl->AddLine(panel.P(0, 653), panel.P(1120, 653), IM_COL32(70, 6, 6, 220), 1.5f * s);
+        dl->AddLine(panel.P(0, 345), panel.P(1120, 345), StudioVcaTheme::topEdge, 1.5f * s);
+        dl->AddLine(panel.P(0, 653), panel.P(1120, 653), StudioVcaTheme::bottomEdge, 1.5f * s);
         // Rack ears: a slot in each corner.
         for (float x : {16.0f, 1104.0f})
             for (float y : {353.0f, 644.0f})
             {
-                dl->AddRectFilled(panel.P(x - 11, y - 5.5f), panel.P(x + 11, y + 5.5f), IM_COL32(28, 4, 4, 255),
+                dl->AddRectFilled(panel.P(x - 11, y - 5.5f), panel.P(x + 11, y + 5.5f), StudioVcaTheme::earSlot,
                                   5.5f * s);
-                dl->AddRect(panel.P(x - 11, y - 5.5f), panel.P(x + 11, y + 5.5f), IM_COL32(255, 130, 115, 90),
+                dl->AddRect(panel.P(x - 11, y - 5.5f), panel.P(x + 11, y + 5.5f), StudioVcaTheme::earSlotRim,
                             5.5f * s, 0, 0.8f * s);
             }
         // Engraved label where the reference prints its model numeral: highlight, shadow, then the face.
         struct Layer { float dx, dy; ImU32 colour; };
-        static constexpr Layer layers[] = {{-0.8f, -0.8f, IM_COL32(255, 135, 120, 120)},
-                                           {1.4f, 1.6f, IM_COL32(85, 8, 8, 230)},
-                                           {0.0f, 0.0f, IM_COL32(176, 28, 25, 255)}};
+        static constexpr Layer layers[] = {{-0.8f, -0.8f, StudioVcaTheme::engraveHighlight},
+                                           {1.4f, 1.6f, StudioVcaTheme::engraveShadow},
+                                           {0.0f, 0.0f, StudioVcaTheme::engraveFace}};
         for (const Layer& layer : layers)
         {
             panel.text(dl, 82 + layer.dx, 396 + layer.dy, 19.0f, layer.colour, "STUDIO", 0, true);
@@ -3887,12 +3960,12 @@ private:
         {
             const float angle = duskdaf::DuskPanel::knobAngle(multicompp::ui_detail::studioVcaDialPosition(p, marks[i].plain));
             dl->AddCircleFilled(ImVec2(c.x + std::sin(angle) * r * 1.21f, c.y - std::cos(angle) * r * 1.21f),
-                                0.032f * r, kSvcaInk, 12);
+                                0.032f * r, StudioVcaTheme::ink, 12);
             // The numeral further out, clear of its dot even beside the dial, where a label is at its widest.
             const float lx = x + std::sin(angle) * (radius + 16.0f);
             const float ly = y - std::cos(angle) * (radius + 16.0f) - 5.5f;
             if (marks[i].label != nullptr)
-                panel.text(dl, lx, ly, 9.5f, kSvcaInk, marks[i].label, 0, false);
+                panel.text(dl, lx, ly, 9.5f, StudioVcaTheme::ink, marks[i].label, 0, false);
             else
                 studioVcaInfinityMark(dl, lx, ly + 5.5f);
         }
@@ -3934,11 +4007,11 @@ private:
         const ImVec2 centre(c.x - 0.018f * r, c.y - 0.018f * r);
         const float radius = 1.085f * r;
         dl->AddCircleFilled(ImVec2(centre.x + 0.035f * r, centre.y + 0.035f * r), radius,
-                            IM_COL32(255, 128, 112, 140), kSvcaRound);
+                            StudioVcaTheme::wellRim, kSvcaRound);
         const float diagonal = 0.70710678f * radius;
         gradientCircle(dl, centre, radius, ImVec2(centre.x - diagonal, centre.y - diagonal),
-                       ImVec2(centre.x + diagonal, centre.y + diagonal), IM_COL32(22, 5, 7, 255),
-                       IM_COL32(58, 15, 17, 255));
+                       ImVec2(centre.x + diagonal, centre.y + diagonal), StudioVcaTheme::wellDark,
+                       StudioVcaTheme::wellLight);
     }
 
     // The polished chrome top, a shallow dome mirroring its surroundings under the fixed light: the red panel as a
@@ -3951,9 +4024,9 @@ private:
         // toward the light.
         struct Band { float offset, radius; ImU32 shaded, lit; };
         static constexpr Band bands[] = {
-            {0.0f, 1.0f, IM_COL32(146, 126, 121, 255), IM_COL32(186, 166, 161, 255)},    // the panel, mirrored
-            {0.12f, 0.86f, IM_COL32(126, 120, 118, 255), IM_COL32(196, 190, 187, 255)},  // the dark horizon band
-            {0.2f, 0.78f, IM_COL32(198, 193, 190, 255), IM_COL32(222, 218, 215, 255)}};  // the light silver
+            {0.0f, 1.0f, StudioVcaTheme::chromePanelShaded, StudioVcaTheme::chromePanelLit},    // the panel, mirrored
+            {0.12f, 0.86f, StudioVcaTheme::chromeHorizonShaded, StudioVcaTheme::chromeHorizonLit},  // the dark horizon band
+            {0.2f, 0.78f, StudioVcaTheme::chromeSilverShaded, StudioVcaTheme::chromeSilverLit}};  // the light silver
         for (const Band& band : bands)
         {
             const ImVec2 centre = studioVcaTowardLight(c, band.offset * r);
@@ -3963,15 +4036,15 @@ private:
         ImVec2 outline[kSvcaRound];
         const ImVec2 spot = studioVcaTowardLight(c, 0.48f * r);
         studioVcaOval(spot, 0.36f * r, 0.6f * r, outline);
-        dl->AddConvexPolyFilled(outline, kSvcaRound, IM_COL32(255, 255, 255, 60));
+        dl->AddConvexPolyFilled(outline, kSvcaRound, StudioVcaTheme::chromeHalo);
         studioVcaOval(spot, 0.26f * r, 0.48f * r, outline);
-        dl->AddConvexPolyFilled(outline, kSvcaRound, IM_COL32(251, 251, 249, 240));
+        dl->AddConvexPolyFilled(outline, kSvcaRound, StudioVcaTheme::chromeHighlight);
         constexpr float upperRight = -0.25f * duskdaf::DuskPanel::kPi;   // ImGui arc angles: clockwise from +x
         dl->PathArcTo(c, 0.98f * r, upperRight - 1.0f, upperRight + 1.0f, 24);
-        dl->PathStroke(IM_COL32(255, 250, 246, 150), ImDrawFlags_None, 0.035f * r);
+        dl->PathStroke(StudioVcaTheme::chromeRimLit, ImDrawFlags_None, 0.035f * r);
         dl->PathArcTo(c, 0.98f * r, upperRight + duskdaf::DuskPanel::kPi - 1.0f,
                       upperRight + duskdaf::DuskPanel::kPi + 1.0f, 24);
-        dl->PathStroke(IM_COL32(60, 30, 28, 150), ImDrawFlags_None, 0.035f * r);
+        dl->PathStroke(StudioVcaTheme::chromeRimShaded, ImDrawFlags_None, 0.035f * r);
     }
 
     // The flat grip bar across the full diameter along the pointer d: its shadow on the chrome, an olive grey top
@@ -3984,12 +4057,12 @@ private:
         constexpr int arcPoints = 8;
         ImVec2 outline[2 * arcPoints];
         int count = studioVcaSlab(c, reach, d, -0.09f * r * facing, half, outline, arcPoints);
-        dl->AddConvexPolyFilled(outline, count, IM_COL32(24, 10, 8, 80));
+        dl->AddConvexPolyFilled(outline, count, StudioVcaTheme::barShadow);
         count = studioVcaSlab(c, reach, d, 0.0f, half, outline, arcPoints);
         const int topVertices = dl->VtxBuffer.Size;
         dl->AddConvexPolyFilled(outline, count, IM_COL32_WHITE);
         shadeLinear(dl, topVertices, studioVcaTowardLight(c, -r), studioVcaTowardLight(c, r),
-                    IM_COL32(106, 100, 90, 255), IM_COL32(136, 130, 119, 255));
+                    StudioVcaTheme::barShaded, StudioVcaTheme::barLit);
         const auto edge = [&](float side, ImU32 colour, float width) {
             const float k = side * (half - 0.5f * width);
             const float along = std::sqrt(reach * reach - k * k) - 0.5f * width;
@@ -3997,8 +4070,8 @@ private:
                         ImVec2(c.x + n.x * k + d.x * along, c.y + n.y * k + d.y * along), colour, width);
         };
         const float litSide = facing >= 0.0f ? 1.0f : -1.0f, strength = std::fabs(facing);
-        edge(litSide, colourMix(IM_COL32(240, 236, 226, 70), IM_COL32(240, 236, 226, 240), strength), 0.9f * s);
-        edge(-litSide, colourMix(IM_COL32(28, 24, 20, 70), IM_COL32(28, 24, 20, 220), strength), 1.1f * s);
+        edge(litSide, colourMix(StudioVcaTheme::barEdgeLitFaint, StudioVcaTheme::barEdgeLit, strength), 0.9f * s);
+        edge(-litSide, colourMix(StudioVcaTheme::barEdgeShadedFaint, StudioVcaTheme::barEdgeShaded, strength), 1.1f * s);
         studioVcaIndexCup(dl, c, r, d, s);
     }
 
@@ -4022,8 +4095,8 @@ private:
         ImVec2 groove[arcPoints + 2];   // the engraving's shaded wall, on its side toward the light
         for (int i = 0; i < arcPoints + 2; ++i)
             groove[i] = ImVec2(cup[i].x + 0.5f * s * kSvcaLightX, cup[i].y + 0.5f * s * kSvcaLightY);
-        dl->AddPolyline(groove, arcPoints + 2, IM_COL32(40, 32, 26, 150), ImDrawFlags_None, s);
-        dl->AddPolyline(cup, arcPoints + 2, IM_COL32(246, 238, 216, 255), ImDrawFlags_None, s);
+        dl->AddPolyline(groove, arcPoints + 2, StudioVcaTheme::cupGroove, ImDrawFlags_None, s);
+        dl->AddPolyline(cup, arcPoints + 2, StudioVcaTheme::cup, ImDrawFlags_None, s);
     }
 
     // The part of the disc (c, r) between the lines at offset - halfWidth and offset + halfWidth along n, which is d
@@ -4060,7 +4133,7 @@ private:
             const float k = 1.0f + std::sin(t) * std::sin(t);
             path[i] = panel.P(x + 5.0f * std::cos(t) / k, y + 5.0f * std::sin(t) * std::cos(t) / k);
         }
-        dl->AddPolyline(path, points, kSvcaInk, ImDrawFlags_Closed, 1.3f * s);
+        dl->AddPolyline(path, points, StudioVcaTheme::ink, ImDrawFlags_Closed, 1.3f * s);
     }
 
     // The AUTO RELEASE lamp button.
@@ -4071,12 +4144,12 @@ private:
         ImGui::SetCursorScreenPos(panel.P(x - 13, y - 13));
         const bool clicked = ImGui::InvisibleButton(id, ImVec2(26 * s, 26 * s));
         const ImVec2 c = panel.P(x, y);
-        if (on) dl->AddCircleFilled(c, 17.0f * s, IM_COL32(255, 70, 50, 70), 32);
-        dl->AddCircleFilled(c, 13.0f * s, IM_COL32(52, 4, 4, 255), 32);
-        gradientDisc(dl, c, 11.0f * s, -0.6f, on ? IM_COL32(255, 150, 130, 255) : IM_COL32(170, 40, 36, 255),
-                     on ? IM_COL32(220, 20, 16, 255) : IM_COL32(92, 10, 10, 255));
+        if (on) dl->AddCircleFilled(c, 17.0f * s, StudioVcaTheme::lampGlow, 32);
+        dl->AddCircleFilled(c, 13.0f * s, StudioVcaTheme::lampWell, 32);
+        gradientDisc(dl, c, 11.0f * s, -0.6f, on ? StudioVcaTheme::lampLitHigh : StudioVcaTheme::lampHigh,
+                     on ? StudioVcaTheme::lampLitLow : StudioVcaTheme::lampLow);
         dl->AddCircleFilled(ImVec2(c.x - 3.5f * s, c.y - 3.5f * s), 3.0f * s,
-                            on ? IM_COL32(255, 235, 225, 200) : IM_COL32(255, 160, 150, 70), 16);
+                            on ? StudioVcaTheme::lampSpecularLit : StudioVcaTheme::lampSpecular, 16);
         if (clicked) setValue(p, on ? 0.0f : 1.0f);
     }
 
@@ -4087,12 +4160,12 @@ private:
         const bool output = values[p] >= 0.5f;
         ImGui::SetCursorScreenPos(panel.P(x - 22, y - 10));
         const bool clicked = ImGui::InvisibleButton(id, ImVec2(44 * s, 20 * s));
-        dl->AddRectFilled(panel.P(x - 22, y - 10), panel.P(x + 22, y + 10), IM_COL32(24, 4, 4, 255), 10.0f * s);
-        dl->AddRect(panel.P(x - 22, y - 10), panel.P(x + 22, y + 10), IM_COL32(255, 120, 105, 80), 10.0f * s, 0, s);
+        dl->AddRectFilled(panel.P(x - 22, y - 10), panel.P(x + 22, y + 10), StudioVcaTheme::switchWell, 10.0f * s);
+        dl->AddRect(panel.P(x - 22, y - 10), panel.P(x + 22, y + 10), StudioVcaTheme::switchRim, 10.0f * s, 0, s);
         const ImVec2 ball = panel.P(output ? x + 11 : x - 11, y);
-        gradientDisc(dl, ball, 8.0f * s, -0.6f, IM_COL32(255, 196, 120, 255), IM_COL32(200, 92, 24, 255));
-        panel.text(dl, x - 28, y - 6, 10.0f, kSvcaInk, "INPUT", 1, true);
-        panel.text(dl, x + 28, y - 6, 10.0f, kSvcaInk, "OUTPUT", -1, true);
+        gradientDisc(dl, ball, 8.0f * s, -0.6f, StudioVcaTheme::ballLit, StudioVcaTheme::ballShade);
+        panel.text(dl, x - 28, y - 6, 10.0f, StudioVcaTheme::ink, "INPUT", 1, true);
+        panel.text(dl, x + 28, y - 6, 10.0f, StudioVcaTheme::ink, "OUTPUT", -1, true);
         if (clicked) setValue(p, output ? 0.0f : 1.0f);
     }
 
@@ -4105,12 +4178,12 @@ private:
         const float s = panel.scale();
         constexpr float bezel = 72.0f, face = 64.0f, split = 8.0f, pivotDrop = 61.0f, arc = 92.0f;   // arc top at 0.49 face
         const ImVec2 c = panel.P(cx, cy);
-        dl->AddCircleFilled(ImVec2(c.x + 2.0f * s, c.y + 3.0f * s), (bezel + 2.0f) * s, IM_COL32(60, 0, 0, 150), 64);
-        gradientDisc(dl, c, bezel * s, -0.5f, IM_COL32(150, 24, 22, 255), IM_COL32(70, 6, 6, 255), 64);
-        dl->AddCircle(c, (bezel - 3.0f) * s, IM_COL32(255, 120, 105, 60), 64, s);
-        dl->AddCircleFilled(c, (face + 2.0f) * s, IM_COL32(16, 10, 8, 255), 64);
+        dl->AddCircleFilled(ImVec2(c.x + 2.0f * s, c.y + 3.0f * s), (bezel + 2.0f) * s, StudioVcaTheme::meterShadow, 64);
+        gradientDisc(dl, c, bezel * s, -0.5f, StudioVcaTheme::bezelLit, StudioVcaTheme::bezelShade, 64);
+        dl->AddCircle(c, (bezel - 3.0f) * s, StudioVcaTheme::bezelRing, 64, s);
+        dl->AddCircleFilled(c, (face + 2.0f) * s, StudioVcaTheme::faceRim, 64);
         // Cream window above the split line, dark below it.
-        dl->AddCircleFilled(c, face * s, IM_COL32(38, 26, 20, 255), 64);
+        dl->AddCircleFilled(c, face * s, StudioVcaTheme::faceDark, 64);
         constexpr int segments = 48;
         ImVec2 window[segments + 1];
         const float limit = duskdaf::DuskPanel::kPi - std::acos(split / face);   // from straight up to the split
@@ -4119,9 +4192,9 @@ private:
             const float a = -limit + 2.0f * limit * static_cast<float>(i) / segments;
             window[i] = panel.P(cx + face * std::sin(a), cy - face * std::cos(a));
         }
-        dl->AddConvexPolyFilled(window, segments + 1, IM_COL32(236, 204, 150, 255));
+        dl->AddConvexPolyFilled(window, segments + 1, StudioVcaTheme::window);
         dl->PushClipRect(panel.P(cx - face, cy - face), panel.P(cx + face, cy + split), true);
-        dl->AddCircleFilled(panel.P(cx, cy - 6), 30.0f * s, IM_COL32(255, 196, 110, 60), 32);   // lamp glow
+        dl->AddCircleFilled(panel.P(cx, cy - 6), 30.0f * s, StudioVcaTheme::windowGlow, 32);   // lamp glow
         dl->PopClipRect();
         // Scale: an arc about the pivot, ticks and numerals (design coordinates).
         const float px = cx, py = cy + pivotDrop;
@@ -4131,28 +4204,28 @@ private:
         };
         dl->PathArcTo(panel.P(px, py), arc * s, (-90.0f - 30.0f) * duskdaf::DuskPanel::kPi / 180.0f,
                       (-90.0f + 30.0f) * duskdaf::DuskPanel::kPi / 180.0f, 32);
-        dl->PathStroke(IM_COL32(30, 20, 12, 255), 0, 1.6f * s);
+        dl->PathStroke(StudioVcaTheme::scaleInk, 0, 1.6f * s);
         for (int i = 0; i < count; ++i)
         {
             const float degrees = multicompp::ui_detail::studioVcaNeedleDegrees(scale[i].plain, minDb, maxDb);
-            dl->AddLine(at(degrees, arc), at(degrees, arc + 6.0f), IM_COL32(30, 20, 12, 255), 1.4f * s);
+            dl->AddLine(at(degrees, arc), at(degrees, arc + 6.0f), StudioVcaTheme::scaleInk, 1.4f * s);
             const float a = degrees * duskdaf::DuskPanel::kPi / 180.0f;
             panel.text(dl, px + std::sin(a) * (arc + 10.0f), py - std::cos(a) * (arc + 10.0f) - 4.25f, 8.5f,
-                       IM_COL32(30, 20, 12, 255), scale[i].label, 0, false);
+                       StudioVcaTheme::scaleInk, scale[i].label, 0, false);
         }
-        panel.text(dl, cx + 44, cy - 13, 11.0f, IM_COL32(30, 20, 12, 255), "VU", 0, true);
+        panel.text(dl, cx + 44, cy - 13, 11.0f, StudioVcaTheme::scaleInk, "VU", 0, true);
         // Needles, clipped to the window; the window's lower edge is where the dark half hides their feet.
         dl->PushClipRect(panel.P(cx - face, cy - face), panel.P(cx + face, cy + split), true);
         if (std::isfinite(markDb))
             dl->AddLine(panel.P(px, py), at(multicompp::ui_detail::studioVcaNeedleDegrees(markDb, minDb, maxDb), arc - 3.0f),
-                        IM_COL32(214, 30, 24, 255), 1.6f * s);
+                        StudioVcaTheme::thresholdMark, 1.6f * s);
         dl->AddLine(panel.P(px, py), at(multicompp::ui_detail::studioVcaNeedleDegrees(valueDb, minDb, maxDb), arc - 3.0f),
-                    IM_COL32(16, 14, 12, 255), 1.8f * s);
+                    StudioVcaTheme::needle, 1.8f * s);
         dl->PopClipRect();
         // Glass: a soft reflection band on the right.
         dl->AddRectFilledMultiColor(panel.P(cx + 22, cy - 58), panel.P(cx + 44, cy + split),
-                                    IM_COL32(255, 255, 255, 40), IM_COL32(255, 255, 255, 10),
-                                    IM_COL32(255, 255, 255, 0), IM_COL32(255, 255, 255, 20));
+                                    StudioVcaTheme::glassTopLeft, StudioVcaTheme::glassTopRight,
+                                    StudioVcaTheme::glassBottomRight, StudioVcaTheme::glassBottomLeft);
     }
 
     // A disc lit along `angle` (radians from straight up): `lit` on that side, `shade` opposite.
