@@ -1074,6 +1074,24 @@ void testOptoFaceplateContract()
                     && Vca::top + Vca::rail < Meter::y0 && Meter::y1 < Vca::bottom - Vca::rail,
                 "VCA faceplate fills the canvas below the mode row and keeps its controls apart");
     }
+    {
+        // BUS is laid out on the canvas too (2026-11-06): its plate spans the width below the mode row, the frame
+        // holds the meter column and both rows, the columns stay apart, and the first row's read-out line (a value
+        // beyond THRESHOLD's or MAKE-UP's travel) clears the second row's numerals.
+        using Bus = multicompp::ui_detail::BusFaceplateLayout;
+        require(Bus::left == 0.0f && Bus::right == multicompp::ui_detail::kDesignWidth
+                    && Bus::top >= multicompp::ui_detail::kFaceAreaTop
+                    && Bus::bottom <= multicompp::ui_detail::kDesignHeight
+                    && Bus::left + Bus::ear < Bus::frameX0 && Bus::frameX1 < Bus::right - Bus::ear
+                    && Bus::top < Bus::frameY0 && Bus::frameY1 < Bus::bottom
+                    && Bus::frameX0 < Bus::meterX0 && Bus::meterX1 < Bus::col0 - Bus::labelRadius
+                    && Bus::frameY0 < Bus::row1Y - Bus::labelRadius - 8.0f
+                    && Bus::row1Y + Bus::readoutDrop + 17.0f < Bus::row2Y - Bus::labelRadius - 8.0f
+                    && Bus::row2Y + Bus::legendDrop + 16.0f < Bus::frameY1
+                    && Bus::col0 < Bus::col1 && Bus::col1 < Bus::col2 && Bus::col2 < Bus::col3
+                    && Bus::col3 < Bus::col4 && Bus::col4 + Bus::labelRadius < Bus::frameX1,
+                "BUS faceplate fills the canvas below the mode row and keeps its controls apart");
+    }
 
     require(!multicompp::ui_detail::vcaSignalAboveThreshold(-30.0f, -10.0f)
                 && multicompp::ui_detail::vcaSignalAboveThreshold(-10.0f, -10.0f)

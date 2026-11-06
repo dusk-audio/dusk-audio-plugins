@@ -167,6 +167,30 @@ struct VcaFaceplateLayout
     static constexpr float mixX = 1034.0f, mixY = 306.0f, mixRadius = 13.0f;
 };
 
+// The BUS face on the 1120 x 380 canvas at the readability floor (canvas coordinates; text y is its top): a frame
+// round the face whose left column carries the name on its top edge, the meter, the IN switch and the series line on
+// its bottom edge; two rows of controls to its right. Only THRESHOLD and MAKE-UP can hold a value beyond their
+// travel (older sessions), both in the first row, and the line under its legends is kept for that read-out.
+struct BusFaceplateLayout
+{
+    static constexpr float left = 0.0f, right = kDesignWidth, top = kFaceAreaTop + 1.0f, bottom = kDesignHeight - 2.0f;
+    static constexpr float ear = 44.0f;                                   // the rack ears, either side of the plate
+    static constexpr float frameX0 = 69.0f, frameX1 = 1051.0f, frameY0 = 92.0f, frameY1 = 362.0f;
+    static constexpr float meterX0 = 91.0f, meterY0 = 110.0f, meterX1 = 344.0f, meterY1 = 256.0f;
+    static constexpr float columnX = 0.5f * (meterX0 + meterX1);         // the left column's centre
+    static constexpr float titleY = 81.0f;                                // BUS COMPRESSOR (22), on the frame's top
+    static constexpr float seriesY = frameY1 - 7.0f;                      // STEREO BUS COMPRESSION (13), on its bottom
+    static constexpr float inY = 301.0f;                                  // the IN switch's centre
+    // MAKE-UP's last numeral and SC FILTER's first sit at one height: those two columns are further apart.
+    static constexpr float col0 = 409.0f, col1 = 536.0f, col2 = 663.0f, col3 = 810.0f, col4 = 949.0f;
+    static constexpr float row1Y = 152.0f, row2Y = 290.0f;
+    static constexpr float knobRadius = 23.0f, dotRadius = 32.0f;         // the knobs and their scale's dots
+    static constexpr float labelRadius = 46.0f;                           // the numerals' anchors
+    static constexpr float legendDrop = 44.0f;                            // a legend's top, below its control's centre
+    static constexpr float readoutDrop = legendDrop + 18.0f;              // a beyond-travel value, under the legend
+    static constexpr float trimRadius = 13.0f;                            // HR
+};
+
 // Digital and Multiband content bounds in visible-canvas y (0 = the top of the header).
 // The rack shell extends to the canvas edges; its lettering keeps an 8 px bottom margin.
 struct ModernFaceLayout
@@ -1935,9 +1959,9 @@ private:
         return multicompp::ui_detail::fetSloAttackTypedHost(text, host);
     }
 
-    // The face of the current mode. OPTO, FET BLACK, FET BLUE and VCA are laid out on the canvas itself (scale and
-    // origin are the canvas transform, as the caller left it); the other faces are still drawn on the face canvas they
-    // were authored on (beginLegacyFace) until each is laid out at the readability floor.
+    // The face of the current mode. OPTO, FET BLACK, FET BLUE, VCA and BUS are laid out on the canvas itself (scale
+    // and origin are the canvas transform, as the caller left it); the other faces are still drawn on the face canvas
+    // they were authored on (beginLegacyFace) until each is laid out at the readability floor.
     void drawModePanel(ImDrawList* dl, float scale, ImVec2 origin)
     {
         const int mode = multicompp::ui_detail::choiceIndex(value(P_MODE), 8);
@@ -1964,7 +1988,7 @@ private:
             case 0: drawOpto(dl); break;
             case 1: drawFet(dl, false); break;
             case 2: drawVca(dl); break;
-            case 3: legacyFace(); drawBus(dl); break;
+            case 3: drawBus(dl); break;
             case 4: drawFet(dl, true); break;
             case 5: legacyFace(); drawStudioVca(dl); break;
             case 6: legacyFace(); drawDigital(dl); break;
@@ -3454,7 +3478,7 @@ private:
         static constexpr ImU32 lensBottomRight = IM_COL32(145, 151, 141, 255);
         static constexpr ImU32 lensBottomLeft = IM_COL32(153, 158, 149, 255);
         static constexpr ImU32 buttonLabel = IM_COL32(46, 48, 39, 255);
-        // The HR set screw (busTrim): shadow, nut, head, face, highlight, slot and legend
+        // The HR set screw (busTrim): shadow, nut, head, face, highlight and slot
         static constexpr ImU32 trimShadow = IM_COL32(0, 0, 0, 140);
         static constexpr ImU32 trimNut = IM_COL32(28, 28, 28, 255);
         static constexpr ImU32 trimNutEdge = IM_COL32(70, 71, 70, 255);
@@ -3462,14 +3486,14 @@ private:
         static constexpr ImU32 trimFace = IM_COL32(206, 208, 206, 255);
         static constexpr ImU32 trimHighlight = IM_COL32(250, 251, 248, 120);
         static constexpr ImU32 trimSlot = IM_COL32(34, 35, 34, 255);
-        static constexpr ImU32 trimLegend = IM_COL32(228, 229, 224, 255);
     };
 
     void busKnob(ImDrawList* dl, const char* id, uint32_t p, float x, float y,
                  const char* label, const char* const* labels, int count,
                  bool discrete, const char* suffix = "")
     {
-        const float s = panel.scale(), radius = 23.0f;
+        using Layout = multicompp::ui_detail::BusFaceplateLayout;
+        const float s = panel.scale(), radius = Layout::knobRadius;
         // Preserve the wider legacy host ranges for existing sessions while the
         // face and its gestures follow the reference's +/-15 and 0..15 dB travel.
         const float lo = p == P_BUS_THRESHOLD ? -15.0f : hostMinimum(p);
@@ -3512,7 +3536,7 @@ private:
         for (int i = 0; i < dots; ++i)
         {
             const float a = angle(static_cast<float>(i) / (dots - 1));
-            dl->AddCircleFilled(panel.P(x + 32.0f * std::sin(a), y - 32.0f * std::cos(a)),
+            dl->AddCircleFilled(panel.P(x + Layout::dotRadius * std::sin(a), y - Layout::dotRadius * std::cos(a)),
                                  2.1f * s, BusTheme::scaleDot, 12);
         }
         for (int i = 0; i < count; ++i)
@@ -3525,9 +3549,11 @@ private:
             }
             else if (p == P_BUS_SC && i == 1)
                 t = (hostValueForPlain(p, 80.0f) - lo) / (hi - lo);
-            const float a = angle(t);
-            panel.text(dl, x + 46.0f * std::sin(a), y - 46.0f * std::cos(a) - 5,
-                       10.0f, BusTheme::scaleLabel, labels[i], 0, true);
+            // At the legend size (16); those left of the knob end at their anchor and those right of it start
+            // there, so the wider ones clear the dots.
+            const float a = angle(t), dx = std::sin(a);
+            panel.text(dl, x + Layout::labelRadius * dx, y - Layout::labelRadius * std::cos(a) - 8.0f, 16.0f,
+                       BusTheme::scaleLabel, labels[i], dx < -0.25f ? 1 : (dx > 0.25f ? -1 : 0), true);
         }
         const ImVec2 c = panel.P(x, y);
         // The skirt ribs turn with the pointer, so the whole knob reads as
@@ -3549,12 +3575,12 @@ private:
         dl->AddLine(panel.P(x + 3.0f * std::sin(a), y - 3.0f * std::cos(a)),
                     panel.P(x + 20.0f * std::sin(a), y - 20.0f * std::cos(a)),
                     BusTheme::pointer, 2.4f * s);
-        panel.text(dl, x, y + 39, 10.0f, BusTheme::knobLegend, label, 0, true);
+        panel.text(dl, x, y + Layout::legendDrop, 16.0f, BusTheme::knobLegend, label, 0, true);
         if (values[p] < lo || values[p] > hi)
         {
             char readout[40];
             std::snprintf(readout, sizeof(readout), "%.1f%s", plainValueForHost(p, values[p]), suffix);
-            panel.text(dl, x, y + 52, 9.0f, BusTheme::knobLegend, readout, 0, true);
+            panel.text(dl, x, y + Layout::readoutDrop, 17.0f, BusTheme::knobLegend, readout, 0, true);
         }
         busKnobSplitter.Merge(dl);
     }
@@ -3584,12 +3610,12 @@ private:
                                     on ? BusTheme::lensLitTop : BusTheme::lensTopRight,
                                     on ? BusTheme::lensLitBottom : BusTheme::lensBottomRight,
                                     on ? BusTheme::lensLitBottom : BusTheme::lensBottomLeft);
-        panel.text(dl, x, y - 6, 10.0f, BusTheme::buttonLabel, label, 0, true);
+        panel.text(dl, x, y - 9, 16.0f, BusTheme::buttonLabel, label, 0, true);
         if (clicked) setValue(p, values[p] >= 0.5f ? 0.0f : 1.0f);
     }
 
     // The BUS face's HR set screw (once the VCA face's MIX). Same gesture
-    // contract as fetTrimKnob; label optional.
+    // contract as fetTrimKnob; label optional, under it like the face's knobs.
     void busTrim(ImDrawList* dl, const char* id, uint32_t p, float x, float y, float radius,
                  const char* label, const char* format, const char* suffix)
     {
@@ -3621,15 +3647,20 @@ private:
         dl->AddLine(ImVec2(center.x - pointer.x * r * 0.62f, center.y - pointer.y * r * 0.62f),
                     ImVec2(center.x + pointer.x * r * 0.62f, center.y + pointer.y * r * 0.62f),
                     BusTheme::trimSlot, 1.8f * scale);
-        if (label != nullptr) spacedText(dl, x, y - radius - 22.0f, 9.0f, BusTheme::trimLegend, label, 0);
+        if (label != nullptr)
+            panel.text(dl, x, y + multicompp::ui_detail::BusFaceplateLayout::legendDrop, 16.0f, BusTheme::knobLegend,
+                       label, 0, true);
         busKnobSplitter.Merge(dl);
     }
 
     void drawBus(ImDrawList* dl)
     {
+        using Layout = multicompp::ui_detail::BusFaceplateLayout;
         const float s = panel.scale();
-        dl->AddRectFilled(panel.P(0, 344), panel.P(1120, 654), BusTheme::rack);
-        dl->AddRectFilledMultiColor(panel.P(44, 346), panel.P(1076, 651),
+        dl->AddRectFilled(panel.P(Layout::left, Layout::top), panel.P(Layout::right, Layout::bottom), BusTheme::rack);
+        constexpr float plateX0 = Layout::left + Layout::ear, plateX1 = Layout::right - Layout::ear;
+        constexpr float plateY0 = Layout::top + 2.0f, plateY1 = Layout::bottom - 3.0f;
+        dl->AddRectFilledMultiColor(panel.P(plateX0, plateY0), panel.P(plateX1, plateY1),
                                     BusTheme::plateTopLeft, BusTheme::plateTopRight,
                                     BusTheme::plateBottomRight, BusTheme::plateBottomLeft);
         // Fine deterministic powder-coat grain; remains static while meters move.
@@ -3639,23 +3670,32 @@ private:
         for (int i = 0; i < 1500; ++i)
         {
             grain = grain * 1664525u + 1013904223u;
-            const float x = 46.0f + static_cast<float>(grain & 65535u) * (1028.0f / 65535.0f);
+            const float x = plateX0 + 2.0f + static_cast<float>(grain & 65535u) * ((plateX1 - plateX0 - 4.0f) / 65535.0f);
             grain = grain * 1664525u + 1013904223u;
-            const float y = 347.0f + static_cast<float>(grain & 65535u) * (302.0f / 65535.0f);
+            const float y = plateY0 + 1.0f + static_cast<float>(grain & 65535u) * ((plateY1 - plateY0 - 3.0f) / 65535.0f);
             dl->AddRectFilled(panel.P(x, y), panel.P(x + 0.65f, y + 0.65f),
                               (grain & 65536u) ? BusTheme::grainLight : BusTheme::grainDark);
         }
-        for (float x : {23.0f, 1097.0f})
-            for (float y : {362.0f, 634.0f})
+        for (float x : {0.5f * Layout::ear, Layout::right - 0.5f * Layout::ear - 1.0f})
+            for (float y : {Layout::top + 18.0f, Layout::bottom - 18.0f})
             {
                 dl->AddCircleFilled(panel.P(x, y), 6.0f * s, BusTheme::screwHead, 24);
                 dl->AddCircle(panel.P(x, y), 6.0f * s, BusTheme::screwRim, 24, s);
                 dl->AddLine(panel.P(x - 3, y + 3), panel.P(x + 3, y - 3), BusTheme::screwSlot, 1.4f * s);
             }
-        panel.text(dl, 560, 356, 22, BusTheme::ink, "BUS COMPRESSOR", 0, true);
-        dl->AddRect(panel.P(69, 391), panel.P(1051, 633), BusTheme::ink, 6 * s, 0, 1.8f * s);
-        dl->AddRectFilled(panel.P(430, 624), panel.P(690, 642), BusTheme::footerPlate);
-        panel.text(dl, 560, 626, 13, BusTheme::ink, "STEREO BUS COMPRESSION", 0, true);
+        // The silk-screened frame, its top edge carrying the name over the meter and its bottom edge the series line
+        // under the IN switch, each on a plate that breaks the line.
+        dl->AddRect(panel.P(Layout::frameX0, Layout::frameY0), panel.P(Layout::frameX1, Layout::frameY1),
+                    BusTheme::ink, 6 * s, 0, 1.8f * s);
+        const auto edgeLabel = [&](float y, float size, const char* text) {
+            const float px = size * s;
+            const float halfWidth = 0.5f * panel.pickFont(px)->CalcTextSizeA(px, FLT_MAX, 0.0f, text).x / s + 12.0f;
+            dl->AddRectFilled(panel.P(Layout::columnX - halfWidth, y - 2.0f),
+                              panel.P(Layout::columnX + halfWidth, y + size + 2.0f), BusTheme::footerPlate);
+            panel.text(dl, Layout::columnX, y, size, BusTheme::ink, text, 0, true);
+        };
+        edgeLabel(Layout::titleY, 22.0f, "BUS COMPRESSOR");
+        edgeLabel(Layout::seriesY, 13.0f, "STEREO BUS COMPRESSION");
 
         static constexpr duskdaf::VuTick ticks[] = {
             {0, "0", true}, {4, "4", true}, {8, "8", true},
@@ -3685,13 +3725,15 @@ private:
         auto* instance = getPluginInstancePointer();
         const float busReading = instance && multiCompGetBusMeterReading != nullptr
             ? multiCompGetBusMeterReading(instance) : -meter(kMeterMaster);
+        // The scale's numerals at 14, dB at the legend size (16) and COMPRESSION at 13 (the readability floor).
         meterStyle.radiusTopInset = 22; meterStyle.tickLabelRadiusFrac = 0.99f;
-        meterStyle.majorTickLength = -17; meterStyle.tickLabelSize = 12;
-        meterStyle.legendOffset = 0.49f; meterStyle.sublabelSize = 10;
-        duskdaf::drawVuMeter(panel, dl, 91, 407, 344, 553,
+        meterStyle.majorTickLength = -17; meterStyle.tickLabelSize = 14;
+        // The legend high enough that the needle at rest clears COMPRESSION under it.
+        meterStyle.legendOffset = 0.62f; meterStyle.legendSize = 16; meterStyle.sublabelSize = 13;
+        duskdaf::drawVuMeter(panel, dl, Layout::meterX0, Layout::meterY0, Layout::meterX1, Layout::meterY1,
                              busReading, busVuNeedle, meterScale,
                              BusTheme::meterSurround, meterStyle);
-        busButton(dl, "bus_in", P_BYPASS, 217, 593, "IN", true);
+        busButton(dl, "bus_in", P_BYPASS, Layout::columnX, Layout::inY, "IN", true);
 
         static constexpr const char* threshold[] = {"-15", "0", "+15"};
         static constexpr const char* makeup[] = {"0", "7.5", "+15"};
@@ -3701,17 +3743,18 @@ private:
         static constexpr const char* sc[] = {"OFF", "80", "500"};
         static constexpr const char* mix[] = {"0", "50", "100"};
         static constexpr const char* rates[] = {"1", "3", "5", "10", "20", "40", "60"};
-        busKnob(dl, "bus_thr", P_BUS_THRESHOLD, 409, 449, "THRESHOLD", threshold, 3, false, " dB");
-        busKnob(dl, "bus_ratio", P_BUS_RATIO, 536, 449, "RATIO", ratios, 3, true, ":1");
-        busKnob(dl, "bus_makeup", P_BUS_MAKEUP, 663, 449, "MAKE-UP", makeup, 3, false, " dB");
-        busKnob(dl, "bus_sc", P_BUS_SC, 790, 449, "SC FILTER Hz", sc, 3, false, " Hz");
-        busKnob(dl, "bus_mix", P_BUS_MIX, 929, 449, "MIX %", mix, 3, false, "%");
-        busKnob(dl, "bus_attack", P_BUS_ATTACK, 409, 568, "ATTACK ms", attacks, 6, true);
-        busKnob(dl, "bus_release", P_BUS_RELEASE, 536, 568, "RELEASE s", releases, 5, true);
-        busTrim(dl, "bus_hr", P_BUS_HEADROOM, 663, 568, 11, "HR dB", "%.0f", " dB");
-        busKnob(dl, "bus_rate", P_BUS_FADE_RATE, 790, 568, "RATE s", rates, 7, false, " s");
-        busButton(dl, "bus_fade", P_BUS_FADE, 929, 568, "FADE");
-        panel.text(dl, 929, 610, 10, BusTheme::ink, "AUTO FADE", 0, true);
+        constexpr float row1 = Layout::row1Y, row2 = Layout::row2Y;
+        busKnob(dl, "bus_thr", P_BUS_THRESHOLD, Layout::col0, row1, "THRESHOLD", threshold, 3, false, " dB");
+        busKnob(dl, "bus_ratio", P_BUS_RATIO, Layout::col1, row1, "RATIO", ratios, 3, true, ":1");
+        busKnob(dl, "bus_makeup", P_BUS_MAKEUP, Layout::col2, row1, "MAKE-UP", makeup, 3, false, " dB");
+        busKnob(dl, "bus_sc", P_BUS_SC, Layout::col3, row1, "SC FILTER Hz", sc, 3, false, " Hz");
+        busKnob(dl, "bus_mix", P_BUS_MIX, Layout::col4, row1, "MIX %", mix, 3, false, "%");
+        busKnob(dl, "bus_attack", P_BUS_ATTACK, Layout::col0, row2, "ATTACK ms", attacks, 6, true);
+        busKnob(dl, "bus_release", P_BUS_RELEASE, Layout::col1, row2, "RELEASE s", releases, 5, true);
+        busTrim(dl, "bus_hr", P_BUS_HEADROOM, Layout::col2, row2, Layout::trimRadius, "HR dB", "%.0f", " dB");
+        busKnob(dl, "bus_rate", P_BUS_FADE_RATE, Layout::col3, row2, "RATE s", rates, 7, false, " s");
+        busButton(dl, "bus_fade", P_BUS_FADE, Layout::col4, row2, "FADE");
+        panel.text(dl, Layout::col4, row2 + Layout::legendDrop, 16.0f, BusTheme::ink, "AUTO FADE", 0, true);
     }
 
     // Studio VCA face: the reference studio VCA compressor's panel, laid out from its own proportions (its 1776 x
