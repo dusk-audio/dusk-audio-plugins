@@ -3234,44 +3234,6 @@ private:
                 hostMinimum(P_SC_HP), hostMaximum(P_SC_HP)));
     }
 
-    // Small set-screw trim (the reference's MIX control). Same gesture
-    // contract as fetTrimKnob; label optional (the badge prints its own).
-    void vcaTrim(ImDrawList* dl, const char* id, uint32_t p, float x, float y, float radius,
-                 const char* label, const char* format, const char* suffix)
-    {
-        vcaKnobSplitter.Split(dl, 2);
-        vcaKnobSplitter.SetCurrentChannel(dl, 1);
-        beginTrackedControl(p, id, true);
-        panel.knob(id, p, hostMinimum(p), hostMaximum(p), x, y, radius,
-                   values[p], hostDefaultValue(p), false, false, format, suffix,
-                   0, true, false, nullptr, false, 1.0f, 0.0f, label ? label : "MIX", true,
-                   nullptr, false, 0.0f, 0.0f, false, true, 8.0f, true, false,
-                   &knobHostToPlain, &knobPlainToHost, this, true);
-        endTrackedControl();
-        vcaKnobSplitter.SetCurrentChannel(dl, 0);
-        const float hostMinV = hostMinimum(p);
-        const float hostRange = std::max(hostMaximum(p) - hostMinV, 1.0e-6f);
-        const float t = std::clamp((values[p] - hostMinV) / hostRange, 0.0f, 1.0f);
-        const float scale = panel.scale();
-        const ImVec2 center = panel.P(x, y);
-        const float r = radius * scale;
-        dl->AddCircleFilled(ImVec2(center.x + 1.5f * scale, center.y + 2.5f * scale), r * 1.35f, IM_COL32(0, 0, 0, 140), 32);
-        dl->AddCircleFilled(center, r * 1.3f, IM_COL32(28, 28, 28, 255), 32);
-        dl->AddCircle(center, r * 1.3f, IM_COL32(70, 71, 70, 255), 32, scale);
-        dl->AddCircleFilled(center, r, IM_COL32(158, 160, 158, 255), 32);
-        dl->AddCircleFilled(center, r * 0.8f, IM_COL32(206, 208, 206, 255), 32);
-        dl->PathArcTo(center, r * 0.62f, -2.45f, -0.75f, 18);
-        dl->PathStroke(IM_COL32(250, 251, 248, 120), 0, scale);
-        const float angle = duskdaf::DuskPanel::knobAngle(t);
-        const ImVec2 pointer(std::sin(angle), -std::cos(angle));
-        dl->AddLine(ImVec2(center.x - pointer.x * r * 0.62f, center.y - pointer.y * r * 0.62f),
-                    ImVec2(center.x + pointer.x * r * 0.62f, center.y + pointer.y * r * 0.62f),
-                    IM_COL32(34, 35, 34, 255), 1.8f * scale);
-        if (label != nullptr) spacedText(dl, x, y - radius - 22.0f, 9.0f, kVcaInk, label, 0);
-        vcaKnobSplitter.Merge(dl);
-    }
-
-
     void vcaKnob(ImDrawList* dl, const char* id, uint32_t p,
                  float x, float y, float radius, const char* label,
                  const char* format, const char* suffix,
@@ -3439,6 +3401,70 @@ private:
         return -60.0f;
     }
 
+    // The BUS face's colours by role, sampled from the face as it was drawn before the tokens.
+    struct BusTheme
+    {
+        // The panel: rack frame, powder-coated plate and its grain, screws, legend ink and the footer plate
+        static constexpr ImU32 rack = IM_COL32(43, 47, 45, 255);
+        static constexpr ImU32 plateTopLeft = IM_COL32(94, 100, 97, 255);
+        static constexpr ImU32 plateTopRight = IM_COL32(77, 83, 80, 255);
+        static constexpr ImU32 plateBottomRight = IM_COL32(49, 54, 52, 255);
+        static constexpr ImU32 plateBottomLeft = IM_COL32(66, 71, 68, 255);
+        static constexpr ImU32 grainLight = IM_COL32(232, 236, 230, 23);
+        static constexpr ImU32 grainDark = IM_COL32(0, 0, 0, 30);
+        static constexpr ImU32 screwHead = IM_COL32(26, 29, 26, 255);
+        static constexpr ImU32 screwRim = IM_COL32(142, 147, 140, 255);
+        static constexpr ImU32 screwSlot = IM_COL32(138, 143, 135, 255);
+        static constexpr ImU32 ink = IM_COL32(235, 237, 233, 255);
+        static constexpr ImU32 footerPlate = IM_COL32(57, 62, 59, 255);
+        // The meter
+        static constexpr ImU32 meterSurround = IM_COL32(119, 124, 115, 255);
+        static constexpr ImU32 meterBezelLight = IM_COL32(80, 83, 79, 255);
+        static constexpr ImU32 meterBezelDark = IM_COL32(14, 17, 14, 255);
+        static constexpr ImU32 meterBezelLine = IM_COL32(15, 17, 15, 255);
+        static constexpr ImU32 meterLip = IM_COL32(22, 24, 22, 255);
+        static constexpr ImU32 meterFace = IM_COL32(26, 28, 26, 255);
+        static constexpr ImU32 meterFaceTopTint = IM_COL32(69, 72, 68, 100);
+        static constexpr ImU32 meterFaceBottomTint = IM_COL32(12, 14, 12, 80);
+        static constexpr ImU32 meterInk = IM_COL32(188, 194, 184, 255);
+        static constexpr ImU32 meterNeedle = IM_COL32(244, 246, 239, 255);
+        // The knobs: scale dots and numerals, shadow, ribbed skirt, cap, pointer and legend
+        static constexpr ImU32 scaleDot = IM_COL32(218, 220, 218, 255);
+        static constexpr ImU32 scaleLabel = IM_COL32(224, 226, 223, 255);
+        static constexpr ImU32 knobShadow = IM_COL32(0, 0, 0, 110);
+        static constexpr ImU32 skirt = IM_COL32(86, 89, 87, 255);
+        static constexpr ImU32 rib = IM_COL32(144, 148, 144, 255);           // the skirt's ribs and the cap
+        static constexpr ImU32 capRing = IM_COL32(192, 196, 191, 180);
+        static constexpr ImU32 capFace = IM_COL32(165, 169, 164, 255);
+        static constexpr ImU32 pointer = IM_COL32(20, 23, 21, 255);
+        static constexpr ImU32 knobLegend = IM_COL32(239, 240, 236, 255);
+        // The IN and FADE buttons: well, frame, lamp, lens and caption
+        static constexpr ImU32 buttonWell = IM_COL32(18, 20, 18, 255);
+        static constexpr ImU32 buttonEdge = IM_COL32(107, 110, 104, 255);
+        static constexpr ImU32 buttonFrameTopLeft = IM_COL32(177, 180, 168, 255);
+        static constexpr ImU32 buttonFrameTopRight = IM_COL32(93, 96, 85, 255);
+        static constexpr ImU32 buttonFrameBottomRight = IM_COL32(27, 29, 25, 255);
+        static constexpr ImU32 buttonFrameBottomLeft = IM_COL32(81, 84, 75, 255);
+        static constexpr ImU32 lampLit = IM_COL32(246, 209, 102, 255);
+        static constexpr ImU32 lamp = IM_COL32(90, 95, 88, 255);
+        static constexpr ImU32 lensLitTop = IM_COL32(255, 255, 241, 255);
+        static constexpr ImU32 lensLitBottom = IM_COL32(255, 245, 189, 255);
+        static constexpr ImU32 lensTopLeft = IM_COL32(206, 210, 201, 255);
+        static constexpr ImU32 lensTopRight = IM_COL32(196, 200, 191, 255);
+        static constexpr ImU32 lensBottomRight = IM_COL32(145, 151, 141, 255);
+        static constexpr ImU32 lensBottomLeft = IM_COL32(153, 158, 149, 255);
+        static constexpr ImU32 buttonLabel = IM_COL32(46, 48, 39, 255);
+        // The HR set screw (busTrim): shadow, nut, head, face, highlight, slot and legend
+        static constexpr ImU32 trimShadow = IM_COL32(0, 0, 0, 140);
+        static constexpr ImU32 trimNut = IM_COL32(28, 28, 28, 255);
+        static constexpr ImU32 trimNutEdge = IM_COL32(70, 71, 70, 255);
+        static constexpr ImU32 trimHead = IM_COL32(158, 160, 158, 255);
+        static constexpr ImU32 trimFace = IM_COL32(206, 208, 206, 255);
+        static constexpr ImU32 trimHighlight = IM_COL32(250, 251, 248, 120);
+        static constexpr ImU32 trimSlot = IM_COL32(34, 35, 34, 255);
+        static constexpr ImU32 trimLegend = IM_COL32(228, 229, 224, 255);
+    };
+
     void busKnob(ImDrawList* dl, const char* id, uint32_t p, float x, float y,
                  const char* label, const char* const* labels, int count,
                  bool discrete, const char* suffix = "")
@@ -3487,7 +3513,7 @@ private:
         {
             const float a = angle(static_cast<float>(i) / (dots - 1));
             dl->AddCircleFilled(panel.P(x + 32.0f * std::sin(a), y - 32.0f * std::cos(a)),
-                                 2.1f * s, IM_COL32(218, 220, 218, 255), 12);
+                                 2.1f * s, BusTheme::scaleDot, 12);
         }
         for (int i = 0; i < count; ++i)
         {
@@ -3501,34 +3527,34 @@ private:
                 t = (hostValueForPlain(p, 80.0f) - lo) / (hi - lo);
             const float a = angle(t);
             panel.text(dl, x + 46.0f * std::sin(a), y - 46.0f * std::cos(a) - 5,
-                       10.0f, IM_COL32(224, 226, 223, 255), labels[i], 0, true);
+                       10.0f, BusTheme::scaleLabel, labels[i], 0, true);
         }
         const ImVec2 c = panel.P(x, y);
         // The skirt ribs turn with the pointer, so the whole knob reads as
         // one turning part; the drop shadow stays put.
         const float t = std::clamp((values[p] - lo) / std::max(hi - lo, 0.001f), 0.0f, 1.0f);
         const float a = angle(t);
-        dl->AddCircleFilled(panel.P(x + 3, y + 4), 26.0f * s, IM_COL32(0, 0, 0, 110), 48);
-        dl->AddCircleFilled(c, 25.0f * s, IM_COL32(86, 89, 87, 255), 48);
+        dl->AddCircleFilled(panel.P(x + 3, y + 4), 26.0f * s, BusTheme::knobShadow, 48);
+        dl->AddCircleFilled(c, 25.0f * s, BusTheme::skirt, 48);
         for (int i = 0; i < 16; ++i)
         {
             const float rib = a + i * 2.0f * kUiPi / 16.0f;
             dl->AddLine(panel.P(x + 21.0f * std::sin(rib), y - 21.0f * std::cos(rib)),
                         panel.P(x + 24.5f * std::sin(rib), y - 24.5f * std::cos(rib)),
-                        IM_COL32(144, 148, 144, 255), 3.0f * s);
+                        BusTheme::rib, 3.0f * s);
         }
-        dl->AddCircleFilled(c, 21.0f * s, IM_COL32(144, 148, 144, 255), 48);
-        dl->AddCircle(c, 19.5f * s, IM_COL32(192, 196, 191, 180), 48, 1.2f * s);
-        dl->AddCircleFilled(c, 18.0f * s, IM_COL32(165, 169, 164, 255), 48);
+        dl->AddCircleFilled(c, 21.0f * s, BusTheme::rib, 48);
+        dl->AddCircle(c, 19.5f * s, BusTheme::capRing, 48, 1.2f * s);
+        dl->AddCircleFilled(c, 18.0f * s, BusTheme::capFace, 48);
         dl->AddLine(panel.P(x + 3.0f * std::sin(a), y - 3.0f * std::cos(a)),
                     panel.P(x + 20.0f * std::sin(a), y - 20.0f * std::cos(a)),
-                    IM_COL32(20, 23, 21, 255), 2.4f * s);
-        panel.text(dl, x, y + 39, 10.0f, IM_COL32(239, 240, 236, 255), label, 0, true);
+                    BusTheme::pointer, 2.4f * s);
+        panel.text(dl, x, y + 39, 10.0f, BusTheme::knobLegend, label, 0, true);
         if (values[p] < lo || values[p] > hi)
         {
             char readout[40];
             std::snprintf(readout, sizeof(readout), "%.1f%s", plainValueForHost(p, values[p]), suffix);
-            panel.text(dl, x, y + 52, 9.0f, IM_COL32(239, 240, 236, 255), readout, 0, true);
+            panel.text(dl, x, y + 52, 9.0f, BusTheme::knobLegend, readout, 0, true);
         }
         busKnobSplitter.Merge(dl);
     }
@@ -3546,30 +3572,66 @@ private:
         }
         ImGui::SetCursorScreenPos(panel.P(x - 29, y - 29));
         const bool clicked = ImGui::InvisibleButton(id, ImVec2(58 * s, 58 * s));
-        dl->AddRectFilled(panel.P(x - 33, y - 33), panel.P(x + 33, y + 33), IM_COL32(18, 20, 18, 255));
-        dl->AddRect(panel.P(x - 33, y - 33), panel.P(x + 33, y + 33), IM_COL32(107, 110, 104, 255), 0, 0, 2 * s);
+        dl->AddRectFilled(panel.P(x - 33, y - 33), panel.P(x + 33, y + 33), BusTheme::buttonWell);
+        dl->AddRect(panel.P(x - 33, y - 33), panel.P(x + 33, y + 33), BusTheme::buttonEdge, 0, 0, 2 * s);
         dl->AddRectFilledMultiColor(panel.P(x - 28, y - 28), panel.P(x + 28, y + 28),
-                                    IM_COL32(177, 180, 168, 255), IM_COL32(93, 96, 85, 255),
-                                    IM_COL32(27, 29, 25, 255), IM_COL32(81, 84, 75, 255));
+                                    BusTheme::buttonFrameTopLeft, BusTheme::buttonFrameTopRight,
+                                    BusTheme::buttonFrameBottomRight, BusTheme::buttonFrameBottomLeft);
         dl->AddRectFilled(panel.P(x - 23, y - 23), panel.P(x + 23, y + 23),
-                          on ? IM_COL32(246, 209, 102, 255) : IM_COL32(90, 95, 88, 255));
+                          on ? BusTheme::lampLit : BusTheme::lamp);
         dl->AddRectFilledMultiColor(panel.P(x - 20, y - 20), panel.P(x + 20, y + 20),
-                                    on ? IM_COL32(255, 255, 241, 255) : IM_COL32(206, 210, 201, 255),
-                                    on ? IM_COL32(255, 255, 241, 255) : IM_COL32(196, 200, 191, 255),
-                                    on ? IM_COL32(255, 245, 189, 255) : IM_COL32(145, 151, 141, 255),
-                                    on ? IM_COL32(255, 245, 189, 255) : IM_COL32(153, 158, 149, 255));
-        panel.text(dl, x, y - 6, 10.0f, IM_COL32(46, 48, 39, 255), label, 0, true);
+                                    on ? BusTheme::lensLitTop : BusTheme::lensTopLeft,
+                                    on ? BusTheme::lensLitTop : BusTheme::lensTopRight,
+                                    on ? BusTheme::lensLitBottom : BusTheme::lensBottomRight,
+                                    on ? BusTheme::lensLitBottom : BusTheme::lensBottomLeft);
+        panel.text(dl, x, y - 6, 10.0f, BusTheme::buttonLabel, label, 0, true);
         if (clicked) setValue(p, values[p] >= 0.5f ? 0.0f : 1.0f);
+    }
+
+    // The BUS face's HR set screw (once the VCA face's MIX). Same gesture
+    // contract as fetTrimKnob; label optional.
+    void busTrim(ImDrawList* dl, const char* id, uint32_t p, float x, float y, float radius,
+                 const char* label, const char* format, const char* suffix)
+    {
+        busKnobSplitter.Split(dl, 2);
+        busKnobSplitter.SetCurrentChannel(dl, 1);
+        beginTrackedControl(p, id, true);
+        panel.knob(id, p, hostMinimum(p), hostMaximum(p), x, y, radius,
+                   values[p], hostDefaultValue(p), false, false, format, suffix,
+                   0, true, false, nullptr, false, 1.0f, 0.0f, label ? label : "MIX", true,
+                   nullptr, false, 0.0f, 0.0f, false, true, 8.0f, true, false,
+                   &knobHostToPlain, &knobPlainToHost, this, true);
+        endTrackedControl();
+        busKnobSplitter.SetCurrentChannel(dl, 0);
+        const float hostMinV = hostMinimum(p);
+        const float hostRange = std::max(hostMaximum(p) - hostMinV, 1.0e-6f);
+        const float t = std::clamp((values[p] - hostMinV) / hostRange, 0.0f, 1.0f);
+        const float scale = panel.scale();
+        const ImVec2 center = panel.P(x, y);
+        const float r = radius * scale;
+        dl->AddCircleFilled(ImVec2(center.x + 1.5f * scale, center.y + 2.5f * scale), r * 1.35f, BusTheme::trimShadow, 32);
+        dl->AddCircleFilled(center, r * 1.3f, BusTheme::trimNut, 32);
+        dl->AddCircle(center, r * 1.3f, BusTheme::trimNutEdge, 32, scale);
+        dl->AddCircleFilled(center, r, BusTheme::trimHead, 32);
+        dl->AddCircleFilled(center, r * 0.8f, BusTheme::trimFace, 32);
+        dl->PathArcTo(center, r * 0.62f, -2.45f, -0.75f, 18);
+        dl->PathStroke(BusTheme::trimHighlight, 0, scale);
+        const float angle = duskdaf::DuskPanel::knobAngle(t);
+        const ImVec2 pointer(std::sin(angle), -std::cos(angle));
+        dl->AddLine(ImVec2(center.x - pointer.x * r * 0.62f, center.y - pointer.y * r * 0.62f),
+                    ImVec2(center.x + pointer.x * r * 0.62f, center.y + pointer.y * r * 0.62f),
+                    BusTheme::trimSlot, 1.8f * scale);
+        if (label != nullptr) spacedText(dl, x, y - radius - 22.0f, 9.0f, BusTheme::trimLegend, label, 0);
+        busKnobSplitter.Merge(dl);
     }
 
     void drawBus(ImDrawList* dl)
     {
         const float s = panel.scale();
-        constexpr ImU32 ink = IM_COL32(235, 237, 233, 255);
-        dl->AddRectFilled(panel.P(0, 344), panel.P(1120, 654), IM_COL32(43, 47, 45, 255));
+        dl->AddRectFilled(panel.P(0, 344), panel.P(1120, 654), BusTheme::rack);
         dl->AddRectFilledMultiColor(panel.P(44, 346), panel.P(1076, 651),
-                                    IM_COL32(94, 100, 97, 255), IM_COL32(77, 83, 80, 255),
-                                    IM_COL32(49, 54, 52, 255), IM_COL32(66, 71, 68, 255));
+                                    BusTheme::plateTopLeft, BusTheme::plateTopRight,
+                                    BusTheme::plateBottomRight, BusTheme::plateBottomLeft);
         // Fine deterministic powder-coat grain; remains static while meters move.
         // 1500 quads (6k vertices) keeps the whole panel well inside ImGui's
         // 16-bit index space; 9000 pushed the draw list toward the limit.
@@ -3581,19 +3643,19 @@ private:
             grain = grain * 1664525u + 1013904223u;
             const float y = 347.0f + static_cast<float>(grain & 65535u) * (302.0f / 65535.0f);
             dl->AddRectFilled(panel.P(x, y), panel.P(x + 0.65f, y + 0.65f),
-                              (grain & 65536u) ? IM_COL32(232, 236, 230, 23) : IM_COL32(0, 0, 0, 30));
+                              (grain & 65536u) ? BusTheme::grainLight : BusTheme::grainDark);
         }
         for (float x : {23.0f, 1097.0f})
             for (float y : {362.0f, 634.0f})
             {
-                dl->AddCircleFilled(panel.P(x, y), 6.0f * s, IM_COL32(26, 29, 26, 255), 24);
-                dl->AddCircle(panel.P(x, y), 6.0f * s, IM_COL32(142, 147, 140, 255), 24, s);
-                dl->AddLine(panel.P(x - 3, y + 3), panel.P(x + 3, y - 3), IM_COL32(138, 143, 135, 255), 1.4f * s);
+                dl->AddCircleFilled(panel.P(x, y), 6.0f * s, BusTheme::screwHead, 24);
+                dl->AddCircle(panel.P(x, y), 6.0f * s, BusTheme::screwRim, 24, s);
+                dl->AddLine(panel.P(x - 3, y + 3), panel.P(x + 3, y - 3), BusTheme::screwSlot, 1.4f * s);
             }
-        panel.text(dl, 560, 356, 22, ink, "BUS COMPRESSOR", 0, true);
-        dl->AddRect(panel.P(69, 391), panel.P(1051, 633), ink, 6 * s, 0, 1.8f * s);
-        dl->AddRectFilled(panel.P(430, 624), panel.P(690, 642), IM_COL32(57, 62, 59, 255));
-        panel.text(dl, 560, 626, 13, ink, "STEREO BUS COMPRESSION", 0, true);
+        panel.text(dl, 560, 356, 22, BusTheme::ink, "BUS COMPRESSOR", 0, true);
+        dl->AddRect(panel.P(69, 391), panel.P(1051, 633), BusTheme::ink, 6 * s, 0, 1.8f * s);
+        dl->AddRectFilled(panel.P(430, 624), panel.P(690, 642), BusTheme::footerPlate);
+        panel.text(dl, 560, 626, 13, BusTheme::ink, "STEREO BUS COMPRESSION", 0, true);
 
         static constexpr duskdaf::VuTick ticks[] = {
             {0, "0", true}, {4, "4", true}, {8, "8", true},
@@ -3603,16 +3665,16 @@ private:
         meterScale.minDb = 0; meterScale.maxDb = 20; meterScale.redFromDb = 100;
         meterScale.legend = "dB"; meterScale.sublabel = "COMPRESSION";
         duskdaf::VuStyle meterStyle;
-        meterStyle.bezelLight = IM_COL32(80, 83, 79, 255);
-        meterStyle.bezelDark = IM_COL32(14, 17, 14, 255);
-        meterStyle.bezelLine = IM_COL32(15, 17, 15, 255);
-        meterStyle.lip = IM_COL32(22, 24, 22, 255);
-        meterStyle.faceBase = IM_COL32(26, 28, 26, 255);
-        meterStyle.faceTopTint = IM_COL32(69, 72, 68, 100);
-        meterStyle.faceBottomTint = IM_COL32(12, 14, 12, 80);
-        meterStyle.ink = IM_COL32(188, 194, 184, 255);
+        meterStyle.bezelLight = BusTheme::meterBezelLight;
+        meterStyle.bezelDark = BusTheme::meterBezelDark;
+        meterStyle.bezelLine = BusTheme::meterBezelLine;
+        meterStyle.lip = BusTheme::meterLip;
+        meterStyle.faceBase = BusTheme::meterFace;
+        meterStyle.faceTopTint = BusTheme::meterFaceTopTint;
+        meterStyle.faceBottomTint = BusTheme::meterFaceBottomTint;
+        meterStyle.ink = BusTheme::meterInk;
         meterStyle.sublabelColor = meterStyle.ink;
-        meterStyle.needle = IM_COL32(244, 246, 239, 255);
+        meterStyle.needle = BusTheme::meterNeedle;
         meterStyle.overloadArc = false; meterStyle.cornerMarks = false;
         meterStyle.pivotBelowFace = 15; meterStyle.sweepHalfAngleDeg = 45;
         meterStyle.smoothNeedle = false;
@@ -3628,7 +3690,7 @@ private:
         meterStyle.legendOffset = 0.49f; meterStyle.sublabelSize = 10;
         duskdaf::drawVuMeter(panel, dl, 91, 407, 344, 553,
                              busReading, busVuNeedle, meterScale,
-                             IM_COL32(119, 124, 115, 255), meterStyle);
+                             BusTheme::meterSurround, meterStyle);
         busButton(dl, "bus_in", P_BYPASS, 217, 593, "IN", true);
 
         static constexpr const char* threshold[] = {"-15", "0", "+15"};
@@ -3646,10 +3708,10 @@ private:
         busKnob(dl, "bus_mix", P_BUS_MIX, 929, 449, "MIX %", mix, 3, false, "%");
         busKnob(dl, "bus_attack", P_BUS_ATTACK, 409, 568, "ATTACK ms", attacks, 6, true);
         busKnob(dl, "bus_release", P_BUS_RELEASE, 536, 568, "RELEASE s", releases, 5, true);
-        vcaTrim(dl, "bus_hr", P_BUS_HEADROOM, 663, 568, 11, "HR dB", "%.0f", " dB");
+        busTrim(dl, "bus_hr", P_BUS_HEADROOM, 663, 568, 11, "HR dB", "%.0f", " dB");
         busKnob(dl, "bus_rate", P_BUS_FADE_RATE, 790, 568, "RATE s", rates, 7, false, " s");
         busButton(dl, "bus_fade", P_BUS_FADE, 929, 568, "FADE");
-        panel.text(dl, 929, 610, 10, ink, "AUTO FADE", 0, true);
+        panel.text(dl, 929, 610, 10, BusTheme::ink, "AUTO FADE", 0, true);
     }
 
     // Studio VCA face: the reference studio VCA compressor's panel, laid out from its own proportions (its 1776 x
