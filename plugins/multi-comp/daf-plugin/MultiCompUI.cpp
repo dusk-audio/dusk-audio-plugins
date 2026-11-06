@@ -4355,6 +4355,127 @@ private:
     // faceY() moves them onto the mode canvas.
     static constexpr float faceY(float visibleY) noexcept { return visibleY + kModeCanvasShiftY; }
 
+    // The Digital and Multiband faces' colours by role (kModernText, kDigitalCyan, kDim and kBandColors are their
+    // lettering and accents), sampled from the faces as they were drawn before the tokens.
+    struct ModernTheme
+    {
+        // The rack: body, plate and its grain, ear seams, edges and the printed rules
+        static constexpr ImU32 rack = IM_COL32(37, 39, 38, 255);
+        static constexpr ImU32 plateTop = IM_COL32(48, 51, 50, 255);
+        static constexpr ImU32 plateBottom = IM_COL32(24, 27, 26, 255);
+        static constexpr ImU32 grainLight = IM_COL32(255, 255, 255, 3);
+        static constexpr ImU32 grainDark = IM_COL32(0, 0, 0, 8);
+        static constexpr ImU32 earSeam = IM_COL32(8, 10, 9, 255);
+        static constexpr ImU32 earSeamHighlight = IM_COL32(107, 112, 108, 80);
+        static constexpr ImU32 topEdge = IM_COL32(123, 129, 124, 150);
+        static constexpr ImU32 bottomEdge = IM_COL32(6, 8, 7, 255);
+        static constexpr ImU32 titleRule = IM_COL32(120, 128, 122, 100);
+        static constexpr ImU32 sectionRule = IM_COL32(121, 130, 122, 100);
+        // The INPUT / OUTPUT meters and their LEDs
+        static constexpr ImU32 meterWell = IM_COL32(0x0A, 0x0A, 0x0A, 255);
+        static constexpr ImU32 meterShade = IM_COL32(0, 0, 0, 153);
+        static constexpr ImU32 meterFrame = IM_COL32(0x2A, 0x2A, 0x2A, 255);
+        static constexpr ImU32 channelLegend = IM_COL32(128, 128, 128, 153);
+        static constexpr ImU32 meterReadout = IM_COL32(0xCC, 0xCC, 0xCC, 255);
+        static constexpr ImU32 ledHighlight = IM_COL32(255, 255, 255, 89);
+        static constexpr ImU32 ledPeakHighlight = IM_COL32(255, 255, 255, 51);
+        static constexpr ImU32 ledUnlitEdge = IM_COL32(0, 0, 0, 102);
+        static constexpr ImU32 ledUnlitHighlight = IM_COL32(255, 255, 255, 13);
+        static constexpr ImU32 clearWhite = IM_COL32(255, 255, 255, 0);
+        static constexpr ImU32 clearBlack = IM_COL32(0, 0, 0, 0);
+        // The knobs and their values
+        static constexpr ImU32 knobShadow = IM_COL32(0, 0, 0, 150);
+        static constexpr ImU32 knobBase = IM_COL32(12, 14, 13, 255);
+        static constexpr ImU32 toothLight = IM_COL32(83, 87, 83, 255);
+        static constexpr ImU32 toothDark = IM_COL32(20, 23, 21, 255);
+        static constexpr ImU32 capLight = IM_COL32(226, 229, 220, 255);
+        static constexpr ImU32 capDark = IM_COL32(127, 133, 126, 255);
+        static constexpr ImU32 capRim = IM_COL32(227, 230, 222, 190);
+        static constexpr ImU32 pointer = IM_COL32(29, 33, 29, 255);
+        static constexpr ImU32 ringMajor = IM_COL32(193, 199, 189, 220);
+        static constexpr ImU32 ringMinor = IM_COL32(151, 159, 149, 180);
+        static constexpr ImU32 value = IM_COL32(255, 255, 255, 255);
+        // The illuminated toggle (also the settings drawer's) and the band switches
+        static constexpr ImU32 toggleWell = IM_COL32(9, 12, 10, 255);
+        static constexpr ImU32 toggleDown = IM_COL32(39, 44, 41, 255);
+        static constexpr ImU32 toggleTop = IM_COL32(76, 83, 77, 255);
+        static constexpr ImU32 toggleBottom = IM_COL32(31, 36, 32, 255);
+        static constexpr ImU32 toggleEdge = IM_COL32(117, 125, 116, 255);
+        static constexpr ImU32 lampWell = IM_COL32(10, 13, 10, 255);
+        static constexpr ImU32 lampOff = IM_COL32(60, 77, 67, 255);
+        static constexpr ImU32 buttonDown = IM_COL32(34, 40, 35, 255);
+        static constexpr ImU32 buttonHover = IM_COL32(88, 96, 86, 255);
+        static constexpr ImU32 buttonCap = IM_COL32(65, 73, 65, 255);
+        static constexpr ImU32 buttonBottom = IM_COL32(26, 32, 27, 255);
+        static constexpr ImU32 buttonEdge = IM_COL32(102, 113, 101, 190);
+        // The Digital face's VU
+        static constexpr ImU32 vuBezelTop = IM_COL32(101, 109, 99, 255);
+        static constexpr ImU32 vuBezelBottom = IM_COL32(22, 27, 23, 255);
+        static constexpr ImU32 vuSurround = IM_COL32(0x3A, 0x3A, 0x3A, 255);
+        static constexpr ImU32 vuFaceTop = IM_COL32(234, 222, 187, 255);
+        static constexpr ImU32 vuFaceBottom = IM_COL32(211, 193, 146, 255);
+        static constexpr ImU32 vuArc = IM_COL32(0x1A, 0x1A, 0x1A, 179);
+        static constexpr ImU32 vuHot = IM_COL32(0xD4, 0x2C, 0x2C, 255);
+        static constexpr ImU32 vuInk = IM_COL32(0x2A, 0x2A, 0x2A, 255);
+        static constexpr ImU32 vuPercent = IM_COL32(0x60, 0x60, 0x60, 255);
+        static constexpr ImU32 vuNeedle = IM_COL32(0, 0, 0, 255);
+        static constexpr ImU32 vuPeak = IM_COL32(0xFF, 0x33, 0x33, 255);
+        static constexpr ImU32 vuPeakLine = IM_COL32(0xFF, 0x33, 0x33, 0x60);
+        static constexpr ImU32 vuGlass = IM_COL32(255, 255, 255, 0x20);
+        static constexpr ImU32 captionShade = IM_COL32(0, 0, 0, 0x30);
+        // The Digital face's gain reduction history
+        static constexpr ImU32 historyFrame = IM_COL32(0x60, 0x60, 0x60, 255);
+        static constexpr ImU32 historyTop = IM_COL32(0x1A, 0x1A, 0x1E, 255);
+        static constexpr ImU32 historyBottom = IM_COL32(0x10, 0x10, 0x14, 255);
+        static constexpr ImU32 historyZero = IM_COL32(0x50, 0x50, 0x50, 255);
+        static constexpr ImU32 historyGrid = IM_COL32(0x2A, 0x2A, 0x2E, 255);
+        static constexpr ImU32 historyZeroLabel = IM_COL32(0xAA, 0xAA, 0xAA, 255);
+        static constexpr ImU32 historyLabel = IM_COL32(0x70, 0x70, 0x70, 255);
+        static constexpr ImU32 historyFillTop = IM_COL32(0x00, 0xCC, 0x77, 230);
+        static constexpr ImU32 historyFillBottom = IM_COL32(0x00, 0x33, 0x22, 179);
+        static constexpr ImU32 historyTraceGlow = IM_COL32(0x00, 0xFF, 0x88, 0x30);
+        static constexpr ImU32 historyTrace = IM_COL32(0x00, 0xFF, 0x88, 255);
+        static constexpr ImU32 historyNow = IM_COL32(0xFF, 0xAA, 0x00, 255);
+        static constexpr ImU32 historyDeepestLine = IM_COL32(0xFF, 0x66, 0x66, 0x80);
+        static constexpr ImU32 historyDeepest = IM_COL32(0xFF, 0x66, 0x66, 255);
+        static constexpr ImU32 historyTitleBack = IM_COL32(0x1A, 0x1A, 0x1A, 0xDD);
+        static constexpr ImU32 historyTitle = IM_COL32(255, 255, 255, 255);
+        // The Digital face's side-chain high-pass slider
+        static constexpr ImU32 sliderSlot = IM_COL32(8, 11, 9, 255);
+        static constexpr ImU32 sliderScale = IM_COL32(98, 107, 97, 150);
+        static constexpr ImU32 thumbTop = IM_COL32(207, 213, 202, 255);
+        static constexpr ImU32 thumbBottom = IM_COL32(110, 119, 108, 255);
+        static constexpr ImU32 thumbLine = IM_COL32(32, 39, 32, 255);
+        // The Multiband face: band meters, crossover faders, scale, enable strip and the B / S switches
+        static constexpr ImU32 bandMeterTop = IM_COL32(0x0C, 0x0C, 0x0C, 255);
+        static constexpr ImU32 bandMeterBottom = IM_COL32(0x18, 0x18, 0x18, 255);
+        static constexpr ImU32 bandMeterEdge = IM_COL32(0, 0, 0, 128);
+        static constexpr ImU32 bandYellow = IM_COL32(0xFF, 0xDD, 0x00, 255);
+        static constexpr ImU32 bandOrange = IM_COL32(0xFF, 0x88, 0x00, 255);
+        static constexpr ImU32 bandRed = IM_COL32(0xFF, 0x33, 0x33, 255);
+        static constexpr ImU32 bandPeakGlow = IM_COL32(255, 255, 255, 77);
+        static constexpr ImU32 bandPeak = IM_COL32(255, 255, 255, 255);
+        static constexpr ImU32 bandUnlit = IM_COL32(0x24, 0x24, 0x29, 255);
+        static constexpr ImU32 bandUnlitHighlight = IM_COL32(0x30, 0x30, 0x36, 255);
+        static constexpr ImU32 pillTop = IM_COL32(0x0A, 0x0A, 0x0A, 255);
+        static constexpr ImU32 pillBottom = IM_COL32(0x1A, 0x1A, 0x1A, 255);
+        static constexpr ImU32 valueShadow = IM_COL32(0, 0, 0, 128);
+        static constexpr ImU32 faderTrack = IM_COL32(0x1A, 0x1A, 0x1A, 255);
+        static constexpr ImU32 gripShadow = IM_COL32(0, 0, 0, 102);
+        static constexpr ImU32 grip = IM_COL32(0x40, 0x40, 0x50, 255);
+        static constexpr ImU32 gripLine = IM_COL32(255, 255, 255, 128);
+        static constexpr ImU32 gripEdge = IM_COL32(255, 255, 255, 77);
+        static constexpr ImU32 faderLabel = IM_COL32(255, 255, 255, 230);
+        static constexpr ImU32 bandOff = IM_COL32(0x2A, 0x2A, 0x2A, 255);
+        static constexpr ImU32 scaleTick = IM_COL32(255, 255, 255, 128);
+        static constexpr ImU32 scaleLabel = IM_COL32(255, 255, 255, 179);
+        static constexpr ImU32 bypassLit = IM_COL32(0xFF, 0x8C, 0x42, 255);
+        static constexpr ImU32 soloLit = IM_COL32(0xFF, 0xCC, 0x00, 255);
+        static constexpr ImU32 switchOff = IM_COL32(0x3A, 0x3A, 0x3A, 255);
+        static constexpr ImU32 switchLegend = IM_COL32(0xAA, 0xAA, 0xAA, 255);
+        static constexpr ImU32 switchLegendLit = IM_COL32(0, 0, 0, 255);
+    };
+
     // A line of text centred on (x, centreY).
     void textCentred(ImDrawList* dl, float x, float centreY, float size, ImU32 colour, const char* text, bool bold)
     {
@@ -4368,29 +4489,29 @@ private:
         using Layout = multicompp::ui_detail::ModernFaceLayout;
         const float s = panel.scale();
         const float top = faceY(70), bottom = faceY(kLegacyFaceH), titleY = faceY(Layout::titleY);
-        dl->AddRectFilled(panel.P(0, top), panel.P(kLegacyFaceW, bottom), IM_COL32(37, 39, 38, 255));
+        dl->AddRectFilled(panel.P(0, top), panel.P(kLegacyFaceW, bottom), ModernTheme::rack);
         gradientRect(dl, panel.P(32, top + 1), panel.P(kLegacyFaceW - 32, bottom - 1), 0,
-                     panel.P(32, top), panel.P(32, bottom), IM_COL32(48, 51, 50, 255), IM_COL32(24, 27, 26, 255));
+                     panel.P(32, top), panel.P(32, bottom), ModernTheme::plateTop, ModernTheme::plateBottom);
         for (int row = 1; row < 155; ++row)
         {
             const float y = top + 2.0f * static_cast<float>(row);
             dl->AddLine(panel.P(33, y), panel.P(kLegacyFaceW - 33, y),
-                        row % 3 == 0 ? IM_COL32(255, 255, 255, 3) : IM_COL32(0, 0, 0, 8), s);
+                        row % 3 == 0 ? ModernTheme::grainLight : ModernTheme::grainDark, s);
         }
         for (float x : {32.0f, kLegacyFaceW - 32.0f})
         {
-            dl->AddLine(panel.P(x, top), panel.P(x, bottom), IM_COL32(8, 10, 9, 255), 1.5f * s);
-            dl->AddLine(panel.P(x + 1, top), panel.P(x + 1, bottom), IM_COL32(107, 112, 108, 80), s);
+            dl->AddLine(panel.P(x, top), panel.P(x, bottom), ModernTheme::earSeam, 1.5f * s);
+            dl->AddLine(panel.P(x + 1, top), panel.P(x + 1, bottom), ModernTheme::earSeamHighlight, s);
         }
-        dl->AddLine(panel.P(0, top + 1), panel.P(kLegacyFaceW, top + 1), IM_COL32(123, 129, 124, 150), s);
-        dl->AddLine(panel.P(0, bottom - 2), panel.P(kLegacyFaceW, bottom - 2), IM_COL32(6, 8, 7, 255), 2 * s);
+        dl->AddLine(panel.P(0, top + 1), panel.P(kLegacyFaceW, top + 1), ModernTheme::topEdge, s);
+        dl->AddLine(panel.P(0, bottom - 2), panel.P(kLegacyFaceW, bottom - 2), ModernTheme::bottomEdge, 2 * s);
         for (float x : {17.0f, kLegacyFaceW - 17.0f})
             for (float y : {top + 22.0f, bottom - 23.0f})
                 drawOptoScrew(dl, x, y, 5.0f);
         duskdaf::spacedText(panel, dl, kLegacyFaceW * 0.5f, titleY - 8.0f, 16.0f, kModernText, title, 0, 0.12f);
         panel.text(dl, 111, titleY - 5, 10, kDim, "MC-2", -1, true);
         panel.text(dl, 1009, titleY - 5, 10, kDim, "PRECISION SERIES", 1, true);
-        dl->AddLine(panel.P(111, faceY(106)), panel.P(1009, faceY(106)), IM_COL32(120, 128, 122, 100), s);
+        dl->AddLine(panel.P(111, faceY(106)), panel.P(1009, faceY(106)), ModernTheme::titleRule, s);
         duskdaf::spacedText(panel, dl, kLegacyFaceW * 0.5f, faceY(Layout::descriptionY) - 5, 10, kDim,
                            description, 0, 0.12f);
     }
@@ -4411,8 +4532,8 @@ private:
             gradientRect(dl, a, b, 2.0f * s, a, ImVec2(a.x, b.y), colourBrighter(colours.lit, 0.2f),
                          colourDarker(colours.lit, 0.3f));
             const ImVec2 h0 = panel.P(x0 + 1, y0 + 1), h1 = panel.P(x1 - 1, y0 + 1 + 0.4f * h);
-            gradientRect(dl, h0, h1, 1.5f * s, h0, ImVec2(h0.x, h1.y), IM_COL32(255, 255, 255, 89),
-                         IM_COL32(255, 255, 255, 0));
+            gradientRect(dl, h0, h1, 1.5f * s, h0, ImVec2(h0.x, h1.y), ModernTheme::ledHighlight,
+                         ModernTheme::clearWhite);
         }
         else if (peak)
         {
@@ -4420,16 +4541,16 @@ private:
                               3.0f * s);
             const ImU32 body = colourMix(colours.lit, colours.unlit, 0.3f);
             gradientRect(dl, a, b, 2.0f * s, a, ImVec2(a.x, b.y), colourBrighter(body, 0.1f), colourDarker(body, 0.2f));
-            dl->AddRectFilled(panel.P(x0 + 1, y0 + 1), panel.P(x1 - 1, y0 + 1 + 0.4f * h), IM_COL32(255, 255, 255, 51),
+            dl->AddRectFilled(panel.P(x0 + 1, y0 + 1), panel.P(x1 - 1, y0 + 1 + 0.4f * h), ModernTheme::ledPeakHighlight,
                               1.5f * s);
         }
         else
         {
             gradientRect(dl, a, b, 2.0f * s, a, ImVec2(a.x, b.y), colourBrighter(colours.unlit, 0.15f),
                          colourDarker(colours.unlit, 0.1f));
-            dl->AddRect(panel.P(x0 + 0.5f, y0 + 0.5f), panel.P(x1 - 0.5f, y1 - 0.5f), IM_COL32(0, 0, 0, 102), 2.0f * s,
+            dl->AddRect(panel.P(x0 + 0.5f, y0 + 0.5f), panel.P(x1 - 0.5f, y1 - 0.5f), ModernTheme::ledUnlitEdge, 2.0f * s,
                         0, 0.5f * s);
-            dl->AddRectFilled(panel.P(x0 + 1, y0 + 1), panel.P(x1 - 1, y0 + 1 + 0.3f * h), IM_COL32(255, 255, 255, 13),
+            dl->AddRectFilled(panel.P(x0 + 1, y0 + 1), panel.P(x1 - 1, y0 + 1 + 0.3f * h), ModernTheme::ledUnlitHighlight,
                               1.5f * s);
         }
     }
@@ -4443,10 +4564,10 @@ private:
         const float x1 = x0 + 40.0f, y0 = faceY(Layout::meterTop), y1 = faceY(Layout::meterBottom);
         textCentred(dl, 0.5f * (x0 + x1), faceY(Layout::meterTitleY), 13.0f, kModernText, title, true);
         const ImVec2 a = panel.P(x0, y0), b = panel.P(x1, y1);
-        dl->AddRectFilled(a, b, IM_COL32(0x0A, 0x0A, 0x0A, 255), 4.0f * s);
-        gradientRect(dl, a, panel.P(x1, y0 + 15.0f), 4.0f * s, a, panel.P(x0, y0 + 10.0f), IM_COL32(0, 0, 0, 153),
-                     IM_COL32(0, 0, 0, 0));
-        dl->AddRect(a, b, IM_COL32(0x2A, 0x2A, 0x2A, 255), 4.0f * s, 0, 1.0f * s);
+        dl->AddRectFilled(a, b, ModernTheme::meterWell, 4.0f * s);
+        gradientRect(dl, a, panel.P(x1, y0 + 15.0f), 4.0f * s, a, panel.P(x0, y0 + 10.0f), ModernTheme::meterShade,
+                     ModernTheme::clearBlack);
+        dl->AddRect(a, b, ModernTheme::meterFrame, 4.0f * s, 0, 1.0f * s);
         static constexpr int kLeds = 12;   // static: the lambda below reads it uncaptured (MSVC C3493)
         constexpr float kGap = 2.0f;
         const float columnWidth = (40.0f - 2.0f) * 0.5f;
@@ -4466,12 +4587,12 @@ private:
                 drawLedSegment(dl, lx0, top, lx1, top + ledHeight, i < lit, i == peak && i >= lit,
                                duskdaf::ledLadderColors(static_cast<float>(i) / kLeds, style));
             }
-            textCentred(dl, cx0 + 0.5f * columnWidth, y1 - 6.0f, 8.0f, IM_COL32(128, 128, 128, 153),
+            textCentred(dl, cx0 + 0.5f * columnWidth, y1 - 6.0f, 8.0f, ModernTheme::channelLegend,
                         ch == 0 ? "L" : "R", false);
         }
         char text[24];
         std::snprintf(text, sizeof(text), "%.1f dB", static_cast<double>(readoutDb));
-        textCentred(dl, 0.5f * (x0 + x1), faceY(Layout::meterReadoutY), 13.0f, IM_COL32(0xCC, 0xCC, 0xCC, 255), text,
+        textCentred(dl, 0.5f * (x0 + x1), faceY(Layout::meterReadoutY), 13.0f, ModernTheme::meterReadout, text,
                     true);
     }
 
@@ -4504,27 +4625,27 @@ private:
             return colourWithAlpha(colour, opacity * static_cast<float>((colour >> IM_COL32_A_SHIFT) & 0xFFu) / 255.0f);
         };
         const ImVec2 c = panel.P(x, y);
-        dl->AddCircleFilled(panel.P(x + 2, y + 3), (r + 2) * s, fade(IM_COL32(0, 0, 0, 150)), 64);
-        dl->AddCircleFilled(c, (r + 1) * s, fade(IM_COL32(12, 14, 13, 255)), 64);
+        dl->AddCircleFilled(panel.P(x + 2, y + 3), (r + 2) * s, fade(ModernTheme::knobShadow), 64);
+        dl->AddCircleFilled(c, (r + 1) * s, fade(ModernTheme::knobBase), 64);
         const float angle = duskdaf::DuskPanel::knobAngle(std::clamp(position, 0.0f, 1.0f));
         for (int tooth = 0; tooth < 48; ++tooth)
         {
             const float a = angle + 2 * kUiPi * static_cast<float>(tooth) / 48;
             dl->AddLine(panel.P(x + r * 0.85f * std::sin(a), y - r * 0.85f * std::cos(a)),
                         panel.P(x + r * std::sin(a), y - r * std::cos(a)),
-                        fade(tooth % 2 ? IM_COL32(83, 87, 83, 255) : IM_COL32(20, 23, 21, 255)), 1.4f * s);
+                        fade(tooth % 2 ? ModernTheme::toothLight : ModernTheme::toothDark), 1.4f * s);
         }
         const float cap = r * 0.81f;
         gradientCircle(dl, c, cap * s, panel.P(x - cap, y - cap), panel.P(x + cap, y + cap),
-                       fade(IM_COL32(226, 229, 220, 255)), fade(IM_COL32(127, 133, 126, 255)));
-        dl->AddCircle(c, cap * s, fade(IM_COL32(227, 230, 222, 190)), 64, s);
+                       fade(ModernTheme::capLight), fade(ModernTheme::capDark));
+        dl->AddCircle(c, cap * s, fade(ModernTheme::capRim), 64, s);
         dl->AddLine(panel.P(x + cap * 0.20f * std::sin(angle), y - cap * 0.20f * std::cos(angle)),
                     panel.P(x + cap * 0.92f * std::sin(angle), y - cap * 0.92f * std::cos(angle)),
-                    fade(IM_COL32(29, 33, 29, 255)), 2.0f * s);
+                    fade(ModernTheme::pointer), 2.0f * s);
         duskdaf::KnobRingStyle ring;
         ring.markInner = 4; ring.markOuter = 8;
-        ring.markColor = fade(IM_COL32(193, 199, 189, 220));
-        ring.minorColor = fade(IM_COL32(151, 159, 149, 180));
+        ring.markColor = fade(ModernTheme::ringMajor);
+        ring.minorColor = fade(ModernTheme::ringMinor);
         ring.minorInner = 5; ring.minorOuter = 7;
         for (int i = 0; i < 11; ++i)
             duskdaf::drawKnobRingMark(panel, dl, x, y, r, static_cast<float>(i) / 10, nullptr, ring,
@@ -4565,7 +4686,7 @@ private:
         if (valueText == nullptr)
             std::snprintf(text, sizeof(text), "%.*f%s", decimals,
                           static_cast<double>(knobHostToPlain(values[p], p, this)), suffix);
-        textCentred(dl, x, valueCentreY, valueSize, colourWithAlpha(IM_COL32_WHITE, opacity),
+        textCentred(dl, x, valueCentreY, valueSize, colourWithAlpha(ModernTheme::value, opacity),
                     valueText != nullptr ? valueText : text, true);
     }
 
@@ -4581,14 +4702,14 @@ private:
             setHostValue(p, values[p] > 0.5f ? 0.0f : 1.0f);
         if (!enabled) ImGui::EndDisabled();
         const bool on = values[p] > 0.5f, down = ImGui::IsItemActive(), hovered = ImGui::IsItemHovered();
-        dl->AddRectFilled(hit0, hit1, IM_COL32(9, 12, 10, 255), 2 * s);
+        dl->AddRectFilled(hit0, hit1, ModernTheme::toggleWell, 2 * s);
         const ImVec2 i0 = panel.P(x0 + 2, y0 + 2), i1 = panel.P(x1 - 2, y1 - 2);
-        const ImU32 topColour = down ? IM_COL32(39, 44, 41, 255) : IM_COL32(76, 83, 77, 255);
-        gradientRect(dl, i0, i1, s, i0, ImVec2(i0.x, i1.y), topColour, IM_COL32(31, 36, 32, 255));
-        dl->AddRect(hit0, hit1, hovered ? kModernText : IM_COL32(117, 125, 116, 255), 2 * s, 0, s);
+        const ImU32 topColour = down ? ModernTheme::toggleDown : ModernTheme::toggleTop;
+        gradientRect(dl, i0, i1, s, i0, ImVec2(i0.x, i1.y), topColour, ModernTheme::toggleBottom);
+        dl->AddRect(hit0, hit1, hovered ? kModernText : ModernTheme::toggleEdge, 2 * s, 0, s);
         const float cy = 0.5f * (y0 + y1);
-        dl->AddCircleFilled(panel.P(x0 + 13, cy), 4 * s, IM_COL32(10, 13, 10, 255), 16);
-        dl->AddCircleFilled(panel.P(x0 + 13, cy), 2.6f * s, on ? kDigitalCyan : IM_COL32(60, 77, 67, 255), 16);
+        dl->AddCircleFilled(panel.P(x0 + 13, cy), 4 * s, ModernTheme::lampWell, 16);
+        dl->AddCircleFilled(panel.P(x0 + 13, cy), 2.6f * s, on ? kDigitalCyan : ModernTheme::lampOff, 16);
         textCentred(dl, 0.5f * (x0 + x1) + 5, cy, labelSize, colourWithAlpha(kModernText, enabled ? 1.0f : 0.4f),
                     label, true);
     }
@@ -4599,12 +4720,12 @@ private:
         const float s = panel.scale();
         const float sf = std::max(0.5f, std::min((x1 - x0) / 400.0f, (y1 - y0) / 250.0f));
         gradientRect(dl, panel.P(x0, y0), panel.P(x1, y1), 3 * s, panel.P(x0, y0), panel.P(x0, y1),
-                     IM_COL32(101, 109, 99, 255), IM_COL32(22, 27, 23, 255));
+                     ModernTheme::vuBezelTop, ModernTheme::vuBezelBottom);
         const float ix0 = x0 + 6, iy0 = y0 + 6, ix1 = x1 - 6, iy1 = y1 - 6;
-        dl->AddRectFilled(panel.P(ix0, iy0), panel.P(ix1, iy1), IM_COL32(0x3A, 0x3A, 0x3A, 255), 2.0f * sf * s);
+        dl->AddRectFilled(panel.P(ix0, iy0), panel.P(ix1, iy1), ModernTheme::vuSurround, 2.0f * sf * s);
         const float fx0 = ix0 + 3 * sf, fy0 = iy0 + 3 * sf, fx1 = ix1 - 3 * sf, fy1 = iy1 - 3 * sf;
         gradientRect(dl, panel.P(fx0, fy0), panel.P(fx1, fy1), 2 * sf * s, panel.P(fx0, fy0), panel.P(fx0, fy1),
-                     IM_COL32(234, 222, 187, 255), IM_COL32(211, 193, 146, 255));
+                     ModernTheme::vuFaceTop, ModernTheme::vuFaceBottom);
         dl->PushClipRect(panel.P(fx0, fy0), panel.P(fx1, fy1), true);
         const float cx = 0.5f * (fx0 + fx1), pivotY = fy1 - 3 * sf;
         const float length = std::min((fx1 - fx0) * 0.49f, (fy1 - fy0) * 0.88f);
@@ -4617,13 +4738,13 @@ private:
         dl->PathClear();
         for (int i = 0; i <= 48; ++i)
             dl->PathLineTo(at(kStart + (kEnd - kStart) * static_cast<float>(i) / 48.0f, length * 0.95f));
-        dl->PathStroke(IM_COL32(0x1A, 0x1A, 0x1A, 179), 0, 2.0f * sf * s);
+        dl->PathStroke(ModernTheme::vuArc, 0, 2.0f * sf * s);
         static constexpr float kMarks[] = {-20, -10, -7, -5, -3, -2, -1, 0, 1, 2, 3};
         for (const float db : kMarks)
         {
             const float angle = kStart + (db + 20.0f) / 23.0f * (kEnd - kStart);
             const bool major = db != 2.0f;
-            const ImU32 ink = db >= 0.0f ? IM_COL32(0xD4, 0x2C, 0x2C, 255) : IM_COL32(0x2A, 0x2A, 0x2A, 255);
+            const ImU32 ink = db >= 0.0f ? ModernTheme::vuHot : ModernTheme::vuInk;
             dl->AddLine(at(angle, length * 0.95f), at(angle, length * 0.95f + (major ? 10.0f : 6.0f) * sf), ink,
                         (major ? 2.0f : 1.0f) * sf * s);
             if (db > 0.0f) continue;
@@ -4638,25 +4759,25 @@ private:
             const float angle = kStart + static_cast<float>(percent) / 100.0f * (kEnd - kStart);
             const float radius = length * 1.15f;
             textCentred(dl, cx + radius * std::cos(angle), pivotY + radius * std::sin(angle) + 5 * sf,
-                        std::max(7.0f, 9.0f * sf), IM_COL32(0x60, 0x60, 0x60, 255), percent == 0 ? "0%" : "100%", false);
+                        std::max(7.0f, 9.0f * sf), ModernTheme::vuPercent, percent == 0 ? "0%" : "100%", false);
         }
-        textCentred(dl, cx, pivotY - length * 0.4f + 10 * sf, std::max(18.0f, 24.0f * sf), IM_COL32(0x2A, 0x2A, 0x2A, 255),
+        textCentred(dl, cx, pivotY - length * 0.4f + 10 * sf, std::max(18.0f, 24.0f * sf), ModernTheme::vuInk,
                     "VU", false);
         dl->AddLine(panel.P(cx, pivotY), at(kStart + digitalVu.position * (kEnd - kStart), length * 0.96f),
-                    IM_COL32_BLACK, 1.5f * sf * s);
+                    ModernTheme::vuNeedle, 1.5f * sf * s);
         if (digitalVu.peakPosition < digitalVu.position - 0.02f)
         {
             const ImVec2 mark = at(kStart + digitalVu.peakPosition * (kEnd - kStart), length * 0.92f);
-            dl->AddCircleFilled(mark, 2.0f * sf * s, IM_COL32(0xFF, 0x33, 0x33, 255), 16);
-            dl->AddLine(panel.P(cx, pivotY), mark, IM_COL32(0xFF, 0x33, 0x33, 0x60), 0.5f * sf * s);
+            dl->AddCircleFilled(mark, 2.0f * sf * s, ModernTheme::vuPeak, 16);
+            dl->AddLine(panel.P(cx, pivotY), mark, ModernTheme::vuPeakLine, 0.5f * sf * s);
         }
-        dl->AddCircleFilled(panel.P(cx, pivotY), 3.0f * sf * s, IM_COL32_BLACK, 16);
+        dl->AddCircleFilled(panel.P(cx, pivotY), 3.0f * sf * s, ModernTheme::vuNeedle, 16);
         dl->PopClipRect();
         // Glass: a faint highlight over the top fifth.
         const float gx0 = ix0 + sf, gy0 = iy0 + sf, gx1 = ix1 - sf, gy1 = iy1 - sf;
         const ImVec2 h0 = panel.P(gx0 + 10 * sf, gy0 + 5 * sf), h1 = panel.P(gx1 - 10 * sf, gy0 + (gy1 - gy0) * 0.2f - 5 * sf);
-        gradientRect(dl, h0, h1, 3.0f * sf * s, h0, ImVec2(h0.x, h1.y), IM_COL32(255, 255, 255, 0x20),
-                     IM_COL32(255, 255, 255, 0));
+        gradientRect(dl, h0, h1, 3.0f * sf * s, h0, ImVec2(h0.x, h1.y), ModernTheme::vuGlass,
+                     ModernTheme::clearWhite);
     }
 
     // The Digital face's gain-reduction history (GRHistoryGraph::paint): the last 128 readings at 30 Hz (about 4 s)
@@ -4665,10 +4786,10 @@ private:
     {
         const float s = panel.scale();
         const float sf = std::max(0.5f, std::min((x1 - x0) / 400.0f, (y1 - y0) / 250.0f));
-        dl->AddRectFilled(panel.P(x0, y0), panel.P(x1, y1), IM_COL32(0x60, 0x60, 0x60, 255), 4.0f * sf * s);
+        dl->AddRectFilled(panel.P(x0, y0), panel.P(x1, y1), ModernTheme::historyFrame, 4.0f * sf * s);
         const float ix0 = x0 + 2 * sf, iy0 = y0 + 2 * sf, ix1 = x1 - 2 * sf, iy1 = y1 - 2 * sf;
         gradientRect(dl, panel.P(ix0, iy0), panel.P(ix1, iy1), 3.0f * sf * s, panel.P(ix0, iy0), panel.P(ix0, iy1),
-                     IM_COL32(0x1A, 0x1A, 0x1E, 255), IM_COL32(0x10, 0x10, 0x14, 255));
+                     ModernTheme::historyTop, ModernTheme::historyBottom);
         const float gx0 = ix0 + 38 * sf, gy0 = iy0 + 10 * sf, gx1 = ix1 - 10 * sf, gy1 = iy1 - 24 * sf;
         const auto rowOf = [&](float db) { return gy0 + std::clamp(-db / 30.0f, 0.0f, 1.0f) * (gy1 - gy0); };
         const float labelSize = std::max(8.0f, 9.0f * sf);
@@ -4677,16 +4798,16 @@ private:
         {
             const float y = rowOf(db);
             dl->AddRectFilled(panel.P(gx0, y), panel.P(gx1, y + 1),
-                              db == 0.0f ? IM_COL32(0x50, 0x50, 0x50, 255) : IM_COL32(0x2A, 0x2A, 0x2E, 255));
+                              db == 0.0f ? ModernTheme::historyZero : ModernTheme::historyGrid);
             char text[8];
             std::snprintf(text, sizeof(text), "%d", static_cast<int>(db));
             panel.text(dl, ix0 + 26 * sf, y - 0.5f * labelSize, labelSize,
-                       db == 0.0f ? IM_COL32(0xAA, 0xAA, 0xAA, 255) : IM_COL32(0x70, 0x70, 0x70, 255), text, 1);
+                       db == 0.0f ? ModernTheme::historyZeroLabel : ModernTheme::historyLabel, text, 1);
         }
         for (int i = 1; i < 4; ++i)
         {
             const float x = gx0 + (gx1 - gx0) * static_cast<float>(i) / 4.0f;
-            dl->AddRectFilled(panel.P(x, gy0), panel.P(x + 1, gy1), IM_COL32(0x2A, 0x2A, 0x2E, 255));
+            dl->AddRectFilled(panel.P(x, gy0), panel.P(x + 1, gy1), ModernTheme::historyGrid);
         }
         constexpr int kCount = static_cast<int>(std::tuple_size<decltype(grHistory)>::value);
         ImVec2 trace[kCount];
@@ -4709,30 +4830,29 @@ private:
             dl->AddConvexPolyFilled(step, 4, IM_COL32_WHITE);
         }
         dl->Flags = flags;
-        shadeLinear(dl, firstVertex, panel.P(gx0, gy0), panel.P(gx0, gy1), IM_COL32(0x00, 0xCC, 0x77, 230),
-                    IM_COL32(0x00, 0x33, 0x22, 179));
-        dl->AddPolyline(trace, kCount, IM_COL32(0x00, 0xFF, 0x88, 0x30), 0, 4.0f * sf * s);
-        dl->AddPolyline(trace, kCount, IM_COL32(0x00, 0xFF, 0x88, 255), 0, 1.5f * sf * s);
-        dl->AddRectFilled(panel.P(gx1, gy0), panel.P(gx1 + 1, gy1), IM_COL32(0xFF, 0xAA, 0x00, 255));
+        shadeLinear(dl, firstVertex, panel.P(gx0, gy0), panel.P(gx0, gy1), ModernTheme::historyFillTop,
+                    ModernTheme::historyFillBottom);
+        dl->AddPolyline(trace, kCount, ModernTheme::historyTraceGlow, 0, 4.0f * sf * s);
+        dl->AddPolyline(trace, kCount, ModernTheme::historyTrace, 0, 1.5f * sf * s);
+        dl->AddRectFilled(panel.P(gx1, gy0), panel.P(gx1 + 1, gy1), ModernTheme::historyNow);
         if (deepest < -0.5f)
         {
             const float y = rowOf(deepest);
-            dl->AddRectFilled(panel.P(gx0, y), panel.P(gx1, y + 1), IM_COL32(0xFF, 0x66, 0x66, 0x80));
+            dl->AddRectFilled(panel.P(gx0, y), panel.P(gx1, y + 1), ModernTheme::historyDeepestLine);
             char text[16];
             std::snprintf(text, sizeof(text), "%.1fdB", static_cast<double>(deepest));
-            panel.text(dl, gx1 - 2 * sf, y - 6 * sf - 0.5f * labelSize, labelSize, IM_COL32(0xFF, 0x66, 0x66, 255), text,
+            panel.text(dl, gx1 - 2 * sf, y - 6 * sf - 0.5f * labelSize, labelSize, ModernTheme::historyDeepest, text,
                        1, true);
         }
         // Time legends. The original also prints "~4 sec" over the same corner as "now"; the two overlap there.
         const float legendTop = gy1 + 8 * sf - 0.5f * labelSize;
-        constexpr ImU32 kLegend = IM_COL32(0x70, 0x70, 0x70, 255);
-        panel.text(dl, gx0, legendTop, labelSize, kLegend, "-4s", -1);
-        panel.text(dl, 0.5f * (gx0 + gx1), legendTop, labelSize, kLegend, "-2s", 0);
-        panel.text(dl, gx1, legendTop, labelSize, kLegend, "now", 1);
+        panel.text(dl, gx0, legendTop, labelSize, ModernTheme::historyLabel, "-4s", -1);
+        panel.text(dl, 0.5f * (gx0 + gx1), legendTop, labelSize, ModernTheme::historyLabel, "-2s", 0);
+        panel.text(dl, gx1, legendTop, labelSize, ModernTheme::historyLabel, "now", 1);
         const float tx0 = gx0 + (gx1 - gx0) * 0.2f, tx1 = gx0 + (gx1 - gx0) * 0.8f, ty0 = gy0 + 4 * sf;
         const float ty1 = ty0 + 18 * sf;
-        dl->AddRectFilled(panel.P(tx0, ty0), panel.P(tx1, ty1), IM_COL32(0x1A, 0x1A, 0x1A, 0xDD), 3.0f * s);
-        textCentred(dl, 0.5f * (tx0 + tx1), 0.5f * (ty0 + ty1), std::max(11.0f, 14.0f * sf), IM_COL32_WHITE,
+        dl->AddRectFilled(panel.P(tx0, ty0), panel.P(tx1, ty1), ModernTheme::historyTitleBack, 3.0f * s);
+        textCentred(dl, 0.5f * (tx0 + tx1), 0.5f * (ty0 + ty1), std::max(11.0f, 14.0f * sf), ModernTheme::historyTitle,
                     "GR HISTORY", true);
     }
 
@@ -4771,11 +4891,11 @@ private:
         }
         const float position = hi > lo ? std::clamp((values[p] - lo) / (hi - lo), 0.0f, 1.0f) : 0.0f;
         const float thumbY = trackBottom - position * (trackBottom - trackTop);
-        dl->AddRectFilled(panel.P(x - 3, trackTop - 3), panel.P(x + 3, trackBottom + 3), IM_COL32(8, 11, 9, 255), s);
-        dl->AddLine(panel.P(x + 4, trackTop), panel.P(x + 4, trackBottom), IM_COL32(98, 107, 97, 150), s);
+        dl->AddRectFilled(panel.P(x - 3, trackTop - 3), panel.P(x + 3, trackBottom + 3), ModernTheme::sliderSlot, s);
+        dl->AddLine(panel.P(x + 4, trackTop), panel.P(x + 4, trackBottom), ModernTheme::sliderScale, s);
         const ImVec2 t0 = panel.P(x - 10, thumbY - 5), t1 = panel.P(x + 10, thumbY + 5);
-        gradientRect(dl, t0, t1, s, t0, ImVec2(t0.x, t1.y), IM_COL32(207, 213, 202, 255), IM_COL32(110, 119, 108, 255));
-        dl->AddLine(panel.P(x - 7, thumbY), panel.P(x + 7, thumbY), IM_COL32(32, 39, 32, 255), s);
+        gradientRect(dl, t0, t1, s, t0, ImVec2(t0.x, t1.y), ModernTheme::thumbTop, ModernTheme::thumbBottom);
+        dl->AddLine(panel.P(x - 7, thumbY), panel.P(x + 7, thumbY), ModernTheme::thumbLine, s);
         textCentred(dl, x, trackTop - 18.0f, 11, kModernText, "SC HP", true);
         const float hz = knobHostToPlain(values[p], p, this);
         char text[16];
@@ -4783,7 +4903,7 @@ private:
             std::snprintf(text, sizeof(text), "OFF");
         else
             std::snprintf(text, sizeof(text), "%.0f Hz", static_cast<double>(hz));
-        textCentred(dl, x, trackBottom + 20.0f, 13.0f, IM_COL32_WHITE, text, true);
+        textCentred(dl, x, trackBottom + 20.0f, 13.0f, ModernTheme::value, text, true);
     }
 
     void drawDigital(ImDrawList* dl)
@@ -4792,7 +4912,7 @@ private:
         const float dt = ImGui::GetIO().DeltaTime;
         drawModernBody(dl, "DIGITAL COMPRESSOR", "PRECISION DYNAMICS");
         drawLevelMeters(dl, dt);
-        dl->AddLine(panel.P(533, faceY(122)), panel.P(533, faceY(338)), IM_COL32(121, 130, 122, 100), s);
+        dl->AddLine(panel.P(533, faceY(122)), panel.P(533, faceY(338)), ModernTheme::sectionRule, s);
 
         // Gain reduction: the VU, or its 4-second history; a click on either (or the caption) swaps them.
         const float gr = meter(kMeterMaster);
@@ -4813,7 +4933,7 @@ private:
         else
             drawDigitalVu(dl, vuX0, faceY(vuTop), vuX1, faceY(vuBottom));
         dl->AddRectFilled(panel.P(vuX0 + 2, faceY(vuBottom + 2)), panel.P(vuX1 - 2, faceY(captionBottom - 2)),
-                          IM_COL32(0, 0, 0, 0x30), 3.0f * s);
+                          ModernTheme::captionShade, 3.0f * s);
         const char* caption = digitalShowsHistory ? "HISTORY / CLICK FOR VU" : "VU / CLICK FOR HISTORY";
         constexpr float captionY = 0.5f * (vuBottom + captionBottom);
         textCentred(dl, 0.5f * (vuX0 + vuX1), faceY(captionY), 10, kDim, caption, true);
@@ -4855,9 +4975,9 @@ private:
             ImGui::SetTooltip("%s", tooltip);
         if (!enabled) ImGui::EndDisabled();
         const ImVec2 f0 = panel.P(x0 + 0.5f, y0 + 0.5f), f1 = panel.P(x1 - 0.5f, y1 - 0.5f);
-        const ImU32 cap = down ? IM_COL32(34, 40, 35, 255) : hovered ? IM_COL32(88, 96, 86, 255) : IM_COL32(65, 73, 65, 255);
-        gradientRect(dl, f0, f1, 1.5f * s, f0, ImVec2(f0.x, f1.y), cap, IM_COL32(26, 32, 27, 255));
-        dl->AddRect(f0, f1, active ? fill : IM_COL32(102, 113, 101, 190), 1.5f * s, 0, s);
+        const ImU32 cap = down ? ModernTheme::buttonDown : hovered ? ModernTheme::buttonHover : ModernTheme::buttonCap;
+        gradientRect(dl, f0, f1, 1.5f * s, f0, ImVec2(f0.x, f1.y), cap, ModernTheme::buttonBottom);
+        dl->AddRect(f0, f1, active ? fill : ModernTheme::buttonEdge, 1.5f * s, 0, s);
         if (active)
             dl->AddRectFilled(panel.P(x0 + 3, y1 - 3), panel.P(x1 - 3, y1 - 1), fill);
         const ImU32 ink = active ? kModernText : textColour;
@@ -4876,12 +4996,11 @@ private:
         if (selected)
             dl->AddRectFilled(panel.P(x0 - 4, y0 - 4), panel.P(x1 + 4, y1 + 4), colourWithAlpha(colour, 0.2f), 6.0f * s);
         const ImVec2 a = panel.P(x0, y0), b = panel.P(x1, y1);
-        gradientRect(dl, a, b, 5.0f * s, a, ImVec2(a.x, b.y), IM_COL32(0x0C, 0x0C, 0x0C, 255),
-                     IM_COL32(0x18, 0x18, 0x18, 255));
-        dl->AddRect(panel.P(x0 + 1, y0 + 1), panel.P(x1 - 1, y1 - 1), IM_COL32(0, 0, 0, 128), 4.0f * s, 0, 1.0f * s);
+        gradientRect(dl, a, b, 5.0f * s, a, ImVec2(a.x, b.y), ModernTheme::bandMeterTop,
+                     ModernTheme::bandMeterBottom);
+        dl->AddRect(panel.P(x0 + 1, y0 + 1), panel.P(x1 - 1, y1 - 1), ModernTheme::bandMeterEdge, 4.0f * s, 0, 1.0f * s);
         static constexpr int kSegments = 20;   // static: read uncaptured by segmentsFor (MSVC C3493)
         constexpr float kGap = 1.5f;
-        constexpr ImU32 kYellow = IM_COL32(0xFF, 0xDD, 0x00, 255), kOrange = IM_COL32(0xFF, 0x88, 0x00, 255);
         const float mx0 = x0 + 4, mx1 = x1 - 4, my0 = y0 + 4, my1 = y1 - 4;
         const float segmentHeight = ((my1 - my0) - (kSegments - 1) * kGap) / kSegments;
         const auto segmentsFor = [](float db) {
@@ -4896,9 +5015,9 @@ private:
             {
                 const float intensity = static_cast<float>(seg) / kSegments;
                 const ImU32 c = intensity < 0.4f ? colourBrighter(colour, 0.2f)
-                    : intensity < 0.6f ? colourMix(colour, kYellow, (intensity - 0.4f) * 5.0f)
-                    : intensity < 0.8f ? colourMix(kYellow, kOrange, (intensity - 0.6f) * 5.0f)
-                    : colourMix(kOrange, IM_COL32(0xFF, 0x33, 0x33, 255), (intensity - 0.8f) * 5.0f);
+                    : intensity < 0.6f ? colourMix(colour, ModernTheme::bandYellow, (intensity - 0.4f) * 5.0f)
+                    : intensity < 0.8f ? colourMix(ModernTheme::bandYellow, ModernTheme::bandOrange, (intensity - 0.6f) * 5.0f)
+                    : colourMix(ModernTheme::bandOrange, ModernTheme::bandRed, (intensity - 0.8f) * 5.0f);
                 gradientRect(dl, s0, s1, 2.0f * s, s0, ImVec2(s0.x, s1.y), colourBrighter(c, 0.4f), colourDarker(c, 0.1f));
                 dl->AddRectFilled(panel.P(mx0 + 2, top + 1), panel.P(mx1 - 2, top + 2.5f),
                                   colourWithAlpha(colourBrighter(c, 0.7f), 0.4f));
@@ -4906,26 +5025,26 @@ private:
             else if (seg == peak && peak > 0)
             {
                 dl->AddRectFilled(panel.P(mx0 - 1, top - 1), panel.P(mx1 + 1, top + segmentHeight + 1),
-                                  IM_COL32(255, 255, 255, 77), 3.0f * s);
-                dl->AddRectFilled(s0, s1, IM_COL32_WHITE, 2.0f * s);
+                                  ModernTheme::bandPeakGlow, 3.0f * s);
+                dl->AddRectFilled(s0, s1, ModernTheme::bandPeak, 2.0f * s);
             }
             else
             {
-                dl->AddRectFilled(s0, s1, IM_COL32(0x24, 0x24, 0x29, 255), 2.0f * s);
-                dl->AddRectFilled(panel.P(mx0 + 2, top + 1), panel.P(mx1 - 2, top + 2), IM_COL32(0x30, 0x30, 0x36, 255));
+                dl->AddRectFilled(s0, s1, ModernTheme::bandUnlit, 2.0f * s);
+                dl->AddRectFilled(panel.P(mx0 + 2, top + 1), panel.P(mx1 - 2, top + 2), ModernTheme::bandUnlitHighlight);
             }
         }
         dl->AddRect(a, b, colourWithAlpha(colour, selected ? 1.0f : 0.5f), 5.0f * s, 0, (selected ? 2.5f : 1.5f) * s);
         const float px0 = x0 + 6, px1 = x1 - 6, py0 = y1 - 24, py1 = y1 - 4;
         const ImVec2 p0 = panel.P(px0, py0), p1 = panel.P(px1, py1);
-        gradientRect(dl, p0, p1, 4.0f * s, p0, ImVec2(p0.x, p1.y), IM_COL32(0x0A, 0x0A, 0x0A, 255),
-                     IM_COL32(0x1A, 0x1A, 0x1A, 255));
+        gradientRect(dl, p0, p1, 4.0f * s, p0, ImVec2(p0.x, p1.y), ModernTheme::pillTop,
+                     ModernTheme::pillBottom);
         dl->AddRect(p0, p1, colourWithAlpha(colour, 0.5f), 4.0f * s, 0, 1.0f * s);
         char text[24];
         std::snprintf(text, sizeof(text), "%.1f dB", static_cast<double>(m.shownDb));
         const float cx = 0.5f * (px0 + px1), cy = 0.5f * (py0 + py1);
-        textCentred(dl, cx + 1, cy + 1, 12.5f, IM_COL32(0, 0, 0, 128), text, true);
-        textCentred(dl, cx, cy, 12.5f, IM_COL32_WHITE, text, true);
+        textCentred(dl, cx + 1, cy + 1, 12.5f, ModernTheme::valueShadow, text, true);
+        textCentred(dl, cx, cy, 12.5f, ModernTheme::value, text, true);
     }
 
     // A crossover handle between two band meters (CrossoverFader): a track in the two bands' colours and a grip on
@@ -4973,7 +5092,7 @@ private:
         }
         const bool hot = ImGui::IsItemHovered() || ImGui::IsItemActive();
         dl->AddRectFilled(panel.P(centreX - 6, trackTop), panel.P(centreX + 6, trackBottom),
-                          IM_COL32(0x1A, 0x1A, 0x1A, 255), 4.0f * s);
+                          ModernTheme::faderTrack, 4.0f * s);
         const ImVec2 g0 = panel.P(centreX - 4, trackTop + 2), g1 = panel.P(centreX + 4, trackBottom - 2);
         gradientRect(dl, g0, g1, 3.0f * s, g0, ImVec2(g0.x, g1.y), colourWithAlpha(highColour, 0.3f),
                      colourWithAlpha(lowColour, 0.3f));
@@ -4983,16 +5102,16 @@ private:
         const float gripY = travelBottom - multicompp::ui_detail::crossoverFaderPosition(hz, minHz, maxHz)
                                                * (travelBottom - travelTop);
         const float gx0 = centreX - 13.0f, gy0 = gripY - 9.0f;
-        dl->AddRectFilled(panel.P(gx0 + 1, gy0 + 2), panel.P(gx0 + 27, gy0 + 20), IM_COL32(0, 0, 0, 102), 4.0f * s);
-        const ImU32 grip = hot ? kDigitalCyan : IM_COL32(0x40, 0x40, 0x50, 255);
+        dl->AddRectFilled(panel.P(gx0 + 1, gy0 + 2), panel.P(gx0 + 27, gy0 + 20), ModernTheme::gripShadow, 4.0f * s);
+        const ImU32 grip = hot ? kDigitalCyan : ModernTheme::grip;
         const ImVec2 t0 = panel.P(gx0, gy0), t1 = panel.P(gx0 + 26, gy0 + 18);
         gradientRect(dl, t0, t1, 4.0f * s, t0, ImVec2(t0.x, t1.y), colourBrighter(grip, 0.3f), colourDarker(grip, 0.2f));
         for (int i = -1; i <= 1; ++i)
         {
             const float y = gripY + 4.0f * static_cast<float>(i);
-            dl->AddRectFilled(panel.P(gx0 + 6, y), panel.P(gx0 + 20, y + 1), IM_COL32(255, 255, 255, 128));
+            dl->AddRectFilled(panel.P(gx0 + 6, y), panel.P(gx0 + 20, y + 1), ModernTheme::gripLine);
         }
-        dl->AddRect(t0, t1, hot ? kDigitalCyan : IM_COL32(255, 255, 255, 77), 4.0f * s, 0, 1.5f * s);
+        dl->AddRect(t0, t1, hot ? kDigitalCyan : ModernTheme::gripEdge, 4.0f * s, 0, 1.5f * s);
         if (hot)
         {
             const ImU32 arrow = colourWithAlpha(kDigitalCyan, 0.8f);
@@ -5006,7 +5125,7 @@ private:
             std::snprintf(text, sizeof(text), "%.1f kHz", static_cast<double>(hz / 1000.0f));
         else
             std::snprintf(text, sizeof(text), "%d Hz", static_cast<int>(hz));
-        textCentred(dl, centreX, bottom - 10.0f, 12.0f, hot ? kDigitalCyan : IM_COL32(255, 255, 255, 230), text, true);
+        textCentred(dl, centreX, bottom - 10.0f, 12.0f, hot ? kDigitalCyan : ModernTheme::faderLabel, text, true);
     }
 
     void drawMultiband(ImDrawList* dl)
@@ -5015,7 +5134,7 @@ private:
         const float dt = ImGui::GetIO().DeltaTime;
         drawModernBody(dl, "MULTIBAND COMPRESSOR", "FOUR-BAND DYNAMICS");
         drawLevelMeters(dl, dt);
-        dl->AddLine(panel.P(620, faceY(122)), panel.P(620, faceY(338)), IM_COL32(121, 130, 122, 100), s);
+        dl->AddLine(panel.P(620, faceY(122)), panel.P(620, faceY(338)), ModernTheme::sectionRule, s);
 
         bool enabled[4] = {};
         int enabledCount = 0;
@@ -5049,7 +5168,7 @@ private:
             ImGui::PushID(b);
             const float x0 = sectionLeft + static_cast<float>(b) * stripWidth;
             if (bandButton(dl, "##mb_enable", x0 + 2.5f, faceY(116.0f), x0 + stripWidth - 2.5f, faceY(136.0f),
-                               bandName(b), enabled[b] ? kBandColors[b] : IM_COL32(0x2A, 0x2A, 0x2A, 255),
+                               bandName(b), enabled[b] ? kBandColors[b] : ModernTheme::bandOff,
                                kModernText, tooltip, enabled[b], !locked))
             {
                 // Clear Solo first, while its control is still visible. Host
@@ -5068,10 +5187,10 @@ private:
         for (const float db : {0.0f, -3.0f, -6.0f, -10.0f, -15.0f, -20.0f})
         {
             const float y = meterTop + (-db / 20.0f) * (meterBottom - meterTop);
-            dl->AddRectFilled(panel.P(sectionLeft - 11, faceY(y)), panel.P(sectionLeft - 5, faceY(y) + 1), IM_COL32(255, 255, 255, 128));
+            dl->AddRectFilled(panel.P(sectionLeft - 11, faceY(y)), panel.P(sectionLeft - 5, faceY(y) + 1), ModernTheme::scaleTick);
             char text[8];
             std::snprintf(text, sizeof(text), "%d", static_cast<int>(db));
-            panel.text(dl, sectionLeft - 13, faceY(y) - 5.0f, 10.0f, IM_COL32(255, 255, 255, 179), text, 1);
+            panel.text(dl, sectionLeft - 13, faceY(y) - 5.0f, 10.0f, ModernTheme::scaleLabel, text, 1);
         }
 
         // Band slots: only the bands shown share the width.
@@ -5101,13 +5220,13 @@ private:
             std::snprintf(tooltip, sizeof(tooltip), "Bypass %s band", bandName(band));
             if (bandButton(dl, "##mb_bypass", tabRight + gap, faceY(buttonTop), tabRight + gap + smallButton,
                                faceY(buttonBottom), "B",
-                               bypassed ? IM_COL32(0xFF, 0x8C, 0x42, 255) : IM_COL32(0x3A, 0x3A, 0x3A, 255),
-                               bypassed ? IM_COL32_BLACK : IM_COL32(0xAA, 0xAA, 0xAA, 255), tooltip, bypassed))
+                               bypassed ? ModernTheme::bypassLit : ModernTheme::switchOff,
+                               bypassed ? ModernTheme::switchLegendLit : ModernTheme::switchLegend, tooltip, bypassed))
                 setHostValue(base + 5, bypassed ? 0.0f : 1.0f);
             std::snprintf(tooltip, sizeof(tooltip), "Solo %s band", bandName(band));
             if (bandButton(dl, "##mb_solo", mx1 - smallButton, faceY(buttonTop), mx1, faceY(buttonBottom), "S",
-                               soloed ? IM_COL32(0xFF, 0xCC, 0x00, 255) : IM_COL32(0x3A, 0x3A, 0x3A, 255),
-                               soloed ? IM_COL32_BLACK : IM_COL32(0xAA, 0xAA, 0xAA, 255), tooltip, soloed))
+                               soloed ? ModernTheme::soloLit : ModernTheme::switchOff,
+                               soloed ? ModernTheme::switchLegendLit : ModernTheme::switchLegend, tooltip, soloed))
                 setHostValue(base + 6, soloed ? 0.0f : 1.0f);
             ImGui::PopID();
             drawBandMeter(dl, band, mx0, faceY(meterTop), mx1, faceY(meterBottom), band == selectedBand);
