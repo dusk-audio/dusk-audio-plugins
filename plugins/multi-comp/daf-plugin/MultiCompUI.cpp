@@ -2935,6 +2935,77 @@ private:
         duskdaf::spacedText(panel, dl, x, y, size, col, text, align, tracking);
     }
 
+    // The VCA face's colours by role (kVcaInk and kVcaInkDim are its legend ink, lit and unlit), sampled from the
+    // face as it was drawn before the tokens; the legends keep kVcaInk.
+    struct VcaTheme
+    {
+        // The case: matte charcoal face with speckle, aluminium rails, walnut cheeks and the edge
+        static constexpr ImU32 dropShadow = IM_COL32(0, 0, 0, 150);
+        static constexpr ImU32 faceTop = IM_COL32(44, 44, 45, 255);
+        static constexpr ImU32 faceBottomRight = IM_COL32(24, 24, 25, 255);
+        static constexpr ImU32 faceBottomLeft = IM_COL32(26, 26, 27, 255);
+        static constexpr ImU32 speckleLight = IM_COL32(255, 255, 255, 9);
+        static constexpr ImU32 speckleDark = IM_COL32(0, 0, 0, 40);
+        static constexpr ImU32 railTop = IM_COL32(190, 192, 192, 255);
+        static constexpr ImU32 railBottom = IM_COL32(118, 120, 120, 255);
+        static constexpr ImU32 railSeam = IM_COL32(6, 6, 6, 255);
+        static constexpr ImU32 railSeamHighlight = IM_COL32(90, 90, 92, 120);
+        static constexpr ImU32 cheekTopLeft = IM_COL32(128, 78, 40, 255);
+        static constexpr ImU32 cheekTopRight = IM_COL32(112, 66, 32, 255);
+        static constexpr ImU32 cheekBottomRight = IM_COL32(72, 40, 18, 255);
+        static constexpr ImU32 cheekBottomLeft = IM_COL32(84, 48, 22, 255);
+        static constexpr ImU32 cheekGrainLight = IM_COL32(168, 108, 58, 80);
+        static constexpr ImU32 cheekGrainDark = IM_COL32(34, 16, 4, 120);
+        static constexpr ImU32 cheekVignette = IM_COL32(0, 0, 0, 90);
+        static constexpr ImU32 cheekSeam = IM_COL32(4, 3, 2, 255);
+        static constexpr ImU32 edge = IM_COL32(18, 18, 18, 255);
+        static constexpr ImU32 clear = IM_COL32(0, 0, 0, 0);
+        // Brushing, on the rails and the knob domes
+        static constexpr ImU32 brushLight = IM_COL32(255, 255, 255, 40);
+        static constexpr ImU32 brushDark = IM_COL32(0, 0, 0, 28);
+        // The threshold jewels: amber BELOW, red ABOVE
+        static constexpr ImU32 jewelBezel = IM_COL32(52, 52, 54, 255);
+        static constexpr ImU32 jewelHighlight = IM_COL32(255, 248, 225, 220);
+        static constexpr ImU32 jewelBelow = IM_COL32(240, 205, 70, 255);
+        static constexpr ImU32 jewelBelowGlow = IM_COL32(240, 205, 70, 80);
+        static constexpr ImU32 jewelAbove = IM_COL32(220, 62, 46, 255);
+        static constexpr ImU32 jewelAboveGlow = IM_COL32(220, 62, 46, 80);
+        // The meter's surround and the badge
+        static constexpr ImU32 meterSurround = IM_COL32(40, 40, 42, 255);
+        static constexpr ImU32 badgeInk = IM_COL32(240, 240, 236, 255);
+        // The black bezels of the PULL/SC switch and the meter keys, the switch's silver bar and the keycaps
+        static constexpr ImU32 bezel = IM_COL32(8, 8, 8, 255);
+        static constexpr ImU32 switchBezelEdge = IM_COL32(60, 62, 60, 255);
+        static constexpr ImU32 switchHover = IM_COL32(255, 255, 255, 14);
+        static constexpr ImU32 barShadow = IM_COL32(0, 0, 0, 140);
+        static constexpr ImU32 barTop = IM_COL32(222, 224, 222, 255);
+        static constexpr ImU32 barBottom = IM_COL32(158, 160, 158, 255);
+        static constexpr ImU32 barHighlight = IM_COL32(250, 250, 250, 180);
+        static constexpr ImU32 barEdge = IM_COL32(36, 37, 36, 255);
+        static constexpr ImU32 keyShadow = IM_COL32(0, 0, 0, 130);
+        static constexpr ImU32 keyBezelEdge = IM_COL32(58, 60, 58, 255);
+        static constexpr ImU32 keyTop = IM_COL32(226, 228, 226, 255);
+        static constexpr ImU32 keyBottom = IM_COL32(164, 166, 164, 255);
+        static constexpr ImU32 keyLitTop = IM_COL32(150, 152, 150, 255);
+        static constexpr ImU32 keyLitBottom = IM_COL32(104, 106, 104, 255);
+        static constexpr ImU32 keyLitShade = IM_COL32(0, 0, 0, 110);
+        static constexpr ImU32 keyHighlight = IM_COL32(250, 251, 250, 200);
+        static constexpr ImU32 keyHover = IM_COL32(255, 255, 255, 22);
+        static constexpr ImU32 keyEdge = IM_COL32(40, 41, 40, 255);
+        // The knobs: minor marks, shadow, serrated skirt, silver dome and pointer
+        static constexpr ImU32 ringMinor = IM_COL32(214, 215, 210, 220);
+        static constexpr ImU32 knobShadow = IM_COL32(0, 0, 0, 160);
+        static constexpr ImU32 skirt = IM_COL32(24, 24, 24, 255);
+        static constexpr ImU32 toothLight = IM_COL32(76, 77, 76, 255);
+        static constexpr ImU32 toothDark = IM_COL32(10, 10, 10, 255);
+        static constexpr ImU32 capBase = IM_COL32(150, 152, 150, 255);
+        static constexpr ImU32 capDome = IM_COL32(204, 206, 204, 255);
+        static constexpr ImU32 capHighlight = IM_COL32(255, 255, 255, 34);
+        static constexpr ImU32 capShade = IM_COL32(60, 62, 60, 170);
+        static constexpr ImU32 capRim = IM_COL32(88, 90, 88, 255);
+        static constexpr ImU32 pointer = IM_COL32(28, 29, 28, 255);
+    };
+
     void drawVca(ImDrawList* dl)
     {
         // VCA compressor face for the VCA mode, laid out from the reference panel's
@@ -2949,11 +3020,11 @@ private:
         constexpr float cheek = 44.0f, rail = 16.0f;
         const float s = panel.scale();
         dl->AddRectFilled(panel.P(left + 5, top + 7), panel.P(right + 5, bottom + 7),
-                          IM_COL32(0, 0, 0, 150), 4.0f * s);
+                          VcaTheme::dropShadow, 4.0f * s);
         // Matte charcoal face with a faint speckle and a gentle vertical fall-off.
         dl->AddRectFilledMultiColor(panel.P(left, top), panel.P(right, bottom),
-                                    IM_COL32(44, 44, 45, 255), IM_COL32(44, 44, 45, 255),
-                                    IM_COL32(24, 24, 25, 255), IM_COL32(26, 26, 27, 255));
+                                    VcaTheme::faceTop, VcaTheme::faceTop,
+                                    VcaTheme::faceBottomRight, VcaTheme::faceBottomLeft);
         {
             uint32_t seed = 0x1600u;
             for (int i = 0; i < 120; ++i)
@@ -2963,7 +3034,7 @@ private:
                 seed = seed * 1664525u + 1013904223u;
                 const float py = top + rail + static_cast<float>((seed >> 8) % 276);
                 dl->AddRectFilled(panel.P(px, py), panel.P(px + 1.2f, py + 1.2f),
-                                  (i & 3) ? IM_COL32(255, 255, 255, 9) : IM_COL32(0, 0, 0, 40));
+                                  (i & 3) ? VcaTheme::speckleLight : VcaTheme::speckleDark);
             }
         }
         // Brushed aluminium rails with a dark seam against the face.
@@ -2972,15 +3043,15 @@ private:
             const float y0 = topRail ? top : bottom - rail;
             const float y1 = topRail ? top + rail : bottom;
             dl->AddRectFilledMultiColor(panel.P(left, y0), panel.P(right, y1),
-                                        IM_COL32(190, 192, 192, 255), IM_COL32(190, 192, 192, 255),
-                                        IM_COL32(118, 120, 120, 255), IM_COL32(118, 120, 120, 255));
+                                        VcaTheme::railTop, VcaTheme::railTop,
+                                        VcaTheme::railBottom, VcaTheme::railBottom);
             for (int row = static_cast<int>(y0 + 1); row < static_cast<int>(y1); row += 2)
                 dl->AddLine(panel.P(left, static_cast<float>(row)), panel.P(right, static_cast<float>(row)),
-                            (row * 7) % 5 == 0 ? IM_COL32(255, 255, 255, 40) : IM_COL32(0, 0, 0, 28), s);
+                            (row * 7) % 5 == 0 ? VcaTheme::brushLight : VcaTheme::brushDark, s);
             dl->AddLine(panel.P(left, topRail ? y1 : y0), panel.P(right, topRail ? y1 : y0),
-                        IM_COL32(6, 6, 6, 255), 1.6f * s);
+                        VcaTheme::railSeam, 1.6f * s);
             dl->AddLine(panel.P(left, topRail ? y1 + 1.5f : y0 - 1.5f), panel.P(right, topRail ? y1 + 1.5f : y0 - 1.5f),
-                        IM_COL32(90, 90, 92, 120), s);
+                        VcaTheme::railSeamHighlight, s);
         }
         // Walnut cheeks: warm gradient, deterministic grain, a soft vignette
         // towards the face, and a dark seam.
@@ -2989,24 +3060,24 @@ private:
             const float x0 = leftCheek ? left : right - cheek;
             const float x1 = leftCheek ? left + cheek : right;
             dl->AddRectFilledMultiColor(panel.P(x0, top), panel.P(x1, bottom),
-                                        IM_COL32(128, 78, 40, 255), IM_COL32(112, 66, 32, 255),
-                                        IM_COL32(72, 40, 18, 255), IM_COL32(84, 48, 22, 255));
+                                        VcaTheme::cheekTopLeft, VcaTheme::cheekTopRight,
+                                        VcaTheme::cheekBottomRight, VcaTheme::cheekBottomLeft);
             for (int grain = 0; grain < 14; ++grain)
             {
                 const float gx = x0 + 2.5f + static_cast<float>(grain) * (cheek - 5.0f) / 13.0f;
                 const float wobble = 2.0f * std::sin(static_cast<float>(grain) * 1.9f);
                 dl->AddLine(panel.P(gx + wobble, top + 2.0f), panel.P(gx - wobble, bottom - 2.0f),
-                            grain % 3 == 0 ? IM_COL32(168, 108, 58, 80) : IM_COL32(34, 16, 4, 120), 1.1f * s);
+                            grain % 3 == 0 ? VcaTheme::cheekGrainLight : VcaTheme::cheekGrainDark, 1.1f * s);
             }
             dl->AddRectFilledMultiColor(panel.P(leftCheek ? x1 - 10.0f : x0, top), panel.P(leftCheek ? x1 : x0 + 10.0f, bottom),
-                                        leftCheek ? IM_COL32(0, 0, 0, 0) : IM_COL32(0, 0, 0, 90),
-                                        leftCheek ? IM_COL32(0, 0, 0, 90) : IM_COL32(0, 0, 0, 0),
-                                        leftCheek ? IM_COL32(0, 0, 0, 90) : IM_COL32(0, 0, 0, 0),
-                                        leftCheek ? IM_COL32(0, 0, 0, 0) : IM_COL32(0, 0, 0, 90));
+                                        leftCheek ? VcaTheme::clear : VcaTheme::cheekVignette,
+                                        leftCheek ? VcaTheme::cheekVignette : VcaTheme::clear,
+                                        leftCheek ? VcaTheme::cheekVignette : VcaTheme::clear,
+                                        leftCheek ? VcaTheme::clear : VcaTheme::cheekVignette);
             dl->AddLine(panel.P(leftCheek ? x1 : x0, top), panel.P(leftCheek ? x1 : x0, bottom),
-                        IM_COL32(4, 3, 2, 255), 1.8f * s);
+                        VcaTheme::cheekSeam, 1.8f * s);
         }
-        dl->AddRect(panel.P(left, top), panel.P(right, bottom), IM_COL32(18, 18, 18, 255), 4.0f * s, 0, 1.3f * s);
+        dl->AddRect(panel.P(left, top), panel.P(right, bottom), VcaTheme::edge, 4.0f * s, 0, 1.3f * s);
 
         // Section titles.
         spacedText(dl, 171, 368, 14.0f, kVcaInk, "THRESHOLD", 0);
@@ -3023,21 +3094,21 @@ private:
         spacedText(dl, 110, 391, 9.5f, kVcaInk, "BELOW", 1);
         // The reference's two jewels: amber below the threshold, red above.
         duskdaf::DuskPanel::LedStyle jewel;
-        jewel.bezelColor = IM_COL32(52, 52, 54, 255);
+        jewel.bezelColor = VcaTheme::jewelBezel;
         jewel.rimRadiusAdd = 1.2f;
         jewel.glowRadiusAdd = 7.0f;
         jewel.dropShadowRadiusAdd = 3.0f;
         jewel.highlightScale = 1.5f;
-        jewel.highlightColor = IM_COL32(255, 248, 225, 220);
+        jewel.highlightColor = VcaTheme::jewelHighlight;
         jewel.offFromOnColor = true;
         jewel.offHighlight = true;
 
-        jewel.onColor = IM_COL32(240, 205, 70, 255);
-        jewel.glowColor = IM_COL32(240, 205, 70, 80);
+        jewel.onColor = VcaTheme::jewelBelow;
+        jewel.glowColor = VcaTheme::jewelBelowGlow;
         panel.led(dl, 128, 397, !above, 7.0f, jewel);
 
-        jewel.onColor = IM_COL32(220, 62, 46, 255);
-        jewel.glowColor = IM_COL32(220, 62, 46, 80);
+        jewel.onColor = VcaTheme::jewelAbove;
+        jewel.glowColor = VcaTheme::jewelAboveGlow;
         panel.led(dl, 214, 397, above, 7.0f, jewel);
         spacedText(dl, 232, 391, 9.5f, kVcaInk, "ABOVE", -1);
 
@@ -3098,17 +3169,16 @@ private:
                             : vcaNeedleGainReduction();
         using Meter = multicompp::ui_detail::VcaMeterRect;
         duskdaf::drawVuMeter(panel, dl, Meter::x0, Meter::y0, Meter::x1, Meter::y1, meterDb,
-                             vcaVuNeedle, scale, IM_COL32(40, 40, 42, 255), style);
+                             vcaVuNeedle, scale, VcaTheme::meterSurround, style);
 
         // Model line above the meter and badge below it, at the FET face's
         // sizes and spacing; the MIX trim is the same set-screw as Opto and
         // FET, in the column right of the meter, level with the badge.
         constexpr float meterCentre = 0.5f * (Meter::x0 + Meter::x1);
-        constexpr ImU32 kVcaWhite = IM_COL32(240, 240, 236, 255);
-        spacedText(dl, meterCentre, 378.0f, 14.0f, kVcaWhite, "VCA 60", 0, 0.12f);
+        spacedText(dl, meterCentre, 378.0f, 14.0f, VcaTheme::badgeInk, "VCA 60", 0, 0.12f);
         spacedText(dl, meterCentre, 398.0f, 8.0f, kVcaInk, "REFERENCE SERIES", 0, 0.12f);
         const float badge = Meter::y1 + 13.0f;
-        spacedText(dl, meterCentre, badge, 10.0f, kVcaWhite, "MC-2", 0, 0.12f);
+        spacedText(dl, meterCentre, badge, 10.0f, VcaTheme::badgeInk, "MC-2", 0, 0.12f);
         spacedText(dl, meterCentre, badge + 18.0f, 9.2f, kVcaInk, "COMPRESSOR/LIMITER", 0, 0.12f);
         trimScrewKnob(dl, "vca_mix", P_MIX, 0.5f * (Meter::x1 + Layout::right - cheek), badge + 19.0f,
                       13.0f, "MIX", "%.0f", "%", true);
@@ -3126,19 +3196,19 @@ private:
         // Black bezel like the reference's push buttons, holding a sliding
         // silver bar that sits right when the filter is in.
         dl->AddRectFilled(panel.P(x - 40.0f, y - 15.0f), panel.P(x + 40.0f, y + 15.0f),
-                          IM_COL32(8, 8, 8, 255), 3.0f * s);
+                          VcaTheme::bezel, 3.0f * s);
         dl->AddRect(panel.P(x - 40.0f, y - 15.0f), panel.P(x + 40.0f, y + 15.0f),
-                    IM_COL32(60, 62, 60, 255), 3.0f * s, 0, s);
+                    VcaTheme::switchBezelEdge, 3.0f * s, 0, s);
         const float barX = on ? x + 17.0f : x - 17.0f;
         dl->AddRectFilled(panel.P(barX - 16.0f + 1.5f, y - 9.0f + 2.0f), panel.P(barX + 16.0f + 1.5f, y + 9.0f + 2.0f),
-                          IM_COL32(0, 0, 0, 140), 2.5f * s);
+                          VcaTheme::barShadow, 2.5f * s);
         dl->AddRectFilledMultiColor(panel.P(barX - 16.0f, y - 9.0f), panel.P(barX + 16.0f, y + 9.0f),
-                                    IM_COL32(222, 224, 222, 255), IM_COL32(222, 224, 222, 255),
-                                    IM_COL32(158, 160, 158, 255), IM_COL32(158, 160, 158, 255));
-        dl->AddLine(panel.P(barX - 14.0f, y - 7.5f), panel.P(barX + 14.0f, y - 7.5f), IM_COL32(250, 250, 250, 180), 1.2f * s);
-        dl->AddRect(panel.P(barX - 16.0f, y - 9.0f), panel.P(barX + 16.0f, y + 9.0f), IM_COL32(36, 37, 36, 255), 2.5f * s, 0, s);
+                                    VcaTheme::barTop, VcaTheme::barTop,
+                                    VcaTheme::barBottom, VcaTheme::barBottom);
+        dl->AddLine(panel.P(barX - 14.0f, y - 7.5f), panel.P(barX + 14.0f, y - 7.5f), VcaTheme::barHighlight, 1.2f * s);
+        dl->AddRect(panel.P(barX - 16.0f, y - 9.0f), panel.P(barX + 16.0f, y + 9.0f), VcaTheme::barEdge, 2.5f * s, 0, s);
         if (ImGui::IsItemHovered())
-            dl->AddRectFilled(panel.P(x - 40.0f, y - 15.0f), panel.P(x + 40.0f, y + 15.0f), IM_COL32(255, 255, 255, 14), 3.0f * s);
+            dl->AddRectFilled(panel.P(x - 40.0f, y - 15.0f), panel.P(x + 40.0f, y + 15.0f), VcaTheme::switchHover, 3.0f * s);
         spacedText(dl, x - 48.0f, y - 6.0f, 9.0f, on ? kVcaInkDim : kVcaInk, "OUT", 1);
         spacedText(dl, x + 48.0f, y - 6.0f, 9.0f, on ? kVcaInk : kVcaInkDim, "IN", -1);
         if (clicked)
@@ -3224,7 +3294,7 @@ private:
             const ImVec2 d(std::sin(angle), -std::cos(angle));
             dl->AddLine(ImVec2(center.x + d.x * (r + 8.0f * scale), center.y + d.y * (r + 8.0f * scale)),
                         ImVec2(center.x + d.x * (r + 13.0f * scale), center.y + d.y * (r + 13.0f * scale)),
-                        IM_COL32(214, 215, 210, 220), 1.1f * scale);
+                        VcaTheme::ringMinor, 1.1f * scale);
         }
         {
             duskdaf::KnobRingStyle ring;
@@ -3248,19 +3318,19 @@ private:
         // highlights are lighting and stay put.
         const float t = std::clamp((values[p] - hostMinV) / hostRange, 0.0f, 1.0f);
         const float pointerAngle = duskdaf::DuskPanel::knobAngle(t);
-        dl->AddCircleFilled(ImVec2(center.x + 3.0f * scale, center.y + 4.5f * scale), r * 1.03f, IM_COL32(0, 0, 0, 160), 64);
-        dl->AddCircleFilled(center, r, IM_COL32(24, 24, 24, 255), 64);
+        dl->AddCircleFilled(ImVec2(center.x + 3.0f * scale, center.y + 4.5f * scale), r * 1.03f, VcaTheme::knobShadow, 64);
+        dl->AddCircleFilled(center, r, VcaTheme::skirt, 64);
         for (int tooth = 0; tooth < 72; ++tooth)
         {
             const float a = pointerAngle + 2.0f * kUiPi * static_cast<float>(tooth) / 72.0f;
             const ImVec2 d(std::sin(a), -std::cos(a));
             dl->AddLine(ImVec2(center.x + d.x * r * 0.90f, center.y + d.y * r * 0.90f),
                         ImVec2(center.x + d.x * r, center.y + d.y * r),
-                        (tooth & 1) ? IM_COL32(76, 77, 76, 255) : IM_COL32(10, 10, 10, 255), 1.6f * scale);
+                        (tooth & 1) ? VcaTheme::toothLight : VcaTheme::toothDark, 1.6f * scale);
         }
         const float capR = r * 0.86f;
-        dl->AddCircleFilled(center, capR, IM_COL32(150, 152, 150, 255), 64);
-        dl->AddCircleFilled(ImVec2(center.x, center.y - capR * 0.06f), capR * 0.94f, IM_COL32(204, 206, 204, 255), 64);
+        dl->AddCircleFilled(center, capR, VcaTheme::capBase, 64);
+        dl->AddCircleFilled(ImVec2(center.x, center.y - capR * 0.06f), capR * 0.94f, VcaTheme::capDome, 64);
         for (int spoke = 0; spoke < 96; ++spoke)
         {
             const float a = pointerAngle + 2.0f * kUiPi * static_cast<float>(spoke) / 96.0f;
@@ -3268,17 +3338,17 @@ private:
             const int shade = (spoke * 7) % 5;
             dl->AddLine(ImVec2(center.x + d.x * capR * 0.18f, center.y + d.y * capR * 0.18f),
                         ImVec2(center.x + d.x * capR * 0.93f, center.y + d.y * capR * 0.93f),
-                        shade == 0 ? IM_COL32(255, 255, 255, 40) : shade == 2 ? IM_COL32(0, 0, 0, 28) : IM_COL32(0, 0, 0, 0),
+                        shade == 0 ? VcaTheme::brushLight : shade == 2 ? VcaTheme::brushDark : VcaTheme::clear,
                         0.9f * scale);
         }
-        dl->AddCircleFilled(ImVec2(center.x - capR * 0.28f, center.y - capR * 0.32f), capR * 0.42f, IM_COL32(255, 255, 255, 34), 40);
+        dl->AddCircleFilled(ImVec2(center.x - capR * 0.28f, center.y - capR * 0.32f), capR * 0.42f, VcaTheme::capHighlight, 40);
         dl->PathArcTo(center, capR * 0.97f, 0.35f, 2.75f, 30);
-        dl->PathStroke(IM_COL32(60, 62, 60, 170), 0, 1.6f * scale);
-        dl->AddCircle(center, capR, IM_COL32(88, 90, 88, 255), 64, 1.1f * scale);
+        dl->PathStroke(VcaTheme::capShade, 0, 1.6f * scale);
+        dl->AddCircle(center, capR, VcaTheme::capRim, 64, 1.1f * scale);
         const ImVec2 pointer(std::sin(pointerAngle), -std::cos(pointerAngle));
         dl->AddLine(ImVec2(center.x + pointer.x * capR * 0.12f, center.y + pointer.y * capR * 0.12f),
                     ImVec2(center.x + pointer.x * capR * 0.97f, center.y + pointer.y * capR * 0.97f),
-                    IM_COL32(28, 29, 28, 255), 2.6f * scale);
+                    VcaTheme::pointer, 2.6f * scale);
         vcaKnobSplitter.Merge(dl);
     }
 
@@ -3314,20 +3384,20 @@ private:
             const float s = panel.scale();
             // Black bezel with a soft outer shadow, then the keycap.
             dl->AddRectFilled(panel.P(bx0 - 4.0f + 2.0f, by0 - 4.0f + 3.0f), panel.P(bx1 + 4.0f + 2.0f, by1 + 4.0f + 3.0f),
-                              IM_COL32(0, 0, 0, 130), 3.0f * s);
-            dl->AddRectFilled(panel.P(bx0 - 4.0f, by0 - 4.0f), panel.P(bx1 + 4.0f, by1 + 4.0f), IM_COL32(8, 8, 8, 255), 3.0f * s);
-            dl->AddRect(panel.P(bx0 - 4.0f, by0 - 4.0f), panel.P(bx1 + 4.0f, by1 + 4.0f), IM_COL32(58, 60, 58, 255), 3.0f * s, 0, s);
-            const ImU32 capHi = active ? IM_COL32(150, 152, 150, 255) : IM_COL32(226, 228, 226, 255);
-            const ImU32 capLo = active ? IM_COL32(104, 106, 104, 255) : IM_COL32(164, 166, 164, 255);
+                              VcaTheme::keyShadow, 3.0f * s);
+            dl->AddRectFilled(panel.P(bx0 - 4.0f, by0 - 4.0f), panel.P(bx1 + 4.0f, by1 + 4.0f), VcaTheme::bezel, 3.0f * s);
+            dl->AddRect(panel.P(bx0 - 4.0f, by0 - 4.0f), panel.P(bx1 + 4.0f, by1 + 4.0f), VcaTheme::keyBezelEdge, 3.0f * s, 0, s);
+            const ImU32 capHi = active ? VcaTheme::keyLitTop : VcaTheme::keyTop;
+            const ImU32 capLo = active ? VcaTheme::keyLitBottom : VcaTheme::keyBottom;
             dl->AddRectFilledMultiColor(b0, b1, capHi, capHi, capLo, capLo);
             if (active)
-                dl->AddRectFilledMultiColor(b0, panel.P(bx1, by0 + 8.0f), IM_COL32(0, 0, 0, 110), IM_COL32(0, 0, 0, 110),
-                                            IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0));
+                dl->AddRectFilledMultiColor(b0, panel.P(bx1, by0 + 8.0f), VcaTheme::keyLitShade, VcaTheme::keyLitShade,
+                                            VcaTheme::clear, VcaTheme::clear);
             else
-                dl->AddLine(panel.P(bx0 + 3.0f, by0 + 2.5f), panel.P(bx1 - 3.0f, by0 + 2.5f), IM_COL32(250, 251, 250, 200), 1.3f * s);
+                dl->AddLine(panel.P(bx0 + 3.0f, by0 + 2.5f), panel.P(bx1 - 3.0f, by0 + 2.5f), VcaTheme::keyHighlight, 1.3f * s);
             if (ImGui::IsItemHovered() && !active)
-                dl->AddRectFilled(b0, b1, IM_COL32(255, 255, 255, 22), 2.0f * s);
-            dl->AddRect(b0, b1, IM_COL32(40, 41, 40, 255), 2.0f * s, 0, s);
+                dl->AddRectFilled(b0, b1, VcaTheme::keyHover, 2.0f * s);
+            dl->AddRect(b0, b1, VcaTheme::keyEdge, 2.0f * s, 0, s);
             if (clicked) vcaMeterSource = i;
         }
         // Square-ended bracket with METER in the gap.
