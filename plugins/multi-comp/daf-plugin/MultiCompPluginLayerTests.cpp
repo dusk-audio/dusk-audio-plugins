@@ -1028,7 +1028,6 @@ void testPresetIdentityFollowsPresetOwnership()
 void testOptoFaceplateContract()
 {
     using Layout = multicompp::ui_detail::OptoFaceplateLayout;
-    constexpr float referenceAspect = 1120.0f / 310.0f;
     // OPTO is laid out on the 1120 x 380 canvas (2026-11-05): its faceplate spans the width below the mode row and
     // keeps every control inside it, the dials clear of the meter and the trims.
     require(Layout::left == 0.0f && Layout::right == multicompp::ui_detail::kDesignWidth
@@ -1041,14 +1040,12 @@ void testOptoFaceplateContract()
                 && Layout::left + Layout::ear < Layout::switchX && Layout::trimX < Layout::right - Layout::ear,
             "Opto faceplate fills the canvas below the mode row and keeps its controls apart");
     // One canvas for every mode (1120 x 380, owner 2026-11-05). A face not yet laid out for it is drawn on the face
-    // canvas it was authored on, which the faceplates fill below the 48 px header and the mode toolbar (mode canvas
+    // canvas it was authored on, which its faceplate fills below the 48 px header and the mode toolbar (mode canvas
     // 322..654 shown at 48..380), and the Digital and Multiband faces fit in visible-canvas y.
     {
         using Modern = multicompp::ui_detail::ModernFaceLayout;
-        using Vca = multicompp::ui_detail::VcaFaceplateLayout;
         require(multicompp::ui_detail::kDesignWidth == 1120.0f && multicompp::ui_detail::kDesignHeight == 380.0f
-                    && multicompp::ui_detail::kFaceCanvasHeight == 380.0f
-                    && multicompp::ui_detail::kFaceCanvasHeight == 48.0f + (Vca::bottom - 322.0f),
+                    && multicompp::ui_detail::kFaceCanvasHeight == 380.0f,
                 "every mode shares the rack-height canvas the faceplates fill");
         require(Modern::top >= 70.0f && Modern::bottom <= multicompp::ui_detail::kFaceCanvasHeight - 8.0f
                     && Modern::top < Modern::titleY && Modern::titleY < Modern::meterTitleY
@@ -1058,11 +1055,24 @@ void testOptoFaceplateContract()
                 "the Digital and Multiband faces fit the rack-height canvas below the mode toolbar");
     }
     {
+        // VCA is laid out on the canvas too (2026-11-06): its faceplate spans the width below the mode row, the
+        // three knobs stay apart, the meter keys sit under COMPRESSION and OUTPUT GAIN, and the meter and MIX
+        // between the last knob and the right cheek.
         using Vca = multicompp::ui_detail::VcaFaceplateLayout;
-        const float vcaAspect = multicompp::ui_detail::vcaFaceplateAspect();
-        require(Vca::left == 0.0f && Vca::right == 1120.0f && Vca::top == 344.0f && Vca::bottom == 654.0f
-                    && std::abs(vcaAspect - referenceAspect) < 0.01f,
-                "VCA faceplate shares the rack-height canvas with the Opto and FET faces");
+        using Meter = multicompp::ui_detail::VcaMeterRect;
+        constexpr float keysRight = Vca::keysX + 3.0f * Vca::keyW + 2.0f * Vca::keyGap;
+        require(Vca::left == 0.0f && Vca::right == multicompp::ui_detail::kDesignWidth
+                    && Vca::top >= multicompp::ui_detail::kFaceAreaTop
+                    && Vca::bottom <= multicompp::ui_detail::kDesignHeight
+                    && Vca::left + Vca::cheek < Vca::thresholdX - Vca::knobRadius
+                    && Vca::thresholdX + Vca::knobRadius < Vca::compressionX - Vca::compressionRadius
+                    && Vca::compressionX + Vca::compressionRadius < Vca::outputX - Vca::knobRadius
+                    && Vca::keysX < Vca::compressionX && Vca::outputX < keysRight
+                    && Vca::outputX + Vca::knobRadius < Meter::x0 && Meter::x1 < Vca::mixX - Vca::mixRadius
+                    && Vca::mixX + Vca::mixRadius < Vca::right - Vca::cheek
+                    && Vca::top + Vca::rail < Vca::titleY && Vca::keyBracketY < Vca::bottom - Vca::rail
+                    && Vca::top + Vca::rail < Meter::y0 && Meter::y1 < Vca::bottom - Vca::rail,
+                "VCA faceplate fills the canvas below the mode row and keeps its controls apart");
     }
 
     require(!multicompp::ui_detail::vcaSignalAboveThreshold(-30.0f, -10.0f)
@@ -1071,11 +1081,16 @@ void testOptoFaceplateContract()
                 && !multicompp::ui_detail::vcaSignalAboveThreshold(
                        std::numeric_limits<float>::quiet_NaN(), -10.0f),
             "VCA threshold lamps split below/at-or-above the threshold and stay dark on non-finite input");
+    // The other faces' words (owner 2026-11-06): GR on the key, GAIN REDUCTION on the meter only while GR is
+    // selected; the caption names the source the needle shows.
     require(std::strcmp(multicompp::ui_detail::vcaMeterSourceLabel(0), "INPUT") == 0
                 && std::strcmp(multicompp::ui_detail::vcaMeterSourceLabel(1), "OUTPUT") == 0
-                && std::strcmp(multicompp::ui_detail::vcaMeterSourceLabel(2), "GAIN CHANGE") == 0
+                && std::strcmp(multicompp::ui_detail::vcaMeterSourceLabel(2), "GAIN REDUCTION") == 0
+                && std::strcmp(multicompp::ui_detail::vcaMeterKeyLegend(0), "INPUT") == 0
+                && std::strcmp(multicompp::ui_detail::vcaMeterKeyLegend(1), "OUTPUT") == 0
+                && std::strcmp(multicompp::ui_detail::vcaMeterKeyLegend(2), "GR") == 0
                 && multicompp::ui_detail::kVcaMeterSourceCount == 3,
-            "VCA meter selector exposes the reference INPUT/OUTPUT/GAIN CHANGE sources");
+            "VCA meter keys read INPUT / OUTPUT / GR and the meter's caption names the selected source");
     {
         bool captionsMatchModes = true;
         for (size_t mode = 0; mode < multicompp::ui_detail::kModeTabLabels.size(); ++mode)

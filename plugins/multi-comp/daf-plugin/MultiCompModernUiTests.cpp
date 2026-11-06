@@ -229,8 +229,8 @@ constexpr std::array<Control, 19> controls{{
     {7, pid(ParamId::Crossover2), 372, 220}, {7, pid(ParamId::Crossover3), 486, 220}
 }};
 
-// A knob of every hardware face, where the editor draws it at the default size (the faces' canvas sits 274 px
-// higher on screen than its own coordinates). Each starts away from the top of its travel (Mix at 50 %), so the
+// A knob of every hardware face, where the editor draws it at the default size (a face still on the canvas it was
+// authored on sits 274 px higher on screen than its own coordinates). Each starts away from the top of its travel (Mix at 50 %), so the
 // hold's upward drag writes. FET's Mix trim is one of four faces' controls for the same parameter: Opto, VCA and
 // Studio VCA draw their own elsewhere, so a gesture must follow the control, not the parameter.
 constexpr std::array<Control, 8> hardwareControls{{
@@ -238,7 +238,9 @@ constexpr std::array<Control, 8> hardwareControls{{
      multicompp::ui_detail::OptoFaceplateLayout::dialY},
     {1, pid(ParamId::FetInput), multicompp::ui_detail::FetFaceplateLayout::blackInputX,
      multicompp::ui_detail::FetFaceplateLayout::dialY},
-    {2, pid(ParamId::VcaThreshold), 171, 204}, {3, pid(ParamId::BusThreshold), 409, 175},
+    {2, pid(ParamId::VcaThreshold), multicompp::ui_detail::VcaFaceplateLayout::thresholdX,
+     multicompp::ui_detail::VcaFaceplateLayout::knobY},
+    {3, pid(ParamId::BusThreshold), 409, 175},
     {4, pid(ParamId::FetAttack), multicompp::ui_detail::FetFaceplateLayout::timingX,
      multicompp::ui_detail::FetFaceplateLayout::attackY},
     {4, pid(ParamId::FetBlueHeadroom), multicompp::ui_detail::FetFaceplateLayout::blueTrimX,
@@ -389,7 +391,7 @@ void hiddenControls()
 void vcaPullScFirstValue()
 {
     Host h(2);
-    h.click(171, 320);
+    h.click(multicompp::ui_detail::VcaFaceplateLayout::thresholdX, multicompp::ui_detail::VcaFaceplateLayout::pullY);
     const uint32_t p = pid(ParamId::SidechainHP);
     float hz = -1.0f;
     for (const auto& event : h.ui.writes)

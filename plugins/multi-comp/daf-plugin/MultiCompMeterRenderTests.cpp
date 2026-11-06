@@ -24,7 +24,9 @@ bool drawCase(float size, const char* source, float db)
 {
     ImGui::NewFrame();
     duskdaf::DuskPanel panel;
-    const ImVec2 origin(19.0f, 11.0f - 274.0f * size);
+    // The VCA face is drawn on the editor's canvas (VcaMeterRect is in its coordinates), offset here so the meter
+    // is not at the display's origin.
+    const ImVec2 origin(19.0f, 11.0f);
     panel.begin(size, origin, ImGui::GetFont(), nullptr);
     auto* dl = ImGui::GetBackgroundDrawList();
     // Keep strokes untextured so font-atlas vertices identify actual labels;
@@ -313,7 +315,7 @@ int main()
     ok = knobBeyondItsRangeStaysPut() && ok;
     ok = valueEditEnterOnSeedIsNoEdit() && ok;
     for (float size : {1.0f, 1.25f, 1.8f, 2.0f, 3.0f})
-        for (const char* source : {"INPUT", "OUTPUT", "GAIN CHANGE"})
+        for (const char* source : {"INPUT", "OUTPUT", "GAIN REDUCTION"})
             for (float db : {-80.0f, -40.0f, -20.0f, 0.0f, 20.0f, 40.0f,
                              std::numeric_limits<float>::quiet_NaN(),
                              std::numeric_limits<float>::infinity()})

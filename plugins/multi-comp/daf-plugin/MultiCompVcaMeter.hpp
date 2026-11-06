@@ -1,19 +1,11 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
 #pragma once
 #include "DuskVuMeter.hpp"
+#include "MultiCompVcaMeterGeometry.hpp"
 #include <array>
 
 namespace multicompp::ui_detail
 {
-// The VCA face's meter, in mode-canvas design coordinates: the same footprint
-// and height on the face as the FET meter (234 x 141 from y 423), between the
-// model line above it and the badge below. The UI and the render test both
-// draw it from here.
-struct VcaMeterRect
-{
-    static constexpr float x0 = 755.0f, y0 = 423.0f, x1 = 991.0f, y1 = 564.0f;
-};
-
 inline duskdaf::VuScaleConfig vcaMeterScale(const char* sourceLabel)
 {
     static constexpr std::array<duskdaf::VuTick, 13> ticks{{
@@ -58,12 +50,13 @@ inline duskdaf::VuStyle vcaMeterStyle()
     style.needle = IM_COL32(20, 18, 14, 255);
     style.overloadArc = false;
     style.cornerMarks = false;
-    // Lengths below were drawn for a 346 x 188 meter and are scaled by the
-    // face-width ratio (222 / 332) to VcaMeterRect; the sublabel and needle
-    // match the Opto and FET meters.
-    style.tickLabelSize = 10.0f;
-    style.legendSize = 10.0f;
-    style.sublabelSize = 6.8f;
+    // Text at the readability floor: the scale's numerals at 14, DECIBELS at the
+    // legend size (16) and the source under it at 13 (owner 2026-11-05).
+    style.tickLabelSize = 14.0f;
+    style.legendSize = 16.0f;
+    style.sublabelSize = 13.0f;
+    // Lengths below were drawn for a 346 x 188 meter and scaled by the
+    // face-width ratio (222 / 332); the needle matches the Opto and FET meters.
     // A shallow arc and an off-window pivot reproduce the reference VCA compressor's scale. All
     // distances stay in design coordinates until drawVuMeter maps them once.
     style.pivotBelowFace = 84.3f;

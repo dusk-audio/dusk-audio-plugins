@@ -4,6 +4,7 @@
 
 #include "MultiCompParams.hpp"
 #include "MultiCompProgramPresets.hpp"
+#include "MultiCompVcaMeterGeometry.hpp"
 #include "MultiCompVintageMeterGeometry.hpp"
 #include "MultiCompVintageMeterControls.hpp"
 #include "../core/MultiCompVcaLaw.hpp"
@@ -138,24 +139,33 @@ struct FetFaceplateLayout
     static constexpr float blackMixX = 976.0f, blackMixY = 310.0f;
 };
 
-// The VCA face keeps the rack-height canvas it was authored on (1120 x 310, as the Opto and FET faces have). The
-// reference VCA compressor's own ~2.5:1 proportions were tried on
-// the tall canvas (2026-09-01) and abandoned: the AU wrapper's resize path leaves the
-// GL view at half size / the host keeps the old window (#240), so a mode
-// whose canvas differs from the opening size shows up shrunken in Logic.
+// The VCA face on the 1120 x 380 canvas at the readability floor (canvas coordinates; text y is its top), in its
+// reference unit's arrangement: THRESHOLD with its BELOW / ABOVE jewels and PULL/SC, COMPRESSION, OUTPUT GAIN, the
+// meter keys under the last two, and the meter (VcaMeterRect) between its model line and badge, MIX beside the badge.
+// The reference's own ~2.5:1 proportions were tried on a tall canvas (2026-09-01) and abandoned: the AU wrapper's
+// resize path leaves the GL view at half size / the host keeps the old window (#240), so a mode whose canvas differs
+// from the opening size shows up shrunken in Logic.
 struct VcaFaceplateLayout
 {
-    static constexpr float left = 0.0f;
-    static constexpr float right = 1120.0f;
-    static constexpr float top = 344.0f;
-    static constexpr float bottom = 654.0f;
+    static constexpr float left = 0.0f, right = kDesignWidth, top = kFaceAreaTop + 1.0f, bottom = kDesignHeight - 2.0f;
+    static constexpr float cheek = 44.0f, rail = 16.0f;                   // the walnut cheeks, the aluminium rails
+    static constexpr float titleY = 95.0f;                                // THRESHOLD, COMPRESSION, OUTPUT GAIN
+    static constexpr float thresholdX = 178.0f, compressionX = 385.0f, outputX = 595.0f;
+    static constexpr float knobY = 212.0f, knobRadius = 34.0f, compressionRadius = 42.0f;
+    static constexpr float ringLabelOffset = 26.0f;                       // the numerals' anchors, past the edge
+    static constexpr float jewelY = 133.0f, jewelRadius = 7.0f;            // BELOW and ABOVE, their centres
+    static constexpr float belowX = thresholdX - 36.0f, aboveX = thresholdX + 36.0f;
+    static constexpr float pullLegendY = 268.0f, pullY = 316.0f;           // PULL/SC, and its switch's centre
+    // The meter keys, centred between COMPRESSION and OUTPUT GAIN, far enough apart that each legend reads as its
+    // own key's (at an 8 px gap two neighbouring legends ran together).
+    static constexpr float keyW = 104.0f, keyGap = 22.0f;
+    static constexpr float keysX = 0.5f * (compressionX + outputX) - 0.5f * (3.0f * keyW + 2.0f * keyGap);
+    static constexpr float keyLegendY = 274.0f, keyY0 = 296.0f, keyY1 = 322.0f;
+    static constexpr float keyBracketY = 345.0f;                           // the METER bracket's line
+    static constexpr float modelY = 96.0f, seriesY = 118.0f;               // above the meter: VCA 60, REFERENCE SERIES
+    static constexpr float badgeY = 296.0f, nameplateY = 320.0f;           // below it: MC-2, COMPRESSOR/LIMITER
+    static constexpr float mixX = 1034.0f, mixY = 306.0f, mixRadius = 13.0f;
 };
-
-inline constexpr float vcaFaceplateAspect() noexcept
-{
-    return (VcaFaceplateLayout::right - VcaFaceplateLayout::left)
-        / (VcaFaceplateLayout::bottom - VcaFaceplateLayout::top);
-}
 
 // Digital and Multiband content bounds in visible-canvas y (0 = the top of the header).
 // The rack shell extends to the canvas edges; its lettering keeps an 8 px bottom margin.
@@ -175,19 +185,27 @@ inline bool vcaSignalAboveThreshold(float inputDb, float thresholdDb) noexcept
     return inputDb >= thresholdDb;
 }
 
-// The VCA face's meter selector is display-only hardware behaviour (matching
-// the reference unit's INPUT / OUTPUT / GAIN CHANGE buttons), so it is UI
-// state, not a host parameter.
+// The VCA face's meter selector is display-only hardware behaviour (the
+// reference unit's three meter keys), so it is UI state, not a host parameter.
+// Its words are the other faces': GR on the key and GAIN REDUCTION on the
+// meter (owner 2026-11-06), where the reference says GAIN CHANGE.
 inline constexpr int kVcaMeterSourceCount = 3;
 
+// The meter's caption under DECIBELS: whichever source the needle shows.
 inline const char* vcaMeterSourceLabel(int source) noexcept
 {
     switch (source)
     {
         case 0: return "INPUT";
         case 1: return "OUTPUT";
-        default: return "GAIN CHANGE";
+        default: return "GAIN REDUCTION";
     }
+}
+
+// The legend over each meter key.
+inline const char* vcaMeterKeyLegend(int source) noexcept
+{
+    return source == 0 || source == 1 ? vcaMeterSourceLabel(source) : "GR";
 }
 
 // Mode toolbar captions, set in capitals like every other legend on the
@@ -971,8 +989,8 @@ private:
     ImDrawListSplitter optoKnobSplitter;
     ImDrawListSplitter fetKnobSplitter;
     ImDrawListSplitter vcaKnobSplitter;
-    // Display-only hardware behaviour (reference INPUT/OUTPUT/GAIN CHANGE
-    // buttons): UI state, deliberately not a host parameter.
+    // Display-only hardware behaviour (the meter keys INPUT / OUTPUT / GR):
+    // UI state, deliberately not a host parameter.
     int vcaMeterSource = 2;
     float vcaVuNeedle = 0.0f;
     // The cutoff PULL/SC restores when it goes in (host value; any 1 Hz or more engages it). Until the switch has
@@ -1917,9 +1935,9 @@ private:
         return multicompp::ui_detail::fetSloAttackTypedHost(text, host);
     }
 
-    // The face of the current mode. OPTO, FET BLACK and FET BLUE are laid out on the canvas itself (scale and origin
-    // are the canvas transform, as the caller left it); the other faces are still drawn on the face canvas they were
-    // authored on (beginLegacyFace) until each is laid out at the readability floor.
+    // The face of the current mode. OPTO, FET BLACK, FET BLUE and VCA are laid out on the canvas itself (scale and
+    // origin are the canvas transform, as the caller left it); the other faces are still drawn on the face canvas they
+    // were authored on (beginLegacyFace) until each is laid out at the readability floor.
     void drawModePanel(ImDrawList* dl, float scale, ImVec2 origin)
     {
         const int mode = multicompp::ui_detail::choiceIndex(value(P_MODE), 8);
@@ -1945,7 +1963,7 @@ private:
         {
             case 0: drawOpto(dl); break;
             case 1: drawFet(dl, false); break;
-            case 2: legacyFace(); drawVca(dl); break;
+            case 2: drawVca(dl); break;
             case 3: legacyFace(); drawBus(dl); break;
             case 4: drawFet(dl, true); break;
             case 5: legacyFace(); drawStudioVca(dl); break;
@@ -3008,16 +3026,14 @@ private:
 
     void drawVca(ImDrawList* dl)
     {
-        // VCA compressor face for the VCA mode, laid out from the reference panel's
-        // own proportions (x scaled 0.56, y scaled 0.52 from the 2000x802
-        // reference image onto the 1120x416 face). Only the reference's
-        // front-panel controls are drawn; attack, release, Over Easy and the
-        // detector selector have no reference-unit equivalent and stay host-visible
-        // parameters without faceplate controls. No third-party marks.
+        // VCA compressor face for the VCA mode, in the reference panel's arrangement (VcaFaceplateLayout). Only
+        // the reference's front-panel controls are drawn; attack, release, Over Easy and the detector selector
+        // have no reference-unit equivalent and stay host-visible parameters without faceplate controls. No
+        // third-party marks.
         using Layout = multicompp::ui_detail::VcaFaceplateLayout;
         constexpr float left = Layout::left, right = Layout::right;
         constexpr float top = Layout::top, bottom = Layout::bottom;
-        constexpr float cheek = 44.0f, rail = 16.0f;
+        constexpr float cheek = Layout::cheek, rail = Layout::rail;
         const float s = panel.scale();
         dl->AddRectFilled(panel.P(left + 5, top + 7), panel.P(right + 5, bottom + 7),
                           VcaTheme::dropShadow, 4.0f * s);
@@ -3026,13 +3042,16 @@ private:
                                     VcaTheme::faceTop, VcaTheme::faceTop,
                                     VcaTheme::faceBottomRight, VcaTheme::faceBottomLeft);
         {
+            // Between the cheeks and the rails, clear of their seams.
+            constexpr auto speckleW = static_cast<uint32_t>(right - left - 2.0f * cheek);
+            constexpr auto speckleH = static_cast<uint32_t>(bottom - top - 2.0f * rail - 2.0f);
             uint32_t seed = 0x1600u;
             for (int i = 0; i < 120; ++i)
             {
                 seed = seed * 1664525u + 1013904223u;
-                const float px = left + cheek + static_cast<float>((seed >> 8) % 1032);
+                const float px = left + cheek + static_cast<float>((seed >> 8) % speckleW);
                 seed = seed * 1664525u + 1013904223u;
-                const float py = top + rail + static_cast<float>((seed >> 8) % 276);
+                const float py = top + rail + static_cast<float>((seed >> 8) % speckleH);
                 dl->AddRectFilled(panel.P(px, py), panel.P(px + 1.2f, py + 1.2f),
                                   (i & 3) ? VcaTheme::speckleLight : VcaTheme::speckleDark);
             }
@@ -3079,11 +3098,10 @@ private:
         }
         dl->AddRect(panel.P(left, top), panel.P(right, bottom), VcaTheme::edge, 4.0f * s, 0, 1.3f * s);
 
-        // Section titles.
-        spacedText(dl, 171, 368, 14.0f, kVcaInk, "THRESHOLD", 0);
-        spacedText(dl, 385, 368, 14.0f, kVcaInk, "COMPRESSION", 0);
-        spacedText(dl, 595, 360, 14.0f, kVcaInk, "OUTPUT", 0);
-        spacedText(dl, 595, 378, 14.0f, kVcaInk, "GAIN", 0);
+        // Section titles, the hero legends' size (20) as on the Opto and FET faces.
+        spacedText(dl, Layout::thresholdX, Layout::titleY, 20.0f, kVcaInk, "THRESHOLD", 0);
+        spacedText(dl, Layout::compressionX, Layout::titleY, 20.0f, kVcaInk, "COMPRESSION", 0);
+        spacedText(dl, Layout::outputX, Layout::titleY, 20.0f, kVcaInk, "OUTPUT GAIN", 0);
 
         // Threshold lamps: BELOW (amber) under threshold, ABOVE (red) at or
         // over it, from the DSP's published input peak level; labels sit
@@ -3091,7 +3109,8 @@ private:
         const float inputDb = levelMeterDb(false);
         const float thresholdDb = plainValueForHost(P_VCA_THRESHOLD, values[P_VCA_THRESHOLD]);
         const bool above = multicompp::ui_detail::vcaSignalAboveThreshold(inputDb, thresholdDb);
-        spacedText(dl, 110, 391, 9.5f, kVcaInk, "BELOW", 1);
+        constexpr float jewelLegendGap = 10.0f, jewelLegendY = Layout::jewelY - 8.0f;
+        spacedText(dl, Layout::belowX - Layout::jewelRadius - jewelLegendGap, jewelLegendY, 16.0f, kVcaInk, "BELOW", 1);
         // The reference's two jewels: amber below the threshold, red above.
         duskdaf::DuskPanel::LedStyle jewel;
         jewel.bezelColor = VcaTheme::jewelBezel;
@@ -3105,12 +3124,12 @@ private:
 
         jewel.onColor = VcaTheme::jewelBelow;
         jewel.glowColor = VcaTheme::jewelBelowGlow;
-        panel.led(dl, 128, 397, !above, 7.0f, jewel);
+        panel.led(dl, Layout::belowX, Layout::jewelY, !above, Layout::jewelRadius, jewel);
 
         jewel.onColor = VcaTheme::jewelAbove;
         jewel.glowColor = VcaTheme::jewelAboveGlow;
-        panel.led(dl, 214, 397, above, 7.0f, jewel);
-        spacedText(dl, 232, 391, 9.5f, kVcaInk, "ABOVE", -1);
+        panel.led(dl, Layout::aboveX, Layout::jewelY, above, Layout::jewelRadius, jewel);
+        spacedText(dl, Layout::aboveX + Layout::jewelRadius + jewelLegendGap, jewelLegendY, 16.0f, kVcaInk, "ABOVE", -1);
 
         {
             // The reference's ring artwork: 10 mV .. 3 V at the hardware's
@@ -3121,7 +3140,7 @@ private:
             constexpr std::array<float, 6> majors{{-55.0f, -41.25f, -33.0f, -22.0f, -13.75f, 0.0f}};
             constexpr std::array<const char*, 6> labels{{"10 mV", "30 mV", "100 mV", "300 mV", "1 V", "3 V"}};
             constexpr std::array<float, 4> minors{{-48.0f, -27.5f, -17.5f, -6.5f}};
-            vcaKnob(dl, "vca_thr", P_VCA_THRESHOLD, 171, 478, 34.0f,
+            vcaKnob(dl, "vca_thr", P_VCA_THRESHOLD, Layout::thresholdX, Layout::knobY, Layout::knobRadius,
                     "THRESHOLD", "%.1f", " dB", majors.data(), labels.data(),
                     static_cast<int>(majors.size()), minors.data(), static_cast<int>(minors.size()));
         }
@@ -3134,7 +3153,7 @@ private:
             std::array<float, 9> majors{};
             for (size_t i = 0; i < ratios.size(); ++i)
                 majors[i] = duskaudio::vcaLaw::compressPosition(ratios[i]);
-            vcaKnob(dl, "vca_ratio", P_VCA_RATIO, 385, 478, 42.0f,
+            vcaKnob(dl, "vca_ratio", P_VCA_RATIO, Layout::compressionX, Layout::knobY, Layout::compressionRadius,
                     "COMPRESSION", "%.1f", ":1", majors.data(), labels.data(),
                     static_cast<int>(majors.size()), nullptr, 0,
                     &vcaCompressionHostToRatio, &vcaCompressionRatioToHost);
@@ -3143,21 +3162,21 @@ private:
             constexpr std::array<float, 5> majors{{-20.0f, -10.0f, 0.0f, 10.0f, 20.0f}};
             constexpr std::array<const char*, 5> labels{{"-20", "-10", "0", "+10", "+20"}};
             constexpr std::array<float, 4> minors{{-15.0f, -5.0f, 5.0f, 15.0f}};
-            vcaKnob(dl, "vca_out", P_VCA_OUT, 595, 478, 34.0f,
+            vcaKnob(dl, "vca_out", P_VCA_OUT, Layout::outputX, Layout::knobY, Layout::knobRadius,
                     "OUTPUT GAIN", "%.1f", " dB", majors.data(), labels.data(),
                     static_cast<int>(majors.size()), minors.data(), static_cast<int>(minors.size()));
         }
         // PULL/SC: printed under the threshold knob like the reference; the
         // switch itself takes the POWER button's place (global bypass covers
         // power).
-        spacedText(dl, 171, 534, 9.5f, kVcaInk, "PULL/SC", 0);
-        vcaPullSwitch(dl, 171, 594);
+        spacedText(dl, Layout::thresholdX, Layout::pullLegendY, 16.0f, kVcaInk, "PULL/SC", 0);
+        vcaPullSwitch(dl, Layout::thresholdX, Layout::pullY);
 
-        drawVcaMeterButtons(dl, 355, 562);
+        drawVcaMeterButtons(dl);
 
         // Meter: the reference's amber-lit window with blue scale, on the
         // shared needle meter. One -40..+20 dB scale reads level (0 VU =
-        // -12 dBFS, fleet calibration) or gain change per the selected source.
+        // -12 dBFS, fleet calibration) or gain reduction per the selected key.
         const auto scale = multicompp::ui_detail::vcaMeterScale(
             multicompp::ui_detail::vcaMeterSourceLabel(vcaMeterSource));
         // Gain change reads the plugin's needle movement (MultiCompGainReductionNeedle.hpp),
@@ -3171,17 +3190,15 @@ private:
         duskdaf::drawVuMeter(panel, dl, Meter::x0, Meter::y0, Meter::x1, Meter::y1, meterDb,
                              vcaVuNeedle, scale, VcaTheme::meterSurround, style);
 
-        // Model line above the meter and badge below it, at the FET face's
-        // sizes and spacing; the MIX trim is the same set-screw as Opto and
-        // FET, in the column right of the meter, level with the badge.
+        // Model line above the meter and badge below it, at the FET face's sizes; the MIX trim is the same set
+        // screw as Opto and FET, in the column right of the meter, level with the badge.
         constexpr float meterCentre = 0.5f * (Meter::x0 + Meter::x1);
-        spacedText(dl, meterCentre, 378.0f, 14.0f, VcaTheme::badgeInk, "VCA 60", 0, 0.12f);
-        spacedText(dl, meterCentre, 398.0f, 8.0f, kVcaInk, "REFERENCE SERIES", 0, 0.12f);
-        const float badge = Meter::y1 + 13.0f;
-        spacedText(dl, meterCentre, badge, 10.0f, VcaTheme::badgeInk, "MC-2", 0, 0.12f);
-        spacedText(dl, meterCentre, badge + 18.0f, 9.2f, kVcaInk, "COMPRESSOR/LIMITER", 0, 0.12f);
-        trimScrewKnob(dl, "vca_mix", P_MIX, 0.5f * (Meter::x1 + Layout::right - cheek), badge + 19.0f,
-                      13.0f, "MIX", "%.0f", "%", true);
+        spacedText(dl, meterCentre, Layout::modelY, 20.0f, VcaTheme::badgeInk, "VCA 60", 0, 0.12f);
+        spacedText(dl, meterCentre, Layout::seriesY, 13.0f, kVcaInk, "REFERENCE SERIES", 0, 0.12f);
+        spacedText(dl, meterCentre, Layout::badgeY, 20.0f, VcaTheme::badgeInk, "MC-2", 0, 0.12f);
+        spacedText(dl, meterCentre, Layout::nameplateY, 16.0f, kVcaInk, "COMPRESSOR/LIMITER", 0, 0.12f);
+        trimScrewKnob(dl, "vca_mix", P_MIX, Layout::mixX, Layout::mixY, Layout::mixRadius, "MIX", "%.0f", "%", true,
+                      true);
     }
 
     void vcaPullSwitch(ImDrawList* dl, float x, float y)
@@ -3209,8 +3226,8 @@ private:
         dl->AddRect(panel.P(barX - 16.0f, y - 9.0f), panel.P(barX + 16.0f, y + 9.0f), VcaTheme::barEdge, 2.5f * s, 0, s);
         if (ImGui::IsItemHovered())
             dl->AddRectFilled(panel.P(x - 40.0f, y - 15.0f), panel.P(x + 40.0f, y + 15.0f), VcaTheme::switchHover, 3.0f * s);
-        spacedText(dl, x - 48.0f, y - 6.0f, 9.0f, on ? kVcaInkDim : kVcaInk, "OUT", 1);
-        spacedText(dl, x + 48.0f, y - 6.0f, 9.0f, on ? kVcaInk : kVcaInkDim, "IN", -1);
+        spacedText(dl, x - 50.0f, y - 8.0f, 16.0f, on ? kVcaInkDim : kVcaInk, "OUT", 1);
+        spacedText(dl, x + 50.0f, y - 8.0f, 16.0f, on ? kVcaInk : kVcaInkDim, "IN", -1);
         if (clicked)
             setHostValue(P_SC_HP, multicompp::ui_detail::vcaSidechainSwitchTarget(
                 on, values[P_SC_HP], vcaLastScHp,
@@ -3302,10 +3319,13 @@ private:
             ring.markOuter = 15.0f;
             ring.markThickness = 1.7f;
             ring.markColor = kVcaInk;
-            ring.labelOffset = 27.0f;
-            ring.labelNudgeY = -5.5f;
+            // Numerals at the legend size (16). Those left of the dial end at their mark and those right of it
+            // start there, so the widest ("300 mV") stay clear of the ticks.
+            ring.labelOffset = multicompp::ui_detail::VcaFaceplateLayout::ringLabelOffset;
+            ring.labelNudgeY = -9.0f;
+            ring.labelSize = 16.0f;
             ring.labelColor = kVcaInk;
-            ring.labelCentred = true;
+            ring.labelCentred = false;
             ring.labelTracking = 0.06f;
             duskdaf::drawKnobRing(panel, dl, x, y, radius,
                                   majorValues, majorLabels, majorCount, nullptr, 0,
@@ -3352,29 +3372,21 @@ private:
         vcaKnobSplitter.Merge(dl);
     }
 
-    void drawVcaMeterButtons(ImDrawList* dl, float x, float y)
+    void drawVcaMeterButtons(ImDrawList* dl)
     {
         // Reference layout: source labels above three silver keycaps in black
         // bezels, a square-cornered bracket with METER beneath. Selection is
         // display-only UI state.
-        struct Cell { float x0, x1; };
-        constexpr std::array<Cell, 3> cells{{{0.0f, 82.0f}, {88.0f, 170.0f}, {176.0f, 262.0f}}};
-        constexpr float capTop = 14.0f, capBottom = 44.0f;
-        for (int i = 0; i < multicompp::ui_detail::kVcaMeterSourceCount; ++i)
+        using Layout = multicompp::ui_detail::VcaFaceplateLayout;
+        constexpr int count = multicompp::ui_detail::kVcaMeterSourceCount;
+        for (int i = 0; i < count; ++i)
         {
-            const float bx0 = x + cells[static_cast<size_t>(i)].x0;
-            const float bx1 = x + cells[static_cast<size_t>(i)].x1;
-            const float by0 = y + capTop, by1 = y + capBottom;
-            const char* label = multicompp::ui_detail::vcaMeterSourceLabel(i);
-            // The bezel below starts at capTop - 4 and is drawn after the
-            // label, so the bottom line has to finish clear of it.
-            if (i == 2)
-            {
-                spacedText(dl, 0.5f * (bx0 + bx1), y - 16.0f, 10.0f, kVcaInk, "GAIN", 0);
-                spacedText(dl, 0.5f * (bx0 + bx1), y - 5.0f, 10.0f, kVcaInk, "CHANGE", 0);
-            }
-            else
-                spacedText(dl, 0.5f * (bx0 + bx1), y - 5.0f, 10.0f, kVcaInk, label, 0);
+            const float bx0 = Layout::keysX + static_cast<float>(i) * (Layout::keyW + Layout::keyGap);
+            const float bx1 = bx0 + Layout::keyW;
+            const float by0 = Layout::keyY0, by1 = Layout::keyY1;
+            // One line each at the legend size; the bezel (by0 - 4) is drawn after it and clears it.
+            spacedText(dl, 0.5f * (bx0 + bx1), Layout::keyLegendY, 16.0f, kVcaInk,
+                       multicompp::ui_detail::vcaMeterKeyLegend(i), 0, 0.10f);
             char id[32];
             std::snprintf(id, sizeof(id), "##vca_meter_source_%d", i);
             const ImVec2 b0 = panel.P(bx0, by0), b1 = panel.P(bx1, by1);
@@ -3401,16 +3413,17 @@ private:
             if (clicked) vcaMeterSource = i;
         }
         // Square-ended bracket with METER in the gap.
-        const float bx0 = x - 4.0f, bx1 = x + cells.back().x1 + 4.0f;
-        const float byy = y + 66.0f;
+        constexpr float bx0 = Layout::keysX - 4.0f;
+        constexpr float bx1 = Layout::keysX + count * Layout::keyW + (count - 1) * Layout::keyGap + 4.0f;
+        constexpr float byy = Layout::keyBracketY;
         const float s = panel.scale();
-        const float gap = 34.0f;
-        const float mid = 0.5f * (bx0 + bx1);
+        constexpr float gap = 36.0f;
+        constexpr float mid = 0.5f * (bx0 + bx1);
         dl->AddLine(panel.P(bx0, byy), panel.P(mid - gap, byy), kVcaInk, 2.0f * s);
         dl->AddLine(panel.P(mid + gap, byy), panel.P(bx1, byy), kVcaInk, 2.0f * s);
         dl->AddLine(panel.P(bx0, byy - 9.0f), panel.P(bx0, byy), kVcaInk, 2.0f * s);
         dl->AddLine(panel.P(bx1, byy - 9.0f), panel.P(bx1, byy), kVcaInk, 2.0f * s);
-        spacedText(dl, mid, byy - 7.0f, 11.0f, kVcaInk, "METER", 0);
+        spacedText(dl, mid, byy - 8.0f, 16.0f, kVcaInk, "METER", 0);
     }
 
     float levelMeterDb(bool output) const
