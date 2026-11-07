@@ -53,6 +53,9 @@ next to the original Multi-Comp without replacing it. Thank you to everyone who 
 - **VCA's PULL/SC**, pressed in a fresh editor, engages the sidechain filter at 20 Hz. It used 500 Hz, the top of
   the range, which the Opto, Bus and Digital faces then applied after a mode change.
 - **The CLAP version reports its version number and home page** to the host; it reported none.
+- **FET Attack and Release read as their dials in your host.** Hosts showed them in milliseconds that were not
+  times (Release "50 ms" was the slowest setting, about a second); AU, VST3 and CLAP hosts now show the same 1 to 7
+  readings as the face, 7 the fastest, and take typed dial readings. LV2 hosts still show plain numbers.
 - **The FET factory presets do what their names say.** Vocal Presence, Modern Pop Control, Room Nuke, Rock Bass
   Anchor, Funk Rhythm Guitar and EDM Pump all loaded with slow attack and release dials (about Attack 2, Release 1
   to 2), so Room Nuke and EDM Pump did not pump. They now set the dials they were meant to: Room Nuke at Attack 6,

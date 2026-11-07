@@ -292,7 +292,7 @@ SETTINGS in the mode row opens a drawer over the face with every control that no
 - **Latency is fixed.** MC-2 reports the same latency in every mode and in bypass: 73 samples at 44.1 and 48 kHz (about 1.5 ms), 79 at 88.2 and 96 kHz, 91 at 176.4 and 192 kHz. Switching modes never shifts the track. Only the lookaheads in DIGITAL and MULTIBAND add to it; set them before you record or bounce, because some hosts read a new latency only when playback restarts.
 - **Switches duck.** A mode change, an OVERSAMPLING change and FET BLACK's RATIO moving into or out of ALL dip the output for a few milliseconds, and a newly entered mode (or ALL) starts from rest. Avoid automating them under exposed material.
 - **Factory presets leave SETTINGS alone,** apart from FET BLACK presets, which return the drawer's FET BLACK group to its defaults. User presets restore everything except BYPASS.
-- **FET automation readouts.** In your host's automation lanes, FET Attack and FET Release keep the millisecond scale of the original Multi-Comp. Those numbers rise toward the fast end of the dial and are not attack or release times; set the timing with the 1 to 7 dials on the face.
+- **FET automation readouts.** Your host shows FET Attack and FET Release as the face's 1 to 7 dial readings, 7 the fastest, and takes typed dial readings (FET Attack also takes SLO). LV2 hosts cannot show custom text: there they read as plain numbers, Attack 0 to 1 and Release 50 to 1100, rising toward the fast end of the dial. They are not times.
 
 ### Known differences from the reference units
 
