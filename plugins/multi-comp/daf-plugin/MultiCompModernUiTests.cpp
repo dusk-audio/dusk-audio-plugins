@@ -131,25 +131,11 @@ struct Host
                 [](const multicompp::Param& p) { return multicompp::hostDefault(p); },
                 [](const multicompp::BandParam& p, int) { return multicompp::hostDefault(p); });
         ui.parameter(pid(ParamId::Mode), static_cast<float>(mode));
-        faceMode = mode;
         frame(); frame();
     }
-    // The face the pointer positions below belong to (the mode the host was opened in, unless a test says). A face
-    // laid out on the 1120 x 380 canvas (OPTO, FET BLACK, FET BLUE) takes canvas coordinates as they are.
-    int faceMode = 0;
-    static bool canvasFace(int mode) noexcept { return mode == 0 || mode == 1 || mode == 4; }
-    // The pointer at (x, y) on the face of faceMode: a face still authored on its own 1120 x 380 canvas, where its
-    // controls below were measured, is drawn there and scaled into the face area of the current canvas
-    // (MultiCompUI::beginLegacyFace). A negative position stays off the window.
-    void frame(float x = -100, float y = -100, bool down = false)
-    {
-        if (x >= 0.0f && y >= 0.0f && !canvasFace(faceMode))
-        {
-            x *= DAF::kLegacyFaceScale;
-            y = DAF::kLegacyFaceY + (y - DAF::kLegacyFaceTopY) * DAF::kLegacyFaceScale;
-        }
-        canvas(x, y, down);
-    }
+    // The pointer at (x, y) on a face: every face is laid out on the 1120 x 380 canvas, so a face position is a canvas
+    // position (each face's layout is in ui_detail). A negative position stays off the window.
+    void frame(float x = -100, float y = -100, bool down = false) { canvas(x, y, down); }
     // The pointer at (x, y) on the 1120 x 380 canvas itself: the header, the mode row and the settings drawer (their
     // controls' positions: At below).
     void canvas(float x = -100, float y = -100, bool down = false)
@@ -254,9 +240,8 @@ constexpr std::array<Control, 19> controls{{
     {7, pid(ParamId::Crossover3), Modern::L::bandBoundaryX(2, 4), Modern::faderY}
 }};
 
-// A knob of every hardware face, where the editor draws it at the default size (a face still on the canvas it was
-// authored on sits 274 px higher on screen than its own coordinates). Each starts away from the top of its travel (Mix at 50 %), so the
-// hold's upward drag writes. FET's Mix trim is one of four faces' controls for the same parameter: Opto, VCA and
+// A knob of every hardware face, where the editor draws it at the default size (canvas coordinates, from each face's
+// layout). Each starts away from the top of its travel (Mix at 50 %), so the hold's upward drag writes. FET's Mix trim is one of four faces' controls for the same parameter: Opto, VCA and
 // Studio VCA draw their own elsewhere, so a gesture must follow the control, not the parameter.
 constexpr std::array<Control, 8> hardwareControls{{
     {0, pid(ParamId::OptoPeakReduction), multicompp::ui_detail::OptoFaceplateLayout::peakX,

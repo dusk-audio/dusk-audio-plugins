@@ -33,10 +33,6 @@ inline int choiceIndex(float hostValue, int count) noexcept
 // 17 px) is met in design px.
 inline constexpr float kDesignWidth = 1120.0f;
 inline constexpr float kDesignHeight = 380.0f;
-// The canvas the faces were authored on (the same 1120 x 380). A face not yet laid out at the readability floor is
-// drawn on it as before and placed into the face area by one uniform scale (MultiCompUI::beginLegacyFace).
-inline constexpr float kFaceCanvasWidth = 1120.0f;
-inline constexpr float kFaceCanvasHeight = 380.0f;
 
 // The mode row under the header: the eight mode tabs, then AUTO MAKEUP, BYPASS and SETTINGS (16 px captions).
 struct ModeRowLayout
@@ -692,20 +688,6 @@ constexpr float kHeaderH = 44.0f;   // the title row
 constexpr float kModeRowY0 = multicompp::ui_detail::ModeRowLayout::y0;
 constexpr float kModeRowY1 = multicompp::ui_detail::ModeRowLayout::y1;
 constexpr float kFaceTop = multicompp::ui_detail::kFaceAreaTop;
-// A face still authored on the 1120 x 380 canvas spans visible-canvas y 70..380 there, under a 48 px header; it is
-// scaled to the current width and centred in the face area (beginLegacyFace).
-constexpr float kLegacyFaceW = multicompp::ui_detail::kFaceCanvasWidth;
-constexpr float kLegacyFaceH = multicompp::ui_detail::kFaceCanvasHeight;
-constexpr float kLegacyFaceTopY = 70.0f;
-constexpr float kLegacyFaceScale = kDesignW / kLegacyFaceW;
-constexpr float kLegacyFaceY = kFaceTop + 0.5f * ((kDesignH - kFaceTop) - (kLegacyFaceH - kLegacyFaceTopY) * kLegacyFaceScale);
-// Mode panels were authored in the original 760 px canvas. Translate that
-// canvas upward so every mode keeps its internal proportions while the retired
-// Global and Sidechain bands disappear completely from the visible layout.
-constexpr float kModeCanvasTop = 322.0f;
-constexpr float kModeCanvasBottom = 760.0f;
-constexpr float kLegacyHeaderH = 48.0f;   // the header the faces' canvas was authored under
-constexpr float kModeCanvasShiftY = kModeCanvasTop - kLegacyHeaderH;
 constexpr float kUiPi = duskdaf::DuskPanel::kPi;
 // Set to true only while collecting a host geometry measurement.
 constexpr bool kGeometryDiagnosticEnabled = false;
@@ -852,8 +834,7 @@ public:
 
         setGeometryConstraints(static_cast<uint32_t>(kDesignW), static_cast<uint32_t>(kDesignH), true);
         // The type scale (owner direction 2026-11-05): 16 legends, 17 values, 20 sections, 14 the family's version
-        // line, 22 / 24 the header's brand and title, 30 face titles. 9 to 13 remain for the faces not yet laid out
-        // for this canvas (beginLegacyFace).
+        // line and meter scales, 13 small print, 22 / 24 the header's brand and title, 30 face titles.
         static const float kFontSizes[] = {9.f, 11.f, 13.f, 14.f, 16.f, 17.f, 20.f, 22.f, 24.f, 30.f};
         fontSet = duskdaf::loadCrispFontSet(kFontSizes, 10, getScaleFactor());
         labelFont = fontSet.primary();
@@ -1002,8 +983,7 @@ protected:
         const bool drawerOpen = showSettings && !modalOpen;
         if (drawerOpen)
             ImGui::BeginDisabled();
-        drawModePanel(dl, scale, origin);
-        panel.begin(scale, origin, labelFont, this);
+        drawModePanel(dl);
         if (drawerOpen)
             ImGui::EndDisabled();
         if (modalOpen)
@@ -1287,14 +1267,6 @@ private:
         setParameterValue(p, hostValue);
         editParameter(p, false);
         if (p >= P_X1 && p <= P_X3) refreshCrossoverMirror();
-    }
-
-    void drawSection(ImDrawList* dl, float y0, float y1, const char* title)
-    {
-        dl->AddRectFilled(panel.P(8, y0), panel.P(kLegacyFaceW - 8, y1), kPanel, 5.0f * panel.scale());
-        dl->AddRect(panel.P(8, y0), panel.P(kLegacyFaceW - 8, y1), kLine, 5.0f * panel.scale(), 0, panel.scale());
-        if (title != nullptr && title[0] != '\0')
-            panel.text(dl, 22, y0 + 10, 11, kAccent, title, -1, true);
     }
 
     bool combo(const char* id, uint32_t p, const char* const* labels, int count,
@@ -1710,17 +1682,6 @@ private:
                     on ? palette.white : palette.whiteDim, label, on);
     }
 
-    // A face still authored on the 1120 x 380 canvas, in its own mode-canvas coordinates (faceY(), kModeCanvas*),
-    // scaled uniformly to the design width and centred in the face area. Each face leaves this as it is laid out for
-    // the current canvas (owner direction 2026-11-05).
-    void beginLegacyFace(float scale, ImVec2 origin)
-    {
-        const float faceScale = scale * kLegacyFaceScale;
-        panel.begin(faceScale,
-                    ImVec2(origin.x, origin.y + kLegacyFaceY * scale - (kLegacyFaceTopY + kModeCanvasShiftY) * faceScale),
-                    labelFont, this);
-    }
-
     // ---- Settings drawer ------------------------------------------------------------------------------------------
     // The parameters no face carries (owner direction 2026-11-05), over the face area and modal to it: SETTINGS in
     // the mode row opens and closes it, and so do its CLOSE button, a click on the face area outside it and Escape. Legends at 16 px and
@@ -2011,10 +1972,9 @@ private:
         return multicompp::ui_detail::fetSloAttackTypedHost(text, host);
     }
 
-    // The face of the current mode. OPTO, FET BLACK, FET BLUE, VCA, BUS and STUDIO VCA are laid out on the canvas
-    // itself (scale and origin are the canvas transform, as the caller left it); DIGITAL and MULTIBAND are still drawn
-    // on the face canvas they were authored on (beginLegacyFace) until each is laid out at the readability floor.
-    void drawModePanel(ImDrawList* dl, float scale, ImVec2 origin)
+    // The face of the current mode, laid out on the canvas in the face area under the mode row (each face's layout
+    // is in ui_detail).
+    void drawModePanel(ImDrawList* dl)
     {
         const int mode = multicompp::ui_detail::choiceIndex(value(P_MODE), 8);
         if (mode != facedMode)
@@ -2022,16 +1982,6 @@ private:
             facedMode = mode;
             resetModernFaces();
         }
-        // A face's own canvas reaches above the face area (the band its old toolbar had): clipped to the face area,
-        // or its backdrop covers the mode row.
-        const ImVec2 faceMin = panel.P(0.0f, kFaceTop), faceMax = panel.P(kDesignW, kDesignH);
-        bool clipped = false;
-        const auto legacyFace = [&] {
-            dl->PushClipRect(faceMin, faceMax, true);
-            clipped = true;
-            beginLegacyFace(scale, origin);
-            drawSection(dl, kModeCanvasTop, kModeCanvasBottom - 8, "");
-        };
         // Every face carries its own gain-reduction metering: the hardware
         // faces' analogue meters, Digital's VU and Multiband's band meters.
         // Deliberately exhaustive: adding a ninth mode must force a UI decision.
@@ -2046,8 +1996,6 @@ private:
             case 6: drawDigital(dl); break;
             case 7: drawMultiband(dl); break;
         }
-        if (clipped)
-            dl->PopClipRect();
     }
 
     // OPTO 2A's colours by role (kOptoInk and kOptoRed are its legend ink and red), sampled from the face as it

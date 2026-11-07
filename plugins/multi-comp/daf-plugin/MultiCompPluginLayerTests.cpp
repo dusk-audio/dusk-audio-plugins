@@ -858,7 +858,6 @@ void testFetFaceplateContract()
     const bool blueSharesFace = source.find("case 4: drawFet(dl, true)") != std::string::npos
         && source.find("drawFetBlueRatioButtons(dl") != std::string::npos
         && source.find("\"fet_blue_hr\"") != std::string::npos
-        && source.find("kModeCanvasTop + 42, 48, 300") == std::string::npos
         && ud::fetBlueRatioAfterPress(0, 0) == 1 && ud::fetBlueRatioAfterPress(1, 1) == 5
         && ud::fetBlueRatioAfterPress(5, 2) == 3 && ud::fetBlueRatioAfterPress(5, 1) == 1
         && ud::fetBlueRatioAfterPress(4, 3) == 0 && ud::fetBlueRatioAfterPress(3, 0) == 8
