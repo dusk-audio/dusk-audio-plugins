@@ -5,8 +5,9 @@ below the line is written to be pasted as it stands; a line marked [check] needs
 
 Sources: the branch `mc2/release-1.0.0` (`git log origin/main..HEAD`), DAF main through #109 (c74776b4), and for the
 measured differences the 2026-11-03 baseline (tools repo, `handoff/reports/mc2-instrument-audit-phase3-2026-11-03.md`;
-`parity-playbook.md`). The DSP changes since that baseline (bypass at activation, the switch duck) leave every render
-without a switch unchanged (commit 1bea349e), so its counts stand for 1.0.0.
+`parity-playbook.md`). The DSP changes since that baseline (bypass at activation, the switch duck, Digital's lookahead
+rounding, the sidechain low shelf in double) leave every default render unchanged and the parity report at its 37, so
+its counts stand for 1.0.0.
 
 ---
 
@@ -23,10 +24,11 @@ next to the original Multi-Comp without replacing it. Thank you to everyone who 
   Digital and Multiband; and FET Black's Threshold, Transient and Curve. A setting the current mode does not use
   stays in place, greyed out. Choosing a mode closes the drawer.
 - **Every face laid out again, for reading.** All eight faces are redrawn inside the same 1120 x 380 window, so that
-  at that size every control legend is at least 16 px and every value 17 px. The header has a mode row of its own:
-  the eight modes, AUTO MAKEUP, BYPASS and SETTINGS. FET Blue takes its reference unit's arrangement, with Headroom
-  above Mix between Input and Output, and the VCA meter keys read INPUT, OUTPUT and GR. The save-preset dialog,
-  typed values, tooltips and menus now use the faces' typeface at 17 px instead of a 13 px framework font.
+  at that size every control legend is at least 16 px and every value 17 px. They draw in Barlow Condensed, now
+  built into the plugin, so they look the same on every system. The header has a mode row of its own: the eight
+  modes, AUTO MAKEUP, BYPASS and SETTINGS. FET Blue takes its reference unit's arrangement, with Headroom above Mix
+  between Input and Output, and the VCA meter keys read INPUT, OUTPUT and GR. The save-preset dialog, typed values,
+  tooltips and menus now use the faces' typeface at 17 px instead of a 13 px framework font.
 - **Every switch fades.** Changing the mode or the Oversampling setting, or pressing or releasing FET Black's All
   button, while audio plays now fades the output out, makes the change in silence and fades it back in, all within
   a few milliseconds. Before, most switches cut straight across: the waveform jumped, entering VCA dropped out for
