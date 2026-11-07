@@ -3741,7 +3741,7 @@ void testBypassToggleResumesWithoutGlitch()
 // both sides come from one binary with nothing in between.
 void testBypassAtActivationEmitsAlignedDry()
 {
-    constexpr int blockSize = 256;
+    static constexpr int blockSize = 256;   // static: the render lambda sizes arrays with it uncaptured (MSVC C2975)
     constexpr int sampleRate = 48000;
     constexpr int totalSamples = sampleRate / 4;              // 250 ms, well past the 30 ms ramp
     constexpr int rampSamples = 30 * sampleRate / 1000;       // kBypassRampMs
@@ -6534,7 +6534,7 @@ void testLatencyMovingSwitchDucksTheDryPaths()
     constexpr double kRate = 48000.0;
     // 254 samples at 48 kHz: not a whole number of the 1 kHz tone's 48-sample periods, so a delay line that jumps by
     // it steps the waveform (5 ms, 240 samples, would land on the same phase and hide the jump).
-    constexpr float kLookaheadMs = 5.3f;
+    static constexpr float kLookaheadMs = 5.3f;   // static: lambdas below read it uncaptured (MSVC C3493)
     const std::vector<MultiCompMode> modes{MultiCompMode::VCA, MultiCompMode::Digital, MultiCompMode::Opto,
                                            MultiCompMode::Multiband, MultiCompMode::VCA, MultiCompMode::Multiband,
                                            MultiCompMode::Opto};
