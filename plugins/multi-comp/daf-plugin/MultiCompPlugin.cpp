@@ -365,9 +365,10 @@ protected:
         duskaudio::ScopedFlushDenormals guard;
         if (frames == 0)
         {
-            // Still publish a latched latency change: some hosts probe with
-            // empty blocks and the CLAP wrapper picks the value up at the
-            // next activate() regardless of block size.
+            // An empty block runs nothing, so the latency the DSP reports, that of
+            // the configuration its last block ran, cannot move here; the report
+            // is kept in step all the same. (DAF's VST3, CLAP and LV2 wrappers
+            // never call run() with no frames.)
             updateLatency();
             return;
         }

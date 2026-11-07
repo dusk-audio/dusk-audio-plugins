@@ -289,6 +289,8 @@ void MultiCompDSP::prepare(double sr, int blockSize)
     fadeCurve.assign(static_cast<size_t>(maxBlock), 1.0f);
     switchDuckCurve.assign(static_cast<size_t>(maxBlock), 1.0f);
     switchDuckDryCurve.assign(static_cast<size_t>(maxBlock), 1.0f);
+    switchDuckLatencyCurve.assign(static_cast<size_t>(maxBlock), 1.0f);
+    switchDuckListenCurve.assign(static_cast<size_t>(maxBlock), 1.0f);
     for (auto& line : delayedInput) line.assign(static_cast<size_t>(maxBlock), 0.0f);
     const size_t lookaheadSize = static_cast<size_t>(std::ceil(sampleRate * 0.01)) + 1u;
     for (auto& line : globalLookahead) line.assign(lookaheadSize, 0.0f);
@@ -604,12 +606,15 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     requested.fetRatio = params.fetRatio.load(std::memory_order_relaxed);   // read as fetRatioIndex() reads it
     requested.globalLookahead = params.globalLookahead.load(std::memory_order_relaxed);
     requested.digitalLookahead = params.digitalLookahead.load(std::memory_order_relaxed);
+    // Whether an external key reaches the detector (as useExternalSidechain below): True Peak skips Multiband's
+    // internal key only, so it decides which chain Listen hears there (listenChainFor).
+    const bool externalKey = params.externalSidechain.load(std::memory_order_relaxed) && sidechain != nullptr;
     if (switchDuckHeld.mode >= 0)
     {
         if (!switchChangesAudioPath(switchDuckHeld, requested))
             switchDuckHeld.mode = -1;   // switched back before silence: no switch, the fade turns round
         else
-            armSwitchDuckDryPaths(switchDuckHeld, requested);   // retargeted: the new target may move a dry path
+            armSwitchDuckDryPaths(switchDuckHeld, requested, externalKey);   // retargeted: it may move a dry path
     }
     else if (!firstBlock && lastMode >= 0)
     {
@@ -617,8 +622,8 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
                                 lastDigitalLookahead};
         if (switchChangesAudioPath(last, requested))
         {
-            armSwitchDuckDryPaths(last, requested);
-            if (switchDuckPosition > 0 || (switchDuckFadesDryPaths() && switchDuckDryPosition > 0))
+            armSwitchDuckDryPaths(last, requested, externalKey);
+            if (switchDuckSilentAt() > 0)
                 switchDuckHeld = last;                  // audible: fade the old configuration out first
             else
             {   // already silent: switch now, mute the realignment. A held switch is made here too: once its fade is
@@ -629,14 +634,13 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
             }
         }
     }
-    const int silentAt = std::max(switchDuckPosition, switchDuckFadesDryPaths() ? switchDuckDryPosition : 0);
+    const int silentAt = switchDuckSilentAt();
     if (switchDuckHeld.mode >= 0 && silentAt < nSamples)
     {
         if (silentAt > 0) processPart(0, silentAt);
         // The switch happens at silence only: a part that reset (non-finite recovery) or saw the request
         // withdrawn ends audible, and the rest then runs as any block does.
-        if (switchDuckHeld.mode >= 0 && switchDuckPosition == 0
-            && (!switchDuckFadesDryPaths() || switchDuckDryPosition == 0))
+        if (switchDuckHeld.mode >= 0 && switchDuckSilentAt() == 0)
         {
             holdPaddingThroughSwitch(switchDuckHeld.mode);
             switchDuckHeld.mode = -1;
@@ -1178,10 +1182,20 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
             }
     }
     // The switch duck shapes the wet path ahead of Mix, and the dry paths a switch moves below (switchDuck*).
-    const bool switchDuckActive = advanceSwitchDuck(nSamples);
+    int switchDuckShaped = 0;
+    const bool switchDuckActive = advanceSwitchDuck(nSamples, switchDuckShaped);
     if (switchDuckActive)
         for (int ch = 0; ch < nCh; ++ch)
             for (int i = 0; i < nSamples; ++i) out[ch][i] *= switchDuckCurve[static_cast<size_t>(i)];
+    if (switchDuckShaped > 0)
+    {
+        // Auto Makeup measures the samples the duck shapes, and the wet path's padding (at most the deepest) later
+        // still, as the duck left them: no gain reduction, so the measurement skips them (autoGainDuckSkip), and
+        // drops the window it was part-way through.
+        if (autoGainDuckSkip == 0) resetAutoGainMeasurement();
+        autoGainDuckSkip = std::max(autoGainDuckSkip,
+                                    switchDuckShaped + (hostLatencyPadding ? getMaximumLatencyPaddingSamples() : 0));
+    }
     padWetPath(out, nCh, nSamples);
     const float targetMix = globalMixTarget(mode);
     globalMixSmoother.setTarget(targetMix);
@@ -1189,16 +1203,27 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     // lookaheads). Keep the monitor history running even while Listen is off so
     // either direction of the crossfade starts between time-aligned signals.
     const int listenDelay = blockLatency + hostPadding;
+    // A switch between the chains Listen hears fades the key going into its delay line, so the fade reaches the
+    // listen output together with the splice it covers, however long that delay is.
+    if (switchDuckActive && switchDuckListenChain)
+        for (int ch = 0; ch < nCh; ++ch)
+        {
+            float* key = processedSidechain[static_cast<size_t>(ch)].data();
+            for (int i = 0; i < nSamples; ++i) key[i] *= switchDuckListenCurve[static_cast<size_t>(i)];
+        }
     processSidechainListenHistory(filteredSidechain, nCh, nSamples, listenDelay);
     // A switch that moves Mix's dry, or the latency every dry path is delayed by, fades those with the wet path:
     // Mix's dry, and with the latency the bypass and listen paths, whose delay lines change length at the switch.
-    if (switchDuckActive && switchDuckFadesDryPaths())
+    if (switchDuckActive && switchDuckDryMix)
         for (int ch = 0; ch < nCh; ++ch)
         {
-            const float* gain = switchDuckDryCurve.data();
             float* dryChannel = dry.data() + static_cast<size_t>(ch * maxBlock);
-            for (int i = 0; i < nSamples; ++i) dryChannel[i] *= gain[i];
-            if (!switchDuckDryLatency) continue;
+            for (int i = 0; i < nSamples; ++i) dryChannel[i] *= switchDuckDryCurve[static_cast<size_t>(i)];
+        }
+    if (switchDuckActive && switchDuckDryLatency)
+        for (int ch = 0; ch < nCh; ++ch)
+        {
+            const float* gain = switchDuckLatencyCurve.data();
             float* bypassChannel = bypassDry.data() + static_cast<size_t>(ch * maxBlock);
             float* listenChannel = processedSidechain[static_cast<size_t>(ch)].data();
             for (int i = 0; i < nSamples; ++i)
@@ -1235,14 +1260,17 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
         for (int ch = 0; ch < nCh; ++ch) applyMix(ch);
     if (!measureAutoGain)
     {
-        // Without the measurement each sample only advances the smoother and the hold count.
+        // Without the measurement each sample only advances the smoother and the hold and skip counts.
         fillRampCurve(autoGainSmoother, autoGainCurve.data(), nSamples);
         autoGainHoldSamples = std::max(0, autoGainHoldSamples - nSamples);
+        autoGainDuckSkip = std::max(0, autoGainDuckSkip - nSamples);
     }
     else
     for (int i = 0; i < nSamples; ++i)
     {
-        if (measureAutoGain)
+        if (autoGainDuckSkip > 0)
+            --autoGainDuckSkip;   // the switch duck's gain, not the compressor's: not measured
+        else
         {
             if (autoGainHoldSamples <= 0)
             {
@@ -1397,6 +1425,7 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
         return;
     }
     updateMeters(blockInputPeak, out, nCh, nSamples);
+    publishCarriedLatency(mode, blockLatency);
     firstBlock = false;
 }
 
@@ -1503,24 +1532,63 @@ bool MultiCompDSP::switchChangesAudioPath(const SwitchConfig& from, const Switch
     return mode == MultiCompMode::Opto && (fromFactor >= 2) != (toFactor >= 2);
 }
 
-// Which dry paths a switch from `from` to `to` moves (switchDuckDryMix, switchDuckDryLatency), armed until the duck
-// is idle again; a dry fade starts from full gain.
-void MultiCompDSP::armSwitchDuckDryPaths(const SwitchConfig& from, const SwitchConfig& to) noexcept
+// Which dry paths a switch from `from` to `to` moves (switchDuckDryMix, switchDuckDryLatency, switchDuckListenChain),
+// armed until the duck is idle again. Each path armed here that was not yet fading starts from full gain on its own
+// position, wherever the others are: a request that retargets a fade part-way arms it there.
+void MultiCompDSP::armSwitchDuckDryPaths(const SwitchConfig& from, const SwitchConfig& to, bool externalKey) noexcept
 {
+    const int full = switchDuckFadeSamples;
     // Flags left by a duck that has finished, but not yet been released by an idle block, belong to that switch.
-    if (switchDuckHeld.mode < 0 && switchDuckMuted == 0 && switchDuckPosition >= switchDuckFadeSamples
-        && switchDuckDryPosition >= switchDuckFadeSamples)
+    if (switchDuckHeld.mode < 0 && switchDuckMuted == 0 && switchDuckPosition >= full
+        && switchDuckDryPosition >= full && switchDuckLatencyPosition >= full && switchDuckListenPosition >= full)
     {
         switchDuckDryMix = false;
         switchDuckDryLatency = false;
+        switchDuckListenChain = false;
+    }
+    if (!switchDuckListenChain && listenChainFor(from.mode, externalKey) != listenChainFor(to.mode, externalKey))
+    {
+        switchDuckListenChain = true;
+        switchDuckListenPosition = full;
     }
     const bool latencyMoves = reportedLatencyFor(from) != reportedLatencyFor(to);
     const auto multiband = static_cast<int>(MultiCompMode::Multiband);
     const bool multibandDry = (from.mode == multiband) != (to.mode == multiband);
-    if (!latencyMoves && !multibandDry) return;
-    if (!switchDuckFadesDryPaths()) switchDuckDryPosition = switchDuckFadeSamples;
-    switchDuckDryMix = true;
-    switchDuckDryLatency = switchDuckDryLatency || latencyMoves;
+    if (!switchDuckDryMix && (latencyMoves || multibandDry))
+    {
+        switchDuckDryMix = true;
+        switchDuckDryPosition = full;
+    }
+    if (!switchDuckDryLatency && latencyMoves)
+    {
+        switchDuckDryLatency = true;
+        switchDuckLatencyPosition = full;
+    }
+}
+
+// The chain the sidechain takes before Listen's delay line in `mode`: VCA's own (its detector coupling and PULL/SC
+// response), the SC HP where the mode applies it and it is on (Opto and Digital at one Q, BUS at its own), or none
+// (the shelf EQ alone, which every mode runs in one state); True Peak on top but on Multiband's internal key. Two
+// modes with one chain hand Listen one signal: a switch between them leaves it running. The SC HP, True Peak and the
+// key are not held through a switch: both sides read them as they are.
+int MultiCompDSP::listenChainFor(int mode, bool externalKey) const noexcept
+{
+    const auto m = static_cast<MultiCompMode>(std::clamp(mode, 0, 7));
+    const bool highPass = (m == MultiCompMode::Opto || m == MultiCompMode::Bus || m == MultiCompMode::Digital)
+        && params.sidechainHP.load(std::memory_order_relaxed) >= 1.0f;
+    const int chain = m == MultiCompMode::VCA ? 1 : !highPass ? 0 : m == MultiCompMode::Bus ? 3 : 2;
+    const bool truePeak = params.truePeakEnable.load(std::memory_order_relaxed)
+        && (m != MultiCompMode::Multiband || externalKey);
+    return chain * 2 + (truePeak ? 1 : 0);
+}
+
+int MultiCompDSP::switchDuckSilentAt() const noexcept
+{
+    int position = switchDuckPosition;
+    if (switchDuckDryMix) position = std::max(position, switchDuckDryPosition);
+    if (switchDuckDryLatency) position = std::max(position, switchDuckLatencyPosition);
+    if (switchDuckListenChain) position = std::max(position, switchDuckListenPosition);
+    return position;
 }
 
 // The latency the host is told for a configuration, its mode at its lookaheads: getHostLatencySamples() with host
@@ -1553,45 +1621,80 @@ void MultiCompDSP::resetSwitchDuck() noexcept
     switchDuckMuted = 0;
     switchDuckPosition = switchDuckFadeSamples;
     switchDuckDryPosition = switchDuckFadeSamples;
+    switchDuckLatencyPosition = switchDuckFadeSamples;
+    switchDuckListenPosition = switchDuckFadeSamples;
     switchDuckDryMix = false;
     switchDuckDryLatency = false;
+    switchDuckListenChain = false;
+    autoGainDuckSkip = 0;
+    // No block has run since: the reports read the parameters, which the first block will run.
+    carriedLatency.store(-1, std::memory_order_relaxed);
+    carriedHostLatency.store(-1, std::memory_order_relaxed);
 }
 
-// The block's wet gain into switchDuckCurve, and the dry paths' into switchDuckDryCurve while they are ducked,
-// advancing the duck: down while the old configuration is held, held at 0 while muted, then up (a smoothstep of
-// the position: no slope step at either end). False, and the curves untouched, while the duck is idle; the dry
-// paths are released there.
-bool MultiCompDSP::advanceSwitchDuck(int nSamples) noexcept
+// The latencies the output carries once a block part has run in `mode` at its core `latency` (blockLatency): from
+// here the reports are that configuration's until a block runs another, whatever the parameters ask for meanwhile.
+void MultiCompDSP::publishCarriedLatency(MultiCompMode mode, int latency) noexcept
 {
+    carriedLatency.store(latency, std::memory_order_relaxed);
+    carriedHostLatency.store(latency + getMaximumLatencyPaddingSamples() - baseLatencyForMode(mode),
+                             std::memory_order_relaxed);
+}
+
+// The block's wet gain into switchDuckCurve, and each armed dry path's into its own curve (switchDuckDryCurve,
+// switchDuckLatencyCurve, switchDuckListenCurve), advancing the duck: down while the old configuration is held, held
+// at 0 while muted, then up (a smoothstep of the position: no slope step at either end). `shaped`: how many of the
+// block's first samples it shapes (after them every path is at full again). False, and the curves untouched, while
+// the duck is idle: the dry paths are released there.
+bool MultiCompDSP::advanceSwitchDuck(int nSamples, int& shaped) noexcept
+{
+    shaped = 0;
     const bool held = switchDuckHeld.mode >= 0;
-    const bool dryPaths = switchDuckFadesDryPaths();
-    if (!held && switchDuckMuted == 0 && switchDuckPosition >= switchDuckFadeSamples
-        && (!dryPaths || switchDuckDryPosition >= switchDuckFadeSamples))
+    const int full = switchDuckFadeSamples;
+    const bool dryMix = switchDuckDryMix, latency = switchDuckDryLatency, listenChain = switchDuckListenChain;
+    const auto open = [&]() noexcept {
+        return switchDuckPosition >= full && (!dryMix || switchDuckDryPosition >= full)
+            && (!latency || switchDuckLatencyPosition >= full) && (!listenChain || switchDuckListenPosition >= full);
+    };
+    if (!held && switchDuckMuted == 0 && open())
     {
         switchDuckDryMix = false;
         switchDuckDryLatency = false;
+        switchDuckListenChain = false;
         return false;
     }
-    const float inverseFade = 1.0f / static_cast<float>(switchDuckFadeSamples);
+    const float inverseFade = 1.0f / static_cast<float>(full);
     const auto smoothstep = [inverseFade](int position) noexcept {
         const float x = static_cast<float>(position) * inverseFade;
         return x * x * (3.0f - 2.0f * x);
     };
+    // One step of a position: down while held, up once the mute has passed.
+    const auto step = [held, full](int& position, bool muted) noexcept {
+        if (held) { if (position > 0) --position; }
+        else if (!muted && position < full) ++position;
+    };
     for (int i = 0; i < nSamples; ++i)
     {
-        if (held)
-        {
-            if (switchDuckPosition > 0) --switchDuckPosition;
-            if (dryPaths && switchDuckDryPosition > 0) --switchDuckDryPosition;
-        }
-        else if (switchDuckMuted > 0) --switchDuckMuted;
-        else
-        {
-            if (switchDuckPosition < switchDuckFadeSamples) ++switchDuckPosition;
-            if (dryPaths && switchDuckDryPosition < switchDuckFadeSamples) ++switchDuckDryPosition;
-        }
+        const bool muted = !held && switchDuckMuted > 0;
+        if (muted) --switchDuckMuted;
+        step(switchDuckPosition, muted);
         switchDuckCurve[static_cast<size_t>(i)] = smoothstep(switchDuckPosition);
-        if (dryPaths) switchDuckDryCurve[static_cast<size_t>(i)] = smoothstep(switchDuckDryPosition);
+        if (dryMix)
+        {
+            step(switchDuckDryPosition, muted);
+            switchDuckDryCurve[static_cast<size_t>(i)] = smoothstep(switchDuckDryPosition);
+        }
+        if (latency)
+        {
+            step(switchDuckLatencyPosition, muted);
+            switchDuckLatencyCurve[static_cast<size_t>(i)] = smoothstep(switchDuckLatencyPosition);
+        }
+        if (listenChain)
+        {
+            step(switchDuckListenPosition, muted);
+            switchDuckListenCurve[static_cast<size_t>(i)] = smoothstep(switchDuckListenPosition);
+        }
+        if (held || muted || !open()) shaped = i + 1;
     }
     return true;
 }
@@ -2996,6 +3099,8 @@ void MultiCompDSP::updateMeters(float inPeak, float* const* out, int nCh, int nS
 
 int MultiCompDSP::getLatencySamples() const noexcept
 {
+    const int carried = carriedLatency.load(std::memory_order_relaxed);
+    if (carried >= 0) return carried;   // what the last block ran
     const auto mode = static_cast<MultiCompMode>(std::clamp(params.mode.load(std::memory_order_relaxed), 0, 7));
     const float globalLookaheadMs = params.globalLookahead.load(std::memory_order_relaxed);
     const float digitalLookaheadMs = params.digitalLookahead.load(std::memory_order_relaxed);
@@ -3034,8 +3139,12 @@ int MultiCompDSP::getMaximumLatencyPaddingSamples() const noexcept
 
 int MultiCompDSP::getHostLatencySamples() const noexcept
 {
+    const int carried = carriedHostLatency.load(std::memory_order_relaxed);
+    if (carried >= 0) return carried;   // what the last block ran
     const auto mode = static_cast<MultiCompMode>(std::clamp(params.mode.load(std::memory_order_relaxed), 0, 7));
-    return getLatencySamples() + getMaximumLatencyPaddingSamples() - baseLatencyForMode(mode);
+    return latencySamplesForMode(mode, params.globalLookahead.load(std::memory_order_relaxed),
+                                 params.digitalLookahead.load(std::memory_order_relaxed))
+        + getMaximumLatencyPaddingSamples() - baseLatencyForMode(mode);
 }
 
 int MultiCompDSP::getLatencyPaddingSamples() const noexcept
