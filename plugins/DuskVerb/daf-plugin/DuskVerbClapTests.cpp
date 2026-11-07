@@ -23,12 +23,24 @@
 #include "clap/events.h"
 #include "clap/ext/audio-ports.h"
 #include "clap/ext/params.h"
-#include "clap/ext/preset-load.h"
 #include "clap/ext/state.h"
 #include "clap/factory/plugin-factory.h"
-#include "clap/factory/preset-discovery.h"
 #include "clap/plugin.h"
 #include "clap/process.h"
+// The MIX LOCK contract loads a factory preset through CLAP preset-load, which DAF ships
+// with CLAP factory presets. A DAF without them still serves the programs to VST3 and AU
+// hosts but gives this test nothing to load through over CLAP, so the contract is not
+// built and the run says so: MIX LOCK's host wiring then has no hosted test. CMake sets
+// DUSKVERB_CLAP_PRESET_LOAD from DAF's own headers, the check the shared ClapPresets guard
+// uses (DUSK_DAF_HAS_CLAP_PRESETS in DuskDafPlugin.cmake), never from whatever CLAP SDK
+// sits on an include path.
+#ifndef DUSKVERB_CLAP_PRESET_LOAD
+#error "DUSKVERB_CLAP_PRESET_LOAD comes from CMake (DUSK_DAF_HAS_CLAP_PRESETS)"
+#endif
+#if DUSKVERB_CLAP_PRESET_LOAD
+#include "clap/ext/preset-load.h"
+#include "clap/factory/preset-discovery.h"
+#endif
 
 namespace {
 
@@ -784,8 +796,9 @@ void audioContract(const clap_plugin_factory_t* factory, const Instance& probe)
 }
 
 // A host reset (clap_plugin::reset) goes straight to the plugin's realtime reset:
-// the tail is gone on the next block, the host is not asked for a restart (which
-// would clear nothing, see DuskVerbPlugin::deactivate), and the instance rings again.
+// the tail is gone on the next block, the host is not asked for a restart (which a
+// host may ignore, and whose deactivate() keeps the engines' buffers, see
+// DuskVerbPlugin::deactivate), and the instance rings again.
 // This runs the default program; DuskVerbDSP::clearState() names the presets whose
 // output match EQ it cannot clear.
 void resetContract(const clap_plugin_factory_t* factory)
@@ -845,6 +858,7 @@ void resetContract(const clap_plugin_factory_t* factory)
 
 } // namespace
 
+#if DUSKVERB_CLAP_PRESET_LOAD
 // MIX LOCK end to end through the host: it travels with the session, off by
 // default, and while it is on a factory preset loaded through the host's
 // preset-load path (DAF's program path) leaves Mix and Bus as they were; off,
@@ -908,6 +922,7 @@ void mixLockContract(const clap_plugin_factory_t* factory)
     checkNear(instance.get(mixId), presetMix, 1e-6, "unlocked, a host preset load writes the preset's Mix");
     checkNear(instance.get(busId), 0.0, 1e-6, "unlocked, a host preset load writes the preset's Bus");
 }
+#endif
 
 int main(int argc, char** argv)
 {
@@ -945,7 +960,11 @@ int main(int argc, char** argv)
     stateContract(probe);
     audioContract(library.factory, probe);
     resetContract(library.factory);
+#if DUSKVERB_CLAP_PRESET_LOAD
     mixLockContract(library.factory);
+#else
+    std::printf("SKIP: MIX LOCK host preset-load contract (this DAF has no CLAP preset-load)\n");
+#endif
 
     if (failures != 0)
     {

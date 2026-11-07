@@ -235,7 +235,7 @@ protected:
     // JUCE build clears nothing on deactivate, and matching it is what keeps the
     // per-preset null test bit-identical across a host deactivate/reactivate.
     void deactivate() override { dsp_.releaseResources(); }
-    // Host reset (CLAP reset, AU Reset), on the audio thread: silence the tank now.
+    // Host reset (CLAP reset on the audio thread, AU Reset with render held off): silence the tank now.
     void reset() override { dsp_.clearState(); }
     void sampleRateChanged(double sr) override
     {

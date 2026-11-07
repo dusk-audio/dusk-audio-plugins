@@ -333,6 +333,10 @@ enable_testing()
     if(UNIX OR WIN32)
         add_executable(DuskVerbClapTest DuskVerbClapTests.cpp)
         target_include_directories(DuskVerbClapTest PRIVATE "${DAF_PATH}/daf/src")
+        # The MIX LOCK contract is built when DAF's own CLAP headers carry preset loading: the
+        # check dusk_daf_add_clap_preset_test uses (DUSK_DAF_HAS_CLAP_PRESETS, DuskDafPlugin.cmake).
+        target_compile_definitions(DuskVerbClapTest PRIVATE
+            DUSKVERB_CLAP_PRESET_LOAD=$<BOOL:${DUSK_DAF_HAS_CLAP_PRESETS}>)
         target_link_libraries(DuskVerbClapTest PRIVATE ${CMAKE_DL_LIBS})
         add_dependencies(DuskVerbClapTest duskverb-2-clap)
         add_test(NAME DuskVerbClapHosted COMMAND DuskVerbClapTest $<TARGET_FILE:duskverb-2-clap>)
@@ -370,9 +374,9 @@ endif()
 # wrapper regressions (dusk-audio/plugins#231, #233) are covered for this plugin
 # only by 4k-eq, TapeMachine and tape-echo continuing to run that harness.
 dusk_daf_add_resize_test(duskverb-2)
-# Aimed at the centre of the hero DECAY knob, in editor coordinates at the
-# default 1200x800 window (design scale 1.0, no letterboxing, so design
-# coordinates ARE window coordinates there). Keep this in step with kHeroCx /
+# Aimed at the centre of the hero DECAY knob, in window pixels at the default
+# 1050x700 window: the 1200x800 design drawn at scale 0.875 with no letterboxing,
+# so this is kHeroCx / kHeroCy times 0.875. Keep it in step with kHeroCx /
 # kHeroCy in DuskVerbUI.cpp: if a layout pass moves the knob, phase A of the
 # harness fails and names the coordinate to update.
 dusk_daf_add_ui_drag_test(duskverb-2 525 159)   # the DECAY hero, in window px at the default size

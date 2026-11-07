@@ -469,9 +469,23 @@ endmacro()
 # own .clap, and processes audio after each load. See DafClapPresetsTest.cpp.
 #
 # Call this for EVERY plugin with DAF_PLUGIN_WANT_PROGRAMS. Inert against a DAF
-# that predates CLAP factory presets (it has no discovery header), so the guard can
-# land before the DAF pin that turns the feature on. Same platform limits and
-# macro-not-function reasoning as the guards above.
+# that predates CLAP factory presets (DUSK_DAF_HAS_CLAP_PRESETS below is false), so
+# the guard can land before the DAF pin that turns the feature on. Same platform
+# limits and macro-not-function reasoning as the guards above.
+#
+# DUSK_DAF_HAS_CLAP_PRESETS is the one check of it: DAF's own CLAP headers carry
+# both preset-discovery and preset-load. Any plugin test that loads presets through
+# CLAP takes it as a compile definition (DuskVerb's MIX LOCK contract does) rather
+# than testing with __has_include, which would also find a CLAP SDK on a system
+# include path while DAF has neither header, and that SDK's headers then collide
+# with DAF's vendored copies.
+if(EXISTS "${DAF_PATH}/daf/src/clap/factory/preset-discovery.h"
+   AND EXISTS "${DAF_PATH}/daf/src/clap/ext/preset-load.h")
+    set(DUSK_DAF_HAS_CLAP_PRESETS TRUE)
+else()
+    set(DUSK_DAF_HAS_CLAP_PRESETS FALSE)
+endif()
+
 macro(dusk_daf_add_clap_preset_test _dusk_cp_plugin)
     if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
         if(NOT TARGET ${_dusk_cp_plugin}-clap)
@@ -483,7 +497,7 @@ macro(dusk_daf_add_clap_preset_test _dusk_cp_plugin)
 
     if(CMAKE_CROSSCOMPILING OR WIN32)
         message(STATUS "CLAP preset test skipped for ${_dusk_cp_plugin} (unsupported platform)")
-    elseif(NOT EXISTS "${DAF_PATH}/daf/src/clap/factory/preset-discovery.h")
+    elseif(NOT DUSK_DAF_HAS_CLAP_PRESETS)
         message(STATUS "CLAP preset test skipped for ${_dusk_cp_plugin} (this DAF has no CLAP factory presets)")
     else()
         enable_testing()
