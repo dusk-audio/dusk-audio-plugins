@@ -689,15 +689,11 @@ constexpr float kModeRowY0 = multicompp::ui_detail::ModeRowLayout::y0;
 constexpr float kModeRowY1 = multicompp::ui_detail::ModeRowLayout::y1;
 constexpr float kFaceTop = multicompp::ui_detail::kFaceAreaTop;
 constexpr float kUiPi = duskdaf::DuskPanel::kPi;
-// Set to true only while collecting a host geometry measurement.
-constexpr bool kGeometryDiagnosticEnabled = false;
 
-constexpr ImU32 kPanel = IM_COL32(35, 37, 43, 255);
 constexpr ImU32 kPanelRaised = IM_COL32(43, 46, 54, 255);
 constexpr ImU32 kLine = IM_COL32(75, 79, 90, 255);
 constexpr ImU32 kText = IM_COL32(232, 234, 238, 255);
 constexpr ImU32 kDim = IM_COL32(162, 168, 180, 255);
-constexpr ImU32 kAccent = IM_COL32(65, 194, 220, 255);
 constexpr ImU32 kHeaderGreen = IM_COL32(76, 103, 48, 255);
 constexpr ImU32 kHeaderGreenDark = IM_COL32(39, 57, 24, 255);
 constexpr ImU32 kOptoInk = IM_COL32(31, 32, 31, 255);
@@ -933,24 +929,6 @@ protected:
         const float scale = std::min(winW / kDesignW, winH / kDesignH);
         const ImVec2 origin((winW - kDesignW * scale) * 0.5f,
                             (winH - kDesignH * scale) * 0.5f);
-        if (kGeometryDiagnosticEnabled && !geometryDiagnosticLogged)
-        {
-            GLint viewport[4]{};
-            glGetIntegerv(GL_VIEWPORT, viewport);
-            std::fprintf(stderr,
-                         "[MultiCompUI geometry] width=%u height=%u scaleFactor=%.3f "
-                         "design=%.0fx%.0f scale=%.6f origin=(%.3f,%.3f) "
-                         "glViewport=(%d,%d %dx%d)\n",
-                         static_cast<unsigned>(getWidth()),
-                         static_cast<unsigned>(getHeight()),
-                         static_cast<double>(getScaleFactor()),
-                         static_cast<double>(kDesignW), static_cast<double>(kDesignH),
-                         static_cast<double>(scale), static_cast<double>(origin.x),
-                         static_cast<double>(origin.y), viewport[0], viewport[1],
-                         viewport[2], viewport[3]);
-            std::fflush(stderr);
-            geometryDiagnosticLogged = true;
-        }
         panel.begin(scale, origin, labelFont, this);
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
@@ -1063,7 +1041,6 @@ private:
     bool showSupporters = false;
     bool showSettings = false;   // the settings drawer (drawSettingsDrawer)
     bool escapeOwnedLastFrame = false;   // a typed value, a held control or a popup had Escape last frame
-    bool geometryDiagnosticLogged = false;
     bool parameterMirrorSeeded = false;
     static constexpr uint32_t kNoCrossover = ~uint32_t(0);
     // The crossover handle under an active drag. Owns both the open automation
@@ -1267,45 +1244,6 @@ private:
         setParameterValue(p, hostValue);
         editParameter(p, false);
         if (p >= P_X1 && p <= P_X3) refreshCrossoverMirror();
-    }
-
-    bool combo(const char* id, uint32_t p, const char* const* labels, int count,
-               float x, float y, float w, const char* caption)
-    {
-        panel.text(ImGui::GetWindowDrawList(), x, y, 9.5f, kDim, caption, 0, true);
-        const int selected = multicompp::ui_detail::choiceIndex(value(p), count);
-        const ImVec2 p0 = panel.P(x - w * 0.5f, y + 16);
-        const ImVec2 p1 = panel.P(x + w * 0.5f, y + 43);
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        dl->AddRectFilled(p0, p1, IM_COL32(24, 25, 29, 255), 3 * panel.scale());
-        dl->AddRect(p0, p1, kLine, 3 * panel.scale(), 0, panel.scale());
-        panel.text(dl, x, y + 23, 10, kText, labels[selected], 0);
-        ImGui::SetCursorScreenPos(p0);
-        ImGui::SetNextItemWidth(p1.x - p0.x);
-        char hiddenId[64];
-        std::snprintf(hiddenId, sizeof(hiddenId), "##%s", id);
-        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(0, 0, 0, 0));
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(0, 0, 0, 0));
-        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(0, 0, 0, 0));
-        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, IM_COL32(0, 0, 0, 0));
-        bool changed = false;
-        const bool open = ImGui::BeginCombo(hiddenId, labels[selected], ImGuiComboFlags_NoArrowButton);
-        ImGui::PopStyleColor(4);
-        if (open)
-        {
-            for (int i = 0; i < count; ++i)
-            {
-                const bool isSelected = i == selected;
-                if (ImGui::Selectable(labels[i], isSelected))
-                {
-                    setValue(p, static_cast<float>(i));
-                    changed = true;
-                }
-                if (isSelected) ImGui::SetItemDefaultFocus();
-            }
-            ImGui::EndCombo();
-        }
-        return changed;
     }
 
     bool headerChevron(ImDrawList* dl, const char* id, float cx, bool left)
@@ -1870,27 +1808,6 @@ private:
         if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !escapeOwnedLastFrame)
             showSettings = false;
         return grip;
-    }
-
-    void knob(ImDrawList* dl, const char* id, uint32_t p, float x, float y,
-              const char* label, const char* fmt, const char* suffix,
-              bool applicable = true)
-    {
-        if (!applicable) ImGui::BeginDisabled();
-        beginTrackedControl(p, id, applicable);
-        panel.knob(id, p, hostMinimum(p), hostMaximum(p), x, y, 25, values[p],
-                   hostDefaultValue(p), false, true,
-                   fmt, suffix, kPanelRaised, false, true, nullptr, false, 1.0f, 0.0f,
-                   nullptr, false, nullptr, false, 0.0f, 0.0f, false, false, 9.5f,
-                   false, false, &knobHostToPlain, &knobPlainToHost, this);
-        endTrackedControl();
-        if (!applicable)
-        {
-            ImGui::EndDisabled();
-            dl->AddCircleFilled(panel.P(x, y), 33.0f * panel.scale(),
-                                IM_COL32(21, 22, 25, 145), 48);
-        }
-        panel.text(dl, x, y + 49, 9.5f, applicable ? kText : kDim, label, 0, true);
     }
 
     float hostDefaultValue(uint32_t p) const
@@ -5320,26 +5237,6 @@ private:
         return instance != nullptr && multiCompGetVcaGainReductionNeedle != nullptr
             ? multiCompGetVcaGainReductionNeedle(instance)
             : static_cast<float>(multicompp::dialReading(multicompp::kVcaNeedle, meter(kMeterMaster)));
-    }
-
-    void drawMeter(ImDrawList* dl, float x, float y, float w, float h, float gr, ImU32 color, const char* label)
-    {
-        dl->AddRectFilled(panel.P(x, y), panel.P(x + w, y + h), IM_COL32(12, 13, 16, 255), 3 * panel.scale());
-        const float amount = std::clamp(-gr / 20.0f, 0.0f, 1.0f);
-        constexpr int segments = 16;
-        const float gap = 2.0f;
-        const float sh = (h - gap * (segments - 1) - 8) / segments;
-        for (int i = 0; i < segments; ++i)
-        {
-            const float sy = y + h - 5 - (i + 1) * sh - i * gap;
-            const bool lit = static_cast<float>(i) < amount * segments;
-            const ImU32 col = lit ? (i > 12 ? IM_COL32(236, 72, 64, 255) : i > 8 ? IM_COL32(241, 184, 66, 255) : color)
-                                  : IM_COL32(43, 45, 51, 255);
-            dl->AddRectFilled(panel.P(x + 4, sy), panel.P(x + w - 4, sy + sh), col, 1.5f * panel.scale());
-        }
-        panel.text(dl, x + w * 0.5f, y + h + 5, 9, kDim, label, 0, true);
-        char text[24]; std::snprintf(text, sizeof(text), "%.1f dB", static_cast<double>(gr));
-        panel.text(dl, x + w * 0.5f, y + h + 18, 9, kText, text, 0);
     }
 
     void applyPreset(int index)
