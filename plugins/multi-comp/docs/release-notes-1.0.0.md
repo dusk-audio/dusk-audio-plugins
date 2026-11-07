@@ -53,6 +53,16 @@ next to the original Multi-Comp without replacing it. Thank you to everyone who 
 - **VCA's PULL/SC**, pressed in a fresh editor, engages the sidechain filter at 20 Hz. It used 500 Hz, the top of
   the range, which the Opto, Bus and Digital faces then applied after a mode change.
 - **The CLAP version reports its version number and home page** to the host; it reported none.
+- **The FET factory presets do what their names say.** Vocal Presence, Modern Pop Control, Room Nuke, Rock Bass
+  Anchor, Funk Rhythm Guitar and EDM Pump all loaded with slow attack and release dials (about Attack 2, Release 1
+  to 2), so Room Nuke and EDM Pump did not pump. They now set the dials they were meant to: Room Nuke at Attack 6,
+  Release 7, for example.
+- **Closing a plugin window no longer risks a crash in AU hosts.** A host that removed the plugin while keeping its
+  window could crash or misbehave a moment later. [check: the DAF fix is merged and in the release build]
+- **Digital's lookahead lines up exactly** with the latency the host is told, at 2x and 4x oversampling as well;
+  before, the processed signal could sit a fraction of a sample off.
+- **The sidechain EQ's low shelf keeps its shape at very high rates** (192 kHz with oversampling, or hosts running
+  at 384 kHz and above).
 
 ### Sessions
 

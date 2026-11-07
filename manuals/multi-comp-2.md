@@ -71,7 +71,7 @@ Why this works: an optical cell sets its own attack and release from the program
 - OUTPUT around -8, then match the crushed level to the dry kit
 - MIX 40%, or 100% on an aux that you blend with its fader
 
-Why this works: ALL is the deepest and most aggressive ratio, and RELEASE 7, the fastest position, lets the room swell back up between hits. That swell is what you blend in under the dry drums. On the FET dials 7 is the fastest and 1 the slowest, so lower ATTACK numbers let more of each hit through before the clamp. The Room Nuke (FET All) preset starts from ALL with a much slower RELEASE (about 1.6); turn it up for more pump.
+Why this works: ALL is the deepest and most aggressive ratio, and RELEASE 7, the fastest position, lets the room swell back up between hits. That swell is what you blend in under the dry drums. On the FET dials 7 is the fastest and 1 the slowest, so lower ATTACK numbers let more of each hit through before the clamp. The Room Nuke (FET All) preset starts here: ALL with ATTACK 6 and RELEASE 7.
 
 ### Drum bus glue with BUS
 
@@ -311,24 +311,24 @@ MC-2 ships with 13 factory presets, listed in the header in the order below. A f
 ### Vocals
 
 - **Smooth Opto Vocal.** OPTO: PEAK REDUCTION 50, GAIN 29 (about +5 dB), COMPRESS, SC HP 60 Hz. Steady level on a lead vocal; move PEAK REDUCTION first.
-- **Vocal Presence.** FET BLACK at 4: INPUT +20, OUTPUT -11, ATTACK about 2.3, RELEASE about 1, the slow end. A forward rock or indie vocal. Set the depth with INPUT; turn RELEASE up toward 5 if the vocal should recover faster.
-- **Modern Pop Control.** FET BLUE at 8: INPUT +15, ATTACK about 2.1, RELEASE about 1.4, HR 16 dB, AUTO MAKEUP on (its OUTPUT of +3 is set aside). Tight control of a pop vocal; set INPUT, then decide whether you want AUTO MAKEUP.
+- **Vocal Presence.** FET BLACK at 4: INPUT +20, OUTPUT -11, ATTACK 3, RELEASE 7. A forward rock or indie vocal: the moderate attack keeps the consonants, the fast release keeps it upfront. Set the depth with INPUT; turn RELEASE down toward 4 for a smoother, slower recovery.
+- **Modern Pop Control.** FET BLUE at 8: INPUT +15, ATTACK 4, RELEASE 5, HR 16 dB, AUTO MAKEUP on (its OUTPUT of +3 is set aside). Tight control of a pop vocal; set INPUT, then decide whether you want AUTO MAKEUP.
 
 ### Drums
 
 - **Classic Drum Glue.** BUS: THRESHOLD -15 dB, RATIO 4, ATTACK 30 ms, RELEASE Auto, SC FILTER 90 Hz, AUTO MAKEUP on (its MAKE-UP of 3 dB is set aside). The drum bus; set THRESHOLD for 2 to 4 dB on the meter.
-- **Room Nuke (FET All).** FET BLACK at ALL: INPUT +24, OUTPUT -8, ATTACK about 2.5, RELEASE about 1.6, MIX 100%. Room mics crushed for parallel use; pull MIX down or blend on an aux, and turn RELEASE toward 7 for more pump.
+- **Room Nuke (FET All).** FET BLACK at ALL: INPUT +24, OUTPUT -8, ATTACK 6, RELEASE 7, MIX 100%. Room mics crushed and pumping, for parallel use; pull MIX down or blend on an aux, and lower ATTACK to keep more of each hit's front.
 - **Snare Snap.** VCA: THRESHOLD -18 dB, COMPRESSION 4.0:1, OUTPUT GAIN +4 dB, PULL/SC IN. One snare track; set THRESHOLD so ABOVE lights on every hit.
 
 ### Bass
 
-- **Rock Bass Anchor.** FET BLACK at 4: INPUT +15, OUTPUT -8, ATTACK about 2.5, RELEASE about 2.1. An even DI or amp bass; set INPUT for 4 to 8 dB on the needle.
+- **Rock Bass Anchor.** FET BLACK at 4: INPUT +15, OUTPUT -8, ATTACK 3, RELEASE 4. An even DI or amp bass; set INPUT for 4 to 8 dB on the needle.
 - **Vintage Pinned Bass.** OPTO: PEAK REDUCTION 67, GAIN 31 (about +6 dB), COMPRESS, SC HP 30 Hz. Bass held flat under the mix; back PEAK REDUCTION off if the notes lose their front.
 
 ### Guitars
 
 - **Acoustic Strum Tamer.** STUDIO VCA: THRESHOLD -22 dB, RATIO 3:1, ATTACK 2 ms, RELEASE 0.1 s with AUTO RELEASE off, AUTO MAKEUP on (its MAKE UP GAIN of 2 dB is set aside). Strumming spikes on an acoustic guitar; set THRESHOLD, then try AUTO RELEASE if the strums flutter.
-- **Funk Rhythm Guitar.** FET BLACK at 4: INPUT +12, OUTPUT +4, ATTACK about 2.1, RELEASE 1, the slowest. Clean rhythm parts; turn RELEASE toward 6 or 7 for a faster recovery between strokes.
+- **Funk Rhythm Guitar.** FET BLACK at 4: INPUT +12, OUTPUT +4, ATTACK 4, RELEASE 7. Clean rhythm parts, recovering between strokes; turn ATTACK down to let more of each pick attack through.
 
 ### Mix Bus
 
@@ -337,7 +337,7 @@ MC-2 ships with 13 factory presets, listed in the header in the order below. A f
 
 ### Creative
 
-- **EDM Pump (115-130 BPM).** FET BLACK at 20: INPUT +10, OUTPUT +6, ATTACK about 1.8, RELEASE about 2.1. Deep pumping on a full loop or a pad; set RELEASE by ear so the level swells back in time with the beat.
+- **EDM Pump (115-130 BPM).** FET BLACK at 20: INPUT +10, OUTPUT +6, ATTACK 6, RELEASE 4. Deep pumping on a full loop or a pad; set RELEASE by ear so the level swells back in time with the beat.
 
 ## Troubleshooting
 

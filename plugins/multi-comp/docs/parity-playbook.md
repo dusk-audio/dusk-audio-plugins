@@ -235,6 +235,23 @@ in 1bea349e by the owner's ruling to duck every switch:
   Multiband is a ducked mode switch.
 - Entering VCA restarts the anti-alias filters, so its first ~1.4 ms is near silent; that now falls inside the
   switch's 128-sample mute.
+- From the 2026-11-06 release work:
+  - Digital's own lookahead, rounded at the mode rate while the report counts whole host samples, left the wet path
+    a quarter or half a host sample off the report at 2x and 4x in 24 of 75 settings; both now round in host
+    samples (73878236, `--digital-lookahead-latency`).
+  - The sidechain EQ's low shelf, designed and run in float far below its rate, missed its response by 0.17 dB at
+    192 kHz and 8.9 dB at 768 (Bus runs it at the mode rate); it now has double coefficients and state, within
+    2e-7 dB to 768 kHz, bit-identical at the 0 dB defaults (15442ddf, `--sidechain-low-shelf`,
+    `--bus-sidechain-low-shelf`). Designing in double and rounding to float was measured and does not hold it.
+  - Dead weight removed (6714d64d): the legacy `SidechainTilt` and the fixed-Hz SC branch in `MultiCompVcaLaw.hpp`
+    (both behind compile-time switches the shipped path never took, used by no test), and the two harmonics headers
+    included nowhere. Every core-test output byte-identical. (The 2026-10-12 ruling kept `SidechainTilt` for that
+    pass; the 2026-11-05 release plan listed it for removal.)
+  - The six FET factory presets carried JUCE times that, read as knob positions, sat every one near Attack 2 and
+    Release 1 to 2; they now set the dials their names call for (3898f2cd, `--fet-preset-dials`; owner 2026-11-06).
+  - AU: disposing the unit while the host kept its view ran the view's idle timer into the deleted plugin (heap use
+    after free under ASan; Multi-Comp 2's `uiIdle` reads the plugin). Fixed in DAF on
+    `fix/au-view-timer-after-dispose` with `tests/AUViewDispose.cpp`; a DAF PR before the release.
 
 ### Still open
 
@@ -242,12 +259,9 @@ in 1bea349e by the owner's ruling to duck every switch:
   `testFetMeasuredCurveAllButtons`). A known issue in the 1.0.0 notes.
 - From code review, not yet measured: `MultiCompDSP::prepare()` at the same rate keeps most modes' state (the
   plugin masks it: the framework deactivates first; the same-rate test runs no audio between the two prepares).
-- Dead weight: the legacy `SidechainTilt` class (kept only for a compile-time disabled-element control) and the
-  fixed-Hz branch in `MultiCompVcaLaw.hpp`; `MultiCompOptoFinalHarmonics.hpp` and
-  `MultiCompOptoLfDynamicHarmonics.hpp` (about 390 KB) are included nowhere.
-- User manual: `manuals/multi-comp-2.md` and `manuals/screenshots/multi-comp-2/` were being written on 2026-11-06
-  (uncommitted). Until the chapter lands and the release writes `/assets/manuals/multi-comp-2-manual.pdf`, the
-  website's page for a released plugin links a PDF that does not exist.
+- User manual: `manuals/multi-comp-2.md` and `manuals/screenshots/multi-comp-2/` landed on 2026-11-06 (a5171c1f).
+  The release writes `/assets/manuals/multi-comp-2-manual.pdf`; until then the website's page links a PDF that does
+  not exist.
 - GR needles (2026-10-22, `daf-plugin/MultiCompGainReductionNeedle.hpp`): the plugin feeds them the DSP's
   block-end gain reduction once per host block, so a transient reads up to a block early and, at large buffers,
   slightly deep (a 6 dB kick: about 0.1 dB at 512 samples, 0.5 dB VU / 0.9 dB VCA at 2048). The fix is a block
@@ -266,8 +280,6 @@ in 1bea349e by the owner's ruling to duck every switch:
   1.0.0). A lookahead change on its own applies at once and can step 3-11x (pre-existing; ducking it gated 99 % of
   an automated ramp). A switch that moves the latency mutes the bypass and dry paths with the wet path: 128 samples
   between 1 ms fades, plus Digital's own lookahead when entering Digital (12.7 ms of silence at 10 ms, 48 kHz).
-- From the 2026-11-05 release review, deferred or not yet measured: the VST3 wrapper caches the latency at
-  construction (0 before the first activate), so an instance's first process sends one latency event (measured: one
-  event; deferred as benign); Digital's lookahead is rounded at the mode rate but reported at the host rate (half a
-  sample); the SC EQ shelves are designed in float and lose gain at 384 kHz and above (they run at the host rate, so
-  this needs a 384 kHz host); the Multiband envelope parks 0.012 dB short at 48 kHz (recorded here, no change).
+- From the 2026-11-05 release review, deferred: the VST3 wrapper caches the latency at construction (0 before the
+  first activate), so an instance's first process sends one latency event (measured: one event; deferred as
+  benign); the Multiband envelope parks 0.012 dB short at 48 kHz (recorded here, no change).
