@@ -16,7 +16,7 @@ on:
 jobs:
   build-au-macos:
     name: Build + auval Tape Echo AU (macOS)
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Checkout plugins repo
         uses: actions/checkout@v4

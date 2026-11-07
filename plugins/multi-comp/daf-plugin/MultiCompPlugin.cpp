@@ -83,9 +83,21 @@ public:
     float inputLevel() const noexcept { return dsp.getInputLevel(); }
     float outputLevel() const noexcept { return dsp.getOutputLevel(); }
     float outputVuLevel() const noexcept { return outputVu.levelDb(); }
+    float externalSidechainActive() const noexcept
+    {
+        return externalSidechainInUse.load(std::memory_order_acquire) ? 1.0f : 0.0f;
+    }
     float gainReductionNeedle() const noexcept { return grNeedle.levelDb(); }
     float vcaGainReductionNeedle() const noexcept { return vcaGrNeedle.levelDb(); }
     float studioVcaInputLevel() const noexcept { return studioVcaInputMeter.levelDb(); }
+    float inputChannelLevel(int channel) const noexcept
+    {
+        return inputChannelDb[channel == 1 ? 1 : 0].load(std::memory_order_relaxed);
+    }
+    float outputChannelLevel(int channel) const noexcept
+    {
+        return outputChannelDb[channel == 1 ? 1 : 0].load(std::memory_order_relaxed);
+    }
     float studioVcaOutputLevel() const noexcept { return studioVcaOutputMeter.levelDb(); }
     float busMeterReading() const noexcept { return dsp.getBusMeterReading(); }
     float busFadePosition() const noexcept { return dsp.getBusFadePosition(); }
@@ -267,8 +279,34 @@ protected:
         });
     }
 
+    // The factory program the controls read (the editor names its preset the same way), or -1. A restore from the
+    // state alone does not replay the saved program, so the wrappers read it back from here.
+    int32_t getCurrentProgram() const override
+    {
+        return multicompp::matchingFactoryPreset(
+            [this](int index) { return values[static_cast<size_t>(index)].load(std::memory_order_relaxed); });
+    }
+
+    // The state is a complete parameter snapshot (decodeState migrates older versions, e.g. a mode-4 session saved
+    // before FET BLUE opens in FET), so the VST3, CLAP and AU wrappers restore from it alone instead of replaying a
+    // saved parameter list over it. A state that does not decode (one a newer build wrote, say) is refused and the
+    // instance keeps what it had, as DuskVerb's. LV2 applies the ports a host restores with the state over it on the
+    // first run, so there an old mode-4 session reopens in FET BLUE.
     void initState(uint32_t index, State& state) override
-    { if (index == 0) { state.key = "parameters"; state.label = "Multi-Comp Parameters"; state.defaultValue = ""; state.hints = kStateIsHostReadable; } }
+    {
+        if (index != 0) return;
+        state.key = "parameters";
+        state.label = "Multi-Comp Parameters";
+        state.defaultValue = "";
+        state.hints = kStateIsHostReadable | kStateIsParameterSnapshot;
+    }
+
+    bool validateStateValue(const char* key, const char* value) const override
+    {
+        multicompp::StateValues state{};
+        return key != nullptr && value != nullptr && std::strcmp(key, "parameters") == 0
+            && multicompp::decodeState(value, state);
+    }
 
     String getState(const char* key) const override
     {
@@ -293,6 +331,8 @@ protected:
     {
         dsp.reset(); outputVu.reset(); grNeedle.reset(); vcaGrNeedle.reset();
         studioVcaInputMeter.reset(); studioVcaOutputMeter.reset();
+        resetChannelLevels();
+        externalSidechainInUse.store(false, std::memory_order_release);
     }
     void sampleRateChanged(double sr) override { prepare(sr, getBufferSize()); }
     void bufferSizeChanged(uint32_t bs) override { prepare(getSampleRate(), bs); }
@@ -307,6 +347,7 @@ protected:
         // deactivated, so run() observes a stable pair.
         activeInputs = static_cast<int>(in);
         activeChannels = out == 1 ? 1 : 2;
+        externalSidechainInUse.store(false, std::memory_order_release);
     }
 
     void run(const float** inputs, float** outputs, uint32_t frames) override
@@ -328,8 +369,16 @@ protected:
         if (studioVcaMeters)
             for (int ch = 0; ch < activeChannels; ++ch)
                 studioVcaInputPeak = duskaudio::blockAbsPeak(inputs[ch], static_cast<int>(frames), studioVcaInputPeak);
+        // The Digital and Multiband faces' INPUT and OUTPUT ladders read each channel's block peak (those faces only).
+        const bool channelMeters = mode == static_cast<long>(duskaudio::MultiCompMode::Digital)
+            || mode == static_cast<long>(duskaudio::MultiCompMode::Multiband);
+        float channelInputPeak[2] = {0.0f, 0.0f};
+        if (channelMeters)
+            for (int ch = 0; ch < activeChannels; ++ch)
+                channelInputPeak[ch] = duskaudio::blockAbsPeak(inputs[ch], static_cast<int>(frames), 0.0f);
         const int sidechainWidth = values[static_cast<size_t>(multicompp::ParamId::ExternalSidechain)].load(std::memory_order_relaxed) > 0.5f
             ? multicompp::plugin_detail::externalSidechainWidth(activeInputs, activeChannels, inputs) : 0;
+        externalSidechainInUse.store(sidechainWidth > 0, std::memory_order_release);
         if (sidechainWidth > 0)
         {
             // A mono sidechain keys every channel; a stereo one keys a mono instance by its mid, the usual mono
@@ -354,12 +403,22 @@ protected:
             vcaGrNeedle.snap(gainReduction);
             studioVcaInputMeter.reset();
             studioVcaOutputMeter.reset();
+            resetChannelLevels();
         }
         else
         {
             grNeedle.process(gainReduction, static_cast<int>(frames));
             vcaGrNeedle.process(gainReduction, static_cast<int>(frames));
         }
+        if (channelMeters)
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                // A mono instance shows its one channel on both columns.
+                const int source = std::min(ch, activeChannels - 1);
+                inputChannelDb[ch].store(peakDb(channelInputPeak[source]), std::memory_order_relaxed);
+                outputChannelDb[ch].store(peakDb(duskaudio::blockAbsPeak(outputs[source], static_cast<int>(frames), 0.0f)),
+                                          std::memory_order_relaxed);
+            }
         if (studioVcaMeters)
         {
             float outputPeak = 0.0f;
@@ -404,6 +463,7 @@ private:
     }
     void prepare(double sampleRate, uint32_t bufferSize)
     {
+        externalSidechainInUse.store(false, std::memory_order_release);
         dsp.prepare(sampleRate, static_cast<int>(bufferSize));
         monoSidechain.assign(bufferSize, 0.0f);
         outputVu.prepare(sampleRate);
@@ -424,6 +484,20 @@ private:
     multicompp::GainReductionNeedle grNeedle{multicompp::kVuNeedle};        // Opto and FET faces
     multicompp::GainReductionNeedle vcaGrNeedle{multicompp::kVcaNeedle};    // VCA face
     multicompp::StudioVcaLevelMeter studioVcaInputMeter, studioVcaOutputMeter;   // Studio VCA face
+    // Digital and Multiband faces: each channel's last block peak in dB (-60 floor), as the original editor read them.
+    std::atomic<float> inputChannelDb[2] = {{-60.0f}, {-60.0f}}, outputChannelDb[2] = {{-60.0f}, {-60.0f}};
+    // UI control availability follows the detector the audio callback actually
+    // uses, including a requested external key whose host bus is disconnected.
+    std::atomic<bool> externalSidechainInUse{false};
+    static float peakDb(float peak) noexcept { return peak > 1.0e-5f ? duskaudio::gainToDecibels(peak) : -60.0f; }
+    void resetChannelLevels() noexcept
+    {
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            inputChannelDb[ch].store(-60.0f, std::memory_order_relaxed);
+            outputChannelDb[ch].store(-60.0f, std::memory_order_relaxed);
+        }
+    }
     std::vector<float> monoSidechain;   // run(): a mono instance's key from a stereo sidechain, its mid
     // Formats other than AU always present the full input set, and ioChanged()
     // is only called where a host narrows it, so the declared count is the
@@ -459,10 +533,19 @@ float multiCompGetBandGainReduction(void* p, int band) noexcept { return p ? asM
 float multiCompGetInputLevel(void* p) noexcept { return p ? asMultiComp(p)->inputLevel() : -60.0f; }
 float multiCompGetOutputLevel(void* p) noexcept { return p ? asMultiComp(p)->outputLevel() : -60.0f; }
 float multiCompGetOutputVuLevel(void* p) noexcept { return p ? asMultiComp(p)->outputVuLevel() : -120.0f; }
+float multiCompGetExternalSidechainActive(void* p) noexcept { return p ? asMultiComp(p)->externalSidechainActive() : 0.0f; }
 float multiCompGetGainReductionNeedle(void* p) noexcept { return p ? asMultiComp(p)->gainReductionNeedle() : 0.0f; }
 float multiCompGetVcaGainReductionNeedle(void* p) noexcept { return p ? asMultiComp(p)->vcaGainReductionNeedle() : 0.0f; }
 float multiCompGetStudioVcaInputLevel(void* p) noexcept { return p ? asMultiComp(p)->studioVcaInputLevel() : -120.0f; }
 float multiCompGetStudioVcaOutputLevel(void* p) noexcept { return p ? asMultiComp(p)->studioVcaOutputLevel() : -120.0f; }
+float multiCompGetInputChannelLevel(void* p, int channel) noexcept
+{
+    return p ? asMultiComp(p)->inputChannelLevel(channel) : -60.0f;
+}
+float multiCompGetOutputChannelLevel(void* p, int channel) noexcept
+{
+    return p ? asMultiComp(p)->outputChannelLevel(channel) : -60.0f;
+}
 float multiCompGetBusMeterReading(void* p) noexcept { return p ? asMultiComp(p)->busMeterReading() : 0.0f; }
 float multiCompGetBusFadePosition(void* p) noexcept { return p ? asMultiComp(p)->busFadePosition() : 0.0f; }
 float multiCompGetParameterValue(void* p, uint32_t index) noexcept

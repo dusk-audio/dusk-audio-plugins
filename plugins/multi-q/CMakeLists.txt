@@ -212,6 +212,9 @@ if(NOT CMAKE_CROSSCOMPILING)
         JUCE_USE_CURL=0
         JUCE_DISPLAY_SPLASH_SCREEN=0
         JUCE_STANDALONE_APPLICATION=1
+        # On Windows START_JUCE_APPLICATION defines main only when _CONSOLE is set
+        # (juce_add_console_app sets it); otherwise WinMain, which won't link here.
+        $<$<PLATFORM_ID:Windows>:_CONSOLE=1>
     )
 
     target_compile_features(MultiQIntegrationTest PRIVATE cxx_std_17)
@@ -251,6 +254,9 @@ if(NOT CMAKE_CROSSCOMPILING)
         JUCE_USE_CURL=0
         JUCE_DISPLAY_SPLASH_SCREEN=0
         JUCE_STANDALONE_APPLICATION=1
+        # On Windows START_JUCE_APPLICATION defines main only when _CONSOLE is set
+        # (juce_add_console_app sets it); otherwise WinMain, which won't link here.
+        $<$<PLATFORM_ID:Windows>:_CONSOLE=1>
     )
 
     target_compile_features(MultiQMSRoutingTest PRIVATE cxx_std_17)
@@ -290,6 +296,9 @@ if(NOT CMAKE_CROSSCOMPILING)
         JUCE_USE_CURL=0
         JUCE_DISPLAY_SPLASH_SCREEN=0
         JUCE_STANDALONE_APPLICATION=1
+        # On Windows START_JUCE_APPLICATION defines main only when _CONSOLE is set
+        # (juce_add_console_app sets it); otherwise WinMain, which won't link here.
+        $<$<PLATFORM_ID:Windows>:_CONSOLE=1>
     )
 
     target_compile_features(MultiQTransferTest PRIVATE cxx_std_17)

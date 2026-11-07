@@ -147,6 +147,7 @@ private:
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attackAttachment;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> releaseAttachment;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> mixAttachment;
+        std::unique_ptr<juce::ParameterAttachment> ratioAttachment;
     };
     
     struct VCAPanel

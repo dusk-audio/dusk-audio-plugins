@@ -46,6 +46,7 @@ public:
         ScHighFreq, ScHighGain, StereoLinkMode,
         BusHeadroom, BusFadeRate, BusFade,
         StudioVcaInput, StudioVcaAutoRelease,
+        FetBlueRatio, FetBlueScFilter, FetBlueHeadroom,
         None // Host-persisted display controls have no audio parameter binding.
     };
     enum class MultibandParameter { Threshold, Ratio, Attack, Release, Makeup, Bypass, Solo, Enabled };
@@ -145,7 +146,7 @@ private:
                           float* const* out, int nCh, int nSamples, bool external, float linkAmount,
                           int linkMode, int hostSidechainDelay, float manualOutputDb,
                           DistortionType distortionType, float distortionAmount) noexcept;
-    void processFetRange(const float* const* in, const float* const* sidechain,
+    void processFetRange(MultiCompMode mode, const float* const* in, const float* const* sidechain,
                          float* const* out, int nCh, int nSamples, bool external, float linkAmount,
                          int linkMode, int factor, int hostSidechainDelay, float manualOutputDb,
                          DistortionType distortionType, float distortionAmount) noexcept;
@@ -163,7 +164,7 @@ private:
     void prepareLookahead(const float* const* in, const float* (&processingIn)[kMaxChannels],
                           int nCh, int nSamples, int delay);
     void processMultiband(const float* const* input, const float* const* sidechain,
-                          float* const* output, int nCh, int nSamples);
+                          float* const* output, int nCh, int nSamples, int linkMode);
     std::array<float, 3> crossoverTargets() const noexcept;
     void prepareCrossovers() noexcept;
     void resetCrossovers() noexcept;
@@ -216,6 +217,7 @@ private:
     std::array<LazyUpsampler<MultiCompOversampler>, kMaxChannels> optoOwnDetectorUpsamplers;
     std::array<LazyUpsampler<MultiCompAntiAliasing>, kMaxChannels> busExternalOversamplers;
     MultiCompTruePeakDetector truePeakDetector;
+    bool truePeakActive = false;   // the detector ran last block (an idle one restarts from rest)
     std::array<MultiCompSidechainFilter, kMaxChannels> sidechainFilters;
     std::array<vcaLaw::SidechainTilt, kMaxChannels> sidechainTilt;
     bool lastVcaSidechainTilt = false;   // which sidechain filter ran last block
@@ -234,9 +236,16 @@ private:
 
     std::array<DuskCrossover, kMaxChannels> crossover1, crossover2, crossover3;
     std::array<DuskCrossover, kMaxChannels> scCrossover1, scCrossover2, scCrossover3;
+    // Each lower branch must carry the all-pass rotation of the splits after it.
+    // Index by physical band / later boundary / channel so unchanged paths keep
+    // their history when an unrelated band is enabled or disabled.
+    using MultibandPhaseFilters = std::array<std::array<std::array<DuskCrossover,
+        kMaxChannels>, kMultiCompBands - 1>, kMultiCompBands - 1>;
+    MultibandPhaseFilters multibandPhase, sidechainMultibandPhase;
     std::array<LinearRamp, 3> crossoverRamps;
     std::array<std::vector<float>, 3> crossoverCurves;
     std::array<std::array<std::vector<float>, kMaxChannels>, kMultiCompBands> bands, sidechainBands;
+    std::vector<float> multibandOutputGains;
     std::array<std::vector<float>, kMaxChannels> processedSidechain;
     std::array<std::vector<float>, kMaxChannels> modeInput;
     // VCA block path (processVcaRange): each channel's detector feed, the

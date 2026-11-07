@@ -582,7 +582,7 @@ jobs:
     # refs/pull/<n>/merge on a PR, so this is false there and true for both a
     # tag push and a manual dispatch.
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
-    runs-on: macos-14
+    runs-on: macos-15
     permissions:
       contents: read
     timeout-minutes: 60
