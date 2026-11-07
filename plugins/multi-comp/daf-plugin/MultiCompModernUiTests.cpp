@@ -14,8 +14,8 @@
 #define DAF_UI_DEFAULT_WIDTH 1120
 #define DAF_UI_DEFAULT_HEIGHT 380
 using GLint = int;
-constexpr int GL_VIEWPORT = 0;
-inline void glGetIntegerv(int, GLint* p) { p[0] = p[1] = 0; p[2] = 1120; p[3] = 380; }
+constexpr int GL_MAX_TEXTURE_SIZE = 0x0D33;
+inline void glGetIntegerv(int, GLint* p) { p[0] = 16384; }   // the editor asks only for GL_MAX_TEXTURE_SIZE
 namespace DAF
 {
 struct TestInstance
@@ -117,9 +117,9 @@ struct Host
         ui.width = width;
         ui.height = height;
         ImGui::GetIO().DisplaySize = ImVec2(static_cast<float>(width), static_cast<float>(height));
-        // In the plugin the host backend builds the font atlas. Without one, an editor that found no system font
-        // (a bare Linux container) leaves it empty, and ImGui::NewFrame needs a built atlas: give it ImGui's own.
-        // An editor that loaded its face built the atlas already and is left as it is.
+        // The editor bakes its embedded faces into the atlas and builds it. Should none load, the atlas is left
+        // empty and ImGui::NewFrame needs a built one: give it ImGui's own, so the frames still run and
+        // defaultFontIsTheValueFace reports the missing faces.
         ImFontAtlas& fonts = *ImGui::GetIO().Fonts;
         if (!fonts.IsBuilt())
         {
@@ -664,20 +664,23 @@ void numericOwnership()
     check(own == 1 && sibling == 0, "numeric entry commits to its original band before selection changes");
 }
 // ImGui's own surfaces (the save dialog, a typed value, tooltips, menus) draw in ImGui's default font. The editor makes
-// that its own face at the value size (17), not the framework's 13 px DejaVu Sans. Without a face to load (a bare
-// Linux container) there is none to choose and the check is skipped.
+// that its embedded Regular face at the value size (17), not the framework's 13 px DejaVu Sans. The faces are compiled
+// in, so every build has them: the atlas holds the ten SemiBold sizes and the Regular one, and anything less is a
+// broken embed.
 void defaultFontIsTheValueFace()
 {
     Host h(0);
     const ImGuiIO& io = ImGui::GetIO();
-    if (io.Fonts->Fonts.Size <= 1)
-    {
-        std::puts("default font: no face loaded, skipped");
-        return;
-    }
     const float size = io.FontDefault != nullptr ? io.FontDefault->FontSize : 0.0f;
-    std::printf("default font: %.1f px\n", static_cast<double>(size));
+    std::printf("default font: %d faces in the atlas, default %.1f px\n", io.Fonts->Fonts.Size,
+                static_cast<double>(size));
+    check(io.Fonts->Fonts.Size == 11, "the atlas holds the editor's eleven embedded faces");
     check(io.FontDefault != nullptr && size == 17.0f, "ImGui's default font is the editor's face at the value size");
+    // ImGui keeps its own copy of font data it does not own, so the source is compared by its bytes.
+    const ImFontConfig* const source = io.FontDefault != nullptr ? io.FontDefault->Sources : nullptr;
+    check(source != nullptr && source->FontDataSize == static_cast<int>(kMcFontRegular_len)
+              && std::memcmp(source->FontData, kMcFontRegular, kMcFontRegular_len) == 0,
+          "ImGui's default font is the embedded Regular face, apart from the panel's SemiBold");
 }
 }
 
