@@ -88,6 +88,10 @@ public:
     {
         if (numSamples <= 0)
             return;
+        // The block's input level, for zeroDecayedState(), read before the loop overwrites it.
+        float inputPeak = 0.0f;
+        for (int i = 0; i < numSamples; ++i)
+            inputPeak = std::max (inputPeak, std::max (std::abs (left[i]), std::abs (right[i])));
         const float lo = loCut_.skip (numSamples), hi = hiCut_.skip (numSamples);
         const float mono = monoBelow_.skip (numSamples);
         if (std::abs (lo - appliedLoCut_) > 0.5f) designLoCut (lo);
@@ -112,9 +116,38 @@ public:
             left[i]  = (mid + side) * g;
             right[i] = (mid - side) * g;
         }
+        zeroDecayedState (inputPeak);
     }
 
 private:
+    // Once a block's input and every filter state are under kZeroBelow, the tail has decayed out
+    // of anything audible and all the states are set to exactly 0 together. That is what ends a
+    // decay at 0 on every CPU: left to the arithmetic, flush-to-zero can keep a recursion going
+    // for good (a 5 Hz Lo Cut at 48 kHz sits near 8.6e-36 for seconds on x86-64 and arm64 alike;
+    // arm64's fused multiply-adds only stretched the 20 Hz case the core test meets). All at once
+    // and only then, because one state can be under 1e-30 while the filter still passes a signal
+    // (a 0 dB Hi Cut shelf does), and zeroing it alone would move that signal. Mono Below's state
+    // counts only while it runs: switched off it is left as it is, for when it comes back.
+    static constexpr float kZeroBelow = 1.0e-30f;
+    static bool decayed (float s) noexcept { return std::abs (s) < kZeroBelow; }
+    static bool decayed (const duskaudio::Biquad& f) noexcept
+    {
+        const auto s = f.state();
+        return decayed (s.first) && decayed (s.second);
+    }
+    void zeroDecayedState (float inputPeak) noexcept
+    {
+        if (! decayed (inputPeak) || ! decayed (lo_[0]) || ! decayed (lo_[1])
+            || ! decayed (hi_[0]) || ! decayed (hi_[1]))
+            return;
+        if (monoOn_ && ! (decayed (monoLp_[0]) && decayed (monoLp_[1])))
+            return;
+        for (auto& f : lo_) f.reset();
+        for (auto& f : hi_) f.reset();
+        if (monoOn_)
+            monoLp_[0] = monoLp_[1] = 0.0f;
+    }
+
     // RBJ 2nd-order Butterworth high-pass: DuskVerbEngine::updateLoCutCoeffs.
     void designLoCut (float hz) noexcept
     {

@@ -31,12 +31,25 @@
 // 0.5 Hz: everything off the tone at -24.5 dB re the output) and tore a moving pre-delay
 // apart (-0.4 dB). A change that arrives during a fade waits for it to end, so a sweep is
 // followed in kTapFadeMs steps and the tap work at most doubles while one runs.
+//
+// Once a block's input and output and every filter state are under kZeroBelow (1e-30), all the
+// filter states are set to exactly 0 together, so the tail ends at 0 on every CPU. The one-poles
+// need it: under flush-to-zero their step c * (x - z) underflows to 0 while z is still a normal
+// float, so on x86-64 the 3 kHz darkLp stopped decaying near 3e-38 and Nonlinear Large sounded at
+// 4.6e-38 for as long as it ran (on arm64 the step is fused into one multiply-add and z keeps
+// decaying). All at once and only then, because one state can sit under 1e-30 while a signal
+// still passes the others; the output joins the test because a quiet input says nothing of what
+// the rings and lines still hold. The delay lines (the allpasses and the tail's lines) are left
+// alone: each pass scales them by less than one, so flush-to-zero ends them at 0 by itself, and
+// zeroing single entries would cut near-zero samples out of a tail still ringing above 1e-25.
+// The rings hold the input's history and feed nothing back.
 
 #pragma once
 
 #include "../../../shared-daf/dsp/DuskFilters.hpp"
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <vector>
 
@@ -156,6 +169,16 @@ private:
     void processChannel (Channel& c, const float* in, float* out, int n) noexcept;
     static void sumTaps (const Channel& c, const Tap* taps, int count, int writePos, int ringLen,
                          float* acc, int n) noexcept;
+
+    // Under this a signal or a filter state has decayed out of anything audible (see the header
+    // comment).
+    static constexpr float kZeroBelow = 1.0e-30f;
+    static bool decayed (float s) noexcept { return std::abs (s) < kZeroBelow; }
+    // Once a block of `n` samples has run: if its input peak, its output `out` and every filter
+    // state of `c` (the two one-poles, given by their last outputs, which are their states; the
+    // output lowpass; the tail's damping) are under kZeroBelow, those states all go to exactly 0.
+    static void zeroDecayedState (Channel& c, float inputPeak, const float* out, int n,
+                                  float darkState, float hfState) noexcept;
 
     double sampleRate_ = 48000.0;
     int maxBlock_ = 0;

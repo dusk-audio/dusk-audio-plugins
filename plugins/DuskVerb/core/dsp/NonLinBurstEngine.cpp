@@ -192,6 +192,26 @@ float NonLinBurstEngine::Tail::process (float x) noexcept
     return y;
 }
 
+void NonLinBurstEngine::zeroDecayedState (Channel& c, float inputPeak, const float* out, int n,
+                                          float darkState, float hfState) noexcept
+{
+    const auto s = c.outLp.state();
+    if (! decayed (inputPeak) || ! decayed (darkState) || ! decayed (hfState)
+        || ! decayed (s.first) || ! decayed (s.second))
+        return;
+    for (const float v : c.tail.lp)
+        if (! decayed (v))
+            return;
+    for (int i = 0; i < n; ++i)
+        if (! decayed (out[i]))
+            return;
+    // OnePoleLP keeps its state to itself: its process() returns it, and reset() sets it to 0.
+    c.darkLp.reset();
+    c.hfDamp.reset();
+    c.outLp.reset();
+    c.tail.lp.fill (0.0f);
+}
+
 void NonLinBurstEngine::prepare (double sampleRate, int maxBlockSize)
 {
     sampleRate_ = sampleRate;
@@ -394,13 +414,19 @@ void NonLinBurstEngine::processChannel (Channel& c, const float* in, float* out,
 {
     if (n <= 0 || n > maxBlock_)
         return;
+    // The block's input level, for zeroDecayedState(), read before out (which may alias in) is written.
+    float inputPeak = 0.0f;
+    for (int i = 0; i < n; ++i)
+        inputPeak = std::max (inputPeak, std::abs (in[i]));
     // Write the block into both rings first (twice each, ringLen_ apart, so any window of up to
     // maxBlock_ samples reads as one contiguous run), then read every tap as one run.
+    float darkState = 0.0f;                  // darkLp's state once the block is in
     for (int i = 0; i < n; ++i)
     {
         const int w = (writePos_ + i) % ringLen_;
         const float x = in[i];
-        const float d = c.darkLp.process (x) * darkNorm_;
+        darkState = c.darkLp.process (x);
+        const float d = darkState * darkNorm_;
         c.raw[static_cast<size_t> (w)] = c.raw[static_cast<size_t> (w + ringLen_)] = x;
         c.dark[static_cast<size_t> (w)] = c.dark[static_cast<size_t> (w + ringLen_)] = d;
     }
@@ -421,6 +447,7 @@ void NonLinBurstEngine::processChannel (Channel& c, const float* in, float* out,
         }
     }
     const bool damp = hfDampHz_ < kHfDampOffHz;
+    float hfState = 0.0f;                    // hfDamp's state, likewise
     for (int i = 0; i < n; ++i)
     {
         const float y = c.mult[1].process (c.mult[0].process (acc[i]));
@@ -428,8 +455,10 @@ void NonLinBurstEngine::processChannel (Channel& c, const float* in, float* out,
         // The damping filter runs even while bypassed, so switching it in continues from the
         // signal instead of from whatever it held when it was last switched out.
         const float damped = c.hfDamp.process (o);
+        hfState = damped;
         out[i] = damp ? damped : o;
     }
+    zeroDecayedState (c, inputPeak, out, n, darkState, hfState);
 }
 
 void NonLinBurstEngine::process (const float* inL, const float* inR, float* outL, float* outR, int numSamples) noexcept
