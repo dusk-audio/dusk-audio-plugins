@@ -1241,7 +1241,7 @@ public:
         if (rate != busSidechainRate || lowF != busSidechainLowFrequency
             || lowG != busSidechainLowGain)
             for (auto& filter : busSidechainLowShelf)
-                filter.setCoeffs(Biquad::shelfSlope1(rate, lowF, lowG, false));
+                filter.setCoeffs(sidechainLowShelfCoeffs(rate, lowF, lowG));
         if (rate != busSidechainRate || highF != busSidechainHighFrequency
             || highG != busSidechainHighGain)
             for (auto& filter : busSidechainHighShelf)
@@ -1965,7 +1965,9 @@ private:
     // and runtime oversampling changes refresh its pole without discarding it.
     std::array<DCBlocker, 2> busFeedbackCoupling;
     std::array<GuardedBiquad, 2> busSidechainHighPass;
-    std::array<Biquad, 2> busSidechainLowShelf, busSidechainHighShelf;
+    // The low shelf runs in double: at the mode rate its corner is far below the rate (sidechainLowShelfCoeffs).
+    std::array<DoubleBiquad, 2> busSidechainLowShelf;
+    std::array<Biquad, 2> busSidechainHighShelf;
     float busSidechainRate = 0.0f;
     float busSidechainHighPassFrequency = -1.0f;
     float busSidechainLowFrequency = -1.0f, busSidechainLowGain = 0.0f;

@@ -6934,6 +6934,164 @@ void testSidechainEq()
     std::printf("sidechain EQ: GR %.4f dB -> %.4f dB with +12 dB HF shelf\n", flat, boosted);
 }
 
+// The RBJ S = 1 low shelf the sidechain EQ implements, designed and evaluated in long double: its gain (dB) at `hz`.
+double exactSidechainLowShelfDb(double fs, double corner, double gainDb, double hz)
+{
+    const long double pi = 3.141592653589793238462643383279502884L;
+    const long double A = std::pow(10.0L, static_cast<long double>(gainDb) / 40.0L);
+    const long double w0 = 2.0L * pi * corner / fs;
+    const long double c = std::cos(w0), q = 2.0L * std::sqrt(A) * 0.5L * std::sin(w0) * std::sqrt(2.0L);
+    const long double b0 = A * ((A + 1) - (A - 1) * c + q), b1 = 2 * A * ((A - 1) - (A + 1) * c);
+    const long double b2 = A * ((A + 1) - (A - 1) * c - q), a0 = (A + 1) + (A - 1) * c + q;
+    const long double a1 = -2 * ((A - 1) + (A + 1) * c), a2 = (A + 1) + (A - 1) * c - q;
+    const long double w = 2.0L * pi * hz / fs;
+    const long double nr = b0 + b1 * std::cos(w) + b2 * std::cos(2 * w), ni = -(b1 * std::sin(w) + b2 * std::sin(2 * w));
+    const long double dr = a0 + a1 * std::cos(w) + a2 * std::cos(2 * w), di = -(a1 * std::sin(w) + a2 * std::sin(2 * w));
+    return static_cast<double>(10.0L * std::log10((nr * nr + ni * ni) / (dr * dr + di * di)));
+}
+
+// The sidechain EQ's low shelf holds its own response at every rate it is designed at: the host rate here, Bus's mode
+// rate (host x oversampling, to 768 kHz) in testBusSidechainLowShelfAtEveryModeRate. Its corner sits far below those
+// rates, where a float design and float coefficients cannot hold the plateau: measured off its response by 0.03 dB at
+// 48 kHz, 0.17 at 192, 0.77 at 384 and 8.9 at 768 (designed in double and rounded to float: 0.56 and 3.98 dB). With
+// the double section the EQ holds it within 1.2e-6 dB (most of it the 0 dB float high shelf at 48 kHz, whose b0 is
+// one float step below 1); the bound is 1e-3 dB. Also: processPair is process(), bit for bit.
+void testSidechainLowShelfHoldsItsResponse()
+{
+    struct Setting { float corner, gainDb; };
+    constexpr std::array<Setting, 6> settings{{{60.0f, 12.0f}, {60.0f, -12.0f}, {100.0f, 6.0f},
+                                               {120.0f, -6.0f}, {250.0f, 12.0f}, {500.0f, -12.0f}}};
+    constexpr double kToneHz = 20.0, kBoundDb = 1.0e-3;
+    double worst = 0.0;
+    for (double rate : {48000.0, 96000.0, 192000.0, 384000.0, 768000.0})
+    {
+        double rateWorst = 0.0;
+        for (const auto& setting : settings)
+        {
+            duskaudio::MultiCompSidechainEQ eq;
+            eq.prepare(rate);
+            eq.setLowShelf(setting.corner, setting.gainDb);   // the high shelf stays at its 0 dB default
+            const int settle = static_cast<int>(rate), measure = static_cast<int>(rate * 0.5);
+            double inPower = 0.0, outPower = 0.0;
+            for (int n = 0; n < settle + measure; ++n)
+            {
+                const float x = static_cast<float>(0.25 * std::sin(2.0 * 3.14159265358979323846 * kToneHz * n / rate));
+                const float y = eq.process(x);
+                if (n < settle) continue;
+                inPower += static_cast<double>(x) * x;
+                outPower += static_cast<double>(y) * y;
+            }
+            const double error = 10.0 * std::log10(outPower / inPower)
+                - exactSidechainLowShelfDb(rate, setting.corner, setting.gainDb, kToneHz);
+            rateWorst = std::max(rateWorst, std::abs(error));
+        }
+        worst = std::max(worst, rateWorst);
+        std::printf("sidechain low shelf: %6.0f Hz worst |gain - designed| at %.0f Hz %.3e dB\n", rate, kToneHz,
+                    rateWorst);
+    }
+    require(worst < kBoundDb, "the sidechain EQ's low shelf holds its designed response at every rate to 768 kHz");
+
+    // The stereo block path against the per-channel one, with both shelves away from 0 dB.
+    std::array<duskaudio::MultiCompSidechainEQ, 2> pair, single;
+    for (auto* eqs : {&pair, &single})
+        for (auto& eq : *eqs)
+        {
+            eq.prepare(48000.0);
+            eq.setLowShelf(150.0f, -9.0f);
+            eq.setHighShelf(5000.0f, 6.0f);
+        }
+    constexpr int kBlock = 61, kBlocks = 40;
+    std::array<float, kBlock> left{}, right{};
+    bool identical = true;
+    for (int block = 0; block < kBlocks; ++block)
+    {
+        for (int i = 0; i < kBlock; ++i)
+        {
+            const double t = static_cast<double>(block * kBlock + i) / 48000.0;
+            left[static_cast<size_t>(i)] = static_cast<float>(0.4 * std::sin(2.0 * 3.14159265358979323846 * 90.0 * t)
+                + 0.1 * std::sin(2.0 * 3.14159265358979323846 * 7000.0 * t));
+            right[static_cast<size_t>(i)] = static_cast<float>(0.3 * std::sin(2.0 * 3.14159265358979323846 * 210.0 * t));
+        }
+        std::array<float, kBlock> pairLeft = left, pairRight = right;
+        duskaudio::MultiCompSidechainEQ::processPair(pair[0], pair[1], pairLeft.data(), pairRight.data(), kBlock);
+        for (int i = 0; i < kBlock; ++i)
+        {
+            const float l = single[0].process(left[static_cast<size_t>(i)]);
+            const float r = single[1].process(right[static_cast<size_t>(i)]);
+            identical = identical && std::memcmp(&l, &pairLeft[static_cast<size_t>(i)], sizeof l) == 0
+                && std::memcmp(&r, &pairRight[static_cast<size_t>(i)], sizeof r) == 0;
+        }
+    }
+    require(identical, "the sidechain EQ's stereo block path is its per-channel path, bit for bit");
+    std::printf("sidechain low shelf: worst %.3e dB (bound %.0e); stereo block path bit-identical\n", worst, kBoundDb);
+}
+
+// Bus's own sidechain shelves run at the mode rate, in its feedback detector. The low shelf's effect on a 30 Hz tone
+// (the output level at +/-12 dB re the same render at 0 dB, where the shelf is bypassed) must not depend on the mode
+// rate it runs at: 48 kHz (48 kHz Off) and 192 / 384 / 768 kHz (192 kHz Off / 2x / 4x). The 0 dB renders themselves
+// span 0.007 dB over those rates, the BUS law's own rate dependence; a shelf that holds its gain adds nothing to it
+// (measured: 0.007 dB at +12, 0.006 at -12). The float shelf moved the +12 dB effect from -10.28 dB at 48 kHz to
+// -10.70 at 384 and -4.27 at 768. Bound: 0.02 dB.
+void testBusSidechainLowShelfAtEveryModeRate()
+{
+    using Parameter = MultiCompDSP::Parameter;
+    const auto levelDb = [](double rate, int setting, float lowGainDb) {
+        constexpr int kBlock = 512;
+        MultiCompDSP dsp;
+        dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Bus));
+        dsp.setOversampling(setting);
+        dsp.setMix(100.0f);
+        dsp.setParameter(Parameter::AutoMakeup, 0.0f);
+        dsp.setParameter(Parameter::SidechainHP, 0.0f);
+        configureStrongCompression(dsp, static_cast<int>(duskaudio::MultiCompMode::Bus));
+        dsp.setParameter(Parameter::ScLowFreq, 60.0f);
+        dsp.setParameter(Parameter::ScLowGain, lowGainDb);
+        dsp.prepare(rate, kBlock);
+        const int total = static_cast<int>(rate * 1.5), measureFrom = static_cast<int>(rate);
+        std::array<float, kBlock> input{}, output{};
+        const float* in[] = {input.data()};
+        float* out[] = {output.data()};
+        double inPower = 0.0, outPower = 0.0;
+        for (int start = 0; start < total; start += kBlock)
+        {
+            const int n = std::min(kBlock, total - start);
+            for (int i = 0; i < n; ++i)
+                input[static_cast<size_t>(i)] = static_cast<float>(
+                    0.25 * std::sin(2.0 * 3.14159265358979323846 * 30.0 * (start + i) / rate));
+            dsp.processBlock(in, out, 1, n);
+            for (int i = 0; i < n; ++i)
+                if (start + i >= measureFrom)
+                {
+                    inPower += static_cast<double>(input[static_cast<size_t>(i)]) * input[static_cast<size_t>(i)];
+                    outPower += static_cast<double>(output[static_cast<size_t>(i)]) * output[static_cast<size_t>(i)];
+                }
+        }
+        return 10.0 * std::log10(outPower / inPower);
+    };
+    struct ModeRate { double hostRate; int setting; };
+    constexpr std::array<ModeRate, 4> modeRates{{{48000.0, kOversamplingOffSetting}, {192000.0, kOversamplingOffSetting},
+                                                {192000.0, kOversampling2xSetting}, {192000.0, kOversampling4xSetting}}};
+    constexpr double kBoundDb = 0.02;
+    for (float gainDb : {12.0f, -12.0f})
+    {
+        double lowest = 1.0e9, highest = -1.0e9;
+        for (const auto& modeRate : modeRates)
+        {
+            const double effect = levelDb(modeRate.hostRate, modeRate.setting, gainDb)
+                - levelDb(modeRate.hostRate, modeRate.setting, 0.0f);
+            const int factor = modeRate.setting == kOversampling4xSetting ? 4
+                : modeRate.setting == kOversampling2xSetting ? 2 : 1;
+            std::printf("bus sidechain low shelf %+.0f dB @ 60 Hz: mode rate %6.0f Hz, 30 Hz level %+.4f dB re 0 dB\n",
+                        static_cast<double>(gainDb), modeRate.hostRate * factor, effect);
+            lowest = std::min(lowest, effect);
+            highest = std::max(highest, effect);
+        }
+        std::printf("bus sidechain low shelf %+.0f dB: spread over the mode rates %.4f dB (bound %.2f)\n",
+                    static_cast<double>(gainDb), highest - lowest, kBoundDb);
+        require(highest - lowest < kBoundDb, "Bus's sidechain low shelf acts the same at every mode rate to 768 kHz");
+    }
+}
+
 // The host sees one latency in every mode: each block's output is padded to the
 // deepest mode's latency, so switching modes never moves PDC (VST3 and CLAP hosts
 // restarted the plugin on every change, AU hosts never heard of one). Bypass
@@ -13735,6 +13893,17 @@ int main(int argc, char** argv)
     // lookahead at the mode rate.
     if (argc == 2 && std::strcmp(argv[1], "--digital-lookahead-latency") == 0)
     { testDigitalLookaheadDelayMatchesReportedLatency(); return 0; }
+    // Also in the default run; separately reachable for their break-first proof against the core whose sidechain
+    // low shelves ran in float.
+    if (argc == 2 && std::strcmp(argv[1], "--sidechain-low-shelf") == 0)
+    {
+        testSidechainLowShelfHoldsItsResponse();
+        testBusSidechainLowShelfAtEveryModeRate();
+        return 0;
+    }
+    // The second alone, so its proof can show it failing on a core that fails the first before reaching it.
+    if (argc == 2 && std::strcmp(argv[1], "--bus-sidechain-low-shelf") == 0)
+    { testBusSidechainLowShelfAtEveryModeRate(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--wide-opto") == 0)
     { testOptoWideDetectorCharge(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--wide-vca") == 0)
@@ -14238,6 +14407,8 @@ int main(int argc, char** argv)
     testDigitalLookaheadMixAlignment();
     testMultibandMixAlignment();
     testSidechainEq();
+    testSidechainLowShelfHoldsItsResponse();
+    testBusSidechainLowShelfAtEveryModeRate();
     testMultibandBypassAndZeroLatency();
     testHostLatencyIsConstantAcrossModes();
     testMultibandDryPaddedToHostLatency();

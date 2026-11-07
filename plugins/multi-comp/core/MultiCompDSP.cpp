@@ -847,7 +847,7 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     else if (nCh == 2 && !vcaSidechainTilt && !(sidechainHP >= 1.0f))
     {
         // Stereo with neither the high-pass nor the VCA's tilt engaged: the per-channel loop below would run the
-        // shelf EQ alone, so both channels run it at once (processPair performs process()'s float arithmetic).
+        // shelf EQ alone, so both channels run it at once (processPair performs process()'s arithmetic).
         float* left = processedSidechain[0].data();
         float* right = processedSidechain[1].data();
         std::copy_n(useExternalSidechain ? sidechain[0] : in[0], nSamples, left);
