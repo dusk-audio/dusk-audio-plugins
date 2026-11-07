@@ -46,6 +46,12 @@ public:
     void setModDepth (float depth);
     void setModRate (float hz);
     void setModeSmear (float depthSamples, float rateHz);  // deep+slow delay wander to smear the tail "boing"; depth 0 = off/bit-null
+    // Time-varying cross-feed: each half of the figure-8 takes its input from the other half's end
+    // turned by theta(t) = peakRad * (0.6 sin(phase1) + 0.4 sin(phase2)), phase2 at 1.618x the
+    // rate: 0 is the figure-8, pi/2 each half feeding itself. Orthogonal at every sample, so the
+    // loop stays lossless and the decay design holds; the modes move. peakRad 0 = off: the loop
+    // runs its instantiation without the turn.
+    void setCrossFeedRotation (float peakRad, float rateHz);
     void setSize (float size);
     void setFreeze (bool frozen);
     // Preserve the clean pre-diffuser input side in the two figure-8 loops.
@@ -139,6 +145,9 @@ public:
     // decayTime/ref) so the knob stays live. All-zero T60 = inactive = legacy.
     void setOctaveT60 (int band, float seconds);
     void setOctaveDecayRef (float seconds);
+    // Read-only view of the octave table as last set, and whether it is engaged.
+    float getOctaveT60 (int band) const noexcept { return band >= 0 && band < 9 ? octaveT60_[band] : 0.0f; }
+    bool  isOctaveT60Active() const noexcept     { return octaveActive_; }
 
     // Tonal-correction GEQ: a STATIC per-octave EQ on the wet OUTPUT (not in the
     // recirculating loop), so it sets the steady-state spectral balance
@@ -162,6 +171,12 @@ public:
     void clearBuffers();
 
 private:
+    // process() body; Rotate compiles the cross-feed turn in (setCrossFeedRotation).
+    template <bool Rotate>
+    void processLoop (const float* inputL, const float* inputR,
+                      float* outputL, float* outputR, int numSamples,
+                      const float* sourceSide);
+
     static constexpr float kTwoPi = 6.283185307179586f;
     static constexpr double kBaseSampleRate = 44100.0;
 
@@ -609,4 +624,22 @@ private:
     OutputTap customLeftTaps_[kNumOutputTaps] {};
     OutputTap customRightTaps_[kNumOutputTaps] {};
     bool useCustomTaps_ = false;
+
+    // Time-varying cross-feed (setCrossFeedRotation), its own loop instantiation. Kept after
+    // every other member so none of theirs moves: under -ffast-math a shifted array can change
+    // how a vectorised sum is ordered, and the loop without the turn must stay bit-null. The
+    // angle is computed every kXfRotBlock samples and interpolated per sample.
+    static constexpr int kXfRotBlock = 32;
+    float xfRotPeak_    = 0.0f;
+    float xfRotRateHz_  = 1.0f;
+    float xfRotPhase_[2] {};       // the two LFO phases (rad)
+    float xfRotInc_  [2] {};       // their advance per control block (rad)
+    float xfRotCos_     = 1.0f;    // the turn now
+    float xfRotSin_     = 0.0f;
+    float xfRotCosStep_ = 0.0f;    // per-sample increments to the next control point
+    float xfRotSinStep_ = 0.0f;
+    int   xfRotCounter_ = 0;       // samples left in the control block
+    bool  xfRotActive_  = false;   // xfRotPeak_ > 0: process() runs processLoop<true>
+    void  resetCrossFeedRotation();    // phases to their seeds, the turn to none (it ramps from there)
+    void  advanceCrossFeedRotation();  // the next control point's angle and the steps to it
 };

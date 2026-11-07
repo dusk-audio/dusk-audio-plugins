@@ -2,6 +2,7 @@
 // Standalone, real-binary CLAP host regression test for DuskVerb 2.
 
 #include "../core/DuskVerbParamTable.hpp"
+#include "../core/DuskVerbPresets.hpp"
 
 #include <algorithm>
 #include <array>
@@ -26,6 +27,20 @@
 #include "clap/factory/plugin-factory.h"
 #include "clap/plugin.h"
 #include "clap/process.h"
+// The MIX LOCK contract loads a factory preset through CLAP preset-load, which DAF ships
+// with CLAP factory presets. A DAF without them still serves the programs to VST3 and AU
+// hosts but gives this test nothing to load through over CLAP, so the contract is not
+// built and the run says so: MIX LOCK's host wiring then has no hosted test. CMake sets
+// DUSKVERB_CLAP_PRESET_LOAD from DAF's own headers, the check the shared ClapPresets guard
+// uses (DUSK_DAF_HAS_CLAP_PRESETS in DuskDafPlugin.cmake), never from whatever CLAP SDK
+// sits on an include path.
+#ifndef DUSKVERB_CLAP_PRESET_LOAD
+#error "DUSKVERB_CLAP_PRESET_LOAD comes from CMake (DUSK_DAF_HAS_CLAP_PRESETS)"
+#endif
+#if DUSKVERB_CLAP_PRESET_LOAD
+#include "clap/ext/preset-load.h"
+#include "clap/factory/preset-discovery.h"
+#endif
 
 namespace {
 
@@ -64,7 +79,8 @@ static const void* CLAP_ABI hostGetExtension(const clap_host_t*, const char* id)
 {
     return id != nullptr && std::strcmp(id, CLAP_EXT_PARAMS) == 0 ? &hostParams : nullptr;
 }
-static void CLAP_ABI hostRequestRestart(const clap_host_t*) {}
+static int hostRestartRequests = 0;
+static void CLAP_ABI hostRequestRestart(const clap_host_t*) { ++hostRestartRequests; }
 static void CLAP_ABI hostRequestProcess(const clap_host_t*) {}
 static void CLAP_ABI hostRequestCallback(const clap_host_t*) {}
 
@@ -779,7 +795,134 @@ void audioContract(const clap_plugin_factory_t* factory, const Instance& probe)
     }
 }
 
+// A host reset (clap_plugin::reset) goes straight to the plugin's realtime reset:
+// the tail is gone on the next block, the host is not asked for a restart (which a
+// host may ignore, and whose deactivate() keeps the engines' buffers, see
+// DuskVerbPlugin::deactivate), and the instance rings again.
+// This runs the default program; DuskVerbDSP::clearState() names the presets whose
+// output match EQ it cannot clear.
+void resetContract(const clap_plugin_factory_t* factory)
+{
+    Instance instance(factory);
+    check(instance.plugin != nullptr && instance.params != nullptr, "reset probe instance creates");
+    if (instance.plugin == nullptr || instance.params == nullptr) return;
+    instance.set(duskverb::Mix, 1.0);
+    check(instance.activate(48000.0, 256), "reset probe instance activates");
+    if (!instance.processing) return;   // process() and reset() need an active instance
+
+    EmptyOutEvents outEvents;
+    ParamEvents inEvents;
+    int64_t steady = 0;
+    auto block = [&](bool impulse) {
+        std::vector<float> inL(256, 0.0f), inR(256, 0.0f), outL(256, 0.0f), outR(256, 0.0f);
+        if (impulse) inL[0] = inR[0] = 0.25f;
+        float* inChannels[] = { inL.data(), inR.data() };
+        float* outChannels[] = { outL.data(), outR.data() };
+        clap_audio_buffer_t input{};
+        input.data32 = inChannels;
+        input.channel_count = 2;
+        clap_audio_buffer_t output{};
+        output.data32 = outChannels;
+        output.channel_count = 2;
+        clap_process_t process{};
+        process.steady_time = steady;
+        process.frames_count = 256;
+        process.audio_inputs = &input;
+        process.audio_outputs = &output;
+        process.audio_inputs_count = 1;
+        process.audio_outputs_count = 1;
+        process.in_events = &inEvents.iface;
+        process.out_events = &outEvents.iface;
+        check(instance.plugin->process(instance.plugin, &process) != CLAP_PROCESS_ERROR, "reset probe processes");
+        steady += 256;
+        float peak = 0.0f;
+        for (int i = 0; i < 256; ++i) peak = std::max({ peak, std::fabs(outL[i]), std::fabs(outR[i]) });
+        return peak;
+    };
+    auto ring = [&] {
+        block(true);
+        float peak = 0.0f;
+        for (int i = 0; i < 8; ++i) peak = block(false);
+        return peak;
+    };
+
+    const float ringing = ring();
+    check(ringing > 1e-6f, "reset probe excites a tail");
+    const int restartsBefore = hostRestartRequests;
+    instance.plugin->reset(instance.plugin);
+    check(hostRestartRequests == restartsBefore, "clap reset does not ask the host for a restart");
+    const float after = block(false);
+    check(after < ringing * 1e-6f, "clap reset silences the tail on the next block");
+    check(ring() > 1e-6f, "the instance rings again after a clap reset");
+}
+
 } // namespace
+
+#if DUSKVERB_CLAP_PRESET_LOAD
+// MIX LOCK end to end through the host: it travels with the session, off by
+// default, and while it is on a factory preset loaded through the host's
+// preset-load path (DAF's program path) leaves Mix and Bus as they were; off,
+// the preset writes its own.
+void mixLockContract(const clap_plugin_factory_t* factory)
+{
+    Instance instance(factory);
+    if (instance.plugin == nullptr || instance.state == nullptr)
+    {
+        check(false, "MIX LOCK: the plugin creates with its state extension");
+        return;
+    }
+    const auto* presets = static_cast<const clap_plugin_preset_load_t*>(
+        instance.plugin->get_extension(instance.plugin, CLAP_EXT_PRESET_LOAD));
+    check(presets != nullptr, "MIX LOCK: the plugin offers preset-load, the host's program path");
+    if (presets == nullptr) return;
+    clap_id mixId = CLAP_INVALID_ID, busId = CLAP_INVALID_ID;
+    for (const auto& p : readParams(instance))
+    {
+        if (p.symbol == "mix") mixId = p.info.id;
+        if (p.symbol == "bus_mode") busId = p.info.id;
+    }
+    check(mixId != CLAP_INVALID_ID && busId != CLAP_INVALID_ID, "MIX LOCK: Mix and Bus are host parameters");
+
+    // The state blob is key/value pairs, each NUL-terminated; MIX LOCK's value is
+    // one character. Empty when the key is missing.
+    const auto withLock = [](std::vector<uint8_t> state, char value) {
+        static constexpr char key[] = "mix_lock";
+        for (size_t i = 0; i + sizeof(key) < state.size(); ++i)
+            if (std::memcmp(state.data() + i, key, sizeof(key)) == 0)
+            {
+                state[i + sizeof(key)] = static_cast<uint8_t>(value);
+                return state;
+            }
+        return std::vector<uint8_t>();
+    };
+    constexpr uint32_t kProgram = 2;
+    const auto& preset = duskverb::dv2FactoryPresets()[kProgram];
+    const double presetMix = duskverb::plainToHost(duskverb::paramDesc(duskverb::Mix), preset.mix);
+    check(!preset.busMode && std::fabs(presetMix - 0.8) > 0.05, "MIX LOCK: the test preset differs from the held values");
+
+    instance.set(mixId, 0.8);
+    instance.set(busId, 1.0);
+    const auto unlocked = instance.save();
+    const auto locked = withLock(unlocked, '1');
+    check(!locked.empty() && withLock(unlocked, '0') == unlocked, "MIX LOCK is saved with the session, off by default");
+
+    char key[8];
+    std::snprintf(key, sizeof(key), "%u", kProgram);
+    check(instance.load(locked), "MIX LOCK: a session with the lock on loads");
+    check(presets->from_location(instance.plugin, CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN, nullptr, key),
+          "MIX LOCK: a factory preset loads through the host");
+    checkNear(instance.get(mixId), 0.8, 1e-6, "MIX LOCK keeps Mix through a host preset load");
+    checkNear(instance.get(busId), 1.0, 1e-6, "MIX LOCK keeps Bus on through a host preset load");
+    const auto relocked = instance.save();
+    check(!relocked.empty() && withLock(relocked, '1') == relocked, "the lock stays on in the saved session");
+
+    check(instance.load(unlocked), "MIX LOCK: the same session with the lock off loads");
+    check(presets->from_location(instance.plugin, CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN, nullptr, key),
+          "MIX LOCK: the factory preset loads again");
+    checkNear(instance.get(mixId), presetMix, 1e-6, "unlocked, a host preset load writes the preset's Mix");
+    checkNear(instance.get(busId), 0.0, 1e-6, "unlocked, a host preset load writes the preset's Bus");
+}
+#endif
 
 int main(int argc, char** argv)
 {
@@ -816,6 +959,12 @@ int main(int argc, char** argv)
     parameterContract(probe, metadata);
     stateContract(probe);
     audioContract(library.factory, probe);
+    resetContract(library.factory);
+#if DUSKVERB_CLAP_PRESET_LOAD
+    mixLockContract(library.factory);
+#else
+    std::printf("SKIP: MIX LOCK host preset-load contract (this DAF has no CLAP preset-load)\n");
+#endif
 
     if (failures != 0)
     {

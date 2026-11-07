@@ -327,6 +327,18 @@ namespace {
 namespace duskverb
 {
 
+// The ParallelMultiband band decays and the mode smear's rate for a preset without rows (bands at
+// unit level, no direct, unit width; smear depth 0 is off).
+constexpr float kPmbDefaultT60[6] = { 2.0f, 2.2f, 2.0f, 1.6f, 1.2f, 0.8f };
+constexpr float kModeSmearDefaultRateHz = 0.08f;
+
+void applyNeutralPmbAndModeSmear (DuskVerbEngine& engine) noexcept
+{
+    for (int k = 0; k < 6; ++k)
+        engine.setPmbBand (k, kPmbDefaultT60[k], 1.0f, 0.0f, 1.0f);
+    engine.setDattorroModeSmear (0.0f, kModeSmearDefaultRateHz);
+}
+
 // Prime the DUSKVERB_* getenv() cache on the message thread. applyEngineConfig()
 // runs on the audio thread and only ever reads the already-initialised pointers.
 void primeTuningEnvCache() noexcept { primeParseLocale(); tuningEnv(); }
@@ -1639,7 +1651,8 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // END_PMB_MAP
         }};
         // Start from engine defaults; env or a per-preset bake overrides them.
-        float t60v[6] = {2,2.2f,2,1.6f,1.2f,0.8f}, lvlv[6] = {1,1,1,1,1,1}, dirv[6] = {0,0,0,0,0,0}, widv[6] = {1,1,1,1,1,1};
+        float t60v[6], lvlv[6] = {1,1,1,1,1,1}, dirv[6] = {0,0,0,0,0,0}, widv[6] = {1,1,1,1,1,1};
+        std::copy (std::begin (duskverb::kPmbDefaultT60), std::end (duskverb::kPmbDefaultT60), t60v);
         if (const char* env = tuningEnv().pmb; env != nullptr && env[0] != '\0')
         {
             duskverb::Tokens groups (env, ';');
@@ -1989,7 +2002,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             { "Vintage Gold Plate", {  40.0f, 2.5f } },  // needs −1.3 dB: 18.5→~11.8 (Δ−2.4) ✓; 19→16
             { "Deep Blue Day",      { 100.0f, 2.0f } },  // Shimmer FDN, measured at NATIVE 50% wet (fleet_audit convention): boing 6.9→+0.6 ✓ + closes piano-low-growth + env_shape (opens 1 HF-spec) → 25→21. (My earlier "shimmer incompatible" finding was a 100%-wet artifact.)
         }};
-        float smDepth = 0.0f, smRate = 0.08f;
+        float smDepth = 0.0f, smRate = duskverb::kModeSmearDefaultRateHz;
         for (const auto& e : kModeSmearByName)
             if (e.first == nameView) { smDepth = e.second.depthSamples; smRate = e.second.rateHz; break; }
         if (const char* e = tuningEnv().modesmear; e != nullptr && e[0] != '\0')

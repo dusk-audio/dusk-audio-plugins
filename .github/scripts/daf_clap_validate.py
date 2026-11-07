@@ -39,6 +39,18 @@ violating the CLAP spec. This script runs clap-validator on a built .clap and:
              returning the whole matrix to advisory. NEVER add a per-test
              allowlist -- fix the plugin instead.
 
+             The one exception is a bug in the VALIDATOR, not in a plugin, and it
+             is spelled out in VALIDATOR_BUG_EXCLUSIONS below:
+             preset-discovery-crawl and preset-discovery-load hang until
+             RUN_TIMEOUT_S on any plugin that publishes a container of presets,
+             which every DAF plugin with factory programs does through CLAP preset
+             discovery. clap-validator's MetadataReceiver::begin_preset holds its
+             result mutex while it calls flush_preset, which locks the same mutex
+             again on the second preset. That is in the pinned build and on
+             upstream master as of 2026-10. DAF's CLAPPresetsWrapper test and each
+             plugin's ClapPresets ctest cover discovery and loading instead. Remove
+             the exclusion when a fixed validator is pinned.
+
 Usage: daf_clap_validate.py <path-to-plugin.clap>
 Env:
   CLAP_VALIDATOR_BIN      Use this binary instead of downloading a release
@@ -82,6 +94,9 @@ ASSET_SHA256 = {
 }
 LATENCY_SIGNATURE = "clap_host_latency::changed"
 RUN_TIMEOUT_S = 600
+# Tests skipped because the validator itself deadlocks in them (see the module docstring).
+# Never add a test here to get a plugin past the gate.
+VALIDATOR_BUG_EXCLUSIONS = ("preset-discovery-crawl", "preset-discovery-load")
 
 
 def log(msg):
@@ -276,9 +291,13 @@ def main():
     try:
         vbin = resolve_binary(workdir)
         log(f"Using clap-validator: {vbin}")
+        exclude_args = []
+        for test in VALIDATOR_BUG_EXCLUSIONS:
+            exclude_args += ["--exclude", f"^{re.escape(test)}$"]
+        log(f"Skipping for a validator deadlock: {', '.join(VALIDATOR_BUG_EXCLUSIONS)}")
         try:
             proc = subprocess.run(
-                [vbin, "validate", clap],
+                [vbin, "validate", *exclude_args, clap],
                 capture_output=True, text=True, timeout=RUN_TIMEOUT_S,
             )
         except subprocess.TimeoutExpired as exc:

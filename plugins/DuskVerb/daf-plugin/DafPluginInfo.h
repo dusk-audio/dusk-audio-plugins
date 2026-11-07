@@ -34,6 +34,13 @@
 // the same keeps hosts from stopping a bounce or suspending the instance
 // mid-decay. Set in activate() and on sample-rate changes, in frames.
 #define DAF_PLUGIN_WANT_TAIL          1
+// A host reset (CLAP reset on the audio thread, AU Reset on the host's thread
+// with render held off) clears the tank in place, with no restart
+// (DuskVerbDSP::clearState(), which documents what it measured). Without it DAF
+// answers a CLAP reset with a restart request, which a host may ignore, and an AU
+// Reset with deactivate() and activate(), which leaves the tail only about 20 dB
+// down: deactivate() deliberately keeps the engines' buffers (see DuskVerbPlugin).
+#define DAF_PLUGIN_WANT_RESET         1
 #define DAF_PLUGIN_WANT_STATE         1
 #define DAF_PLUGIN_WANT_FULL_STATE    1
 // JUCE consumes the final point of each host parameter queue before processing
@@ -48,9 +55,11 @@
 #define DAF_UI_FILE_BROWSER         1
 #define DAF_UI_CUSTOM_INCLUDE_PATH  "DearImGui.hpp"
 #define DAF_UI_CUSTOM_WIDGET_TYPE   DGL_NAMESPACE::ImGuiTopLevelWidget
-// Uniformly scaled 1200 x 800 editor; 1050 x 700 minimum preserves 3:2.
-#define DAF_UI_DEFAULT_WIDTH        1200
-#define DAF_UI_DEFAULT_HEIGHT       800
+// A 1200 x 800 design drawn uniformly scaled; it opens at its 1050 x 700 minimum,
+// inside the fleet's default-size envelope (1000-1080 wide, 500-700 tall), and
+// keeps 3:2 when resized.
+#define DAF_UI_DEFAULT_WIDTH        1050
+#define DAF_UI_DEFAULT_HEIGHT       700
 #define DAF_UI_USER_RESIZABLE       1
 
 #define DAF_PLUGIN_CLAP_FEATURES   "audio-effect", "reverb", "stereo"
