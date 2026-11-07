@@ -11,7 +11,6 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <complex>
 #include <limits>
 #if defined(__aarch64__)
 #include <arm_neon.h>
@@ -375,27 +374,7 @@ private:
 // same procedure recovers our own known design to 0.00 dB above 700 Hz; its
 // small low-frequency bias (+0.17 dB at 40 Hz, detector ripple) is removed
 // from the reference values below. The earlier campaign table (probe_sc_hf.py)
-// read 0.3-0.7 dB high at both ends, and the old ladder's top section, with its
-// pole clamped just under Nyquist, rose +4.9 dB above the reference at 23.5 kHz,
-// so ultrasonic content over-drove the detector (a -12 dB snare with 14 % of
-// its energy above 20 kHz lost 3-4 dB more than the reference).
-//
-// Realisation: eight first-order sections fitted jointly to the three rates,
-// each designed at the host rate with a matched-Z pole and its zero solved so
-// the section's gain at Nyquist equals the analogue section's gain at fs / 2
-// (a magnitude-matched one-pole shelf). No corner is clamped, so nothing folds
-// up against Nyquist at any rate. Residual against the reference: <= 0.26 dB
-// to 20 kHz and <= 0.27 dB to 23.5 kHz at 48 kHz, <= 0.27 / 0.31 dB at 44.1 kHz,
-// <= 0.45 dB at 96 kHz (the reference's own in-band shape shifts ~0.2 dB with
-// rate). Normalised digitally at the fitted unity frequency.
-inline constexpr double kSidechainTiltUnityHz = 286.637944;
-inline constexpr int kSidechainTiltSections = 8;
-inline constexpr std::array<float, 8> kSidechainTiltZeroHz{{
-    0.91690101f, 4.40563334f, 59.7318946f, 313.543966f,
-    2045.29265f, 18816.0346f, 19927.1537f, 21334.9133f}};
-inline constexpr std::array<float, 8> kSidechainTiltPoleHz{{
-    2.42038204f, 36.9131747f, 127.332884f, 806.213569f,
-    4974.03307f, 25503.6051f, 31301.2147f, 29317.4969f}};
+// read 0.3-0.7 dB high at both ends. The live response is SidechainResponse.
 
 // The reference's engaged response at 48 kHz, in detector dB relative to the
 // switch-out (flat) detector, for tests (2026-09-11 remeasurement above).
@@ -407,25 +386,9 @@ inline constexpr std::array<SidechainTiltPoint, 25> kSidechainTiltMeasured{{
     {10000.0f, 15.54f}, {12000.0f, 16.28f}, {14000.0f, 16.98f}, {16000.0f, 17.64f}, {18000.0f, 18.23f},
     {20000.0f, 18.72f}, {21000.0f, 18.91f}, {22000.0f, 19.05f}, {23000.0f, 19.13f}, {23500.0f, 19.15f}}};
 
-
-
-// 2026-10-11 joint 44.1/48/96 kHz FIT response. The earlier 48 kHz-only
-// realization missed the new 96 kHz C table by 2.374 dB. The three-rate
-// response and independent short-pulse FIT residuals are documented in
-// rate-followup/impulse-fit/projected-blend-fit.json.
-// The lowest three measured sections and independent 20.020729 Hz pole
-// preserve Q's LF magnitude/phase. Higher poles use the common bilinear
-// mapping; no corner is clamped or selected from a host's Nyquist.
-// P's measured 49.348321 ms linear transition is unchanged.
-inline constexpr float kScResponseStrength = 1.0f;
+// PULL/SC in and out: P's measured 49.348321 ms linear transition between the
+// switch-out (flat) and the engaged detector (2026-10-11).
 inline constexpr double kScTransitionMs = 49.34832034753578;
-inline constexpr std::array<double, 8> kScResponseZeroHz{{
-    5.756520018445299, 7.58503667171528, 45.27084620441695, 1266.126284916478,
-    311.6317223037134, 2828.6456577583094, 21804.85412256131, 27890.82245889833}};
-inline constexpr std::array<double, 8> kScResponsePoleHz{{
-    7.809181475826136, 16.760703575029417, 119.57010598264047, 751.986944483175,
-    1630.4376516346435, 7727.690864281121, 33403.22353937673, 40420.16378298945}};
-inline constexpr double kScResponseGainDb = 0.041299182276151536;
 
 // 2026-10-12: normalized SC ladder identified jointly from steady response
 // and independent short-pulse FIT data; no held DC/music/blind data fitted.
@@ -434,8 +397,6 @@ inline constexpr double kScResponseGainDb = 0.041299182276151536;
 // FIT magnitude residual 0.032699 dB; LF phase 0.025538 degrees.
 // Frozen-fit rate judgments: 88.2 kHz 0.044970 dB, 192 kHz
 // 0.045211 dB. Y pulse residual 0.313651 dB. The transition is unchanged.
-// Zero retains the previous response exactly for the complete off control.
-inline constexpr float kRateScaledScStrength = 1.0f;
 inline constexpr std::array<double, 8> kRateScaledScZeroFraction{{
     0.00011748757161015158, 0.00038202801916710044, 0.00094843173487066, 0.007133710397707068,
     0.007121114034996163, 0.04499253549690136, 0.1273179770248589, 0.32087446046258616}};
@@ -452,49 +413,19 @@ public:
         const double fs = std::isfinite(sampleRate) && sampleRate > 0.0
                             ? sampleRate : 48000.0;
         constexpr double pi = 3.14159265358979323846;
-        if constexpr (kRateScaledScStrength != 0.0f)
-        {
-            for (size_t i = 0; i < sections.size(); ++i)
-            {
-                const double kp = pi * kRateScaledScPoleFraction[i];
-                const double kz = pi * kRateScaledScZeroFraction[i];
-                const double pole = (1.0 - kp) / (1.0 + kp);
-                const double zero = (1.0 - kz) / (1.0 + kz);
-                auto& section = sections[i];
-                section.b0 = (1.0 - pole) / (1.0 - zero);
-                section.b1 = -section.b0 * zero;
-                section.a1 = -pole;
-            }
-            scale = std::pow(10.0, kRateScaledScGainDb / 20.0)
-                  * std::sqrt(fs / 48000.0);
-            step = 1.0 / (fs * kScTransitionMs * 0.001);
-            reset();
-            return;
-        }
-        const std::complex<double> atUnity =
-            std::polar(1.0, -2.0 * pi * kSidechainTiltUnityHz / fs);
-        std::complex<double> responseAtUnity{1.0, 0.0};
         for (size_t i = 0; i < sections.size(); ++i)
         {
-            const double zeroHz = kScResponseZeroHz[i];
-            const double poleHz = kScResponsePoleHz[i];
-            const double k = pi * poleHz / fs;
-            const double pole = i < 3 ? std::exp(-2.0 * k)
-                                      : (1.0 - k) / (1.0 + k);
-            const double nyquistGain = std::sqrt(
-                (1.0 + std::pow(0.5 * fs / zeroHz, 2.0))
-                / (1.0 + std::pow(0.5 * fs / poleHz, 2.0)));
-            const double a = nyquistGain * (1.0 + pole) / (1.0 - pole);
-            const double zero = (a - 1.0) / (a + 1.0);
+            const double kp = pi * kRateScaledScPoleFraction[i];
+            const double kz = pi * kRateScaledScZeroFraction[i];
+            const double pole = (1.0 - kp) / (1.0 + kp);
+            const double zero = (1.0 - kz) / (1.0 + kz);
             auto& section = sections[i];
             section.b0 = (1.0 - pole) / (1.0 - zero);
             section.b1 = -section.b0 * zero;
             section.a1 = -pole;
-            responseAtUnity *= (section.b0 + section.b1 * atUnity)
-                             / (1.0 + section.a1 * atUnity);
         }
-        scale = std::pow(10.0, kScResponseGainDb / 20.0)
-              / std::abs(responseAtUnity);
+        scale = std::pow(10.0, kRateScaledScGainDb / 20.0)
+              * std::sqrt(fs / 48000.0);
         step = 1.0 / (fs * kScTransitionMs * 0.001);
         reset();
     }
@@ -603,62 +534,6 @@ private:
     std::array<Section, kSectionCount> sections{};
     double scale = 1.0, step = 1.0, weight = 0.0;
     bool initialized = false;
-};
-
-// Retained only for kScResponseStrength == 0: this is the exact pre-patch-44
-// signal path required by the disabled-element byte-identity control.
-// The default VCA path uses SidechainResponse, never this legacy filter.
-class SidechainTilt
-{
-public:
-    void prepare(double sampleRate) noexcept
-    {
-        const double fs = sampleRate > 0.0 ? sampleRate : 44100.0;
-        const double pi = 3.14159265358979323846;
-        const std::complex<double> zu = std::polar(1.0, -2.0 * pi * kSidechainTiltUnityHz / fs);
-        std::complex<double> atUnity = 1.0;
-        for (int i = 0; i < kSidechainTiltSections; ++i)
-        {
-            const double zh = kSidechainTiltZeroHz[static_cast<size_t>(i)];
-            const double ph = kSidechainTiltPoleHz[static_cast<size_t>(i)];
-            // H(z) = g (1 - q z^-1) / (1 - pz z^-1): pole matched to the
-            // analogue pole, DC gain 1, Nyquist gain equal to the analogue
-            // section's gain at fs / 2.
-            const double pz = std::exp(-2.0 * pi * ph / fs);
-            const double nyquistGain = std::sqrt((1.0 + (0.5 * fs / zh) * (0.5 * fs / zh))
-                                               / (1.0 + (0.5 * fs / ph) * (0.5 * fs / ph)));
-            const double a = nyquistGain * (1.0 + pz) / (1.0 - pz);
-            const double q = (a - 1.0) / (a + 1.0);
-            const double g = (1.0 - pz) / (1.0 - q);
-            sections[static_cast<size_t>(i)] = {static_cast<float>(g), static_cast<float>(-g * q),
-                                                static_cast<float>(-pz), 0.0f, 0.0f};
-            atUnity *= (g - g * q * zu) / (1.0 - pz * zu);
-        }
-        normalise = static_cast<float>(1.0 / std::abs(atUnity));
-        reset();
-    }
-
-    void reset() noexcept
-    {
-        for (auto& s : sections) { s.x1 = 0.0f; s.y1 = 0.0f; }
-    }
-
-    float process(float x) noexcept
-    {
-        for (auto& s : sections)
-        {
-            const float y = s.b0 * x + s.b1 * s.x1 - s.a1 * s.y1;
-            s.x1 = x;
-            s.y1 = y;
-            x = y;
-        }
-        return x * normalise;
-    }
-
-private:
-    struct Section { float b0 = 1.0f, b1 = 0.0f, a1 = 0.0f, x1 = 0.0f, y1 = 0.0f; };
-    std::array<Section, static_cast<size_t>(kSidechainTiltSections)> sections{};
-    float normalise = 1.0f;
 };
 
 // OUTPUT VOICING: native impulse at 48 kHz (setting-independent +0.13 dB

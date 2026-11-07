@@ -1,5 +1,6 @@
 #include "MultiCompFetProgrammeFixtures.hpp"
 #include "../MultiCompDSP.hpp"
+#include "../MultiCompPresets.hpp"
 #include "MultiCompOptoParityFixtures.hpp"
 #include "MultiCompFetBlueFixtures.hpp"
 #include "MultiCompStudioVcaFixtures.hpp"
@@ -27,7 +28,16 @@ namespace duskaudio
 {
 struct MultiCompDSPTestAccess
 {
+    // The switches the duck has made at its silence (MultiCompDSP::switchDuckSwitches). The output alone cannot tell
+    // a ducked switch from one into a path that restarts near-silent on its own (VCA's anti-alias filters, the way
+    // out of Multiband), so the switch tests count them too.
+    static unsigned duckedSwitches(const MultiCompDSP& dsp) noexcept { return dsp.switchDuckSwitches; }
 
+    // The auto makeup gain the output is taking now (dB): the smoother's value, which the matcher's targets move.
+    static float autoGainDb(const MultiCompDSP& dsp) noexcept
+    {
+        return 20.0f * std::log10(std::max(dsp.autoGainSmoother.value(), 1.0e-9f));
+    }
 
     // The vintage FET envelope gain, in dB, straight off the mode state --
     // NOT the published meter, which is smoothed and clamped. `processFET`
@@ -100,12 +110,6 @@ struct MultiCompDSPTestAccess
     {
         return MultiCompDSP::advanceFetStartupBlend(
             activeSamples, fullCorrectionSamples, correctionEndSamples);
-    }
-
-    static float advanceVcaSidechainTilt(MultiCompDSP& dsp, int channel,
-                                         float sample) noexcept
-    {
-        return dsp.sidechainTilt[static_cast<size_t>(channel)].process(sample);
     }
 };
 }
@@ -3733,6 +3737,111 @@ void testBypassToggleResumesWithoutGlitch()
     std::puts("bypass toggle: all six modes resume bit-identically after the 30 ms crossfade");
 }
 
+// A session saved bypassed reopens with Bypass already on when the host activates the instance, and an offline
+// bounce prepares it again the same way. Until 2026-11-05 prepare() started the bypass ramp at "processed"
+// whatever the parameter said (reset() already followed it), so every such activation crossfaded out of the
+// processed signal over the 30 ms ramp. The contract: an instance prepared while bypassed emits the
+// latency-aligned input from its first sample, bit for bit, in every mode; so does one prepared again (a host
+// deactivate / activate) after it ran processed and was then bypassed. Exact equality, as in the toggle test:
+// both sides come from one binary with nothing in between.
+void testBypassAtActivationEmitsAlignedDry()
+{
+    static constexpr int blockSize = 256;   // static: the render lambda sizes arrays with it uncaptured (MSVC C2975)
+    constexpr int sampleRate = 48000;
+    constexpr int totalSamples = sampleRate / 4;              // 250 ms, well past the 30 ms ramp
+    constexpr int rampSamples = 30 * sampleRate / 1000;       // kBypassRampMs
+    constexpr std::array<const char*, duskaudio::kMultiCompModes> kNames{{
+        "OPTO", "FET BLACK", "VCA", "BUS", "FET BLUE", "Studio VCA", "Digital", "Multiband"}};
+    std::vector<float> inputLeft, inputRight;
+    makeBypassToggleStimulus(inputLeft, inputRight, totalSamples, sampleRate);
+
+    const auto render = [&](MultiCompDSP& dsp, std::vector<float>& left, std::vector<float>& right) {
+        left.assign(inputLeft.size(), 0.0f);
+        right.assign(inputRight.size(), 0.0f);
+        std::array<float, blockSize> blockLeft{}, blockRight{}, blockOutLeft{}, blockOutRight{};
+        const float* inputs[] = {blockLeft.data(), blockRight.data()};
+        float* outputs[] = {blockOutLeft.data(), blockOutRight.data()};
+        for (int start = 0; start < totalSamples; start += blockSize)
+        {
+            const int count = std::min(blockSize, totalSamples - start);
+            std::copy_n(inputLeft.begin() + start, count, blockLeft.begin());
+            std::copy_n(inputRight.begin() + start, count, blockRight.begin());
+            dsp.processBlock(inputs, outputs, 2, count);
+            std::copy_n(blockOutLeft.begin(), count, left.begin() + start);
+            std::copy_n(blockOutRight.begin(), count, right.begin() + start);
+        }
+    };
+    // Largest |output - input delayed by the latency| over [from, to).
+    const auto fromAlignedDry = [&](const std::vector<float>& left, const std::vector<float>& right,
+                                    int latency, int from, int to) {
+        float worst = 0.0f;
+        for (int i = from; i < to; ++i)
+        {
+            const float dryLeft = i >= latency ? inputLeft[static_cast<size_t>(i - latency)] : 0.0f;
+            const float dryRight = i >= latency ? inputRight[static_cast<size_t>(i - latency)] : 0.0f;
+            worst = std::max(worst, std::abs(left[static_cast<size_t>(i)] - dryLeft));
+            worst = std::max(worst, std::abs(right[static_cast<size_t>(i)] - dryRight));
+        }
+        return worst;
+    };
+
+    for (int modeIndex = 0; modeIndex < duskaudio::kMultiCompModes; ++modeIndex)
+    {
+        const auto mode = static_cast<duskaudio::MultiCompMode>(modeIndex);
+        const std::string label = std::string("bypass at activation [")
+            + kNames[static_cast<size_t>(modeIndex)] + "] ";
+        const auto configure = [&](MultiCompDSP& dsp) {
+            dsp.setMode(modeIndex);
+            dsp.setOversampling(kOversampling2xSetting);
+            configureBypassToggleMode(dsp, mode);
+        };
+
+        // Control: processed, the ramp window differs from the aligned dry, so a crossfade out of it is visible.
+        std::vector<float> processedLeft, processedRight;
+        MultiCompDSP processed;
+        configure(processed);
+        processed.prepare(sampleRate, blockSize);
+        render(processed, processedLeft, processedRight);
+        const float processedDifference = fromAlignedDry(processedLeft, processedRight,
+                                                         processed.getLatencySamples(), 0, rampSamples);
+
+        // A: bypassed before the first prepare.
+        std::vector<float> freshLeft, freshRight;
+        MultiCompDSP fresh;
+        configure(fresh);
+        fresh.setBypass(true);
+        fresh.prepare(sampleRate, blockSize);
+        render(fresh, freshLeft, freshRight);
+        const float freshDifference = fromAlignedDry(freshLeft, freshRight, fresh.getLatencySamples(),
+                                                     0, totalSamples);
+
+        // B: ran processed, then bypassed, then prepared again.
+        std::vector<float> againLeft, againRight;
+        MultiCompDSP again;
+        configure(again);
+        again.prepare(sampleRate, blockSize);
+        render(again, againLeft, againRight);
+        again.setBypass(true);
+        again.prepare(sampleRate, blockSize);
+        render(again, againLeft, againRight);
+        const float againDifference = fromAlignedDry(againLeft, againRight, again.getLatencySamples(),
+                                                     0, totalSamples);
+
+        std::printf("bypass at activation %-10s latency %3d | processed vs dry in the ramp %.3e | "
+                    "bypassed at first prepare %.3e | re-prepared bypassed %.3e\n",
+                    kNames[static_cast<size_t>(modeIndex)], fresh.getLatencySamples(),
+                    static_cast<double>(processedDifference), static_cast<double>(freshDifference),
+                    static_cast<double>(againDifference));
+        require(processedDifference > 1.0e-3f,
+                (label + "the processed render differs from the dry inside the ramp window").c_str());
+        require(freshDifference == 0.0f,
+                (label + "prepared while bypassed, the output is the aligned input from sample 0").c_str());
+        require(againDifference == 0.0f,
+                (label + "prepared again while bypassed, the output is the aligned input from sample 0").c_str());
+    }
+    std::puts("bypass at activation: every mode emits the aligned input from its first sample");
+}
+
 float renderNeutralSine(int oversampling, float mix, float frequency = 997.0f)
 {
     MultiCompDSP dsp;
@@ -4070,6 +4179,75 @@ void testWideDigitalLatencyContract()
             require(std::abs(sum - 0.25) < 2.5e-4, "neutral Digital impulse DC gain is unity within 0.1%");
             require(*peak > 0.24f, "neutral Digital impulse keeps its central sample above 0.24");
         }
+}
+
+// Digital's own lookahead delays the audio inside the mode, at the mode rate; the latency the host is told counts it
+// in whole host samples. Rounded at the mode rate, the delay missed the report by a quarter or half a host sample
+// wherever the lookahead does not round to the same thing at both rates (2x / 4x: 24 of the 75 settings below, e.g.
+// 0.1 ms at 44.1 kHz delayed 4.5 samples against a report of 4), while the bypass and listen paths sit at the report.
+// With Ratio 1 the Digital path is linear, and every stage in it (the halfband FIRs, their phase-rate padding, the
+// delay lines) is a symmetric FIR or a pure delay, so the response is linear phase and its first moment is its delay
+// exactly: 4.5e-13 samples from the report on every setting that matched, against 0.25 for the smallest miss.
+void testDigitalLookaheadDelayMatchesReportedLatency()
+{
+    constexpr int kImpulseAt = 3000, kTotal = kImpulseAt + 12000, kBlock = 512;
+    constexpr float kAmplitude = 0.25f;
+    constexpr double kTolerance = 1.0e-6;   // samples
+    const char* const settingNames[] = {"off", "2x", "4x"};
+    int misses = 0;
+    double worst = 0.0;
+    for (double rate : {44100.0, 48000.0, 88200.0, 96000.0, 192000.0})
+        for (int setting : {kOversamplingOffSetting, kOversampling2xSetting, kOversampling4xSetting})
+        {
+            double settingWorst = 0.0;
+            for (float lookaheadMs : {0.1f, 1.3f, 2.7f, 5.0f, 10.0f})
+                for (bool bypassed : {false, true})
+                {
+                    MultiCompDSP dsp;
+                    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Digital));
+                    dsp.setOversampling(setting);
+                    dsp.setParameter(MultiCompDSP::Parameter::DigitalThreshold, 0.0f);
+                    dsp.setParameter(MultiCompDSP::Parameter::DigitalRatio, 1.0f);
+                    dsp.setParameter(MultiCompDSP::Parameter::DigitalLookahead, lookaheadMs);
+                    dsp.setParameter(MultiCompDSP::Parameter::GlobalLookahead, 0.0f);
+                    dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+                    dsp.setHostLatencyPadding(true);   // as the plugin runs
+                    dsp.setBypass(bypassed);
+                    dsp.prepare(rate, kBlock);
+                    std::vector<float> input(kTotal, 0.0f), output(kTotal, 0.0f);
+                    input[kImpulseAt] = kAmplitude;
+                    for (int start = 0; start < kTotal; start += kBlock)
+                    {
+                        const float* in[] = {input.data() + start};
+                        float* out[] = {output.data() + start};
+                        dsp.processBlock(in, out, 1, std::min(kBlock, kTotal - start));
+                    }
+                    double sum = 0.0, moment = 0.0;
+                    for (int i = 0; i < kTotal; ++i)
+                    {
+                        sum += output[static_cast<size_t>(i)];
+                        moment += static_cast<double>(i - kImpulseAt) * output[static_cast<size_t>(i)];
+                    }
+                    // The moment is a delay only for a response that passes DC: measured 0.99961 at 4x.
+                    requireStructure(std::abs(sum / kAmplitude - 1.0) < 1.0e-3,
+                                     "the Digital impulse response passes DC at unity within 0.1%");
+                    const double error = moment / sum - dsp.getHostLatencySamples();
+                    if (std::abs(error) > kTolerance)
+                    {
+                        ++misses;
+                        std::printf("digital lookahead latency: %.0f Hz %s %.1f ms %s delayed %.4f, reported %d\n",
+                                    rate, settingNames[setting], static_cast<double>(lookaheadMs),
+                                    bypassed ? "bypass" : "wet", moment / sum, dsp.getHostLatencySamples());
+                    }
+                    settingWorst = std::max(settingWorst, std::abs(error));
+                }
+            worst = std::max(worst, settingWorst);
+            std::printf("digital lookahead latency: %6.0f Hz %-3s worst |delay - reported| %.3e samples\n", rate,
+                        settingNames[setting], settingWorst);
+        }
+    std::printf("digital lookahead latency: %d of 150 renders off the report, worst %.3e samples\n", misses, worst);
+    require(misses == 0, "Digital's wet and bypassed paths are delayed by exactly the latency the host is told, "
+                         "at every rate, oversampling setting and lookahead");
 }
 
 void testOptoWideDetectorCharge()
@@ -5568,20 +5746,30 @@ enum class ModeRenderHost { Core, Plugin };
 // Bypass: bypassed from the start, settled after its 30 ms crossfade. Listen: Sidechain Listen on from the start.
 enum class ModeRenderPath { Wet, Dry, Bypass, Listen };
 
+// A parameter change made at `sample` (a mode, an Oversampling setting, a Ratio button, ...).
+struct ParameterRequest
+{
+    int sample;
+    std::function<void(MultiCompDSP&)> apply;
+};
+
 // `input` on both channels through one instance at near-unity settings (no mode compresses the tone; FET's Input
-// at -20 dB keeps it linear, 20 dB down; every Multiband band at 0 dB and 1:1), starting in the first request's
-// mode. Each later request is made at its sample, which lands mid-block unless it falls a multiple of `block` after
-// the block start (`host` says where blocks start). Returns the left channel.
-std::vector<float> renderModeRequests(double sampleRate, int oversampling, int block,
-                                      const std::vector<ModeRequest>& requests, const std::vector<float>& input,
-                                      float fetInputDb = -20.0f, ModeRenderHost host = ModeRenderHost::Core,
-                                      ModeRenderPath path = ModeRenderPath::Wet,
-                                      const std::function<void(MultiCompDSP&, int)>& beforeBlock = {})
+// at -20 dB keeps it linear, 20 dB down; every Multiband band at 0 dB and 1:1), starting in `startMode`, with
+// `setup` (if any) applied last before prepare. Each request is made at its sample, which lands mid-block unless it
+// falls a multiple of `block` after the block start (`host` says where blocks start). Returns the left channel.
+std::vector<float> renderParameterRequests(double sampleRate, int oversampling, int block,
+                                           duskaudio::MultiCompMode startMode,
+                                           const std::vector<ParameterRequest>& requests,
+                                           const std::vector<float>& input, float fetInputDb = -20.0f,
+                                           ModeRenderHost host = ModeRenderHost::Core,
+                                           ModeRenderPath path = ModeRenderPath::Wet,
+                                           const std::function<void(MultiCompDSP&, int)>& beforeBlock = {},
+                                           const std::function<void(MultiCompDSP&)>& setup = {})
 {
     using Parameter = MultiCompDSP::Parameter;
     MultiCompDSP dsp;
     dsp.setOversampling(oversampling);
-    dsp.setMode(static_cast<int>(requests.front().mode));
+    dsp.setMode(static_cast<int>(startMode));
     dsp.setMix(path == ModeRenderPath::Dry ? 0.0f : 100.0f);
     dsp.setParameter(Parameter::MbMix, path == ModeRenderPath::Dry ? 0.0f : 100.0f);
     dsp.setBypass(path == ModeRenderPath::Bypass);
@@ -5597,14 +5785,15 @@ std::vector<float> renderModeRequests(double sampleRate, int oversampling, int b
         dsp.setMultibandParameter(band, MultiCompDSP::MultibandParameter::Ratio, 1.0f);
     }
     if (host == ModeRenderHost::Plugin) dsp.setHostLatencyPadding(true);
+    if (setup) setup(dsp);
     dsp.prepare(sampleRate, block);
     const int total = static_cast<int>(input.size());
     std::vector<float> left(input.size()), right(input.size());
-    size_t next = 1;
+    size_t next = 0;
     for (int position = 0; position < total;)
     {
         for (; next < requests.size() && requests[next].sample <= position; ++next)
-            dsp.setMode(static_cast<int>(requests[next].mode));
+            requests[next].apply(dsp);
         int count = std::min(host == ModeRenderHost::Plugin ? block - position % block : block, total - position);
         if (next < requests.size()) count = std::min(count, requests[next].sample - position);
         const float* inputs[] = {input.data() + position, input.data() + position};
@@ -5614,6 +5803,23 @@ std::vector<float> renderModeRequests(double sampleRate, int oversampling, int b
         position += count;
     }
     return left;
+}
+
+// renderParameterRequests with mode requests: the first request's mode from the start, each later one at its sample.
+std::vector<float> renderModeRequests(double sampleRate, int oversampling, int block,
+                                      const std::vector<ModeRequest>& requests, const std::vector<float>& input,
+                                      float fetInputDb = -20.0f, ModeRenderHost host = ModeRenderHost::Core,
+                                      ModeRenderPath path = ModeRenderPath::Wet,
+                                      const std::function<void(MultiCompDSP&, int)>& beforeBlock = {})
+{
+    std::vector<ParameterRequest> changes;
+    for (size_t k = 1; k < requests.size(); ++k)
+    {
+        const int mode = static_cast<int>(requests[k].mode);
+        changes.push_back({requests[k].sample, [mode](MultiCompDSP& dsp) { dsp.setMode(mode); }});
+    }
+    return renderParameterRequests(sampleRate, oversampling, block, requests.front().mode, changes, input,
+                                   fetInputDb, host, path, beforeBlock);
 }
 
 // One segment per request, the mode's own renders included, so every render shares its samples (the same tone
@@ -5683,102 +5889,163 @@ const char* oversamplingSettingName(int oversampling)
     return oversampling == kOversampling4xSetting ? "4x" : oversampling == kOversampling2xSetting ? "2x" : "off";
 }
 
-// Opto and vintage FET keep the mode rate of a 44.1 / 48 kHz host and every other mode runs the Oversampling
-// setting, so from 88.2 kHz up a switch between the two kinds changes the audio anti-alias oversampler's factor.
-// The output then replayed part of that oversampler's history and jumped forward: a click, up to 49x the tone's
-// steady slope below. Such a switch is now ducked (owner ruling 2026-10-21): the old mode fades out over 1 ms, the
-// switch happens at silence, the realignment stays muted and the new mode fades in. A switch that keeps the
-// factor stays instant.
-void testModeSwitchDuckOnlyWhereAntiAliasFactorChanges()
+// An Eulerian circuit through every ordered pair of distinct modes: the complete directed graph on the modes has
+// every in-degree equal to its out-degree, so one exists (Hierholzer). 57 modes from OPTO back to OPTO, each of the
+// 56 switches once.
+std::vector<duskaudio::MultiCompMode> everyModeSwitchChain()
 {
-    using duskaudio::MultiCompMode;
-
-    // Switches that keep the audio path must stay instant. At 48 kHz the modes that run the setting (VCA, BUS,
-    // Digital; FET at 2x) share its factor and Studio VCA runs 1x; from 88.2 kHz up FET and Studio VCA share one
-    // factor and VCA and Digital another; with Oversampling off all run 1x; a switch into or out of Opto changes the
-    // path at every rate (its output stage's latency). Multiband never runs the anti-alias path, so no switch into
-    // or out of it is ducked. A duck holds the wet path (with Mix at
-    // 100 %, the output) silent for 128 samples after its 1 ms fade, so the millisecond after the first reads 0 (at
-    // 192 kHz, where the silence is 0.67 ms, a quarter or less); an instant switch reads the entered mode's own level
-    // in every one. The first millisecond is not read: entering VCA restarts the anti-alias filters, which refill
-    // over their latency (1.4 ms at 48 kHz), so it starts near silent even when instant. Each millisecond's peak,
-    // over the entered mode's own peak in the same millisecond, must stay above one half up to 10 ms after the
-    // request. (getLatencySamples() cannot tell the two apart: it reports the requested mode from the request on,
-    // ducked or not.)
-    struct KeepFactorChain
+    constexpr int modes = duskaudio::kMultiCompModes;
+    std::array<int, modes> nextTarget{};
+    std::vector<int> stack{0}, circuit;
+    while (!stack.empty())
     {
-        double sampleRate;
-        int oversampling;
-        std::vector<MultiCompMode> modes;
-    };
-    const std::vector<MultiCompMode> highRateKeep{
-        MultiCompMode::FET, MultiCompMode::StudioVCA, MultiCompMode::FET, MultiCompMode::Multiband,
-        MultiCompMode::Digital, MultiCompMode::VCA, MultiCompMode::Digital, MultiCompMode::Multiband,
-        MultiCompMode::Opto, MultiCompMode::Multiband, MultiCompMode::StudioVCA};
-    const std::vector<KeepFactorChain> keepFactor{
-        {48000.0, kOversampling2xSetting, {MultiCompMode::VCA, MultiCompMode::FET, MultiCompMode::Digital,
-                                           MultiCompMode::VCA}},
-        {48000.0, kOversampling4xSetting, {MultiCompMode::VCA, MultiCompMode::Digital, MultiCompMode::VCA}},
-        {96000.0, kOversamplingOffSetting, {MultiCompMode::VCA, MultiCompMode::StudioVCA, MultiCompMode::Digital,
-                                            MultiCompMode::VCA}},
-        {96000.0, kOversampling2xSetting, highRateKeep},
-        {192000.0, kOversampling4xSetting, highRateKeep}};
-    float keepSettled = 0.0f, keepLeastLevel = std::numeric_limits<float>::max();
-    int keepSwitches = 0;
-    for (const KeepFactorChain& keep : keepFactor)
-    {
-        const int millisecond = static_cast<int>(std::lround(keep.sampleRate * 0.001));
-        std::array<std::vector<float>, duskaudio::kMultiCompModes> alone;
-        for (const MultiCompMode mode : keep.modes)
-            if (alone[static_cast<size_t>(mode)].empty())
-                alone[static_cast<size_t>(mode)] = renderModeSwitchSequence(
-                    keep.sampleRate, keep.oversampling, 256, std::vector<MultiCompMode>(keep.modes.size(), mode));
-        for (const int block : {32, 256})
+        const int from = stack.back();
+        int& target = nextTarget[static_cast<size_t>(from)];
+        if (target == from) ++target;
+        if (target < modes)
+            stack.push_back(target++);
+        else
         {
-            const std::vector<float> out = renderModeSwitchSequence(keep.sampleRate, keep.oversampling, block,
-                                                                    keep.modes);
-            float chainLeast = std::numeric_limits<float>::max(), chainSettled = 0.0f;
-            size_t leastSwitch = 1;
-            for (size_t k = 1; k < keep.modes.size(); ++k)
-            {
-                const std::vector<float>& entered = alone[static_cast<size_t>(keep.modes[k])];
-                const int request = static_cast<int>(k) * kModeSwitchSegment;
-                for (int window = 1; window < 10; ++window)
-                {
-                    const int from = request + window * millisecond;
-                    const int to = from + millisecond;
-                    const float level = peakBetween(out, from, to) / peakBetween(entered, from, to);
-                    if (level < chainLeast)
-                    {
-                        chainLeast = level;
-                        leastSwitch = k;
-                    }
-                }
-                chainSettled = std::max(chainSettled, largestDifferenceBetween(
-                    out, entered, request + kModeSwitchSegment / 2, request + kModeSwitchSegment));
-                ++keepSwitches;
-            }
-            std::printf("mode-switch duck: %3.0f kHz %-3s block %3d, factor kept: least level %.4f (%s>%s), "
-                        "settled %.1e\n",
-                        keep.sampleRate / 1000.0, oversamplingSettingName(keep.oversampling), block, chainLeast,
-                        kModeSwitchModeNames[static_cast<size_t>(keep.modes[leastSwitch - 1])],
-                        kModeSwitchModeNames[static_cast<size_t>(keep.modes[leastSwitch])], chainSettled);
-            keepLeastLevel = std::min(keepLeastLevel, chainLeast);
-            keepSettled = std::max(keepSettled, chainSettled);
+            circuit.push_back(from);
+            stack.pop_back();
         }
     }
-    require(keepSettled < kModeSwitchSettledTolerance,
-            "a mode switch that keeps the anti-alias factor completes into the entered mode");
-    require(keepLeastLevel > 0.5f, "a mode switch that keeps the anti-alias factor is instant, not ducked");
+    std::reverse(circuit.begin(), circuit.end());
+    std::vector<duskaudio::MultiCompMode> chain;
+    for (const int mode : circuit) chain.push_back(static_cast<duskaudio::MultiCompMode>(mode));
+    return chain;
+}
+
+// A switch test's segment: 30 ms, odd so a request never falls on a block boundary of a chain. Long enough for
+// every entered mode to settle in its second half (BUS, entered from rest, runs above its steady level for about
+// 10 ms).
+int switchTestSegment(double sampleRate)
+{
+    return static_cast<int>(sampleRate * 0.030) | 1;
+}
+
+// Whether the output went quiet after a request: some 32-sample window in [from, to) peaks under 1e-3. A ducked
+// switch's 128-sample mute holds the wet path at 0 (Mix at 100 %: the output, but for Analog Noise at 1e-4), and a
+// dry path it fades at 0 for as long; padded, the wet path's silence reaches the output its padding later, so at Mix
+// 50 % the two overlap by the mute less the padding (55 samples out of Multiband at 48 kHz). The 1 kHz tones the
+// switch tests play stay under 1e-3 for at most 2 samples around each zero crossing at 48 kHz (4 at 96 kHz).
+bool wentQuietBetween(const std::vector<float>& x, int from, int to)
+{
+    for (int n = from; n + 32 <= to; n += 4)
+        if (peakBetween(x, n, n + 32) < 1.0e-3f) return true;
+    return false;
+}
+
+// Every mode switch is ducked (owner ruling 2026-11-05; until then only the switches that changed the anti-alias
+// oversampler's factor or brought Opto's output stage in or out, ruling 2026-10-21). An instant switch started the
+// entered mode from rest under the audio, restarted VCA's anti-alias filters (1.4 ms of near-silence) and, into or
+// out of Multiband, moved the wet padding by the anti-alias latency (67 samples replayed or skipped). Every one of
+// the 56 ordered switches between the eight modes, at 48 kHz with Oversampling off, 2x and 4x and at 96 kHz 2x,
+// host blocks of 32 and 256: the output goes quiet after the request (ducked), steps at most kModeSwitchClickBound
+// times the larger of the two modes' own largest steps (BUS entered from rest runs up to 14 dB above its steady
+// level for about 10 ms, so each mode's own render from rest is its measure, not its steady slope alone), and
+// completes into the entered mode's own render.
+void testEveryModeSwitchIsDucked()
+{
+    using duskaudio::MultiCompMode;
+    const std::vector<MultiCompMode> chain = everyModeSwitchChain();
+    std::array<std::array<int, duskaudio::kMultiCompModes>, duskaudio::kMultiCompModes> covered{};
+    for (size_t k = 1; k < chain.size(); ++k)
+        ++covered[static_cast<size_t>(chain[k - 1])][static_cast<size_t>(chain[k])];
+    bool everyPairOnce = chain.size() == 57;
+    for (int from = 0; from < duskaudio::kMultiCompModes; ++from)
+        for (int to = 0; to < duskaudio::kMultiCompModes; ++to)
+            everyPairOnce = everyPairOnce
+                && covered[static_cast<size_t>(from)][static_cast<size_t>(to)] == (from == to ? 0 : 1);
+    require(everyPairOnce, "the switch chain takes every ordered pair of modes exactly once");
+
+    struct Config { double sampleRate; int oversampling; };
+    const Config configs[] = {{48000.0, kOversamplingOffSetting}, {48000.0, kOversampling2xSetting},
+                              {48000.0, kOversampling4xSetting}, {96000.0, kOversampling2xSetting}};
+    float worstClick = 0.0f, worstSettled = 0.0f;
+    int switches = 0, unducked = 0;
+    for (const Config& config : configs)
+    {
+        const int segment = switchTestSegment(config.sampleRate);
+        const int total = segment * static_cast<int>(chain.size());
+        const std::vector<float> input = modeSwitchTone(config.sampleRate, total);
+        std::array<std::vector<float>, duskaudio::kMultiCompModes> alone;
+        std::array<float, duskaudio::kMultiCompModes> ownStep{};
+        for (int mode = 0; mode < duskaudio::kMultiCompModes; ++mode)
+        {
+            alone[static_cast<size_t>(mode)] = renderParameterRequests(
+                config.sampleRate, config.oversampling, 256, static_cast<MultiCompMode>(mode), {}, input);
+            ownStep[static_cast<size_t>(mode)] = largestStepBetween(alone[static_cast<size_t>(mode)], 1, total);
+        }
+        // The duck's switch count as each switch is requested, and at the end (MultiCompDSPTestAccess).
+        std::vector<unsigned> duckedAt(chain.size() + 1, 0);
+        std::vector<ParameterRequest> requests;
+        for (size_t k = 1; k < chain.size(); ++k)
+        {
+            const int mode = static_cast<int>(chain[k]);
+            requests.push_back({static_cast<int>(k) * segment, [mode, k, &duckedAt](MultiCompDSP& dsp) {
+                duckedAt[k] = duskaudio::MultiCompDSPTestAccess::duckedSwitches(dsp);
+                dsp.setMode(mode);
+            }});
+        }
+        requests.push_back({total - 1, [&duckedAt](MultiCompDSP& dsp) {
+            duckedAt.back() = duskaudio::MultiCompDSPTestAccess::duckedSwitches(dsp);
+        }});
+        for (const int block : {32, 256})
+        {
+            const std::vector<float> out = renderParameterRequests(config.sampleRate, config.oversampling, block,
+                                                                   chain.front(), requests, input);
+            float chainClick = 0.0f, chainSettled = 0.0f;
+            size_t worstSwitch = 1;
+            for (size_t k = 1; k < chain.size(); ++k)
+            {
+                const size_t from = static_cast<size_t>(chain[k - 1]), to = static_cast<size_t>(chain[k]);
+                const int request = static_cast<int>(k) * segment;
+                const float click = largestStepBetween(out, request, request + segment)
+                    / std::max(ownStep[from], ownStep[to]);
+                if (click > chainClick)
+                {
+                    chainClick = click;
+                    worstSwitch = k;
+                }
+                chainSettled = std::max(chainSettled, largestDifferenceBetween(
+                    out, alone[to], request + segment / 2, request + segment));
+                // Through the duck: the output goes quiet, and the duck made exactly this one switch.
+                const unsigned duckedThen = k + 1 < chain.size() ? duckedAt[k + 1] : duckedAt.back();
+                const bool switchedByDuck = duckedThen - duckedAt[k] == 1;
+                if (!wentQuietBetween(out, request, request + segment / 2) || !switchedByDuck)
+                {
+                    ++unducked;
+                    std::printf("mode-switch duck: %3.0f kHz %-3s block %3d, %s>%s %s\n",
+                                config.sampleRate / 1000.0, oversamplingSettingName(config.oversampling), block,
+                                kModeSwitchModeNames[from], kModeSwitchModeNames[to],
+                                switchedByDuck ? "did not go quiet" : "was not switched by the duck");
+                }
+                ++switches;
+            }
+            std::printf("mode-switch duck: %3.0f kHz %-3s block %3d, all 56 switches: click worst %.2fx (%s>%s), "
+                        "settled %.1e\n", config.sampleRate / 1000.0, oversamplingSettingName(config.oversampling),
+                        block, chainClick, kModeSwitchModeNames[static_cast<size_t>(chain[worstSwitch - 1])],
+                        kModeSwitchModeNames[static_cast<size_t>(chain[worstSwitch])], chainSettled);
+            worstClick = std::max(worstClick, chainClick);
+            worstSettled = std::max(worstSettled, chainSettled);
+        }
+    }
+    require(unducked == 0, "every mode switch is ducked");
+    require(worstClick < kModeSwitchClickBound, "no mode switch clicks");
+    require(worstSettled < kModeSwitchSettledTolerance, "every mode switch completes into the entered mode");
+    std::printf("mode-switch duck: %d switches between every ordered pair of modes ducked, worst step %.2fx, "
+                "settled within %.1e\n", switches, worstClick, worstSettled);
 
     // Every switch between a mode at the host-rate side (Opto and FET at 96 / 192 kHz, Studio VCA always) and one that
     // runs the setting (VCA, Digital), both ways, at 96 and 192 kHz and both settings: one chain, so each request
     // leaves a steady mode that was itself entered through a duck. At 44.1 and 48 kHz, where Opto and FET run the 2x
     // setting's rate, Studio VCA's switches to and from every other mode change the factor: a chain through it. BUS
-    // is left out: entered from rest it runs up to 14 dB above its steady level for about 10 ms, at 48 kHz too where
-    // nothing is ducked: a level transient, not a click. Multiband never runs the anti-alias path. Each switch's
-    // click must stay under kModeSwitchClickBound.
-    const std::vector<MultiCompMode> chain{
+    // is left out here (entered from rest it runs up to 14 dB above its steady level for about 10 ms, a level
+    // transient that the steady slope below does not measure; the all-pairs check above measures it against its
+    // own render from rest). Multiband never runs the anti-alias path. Each switch's click must stay under
+    // kModeSwitchClickBound.
+    const std::vector<MultiCompMode> factorChain{
         MultiCompMode::Opto, MultiCompMode::VCA, MultiCompMode::FET, MultiCompMode::Digital,
         MultiCompMode::StudioVCA, MultiCompMode::VCA, MultiCompMode::Opto, MultiCompMode::Digital,
         MultiCompMode::FET, MultiCompMode::VCA, MultiCompMode::StudioVCA, MultiCompMode::Digital,
@@ -5788,9 +6055,9 @@ void testModeSwitchDuckOnlyWhereAntiAliasFactorChanges()
         MultiCompMode::StudioVCA, MultiCompMode::Digital, MultiCompMode::StudioVCA, MultiCompMode::Opto,
         MultiCompMode::StudioVCA};
     struct ChangeChain { double sampleRate; const std::vector<MultiCompMode>* modes; };
-    const ChangeChain changeChains[] = {{96000.0, &chain}, {192000.0, &chain},
+    const ChangeChain changeChains[] = {{96000.0, &factorChain}, {192000.0, &factorChain},
                                         {44100.0, &hostRateChain}, {48000.0, &hostRateChain}};
-    float worstClick = 0.0f, changeSettled = 0.0f;
+    float factorClick = 0.0f, changeSettled = 0.0f;
     int changeSwitches = 0;
     for (const ChangeChain& changeChain : changeChains)
         for (const int oversampling : {kOversampling2xSetting, kOversampling4xSetting})
@@ -5835,15 +6102,15 @@ void testModeSwitchDuckOnlyWhereAntiAliasFactorChanges()
                             sampleRate / 1000.0, oversamplingSettingName(oversampling), block, chainWorst,
                             kModeSwitchModeNames[static_cast<size_t>(modes[worstSwitch - 1])],
                             kModeSwitchModeNames[static_cast<size_t>(modes[worstSwitch])], chainLeast, chainSettled);
-                worstClick = std::max(worstClick, chainWorst);
+                factorClick = std::max(factorClick, chainWorst);
                 changeSettled = std::max(changeSettled, chainSettled);
             }
         }
     require(changeSettled < kModeSwitchSettledTolerance,
             "a mode switch that changes the anti-alias factor completes into the entered mode");
-    require(worstClick < kModeSwitchClickBound, "a mode switch that changes the anti-alias factor does not click");
-    std::printf("mode-switch duck: %d switches that keep the factor stay instant (least level %.4f); %d that change "
-                "it step at most %.2fx the steady slope\n", keepSwitches, keepLeastLevel, changeSwitches, worstClick);
+    require(factorClick < kModeSwitchClickBound, "a mode switch that changes the anti-alias factor does not click");
+    std::printf("mode-switch duck: %d switches that change the anti-alias factor (to 192 kHz) step at most %.2fx the "
+                "steady slope\n", changeSwitches, factorClick);
 }
 
 // The duck's state at two awkward moments, 2x setting, each request starting a host block of up to 256 samples:
@@ -6097,6 +6364,1089 @@ void testModeSwitchKeepsDryPathsAtHostLatency()
     std::puts("mode-switch duck: padded, settled bypass, Mix 0 and Listen hold the host latency through every switch");
 }
 
+// An Oversampling change during playback changes the anti-alias oversampler's factor, or in Opto whether its output
+// stage oversamples, for every mode that runs the setting. Instant, the anti-alias path's compensation ring replayed
+// or skipped the difference in latency and the restarted stages played from rest: a click on every change and every
+// automation step. It is ducked like a mode switch (owner ruling 2026-11-05). Every mode, every ordered pair of
+// settings, at 48 and 96 kHz, host blocks of 32 and 256: no step over kModeSwitchClickBound times the larger of the
+// two settings' own largest steps, and each change completes into the entered setting's own render. A change whose
+// two settings' own renders differ (the anti-alias factor or Opto's output stage moves) must go quiet and be switched
+// by the duck exactly once, and one whose renders are identical must stay instant: a smooth hand-over that never
+// reached silence passed the click and settling checks. Studio VCA (host rate at every setting) and Multiband (no
+// oversampler) change nothing, so their renders must be the unchanged ones, bit for bit: nothing is ducked that need
+// not be.
+void testOversamplingChangeIsDucked()
+{
+    using duskaudio::MultiCompMode;
+    // 2x, off, 4x, 2x, 4x, off, 2x: each of the six ordered pairs of settings once.
+    const std::array<int, 7> settings{{kOversampling2xSetting, kOversamplingOffSetting, kOversampling4xSetting,
+                                       kOversampling2xSetting, kOversampling4xSetting, kOversamplingOffSetting,
+                                       kOversampling2xSetting}};
+    float worstClick = 0.0f, worstSettled = 0.0f;
+    int changes = 0, unchangedRendersOff = 0, wronglyDucked = 0, pathChanges = 0;
+    for (const double sampleRate : {48000.0, 96000.0})
+    {
+        const int segment = switchTestSegment(sampleRate);
+        const int total = segment * static_cast<int>(settings.size());
+        const std::vector<float> input = modeSwitchTone(sampleRate, total);
+        // The duck's switch count as each change is requested, and before each block: the last is the count at the
+        // render's last block, long after its last duck (MultiCompDSPTestAccess).
+        std::array<unsigned, std::tuple_size<decltype(settings)>::value + 1> duckedAt{};
+        std::vector<ParameterRequest> requests;
+        for (size_t k = 1; k < settings.size(); ++k)
+        {
+            const int setting = settings[k];
+            requests.push_back({static_cast<int>(k) * segment, [setting, k, &duckedAt](MultiCompDSP& dsp) {
+                duckedAt[k] = duskaudio::MultiCompDSPTestAccess::duckedSwitches(dsp);
+                dsp.setOversampling(setting);
+            }});
+        }
+        const std::function<void(MultiCompDSP&, int)> countAtLastBlock = [&duckedAt](MultiCompDSP& dsp, int) {
+            duckedAt.back() = duskaudio::MultiCompDSPTestAccess::duckedSwitches(dsp);
+        };
+        for (int modeIndex = 0; modeIndex < duskaudio::kMultiCompModes; ++modeIndex)
+        {
+            const auto mode = static_cast<MultiCompMode>(modeIndex);
+            const bool settingChangesNothing = mode == MultiCompMode::StudioVCA || mode == MultiCompMode::Multiband;
+            std::array<std::vector<float>, 3> alone;
+            std::array<float, 3> ownStep{};
+            for (int setting = 0; setting < 3 && !settingChangesNothing; ++setting)
+            {
+                alone[static_cast<size_t>(setting)] = renderParameterRequests(sampleRate, setting, 256, mode, {}, input);
+                ownStep[static_cast<size_t>(setting)] = largestStepBetween(alone[static_cast<size_t>(setting)], 1, total);
+            }
+            for (const int block : {32, 256})
+            {
+                const std::vector<float> out = renderParameterRequests(sampleRate, settings.front(), block, mode,
+                                                                       requests, input, -20.0f, ModeRenderHost::Core,
+                                                                       ModeRenderPath::Wet, countAtLastBlock);
+                if (settingChangesNothing)
+                {
+                    const std::vector<float> unchanged = renderParameterRequests(sampleRate, settings.front(), block,
+                                                                                 mode, {}, input);
+                    if (out != unchanged) ++unchangedRendersOff;
+                    std::printf("oversampling change: %3.0f kHz block %3d %-10s %s the render without the changes\n",
+                                sampleRate / 1000.0, block, kModeSwitchModeNames[static_cast<size_t>(modeIndex)],
+                                out == unchanged ? "is" : "is NOT");
+                    continue;
+                }
+                float modeClick = 0.0f, modeSettled = 0.0f;
+                for (size_t k = 1; k < settings.size(); ++k)
+                {
+                    const size_t from = static_cast<size_t>(settings[k - 1]), to = static_cast<size_t>(settings[k]);
+                    const int request = static_cast<int>(k) * segment;
+                    modeClick = std::max(modeClick, largestStepBetween(out, request, request + segment)
+                        / std::max(ownStep[from], ownStep[to]));
+                    modeSettled = std::max(modeSettled, largestDifferenceBetween(
+                        out, alone[to], request + segment / 2, request + segment));
+                    ++changes;
+                    // Through the duck where the change moves the path: quiet, and exactly this one switch made.
+                    const bool changesPath = alone[from] != alone[to];
+                    const bool quiet = wentQuietBetween(out, request, request + segment / 2);
+                    const unsigned made = duckedAt[k + 1] - duckedAt[k];
+                    if (changesPath ? !quiet || made != 1 : quiet || made != 0)
+                    {
+                        ++wronglyDucked;
+                        std::printf("oversampling change: %3.0f kHz block %3d %-10s %s>%s %s: %s, %u duck switches\n",
+                                    sampleRate / 1000.0, block, kModeSwitchModeNames[static_cast<size_t>(modeIndex)],
+                                    oversamplingSettingName(settings[k - 1]), oversamplingSettingName(settings[k]),
+                                    changesPath ? "moves the path" : "changes nothing",
+                                    quiet ? "went quiet" : "never went quiet", made);
+                    }
+                    if (changesPath) ++pathChanges;
+                }
+                std::printf("oversampling change: %3.0f kHz block %3d %-10s all six changes: click worst %.2fx, "
+                            "settled %.1e\n", sampleRate / 1000.0, block,
+                            kModeSwitchModeNames[static_cast<size_t>(modeIndex)], modeClick, modeSettled);
+                worstClick = std::max(worstClick, modeClick);
+                worstSettled = std::max(worstSettled, modeSettled);
+            }
+        }
+    }
+    require(unchangedRendersOff == 0,
+            "an Oversampling change leaves Studio VCA and Multiband bit for bit as they were");
+    require(worstClick < kModeSwitchClickBound, "an Oversampling change does not click");
+    require(worstSettled < kModeSwitchSettledTolerance, "an Oversampling change completes into the entered setting");
+    require(pathChanges > 0 && wronglyDucked == 0,
+            "an Oversampling change that moves the path is ducked to silence once, and one that changes nothing is not");
+    std::printf("oversampling change: %d changes step at most %.2fx, settled within %.1e\n", changes, worstClick,
+                worstSettled);
+    std::printf("oversampling change: %d changes move the path, each ducked to silence once; the rest instant\n",
+                pathChanges);
+}
+
+// FET BLACK's All buttons run the feed-forward arm and every other Ratio the loop, so a Ratio change into or out of
+// All swapped a running state for another under the audio: a jump (alpha 3 known issue). It is ducked like a mode
+// switch, and the entered arm starts from rest (owner ruling 2026-11-05). At 48 and 96 kHz, 2x, blocks 32 and 256,
+// a tone into gain reduction (Input +10 dB) through 4:1 > All > 8:1 > All > 20:1 > 12:1 > All > 4:1: every change
+// into or out of All goes quiet and steps at most kModeSwitchClickBound times the larger of the two Ratios' own
+// largest steps; 20:1 > 12:1, loop to loop, stays instant (it never goes quiet); each change completes into the
+// entered Ratio's own render.
+void testFetAllButtonsSwitchIsDucked()
+{
+    using duskaudio::MultiCompMode;
+    constexpr int kAll = 4;
+    constexpr float kFetInputDb = 10.0f;
+    const std::array<int, 8> ratios{{0, kAll, 1, kAll, 3, 2, kAll, 0}};
+    const auto setRatio = [](int ratio) {
+        return std::function<void(MultiCompDSP&)>([ratio](MultiCompDSP& dsp) {
+            dsp.setParameter(MultiCompDSP::Parameter::FetRatio, static_cast<float>(ratio));
+        });
+    };
+    float worstClick = 0.0f, worstSettled = 0.0f;
+    int allChanges = 0, unducked = 0, needlesslyDucked = 0;
+    for (const double sampleRate : {48000.0, 96000.0})
+    {
+        const int segment = switchTestSegment(sampleRate);
+        const int total = segment * static_cast<int>(ratios.size());
+        const std::vector<float> input = modeSwitchTone(sampleRate, total);
+        std::array<std::vector<float>, 5> alone;
+        std::array<float, 5> ownStep{};
+        for (int ratio = 0; ratio < 5; ++ratio)
+        {
+            alone[static_cast<size_t>(ratio)] = renderParameterRequests(
+                sampleRate, kOversampling2xSetting, 256, MultiCompMode::FET, {}, input, kFetInputDb,
+                ModeRenderHost::Core, ModeRenderPath::Wet, {}, setRatio(ratio));
+            ownStep[static_cast<size_t>(ratio)] = largestStepBetween(alone[static_cast<size_t>(ratio)], 1, total);
+        }
+        std::vector<ParameterRequest> requests;
+        for (size_t k = 1; k < ratios.size(); ++k)
+            requests.push_back({static_cast<int>(k) * segment, setRatio(ratios[k])});
+        for (const int block : {32, 256})
+        {
+            const std::vector<float> out = renderParameterRequests(
+                sampleRate, kOversampling2xSetting, block, MultiCompMode::FET, requests, input, kFetInputDb,
+                ModeRenderHost::Core, ModeRenderPath::Wet, {}, setRatio(ratios.front()));
+            float chainClick = 0.0f, chainSettled = 0.0f;
+            for (size_t k = 1; k < ratios.size(); ++k)
+            {
+                const size_t from = static_cast<size_t>(ratios[k - 1]), to = static_cast<size_t>(ratios[k]);
+                const int request = static_cast<int>(k) * segment;
+                const bool throughAll = (ratios[k - 1] == kAll) != (ratios[k] == kAll);
+                const bool quiet = wentQuietBetween(out, request, request + segment / 2);
+                if (throughAll)
+                {
+                    ++allChanges;
+                    if (!quiet) ++unducked;
+                    chainClick = std::max(chainClick, largestStepBetween(out, request, request + segment)
+                        / std::max(ownStep[from], ownStep[to]));
+                }
+                else if (quiet)
+                    ++needlesslyDucked;
+                const float settled = largestDifferenceBetween(out, alone[to], request + segment / 2,
+                                                               request + segment);
+                std::printf("FET All switch: %3.0f kHz block %3d ratio %zu>%zu: settled %.1e%s\n",
+                            sampleRate / 1000.0, block, from, to, static_cast<double>(settled),
+                            throughAll ? (quiet ? " (ducked)" : " (NOT ducked)") : (quiet ? " (ducked!)" : ""));
+                chainSettled = std::max(chainSettled, settled);
+            }
+            std::printf("FET All switch: %3.0f kHz block %3d: changes into or out of All step at most %.2fx, "
+                        "settled %.1e\n", sampleRate / 1000.0, block, chainClick, chainSettled);
+            worstClick = std::max(worstClick, chainClick);
+            worstSettled = std::max(worstSettled, chainSettled);
+        }
+    }
+    require(unducked == 0, "a FET BLACK Ratio change into or out of All is ducked");
+    require(needlesslyDucked == 0, "a FET BLACK Ratio change between loop ratios stays instant");
+    require(worstClick < kModeSwitchClickBound, "a FET BLACK Ratio change into or out of All does not click");
+    require(worstSettled < kModeSwitchSettledTolerance, "a FET BLACK Ratio change completes into the entered Ratio");
+    std::printf("FET All switch: %d changes into or out of All ducked, worst step %.2fx, settled within %.1e\n",
+                allChanges, worstClick, worstSettled);
+}
+
+// A switch between a mode a lookahead counts in (Digital and Multiband for Global Lookahead) and one it does not
+// moves the latency every dry path is delayed by: the bypass, Listen and Mix-dry delay lines change length at the
+// switch, and instant they replayed or skipped the difference at full level, bypassed too. Into or out of Multiband
+// Mix's dry also changes signal (Multiband's is its split-band sum). The duck now fades those paths with the wet
+// path (switchDuckDry*). Padded as the plugin runs, 48 kHz 2x, Global Lookahead 5.3 ms, blocks 32 and 256, through
+// VCA > Digital > Opto > Multiband > VCA > Multiband > Opto: in a settled bypass every switch goes quiet, steps at most
+// kModeSwitchClickBound times the tone's own largest step, and then plays exactly the input delayed by the entered
+// mode's host latency; at Mix 50 % (MB Mix 50 %) every switch goes quiet and steps at most the bound.
+void testLatencyMovingSwitchDucksTheDryPaths()
+{
+    using duskaudio::MultiCompMode;
+    using Parameter = MultiCompDSP::Parameter;
+    constexpr double kRate = 48000.0;
+    // 254 samples at 48 kHz: not a whole number of the 1 kHz tone's 48-sample periods, so a delay line that jumps by
+    // it steps the waveform (5 ms, 240 samples, would land on the same phase and hide the jump).
+    static constexpr float kLookaheadMs = 5.3f;   // static: lambdas below read it uncaptured (MSVC C3493)
+    const std::vector<MultiCompMode> modes{MultiCompMode::VCA, MultiCompMode::Digital, MultiCompMode::Opto,
+                                           MultiCompMode::Multiband, MultiCompMode::VCA, MultiCompMode::Multiband,
+                                           MultiCompMode::Opto};
+    std::array<int, duskaudio::kMultiCompModes> hostLatency{};
+    for (const MultiCompMode mode : modes)
+    {
+        MultiCompDSP probe;
+        probe.setHostLatencyPadding(true);
+        probe.setOversampling(kOversampling2xSetting);
+        probe.setMode(static_cast<int>(mode));
+        probe.setParameter(Parameter::GlobalLookahead, kLookaheadMs);
+        probe.prepare(kRate, 256);
+        hostLatency[static_cast<size_t>(mode)] = probe.getHostLatencySamples();
+    }
+    const auto latencyOf = [&hostLatency](MultiCompMode mode) { return hostLatency[static_cast<size_t>(mode)]; };
+    require(latencyOf(MultiCompMode::Digital) != latencyOf(MultiCompMode::VCA)
+                && latencyOf(MultiCompMode::Multiband) != latencyOf(MultiCompMode::Opto),
+            "Global Lookahead moves the host latency between the modes it counts in and the others");
+    const int segment = switchTestSegment(kRate);
+    const int total = segment * static_cast<int>(modes.size());
+    const std::vector<float> input = modeSwitchTone(kRate, total);
+    const float toneStep = largestStepBetween(input, 1, total);
+    std::vector<ParameterRequest> requests;
+    for (size_t k = 1; k < modes.size(); ++k)
+    {
+        const int mode = static_cast<int>(modes[k]);
+        requests.push_back({static_cast<int>(k) * segment, [mode](MultiCompDSP& dsp) { dsp.setMode(mode); }});
+    }
+    const std::function<void(MultiCompDSP&)> lookahead = [](MultiCompDSP& dsp) {
+        dsp.setParameter(Parameter::GlobalLookahead, kLookaheadMs);
+    };
+    const std::function<void(MultiCompDSP&)> lookaheadHalfMix = [](MultiCompDSP& dsp) {
+        dsp.setParameter(Parameter::GlobalLookahead, kLookaheadMs);
+        dsp.setMix(50.0f);
+        dsp.setParameter(Parameter::MbMix, 50.0f);
+    };
+    float worstBypassClick = 0.0f, worstMixClick = 0.0f;
+    int unducked = 0, bypassOff = 0;
+    for (const int block : {32, 256})
+    {
+        const std::vector<float> bypassed = renderParameterRequests(
+            kRate, kOversampling2xSetting, block, modes.front(), requests, input, -20.0f, ModeRenderHost::Plugin,
+            ModeRenderPath::Bypass, {}, lookahead);
+        const std::vector<float> halfMix = renderParameterRequests(
+            kRate, kOversampling2xSetting, block, modes.front(), requests, input, -20.0f, ModeRenderHost::Plugin,
+            ModeRenderPath::Wet, {}, lookaheadHalfMix);
+        for (size_t k = 1; k < modes.size(); ++k)
+        {
+            const int request = static_cast<int>(k) * segment;
+            const int latency = latencyOf(modes[k]);
+            const bool bypassQuiet = wentQuietBetween(bypassed, request, request + segment / 2);
+            const bool mixQuiet = wentQuietBetween(halfMix, request, request + segment / 2);
+            const float bypassClick = largestStepBetween(bypassed, request, request + segment) / toneStep;
+            const float mixClick = largestStepBetween(halfMix, request, request + segment) / toneStep;
+            int off = 0;
+            for (int n = request + segment / 2; n < request + segment; ++n)
+                if (bypassed[static_cast<size_t>(n)] != input[static_cast<size_t>(n - latency)]) ++off;
+            std::printf("lookahead-latency switch: block %3d %s>%s (latency %d>%d): bypassed %s step %.2fx, %d off; "
+                        "Mix 50 %% %s step %.2fx\n", block,
+                        kModeSwitchModeNames[static_cast<size_t>(modes[k - 1])],
+                        kModeSwitchModeNames[static_cast<size_t>(modes[k])], latencyOf(modes[k - 1]), latency,
+                        bypassQuiet ? "ducked" : "NOT ducked", static_cast<double>(bypassClick), off,
+                        mixQuiet ? "ducked" : "NOT ducked", static_cast<double>(mixClick));
+            unducked += (bypassQuiet ? 0 : 1) + (mixQuiet ? 0 : 1);
+            worstBypassClick = std::max(worstBypassClick, bypassClick);
+            worstMixClick = std::max(worstMixClick, mixClick);
+            bypassOff += off;
+        }
+    }
+    require(unducked == 0, "a switch that moves the host latency is ducked, bypassed and at Mix 50 %");
+    require(worstBypassClick < kModeSwitchClickBound, "a switch that moves the host latency does not click bypassed");
+    require(worstMixClick < kModeSwitchClickBound, "a switch that moves the host latency does not click at Mix 50 %");
+    require(bypassOff == 0, "after the switch, a settled bypass is the input delayed by the entered mode's latency");
+}
+
+// A preset or INIT writes Mode and the lookaheads in one request. The duck holds the old lookaheads with the old mode
+// until its silence, so every delay line moves at the switch, in silence; at the request, the bypass and dry paths
+// stepped by the whole old lookahead with no fade. A lookahead change on its own is not a switch: it applies at once
+// (a dragged or automated lookahead must never gate the output, testLookaheadRampNeverGates), and where the mode
+// ignores the lookahead nothing moves. Digital's own lookahead delays the audio inside the mode, so a switch into it
+// keeps the wet path silent until what that delay held from before has passed (switchMuteSamples); in a fade it
+// clicked. Padded as the plugin runs, 48 kHz 2x, blocks 32 and 256, bypassed and at Mix 50 % (MB Mix 50 %).
+// Lookaheads of 5.3, 3.1 and 2.1 ms, so no latency step is a whole number of the tone's periods.
+void testLookaheadMovesWithTheSwitch()
+{
+    using duskaudio::MultiCompMode;
+    using Parameter = MultiCompDSP::Parameter;
+    constexpr double kRate = 48000.0;
+    struct Step { MultiCompMode mode; float globalMs; float digitalMs; };
+    const std::vector<Step> steps{
+        {MultiCompMode::Digital, 5.3f, 0.0f},
+        {MultiCompMode::Opto, 0.0f, 0.0f},        // Mode and lookaheads in one request (INIT, a preset)
+        {MultiCompMode::Opto, 5.3f, 3.1f},        // Opto ignores both: nothing moves
+        {MultiCompMode::Digital, 5.3f, 3.1f},     // into Digital at its own lookahead
+        {MultiCompMode::Multiband, 2.1f, 3.1f},   // Mode and Global Lookahead
+        {MultiCompMode::VCA, 0.0f, 0.0f},
+        {MultiCompMode::Digital, 0.0f, 3.1f},
+        {MultiCompMode::Digital, 5.3f, 3.1f}};    // a lookahead change alone: at once, not a switch
+    const auto setStep = [](MultiCompDSP& dsp, const Step& step) {
+        dsp.setMode(static_cast<int>(step.mode));
+        dsp.setParameter(Parameter::GlobalLookahead, step.globalMs);
+        dsp.setParameter(Parameter::DigitalLookahead, step.digitalMs);
+    };
+    std::vector<int> latency;
+    for (const Step& step : steps)
+    {
+        MultiCompDSP probe;
+        probe.setHostLatencyPadding(true);
+        probe.setOversampling(kOversampling2xSetting);
+        setStep(probe, step);
+        probe.prepare(kRate, 256);
+        latency.push_back(probe.getHostLatencySamples());
+    }
+    bool chainAsMeant = true;
+    for (size_t k = 1; k < steps.size(); ++k)
+        chainAsMeant = chainAsMeant && (latency[k] != latency[k - 1]) == (k != 2)
+            && (std::abs(latency[k] - latency[k - 1]) % 48 != 0) == (k != 2);
+    require(chainAsMeant, "every step but Opto's ignored lookaheads moves the host latency, by no whole tone period");
+
+    const int segment = switchTestSegment(kRate);
+    const int total = segment * static_cast<int>(steps.size());
+    const std::vector<float> input = modeSwitchTone(kRate, total);
+    const float toneStep = largestStepBetween(input, 1, total);
+    std::vector<unsigned> duckedAt(steps.size() + 1, 0);
+    std::vector<ParameterRequest> requests;
+    for (size_t k = 1; k < steps.size(); ++k)
+    {
+        const Step step = steps[k];
+        requests.push_back({static_cast<int>(k) * segment, [step, k, &duckedAt, setStep](MultiCompDSP& dsp) {
+            duckedAt[k] = duskaudio::MultiCompDSPTestAccess::duckedSwitches(dsp);
+            setStep(dsp, step);
+        }});
+    }
+    requests.push_back({total - 1, [&duckedAt](MultiCompDSP& dsp) {
+        duckedAt.back() = duskaudio::MultiCompDSPTestAccess::duckedSwitches(dsp);
+    }});
+    const Step first = steps.front();
+    const std::function<void(MultiCompDSP&)> start = [first](MultiCompDSP& dsp) {
+        dsp.setParameter(Parameter::GlobalLookahead, first.globalMs);
+        dsp.setParameter(Parameter::DigitalLookahead, first.digitalMs);
+    };
+    const std::function<void(MultiCompDSP&)> startHalfMix = [first](MultiCompDSP& dsp) {
+        dsp.setParameter(Parameter::GlobalLookahead, first.globalMs);
+        dsp.setParameter(Parameter::DigitalLookahead, first.digitalMs);
+        dsp.setMix(50.0f);
+        dsp.setParameter(Parameter::MbMix, 50.0f);
+    };
+    int wrong = 0, bypassOff = 0;
+    float worstClick = 0.0f;
+    for (const int block : {32, 256})
+        for (const bool bypassed : {true, false})
+        {
+            const std::vector<float> out = renderParameterRequests(
+                kRate, kOversampling2xSetting, block, first.mode, requests, input, -20.0f, ModeRenderHost::Plugin,
+                bypassed ? ModeRenderPath::Bypass : ModeRenderPath::Wet, {}, bypassed ? start : startHalfMix);
+            for (size_t k = 1; k < steps.size(); ++k)
+            {
+                const int request = static_cast<int>(k) * segment;
+                const bool switches = steps[k].mode != steps[k - 1].mode;
+                const unsigned duckedThen = k + 1 < steps.size() ? duckedAt[k + 1] : duckedAt.back();
+                const bool switchedByDuck = duckedThen - duckedAt[k] == 1;
+                const bool quiet = wentQuietBetween(out, request, request + segment / 2);
+                const float click = largestStepBetween(out, request, request + segment) / toneStep;
+                // Bypassed: the input delayed by the new latency once a switch has settled, and at once otherwise.
+                int off = 0;
+                if (bypassed)
+                    for (int n = switches ? request + segment / 2 : request; n < request + segment; ++n)
+                        if (out[static_cast<size_t>(n)] != input[static_cast<size_t>(n - latency[k])]) ++off;
+                std::printf("lookahead with switch: block %3d %s %s %.1f/%.1f ms > %s %.1f/%.1f ms (latency %d>%d): "
+                            "%s%s, step %.2fx, %d off\n", block, bypassed ? "bypassed" : "Mix 50 %",
+                            kModeSwitchModeNames[static_cast<size_t>(steps[k - 1].mode)],
+                            static_cast<double>(steps[k - 1].globalMs), static_cast<double>(steps[k - 1].digitalMs),
+                            kModeSwitchModeNames[static_cast<size_t>(steps[k].mode)],
+                            static_cast<double>(steps[k].globalMs), static_cast<double>(steps[k].digitalMs),
+                            latency[k - 1], latency[k], quiet ? "ducked" : "not ducked",
+                            switchedByDuck ? " (by the duck)" : "", static_cast<double>(click), off);
+                if (quiet != switches || switchedByDuck != switches) ++wrong;
+                if (switches) worstClick = std::max(worstClick, click);
+                bypassOff += off;
+            }
+        }
+    require(wrong == 0, "a mode switch that carries lookahead changes is ducked, and a lookahead change alone is not");
+    require(worstClick < kModeSwitchClickBound, "a mode switch that carries lookahead changes does not click");
+    require(bypassOff == 0, "a settled bypass plays the input delayed by the latency of the configuration it runs");
+}
+
+// A dragged or automated lookahead must never gate the output: a lookahead change on its own applies at once. A
+// version that ducked every latency-moving lookahead change muted the whole of an automated ramp, since each change
+// restarted the duck's mute before the last had ended. Global Lookahead ramped from 0.5 to 9.5 ms over one second, a
+// new value every 256 samples, in Digital with its own lookahead at 0 and at 3.1 ms, padded, bypassed and at Mix 50 %:
+// no 1 ms window of the output falls under 10 % of the tone's level, and the duck makes no switch.
+void testLookaheadRampNeverGates()
+{
+    using duskaudio::MultiCompMode;
+    using Parameter = MultiCompDSP::Parameter;
+    constexpr double kRate = 48000.0;
+    constexpr int kRampStart = 4800, kRampSamples = 48000, kStep = 256, kWindow = 48;
+    const int total = kRampStart + kRampSamples + 4800;
+    const std::vector<float> input = modeSwitchTone(kRate, total);
+    int gated = 0, windows = 0;
+    unsigned ducked = 0;
+    for (const float digitalMs : {0.0f, 3.1f})
+        for (const bool bypassed : {true, false})
+        {
+            unsigned duckedAtEnd = 0;
+            std::vector<ParameterRequest> requests;
+            for (int n = kRampStart; n < kRampStart + kRampSamples; n += kStep)
+            {
+                const float ms = 0.5f + 9.0f * static_cast<float>(n - kRampStart) / static_cast<float>(kRampSamples);
+                requests.push_back({n, [ms](MultiCompDSP& dsp) { dsp.setParameter(Parameter::GlobalLookahead, ms); }});
+            }
+            requests.push_back({total - 1, [&duckedAtEnd](MultiCompDSP& dsp) {
+                duckedAtEnd = duskaudio::MultiCompDSPTestAccess::duckedSwitches(dsp);
+            }});
+            const std::function<void(MultiCompDSP&)> setup = [digitalMs, bypassed](MultiCompDSP& dsp) {
+                dsp.setParameter(Parameter::GlobalLookahead, 0.5f);
+                dsp.setParameter(Parameter::DigitalLookahead, digitalMs);
+                if (!bypassed)
+                {
+                    dsp.setMix(50.0f);
+                    dsp.setParameter(Parameter::MbMix, 50.0f);
+                }
+            };
+            const std::vector<float> out = renderParameterRequests(
+                kRate, kOversampling2xSetting, 256, MultiCompMode::Digital, requests, input, -20.0f,
+                ModeRenderHost::Plugin, bypassed ? ModeRenderPath::Bypass : ModeRenderPath::Wet, {}, setup);
+            int runGated = 0, runWindows = 0;
+            for (int n = kRampStart; n + kWindow <= kRampStart + kRampSamples + 2400; n += kWindow)
+            {
+                float peak = 0.0f;
+                for (int i = n; i < n + kWindow; ++i) peak = std::max(peak, std::abs(out[static_cast<size_t>(i)]));
+                ++runWindows;
+                if (peak < 0.05f) ++runGated;   // 10 % of the tone's 0.5
+            }
+            std::printf("lookahead ramp: Digital lookahead %.1f ms, %s: %d of %d 1 ms windows gated, %u ducked "
+                        "switches\n", static_cast<double>(digitalMs), bypassed ? "bypassed" : "Mix 50 %", runGated,
+                        runWindows, duckedAtEnd);
+            gated += runGated;
+            windows += runWindows;
+            ducked += duckedAtEnd;
+        }
+    require(gated == 0, "a ramped lookahead never gates the output");
+    require(ducked == 0, "a lookahead change on its own is not a switch");
+    std::printf("lookahead ramp: %d windows, none gated, no switch\n", windows);
+}
+
+// LCG noise in [-amplitude, amplitude): an input whose samples tell one delay from another.
+std::vector<float> switchTestNoise(int samples, uint32_t seed, float amplitude)
+{
+    std::vector<float> noise(static_cast<size_t>(samples));
+    for (float& value : noise)
+    {
+        seed = seed * 1664525u + 1013904223u;
+        value = amplitude * (static_cast<float>(seed >> 8) / 8388608.0f - 1.0f);
+    }
+    return noise;
+}
+
+// A configuration a latency-report render steps through: a mode at its lookaheads, set together as a preset sets them.
+struct LatencyReportStep
+{
+    duskaudio::MultiCompMode mode;
+    float globalMs;
+    float digitalMs;
+};
+
+// What a latency-report render saw: its audible block ends, those whose report was not the delay their last sample
+// carries, and how often the report changed.
+struct LatencyReportCount
+{
+    int observed = 0;
+    int wrong = 0;
+    int moves = 0;
+};
+
+// `steps` through one DSP as MultiCompPlugin runs it (padded, 2x, bypassed and settled: the output is the input delayed
+// by the latency, times the duck), step k from sample k * switchTestSegment(), host blocks of `block` on a fixed grid,
+// getHostLatencySamples() read after every block (updateLatency()). Requests before the block: each is set before the
+// block it starts, which it splits there (sample-accurate automation). After the block: each is set once a block has
+// reached its sample, after that block's processing and before its report is read: an edit from the editor, which
+// DAF applies on the main thread, landing during run(). Two renders of independent noise tell the delay sample by
+// sample: out_x[n] y[n - L] == out_y[n] x[n - L] (both g[n] x[n - L] y[n - L]) holds for the carried L alone.
+LatencyReportCount renderLatencyReports(double rate, int block, const std::vector<LatencyReportStep>& steps,
+                                        bool requestsAfterTheBlock)
+{
+    using Parameter = MultiCompDSP::Parameter;
+    const auto setStep = [](MultiCompDSP& dsp, const LatencyReportStep& step) {
+        dsp.setMode(static_cast<int>(step.mode));
+        dsp.setParameter(Parameter::GlobalLookahead, step.globalMs);
+        dsp.setParameter(Parameter::DigitalLookahead, step.digitalMs);
+    };
+    std::vector<int> latency;   // each step's host latency
+    for (const LatencyReportStep& step : steps)
+    {
+        MultiCompDSP probe;
+        probe.setHostLatencyPadding(true);
+        probe.setOversampling(kOversampling2xSetting);
+        setStep(probe, step);
+        probe.prepare(rate, 256);
+        latency.push_back(probe.getHostLatencySamples());
+    }
+    bool everyStepMoves = true;
+    for (size_t k = 1; k < steps.size(); ++k) everyStepMoves = everyStepMoves && latency[k] != latency[k - 1];
+    requireStructure(everyStepMoves, "every step of a latency-report chain moves the host latency");
+    std::vector<int> candidates(latency);
+    std::sort(candidates.begin(), candidates.end());
+    candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+
+    const int segment = switchTestSegment(rate);
+    const int total = segment * static_cast<int>(steps.size());
+    const std::vector<float> x = switchTestNoise(total, 0x1234567u, 0.3f), y = switchTestNoise(total, 0x89abcdeu, 0.3f);
+    struct Report { int end; int latency; };
+    const auto render = [&](const std::vector<float>& input, std::vector<Report>* reports) {
+        MultiCompDSP dsp;
+        dsp.setHostLatencyPadding(true);
+        dsp.setOversampling(kOversampling2xSetting);
+        dsp.setBypass(true);
+        setStep(dsp, steps.front());
+        dsp.prepare(rate, block);
+        std::vector<float> left(input.size()), right(input.size());
+        size_t next = 1;
+        const auto due = [&](int position) { return next < steps.size() && static_cast<int>(next) * segment <= position; };
+        for (int position = 0; position < total;)
+        {
+            if (!requestsAfterTheBlock)
+                for (; due(position); ++next) setStep(dsp, steps[next]);
+            int count = std::min(block - position % block, total - position);
+            if (!requestsAfterTheBlock && next < steps.size())
+                count = std::min(count, static_cast<int>(next) * segment - position);
+            const float* inputs[] = {input.data() + position, input.data() + position};
+            float* outputs[] = {left.data() + position, right.data() + position};
+            dsp.processBlock(inputs, outputs, 2, count);
+            position += count;
+            if (requestsAfterTheBlock)
+                for (; due(position); ++next) setStep(dsp, steps[next]);
+            if (reports != nullptr) reports->push_back({position - 1, dsp.getHostLatencySamples()});
+        }
+        return left;
+    };
+    std::vector<Report> reports;
+    const std::vector<float> outX = render(x, &reports), outY = render(y, nullptr);
+    LatencyReportCount count;
+    for (size_t r = 0; r < reports.size(); ++r)
+    {
+        const Report& report = reports[r];
+        if (r > 0 && report.latency != reports[r - 1].latency) ++count.moves;
+        const size_t n = static_cast<size_t>(report.end);
+        if (outX[n] == 0.0f) continue;   // silent (filling, or the duck's mute): no delay to read
+        int matches = 0, carried = -1;
+        for (const int candidate : candidates)
+        {
+            if (report.end < candidate) continue;
+            const double a = static_cast<double>(outX[n]) * y[n - static_cast<size_t>(candidate)];
+            const double b = static_cast<double>(outY[n]) * x[n - static_cast<size_t>(candidate)];
+            if (std::abs(a - b) <= 1.0e-5 * std::max(std::abs(a), std::abs(b)))
+            {
+                ++matches;
+                carried = candidate;
+            }
+        }
+        requireStructure(matches == 1, "exactly one of the chain's latencies explains each bypassed sample");
+        ++count.observed;
+        if (carried != report.latency)
+        {
+            if (count.wrong < 4)
+                std::printf("latency report: %3.0f kHz block %3d, after sample %d the host reads %d, the output "
+                            "carries %d\n", rate / 1000.0, block, report.end, report.latency, carried);
+            ++count.wrong;
+        }
+    }
+    std::printf("latency report: %3.0f kHz block %3d, requests %s the block: the report moved %d times for %zu "
+                "steps; %d of %d audible block ends read a latency the output does not carry\n", rate / 1000.0, block,
+                requestsAfterTheBlock ? "after" : "before", count.moves, steps.size() - 1, count.wrong,
+                count.observed);
+    return count;
+}
+
+// The latency the host is told is the latency the output carries. A ducked switch runs the held configuration until
+// its silence, so until then the output carries the held configuration's latency, and MultiCompPlugin publishes
+// getHostLatencySamples() at the end of every host block (updateLatency()); a report that moved at the request told a
+// host reading it during the fade a latency the output did not carry yet (PR #344 review). 48 kHz, host blocks of 16
+// (the 48-sample fade spans three), 32 and 256, each request set before the block it starts, through VCA > Digital
+// (Global Lookahead 5.3 ms) > VCA > Digital at 2.1 / 3.1 ms (Mode and both lookaheads in one request, as a preset writes
+// them) > Multiband at 5.3 ms (renderLatencyReports): after every block whose last sample is audible, the latency read
+// is the delay that sample carries, and the report moves once per step.
+void testLatencyReportFollowsTheSwitch()
+{
+    using duskaudio::MultiCompMode;
+    const std::vector<LatencyReportStep> steps{
+        {MultiCompMode::VCA, 5.3f, 0.0f}, {MultiCompMode::Digital, 5.3f, 0.0f}, {MultiCompMode::VCA, 5.3f, 0.0f},
+        {MultiCompMode::Digital, 2.1f, 3.1f}, {MultiCompMode::Multiband, 5.3f, 3.1f}};
+    int observed = 0, wrong = 0, extraMoves = 0;
+    for (const int block : {16, 32, 256})
+    {
+        const LatencyReportCount count = renderLatencyReports(48000.0, block, steps, false);
+        observed += count.observed;
+        wrong += count.wrong;
+        extraMoves += std::abs(count.moves - static_cast<int>(steps.size() - 1));
+    }
+    require(observed > 0, "the latency-report renders reach audible block ends");
+    require(wrong == 0, "after every host block, the host latency is the latency the output carries");
+    require(extraMoves == 0, "the host latency moves once for each step that moves it");
+}
+
+// The same where each request lands after a block has read the parameters and before its report is read, as an edit
+// from the editor can (DAF applies those on the main thread, during run()). A report that read the parameters whenever
+// no switch was held moved to the new latency after that block (which still ran the old configuration), back to the
+// old one while the next held it, and to the new one at the switch: three latency changes, so three restart requests
+// from a VST3 host, for one click (PR #344 pre-push review). Digital at Global Lookahead 5.3 ms > VCA > Digital >
+// Digital at 2.1 ms (a lookahead change alone, which applies at the next block) > OPTO at 0 ms > Digital at 5.3 ms
+// (Mode and lookahead together), at 48 kHz in host blocks of 16, 32, 48 (the fade's length), 64 and 256, and at
+// 96 kHz in blocks of 16, 64, 96 (its fade), 128 and 256: the report moves once per step, and after every block whose
+// last sample is audible it is the delay that sample carries.
+void testLatencyReportFollowsRequestsMadeDuringABlock()
+{
+    using duskaudio::MultiCompMode;
+    const std::vector<LatencyReportStep> steps{
+        {MultiCompMode::Digital, 5.3f, 0.0f}, {MultiCompMode::VCA, 5.3f, 0.0f}, {MultiCompMode::Digital, 5.3f, 0.0f},
+        {MultiCompMode::Digital, 2.1f, 0.0f}, {MultiCompMode::Opto, 0.0f, 0.0f}, {MultiCompMode::Digital, 5.3f, 0.0f}};
+    struct Rate { double rate; std::array<int, 5> blocks; };
+    const Rate rates[] = {{48000.0, {{16, 32, 48, 64, 256}}}, {96000.0, {{16, 64, 96, 128, 256}}}};
+    int observed = 0, wrong = 0, extraMoves = 0;
+    for (const Rate& rate : rates)
+        for (const int block : rate.blocks)
+        {
+            const LatencyReportCount count = renderLatencyReports(rate.rate, block, steps, true);
+            observed += count.observed;
+            wrong += count.wrong;
+            extraMoves += std::abs(count.moves - static_cast<int>(steps.size() - 1));
+        }
+    require(observed > 0, "the latency-report renders reach audible block ends");
+    require(extraMoves == 0, "a request made during a block moves the host latency once");
+    require(wrong == 0, "after a request made during a block, the host latency is the latency the output carries");
+}
+
+// Auto Makeup learns the level the compressor takes off: its matcher measures the mixed output against the dry. A
+// switch's duck fades the wet path, and only a mode switch resets the matcher; an Oversampling change does not, so a
+// matcher that has measured nothing since its last reset, or only a quiet passage, can learn from a window the duck
+// faded what the compressor never took off (PR #344 review). Digital, Threshold -20 dB, 4:1, a -12 dBFS 1 kHz tone
+// (its own correction C: the dry-to-output level of the same tone with Auto Makeup off, settled), Auto Makeup on,
+// padded, 48 kHz, host blocks of 32 and 256, Oversampling 2x > 4x requested (a) after 1 s of the steady tone, (b) around
+// the tone's start after 1 s of it 38 dB down, (c) around the tone's start after 0.5 s of silence since prepare: the
+// gain the output takes must never exceed C by more than 0.5 dB. A compressor that holds no more than its settled
+// reduction never asks the matcher for more than C; a window the duck faded can (its clamp is +12 dB).
+void testAutoGainIgnoresTheSwitchDuck()
+{
+    using duskaudio::MultiCompMode;
+    using Parameter = MultiCompDSP::Parameter;
+    static constexpr double kRate = 48000.0;   // static: a lambda below reads it uncaptured (MSVC C3493)
+    constexpr float kOvershootBoundDb = 0.5f;
+    const auto configure = [](MultiCompDSP& dsp, bool autoMakeup) {
+        dsp.setHostLatencyPadding(true);
+        dsp.setMode(static_cast<int>(MultiCompMode::Digital));
+        dsp.setOversampling(kOversampling2xSetting);
+        dsp.setParameter(Parameter::DigitalThreshold, -20.0f);
+        dsp.setParameter(Parameter::DigitalRatio, 4.0f);
+        dsp.setParameter(Parameter::AutoMakeup, autoMakeup ? 1.0f : 0.0f);
+    };
+    const auto tone = [](int total, int onset, float before, float after) {
+        std::vector<float> x(static_cast<size_t>(total));
+        for (int n = 0; n < total; ++n)
+            x[static_cast<size_t>(n)] = (n < onset ? before : after)
+                * static_cast<float>(std::sin(2.0 * 3.141592653589793 * 1000.0 * n / kRate));
+        return x;
+    };
+    // C: the steady tone's dry-to-output level with Auto Makeup off, over the last half of 1.5 s.
+    double correctionDb = 0.0;
+    {
+        MultiCompDSP dsp;
+        configure(dsp, false);
+        dsp.prepare(kRate, 256);
+        const int total = static_cast<int>(kRate * 1.5);
+        const std::vector<float> input = tone(total, 0, 0.25f, 0.25f);
+        std::vector<float> left(input.size()), right(input.size());
+        for (int position = 0; position < total; position += 256)
+        {
+            const int count = std::min(256, total - position);
+            const float* inputs[] = {input.data() + position, input.data() + position};
+            float* outputs[] = {left.data() + position, right.data() + position};
+            dsp.processBlock(inputs, outputs, 2, count);
+        }
+        double inPower = 0.0, outPower = 0.0;
+        for (int n = total / 2; n < total; ++n)
+        {
+            inPower += static_cast<double>(input[static_cast<size_t>(n)]) * input[static_cast<size_t>(n)];
+            outPower += static_cast<double>(left[static_cast<size_t>(n)]) * left[static_cast<size_t>(n)];
+        }
+        correctionDb = 10.0 * std::log10(inPower / outPower);
+    }
+    // The gain the output takes after each host block (dB), held over the block's samples.
+    const auto renderGain = [&](const std::vector<float>& input, int block, int requestAt) {
+        MultiCompDSP dsp;
+        configure(dsp, true);
+        dsp.prepare(kRate, block);
+        const int total = static_cast<int>(input.size());
+        std::vector<float> left(input.size()), right(input.size()), gain(input.size());
+        for (int position = 0; position < total;)
+        {
+            if (position == requestAt) dsp.setOversampling(kOversampling4xSetting);
+            int count = std::min(block - position % block, total - position);
+            if (requestAt > position) count = std::min(count, requestAt - position);
+            const float* inputs[] = {input.data() + position, input.data() + position};
+            float* outputs[] = {left.data() + position, right.data() + position};
+            dsp.processBlock(inputs, outputs, 2, count);
+            std::fill_n(gain.begin() + position, count, duskaudio::MultiCompDSPTestAccess::autoGainDb(dsp));
+            position += count;
+        }
+        return gain;
+    };
+    struct Scenario { const char* name; int onset; float before; std::vector<int> offsets; };
+    const int second = static_cast<int>(kRate);
+    const Scenario scenarios[] = {
+        {"steady", 0, 0.25f, {second}},
+        {"38 dB down, then the tone", second, 0.25f * 0.0125f, {-100, -40, 0, 24, 60}},
+        {"silence since prepare, then the tone", second / 2, 0.0f, {-200, -100, -40, 0, 24}}};
+    const int total = 3 * second;
+    float worstOvershoot = -std::numeric_limits<float>::infinity();
+    for (const Scenario& scenario : scenarios)
+    {
+        const std::vector<float> input = tone(total, scenario.onset, scenario.before, 0.25f);
+        for (const int block : {32, 256})
+        {
+            const std::vector<float> control = renderGain(input, block, -1);
+            for (const int offset : scenario.offsets)
+            {
+                const int request = scenario.onset + offset;
+                const std::vector<float> gain = renderGain(input, block, request);
+                const float peak = *std::max_element(gain.begin() + request, gain.end());
+                const float controlPeak = *std::max_element(control.begin() + request, control.end());
+                const float overshoot = peak - static_cast<float>(correctionDb);
+                const auto at = [&](double ms) {
+                    return static_cast<size_t>(std::min<double>(total - 1, request + ms * 0.001 * kRate));
+                };
+                std::printf("auto gain switch: %-38s block %3d, Oversampling 2x>4x at %+4d: peak %+.2f dB (no change "
+                            "%+.2f, C %+.2f, over C by %+.2f); vs no change %+.3f dB at 100 ms, %+.3f at 1 s\n",
+                            scenario.name, block, offset, static_cast<double>(peak),
+                            static_cast<double>(controlPeak), correctionDb, static_cast<double>(overshoot),
+                            static_cast<double>(gain[at(100.0)] - control[at(100.0)]),
+                            static_cast<double>(gain[at(1000.0)] - control[at(1000.0)]));
+                worstOvershoot = std::max(worstOvershoot, overshoot);
+            }
+        }
+    }
+    std::printf("auto gain switch: the gain the output takes after an Oversampling change exceeds the compressor's own "
+                "correction by at most %+.2f dB (bound %.1f)\n", static_cast<double>(worstOvershoot),
+                static_cast<double>(kOvershootBoundDb));
+    require(worstOvershoot <= kOvershootBoundDb,
+            "Auto Makeup never learns the switch duck: the gain stays within the compressor's own correction");
+}
+
+// Sidechain Listen plays the sidechain through each mode's own chain (VCA: its coupling and PULL/SC response; Opto
+// and Digital: the SC HP; BUS: its SC FILTER; the others none; True Peak but on Multiband's internal key), delayed to
+// the host latency. A switch between two chains splices them in the listen delay line, and the splice reaches the
+// output that delay after the switch at full level: the listen path was faded only where the latency moved, and then
+// only for the 128-sample mute (PR #344 review). Padded, Listen on from the start, SC HP at 100 Hz (VCA's PULL/SC
+// engaged), 48 and 96 kHz 2x, host blocks of 32 and 256: VCA > Opto > VCA > BUS > VCA > FET BLACK > Opto (one latency),
+// Digital > Multiband > Digital at Global Lookahead 5.3 ms (one latency, a listen delay past the mute) and Opto >
+// Multiband > Opto at 5.3 ms (the latency moves): no step over kModeSwitchClickBound times the larger of the two modes'
+// own listen renders' steps, and each switch completes into the entered mode's own listen render. Then the same for a
+// chain change that a retarget arms part-way through a fade.
+void testListenFadesAcrossSidechainChainChange()
+{
+    using duskaudio::MultiCompMode;
+    using Parameter = MultiCompDSP::Parameter;
+    struct Chain { std::vector<MultiCompMode> modes; float globalMs; };
+    const Chain chains[] = {
+        {{MultiCompMode::VCA, MultiCompMode::Opto, MultiCompMode::VCA, MultiCompMode::Bus, MultiCompMode::VCA,
+          MultiCompMode::FET, MultiCompMode::Opto}, 0.0f},
+        {{MultiCompMode::Digital, MultiCompMode::Multiband, MultiCompMode::Digital}, 5.3f},
+        {{MultiCompMode::Opto, MultiCompMode::Multiband, MultiCompMode::Opto}, 5.3f}};
+    float worstClick = 0.0f, worstSettled = 0.0f;
+    int switches = 0;
+    for (const double sampleRate : {48000.0, 96000.0})
+    {
+        const int segment = switchTestSegment(sampleRate);
+        for (const Chain& chain : chains)
+        {
+            const float globalMs = chain.globalMs;
+            const std::function<void(MultiCompDSP&)> setup = [globalMs](MultiCompDSP& dsp) {
+                dsp.setParameter(Parameter::SidechainHP, 100.0f);
+                dsp.setParameter(Parameter::GlobalLookahead, globalMs);
+            };
+            const int total = segment * static_cast<int>(chain.modes.size());
+            const std::vector<float> input = modeSwitchTone(sampleRate, total);
+            std::array<std::vector<float>, duskaudio::kMultiCompModes> own;
+            std::array<float, duskaudio::kMultiCompModes> ownStep{};
+            for (const MultiCompMode mode : chain.modes)
+            {
+                std::vector<float>& listened = own[static_cast<size_t>(mode)];
+                if (!listened.empty()) continue;
+                listened = renderParameterRequests(sampleRate, kOversampling2xSetting, 256, mode, {}, input, -20.0f,
+                                                   ModeRenderHost::Plugin, ModeRenderPath::Listen, {}, setup);
+                ownStep[static_cast<size_t>(mode)] = largestStepBetween(listened, segment, total);
+            }
+            std::vector<ParameterRequest> requests;
+            std::string chainName = kModeSwitchModeNames[static_cast<size_t>(chain.modes.front())];
+            for (size_t k = 1; k < chain.modes.size(); ++k)
+            {
+                const int mode = static_cast<int>(chain.modes[k]);
+                requests.push_back({static_cast<int>(k) * segment, [mode](MultiCompDSP& dsp) { dsp.setMode(mode); }});
+                chainName = chainName + ">" + kModeSwitchModeNames[static_cast<size_t>(mode)];
+            }
+            for (const int block : {32, 256})
+            {
+                const std::vector<float> out = renderParameterRequests(
+                    sampleRate, kOversampling2xSetting, block, chain.modes.front(), requests, input, -20.0f,
+                    ModeRenderHost::Plugin, ModeRenderPath::Listen, {}, setup);
+                float chainClick = 0.0f, chainSettled = 0.0f;
+                size_t worstSwitch = 1;
+                for (size_t k = 1; k < chain.modes.size(); ++k)
+                {
+                    const size_t from = static_cast<size_t>(chain.modes[k - 1]);
+                    const size_t to = static_cast<size_t>(chain.modes[k]);
+                    const int request = static_cast<int>(k) * segment;
+                    const float click = largestStepBetween(out, request, request + segment)
+                        / std::max(ownStep[from], ownStep[to]);
+                    if (click > chainClick)
+                    {
+                        chainClick = click;
+                        worstSwitch = k;
+                    }
+                    chainSettled = std::max(chainSettled, largestDifferenceBetween(
+                        out, own[to], request + segment / 2, request + segment));
+                    ++switches;
+                }
+                std::printf("listen chain switch: %3.0f kHz block %3d, Global Lookahead %.1f ms, %s: click worst "
+                            "%.2fx (%s>%s), settled %.1e\n", sampleRate / 1000.0, block,
+                            static_cast<double>(globalMs), chainName.c_str(), static_cast<double>(chainClick),
+                            kModeSwitchModeNames[static_cast<size_t>(chain.modes[worstSwitch - 1])],
+                            kModeSwitchModeNames[static_cast<size_t>(chain.modes[worstSwitch])],
+                            static_cast<double>(chainSettled));
+                worstClick = std::max(worstClick, chainClick);
+                worstSettled = std::max(worstSettled, chainSettled);
+            }
+        }
+    }
+    // Armed by a retarget: OPTO > FET BLACK (one chain at the SC HP's default, off) retargeted k = 12, 24 and 36 samples
+    // into its fade by VCA, whose chain is its own. The key's fade starts there from full gain; taking the wet fade's
+    // gain at once, it stepped the listen output a listen delay later.
+    {
+        constexpr double kRate = 48000.0;
+        const int segment = switchTestSegment(kRate);
+        const int request = segment, total = 3 * segment;
+        const std::vector<float> input = modeSwitchTone(kRate, total);
+        float ownStep = 0.0f;
+        std::vector<float> vcaListen;
+        for (const MultiCompMode mode : {MultiCompMode::Opto, MultiCompMode::FET, MultiCompMode::VCA})
+        {
+            std::vector<float> listened = renderParameterRequests(kRate, kOversampling2xSetting, 256, mode, {}, input,
+                                                                  -20.0f, ModeRenderHost::Plugin,
+                                                                  ModeRenderPath::Listen);
+            ownStep = std::max(ownStep, largestStepBetween(listened, segment, total));
+            if (mode == MultiCompMode::VCA) vcaListen = std::move(listened);
+        }
+        for (const int retarget : {12, 24, 36})
+        {
+            const std::vector<ParameterRequest> requests{
+                {request, [](MultiCompDSP& dsp) { dsp.setMode(static_cast<int>(MultiCompMode::FET)); }},
+                {request + retarget, [](MultiCompDSP& dsp) { dsp.setMode(static_cast<int>(MultiCompMode::VCA)); }}};
+            for (const int block : {32, 256})
+            {
+                const std::vector<float> out = renderParameterRequests(
+                    kRate, kOversampling2xSetting, block, MultiCompMode::Opto, requests, input, -20.0f,
+                    ModeRenderHost::Plugin, ModeRenderPath::Listen);
+                const float click = largestStepBetween(out, request, total) / ownStep;
+                const float settled = largestDifferenceBetween(out, vcaListen, request + segment, total);
+                std::printf("listen chain switch:  48 kHz block %3d, OPTO>FET BLACK retargeted %2d samples in by VCA: "
+                            "click %.2fx, settled %.1e\n", block, retarget, static_cast<double>(click),
+                            static_cast<double>(settled));
+                worstClick = std::max(worstClick, click);
+                worstSettled = std::max(worstSettled, settled);
+                ++switches;
+            }
+        }
+    }
+    require(worstSettled < kModeSwitchSettledTolerance,
+            "with Listen on, a switch between sidechain chains completes into the entered mode's listen render");
+    require(worstClick < kModeSwitchClickBound, "with Listen on, a switch between sidechain chains does not click");
+    std::printf("listen chain switch: %d switches step at most %.2fx, settled within %.1e\n", switches,
+                static_cast<double>(worstClick), static_cast<double>(worstSettled));
+}
+
+// Sidechain Listen hears the chain the sidechain takes, not the mode: it keeps playing through a switch that keeps
+// that chain, and fades only through one that changes it. Two modes take one chain exactly when their own listen
+// renders are identical, bit for bit (with the SC HP at its default, off, every mode but VCA; with it on, OPTO and
+// Digital share one, BUS has its own and the unfiltered modes theirs; with True Peak on, Multiband's internal key
+// leaves it out). The other switch tests check that only for OPTO, FET BLACK, Multiband, Digital and Studio VCA at the
+// defaults (testModeSwitchKeepsDryPathsAtHostLatency), so a duck that told FET BLUE or BUS from the other unfiltered
+// modes passed them (PR #344 pre-push review). Padded, Listen on, 48 kHz 2x, no lookahead (one latency in every mode),
+// host blocks of 32 and 256, all 56 ordered pairs (everyModeSwitchChain()), with the SC HP off, at 100 Hz, and with
+// True Peak on. The render must be, bit for bit, the same chain played with every mode replaced by the first mode of
+// its chain: a switch between two modes of one chain is then no switch at all, and one between two chains switches
+// between the same two chains (an own render from rest is no reference there, since the SC HP keeps its state from
+// whatever mode ran it last). Each switch between chains goes quiet, steps at most kModeSwitchClickBound times the
+// larger of the two modes' own listen steps and settles into the entered mode's render.
+void testListenFollowsEveryModeSwitch()
+{
+    using duskaudio::MultiCompMode;
+    using Parameter = MultiCompDSP::Parameter;
+    constexpr double kRate = 48000.0;
+    const std::vector<MultiCompMode> chain = everyModeSwitchChain();
+    const int segment = switchTestSegment(kRate);
+    const int total = segment * static_cast<int>(chain.size());
+    const std::vector<float> input = modeSwitchTone(kRate, total);
+    const auto requestsFor = [segment](const std::vector<int>& modes) {
+        std::vector<ParameterRequest> requests;
+        for (size_t k = 1; k < modes.size(); ++k)
+        {
+            const int mode = modes[k];
+            requests.push_back({static_cast<int>(k) * segment, [mode](MultiCompDSP& dsp) { dsp.setMode(mode); }});
+        }
+        return requests;
+    };
+    std::vector<int> modes;
+    for (const MultiCompMode mode : chain) modes.push_back(static_cast<int>(mode));
+    const std::vector<ParameterRequest> requests = requestsFor(modes);
+    struct Setting { const char* name; float sidechainHP; bool truePeak; };
+    const Setting settings[] = {{"SC HP off", 0.0f, false}, {"SC HP 100 Hz", 100.0f, false},
+                                {"True Peak on", 0.0f, true}};
+    int kept = 0, changed = 0, changedNotQuiet = 0, rendersOff = 0;
+    float worstClick = 0.0f, worstSettled = 0.0f;
+    for (const Setting& setting : settings)
+    {
+        const float sidechainHP = setting.sidechainHP;
+        const bool truePeak = setting.truePeak;
+        const std::function<void(MultiCompDSP&)> setup = [sidechainHP, truePeak](MultiCompDSP& dsp) {
+            dsp.setParameter(Parameter::SidechainHP, sidechainHP);
+            dsp.setParameter(Parameter::TruePeakEnable, truePeak ? 1.0f : 0.0f);
+        };
+        std::array<std::vector<float>, duskaudio::kMultiCompModes> own;
+        std::array<float, duskaudio::kMultiCompModes> ownStep{};
+        std::array<int, duskaudio::kMultiCompModes> first{};   // the first mode of each mode's chain
+        for (int mode = 0; mode < duskaudio::kMultiCompModes; ++mode)
+        {
+            own[static_cast<size_t>(mode)] = renderParameterRequests(
+                kRate, kOversampling2xSetting, 256, static_cast<MultiCompMode>(mode), {}, input, -20.0f,
+                ModeRenderHost::Plugin, ModeRenderPath::Listen, {}, setup);
+            ownStep[static_cast<size_t>(mode)] = largestStepBetween(own[static_cast<size_t>(mode)], segment, total);
+            first[static_cast<size_t>(mode)] = mode;
+            for (int earlier = 0; earlier < mode; ++earlier)
+                if (own[static_cast<size_t>(earlier)] == own[static_cast<size_t>(mode)])
+                {
+                    first[static_cast<size_t>(mode)] = earlier;
+                    break;
+                }
+        }
+        std::vector<int> firsts;
+        for (const int mode : modes) firsts.push_back(first[static_cast<size_t>(mode)]);
+        const std::vector<ParameterRequest> chainRequests = requestsFor(firsts);
+        for (const int block : {32, 256})
+        {
+            const std::vector<float> out = renderParameterRequests(
+                kRate, kOversampling2xSetting, block, chain.front(), requests, input, -20.0f, ModeRenderHost::Plugin,
+                ModeRenderPath::Listen, {}, setup);
+            const std::vector<float> byChain = renderParameterRequests(
+                kRate, kOversampling2xSetting, block, static_cast<MultiCompMode>(firsts.front()), chainRequests, input,
+                -20.0f, ModeRenderHost::Plugin, ModeRenderPath::Listen, {}, setup);
+            int off = 0, runKept = 0, runChanged = 0;
+            for (int n = 0; n < total; ++n)
+                if (out[static_cast<size_t>(n)] != byChain[static_cast<size_t>(n)]) ++off;
+            float runClick = 0.0f, runSettled = 0.0f;
+            for (size_t k = 1; k < chain.size(); ++k)
+            {
+                const size_t from = static_cast<size_t>(chain[k - 1]), to = static_cast<size_t>(chain[k]);
+                const int request = static_cast<int>(k) * segment;
+                if (first[from] == first[to])
+                {
+                    ++runKept;
+                    continue;
+                }
+                ++runChanged;
+                if (!wentQuietBetween(out, request, request + segment / 2))
+                {
+                    ++changedNotQuiet;
+                    std::printf("listen every switch: %-12s block %3d, %s>%s changes the chain, but never goes quiet\n",
+                                setting.name, block, kModeSwitchModeNames[from], kModeSwitchModeNames[to]);
+                }
+                runClick = std::max(runClick, largestStepBetween(out, request, request + segment)
+                    / std::max(ownStep[from], ownStep[to]));
+                runSettled = std::max(runSettled, largestDifferenceBetween(out, own[to], request + segment / 2,
+                                                                           request + segment));
+            }
+            std::printf("listen every switch: %-12s block %3d, %d switches keep the chain, %d change it: %d samples "
+                        "off the chain's own render, click worst %.2fx, settled %.1e\n", setting.name, block, runKept,
+                        runChanged, off, static_cast<double>(runClick), static_cast<double>(runSettled));
+            rendersOff += off > 0 ? 1 : 0;
+            kept += runKept;
+            changed += runChanged;
+            worstClick = std::max(worstClick, runClick);
+            worstSettled = std::max(worstSettled, runSettled);
+        }
+    }
+    require(kept > 0 && changed > 0, "the listen switch chain both keeps and changes the sidechain chain");
+    require(rendersOff == 0, "with Listen on, Listen plays the chain the sidechain takes, through every mode switch");
+    require(changedNotQuiet == 0, "with Listen on, a switch between sidechain chains fades Listen through silence");
+    require(worstClick < kModeSwitchClickBound, "with Listen on, no mode switch clicks");
+    require(worstSettled < kModeSwitchSettledTolerance, "with Listen on, every mode switch settles into the entered mode");
+}
+
+// A request that moves the latency while a switch's fade is under way arms the bypass and listen paths there. Where
+// the Mix dry was already fading (into or out of Multiband at one latency), they took the dry fade's gain at once:
+// bypassed, the output stepped from the input to about half of it in one sample (PR #344 review). Padded, 48 kHz 2x,
+// host blocks of 32 and 256: VCA > Multiband (no lookahead: one latency, the Mix dry fades), retargeted k = 1, 12, 24,
+// 36 and 47 samples into its 48-sample fade by Digital at Global Lookahead 5.3 ms (the latency moves). Bypassed: no step
+// over kModeSwitchClickBound times the tone's own step, and then exactly the input delayed by Digital's latency. Listen
+// on: no step over the bound times the larger of VCA's and Digital's own listen steps, and then Digital's own render.
+void testLatencyPathsArmedMidFadeStartAtUnity()
+{
+    using duskaudio::MultiCompMode;
+    using Parameter = MultiCompDSP::Parameter;
+    constexpr double kRate = 48000.0;
+    static constexpr float kLookaheadMs = 5.3f;   // static: lambdas below read it uncaptured (MSVC C3493)
+    const int segment = switchTestSegment(kRate);
+    const int request = segment, total = 3 * segment;
+    const std::vector<float> input = modeSwitchTone(kRate, total);
+    const float toneStep = largestStepBetween(input, 1, total);
+    MultiCompDSP probe;
+    probe.setHostLatencyPadding(true);
+    probe.setOversampling(kOversampling2xSetting);
+    probe.setMode(static_cast<int>(MultiCompMode::Digital));
+    probe.setParameter(Parameter::GlobalLookahead, kLookaheadMs);
+    probe.prepare(kRate, 256);
+    const int digitalLatency = probe.getHostLatencySamples();
+    const std::function<void(MultiCompDSP&)> atLookahead = [](MultiCompDSP& dsp) {
+        dsp.setParameter(Parameter::GlobalLookahead, kLookaheadMs);
+    };
+    const std::vector<float> vcaListen = renderParameterRequests(
+        kRate, kOversampling2xSetting, 256, MultiCompMode::VCA, {}, input, -20.0f, ModeRenderHost::Plugin,
+        ModeRenderPath::Listen);
+    const std::vector<float> digitalListen = renderParameterRequests(
+        kRate, kOversampling2xSetting, 256, MultiCompMode::Digital, {}, input, -20.0f, ModeRenderHost::Plugin,
+        ModeRenderPath::Listen, {}, atLookahead);
+    const float listenStep = std::max(largestStepBetween(vcaListen, segment, total),
+                                      largestStepBetween(digitalListen, segment, total));
+    float worstBypassClick = 0.0f, worstListenClick = 0.0f, worstListenSettled = 0.0f;
+    int bypassOff = 0;
+    for (const int retarget : {1, 12, 24, 36, 47})
+    {
+        const std::vector<ParameterRequest> requests{
+            {request, [](MultiCompDSP& dsp) { dsp.setMode(static_cast<int>(MultiCompMode::Multiband)); }},
+            {request + retarget, [](MultiCompDSP& dsp) {
+                dsp.setMode(static_cast<int>(MultiCompMode::Digital));
+                dsp.setParameter(Parameter::GlobalLookahead, kLookaheadMs);
+            }}};
+        for (const int block : {32, 256})
+        {
+            const std::vector<float> bypassed = renderParameterRequests(
+                kRate, kOversampling2xSetting, block, MultiCompMode::VCA, requests, input, -20.0f,
+                ModeRenderHost::Plugin, ModeRenderPath::Bypass);
+            const std::vector<float> listened = renderParameterRequests(
+                kRate, kOversampling2xSetting, block, MultiCompMode::VCA, requests, input, -20.0f,
+                ModeRenderHost::Plugin, ModeRenderPath::Listen);
+            const float bypassClick = largestStepBetween(bypassed, request, total) / toneStep;
+            const float listenClick = largestStepBetween(listened, request, total) / listenStep;
+            const float listenSettled = largestDifferenceBetween(listened, digitalListen, request + segment, total);
+            int off = 0;
+            for (int n = request + segment; n < total; ++n)
+                if (bypassed[static_cast<size_t>(n)] != input[static_cast<size_t>(n - digitalLatency)]) ++off;
+            std::printf("latency retarget: block %3d, VCA>Multiband retargeted %2d samples in by Digital at %.1f ms: "
+                        "bypassed step %.2fx, %d off; Listen step %.2fx, settled %.1e\n", block, retarget,
+                        static_cast<double>(kLookaheadMs), static_cast<double>(bypassClick), off,
+                        static_cast<double>(listenClick), static_cast<double>(listenSettled));
+            worstBypassClick = std::max(worstBypassClick, bypassClick);
+            worstListenClick = std::max(worstListenClick, listenClick);
+            worstListenSettled = std::max(worstListenSettled, listenSettled);
+            bypassOff += off;
+        }
+    }
+    require(bypassOff == 0, "after a retargeted switch, a settled bypass is the input delayed by the entered latency");
+    require(worstListenSettled < kModeSwitchSettledTolerance,
+            "after a retargeted switch, Listen plays the entered mode's listen render");
+    require(worstBypassClick < kModeSwitchClickBound,
+            "a latency-moving request inside a Mix-only fade does not click bypassed");
+    require(worstListenClick < kModeSwitchClickBound,
+            "a latency-moving request inside a Mix-only fade does not click the listen path");
+}
+
 float renderMultibandTone(float mix, float frequency)
 {
     MultiCompDSP dsp;
@@ -6245,6 +7595,203 @@ void testSidechainEq()
     std::printf("sidechain EQ: GR %.4f dB -> %.4f dB with +12 dB HF shelf\n", flat, boosted);
 }
 
+// The RBJ S = 1 low shelf the sidechain EQ implements, designed and evaluated in long double: its gain (dB) at `hz`.
+double exactSidechainLowShelfDb(double fs, double corner, double gainDb, double hz)
+{
+    const long double pi = 3.141592653589793238462643383279502884L;
+    const long double A = std::pow(10.0L, static_cast<long double>(gainDb) / 40.0L);
+    const long double w0 = 2.0L * pi * corner / fs;
+    const long double c = std::cos(w0), q = 2.0L * std::sqrt(A) * 0.5L * std::sin(w0) * std::sqrt(2.0L);
+    const long double b0 = A * ((A + 1) - (A - 1) * c + q), b1 = 2 * A * ((A - 1) - (A + 1) * c);
+    const long double b2 = A * ((A + 1) - (A - 1) * c - q), a0 = (A + 1) + (A - 1) * c + q;
+    const long double a1 = -2 * ((A - 1) + (A + 1) * c), a2 = (A + 1) + (A - 1) * c - q;
+    const long double w = 2.0L * pi * hz / fs;
+    const long double nr = b0 + b1 * std::cos(w) + b2 * std::cos(2 * w), ni = -(b1 * std::sin(w) + b2 * std::sin(2 * w));
+    const long double dr = a0 + a1 * std::cos(w) + a2 * std::cos(2 * w), di = -(a1 * std::sin(w) + a2 * std::sin(2 * w));
+    return static_cast<double>(10.0L * std::log10((nr * nr + ni * ni) / (dr * dr + di * di)));
+}
+
+// The FET factory presets set the dials their names call for (2026-11-06). Their attack and release are knob positions
+// in the legacy plain domains, read through the DSP's own laws; copied as times from the JUCE table, every one of them
+// sat at about Attack 2 and Release 1 to 2, the slow end (Room Nuke at Release 1.6, EDM Pump at 2.1).
+void testFetPresetsSetTheirDials()
+{
+    struct Dials { const char* name; float attack, release; };
+    constexpr std::array<Dials, 6> expected{{{"Vocal Presence", 3.0f, 7.0f}, {"Modern Pop Control", 4.0f, 5.0f},
+                                             {"Room Nuke (FET All)", 6.0f, 7.0f}, {"Rock Bass Anchor", 3.0f, 4.0f},
+                                             {"Funk Rhythm Guitar", 4.0f, 7.0f}, {"EDM Pump (115-130 BPM)", 6.0f, 4.0f}}};
+    int fetPresets = 0;
+    for (const auto& preset : duskaudio::kMultiCompPresets)
+    {
+        if (preset.mode != 1 && preset.mode != 4) continue;
+        ++fetPresets;
+        const auto found = std::find_if(expected.begin(), expected.end(),
+                                        [&](const Dials& d) { return std::strcmp(d.name, preset.name) == 0; });
+        require(found != expected.end(), "every FET factory preset has its dials pinned");
+        const float attack = 1.0f + 6.0f * duskaudio::fetAttackPositionFromMilliseconds(preset.attack);
+        const float release = 1.0f + 6.0f * duskaudio::fetReleasePositionFromMilliseconds(preset.release);
+        std::printf("FET preset %-24s Attack %.3f (want %.0f)  Release %.3f (want %.0f)\n", preset.name,
+                    static_cast<double>(attack), static_cast<double>(found->attack), static_cast<double>(release),
+                    static_cast<double>(found->release));
+        require(std::abs(attack - found->attack) < 1e-3f && std::abs(release - found->release) < 1e-3f,
+                "a FET factory preset sets the Attack and Release dials its name calls for");
+    }
+    require(fetPresets == static_cast<int>(expected.size()), "the six FET factory presets are all checked");
+}
+
+// The sidechain EQ's low shelf holds its own response at every rate it is designed at: the host rate here, Bus's mode
+// rate (host x oversampling, to 768 kHz) in testBusSidechainLowShelfAtEveryModeRate. Its corner sits far below those
+// rates, where a float design and float coefficients cannot hold the plateau: measured off its response by 0.03 dB at
+// 48 kHz, 0.17 at 192, 0.77 at 384 and 8.9 at 768 (designed in double and rounded to float: 0.56 and 3.98 dB). With
+// the double section the EQ holds it within 1.2e-6 dB (most of it the 0 dB float high shelf at 48 kHz, whose b0 is
+// one float step below 1); the bound is 1e-3 dB. Also: processPair is process(), bit for bit.
+void testSidechainLowShelfHoldsItsResponse()
+{
+    struct Setting { float corner, gainDb; };
+    constexpr std::array<Setting, 6> settings{{{60.0f, 12.0f}, {60.0f, -12.0f}, {100.0f, 6.0f},
+                                               {120.0f, -6.0f}, {250.0f, 12.0f}, {500.0f, -12.0f}}};
+    constexpr double kToneHz = 20.0, kBoundDb = 1.0e-3;
+    double worst = 0.0;
+    for (double rate : {48000.0, 96000.0, 192000.0, 384000.0, 768000.0})
+    {
+        double rateWorst = 0.0;
+        for (const auto& setting : settings)
+        {
+            duskaudio::MultiCompSidechainEQ eq;
+            eq.prepare(rate);
+            eq.setLowShelf(setting.corner, setting.gainDb);   // the high shelf stays at its 0 dB default
+            const int settle = static_cast<int>(rate), measure = static_cast<int>(rate * 0.5);
+            double inPower = 0.0, outPower = 0.0;
+            for (int n = 0; n < settle + measure; ++n)
+            {
+                const float x = static_cast<float>(0.25 * std::sin(2.0 * 3.14159265358979323846 * kToneHz * n / rate));
+                const float y = eq.process(x);
+                if (n < settle) continue;
+                inPower += static_cast<double>(x) * x;
+                outPower += static_cast<double>(y) * y;
+            }
+            const double error = 10.0 * std::log10(outPower / inPower)
+                - exactSidechainLowShelfDb(rate, setting.corner, setting.gainDb, kToneHz);
+            // A response that is not finite is infinitely far off: std::max would drop a NaN and pass it.
+            rateWorst = std::isfinite(error) ? std::max(rateWorst, std::abs(error))
+                                             : std::numeric_limits<double>::infinity();
+        }
+        worst = std::max(worst, rateWorst);
+        std::printf("sidechain low shelf: %6.0f Hz worst |gain - designed| at %.0f Hz %.3e dB\n", rate, kToneHz,
+                    rateWorst);
+    }
+    require(worst < kBoundDb, "the sidechain EQ's low shelf holds its designed response at every rate to 768 kHz");
+
+    // The stereo block path against the per-channel one, with both shelves away from 0 dB.
+    std::array<duskaudio::MultiCompSidechainEQ, 2> pair, single;
+    for (auto* eqs : {&pair, &single})
+        for (auto& eq : *eqs)
+        {
+            eq.prepare(48000.0);
+            eq.setLowShelf(150.0f, -9.0f);
+            eq.setHighShelf(5000.0f, 6.0f);
+        }
+    constexpr int kBlock = 61, kBlocks = 40;
+    std::array<float, kBlock> left{}, right{};
+    bool identical = true;
+    for (int block = 0; block < kBlocks; ++block)
+    {
+        for (int i = 0; i < kBlock; ++i)
+        {
+            const double t = static_cast<double>(block * kBlock + i) / 48000.0;
+            left[static_cast<size_t>(i)] = static_cast<float>(0.4 * std::sin(2.0 * 3.14159265358979323846 * 90.0 * t)
+                + 0.1 * std::sin(2.0 * 3.14159265358979323846 * 7000.0 * t));
+            right[static_cast<size_t>(i)] = static_cast<float>(0.3 * std::sin(2.0 * 3.14159265358979323846 * 210.0 * t));
+        }
+        std::array<float, kBlock> pairLeft = left, pairRight = right;
+        duskaudio::MultiCompSidechainEQ::processPair(pair[0], pair[1], pairLeft.data(), pairRight.data(), kBlock);
+        for (int i = 0; i < kBlock; ++i)
+        {
+            const float l = single[0].process(left[static_cast<size_t>(i)]);
+            const float r = single[1].process(right[static_cast<size_t>(i)]);
+            identical = identical && std::memcmp(&l, &pairLeft[static_cast<size_t>(i)], sizeof l) == 0
+                && std::memcmp(&r, &pairRight[static_cast<size_t>(i)], sizeof r) == 0;
+        }
+    }
+    require(identical, "the sidechain EQ's stereo block path is its per-channel path, bit for bit");
+    std::printf("sidechain low shelf: worst %.3e dB (bound %.0e); stereo block path bit-identical\n", worst, kBoundDb);
+}
+
+// Bus's own sidechain shelves run at the mode rate, in its feedback detector. The low shelf's effect on a 30 Hz tone
+// (the output level at +/-12 dB re the same render at 0 dB, where the shelf is bypassed) must not depend on the mode
+// rate it runs at: 48 kHz (48 kHz Off) and 192 / 384 / 768 kHz (192 kHz Off / 2x / 4x). The 0 dB renders themselves
+// span 0.007 dB over those rates, the BUS law's own rate dependence; a shelf that holds its gain adds nothing to it
+// (measured: 0.007 dB at +12, 0.006 at -12). The float shelf moved the +12 dB effect from -10.28 dB at 48 kHz to
+// -10.70 at 384 and -4.27 at 768. Bound: 0.02 dB. The spread alone passes a shelf that never runs (every effect 0),
+// so each effect must also move the level the way its gain asks, by at least kShelfActsDb: the shelf moves it by
+// about 10 dB, and only a shelf that does not act falls under 1.
+void testBusSidechainLowShelfAtEveryModeRate()
+{
+    constexpr double kShelfActsDb = 1.0;
+    using Parameter = MultiCompDSP::Parameter;
+    const auto levelDb = [](double rate, int setting, float lowGainDb) {
+        constexpr int kBlock = 512;
+        MultiCompDSP dsp;
+        dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Bus));
+        dsp.setOversampling(setting);
+        dsp.setMix(100.0f);
+        dsp.setParameter(Parameter::AutoMakeup, 0.0f);
+        dsp.setParameter(Parameter::SidechainHP, 0.0f);
+        configureStrongCompression(dsp, static_cast<int>(duskaudio::MultiCompMode::Bus));
+        dsp.setParameter(Parameter::ScLowFreq, 60.0f);
+        dsp.setParameter(Parameter::ScLowGain, lowGainDb);
+        dsp.prepare(rate, kBlock);
+        const int total = static_cast<int>(rate * 1.5), measureFrom = static_cast<int>(rate);
+        std::array<float, kBlock> input{}, output{};
+        const float* in[] = {input.data()};
+        float* out[] = {output.data()};
+        double inPower = 0.0, outPower = 0.0;
+        for (int start = 0; start < total; start += kBlock)
+        {
+            const int n = std::min(kBlock, total - start);
+            for (int i = 0; i < n; ++i)
+                input[static_cast<size_t>(i)] = static_cast<float>(
+                    0.25 * std::sin(2.0 * 3.14159265358979323846 * 30.0 * (start + i) / rate));
+            dsp.processBlock(in, out, 1, n);
+            for (int i = 0; i < n; ++i)
+                if (start + i >= measureFrom)
+                {
+                    inPower += static_cast<double>(input[static_cast<size_t>(i)]) * input[static_cast<size_t>(i)];
+                    outPower += static_cast<double>(output[static_cast<size_t>(i)]) * output[static_cast<size_t>(i)];
+                }
+        }
+        return 10.0 * std::log10(outPower / inPower);
+    };
+    struct ModeRate { double hostRate; int setting; };
+    constexpr std::array<ModeRate, 4> modeRates{{{48000.0, kOversamplingOffSetting}, {192000.0, kOversamplingOffSetting},
+                                                {192000.0, kOversampling2xSetting}, {192000.0, kOversampling4xSetting}}};
+    constexpr double kBoundDb = 0.02;
+    int idle = 0;
+    for (float gainDb : {12.0f, -12.0f})
+    {
+        double lowest = 1.0e9, highest = -1.0e9;
+        for (const auto& modeRate : modeRates)
+        {
+            const double effect = levelDb(modeRate.hostRate, modeRate.setting, gainDb)
+                - levelDb(modeRate.hostRate, modeRate.setting, 0.0f);
+            const int factor = modeRate.setting == kOversampling4xSetting ? 4
+                : modeRate.setting == kOversampling2xSetting ? 2 : 1;
+            // A boost into the detector compresses the 30 Hz tone harder (the level falls), a cut softer.
+            const bool acts = gainDb > 0.0f ? effect <= -kShelfActsDb : effect >= kShelfActsDb;
+            if (!acts) ++idle;
+            std::printf("bus sidechain low shelf %+.0f dB @ 60 Hz: mode rate %6.0f Hz, 30 Hz level %+.4f dB re 0 dB%s\n",
+                        static_cast<double>(gainDb), modeRate.hostRate * factor, effect,
+                        acts ? "" : " (the shelf does not act)");
+            lowest = std::min(lowest, effect);
+            highest = std::max(highest, effect);
+        }
+        std::printf("bus sidechain low shelf %+.0f dB: spread over the mode rates %.4f dB (bound %.2f)\n",
+                    static_cast<double>(gainDb), highest - lowest, kBoundDb);
+        require(highest - lowest < kBoundDb, "Bus's sidechain low shelf acts the same at every mode rate to 768 kHz");
+    }
+    require(idle == 0, "Bus's sidechain low shelf moves the 30 Hz level the way its gain asks at every mode rate");
+}
+
 // The host sees one latency in every mode: each block's output is padded to the
 // deepest mode's latency, so switching modes never moves PDC (VST3 and CLAP hosts
 // restarted the plugin on every change, AU hosts never heard of one). Bypass
@@ -6348,10 +7895,14 @@ std::array<std::vector<float>, 2> renderHostLatencyStereo(MultiCompDSP& dsp, con
 // nothing else in Multiband depends on the padding, so the padded output must be the unpadded one delayed by the
 // padding exactly, silent before it, on both channels: at MB Mix 50 % (100 %, the wet alone, is the control),
 // compressing (every band 4:1 from -30 dB) and at 1:1, link L/R and M/S, at 48 and 96 kHz. Entering Multiband
-// mid-block from VCA with Mix and MB Mix at 0 (the dry alone; noise off, which would add to it), the output must
-// stay exactly the input delayed by the host latency until the first split-band sum reaches it, a padding after
-// the switch: the pad plays what VCA fed it, which in link M/S holds only if the sum is decoded to L/R, the domain
-// it is fed in, before its pad.
+// mid-block from VCA with Mix and MB Mix at 0 (the dry alone; noise off, which would add to it): the dry changes
+// signal there, from the input delayed to the host latency to the split-band sum, so the switch duck fades it out
+// first (switchDuckDryMix, since 2026-11-05; until then the plain dry ran on through the pad and the sum was
+// spliced onto it a padding after the switch). The output must be exactly the delayed input up to the request,
+// then only that input attenuated (0 <= gain <= 1, never another signal) until it is silent, go silent for the
+// duck's mute (the sum arrives inside it: the pad plays what VCA fed it, which in link M/S holds only if the sum is
+// decoded to L/R, the domain it is fed in, before its pad), and step at most kModeSwitchClickBound times the
+// input's own largest step from the request on.
 void testMultibandDryPaddedToHostLatency()
 {
     using duskaudio::MultiCompMode;
@@ -6373,6 +7924,9 @@ void testMultibandDryPaddedToHostLatency()
     // unpadded output peak: the exact match below must not be one of silence.
     float weakestCompressionDb = -std::numeric_limits<float>::infinity();
     float quietestPeak = std::numeric_limits<float>::infinity();
+    // Entering Multiband: the furthest the settled dry is from Multiband's own render, and that render's quietest
+    // channel peak.
+    float worstEntrySettled = 0.0f, quietestEntryReference = std::numeric_limits<float>::infinity();
     for (const double sampleRate : {48000.0, 96000.0})
     {
         const size_t total = static_cast<size_t>(sampleRate * 0.1);
@@ -6427,25 +7981,63 @@ void testMultibandDryPaddedToHostLatency()
             const int hostLatency = dsp.getHostLatencySamples();
             const auto out = renderHostLatencyStereo(dsp, left, right, kBlock, kModeSwitchSegment,
                                                      static_cast<int>(MultiCompMode::Multiband));
-            const size_t sumArrives = static_cast<size_t>(kModeSwitchSegment + hostLatency);
+            const size_t request = static_cast<size_t>(kModeSwitchSegment);
             int off = 0;
-            float worst = 0.0f;
+            bool silent = true;
+            float worstStep = 0.0f, inputStep = 0.0f;
             for (size_t ch = 0; ch < 2; ++ch)
             {
                 const std::vector<float>& input = ch == 0 ? left : right;
-                for (size_t n = 0; n < sumArrives; ++n)
+                const auto delayed = [&](size_t n) {
+                    return n < static_cast<size_t>(hostLatency) ? 0.0f : input[n - static_cast<size_t>(hostLatency)];
+                };
+                size_t quietRun = 0, n = 0;
+                for (; n < request; ++n)
+                    if (out[ch][n] != delayed(n)) ++off;
+                for (; n < total && quietRun < 32; ++n)
                 {
-                    const float expected = n < static_cast<size_t>(hostLatency)
-                        ? 0.0f : input[n - static_cast<size_t>(hostLatency)];
-                    if (out[ch][n] != expected) ++off;
-                    worst = std::max(worst, std::abs(out[ch][n] - expected));
+                    const float x = delayed(n), y = out[ch][n];
+                    if (y * x < 0.0f || std::abs(y) > std::abs(x)) ++off;   // the delayed input, attenuated
+                    quietRun = y == 0.0f ? quietRun + 1 : 0;
+                }
+                silent = silent && quietRun >= 32;   // every channel
+                for (size_t m = request; m < total; ++m)
+                {
+                    worstStep = std::max(worstStep, std::abs(out[ch][m] - out[ch][m - 1]));
+                    inputStep = std::max(inputStep, std::abs(delayed(m) - delayed(m - 1)));
                 }
             }
+            if (!silent) ++off;
+            const float click = worstStep / std::max(inputStep, 1.0e-9f);
+            if (click >= kModeSwitchClickBound) ++off;
             std::printf("host latency: %.0f kHz VCA>Multiband at sample %d, Mix 0, link %s: %d samples off the input "
-                        "delayed by the host latency (%d) until the split-band sum arrives, worst %.3g\n",
+                        "delayed by the host latency (%d), then faded%s; step %.2fx the input's\n",
                         sampleRate / 1000.0, kModeSwitchSegment, linkMode == 1 ? "M/S" : "L/R", off, hostLatency,
-                        static_cast<double>(worst));
+                        silent ? " to silence" : ", NEVER silent", static_cast<double>(click));
             entryOff += off;
+            // The dry fades back in after the switch: over the second half after the request, both channels play what
+            // Multiband alone plays (the same input, Mix and MB Mix at 0, padded) to kModeSwitchSettledTolerance, and
+            // that render carries signal on both. A dry left muted had no step left to fail the checks above.
+            MultiCompDSP alone;
+            configure(alone, true, 4.0f, linkMode);
+            alone.setMode(static_cast<int>(MultiCompMode::Multiband));
+            alone.setMix(0.0f);
+            alone.setParameter(Parameter::MbMix, 0.0f);
+            alone.prepare(sampleRate, kBlock);
+            const auto multiband = renderHostLatencyStereo(alone, left, right, kBlock);
+            const int settledFrom = (static_cast<int>(request) + static_cast<int>(total)) / 2;
+            float settled = 0.0f, alonePeak = std::numeric_limits<float>::infinity();
+            for (size_t ch = 0; ch < 2; ++ch)
+            {
+                settled = std::max(settled, largestDifferenceBetween(out[ch], multiband[ch], settledFrom,
+                                                                     static_cast<int>(total)));
+                alonePeak = std::min(alonePeak, peakBetween(multiband[ch], settledFrom, static_cast<int>(total)));
+            }
+            std::printf("host latency: %.0f kHz VCA>Multiband, Mix 0, link %s: settled %.1e off Multiband's own render "
+                        "(its quieter channel peaks %.2f)\n", sampleRate / 1000.0, linkMode == 1 ? "M/S" : "L/R",
+                        static_cast<double>(settled), static_cast<double>(alonePeak));
+            worstEntrySettled = std::max(worstEntrySettled, settled);
+            quietestEntryReference = std::min(quietestEntryReference, alonePeak);
         }
     }
     require(weakestCompressionDb < -1.0f && quietestPeak > 0.05f,
@@ -6453,7 +8045,10 @@ void testMultibandDryPaddedToHostLatency()
     require(steadyOff == 0,
             "padded, Multiband's output is its unpadded output delayed by the padding, at every MB Mix");
     require(entryOff == 0,
-            "padded, entering Multiband holds the dry at the host latency until the split-band sum arrives");
+            "padded, entering Multiband holds the dry at the host latency, then fades it out before the split-band sum");
+    require(quietestEntryReference > 0.05f, "Multiband's own Mix 0 render carries signal on both channels");
+    require(worstEntrySettled < kModeSwitchSettledTolerance,
+            "padded, entering Multiband at Mix 0 fades the split-band sum back in on both channels");
     std::printf("host latency: padded Multiband is its unpadded output delayed exactly (output peaks %.2f or more, "
                 "4:1 reducing %.1f dB or more)\n",
                 static_cast<double>(quietestPeak), static_cast<double>(-weakestCompressionDb));
@@ -11387,8 +12982,7 @@ void testFetLowFrequencyColourSurface()
 void testVcaSidechainTilt()
 {
     // Exercise the live detector route through Sidechain Listen, including
-    // the independent 20.02 Hz pole. The legacy SidechainTilt class is used
-    // only by the compile-time disabled-element identity control.
+    // the independent 20.02 Hz pole.
     double worst = 0.0;
     bool valid = true;
     const auto measure = [&](double rate, double hz, double referenceDb) {
@@ -13023,6 +14617,24 @@ int main(int argc, char** argv)
     { testBypassAndListenLinesHoldBothLookaheads(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--wide-latency") == 0)
     { testWideDigitalLatencyContract(); return 0; }
+    // Also in the default run; separately reachable for its break-first proof against the FET presets copied as times.
+    if (argc == 2 && std::strcmp(argv[1], "--fet-preset-dials") == 0)
+    { testFetPresetsSetTheirDials(); return 0; }
+    // Also in the default run; separately reachable for its break-first proof against the core that rounded Digital's
+    // lookahead at the mode rate.
+    if (argc == 2 && std::strcmp(argv[1], "--digital-lookahead-latency") == 0)
+    { testDigitalLookaheadDelayMatchesReportedLatency(); return 0; }
+    // Also in the default run; separately reachable for their break-first proof against the core whose sidechain
+    // low shelves ran in float.
+    if (argc == 2 && std::strcmp(argv[1], "--sidechain-low-shelf") == 0)
+    {
+        testSidechainLowShelfHoldsItsResponse();
+        testBusSidechainLowShelfAtEveryModeRate();
+        return 0;
+    }
+    // The second alone, so its proof can show it failing on a core that fails the first before reaching it.
+    if (argc == 2 && std::strcmp(argv[1], "--bus-sidechain-low-shelf") == 0)
+    { testBusSidechainLowShelfAtEveryModeRate(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--wide-opto") == 0)
     { testOptoWideDetectorCharge(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--wide-vca") == 0)
@@ -13369,14 +14981,104 @@ int main(int argc, char** argv)
         std::puts("Multi-Comp bypass-toggle continuity test: PASS");
         return 0;
     }
+    // Also in the default run below; separately reachable so the break-first proof can run it against the core
+    // whose prepare() started the bypass ramp at "processed".
+    if (argc == 2 && std::strcmp(argv[1], "--bypass-activation") == 0)
+    {
+        testBypassAtActivationEmitsAlignedDry();
+        std::puts("Multi-Comp bypass-at-activation test: PASS");
+        return 0;
+    }
     // Also in the default run below; separately reachable so the break-first
     // proof can run them against the core without the mode-switch duck.
+    // Also in the default run and in --mode-switch-duck; one at a time for their break-first proofs against the
+    // core whose duck covered only factor-changing mode switches.
+    if (argc == 2 && std::strcmp(argv[1], "--oversampling-change-duck") == 0)
+    {
+        testOversamplingChangeIsDucked();
+        std::puts("Multi-Comp Oversampling-change duck test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--fet-all-switch-duck") == 0)
+    {
+        testFetAllButtonsSwitchIsDucked();
+        std::puts("Multi-Comp FET All-buttons switch duck test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--latency-switch-duck") == 0)
+    {
+        testLatencyMovingSwitchDucksTheDryPaths();
+        std::puts("Multi-Comp latency-moving switch duck test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--lookahead-ramp") == 0)
+    {
+        testLookaheadRampNeverGates();
+        std::puts("Multi-Comp lookahead ramp test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--lookahead-switch-duck") == 0)
+    {
+        testLookaheadMovesWithTheSwitch();
+        testLookaheadRampNeverGates();
+        std::puts("Multi-Comp lookahead switch duck tests: PASS");
+        return 0;
+    }
+    // Also in the default run and in --mode-switch-duck; one at a time for their break-first proofs against the
+    // core whose switch duck the PR #344 review questioned.
+    if (argc == 2 && std::strcmp(argv[1], "--latency-report-switch") == 0)
+    {
+        testLatencyReportFollowsTheSwitch();
+        std::puts("Multi-Comp latency report through a switch test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--latency-report-during-block") == 0)
+    {
+        testLatencyReportFollowsRequestsMadeDuringABlock();
+        std::puts("Multi-Comp latency report with requests made during a block test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--listen-every-switch") == 0)
+    {
+        testListenFollowsEveryModeSwitch();
+        std::puts("Multi-Comp Listen through every mode switch test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--auto-gain-switch-duck") == 0)
+    {
+        testAutoGainIgnoresTheSwitchDuck();
+        std::puts("Multi-Comp auto gain through a switch duck test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--listen-chain-switch-duck") == 0)
+    {
+        testListenFadesAcrossSidechainChainChange();
+        std::puts("Multi-Comp listen chain switch duck test: PASS");
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--latency-retarget-duck") == 0)
+    {
+        testLatencyPathsArmedMidFadeStartAtUnity();
+        std::puts("Multi-Comp latency retarget duck test: PASS");
+        return 0;
+    }
     if (argc == 2 && std::strcmp(argv[1], "--mode-switch-duck") == 0)
     {
-        testModeSwitchDuckOnlyWhereAntiAliasFactorChanges();
+        testEveryModeSwitchIsDucked();
         testModeSwitchDuckRearmsAndSurvivesRecovery();
         testModeSwitchDuckPaddedToHostLatency();
         testModeSwitchKeepsDryPathsAtHostLatency();
+        testOversamplingChangeIsDucked();
+        testFetAllButtonsSwitchIsDucked();
+        testLatencyMovingSwitchDucksTheDryPaths();
+        testLookaheadMovesWithTheSwitch();
+        testLookaheadRampNeverGates();
+        testLatencyReportFollowsTheSwitch();
+        testLatencyReportFollowsRequestsMadeDuringABlock();
+        testAutoGainIgnoresTheSwitchDuck();
+        testListenFadesAcrossSidechainChainChange();
+        testListenFollowsEveryModeSwitch();
+        testLatencyPathsArmedMidFadeStartAtUnity();
         std::puts("Multi-Comp mode-switch duck tests: PASS");
         return 0;
     }
@@ -13458,9 +15160,12 @@ int main(int argc, char** argv)
     testEnvelopeAndReset();
     testMixBypassAndBlockEdges();
     testBypassToggleResumesWithoutGlitch();
+    testBypassAtActivationEmitsAlignedDry();
     testClassicOversamplerByteIdentity();
     testWideOversamplerResponse();
     testWideDigitalLatencyContract();
+    testDigitalLookaheadDelayMatchesReportedLatency();
+    testFetPresetsSetTheirDials();
     testOptoWideDetectorCharge();
     testVcaWideOutputOnset();
     testLatencyMixBypassAndDigitalStereo();
@@ -13478,6 +15183,8 @@ int main(int argc, char** argv)
     testDigitalLookaheadMixAlignment();
     testMultibandMixAlignment();
     testSidechainEq();
+    testSidechainLowShelfHoldsItsResponse();
+    testBusSidechainLowShelfAtEveryModeRate();
     testMultibandBypassAndZeroLatency();
     testHostLatencyIsConstantAcrossModes();
     testMultibandDryPaddedToHostLatency();
@@ -13489,10 +15196,21 @@ int main(int argc, char** argv)
     testLongReleaseSettlesAtHighRates();
     testModeReentryStartsFromRest();
     testOversamplingRiseDoesNotReplayStaleAudio();
-    testModeSwitchDuckOnlyWhereAntiAliasFactorChanges();
+    testEveryModeSwitchIsDucked();
     testModeSwitchDuckRearmsAndSurvivesRecovery();
     testModeSwitchDuckPaddedToHostLatency();
     testModeSwitchKeepsDryPathsAtHostLatency();
+    testOversamplingChangeIsDucked();
+    testFetAllButtonsSwitchIsDucked();
+    testLatencyMovingSwitchDucksTheDryPaths();
+    testLookaheadMovesWithTheSwitch();
+    testLookaheadRampNeverGates();
+    testLatencyReportFollowsTheSwitch();
+    testLatencyReportFollowsRequestsMadeDuringABlock();
+    testAutoGainIgnoresTheSwitchDuck();
+    testListenFadesAcrossSidechainChainChange();
+    testListenFollowsEveryModeSwitch();
+    testLatencyPathsArmedMidFadeStartAtUnity();
     testHiddenControlsStayOutOfModesWithoutThem();
     testGlobalLookaheadOnlyInDigitalModes();
     testStudioVcaStaticsMatchReference();

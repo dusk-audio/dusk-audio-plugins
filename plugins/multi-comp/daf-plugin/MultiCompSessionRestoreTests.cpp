@@ -30,6 +30,15 @@
 //       carries non-default values. This build cannot decode that state, and a state it cannot decode is refused
 //       whole (a half-applied session is worse than a refused one): the restore fails and the instance stays as it
 //       was, every control and its saved state as before the attempt.
+//   [6] CLAP only, the one format here driven with audio: a session saved bypassed plays the latency-aligned input
+//       from its first sample. Until 2026-11-05 MultiCompDSP::prepare() started the bypass ramp at "processed"
+//       whatever the Bypass control said, so every activation of a bypassed instance (a reopened session, an
+//       offline bounce) played 30 ms of processed audio first.
+//   [7] The FET timing dials' host text, the one host-facing reading here that is not a session's: FET Attack and FET
+//       Release read as the FET faces' 1-7 dials ("1.0" to "7.0") with no unit, and a typed reading (Attack: or SLO)
+//       sets the dial's host value. Their host ranges are the legacy ones, Attack 0..1 and Release 50..1100, which
+//       sessions and automation hold. Until 2026-11-06 a host read Release as "50 ms" at the dial's slowest setting
+//       (about 1.1 s) and Attack in milliseconds that were a position in disguise.
 //
 //   MultiCompSessionRestoreTest --vst3 <binary inside multi-comp-2.vst3>
 //   MultiCompSessionRestoreTest --clap <binary inside multi-comp-2.clap>
@@ -52,6 +61,8 @@
 #include <dlfcn.h>
 
 #include "clap/entry.h"
+#include "clap/ext/audio-ports.h"
+#include "clap/ext/latency.h"
 #include "clap/ext/params.h"
 #include "clap/ext/state.h"
 #include "clap/factory/plugin-factory.h"
@@ -485,10 +496,20 @@ public:
         if (v3_cpp_obj_query_interface(instance.component, v3_edit_controller_iid, &instance.controller) != V3_OK
             || instance.controller == nullptr)
             return false;
+        // A stepped control's value text is its label ("4:1", "All"); a unit on it reads twice in a host that
+        // appends units ("4:1 :1"). Checked once per binary.
+        std::string steppedWithUnit;
+        int stepped = 0;
         for (int32_t i = 0, count = v3_cpp_obj(instance.controller)->get_parameter_count(instance.controller); i < count; ++i)
         {
             v3_param_info info = {};
             if (v3_cpp_obj(instance.controller)->get_parameter_info(instance.controller, i, &info) != V3_OK) return false;
+            if (info.step_count > 0 && (info.flags & V3_PARAM_PROGRAM_CHANGE) == 0)
+            {
+                ++stepped;
+                if (!asciiOf(info.units).empty())
+                    steppedWithUnit += " \"" + asciiOf(info.title) + "\" (" + asciiOf(info.units) + ")";
+            }
             if ((info.flags & V3_PARAM_PROGRAM_CHANGE) != 0)
             {
                 instance.programId = info.param_id;
@@ -497,6 +518,10 @@ public:
             else
                 instance.ids.add(asciiOf(info.title), info.param_id);
         }
+        if (!unitsChecked)
+            check(steppedWithUnit.empty(), "VST3: none of the %d stepped controls reports a unit%s", stepped,
+                  steppedWithUnit.c_str());
+        unitsChecked = true;
         return instance.ids.complete();
     }
 
@@ -518,6 +543,47 @@ public:
         const v3_param_id id = instance.ids[index];
         const double normalised = v3_cpp_obj(instance.controller)->get_parameter_normalised(instance.controller, id);
         return static_cast<float>(v3_cpp_obj(instance.controller)->normalised_parameter_to_plain(instance.controller, id, normalised));
+    }
+
+    // A control's text at a plain value, as a host shows it (the host appends the parameter's units).
+    bool text(Instance& instance, int index, float plain, std::string& out)
+    {
+        const v3_param_id id = instance.ids[index];
+        const double normalised = v3_cpp_obj(instance.controller)->plain_parameter_to_normalised(instance.controller, id, plain);
+        v3_str_128 text = {};
+        if (v3_cpp_obj(instance.controller)->get_parameter_string_for_value(instance.controller, id, normalised, text) != V3_OK)
+            return false;
+        out = asciiOf(text);
+        return true;
+    }
+
+    // The plain value a host's typed text sets.
+    bool fromText(Instance& instance, int index, const char* typed, float& plain)
+    {
+        const v3_param_id id = instance.ids[index];
+        int16_t text[128] = {};
+        for (size_t c = 0; c + 1 < 128 && typed[c] != '\0'; ++c) text[c] = static_cast<int16_t>(typed[c]);
+        double normalised = -1.0;
+        if (v3_cpp_obj(instance.controller)->get_parameter_value_for_string(instance.controller, id, text, &normalised) != V3_OK)
+            return false;
+        plain = static_cast<float>(v3_cpp_obj(instance.controller)->normalised_parameter_to_plain(instance.controller, id, normalised));
+        return true;
+    }
+
+    // Whether a host shows the control's text alone: no units to append after it.
+    bool textStandsAlone(Instance& instance, int index, std::string& why)
+    {
+        for (int32_t i = 0, count = v3_cpp_obj(instance.controller)->get_parameter_count(instance.controller); i < count; ++i)
+        {
+            v3_param_info info = {};
+            if (v3_cpp_obj(instance.controller)->get_parameter_info(instance.controller, i, &info) != V3_OK
+                || info.param_id != instance.ids[index])
+                continue;
+            why = asciiOf(info.units).empty() ? "" : " [units \"" + asciiOf(info.units) + "\"]";
+            return why.empty();
+        }
+        why = " [no parameter info]";
+        return false;
     }
 
     // A host's program change: the program parameter, delivered as any other edit.
@@ -559,6 +625,8 @@ public:
     }
 
 private:
+    bool unitsChecked = false;
+
     // One edit, in plain units, delivered in a zero-frame process().
     bool send(Instance& instance, v3_param_id id, double plain)
     {
@@ -697,6 +765,32 @@ public:
         return instance.params->get_value(instance.plugin, instance.ids[index], &value) ? static_cast<float>(value) : -1.0f;
     }
 
+    // A control's text at a plain value, as a host shows it.
+    bool text(Instance& instance, int index, float plain, std::string& out)
+    {
+        char display[CLAP_NAME_SIZE] = {};
+        if (!instance.params->value_to_text(instance.plugin, instance.ids[index], plain, display, sizeof(display)))
+            return false;
+        out = display;
+        return true;
+    }
+
+    // The plain value a host's typed text sets.
+    bool fromText(Instance& instance, int index, const char* typed, float& plain)
+    {
+        double value = -1.0;
+        if (!instance.params->text_to_value(instance.plugin, instance.ids[index], typed, &value)) return false;
+        plain = static_cast<float>(value);
+        return true;
+    }
+
+    // CLAP has no unit field: a unit can only be in the text, which the caller reads whole.
+    bool textStandsAlone(Instance&, int, std::string& why)
+    {
+        why.clear();
+        return true;
+    }
+
     bool save(Instance& instance, Form& form)
     {
         clap_ostream_t stream = {&form.bytes, [](const clap_ostream_t* s, const void* buffer, uint64_t size) -> int64_t {
@@ -718,6 +812,76 @@ public:
             return static_cast<int64_t>(n);
         }};
         return instance.state->load(instance.plugin, &stream);
+    }
+
+    // Activates the instance at 48 kHz, plays the stereo input through its main port in 256-frame blocks with every
+    // other input port silent, then deactivates it. Gives back the main output and the latency the plugin reported
+    // at activation.
+    bool render(Instance& instance, const std::vector<float>& left, const std::vector<float>& right,
+                std::vector<float>& outLeft, std::vector<float>& outRight, uint32_t& latency)
+    {
+        constexpr double kRate = 48000.0;
+        constexpr uint32_t kBlock = 256;
+        const auto* const ports = static_cast<const clap_plugin_audio_ports_t*>(
+            instance.plugin->get_extension(instance.plugin, CLAP_EXT_AUDIO_PORTS));
+        const auto* const latencyExtension = static_cast<const clap_plugin_latency_t*>(
+            instance.plugin->get_extension(instance.plugin, CLAP_EXT_LATENCY));
+        if (ports == nullptr || latencyExtension == nullptr) return false;
+        struct Port { std::vector<std::vector<float>> channels; std::vector<float*> pointers; };
+        const auto makePorts = [&](bool input, std::vector<Port>& made, std::vector<clap_audio_buffer_t>& buffers) {
+            const uint32_t count = ports->count(instance.plugin, input);
+            made.resize(count);
+            buffers.assign(count, clap_audio_buffer_t{});
+            for (uint32_t p = 0; p < count; ++p)
+            {
+                clap_audio_port_info_t info = {};
+                if (!ports->get(instance.plugin, p, input, &info)) return false;
+                made[p].channels.assign(info.channel_count, std::vector<float>(kBlock, 0.0f));
+                for (auto& channel : made[p].channels) made[p].pointers.push_back(channel.data());
+                buffers[p].data32 = made[p].pointers.data();
+                buffers[p].channel_count = info.channel_count;
+            }
+            return count > 0 && made[0].channels.size() >= 2;
+        };
+        std::vector<Port> inPorts, outPorts;
+        std::vector<clap_audio_buffer_t> inBuffers, outBuffers;
+        if (!makePorts(true, inPorts, inBuffers) || !makePorts(false, outPorts, outBuffers)) return false;
+        if (!instance.plugin->activate(instance.plugin, kRate, 1, kBlock)) return false;
+        latency = latencyExtension->get(instance.plugin);
+        if (!instance.plugin->start_processing(instance.plugin))
+        {
+            instance.plugin->deactivate(instance.plugin);
+            return false;
+        }
+        clap_input_events_t noEvents = {nullptr, [](const clap_input_events_t*) -> uint32_t { return 0; },
+            [](const clap_input_events_t*, uint32_t) -> const clap_event_header_t* { return nullptr; }};
+        clap_output_events_t anyEvents = {nullptr, [](const clap_output_events_t*, const clap_event_header_t*) {
+            return true; }};
+        const size_t total = left.size();
+        outLeft.assign(total, 0.0f);
+        outRight.assign(total, 0.0f);
+        bool processed = true;
+        for (size_t start = 0; start < total && processed; start += kBlock)
+        {
+            const uint32_t frames = static_cast<uint32_t>(std::min<size_t>(kBlock, total - start));
+            std::copy_n(left.begin() + static_cast<std::ptrdiff_t>(start), frames, inPorts[0].channels[0].begin());
+            std::copy_n(right.begin() + static_cast<std::ptrdiff_t>(start), frames, inPorts[0].channels[1].begin());
+            clap_process_t process = {};
+            process.steady_time = static_cast<int64_t>(start);
+            process.frames_count = frames;
+            process.audio_inputs = inBuffers.data();
+            process.audio_outputs = outBuffers.data();
+            process.audio_inputs_count = static_cast<uint32_t>(inBuffers.size());
+            process.audio_outputs_count = static_cast<uint32_t>(outBuffers.size());
+            process.in_events = &noEvents;
+            process.out_events = &anyEvents;
+            processed = instance.plugin->process(instance.plugin, &process) != CLAP_PROCESS_ERROR;
+            std::copy_n(outPorts[0].channels[0].begin(), frames, outLeft.begin() + static_cast<std::ptrdiff_t>(start));
+            std::copy_n(outPorts[0].channels[1].begin(), frames, outRight.begin() + static_cast<std::ptrdiff_t>(start));
+        }
+        instance.plugin->stop_processing(instance.plugin);
+        instance.plugin->deactivate(instance.plugin);
+        return processed;
     }
 
 private:
@@ -862,6 +1026,51 @@ public:
                                                        kAudioUnitScope_Global, 0, &value) == noErr ? value : -1.0f;
     }
 
+    // A control's text at a plain value, as a host asks for it: kAudioUnitProperty_ParameterStringFromValue.
+    bool text(Instance& instance, int index, float plain, std::string& out)
+    {
+        const AudioUnitParameterValue value = plain;
+        AudioUnitParameterStringFromValue request = {static_cast<AudioUnitParameterID>(index), &value, nullptr};
+        UInt32 size = sizeof(request);
+        if (getProperty(instance, kAudioUnitProperty_ParameterStringFromValue, &request, &size) != noErr) return false;
+        out = stringOf(request.outString);
+        if (request.outString != nullptr) CFRelease(request.outString);   // the property hands over a reference
+        return true;
+    }
+
+    // The plain value a host's typed text sets: kAudioUnitProperty_ParameterValueFromString.
+    bool fromText(Instance& instance, int index, const char* typed, float& plain)
+    {
+        const CFStringRef string = CFStringCreateWithCString(nullptr, typed, kCFStringEncodingUTF8);
+        if (string == nullptr) return false;
+        AudioUnitParameterValueFromString request = {static_cast<AudioUnitParameterID>(index), string, 0.0f};
+        UInt32 size = sizeof(request);
+        const bool parsed = getProperty(instance, kAudioUnitProperty_ParameterValueFromString, &request, &size) == noErr;
+        CFRelease(string);
+        if (parsed) plain = request.outValue;
+        return parsed;
+    }
+
+    // Whether a host shows the control's text alone: kAudioUnitProperty_ParameterInfo flags ValuesHaveStrings (else
+    // Logic shows the raw number) and names no unit.
+    bool textStandsAlone(Instance& instance, int index, std::string& why)
+    {
+        AudioUnitParameterInfo info = {};
+        UInt32 size = sizeof(info);
+        if (getProperty(instance, kAudioUnitProperty_ParameterInfo, &info, &size, static_cast<AudioUnitElement>(index))
+            != noErr)
+        {
+            why = " [no parameter info]";
+            return false;
+        }
+        if (info.cfNameString != nullptr && (info.flags & kAudioUnitParameterFlag_CFNameRelease) != 0)
+            CFRelease(info.cfNameString);
+        why.clear();
+        if ((info.flags & kAudioUnitParameterFlag_ValuesHaveStrings) == 0) why += " [no value strings: the raw number]";
+        if (info.unit != kAudioUnitParameterUnit_Generic) why += " [AU unit " + std::to_string(info.unit) + "]";
+        return why.empty();
+    }
+
     // A host's program change: kAudioUnitProperty_PresentPreset set to the factory preset.
     bool loadProgram(Instance& instance, int program)
     {
@@ -902,11 +1111,12 @@ public:
     }
 
 private:
-    static OSStatus getProperty(Instance& instance, AudioUnitPropertyID property, void* data, UInt32* size)
+    static OSStatus getProperty(Instance& instance, AudioUnitPropertyID property, void* data, UInt32* size,
+                                AudioUnitElement element = 0)
     {
         using GetProperty = OSStatus (*)(void*, AudioUnitPropertyID, AudioUnitScope, AudioUnitElement, void*, UInt32*);
         const auto function = reinterpret_cast<GetProperty>(instance.unit->Lookup(kAudioUnitGetPropertySelect));
-        return function != nullptr ? function(instance.unit, property, kAudioUnitScope_Global, 0, data, size)
+        return function != nullptr ? function(instance.unit, property, kAudioUnitScope_Global, element, data, size)
                                    : static_cast<OSStatus>(kAudioUnitErr_InvalidProperty);
     }
 
@@ -1098,7 +1308,97 @@ void runNewerSession(Format& format)
           Format::kName, decodedMode(stateAfter), stateAfter == stateBefore ? "the same string" : "a different string");
 }
 
+// ---- [7] the FET timing dials' host text ---------------------------------------------------------------------------
+
+// See the file comment. Each dial at its slow stop, middle and fast stop, a typed reading, a typed unit and Attack's
+// SLO, through the wrapper's own text calls.
+template <class Format>
+void runFetTimingText(Format& format)
+{
+    typename Format::Instance instance;
+    if (!format.create(instance))
+    {
+        check(false, "%s FET timing text: a fresh instance", Format::kName);
+        return;
+    }
+    for (const ParamId id : {ParamId::FetAttack, ParamId::FetRelease})
+    {
+        const int index = indexOf(id);
+        const auto& d = multicompp::kParams[static_cast<size_t>(index)];
+        const float slow = multicompp::hostMin(d), fast = multicompp::hostMax(d), middle = 0.5f * (slow + fast);
+        std::string atSlow, atMiddle, atFast, why;
+        const bool shown = format.text(instance, index, slow, atSlow) && format.text(instance, index, middle, atMiddle)
+            && format.text(instance, index, fast, atFast);
+        check(shown && atSlow == "1.0" && atMiddle == "4.0" && atFast == "7.0",
+              "%s %s reads as its dial: \"%s\" / \"%s\" / \"%s\" at %g / %g / %g (expected 1.0 / 4.0 / 7.0)%s",
+              Format::kName, d.name, atSlow.c_str(), atMiddle.c_str(), atFast.c_str(), slow, middle, fast,
+              shown ? "" : " [the wrapper gave no text]");
+        const bool alone = format.textStandsAlone(instance, index, why);
+        check(alone, "%s %s: a host shows that text alone, no unit after it%s", Format::kName, d.name, why.c_str());
+        // Dial 3.5 is 2.5 / 6 of the travel.
+        const float expected = slow + (2.5f / 6.0f) * (fast - slow);
+        float typed = -1.0f, withUnit = -1.0f;
+        const bool parsed = format.fromText(instance, index, "3.5", typed);
+        check(parsed && typed == expected, "%s %s: a typed 3.5 sets %.9g (expected %.9g)%s", Format::kName, d.name,
+              static_cast<double>(typed), static_cast<double>(expected), parsed ? "" : " [refused]");
+        const bool refused = !format.fromText(instance, index, "4 ms", withUnit);
+        const std::string accepted = refused ? std::string() : " [accepted as " + std::to_string(withUnit) + "]";
+        check(refused, "%s %s refuses a typed \"4 ms\"%s", Format::kName, d.name, accepted.c_str());
+    }
+    float slo = -1.0f;
+    const bool sloParsed = format.fromText(instance, indexOf(ParamId::FetAttack), "SLO", slo);
+    check(sloParsed && slo == 0.0f, "%s FET Attack: a typed SLO sets its stop, 0 (%s %g)", Format::kName,
+          sloParsed ? "set" : "refused", static_cast<double>(slo));
+    format.destroy(instance);
+}
+
 // ---- the cases -----------------------------------------------------------------------------------------------------
+
+// [6] See the file comment. FET BLACK at +30 dB Input, so the processed output is far from the dry: the control render
+// (not bypassed) must differ from the aligned input, the bypassed one must not differ at all.
+void runBypassedActivation(ClapFormat& format)
+{
+    constexpr size_t kSamples = 12000;   // 250 ms at 48 kHz, well past the 30 ms bypass ramp
+    std::vector<float> left(kSamples), right(kSamples);
+    for (size_t i = 0; i < kSamples; ++i)
+    {
+        const double t = static_cast<double>(i) / 48000.0;
+        left[i] = static_cast<float>(0.4 * std::sin(6.283185307179586 * 220.0 * t));
+        right[i] = static_cast<float>(0.3 * std::sin(6.283185307179586 * 330.0 * t + 0.7));
+    }
+    float difference[2] = {-1.0f, -1.0f};
+    uint32_t latencies[2] = {0, 0};
+    for (int bypassed = 0; bypassed < 2; ++bypassed)
+    {
+        ClapFormat::Form form;
+        ClapFormat::Instance writer;
+        if (!format.create(writer)) { check(false, "CLAP bypassed activation: create the saving instance"); return; }
+        format.set(writer, indexOf(ParamId::Mode), 1.0f);
+        format.set(writer, indexOf(ParamId::FetInput), 30.0f);
+        format.set(writer, indexOf(ParamId::Bypass), static_cast<float>(bypassed));
+        const bool saved = format.save(writer, form);
+        format.destroy(writer);
+        ClapFormat::Instance reader;
+        std::vector<float> outLeft, outRight;
+        const bool rendered = saved && format.create(reader) && format.restore(reader, form)
+            && format.render(reader, left, right, outLeft, outRight, latencies[bypassed]);
+        format.destroy(reader);
+        if (!rendered) { check(false, "CLAP bypassed activation: save, restore and render (bypass %d)", bypassed); return; }
+        const size_t latency = latencies[bypassed];
+        float worst = 0.0f;
+        for (size_t i = 0; i < kSamples; ++i)
+        {
+            const float dryLeft = i >= latency ? left[i - latency] : 0.0f;
+            const float dryRight = i >= latency ? right[i - latency] : 0.0f;
+            worst = std::max(worst, std::max(std::abs(outLeft[i] - dryLeft), std::abs(outRight[i] - dryRight)));
+        }
+        difference[bypassed] = worst;
+    }
+    check(difference[0] > 1.0e-3f, "CLAP control: a session saved processing plays processed audio (%.3e from the "
+          "aligned input, latency %u)", static_cast<double>(difference[0]), latencies[0]);
+    check(difference[1] == 0.0f, "CLAP: a session saved bypassed plays the aligned input from its first sample "
+          "(%.3e, latency %u)", static_cast<double>(difference[1]), latencies[1]);
+}
 
 template <class Format>
 void run(Format& format)
@@ -1112,6 +1412,7 @@ void run(Format& format)
         std::fflush(stdout);
     }
     runNewerSession(format);
+    runFetTimingText(format);
 }
 } // namespace
 
@@ -1134,6 +1435,7 @@ int main(int argc, char** argv)
         ClapFormat format(argv[2]);
         if (!format.ok()) { std::fprintf(stderr, "FAIL: %s is not a loadable CLAP\n", argv[2]); return 1; }
         run(format);
+        runBypassedActivation(format);
     }
 #ifdef __APPLE__
     else if (flag == "--au")

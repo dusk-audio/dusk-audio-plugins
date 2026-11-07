@@ -885,8 +885,9 @@ public:
             inputTransformerFet[ch].reset(); outputTransformerFet[ch].reset();
             inputTransformerBus[ch].reset(); outputTransformerBus[ch].reset();
         }
+        // Digital's longest delay: its 10 ms lookahead at 4x (processDigital).
         for (auto& delay : digitalDelay)
-            delay.assign(static_cast<size_t>(std::ceil(fs * 0.01 * 4.0)) + 2, 0.0f);
+            delay.assign(static_cast<size_t>(4 * lookaheadHostSamples(10.0f, fs) + 1), 0.0f);
         digitalWrite.fill(0);
         prepared = true;
     }
@@ -1240,7 +1241,7 @@ public:
         if (rate != busSidechainRate || lowF != busSidechainLowFrequency
             || lowG != busSidechainLowGain)
             for (auto& filter : busSidechainLowShelf)
-                filter.setCoeffs(Biquad::shelfSlope1(rate, lowF, lowG, false));
+                filter.setCoeffs(sidechainLowShelfCoeffs(rate, lowF, lowG));
         if (rate != busSidechainRate || highF != busSidechainHighFrequency
             || highG != busSidechainHighGain)
             for (auto& filter : busSidechainHighShelf)
@@ -1964,7 +1965,9 @@ private:
     // and runtime oversampling changes refresh its pole without discarding it.
     std::array<DCBlocker, 2> busFeedbackCoupling;
     std::array<GuardedBiquad, 2> busSidechainHighPass;
-    std::array<Biquad, 2> busSidechainLowShelf, busSidechainHighShelf;
+    // The low shelf runs in double: at the mode rate its corner is far below the rate (sidechainLowShelfCoeffs).
+    std::array<DoubleBiquad, 2> busSidechainLowShelf;
+    std::array<Biquad, 2> busSidechainHighShelf;
     float busSidechainRate = 0.0f;
     float busSidechainHighPassFrequency = -1.0f;
     float busSidechainLowFrequency = -1.0f, busSidechainLowGain = 0.0f;
@@ -3390,8 +3393,7 @@ private:
 
     static float fetReleasePosition(float legacyMilliseconds) noexcept
     {
-        return std::clamp(
-            (legacyMilliseconds - 50.0f) / (1100.0f - 50.0f), 0.0f, 1.0f);
+        return fetReleasePositionFromMilliseconds(legacyMilliseconds);
     }
 
     // New native phrase/gap probes constrain deep release. Keep the existing
@@ -7468,7 +7470,8 @@ private:
         const float sr = static_cast<float>(fs * osFactor);
         const float lookahead = std::clamp(p.digitalLookahead.load(std::memory_order_relaxed), 0.0f, 10.0f);
         auto& delayLine = digitalDelay[static_cast<size_t>(ch)];
-        const int delay = std::min(static_cast<int>(std::round(lookahead * 0.001f * sr)), static_cast<int>(delayLine.size()) - 1);
+        // Whole host samples, as the latency report counts them, scaled to the mode rate.
+        const int delay = std::min(lookaheadHostSamples(lookahead, fs) * osFactor, static_cast<int>(delayLine.size()) - 1);
         int& wp = digitalWrite[ch];
         float delayed = input;
         if (delay > 0)

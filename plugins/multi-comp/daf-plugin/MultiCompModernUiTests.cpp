@@ -14,8 +14,8 @@
 #define DAF_UI_DEFAULT_WIDTH 1120
 #define DAF_UI_DEFAULT_HEIGHT 380
 using GLint = int;
-constexpr int GL_VIEWPORT = 0;
-inline void glGetIntegerv(int, GLint* p) { p[0] = p[1] = 0; p[2] = 1120; p[3] = 380; }
+constexpr int GL_MAX_TEXTURE_SIZE = 0x0D33;
+inline void glGetIntegerv(int, GLint* p) { p[0] = 16384; }   // the editor asks only for GL_MAX_TEXTURE_SIZE
 namespace DAF
 {
 struct TestInstance
@@ -37,10 +37,12 @@ public:
     void draw() { onImGuiDisplay(); }
     void parameter(uint32_t p, float v) { state.parameters[p] = v; parameterChanged(p, v); }
     void restore(const char* key, const char* value) { stateChanged(key, value); }
-    uint32_t getWidth() const { return 1120; }
-    uint32_t getHeight() const { return 380; }
+    uint32_t width = 1120, height = 380;   // the editor window (Host sets a letterboxed one)
+    uint32_t getWidth() const { return width; }
+    uint32_t getHeight() const { return height; }
     float getScaleFactor() const { return 1; }
-    void setSize(uint32_t, uint32_t) {}
+    uint32_t sizeRequests = 0;
+    void setSize(uint32_t, uint32_t) { ++sizeRequests; }
     void setGeometryConstraints(uint32_t, uint32_t, bool) {}
     void* getPluginInstancePointer() const { return instance; }
     void repaint() {}
@@ -105,15 +107,19 @@ struct Host
             auto& io = ImGui::GetIO();
             io.IniFilename = nullptr; io.LogFilename = nullptr;
             io.DisplaySize = ImVec2(1120, 380); io.DeltaTime = 1.0f / 60.0f;
+            io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;   // as DAF runs ImGui (DearImGui.cpp)
         }
         ~Context() { ImGui::DestroyContext(context); }
     } context;
     DAF::MultiCompUI ui;
-    explicit Host(int mode)
+    explicit Host(int mode, uint32_t width = 1120, uint32_t height = 380)
     {
-        // In the plugin the host backend builds the font atlas. Without one, an editor that found no system font
-        // (a bare Linux container) leaves it empty, and ImGui::NewFrame needs a built atlas: give it ImGui's own.
-        // An editor that loaded its face built the atlas already and is left as it is.
+        ui.width = width;
+        ui.height = height;
+        ImGui::GetIO().DisplaySize = ImVec2(static_cast<float>(width), static_cast<float>(height));
+        // The editor bakes its embedded faces into the atlas and builds it. Should none load, the atlas is left
+        // empty and ImGui::NewFrame needs a built one: give it ImGui's own, so the frames still run and
+        // defaultFontIsTheValueFace reports the missing faces.
         ImFontAtlas& fonts = *ImGui::GetIO().Fonts;
         if (!fonts.IsBuilt())
         {
@@ -127,12 +133,22 @@ struct Host
         ui.parameter(pid(ParamId::Mode), static_cast<float>(mode));
         frame(); frame();
     }
-    void frame(float x = -100, float y = -100, bool down = false)
+    // The pointer at (x, y) on a face: every face is laid out on the 1120 x 380 canvas, so a face position is a canvas
+    // position (each face's layout is in ui_detail). A negative position stays off the window.
+    void frame(float x = -100, float y = -100, bool down = false) { canvas(x, y, down); }
+    // The pointer at (x, y) on the 1120 x 380 canvas itself: the header, the mode row and the settings drawer (their
+    // controls' positions: At below).
+    void canvas(float x = -100, float y = -100, bool down = false)
     {
         ImGui::SetCurrentContext(context.context);
         auto& io = ImGui::GetIO();
         io.AddMousePosEvent(x, y); io.AddMouseButtonEvent(0, down);
         ImGui::NewFrame(); ui.draw(); ImGui::Render();
+    }
+    void canvasClick(float x, float y) { canvas(x, y); canvas(x, y, true); canvas(x, y); }
+    void canvasDrag(float x, float y)
+    {
+        canvas(x, y); canvas(x, y, true); canvas(x, y - 20, true); canvas(x, y - 20); canvas(-100, -100);
     }
     void click(float x, float y) { frame(x, y); frame(x, y, true); frame(x, y); }
     void hold(float x, float y) { frame(x, y); frame(x, y, true); frame(x, y - 20, true); }
@@ -162,6 +178,25 @@ void check(bool ok, const char* name)
     failures += ok ? 0 : 1;
 }
 
+// The Digital and Multiband faces' controls, from their layout (ModernFaceLayout).
+namespace Modern
+{
+using L = multicompp::ui_detail::ModernFaceLayout;
+constexpr float dRow1 = L::digitalRow1Y, dRow2 = L::digitalRow2Y;
+constexpr float mRow1 = L::multibandRow1Y, mRow2 = L::multibandRow2Y;
+constexpr float d(int column) { return L::digitalColumnX(column); }
+constexpr float m(float column) { return L::multibandKnobX(column); }
+constexpr float faderY = 0.5f * (L::bandMeterTop + L::faderBottom);
+constexpr float enableY = 0.5f * (L::enableY0 + L::enableY1), tabY = 0.5f * (L::tabY0 + L::tabY1);
+// The middle of band b's enable button, and of the tab of the band in `slot` with four bands shown.
+constexpr float enableX(int b) { return L::bandsX0 + L::bandSlotWidth(4) * (static_cast<float>(b) + 0.5f); }
+constexpr float tabX(int slot)
+{
+    return L::bandsX0 + L::bandSlotWidth(4) * static_cast<float>(slot) + 8.0f
+        + 0.5f * (L::bandSlotWidth(4) - 16.0f - 2.0f * (L::bandSwitchW + L::bandSwitchGap));
+}
+}
+
 void hiddenSolo()
 {
     for (int b = 0; b < 4; ++b)
@@ -170,7 +205,7 @@ void hiddenSolo()
         h.ui.parameter(band(b, 6), 1);
         const uint32_t siblingSolo = band((b + 1) % 4, 6);
         h.ui.parameter(siblingSolo, 1);
-        h.click(201.0f + 114.0f * b, 126);
+        h.click(Modern::enableX(b), Modern::enableY);
         int soloAt = -1, disableAt = -1;
         for (size_t i = 0; i < h.ui.writes.size(); ++i)
         {
@@ -187,27 +222,44 @@ void hiddenSolo()
 
 struct Control { int mode; uint32_t p; float x, y; };
 constexpr std::array<Control, 19> controls{{
-    {6, pid(ParamId::DigitalThreshold), 582, 180}, {6, pid(ParamId::DigitalRatio), 676, 180},
-    {6, pid(ParamId::DigitalKnee), 770, 180}, {6, pid(ParamId::DigitalAttack), 864, 180},
-    {6, pid(ParamId::DigitalRelease), 958, 180}, {6, pid(ParamId::DigitalLookahead), 582, 286},
-    {6, pid(ParamId::DigitalMix), 676, 286}, {6, pid(ParamId::DigitalOutput), 770, 286},
-    {6, pid(ParamId::SidechainHP), 492, 200},
-    {7, band(0, 0), 674, 194}, {7, band(0, 1), 766, 194},
-    {7, band(0, 2), 858, 194}, {7, band(0, 3), 950, 194},
-    {7, band(0, 4), 720, 294}, {7, pid(ParamId::MbOutput), 812, 294},
-    {7, pid(ParamId::MbMix), 904, 294}, {7, pid(ParamId::Crossover1), 258, 220},
-    {7, pid(ParamId::Crossover2), 372, 220}, {7, pid(ParamId::Crossover3), 486, 220}
+    {6, pid(ParamId::DigitalThreshold), Modern::d(0), Modern::dRow1},
+    {6, pid(ParamId::DigitalRatio), Modern::d(1), Modern::dRow1},
+    {6, pid(ParamId::DigitalKnee), Modern::d(2), Modern::dRow1},
+    {6, pid(ParamId::DigitalAttack), Modern::d(3), Modern::dRow1},
+    {6, pid(ParamId::DigitalRelease), Modern::d(4), Modern::dRow1},
+    {6, pid(ParamId::DigitalLookahead), Modern::d(0), Modern::dRow2},
+    {6, pid(ParamId::DigitalMix), Modern::d(1), Modern::dRow2},
+    {6, pid(ParamId::DigitalOutput), Modern::d(2), Modern::dRow2},
+    {6, pid(ParamId::SidechainHP), Modern::L::scHpX, 0.5f * (Modern::L::scHpTrackTop + Modern::L::scHpTrackBottom)},
+    {7, band(0, 0), Modern::m(-1.5f), Modern::mRow1}, {7, band(0, 1), Modern::m(-0.5f), Modern::mRow1},
+    {7, band(0, 2), Modern::m(0.5f), Modern::mRow1}, {7, band(0, 3), Modern::m(1.5f), Modern::mRow1},
+    {7, band(0, 4), Modern::m(-1.0f), Modern::mRow2}, {7, pid(ParamId::MbOutput), Modern::m(0.0f), Modern::mRow2},
+    {7, pid(ParamId::MbMix), Modern::m(1.0f), Modern::mRow2},
+    {7, pid(ParamId::Crossover1), Modern::L::bandBoundaryX(0, 4), Modern::faderY},
+    {7, pid(ParamId::Crossover2), Modern::L::bandBoundaryX(1, 4), Modern::faderY},
+    {7, pid(ParamId::Crossover3), Modern::L::bandBoundaryX(2, 4), Modern::faderY}
 }};
 
-// A knob of every hardware face, where the editor draws it at the default size (the faces' canvas sits 274 px
-// higher on screen than its own coordinates). Each starts away from the top of its travel (Mix at 50 %), so the
-// hold's upward drag writes. FET's Mix trim is one of four faces' controls for the same parameter: Opto, VCA and
+// A knob of every hardware face, where the editor draws it at the default size (canvas coordinates, from each face's
+// layout). Each starts away from the top of its travel (Mix at 50 %), so the hold's upward drag writes. FET's Mix trim is one of four faces' controls for the same parameter: Opto, VCA and
 // Studio VCA draw their own elsewhere, so a gesture must follow the control, not the parameter.
 constexpr std::array<Control, 8> hardwareControls{{
-    {0, pid(ParamId::OptoPeakReduction), 794, 250}, {1, pid(ParamId::FetInput), 177, 227},
-    {2, pid(ParamId::VcaThreshold), 171, 204}, {3, pid(ParamId::BusThreshold), 409, 175},
-    {4, pid(ParamId::FetAttack), 559, 164}, {4, pid(ParamId::FetBlueHeadroom), 955, 322},
-    {5, pid(ParamId::StudioVcaRatio), 230, 155}, {1, pid(ParamId::Mix), 1010, 322}
+    {0, pid(ParamId::OptoPeakReduction), multicompp::ui_detail::OptoFaceplateLayout::peakX,
+     multicompp::ui_detail::OptoFaceplateLayout::dialY},
+    {1, pid(ParamId::FetInput), multicompp::ui_detail::FetFaceplateLayout::blackInputX,
+     multicompp::ui_detail::FetFaceplateLayout::dialY},
+    {2, pid(ParamId::VcaThreshold), multicompp::ui_detail::VcaFaceplateLayout::thresholdX,
+     multicompp::ui_detail::VcaFaceplateLayout::knobY},
+    {3, pid(ParamId::BusThreshold), multicompp::ui_detail::BusFaceplateLayout::col0,
+     multicompp::ui_detail::BusFaceplateLayout::row1Y},
+    {4, pid(ParamId::FetAttack), multicompp::ui_detail::FetFaceplateLayout::timingX,
+     multicompp::ui_detail::FetFaceplateLayout::attackY},
+    {4, pid(ParamId::FetBlueHeadroom), multicompp::ui_detail::FetFaceplateLayout::blueTrimX,
+     multicompp::ui_detail::FetFaceplateLayout::blueHeadroomY},
+    {5, pid(ParamId::StudioVcaRatio), multicompp::ui_detail::StudioVcaFaceplateLayout::ratioX,
+     multicompp::ui_detail::StudioVcaFaceplateLayout::row1Y},
+    {1, pid(ParamId::Mix), multicompp::ui_detail::FetFaceplateLayout::blackMixX,
+     multicompp::ui_detail::FetFaceplateLayout::blackMixY}
 }};
 
 template <size_t N>
@@ -245,12 +297,14 @@ void hardwareHidden()
 {
     const uint32_t mode = pid(ParamId::Mode), headroom = pid(ParamId::FetBlueHeadroom);
     const uint32_t attack = pid(ParamId::FetAttack);
+    using Fet = multicompp::ui_detail::FetFaceplateLayout;
     {
         // FET BLUE's Headroom trim is held; the host moves to FET (no trim there), then Opto, the pointer is
         // released there, and the host returns to FET BLUE.
-        Host h(4); h.hold(955, 322);
-        h.ui.parameter(mode, 1); h.frame(955, 297, true); h.frame(955, 292, true);
-        h.ui.parameter(mode, 0); h.frame(955, 287, true); h.frame(955, 287); h.frame();
+        const float x = Fet::blueTrimX, y = Fet::blueHeadroomY;
+        Host h(4); h.hold(x, y);
+        h.ui.parameter(mode, 1); h.frame(x, y - 25, true); h.frame(x, y - 30, true);
+        h.ui.parameter(mode, 0); h.frame(x, y - 35, true); h.frame(x, y - 35); h.frame();
         h.ui.parameter(mode, 4); h.frame(); h.frame();
         std::printf("hidden Headroom trim begins=%d ends=%d writes=%d\n", h.count(h.ui.gestures, headroom, 1),
                     h.count(h.ui.gestures, headroom, 0), h.writes(headroom));
@@ -259,8 +313,9 @@ void hardwareHidden()
     }
     {
         // FET BLUE's Attack is held; the host moves to Opto.
-        Host h(4); h.hold(559, 164);
-        h.ui.parameter(mode, 0); h.frame(559, 139, true); h.frame(559, 134, true); h.frame(559, 134); h.frame();
+        const float x = Fet::timingX, y = Fet::attackY;
+        Host h(4); h.hold(x, y);
+        h.ui.parameter(mode, 0); h.frame(x, y - 25, true); h.frame(x, y - 30, true); h.frame(x, y - 30); h.frame();
         h.ui.parameter(mode, 4); h.frame(); h.frame();
         std::printf("hidden FET Attack begins=%d ends=%d writes=%d\n", h.count(h.ui.gestures, attack, 1),
                     h.count(h.ui.gestures, attack, 0), h.writes(attack));
@@ -269,15 +324,16 @@ void hardwareHidden()
     }
     {
         // A drag held over several frames: one gesture, open until the release.
-        Host h(4); h.hold(559, 164);
+        const float x = Fet::timingX, y = Fet::attackY;
+        Host h(4); h.hold(x, y);
         bool open = true;
         for (int f = 1; f <= 6; ++f)
         {
-            h.frame(559, 144.0f - 4.0f * static_cast<float>(f), true);
+            h.frame(x, y - 20.0f - 4.0f * static_cast<float>(f), true);
             open = open && h.count(h.ui.gestures, attack, 1) == 1 && h.count(h.ui.gestures, attack, 0) == 0;
         }
         const int heldWrites = h.writes(attack);
-        h.frame(559, 120); h.frame();
+        h.frame(x, y - 44); h.frame();
         std::printf("held FET Attack drag openThroughout=%d writes=%d begins=%d ends=%d\n", open, heldWrites,
                     h.count(h.ui.gestures, attack, 1), h.count(h.ui.gestures, attack, 0));
         check(open && heldWrites > 1 && h.balanced(attack),
@@ -307,9 +363,10 @@ void editorClosedMidDrag()
 void hiddenControls()
 {
     // Host automation can hide the selected band while its threshold is held.
-    Host h(7); h.hold(674, 194);
+    const float tx = Modern::m(-1.5f), ty = Modern::mRow1;
+    Host h(7); h.hold(tx, ty);
     h.ui.parameter(band(0, 7), 0);
-    h.frame(674, 169, true); h.frame(674, 164, true); h.frame(674, 164); h.frame();
+    h.frame(tx, ty - 25, true); h.frame(tx, ty - 30, true); h.frame(tx, ty - 30); h.frame();
     std::printf("hidden band begins=%d ends=%d nextBandWrites=%d\n", h.count(h.ui.gestures, band(0, 0), 1),
                 h.count(h.ui.gestures, band(0, 0), 0), h.writes(band(1, 0)));
     check(h.balanced(band(0, 0)) && h.writes(band(1, 0)) == 0,
@@ -318,7 +375,7 @@ void hiddenControls()
     {
         Host out(mode);
         const uint32_t p = pid(mode == 6 ? ParamId::DigitalOutput : ParamId::MbOutput);
-        const float x = mode == 6 ? 770 : 812, y = mode == 6 ? 286 : 294;
+        const float x = mode == 6 ? Modern::d(2) : Modern::m(0.0f), y = mode == 6 ? Modern::dRow2 : Modern::mRow2;
         out.hold(x, y); const int before = out.writes(p);
         out.ui.parameter(pid(ParamId::AutoMakeup), 1);
         out.frame(x, y - 25, true); out.frame(x, y - 30, true); out.frame(x, y - 30); out.frame();
@@ -326,7 +383,34 @@ void hiddenControls()
                     out.count(out.ui.gestures, p, 1), out.count(out.ui.gestures, p, 0), before, out.writes(p));
         check(out.balanced(p) && before > 0 && before == out.writes(p),
               "Auto Makeup closes output gesture and prevents further writes");
+        // The same with the pointer dragged off the knob first. ImGui drops a disabled active item only while the
+        // pointer is over it, so off the knob it stayed active and kept writing after its gesture had closed, with
+        // no gesture around the writes.
+        Host far(mode);
+        far.hold(x, y); far.frame(x, y - 90, true);
+        const int held = far.writes(p);
+        far.ui.parameter(pid(ParamId::AutoMakeup), 1);
+        far.frame(x, y - 120, true); far.frame(x, y - 150, true); far.frame(x, y - 150); far.frame();
+        std::printf("disabled output off the knob mode=%d begins=%d ends=%d before=%d after=%d\n", mode,
+                    far.count(far.ui.gestures, p, 1), far.count(far.ui.gestures, p, 0), held, far.writes(p));
+        check(far.balanced(p) && held > 0 && held == far.writes(p),
+              "Auto Makeup closes output gesture and prevents further writes with the pointer off the knob");
     }
+}
+
+// VCA's PULL/SC switch, pressed in a fresh editor, puts the shared sidechain cutoff at 20 Hz: it engages the switch
+// and stays close to transparent as the high-pass of the Opto, Bus and Digital faces. Its first value used to be the
+// range's top, 500 Hz, which those faces then applied after a mode change.
+void vcaPullScFirstValue()
+{
+    Host h(2);
+    h.click(multicompp::ui_detail::VcaFaceplateLayout::thresholdX, multicompp::ui_detail::VcaFaceplateLayout::pullY);
+    const uint32_t p = pid(ParamId::SidechainHP);
+    float hz = -1.0f;
+    for (const auto& event : h.ui.writes)
+        if (event.parameter == p) hz = multicompp::hostToPlain(multicompp::kParams[p], event.value);
+    std::printf("VCA PULL/SC first press: SC HP %.2f Hz\n", static_cast<double>(hz));
+    check(std::abs(hz - 20.0f) < 0.5f, "a fresh PULL/SC press engages the switch at a 20 Hz cutoff");
 }
 
 void outputAccess()
@@ -343,7 +427,7 @@ void outputAccess()
             const uint32_t p = pid(mode == 6 ? ParamId::DigitalOutput : ParamId::MbOutput);
             const bool external = request != 0 && (connected < 0 || active);
             const bool editable = !automatic || external;
-            h.drag(mode == 6 ? 770 : 812, mode == 6 ? 286 : 294);
+            h.drag(mode == 6 ? Modern::d(2) : Modern::m(0.0f), mode == 6 ? Modern::dRow2 : Modern::mRow2);
             const bool ok = editable ? h.writes(p) > 0 && h.balanced(p)
                                      : h.writes(p) == 0 && h.ui.gestures.empty();
             std::printf("output mode=%d auto=%d request=%d connection=%d editable=%d writes=%d\n",
@@ -376,22 +460,227 @@ void restoredFace()
         if (c.reachable) { h.ui.instance = &h.ui.state; h.frame(); h.ui.state.parameters[mode] = c.running; }
         saved[mode] = c.savedMode;
         h.ui.restore("parameters", multicompp::encodeState(saved).c_str());
-        h.frame(); h.drag(955, 322);
+        // Where FET BLUE's HR trim is (nothing on FET BLACK's face).
+        h.frame(); h.drag(multicompp::ui_detail::FetFaceplateLayout::blueTrimX,
+                          multicompp::ui_detail::FetFaceplateLayout::blueHeadroomY);
         std::printf("restored face %s: Headroom writes=%d\n", c.name, h.writes(headroom));
         check((h.writes(headroom) > 0) == c.blueFace, "a restored state's face follows the plugin");
     }
 }
 
+// Canvas positions of the mode row's and the settings drawer's controls, from their layouts.
+namespace At
+{
+using Row = multicompp::ui_detail::ModeRowLayout;
+using Drawer = multicompp::ui_detail::SettingsDrawerLayout;
+constexpr float rowY = Row::centreY;
+constexpr float settingsX = 0.5f * (Row::settingsX0 + Row::settingsX1);
+constexpr float autoMakeupX = 0.5f * (Row::autoMakeupX0 + Row::autoMakeupX1);
+constexpr float tabX(int mode) { return Row::tabX0(mode) + 0.5f * Row::tabWidth; }
+// DRIVE: a 2 x 2 grid, OFF SOFT in its first column and HARD CLIP in its second.
+constexpr float driveX(int step) { return Drawer::segmentCentreX(Drawer::driveGridX, Drawer::driveW, step, 2); }
+constexpr float driveY(int step) { return Drawer::segmentCentreY(Drawer::rowBButtonsY, step, 2); }
+constexpr int soft = 1, hard = 2, clip = 3;
+constexpr float midSideX = Drawer::linkModeX + 0.5f * Drawer::linkModeW;
+constexpr float midSideY = Drawer::segmentCentreY(Drawer::rowBButtonsY, 1, 0);
+constexpr float lowFreqX = Drawer::lowFreqX, lowFreqY = Drawer::rowAKnobY;
+constexpr float truePeakX = 0.5f * (Drawer::processingToggleX0 + Drawer::processingToggleX1);
+constexpr float truePeakY = Drawer::rowAButtonsY + Drawer::rowPitch + 0.5f * Drawer::buttonH;
+constexpr float closeX = 0.5f * (Drawer::closeX0 + Drawer::closeX1), closeY = Drawer::titleY + 0.5f * Drawer::buttonH;
+constexpr float designW = multicompp::ui_detail::kDesignWidth, designH = multicompp::ui_detail::kDesignHeight;
+// The scrim press in drawerKeysAndCorner(), (8, 300): left of the drawer's panel, inside the face area it covers.
+static_assert(Drawer::x0 > 8.0f && multicompp::ui_detail::kFaceAreaTop < 300.0f && 300.0f < designH,
+              "the scrim press lands on the scrim");
+} // namespace At
+
+// The settings drawer, in canvas coordinates. Opened from the mode row in every mode, its controls take the pointer
+// from the face under them (the face's disabled items kept the hover, and the drawer's buttons did nothing), and a
+// click on the header or the mode row's switches leaves it above the face (the face's window, raised by the click,
+// hid the drawer and took its pointer). Choosing a mode closes it and shows that mode's face (owner 2026-11-05), and
+// so does CLOSE.
+void settingsDrawer()
+{
+    const uint32_t distortion = pid(ParamId::Distortion), linkMode = pid(ParamId::StereoLinkMode),
+                   lowFreq = pid(ParamId::ScLowFreq), modeId = pid(ParamId::Mode),
+                   autoMakeup = pid(ParamId::AutoMakeup);
+    for (int mode = 0; mode < 8; ++mode)
+    {
+        Host h(mode);
+        h.canvasClick(At::settingsX, At::rowY);
+        h.canvasClick(At::driveX(At::soft), At::driveY(At::soft));
+        h.canvasClick(At::midSideX, At::midSideY);                        // STEREO: MID-SIDE
+        h.canvasDrag(At::lowFreqX, At::lowFreqY);                         // SIDECHAIN: LOW FREQ
+        h.canvasClick(At::autoMakeupX, At::rowY);                         // AUTO MAKEUP, the drawer open
+        h.canvasClick(At::driveX(At::hard), At::driveY(At::hard));
+        int others = 0;
+        for (const auto& event : h.ui.writes)
+            others += event.parameter != distortion && event.parameter != linkMode && event.parameter != lowFreq
+                && event.parameter != autoMakeup;
+        const bool drive = h.count(h.ui.writes, distortion, 1) == 1 && h.count(h.ui.writes, distortion, 2) == 1;
+        const bool link = h.count(h.ui.writes, linkMode, 1) == 1;
+        const bool knob = h.writes(lowFreq) > 0 && h.balanced(lowFreq);
+        const bool aboveFace = h.writes(autoMakeup) == 1;
+        // A mode chosen closes the drawer: the press where CLIP was lands on the face, not on the drawer.
+        const int next = (mode + 1) % 8;
+        h.canvasClick(At::tabX(next), At::rowY);
+        const bool switched = h.count(h.ui.writes, modeId, static_cast<float>(next)) == 1;
+        int driveWrites = h.writes(distortion);
+        h.canvasClick(At::driveX(At::clip), At::driveY(At::clip));      // where CLIP is
+        const bool closedByMode = h.writes(distortion) == driveWrites;
+        // So does the lit mode's own tab, and CLOSE.
+        h.canvasClick(At::settingsX, At::rowY);
+        h.canvasClick(At::tabX(next), At::rowY);
+        driveWrites = h.writes(distortion);
+        h.canvasClick(At::driveX(At::clip), At::driveY(At::clip));
+        const bool closedByLitTab = h.writes(distortion) == driveWrites;
+        h.canvasClick(At::settingsX, At::rowY);
+        h.canvasClick(At::closeX, At::closeY);
+        driveWrites = h.writes(distortion);
+        h.canvasClick(At::driveX(At::clip), At::driveY(At::clip));
+        const bool closedByClose = h.writes(distortion) == driveWrites;
+        std::printf("drawer mode=%d drive=%d link=%d knob=%d above=%d others=%d switched=%d closed by mode=%d "
+                    "lit tab=%d CLOSE=%d\n", mode, drive, link, knob, aboveFace, others, switched, closedByMode,
+                    closedByLitTab, closedByClose);
+        check(drive && link && knob && aboveFace && others == 0,
+              "the settings drawer's controls answer in every mode and stay above the face");
+        check(switched && closedByMode && closedByLitTab && closedByClose,
+              "choosing a mode, the lit one included, closes the settings drawer, and so does CLOSE");
+    }
+}
+
+// The drawer against Escape, the external key and the resize grip, in canvas coordinates. With keyboard navigation
+// on, as DAF runs ImGui, Escape that cancels a held knob or closes the preset list is ImGui's: it used to close the
+// drawer too, since ImGui takes the press inside NewFrame, before the drawer sees it. TRUE PEAK in Multiband follows
+// the key the plugin has, not the one requested (the DSP ignores it without one). The resize grip works with the
+// drawer open, whose window covers the grip's corner.
+void drawerKeysAndCorner()
+{
+    const uint32_t distortion = pid(ParamId::Distortion), lowFreq = pid(ParamId::ScLowFreq),
+                   truePeak = pid(ParamId::TruePeakEnable), externalKey = pid(ParamId::ExternalSidechain);
+    const auto escape = [](Host& h, float x, float y, bool down) {
+        ImGui::SetCurrentContext(h.context.context);
+        ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape, true);
+        h.canvas(x, y, down);
+        ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape, false);
+        h.canvas(x, y, down);
+    };
+    // Open: a press on a DRIVE button that is not lit writes Distortion (CLIP, or SOFT once CLIP is lit).
+    const auto drawerOpen = [distortion](Host& h) {
+        const bool clip = h.ui.state.parameters[distortion] != 3.0f;
+        const float value = clip ? 3.0f : 1.0f;
+        const int before = h.count(h.ui.writes, distortion, value);
+        const int step = clip ? At::clip : At::soft;
+        h.canvasClick(At::driveX(step), At::driveY(step));
+        return h.count(h.ui.writes, distortion, value) > before;
+    };
+
+    Host held(2);
+    held.canvasClick(At::settingsX, At::rowY);
+    held.canvas(At::lowFreqX, At::lowFreqY); held.canvas(At::lowFreqX, At::lowFreqY, true);   // LOW FREQ held
+    held.canvas(At::lowFreqX, At::lowFreqY - 20, true);
+    escape(held, At::lowFreqX, At::lowFreqY - 20, true);
+    held.canvas(At::lowFreqX, At::lowFreqY - 20); held.canvas();
+    const bool heldBalanced = held.balanced(lowFreq);
+    const bool openAfterHeld = drawerOpen(held);
+    held.canvasClick(560, 24);                                    // the preset list
+    ImGui::SetCurrentContext(held.context.context);
+    const bool listOpened = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
+    escape(held, -100, -100, false);
+    const bool listClosed = !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
+    const bool openAfterList = drawerOpen(held);
+    escape(held, -100, -100, false);
+    const bool closedByEscape = !drawerOpen(held);
+    std::printf("drawer Escape: knob held -> drawer open %d (gesture balanced %d); preset list %d/%d -> drawer open "
+                "%d; Escape alone -> closed %d\n", openAfterHeld, heldBalanced, listOpened, listClosed,
+                openAfterList, closedByEscape);
+    check(openAfterHeld && heldBalanced, "Escape that cancels a held drawer knob leaves the drawer open");
+    check(listOpened && listClosed && openAfterList, "Escape that closes the preset list leaves the drawer open");
+    check(closedByEscape, "Escape on its own closes the drawer");
+
+    Host key(7);
+    key.ui.instance = &key.ui.state;
+    key.ui.state.externalActive = false;
+    key.ui.parameter(externalKey, 1.0f);
+    key.canvasClick(At::settingsX, At::rowY);
+    key.canvasClick(At::truePeakX, At::truePeakY);                // key requested, none connected
+    const int requestedOnly = key.writes(truePeak);
+    key.ui.state.externalActive = true;
+    key.canvas();
+    key.canvasClick(At::truePeakX, At::truePeakY);                // key connected
+    const int connected = key.writes(truePeak);
+    std::printf("drawer TRUE PEAK in Multiband: key requested only -> %d writes, key connected -> %d\n",
+                requestedOnly, connected);
+    check(requestedOnly == 0 && connected > 0, "Multiband's TRUE PEAK follows the key the plugin has");
+
+    Host grip(0);
+    grip.canvasClick(At::settingsX, At::rowY);
+    const float gx = At::designW - 7.0f, gy = At::designH - 7.0f;      // the grip's corner
+    grip.canvas(gx, gy); grip.canvas(gx, gy, true); grip.canvas(gx + 40, gy + 25, true); grip.canvas(gx + 40, gy + 25);
+    grip.canvas();
+    const uint32_t sized = grip.ui.sizeRequests;
+    const bool openAfterGrip = drawerOpen(grip);
+    std::printf("drawer resize grip: %u size requests, drawer open after %d\n", sized, openAfterGrip);
+    check(sized > 0 && openAfterGrip, "the resize grip works with the drawer open, and leaves it open");
+
+    // Letterboxed windows: the canvas is centred, and the grip stays in the window's own corner.
+    for (const auto size : {std::array<uint32_t, 2>{{1320, 380}}, std::array<uint32_t, 2>{{1120, 500}}})
+    {
+        Host box(0, size[0], size[1]);
+        const float ox = (static_cast<float>(size[0]) - At::designW) * 0.5f;
+        const float oy = (static_cast<float>(size[1]) - At::designH) * 0.5f;
+        box.canvasClick(At::settingsX + ox, At::rowY + oy);
+        const float cx = static_cast<float>(size[0]) - 7.0f, cy = static_cast<float>(size[1]) - 7.0f;
+        box.canvas(cx, cy); box.canvas(cx, cy, true); box.canvas(cx + 40, cy + 25, true); box.canvas(cx + 40, cy + 25);
+        box.canvas();
+        // Open: DRIVE: CLIP, in this window's coordinates.
+        const int clipBefore = box.count(box.ui.writes, distortion, 3);
+        box.canvasClick(At::driveX(At::clip) + ox, At::driveY(At::clip) + oy);
+        const bool open = box.count(box.ui.writes, distortion, 3) > clipBefore;
+        std::printf("drawer resize grip in a %ux%u window: %u size requests, drawer open after %d\n", size[0],
+                    size[1], box.ui.sizeRequests, open);
+        check(box.ui.sizeRequests > 0 && open, "the resize grip works with the drawer open in a letterboxed window");
+    }
+
+    // A press on the scrim in the frame the pointer arrives (from a drawer knob) closes the drawer.
+    Host scrim(0);
+    scrim.canvasClick(At::settingsX, At::rowY);
+    scrim.canvas(At::lowFreqX, At::lowFreqY);                     // over LOW FREQ
+    scrim.canvas(8, 300, true); scrim.canvas(8, 300);              // to the scrim's margin and pressed, one frame
+    scrim.canvas();
+    const bool closedByScrim = !drawerOpen(scrim);
+    std::printf("drawer scrim press in the pointer's first frame there: closed %d\n", closedByScrim);
+    check(closedByScrim, "a press on the scrim closes the drawer in the pointer's first frame there");
+}
+
 void numericOwnership()
 {
     Host h(7);
-    h.click(674, 194); h.click(674, 194); h.frame();
+    h.click(Modern::m(-1.5f), Modern::mRow1); h.click(Modern::m(-1.5f), Modern::mRow1); h.frame();
     ImGui::GetIO().AddInputCharactersUTF8("-35"); h.frame(); h.frame();
-    h.click(290, 152); h.frame();
+    h.click(Modern::tabX(1), Modern::tabY); h.frame();   // LO-MID's tab
     const int own = h.count(h.ui.writes, band(0, 0), -35);
     const int sibling = h.writes(band(1, 0));
     std::printf("numeric band change ownWrites=%d replacementWrites=%d\n", own, sibling);
     check(own == 1 && sibling == 0, "numeric entry commits to its original band before selection changes");
+}
+// ImGui's own surfaces (the save dialog, a typed value, tooltips, menus) draw in ImGui's default font. The editor makes
+// that its embedded Regular face at the value size (17), not the framework's 13 px DejaVu Sans. The faces are compiled
+// in, so every build has them: the atlas holds the ten SemiBold sizes and the Regular one, and anything less is a
+// broken embed.
+void defaultFontIsTheValueFace()
+{
+    Host h(0);
+    const ImGuiIO& io = ImGui::GetIO();
+    const float size = io.FontDefault != nullptr ? io.FontDefault->FontSize : 0.0f;
+    std::printf("default font: %d faces in the atlas, default %.1f px\n", io.Fonts->Fonts.Size,
+                static_cast<double>(size));
+    check(io.Fonts->Fonts.Size == 11, "the atlas holds the editor's eleven embedded faces");
+    check(io.FontDefault != nullptr && size == 17.0f, "ImGui's default font is the editor's face at the value size");
+    // ImGui keeps its own copy of font data it does not own, so the source is compared by its bytes.
+    const ImFontConfig* const source = io.FontDefault != nullptr ? io.FontDefault->Sources : nullptr;
+    check(source != nullptr && source->FontDataSize == static_cast<int>(kMcFontRegular_len)
+              && std::memcmp(source->FontData, kMcFontRegular, kMcFontRegular_len) == 0,
+          "ImGui's default font is the embedded Regular face, apart from the panel's SemiBold");
 }
 }
 
@@ -408,8 +697,12 @@ int main(int argc, char** argv)
     if (run("editor-close")) editorClosedMidDrag();
     if (run("hidden")) hiddenControls();
     if (run("output")) outputAccess();
+    if (run("pull-sc")) vcaPullScFirstValue();
+    if (run("drawer")) settingsDrawer();
+    if (run("drawer-keys")) drawerKeysAndCorner();
     if (run("numeric")) numericOwnership();
     if (run("restore")) restoredFace();
+    if (run("default-font")) defaultFontIsTheValueFace();
     std::printf("modern UI failures=%d\n", failures);
     return failures == 0 ? 0 : 1;
 }

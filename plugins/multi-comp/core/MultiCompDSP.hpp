@@ -102,7 +102,11 @@ public:
     // deepest mode's latency minus that of the mode the part ran in, ahead of
     // Mix; a ducked switch keeps the old padding until its mute has covered the
     // change. Only the lookaheads move the report. Off by default: the core
-    // tests read each mode's own latency.
+    // tests read each mode's own latency. Both reports are the latency the
+    // output carries: that of the configuration the last block ran (a ducked
+    // switch's old one until its silence, a lookahead from the first block
+    // that applies it), whatever the parameters have asked for since; before
+    // the first block after prepare() or reset(), the parameters'.
     void setHostLatencyPadding(bool enabled) noexcept { hostLatencyPadding = enabled; }
     int getHostLatencySamples() const noexcept;
     int getLatencyPaddingSamples() const noexcept;
@@ -118,7 +122,7 @@ private:
     static constexpr int kAutoGainMeasurementWindow = 64;
     static constexpr int kCrossoverRampMs = 20;
     static constexpr int kCrossoverCoefficientInterval = 8;
-    // The mode-switch duck (switchDuck*): the fades, and the mute that covers the anti-alias path realigning on its
+    // The switch duck (switchDuck*): the fades, and the mute that covers the anti-alias path realigning on its
     // new factor (the longest disturbance measured over every factor-changing switch, 88.2-192 kHz, plus margin;
     // the switches into and out of Studio VCA and Opto at 44.1 / 48 kHz stay inside it too).
     static constexpr double kSwitchDuckFadeMs = 1.0;
@@ -182,9 +186,32 @@ private:
     void resetAutoGainMeasurement() noexcept;
     MultiCompMode currentMode() const noexcept;
     float globalMixTarget(MultiCompMode mode) const noexcept;
-    bool switchChangesAudioPath(int fromMode, int toMode) const noexcept;
+    // What a block runs in, as far as a switch is concerned: the mode, the Oversampling setting (0..2) and FET
+    // BLACK's Ratio position (its All position runs the feed-forward arm, every other one the loop).
+    struct SwitchConfig
+    {
+        int mode = -1;
+        int oversampling = 0;
+        int fetRatio = 0;
+        // The lookaheads (ms, as their parameters hold them), held with the rest while a switch fades out: a preset
+        // or INIT that writes Mode and Lookahead together moves every delay line at the switch, in silence, not at
+        // the request. A lookahead change on its own is not a switch (switchChangesAudioPath): it applies at once,
+        // so a dragged or automated lookahead never gates the output.
+        float globalLookahead = 0.0f;
+        float digitalLookahead = 0.0f;
+    };
+    bool switchChangesAudioPath(const SwitchConfig& from, const SwitchConfig& to) const noexcept;
+    void armSwitchDuckDryPaths(const SwitchConfig& from, const SwitchConfig& to, bool externalKey) noexcept;
+    // The chain Sidechain Listen hears in a mode (listenChainFor): the switch duck fades the listen path where it
+    // changes (switchDuckListenChain).
+    int listenChainFor(int mode, bool externalKey) const noexcept;
+    // The furthest any path the duck fades is from silence: the wet path's position, and each armed dry path's.
+    int switchDuckSilentAt() const noexcept;
+    int reportedLatencyFor(const SwitchConfig& config) const noexcept;
+    int switchMuteSamples(const SwitchConfig& to) const noexcept;
     void resetSwitchDuck() noexcept;
-    bool advanceSwitchDuck(int nSamples) noexcept;
+    bool advanceSwitchDuck(int nSamples, int& shaped) noexcept;
+    void publishCarriedLatency(MultiCompMode mode, int latency) noexcept;
     void padWetPath(float* const* out, int nCh, int nSamples) noexcept;
     void holdPaddingThroughSwitch(int previousMode) noexcept;
     int paddingForMode(int mode) const noexcept;
@@ -195,7 +222,8 @@ private:
                               float digitalLookaheadMs) const noexcept;
     // The part of a mode's latency its controls cannot change.
     int baseLatencyForMode(MultiCompMode mode) const noexcept;
-    // A lookahead in samples. The latency, the delays and the delay lines' sizes all round it here.
+    // A lookahead in host samples (lookaheadHostSamples, which Digital's mode-rate delay rounds with too). The
+    // latency, the delays and the delay lines' sizes all round it here.
     int lookaheadSamples(float milliseconds) const noexcept;
 
     MultiCompParameterState params;
@@ -219,10 +247,7 @@ private:
     MultiCompTruePeakDetector truePeakDetector;
     bool truePeakActive = false;   // the detector ran last block (an idle one restarts from rest)
     std::array<MultiCompSidechainFilter, kMaxChannels> sidechainFilters;
-    std::array<vcaLaw::SidechainTilt, kMaxChannels> sidechainTilt;
-    bool lastVcaSidechainTilt = false;   // which sidechain filter ran last block
-    // Used only by the disabled SC-response identity control.
-    bool lastVcaSidechainTiltEngaged = false;
+    bool lastVcaSidechainTilt = false;   // which sidechain path ran last block: VCA's response, else the high-pass
     std::array<vcaLaw::OutputVoicing, kMaxChannels> vcaOutputVoicing;
     bool vcaVoicingActive = false;
     std::array<vcaLaw::LowFrequencyHighPass, kMaxChannels> vcaAudioCoupling;
@@ -281,7 +306,8 @@ private:
     // a non-finite or above-ceiling sample; see sanitizeChannels.
     std::array<std::vector<float>, kMaxChannels> sanitizedInput, sanitizedSidechain;
     std::vector<float> dry, bypassDry, fetStartupInput;
-    std::vector<float> mixCurve, bypassCurve, autoGainCurve, listenCurve, fadeCurve, listenSource, switchDuckCurve;
+    std::vector<float> mixCurve, bypassCurve, autoGainCurve, listenCurve, fadeCurve, listenSource, switchDuckCurve,
+        switchDuckDryCurve, switchDuckLatencyCurve, switchDuckListenCurve;
     std::array<std::vector<float>, kMaxChannels> dryPathDelay;
     std::array<int, kMaxChannels> dryPathWrite{{0, 0}};
     std::array<std::vector<float>, kMaxChannels> bypassDelay;
@@ -329,15 +355,47 @@ private:
     bool lastAutoMakeup = false;
     bool firstBlock = true;
     int lastMode = -1;
-    // A mode switch that changes the audio path (switchChangesAudioPath(): the anti-alias oversampler's factor, as
-    // Studio VCA against the oversampled modes or Opto and vintage FET against the others at 88.2 kHz and up, or
-    // Opto's output stage) would replay that oversampler's delay line from the old factor or step the latency: the
-    // old mode is held while its wet path fades out, the switch happens at silence, the realignment stays muted
-    // and the new mode fades in (processBlockExternal). Every other switch is instant.
-    int switchDuckHeldMode = -1;   // the old mode, processed while the wet path fades out; -1: none held
-    int switchDuckPosition = 1;    // fade position in samples: 0 silent .. switchDuckFadeSamples full
-    int switchDuckMuted = 0;       // samples still muted after the switch
+    int lastOversamplingSetting = 0;   // the Oversampling setting the last block ran with
+    int lastFetRatio = 0;              // FET BLACK's Ratio position the last block ran with
+    float lastGlobalLookahead = 0.0f;  // the lookaheads the last block ran with (ms)
+    float lastDigitalLookahead = 0.0f;
+    unsigned switchDuckSwitches = 0;   // switches the duck has made (tests: MultiCompDSPTestAccess)
+    int blockFetRatio = 0;             // the Ratio position this block runs FET BLACK with (syncModeParameters)
+    // A switch that changes the audio path (switchChangesAudioPath()) is ducked: every mode switch (owner ruling
+    // 2026-11-05; until then only those that changed the anti-alias oversampler's factor or brought Opto's output
+    // stage in or out, ruling 2026-10-21), an Oversampling change that changes the mode's path, and FET BLACK's
+    // Ratio into or out of All. Instant, each replayed or skipped part of a delay line, restarted a filter from rest
+    // or swapped a running state for one at rest under the audio. The old configuration is held while the wet
+    // path fades out, the switch happens at silence, the realignment stays muted and the new configuration fades
+    // in (processBlockExternal). A switch that also moves a dry path fades it too (switchDuckDryMix and below).
+    SwitchConfig switchDuckHeld;   // the old configuration, processed while the fade runs; mode -1: none held
+    int switchDuckPosition = 1;    // wet fade position in samples: 0 silent .. switchDuckFadeSamples full
+    int switchDuckMuted = 0;       // samples still muted after the switch (switchMuteSamples)
     int switchDuckFadeSamples = 1;
+    // The dry paths a switch moves, faded with the wet path until the duck is idle again, each from full gain where
+    // it is armed (a request that retargets a fade can arm one mid-way) and on a position of its own, same scale:
+    // - Mix's dry (switchDuckDryPosition) when Multiband comes in or goes (its dry is the split-band sum) or the
+    //   reported latency moves (a lookahead counts in one mode and not the other, or, without host latency padding,
+    //   any two base latencies);
+    // - the bypass and listen paths (switchDuckLatencyPosition) when the latency moves, since their delay lines then
+    //   change length;
+    // - the key going into the listen delay line (switchDuckListenPosition) when the chain Listen hears changes
+    //   (listenChainFor): the splice reaches the listen output that delay after the switch, and the fade with it.
+    bool switchDuckDryMix = false;
+    bool switchDuckDryLatency = false;
+    bool switchDuckListenChain = false;
+    int switchDuckDryPosition = 1;
+    int switchDuckLatencyPosition = 1;
+    int switchDuckListenPosition = 1;
+    // Samples, from this block's first, whose output the duck still shapes where Auto Makeup measures it (after the
+    // wet padding): the measurement skips them, so the matcher never takes the duck for gain reduction.
+    int autoGainDuckSkip = 0;
+    // The latencies the output carries (getLatencySamples(), getHostLatencySamples()): those of the configuration
+    // the last block part ran, published by the audio thread at its end (publishCarriedLatency()), so the reports read
+    // on any thread and an edit made while a block runs does not move them before a block has run it; -1 before the
+    // first block after prepare() or reset().
+    std::atomic<int> carriedLatency{-1};
+    std::atomic<int> carriedHostLatency{-1};
     // Host latency padding (setHostLatencyPadding): the wet path delayed to the
     // deepest mode's latency, part by part. Multiband's dry is its split-band
     // sum, built after the dry delay line, so it takes the same padding in a

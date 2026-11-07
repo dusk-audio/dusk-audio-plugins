@@ -3,6 +3,7 @@
 #include "../core/MultiCompDSP.hpp"
 #include "../core/MultiCompVcaLaw.hpp"
 #include "../core/MultiCompPresets.hpp"
+#include "../../shared-daf/ui/DuskValueText.hpp"
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -60,6 +61,8 @@ enum class ParamId : uint32_t {
 // 0.3 skew that snap put the bottom 5.5 % of the knob's travel on 0.02 ms, the
 // position FET BLUE's SLO detent reads, and left the slow end in coarse steps
 // (position 0 -> 0.0675 -> 0.0826). Continuous, the detent is the stop alone.
+// FET Attack and FET Release keep their legacy ranges (0.02..80 under that skew, 50..1100) for the sessions and
+// automation that hold them, but no unit: those numbers place the 1-7 dials (fetTimingDialValue), they are not times.
 inline constexpr std::array<Param, 63> kParams = {{
  {"mode","Mode","",0,7,0,CoreParameter::Mode,true}, {"bypass","Bypass","",0,1,0,CoreParameter::Bypass,true},
  {"stereo_link","Stereo Link","%",0,100,100,CoreParameter::StereoLink,false}, {"mix","Mix","%",0,100,100,CoreParameter::Mix,false},
@@ -69,7 +72,7 @@ inline constexpr std::array<Param, 63> kParams = {{
  {"distortion_amount","Distortion Amt","%",0,100,50,CoreParameter::DistortionAmount,false}, {"oversampling","Oversampling","",0,2,1,CoreParameter::Oversampling,true},
  {"global_lookahead","Lookahead","ms",0,10,0,CoreParameter::GlobalLookahead,false},
  {"opto_peak_reduction","Opto Peak Reduction","%",0,100,0,CoreParameter::OptoPeakReduction,false}, {"opto_gain","Opto Gain","%",0,100,duskaudio::kOptoGainUnityKnob,CoreParameter::OptoGain,false}, {"opto_limit","Opto Limit","",0,1,0,CoreParameter::OptoLimit,true},
- {"fet_input","FET Input","dB",-20,40,0,CoreParameter::FetInput,false}, {"fet_output","FET Output","dB",-20,20,0,CoreParameter::FetOutput,false}, {"fet_attack","FET Attack","ms",duskaudio::kFetAttackMinMs,duskaudio::kFetAttackMaxMs,0.2f,CoreParameter::FetAttack,false,0.0f,duskaudio::kFetAttackSkew}, {"fet_release","FET Release","ms",50,1100,400,CoreParameter::FetRelease,false}, {"fet_ratio","FET Ratio",":1",0,4,0,CoreParameter::FetRatio,true}, {"fet_curve_mode","FET Curve","",0,1,0,CoreParameter::FetCurve,true}, {"fet_transient","FET Transient","%",0,100,0,CoreParameter::FetTransient,false}, {"fet_threshold","FET Threshold","dB",-60,0,-10,CoreParameter::FetThreshold,false},
+ {"fet_input","FET Input","dB",-20,40,0,CoreParameter::FetInput,false}, {"fet_output","FET Output","dB",-20,20,0,CoreParameter::FetOutput,false}, {"fet_attack","FET Attack","",duskaudio::kFetAttackMinMs,duskaudio::kFetAttackMaxMs,0.2f,CoreParameter::FetAttack,false,0.0f,duskaudio::kFetAttackSkew}, {"fet_release","FET Release","",duskaudio::kFetReleaseMinMs,duskaudio::kFetReleaseMaxMs,400,CoreParameter::FetRelease,false}, {"fet_ratio","FET Ratio",":1",0,4,0,CoreParameter::FetRatio,true}, {"fet_curve_mode","FET Curve","",0,1,0,CoreParameter::FetCurve,true}, {"fet_transient","FET Transient","%",0,100,0,CoreParameter::FetTransient,false}, {"fet_threshold","FET Threshold","dB",-60,0,-10,CoreParameter::FetThreshold,false},
  {"vca_threshold","VCA Threshold","dB",duskaudio::vcaLaw::kThresholdMinDb,duskaudio::vcaLaw::kThresholdMaxDb,duskaudio::vcaLaw::kThresholdDefaultDb,CoreParameter::VcaThreshold,false}, {"vca_compression","VCA Compression","",duskaudio::vcaLaw::kCompressLaw.front().position,duskaudio::vcaLaw::kCompressLaw.back().position,duskaudio::vcaLaw::kCompressDefaultPosition,CoreParameter::VcaRatio,false}, {"vca_attack","VCA Attack","ms",0.1f,50,1,CoreParameter::VcaAttack,false}, {"vca_release","VCA Release","ms",10,5000,100,CoreParameter::VcaRelease,false}, {"vca_output","VCA Output","dB",-20,20,0,CoreParameter::VcaOutput,false}, {"vca_overeasy","VCA Soft Knee","",0,1,0,CoreParameter::VcaOverEasy,true}, {"vca_detector_mode","VCA Detector","",0,1,0,CoreParameter::VcaClassicDetector,true},
  {"bus_threshold","Bus Threshold","dB",-30,15,0,CoreParameter::BusThreshold,false}, {"bus_ratio","Bus Ratio",":1",0,2,0,CoreParameter::BusRatio,true}, {"bus_attack","Bus Attack","",0,5,2,CoreParameter::BusAttack,true}, {"bus_release","Bus Release","",0,4,1,CoreParameter::BusRelease,true}, {"bus_makeup","Bus Makeup","dB",0,20,0,CoreParameter::BusMakeup,false}, {"bus_mix","Bus Mix","%",0,100,100,CoreParameter::BusMix,false},
  {"studio_vca_threshold","Studio VCA Threshold","dB",-50,20,-10,CoreParameter::StudioVcaThreshold,false}, {"studio_vca_ratio","Studio VCA Ratio",":1",1,50,1.5f,CoreParameter::StudioVcaRatio,false}, {"studio_vca_attack","Studio VCA Attack","ms",0.1805f,75,7.2305f,CoreParameter::StudioVcaAttack,false}, {"studio_vca_release","Studio VCA Release","ms",100,4000,1000,CoreParameter::StudioVcaRelease,false}, {"studio_vca_output","Studio VCA Make Up","dB",-20,40,0,CoreParameter::StudioVcaOutput,false},
@@ -317,7 +320,7 @@ inline constexpr const char* const kDistortion[4] = {"Off","Soft","Hard","Clip"}
 inline constexpr const char* const kTruePeakQuality[2] = {"4x (Standard)","8x (High)"};
 inline constexpr const char* const kFetCurve[2] = {"Modern", "Measured"};
 inline constexpr const char* const kVcaDetector[2] = {"Adaptive", "Classic"};
-inline constexpr const char* const kBusHeadroom[7] = {"4", "8", "12", "16", "20", "24", "28"};
+inline constexpr const char* const kBusHeadroom[7] = {"4 dB", "8 dB", "12 dB", "16 dB", "20 dB", "24 dB", "28 dB"};
 inline constexpr const char* const kBusRatios[3] = {"2:1", "4:1", "10:1"};
 inline constexpr const char* const kBusAttack[6] = {"0.1ms", "0.3ms", "1ms", "3ms", "10ms", "30ms"};
 inline constexpr const char* const kBusRelease[5] = {"0.1s", "0.3s", "0.6s", "1.2s", "Auto"};
@@ -503,6 +506,32 @@ inline std::string bandHostName(const BandParam& d, int band)
     return std::string("MB ") + kBandHostNames[static_cast<size_t>(std::clamp(band, 0, 3))] + " " + d.name;
 }
 
+// A fixed-point number with '.' as its decimal point whatever the C library's
+// LC_NUMERIC says: printf's %f follows it, and a host can set a comma ("0,20 ms"
+// in a German-locale Qt host, "8, kHz" once the kHz trim met it). Host text uses
+// '.', as the parsers below (classic locale) read it back. No locale is queried,
+// so threads formatting at once cannot disturb each other: the separator is
+// whatever printf put between the whole digits and the `decimals` last ones.
+inline int formatFixed(char* text, size_t size, double value, int decimals) noexcept
+{
+    decimals = std::clamp(decimals, 0, 6);
+    char number[64];
+    const int written = std::snprintf(number, sizeof(number), "%.*f", decimals, value);
+    if (written < 0 || static_cast<size_t>(written) >= sizeof(number)) return -1;
+    if (decimals > 0 && std::isfinite(value) && written > decimals)
+    {
+        const size_t fraction = static_cast<size_t>(written - decimals);
+        size_t integerEnd = number[0] == '-' ? 1 : 0;
+        while (integerEnd < fraction && std::isdigit(static_cast<unsigned char>(number[integerEnd]))) ++integerEnd;
+        if (integerEnd < fraction)
+        {
+            number[integerEnd] = '.';
+            std::memmove(number + integerEnd + 1, number + fraction, static_cast<size_t>(decimals) + 1);
+        }
+    }
+    return std::snprintf(text, size, "%s", number);
+}
+
 // A tapered control (hasSkew) reaches the host as its 0..1 knob position, so the
 // host's own text would read "0.160578" for 0.20 ms. Its text is the plain value
 // with its unit; the reported unit is empty for these, so nothing is appended.
@@ -519,21 +548,20 @@ inline bool formatTaperedText(const Descriptor& d, float hostValue, char* text, 
     {
         // "8 kHz", "1.25 kHz": two decimals at most, no trailing zeros.
         char number[32];
-        std::snprintf(number, sizeof(number), "%.2f", static_cast<double>(plain * 0.001f));
+        if (formatFixed(number, sizeof(number), static_cast<double>(plain * 0.001f), 2) < 0) return false;
         std::string trimmed(number);
         while (trimmed.back() == '0') trimmed.pop_back();
         if (trimmed.back() == '.') trimmed.pop_back();
         written = std::snprintf(text, size, "%s kHz", trimmed.c_str());
     }
-    else if (unit == "Hz")
-        written = std::snprintf(text, size, "%.0f Hz", static_cast<double>(plain));
-    else if (unit == "ms")
-        written = std::snprintf(text, size, plain < 10.0f ? "%.2f ms" : plain < 100.0f ? "%.1f ms" : "%.0f ms",
-                                static_cast<double>(plain));
-    else if (unit == ":1")
-        written = std::snprintf(text, size, "%.1f:1", static_cast<double>(plain));
     else
-        written = std::snprintf(text, size, "%.1f %s", static_cast<double>(plain), d.unit);
+    {
+        char number[32];
+        const int decimals = unit == "Hz" ? 0 : unit == "ms" ? (plain < 10.0f ? 2 : plain < 100.0f ? 1 : 0) : 1;
+        if (formatFixed(number, sizeof(number), static_cast<double>(plain), decimals) < 0) return false;
+        written = unit == ":1" ? std::snprintf(text, size, "%s:1", number)
+                               : std::snprintf(text, size, "%s %s", number, d.unit);
+    }
     return written >= 0 && static_cast<uint32_t>(written) < size;
 }
 
@@ -580,8 +608,14 @@ inline bool formatVcaCompressionText(float position, char* text, uint32_t size)
 {
     if (text == nullptr || size == 0 || !std::isfinite(position)) return false;
     const float ratio = duskaudio::vcaLaw::compressRatio(position);
-    const int written = !std::isfinite(ratio) ? std::snprintf(text, size, "INF")
-        : std::snprintf(text, size, ratio < 100.0f ? "%.1f:1" : "%.0f:1", static_cast<double>(ratio));
+    if (!std::isfinite(ratio))
+    {
+        const int written = std::snprintf(text, size, "INF");
+        return written >= 0 && static_cast<uint32_t>(written) < size;
+    }
+    char number[32];
+    if (formatFixed(number, sizeof(number), static_cast<double>(ratio), ratio < 100.0f ? 1 : 0) < 0) return false;
+    const int written = std::snprintf(text, size, "%s:1", number);
     return written >= 0 && static_cast<uint32_t>(written) < size;
 }
 
@@ -606,6 +640,70 @@ inline bool parseVcaCompressionText(const char* text, float& position)
     std::getline(in, suffix);
     if (!suffix.empty() && suffix != ":1") return false;
     position = duskaudio::vcaLaw::compressPosition(ratio);
+    return true;
+}
+
+// FET Attack and FET Release are the reference unit's numbered 1-7 dials (7 the fastest), on both FET faces. Their host
+// values stay on the legacy ranges for the sessions and automation that hold them: Attack's is its knob position
+// 0..1, the skew duskaudio::fetAttackPositionFromMilliseconds inverts; Release's is 50..1100, the range
+// duskaudio::fetReleasePositionFromMilliseconds normalises. The dial reads 1 + 6 x that position, the one the DSP
+// plays. The face (readout, gesture domain, pointer) and the host text both read this law.
+inline bool fetTimingUsesDialReadout(uint32_t parameter) noexcept
+{
+    return parameter == static_cast<uint32_t>(ParamId::FetAttack)
+        || parameter == static_cast<uint32_t>(ParamId::FetRelease);
+}
+
+inline float fetTimingDialValue(float hostValue, uint32_t parameter) noexcept
+{
+    if (!fetTimingUsesDialReadout(parameter)) return hostValue;
+    const auto& descriptor = kParams[parameter];
+    const float minimum = hostMin(descriptor);
+    const float range = hostMax(descriptor) - minimum;
+    const float position = std::clamp((hostValue - minimum) / range, 0.0f, 1.0f);
+    return 1.0f + 6.0f * position;
+}
+
+inline float fetTimingHostValue(float dialValue, uint32_t parameter) noexcept
+{
+    if (!fetTimingUsesDialReadout(parameter)) return dialValue;
+    const auto& descriptor = kParams[parameter];
+    const float position = std::clamp((dialValue - 1.0f) / 6.0f, 0.0f, 1.0f);
+    return hostMin(descriptor)
+        + position * (hostMax(descriptor) - hostMin(descriptor));
+}
+
+// Attack's counter-clockwise stop, the reference's SLO detent: FET BLUE's face prints it there, and typed text may
+// name it.
+inline constexpr const char* kFetSloText = "SLO";
+
+// A FET timing dial's host text: its reading, "1.0" to "7.0", one decimal, '.' in every locale, no unit. Host text
+// follows the value alone, so Attack's stop reads 1.0 in FET BLUE too, where the face prints SLO.
+inline bool formatFetTimingText(uint32_t parameter, float hostValue, char* text, uint32_t size) noexcept
+{
+    if (text == nullptr || size == 0 || !std::isfinite(hostValue) || !fetTimingUsesDialReadout(parameter))
+        return false;
+    const int written = formatFixed(text, size, static_cast<double>(fetTimingDialValue(hostValue, parameter)), 1);
+    return written >= 0 && static_cast<uint32_t>(written) < size;
+}
+
+// Text typed on a FET timing dial, in a host or on FET BLUE's Attack, back to a host value: a dial reading ("3",
+// "3.0", "3.5"; '.'-decimal, space around it allowed), held to the dial's 1-7 travel; on Attack also its stop by name
+// (SLO, slo or Slo). Anything else is refused, a unit included ("4 ms").
+inline bool parseFetTimingText(uint32_t parameter, const char* text, float& hostValue) noexcept
+{
+    namespace entry = duskdaf::value_text;
+    if (text == nullptr || !fetTimingUsesDialReadout(parameter)) return false;
+    if (parameter == static_cast<uint32_t>(ParamId::FetAttack)
+        && (entry::suffix(text, kFetSloText, "slo") || entry::suffix(text, "Slo")))
+    {
+        hostValue = hostMin(kParams[parameter]);
+        return true;
+    }
+    const char* end = nullptr;
+    float dial = 0.0f;
+    if (!entry::parseDecimal(text, end, dial) || !entry::finish(end, "")) return false;
+    hostValue = fetTimingHostValue(dial, parameter);
     return true;
 }
 

@@ -6,6 +6,16 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/cmake/DuskDafPlugin.cmake")
+# The editor bundles the family's face, Barlow Condensed, so its metrics (and the readability floor checked on macOS)
+# are the same on every OS; a system font differed by OS. dusk_daf_embed_font writes the C arrays under the build tree,
+# so nothing hex-encoded is committed.
+set(MULTICOMP_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+dusk_daf_embed_font(kMcFontSemiBold
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/fonts/BarlowCondensed/BarlowCondensed-SemiBold.ttf"
+    "${MULTICOMP_GENERATED_DIR}/MultiCompFontSemiBold.inc")
+dusk_daf_embed_font(kMcFontRegular
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/fonts/BarlowCondensed/BarlowCondensed-Regular.ttf"
+    "${MULTICOMP_GENERATED_DIR}/MultiCompFontRegular.inc")
 # Bit-identical DSP on every platform: no fused multiply-add. Clang fuses
 # a*b+c within an expression by default and GCC on arm64 across statements,
 # while x86-64 without FMA fuses nothing, so the same source rendered audio
@@ -23,7 +33,8 @@ daf_add_plugin(multi-comp-2
   UI_TYPE opengl
   FILES_DSP MultiCompPlugin.cpp ../core/MultiCompDSP.cpp
   FILES_UI MultiCompUI.cpp ${DUSK_DAF_UI_SOURCES})
-target_include_directories(multi-comp-2 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/../core" ${DUSK_DAF_INCLUDE_DIRS})
+target_include_directories(multi-comp-2 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/../core"
+  "${MULTICOMP_GENERATED_DIR}" ${DUSK_DAF_INCLUDE_DIRS})
 target_compile_definitions(multi-comp-2 PUBLIC MULTICOMP2_VERSION_MAJOR=${PROJECT_VERSION_MAJOR} MULTICOMP2_VERSION_MINOR=${PROJECT_VERSION_MINOR} MULTICOMP2_VERSION_PATCH=${PROJECT_VERSION_PATCH})
 if(APPLE)
   # DAF's generic AU path lookup can resolve the remote host executable in
@@ -165,7 +176,7 @@ if(NOT CMAKE_CROSSCOMPILING)
     "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_draw.cpp"
     "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_tables.cpp"
     "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_widgets.cpp")
-  target_include_directories(MultiCompModernUiTest PRIVATE ${DUSK_DAF_INCLUDE_DIRS})
+  target_include_directories(MultiCompModernUiTest PRIVATE "${MULTICOMP_GENERATED_DIR}" ${DUSK_DAF_INCLUDE_DIRS})
   target_compile_features(MultiCompModernUiTest PRIVATE cxx_std_17)
   add_test(NAME MultiCompModernUi COMMAND MultiCompModernUiTest)
 
@@ -227,6 +238,6 @@ endif()
 # opto_peak_reduction is 0 and the Opto cell does not compress, so a run that
 # only feeds noise cannot tell working meters from dead ones.
 dusk_daf_add_output_param_tests(multi-comp-2 "Opto Peak Reduction=0.8")
-dusk_daf_add_ui_drag_test(multi-comp-2 287 237)   # Opto GAIN knob (default face)
+dusk_daf_add_ui_drag_test(multi-comp-2 306 228)   # Opto GAIN knob (default face), design coordinates of the 1120 x 380 canvas
 dusk_daf_add_resize_test(multi-comp-2)
 dusk_daf_add_clap_preset_test(multi-comp-2)

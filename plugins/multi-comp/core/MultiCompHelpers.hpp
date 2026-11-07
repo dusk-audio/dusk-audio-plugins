@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <utility>
 #include <vector>
 #if defined(__aarch64__)
 #include <arm_neon.h>
@@ -146,8 +147,60 @@ private:
     GuardedBiquad filter;
 };
 
+// The sidechain EQ's low shelf: the RBJ S = 1 shelf Biquad::shelfSlope1 designs, in double, for a section that runs in
+// double (MultiCompDoubleSection here, DoubleBiquad in Bus's own shelf). Its corner sits far below the rate it runs at
+// (60 Hz is 4.9e-4 rad at 768 kHz, Bus's mode rate at 192 kHz and 4x), where the plateau is set by differences of
+// nearly equal coefficients finer than float holds.
+// Designed and run in float, the shelf missed its own response by up to 0.03 dB at 48 kHz, 0.17 dB at 192, 0.77 dB at
+// 384 and 8.9 dB at 768; designed in double with the coefficients rounded to float, still 0.56 and 3.98 dB. With double
+// coefficients and state it holds within 2e-7 dB at every rate to 768 kHz. The high shelf's corner (2 kHz and up) is
+// far enough above that its float design stays within 1e-3 dB at all of them. Normalised by division, so at 0 dB the
+// section is the exact identity (b0 = 1, b1 = a1, b2 = a2), as the float design is at the default 100 Hz.
+inline BiquadCoeffsDouble sidechainLowShelfCoeffs(double fs, float frequency, float gainDb) noexcept
+{
+    constexpr double kPi = 3.14159265358979323846;
+    const double f = nyquistSafeDesignHzD(fs, static_cast<double>(frequency), kMaxDesignFreqRatio);
+    const double A = std::pow(10.0, static_cast<double>(gainDb) / 40.0);
+    const double w0 = 2.0 * kPi * f / fs;
+    const double cosw = std::cos(w0);
+    const double sinw = std::sin(w0);
+    const double alpha = 0.5 * sinw * std::sqrt(2.0);   // S = 1
+    const double sqA2a = 2.0 * std::sqrt(A) * alpha;
+    const double b0 = A * ((A + 1.0) - (A - 1.0) * cosw + sqA2a);
+    const double b1 = 2.0 * A * ((A - 1.0) - (A + 1.0) * cosw);
+    const double b2 = A * ((A + 1.0) - (A - 1.0) * cosw - sqA2a);
+    const double a0 = (A + 1.0) + (A - 1.0) * cosw + sqA2a;
+    const double a1 = -2.0 * ((A - 1.0) + (A + 1.0) * cosw);
+    const double a2 = (A + 1.0) + (A - 1.0) * cosw - sqA2a;
+    return {b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0};
+}
+
+// The sidechain EQ's low shelf section: TDF-II in double, DoubleBiquad's arithmetic, with the state exposed so the
+// stereo block path (MultiCompSidechainEQ::processPair) can run the left and right sections in one register's lanes.
+class MultiCompDoubleSection
+{
+public:
+    void setCoeffs(const BiquadCoeffsDouble& k) noexcept { c = k; }
+    const BiquadCoeffsDouble& coeffs() const noexcept { return c; }
+    void reset() noexcept { z1 = z2 = 0.0; }
+    std::pair<double, double> state() const noexcept { return {z1, z2}; }
+    void setState(double s1, double s2) noexcept { z1 = s1; z2 = s2; }
+
+    float process(float x) noexcept
+    {
+        const double y = c.b0 * x + z1;
+        z1 = c.b1 * x - c.a1 * y + z2;
+        z2 = c.b2 * x - c.a2 * y;
+        return static_cast<float>(y);
+    }
+
+private:
+    BiquadCoeffsDouble c;
+    double z1 = 0.0, z2 = 0.0;
+};
+
 // JUCE multicomp.cpp:575-690. Two RBJ shelves in TDF-II, after the sidechain
-// high-pass and before stereo linking.
+// high-pass and before stereo linking; the low one in double (sidechainLowShelfCoeffs).
 class MultiCompSidechainEQ
 {
 public:
@@ -166,7 +219,7 @@ public:
         if (std::abs(f - lowFrequency) > 0.001f || std::abs(g - lowGain) > 0.001f)
         {
             lowFrequency = f; lowGain = g;
-            low.setCoeffs(Biquad::shelfSlope1(sampleRate, f, g, false));
+            low.setCoeffs(sidechainLowShelfCoeffs(sampleRate, f, g));
         }
     }
     void setHighShelf(float frequency, float gain) noexcept
@@ -182,12 +235,25 @@ public:
     float process(float input) noexcept { return high.process(low.process(input)); }
     void reset() noexcept { low.reset(); high.reset(); }
 
-    // process() on a left and a right EQ over a block, in place: each lane
-    // runs Biquad::process()'s float arithmetic for both shelves.
+    // process() on a left and a right EQ over a block, in place: each lane runs process()'s arithmetic, the low
+    // shelf's in double (MultiCompDoubleSection::process) and the high shelf's in float (Biquad::process).
     static void processPair(MultiCompSidechainEQ& left, MultiCompSidechainEQ& right,
                             float* x0, float* x1, int n) noexcept
     {
 #if defined(__aarch64__)
+        struct LowLanes { float64x2_t b0, b1, b2, a1, a2, z1, z2; };
+        const auto& kl = left.low.coeffs();
+        const auto& kr = right.low.coeffs();
+        const auto ls = left.low.state();
+        const auto rs = right.low.state();
+        LowLanes lo{{kl.b0, kr.b0}, {kl.b1, kr.b1}, {kl.b2, kr.b2}, {kl.a1, kr.a1}, {kl.a2, kr.a2},
+                    {ls.first, rs.first}, {ls.second, rs.second}};
+        const auto stepLow = [](LowLanes& f, float64x2_t x) noexcept {
+            const float64x2_t y = vaddq_f64(vmulq_f64(f.b0, x), f.z1);
+            f.z1 = vaddq_f64(vsubq_f64(vmulq_f64(f.b1, x), vmulq_f64(f.a1, y)), f.z2);
+            f.z2 = vsubq_f64(vmulq_f64(f.b2, x), vmulq_f64(f.a2, y));
+            return y;
+        };
         struct Lanes { float32x2_t b0, b1, b2, a1, a2, z1, z2; };
         const auto load = [](const Biquad& l, const Biquad& r) noexcept {
             const auto& cl = l.coeffs();
@@ -197,7 +263,7 @@ public:
             return Lanes{{cl.b0, cr.b0}, {cl.b1, cr.b1}, {cl.b2, cr.b2}, {cl.a1, cr.a1}, {cl.a2, cr.a2},
                          {sl.first, sr.first}, {sl.second, sr.second}};
         };
-        Lanes lo = load(left.low, right.low), hi = load(left.high, right.high);
+        Lanes hi = load(left.high, right.high);
         const auto step = [](Lanes& f, float32x2_t x) noexcept {
             const float32x2_t y = vadd_f32(vmul_f32(f.b0, x), f.z1);
             f.z1 = vadd_f32(vsub_f32(vmul_f32(f.b1, x), vmul_f32(f.a1, y)), f.z2);
@@ -206,12 +272,13 @@ public:
         };
         for (int i = 0; i < n; ++i)
         {
-            const float32x2_t y = step(hi, step(lo, float32x2_t{x0[i], x1[i]}));
+            const float32x2_t low = vcvt_f32_f64(stepLow(lo, vcvt_f64_f32(float32x2_t{x0[i], x1[i]})));
+            const float32x2_t y = step(hi, low);
             x0[i] = vget_lane_f32(y, 0);
             x1[i] = vget_lane_f32(y, 1);
         }
-        left.low.setState(vget_lane_f32(lo.z1, 0), vget_lane_f32(lo.z2, 0));
-        right.low.setState(vget_lane_f32(lo.z1, 1), vget_lane_f32(lo.z2, 1));
+        left.low.setState(vgetq_lane_f64(lo.z1, 0), vgetq_lane_f64(lo.z2, 0));
+        right.low.setState(vgetq_lane_f64(lo.z1, 1), vgetq_lane_f64(lo.z2, 1));
         left.high.setState(vget_lane_f32(hi.z1, 0), vget_lane_f32(hi.z2, 0));
         right.high.setState(vget_lane_f32(hi.z1, 1), vget_lane_f32(hi.z2, 1));
 #else
@@ -226,7 +293,8 @@ public:
 private:
     double sampleRate = 44100.0;
     float lowFrequency = 100.0f, lowGain = 0.0f, highFrequency = 8000.0f, highGain = 0.0f;
-    Biquad low, high;
+    MultiCompDoubleSection low;
+    Biquad high;
 };
 
 class MultiCompTransientShaper
@@ -345,6 +413,15 @@ inline float interpolateOversampledSidechain(float current, float next,
 // `(index + 1) % size` returned.
 inline int wrapRingIndex(int index, int size) noexcept { return index < 0 ? index + size : index; }
 inline int advanceRingIndex(int index, int size) noexcept { return index + 1 == size ? 0 : index + 1; }
+
+// A lookahead (ms) in whole host samples. The latency the host is told rounds it here (MultiCompDSP::lookaheadSamples),
+// and so does every delay that applies it: the host-rate delay lines, and Digital's mode-rate one, which delays by this
+// many host samples times its oversampling factor. Rounded at the mode rate instead, Digital's delay missed the report
+// by up to half a host sample at 2x and 4x.
+inline int lookaheadHostSamples(float milliseconds, double hostRate) noexcept
+{
+    return static_cast<int>(std::round(milliseconds * 0.001f * static_cast<float>(hostRate)));
+}
 
 // A ring-buffer delay line over a block, exactly as the per-sample loop
 //   line[write] = input[i]; output[i] = line[(write - delay) mod size]; advance write

@@ -17,7 +17,7 @@ inline duskdaf::VuScaleConfig vintageVuScale(const char* sublabel = "GAIN REDUCT
     cfg.ticks = ticks;
     cfg.tickCount = static_cast<int>(std::size(ticks));
     cfg.redFromDb = 0.1f;
-    cfg.legend = "DUSK";
+    cfg.legend = nullptr;   // no brand on the meter face (owner 2026-11-05); the sublabel takes the legend's place
     cfg.sublabel = sublabel;
     cfg.deflection = [](float db, const duskdaf::VuScaleConfig&) { return vintageVuDeflection(db); };
     return cfg;
@@ -48,23 +48,57 @@ inline duskdaf::VuStyle vintageVuStyle(bool opto) noexcept
     style.majorTickLength = -10;
     style.minorTickLength = -6;
     style.tickLabelSize = 8.0f;
-    style.legendSize = 13;
+    style.legendSize = 0.0f;   // no legend: the sublabel moves up into its place
     style.sublabelSize = 6.8f;
     style.legendOffset = 0.46f;
     style.needleWidth = 1.9f;
     return style;
 }
 
+// How large the meter draws: its geometry follows `detail` (bezel, insets, ticks and needle; 1 is the old faces'
+// 238 px meter) and its text the sizes given. The member defaults are those faces' lettering, below the readability
+// floor: the faces draw at floorVintageMeterScale, and drawVintageMeter takes its scale from every caller.
+struct VintageMeterScale
+{
+    float detail = 1.0f;
+    float tickLabel = 8.0f;   // the dB scale
+    float sublabel = 6.8f;    // GAIN REDUCTION, OUTPUT +10, ...
+    float percent = 6.5f;     // the second printed scale
+    float vu = 9.0f;          // the VU marks in the corners
+};
+
+// The Opto and FET faces' meter at the readability floor (owner 2026-11-05: the meter's dB scale at 14 and its small
+// print at 13): geometry scaled to the meter's width, the dB scale at 14, the captions and the second scale at 13, the
+// VU marks at the legend size (16). The faces and the render test both draw it from here.
+inline VintageMeterScale floorVintageMeterScale(float meterWidth) noexcept
+{
+    VintageMeterScale scale;
+    scale.detail = meterWidth / 238.0f;
+    scale.tickLabel = 14.0f;
+    scale.sublabel = 13.0f;
+    scale.percent = 13.0f;
+    scale.vu = 16.0f;
+    return scale;
+}
+
 inline void drawVintageMeter(duskdaf::DuskPanel& panel, ImDrawList* dl,
                                           float x, float y, float w, float h,
                                           float db, bool opto,
-                                          const char* sublabel = "GAIN REDUCTION", bool powered = true)
+                                          const char* sublabel, bool powered, const VintageMeterScale& scale)
 {
     const float s = panel.scale();
-    dl->AddRectFilled(panel.P(x + 3, y + 4), panel.P(x + w + 3, y + h + 4),
-                       IM_COL32(0, 0, 0, 95), 2 * s);
-    const float frame = opto ? 10.0f : 3.0f;
+    const float d = scale.detail;
+    dl->AddRectFilled(panel.P(x + 3 * d, y + 4 * d), panel.P(x + w + 3 * d, y + h + 4 * d),
+                       IM_COL32(0, 0, 0, 95), 2 * s * d);
+    const float frame = (opto ? 10.0f : 3.0f) * d;
     auto style = vintageVuStyle(opto);
+    style.pivotBelowFace *= d;
+    style.radiusTopInset *= d;
+    style.majorTickLength *= d;
+    style.minorTickLength *= d;
+    style.needleWidth *= d;
+    style.tickLabelSize = scale.tickLabel;
+    style.sublabelSize = scale.sublabel;
     if (!powered)
     {
         style.faceBase = IM_COL32(167, 155, 113, 255);
@@ -86,7 +120,7 @@ inline void drawVintageMeter(duskdaf::DuskPanel& panel, ImDrawList* dl,
     duskdaf::drawVuMeter(panel, dl, x0, y0, x1, y1, db, needle, cfg,
                          IM_COL32(140, 141, 123, 150), style);
 
-    const float fx0 = x0 + 7, fx1 = x1 - 7, fy0 = y0 + 7, fy1 = y1 - 7;
+    const float fx0 = x0 + 7 * d, fx1 = x1 - 7 * d, fy0 = y0 + 7 * d, fy1 = y1 - 7 * d;
     const float cx = (fx0 + fx1) * 0.5f, py = fy1 + style.pivotBelowFace;
     const float half = style.sweepHalfAngleDeg * 0.0174532925199433f;
     const float radius = std::min(py - fy0 - style.radiusTopInset,
@@ -99,11 +133,11 @@ inline void drawVintageMeter(duskdaf::DuskPanel& panel, ImDrawList* dl,
         const float angle = vintageVuNeedleAngle(db);
         char label[8]; std::snprintf(label, sizeof(label), "%d", percent);
         panel.text(dl, cx + std::sin(angle) * radius * 0.71f,
-                    py - std::cos(angle) * radius * 0.71f - 4,
-                    6.5f, style.ink, label, 0);
+                    py - std::cos(angle) * radius * 0.71f - 4 * scale.percent / 6.5f,
+                    scale.percent, style.ink, label, 0);
     }
-    panel.text(dl, fx0 + 7, fy0 + 8, 9.0f, style.ink, "VU", -1);
-    panel.text(dl, fx1 - 7, fy0 + 8, 9.0f, style.hot, "VU", 1);
+    panel.text(dl, fx0 + 7 * d, fy0 + 8 * d, scale.vu, style.ink, "VU", -1);
+    panel.text(dl, fx1 - 7 * d, fy0 + 8 * d, scale.vu, style.hot, "VU", 1);
     dl->PopClipRect();
 }
 }

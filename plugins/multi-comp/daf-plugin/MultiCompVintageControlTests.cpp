@@ -252,17 +252,50 @@ bool switching()
     {
         auto values = defaults(); values[fet] = 2; values[bypass] = row == 3 ? 0 : 1;
         const auto before = values;
-        ui_detail::selectFetMeterButton(row, [&](uint32_t p, float v) { values[p] = v; });
+        const auto get = [&](uint32_t p) { return values[p]; };
+        ui_detail::selectFetMeterButton(row, get, [&](uint32_t p, float v) { values[p] = v; });
         ok &= values[fet] == (row == 3 ? 2 : row) && values[bypass] == (row == 3 ? 1 : 0)
             && ui_detail::fetMeterButton(values[fet], values[bypass] != 0) == row;
         for (int i = 0; i < kTotalParamCount; ++i)
             if (i != fet && i != bypass) ok &= values[static_cast<size_t>(i)] == before[static_cast<size_t>(i)];
+        // Pressing the lit button again writes nothing: no host edit, no undo step, no automation point.
+        int again = 0;
+        ui_detail::selectFetMeterButton(row, get, [&](uint32_t, float) { ++again; });
+        ok &= again == 0;
     }
     int writes = 0;
-    ui_detail::selectFetMeterButton(-1, [&](uint32_t, float) { ++writes; });
-    ui_detail::selectFetMeterButton(4, [&](uint32_t, float) { ++writes; });
+    const auto none = [](uint32_t) { return 0.0f; };
+    ui_detail::selectFetMeterButton(-1, none, [&](uint32_t, float) { ++writes; });
+    ui_detail::selectFetMeterButton(4, none, [&](uint32_t, float) { ++writes; });
     ok &= writes == 0 && ui_detail::vintageMeterChoice(0.6f) == 1 && ui_detail::vintageMeterChoice(1.6f) == 2;
-    std::puts("FET switching: GR/+8/+4 enable, OFF bypasses and preserves reference; unrelated controls unchanged");
+    // A host can leave a value between two choices (an LV2 port takes any float). The face lights the nearest
+    // button (drawFetMeterSwitch), and pressing that one writes nothing either.
+    struct Between { float meter, bypass; int lit; };
+    constexpr Between between[] = {{0.3f, 0.2f, 0}, {1.4f, 0.2f, 1}, {1.6f, 0.4f, 2}, {1.4f, 0.7f, 3}};
+    int betweenWrites = 0;
+    for (const Between& b : between)
+    {
+        auto values = defaults(); values[fet] = b.meter; values[bypass] = b.bypass;
+        ok &= ui_detail::litFetMeterButton(b.meter, b.bypass) == b.lit;   // what drawFetMeterSwitch lights
+        ui_detail::selectFetMeterButton(b.lit, [&](uint32_t p) { return values[p]; },
+                                        [&](uint32_t, float) { ++betweenWrites; });
+    }
+    ok &= betweenWrites == 0;
+    // Another button writes only what changes on the face: from +8 at 1.4, not bypassed at 0.2, +4 writes the
+    // meter alone and OFF writes Bypass alone.
+    for (const int row : {2, 3})
+    {
+        auto values = defaults(); values[fet] = 1.4f; values[bypass] = 0.2f;
+        std::vector<std::pair<uint32_t, float>> written;
+        ui_detail::selectFetMeterButton(row, [&](uint32_t p) { return values[p]; },
+                                        [&](uint32_t p, float v) { written.emplace_back(p, v); });
+        ok &= written.size() == 1
+            && written[0] == (row == 2 ? std::make_pair(static_cast<uint32_t>(fet), 2.0f)
+                                       : std::make_pair(static_cast<uint32_t>(bypass), 1.0f));
+    }
+    std::printf("FET switching between choices: %d writes from the lit buttons\n", betweenWrites);
+    std::puts("FET switching: GR/+8/+4 enable, OFF bypasses and preserves reference; unrelated controls unchanged; "
+              "the lit button writes nothing");
     return ok;
 }
 
@@ -582,7 +615,7 @@ bool studioVcaEntry()
     return ok;
 }
 
-// FET BLUE's Attack detent (ui_detail::fetAttackAtSlo, fetSloAttackTypedHost). The face must name SLO exactly where
+// FET BLUE's Attack detent (ui_detail::fetAttackAtSlo, parseFetTimingText). The face must name SLO exactly where
 // the DSP takes it: the core reads the plain value the host position converts to through its position law,
 // duskaudio::fetAttackPositionFromMilliseconds (core MultiCompParams.hpp, pow(clamp((ms - min) / (max - min)), skew),
 // the one law both DSP sites read), and engages SLO at position 0. The descriptor carries that law's ends and skew
@@ -623,14 +656,14 @@ bool fetBlueSlo()
     for (const Case& c : cases)
     {
         float host = -1.0f;
-        const bool valid = ui_detail::fetSloAttackTypedHost(c.text, host);
+        const bool valid = parseFetTimingText(attack, c.text, host);
         const bool good = valid == c.valid && (!valid || std::abs(host - c.host) < 1.0e-6f);
         if (!good) std::printf("  \"%s\": %s %.6f\n", c.text, valid ? "accepted" : "refused", host);
         ok &= good;
     }
     // The readout's own text at the detent parses back to the detent.
     float host = -1.0f;
-    ok &= ui_detail::fetSloAttackTypedHost(ui_detail::kFetSloText, host)
+    ok &= parseFetTimingText(attack, kFetSloText, host)
         && ui_detail::fetAttackAtSlo(hostToPlain(descriptor, host));
     std::printf("FET BLUE SLO typed entry: %zu cases\n", std::size(cases));
     return ok;

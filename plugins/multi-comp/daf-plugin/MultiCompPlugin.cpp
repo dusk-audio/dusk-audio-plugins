@@ -156,8 +156,8 @@ protected:
                 [&](const multicompp::Param& d) {
                     p.name = d.name; p.symbol = d.id;
                     // Tapered parameters expose their honest normalized coordinate;
-                    // the Opto controls add display-only callbacks below without
-                    // changing their host/state/automation domain.
+                    // the Opto controls and the FET timing dials add display-only
+                    // text below without changing their host/state/automation domain.
                     p.unit = multicompp::hasSkew(d) ? "" : d.unit;
                     p.ranges.min = multicompp::hostMin(d); p.ranges.max = multicompp::hostMax(d);
                     p.ranges.def = multicompp::hostDefault(d);
@@ -176,6 +176,9 @@ protected:
                     {
                         setEnum(p, labels.labels, labels.count);
                         if (labels.boolean) p.hints |= kParameterIsBoolean;
+                        // A label is the whole value text ("4:1", "All"): a host that appends the unit would show
+                        // "4:1 :1".
+                        p.unit = "";
                     }
                 },
                 [&](const multicompp::BandParam& d, int band) {
@@ -209,9 +212,11 @@ protected:
         return 0.0f;
     }
 
+    // The FET timing dials read as the faces' 1-7 dials (multicompp::fetTimingDialValue), not as their legacy ranges.
     bool hasCustomParameterText(uint32_t index) const override
     {
-        return multicompp::usesOptoReferenceDisplay(index) || isTapered(index) || isVcaCompression(index);
+        return multicompp::usesOptoReferenceDisplay(index) || multicompp::fetTimingUsesDialReadout(index)
+            || isTapered(index) || isVcaCompression(index);
     }
 
     bool getParameterValueText(uint32_t index, float value,
@@ -221,6 +226,9 @@ protected:
             || !std::isfinite(value)) return false;
         if (isVcaCompression(index))
             return multicompp::formatVcaCompressionText(value, text, size);
+        // Ahead of the tapered controls: FET Attack is one, but reads as its dial.
+        if (multicompp::fetTimingUsesDialReadout(index))
+            return multicompp::formatFetTimingText(index, value, text, size);
         if (isTapered(index))
             return multicompp::resolveParameter(static_cast<int>(index),
                 [&](const multicompp::Param& d) { return multicompp::formatTaperedText(d, value, text, size); },
@@ -236,6 +244,8 @@ protected:
     {
         if (isVcaCompression(index))
             return multicompp::parseVcaCompressionText(text, value);
+        if (multicompp::fetTimingUsesDialReadout(index))
+            return multicompp::parseFetTimingText(index, text, value);
         if (isTapered(index))
             return multicompp::resolveParameter(static_cast<int>(index),
                 [&](const multicompp::Param& d) { return multicompp::parseTaperedText(d, text, value); },
@@ -355,9 +365,10 @@ protected:
         duskaudio::ScopedFlushDenormals guard;
         if (frames == 0)
         {
-            // Still publish a latched latency change: some hosts probe with
-            // empty blocks and the CLAP wrapper picks the value up at the
-            // next activate() regardless of block size.
+            // An empty block runs nothing, so the latency the DSP reports, that of
+            // the configuration its last block ran, cannot move here; the report
+            // is kept in step all the same. (DAF's VST3, CLAP and LV2 wrappers
+            // never call run() with no frames.)
             updateLatency();
             return;
         }

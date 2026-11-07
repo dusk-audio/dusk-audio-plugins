@@ -169,9 +169,12 @@ Render renderAdaptive(bool adaptive, bool external, int factorSetting,
     }
     // Exercise stale adaptive/envelope/delay state before a lifecycle boundary.
     // reset and mode re-entry must give the same subsequent render as fresh.
+    // Lifecycle 3 is re-entry's control: the same Multiband block and switch
+    // back from an instance that ran only that first Digital block.
     if (lifecycle != 0)
     {
-        for (int start = 0; start < count; start += block)
+        const int warmup = lifecycle == 3 ? block : count;
+        for (int start = 0; start < warmup; start += block)
         {
             const float* ip[] = {input[0].data() + start, input[1].data() + start};
             const float* sp[] = {key[0].data() + start, key[1].data() + start};
@@ -255,12 +258,16 @@ void testAdaptiveLink()
     const auto fresh = renderAdaptive(true, true, 2, 0, 100.0f, 2);
     const auto reset = renderAdaptive(true, true, 2, 0, 100.0f, 2, true, false, 1);
     const auto reentry = renderAdaptive(true, true, 2, 0, 100.0f, 2, true, false, 2);
-    // Mode transitions crossfade at the output, so compare the settled
-    // recovery rather than asserting the transition itself is byte-identical.
+    // Re-entry's reference is an instance taken through the same switches with no stale state behind them: since
+    // 2026-11-05 every mode switch is ducked, so the re-entered mode starts from rest at the switch's silence, not at
+    // the block start a fresh render starts at, and only the same switch sequence lands on the same samples. Mode
+    // transitions crossfade at the output, so compare the settled recovery rather than the transition itself.
+    const auto reentryControl = renderAdaptive(true, true, 2, 0, 100.0f, 2, true, false, 3);
     double resetError = renderDifference(fresh, reset), reentryError = 0.0;
     for (int ch = 0; ch < 2; ++ch)
         for (size_t n = static_cast<size_t>(fresh.releaseAt); n < fresh.output[ch].size(); ++n)
-            reentryError = std::max(reentryError, static_cast<double>(std::abs(fresh.output[ch][n] - reentry.output[ch][n])));
+            reentryError = std::max(reentryError,
+                static_cast<double>(std::abs(reentryControl.output[ch][n] - reentry.output[ch][n])));
     std::printf("adaptive lifecycle: reset_delta=%.9g reentry_release_delta=%.9g fresh_release_peak=%.9g\n",
                 resetError, reentryError, fresh.output[0][fresh.releaseAt + 4800]);
     check(resetError < 1.0e-8 && reentryError < 1.0e-8 && std::abs(fresh.output[0][fresh.releaseAt + 4800]) > 1.0e-3f,

@@ -22,6 +22,7 @@
 
 #include <array>
 #include <cctype>
+#include <clocale>
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -778,10 +779,16 @@ void testShippingUiUsesConformingHeaderWithoutUtilityBands()
         && source.find("##mc_presetnext") != std::string::npos
         && source.find("##mc_init") != std::string::npos
         && source.find("##mc_save") != std::string::npos;
+    // 1120 x 380, one size for every mode (owner 2026-11-05): the default and the minimum window, where every legend
+    // and value meets the readability floor.
     const bool hasCompactDefaultHeight =
-        info.find("#define DAF_UI_DEFAULT_HEIGHT       380") != std::string::npos;
+        info.find("#define DAF_UI_DEFAULT_WIDTH        1120") != std::string::npos
+        && info.find("#define DAF_UI_DEFAULT_HEIGHT       380") != std::string::npos;
+    // The brand is the header's alone: no meter face carries it either (owner 2026-11-05).
+    const std::string vintageMeter = readSiblingSource("MultiCompVintageMeter.hpp");
     const bool hasSingleHeaderIdentity = countText("\"DUSK AUDIO\"") == 1
-        && source.find("\"DUSK\"") == std::string::npos;
+        && source.find("\"DUSK\"") == std::string::npos
+        && vintageMeter.find("\"DUSK\"") == std::string::npos;
     const bool hasSimplifiedOptoTitle =
         source.find("\"LEVELING AMPLIFIER\"") != std::string::npos
         && source.find("\"OPTICAL LEVELING AMPLIFIER\"") == std::string::npos;
@@ -792,7 +799,7 @@ void testShippingUiUsesConformingHeaderWithoutUtilityBands()
     const bool hasModeDropdown = source.find("ImGui::BeginCombo(\"##mc_mode\"")
         != std::string::npos;
 
-    std::printf("header conformity: global=%s sidechain=%s identity=%s actions=%s height380=%s "
+    std::printf("header conformity: global=%s sidechain=%s identity=%s actions=%s size1120x380=%s "
                 "single-brand=%s opto-title=%s\n",
                 drawsGlobalBand ? "drawn" : "removed",
                 drawsSidechainBand ? "drawn" : "removed",
@@ -851,7 +858,6 @@ void testFetFaceplateContract()
     const bool blueSharesFace = source.find("case 4: drawFet(dl, true)") != std::string::npos
         && source.find("drawFetBlueRatioButtons(dl") != std::string::npos
         && source.find("\"fet_blue_hr\"") != std::string::npos
-        && source.find("kModeCanvasTop + 42, 48, 300") == std::string::npos
         && ud::fetBlueRatioAfterPress(0, 0) == 1 && ud::fetBlueRatioAfterPress(1, 1) == 5
         && ud::fetBlueRatioAfterPress(5, 2) == 3 && ud::fetBlueRatioAfterPress(5, 1) == 1
         && ud::fetBlueRatioAfterPress(4, 3) == 0 && ud::fetBlueRatioAfterPress(3, 0) == 8
@@ -860,17 +866,17 @@ void testFetFaceplateContract()
     const auto release = static_cast<uint32_t>(multicompp::ParamId::FetRelease);
     const auto input = static_cast<uint32_t>(multicompp::ParamId::FetInput);
     const bool timingReadoutUsesDialPosition =
-        multicompp::ui_detail::fetTimingDialValue(multicompp::hostMin(
+        multicompp::fetTimingDialValue(multicompp::hostMin(
             multicompp::kParams[attack]), attack) == 1.0f
-        && multicompp::ui_detail::fetTimingDialValue(multicompp::hostMax(
+        && multicompp::fetTimingDialValue(multicompp::hostMax(
             multicompp::kParams[attack]), attack) == 7.0f
-        && multicompp::ui_detail::fetTimingDialValue(multicompp::hostMin(
+        && multicompp::fetTimingDialValue(multicompp::hostMin(
             multicompp::kParams[release]), release) == 1.0f
-        && multicompp::ui_detail::fetTimingDialValue(multicompp::hostMax(
+        && multicompp::fetTimingDialValue(multicompp::hostMax(
             multicompp::kParams[release]), release) == 7.0f
-        && multicompp::ui_detail::fetTimingHostValue(4.0f, attack) == 0.5f
-        && multicompp::ui_detail::fetTimingHostValue(4.0f, release) == 575.0f
-        && !multicompp::ui_detail::fetTimingUsesDialReadout(input);
+        && multicompp::fetTimingHostValue(4.0f, attack) == 0.5f
+        && multicompp::fetTimingHostValue(4.0f, release) == 575.0f
+        && !multicompp::fetTimingUsesDialReadout(input);
     std::printf("FET faceplate: identity=%s opto-meter=%s ratios=%s mix-only=%s "
                 "concentric-knobs=%s blue-face=%s timing-readout=%s\n",
                 hasBlackFaceIdentity ? "yes" : "no",
@@ -1021,32 +1027,108 @@ void testPresetIdentityFollowsPresetOwnership()
 void testOptoFaceplateContract()
 {
     using Layout = multicompp::ui_detail::OptoFaceplateLayout;
-    constexpr float referenceAspect = 1120.0f / 310.0f;
-    const float aspect = multicompp::ui_detail::optoFaceplateAspect();
-    require(Layout::left == 0.0f && Layout::right == 1120.0f
-                && Layout::top == 344.0f && Layout::bottom == 654.0f
-                && std::abs(aspect - referenceAspect) < 0.01f,
-            "Opto faceplate fills the complete mode canvas below the toolbar");
-    // One canvas for every mode: the faceplates fill it below the 48 px header and the mode toolbar (mode canvas
-    // 322..654 shown at 48..380), and the Digital and Multiband faces fit it in visible-canvas y.
+    // OPTO is laid out on the 1120 x 380 canvas (2026-11-05): its faceplate spans the width below the mode row and
+    // keeps every control inside it, the dials clear of the meter and the trims.
+    require(Layout::left == 0.0f && Layout::right == multicompp::ui_detail::kDesignWidth
+                && Layout::top >= multicompp::ui_detail::kFaceAreaTop
+                && multicompp::ui_detail::kFaceAreaTop >= multicompp::ui_detail::ModeRowLayout::y1
+                && Layout::bottom <= multicompp::ui_detail::kDesignHeight
+                && Layout::meterX + Layout::meterW < Layout::peakX - Layout::dialRadius
+                && Layout::gainX + Layout::dialRadius < Layout::meterX
+                && Layout::peakX + Layout::dialRadius < Layout::trimX - Layout::trimRadius
+                && Layout::left + Layout::ear < Layout::switchX && Layout::trimX < Layout::right - Layout::ear,
+            "Opto faceplate fills the canvas below the mode row and keeps its controls apart");
+    // One canvas for every mode (1120 x 380, owner 2026-11-05). The Digital and Multiband faces stack their title row,
+    // meters, knob rows and foot line inside the rack below the mode row (2026-11-06), each knob's name (16) and value
+    // (17) clear of the rows next to it: a row's values at least 12 px above the next row's names, where 4 px read as
+    // one value-and-name pair.
     {
         using Modern = multicompp::ui_detail::ModernFaceLayout;
-        require(multicompp::ui_detail::kDesignHeight == 380.0f
-                    && multicompp::ui_detail::kDesignHeight == 48.0f + (Layout::bottom - 322.0f),
-                "every mode shares the rack-height canvas the faceplates fill");
-        require(Modern::top >= 70.0f && Modern::bottom <= multicompp::ui_detail::kDesignHeight - 8.0f
-                    && Modern::top < Modern::titleY && Modern::titleY < Modern::meterTitleY
-                    && Modern::meterTitleY < Modern::meterTop && Modern::meterTop < Modern::meterBottom
-                    && Modern::meterBottom < Modern::meterReadoutY && Modern::meterReadoutY < Modern::descriptionY
-                    && Modern::descriptionY < Modern::bottom,
-                "the Digital and Multiband faces fit the rack-height canvas below the mode toolbar");
+        require(multicompp::ui_detail::kDesignWidth == 1120.0f && multicompp::ui_detail::kDesignHeight == 380.0f,
+                "every mode shares the 1120 x 380 canvas");
+        constexpr float dR = Modern::digitalKnobRadius, mR = Modern::multibandKnobRadius;
+        require(Modern::top >= multicompp::ui_detail::kFaceAreaTop && Modern::bottom <= multicompp::ui_detail::kDesignHeight
+                    && Modern::top < Modern::titleY && Modern::titleY + 16.0f < Modern::ruleY
+                    && Modern::ruleY < Modern::meterTitleY && Modern::meterTitleY + 16.0f < Modern::meterTop
+                    && Modern::meterTop < Modern::meterBottom && Modern::meterBottom < Modern::meterReadoutY
+                    && Modern::meterReadoutY + 17.0f < Modern::descriptionY
+                    && Modern::descriptionY + 13.0f < Modern::bottom
+                    && Modern::ruleY < Modern::nameTop(Modern::digitalRow1Y, dR)
+                    && Modern::valueTop(Modern::digitalRow1Y, dR) + 17.0f + 12.0f
+                           < Modern::nameTop(Modern::digitalRow2Y, dR)
+                    && Modern::valueTop(Modern::digitalRow2Y, dR) + 17.0f < Modern::descriptionY
+                    && Modern::bandTagRuleY < Modern::nameTop(Modern::multibandRow1Y, mR)
+                    && Modern::valueTop(Modern::multibandRow1Y, mR) + 17.0f + 12.0f
+                           < Modern::nameTop(Modern::multibandRow2Y, mR)
+                    && Modern::valueTop(Modern::multibandRow2Y, mR) + 17.0f < Modern::descriptionY
+                    && Modern::enableY1 < Modern::tabY0 && Modern::tabY1 < Modern::bandMeterTop
+                    && Modern::bandMeterBottom < Modern::faderBottom && Modern::faderBottom < Modern::bandLegendY
+                    && Modern::bandLegendY + 16.0f < Modern::descriptionY
+                    && Modern::inputMeterX + Modern::meterW < Modern::vuX0 && Modern::vuX1 < Modern::scHpX
+                    && Modern::scHpX < Modern::digitalDividerX
+                    && Modern::inputMeterX + Modern::meterW < Modern::bandsX0
+                    && Modern::bandsX1 < Modern::multibandDividerX
+                    && Modern::digitalColumnX(4) + dR < Modern::outputMeterX
+                    && Modern::multibandKnobX(1.5f) + mR < Modern::outputMeterX,
+                "the Digital and Multiband faces fit the canvas below the mode row, their rows clear of each other");
     }
     {
+        // VCA is laid out on the canvas too (2026-11-06): its faceplate spans the width below the mode row, the
+        // three knobs stay apart, the meter keys sit under COMPRESSION and OUTPUT GAIN, and the meter and MIX
+        // between the last knob and the right cheek.
         using Vca = multicompp::ui_detail::VcaFaceplateLayout;
-        const float vcaAspect = multicompp::ui_detail::vcaFaceplateAspect();
-        require(Vca::left == 0.0f && Vca::right == 1120.0f && Vca::top == 344.0f && Vca::bottom == 654.0f
-                    && std::abs(vcaAspect - referenceAspect) < 0.01f,
-                "VCA faceplate shares the rack-height canvas with the Opto and FET faces");
+        using Meter = multicompp::ui_detail::VcaMeterRect;
+        constexpr float keysRight = Vca::keysX + 3.0f * Vca::keyW + 2.0f * Vca::keyGap;
+        require(Vca::left == 0.0f && Vca::right == multicompp::ui_detail::kDesignWidth
+                    && Vca::top >= multicompp::ui_detail::kFaceAreaTop
+                    && Vca::bottom <= multicompp::ui_detail::kDesignHeight
+                    && Vca::left + Vca::cheek < Vca::thresholdX - Vca::knobRadius
+                    && Vca::thresholdX + Vca::knobRadius < Vca::compressionX - Vca::compressionRadius
+                    && Vca::compressionX + Vca::compressionRadius < Vca::outputX - Vca::knobRadius
+                    && Vca::keysX < Vca::compressionX && Vca::outputX < keysRight
+                    && Vca::outputX + Vca::knobRadius < Meter::x0 && Meter::x1 < Vca::mixX - Vca::mixRadius
+                    && Vca::mixX + Vca::mixRadius < Vca::right - Vca::cheek
+                    && Vca::top + Vca::rail < Vca::titleY && Vca::keyBracketY < Vca::bottom - Vca::rail
+                    && Vca::top + Vca::rail < Meter::y0 && Meter::y1 < Vca::bottom - Vca::rail,
+                "VCA faceplate fills the canvas below the mode row and keeps its controls apart");
+    }
+    {
+        // BUS is laid out on the canvas too (2026-11-06): its plate spans the width below the mode row, the frame
+        // holds the meter column and both rows, the columns stay apart, and the first row's read-out line (a value
+        // beyond THRESHOLD's or MAKE-UP's travel) clears the second row's numerals.
+        using Bus = multicompp::ui_detail::BusFaceplateLayout;
+        require(Bus::left == 0.0f && Bus::right == multicompp::ui_detail::kDesignWidth
+                    && Bus::top >= multicompp::ui_detail::kFaceAreaTop
+                    && Bus::bottom <= multicompp::ui_detail::kDesignHeight
+                    && Bus::left + Bus::ear < Bus::frameX0 && Bus::frameX1 < Bus::right - Bus::ear
+                    && Bus::top < Bus::frameY0 && Bus::frameY1 < Bus::bottom
+                    && Bus::frameX0 < Bus::meterX0 && Bus::meterX1 < Bus::col0 - Bus::labelRadius
+                    && Bus::frameY0 < Bus::row1Y - Bus::labelRadius - 8.0f
+                    && Bus::row1Y + Bus::readoutDrop + 17.0f < Bus::row2Y - Bus::labelRadius - 8.0f
+                    && Bus::row2Y + Bus::legendDrop + 16.0f < Bus::frameY1
+                    && Bus::col0 < Bus::col1 && Bus::col1 < Bus::col2 && Bus::col2 < Bus::col3
+                    && Bus::col3 < Bus::col4 && Bus::col4 + Bus::labelRadius < Bus::frameX1,
+                "BUS faceplate fills the canvas below the mode row and keeps its controls apart");
+    }
+    {
+        // STUDIO VCA is laid out on the canvas too (2026-11-06): its plate spans the width below the mode row, the
+        // round meters sit inside it between the THRESHOLD and MAKE UP GAIN columns, apart from each other and the
+        // dials' numerals, and the switch and the bottom legends clear the meters.
+        using Svca = multicompp::ui_detail::StudioVcaFaceplateLayout;
+        constexpr float reach = Svca::dialRadius + Svca::numeralOffset;   // a dial's numeral anchors
+        require(Svca::left == 0.0f && Svca::right == multicompp::ui_detail::kDesignWidth
+                    && Svca::top >= multicompp::ui_detail::kFaceAreaTop
+                    && Svca::bottom <= multicompp::ui_detail::kDesignHeight
+                    && Svca::left < Svca::inputX - reach && Svca::inputX < Svca::ratioX
+                    && Svca::ratioX < Svca::lampX && Svca::lampX < Svca::thresholdX
+                    && Svca::thresholdX + reach < Svca::ioX - Svca::meterRadius
+                    && Svca::ioX + Svca::meterRadius < Svca::grX - Svca::meterRadius
+                    && Svca::grX + Svca::meterRadius < Svca::makeupX - reach && Svca::makeupX + reach < Svca::right
+                    && Svca::top < Svca::ioY - Svca::meterRadius && Svca::ioY + Svca::meterRadius < Svca::switchY
+                    && Svca::top < Svca::grY - Svca::meterRadius
+                    && Svca::grY + Svca::meterRadius < Svca::row2Y + Svca::legendDrop
+                    && Svca::row2Y + Svca::legendDrop + 16.0f < Svca::bottom,
+                "Studio VCA faceplate fills the canvas below the mode row and keeps its controls apart");
     }
 
     require(!multicompp::ui_detail::vcaSignalAboveThreshold(-30.0f, -10.0f)
@@ -1055,11 +1137,16 @@ void testOptoFaceplateContract()
                 && !multicompp::ui_detail::vcaSignalAboveThreshold(
                        std::numeric_limits<float>::quiet_NaN(), -10.0f),
             "VCA threshold lamps split below/at-or-above the threshold and stay dark on non-finite input");
+    // The other faces' words (owner 2026-11-06): GR on the key, GAIN REDUCTION on the meter only while GR is
+    // selected; the caption names the source the needle shows.
     require(std::strcmp(multicompp::ui_detail::vcaMeterSourceLabel(0), "INPUT") == 0
                 && std::strcmp(multicompp::ui_detail::vcaMeterSourceLabel(1), "OUTPUT") == 0
-                && std::strcmp(multicompp::ui_detail::vcaMeterSourceLabel(2), "GAIN CHANGE") == 0
+                && std::strcmp(multicompp::ui_detail::vcaMeterSourceLabel(2), "GAIN REDUCTION") == 0
+                && std::strcmp(multicompp::ui_detail::vcaMeterKeyLegend(0), "INPUT") == 0
+                && std::strcmp(multicompp::ui_detail::vcaMeterKeyLegend(1), "OUTPUT") == 0
+                && std::strcmp(multicompp::ui_detail::vcaMeterKeyLegend(2), "GR") == 0
                 && multicompp::ui_detail::kVcaMeterSourceCount == 3,
-            "VCA meter selector exposes the reference INPUT/OUTPUT/GAIN CHANGE sources");
+            "VCA meter keys read INPUT / OUTPUT / GR and the meter's caption names the selected source");
     {
         bool captionsMatchModes = true;
         for (size_t mode = 0; mode < multicompp::ui_detail::kModeTabLabels.size(); ++mode)
@@ -1163,10 +1250,11 @@ void testOptoFaceplateContract()
                 && multicompp::ui_detail::optoMeterReadoutAmount(1.0f) == 0.0f
                 && multicompp::ui_detail::optoMeterReadoutAmount(-150.0f) == 99.9f,
             "Opto GR readout is positive, bounded, and never displays negative zero");
-    std::printf("opto faceplate: aspect %.6f reference %.6f; meter scale=voltage VU "
+    std::printf("opto faceplate: %.0f x %.0f on the canvas; meter scale=voltage VU "
                 "with red overload marks; meter angles "
                 "0/10/20 dB %.6f/%.6f/%.6f rad; modes %s/%s\n",
-                aspect, referenceAspect, zero, ten, twenty,
+                static_cast<double>(Layout::right - Layout::left), static_cast<double>(Layout::bottom - Layout::top),
+                zero, ten, twenty,
                 multicompp::ui_detail::optoModeLabel(0.0f),
                 multicompp::ui_detail::optoModeLabel(1.0f));
 }
@@ -1486,12 +1574,13 @@ void testHostNamesAndTaperedText()
         inert += multicompp::isInertParameter(static_cast<uint32_t>(i)) ? 1 : 0;
     require(inert == 4, "exactly the four fixed VCA controls are hidden as inert");
 
+    // FET Attack is tapered too, but reads as its 1-7 dial (testFetTimingHostText).
     int tapered = 0;
     for (int i = 0; i < multicompp::kTotalParamCount; i = multicompp::nextControlParameter(i))
     {
         multicompp::resolveParameter(i,
             [&](const auto& d) {
-                if (!multicompp::hasSkew(d)) return;
+                if (!multicompp::hasSkew(d) || multicompp::fetTimingUsesDialReadout(static_cast<uint32_t>(i))) return;
                 ++tapered;
                 for (const float position : {0.0f, 0.25f, 0.5f, 0.75f, 1.0f})
                 {
@@ -1515,17 +1604,24 @@ void testHostNamesAndTaperedText()
                         "a tapered band control shows its unit");
             });
     }
-    require(tapered == 23, "23 tapered controls get plain-value text");
+    require(tapered == 22, "the 22 tapered controls other than FET Attack get plain-value text");
 
     const auto textOf = [](const auto& d, float plain) {
         char text[64] = {};
         multicompp::formatTaperedText(d, multicompp::plainToHost(d, plain), text, sizeof(text));
         return std::string(text);
     };
-    const auto& fetAttack = multicompp::kParams[static_cast<size_t>(multicompp::ParamId::FetAttack)];
+    const auto fetAttackDialText = [](float plain) {
+        const auto attack = static_cast<uint32_t>(multicompp::ParamId::FetAttack);
+        char text[32] = {};
+        multicompp::formatFetTimingText(attack, multicompp::plainToHost(multicompp::kParams[attack], plain), text,
+                                        sizeof(text));
+        return std::string(text);
+    };
+    const auto& digitalAttack = multicompp::kParams[static_cast<size_t>(multicompp::ParamId::DigitalAttack)];
     const auto& crossover3 = multicompp::kParams[static_cast<size_t>(multicompp::ParamId::Crossover3)];
     const auto& sidechainHp = multicompp::kParams[static_cast<size_t>(multicompp::ParamId::SidechainHP)];
-    require(textOf(fetAttack, 0.2f) == "0.20 ms", "FET Attack reads in milliseconds");
+    require(fetAttackDialText(0.2f) == "2.0", "FET Attack reads as its dial: 2.0 at its default");
     require(textOf(crossover3, 8000.0f) == "8 kHz", "a crossover reads in kHz from 1000 Hz up");
     require(textOf(sidechainHp, 0.0f) == "Off", "SC HP at 0 Hz reads Off");
     float host = -1.0f;
@@ -1533,7 +1629,7 @@ void testHostNamesAndTaperedText()
                 && std::abs(multicompp::hostToPlain(crossover3, host) - 8000.0f) < 1.0f,
             "a typed 8k sets 8000 Hz");
     require(multicompp::parseTaperedText(sidechainHp, "off", host) && host == 0.0f, "a typed Off turns SC HP off");
-    require(!multicompp::parseTaperedText(fetAttack, "50 Hz", host), "a typed value in the wrong unit is rejected");
+    require(!multicompp::parseTaperedText(digitalAttack, "50 Hz", host), "a typed value in the wrong unit is rejected");
     char vcaText[32] = {};
     require(multicompp::formatVcaCompressionText(duskaudio::vcaLaw::compressPosition(4.0f), vcaText, sizeof(vcaText))
                 && std::string(vcaText) == "4.0:1",
@@ -1556,7 +1652,204 @@ void testHostNamesAndTaperedText()
                 && std::abs(duskaudio::vcaLaw::compressRatio(position) - 150.0f) < 1.0f,
             "a finite ratio of 100:1 or more reads as a number and round-trips");
     std::printf("host text: FET Attack %s, Crossover 3 %s, SC HP %s\n",
-                textOf(fetAttack, 0.2f).c_str(), textOf(crossover3, 8000.0f).c_str(), textOf(sidechainHp, 0.0f).c_str());
+                fetAttackDialText(0.2f).c_str(), textOf(crossover3, 8000.0f).c_str(), textOf(sidechainHp, 0.0f).c_str());
+}
+
+// FET Attack and FET Release read in a host as the FET faces' 1-7 dials (owner, 2026-11-06), not as the legacy
+// milliseconds: Release's "50 ms" was the dial's slowest setting (about 1.1 s) and "1100 ms" its fastest, and Attack's
+// milliseconds a position in disguise. Host ranges, sessions and automation are unchanged. The text is the faces' law
+// (fetTimingDialValue) to one decimal, with no unit; typed text reads back through the same law, Attack's also SLO.
+void testFetTimingHostText()
+{
+    const auto attack = static_cast<uint32_t>(multicompp::ParamId::FetAttack);
+    const auto release = static_cast<uint32_t>(multicompp::ParamId::FetRelease);
+    const auto& attackDescriptor = multicompp::kParams[attack];
+    const auto& releaseDescriptor = multicompp::kParams[release];
+    const auto textOf = [](uint32_t parameter, float host) {
+        char text[32] = {};
+        return multicompp::formatFetTimingText(parameter, host, text, sizeof(text)) ? std::string(text)
+                                                                                     : std::string("(none)");
+    };
+    require(std::string_view(attackDescriptor.unit).empty() && std::string_view(releaseDescriptor.unit).empty(),
+            "FET Attack and FET Release carry no unit: their values place the dials, they are not times");
+    require(releaseDescriptor.min == duskaudio::kFetReleaseMinMs && releaseDescriptor.max == duskaudio::kFetReleaseMaxMs
+                && releaseDescriptor.min == 50.0f && releaseDescriptor.max == 1100.0f
+                && !multicompp::hasSkew(releaseDescriptor),
+            "FET Release keeps its legacy 50..1100 range, the one duskaudio::fetReleasePositionFromMilliseconds reads");
+
+    // The stops, quarters and middle of each host range, and the defaults (Attack 0.20 ms, Release 400).
+    struct Reading { uint32_t parameter; float host; const char* text; };
+    const Reading readings[] = {
+        {attack, 0.0f, "1.0"}, {attack, 0.25f, "2.5"}, {attack, 0.5f, "4.0"}, {attack, 0.75f, "5.5"},
+        {attack, 1.0f, "7.0"}, {attack, multicompp::hostDefault(attackDescriptor), "2.0"},
+        {release, 50.0f, "1.0"}, {release, 312.5f, "2.5"}, {release, 575.0f, "4.0"}, {release, 837.5f, "5.5"},
+        {release, 1100.0f, "7.0"}, {release, multicompp::hostDefault(releaseDescriptor), "3.0"}};
+    for (const Reading& r : readings)
+    {
+        const std::string text = textOf(r.parameter, r.host);
+        if (text != r.text)
+            std::fprintf(stderr, "%s at %.7g reads \"%s\", expected \"%s\"\n", multicompp::kParams[r.parameter].name,
+                         static_cast<double>(r.host), text.c_str(), r.text);
+        require(text == r.text, "FET Attack and FET Release read as their 1-7 dials, one decimal, no unit");
+    }
+    char tooSmall[3] = {};
+    require(!multicompp::formatFetTimingText(release, 575.0f, tooSmall, sizeof(tooSmall))
+                && !multicompp::formatFetTimingText(release, std::numeric_limits<float>::quiet_NaN(), tooSmall,
+                                                    sizeof(tooSmall))
+                && textOf(static_cast<uint32_t>(multicompp::ParamId::FetInput), 0.0f) == "(none)",
+            "dial text needs room and a finite value, and only the FET timing dials have it");
+
+    // Typed text: a dial reading, or SLO on Attack, sets the exact host value; a reading off the dial is held to its
+    // 1-7 travel, as the face holds a gesture.
+    struct Typed { uint32_t parameter; const char* text; float host; };
+    const Typed typed[] = {
+        {attack, "1", 0.0f}, {attack, "1.0", 0.0f}, {attack, "2.5", 0.25f}, {attack, "4", 0.5f},
+        {attack, "4.0", 0.5f}, {attack, " 5.5 ", 0.75f}, {attack, "7", 1.0f}, {attack, "7.0", 1.0f},
+        {attack, "SLO", 0.0f}, {attack, "slo", 0.0f}, {attack, "Slo", 0.0f}, {attack, " SLO ", 0.0f},
+        {attack, "0", 0.0f}, {attack, "9", 1.0f},
+        {release, "1", 50.0f}, {release, "2.5", 312.5f}, {release, "3", 400.0f}, {release, "3.0", 400.0f},
+        {release, "3.5", 487.5f}, {release, "4", 575.0f}, {release, "5.5", 837.5f}, {release, "7", 1100.0f},
+        {release, "0", 50.0f}, {release, "9", 1100.0f}};
+    for (const Typed& t : typed)
+    {
+        float host = -1.0f;
+        const bool parsed = multicompp::parseFetTimingText(t.parameter, t.text, host);
+        if (!parsed || host != t.host)
+            std::fprintf(stderr, "%s typed \"%s\": %s %.9g, expected %.9g\n", multicompp::kParams[t.parameter].name,
+                         t.text, parsed ? "host" : "refused", static_cast<double>(host), static_cast<double>(t.host));
+        require(parsed && host == t.host, "a typed dial reading, or SLO on Attack, sets the exact host value");
+    }
+    float host = -1.0f;
+    require(multicompp::parseFetTimingText(attack, "3.5", host) && host == multicompp::fetTimingHostValue(3.5f, attack)
+                && std::abs(host - 2.5f / 6.0f) < 1.0e-7f,
+            "a typed 3.5 on Attack sets the law's position, 2.5 / 6 of the travel");
+    require(multicompp::parseFetTimingText(attack, multicompp::kFetSloText, host)
+                && duskaudio::fetAttackPositionFromMilliseconds(multicompp::hostToPlain(attackDescriptor, host)) == 0.0f,
+            "SLO typed in a host engages the DSP's SLO detent (Attack position 0)");
+    for (const char* bad : {"", " ", "abc", "4 ms", "4ms", "3,5", "4 4", "SLOW", "SL0", "nan", "inf", "1e400"})
+    {
+        float refused = -1.0f;
+        const bool attackTook = multicompp::parseFetTimingText(attack, bad, refused);
+        const bool releaseTook = multicompp::parseFetTimingText(release, bad, refused);
+        if (attackTook || releaseTook) std::fprintf(stderr, "typed \"%s\" was accepted\n", bad);
+        require(!attackTook && !releaseTook, "typed text other than a dial reading is refused, a unit included");
+    }
+    require(!multicompp::parseFetTimingText(release, "SLO", host), "Release has no SLO stop");
+    require(!multicompp::parseFetTimingText(attack, nullptr, host)
+                && !multicompp::parseFetTimingText(static_cast<uint32_t>(multicompp::ParamId::FetInput), "4", host),
+            "dial text needs a string and a FET timing dial");
+
+    // Every reading a host shows reads back to itself.
+    int readBack = 0;
+    for (int tenth = 10; tenth <= 70; ++tenth)
+        for (const uint32_t parameter : {attack, release})
+        {
+            char shown[8] = {};
+            std::snprintf(shown, sizeof(shown), "%d.%d", tenth / 10, tenth % 10);
+            float typedHost = -1.0f;
+            const bool parsed = multicompp::parseFetTimingText(parameter, shown, typedHost);
+            const std::string again = textOf(parameter, typedHost);
+            if (!parsed || again != shown)
+                std::fprintf(stderr, "%s: \"%s\" reads back as \"%s\"\n", multicompp::kParams[parameter].name, shown,
+                             again.c_str());
+            require(parsed && again == shown, "every dial reading a host shows reads back to itself");
+            ++readBack;
+        }
+
+    // The text names the position the DSP plays, read through the core's own laws from the plain value the DSP
+    // receives, at every host position (offset half a step, so none sits on a rounding tie).
+    double worst[2] = {0.0, 0.0};
+    for (const uint32_t parameter : {attack, release})
+    {
+        const auto& d = multicompp::kParams[parameter];
+        const float slow = multicompp::hostMin(d), span = multicompp::hostMax(d) - slow;
+        for (int i = 0; i < 1000; ++i)
+        {
+            const float hostValue = slow + span * (static_cast<float>(i) + 0.5f) / 1000.0f;
+            const float plain = multicompp::hostToPlain(d, hostValue);
+            const float dsp = 1.0f + 6.0f * (parameter == attack ? duskaudio::fetAttackPositionFromMilliseconds(plain)
+                                                                 : duskaudio::fetReleasePositionFromMilliseconds(plain));
+            double& gap = worst[parameter == attack ? 0 : 1];
+            gap = std::max(gap, std::abs(static_cast<double>(multicompp::fetTimingDialValue(hostValue, parameter) - dsp)));
+            char dspText[32] = {};
+            multicompp::formatFixed(dspText, sizeof(dspText), static_cast<double>(dsp), 1);
+            const std::string text = textOf(parameter, hostValue);
+            if (text != dspText)
+                std::fprintf(stderr, "%s at %.7g reads %s, the DSP plays %s\n", d.name, static_cast<double>(hostValue),
+                             text.c_str(), dspText);
+            require(text == dspText, "FET Attack's and FET Release's text names the dial position the DSP plays");
+        }
+    }
+    std::printf("FET timing host text: %zu readings, %zu typed, %d read back; dial vs the DSP's law within %.2g "
+                "(Attack), %.2g (Release)\n", std::size(readings), std::size(typed), readBack, worst[0], worst[1]);
+}
+
+// Host text in a comma-decimal locale. A host process that sets LC_NUMERIC (Qt and GTK hosts on Linux follow the
+// user's locale) made printf write "0,20 ms", and the kHz trim turned 8000 Hz into "8, kHz"; the parsers read the
+// classic locale, so the host's own text did not read back. Host text is '.'-decimal in every locale.
+void testHostTextIgnoresTheNumericLocale()
+{
+    const char* const previous = std::setlocale(LC_NUMERIC, nullptr);
+    const std::string restore = previous != nullptr ? previous : "C";
+    const char* commaLocale = nullptr;
+    for (const char* name : {"de_DE.UTF-8", "de_DE.utf8", "de_DE", "fr_FR.UTF-8", "fr_FR.utf8", "nl_NL.UTF-8", "de-DE"})
+        if (std::setlocale(LC_NUMERIC, name) != nullptr && std::strcmp(std::localeconv()->decimal_point, ",") == 0)
+        {
+            commaLocale = name;
+            break;
+        }
+    if (commaLocale == nullptr)
+    {
+        std::setlocale(LC_NUMERIC, restore.c_str());
+#if defined(__APPLE__)
+        require(false, "macOS ships a comma-decimal locale for the host-text locale check");
+#else
+        std::puts("SKIP host text in a comma-decimal locale: none installed");
+#endif
+        return;
+    }
+    const auto textOf = [](const auto& d, float plain) {
+        char text[64] = {};
+        multicompp::formatTaperedText(d, multicompp::plainToHost(d, plain), text, sizeof(text));
+        return std::string(text);
+    };
+    const auto dialTextOf = [](uint32_t parameter, float host) {
+        char text[32] = {};
+        return multicompp::formatFetTimingText(parameter, host, text, sizeof(text)) ? std::string(text)
+                                                                                     : std::string("(none)");
+    };
+    const auto attack = static_cast<uint32_t>(multicompp::ParamId::FetAttack);
+    const auto release = static_cast<uint32_t>(multicompp::ParamId::FetRelease);
+    const auto& crossover3 = multicompp::kParams[static_cast<size_t>(multicompp::ParamId::Crossover3)];
+    // The FET timing dials at the slow stop, the middle and the fast stop (Attack 0 / 0.5 / 1, Release 50 / 575 /
+    // 1100), and a reading typed back.
+    const std::string attackSlow = dialTextOf(attack, 0.0f), attackMiddle = dialTextOf(attack, 0.5f),
+                      attackFast = dialTextOf(attack, 1.0f), releaseSlow = dialTextOf(release, 50.0f),
+                      releaseMiddle = dialTextOf(release, 575.0f), releaseFast = dialTextOf(release, 1100.0f),
+                      releaseTyped = dialTextOf(release, 487.5f);
+    const std::string crossover = textOf(crossover3, 8000.0f), crossoverHalf = textOf(crossover3, 8500.0f);
+    char vcaText[32] = {};
+    const bool vcaFormatted = multicompp::formatVcaCompressionText(
+        duskaudio::vcaLaw::compressPosition(4.0f), vcaText, sizeof(vcaText));
+    float host = -1.0f, attackHost = -1.0f, releaseHost = -1.0f;
+    const bool crossoverParsed = multicompp::parseTaperedText(crossover3, crossoverHalf.c_str(), host)
+        && std::abs(multicompp::hostToPlain(crossover3, host) - 8500.0f) < 1.0f;
+    const bool dialsParsed = multicompp::parseFetTimingText(attack, attackMiddle.c_str(), attackHost)
+        && multicompp::parseFetTimingText(release, releaseTyped.c_str(), releaseHost);
+    std::setlocale(LC_NUMERIC, restore.c_str());
+    std::printf("host text in %s: FET Attack %s / %s / %s, FET Release %s / %s / %s (487.5: %s), Crossover 3 %s / %s, "
+                "VCA Compression %s\n", commaLocale, attackSlow.c_str(), attackMiddle.c_str(), attackFast.c_str(),
+                releaseSlow.c_str(), releaseMiddle.c_str(), releaseFast.c_str(), releaseTyped.c_str(),
+                crossover.c_str(), crossoverHalf.c_str(), vcaText);
+    require(attackSlow == "1.0" && attackMiddle == "4.0" && attackFast == "7.0",
+            "FET Attack reads 1.0 / 4.0 / 7.0 at its stops and middle in a comma-decimal locale");
+    require(releaseSlow == "1.0" && releaseMiddle == "4.0" && releaseFast == "7.0" && releaseTyped == "3.5",
+            "FET Release reads 1.0 / 4.0 / 7.0 at its stops and middle, 3.5 at 487.5, in a comma-decimal locale");
+    require(crossover == "8 kHz" && crossoverHalf == "8.5 kHz", "a crossover reads 8 kHz / 8.5 kHz in a comma-decimal locale");
+    require(vcaFormatted && std::string(vcaText) == "4.0:1", "VCA Compression reads 4.0:1 in a comma-decimal locale");
+    require(crossoverParsed, "the host's own text reads back in a comma-decimal locale");
+    require(dialsParsed && attackHost == 0.5f && releaseHost == 487.5f,
+            "the FET dials' own text reads back to the exact host values in a comma-decimal locale");
 }
 
 // The Digital and Multiband faces keep the original editor's display timing (EnhancedCompressorEditor::updateMeters,
@@ -1674,6 +1967,8 @@ int main(int argc, char** argv)
     testAlphaSessionStateStaysLoadable();
     testOptoReferenceDisplayAndNoiseDefault();
     testHostNamesAndTaperedText();
+    testFetTimingHostText();
+    testHostTextIgnoresTheNumericLocale();
     testEverySwitchHasHostLabels();
     testModernFaceTiming();
     std::puts("Multi-Comp plugin-layer tests: PASS");
