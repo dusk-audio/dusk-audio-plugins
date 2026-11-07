@@ -2035,12 +2035,7 @@ private:
 
         optoModeSwitch(dl, Layout::switchX, Layout::switchY);
         optoKnob(dl, "opto_gain", P_OPTO_GAIN, Layout::gainX, Layout::dialY, Layout::dialRadius, "GAIN");
-        multicompp::ui_detail::VintageMeterScale meterScale;
-        meterScale.detail = Layout::meterW / 238.0f;
-        meterScale.tickLabel = 14.0f;
-        meterScale.sublabel = 13.0f;
-        meterScale.percent = 13.0f;
-        meterScale.vu = 16.0f;
+        const auto meterScale = multicompp::ui_detail::floorVintageMeterScale(Layout::meterW);
         drawOptoMeter(dl, Layout::meterX, Layout::meterY, Layout::meterW, Layout::meterH,
                       multicompp::ui_detail::optoMeterDisplayValue(needleGainReduction()), meterScale);
         optoKnob(dl, "opto_peak", P_OPTO_PEAK, Layout::peakX, Layout::dialY, Layout::dialRadius, "PEAK REDUCTION");
@@ -2291,7 +2286,7 @@ private:
     }
 
     void drawOptoMeter(ImDrawList* dl, float x, float y, float w, float h, float gr,
-                       const multicompp::ui_detail::VintageMeterScale& scale = {})
+                       const multicompp::ui_detail::VintageMeterScale& scale)
     {
         const bool opto = multicompp::ui_detail::choiceIndex(values[P_MODE], 8) == 0;
         const int choice = multicompp::ui_detail::vintageMeterChoice(values[opto ? P_OPTO_METER : P_FET_METER]);
@@ -2452,20 +2447,15 @@ private:
         fetKnob(dl, "fet_rel", P_FET_RELEASE, timingX, Layout::releaseY, Layout::timingRadius, "RELEASE", false,
                 "%.1f", "");
 
-        multicompp::ui_detail::VintageMeterScale meterScale;
-        meterScale.detail = Layout::meterW / 238.0f;
-        meterScale.tickLabel = 14.0f;
-        meterScale.sublabel = 13.0f;
-        meterScale.percent = 13.0f;
-        meterScale.vu = 16.0f;
+        const auto meterScale = multicompp::ui_detail::floorVintageMeterScale(Layout::meterW);
         const float meterCentre = Layout::meterX + 0.5f * Layout::meterW;
         const float reading = multicompp::ui_detail::optoMeterDisplayValue(needleGainReduction());
         if (blue)
         {
             trimScrewKnob(dl, "fet_blue_hr", P_FET_BLUE_HEADROOM, Layout::blueTrimX, Layout::blueHeadroomY,
-                          Layout::trimRadius, "HR", "%.0f", " dB", false, true);
+                          Layout::trimRadius, "HR", "%.0f", " dB", false);
             trimScrewKnob(dl, "fet_mix", P_MIX, Layout::blueTrimX, Layout::blueMixY, Layout::trimRadius,
-                          "MIX", "%.0f", "%", true, true);
+                          "MIX", "%.0f", "%", true);
             drawFetBlueRatioButtons(dl, Layout::blueRatioX, Layout::buttonsY);
             // The blue meter section, top to bottom: the series mark, the VU, the nameplate.
             const ImVec2 b0 = panel.P(Layout::blueSectionX0, top + 4), b1 = panel.P(Layout::blueSectionX1, bottom - 4);
@@ -2494,7 +2484,7 @@ private:
             // Under the meter buttons, labelled below like the face's other knobs so it does not read as a fifth
             // meter row.
             trimScrewKnob(dl, "fet_mix", P_MIX, Layout::blackMixX, Layout::blackMixY, Layout::trimRadius,
-                          "MIX", "%.0f", "%", true, true);
+                          "MIX", "%.0f", "%", true);
         }
         drawFetMeterSwitch(dl, Layout::meterButtonsX, Layout::buttonsY);
     }
@@ -2607,7 +2597,8 @@ private:
         }
         else
         {
-            // FET BLUE's Attack: the stop is the SLO detent, as the reference names it.
+            // The timing rings, Attack and Release on both FET faces, read 1 to 7. On FET BLUE's Attack the stop is
+            // the SLO detent, as the reference names it.
             const std::array<const char*, 4> labels{{
                 sloDetent ? multicompp::kFetSloText : "1", "3", "5", "7"}};
             duskdaf::KnobRingStyle ring;
@@ -2618,7 +2609,7 @@ private:
             ring.markColor = FetTheme::ringDot;
             ring.labelOffset = 20.0f; ring.labelNudgeY = -9.0f; ring.labelSize = 16.0f;
             ring.labelColor = FetTheme::ringLabel;
-            ring.labelCentred = true;
+            ring.labelCentred = false;   // outward on every timing ring: SLO, the widest, clears its stop's dot
             for (int tick = 0; tick <= 6; ++tick)
             {
                 const bool major = tick % 2 == 0;
@@ -2701,11 +2692,10 @@ private:
         fetKnobSplitter.Merge(dl);
     }
 
-    // floorText: the legend and travel marks at the readability floor (16 px, the faces laid out on the canvas);
-    // false keeps the VCA face's own small lettering.
+    // The legend and its travel marks at the readability floor (16 px).
     void trimScrewKnob(ImDrawList* dl, const char* id, uint32_t p,
                      float x, float y, float radius, const char* label,
-                     const char* format, const char* suffix, bool labelBelow = false, bool floorText = false)
+                     const char* format, const char* suffix, bool labelBelow = false)
     {
         // The Opto face established the fleet contract for non-reference
         // controls: keep the full parameter available as a small set-screw trim
@@ -2760,23 +2750,11 @@ private:
                     ImVec2(center.x + pointer.x * r * 0.58f,
                            center.y + pointer.y * r * 0.58f),
                     TrimScrewTheme::slot, 2.0f * scale);
-        if (floorText)
-        {
-            const float nut = radius * 1.18f;
-            panel.text(dl, x, labelBelow ? y + nut + 5.0f : y - nut - 21.0f, 16.0f,
-                       TrimScrewTheme::legend, label, 0, true);
-            panel.text(dl, x - nut - 15.0f, y - 9.0f, 16.0f, TrimScrewTheme::minus, "-", 0, true);
-            panel.text(dl, x + nut + 15.0f, y - 9.0f, 16.0f, TrimScrewTheme::plus, "+", 0, true);
-        }
-        else
-        {
-            panel.text(dl, x, labelBelow ? y + radius + 9.0f : y - 38.0f, 7.5f,
-                       TrimScrewTheme::legend, label, 0, true);
-            panel.text(dl, x - 27.0f, y - 5.0f, 10.0f,
-                       TrimScrewTheme::minus, "-", 0, true);
-            panel.text(dl, x + 27.0f, y - 5.0f, 10.0f,
-                       TrimScrewTheme::plus, "+", 0, true);
-        }
+        const float nutRadius = radius * 1.18f;
+        panel.text(dl, x, labelBelow ? y + nutRadius + 5.0f : y - nutRadius - 21.0f, 16.0f,
+                   TrimScrewTheme::legend, label, 0, true);
+        panel.text(dl, x - nutRadius - 15.0f, y - 9.0f, 16.0f, TrimScrewTheme::minus, "-", 0, true);
+        panel.text(dl, x + nutRadius + 15.0f, y - 9.0f, 16.0f, TrimScrewTheme::plus, "+", 0, true);
         fetKnobSplitter.Merge(dl);
     }
 
@@ -3112,8 +3090,7 @@ private:
         spacedText(dl, meterCentre, Layout::seriesY, 13.0f, kVcaInk, "REFERENCE SERIES", 0, 0.12f);
         spacedText(dl, meterCentre, Layout::badgeY, 20.0f, VcaTheme::badgeInk, "MC-2", 0, 0.12f);
         spacedText(dl, meterCentre, Layout::nameplateY, 16.0f, kVcaInk, "COMPRESSOR/LIMITER", 0, 0.12f);
-        trimScrewKnob(dl, "vca_mix", P_MIX, Layout::mixX, Layout::mixY, Layout::mixRadius, "MIX", "%.0f", "%", true,
-                      true);
+        trimScrewKnob(dl, "vca_mix", P_MIX, Layout::mixX, Layout::mixY, Layout::mixRadius, "MIX", "%.0f", "%", true);
     }
 
     void vcaPullSwitch(ImDrawList* dl, float x, float y)

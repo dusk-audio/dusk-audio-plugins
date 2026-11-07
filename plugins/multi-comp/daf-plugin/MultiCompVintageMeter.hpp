@@ -55,8 +55,9 @@ inline duskdaf::VuStyle vintageVuStyle(bool opto) noexcept
     return style;
 }
 
-// A meter drawn larger than the faces' 238 x 141 (the Opto face at the readability floor): its geometry follows
-// `detail` (bezel, insets, ticks, needle) and its text the sizes given. The defaults draw the faces' meter as it was.
+// How large the meter draws: its geometry follows `detail` (bezel, insets, ticks and needle; 1 is the old faces'
+// 238 px meter) and its text the sizes given. The member defaults are those faces' lettering, below the readability
+// floor: the faces draw at floorVintageMeterScale, and drawVintageMeter takes its scale from every caller.
 struct VintageMeterScale
 {
     float detail = 1.0f;
@@ -66,11 +67,24 @@ struct VintageMeterScale
     float vu = 9.0f;          // the VU marks in the corners
 };
 
+// The Opto and FET faces' meter at the readability floor (owner 2026-11-05: the meter's dB scale at 14 and its small
+// print at 13): geometry scaled to the meter's width, the dB scale at 14, the captions and the second scale at 13, the
+// VU marks at the legend size (16). The faces and the render test both draw it from here.
+inline VintageMeterScale floorVintageMeterScale(float meterWidth) noexcept
+{
+    VintageMeterScale scale;
+    scale.detail = meterWidth / 238.0f;
+    scale.tickLabel = 14.0f;
+    scale.sublabel = 13.0f;
+    scale.percent = 13.0f;
+    scale.vu = 16.0f;
+    return scale;
+}
+
 inline void drawVintageMeter(duskdaf::DuskPanel& panel, ImDrawList* dl,
                                           float x, float y, float w, float h,
                                           float db, bool opto,
-                                          const char* sublabel = "GAIN REDUCTION", bool powered = true,
-                                          const VintageMeterScale& scale = VintageMeterScale())
+                                          const char* sublabel, bool powered, const VintageMeterScale& scale)
 {
     const float s = panel.scale();
     const float d = scale.detail;

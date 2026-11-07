@@ -13911,10 +13911,11 @@ int main(int argc, char** argv)
     { testBypassAndListenLinesHoldBothLookaheads(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--wide-latency") == 0)
     { testWideDigitalLatencyContract(); return 0; }
-    // Also in the default run; separately reachable for its break-first proof against the core that rounded Digital's
-    // lookahead at the mode rate.
+    // Also in the default run; separately reachable for its break-first proof against the FET presets copied as times.
     if (argc == 2 && std::strcmp(argv[1], "--fet-preset-dials") == 0)
     { testFetPresetsSetTheirDials(); return 0; }
+    // Also in the default run; separately reachable for its break-first proof against the core that rounded Digital's
+    // lookahead at the mode rate.
     if (argc == 2 && std::strcmp(argv[1], "--digital-lookahead-latency") == 0)
     { testDigitalLookaheadDelayMatchesReportedLatency(); return 0; }
     // Also in the default run; separately reachable for their break-first proof against the core whose sidechain

@@ -106,9 +106,12 @@ bool drawVintageCase(float size, bool opto, float db, const char* caption, bool 
     panel.begin(size, origin, ImGui::GetFont(), nullptr);
     auto* dl = ImGui::GetBackgroundDrawList();
     dl->Flags &= ~ImDrawListFlags_AntiAliasedLinesUseTex;
+    // The faces' meters as they ship: the Opto face's 258 x 146 and the FET faces' 252 x 150, at the readability
+    // floor's text sizes (floorVintageMeterScale).
     const float x = opto ? 441 : 743, y = opto ? 405 : 431;
-    const float w = opto ? 238 : 234, h = 141;
-    multicompp::ui_detail::drawVintageMeter(panel, dl, x, y, w, h, db, opto, caption, powered);
+    const float w = opto ? 258 : 252, h = opto ? 146 : 150;
+    multicompp::ui_detail::drawVintageMeter(panel, dl, x, y, w, h, db, opto, caption, powered,
+                                            multicompp::ui_detail::floorVintageMeterScale(w));
     ImGui::Render();
     const auto style = multicompp::ui_detail::vintageVuStyle(opto);
     const auto white = ImGui::GetIO().Fonts->TexUvWhitePixel;
