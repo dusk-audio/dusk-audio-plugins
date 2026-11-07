@@ -33,9 +33,12 @@ next to the original Multi-Comp without replacing it. Thank you to everyone who 
   button, while audio plays now fades the output out, makes the change in silence and fades it back in, all within
   a few milliseconds. Before, most switches cut straight across: the waveform jumped, entering VCA dropped out for
   about 1.4 ms, entering or leaving Multiband replayed or skipped a little audio, and Oversampling changes clicked.
+  With SC Listen on, the key fades as well wherever the switch changes the sidechain filtering you hear, and Auto
+  Makeup does not measure the fade.
 - **Lookahead moves with the switch.** When a switch changes the latency (a Lookahead set, and Digital or
   Multiband against another mode), the dry, bypassed and sidechain-listen signals fade with it, since their delay
-  changes too. A preset or INIT that changes the mode and a Lookahead together no longer steps the output.
+  changes too, and the plugin reports the new latency only once the new delay is in place. A preset or INIT that
+  changes the mode and a Lookahead together no longer steps the output.
 - **AU hosts follow latency changes.** The AU version now tells the host when Lookahead changes the latency, so
   hosts that listen for it, Logic among them, no longer keep the old delay compensation until the project is
   reopened.
@@ -83,7 +86,8 @@ next to the original Multi-Comp without replacing it. Thank you to everyone who 
 Each measured mode is checked against its reference unit on the same audio at the same settings: test signals that
 bring out one behaviour at a time (steady tones, bursts from silence, releases, trains of hits, linked stereo,
 distortion) and 30 music clips at many settings. A reading compares the gain reduction Multi-Comp 2 applies with
-the reference's, and it counts as a difference when the two are more than 1 dB apart.
+the reference's or, on the distortion tests, the level of a harmonic, and it counts as a difference when the two are
+more than 1 dB apart.
 
 On the music clips, every measured mode stays within 1 dB of its reference in every reading but one (FET Blue,
 1.15 dB, one reading of 1,800). The differences below show up on the test signals. Readings more than 1 dB apart,
@@ -118,7 +122,8 @@ measured on November 3, 2026:
 - **LV2 hosts: a factory preset resets the global settings.** A factory preset chosen from an LV2 host's own preset
   list also sets Bypass and the Settings drawer (Oversampling, External Key, Lookahead, Stereo Link and the rest)
   back to their defaults. The plugin's own preset menu, and the AU, VST3 and CLAP versions, leave those settings as
-  they are.
+  they are, apart from a FET Black preset, which returns the drawer's FET Black settings (Threshold, Curve and
+  Transient) to their defaults from every preset list.
 - **Lookahead changes the latency.** A Lookahead adds latency in Digital and Multiband, so changing one there, or
   switching between those modes and another mode while one is set, changes the plugin's latency. VST3 and CLAP hosts
   restart the plugin to take the new latency, which resets the compressor for a moment; AU hosts are told and adjust

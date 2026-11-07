@@ -180,6 +180,7 @@ The OPTO face is shown in the Overview.
 - **THRESHOLD:** -15 to +15 dB, default 0 dB.
 - **RATIO:** 2, 4 or 10; default 2.
 - **MAKE-UP:** 0 to +15 dB, default 0 dB.
+- **Past the knobs' travel:** host automation reaches THRESHOLD -30 dB and MAKE-UP +20 dB, and the Console-Style Glue preset sets THRESHOLD -20 dB. A knob set past its stop rests at the stop and reads the value; turning it brings the value back into its travel, and the face cannot set such a value again.
 - **SC FILTER Hz:** OFF to 500 Hz, default OFF. A high-pass on the detector; 60 to 100 Hz keeps the kick from driving the bus.
 - **MIX %:** 0 to 100%, default 100%. BUS's own blend.
 - **ATTACK ms:** 0.1, 0.3, 1, 3, 10 or 30; default 1. 10 and 30 let transients through.
@@ -332,7 +333,7 @@ MC-2 ships with 13 factory presets, listed in the header in the order below. A f
 
 ### Mix Bus
 
-- **Console-Style Glue.** BUS: THRESHOLD -20 dB, RATIO 4, ATTACK 10 ms, RELEASE Auto, SC FILTER 60 Hz, MAKE-UP 0 dB, AUTO MAKEUP on. The mix bus; set THRESHOLD for 1 to 3 dB of reduction and consider RATIO 2.
+- **Console-Style Glue.** BUS: THRESHOLD -20 dB, past the knob's -15 dB stop (see BUS), RATIO 4, ATTACK 10 ms, RELEASE Auto, SC FILTER 60 Hz, MAKE-UP 0 dB, AUTO MAKEUP on. The mix bus; set THRESHOLD for 1 to 3 dB of reduction and consider RATIO 2.
 - **Gentle Master.** STUDIO VCA: THRESHOLD -24 dB, RATIO 1.5:1, ATTACK 30 ms, RELEASE 0.1 s with AUTO RELEASE off, AUTO MAKEUP on. A low-ratio master bus; set THRESHOLD for 1 to 2 dB, and try AUTO RELEASE for a smoother recovery.
 
 ### Creative
@@ -343,7 +344,7 @@ MC-2 ships with 13 factory presets, listed in the header in the order below. A f
 
 **I hear nothing.** OPTO's GAIN at 0 mutes the output (20 is unity). On BUS, an engaged AUTO FADE fades everything out over RATE seconds; press FADE again. SC LISTEN plays the detector's signal instead of the track, which is silent when EXTERNAL KEY is on and the key carries nothing.
 
-**Nothing compresses.** OPTO does nothing at PEAK REDUCTION 0, its default, and FET BLUE does not compress with no RATIO button lit. Check BYPASS in the mode row, METER OFF on the FET faces and IN on the BUS face: all three are the same bypass. With EXTERNAL KEY on, MC-2 compresses only when the key signal is there.
+**Nothing compresses.** OPTO does nothing at PEAK REDUCTION 0, its default, and FET BLUE does not compress with no RATIO button lit. Check BYPASS in the mode row, METER OFF on the FET faces and IN on the BUS face: all three are the same bypass. With EXTERNAL KEY on, the key alone drives the detector: a sidechain input with nothing routed to it is silent, so nothing compresses. Only a host that gives MC-2 no sidechain input at all leaves the track driving it.
 
 **The face's output or makeup control does nothing.** AUTO MAKEUP is on and has taken over the level. Switch it off to set the level by hand.
 
