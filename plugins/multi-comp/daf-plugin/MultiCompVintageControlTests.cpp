@@ -589,7 +589,7 @@ bool studioVcaEntry()
     return ok;
 }
 
-// FET BLUE's Attack detent (ui_detail::fetAttackAtSlo, fetSloAttackTypedHost). The face must name SLO exactly where
+// FET BLUE's Attack detent (ui_detail::fetAttackAtSlo, parseFetTimingText). The face must name SLO exactly where
 // the DSP takes it: the core reads the plain value the host position converts to through its position law,
 // duskaudio::fetAttackPositionFromMilliseconds (core MultiCompParams.hpp, pow(clamp((ms - min) / (max - min)), skew),
 // the one law both DSP sites read), and engages SLO at position 0. The descriptor carries that law's ends and skew
@@ -630,14 +630,14 @@ bool fetBlueSlo()
     for (const Case& c : cases)
     {
         float host = -1.0f;
-        const bool valid = ui_detail::fetSloAttackTypedHost(c.text, host);
+        const bool valid = parseFetTimingText(attack, c.text, host);
         const bool good = valid == c.valid && (!valid || std::abs(host - c.host) < 1.0e-6f);
         if (!good) std::printf("  \"%s\": %s %.6f\n", c.text, valid ? "accepted" : "refused", host);
         ok &= good;
     }
     // The readout's own text at the detent parses back to the detent.
     float host = -1.0f;
-    ok &= ui_detail::fetSloAttackTypedHost(ui_detail::kFetSloText, host)
+    ok &= parseFetTimingText(attack, kFetSloText, host)
         && ui_detail::fetAttackAtSlo(hostToPlain(descriptor, host));
     std::printf("FET BLUE SLO typed entry: %zu cases\n", std::size(cases));
     return ok;

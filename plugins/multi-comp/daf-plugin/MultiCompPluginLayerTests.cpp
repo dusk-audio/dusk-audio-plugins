@@ -866,17 +866,17 @@ void testFetFaceplateContract()
     const auto release = static_cast<uint32_t>(multicompp::ParamId::FetRelease);
     const auto input = static_cast<uint32_t>(multicompp::ParamId::FetInput);
     const bool timingReadoutUsesDialPosition =
-        multicompp::ui_detail::fetTimingDialValue(multicompp::hostMin(
+        multicompp::fetTimingDialValue(multicompp::hostMin(
             multicompp::kParams[attack]), attack) == 1.0f
-        && multicompp::ui_detail::fetTimingDialValue(multicompp::hostMax(
+        && multicompp::fetTimingDialValue(multicompp::hostMax(
             multicompp::kParams[attack]), attack) == 7.0f
-        && multicompp::ui_detail::fetTimingDialValue(multicompp::hostMin(
+        && multicompp::fetTimingDialValue(multicompp::hostMin(
             multicompp::kParams[release]), release) == 1.0f
-        && multicompp::ui_detail::fetTimingDialValue(multicompp::hostMax(
+        && multicompp::fetTimingDialValue(multicompp::hostMax(
             multicompp::kParams[release]), release) == 7.0f
-        && multicompp::ui_detail::fetTimingHostValue(4.0f, attack) == 0.5f
-        && multicompp::ui_detail::fetTimingHostValue(4.0f, release) == 575.0f
-        && !multicompp::ui_detail::fetTimingUsesDialReadout(input);
+        && multicompp::fetTimingHostValue(4.0f, attack) == 0.5f
+        && multicompp::fetTimingHostValue(4.0f, release) == 575.0f
+        && !multicompp::fetTimingUsesDialReadout(input);
     std::printf("FET faceplate: identity=%s opto-meter=%s ratios=%s mix-only=%s "
                 "concentric-knobs=%s blue-face=%s timing-readout=%s\n",
                 hasBlackFaceIdentity ? "yes" : "no",
@@ -1574,12 +1574,13 @@ void testHostNamesAndTaperedText()
         inert += multicompp::isInertParameter(static_cast<uint32_t>(i)) ? 1 : 0;
     require(inert == 4, "exactly the four fixed VCA controls are hidden as inert");
 
+    // FET Attack is tapered too, but reads as its 1-7 dial (testFetTimingHostText).
     int tapered = 0;
     for (int i = 0; i < multicompp::kTotalParamCount; i = multicompp::nextControlParameter(i))
     {
         multicompp::resolveParameter(i,
             [&](const auto& d) {
-                if (!multicompp::hasSkew(d)) return;
+                if (!multicompp::hasSkew(d) || multicompp::fetTimingUsesDialReadout(static_cast<uint32_t>(i))) return;
                 ++tapered;
                 for (const float position : {0.0f, 0.25f, 0.5f, 0.75f, 1.0f})
                 {
@@ -1603,17 +1604,24 @@ void testHostNamesAndTaperedText()
                         "a tapered band control shows its unit");
             });
     }
-    require(tapered == 23, "23 tapered controls get plain-value text");
+    require(tapered == 22, "the 22 tapered controls other than FET Attack get plain-value text");
 
     const auto textOf = [](const auto& d, float plain) {
         char text[64] = {};
         multicompp::formatTaperedText(d, multicompp::plainToHost(d, plain), text, sizeof(text));
         return std::string(text);
     };
-    const auto& fetAttack = multicompp::kParams[static_cast<size_t>(multicompp::ParamId::FetAttack)];
+    const auto fetAttackDialText = [](float plain) {
+        const auto attack = static_cast<uint32_t>(multicompp::ParamId::FetAttack);
+        char text[32] = {};
+        multicompp::formatFetTimingText(attack, multicompp::plainToHost(multicompp::kParams[attack], plain), text,
+                                        sizeof(text));
+        return std::string(text);
+    };
+    const auto& digitalAttack = multicompp::kParams[static_cast<size_t>(multicompp::ParamId::DigitalAttack)];
     const auto& crossover3 = multicompp::kParams[static_cast<size_t>(multicompp::ParamId::Crossover3)];
     const auto& sidechainHp = multicompp::kParams[static_cast<size_t>(multicompp::ParamId::SidechainHP)];
-    require(textOf(fetAttack, 0.2f) == "0.20 ms", "FET Attack reads in milliseconds");
+    require(fetAttackDialText(0.2f) == "2.0", "FET Attack reads as its dial: 2.0 at its default");
     require(textOf(crossover3, 8000.0f) == "8 kHz", "a crossover reads in kHz from 1000 Hz up");
     require(textOf(sidechainHp, 0.0f) == "Off", "SC HP at 0 Hz reads Off");
     float host = -1.0f;
@@ -1621,7 +1629,7 @@ void testHostNamesAndTaperedText()
                 && std::abs(multicompp::hostToPlain(crossover3, host) - 8000.0f) < 1.0f,
             "a typed 8k sets 8000 Hz");
     require(multicompp::parseTaperedText(sidechainHp, "off", host) && host == 0.0f, "a typed Off turns SC HP off");
-    require(!multicompp::parseTaperedText(fetAttack, "50 Hz", host), "a typed value in the wrong unit is rejected");
+    require(!multicompp::parseTaperedText(digitalAttack, "50 Hz", host), "a typed value in the wrong unit is rejected");
     char vcaText[32] = {};
     require(multicompp::formatVcaCompressionText(duskaudio::vcaLaw::compressPosition(4.0f), vcaText, sizeof(vcaText))
                 && std::string(vcaText) == "4.0:1",
@@ -1644,7 +1652,136 @@ void testHostNamesAndTaperedText()
                 && std::abs(duskaudio::vcaLaw::compressRatio(position) - 150.0f) < 1.0f,
             "a finite ratio of 100:1 or more reads as a number and round-trips");
     std::printf("host text: FET Attack %s, Crossover 3 %s, SC HP %s\n",
-                textOf(fetAttack, 0.2f).c_str(), textOf(crossover3, 8000.0f).c_str(), textOf(sidechainHp, 0.0f).c_str());
+                fetAttackDialText(0.2f).c_str(), textOf(crossover3, 8000.0f).c_str(), textOf(sidechainHp, 0.0f).c_str());
+}
+
+// FET Attack and FET Release read in a host as the FET faces' 1-7 dials (owner, 2026-11-06), not as the legacy
+// milliseconds: Release's "50 ms" was the dial's slowest setting (about 1.1 s) and "1100 ms" its fastest, and Attack's
+// milliseconds a position in disguise. Host ranges, sessions and automation are unchanged. The text is the faces' law
+// (fetTimingDialValue) to one decimal, with no unit; typed text reads back through the same law, Attack's also SLO.
+void testFetTimingHostText()
+{
+    const auto attack = static_cast<uint32_t>(multicompp::ParamId::FetAttack);
+    const auto release = static_cast<uint32_t>(multicompp::ParamId::FetRelease);
+    const auto& attackDescriptor = multicompp::kParams[attack];
+    const auto& releaseDescriptor = multicompp::kParams[release];
+    const auto textOf = [](uint32_t parameter, float host) {
+        char text[32] = {};
+        return multicompp::formatFetTimingText(parameter, host, text, sizeof(text)) ? std::string(text)
+                                                                                     : std::string("(none)");
+    };
+    require(std::string_view(attackDescriptor.unit).empty() && std::string_view(releaseDescriptor.unit).empty(),
+            "FET Attack and FET Release carry no unit: their values place the dials, they are not times");
+    require(releaseDescriptor.min == duskaudio::kFetReleaseMinMs && releaseDescriptor.max == duskaudio::kFetReleaseMaxMs
+                && releaseDescriptor.min == 50.0f && releaseDescriptor.max == 1100.0f
+                && !multicompp::hasSkew(releaseDescriptor),
+            "FET Release keeps its legacy 50..1100 range, the one duskaudio::fetReleasePositionFromMilliseconds reads");
+
+    // The stops, quarters and middle of each host range, and the defaults (Attack 0.20 ms, Release 400).
+    struct Reading { uint32_t parameter; float host; const char* text; };
+    const Reading readings[] = {
+        {attack, 0.0f, "1.0"}, {attack, 0.25f, "2.5"}, {attack, 0.5f, "4.0"}, {attack, 0.75f, "5.5"},
+        {attack, 1.0f, "7.0"}, {attack, multicompp::hostDefault(attackDescriptor), "2.0"},
+        {release, 50.0f, "1.0"}, {release, 312.5f, "2.5"}, {release, 575.0f, "4.0"}, {release, 837.5f, "5.5"},
+        {release, 1100.0f, "7.0"}, {release, multicompp::hostDefault(releaseDescriptor), "3.0"}};
+    for (const Reading& r : readings)
+    {
+        const std::string text = textOf(r.parameter, r.host);
+        if (text != r.text)
+            std::fprintf(stderr, "%s at %.7g reads \"%s\", expected \"%s\"\n", multicompp::kParams[r.parameter].name,
+                         static_cast<double>(r.host), text.c_str(), r.text);
+        require(text == r.text, "FET Attack and FET Release read as their 1-7 dials, one decimal, no unit");
+    }
+    char tooSmall[3] = {};
+    require(!multicompp::formatFetTimingText(release, 575.0f, tooSmall, sizeof(tooSmall))
+                && !multicompp::formatFetTimingText(release, std::numeric_limits<float>::quiet_NaN(), tooSmall,
+                                                    sizeof(tooSmall))
+                && textOf(static_cast<uint32_t>(multicompp::ParamId::FetInput), 0.0f) == "(none)",
+            "dial text needs room and a finite value, and only the FET timing dials have it");
+
+    // Typed text: a dial reading, or SLO on Attack, sets the exact host value; a reading off the dial is held to its
+    // 1-7 travel, as the face holds a gesture.
+    struct Typed { uint32_t parameter; const char* text; float host; };
+    const Typed typed[] = {
+        {attack, "1", 0.0f}, {attack, "1.0", 0.0f}, {attack, "2.5", 0.25f}, {attack, "4", 0.5f},
+        {attack, "4.0", 0.5f}, {attack, " 5.5 ", 0.75f}, {attack, "7", 1.0f}, {attack, "7.0", 1.0f},
+        {attack, "SLO", 0.0f}, {attack, "slo", 0.0f}, {attack, "Slo", 0.0f}, {attack, " SLO ", 0.0f},
+        {attack, "0", 0.0f}, {attack, "9", 1.0f},
+        {release, "1", 50.0f}, {release, "2.5", 312.5f}, {release, "3", 400.0f}, {release, "3.0", 400.0f},
+        {release, "3.5", 487.5f}, {release, "4", 575.0f}, {release, "5.5", 837.5f}, {release, "7", 1100.0f},
+        {release, "0", 50.0f}, {release, "9", 1100.0f}};
+    for (const Typed& t : typed)
+    {
+        float host = -1.0f;
+        const bool parsed = multicompp::parseFetTimingText(t.parameter, t.text, host);
+        if (!parsed || host != t.host)
+            std::fprintf(stderr, "%s typed \"%s\": %s %.9g, expected %.9g\n", multicompp::kParams[t.parameter].name,
+                         t.text, parsed ? "host" : "refused", static_cast<double>(host), static_cast<double>(t.host));
+        require(parsed && host == t.host, "a typed dial reading, or SLO on Attack, sets the exact host value");
+    }
+    float host = -1.0f;
+    require(multicompp::parseFetTimingText(attack, "3.5", host) && host == multicompp::fetTimingHostValue(3.5f, attack)
+                && std::abs(host - 2.5f / 6.0f) < 1.0e-7f,
+            "a typed 3.5 on Attack sets the law's position, 2.5 / 6 of the travel");
+    require(multicompp::parseFetTimingText(attack, multicompp::kFetSloText, host)
+                && duskaudio::fetAttackPositionFromMilliseconds(multicompp::hostToPlain(attackDescriptor, host)) == 0.0f,
+            "SLO typed in a host engages the DSP's SLO detent (Attack position 0)");
+    for (const char* bad : {"", " ", "abc", "4 ms", "4ms", "3,5", "4 4", "SLOW", "SL0", "nan", "inf", "1e400"})
+    {
+        float refused = -1.0f;
+        const bool attackTook = multicompp::parseFetTimingText(attack, bad, refused);
+        const bool releaseTook = multicompp::parseFetTimingText(release, bad, refused);
+        if (attackTook || releaseTook) std::fprintf(stderr, "typed \"%s\" was accepted\n", bad);
+        require(!attackTook && !releaseTook, "typed text other than a dial reading is refused, a unit included");
+    }
+    require(!multicompp::parseFetTimingText(release, "SLO", host), "Release has no SLO stop");
+    require(!multicompp::parseFetTimingText(attack, nullptr, host)
+                && !multicompp::parseFetTimingText(static_cast<uint32_t>(multicompp::ParamId::FetInput), "4", host),
+            "dial text needs a string and a FET timing dial");
+
+    // Every reading a host shows reads back to itself.
+    int readBack = 0;
+    for (int tenth = 10; tenth <= 70; ++tenth)
+        for (const uint32_t parameter : {attack, release})
+        {
+            char shown[8] = {};
+            std::snprintf(shown, sizeof(shown), "%d.%d", tenth / 10, tenth % 10);
+            float typedHost = -1.0f;
+            const bool parsed = multicompp::parseFetTimingText(parameter, shown, typedHost);
+            const std::string again = textOf(parameter, typedHost);
+            if (!parsed || again != shown)
+                std::fprintf(stderr, "%s: \"%s\" reads back as \"%s\"\n", multicompp::kParams[parameter].name, shown,
+                             again.c_str());
+            require(parsed && again == shown, "every dial reading a host shows reads back to itself");
+            ++readBack;
+        }
+
+    // The text names the position the DSP plays, read through the core's own laws from the plain value the DSP
+    // receives, at every host position (offset half a step, so none sits on a rounding tie).
+    double worst[2] = {0.0, 0.0};
+    for (const uint32_t parameter : {attack, release})
+    {
+        const auto& d = multicompp::kParams[parameter];
+        const float slow = multicompp::hostMin(d), span = multicompp::hostMax(d) - slow;
+        for (int i = 0; i < 1000; ++i)
+        {
+            const float hostValue = slow + span * (static_cast<float>(i) + 0.5f) / 1000.0f;
+            const float plain = multicompp::hostToPlain(d, hostValue);
+            const float dsp = 1.0f + 6.0f * (parameter == attack ? duskaudio::fetAttackPositionFromMilliseconds(plain)
+                                                                 : duskaudio::fetReleasePositionFromMilliseconds(plain));
+            double& gap = worst[parameter == attack ? 0 : 1];
+            gap = std::max(gap, std::abs(static_cast<double>(multicompp::fetTimingDialValue(hostValue, parameter) - dsp)));
+            char dspText[32] = {};
+            multicompp::formatFixed(dspText, sizeof(dspText), static_cast<double>(dsp), 1);
+            const std::string text = textOf(parameter, hostValue);
+            if (text != dspText)
+                std::fprintf(stderr, "%s at %.7g reads %s, the DSP plays %s\n", d.name, static_cast<double>(hostValue),
+                             text.c_str(), dspText);
+            require(text == dspText, "FET Attack's and FET Release's text names the dial position the DSP plays");
+        }
+    }
+    std::printf("FET timing host text: %zu readings, %zu typed, %d read back; dial vs the DSP's law within %.2g "
+                "(Attack), %.2g (Release)\n", std::size(readings), std::size(typed), readBack, worst[0], worst[1]);
 }
 
 // Host text in a comma-decimal locale. A host process that sets LC_NUMERIC (Qt and GTK hosts on Linux follow the
@@ -1676,23 +1813,43 @@ void testHostTextIgnoresTheNumericLocale()
         multicompp::formatTaperedText(d, multicompp::plainToHost(d, plain), text, sizeof(text));
         return std::string(text);
     };
-    const auto& fetAttack = multicompp::kParams[static_cast<size_t>(multicompp::ParamId::FetAttack)];
+    const auto dialTextOf = [](uint32_t parameter, float host) {
+        char text[32] = {};
+        return multicompp::formatFetTimingText(parameter, host, text, sizeof(text)) ? std::string(text)
+                                                                                     : std::string("(none)");
+    };
+    const auto attack = static_cast<uint32_t>(multicompp::ParamId::FetAttack);
+    const auto release = static_cast<uint32_t>(multicompp::ParamId::FetRelease);
     const auto& crossover3 = multicompp::kParams[static_cast<size_t>(multicompp::ParamId::Crossover3)];
-    const std::string attack = textOf(fetAttack, 0.2f), crossover = textOf(crossover3, 8000.0f),
-                      crossoverHalf = textOf(crossover3, 8500.0f);
+    // The FET timing dials at the slow stop, the middle and the fast stop (Attack 0 / 0.5 / 1, Release 50 / 575 /
+    // 1100), and a reading typed back.
+    const std::string attackSlow = dialTextOf(attack, 0.0f), attackMiddle = dialTextOf(attack, 0.5f),
+                      attackFast = dialTextOf(attack, 1.0f), releaseSlow = dialTextOf(release, 50.0f),
+                      releaseMiddle = dialTextOf(release, 575.0f), releaseFast = dialTextOf(release, 1100.0f),
+                      releaseTyped = dialTextOf(release, 487.5f);
+    const std::string crossover = textOf(crossover3, 8000.0f), crossoverHalf = textOf(crossover3, 8500.0f);
     char vcaText[32] = {};
     const bool vcaFormatted = multicompp::formatVcaCompressionText(
         duskaudio::vcaLaw::compressPosition(4.0f), vcaText, sizeof(vcaText));
-    float host = -1.0f;
-    const bool attackParsed = multicompp::parseTaperedText(fetAttack, attack.c_str(), host)
-        && std::abs(multicompp::hostToPlain(fetAttack, host) - 0.2f) < 0.006f;
+    float host = -1.0f, attackHost = -1.0f, releaseHost = -1.0f;
+    const bool crossoverParsed = multicompp::parseTaperedText(crossover3, crossoverHalf.c_str(), host)
+        && std::abs(multicompp::hostToPlain(crossover3, host) - 8500.0f) < 1.0f;
+    const bool dialsParsed = multicompp::parseFetTimingText(attack, attackMiddle.c_str(), attackHost)
+        && multicompp::parseFetTimingText(release, releaseTyped.c_str(), releaseHost);
     std::setlocale(LC_NUMERIC, restore.c_str());
-    std::printf("host text in %s: FET Attack %s, Crossover 3 %s / %s, VCA Compression %s\n", commaLocale,
-                attack.c_str(), crossover.c_str(), crossoverHalf.c_str(), vcaText);
-    require(attack == "0.20 ms", "FET Attack reads 0.20 ms in a comma-decimal locale");
+    std::printf("host text in %s: FET Attack %s / %s / %s, FET Release %s / %s / %s (487.5: %s), Crossover 3 %s / %s, "
+                "VCA Compression %s\n", commaLocale, attackSlow.c_str(), attackMiddle.c_str(), attackFast.c_str(),
+                releaseSlow.c_str(), releaseMiddle.c_str(), releaseFast.c_str(), releaseTyped.c_str(),
+                crossover.c_str(), crossoverHalf.c_str(), vcaText);
+    require(attackSlow == "1.0" && attackMiddle == "4.0" && attackFast == "7.0",
+            "FET Attack reads 1.0 / 4.0 / 7.0 at its stops and middle in a comma-decimal locale");
+    require(releaseSlow == "1.0" && releaseMiddle == "4.0" && releaseFast == "7.0" && releaseTyped == "3.5",
+            "FET Release reads 1.0 / 4.0 / 7.0 at its stops and middle, 3.5 at 487.5, in a comma-decimal locale");
     require(crossover == "8 kHz" && crossoverHalf == "8.5 kHz", "a crossover reads 8 kHz / 8.5 kHz in a comma-decimal locale");
     require(vcaFormatted && std::string(vcaText) == "4.0:1", "VCA Compression reads 4.0:1 in a comma-decimal locale");
-    require(attackParsed, "the host's own text reads back in a comma-decimal locale");
+    require(crossoverParsed, "the host's own text reads back in a comma-decimal locale");
+    require(dialsParsed && attackHost == 0.5f && releaseHost == 487.5f,
+            "the FET dials' own text reads back to the exact host values in a comma-decimal locale");
 }
 
 // The Digital and Multiband faces keep the original editor's display timing (EnhancedCompressorEditor::updateMeters,
@@ -1810,6 +1967,7 @@ int main(int argc, char** argv)
     testAlphaSessionStateStaysLoadable();
     testOptoReferenceDisplayAndNoiseDefault();
     testHostNamesAndTaperedText();
+    testFetTimingHostText();
     testHostTextIgnoresTheNumericLocale();
     testEverySwitchHasHostLabels();
     testModernFaceTiming();

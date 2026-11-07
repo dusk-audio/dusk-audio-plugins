@@ -319,63 +319,16 @@ inline float optoMeterDisplayValue(float gainReductionDb) noexcept
 
 inline constexpr const char* optoKnobValueSuffix() noexcept { return ""; }
 
-inline bool fetTimingUsesDialReadout(uint32_t parameter) noexcept
-{
-    return parameter == static_cast<uint32_t>(ParamId::FetAttack)
-        || parameter == static_cast<uint32_t>(ParamId::FetRelease);
-}
-
-// Vintage FET timing follows the reference unit's numbered 1-7 controls. Keep
-// the legacy host ranges intact for automation/state compatibility and convert
-// only the faceplate readout, gesture domain, and pointer position.
-inline float fetTimingDialValue(float hostValue, uint32_t parameter) noexcept
-{
-    if (!fetTimingUsesDialReadout(parameter)) return hostValue;
-    const auto& descriptor = kParams[parameter];
-    const float minimum = hostMin(descriptor);
-    const float range = hostMax(descriptor) - minimum;
-    const float position = std::clamp((hostValue - minimum) / range, 0.0f, 1.0f);
-    return 1.0f + 6.0f * position;
-}
-
-inline float fetTimingHostValue(float dialValue, uint32_t parameter) noexcept
-{
-    if (!fetTimingUsesDialReadout(parameter)) return dialValue;
-    const auto& descriptor = kParams[parameter];
-    const float position = std::clamp((dialValue - 1.0f) / 6.0f, 0.0f, 1.0f);
-    return hostMin(descriptor)
-        + position * (hostMax(descriptor) - hostMin(descriptor));
-}
-
 // FET BLUE's Attack has the reference's SLO detent at its counter-clockwise stop: the loop takes its slower attack
 // and raised threshold (FetVoice::sloAttackScales, sloLoadDb) while the attack position is 0, i.e. while the plain
 // value the DSP receives sits on the descriptor's minimum. The face reads the core's own position law
 // (duskaudio::fetAttackPositionFromMilliseconds), so it names SLO exactly where the DSP engages it.
-// The reference names that stop SLO in its own readout. The face prints SLO there, and its readout and typed entry
-// name the detent.
-inline constexpr const char* kFetSloText = "SLO";
-
+// The reference names that stop SLO in its own readout. The face prints SLO there (kFetSloText), and its readout and
+// typed entry name the detent. The dials' law and typed text are the host text's too (MultiCompParams.hpp:
+// fetTimingDialValue, fetTimingHostValue, parseFetTimingText).
 inline bool fetAttackAtSlo(float plainMilliseconds) noexcept
 {
     return duskaudio::fetAttackPositionFromMilliseconds(plainMilliseconds) <= 0.0f;
-}
-
-// Typed entry on FET BLUE's Attack, returning the host value: SLO (SLO, slo or Slo) selects the detent; a number is a
-// dial reading as the face shows it (1-7, FET BLACK's conversion). Anything else is refused.
-inline bool fetSloAttackTypedHost(const char* text, float& host) noexcept
-{
-    namespace entry = duskdaf::value_text;
-    const auto attack = static_cast<uint32_t>(ParamId::FetAttack);
-    if (entry::suffix(text, kFetSloText, "slo") || entry::suffix(text, "Slo"))
-    {
-        host = hostMin(kParams[attack]);
-        return true;
-    }
-    const char* end = nullptr;
-    float dial = 0.0f;
-    if (!entry::parseDecimal(text, end, dial) || !entry::finish(end, "")) return false;
-    host = fetTimingHostValue(dial, attack);
-    return true;
 }
 
 inline bool optoKnobUsesPlainDomainDrag(uint32_t parameter) noexcept
@@ -1883,18 +1836,18 @@ private:
 
     static float fetTimingHostToDial(float host, uint32_t p, void*)
     {
-        return multicompp::ui_detail::fetTimingDialValue(host, p);
+        return multicompp::fetTimingDialValue(host, p);
     }
 
     static float fetTimingDialToHost(float dial, uint32_t p, void*)
     {
-        return multicompp::ui_detail::fetTimingHostValue(dial, p);
+        return multicompp::fetTimingHostValue(dial, p);
     }
 
-    // Typed entry on FET BLUE's Attack: SLO or a dial reading (fetSloAttackTypedHost).
-    static bool fetSloAttackParseText(const char* text, uint32_t, void*, float& host)
+    // Typed entry on FET BLUE's Attack: SLO or a dial reading, as a host reads it (multicompp::parseFetTimingText).
+    static bool fetSloAttackParseText(const char* text, uint32_t p, void*, float& host)
     {
-        return multicompp::ui_detail::fetSloAttackTypedHost(text, host);
+        return multicompp::parseFetTimingText(p, text, host);
     }
 
     // The face of the current mode, laid out on the canvas in the face area under the mode row (each face's layout
@@ -2481,10 +2434,11 @@ private:
         const float timingX = Layout::timingX;
         fetKnob(dl, "fet_in", P_FET_IN, inputX, Layout::dialY, Layout::dialRadius, "INPUT", true, "%.1f", " dB");
         fetKnob(dl, "fet_out", P_FET_OUT, outputX, Layout::dialY, Layout::dialRadius, "OUTPUT", true, "%.1f", " dB");
-        fetKnob(dl, "fet_att", P_FET_ATTACK, timingX, Layout::attackY, Layout::timingRadius, "ATTACK", false, "%.2f",
+        // The timing dials' readouts at one decimal, as hosts print them (multicompp::formatFetTimingText).
+        fetKnob(dl, "fet_att", P_FET_ATTACK, timingX, Layout::attackY, Layout::timingRadius, "ATTACK", false, "%.1f",
                 "", blue);
         fetKnob(dl, "fet_rel", P_FET_RELEASE, timingX, Layout::releaseY, Layout::timingRadius, "RELEASE", false,
-                "%.2f", "");
+                "%.1f", "");
 
         multicompp::ui_detail::VintageMeterScale meterScale;
         meterScale.detail = Layout::meterW / 238.0f;
@@ -2586,13 +2540,13 @@ private:
         // here so FET mode gets the reference unit's silver skirt and knurling.
         fetKnobSplitter.Split(dl, 2);
         fetKnobSplitter.SetCurrentChannel(dl, 1);
-        const bool timingDial = multicompp::ui_detail::fetTimingUsesDialReadout(p);
+        const bool timingDial = multicompp::fetTimingUsesDialReadout(p);
         const bool atSlo = sloDetent && multicompp::ui_detail::fetAttackAtSlo(plainValueForHost(p, values[p]));
         beginTrackedControl(p, id, true);
         panel.knob(id, p, hostMinimum(p), hostMaximum(p), x, y, radius,
                    values[p], hostDefaultValue(p), false, false, format, suffix,
                    0, true, false, nullptr, false, 1.0f, 0.0f, label, true,
-                   atSlo ? multicompp::ui_detail::kFetSloText : nullptr,
+                   atSlo ? multicompp::kFetSloText : nullptr,
                    false, 0.0f, 0.0f, false, true, 9.5f, true, false,
                    timingDial ? &fetTimingHostToDial : &knobHostToPlain,
                    timingDial ? &fetTimingDialToHost : &knobPlainToHost,
@@ -2604,7 +2558,7 @@ private:
         const float minimum = plainValueForHost(p, hostMinimum(p));
         const float maximum = plainValueForHost(p, hostMaximum(p));
         const float t = timingDial
-            ? std::clamp((multicompp::ui_detail::fetTimingDialValue(values[p], p) - 1.0f)
+            ? std::clamp((multicompp::fetTimingDialValue(values[p], p) - 1.0f)
                              / 6.0f,
                          0.0f, 1.0f)
             : std::clamp((plain - minimum)
@@ -2643,7 +2597,7 @@ private:
         {
             // FET BLUE's Attack: the stop is the SLO detent, as the reference names it.
             const std::array<const char*, 4> labels{{
-                sloDetent ? multicompp::ui_detail::kFetSloText : "1", "3", "5", "7"}};
+                sloDetent ? multicompp::kFetSloText : "1", "3", "5", "7"}};
             duskdaf::KnobRingStyle ring;
             ring.dotMarks = true;
             ring.markOuter = 9.0f;   ring.minorOuter = 9.0f;

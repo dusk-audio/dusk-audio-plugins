@@ -20,7 +20,11 @@
 //   [5] a program selected through the programs extension plays, and keeps its
 //       sound once its ports are saved and reloaded;
 //   [6] LV2 state saved from one instance and restored into another, fresh or
-//       already set otherwise, plays the saved settings.
+//       already set otherwise, plays the saved settings;
+//   [7] the units the TTL gives the FET timing ports: none. Their values place
+//       the 1-7 dials on the legacy ranges, they are not times, and LV2 has no
+//       custom text, so a host shows the raw number (Release 50..1100, Attack
+//       its 0..1 knob position).
 //
 // The comparison is bit for bit: the plugin and this test compile the same DSP
 // with the same flags (no FMA contraction, see CMakeLists.txt), and the TTL
@@ -43,6 +47,7 @@
 #include <lv2/buf-size/buf-size.h>
 #include <lv2/options/options.h>
 #include <lv2/parameters/parameters.h>
+#include <lv2/units/units.h>
 #include <lv2/urid/urid.h>
 #include <lv2/worker/worker.h>
 
@@ -835,6 +840,36 @@ void testStateRoundTrip(LilvWorld* world, const LilvPlugin* plugin, const Signal
         lilv_state_free(state);
     }
 }
+
+// The unit the TTL gives a control port (its units:unit), "" for none.
+std::string portUnit(LilvWorld* world, const LilvPlugin* plugin, const char* symbol)
+{
+    LilvNode* name = lilv_new_string(world, symbol);
+    const LilvPort* port = lilv_plugin_get_port_by_symbol(plugin, name);
+    lilv_node_free(name);
+    if (port == nullptr)
+        return "(no such port)";
+    LilvNode* predicate = lilv_new_uri(world, LV2_UNITS__unit);
+    LilvNodes* units = lilv_port_get_value(plugin, port, predicate);
+    lilv_node_free(predicate);
+    const char* first = units != nullptr && lilv_nodes_size(units) > 0
+        ? lilv_node_as_string(lilv_nodes_get_first(units)) : nullptr;
+    const std::string unit = first != nullptr ? first : "";
+    lilv_nodes_free(units);
+    return unit;
+}
+
+void testFetTimingPortUnits(LilvWorld* world, const LilvPlugin* plugin)
+{
+    const std::string attack = portUnit(world, plugin, "fet_attack");
+    const std::string release = portUnit(world, plugin, "fet_release");
+    const std::string input = portUnit(world, plugin, "fet_input");   // the control: a unit the query must find
+    CHECK(attack.empty(), "fet_attack carries the unit %s", attack.c_str());
+    CHECK(release.empty(), "fet_release carries the unit %s", release.c_str());
+    CHECK(input == LV2_UNITS__db, "fet_input carries \"%s\", not %s", input.c_str(), LV2_UNITS__db);
+    std::printf("  port units: fet_attack \"%s\", fet_release \"%s\", fet_input \"%s\"\n", attack.c_str(),
+                release.c_str(), input.c_str());
+}
 } // namespace
 
 int main(int argc, char** argv)
@@ -871,6 +906,8 @@ int main(int argc, char** argv)
     testSelectedPrograms(world, plugin, in);
     std::printf("[6] LV2 state saved and restored\n");
     testStateRoundTrip(world, plugin, in);
+    std::printf("[7] the FET timing ports' units\n");
+    testFetTimingPortUnits(world, plugin);
 
     lilv_node_free(pluginUri);
     lilv_node_free(bundleUri);
