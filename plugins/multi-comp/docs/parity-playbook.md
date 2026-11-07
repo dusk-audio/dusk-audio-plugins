@@ -162,9 +162,18 @@ two-tone IMD and the slow sweep stay a 2 dB report for OPTO. Tools: `kit/latency
 Rules that stay: never loosen a test bound; no classifiers or hand corrections in the audio path; captures
 and candidate renders never enter a repo; the owner commits.
 
-## Open before the stable 1.0.0 (from the 1.0.0-alpha1 review, 2026-10-18)
+## Open before the stable 1.0.0 (from the 1.0.0-alpha1 review, 2026-10-18; status 2026-11-06)
 
-- FET ratio buttons switch without a crossfade; going to or from All jumps.
+Status on the release branch `mc2/release-1.0.0` and DAF main (c74776b4) on 2026-11-06. Owner rulings of 2026-11-05:
+the parity residuals in the per-mode table above ship as documented known deltas, not blockers. The user-facing side
+of the open items below is in `release-notes-1.0.0.md`.
+
+### Done
+
+- FET BLACK Ratio into or out of All (was: the buttons switch without a crossfade and going to or from All jumps).
+  Since 2026-11-05 (1bea349e) that change is a ducked switch: the old ratio plays until the wet output is silent, the
+  FET state is cleared and the new topology fades in (`--fet-all-switch-duck`). Steps among 4, 8, 12 and 20 stay in
+  the C6 loop and stay instant.
 - Global Lookahead in Multiband fixed 2026-10-27: its detector splits the undelayed filtered key while the
   audio splits the delayed input, for both internal and external keys. `MultiCompModernRegression` checks
   transient anticipation and aligned dry/wet paths, including M/S and host latency padding.
@@ -179,10 +188,18 @@ and candidate renders never enter a repo; the owner commits.
   after the pad). Auto makeup measures the padded signals, so its 64-sample windows fall elsewhere on the
   programme: its gain is the one an unpadded render takes with the input starting a padding later (up to 0.5 dB
   apart in the first seconds of pink noise, 0.01-0.06 dB after 8 s). Only the lookaheads (Global Lookahead in
-  Digital and Multiband, Digital's own) still move the report, and the AU wrapper still never tells the host when
-  they do.
-- Sixteen automatable parameters have no control on any face (the modern-face JUCE port puts Oversampling,
-  External Sidechain, SC Listen, Analog Noise and SC HP back on). FET BLUE shares FET's Input, Output, Attack
+  Digital and Multiband, Digital's own) still move the report. Since 2026-11-05 the AU wrapper tells the host when
+  they do (DAF #109, merged as c74776b4: a main-run-loop watch notifies the latency listeners after the render that
+  moved the latency), and a switch that moves the report ducks the dry, bypass and listen paths with the wet path,
+  with both lookaheads held in `SwitchConfig` until the silence (1bea349e, c27de4b0; `--latency-switch-duck`,
+  `--lookahead-switch-duck`).
+- Parameters with no control on any face: done 2026-11-05 (bad8fc45). `MultiCompParams.hpp` declares 106 control
+  parameters (63 in `kParams`, 32 Multiband band parameters, 11 in `kExtensionParams`) and 5 meter outputs; the four
+  inert VCA parameters are hidden from host lists, which leaves 102. Eighteen of the 102 had no control on any face
+  (this item said sixteen): External Sidechain, SC Listen, the four SC EQ controls, Oversampling, True Peak, TP
+  Quality, Analog Noise, Stereo Link, Link Mode, Distortion, Distortion Amt, Lookahead, and FET Threshold, Transient
+  and Curve. The SETTINGS drawer at the end of the mode row holds all eighteen, greyed where the mode ignores them;
+  the other 84 are on the faces and the mode row. FET BLUE shares FET's Input, Output, Attack
   and Release and has its own `fet_blue_*` Ratio, SC Filter and Headroom; Curve and Transient act in FET only.
   Sessions saved in mode 4 before FET BLUE (Studio FET, state version 7 and older) reopen in FET in VST3, CLAP
   and AU (`MultiCompSessionRestoreTest`); in LV2 the host's restored Mode port wins and they reopen in FET BLUE,
@@ -190,37 +207,67 @@ and candidate renders never enter a repo; the owner commits.
   Done 2026-10-19: host names
   carry their mode or band ("FET Threshold", "MB Low Ratio"), tapered controls and VCA Compression show plain
   text with units, and the four inert VCA parameters are hidden (the VST3 and CLAP flag comes from DAF #83).
+- Float one-poles at high processing rates (closed 2026-11-05, measured): the Studio VCA, Digital and FET All
+  envelopes, and the FET feedback capacitor's leak (whose time the 4:1 release depth term stretches up to about 40x
+  at extreme depth), are float one-poles at the mode rate, so at 192 kHz and above with oversampling a long release
+  could stall short of unity. Emulating those one-poles in the 1.0.0 release review put the worst stall at 0.03 dB.
+  No change.
+- The CLAP version string (DAF #108, merged as 50a61d40): the descriptor carries the version (M.m.p from
+  `getVersion()`, 1.0.0) and the homepage (`getHomePage()`). Its manual and support URLs stay empty until
+  `DafPluginInfo.h` defines `DAF_PLUGIN_MANUAL_URL` and `DAF_PLUGIN_SUPPORT_URL`. The alphas reported 1.0.0 as well;
+  from the stable release on, that number is right.
+- Readability and window: all eight faces, the header and ImGui's own surfaces (the save dialog, typed values,
+  tooltips, menus) at the readability floor, legends 16 px and values 17 px at the minimum window, relaid out inside
+  one 1120 x 380 window for every mode (42247cbf to cc79a6e8, 9e3379ad; owner 2026-11-05: one size, the original).
+- From the 2026-11-05 release review: a session saved bypassed played about 30 ms processed at every activation
+  (e1c570d2, `--bypass-activation`); host text in comma-decimal locales and the doubled ":1" units (f59c3feb); meter
+  buttons rewriting unchanged values, the FET row rewriting Bypass, knobs writing after they went inapplicable while
+  held, and PULL/SC seeded at 500 Hz (d5d7d690).
+
+From the CPU-parity review (2026-10-21; report in the tools repo, `mc2-alpha2-review-2026-10-21.md`), done 2026-11-05
+in 1bea349e by the owner's ruling to duck every switch:
+- Mode switches during playback stepped the waveform wherever the latency changed between the two modes, and the
+  entered mode started from rest (48 kHz VCA <-> Opto: 1.0-7.6x a tone's slope depending on the switch's phase;
+  alpha1 too). Every mode switch is ducked now; `testEveryModeSwitchIsDucked` runs all 56 ordered switches.
+- An Oversampling change replayed the anti-alias path at its new factor without a duck (5.6-11x at 48 kHz, 11-27x
+  at 96 kHz; VCA, Digital, Opto), and leaving Multiband stepped 11-39x at 96-192 kHz. An Oversampling change that
+  moves the mode's audio factor or Opto's output stage is now ducked (`--oversampling-change-duck`), and leaving
+  Multiband is a ducked mode switch.
+- Entering VCA restarts the anti-alias filters, so its first ~1.4 ms is near silent; that now falls inside the
+  switch's 128-sample mute.
+
+### Still open
+
 - FET Curve Measured with All: the small-signal gain sits 1.20 dB under the reference (pinned by
-  `testFetMeasuredCurveAllButtons`).
+  `testFetMeasuredCurveAllButtons`). A known issue in the 1.0.0 notes.
 - From code review, not yet measured: `MultiCompDSP::prepare()` at the same rate keeps most modes' state (the
-  plugin masks it: the framework deactivates first; the same-rate test runs no audio between the two prepares),
-  and the Studio VCA, Digital and FET All envelopes, and the FET feedback capacitor's leak (whose time
-  the 4:1 release depth term stretches up to about 40x at extreme depth), are float one-poles at the mode rate, so at
-  192 kHz and above with oversampling a long release may stall short of unity.
+  plugin masks it: the framework deactivates first; the same-rate test runs no audio between the two prepares).
 - Dead weight: the legacy `SidechainTilt` class (kept only for a compile-time disabled-element control) and the
   fixed-Hz branch in `MultiCompVcaLaw.hpp`; `MultiCompOptoFinalHarmonics.hpp` and
   `MultiCompOptoLfDynamicHarmonics.hpp` (about 390 KB) are included nowhere.
-- The CLAP version string is empty (framework), and alpha and stable both report 1.0.0.
-- No user manual yet.
+- User manual: `manuals/multi-comp-2.md` and `manuals/screenshots/multi-comp-2/` were being written on 2026-11-06
+  (uncommitted). Until the chapter lands and the release writes `/assets/manuals/multi-comp-2-manual.pdf`, the
+  website's page for a released plugin links a PDF that does not exist.
 - GR needles (2026-10-22, `daf-plugin/MultiCompGainReductionNeedle.hpp`): the plugin feeds them the DSP's
   block-end gain reduction once per host block, so a transient reads up to a block early and, at large buffers,
   slightly deep (a 6 dB kick: about 0.1 dB at 512 samples, 0.5 dB VU / 0.9 dB VCA at 2048). The fix is a block
   mean of the gain in the OPTO/FET/VCA paths (linear for the VU needle, dB for VCA), measured against CPU parity.
   The FET needle reads true GR: the reference 1176's meter is not a function of GR (its drive has dynamics of its
   own; tools `needle_meter/README.md` has the kill-tests and a measurement plan).
-
-From the CPU-parity review (2026-10-21; report in the tools repo, `mc2-alpha2-review-2026-10-21.md`):
-- Mode switches during playback step the waveform wherever the latency changes between the two modes, and the
-  entered mode starts from rest (48 kHz VCA <-> Opto: 1.0-7.6x a tone's slope depending on the switch's phase;
-  alpha1 too). Only a switch that changes the anti-alias oversampler's factor (Opto / FET against the others at
-  88.2 kHz and above) is ducked (owner ruling); the same duck could cover every switch.
-- An Oversampling change replays the anti-alias path at its new factor without a duck, the mechanism the duck
-  removes from mode switches (5.6-11x at 48 kHz, 11-27x at 96 kHz; VCA, Digital, Opto). Leaving Multiband steps
-  11-39x at 96-192 kHz: the anti-alias latency goes from 0 to 67 samples and the path still holds its history from
-  before Multiband.
-- Entering VCA restarts the anti-alias filters, so its first ~1.4 ms is near silent; entering BUS from rest runs up
-  to 14 dB above its steady level for ~10 ms.
+- Entering BUS from rest runs up to 14 dB above its steady level for about 10 ms (a level transient, not a click,
+  in alpha1 too; on 2026-10-21 the duck took about half of it). Not changed.
 - `getLatencySamples()` reports the requested mode from the request on, also while the duck still holds the old one
   (with the lookaheads at 0 the host report, `getHostLatencySamples()`, is the same in every mode).
 - Windows: `MultiCompPluginLayer` fails its `__FILE__` path check on backslashes (CI runs only `MultiCompCore` on
   Windows). On Windows ARM64 (`_M_ARM64`) `ScopedFlushDenormals` does nothing.
+- Known issues by ruling or by design, in the 1.0.0 notes. LV2 factory preset recall resets the globals (Bypass,
+  Oversampling, external key, lookahead, link): DAF writes each LV2 preset from a fresh instance with every input
+  port, and the factory walker leaves the globals at their defaults there (owner 2026-11-05: a known issue for
+  1.0.0). A lookahead change on its own applies at once and can step 3-11x (pre-existing; ducking it gated 99 % of
+  an automated ramp). A switch that moves the latency mutes the bypass and dry paths with the wet path: 128 samples
+  between 1 ms fades, plus Digital's own lookahead when entering Digital (12.7 ms of silence at 10 ms, 48 kHz).
+- From the 2026-11-05 release review, deferred or not yet measured: the VST3 wrapper caches the latency at
+  construction (0 before the first activate), so an instance's first process sends one latency event (measured: one
+  event; deferred as benign); Digital's lookahead is rounded at the mode rate but reported at the host rate (half a
+  sample); the SC EQ shelves are designed in float and lose gain at 384 kHz and above (they run at the host rate, so
+  this needs a 384 kHz host); the Multiband envelope parks 0.012 dB short at 48 kHz (recorded here, no change).
