@@ -105,12 +105,6 @@ struct MultiCompDSPTestAccess
         return MultiCompDSP::advanceFetStartupBlend(
             activeSamples, fullCorrectionSamples, correctionEndSamples);
     }
-
-    static float advanceVcaSidechainTilt(MultiCompDSP& dsp, int channel,
-                                         float sample) noexcept
-    {
-        return dsp.sidechainTilt[static_cast<size_t>(channel)].process(sample);
-    }
 };
 }
 
@@ -12253,8 +12247,7 @@ void testFetLowFrequencyColourSurface()
 void testVcaSidechainTilt()
 {
     // Exercise the live detector route through Sidechain Listen, including
-    // the independent 20.02 Hz pole. The legacy SidechainTilt class is used
-    // only by the compile-time disabled-element identity control.
+    // the independent 20.02 Hz pole.
     double worst = 0.0;
     bool valid = true;
     const auto measure = [&](double rate, double hz, double referenceDb) {

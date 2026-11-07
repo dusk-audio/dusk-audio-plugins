@@ -233,7 +233,6 @@ void MultiCompDSP::prepare(double sr, int blockSize)
     for (auto& os : optoOwnDetectorUpsamplers) os.setFactor(initialOversampling);
     for (auto& os : busExternalOversamplers) os.setFactor(initialOversampling);
     for (auto& f : sidechainFilters) f.prepare(sampleRate);
-    for (auto& f : sidechainTilt) f.prepare(sampleRate);
     for (auto& f : vcaScResponse) f.prepare(sampleRate);
     vcaScResponseActive = false;
     for (auto& f : vcaOutputVoicing) f.prepare(sampleRate);
@@ -339,7 +338,6 @@ void MultiCompDSP::prepare(double sr, int blockSize)
     bypassSettled = bypassed; lastBypass = bypassed; lastExternalSidechain = false;
     lastAutoMakeup = false; firstBlock = true; lastMode = -1; autoGainHoldSamples = 0;
     lastVcaSidechainTilt = false;
-    lastVcaSidechainTiltEngaged = false;
     noiseState = 0x6d2b79f5u;
     multibandEnvelopes.fill(1.0f);
     prepareCrossovers();
@@ -370,7 +368,6 @@ void MultiCompDSP::reset()
     for (auto& os : optoOwnDetectorUpsamplers) os.reset();
     for (auto& os : busExternalOversamplers) os.reset();
     for (auto& f : sidechainFilters) f.reset();
-    for (auto& f : sidechainTilt) f.reset();
     for (auto& f : vcaScResponse) f.reset();
     vcaScResponseActive = false;
     for (auto& f : vcaOutputVoicing) f.reset();
@@ -429,7 +426,6 @@ void MultiCompDSP::reset()
     lastMode = -1;
     resetSwitchDuck();
     lastVcaSidechainTilt = false;
-    lastVcaSidechainTiltEngaged = false;
     autoGainHoldSamples = 0;
     noiseState = 0x6d2b79f5u;
     for (auto& m : bandGR) m.store(0.0f, std::memory_order_relaxed);
@@ -776,12 +772,10 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     const bool vcaSidechainPathChanged = vcaSidechainTilt != lastVcaSidechainTilt;
     if (vcaSidechainPathChanged)
     {
-        // The filter that was not running holds state from whenever it last
-        // ran; clear it before it takes over so a mode switch does not start
-        // from a stale sidechain.
-        if (vcaSidechainTilt)
-            for (auto& f : sidechainTilt) f.reset();
-        else
+        // The high-pass did not run in VCA and holds state from whenever it
+        // last ran; clear it before it takes over so a mode switch does not
+        // start from a stale sidechain. VCA's own response restarts below.
+        if (!vcaSidechainTilt)
             for (auto& f : sidechainFilters) f.reset();
         lastVcaSidechainTilt = vcaSidechainTilt;
     }
@@ -796,9 +790,12 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
         vcaDetectorCouplingActive = true;
         if (nCh == 1) vcaDetectorCoupling[1].reset();
     }
+    // VCA's measured SC response restarts from rest when VCA is entered, and
+    // otherwise runs continuously, ramping its selection weight with PULL/SC:
+    // resetting it on an SC edge contradicts the captures.
     if (!vcaSidechainTilt)
         vcaScResponseActive = false;
-    else if (vcaLaw::kScResponseStrength != 0.0f)
+    else
     {
         if (!vcaScResponseActive)
             for (auto& filter : vcaScResponse)
@@ -807,24 +804,7 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
         if (nCh == 1)
             vcaScResponse[1].reset();
     }
-    // This legacy engage-reset policy exists only for the exact-off
-    // control. The live measured response runs continuously and ramps its
-    // selection weight; resetting it on an SC edge contradicts the captures.
-    if constexpr (vcaLaw::kScResponseStrength == 0.0f)
-    {
-        const bool vcaSidechainTiltEngaged = vcaSidechainTilt && sidechainHP >= 1.0f;
-        if (vcaSidechainTiltEngaged && !lastVcaSidechainTiltEngaged
-            && !vcaSidechainPathChanged)
-        {
-            // While PULL/SC is out the tilt is bypassed and retains its last
-            // history. Clear that stale history once, on the edge back to IN,
-            // before the first newly filtered sample. A mode entry already reset
-            // it in the path-change block above.
-            for (auto& f : sidechainTilt) f.reset();
-        }
-        lastVcaSidechainTiltEngaged = vcaSidechainTiltEngaged;
-    }
-    if (vcaSidechainTilt && vcaLaw::kScResponseStrength != 0.0f && nCh == 2)
+    if (vcaSidechainTilt && nCh == 2)
     {
         // VCA stereo: the same three stages per channel (detector coupling, SC
         // response, shelf EQ), each run over the block on both channels at once.
@@ -871,12 +851,12 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
         {
             float sample = source[i];
             if (vcaSidechainTilt)
+            {
                 sample = vcaDetectorCoupling[ch].process(sample, vcaLaw::kDetectorCouplingStrength);
-            if (vcaSidechainTilt && vcaLaw::kScResponseStrength != 0.0f)
                 sample = vcaScResponse[ch].process(sample, sidechainHP >= 1.0f);
+            }
             else if (sidechainHP >= 1.0f)
-                sample = vcaSidechainTilt ? sidechainTilt[ch].process(sample)
-                                          : sidechainFilters[ch].process(sample);
+                sample = sidechainFilters[ch].process(sample);
             processedSidechain[ch][static_cast<size_t>(i)] = sidechainEQ[ch].process(sample);
         }
     }

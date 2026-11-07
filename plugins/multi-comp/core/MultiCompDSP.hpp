@@ -238,10 +238,7 @@ private:
     MultiCompTruePeakDetector truePeakDetector;
     bool truePeakActive = false;   // the detector ran last block (an idle one restarts from rest)
     std::array<MultiCompSidechainFilter, kMaxChannels> sidechainFilters;
-    std::array<vcaLaw::SidechainTilt, kMaxChannels> sidechainTilt;
-    bool lastVcaSidechainTilt = false;   // which sidechain filter ran last block
-    // Used only by the disabled SC-response identity control.
-    bool lastVcaSidechainTiltEngaged = false;
+    bool lastVcaSidechainTilt = false;   // which sidechain path ran last block: VCA's response, else the high-pass
     std::array<vcaLaw::OutputVoicing, kMaxChannels> vcaOutputVoicing;
     bool vcaVoicingActive = false;
     std::array<vcaLaw::LowFrequencyHighPass, kMaxChannels> vcaAudioCoupling;
