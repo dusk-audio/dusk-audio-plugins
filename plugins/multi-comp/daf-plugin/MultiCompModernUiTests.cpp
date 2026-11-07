@@ -663,6 +663,22 @@ void numericOwnership()
     std::printf("numeric band change ownWrites=%d replacementWrites=%d\n", own, sibling);
     check(own == 1 && sibling == 0, "numeric entry commits to its original band before selection changes");
 }
+// ImGui's own surfaces (the save dialog, a typed value, tooltips, menus) draw in ImGui's default font. The editor makes
+// that its own face at the value size (17), not the framework's 13 px DejaVu Sans. Without a face to load (a bare
+// Linux container) there is none to choose and the check is skipped.
+void defaultFontIsTheValueFace()
+{
+    Host h(0);
+    const ImGuiIO& io = ImGui::GetIO();
+    if (io.Fonts->Fonts.Size <= 1)
+    {
+        std::puts("default font: no face loaded, skipped");
+        return;
+    }
+    const float size = io.FontDefault != nullptr ? io.FontDefault->FontSize : 0.0f;
+    std::printf("default font: %.1f px\n", static_cast<double>(size));
+    check(io.FontDefault != nullptr && size == 17.0f, "ImGui's default font is the editor's face at the value size");
+}
 }
 
 int main(int argc, char** argv)
@@ -683,6 +699,7 @@ int main(int argc, char** argv)
     if (run("drawer-keys")) drawerKeysAndCorner();
     if (run("numeric")) numericOwnership();
     if (run("restore")) restoredFace();
+    if (run("default-font")) defaultFontIsTheValueFace();
     std::printf("modern UI failures=%d\n", failures);
     return failures == 0 ? 0 : 1;
 }

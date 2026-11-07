@@ -836,6 +836,14 @@ public:
         labelFont = fontSet.primary();
         panel.setFontSet(fontSet);
         panel.setValueBubbleTextSize(17.0f);   // the readability floor's value size
+        // ImGui's own surfaces (the save dialog, a typed value, tooltips, menus) draw in ImGui's default font: the
+        // editor's face at the value size (17), not the framework's 13 px DejaVu Sans. A face of their own, not the
+        // panel's 17: DuskPanel::text fake-bolds text whose font is ImGui's current one, which would smear every
+        // value the panel draws at 17. The atlas is the editor's (DAF leaves an atlas it did not build alone), so
+        // this holds for the editor's life.
+        static const float kDefaultFaceSize[] = {17.f};
+        if (ImFont* const face = duskdaf::loadCrispFontSet(kDefaultFaceSize, 1, getScaleFactor()).primary())
+            ImGui::GetIO().FontDefault = face;
         vcaLastScHp = hostValueForPlain(P_SC_HP, kVcaPullScFirstHz);
         scanUserPresets();
     }
