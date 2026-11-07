@@ -39,6 +39,17 @@ inline float fetAttackPositionFromMilliseconds(float milliseconds) noexcept
     return std::pow(proportion, kFetAttackSkew);
 }
 
+// The FET Release control's legacy plain domain: milliseconds in name only. Its minimum is the knob's slow,
+// counter-clockwise stop and its maximum the fast one, the reverse of a time.
+inline constexpr float kFetReleaseMinMs = 50.0f, kFetReleaseMaxMs = 1100.0f;
+
+// The FET Release knob's position (0 at the slow stop to 1 at the fast one) from its plain value. The one law the DSP
+// and the factory presets read; the face's dial reads 1 + 6 * position, as for Attack.
+inline float fetReleasePositionFromMilliseconds(float milliseconds) noexcept
+{
+    return std::clamp((milliseconds - kFetReleaseMinMs) / (kFetReleaseMaxMs - kFetReleaseMinMs), 0.0f, 1.0f);
+}
+
 struct OptoGainPoint
 {
     float knob;

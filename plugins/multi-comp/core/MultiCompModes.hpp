@@ -3393,8 +3393,7 @@ private:
 
     static float fetReleasePosition(float legacyMilliseconds) noexcept
     {
-        return std::clamp(
-            (legacyMilliseconds - 50.0f) / (1100.0f - 50.0f), 0.0f, 1.0f);
+        return fetReleasePositionFromMilliseconds(legacyMilliseconds);
     }
 
     // New native phrase/gap probes constrain deep release. Keep the existing

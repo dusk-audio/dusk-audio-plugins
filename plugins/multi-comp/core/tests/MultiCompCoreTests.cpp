@@ -1,5 +1,6 @@
 #include "MultiCompFetProgrammeFixtures.hpp"
 #include "../MultiCompDSP.hpp"
+#include "../MultiCompPresets.hpp"
 #include "MultiCompOptoParityFixtures.hpp"
 #include "MultiCompFetBlueFixtures.hpp"
 #include "MultiCompStudioVcaFixtures.hpp"
@@ -6944,6 +6945,34 @@ double exactSidechainLowShelfDb(double fs, double corner, double gainDb, double 
     return static_cast<double>(10.0L * std::log10((nr * nr + ni * ni) / (dr * dr + di * di)));
 }
 
+// The FET factory presets set the dials their names call for (2026-11-06). Their attack and release are knob positions
+// in the legacy plain domains, read through the DSP's own laws; copied as times from the JUCE table, every one of them
+// sat at about Attack 2 and Release 1 to 2, the slow end (Room Nuke at Release 1.6, EDM Pump at 2.1).
+void testFetPresetsSetTheirDials()
+{
+    struct Dials { const char* name; float attack, release; };
+    constexpr std::array<Dials, 6> expected{{{"Vocal Presence", 3.0f, 7.0f}, {"Modern Pop Control", 4.0f, 5.0f},
+                                             {"Room Nuke (FET All)", 6.0f, 7.0f}, {"Rock Bass Anchor", 3.0f, 4.0f},
+                                             {"Funk Rhythm Guitar", 4.0f, 7.0f}, {"EDM Pump (115-130 BPM)", 6.0f, 4.0f}}};
+    int fetPresets = 0;
+    for (const auto& preset : duskaudio::kMultiCompPresets)
+    {
+        if (preset.mode != 1 && preset.mode != 4) continue;
+        ++fetPresets;
+        const auto found = std::find_if(expected.begin(), expected.end(),
+                                        [&](const Dials& d) { return std::strcmp(d.name, preset.name) == 0; });
+        require(found != expected.end(), "every FET factory preset has its dials pinned");
+        const float attack = 1.0f + 6.0f * duskaudio::fetAttackPositionFromMilliseconds(preset.attack);
+        const float release = 1.0f + 6.0f * duskaudio::fetReleasePositionFromMilliseconds(preset.release);
+        std::printf("FET preset %-24s Attack %.3f (want %.0f)  Release %.3f (want %.0f)\n", preset.name,
+                    static_cast<double>(attack), static_cast<double>(found->attack), static_cast<double>(release),
+                    static_cast<double>(found->release));
+        require(std::abs(attack - found->attack) < 1e-3f && std::abs(release - found->release) < 1e-3f,
+                "a FET factory preset sets the Attack and Release dials its name calls for");
+    }
+    require(fetPresets == static_cast<int>(expected.size()), "the six FET factory presets are all checked");
+}
+
 // The sidechain EQ's low shelf holds its own response at every rate it is designed at: the host rate here, Bus's mode
 // rate (host x oversampling, to 768 kHz) in testBusSidechainLowShelfAtEveryModeRate. Its corner sits far below those
 // rates, where a float design and float coefficients cannot hold the plateau: measured off its response by 0.03 dB at
@@ -13884,6 +13913,8 @@ int main(int argc, char** argv)
     { testWideDigitalLatencyContract(); return 0; }
     // Also in the default run; separately reachable for its break-first proof against the core that rounded Digital's
     // lookahead at the mode rate.
+    if (argc == 2 && std::strcmp(argv[1], "--fet-preset-dials") == 0)
+    { testFetPresetsSetTheirDials(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--digital-lookahead-latency") == 0)
     { testDigitalLookaheadDelayMatchesReportedLatency(); return 0; }
     // Also in the default run; separately reachable for their break-first proof against the core whose sidechain
@@ -14383,6 +14414,7 @@ int main(int argc, char** argv)
     testWideOversamplerResponse();
     testWideDigitalLatencyContract();
     testDigitalLookaheadDelayMatchesReportedLatency();
+    testFetPresetsSetTheirDials();
     testOptoWideDetectorCharge();
     testVcaWideOutputOnset();
     testLatencyMixBypassAndDigitalStereo();
