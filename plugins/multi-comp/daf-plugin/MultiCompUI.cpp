@@ -2804,7 +2804,7 @@ private:
 
     void drawFetMeterSwitch(ImDrawList* dl, float x, float y)
     {
-        const int selected = multicompp::ui_detail::fetMeterButton(values[P_FET_METER], values[P_BYPASS] >= 0.5f);
+        const int selected = multicompp::ui_detail::litFetMeterButton(values[P_FET_METER], values[P_BYPASS]);
         panel.text(dl, x + 26.0f, y - 26.0f, 16.0f,
                    FetTheme::columnLegend, "METER", 0, true);
         constexpr std::array<const char*, 4> labels{{"GR", "+8", "+4", "OFF"}};

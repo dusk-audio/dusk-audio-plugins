@@ -268,6 +268,32 @@ bool switching()
     ui_detail::selectFetMeterButton(-1, none, [&](uint32_t, float) { ++writes; });
     ui_detail::selectFetMeterButton(4, none, [&](uint32_t, float) { ++writes; });
     ok &= writes == 0 && ui_detail::vintageMeterChoice(0.6f) == 1 && ui_detail::vintageMeterChoice(1.6f) == 2;
+    // A host can leave a value between two choices (an LV2 port takes any float). The face lights the nearest
+    // button (drawFetMeterSwitch), and pressing that one writes nothing either.
+    struct Between { float meter, bypass; int lit; };
+    constexpr Between between[] = {{0.3f, 0.2f, 0}, {1.4f, 0.2f, 1}, {1.6f, 0.4f, 2}, {1.4f, 0.7f, 3}};
+    int betweenWrites = 0;
+    for (const Between& b : between)
+    {
+        auto values = defaults(); values[fet] = b.meter; values[bypass] = b.bypass;
+        ok &= ui_detail::litFetMeterButton(b.meter, b.bypass) == b.lit;   // what drawFetMeterSwitch lights
+        ui_detail::selectFetMeterButton(b.lit, [&](uint32_t p) { return values[p]; },
+                                        [&](uint32_t, float) { ++betweenWrites; });
+    }
+    ok &= betweenWrites == 0;
+    // Another button writes only what changes on the face: from +8 at 1.4, not bypassed at 0.2, +4 writes the
+    // meter alone and OFF writes Bypass alone.
+    for (const int row : {2, 3})
+    {
+        auto values = defaults(); values[fet] = 1.4f; values[bypass] = 0.2f;
+        std::vector<std::pair<uint32_t, float>> written;
+        ui_detail::selectFetMeterButton(row, [&](uint32_t p) { return values[p]; },
+                                        [&](uint32_t p, float v) { written.emplace_back(p, v); });
+        ok &= written.size() == 1
+            && written[0] == (row == 2 ? std::make_pair(static_cast<uint32_t>(fet), 2.0f)
+                                       : std::make_pair(static_cast<uint32_t>(bypass), 1.0f));
+    }
+    std::printf("FET switching between choices: %d writes from the lit buttons\n", betweenWrites);
     std::puts("FET switching: GR/+8/+4 enable, OFF bypasses and preserves reference; unrelated controls unchanged; "
               "the lit button writes nothing");
     return ok;
