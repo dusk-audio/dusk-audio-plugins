@@ -885,8 +885,9 @@ public:
             inputTransformerFet[ch].reset(); outputTransformerFet[ch].reset();
             inputTransformerBus[ch].reset(); outputTransformerBus[ch].reset();
         }
+        // Digital's longest delay: its 10 ms lookahead at 4x (processDigital).
         for (auto& delay : digitalDelay)
-            delay.assign(static_cast<size_t>(std::ceil(fs * 0.01 * 4.0)) + 2, 0.0f);
+            delay.assign(static_cast<size_t>(4 * lookaheadHostSamples(10.0f, fs) + 1), 0.0f);
         digitalWrite.fill(0);
         prepared = true;
     }
@@ -7468,7 +7469,8 @@ private:
         const float sr = static_cast<float>(fs * osFactor);
         const float lookahead = std::clamp(p.digitalLookahead.load(std::memory_order_relaxed), 0.0f, 10.0f);
         auto& delayLine = digitalDelay[static_cast<size_t>(ch)];
-        const int delay = std::min(static_cast<int>(std::round(lookahead * 0.001f * sr)), static_cast<int>(delayLine.size()) - 1);
+        // Whole host samples, as the latency report counts them, scaled to the mode rate.
+        const int delay = std::min(lookaheadHostSamples(lookahead, fs) * osFactor, static_cast<int>(delayLine.size()) - 1);
         int& wp = digitalWrite[ch];
         float delayed = input;
         if (delay > 0)

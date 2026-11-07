@@ -213,7 +213,8 @@ private:
                               float digitalLookaheadMs) const noexcept;
     // The part of a mode's latency its controls cannot change.
     int baseLatencyForMode(MultiCompMode mode) const noexcept;
-    // A lookahead in samples. The latency, the delays and the delay lines' sizes all round it here.
+    // A lookahead in host samples (lookaheadHostSamples, which Digital's mode-rate delay rounds with too). The
+    // latency, the delays and the delay lines' sizes all round it here.
     int lookaheadSamples(float milliseconds) const noexcept;
 
     MultiCompParameterState params;

@@ -4181,6 +4181,75 @@ void testWideDigitalLatencyContract()
         }
 }
 
+// Digital's own lookahead delays the audio inside the mode, at the mode rate; the latency the host is told counts it
+// in whole host samples. Rounded at the mode rate, the delay missed the report by a quarter or half a host sample
+// wherever the lookahead does not round to the same thing at both rates (2x / 4x: 24 of the 75 settings below, e.g.
+// 0.1 ms at 44.1 kHz delayed 4.5 samples against a report of 4), while the bypass and listen paths sit at the report.
+// With Ratio 1 the Digital path is linear, and every stage in it (the halfband FIRs, their phase-rate padding, the
+// delay lines) is a symmetric FIR or a pure delay, so the response is linear phase and its first moment is its delay
+// exactly: 4.5e-13 samples from the report on every setting that matched, against 0.25 for the smallest miss.
+void testDigitalLookaheadDelayMatchesReportedLatency()
+{
+    constexpr int kImpulseAt = 3000, kTotal = kImpulseAt + 12000, kBlock = 512;
+    constexpr float kAmplitude = 0.25f;
+    constexpr double kTolerance = 1.0e-6;   // samples
+    const char* const settingNames[] = {"off", "2x", "4x"};
+    int misses = 0;
+    double worst = 0.0;
+    for (double rate : {44100.0, 48000.0, 88200.0, 96000.0, 192000.0})
+        for (int setting : {kOversamplingOffSetting, kOversampling2xSetting, kOversampling4xSetting})
+        {
+            double settingWorst = 0.0;
+            for (float lookaheadMs : {0.1f, 1.3f, 2.7f, 5.0f, 10.0f})
+                for (bool bypassed : {false, true})
+                {
+                    MultiCompDSP dsp;
+                    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Digital));
+                    dsp.setOversampling(setting);
+                    dsp.setParameter(MultiCompDSP::Parameter::DigitalThreshold, 0.0f);
+                    dsp.setParameter(MultiCompDSP::Parameter::DigitalRatio, 1.0f);
+                    dsp.setParameter(MultiCompDSP::Parameter::DigitalLookahead, lookaheadMs);
+                    dsp.setParameter(MultiCompDSP::Parameter::GlobalLookahead, 0.0f);
+                    dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+                    dsp.setHostLatencyPadding(true);   // as the plugin runs
+                    dsp.setBypass(bypassed);
+                    dsp.prepare(rate, kBlock);
+                    std::vector<float> input(kTotal, 0.0f), output(kTotal, 0.0f);
+                    input[kImpulseAt] = kAmplitude;
+                    for (int start = 0; start < kTotal; start += kBlock)
+                    {
+                        const float* in[] = {input.data() + start};
+                        float* out[] = {output.data() + start};
+                        dsp.processBlock(in, out, 1, std::min(kBlock, kTotal - start));
+                    }
+                    double sum = 0.0, moment = 0.0;
+                    for (int i = 0; i < kTotal; ++i)
+                    {
+                        sum += output[static_cast<size_t>(i)];
+                        moment += static_cast<double>(i - kImpulseAt) * output[static_cast<size_t>(i)];
+                    }
+                    // The moment is a delay only for a response that passes DC: measured 0.99961 at 4x.
+                    requireStructure(std::abs(sum / kAmplitude - 1.0) < 1.0e-3,
+                                     "the Digital impulse response passes DC at unity within 0.1%");
+                    const double error = moment / sum - dsp.getHostLatencySamples();
+                    if (std::abs(error) > kTolerance)
+                    {
+                        ++misses;
+                        std::printf("digital lookahead latency: %.0f Hz %s %.1f ms %s delayed %.4f, reported %d\n",
+                                    rate, settingNames[setting], static_cast<double>(lookaheadMs),
+                                    bypassed ? "bypass" : "wet", moment / sum, dsp.getHostLatencySamples());
+                    }
+                    settingWorst = std::max(settingWorst, std::abs(error));
+                }
+            worst = std::max(worst, settingWorst);
+            std::printf("digital lookahead latency: %6.0f Hz %-3s worst |delay - reported| %.3e samples\n", rate,
+                        settingNames[setting], settingWorst);
+        }
+    std::printf("digital lookahead latency: %d of 150 renders off the report, worst %.3e samples\n", misses, worst);
+    require(misses == 0, "Digital's wet and bypassed paths are delayed by exactly the latency the host is told, "
+                         "at every rate, oversampling setting and lookahead");
+}
+
 void testOptoWideDetectorCharge()
 {
     for (int eventSamples : {48, 480})
@@ -13662,6 +13731,10 @@ int main(int argc, char** argv)
     { testBypassAndListenLinesHoldBothLookaheads(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--wide-latency") == 0)
     { testWideDigitalLatencyContract(); return 0; }
+    // Also in the default run; separately reachable for its break-first proof against the core that rounded Digital's
+    // lookahead at the mode rate.
+    if (argc == 2 && std::strcmp(argv[1], "--digital-lookahead-latency") == 0)
+    { testDigitalLookaheadDelayMatchesReportedLatency(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--wide-opto") == 0)
     { testOptoWideDetectorCharge(); return 0; }
     if (argc == 2 && std::strcmp(argv[1], "--wide-vca") == 0)
@@ -14147,6 +14220,7 @@ int main(int argc, char** argv)
     testClassicOversamplerByteIdentity();
     testWideOversamplerResponse();
     testWideDigitalLatencyContract();
+    testDigitalLookaheadDelayMatchesReportedLatency();
     testOptoWideDetectorCharge();
     testVcaWideOutputOnset();
     testLatencyMixBypassAndDigitalStereo();

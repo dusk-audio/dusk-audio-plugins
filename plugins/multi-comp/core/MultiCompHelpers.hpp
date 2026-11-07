@@ -346,6 +346,15 @@ inline float interpolateOversampledSidechain(float current, float next,
 inline int wrapRingIndex(int index, int size) noexcept { return index < 0 ? index + size : index; }
 inline int advanceRingIndex(int index, int size) noexcept { return index + 1 == size ? 0 : index + 1; }
 
+// A lookahead (ms) in whole host samples. The latency the host is told rounds it here (MultiCompDSP::lookaheadSamples),
+// and so does every delay that applies it: the host-rate delay lines, and Digital's mode-rate one, which delays by this
+// many host samples times its oversampling factor. Rounded at the mode rate instead, Digital's delay missed the report
+// by up to half a host sample at 2x and 4x.
+inline int lookaheadHostSamples(float milliseconds, double hostRate) noexcept
+{
+    return static_cast<int>(std::round(milliseconds * 0.001f * static_cast<float>(hostRate)));
+}
+
 // A ring-buffer delay line over a block, exactly as the per-sample loop
 //   line[write] = input[i]; output[i] = line[(write - delay) mod size]; advance write
 // leaves it: the first `delay` outputs come from the ring, the rest are the

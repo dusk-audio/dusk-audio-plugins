@@ -3033,7 +3033,7 @@ int MultiCompDSP::latencySamplesForMode(MultiCompMode mode, float globalLookahea
 
 int MultiCompDSP::lookaheadSamples(float milliseconds) const noexcept
 {
-    return static_cast<int>(std::round(milliseconds * 0.001f * static_cast<float>(sampleRate)));
+    return lookaheadHostSamples(milliseconds, sampleRate);
 }
 
 int MultiCompDSP::baseLatencyForMode(MultiCompMode mode) const noexcept
