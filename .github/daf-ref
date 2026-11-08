@@ -6,4 +6,6 @@
 # commit on every platform and records it in the job summary and release notes.
 # A full 40-character commit SHA holds every build on that commit (e.g. while
 # DAF main is broken). Put exactly one value on the first non-comment line.
-main
+# TEMPORARY, never merge: the head of dusk-audio/DAF#112 (AU latency fix),
+# for pre-merge DuskVerb 2 / Tape Echo 2 / Ring Out acceptance builds.
+b68711a071f005a8779e82c9196b2ece68056d12
