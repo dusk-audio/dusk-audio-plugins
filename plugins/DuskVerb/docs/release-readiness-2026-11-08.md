@@ -1,7 +1,8 @@
 # DuskVerb 2 1.0 readiness implementation
 
 This change set contains the release fixes and the missing studio-processor UI.
-It is not a published release; the remaining acceptance work is listed below.
+It shipped as DuskVerb 2 1.0.1 on 2026-11-08 through early access (members now,
+public on 2026-11-22); the acceptance record is below.
 
 ## Source and UI provenance
 
@@ -305,21 +306,37 @@ are in `windows-runtime-results/`; the original CI results remain separate.
 
 1. Done: [dusk-audio/DAF#112](https://github.com/dusk-audio/DAF/pull/112) is
    merged, a CI package built after the merge passed the same AU checks, and the
-   temporary `ci/daf-pr112-acceptance` branch is deleted. Every recorded AU
-   bounce used a CI package; none used a release archive.
+   temporary `ci/daf-pr112-acceptance` branch is deleted. Every AU bounce
+   before the release used a CI package; item 3 records the release archive's.
 2. Done: the Windows runtime change is committed as `86d78b4b` and fresh CI built
    it; see the Windows runtime section. The release archives still come from the
    release workflow on the final commit.
-3. Open: bounce the AU from the release archive in REAPER, as above, once the
-   release workflow has built it. Logic Pro and other AU hosts have not been
-   tested.
-4. Complete human listening and interactive DAW acceptance. This pass verifies
-   audio numerically and uses public REAPER APIs for editor lifecycle; it does not
-   claim subjective listening, Logic testing, or manual screenshots on remote
-   desktop sessions. Intel/Catalina and clean Windows 10 remain explicitly
+3. Done: the macOS archive of the 1.0.1 release (`duskverb-2-macos.zip`, sha256
+   `ef755505d9e69ad5dad9335316a4c14987541b4aacd988c3dbf3e70fef899e36`, the same
+   file in the draft release and the members mirror) was bounced in REAPER as
+   above. Its AU reports version 1.0.1, answers the latency query with 0 seconds
+   and, once initialized, its tail time with 30 seconds. The fresh-insert bounce
+   is wet and bit-identical to the archive's VST3, the automated project bounces
+   the same before and after a save and reload, the static project matches the
+   VST3 bit for bit, and the realtime tail stays above the no-FX meter level. All
+   eight bounces are bit-identical to the post-merge CI package's: the release
+   was built from the same DAF commit, `0abd02e3`. Automated AU against automated
+   VST3 still differs by up to 6.1e-3, as above. The release AU passes `auval` in
+   the release CI run and in the Mac's GUI session (macOS 27.0.1: 0 failures, 0
+   warnings). No available machine has Logic Pro or another AU host installed, so
+   `auval`, the validation Logic runs when it scans a plugin, is the only check
+   beyond REAPER; playback in Logic remains untested. Renders and logs:
+   `~/Downloads/dusk-capture/dv2-release-1.0.1/`.
+4. Human listening and interactive DAW acceptance are Marc's; he released 1.0.1
+   on 2026-11-08. This report verifies audio numerically and uses public REAPER
+   APIs for editor lifecycle; it does not claim subjective listening, Logic
+   testing, or manual screenshots on remote desktop sessions. Intel/Catalina and clean Windows 10 remain explicitly
    unverified, as agreed.
 
-No release tag or publication was performed. The website remains unpublished.
+The release tag is `duskverb-2-v1.0.1` (`e8548791`). Its GitHub release stays a
+draft until 2026-11-22, when the website page and catalog entry, waiting on the
+`early-access/2026-11-22` branch, go live with it. The `duskverb-2-v1.0.0` tag of
+2026-10-05 was never published.
 The existing 192-render comparison proves preservation of existing voicing, not
 new reference-anchor calibration. Private tuner `full_check`/`fleet_audit` and
 clean-system download acceptance remain unclaimed.
