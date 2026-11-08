@@ -91,7 +91,7 @@ scan. These are fresh scans and profiles, not clean operating-system installs.
 | Available machine | Real-host results |
 |---|---|
 | Linux x86_64, REAPER 7.85 | VST3, CLAP and LV2 discovered; non-default edits, three editor open/close cycles, full static parameter restore, non-automated parameter restore and all five automation points passed. All nine eight-second bounces were finite and below full scale. Before/after automated renders matched exactly in each format, with measurable tails after the input ended. |
-| macOS 27.0.1 / Apple M3, REAPER 7.79 | VST3, CLAP, LV2 and AU discovered; the same parameter, automation-point and editor lifecycle checks passed. VST3, CLAP and LV2 produced reverb tails and a measurable difference between automated and static renders. **Its AU rendered dry**, because DAF refused REAPER's latency query; a CI build with the DAF fix renders wet. See the AU section below. |
+| macOS 27.0.1 / Apple M3, REAPER 7.79 | VST3, CLAP, LV2 and AU discovered; the same parameter, automation-point and editor lifecycle checks passed. VST3, CLAP and LV2 produced reverb tails and a measurable difference between automated and static renders. **Its AU rendered dry**, because it answered REAPER's tail-time query but DAF refused the latency query; a CI build with the DAF fix renders wet. See the AU section below. |
 | Windows 11 Home 10.0.26200 / x64, REAPER 7.78 | VST3 and CLAP passed the same scan, state, automation-point and editor checks. Both produced finite, unclipped reverb bounces and responded measurably to automation. The final statically linked runtime build repeated these checks successfully. VST3 before/after audio matched exactly. |
 
 The state test deliberately corrupts restored Decay Time in its negative control:
@@ -262,7 +262,7 @@ Loaded directly from the release archives, the Tape Echo 2 1.0.8 and Ring Out
 development copies were removed from `/Library/Audio/Plug-Ins/Components`, the
 Tape Echo 2 1.0.8 AU played normally: its fresh-insert bounce is bit-identical
 to its VST3's, and its realtime tail stays above the no-FX meter level. Ring Out
-1.1.0 answers both queries as Tape Echo 2 does and should play normally too; it
+1.1.0 refuses both queries too, so it should play normally as well; it
 was not run in REAPER. Neither needs a release for this fault. Builds of both
 from `main` now answer the latency query with 0 seconds
 ([run 42504720533](https://github.com/dusk-audio/dusk-audio-plugins/actions/runs/42504720533)
