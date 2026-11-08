@@ -301,12 +301,15 @@ are in `windows-runtime-results/`; the original CI results remain separate.
 
 1. Done: [dusk-audio/DAF#112](https://github.com/dusk-audio/DAF/pull/112) is
    merged, a CI package built after the merge passed the same AU checks, and the
-   temporary `ci/daf-pr112-acceptance` branch is deleted. Repeat the AU bounce on
-   the release package. Logic Pro and other AU hosts have not been tested.
+   temporary `ci/daf-pr112-acceptance` branch is deleted. Every recorded AU
+   bounce used a CI package; none used a release archive.
 2. Done: the Windows runtime change is committed as `86d78b4b` and fresh CI built
    it; see the Windows runtime section. The release archives still come from the
    release workflow on the final commit.
-3. Complete human listening and interactive DAW acceptance. This pass verifies
+3. Open: bounce the AU from the release archive in REAPER, as above, once the
+   release workflow has built it. Logic Pro and other AU hosts have not been
+   tested.
+4. Complete human listening and interactive DAW acceptance. This pass verifies
    audio numerically and uses public REAPER APIs for editor lifecycle; it does not
    claim subjective listening, Logic testing, or manual screenshots on remote
    desktop sessions. Intel/Catalina and clean Windows 10 remain explicitly
