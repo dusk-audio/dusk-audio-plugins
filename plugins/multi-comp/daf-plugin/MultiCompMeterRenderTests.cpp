@@ -11,6 +11,26 @@
 
 namespace
 {
+// Input history belongs to a scenario, not the executable. Reusing one context
+// made a case's first press combine with the previous case's last press into a
+// double-click, opening text entry instead of exercising the intended drag.
+struct TestContext
+{
+    TestContext()
+    {
+        ImGui::CreateContext();
+        auto& io = ImGui::GetIO();
+        io.IniFilename = nullptr;
+        io.DisplaySize = ImVec2(3600, 2000);
+        io.DeltaTime = 1.0f / 60.0f;
+        duskdaf::loadCrispFont(24.0f);
+        unsigned char* pixels;
+        int width, height;
+        io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
+    }
+    ~TestContext() { ImGui::DestroyContext(); }
+};
+
 bool triangleContains(ImVec2 p, ImVec2 a, ImVec2 b, ImVec2 c)
 {
     const auto side = [](ImVec2 u, ImVec2 v, ImVec2 w) {
@@ -304,19 +324,14 @@ bool valueEditEnterOnSeedIsNoEdit()
 
 int main()
 {
-    ImGui::CreateContext();
-    auto& io = ImGui::GetIO();
-    io.IniFilename = nullptr;
-    io.DisplaySize = ImVec2(3600, 2000);
-    io.DeltaTime = 1.0f / 60.0f;
-    duskdaf::loadCrispFont(24.0f);
-    unsigned char* pixels;
-    int width, height;
-    io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
-    bool ok = drawNeedlePolicy();
-    ok = knobWritesOnlyOnMovement() && ok;
-    ok = knobBeyondItsRangeStaysPut() && ok;
-    ok = valueEditEnterOnSeedIsNoEdit() && ok;
+    bool ok = true;
+    for (auto test : {drawNeedlePolicy, knobWritesOnlyOnMovement,
+                      knobBeyondItsRangeStaysPut, valueEditEnterOnSeedIsNoEdit})
+    {
+        const TestContext context;
+        ok = test() && ok;
+    }
+    const TestContext context;
     for (float size : {1.0f, 1.25f, 1.8f, 2.0f, 3.0f})
         for (const char* source : {"INPUT", "OUTPUT", "GAIN REDUCTION"})
             for (float db : {-80.0f, -40.0f, -20.0f, 0.0f, 20.0f, 40.0f,
@@ -334,6 +349,5 @@ int main()
                 ok = drawVintageCase(size, opto, db, "OUTPUT +4", true) && ok;
                 if (!opto) ok = drawVintageCase(size, opto, db, "OFF", false) && ok;
             }
-    ImGui::DestroyContext();
     return ok ? 0 : 1;
 }

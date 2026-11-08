@@ -37,6 +37,7 @@ Actual failing controls and restored results, retained under `/tmp`:
 | Entry position | Original shared widget: 2 position assertions failed | Shared knob suite passes at multiple scales |
 | Output-history bridge | Feed disconnected: `36 check(s) FAILED` | `DuskVerbCoreTests: all checks passed` |
 | Host restore during value entry | `FAIL: host restore cancels unfinished entry for the previous preset` (real CLAP editor) | The same permanent UI gate passes, including the opposite automation case |
+| Multi-Comp fleet meter gate | `FAIL knob beyond its range: press, outward drag and wheel 0 writes, -25.00; inward drag -25.00` | `PASS knob beyond its range: press, outward drag and wheel 0 writes, -25.00; inward drag -12.00` after isolating each case's ImGui context |
 
 Neighboring paths checked: zero and variable blocks, mono/stereo/mono-to-stereo,
 bypass, supported and unsupported Freeze, reset, repeated prepare, rate changes,
@@ -45,6 +46,8 @@ factory EQ versus explicitly edited gains, Mix Lock on/off, INIT and A/B.
 
 ## Integrated-build evidence
 
+- GitHub Actions [DAF build run 42479837947](https://github.com/dusk-audio/dusk-audio-plugins/actions/runs/42479837947), commit `349292c5e04ffa89516d50c6b1142a799fab051f`: **all four DuskVerb jobs passed** (Linux x86_64, Linux ARM64, macOS and Windows). The fleet run finished with 35 successful jobs and two failures, both Multi-Comp's `MultiCompMeterRender` test on Linux. The failures reproduce locally: a previous case's click history opens text entry in the next case, preventing its intended drag. Giving each interaction case its own ImGui context fixes the test without changing plugin code; the corrected Linux ARM64 gate still needs a CI run.
+- After the test-isolation fix, Multi-Comp's full Linux release build succeeded and **27/27 release-gating tests passed, 452.14 seconds**, using the same pinned DAF source as CI. This excludes the existing `report-only` parity test, as CI does. Plain presses and outward drags/wheel steps still preserve out-of-range saved values; inward drags and typed edits work. All meter-render cases and the real editor's drag/resize checks pass. DuskVerb's real-editor regression also passed again (**18.93 seconds**).
 - Linux x86_64: **all 31 registered tests pass across the core/host and display-enabled runs**. The broad run passed 29 tests and its resize test was blocked by sandbox X11 access (601.18 seconds). After the final editor-state fix, the five affected hosted/resize/drag checks pass with an isolated display (18.49 seconds), including the expanded permanent UI regression.
 - Windows x64/MSVC: **27/27 tests passed, 580.08 seconds**, including native VST3 identity, CLAP state/tail and the repaired test stack allocation. After the final UI-only adjustment, all three affected CLAP/VST3 hosted checks passed again (3.00 seconds).
 - AddressSanitizer, UndefinedBehaviorSanitizer and leak detection: **`DuskVerbCoreTests: all checks passed`, exit 0**. LeakSanitizer required a run outside the sandbox to inspect threads.
@@ -66,15 +69,22 @@ are not public release downloads. Build and test logs use the
 under `/tmp/duskverb2-readiness-20261108` on macOS and
 `C:/tmp/duskverb2-readiness-20261108` on Windows.
 
-The existing website draft, screenshot and PDF in
-`/home/marc/projects/dusk-audio.github.io` were updated locally; `published: false`
-was retained. No plugin release tag has been created.
+The fleet-test correction's failing and passing output is retained in
+`/tmp/multicomp-meter-red.log` and `/tmp/multicomp-meter-fixed-cases.log`.
+The full Multi-Comp build and gate logs are
+`/tmp/multicomp-meter-full-build.log` and `/tmp/multicomp-meter-full-ctest.log`;
+the repeated DuskVerb editor check is `/tmp/multicomp-duskverb-ui-check.log`.
+
+The website draft, screenshot and PDF were merged in
+[website PR #22](https://github.com/dusk-audio/dusk-audio.github.io/pull/22);
+`published: false` was retained. No plugin release tag has been created.
 
 ## Remaining release acceptance
 
-Run the release workflow on the final commit, including Linux ARM64 and
-other plugins consuming the shared widget headers. The local Linux build is a
-validation build, not proof of the release image's minimum glibc compatibility.
+Repeat the affected Multi-Comp Linux CI jobs after the test-isolation fix, then
+run the release workflow on the final release commit. DuskVerb's build-only CI
+already passed on all four targets, including Linux ARM64. The local Linux build
+is a validation build, not proof of the release image's minimum glibc compatibility.
 The macOS build contains both architectures, but x86_64 runtime and Catalina
 compatibility were not exercised; the installed SDK warns about the old deployment
 target. Windows testing uses the current VM, not a clean Windows 10 machine.
