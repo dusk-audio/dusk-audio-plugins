@@ -151,10 +151,13 @@ beyond its own decay, so the problem was never specific to offline rendering.
 
 **Cause.** DAF's AU wrapper refused `kAudioUnitProperty_Latency` with
 `kAudioUnitErr_InvalidProperty` (-10879) for any plugin built without
-`DAF_PLUGIN_WANT_LATENCY`, and DuskVerb 2 does not define it. REAPER keeps
-calling `AudioUnitRender` on a unit whose latency query fails, but mixes the
-track without the unit's output. Apple's AU SDK base class answers this query
-for every unit, which is why AUs built on it never show the problem.
+`DAF_PLUGIN_WANT_LATENCY`, and DuskVerb 2 does not define it. DuskVerb 2 does
+answer `kAudioUnitProperty_TailTime` (`DAF_PLUGIN_WANT_TAIL`; 30 seconds at its
+default settings). REAPER keeps calling `AudioUnitRender` on a unit that answers
+its tail time but fails the latency query, and mixes the track without the
+unit's output. A unit that refuses both plays normally. Apple's AU SDK base
+class answers the latency query for every unit, which is why AUs built on it
+never show the problem.
 
 It was found with a logging build of DAF's AU wrapper, built from the same
 sources as CI and run in REAPER in the Mac's GUI session. Each build changed one
@@ -168,6 +171,12 @@ thing on top of the logging, and each bounced the same fresh-insert project:
 | Write a 0.5 test tone into REAPER's output buffer | Dry: the tone never reached the bounce |
 | Log `Process`, `ProcessMultiple` and `ComplexRender` | Dry: REAPER never calls them |
 | Answer the latency query with 0, and nothing else | **Wet**: peak `0.178849816`, the unit's own output peak, with a tail to 4.51 seconds |
+
+A second experiment found why only DuskVerb 2 was affected. DAF `68b07f25`
+without the logging, changed only so that the unit also refuses
+`kAudioUnitProperty_TailTime`, still refuses the latency query and bounces wet,
+bit-identical to the latency-only probe. The dry mix needs both: a tail time
+answered and the latency query refused.
 
 Three statements in the first diagnosis were wrong or unsupported:
 
@@ -246,34 +255,29 @@ call where VST3's are sample-accurate. That has not been verified; include
 automated passages in the listening pass.
 
 **Other plugins.** Tape Echo 2 and Ring Out, both shipped, and Chord Analyzer 2
-are also built without `DAF_PLUGIN_WANT_LATENCY`. Loaded directly from the
-release archives, the Tape Echo 2 1.0.8 and Ring Out 1.1.0 AU binaries refuse
-the latency query with -10879, exactly as DuskVerb 2's original CI AU does. The
-fixed DuskVerb 2 build answers 0 seconds, and TapeMachine 2 1.0.10, which
-defines the macro, answers 0.00127 seconds once initialized. Their AUs are
-therefore expected to play dry in REAPER until new releases are built from
-`main`. CI builds of both against the fix, on the same temporary branch, answer 0
-seconds:
-[run 42502585122](https://github.com/dusk-audio/dusk-audio-plugins/actions/runs/42502585122)
-for Tape Echo 2 and
-[run 42502586942](https://github.com/dusk-audio/dusk-audio-plugins/actions/runs/42502586942)
-for Ring Out, both green on all four targets; so do builds from `main` after the
-merge,
-[run 42504720533](https://github.com/dusk-audio/dusk-audio-plugins/actions/runs/42504720533)
+are also built without `DAF_PLUGIN_WANT_LATENCY`, but none of them answers the
+tail-time query: DuskVerb 2 is the only DAF plugin with `DAF_PLUGIN_WANT_TAIL`.
+Loaded directly from the release archives, the Tape Echo 2 1.0.8 and Ring Out
+1.1.0 AU binaries refuse both queries with -10879. In REAPER, once the old
+development copies were removed from `/Library/Audio/Plug-Ins/Components`, the
+Tape Echo 2 1.0.8 AU played normally: its fresh-insert bounce is bit-identical
+to its VST3's, and its realtime tail stays above the no-FX meter level. Ring Out
+1.1.0 answers both queries as Tape Echo 2 does and should play normally too; it
+was not run in REAPER. Neither needs a release for this fault. Builds of both
+from `main` now answer the latency query with 0 seconds
+([run 42504720533](https://github.com/dusk-audio/dusk-audio-plugins/actions/runs/42504720533)
 and
-[run 42504722602](https://github.com/dusk-audio/dusk-audio-plugins/actions/runs/42504722602).
-Tape Echo 2 could not be checked in
-REAPER on the available Mac: REAPER loaded an August development copy from
-`/Library/Audio/Plug-Ins/Components` even with 1.0.8 installed in the user
-folder, and that copy aborts REAPER during a bounce with heap corruption.
+[run 42504722602](https://github.com/dusk-audio/dusk-audio-plugins/actions/runs/42504722602)).
 
-Evidence on the Linux machine: renders, probe logs, the red and green test logs
-and the CI-package acceptance (`ci2/`) are in
-`~/Downloads/dusk-capture/dv2-au-latency-2026-11-08/`; the Tape Echo 2 and Ring
-Out archives that were checked are in
-`~/Downloads/dusk-capture/te2-au-latency-2026-11-08/`. The harness (GUI-session REAPER runner, render comparer, in-process latency probe
-and the AU wrapper logging patch) is `tools/mac-reaper-au/` in the private
-tools repository (dusk-audio-tools PR #16).
+Evidence on the Linux machine: renders (the tail-time probe's is
+`probe-tail-refused.wav`), probe logs, the red and green test logs and the
+CI-package acceptance (`ci2/`, and `ci3/` after the merge) are in
+`~/Downloads/dusk-capture/dv2-au-latency-2026-11-08/`. The Tape Echo 2 and Ring
+Out archives that were checked, and the Tape Echo 2 REAPER renders (`reaper/`),
+are in `~/Downloads/dusk-capture/te2-au-latency-2026-11-08/`. The harness
+(GUI-session REAPER runner, render comparer, package comparer, in-process AU
+property probe and the AU wrapper logging patch) is `tools/mac-reaper-au/` in
+the private tools repository.
 
 ### Compatibility and distribution decision
 
