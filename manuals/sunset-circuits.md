@@ -1,7 +1,7 @@
 ---
 slug: sunset-circuits
-version: 1.0.7
-last_updated: 2026-09-06
+version: 1.0.8
+last_updated: 2026-11-08
 tagline: Six vintage synth circuits in one instrument
 ---
 
