@@ -1132,7 +1132,7 @@ jobs:
             $dependencies = & $dumpbin /DEPENDENTS $binary.FullName
             if ($LASTEXITCODE -ne 0) { throw "Cannot inspect $($binary.FullName)" }
             $dependencies | Write-Output
-            if ($dependencies -match '^\s*(MSVCP|MSVCR|VCRUNTIME|CONCRT)[A-Za-z0-9_]*\.dll\s*$') {
+            if ($dependencies -match '^\s*(MSVCP|MSVCR|VCRUNTIME|VCOMP|CONCRT)[A-Za-z0-9_]*\.dll\s*$') {
               throw "$($binary.Name) requires an unbundled VC++ runtime"
             }
           }

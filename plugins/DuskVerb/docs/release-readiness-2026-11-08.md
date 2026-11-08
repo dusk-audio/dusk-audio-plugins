@@ -133,7 +133,9 @@ runtime imports. This is scoped to DuskVerb; other plugins are unchanged.
   `ole32`, `IMM32`). The run's native MSVC suite passed **28/28 (215.09 seconds)**;
   macOS passed 30/30 and both Linux targets 31/31. The CI-built Windows package
   has not been run in REAPER on the Windows machine; the REAPER results above
-  come from the local rebuild.
+  come from the local rebuild. The post-merge
+  [run 42504718251](https://github.com/dusk-audio/dusk-audio-plugins/actions/runs/42504718251)
+  passed the gate and the same suites again.
 
 ### AU played dry in REAPER (cause found, fixed in DAF)
 
@@ -194,15 +196,15 @@ with it.
 - DuskVerb 2 built universal on the Mac against the fix passes its 30 macOS
   tests. In REAPER its fresh-insert bounce is identical, bit for bit, to the
   latency-only probe's.
-- The PR is not merged yet. Plugin CI builds whatever DAF `main` is when it runs,
-  so DuskVerb 2's release build picks up the fix once the PR is merged, with no
-  pin to change.
+- Merged on 2026-11-08 as `0abd02e3`, whose tree is identical to the tested
+  `b68711a0`. Plugin CI builds whatever DAF `main` is when it runs, so every
+  build since, release tags included, has the fix, with no pin to change.
 
 **Acceptance on a CI package.**
 [Run 42502583390](https://github.com/dusk-audio/dusk-audio-plugins/actions/runs/42502583390)
 built DuskVerb 2 with the plugin CI pipeline from `86d78b4b`, with
 `.github/daf-ref` pointed at `b68711a0` on a temporary branch,
-`ci/daf-pr112-acceptance`, that is not for merging. Its universal, ad-hoc signed
+`ci/daf-pr112-acceptance`, deleted after the merge. Its universal, ad-hoc signed
 macOS AU answers the latency query with 0 seconds. It was installed in place of
 the original CI AU and tested in REAPER 7.79 in the GUI session, next to the same
 package's VST3. Every run logged the plugin binaries REAPER mapped; the first
@@ -227,6 +229,16 @@ not from the AU format.
 Afterwards the installed AU was restored to the original CI package, compared
 byte for byte and its signature verified.
 
+**Repeated after the merge.**
+[Run 42504718251](https://github.com/dusk-audio/dusk-audio-plugins/actions/runs/42504718251)
+built DuskVerb 2 from `68914f9c`, the commit PR #346 merged, with
+`.github/daf-ref` at `main`, which resolved to `0abd02e3`. It passed on all four
+targets (macOS 30/30, Windows 28/28, both Linux targets 31/31), its Windows gate
+passed, and its macOS AU answers the latency query with 0 seconds. The same ten
+REAPER runs on its macOS package, each with its mapped binaries logged, gave
+bounces bit-identical to the pre-merge package's in all eight bounced cases, and
+the realtime tail again stayed above the no-FX meter decay.
+
 Open: with automation the AU and VST3 bounces differ by up to `6.1e-3`, while
 without it they are identical, so REAPER's automation reaches the two formats
 differently. A likely cause is AU parameter changes taking effect once per render
@@ -239,13 +251,18 @@ release archives, the Tape Echo 2 1.0.8 and Ring Out 1.1.0 AU binaries refuse
 the latency query with -10879, exactly as DuskVerb 2's original CI AU does. The
 fixed DuskVerb 2 build answers 0 seconds, and TapeMachine 2 1.0.10, which
 defines the macro, answers 0.00127 seconds once initialized. Their AUs are
-therefore expected to play dry in REAPER until they are rebuilt on the fix.
-CI builds of both against the fix, on the same temporary branch, answer 0
+therefore expected to play dry in REAPER until new releases are built from
+`main`. CI builds of both against the fix, on the same temporary branch, answer 0
 seconds:
 [run 42502585122](https://github.com/dusk-audio/dusk-audio-plugins/actions/runs/42502585122)
 for Tape Echo 2 and
 [run 42502586942](https://github.com/dusk-audio/dusk-audio-plugins/actions/runs/42502586942)
-for Ring Out, both green on all four targets. Tape Echo 2 could not be checked in
+for Ring Out, both green on all four targets; so do builds from `main` after the
+merge,
+[run 42504720533](https://github.com/dusk-audio/dusk-audio-plugins/actions/runs/42504720533)
+and
+[run 42504722602](https://github.com/dusk-audio/dusk-audio-plugins/actions/runs/42504722602).
+Tape Echo 2 could not be checked in
 REAPER on the available Mac: REAPER loaded an August development copy from
 `/Library/Audio/Plug-Ins/Components` even with 1.0.8 installed in the user
 folder, and that copy aborts REAPER during a bounce with heap corruption.
@@ -282,11 +299,10 @@ are in `windows-runtime-results/`; the original CI results remain separate.
 
 ## Remaining release acceptance
 
-1. Merge [dusk-audio/DAF#112](https://github.com/dusk-audio/DAF/pull/112). Until
-   then every CI build from `main`, a release tag included, produces an AU that
-   REAPER plays dry. Then delete the temporary `ci/daf-pr112-acceptance` branch,
-   and repeat the AU bounce on the release package. Logic Pro and other AU
-   hosts have not been tested.
+1. Done: [dusk-audio/DAF#112](https://github.com/dusk-audio/DAF/pull/112) is
+   merged, a CI package built after the merge passed the same AU checks, and the
+   temporary `ci/daf-pr112-acceptance` branch is deleted. Repeat the AU bounce on
+   the release package. Logic Pro and other AU hosts have not been tested.
 2. Done: the Windows runtime change is committed as `86d78b4b` and fresh CI built
    it; see the Windows runtime section. The release archives still come from the
    release workflow on the final commit.
