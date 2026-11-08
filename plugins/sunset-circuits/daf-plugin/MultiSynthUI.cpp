@@ -612,7 +612,7 @@ private:
     }
 
     void panelBox(float x0, float y0, float x1, float y1, float alpha = 1.0f,
-                  ImU32 cosmosBand = 0)
+                  ImU32 cosmosBand = 0, float bandHeight = 20.0f)
     {
         // The older 3 px bright metal frame gave every nested section the same
         // visual weight. A slimmer, chassis-blended rail keeps the hardware
@@ -627,7 +627,7 @@ private:
         dl->AddLine(P(x0 + 2, y1 - 1), P(x1 - 2, y1 - 1),
                     mulA(lerpC(live.panel, IM_COL32(0, 0, 0, 255), 0.26f), alpha), 1.0f * s);
         if (cosmosBand != 0 && live.cosmos > 0.0f)
-            dl->AddRectFilled(P(x0 + 2, y0 + 2), P(x1 - 2, y0 + 20),
+            dl->AddRectFilled(P(x0 + 2, y0 + 2), P(x1 - 2, y0 + bandHeight),
                               mulA(cosmosBand, alpha * live.cosmos), 4.0f * s,
                               ImDrawFlags_RoundCornersTop);
     }
@@ -1074,12 +1074,15 @@ private:
         ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
             ImGui::SetTooltip("%s", whyTip);
-        const ImU32 bg = lerpC(IM_COL32(38, 38, 41, 255), live.accent, 0.08f);
-        dl->AddRectFilled(b0, b1, mulA(bg, alpha), 3.0f * s);
-        dl->AddRect(b0, b1, mulA(withA(live.accent, 150), alpha),
+        dl->AddRectFilled(b0, b1, mulA(IM_COL32(38, 38, 41, 255), alpha), 3.0f * s);
+        dl->AddRect(b0, b1, mulA(IM_COL32(100, 102, 104, 255), alpha),
                     3.0f * s, 0, 1.0f * s);
-        text(0.5f * (x0 + x1), y0 + 0.28f * (y1 - y0), 10.0f,
-             mulA(IM_COL32(230, 232, 235, 255), alpha), label, 0, true);
+        // Match the adjacent combo's font, left inset and vertical centering.
+        ImFont* const font = panel.pickFont(12.0f * s);
+        const ImVec2 pos(b0.x + 6.0f * s,
+                         b0.y + 0.5f * (b1.y - b0.y - font->FontSize));
+        dl->AddText(font, font->FontSize, pos,
+                    mulA(IM_COL32(235, 238, 242, 255), alpha), label);
     }
 
     void setChoice(uint32_t p, int v)
@@ -1097,8 +1100,13 @@ private:
         ImGui::SetNextItemWidth((x1 - x0) * s);
         ImFont* f = panel.pickFont(12.0f * s);
         ImGui::PushFont(f);
-        float padY = ((y1 - y0) * s - f->FontSize) * 0.5f; if (padY < 1.0f) padY = 1.0f;
+        // Let padding reach zero at the minimum editor size so the native
+        // widget stays within the same row as the drawn fields and labels.
+        const float padY = std::max(0.0f, ((y1 - y0) * s - f->FontSize) * 0.5f);
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f * s, padY));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f * s);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f * s);
+        ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(100, 102, 104, 255));
         ImGui::PushStyleColor(ImGuiCol_FrameBg,  acid ? IM_COL32(70, 72, 78, 255) : IM_COL32(38, 38, 41, 255));
         ImGui::PushStyleColor(ImGuiCol_PopupBg,  IM_COL32(24, 24, 26, 255));
         ImGui::PushStyleColor(ImGuiCol_Header,   withA(live.accent, 150));
@@ -1121,8 +1129,8 @@ private:
         }
         if (tips[p] && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
             ImGui::SetTooltip("%s", tips[p]);
-        ImGui::PopStyleColor(7);
-        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(8);
+        ImGui::PopStyleVar(3);
         ImGui::PopFont();
     }
 
@@ -1310,7 +1318,7 @@ private:
         ImGui::SetNextItemWidth(kBarComboW * s);
         ImFont* f = panel.pickFont(12.0f * s);
         ImGui::PushFont(f);
-        // FramePadding.y floored at 1 px, as in comboBox(): at the 620x390 minimum
+        // FramePadding.y floored at 1 px: at the 620x390 minimum
         // the atlas face can be taller than the row, and a negative padding
         // collapses the combo frame rather than tightening it.
         const float comboPadY = std::max(1.0f, ((kBarY1 - kBarY0) * s - f->FontSize) * 0.5f);
@@ -1775,8 +1783,8 @@ private:
         // OSC 1 — DETUNE / PW / LEVEL, plus Cosmos X-MOD. Oracle's defining
         // OSC 2 -> OSC 1 routing belongs exclusively to its Poly-Mod panel; showing
         // X-MOD here as well exposed two controls for effectively the same route.
-        panelBox(16, g1.y0, 340, g1.y1, 1.0f, kCosmosRed);
-        sectionTitle(24, g1.rowY, "OSC 1");
+        panelBox(16, g1.y0, 340, g1.y1, 1.0f, kCosmosRed, 26.0f);
+        sectionTitle(24, g1.rowY + 4.0f, "OSC 1");
         comboBox("o1w", kParamOsc1Wave, 150, g1.rowY, 332, g1.comboY1, kWave5, 5, curMode == 5);
         klabel(60, g1.labelY, "DETUNE");
         if (curMode == 5)
@@ -1799,8 +1807,8 @@ private:
         // OSC 2 — SEMI / DETUNE / PW / LEVEL. Four columns 58 apart against the same
         // 49 px ring, so 9 px of daylight (VOICE / CHARACTER runs 6, so this is the
         // roomier of the two grids).
-        panelBox(16, g2.y0, 340, g2.y1, 1.0f, kCosmosRed);
-        sectionTitle(24, g2.rowY, "OSC 2");
+        panelBox(16, g2.y0, 340, g2.y1, 1.0f, kCosmosRed, 26.0f);
+        sectionTitle(24, g2.rowY + 4.0f, "OSC 2");
         if (curMode == 5)
         {
             text(178, g2.cy - 13.0f, 11.0f, whiteDimCol(),
@@ -1842,10 +1850,10 @@ private:
 
         // OSC 3 / SUB — mode-variant contents, but the SAME frame and knob row as the
         // two panels above it in every mode (that is the whole point of the rework).
-        panelBox(16, g3.y0, 340, g3.y1, 1.0f, kCosmosRed);
+        panelBox(16, g3.y0, 340, g3.y1, 1.0f, kCosmosRed, 26.0f);
         if (curMode == 3) // Modular -> osc3
         {
-            sectionTitle(24, g3.rowY, "OSC 3");
+            sectionTitle(24, g3.rowY + 4.0f, "OSC 3");
             comboBox("o3w", kParamOsc3Wave, 150, g3.rowY, 332, g3.comboY1, kWave4, 4, false);
             // Centred as a pair on the panel's midline (178) like the SUB OSC
             // variant's lone LEVEL knob; 90/240 sat 13 px left of centre.
@@ -1854,13 +1862,13 @@ private:
         }
         else if (curMode == 0 || curMode == 2) // Cosmos / Mono -> sub
         {
-            sectionTitle(24, g3.rowY, "SUB OSC");
+            sectionTitle(24, g3.rowY + 4.0f, "SUB OSC");
             comboBox("subw", kParamSubWave, 150, g3.rowY, 332, g3.comboY1, kSubWave, 2, curMode == 5);
             klabel(178, g3.labelY, "LEVEL"); knob("sublvl", kParamSubLevel, 178, g3.cy, kOscR, "%.0f", " %", false, false, false, 100.0f);
         }
         else
         {
-            sectionTitle(24, g3.rowY, "AUX OSC");
+            sectionTitle(24, g3.rowY + 4.0f, "AUX OSC");
             text(178, g3.cy - 13.0f, 11.0f, whiteDimCol(),
                  "NO AUXILIARY OSCILLATOR", 0, true);
             text(178, g3.cy + 5.0f, 9.5f,
@@ -3364,7 +3372,7 @@ private:
         text(kBrCX0, 110, 10.0f, live.textPanel, "FIND", -1, true);
         ImGui::SetCursorScreenPos(P(kBrCX0 + 42, 104));
         ImGui::SetNextItemWidth(318.0f * s);
-        // FramePadding.y floored at 1 px, same as comboBox(): at the 620x390
+        // FramePadding.y floored at 1 px: at the 620x390
         // minimum the crisp atlas hands back a face whose FontSize can exceed the
         // 26*s row height, and the resulting negative padding collapses the frame
         // (and clips the caret) instead of merely tightening it.
@@ -3682,10 +3690,6 @@ private:
     }
     void drawSequencer()
     {
-        // Panel top 548 (was 524): the lower body row above grew +24, so the
-        // sequencer gives that height back at the top. The transport header (y
-        // 552..606) carries the labels, controls and read-outs; the step lanes
-        // occupy the remaining height down to the 692 floor.
         panelBox(16, 548, 700, 692, 1.0f, kCosmosBlue);
         if (curMode == 5)
         {
@@ -3693,138 +3697,59 @@ private:
             drawAcidSequencerBody();
             return;
         }
-        const char* const seqTitle = "SEQUENCER / ARP";
-        sectionTitle(24, 552, seqTitle);
+        sectionTitle(24, 552, "SEQUENCER / ARP");
 
-        // --- transport header: ONE rhythm, no dead air ------------------------
-        // The row is six groups — ARP | MODE | RATE | OCT/GATE/SWING | LATCH |
-        // VEL — laid out right-to-left off the 692 rule the step lane below also
-        // ends on, with a single gap `g` repeated between EVERY pair including
-        // title -> ARP. The old fixed x=160 start left the five arpeggiator
-        // modes opening on a 45 px hole while their own inter-group gaps were
-        // 6..11 px. Solving the gap from the title width keeps one even rhythm
-        // across the row.
-        //
-        // Knobs are r13 and TICKLESS, matching the FX strip idiom next door:
-        // reach is r+3+1.2 = +/-17.2 (value arc + half its stroke) instead of the
-        // tick ring's +/-20.5, which makes all three read as one family (as r14
-        // ringed knobs they differed enough in apparent size/weight to look like
-        // three different widgets).
-        //
-        // MEASURED ink extents, not the 0.675*size convention the older comments in
-        // this file use — that convention is wrong. Rendered at s=1 through this
-        // atlas, a label drawn with its top at y552 puts ink on rows 555..560, i.e.
-        // the ink box runs 9.0 px below the draw origin for every size in this row
-        // (9.5 / 10 / 11 all snap to neighbouring atlas faces). So:
-        //   label top 552          -> ink bottom 561
-        //   knob centre hy = 580   -> arc top 562.8   =>  1.8 px clearance
-        // hy was 578, which put the arc top at 560.8 and had the label ink
-        // overlapping it by 0.2 px. Downstream of hy = 580 (all verified by pixel
-        // scan): the read-out (top hy+r+8 = 601) has ink bottom 610, clearing the
-        // step lane at y612 by 2.0 px.
-        const int  velMode  = (int)std::lround(values[kParamArpVelMode]);
-        const bool velFixed = velMode == 1;
-        const bool velAccent = velMode == 2;
-        const float kr = 13.0f, khw = kr + 4.5f, kdx = 44.0f;  // radius / half-reach / pitch
-        const float wArp = 52.0f, wMode = 84.0f, wRate = 64.0f, wLatch = 52.0f;
-        const float wKnobs = 2.0f * kdx + 2.0f * khw;          // 123
-        // The VEL group is 100 wide in BOTH velocity modes so that switching to
-        // Fixed does not reflow the whole row: Fixed spends the width on a 58 px
-        // combo ("Fixed" is short) plus the value knob, the other modes give all
-        // 100 to the combo (which "As Played" wants — it was clipping at 86).
-        const float wVel = 100.0f;
-        const float xR = 692.0f;
-        const float titleEnd = 24.0f + textW(11.0f, seqTitle);
-        const float wSum = wArp + wMode + wRate + wKnobs + wLatch + wVel;   // 475
-        float g = (xR - titleEnd - wSum) / 6.0f;
-        g = g < 12.0f ? 12.0f : (g > 22.0f ? 22.0f : g);        // font-metric guard
-        auto hlabel = [&](float x, const char* t, int align)
-        { text(x, 552, 10.0f, live.textPanel, t, align, true); };
-
-        const float hy = 580.0f;
-        // Persistent read-outs for OCT/GATE/SWING (spec §3.1b step 7): drawn top
-        // hy + r + 8 = 601, ink bottom 610, clearing the lane top at 612.
+        // The title has its own strip. All transport controls share one centre
+        // line below it, with labels above and read-outs below. Fixed group
+        // widths keep the row still when the velocity mode changes.
+        const int velMode = (int)std::lround(values[kParamArpVelMode]);
+        const bool velFixed = velMode == 1, velAccent = velMode == 2;
+        constexpr float kr = 13.0f, khw = kr + 4.5f, kdx = 48.0f;
+        constexpr float wArp = 52.0f, wMode = 106.0f, wRate = 82.0f;
+        constexpr float wKnobs = 132.0f, wLatch = 62.0f, wVel = 154.0f;
+        constexpr float gap = 16.0f, xR = 692.0f, cy = 598.0f;
+        constexpr float fieldTop = cy - 12.0f, fieldBottom = cy + 12.0f;
+        auto hlabel = [&](float x, const char* t)
+        { text(x, 570, 10.0f, live.textPanel, t, 0, true); };
         const bool ro = readoutsOn();
 
-        // Walking left-to-right from the title only lands on the 692 rule while `g`
-        // is the SOLVED value; once the clamp engages (a title wide enough to drive g
-        // below 12) the row would march straight through the right wall and into the
-        // FX strip, so pin the start to whatever still ends at xR and let the
-        // title gap absorb the difference instead.
-        float x = titleEnd + g;
-        const float xMax = xR - wSum - 5.0f * g;
-        if (x > xMax) x = xMax;
-        // LED buttons are h24 centred on 575, the same centre line as the combos
-        // (they used to sit 5 px high, which read as a misaligned row).
-        ledButton("arpon", kParamArpOn, x, 563, x + wArp, 587, "ARP");
-        x += wArp + g;
-        hlabel(x + 2, "MODE", -1);
-        comboBox("arpmode", kParamArpMode, x, 564, x + wMode, 586, kArpMode, 7);
-        x += wMode + g;
-        hlabel(x + 2, "RATE", -1);
-        comboBox("arprate", kParamArpRate, x, 564, x + wRate, 586, kDivName, 14);
-        x += wRate + g;
+        float x = 24.0f;
+        ledButton("arpon", kParamArpOn, x, fieldTop, x + wArp, fieldBottom, "ARP");
+        x += wArp + gap;
+        hlabel(x + wMode * 0.5f, "MODE");
+        comboBox("arpmode", kParamArpMode, x, fieldTop, x + wMode, fieldBottom, kArpMode, 7);
+        x += wMode + gap;
+        hlabel(x + wRate * 0.5f, "RATE");
+        comboBox("arprate", kParamArpRate, x, fieldTop, x + wRate, fieldBottom, kDivName, 14);
+        x += wRate + gap;
         const float kx0 = x + khw;
-        hlabel(kx0, "OCT", 0);
-        knob("arpoct", kParamArpOctave, kx0, hy, kr, "%.0f", "", false, true, ro, 1.0f, 0.0f, false);
-        hlabel(kx0 + kdx, "GATE", 0);
-        knob("arpgate", kParamArpGate, kx0 + kdx, hy, kr, "%.0f", " %", false, false, ro, 100.0f, 0.0f, false);
-        hlabel(kx0 + 2.0f * kdx, "SWING", 0);
-        knob("arpswing", kParamArpSwing, kx0 + 2.0f * kdx, hy, kr, "%.0f", " %", false, false, ro, 100.0f, 0.0f, false);
-        x += wKnobs + g;
-        ledButton("arplatch", kParamArpLatch, x, 563, x + wLatch, 587, "LATCH");
-        x += wLatch + g;
-        hlabel(x + 2, "VEL", -1);
-        // Fixed mode: combo 58 wide + the value knob on the right end of the
-        // group (centre xR-13 = 679, reach 696.5, inside the 700 panel wall).
-        comboBox("arpvel", kParamArpVelMode, x, 564,
-                 velFixed ? x + 58.0f : x + wVel, 586, kArpVel, 3);
+        hlabel(kx0, "OCT");
+        knob("arpoct", kParamArpOctave, kx0, cy, kr, "%.0f", "", false, true, ro, 1.0f, 0.0f, false);
+        hlabel(kx0 + kdx, "GATE");
+        knob("arpgate", kParamArpGate, kx0 + kdx, cy, kr, "%.0f", " %", false, false, ro, 100.0f, 0.0f, false);
+        hlabel(kx0 + 2.0f * kdx, "SWING");
+        knob("arpswing", kParamArpSwing, kx0 + 2.0f * kdx, cy, kr, "%.0f", " %", false, false, ro, 100.0f, 0.0f, false);
+        x += wKnobs + gap;
+        ledButton("arplatch", kParamArpLatch, x, fieldTop, x + wLatch, fieldBottom, "LATCH");
+        x += wLatch + gap;
+        const float velWidth = velFixed ? 100.0f : wVel;
+        hlabel(x + velWidth * 0.5f, "VEL");
+        comboBox("arpvel", kParamArpVelMode, x, fieldTop, x + velWidth, fieldBottom, kArpVel, 3);
         if (velFixed)
         {
-            const float fx = xR - kr;
-            hlabel(fx, "FIX", 0);
-            knob("arpfvel", kParamArpFixedVel, fx, hy, kr, "%.0f", "", false, true, ro, 1.0f, 0.0f, false);
+            const float fx = xR - khw;
+            hlabel(fx, "FIX");
+            knob("arpfvel", kParamArpFixedVel, fx, cy, kr, "%.0f", "", false, true, ro, 1.0f, 0.0f, false);
         }
-        // ACC — the accent SHAPE, only meaningful while VEL is "Accent" (it is the
-        // sole consumer: Arpeggiator::getVelocity reads accentPattern in that
-        // branch and nowhere else). Shown/hidden, not dimmed, matching the FIX
-        // knob one line up, which is the established idiom for "this control has
-        // no meaning in the other velocity modes".
-        //
-        // It is NOT a seventh group in the solved rhythm, and that is arithmetic,
-        // not taste. A seventh group of width W re-solves g to
-        // (692 - titleEnd - 475 - W)/7, which hits the g >= 12 floor at W = 18 px.
-        // Splitting the existing 100 px VEL group in two does not work either:
-        // a combo spends 6 px of frame padding plus
-        // ~24 px of arrow before any text, so 100 px cannot carry two of them.
-        // Widening the VEL group to fit both would reflow all six groups on a
-        // velocity-mode change — precisely what the fixed 100 px width exists to
-        // prevent (see the note above it).
-        //
-        // So it takes the free band directly UNDER the VEL combo instead, right-
-        // aligned on the same 692 rule and the same 100 px wide, which keeps the
-        // column and costs the row nothing. Vertical fit (ink extents measured the
-        // same way as the rest of this header): VEL combo bottom 586 -> 2 px -> ACC
-        // 588..606 -> 6 px -> step lane at 612. The OCT/GATE/SWING read-
-        // outs share the 601..610 band but end at x~501, well left of 592; the
-        // Fixed-VEL knob's read-out does reach into this x-range, but Fixed and
-        // Accent are mutually exclusive so the two can never draw together.
-        //
         if (velAccent)
         {
-            // x still holds the VEL group's left edge (last group in the walk);
-            // deriving from it keeps ACC under VEL even if the walk's start
-            // clamp ever moves the row off the 692 rule.
-            const float ax = x;
-            text(ax - 4.0f, 590.0f, 8.5f, live.textPanel, "ACC", 1, true);
-            comboBox("arpacc", kParamArpAccentPattern, ax, 588, xR, 606, kArpAccent, 4);
+            // Accent shares the read-out row; it cannot overlap the Fixed knob.
+            text(x, 616.0f, 8.5f, live.textPanel, "ACC", -1, true);
+            comboBox("arpacc", kParamArpAccentPattern, x + 28.0f, 612, xR, 630, kArpAccent, 4);
         }
 
-        const int step = liveStep();
-        // Single mute row, y 612..680 (h68), starting 6.6 px below the knob
-        // read-out ink. The 16 cells are split into four bar-groups with an
-        // 8 px gap between groups, so the pattern reads as 4 bars of 4.
-        drawStepRow(24, 612, 692, 68, kParamArpStep0, step, true, 8.0f);
+        // Leave clear space below both the knob read-outs and the accent field.
+        drawStepRow(24, 636, 692, 48, kParamArpStep0, liveStep(), true, 8.0f);
     }
 
     void drawAcidSequencerBody()
@@ -3835,10 +3760,10 @@ private:
         auto hlabel = [&](float x, const char* t, int align)
         { text(x, 552, 10.0f, live.textPanel, t, align, true); };
 
-        ledButton("acid_run", kParamArpOn, 158, 563, 216, 587, "RUN");
+        ledButton("acid_run", kParamArpOn, 158, 568, 216, 592, "RUN");
 
         hlabel(230, "RATE", -1);
-        comboBox("acid_rate", kParamArpRate, 228, 564, 294, 586,
+        comboBox("acid_rate", kParamArpRate, 228, 569, 294, 591,
                  kDivName, 14, true);
 
         constexpr float kr = 13.0f;
@@ -3849,12 +3774,12 @@ private:
         knob("acid_swing", kParamArpSwing, 374, 580, kr, "%.0f", " %",
              false, false, false, 100.0f, 0.0f, false);
 
-        ledButton("acid_latch", kParamArpLatch, 406, 563, 470, 587, "LATCH");
+        ledButton("acid_latch", kParamArpLatch, 406, 568, 470, 592, "LATCH");
 
         const int step = liveStep();
-        dl->AddRectFilled(P(484, 563), P(692, 587),
+        dl->AddRectFilled(P(484, 568), P(692, 592),
                           IM_COL32(38, 39, 43, 255), 4.0f * s);
-        dl->AddRect(P(484, 563), P(692, 587), withA(live.accent, 120),
+        dl->AddRect(P(484, 568), P(692, 592), withA(live.accent, 120),
                     4.0f * s, 0, 1.0f * s);
         if (step >= 0 && step < 16)
         {
@@ -3865,12 +3790,12 @@ private:
                           step + 1,
                           accent ? "ACC" : "NORMAL",
                           slide ? " + SLIDE" : "");
-            text(588, 570, 9.0f, IM_COL32(231, 233, 236, 255),
+            text(588, 575, 9.0f, IM_COL32(231, 233, 236, 255),
                  status, 0, true);
         }
         else
         {
-            text(588, 570, 9.0f, whiteDimCol(),
+            text(588, 575, 9.0f, whiteDimCol(),
                  values[kParamArpOn] > 0.5f ? "WAITING FOR TRANSPORT" : "PATTERN READY",
                  0, true);
         }

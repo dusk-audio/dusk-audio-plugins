@@ -360,7 +360,7 @@ The drop-down is a list you scroll. The browser is the library you read. **BROWS
 
 The footer shows how many presets the current filters match. The browser reads the preset library as it was last scanned; see the note on rescanning below.
 
-![The preset browser: factory presets laid out in a column per mode, Cosmos through Acid, with the user library in its own column](screenshots/sunset-circuits/07-preset-browser.png)
+![The preset browser: a grid of preset cards with mode and bank badges, a search field, and mode and bank filters](screenshots/sunset-circuits/07-preset-browser.png)
 
 ### The user preset library
 
