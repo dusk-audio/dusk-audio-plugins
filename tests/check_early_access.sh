@@ -39,7 +39,14 @@ case "$1 $2" in
       if [ "$1" = "--notes-file" ]; then { echo "--- notes"; cat "$2"; echo "--- end"; } >> "$GH_LOG"; fi
       shift
     done ;;
-  "api repos/"*) printf '%s' "${FAKE_RELEASES:-}" ;;
+  "api repos/"*)
+    # The published-release count already_released asks for, or the publish-due listing.
+    if [[ "$*" == *'| length'* ]]; then
+      [ "${FAKE_API_EXIT:-0}" -eq 0 ] || exit "$FAKE_API_EXIT"
+      echo "${FAKE_PUBLISHED:-0}"
+    else
+      printf '%s' "${FAKE_RELEASES:-}"
+    fi ;;
 esac
 EOF
 chmod +x "$WORK/bin/gh"
@@ -83,6 +90,24 @@ check "all-plugins tag is never early" \
 check "all-plugins prerelease is never early" \
   "early=false members_only=false public_on=" "$(plan v2.0.0-beta | oneline)"
 
+# --- early access only for a plugin's first public release ---
+rplan() { # rplan PUBLISHED_COUNT TAG -> key=value lines, with GitHub reachable
+  ( export GITHUB_REPOSITORY=o/plugins FAKE_PUBLISHED="$1" FAKE_API_EXIT="${FAKE_API_EXIT:-0}"; plan "$2" )
+}
+check "an update to a released plugin goes public now" \
+  "early=false members_only=false public_on=" "$(rplan 22 multi-comp-2-v1.0.0 | oneline)"
+check "a plugin's first release stays early" \
+  "early=true members_only=false public_on=2026-10-31" "$(rplan 0 multi-comp-2-v1.0.0 | oneline)"
+check "a prerelease of a released plugin is public" \
+  "early=false members_only=false public_on=" "$(rplan 3 multi-comp-2-v1.1.0-alpha1 | oneline)"
+check "a prerelease of an unreleased plugin stays members-only" \
+  "early=true members_only=true public_on=" "$(rplan 0 multi-comp-2-v1.1.0-alpha1 | oneline)"
+check "an unreachable GitHub keeps the first-release plan" \
+  "early=true members_only=false public_on=2026-10-31" "$(FAKE_API_EXIT=1 rplan 0 multi-comp-2-v1.0.0 | oneline)"
+: > "$GH_LOG"; rplan 0 multi-comp-2-v1.0.0 > /dev/null
+contains "the query counts the tag's own plugin" 'startswith("multi-comp-2-v")' "$(cat "$GH_LOG")"
+check "a plugin name ends before its version" "multi-comp-2" "$(bash -c "source <(sed -n '/^plugin_of()/p' '$SCRIPT'); plugin_of multi-comp-2-v1.0.0-alpha1")"
+
 # --- website-ref ---
 wref() { # wref TAG -> the ref line
   GITHUB_OUTPUT="" GITHUB_REF="" EARLY_ACCESS_DAYS="${DAYS-14}" HAS_EARLY_TOKEN="${TOKEN-true}" \
@@ -97,6 +122,8 @@ check "all-plugins tag reads website main" "ref=main" "$(wref v2.0.0)"
 check "an unknown tag reads website main" "ref=main" "$(wref no-such-v9.9.9)"
 check "the tag defaults to GITHUB_REF" "ref=early-access/2026-10-31" \
   "$(GITHUB_OUTPUT="" GITHUB_REF=refs/tags/multi-comp-2-v1.0.0 EARLY_ACCESS_DAYS=14 HAS_EARLY_TOKEN=true bash "$SCRIPT" website-ref)"
+check "an update's website change is on main" "ref=main" \
+  "$( export GITHUB_REPOSITORY=o/plugins FAKE_PUBLISHED=5; wref multi-comp-2-v1.0.0 )"
 check "a branch build reads website main" "ref=main" \
   "$(GITHUB_OUTPUT="" GITHUB_REF=refs/heads/main EARLY_ACCESS_DAYS=14 HAS_EARLY_TOKEN=true bash "$SCRIPT" website-ref)"
 

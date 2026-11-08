@@ -91,6 +91,7 @@ jobs:
         env:
           EARLY_ACCESS_DAYS: ${{ vars.EARLY_ACCESS_DAYS }}
           HAS_EARLY_TOKEN: ${{ secrets.EARLY_ACCESS_TOKEN != '' }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             git fetch --quiet --depth=1 origin "+$GITHUB_REF:$GITHUB_REF" || true
@@ -1031,6 +1032,7 @@ jobs:
         env:
           EARLY_ACCESS_DAYS: ${{ vars.EARLY_ACCESS_DAYS }}
           HAS_EARLY_TOKEN: ${{ secrets.EARLY_ACCESS_TOKEN != '' }}
+          GH_TOKEN: ${{ github.token }}
         run: .github/scripts/early_access.sh plan "${GITHUB_REF#refs/tags/}"
 
       - name: Finish release notes

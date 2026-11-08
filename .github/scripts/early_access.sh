@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Two-week (EARLY_ACCESS_DAYS) early access for plugin releases.
 #
+# Early access is only for a plugin that has never had a public release: its
+# first stable release, and its prereleases until then. A release of a plugin
+# that already has a published, non-prerelease release here goes public at once.
+#
 # A release that qualifies is published to this repo as a DRAFT (invisible to
 # the public) and mirrored to the private EARLY_ACCESS_REPO, which the Patreon
 # build gate (dusk-audio.github.io/builds-gate) serves to members. The daily
@@ -41,6 +45,25 @@ public_on_for_tag() {
   date -u -d "@$((ts + days * 86400))" +%F
 }
 
+# The plugin a release tag belongs to: multi-comp-v1.3.9 -> multi-comp,
+# multi-comp-2-v1.0.0-alpha1 -> multi-comp-2.
+plugin_of() { printf '%s\n' "${1%-v[0-9]*}"; }
+
+# True when this repository already has a published release (not a draft, not a
+# prerelease) of the tag's plugin. When GitHub cannot be asked, answer false and
+# warn: an update held back for the window can be published by hand, while a new
+# plugin published early cannot be taken back.
+already_released() {
+  local plugin count repo="${GITHUB_REPOSITORY:-}"
+  plugin=$(plugin_of "$1")
+  if [ -z "$repo" ] || ! count=$(gh api "repos/$repo/releases" --paginate \
+      --jq "[.[] | select(.draft == false and .prerelease == false and (.tag_name | startswith(\"$plugin-v\")))] | length" 2>/dev/null); then
+    echo "::warning::Could not list the releases of $plugin; planning $1 as its first release."
+    return 1
+  fi
+  [ "$(printf '%s\n' "$count" | awk '{ s += $1 } END { print s + 0 }')" -gt 0 ]
+}
+
 cmd_plan() {
   local tag="$1" days="${EARLY_ACCESS_DAYS:-0}" reason="" members_only=false
   [[ "$days" =~ ^[0-9]+$ ]] || days=0
@@ -54,6 +77,8 @@ cmd_plan() {
   elif [ "${HAS_EARLY_TOKEN:-false}" != "true" ]; then
     echo "::warning::EARLY_ACCESS_DAYS=$days but the EARLY_ACCESS_TOKEN secret is missing; releasing publicly."
     reason="EARLY_ACCESS_TOKEN secret is missing"
+  elif already_released "$tag"; then
+    reason="$(plugin_of "$tag") already has a public release; early access is only for a plugin's first release"
   fi
   if [ -n "$reason" ]; then
     echo "Public release now: $reason."
