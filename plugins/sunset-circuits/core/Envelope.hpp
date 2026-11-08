@@ -345,7 +345,12 @@ public:
         else        { phase = 0.0f; }
         lastPhase = phase;
         fadeInPhase = 0.0f;
-        smoothTarget = randomValue();
+        // Seed both random shapes using the existing per-note draw. A locked
+        // S&H only draws on a clock wrap, so without this its first note holds
+        // zero for a whole cycle and subsequent notes inherit an old value.
+        // Do not branch on shape: the first note can precede the parameter
+        // snapshot that selects S&H. Free-run S&H still samples at phase zero.
+        currentSHValue = smoothTarget = randomValue();
     }
 
     float processSample() noexcept
@@ -432,7 +437,7 @@ public:
     void reset() noexcept
     {
         phase = 0.0f; lastPhase = 0.0f; fadeInPhase = 1.0f;
-        currentSHValue = 0.0f; currentSmoothValue = 0.0f;
+        currentSHValue = 0.0f; currentSmoothValue = 0.0f; smoothTarget = 0.0f;
         resetSyncState();
     }
 

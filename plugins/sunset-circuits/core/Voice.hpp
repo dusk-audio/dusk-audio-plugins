@@ -142,6 +142,7 @@ public:
     void prepare(double sampleRate, uint32_t seed) noexcept
     {
         sr = sampleRate;
+        whiteNoiseGain = 2.85f * std::sqrt((float)sampleRate / 96000.0f);
         rng.seed(seed);
         for (int u = 0; u < kMaxUnison; ++u)
         {
@@ -181,6 +182,7 @@ public:
     void setSampleRate(double sampleRate) noexcept
     {
         sr = sampleRate;
+        whiteNoiseGain = 2.85f * std::sqrt((float)sampleRate / 96000.0f);
         for (int u = 0; u < kMaxUnison; ++u)
         {
             osc[u].osc1.setSampleRate(sampleRate);
@@ -474,7 +476,9 @@ public:
         const float freq1 = baseFreq * std::pow(2.0f, pitchMod1 * 2.0f / 12.0f);
         const float freq2 = baseFreq * std::pow(2.0f, ((float)params.osc2SemiOffset + pitchMod2 * 2.0f) / 12.0f);
 
-        const float noiseSample = pinkNoise.processSample() * params.noiseLevel;
+        const float noiseSample = pinkNoise.processSample(params.mode == SynthMode::Cosmos)
+                                * params.noiseLevel
+                                * (params.mode == SynthMode::Cosmos ? whiteNoiseGain : 1.0f);
 
         const int uCount = clampi(retiring ? retireUnison : unisonCount, 1, kMaxUnison);
         // The R filter runs only on the multi-voice path; when unison count grows
@@ -533,11 +537,11 @@ public:
         envCutoff = clampf(envCutoff, 20.0f, (float)sr * 0.45f);
         const float envRes = clampf(params.filterResonance + resMod, 0.0f, 1.0f);
 
-        // Prism has no analog filter model of its own; route it through the clean
-        // (non-self-oscillating) Cosmos LPF so the section stays in circuit.
+        // Keep Prism's original clean, subcritical response independently of
+        // Cosmos's resonant DCO filter calibration.
         const FilterMode filtMode = (params.mode == SynthMode::Prism)
-            ? FilterMode::Cosmos : (FilterMode)clampi((int)params.mode, 0, 3);
-        // Prism routes through the Cosmos filter model but has no dedicated HP
+            ? FilterMode::Prism : (FilterMode)clampi((int)params.mode, 0, 3);
+        // Prism has no dedicated HP
         // control, so feed a neutral 20 Hz HP (U3). Modes 1-3 ignore the HP arg.
         const float hpCut = (params.mode == SynthMode::Prism) ? 20.0f : params.filterHPCutoff;
         filterL.setModularModel(params.modularFilterModel);
@@ -628,19 +632,26 @@ private:
                 // (JUCE double-advanced osc2 here, an octave-up bug; fixed: osc2 is
                 //  configured as the pulse component at freq1 and processed once.)
                 osc1Sample = o.osc1.processSample();
+                // The DCO's saw and pulse have reinforcing fundamentals. The
+                // generic ascending saw has the opposite polarity to Pulse.
+                if (params.osc1Wave == Waveform::Saw) osc1Sample = -osc1Sample;
                 o.osc2.setFrequency(freq1);
                 o.osc2.setWaveform(Waveform::Pulse);
                 o.osc2.setPulseWidth(params.osc2PulseWidth + pwm2);
                 o.osc2.setDetune(params.osc1Detune + detCents);
                 osc2Sample = o.osc2.processSample();
 
-                o.sub.setFrequency(baseFreq);
+                o.sub.setFrequency(freq1);
                 o.sub.setWaveform(params.subWave);
-                o.sub.setDetune(detCents);
+                o.sub.setDetune(params.osc1Detune + detCents);
                 subSample = o.sub.processSample() * params.subLevel;
 
-                mix = osc1Sample * params.osc1Level + osc2Sample * params.osc2Level + subSample + noiseSample;
-                activeGain = params.osc1Level + params.osc2Level + params.subLevel + params.noiseLevel;
+                // Fixed DCO mixer gains: enabling a second waveform adds to
+                // the first instead of turning every source down. Pulse/sub
+                // balance follows isolated reference captures (saw = unity).
+                mix = osc1Sample * params.osc1Level
+                    + osc2Sample * params.osc2Level * 0.91f
+                    + subSample * 0.73f + noiseSample;
                 break;
             }
 
@@ -814,6 +825,9 @@ private:
     float  fmCarrierTrim = 1.0f;       // 1/sqrt(numCarriers), set by updateFMParams
     float  lastOsc2[kMaxUnison] = {};
     PinkNoiseGenerator pinkNoise;
+    // Fixed white-noise density across internal rates; cached on prepare/rate
+    // changes. 2.85 matches the reference's 500 Hz–4 kHz noise/saw balance.
+    float whiteNoiseGain = 2.85f;
     SampleAndHold sampleAndHold;
     SynthFilter filterL, filterR;
     ADSREnvelope ampEnv, filtEnv;

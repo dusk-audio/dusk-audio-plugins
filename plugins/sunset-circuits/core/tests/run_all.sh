@@ -73,11 +73,15 @@ if ! python3 ../../daf-plugin/tools/gen_params.py --check; then
     fail=1
 fi
 for g in pitch env reverb arp arp_seq filter_stability accuracy fx_reenable param_robust \
-         lfo_sync acid stuck sustain polyat steal zipper user_preset; do
+         lfo_sync modulation cosmos acid stuck sustain polyat steal zipper user_preset; do
     echo
     echo "########## ${g}_gate ##########"
     python3 "${g}_gate.py" || fail=1
 done
+
+echo
+echo "########## cosmos state ##########"
+./build/cosmos_state_test || fail=1
 
 echo
 echo "########## fm suite ##########"

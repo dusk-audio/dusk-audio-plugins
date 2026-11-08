@@ -13,7 +13,7 @@ Sunset Circuits is six vintage synthesizers in one instrument. A row of six back
 
 The six modes cover the ground that defined subtractive and FM synthesis:
 
-- **Cosmos** is an early-80s Japanese six-voice poly built on digitally controlled oscillators, with a clean non-resonant filter and a built-in bucket-brigade chorus.
+- **Cosmos** is an early-80s Japanese six-voice poly built on digitally controlled oscillators, with a resonant low-pass filter and a built-in bucket-brigade chorus.
 - **Oracle** is a late-70s American five-voice poly with two analog oscillators, a self-oscillating filter, and poly-modulation routing.
 - **Mono** is an aggressive 70s monophonic voice with two oscillators plus a sub, a fat driven filter, ring modulation, and hard sync.
 - **Modular** is a 70s semi-modular patchable voice with three oscillators, a transistor-ladder filter, sample and hold, and a spring reverb.
@@ -109,9 +109,11 @@ One caveat applies to program changes in the LV2 version only. A preset recalled
 
 ### Cosmos: six-voice DCO poly
 
-Cosmos is modeled on an early-80s Japanese polysynth with digitally controlled oscillators. It is six-voice polyphonic. The DCO gives it rock-steady tuning, which is what made this class of synth a workhorse for pads, plucks, and arpeggios. The filter is a clean 24 dB per octave low-pass that does not self-oscillate, paired with a separate high-pass control for thinning the low end.
+Cosmos uses a JUNO-inspired charcoal panel, red synth-section bars, blue performance-section bars, yellow/orange chorus switches, and a green display.
 
-The signature of Cosmos is the built-in bucket-brigade chorus. The mode sub-panel is titled **BBD CHORUS** and offers four settings, **OFF**, **I**, **II**, and **I+II**, which set the `Chorus Mode`. Chorus I is the subtle single-rate chorus; Chorus II is faster and deeper; I+II runs both together for the lush, wide, slightly seasick wash this synth is famous for. This chorus is separate from the global chorus in the effects section, and it is the fastest way to get the classic warm poly sound.
+Cosmos is modeled on an early-80s Japanese polysynth with digitally controlled oscillators. It is six-voice polyphonic. The DCO combines saw, pulse, and an octave-down sub with fixed mixer levels: adding a waveform adds to the sound without turning the other sources down. The sub follows Oscillator 1 pitch modulation and detune. Cosmos uses white noise. The 24 dB per octave low-pass reaches self-oscillation near the top of the resonance control, paired with a separate high-pass control for thinning the low end.
+
+The signature of Cosmos is the built-in bucket-brigade chorus. The mode sub-panel is titled **BBD CHORUS** and offers four settings, **OFF**, **I**, **II**, and **I+II**, which set the `Chorus Mode`. Chorus I sweeps at about 0.40 Hz; Chorus II is faster and slightly deeper at about 0.83 Hz. Each uses opposing left/right delay sweeps, so the chorus remains audible when summed to mono. I+II adds both for a denser sound. Fixed headroom ahead of the global effects accommodates the additive mixer and chorus. This chorus is separate from the global chorus in the effects section.
 
 Mode-specific controls visible in Cosmos: the **Sub** oscillator (wave and level), the filter **HP** knob, the **Cross Mod** knob (oscillator 2 modulating oscillator 1 at audio rate), and the four chorus buttons.
 
@@ -303,6 +305,8 @@ Two behaviors are worth knowing:
 - **A note-on does not retrigger a locked LFO.** That is the point of locking: every voice you play joins the same running phase, so a chord modulates in step instead of each note starting its own sweep. Without sync, a note-on does reset the LFO to the start of its cycle. The fade-in restarts either way.
 - **Sync free-runs when the transport is stopped.** You still get a tempo-correct rate for auditioning; the phase lock engages when you press play. The lock is eased in over up to a quarter second rather than snapped, so engaging the transport does not jump a slow modulation.
 
+While phase-locked, **LFO1 Rate / LFO2 Rate modulation routes do not change the cycle length**; the Rate knob and host grid set it. Those routes affect speed again when the transport stops or Sync is off. For Random Smooth, rate modulation still changes the smoothing speed while locked.
+
 ## Mod Matrix
 
 The mod matrix is an eight-slot modulation router, opened from the **MOD MATRIX** bar on the right (the bar shows how many slots are active). Each slot connects one source to one destination with a bipolar amount, so you can invert a modulation by using a negative amount. All eight slots are always available in every mode.
@@ -404,7 +408,7 @@ A standard stereo chorus with **Rate**, **Depth**, and **Mix**. This is the glob
 
 ### Vintage chorus (Cosmos)
 
-Cosmos has its own bucket-brigade chorus built into the circuit, controlled by the three **I / II / I+II** buttons in the mode sub-panel rather than by the effects Chorus. This is the authentic vintage chorus of the original hardware and is the source of that synth's signature warmth. You can run it alongside the effects chorus, but usually one or the other is plenty.
+Cosmos has its own bucket-brigade chorus built into the circuit, controlled by the three **I / II / I+II** buttons in the mode sub-panel rather than by the effects Chorus. Its stereo delay sweeps and filtered wet paths are calibrated against reference captures. You can run it alongside the effects chorus, but usually one or the other is plenty.
 
 ### Delay
 

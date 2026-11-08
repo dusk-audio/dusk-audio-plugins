@@ -46,12 +46,21 @@ namespace
 
     inline ImU32 hx(uint32_t rgb) { return IM_COL32((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255, 255); }
 
-    // Per-mode palette (exact hex from spec §4.0). textPanel = on-panel ink
+    // Per-mode palette. textPanel = on-panel ink
     // (== text on dark panels; dark on Acid's silver panel).
-    struct MSPal { ImU32 bg, panel, accent, text, textPanel, ledOn, ledOff; };
+    // Cosmos adds the JUNO colour families seen in TAL's reference UI:
+    // https://tal-software.com/products/tal-u-no-lx
+    const ImU32 kCosmosRed = hx(0x782B29), kCosmosBlue = hx(0x164F83);
+    const ImU32 kCosmosYellow = hx(0xB99A28), kCosmosOrange = hx(0xBD8036);
+    const ImU32 kCosmosDisplay = hx(0x809665), kCosmosDisplayInk = hx(0x182117);
+    struct MSPal
+    {
+        ImU32 bg, panel, accent, text, textPanel, ledOn, ledOff;
+        float cosmos = 0.0f; // blends the extra colours even during interrupted mode fades
+    };
     const MSPal kPalettes[6] = {
         // Cosmos
-        { hx(0x14161C), hx(0x1E2229), hx(0xE8C89A), hx(0xEFEAE0), hx(0xEFEAE0), hx(0xFF4B2E), hx(0x3A1712) },
+        { hx(0x191B1A), hx(0x252725), hx(0xD9D9C9), hx(0xE3E3DA), hx(0xE3E3DA), hx(0xF44336), hx(0x401613), 1.0f },
         // Oracle
         { hx(0x1A130E), hx(0x241A12), hx(0xC8A15A), hx(0xEDE3CE), hx(0xEDE3CE), hx(0xFFB020), hx(0x3A2A0E) },
         // Mono
@@ -575,7 +584,8 @@ private:
     {
         return { lerpC(a.bg, b.bg, t), lerpC(a.panel, b.panel, t), lerpC(a.accent, b.accent, t),
                  lerpC(a.text, b.text, t), lerpC(a.textPanel, b.textPanel, t),
-                 lerpC(a.ledOn, b.ledOn, t), lerpC(a.ledOff, b.ledOff, t) };
+                 lerpC(a.ledOn, b.ledOn, t), lerpC(a.ledOff, b.ledOff, t),
+                 a.cosmos + (b.cosmos - a.cosmos) * t };
     }
     ImU32 metalCol() const // bevel frame: lighten dark panels, darken light panels
     {
@@ -601,7 +611,8 @@ private:
         return f->CalcTextSizeA(px, FLT_MAX, 0.0f, t).x / s;
     }
 
-    void panelBox(float x0, float y0, float x1, float y1, float alpha = 1.0f)
+    void panelBox(float x0, float y0, float x1, float y1, float alpha = 1.0f,
+                  ImU32 cosmosBand = 0)
     {
         // The older 3 px bright metal frame gave every nested section the same
         // visual weight. A slimmer, chassis-blended rail keeps the hardware
@@ -615,6 +626,10 @@ private:
                     mulA(lerpC(live.panel, IM_COL32(255, 255, 255, 255), 0.13f), alpha), 1.0f * s);
         dl->AddLine(P(x0 + 2, y1 - 1), P(x1 - 2, y1 - 1),
                     mulA(lerpC(live.panel, IM_COL32(0, 0, 0, 255), 0.26f), alpha), 1.0f * s);
+        if (cosmosBand != 0 && live.cosmos > 0.0f)
+            dl->AddRectFilled(P(x0 + 2, y0 + 2), P(x1 - 2, y0 + 20),
+                              mulA(cosmosBand, alpha * live.cosmos), 4.0f * s,
+                              ImDrawFlags_RoundCornersTop);
     }
     void sectionTitle(float x, float y, const char* t)
     {
@@ -1760,7 +1775,7 @@ private:
         // OSC 1 — DETUNE / PW / LEVEL, plus Cosmos X-MOD. Oracle's defining
         // OSC 2 -> OSC 1 routing belongs exclusively to its Poly-Mod panel; showing
         // X-MOD here as well exposed two controls for effectively the same route.
-        panelBox(16, g1.y0, 340, g1.y1);
+        panelBox(16, g1.y0, 340, g1.y1, 1.0f, kCosmosRed);
         sectionTitle(24, g1.rowY, "OSC 1");
         comboBox("o1w", kParamOsc1Wave, 150, g1.rowY, 332, g1.comboY1, kWave5, 5, curMode == 5);
         klabel(60, g1.labelY, "DETUNE");
@@ -1784,7 +1799,7 @@ private:
         // OSC 2 — SEMI / DETUNE / PW / LEVEL. Four columns 58 apart against the same
         // 49 px ring, so 9 px of daylight (VOICE / CHARACTER runs 6, so this is the
         // roomier of the two grids).
-        panelBox(16, g2.y0, 340, g2.y1);
+        panelBox(16, g2.y0, 340, g2.y1, 1.0f, kCosmosRed);
         sectionTitle(24, g2.rowY, "OSC 2");
         if (curMode == 5)
         {
@@ -1827,7 +1842,7 @@ private:
 
         // OSC 3 / SUB — mode-variant contents, but the SAME frame and knob row as the
         // two panels above it in every mode (that is the whole point of the rework).
-        panelBox(16, g3.y0, 340, g3.y1);
+        panelBox(16, g3.y0, 340, g3.y1, 1.0f, kCosmosRed);
         if (curMode == 3) // Modular -> osc3
         {
             sectionTitle(24, g3.rowY, "OSC 3");
@@ -1906,7 +1921,7 @@ private:
         const float is2 = prism ? 492.0f : 488.0f;
         const float is3 = prism ? 520.0f : 524.0f;
 
-        panelBox(16, pTop, 340, 542);
+        panelBox(16, pTop, 340, 542, 1.0f, kCosmosBlue);
         sectionTitle(24, titleY, "VOICE / CHARACTER");
         auto KX = [&](int c) { return KX0 + c * KDX; };
         auto vLabel = [&](float cx, float y, const char* t)
@@ -2002,7 +2017,7 @@ private:
     //========================================================================
     void drawFilter()
     {
-        panelBox(348, 60, 752, 300);
+        panelBox(348, 60, 752, 300, 1.0f, kCosmosRed);
         sectionTitle(356, 64, "FILTER");
         drawFilterCurve(360, 74, 742, 156);
 
@@ -2078,7 +2093,9 @@ private:
         float k;
         switch (fcMode)
         {
-            case 0: k = std::min(fcRes, 0.75f) * 3.0f; break; // Cosmos (clamped)
+            // The linear preview approaches the oscillation threshold; above
+            // it, the DSP's saturation bounds a tone rather than a linear peak.
+            case 0: k = std::min(3.99f, 4.4f * fcRes * (0.72f + 0.28f * fcRes)); break;
             case 1: k = fcRes * 4.2f; break;                  // Oracle
             case 2: k = fcRes * 4.0f; break;                  // Mono
             case 5: k = fcRes * 3.2f; break;                  // Acid
@@ -2114,13 +2131,13 @@ private:
             return;
         }
 
-        panelBox(348, 304, 548, 542);
+        panelBox(348, 304, 548, 542, 1.0f, kCosmosRed);
         sectionTitle(356, 308, "AMP ENV");
         drawADSR(356, 320, 540, 420, kParamAmpA, kParamAmpS, ampEnv, ampHash, false);
         drawADSRKnobs(380, kParamAmpA, "amp");
         comboBox("ampcrv", kParamAmpCurve, 360, 514, 536, 538, kEnvCurve, 4);
 
-        panelBox(552, 304, 752, 542);
+        panelBox(552, 304, 752, 542, 1.0f, kCosmosRed);
         sectionTitle(560, 308, "FILTER ENV");
         drawADSR(560, 320, 744, 420, kParamFiltA, kParamFiltS, filtEnv, filtHash, true);
         drawADSRKnobs(584, kParamFiltA, "filt");
@@ -2331,7 +2348,7 @@ private:
     void drawOneLFO(float x0, float y0, float x1, float y1, const char* title,
                     uint32_t rate, uint32_t shape, uint32_t fade, uint32_t sync, const char* pfx)
     {
-        panelBox(x0, y0, x1, y1);
+        panelBox(x0, y0, x1, y1, 1.0f, kCosmosRed);
         sectionTitle(x0 + 8, y0 + 4, title);
         char id[24];
         std::snprintf(id, sizeof(id), "%srate", pfx);
@@ -2350,7 +2367,7 @@ private:
 
     void drawModeSubPanelRegion()
     {
-        panelBox(760, 328, 1000, 462);
+        panelBox(760, 328, 1000, 462, 1.0f, kCosmosRed);
         if (modeBlend < 1.0f)
         {
             const float outA = 1.0f - std::min(1.0f, modeBlend * 2.0f);
@@ -2398,24 +2415,28 @@ private:
                     && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
                     ImGui::SetTooltip("%s", tips[kParamCosmosChorus]);
             }
-            const ImU32 off = IM_COL32(34, 36, 40, 255);
+            const ImU32 off = hx(0x2B2D2B);
+            const ImU32 cap = i == 0 ? hx(0x9C9E96)
+                           : i == 1 ? kCosmosYellow : kCosmosOrange;
+            const ImU32 fill = on ? cap : lerpC(off, cap, 0.45f);
             const ImDrawFlags corners =
                 i == 0 ? ImDrawFlags_RoundCornersLeft
                        : i == 3 ? ImDrawFlags_RoundCornersRight : 0;
-            dl->AddRectFilled(b0, b1, mulA(on ? lerpC(off, live.accent, 0.30f) : off, a),
-                              4.0f * s, corners);
+            dl->AddRectFilled(b0, b1, mulA(fill, a), 4.0f * s, corners);
+            if (i == 3) // Both retains the two switch colours.
+                dl->AddRectFilled(b0, P(0.5f * (x0 + x1), 409),
+                                  mulA(on ? kCosmosYellow : lerpC(off, kCosmosYellow, 0.45f), a));
             dl->AddRect(b0, b1,
                         mulA(on ? live.accent : IM_COL32(78, 81, 86, 255), a),
                         4.0f * s, corners,
                         (on ? 1.6f : 1.0f) * s);
             const float cx = 0.5f * (x0 + x1);
             text(cx, 385, 10.0f,
-                 mulA(on ? IM_COL32(240, 241, 243, 255)
-                         : IM_COL32(158, 160, 165, 255), a),
+                 mulA(on ? hx(0x141714) : hx(0xE3E3DA), a),
                  labs[i], 0, on);
             if (on)
                 dl->AddRectFilled(P(x0 + 5, 405), P(x1 - 5, 408),
-                                  mulA(live.accent, a), 1.5f * s);
+                                  mulA(live.ledOn, a), 1.5f * s);
         }
         text(880, 424, 9.0f, mulA(whiteDimCol(), a),
              cur == 0 ? "BYPASSED"
@@ -3229,7 +3250,7 @@ private:
     }
 
     // Ink that reads on a filled swatch of `c`: the six mode accents run from
-    // Cosmos' pale sand to Acid's saturated orange, so the badge label picks its
+    // Cosmos' warm grey to Acid's saturated orange, so the badge label picks its
     // ink per swatch rather than committing to one colour.
     static ImU32 inkOn(ImU32 c)
     {
@@ -3528,7 +3549,10 @@ private:
         panelBox(1004, 60, 1224, 300);
         sectionTitle(1012, 64, "SCOPE");
         const float rx0 = 1012, ry0 = 82, rx1 = 1216, ry1 = 292;
-        dl->AddRectFilled(P(rx0, ry0), P(rx1, ry1), IM_COL32(9, 11, 13, 255), 4.0f * s);
+        const ImU32 displayBg = lerpC(IM_COL32(9, 11, 13, 255), kCosmosDisplay, live.cosmos);
+        const ImU32 displayInk = lerpC(live.accent, kCosmosDisplayInk, live.cosmos);
+        const ImU32 gridInk = lerpC(IM_COL32(255, 255, 255, 255), kCosmosDisplayInk, live.cosmos);
+        dl->AddRectFilled(P(rx0, ry0), P(rx1, ry1), displayBg, 4.0f * s);
         dl->PushClipRect(P(rx0, ry0), P(rx1, ry1), true);
         const float midY = 0.5f * (ry0 + ry1);
         // A restrained oscilloscope grid makes the large display intentional even
@@ -3537,9 +3561,9 @@ private:
         {
             const float x = rx0 + (rx1 - rx0) * (float)i / 4.0f;
             const float y = ry0 + (ry1 - ry0) * (float)i / 4.0f;
-            dl->AddLine(P(x, ry0), P(x, ry1), IM_COL32(255, 255, 255, 12), 1.0f * s);
+            dl->AddLine(P(x, ry0), P(x, ry1), withA(gridInk, 12), 1.0f * s);
             dl->AddLine(P(rx0, y), P(rx1, y),
-                        IM_COL32(255, 255, 255, i == 2 ? 30 : 12), 1.0f * s);
+                        withA(gridInk, i == 2 ? 30 : 12), 1.0f * s);
         }
 
         int count = 0;
@@ -3574,13 +3598,15 @@ private:
                 }
                 if (peak > 1e-4f)
                 {
-                    dl->AddPolyline(pts, nPts, live.accent, 0, 1.8f * s);
+                    dl->AddPolyline(pts, nPts, displayInk, 0, 1.8f * s);
                     hasUsableSignal = true;
                 }
             }
         }
         if (!hasUsableSignal)
-            text(1114, midY - 5.0f, 9.0f, withA(live.text, 105),
+            text(1114, midY - 5.0f, 9.0f,
+                 withA(lerpC(live.text, kCosmosDisplayInk, live.cosmos),
+                       (int)(105.0f + live.cosmos * 150.0f)),
                  "WAITING FOR SIGNAL", 0, true);
         dl->PopClipRect();
         dl->AddRect(P(rx0, ry0), P(rx1, ry1), IM_COL32(0, 0, 0, 180), 4.0f * s, 0, 1.2f * s);
@@ -3660,7 +3686,7 @@ private:
         // sequencer gives that height back at the top. The transport header (y
         // 552..606) carries the labels, controls and read-outs; the step lanes
         // occupy the remaining height down to the 692 floor.
-        panelBox(16, 548, 700, 692);
+        panelBox(16, 548, 700, 692, 1.0f, kCosmosBlue);
         if (curMode == 5)
         {
             sectionTitle(24, 552, "PATTERN SEQUENCER");
@@ -4554,7 +4580,7 @@ private:
         tips[kParamLfo1Rate] = tips[kParamLfo2Rate] = "Speed of the LFO.";
         tips[kParamLfo1Shape] = tips[kParamLfo2Shape] = "Waveform of the LFO.";
         tips[kParamLfo1Fade] = tips[kParamLfo2Fade] = "Time for the LFO to fade in after a note.";
-        tips[kParamLfo1Sync] = tips[kParamLfo2Sync] = "Lock the LFO to the host tempo and song position; notes no longer restart it.";
+        tips[kParamLfo1Sync] = tips[kParamLfo2Sync] = "Lock the LFO to the host tempo and song position; notes no longer restart its phase. While playing with a valid song position, mod-matrix rate routes do not change its cycle length.";
         tips[kParamUnisonVoices] = "Stacked detuned voices per note.";
         tips[kParamUnisonDetune] = "Spread of detuning across unison voices, in cents.";
         tips[kParamUnisonSpread] = "Stereo spread of unison voices.";

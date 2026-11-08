@@ -1189,6 +1189,15 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
 
             cosmosChorus.process(sL, sR);
 
+            // The additive DCO mixer and stereo BBD paths need fixed headroom
+            // before the global drive/delay/reverb. Keep source and chorus
+            // ratios intact instead of normalising away each newly added path.
+            if (voiceParams.mode == SynthMode::Cosmos)
+            {
+                sL *= 0.12f;
+                sR *= 0.12f;
+            }
+
             // EffectsMix mod (fix #5): scale effect wet mixes by the mean per-voice
             // routing amount. Only pays per-sample setter cost when routed.
             //

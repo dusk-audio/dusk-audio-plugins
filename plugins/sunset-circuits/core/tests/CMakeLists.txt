@@ -21,6 +21,10 @@ add_executable(render_test
 target_include_directories(render_test PRIVATE ${CORE_DIR} ${SHARED_DSP} ${DAF_PLUGIN})
 target_compile_options(render_test PRIVATE -O2 -Wall -Wextra)
 
+add_executable(cosmos_state_test cosmos_state_test.cpp)
+target_include_directories(cosmos_state_test PRIVATE ${CORE_DIR} ${SHARED_DSP})
+target_compile_options(cosmos_state_test PRIVATE -O2 -Wall -Wextra)
+
 # preset_render — includes the static factory-preset table (MultiSynthParams.hpp)
 # from the DAF shell plus the core DSP; renders mode-appropriate performances for
 # the Phase 5 preset re-voice + audit (no plugin hosting / MIDI injection).

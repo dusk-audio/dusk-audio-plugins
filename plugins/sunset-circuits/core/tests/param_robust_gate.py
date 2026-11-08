@@ -118,7 +118,9 @@ def bad_parameter(fails):
     for name, bad, good in BAD_ROWS:
         _, x = render(0, 60, 2.0, 2, f"probust_{name}_{bad}",
                       setat=[f"{BAD_T}:{name}:{bad}", f"{RESTORE_T}:{name}:{good}"],
-                      **CLEAN)
+                      # Cosmos now reserves fixed mixer/chorus headroom. Keep
+                      # this survival probe above its unchanged 0.05 guard.
+                      **dict(CLEAN, masterVol=0))
         healthy = float(np.max(np.abs(x[:int(0.4 * SR)])))
         recovered = float(np.max(np.abs(x[int(1.4 * SR):])))
         ok = healthy >= HEALTHY_MIN_PEAK and recovered >= RECOVER_MIN_PEAK

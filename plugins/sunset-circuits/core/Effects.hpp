@@ -200,10 +200,10 @@ private:
 };
 
 //==============================================================================
-// Vintage dual-BBD chorus (Cosmos mode).  A fixed 2x path models the audible
-// parts around a bucket-brigade line: pre-emphasis, two-pole anti-alias
-// filtering, companding/expanding, quantised clock delay, clock noise, and
-// two-pole reconstruction filtering.
+// Vintage stereo BBD chorus (Cosmos mode). Each mode has an opposing pair of
+// delay sweeps, running at fixed 2x with clock quantisation/noise. Reference
+// captures resolve a ~4.2 kHz wet low-pass and ~40 Hz high-pass; instantaneous
+// waveshaping around the delay would add harmonics absent from those captures.
 enum class CosmosChorusMode { Off = 0, I, II, Both };
 
 class CosmosChorusEffect
@@ -214,24 +214,25 @@ public:
         sr = (float)sampleRate;
         processRate = sr * (float)kOversampleFactor;
         const int maxDelay = (int)(processRate * 0.015f) + 1;
-        for (int c = 0; c < 2; ++c)
+        for (int c = 0; c < 4; ++c)
         {
             bufL[c].assign((size_t)maxDelay, 0.0f);
             bufSize[c] = maxDelay; writePos[c] = 0; lfoPhase[c] = 0.0f;
             oversampler[c].setFactor(kOversampleFactor);
         }
         // The shared FIR round trip delays only the wet path. Subtract that
-        // delay from the BBD line so its audible centre remains at ~3 ms
+        // delay from each BBD line so its audible centre remains calibrated
         // relative to the undelayed dry path.
-        centerDelaySamples = std::max(
-            1.0f, (sr * 0.003f - oversampler[0].latency())
-                * (float)kOversampleFactor);
-        modDepthSamples = processRate * 0.002f;
-        preEmphCoeff = 1.0f - std::exp(-kTwoPi * 1500.0f / processRate);
-        preCoeff = 1.0f - std::exp(-kTwoPi * 12500.0f / processRate);
-        postCoeff[0] = 1.0f - std::exp(-kTwoPi * 9200.0f / processRate);
-        postCoeff[1] = 1.0f - std::exp(-kTwoPi * 10800.0f / processRate);
-        dcCoeff = std::exp(-kTwoPi * 12.0f / processRate);
+        for (int m = 0; m < 2; ++m)
+        {
+            centerDelaySamples[m] = std::max(
+                1.0f, (sr * (m == 0 ? 0.00325f : 0.00350f) - oversampler[0].latency())
+                    * (float)kOversampleFactor);
+            modDepthSamples[m] = processRate * (m == 0 ? 0.00195f : 0.00210f);
+        }
+        const float g = std::tan(kPi * 4200.0f / processRate);
+        postCoeff = g / (1.0f + g);
+        dcCoeff = std::exp(-kTwoPi * 40.0f / processRate);
         noiseRng.seed(0xC05C05u);
         reset();
     }
@@ -241,7 +242,10 @@ public:
         const unsigned activated = activeMask(m) & ~activeMask(mode);
         for (int c = 0; c < 2; ++c)
             if ((activated & (1u << c)) != 0)
-                resetChannel(c);
+            {
+                resetChannel(c * 2);
+                resetChannel(c * 2 + 1);
+            }
         mode = m;
     }
 
@@ -250,36 +254,28 @@ public:
         if (mode == CosmosChorusMode::Off) return;
         const float dryL = left, dryR = right;
         float wetL = 0.0f, wetR = 0.0f;
-        int numActive = 0;
-
         const float mono = (left + right) * 0.5f;
         const unsigned mask = activeMask(mode);
-        for (int c = 0; c < 2; ++c)
+        for (int m = 0; m < 2; ++m)
         {
-            if ((mask & (1u << c)) == 0) continue;
-            ++numActive;
-
-            const float wet = oversampler[c].processSample(
-                mono, [this, c](float input) noexcept {
-                    return processChannel(c, input);
-                });
-
-            wetL += wet;
-            wetR -= wet; // inverted for stereo width
+            if ((mask & (1u << m)) == 0) continue;
+            const int l = m * 2, r = l + 1;
+            wetL += oversampler[l].processSample(mono,
+                [this, l](float input) noexcept { return processChannel(l, input); });
+            wetR += oversampler[r].processSample(mono,
+                [this, r](float input) noexcept { return processChannel(r, input); });
         }
-
-        if (numActive > 0)
-        {
-            const float wetGain = (numActive == 2) ? 0.35f : 0.5f;
-            left  = dryL * 0.7f + wetL * wetGain;
-            right = dryR * 0.7f + wetR * wetGain;
-        }
+        // Add two oppositely swept delays, not one polarity-inverted wet copy.
+        // Each enabled mode retains its level when I+II is selected.
+        left  = dryL + wetL * 1.35f;
+        right = dryR + wetR * 1.35f;
     }
 
     void reset() noexcept
     {
-        for (int c = 0; c < 2; ++c)
+        for (int c = 0; c < 4; ++c)
             resetChannel(c);
+        noiseRng.seed(0xC05C05u);
     }
 
 private:
@@ -301,48 +297,41 @@ private:
         oversampler[c].reset();
         writePos[c] = 0;
         lfoPhase[c] = 0.0f;
-        preEmphLP[c] = preLP1[c] = preLP2[c] = 0.0f;
-        postLP1[c] = postLP2[c] = 0.0f;
+        postState[c] = 0.0f;
         dcIn[c] = dcOut[c] = 0.0f;
     }
 
     float processChannel(int c, float input) noexcept
     {
-        // Fixed pre-emphasis lifts the detail that the BBD path will lose.
-        preEmphLP[c] += (input - preEmphLP[c]) * preEmphCoeff;
-        const float emphasized = input + (input - preEmphLP[c]) * 0.32f;
-        preLP1[c] += (emphasized - preLP1[c]) * preCoeff;
-        preLP2[c] += (preLP1[c] - preLP2[c]) * preCoeff;
-        const float compressed = preLP2[c] == 0.0f
-            ? 0.0f : std::copysign(std::sqrt(std::abs(preLP2[c])), preLP2[c]);
-
-        const float lfo = 2.0f * std::abs(
+        const int m = c / 2;
+        const float triangle = 2.0f * std::abs(
             2.0f * (lfoPhase[c] - std::floor(lfoPhase[c] + 0.5f))) - 1.0f;
-        float delay = centerDelaySamples + lfo * modDepthSamples;
+        const float lfo = (c & 1) ? -triangle : triangle;
+        float delay = centerDelaySamples[m] + lfo * modDepthSamples[m];
         // Bucket clocks do not move continuously.  Sixteenth-sample delay
         // steps are above the processing sample resolution but still leave the
         // faint clock texture after reconstruction filtering.
         delay += noiseRng.nextBipolar()
                * 0.018f * (float)kOversampleFactor;
         delay = std::round(delay * 16.0f) * (1.0f / 16.0f);
+        // At low host rates the FIR latency can exceed the shortest desired
+        // delay. Keep both interpolation taps inside the allocated line.
+        delay = clampf(delay, 1.0f, (float)(bufSize[c] - 2));
 
-        const float bucketNoise = noiseRng.nextBipolar() * 0.00011f;
-        bufL[c][(size_t)writePos[c]] = compressed + bucketNoise;
+        const float bucketNoise = noiseRng.nextBipolar() * 0.000011f;
+        bufL[c][(size_t)writePos[c]] = input + bucketNoise;
 
         float wet = readBuf(bufL[c], bufSize[c], writePos[c], delay);
-        postLP1[c] += (wet - postLP1[c]) * postCoeff[c];
-        postLP2[c] += (postLP1[c] - postLP2[c]) * postCoeff[c];
-        wet = postLP2[c];
-        // Complementary expander restores level and pushes the BBD noise
-        // down when the wanted signal is quiet.
-        wet *= std::abs(wet);
+        const float v = (wet - postState[c]) * postCoeff;
+        wet = postState[c] + v;
+        postState[c] = wet + v;
         const float hp = wet - dcIn[c] + dcCoeff * dcOut[c];
         dcIn[c] = wet;
         dcOut[c] = isBad(hp) ? 0.0f : hp;
-        wet = dcOut[c] + noiseRng.nextBipolar() * 0.000035f;
+        wet = dcOut[c];
 
         writePos[c] = (writePos[c] + 1) % bufSize[c];
-        const float rate = (c == 0) ? 0.513f : 0.863f;
+        const float rate = (m == 0) ? 0.4f : 0.83f;
         lfoPhase[c] += rate / processRate;
         if (lfoPhase[c] >= 1.0f) lfoPhase[c] -= 1.0f;
         return wet;
@@ -361,17 +350,14 @@ private:
     static constexpr int kOversampleFactor = 2;
 
     float sr = 44100.0f, processRate = 88200.0f;
-    float centerDelaySamples = 1.0f, modDepthSamples = 1.0f;
+    float centerDelaySamples[2] = { 1.0f, 1.0f }, modDepthSamples[2] = { 1.0f, 1.0f };
     CosmosChorusMode mode = CosmosChorusMode::Off;
-    duskaudio::Oversampler oversampler[2];
-    std::vector<float> bufL[2];
-    int bufSize[2] = { 1, 1 }, writePos[2] = { 0, 0 };
-    float lfoPhase[2] = { 0.0f, 0.0f };
-    float preEmphCoeff = 1.0f, preCoeff = 1.0f;
-    float postCoeff[2] = { 1.0f, 1.0f };
-    float preEmphLP[2] = {}, preLP1[2] = {}, preLP2[2] = {};
-    float postLP1[2] = {}, postLP2[2] = {};
-    float dcCoeff = 0.999f, dcIn[2] = {}, dcOut[2] = {};
+    duskaudio::Oversampler oversampler[4];
+    std::vector<float> bufL[4];
+    int bufSize[4] = { 1, 1, 1, 1 }, writePos[4] = {};
+    float lfoPhase[4] = {};
+    float postCoeff = 1.0f, postState[4] = {};
+    float dcCoeff = 0.999f, dcIn[4] = {}, dcOut[4] = {};
     Xorshift noiseRng;
 };
 

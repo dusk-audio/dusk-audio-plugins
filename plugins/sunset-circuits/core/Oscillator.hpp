@@ -70,10 +70,12 @@ public:
 
     void seedNoise(uint32_t s) noexcept { rng.seed(s); }
 
-    // FM: add to phase (through-zero-ish, wraps).
+    // FM depth is calibrated in cycles per sample at 96 kHz (the existing
+    // 48 kHz / 2x default). Convert to the current internal rate so the same
+    // patch retains its pitch/deviation when sample rate or oversampling changes.
     void applyFM(float fmAmount) noexcept
     {
-        phase += fmAmount;
+        phase += fmAmount * (96000.0f / sr);
         // Constant-time wrap. The while loops this replaces ran once per whole
         // cycle of overshoot, so their cost was proportional to |fmAmount| -- a
         // large modulation value would have spun the audio thread. Nothing
@@ -218,7 +220,10 @@ class PinkNoiseGenerator
 public:
     void seed(uint32_t s) noexcept { rng.seed(s); }
 
-    float processSample() noexcept
+    // Cosmos takes the white source before coloration. Advance the same PRNG
+    // and pink-filter state in either case so neighbouring modes keep their
+    // noise stream and mode changes cannot expose stale filter memory.
+    float processSample(bool whiteOutput = false) noexcept
     {
         const float white = rng.nextBipolar();
         b0 = 0.99886f * b0 + white * 0.0555179f;
@@ -229,7 +234,7 @@ public:
         b5 = -0.7616f * b5 - white * 0.0168980f;
         const float pink = b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362f;
         b6 = white * 0.115926f;
-        return pink * 0.11f;
+        return whiteOutput ? white : pink * 0.11f;
     }
 
     void reset() noexcept { b0 = b1 = b2 = b3 = b4 = b5 = b6 = 0.0f; }
