@@ -83,6 +83,49 @@ check "all-plugins tag is never early" \
 check "all-plugins prerelease is never early" \
   "early=false members_only=false public_on=" "$(plan v2.0.0-beta | oneline)"
 
+# --- website-ref ---
+wref() { # wref TAG -> the ref line
+  GITHUB_OUTPUT="" GITHUB_REF="" EARLY_ACCESS_DAYS="${DAYS-14}" HAS_EARLY_TOKEN="${TOKEN-true}" \
+    bash "$SCRIPT" website-ref "$1"
+}
+check "early-access release reads its dated website branch" "ref=early-access/2026-10-31" "$(wref multi-comp-2-v1.0.0)"
+check "members-only prerelease reads website main" "ref=main" "$(wref multi-comp-2-v1.1.0-alpha1)"
+check "Early-Access: no reads website main" "ref=main" "$(wref duskverb-2-v1.1.0-beta)"
+check "feature off reads website main" "ref=main" "$(DAYS=0 wref multi-comp-2-v1.0.0)"
+check "missing token reads website main" "ref=main" "$(TOKEN=false wref multi-comp-2-v1.0.0)"
+check "all-plugins tag reads website main" "ref=main" "$(wref v2.0.0)"
+check "an unknown tag reads website main" "ref=main" "$(wref no-such-v9.9.9)"
+check "the tag defaults to GITHUB_REF" "ref=early-access/2026-10-31" \
+  "$(GITHUB_OUTPUT="" GITHUB_REF=refs/tags/multi-comp-2-v1.0.0 EARLY_ACCESS_DAYS=14 HAS_EARLY_TOKEN=true bash "$SCRIPT" website-ref)"
+check "a branch build reads website main" "ref=main" \
+  "$(GITHUB_OUTPUT="" GITHUB_REF=refs/heads/main EARLY_ACCESS_DAYS=14 HAS_EARLY_TOKEN=true bash "$SCRIPT" website-ref)"
+
+# --- fetch_manual_pdf.sh, against a fake curl that serves only $FAKE_URLS ---
+FETCH="$ROOT/.github/scripts/fetch_manual_pdf.sh"
+cat > "$WORK/bin/curl" <<'EOF'
+#!/usr/bin/env bash
+url="" out=""
+while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift ;; http*) url="$1" ;; esac; shift; done
+echo "$url" >> "$CURL_LOG"
+if [ -n "$FAKE_URLS" ] && grep -qxF "$url" <<< "$FAKE_URLS"; then echo pdf > "$out"; exit 0; fi
+exit 22
+EOF
+chmod +x "$WORK/bin/curl"
+export CURL_LOG="$WORK/curl.log"
+site=https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io
+fm() { : > "$CURL_LOG"; FAKE_URLS="$1" bash "$FETCH" x "$WORK/x-manual.pdf" "$2" 2>&1; }
+out=$(fm "$site/early-access/2026-10-31/assets/manuals/x-manual.pdf" early-access/2026-10-31)
+contains "manual comes from the early-access branch" "from website early-access/2026-10-31" "$out"
+check "main is not asked when the branch has the manual" "1" "$(wc -l < "$CURL_LOG" | tr -d ' ')"
+out=$(fm "$site/main/assets/manuals/x-manual.pdf" early-access/2026-10-31)
+contains "a missing branch falls back to main" "from website main" "$out"
+contains "the fallback warns" "::warning::No manual PDF on website branch early-access/2026-10-31" "$out"
+out=$(fm "" main)
+contains "no manual anywhere warns" "::warning::User manual PDF not found" "$out"
+check "no manual anywhere leaves no file" "absent" "$([ -e "$WORK/x-manual.pdf" ] && echo present || echo absent)"
+out=$(fm "$site/main/assets/manuals/x-manual.pdf" 'odd ref;x')
+contains "an odd ref reads main" "from website main" "$out"
+
 # --- notes ---
 printf 'Body\n' > "$WORK/b1"
 EARLY=true MEMBERS_ONLY=true PUBLIC_ON="" EARLY_ACCESS_DAYS=14 bash "$SCRIPT" notes "$WORK/b1"

@@ -1126,10 +1126,20 @@ jobs:
         with:
           path: artifacts
 
+      # Release archives bundle the plugin's manual PDF from the website; see the same step
+      # in daf-build.yml.
+      - name: Resolve the manual's website branch
+        id: manual
+        env:
+          EARLY_ACCESS_DAYS: ${{ vars.EARLY_ACCESS_DAYS }}
+          HAS_EARLY_TOKEN: ${{ secrets.EARLY_ACCESS_TOKEN != '' }}
+        run: .github/scripts/early_access.sh website-ref
+
       - name: Create release archives
         env:
           RELEASE_NAME: ${{ needs.setup.outputs.release_name }}
           PLUGIN_NAME: ${{ needs.setup.outputs.plugin_name }}
+          MANUAL_REF: ${{ steps.manual.outputs.ref }}
         run: |
           cd artifacts
 
@@ -1164,19 +1174,13 @@ jobs:
           }
 
           # Helper: drop the per-plugin User Manual PDF into the release dir.
-          # Sourced from the dusk-audio.github.io repo's main branch (issue #80).
+          # Sourced from the website branch holding this release's site change (issue #80):
+          # main, or early-access/<public date> for an early-access release.
           # A missing PDF is non-fatal so a first-release of a brand-new plugin
           # does not block. /release-plugin auto-regenerates these on every tag,
           # so the URL should be in sync with the plugin version being released.
           fetch_manual() {
-            local release_dir="$1"
-            local manual_url="https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/main/assets/manuals/${SLUG}-manual.pdf"
-            if curl -fL --silent --show-error "$manual_url" -o "${release_dir}/${SLUG}-manual.pdf"; then
-              echo "  bundled ${SLUG}-manual.pdf into ${release_dir}/"
-            else
-              rm -f "${release_dir}/${SLUG}-manual.pdf"
-              echo "::warning::User manual PDF not found at ${manual_url} (non-fatal)"
-            fi
+            bash "$GITHUB_WORKSPACE/.github/scripts/fetch_manual_pdf.sh" "$SLUG" "$1/${SLUG}-manual.pdf" "${MANUAL_REF:-main}"
           }
 
           # Linux: Create zip with VST3/, LV2/, CLAP/ folders at root (not nested in plugins-linux/)
