@@ -23,11 +23,10 @@ The Multi-Comp follow-up CI is green on all four targets. Fresh-scan REAPER chec
 on the available Linux, macOS and Windows machines verify state, automation points
 and editor lifecycle. Linux VST3/CLAP/LV2, macOS VST3/CLAP/LV2 and Windows VST3/CLAP
 produce wet bounces. The macOS AU played dry in REAPER because DAF refused the
-host's latency query. A CI build against the fix (dusk-audio/DAF#112) plays wet
-in REAPER, matches the VST3 bit for bit without automation, and bounces the same
-before and after a save and reload. **Merge that fix before building the
-release**: until then CI still produces the dry AU. See the detailed readiness
-report.
+host's latency query. The fix, dusk-audio/DAF#112, is merged. CI builds made
+before and after the merge play wet in REAPER, match the VST3 bit for bit without
+automation, and bounce the same before and after a save and reload. See the
+detailed readiness report.
 
 Fresh CI built the final Windows runtime change on all four targets, and its new
 gate confirms that both Windows binaries import only system DLLs. Complete human
