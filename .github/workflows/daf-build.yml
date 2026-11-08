@@ -1121,6 +1121,19 @@ jobs:
         working-directory: ${{ env.PLUGIN_DIR }}
         shell: pwsh
         run: |
+          # The DLLs of the VC++ redistributable, which the download does not ship. VCOMP
+          # (OpenMP) has no static form, so linking the runtime statically cannot remove it.
+          $runtimeImport = '^\s*(MSVCP|MSVCR|VCRUNTIME|VCOMP|CONCRT)[A-Za-z0-9_]*\.dll\s*$'
+          function Find-RuntimeImports([string[]] $Lines) { @($Lines -match $runtimeImport) }
+          # Negative controls for the check below, in dumpbin's layout: it must reject each
+          # runtime DLL and pass Windows system DLLs.
+          foreach ($dll in 'MSVCP140.dll', 'MSVCR120.dll', 'VCRUNTIME140_1.dll', 'VCOMP140.dll', 'CONCRT140.dll') {
+            $found = Find-RuntimeImports @('  Image has the following dependencies:', '', "    $dll", '    KERNEL32.dll')
+            if ($found.Count -ne 1) { throw "The runtime import check does not reject $dll" }
+          }
+          if ((Find-RuntimeImports @('    KERNEL32.dll', '    USER32.dll', '    OPENGL32.dll')).Count -ne 0) {
+            throw "The runtime import check rejects a Windows system DLL"
+          }
           $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
           $dumpbin = & $vswhere -latest -products '*' -find 'VC/Tools/MSVC/**/bin/Hostx64/x64/dumpbin.exe' | Select-Object -First 1
           if (-not $dumpbin) { throw "dumpbin not found" }
@@ -1132,7 +1145,7 @@ jobs:
             $dependencies = & $dumpbin /DEPENDENTS $binary.FullName
             if ($LASTEXITCODE -ne 0) { throw "Cannot inspect $($binary.FullName)" }
             $dependencies | Write-Output
-            if ($dependencies -match '^\s*(MSVCP|MSVCR|VCRUNTIME|VCOMP|CONCRT)[A-Za-z0-9_]*\.dll\s*$') {
+            if ((Find-RuntimeImports $dependencies).Count -ne 0) {
               throw "$($binary.Name) requires an unbundled VC++ runtime"
             }
           }
