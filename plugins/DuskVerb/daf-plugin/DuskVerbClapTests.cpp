@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
 // Standalone, real-binary CLAP host regression test for DuskVerb 2.
 
-#include "../core/DuskVerbParamTable.hpp"
+#include "DuskVerbParams.hpp"
 #include "../core/DuskVerbPresets.hpp"
 
 #include <algorithm>
@@ -24,6 +24,7 @@
 #include "clap/ext/audio-ports.h"
 #include "clap/ext/params.h"
 #include "clap/ext/state.h"
+#include "clap/ext/tail.h"
 #include "clap/factory/plugin-factory.h"
 #include "clap/plugin.h"
 #include "clap/process.h"
@@ -801,6 +802,95 @@ void audioContract(const clap_plugin_factory_t* factory, const Instance& probe)
 // DuskVerbPlugin::deactivate), and the instance rings again.
 // This runs the default program; DuskVerbDSP::clearState() names the presets whose
 // output match EQ it cannot clear.
+
+// Exercise the host contract, including changes while a previous preset is still fading.
+void tailContract(const clap_plugin_factory_t* factory)
+{
+    Instance instance(factory);
+    check(instance.plugin != nullptr, "tail probe instance creates");
+    if (!instance.plugin) return;
+    const auto* tail = static_cast<const clap_plugin_tail_t*>(
+        instance.plugin->get_extension(instance.plugin, CLAP_EXT_TAIL));
+    check(tail != nullptr, "CLAP exposes tail length");
+    if (!tail) return;
+    instance.set(duskverb::Algorithm, 10.0); // Hall can freeze
+    instance.set(duskverb::Mix, 1.0);
+    check(instance.activate(48000.0, 256), "tail probe activates");
+    if (!instance.processing) return;
+    std::array<float, 256> input{}, left{}, right{};
+    float* in[] = {input.data(), input.data()};
+    float* out[] = {left.data(), right.data()};
+    clap_audio_buffer_t a{}, b{};
+    a.data32 = in; a.channel_count = 2; b.data32 = out; b.channel_count = 2;
+    ParamEvents events;
+    EmptyOutEvents output;
+    clap_process_t process{};
+    process.frames_count = 256;
+    process.audio_inputs = &a; process.audio_outputs = &b;
+    process.audio_inputs_count = process.audio_outputs_count = 1;
+    process.in_events = &events.iface; process.out_events = &output.iface;
+    const auto run = [&](int blocks = 1) {
+        for (int i = 0; i < blocks; ++i) {
+            check(instance.plugin->process(instance.plugin, &process) != CLAP_PROCESS_ERROR,
+                  "tail probe processes");
+            process.steady_time += process.frames_count;
+        }
+    };
+    run(20);
+    const auto normal = tail->get(instance.plugin);
+    check(normal >= 30u * 48000u && normal < 0x80000000u, "unfrozen tail is finite");
+    input[0] = 0.25f; run(); input[0] = 0; run(20);
+    instance.set(duskverb::Freeze, 1.0);
+    run();
+    check(tail->get(instance.plugin) == UINT32_MAX, "Freeze advertises an infinite tail");
+    run(32 * 48000 / 256);
+    float peak = 0;
+    for (int i = 0; i < 256; ++i) peak = std::max({peak, std::abs(left[i]), std::abs(right[i])});
+    check(peak > 1e-5f, "frozen audio really outlasts the former 30-second report");
+    instance.plugin->reset(instance.plugin);
+    run();
+    check(tail->get(instance.plugin) == UINT32_MAX, "reset retains the Freeze contract");
+    instance.set(duskverb::Bypass, 1.0); run(20);
+    instance.set(duskverb::Freeze, 0.0); run();
+    check(tail->get(instance.plugin) < 0x80000000u, "unfreeze while bypassed restores a finite tail");
+    instance.set(duskverb::Bypass, 0.0); run(20);
+    instance.set(duskverb::Decay, 1.0); // maximum normalized decay
+    instance.set(duskverb::BassMult, 2.5); run();
+    check(tail->get(instance.plugin) > 75u * 48000u, "long low-band decays exceed 30 seconds");
+    instance.set(duskverb::Freeze, 1.0); run();
+    instance.set(duskverb::Algorithm, duskverb::kNonLinAlgorithm); run();
+    check(tail->get(instance.plugin) == UINT32_MAX, "outgoing frozen engine keeps its tail report during crossfade");
+    run(20);
+    check(tail->get(instance.plugin) < 0x80000000u, "nonlinear engine ignores Freeze after the fade");
+    instance.set(duskverb::Algorithm, 10.0); run(20);
+    check(tail->get(instance.plugin) == UINT32_MAX, "return to a freeze-capable engine restores infinity");
+    instance.set(duskverb::Freeze, 0.0); run();
+    const auto at48 = tail->get(instance.plugin);
+    process.frames_count = 0;
+    run();
+    check(tail->get(instance.plugin) == at48, "zero-frame processing preserves the applied tail");
+    process.frames_count = 256;
+    instance.deactivate();
+    check(instance.activate(96000.0, 256), "tail probe reactivates at 96 kHz");
+    run(20);
+    check(std::abs(double(tail->get(instance.plugin)) / 96000.0 - double(at48) / 48000.0) < 1e-4,
+          "finite tail follows the sample rate across reactivation");
+    auto frozen = duskverb::makeDefaultState();
+    frozen.params[duskverb::Algorithm] = 10;
+    frozen.params[duskverb::Freeze] = 1;
+    const auto container = instance.save();
+    check(instance.load(replaceCustomPayload(container, duskverb::encodeState(frozen))),
+          "frozen snapshot loads during playback");
+    run();
+    frozen.params[duskverb::Algorithm] = duskverb::kNonLinAlgorithm;
+    check(instance.load(replaceCustomPayload(container, duskverb::encodeState(frozen))),
+          "second snapshot queues during the active crossfade");
+    run();
+    check(tail->get(instance.plugin) == UINT32_MAX, "queued recall preserves the still-sounding frozen tail");
+    run(80);
+    check(tail->get(instance.plugin) < 0x80000000u, "queued nonlinear recall eventually restores a finite tail");
+}
+
 void resetContract(const clap_plugin_factory_t* factory)
 {
     Instance instance(factory);
@@ -960,6 +1050,7 @@ int main(int argc, char** argv)
     stateContract(probe);
     audioContract(library.factory, probe);
     resetContract(library.factory);
+    tailContract(library.factory);
 #if DUSKVERB_CLAP_PRESET_LOAD
     mixLockContract(library.factory);
 #else

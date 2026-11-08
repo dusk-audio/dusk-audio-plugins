@@ -93,6 +93,7 @@ inline bool decodeUserPreset(std::string_view text, StateValues& out)
                     if (headerSeen) return false;
                     headerSeen = true;
                     headerName.assign(value);
+                    if (!validUserName(headerName)) return false;
                 }
                 else if (key == "@config")
                 {
@@ -165,7 +166,9 @@ inline bool decodeJucePreset(std::string_view xml, StateValues& out)
     const auto tag = xml.substr(root + 1, xml.find_first_of(" \t\r\n/>", root + 1) - root - 1);
     if (tag != "DuskVerb") return false;
     StateValues decoded = makeDefaultState();
-    std::array<bool, static_cast<size_t>(kNumParams)> seen{};
+    // seen: the file gave the parameter a value. present: the file has the
+    // parameter at all, valued or bare (see the PARAM loop).
+    std::array<bool, static_cast<size_t>(kNumParams)> seen{}, present{};
     int version = 1;
     const auto attrs = xml.substr(root + tag.size() + 1, rootEnd - (root + tag.size() + 1));
     std::array<XmlAttr, 32> rootAttrs{}; size_t rootAttrCount = 0;
@@ -197,7 +200,11 @@ inline bool decodeJucePreset(std::string_view xml, StateValues& out)
         if (parsed.ec != std::errc() || parsed.ptr != textValue.data() + textValue.size()
             || version < 1 || version > 4) return false;
     }
-    if (rootAttr("presetName", textValue)) decoded.userName = textValue;
+    if (rootAttr("presetName", textValue))
+    {
+        if (!validUserName(textValue)) return false;
+        decoded.userName = textValue;
+    }
     if (rootAttr("lastPresetName", textValue)) decoded.presetName = textValue;
     static constexpr const char* const sixNames[10] = {
         "sixAPDensityBaseline", "sixAPBloomCeiling", "sixAPEarlyMix", "sixAPOutputTrim",
@@ -229,13 +236,18 @@ inline bool decodeJucePreset(std::string_view xml, StateValues& out)
                 if (childAttrs[i].name == name) return unescape(childAttrs[i].value, value);
             return false;
         };
-        std::string id, value; if (!get("id", id) || !get("value", value)) return false;
-        const int index = paramIndexForId(id); if (index < 0 || seen[static_cast<size_t>(index)]) return false;
+        std::string id, value; if (!get("id", id)) return false;
+        const int index = paramIndexForId(id); if (index < 0 || present[static_cast<size_t>(index)]) return false;
+        present[static_cast<size_t>(index)] = true;
+        // JUCE writes a parameter the restored tree did not contain (left at its
+        // default) as a bare <PARAM id="..."/>, exactly that, and loads it as the
+        // default, which `decoded` already holds. Any other PARAM without a
+        // well-formed value (an empty one, a misspelled attribute) is refused.
+        if (childAttrCount == 1) { p = e + 1; continue; }
+        if (!get("value", value)) return false;
         float f = 0.0f; if (!parseClassicFloat(value, f)) return false;
         if (!plainValueInRange(paramDesc(index), f)) return false;
         f = plainToHost(paramDesc(index), f);
-        if (version < 3 && index == Algorithm)
-            f = static_cast<float>(migrateLegacyAlgorithmIndex(static_cast<int>(f)));
         if (!hostValueInRange(paramDesc(index), f)) return false;
         decoded.params[static_cast<size_t>(index)] = f;
         seen[static_cast<size_t>(index)] = true; p = e + 1;
@@ -267,7 +279,7 @@ inline bool decodeJucePreset(std::string_view xml, StateValues& out)
             float plain;
             if (!parseClassicFloat(textValue, plain) || !plainValueInRange(paramDesc(index), plain)) return false;
             decoded.params[index] = plainToHost(paramDesc(index), plain);
-            seen[index] = true;
+            seen[index] = present[index] = true;
         }
     // Earliest layouts from JUCE history: unversioned 03bae9d (19 controls),
     // v1 99eba57 (25), v2 628e356 (+gate), v3 f95ecfc (+bass_choke).
@@ -290,7 +302,23 @@ inline bool decodeJucePreset(std::string_view xml, StateValues& out)
         }
     };
     for (int i = 0; i < kNumParams; ++i)
-        if (!seen[static_cast<size_t>(i)] && required(i)) return false;
+        if (!present[static_cast<size_t>(i)] && required(i)) return false;
+    // f95ecfc reordered the engine enum and added bass_choke in the same commit
+    // (0.5.5; no release has one without the other). A file is written from the
+    // live parameter tree, which in 0.5.5+ always holds bass_choke, so its
+    // index names the engine that build was playing, in the new order; only a
+    // file without bass_choke stores the old order. stateVersion cannot decide
+    // it: UserPresetManager files from a fresh JUCE instance carry none, a file
+    // saved after a session restore carries the restored session's (already
+    // migrated) version, and JUCE loads both without migrating. For a genuine
+    // session state the two rules agree, since v3 requires bass_choke.
+    // bass_choke counts when PRESENT, bare or valued: JUCE writes it bare when a
+    // restored session left it at its default, and that file's engine index is
+    // already in the new order (JUCE migrated it on restore). Keying on a value
+    // would migrate it a second time.
+    if (seen[Algorithm] && !present[BassChoke])
+        decoded.params[Algorithm] = static_cast<float>(
+            migrateLegacyAlgorithmIndex(static_cast<int>(decoded.params[Algorithm])));
     out = std::move(decoded); return true;
 }
 

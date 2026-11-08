@@ -2,23 +2,25 @@
 slug: duskverb-2
 title: DuskVerb 2
 version: 1.0.0
-last_updated: 2026-10-25
-tagline: Algorithmic reverb with the original DuskVerb engines
+last_updated: 2026-11-08
+tagline: Algorithmic reverb with 24 factory sounds
 ---
 
 # DuskVerb 2
 
 ## Overview
 
-DuskVerb 2 combines the original DuskVerb reverb engines with a redesigned
-interface. The factory presets provide starting points for plates, rooms,
-halls, springs and other spaces. Engine selection changes the reverb topology;
+DuskVerb 2 combines the original DuskVerb reverb engines, its own nonlinear
+engine and updated voicing with a redesigned interface. Its 24 factory presets
+provide starting points for plates, rooms, halls, springs and nonlinear bursts.
+Engine selection changes the reverb topology;
 some controls change labels or availability to match the selected engine.
 
-![DuskVerb 2 on the Vocal Plate preset: the Space, Decay and Output row, the Tone row with its decay-by-frequency graph, and the Early, Modulation, Bass Mono and Macro cards](screenshots/duskverb-2/01-main-ui.png)
+![DuskVerb 2 on the Vocal Plate preset: graphite faceplate, amber engine and decay display, output history, and controls grouped in signal order](screenshots/duskverb-2/01-main-ui.png)
 
-The panel reads left to right in signal order: Pre-delay sits beside the input
-meter, Mix beside the output meter, and the large Decay knob in the middle.
+The amber display shows the engine, decay setting and output history. The large
+Decay knob sits beside it; Input, Early Reflections, Modulation, Damping, Macro,
+Filter and Output controls fill the rows below.
 
 ## Quick Start
 
@@ -28,30 +30,44 @@ meter, Mix beside the output meter, and the large Decay knob in the middle.
    **Mix Lock** to keep Mix and Bus where they are while you audition presets.
 4. Use **Pre-delay** to separate the source from the reverb. Choose a rhythmic
    division in **Sync** to follow the host tempo.
-5. Shape the tail in the **Tone** row: drag the handles on the graph or turn the
-   knobs below it. Then adjust **Trim**.
+5. Shape the tail with the **Damping** multipliers and crossover controls.
+   Use **Tone** for a broader adjustment, then set **Trim**.
 6. Click **Save** to store your sound as a user preset.
 
 ## Controls
 
 | Section | Purpose |
 |---|---|
-| Space | The engine, Pre-delay with tempo sync, Size and Diffusion. While sync is active the Pre-delay knob shows the division and keeps its free value. |
-| Decay | The decay time, the time the tail takes to fall by 60 dB at mid frequencies, and **Freeze**, which holds the reverb. On the Gated engine Decay sets the gate length, on Reverse the swell and on Nonlinear the burst length. Beside Freeze sits the selected engine's own tail switch where it has one: **Gate** on the Gated engine, **Tonal Correction** on the engines whose tail it evens out. |
-| Output | Width, Trim and Mix. **Bus** overrides Mix with a fully wet output while retaining its setting. **Mix Lock** keeps Mix and Bus when a preset, INIT or an import is recalled, or when the host changes program; A/B comparison is unaffected. |
-| Tone | The graph shows how long each part of the spectrum rings relative to Decay (the Bass, Mid and Treble multipliers with their crossovers) and shades what Low Cut and High Cut remove from the wet signal. The knobs below it follow in frequency order. Tone tilts the whole wet signal darker or brighter. |
-| Early | Early-reflection level and size. |
-| Engine card | The selected engine's own controls: modulation depth and rate on most engines, or the Spring, Shimmer and Gate controls on those engines. |
-| Bass Mono | Sums the wet signal to mono below a frequency, with a depth control. |
-| Macro | Saturation, Character and Duck. |
+| Input | Pre-delay, tempo sync and saturation. |
+| Filter | Low Cut, High Cut, Mono Below and Mono Depth. |
+| Decay / Size | Tail length and space size. |
+| Output | Dry / Wet, Width, Trim and fully wet Bus mode. |
+| Early Reflections | Level, size and diffusion. |
+| Damping | Three decay multipliers and two crossover frequencies. |
+| Modulation | Depth and rate; labels follow the engine. |
+| Macro | Tone, Character and Duck. |
 
-Controls the selected engine does not use are dimmed; they keep their value for
-an engine that does. **Gate** and **Tonal Correction** appear only on the engines
-they affect.
+Sync retains the free pre-delay setting, and Bus retains the Dry / Wet setting.
 
-The side meters show input and output levels. The Tone graph shows the settings,
-not a measurement of the acoustic decay. On most factory presets Decay reads the
-decay time measured on the preset itself, averaged over 500 Hz and 1 kHz.
+**Freeze** holds the reverb on supported engines; it is hidden for Reverse
+and Nonlinear. The gated engine also exposes its **Gate** switch. Controls
+unused by the selected engine are dimmed.
+**Tonal Correction** appears only where it changes the sound: the Vocal Plate,
+Ambience and Tiled Room sounds on the Hall and Tiled Room engines (and on the
+older hall engines a restored session may still use).
+
+The display at the top left shows the engine (click its name to choose another),
+the decay time (click it to type a value), the **Freeze**, **Sync** and **Bus**
+indicators, and **Output History**. Output History shows recent output level; it
+is not a measured RT60 graph, and the decay readout is the parameter setting, not
+a guarantee of a measured acoustic decay time. The side meters show input and
+output levels.
+
+Freeze can sustain a tail indefinitely on supported engines. Choose the desired
+end of an offline bounce explicitly when using Freeze. CLAP and VST3 report an
+infinite frozen tail; AU uses the framework's one-hour fallback because its tail
+property has no infinite sentinel. Unfrozen tail estimates include long decay
+and damping settings.
 
 ## Editing Values
 
@@ -62,17 +78,17 @@ decay time measured on the preset itself, averaged over 500 Hz and 1 kHz.
 - Right-click a knob for its reset and value-entry menu.
 - Ctrl-click or Alt-click resets a knob on Windows/Linux. On macOS, use
   Alt-click or Cmd-click.
-- Drag a handle on the Tone graph to move its band's crossover and decay
-  together. Hold Shift to move only the frequency, or Ctrl (Cmd on macOS) to
-  move only the level. Alt-click a handle to reset it.
 - Drag the editor corner to resize. The minimum size is 1050 × 700.
-- Click **?** for the in-plugin control reference and this instance's CPU load.
+- Click **?** for the in-plugin control reference. The amber display also shows
+  this instance's approximate CPU load.
 
 ## Presets and Comparison
 
 **INIT** restores defaults. Factory recall applies the factory sound while
 preserving the settings intentionally excluded by the original preset format.
-An asterisk beside the preset name indicates an edited sound.
+An asterisk beside the preset name indicates an edited sound. **Mix Lock**,
+below the Bus switch, keeps Dry / Wet and Bus unchanged on preset recall and
+INIT; A/B still restores the complete sound.
 
 **A** and **B** switch between complete comparison snapshots. **COPY** copies
 the active sound into the other slot without switching. Save sounds you want
@@ -100,6 +116,12 @@ DuskVerb 2 has its own plugin identity and can coexist with the original
 DuskVerb. Importing an original preset does not convert a DAW project or
 replace an original plugin instance. Keep the original plugin available for
 projects that use it.
+
+The 1.0 Windows VST3 identity matches Linux and macOS. Windows projects saved
+with an earlier DuskVerb 2 preview may need the preview instance replaced:
+export its user preset first, insert 1.0, import the preset, and check automation
+and routing. Keep the preview available until those projects are migrated.
+Original DuskVerb has a separate identity and is unaffected.
 
 The plugin supports mono, mono-to-stereo and stereo operation where the host
 exposes those layouts. Select the appropriate host routing before playback.

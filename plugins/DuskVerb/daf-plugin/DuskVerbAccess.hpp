@@ -10,6 +10,8 @@
 //   * the complete sound snapshot and its revision, so the preset name in the
 //     top bar follows a program change or session restore made by the host
 //     rather than by the UI, and the A/B slots that outlive the editor.
+//   * output history: peak dB sampled at 15 Hz on the audio thread, independent
+//     of host block size and editor frame rate.
 //
 // Parameter values are NOT here: the UI reads and writes those through DAF's
 // own parameter API (editParameter/setParameterValue), as every other Dusk DAF
@@ -55,3 +57,9 @@ DUSK_ACCESS_DECL(float, duskVerbGetOutputLevelR);
 // scheduling hiccup inflates one sample of it, which is exactly what the
 // smoothing is for. Returns 0 when the bridge is unavailable.
 DUSK_ACCESS_DECL(float, duskVerbGetCpuLoad);
+
+// Copies up to `maxCount` frames of output-peak dB into `dest`, oldest first,
+// and returns how many were written (0 when the bridge is unavailable). The
+// ring holds duskverb::DuskVerbDSP::kTailHistorySize (256) frames.
+DUSK_WEAK int duskVerbGetTailHistory(void* pluginInstancePointer,
+                                     float* dest, int maxCount) noexcept;

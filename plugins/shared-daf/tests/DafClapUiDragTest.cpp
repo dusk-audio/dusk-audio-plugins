@@ -643,6 +643,11 @@ bool reportInterception(const DragResult& result, const char* const phase,
 
 } // namespace
 
+// Optional plugin-specific checks share this real host/window fixture.
+#ifdef DUSK_UI_TEST_EXTENSION
+# include DUSK_UI_TEST_EXTENSION
+#endif
+
 int main(const int argc, const char* const* const argv)
 {
     std::vector<const char*> positional;
@@ -1062,6 +1067,10 @@ int main(const int argc, const char* const* const argv)
                      phaseA.edits, phaseB.edits, required);
         return 1;
     }
+
+#ifdef DUSK_UI_TEST_EXTENSION
+    if (!extraUiChecks(fx, plugin, paramsExt, sampled, width, height)) return 1;
+#endif
 
     guiExt->destroy(plugin);
     plugin->destroy(plugin);

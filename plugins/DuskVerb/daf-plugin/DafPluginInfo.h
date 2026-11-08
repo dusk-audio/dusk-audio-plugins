@@ -6,6 +6,10 @@
 
 #pragma once
 
+// Freeze the public 1.0 VST3 identity across Windows COM and Unix GUID layouts.
+// This changes the Windows preview ID only; legacy DuskVerb has its own IDs.
+#define DAF_VST3_CROSS_PLATFORM_UID
+
 #define DAF_PLUGIN_BRAND        "Dusk Audio"
 #define DAF_PLUGIN_NAME         "DuskVerb 2"
 #define DAF_PLUGIN_URI          "https://dusk-audio.github.io/plugins/duskverb-2"
@@ -30,9 +34,8 @@
 // The Pre-Delay Sync parameter resolves note values against the host tempo,
 // exactly as the JUCE build queries its playhead.
 #define DAF_PLUGIN_WANT_TIMEPOS       1
-// The JUCE build reports a fixed 30 s tail (getTailLengthSeconds); reporting
-// the same keeps hosts from stopping a bounce or suspending the instance
-// mid-decay. Set in activate() and on sample-rate changes, in frames.
+// Dynamic tail: finite decay estimate, or infinite while a sounding engine is
+// frozen. Updated on activation and after processing, including preset fades.
 #define DAF_PLUGIN_WANT_TAIL          1
 // A host reset (CLAP reset on the audio thread, AU Reset on the host's thread
 // with render held off) clears the tank in place, with no restart

@@ -835,8 +835,8 @@ jobs:
             --target "${PLUGIN_BASE}-au" "${PLUGIN_BASE}-vst3" \
                      "${PLUGIN_BASE}-clap" "${PLUGIN_BASE}-lv2"
 
-      - name: Run chord core and ABI tests (macOS)
-        if: startsWith(matrix.plugin.key, 'chord-analyzer-')
+      - name: Run core and ABI tests (macOS)
+        if: startsWith(matrix.plugin.key, 'chord-analyzer-') || matrix.plugin.key == 'duskverb-2'
         working-directory: ${{ env.PLUGIN_DIR }}
         run: |
           cmake --build build --config Release -j"$(sysctl -n hw.ncpu)"
@@ -1107,8 +1107,8 @@ jobs:
           cmake --build build --config Release -j $env:NUMBER_OF_PROCESSORS `
             --target "$env:PLUGIN_BASE-vst3" "$env:PLUGIN_BASE-clap"
 
-      - name: Build and run chord core and ABI tests (MSVC)
-        if: startsWith(matrix.plugin.key, 'chord-analyzer-')
+      - name: Build and run core and ABI tests (MSVC)
+        if: startsWith(matrix.plugin.key, 'chord-analyzer-') || matrix.plugin.key == 'duskverb-2'
         working-directory: ${{ env.PLUGIN_DIR }}
         shell: pwsh
         run: |

@@ -201,11 +201,13 @@ struct Knob { int index; float value; };
 
 Dv2OutputShell stageFor (const FactoryPreset& preset, const std::vector<Knob>& knobs = {})
 {
-    DuskVerbDSP dsp (nullptr, &duskverb::kFlatOctaveTrim);
-    setPreset (dsp, preset);
+    // The two-engine DSP exceeds Windows' default 1 MB thread stack.
+    // This is test setup, so use the same heap ownership as render().
+    auto dsp = std::make_unique<DuskVerbDSP> (nullptr, &duskverb::kFlatOctaveTrim);
+    setPreset (*dsp, preset);
     for (const Knob& k : knobs)
-        setPlain (dsp, k.index, k.value);
-    const auto p = [&dsp] (int index) { return dsp.getParameter (index); };
+        setPlain (*dsp, k.index, k.value);
+    const auto p = [&dsp] (int index) { return dsp->getParameter (index); };
     Dv2OutputShell s;
     s.prepare (kSr);
     s.setLoCut (p (duskverb::LoCut));
@@ -717,7 +719,7 @@ void testASwapToAnotherPresetCrossfadesLinearly()
     const EarlyFieldConfig c = directField();
     const int n = 19200, swapBlock = 20;
     const auto noise = [] (int t, int ch) { return noiseAt (t, ch); };
-    const auto load = [&to] (DuskVerbDSP& dsp, int block) {
+    const auto load = [&to, swapBlock] (DuskVerbDSP& dsp, int block) {
         if (block == swapBlock - 1)
         {
             setPreset (dsp, to);

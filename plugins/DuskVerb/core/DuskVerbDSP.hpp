@@ -117,6 +117,9 @@ public:
     // -53 dBFS, is now cleared there).
     void clearState() noexcept;
 
+    static constexpr int kTailHistorySize = 256;
+    int getTailHistory(float* dest, int maxCount) const noexcept;
+
     // In-place safe (out[ch] may alias in[ch]). numSamples <= 0 returns early.
     // numChannels 1 or 2; the reverb always runs in stereo internally and a
     // mono host layout gets the left channel (the JUCE build refuses mono
@@ -156,9 +159,11 @@ public:
     // resets that engine config to defaults, so a preset previously applied to
     // this reused instance cannot leak into the restored session.
     //
-    // This is the JUCE setStateInformation() behaviour exactly, including the
-    // consequence that a matched preset's applyEngineConfig() re-asserts the
-    // PRESET's SixAP brightness over the state's at swap time.
+    // One deliberate difference from JUCE's setStateInformation(): there, a
+    // matched preset's applyEngineConfig() re-asserts the PRESET's SixAP
+    // brightness over the state's at swap time. Here performPresetSwap()
+    // pushes the state's SixAP values after applyEngineConfig(), so a restored
+    // custom snapshot keeps its own.
     void restorePresetIdentity (const FactoryPreset* preset);
 
     const FactoryPreset* lastAppliedPreset() const noexcept
@@ -263,7 +268,7 @@ private:
     void syncParameterCacheToCurrent();
     void performPresetSwap();
     void pushSixAPBrightnessTo (DuskVerbEngine& target);
-    static void writeOut (float* const* out, int numChannels,
+    void writeOut (float* const* out, int numChannels,
                           const float* left, const float* right, int numSamples) noexcept;
 
     // The engine the Algorithm parameter selects: a Reserved slot resolves to its stand-in.
@@ -345,6 +350,9 @@ private:
     float pteqBandQ_   [4] {   1.5f,    1.0f,    1.5f,     0.8f };
     float lastPteqBand0Gain_ = 0.0f, lastPteqBand1Gain_ = 0.0f;
     float lastPteqBand2Gain_ = 0.0f, lastPteqBand3Gain_ = 0.0f;
+    // Factory voicing is independent of the gain controls' zero defaults.
+    // Only bands actually edited since the last config install override it.
+    bool pteqGainOverrides_[4] {};
 
     // Edge-detected last-pushed values. Sentinels match the JUCE processor's.
     int   cachedAlgorithm_ = -1;
@@ -360,6 +368,13 @@ private:
     float lastCrossover_ = -1.0f, lastHighCrossover_ = -1.0f, lastBassChoke_ = -1.0f;
     float lastSaturation_ = -1.0f, lastDiffusion_ = -1.0f, lastTonalCorr_ = -1.0f;
     float lastModDepth_ = -1.0f, lastModRate_ = -1.0f;
+    void clearTail() noexcept;
+    void sampleTail(const float* left, const float* right, int count) noexcept;
+    std::atomic<float> tailHistory_[kTailHistorySize]{};
+    std::atomic<unsigned> tailWriteIndex_{0};
+    int tailSamplesPerFrame_ = 3200, tailSamples_ = 0;
+    float tailPeak_ = 0.0f;
+
     float lastTailSpinDepth_ = -1.0f, lastTailSpinRate_ = -1.0f;
     float lastERSize_ = -1.0f, lastERLevel_ = -2.0f, lastERBoost_ = -1.0f;
     float lastQtHiMidMult_ = -99.0f, lastQtAirMult_ = -99.0f;

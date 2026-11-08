@@ -13,6 +13,7 @@
 #include "DuskVerbFormat.hpp"
 #include "DuskDenormals.hpp"
 #include "DuskVerbVersion.hpp"
+#include "../core/DuskVerbToneMacro.hpp"
 
 #include <array>
 #include <atomic>
@@ -42,6 +43,7 @@ public:
     float outputLevelL() const noexcept { return dsp_.getOutputLevelL(); }
     float outputLevelR() const noexcept { return dsp_.getOutputLevelR(); }
     int   currentProgram() const noexcept { return controls_.sound().program; }
+    int tailHistory(float* dest, int count) const noexcept { return dsp_.getTailHistory(dest, count); }
     float cpuLoad() const noexcept { return cpuLoad_.load(std::memory_order_relaxed); }
     duskverb::StateValues snapshot() const { return controls_.snapshot(); }
     duskverb::EditorState* editorState() noexcept { return &editorState_; }
@@ -217,18 +219,55 @@ protected:
     }
 
     // ── Lifecycle ───────────────────────────────────────────────────────────
-    // 30 s, the value the JUCE build returns from getTailLengthSeconds(). Frames at
-    // the current sample rate, so it is re-sent whenever the rate changes.
-    static constexpr double kTailSeconds = 30.0;
     void reportTail(double sampleRate) noexcept
     {
-        setTail(static_cast<uint32_t>(kTailSeconds * sampleRate + 0.5));
+        const auto p = [this](int id) { return dsp_.getParameter(id); };
+        const int algorithm = duskverb::resolveAlgorithm(static_cast<int>(p(duskverb::Algorithm)));
+        uint32_t frames;
+        if (p(duskverb::Freeze) >= 0.5f && duskverb::algorithmFreezes(algorithm))
+            frames = kTailInfinite;
+        else
+        {
+            // Decay is RT60, not the point at which a tail becomes silent. Allow
+            // four RT60s for the slowest band, plus the input/early-field delays,
+            // and retain the previous 30-second floor for short sounds. Include
+            // calibrated engine decay and the table-relative damping controls.
+            const float treble = p(duskverb::Damping) * duskverb::toneTrebleFactor(p(duskverb::Tone));
+            double stretch = std::max({1.0f, p(duskverb::BassMult), p(duskverb::MidMult), treble,
+                p(duskverb::SubMult), p(duskverb::HiMidMult), p(duskverb::QtHimidMult), p(duskverb::QtAirMult)});
+            double decay = std::max(p(duskverb::Decay), dsp_.engineDecay());
+            if (const auto* preset = dsp_.lastAppliedPreset())
+            {
+                const auto stored = duskverb::storedDampingKnobs(*preset);
+                if (p(duskverb::BassMult) != stored.bass || p(duskverb::MidMult) != stored.mid
+                    || treble != stored.treble || p(duskverb::Crossover) != stored.lowX
+                    || p(duskverb::HighCrossover) != stored.highX)
+                    stretch = std::max(stretch, double(std::max({p(duskverb::BassMult), p(duskverb::MidMult), treble})
+                        / std::min({stored.bass, stored.mid, stored.treble})));
+                if (duskverb::resolveAlgorithm(preset->algorithm) == algorithm)
+                    if (const auto* shown = duskverb::decayShownFor(preset->name))
+                        decay = std::max(decay, double(preset->decay) * p(duskverb::Decay) / *shown);
+            }
+            decay = std::max({decay, double(p(duskverb::MbLowDecay)), double(p(duskverb::MbMidDecay)),
+                             double(p(duskverb::MbHighDecay))});
+            const double seconds = std::max(30.0, 4.0 * decay * stretch + 1.0);
+            // CLAP interprets >= 2^31 frames as infinite. Saturate before the
+            // integer conversion even at unusually high host sample rates.
+            const double count = std::ceil(seconds * sampleRate);
+            frames = count >= 2147483648.0 ? kTailInfinite : static_cast<uint32_t>(count);
+        }
+        // The outgoing engine may still be frozen, or have a longer decay.
+        // Its report can shrink only once the 50 ms sound crossfade is over.
+        if (!dsp_.canRecall()) frames = std::max(frames, reportedTailFrames_);
+        reportedTailFrames_ = frames;
+        setTail(frames);
     }
 
     void activate() override
     {
         synchronizeControls(true);
         dsp_.prepare(getSampleRate(), static_cast<int>(getBufferSize()));
+        reportedTailFrames_ = 0;
         reportTail(getSampleRate());
     }
     // releaseResources(), not reset(): see DuskVerbDSP::releaseResources(). The
@@ -236,7 +275,7 @@ protected:
     // per-preset null test bit-identical across a host deactivate/reactivate.
     void deactivate() override { dsp_.releaseResources(); }
     // Host reset (CLAP reset on the audio thread, AU Reset with render held off): silence the tank now.
-    void reset() override { dsp_.clearState(); }
+    void reset() override { dsp_.clearState(); reportedTailFrames_ = 0; }
     void sampleRateChanged(double sr) override
     {
         synchronizeControls(true);
@@ -264,6 +303,7 @@ protected:
         const bool tempoValid = t.bpmValid || t.bbt.valid;
         dsp_.setHostBpm(tempoValid ? t.bbt.beatsPerMinute : 0.0, tempoValid);
         dsp_.processBlock(inputs, outputs, activeInputs_, activeOutputs_, static_cast<int>(frames));
+        reportTail(getSampleRate());
 
         // Load = time spent / time produced, smoothed. The coefficient is per
         // BLOCK rather than per second on purpose: it costs no extra clock read,
@@ -323,6 +363,7 @@ private:
     std::array<float, duskverb::kNumParams> lastHostParams_{};
     std::array<float, duskverb::kNumParams> plainParams_{};
     uint32_t appliedEpoch_ = 1;
+    uint32_t reportedTailFrames_ = 0; // audio thread or stopped; cleared by reset/activate
     // Written by run(), read by the editor. Relaxed: it is a read-out, not a
     // state flag, and no other value is ordered against it.
     std::atomic<float> cpuLoad_ { 0.0f };
@@ -343,6 +384,8 @@ float duskVerbGetInputLevelL (void* p) noexcept { return p ? asDuskVerb(p)->inpu
 float duskVerbGetInputLevelR (void* p) noexcept { return p ? asDuskVerb(p)->inputLevelR()  : -100.0f; }
 float duskVerbGetOutputLevelL(void* p) noexcept { return p ? asDuskVerb(p)->outputLevelL() : -100.0f; }
 float duskVerbGetOutputLevelR(void* p) noexcept { return p ? asDuskVerb(p)->outputLevelR() : -100.0f; }
+int   duskVerbGetTailHistory(void* p, float* dest, int maxCount) noexcept
+{ return p ? asDuskVerb(p)->tailHistory(dest, maxCount) : 0; }
 float duskVerbGetCpuLoad(void* p) noexcept { return p ? asDuskVerb(p)->cpuLoad() : 0.0f; }
 bool duskVerbReadSnapshot(void* p, duskverb::StateValues& state)
 { if (!p) return false; state = asDuskVerb(p)->snapshot(); return true; }

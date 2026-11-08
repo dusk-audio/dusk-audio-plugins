@@ -223,6 +223,19 @@ enable_testing()
         target_compile_options(NonLinBurstEngineTest PRIVATE -O2)
     endif()
     add_test(NAME NonLinBurstEngine COMMAND NonLinBurstEngineTest)
+    add_executable(DuskVerbTonalCorrectionTest
+        DuskVerbTonalCorrectionTests.cpp
+        ${DUSKVERB2_DSP_SOURCES}
+        ${DUSKVERB_ENGINE_SOURCES})
+    target_include_directories(DuskVerbTonalCorrectionTest PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../core"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+    target_compile_features(DuskVerbTonalCorrectionTest PRIVATE cxx_std_17)
+    if(NOT MSVC)
+        target_compile_options(DuskVerbTonalCorrectionTest PRIVATE -O2)
+    endif()
+    add_test(NAME DuskVerbTonalCorrection COMMAND DuskVerbTonalCorrectionTest)
 
     add_executable(DuskVerbPluginLayerTest
         DuskVerbPluginLayerTests.cpp
@@ -310,7 +323,7 @@ enable_testing()
     add_test(NAME DuskVerbPmbSide COMMAND DuskVerbPmbSideTest)
     add_test(NAME DuskVerbFeedbackRotation COMMAND DuskVerbFeedbackRotationTest)
 
-    foreach(testTarget DuskVerbCoreTest DuskVerbDampingKnobTest DuskVerbControlLivenessTest DuskVerbPluginLayerTest
+    foreach(testTarget DuskVerbCoreTest DuskVerbTonalCorrectionTest DuskVerbDampingKnobTest DuskVerbControlLivenessTest DuskVerbPluginLayerTest
                        DuskVerbEarlyFieldDspTest DuskVerbOctaveTrimDspTest DuskVerbBandLimitTest DuskVerbPresetRecallTest)
         target_compile_definitions(${testTarget} PRIVATE ${DUSKVERB2_DSP_DEFINITIONS})
     endforeach()
@@ -319,7 +332,9 @@ enable_testing()
     add_executable(DuskVerbStateCodecTest DuskVerbStateCodecTests.cpp)
     add_executable(DuskVerbControlStateTest DuskVerbControlStateTests.cpp)
     add_executable(DuskVerbValueTextTest DuskVerbValueTextTests.cpp)
-    foreach(testTarget DuskVerbParameterTest DuskVerbStateCodecTest DuskVerbControlStateTest DuskVerbValueTextTest)
+    add_executable(DuskVerbEditorIdentityTest DuskVerbEditorIdentityTests.cpp)
+    foreach(testTarget DuskVerbParameterTest DuskVerbStateCodecTest DuskVerbControlStateTest DuskVerbValueTextTest
+                       DuskVerbEditorIdentityTest)
         target_include_directories(${testTarget} PRIVATE
             "${CMAKE_CURRENT_SOURCE_DIR}/../src"
             "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
@@ -330,6 +345,12 @@ enable_testing()
     endforeach()
     find_package(Threads REQUIRED)
     target_link_libraries(DuskVerbControlStateTest PRIVATE Threads::Threads)
+    if(APPLE)
+        add_executable(DuskVerbAUTest DuskVerbAUTests.cpp)
+        target_link_libraries(DuskVerbAUTest PRIVATE "-framework AudioToolbox" "-framework CoreFoundation")
+        add_dependencies(DuskVerbAUTest duskverb-2-au)
+        add_test(NAME DuskVerbAUHosted COMMAND DuskVerbAUTest $<TARGET_FILE:duskverb-2-au>)
+    endif()
     if(UNIX OR WIN32)
         add_executable(DuskVerbClapTest DuskVerbClapTests.cpp)
         target_include_directories(DuskVerbClapTest PRIVATE "${DAF_PATH}/daf/src")
@@ -350,6 +371,11 @@ enable_testing()
         target_link_libraries(DuskVerbVst3LayoutTest PRIVATE ${CMAKE_DL_LIBS})
         add_dependencies(DuskVerbVst3LayoutTest duskverb-2-vst3)
         add_test(NAME DuskVerbVst3Layouts COMMAND DuskVerbVst3LayoutTest $<TARGET_FILE:duskverb-2-vst3>)
+        add_executable(DuskVerbVst3IdentityTest DuskVerbVst3IdentityTests.cpp)
+        target_include_directories(DuskVerbVst3IdentityTest PRIVATE "${DAF_PATH}/daf/src")
+        target_link_libraries(DuskVerbVst3IdentityTest PRIVATE ${CMAKE_DL_LIBS})
+        add_dependencies(DuskVerbVst3IdentityTest duskverb-2-vst3)
+        add_test(NAME DuskVerbVst3Identity COMMAND DuskVerbVst3IdentityTest $<TARGET_FILE:duskverb-2-vst3>)
         if(UNIX AND TARGET duskverb-2-lv2)
             add_executable(DuskVerbLv2Test DuskVerbLv2Tests.cpp)
             target_include_directories(DuskVerbLv2Test PRIVATE "${DAF_PATH}/daf/src"
@@ -379,5 +405,11 @@ dusk_daf_add_resize_test(duskverb-2)
 # so this is kHeroCx / kHeroCy times 0.875. Keep it in step with kHeroCx /
 # kHeroCy in DuskVerbUI.cpp: if a layout pass moves the knob, phase A of the
 # harness fails and names the coordinate to update.
-dusk_daf_add_ui_drag_test(duskverb-2 525 159)   # the DECAY hero, in window px at the default size
+dusk_daf_add_ui_drag_test(duskverb-2 644 147)
+if(TARGET duskverb-2UiDragTest)
+    target_compile_definitions(duskverb-2UiDragTest PRIVATE
+        DUSK_UI_TEST_EXTENSION="${CMAKE_CURRENT_SOURCE_DIR}/DuskVerbUiStateChecks.hpp")
+    target_include_directories(duskverb-2UiDragTest PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+endif()
 dusk_daf_add_clap_preset_test(duskverb-2)

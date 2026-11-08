@@ -117,6 +117,15 @@ public:
     void begin(float scale, ImVec2 origin, ImFont* font, ParamHost* h) noexcept
     {
         s = scale; org = origin; labelFont = font; host = h;
+        // A field asked for while another was open waits for that one to commit
+        // or close, which it normally does on the same click when it draws. If it
+        // is still open on a later frame (it was not drawn, it was not yet active,
+        // or its text does not parse) it is dropped, unparseable text and all,
+        // and the asked-for field opens. A request must never lapse: a knob that
+        // asked by double-click has already ended its host gesture and relies on
+        // editing to stop its own press.
+        if (!valueEditPendingId_.empty() && ImGui::GetFrameCount() > valueEditPendingFrame_)
+            closeValueEdit();
     }
     void setPalette(const Palette& p) noexcept { pal = p; }
     void setFontSet(const CrispFontSet& fs) noexcept { fontSet = fs; }
@@ -301,16 +310,35 @@ public:
     }
 
     // Open the inline editor on the knob `id`, seeded with its current value.
+    //
+    // CALL ORDER: a caller's own entry target (a read-out that opens the field)
+    // must be submitted BEFORE the knob() it belongs to. A second click on it then
+    // reaches here before the field reacts to the click, so the field stays open
+    // and keeps what was typed (see valueEdit).
     void openValueEdit(const char* id, float curValue, const char* seedText = nullptr) noexcept
     {
-        valueEditId_ = id;
+        char seed[sizeof(valueEditBuf_)];
         if (seedText != nullptr)
-            std::snprintf(valueEditBuf_, sizeof(valueEditBuf_), "%s", seedText);
+            std::snprintf(seed, sizeof(seed), "%s", seedText);
         else
-            std::snprintf(valueEditBuf_, sizeof(valueEditBuf_), "%.4g", (double) curValue);
-        std::memcpy(valueEditSeed_, valueEditBuf_, sizeof(valueEditSeed_));
-        valueEditInvalid_ = false;
-        valueEditFocus_ = true;
+            std::snprintf(seed, sizeof(seed), "%.4g", (double) curValue);
+        // Asked again for the field that is open: keep its text, take focus back.
+        if (valueEditId_ == id)
+        {
+            valueEditFocus_ = true;
+            return;
+        }
+        // Another knob's field is open. It commits or closes on this same click
+        // when it draws, and this one opens then (closeValueEdit). Opening now
+        // would overwrite its text first whenever it is drawn later in the frame.
+        if (!valueEditId_.empty())
+        {
+            valueEditPendingId_ = id;
+            std::memcpy(valueEditPendingSeed_, seed, sizeof(seed));
+            valueEditPendingFrame_ = ImGui::GetFrameCount();
+            return;
+        }
+        startValueEdit(id, seed);
     }
     bool isEditingValue(const char* id) const noexcept { return valueEditId_ == id; }
     void cancelValueEdit() noexcept
@@ -318,6 +346,7 @@ public:
         valueEditId_.clear();
         valueEditInvalid_ = false;
         valueEditFocus_ = false;
+        valueEditPendingId_.clear();
     }
 
     // Draw the inline InputText over knob `id` when it is being edited. Returns
@@ -355,11 +384,13 @@ public:
                                                                   : IM_COL32(246, 247, 249, 255));
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(22, 22, 24, 255));
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f * s, 3.0f * s));
+        // Set on the frame the field opens and on a re-open (openValueEdit).
+        const bool reopened = valueEditFocus_;
         if (valueEditFocus_) { ImGui::SetKeyboardFocusHere(); valueEditFocus_ = false; }
         char wid[48]; std::snprintf(wid, sizeof(wid), "##ve_%s", id);
         const bool entered = ImGui::InputText(wid, valueEditBuf_, sizeof(valueEditBuf_),
             ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
-        const bool committed = ImGui::IsItemDeactivatedAfterEdit();
+        const bool edited = ImGui::IsItemDeactivatedAfterEdit();
         const bool deactivated = ImGui::IsItemDeactivated();
         const bool escaped = ImGui::IsKeyPressed(ImGuiKey_Escape, false);
         ImGui::PopStyleVar();
@@ -368,50 +399,54 @@ public:
         // frame, and committing here would turn a cancel into an edit.
         if (escaped)
         {
-            valueEditId_.clear();
-            valueEditInvalid_ = false;
+            closeValueEdit();
             return false;
         }
+        // A second click on the caller's entry target took focus from the field
+        // to ask for the field again (openValueEdit): not a click-away. Keep the
+        // field and its text; it takes focus back on the next frame.
+        if (reopened && deactivated)
+            return false;
+        // Enter, or focus leaving the field, commits whatever differs from the
+        // seed. The text decides, not ImGui's edited flag: that restarts each
+        // time a re-open re-activates the field, while the text is kept.
+        if (!entered && !deactivated)
+            return false;
         // Committing the seed text (untouched, or edited back to it) is no edit: parsing the rounded seed back would
         // move the value.
-        if ((entered || committed) && std::strcmp(valueEditBuf_, valueEditSeed_) == 0)
+        if (std::strcmp(valueEditBuf_, valueEditSeed_) == 0)
         {
-            valueEditId_.clear();
-            valueEditInvalid_ = false;
+            closeValueEdit();
             return false;
         }
-        if (entered || committed)
+        float parsed = 0.0f;
+        bool valid;
+        if (parseText != nullptr)
+            valid = parseText(valueEditBuf_, param, parseContext, parsed);
+        else
         {
-            float parsed = 0.0f;
-            bool valid;
-            if (parseText != nullptr)
-                valid = parseText(valueEditBuf_, param, parseContext, parsed);
-            else
+            // Existing consumers seed with locale-sensitive snprintf. Keep
+            // their matching parser; custom unit entry opts into its own
+            // locale-independent seed/parser pair.
+            char* end = nullptr;
+            parsed = std::strtof(valueEditBuf_, &end);
+            valid = end != valueEditBuf_ && duskdaf::value_text::finiteFloat(parsed);
+            while (valid && *end != '\0')
             {
-                // Existing consumers seed with locale-sensitive snprintf. Keep
-                // their matching parser; custom unit entry opts into its own
-                // locale-independent seed/parser pair.
-                char* end = nullptr;
-                parsed = std::strtof(valueEditBuf_, &end);
-                valid = end != valueEditBuf_ && duskdaf::value_text::finiteFloat(parsed);
-                while (valid && *end != '\0')
-                {
-                    if (*end != ' ' && *end != '\t') valid = false;
-                    ++end;
-                }
+                if (*end != ' ' && *end != '\t') valid = false;
+                ++end;
             }
-            if (valid)
-            {
-                valueEditId_.clear();
-                valueEditInvalid_ = false;
-                outValue = parsed;
-                return true;
-            }
-            valueEditInvalid_ = true;
-            ImGui::SetKeyboardFocusHere(-1);
-            return false;
         }
-        if (deactivated && !valueEditInvalid_) valueEditId_.clear(); // click-away without an edit
+        if (valid)
+        {
+            closeValueEdit();
+            outValue = parsed;
+            return true;
+        }
+        // Text that does not parse keeps the field open, marked. A fresh attempt
+        // (Enter, or an edit followed by a click away) also keeps the focus.
+        valueEditInvalid_ = true;
+        if (entered || edited) ImGui::SetKeyboardFocusHere(-1);
         return false;
     }
 
@@ -440,6 +475,8 @@ public:
     //   dragInDisplayDomain: opt into gestures and wheel steps in the transformed
     //                   domain (for example, equal Hz per pixel on a tapered host
     //                   parameter). The value sent to the host remains [minV,maxV].
+    //   valueEditPosition: optional inline field center in panel coordinates,
+    //                   for a readout placed outside the knob (copied per call).
     bool knob(const char* id, uint32_t param, float minV, float maxV,
               float cx, float cy, float radius, float& value, float defaultVal,
               bool stepped = false, bool panelTicks = true,
@@ -460,7 +497,8 @@ public:
               float (*fromDisplay)(float, uint32_t, void*) = nullptr,
               void* displayContext = nullptr,
               bool dragInDisplayDomain = false,
-              bool (*parseText)(const char*, uint32_t, void*, float&) = nullptr)
+              bool (*parseText)(const char*, uint32_t, void*, float&) = nullptr,
+              const ImVec2* valueEditPosition = nullptr)
     {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const float R  = radius * s;
@@ -486,15 +524,24 @@ public:
         };
         const auto beginDragValue = [&]() { dragValue = dragCoordinateOf(value); };
 
-        ImGui::SetCursorScreenPos(ImVec2(c.x - R, c.y - R));
-        ImGui::InvisibleButton(id, ImVec2(2.0f * R, 2.0f * R));
-        const bool hovered = ImGui::IsItemHovered();
-        const bool active  = ImGui::IsItemActive();
-        if (tooltip != nullptr && !active
-            && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
-            ImGui::SetTooltip("%s", tooltip);
-
+        // While its inline field is open the knob submits no button at all. The
+        // field sits over the knob, and ImGui gives a click to the item submitted
+        // first: the field would close and a drag start with no host gesture
+        // opened. A disabled button is no help, because ImGui still lets it claim
+        // the hover. Every gesture below is skipped while editing anyway.
         const bool editing = (valueEditId_ == id);
+        bool hovered = false, active = false;
+        if (!editing)
+        {
+            ImGui::SetCursorScreenPos(ImVec2(c.x - R, c.y - R));
+            ImGui::InvisibleButton(id, ImVec2(2.0f * R, 2.0f * R));
+            hovered = ImGui::IsItemHovered();
+            active  = ImGui::IsItemActive();
+            if (tooltip != nullptr && !active
+                && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+                ImGui::SetTooltip("%s", tooltip);
+        }
+
         // Reset modifier: Option/Alt on every platform, plus Cmd (Super) on macOS or
         // Ctrl on Windows/Linux. macOS deliberately EXCLUDES Ctrl here: the OS routes a
         // Ctrl+left-click as a right-click, so it must fall through to the context menu,
@@ -690,7 +737,9 @@ public:
         }
 
         float typed;
-        if (valueEdit(id, cx, cy, radius, typed, parseText, param, displayContext))
+        if (valueEdit(id, valueEditPosition ? valueEditPosition->x : cx,
+                      valueEditPosition ? valueEditPosition->y : cy,
+                      radius, typed, parseText, param, displayContext))
         {
             if (parseText == nullptr)
                 typed = valueFromDisplay(typed); // display -> actual
@@ -934,6 +983,32 @@ private:
     char        valueEditSeed_[32] = { 0 };   // what openValueEdit() put in valueEditBuf_
     bool        valueEditFocus_ = false;
     bool        valueEditInvalid_ = false;
+    // A field asked for while another was open (openValueEdit), and its seed.
+    std::string valueEditPendingId_;
+    char        valueEditPendingSeed_[32] = { 0 };
+    int         valueEditPendingFrame_ = 0;
+
+    void startValueEdit(std::string id, const char* seed) noexcept
+    {
+        valueEditId_ = std::move(id);
+        std::snprintf(valueEditBuf_, sizeof(valueEditBuf_), "%s", seed);
+        std::memcpy(valueEditSeed_, valueEditBuf_, sizeof(valueEditSeed_));
+        valueEditInvalid_ = false;
+        valueEditFocus_ = true;
+    }
+
+    // Close the field, then open the one a click asked for while it was open.
+    void closeValueEdit() noexcept
+    {
+        valueEditId_.clear();
+        valueEditInvalid_ = false;
+        if (!valueEditPendingId_.empty())
+        {
+            std::string next;
+            next.swap(valueEditPendingId_);
+            startValueEdit(std::move(next), valueEditPendingSeed_);
+        }
+    }
     bool        modResetActive_ = false; // Ctrl/Cmd+click reset in progress (suppress drag)
 };
 

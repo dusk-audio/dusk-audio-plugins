@@ -1006,6 +1006,142 @@ void testStereoBands()
         }
 }
 
+// A host reconfiguration must retain edited post-tank EQ, including sessions
+// with no factory identity. The control explicitly re-sends changed gains after
+// the same lifecycle; both engines see identical silent blocks and modulation.
+void testRepreparePostTankEQ()
+{
+    using namespace duskverb;
+    const int bands[] = {PteqBand0GainDb, PteqBand1GainDb, PteqBand2GainDb, PteqBand3GainDb};
+    for (bool factory : {false, true})
+        for (int lifecycle = 0; lifecycle < 3; ++lifecycle)
+            for (float gain : {0.0f, 6.0f})
+    {
+        const auto response = [&](bool resend) {
+            auto dsp = std::make_unique<DuskVerbDSP>();
+            dsp->prepare(48000, 256);
+            std::array<float, kNumParams> plain{};
+            for (int i = 0; i < kNumParams; ++i)
+                plain[i] = dspFromHost(paramDesc(i), hostDefault(paramDesc(i)));
+            const auto* preset = factory ? &getFactoryPresets().front() : nullptr;
+            if (preset) preset->collectParameters([&](const char* id, float v) {
+                const int i = paramIndexForId(id);
+                if (i >= 0) plain[i] = dspFromHost(paramDesc(i), plainToHost(paramDesc(i), v));
+            });
+            plain[Mix] = 1.0f;
+            for (int b = 0; b < 4; ++b) plain[bands[b]] = b % 2 ? -gain : gain;
+            dsp->stageSound(plain, preset, DuskVerbDSP::SixAPBrightnessState{});
+            float l[256]{}, r[256]{};
+            const float* in[] = {l, r}; float* out[] = {l, r};
+            const auto silence = [&] {
+                std::fill_n(l, 256, 0.0f); std::fill_n(r, 256, 0.0f);
+                dsp->processBlock(in, out, 2, 256);
+            };
+            for (int n = 0; n < 30; ++n) silence();
+            // Exercise actual edits, including a deliberate return to zero.
+            // An untouched zero control retains the factory's hidden EQ curve.
+            for (int b = 0; b < 4; ++b) dsp->setParameter(bands[b], plain[bands[b]] + 1.0f);
+            silence();
+            for (int b = 0; b < 4; ++b) dsp->setParameter(bands[b], plain[bands[b]]);
+            silence();
+            if (lifecycle == 1) dsp->releaseResources();
+            dsp->prepare(lifecycle == 2 ? 96000 : 48000, 512);
+            dsp->prepare(lifecycle == 2 ? 96000 : 48000, 512);
+            if (resend)
+                for (int b = 0; b < 4; ++b) dsp->setParameter(bands[b], plain[bands[b]] + 1.0f);
+            silence();
+            for (int b = 0; b < 4; ++b) dsp->setParameter(bands[b], plain[bands[b]]);
+            silence();
+            std::vector<float> rendered;
+            for (int n = 0; n < 180; ++n)
+            {
+                std::fill_n(l, 256, 0.0f); std::fill_n(r, 256, 0.0f);
+                if (n == 0) l[0] = r[0] = 0.25f;
+                dsp->processBlock(in, out, 2, 256);
+                rendered.insert(rendered.end(), l, l + 256);
+                rendered.insert(rendered.end(), r, r + 256);
+            }
+            return rendered;
+        };
+        const auto actual = response(false), control = response(true);
+        double energy = 0, error = 0;
+        for (size_t i = 0; i < actual.size(); ++i)
+        {
+            energy += double(control[i]) * control[i];
+            error += double(actual[i] - control[i]) * (actual[i] - control[i]);
+        }
+        checkf(energy > 1e-8 && error < energy * 1e-10,
+               "reprepare retains EQ: factory=%d lifecycle=%d gain=%g relative error=%g",
+               factory, lifecycle, gain, error / std::max(energy, 1e-30));
+    }
+}
+
+// The display follows final output at 15 Hz, including mono and settled bypass,
+// independently of host block size. Reset must clear a partial peak as well as the ring.
+void testOutputHistory()
+{
+    for (const int rate : {48000, 96000})
+    for (const int channels : {1, 2})
+    for (const int block : {1, 127, 512})
+    {
+        auto dsp = std::make_unique<duskverb::DuskVerbDSP>();
+        dsp->setParameter(duskverb::Bypass, 1.0f);
+        dsp->prepare(rate, block);
+        const int period = rate / 15;
+        std::array<float, 512> l{}, r{}, ol{}, oright{};
+        l.fill(0.25f); r.fill(0.5f);
+        const float* in[] = {l.data(), r.data()};
+        float* out[] = {ol.data(), oright.data()};
+        float history[256];
+        auto run = [&](int count) {
+            while (count > 0) {
+                const int n = std::min(count, block);
+                dsp->processBlock(in, out, channels, n);
+                count -= n;
+            }
+        };
+        check(dsp->getTailHistory(nullptr, 256) == 0 && dsp->getTailHistory(history, 0) == 0,
+              "history rejects empty destinations");
+        run(period - 1);
+        dsp->getTailHistory(history, 256);
+        check(history[255] == -100.0f, "history waits for a complete time interval");
+        dsp->processBlock(in, out, channels, 0);
+        run(1);
+        dsp->getTailHistory(history, 256);
+        const float expected = 20.0f * std::log10(channels == 1 ? 0.25f : 0.5f);
+        checkf(std::abs(history[255] - expected) < 1e-4f && history[254] == -100.0f,
+               "history records output: rate=%d channels=%d block=%d got=%g", rate, channels, block, history[255]);
+        // Cross the wrap boundary, retaining the latest count in chronological order.
+        run(period * 257);
+        l.fill(0.125f); r.fill(0.125f);
+        run(period);
+        check(dsp->getTailHistory(history, 300) == 256, "history caps the caller's requested count");
+        check(std::abs(history[254] - expected) < 1e-4f
+              && std::abs(history[255] - 20.0f * std::log10(0.125f)) < 1e-4f,
+              "history wraps in chronological order");
+        run(period / 2);
+        gAllocations.store(0); gCountAllocations.store(true);
+        dsp->clearState();
+        gCountAllocations.store(false);
+        check(gAllocations.load() == 0, "history reset does not allocate");
+        dsp->getTailHistory(history, 256);
+        check(std::all_of(std::begin(history), std::end(history), [](float v) { return v == -100.0f; }),
+              "reset clears the complete history ring");
+        l.fill(0); r.fill(0);
+        run(period);
+        dsp->getTailHistory(history, 1);
+        check(history[0] == -100.0f, "reset clears the partial peak");
+        dsp->prepare(rate * 2, block);
+        l.fill(0.25f); r.fill(0.5f);
+        run(period);
+        dsp->getTailHistory(history, 1);
+        check(history[0] == -100.0f, "rate change updates history cadence");
+        run(period);
+        dsp->getTailHistory(history, 1);
+        check(std::abs(history[0] - expected) < 1e-4f, "history resumes at the new sample rate");
+    }
+}
+
 } // namespace
 
 int main()
@@ -1025,6 +1161,8 @@ int main()
     testDegenerateBlocks();
     testStereoBands();
     testPmbPatchParsers();
+    testRepreparePostTankEQ();
+    testOutputHistory();
 
     if (failures == 0) std::printf("DuskVerbCoreTests: all checks passed\n");
     else               std::printf("DuskVerbCoreTests: %d check(s) FAILED\n", failures);

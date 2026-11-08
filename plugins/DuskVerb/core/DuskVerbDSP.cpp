@@ -222,6 +222,7 @@ DuskVerbDSP::DuskVerbDSP (const EarlyFieldConfig* earlyFieldOverride, const Octa
     }
 #endif
 
+    clearTail();
     const auto& table = paramTable();
     for (int i = 0; i < kNumParams; ++i)
         params_[static_cast<size_t> (i)].store (dspFromHost (table[static_cast<size_t> (i)],
@@ -236,6 +237,8 @@ DuskVerbDSP::DuskVerbDSP (const EarlyFieldConfig* earlyFieldOverride, const Octa
 
 void DuskVerbDSP::prepare (double sampleRate, int samplesPerBlock)
 {
+    tailSamplesPerFrame_ = std::max(1, static_cast<int>(std::lround(sampleRate / 15.0)));
+    clearTail();
     constexpr int kMinPreparedBlockSize = 4096;
     const int safeBlockSize = std::max (samplesPerBlock, kMinPreparedBlockSize);
     const bool needsReprepare =
@@ -346,16 +349,26 @@ void DuskVerbDSP::prepare (double sampleRate, int samplesPerBlock)
         installEarlyField (&engineA_, preset, nullptr);
         installEarlyField (&engineB_, preset, nullptr);
     }
+    // Restore only user overrides: untouched zero-valued controls do NOT mean
+    // flat EQ, because applyEngineConfig installs the factory's own voicing.
+    // Preserve explicit edits back to zero too. Reinstall after the factory
+    // config, including repeated prepare calls that did not resize anything.
+    const int gains[] = {PteqBand0GainDb, PteqBand1GainDb, PteqBand2GainDb, PteqBand3GainDb};
+    for (int band = 0; band < 4; ++band)
+        if (pteqGainOverrides_[band])
+            activeEngine_->setPostTankEQBand(band, pteqBandFreq_[band], pteqBandQ_[band], p(gains[band]));
 }
 
 void DuskVerbDSP::reset()
 {
     clearState();
     releaseResources();
+    std::fill_n(pteqGainOverrides_, 4, false);
 }
 
 void DuskVerbDSP::clearState() noexcept
 {
+    clearTail();
     engineA_.clearAllBuffers();
     engineB_.clearAllBuffers();
     // Only a voice that is sounding needs clearing: armOwnVoice() clears a voice whenever it
@@ -967,6 +980,7 @@ void DuskVerbDSP::performPresetSwap()
     // just-applied parameters and brightness state, snap its shell smoothers to
     // the new targets, then swap pointers and arm the equal-power crossfade.
     DuskVerbEngine* newActive = (activeEngine_ == &engineA_) ? &engineB_ : &engineA_;
+    std::fill_n(pteqGainOverrides_, 4, false);
 
     // One acquire load for the Decay calibration, the engine config and the early field alike.
     // The calibration goes in first: the force-push below gives the new engine its decay.
@@ -1008,6 +1022,7 @@ void DuskVerbDSP::performPresetSwap()
         newActive->setPostTankEQBand (1, pteqBandFreq_[1], pteqBandQ_[1], p (PteqBand1GainDb));
         newActive->setPostTankEQBand (2, pteqBandFreq_[2], pteqBandQ_[2], p (PteqBand2GainDb));
         newActive->setPostTankEQBand (3, pteqBandFreq_[3], pteqBandQ_[3], p (PteqBand3GainDb));
+        std::fill_n(pteqGainOverrides_, 4, true);
     }
 
     // Session/user/A-B snapshots carry custom SixAP values independently of
@@ -1278,13 +1293,13 @@ void DuskVerbDSP::processBlock (const float* const* in, float* const* out,
     pushIfChanged (lastHiCutShelfDb_, p (HiCutShelfDb), [this] (float v) { activeEngine_->setHiCutShelfGainDb (v); });
 
     pushIfChanged (lastPteqBand0Gain_, p (PteqBand0GainDb),
-                   [this] (float v) { activeEngine_->setPostTankEQBand (0, pteqBandFreq_[0], pteqBandQ_[0], v); });
+                   [this] (float v) { activeEngine_->setPostTankEQBand (0, pteqBandFreq_[0], pteqBandQ_[0], v); pteqGainOverrides_[0] = true; });
     pushIfChanged (lastPteqBand1Gain_, p (PteqBand1GainDb),
-                   [this] (float v) { activeEngine_->setPostTankEQBand (1, pteqBandFreq_[1], pteqBandQ_[1], v); });
+                   [this] (float v) { activeEngine_->setPostTankEQBand (1, pteqBandFreq_[1], pteqBandQ_[1], v); pteqGainOverrides_[1] = true; });
     pushIfChanged (lastPteqBand2Gain_, p (PteqBand2GainDb),
-                   [this] (float v) { activeEngine_->setPostTankEQBand (2, pteqBandFreq_[2], pteqBandQ_[2], v); });
+                   [this] (float v) { activeEngine_->setPostTankEQBand (2, pteqBandFreq_[2], pteqBandQ_[2], v); pteqGainOverrides_[2] = true; });
     pushIfChanged (lastPteqBand3Gain_, p (PteqBand3GainDb),
-                   [this] (float v) { activeEngine_->setPostTankEQBand (3, pteqBandFreq_[3], pteqBandQ_[3], v); });
+                   [this] (float v) { activeEngine_->setPostTankEQBand (3, pteqBandFreq_[3], pteqBandQ_[3], v); pteqGainOverrides_[3] = true; });
 
     pushIfChanged (lastPostBandSub_,    p (PostBandSubDb),
                    [this] (float v) { activeEngine_->setPostTankBandTrimGainDb (0, v); });
@@ -1513,9 +1528,49 @@ void DuskVerbDSP::processBlock (const float* const* in, float* const* out,
     writeOut (out, numChannels, left, right, numSamples);
 }
 
+int DuskVerbDSP::getTailHistory (float* dest, int maxCount) const noexcept
+{
+    if (dest == nullptr || maxCount <= 0) return 0;
+    const int count = std::min (maxCount, kTailHistorySize);
+    const unsigned head = tailWriteIndex_.load (std::memory_order_relaxed);
+    for (int i = 0; i < count; ++i)
+    {
+        const unsigned idx = (head + static_cast<unsigned> (kTailHistorySize - count + i))
+                             % static_cast<unsigned> (kTailHistorySize);
+        dest[i] = tailHistory_[idx].load (std::memory_order_relaxed);
+    }
+    return count;
+}
+
+void DuskVerbDSP::clearTail() noexcept
+{
+    for (auto& value : tailHistory_) value.store(-100.0f, std::memory_order_relaxed);
+    tailWriteIndex_.store(0, std::memory_order_relaxed);
+    tailSamples_ = 0;
+    tailPeak_ = 0.0f;
+}
+
+void DuskVerbDSP::sampleTail(const float* left, const float* right, int count) noexcept
+{
+    for (int i = 0; i < count; ++i)
+    {
+        tailPeak_ = std::max({tailPeak_, std::abs(left[i]), std::abs(right[i])});
+        if (++tailSamples_ == tailSamplesPerFrame_)
+        {
+            const unsigned head = tailWriteIndex_.load(std::memory_order_relaxed);
+            const float db = tailPeak_ > 1e-5f ? 20.0f * std::log10(tailPeak_) : -100.0f;
+            tailHistory_[head % kTailHistorySize].store(db, std::memory_order_relaxed);
+            tailWriteIndex_.store(head + 1, std::memory_order_relaxed);
+            tailSamples_ = 0;
+            tailPeak_ = 0.0f;
+        }
+    }
+}
+
 void DuskVerbDSP::writeOut (float* const* out, int numChannels,
                             const float* left, const float* right, int numSamples) noexcept
 {
+    sampleTail(left, numChannels > 1 ? right : left, numSamples);
     const size_t bytes = static_cast<size_t> (numSamples) * sizeof (float);
     if (out[0] != nullptr) std::memcpy (out[0], left, bytes);
     if (numChannels > 1 && out[1] != nullptr) std::memcpy (out[1], right, bytes);

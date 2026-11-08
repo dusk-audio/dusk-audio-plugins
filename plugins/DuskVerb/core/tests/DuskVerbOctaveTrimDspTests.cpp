@@ -308,7 +308,7 @@ void testTheTuningHook()
 // an own engine.
 void testTheTrimIsTheStageOnTheSummedWet()
 {
-    constexpr int n = 40800, at = 40;                 // events at 0.2 s, in the impulse's tail
+    static constexpr int n = 40800, at = 40;          // captureless callbacks also compile on MSVC
     struct Scenario
     {
         const char* name;
