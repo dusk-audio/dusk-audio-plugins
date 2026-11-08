@@ -20,8 +20,11 @@ One-time setup:
           "name_overrides": { "API Full Name": "Preferred Display Name" }
         }
 
-The script refreshes expired tokens automatically and rewrites that file with
-the rotated pair, so setup is genuinely one-time.
+The script never refreshes the tokens. The same pair lives in that file and in
+the Actions secrets of this repository and dusk-audio/dusk-studio, and a
+refresh in one place can leave the others holding dead tokens. When Patreon
+rejects the access token, run scripts/update-patrons.py --refresh-tokens from
+the Dusk Studio checkout: it refreshes once and updates every copy.
 
 Behaviour:
   - Active patrons are bucketed by their highest entitled tier amount:
@@ -55,7 +58,6 @@ import urllib.request
 from pathlib import Path
 
 API = "https://www.patreon.com/api/oauth2/v2"
-TOKEN_URL = "https://www.patreon.com/api/oauth2/token"
 CONFIG_PATH = Path.home() / ".config" / "dusk-audio" / "patreon.json"
 
 # Array names keep the original tier names so a DuskStudio build pinned to an
@@ -83,61 +85,10 @@ DAF_HEADER_RELPATH = Path("plugins") / "shared-daf" / "ui" / "PatreonBackersDaf.
 DAF_TIER_TITLES = [(name, heading) for name, heading, _ in TIERS]
 
 
-def write_config_secure(config):
-    """Atomically rewrite CONFIG_PATH with user-only (0600) permissions.
-
-    The config holds access/refresh tokens and the client secret; a plain
-    write_text() leaves the file at the process umask, which can be
-    world-readable. Write to a temp file in the same dir, chmod 0600, fsync,
-    then rename so a reader never sees a partial or permissive file.
-    """
-    data = json.dumps(config, indent=2) + "\n"
-    fd, tmp = tempfile.mkstemp(dir=str(CONFIG_PATH.parent),
-                               prefix=".patreon-", suffix=".tmp")
-    fd_owned_by_file = False  # os.fdopen takes ownership only once it returns
-    try:
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            fd_owned_by_file = True
-            f.write(data)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, CONFIG_PATH)
-    except BaseException:
-        if not fd_owned_by_file:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
-
-
 def api_get(url, token):
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
     with urllib.request.urlopen(req, timeout=30) as resp:
         return json.load(resp)
-
-
-def refresh_tokens(config):
-    body = urllib.parse.urlencode({
-        "grant_type": "refresh_token",
-        "refresh_token": config["refresh_token"],
-        "client_id": config["client_id"],
-        "client_secret": config["client_secret"],
-    }).encode()
-    req = urllib.request.Request(TOKEN_URL, data=body, method="POST")
-    req.add_header("Content-Type", "application/x-www-form-urlencoded")
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        fresh = json.load(resp)
-    config["access_token"] = fresh["access_token"]
-    config["refresh_token"] = fresh.get("refresh_token", config["refresh_token"])
-    write_config_secure(config)
-    print("Patreon tokens refreshed and saved.")
-    return config
 
 
 def fetch_members(config):
@@ -195,8 +146,10 @@ def fetch_members(config):
     except urllib.error.HTTPError as e:
         if e.code != 401:
             raise
-        config = refresh_tokens(config)
-        return run(config["access_token"])
+        sys.exit("Patreon rejected the access token (HTTP 401). Run "
+                 "scripts/update-patrons.py --refresh-tokens from the Dusk Studio "
+                 "checkout on the maintainer machine; it updates every copy of "
+                 "the pair at once.")
     except urllib.error.URLError as e:
         # DNS failure / connection refused / unreachable network / timeout —
         # a clearer message than a raw traceback. HTTPError (a URLError

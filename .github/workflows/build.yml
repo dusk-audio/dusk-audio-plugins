@@ -177,13 +177,13 @@ jobs:
           umask 077
           mkdir -p "${HOME}/.config/dusk-audio"
           cfg="${HOME}/.config/dusk-audio/patreon.json"
-          # Always remove the credential file on exit, even if the refresh fails.
+          # Always remove the credential file on exit, even if the fetch fails.
           trap 'rm -f "${cfg}"' EXIT
           # json.dump escapes special characters in the secrets; a raw heredoc would corrupt the
           # JSON on a quote/backslash in a token.
           python3 -c 'import json, os, sys; json.dump({"access_token": os.environ["PATREON_ACCESS_TOKEN"], "refresh_token": os.environ["PATREON_REFRESH_TOKEN"], "client_id": os.environ["PATREON_CLIENT_ID"], "client_secret": os.environ["PATREON_CLIENT_SECRET"]}, open(sys.argv[1], "w"))' "${cfg}"
           if ! python3 scripts/update-patrons.py; then
-            echo "::error::Patreon refresh failed despite configured secrets - refusing to ship a stale supporters list. Check the token/API and re-run."
+            echo "::error::Patreon fetch failed despite configured secrets - refusing to ship a stale supporters list. If Patreon rejected the access token, run scripts/update-patrons.py --refresh-tokens from the Dusk Studio checkout on the maintainer machine, then re-run."
             exit 1
           fi
 
