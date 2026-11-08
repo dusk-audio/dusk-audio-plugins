@@ -9,6 +9,7 @@ Unreleased. DuskVerb 2 has a separate identity from the original DuskVerb; both 
 - Edited post-tank EQ survives host buffer/sample-rate reconfiguration without flattening the factory voicing.
 - Preset imports retain the correct engine across legacy XML versions; the editor retains preset identity when reopened and rejects invalid recalls before mirroring them.
 - Decay value entry appears at its readout. Enter commits, Escape cancels, and invalid input stays editable.
+- Windows builds include the MSVC runtime in the plugin; CI rejects accidental external runtime dependencies.
 - Native macOS and Windows release jobs now run the core and hosted regression suites. Added VST3 identity and AU state/routing/tail coverage; fixed two MSVC test compilation errors and a Windows test stack overflow exposed by the new gate.
 
 ## Windows preview projects

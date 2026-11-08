@@ -1116,6 +1116,27 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ctest --test-dir build -C Release --no-tests=error --output-on-failure
 
+      - name: Verify DuskVerb has no external VC++ runtime dependency
+        if: matrix.plugin.key == 'duskverb-2'
+        working-directory: ${{ env.PLUGIN_DIR }}
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
+          $dumpbin = & $vswhere -latest -products '*' -find 'VC/Tools/MSVC/**/bin/Hostx64/x64/dumpbin.exe' | Select-Object -First 1
+          if (-not $dumpbin) { throw "dumpbin not found" }
+          $binaries = Get-ChildItem build -Recurse -File | Where-Object {
+            $_.Name -eq "$env:PLUGIN_BASE.clap" -or $_.Name -eq "$env:PLUGIN_BASE.vst3"
+          }
+          if ($binaries.Count -ne 2) { throw "Expected the CLAP and VST3 binaries, found $($binaries.Count)" }
+          foreach ($binary in $binaries) {
+            $dependencies = & $dumpbin /DEPENDENTS $binary.FullName
+            if ($LASTEXITCODE -ne 0) { throw "Cannot inspect $($binary.FullName)" }
+            $dependencies | Write-Output
+            if ($dependencies -match '^\s*(MSVCP|MSVCR|VCRUNTIME|CONCRT)[A-Za-z0-9_]*\.dll\s*$') {
+              throw "$($binary.Name) requires an unbundled VC++ runtime"
+            }
+          }
+
       # #271 was invisible here because only plugin targets were compiled.
       - name: Build and run Multi-Comp core tests (MSVC)
         if: matrix.plugin.key == 'multi-comp-2'
