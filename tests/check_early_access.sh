@@ -33,12 +33,22 @@ cat > "$WORK/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 echo "gh $*" >> "$GH_LOG"
 case "$1 $2" in
-  "release view") exit "${FAKE_VIEW_EXIT:-1}" ;;
+  "release view")
+    if [[ "$*" == *"--json body"* ]]; then
+      printf '%s\n' "${FAKE_VIEW_BODY:-}"
+      exit "${FAKE_VIEW_EXIT:-0}"
+    fi
+    # FAKE_VIEW_DRAFT stands for what `--json isDraft --jq .isDraft` prints for a release that exists.
+    if [ -n "${FAKE_VIEW_DRAFT:-}" ]; then echo "$FAKE_VIEW_DRAFT"; exit 0; fi
+    exit "${FAKE_VIEW_EXIT:-1}" ;;
   "release create"|"release edit")
     while [ $# -gt 0 ]; do
       if [ "$1" = "--notes-file" ]; then { echo "--- notes"; cat "$2"; echo "--- end"; } >> "$GH_LOG"; fi
       shift
     done ;;
+  "api repos/dusk-audio/dusk-audio.github.io/branches")
+    printf '%s\n' "${FAKE_WEBSITE_BRANCHES-main}"
+    exit "${FAKE_WEBSITE_BRANCHES_EXIT:-0}" ;;
   "api repos/"*)
     # The published-release count already_released asks for, or the publish-due listing.
     if [[ "$*" == *'| length'* ]]; then
@@ -126,6 +136,53 @@ check "an update's website change is on main" "ref=main" \
   "$( export GITHUB_REPOSITORY=o/plugins FAKE_PUBLISHED=5; wref multi-comp-2-v1.0.0 )"
 check "a branch build reads website main" "ref=main" \
   "$(GITHUB_OUTPUT="" GITHUB_REF=refs/heads/main EARLY_ACCESS_DAYS=14 HAS_EARLY_TOKEN=true bash "$SCRIPT" website-ref)"
+# Publication precedes the website merge; only a removed branch permits main.
+wref_on() { # wref_on DRAFT TAG: as wref, with the release on GitHub (DRAFT true/false, or "" for none yet)
+  FAKE_VIEW_DRAFT="$1" GITHUB_REPOSITORY=dusk-audio/dusk-audio-plugins GITHUB_OUTPUT="" GITHUB_REF="" \
+    EARLY_ACCESS_DAYS=14 HAS_EARLY_TOKEN=true bash "$SCRIPT" website-ref "$2" 2>/dev/null
+}
+check "a published release with its website branch removed reads main" "ref=main" "$(wref_on false multi-comp-2-v1.0.0)"
+check "a published release with an unmerged website branch keeps that branch" "ref=early-access/2026-10-31" \
+  "$(FAKE_WEBSITE_BRANCHES=$'main\nearly-access/2026-10-31' wref_on false multi-comp-2-v1.0.0)"
+check "an unrelated website branch does not prevent main" "ref=main" \
+  "$(FAKE_WEBSITE_BRANCHES=$'main\nearly-access/2026-10-31-extra' wref_on false multi-comp-2-v1.0.0)"
+check "a failed website query preserves the dated branch" "ref=early-access/2026-10-31" \
+  "$(FAKE_WEBSITE_BRANCHES='' FAKE_WEBSITE_BRANCHES_EXIT=1 wref_on false multi-comp-2-v1.0.0)"
+check "a failed paginated query cannot prove the branch was removed" "ref=early-access/2026-10-31" \
+  "$(FAKE_WEBSITE_BRANCHES=main FAKE_WEBSITE_BRANCHES_EXIT=1 wref_on false multi-comp-2-v1.0.0)"
+check "a draft release reads its dated branch" "ref=early-access/2026-10-31" "$(wref_on true multi-comp-2-v1.0.0)"
+check "a first release becoming public keeps its unmerged website branch" "ref=early-access/2026-10-31" \
+  "$(FAKE_PUBLISHED=1 FAKE_VIEW_BODY='<!-- early-access public-on=2026-10-31 -->' \
+     FAKE_WEBSITE_BRANCHES=$'main\nearly-access/2026-10-31' wref_on false multi-comp-2-v1.0.0)"
+check "a published release keeps its recorded date when the window changes" "ref=early-access/2026-11-07" \
+  "$(FAKE_PUBLISHED=1 FAKE_VIEW_BODY='<!-- early-access public-on=2026-11-07 -->' \
+     FAKE_WEBSITE_BRANCHES=$'main\nearly-access/2026-11-07' wref_on false multi-comp-2-v1.0.0)"
+check "a published first release uses main after its recorded branch is removed" "ref=main" \
+  "$(FAKE_PUBLISHED=1 FAKE_VIEW_BODY='<!-- early-access public-on=2026-10-31 -->' wref_on false multi-comp-2-v1.0.0)"
+check "a failed branch query preserves a published release's recorded date" "ref=early-access/2026-10-31" \
+  "$(FAKE_PUBLISHED=1 FAKE_VIEW_BODY='<!-- early-access public-on=2026-10-31 -->' \
+     FAKE_WEBSITE_BRANCHES_EXIT=1 wref_on false multi-comp-2-v1.0.0)"
+check "a public update without an early-access marker uses main" "ref=main" \
+  "$(FAKE_PUBLISHED=1 FAKE_VIEW_BODY='Public update' wref_on false multi-comp-2-v1.0.0)"
+check "an unavailable release body keeps the planned website branch" "ref=early-access/2026-10-31" \
+  "$(FAKE_VIEW_BODY='<!-- early-access public-on=2026-11-07 -->' FAKE_VIEW_EXIT=1 wref_on true multi-comp-2-v1.0.0)"
+check "a release not created yet reads its dated branch" "ref=early-access/2026-10-31" "$(wref_on "" multi-comp-2-v1.0.0)"
+# actions/checkout leaves a lightweight tag behind; its commit here is a week older than the tag.
+# website-ref fetches the annotated tag from origin again and dates the release by it.
+git init -q --bare "$WORK/origin.git"
+git init -q "$WORK/clone"
+(
+  cd "$WORK/clone"
+  GIT_COMMITTER_DATE="2026-10-10T12:00:00Z" git -c user.name=t -c user.email=t@t commit -q --allow-empty -m old
+  GIT_COMMITTER_DATE="2026-10-17T12:00:00Z" git -c user.name=t -c user.email=t@t tag -a ring-out-v1.2.0 -m "Ring Out 1.2.0"
+  git remote add origin "$WORK/origin.git"
+  git push -q origin HEAD:refs/heads/main refs/tags/ring-out-v1.2.0
+  git tag -d ring-out-v1.2.0 >/dev/null
+  git tag ring-out-v1.2.0 HEAD
+)
+check "a lightweight checkout tag is dated by the annotated tag" "ref=early-access/2026-10-31" \
+  "$(cd "$WORK/clone" && GITHUB_OUTPUT="" GITHUB_REF="" EARLY_ACCESS_DAYS=14 HAS_EARLY_TOKEN=true \
+       bash "$SCRIPT" website-ref ring-out-v1.2.0 2>/dev/null)"
 
 # --- fetch_manual_pdf.sh, against a fake curl that serves only $FAKE_URLS ---
 FETCH="$ROOT/.github/scripts/fetch_manual_pdf.sh"

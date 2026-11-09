@@ -106,15 +106,46 @@ cmd_plan() {
 # regenerated manual PDF from: early-access/<public date> for a dated early-access release (/release-plugin
 # pushes the site commit there, and website main keeps the previous version's PDF until that date), main for
 # everything else. Members-only prereleases change nothing on the site. TAG defaults to the tag being built.
-# Anything that cannot be planned answers main, which is what every archive used before this existed.
+# Without a recorded date or an early-access plan, use main.
+#
+# Existing releases retain the date recorded in their notes, even after publication makes the plugin
+# ineligible for early access or the configured window changes. For a new release the public date comes
+# from the annotated tag's date, but actions/checkout replaces a tag it checks out
+# with a lightweight one (see release_changelog.sh), whose date is its commit's: a day early whenever the
+# commit and the tag fall on different UTC days. So the tag is fetched again first. Publication happens
+# before the website merge, which can fail independently. A public release reads main only after the
+# dated website branch is gone; while that branch exists it still holds the regenerated manual.
 cmd_website_ref() {
-  local tag="${1:-}" plan_out early public_on ref=main
+  local tag="${1:-}" plan_out early public_on body draft website_branches ref=main
   if [ -z "$tag" ] && [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then tag="${GITHUB_REF#refs/tags/}"; fi
+  if [ -n "$tag" ]; then
+    git fetch --quiet --force --no-tags origin "refs/tags/$tag:refs/tags/$tag" 2>/dev/null || true
+  fi
   if [ -n "$tag" ] && git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+    if [ "$(git cat-file -t "refs/tags/$tag")" != tag ]; then
+      echo "::warning::$tag is a lightweight tag here; its early-access date is taken from its commit." >&2
+    fi
     plan_out=$(GITHUB_OUTPUT="" cmd_plan "$tag" 2>/dev/null) || plan_out=""
     early=$(sed -n 's/^early=//p' <<< "$plan_out")
     public_on=$(sed -n 's/^public_on=//p' <<< "$plan_out")
     if [ "$early" = true ] && [[ "$public_on" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then ref="early-access/$public_on"; fi
+  fi
+  if [ -n "$tag" ] && [ -n "${GITHUB_REPOSITORY:-}" ]; then
+    body=$(gh release view "$tag" -R "$GITHUB_REPOSITORY" --json body --jq .body 2>/dev/null) || body=""
+    if [[ "$body" =~ $MARKER_RE ]]; then ref="early-access/${BASH_REMATCH[1]}"; fi
+  fi
+  if [ "$ref" != main ] && [ -n "${GITHUB_REPOSITORY:-}" ]; then
+    draft=$(gh release view "$tag" -R "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null) || draft=""
+    if [ "$draft" = false ]; then
+      if website_branches=$(gh api "repos/$WEBSITE_REPO/branches" --paginate --jq '.[].name' 2>/dev/null); then
+        if ! grep -Fxq "$ref" <<< "$website_branches"; then
+          echo "$tag is public and its dated website branch was removed: using website main." >&2
+          ref=main
+        fi
+      else
+        echo "::warning::Could not check website branches; keeping $ref for the manual download." >&2
+      fi
+    fi
   fi
   out "ref=$ref"
 }

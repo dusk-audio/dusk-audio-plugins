@@ -33,8 +33,10 @@ SLUGS = $(patsubst %.md,%,$(filter-out _%.md README.md,$(notdir $(wildcard *.md)
 all: preflight
 	$(PYTHON) build_manuals.py --all --skip-preflight
 
-combined: preflight
-	$(PYTHON) build_manuals.py --combined --skip-preflight
+# No preflight dependency: the combined manual leaves unreleased chapters out and lets an
+# early-access chapter be one version ahead, so build_manuals.py runs its own preflight for it.
+combined:
+	$(PYTHON) build_manuals.py --combined
 
 preflight:
 	$(PYTHON) preflight.py

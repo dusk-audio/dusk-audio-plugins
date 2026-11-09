@@ -83,8 +83,8 @@ jobs:
         run: ./.github/scripts/resolve_daf_ref.sh --github-output
 
       # Release archives bundle the manual PDF from the website; see the same step in
-      # daf-build.yml. This checkout is shallow, so fetch the annotated tag first: its date
-      # gives the early-access public date.
+      # daf-build.yml. website-ref fetches the annotated tag itself: its date gives the
+      # early-access public date.
       - name: Resolve the manual's website branch
         id: manual
         shell: bash
@@ -92,11 +92,7 @@ jobs:
           EARLY_ACCESS_DAYS: ${{ vars.EARLY_ACCESS_DAYS }}
           HAS_EARLY_TOKEN: ${{ secrets.EARLY_ACCESS_TOKEN != '' }}
           GH_TOKEN: ${{ github.token }}
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            git fetch --quiet --depth=1 origin "+$GITHUB_REF:$GITHUB_REF" || true
-          fi
-          .github/scripts/early_access.sh website-ref
+        run: .github/scripts/early_access.sh website-ref
 
       - name: Parse tag
         id: v
@@ -219,7 +215,7 @@ jobs:
           # configure rather than skipping itself, so the package belongs in every
           # Linux dep list, not only the ones that go on to run ctest.
           APT_TOTAL_TIMEOUT=400 .github/scripts/apt_install.sh \
-            gcc-11 g++-11 cmake ninja-build pkg-config zip unzip \
+            gcc-11 g++-11 cmake ninja-build pkg-config zip unzip curl \
             libgl1-mesa-dev libglu1-mesa-dev mesa-common-dev \
             libx11-dev libxext-dev libxrandr-dev libxinerama-dev \
             libxcursor-dev libxtst-dev libdbus-1-dev
@@ -354,7 +350,7 @@ jobs:
           # configure rather than skipping itself, so the package belongs in every
           # Linux dep list, not only the ones that go on to run ctest.
           APT_TOTAL_TIMEOUT=400 .github/scripts/apt_install.sh \
-            gcc-11 g++-11 cmake ninja-build pkg-config zip unzip \
+            gcc-11 g++-11 cmake ninja-build pkg-config zip unzip curl \
             libgl1-mesa-dev libglu1-mesa-dev mesa-common-dev \
             libx11-dev libxext-dev libxrandr-dev libxinerama-dev \
             libxcursor-dev libxtst-dev libdbus-1-dev
@@ -537,7 +533,7 @@ jobs:
           foreach ($ref in $refs) {
             $manualUrl = "https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/$ref/assets/manuals/$env:SLUG-manual.pdf"
             try {
-              Invoke-WebRequest -Uri $manualUrl -OutFile "out/$env:SLUG-manual.pdf" -ErrorAction Stop
+              Invoke-WebRequest -Uri $manualUrl -OutFile "out/$env:SLUG-manual.pdf" -TimeoutSec 120 -ErrorAction Stop
               $bundled = $true
               break
             } catch {
