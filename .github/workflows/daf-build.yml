@@ -114,6 +114,7 @@ jobs:
       rel_display: ${{ steps.plan.outputs.rel_display }}
       rel_base: ${{ steps.plan.outputs.rel_base }}
       daf_sha: ${{ steps.daf.outputs.sha }}
+      manual_ref: ${{ steps.manual.outputs.ref }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -139,6 +140,18 @@ jobs:
         id: daf
         shell: bash
         run: ./.github/scripts/resolve_daf_ref.sh --github-output
+
+      # Release archives bundle the plugin's manual PDF from the website. An early-access
+      # release's regenerated PDF waits on early-access/<public date> until that date, while
+      # website main still has the previous version's (early_access.sh website-ref).
+      - name: Resolve the manual's website branch
+        id: manual
+        shell: bash
+        env:
+          EARLY_ACCESS_DAYS: ${{ vars.EARLY_ACCESS_DAYS }}
+          HAS_EARLY_TOKEN: ${{ secrets.EARLY_ACCESS_TOKEN != '' }}
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/early_access.sh website-ref
 
       - name: Resolve build set + release info
         id: plan
@@ -302,6 +315,7 @@ jobs:
       PLUGIN_BASE: ${{ matrix.plugin.base }}
       PLUGIN_URI: ${{ matrix.plugin.uri }}
       ASSET: ${{ matrix.plugin.asset }}
+      MANUAL_REF: ${{ needs.plan.outputs.manual_ref }}
     steps:
       # git + ca-certificates must exist BEFORE actions/checkout so the DAF
       # submodule checkouts work inside the bare container.
@@ -545,13 +559,7 @@ jobs:
           # the website repo's main branch; /release-plugin regenerates it on every
           # tag so it tracks the released version. Missing PDF is non-fatal (a brand-
           # new plugin without a published manual yet must not block the release).
-          manual_url="https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/main/assets/manuals/${ASSET}-manual.pdf"
-          if curl -fL --silent --show-error "$manual_url" -o "${STAGE}/${ASSET}-manual.pdf"; then
-            echo "bundled ${ASSET}-manual.pdf into ${STAGE}/"
-          else
-            rm -f "${STAGE}/${ASSET}-manual.pdf"
-            echo "::warning::User manual PDF not found at ${manual_url} (non-fatal)"
-          fi
+          bash "$GITHUB_WORKSPACE/.github/scripts/fetch_manual_pdf.sh" "$ASSET" "${STAGE}/${ASSET}-manual.pdf" "${MANUAL_REF:-main}"
           echo "=== staged ==="; find "${STAGE}" -maxdepth 2
           zip -r "${STAGE}.zip" "${STAGE}"
 
@@ -609,6 +617,7 @@ jobs:
       PLUGIN_DIR: ${{ matrix.plugin.dir }}
       PLUGIN_BASE: ${{ matrix.plugin.base }}
       ASSET: ${{ matrix.plugin.asset }}
+      MANUAL_REF: ${{ needs.plan.outputs.manual_ref }}
     steps:
       # git + ca-certificates must exist BEFORE actions/checkout so the DAF
       # submodule checkouts work inside the bare container.
@@ -750,13 +759,7 @@ jobs:
           # the website repo's main branch; /release-plugin regenerates it on every
           # tag so it tracks the released version. Missing PDF is non-fatal (a brand-
           # new plugin without a published manual yet must not block the release).
-          manual_url="https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/main/assets/manuals/${ASSET}-manual.pdf"
-          if curl -fL --silent --show-error "$manual_url" -o "${STAGE}/${ASSET}-manual.pdf"; then
-            echo "bundled ${ASSET}-manual.pdf into ${STAGE}/"
-          else
-            rm -f "${STAGE}/${ASSET}-manual.pdf"
-            echo "::warning::User manual PDF not found at ${manual_url} (non-fatal)"
-          fi
+          bash "$GITHUB_WORKSPACE/.github/scripts/fetch_manual_pdf.sh" "$ASSET" "${STAGE}/${ASSET}-manual.pdf" "${MANUAL_REF:-main}"
           echo "=== staged ==="; find "${STAGE}" -maxdepth 2
           zip -r "${STAGE}.zip" "${STAGE}"
 
@@ -814,6 +817,7 @@ jobs:
       PLUGIN_DIR: ${{ matrix.plugin.dir }}
       PLUGIN_BASE: ${{ matrix.plugin.base }}
       ASSET: ${{ matrix.plugin.asset }}
+      MANUAL_REF: ${{ needs.plan.outputs.manual_ref }}
       AU_SUBTYPE: ${{ matrix.plugin.au }}
       AU_TYPE: ${{ matrix.plugin.au_type || 'aufx' }}
     steps:
@@ -1022,13 +1026,7 @@ jobs:
           # the website repo's main branch; /release-plugin regenerates it on every
           # tag so it tracks the released version. Missing PDF is non-fatal (a brand-
           # new plugin without a published manual yet must not block the release).
-          manual_url="https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/main/assets/manuals/${ASSET}-manual.pdf"
-          if curl -fL --silent --show-error "$manual_url" -o "${STAGE}/${ASSET}-manual.pdf"; then
-            echo "bundled ${ASSET}-manual.pdf into ${STAGE}/"
-          else
-            rm -f "${STAGE}/${ASSET}-manual.pdf"
-            echo "::warning::User manual PDF not found at ${manual_url} (non-fatal)"
-          fi
+          bash "$GITHUB_WORKSPACE/.github/scripts/fetch_manual_pdf.sh" "$ASSET" "${STAGE}/${ASSET}-manual.pdf" "${MANUAL_REF:-main}"
           echo "=== staged ==="; find "${STAGE}" -maxdepth 2 -type d
           # ditto preserves macOS bundle metadata better than zip
           ditto -c -k --keepParent "${STAGE}" "${STAGE}.zip"
@@ -1064,6 +1062,7 @@ jobs:
       PLUGIN_DIR: ${{ matrix.plugin.dir }}
       PLUGIN_BASE: ${{ matrix.plugin.base }}
       ASSET: ${{ matrix.plugin.asset }}
+      MANUAL_REF: ${{ needs.plan.outputs.manual_ref }}
     steps:
       - name: Checkout plugins repo
         uses: actions/checkout@v4
@@ -1201,11 +1200,21 @@ jobs:
           # Bundle the User Manual PDF INSIDE the archive, matching the JUCE plugins on
           # build.yml. Missing PDF is non-fatal (a brand-new plugin without a published
           # manual yet must not block the release).
-          $manualUrl = "https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/main/assets/manuals/$env:ASSET-manual.pdf"
-          try {
-            Invoke-WebRequest -Uri $manualUrl -OutFile "$stage/$env:ASSET-manual.pdf" -ErrorAction Stop
-            Write-Host "bundled $env:ASSET-manual.pdf into $stage/"
-          } catch {
+          # Same source as fetch_manual_pdf.sh: the release's website branch, then main.
+          $refs = @($env:MANUAL_REF, 'main') | Where-Object { $_ -match '^[A-Za-z0-9][A-Za-z0-9._/-]*$' } | Select-Object -Unique
+          $bundled = $false
+          foreach ($ref in $refs) {
+            $manualUrl = "https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/$ref/assets/manuals/$env:ASSET-manual.pdf"
+            try {
+              Invoke-WebRequest -Uri $manualUrl -OutFile "$stage/$env:ASSET-manual.pdf" -ErrorAction Stop
+              Write-Host "bundled $env:ASSET-manual.pdf from website $ref"
+              $bundled = $true
+              break
+            } catch {
+              if ($ref -ne 'main') { Write-Host "::warning::No manual PDF on website branch $ref; falling back to main, which may hold the previous version's." }
+            }
+          }
+          if (-not $bundled) {
             Remove-Item -Force -ErrorAction SilentlyContinue "$stage/$env:ASSET-manual.pdf"
             Write-Host "::warning::User manual PDF not found at $manualUrl (non-fatal)"
           }

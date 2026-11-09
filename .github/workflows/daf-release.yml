@@ -61,6 +61,7 @@ jobs:
       is_release: ${{ steps.v.outputs.is_release }}
       prerelease: ${{ steps.v.outputs.prerelease }}
       daf_sha: ${{ steps.daf.outputs.sha }}
+      manual_ref: ${{ steps.manual.outputs.ref }}
     steps:
       # Needed by the tag<->CMake version guard below, which reads the plugin's
       # CMakeLists.txt.
@@ -80,6 +81,18 @@ jobs:
       - name: Resolve DAF revision
         id: daf
         run: ./.github/scripts/resolve_daf_ref.sh --github-output
+
+      # Release archives bundle the manual PDF from the website; see the same step in
+      # daf-build.yml. website-ref fetches the annotated tag itself: its date gives the
+      # early-access public date.
+      - name: Resolve the manual's website branch
+        id: manual
+        shell: bash
+        env:
+          EARLY_ACCESS_DAYS: ${{ vars.EARLY_ACCESS_DAYS }}
+          HAS_EARLY_TOKEN: ${{ secrets.EARLY_ACCESS_TOKEN != '' }}
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/early_access.sh website-ref
 
       - name: Parse tag
         id: v
@@ -202,7 +215,7 @@ jobs:
           # configure rather than skipping itself, so the package belongs in every
           # Linux dep list, not only the ones that go on to run ctest.
           APT_TOTAL_TIMEOUT=400 .github/scripts/apt_install.sh \
-            gcc-11 g++-11 cmake ninja-build pkg-config zip unzip \
+            gcc-11 g++-11 cmake ninja-build pkg-config zip unzip curl \
             libgl1-mesa-dev libglu1-mesa-dev mesa-common-dev \
             libx11-dev libxext-dev libxrandr-dev libxinerama-dev \
             libxcursor-dev libxtst-dev libdbus-1-dev
@@ -242,6 +255,8 @@ jobs:
 
       - name: Package
         working-directory: ${{ env.PLUGIN_DIR }}
+        env:
+          MANUAL_REF: ${{ needs.setup.outputs.manual_ref }}
         run: |
           mkdir -p out/VST3 out/CLAP out/LV2
           cp -r build/bin/sunset-circuits.vst3 out/VST3/
@@ -251,9 +266,7 @@ jobs:
           test -f "out/LV2/sunset-circuits.lv2/manifest.ttl"
           # Bundle the published user manual (non-fatal if absent), same as
           # daf-build.yml does for the "-2" plugins.
-          manual_url="https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/main/assets/manuals/${SLUG}-manual.pdf"
-          curl -fL --silent --show-error "$manual_url" -o "out/${SLUG}-manual.pdf" \
-            || { rm -f "out/${SLUG}-manual.pdf"; echo "::warning::User manual PDF not found at ${manual_url} (non-fatal)"; }
+          bash "$GITHUB_WORKSPACE/.github/scripts/fetch_manual_pdf.sh" "$SLUG" "out/${SLUG}-manual.pdf" "${MANUAL_REF:-main}"
           ( cd out && zip -r "../${SLUG}-linux.zip" . )
           echo "=== contents ==="; unzip -l "${SLUG}-linux.zip"
 
@@ -337,7 +350,7 @@ jobs:
           # configure rather than skipping itself, so the package belongs in every
           # Linux dep list, not only the ones that go on to run ctest.
           APT_TOTAL_TIMEOUT=400 .github/scripts/apt_install.sh \
-            gcc-11 g++-11 cmake ninja-build pkg-config zip unzip \
+            gcc-11 g++-11 cmake ninja-build pkg-config zip unzip curl \
             libgl1-mesa-dev libglu1-mesa-dev mesa-common-dev \
             libx11-dev libxext-dev libxrandr-dev libxinerama-dev \
             libxcursor-dev libxtst-dev libdbus-1-dev
@@ -377,6 +390,8 @@ jobs:
 
       - name: Package
         working-directory: ${{ env.PLUGIN_DIR }}
+        env:
+          MANUAL_REF: ${{ needs.setup.outputs.manual_ref }}
         run: |
           mkdir -p out/VST3 out/CLAP out/LV2
           cp -r build/bin/sunset-circuits.vst3 out/VST3/
@@ -385,9 +400,7 @@ jobs:
           test -f "out/VST3/sunset-circuits.vst3/Contents/aarch64-linux/sunset-circuits.so"
           test -f "out/LV2/sunset-circuits.lv2/manifest.ttl"
           # Bundle the published user manual (non-fatal if absent).
-          manual_url="https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/main/assets/manuals/${SLUG}-manual.pdf"
-          curl -fL --silent --show-error "$manual_url" -o "out/${SLUG}-manual.pdf" \
-            || { rm -f "out/${SLUG}-manual.pdf"; echo "::warning::User manual PDF not found at ${manual_url} (non-fatal)"; }
+          bash "$GITHUB_WORKSPACE/.github/scripts/fetch_manual_pdf.sh" "$SLUG" "out/${SLUG}-manual.pdf" "${MANUAL_REF:-main}"
           ( cd out && zip -r "../${SLUG}-linux-arm64.zip" . )
           echo "=== contents ==="; unzip -l "${SLUG}-linux-arm64.zip"
 
@@ -505,6 +518,8 @@ jobs:
 
       - name: Package
         working-directory: ${{ env.PLUGIN_DIR }}
+        env:
+          MANUAL_REF: ${{ needs.setup.outputs.manual_ref }}
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path out/VST3, out/CLAP, out/LV2 | Out-Null
@@ -512,9 +527,20 @@ jobs:
           Copy-Item          build/bin/sunset-circuits.clap out/CLAP/
           Copy-Item -Recurse build/bin/sunset-circuits.lv2  out/LV2/
           # Bundle the published user manual (non-fatal if absent).
-          $manualUrl = "https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/main/assets/manuals/$env:SLUG-manual.pdf"
-          try { Invoke-WebRequest -Uri $manualUrl -OutFile "out/$env:SLUG-manual.pdf" }
-          catch { Remove-Item -Force -ErrorAction SilentlyContinue "out/$env:SLUG-manual.pdf"; Write-Host "::warning::User manual PDF not found at $manualUrl (non-fatal)" }
+          # Same source as fetch_manual_pdf.sh: the release's website branch, then main.
+          $refs = @($env:MANUAL_REF, 'main') | Where-Object { $_ -match '^[A-Za-z0-9][A-Za-z0-9._/-]*$' } | Select-Object -Unique
+          $bundled = $false
+          foreach ($ref in $refs) {
+            $manualUrl = "https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/$ref/assets/manuals/$env:SLUG-manual.pdf"
+            try {
+              Invoke-WebRequest -Uri $manualUrl -OutFile "out/$env:SLUG-manual.pdf" -TimeoutSec 120 -ErrorAction Stop
+              $bundled = $true
+              break
+            } catch {
+              if ($ref -ne 'main') { Write-Host "::warning::No manual PDF on website branch $ref; falling back to main, which may hold the previous version's." }
+            }
+          }
+          if (-not $bundled) { Remove-Item -Force -ErrorAction SilentlyContinue "out/$env:SLUG-manual.pdf"; Write-Host "::warning::User manual PDF not found at $manualUrl (non-fatal)" }
           Compress-Archive -Path out/* -DestinationPath "$env:SLUG-windows.zip" -Force
           Write-Host "=== contents ==="
           Get-ChildItem -Recurse out | Select-Object FullName
@@ -700,6 +726,8 @@ jobs:
 
       - name: Package
         working-directory: ${{ env.PLUGIN_DIR }}
+        env:
+          MANUAL_REF: ${{ needs.setup.outputs.manual_ref }}
         run: |
           mkdir -p out/VST3 out/CLAP out/LV2 out/AU
           # Prefer notarized+stapled bundles when present.
@@ -713,9 +741,7 @@ jobs:
           [ -e out/AU/sunset-circuits.component ]   || cp -r build/bin/sunset-circuits.component out/AU/
           cp -r build/bin/sunset-circuits.lv2 out/LV2/
           # Bundle the published user manual (non-fatal if absent).
-          manual_url="https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/main/assets/manuals/${SLUG}-manual.pdf"
-          curl -fL --silent --show-error "$manual_url" -o "out/${SLUG}-manual.pdf" \
-            || { rm -f "out/${SLUG}-manual.pdf"; echo "::warning::User manual PDF not found at ${manual_url} (non-fatal)"; }
+          bash "$GITHUB_WORKSPACE/.github/scripts/fetch_manual_pdf.sh" "$SLUG" "out/${SLUG}-manual.pdf" "${MANUAL_REF:-main}"
           ( cd out && zip -r "../${SLUG}-macos.zip" . )
           echo "=== contents ==="; unzip -l "${SLUG}-macos.zip"
 

@@ -17,6 +17,7 @@
 #   early_access.sh notes BODY_FILE        -> append the Patreon section (+ public-on marker if early)
 #   early_access.sh mirror TAG BODY FILES… -> create the release in EARLY_ACCESS_REPO
 #   early_access.sh publish-due [TAG]      -> publish due drafts (or TAG now), merge website branches
+#   early_access.sh website-ref [TAG]      -> GITHUB_OUTPUT ref=<website branch holding TAG's site change>
 #
 # Env: EARLY_ACCESS_DAYS (repo variable; unset/0 = feature off), EARLY_ACCESS_REPO,
 #      HAS_EARLY_TOKEN, PUBLIC_ON, EARLY, MEMBERS_ONLY, GH_TOKEN, WEBSITE_TOKEN,
@@ -74,6 +75,48 @@ cmd_plan() {
   out "early=true"
   out "members_only=false"
   out "public_on=$when"
+}
+
+# The website branch that holds a release's site change, which is where its archives must take the
+# regenerated manual PDF from: early-access/<public date> for a dated early-access release (/release-plugin
+# pushes the site commit there, and website main keeps the previous version's PDF until that date), main for
+# everything else. Members-only prereleases change nothing on the site. TAG defaults to the tag being built.
+# Anything that cannot be planned answers main, which is what every archive used before this existed.
+#
+# The public date comes from the annotated tag's date, but actions/checkout replaces a tag it checks out
+# with a lightweight one (see release_changelog.sh), whose date is its commit's: a day early whenever the
+# commit and the tag fall on different UTC days. So the tag is fetched again first. Publication happens
+# before the website merge, which can fail independently. A public release reads main only after the
+# dated website branch is gone; while that branch exists it still holds the regenerated manual.
+cmd_website_ref() {
+  local tag="${1:-}" plan_out early public_on draft website_branches ref=main
+  if [ -z "$tag" ] && [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then tag="${GITHUB_REF#refs/tags/}"; fi
+  if [ -n "$tag" ]; then
+    git fetch --quiet --force --no-tags origin "refs/tags/$tag:refs/tags/$tag" 2>/dev/null || true
+  fi
+  if [ -n "$tag" ] && git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+    if [ "$(git cat-file -t "refs/tags/$tag")" != tag ]; then
+      echo "::warning::$tag is a lightweight tag here; its early-access date is taken from its commit." >&2
+    fi
+    plan_out=$(GITHUB_OUTPUT="" cmd_plan "$tag" 2>/dev/null) || plan_out=""
+    early=$(sed -n 's/^early=//p' <<< "$plan_out")
+    public_on=$(sed -n 's/^public_on=//p' <<< "$plan_out")
+    if [ "$early" = true ] && [[ "$public_on" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then ref="early-access/$public_on"; fi
+  fi
+  if [ "$ref" != main ] && [ -n "${GITHUB_REPOSITORY:-}" ]; then
+    draft=$(gh release view "$tag" -R "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null) || draft=""
+    if [ "$draft" = false ]; then
+      if website_branches=$(gh api "repos/$WEBSITE_REPO/branches" --paginate --jq '.[].name' 2>/dev/null); then
+        if ! grep -Fxq "$ref" <<< "$website_branches"; then
+          echo "$tag is public and its dated website branch was removed: using website main." >&2
+          ref=main
+        fi
+      else
+        echo "::warning::Could not check website branches; keeping $ref for the manual download." >&2
+      fi
+    fi
+  fi
+  out "ref=$ref"
 }
 
 cmd_notes() {
@@ -187,5 +230,6 @@ case "${1:-}" in
   notes) shift; cmd_notes "$@" ;;
   mirror) shift; cmd_mirror "$@" ;;
   publish-due) shift; cmd_publish_due "$@" ;;
-  *) echo "usage: $0 plan|notes|mirror|publish-due ..." >&2; exit 2 ;;
+  website-ref) shift; cmd_website_ref "$@" ;;
+  *) echo "usage: $0 plan|notes|mirror|publish-due|website-ref ..." >&2; exit 2 ;;
 esac

@@ -9,7 +9,9 @@ Run before build_manuals.py to fail fast on common authoring mistakes:
      to another "-". LaTeX renders bare "--" as an en dash regardless of
      surrounding spaces (e.g., "word -- word", "word--word", "X--Y all match).
   3. Every screenshot reference resolves on disk.
-  4. Each chapter's front-matter version matches _data/plugins.yml.
+  4. Each chapter's front-matter version matches _data/plugins.yml. For the
+     combined manual (--combined), unreleased plugins' chapters are left out,
+     and a chapter whose release is in early access may be one version ahead.
 
 Code fences (```...```), indented code blocks, and HTML comments are
 exempt from the dash check; long horizontal-rule sequences (--- or ---|)
@@ -26,6 +28,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -139,34 +142,93 @@ def parse_front_matter(raw_md: str, path: Path, errors: list[str]) -> dict | Non
     return fm
 
 
-def load_plugin_versions(errors: list[str]) -> dict[str, str]:
-    """Read _data/plugins.yml and return {slug: version}."""
+# Website statuses of a plugin that is not out yet. Its manual chapter is a draft.
+UNRELEASED_STATUSES = {"in-dev", "coming-soon"}
+# Every status the website knows. Anything else is a typo, and a typo must not
+# count as released and put a draft chapter in the combined PDF.
+KNOWN_STATUSES = {"released", "pre-release"} | UNRELEASED_STATUSES
+
+
+def load_plugin_catalog(errors: list[str]) -> tuple[dict[str, str], set[str]]:
+    """Read _data/plugins.yml and return ({slug: version}, unreleased slugs).
+
+    A plugin is unreleased when the website lists it without a version or with an
+    unreleased status; its chapter must stay out of the combined PDF.
+    """
     if not PLUGINS_YML.exists():
         errors.append(f"plugins.yml not found at {PLUGINS_YML} "
                       f"(set DUSK_WEBSITE_REPO env var to override)")
-        return {}
+        return {}, set()
     try:
         with PLUGINS_YML.open() as f:
             data = yaml.safe_load(f)
     except yaml.YAMLError as e:
         errors.append(f"{PLUGINS_YML}: YAML parse error: {e}")
-        return {}
+        return {}, set()
     versions: dict[str, str] = {}
+    unreleased: set[str] = set()
     if not isinstance(data, list):
         errors.append(f"{PLUGINS_YML}: expected list of plugins")
-        return {}
+        return {}, set()
     for entry in data:
         if not isinstance(entry, dict):
             continue
         slug = entry.get("slug")
         version = entry.get("version")
+        status = entry.get("status")
+        if slug is not None and not isinstance(slug, str):
+            errors.append(f"{PLUGINS_YML}: invalid slug {slug!r}: expected a string")
+            continue
+        if slug and status is not None and (not isinstance(status, str) or status not in KNOWN_STATUSES):
+            errors.append(f"{PLUGINS_YML}: {slug}: unknown status {status!r} "
+                          f"(known: {', '.join(sorted(KNOWN_STATUSES))})")
+            unreleased.add(slug)
         if slug and version:
             versions[slug] = str(version)
-    return versions
+        if slug and (not version or (isinstance(status, str) and status in UNRELEASED_STATUSES)):
+            unreleased.add(slug)
+    return versions, unreleased
+
+
+def load_plugin_versions(errors: list[str]) -> dict[str, str]:
+    """Read _data/plugins.yml and return {slug: version}."""
+    return load_plugin_catalog(errors)[0]
+
+
+def release_tag_exists(slug: str, version: str) -> bool:
+    """True when this repository has the release tag <slug>-v<version>.
+
+    Manuals are built from a clone (/release-plugin), which has its tags. Without
+    git or a tag, the answer is False, so a chapter ahead of the website is
+    reported as a version mismatch rather than let into the combined PDF.
+    """
+    try:
+        res = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "rev-parse", "-q", "--verify",
+             f"refs/tags/{slug}-v{version}"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    except OSError:
+        return False
+    return res.returncode == 0
+
+
+def _version_key(version: str) -> tuple[int, ...] | None:
+    m = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", version.strip())
+    return tuple(int(g) for g in m.groups()) if m else None
+
+
+def in_early_access(slug: str, chapter_version: str, site_version: str) -> bool:
+    """A chapter ahead of the website is in early access while its release tag
+    exists: /release-plugin bumps the manual with the tag, but website main keeps
+    the previous version until the early-access/<public date> branch merges."""
+    ahead, shown = _version_key(chapter_version), _version_key(site_version)
+    return (ahead is not None and shown is not None and ahead > shown
+            and release_tag_exists(slug, chapter_version))
 
 
 def check_version_match(path: Path, fm: dict, plugin_versions: dict[str, str],
-                       errors: list[str]) -> None:
+                       errors: list[str], early_access_ok: bool = False,
+                       notes: list[str] | None = None) -> None:
     slug = fm.get("slug")
     fm_version = fm.get("version")
     if not slug:
@@ -180,6 +242,11 @@ def check_version_match(path: Path, fm: dict, plugin_versions: dict[str, str],
         errors.append(f"{path}: slug '{slug}' not found in {PLUGINS_YML}")
         return
     if str(fm_version) != expected:
+        if early_access_ok and in_early_access(slug, str(fm_version), expected):
+            if notes is not None:
+                notes.append(f"early access: {path.name} is {fm_version}; the website "
+                             f"shows {expected} until its public date")
+            return
         errors.append(
             f"{path}: front matter version {fm_version!r} does not match "
             f"plugins.yml version {expected!r} for slug {slug!r}"
@@ -196,12 +263,33 @@ def discover_chapters(manuals_dir: Path) -> list[Path]:
     return chapters
 
 
+def select_combined_chapters(unreleased: set[str], notes: list[str]) -> list[Path]:
+    """The chapters the combined manual includes: every chapter except an
+    unreleased plugin's draft. A slug the website does not list at all stays in,
+    so its version check fails instead of the chapter quietly vanishing."""
+    selected: list[Path] = []
+    for path in discover_chapters(MANUALS_DIR):
+        fm = parse_front_matter(path.read_text(encoding="utf-8"), path, errors=[])
+        slug = fm.get("slug") if fm else None
+        if slug in unreleased:
+            notes.append(f"skip: {path.name} ({slug} is not released on the website)")
+            continue
+        selected.append(path)
+    return selected
+
+
 # ---------- driver ----------
 
-def run_preflight(slug: str | None) -> int:
+def run_preflight(slug: str | None, combined: bool = False) -> int:
+    """Lint the chapters. combined=True checks what the combined manual includes:
+    unreleased plugins' chapters are left out and early-access chapters pass."""
     errors: list[str] = []
-    plugin_versions = load_plugin_versions(errors)
-    chapters = discover_chapters(MANUALS_DIR)
+    notes: list[str] = []
+    plugin_versions, unreleased = load_plugin_catalog(errors)
+    if combined:
+        chapters = select_combined_chapters(unreleased, notes)
+    else:
+        chapters = discover_chapters(MANUALS_DIR)
 
     if slug is not None:
         chapters = [c for c in chapters if c.stem == slug]
@@ -220,9 +308,12 @@ def run_preflight(slug: str | None) -> int:
         check_dashes(path, prose, errors)
         check_screenshots(path, raw, errors)
         fm = parse_front_matter(raw, path, errors)
-        if fm is not None and plugin_versions:
-            check_version_match(path, fm, plugin_versions, errors)
+        if fm is not None:
+            check_version_match(path, fm, plugin_versions, errors,
+                                early_access_ok=combined, notes=notes)
 
+    for note in notes:
+        print(note)
     if errors:
         for e in errors:
             print(e, file=sys.stderr)
@@ -237,8 +328,10 @@ def run_preflight(slug: str | None) -> int:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
     p.add_argument("--slug", help="check only the chapter with this slug")
+    p.add_argument("--combined", action="store_true",
+                   help="check the chapters the combined manual includes")
     args = p.parse_args(argv)
-    return run_preflight(args.slug)
+    return run_preflight(args.slug, combined=args.combined)
 
 
 if __name__ == "__main__":

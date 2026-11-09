@@ -51,8 +51,8 @@ except ImportError:
 
 from preflight import (
     MANUALS_DIR, WEBSITE_REPO, PLUGINS_YML, SCREENSHOTS_DIR,
-    discover_chapters, load_plugin_versions, parse_front_matter,
-    run_preflight, FRONT_MATTER_RE,
+    discover_chapters, load_plugin_catalog, load_plugin_versions, parse_front_matter,
+    run_preflight, select_combined_chapters, FRONT_MATTER_RE,
 )
 
 
@@ -218,7 +218,17 @@ def render_per_plugin(slug: str) -> Path:
 
 
 def render_combined() -> Path:
-    chapters = discover_chapters(MANUALS_DIR)
+    # Unreleased plugins' chapters never reach the public PDF, preflight or not.
+    errors: list[str] = []
+    notes: list[str] = []
+    _, unreleased = load_plugin_catalog(errors)
+    if errors:
+        for e in errors:
+            print(e, file=sys.stderr)
+        sys.exit(2)
+    chapters = select_combined_chapters(unreleased, notes)
+    for note in notes:
+        print(note)
     by_slug = {c.stem: c for c in chapters}
     # Order per CHAPTER_ORDER, then any leftover slugs alphabetically.
     ordered: list[Path] = []
@@ -260,7 +270,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.skip_preflight:
         preflight_slug = args.slug if args.slug else None
-        rc = run_preflight(preflight_slug)
+        rc = run_preflight(preflight_slug, combined=bool(args.combined))
         if rc != 0:
             return 3
 

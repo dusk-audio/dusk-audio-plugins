@@ -33,12 +33,18 @@ cat > "$WORK/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 echo "gh $*" >> "$GH_LOG"
 case "$1 $2" in
-  "release view") exit "${FAKE_VIEW_EXIT:-1}" ;;
+  "release view")
+    # FAKE_VIEW_DRAFT stands for what `--json isDraft --jq .isDraft` prints for a release that exists.
+    if [ -n "${FAKE_VIEW_DRAFT:-}" ]; then echo "$FAKE_VIEW_DRAFT"; exit 0; fi
+    exit "${FAKE_VIEW_EXIT:-1}" ;;
   "release create"|"release edit")
     while [ $# -gt 0 ]; do
       if [ "$1" = "--notes-file" ]; then { echo "--- notes"; cat "$2"; echo "--- end"; } >> "$GH_LOG"; fi
       shift
     done ;;
+  "api repos/dusk-audio/dusk-audio.github.io/branches")
+    printf '%s\n' "${FAKE_WEBSITE_BRANCHES-main}"
+    exit "${FAKE_WEBSITE_BRANCHES_EXIT:-0}" ;;
   "api repos/"*) printf '%s' "${FAKE_RELEASES:-}" ;;
 esac
 EOF
@@ -82,6 +88,81 @@ check "all-plugins tag is never early" \
   "early=false members_only=false public_on=" "$(plan v2.0.0 | oneline)"
 check "all-plugins prerelease is never early" \
   "early=false members_only=false public_on=" "$(plan v2.0.0-beta | oneline)"
+
+# --- website-ref ---
+wref() { # wref TAG -> the ref line
+  GITHUB_OUTPUT="" GITHUB_REF="" EARLY_ACCESS_DAYS="${DAYS-14}" HAS_EARLY_TOKEN="${TOKEN-true}" \
+    bash "$SCRIPT" website-ref "$1"
+}
+check "early-access release reads its dated website branch" "ref=early-access/2026-10-31" "$(wref multi-comp-2-v1.0.0)"
+check "members-only prerelease reads website main" "ref=main" "$(wref multi-comp-2-v1.1.0-alpha1)"
+check "Early-Access: no reads website main" "ref=main" "$(wref duskverb-2-v1.1.0-beta)"
+check "feature off reads website main" "ref=main" "$(DAYS=0 wref multi-comp-2-v1.0.0)"
+check "missing token reads website main" "ref=main" "$(TOKEN=false wref multi-comp-2-v1.0.0)"
+check "all-plugins tag reads website main" "ref=main" "$(wref v2.0.0)"
+check "an unknown tag reads website main" "ref=main" "$(wref no-such-v9.9.9)"
+check "the tag defaults to GITHUB_REF" "ref=early-access/2026-10-31" \
+  "$(GITHUB_OUTPUT="" GITHUB_REF=refs/tags/multi-comp-2-v1.0.0 EARLY_ACCESS_DAYS=14 HAS_EARLY_TOKEN=true bash "$SCRIPT" website-ref)"
+check "a branch build reads website main" "ref=main" \
+  "$(GITHUB_OUTPUT="" GITHUB_REF=refs/heads/main EARLY_ACCESS_DAYS=14 HAS_EARLY_TOKEN=true bash "$SCRIPT" website-ref)"
+# Publication precedes the website merge; only a removed branch permits main.
+wref_on() { # wref_on DRAFT TAG: as wref, with the release on GitHub (DRAFT true/false, or "" for none yet)
+  FAKE_VIEW_DRAFT="$1" GITHUB_REPOSITORY=dusk-audio/dusk-audio-plugins GITHUB_OUTPUT="" GITHUB_REF="" \
+    EARLY_ACCESS_DAYS=14 HAS_EARLY_TOKEN=true bash "$SCRIPT" website-ref "$2" 2>/dev/null
+}
+check "a published release with its website branch removed reads main" "ref=main" "$(wref_on false multi-comp-2-v1.0.0)"
+check "a published release with an unmerged website branch keeps that branch" "ref=early-access/2026-10-31" \
+  "$(FAKE_WEBSITE_BRANCHES=$'main\nearly-access/2026-10-31' wref_on false multi-comp-2-v1.0.0)"
+check "an unrelated website branch does not prevent main" "ref=main" \
+  "$(FAKE_WEBSITE_BRANCHES=$'main\nearly-access/2026-10-31-extra' wref_on false multi-comp-2-v1.0.0)"
+check "a failed website query preserves the dated branch" "ref=early-access/2026-10-31" \
+  "$(FAKE_WEBSITE_BRANCHES='' FAKE_WEBSITE_BRANCHES_EXIT=1 wref_on false multi-comp-2-v1.0.0)"
+check "a failed paginated query cannot prove the branch was removed" "ref=early-access/2026-10-31" \
+  "$(FAKE_WEBSITE_BRANCHES=main FAKE_WEBSITE_BRANCHES_EXIT=1 wref_on false multi-comp-2-v1.0.0)"
+check "a draft release reads its dated branch" "ref=early-access/2026-10-31" "$(wref_on true multi-comp-2-v1.0.0)"
+check "a release not created yet reads its dated branch" "ref=early-access/2026-10-31" "$(wref_on "" multi-comp-2-v1.0.0)"
+# actions/checkout leaves a lightweight tag behind; its commit here is a week older than the tag.
+# website-ref fetches the annotated tag from origin again and dates the release by it.
+git init -q --bare "$WORK/origin.git"
+git init -q "$WORK/clone"
+(
+  cd "$WORK/clone"
+  GIT_COMMITTER_DATE="2026-10-10T12:00:00Z" git -c user.name=t -c user.email=t@t commit -q --allow-empty -m old
+  GIT_COMMITTER_DATE="2026-10-17T12:00:00Z" git -c user.name=t -c user.email=t@t tag -a ring-out-v1.2.0 -m "Ring Out 1.2.0"
+  git remote add origin "$WORK/origin.git"
+  git push -q origin HEAD:refs/heads/main refs/tags/ring-out-v1.2.0
+  git tag -d ring-out-v1.2.0 >/dev/null
+  git tag ring-out-v1.2.0 HEAD
+)
+check "a lightweight checkout tag is dated by the annotated tag" "ref=early-access/2026-10-31" \
+  "$(cd "$WORK/clone" && GITHUB_OUTPUT="" GITHUB_REF="" EARLY_ACCESS_DAYS=14 HAS_EARLY_TOKEN=true \
+       bash "$SCRIPT" website-ref ring-out-v1.2.0 2>/dev/null)"
+
+# --- fetch_manual_pdf.sh, against a fake curl that serves only $FAKE_URLS ---
+FETCH="$ROOT/.github/scripts/fetch_manual_pdf.sh"
+cat > "$WORK/bin/curl" <<'EOF'
+#!/usr/bin/env bash
+url="" out=""
+while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift ;; http*) url="$1" ;; esac; shift; done
+echo "$url" >> "$CURL_LOG"
+if [ -n "$FAKE_URLS" ] && grep -qxF "$url" <<< "$FAKE_URLS"; then echo pdf > "$out"; exit 0; fi
+exit 22
+EOF
+chmod +x "$WORK/bin/curl"
+export CURL_LOG="$WORK/curl.log"
+site=https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io
+fm() { : > "$CURL_LOG"; FAKE_URLS="$1" bash "$FETCH" x "$WORK/x-manual.pdf" "$2" 2>&1; }
+out=$(fm "$site/early-access/2026-10-31/assets/manuals/x-manual.pdf" early-access/2026-10-31)
+contains "manual comes from the early-access branch" "from website early-access/2026-10-31" "$out"
+check "main is not asked when the branch has the manual" "1" "$(wc -l < "$CURL_LOG" | tr -d ' ')"
+out=$(fm "$site/main/assets/manuals/x-manual.pdf" early-access/2026-10-31)
+contains "a missing branch falls back to main" "from website main" "$out"
+contains "the fallback warns" "::warning::No manual PDF on website branch early-access/2026-10-31" "$out"
+out=$(fm "" main)
+contains "no manual anywhere warns" "::warning::User manual PDF not found" "$out"
+check "no manual anywhere leaves no file" "absent" "$([ -e "$WORK/x-manual.pdf" ] && echo present || echo absent)"
+out=$(fm "$site/main/assets/manuals/x-manual.pdf" 'odd ref;x')
+contains "an odd ref reads main" "from website main" "$out"
 
 # --- notes ---
 printf 'Body\n' > "$WORK/b1"
