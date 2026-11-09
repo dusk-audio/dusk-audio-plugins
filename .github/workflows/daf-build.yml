@@ -66,6 +66,12 @@ on:
       - '.github/scripts/**'
       # The DAF revision every plugin is built against.
       - '.github/daf-ref'
+      # Sunset Circuits is built, tested and released by its own workflow
+      # (daf-release.yml) and is not in this workflow's registry. Without this, a
+      # PR that only touches it matches the two globs above and fails the plan
+      # step with "no registered plugin owns its changed paths". Last, because a
+      # negated pattern only excludes what the patterns before it matched.
+      - '!plugins/sunset-circuits/**'
 
 # DAF is the single hard-fork dependency under dusk-audio. Its widgets/ and
 # dgl/src/pugl-upstream/ trees are included in the same revision; archived
