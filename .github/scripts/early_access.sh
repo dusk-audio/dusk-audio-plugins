@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Two-week (EARLY_ACCESS_DAYS) early access for plugin releases.
 #
+# Early access is only for a plugin that has never had a public release: its
+# first stable release, and its prereleases until then. A release of a plugin
+# that already has a published, non-prerelease release here goes public at once.
+#
 # A release that qualifies is published to this repo as a DRAFT (invisible to
 # the public) and mirrored to the private EARLY_ACCESS_REPO, which the Patreon
 # build gate (dusk-audio.github.io/builds-gate) serves to members. The daily
@@ -41,6 +45,25 @@ public_on_for_tag() {
   date -u -d "@$((ts + days * 86400))" +%F
 }
 
+# The plugin a release tag belongs to: multi-comp-v1.3.9 -> multi-comp,
+# multi-comp-2-v1.0.0-alpha1 -> multi-comp-2.
+plugin_of() { printf '%s\n' "${1%-v[0-9]*}"; }
+
+# True when this repository already has a published release (not a draft, not a
+# prerelease) of the tag's plugin. When GitHub cannot be asked, answer false and
+# warn: an update held back for the window can be published by hand, while a new
+# plugin published early cannot be taken back.
+already_released() {
+  local plugin count repo="${GITHUB_REPOSITORY:-}"
+  plugin=$(plugin_of "$1")
+  if [ -z "$repo" ] || ! count=$(gh api "repos/$repo/releases" --paginate \
+      --jq "[.[] | select(.draft == false and .prerelease == false and (.tag_name | startswith(\"$plugin-v\")))] | length" 2>/dev/null); then
+    echo "::warning::Could not list the releases of $plugin; planning $1 as its first release."
+    return 1
+  fi
+  [ "$(printf '%s\n' "$count" | awk '{ s += $1 } END { print s + 0 }')" -gt 0 ]
+}
+
 cmd_plan() {
   local tag="$1" days="${EARLY_ACCESS_DAYS:-0}" reason="" members_only=false
   [[ "$days" =~ ^[0-9]+$ ]] || days=0
@@ -54,6 +77,8 @@ cmd_plan() {
   elif [ "${HAS_EARLY_TOKEN:-false}" != "true" ]; then
     echo "::warning::EARLY_ACCESS_DAYS=$days but the EARLY_ACCESS_TOKEN secret is missing; releasing publicly."
     reason="EARLY_ACCESS_TOKEN secret is missing"
+  elif already_released "$tag"; then
+    reason="$(plugin_of "$tag") already has a public release; early access is only for a plugin's first release"
   fi
   if [ -n "$reason" ]; then
     echo "Public release now: $reason."
@@ -81,15 +106,17 @@ cmd_plan() {
 # regenerated manual PDF from: early-access/<public date> for a dated early-access release (/release-plugin
 # pushes the site commit there, and website main keeps the previous version's PDF until that date), main for
 # everything else. Members-only prereleases change nothing on the site. TAG defaults to the tag being built.
-# Anything that cannot be planned answers main, which is what every archive used before this existed.
+# Without a recorded date or an early-access plan, use main.
 #
-# The public date comes from the annotated tag's date, but actions/checkout replaces a tag it checks out
+# Existing releases retain the date recorded in their notes, even after publication makes the plugin
+# ineligible for early access or the configured window changes. For a new release the public date comes
+# from the annotated tag's date, but actions/checkout replaces a tag it checks out
 # with a lightweight one (see release_changelog.sh), whose date is its commit's: a day early whenever the
 # commit and the tag fall on different UTC days. So the tag is fetched again first. Publication happens
 # before the website merge, which can fail independently. A public release reads main only after the
 # dated website branch is gone; while that branch exists it still holds the regenerated manual.
 cmd_website_ref() {
-  local tag="${1:-}" plan_out early public_on draft website_branches ref=main
+  local tag="${1:-}" plan_out early public_on body draft website_branches ref=main
   if [ -z "$tag" ] && [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then tag="${GITHUB_REF#refs/tags/}"; fi
   if [ -n "$tag" ]; then
     git fetch --quiet --force --no-tags origin "refs/tags/$tag:refs/tags/$tag" 2>/dev/null || true
@@ -102,6 +129,10 @@ cmd_website_ref() {
     early=$(sed -n 's/^early=//p' <<< "$plan_out")
     public_on=$(sed -n 's/^public_on=//p' <<< "$plan_out")
     if [ "$early" = true ] && [[ "$public_on" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then ref="early-access/$public_on"; fi
+  fi
+  if [ -n "$tag" ] && [ -n "${GITHUB_REPOSITORY:-}" ]; then
+    body=$(gh release view "$tag" -R "$GITHUB_REPOSITORY" --json body --jq .body 2>/dev/null) || body=""
+    if [[ "$body" =~ $MARKER_RE ]]; then ref="early-access/${BASH_REMATCH[1]}"; fi
   fi
   if [ "$ref" != main ] && [ -n "${GITHUB_REPOSITORY:-}" ]; then
     draft=$(gh release view "$tag" -R "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null) || draft=""
