@@ -217,6 +217,11 @@ public:
     float getOutputLevelR() const noexcept { return outLevelR.load(std::memory_order_relaxed); }
     int   getArpStep() const noexcept { return arpStep.load(std::memory_order_relaxed); }
     int   getArpTotalSteps() const noexcept { return arpTotalSteps.load(std::memory_order_relaxed); }
+    // The oversampling factor the voices render at now: the parameter's, once a
+    // change has committed at the bottom of the voice-path fade. NOT an atomic:
+    // read it only from the thread that calls processBlock, between calls
+    // (render_test logs it after each block).
+    int   getOsFactor() const noexcept { return osFactor; }
     // Current performance-wheel state, whoever last wrote it — the shell's MIDI
     // handler (0xE0 / CC 1) or the editor's on-screen wheels. Read-only, relaxed,
     // no new state: these are the same atomics pitchBend()/modWheel() store into.
@@ -368,7 +373,9 @@ private:
     // The switch is DEFERRED instead. The requested mode is held off while the
     // voice path fades out over kModeFadeSeconds; it commits on the first block
     // that starts with the fade at zero, and the new mode fades back in. The
-    // outgoing note is faded rather than cut mid-waveform.
+    // outgoing note is faded rather than cut mid-waveform. An oversampling change
+    // waits for the same fade, because switching the factor resets the decimators
+    // and the latency pad (snapshotParameters).
     //
     // activeMode is what the engine is actually RENDERING; it lags the parameter
     // while a fade is in flight. Note routing has to follow it (a note arriving
@@ -386,7 +393,7 @@ private:
     }
 
     SynthMode activeMode = SynthMode::Cosmos;
-    bool  modeSwitchPending = false;   // fading out, waiting to commit
+    bool  modeSwitchPending = false;   // fading out, waiting to commit a mode or OS change
     float modeFade = 1.0f;             // voice-path gain, 0..1
     float modeFadeStep = 1.0f;         // per host sample, set in prepare()
 

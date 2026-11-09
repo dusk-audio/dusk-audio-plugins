@@ -78,19 +78,23 @@ static void clear_seq(uint8_t* buf) {
     ((LV2_Atom_Sequence*)buf)->atom.size = sizeof(LV2_Atom_Sequence_Body);
 }
 
-// Run `blocks` blocks and return the peak absolute sample over every audio port.
+// Run `blocks` blocks and return the peak absolute sample over every audio port,
+// or NAN if any sample is not finite. A NaN compares false against everything, so
+// the peak alone let one through every check below; a NAN result fails them all.
 static float run_peak(LilvInstance* inst, float** audio, uint32_t nPorts, int blocks) {
     float peak = 0.0f;
+    int finite = 1;
     for (int b = 0; b < blocks; ++b) {
         lilv_instance_run(inst, BLOCK);
         for (uint32_t i = 0; i < nPorts; ++i)
             if (audio[i])
                 for (int k = 0; k < BLOCK; ++k) {
+                    if (!isfinite(audio[i][k])) finite = 0;
                     const float a = fabsf(audio[i][k]);
                     if (a > peak) peak = a;
                 }
     }
-    return peak;
+    return finite ? peak : NAN;
 }
 
 // Exit codes: 0 ok, 1 usage, 2 plugin not found, 3 instantiate failed,
@@ -331,21 +335,28 @@ int main(int argc, char** argv) {
         const uint8_t noteOn2[3] = { 0x90, 64, 100 };  // E4
 
         ctrl[masterVolIdx] = -60.0f;
-        (void)run_peak(inst, audio, nPorts, 8);   // let the 8 ms volume glide settle
+        // let the 8 ms volume glide settle; not measured, but still checked for NaN
+        if (isnan(run_peak(inst, audio, nPorts, 8))) {
+            fprintf(stderr, "FAIL: non-finite audio while the volume settled\n");
+            ++failures;
+        }
         const float quiet = run_peak(inst, audio, nPorts, 24);
 
         // put_midi_event() writes the sequence's only event, so the program change
         // and the note go in separate blocks.
         put_midi_event(buf, midiEventURID, pc, 2);   // program 0
-        lilv_instance_run(inst, BLOCK);
+        const float pcBlock = run_peak(inst, audio, nPorts, 1);
         clear_seq(buf);
         put_midi_event(buf, midiEventURID, noteOn2, 3);
-        float loud = run_peak(inst, audio, nPorts, 1);
+        const float noteBlock = run_peak(inst, audio, nPorts, 1);
         clear_seq(buf);
-        loud = fmaxf(loud, run_peak(inst, audio, nPorts, 47));
+        const float rest = run_peak(inst, audio, nPorts, 47);
+        // fmaxf() drops a NaN operand, so a non-finite block is carried explicitly.
+        const float loud = (isnan(noteBlock) || isnan(rest)) ? NAN : fmaxf(noteBlock, rest);
         const float latPc = ctrl[latencyIdx];
 
-        const int pcOk = loud > 1.0e-3f && loud > quiet * 31.6f && latPc == 13.0f;
+        const int pcOk = !isnan(pcBlock) && loud > 1.0e-3f && loud > quiet * 31.6f
+                      && latPc == 13.0f;
         printf("program change (0xC0 prog 0): peak %.5f -> %.5f (want > +30 dB, the "
                "preset's own Master Volume), latency %.0f (want 13)  %s\n",
                (double)quiet, (double)loud, (double)latPc, pcOk ? "PASS" : "FAIL");
@@ -356,18 +367,24 @@ int main(int argc, char** argv) {
         // (program 0 moved the internal value behind the host's back while the port
         // still reads -60, and DAF only pushes a port whose value differs from the
         // last one it pushed), hence -59.9. The windows span two arp steps of the
-        // preset's pattern, so the two peaks compare like with like.
+        // preset's pattern, so the two peaks compare like with like. Ignored means
+        // the same pattern plays on at the same level: within 10 dB either way. A
+        // one-sided bound passed silence after the change.
         ctrl[masterVolIdx] = -59.9f;
-        (void)run_peak(inst, audio, nPorts, 8);   // settle, as above
+        if (isnan(run_peak(inst, audio, nPorts, 8))) {   // settle, as above
+            fprintf(stderr, "FAIL: non-finite audio while the volume settled\n");
+            ++failures;
+        }
         const float parked = run_peak(inst, audio, nPorts, 48);
         pc[1] = 127;                                  // > 54 factory presets
         put_midi_event(buf, midiEventURID, pc, 2);
-        lilv_instance_run(inst, BLOCK);
+        const float oorBlock = run_peak(inst, audio, nPorts, 1);
         clear_seq(buf);
         const float afterOor = run_peak(inst, audio, nPorts, 48);
-        const int oorOk = parked > 0.0f && afterOor < parked * 3.16f;   // within +10 dB
+        const int oorOk = !isnan(oorBlock) && parked > 0.0f
+                       && afterOor > parked / 3.16f && afterOor < parked * 3.16f;
         printf("program change (0xC0 prog 127): peak %.5f -> %.5f "
-               "(want no jump: out-of-range ignored)  %s\n",
+               "(want within 10 dB: out-of-range ignored)  %s\n",
                (double)parked, (double)afterOor, oorOk ? "PASS" : "FAIL");
         if (!oorOk) ++failures;
     }

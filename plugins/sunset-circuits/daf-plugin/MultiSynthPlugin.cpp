@@ -360,26 +360,29 @@ protected:
         {
             // ---- PER-WRAPPER BBT BEAT SEMANTICS (S1) -------------------------
             // DAF's BarBeatTick struct is a copy of jack_position_t and its doc
-            // (DafDetails.hpp:987-1000) only constrains beat <= beatsPerBar;
+            // (DafDetails.hpp, BarBeatTick) only constrains beat <= beatsPerBar;
             // it never states the unit of a "beat". The wrappers disagree:
             //
             //   VST3, VST2, LV2, JACK  ->  beat/tick in TIME-SIGNATURE
             //                              DENOMINATOR units (in 6/8 a beat is an
             //                              eighth note, beat runs 1..6).
-            //     DafPluginVST3.cpp:1422-1429  ppqPerBar = num*4/denom, then
-            //       barBeats = fmod(ppq, ppqPerBar)/ppqPerBar * num  -> denominator
-            //     DafPluginVST2.cpp:1036-1043  identical arithmetic
-            //     DafPluginLV2.cpp:460-464     pass-through of time:barBeat,
+            //     DafPluginVST3.cpp, DafPluginVST2.cpp  fillBarBeatTickFromQuarters
+            //       (DafPluginInternal.hpp): the host's quarter-note position over
+            //       bars of num*4/denom quarter notes, counted in denominator beats.
+            //       Before DAF #114 the bar length was an int (a 7/8 bar was 3
+            //       quarter notes long), so the arp ran 7/6 fast in VST2/VST3 7/8,
+            //       and 3/16 divided by zero.
+            //     DafPluginLV2.cpp             pass-through of time:barBeat,
             //       which LV2 defines in time:beatUnit (denominator) units
-            //     DafPluginJACK.cpp:394-396    verbatim jack_position_t copy
+            //     DafPluginJACK.cpp            verbatim jack_position_t copy
             //
             //   CLAP, AudioUnit        ->  beat/tick in QUARTER NOTES, merely
             //                              wrapped modulo the NUMERATOR.
-            //     DafPluginCLAP.cpp:930-936    clapBeats = song_pos_beats >> 31,
+            //     DafPluginCLAP.cpp            clapBeats = song_pos_beats >> 31,
             //       and CLAP defines song_pos_beats in quarter notes
-            //       (clap/events.h:219, fixedpoint.h:12 CLAP_BEATTIME_FACTOR).
+            //       (clap/events.h, fixedpoint.h CLAP_BEATTIME_FACTOR).
             //       beat = clapBeats % tsig_num + 1; tick = frac(quarter)*1920.
-            //     DafPluginAU.cpp:2334-2339    same shape, on the AU quarter-
+            //     DafPluginAU.cpp              same shape, on the AU quarter-
             //       note musical timeline divided by the numerator.
             //
             // So the raw sum below is denominator-beats on the first group and
@@ -401,9 +404,9 @@ protected:
         }
         else
         {
-            // No BBT, OR BBT with no sub-beat tick resolution (ticksPerBeat <= 0
-            // — only JACK can report that, DafPluginJACK.cpp:392 sets valid
-            // from the BBT flag alone while :408 copies ticks_per_beat unguarded).
+            // No BBT, OR BBT with no sub-beat tick resolution (ticksPerBeat <= 0:
+            // only JACK can report that, as DafPluginJACK.cpp sets valid from the
+            // BBT flag alone and copies ticks_per_beat unguarded).
             // In the latter case BBT is block-constant within a beat, so songBeat
             // would jump backward at each buffer start and machine-gun the arp/
             // acid backward-jump (loop-wrap) detector. Derive songBeat from the
@@ -411,22 +414,22 @@ protected:
             //
             // tp.frame is NOT a dependable song-position counter on every wrapper
             // (S3):
-            //   VST3 (DafPluginVST3.cpp:1409-1412) has no else branch — when
+            //   VST3 (DafPluginVST3.cpp, process()) has no else branch: when
             //     the host sets neither PROJECT_TIME_VALID nor CONT_TIME_VALID,
             //     fTimePosition.frame keeps its PREVIOUS value forever (0 until
             //     the first valid block).
-            //   CLAP (DafPluginCLAP.cpp:916) uses process->steady_time, which
-            //     is pinned to 0 on every block when the host reports -1
-            //     ("not available", clap/process.h:36).
+            //   CLAP (DafPluginCLAP.cpp) takes the transport's seconds timeline,
+            //     or its beats at the current tempo, and reports 0 on every
+            //     block when the host gives neither.
             // Either way the counter FREEZES, so songBeat is a constant. Reporting
             // that as a valid host position pins the arp/acid grid to step 0 for as
             // long as the transport rolls. Detect the freeze and report invalid
             // instead, which makes the core free-run on its own clock — a stable
             // wrong phase beats a stuck one.
             //
-            // (CLAP's steady_time also keeps counting while the transport is
-            // STOPPED, which is harmless here: the core only phase-locks while
-            // tp.playing, see dsp.setTempo above and processBlock.)
+            // (What a STOPPED transport reports does not matter here: the core
+            // only phase-locks while tp.playing, see dsp.setTempo above and
+            // processBlock.)
             const int64_t frame = tp.frame;
             const bool frozen = tp.playing && frames > 0
                              && haveLastTransportFrame && frame == lastTransportFrame;

@@ -63,7 +63,7 @@ After installing, rescan plugins in your DAW. If the instrument does not appear,
 
 The six mode rockers at the top center are the most important control in the instrument. Click one to switch circuits. The panel color crossfades over about a quarter second, the mode sub-panel (the small panel on the right, below the LFOs) morphs to show that mode's signature controls, and a few controls in the standard panels appear or disappear depending on which mode is active. The mode is a normal automatable parameter, so you can switch circuits from the host if you want.
 
-Switching modes is click-safe. The old circuit's voices fade out over 36 ms and the new circuit fades in over the same time, so a mode change under a held chord is a short dip rather than a click, and the delay and reverb tails ring on through it. The notes you are holding, on the keys or with the sustain pedal, carry over: the new circuit plays them as it comes up, so you can audition circuits under a held chord. The switch lands on an exact sample rather than waiting for the next buffer boundary, so it sounds the same at a 64-sample buffer and at 4096.
+Switching modes is click-safe. The old circuit's voices fade out over 36 ms and the new circuit fades in over the same time, so a mode change under a held chord is a short dip rather than a click, and the delay and reverb tails ring on through it. The notes you are holding, on the keys or with the sustain pedal, carry over: the new circuit plays them as it comes up, so you can audition circuits under a held chord. A circuit with fewer voices than the notes you hold takes the most recent ones, so Mono plays the last key you pressed. The switch lands on an exact sample rather than waiting for the next buffer boundary, so it sounds the same at a 64-sample buffer and at 4096.
 
 Loading a factory preset also sets the mode, because the mode is stored with the preset. If you switch modes by hand without loading a preset, the other parameters keep their current values, so the sound may not match what you expect from that circuit until you load a preset or dial it in.
 
@@ -77,7 +77,7 @@ The full-width keyboard at the bottom is playable with the mouse and sends MIDI 
 
 **The pitch and mod wheels** sit to the left of the keys. The pitch wheel is bipolar and springs back to center when you let go; the mod wheel latches where you leave it and also responds to the scroll wheel. Both grab absolutely, so clicking part-way up a wheel jumps it there. They are the on-screen stand-ins for the two controllers a hardware synth puts left of the keybed, and the only way to exercise the Pitch Bend and Mod Whl mod-matrix sources without external hardware.
 
-**Glide and Legato.** Glide slides the pitch from one note to the next over the Glide time, or at a fixed rate with Glide Mode. With **Legato** on, notes that overlap tie: the new note takes over the one still held without a new attack, and glide happens only between overlapping notes, so a detached note lands straight on its pitch. That is the classic way to play Mono basses and leads. In the poly circuits a note ties only when it has to take over a voice that is still held, because a free voice is always used first. At full arpeggiator gate, Legato ties the arpeggiator's steps too (see the arpeggiator controls).
+**Glide and Legato.** Glide slides the pitch from one note to the next over the Glide time, or at a fixed rate with Glide Mode. With **Legato** on, notes that overlap tie: the new note takes over the one still held without a new attack, and glide happens only between overlapping notes, so a detached note lands straight on its pitch. That is the classic way to play Mono basses and leads. In the poly circuits a note ties only when it has to take over a voice that is still held, because a free voice is always used first. At full arpeggiator gate, Legato ties the arpeggiator's steps too, in every circuit: each step takes over the voice of the step before it (see the arpeggiator controls).
 
 ### Reading the panel
 
@@ -259,7 +259,7 @@ The sequencer strip along the bottom is an arpeggiator and step sequencer shared
 
 ### Arpeggiator controls
 
-- **Arp On**: enable the arpeggiator or step sequencer. Switch it on while you hold keys and the pattern starts on them; switch it off and the keys you are still holding keep sounding as a chord (in Acid, as a held note). Nothing has to be pressed again.
+- **Arp On**: enable the arpeggiator or step sequencer. Switch it on while you hold keys and the pattern starts on them; switch it off and the keys you are still holding keep sounding as a chord (in Mono and Acid, the last key you pressed). Nothing has to be pressed again.
 - **Arp Mode**: the note order the arpeggiator plays: Up, Down, Up/Down, Down/Up, Random, Order (as played), or Chord. Chord is a known limitation in this release: it is selectable and stable, but it currently steps one note at a time exactly as Up does rather than striking every held note on each step. Use a held chord with the arpeggiator off if you want block chords.
 - **Arp Octave**: how many octaves the arpeggio spans, 1 to 4.
 - **Arp Rate**: the step length as a note division, from 1/1 down to 1/32, including dotted (1/8. and so on) and triplet (1/8T and so on) divisions.
@@ -447,7 +447,7 @@ The filter that brings the oversampled voices back to the host rate delays them 
 |---|---|
 | 1x, 2x and 4x | 13 samples |
 
-These are host samples and are independent of the sample rate: 13 samples is 0.27 ms at 48 kHz. Because the latency never changes, switching oversampling does not make your DAW restart the plugin, so the sound does not drop out and held notes keep playing. If other tracks sound slightly out of time, confirm plugin delay compensation is enabled in your DAW.
+These are host samples and are independent of the sample rate: 13 samples is 0.27 ms at 48 kHz. Because the latency never changes, switching oversampling does not make your DAW restart the plugin, and held notes keep playing. The voices fade out over 36 ms, change factor in silence, and fade back in over the same time, so the switch is a short dip rather than a click; the delay and reverb tails ring on through it. If other tracks sound slightly out of time, confirm plugin delay compensation is enabled in your DAW.
 
 ### CPU
 

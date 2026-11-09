@@ -1006,6 +1006,30 @@ public:
         return &voices[(size_t)quietest];
     }
 
+    // The voice, below the polyphony limit, that holds `note` with its gate still
+    // held, or -1. A retiring voice does not count: it is on its way out.
+    int findHeld(int note) const noexcept
+    {
+        const int poly = effectivePoly();
+        for (int i = 0; i < poly; ++i)
+            if (voices[(size_t)i].getCurrentNote() == note && voices[(size_t)i].isGateHeld())
+                return i;
+        return -1;
+    }
+
+    // A tied arp step: `to` takes over the voice that holds `from` with its gate
+    // still held, so SynthVoice::noteOn ties to it. noteOn() above would start `to`
+    // on a free voice, with an attack of its own, whenever the circuit has one,
+    // which in a poly circuit is every step. False when no voice holds `from` that
+    // way (it was stolen, released or retired); the caller then starts `to` as usual.
+    bool retarget(int from, int to, float velocity, const VoiceParameters& params) noexcept
+    {
+        const int i = findHeld(from);
+        if (i < 0) return false;
+        voices[(size_t)i].noteOn(to, velocity, params);
+        return true;
+    }
+
     void noteOff(int note) noexcept
     {
         for (auto& v : voices)

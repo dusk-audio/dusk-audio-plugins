@@ -13,14 +13,19 @@ silent with a 1 s release, and a held Mono legato note was gone within 2 s.
 
 Scenarios (48k, 1x OS, plain square through an open filter, dry):
   a. arp, gate 50 %    : Cosmos and Mono, release 1 s -- no step more than 20 dB
-                         below the first, with legato on as with it off
+                         below the first, with legato on as with it off, and the
+                         first above -50 dBFS (a silent render has no step below
+                         its own first one)
   b. live Mono tie     : 60 held, 64 added at 1.0 s, both held -- the level holds
                          (within 1 dB) instead of dying, and does not re-attack
                          (ampS 0.5 patch: legato peak stays at sustain, while the
                          legato-off control re-attacks, proving the probe sees it)
-  c. arp, gate 100 %   : Mono legato ties the steps -- per-step level swing under
-                         2 dB with no silent floor; the legato-off control
-                         re-attacks every step (swing over 3 dB)
+  c. arp, gate 100 %   : legato ties the steps, in Mono and in Cosmos -- per-step
+                         level swing under 2 dB with no silent floor; the
+                         legato-off control re-attacks every step (swing over
+                         3 dB). Cosmos is the poly case: each step has to take
+                         over the outgoing step's voice, where the allocator
+                         would start it on a free one with an attack of its own
   d. glide             : glide 0.2 s, 60 -> 72. Legato on: a detached note lands
                          on pitch (no glide), an overlapping one glides. Legato
                          off: both glide (control, unchanged behaviour)
@@ -28,6 +33,12 @@ Scenarios (48k, 1x OS, plain square through an open filter, dry):
                          a held voice; with legato on it ties and SOUNDS (its
                          fundamental is present 1-2 s later at the legato-off
                          level, within 6 dB)
+  f. tie after retire  : Cosmos, one key held under a full-gate legato arp whose
+                         voice is retired by a unison change (unison 8 leaves two
+                         voices, the arp's is the sixth). Every step is the same
+                         note, so no event restarted it and the arp went silent
+                         (-297 dB) with the key still down; it must keep sounding
+                         within 10 dB of its level before the change
 """
 import sys
 
@@ -36,6 +47,7 @@ import numpy as np
 from _harness import render
 
 BPM, STEP = 120.0, 0.125
+ABS_FLOOR_DB = -50.0
 BASE = dict(osc1Wave=1, osc2Level=0, subLevel=0, noiseLevel=0, analogAmt=0,
             filterEnvAmt=0, filterCutoff=6000, filterRes=0, reverbOn=0, delayOn=0,
             cosmosChorus=0)
@@ -86,7 +98,7 @@ def arp_dead_steps(mode, legato):
     n = int(8.0 / STEP)
     p = np.array([a[k * seg:k * seg + int(0.03 * sr)].max() for k in range(n)])
     d = 20 * np.log10(np.maximum(p, 1e-9) / max(p[0], 1e-9))
-    return int(np.sum(d < -20.0)), n
+    return int(np.sum(d < -20.0)), n, db(p[0])
 
 
 def main():
@@ -94,9 +106,10 @@ def main():
 
     # (a) arp at gate 50 %: no dead steps with legato on.
     for mode, name in ((2, "Mono"), (0, "Cosmos")):
-        dead, n = arp_dead_steps(mode, 1)
-        fails += check(f"a-{name}", dead == 0,
-                       f"arp 50 % {name:6s}: {dead}/{n} steps >20 dB down (want 0)")
+        dead, n, first = arp_dead_steps(mode, 1)
+        fails += check(f"a-{name}", dead == 0 and first > ABS_FLOOR_DB,
+                       f"arp 50 % {name:6s}: {dead}/{n} steps >20 dB down (want 0), "
+                       f"first step {first:6.1f} dBFS (>{ABS_FLOOR_DB:.0f})")
 
     # (b) live Mono tie: level holds, no re-attack.
     P = dict(BASE, ampA=0.005, ampD=0.1, ampS=0.8, ampR=0.3)
@@ -113,22 +126,24 @@ def main():
     fails += check("b-attack", rise[1] < 1.0 and rise[0] > 3.0,
                    f"re-attack   : legato +{rise[1]:.1f} dB (<1), control +{rise[0]:.1f} dB (>3)")
 
-    # (c) arp at gate 100 % in Mono: legato ties the steps.
-    swing, floor = {}, {}
-    for legato in (0, 1):
-        sr, x = render(2, 60, 4.0, 1, f"leg_tie_{legato}", tempo=BPM, playing=0,
-                       hold="64,67", legato=legato, arpOn=1, arpMode=0, arpRate=4,
-                       arpGate=1.0, arpOctave=1, ampA=0.02, ampD=0.2, ampS=0.5,
-                       ampR=0.05, **BASE)
-        s, m = [], []
-        for k in range(8, 32):
-            e = win_rms(x, sr, k * STEP, (k + 1) * STEP, 0.002)
-            s.append(db(e.max()) - db(e.min()))
-            m.append(db(e.min()))
-        swing[legato], floor[legato] = float(np.median(s)), min(m)
-    fails += check("c", swing[1] < 2.0 and floor[1] > -30.0 and swing[0] > 3.0,
-                   f"arp 100 %   : legato swing {swing[1]:.1f} dB (<2), floor {floor[1]:.1f} dB"
-                   f" (>-30); control swing {swing[0]:.1f} dB (>3)")
+    # (c) arp at gate 100 %: legato ties the steps, in Mono and in a poly circuit.
+    # Cosmos plays about 10 dB below Mono (its output trim), so its floor sits lower.
+    for mode, name, min_floor in ((2, "Mono", -30.0), (0, "Cosmos", -40.0)):
+        swing, floor = {}, {}
+        for legato in (0, 1):
+            sr, x = render(mode, 60, 4.0, 1, f"leg_tie_{mode}_{legato}", tempo=BPM,
+                           playing=0, hold="64,67", legato=legato, arpOn=1, arpMode=0,
+                           arpRate=4, arpGate=1.0, arpOctave=1, ampA=0.02, ampD=0.2,
+                           ampS=0.5, ampR=0.05, **BASE)
+            s, m = [], []
+            for k in range(8, 32):
+                e = win_rms(x, sr, k * STEP, (k + 1) * STEP, 0.002)
+                s.append(db(e.max()) - db(e.min()))
+                m.append(db(e.min()))
+            swing[legato], floor[legato] = float(np.median(s)), min(m)
+        fails += check(f"c-{name}", swing[1] < 2.0 and floor[1] > min_floor and swing[0] > 3.0,
+                       f"arp 100 % {name:6s}: legato swing {swing[1]:.1f} dB (<2), floor "
+                       f"{floor[1]:.1f} dB (>{min_floor:.0f}); control swing {swing[0]:.1f} dB (>3)")
 
     # (d) glide only when notes overlap.
     P = dict(BASE, ampA=0.002, ampD=0.1, ampS=0.8, ampR=0.02, portaTime=0.2)
@@ -160,6 +175,19 @@ def main():
     fails += check("e", level[1] > level[0] - 6.0 and level[0] > -80.0,
                    f"poly steal  : stealing note {level[1]:.1f} dB with legato, "
                    f"{level[0]:.1f} dB without (within 6 dB)")
+
+    # (f) the tied note's voice retired by a unison change. A released chord's tails
+    #     hold voices 0-4 when the arp starts on one key, so the arp lands on voice 5;
+    #     unison 8 at 1.4 s leaves two voices. The tails (0.6 s) are gone by then, so
+    #     after it only the arp can sound.
+    P = dict(BASE, osc1Wave=3, ampA=0.002, ampD=0.1, ampS=1.0, ampR=0.6, legato=1,
+             arpGate=1.0, arpRate=4)
+    sr, x = render(0, 48, 2.6, 2, "leg_retire", hold="52,55,59,62", release=0.5,
+                   noteon="0.7:60", setat=["0.6:arpOn:1", "1.4:unisonVoices:8"], **P)
+    before, after = db(rms(x, sr, 0.9, 1.3)), db(rms(x, sr, 1.6, 2.5))
+    fails += check("f", after > before - 10.0,
+                   f"tie after retire: {before:6.1f} dB before the unison change, "
+                   f"{after:6.1f} dB after (within 10 dB)")
 
     print(f"legato_gate: {'PASS' if not fails else 'FAIL (' + ','.join(fails) + ')'}")
     sys.exit(0 if not fails else 1)
