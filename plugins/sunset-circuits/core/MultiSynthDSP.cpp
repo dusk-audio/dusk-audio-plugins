@@ -136,6 +136,7 @@ void MultiSynthDSP::prepare(double sampleRate, int maxBlockSize)
     acidVoice.prepare(hostRate * (double)osFactor);
     acidSeq.prepare(hostRate);
     decimL.setFactor(osFactor); decimR.setFactor(osFactor);
+    padL.delay = padR.delay = padFor(osFactor);
     // Parameter smoothers advance once per HOST sample (see processBlock), so
     // they are prepared at hostRate regardless of the oversampling factor.
     for (auto* s : { &smGain, &smPanAngle, &smWidth,
@@ -154,6 +155,12 @@ void MultiSynthDSP::applyOsFactor(int factor)
     acidVoice.setSampleRate(internalRate); // host-rate sequencer unaffected
     decimL.setFactor(osFactor); decimL.reset();
     decimR.setFactor(osFactor); decimR.reset();
+    // The pad takes up the difference, so the total latency stays put. Cleared with
+    // the decimators: the samples it holds came from the old path. Both resets are
+    // a step in the output, so this runs with the voice path faded to zero
+    // (snapshotParameters), or before the first block.
+    padL.delay = padR.delay = padFor(osFactor);
+    padL.reset(); padR.reset();
 }
 
 void MultiSynthDSP::reset()
@@ -164,6 +171,7 @@ void MultiSynthDSP::reset()
     arp.reset();
     acidVoice.reset(); acidSeq.reset(); acidHeldCount = 0;
     decimL.reset(); decimR.reset();
+    padL.reset(); padR.reset();
     dcBlockL.reset(); dcBlockR.reset();
     prevVintageL = prevVintageR = 0.0f;
     meterL = meterR = 0.0f;
@@ -171,7 +179,6 @@ void MultiSynthDSP::reset()
     haveWitness  = false;   // ...and must SNAP the smoothers, not glide up from stale state
     modeSwitchPending = false;  // ...and must adopt the requested mode, not fade into it
     modeFade = 1.0f;
-    deferredNoteCount = 0;      // ...and owes no notes from a fade that no longer exists
     for (auto& s : scope) s.store(0.0f, std::memory_order_relaxed);
     scopeWritePos.store(0, std::memory_order_relaxed);
     scopeCount.store(0, std::memory_order_relaxed);
@@ -193,28 +200,22 @@ void MultiSynthDSP::noteOn(int note, float velocity01) noexcept
         // lifting the pedal cannot cut a note whose key is still down. If the key
         // goes up again while the pedal is still down it is simply captured afresh.
         (note < 64 ? sustainedLo : sustainedHi) &= ~(1ull << (note & 63));
+        // Remembered for a later routing edge (see replayHeldNotes). A key pressed
+        // while a mode-switch fade is running is routed to the outgoing mode below,
+        // which is what is still sounding, and the commit replays it with every
+        // other held note into the mode that arrives.
+        keyVelocity[(size_t)note]   = clamp01(velocity01);
+        keyPressOrder[(size_t)note] = ++keyPressCount;
     }
-    // Mode-switch crossfade in flight: this note is routed to the outgoing mode
-    // below (right, it is what is still sounding), but the commit is about to
-    // reset the voice pool and wipe it. Remember it so the commit can re-issue it
-    // into the mode that actually arrives. See kMaxDeferredNotes.
-    //
-    // Capture is keyed BY NOTE NUMBER, not appended blindly: a key pressed,
-    // released and re-pressed inside the same 12 ms fade would otherwise leave two
-    // entries for one key, and the commit would replay it twice -- two voices for
-    // one key, of which only one can ever be released (VoiceAllocator::noteOff
-    // matches on note number, so the duplicate that is not first in the pool is
-    // orphaned and drones). One entry per key, latest velocity wins, which is
-    // exactly what the last press asked for.
-    if (modeSwitchPending)
-    {
-        int slot = 0;
-        while (slot < deferredNoteCount && deferredNotes[(size_t)slot].note != note) ++slot;
-        if (slot < deferredNoteCount)
-            deferredNotes[(size_t)slot].vel = clamp01(velocity01);
-        else if (deferredNoteCount < kMaxDeferredNotes)
-            deferredNotes[(size_t)deferredNoteCount++] = { note, clamp01(velocity01) };
-    }
+    routeNoteOn(note, velocity01);
+}
+
+// Start `note` on whichever path currently owns note-ons: the acid voice or
+// sequencer, the arpeggiator, or the poly voices. noteOn() minus the key-state
+// bookkeeping, so a routing edge can re-issue a held note without pressing its key
+// again (replayHeldNotes).
+void MultiSynthDSP::routeNoteOn(int note, float velocity01) noexcept
+{
     if (isAcidMode()) { acidNoteOn(note, velocity01); return; }
     // Keep voiceParams.mode current even for a frame-0 note that arrives before
     // the block's snapshot runs — the voice needs it to trigger the right osc
@@ -226,6 +227,48 @@ void MultiSynthDSP::noteOn(int note, float velocity01) noexcept
     else voices.noteOn(note, clamp01(velocity01), voiceParams);
 }
 
+// Re-issue every held note -- keys down plus pedal-held -- into the CURRENT
+// routing, oldest key first (rationale at keyPressOrder in the header). Called on
+// a routing edge after the old path has been released or reset. Fixed arrays and a
+// 128-entry insertion sort: no allocation, and it runs only on that edge.
+void MultiSynthDSP::replayHeldNotes() noexcept
+{
+    const uint64_t lo = heldNotesLo.load(std::memory_order_relaxed) | sustainedLo;
+    const uint64_t hi = heldNotesHi.load(std::memory_order_relaxed) | sustainedHi;
+    if ((lo | hi) == 0) return;
+    int notes[128];
+    int n = 0;
+    for (int k = 0; k < 128; ++k)
+    {
+        if (((((k < 64) ? lo : hi) >> (k & 63)) & 1ull) == 0) continue;
+        int j = n++;
+        while (j > 0 && keyPressOrder[(size_t)notes[j - 1]] > keyPressOrder[(size_t)k])
+        {
+            notes[j] = notes[j - 1];
+            --j;
+        }
+        notes[j] = k;
+    }
+    // Live Acid is one voice. Every held note goes on its last-note stack, but only
+    // the newest is played: replayed one by one, each would slide into the next and
+    // the voice would glide up through the whole chord.
+    if (isAcidMode() && p(pArpOn) <= 0.5f)
+    {
+        for (int i = 0; i < n; ++i)
+            pushAcidHeld(notes[i], keyVelocity[(size_t)notes[i]]);
+        const HeldNote& top = acidHeld[acidHeldCount - 1];
+        acidVoice.noteOn(midiToHz((float)top.note), top.vel > kAcidAccentVel, /*slide=*/false, top.vel);
+        return;
+    }
+    // The voices take only the newest notes the circuit has voices for. The rest
+    // would only steal each other, and in Mono, where that leaves the last key
+    // pressed, replaying the older keys first made the one voice glide from the
+    // oldest through each in turn. The arp takes every held note, as its pattern.
+    const int first = p(pArpOn) > 0.5f ? 0 : clampi(n - voices.effectivePoly(), 0, n);
+    for (int i = first; i < n; ++i)
+        routeNoteOn(notes[i], keyVelocity[(size_t)notes[i]]);
+}
+
 void MultiSynthDSP::noteOff(int note) noexcept
 {
     if (note >= 0 && note < 128)
@@ -233,11 +276,16 @@ void MultiSynthDSP::noteOff(int note) noexcept
         // The key-state mask always clears: the key IS up, whatever the pedal is
         // doing. Latch pruning combines it with the pedal mask explicitly (see
         // snapshotParameters), so nothing downstream loses the sustained notes.
-        (note < 64 ? heldNotesLo : heldNotesHi)
-            .fetch_and(~(1ull << (note & 63)), std::memory_order_relaxed);
+        const uint64_t bit = 1ull << (note & 63);
+        const bool wasDown = ((note < 64 ? heldNotesLo : heldNotesHi)
+                                  .fetch_and(~bit, std::memory_order_relaxed) & bit) != 0;
         if (sustainDown)
         {
-            (note < 64 ? sustainedLo : sustainedHi) |= 1ull << (note & 63);
+            // Only a key that was down is captured. A note-off for a key that is
+            // not (a host flushing note-offs, a duplicate) has nothing to hold, and
+            // a captured note is replayed on the next routing edge: switching the
+            // arp on played a note nobody pressed. A note already captured stays.
+            if (wasDown) (note < 64 ? sustainedLo : sustainedHi) |= bit;
             return;   // deferred to sustainPedal(false)
         }
     }
@@ -246,38 +294,11 @@ void MultiSynthDSP::noteOff(int note) noexcept
 
 // Release `note` through whichever path currently owns it. Called by a live key-up
 // and by the pedal-up sweep, so a deferred release is identical to a live one.
-//
-// This is also where the mode-switch capture is pruned, and it is the ONLY correct
-// place for it: the capture exists to re-issue a note the commit is about to wipe,
-// so it must survive for exactly as long as the note should sound. That is the
-// EFFECTIVE release, not the key-up -- with the pedal down noteOff() captures the
-// release and returns without reaching here, the note is still meant to sound after
-// the commit, and its deferred entry is still owed. When the pedal lifts,
-// releaseSustained() routes the deferred key-ups through here and they prune then.
-// Pruning in noteOff() instead would cut every pedal-held note pressed mid-fade.
-//
-// The release below is still issued unconditionally: the note is (or may be)
-// sounding in the OUTGOING mode as well, and that voice needs its note-off whether
-// or not a replay was owed.
 void MultiSynthDSP::routeNoteOff(int note) noexcept
 {
-    pruneDeferred(note);
     if (isAcidMode()) { acidNoteOff(note); return; }
     if (p(pArpOn) > 0.5f) arp.noteOff(note);
     else voices.noteOff(note);
-}
-
-// Drop any mode-switch capture for `note` (see routeNoteOff). Order-preserving
-// compaction of a fixed array -- no allocation, no locks, bounded by
-// kMaxDeferredNotes. Duplicate entries cannot exist (noteOn dedupes), but the loop
-// removes every match anyway so this stays correct if that ever changes.
-void MultiSynthDSP::pruneDeferred(int note) noexcept
-{
-    int w = 0;
-    for (int r = 0; r < deferredNoteCount; ++r)
-        if (deferredNotes[(size_t)r].note != note)
-            deferredNotes[(size_t)w++] = deferredNotes[(size_t)r];
-    deferredNoteCount = w;
 }
 
 // ============================ SUSTAIN CONTRACT ===============================
@@ -301,15 +322,11 @@ void MultiSynthDSP::pruneDeferred(int note) noexcept
 //   AND lifts the pedal: a panic that left the pedal latched down would re-strand
 //   the very next note played, which is exactly the stuck note the panic exists to
 //   clear.
-// * A mode switch clears the captured set with the rest of the note state
-//   (snapshotParameters); a preset change WITHIN a mode keeps held notes seamless,
-//   and pedal-held notes are held notes, so they are kept too.
-// * Mode-switch CAPTURE (deferredNotes) and pedal capture compose: a key pressed
-//   during the fade is remembered for replay, and a key-up during the fade only
-//   cancels that replay once the pedal (if any) lets the release through. Both
-//   prunings happen at routeNoteOff, the single point where a release becomes
-//   effective, so the pedal cannot strand a replayed note and a key-up cannot
-//   cancel a note the pedal is still holding.
+// * Routing edges (arp or acid sequencer on/off, a mode switch committing) hand
+//   pedal-held notes to the new path exactly like held keys (replayHeldNotes), and
+//   KEEP the captured set: those key-ups are still owed, and pedal-up delivers
+//   them through the new routing. A preset change WITHIN a mode changes no routing
+//   and keeps held notes seamless, pedal-held ones included.
 void MultiSynthDSP::sustainPedal(bool down) noexcept
 {
     if (down == sustainDown) return;
@@ -388,19 +405,16 @@ void MultiSynthDSP::allNotesOff() noexcept
     acidVoice.noteOff();
     acidSeq.reset();
     acidHeldCount = 0;
-    // A panic that lands DURING a mode-switch crossfade must also cancel the
-    // note-ons the fade captured for replay: the commit at the end of
-    // snapshotParameters re-issues them unconditionally, so leaving them here
-    // un-does the panic ~12 ms after it was sent and hands back the very notes it
-    // was supposed to kill.
-    deferredNoteCount = 0;
+    // Nothing is left for a routing edge to replay: the key and pedal masks above
+    // are what replayHeldNotes() reads, so a panic that lands during a mode-switch
+    // fade is not undone by the commit ~36 ms later.
 }
 
 // MIDI CC120 (All Sound Off). CC123 releases; this one MUTES.
 //
 // The spec: "all oscillators will turn off, and their volume envelopes are set to
 // zero as soon as possible". So it is allNotesOff() -- same note-state teardown,
-// same panic-clears-the-pedal rule, same deferred-replay cancellation -- plus a
+// same panic-clears-the-pedal rule, nothing left to replay -- plus a
 // hard stop on whatever is still sounding, because a 10 s release tail surviving an
 // All Sound Off is exactly what distinguishes it from CC123.
 //
@@ -433,29 +447,36 @@ void MultiSynthDSP::allSoundOff() noexcept
 // "held = false when the root's key lifts": holding C, then E (root moves to E),
 // then releasing E stopped the pattern with C still physically down. The stack
 // gives the sequencer the same next-newest unwind the live voice already had --
-// see acidNoteOff. The arpOn edge in snapshotParameters clears the stack for the
-// same reason it always did (the notes on it were routed the other way).
+// see acidNoteOff. Because both paths read it, the stack carries over the
+// sequencer toggle in snapshotParameters unchanged.
 void MultiSynthDSP::acidNoteOn(int note, float velocity01) noexcept
 {
     const float vel = clamp01(velocity01);
-    // Remove any existing entry for this note (re-press moves it to the top).
+    const bool slide = pushAcidHeld(note, vel);   // a note was already sounding -> legato glide
+    // Sequencer: the newest key is the root, exactly as before. Latch and the
+    // 16-step pattern are the sequencer's business, not the stack's.
+    if (p(pArpOn) > 0.5f) { acidSeq.noteOn(note); return; }
+    const bool accent = vel > kAcidAccentVel;
+    acidVoice.noteOn(midiToHz((float)note), accent, slide, vel);
+}
+
+// Put `note` on top of the last-note stack: a re-press moves it up, and a full
+// stack drops its oldest entry. Returns whether another note was already held,
+// which is what makes live play glide into this one.
+bool MultiSynthDSP::pushAcidHeld(int note, float vel) noexcept
+{
     int w = 0;
     for (int r = 0; r < acidHeldCount; ++r)
         if (acidHeld[r].note != note) acidHeld[w++] = acidHeld[r];
     acidHeldCount = w;
-    const bool slide = acidHeldCount > 0;   // a note was already sounding -> legato glide
-    // Push on top, dropping the oldest if the stack is full.
+    const bool wasHolding = acidHeldCount > 0;
     if (acidHeldCount >= 16)
     {
         for (int r = 1; r < 16; ++r) acidHeld[r - 1] = acidHeld[r];
         acidHeldCount = 15;
     }
     acidHeld[acidHeldCount++] = { note, vel };
-    // Sequencer: the newest key is the root, exactly as before. Latch and the
-    // 16-step pattern are the sequencer's business, not the stack's.
-    if (p(pArpOn) > 0.5f) { acidSeq.noteOn(note); return; }
-    const bool accent = vel > kAcidAccentVel;
-    acidVoice.noteOn(midiToHz((float)note), accent, slide, vel);
+    return wasHolding;
 }
 
 void MultiSynthDSP::acidNoteOff(int note) noexcept
@@ -509,27 +530,35 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
     // on the first block that starts with the fade at zero. Everything below this
     // point derives from vp.mode, so holding it steady is all it takes to keep the
     // outgoing engine intact and rendering for the length of the fade.
+    //
+    // An oversampling change takes the same fade. Changing the factor resets the
+    // decimators and the latency pad, which in the middle of a note is a step in the
+    // output (measured +52 to +59 dB over the steady signal's sample-to-sample
+    // curvature, a click). At zero gain it is silent, and the voices keep their
+    // notes and pitch through it.
     const SynthMode requestedMode = (SynthMode)clampi((int)p(pMode), 0, 5);
-    bool committedModeSwitch = false;
+    const int osSetting = (int)p(pOversampling);
+    const int requestedOs = osSetting == 0 ? 1 : (osSetting == 1 ? 2 : 4);
     if (!haveLastSnap)
     {
         // First snapshot after prepare/reset: adopt outright, there is nothing
         // sounding to fade and the host has already set the mode it wants.
         activeMode = requestedMode;
+        if (requestedOs != osFactor) applyOsFactor(requestedOs);
         modeSwitchPending = false;
         modeFade = 1.0f;
     }
     else if (modeSwitchPending && modeFade <= 0.0f)
     {
-        activeMode = requestedMode;     // muted: commit (cleanup runs further down)
-        modeSwitchPending = false;
-        committedModeSwitch = true;     // replay the deferred note-ons after cleanup
+        activeMode = requestedMode;     // muted: commit (cleanup and the held-note
+        modeSwitchPending = false;      // replay run further down)
+        if (requestedOs != osFactor) applyOsFactor(requestedOs);
     }
     else
     {
         // Starts a fade on a new request, and cancels one whose request was
         // reverted before it finished.
-        modeSwitchPending = (requestedMode != activeMode);
+        modeSwitchPending = (requestedMode != activeMode) || (requestedOs != osFactor);
     }
     vp.mode = activeMode;
 
@@ -631,6 +660,7 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
     arp.setOctaveRange((int)p(pArpOctave));
     arp.setRate((ArpRateDivision)clampi((int)p(pArpRate), 0, (int)ArpRateDivision::NumDivisions - 1));
     arp.setGate(p(pArpGate));
+    arp.setTieSteps(vp.legatoMode);   // ties only at full gate, see Arpeggiator
     arp.setSwing(p(pArpSwing));
     const bool latchOn = p(pArpLatch) > 0.5f;
     if (lastArpLatch && !latchOn)
@@ -734,6 +764,7 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
 
     // --- Mod matrix ---
     hasEffectsMixRouting = false;
+    vp.lfo1Used = vp.lfo2Used = false;
     for (int i = 0; i < kNumModSlots; ++i)
     {
         auto& slot = modMatrix.getSlot(i);
@@ -742,6 +773,13 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
         slot.amount = p((Param)(pModAmt0 + i));
         if (slot.destination == ModDest::EffectsMix && slot.source != ModSource::None && slot.amount != 0.0f)
             hasEffectsMixRouting = true;
+        // Exactly the slots ModMatrix::process reads: any with a destination, at
+        // any amount. An LFO nothing reads skips its sine (VoiceParameters).
+        if (slot.destination != ModDest::None)
+        {
+            if (slot.source == ModSource::LFO1) vp.lfo1Used = true;
+            if (slot.source == ModSource::LFO2) vp.lfo2Used = true;
+        }
     }
 
     // --- Acid (mode 5): mono voice + pattern sequencer ---
@@ -813,68 +851,57 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
     stereoWidth = p(pStereoWidth);
     vintage = p(pVintage);
 
-    // --- Preset/mode transition handling (stuck-note fix) ---------------------
-    // A factory-preset load can change the mode, or disable the arp / acid
-    // sequencer, WHILE notes are held. The note-routing path then changes out
-    // from under the sounding voice, so its key-up never reaches it and it drones
-    // forever. Detect the transition here and release the stranded voice(s).
-    // For an arp / sequencer disable that is a plain release, so envelopes enter
-    // Release and tails ring out with no click. Browsing presets WITHIN the same
-    // mode is untouched — held notes stay seamless, which is the correct, desired
-    // behaviour.
+    // --- Routing transitions: end the old path, hand held notes to the new ------
+    // A preset load or a knob can change the mode, or switch the arp / acid
+    // sequencer, WHILE notes are held. noteOn and noteOff pick their path from the
+    // CURRENT mode and arpOn, so whatever the old path started would never get its
+    // key-up and would drone forever (measured: -14.9 dB poly, -8.2 dBFS acid).
+    // Each edge therefore ends everything the old path was sounding, and then the
+    // notes the player is still holding -- keys and pedal -- are handed to the new
+    // path (replayHeldNotes): the arp picks up a held chord, a chord the arp was
+    // playing keeps sounding when it is switched off, and a new engine plays what
+    // the old one was holding. They used to go silent until pressed again.
+    // Browsing presets WITHIN a mode changes no routing; held notes stay seamless.
+    bool replayHeld = false;
     if (haveLastSnap)
     {
         if (vp.mode != lastSnapMode)
         {
-            // Mode changed: every note started under the old mode is unreachable.
-            // This branch only runs on the block that COMMITS a mode switch, i.e.
-            // with the voice path already faded to zero gain, so the outgoing
-            // engines are RESET rather than released — releasing them would ring the
-            // old notes back IN behind the fade-in, rendered through the new mode's
-            // oscillator section. Their EFFECT tails are unaffected either way: the
-            // mode fade sits ahead of the effects chain.
+            // Mode changed. This branch only runs on the block that COMMITS a mode
+            // switch, with the voice path already faded to zero gain, so the
+            // outgoing engines are RESET rather than released -- releasing them
+            // would ring the old notes back IN behind the fade-in, rendered through
+            // the new mode's oscillator section. Their EFFECT tails are unaffected
+            // either way: the mode fade sits ahead of the effects chain.
             voices.reset();
             acidVoice.reset();
-            acidHeldCount = 0;   // drop the live-acid held-note stack
-            // Pedal-captured note-offs belong to voices that no longer exist; the
-            // pedal itself stays down (it is a physical control, not note state), so
-            // playing into the new mode with the pedal still held sustains normally.
-            clearSustained();
-            arp.clearLatch();    // drop latched held notes (else they re-trigger
-            arp.reset();         // in the new mode and drone; reset() keeps them
-            acidSeq.clearLatch();// while latch is on)
+            acidHeldCount = 0;     // rebuilt by the replay if the new mode is Acid
+            arp.clearLatch();      // latched notes nobody holds do not carry over:
+            arp.reset();           // reset() alone keeps them while latch is on
+            acidSeq.clearLatch();
             acidSeq.reset();
+            replayHeld = true;
         }
         else
         {
-            // Same mode: only the specific subsystem whose routing moved is stranded.
-            // The arp toggle strands voices in BOTH directions, because noteOn and
-            // noteOff each pick their path from the CURRENT arpOn: enabling it while
-            // notes sound sends their key-ups to Arpeggiator::noteOff, which never
-            // reaches the poly voices that are actually sounding (measured -14.9 dB
-            // droning forever, with or without the sustain pedal), and disabling it
-            // strands the arp-triggered voice the same way. Either edge releases.
             if (lastArpEnabled != arpEnabled && vp.mode != SynthMode::Acid)
             {
-                voices.allNotesOff();
-                // The captured note-offs belong to the voices just released, and
-                // their routing has moved too — drop them like a mode switch does.
-                clearSustained();
+                voices.allNotesOff();   // what either path was sounding
+                replayHeld = true;      // into the arp's held-set, or back onto voices
             }
-            // The acid sequencer strands its voice on BOTH edges, for exactly the
-            // reason the arp does above: noteOn and noteOff each pick their path
-            // from the CURRENT arpOn. Enabling the sequencer while a note is held
-            // live routes that note's key-up to the sequencer, so it never
-            // reaches the acidVoice the live path gated on and the voice drones
-            // (measured -8.2 dBFS for the rest of the render, against a silent
-            // control that released the note before the edge). Disabling it
-            // strands the sequencer-gated voice the same way, which is the only
-            // direction that used to be handled.
             if (lastAcidSeqEnabled != acidSeqEnabled)
             {
-                acidVoice.noteOff();   // release whichever path had gated it
-                acidHeldCount = 0;     // the live stack was routed the old way
-                clearSustained();      // and so were the pedal-captured key-ups
+                // Acid keeps one held stack (keys and pedal, newest on top) for both
+                // of its paths, so it carries over as it is: the sequencer takes the
+                // top note as its root, or live play resumes on it.
+                acidVoice.noteOff();    // release whichever path had gated it
+                if (acidHeldCount > 0)
+                {
+                    const HeldNote& t = acidHeld[acidHeldCount - 1];
+                    if (acidSeqEnabled) acidSeq.noteOn(t.note);
+                    else acidVoice.noteOn(midiToHz((float)t.note), t.vel > kAcidAccentVel,
+                                          /*slide=*/false, t.vel);
+                }
             }
         }
     }
@@ -882,26 +909,9 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
     lastSnapMode = vp.mode;
     lastArpEnabled = arpEnabled;
     lastAcidSeqEnabled = acidSeqEnabled;
-
-    // Re-issue the note-ons that arrived mid-crossfade, now that the new mode is
-    // committed and the cleanup above has finished resetting the voice pool. They
-    // go back through noteOn(), so each one picks the routing of the mode that
-    // actually arrived -- poly, arp or acid -- rather than the one it was pressed
-    // under. The counter is cleared FIRST so the re-entry cannot re-capture.
-    if (committedModeSwitch && deferredNoteCount > 0)
-    {
-        const int n = deferredNoteCount;
-        deferredNoteCount = 0;
-        for (int i = 0; i < n; ++i)
-            noteOn(deferredNotes[(size_t)i].note, deferredNotes[(size_t)i].vel);
-    }
-    else if (!modeSwitchPending)
-    {
-        // No fade in flight: either one was cancelled before it committed, in
-        // which case the notes are sounding normally in the mode that stayed, or
-        // there was never one. Either way nothing is owed.
-        deferredNoteCount = 0;
-    }
+    // The pedal's captured key-ups are kept across every edge: their notes are
+    // being replayed, so the releases are still owed, now through the new routing.
+    if (replayHeld) replayHeldNotes();
 
     // --- Parameter smoothing targets -----------------------------------------
     // Everything above wrote this block's TARGETS. The render loop advances the
@@ -1026,10 +1036,8 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
     duskaudio::ScopedFlushDenormals noDenormals;
     if (nSamples <= 0) return;
 
-    // Apply a pending oversampling change at block start (never mid-block).
-    const int desiredOs = ((int)p(pOversampling) == 0) ? 1 : ((int)p(pOversampling) == 1) ? 2 : 4;
-    if (desiredOs != osFactor) applyOsFactor(desiredOs);
-
+    // An oversampling change is applied by snapshotParameters, at the bottom of
+    // the voice-path fade (see there).
     const double bpm = hostBpm.load(std::memory_order_relaxed);
     const bool playing = transportPlaying.load(std::memory_order_relaxed);
 
@@ -1159,8 +1167,38 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
                 if (arpEnabled)
                 {
                     const auto ev = arp.advanceSample(bpm, playing, songBeat, hostLocked);
-                    if (ev.noteOffValid) voices.noteOff(ev.offNote);
-                    if (ev.noteOnValid)  voices.noteOn(ev.onNote, (float)ev.onVel / 127.0f, voiceParams);
+                    if (ev.noteOffValid && ev.noteOnValid && arp.tiesSteps())
+                    {
+                        // Tied step (legato at full gate): the new note takes over
+                        // the voice the outgoing one still holds, and
+                        // SynthVoice::noteOn ties to it. Left to the allocator, a
+                        // poly circuit started it on a free voice with an attack
+                        // of its own. If the outgoing note has lost its voice, the
+                        // new one starts as usual and the old one is released.
+                        // The same pitch again is just the held note carrying on,
+                        // so no event is sent, unless the note has lost its voice:
+                        // a unison change that lowers the voice count retires it,
+                        // and with one key held every step is that same note, so
+                        // nothing would ever start it again.
+                        const float vel = (float)ev.onVel / 127.0f;
+                        if (ev.onNote != ev.offNote)
+                        {
+                            if (!voices.retarget(ev.offNote, ev.onNote, vel, voiceParams))
+                            {
+                                voices.noteOn(ev.onNote, vel, voiceParams);
+                                voices.noteOff(ev.offNote);
+                            }
+                        }
+                        else if (voices.findHeld(ev.onNote) < 0)
+                        {
+                            voices.noteOn(ev.onNote, vel, voiceParams);
+                        }
+                    }
+                    else
+                    {
+                        if (ev.noteOffValid) voices.noteOff(ev.offNote);
+                        if (ev.noteOnValid)  voices.noteOn(ev.onNote, (float)ev.onVel / 127.0f, voiceParams);
+                    }
                 }
                 for (int os = 0; os < osFactor; ++os)
                 {
@@ -1170,8 +1208,8 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
                 }
             }
 
-            float sL = decimL.process(iL);
-            float sR = decimR.process(iR);
+            float sL = padL.process(decimL.process(iL));
+            float sR = padR.process(decimR.process(iR));
             const float fxMod = fxAccum / (float)osFactor;
 
             // Mode-switch crossfade (see snapshotParameters). Applied to the VOICE path

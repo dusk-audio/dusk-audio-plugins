@@ -11,6 +11,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 
 namespace msynth
 {
@@ -46,6 +47,53 @@ inline float midiToHz(float note) noexcept
 }
 
 inline bool isBad(float x) noexcept { return std::isnan(x) || std::isinf(x); }
+
+// ---- exact memos for the per-sample voice math -----------------------------
+// The voice evaluates pow / cos / sin once per INTERNAL sample on inputs that are
+// usually unchanged from the last sample (an unrouted modulation, an envelope in
+// sustain, a static detune). A memo keeps the last input and its result. Inputs
+// are compared by their BITS rather than with ==, so -0.0 and +0.0 stay distinct
+// and a hit returns exactly what the call would have returned: the rendered
+// output is bit-identical with or without the memo.
+inline bool sameBits(float a, float b) noexcept
+{
+    uint32_t ua, ub;
+    std::memcpy(&ua, &a, sizeof ua);
+    std::memcpy(&ub, &b, sizeof ub);
+    return ua == ub;
+}
+
+// pow(2, x) for the last x seen. Starts valid: pow(2, +0) is exactly 1.
+struct Exp2Memo
+{
+    float x = 0.0f, y = 1.0f;
+    float operator()(float in) noexcept
+    {
+        if (!sameBits(in, x)) { x = in; y = std::pow(2.0f, in); }
+        return y;
+    }
+};
+
+// cos and sin of the constant-power pan angle, (pan + 1) * pi/4, for the last
+// pan position seen.
+struct PanMemo
+{
+    float pan = 0.0f, c = 0.0f, s = 0.0f;
+    bool  valid = false;
+    void get(float p, float& cosOut, float& sinOut) noexcept
+    {
+        if (!valid || !sameBits(p, pan))
+        {
+            valid = true;
+            pan = p;
+            const float angle = (p + 1.0f) * 0.25f * kPi;
+            c = std::cos(angle);
+            s = std::sin(angle);
+        }
+        cosOut = c;
+        sinOut = s;
+    }
+};
 
 // xorshift32 — small, fast, allocation-free. Each owner seeds it uniquely.
 struct Xorshift

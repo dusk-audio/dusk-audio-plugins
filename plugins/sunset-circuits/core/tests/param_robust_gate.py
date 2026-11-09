@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Engine robustness gate — bad parameter writes, meter range, crossfade capture.
+"""Engine robustness gate: bad parameter writes, meter range, crossfade capture,
+oversampling switches.
 
 A. A BAD PARAMETER VALUE MUST NOT KILL THE ENGINE FOR GOOD
     One out-of-range write left the synth rendering silence PERMANENTLY, with
@@ -82,6 +83,27 @@ D. PORTAMENTO ACROSS AN OVERSAMPLING SWITCH
     switch. The gate compares the switched render against the unswitched one, so
     it needs no absolute pitch model -- only that the switch did not change the
     trajectory.
+
+E. AN OVERSAMPLING SWITCH UNDER A HELD NOTE IS CLICK-FREE
+    Switching the factor resets the decimators and the latency pad, which in the
+    middle of a note is a step in the output. The switch now waits for the
+    voice path to fade out, as a mode switch does, and the note fades back in at
+    the new factor. A held sine (Cosmos, note 60) is switched 2x -> 1x -> 4x -> 2x
+    at 1, 2 and 3 s; the largest sample-to-sample curvature (second difference)
+    within 20 ms before to 60 ms after each switch is compared with the steady
+    note's own. A write the engine ignored would leave the note just as smooth,
+    so the factor the voices render at (render_test oslog=) must also read the
+    old factor up to the switch and the new one 0.1 s after it. Both channels
+    are measured, up to the block that shows the new factor, and oscillator 2
+    alone (CLEAN mutes it) must hold its pitch across each switch:
+
+        switch      pre-fix    post-fix   (dB over the steady note)
+        2x -> 1x    +58.7      -0.0
+        1x -> 4x    +52.0      +0.0
+        4x -> 2x    +54.5      -0.0
+
+    1.0.8, before the latency pad existed, measured the same (+59.4, +56.7,
+    +54.5): the decimator reset alone was the click.
 """
 import os
 import sys
@@ -248,12 +270,65 @@ def portamento_os(fails):
         fails.append("D")
 
 
+# time, label, factor before, factor after
+OS_SWITCHES = ((1.0, "2x -> 1x", 2, 1), (2.0, "1x -> 4x", 1, 4), (3.0, "4x -> 2x", 4, 2))
+OS_CLICK_MAX_DB = 3.0
+OS_COMMIT_S = 0.1   # the 36 ms fade plus a block, with room to spare
+OS_PITCH_MAX_CENTS = 1.0
+
+
+def os_switch_click(fails):
+    print("\nE. oversampling switched under a held note (largest second difference "
+          "over the steady note's, and the factor the voices render at either side)")
+    log = os.path.join(OUT, "probust_os_click.oslog")
+    _, x = render(0, 60, 4.0, 2, "probust_os_click", release=3.9, oslog=log,
+                  setat=["1.0:oversampling:0", "2.0:oversampling:2", "3.0:oversampling:1"],
+                  **CLEAN)
+    # (end of block, factor) per block. A write the engine ignored would leave the
+    # note as smooth as a perfect switch, so each switch must also be seen to land.
+    factors = np.loadtxt(log, ndmin=2)
+    # Each channel against its own steady note.
+    d2 = np.abs(np.diff(x, 2, axis=0))
+    steady = np.max(d2[int(0.5 * SR):int(0.9 * SR)], axis=0)
+    for t, label, before, after in OS_SWITCHES:
+        was = int(factors[factors[:, 0] <= t][-1, 1])
+        landed = factors[factors[:, 0] >= t + OS_COMMIT_S][0]
+        now = int(landed[1])
+        # From just before the switch to the block that shows it landed, so the
+        # commit and the start of the fade back in are inside the window.
+        a, b = int((t - 0.02) * SR), int(landed[0] * SR)
+        over = float(np.max(20.0 * np.log10(np.max(d2[a:b], axis=0) / steady)))
+        click_ok = over <= OS_CLICK_MAX_DB
+        commit_ok = was == before and now == after
+        if not (click_ok and commit_ok):
+            fails.append("E")
+        print(f"   {label}: {over:+5.1f} dB (max +{OS_CLICK_MAX_DB:.0f})   "
+              f"{'PASS' if click_ok else 'FAIL'};  renders {was}x before, {now}x after "
+              f"(want {before}x, {after}x)   {'PASS' if commit_ok else 'FAIL'}")
+
+    # The oscillators take the new rate on the switch. Oscillator 2 alone (CLEAN
+    # mutes it), a fifth up, must keep its pitch across each one.
+    _, y = render(2, 60, 4.0, 2, "probust_os_osc2", release=3.9,
+                  setat=["1.0:oversampling:0", "2.0:oversampling:2", "3.0:oversampling:1"],
+                  **dict(CLEAN, osc1Level=0, osc2Level=1, osc2Wave=3, osc2Semi=7))
+    for t, label, _, _ in OS_SWITCHES:
+        f0 = peak_hz(y[int((t - 0.35) * SR):int((t - 0.05) * SR), 0], SR, 30.0)
+        f1 = peak_hz(y[int((t + 0.15) * SR):int((t + 0.45) * SR), 0], SR, 30.0)
+        cents = 1200.0 * np.log2(f1 / f0)
+        ok = abs(cents) <= OS_PITCH_MAX_CENTS
+        if not ok:
+            fails.append("E")
+        print(f"   {label}: oscillator 2 {f0:.2f} Hz -> {f1:.2f} Hz ({cents:+.2f} ct, "
+              f"max +-{OS_PITCH_MAX_CENTS:.0f})   {'PASS' if ok else 'FAIL'}")
+
+
 def main():
     fails = []
     bad_parameter(fails)
     meter_floor(fails)
     crossfade_capture(fails)
     portamento_os(fails)
+    os_switch_click(fails)
     print(f"\nparam_robust_gate: {'PASS' if not fails else 'FAIL (' + ','.join(fails) + ')'}")
     sys.exit(0 if not fails else 1)
 

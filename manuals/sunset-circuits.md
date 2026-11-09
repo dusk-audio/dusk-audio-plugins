@@ -63,7 +63,7 @@ After installing, rescan plugins in your DAW. If the instrument does not appear,
 
 The six mode rockers at the top center are the most important control in the instrument. Click one to switch circuits. The panel color crossfades over about a quarter second, the mode sub-panel (the small panel on the right, below the LFOs) morphs to show that mode's signature controls, and a few controls in the standard panels appear or disappear depending on which mode is active. The mode is a normal automatable parameter, so you can switch circuits from the host if you want.
 
-Switching modes is click-safe. The old circuit's voices are crossfaded out over 12 ms while the new one comes up, so a mode change under a held chord is a fast dip rather than a click, and the delay and reverb tails ring on through it. The crossfade lands on an exact sample rather than waiting for the next buffer boundary, so a mode switch sounds the same at a 64-sample buffer and at 4096.
+Switching modes is click-safe. The old circuit's voices fade out over 36 ms and the new circuit fades in over the same time, so a mode change under a held chord is a short dip rather than a click, and the delay and reverb tails ring on through it. The notes you are holding, on the keys or with the sustain pedal, carry over: the new circuit plays them as it comes up, so you can audition circuits under a held chord. A circuit with fewer voices than the notes you hold takes the most recent ones, so Mono plays the last key you pressed. The switch lands on an exact sample rather than waiting for the next buffer boundary, so it sounds the same at a 64-sample buffer and at 4096.
 
 Loading a factory preset also sets the mode, because the mode is stored with the preset. If you switch modes by hand without loading a preset, the other parameters keep their current values, so the sound may not match what you expect from that circuit until you load a preset or dial it in.
 
@@ -76,6 +76,8 @@ The full-width keyboard at the bottom is playable with the mouse and sends MIDI 
 **The OCT- and OCT+ buttons** shift the played octave by twelve semitones per click, from a bottom key of C0 up to a bottom key of C6. The default is C3.
 
 **The pitch and mod wheels** sit to the left of the keys. The pitch wheel is bipolar and springs back to center when you let go; the mod wheel latches where you leave it and also responds to the scroll wheel. Both grab absolutely, so clicking part-way up a wheel jumps it there. They are the on-screen stand-ins for the two controllers a hardware synth puts left of the keybed, and the only way to exercise the Pitch Bend and Mod Whl mod-matrix sources without external hardware.
+
+**Glide and Legato.** Glide slides the pitch from one note to the next over the Glide time, or at a fixed rate with Glide Mode. With **Legato** on, notes that overlap tie: the new note takes over the one still held without a new attack, and glide happens only between overlapping notes, so a detached note lands straight on its pitch. That is the classic way to play Mono basses and leads. In the poly circuits a note ties only when it has to take over a voice that is still held, because a free voice is always used first. At full arpeggiator gate, Legato ties the arpeggiator's steps too, in every circuit: each step takes over the voice of the step before it (see the arpeggiator controls).
 
 ### Reading the panel
 
@@ -257,11 +259,11 @@ The sequencer strip along the bottom is an arpeggiator and step sequencer shared
 
 ### Arpeggiator controls
 
-- **Arp On**: enable the arpeggiator or step sequencer.
+- **Arp On**: enable the arpeggiator or step sequencer. Switch it on while you hold keys and the pattern starts on them; switch it off and the keys you are still holding keep sounding as a chord (in Mono and Acid, the last key you pressed). Nothing has to be pressed again.
 - **Arp Mode**: the note order the arpeggiator plays: Up, Down, Up/Down, Down/Up, Random, Order (as played), or Chord. Chord is a known limitation in this release: it is selectable and stable, but it currently steps one note at a time exactly as Up does rather than striking every held note on each step. Use a held chord with the arpeggiator off if you want block chords.
 - **Arp Octave**: how many octaves the arpeggio spans, 1 to 4.
 - **Arp Rate**: the step length as a note division, from 1/1 down to 1/32, including dotted (1/8. and so on) and triplet (1/8T and so on) divisions.
-- **Arp Gate**: the length of each step relative to its slot, from staccato to fully connected.
+- **Arp Gate**: the length of each step relative to its slot, from staccato to fully connected. At full gate with Legato on, the steps tie: each one takes over the last without a new attack, and glides into it when Glide is up. A repeated note simply holds.
 - **Arp Swing**: delays the off-beat steps for a swung feel while keeping the downbeats on the grid.
 - **Arp Latch**: holds the pattern after you release the keys, so it keeps playing hands-free.
 - **Arp Vel Mode**: where each step's velocity comes from: As Played, Fixed, or Accent.
@@ -439,15 +441,13 @@ Factory presets ship at 2x.
 
 ### Reported latency
 
-Oversampling adds a small, fixed processing latency from the decimation filter, which the plugin reports to the host so plugin delay compensation keeps everything aligned:
+The filter that brings the oversampled voices back to the host rate delays them slightly, by an amount that depends on the oversampling factor. The plugin pads the shorter paths so the delay is the same at every factor, and reports it to the host so plugin delay compensation keeps everything aligned:
 
 | Oversampling | Reported latency |
 |---|---|
-| 1x | 0 samples |
-| 2x | 12 samples |
-| 4x | 14 samples |
+| 1x, 2x and 4x | 13 samples |
 
-These are host samples and are independent of the sample rate. If other tracks sound slightly out of time when you change oversampling, confirm plugin delay compensation is enabled in your DAW.
+These are host samples and are independent of the sample rate: 13 samples is 0.27 ms at 48 kHz. Because the latency never changes, switching oversampling does not make your DAW restart the plugin, and held notes keep playing. The voices fade out over 36 ms, change factor in silence, and fade back in over the same time, so the switch is a short dip rather than a click; the delay and reverb tails ring on through it. If other tracks sound slightly out of time, confirm plugin delay compensation is enabled in your DAW.
 
 ### CPU
 
@@ -468,7 +468,7 @@ The first row is the worst case among ordinary patches: a full 8-voice FM patch,
 
 ### Parameters and automation
 
-Every control is a normal host parameter: 223 automatable parameters, plus two output-only level meters the host can read but not write, for 225 host parameters in total (229 ports in the LV2 build, counting audio, MIDI, and the latency report). Oversampling is one of the 223, so it automates like anything else. Controls that a mode hides are still present in the host's parameter list, so an automation lane never breaks when you switch circuits.
+Every control is a normal host parameter: 223 automatable parameters, plus two output-only level meters the host can read but not write, for 225 host parameters in total (229 ports in the LV2 build, counting audio, MIDI, and the latency report). Oversampling is one of the 223, so it automates like anything else, and since the latency is the same at every factor, automating it never makes the host restart the plugin. Controls that a mode hides are still present in the host's parameter list, so an automation lane never breaks when you switch circuits.
 
 Continuous parameters are smoothed, so automating or dragging them does not produce zipper noise. The smoother settles with an 8 ms time constant, short enough that a knob still feels immediate. Filter cutoffs are smoothed in the log-frequency domain rather than in Hz, so a sweep sounds even across the range instead of racing through the top octaves. The smoothed set covers the level, filter and effect-mix controls; the rest step per block, which for most of them is inaudible. A few are deliberately left unsmoothed because smoothing them would be worse than the step: oscillator and unison detune, pulse width, and the LFO and chorus rates all set a phase increment or an edge position, where a ramp is a pitch glide nobody asked for. Stepped controls (waveforms, modes, sequencer cells, mod-matrix routings) switch outright, as they should.
 
@@ -577,4 +577,6 @@ Two names are easy to misread. **Acid Squelch** and **Acid Machine** are Mono-mo
 
 **The text looks slightly soft.** The font atlas is baked once when the plugin window opens, at the pixel density of the display it opened on. Moving the window to a display with a different density, or zooming a long way from the size it opened at, softens the text until you close and reopen the plugin. A live atlas rebuild is planned for a future release.
 
-**My host shows extra latency.** Oversampling at 2x or 4x reports a small fixed latency (12 or 14 samples) so the host can compensate. Confirm plugin delay compensation is enabled in your DAW if other tracks sound out of sync.
+**My host shows extra latency.** The plugin reports a small fixed latency of 13 samples, the same at every oversampling setting, so the host can compensate. Confirm plugin delay compensation is enabled in your DAW if other tracks sound out of sync.
+
+**The arpeggiator stops, or notes cut out, while I am holding keys.** Check whether it happens on a loop wrap, a jump of the playhead, or a transport stop. Many DAWs send All Notes Off or All Sound Off (MIDI CC 123 or CC 120) to an instrument at those moments, and Sunset Circuits obeys them: the arpeggiator's held notes are cleared and stay silent until you press the keys again. If the cut-outs line up with the loop point, the host is sending the panic. A mode change also dips the sound for a moment, and drops a latched pattern that no key or pedal is holding.

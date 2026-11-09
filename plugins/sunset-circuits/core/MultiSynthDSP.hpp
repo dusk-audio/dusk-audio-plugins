@@ -159,6 +159,10 @@ public:
     // Name lookup for the test harness / shell param mapping. Returns -1 if unknown.
     static int paramIndexForName(const char* name) noexcept;
 
+    // Output latency in host samples, the same at every oversampling factor (see
+    // LatencyPad). The shell reports it to the host; it never changes.
+    static constexpr int kLatencySamples = 13;
+
     // Tell the engine that the parameter table was just rewritten wholesale by a
     // program / preset load, so the smoothed controls must LAND on their new
     // values instead of gliding to them (a preset switch must never swoop).
@@ -213,6 +217,11 @@ public:
     float getOutputLevelR() const noexcept { return outLevelR.load(std::memory_order_relaxed); }
     int   getArpStep() const noexcept { return arpStep.load(std::memory_order_relaxed); }
     int   getArpTotalSteps() const noexcept { return arpTotalSteps.load(std::memory_order_relaxed); }
+    // The oversampling factor the voices render at now: the parameter's, once a
+    // change has committed at the bottom of the voice-path fade. NOT an atomic:
+    // read it only from the thread that calls processBlock, between calls
+    // (render_test logs it after each block).
+    int   getOsFactor() const noexcept { return osFactor; }
     // Current performance-wheel state, whoever last wrote it — the shell's MIDI
     // handler (0xE0 / CC 1) or the editor's on-screen wheels. Read-only, relaxed,
     // no new state: these are the same atomics pitchBend()/modWheel() store into.
@@ -364,7 +373,9 @@ private:
     // The switch is DEFERRED instead. The requested mode is held off while the
     // voice path fades out over kModeFadeSeconds; it commits on the first block
     // that starts with the fade at zero, and the new mode fades back in. The
-    // outgoing note is faded rather than cut mid-waveform.
+    // outgoing note is faded rather than cut mid-waveform. An oversampling change
+    // waits for the same fade, because switching the factor resets the decimators
+    // and the latency pad (snapshotParameters).
     //
     // activeMode is what the engine is actually RENDERING; it lags the parameter
     // while a fade is in flight. Note routing has to follow it (a note arriving
@@ -382,31 +393,34 @@ private:
     }
 
     SynthMode activeMode = SynthMode::Cosmos;
-    bool  modeSwitchPending = false;   // fading out, waiting to commit
+    bool  modeSwitchPending = false;   // fading out, waiting to commit a mode or OS change
     float modeFade = 1.0f;             // voice-path gain, 0..1
     float modeFadeStep = 1.0f;         // per host sample, set in prepare()
 
-    // Note-ons that arrived while a mode-switch crossfade was in flight. They are
-    // routed to the OUTGOING mode (correctly -- that is what is still sounding),
-    // but the commit resets the voice pool, so without this they are wiped and
-    // the key simply does nothing. Measured: a key pressed 2 ms into the 12 ms
-    // fade sustained at -168.9 dBFS, against -9.7 dBFS for the same key pressed
-    // 8 ms later. Replayed into the new mode on the commit segment.
+    // ========================= HELD-NOTE HAND-OVER ===========================
+    // A routing edge -- the arp or the acid sequencer switching on or off, or a
+    // mode switch committing -- moves where notes go, and the notes the player is
+    // still holding have to move with it. They used not to: the edge released (or,
+    // for a mode switch, reset) whatever was sounding and the held keys went
+    // silent until they were pressed again, so a held chord simply stopped when the
+    // arp was switched on, and an engine change in the middle of a phrase cut it.
     //
-    // Fixed array, sized to the largest voice pool, so the capture allocates
-    // nothing on the audio thread; past that a held chord simply stops
-    // capturing, which is the same as today's behaviour.
+    // "Held" is exactly what a note-off has not yet ended: keys down (heldNotes*)
+    // plus the notes the sustain pedal is holding (sustained*). Their captured
+    // key-ups stay owed across the edge and are delivered through the NEW routing,
+    // so nothing is stranded. replayHeldNotes() re-issues them in the order the
+    // keys were pressed (keyPressOrder), at the velocity each was struck with
+    // (keyVelocity) -- press order matters to mono last-note priority and to the
+    // arp's As-Played pattern.
     //
-    // Entries are keyed by note number (noteOn updates in place rather than
-    // appending a second entry for the same key) and are dropped again by
-    // pruneDeferred() when the note's release becomes effective, so a key that goes
-    // up before the commit is not replayed into a note nobody can release. Cleared
-    // wholesale by reset() and by allNotesOff() / allSoundOff().
-    static constexpr int kMaxDeferredNotes = 16;
-    struct DeferredNote { int note = -1; float vel = 0.0f; };
-    DeferredNote deferredNotes[kMaxDeferredNotes] = {};
-    int deferredNoteCount = 0;
-    void pruneDeferred(int note) noexcept;
+    // This also covers the mode-switch fade, which used to keep its own list of
+    // notes pressed while the fade was running: such a note is held like any other.
+    // Audio thread only (every note event is), so plain members.
+    void routeNoteOn(int note, float velocity01) noexcept;
+    void replayHeldNotes() noexcept;
+    std::array<float, 128>    keyVelocity {};
+    std::array<uint32_t, 128> keyPressOrder {};
+    uint32_t                  keyPressCount = 0;
 
     // --- Acid mode (mode 5) helpers ---
     // Note routing for mode 5 lives outside the poly VoiceAllocator: a single
@@ -414,8 +428,41 @@ private:
     bool  isAcidMode() const noexcept { return renderMode() == SynthMode::Acid; }
     void  acidNoteOn(int note, float velocity01) noexcept;
     void  acidNoteOff(int note) noexcept;
+    bool  pushAcidHeld(int note, float vel) noexcept;   // see acidNoteOn
     // 100/127: MIDI velocity > 100 accents a live-played acid note (design doc).
     static constexpr float kAcidAccentVel = 100.0f / 127.0f;
+
+    // ========================= CONSTANT LATENCY ==============================
+    // The decimator's group delay depends on the factor: none at 1x, 11.5 host
+    // samples at 2x (downA alone, 47 taps at 2x) and 13.25 at 4x (plus downB, 15
+    // taps at 4x); cross-correlating one note onset rendered at each factor
+    // measures 11.3 and 12.9. Re-measure if the halfband taps change. Reporting
+    // that delay made every Oversampling change a LATENCY change, which hosts
+    // answer by restarting the plugin: a dropout, and in some hosts a pause of the
+    // whole audio engine. The voice path is padded instead, so it is
+    // kLatencySamples late at every factor and the report never moves: 1x by 13,
+    // 2x by 2, 4x not at all, which lands all three within half a sample of 13.
+    // Cost against the old per-factor report: 13 samples (0.27 ms at 48 kHz) at
+    // 1x, about 2 at the default 2x, nothing at 4x.
+    static constexpr int padFor(int factor) noexcept
+    { return factor == 4 ? 0 : factor == 2 ? 2 : kLatencySamples; }
+    struct LatencyPad
+    {
+        static constexpr int kSize = 16;   // power of two above the largest pad
+        float buf[kSize] = {};
+        int   pos = 0, delay = 0;
+        // delay == 0 hands x straight back, so the 4x path is unchanged bit for bit.
+        float process(float x) noexcept
+        {
+            buf[pos] = x;
+            const float y = buf[(pos - delay) & (kSize - 1)];
+            pos = (pos + 1) & (kSize - 1);
+            return y;
+        }
+        void reset() noexcept { for (float& v : buf) v = 0.0f; pos = 0; }
+    };
+    static_assert(kLatencySamples < LatencyPad::kSize, "latency pad ring too small");
+    LatencyPad padL, padR;
 
     // Streaming stereo decimator: generate `factor` internal samples, get one
     // host sample. Halfband stage assignment mirrors DuskOversampler.
@@ -503,12 +550,12 @@ private:
     bool  arpEnabled = false;
     bool  lastArpLatch = false;   // detects the latch 1->0 edge (prune latched notes)
 
-    // Preset/mode transition tracking (stuck-note fix). snapshotParameters()
-    // compares these against the current snapshot: a mode change or an arp /
-    // acid-sequencer disable while a note is held would otherwise strand the
-    // sounding voice (its note-off routes through the new path, or the disabled
-    // subsystem stops advancing), so we release it. haveLastSnap suppresses a
-    // spurious release on the very first block (before any real transition).
+    // Routing-edge tracking. snapshotParameters() compares these against the
+    // current snapshot: a mode change or an arp / acid-sequencer toggle while a
+    // note is held would otherwise strand the sounding voice (its note-off routes
+    // through the new path, or the disabled subsystem stops advancing), so the edge
+    // ends the old path and hands the held notes to the new one. haveLastSnap
+    // suppresses a spurious edge on the very first block (before any real one).
     bool      haveLastSnap = false;
     SynthMode lastSnapMode = SynthMode::Cosmos;
     bool      lastArpEnabled = false;

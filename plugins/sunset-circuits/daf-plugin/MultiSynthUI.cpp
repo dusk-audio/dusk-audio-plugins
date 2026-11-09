@@ -2027,7 +2027,9 @@ private:
     {
         panelBox(348, 60, 752, 300, 1.0f, kCosmosRed);
         sectionTitle(356, 64, "FILTER");
-        drawFilterCurve(360, 74, 742, 156);
+        // Top edge 2 px under Cosmos's title band (panel top 60 + 20), which the
+        // graph used to cover.
+        drawFilterCurve(360, 82, 742, 156);
 
         // Oversized cutoff knob with a static CUTOFF label + persistent kHz readout
         // (defect 7). knobSkewed handles the log drag; readout drawn manually so it
@@ -2139,15 +2141,17 @@ private:
             return;
         }
 
+        // Both displays start 2 px under Cosmos's title band (panel top 304 + 20),
+        // which they used to cover.
         panelBox(348, 304, 548, 542, 1.0f, kCosmosRed);
         sectionTitle(356, 308, "AMP ENV");
-        drawADSR(356, 320, 540, 420, kParamAmpA, kParamAmpS, ampEnv, ampHash, false);
+        drawADSR(356, 326, 540, 420, kParamAmpA, kParamAmpS, ampEnv, ampHash, false);
         drawADSRKnobs(380, kParamAmpA, "amp");
         comboBox("ampcrv", kParamAmpCurve, 360, 514, 536, 538, kEnvCurve, 4);
 
         panelBox(552, 304, 752, 542, 1.0f, kCosmosRed);
         sectionTitle(560, 308, "FILTER ENV");
-        drawADSR(560, 320, 744, 420, kParamFiltA, kParamFiltS, filtEnv, filtHash, true);
+        drawADSR(560, 326, 744, 420, kParamFiltA, kParamFiltS, filtEnv, filtHash, true);
         drawADSRKnobs(584, kParamFiltA, "filt");
         comboBox("filtcrv", kParamFiltCurve, 564, 514, 740, 538, kEnvCurve, 4);
     }
@@ -2167,12 +2171,13 @@ private:
         const float D = values[kParamAmpD], S = values[kParamAmpS];
         if (!acidEnvValid || D != acidEnvDecay || S != acidEnvSustain)
         {
-            computeADSR(rx0, ry0, rx1, ry1, 0.003f, D, S,
+            computeADSR(rx0, ry0 + kEnvPeakInset, rx1, ry1, 0.003f, D, S,
                         msynth::AcidVoice::kRelease, 1, acidEnv);
             acidEnvDecay = D;
             acidEnvSustain = S;
             acidEnvValid = true;
         }
+        dl->PushClipRect(P(rx0, ry0), P(rx1, ry1), true);
         for (int i = 0; i + 1 < kAdsrN; ++i)
             dl->AddQuadFilled(P(acidEnv[i].x, acidEnv[i].y),
                               P(acidEnv[i + 1].x, acidEnv[i + 1].y),
@@ -2181,6 +2186,7 @@ private:
         ImVec2 line[kAdsrN];
         for (int i = 0; i < kAdsrN; ++i) line[i] = P(acidEnv[i].x, acidEnv[i].y);
         dl->AddPolyline(line, kAdsrN, live.accent, 0, 2.0f * s);
+        dl->PopClipRect();
         dl->AddRect(P(rx0, ry0), P(rx1, ry1), IM_COL32(0, 0, 0, 180),
                     4.0f * s, 0, 1.2f * s);
 
@@ -2218,6 +2224,10 @@ private:
         }
     }
 
+    // The envelope peak (level 1) is plotted this far below the display's top edge,
+    // so the 2 px stroke stays inside the box instead of straddling its border.
+    static constexpr float kEnvPeakInset = 3.0f;
+
     struct EnvCache { float x0, y0, x1, y1; };
     void drawADSR(float rx0, float ry0, float rx1, float ry1,
                   uint32_t baseA, uint32_t sParam, ImVec2* pts, float& hash, bool filt)
@@ -2226,8 +2236,9 @@ private:
         const float A = values[baseA], D = values[baseA + 1], S = values[sParam], R = values[baseA + 3];
         const int crv = (int)std::lround(values[filt ? kParamFiltCurve : kParamAmpCurve]);
         const float h = A + D * 3.1f + S * 7.3f + R * 11.7f + crv * 101.0f + (rx1 - rx0) + (ry1 - ry0) * 3.0f;
-        if (h != hash) { hash = h; computeADSR(rx0, ry0, rx1, ry1, A, D, S, R, crv, pts); }
+        if (h != hash) { hash = h; computeADSR(rx0, ry0 + kEnvPeakInset, rx1, ry1, A, D, S, R, crv, pts); }
 
+        dl->PushClipRect(P(rx0, ry0), P(rx1, ry1), true);
         const float baseY = ry1;
         for (int i = 0; i + 1 < kAdsrN; ++i)
             dl->AddQuadFilled(P(pts[i].x, pts[i].y), P(pts[i + 1].x, pts[i + 1].y),
@@ -2235,6 +2246,7 @@ private:
         ImVec2 line[kAdsrN];
         for (int i = 0; i < kAdsrN; ++i) line[i] = P(pts[i].x, pts[i].y);
         dl->AddPolyline(line, kAdsrN, live.accent, 0, 2.0f * s);
+        dl->PopClipRect();
         dl->AddRect(P(rx0, ry0), P(rx1, ry1), IM_COL32(0, 0, 0, 180), 4.0f * s, 0, 1.2f * s);
     }
 
@@ -4510,7 +4522,7 @@ private:
         tips[kParamUnisonDetune] = "Spread of detuning across unison voices, in cents.";
         tips[kParamUnisonSpread] = "Stereo spread of unison voices.";
         tips[kParamPortaTime] = "Glide time between notes.";
-        tips[kParamLegato] = "Glide only when notes overlap.";
+        tips[kParamLegato] = "Overlapping notes tie: no new attack, and glide only between them. At full arp gate the arp's steps tie too.";
         tips[kParamGlideMode] = "Glide as a fixed time or a fixed rate.";
         tips[kParamVelSens] = "How strongly velocity affects level.";
         tips[kParamVelCurve] = "Response curve applied to incoming velocity.";
@@ -4519,7 +4531,7 @@ private:
         tips[kParamArpMode] = "Note order the arpeggiator plays.";
         tips[kParamArpOctave] = "Range the arpeggio spans, in octaves.";
         tips[kParamArpRate] = "Step length as a note division.";
-        tips[kParamArpGate] = "Length of each step relative to its slot.";
+        tips[kParamArpGate] = "Length of each step relative to its slot. At full gate with Legato on, steps tie.";
         tips[kParamArpSwing] = "Delays off-beat steps for a swung feel.";
         tips[kParamArpLatch] = "Hold the pattern after keys are released.";
         tips[kParamArpVelMode] = "Velocity source for steps: as played, fixed, or accented.";

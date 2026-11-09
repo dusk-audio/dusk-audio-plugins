@@ -133,6 +133,11 @@ struct VoiceParameters
 
     // Performance controllers (mod sources).
     float modWheel = 0.0f, aftertouch = 0.0f;
+
+    // Whether any mod-matrix slot reads LFO 1 / LFO 2 (source set, destination
+    // not None). An unread LFO still advances every piece of its state but skips
+    // evaluating its sine (LFO::processSample), the costliest part of it.
+    bool lfo1Used = true, lfo2Used = true;
 };
 
 //==============================================================================
@@ -227,17 +232,32 @@ public:
         retiring = false; retirePhase = 1.0f;
     }
 
+    // LEGATO ("Glide only when notes overlap"). A note that lands on a voice whose
+    // note is still HELD -- key or sustain pedal down, see isGateHeld() -- is TIED
+    // to it: the envelopes, LFOs and oscillator phases run on, the voice keeps the
+    // first note's velocity (a new one would step the level without an attack to
+    // hide it), and only the pitch moves, gliding when Glide is up. Any other note
+    // starts one of its own, and with legato on that note does not glide.
+    //
+    // The tie used to be decided by ampEnv.isActive(), which is also true while the
+    // envelope RELEASES. A legato note landing on a releasing voice -- every arp
+    // step, since the arp releases each step before the next starts, and every
+    // steal of a held voice, which used to be released first -- skipped its attack
+    // and rode the old note's release down to silence (measured: 58 of 64 Mono arp
+    // steps silent with a 1 s release, and a held Mono legato note gone within 2 s).
     void noteOn(int midiNote, float velocity, const VoiceParameters& params) noexcept
     {
+        const bool tie = params.legatoMode && isGateHeld();
+
         currentNote = midiNote;
-        currentVelocity = velocity;
+        if (!tie) currentVelocity = velocity;
         active = true;
         polyPressure = 0.0f;   // a new note starts unpressed until 0xA0 says otherwise
         retiring = false; retirePhase = 1.0f;   // a re-used voice is no longer retiring
 
         const float targetFreq = midiToHz((float)midiNote);
 
-        if (params.portamentoTime > 0.0f && lastFreq > 0.0f)
+        if (params.portamentoTime > 0.0f && lastFreq > 0.0f && (tie || !params.legatoMode))
         {
             float tau = params.portamentoTime;
             if (params.glideMode != 0) // constant rate: proportional to interval (octaves)
@@ -252,19 +272,22 @@ public:
         }
         lastFreq = targetFreq;
 
-        float mappedVel = velocity;
-        switch (params.velocityCurve)
+        if (!tie)
         {
-            case 1: mappedVel = std::sqrt(velocity); break;
-            case 2: mappedVel = velocity * velocity; break;
-            case 3: mappedVel = 1.0f; break;
-            default: break;
+            float mappedVel = velocity;
+            switch (params.velocityCurve)
+            {
+                case 1: mappedVel = std::sqrt(velocity); break;
+                case 2: mappedVel = velocity * velocity; break;
+                case 3: mappedVel = 1.0f; break;
+                default: break;
+            }
+            velocityGain = 1.0f - params.velocitySensitivity * (1.0f - mappedVel);
         }
-        velocityGain = 1.0f - params.velocitySensitivity * (1.0f - mappedVel);
 
         randomPerNote = rng.nextFloat();
 
-        if (!params.legatoMode || !ampEnv.isActive())
+        if (!tie)
         {
             ampEnv.noteOn();
             filtEnv.noteOn();
@@ -331,18 +354,17 @@ public:
     // zeroes it). Controllers stop sending 0xA0 at key-up, so the last value simply
     // persists; that is the same convention channel pressure follows.
     void setPolyPressure(float v01) noexcept { polyPressure = v01; }
-    // Voice steal: release everything that shapes the outgoing note before the new
-    // one is triggered on top. The FILTER envelope must release with the amp
-    // envelope, not just alongside it: in legato mode noteOn() deliberately skips
-    // the retrigger while ampEnv is still active, so a stolen voice runs its amp
-    // release to silence while filtEnv sat in Sustain holding the cutoff wide open
-    // for the whole fade — and left that stale level as the seed for the next note
-    // to land on this voice. Outside legato the following noteOn() retriggers both
-    // envelopes from their current values, so this is a no-op there.
-    void setSteal() noexcept
+
+    // The note on this voice is still held, by its key or by the sustain pedal (a
+    // pedal-held key-up never reaches the voice): the amp envelope is in attack,
+    // decay or sustain. Release does not count -- that note is ending -- and
+    // neither does a retiring voice, which retire() has already released.
+    bool isGateHeld() const noexcept
     {
-        ampEnv.noteOff(); filtEnv.noteOff();
-        for (int u = 0; u < kMaxUnison; ++u) fm[u].noteOff();
+        const ADSREnvelope::Stage s = ampEnv.getStage();
+        return active && !retiring
+            && (s == ADSREnvelope::Stage::Attack || s == ADSREnvelope::Stage::Decay
+                || s == ADSREnvelope::Stage::Sustain);
     }
 
     // Retire: the voice has fallen OUTSIDE the allocator's effective polyphony
@@ -471,10 +493,10 @@ public:
         if (--driftCounter <= 0) { driftTarget = rng.nextBipolar(); driftCounter = 200 + rng.nextInt(300); }
         driftSmooth += (driftTarget - driftSmooth) * 0.001f;
         baseFreq *= (1.0f + driftSmooth * params.analogAmount * 0.002f);
-        baseFreq *= std::pow(2.0f, (params.pitchBendSemis + params.masterTuneSemis) / 12.0f);
+        baseFreq *= bendTuneRatio((params.pitchBendSemis + params.masterTuneSemis) / 12.0f);
 
-        const float freq1 = baseFreq * std::pow(2.0f, pitchMod1 * 2.0f / 12.0f);
-        const float freq2 = baseFreq * std::pow(2.0f, ((float)params.osc2SemiOffset + pitchMod2 * 2.0f) / 12.0f);
+        const float freq1 = baseFreq * pitch1Ratio(pitchMod1 * 2.0f / 12.0f);
+        const float freq2 = baseFreq * pitch2Ratio(((float)params.osc2SemiOffset + pitchMod2 * 2.0f) / 12.0f);
 
         const float noiseSample = pinkNoise.processSample(params.mode == SynthMode::Cosmos)
                                 * params.noiseLevel
@@ -513,10 +535,10 @@ public:
             }
             else
             {
-                const float totalPan = clampf(uPan + panMod, -1.0f, 1.0f);
-                const float angle = (totalPan + 1.0f) * 0.25f * kPi;
-                preL += mix * std::cos(angle) * uGain;
-                preR += mix * std::sin(angle) * uGain;
+                float c, s;
+                unisonPanMemo[(size_t)u].get(clampf(uPan + panMod, -1.0f, 1.0f), c, s);
+                preL += mix * c * uGain;
+                preR += mix * s * uGain;
             }
         }
 
@@ -531,7 +553,7 @@ public:
         const float envModTotal = clampf(
             (filtVal * params.filterEnvAmount + cutoffMod + polyModFiltExtra) * 2.0f
             + audioRateOctaves, -5.0f, 5.0f);
-        float envCutoff = params.filterCutoff * std::pow(2.0f, envModTotal);
+        float envCutoff = params.filterCutoff * cutoffRatio(envModTotal);
         envCutoff *= (1.0f + filterTrackingOffset * params.analogAmount);
         // TPT models remain stable throughout the usable top octave.
         envCutoff = clampf(envCutoff, 20.0f, (float)sr * 0.45f);
@@ -553,10 +575,10 @@ public:
             const float filtered = filterL.process(preL);
             // Clamp panMod to the valid pan range before the constant-power angle
             // math; the multi-voice path already clamps its totalPan (C4a).
-            const float sPan = clampf(panMod, -1.0f, 1.0f);
-            const float angle = (sPan + 1.0f) * 0.25f * kPi; // == JUCE single-voice pan
-            sL = filtered * std::cos(angle);
-            sR = filtered * std::sin(angle);
+            float c, s;
+            panMemo.get(clampf(panMod, -1.0f, 1.0f), c, s); // == JUCE single-voice pan
+            sL = filtered * c;
+            sR = filtered * s;
         }
         else
         {
@@ -741,7 +763,7 @@ private:
                 // plus this unison sub-voice's detune; the FM output is already
                 // envelope-shaped internally, so no activeGain normalisation —
                 // just the carrier-count headroom trim.
-                const float detFreq = freq1 * std::pow(2.0f, detCents / 1200.0f);
+                const float detFreq = freq1 * prismDetuneRatio[(size_t)u](detCents / 1200.0f);
                 fm[(size_t)u].setFrequency(detFreq);
                 // Wire noise into Prism so the always-visible NOISE knob is honest
                 // (U4). noiseLevel defaults to 0, so existing presets are bit-null.
@@ -769,8 +791,8 @@ private:
         lfo1.setRate(baseLfo1Rate * (1.0f + clampf(lfoRateMod1, -0.9f, 4.0f)));
         lfo2.setRate(baseLfo2Rate * (1.0f + clampf(lfoRateMod2, -0.9f, 4.0f)));
 
-        state.setSourceValue(ModSource::LFO1, lfo1.processSample());
-        state.setSourceValue(ModSource::LFO2, lfo2.processSample());
+        state.setSourceValue(ModSource::LFO1, lfo1.processSample(params.lfo1Used));
+        state.setSourceValue(ModSource::LFO2, lfo2.processSample(params.lfo2Used));
         state.setSourceValue(ModSource::Envelope2, filtEnv.getCurrentValue());
         state.setSourceValue(ModSource::ModWheel, params.modWheel);
         // One Aftertouch source, fed by whichever pressure message is higher:
@@ -819,6 +841,12 @@ private:
     // the stack of renderInternalSample so it is not re-zeroed every sample; see
     // the note at its use.
     ModulationState modState;
+
+    // Exact memos for the per-sample pow / cos / sin (SynthCommon.hpp): the call
+    // runs only when its input moves, and the output is bit-identical.
+    Exp2Memo bendTuneRatio, pitch1Ratio, pitch2Ratio, cutoffRatio;
+    Exp2Memo prismDetuneRatio[kMaxUnison];
+    PanMemo  panMemo, unisonPanMemo[kMaxUnison];
 
     OscSet osc[kMaxUnison];
     FMVoiceEngine fm[kMaxUnison];      // Prism (mode 4) — one op bank per unison sub-voice
@@ -969,9 +997,37 @@ public:
             if (voices[(size_t)i].isReleasing()) level *= 0.1f;
             if (level < quietestLevel) { quietestLevel = level; quietest = i; }
         }
-        voices[(size_t)quietest].setSteal();
+        // No release before the new note: SynthVoice::noteOn either ties to the
+        // stolen note (legato, still held) or restarts every envelope from its
+        // current level, which is the click-free hand-off on its own. The release
+        // this used to issue first was what turned every legato steal into a tie
+        // to a dying note.
         voices[(size_t)quietest].noteOn(note, velocity, params);
         return &voices[(size_t)quietest];
+    }
+
+    // The voice, below the polyphony limit, that holds `note` with its gate still
+    // held, or -1. A retiring voice does not count: it is on its way out.
+    int findHeld(int note) const noexcept
+    {
+        const int poly = effectivePoly();
+        for (int i = 0; i < poly; ++i)
+            if (voices[(size_t)i].getCurrentNote() == note && voices[(size_t)i].isGateHeld())
+                return i;
+        return -1;
+    }
+
+    // A tied arp step: `to` takes over the voice that holds `from` with its gate
+    // still held, so SynthVoice::noteOn ties to it. noteOn() above would start `to`
+    // on a free voice, with an attack of its own, whenever the circuit has one,
+    // which in a poly circuit is every step. False when no voice holds `from` that
+    // way (it was stolen, released or retired); the caller then starts `to` as usual.
+    bool retarget(int from, int to, float velocity, const VoiceParameters& params) noexcept
+    {
+        const int i = findHeld(from);
+        if (i < 0) return false;
+        voices[(size_t)i].noteOn(to, velocity, params);
+        return true;
     }
 
     void noteOff(int note) noexcept

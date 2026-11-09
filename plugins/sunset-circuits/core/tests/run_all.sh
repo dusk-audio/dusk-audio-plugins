@@ -23,7 +23,8 @@
 #   * Stereo width. No gate measures the width control's effect on correlation,
 #     mono compatibility, or that width=0 is genuinely mono.
 #   * Portamento / glide at the synth level. acid/slide_gate covers the Acid
-#     engine's slide only -- the other five modes' portamento is untested.
+#     engine's slide; legato_gate only checks WHETHER a Mono note glides (the
+#     legato rule). Glide time, glide mode and the other modes are untested.
 #   * Velocity curve. Nothing asserts the velocity-to-level (or velocity-to-
 #     anything) mapping, so a curve inversion or a dead top/bottom would pass.
 #   * Overlapping unison shrinks. VoiceAllocator::retireAbove budgets how many
@@ -73,7 +74,8 @@ if ! python3 ../../daf-plugin/tools/gen_params.py --check; then
     fail=1
 fi
 for g in pitch env reverb arp arp_seq filter_stability accuracy fx_reenable param_robust \
-         lfo_sync modulation cosmos acid stuck sustain polyat steal zipper user_preset; do
+         lfo_sync modulation cosmos acid stuck sustain handover polyat steal legato zipper \
+         user_preset latency; do
     echo
     echo "########## ${g}_gate ##########"
     python3 "${g}_gate.py" || fail=1
