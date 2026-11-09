@@ -243,6 +243,56 @@ protected:
             programName = kFactoryPresets[index].name;
     }
 
+    //--- remote control pages (CLAP hosts' hardware controls) ------------------
+    // A controller lands on page 0, so it holds what a player reaches for.
+    // Without pages, hosts that map knobs to the first eight parameters put Mode
+    // on knob 1 and Oversampling on knob 6: a nudge switched the engine (which
+    // resets every voice) or the oversampling. Neither is on any page.
+    bool initRemoteControlPage(uint32_t index, RemoteControlPage& page) override
+    {
+        struct PageDef { const char* section; const char* name; uint32_t params[kRemoteControlsPerPage]; };
+        static const PageDef kPages[] = {
+            { "Main", "Performance",
+              { kParamFilterCutoff, kParamFilterRes, kParamFilterEnvAmt, kParamAmpA,
+                kParamAmpD, kParamAmpS, kParamAmpR, kParamMasterVol } },
+            { "Oscillators", "Oscillators",
+              { kParamOsc1Wave, kParamOsc1Level, kParamOsc1PW, kParamOsc2Wave,
+                kParamOsc2Level, kParamOsc2Detune, kParamSubLevel, kParamNoiseLevel } },
+            { "Filter", "Filter",
+              { kParamFilterCutoff, kParamFilterRes, kParamFilterHP, kParamFilterEnvAmt,
+                kParamFiltA, kParamFiltD, kParamFiltS, kParamFiltR } },
+            { "Amp", "Amp",
+              { kParamAmpA, kParamAmpD, kParamAmpS, kParamAmpR,
+                kParamVelSens, kParamAnalogAmt, kParamVintage, kParamMasterVol } },
+            { "Modulation", "LFOs",
+              { kParamLfo1Rate, kParamLfo1Shape, kParamLfo1Fade, kParamLfo2Rate,
+                kParamLfo2Shape, kParamLfo2Fade, kParamModAmt0, kParamModAmt1 } },
+            { "Voice", "Voice",
+              { kParamPortaTime, kParamLegato, kParamUnisonVoices, kParamUnisonDetune,
+                kParamUnisonSpread, kParamStereoWidth, kParamMasterPan, kParamMasterTune } },
+            { "Arp", "Arp",
+              { kParamArpOn, kParamArpMode, kParamArpOctave, kParamArpRate,
+                kParamArpGate, kParamArpSwing, kParamArpLatch, kParamArpVelMode } },
+            { "Effects", "Effects",
+              { kParamDriveAmt, kParamDriveMix, kParamChorusMix, kParamDelayTime,
+                kParamDelayFB, kParamDelayMix, kParamReverbDecay, kParamReverbMix } },
+            { "Prism", "Operators",
+              { kParamOp1Level, kParamOp2Level, kParamOp3Level, kParamOp4Level,
+                kParamOp1Ratio, kParamOp2Ratio, kParamOp3Ratio, kParamOp4Ratio } },
+            { "Acid", "Acid",
+              { kParamFilterCutoff, kParamFilterRes, kParamFilterEnvAmt, kParamAmpD,
+                kParamDriveAmt, kParamAcidAccentAmt, kParamAcidSlideTime, kParamArpRate } },
+        };
+        if (index >= sizeof(kPages) / sizeof(kPages[0]))
+            return false;
+        const PageDef& def = kPages[index];
+        page.section = def.section;
+        page.name = def.name;
+        for (uint32_t i = 0; i < kRemoteControlsPerPage; ++i)
+            page.parameters[i] = def.params[i];
+        return true;
+    }
+
     // Two threads can ask for a program: the HOST (main thread, this override)
     // and the plugin itself from a MIDI 0xC0 on the AUDIO thread
     // (loadProgramFromMidi). Both walk the same ~250 setParameterValue() writes.

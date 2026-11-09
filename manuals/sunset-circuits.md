@@ -474,6 +474,12 @@ Continuous parameters are smoothed, so automating or dragging them does not prod
 
 Loading a preset snaps rather than glides. The plugin tells the engine explicitly that a program change happened, so all 223 values land at once and a preset sounds correct on its first note instead of sliding into place over the first fraction of a second. For hosts that replay a patch as a burst of ordinary parameter writes rather than a program change, the engine detects the burst and snaps anyway.
 
+### Hardware controllers
+
+In CLAP hosts that read a plugin's remote control pages, such as Bitwig Studio, a controller's eight knobs land on pages laid out for playing rather than on the first eight parameters. The first page, **Performance**, holds filter cutoff, resonance and envelope amount, the four amp envelope stages and the master volume. The other pages cover the oscillators, the filter, the amp, the LFOs, the voice (glide, legato, unison, width), the arpeggiator, the effects, the Prism operators and the Acid controls. Mode and Oversampling are on no page, so a knob cannot switch the circuit or the oversampling by accident.
+
+Hosts that do not read these pages, and the VST3, AU and LV2 builds, map controllers their own way. Many simply take the parameters in order, which start with Mode, Master Tune, Master Volume, Master Pan, Stereo Width and Oversampling, so assign the knobs you want by hand there.
+
 ### Known limits
 
 - **Prism with heavy unison at 4x oversampling** can exceed one core. See the CPU section above.
