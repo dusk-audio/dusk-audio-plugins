@@ -86,8 +86,9 @@ cmd_plan() {
 # The public date comes from the annotated tag's date, but actions/checkout replaces a tag it checks out
 # with a lightweight one (see release_changelog.sh), whose date is its commit's: a day early whenever the
 # commit and the tag fall on different UTC days. So the tag is fetched again first. And once the release
-# is public (no longer a draft), publish-due has merged its branch into website main and deleted it, so a
-# rebuild reads main directly instead of warning that the branch is missing.
+# is public (no longer a draft) AND its branch is gone, publish-due has merged the branch into website main
+# and deleted it, so a rebuild reads main directly instead of warning that the branch is missing. A public
+# release whose branch is still there (its merge failed or has not run) keeps reading the branch.
 cmd_website_ref() {
   local tag="${1:-}" plan_out early public_on draft ref=main
   if [ -z "$tag" ] && [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then tag="${GITHUB_REF#refs/tags/}"; fi
@@ -106,8 +107,14 @@ cmd_website_ref() {
   if [ "$ref" != main ] && [ -n "${GITHUB_REPOSITORY:-}" ]; then
     draft=$(gh release view "$tag" -R "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null) || draft=""
     if [ "$draft" = false ]; then
-      echo "$tag is public already: its site change is on website main." >&2
-      ref=main
+      # Only a definite 404 means merged and deleted. Any other failure keeps the branch: if it is gone,
+      # the download falls back to main with a warning anyway.
+      local lookup
+      lookup=$(gh api "repos/$WEBSITE_REPO/git/ref/heads/$ref" --silent 2>&1 >/dev/null) || true
+      if [[ "$lookup" == *"HTTP 404"* ]]; then
+        echo "$tag is public and $ref has been merged: its site change is on website main." >&2
+        ref=main
+      fi
     fi
   fi
   out "ref=$ref"
