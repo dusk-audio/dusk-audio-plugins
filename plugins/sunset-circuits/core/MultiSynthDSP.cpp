@@ -156,7 +156,9 @@ void MultiSynthDSP::applyOsFactor(int factor)
     decimL.setFactor(osFactor); decimL.reset();
     decimR.setFactor(osFactor); decimR.reset();
     // The pad takes up the difference, so the total latency stays put. Cleared with
-    // the decimators: the samples it holds came from the old path.
+    // the decimators: the samples it holds came from the old path. Both resets are
+    // a step in the output, so this runs with the voice path faded to zero
+    // (snapshotParameters), or before the first block.
     padL.delay = padR.delay = padFor(osFactor);
     padL.reset(); padR.reset();
 }
@@ -258,7 +260,12 @@ void MultiSynthDSP::replayHeldNotes() noexcept
         acidVoice.noteOn(midiToHz((float)top.note), top.vel > kAcidAccentVel, /*slide=*/false, top.vel);
         return;
     }
-    for (int i = 0; i < n; ++i)
+    // The voices take only the newest notes the circuit has voices for. The rest
+    // would only steal each other, and in Mono, where that leaves the last key
+    // pressed, replaying the older keys first made the one voice glide from the
+    // oldest through each in turn. The arp takes every held note, as its pattern.
+    const int first = p(pArpOn) > 0.5f ? 0 : clampi(n - voices.effectivePoly(), 0, n);
+    for (int i = first; i < n; ++i)
         routeNoteOn(notes[i], keyVelocity[(size_t)notes[i]]);
 }
 
@@ -269,11 +276,16 @@ void MultiSynthDSP::noteOff(int note) noexcept
         // The key-state mask always clears: the key IS up, whatever the pedal is
         // doing. Latch pruning combines it with the pedal mask explicitly (see
         // snapshotParameters), so nothing downstream loses the sustained notes.
-        (note < 64 ? heldNotesLo : heldNotesHi)
-            .fetch_and(~(1ull << (note & 63)), std::memory_order_relaxed);
+        const uint64_t bit = 1ull << (note & 63);
+        const bool wasDown = ((note < 64 ? heldNotesLo : heldNotesHi)
+                                  .fetch_and(~bit, std::memory_order_relaxed) & bit) != 0;
         if (sustainDown)
         {
-            (note < 64 ? sustainedLo : sustainedHi) |= 1ull << (note & 63);
+            // Only a key that was down is captured. A note-off for a key that is
+            // not (a host flushing note-offs, a duplicate) has nothing to hold, and
+            // a captured note is replayed on the next routing edge: switching the
+            // arp on played a note nobody pressed. A note already captured stays.
+            if (wasDown) (note < 64 ? sustainedLo : sustainedHi) |= bit;
             return;   // deferred to sustainPedal(false)
         }
     }
@@ -518,12 +530,21 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
     // on the first block that starts with the fade at zero. Everything below this
     // point derives from vp.mode, so holding it steady is all it takes to keep the
     // outgoing engine intact and rendering for the length of the fade.
+    //
+    // An oversampling change takes the same fade. Changing the factor resets the
+    // decimators and the latency pad, which in the middle of a note is a step in the
+    // output (measured +52 to +59 dB over the steady signal's sample-to-sample
+    // curvature, a click). At zero gain it is silent, and the voices keep their
+    // notes and pitch through it.
     const SynthMode requestedMode = (SynthMode)clampi((int)p(pMode), 0, 5);
+    const int osSetting = (int)p(pOversampling);
+    const int requestedOs = osSetting == 0 ? 1 : (osSetting == 1 ? 2 : 4);
     if (!haveLastSnap)
     {
         // First snapshot after prepare/reset: adopt outright, there is nothing
         // sounding to fade and the host has already set the mode it wants.
         activeMode = requestedMode;
+        if (requestedOs != osFactor) applyOsFactor(requestedOs);
         modeSwitchPending = false;
         modeFade = 1.0f;
     }
@@ -531,12 +552,13 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
     {
         activeMode = requestedMode;     // muted: commit (cleanup and the held-note
         modeSwitchPending = false;      // replay run further down)
+        if (requestedOs != osFactor) applyOsFactor(requestedOs);
     }
     else
     {
         // Starts a fade on a new request, and cancels one whose request was
         // reverted before it finished.
-        modeSwitchPending = (requestedMode != activeMode);
+        modeSwitchPending = (requestedMode != activeMode) || (requestedOs != osFactor);
     }
     vp.mode = activeMode;
 
@@ -1014,10 +1036,8 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
     duskaudio::ScopedFlushDenormals noDenormals;
     if (nSamples <= 0) return;
 
-    // Apply a pending oversampling change at block start (never mid-block).
-    const int desiredOs = ((int)p(pOversampling) == 0) ? 1 : ((int)p(pOversampling) == 1) ? 2 : 4;
-    if (desiredOs != osFactor) applyOsFactor(desiredOs);
-
+    // An oversampling change is applied by snapshotParameters, at the bottom of
+    // the voice-path fade (see there).
     const double bpm = hostBpm.load(std::memory_order_relaxed);
     const bool playing = transportPlaying.load(std::memory_order_relaxed);
 
@@ -1149,14 +1169,22 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
                     const auto ev = arp.advanceSample(bpm, playing, songBeat, hostLocked);
                     if (ev.noteOffValid && ev.noteOnValid && arp.tiesSteps())
                     {
-                        // Tied step (legato at full gate): the new note goes on
-                        // FIRST, so it finds the outgoing one still held and
-                        // SynthVoice::noteOn ties to it. The same pitch again is
-                        // just the held note carrying on, so neither event is sent.
+                        // Tied step (legato at full gate): the new note takes over
+                        // the voice the outgoing one still holds, and
+                        // SynthVoice::noteOn ties to it. Left to the allocator, a
+                        // poly circuit started it on a free voice with an attack
+                        // of its own. If the outgoing note has lost its voice, the
+                        // new one starts as usual and the old one is released.
+                        // The same pitch again is just the held note carrying on,
+                        // so neither event is sent.
                         if (ev.onNote != ev.offNote)
                         {
-                            voices.noteOn(ev.onNote, (float)ev.onVel / 127.0f, voiceParams);
-                            voices.noteOff(ev.offNote);
+                            const float vel = (float)ev.onVel / 127.0f;
+                            if (!voices.retarget(ev.offNote, ev.onNote, vel, voiceParams))
+                            {
+                                voices.noteOn(ev.onNote, vel, voiceParams);
+                                voices.noteOff(ev.offNote);
+                            }
                         }
                     }
                     else

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Engine robustness gate — bad parameter writes, meter range, crossfade capture.
+"""Engine robustness gate: bad parameter writes, meter range, crossfade capture,
+oversampling switches.
 
 A. A BAD PARAMETER VALUE MUST NOT KILL THE ENGINE FOR GOOD
     One out-of-range write left the synth rendering silence PERMANENTLY, with
@@ -82,6 +83,23 @@ D. PORTAMENTO ACROSS AN OVERSAMPLING SWITCH
     switch. The gate compares the switched render against the unswitched one, so
     it needs no absolute pitch model -- only that the switch did not change the
     trajectory.
+
+E. AN OVERSAMPLING SWITCH UNDER A HELD NOTE IS CLICK-FREE
+    Switching the factor resets the decimators and the latency pad, which in the
+    middle of a note is a step in the output. The switch now waits for the
+    voice path to fade out, as a mode switch does, and the note fades back in at
+    the new factor. A held sine (Cosmos, note 60) is switched 2x -> 1x -> 4x -> 2x
+    at 1, 2 and 3 s; the largest sample-to-sample curvature (second difference)
+    within 20 ms before to 60 ms after each switch is compared with the steady
+    note's own:
+
+        switch      pre-fix    post-fix   (dB over the steady note)
+        2x -> 1x    +58.7      -0.0
+        1x -> 4x    +52.0      +0.0
+        4x -> 2x    +54.5      -0.0
+
+    1.0.8, before the latency pad existed, measured the same (+59.4, +56.7,
+    +54.5): the decimator reset alone was the click.
 """
 import os
 import sys
@@ -248,12 +266,35 @@ def portamento_os(fails):
         fails.append("D")
 
 
+OS_SWITCHES = ((1.0, "2x -> 1x"), (2.0, "1x -> 4x"), (3.0, "4x -> 2x"))
+OS_CLICK_MAX_DB = 3.0
+
+
+def os_switch_click(fails):
+    print("\nE. oversampling switched under a held note (largest second difference "
+          "over the steady note's)")
+    _, x = render(0, 60, 4.0, 2, "probust_os_click", release=3.9,
+                  setat=["1.0:oversampling:0", "2.0:oversampling:2", "3.0:oversampling:1"],
+                  **CLEAN)
+    d2 = np.abs(np.diff(x[:, 0], 2))
+    steady = float(np.max(d2[int(0.5 * SR):int(0.9 * SR)]))
+    for t, label in OS_SWITCHES:
+        a, b = int((t - 0.02) * SR), int((t + 0.06) * SR)
+        over = 20.0 * np.log10(float(np.max(d2[a:b])) / steady)
+        ok = over <= OS_CLICK_MAX_DB
+        if not ok:
+            fails.append("E")
+        print(f"   {label}: {over:+5.1f} dB (max +{OS_CLICK_MAX_DB:.0f})   "
+              f"{'PASS' if ok else 'FAIL'}")
+
+
 def main():
     fails = []
     bad_parameter(fails)
     meter_floor(fails)
     crossfade_capture(fails)
     portamento_os(fails)
+    os_switch_click(fails)
     print(f"\nparam_robust_gate: {'PASS' if not fails else 'FAIL (' + ','.join(fails) + ')'}")
     sys.exit(0 if not fails else 1)
 

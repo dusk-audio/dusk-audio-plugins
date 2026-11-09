@@ -31,6 +31,21 @@ Scenarios (48k, 2x OS, dry):
                    off) at 1.0 s. The one Acid voice must land on 48 at once: right
                    after the switch and later the pitch is 48's. Replaying the keys
                    one by one slid the voice up from 45 over the 200 ms slide.
+  j. Mono glide  : (h) with Legato and a 0.5 s Glide. Mono must start on 64 at
+                   once; replaying 60 and 67 first glided the one voice up from 60.
+  k. arp back on : one key held, arp at full gate with Legato, switched off at 1.0 s
+                   and on again at 2.0 s, in Mono and in Cosmos. The pattern must
+                   sound after 2.0 s. Every step was a tie to the note the arp had
+                   kept from before it was switched off, which was gone, so the
+                   pattern stayed silent.
+  l. stray key-up: a note-off for a key that was never pressed, under the pedal,
+                   then the arp on at 1.0 s. The render must be identical to one
+                   without that note-off; the pedal used to capture it, and the arp
+                   played it.
+
+(b) and (c) also check each held note on its own: the fundamental of each of 60,
+64 and 67 is present after the hand-over, within 15 dB of the strongest, so one
+note carried over cannot pass for the chord.
 """
 import sys
 
@@ -94,25 +109,42 @@ def pattern_case(tag, label, mode, note, **kw):
                  f"after key-up {end:6.1f} dB (<{SILENT_DB:.0f})")
 
 
-def steady_case(tag, label, mode, note, **kw):
-    """A held note or chord must SOUND, steadily, in 1.2-2.8 s and stop at the end."""
+def band_db(x, sr, t0, t1, f0):
+    seg = x[int(t0 * sr):int(t1 * sr), 0] * np.hanning(int(t1 * sr) - int(t0 * sr))
+    spec = np.abs(np.fft.rfft(seg))
+    f = np.fft.rfftfreq(len(seg), 1.0 / sr)
+    return db(spec[(f > f0 * 0.98) & (f < f0 * 1.02)].max() / len(seg))
+
+
+def steady_case(tag, label, mode, note, notes=(), **kw):
+    """A held note or chord must SOUND, steadily, in 1.2-2.8 s and stop at the end.
+
+    With `notes`, each of them must also be present on its own: its fundamental
+    within 15 dB of the strongest one's."""
     sr, x = render(mode, note, SECONDS, 2, f"ho_{tag}", release=3.0, **kw)
     e = win_db(x, sr, 1.2, 2.8, win=0.02)
     lvl = window_db(x, sr, 1.2, 2.8)
     end = window_db(x, sr, 3.4, SECONDS)
     spread = float(e.max() - e.min())
-    return check(tag, lvl > LOUD_DB and spread < 6.0 and end < SILENT_DB,
-                 f"{label}: {lvl:6.1f} dB (>{LOUD_DB:.0f}), 20 ms level spread {spread:4.1f} dB (<6), "
-                 f"after key-up {end:6.1f} dB (<{SILENT_DB:.0f})")
+    fails = check(tag, lvl > LOUD_DB and spread < 6.0 and end < SILENT_DB,
+                  f"{label}: {lvl:6.1f} dB (>{LOUD_DB:.0f}), 20 ms level spread {spread:4.1f} dB (<6), "
+                  f"after key-up {end:6.1f} dB (<{SILENT_DB:.0f})")
+    if notes:
+        lv = [band_db(x, sr, 1.2, 2.8, 440.0 * 2 ** ((n - 69) / 12)) for n in notes]
+        low = max(lv) - min(lv)
+        fails += check(tag + "-notes", low < 15.0,
+                       f"{label}: fundamentals of {'/'.join(map(str, notes))} at "
+                       f"{'/'.join(f'{v:.1f}' for v in lv)} dB, weakest {low:.1f} dB down (<15)")
+    return fails
 
 
 def main():
     fails = []
     fails += pattern_case("a", "arp on      ", 0, 60, hold="64,67",
                           setat="1.0:arpOn:1", **PLUCK)
-    fails += steady_case("b", "arp off     ", 0, 60, hold="64,67", arpOn=1, arpRate=4,
-                         setat="1.0:arpOn:0", **SUSTAIN)
-    fails += steady_case("c", "mode switch ", 0, 60, hold="64,67",
+    fails += steady_case("b", "arp off     ", 0, 60, notes=(60, 64, 67), hold="64,67",
+                         arpOn=1, arpRate=4, setat="1.0:arpOn:0", **SUSTAIN)
+    fails += steady_case("c", "mode switch ", 0, 60, notes=(60, 64, 67), hold="64,67",
                          setat="1.0:mode:1", **SUSTAIN)
     fails += pattern_case("d", "into Acid   ", 0, 45, arpOn=1,
                           setat="1.0:mode:5", **PLUCK)
@@ -153,6 +185,33 @@ def main():
     fails += check("i", abs(early) < 30 and abs(late) < 30,
                    f"live Acid   : {early:+.0f} ct right after the switch, {late:+.0f} ct later "
                    f"(vs 48, want +-30 both)")
+
+    # (j) Mono with Legato and Glide: the newest key at once, no glide up to it.
+    sr, x = render(0, 60, 2.0, 2, "ho_j", noteon=["0.2:67", "0.4:64"],
+                   setat="1.0:mode:2", legato=1, portaTime=0.5, **tone)
+    early = 1200 * np.log2(max(zc_hz(x, sr, 1.06, 1.14), 1.0) / f64)
+    fails += check("j", abs(early) < 30,
+                   f"Mono glide  : {early:+.0f} ct right after the switch (vs 64, want +-30)")
+
+    # (k) arp off and on again over one held key, at full gate with Legato.
+    for mode, name in ((2, "Mono"), (0, "Cosmos")):
+        sr, x = render(mode, 60, SECONDS, 2, f"ho_k_{mode}", release=3.0, arpOn=1,
+                       legato=1, arpGate=1.0, arpRate=4,
+                       setat=["1.0:arpOn:0", "2.0:arpOn:1"], **SUSTAIN)
+        lvl = window_db(x, sr, 2.2, 2.9)
+        end = window_db(x, sr, 3.4, SECONDS)
+        fails += check(f"k-{name}", lvl > LOUD_DB and end < SILENT_DB,
+                       f"arp back on : {name:6s} {lvl:6.1f} dB after 2.0 s (>{LOUD_DB:.0f}), "
+                       f"after key-up {end:6.1f} dB (<{SILENT_DB:.0f})")
+
+    # (l) a key-up for a key nobody pressed changes nothing, pedal or not.
+    stray = dict(release=0.5, sustainat=["0.1:1", "3.0:0"], setat="1.0:arpOn:1", **PLUCK)
+    _, a = render(0, 60, SECONDS, 2, "ho_l_ref", **stray)
+    _, b = render(0, 60, SECONDS, 2, "ho_l_stray", noteoff="0.3:66", **stray)
+    diff = float(np.max(np.abs(a - b)))
+    fails += check("l", diff == 0.0,
+                   f"stray key-up: largest difference from the render without it "
+                   f"{diff:.3g} (want 0)")
 
     print(f"handover_gate: {'PASS' if not fails else 'FAIL (' + ','.join(fails) + ')'}")
     sys.exit(0 if not fails else 1)

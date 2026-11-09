@@ -368,7 +368,9 @@ private:
     // The switch is DEFERRED instead. The requested mode is held off while the
     // voice path fades out over kModeFadeSeconds; it commits on the first block
     // that starts with the fade at zero, and the new mode fades back in. The
-    // outgoing note is faded rather than cut mid-waveform.
+    // outgoing note is faded rather than cut mid-waveform. An oversampling change
+    // waits for the same fade, because switching the factor resets the decimators
+    // and the latency pad (snapshotParameters).
     //
     // activeMode is what the engine is actually RENDERING; it lags the parameter
     // while a fade is in flight. Note routing has to follow it (a note arriving
@@ -386,7 +388,7 @@ private:
     }
 
     SynthMode activeMode = SynthMode::Cosmos;
-    bool  modeSwitchPending = false;   // fading out, waiting to commit
+    bool  modeSwitchPending = false;   // fading out, waiting to commit a mode or OS change
     float modeFade = 1.0f;             // voice-path gain, 0..1
     float modeFadeStep = 1.0f;         // per host sample, set in prepare()
 

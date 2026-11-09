@@ -54,6 +54,12 @@ public:
         // advanceSample ever runs while disabled it still emits the note-off (the
         // engine also releases the voice on the arp-off transition — primary path).
         if (!on) { const int pending = lastPlayedNote; reset(); lastPlayedNote = pending; }
+        // Switched back on, though, nothing of the arp's is sounding: the engine
+        // released every voice on the edge that switched it off. A note kept from
+        // then made the first step a tie to a note that was gone, and with one key
+        // held at full gate with legato every step is that same note, so the
+        // pattern stayed silent until the key was pressed again.
+        else lastPlayedNote = -1;
     }
     bool isEnabled() const noexcept { return enabled; }
 

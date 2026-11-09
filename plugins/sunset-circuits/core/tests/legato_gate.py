@@ -18,9 +18,12 @@ Scenarios (48k, 1x OS, plain square through an open filter, dry):
                          (within 1 dB) instead of dying, and does not re-attack
                          (ampS 0.5 patch: legato peak stays at sustain, while the
                          legato-off control re-attacks, proving the probe sees it)
-  c. arp, gate 100 %   : Mono legato ties the steps -- per-step level swing under
-                         2 dB with no silent floor; the legato-off control
-                         re-attacks every step (swing over 3 dB)
+  c. arp, gate 100 %   : legato ties the steps, in Mono and in Cosmos -- per-step
+                         level swing under 2 dB with no silent floor; the
+                         legato-off control re-attacks every step (swing over
+                         3 dB). Cosmos is the poly case: each step has to take
+                         over the outgoing step's voice, where the allocator
+                         would start it on a free one with an attack of its own
   d. glide             : glide 0.2 s, 60 -> 72. Legato on: a detached note lands
                          on pitch (no glide), an overlapping one glides. Legato
                          off: both glide (control, unchanged behaviour)
@@ -113,22 +116,24 @@ def main():
     fails += check("b-attack", rise[1] < 1.0 and rise[0] > 3.0,
                    f"re-attack   : legato +{rise[1]:.1f} dB (<1), control +{rise[0]:.1f} dB (>3)")
 
-    # (c) arp at gate 100 % in Mono: legato ties the steps.
-    swing, floor = {}, {}
-    for legato in (0, 1):
-        sr, x = render(2, 60, 4.0, 1, f"leg_tie_{legato}", tempo=BPM, playing=0,
-                       hold="64,67", legato=legato, arpOn=1, arpMode=0, arpRate=4,
-                       arpGate=1.0, arpOctave=1, ampA=0.02, ampD=0.2, ampS=0.5,
-                       ampR=0.05, **BASE)
-        s, m = [], []
-        for k in range(8, 32):
-            e = win_rms(x, sr, k * STEP, (k + 1) * STEP, 0.002)
-            s.append(db(e.max()) - db(e.min()))
-            m.append(db(e.min()))
-        swing[legato], floor[legato] = float(np.median(s)), min(m)
-    fails += check("c", swing[1] < 2.0 and floor[1] > -30.0 and swing[0] > 3.0,
-                   f"arp 100 %   : legato swing {swing[1]:.1f} dB (<2), floor {floor[1]:.1f} dB"
-                   f" (>-30); control swing {swing[0]:.1f} dB (>3)")
+    # (c) arp at gate 100 %: legato ties the steps, in Mono and in a poly circuit.
+    # Cosmos plays about 10 dB below Mono (its output trim), so its floor sits lower.
+    for mode, name, min_floor in ((2, "Mono", -30.0), (0, "Cosmos", -40.0)):
+        swing, floor = {}, {}
+        for legato in (0, 1):
+            sr, x = render(mode, 60, 4.0, 1, f"leg_tie_{mode}_{legato}", tempo=BPM,
+                           playing=0, hold="64,67", legato=legato, arpOn=1, arpMode=0,
+                           arpRate=4, arpGate=1.0, arpOctave=1, ampA=0.02, ampD=0.2,
+                           ampS=0.5, ampR=0.05, **BASE)
+            s, m = [], []
+            for k in range(8, 32):
+                e = win_rms(x, sr, k * STEP, (k + 1) * STEP, 0.002)
+                s.append(db(e.max()) - db(e.min()))
+                m.append(db(e.min()))
+            swing[legato], floor[legato] = float(np.median(s)), min(m)
+        fails += check(f"c-{name}", swing[1] < 2.0 and floor[1] > min_floor and swing[0] > 3.0,
+                       f"arp 100 % {name:6s}: legato swing {swing[1]:.1f} dB (<2), floor "
+                       f"{floor[1]:.1f} dB (>{min_floor:.0f}); control swing {swing[0]:.1f} dB (>3)")
 
     # (d) glide only when notes overlap.
     P = dict(BASE, ampA=0.002, ampD=0.1, ampS=0.8, ampR=0.02, portaTime=0.2)
