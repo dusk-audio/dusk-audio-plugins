@@ -176,6 +176,9 @@ def load_plugin_catalog(errors: list[str]) -> tuple[dict[str, str], set[str]]:
         slug = entry.get("slug")
         version = entry.get("version")
         status = entry.get("status")
+        if slug is not None and not isinstance(slug, str):
+            errors.append(f"{PLUGINS_YML}: invalid slug {slug!r}: expected a string")
+            continue
         if slug and status is not None and (not isinstance(status, str) or status not in KNOWN_STATUSES):
             errors.append(f"{PLUGINS_YML}: {slug}: unknown status {status!r} "
                           f"(known: {', '.join(sorted(KNOWN_STATUSES))})")

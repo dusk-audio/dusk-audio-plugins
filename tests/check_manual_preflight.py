@@ -15,7 +15,7 @@ import preflight
 import build_manuals
 
 
-class CatalogStatusTests(unittest.TestCase):
+class CatalogValidationTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -52,6 +52,29 @@ class CatalogStatusTests(unittest.TestCase):
                 _, actual = preflight.load_plugin_catalog(errors)
                 self.assertEqual(actual, unreleased)
                 self.assertEqual(errors, [])
+
+    def test_non_string_slugs_report_errors_without_entering_catalog(self):
+        for slug in (["subject"], {"name": "subject"}, [], {}, True, False, 7, 0):
+            for version in (None, "1.0.0"):
+                with self.subTest(slug=slug, version=version):
+                    self.catalog.write_text(yaml.safe_dump([
+                        {"slug": "good", "version": "1.0.0", "status": "released"},
+                        {"slug": slug, "version": version},
+                    ]))
+                    errors = []
+                    versions, unreleased = preflight.load_plugin_catalog(errors)
+                    self.assertEqual(versions, {"good": "1.0.0"})
+                    self.assertEqual(unreleased, set())
+                    self.assertEqual(len(errors), 1)
+                    self.assertIn("invalid slug", errors[0])
+
+    def test_missing_and_empty_slugs_keep_existing_skip_behavior(self):
+        self.catalog.write_text(yaml.safe_dump([
+            {"version": "1.0.0"}, {"slug": None}, {"slug": "", "version": "1.0.0"},
+        ]))
+        errors = []
+        self.assertEqual(preflight.load_plugin_catalog(errors), ({}, set()))
+        self.assertEqual(errors, [])
 
     def test_preflight_and_renderer_reject_malformed_status_without_traceback(self):
         self.write_catalog(["in-dev"])
