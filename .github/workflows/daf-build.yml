@@ -58,6 +58,15 @@ on:
       - 'plugins/*/core/**'
       - 'plugins/chord-analyzer/lv2/**'
       - 'plugins/chord-analyzer/tests/**'
+      # What registered plugins build from outside core/ and daf-plugin/: Multi-Q 2's
+      # ctest gate (../tests in its CMakeLists), the two Multi-Q headers and Multi-Comp's
+      # HardwareEmulation that their cores include, and the AnalogEmulation library
+      # Multi-Q 2's tube stage includes (built like shared code, see the plan step).
+      - 'plugins/multi-q/tests/**'
+      - 'plugins/multi-q/SafeFloat.h'
+      - 'plugins/multi-q/ADAASaturation.h'
+      - 'plugins/multi-comp/HardwareEmulation/**'
+      - 'plugins/shared/AnalogEmulation/**'
       - 'plugins/DuskVerb/src/**'
       - 'plugins/shared-daf/**'
       - '.github/workflows/daf-build.yml'
@@ -211,7 +220,9 @@ jobs:
                 # .github/daf-ref and the scripts that resolve and verify it change
                 # what every plugin is built against, so they build everything, as
                 # shared code does. (daf-provenance.yml tests the guards themselves.)
-                plugins/shared-daf/*|.github/workflows/daf-build.yml|.github/scripts/*|.github/daf-ref)
+                # plugins/shared/AnalogEmulation is under no plugin's root, so the
+                # ownership match below cannot place it; it builds everything too.
+                plugins/shared-daf/*|plugins/shared/AnalogEmulation/*|.github/workflows/daf-build.yml|.github/scripts/*|.github/daf-ref)
                   BUILD_ALL=true
                   break
                   ;;
