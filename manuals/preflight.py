@@ -176,13 +176,13 @@ def load_plugin_catalog(errors: list[str]) -> tuple[dict[str, str], set[str]]:
         slug = entry.get("slug")
         version = entry.get("version")
         status = entry.get("status")
-        if slug and status is not None and status not in KNOWN_STATUSES:
+        if slug and status is not None and (not isinstance(status, str) or status not in KNOWN_STATUSES):
             errors.append(f"{PLUGINS_YML}: {slug}: unknown status {status!r} "
                           f"(known: {', '.join(sorted(KNOWN_STATUSES))})")
             unreleased.add(slug)
         if slug and version:
             versions[slug] = str(version)
-        if slug and (not version or status in UNRELEASED_STATUSES):
+        if slug and (not version or (isinstance(status, str) and status in UNRELEASED_STATUSES)):
             unreleased.add(slug)
     return versions, unreleased
 

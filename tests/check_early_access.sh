@@ -42,6 +42,9 @@ case "$1 $2" in
       if [ "$1" = "--notes-file" ]; then { echo "--- notes"; cat "$2"; echo "--- end"; } >> "$GH_LOG"; fi
       shift
     done ;;
+  "api repos/dusk-audio/dusk-audio.github.io/branches")
+    printf '%s\n' "${FAKE_WEBSITE_BRANCHES-main}"
+    exit "${FAKE_WEBSITE_BRANCHES_EXIT:-0}" ;;
   "api repos/"*) printf '%s' "${FAKE_RELEASES:-}" ;;
 esac
 EOF
@@ -102,12 +105,20 @@ check "the tag defaults to GITHUB_REF" "ref=early-access/2026-10-31" \
   "$(GITHUB_OUTPUT="" GITHUB_REF=refs/tags/multi-comp-2-v1.0.0 EARLY_ACCESS_DAYS=14 HAS_EARLY_TOKEN=true bash "$SCRIPT" website-ref)"
 check "a branch build reads website main" "ref=main" \
   "$(GITHUB_OUTPUT="" GITHUB_REF=refs/heads/main EARLY_ACCESS_DAYS=14 HAS_EARLY_TOKEN=true bash "$SCRIPT" website-ref)"
-# Once the release is public, publish-due has merged its branch into main and deleted it.
+# Publication precedes the website merge; only a removed branch permits main.
 wref_on() { # wref_on DRAFT TAG: as wref, with the release on GitHub (DRAFT true/false, or "" for none yet)
   FAKE_VIEW_DRAFT="$1" GITHUB_REPOSITORY=dusk-audio/dusk-audio-plugins GITHUB_OUTPUT="" GITHUB_REF="" \
     EARLY_ACCESS_DAYS=14 HAS_EARLY_TOKEN=true bash "$SCRIPT" website-ref "$2" 2>/dev/null
 }
-check "a published release reads website main" "ref=main" "$(wref_on false multi-comp-2-v1.0.0)"
+check "a published release with its website branch removed reads main" "ref=main" "$(wref_on false multi-comp-2-v1.0.0)"
+check "a published release with an unmerged website branch keeps that branch" "ref=early-access/2026-10-31" \
+  "$(FAKE_WEBSITE_BRANCHES=$'main\nearly-access/2026-10-31' wref_on false multi-comp-2-v1.0.0)"
+check "an unrelated website branch does not prevent main" "ref=main" \
+  "$(FAKE_WEBSITE_BRANCHES=$'main\nearly-access/2026-10-31-extra' wref_on false multi-comp-2-v1.0.0)"
+check "a failed website query preserves the dated branch" "ref=early-access/2026-10-31" \
+  "$(FAKE_WEBSITE_BRANCHES='' FAKE_WEBSITE_BRANCHES_EXIT=1 wref_on false multi-comp-2-v1.0.0)"
+check "a failed paginated query cannot prove the branch was removed" "ref=early-access/2026-10-31" \
+  "$(FAKE_WEBSITE_BRANCHES=main FAKE_WEBSITE_BRANCHES_EXIT=1 wref_on false multi-comp-2-v1.0.0)"
 check "a draft release reads its dated branch" "ref=early-access/2026-10-31" "$(wref_on true multi-comp-2-v1.0.0)"
 check "a release not created yet reads its dated branch" "ref=early-access/2026-10-31" "$(wref_on "" multi-comp-2-v1.0.0)"
 # actions/checkout leaves a lightweight tag behind; its commit here is a week older than the tag.

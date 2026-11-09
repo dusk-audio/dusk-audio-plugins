@@ -85,11 +85,11 @@ cmd_plan() {
 #
 # The public date comes from the annotated tag's date, but actions/checkout replaces a tag it checks out
 # with a lightweight one (see release_changelog.sh), whose date is its commit's: a day early whenever the
-# commit and the tag fall on different UTC days. So the tag is fetched again first. And once the release
-# is public (no longer a draft), publish-due has merged its branch into website main and deleted it, so a
-# rebuild reads main directly instead of warning that the branch is missing.
+# commit and the tag fall on different UTC days. So the tag is fetched again first. Publication happens
+# before the website merge, which can fail independently. A public release reads main only after the
+# dated website branch is gone; while that branch exists it still holds the regenerated manual.
 cmd_website_ref() {
-  local tag="${1:-}" plan_out early public_on draft ref=main
+  local tag="${1:-}" plan_out early public_on draft website_branches ref=main
   if [ -z "$tag" ] && [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then tag="${GITHUB_REF#refs/tags/}"; fi
   if [ -n "$tag" ]; then
     git fetch --quiet --force --no-tags origin "refs/tags/$tag:refs/tags/$tag" 2>/dev/null || true
@@ -106,8 +106,14 @@ cmd_website_ref() {
   if [ "$ref" != main ] && [ -n "${GITHUB_REPOSITORY:-}" ]; then
     draft=$(gh release view "$tag" -R "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null) || draft=""
     if [ "$draft" = false ]; then
-      echo "$tag is public already: its site change is on website main." >&2
-      ref=main
+      if website_branches=$(gh api "repos/$WEBSITE_REPO/branches" --paginate --jq '.[].name' 2>/dev/null); then
+        if ! grep -Fxq "$ref" <<< "$website_branches"; then
+          echo "$tag is public and its dated website branch was removed: using website main." >&2
+          ref=main
+        fi
+      else
+        echo "::warning::Could not check website branches; keeping $ref for the manual download." >&2
+      fi
     fi
   fi
   out "ref=$ref"
