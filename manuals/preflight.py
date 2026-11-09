@@ -144,6 +144,9 @@ def parse_front_matter(raw_md: str, path: Path, errors: list[str]) -> dict | Non
 
 # Website statuses of a plugin that is not out yet. Its manual chapter is a draft.
 UNRELEASED_STATUSES = {"in-dev", "coming-soon"}
+# Every status the website knows. Anything else is a typo, and a typo must not
+# count as released and put a draft chapter in the combined PDF.
+KNOWN_STATUSES = {"released", "pre-release"} | UNRELEASED_STATUSES
 
 
 def load_plugin_catalog(errors: list[str]) -> tuple[dict[str, str], set[str]]:
@@ -172,9 +175,14 @@ def load_plugin_catalog(errors: list[str]) -> tuple[dict[str, str], set[str]]:
             continue
         slug = entry.get("slug")
         version = entry.get("version")
+        status = entry.get("status")
+        if slug and status is not None and status not in KNOWN_STATUSES:
+            errors.append(f"{PLUGINS_YML}: {slug}: unknown status {status!r} "
+                          f"(known: {', '.join(sorted(KNOWN_STATUSES))})")
+            unreleased.add(slug)
         if slug and version:
             versions[slug] = str(version)
-        if slug and (not version or entry.get("status") in UNRELEASED_STATUSES):
+        if slug and (not version or status in UNRELEASED_STATUSES):
             unreleased.add(slug)
     return versions, unreleased
 
@@ -185,11 +193,19 @@ def load_plugin_versions(errors: list[str]) -> dict[str, str]:
 
 
 def release_tag_exists(slug: str, version: str) -> bool:
-    """True when this repository has the release tag <slug>-v<version>."""
-    res = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "rev-parse", "-q", "--verify",
-         f"refs/tags/{slug}-v{version}"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    """True when this repository has the release tag <slug>-v<version>.
+
+    Manuals are built from a clone (/release-plugin), which has its tags. Without
+    git or a tag, the answer is False, so a chapter ahead of the website is
+    reported as a version mismatch rather than let into the combined PDF.
+    """
+    try:
+        res = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "rev-parse", "-q", "--verify",
+             f"refs/tags/{slug}-v{version}"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    except OSError:
+        return False
     return res.returncode == 0
 
 
@@ -289,7 +305,7 @@ def run_preflight(slug: str | None, combined: bool = False) -> int:
         check_dashes(path, prose, errors)
         check_screenshots(path, raw, errors)
         fm = parse_front_matter(raw, path, errors)
-        if fm is not None and plugin_versions:
+        if fm is not None:
             check_version_match(path, fm, plugin_versions, errors,
                                 early_access_ok=combined, notes=notes)
 
