@@ -59,14 +59,14 @@ on:
       - 'plugins/chord-analyzer/lv2/**'
       - 'plugins/chord-analyzer/tests/**'
       # What registered plugins build from outside core/ and daf-plugin/: Multi-Q 2's
-      # ctest gate (../tests in its CMakeLists), the two Multi-Q headers and Multi-Comp's
-      # HardwareEmulation that their cores include, and the AnalogEmulation library
-      # Multi-Q 2's tube stage includes (built like shared code, see the plan step).
+      # ctest gate (../tests in its CMakeLists) and the JUCE Multi-Q headers its core and
+      # parity tests include, Multi-Comp's HardwareEmulation, and the two shared JUCE
+      # sources Multi-Q 2 includes (built like shared code, see the plan step).
       - 'plugins/multi-q/tests/**'
-      - 'plugins/multi-q/SafeFloat.h'
-      - 'plugins/multi-q/ADAASaturation.h'
+      - 'plugins/multi-q/*.h'
       - 'plugins/multi-comp/HardwareEmulation/**'
       - 'plugins/shared/AnalogEmulation/**'
+      - 'plugins/shared/CrashLog.h'
       - 'plugins/DuskVerb/src/**'
       - 'plugins/shared-daf/**'
       - '.github/workflows/daf-build.yml'
@@ -210,7 +210,9 @@ jobs:
             # --- PR: build touched plugins, or all when shared infrastructure changed ---
             BASE_SHA="${{ github.event.pull_request.base.sha }}"
             HEAD_SHA="${{ github.event.pull_request.head.sha }}"
-            CHANGED_PATHS=$(git diff --name-only --diff-filter=ACDMRT "$BASE_SHA" "$HEAD_SHA")
+            # --no-renames: a moved file is its old path and its new one, so moving a
+            # shared header away still names the shared path it left.
+            CHANGED_PATHS=$(git diff --name-only --no-renames --diff-filter=ACDMRT "$BASE_SHA" "$HEAD_SHA")
             echo "=== changed paths ==="
             printf '%s\n' "$CHANGED_PATHS"
 
@@ -220,9 +222,10 @@ jobs:
                 # .github/daf-ref and the scripts that resolve and verify it change
                 # what every plugin is built against, so they build everything, as
                 # shared code does. (daf-provenance.yml tests the guards themselves.)
-                # plugins/shared/AnalogEmulation is under no plugin's root, so the
-                # ownership match below cannot place it; it builds everything too.
-                plugins/shared-daf/*|plugins/shared/AnalogEmulation/*|.github/workflows/daf-build.yml|.github/scripts/*|.github/daf-ref)
+                # plugins/shared/AnalogEmulation and CrashLog.h are under no plugin's
+                # root, so the ownership match below cannot place them; they build
+                # everything too.
+                plugins/shared-daf/*|plugins/shared/AnalogEmulation/*|plugins/shared/CrashLog.h|.github/workflows/daf-build.yml|.github/scripts/*|.github/daf-ref)
                   BUILD_ALL=true
                   break
                   ;;
