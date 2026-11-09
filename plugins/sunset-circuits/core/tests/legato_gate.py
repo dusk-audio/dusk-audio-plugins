@@ -33,6 +33,12 @@ Scenarios (48k, 1x OS, plain square through an open filter, dry):
                          a held voice; with legato on it ties and SOUNDS (its
                          fundamental is present 1-2 s later at the legato-off
                          level, within 6 dB)
+  f. tie after retire  : Cosmos, one key held under a full-gate legato arp whose
+                         voice is retired by a unison change (unison 8 leaves two
+                         voices, the arp's is the sixth). Every step is the same
+                         note, so no event restarted it and the arp went silent
+                         (-297 dB) with the key still down; it must keep sounding
+                         within 10 dB of its level before the change
 """
 import sys
 
@@ -169,6 +175,19 @@ def main():
     fails += check("e", level[1] > level[0] - 6.0 and level[0] > -80.0,
                    f"poly steal  : stealing note {level[1]:.1f} dB with legato, "
                    f"{level[0]:.1f} dB without (within 6 dB)")
+
+    # (f) the tied note's voice retired by a unison change. A released chord's tails
+    #     hold voices 0-4 when the arp starts on one key, so the arp lands on voice 5;
+    #     unison 8 at 1.4 s leaves two voices. The tails (0.6 s) are gone by then, so
+    #     after it only the arp can sound.
+    P = dict(BASE, osc1Wave=3, ampA=0.002, ampD=0.1, ampS=1.0, ampR=0.6, legato=1,
+             arpGate=1.0, arpRate=4)
+    sr, x = render(0, 48, 2.6, 2, "leg_retire", hold="52,55,59,62", release=0.5,
+                   noteon="0.7:60", setat=["0.6:arpOn:1", "1.4:unisonVoices:8"], **P)
+    before, after = db(rms(x, sr, 0.9, 1.3)), db(rms(x, sr, 1.6, 2.5))
+    fails += check("f", after > before - 10.0,
+                   f"tie after retire: {before:6.1f} dB before the unison change, "
+                   f"{after:6.1f} dB after (within 10 dB)")
 
     print(f"legato_gate: {'PASS' if not fails else 'FAIL (' + ','.join(fails) + ')'}")
     sys.exit(0 if not fails else 1)

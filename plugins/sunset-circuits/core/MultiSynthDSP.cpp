@@ -1176,15 +1176,22 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
                         // of its own. If the outgoing note has lost its voice, the
                         // new one starts as usual and the old one is released.
                         // The same pitch again is just the held note carrying on,
-                        // so neither event is sent.
+                        // so no event is sent, unless the note has lost its voice:
+                        // a unison change that lowers the voice count retires it,
+                        // and with one key held every step is that same note, so
+                        // nothing would ever start it again.
+                        const float vel = (float)ev.onVel / 127.0f;
                         if (ev.onNote != ev.offNote)
                         {
-                            const float vel = (float)ev.onVel / 127.0f;
                             if (!voices.retarget(ev.offNote, ev.onNote, vel, voiceParams))
                             {
                                 voices.noteOn(ev.onNote, vel, voiceParams);
                                 voices.noteOff(ev.offNote);
                             }
+                        }
+                        else if (voices.findHeld(ev.onNote) < 0)
+                        {
+                            voices.noteOn(ev.onNote, vel, voiceParams);
                         }
                     }
                     else
