@@ -133,6 +133,11 @@ struct VoiceParameters
 
     // Performance controllers (mod sources).
     float modWheel = 0.0f, aftertouch = 0.0f;
+
+    // Whether any mod-matrix slot reads LFO 1 / LFO 2 (source set, destination
+    // not None). An unread LFO still advances every piece of its state but skips
+    // evaluating its sine (LFO::processSample), the costliest part of it.
+    bool lfo1Used = true, lfo2Used = true;
 };
 
 //==============================================================================
@@ -488,10 +493,10 @@ public:
         if (--driftCounter <= 0) { driftTarget = rng.nextBipolar(); driftCounter = 200 + rng.nextInt(300); }
         driftSmooth += (driftTarget - driftSmooth) * 0.001f;
         baseFreq *= (1.0f + driftSmooth * params.analogAmount * 0.002f);
-        baseFreq *= std::pow(2.0f, (params.pitchBendSemis + params.masterTuneSemis) / 12.0f);
+        baseFreq *= bendTuneRatio((params.pitchBendSemis + params.masterTuneSemis) / 12.0f);
 
-        const float freq1 = baseFreq * std::pow(2.0f, pitchMod1 * 2.0f / 12.0f);
-        const float freq2 = baseFreq * std::pow(2.0f, ((float)params.osc2SemiOffset + pitchMod2 * 2.0f) / 12.0f);
+        const float freq1 = baseFreq * pitch1Ratio(pitchMod1 * 2.0f / 12.0f);
+        const float freq2 = baseFreq * pitch2Ratio(((float)params.osc2SemiOffset + pitchMod2 * 2.0f) / 12.0f);
 
         const float noiseSample = pinkNoise.processSample(params.mode == SynthMode::Cosmos)
                                 * params.noiseLevel
@@ -530,10 +535,10 @@ public:
             }
             else
             {
-                const float totalPan = clampf(uPan + panMod, -1.0f, 1.0f);
-                const float angle = (totalPan + 1.0f) * 0.25f * kPi;
-                preL += mix * std::cos(angle) * uGain;
-                preR += mix * std::sin(angle) * uGain;
+                float c, s;
+                unisonPanMemo[(size_t)u].get(clampf(uPan + panMod, -1.0f, 1.0f), c, s);
+                preL += mix * c * uGain;
+                preR += mix * s * uGain;
             }
         }
 
@@ -548,7 +553,7 @@ public:
         const float envModTotal = clampf(
             (filtVal * params.filterEnvAmount + cutoffMod + polyModFiltExtra) * 2.0f
             + audioRateOctaves, -5.0f, 5.0f);
-        float envCutoff = params.filterCutoff * std::pow(2.0f, envModTotal);
+        float envCutoff = params.filterCutoff * cutoffRatio(envModTotal);
         envCutoff *= (1.0f + filterTrackingOffset * params.analogAmount);
         // TPT models remain stable throughout the usable top octave.
         envCutoff = clampf(envCutoff, 20.0f, (float)sr * 0.45f);
@@ -570,10 +575,10 @@ public:
             const float filtered = filterL.process(preL);
             // Clamp panMod to the valid pan range before the constant-power angle
             // math; the multi-voice path already clamps its totalPan (C4a).
-            const float sPan = clampf(panMod, -1.0f, 1.0f);
-            const float angle = (sPan + 1.0f) * 0.25f * kPi; // == JUCE single-voice pan
-            sL = filtered * std::cos(angle);
-            sR = filtered * std::sin(angle);
+            float c, s;
+            panMemo.get(clampf(panMod, -1.0f, 1.0f), c, s); // == JUCE single-voice pan
+            sL = filtered * c;
+            sR = filtered * s;
         }
         else
         {
@@ -758,7 +763,7 @@ private:
                 // plus this unison sub-voice's detune; the FM output is already
                 // envelope-shaped internally, so no activeGain normalisation —
                 // just the carrier-count headroom trim.
-                const float detFreq = freq1 * std::pow(2.0f, detCents / 1200.0f);
+                const float detFreq = freq1 * prismDetuneRatio[(size_t)u](detCents / 1200.0f);
                 fm[(size_t)u].setFrequency(detFreq);
                 // Wire noise into Prism so the always-visible NOISE knob is honest
                 // (U4). noiseLevel defaults to 0, so existing presets are bit-null.
@@ -786,8 +791,8 @@ private:
         lfo1.setRate(baseLfo1Rate * (1.0f + clampf(lfoRateMod1, -0.9f, 4.0f)));
         lfo2.setRate(baseLfo2Rate * (1.0f + clampf(lfoRateMod2, -0.9f, 4.0f)));
 
-        state.setSourceValue(ModSource::LFO1, lfo1.processSample());
-        state.setSourceValue(ModSource::LFO2, lfo2.processSample());
+        state.setSourceValue(ModSource::LFO1, lfo1.processSample(params.lfo1Used));
+        state.setSourceValue(ModSource::LFO2, lfo2.processSample(params.lfo2Used));
         state.setSourceValue(ModSource::Envelope2, filtEnv.getCurrentValue());
         state.setSourceValue(ModSource::ModWheel, params.modWheel);
         // One Aftertouch source, fed by whichever pressure message is higher:
@@ -836,6 +841,12 @@ private:
     // the stack of renderInternalSample so it is not re-zeroed every sample; see
     // the note at its use.
     ModulationState modState;
+
+    // Exact memos for the per-sample pow / cos / sin (SynthCommon.hpp): the call
+    // runs only when its input moves, and the output is bit-identical.
+    Exp2Memo bendTuneRatio, pitch1Ratio, pitch2Ratio, cutoffRatio;
+    Exp2Memo prismDetuneRatio[kMaxUnison];
+    PanMemo  panMemo, unisonPanMemo[kMaxUnison];
 
     OscSet osc[kMaxUnison];
     FMVoiceEngine fm[kMaxUnison];      // Prism (mode 4) — one op bank per unison sub-voice

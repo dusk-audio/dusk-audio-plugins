@@ -61,7 +61,14 @@ public:
     void setSampleRate(double sampleRate) noexcept { sr = (float)sampleRate; dt = freq / sr; updateTriLeak(); }
     void setWaveform(Waveform w) noexcept    { waveform = w; }
     void setPulseWidth(float pw) noexcept    { pulseWidth = clampf(pw, 0.05f, 0.95f); }
-    void setDetune(float cents) noexcept     { detuneRatio = std::pow(2.0f, cents / 1200.0f); }
+    // Called per internal sample with a detune that rarely moves: the pow() runs
+    // only when it does (bit-compared, see sameBits).
+    void setDetune(float cents) noexcept
+    {
+        if (sameBits(cents, detuneCents)) return;
+        detuneCents = cents;
+        detuneRatio = std::pow(2.0f, cents / 1200.0f);
+    }
 
     void hardSync() noexcept   { phase = 0.0f; triState = 0.0f; }
     float getPhase() const noexcept { return phase; }
@@ -156,6 +163,7 @@ private:
     float dt = 0.01f;
     float phase = 0.0f;
     float pulseWidth = 0.5f;
+    float detuneCents = 0.0f;   // input of detuneRatio: pow(2, 0 / 1200) is exactly 1
     float detuneRatio = 1.0f;
     float triState = 0.0f;
     float triLeak = 0.999f;

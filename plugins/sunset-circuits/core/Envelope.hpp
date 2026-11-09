@@ -306,7 +306,9 @@ public:
                 // buffer size, and it is generous enough that ordinary rounding
                 // between a host's block anchor and our own cursor stays "normal".
                 syncOffset = 0.0f;
-                seekHold = lastRaw;
+                // An unread sine skipped its value (processSample); it is the same
+                // expression on the same phase, so the hold is bit-identical.
+                seekHold = lastRawDeferred ? std::sin(lastRawPhase * kTwoPi) : lastRaw;
                 seekFade = 1.0f;
             }
             else
@@ -353,7 +355,15 @@ public:
         currentSHValue = smoothTarget = randomValue();
     }
 
-    float processSample() noexcept
+    // outputUsed == false: nothing reads this sample's value (no mod slot routes
+    // the LFO), so the sine -- the one shape with real cost -- is not evaluated.
+    // Everything else runs exactly as always (phase, fade-in, the random shapes'
+    // draws, the slew credit), so the LFO is in the same state the moment a
+    // routing appears and its output is bit-identical from there on. The skipped
+    // value is needed again only as the hold value of a seek crossfade, which
+    // setSongBeat() recomputes from the phase; while a crossfade is running the
+    // sine is evaluated, because the blend below carries it into lastRaw.
+    float processSample(bool outputUsed = true) noexcept
     {
         const float dt = rate / sr;
         // Host-locked: setSongBeat() has already written this host sample's phase
@@ -365,11 +375,13 @@ public:
         // hair, and that is not a wrap.
         const bool wrapped = locked && ((lastPhase - phase) > 0.5f);
         float raw = 0.0f;
+        const bool skipSine = !outputUsed && shape == LFOShape::Sine && seekFade <= 0.0f;
+        const float rawPhase = phase;
 
         switch (shape)
         {
             case LFOShape::Sine:
-                raw = std::sin(phase * kTwoPi);
+                if (!skipSine) raw = std::sin(phase * kTwoPi);
                 break;
             case LFOShape::Triangle:
                 raw = 2.0f * std::abs(2.0f * (phase - std::floor(phase + 0.5f))) - 1.0f;
@@ -421,7 +433,9 @@ public:
             seekFade -= seekFadeStep;
             if (seekFade < 0.0f) seekFade = 0.0f;
         }
-        lastRaw = raw;
+        lastRawDeferred = skipSine;
+        if (skipSine) lastRawPhase = rawPhase;
+        else          lastRaw = raw;
 
         float fadeGain = 1.0f;
         if (fadeInTime > 0.0f && fadeInPhase < 1.0f)
@@ -452,7 +466,7 @@ private:
         locked = false; reanchor = false;
         syncOffset = 0.0f; slewCredit = 0.0f;
         lastDerived = 0.0f; lastSongBeat = 0.0;
-        seekFade = 0.0f; seekHold = 0.0f; lastRaw = 0.0f;
+        seekFade = 0.0f; seekHold = 0.0f; lastRaw = 0.0f; lastRawDeferred = false;
     }
 
     // Signed phase distance in [-0.5, 0.5) — the SHORT way round, so the slew
@@ -486,6 +500,8 @@ private:
     float  seekFadeStep = 0.0f;
     float  seekHold = 0.0f;        // output value held from just before the jump
     float  lastRaw = 0.0f;         // previous sample's (blended) shape output
+    bool   lastRawDeferred = false;// ...not evaluated (unread sine): see lastRawPhase
+    float  lastRawPhase = 0.0f;    // the phase lastRaw would have been taken at
 };
 
 } // namespace msynth

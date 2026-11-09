@@ -742,6 +742,7 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
 
     // --- Mod matrix ---
     hasEffectsMixRouting = false;
+    vp.lfo1Used = vp.lfo2Used = false;
     for (int i = 0; i < kNumModSlots; ++i)
     {
         auto& slot = modMatrix.getSlot(i);
@@ -750,6 +751,13 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
         slot.amount = p((Param)(pModAmt0 + i));
         if (slot.destination == ModDest::EffectsMix && slot.source != ModSource::None && slot.amount != 0.0f)
             hasEffectsMixRouting = true;
+        // Exactly the slots ModMatrix::process reads: any with a destination, at
+        // any amount. An LFO nothing reads skips its sine (VoiceParameters).
+        if (slot.destination != ModDest::None)
+        {
+            if (slot.source == ModSource::LFO1) vp.lfo1Used = true;
+            if (slot.source == ModSource::LFO2) vp.lfo2Used = true;
+        }
     }
 
     // --- Acid (mode 5): mono voice + pattern sequencer ---

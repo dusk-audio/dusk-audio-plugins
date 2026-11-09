@@ -321,17 +321,38 @@ public:
         oracle.prepare(sampleRate);
         mono.prepare(sampleRate);
         ladder.prepare(sampleRate);
+        haveCoeffs = false;   // the rate is part of every coefficient
     }
 
     void setMode(FilterMode m) noexcept { mode = m; }
-    void setModularModel(ModularFilterModel m) noexcept { ladder.setModel(m); }
+    void setModularModel(ModularFilterModel m) noexcept
+    {
+        if (m == ladderModel) return;
+        ladderModel = m;
+        ladder.setModel(m);
+        haveCoeffs = false;   // the model sets the ladder's feedback ceiling
+    }
 
     // Re-preparing resets only filter memory; oscillator/envelope musical state is
     // retained by SynthVoice during an oversampling-factor change.
     void setSampleRate(double sampleRate) noexcept { prepare(sampleRate); }
 
+    // The voice calls this every INTERNAL sample, and its inputs usually have not
+    // moved since the last one (an envelope in sustain, no cutoff modulation): two
+    // tan() per call for coefficients it already has. The coefficients are a pure
+    // function of these inputs, the mode, the rate and the ladder model, so they
+    // are recomputed only when an input's BITS change (sameBits). prepare(),
+    // reset() and a model change drop the memo, because each leaves derived state
+    // the inputs alone do not describe -- CosmosFilter::reset() clears its
+    // self-oscillation flag, for one. Output is bit-identical to recomputing.
     void setParameters(float cutoff, float resonance, float hpCutoff = 20.0f) noexcept
     {
+        if (haveCoeffs && mode == memoMode && sameBits(cutoff, memoCutoff)
+            && sameBits(resonance, memoRes) && sameBits(hpCutoff, memoHp))
+            return;
+        haveCoeffs = true;
+        memoMode = mode;
+        memoCutoff = cutoff; memoRes = resonance; memoHp = hpCutoff;
         switch (mode)
         {
             case FilterMode::Cosmos:  cosmos.setParameters(cutoff, resonance, hpCutoff); break;
@@ -362,10 +383,16 @@ public:
         oracle.reset();
         mono.reset();
         ladder.reset();
+        haveCoeffs = false;
     }
 
 private:
     FilterMode mode = FilterMode::Cosmos;
+    // Memo for setParameters(). ladderModel mirrors LadderFilter's own default.
+    ModularFilterModel ladderModel = ModularFilterModel::Early;
+    bool       haveCoeffs = false;
+    FilterMode memoMode = FilterMode::Cosmos;
+    float      memoCutoff = 0.0f, memoRes = 0.0f, memoHp = 0.0f;
     CosmosFilter cosmos;
     CosmosFilter prism;
     OracleFilter oracle;
