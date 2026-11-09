@@ -159,6 +159,10 @@ public:
     // Name lookup for the test harness / shell param mapping. Returns -1 if unknown.
     static int paramIndexForName(const char* name) noexcept;
 
+    // Output latency in host samples, the same at every oversampling factor (see
+    // LatencyPad). The shell reports it to the host; it never changes.
+    static constexpr int kLatencySamples = 13;
+
     // Tell the engine that the parameter table was just rewritten wholesale by a
     // program / preset load, so the smoothed controls must LAND on their new
     // values instead of gliding to them (a preset switch must never swoop).
@@ -420,6 +424,38 @@ private:
     bool  pushAcidHeld(int note, float vel) noexcept;   // see acidNoteOn
     // 100/127: MIDI velocity > 100 accents a live-played acid note (design doc).
     static constexpr float kAcidAccentVel = 100.0f / 127.0f;
+
+    // ========================= CONSTANT LATENCY ==============================
+    // The decimator's group delay depends on the factor: none at 1x, 11.5 host
+    // samples at 2x (downA alone, 47 taps at 2x) and 13.25 at 4x (plus downB, 15
+    // taps at 4x); cross-correlating one note onset rendered at each factor
+    // measures 11.3 and 12.9. Re-measure if the halfband taps change. Reporting
+    // that delay made every Oversampling change a LATENCY change, which hosts
+    // answer by restarting the plugin: a dropout, and in some hosts a pause of the
+    // whole audio engine. The voice path is padded instead, so it is
+    // kLatencySamples late at every factor and the report never moves: 1x by 13,
+    // 2x by 2, 4x not at all, which lands all three within half a sample of 13.
+    // Cost against the old per-factor report: 13 samples (0.27 ms at 48 kHz) at
+    // 1x, about 2 at the default 2x, nothing at 4x.
+    static constexpr int padFor(int factor) noexcept
+    { return factor == 4 ? 0 : factor == 2 ? 2 : kLatencySamples; }
+    struct LatencyPad
+    {
+        static constexpr int kSize = 16;   // power of two above the largest pad
+        float buf[kSize] = {};
+        int   pos = 0, delay = 0;
+        // delay == 0 hands x straight back, so the 4x path is unchanged bit for bit.
+        float process(float x) noexcept
+        {
+            buf[pos] = x;
+            const float y = buf[(pos - delay) & (kSize - 1)];
+            pos = (pos + 1) & (kSize - 1);
+            return y;
+        }
+        void reset() noexcept { for (float& v : buf) v = 0.0f; pos = 0; }
+    };
+    static_assert(kLatencySamples < LatencyPad::kSize, "latency pad ring too small");
+    LatencyPad padL, padR;
 
     // Streaming stereo decimator: generate `factor` internal samples, get one
     // host sample. Halfband stage assignment mirrors DuskOversampler.

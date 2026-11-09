@@ -153,11 +153,12 @@ public:
             values[i].store(d, std::memory_order_relaxed);
             dsp.setParameter((int)i, d);
         }
-        // Report the default-state latency from construction so a host that
-        // queries getLatency() before activate() (e.g. at plugin scan/load)
-        // gets the correct 2x value (12 samples) rather than 0 — otherwise PDC
-        // is misaligned until the first activate(). (E1)
-        updateLatency();
+        // Report the latency from construction so a host that queries
+        // getLatency() before activate() (e.g. at plugin scan/load) gets it
+        // rather than 0. It is the same at every oversampling factor (the core
+        // pads the shorter paths), so this is the only value ever reported and an
+        // Oversampling change never asks the host to restart the plugin. (E1)
+        setLatency((uint32_t)msynth::MultiSynthDSP::kLatencySamples);
     }
 
     // Same-process accessors for the Phase-4 UI bridge (MultiSynthAccess.hpp).
@@ -233,7 +234,6 @@ protected:
         if (index >= kNumCoreParams) return; // output params are not settable
         values[index].store(value, std::memory_order_relaxed);
         dsp.setParameter((int)index, value);
-        if (index == kParamOversampling) updateLatency(); // E1
     }
 
     //--- programs (factory presets; count = kNumFactoryPresets) -----------------
@@ -274,7 +274,6 @@ protected:
     {
         dsp.prepare(getSampleRate(), (int)getBufferSize());
         pushAllParams();
-        updateLatency(); // E1
         haveLastTransportFrame = false; // S3: no stale frame across a re-activate
     }
 
@@ -443,7 +442,6 @@ private:
         // Must come after the writes above so the snapshot that consumes the flag
         // already sees the whole preset.
         dsp.notifyProgramChange();
-        updateLatency(); // a preset may change oversampling (E1)
     }
 
     // Audio-thread retry for a program request that lost the programBusy race.
@@ -467,42 +465,17 @@ private:
             dsp.setParameter((int)i, values[i].load(std::memory_order_relaxed));
     }
 
-    // E1: report the oversampling group delay to the host so it can compensate.
-    // The oversampling param is 0=1x, 1=2x, 2=4x. The added latency (in host
-    // samples) is the halfband decimator group delay, measured by cross-
-    // correlating the same note-onset rendered at each factor (see the core
-    // Decimator: downA = HalfbandFIR<47,12> for 2x<->1x, downB = <15,4> for
-    // 4x<->2x). Those group delays are rate-independent in samples:
-    //   1x -> 0        (oversampling bypassed, no filter)
-    //   2x -> 12       (downA only: 12 host samples)
-    //   4x -> 14       (downA 12 + downB 4-at-2x = 2 host samples)
-    // Values verified by measurement; changing the halfband taps requires
-    // re-measuring these three ints.
-    static uint32_t latencyForOsParam(float osParamValue) noexcept
-    {
-        const int os = (int)(osParamValue + 0.5f);
-        if (os >= 2) return 14u; // 4x
-        if (os == 1) return 12u; // 2x
-        return 0u;               // 1x
-    }
-
-    void updateLatency()
-    {
-        setLatency(latencyForOsParam(values[kParamOversampling].load(std::memory_order_relaxed)));
-    }
-
     // MIDI program change (0xC0) -> factory preset, through the SAME loadProgram()
-    // the host's own program change uses, so the preset rows, the smoothing snap
-    // (notifyProgramChange) and the reported latency all stay consistent with a
-    // host-driven change. Out-of-range programs are ignored (54 factory presets;
-    // the MIDI data byte reaches 127).
+    // the host's own program change uses, so the preset rows and the smoothing snap
+    // (notifyProgramChange) stay consistent with a host-driven change.
+    // Out-of-range programs are ignored (54 factory presets; the MIDI data byte
+    // reaches 127).
     //
     // RT AUDIT — this is called from handleMidi on the audio thread. loadProgram()
     // does: kNumCoreParams + kBaselineRows + preset rows calls to setParameterValue,
-    // each a pair of relaxed atomic stores (values[] and the core's params[]); one
-    // dsp.notifyProgramChange() (release store); and updateLatency(), which is a
-    // plain field store in DAF (Plugin::setLatency -> pData->latency = frames). No
-    // allocation, no lock, no I/O, no host callback — RT-safe, so it runs inline
+    // each a pair of relaxed atomic stores (values[] and the core's params[]), and
+    // one dsp.notifyProgramChange() (release store). No allocation, no lock, no
+    // I/O, no host callback: RT-safe, so it runs inline
     // rather than through a pending-program atomic. Inline is also strictly better
     // for timing: run() splits the buffer at every MIDI event, so applying it here
     // lands the preset on the event's own frame instead of the next block boundary.

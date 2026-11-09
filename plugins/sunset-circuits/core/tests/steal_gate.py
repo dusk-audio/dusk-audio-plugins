@@ -70,42 +70,40 @@ these fixes landed (fe6ec66). Limits sit ~10 dB over the post-fix reading and
 >=10 dB under the pre-fix one, so a regression fails loudly and noise cannot
 flake the gate. Both numbers print on every run.
 
-WHY SCENARIO (b) READS +3.26 AT 512 BUT -2.43 / -3.07 AT 64 / 4096
-    Not drift, and not a fade landing inside the window. Two measurements:
+WHY SCENARIO (b) READS ~14 AT 512 BUT ~3 AT 64 / 4096, AND HOW IT IS GATED
+    The reading is a function of the SWITCH FRAME, not of the buffer size as such:
+    setat= fires on the first block starting at/after 1.0 s, so the switch lands
+    at frame 48000 (64, 128), 48128 (256, 512, 1024) or 49152 (2048, 4096), and
+    the window catches a different fraction of the outgoing fade in each.
 
-    1. Sweeping the buffer size shows the reading is a function of the SWITCH
-       FRAME, not of the buffer size as such. setat= fires on the first block
-       starting at/after 1.0 s, so the switch lands at frame 48000 (64, 128),
-       48128 (256, 512, 1024) or 49152 (2048, 4096) -- 0.0, 2.7 or 24.0 ms after
-       the nominal time -- and the readings group exactly the same way:
-       -2.43 / +3.26 / -3.07. Same three renders, same window offset from the
-       switch, three different fractions of the event inside the window.
+    The event itself is a legitimate amplitude collapse: the outgoing voices fade
+    over the engine's 36 ms mode fade, and a fade alone reads high on this metric.
+    It is also steeply placement sensitive at 512: moving the window 2 samples
+    moves the reading about 1 dB. That is how the constant-latency pad (2 samples
+    at 2x) took it from 12.51 to 14.05 dB with no change to the switch at all.
+    (The readings this note used to quote, +3.26 / -2.43 / -3.07 with >= 10.7 dB
+    of margin, predate the 36 ms fade.)
 
-    2. The event itself is a legitimate, large amplitude collapse: after the
-       switch to Acid there is no live acid note, so the outgoing voices fade out
-       into silence and the output is gone ~10 ms later. That collapse alone
-       reads high on this metric. Control: take the steady chord from t = 0.5 s
-       (continuous, click-free by construction) and re-envelope it with the
-       amplitude curve measured across the switch. It reads +8.6 to +22.0 dB
-       depending on window offset -- i.e. the metric attributes up to 22 dB of
-       "burst" to a signal that provably contains no discontinuity, and the real
-       render reads AT OR BELOW that control at the gate's own window offset
-       (-11.7 / -13.4 / -11.7 dB below it at 64 / 512 / 4096).
+    So (b) is gated two ways:
+    1. Against its CLICK-FREE CONTROL: the same chord rendered with no switch,
+       multiplied by the engine's own fade curve (smoothstep of a ramp that falls
+       1 / (36 ms * sr) per host sample from the switch frame). Effects are off,
+       so inside the window -- which ends before the commit at +36 ms -- a switch
+       that adds nothing but the fade renders exactly that, and the metric reads
+       the same on both (measured within 0.07 dB at every buffer size; the
+       samples agree to -49 dB re peak, the gap being the DC blocker's order
+       relative to the fade). A cut or a step reads far above its control, so
+       "real minus control <= 1 dB" pins the property itself, independent of
+       where the window falls.
+    2. Against the absolute limit, kept as the coarse backstop with the
+       calibration rule above: ~10 dB over the post-fix reading (14.05) and
+       >= 10 dB under the pre-fix 39.97, i.e. 24 dB.
 
-    So the 6.3 dB spread across buffer sizes is the window catching more or less
-    of a click-free collapse, and every reading has >=10.7 dB of margin under the
-    14 dB limit and >=36 dB under the pre-fix 39.97. No adjustment made: the
-    limit is untouched and the metric is left alone, because a control-referenced
-    metric would also have to re-derive the pre-fix calibration (a hard cut
-    produces nearly the same envelope, so its control reads high too).
-
-    ONE THING TO KNOW BEFORE MOVING THIS WINDOW. The reading is placement
-    sensitive: at +5 / +10 ms past the switch the same renders read +23.3 / +33.1
-    dB, over the 14 dB limit, while the click-free control reads +22.0 / +17.1
-    there. The window offset (PRE_MS) and SWITCH_T are therefore load-bearing
-    calibration, not free parameters -- change either and the limits must be
-    re-derived against the click-free control, not just against the pre-fix
-    column.
+    ONE THING TO KNOW BEFORE MOVING THIS WINDOW. The absolute readings of (a) and
+    (c) are placement sensitive in the same way. The window offset (PRE_MS) and
+    SWITCH_T are load-bearing calibration, not free parameters -- change either
+    and those limits must be re-derived against a click-free control, not just
+    against the pre-fix column.
 """
 import sys
 import numpy as np
@@ -122,6 +120,8 @@ WIN = 1440           # 30 ms analysis window
 QUIET_T = 0.5        # start of the reference window (steady, untouched signal)
 PRE_MS = 2.0         # window starts this far before the event (calibrated: see
                      # "ONE THING TO KNOW BEFORE MOVING THIS WINDOW" above)
+MODE_FADE_S = 0.036  # MultiSynthDSP::kModeFadeSeconds, for (b)'s click-free control
+OVER_FADE_DB = 1.0   # (b): how far the real switch may read above its control
 
 # Pure sine voice, fully linear output chain: no FX, no chorus, no analog drift, no
 # vintage noise, and masterVol low enough that softLimit() never engages -- it is
@@ -148,10 +148,11 @@ CHORD = [52, 55, 59, 62, 64]     # + ROOT = six notes -> voices 0..5
 SILENT_DB = -60.0
 LOUD_DB = -45.0
 
-# label: (limit dB, pre-fix dB at 512 frames)
+# label: (limit dB, pre-fix dB at 512 frames). (b)'s limit is the coarse backstop;
+# its click-free control check is the real gate (see the docstring).
 BURST_LIMIT = {
     "a": (8.0, 25.76),
-    "b": (14.0, 39.97),
+    "b": (24.0, 39.97),
     "c": (10.0, 24.14),
 }
 
@@ -185,6 +186,14 @@ def burst_db(sig, frame):
     ref = out_of_band_db(sig, int(QUIET_T * SR))
     hit = out_of_band_db(sig, frame - int(PRE_MS * SR / 1000.0))
     return hit - ref
+
+
+def mode_fade(n, frame):
+    """The engine's mode-switch fade gain per host sample: a ramp that starts
+    falling by 1 / (MODE_FADE_S * SR) on the switch frame, through smoothstep."""
+    m = np.clip(1.0 - (np.arange(n) - frame + 1) / (MODE_FADE_S * SR), 0.0, 1.0)
+    m[:frame] = 1.0
+    return m * m * (3.0 - 2.0 * m)
 
 
 def rms_db(sig, t0, t1):
@@ -228,13 +237,20 @@ def main():
     check("a", "retired voice gone", val, SILENT_DB, None, val < SILENT_DB)
 
     # --- (b) mode switch poly -> acid, at every buffer size ----------------------
+    # Gated against the click-free control (the unswitched chord times the
+    # engine's fade) and, coarsely, against the absolute limit.
     lim, pre = BURST_LIMIT["b"]
     for blk in BLOCKS:
         _, xb = render(0, ROOT, SECONDS, 2, f"steal_mode_poly_acid_{blk}",
                        hold=held(CHORD), setat=f"{SWITCH_T}:mode:5", block=blk, **POLY)
-        val = burst_db(xb, switch_frame(blk))
+        _, xs = render(0, ROOT, SECONDS, 2, f"steal_mode_poly_steady_{blk}",
+                       hold=held(CHORD), block=blk, **POLY)
+        sw = switch_frame(blk)
+        val = burst_db(xb, sw)
         check("b", f"poly -> acid @{blk}", val, lim, pre if blk == BLOCK else None,
               val <= lim)
+        over = val - burst_db(xs * mode_fade(xs.shape[0], sw)[:, None], sw)
+        check("b", f"  over fade @{blk}", over, OVER_FADE_DB, None, over <= OVER_FADE_DB)
 
     # --- (c) mode switch acid -> poly, at every buffer size ----------------------
     lim, pre = BURST_LIMIT["c"]

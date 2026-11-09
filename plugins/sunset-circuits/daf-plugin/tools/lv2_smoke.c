@@ -6,7 +6,8 @@
 //   * instantiates + activates + runs the bundle (via lilv, the library jalv
 //     uses), providing the URID map and options features a real host provides;
 //   * sweeps the oversampling factor and reads the reported-latency output port
-//     (expect 0 / 12 / 14 for 1x / 2x / 4x);
+//     (expect 13 at every factor: the latency is constant, so changing the
+//     factor never makes a host restart the plugin);
 //   * injects a MIDI note-on and confirms the MIDI-to-audio path is audible;
 //   * injects a MIDI program change (0xC0) and confirms it reached loadProgram().
 //
@@ -77,8 +78,23 @@ static void clear_seq(uint8_t* buf) {
     ((LV2_Atom_Sequence*)buf)->atom.size = sizeof(LV2_Atom_Sequence_Body);
 }
 
+// Run `blocks` blocks and return the peak absolute sample over every audio port.
+static float run_peak(LilvInstance* inst, float** audio, uint32_t nPorts, int blocks) {
+    float peak = 0.0f;
+    for (int b = 0; b < blocks; ++b) {
+        lilv_instance_run(inst, BLOCK);
+        for (uint32_t i = 0; i < nPorts; ++i)
+            if (audio[i])
+                for (int k = 0; k < BLOCK; ++k) {
+                    const float a = fabsf(audio[i][k]);
+                    if (a > peak) peak = a;
+                }
+    }
+    return peak;
+}
+
 // Exit codes: 0 ok, 1 usage, 2 plugin not found, 3 instantiate failed,
-// 4 no latency port, 5 no oversampling port, 6 one or more checks FAILED
+// 4 no latency port, 5 no oversampling or masterVol port, 6 one or more checks FAILED
 // (including a missing MIDI input port, which is a broken bundle, not a
 // reason to skip the MIDI section).
 int main(int argc, char** argv) {
@@ -98,7 +114,7 @@ int main(int argc, char** argv) {
     uint32_t nPorts = 0;
     const LilvPlugins* plugins = NULL;
     const LilvPlugin*  plug = NULL;
-    int oversamplingIdx = -1, latencyIdx = -1, atomInIdx = -1;
+    int oversamplingIdx = -1, latencyIdx = -1, masterVolIdx = -1, atomInIdx = -1;
 
     if (argc < 2) { fprintf(stderr, "usage: lv2_smoke <plugin-uri>\n"); return 1; }
     const char* uri = argv[1];
@@ -193,6 +209,7 @@ int main(int argc, char** argv) {
             lilv_instance_connect_port(inst, i, &ctrl[i]);
             if (strcmp(s, "oversampling") == 0) oversamplingIdx = (int)i;
             if (strcmp(s, "lv2_latency") == 0)  latencyIdx = (int)i;
+            if (strcmp(s, "masterVol") == 0)    masterVolIdx = (int)i;
         } else if (isAtom) {
             uint8_t* buf = calloc(4096, 1);
             atomBuf[i] = buf;
@@ -216,6 +233,7 @@ int main(int argc, char** argv) {
 
     if (latencyIdx < 0)      { fprintf(stderr, "no latency port found\n"); rc = 4; goto cleanup; }
     if (oversamplingIdx < 0) { fprintf(stderr, "no oversampling port found\n"); rc = 5; goto cleanup; }
+    if (masterVolIdx < 0)    { fprintf(stderr, "no masterVol port found\n"); rc = 5; goto cleanup; }
 
     lilv_instance_activate(inst);
     activated = 1;
@@ -225,12 +243,12 @@ int main(int argc, char** argv) {
     printf("\n  osParam   factor   reported latency (host samples)   audio finite?   result\n");
     printf("  -------   ------   ------------------------------   -------------   ------\n");
 
-    // The expected PDC values, in host samples, per oversampling setting. These
-    // are the halfband decimator group delays asserted in MultiSynthPlugin.cpp
-    // (latencyForOsParam): 1x bypasses the filters, 2x is downA alone, 4x is
-    // downA + downB. Printing them without checking them (the previous
-    // behaviour) meant a PDC regression scrolled past as a green run.
-    static const float kWantLatency[3] = { 0.0f, 12.0f, 14.0f };
+    // The expected PDC, in host samples, per oversampling setting: the same 13 at
+    // every factor. The engine pads the voice path (1x by 13, 2x by 2, 4x not at
+    // all) so the report never moves and a factor change never makes the host
+    // restart the plugin. Printing these without checking them (an earlier
+    // behaviour) let a PDC regression scroll past as a green run.
+    static const float kWantLatency[3] = { 13.0f, 13.0f, 13.0f };
     const char* facName[3] = { "1x", "2x", "4x" };
     for (int os = 0; os <= 2; ++os) {
         ctrl[oversamplingIdx] = (float)os;
@@ -302,48 +320,55 @@ int main(int argc, char** argv) {
 
         // --- MIDI program change (0xC0) -> loadProgram().
         // The plugin applies a self-initiated program change without telling the
-        // host, so no control INPUT port can show it. The reported latency can:
-        // every factory preset's baseline sets oversampling to 2x, so parking the
-        // host's oversampling port at 4x (latency 14) and then sending a program
-        // change must pull the reported latency to the preset's 2x value (12).
-        // That is a parameter the preset owns, observed through a real host port.
+        // host, so no control INPUT port can show it. The audio can: park the
+        // host's Master Volume port at -60 dB, then send program 0. Its rows
+        // rewrite Master Volume to the preset's own level behind the host's back,
+        // so the output must come up by more than 30 dB. A fresh note after the
+        // change keeps this independent of what the preset does with held notes.
+        // (This used to watch the reported latency follow the preset's 2x
+        // oversampling; the latency no longer moves.)
         uint8_t pc[2] = { 0xC0, 0 };
+        const uint8_t noteOn2[3] = { 0x90, 64, 100 };  // E4
 
-        ctrl[oversamplingIdx] = 2.0f; // 4x
-        lilv_instance_run(inst, BLOCK);
-        lilv_instance_run(inst, BLOCK);
-        const float latBefore = ctrl[latencyIdx];
+        ctrl[masterVolIdx] = -60.0f;
+        (void)run_peak(inst, audio, nPorts, 8);   // let the 8 ms volume glide settle
+        const float quiet = run_peak(inst, audio, nPorts, 24);
 
+        // put_midi_event() writes the sequence's only event, so the program change
+        // and the note go in separate blocks.
         put_midi_event(buf, midiEventURID, pc, 2);   // program 0
         lilv_instance_run(inst, BLOCK);
         clear_seq(buf);
-        const float latAfter = ctrl[latencyIdx];
+        put_midi_event(buf, midiEventURID, noteOn2, 3);
+        float loud = run_peak(inst, audio, nPorts, 1);
+        clear_seq(buf);
+        loud = fmaxf(loud, run_peak(inst, audio, nPorts, 47));
+        const float latPc = ctrl[latencyIdx];
 
-        const int pcOk = (latBefore == 14.0f) && (latAfter == 12.0f);
-        printf("program change (0xC0 prog 0): latency %.0f -> %.0f "
-               "(want 14 -> 12, the preset's 2x oversampling)  %s\n",
-               (double)latBefore, (double)latAfter, pcOk ? "PASS" : "FAIL");
+        const int pcOk = loud > 1.0e-3f && loud > quiet * 31.6f && latPc == 13.0f;
+        printf("program change (0xC0 prog 0): peak %.5f -> %.5f (want > +30 dB, the "
+               "preset's own Master Volume), latency %.0f (want 13)  %s\n",
+               (double)quiet, (double)loud, (double)latPc, pcOk ? "PASS" : "FAIL");
         if (!pcOk) ++failures;
 
-        // Out-of-range program must be ignored, not clamped or crashed into.
-        // Re-arming 4x needs the control port to actually CHANGE: the program change
-        // moved the plugin's internal oversampling to 2x behind the host's back, so
-        // the port still reads 4x and DAF (which only pushes a control port whose
-        // value differs from the last one it pushed) would not re-send it. Go via 1x.
-        ctrl[oversamplingIdx] = 0.0f; // 1x
-        lilv_instance_run(inst, BLOCK);
-        ctrl[oversamplingIdx] = 2.0f; // 4x
-        lilv_instance_run(inst, BLOCK);
-        lilv_instance_run(inst, BLOCK);
+        // Out-of-range program must be ignored, not clamped or crashed into. Re-park
+        // Master Volume first; the port has to CHANGE for DAF to push it again
+        // (program 0 moved the internal value behind the host's back while the port
+        // still reads -60, and DAF only pushes a port whose value differs from the
+        // last one it pushed), hence -59.9. The windows span two arp steps of the
+        // preset's pattern, so the two peaks compare like with like.
+        ctrl[masterVolIdx] = -59.9f;
+        (void)run_peak(inst, audio, nPorts, 8);   // settle, as above
+        const float parked = run_peak(inst, audio, nPorts, 48);
         pc[1] = 127;                                  // > 54 factory presets
         put_midi_event(buf, midiEventURID, pc, 2);
         lilv_instance_run(inst, BLOCK);
         clear_seq(buf);
-        const float latOor = ctrl[latencyIdx];
-        const int oorOk = latOor == 14.0f;
-        printf("program change (0xC0 prog 127): latency %.0f "
-               "(want 14, out-of-range ignored)  %s\n",
-               (double)latOor, oorOk ? "PASS" : "FAIL");
+        const float afterOor = run_peak(inst, audio, nPorts, 48);
+        const int oorOk = parked > 0.0f && afterOor < parked * 3.16f;   // within +10 dB
+        printf("program change (0xC0 prog 127): peak %.5f -> %.5f "
+               "(want no jump: out-of-range ignored)  %s\n",
+               (double)parked, (double)afterOor, oorOk ? "PASS" : "FAIL");
         if (!oorOk) ++failures;
     }
 

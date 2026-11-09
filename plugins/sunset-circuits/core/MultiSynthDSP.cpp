@@ -136,6 +136,7 @@ void MultiSynthDSP::prepare(double sampleRate, int maxBlockSize)
     acidVoice.prepare(hostRate * (double)osFactor);
     acidSeq.prepare(hostRate);
     decimL.setFactor(osFactor); decimR.setFactor(osFactor);
+    padL.delay = padR.delay = padFor(osFactor);
     // Parameter smoothers advance once per HOST sample (see processBlock), so
     // they are prepared at hostRate regardless of the oversampling factor.
     for (auto* s : { &smGain, &smPanAngle, &smWidth,
@@ -154,6 +155,10 @@ void MultiSynthDSP::applyOsFactor(int factor)
     acidVoice.setSampleRate(internalRate); // host-rate sequencer unaffected
     decimL.setFactor(osFactor); decimL.reset();
     decimR.setFactor(osFactor); decimR.reset();
+    // The pad takes up the difference, so the total latency stays put. Cleared with
+    // the decimators: the samples it holds came from the old path.
+    padL.delay = padR.delay = padFor(osFactor);
+    padL.reset(); padR.reset();
 }
 
 void MultiSynthDSP::reset()
@@ -164,6 +169,7 @@ void MultiSynthDSP::reset()
     arp.reset();
     acidVoice.reset(); acidSeq.reset(); acidHeldCount = 0;
     decimL.reset(); decimR.reset();
+    padL.reset(); padR.reset();
     dcBlockL.reset(); dcBlockR.reset();
     prevVintageL = prevVintageR = 0.0f;
     meterL = meterR = 0.0f;
@@ -1159,8 +1165,8 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
                 }
             }
 
-            float sL = decimL.process(iL);
-            float sR = decimR.process(iR);
+            float sL = padL.process(decimL.process(iL));
+            float sR = padR.process(decimR.process(iR));
             const float fxMod = fxAccum / (float)osFactor;
 
             // Mode-switch crossfade (see snapshotParameters). Applied to the VOICE path
