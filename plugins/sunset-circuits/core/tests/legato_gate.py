@@ -13,7 +13,9 @@ silent with a 1 s release, and a held Mono legato note was gone within 2 s.
 
 Scenarios (48k, 1x OS, plain square through an open filter, dry):
   a. arp, gate 50 %    : Cosmos and Mono, release 1 s -- no step more than 20 dB
-                         below the first, with legato on as with it off
+                         below the first, with legato on as with it off, and the
+                         first above -50 dBFS (a silent render has no step below
+                         its own first one)
   b. live Mono tie     : 60 held, 64 added at 1.0 s, both held -- the level holds
                          (within 1 dB) instead of dying, and does not re-attack
                          (ampS 0.5 patch: legato peak stays at sustain, while the
@@ -39,6 +41,7 @@ import numpy as np
 from _harness import render
 
 BPM, STEP = 120.0, 0.125
+ABS_FLOOR_DB = -50.0
 BASE = dict(osc1Wave=1, osc2Level=0, subLevel=0, noiseLevel=0, analogAmt=0,
             filterEnvAmt=0, filterCutoff=6000, filterRes=0, reverbOn=0, delayOn=0,
             cosmosChorus=0)
@@ -89,7 +92,7 @@ def arp_dead_steps(mode, legato):
     n = int(8.0 / STEP)
     p = np.array([a[k * seg:k * seg + int(0.03 * sr)].max() for k in range(n)])
     d = 20 * np.log10(np.maximum(p, 1e-9) / max(p[0], 1e-9))
-    return int(np.sum(d < -20.0)), n
+    return int(np.sum(d < -20.0)), n, db(p[0])
 
 
 def main():
@@ -97,9 +100,10 @@ def main():
 
     # (a) arp at gate 50 %: no dead steps with legato on.
     for mode, name in ((2, "Mono"), (0, "Cosmos")):
-        dead, n = arp_dead_steps(mode, 1)
-        fails += check(f"a-{name}", dead == 0,
-                       f"arp 50 % {name:6s}: {dead}/{n} steps >20 dB down (want 0)")
+        dead, n, first = arp_dead_steps(mode, 1)
+        fails += check(f"a-{name}", dead == 0 and first > ABS_FLOOR_DB,
+                       f"arp 50 % {name:6s}: {dead}/{n} steps >20 dB down (want 0), "
+                       f"first step {first:6.1f} dBFS (>{ABS_FLOOR_DB:.0f})")
 
     # (b) live Mono tie: level holds, no re-attack.
     P = dict(BASE, ampA=0.005, ampD=0.1, ampS=0.8, ampR=0.3)

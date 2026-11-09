@@ -289,11 +289,16 @@ def main():
     # is still rendering the OLD mode, and a note arriving then used to be routed to
     # it, played at zero gain and wiped by the commit. Purely a buffer-size defect:
     # the dead window is (blockSize - fade) samples, so 512 frames shows nothing.
+    # Measured on the difference from the same render without the key: the commit
+    # hands the held chord to the new mode, and the chord alone is loud enough to
+    # pass for the key.
     for blk in BLOCKS:
         _, xf = render(0, ROOT, SECONDS, 2, f"steal_key_after_switch_{blk}",
                        hold=held(CHORD), setat=f"{SWITCH_T}:mode:1",
                        noteon=f"{KEY_T}:72", block=blk, **POLY)
-        val = rms_db(xf, KEY_T + 0.1, 1.5)
+        _, xn = render(0, ROOT, SECONDS, 2, f"steal_no_key_after_switch_{blk}",
+                       hold=held(CHORD), setat=f"{SWITCH_T}:mode:1", block=blk, **POLY)
+        val = rms_db(xf - xn, KEY_T + 0.1, 1.5)
         check("f", f"live key @{blk}", val, LOUD_DB, None, val > LOUD_DB)
 
     print("\n(a-c are the broadband burst in dB over the same signal's own "
