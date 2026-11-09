@@ -335,7 +335,11 @@ int main(int argc, char** argv) {
         const uint8_t noteOn2[3] = { 0x90, 64, 100 };  // E4
 
         ctrl[masterVolIdx] = -60.0f;
-        (void)run_peak(inst, audio, nPorts, 8);   // let the 8 ms volume glide settle
+        // let the 8 ms volume glide settle; not measured, but still checked for NaN
+        if (isnan(run_peak(inst, audio, nPorts, 8))) {
+            fprintf(stderr, "FAIL: non-finite audio while the volume settled\n");
+            ++failures;
+        }
         const float quiet = run_peak(inst, audio, nPorts, 24);
 
         // put_midi_event() writes the sequence's only event, so the program change
@@ -367,7 +371,10 @@ int main(int argc, char** argv) {
         // the same pattern plays on at the same level: within 10 dB either way. A
         // one-sided bound passed silence after the change.
         ctrl[masterVolIdx] = -59.9f;
-        (void)run_peak(inst, audio, nPorts, 8);   // settle, as above
+        if (isnan(run_peak(inst, audio, nPorts, 8))) {   // settle, as above
+            fprintf(stderr, "FAIL: non-finite audio while the volume settled\n");
+            ++failures;
+        }
         const float parked = run_peak(inst, audio, nPorts, 48);
         pc[1] = 127;                                  // > 54 factory presets
         put_midi_event(buf, midiEventURID, pc, 2);

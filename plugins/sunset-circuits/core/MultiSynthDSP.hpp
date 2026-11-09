@@ -217,6 +217,11 @@ public:
     float getOutputLevelR() const noexcept { return outLevelR.load(std::memory_order_relaxed); }
     int   getArpStep() const noexcept { return arpStep.load(std::memory_order_relaxed); }
     int   getArpTotalSteps() const noexcept { return arpTotalSteps.load(std::memory_order_relaxed); }
+    // The oversampling factor the voices render at now: the parameter's, once a
+    // change has committed at the bottom of the voice-path fade. NOT an atomic:
+    // read it only from the thread that calls processBlock, between calls
+    // (render_test logs it after each block).
+    int   getOsFactor() const noexcept { return osFactor; }
     // Current performance-wheel state, whoever last wrote it — the shell's MIDI
     // handler (0xE0 / CC 1) or the editor's on-screen wheels. Read-only, relaxed,
     // no new state: these are the same atomics pitchBend()/modWheel() store into.

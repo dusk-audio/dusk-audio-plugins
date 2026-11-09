@@ -59,6 +59,11 @@
 //                       processBlock. The meters are a published observable with
 //                       a declared -60 dB floor, and this is the only way a gate
 //                       can see them.
+//   oslog=<path>        append "<sec> <factor>" per rendered block to <path>:
+//                       the time at the END of the block and the oversampling
+//                       factor the voices render at then (getOsFactor). A change
+//                       commits at the bottom of the voice-path fade, so this is
+//                       how a gate sees that an oversampling write was applied.
 //   notifyat=<sec>      call notifyProgramChange() on the same block boundary as
 //                       a setat= at the same time, AFTER that block's parameter
 //                       writes — i.e. exactly what the shell's loadProgram() and
@@ -282,6 +287,7 @@ int main(int argc, char** argv)
     std::vector<int> holdNotes;
     int    blockSize = 512;
     std::string meterPath;
+    std::string osLogPath;
 
     struct Override { int idx; float val; };
     std::vector<Override> overrides;
@@ -547,6 +553,7 @@ int main(int argc, char** argv)
             continue;
         }
         if (key == "meters")   { meterPath = val; continue; }
+        if (key == "oslog")    { osLogPath = val; continue; }
         if (key == "sr")       { sampleRate = parseNum("sr", val); continue; }
         if (key == "block")
         {
@@ -666,6 +673,17 @@ int main(int argc, char** argv)
         if (!meterFile)
         {
             std::fprintf(stderr, "cannot open meter log %s\n", meterPath.c_str());
+            return 2;
+        }
+    }
+    // Optional oversampling log (oslog=<path>): one line per rendered block.
+    FILE* osLogFile = nullptr;
+    if (!osLogPath.empty())
+    {
+        osLogFile = std::fopen(osLogPath.c_str(), "w");
+        if (!osLogFile)
+        {
+            std::fprintf(stderr, "cannot open oversampling log %s\n", osLogPath.c_str());
             return 2;
         }
     }
@@ -842,6 +860,13 @@ int main(int argc, char** argv)
                 std::exit(2);
             }
         }
+        if (osLogFile != nullptr
+            && std::fprintf(osLogFile, "%.9g %d\n", (double)(pos + n) / sampleRate,
+                            synth.getOsFactor()) < 0)
+        {
+            std::fprintf(stderr, "short write to oversampling log %s\n", osLogPath.c_str());
+            std::exit(2);
+        }
         for (int i = 0; i < n; ++i)
         {
             interleaved[(size_t)((pos + i) * 2 + 0)] = bufL[(size_t)i];
@@ -853,6 +878,11 @@ int main(int argc, char** argv)
     if (meterFile != nullptr && std::fclose(meterFile) != 0)
     {
         std::fprintf(stderr, "error closing meter log %s\n", meterPath.c_str());
+        return 2;
+    }
+    if (osLogFile != nullptr && std::fclose(osLogFile) != 0)
+    {
+        std::fprintf(stderr, "error closing oversampling log %s\n", osLogPath.c_str());
         return 2;
     }
 

@@ -91,7 +91,9 @@ E. AN OVERSAMPLING SWITCH UNDER A HELD NOTE IS CLICK-FREE
     the new factor. A held sine (Cosmos, note 60) is switched 2x -> 1x -> 4x -> 2x
     at 1, 2 and 3 s; the largest sample-to-sample curvature (second difference)
     within 20 ms before to 60 ms after each switch is compared with the steady
-    note's own:
+    note's own. A write the engine ignored would leave the note just as smooth,
+    so the factor the voices render at (render_test oslog=) must also read the
+    old factor up to the switch and the new one 0.1 s after it:
 
         switch      pre-fix    post-fix   (dB over the steady note)
         2x -> 1x    +58.7      -0.0
@@ -266,26 +268,36 @@ def portamento_os(fails):
         fails.append("D")
 
 
-OS_SWITCHES = ((1.0, "2x -> 1x"), (2.0, "1x -> 4x"), (3.0, "4x -> 2x"))
+# time, label, factor before, factor after
+OS_SWITCHES = ((1.0, "2x -> 1x", 2, 1), (2.0, "1x -> 4x", 1, 4), (3.0, "4x -> 2x", 4, 2))
 OS_CLICK_MAX_DB = 3.0
+OS_COMMIT_S = 0.1   # the 36 ms fade plus a block, with room to spare
 
 
 def os_switch_click(fails):
     print("\nE. oversampling switched under a held note (largest second difference "
-          "over the steady note's)")
-    _, x = render(0, 60, 4.0, 2, "probust_os_click", release=3.9,
+          "over the steady note's, and the factor the voices render at either side)")
+    log = os.path.join(OUT, "probust_os_click.oslog")
+    _, x = render(0, 60, 4.0, 2, "probust_os_click", release=3.9, oslog=log,
                   setat=["1.0:oversampling:0", "2.0:oversampling:2", "3.0:oversampling:1"],
                   **CLEAN)
+    # (end of block, factor) per block. A write the engine ignored would leave the
+    # note as smooth as a perfect switch, so each switch must also be seen to land.
+    factors = np.loadtxt(log, ndmin=2)
     d2 = np.abs(np.diff(x[:, 0], 2))
     steady = float(np.max(d2[int(0.5 * SR):int(0.9 * SR)]))
-    for t, label in OS_SWITCHES:
+    for t, label, before, after in OS_SWITCHES:
         a, b = int((t - 0.02) * SR), int((t + 0.06) * SR)
         over = 20.0 * np.log10(float(np.max(d2[a:b])) / steady)
-        ok = over <= OS_CLICK_MAX_DB
-        if not ok:
+        was = int(factors[factors[:, 0] <= t][-1, 1])
+        now = int(factors[factors[:, 0] >= t + OS_COMMIT_S][0, 1])
+        click_ok = over <= OS_CLICK_MAX_DB
+        commit_ok = was == before and now == after
+        if not (click_ok and commit_ok):
             fails.append("E")
         print(f"   {label}: {over:+5.1f} dB (max +{OS_CLICK_MAX_DB:.0f})   "
-              f"{'PASS' if ok else 'FAIL'}")
+              f"{'PASS' if click_ok else 'FAIL'};  renders {was}x before, {now}x after "
+              f"(want {before}x, {after}x)   {'PASS' if commit_ok else 'FAIL'}")
 
 
 def main():
