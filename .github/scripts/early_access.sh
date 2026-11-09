@@ -82,14 +82,33 @@ cmd_plan() {
 # pushes the site commit there, and website main keeps the previous version's PDF until that date), main for
 # everything else. Members-only prereleases change nothing on the site. TAG defaults to the tag being built.
 # Anything that cannot be planned answers main, which is what every archive used before this existed.
+#
+# The public date comes from the annotated tag's date, but actions/checkout replaces a tag it checks out
+# with a lightweight one (see release_changelog.sh), whose date is its commit's: a day early whenever the
+# commit and the tag fall on different UTC days. So the tag is fetched again first. And once the release
+# is public (no longer a draft), publish-due has merged its branch into website main and deleted it, so a
+# rebuild reads main directly instead of warning that the branch is missing.
 cmd_website_ref() {
-  local tag="${1:-}" plan_out early public_on ref=main
+  local tag="${1:-}" plan_out early public_on draft ref=main
   if [ -z "$tag" ] && [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then tag="${GITHUB_REF#refs/tags/}"; fi
+  if [ -n "$tag" ]; then
+    git fetch --quiet --force --no-tags origin "refs/tags/$tag:refs/tags/$tag" 2>/dev/null || true
+  fi
   if [ -n "$tag" ] && git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+    if [ "$(git cat-file -t "refs/tags/$tag")" != tag ]; then
+      echo "::warning::$tag is a lightweight tag here; its early-access date is taken from its commit." >&2
+    fi
     plan_out=$(GITHUB_OUTPUT="" cmd_plan "$tag" 2>/dev/null) || plan_out=""
     early=$(sed -n 's/^early=//p' <<< "$plan_out")
     public_on=$(sed -n 's/^public_on=//p' <<< "$plan_out")
     if [ "$early" = true ] && [[ "$public_on" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then ref="early-access/$public_on"; fi
+  fi
+  if [ "$ref" != main ] && [ -n "${GITHUB_REPOSITORY:-}" ]; then
+    draft=$(gh release view "$tag" -R "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null) || draft=""
+    if [ "$draft" = false ]; then
+      echo "$tag is public already: its site change is on website main." >&2
+      ref=main
+    fi
   fi
   out "ref=$ref"
 }

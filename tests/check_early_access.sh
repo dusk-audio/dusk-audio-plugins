@@ -33,7 +33,10 @@ cat > "$WORK/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 echo "gh $*" >> "$GH_LOG"
 case "$1 $2" in
-  "release view") exit "${FAKE_VIEW_EXIT:-1}" ;;
+  "release view")
+    # FAKE_VIEW_DRAFT stands for what `--json isDraft --jq .isDraft` prints for a release that exists.
+    if [ -n "${FAKE_VIEW_DRAFT:-}" ]; then echo "$FAKE_VIEW_DRAFT"; exit 0; fi
+    exit "${FAKE_VIEW_EXIT:-1}" ;;
   "release create"|"release edit")
     while [ $# -gt 0 ]; do
       if [ "$1" = "--notes-file" ]; then { echo "--- notes"; cat "$2"; echo "--- end"; } >> "$GH_LOG"; fi
@@ -99,6 +102,30 @@ check "the tag defaults to GITHUB_REF" "ref=early-access/2026-10-31" \
   "$(GITHUB_OUTPUT="" GITHUB_REF=refs/tags/multi-comp-2-v1.0.0 EARLY_ACCESS_DAYS=14 HAS_EARLY_TOKEN=true bash "$SCRIPT" website-ref)"
 check "a branch build reads website main" "ref=main" \
   "$(GITHUB_OUTPUT="" GITHUB_REF=refs/heads/main EARLY_ACCESS_DAYS=14 HAS_EARLY_TOKEN=true bash "$SCRIPT" website-ref)"
+# Once the release is public, publish-due has merged its branch into main and deleted it.
+wref_on() { # wref_on DRAFT TAG: as wref, with the release on GitHub (DRAFT true/false, or "" for none yet)
+  FAKE_VIEW_DRAFT="$1" GITHUB_REPOSITORY=dusk-audio/dusk-audio-plugins GITHUB_OUTPUT="" GITHUB_REF="" \
+    EARLY_ACCESS_DAYS=14 HAS_EARLY_TOKEN=true bash "$SCRIPT" website-ref "$2" 2>/dev/null
+}
+check "a published release reads website main" "ref=main" "$(wref_on false multi-comp-2-v1.0.0)"
+check "a draft release reads its dated branch" "ref=early-access/2026-10-31" "$(wref_on true multi-comp-2-v1.0.0)"
+check "a release not created yet reads its dated branch" "ref=early-access/2026-10-31" "$(wref_on "" multi-comp-2-v1.0.0)"
+# actions/checkout leaves a lightweight tag behind; its commit here is a week older than the tag.
+# website-ref fetches the annotated tag from origin again and dates the release by it.
+git init -q --bare "$WORK/origin.git"
+git init -q "$WORK/clone"
+(
+  cd "$WORK/clone"
+  GIT_COMMITTER_DATE="2026-10-10T12:00:00Z" git -c user.name=t -c user.email=t@t commit -q --allow-empty -m old
+  GIT_COMMITTER_DATE="2026-10-17T12:00:00Z" git -c user.name=t -c user.email=t@t tag -a ring-out-v1.2.0 -m "Ring Out 1.2.0"
+  git remote add origin "$WORK/origin.git"
+  git push -q origin HEAD:refs/heads/main refs/tags/ring-out-v1.2.0
+  git tag -d ring-out-v1.2.0 >/dev/null
+  git tag ring-out-v1.2.0 HEAD
+)
+check "a lightweight checkout tag is dated by the annotated tag" "ref=early-access/2026-10-31" \
+  "$(cd "$WORK/clone" && GITHUB_OUTPUT="" GITHUB_REF="" EARLY_ACCESS_DAYS=14 HAS_EARLY_TOKEN=true \
+       bash "$SCRIPT" website-ref ring-out-v1.2.0 2>/dev/null)"
 
 # --- fetch_manual_pdf.sh, against a fake curl that serves only $FAKE_URLS ---
 FETCH="$ROOT/.github/scripts/fetch_manual_pdf.sh"

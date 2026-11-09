@@ -14,7 +14,8 @@ base="https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io"
 [[ "$ref" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] || ref=main
 for r in "$ref" main; do
   url="$base/$r/assets/manuals/$slug-manual.pdf"
-  if curl -fL --silent --show-error "$url" -o "$out"; then
+  # Bounded: a stalled transfer fails like a missing file, so packaging goes on (and tries main).
+  if curl -fL --silent --show-error --connect-timeout 20 --max-time 120 "$url" -o "$out"; then
     echo "bundled $slug-manual.pdf from website $r"
     exit 0
   fi
