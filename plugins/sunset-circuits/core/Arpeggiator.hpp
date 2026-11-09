@@ -61,6 +61,15 @@ public:
     void setOctaveRange(int r) noexcept { r = clampi(r, 1, 4); if (r != octaveRange) { octaveRange = r; dirty = true; } }
     void setRate(ArpRateDivision r) noexcept { rateDivision = r; }
     void setGate(float g) noexcept { gateLength = clampf(g, 0.01f, 1.0f); }
+    // LEGATO at full gate TIES the steps. A step then never ends on its own gate:
+    // each step's note-off arrives on the same sample as the next step's note-on,
+    // so the engine can hand the line over note-on first and the voice ties
+    // (SynthVoice::noteOn). Without this the free-run clock released the step one
+    // sample early whenever the step length was a whole number of samples, which
+    // left nothing held to tie to. A muted step, an emptied held-set and a clock
+    // switch still end the note.
+    void setTieSteps(bool on) noexcept { tieSteps = on; }
+    bool tiesSteps() const noexcept { return tieSteps && gateLength >= 1.0f; }
     void setSwing(float s) noexcept { swing = clampf(s, 0.0f, 1.0f); }
     void setLatch(bool on) noexcept { latch = on; }
     void clearLatch() noexcept { if (latch) { heldCount = 0; orderCount = 0; dirty = true; } }
@@ -247,7 +256,8 @@ private:
             }
         }
 
-        if ((double)sampleCounter >= gateSamples && lastPlayedNote >= 0 && !ev.noteOnValid)
+        if (!tiesSteps() && (double)sampleCounter >= gateSamples && lastPlayedNote >= 0
+            && !ev.noteOnValid)
         {
             ev.noteOffValid = true; ev.offNote = lastPlayedNote; lastPlayedNote = -1;
         }
@@ -335,8 +345,10 @@ private:
             }
         }
 
-        // Gate-off for the sounding note (belongs to lastFiredGlobalStep).
-        if (lastPlayedNote >= 0 && !ev.noteOnValid && lastFiredGlobalStep >= 0)
+        // Gate-off for the sounding note (belongs to lastFiredGlobalStep). At full
+        // gate it lands on the next onset in exact arithmetic, but the two beats are
+        // computed differently, so a tie must not rely on them agreeing to the ulp.
+        if (!tiesSteps() && lastPlayedNote >= 0 && !ev.noteOnValid && lastFiredGlobalStep >= 0)
         {
             const long long g = lastFiredGlobalStep;
             const double swOff = (g & 1) ? (double)swing * 0.5 * bps : 0.0;
@@ -487,6 +499,7 @@ private:
     ArpRateDivision rateDivision = ArpRateDivision::Eighth;
     float gateLength = 0.5f, swing = 0.0f;
     bool latch = false;
+    bool tieSteps = false;
 
     ArpVelocityMode velMode = ArpVelocityMode::AsPlayed;
     int fixedVel = 100;

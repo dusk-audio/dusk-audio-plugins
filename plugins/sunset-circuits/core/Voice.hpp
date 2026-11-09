@@ -227,17 +227,32 @@ public:
         retiring = false; retirePhase = 1.0f;
     }
 
+    // LEGATO ("Glide only when notes overlap"). A note that lands on a voice whose
+    // note is still HELD -- key or sustain pedal down, see isGateHeld() -- is TIED
+    // to it: the envelopes, LFOs and oscillator phases run on, the voice keeps the
+    // first note's velocity (a new one would step the level without an attack to
+    // hide it), and only the pitch moves, gliding when Glide is up. Any other note
+    // starts one of its own, and with legato on that note does not glide.
+    //
+    // The tie used to be decided by ampEnv.isActive(), which is also true while the
+    // envelope RELEASES. A legato note landing on a releasing voice -- every arp
+    // step, since the arp releases each step before the next starts, and every
+    // steal of a held voice, which used to be released first -- skipped its attack
+    // and rode the old note's release down to silence (measured: 58 of 64 Mono arp
+    // steps silent with a 1 s release, and a held Mono legato note gone within 2 s).
     void noteOn(int midiNote, float velocity, const VoiceParameters& params) noexcept
     {
+        const bool tie = params.legatoMode && isGateHeld();
+
         currentNote = midiNote;
-        currentVelocity = velocity;
+        if (!tie) currentVelocity = velocity;
         active = true;
         polyPressure = 0.0f;   // a new note starts unpressed until 0xA0 says otherwise
         retiring = false; retirePhase = 1.0f;   // a re-used voice is no longer retiring
 
         const float targetFreq = midiToHz((float)midiNote);
 
-        if (params.portamentoTime > 0.0f && lastFreq > 0.0f)
+        if (params.portamentoTime > 0.0f && lastFreq > 0.0f && (tie || !params.legatoMode))
         {
             float tau = params.portamentoTime;
             if (params.glideMode != 0) // constant rate: proportional to interval (octaves)
@@ -252,19 +267,22 @@ public:
         }
         lastFreq = targetFreq;
 
-        float mappedVel = velocity;
-        switch (params.velocityCurve)
+        if (!tie)
         {
-            case 1: mappedVel = std::sqrt(velocity); break;
-            case 2: mappedVel = velocity * velocity; break;
-            case 3: mappedVel = 1.0f; break;
-            default: break;
+            float mappedVel = velocity;
+            switch (params.velocityCurve)
+            {
+                case 1: mappedVel = std::sqrt(velocity); break;
+                case 2: mappedVel = velocity * velocity; break;
+                case 3: mappedVel = 1.0f; break;
+                default: break;
+            }
+            velocityGain = 1.0f - params.velocitySensitivity * (1.0f - mappedVel);
         }
-        velocityGain = 1.0f - params.velocitySensitivity * (1.0f - mappedVel);
 
         randomPerNote = rng.nextFloat();
 
-        if (!params.legatoMode || !ampEnv.isActive())
+        if (!tie)
         {
             ampEnv.noteOn();
             filtEnv.noteOn();
@@ -331,18 +349,17 @@ public:
     // zeroes it). Controllers stop sending 0xA0 at key-up, so the last value simply
     // persists; that is the same convention channel pressure follows.
     void setPolyPressure(float v01) noexcept { polyPressure = v01; }
-    // Voice steal: release everything that shapes the outgoing note before the new
-    // one is triggered on top. The FILTER envelope must release with the amp
-    // envelope, not just alongside it: in legato mode noteOn() deliberately skips
-    // the retrigger while ampEnv is still active, so a stolen voice runs its amp
-    // release to silence while filtEnv sat in Sustain holding the cutoff wide open
-    // for the whole fade — and left that stale level as the seed for the next note
-    // to land on this voice. Outside legato the following noteOn() retriggers both
-    // envelopes from their current values, so this is a no-op there.
-    void setSteal() noexcept
+
+    // The note on this voice is still held, by its key or by the sustain pedal (a
+    // pedal-held key-up never reaches the voice): the amp envelope is in attack,
+    // decay or sustain. Release does not count -- that note is ending -- and
+    // neither does a retiring voice, which retire() has already released.
+    bool isGateHeld() const noexcept
     {
-        ampEnv.noteOff(); filtEnv.noteOff();
-        for (int u = 0; u < kMaxUnison; ++u) fm[u].noteOff();
+        const ADSREnvelope::Stage s = ampEnv.getStage();
+        return active && !retiring
+            && (s == ADSREnvelope::Stage::Attack || s == ADSREnvelope::Stage::Decay
+                || s == ADSREnvelope::Stage::Sustain);
     }
 
     // Retire: the voice has fallen OUTSIDE the allocator's effective polyphony
@@ -969,7 +986,11 @@ public:
             if (voices[(size_t)i].isReleasing()) level *= 0.1f;
             if (level < quietestLevel) { quietestLevel = level; quietest = i; }
         }
-        voices[(size_t)quietest].setSteal();
+        // No release before the new note: SynthVoice::noteOn either ties to the
+        // stolen note (legato, still held) or restarts every envelope from its
+        // current level, which is the click-free hand-off on its own. The release
+        // this used to issue first was what turned every legato steal into a tie
+        // to a dying note.
         voices[(size_t)quietest].noteOn(note, velocity, params);
         return &voices[(size_t)quietest];
     }

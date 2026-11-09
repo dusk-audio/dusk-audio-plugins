@@ -386,27 +386,30 @@ private:
     float modeFade = 1.0f;             // voice-path gain, 0..1
     float modeFadeStep = 1.0f;         // per host sample, set in prepare()
 
-    // Note-ons that arrived while a mode-switch crossfade was in flight. They are
-    // routed to the OUTGOING mode (correctly -- that is what is still sounding),
-    // but the commit resets the voice pool, so without this they are wiped and
-    // the key simply does nothing. Measured: a key pressed 2 ms into the 12 ms
-    // fade sustained at -168.9 dBFS, against -9.7 dBFS for the same key pressed
-    // 8 ms later. Replayed into the new mode on the commit segment.
+    // ========================= HELD-NOTE HAND-OVER ===========================
+    // A routing edge -- the arp or the acid sequencer switching on or off, or a
+    // mode switch committing -- moves where notes go, and the notes the player is
+    // still holding have to move with it. They used not to: the edge released (or,
+    // for a mode switch, reset) whatever was sounding and the held keys went
+    // silent until they were pressed again, so a held chord simply stopped when the
+    // arp was switched on, and an engine change in the middle of a phrase cut it.
     //
-    // Fixed array, sized to the largest voice pool, so the capture allocates
-    // nothing on the audio thread; past that a held chord simply stops
-    // capturing, which is the same as today's behaviour.
+    // "Held" is exactly what a note-off has not yet ended: keys down (heldNotes*)
+    // plus the notes the sustain pedal is holding (sustained*). Their captured
+    // key-ups stay owed across the edge and are delivered through the NEW routing,
+    // so nothing is stranded. replayHeldNotes() re-issues them in the order the
+    // keys were pressed (keyPressOrder), at the velocity each was struck with
+    // (keyVelocity) -- press order matters to mono last-note priority and to the
+    // arp's As-Played pattern.
     //
-    // Entries are keyed by note number (noteOn updates in place rather than
-    // appending a second entry for the same key) and are dropped again by
-    // pruneDeferred() when the note's release becomes effective, so a key that goes
-    // up before the commit is not replayed into a note nobody can release. Cleared
-    // wholesale by reset() and by allNotesOff() / allSoundOff().
-    static constexpr int kMaxDeferredNotes = 16;
-    struct DeferredNote { int note = -1; float vel = 0.0f; };
-    DeferredNote deferredNotes[kMaxDeferredNotes] = {};
-    int deferredNoteCount = 0;
-    void pruneDeferred(int note) noexcept;
+    // This also covers the mode-switch fade, which used to keep its own list of
+    // notes pressed while the fade was running: such a note is held like any other.
+    // Audio thread only (every note event is), so plain members.
+    void routeNoteOn(int note, float velocity01) noexcept;
+    void replayHeldNotes() noexcept;
+    std::array<float, 128>    keyVelocity {};
+    std::array<uint32_t, 128> keyPressOrder {};
+    uint32_t                  keyPressCount = 0;
 
     // --- Acid mode (mode 5) helpers ---
     // Note routing for mode 5 lives outside the poly VoiceAllocator: a single
@@ -414,6 +417,7 @@ private:
     bool  isAcidMode() const noexcept { return renderMode() == SynthMode::Acid; }
     void  acidNoteOn(int note, float velocity01) noexcept;
     void  acidNoteOff(int note) noexcept;
+    bool  pushAcidHeld(int note, float vel) noexcept;   // see acidNoteOn
     // 100/127: MIDI velocity > 100 accents a live-played acid note (design doc).
     static constexpr float kAcidAccentVel = 100.0f / 127.0f;
 
@@ -503,12 +507,12 @@ private:
     bool  arpEnabled = false;
     bool  lastArpLatch = false;   // detects the latch 1->0 edge (prune latched notes)
 
-    // Preset/mode transition tracking (stuck-note fix). snapshotParameters()
-    // compares these against the current snapshot: a mode change or an arp /
-    // acid-sequencer disable while a note is held would otherwise strand the
-    // sounding voice (its note-off routes through the new path, or the disabled
-    // subsystem stops advancing), so we release it. haveLastSnap suppresses a
-    // spurious release on the very first block (before any real transition).
+    // Routing-edge tracking. snapshotParameters() compares these against the
+    // current snapshot: a mode change or an arp / acid-sequencer toggle while a
+    // note is held would otherwise strand the sounding voice (its note-off routes
+    // through the new path, or the disabled subsystem stops advancing), so the edge
+    // ends the old path and hands the held notes to the new one. haveLastSnap
+    // suppresses a spurious edge on the very first block (before any real one).
     bool      haveLastSnap = false;
     SynthMode lastSnapMode = SynthMode::Cosmos;
     bool      lastArpEnabled = false;

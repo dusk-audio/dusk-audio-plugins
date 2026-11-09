@@ -4522,7 +4522,7 @@ private:
         tips[kParamUnisonDetune] = "Spread of detuning across unison voices, in cents.";
         tips[kParamUnisonSpread] = "Stereo spread of unison voices.";
         tips[kParamPortaTime] = "Glide time between notes.";
-        tips[kParamLegato] = "Glide only when notes overlap.";
+        tips[kParamLegato] = "Overlapping notes tie: no new attack, and glide only between them. At full arp gate the arp's steps tie too.";
         tips[kParamGlideMode] = "Glide as a fixed time or a fixed rate.";
         tips[kParamVelSens] = "How strongly velocity affects level.";
         tips[kParamVelCurve] = "Response curve applied to incoming velocity.";
@@ -4531,7 +4531,7 @@ private:
         tips[kParamArpMode] = "Note order the arpeggiator plays.";
         tips[kParamArpOctave] = "Range the arpeggio spans, in octaves.";
         tips[kParamArpRate] = "Step length as a note division.";
-        tips[kParamArpGate] = "Length of each step relative to its slot.";
+        tips[kParamArpGate] = "Length of each step relative to its slot. At full gate with Legato on, steps tie.";
         tips[kParamArpSwing] = "Delays off-beat steps for a swung feel.";
         tips[kParamArpLatch] = "Hold the pattern after keys are released.";
         tips[kParamArpVelMode] = "Velocity source for steps: as played, fixed, or accented.";
