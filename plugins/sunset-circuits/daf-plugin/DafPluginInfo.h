@@ -43,6 +43,7 @@
 #define DAF_PLUGIN_WANT_PROGRAMS      1   // factory presets (see MultiSynthParams)
 #define DAF_PLUGIN_WANT_STATE         0
 #define DAF_PLUGIN_WANT_LATENCY       1   // constant latency, the same at every oversampling factor (E1)
+#define DAF_PLUGIN_WANT_REMOTE_CONTROLS 1 // controller pages for CLAP hosts (initRemoteControlPage)
 // Same-process meter/scope access for the Phase-4 UI (weak-symbol bridge). With
 // MONOLITHIC LV2 (see CMakeLists) this resolves in every format.
 #define DAF_PLUGIN_WANT_DIRECT_ACCESS 1
