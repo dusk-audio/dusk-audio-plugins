@@ -511,8 +511,12 @@ private:
         guards(!h.fieldActive(), k.name + ": a press on the knob outside its open field closes the field");
         const bool ok = h.protocolOk(m);
         detects(ok, k.name + ": that press leaves no write outside a gesture and no unmatched gesture");
-        if (!ok) h.printEvents(m);
-        else std::printf("    (that press sent %d host events)\n", h.eventsSince(m));
+        // The text was not edited, so closing the field commits nothing, and the
+        // press began while the knob had no button, so it starts no drag: a
+        // balanced begin, write, end here would still be a drag nobody asked for.
+        const bool silent = h.eventsSince(m) == 0;
+        detects(silent, k.name + ": that press sends nothing to the host");
+        if (!ok || !silent) h.printEvents(m);
     }
 
     // With this knob's field open, a drag on another knob behaves as it always
