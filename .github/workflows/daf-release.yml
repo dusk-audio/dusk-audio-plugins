@@ -39,6 +39,8 @@ on:
       - '.github/daf-ref'
       - '.github/scripts/resolve_daf_ref.sh'
       - '.github/scripts/verify_daf_checkout.sh'
+      # The shared CLAP gate test-linux runs.
+      - '.github/scripts/daf_clap_validate.py'
   workflow_dispatch:
 
 # DAF is the permanent dusk-audio hard fork and the sole source of truth for
@@ -945,6 +947,8 @@ jobs:
           # be advisory about; if that ever changes, fix the plugin rather than
           # loosening this (NEVER a per-test allowlist -- see the script).
           SUITE_STRICT: "1"
+          # The release tag's version (its numeric core); empty unless this run is a release.
+          RELEASE_VERSION: ${{ needs.setup.outputs.version }}
         run: |
           # This calls the SHARED gate rather than an inline classifier.
           #
@@ -958,12 +962,20 @@ jobs:
           # defines what makes a CLAP acceptable -- including the pinned
           # validator version and its SHA-256, which the script resolves itself.
           #
+          # The script also gates the descriptor's version: the one this build was
+          # configured with and, on a release, the tag's (#358).
+          #
           # xvfb: clap-validator drives the plugin GUI, which needs an X display.
           set -o pipefail
           CLAP="$(cd build/bin && pwd)/sunset-circuits.clap"
           test -f "$CLAP"
+          PROJECT_VERSION=$(sed -n 's/^CMAKE_PROJECT_VERSION:STATIC=//p' build/CMakeCache.txt)
+          EXPECT=(--expect-version "$PROJECT_VERSION")
+          if [ -n "$RELEASE_VERSION" ]; then
+            EXPECT+=(--expect-version "$RELEASE_VERSION")
+          fi
           xvfb-run -a python3 "${GITHUB_WORKSPACE}/.github/scripts/daf_clap_validate.py" \
-            "$CLAP" 2>&1 | tee clap-validator.log
+            "${EXPECT[@]}" "$CLAP" 2>&1 | tee clap-validator.log
 
       - name: Upload validation logs
         if: always()

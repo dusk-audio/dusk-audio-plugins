@@ -466,11 +466,23 @@ jobs:
           # returning the whole matrix to advisory, and NEVER add a per-test
           # allowlist (see .github/scripts/daf_clap_validate.py).
           SUITE_STRICT: "1"
+          # The release tag's version; empty unless this run is a release.
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
         run: |
+          # The descriptor must report the version this build was configured with
+          # (project() VERSION, which getVersion() is built from) and, on a release,
+          # the tag's: every CLAP built before dusk-audio/DAF#108 reports an empty
+          # one (#358). A prerelease tag's -suffix is not part of the binary's
+          # version, as in the plan step's tag guard.
+          PROJECT_VERSION=$(sed -n 's/^CMAKE_PROJECT_VERSION:STATIC=//p' build/CMakeCache.txt)
+          EXPECT=(--expect-version "$PROJECT_VERSION")
+          if [ -n "$RELEASE_VERSION" ]; then
+            EXPECT+=(--expect-version "${RELEASE_VERSION%%-*}")
+          fi
           # xvfb: clap-validator drives the plugin GUI, which needs an X display in
           # this headless container.
           xvfb-run -a python3 "${GITHUB_WORKSPACE}/.github/scripts/daf_clap_validate.py" \
-            "build/bin/${PLUGIN_BASE}.clap"
+            "${EXPECT[@]}" "build/bin/${PLUGIN_BASE}.clap"
 
       - name: Validate LV2 metadata and discovery (gate)
         working-directory: ${{ env.PLUGIN_DIR }}

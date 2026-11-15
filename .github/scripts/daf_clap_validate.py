@@ -51,7 +51,19 @@ violating the CLAP spec. This script runs clap-validator on a built .clap and:
              plugin's ClapPresets ctest cover discovery and loading instead. Remove
              the exclusion when a fixed validator is pinned.
 
-Usage: daf_clap_validate.py <path-to-plugin.clap>
+  VERSION    HARD FAIL unless every plugin the factory lists reports exactly
+             each --expect-version: the project() version the build was
+             configured with and, on a release, the tag's. No validator TEST
+             checks the version string, but the validator's plugin listing
+             (`list plugins --json`, out of process, like the suite) reports
+             every descriptor's fields, so this reads the version from there
+             before the suite runs. The listing reports an empty version as
+             null, and null, missing and empty all fail. DAF's descriptor
+             carried an empty version until dusk-audio/DAF#108, and every CLAP
+             released before that reports none (dusk-audio/dusk-audio-plugins#358).
+
+Usage: daf_clap_validate.py --expect-version X.Y.Z [--expect-version X.Y.Z ...]
+                            <path-to-plugin.clap>
 Env:
   CLAP_VALIDATOR_BIN      Use this binary instead of downloading a release
                           (Linux ARM64 has no prebuilt: cargo-install and point
@@ -63,8 +75,10 @@ Env:
                           advisory. Any OTHER unrecognized value is an error rather
                           than a silent fallback to advisory.
 """
+import argparse
 import glob
 import hashlib
+import json
 import re
 import os
 import platform
@@ -97,10 +111,73 @@ RUN_TIMEOUT_S = 600
 # Tests skipped because the validator itself deadlocks in them (see the module docstring).
 # Never add a test here to get a plugin past the gate.
 VALIDATOR_BUG_EXCLUSIONS = ("preset-discovery-crawl", "preset-discovery-load")
+# The plugin listing loads the plugin, so it gets a bound of its own.
+LISTING_TIMEOUT_S = 120
+EXPECTED_VERSION_RE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 
 
 def log(msg):
     print(msg, flush=True)
+
+
+def check_descriptor_version(vbin, clap, expected_versions):
+    """HARD GATE: every plugin the factory lists reports exactly each expected version.
+
+    --hide-output is load-bearing, not cosmetic: without it, whatever the plugin
+    prints to stdout while it loads lands in front of the JSON on the validator's
+    stdout, and the listing no longer parses. The suite run below shows that output.
+    """
+    try:
+        proc = subprocess.run(
+            [vbin, "-v", "quiet", "list", "plugins", "--json", "--hide-output", clap],
+            capture_output=True, encoding="utf-8", errors="replace", timeout=LISTING_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        log(f"::error::clap-validator timed out after {LISTING_TIMEOUT_S}s listing the plugins in {clap}")
+        sys.exit(2)
+    output = (proc.stdout or "") + (proc.stderr or "")
+    try:
+        listing = json.loads(proc.stdout or "")
+    except json.JSONDecodeError as exc:
+        listing, why = None, f"not JSON: {exc}"
+    else:
+        why = "not one entry for the one path given"
+    # One path in, one entry out. Its key is the path as the validator spells it, so
+    # the entry is taken by count, not by key.
+    if proc.returncode != 0 or not isinstance(listing, dict) or len(listing) != 1:
+        log(f"::error::clap-validator's plugin listing for {clap} is unusable "
+            f"(exit {proc.returncode}; {why}).")
+        log(output)
+        sys.exit(1)
+    (entry,) = listing.values()
+    entry = entry if isinstance(entry, dict) else {}
+    # The validator exits 0 on a plugin it cannot load and says so only in status.
+    if entry.get("status") != "success":
+        log(f"::error::clap-validator could not scan {clap}: status {entry.get('status')!r}, "
+            f"{entry.get('details')!r}.")
+        sys.exit(1)
+    plugins = entry.get("plugins")
+    if not isinstance(plugins, list) or not plugins:
+        log(f"::error::The plugin factory of {clap} lists no plugin.")
+        sys.exit(1)
+
+    bad = False
+    for plugin in plugins:
+        plugin = plugin if isinstance(plugin, dict) else {}
+        version = plugin.get("version")
+        log(f"CLAP descriptor: id={plugin.get('id')!r} name={plugin.get('name')!r} "
+            f"version={version!r}")
+        for expected in expected_versions:
+            # A null, missing or empty version and a different one all fail here.
+            if version != expected:
+                why = (" The descriptor has no version, as DAF before dusk-audio/DAF#108 builds "
+                       "it, and hosts show the plugin as unversioned." if not version else "")
+                log(f"::error::CLAP descriptor {plugin.get('id')!r} reports version {version!r}, "
+                    f"expected {expected!r}.{why}")
+                bad = True
+    if bad:
+        sys.exit(1)
+    log(f"CLAP descriptor version {', '.join(sorted(set(expected_versions)))} PASSED.")
 
 
 def _suite_strict():
@@ -273,13 +350,30 @@ def resolve_binary(workdir):
 
 
 def main():
-    if len(sys.argv) != 2:
-        log("usage: daf_clap_validate.py <path-to.clap>")
-        sys.exit(2)
-    clap = sys.argv[1]
+    parser = argparse.ArgumentParser(prog="daf_clap_validate.py")
+    # Required, so a caller that forgets it fails instead of silently skipping the
+    # version gate (checked below, to fail with an ::error:: annotation). Repeatable:
+    # on a release the workflows pass the tag's version too.
+    parser.add_argument("--expect-version", action="append", metavar="X.Y.Z",
+                        help="version every CLAP descriptor must report")
+    parser.add_argument("clap", help="path to the built .clap")
+    args = parser.parse_args()
+    clap = args.clap
     if not os.path.exists(clap):
         log(f"::error::plugin not found: {clap}")
         sys.exit(2)
+
+    # An empty value is a workflow that could not read the project version; refuse
+    # it rather than compare against nothing.
+    expected_versions = args.expect_version or []
+    if not expected_versions:
+        log("::error::--expect-version is required: the version every CLAP descriptor must report.")
+        sys.exit(2)
+    for expected in expected_versions:
+        if not EXPECTED_VERSION_RE.fullmatch(expected):
+            log(f"::error::--expect-version {expected!r} is not MAJOR.MINOR.PATCH, the form the "
+                "descriptor reports (an empty value means the caller could not read the version).")
+            sys.exit(2)
 
     # Resolve SUITE_STRICT UP FRONT, not lazily inside the failure branch. Checking
     # it only when the suite already failed means a misconfigured value sails
@@ -291,14 +385,20 @@ def main():
     try:
         vbin = resolve_binary(workdir)
         log(f"Using clap-validator: {vbin}")
+
+        # HARD GATE: the descriptor version, before the suite.
+        check_descriptor_version(vbin, clap, expected_versions)
+
         exclude_args = []
         for test in VALIDATOR_BUG_EXCLUSIONS:
             exclude_args += ["--exclude", f"^{re.escape(test)}$"]
         log(f"Skipping for a validator deadlock: {', '.join(VALIDATOR_BUG_EXCLUSIONS)}")
         try:
+            # errors="replace": the suite forwards what the plugin prints, which need
+            # not be UTF-8, and a decode error would end the gate in a traceback.
             proc = subprocess.run(
                 [vbin, "validate", *exclude_args, clap],
-                capture_output=True, text=True, timeout=RUN_TIMEOUT_S,
+                capture_output=True, encoding="utf-8", errors="replace", timeout=RUN_TIMEOUT_S,
             )
         except subprocess.TimeoutExpired as exc:
             log(f"::error::clap-validator timed out after {RUN_TIMEOUT_S}s on {clap}")
