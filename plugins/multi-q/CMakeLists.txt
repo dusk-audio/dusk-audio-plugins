@@ -535,3 +535,36 @@ if(NOT CMAKE_CROSSCOMPILING)
     target_link_libraries(MultiQAutoGainJuceTest PRIVATE MultiQ)
     add_test(NAME MultiQAutoGainJuce COMMAND MultiQAutoGainJuceTest)
 endif()
+
+# #165 / #359: type a value into Multi-Q's knobs and close the field every way a
+# host can. Fails on a destroyed callback, a non-finite parameter, or a value
+# written into the wrong band. No CI job runs it. Without a sanitizer it detects
+# the pre-0.10.8 use-after-free only where the allocator makes the stale read
+# visible (measured on macOS: a time-out); build with -fsanitize=address to prove
+# it absent. See the test's header.
+#
+# Not built on Windows: it has never been compiled or run with MSVC, so CI must
+# not build it there unverified (build.yml builds "all" on full-fleet runs). The
+# test has a plain main (no START_JUCE_APPLICATION, so no dependence on _CONSOLE
+# in juce_events) and is meant to build there once this guard is lifted. The
+# private home below would not hold on Windows: JUCE asks the shell for the
+# AppData folder (SHGetSpecialFolderPath), not the environment, so the editor
+# would save its window size into the user's real settings.
+if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
+    add_executable(MultiQValueEntryTest tests/test_multiq_value_entry.cpp)
+    target_compile_definitions(MultiQValueEntryTest PRIVATE
+        $<TARGET_PROPERTY:MultiQ,COMPILE_DEFINITIONS>)
+    target_include_directories(MultiQValueEntryTest PRIVATE
+        "${CMAKE_CURRENT_BINARY_DIR}/MultiQ_artefacts/JuceLibraryCode"
+        $<TARGET_PROPERTY:MultiQ,INCLUDE_DIRECTORIES>)
+    target_link_libraries(MultiQValueEntryTest PRIVATE MultiQ)
+    add_test(NAME MultiQValueEntry COMMAND MultiQValueEntryTest)
+    # Private home (CFFIXED_USER_HOME on macOS, HOME on Linux) so the editor's
+    # saved window size and the crash-log folder stay in the build tree. Exit 77
+    # means skipped (Linux without an X display).
+    set(_multiq_value_entry_home "${CMAKE_CURRENT_BINARY_DIR}/value-entry-home")
+    file(MAKE_DIRECTORY "${_multiq_value_entry_home}")
+    set_tests_properties(MultiQValueEntry PROPERTIES
+        ENVIRONMENT "CFFIXED_USER_HOME=${_multiq_value_entry_home};HOME=${_multiq_value_entry_home}"
+        SKIP_RETURN_CODE 77)
+endif()
