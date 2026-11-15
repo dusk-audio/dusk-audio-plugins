@@ -462,6 +462,16 @@ void BandDetailPanel::setSelectedBand(int bandIndex)
 
 void BandDetailPanel::updateAttachments()
 {
+    // A value typed into one of these knobs is committed from a posted message,
+    // i.e. after this swap, and would be written into the newly selected band.
+    // Commit it now, into the band it was typed for, while the old attachments
+    // still exist. (The same as clicking anywhere else, which also commits.)
+    for (auto* knob : { freqKnob.get(), gainKnob.get(), qKnob.get(), panKnob.get(),
+                        thresholdKnob.get(), attackKnob.get(), releaseKnob.get(),
+                        rangeKnob.get(), ratioKnob.get() })
+        if (knob != nullptr)
+            ValueEditor::commitOpenEditorNow(*knob);
+
     freqAttachment.reset();
     gainAttachment.reset();
     qAttachment.reset();

@@ -452,6 +452,76 @@ public:
         return false;
     }
 
+    // Commits, NOW, a value field that is still open for `slider`, then closes
+    // it. Returns true if there was one. Call it before re-pointing the slider
+    // at a different parameter (Multi-Q's band knobs follow the selected band).
+    //
+    // Why: the field's own commit runs from the TextEditor's posted Return /
+    // focus-loss message, and writes through whatever the slider is attached
+    // to by then. Clicking another band takes focus (which only POSTS the
+    // focus-loss message) and then swaps the attachments synchronously, so the
+    // value typed for one band used to land in the band clicked next.
+    //
+    // The write uses a synchronous notification so the slider's CURRENT
+    // attachment sees it before the caller swaps. The field is closed through
+    // its own cleanup first, which sets the shared state flag: the posted
+    // message that still arrives afterwards finds it set and writes nothing.
+    // The callbacks are copied, never cleared (see note 4 in popUp). Message
+    // thread only, and not from inside the field's own callbacks.
+    //
+    // Two known limits, both needing the caller to run inside the same message-
+    // loop pass as the field's own event, which user input practically cannot do
+    // (a click or key after typing is a later OS event, and the field's posted
+    // message is normally dispatched first; JUCE does not guarantee that order
+    // when its message queue is backed up):
+    //   * Escape pressed but not yet handled. Escape only POSTS its message, so
+    //     the field still counts as open, and a call here commits the typed
+    //     text that Escape was about to discard. New with this function (before
+    //     it, the band change just left the old value). Closing it would need a
+    //     synchronous key listener in popUp's lifecycle.
+    //   * Commit handled, slider notification not yet delivered. popUp's commit
+    //     notifies asynchronously, so a re-point in between hands the pending
+    //     notification to the NEW attachment, which already holds that value and
+    //     ignores it: the typed value is lost, no other parameter is written.
+    //     Predates this function (identical without it). Closing it would mean
+    //     a synchronous notification in popUp's commit, which that commit
+    //     avoids on purpose (failure modes 1 and 3 above).
+    static bool commitOpenEditorNow (juce::Slider& slider)
+    {
+        JUCE_ASSERT_MESSAGE_THREAD
+
+        auto* top = slider.getTopLevelComponent();
+        if (top == nullptr)
+            return false;
+
+        const juce::int64 sliderTag = reinterpret_cast<juce::int64> (&slider);
+        for (int i = 0; i < top->getNumChildComponents(); ++i)
+        {
+            auto* field = dynamic_cast<juce::TextEditor*> (top->getChildComponent (i));
+            if (field == nullptr
+                || field->getProperties().contains ("dusk_valeditor_closing")
+                || static_cast<juce::int64> (field->getProperties().getWithDefault ("dusk_valeditor_for",
+                                                                                    juce::var (juce::int64 (0))))
+                   != sliderTag)
+                continue;
+
+            const auto text = field->getText().trim();
+            const auto close = field->onEscapeKey;   // the field's cleanup
+            if (close)
+                close();
+
+            if (text.isNotEmpty())
+            {
+                const double parsed = parseSmart (text, slider);
+                if (std::isfinite (parsed))
+                    slider.setValue (juce::jlimit (slider.getMinimum(), slider.getMaximum(), parsed),
+                                     juce::sendNotificationSync);
+            }
+            return true;
+        }
+        return false;
+    }
+
 private:
     // Parse text like "1.5k", "500hz", "-3.5dB", "85%", "60ms" into a numeric
     // value in the slider's native units. Heuristics:
