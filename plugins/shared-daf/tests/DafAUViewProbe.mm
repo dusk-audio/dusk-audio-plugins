@@ -7,7 +7,9 @@
 // It reports the view tree at each stage and, for in-process hosting, reads the
 // plugin's own GL front buffer back and writes it to a PNG. A drawn ImGui panel
 // yields hundreds of distinct colours; a blank surface yields one or two, which
-// is the "black box in the host" symptom expressed as a number.
+// is the "black box in the host" symptom expressed as a number. The PNG holds the
+// RGB the surface shows and no alpha: the GL surface is opaque and hosts show its
+// raw RGB, so a framebuffer alpha below 255 is not coverage and is dropped.
 //
 //   clang++ -std=c++17 -ObjC++ -Wno-deprecated-declarations \
 //     plugins/shared-daf/tests/DafAUViewProbe.mm \
@@ -24,9 +26,37 @@
 //                window id printed as "WINDOWID:" is the only way to see pixels.
 //   [5]          seconds to hold the window open, for that screencapture
 //   [6]          "WxH" to replay the resize a host performs immediately after
-//                creating the view, which is how Logic restores a saved size
+//                creating the view, which is how Logic restores a saved size.
+//                With WxH the view is also created with WxH as its preferred
+//                size: out of process Apple's remote container sizes the host
+//                window to it, in process DAF ignores it.
+//                Without it, or with "-", the window takes the size the view
+//                reports when it is created, the plugin's own design size, and
+//                follows the view if it changes that size itself. In process, a
+//                view that reports no size at creation is an error (pass WxH);
+//                out of process the remote view reports 1x1 at creation and its
+//                real size later, and the window follows it there.
 //   [7]          directory for shot_<subtype>.png (default DAF_PROBE_CAPTURE_DIR,
 //                then the system temporary directory)
+//
+// Environment, all optional:
+//   DAF_PROBE_PRESET=n          sets kAudioUnitProperty_PresentPreset to factory
+//                               preset n
+//   DAF_PROBE_SET="id=v,..."    AudioUnitSetParameter for each entry: id is the DAF
+//                               parameter index, v the value in host units
+//       Both are applied after AudioUnitInitialize and before the view is built,
+//       so the view opens on that state (lit switches, engine-specific controls).
+//       The preset goes first, so DAF_PROBE_SET overrides the preset's values.
+//       Malformed input, a value that is not a finite number within float range,
+//       an unknown preset or parameter, a read-only parameter, a value outside the
+//       parameter's range, a value the unit does not hold back, or a failing AU
+//       call stops the probe with exit status 1.
+//   DAF_PROBE_CAPTURE_DIR=dir   capture directory when [7] is not given
+//   DAF_PROBE_RENDER            set to any value (even empty or 0): the input
+//                               buses are connected before AudioUnitInitialize,
+//                               and once the editor is open a sine is rendered
+//                               through the plugin; in-process only, ignored out
+//                               of process
 
 #import <AppKit/AppKit.h>
 #import <CoreServices/CoreServices.h>
@@ -40,7 +70,11 @@
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
+#include <cctype>
+#include <cstdint>
 #include <algorithm>
+#include <string>
+#include <vector>
 
 namespace
 {
@@ -108,6 +142,302 @@ NSView* findGLView(NSView* view)
             return found;
     return nil;
 }
+
+void printUsage(const char* program)
+{
+    std::fprintf(stderr,
+        "usage: %s [type subtype manu] [oop|in] [holdSeconds] [WxH|-] [captureDir]\n"
+        "  defaults: aufx DsMc Dusk, in-process, no hold, the view's own size,\n"
+        "            DAF_PROBE_CAPTURE_DIR or the system temporary directory\n"
+        "  environment, applied before the view is built, preset first:\n"
+        "    DAF_PROBE_PRESET=n         factory preset n (kAudioUnitProperty_PresentPreset)\n"
+        "    DAF_PROBE_SET=\"id=v,...\"   AudioUnitSetParameter: DAF parameter index = host value\n"
+        "  environment, used once the editor is open:\n"
+        "    DAF_PROBE_RENDER=<any>     render a sine through the plugin with the editor open\n"
+        "                               (set to any value, even 0; in-process only)\n",
+        program);
+}
+
+// A whole string of decimal digits and nothing else: no sign, no spaces.
+bool parseUnsigned(const std::string& text, unsigned long long limit, unsigned long long& out)
+{
+    if (text.empty() || text.size() > 10)
+        return false;
+    unsigned long long value = 0;
+    for (const char c : text)
+    {
+        if (!std::isdigit(static_cast<unsigned char>(c)))
+            return false;
+        value = value * 10 + static_cast<unsigned long long>(c - '0');
+    }
+    if (value > limit)
+        return false;
+    out = value;
+    return true;
+}
+
+// A whole string that is one finite number. An overflow comes back as infinity
+// and is rejected; an underflow is a finite value near zero and is accepted.
+bool parseFloat(const std::string& text, float& out)
+{
+    if (text.empty() || std::isspace(static_cast<unsigned char>(text[0])))
+        return false;
+    char* end = nullptr;
+    const float value = std::strtof(text.c_str(), &end);
+    if (end != text.c_str() + text.size() || !std::isfinite(value))
+        return false;
+    out = value;
+    return true;
+}
+
+// argv[6]: "WxH" with both sides positive, or "-" for no host resize.
+bool parseHostSize(const char* text, bool& wanted, NSSize& size)
+{
+    wanted = false;
+    if (std::strcmp(text, "-") == 0)
+        return true;
+    const std::string spec(text);
+    const size_t x = spec.find('x');
+    unsigned long long width = 0, height = 0;
+    if (x == std::string::npos
+        || !parseUnsigned(spec.substr(0, x), INT32_MAX, width)
+        || !parseUnsigned(spec.substr(x + 1), INT32_MAX, height)
+        || width == 0 || height == 0)
+        return false;
+    wanted = true;
+    size = NSMakeSize(static_cast<CGFloat>(width), static_cast<CGFloat>(height));
+    return true;
+}
+
+std::string utf8(CFStringRef text)
+{
+    if (text == nullptr)
+        return {};
+    const char* const bytes = [(__bridge NSString*) text UTF8String];
+    return bytes != nullptr ? std::string(bytes) : std::string();
+}
+
+// DAF_PROBE_PRESET=n: factory preset n, which must be one the unit lists.
+bool applyPresetFromEnvironment(AudioUnit unit)
+{
+    const char* const text = std::getenv("DAF_PROBE_PRESET");
+    if (text == nullptr)
+        return true;
+
+    unsigned long long requested = 0;
+    if (!parseUnsigned(text, INT32_MAX, requested))
+    {
+        std::fprintf(stderr,
+                     "FAIL: DAF_PROBE_PRESET=\"%s\" is not a factory preset number "
+                     "(a non-negative decimal integer)\n", text);
+        return false;
+    }
+
+    CFArrayRef presets = nullptr;
+    UInt32 size = sizeof(presets);
+    OSStatus status = AudioUnitGetProperty(unit, kAudioUnitProperty_FactoryPresets,
+                                           kAudioUnitScope_Global, 0, &presets, &size);
+    if (status != noErr || presets == nullptr || CFArrayGetCount(presets) == 0)
+    {
+        std::fprintf(stderr,
+                     "FAIL: DAF_PROBE_PRESET=%s: the unit lists no factory presets "
+                     "(kAudioUnitProperty_FactoryPresets -> %d)\n", text, (int) status);
+        if (presets != nullptr)
+            CFRelease(presets);
+        return false;
+    }
+
+    const CFIndex count = CFArrayGetCount(presets);
+    const AUPreset* match = nullptr;
+    SInt32 lowest = INT32_MAX, highest = INT32_MIN;
+    for (CFIndex i = 0; i < count; ++i)
+    {
+        const AUPreset* const preset =
+            static_cast<const AUPreset*>(CFArrayGetValueAtIndex(presets, i));
+        if (preset == nullptr)
+            continue;
+        lowest = std::min(lowest, preset->presetNumber);
+        highest = std::max(highest, preset->presetNumber);
+        if (preset->presetNumber == static_cast<SInt32>(requested))
+            match = preset;
+    }
+    if (match == nullptr)
+    {
+        std::fprintf(stderr,
+                     "FAIL: DAF_PROBE_PRESET=%s is not one of the unit's %ld factory "
+                     "presets (numbers %d to %d)\n",
+                     text, (long) count, (int) lowest, (int) highest);
+        CFRelease(presets);
+        return false;
+    }
+
+    AUPreset chosen = *match;
+    const std::string name = utf8(chosen.presetName);
+    status = AudioUnitSetProperty(unit, kAudioUnitProperty_PresentPreset,
+                                  kAudioUnitScope_Global, 0, &chosen, sizeof(chosen));
+    CFRelease(presets);
+    if (status != noErr)
+    {
+        std::fprintf(stderr,
+                     "FAIL: DAF_PROBE_PRESET=%s: setting kAudioUnitProperty_PresentPreset "
+                     "to \"%s\" -> %d\n", text, name.c_str(), (int) status);
+        return false;
+    }
+
+    AUPreset present{};
+    size = sizeof(present);
+    status = AudioUnitGetProperty(unit, kAudioUnitProperty_PresentPreset,
+                                  kAudioUnitScope_Global, 0, &present, &size);
+    if (status == noErr && present.presetName != nullptr)
+        CFRelease(present.presetName);
+    if (status != noErr || present.presetNumber != chosen.presetNumber)
+    {
+        std::fprintf(stderr,
+                     "FAIL: DAF_PROBE_PRESET=%s: the unit reports preset %d (status %d) "
+                     "after being set to it\n",
+                     text, (int) present.presetNumber, (int) status);
+        return false;
+    }
+    std::printf("PRESET: %d \"%s\"\n", (int) chosen.presetNumber, name.c_str());
+    return true;
+}
+
+// DAF_PROBE_SET="id=v,...": every entry is checked against the unit's parameter
+// list, writability and range before any is set, so a bad entry changes nothing.
+bool applyParametersFromEnvironment(AudioUnit unit)
+{
+    const char* const text = std::getenv("DAF_PROBE_SET");
+    if (text == nullptr)
+        return true;
+
+    UInt32 listSize = 0;
+    OSStatus status = AudioUnitGetPropertyInfo(unit, kAudioUnitProperty_ParameterList,
+                                               kAudioUnitScope_Global, 0, &listSize, nullptr);
+    std::vector<AudioUnitParameterID> ids(
+        status == noErr ? listSize / sizeof(AudioUnitParameterID) : 0);
+    if (status == noErr && !ids.empty())
+        status = AudioUnitGetProperty(unit, kAudioUnitProperty_ParameterList,
+                                      kAudioUnitScope_Global, 0, ids.data(), &listSize);
+    if (status != noErr)
+    {
+        std::fprintf(stderr, "FAIL: DAF_PROBE_SET: kAudioUnitProperty_ParameterList -> %d\n",
+                     (int) status);
+        return false;
+    }
+    ids.resize(listSize / sizeof(AudioUnitParameterID));
+
+    struct Setting { AudioUnitParameterID id; float value, low, high; std::string name; };
+    std::vector<Setting> settings;
+    const std::string all(text);
+    for (size_t start = 0;;)
+    {
+        const size_t comma = all.find(',', start);
+        const std::string entry = all.substr(
+            start, comma == std::string::npos ? std::string::npos : comma - start);
+        const size_t equals = entry.find('=');
+        unsigned long long id = 0;
+        float value = 0.0f;
+        if (equals == std::string::npos
+            || !parseUnsigned(entry.substr(0, equals), UINT32_MAX, id)
+            || !parseFloat(entry.substr(equals + 1), value))
+        {
+            std::fprintf(stderr,
+                         "FAIL: DAF_PROBE_SET entry \"%s\" is not id=value with id a DAF "
+                         "parameter index and value a finite number within float range, "
+                         "in host units (entries separated by commas)\n", entry.c_str());
+            return false;
+        }
+        const AudioUnitParameterID parameter = static_cast<AudioUnitParameterID>(id);
+        if (std::find(ids.begin(), ids.end(), parameter) == ids.end())
+        {
+            std::fprintf(stderr,
+                         "FAIL: DAF_PROBE_SET entry \"%s\": the unit has no parameter %u "
+                         "(it lists %zu parameters)\n",
+                         entry.c_str(), (unsigned) parameter, ids.size());
+            return false;
+        }
+        for (const Setting& earlier : settings)
+            if (earlier.id == parameter)
+            {
+                std::fprintf(stderr, "FAIL: DAF_PROBE_SET sets parameter %u twice\n",
+                             (unsigned) parameter);
+                return false;
+            }
+
+        AudioUnitParameterInfo info{};
+        UInt32 infoSize = sizeof(info);
+        status = AudioUnitGetProperty(unit, kAudioUnitProperty_ParameterInfo,
+                                      kAudioUnitScope_Global, parameter, &info, &infoSize);
+        if (status != noErr)
+        {
+            std::fprintf(stderr,
+                         "FAIL: DAF_PROBE_SET: kAudioUnitProperty_ParameterInfo for "
+                         "parameter %u -> %d\n", (unsigned) parameter, (int) status);
+            return false;
+        }
+        const bool hasCFName = (info.flags & kAudioUnitParameterFlag_HasCFNameString) != 0
+                            && info.cfNameString != nullptr;
+        const std::string name = hasCFName
+            ? utf8(info.cfNameString)
+            : std::string(info.name, strnlen(info.name, sizeof(info.name)));
+        if ((info.flags & kAudioUnitParameterFlag_CFNameRelease) != 0)
+        {
+            if (hasCFName)
+                CFRelease(info.cfNameString);
+            if (info.unit == kAudioUnitParameterUnit_CustomUnit && info.unitName != nullptr)
+                CFRelease(info.unitName);
+        }
+        if ((info.flags & kAudioUnitParameterFlag_IsWritable) == 0)
+        {
+            std::fprintf(stderr, "FAIL: DAF_PROBE_SET: parameter %u \"%s\" is read-only\n",
+                         (unsigned) parameter, name.c_str());
+            return false;
+        }
+        if (value < info.minValue || value > info.maxValue)
+        {
+            std::fprintf(stderr,
+                         "FAIL: DAF_PROBE_SET: %g is outside parameter %u \"%s\"'s range "
+                         "%g to %g\n", (double) value, (unsigned) parameter, name.c_str(),
+                         (double) info.minValue, (double) info.maxValue);
+            return false;
+        }
+        settings.push_back({ parameter, value, info.minValue, info.maxValue, name });
+
+        if (comma == std::string::npos)
+            break;
+        start = comma + 1;
+    }
+
+    for (const Setting& setting : settings)
+    {
+        status = AudioUnitSetParameter(unit, setting.id, kAudioUnitScope_Global, 0,
+                                       setting.value, 0);
+        if (status != noErr)
+        {
+            std::fprintf(stderr,
+                         "FAIL: AudioUnitSetParameter(%u \"%s\", %g) -> %d\n",
+                         (unsigned) setting.id, setting.name.c_str(),
+                         (double) setting.value, (int) status);
+            return false;
+        }
+        AudioUnitParameterValue held = 0.0f;
+        status = AudioUnitGetParameter(unit, setting.id, kAudioUnitScope_Global, 0, &held);
+        // A float round trip may move the last bit; a clamp, a step or an ignored
+        // set moves it further, and then the capture would not show what was asked.
+        const float tolerance = 1.0e-5f * std::max(1.0f, setting.high - setting.low);
+        if (status != noErr || std::fabs(held - setting.value) > tolerance)
+        {
+            std::fprintf(stderr,
+                         "FAIL: parameter %u \"%s\" holds %g (status %d) after being set "
+                         "to %g\n", (unsigned) setting.id, setting.name.c_str(),
+                         (double) held, (int) status, (double) setting.value);
+            return false;
+        }
+        std::printf("SET: parameter %u \"%s\" = %g\n",
+                    (unsigned) setting.id, setting.name.c_str(), (double) held);
+    }
+    return true;
+}
 }
 
 int main(int argc, const char* argv[])
@@ -131,6 +461,19 @@ int main(int argc, const char* argv[])
         {
             std::fprintf(stderr,
                          "FAIL: AU type, subtype, and manufacturer codes must each contain at least four characters\n");
+            printUsage(argv[0]);
+            return 1;
+        }
+
+        // Logic resizes the view it was handed straight after creating it, to the
+        // plugin window size saved with the session. argv[6] = "WxH" replays that.
+        bool hostResize = false;
+        NSSize hostResizeSize = NSZeroSize;
+        if (argc > 6 && !parseHostSize(argv[6], hostResize, hostResizeSize))
+        {
+            std::fprintf(stderr, "FAIL: \"%s\" is not a host size: expected WxH, both "
+                                 "positive integers, or - for the view's own size\n", argv[6]);
+            printUsage(argv[0]);
             return 1;
         }
 
@@ -212,6 +555,11 @@ int main(int argc, const char* argv[])
 
         status = AudioUnitInitialize(unit);
         std::printf("AudioUnitInitialize -> %d\n", (int) status);
+
+        // The state to capture, before the view is built: the preset first, so the
+        // single parameters can override it.
+        if (!applyPresetFromEnvironment(unit) || !applyParametersFromEnvironment(unit))
+            return 1;
 
         // --- the property a host reads to find the view -------------------------
         UInt32 dataSize = 0;
@@ -295,8 +643,13 @@ int main(int argc, const char* argv[])
 
         std::printf("--- calling uiViewForAudioUnit ---\n");
         std::fflush(stdout);
+        // In process DAF ignores the preferred size (its DAF_UI_DEFAULT_WIDTH and
+        // HEIGHT win). Out of process Apple's remote container sizes the host window
+        // to it, so it is the replayed host size when WxH is given, and none
+        // otherwise, so that the size the view reports is its own.
         NSView* const view = [factory uiViewForAudioUnit:unit
-                                                withSize:NSMakeSize(1120, 380)];
+                                                withSize:hostResize ? hostResizeSize
+                                                                    : NSZeroSize];
         std::fflush(stdout);
         std::printf("--- returned view=%p ---\n", (void*) view);
         if (view == nil)
@@ -308,20 +661,28 @@ int main(int argc, const char* argv[])
         std::printf("view tree immediately after creation:\n");
         describeView(view, 1);
 
-        // Logic resizes the view it was handed straight after creating it, to the
-        // plugin window size saved with the session. argv[6] = "WxH" replays that.
-        NSSize hostSize = NSMakeSize(1120, 380);
-        if (argc > 6)
+        // The window takes the size the view reports now, before any host resize,
+        // unless argv[6] replays the resize a host performs at this point.
+        NSSize hostSize = [view frame].size;
+        if (hostResize)
         {
-            int hw = 0, hh = 0;
-            if (std::sscanf(argv[6], "%dx%d", &hw, &hh) == 2 && hw > 0 && hh > 0)
-            {
-                hostSize = NSMakeSize(hw, hh);
-                std::printf("host resize: setFrameSize %dx%d right after creation\n", hw, hh);
-                [view setFrameSize:hostSize];
-                std::printf("view tree after host resize:\n");
-                describeView(view, 1);
-            }
+            hostSize = hostResizeSize;
+            std::printf("host resize: setFrameSize %.0fx%.0f right after creation\n",
+                        hostSize.width, hostSize.height);
+            [view setFrameSize:hostSize];
+            std::printf("view tree after host resize:\n");
+            describeView(view, 1);
+        }
+        else if (!outOfProcess && (hostSize.width < 1.0 || hostSize.height < 1.0))
+        {
+            std::fprintf(stderr, "FAIL: the view reports no size of its own (%.1fx%.1f); "
+                                 "pass WxH\n", hostSize.width, hostSize.height);
+            return 1;
+        }
+        else
+        {
+            std::printf("window: the view's own size %.0fx%.0f\n",
+                        hostSize.width, hostSize.height);
         }
 
         // --- put it in a window and let the run loop turn, as a host would ------
@@ -331,6 +692,33 @@ int main(int argc, const char* argv[])
                                           backing:NSBackingStoreBuffered
                                             defer:NO];
         [window setContentView:view];
+
+        // At its own size the window follows the view, as a host does: out of
+        // process the remote view reports 1x1 when created and its real size later.
+        id frameObserver = nil;
+        if (!hostResize)
+        {
+            [view setPostsFrameChangedNotifications:YES];
+            frameObserver = [[NSNotificationCenter defaultCenter]
+                addObserverForName:NSViewFrameDidChangeNotification
+                            object:view
+                             queue:nil
+                        usingBlock:^(NSNotification*) {
+                const NSSize size = [view frame].size;
+                if (!NSEqualSizes(size, [window contentRectForFrameRect:[window frame]].size))
+                {
+                    std::printf("window: follows the view to %.0fx%.0f\n",
+                                size.width, size.height);
+                    // Anchored at the origin like the window was created:
+                    // setContentSize keeps the top-left fixed, which grows a window
+                    // that starts at 1x1 down past the bottom of the screen.
+                    [window setFrame:[window frameRectForContentRect:
+                                         NSMakeRect(0, 0, size.width, size.height)]
+                             display:YES];
+                }
+            }];
+        }
+
         [window orderFront:nil];
         std::printf("WINDOWID: %ld\n", (long) [window windowNumber]);
         std::fflush(stdout);
@@ -394,9 +782,14 @@ int main(int argc, const char* argv[])
                     (unsigned long) [[view subviews] count]);
 
         // --- does the GL surface actually paint anything? -----------------------
-        // Captured through the window server, so this sees exactly what a host
-        // would composite. A capture that is uniformly one colour is the "black
-        // box" symptom; a capture with many distinct colours is a drawn UI.
+        // Read back from the plugin's GL front buffer. The surface is opaque, so its
+        // RGB bytes are the ones the window server shows for the host: a
+        // screencapture of the window holds the same bytes. The tags differ: the PNG
+        // is device RGB, which ImageIO writes as sRGB, while the screencapture carries
+        // the display's profile (Display P3 on a P3 display), so a colour-managed
+        // viewer shows the PNG less saturated than the host window. A capture that
+        // is uniformly one colour is the "black box" symptom; many distinct colours
+        // is a drawn UI.
         NSView* const glView = findGLView(view);
         bool captureFailed = false;
 
@@ -476,10 +869,15 @@ int main(int argc, const char* argv[])
                     [NSString stringWithFormat:@"shot_%s.png", subCode]];
                 [[NSFileManager defaultManager] removeItemAtPath:out error:nil];
 
+                // The framebuffer alpha is not coverage (43% of Multi-Comp 2's face
+                // reads below 255, down to 110): the GL surface is opaque and the host
+                // shows its raw RGB. Read as premultiplied, those areas would be divided
+                // by alpha towards white, so the alpha byte is skipped and the RGB
+                // reaches the PNG unchanged.
                 CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
                 CGContextRef bmp = space != nullptr ? CGBitmapContextCreate(
                     pixels, (size_t) w, (size_t) h, 8, rowBytes, space,
-                    kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big) : nullptr;
+                    kCGImageAlphaNoneSkipLast | kCGBitmapByteOrder32Big) : nullptr;
                 CGImageRef image = bmp != nullptr ? CGBitmapContextCreateImage(bmp) : nullptr;
                 CGImageDestinationRef dest = CGImageDestinationCreateWithURL(
                     (__bridge CFURLRef) [NSURL fileURLWithPath:out],
@@ -540,6 +938,8 @@ int main(int argc, const char* argv[])
             }
         }
 
+        if (frameObserver != nil)
+            [[NSNotificationCenter defaultCenter] removeObserver:frameObserver];
         [window orderOut:nil];
         AudioUnitUninitialize(unit);
         AudioComponentInstanceDispose(unit);
