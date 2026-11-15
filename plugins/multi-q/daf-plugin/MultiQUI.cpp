@@ -2350,10 +2350,16 @@ private:
         };
         float t = toT(values[pid]);
 
-        ImGui::SetCursorScreenPos(ImVec2(c.x - RR, c.y - RR));
-        ImGui::InvisibleButton(id, ImVec2(2.f * RR, 2.f * RR));
-        const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+        // No button while the value field is open over the knob: it would take
+        // every click inside the field (see DuskPanel::knob).
         const bool editing = panel.isEditingValue(id);
+        bool hov = false, act = false;
+        if (!editing)
+        {
+            ImGui::SetCursorScreenPos(ImVec2(c.x - RR, c.y - RR));
+            ImGui::InvisibleButton(id, ImVec2(2.f * RR, 2.f * RR));
+            hov = ImGui::IsItemHovered(); act = ImGui::IsItemActive();
+        }
         const bool modKey = ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper;
         auto apply = [&](float tt) { const float v = toV(tt); values[pid] = v; setParameterValue(pid, v); };
         if (!editing)
@@ -2799,10 +2805,16 @@ private:
                                                   : clamp01((v - minV) / (maxV - minV)); };
         auto toV = [&](float t) { return logScale ? std::pow(10.f, lmin + t * (lmax - lmin)) : minV + t * (maxV - minV); };
 
-        ImGui::SetCursorScreenPos(b0);
-        ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
-        const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+        // No button while the value field is open over the box: it would take
+        // every click inside the field (see DuskPanel::knob).
         const bool editing = panel.isEditingValue(id);
+        bool hov = false, act = false;
+        if (!editing)
+        {
+            ImGui::SetCursorScreenPos(b0);
+            ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
+            hov = ImGui::IsItemHovered(); act = ImGui::IsItemActive();
+        }
         const bool modKey = ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper;
         float t = toT(values[pid]);
         auto apply = [&](float tt) { const float v = toV(tt); values[pid] = v; setParameterValue(pid, v); };
@@ -3925,10 +3937,16 @@ private:
         const bool en = values[enId] > 0.5f;
         float t = stepStateToPos(F, en, values[freqId]);
 
-        ImGui::SetCursorScreenPos(ImVec2(c.x - RR, c.y - RR));
-        ImGui::InvisibleButton(id, ImVec2(2.f * RR, 2.f * RR));
-        const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+        // No button while the value field is open over the knob: it would take
+        // every click inside the field (see DuskPanel::knob).
         const bool editing = panel.isEditingValue(id);
+        bool hov = false, act = false;
+        if (!editing)
+        {
+            ImGui::SetCursorScreenPos(ImVec2(c.x - RR, c.y - RR));
+            ImGui::InvisibleButton(id, ImVec2(2.f * RR, 2.f * RR));
+            hov = ImGui::IsItemHovered(); act = ImGui::IsItemActive();
+        }
         const bool modKey = ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper;
         if (!editing)
         {
@@ -4047,10 +4065,16 @@ private:
 
         float t = duskdaf::knobDetentValueToPos(T, V, n, values[paramId]);
 
-        ImGui::SetCursorScreenPos(ImVec2(c.x - RR, c.y - RR));
-        ImGui::InvisibleButton(id, ImVec2(2.f * RR, 2.f * RR));
-        const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+        // No button while the value field is open over the knob: it would take
+        // every click inside the field (see DuskPanel::knob).
         const bool editing = panel.isEditingValue(id);
+        bool hov = false, act = false;
+        if (!editing)
+        {
+            ImGui::SetCursorScreenPos(ImVec2(c.x - RR, c.y - RR));
+            ImGui::InvisibleButton(id, ImVec2(2.f * RR, 2.f * RR));
+            hov = ImGui::IsItemHovered(); act = ImGui::IsItemActive();
+        }
         const bool modKey = ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper;
         auto setFromT = [&](float tt) { const float nv = duskdaf::knobDetentPosToValue(T, V, n, tt); values[paramId] = nv; setParameterValue(paramId, nv); };
         auto resetDefault = [&] { editParameter(paramId, true); values[paramId] = mqDef(paramId); setParameterValue(paramId, mqDef(paramId)); editParameter(paramId, false); t = duskdaf::knobDetentValueToPos(T, V, n, values[paramId]); };

@@ -864,17 +864,23 @@ private:
 
         const float R = r * s;
         const ImVec2 c = P(cx, cy);
-        ImGui::SetCursorScreenPos(ImVec2(c.x - R, c.y - R));
-        ImGui::InvisibleButton(id, ImVec2(2.0f * R, 2.0f * R));
-        const bool hovered = ImGui::IsItemHovered();
-        const bool active  = ImGui::IsItemActive();
-        const bool modKey  = resetModKey();
+        // No button while the value field is open over the knob: it would take
+        // every click inside the field (see DuskPanel::knob).
         const bool editing = panel.isEditingValue(id);
+        bool hovered = false, active = false;
+        if (!editing)
+        {
+            ImGui::SetCursorScreenPos(ImVec2(c.x - R, c.y - R));
+            ImGui::InvisibleButton(id, ImVec2(2.0f * R, 2.0f * R));
+            hovered = ImGui::IsItemHovered();
+            active  = ImGui::IsItemActive();
+            if (tips[p] && tips[p][0] && !active
+                && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+                ImGui::SetTooltip("%s", tips[p]);
+        }
+        const bool modKey  = resetModKey();
         bool changed = false;
 
-        if (tips[p] && tips[p][0] && !active
-            && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
-            ImGui::SetTooltip("%s", tips[p]);
         if (!editing)
         {
             if (ImGui::IsItemActivated())
@@ -942,16 +948,22 @@ private:
         const ParamDef& d = kParamDefs[p];               // 0.25..16 LOG
         const float lmin = std::log(d.min), lmax = std::log(d.max), lrange = lmax - lmin;
         const float R = r * s; const ImVec2 c = P(cx, cy);
-        ImGui::SetCursorScreenPos(ImVec2(c.x - R, c.y - R));
-        ImGui::InvisibleButton(id, ImVec2(2.0f * R, 2.0f * R));
-        const bool hovered = ImGui::IsItemHovered();
-        const bool active  = ImGui::IsItemActive();
-        const bool modKey  = resetModKey();
+        // No button while the value field is open over the knob: it would take
+        // every click inside the field (see DuskPanel::knob).
         const bool editing = panel.isEditingValue(id);
+        bool hovered = false, active = false;
+        if (!editing)
+        {
+            ImGui::SetCursorScreenPos(ImVec2(c.x - R, c.y - R));
+            ImGui::InvisibleButton(id, ImVec2(2.0f * R, 2.0f * R));
+            hovered = ImGui::IsItemHovered();
+            active  = ImGui::IsItemActive();
+            if (tips[p] && tips[p][0] && !active
+                && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+                ImGui::SetTooltip("%s", tips[p]);
+        }
+        const bool modKey  = resetModKey();
         bool changed = false;
-        if (tips[p] && tips[p][0] && !active
-            && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
-            ImGui::SetTooltip("%s", tips[p]);
         if (!editing)
         {
             if (ImGui::IsItemActivated())

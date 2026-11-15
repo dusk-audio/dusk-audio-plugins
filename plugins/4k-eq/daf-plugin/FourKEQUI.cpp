@@ -1331,11 +1331,16 @@ private:
         // is: a Brown HPF dial at 120 is 3 dB down near 80 Hz.
         float t = stepStateToPos(F, en, displayValue(freqId));
 
-        // interaction
-        ImGui::SetCursorScreenPos(ImVec2(c.x - RR, c.y - RR));
-        ImGui::InvisibleButton(id, ImVec2(2.f * RR, 2.f * RR));
-        const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+        // interaction. No button while the value field is open over the knob:
+        // it would take every click inside the field (see DuskPanel::knob).
         const bool editing = panel.isEditingValue(id);
+        bool hov = false, act = false;
+        if (!editing)
+        {
+            ImGui::SetCursorScreenPos(ImVec2(c.x - RR, c.y - RR));
+            ImGui::InvisibleButton(id, ImVec2(2.f * RR, 2.f * RR));
+            hov = ImGui::IsItemHovered(); act = ImGui::IsItemActive();
+        }
         const bool modKey = ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper;
         if (!editing)
         {
@@ -1474,10 +1479,16 @@ private:
                                 frequencyKnob ? displayValue(paramId)
                                               : values[paramId]);
 
-        ImGui::SetCursorScreenPos(ImVec2(c.x - RR, c.y - RR));
-        ImGui::InvisibleButton(id, ImVec2(2.f * RR, 2.f * RR));
-        const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+        // No button while the value field is open over the knob: it would take
+        // every click inside the field (see DuskPanel::knob).
         const bool editing = panel.isEditingValue(id);
+        bool hov = false, act = false;
+        if (!editing)
+        {
+            ImGui::SetCursorScreenPos(ImVec2(c.x - RR, c.y - RR));
+            ImGui::InvisibleButton(id, ImVec2(2.f * RR, 2.f * RR));
+            hov = ImGui::IsItemHovered(); act = ImGui::IsItemActive();
+        }
         const bool modKey = ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper;
         auto setFromT = [&](float tt) {
             const float nv = fkNormalizeParamValue(paramId, duskdaf::knobDetentPosToValue(T, V, n, tt));
