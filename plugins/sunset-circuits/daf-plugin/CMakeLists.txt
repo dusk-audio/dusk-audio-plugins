@@ -105,3 +105,38 @@ dusk_daf_install_local(sunset-circuits LV2_PROGRAMS)
 dusk_daf_add_ui_drag_test(sunset-circuits 425 232)   # FILTER CUTOFF knob
 dusk_daf_add_resize_test(sunset-circuits)
 dusk_daf_add_clap_preset_test(sunset-circuits)
+
+# The editor's own knobs and their inline value fields (#337): the production
+# MultiSynthUI.cpp against Dear ImGui's real input handling, through the
+# window-free host in shared-daf/ui/tests/daf-ui-test-host. That directory comes
+# first so the editor's DafUI.hpp resolves to the host. DAF's Resources.cpp is
+# its DejaVu Sans, which the host puts first in the atlas as DAF does. Needs no
+# window or display; in CI it runs in daf-release.yml's test-linux job (the
+# macOS and Windows jobs build only the plugin targets).
+if(NOT CMAKE_CROSSCOMPILING)
+    enable_testing()
+    add_executable(MultiSynthValueFieldTest
+        tests/MultiSynthValueFieldTest.cpp
+        "${DAF_PATH}/dgl/src/Resources.cpp"
+        "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui.cpp"
+        "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_draw.cpp"
+        "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_tables.cpp"
+        "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_widgets.cpp")
+    target_include_directories(MultiSynthValueFieldTest PRIVATE
+        "${DUSK_SHARED_DAF_DIR}/ui/tests/daf-ui-test-host"
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../core"
+        ${DUSK_DAF_INCLUDE_DIRS}
+        "${DAF_PATH}")   # last, for dgl/src/Resources.hpp by its full path
+    target_compile_features(MultiSynthValueFieldTest PRIVATE cxx_std_17)
+    # Expected here: the test #includes MultiSynthUI.cpp, so GCC sees its class (with
+    # anonymous-namespace MSPal fields) outside the main source file. Clang lacks the flag.
+    target_compile_options(MultiSynthValueFieldTest PRIVATE $<$<CXX_COMPILER_ID:GNU>:-Wno-subobject-linkage>)
+    target_compile_definitions(MultiSynthValueFieldTest PRIVATE
+        SC_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
+        SC_VERSION_MINOR=${PROJECT_VERSION_MINOR}
+        SC_VERSION_PATCH=${PROJECT_VERSION_PATCH}
+        SC_VERSION_STRING="${PROJECT_VERSION}"
+        SUNSET_UI_TEST_HOME="${CMAKE_CURRENT_BINARY_DIR}/value-field-test-home")
+    add_test(NAME MultiSynthValueField COMMAND MultiSynthValueFieldTest)
+endif()

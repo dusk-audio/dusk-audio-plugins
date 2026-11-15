@@ -97,6 +97,36 @@ if(NOT CMAKE_CROSSCOMPILING)
     target_compile_definitions(MultiQHostStateTest PRIVATE DAF_PLUGIN_TARGET_CLAP)
     add_test(NAME MultiQHostState COMMAND MultiQHostStateTest)
     set_tests_properties(MultiQHostState PROPERTIES TIMEOUT 60)
+
+    # The editor's own knobs and their inline value fields (#337): the
+    # production MultiQUI.cpp against Dear ImGui's real input handling, through
+    # the window-free host in shared-daf/ui/tests/daf-ui-test-host. That
+    # directory comes first so the editor's DafUI.hpp resolves to the host.
+    # DAF's Resources.cpp is its DejaVu Sans, which the host puts first in the
+    # atlas as DAF does. Needs no window or display; in CI it runs in
+    # daf-build.yml's Linux x64 and arm64 jobs (the macOS and Windows jobs
+    # build only the plugin targets).
+    add_executable(MultiQValueFieldTest
+        tests/MultiQValueFieldTest.cpp
+        ../../shared-daf/dsp/FourKEQDSP.cpp
+        "${DAF_PATH}/dgl/src/Resources.cpp"
+        "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui.cpp"
+        "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_draw.cpp"
+        "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_tables.cpp"
+        "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_widgets.cpp")
+    target_include_directories(MultiQValueFieldTest PRIVATE
+        "${DUSK_SHARED_DAF_DIR}/ui/tests/daf-ui-test-host"
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../core"
+        ${DUSK_DAF_INCLUDE_DIRS}
+        "${DAF_PATH}")   # last, for dgl/src/Resources.hpp by its full path
+    target_compile_features(MultiQValueFieldTest PRIVATE cxx_std_17)
+    target_compile_definitions(MultiQValueFieldTest PRIVATE
+        MQ2_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
+        MQ2_VERSION_MINOR=${PROJECT_VERSION_MINOR}
+        MQ2_VERSION_PATCH=${PROJECT_VERSION_PATCH}
+        MULTIQ_UI_TEST_HOME="${CMAKE_CURRENT_BINARY_DIR}/value-field-test-home")
+    add_test(NAME MultiQValueField COMMAND MultiQValueFieldTest)
 endif()
 
 # Fleet gates. Multi-Q 2 registered no ctest at all; see #148.

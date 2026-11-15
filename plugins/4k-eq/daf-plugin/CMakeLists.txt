@@ -93,6 +93,35 @@ if(NOT CMAKE_CROSSCOMPILING)
     target_link_libraries(FourKEQPluginLogicTest PRIVATE Threads::Threads)
     add_test(NAME FourKEQPluginLogic COMMAND FourKEQPluginLogicTest)
 
+    # The editor's own knobs and their inline value fields (#337): the
+    # production FourKEQUI.cpp against Dear ImGui's real input handling, through
+    # the window-free host in shared-daf/ui/tests/daf-ui-test-host. That
+    # directory comes first so the editor's DafUI.hpp resolves to the host.
+    # DAF's Resources.cpp is its DejaVu Sans, which the host puts first in the
+    # atlas as DAF does. Needs no window or display; in CI it runs in
+    # daf-build.yml's Linux x64 and arm64 jobs (the macOS and Windows jobs
+    # build only the plugin targets).
+    add_executable(FourKEQValueFieldTest
+        tests/FourKEQValueFieldTest.cpp
+        ../../shared-daf/dsp/FourKEQDSP.cpp
+        "${DAF_PATH}/dgl/src/Resources.cpp"
+        "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui.cpp"
+        "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_draw.cpp"
+        "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_tables.cpp"
+        "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_widgets.cpp")
+    target_include_directories(FourKEQValueFieldTest PRIVATE
+        "${DUSK_SHARED_DAF_DIR}/ui/tests/daf-ui-test-host"
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        ${DUSK_DAF_INCLUDE_DIRS}
+        "${DAF_PATH}")   # last, for dgl/src/Resources.hpp by its full path
+    target_compile_features(FourKEQValueFieldTest PRIVATE cxx_std_17)
+    target_compile_definitions(FourKEQValueFieldTest PRIVATE
+        FOURKEQ2_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
+        FOURKEQ2_VERSION_MINOR=${PROJECT_VERSION_MINOR}
+        FOURKEQ2_VERSION_PATCH=${PROJECT_VERSION_PATCH}
+        FOURKEQ_UI_TEST_HOME="${CMAKE_CURRENT_BINARY_DIR}/value-field-test-home")
+    add_test(NAME FourKEQValueField COMMAND FourKEQValueFieldTest)
+
     # The same through the built CLAP's state and parameter paths: pre-#288
     # states and legacy automation keep their sound, the Hz parameters and the
     # factory programs play the Hz they state. dlopen(), so not on Windows.
