@@ -26,15 +26,16 @@
 //     fails on the first trial's time-out instead (the stale pointer no longer
 //     resolves, so the field is never deleted). Other allocators were not
 //     measured; a plain build there may pass with the defect present.
-//   * Registered with CTest on macOS and Linux (not Windows, see CMakeLists).
-//     No CI job runs it.
+//   * Registered with CTest on macOS, Linux and Windows. No CI job runs it.
+//     On Windows a run does not prove the non-finite part: with its #359 fix
+//     taken out, those checks still passed there (see CMakeLists).
 //
 // It never shows a window or takes keyboard focus (the editor is never added
 // to the desktop; the last step checks both), and CTest gives it a private
 // home so the editor's saved window size stays out of the user's settings
-// (the folder actually used is printed first). macOS-specific: that private
-// home is CFFIXED_USER_HOME (Linux: HOME; Windows: none, JUCE asks the shell
-// for the AppData folder), and the plain-build time-out behaviour above. On
+// (the folder actually used is printed first): CFFIXED_USER_HOME on macOS,
+// HOME on Linux, USERPROFILE on Windows (measured: JUCE's AppData folder then
+// lies under it). macOS-specific: the plain-build time-out behaviour above. On
 // Linux it needs an X display (exit 77 = skip).
 //
 // Output: one "<section>: N fields opened (expected N)" line per section, then
@@ -73,7 +74,8 @@ void check (bool ok, const juce::String& what)
     }
 }
 
-bool near (double got, double want) { return std::abs (got - want) <= 1.0e-3 * juce::jmax (1.0, std::abs (want)); }
+// Not near(): <windows.h> defines `near` as an empty macro (MSVC error C2062).
+bool closeTo (double got, double want) { return std::abs (got - want) <= 1.0e-3 * juce::jmax (1.0, std::abs (want)); }
 
 // Visible flags from `c` up to, but not including, `root`. The editor itself is
 // never on screen here, so its own flag says nothing about what a user sees.
@@ -600,7 +602,9 @@ void addWrongBandTrial (Runner& runner, Fixture& fx, std::function<juce::Slider*
                         juce::String text, double want, float typedStart, float otherStart,
                         BandOrder order)
 {
-    constexpr int typedBand = 4, otherBand = 7;   // 1-based; both have every knob attached
+    // static: MSVC 19.44 (-std:c++17) rejects these as not captured in the
+    // lambdas below (C3493); a static local needs no capture.
+    static constexpr int typedBand = 4, otherBand = 7;   // 1-based; both have every knob attached
     const auto name = label + " typed for band 4, band 7 selected "
                     + (order == BandOrder::focusLossThenSelect ? "after the focus loss"
                        : order == BandOrder::selectThenReturn  ? "before Return"
@@ -672,18 +676,18 @@ void addWrongBandTrial (Runner& runner, Fixture& fx, std::function<juce::Slider*
         if (order == BandOrder::selectBetweenCommitAndNotify)
         {
             std::printf ("%s: band 4 %s\n", name.toRawUTF8(),
-                         near (typed, want) ? "took the typed value" : "kept its old value (typed value lost)");
-            check (near (typed, want) || near (typed, typedStart),
+                         closeTo (typed, want) ? "took the typed value" : "kept its old value (typed value lost)");
+            check (closeTo (typed, want) || closeTo (typed, typedStart),
                    name + ": band 4 holds its old or the typed value (got " + juce::String (typed) + ")");
         }
         else
-            check (near (typed, want), name + ": band 4 holds the typed value (expected "
-                                           + juce::String (want) + ", got " + juce::String (typed) + ")");
-        check (near (other, otherStart), name + ": band 7 unchanged (expected "
-                                       + juce::String (otherStart) + ", got " + juce::String (other) + ")");
+            check (closeTo (typed, want), name + ": band 4 holds the typed value (expected "
+                                              + juce::String (want) + ", got " + juce::String (typed) + ")");
+        check (closeTo (other, otherStart), name + ": band 7 unchanged (expected "
+                                          + juce::String (otherStart) + ", got " + juce::String (other) + ")");
         check (fx.selectedBand() == otherBand, name + ": band 7 is selected afterwards");
         if (auto* knob = findKnob())
-            check (near (knob->getValue(), otherStart), name + ": the knob now shows band 7");
+            check (closeTo (knob->getValue(), otherStart), name + ": the knob now shows band 7");
         return true;
     });
 }
@@ -923,7 +927,7 @@ void buildPlan (Runner& runner, Fixture& fx)
         auto paramIs = [&fx] (juce::String id, double want) {
             return [&fx, id, want] (double, double) {
                 const double got = fx.param (id);
-                check (near (got, want), id + ": parameter expected " + juce::String (want) + ", got " + juce::String (got));
+                check (closeTo (got, want), id + ": parameter expected " + juce::String (want) + ", got " + juce::String (got));
             };
         };
         auto start = std::make_shared<int> (0);
