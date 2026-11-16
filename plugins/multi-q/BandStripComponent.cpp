@@ -1,5 +1,6 @@
 #include "BandStripComponent.h"
 #include "MultiQ.h"
+#include "SafeFloat.h"
 
 BandStripComponent::BandStripComponent(MultiQ& proc)
     : processor(proc)
@@ -85,6 +86,10 @@ void BandStripComponent::setupBandColumn(int index)
     col.freqLabel->onTextChange = [this, index]() {
         auto& label = *bandColumns[static_cast<size_t>(index)].freqLabel;
         float value = parseFrequency(label.getText());
+        // JUCE's parser reads "nan" as NaN and jlimit passes NaN through, so a
+        // typed "nan" would reach the parameter, the host and every drawing
+        // path. Refuse it and show the current value again.
+        if (!safeIsFinite(value)) { updateBandValues(index); return; }
         if (auto* param = processor.parameters.getParameter(ParamIDs::bandFreq(index + 1)))
         {
             param->setValueNotifyingHost(param->convertTo0to1(value));
@@ -141,6 +146,7 @@ void BandStripComponent::setupBandColumn(int index)
         col.gainLabel->onTextChange = [this, index]() {
             auto& label = *bandColumns[static_cast<size_t>(index)].gainLabel;
             float value = parseGain(label.getText());
+            if (!safeIsFinite(value)) { updateBandValues(index); return; }  // typed "nan", see freqLabel
             if (auto* param = processor.parameters.getParameter(ParamIDs::bandGain(index + 1)))
             {
                 param->setValueNotifyingHost(param->convertTo0to1(value));
@@ -173,6 +179,7 @@ void BandStripComponent::setupBandColumn(int index)
     col.qLabel->onTextChange = [this, index]() {
         auto& label = *bandColumns[static_cast<size_t>(index)].qLabel;
         float value = parseQ(label.getText());
+        if (!safeIsFinite(value)) { updateBandValues(index); return; }  // typed "nan", see freqLabel
         if (auto* param = processor.parameters.getParameter(ParamIDs::bandQ(index + 1)))
         {
             param->setValueNotifyingHost(param->convertTo0to1(value));

@@ -1802,6 +1802,17 @@ void MultiQEditor::setupLabel(juce::Label& label, const juce::String& text)
 
 void MultiQEditor::updateSelectedBandControls()
 {
+    // Same swap as BandDetailPanel::updateAttachments: commit a typed value into
+    // the band it was typed for before these sliders follow the new band.
+    // Defensive, unreachable today: freqSlider and qSlider are always hidden and
+    // gainSlider is shown but never laid out (0 x 0), so no user can open a
+    // field on them. The call keeps the rule if they are ever shown again. No
+    // user-reachable path exercises it; the value-entry test reaches only the
+    // 0 x 0 gainSlider.
+    for (auto* slider : { freqSlider.get(), gainSlider.get(), qSlider.get() })
+        if (slider != nullptr)
+            ValueEditor::commitOpenEditorNow(*slider);
+
     freqAttachment.reset();
     gainAttachment.reset();
     qAttachment.reset();
@@ -3321,6 +3332,17 @@ void MultiQEditor::layoutDynamicControls()
 
 void MultiQEditor::updateDynamicAttachments()
 {
+    // Same swap as BandDetailPanel::updateAttachments (see there). Defensive,
+    // unreachable today: layoutDynamicControls() hides these sliders, so no
+    // user can open a field on them; no test covers it through the UI.
+    // updateEQModeVisibility() also drops these attachments when leaving Digital
+    // without committing first. That is deliberate: it only detaches, so a
+    // later commit can reach no parameter at all, let alone another band.
+    for (auto* slider : { dynThresholdSlider.get(), dynAttackSlider.get(),
+                          dynReleaseSlider.get(), dynRangeSlider.get() })
+        if (slider != nullptr)
+            ValueEditor::commitOpenEditorNow(*slider);
+
     dynEnableAttachment.reset();
     dynThresholdAttachment.reset();
     dynAttackAttachment.reset();
