@@ -123,7 +123,12 @@ add("ReverbMix","reverbMix","Reverb Mix",0,1,0.2,L)
 add("ReverbPD","reverbPD","Reverb Pre-Delay",0,200,20,L)
 # --- Mod matrix ---
 for n in range(8): add(f"ModSrc{n}",f"modSrc{n}",f"Mod {n+1} Source",0,10,0,I)
-for n in range(8): add(f"ModDst{n}",f"modDst{n}",f"Mod {n+1} Dest",0,12,0,I)
+# Max = msynth::kNumModDests - 1 (static_assert in MultiSynthPlugin.cpp). 12 -> 14
+# when LFO1 Depth / LFO2 Depth were appended (issue #303). Saved sessions and
+# presets store the plain index and are unaffected; a VST3 automation lane stores
+# the normalized value (index / max), so lanes recorded on these eight parameters
+# before the change now land on index round(old * 14 / 12) (manual).
+for n in range(8): add(f"ModDst{n}",f"modDst{n}",f"Mod {n+1} Dest",0,14,0,I)
 for n in range(8): add(f"ModAmt{n}",f"modAmt{n}",f"Mod {n+1} Amount",-1,1,0,L)
 # --- Prism (4-op FM) ---
 add("PrismAlgo","prismAlgo","Prism Algorithm",0,7,4,I)

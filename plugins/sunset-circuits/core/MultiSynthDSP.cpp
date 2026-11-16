@@ -781,6 +781,10 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
             if (slot.source == ModSource::LFO2) vp.lfo2Used = true;
         }
     }
+    // A depth route scales its LFO only while it exists (SynthVoice::applyLfoDepth);
+    // with none, the LFO's output is left exactly as it was.
+    vp.lfo1DepthRouted = modMatrix.targets(ModDest::LFO1Depth);
+    vp.lfo2DepthRouted = modMatrix.targets(ModDest::LFO2Depth);
 
     // --- Acid (mode 5): mono voice + pattern sequencer ---
     // Shared-knob mapping (documented for the UI/manual):
