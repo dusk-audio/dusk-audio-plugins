@@ -543,14 +543,23 @@ endif()
 # visible (measured on macOS: a time-out); build with -fsanitize=address to prove
 # it absent. See the test's header.
 #
-# Not built on Windows: it has never been compiled or run with MSVC, so CI must
-# not build it there unverified (build.yml builds "all" on full-fleet runs). The
-# test has a plain main (no START_JUCE_APPLICATION, so no dependence on _CONSOLE
-# in juce_events) and is meant to build there once this guard is lifted. The
-# private home below would not hold on Windows: JUCE asks the shell for the
-# AppData folder (SHGetSpecialFolderPath), not the environment, so the editor
-# would save its window size into the user's real settings.
-if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
+# Windows (MSVC 19.44, VS 2022 Build Tools, x64, Ninja, Release): built and
+# passed with the macOS counts (1403 fields, 10057 checks, 0 failures). That
+# run had CLAP off (no submodules); CI builds with CLAP on, so there the test
+# also gets clap_juce_extensions and HAS_CLAP_JUCE_EXTENSIONS=1 through MultiQ,
+# as on Linux and macOS. No pull-request job compiles it on Windows: the first
+# Windows compile in CI is a full-fleet build.yml run ("all"). The test has a
+# plain main (no START_JUCE_APPLICATION, so no dependence on _CONSOLE in
+# juce_events). Its private home there is USERPROFILE: with it set, JUCE's
+# AppData folder was %USERPROFILE%\AppData\Roaming (a .NET probe of the shell's
+# folder lookup also ignored APPDATA alone). That holds only while AppData sits
+# in its default place under the profile (folder redirection by policy would
+# defeat it; not tried). The folder is created below; the run had it in place,
+# and a run without it was not tried.
+# Not proven on Windows: with the two #359 fixes taken out, only the wrong-band
+# checks failed there (84 failures). The non-finite checks passed even without
+# their fix, so a Windows run does not show that defect.
+if(NOT CMAKE_CROSSCOMPILING)
     add_executable(MultiQValueEntryTest tests/test_multiq_value_entry.cpp)
     target_compile_definitions(MultiQValueEntryTest PRIVATE
         $<TARGET_PROPERTY:MultiQ,COMPILE_DEFINITIONS>)
@@ -559,12 +568,15 @@ if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
         $<TARGET_PROPERTY:MultiQ,INCLUDE_DIRECTORIES>)
     target_link_libraries(MultiQValueEntryTest PRIVATE MultiQ)
     add_test(NAME MultiQValueEntry COMMAND MultiQValueEntryTest)
-    # Private home (CFFIXED_USER_HOME on macOS, HOME on Linux) so the editor's
-    # saved window size and the crash-log folder stay in the build tree. Exit 77
-    # means skipped (Linux without an X display).
+    # Private home (CFFIXED_USER_HOME on macOS, HOME on Linux, USERPROFILE on
+    # Windows) so the editor's saved window size and the crash-log folder stay
+    # in the build tree. Exit 77 means skipped (Linux without an X display).
     set(_multiq_value_entry_home "${CMAKE_CURRENT_BINARY_DIR}/value-entry-home")
     file(MAKE_DIRECTORY "${_multiq_value_entry_home}")
+    if(WIN32)
+        file(MAKE_DIRECTORY "${_multiq_value_entry_home}/AppData/Roaming")
+    endif()
     set_tests_properties(MultiQValueEntry PROPERTIES
-        ENVIRONMENT "CFFIXED_USER_HOME=${_multiq_value_entry_home};HOME=${_multiq_value_entry_home}"
+        ENVIRONMENT "CFFIXED_USER_HOME=${_multiq_value_entry_home};HOME=${_multiq_value_entry_home};USERPROFILE=${_multiq_value_entry_home}"
         SKIP_RETURN_CODE 77)
 endif()
