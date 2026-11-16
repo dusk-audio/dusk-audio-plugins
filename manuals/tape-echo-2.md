@@ -7,8 +7,6 @@ tagline: three-head tape delay with spring reverb
 
 # Tape Echo 2 User Manual
 
-Version 1.0.0
-
 Tape Echo 2 is a three-head tape-delay and spring-reverb effect. It models the
 mechanical timing, record and playback coloration, regeneration, tape wear,
 splice dropout, input/output amplifiers, and independent echo and spring
