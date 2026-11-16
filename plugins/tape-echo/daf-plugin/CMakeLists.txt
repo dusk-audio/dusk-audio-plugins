@@ -74,6 +74,27 @@ if(NOT CMAKE_CROSSCOMPILING)
     target_link_libraries(TapeEchoRateHandoffTest PRIVATE tape-echo-2)
     add_test(NAME TapeEchoRateHandoff COMMAND TapeEchoRateHandoffTest)
 
+    # Every parameter's host flags in the built CLAP and VST3 must match the
+    # test's expected table, measured on the 1.0.8 release: above all, legacy
+    # Dry Level and Sync Division stay automatable and not hidden (see
+    # initParameter). dlopen(), so not on Windows.
+    if(NOT WIN32)
+        add_executable(TapeEchoHostParamFlagsTest tests/TapeEchoHostParamFlagsTest.cpp)
+        target_include_directories(TapeEchoHostParamFlagsTest PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}"
+            "${DAF_PATH}/daf/src")
+        target_compile_features(TapeEchoHostParamFlagsTest PRIVATE cxx_std_17)
+        target_link_libraries(TapeEchoHostParamFlagsTest PRIVATE ${CMAKE_DL_LIBS})
+        add_dependencies(TapeEchoHostParamFlagsTest tape-echo-2-clap tape-echo-2-vst3)
+        add_test(NAME TapeEchoClapParamFlags
+                 COMMAND TapeEchoHostParamFlagsTest --clap "$<TARGET_FILE:tape-echo-2-clap>")
+        add_test(NAME TapeEchoVst3ParamFlags
+                 COMMAND TapeEchoHostParamFlagsTest --vst3 "$<TARGET_FILE:tape-echo-2-vst3>")
+        # Well under a second each; CI's ctest passes no --timeout, so a hang
+        # in a plugin's load path must fail rather than stall the job.
+        set_tests_properties(TapeEchoClapParamFlags TapeEchoVst3ParamFlags PROPERTIES TIMEOUT 120)
+    endif()
+
     find_program(DUSK_SERDI_EXECUTABLE serdi)
     if(DUSK_SERDI_EXECUTABLE)
         add_test(NAME DuskFixLv2Presets
