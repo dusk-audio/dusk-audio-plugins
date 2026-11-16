@@ -1398,68 +1398,8 @@ jobs:
               gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id"
             done
 
-      - name: Update Website Version
-        # Early-access releases reach the website when they go public.
-        if: ${{ needs.setup.outputs.plugin_name != 'All Plugins' && steps.ea.outputs.early != 'true' }}
-        env:
-          RELEASE_NAME: ${{ needs.setup.outputs.release_name }}
-          PLUGIN_VERSION: ${{ needs.setup.outputs.plugin_version }}
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: |
-          # Skip if no PAT configured or no version
-          if [ -z "$GH_TOKEN" ] || [ -z "$PLUGIN_VERSION" ]; then
-            echo "Skipping website update (no PAT or version)"
-            exit 0
-          fi
-
-          echo "Updating website with $RELEASE_NAME version $PLUGIN_VERSION"
-
-          # Clone website repo
-          git clone https://x-access-token:${GH_TOKEN}@github.com/dusk-audio/dusk-audio.github.io.git website
-          cd website
-
-          # Update version in plugins.yml using sed
-          # Format: "  version: X.X.X" under the plugin entry
-          PLUGIN_SLUG="$RELEASE_NAME"
-
-          # Update version in the plugin's markdown file (front matter)
-          # This is where Jekyll reads the version from
-          PLUGIN_MD="_plugins/${PLUGIN_SLUG}.md"
-          if [ -f "$PLUGIN_MD" ]; then
-            echo "Updating $PLUGIN_MD"
-            if grep -q "^version:" "$PLUGIN_MD"; then
-              sed -i "s/^version: .*/version: \"$PLUGIN_VERSION\"/" "$PLUGIN_MD"
-            else
-              echo "Warning: No version field found in $PLUGIN_MD"
-            fi
-          else
-            echo "Warning: $PLUGIN_MD not found"
-          fi
-
-          # Update _data/plugins.yml using sed (preserves formatting, no yaml.dump)
-          SLUG_LINE=$(grep -n "slug: ${PLUGIN_SLUG}$" _data/plugins.yml | head -1 | cut -d: -f1)
-          if [ -n "$SLUG_LINE" ]; then
-            # Find and update the version line within 10 lines after the slug
-            sed -i "${SLUG_LINE},$((SLUG_LINE + 10))s/version: .*/version: ${PLUGIN_VERSION}/" _data/plugins.yml
-            echo "Updated $PLUGIN_SLUG to version $PLUGIN_VERSION in plugins.yml"
-          else
-            echo "Warning: Plugin '$PLUGIN_SLUG' not found in plugins.yml"
-          fi
-
-          # Check if there are changes
-          if git diff --quiet; then
-            echo "No changes to commit"
-            exit 0
-          fi
-
-          # Commit and push
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add _data/plugins.yml
-          if [ -f "_plugins/${PLUGIN_SLUG}.md" ] && ! git diff --quiet "_plugins/${PLUGIN_SLUG}.md"; then
-            git add "_plugins/${PLUGIN_SLUG}.md"
-          fi
-          git commit -m "Update $RELEASE_NAME to v$PLUGIN_VERSION
-
-          Automated update from release workflow."
-          git push
+      # No website step: the website repository's main is a protected branch, so
+      # the version bump this job used to push there directly was refused with
+      # GH006 after the release was already published, failing the run. A public
+      # release's site change goes up as a pull request against the website's
+      # main instead.

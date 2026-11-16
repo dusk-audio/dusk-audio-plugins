@@ -34,7 +34,7 @@ jobs:
       - name: Publish due releases
         env:
           GH_TOKEN: ${{ github.token }}
-          # Same PAT the JUCE release job uses to push website version bumps.
+          # PAT with write access to the website repository.
           WEBSITE_TOKEN: ${{ secrets.GH_TOKEN }}
           TAG: ${{ inputs.tag }}
         run: .github/scripts/early_access.sh publish-due "$TAG"
