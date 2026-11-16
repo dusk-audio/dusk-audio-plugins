@@ -123,8 +123,8 @@ protected:
             break;
         case kParamDryLevel:
             // Retained at its shipped ID for old projects and automation. The
-            // custom UI now exposes the appended Mix control instead.
-            p.hints |= kParameterIsHidden;
+            // custom UI now exposes the appended Mix control instead. Not
+            // hidden from hosts, for the reason given at kParamSyncDivision.
             p.name = "Dry Level";   p.symbol = "dry_level";
             p.ranges.def = 1.0f;    p.ranges.min = 0.0f;  p.ranges.max = 1.0f;
             break;
@@ -138,19 +138,45 @@ protected:
             // for old projects and automation, but expose the physical detent
             // below for all new edits.
             //
-            // kParameterIsHidden only reaches the LV2 exporter, which turns it
-            // into port-props#notOnGUI. The VST3, CLAP and AU backends never
-            // read the flag, so in those formats BOTH this and Echo Rate Note
-            // appear in the host's generic parameter list and both are
-            // automatable. Writing this one latches legacySyncDivisionOverride
-            // and the Echo Rate Note detent stops driving the delay until it is
-            // moved again. That is deliberate -- it is the only way 0.1.x
-            // automation lanes keep working, exactly as for Dry Level -- but it
-            // is a real trap for anyone who automates the wrong one of the
-            // pair, so every release exercises it by hand.
+            // This and Dry Level must NOT carry kParameterIsHidden. Since DAF
+            // 4556beb6 the hint is no longer LV2-only (port-props#notOnGUI):
+            // VST3 gets V3_PARAM_IS_HIDDEN and CLAP gets CLAP_PARAM_IS_HIDDEN.
+            // AU has never read it. The VST3 SDK defines a hidden parameter as
+            // one that "cannot be changed from outside the plug-in" and implies
+            // read-only and not automatable; CLAP says a host need not process
+            // its automation. Either lets a host drop these two from its
+            // parameter and automation lists and stop playing the lanes old
+            // sessions saved, which is the only reason they exist. The 1.0.8
+            // release reported both as automatable and not hidden in VST3, CLAP
+            // and AU. TapeEchoHostParamFlagsTest pins every parameter's CLAP
+            // and VST3 flags to that release; it does not cover AU, which never
+            // read the hint.
+            //
+            // The hint should not be kept for LV2 alone either. This file is
+            // compiled once for all formats, into the DSP library each of them
+            // links, so no DAF_PLUGIN_TARGET_* macro reaches it. The one
+            // per-format switch left is the runtime getPluginFormatName(),
+            // which DAF documents as informational only and not to be used to
+            // change plugin behaviour, and which would no longer link into
+            // TapeEchoRateHandoffTest (that builds this file against
+            // DafPlugin.cpp alone). LV2 therefore differs from 1.0.8: generic
+            // LV2 UIs and parameter lists show both parameters, and writing
+            // Sync Division there latches the legacy override as in every other
+            // format. The custom UI, the LV2 port indices and symbols, saved
+            // state and presets are unchanged.
+            //
+            // So in every format BOTH this and Echo Rate Note appear in the
+            // host's generic parameter list and both are automatable. Writing
+            // this one latches legacySyncDivisionOverride and the Echo Rate
+            // Note detent stops driving the delay until it is moved again. That
+            // is deliberate -- it is the only way 0.1.x automation lanes keep
+            // working, exactly as for Dry Level -- but it is a real trap for
+            // anyone who automates the wrong one of the pair, so every release
+            // exercises it by hand.
             // Do NOT "fix" it by assigning p.hints to drop
-            // kParameterIsAutomatable: that silences shipped 0.1.x automation.
-            p.hints |= kParameterIsInteger | kParameterIsHidden;
+            // kParameterIsAutomatable, or by adding kParameterIsHidden: either
+            // may silence shipped 0.1.x automation.
+            p.hints |= kParameterIsInteger;
             p.name = "Sync Division"; p.symbol = "sync_division";
             p.ranges.def = 2.0f;    p.ranges.min = 0.0f;
             p.ranges.max = (float)(kNumSyncDivisions - 1);
@@ -276,9 +302,10 @@ protected:
             break;
         case kParamEchoRateNote:
             // The physical detent is authoritative for new edits. Keep the
-            // hidden legacy value intact so automation/state inspection never
-            // observes an undeclared sibling-parameter mutation; run() derives
-            // the effective semantic division without changing either value.
+            // legacy value (not on the panel, still a host parameter) intact so
+            // automation/state inspection never observes an undeclared
+            // sibling-parameter mutation; run() derives the effective semantic
+            // division without changing either value.
             legacySyncDivisionOverride.store(false, std::memory_order_relaxed);
             break;
         case kParamTapeAge:     dsp.setTapeAge(value);            break;

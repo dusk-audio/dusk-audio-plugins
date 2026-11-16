@@ -64,9 +64,9 @@ dBFS for New/Used/Old at Noise 0, and −78/−72/−66 dBFS at Noise 1.
 | 6  | Treble        | `setTreble`       | −1–+1      | 0.0     | ≈±17 dB shelf; separate boost/cut turnover laws reach ≈991/1441 Hz at half travel and ≈2.85/3.44 kHz at full travel; Q 0.545–0.443; echo path only |
 | 7  | Input Volume  | `setInputGain`    | 0–1        | 0.5     | preamp drive / saturation amount |
 | 8  | Wow & Flutter | `setWowFlutter`   | 0–1        | 0.0     | transport modulation amount; the whole motion signal (wow, capstan flutter and the stochastic ~6 Hz scrape-flutter band) is scaled by a shared 1 + 1.5·value + 0.20·age multiplier — this knob contributes the 1.5·value term, Tape Age the 0.20·age term (scrape flutter additionally has its own steeper age law, see Tape Age). 0 is NOT still: the intrinsic transport matches the reference (≈0.45 % wow, ≈0.033 % flutter at Tape Age 0) |
-| 9  | Dry Level (legacy) | `setDryLevel` | 0–1        | 1.0     | hidden compatibility control; retains old instrument-through automation |
+| 9  | Dry Level (legacy) | `setDryLevel` | 0–1        | 1.0     | legacy compatibility control, not on the panel but still a host parameter; retains old instrument-through automation |
 | 10 | Tempo Sync    | (shell-level)     | off/on     | off     | locks the leading active head to a host-tempo division, clamped to the physical motor range |
-| 11 | Sync Division (legacy) | (shell-level) | 0–15 (int) | 2 (1/16)| hidden compatibility parameter; preserves the semantic divisions stored by 0.1-series sessions |
+| 11 | Sync Division (legacy) | (shell-level) | 0–15 (int) | 2 (1/16)| legacy compatibility parameter, not on the panel but still a host parameter; preserves the semantic divisions stored by 0.1-series sessions |
 | 12 | Tape Age      | `setTapeAge`      | New/Used/Old | Used | stepped cartridge states; every state includes the captured dark tape/electronics floor, while Used/Old progressively add noise, wow, HF loss, level wobble, and splice wear |
 | 13 | Bypass        | `setBypass`       | off/on     | off     | host-designated; UI POWER switch, click-free clean passthrough |
 | 14 | Record VU     | `getRecordVuLevel` | 0–3 (out) | —       | average-responding record meter after Input Volume, including feedback; 225 ms attack / 200 ms release |
@@ -93,9 +93,10 @@ converts that division plus host BPM into the leading active head's delay each
 block (see `syncDelayMs` in `TapeEchoParams.hpp`), derives head-1 time from the
 selected mode, and clamps the motor to its measured range. Changing Head Select
 therefore keeps the physical detent fixed while changing its note assignment,
-as on the reference tape echo. The hidden Sync Division parameter remains an exact compatibility
-path for old sessions. The core stays host-agnostic and its motor-inertia
-smoother supplies tape-style glides on tempo changes.
+as on the reference tape echo. The legacy Sync Division parameter (not on the
+panel, still a host parameter) remains an exact compatibility path for old
+sessions. The core stays host-agnostic and its motor-inertia smoother supplies
+tape-style glides on tempo changes.
 
 Level note: with Intensity at maximum and all three heads active, the echo
 bus can peak near +9 dBFS during self-oscillation (as on the hardware, which
