@@ -100,7 +100,13 @@ namespace
                                       "Velocity", "Key Trk", "Random", "P.Bend", "S&H" };
     const char* const kModDst[]   = { "None", "Osc1 Pitch", "Osc2 Pitch", "Osc1 PW", "Osc2 PW",
                                       "Cutoff", "Reso", "Amp", "Pan", "LFO1 Rate", "LFO2 Rate",
-                                      "FX Mix", "Uni Det" };
+                                      "FX Mix", "Uni Det", "LFO1 Depth", "LFO2 Depth" };
+    // One label per core enumerator, so an appended source or destination cannot
+    // be left out of the dropdowns (the combo would clamp it onto the last label).
+    constexpr int kNumModSrcLabels = (int)(sizeof(kModSrc) / sizeof(kModSrc[0]));
+    constexpr int kNumModDstLabels = (int)(sizeof(kModDst) / sizeof(kModDst[0]));
+    static_assert(kNumModSrcLabels == msynth::kNumModSources, "kModSrc vs msynth::ModSource");
+    static_assert(kNumModDstLabels == msynth::kNumModDests,   "kModDst vs msynth::ModDest");
 }
 
 class MultiSynthUI : public UI, public duskdaf::ParamHost
@@ -2831,8 +2837,16 @@ private:
     {
         int n = 0;
         for (int i = 0; i < 8; ++i)
-            if (values[kParamModSrc0 + i] > 0.5f && values[kParamModDst0 + i] > 0.5f
-                && std::fabs(values[kParamModAmt0 + i]) > 1e-4f) ++n;
+        {
+            if (values[kParamModSrc0 + i] <= 0.5f || values[kParamModDst0 + i] <= 0.5f)
+                continue;
+            // A depth slot acts at 0 % too: it holds its LFO at zero (the engine
+            // scales the LFO by the sum of its depth slots, SynthVoice::applyLfoDepth).
+            const int dst = (int)std::lround(values[kParamModDst0 + i]);
+            const bool depth = dst == (int)msynth::ModDest::LFO1Depth
+                            || dst == (int)msynth::ModDest::LFO2Depth;
+            if (depth || std::fabs(values[kParamModAmt0 + i]) > 1e-4f) ++n;
+        }
         return n;
     }
     void drawModMatrixBar()
@@ -2910,11 +2924,11 @@ private:
             const float y = 168.0f + r * 58.0f;
             char id[24];
             std::snprintf(id, sizeof(id), "msrc%d", r);
-            comboBox(id, kParamModSrc0 + r, 240, y + 8, 470, y + 34, kModSrc, 11);
+            comboBox(id, kParamModSrc0 + r, 240, y + 8, 470, y + 34, kModSrc, kNumModSrcLabels);
             { const float ay = y + 21; dl->AddLine(P(478, ay), P(492, ay), live.accent, 2.0f * s);
               dl->AddTriangleFilled(P(492, ay - 4), P(492, ay + 4), P(497, ay), live.accent); }
             std::snprintf(id, sizeof(id), "mdst%d", r);
-            comboBox(id, kParamModDst0 + r, 500, y + 8, 760, y + 34, kModDst, 13);
+            comboBox(id, kParamModDst0 + r, 500, y + 8, 760, y + 34, kModDst, kNumModDstLabels);
             std::snprintf(id, sizeof(id), "mamt%d", r);
             knob(id, kParamModAmt0 + r, 790, y + 20, 18, "%+.0f", " %", true, false, false, 100.0f);
             // Permanent read-out: the depth of a routing is what you dial by ear.
@@ -4135,9 +4149,14 @@ private:
                   live_ ? "Pitch bend. Drag up or down; springs back to centre on release.\n"
                           "Follows bend sent by the host or a hardware wheel."
                         : "Pitch bend is unavailable in a remote (split) UI.", live_);
+        // Nothing is hardwired to the wheel, so the tooltip says where it goes: the
+        // mod matrix source "Mod Whl" (issue #303), and nowhere in Acid, whose
+        // engine has no matrix.
         drawWheel("modwheel", 86, 112, false, modValue, "MOD",
                   live_ ? "Mod wheel (CC 1). Latches where you leave it; wheel-scroll to trim.\n"
-                          "Follows CC 1 sent by the host or a hardware wheel."
+                          "Follows CC 1 sent by the host or a hardware wheel.\n"
+                          "Nothing is wired to it: route the source Mod Whl in the MOD MATRIX (not in Acid).\n"
+                          "Vibrato on Osc 1 and 2: LFO 1 to Osc1 Pitch and Osc2 Pitch, Mod Whl to LFO1 Depth."
                         : "The mod wheel is unavailable in a remote (split) UI.", live_);
         pushWheels();   // again, so a live drag reaches the engine with no frame of lag
     }

@@ -80,6 +80,16 @@
 //                       polyphonic key pressure (MIDI 0xA0) for one note.
 //                       Repeatable.
 //   chanat=<sec>:<0..1> channel pressure (MIDI 0xD0). Repeatable.
+//   modwheel=<0..1>     mod wheel (MIDI CC 1) position before the first note, i.e.
+//                       what the shell's CC 1 handler would have stored before
+//                       frame 0 (default 0, the engine's power-on value).
+//   modwheelat=<sec>:<0..1>
+//                       move the mod wheel (MIDI CC 1) at this time, applied on the
+//                       first block starting at/after its frame (<sec> x sr,
+//                       truncated). Repeatable: moves are applied in time order
+//                       whatever order they are given in (argument order for
+//                       equal times). A move that no block start reaches before
+//                       the render ends is an error.
 //   progat=<sec>:<n>    load factory program <n> at this time, exactly as the DAF
 //                       shell's loadProgram() does (every parameter to its
 //                       default, then the shared baseline, then the preset's own
@@ -138,7 +148,9 @@ void loadFactoryProgram(msynth::MultiSynthDSP& synth, int index) noexcept
 // therefore has no block left to fire on: the harness used to accept it and
 // silently do nothing, so a gate written around it measured an untouched render
 // and passed. The schedule window is half-open -- [0, seconds) -- and this is
-// where that is enforced, for every event key and for release=.
+// where that is enforced, for every event key and for release=. A time inside the
+// window can still put its frame past the START of the last block; for mod wheel
+// moves the check after the render loop catches that.
 bool validEventTime(double t, double seconds) noexcept
 {
     return std::isfinite(t) && t >= 0.0 && t < seconds;
@@ -317,6 +329,12 @@ int main(int argc, char** argv)
     struct SchedPressure { double time; int note; float value; };
     std::vector<SchedPressure> schedPressure;
 
+    // Mod wheel (MIDI CC 1): the position before frame 0 (modwheel=) and scheduled
+    // moves (modwheelat=<sec>:<0..1>).
+    float modWheelStart = 0.0f;
+    struct SchedWheel { double time; float value; };
+    std::vector<SchedWheel> schedWheel;
+
     // Scheduled factory-program loads (progat=<sec>:<n>).
     struct SchedProgram { double time; int index; };
     std::vector<SchedProgram> schedProgram;
@@ -455,6 +473,41 @@ int main(int argc, char** argv)
             schedPressure.push_back({ t, note, (float)v });
             continue;
         }
+        if (key == "modwheel")
+        {
+            const double v = parseNum("modwheel", val);
+            if (!(v >= 0.0 && v <= 1.0))
+            {
+                std::fprintf(stderr, "bad modwheel value: %g (want 0..1)\n", v);
+                return 1;
+            }
+            modWheelStart = (float)v;
+            continue;
+        }
+        if (key == "modwheelat")
+        {
+            // <sec>:<0..1>
+            const auto c1 = val.find(':');
+            if (c1 == std::string::npos)
+            {
+                std::fprintf(stderr, "bad modwheelat (want <sec>:<0..1>): %s\n", val.c_str());
+                return 1;
+            }
+            const double t = parseNum("modwheelat.time", val.substr(0, c1));
+            const double v = parseNum("modwheelat.value", val.substr(c1 + 1));
+            if (!validEventTime(t, seconds))
+            {
+                std::fprintf(stderr, "bad modwheelat time: %g (want 0 <= t < %g)\n", t, seconds);
+                return 1;
+            }
+            if (!(v >= 0.0 && v <= 1.0))
+            {
+                std::fprintf(stderr, "bad modwheelat value: %g (want 0..1)\n", v);
+                return 1;
+            }
+            schedWheel.push_back({ t, (float)v });
+            continue;
+        }
         if (key == "panicat" || key == "soundoffat")
         {
             const double t = parseNum(key.c_str(), val);
@@ -591,6 +644,13 @@ int main(int argc, char** argv)
         overrides.push_back({ idx, (float)parseNum(key.c_str(), val) });
     }
 
+    // Mod wheel moves run in time order. The render loop applies every move that
+    // is due at a block start in the order it finds them, so of two moves due on
+    // the same block the earlier one, given second, would be applied last and win.
+    // Moves at the same time keep their argument order.
+    std::stable_sort(schedWheel.begin(), schedWheel.end(),
+                     [](const SchedWheel& a, const SchedWheel& b) { return a.time < b.time; });
+
     if (osFactor != 1 && osFactor != 2 && osFactor != 4)
     {
         std::fprintf(stderr, "invalid osfactor: %d (must be 1, 2, or 4)\n", osFactor);
@@ -642,6 +702,7 @@ int main(int argc, char** argv)
     // Transport state as of frame 0, so the notes below are pressed against the
     // same state the first block will render with (playat= means "stopped" here).
     synth.setTempo(tempo, playing && playAtTime <= 0.0);
+    synth.modWheel(modWheelStart);
 
     // Trigger note(s). noteOn routes to the arp internally when arpOn is set.
     synth.noteOn(midiNote, vel);
@@ -661,6 +722,7 @@ int main(int argc, char** argv)
     std::vector<char> schedPanicDone(schedPanic.size(), 0);
     std::vector<char> schedSoundOffDone(schedSoundOff.size(), 0);
     std::vector<char> schedPressureDone(schedPressure.size(), 0);
+    std::vector<char> schedWheelDone(schedWheel.size(), 0);
     std::vector<char> schedProgramDone(schedProgram.size(), 0);
     std::vector<char> schedLoopDone(schedLoops.size(), 0);
     std::vector<double> schedLoopShift(schedLoops.size(), 0.0);
@@ -757,6 +819,17 @@ int main(int argc, char** argv)
                 else
                     synth.aftertouch(schedPressure[s].value);
                 schedPressureDone[s] = 1;
+            }
+        }
+
+        // Mod wheel moves (MIDI CC 1).
+        for (size_t s = 0; s < schedWheel.size(); ++s)
+        {
+            if (schedWheelDone[s]) continue;
+            if (pos >= (int)(schedWheel[s].time * sampleRate))
+            {
+                synth.modWheel(schedWheel[s].value);
+                schedWheelDone[s] = 1;
             }
         }
 
@@ -884,6 +957,28 @@ int main(int argc, char** argv)
     {
         std::fprintf(stderr, "error closing oversampling log %s\n", osLogPath.c_str());
         return 2;
+    }
+
+    // A mod wheel move that no block start reached was never applied: its frame
+    // lies past the start of the last block (block= sets the starts, and release=
+    // moves them by splitting a block). A gate built on that move would measure a
+    // render the wheel never touched and pass, so it is an error and no WAV is
+    // written (a meters= or oslog= log already has been). It is found here, not
+    // with the time checks above, because only the loop knows where its blocks
+    // start. Applied is all this establishes, not audible: a move applied a few
+    // frames before the end changes nothing in the output.
+    for (size_t s = 0; s < schedWheel.size(); ++s)
+    {
+        if (!schedWheelDone[s])
+        {
+            char split[64] = "";
+            if (releaseProvided)
+                std::snprintf(split, sizeof split, ", release=%.9g", releaseTime);
+            std::fprintf(stderr, "modwheelat %.9g was never applied: no block starts at or after "
+                                 "it before the render ends at %.9g (block=%d%s)\n",
+                         schedWheel[s].time, seconds, blockSize, split);
+            return 1;
+        }
     }
 
     writeFloatWav(outPath, interleaved, (int)sampleRate);

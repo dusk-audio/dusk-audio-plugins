@@ -10,7 +10,8 @@
 //      poly x unison <= 16 (handled in VoiceAllocator);
 //   #4 Cross Mod wired — osc2 (1-sample-delayed) modulates osc1 frequency;
 //   #5 LFO1Rate / LFO2Rate / UnisonDetune mod destinations consumed here
-//      (EffectsMix is consumed at engine level);
+//      (EffectsMix is consumed at engine level), as are the LFO1Depth /
+//      LFO2Depth destinations appended later (applyLfoDepth);
 //   #10 member xorshift PRNG (drift / per-note random), NaN guards kept.
 //
 // The oscillator section is a plain per-mode switch. Modes 0-3 use the analog
@@ -56,6 +57,14 @@ static constexpr int kMaxOscVoices   = 16; // poly x unison ceiling
 // high-resonance filters retain more upper-band energy than the former shared
 // cascade, so 36 ms is used to keep the fade's C1 corners below audibility.
 static constexpr float kRetireSeconds = 0.036f;
+
+// Crossfade for the two edges at which an LFO's depth starts or stops being
+// applied while a voice is sounding: its FIRST depth slot appearing, or its LAST
+// one disappearing (SynthVoice::applyLfoDepth). Without it the LFO's output would
+// step on that sample, a click on every route the LFO feeds. Only those two edges
+// fade; see applyLfoDepth for what does not. The same length, and for the same
+// reason, as the LFO's own seek crossfade (Envelope.hpp).
+static constexpr float kLfoDepthFadeSeconds = LFO::kSeekFadeSeconds;
 
 // Per-voice parameters (shared across voices for a given mode). Set once per
 // block by the engine from atomics — never looked up in the render path.
@@ -138,6 +147,11 @@ struct VoiceParameters
     // not None). An unread LFO still advances every piece of its state but skips
     // evaluating its sine (LFO::processSample), the costliest part of it.
     bool lfo1Used = true, lfo2Used = true;
+
+    // Whether any mod-matrix slot targets LFO 1 / LFO 2 Depth (ModMatrix::targets).
+    // With none, once a just-removed route's fade-out has run, that LFO's output is
+    // not touched at all (SynthVoice::applyLfoDepth).
+    bool lfo1DepthRouted = false, lfo2DepthRouted = false;
 };
 
 //==============================================================================
@@ -178,6 +192,8 @@ public:
         portaFreq.snap(440.0f);
         retireStep = 1.0f / (float)(kRetireSeconds * sampleRate);
         retiring = false; retirePhase = 1.0f;
+        lfoDepthFadeStep = 1.0f / (float)(kLfoDepthFadeSeconds * sampleRate);
+        resetLfoDepth();
     }
 
     // Change the internal (oversampled) rate WITHOUT resetting musical state:
@@ -210,6 +226,7 @@ public:
         // 0.1 s one part-way through. Keeps current/target value.
         portaFreq.prepare(sampleRate, portaTau);
         retireStep = 1.0f / (float)(kRetireSeconds * sampleRate); // keeps retirePhase
+        lfoDepthFadeStep = 1.0f / (float)(kLfoDepthFadeSeconds * sampleRate); // keeps the fades
     }
 
     void reset() noexcept
@@ -230,6 +247,7 @@ public:
         effectsMixMod = 0.0f;
         polyPressure = 0.0f;
         retiring = false; retirePhase = 1.0f;
+        resetLfoDepth();
     }
 
     // LEGATO ("Glide only when notes overlap"). A note that lands on a voice whose
@@ -294,6 +312,10 @@ public:
             // Per-note LFO retrigger (resets phase + fade-in + S&H target). Legato
             // notes keep the running LFO. Without this the LFO fade-in is inert.
             lfo1.retrigger(); lfo2.retrigger();
+            // A new note has no LFO depth to fade from: it starts settled on
+            // whatever the matrix routes now (applyLfoDepth), not on whatever the
+            // voice's previous note left behind.
+            lfoDepthPrime = true;
             filterR.reset(); // keep the (usually idle) R filter fresh for unison
             for (int u = 0; u < kMaxUnison; ++u)
             {
@@ -814,7 +836,74 @@ private:
         sampleAndHold.setRate(params.shRate);
         state.setSourceValue(ModSource::SampleAndHold, sampleAndHold.process(rng.nextBipolar()));
 
+        applyLfoDepth(state, matrix, params);
         matrix.process(state);
+    }
+
+    // LFO depth destinations (ModDest::LFO1Depth / LFO2Depth). While at least one
+    // slot targets an LFO's depth, that LFO's output -- the value every other slot
+    // reads -- is multiplied by the sum of those slots' contributions (source x
+    // amount), clamped to 0..1. While none does (and no removed route is still
+    // fading out, below), the output is not touched at all, which is what keeps
+    // every patch without such a route bit-identical.
+    //
+    // SAME sample, not one sample late like the rate routes above. A rate route
+    // has to wait because it moves the LFO's phase, and the phase is advanced
+    // before the matrix runs; a depth only scales a value that already exists. So
+    // both sums are taken from the sources as they stand, before either LFO is
+    // scaled, and only then are the scaled LFOs handed to the matrix. A delay
+    // would also leak: the first sample of every note would get the depth the
+    // voice's previous note left behind, and a triangle or square LFO starts at
+    // -1 / +1, so "wheel at zero" would not be silent. The order has one visible
+    // consequence: a route from an LFO to an LFO's depth reads that LFO UNSCALED.
+    //
+    // Two edges are crossfaded over kLfoDepthFadeSeconds (smoothstep) while the
+    // voice sounds: an LFO's FIRST depth slot appearing (from no depth to the sum)
+    // and its LAST one disappearing (from the last sum, held, back to no depth;
+    // when that fade ends the LFO is untouched again). Nothing else is: adding or
+    // removing a depth slot while another still targets the same LFO, editing a
+    // depth slot's source or amount, or moving its source (the wheel) changes the
+    // sum on the next block or sample like every other matrix edit, and can click
+    // the same way on an LFO -> Amp route. A fresh note (lfoDepthPrime) has
+    // nothing to fade from and starts settled.
+    void applyLfoDepth(ModulationState& state, const ModMatrix& matrix,
+                       const VoiceParameters& params) noexcept
+    {
+        const bool routed[2] = { params.lfo1DepthRouted, params.lfo2DepthRouted };
+        if (lfoDepthPrime)
+        {
+            lfoDepthPrime = false;
+            lfoDepthFade[0] = routed[0] ? 1.0f : 0.0f;
+            lfoDepthFade[1] = routed[1] ? 1.0f : 0.0f;
+        }
+        if (!routed[0] && !routed[1] && lfoDepthFade[0] <= 0.0f && lfoDepthFade[1] <= 0.0f)
+            return;
+
+        static constexpr ModSource kLfo[2]   = { ModSource::LFO1, ModSource::LFO2 };
+        static constexpr ModDest   kDepth[2] = { ModDest::LFO1Depth, ModDest::LFO2Depth };
+        for (int k = 0; k < 2; ++k)   // both sums first, from the unscaled sources
+            if (routed[k])
+                lfoDepthHeld[k] = clampf(matrix.sumFor(state, kDepth[k]), 0.0f, 1.0f);
+        for (int k = 0; k < 2; ++k)
+        {
+            float& fade = lfoDepthFade[k];
+            if (routed[k]) { fade += lfoDepthFadeStep; if (fade > 1.0f) fade = 1.0f; }
+            else           { fade -= lfoDepthFadeStep; if (fade < 0.0f) fade = 0.0f; }
+            if (fade <= 0.0f) continue;   // settled unrouted: untouched
+            const float d = lfoDepthHeld[k];
+            // Settled: exactly the clamped sum. Mid-fade: smoothstep from 1 (no
+            // depth applied) to it, C1 at both ends like the voice's other fades.
+            const float g = fade >= 1.0f ? d
+                                         : 1.0f + (d - 1.0f) * (fade * fade * (3.0f - 2.0f * fade));
+            state.sourceValues[(size_t)kLfo[k]] *= g;
+        }
+    }
+
+    void resetLfoDepth() noexcept
+    {
+        lfoDepthFade[0] = lfoDepthFade[1] = 0.0f;
+        lfoDepthHeld[0] = lfoDepthHeld[1] = 1.0f;
+        lfoDepthPrime = true;
     }
 
     double sr = 44100.0;
@@ -829,6 +918,11 @@ private:
     float filterTrackingOffset = 0.0f, voicePanOffset = 0.0f;
     float baseLfo1Rate = 1.0f, baseLfo2Rate = 0.5f;
     float lfoRateMod1 = 0.0f, lfoRateMod2 = 0.0f;
+    // LFO depth routes (applyLfoDepth), index 0 = LFO 1, 1 = LFO 2.
+    float lfoDepthFade[2] = { 0.0f, 0.0f };  // 0 = depth not applied .. 1 = fully applied
+    float lfoDepthHeld[2] = { 1.0f, 1.0f };  // last routed depth, held through a fade-out
+    float lfoDepthFadeStep = 1.0f;           // per internal sample, set by prepare/setSampleRate
+    bool  lfoDepthPrime = true;              // next render settles the fades (fresh note)
     float effectsMixMod = 0.0f;
     float polyPressure = 0.0f;     // per-note key pressure (MIDI 0xA0), see render loop
     int   prevUCount = 1; // detects the 1 -> >1 unison transition (C4b)

@@ -342,8 +342,31 @@ The mod matrix is an eight-slot modulation router, opened from the **MOD MATRIX*
 | LFO1 Rate / LFO2 Rate | The speed of LFO 1 or 2. |
 | FX Mix | The wet/dry balance of the effects. |
 | Uni Det | The unison detune spread. |
+| LFO1 Depth / LFO2 Depth | How much of LFO 1 or 2 reaches every slot that uses it. While any slot targets an LFO's depth, that LFO is scaled by the sum of those slots (source times amount), held between 0 and 100 %, so a depth slot at 0 % holds the LFO at zero; with none, the LFO runs at full depth. Routing one LFO to the other's depth uses its unscaled output. |
 
 A classic starting patch is LFO 1 to Cutoff for a filter wobble, or Key Track to Cutoff so the filter opens as you play higher. Aftertouch to LFO1 Rate gives expressive vibrato that speeds up under pressure.
+
+**Vibrato from the mod wheel.** Route LFO 1 to Osc1 Pitch at a small amount such as +20 % and, in a second slot, LFO 1 to Osc2 Pitch, then route Mod Whl to LFO1 Depth at +100 %. With the wheel down there is no vibrato, and pushing it up brings it in, up to the depth the LFO slots set. Osc1 Pitch moves the whole voice in Cosmos and Prism and Oscillator 1 in the other modes; Osc2 Pitch moves Oscillator 2 in Oracle, Mono and Modular. Neither moves the Mono sub oscillator or Modular's Osc 3, which stay at the played pitch.
+
+In Acid mode the mod matrix is not in circuit, so the mod wheel and the depth destinations do nothing there.
+
+**Compatibility of the depth destinations.** Saved projects and presets keep their destinations in every format. A project or preset that uses LFO1 Depth or LFO2 Depth, opened in version 1.0.10 or earlier, plays those slots as Uni Det, and the mod matrix shows Uni Det. Destination automation is different: the two depth destinations grew each slot's destination from 13 to 15 choices, and a host that stores an automation lane as a position between the first and last value, as VST3 hosts do, now plays a different destination for most values of a lane recorded before:
+
+| Recorded | Now plays |
+|---|---|
+| None, Osc1 Pitch, Osc2 Pitch | unchanged |
+| Osc1 PW | Osc2 PW |
+| Osc2 PW | Cutoff |
+| Cutoff | Reso |
+| Reso | Amp |
+| Amp | Pan |
+| Pan | LFO1 Rate |
+| LFO1 Rate | FX Mix |
+| LFO2 Rate | Uni Det |
+| FX Mix | LFO1 Depth |
+| Uni Det | LFO2 Depth |
+
+Re-record such lanes. Automation in other hosts and formats has not been tested; after updating, check any lanes on the eight Mod Dest parameters.
 
 ## Presets
 
@@ -470,7 +493,7 @@ The first row is the worst case among ordinary patches: a full 8-voice FM patch,
 
 Every control is a normal host parameter: 223 automatable parameters, plus two output-only level meters the host can read but not write, for 225 host parameters in total (229 ports in the LV2 build, counting audio, MIDI, and the latency report). Oversampling is one of the 223, so it automates like anything else, and since the latency is the same at every factor, automating it never makes the host restart the plugin. Controls that a mode hides are still present in the host's parameter list, so an automation lane never breaks when you switch circuits.
 
-Continuous parameters are smoothed, so automating or dragging them does not produce zipper noise. The smoother settles with an 8 ms time constant, short enough that a knob still feels immediate. Filter cutoffs are smoothed in the log-frequency domain rather than in Hz, so a sweep sounds even across the range instead of racing through the top octaves. The smoothed set covers the level, filter and effect-mix controls; the rest step per block, which for most of them is inaudible. A few are deliberately left unsmoothed because smoothing them would be worse than the step: oscillator and unison detune, pulse width, and the LFO and chorus rates all set a phase increment or an edge position, where a ramp is a pitch glide nobody asked for. Stepped controls (waveforms, modes, sequencer cells, mod-matrix routings) switch outright, as they should.
+Continuous parameters are smoothed, so automating or dragging them does not produce zipper noise. The smoother settles with an 8 ms time constant, short enough that a knob still feels immediate. Filter cutoffs are smoothed in the log-frequency domain rather than in Hz, so a sweep sounds even across the range instead of racing through the top octaves. The smoothed set covers the level, filter and effect-mix controls; the rest step per block, which for most of them is inaudible. A few are deliberately left unsmoothed because smoothing them would be worse than the step: oscillator and unison detune, pulse width, and the LFO and chorus rates all set a phase increment or an edge position, where a ramp is a pitch glide nobody asked for. Stepped controls (waveforms, modes, sequencer cells, mod-matrix routings) switch outright, as they should, with one exception: when an LFO gets its first LFO1 Depth or LFO2 Depth slot, or loses its last one, while a note sounds, its depth fades in or out over 5 ms so the change does not click. Any other change to a depth slot switches outright like the rest of the matrix.
 
 Loading a preset snaps rather than glides. The plugin tells the engine explicitly that a program change happened, so all 223 values land at once and a preset sounds correct on its first note instead of sliding into place over the first fraction of a second. For hosts that replay a patch as a burst of ordinary parameter writes rather than a program change, the engine detects the burst and snaps anyway.
 

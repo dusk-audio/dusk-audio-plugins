@@ -177,6 +177,45 @@ int main()
               "out-of-range value clamped to param max");
     }
 
+    // ---- 4c. mod destinations 13 / 14 (LFO1 / LFO2 Depth, issue #303) ---------
+    // Appended for issue #303, growing the modDst range from 0..12 to 0..14. A file
+    // naming them must load them as written (clamped to the old maximum both
+    // would become 12, Uni Det), and a file from before they existed, whose
+    // destinations are 0..12, must load exactly as it always did.
+    {
+        fs::path f = expectDir / "Depth.scpreset";
+        { std::ofstream os(f, std::ios::trunc);
+          os << "# SunsetCircuits preset v1\nname=Depth\n";
+          os << "modDst0=13\nmodDst7=14\n"; }
+        std::vector<float> vp(N, -1.0f);
+        CHECK(store.loadInto(f, vp.data(), N), "load a file naming destinations 13 / 14");
+        CHECK(vp[kParamModDst0] == 13.0f && vp[kParamModDst7] == 14.0f,
+              "destinations 13 / 14 load as written, not clamped to 12");
+
+        std::vector<float> v(N), r(N, -1.0f);
+        for (int i = 0; i < N; ++i) v[i] = kParamDefs[i].def;
+        for (int s = 0; s < 8; ++s) v[kParamModDst0 + s] = (float)(7 + s);   // 7..14
+        CHECK(store.save("Depth Round Trip", v.data(), N), "save destinations 7..14");
+        store.refresh();
+        CHECK(store.loadByName("Depth Round Trip", r.data(), N), "load destinations 7..14");
+        bool rt = true;
+        for (int s = 0; s < 8; ++s) rt = rt && r[kParamModDst0 + s] == (float)(7 + s);
+        CHECK(rt, "destinations 7..14 round-trip through save + load");
+
+        bool legacy = true;
+        for (int d = 0; d <= 12; ++d)
+        {
+            fs::path g = expectDir / "Legacy.scpreset";
+            { std::ofstream os(g, std::ios::trunc);
+              os << "# SunsetCircuits preset v1\nname=Legacy\n";
+              for (int s = 0; s < 8; ++s) os << kParamDefs[kParamModDst0 + s].symbol << "=" << d << "\n"; }
+            std::vector<float> lp(N, -1.0f);
+            legacy = store.loadInto(g, lp.data(), N) && legacy;
+            for (int s = 0; s < 8; ++s) legacy = legacy && lp[kParamModDst0 + s] == (float)d;
+        }
+        CHECK(legacy, "pre-#303 destinations 0..12 load unchanged");
+    }
+
     // ---- 5. name sanitization ----------------------------------------------
     CHECK(sanitize("a/b\\c:d") == "abcd", "strip path/reserved chars");
     CHECK(sanitize("  Lead  ") == "Lead", "trim surrounding whitespace");
