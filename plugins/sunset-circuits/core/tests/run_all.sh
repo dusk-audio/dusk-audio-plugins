@@ -74,7 +74,7 @@ if ! python3 ../../daf-plugin/tools/gen_params.py --check; then
     echo "Re-run tools/gen_params.py and commit the result."
     fail=1
 fi
-for g in pitch env reverb arp arp_seq filter_stability accuracy fx_reenable param_robust \
+for g in sched pitch env reverb arp arp_seq filter_stability accuracy fx_reenable param_robust \
          lfo_sync modulation lfo_depth cosmos acid stuck sustain handover polyat steal legato \
          zipper user_preset latency; do
     echo
