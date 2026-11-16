@@ -1642,11 +1642,14 @@ private:
     }
 
     // Decay time right-aligned at xRight, digits and unit on one baseline. The
-    // digits open the same type-entry field as the DECAY knob.
+    // digits open the same type-entry field as the DECAY knob. The time is the
+    // one the engine plays (shownDecaySeconds): past the nonlinear burst's
+    // longest, the knob still turns but the read-out stays at that length.
     void drawDecayReadout(ImDrawList* dl, float xRight, float top)
     {
         char number[24], unit[8];
-        formatDecayParts(plainOf(duskverb::Decay), number, sizeof(number), unit, sizeof(unit));
+        formatDecayParts(shownDecaySeconds(algorithmSlot(), plainOf(duskverb::Decay)),
+                         number, sizeof(number), unit, sizeof(unit));
         const float numW  = textWidth(valueFonts_, kTypeHero, number);
         const float unitW = textWidth(valueFonts_, kTypeValue, unit);
         const float unitX = xRight - unitW;
@@ -1657,7 +1660,7 @@ private:
                   kTypeValue, amberDim(), unit, -1);
 
         char seed[48];
-        formatPlainValue(currentEngine(), duskverb::Decay, plainOf(duskverb::Decay), seed, sizeof(seed));
+        formatSlotValue(algorithmSlot(), duskverb::Decay, plainOf(duskverb::Decay), seed, sizeof(seed));
         ImGui::SetCursorScreenPos(P(numX - 8.0f, top));
         ImGui::InvisibleButton("##decay_value_entry", ImVec2((xRight - numX + 8.0f) * s_, kTypeHero * s_));
         if (ImGui::IsItemClicked()) panel_.openValueEdit("##dvk_decay", values_[duskverb::Decay], seed);
@@ -1751,7 +1754,7 @@ private:
         const float lo = duskverb::knobMin(d), hi = duskverb::knobMax(d);
         knobBody(dl, kHeroCx, kHeroCy, kHeroR, /*hero*/ true, /*inactive*/ false);
         char decaySeed[48];
-        formatPlainValue(currentEngine(), duskverb::Decay, plainOf(duskverb::Decay), decaySeed, sizeof(decaySeed));
+        formatSlotValue(algorithmSlot(), duskverb::Decay, plainOf(duskverb::Decay), decaySeed, sizeof(decaySeed));
         const bool buttonDrawn = !panel_.isEditingValue("##dvk_decay");   // see knobCell()
         const ImVec2 decayEditPosition(kDispX1 - 92.0f, kDispY0 + 35.0f);
         panel_.knob("##dvk_decay", (uint32_t)duskverb::Decay, lo, hi, kHeroCx, kHeroCy, kHeroR,

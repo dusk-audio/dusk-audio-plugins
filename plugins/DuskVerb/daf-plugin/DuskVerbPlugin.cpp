@@ -132,7 +132,7 @@ protected:
         const auto& desc = duskverb::paramDesc(index);
         const int algorithm = static_cast<int>(controls_.parameter(duskverb::Algorithm));
         char formatted[96];
-        duskverb::ui::formatPlainValue(duskverb::controlEngine(algorithm), index,
+        duskverb::ui::formatSlotValue(algorithm, static_cast<int>(index),
                                       duskverb::dspFromHost(desc, value), formatted, sizeof(formatted));
         if (std::strlen(formatted) >= size) { text[0] = '\0'; return false; }
         std::memcpy(text, formatted, std::strlen(formatted) + 1);

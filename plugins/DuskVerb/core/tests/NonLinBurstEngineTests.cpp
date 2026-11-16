@@ -170,37 +170,156 @@ void testSilentFiniteAndCleared()
     checkf (silent, "not silent after clear()");
 }
 
+// An impulse through the engine at `seconds` of Decay: 48 kHz, 256-sample blocks, `n` samples.
+Stereo decayImpulseResponse (float seconds, int n)
+{
+    NonLinBurstEngine e;
+    e.prepare (48000.0, 256);
+    e.setKnee (NonLinBurstEngine::kneeForDecaySeconds (seconds));
+    Stereo in { std::vector<float> (static_cast<size_t> (n)), std::vector<float> (static_cast<size_t> (n)) };
+    in.l[0] = in.r[0] = 1.0f;
+    return render (e, in, 256);
+}
+
+// The time from the input to -60 dB under the plateau of a 48 kHz impulse response, in ms.
+double timeToMinus60Ms (const Stereo& out)
+{
+    const int n = static_cast<int> (out.l.size());
+    // 10 ms power envelope on a 1 ms grid, re the median plateau.
+    std::vector<double> env;
+    for (int t = 0; t + 480 <= n; t += 48)
+    {
+        double p = 0.0;
+        for (int i = t; i < t + 480; ++i)
+            p += static_cast<double> (out.l[static_cast<size_t> (i)]) * out.l[static_cast<size_t> (i)]
+               + static_cast<double> (out.r[static_cast<size_t> (i)]) * out.r[static_cast<size_t> (i)];
+        env.push_back (10.0 * std::log10 (p / 480.0 + 1e-30));
+    }
+    std::vector<double> body (env.begin() + 40, env.begin() + 100);
+    std::nth_element (body.begin(), body.begin() + 30, body.end());
+    const double plateau = body[30];
+    int last = 0;
+    for (int i = 0; i < static_cast<int> (env.size()); ++i)
+        if (env[static_cast<size_t> (i)] >= plateau - 60.0) last = i;
+    return last + 5.0;     // the 10 ms window is centred 5 ms after its start
+}
+
 // Decay Time is the time from the input to -60 dB under the plateau, measured on the output.
 void testDecayMeansWhatItSays()
 {
     for (float seconds : { 0.27f, 0.35f, 0.46f, 0.6f, 0.75f })
     {
-        NonLinBurstEngine e;
-        e.prepare (48000.0, 256);
-        e.setKnee (NonLinBurstEngine::kneeForDecaySeconds (seconds));
-        const int n = 48000;
-        Stereo in { std::vector<float> (static_cast<size_t> (n)), std::vector<float> (static_cast<size_t> (n)) };
-        in.l[0] = in.r[0] = 1.0f;
-        const Stereo out = render (e, in, 256);
-        // 10 ms power envelope on a 1 ms grid, re the median plateau.
-        std::vector<double> env;
-        for (int t = 0; t + 480 <= n; t += 48)
-        {
-            double p = 0.0;
-            for (int i = t; i < t + 480; ++i)
-                p += static_cast<double> (out.l[static_cast<size_t> (i)]) * out.l[static_cast<size_t> (i)]
-                   + static_cast<double> (out.r[static_cast<size_t> (i)]) * out.r[static_cast<size_t> (i)];
-            env.push_back (10.0 * std::log10 (p / 480.0 + 1e-30));
-        }
-        std::vector<double> body (env.begin() + 40, env.begin() + 100);
-        std::nth_element (body.begin(), body.begin() + 30, body.end());
-        const double plateau = body[30];
-        int last = 0;
-        for (int i = 0; i < static_cast<int> (env.size()); ++i)
-            if (env[static_cast<size_t> (i)] >= plateau - 60.0) last = i;
-        const double t60 = last + 5.0;     // the 10 ms window is centred 5 ms after its start
+        const double t60 = timeToMinus60Ms (decayImpulseResponse (seconds, 48000));
         checkf (std::abs (t60 - seconds * 1000.0) <= 15.0, "Decay %.2f s: the output reaches -60 dB at %.0f ms", seconds, t60);
     }
+    // The same bound up to the longest burst, 2.5 s, past the 600 ms knee where the fitted law
+    // ends (Decay 0.783 s). Each render runs half a second past its Decay.
+    for (float seconds : { 0.783f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f, 1.3f, 1.4f, 1.5f, 1.6f, 1.7f, 1.8f,
+                           1.9f, 2.0f, 2.1f, 2.2f, 2.3f, 2.4f, 2.5f })
+    {
+        const int n = static_cast<int> ((seconds + 0.5f) * 48000.0f);
+        const double t60 = timeToMinus60Ms (decayImpulseResponse (seconds, n));
+        checkf (std::abs (t60 - seconds * 1000.0) <= 15.0, "Decay %.3f s: the output reaches -60 dB at %.0f ms", seconds, t60);
+    }
+}
+
+// Past the longest burst Decay changes nothing: 2.6, 3 and 30 s render the 2.5 s burst sample for
+// sample, and that burst is 2.5 s long.
+void testDecayPastTheLongestBurst()
+{
+    const int n = 3 * 48000;
+    const Stereo longest = decayImpulseResponse (2.5f, n);
+    const double t60 = timeToMinus60Ms (longest);
+    checkf (std::abs (t60 - 2500.0) <= 15.0, "the longest burst reaches -60 dB at %.0f ms, not at 2.5 s", t60);
+    for (float seconds : { 2.5f, 2.6f, 3.0f, 30.0f })
+        checkf (NonLinBurstEngine::kneeForDecaySeconds (seconds) == NonLinBurstEngine::kMaxKneeMs,
+                "Decay %.1f s maps to knee %.4f ms, not the longest", seconds, NonLinBurstEngine::kneeForDecaySeconds (seconds));
+    for (float seconds : { 2.6f, 3.0f, 30.0f })
+    {
+        const Stereo out = decayImpulseResponse (seconds, n);
+        checkf (out.l == longest.l && out.r == longest.r, "Decay %.1f s does not render the 2.5 s burst", seconds);
+    }
+}
+
+// The tap layout is drawn in prepare() up to the end of the longest burst and at most kMaxTaps
+// taps: at the longest knee it must end by time, never by that count, at every rate (the layout
+// is in ms; the rate only places it).
+void testTheLongestKneeKeepsItsWholeLayout()
+{
+    for (double sr : { 44100.0, 48000.0, 96000.0, 192000.0 })
+    {
+        NonLinBurstEngine e;
+        e.prepare (sr, 256);
+        e.setKnee (NonLinBurstEngine::kMaxKneeMs);
+        float silence[1] = { 0.0f }, out[1];
+        e.process (silence, silence, out, out, 1);
+        for (int ch = 0; ch < 2; ++ch)
+            checkf (e.tapCount (ch) < NonLinBurstEngine::kMaxTaps, "%.0f Hz channel %d: the longest knee uses all %d taps"
+                    " (the layout was cut short)", sr, ch, e.tapCount (ch));
+    }
+}
+
+// After a clear() the engine picks the taps it may read by their place in the tap set (sumTaps),
+// which is right only while the delays never decrease along it: at the longest knee, at every
+// rate, with the pre-delay at 0, in between and at its longest.
+void testTapsRunInDelayOrder()
+{
+    for (double sr : { 44100.0, 48000.0, 96000.0, 192000.0 })
+        for (float preDelay : { 0.0f, 37.5f, NonLinBurstEngine::kMaxPreDelayMs })
+        {
+            NonLinBurstEngine e;
+            e.prepare (sr, 256);
+            e.setKnee (NonLinBurstEngine::kMaxKneeMs);
+            e.setPreDelay (preDelay);
+            float silence[1] = { 0.0f }, out[1];
+            e.process (silence, silence, out, out, 1);
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                const int count = e.tapCount (ch);
+                int k = 1;
+                while (k < count && e.tap (ch, k).delay >= e.tap (ch, k - 1).delay)
+                    ++k;
+                checkf (count > 1 && k == count, "%.0f Hz, pre-delay %.1f ms, channel %d: tap %d of %d sits before the one"
+                        " it follows", sr, preDelay, ch, k, count);
+            }
+        }
+}
+
+// clear() leaves the rings as they are (too large to wipe on the audio thread at every preset
+// swap): nothing written before it may be read after it. A loud burst at
+// the longest knee, then clear(), then an impulse renders the same samples as a fresh engine,
+// with the pre-delay at its longest and at 0, the knee kept or moved right after the clear.
+void testClearForgetsTheRings()
+{
+    for (double sr : { 44100.0, 192000.0 })
+        for (float preDelay : { NonLinBurstEngine::kMaxPreDelayMs, 0.0f })
+            for (bool moveKnee : { false, true })
+            {
+                const int n = static_cast<int> (3.0 * sr);
+                const auto play = [&] (bool loudFirst) {
+                    NonLinBurstEngine e;
+                    e.prepare (sr, 512);
+                    e.setKnee (NonLinBurstEngine::kMaxKneeMs);
+                    e.setPreDelay (preDelay);
+                    if (loudFirst)
+                    {
+                        Stereo loud = noiseBurst (4 * n, 0.9f);       // the first quarter is noise
+                        loud.l.resize (static_cast<size_t> (n));
+                        loud.r.resize (static_cast<size_t> (n));
+                        render (e, loud, 512);
+                        e.clear();
+                    }
+                    if (moveKnee)
+                        e.setKnee (300.0f);
+                    Stereo in { std::vector<float> (static_cast<size_t> (n)), std::vector<float> (static_cast<size_t> (n)) };
+                    in.l[0] = in.r[0] = 1.0f;
+                    return render (e, in, 512);
+                };
+                const Stereo fresh = play (false), cleared = play (true);
+                checkf (cleared.l == fresh.l && cleared.r == fresh.r,
+                        "%.0f Hz, pre-delay %.0f ms%s: after clear() the engine still plays what came before it",
+                        sr, preDelay, moveKnee ? ", knee moved" : "");
+            }
 }
 
 void testNoAllocationOnTheAudioThread()
@@ -397,6 +516,10 @@ int main()
     testLinearAndBlockSizeInvariant();
     testSilentFiniteAndCleared();
     testDecayMeansWhatItSays();
+    testDecayPastTheLongestBurst();
+    testTheLongestKneeKeepsItsWholeLayout();
+    testTapsRunInDelayOrder();
+    testClearForgetsTheRings();
     testNoAllocationOnTheAudioThread();
     testSampleRates();
     testSweepsDoNotZipper();

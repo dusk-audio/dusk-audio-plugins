@@ -635,12 +635,19 @@ struct Instance
     }
 };
 
-// Share of an impulse response's energy from 1.2 s to 1.6 s. The own engine's longest
-// burst is over by 0.8 s; a 3 s shared tail is still plainly there.
+// The Decay of the family-change checks below: past the own engine's longest burst, which it
+// plays at most, so a shared tail is plainly still there when the burst has ended.
+constexpr float kLongDecay = 6.0f;
+
+// Share of an impulse response's energy in the 0.4 s from 0.2 s after the own engine's longest
+// burst (NonLinBurstEngine::kMaxDecaySeconds). The burst is over by then; a 6 s shared tail is
+// still there (measured 2026-11-16 in the checks below: own engine 1.7e-14, shared engine
+// 1.1e-3 and 1.3e-3).
 double lateShare(const std::vector<float>& ir)
 {
     const size_t half = ir.size() / 2;
-    const size_t from = static_cast<size_t>(1.2 * kSr), to = static_cast<size_t>(1.6 * kSr);
+    const double fromSeconds = duskverb::NonLinBurstEngine::kMaxDecaySeconds + 0.2;
+    const size_t from = static_cast<size_t>(fromSeconds * kSr), to = static_cast<size_t>((fromSeconds + 0.4) * kSr);
     double late = 0.0, total = 0.0;
     for (size_t i = 0; i < half; ++i)
     {
@@ -683,13 +690,13 @@ void testEngineFamilyChange()
 
     {
         Instance own(nonlin);
-        setPlain(own.dsp, duskverb::Decay, 3.0f);
+        setPlain(own.dsp, duskverb::Decay, kLongDecay);
         own.run(kSecond, 0.0f);
-        const double ownLate = lateShare(own.impulseResponse(2 * kSecond));
-        checkf(ownLate < 1e-10, "the own engine is silent 1.2 s after an impulse (late share %.3g)", ownLate);
+        const double ownLate = lateShare(own.impulseResponse(4 * kSecond));
+        checkf(ownLate < 1e-10, "the own engine is silent after its longest burst (late share %.3g)", ownLate);
 
         Instance s(nonlin);
-        setPlain(s.dsp, duskverb::Decay, 3.0f);
+        setPlain(s.dsp, duskverb::Decay, kLongDecay);
         s.run(kSecond / 2, noise);
         s.fadesStarted = 0;
         setPlain(s.dsp, duskverb::Algorithm, kPlate);
@@ -697,14 +704,14 @@ void testEngineFamilyChange()
         check(s.fadesStarted == 1, "own -> shared crossfades like a preset swap");
         s.run(kSecond / 5, noise);
         s.run(3 * kSecond, 0.0f);
-        const double late = lateShare(s.impulseResponse(2 * kSecond));
+        const double late = lateShare(s.impulseResponse(4 * kSecond));
         checkf(late > 1e-6, "own -> shared hands over to the shared engine (late share %.3g)", late);
     }
 
     {
         Instance s(nonlin);
         setPlain(s.dsp, duskverb::Algorithm, kPlate);
-        setPlain(s.dsp, duskverb::Decay, 3.0f);
+        setPlain(s.dsp, duskverb::Decay, kLongDecay);
         s.run(kSecond / 2, noise);
         s.fadesStarted = 0;
         setPlain(s.dsp, duskverb::Algorithm, duskverb::kNonLinAlgorithm);
@@ -715,7 +722,7 @@ void testEngineFamilyChange()
         s.run(kSecond / 2, noise);
         check(s.fadesStarted == 2, "the waiting crossing crossfades once the fade ends");
         s.run(3 * kSecond, 0.0f);
-        const double late = lateShare(s.impulseResponse(2 * kSecond));
+        const double late = lateShare(s.impulseResponse(4 * kSecond));
         checkf(late > 1e-6, "shared -> own -> shared mid-fade ends on the shared engine (late share %.3g)", late);
     }
 

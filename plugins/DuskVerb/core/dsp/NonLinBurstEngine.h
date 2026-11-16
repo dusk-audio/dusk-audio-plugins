@@ -23,8 +23,8 @@
 // Threading: prepare() allocates and runs off the audio thread. Everything else is audio-thread
 // safe: no allocation, no locks. prepare() draws the tap layout once (each tap's time, line and
 // random gain, none of which depends on the knee); a knee change then recomputes only the
-// envelope gains (about 700 taps per channel at the longest knee, roughly 40 us for both
-// channels), and a pre-delay change only the delays.
+// envelope gains (about 2760 taps per channel at the longest knee, about 45 us for both
+// channels on the development machine), and a pre-delay change only the delays.
 //
 // A new tap set never replaces the old one in a step: the two tap sums crossfade over
 // kTapFadeMs. Stepping them zippered a moving knee (sine through a knee swept +-50 ms at
@@ -42,7 +42,9 @@
 // the rings and lines still hold. The delay lines (the allpasses and the tail's lines) are left
 // alone: each pass scales them by less than one, so flush-to-zero ends them at 0 by itself, and
 // zeroing single entries would cut near-zero samples out of a tail still ringing above 1e-25.
-// The rings hold the input's history and feed nothing back.
+// The rings hold the input's history and feed nothing back. clear() does not wipe them: sized
+// for the longest burst they hold 4.2 MB at 48 kHz and 16.5 MB at 192 kHz, too much to zero
+// on the audio thread at every preset swap. The taps read only what was written since (sumTaps).
 
 #pragma once
 
@@ -61,9 +63,16 @@ class NonLinBurstEngine
 public:
     // Knee: ms after the onset at which the burst sits 10 dB under its plateau.
     static constexpr float kMinKneeMs = 40.0f;
-    static constexpr float kMaxKneeMs = 600.0f;
+    // Decay is honoured up to kMaxDecaySeconds; a longer setting plays the burst of this one.
+    static constexpr float kMaxDecaySeconds = 2.5f;
+    // kneeForDecaySeconds' law: fitted up to the kLinearTopKneeMs knee, one for one past it.
+    // DuskVerbAlgorithms.hpp's kNonLinMaxDecaySeconds mirrors kMaxDecaySeconds for the editor
+    // and host text (asserted equal in DuskVerbDSP.cpp).
+    static constexpr float kLinearTopKneeMs = 600.0f;
+    static constexpr float kLinearTopDecayMs = 1.0216f * kLinearTopKneeMs + 170.2f;
+    static constexpr float kMaxKneeMs = kLinearTopKneeMs + (kMaxDecaySeconds * 1000.0f - kLinearTopDecayMs);
     static constexpr float kMaxPreDelayMs = 250.0f;
-    static constexpr int   kMaxTaps = 2048;          // per channel; the longest knee needs 694
+    static constexpr int   kMaxTaps = 3072;          // per channel; the longest knee needs 2758
     static constexpr float kTapFadeMs = 20.0f;
 
     void prepare (double sampleRate, int maxBlockSize);
@@ -75,8 +84,16 @@ public:
     void setKnee (float kneeMs) noexcept;
     void setPreDelay (float ms) noexcept;
 
-    // The knee for a decay time, the time from the input to -60 dB under the plateau. Measured
-    // on this engine's output: t60 = 1.0216 * knee + 170.2 ms (within 6 ms, knees 40 to 600).
+    // The knee for a decay time, the time from the input to -60 dB under the plateau, as
+    // NonLinBurstEngineTests measures it on this engine's output (48 kHz). Up to the
+    // kLinearTopKneeMs knee: t60 = 1.0216 * knee + 170.2 ms, fitted on knees 40 to 600. From
+    // Decay 0.27 s to the fit's top (0.783 s) t60 lands 10 ms short to 2 ms over; no knee
+    // reaches -60 dB sooner than about 255 ms, so a Decay under 0.27 s plays up to 55 ms over.
+    // Past the fit's top the envelope is very nearly the 283.5 ms knee's moved later (Envelope
+    // keeps that knee's shape and fall; the plateau's slope is rescaled to keep its total sag),
+    // so t60 moves with the knee one for one (slope 1.0006 measured over knees 600 to 2400 ms):
+    // the law goes on from the fit's top point with slope 1, and t60 lands 0 to 14 ms short
+    // (7 on average, 1 ms steps) from 0.784 to 2.5 s. Past kMaxDecaySeconds: kMaxKneeMs.
     static float kneeForDecaySeconds (float seconds) noexcept;
 
     // HF damping: a one-pole lowpass after the burst, as on the hardware. At or above
@@ -167,8 +184,10 @@ private:
     void rebuildGains() noexcept;
     void placeTaps() noexcept;
     void processChannel (Channel& c, const float* in, float* out, int n) noexcept;
+    // `written`: samples written to the rings since the last clear() or prepare(), this block's
+    // included, at most ringLen. Nothing older is read.
     static void sumTaps (const Channel& c, const Tap* taps, int count, int writePos, int ringLen,
-                         float* acc, int n) noexcept;
+                         int written, float* acc, int n) noexcept;
 
     // Under this a signal or a filter state has decayed out of anything audible (see the header
     // comment).
@@ -184,6 +203,7 @@ private:
     int maxBlock_ = 0;
     int ringLen_ = 0;
     int writePos_ = 0;
+    int written_ = 0;                          // samples into the rings since clear()/prepare(), at most ringLen_
     float darkNorm_ = 1.0f;
     float tailSend_ = 0.0f;
     float kneeMs_ = 150.0f, preDelayMs_ = 0.0f;

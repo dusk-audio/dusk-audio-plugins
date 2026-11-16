@@ -372,9 +372,8 @@ void DuskVerbDSP::clearState() noexcept
     engineA_.clearAllBuffers();
     engineB_.clearAllBuffers();
     // Only a voice that is sounding needs clearing: armOwnVoice() clears a voice whenever it
-    // becomes active, so an idle one is cleared before it is heard again. That keeps a host
-    // reset on a shared engine from also zeroing both own voices' rings (several MB at high
-    // sample rates) on the audio thread.
+    // becomes active, so an idle one is cleared before it is heard again, and a host reset on
+    // a shared engine does no work for the two own voices.
     for (OwnVoice* own : { &ownA_, &ownB_ })
     {
         if (! own->active)
@@ -730,6 +729,9 @@ void DuskVerbDSP::pushShellParameters (Dv2OutputShell& shell, float toneHiCut) n
     shell.setWidth (p (Width));
     shell.setGainTrim (p (GainTrim));
 }
+
+static_assert (NonLinBurstEngine::kMaxDecaySeconds == kNonLinMaxDecaySeconds,
+               "the editor and host text show the burst's own longest Decay");
 
 void DuskVerbDSP::pushOwnParameters (OwnVoice& voice, float preDelayMs, float toneTreble, float toneHiCut) noexcept
 {

@@ -378,9 +378,55 @@ void testReadoutFormatting()
     }
 }
 
+// The read-out names what the engine a slot plays. The nonlinear burst stops lengthening at
+// 2.5 s, so there a longer Decay reads 2.50 s; every other engine, a Reserved slot (it plays
+// Hall) and every other control read exactly what formatPlainValue prints for the slot's family.
+void testSlotReadout()
+{
+    using duskverb::ui::formatPlainValue;
+    using duskverb::ui::formatSlotValue;
+    using duskverb::ui::shownDecaySeconds;
+    const int nonlin = duskverb::kNonLinAlgorithm;
+    struct Row { int slot; float decay; const char* expected; };
+    const Row rows[] = {
+        { nonlin, 30.0f, "2.50 s" }, { nonlin, 2.6f, "2.50 s" }, { nonlin, 2.5f, "2.50 s" },
+        { nonlin, 1.5f, "1.50 s" },  { nonlin, 0.46f, "460 ms" }, { nonlin, 0.2f, "200 ms" },
+        { 10, 30.0f, "30.00 s" },    { 6, 10.0f, "10.00 s" },     { 0, 2.6f, "2.60 s" },
+        { 20, 10.0f, "10.00 s" },    { -1, 10.0f, "10.00 s" },
+    };
+    for (const Row& r : rows)
+    {
+        char buf[48];
+        formatSlotValue(r.slot, duskverb::Decay, r.decay, buf, sizeof(buf));
+        checkf(std::strcmp(buf, r.expected) == 0, "Decay %g on slot %d prints \"%s\" (got \"%s\")",
+               r.decay, r.slot, r.expected, buf);
+    }
+    checkf(shownDecaySeconds(nonlin, 30.0f) == duskverb::NonLinBurstEngine::kMaxDecaySeconds
+           && shownDecaySeconds(nonlin, 0.46f) == 0.46f && shownDecaySeconds(10, 30.0f) == 30.0f,
+           "only the nonlinear burst caps the Decay it shows");
+    // What it caps is Decay itself: DuskVerbDSP::engineDecay() gives the engine a calibrated
+    // reading only on a calibrated preset's own engine, and none of them plays the burst.
+    for (const auto& row : duskverb::kDecayShownByName)
+    {
+        const FactoryPreset* preset = duskverb::factoryPresetByName(row.first);
+        checkf(preset != nullptr && duskverb::resolveAlgorithm(preset->algorithm) != duskverb::kNonLinAlgorithm,
+               "Decay calibration row '%s' names no preset off the nonlinear burst", std::string(row.first).c_str());
+    }
+    for (int slot : { 0, 6, 7, 10, nonlin, 20 })
+        for (int p : { duskverb::ModDepth, duskverb::ModRate, duskverb::MidMult, duskverb::Predelay })
+        {
+            char slotText[48], familyText[48];
+            formatSlotValue(slot, p, 0.5f, slotText, sizeof(slotText));
+            formatPlainValue(duskverb::controlEngine(slot), p, 0.5f, familyText, sizeof(familyText));
+            checkf(std::strcmp(slotText, familyText) == 0, "'%s' on slot %d prints as its family does",
+                   duskverb::paramDesc(p).id, slot);
+        }
+}
+
 int main()
 {
     testReadoutFormatting();
+    testSlotReadout();
     testStateRoundTrip();
     testStateRejection();
     testStateSixApCompleteness();

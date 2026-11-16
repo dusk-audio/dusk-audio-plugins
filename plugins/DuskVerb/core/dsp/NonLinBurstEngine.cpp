@@ -269,6 +269,7 @@ void NonLinBurstEngine::prepare (double sampleRate, int maxBlockSize)
         c.hfDamp.reset();
     }
     writePos_ = 0;
+    written_ = 0;
     fadeRemaining_ = 0;
     fresh_ = true;
     gainsDirty_ = true;
@@ -278,10 +279,11 @@ void NonLinBurstEngine::prepare (double sampleRate, int maxBlockSize)
 
 void NonLinBurstEngine::clear() noexcept
 {
+    // The rings keep what they hold (too large to zero here, see the header): the taps never
+    // read what was written before this point (written_, sumTaps).
+    written_ = 0;
     for (Channel& c : channels_)
     {
-        std::fill (c.raw.begin(), c.raw.end(), 0.0f);
-        std::fill (c.dark.begin(), c.dark.end(), 0.0f);
         c.darkLp.reset();
         c.mult[0].clear();
         c.mult[1].clear();
@@ -297,7 +299,7 @@ void NonLinBurstEngine::clear() noexcept
 void NonLinBurstEngine::setKnee (float kneeMs) noexcept
 {
     kneeMs = std::clamp (kneeMs, kMinKneeMs, kMaxKneeMs);
-    // A gain rebuild costs about 40 us at the longest knee and a quarter millisecond of knee is
+    // A gain rebuild costs about 45 us at the longest knee and a quarter millisecond of knee is
     // inaudible, so a moving knee rebuilds only in steps that size. Once the request repeats
     // (the knob or the automation has stopped) the exact value is applied, so the taps at rest
     // never depend on the path that led there.
@@ -312,7 +314,18 @@ void NonLinBurstEngine::setKnee (float kneeMs) noexcept
 
 float NonLinBurstEngine::kneeForDecaySeconds (float seconds) noexcept
 {
-    return std::clamp ((seconds * 1000.0f - 170.2f) / 1.0216f, kMinKneeMs, kMaxKneeMs);
+    // Every setting the fit puts at or under its top knee keeps the knee it always had.
+    const float fitted = (seconds * 1000.0f - 170.2f) / 1.0216f;
+    if (! (fitted > kLinearTopKneeMs))
+        return std::clamp (fitted, kMinKneeMs, kLinearTopKneeMs);
+    // Past it, one ms of knee is one ms of t60 (see the header), from the fit's top point on, up
+    // to kMaxKneeMs: the clamp is what holds every Decay from kMaxDecaySeconds up on the longest
+    // knee. In double, sharing no arithmetic with the fit: given a float seconds * 1000 to share,
+    // GCC 11 (aarch64, -O3 -ffast-math) computed the product once and so no longer fused the
+    // fit's multiply-add, which moved 8 million of the fit's results by one float step.
+    const double knee = static_cast<double> (kLinearTopKneeMs)
+                      + (static_cast<double> (seconds) * 1000.0 - static_cast<double> (kLinearTopDecayMs));
+    return static_cast<float> (std::clamp (knee, static_cast<double> (kLinearTopKneeMs), static_cast<double> (kMaxKneeMs)));
 }
 
 float NonLinBurstEngine::hfDampHzForTreble (float trebleMultiply) noexcept
@@ -386,6 +399,9 @@ void NonLinBurstEngine::rebuildGains() noexcept
     }
 }
 
+// The layout's times never decrease along the tap set (prepare() puts tap 0 at the onset and
+// every later tap k at invertDensity (k + a draw under 1)), so neither do these delays. sumTaps
+// relies on that order; NonLinBurstEngineTests pins it.
 void NonLinBurstEngine::placeTaps() noexcept
 {
     for (Channel& c : channels_)
@@ -395,10 +411,27 @@ void NonLinBurstEngine::placeTaps() noexcept
 }
 
 void NonLinBurstEngine::sumTaps (const Channel& c, const Tap* taps, int count, int writePos, int ringLen,
-                                 float* acc, int n) noexcept
+                                 int written, float* acc, int n) noexcept
 {
     std::fill (acc, acc + n, 0.0f);
-    for (int t = 0; t < count; ++t)
+    // A tap reads its block at ages delay .. delay + n - 1 (age 0: this block's newest sample),
+    // and only ages under `written` hold input since the last clear(), which leaves the rings as
+    // they are. The taps run in delay order, so those whose whole block is written are a prefix
+    // and are summed as always; the few reaching back past the first written sample are summed
+    // over their written part; the rest would read only older content and are left out. A ring
+    // wiped to 0 would make every left-out product g * 0, which adds nothing to the sum (it
+    // starts at +0, never -0): the sums are the wiped ring's bit for bit.
+    int whole = count, some = count;
+    if (written < ringLen)
+    {
+        const auto upTo = [taps, count] (int delay) {
+            return static_cast<int> (std::partition_point (taps, taps + count,
+                                                           [delay] (const Tap& t) { return t.delay <= delay; }) - taps);
+        };
+        whole = upTo (written - n);
+        some = upTo (written - 1);
+    }
+    for (int t = 0; t < whole; ++t)
     {
         const Tap& tap = taps[t];
         int start = (writePos - tap.delay) % ringLen;
@@ -406,6 +439,18 @@ void NonLinBurstEngine::sumTaps (const Channel& c, const Tap* taps, int count, i
         const float* src = (tap.dark ? c.dark.data() : c.raw.data()) + start;
         const float g = tap.gain;
         for (int i = 0; i < n; ++i)
+            acc[i] += g * src[i];
+    }
+    for (int t = whole; t < some; ++t)
+    {
+        const Tap& tap = taps[t];
+        int start = (writePos - tap.delay) % ringLen;
+        if (start < 0) start += ringLen;
+        const float* src = (tap.dark ? c.dark.data() : c.raw.data()) + start;
+        const float g = tap.gain;
+        // In delay order the first written sample is 1 .. n - 1; the max keeps a tap out of
+        // that order inside acc.
+        for (int i = std::max (0, tap.delay + n - written); i < n; ++i)
             acc[i] += g * src[i];
     }
 }
@@ -431,13 +476,14 @@ void NonLinBurstEngine::processChannel (Channel& c, const float* in, float* out,
         c.dark[static_cast<size_t> (w)] = c.dark[static_cast<size_t> (w + ringLen_)] = d;
     }
     float* acc = acc_.data();
-    sumTaps (c, c.taps.data(), c.numTaps, writePos_, ringLen_, acc, n);
+    const int written = std::min (written_ + n, ringLen_);   // this block included
+    sumTaps (c, c.taps.data(), c.numTaps, writePos_, ringLen_, written, acc, n);
     if (fadeRemaining_ > 0)
     {
         // Linear: the two sums are the same input through nearly the same taps, so their
         // amplitudes add; an equal-power law would bulge in the middle of the fade.
         float* old = fadeAcc_.data();
-        sumTaps (c, c.fadeTaps.data(), c.numFadeTaps, writePos_, ringLen_, old, n);
+        sumTaps (c, c.fadeTaps.data(), c.numFadeTaps, writePos_, ringLen_, written, old, n);
         const float step = 1.0f / static_cast<float> (fadeLen_);
         const int fading = std::min (n, fadeRemaining_);
         for (int i = 0; i < fading; ++i)
@@ -472,6 +518,7 @@ void NonLinBurstEngine::process (const float* inL, const float* inR, float* outL
         processChannel (channels_[0], inL + done, outL + done, n);
         processChannel (channels_[1], inR + done, outR + done, n);
         writePos_ = (writePos_ + n) % ringLen_;
+        written_ = std::min (written_ + n, ringLen_);
         fadeRemaining_ = std::max (0, fadeRemaining_ - n);
         done += n;
     }
