@@ -14,8 +14,9 @@ tagline: Calibrated British console EQ with Brown and Black voicings
 
 4K EQ 2 models the equalizer and high-pass/low-pass filters of a classic
 British E-series channel strip. The Brown and Black modes are separate
-voicings, not cosmetic themes. Each mode uses its own measured frequency,
-gain, Q, shelf, filter, interaction, nonlinearity, and overload behavior.
+voicings, not cosmetic themes. Each mode uses its own measured gain, Q, shelf,
+high-pass filter, interaction, nonlinearity, and overload behavior. A frequency
+knob puts a band at the same frequency in both modes, to within 2%.
 
 Use it for broad tonal decisions where a console EQ is faster than a surgical
 parametric equalizer: shaping drums, moving a vocal forward, removing low-end
@@ -220,8 +221,8 @@ from running nominally unity biquads.
 
 ## Tips and Traps
 
-- Brown and Black put a band at the same frequency for the same knob setting.
-  They differ in Q, gain law, band interaction and color.
+- Brown and Black put a band at the same frequency for the same knob setting,
+  to within 2%. They differ in Q, gain law, band interaction and color.
 - Up to version 1.0.5 the band frequency parameters were positions on the
   console's printed dial, which played a different frequency from the number:
   HMF stopped at about 6.4 kHz in Brown mode, and the Brown HF shelf never went
@@ -235,11 +236,12 @@ from running nominally unity biquads.
   bands, as "HPF Frequency (Legacy Dial)" and "LPF Frequency (Legacy Dial)"
   beside "HPF Frequency" and "LPF Frequency" in Hz. A filter from an older
   session can play outside its knob's range, for example a Brown LPF above
-  15.2 kHz; the knob then rests at its end stop.
+  15.2 kHz; the knob then points at its 15.2 mark, next to OUT.
 - A band from an older session can play a frequency outside its knob's range,
   for example a Black LF shelf above 450 Hz. The knob then rests at its end stop
-  and the bubble shows the frequency the band plays. Turning the knob moves the
-  band onto the knob's range.
+  and the bubble shows the frequency the band plays. Turning the knob away from
+  its end stop moves the band onto the knob's range; turning it further out
+  changes nothing.
 - A large EQ boost can hit the modeled rail even when the DAW input meter looks
   safe. Lower Input or the band gain if the overload is not intentional.
 - Auto Gain is a convenience, not part of the modeled channel-strip signal
@@ -291,12 +293,15 @@ bypassed only while their knobs read OUT.
 **A band frequency knob sits at its end stop.** The band follows a legacy dial
 setting from a session saved with version 1.0.5 or earlier, and the frequency
 it plays is outside the knob's range. The bubble shows that frequency. Turn the
-knob to bring the band back onto the knob's scale.
+knob away from its end stop to bring the band back onto the knob's scale.
 
-**The HPF or LPF knob sits at its end stop.** The filter follows a legacy dial
-setting from a session saved with version 1.0.5 or earlier, and its 3 dB point
-is outside the knob's range. The bubble shows it. Turn the knob to bring the
-filter back onto the knob's scale.
+**The HPF or LPF knob sits at the end of its scale.** The filter follows a
+legacy dial setting from a session saved with version 1.0.5 or earlier, and its
+3 dB point is outside the knob's range. The bubble shows it. An HPF below 16 Hz
+or an LPF above 15.2 kHz points at the mark next to OUT; an HPF above 350 Hz
+rests at its end stop. Turn the knob toward the middle of its scale to bring
+the filter back onto it. Turning it the other way changes nothing, except that
+from the mark next to OUT, reaching OUT switches the filter out.
 
 **In an LV2 host, a band set through its legacy dial moves after a reload.**
 After a preset is applied, a write to a band's or filter's "(Legacy Dial)"
