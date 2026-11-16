@@ -16,6 +16,9 @@ namespace duskverb
 
 inline constexpr int kNumSharedAlgorithms = 16;
 inline constexpr int kNonLinAlgorithm = 16;      // the classic nonlinear burst (NonLinBurstEngine)
+// The longest Decay that burst honours (NonLinBurstEngine::kMaxDecaySeconds, asserted equal in
+// DuskVerbDSP.cpp), here for the editor and host text, which do not include the engine.
+inline constexpr float kNonLinMaxDecaySeconds = 2.5f;
 inline constexpr int kNumAlgorithms = 17;        // engines that exist
 
 // The size of the Algorithm parameter as hosts see it. VST3 stores automation as a fraction
