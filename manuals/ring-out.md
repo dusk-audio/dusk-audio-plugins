@@ -1,7 +1,7 @@
 ---
 slug: ring-out
-version: 1.1.0
-last_updated: 2026-10-12
+version: 1.1.1
+last_updated: 2026-11-15
 tagline: feedback eliminator for ringing out monitors and PA
 ---
 
