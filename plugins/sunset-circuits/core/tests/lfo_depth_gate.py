@@ -63,8 +63,21 @@ before the note through render_test's modwheel= key, or moved with modwheelat=.
            route removed while the voice is idle: the next note on that voice
            matches the never-routed render from its first sample (same bound), and
            the control with the route still in place does not.
+  [sched]  render_test's wheel schedule, which [first] and [move] stand on. Moves
+           that fall due on the same block start are applied in time order: three
+           of them, in all six argument orders, render byte-identical to the
+           latest one alone. Its value lies between the other two, and each of
+           those alone must NOT match, so neither argument order nor value order
+           passes. Moves at the same time are applied in the order given. A move
+           is applied on the first block starting at or after its frame: on the
+           last block start it still is (and changes the render), one frame past
+           it the render is refused (exit code 1, no WAV written), where it used
+           to be dropped in silence. The block starts are the render loop's own,
+           which release= moves: one release puts a move out of reach that is
+           reached without it, another brings the refused move within reach.
 """
 import filecmp
+import itertools
 import os
 import sys
 
@@ -378,6 +391,88 @@ def case_edge_stale():
               f"{STALE_REL * peak:.2e}); control with the route kept: {d_kept:.2e}")
 
 
+def attempt(tag, mode, **p):
+    """run(), except that a failed render comes back as its error text (None when it
+    rendered)."""
+    try:
+        run(tag, mode, **p)
+    except RuntimeError as e:
+        return str(e)
+    return None
+
+
+def case_sched():
+    # 1 s at 48 kHz in 512-frame blocks. render_test truncates a move's time x 48000
+    # to a frame and applies the move on the first block that starts at or after it.
+    # The blocks start at multiples of 512, the last one at frame 47616.
+    rig = dict(block=512, modwheel=0.5, **vib(1), **depth(1))
+
+    def moved(tag, *moves, **extra):
+        return run(f"sc_{tag}", 2, modwheelat=list(moves), **rig, **extra)
+
+    def failure(tag, *moves, **extra):
+        return attempt(f"sc_{tag}", 2, modwheelat=list(moves), **rig, **extra)
+
+    def unapplied(tag, err):
+        # render_test's refusal of a move it never applied: exit code 1 (as
+        # _harness.render reports it), its message, and no WAV.
+        return (err is not None and "(rc=1):" in err and "never applied" in err
+                and not os.path.exists(os.path.join(OUT, f"sc_{tag}.wav")))
+
+    def said(err):
+        # A failed render's error text for a check's detail, nothing when it rendered.
+        return f" ({err})" if err else ""
+
+    # Three moves 5 microseconds apart, all inside frame 14400 and so all due on
+    # the block starting at frame 14848. In time order the last one stays; its
+    # value, 0.25, lies between the other two, so no ordering by value ends on it.
+    a, b, c = "0.300005:0", "0.30001:1", "0.300015:0.25"
+    latest, only_a, only_b = moved("latest", c), moved("a", a), moved("b", b)
+    in_order = [same(moved(f"order{i}", *order), latest)
+                for i, order in enumerate(itertools.permutations((a, b, c)))]
+    apart = not same(latest, only_a) and not same(latest, only_b)
+    check("[sched] three moves due on one block start, in all six argument orders",
+          all(in_order) and apart,
+          f"byte-identical to the latest move alone: {in_order.count(True)} of 6; control "
+          f"(each of the other two alone renders differently): {apart}")
+
+    # Moves at the same time are applied in the order given: the second one stays.
+    only_0, only_1 = moved("tie_0", "0.3:0"), moved("tie_1", "0.3:1")
+    kept = (same(moved("tie_01", "0.3:0", "0.3:1"), only_1)
+            and same(moved("tie_10", "0.3:1", "0.3:0"), only_0))
+    check("[sched] two moves at the same time", kept and not same(only_0, only_1),
+          f"the one given second stays, both ways round: {kept}; control (the two alone "
+          f"render differently): {not same(only_0, only_1)}")
+
+    # The edge of what a block start reaches. 0.9920125 s is frame 47616.6, which
+    # truncates to 47616, the last block start: the move is applied there, 384
+    # frames before the end (rounded to the nearest frame it would be out of
+    # reach). One frame later (47617, 0.99203 s) no block start is left.
+    none = moved("none")
+    on_edge, past_edge = failure("on_edge", "0.9920125:1"), failure("past_edge", "0.99203:1")
+    applied = on_edge is None and not same("sc_on_edge", none)
+    check("[sched] a move one frame past the last block start",
+          unapplied("past_edge", past_edge) and applied,
+          f"refused and no WAV written: {unapplied('past_edge', past_edge)}{said(past_edge)}; "
+          f"control (a move on the last block start is applied and changes the render): "
+          f"{applied}{said(on_edge)}")
+
+    # release= cuts a block so that one starts on the release frame, and every later
+    # block start moves with it. release=0.5 (frame 24000) makes the last start
+    # 47552: the move at 0.9915 s (frame 47592), reached without it, is cut off. An
+    # earlier move in the same schedule is applied, so the refusal does not hang on
+    # the first move alone. release=0.999 (frame 47952) puts a start inside the last
+    # block, which reaches the move at frame 47617 that was refused above.
+    cut_off = failure("cut_off", "0.25:0.75", "0.9915:1", release=0.5)
+    no_cut = failure("no_cut", "0.25:0.75", "0.9915:1")
+    reached = failure("reached", "0.99203:1", release=0.999)
+    check("[sched] block starts moved by release=",
+          unapplied("cut_off", cut_off) and no_cut is None and reached is None,
+          f"a move the split puts out of reach is refused: {unapplied('cut_off', cut_off)}"
+          f"{said(cut_off)}; control (renders without release=): {no_cut is None}{said(no_cut)}; "
+          f"a move only the split reaches renders: {reached is None}{said(reached)}")
+
+
 def main():
     try:
         case_zero_full()
@@ -388,6 +483,7 @@ def main():
         case_inert()
         case_acid()
         case_edge_stale()
+        case_sched()
     except RuntimeError as e:
         # A stale render_test (built before the modwheel= key existed) exits
         # nonzero; report it as a gate failure rather than a traceback.

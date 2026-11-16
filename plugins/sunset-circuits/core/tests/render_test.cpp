@@ -85,7 +85,11 @@
 //                       frame 0 (default 0, the engine's power-on value).
 //   modwheelat=<sec>:<0..1>
 //                       move the mod wheel (MIDI CC 1) at this time, applied on the
-//                       first block starting at/after <sec>. Repeatable.
+//                       first block starting at/after its frame (<sec> x sr,
+//                       truncated). Repeatable: moves are applied in time order
+//                       whatever order they are given in (argument order for
+//                       equal times). A move that no block start reaches before
+//                       the render ends is an error.
 //   progat=<sec>:<n>    load factory program <n> at this time, exactly as the DAF
 //                       shell's loadProgram() does (every parameter to its
 //                       default, then the shared baseline, then the preset's own
@@ -144,7 +148,9 @@ void loadFactoryProgram(msynth::MultiSynthDSP& synth, int index) noexcept
 // therefore has no block left to fire on: the harness used to accept it and
 // silently do nothing, so a gate written around it measured an untouched render
 // and passed. The schedule window is half-open -- [0, seconds) -- and this is
-// where that is enforced, for every event key and for release=.
+// where that is enforced, for every event key and for release=. A time inside the
+// window can still put its frame past the START of the last block; for mod wheel
+// moves the check after the render loop catches that.
 bool validEventTime(double t, double seconds) noexcept
 {
     return std::isfinite(t) && t >= 0.0 && t < seconds;
@@ -638,6 +644,13 @@ int main(int argc, char** argv)
         overrides.push_back({ idx, (float)parseNum(key.c_str(), val) });
     }
 
+    // Mod wheel moves run in time order. The render loop applies every move that
+    // is due at a block start in the order it finds them, so of two moves due on
+    // the same block the earlier one, given second, would be applied last and win.
+    // Moves at the same time keep their argument order.
+    std::stable_sort(schedWheel.begin(), schedWheel.end(),
+                     [](const SchedWheel& a, const SchedWheel& b) { return a.time < b.time; });
+
     if (osFactor != 1 && osFactor != 2 && osFactor != 4)
     {
         std::fprintf(stderr, "invalid osfactor: %d (must be 1, 2, or 4)\n", osFactor);
@@ -944,6 +957,28 @@ int main(int argc, char** argv)
     {
         std::fprintf(stderr, "error closing oversampling log %s\n", osLogPath.c_str());
         return 2;
+    }
+
+    // A mod wheel move that no block start reached was never applied: its frame
+    // lies past the start of the last block (block= sets the starts, and release=
+    // moves them by splitting a block). A gate built on that move would measure a
+    // render the wheel never touched and pass, so it is an error and no WAV is
+    // written (a meters= or oslog= log already has been). It is found here, not
+    // with the time checks above, because only the loop knows where its blocks
+    // start. Applied is all this establishes, not audible: a move applied a few
+    // frames before the end changes nothing in the output.
+    for (size_t s = 0; s < schedWheel.size(); ++s)
+    {
+        if (!schedWheelDone[s])
+        {
+            char split[64] = "";
+            if (releaseProvided)
+                std::snprintf(split, sizeof split, ", release=%.9g", releaseTime);
+            std::fprintf(stderr, "modwheelat %.9g was never applied: no block starts at or after "
+                                 "it before the render ends at %.9g (block=%d%s)\n",
+                         schedWheel[s].time, seconds, blockSize, split);
+            return 1;
+        }
     }
 
     writeFloatWav(outPath, interleaved, (int)sampleRate);
