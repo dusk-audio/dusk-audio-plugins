@@ -832,8 +832,9 @@ private:
 
     // Keep the appended physical detent and the shipped semantic division in
     // step without making the knob jump when Head Select changes. The detent is
-    // authoritative for new UI/host edits; writing the hidden legacy parameter
-    // derives the closest reference detent for old projects.
+    // authoritative for new UI/host edits; writing the legacy parameter (not on
+    // the panel, still a host parameter) derives the closest reference detent
+    // for old projects.
     void storeParamLocally(uint32_t param, float value)
     {
         values[param] = value;
