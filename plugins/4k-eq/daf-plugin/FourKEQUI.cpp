@@ -1309,12 +1309,52 @@ private:
             }
         return 1.f;
     }
+    // Whether moving the knob from t0 to t1 changes its setting. As in
+    // DuskPanel::knob only movement edits: a press alone writes nothing, and
+    // a knob pinned at an end edits nothing while a gesture pushes it further
+    // out. A move can also stay on one setting here: everything from just
+    // above OUT up to the first detent sets that detent's Hz, and a filter
+    // that plays beyond it (a legacy dial from an older session) points at
+    // that detent, so pushed toward OUT it stays as it is until it reaches OUT.
+    bool stepSettingMoves(const float* F, float t0, float t1) const
+    {
+        if (t0 == t1)
+            return false;
+        bool en0, en1; float f0, f1;
+        stepPosToState(F, t0, en0, f0);
+        stepPosToState(F, t1, en1, f1);
+        return en0 != en1 || f0 != f1;
+    }
     void stepApply(uint32_t enId, uint32_t freqId, const float* F, float t)
     {
         bool en; float f; stepPosToState(F, t, en, f);
         values[enId] = en ? 1.f : 0.f; setParameterValue(enId, values[enId]);
         if (en)
             setFrequency(freqId, fkNormalizeParamValue(freqId, f));
+    }
+
+    // One frame of a held filter or console knob, dragged the way
+    // DuskPanel::knob drags: Shift drags finer, and on the press frame only
+    // mouse movement after the press counts (that frame can also carry
+    // movement from before it). Moves stepDragT and returns where it was. The
+    // knob's pointer t shows the parameter, which a host may automate while
+    // the knob is held, until the gesture moves; then it follows the gesture.
+    float stepDrag(float& t)
+    {
+        const ImGuiIO& io = ImGui::GetIO();
+        const bool pressFrame = ImGui::IsItemActivated();
+        if (pressFrame)
+            stepDragMoved_ = false;
+        const float sp = io.KeyShift ? 0.0008f : 0.005f;
+        const float dy = pressFrame ? io.MousePos.y - io.MouseClickedPos[0].y
+                                    : io.MouseDelta.y;
+        const float from = stepDragT, to = stepDragT - dy * sp;
+        stepDragT = to < 0.f ? 0.f : (to > 1.f ? 1.f : to);
+        if (stepDragT != from)
+            stepDragMoved_ = true;
+        if (stepDragMoved_)
+            t = stepDragT;
+        return from;
     }
 
     void steppedFilterKnob(ImDrawList* dl, const char* id, float cx, float cy, float R,
@@ -1352,9 +1392,10 @@ private:
             }
             if (act && !stepModReset_)
             {
-                const float sp = ImGui::GetIO().KeyShift ? 0.0008f : 0.005f;
-                stepDragT = c01(stepDragT - ImGui::GetIO().MouseDelta.y * sp);
-                t = stepDragT; stepApply(enId, freqId, F, t);
+                // Only a move to another setting edits (see stepSettingMoves).
+                const float dragFrom = stepDrag(t);
+                if (stepSettingMoves(F, dragFrom, stepDragT))
+                    stepApply(enId, freqId, F, stepDragT);
             }
             if (ImGui::IsItemDeactivated()) { if (!stepModReset_) { editParameter(enId, false); editParameter(freqId, false); } stepModReset_ = false; }
             if (!modKey && (hov || act) && ImGui::IsMouseDoubleClicked(0)) // double-click: type a frequency (actual Hz)
@@ -1364,10 +1405,14 @@ private:
                 const float wh = ImGui::GetIO().MouseWheel;
                 if (wh != 0.f)
                 {
+                    const float wheelFrom = t;
                     t = c01(t + wh * 0.02f);
-                    editParameter(enId, true); editParameter(freqId, true);
-                    stepApply(enId, freqId, F, t);
-                    editParameter(freqId, false); editParameter(enId, false);
+                    if (stepSettingMoves(F, wheelFrom, t))   // as for a drag
+                    {
+                        editParameter(enId, true); editParameter(freqId, true);
+                        stepApply(enId, freqId, F, t);
+                        editParameter(freqId, false); editParameter(enId, false);
+                    }
                 }
             }
         }
@@ -1519,9 +1564,14 @@ private:
             }
             if (act && !stepModReset_)
             {
-                const float sp = ImGui::GetIO().KeyShift ? 0.0008f : 0.005f;
-                stepDragT = c01(stepDragT - ImGui::GetIO().MouseDelta.y * sp);
-                t = stepDragT; setFromT(t);
+                // Only movement edits, as in DuskPanel::knob. A press alone
+                // would write the value back through the knob, and a band
+                // beyond the knob's range (a legacy dial from an older
+                // session) would jump to its end. A knob pinned at an end
+                // edits nothing either while the drag pushes it further out.
+                const float dragFrom = stepDrag(t);
+                if (stepDragT != dragFrom)
+                    setFromT(stepDragT);
             }
             if (ImGui::IsItemDeactivated()) { if (!stepModReset_) editParameter(paramId, false); stepModReset_ = false; }
             if (!modKey && (hov || act) && ImGui::IsMouseDoubleClicked(0))
@@ -1529,7 +1579,19 @@ private:
             else if (hov && !act)
             {
                 const float wh = ImGui::GetIO().MouseWheel;
-                if (wh != 0.f) { t = c01(t + wh * 0.02f); editParameter(paramId, true); setFromT(t); editParameter(paramId, false); }
+                if (wh != 0.f)
+                {
+                    // As for a drag: a step pushing a knob pinned at an end
+                    // edits nothing.
+                    const float wheelFrom = t;
+                    t = c01(t + wh * 0.02f);
+                    if (t != wheelFrom)
+                    {
+                        editParameter(paramId, true);
+                        setFromT(t);
+                        editParameter(paramId, false);
+                    }
+                }
             }
         }
 
@@ -1733,7 +1795,8 @@ private:
     bool needResize = false;
     bool gripCursorSet = false;  // NWSE cursor currently pushed to the window
     float ctlDstTop_ = 180.0f, ctlScaleY_ = 1.0f;
-    float stepDragT = 0.0f; // stepped filter-knob drag origin (HPF/LPF)
+    float stepDragT = 0.0f; // the held filter or console knob's drag position
+    bool  stepDragMoved_ = false; // the held knob's gesture moved (stepDrag)
     bool  stepModReset_ = false; // Ctrl/Cmd+click reset in progress (suppress drag)
 
     DAF_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FourKEQUI)
