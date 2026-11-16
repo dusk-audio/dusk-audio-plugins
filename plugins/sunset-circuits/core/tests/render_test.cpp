@@ -80,6 +80,12 @@
 //                       polyphonic key pressure (MIDI 0xA0) for one note.
 //                       Repeatable.
 //   chanat=<sec>:<0..1> channel pressure (MIDI 0xD0). Repeatable.
+//   modwheel=<0..1>     mod wheel (MIDI CC 1) position before the first note, i.e.
+//                       what the shell's CC 1 handler would have stored before
+//                       frame 0 (default 0, the engine's power-on value).
+//   modwheelat=<sec>:<0..1>
+//                       move the mod wheel (MIDI CC 1) at this time, applied on the
+//                       first block starting at/after <sec>. Repeatable.
 //   progat=<sec>:<n>    load factory program <n> at this time, exactly as the DAF
 //                       shell's loadProgram() does (every parameter to its
 //                       default, then the shared baseline, then the preset's own
@@ -317,6 +323,12 @@ int main(int argc, char** argv)
     struct SchedPressure { double time; int note; float value; };
     std::vector<SchedPressure> schedPressure;
 
+    // Mod wheel (MIDI CC 1): the position before frame 0 (modwheel=) and scheduled
+    // moves (modwheelat=<sec>:<0..1>).
+    float modWheelStart = 0.0f;
+    struct SchedWheel { double time; float value; };
+    std::vector<SchedWheel> schedWheel;
+
     // Scheduled factory-program loads (progat=<sec>:<n>).
     struct SchedProgram { double time; int index; };
     std::vector<SchedProgram> schedProgram;
@@ -453,6 +465,41 @@ int main(int argc, char** argv)
                 return 1;
             }
             schedPressure.push_back({ t, note, (float)v });
+            continue;
+        }
+        if (key == "modwheel")
+        {
+            const double v = parseNum("modwheel", val);
+            if (!(v >= 0.0 && v <= 1.0))
+            {
+                std::fprintf(stderr, "bad modwheel value: %g (want 0..1)\n", v);
+                return 1;
+            }
+            modWheelStart = (float)v;
+            continue;
+        }
+        if (key == "modwheelat")
+        {
+            // <sec>:<0..1>
+            const auto c1 = val.find(':');
+            if (c1 == std::string::npos)
+            {
+                std::fprintf(stderr, "bad modwheelat (want <sec>:<0..1>): %s\n", val.c_str());
+                return 1;
+            }
+            const double t = parseNum("modwheelat.time", val.substr(0, c1));
+            const double v = parseNum("modwheelat.value", val.substr(c1 + 1));
+            if (!validEventTime(t, seconds))
+            {
+                std::fprintf(stderr, "bad modwheelat time: %g (want 0 <= t < %g)\n", t, seconds);
+                return 1;
+            }
+            if (!(v >= 0.0 && v <= 1.0))
+            {
+                std::fprintf(stderr, "bad modwheelat value: %g (want 0..1)\n", v);
+                return 1;
+            }
+            schedWheel.push_back({ t, (float)v });
             continue;
         }
         if (key == "panicat" || key == "soundoffat")
@@ -642,6 +689,7 @@ int main(int argc, char** argv)
     // Transport state as of frame 0, so the notes below are pressed against the
     // same state the first block will render with (playat= means "stopped" here).
     synth.setTempo(tempo, playing && playAtTime <= 0.0);
+    synth.modWheel(modWheelStart);
 
     // Trigger note(s). noteOn routes to the arp internally when arpOn is set.
     synth.noteOn(midiNote, vel);
@@ -661,6 +709,7 @@ int main(int argc, char** argv)
     std::vector<char> schedPanicDone(schedPanic.size(), 0);
     std::vector<char> schedSoundOffDone(schedSoundOff.size(), 0);
     std::vector<char> schedPressureDone(schedPressure.size(), 0);
+    std::vector<char> schedWheelDone(schedWheel.size(), 0);
     std::vector<char> schedProgramDone(schedProgram.size(), 0);
     std::vector<char> schedLoopDone(schedLoops.size(), 0);
     std::vector<double> schedLoopShift(schedLoops.size(), 0.0);
@@ -757,6 +806,17 @@ int main(int argc, char** argv)
                 else
                     synth.aftertouch(schedPressure[s].value);
                 schedPressureDone[s] = 1;
+            }
+        }
+
+        // Mod wheel moves (MIDI CC 1).
+        for (size_t s = 0; s < schedWheel.size(); ++s)
+        {
+            if (schedWheelDone[s]) continue;
+            if (pos >= (int)(schedWheel[s].time * sampleRate))
+            {
+                synth.modWheel(schedWheel[s].value);
+                schedWheelDone[s] = 1;
             }
         }
 
