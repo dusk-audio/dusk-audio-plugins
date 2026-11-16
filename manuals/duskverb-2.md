@@ -56,12 +56,19 @@ unused by the selected engine are dimmed.
 Ambience and Tiled Room sounds on the Hall and Tiled Room engines (and on the
 older hall engines a restored session may still use).
 
+On the **Nonlinear** engine, Decay sets the length of the burst: the time it
+takes to fall by 60 dB. The burst follows Decay from about 0.27 s up to 2.5 s.
+Above 2.5 s the burst stays at 2.5 s, and both the decay readout and the
+host's parameter display show 2.50 s (an LV2 host's own display shows the
+knob position from 0 to 1, not a time). Below about 0.27 s the burst cannot
+get any shorter, so those settings all last about 0.26 s.
+
 The display at the top left shows the engine (click its name to choose another),
 the decay time (click it to type a value), the **Freeze**, **Sync** and **Bus**
 indicators, and **Output History**. Output History shows recent output level; it
 is not a measured RT60 graph, and the decay readout is the parameter setting, not
-a guarantee of a measured acoustic decay time. The side meters show input and
-output levels.
+a guarantee of a measured acoustic decay time. On the Nonlinear engine it shows
+at most 2.50 s, the longest burst. The side meters show input and output levels.
 
 Freeze can sustain a tail indefinitely on supported engines. Choose the desired
 end of an offline bounce explicitly when using Freeze. CLAP and VST3 report an
@@ -125,3 +132,9 @@ Original DuskVerb has a separate identity and is unaffected.
 
 The plugin supports mono, mono-to-stereo and stereo operation where the host
 exposes those layouts. Select the appropriate host routing before playback.
+
+In version 1.0.1 the Nonlinear burst stopped getting longer at a Decay of
+783 ms. A project saved with 1.0.1 on the Nonlinear engine with Decay above
+783 ms played that 783 ms burst and now plays the Decay it shows; set Decay
+to 783 ms to get the old length back (when typing it, include the unit).
+Recorded Decay automation above 783 ms likewise now plays what it says.
