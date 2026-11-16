@@ -339,6 +339,20 @@ void parameterContract(Instance& instance, const std::vector<ParamMeta>& metadat
           "CLAP parses Gated attack 25 ms");
     checkNear(parsed, 0.49, 1e-6, "Gated attack 25 ms maps to snapped depth 0.49");
 
+    // On the Nonlinear engine Decay reads the burst the engine plays: past the longest (2.5 s)
+    // the text stays there. Every other engine reads the setting itself.
+    const auto decayText = [&](float seconds) {
+        std::memset(text, 0, sizeof(text));
+        instance.params->value_to_text(instance.plugin, duskverb::Decay,
+            duskverb::plainToHost(duskverb::paramDesc(duskverb::Decay), seconds), text, sizeof(text));
+        return std::string(text);
+    };
+    instance.set(duskverb::Algorithm, duskverb::kNonLinAlgorithm);
+    check(decayText(10.0f) == "2.50 s", "Nonlinear Decay 10 s reads as the 2.50 s burst it plays");
+    check(decayText(1.5f) == "1.50 s", "Nonlinear Decay 1.5 s reads as set");
+    instance.set(duskverb::Algorithm, 10.0);
+    check(decayText(10.0f) == "10.00 s", "Hall Decay 10 s reads as set");
+
     instance.set(duskverb::Algorithm, 0.0);
     for (size_t i = 0; i < metadata.size() && i < static_cast<size_t>(duskverb::kNumParams); ++i)
     {

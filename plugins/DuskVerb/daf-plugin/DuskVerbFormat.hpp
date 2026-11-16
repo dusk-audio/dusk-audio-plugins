@@ -316,6 +316,23 @@ inline void formatPlainValue(EngineType engine, int p, float v, char* out, size_
     formatFixed(v, 2, out, n);
 }
 
+// The Decay the engine a slot plays honours. The nonlinear burst stops lengthening at
+// kNonLinMaxDecaySeconds, so a longer setting reads as that time there; every other engine plays
+// Decay as set. (No Decay calibration row applies to that slot, so its Decay is the engine's:
+// pinned by DuskVerbPluginLayerTests.)
+inline float shownDecaySeconds(int slot, float decay) noexcept
+{
+    return resolveAlgorithm(slot) == kNonLinAlgorithm ? std::min(decay, kNonLinMaxDecaySeconds) : decay;
+}
+
+// A value as the engine a slot plays it: formatPlainValue for the slot's control family, with
+// Decay at the time that engine honours. The editor's Decay read-out and the host's parameter
+// text both print through here, so neither names a burst the engine does not play.
+inline void formatSlotValue(int slot, int p, float v, char* out, size_t n)
+{
+    formatPlainValue(controlEngine(slot), p, p == duskverb::Decay ? shownDecaySeconds(slot, v) : v, out, n);
+}
+
 // The hero read-out prints the number and its unit at two different sizes.
 inline void formatDecayParts(float seconds, char* number, size_t nn, char* unit, size_t un)
 {
