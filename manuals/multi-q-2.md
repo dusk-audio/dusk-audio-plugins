@@ -81,8 +81,10 @@ notch-width surgery.
 
 The static gain stays at zero, so the band is inaudible until sibilance
 crosses the threshold; then the band ducks by up to 6 dB at the set ratio.
-The factory program "De-Esser" is this exact recipe. Switch Dynamics
-Detection to RMS when the trigger feels too jumpy on dense material.
+The factory program "De-Esser" is this exact recipe. When the trigger feels
+too jumpy on dense material, set the Dynamics Detection Mode parameter to RMS
+from your host's parameter list or automation; RMS reacts to the band's
+average level rather than to single peaks.
 
 ### Match: making a mix sit like the reference
 
@@ -186,8 +188,15 @@ through 7 are the shaping bands. Every band has:
   wrong".
 - **Dynamics:** per band: Threshold -48 to 0 dB (default -20), Attack 0.1 to
   500 ms (default 10), Release 10 to 5000 ms (default 100), Range 0 to 24 dB
-  (default 12), Ratio 1:1 to 100:1 (default 4). **Dynamics Detection** picks
-  Peak or RMS globally.
+  (default 12), Ratio 1:1 to 100:1 (default 4). **Dynamics Detection Mode**
+  picks Peak (default) or RMS for every band. Peak follows the band's level
+  moment by moment; RMS follows its average level over about 10 ms, so single
+  peaks move it less. The mode is a host parameter: set it from your host's
+  parameter list or automation, the editor has no switch for it. A band's
+  dynamics turn both channels down together, by the amount the louder channel
+  calls for. A band routed to Left, Right, Mid, or Side listens to that signal
+  only and turns only that signal down. The amount of reduction does not
+  depend on your host's buffer size.
 
 ### Match mode
 

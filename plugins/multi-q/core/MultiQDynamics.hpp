@@ -10,10 +10,17 @@
 // optional lookahead peak buffer. Both are dropped here: the DAF shell snapshots
 // parameters once per block (no cross-thread transfer needed) and Multi-Q never
 // engages lookahead (no lookahead parameter exists → 0 samples). The envelope,
-// soft-knee gain law, detection bandpass and 2 ms anti-zipper smoother are
-// byte-for-byte the JUCE math (kneeWidth fixed at the JUCE default 6 dB, soft
-// knee on, matching Multi-Q's dynParams which set only enabled/threshold/attack/
-// release/range/ratio).
+// soft-knee gain law, detection bandpass, linked stereo detection, RMS mode and
+// 2 ms anti-zipper smoother are the JUCE math (kneeWidth fixed at the JUCE
+// default 6 dB, soft knee on, matching Multi-Q's dynParams which set only
+// enabled/threshold/attack/release/range/ratio).
+//
+// Detection is stereo-linked: each channel's band-passed signal is followed by
+// its own envelope and the louder envelope sets one gain for both channels, so
+// the reduction does not depend on the phase between them (a band routed to one
+// channel or to Mid/Side measures just that signal). Peak mode follows the
+// rectified band signal; RMS mode the louder channel's RMS level over
+// kRmsWindowSeconds.
 
 #pragma once
 
@@ -41,10 +48,22 @@ public:
         bool  enabled = false;
     };
 
+    // RMS detection window (one-pole time constant). Long enough to average the
+    // ripple of a steady tone in any band above about 100 Hz (the detected level
+    // ripples by about +/-0.35 dB at 100 Hz and +/-0.035 dB at 1 kHz), short
+    // enough that the band's own Attack and Release keep their meaning.
+    static constexpr double kRmsWindowSeconds = 0.010;
+
+    // Largest band-passed level the detectors take (+80 dBFS). A larger finite
+    // input would overflow the RMS mean square to infinity, which never decays
+    // and would hold the band at full range.
+    static constexpr float kMaxDetectionLevel = 1.0e4f;
+
     void prepare(double newSampleRate, int channelCount)
     {
         sampleRate = newSampleRate > 0 ? newSampleRate : 44100.0;
         numChannels = channelCount < 1 ? 1 : channelCount;
+        updateRmsCoefficient();
         reset();
         for (auto& c : detCoeffs) c = DetCoeffs{};
     }
@@ -55,10 +74,14 @@ public:
             for (auto& b : ch.bands) { b.envelope = -96.0f; b.currentGainDb = 0.0f; b.smoothedGainDb = 0.0f; }
         for (auto& ch : biquadStates)
             for (auto& b : ch) b.reset();
+        for (auto& ms : meanSquare) ms.fill(0.0f);
         for (auto& m : dynamicGainMeters) m = 0.0f;
     }
 
-    void updateSampleRate(double newRate) { sampleRate = newRate; reset(); }
+    void updateSampleRate(double newRate) { sampleRate = newRate; updateRmsCoefficient(); reset(); }
+
+    // Dynamics Detection Mode: false = Peak (default), true = RMS.
+    void setRmsDetection(bool rms) { rmsDetection = rms; }
 
     void setBandParameters(int band, const BandParameters& p)
     {
@@ -74,7 +97,10 @@ public:
         detCoeffs[(size_t)band] = computeBandPassCoeffs(sampleRate, frequency, q);
     }
 
-    // Bandpass-filter input for sidechain detection (DF2T), return |output|.
+    // Bandpass-filter input for sidechain detection (DF2T), return |output|,
+    // at most kMaxDetectionLevel. A non-finite output (a NaN or infinite input)
+    // clears this channel's filter and reads as silence, so one bad sample
+    // cannot stop the band's dynamics.
     float processDetection(int band, float input, int channel)
     {
         if (band < 0 || band >= NUM_BANDS || channel < 0 || channel >= numChannels)
@@ -84,35 +110,57 @@ public:
         float output = c[0] * input + state.z1;
         state.z1 = c[1] * input - c[4] * output + state.z2;
         state.z2 = c[2] * input - c[5] * output;
-        return std::abs(output);
+        if (!safeIsFinite(output))
+        {
+            state.reset();
+            return 0.0f;
+        }
+        return std::min(std::abs(output), kMaxDetectionLevel);
     }
 
-    // Envelope-follow the detection level and return the smoothed dynamic gain (dB, <=0).
-    float processBand(int band, float detectionLevel, int channel)
+    // One sample of a band's stereo-linked dynamics. Band-passes each channel's
+    // detection input, follows each with its own envelope (the band's attack and
+    // release), and turns both channels down by one gain from the louder
+    // envelope. Returns that gain, smoothed against zipper noise (dB, <= 0), and
+    // updates the band's meter. Peak follows each channel's rectified band
+    // signal; RMS the louder channel's RMS level over kRmsWindowSeconds, with
+    // the right envelope tracking the left so a mode switch does not jump. Both
+    // mean squares run in either mode for the same reason. For a band routed to
+    // one channel, pass the other as 0; for Mid or Side, pass that signal twice.
+    float processBandLinked(int band, float inL, float inR)
     {
-        if (band < 0 || band >= NUM_BANDS || channel < 0 || channel >= numChannels)
+        if (band < 0 || band >= NUM_BANDS)
             return 0.0f;
+        const float dl = processDetection(band, inL, 0);
+        const float dr = processDetection(band, inR, 1);
+        auto& ms = meanSquare[(size_t)band];
+        ms[0] = rmsCoeff * ms[0] + (1.0f - rmsCoeff) * (dl * dl);
+        ms[1] = rmsCoeff * ms[1] + (1.0f - rmsCoeff) * (dr * dr);
+
         const auto& params = bandParams[(size_t)band];
         if (!params.enabled) return 0.0f;
 
-        auto& state = channelStates[(size_t)channel].bands[(size_t)band];
-
-        float inputDb = gainToDb(detectionLevel, -96.0f);
-        float attackCoeff = calcCoefficient(params.attack);
-        float releaseCoeff = calcCoefficient(params.release);
-
-        if (inputDb > state.envelope)
-            state.envelope = attackCoeff * state.envelope + (1.0f - attackCoeff) * inputDb;
+        auto& left = channelStates[0].bands[(size_t)band];
+        auto& right = channelStates[1].bands[(size_t)band];
+        const float attackCoeff = calcCoefficient(params.attack);
+        const float releaseCoeff = calcCoefficient(params.release);
+        if (rmsDetection)
+        {
+            followEnvelope(left.envelope, std::sqrt(std::max(ms[0], ms[1])), attackCoeff, releaseCoeff);
+            right.envelope = left.envelope;
+        }
         else
-            state.envelope = releaseCoeff * state.envelope + (1.0f - releaseCoeff) * inputDb;
+        {
+            followEnvelope(left.envelope, dl, attackCoeff, releaseCoeff);
+            followEnvelope(right.envelope, dr, attackCoeff, releaseCoeff);
+        }
+        left.currentGainDb = calculateDynamicGain(std::max(left.envelope, right.envelope), params);
 
-        state.currentGainDb = calculateDynamicGain(state.envelope, params);
+        const float smoothCoeff = calcCoefficient(2.0f); // 2 ms anti-zipper
+        left.smoothedGainDb = smoothCoeff * left.smoothedGainDb + (1.0f - smoothCoeff) * left.currentGainDb;
 
-        float smoothCoeff = calcCoefficient(2.0f); // 2 ms anti-zipper
-        state.smoothedGainDb = smoothCoeff * state.smoothedGainDb + (1.0f - smoothCoeff) * state.currentGainDb;
-
-        dynamicGainMeters[(size_t)band] = state.smoothedGainDb;
-        return state.smoothedGainDb;
+        dynamicGainMeters[(size_t)band] = left.smoothedGainDb;
+        return left.smoothedGainDb;
     }
 
     float getCurrentDynamicGain(int band) const
@@ -128,10 +176,25 @@ private:
         return std::exp(-1.0f / (tau * (float)sampleRate));
     }
 
+    void updateRmsCoefficient()
+    {
+        rmsCoeff = (float)std::exp(-1.0 / (kRmsWindowSeconds * sampleRate));
+    }
+
     // juce::Decibels::gainToDecibels(gain, minusInfDb)
     static float gainToDb(float gain, float minusInf)
     {
         return gain > 0.0f ? std::max(minusInf, 20.0f * std::log10(gain)) : minusInf;
+    }
+
+    // dB-domain attack/release follower (the JUCE envelope).
+    static void followEnvelope(float& envelope, float level, float attackCoeff, float releaseCoeff)
+    {
+        const float levelDb = gainToDb(level, -96.0f);
+        if (levelDb > envelope)
+            envelope = attackCoeff * envelope + (1.0f - attackCoeff) * levelDb;
+        else
+            envelope = releaseCoeff * envelope + (1.0f - releaseCoeff) * levelDb;
     }
 
     float calculateDynamicGain(float envelopeDb, const BandParameters& params) const
@@ -188,8 +251,11 @@ private:
     double sampleRate = 44100.0;
     int numChannels = 2;
     bool softKneeEnabled = true;
+    bool rmsDetection = false;
+    float rmsCoeff = 0.0f;                                 // RMS window pole, set from the rate
     std::array<ChannelState, 2> channelStates;
     std::array<std::array<BiquadState, NUM_BANDS>, 2> biquadStates;
+    std::array<std::array<float, 2>, NUM_BANDS> meanSquare{}; // per band: L, R mean square
     std::array<BandParameters, NUM_BANDS> bandParams;
     std::array<DetCoeffs, NUM_BANDS> detCoeffs;
     std::array<float, NUM_BANDS> dynamicGainMeters{};
