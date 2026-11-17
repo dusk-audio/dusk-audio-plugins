@@ -406,7 +406,7 @@ static constexpr FactoryPreset kFactoryPresets[] =
     { "Neon Sequence", kP53, (int)(sizeof(kP53)/sizeof(PresetRow)) },
     { "Oracle Trumpet", kP54, (int)(sizeof(kP54)/sizeof(PresetRow)) },
     { "Modular English Horn", kP55, (int)(sizeof(kP55)/sizeof(PresetRow)) },
-    { "Prism Talking Clav", kP56, (int)(sizeof(kP56)/sizeof(PresetRow)) },
+    { "Prism Talking Keys", kP56, (int)(sizeof(kP56)/sizeof(PresetRow)) },
 };
 static constexpr int kNumFactoryPresets = (int)(sizeof(kFactoryPresets)/sizeof(kFactoryPresets[0]));
 static constexpr int kBaselineRows = (int)(sizeof(kPresetBaseline)/sizeof(PresetRow));

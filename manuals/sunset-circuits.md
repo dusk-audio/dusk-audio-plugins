@@ -460,7 +460,7 @@ The **Oversampling** control sets the internal processing rate: **1x**, **2x**, 
 - **2x**: the default and the recommended everyday setting. A good balance of clean high end and reasonable CPU.
 - **4x**: the cleanest high end, for exposed leads, bright FM tones, and high notes where aliasing would be audible. Use it when you can afford the CPU.
 
-Factory presets ship at 2x, except Oracle Trumpet, Modular English Horn and Prism Talking Clav, which keep the 4x they were made with.
+Factory presets ship at 2x, except Oracle Trumpet, Modular English Horn and Prism Talking Keys, which keep the 4x they were made with.
 
 ### Reported latency
 
@@ -487,7 +487,7 @@ The figures below are single-core measurements taken at 48 kHz with a 512-sample
 
 The first row is the worst case among ordinary patches: a full 8-voice FM patch, every effect on, at the highest oversampling factor. Even there it uses about half of one core, so a typical session runs several instances comfortably. If you need more headroom, drop from 4x to 2x oversampling first, since that is where most of the voice cost lives, then thin out effects you are not using.
 
-**One case does run out of headroom: Prism with heavy unison at 4x.** Prism's cost is per operator bank, and unison multiplies the bank count rather than sharing one. A patch that keeps sixteen operator banks running at 4x sits at essentially the whole of one core on the reference machine above, and the transient peak while a bulk of voices retires is in the same region. It is a known limit rather than a bug, and it is a wall you have to go looking for; the one factory preset that can reach it is Prism Talking Clav, whose two-voice unison at 4x makes sixteen banks when all eight voices sound at once. If that preset or a Prism patch of yours crackles, take it to 2x, or reduce the unison count before you reduce polyphony. The other five circuits do not have a comparable ceiling.
+**One case does run out of headroom: Prism with heavy unison at 4x.** Prism's cost is per operator bank, and unison multiplies the bank count rather than sharing one. A patch that keeps sixteen operator banks running at 4x sits at essentially the whole of one core on the reference machine above, and the transient peak while a bulk of voices retires is in the same region. It is a known limit rather than a bug, and it is a wall you have to go looking for; the one factory preset that can reach it is Prism Talking Keys, whose two-voice unison at 4x makes sixteen banks when all eight voices sound at once. If that preset or a Prism patch of yours crackles, take it to 2x, or reduce the unison count before you reduce polyphony. The other five circuits do not have a comparable ceiling.
 
 ### Parameters and automation
 
@@ -583,7 +583,7 @@ Two names are easy to misread. **Acid Squelch** and **Acid Machine** are Mono-mo
 - **Crystal Bells**: additive inharmonic bells with staggered decays and a reverb tail.
 - **Brass Machine**: serial FM brass with strong feedback growl and an attack swell.
 - **Glass Cathedral**: dual-stack FM pad with a long swell, chorus, and big reverb.
-- **Prism Talking Clav**: FM clav through a resonant filter whose envelope sweep gives each note a vocal attack; the mod wheel brings in vibrato.
+- **Prism Talking Keys**: FM keys through a resonant filter whose envelope sweep gives each note a vocal attack; the mod wheel brings in vibrato.
 
 ### Acid (bass box and pattern sequencer)
 

@@ -434,9 +434,9 @@ PRESETS = [
    "prismAlgo":5,"op1Ratio":1.5,"op1A":0.0125892526,"op1D":0.00954992697,"op1S":0.26000008,"op1R":0.954992712,
    "op2Ratio":0.75,"op2Level":0.440000057,"op2A":0.00478630001,"op4Ratio":5,
    "pmOscBFilt":0.62500006,"modOsc3Filter":0.0749998987}),
- # Prism Talking Clav: FM clav through a resonant, envelope-swept filter with
+ # Prism Talking Keys: FM keys through a resonant, envelope-swept filter with
  # key-tracked cutoff; the mod wheel brings in LFO 1 vibrato.
- ("Prism Talking Clav", {"mode":4,"masterVol":6,"stereoWidth":1,"oversampling":2,
+ ("Prism Talking Keys", {"mode":4,"masterVol":6,"stereoWidth":1,"oversampling":2,
    "analogAmt":1,"osc1Level":1,"osc2Detune":0,"osc2Level":1,
    "filterCutoff":176.210617,"filterRes":0.734999955,"filterEnvAmt":1,
    "ampA":0.0796214044,"ampD":0.0626789629,"ampS":0.555000186,"ampR":0.201403946,"ampCurve":2,
