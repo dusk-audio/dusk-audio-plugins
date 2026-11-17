@@ -165,7 +165,7 @@ int MultiQDSP::getLatencySamples(const Params& p) const noexcept
     if (eqType == EQType::Tube)
         return limiterLatency + (int)std::lround(tubeEQ.oversamplingDelay(p.oversampling));
     if (eqType == EQType::Match)
-        return limiterLatency + matchProc.getLatencySamples();
+        return limiterLatency + matchProc.getReportedLatencySamples();
     if (eqType != EQType::Digital)
         return limiterLatency;   // process() passes such a block through undelayed
 

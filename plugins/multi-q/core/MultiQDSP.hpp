@@ -119,12 +119,12 @@ public:
     // Latency in base-rate samples that process() renders with these parameters:
     // the limiter lookahead, plus the active character's delay. Digital: the
     // oversampler of every running band with saturation on (Oversampling 2x or
-    // 4x), in series. British and Tube: their oversampled cores. Derived from
-    // the parameters, not from the last processed block, so the value a host
-    // reads at activation is already right and holds while the settings do.
-    // Match adds its correction FIR's latency only once the audio thread has
-    // adopted the correction, on the first block after activation. Valid after
-    // prepare().
+    // 4x), in series. British and Tube: their oversampled cores. Match: its
+    // correction FIR, counted from the moment the correction is committed (see
+    // MultiQMatch::getReportedLatencySamples). Derived from the parameters and
+    // the committed correction, not from the last processed block, so the value
+    // a host reads at activation is already right and holds while the settings
+    // do. Valid after prepare().
     int getLatencySamples(const Params& p) const noexcept;
 
     // Current limiter gain reduction (dB, >=0) for the UI meter. Read-only tap.

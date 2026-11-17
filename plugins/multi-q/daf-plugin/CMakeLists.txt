@@ -117,6 +117,18 @@ if(NOT CMAKE_CROSSCOMPILING)
     target_compile_definitions(MultiQLatencyTest PRIVATE DAF_PLUGIN_TARGET_CLAP)
     add_test(NAME MultiQLatency COMMAND MultiQLatencyTest)
 
+    # Match: a learned correction's latency is known at activation, matches
+    # what plays, survives restarts, and falls to 0 only after a clear fades.
+    add_executable(MultiQMatchLatencyTest
+        tests/MultiQMatchLatencyTest.cpp
+        ../core/MultiQDSP.cpp
+        ../core/MultiQMatch.cpp
+        ../../shared-daf/dsp/FourKEQDSP.cpp
+        "${DAF_PATH}/daf/src/DafPlugin.cpp")
+    target_link_libraries(MultiQMatchLatencyTest PRIVATE multi-q-2 Threads::Threads)
+    target_compile_definitions(MultiQMatchLatencyTest PRIVATE DAF_PLUGIN_TARGET_CLAP)
+    add_test(NAME MultiQMatchLatency COMMAND MultiQMatchLatencyTest)
+
     # The editor's own knobs and their inline value fields (#337): the
     # production MultiQUI.cpp against Dear ImGui's real input handling, through
     # the window-free host in shared-daf/ui/tests/daf-ui-test-host. That

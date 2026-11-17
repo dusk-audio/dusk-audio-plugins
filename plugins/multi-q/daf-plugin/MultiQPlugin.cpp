@@ -318,9 +318,9 @@ protected:
         const StateGuard guard(stateMutex);
         prepareDsp(getSampleRate(), getBufferSize());
         // A CLAP host reads the latency here and nowhere else. It comes from the
-        // parameters, so run() reports the same value until they change: no
-        // restart request on a plain activate/run cycle (except a Match
-        // correction, whose latency counts from its adoption in run()).
+        // parameters and the restored Match correction, so run() reports the
+        // same value until they change: no restart request on a plain
+        // activate/run cycle.
         MultiQDSP::Params p;
         fillParams(p);
         updateLatency(p);

@@ -234,8 +234,17 @@ public:
     // Apply the correction FIR to a stereo (or mono) block in place. No-op (leaves
     // the buffer untouched, zero latency) when no correction is active.
     void process(float* left, float* right, bool isStereo, int numSamples);
-    // Reported extra latency in samples (0 when inactive).
+    // Latency in samples of the correction the audio thread has adopted (0 when
+    // inactive).
     int getLatencySamples() const noexcept;
+    // Latency in samples to report to the host (any thread). A correction counts
+    // from the moment it is committed (computed, restored or cleared), so it is
+    // already known at activation: the audio thread adopts it at the start of
+    // its next block, before any audio, and plays it from there. A clear or a
+    // shorter correction takes effect only once the audio thread has faded out
+    // or replaced the longer one, so until then the longer, adopted latency is
+    // reported. The value therefore never runs behind what plays.
+    int getReportedLatencySamples() const noexcept;
 
     // --- state persistence (message thread). Serialises the learned spectra +
     //     correction curve + FIR as a base64 blob, restored by deserialize(). ---
@@ -331,6 +340,9 @@ private:
     LearnedSpectrum referenceForReaders() const; // caller holds updateLock
     void processHop(ChannelConv& c, const IRSpectra* H); // one 128-sample conv hop
     void doClearNow();   // audio-thread immediate clear of spectra/state
+    // Convolver latency of a correction FIR (minimum phase carries ~0 delay of its
+    // own; linear phase is centred on FIR_LENGTH / 2).
+    static int latencyFor(bool minimumPhase) noexcept { return CONV_HOP + (minimumPhase ? 0 : FIR_LENGTH / 2); }
 
     double sampleRate = 48000.0;
 
@@ -378,6 +390,7 @@ private:
     MatchMailbox<IRUpdate> irUpdates;
     IRSpectra activeIR;                 // exclusively audio-owned, including fade-out
     std::atomic<int> activeLatency{0};  // metadata adopted with the audio-owned IR
+    std::atomic<int> committedLatency{0}; // newest published correction (0 once cleared); updateLock writers
     ChannelConv convL, convR;
     int hopFill = 0;                    // shared 0..CONV_HOP sample counter
     std::array<float, CONV_FFT> convScratchRe{}, convScratchIm{}; // hop FFT scratch
