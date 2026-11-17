@@ -70,10 +70,65 @@ public:
         detuneRatio = std::pow(2.0f, cents / 1200.0f);
     }
 
-    void hardSync() noexcept   { phase = 0.0f; triState = 0.0f; }
     float getPhase() const noexcept { return phase; }
     bool  didCross() const noexcept { return lastCrossed; }
-    void  resetPhase() noexcept { phase = 0.0f; triState = 0.0f; }
+    // Where in the interval after the last processSample() the phase wrapped, as
+    // a fraction (0, 1] of that interval. Meaningful when didCross() is true; a
+    // hard-sync master hands it to its slave (processSampleSynced).
+    float wrapFraction() const noexcept { return lastWrapFrac; }
+    void  resetPhase() noexcept
+    {
+        phase = 0.0f; triState = 0.0f;
+        syncCarry = 0.0f; syncSqCarry = 0.0f;
+    }
+
+    // ============================ HARD SYNC (slave) ===========================
+    // One sample of a hard-synced oscillator. `syncFrac` is where the master
+    // wrapped in the interval this sample starts (its wrapFraction()), or 0 when
+    // it did not wrap.
+    //
+    // The old sync set the phase to 0 before the sample was rendered: up to one
+    // sample early, on the internal sample grid (so the reset point jittered by up
+    // to a sample from cycle to cycle), and as a bare step. The discontinuity
+    // then folded back at full strength, and the oscillator's own polyBLEP read
+    // the reset as an ordinary wrap and corrected a step of the wrong size.
+    //
+    // Here the sample is rendered at the current phase, and the interval up to
+    // the next sample is walked as a sequence of events: each value step of the
+    // waveform (its own edges, and the reset to phase 0 at syncFrac) gets the two
+    // halves of a polyBLEP sized to that step's true height, the half before the
+    // step on this sample and the half after it on the next one (syncCarry); a
+    // corner the reset cuts into a sine or a triangle gets a polyBLAMP the same
+    // way. Then the phase restarts where it would be (1 - syncFrac) of a sample
+    // after the reset. For a free-running interval this is the same polyBLEP as
+    // processSample(), so a synced oscillator between resets sounds as before.
+    float processSampleSynced(float syncFrac) noexcept
+    {
+        const float d = dt * detuneRatio;
+        const bool reset = syncFrac > 0.0f && syncFrac <= 1.0f;
+        if (waveform == Waveform::Triangle)
+            return processTriangleSynced(d, reset ? syncFrac : 0.0f);
+        if (waveform == Waveform::Noise)
+            return processSample();            // no phase to sync
+
+        float out = stepValue(phase) + syncCarry;
+        syncCarry = 0.0f;
+        float p = phase;
+        walkEdges(waveform, p, d, 0.0f, reset ? syncFrac : 1.0f, out, syncCarry);
+        if (reset)
+        {
+            addStep(stepValue(0.0f) - stepValue(p), syncFrac, out, syncCarry);
+            // A sine also turns a corner at the reset: its slope jumps from where
+            // the cycle was cut to the slope at phase 0.
+            if (waveform == Waveform::Sine)
+                addRamp(kTwoPi * d * (1.0f - std::cos(kTwoPi * p)), syncFrac, out, syncCarry);
+            p = 0.0f;
+            walkEdges(waveform, p, d, syncFrac, 1.0f, out, syncCarry);
+        }
+        lastCrossed = reset || p < phase;
+        phase = p;
+        return out;
+    }
 
     void seedNoise(uint32_t s) noexcept { rng.seed(s); }
 
@@ -140,6 +195,11 @@ public:
                 break;
         }
 
+        // The half-step a synced render left for this sample (sync was switched off
+        // with one pending). Zero on every other path, which then stays untouched.
+        if (syncCarry != 0.0f) { sample += syncCarry; syncCarry = 0.0f; }
+        syncSqCarry = 0.0f;
+
         const float prevPhase = phase;
         phase += effectiveDt;
         // Full wrap via floor handles pathological dt > 1 (extreme freq/OS);
@@ -149,11 +209,146 @@ public:
             phase -= std::floor(phase);
 
         lastCrossed = (prevPhase > phase); // wrapped at least once this sample
+        if (lastCrossed)
+            lastWrapFrac = clampf((1.0f - prevPhase) / effectiveDt, 0.0f, 1.0f);
 
         return sample;
     }
 
 private:
+    // Two halves of a polyBLEP for a step of height h at fraction s (0, 1] of the
+    // interval after this sample: (h/2)(1-s)^2 on this sample, -(h/2)s^2 on the
+    // next. The kernel is polyBlep()'s: for the saw's own wrap (h = -2) these are
+    // exactly its pre- and post-wrap terms.
+    static void addStep(float h, float s, float& now, float& next) noexcept
+    {
+        const float a = 1.0f - s;
+        now  += 0.5f * h * a * a;
+        next -= 0.5f * h * s * s;
+    }
+
+    // The same for a corner, where the slope (value per sample) changes by g at
+    // s: the polyBLAMP, the polyBLEP integrated, g(1-s)^3/6 now and g s^3/6 next.
+    static void addRamp(float g, float s, float& now, float& next) noexcept
+    {
+        const float a = 1.0f - s;
+        now  += g * a * a * a * (1.0f / 6.0f);
+        next += g * s * s * s * (1.0f / 6.0f);
+    }
+
+    // The naive (uncorrected) value of a stepped waveform at phase q. Sine has no
+    // edges of its own but does step when it is reset.
+    float stepValue(float q) const noexcept
+    {
+        switch (waveform)
+        {
+            case Waveform::Saw:    return 2.0f * q - 1.0f;
+            case Waveform::Square: return q < 0.5f ? 1.0f : -1.0f;
+            case Waveform::Pulse:  return q < pulseWidth ? 1.0f : -1.0f;
+            case Waveform::Sine:   return std::sin(q * kTwoPi);
+            default:               return 0.0f;
+        }
+    }
+
+    // The next value edge of waveform w after phase p, in (p, 1], and its
+    // height. False for a waveform without edges.
+    bool nextEdge(Waveform w, float p, float& edge, float& height) const noexcept
+    {
+        switch (w)
+        {
+            case Waveform::Saw:
+                edge = 1.0f; height = -2.0f; return true;
+            case Waveform::Square:
+                if (p < 0.5f) { edge = 0.5f; height = -2.0f; } else { edge = 1.0f; height = 2.0f; }
+                return true;
+            case Waveform::Pulse:
+                if (p < pulseWidth) { edge = pulseWidth; height = -2.0f; } else { edge = 1.0f; height = 2.0f; }
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    // Advance phase p through the part [s0, s1) of the interval at increment d,
+    // adding both polyBLEP halves for every edge of w crossed on the way. The
+    // guard only matters for a pathological increment (several cycles per
+    // sample); it bounds the work, and the phase still lands where it should.
+    void walkEdges(Waveform w, float& p, float d, float s0, float s1,
+                   float& now, float& next) const noexcept
+    {
+        float s = s0, edge = 0.0f, height = 0.0f;
+        for (int guard = 0; guard < 16 && d > 0.0f && nextEdge(w, p, edge, height); ++guard)
+        {
+            const float at = s + (edge - p) / d;
+            if (at > s1) break;
+            addStep(height, at, now, next);
+            s = at;
+            p = edge >= 1.0f ? 0.0f : edge;
+        }
+        p += d * (s1 - s);
+        if (p >= 1.0f) p -= std::floor(p);
+    }
+
+    // Exact integral, in samples, of the naive square over the part [s0, s1) of
+    // the interval at increment d, starting from phase p (which it advances).
+    static float squareIntegral(float& p, float d, float s0, float s1) noexcept
+    {
+        float acc = 0.0f, s = s0;
+        for (int guard = 0; guard < 16 && d > 0.0f; ++guard)
+        {
+            const float level = p < 0.5f ? 1.0f : -1.0f;
+            const float edge  = p < 0.5f ? 0.5f : 1.0f;
+            const float at = s + (edge - p) / d;
+            if (at >= s1) break;
+            acc += level * (at - s);
+            s = at;
+            p = edge >= 1.0f ? 0.0f : edge;
+        }
+        acc += (p < 0.5f ? 1.0f : -1.0f) * (s1 - s);
+        p += d * (s1 - s);
+        if (p >= 1.0f) p -= std::floor(p);
+        return acc;
+    }
+
+    // Synced triangle: the leaky integrator of the band-limited square, as in
+    // processSample(), but read BEFORE this sample's update so that a reset in
+    // the interval after it can still be corrected on both sides (the free
+    // triangle reads after the update, one sample later).
+    //
+    // A reset clears the integrator. In that interval the triangle is integrated
+    // exactly, piece by piece: up to the reset, to size the step down to 0 (a
+    // polyBLEP) and the corner (a polyBLAMP: the slope turns from the square's
+    // level just before the reset to rising), then from 0 to the end of the
+    // interval with the square restarted high. The square's own edge halves still
+    // owed are dropped there: the integrator they would correct is the one the
+    // reset throws away.
+    float processTriangleSynced(float d, float syncFrac) noexcept
+    {
+        float out = triState + syncCarry;
+        syncCarry = 0.0f;
+        float p = phase;
+        if (syncFrac <= 0.0f)
+        {
+            float sq = (p < 0.5f ? 1.0f : -1.0f) + syncSqCarry;
+            syncSqCarry = 0.0f;
+            walkEdges(Waveform::Square, p, d, 0.0f, 1.0f, sq, syncSqCarry);
+            triState = triLeak * triState + d * sq * 4.0f;
+        }
+        else
+        {
+            syncSqCarry = 0.0f;
+            const float atReset = triState + 4.0f * d * squareIntegral(p, d, 0.0f, syncFrac);
+            const float levelBefore = p < 0.5f ? 1.0f : -1.0f;
+            addStep(-atReset, syncFrac, out, syncCarry);
+            addRamp(4.0f * d * (1.0f - levelBefore), syncFrac, out, syncCarry);
+            p = 0.0f;
+            triState = 4.0f * d * squareIntegral(p, d, syncFrac, 1.0f);
+        }
+        lastCrossed = syncFrac > 0.0f || p < phase;
+        phase = p;
+        return out;
+    }
+
     // ~7 Hz DC-block corner for the triangle leaky integrator, independent of sr.
     static constexpr float kTriLeakHz = 7.0f;
     void updateTriLeak() noexcept { triLeak = std::exp(-kTwoPi * kTriLeakHz / sr); }
@@ -168,6 +363,9 @@ private:
     float triState = 0.0f;
     float triLeak = 0.999f;
     bool  lastCrossed = false;
+    float lastWrapFrac = 1.0f;   // see wrapFraction()
+    float syncCarry = 0.0f;      // polyBLEP/BLAMP halves a synced render owes the next sample
+    float syncSqCarry = 0.0f;    // the polyBLEP halves the synced triangle's square owes
     Waveform waveform = Waveform::Saw;
     Xorshift rng;
 };

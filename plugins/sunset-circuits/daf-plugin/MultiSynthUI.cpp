@@ -4532,7 +4532,12 @@ private:
         tips[kParamAmpCurve] = tips[kParamFiltCurve] = "Shape of the envelope segments.";
         tips[kParamCrossMod] = "Oscillator 2 modulates oscillator 1 frequency at audio rate.";
         tips[kParamRingMod] = "Ring modulation between oscillators 1 and 2.";
-        tips[kParamHardSync] = "Oscillator 2 hard-syncs to oscillator 1 for tearing timbres.";
+        // One tip for three panels, and the direction differs: Oracle syncs osc 1 to
+        // osc 2 (osc 2 is the master), Mono and Modular osc 2 to osc 1. Short lines,
+        // because SetTooltip does not wrap.
+        tips[kParamHardSync] = "Hard sync, for tearing timbres.\n"
+                               "Oracle: oscillator 2 restarts oscillator 1.\n"
+                               "Mono and Modular: oscillator 1 restarts oscillator 2.";
         tips[kParamFMAmount] = "Linear FM from oscillator 1 into oscillator 2.";
         tips[kParamPmFenvOscA] = "Poly-mod: filter envelope to oscillator 1 pitch.";
         tips[kParamPmFenvFilt] = "Poly-mod: filter envelope added to the filter cutoff.";

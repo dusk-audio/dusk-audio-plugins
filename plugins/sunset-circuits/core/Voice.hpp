@@ -632,6 +632,14 @@ private:
         return clampf(x, -4.0f, 4.0f);
     }
 
+    // Hard sync: where in the coming interval the master wrapped, for the slave's
+    // band-limited reset (Oscillator::processSampleSynced); 0 when it did not
+    // wrap. The master is osc 1 in Mono and Modular and osc 2 in Oracle.
+    static float syncPoint(const Oscillator& master) noexcept
+    {
+        return master.didCross() ? master.wrapFraction() : 0.0f;
+    }
+
     static int popcount8(uint8_t v) noexcept
     {
         int c = 0;
@@ -711,9 +719,13 @@ private:
                 o.osc2.setWaveform(params.osc2Wave);
                 o.osc2.setPulseWidth(params.osc2PulseWidth + pwm2);
                 o.osc2.setDetune(params.osc2Detune + detCents);
-                osc1Sample = o.osc1.processSample();
-                if (params.hardSync && o.osc1.didCross()) o.osc2.hardSync();
+                // Oracle's sync runs the other way round from Mono and Modular, as on
+                // the instrument it models: oscillator B (osc 2) is the master and
+                // restarts oscillator A (osc 1), the oscillator Poly-Mod drives. So
+                // osc 2 runs first and hands its wrap point to osc 1.
                 osc2Sample = o.osc2.processSample();
+                osc1Sample = params.hardSync ? o.osc1.processSampleSynced(syncPoint(o.osc2))
+                                             : o.osc1.processSample();
 
                 // Poly-mod (affects next sample via applyFM, matching original).
                 if (params.polyModFEnvOscA > 0.0f) o.osc1.applyFM(filtVal * params.polyModFEnvOscA * 0.03f);
@@ -734,8 +746,8 @@ private:
                 o.osc2.setPulseWidth(params.osc2PulseWidth + pwm2);
                 o.osc2.setDetune(params.osc2Detune + detCents);
                 osc1Sample = o.osc1.processSample();
-                if (params.hardSync && o.osc1.didCross()) o.osc2.hardSync();
-                osc2Sample = o.osc2.processSample();
+                osc2Sample = params.hardSync ? o.osc2.processSampleSynced(syncPoint(o.osc1))
+                                             : o.osc2.processSample();
 
                 o.sub.setFrequency(baseFreq);
                 o.sub.setWaveform(params.subWave);
@@ -760,9 +772,9 @@ private:
                 o.osc2.setPulseWidth(params.osc2PulseWidth + pwm2);
                 o.osc2.setDetune(params.osc2Detune + detCents);
                 osc1Sample = o.osc1.processSample();
-                if (params.hardSync && o.osc1.didCross()) o.osc2.hardSync();
                 if (params.fmAmount > 0.0f) o.osc2.applyFM(osc1Sample * params.fmAmount * 0.05f);
-                osc2Sample = o.osc2.processSample();
+                osc2Sample = params.hardSync ? o.osc2.processSampleSynced(syncPoint(o.osc1))
+                                             : o.osc2.processSample();
 
                 o.osc3.setFrequency(baseFreq);
                 o.osc3.setWaveform(params.osc3Wave);

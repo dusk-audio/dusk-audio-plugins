@@ -390,13 +390,18 @@ PRESETS = [
  # Converted from the author's .scpreset files: every row is a parameter whose
  # saved value differs from default + baseline, with the file's own decimal
  # text, so loadProgram() lands on the same float32 state the user-preset loader
- # produces from those files (knob residue such as 2.38418579e-07 included).
+ # produces from those files (knob residue such as 2.38418579e-07 included),
+ # except where a later engine change needed a re-voice (noted per preset).
  # Settings that are inert in the preset's engine (poly-mod on Modular, the
  # Prism operators on Modular, sync and poly-mod on Prism) are kept, so a mode
  # switch after loading behaves as it does after loading the author's file. All
  # three keep the 4x oversampling they were saved with (the bank default is 2x).
  # Oracle Trumpet: hard-synced brass with filter-envelope and Osc B poly-mod on
  # the filter; the mod wheel brings in LFO 1 vibrato (Mod Whl -> LFO1 Depth).
+ # The author's file routes LFO 1 to Osc1 Pitch, for the sync master it then
+ # was. Oracle's sync now runs from osc 2 to osc 1 (osc 2 is the master), and the
+ # two oscillators are set identically, so the route moves to Osc2 Pitch: the
+ # vibrato stays on the master and the sync on the steady oscillator.
  ("Oracle Trumpet", {"mode":1,"masterVol":-3.5,"stereoWidth":0.49999997,"oversampling":2,
    "analogAmt":1,"osc1Level":1,"osc2Detune":0,"osc2Level":1,
    "filterCutoff":355.03714,"filterRes":0.37500006,"filterEnvAmt":1,
@@ -410,7 +415,7 @@ PRESETS = [
    "chorusOn":1,"chorusRate":1.63339043,"chorusDepth":0.0200000592,"chorusMix":0.265000045,
    "delayOn":1,"delayFB":0.0569999926,"delayMix":0.0549999997,"delayPP":1,"delayTape":1,
    "reverbOn":1,"reverbSize":0,"reverbDecay":0.100000001,"reverbDamp":0,"reverbMix":0.0449999981,"reverbPD":0,
-   "modSrc0":4,"modSrc1":1,"modDst0":13,"modDst1":1,"modAmt0":1,"modAmt1":1,
+   "modSrc0":4,"modSrc1":1,"modDst0":13,"modDst1":2,"modAmt0":1,"modAmt1":1,
    "pmOscBFilt":0.62500006}),
  # Modular English Horn: triangle oscillators with sync, FM and ring mod into the
  # driven ladder, key-tracked cutoff, and mod-wheel vibrato from LFO 2.

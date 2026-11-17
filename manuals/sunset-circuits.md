@@ -133,7 +133,7 @@ The signature of Oracle is poly-modulation. The mode sub-panel is a six-knob **P
 - **OscB to OscA**: oscillator 2 modulates oscillator 1 pitch at audio rate, for clangorous inharmonic timbres.
 - **OscB to PW**: oscillator 2 modulates oscillator 1 pulse width, for animated pulse textures.
 - **OscB to Filter**: oscillator 2 modulates filter cutoff at audio rate, for growling and metallic filter FM.
-- **Sync**: oscillator 1 hard-syncs oscillator 2, creating swept harmonic edges when their pitches differ.
+- **Sync**: oscillator 2 hard-syncs oscillator 1. Each time oscillator 2 starts a cycle it restarts oscillator 1, creating swept harmonic edges when their pitches differ. This is the reverse of Mono and Modular, as on the instrument Oracle is modeled on: oscillator 1 is the one Poly-Mod plays, and with Sync on, modulating its pitch (from the filter envelope, oscillator 2 or the mod matrix) sweeps its timbre while the note keeps oscillator 2's pitch.
 
 Mode-specific controls visible in Oracle: the six poly-mod knobs and the **Sync** button. There is no sub oscillator and no filter high-pass in this mode; the third panel on the left reads **AUX OSC** with a note that Oracle uses its two-oscillator poly-mod path instead.
 
@@ -346,7 +346,7 @@ The mod matrix is an eight-slot modulation router, opened from the **MOD MATRIX*
 
 A classic starting patch is LFO 1 to Cutoff for a filter wobble, or Key Track to Cutoff so the filter opens as you play higher. Aftertouch to LFO1 Rate gives expressive vibrato that speeds up under pressure.
 
-**Vibrato from the mod wheel.** Route LFO 1 to Osc1 Pitch at a small amount such as +20 % and, in a second slot, LFO 1 to Osc2 Pitch, then route Mod Whl to LFO1 Depth at +100 %. With the wheel down there is no vibrato, and pushing it up brings it in, up to the depth the LFO slots set. Osc1 Pitch moves the whole voice in Cosmos and Prism and Oscillator 1 in the other modes; Osc2 Pitch moves Oscillator 2 in Oracle, Mono and Modular. Neither moves the Mono sub oscillator or Modular's Osc 3, which stay at the played pitch.
+**Vibrato from the mod wheel.** Route LFO 1 to Osc1 Pitch at a small amount such as +20 % and, in a second slot, LFO 1 to Osc2 Pitch, then route Mod Whl to LFO1 Depth at +100 %. With the wheel down there is no vibrato, and pushing it up brings it in, up to the depth the LFO slots set. Osc1 Pitch moves the whole voice in Cosmos and Prism and Oscillator 1 in the other modes; Osc2 Pitch moves Oscillator 2 in Oracle, Mono and Modular. Neither moves the Mono sub oscillator or Modular's Osc 3, which stay at the played pitch. With Sync on, the note follows the master oscillator (oscillator 2 in Oracle, oscillator 1 in Mono and Modular), so put vibrato on the master; on the synced oscillator alone the same route sweeps the timbre instead.
 
 In Acid mode the mod matrix is not in circuit, so the mod wheel and the depth destinations do nothing there.
 
@@ -463,6 +463,8 @@ The **Oversampling** control sets the internal processing rate: **1x**, **2x**, 
 Factory presets ship at 2x, except Oracle Trumpet, Modular English Horn and Prism Talking Keys, which keep the 4x they were made with.
 
 The factor changes how clean the high end is and what it costs, not how a patch moves. The slow random pitch wander that the **Analog** control adds to each voice runs on its own clock, so a patch drifts at the same speed and depth at 1x, 2x and 4x and at every session sample rate.
+
+Hard sync is band-limited at every factor: each restart of the synced oscillator lands exactly where the other one wraps, between samples where it falls between them, and is smoothed like the oscillators' own edges. A synced sound therefore aliases about as little as the same sound without sync, even with oscillator 1's pitch moving under vibrato.
 
 ### Reported latency
 
