@@ -44,7 +44,12 @@ void MultiQDSP::prepare(double sampleRate, int maxBlockSize)
     lastDigitalSatLatency = 0;
 
     hpfFilter.reset(); lpfFilter.reset();
-    for (auto& s : bandEnableSmoothed) { s.reset(currentSampleRate, 0.01); s.setCurrentAndTargetValue(1.0f); }
+    // Band enable and solo crossfade over 3 ms, as in the original Multi-Q
+    // (MultiQ.cpp prepareToPlay). That build resets its smoother at the host
+    // rate but steps it per processed sample, so its fade is 3 ms only with
+    // Oversampling Off (1.5 ms at 2x, 0.75 ms at 4x); Multi-Q 2 processes at
+    // the host rate and fades over 3 ms at every Oversampling setting.
+    for (auto& s : bandEnableSmoothed) { s.reset(currentSampleRate, 0.003); s.setCurrentAndTargetValue(1.0f); }
     prevBandPhaseInvertGain.fill(1.0f);
     prevBandPanVal.fill(0.0f);
     prevHpfStages = prevLpfStages = -1;
