@@ -12,7 +12,8 @@ JUCE 4K-EQ in existing sessions.
 
 - Four-band console EQ with LF, LMF, HMF, and HF sections
 - Separately calibrated Brown and Black frequency, gain, Q, shelf, and filter laws
-- Constant-Q Brown mid bands and proportional-Q Black mid bands
+- LMF and HMF bells that narrow at the top as boost or cut grows, Black's
+  stronger and a little narrower than Brown's at the same setting
 - LF and HF shelf/bell switching
 - Stepped high-pass and low-pass filters with mode-specific responses
 - Shared-stage interaction modeling for the LF/LMF and HMF/HF circuit pairs
@@ -26,12 +27,7 @@ JUCE 4K-EQ in existing sessions.
 
 4K EQ 2 intentionally has no independent Drive or M/S control. Hidden legacy
 parameter slots remain only to preserve automation and session compatibility
-with earlier builds. The same goes for the four band and two filter
-frequencies as dial positions ("LF Frequency (Legacy Dial)", "HPF Frequency
-(Legacy Dial)" and so on): up to 1.0.5 the frequency parameters were positions
-on the console's printed dial, and sessions and automation that address them
-still sound as they did. The Hz parameters ("LF Frequency", "HPF Frequency"
-and so on) take over a band or filter as soon as they are set.
+with earlier 2.x builds.
 
 ## Controls
 
@@ -45,17 +41,22 @@ and so on) take over a band or filter as soon as they are set.
 | Master | Input: +/-12 dB; Output: +/-12 dB; Bypass; Auto Gain |
 | Header | Presets, oversampling, Brown/Black, graph, FFT, and pre/post analyzer source |
 
-The band frequency knobs are in Hz: a bell's centre, a shelf's corner (both
-exact at +7.5 dB of gain), the same in Brown and Black. From about 3 dB of
-boost or cut a shelf has roughly half to two-thirds of it in at its corner and
-nearly all of it two octaves further out. The readout does
-not move with gain. The HPF and LPF knobs are in Hz as well, each filter's
-3 dB point, with their marks where the stepped console dials have theirs.
+The frequency knobs carry the console's printed dial markings, and a knob set
+to a marking plays what the modeled console plays there in the selected mode.
+A marking is a dial position, not the exact frequency of the band, and the same
+marking can place a band differently in Brown and Black. Hover, drag, and
+typed-entry readouts show the dial setting ("30.0 Hz", "1.00 k", "16.0 k",
+"15201 Hz" for the LPF, "Out" for a filter at OUT), and they do not move with
+gain or mode; the response graph shows where each band plays.
 
 ## Factory Presets
 
-`INIT` restores the flat default. The band frequencies below are the Hz each
-band plays, by the definition above.
+`INIT` restores the flat default. Factory-preset frequencies below are audible
+targets rather than knob markings. Each preset plays its targets except where
+a dial runs out: an HF shelf goes no higher than about 5.5 to 6 kHz in Brown
+and 7 to 7.5 kHz in Black, the Black LF shelf no lower than about 80 Hz, the
+Brown HMF no higher than about 6.4 kHz, and the LPF no lower than about
+3.2 kHz.
 
 1. **Vocal Presence**: HPF 80 Hz; LF +3 dB at 100 Hz, LMF -3 dB at 300 Hz, HMF +4 dB at 3.5 kHz, HF +2 dB at 8 kHz
 2. **Kick Punch**: HPF 30 Hz; LF +4 dB at 50 Hz, LMF -2.5 dB at 200 Hz, HMF +3 dB at 2 kHz

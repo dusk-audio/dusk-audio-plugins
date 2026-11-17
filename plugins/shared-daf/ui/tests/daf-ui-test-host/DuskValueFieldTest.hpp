@@ -279,6 +279,10 @@ public:
     }
 };
 
+// The inline field is 58 x 22 design px centred on the knob, or 96 x 22
+// where the knob parses its own text (DuskPanel::valueEdit's parseText).
+constexpr float kDefaultFieldHalfWidth = 29.0f;
+
 // One knob under test, in window pixels at the design size.
 struct ValueFieldKnob
 {
@@ -296,14 +300,13 @@ struct ValueFieldKnob
     uint32_t resetParameter = 0;
     float resetValue = 0;
     enum class Hover { Bubble, Tooltip, Nothing } hover = Hover::Bubble;   // what a resting hover shows
+    float fieldHalfWidth = kDefaultFieldHalfWidth;   // 48 where the field is 96 px wide
 };
 
-// The inline field is 58 x 22 design px centred on the knob (DuskPanel::valueEdit),
-// its text left-aligned after a 4 px frame padding.
-constexpr float kFieldHalfWidth = 29.0f;
+// The field's text is left-aligned after a 4 px frame padding.
 constexpr float kFieldPadding = 4.0f;
 // The click on the start of the text, as an offset from the knob centre.
-constexpr float kTextStart = -kFieldHalfWidth + kFieldPadding + 3.0f;
+inline float textStart(const ValueFieldKnob& k) { return -k.fieldHalfWidth + kFieldPadding + 3.0f; }
 
 template <class Editor>
 class ValueFieldSuite
@@ -403,20 +406,26 @@ private:
         // all of it, and over the knob: at the middle of the field, or just past
         // the text where the text runs past the middle. Measured in the face the
         // field is drawn in, while it still shows the start value.
-        const float textEnd = k.x - kFieldHalfWidth + kFieldPadding + h.fieldTextWidth();
+        const float textEnd = k.x - k.fieldHalfWidth + kFieldPadding + h.fieldTextWidth();
         const float pressX = std::max(k.x, textEnd + 3.0f);
         char where[96];
         std::snprintf(where, sizeof(where), " (text ends %+.1f px from the centre, drag starts %+.1f px)",
                       (double) (textEnd - k.x), (double) (pressX - k.x));
-        guards(pressX < k.x + k.radius && pressX < k.x + kFieldHalfWidth - 1.0f,
+        guards(pressX < k.x + k.radius && pressX < k.x + k.fieldHalfWidth - 1.0f,
                k.name + ": the field has a point right of its text over the knob" + where);
 
-        // On a small knob the start of the text is not over the knob, so the
-        // click there fails on the unfixed editors only where it is.
-        const bool textOverKnob = -kTextStart < k.radius;
-        const auto onText = textOverKnob ? detects : guards;
+        // The click on the text lands at its start, or, in a wide field whose
+        // text starts left of the knob, 3 px inside the knob's edge where the
+        // text reaches that far. On a small knob the start of a 58 px field's
+        // text is not over the knob, so the click there fails on the unfixed
+        // editors only where it is.
+        float onTextX = k.x + textStart(k);
+        if (k.fieldHalfWidth > kDefaultFieldHalfWidth && onTextX <= k.x - k.radius
+            && k.x - k.radius + 3.0f < textEnd - 3.0f)
+            onTextX = k.x - k.radius + 3.0f;
+        const auto onText = onTextX > k.x - k.radius ? detects : guards;
         const size_t m = h.mark();
-        h.click(k.x + kTextStart, k.y);
+        h.click(onTextX, k.y);
         h.idle();
         onText(h.fieldActive(), k.name + ": a click on the text in the open field keeps it open");
         onText(h.fieldActive() && h.fieldSelectionLength() == 0,
@@ -430,7 +439,7 @@ private:
         detects(h.eventsSince(m) == 0, k.name + ": that click sends no gesture and no write to the host");
         if (h.eventsSince(m) != 0) h.printEvents(m);
 
-        h.drag(pressX, k.y, k.x - kFieldHalfWidth + 2.0f - pressX, 0.0f);   // to the field's left end
+        h.drag(pressX, k.y, k.x - k.fieldHalfWidth + 2.0f - pressX, 0.0f);   // to the field's left end
         h.idle();
         detects(h.fieldActive(), k.name + ": a click-drag inside the open field keeps it open");
         detects(h.fieldActive() && h.fieldTextLength() > 0 && h.fieldSelectionLength() == h.fieldTextLength(),
