@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -38,6 +39,49 @@ void check(bool ok, const char* what, double measured, double expected)
 
 constexpr int kBlock = 256;
 constexpr int kHop = duskaudio::MultiQMatch::CONV_HOP;   // the convolver's latency
+
+// The delay (0 or kHop) at which a rendered block equals the input it was
+// given on both channels (the input history ends with that block, which
+// starts at `start`), or -1 if neither matches or any output sample is not
+// finite. A NaN would otherwise slip through: it never wins std::max.
+int matchedShift(const std::vector<float>& l, const std::vector<float>& r,
+                 const std::vector<float>& history, size_t start)
+{
+    for (size_t i = 0; i < l.size(); ++i)
+        if (!std::isfinite(l[i]) || !std::isfinite(r[i])) return -1;
+    for (int shift : {0, kHop})
+    {
+        if ((size_t)shift > start) continue;   // too early in the render to tell
+        double worst = 0.0;
+        for (size_t i = 0; i < l.size(); ++i)
+        {
+            const float expected = history[start + i - (size_t)shift];
+            worst = std::max({worst, (double)std::abs(l[i] - expected), (double)std::abs(r[i] - expected)});
+        }
+        if (worst < 1e-4) return shift;
+    }
+    return -1;
+}
+
+void helperRejectsBadOutput()
+{
+    // The block check must not take a block for a match when an output sample
+    // is not finite or when the right channel is wrong.
+    std::vector<float> history((size_t)(2 * kBlock));
+    for (size_t i = 0; i < history.size(); ++i) history[i] = 0.01f * (float)(i % 97) - 0.4f;
+    const size_t start = (size_t)kBlock;
+    const std::vector<float> good(history.begin() + (long)start, history.end());
+    std::vector<float> nanLeft = good, nanRight = good, silentRight((size_t)kBlock, 0.0f);
+    nanLeft[5] = std::numeric_limits<float>::quiet_NaN();
+    nanRight[7] = std::numeric_limits<float>::quiet_NaN();
+    const int clean = matchedShift(good, good, history, start);
+    const int a = matchedShift(nanLeft, good, history, start), b = matchedShift(good, nanRight, history, start);
+    const int c = matchedShift(good, silentRight, history, start);
+    std::printf("  block check: clean %d, NaN left %d, NaN right %d, silent right %d\n", clean, a, b, c);
+    check(clean == 0, "the block check finds an undelayed block", clean, 0);
+    check(a == -1 && b == -1, "the block check rejects a block with a NaN in either channel", std::max(a, b), -1);
+    check(c == -1, "the block check rejects a block whose right channel is wrong", c, -1);
+}
 
 class Plugin
 {
@@ -69,16 +113,7 @@ public:
         float* outs[] = {l.data(), r.data()};
         plugin->run(ins, outs, (uint32_t)kBlock);
         history.insert(history.end(), in.begin(), in.end());
-        const size_t start = history.size() - (size_t)kBlock;
-        for (int shift : {0, kHop})
-        {
-            if ((size_t)shift > start) continue;   // too early in the render to tell
-            double worst = 0.0;
-            for (int i = 0; i < kBlock; ++i)
-                worst = std::max(worst, (double)std::abs(l[(size_t)i] - history[start + (size_t)i - (size_t)shift]));
-            if (worst < 1e-4) return shift;
-        }
-        return -1;
+        return matchedShift(l, r, history, history.size() - (size_t)kBlock);
     }
     void blocks(int count) { for (int i = 0; i < count; ++i) block(); }
 
@@ -201,6 +236,7 @@ void switching(double sr)
 int main()
 {
     std::printf("Multi-Q 2 Match latency\n");
+    helperRejectsBadOutput();
     for (double sr : {44100.0, 48000.0, 96000.0})
     {
         learnedCorrection(sr);
