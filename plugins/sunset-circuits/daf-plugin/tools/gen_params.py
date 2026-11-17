@@ -223,17 +223,27 @@ BASE = {
  "vintage":0, "oversampling":1,
 }
 
+# Oracle Poly-Mod amounts below follow the laws measured on the instrument Oracle
+# is modeled on (Voice.hpp, ORACLE POLY-MOD LAWS, 2026-11-17). The presets that
+# used a Poly-Mod route were re-voiced to keep their sound: filter-envelope ->
+# filter amounts scaled by 4/14.3 (the same depth, exactly); filter-envelope ->
+# freq A and osc B -> freq A amounts fitted to each preset's own performance,
+# minimising the third-octave spectral difference against its render on the
+# previous laws (Stab Machine 7.1 -> 4.0 dB, Poly Brass 5.0 -> 3.0, Regal Brass
+# 5.1 -> 4.1, Poly Mod Bells 6.8 -> 4.9, Glass Bells 5.5 -> 4.8). The linear-Hz
+# pitch swoop the old law made cannot be matched at every note by an exponential
+# one, and the bells' osc B -> freq A is at the law's maximum (+-7.5 semitones).
 PRESETS = [
  ("Neon Nights", {"mode":0,"osc1Wave":0,"osc2Wave":4,"osc2Detune":8,"filterCutoff":2500,"filterRes":0.15,"filterEnvAmt":0.3,"ampA":0.4,"ampD":0.6,"ampS":0.85,"ampR":1.8,"cosmosChorus":3,"analogAmt":0.3,"reverbOn":1,"reverbSize":0.6,"reverbMix":0.2}),
  ("Glass Highway", {"mode":0,"filterCutoff":5000,"filterRes":0.35,"ampA":0.005,"ampD":0.25,"ampS":0.5,"ampR":0.6,"cosmosChorus":1,"arpOn":1,"arpRate":3,"arpGate":0.6,"delayOn":1,"delayMix":0.2}),
  ("Velvet Fog", {"mode":0,"filterCutoff":1200,"filterRes":0.25,"filterEnvAmt":0.15,"ampA":1.0,"ampS":0.9,"ampR":2.5,"cosmosChorus":2,"vintage":0.5}),
  ("Sunset Strip", {"mode":0,"osc2Detune":15,"filterCutoff":3500,"ampA":0.25,"ampS":0.8,"ampR":1.5,"cosmosChorus":3,"analogAmt":0.35}),
  ("Crystal Rain", {"mode":0,"filterCutoff":6000,"filterRes":0.2,"ampA":0.003,"ampD":0.12,"ampS":0.2,"ampR":0.35,"cosmosChorus":3,"arpOn":1,"arpRate":4,"arpGate":0.3,"delayOn":1,"delayMix":0.25,"reverbOn":1,"reverbMix":0.2}),
- ("Brass Section", {"masterVol":-3.0,"mode":1,"filterCutoff":2000,"filterRes":0.4,"filterEnvAmt":0.7,"filtA":0.05,"filtD":0.3,"filtS":0.3,"ampA":0.01,"ampD":0.3,"ampS":0.7,"pmFenvFilt":0.3}),
+ ("Brass Section", {"masterVol":-3.0,"mode":1,"filterCutoff":2000,"filterRes":0.4,"filterEnvAmt":0.7,"filtA":0.05,"filtD":0.3,"filtS":0.3,"ampA":0.01,"ampD":0.3,"ampS":0.7,"pmFenvFilt":0.08391608}),
  ("Wooden Keys", {"masterVol":-1.5,"mode":1,"filterCutoff":3000,"filterRes":0.2,"ampA":0.005,"ampD":0.4,"ampS":0.5,"ampR":0.3}),
- ("Poly Mod Bells", {"mode":1,"osc2Wave":2,"osc2Semi":7,"pmOscBOscA":0.5,"pmFenvOscA":0.4,"filterCutoff":5000,"ampA":0.005,"ampD":1.0,"ampS":0.0,"ampR":1.5,"reverbOn":1,"reverbMix":0.35,"reverbDecay":3.0}),
- ("Dark Oracle", {"mode":1,"filterCutoff":1200,"filterRes":0.5,"filterEnvAmt":0.3,"ampA":0.5,"ampS":0.85,"ampR":1.5,"vintage":0.3,"pmFenvFilt":0.2}),
- ("Stab Machine", {"mode":1,"filterCutoff":4000,"filterEnvAmt":0.6,"ampA":0.001,"ampD":0.15,"ampS":0.0,"ampR":0.1,"pmFenvOscA":0.3}),
+ ("Poly Mod Bells", {"mode":1,"osc2Wave":2,"osc2Semi":7,"pmOscBOscA":1.0,"pmFenvOscA":0.7,"filterCutoff":5000,"ampA":0.005,"ampD":1.0,"ampS":0.0,"ampR":1.5,"reverbOn":1,"reverbMix":0.35,"reverbDecay":3.0}),
+ ("Dark Oracle", {"mode":1,"filterCutoff":1200,"filterRes":0.5,"filterEnvAmt":0.3,"ampA":0.5,"ampS":0.85,"ampR":1.5,"vintage":0.3,"pmFenvFilt":0.05594406}),
+ ("Stab Machine", {"mode":1,"filterCutoff":4000,"filterEnvAmt":0.6,"ampA":0.001,"ampD":0.15,"ampS":0.0,"ampR":0.1,"pmFenvOscA":0.55}),
  ("Pulsing Darkness", {"mode":2,"osc1Wave":4,"osc2Wave":0,"osc2Semi":-12,"filterCutoff":600,"filterRes":0.55,"filterEnvAmt":0.5,"subLevel":0.9,"filtA":0.001,"filtD":0.15,"filtS":0.05,"arpOn":1,"arpRate":3,"vintage":0.3}),
  ("Acid Squelch", {"mode":2,"filterCutoff":400,"filterRes":0.85,"filterEnvAmt":0.95,"filtA":0.001,"filtD":0.15,"filtS":0.0,"subLevel":0.7,"portaTime":0.08,"ampD":0.3,"ampS":0.0,"ampR":0.15}),
  ("Screaming Lead", {"masterVol":-3.0,"mode":2,"filterCutoff":6000,"filterRes":0.3,"ampA":0.005,"portaTime":0.1,"driveOn":1,"driveAmt":0.4,"delayOn":1,"delayMix":0.2}),
@@ -257,8 +267,8 @@ PRESETS = [
  ("Retro Sequence", {"mode":3,"filterCutoff":2500,"filterEnvAmt":0.7,"arpOn":1,"arpRate":3,"arpGate":0.5,"delayOn":1,"delayTape":1}),
  ("Midnight Drive", {"masterVol":-2.5,"mode":0,"filterCutoff":1800,"filterRes":0.35,"filterEnvAmt":0.25,"ampA":0.5,"ampS":0.85,"ampR":2.0,"cosmosChorus":2,"driveOn":1,"driveAmt":0.3,"delayOn":1,"delayTape":1,"delayMix":0.25,"stereoWidth":0.7}),
  ("Starfield", {"mode":0,"filterCutoff":7000,"ampA":0.003,"ampD":0.2,"ampS":0.3,"ampR":0.5,"cosmosChorus":3,"arpOn":1,"arpMode":4,"arpRate":4,"arpOctave":3,"arpGate":0.4,"delayOn":1,"delayMix":0.3,"reverbOn":1,"reverbMix":0.25,"stereoWidth":0.8}),
- ("Poly Brass", {"mode":1,"filterCutoff":1500,"filterRes":0.3,"filterEnvAmt":0.6,"filtA":0.03,"filtD":0.25,"filtS":0.35,"ampA":0.01,"ampS":0.75,"pmFenvFilt":0.4,"pmFenvOscA":0.15,"velCurve":2}),
- ("Glass Bells", {"mode":1,"osc2Wave":2,"osc2Semi":19,"filterCutoff":6000,"ampA":0.001,"ampD":1.5,"ampS":0.0,"ampR":2.0,"pmOscBOscA":0.6,"pmFenvOscA":0.3,"reverbOn":1,"reverbDecay":4.0,"reverbMix":0.35}),
+ ("Poly Brass", {"mode":1,"filterCutoff":1500,"filterRes":0.3,"filterEnvAmt":0.6,"filtA":0.03,"filtD":0.25,"filtS":0.35,"ampA":0.01,"ampS":0.75,"pmFenvFilt":0.1118881,"pmFenvOscA":0.35,"velCurve":2}),
+ ("Glass Bells", {"mode":1,"osc2Wave":2,"osc2Semi":19,"filterCutoff":6000,"ampA":0.001,"ampD":1.5,"ampS":0.0,"ampR":2.0,"pmOscBOscA":1.0,"pmFenvOscA":0.6,"reverbOn":1,"reverbDecay":4.0,"reverbMix":0.35}),
  ("Acid Machine", {"mode":2,"osc1Wave":0,"filterCutoff":350,"filterRes":0.9,"filterEnvAmt":0.95,"filtA":0.001,"filtD":0.12,"filtS":0.0,"ampD":0.2,"ampS":0.0,"portaTime":0.06,"glideMode":1,"arpOn":1,"arpRate":3,"arpGate":0.6}),
  ("Thunder Sub", {"mode":2,"osc1Wave":3,"osc2Wave":3,"osc2Semi":-12,"filterCutoff":200,"filterRes":0.15,"subLevel":1.0,"subWave":1,"ampA":0.01,"ampS":1.0,"velCurve":1}),
  ("Voltage Seq", {"mode":3,"filterCutoff":2000,"filterRes":0.5,"filterEnvAmt":0.4,"shRate":8.0,"arpOn":1,"arpRate":3,"arpMode":0,"arpOctave":2,"delayOn":1,"delayMix":0.2}),
@@ -356,7 +366,7 @@ PRESETS = [
  # Regal Brass: Oracle self-osc filter + poly-mod brass with 2-voice unison.
  ("Regal Brass", {"masterVol":-3.5,"mode":1,"osc2Semi":0,"filterCutoff":1800,"filterRes":0.35,"filterEnvAmt":0.6,
    "filtA":0.04,"filtD":0.3,"filtS":0.4,"ampA":0.02,"ampD":0.3,"ampS":0.8,"ampR":0.35,
-   "pmFenvFilt":0.35,"pmFenvOscA":0.1,"unisonVoices":2,"unisonDetune":6,"stereoWidth":0.6}),
+   "pmFenvFilt":0.0979021,"pmFenvOscA":0.25,"unisonVoices":2,"unisonDetune":6,"stereoWidth":0.6}),
  # Siren Lead: Mono screaming sync lead (hard sync + osc2 up an octave), driven,
  # slap of delay, portamento glide.
  ("Siren Lead", {"masterVol":-3.0,"mode":2,"hardSync":1,"osc2Semi":12,"filterCutoff":4000,"filterRes":0.5,
@@ -398,6 +408,8 @@ PRESETS = [
  # three keep the 4x oversampling they were saved with (the bank default is 2x).
  # Oracle Trumpet: hard-synced brass with filter-envelope and Osc B poly-mod on
  # the filter; the mod wheel brings in LFO 1 vibrato (Mod Whl -> LFO1 Depth).
+ # Its Poly-Mod filter amounts were rescaled to the measured laws (Voice.hpp,
+ # ORACLE POLY-MOD LAWS): 1 x 4/14.3 and 0.625 x 3/3.1 give the same depths.
  # The author's file routes LFO 1 to Osc1 Pitch, for the sync master it then
  # was. Oracle's sync now runs from osc 2 to osc 1 (osc 2 is the master), and the
  # two oscillators are set identically, so the route moves to Osc2 Pitch: the
@@ -407,7 +419,7 @@ PRESETS = [
    "filterCutoff":355.03714,"filterRes":0.37500006,"filterEnvAmt":1,
    "ampA":0.0479766354,"ampD":0.0626789629,"ampS":0.555000186,"ampR":0.121357851,
    "filtA":0.0480906405,"filtD":0.198207721,"filtS":0.404999912,"filtR":0.100000091,"filtCurve":2,
-   "hardSync":1,"pmFenvFilt":1,
+   "hardSync":1,"pmFenvFilt":0.2797203,
    "lfo1Rate":4.80566263,"lfo1Shape":1,"lfo1Fade":0.675000012,
    "lfo2Rate":2.0504818,"lfo2Shape":1,"lfo2Fade":1.32499993,
    "unisonVoices":2,"unisonDetune":1.25,"unisonSpread":0.324999988,
@@ -416,7 +428,7 @@ PRESETS = [
    "delayOn":1,"delayFB":0.0569999926,"delayMix":0.0549999997,"delayPP":1,"delayTape":1,
    "reverbOn":1,"reverbSize":0,"reverbDecay":0.100000001,"reverbDamp":0,"reverbMix":0.0449999981,"reverbPD":0,
    "modSrc0":4,"modSrc1":1,"modDst0":13,"modDst1":2,"modAmt0":1,"modAmt1":1,
-   "pmOscBFilt":0.62500006}),
+   "pmOscBFilt":0.6048388}),
  # Modular English Horn: triangle oscillators with sync, FM and ring mod into the
  # driven ladder, key-tracked cutoff, and mod-wheel vibrato from LFO 2.
  ("Modular English Horn", {"mode":3,"masterVol":6,"stereoWidth":0.780000031,"oversampling":2,

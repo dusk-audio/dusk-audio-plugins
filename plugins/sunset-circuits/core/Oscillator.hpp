@@ -61,6 +61,9 @@ public:
     void setSampleRate(double sampleRate) noexcept { sr = (float)sampleRate; dt = freq / sr; updateTriLeak(); }
     void setWaveform(Waveform w) noexcept    { waveform = w; }
     void setPulseWidth(float pw) noexcept    { pulseWidth = clampf(pw, 0.05f, 0.95f); }
+    // For a modulation that may close the pulse altogether (Oracle's filter
+    // envelope -> PW A): down to 0, where the pulse is gone and only DC is left.
+    void setPulseWidthMayClose(float pw) noexcept { pulseWidth = clampf(pw, 0.0f, 0.95f); }
     // Called per internal sample with a detune that rarely moves: the pow() runs
     // only when it does (bit-compared, see sameBits).
     void setDetune(float cents) noexcept
@@ -262,6 +265,7 @@ private:
                 if (p < 0.5f) { edge = 0.5f; height = -2.0f; } else { edge = 1.0f; height = 2.0f; }
                 return true;
             case Waveform::Pulse:
+                if (pulseWidth <= 0.0f) return false;   // closed: no edges, constant low
                 if (p < pulseWidth) { edge = pulseWidth; height = -2.0f; } else { edge = 1.0f; height = 2.0f; }
                 return true;
             default:

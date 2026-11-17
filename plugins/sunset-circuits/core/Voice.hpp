@@ -571,13 +571,14 @@ public:
         }
 
         // --- filter (env-modulated cutoff) ---
+        // (halved: this sum is doubled into octaves below)
         const float polyModFiltExtra = (params.mode == SynthMode::Oracle)
-            ? filtVal * params.polyModFEnvFilt * 2.0f : 0.0f;
+            ? filtVal * params.polyModFEnvFilt * (0.5f * kPmFEnvFilterOct) : 0.0f;
         // Oracle Osc-B->Filter and Modular Osc-3->Filter are evaluated from the
         // actual oscillator sample above, at the internal audio rate.  They enter
         // in octaves after the slower envelope/mod-matrix contribution.
         const float audioRateOctaves = audioRateFilterMod
-            * (params.mode == SynthMode::Modular ? 4.0f : 3.0f);
+            * (params.mode == SynthMode::Modular ? 4.0f : kPmOscBFilterOct);
         const float envModTotal = clampf(
             (filtVal * params.filterEnvAmount + cutoffMod + polyModFiltExtra) * 2.0f
             + audioRateOctaves, -5.0f, 5.0f);
@@ -632,6 +633,25 @@ private:
         return clampf(x, -4.0f, 4.0f);
     }
 
+    // ORACLE POLY-MOD LAWS, measured on the instrument Oracle is modeled on
+    // (#303, 2026-11-17), with the Poly-Mod amount 0..1 read as its 0..100 knob:
+    //   filter envelope -> freq A   34.7 cents per step, exponential, near
+    //                               note-independent: 34.7 semitones at full;
+    //   osc B -> freq A             7.5 cents per step, exponential: +-7.5
+    //                               semitones at full, oscillator B at full scale;
+    //   filter envelope -> PW A     narrows the pulse 2.3 % per step, and can
+    //                               close it (4 steps from a 10 % pulse silence it);
+    //   filter envelope -> filter   0.143 octave per step: 14.3 octaves at full;
+    //   osc B -> filter             +-0.031 octave per step: +-3.1 octaves at full.
+    // Until then freq A took linear FM (2880 Hz x amount, the same at every
+    // note), the pulse widened (+0.35 x amount) and the two filter depths were 4
+    // and 3 octaves. Osc B -> PW A was not measured and keeps +-0.30 x amount.
+    static constexpr float kPmFEnvFreqSemis   = 34.7f;
+    static constexpr float kPmOscBFreqSemis   = 7.5f;
+    static constexpr float kPmFEnvPwPerAmount = 2.3f;
+    static constexpr float kPmFEnvFilterOct   = 14.3f;
+    static constexpr float kPmOscBFilterOct   = 3.1f;
+
     // Hard sync: where in the coming interval the master wrapped, for the slave's
     // band-limited reset (Oscillator::processSampleSynced); 0 when it did not
     // wrap. The master is osc 1 in Mono and Modular and osc 2 in Oracle.
@@ -662,12 +682,20 @@ private:
         // the 1-sample-delayed osc2 value. (The old Oracle-branch setPulseWidth ran
         // AFTER this call, so it was overwritten here on the next sample -> dead.)
         float pw1 = params.osc1PulseWidth + pwm1;
+        bool  pwMayClose = false;
         if (params.mode == SynthMode::Oracle)
         {
-            pw1 += filtVal * params.polyModFEnvPWM * 0.35f;
+            // The filter envelope NARROWS oscillator A's pulse, and may close it
+            // altogether (silence), as on the instrument; see kPmFEnvPwPerAmount.
+            if (params.polyModFEnvPWM > 0.0f)
+            {
+                pw1 -= filtVal * params.polyModFEnvPWM * kPmFEnvPwPerAmount;
+                pwMayClose = true;
+            }
             pw1 += lastOsc2[(size_t)u] * params.polyModOscBPWM * 0.30f;
         }
-        o.osc1.setPulseWidth(pw1);
+        if (pwMayClose) o.osc1.setPulseWidthMayClose(pw1);
+        else            o.osc1.setPulseWidth(pw1);
         o.osc1.setDetune(params.osc1Detune + detCents);
 
         // Cross mod (fix #4): osc2 (previous sample) -> osc1 frequency. The UI and
@@ -724,12 +752,15 @@ private:
                 // restarts oscillator A (osc 1), the oscillator Poly-Mod drives. So
                 // osc 2 runs first and hands its wrap point to osc 1.
                 osc2Sample = o.osc2.processSample();
+                // Poly-Mod into oscillator A's pitch, exponential like the rest of
+                // its pitch: the filter envelope and oscillator B (this sample's,
+                // osc 2 having run first) set an offset in semitones on freq1.
+                if (params.polyModFEnvOscA > 0.0f || params.polyModOscBOscA > 0.0f)
+                    o.osc1.setFrequency(freq1 * std::exp2(
+                        (filtVal * params.polyModFEnvOscA * kPmFEnvFreqSemis
+                         + osc2Sample * params.polyModOscBOscA * kPmOscBFreqSemis) * (1.0f / 12.0f)));
                 osc1Sample = params.hardSync ? o.osc1.processSampleSynced(syncPoint(o.osc2))
                                              : o.osc1.processSample();
-
-                // Poly-mod (affects next sample via applyFM, matching original).
-                if (params.polyModFEnvOscA > 0.0f) o.osc1.applyFM(filtVal * params.polyModFEnvOscA * 0.03f);
-                if (params.polyModOscBOscA > 0.0f) o.osc1.applyFM(osc2Sample * params.polyModOscBOscA * 0.03f);
                 // (OscB->PW poly-mod is applied to osc1's pulse width up in renderOscSet's
                 //  pre-render set, using the 1-sample-delayed osc2 value.)
                 filterAudioMod = osc2Sample * params.polyModOscBFilt;
