@@ -130,7 +130,9 @@ This is not a digital trick; it mimics how real passive tube EQs behave. The "Vi
 - **Q:** 0.1 to 36 (effectively notch-narrow at the high end).
 - **Filter shape:** Bell, Shelf, Pass, Notch, or Band Pass (choices vary by band).
 - **Enabled:** Per-band toggle in the strip below the curve.
-- **Dynamic EQ:** Threshold (-60 to 0 dB), Attack (0.1 to 100 ms), Release (10 to 1000 ms), Range (-24 to +24 dB). Right-click a band to expand the dynamic controls.
+- **Dynamic EQ:** Threshold (-48 to 0 dB, default -20), Attack (0.1 to 500 ms, default 10), Release (10 to 5000 ms, default 100), Range (0 to 24 dB, default 12), Ratio (1:1 to 100:1, default 4:1). Right-click a band to expand the dynamic controls.
+- **Dynamics Detection Mode:** Peak (default) or RMS, for every band. Peak follows the band's level moment by moment; RMS follows its average level over about 10 ms, so single peaks move it less, which helps when the dynamics feel jumpy on dense material. It is a host parameter: set it from your host's parameter list or automation, the editor has no switch for it.
+- **Dynamics and stereo:** a band's dynamics turn both channels down together, by the amount the louder channel calls for. A band routed to Left, Right, Mid, or Side listens to that signal only and turns only that signal down. The amount of reduction does not depend on your host's buffer size.
 
 The HPF and LPF have selectable slopes (12, 18, or 24 dB/oct). The mid parametrics support Notch and Band Pass shapes for surgical work.
 

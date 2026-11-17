@@ -62,6 +62,7 @@ public:
         std::array<float, NUM_BANDS> bandDynRelease { {100,100,100,100,100,100,100,100} };
         std::array<float, NUM_BANDS> bandDynRange   { {12,12,12,12,12,12,12,12} };
         std::array<float, NUM_BANDS> bandDynRatio   { {4,4,4,4,4,4,4,4} };
+        bool  dynDetectionRms = false;   // Dynamics Detection Mode: false = Peak, true = RMS
 
         float masterGain    = 0.0f;  // dB
         int   processingMode = 0;    // 0=Stereo,1=L,2=R,3=Mid,4=Side
@@ -236,6 +237,12 @@ private:
     std::array<StereoBiquad, 6> svfFilters;       // bands 2-7 (DF2T, AnalogMatchedBiquad coeffs)
     std::array<StereoSVF, 6>    svfDynGainFilters; // bands 2-7 dynamic-gain (Cytomic SVF)
     MultiQDynamics dynamicEQ;
+    // Band dynamic-gain filters follow their envelopes every kDynGainUpdateSeconds
+    // on a grid counted across process() calls, so the applied gain does not
+    // depend on the host block size (MultiQ.cpp uses the same grid).
+    static constexpr double kDynGainUpdateSeconds = 0.0005;
+    int dynUpdateInterval = 24;       // samples per grid step at the current rate
+    int dynUpdateCountdown = 0;       // samples until the next step; 0 = at the next sample
     FourKEQDSP britishEQ;              // British character (upgraded 4K parallel-summing core)
     MultiQMatch matchProc;            // Match character (learn + correction-FIR convolution)
     MultiQTube tubeEQ;                 // Tube character (framework-free TubeEQ port)

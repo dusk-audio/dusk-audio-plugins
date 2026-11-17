@@ -24,6 +24,8 @@ void MultiQDSP::prepare(double sampleRate, int maxBlockSize)
     for (auto& f : svfFilters) { f.setSmoothCoeff(biquadSmoothCoeff); f.reset(); }
     for (auto& f : svfDynGainFilters) { f.setSmoothCoeff(biquadSmoothCoeff); f.reset(); }
     dynamicEQ.prepare(currentSampleRate, 2);
+    dynUpdateInterval = std::max(1, (int)std::lround(kDynGainUpdateSeconds * currentSampleRate));
+    dynUpdateCountdown = 0;
     matchProc.prepare(currentSampleRate, maxBlockSize > 0 ? maxBlockSize : 512);
     limiter.prepare(currentSampleRate, maxBlockSize > 0 ? maxBlockSize : 512);
 
@@ -67,6 +69,7 @@ void MultiQDSP::reset()
     for (auto& f : svfFilters) f.reset();
     for (auto& f : svfDynGainFilters) f.reset();
     dynamicEQ.reset();
+    dynUpdateCountdown = 0;
     britishEQ.reset();
     matchProc.reset();
     tubeEQ.reset();
@@ -583,10 +586,9 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
             dynamicEQ.setBandParameters(band, dp);
             dynamicEQ.updateDetectionFilter(band, p.bandFreq[(size_t)band], p.bandQ[(size_t)band]);
         }
-        // Dyn-gain filter coeffs use the PREVIOUS block's envelope (1-block latency).
-        for (int band = 1; band < 7; ++band)
-            if (bandDynEnabled[(size_t)band])
-                updateDynGainFilter(band, dynamicEQ.getCurrentDynamicGain(band), p);
+        dynamicEQ.setRmsDetection(p.dynDetectionRms);
+        // The dyn-gain filter coefficients follow the envelopes inside the sample
+        // loop, on the kDynGainUpdateSeconds grid (see dynUpdateCountdown).
 
         // static band coefficients (block rate; per-sample smoothing in the loop)
         for (int band = 1; band < 7; ++band)
@@ -603,6 +605,13 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
         // JUCE instance is the A/B reference).
         if (firstBlock)
         {
+            // prepare()/reset() zeroed the envelopes but not the dynamic-gain
+            // filters' targets; aim every band's at the current (0 dB) gain
+            // before the snap, dynamics on or off, or a re-activated band would
+            // start from its old reduction, at once or when its dynamics are
+            // switched on again.
+            for (int band = 1; band < 7; ++band)
+                updateDynGainFilter(band, dynamicEQ.getCurrentDynamicGain(band), p);
             for (auto& f : svfFilters) f.snapToTarget();
             for (auto& f : svfDynGainFilters) f.snapToTarget();
             for (int i = 0; i < NUM_BANDS; ++i)
@@ -675,6 +684,17 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
         {
             float sampleL = procL[i];
             float sampleR = isStereo ? procR[i] : sampleL;
+
+            // Each dynamic band's gain filter takes the envelope's current gain
+            // every kDynGainUpdateSeconds. The grid runs across process() calls,
+            // so the gain does not depend on how the host splits the audio.
+            if (--dynUpdateCountdown <= 0)
+            {
+                dynUpdateCountdown = dynUpdateInterval;
+                for (int band = 1; band < 7; ++band)
+                    if (bandDynEnabled[(size_t)band])
+                        updateDynGainFilter(band, dynamicEQ.getCurrentDynamicGain(band), p);
+            }
 
             float deltaBeforeL = 0.0f, deltaBeforeR = 0.0f;
             float deltaAfterL = 0.0f, deltaAfterR = 0.0f;
@@ -753,10 +773,8 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
                     {
                         if (bandDynEnabled[(size_t)band])
                         {
-                            float detectionL = dynamicEQ.processDetection(band, sampleL, 0);
-                            float detectionR = dynamicEQ.processDetection(band, sampleR, 1);
-                            dynamicEQ.processBand(band, detectionL, 0);
-                            dynamicEQ.processBand(band, detectionR, 1);
+                            // Linked: the louder channel's envelope sets one gain for both.
+                            dynamicEQ.processBandLinked(band, sampleL, sampleR);
                             applyFilterStereo(filter);
                             applyFilterStereo(svfDynGainFilters[(size_t)(band - 1)]);
                         }
@@ -781,6 +799,8 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
                         int routing = effectiveRouting[(size_t)band];
                         if (bandDynEnabled[(size_t)band])
                         {
+                            // Detect what the band processes: one channel, Mid,
+                            // Side, or both channels linked (the louder one).
                             float detL = sampleL, detR = sampleR;
                             if (routing == 3 || routing == 4)
                             {
@@ -791,10 +811,7 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
                             }
                             else if (routing == 1) { detR = 0.0f; }
                             else if (routing == 2) { detL = 0.0f; }
-                            float detectionL = dynamicEQ.processDetection(band, detL, 0);
-                            float detectionR = dynamicEQ.processDetection(band, detR, 1);
-                            dynamicEQ.processBand(band, detectionL, 0);
-                            dynamicEQ.processBand(band, detectionR, 1);
+                            dynamicEQ.processBandLinked(band, detL, detR);
                             applyFilterWithRouting(filter, routing);
                             applyFilterWithRouting(svfDynGainFilters[(size_t)(band - 1)], routing);
                         }

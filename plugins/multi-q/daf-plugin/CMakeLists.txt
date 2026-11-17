@@ -87,6 +87,20 @@ if(NOT CMAKE_CROSSCOMPILING)
     target_link_libraries(MultiQMatchIRTest PRIVATE Threads::Threads)
     add_test(NAME MultiQMatchIR COMMAND MultiQMatchIRTest)
 
+    # Band dynamics through the real plugin and its host parameters: block
+    # size, stereo linking at any phase, routing, RMS detection and its window,
+    # the gain grid, bad input and re-activation, held to the same values as
+    # the JUCE Multi-Q (the same test source builds there).
+    add_executable(MultiQDynamicsTest
+        ../tests/test_multiq_dynamics.cpp
+        ../core/MultiQDSP.cpp
+        ../core/MultiQMatch.cpp
+        ../../shared-daf/dsp/FourKEQDSP.cpp
+        "${DAF_PATH}/daf/src/DafPlugin.cpp")
+    target_link_libraries(MultiQDynamicsTest PRIVATE multi-q-2)
+    target_compile_definitions(MultiQDynamicsTest PRIVATE DAF_PLUGIN_TARGET_CLAP)
+    add_test(NAME MultiQDynamics COMMAND MultiQDynamicsTest)
+
     add_executable(MultiQHostStateTest
         tests/MultiQHostStateTest.cpp
         ../core/MultiQDSP.cpp

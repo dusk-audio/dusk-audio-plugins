@@ -439,6 +439,7 @@ private:
             p.bandDynRange[band]     = f(mqidx::dynRange(band));
             p.bandDynRatio[band]     = f(mqidx::dynRatio(band));
         }
+        p.dynDetectionRms = ci(kParamDynDetectionMode) == 1;   // Peak=0, RMS=1
 
         p.masterGain     = f(kParamMasterGain);
         p.processingMode = ci(kParamProcessingMode);
