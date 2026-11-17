@@ -242,6 +242,12 @@ BASE = {
 # and 5.5 -> 3.1 dB, all of it the filter-envelope pitch swoop. Cross Mod is not
 # shown on Oracle's panel, so these two presets carry a setting users cannot
 # see there.
+# Mono and Modular no longer count the noise in the mixer's level sum (#303,
+# 2026-11-17), so noise stops turning the oscillators down. The four presets
+# whose levels added up past 1 with their noise (Sub Thunder, Alien Transmission,
+# Noise Sweep, Modular English Horn) had every level, noise included, divided by
+# that old sum: the mix is then exactly what the old division made, and below 1,
+# so nothing divides it now. They render as before to within float rounding.
 PRESETS = [
  ("Neon Nights", {"mode":0,"osc1Wave":0,"osc2Wave":4,"osc2Detune":8,"filterCutoff":2500,"filterRes":0.15,"filterEnvAmt":0.3,"ampA":0.4,"ampD":0.6,"ampS":0.85,"ampR":1.8,"cosmosChorus":3,"analogAmt":0.3,"reverbOn":1,"reverbSize":0.6,"reverbMix":0.2}),
  ("Glass Highway", {"mode":0,"filterCutoff":5000,"filterRes":0.35,"ampA":0.005,"ampD":0.25,"ampS":0.5,"ampR":0.6,"cosmosChorus":1,"arpOn":1,"arpRate":3,"arpGate":0.6,"delayOn":1,"delayMix":0.2}),
@@ -256,7 +262,7 @@ PRESETS = [
  ("Pulsing Darkness", {"mode":2,"osc1Wave":4,"osc2Wave":0,"osc2Semi":-12,"filterCutoff":600,"filterRes":0.55,"filterEnvAmt":0.5,"subLevel":0.9,"filtA":0.001,"filtD":0.15,"filtS":0.05,"arpOn":1,"arpRate":3,"vintage":0.3}),
  ("Acid Squelch", {"mode":2,"filterCutoff":400,"filterRes":0.85,"filterEnvAmt":0.95,"filtA":0.001,"filtD":0.15,"filtS":0.0,"subLevel":0.7,"portaTime":0.08,"ampD":0.3,"ampS":0.0,"ampR":0.15}),
  ("Screaming Lead", {"masterVol":-3.0,"mode":2,"filterCutoff":6000,"filterRes":0.3,"ampA":0.005,"portaTime":0.1,"driveOn":1,"driveAmt":0.4,"delayOn":1,"delayMix":0.2}),
- ("Sub Thunder", {"mode":2,"osc1Wave":3,"osc2Wave":3,"filterCutoff":400,"subLevel":1.0,"noiseLevel":0.02}),
+ ("Sub Thunder", {"mode":2,"osc1Wave":3,"osc2Wave":3,"filterCutoff":400,"osc1Level":0.330578512,"osc2Level":0.247933884,"subLevel":0.41322314,"noiseLevel":0.00826446281}),
  ("Sync Sweep", {"mode":2,"osc2Semi":7,"filterCutoff":800,"filterRes":0.6,"filterEnvAmt":0.7,"filtA":0.01,"filtD":0.4,"ringMod":0.3,"delayOn":1,"delayMix":0.2}),
  # Flagship (design-doc mandate): Oracle mode, two slightly detuned saws, arp
  # Up-Down 1/8 with latch so holding a Cmaj-ish chord instantly plays the famous
@@ -281,7 +287,7 @@ PRESETS = [
  ("Acid Machine", {"mode":2,"osc1Wave":0,"filterCutoff":350,"filterRes":0.9,"filterEnvAmt":0.95,"filtA":0.001,"filtD":0.12,"filtS":0.0,"ampD":0.2,"ampS":0.0,"portaTime":0.06,"glideMode":1,"arpOn":1,"arpRate":3,"arpGate":0.6}),
  ("Thunder Sub", {"mode":2,"osc1Wave":3,"osc2Wave":3,"osc2Semi":-12,"filterCutoff":200,"filterRes":0.15,"subLevel":1.0,"subWave":1,"ampA":0.01,"ampS":1.0,"velCurve":1}),
  ("Voltage Seq", {"mode":3,"filterCutoff":2000,"filterRes":0.5,"filterEnvAmt":0.4,"shRate":8.0,"arpOn":1,"arpRate":3,"arpMode":0,"arpOctave":2,"delayOn":1,"delayMix":0.2}),
- ("Alien Transmission", {"mode":3,"fmAmount":0.7,"ringMod":0.4,"hardSync":1,"osc2Semi":7,"filterCutoff":4000,"filterRes":0.4,"ampA":0.3,"ampR":2.0,"noiseLevel":0.1,"reverbOn":1,"reverbDecay":5.0,"reverbMix":0.4,"vintage":0.4}),
+ ("Alien Transmission", {"mode":3,"fmAmount":0.7,"ringMod":0.4,"hardSync":1,"osc2Semi":7,"filterCutoff":4000,"filterRes":0.4,"ampA":0.3,"ampR":2.0,"osc1Level":0.4,"osc2Level":0.3,"osc3Level":0.25,"noiseLevel":0.05,"reverbOn":1,"reverbDecay":5.0,"reverbMix":0.4,"vintage":0.4}),
  ("Warm Keys", {"masterVol":-2.0,"mode":0,"osc1Wave":2,"osc2Wave":3,"filterCutoff":4000,"ampA":0.005,"ampD":0.8,"ampS":0.3,"ampR":0.5,"cosmosChorus":1,"velCurve":2}),
  ("Analog Strings", {"masterVol":-3.0,"mode":1,"filterCutoff":3000,"filterRes":0.15,"ampA":0.8,"ampS":0.9,"ampR":1.5,"unisonVoices":4,"unisonDetune":12,"stereoWidth":0.7,"chorusOn":1,"chorusMix":0.3}),
  ("Wobble Bass", {"mode":2,"filterCutoff":600,"filterRes":0.6,"subLevel":0.8,"lfo1Rate":4.0,"lfo1Shape":0,"modSrc0":1,"modDst0":5,"modAmt0":0.6}),
@@ -289,7 +295,7 @@ PRESETS = [
  ("Drone Machine", {"mode":3,"fmAmount":0.3,"osc3Level":0.6,"osc3Wave":3,"filterCutoff":1200,"filterRes":0.55,"ampA":3.0,"ampS":1.0,"ampR":5.0,"lfo1Rate":0.1,"modSrc0":1,"modDst0":5,"modAmt0":0.4,"reverbOn":1,"reverbDecay":12.0,"reverbMix":0.5,"vintage":0.6}),
  ("Arp Factory", {"mode":0,"filterCutoff":4500,"filterRes":0.3,"filterEnvAmt":0.4,"filtD":0.2,"ampA":0.003,"ampD":0.15,"ampS":0.4,"ampR":0.3,"cosmosChorus":3,"arpOn":1,"arpMode":2,"arpRate":4,"arpOctave":3,"arpGate":0.5,"arpSwing":0.3,"delayOn":1,"delayMix":0.2}),
  ("Fat Fifth", {"masterVol":-3.5,"mode":1,"osc2Semi":7,"filterCutoff":3500,"filterRes":0.2,"ampA":0.01,"ampS":0.8,"unisonVoices":3,"unisonDetune":8,"stereoWidth":0.65}),
- ("Noise Sweep", {"mode":3,"osc1Level":0.0,"osc2Level":0.0,"noiseLevel":1.0,"filterCutoff":500,"filterRes":0.7,"filterEnvAmt":0.8,"filtA":0.5,"filtD":2.0,"filtS":0.1,"ampA":0.3,"ampS":0.7,"ampR":3.0,"reverbOn":1,"reverbMix":0.4}),
+ ("Noise Sweep", {"mode":3,"osc1Level":0.0,"osc2Level":0.0,"osc3Level":0.333333333,"noiseLevel":0.666666667,"filterCutoff":500,"filterRes":0.7,"filterEnvAmt":0.8,"filtA":0.5,"filtD":2.0,"filtS":0.1,"ampA":0.3,"ampS":0.7,"ampR":3.0,"reverbOn":1,"reverbMix":0.4}),
  ("Init Cosmos", {"mode":0,"cosmosChorus":3}),
  ("Init Oracle", {"masterVol":-4.0,"mode":1}),
  ("Init Mono", {"mode":2}),
@@ -441,8 +447,8 @@ PRESETS = [
  # Modular English Horn: triangle oscillators with sync, FM and ring mod into the
  # driven ladder, key-tracked cutoff, and mod-wheel vibrato from LFO 2.
  ("Modular English Horn", {"mode":3,"masterVol":6,"stereoWidth":0.780000031,"oversampling":2,
-   "analogAmt":1,"osc1Wave":2,"osc1Level":1,"osc2Wave":2,"osc2Detune":2.38418579e-07,"osc2Level":1,
-   "osc3Wave":3,"osc3Level":1,"noiseLevel":0.0650000274,
+   "analogAmt":1,"osc1Wave":2,"osc1Level":0.326264271,"osc2Wave":2,"osc2Detune":2.38418579e-07,"osc2Level":0.326264271,
+   "osc3Wave":3,"osc3Level":0.326264271,"noiseLevel":0.0212071866,
    "filterCutoff":532.145996,"filterRes":0.295000017,"filterEnvAmt":0.650000095,
    "ampA":0.115087986,"ampD":0.12506099,"ampS":0.295000166,"ampR":0.127077311,
    "filtA":1.65958917,"filtD":0.86520803,"filtS":0.350000083,"filtR":0.691831708,

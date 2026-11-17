@@ -815,7 +815,10 @@ private:
                 }
 
                 mix = osc1Sample * params.osc1Level + osc2Sample * params.osc2Level + subSample + noiseSample;
-                activeGain = params.osc1Level + params.osc2Level + params.subLevel + params.noiseLevel;
+                // Noise is not part of the level sum (as in Oracle): dividing by it
+                // turned the oscillators down when the noise came up (one saw at full
+                // -2.6 to -3.0 dB with noise at full). The oscillators share their own.
+                activeGain = params.osc1Level + params.osc2Level + params.subLevel;
                 break;
             }
 
@@ -846,7 +849,9 @@ private:
                 }
 
                 mix = osc1Sample * params.osc1Level + osc2Sample * params.osc2Level + osc3Sample + noiseSample;
-                activeGain = params.osc1Level + params.osc2Level + params.osc3Level + params.noiseLevel;
+                // Noise is not part of the level sum, as in Mono and Oracle (one saw at
+                // full was -2.8 to -3.2 dB with noise at full).
+                activeGain = params.osc1Level + params.osc2Level + params.osc3Level;
                 break;
             }
 

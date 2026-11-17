@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Oracle mixer noise gate: white, at the measured level, no ducking.
+"""Mixer noise gate: Oracle white at the measured level; no mode ducks its oscillators.
 
 Oracle's mixer noise follows measurements of the instrument it is modeled on
 (#303, 2026-11-17; Voice.hpp, ORACLE MIXER NOISE): white rather than pink, at a
@@ -22,6 +22,20 @@ output limiter stays out of it, 48 kHz:
 
 The rate row passed before too (pink noise is not rate-scaled); it guards the
 white source's density scaling, which a fixed per-sample level would break.
+
+Mono and Modular keep their pink noise but, like Oracle, no longer count it in
+the mixer's level sum (#303, 2026-11-17). Same voice and settings, the mode's
+other sources (sub, osc 3) at 0:
+  pink       octave bands 125 Hz .. 2 kHz flat (0 dB per octave, +-1)
+  no duck    noise at full lowers a single saw by no more than 0.5 dB
+
+    measured                 now            before (noise in the level sum)
+    Mono slope, dB/oct       -0.0           -0.0
+    Mono ducking             -0.34..-0.38   -2.55..-2.96
+    Modular ducking          -0.34..-0.38   -2.78..-3.24
+
+What is left of the ducking is the filter's input saturation reacting to the
+noise's own power, not the mixer.
 """
 import sys
 
@@ -78,6 +92,24 @@ def main():
             rows.append(("level: 1 kHz band re own saw, 2x", rel, "dB", abs(rel + 22.3) <= 1.5))
     spread = max(one_k.values()) - min(one_k.values())
     rows.append(("rate: 1 kHz band spread over 1x/2x/4x", spread, "dB", spread <= 1.0))
+
+    for mode, label, others in ((2, "Mono", dict(subLevel=0)), (3, "Modular", dict(osc3Level=0))):
+        for osf in (1, 2, 4):
+            fs, s0 = render(mode, 57, 3.0, osf, f"noise_m{mode}s0_{osf}",
+                            **dict(BASE, osc1Level=1, osc2Level=0, noiseLevel=0, **others))
+            _, s1 = render(mode, 57, 3.0, osf, f"noise_m{mode}s1_{osf}",
+                           **dict(BASE, osc1Level=1, osc2Level=0, noiseLevel=1, **others))
+            f, P0 = welch(s0[int(0.5 * fs):, 0], fs)
+            _, P1 = welch(s1[int(0.5 * fs):, 0], fs)
+            hh = np.round(f / F0)
+            harm = (hh >= 1) & (np.abs(f - hh * F0) < 3 * fs / 16384) & (f < 20000)
+            duck = 10 * np.log10(P1[harm].sum() / P0[harm].sum())
+            rows.append((f"{label}: no duck, one saw, {osf}x", duck, "dB", duck >= -0.5))
+        fs, n = render(mode, 57, 3.0, 2, f"noise_m{mode}n", **dict(BASE, osc1Level=0, osc2Level=0, noiseLevel=1, **others))
+        f, Pn = welch(n[int(0.5 * fs):, 0], fs)
+        lv = [10 * np.log10(octave(f, Pn, c)) for c in CENTRES]
+        slope = float(np.polyfit(np.log2(CENTRES), lv, 1)[0])
+        rows.append((f"{label}: pink, slope 125 Hz .. 2 kHz", slope, "dB/oct", abs(slope) <= 1.0))
 
     fails = 0
     for name, v, unit, ok in rows:

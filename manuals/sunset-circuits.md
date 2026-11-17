@@ -139,7 +139,7 @@ Mode-specific controls visible in Oracle: the six poly-mod knobs and the **Sync*
 
 ### Mono: aggressive monophonic
 
-Mono is modeled on a 70s Japanese monophonic synth voiced for aggression: two oscillators plus a sub, a fat driven filter, ring modulation, and hard sync. It is a single voice (one note at a time), which is exactly right for basses and leads that need weight and glide.
+Mono is modeled on a 70s Japanese monophonic synth voiced for aggression: two oscillators plus a sub, a fat driven filter, ring modulation, and hard sync. It is a single voice (one note at a time), which is exactly right for basses and leads that need weight and glide. Its noise is pink, and turning it up adds to the sound without turning the oscillators down.
 
 ![Mono mode: a grey panel with two oscillators plus the sub oscillator, and the RING and SYNC sub-panel carrying the ring modulation knob and the hard sync button](screenshots/sunset-circuits/03-mode-mono.png)
 
@@ -147,7 +147,7 @@ Mode-specific controls visible in Mono: the **Sub** oscillator (wave and level),
 
 ### Modular: semi-modular
 
-Modular is modeled on a 70s semi-modular synthesizer: three oscillators, a transistor-ladder filter, linear FM between oscillators, a sample and hold, and a real dispersive spring reverb. It is two-voice, so you can play the occasional dyad, but it is at its best on evolving drones, sci-fi effects, and sequences.
+Modular is modeled on a 70s semi-modular synthesizer: three oscillators, a transistor-ladder filter, linear FM between oscillators, a sample and hold, and a real dispersive spring reverb. It is two-voice, so you can play the occasional dyad, but it is at its best on evolving drones, sci-fi effects, and sequences. Its noise is pink, and turning it up adds to the sound without turning the oscillators down.
 
 ![Modular mode: a green panel with a third oscillator panel, the audio patch and filter sub-panel carrying sample and hold, oscillator cross routing and ring modulation, and the reverb section showing its fixed spring send](screenshots/sunset-circuits/04-mode-modular.png)
 
