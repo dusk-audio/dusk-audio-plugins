@@ -315,16 +315,22 @@ void rmsDetection(double sr)
 // at 44.1, 48 and 96 kHz; 10.0 ms with a 5 ms window, 8.5 ms with 3 ms, 36 ms
 // with 50 ms. The 12 to 15 ms bound holds the window to about 8 to 11 ms.
 // Attack 0.1 ms and range 24 dB keep the envelope and the range out of the
-// way. `plugin` must be fresh or settled at silence.
+// way. `plugin` must be fresh or settled at silence. NaN if a gain it measures
+// on the way is not finite: no comparison with a NaN is true, so the search
+// would pass over it, and a NaN fails every check on the result.
 double rmsRiseMs(Plugin& plugin, double sr)
 {
     const Signal in = tone(sr, 0.1, 0.1, 0.05, -6.0, -6.0);
     const Signal out = run(plugin, in, {512});
     const int onset = (int)(0.1 * sr), lat = plugin.latency(), win = (int)std::lround(0.001 * sr);
     const double final = gainDb(out.l, in.l, onset + (int)(0.06 * sr), onset + (int)(0.09 * sr), lat);
+    if (!std::isfinite(final)) return std::numeric_limits<double>::quiet_NaN();
     for (int t = 0; t < (int)(0.06 * sr); t += std::max(1, win / 4))
-        if (gainDb(out.l, in.l, onset + t, onset + t + win, lat) <= 0.9 * final)
-            return 1000.0 * (t + 0.5 * win) / sr;
+    {
+        const double g = gainDb(out.l, in.l, onset + t, onset + t + win, lat);
+        if (!std::isfinite(g)) return std::numeric_limits<double>::quiet_NaN();
+        if (g <= 0.9 * final) return 1000.0 * (t + 0.5 * win) / sr;
+    }
     return 1000.0;
 }
 
@@ -362,7 +368,10 @@ void oversamplingSwitch(double sr)
 
 // Samples from a -6 dBFS burst's onset at `onset` until the dynamics first
 // change the output: the first sample that differs from the same render with
-// the band's dynamics off. Peak mode, attack 0.1 ms, host block 2048.
+// the band's dynamics off. Peak mode, attack 0.1 ms, host block 2048. -1 if
+// the output never changes; kNotFinite if a sample it reads on the way is not
+// finite, which memcmp would take for a change.
+constexpr int kNotFinite = -2;
 int reaction(double sr, int onset)
 {
     Settings on;
@@ -378,8 +387,11 @@ int reaction(double sr, int onset)
     const Signal a = run(withDynamics, in, {2048});
     const Signal b = run(without, in, {2048});
     for (size_t i = 0; i < a.l.size(); ++i)
+    {
+        if (!std::isfinite(a.l[i]) || !std::isfinite(b.l[i])) return kNotFinite;
         if (std::memcmp(&a.l[i], &b.l[i], sizeof(float)) != 0)
             return (int)i - onset;
+    }
     return -1;
 }
 
@@ -391,15 +403,17 @@ void gridPeriod(double sr)
     // positions within a period) the reaction spreads by one period less one
     // sample. A coarser grid, or block-rate updates, spread wider.
     const int period = (int)std::lround(0.0005 * sr);
-    int lo = 1 << 30, hi = -1;
+    int lo = 1 << 30, hi = -1, notFinite = 0;
     for (int k = 0; k < 50; ++k)
     {
         const int r = reaction(sr, (int)(0.05 * sr) + 7 * k);
+        if (r == kNotFinite) { ++notFinite; continue; }
         lo = std::min(lo, r);
         hi = std::max(hi, r);
     }
     std::printf("  sr=%.0f grid: reaction %d to %d samples after onset, spread %d (period %d)\n",
                 sr, lo, hi, hi - lo, period);
+    check(notFinite == 0, "every render around a burst is finite", notFinite, 0.0);
     check(lo >= 0, "the dynamics react to every burst", lo, 0.0);
     check(hi - lo >= period - 2 && hi - lo <= period, "the gain steps on the 0.5 ms grid at host block 2048", hi - lo, period - 1);
 }
@@ -489,15 +503,24 @@ void detectionSwitchOneChannel(double sr, bool loudRight)
     const auto& x = loudRight ? in.r : in.l;
     const auto& y = loudRight ? out.r : out.l;
     const int lat = plugin.latency(), ms = (int)std::lround(0.001 * sr);
-    double least = -1.0e9;   // the least reduction (highest gain) of any 1 ms window
+    // The least reduction (highest gain) of any 1 ms window. A window whose
+    // gain is not finite counts against the switch: std::max would pass over a
+    // NaN, and with every window NaN the check below would pass at -1e9.
+    double least = -1.0e9;
+    int notFinite = 0;
     for (int t = 0; t + ms <= (int)(0.06 * sr); t += ms)
-        least = std::max(least, gainDb(y, x, t, t + ms, lat));
+    {
+        const double g = gainDb(y, x, t, t + ms, lat);
+        if (std::isfinite(g)) least = std::max(least, g);
+        else ++notFinite;
+    }
     Settings rms;
     rms.rms = true;
     const Gain fresh = steady(sr, rms, dbL, dbR);
     const double settled = loudRight ? fresh.right : fresh.left;
     std::printf("  sr=%.0f Peak to RMS with only the %s channel loud: least reduction in the first 60 ms "
                 "%+.3f dB, fresh RMS instance %+.3f dB\n", sr, loudRight ? "right" : "left ", least, settled);
+    check(notFinite == 0 && std::isfinite(settled), "every gain measured across the switch is finite", notFinite, 0.0);
     check(least <= settled + 0.05, "switching Peak to RMS keeps the louder channel's reduction", least, settled);
 }
 
