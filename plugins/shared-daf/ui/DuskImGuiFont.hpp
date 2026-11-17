@@ -53,12 +53,17 @@ inline const char* findCrispFontPath()
 // spelling that survives both the TTL generator and the UI. Listed as two extra
 // codepoints rather than all of General Punctuation to keep the atlas small: this
 // set is rasterized once per font size, and the sets run up to CrispFontSet::kMax.
+// U+2192 RIGHTWARDS ARROW is the routing arrow in labels such as "OSC1→OSC2"
+// (Sunset Circuits); outside this table it drew as '?'. The system bold faces
+// carry it (Arial, Liberation Sans, DejaVu Sans); the bundled Barlow Condensed
+// and the Verdana fallback do not, and for them nothing changes.
 // A face missing these degrades to the same fallback glyph as before — no regression.
 inline const ImWchar* crispGlyphRanges()
 {
     static const ImWchar ranges[] = {
         0x0020, 0x00FF,   // Basic Latin + Latin-1 Supplement (the ImGui default)
         0x2032, 0x2033,   // PRIME, DOUBLE PRIME (feet / inches)
+        0x2192, 0x2192,   // RIGHTWARDS ARROW (routing labels)
         0,
     };
     return ranges;

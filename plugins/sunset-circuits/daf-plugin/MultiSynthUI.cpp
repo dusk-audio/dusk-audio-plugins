@@ -2536,7 +2536,11 @@ private:
         }
         compactToggle("oracle_sync", kParamHardSync, 850, 427, 916, 449,
                       "SYNC", it, a);
-        text(956, 438, 8.5f, mulA(whiteDimCol(), a), "OSC 1 \xE2\x86\x92 OSC 2", 0, true);
+        // Oracle's sync runs osc 2 -> osc 1: osc 2 is the master and restarts osc 1,
+        // the reverse of Mono and Modular (manual, Oracle: Sync). The arrow reads as
+        // in the face's other routing labels, from the oscillator that acts to the
+        // one it acts on.
+        text(956, 438, 8.5f, mulA(whiteDimCol(), a), "OSC 2 \xE2\x86\x92 OSC 1", 0, true);
     }
     void drawSubMono(float a, bool it)
     {
