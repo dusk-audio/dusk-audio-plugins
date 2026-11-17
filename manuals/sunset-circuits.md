@@ -462,6 +462,8 @@ The **Oversampling** control sets the internal processing rate: **1x**, **2x**, 
 
 Factory presets ship at 2x, except Oracle Trumpet, Modular English Horn and Prism Talking Keys, which keep the 4x they were made with.
 
+The factor changes how clean the high end is and what it costs, not how a patch moves. The slow random pitch wander that the **Analog** control adds to each voice runs on its own clock, so a patch drifts at the same speed and depth at 1x, 2x and 4x and at every session sample rate.
+
 ### Reported latency
 
 The filter that brings the oversampled voices back to the host rate delays them slightly, by an amount that depends on the oversampling factor. The plugin pads the shorter paths so the delay is the same at every factor, and reports it to the host so plugin delay compensation keeps everything aligned:

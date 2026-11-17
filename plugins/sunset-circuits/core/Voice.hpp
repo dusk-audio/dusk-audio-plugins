@@ -182,7 +182,8 @@ public:
         lfo2.prepare(sampleRate); lfo2.seed(seed + 202u);
         sampleAndHold.prepare(sampleRate);
 
-        driftCounter = rng.nextInt(200) + 100;
+        setDriftRate();
+        driftCounter = driftSamples(rng.nextInt(200) + 100);
         driftTarget = rng.nextBipolar();
         driftSmooth = 0.0f;
         filterTrackingOffset = (rng.nextFloat() - 0.5f) * 0.04f;
@@ -227,6 +228,11 @@ public:
         portaFreq.prepare(sampleRate, portaTau);
         retireStep = 1.0f / (float)(kRetireSeconds * sampleRate); // keeps retirePhase
         lfoDepthFadeStep = 1.0f / (float)(kLfoDepthFadeSeconds * sampleRate); // keeps the fades
+        // Analog drift keeps its target and smoothed value; the samples left until
+        // the next target are rescaled so that interval keeps its length in time.
+        const double oldScale = driftStepScale;
+        setDriftRate();
+        driftCounter = maxi(1, (int)std::lround((double)driftCounter * driftStepScale / oldScale));
     }
 
     void reset() noexcept
@@ -512,8 +518,8 @@ public:
 
         // --- base frequency: porta + drift + pitch bend + master tune (fix #2) ---
         float baseFreq = portaFreq.next();
-        if (--driftCounter <= 0) { driftTarget = rng.nextBipolar(); driftCounter = 200 + rng.nextInt(300); }
-        driftSmooth += (driftTarget - driftSmooth) * 0.001f;
+        if (--driftCounter <= 0) { driftTarget = rng.nextBipolar(); driftCounter = driftSamples(200 + rng.nextInt(300)); }
+        driftSmooth += (driftTarget - driftSmooth) * driftCoeff;
         baseFreq *= (1.0f + driftSmooth * params.analogAmount * 0.002f);
         baseFreq *= bendTuneRatio((params.pitchBendSemis + params.masterTuneSemis) / 12.0f);
 
@@ -913,8 +919,32 @@ private:
     float randomPerNote = 0.0f;
     bool  active = false;
     float lastFreq = 0.0f;
+    // ANALOG DRIFT. A random target every 200 to 500 samples, followed by a
+    // one-pole of 0.001 per sample, both counted at kDriftRefRate: 2.1 to 5.2 ms
+    // between targets and a 10.4 ms time constant. They used to be counted in
+    // INTERNAL samples at whatever rate the voice ran, so the wander kept its
+    // depth but moved twice as fast at 4x as at 2x and half as fast at 1x
+    // (pitch-wander centroid 9.3 / 18.9 / 35.0 Hz at 44.1 kHz 1x / 2x / 4x).
+    // The reference is the 48 kHz / 2x default the drift was voiced at, the same
+    // one Oscillator::applyFM calibrates against: renders at 96 kHz internal are
+    // unchanged bit for bit, every other rate now drifts like them.
+    static constexpr double kDriftRefRate = 96000.0;
+    void setDriftRate() noexcept
+    {
+        driftStepScale = sr / kDriftRefRate;
+        // 0.001 per sample at the reference, the same decay per second elsewhere.
+        // At the reference this is 1 - 0.999 in double, which rounds to 0.001f.
+        driftCoeff = (float)(1.0 - std::pow(1.0 - 0.001, kDriftRefRate / sr));
+    }
+    int driftSamples(int refSamples) const noexcept
+    {
+        return maxi(1, (int)std::lround((double)refSamples * driftStepScale));
+    }
+    static int maxi(int a, int b) noexcept { return a > b ? a : b; }
     float driftTarget = 0.0f, driftSmooth = 0.0f;
     int   driftCounter = 0;
+    double driftStepScale = 1.0;   // sr / kDriftRefRate
+    float driftCoeff = 0.001f;     // one-pole coefficient per sample at sr
     float filterTrackingOffset = 0.0f, voicePanOffset = 0.0f;
     float baseLfo1Rate = 1.0f, baseLfo2Rate = 0.5f;
     float lfoRateMod1 = 0.0f, lfoRateMod2 = 0.0f;
