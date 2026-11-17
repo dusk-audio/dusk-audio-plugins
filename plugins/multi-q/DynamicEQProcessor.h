@@ -1,17 +1,36 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include "SafeFloat.h"
 #include <array>
 #include <atomic>
 #include <vector>
 
 // Per-band dynamic EQ: envelope followers with soft-knee compression and lookahead.
 // Each band acts as an independent compressor at its frequency.
+//
+// Detection is stereo-linked: each channel's band-passed signal is followed by
+// its own envelope and the louder envelope sets one gain for both channels, so
+// the reduction does not depend on the phase between them (a band routed to one
+// channel or to Mid/Side measures just that signal). Peak mode follows the
+// rectified band signal; RMS mode the louder channel's RMS level over
+// kRmsWindowSeconds. Multi-Q 2 (core/MultiQDynamics.hpp) does the same.
 class DynamicEQProcessor
 {
 public:
     static constexpr int NUM_BANDS = 8;
     static constexpr int MAX_LOOKAHEAD_SAMPLES = 512;  // ~11ms at 44.1kHz
+
+    // RMS detection window (one-pole time constant). Long enough to average the
+    // ripple of a steady tone in any band above about 100 Hz (the detected level
+    // ripples by about +/-0.35 dB at 100 Hz and +/-0.035 dB at 1 kHz), short
+    // enough that the band's own Attack and Release keep their meaning.
+    static constexpr double kRmsWindowSeconds = 0.010;
+
+    // Largest band-passed level the detectors take (+80 dBFS). A larger finite
+    // input would overflow the RMS mean square to infinity, which never decays
+    // and would hold the band at full range.
+    static constexpr float kMaxDetectionLevel = 1.0e4f;
 
     struct AudioDelayLine
     {
@@ -42,6 +61,9 @@ public:
     {
         sampleRate.store(newSampleRate, std::memory_order_release);
         numChannels = channelCount;
+        updateRmsCoefficient();
+        for (auto& ms : meanSquare)
+            ms.fill(0.0f);
 
         channelStates.resize(static_cast<size_t>(numChannels));
         for (auto& ch : channelStates)
@@ -171,6 +193,9 @@ public:
 
         resetDelayLines();
 
+        for (auto& ms : meanSquare)
+            ms.fill(0.0f);
+
         for (auto& meter : dynamicGainMeters)
             meter.store(0.0f, std::memory_order_relaxed);
     }
@@ -182,8 +207,12 @@ public:
     void updateSampleRate(double newRate)
     {
         sampleRate.store(newRate, std::memory_order_release);
+        updateRmsCoefficient();
         reset();
     }
+
+    /** Dynamics Detection Mode: false = Peak (default), true = RMS. Audio thread. */
+    void setRmsDetection(bool rms) { rmsDetection = rms; }
 
     // Lock-free SPSC band parameter transfer via SeqLock (UI thread writes, audio thread reads).
     // Torn reads are avoided: the audio thread caches a consistent snapshot and falls back
@@ -214,16 +243,28 @@ public:
         coeffTransfers[static_cast<size_t>(bandIndex)].publish(dc);
     }
 
-    // Returns dynamic gain adjustment in dB (0 = no change, negative = reduction)
-    float processBand(int bandIndex, float inputLevel, int channel)
+    // One sample of a band's stereo-linked dynamics. Band-passes each channel's
+    // detection input, follows each with its own envelope (the band's attack and
+    // release), and turns both channels down by one gain from the louder
+    // envelope. Returns that gain, smoothed against zipper noise (dB, <= 0), and
+    // updates the band's meter. Peak follows each channel's rectified band
+    // signal; RMS the louder channel's RMS level over kRmsWindowSeconds, with
+    // the right envelope tracking the left so a mode switch does not jump. Both
+    // mean squares run in either mode for the same reason. For a band routed to
+    // one channel, pass the other as 0; for Mid or Side, pass that signal twice.
+    float processBandLinked(int bandIndex, float inL, float inR)
     {
-        if (bandIndex < 0 || bandIndex >= NUM_BANDS ||
-            channel < 0 || channel >= static_cast<int>(channelStates.size()))
+        if (bandIndex < 0 || bandIndex >= NUM_BANDS || channelStates.size() < 2)
             return 0.0f;
+        const auto bi = static_cast<size_t>(bandIndex);
+        const float dl = processDetection(bandIndex, inL, 0);
+        const float dr = processDetection(bandIndex, inR, 1);
+        auto& ms = meanSquare[bi];
+        ms[0] = rmsCoeff * ms[0] + (1.0f - rmsCoeff) * (dl * dl);
+        ms[1] = rmsCoeff * ms[1] + (1.0f - rmsCoeff) * (dr * dr);
 
         // SeqLock read: pick up new parameters into audio thread's cached copy
         {
-            auto bi = static_cast<size_t>(bandIndex);
             auto& transfer = bandParamTransfers[bi];
             uint32_t seq = transfer.sequence.load(std::memory_order_acquire);
             if (seq != lastBandParamSeq[bi] && (seq & 1) == 0)
@@ -237,58 +278,42 @@ public:
                 }
             }
         }
-        const auto& params = activeBandParams[static_cast<size_t>(bandIndex)];
+        const auto& params = activeBandParams[bi];
         if (!params.enabled)
             return 0.0f;
 
-        auto& state = channelStates[static_cast<size_t>(channel)]
-                          .bands[static_cast<size_t>(bandIndex)];
-
-        float detectionLevel = inputLevel;
-        int currentLookahead = lookaheadSamples.load(std::memory_order_acquire);
-        if (currentLookahead > 0 &&
-            channel < static_cast<int>(lookaheadBuffers.size()) &&
-            bandIndex < static_cast<int>(lookaheadBuffers[static_cast<size_t>(channel)].size()))
+        auto& left = channelStates[0].bands[bi];
+        auto& right = channelStates[1].bands[bi];
+        const float attackCoeff = calcCoefficient(params.attack);
+        const float releaseCoeff = calcCoefficient(params.release);
+        if (rmsDetection)
         {
-            auto& lookahead = lookaheadBuffers[static_cast<size_t>(channel)][static_cast<size_t>(bandIndex)];
-            lookahead.buffer[static_cast<size_t>(lookahead.writeIndex)] = inputLevel;
-
-            float peak = 0.0f;
-            int bufSize = static_cast<int>(lookahead.buffer.size());
-            for (int i = 0; i < currentLookahead; ++i)
-            {
-                int idx = (lookahead.writeIndex - i + bufSize) % bufSize;
-                peak = juce::jmax(peak, lookahead.buffer[static_cast<size_t>(idx)]);
-            }
-
-            detectionLevel = peak;
-            lookahead.writeIndex = (lookahead.writeIndex + 1) % bufSize;
+            followEnvelope(left.envelope, lookaheadPeak(bandIndex, 0, std::sqrt(std::max(ms[0], ms[1]))),
+                           attackCoeff, releaseCoeff);
+            right.envelope = left.envelope;
         }
-
-        float inputDb = juce::Decibels::gainToDecibels(detectionLevel, -96.0f);
-        float attackCoeff = calcCoefficient(params.attack);
-        float releaseCoeff = calcCoefficient(params.release);
-
-        if (inputDb > state.envelope)
-            state.envelope = attackCoeff * state.envelope + (1.0f - attackCoeff) * inputDb;
         else
-            state.envelope = releaseCoeff * state.envelope + (1.0f - releaseCoeff) * inputDb;
-
-        state.currentGainDb = calculateDynamicGain(state.envelope, params);
+        {
+            followEnvelope(left.envelope, lookaheadPeak(bandIndex, 0, dl), attackCoeff, releaseCoeff);
+            followEnvelope(right.envelope, lookaheadPeak(bandIndex, 1, dr), attackCoeff, releaseCoeff);
+        }
+        left.currentGainDb = calculateDynamicGain(juce::jmax(left.envelope, right.envelope), params);
 
         float smoothCoeff = calcCoefficient(2.0f);  // 2ms anti-zipper
-        state.smoothedGainDb = smoothCoeff * state.smoothedGainDb +
-                               (1.0f - smoothCoeff) * state.currentGainDb;
+        left.smoothedGainDb = smoothCoeff * left.smoothedGainDb +
+                              (1.0f - smoothCoeff) * left.currentGainDb;
 
         // Always update meter to track current gain (decays naturally with envelope)
-        dynamicGainMeters[static_cast<size_t>(bandIndex)]
-            .store(state.smoothedGainDb, std::memory_order_relaxed);
+        dynamicGainMeters[bi].store(left.smoothedGainDb, std::memory_order_relaxed);
 
-        return state.smoothedGainDb;
+        return left.smoothedGainDb;
     }
 
     // Bandpass-filter input for sidechain detection (lock-free coefficient updates)
     // Each channel maintains its own copy of detection coefficients to avoid data races.
+    // Returns |output|, at most kMaxDetectionLevel. A non-finite output (a NaN or
+    // infinite input) clears this channel's filter and reads as silence, so one
+    // bad sample cannot stop the band's dynamics.
     float processDetection(int bandIndex, float input, int channel)
     {
         if (bandIndex < 0 || bandIndex >= NUM_BANDS ||
@@ -324,7 +349,12 @@ public:
         state.z1 = c[1] * input - c[4] * output + state.z2;
         state.z2 = c[2] * input - c[5] * output;
 
-        return std::abs(output);
+        if (!safeIsFinite(output))
+        {
+            state.reset();
+            return 0.0f;
+        }
+        return juce::jmin(std::abs(output), kMaxDetectionLevel);
     }
 
     float getCurrentDynamicGain(int bandIndex) const
@@ -354,6 +384,45 @@ private:
             return 0.0f;
         float tau = timeMs / 1000.0f;
         return std::exp(-1.0f / (tau * static_cast<float>(sampleRate.load(std::memory_order_acquire))));
+    }
+
+    void updateRmsCoefficient()
+    {
+        rmsCoeff = static_cast<float>(std::exp(-1.0 / (kRmsWindowSeconds * sampleRate.load(std::memory_order_acquire))));
+    }
+
+    // dB-domain attack/release follower.
+    static void followEnvelope(float& envelope, float level, float attackCoeff, float releaseCoeff)
+    {
+        const float levelDb = juce::Decibels::gainToDecibels(level, -96.0f);
+        if (levelDb > envelope)
+            envelope = attackCoeff * envelope + (1.0f - attackCoeff) * levelDb;
+        else
+            envelope = releaseCoeff * envelope + (1.0f - releaseCoeff) * levelDb;
+    }
+
+    // Detection level held at its peak over the lookahead window (the level
+    // itself when lookahead is off, as it always is in Multi-Q).
+    float lookaheadPeak(int bandIndex, int channel, float level)
+    {
+        const int currentLookahead = lookaheadSamples.load(std::memory_order_acquire);
+        if (currentLookahead <= 0 ||
+            channel >= static_cast<int>(lookaheadBuffers.size()) ||
+            bandIndex >= static_cast<int>(lookaheadBuffers[static_cast<size_t>(channel)].size()))
+            return level;
+
+        auto& lookahead = lookaheadBuffers[static_cast<size_t>(channel)][static_cast<size_t>(bandIndex)];
+        lookahead.buffer[static_cast<size_t>(lookahead.writeIndex)] = level;
+
+        float peak = 0.0f;
+        int bufSize = static_cast<int>(lookahead.buffer.size());
+        for (int i = 0; i < currentLookahead; ++i)
+        {
+            int idx = (lookahead.writeIndex - i + bufSize) % bufSize;
+            peak = juce::jmax(peak, lookahead.buffer[static_cast<size_t>(idx)]);
+        }
+        lookahead.writeIndex = (lookahead.writeIndex + 1) % bufSize;
+        return peak;
     }
 
     float calculateDynamicGain(float envelopeDb, const BandParameters& params) const
@@ -499,6 +568,11 @@ private:
     std::atomic<int> lookaheadSamples{0};
     std::atomic<bool> softKneeEnabled{true};
     int numChannels = 2;
+
+    // RMS detection (audio thread only)
+    bool rmsDetection = false;
+    float rmsCoeff = 0.0f;                                     // RMS window pole, set from the rate
+    std::array<std::array<float, 2>, NUM_BANDS> meanSquare{};  // per band: L, R mean square
 
     std::atomic<double> sampleRate{44100.0};
 };

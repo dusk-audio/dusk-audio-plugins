@@ -536,6 +536,21 @@ if(NOT CMAKE_CROSSCOMPILING)
     add_test(NAME MultiQAutoGainJuce COMMAND MultiQAutoGainJuceTest)
 endif()
 
+# Band dynamics on the actual JUCE processor: block size, stereo linking at any
+# phase, routing, RMS detection and its window (also across an Oversampling
+# change), the gain grid, bad input and re-activation, held to the same values
+# as Multi-Q 2.
+if(NOT CMAKE_CROSSCOMPILING)
+    add_executable(MultiQDynamicsJuceTest tests/test_multiq_dynamics.cpp)
+    target_compile_definitions(MultiQDynamicsJuceTest PRIVATE
+        MULTIQ_TEST_JUCE=1 $<TARGET_PROPERTY:MultiQ,COMPILE_DEFINITIONS>)
+    target_include_directories(MultiQDynamicsJuceTest PRIVATE
+        "${CMAKE_CURRENT_BINARY_DIR}/MultiQ_artefacts/JuceLibraryCode"
+        $<TARGET_PROPERTY:MultiQ,INCLUDE_DIRECTORIES>)
+    target_link_libraries(MultiQDynamicsJuceTest PRIVATE MultiQ)
+    add_test(NAME MultiQDynamicsJuce COMMAND MultiQDynamicsJuceTest)
+endif()
+
 # #165 / #359: type a value into Multi-Q's knobs and close the field every way a
 # host can. Fails on a destroyed callback, a non-finite parameter, or a value
 # written into the wrong band. No CI job runs it. Without a sanitizer it detects
