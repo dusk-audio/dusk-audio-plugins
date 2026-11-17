@@ -560,8 +560,8 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
     const auto eqType = (EQType)p.eqType;
 
     // The British and Tube characters do not run the Digital bands, so their
-    // solo references and input history fall out of date: they start afresh
-    // when the bands run again.
+    // solo references, input history and delta-solo delay stages fall out of
+    // date: they start afresh when the bands run again.
     if (eqType == EQType::British || eqType == EQType::Tube)
     {
         refRunning.fill(false);
@@ -570,6 +570,7 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
         bandRan.fill(false);
         bandHold.fill(0);
         bandHistoryFill.fill(0);
+        deltaDelayLayout = -1;
     }
 
     // British character: route through the upgraded FourKEQDSP core (its own

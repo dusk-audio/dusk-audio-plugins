@@ -16,7 +16,9 @@
 //     silenced band saturates and boosts or cuts, and so does switching a
 //     saturating band on or off;
 //   * phase invert, pan and delta solo of a saturating band act on the band's
-//     effect lined up with its delay, as they do without oversampling.
+//     effect lined up with its delay, as they do without oversampling;
+//   * a delta solo's delay stages start empty when the Digital bands come
+//     back from another character.
 //
 // Runs the real plugin through DAF's PluginExporter, its host parameters and
 // the editor's solo bridge.
@@ -459,6 +461,42 @@ void shapingBandClick(double sr, int os, float gain, float q, float drive)
           "a solo that silences a saturating band which also boosts or cuts does not click",
           std::max(atEngage, atRelease) / steady, 1.5);
 }
+
+// Runs `seconds` of `in` (or silence when `in` is null, from the start) and
+// returns the largest output sample.
+double play(Plugin& plugin, double sr, double seconds, const Signal* in)
+{
+    const size_t n = (size_t)(seconds * sr);
+    std::vector<float> l(n, 0.0f), r(n, 0.0f);
+    if (in) for (size_t i = 0; i < n; ++i) { l[i] = in->l[i % in->l.size()]; r[i] = in->r[i % in->r.size()]; }
+    for (size_t pos = 0; pos < n; pos += kBlock)
+        plugin.process(l.data() + pos, r.data() + pos, (int)std::min<size_t>(kBlock, n - pos));
+    double peak = 0.0;
+    for (size_t i = 0; i < n; ++i)
+        peak = std::max({peak, (double)std::abs(l[i]), (double)std::abs(r[i])});
+    return peak;
+}
+
+void deltaChainAcrossCharacterChange(double sr)
+{
+    // Delta solo of band 3 with saturating bands after it: the difference runs
+    // through one delay stage per such band. Switch to British and back with
+    // the same delta solo, then play silence: the stages must start empty, so
+    // the output is silence, not what they held before the switch.
+    Setup s; s.oversampling = 1; s.saturating = {2, 3, 4, 5, 6, 7}; s.drive = 0.6f; s.edges = false;
+    Plugin plugin(sr, s);
+    plugin.solo(3, true);
+    const Signal loud = tone(sr, 0.3, -6.0, 200.0);
+    const double before = play(plugin, sr, 0.3, &loud);
+    plugin.set(kParamEqType, 2.0f);   // British
+    play(plugin, sr, 0.1, nullptr);
+    plugin.set(kParamEqType, 0.0f);   // Digital again
+    const double after = play(plugin, sr, 0.1, nullptr);
+    std::printf("  sr=%.0f delta solo across a switch to British and back: %.3f before, %.1e on silence after\n",
+                sr, before, after);
+    check(before > 1e-3 && after < 1e-6,
+          "returning to Digital, the delta-solo delay stages hold nothing from before", after, 0.0);
+}
 }
 
 int main()
@@ -482,6 +520,7 @@ int main()
         }
         crossfade(sr);
         enableSwitch(sr);
+        deltaChainAcrossCharacterChange(sr);
     }
     std::printf("Multi-Q solo latency: %d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
