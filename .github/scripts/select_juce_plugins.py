@@ -69,14 +69,16 @@ FLEET_WIDE = (
 )
 
 # Subtrees generally owned by DAF targets. Chord Analyzer's extracted numeric
-# model is shared with both legacy desktop adapters and is an explicit exception.
+# model is shared with both legacy desktop adapters, and the Spectrum Analyzer
+# core is compiled into its JUCE plugin; both are explicit exceptions.
 # Keep this aligned with the workflow's ordered paths filter.
 NON_JUCE_SUBTREES = ("/daf-plugin/", "/core/")
-JUCE_SHARED_CORES = ("plugins/chord-analyzer/core/",)
+JUCE_SHARED_CORES = ("plugins/chord-analyzer/core/", "plugins/spectrum-analyzer/core/")
 
 # Exact cross-tree dependencies which do not reach the whole JUCE fleet.
 SHARED_HEADER_TARGETS = {
     "plugins/shared-daf/dsp/DuskSeqLock.hpp": PLUGIN_DIRS["plugins/chord-analyzer/"],
+    "plugins/shared-daf/dsp/DuskFft.hpp": PLUGIN_DIRS["plugins/spectrum-analyzer/"],
 }
 
 
