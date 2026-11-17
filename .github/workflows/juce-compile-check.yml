@@ -46,6 +46,7 @@ on:
       - 'plugins/shared/**'
       - 'plugins/shared-daf/dsp/DuskFilters.hpp'
       - 'plugins/shared-daf/dsp/DuskSeqLock.hpp'
+      - 'plugins/shared-daf/dsp/DuskFft.hpp'
       # The JUCE plugins themselves. Their own PRs were equally unbuilt, and
       # these paths are narrow enough that DAF-only work does not trigger them.
       - 'plugins/4k-eq/**'
@@ -78,12 +79,14 @@ on:
       # the plugin root, and 'plugins/4k-eq/**' matches 'plugins/4k-eq/daf-plugin/**'
       # too, so without these a DAF-only PR would fire all twelve JUCE jobs and
       # daf-build.yml would build it a second time. GitHub applies patterns in
-      # order: subtract these after the plugin roots, then re-include the one
-      # core that this change shares with the legacy desktop adapters.
+      # order: subtract these after the plugin roots, then re-include the cores
+      # that the legacy desktop adapters also compile.
       - '!plugins/*/daf-plugin/**'
       - '!plugins/*/core/**'
       # The extracted Chord Analyzer model also builds into both JUCE adapters.
       - 'plugins/chord-analyzer/core/**'
+      # The Spectrum Analyzer core is compiled straight into its JUCE plugin.
+      - 'plugins/spectrum-analyzer/core/**'
   workflow_dispatch:
 
 # A PR that gets pushed twice should not run two fleets. Never applied to

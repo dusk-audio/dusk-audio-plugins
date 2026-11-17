@@ -62,8 +62,11 @@ algorithms or replace their calibration during the port.
 Retain Hann normalization, display mapping/smoothing/slope/decay/peak hold,
 K-System behavior, true-peak filtering and correlation. LUFS retains its current
 channel-averaged energy convention, gating, and up-to-6000 gated-block history.
-The golden suite explicitly freezes this behavior, including its difference
-from a channel-summed BS.1770 interpretation.
+The golden suite freezes the channel-averaged convention, including its
+difference from a channel-summed BS.1770 interpretation. The core capture test
+(`core/tests/test_core_capture.cpp`) freezes the gating (the absolute gate and
+the integrated and LRA relative gates, each to within 0.3 dB), the 6000-block
+history, and the meter and spectrum readings at fixed positions.
 
 The legacy callback routes only the FFT feed; loudness, K-System, true peak,
 correlation and output/RMS meters use the original input. Mono duplicates the
@@ -106,5 +109,8 @@ demonstrated. Coordinate publication with the fleet release criteria in #189.
 The existing standalone C++ golden suite passes at 44.1/48/96 kHz and all three
 FFT resolutions with zero failures. The 10-second ring stress passes with 3,407
 blocks read and zero torn reads. The ThreadSanitizer build passes with 3,157
-blocks read, zero torn reads and no TSan report. These checks establish the
+blocks read, zero torn reads and no TSan report. That TSan run checks the ring's
+index atomicity, not the ordering of its sample copies: on Apple clang 21 TSan
+does not see the ring's memcpy, and on GCC 11.4 aarch64 a ring with relaxed
+publishes also passes (step-1 review, GH #184). These checks establish the
 existing core/ring baseline; they do not prove the future runtime or native port.

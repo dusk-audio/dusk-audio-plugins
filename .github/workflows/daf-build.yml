@@ -81,6 +81,11 @@ on:
       # step with "no registered plugin owns its changed paths". Last, because a
       # negated pattern only excludes what the patterns before it matched.
       - '!plugins/sunset-circuits/**'
+      # Spectrum Analyzer has no registered DAF plugin until step 3 of its
+      # migration (GH #184); spectrum-core.yml and juce-compile-check.yml build
+      # it. Without this, a PR that only touches its core fails the plan step
+      # the same way. Remove it when spectrum-analyzer-2 joins the registry.
+      - '!plugins/spectrum-analyzer/**'
 
 # DAF is the single hard-fork dependency under dusk-audio. Its widgets/ and
 # dgl/src/pugl-upstream/ trees are included in the same revision; archived
