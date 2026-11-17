@@ -163,6 +163,7 @@ public:
         sr = sampleRate;
         whiteNoiseGain = 2.85f * std::sqrt((float)sampleRate / 96000.0f);
         setOracleNoiseRate();
+        setOraclePreFilterRate();
         rng.seed(seed);
         for (int u = 0; u < kMaxUnison; ++u)
         {
@@ -207,6 +208,7 @@ public:
         sr = sampleRate;
         whiteNoiseGain = 2.85f * std::sqrt((float)sampleRate / 96000.0f);
         setOracleNoiseRate();
+        setOraclePreFilterRate();
         for (int u = 0; u < kMaxUnison; ++u)
         {
             osc[u].osc1.setSampleRate(sampleRate);
@@ -243,7 +245,8 @@ public:
         ampEnv.reset(); filtEnv.reset();
         filterL.reset(); filterR.reset();
         lfo1.reset(); lfo2.reset();
-        sampleAndHold.reset(); pinkNoise.reset(); oracleNoiseZ1 = oracleNoiseZ2 = 0.0f;
+        sampleAndHold.reset(); pinkNoise.reset(); oracleNoiseBand.clear();
+        for (int i = 0; i < 2; ++i) { oraclePreFilterL[i].clear(); oraclePreFilterR[i].clear(); }
         for (int u = 0; u < kMaxUnison; ++u)
         {
             osc[u].osc1.resetPhase(); osc[u].osc2.resetPhase();
@@ -538,7 +541,7 @@ public:
             // the band filter runs only while the noise is up.
             const float white = pinkNoise.processSample(true);
             noiseSample = params.noiseLevel > 0.0f
-                ? oracleNoiseBand(white) * params.noiseLevel * oracleNoiseGain : 0.0f;
+                ? oracleNoiseBand.process(white) * params.noiseLevel * oracleNoiseGain : 0.0f;
         }
         else
         {
@@ -614,6 +617,12 @@ public:
         const float hpCut = (params.mode == SynthMode::Prism) ? 20.0f : params.filterHPCutoff;
         filterL.setModularModel(params.modularFilterModel);
         filterL.setMode(filtMode); filterL.setParameters(envCutoff, envRes, hpCut);
+
+        if (params.mode == SynthMode::Oracle && oraclePreFilterOn)
+        {
+            preL = oraclePreFilterL[1].process(oraclePreFilterL[0].process(preL));
+            if (uCount > 1) preR = oraclePreFilterR[1].process(oraclePreFilterR[0].process(preR));
+        }
 
         float sL, sR;
         if (uCount == 1)
@@ -1069,24 +1078,65 @@ private:
     void setOracleNoiseRate() noexcept
     {
         oracleNoiseGain = kOracleNoiseLevel * std::sqrt((float)sr / 96000.0f);
-        // RBJ low-pass, Q 1/sqrt(2); the corner stays below the rate's Nyquist.
-        const double fc = std::min((double)kOracleNoiseBandHz, 0.45 * sr);
-        const double w = 2.0 * 3.14159265358979323846 * fc / sr;
-        const double alpha = std::sin(w) / (2.0 * 0.70710678118654752);
-        const double a0 = 1.0 + alpha, c = std::cos(w);
-        nb0 = (float)((1.0 - c) * 0.5 / a0); nb1 = (float)((1.0 - c) / a0); nb2 = nb0;
-        na1 = (float)(-2.0 * c / a0); na2 = (float)((1.0 - alpha) / a0);
+        // Q 1/sqrt(2); the corner stays below the rate's Nyquist.
+        oracleNoiseBand.set(sr, std::min((double)kOracleNoiseBandHz, 0.45 * sr), 0.70710678118654752);
     }
-    float oracleNoiseBand(float x) noexcept   // transposed direct form II
+
+    // RBJ cookbook low-pass biquad, transposed direct form II. set() leaves the
+    // state alone (clear() does that), so a rate change does not reset it.
+    struct RbjLowpass
     {
-        const float y = nb0 * x + oracleNoiseZ1;
-        oracleNoiseZ1 = nb1 * x - na1 * y + oracleNoiseZ2;
-        oracleNoiseZ2 = nb2 * x - na2 * y;
-        return y;
-    }
+        void set(double rate, double fc, double q) noexcept
+        {
+            const double w = 2.0 * 3.14159265358979323846 * fc / rate;
+            const double alpha = std::sin(w) / (2.0 * q);
+            const double a0 = 1.0 + alpha, c = std::cos(w);
+            b0 = (float)((1.0 - c) * 0.5 / a0); b1 = (float)((1.0 - c) / a0); b2 = b0;
+            a1 = (float)(-2.0 * c / a0); a2 = (float)((1.0 - alpha) / a0);
+        }
+        float process(float x) noexcept
+        {
+            const float y = b0 * x + z1;
+            z1 = b1 * x - a1 * y + z2;
+            z2 = b2 * x - a2 * y;
+            return y;
+        }
+        void clear() noexcept { z1 = z2 = 0.0f; }
+        float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f, a1 = 0.0f, a2 = 0.0f, z1 = 0.0f, z2 = 0.0f;
+    };
+    RbjLowpass oracleNoiseBand;
     float oracleNoiseGain = 1.0f;
-    float nb0 = 1.0f, nb1 = 0.0f, nb2 = 0.0f, na1 = 0.0f, na2 = 0.0f;
-    float oracleNoiseZ1 = 0.0f, oracleNoiseZ2 = 0.0f;
+
+    // ORACLE PRE-FILTER (#303, owner ruling 2026-11-17): the oscillator mix goes
+    // through a 4-pole Butterworth low-pass at 18 kHz before the Oracle filter,
+    // whenever the internal rate is 88.2 kHz or more. Measured on a plain saw at
+    // 2x, the filter's input saturation acting on the oscillators' ultrasonic
+    // content (up to the internal Nyquist, which nobody hears) was the largest
+    // source of fold-back: linearising that stage alone took the saw from -48 to
+    // -62 dB; the stage saturations added nothing. The same ultrasonic content,
+    // run through a cutoff moved at audio rate by osc B -> filter, folded back
+    // too. Content the decimator removes anyway no longer reaches the
+    // nonlinearity. Cost: two biquads per voice. Top octave with the filter open
+    // at 2x: -0.7 dB at 15.2 kHz, -1.4 dB at 16.7 kHz, -3.3 dB at 18.8 kHz. Saw at
+    // 2x, C6 to C7: -48.6 / -46.7 / -47.9 dB became -68.9 / -67.7 / -68.1 dB
+    // (oracle_alias_gate's metric). At lower internal rates
+    // the oscillators' band already ends near 20 kHz and the pre-filter would
+    // only dull the top, so it is off.
+    static constexpr double kOraclePreFilterHz = 18000.0;
+    static constexpr double kOraclePreFilterMinRate = 88200.0;
+    void setOraclePreFilterRate() noexcept
+    {
+        oraclePreFilterOn = sr >= kOraclePreFilterMinRate;
+        // Butterworth 4-pole: Q = 1 / (2 cos(pi/8)) and 1 / (2 cos(3 pi/8)).
+        static constexpr double kQ[2] = {0.54119610014619698, 1.3065629648763766};
+        for (int i = 0; i < 2; ++i)
+        {
+            oraclePreFilterL[i].set(sr, kOraclePreFilterHz, kQ[i]);
+            oraclePreFilterR[i].set(sr, kOraclePreFilterHz, kQ[i]);
+        }
+    }
+    RbjLowpass oraclePreFilterL[2], oraclePreFilterR[2];
+    bool oraclePreFilterOn = false;
     // Fixed white-noise density across internal rates; cached on prepare/rate
     // changes. 2.85 matches the reference's 500 Hz–4 kHz noise/saw balance.
     float whiteNoiseGain = 2.85f;
