@@ -119,15 +119,13 @@ constexpr float kTypeTitle   = 24;  // nameplate title (family top row); Roman n
 constexpr float kTypeHero    = 44;  // chord name; a name too long for the display shrinks,
 constexpr float kTypeHeroMin = 20;  // never below this
 constexpr float kTypeHeroMid = 32;  // a bake between kTypeTitle and kTypeHero for a shrunk name
-// DuskSupportersOverlay draws its own text: small print at 9.5 to 12 px and an 18 px
-// heading. Their bakes keep it crisp; its sizes are shared code.
-constexpr float kTypeOverlay = 12, kTypeOverlayHeading = 18;
 // Barlow Condensed (ascent 1000, descent -200, cap height 700): the middle of the
 // capitals sits this far below the text top, per px of size. Centres a label on a line.
 constexpr float kCapMiddle = (1000.0f - 350.0f) / 1200.0f;
 // The bakes are the type scale, made at the window's scale (see bakeFonts()).
-constexpr float kBoldSizes[] = {kTypeOverlay, kTypeLegend, kTypeOverlayHeading, kTypeBadge, kTypeBrand,
-                                kTypeTitle, kTypeHeroMid, kTypeHero};
+// DuskSupportersOverlay draws its own text at 20 px and its heading at 24 px, on the
+// kTypeBadge and kTypeTitle bakes; its sizes are shared code.
+constexpr float kBoldSizes[] = {kTypeLegend, kTypeBadge, kTypeBrand, kTypeTitle, kTypeHeroMid, kTypeHero};
 constexpr float kRegularSizes[] = {kTypeLegend, kTypeVersion, kTypeBody};
 
 // Layout, design px; rectangles are x, y, width, height. tests/ChordAnalyzerUiTest.cpp
@@ -389,9 +387,9 @@ protected:
         saveDialog();
         statusLine();
         if (modalOpen) ImGui::EndDisabled();
-        if (showSupporters)
-            duskdaf::drawSupportersOverlay(panel, draw, designWidth, designHeight, showSupporters,
-                                           DAF_PLUGIN_NAME, CA2_VERSION_STRING, &supportersOverlay);
+        // Every frame, open or not: after a click closes it, it still blocks the face for a double-click time.
+        duskdaf::drawSupportersOverlay(panel, draw, designWidth, designHeight, showSupporters,
+                                       DAF_PLUGIN_NAME, CA2_VERSION_STRING, &supportersOverlay);
         if (body) ImGui::PopFont();
         ImGui::PopStyleColor(static_cast<int>(std::size(kStyleColours)));
         ImGui::PopStyleVar(styleVars);
