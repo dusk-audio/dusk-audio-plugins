@@ -245,7 +245,20 @@
     X(PmOscBFilt, "pmOscBFilt", "PM OscB-Filt", 0.0f, 1.0f, 0.0f, LIN, "") \
     X(ModFilterModel, "modFilterModel", "Modular Filter", 0.0f, 1.0f, 0.0f, INT, "") \
     X(ModOsc2Osc1, "modOsc2Osc1", "Mod Osc2-Osc1", 0.0f, 1.0f, 0.0f, LIN, "") \
-    X(ModOsc3Filter, "modOsc3Filter", "Mod Osc3-Filter", 0.0f, 1.0f, 0.0f, LIN, "")
+    X(ModOsc3Filter, "modOsc3Filter", "Mod Osc3-Filter", 0.0f, 1.0f, 0.0f, LIN, "") \
+    X(WheelLfoRate, "wheelLfoRate", "Wheel LFO Rate", 0.03f, 26.2f, 0.8866f, LOG, "Hz") \
+    X(WheelLfoSaw, "wheelLfoSaw", "Wheel LFO Saw", 0.0f, 1.0f, 0.0f, BOOL, "") \
+    X(WheelLfoTri, "wheelLfoTri", "Wheel LFO Triangle", 0.0f, 1.0f, 1.0f, BOOL, "") \
+    X(WheelLfoSquare, "wheelLfoSquare", "Wheel LFO Square", 0.0f, 1.0f, 0.0f, BOOL, "") \
+    X(WheelSourceMix, "wheelSourceMix", "Wheel Source Mix", 0.0f, 1.0f, 0.0f, LIN, "") \
+    X(WheelNoiseSH, "wheelNoiseSH", "Wheel Noise/S&H", 0.0f, 1.0f, 0.0f, INT, "") \
+    X(WheelLowerLimit, "wheelLowerLimit", "Wheel Lower Limit", 0.0f, 1.0f, 0.0f, LIN, "") \
+    X(WheelUpperLimit, "wheelUpperLimit", "Wheel Upper Limit", 0.0f, 1.0f, 1.0f, LIN, "") \
+    X(WheelFreqA, "wheelFreqA", "Wheel Freq A", 0.0f, 1.0f, 0.0f, BOOL, "") \
+    X(WheelFreqB, "wheelFreqB", "Wheel Freq B", 0.0f, 1.0f, 0.0f, BOOL, "") \
+    X(WheelPwA, "wheelPwA", "Wheel PW A", 0.0f, 1.0f, 0.0f, BOOL, "") \
+    X(WheelPwB, "wheelPwB", "Wheel PW B", 0.0f, 1.0f, 0.0f, BOOL, "") \
+    X(WheelFilter, "wheelFilter", "Wheel Filter", 0.0f, 1.0f, 0.0f, BOOL, "")
 
 // Parameter index enum (kParam<Suffix>), matching the core order 1:1.
 enum ParamId
@@ -253,7 +266,7 @@ enum ParamId
 #define X(suf, sym, name, mn, mx, df, kind, unit) kParam##suf,
     MSYNTH_PARAMS(X)
 #undef X
-    kNumCoreParams,                 // == msynth::kNumParams (228)
+    kNumCoreParams,                 // == msynth::kNumParams (241)
     kParamOutLevelL = kNumCoreParams, // output: peak L (meter fallback)
     kParamOutLevelR,                  // output: peak R
     kParamCount

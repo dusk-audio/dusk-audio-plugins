@@ -82,6 +82,14 @@ const ParamDef kParamDefs[] = {
     { pPmFenvPWM, "pmFenvPWM", 0 }, { pPmOscBFilt, "pmOscBFilt", 0 },
     { pModFilterModel, "modFilterModel", 0 },
     { pModOsc2Osc1, "modOsc2Osc1", 0 }, { pModOsc3Filter, "modOsc3Filter", 0 },
+
+    // --- Oracle Wheel Mod (append-only; defaults = WheelModSettings, section off) ---
+    { pWheelLfoRate, "wheelLfoRate", 0.8866f }, { pWheelLfoSaw, "wheelLfoSaw", 0 },
+    { pWheelLfoTri, "wheelLfoTri", 1 }, { pWheelLfoSquare, "wheelLfoSquare", 0 },
+    { pWheelSourceMix, "wheelSourceMix", 0 }, { pWheelNoiseSH, "wheelNoiseSH", 0 },
+    { pWheelLowerLimit, "wheelLowerLimit", 0 }, { pWheelUpperLimit, "wheelUpperLimit", 1 },
+    { pWheelFreqA, "wheelFreqA", 0 }, { pWheelFreqB, "wheelFreqB", 0 },
+    { pWheelPwA, "wheelPwA", 0 }, { pWheelPwB, "wheelPwB", 0 }, { pWheelFilter, "wheelFilter", 0 },
 };
 } // namespace
 

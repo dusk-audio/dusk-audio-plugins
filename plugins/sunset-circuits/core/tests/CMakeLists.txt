@@ -25,6 +25,15 @@ add_executable(cosmos_state_test cosmos_state_test.cpp)
 target_include_directories(cosmos_state_test PRIVATE ${CORE_DIR} ${SHARED_DSP})
 target_compile_options(cosmos_state_test PRIVATE -O2 -Wall -Wextra)
 
+# wheelmod_test — unit gate for core/WheelMod.hpp (Oracle Wheel Mod, issue #303):
+# the reference laws, the off contract, and the appended parameters (core and
+# shell tables, so it links the core for paramIndexForName and the defaults).
+add_executable(wheelmod_test
+    wheelmod_test.cpp
+    ${CORE_DIR}/MultiSynthDSP.cpp)
+target_include_directories(wheelmod_test PRIVATE ${CORE_DIR} ${SHARED_DSP} ${DAF_PLUGIN})
+target_compile_options(wheelmod_test PRIVATE -O2 -Wall -Wextra)
+
 # preset_render — includes the static factory-preset table (MultiSynthParams.hpp)
 # from the DAF shell plus the core DSP; renders mode-appropriate performances for
 # the Phase 5 preset re-voice + audit (no plugin hosting / MIDI injection).

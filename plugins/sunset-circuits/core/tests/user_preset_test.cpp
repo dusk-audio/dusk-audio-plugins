@@ -84,7 +84,8 @@ int main()
 
     const int N = (int)kNumCoreParams;
     std::fprintf(stderr, "kNumCoreParams = %d\n", N);
-    CHECK(N == 228, "228 core params");
+    // 228 in 1.1.0, plus the 13 Oracle Wheel Mod parameters appended for #303.
+    CHECK(N == 241, "241 core params");
 
     Store store;
 
@@ -214,6 +215,34 @@ int main()
             for (int s = 0; s < 8; ++s) legacy = legacy && lp[kParamModDst0 + s] == (float)d;
         }
         CHECK(legacy, "pre-#303 destinations 0..12 load unchanged");
+    }
+
+    // ---- 4d. Oracle Wheel Mod (issue #303): a 1.1.0 file loads it switched off ---
+    // A preset saved by 1.1.0 names the first 228 parameters and none of the 13
+    // appended after them. Loading it must leave every wheel parameter at its
+    // default, and the defaults switch no destination on, so the patch sounds as
+    // it did in 1.1.0. Written exactly as 1.1.0's save() would (all 228, in order).
+    {
+        fs::path f = expectDir / "From110.scpreset";
+        { std::ofstream os(f, std::ios::trunc);
+          os << "# SunsetCircuits preset v1\nname=From110\n";
+          char line[160];
+          for (int i = 0; i < kParamWheelLfoRate; ++i)
+          {
+              std::snprintf(line, sizeof line, "%s=%.9g\n", kParamDefs[i].symbol, vin[i]);
+              os << line;
+          } }
+        std::vector<float> vp(N, 1.0f);   // pre-filled "on": loadInto must reset
+        CHECK(store.loadInto(f, vp.data(), N), "load a 1.1.0-shaped file");
+        bool same110 = true;
+        for (int i = 0; i < kParamWheelLfoRate; ++i) same110 = same110 && std::memcmp(&vp[i], &vin[i], sizeof(float)) == 0;
+        CHECK(same110, "its 228 values load bit-exact");
+        bool wheelDef = true;
+        for (int i = kParamWheelLfoRate; i <= kParamWheelFilter; ++i) wheelDef = wheelDef && vp[i] == kParamDefs[i].def;
+        CHECK(wheelDef, "every wheel parameter takes its default");
+        CHECK(vp[kParamWheelFreqA] == 0.0f && vp[kParamWheelFreqB] == 0.0f && vp[kParamWheelPwA] == 0.0f
+              && vp[kParamWheelPwB] == 0.0f && vp[kParamWheelFilter] == 0.0f,
+              "so no wheel destination is on: the section is off");
     }
 
     // ---- 5. name sanitization ----------------------------------------------

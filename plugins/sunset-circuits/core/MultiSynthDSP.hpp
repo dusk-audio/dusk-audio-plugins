@@ -118,6 +118,13 @@ enum Param : int
     // Modular audio-rate patch points / two filter revisions.
     pPmFenvPWM, pPmOscBFilt,
     pModFilterModel, pModOsc2Osc1, pModOsc3Filter,
+    // Oracle Wheel Mod (issue #303; WheelMod.hpp): one free-running LFO and one
+    // shared noise source, mixed, scaled by the mod wheel between two limits and
+    // switched to five destinations. Every destination defaults to off, so the
+    // section changes nothing until one is switched on.
+    pWheelLfoRate, pWheelLfoSaw, pWheelLfoTri, pWheelLfoSquare,
+    pWheelSourceMix, pWheelNoiseSH, pWheelLowerLimit, pWheelUpperLimit,
+    pWheelFreqA, pWheelFreqB, pWheelPwA, pWheelPwB, pWheelFilter,
     kNumParams
 };
 

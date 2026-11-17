@@ -36,6 +36,9 @@ static_assert((int)kParamArpAccentPattern == (int)msynth::pArpAccentPattern,
               "appended param drift");
 static_assert((int)kParamModOsc3Filter == (int)msynth::pModOsc3Filter,
               "accuracy-upgrade block end drift");
+static_assert((int)kParamWheelLfoRate == (int)msynth::pWheelLfoRate
+              && (int)kParamWheelFilter == (int)msynth::pWheelFilter,
+              "wheel-mod block drift");
 static_assert((int)kNumCoreParams    == (int)msynth::kNumParams,   "core param count drift");
 
 //---------------------------------------------------------------------------

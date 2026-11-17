@@ -95,6 +95,10 @@ echo "########## filter tanh ##########"
 ./build/filter_tanh_gate || fail=1
 
 echo
+echo "########## wheel mod ##########"
+./build/wheelmod_test || fail=1
+
+echo
 echo "########## fm suite ##########"
 (cd fm && ./run_all.sh) || fail=1
 

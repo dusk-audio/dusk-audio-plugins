@@ -162,6 +162,23 @@ add("PmOscBFilt","pmOscBFilt","PM OscB-Filt",0,1,0,L)
 add("ModFilterModel","modFilterModel","Modular Filter",0,1,0,I)
 add("ModOsc2Osc1","modOsc2Osc1","Mod Osc2-Osc1",0,1,0,L)
 add("ModOsc3Filter","modOsc3Filter","Mod Osc3-Filter",0,1,0,L)
+# Oracle Wheel Mod (issue #303; core/WheelMod.hpp). Off by default: every
+# destination switch defaults to 0, so existing presets and sessions render
+# bit-identically. The rate range IS the measured exponential knob law (a LOG
+# parameter, 0.03 Hz to 26.2 Hz); the other defaults are the reference panel's.
+add("WheelLfoRate","wheelLfoRate","Wheel LFO Rate",0.03,26.2,0.8866,LOG)
+add("WheelLfoSaw","wheelLfoSaw","Wheel LFO Saw",0,1,0,B)
+add("WheelLfoTri","wheelLfoTri","Wheel LFO Triangle",0,1,1,B)
+add("WheelLfoSquare","wheelLfoSquare","Wheel LFO Square",0,1,0,B)
+add("WheelSourceMix","wheelSourceMix","Wheel Source Mix",0,1,0,L)
+add("WheelNoiseSH","wheelNoiseSH","Wheel Noise/S&H",0,1,0,I)
+add("WheelLowerLimit","wheelLowerLimit","Wheel Lower Limit",0,1,0,L)
+add("WheelUpperLimit","wheelUpperLimit","Wheel Upper Limit",0,1,1,L)
+add("WheelFreqA","wheelFreqA","Wheel Freq A",0,1,0,B)
+add("WheelFreqB","wheelFreqB","Wheel Freq B",0,1,0,B)
+add("WheelPwA","wheelPwA","Wheel PW A",0,1,0,B)
+add("WheelPwB","wheelPwB","Wheel PW B",0,1,0,B)
+add("WheelFilter","wheelFilter","Wheel Filter",0,1,0,B)
 
 NCORE = len(P)
 sym2enum = {p[1]: "kParam"+p[0] for p in P}
@@ -190,7 +207,7 @@ def _units(unit, *syms):
 
 _units(UNIT_DB, "masterVol")
 _units(UNIT_HZ, "filterCutoff", "filterHP", "shRate", "lfo1Rate", "lfo2Rate",
-       "chorusRate")
+       "chorusRate", "wheelLfoRate")
 _units(UNIT_CT, "masterTune", "osc1Detune", "osc2Detune", "unisonDetune")
 _units(UNIT_ST, "osc2Semi", "pbRange")
 _units(UNIT_MS, "delayTime", "reverbPD", "acidSlideTime")
