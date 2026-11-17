@@ -57,12 +57,15 @@ namespace
     {
         ImU32 bg, panel, accent, text, textPanel, ledOn, ledOff;
         float cosmos = 0.0f; // blends the extra colours even during interrupted mode fades
+        float oracle = 0.0f; // blends Oracle's materials (kOracleMat) the same way
     };
     const MSPal kPalettes[6] = {
         // Cosmos
         { hx(0x191B1A), hx(0x252725), hx(0xD9D9C9), hx(0xE3E3DA), hx(0xE3E3DA), hx(0xF44336), hx(0x401613), 1.0f },
-        // Oracle
-        { hx(0x1A130E), hx(0x241A12), hx(0xC8A15A), hx(0xEDE3CE), hx(0xEDE3CE), hx(0xFFB020), hx(0x3A2A0E) },
+        // Oracle: one near-black panel with white silk-screen and red lamps, framed in
+        // walnut (kOracleMat). Was brown panels with gold legends and amber lamps.
+        // Ground and panel are the same black: one sheet, sections marked only by silk.
+        { hx(0x1A191C), hx(0x1A191C), hx(0xE6E2E4), hx(0xECE8EA), hx(0xECE8EA), hx(0xFF3B30), hx(0x3C1512), 0.0f, 1.0f },
         // Mono
         { hx(0x0E0E10), hx(0x17181B), hx(0xC0C6CC), hx(0xE6E8EA), hx(0xE6E8EA), hx(0xFF3838), hx(0x3A1414) },
         // Modular
@@ -73,6 +76,28 @@ namespace
         { hx(0x16171A), hx(0xC8CBD0), hx(0xFF5A00), hx(0xEDEFF2), hx(0x202226), hx(0xFF2A2A), hx(0x5A1414) },
     };
     const char* const kModeNames[6] = { "COSMOS", "ORACLE", "MONO", "MODULAR", "PRISM", "ACID" };
+
+    // Oracle's materials (owner request 2026-11-17: look more like the instrument it
+    // models), sampled from photos of that instrument and deepened to the face's black:
+    // a walnut cabinet (photo strip median 82564B, cheeks 66433B) around one near-black
+    // panel, white silk-screened section boxes, black knobs with white pointers and
+    // white tick scales (the two master knobs keep bright caps), red lamps. Drawn only
+    // in proportion to MSPal::oracle, which is exactly 0 in every other mode.
+    struct OracleMat
+    {
+        ImU32 walnut, walnutDark, walnutLight;   // cabinet: base and the two grain inks
+        ImU32 silk;                               // section outlines
+        ImU32 arc;                                // knob value arcs: dimmed silk
+        ImU32 knobBody, knobRing, knobFace, knobPointer, knobSheen, knobFaceEdge, knobRim;
+    };
+    const OracleMat kOracleMat = {
+        hx(0x7A5044), hx(0x58392F), hx(0x9A7363),
+        hx(0xE6E2E4),
+        hx(0xA7A3A8),
+        // the knob inks are the shared console knob's (DuskPanel::knob), face black
+        hx(0x121214), hx(0x28282B), hx(0x1B1B1D), hx(0xF5F5F5), IM_COL32(255, 255, 255, 38),
+        IM_COL32(0, 0, 0, 140), IM_COL32(0, 0, 0, 255),
+    };
 
     // Version chip under the "Dusk Audio" byline. Middle dot, not an em dash:
     // the crisp atlas is baked over Latin-1 and U+2014 draws as a "?" box.
@@ -610,7 +635,8 @@ private:
         return { lerpC(a.bg, b.bg, t), lerpC(a.panel, b.panel, t), lerpC(a.accent, b.accent, t),
                  lerpC(a.text, b.text, t), lerpC(a.textPanel, b.textPanel, t),
                  lerpC(a.ledOn, b.ledOn, t), lerpC(a.ledOff, b.ledOff, t),
-                 a.cosmos + (b.cosmos - a.cosmos) * t };
+                 a.cosmos + (b.cosmos - a.cosmos) * t,
+                 a.oracle + (b.oracle - a.oracle) * t };
     }
     ImU32 metalCol() const // bevel frame: lighten dark panels, darken light panels
     {
@@ -636,28 +662,52 @@ private:
         return f->CalcTextSizeA(px, FLT_MAX, 0.0f, t).x / s;
     }
 
+    // sheet = false: a modal panel (an overlay), not a section of the face. It keeps
+    // its rail in Oracle, so it still reads against the scrim, and gets no silk box.
     void panelBox(float x0, float y0, float x1, float y1, float alpha = 1.0f,
-                  ImU32 cosmosBand = 0, float bandHeight = 20.0f)
+                  ImU32 cosmosBand = 0, float bandHeight = 20.0f, bool sheet = true)
     {
         // The older 3 px bright metal frame gave every nested section the same
         // visual weight. A slimmer, chassis-blended rail keeps the hardware
         // character while allowing titles, controls, and mode colour to lead.
+        // Oracle is one black sheet: its rail and bevel fade out as the silk box
+        // (oracleBox) fades in. Exactly `alpha` in every other mode.
+        const float edgeA = (sheet && live.oracle > 0.0f) ? alpha * (1.0f - live.oracle) : alpha;
         const ImU32 frame = lerpC(metalCol(), live.bg, 0.34f);
         dl->AddRectFilled(P(x0 - 2, y0 - 2), P(x1 + 2, y1 + 2),
-                          mulA(frame, alpha), 7.0f * s);
+                          mulA(frame, edgeA), 7.0f * s);
         dl->AddRectFilled(P(x0, y0), P(x1, y1), mulA(live.panel, alpha), 6.0f * s);
         // engraved bevel: light top-edge highlight + dark bottom-edge shade
         dl->AddLine(P(x0 + 2, y0 + 1), P(x1 - 2, y0 + 1),
-                    mulA(lerpC(live.panel, IM_COL32(255, 255, 255, 255), 0.13f), alpha), 1.0f * s);
+                    mulA(lerpC(live.panel, IM_COL32(255, 255, 255, 255), 0.13f), edgeA), 1.0f * s);
         dl->AddLine(P(x0 + 2, y1 - 1), P(x1 - 2, y1 - 1),
-                    mulA(lerpC(live.panel, IM_COL32(0, 0, 0, 255), 0.26f), alpha), 1.0f * s);
+                    mulA(lerpC(live.panel, IM_COL32(0, 0, 0, 255), 0.26f), edgeA), 1.0f * s);
         if (cosmosBand != 0 && live.cosmos > 0.0f)
             dl->AddRectFilled(P(x0 + 2, y0 + 2), P(x1 - 2, y0 + bandHeight),
                               mulA(cosmosBand, alpha * live.cosmos), 4.0f * s,
                               ImDrawFlags_RoundCornersTop);
+        if (sheet && live.oracle > 0.0f) oracleBox(x0, y0, x1, y1, alpha);
+    }
+
+    // Oracle: the panel is part of one black sheet and the section is marked the way
+    // the instrument's panel marks it, by a thin white silk-screened box whose top
+    // line runs through the section title (sectionTitle knocks the title out of it).
+    static constexpr float kSilkInset = 5.0f, kSilkTop = 9.5f;   // title centre line
+    void oracleBox(float x0, float y0, float x1, float y1, float alpha)
+    {
+        dl->AddRect(P(x0 + kSilkInset, y0 + kSilkTop), P(x1 - kSilkInset, y1 - kSilkInset),
+                    mulA(kOracleMat.silk, alpha * live.oracle), 4.0f * s, 0, 1.2f * s);
+    }
+    // Knock a title out of the silk-screen box's top line (Oracle only).
+    void oracleTitleGap(float x, float y, float sz, const char* t, float alpha = 1.0f)
+    {
+        if (live.oracle <= 0.0f) return;
+        dl->AddRectFilled(P(x - 5, y + 1), P(x + textW(sz, t) + 5, y + sz + 1),
+                          mulA(live.panel, alpha * live.oracle));
     }
     void sectionTitle(float x, float y, const char* t)
     {
+        oracleTitleGap(x, y, 11.5f, t);
         // Dark panels benefit from the engraved shadow. On Acid's light silver
         // skin it reads as a second, misregistered heading instead of depth.
         if (curMode != 5)
@@ -706,6 +756,9 @@ private:
     // Mode-accent value arc drawn just outside the shared knob body (spec §3.1).
     void accentArc(float cx, float cy, float r, float t, bool bipolar, float anchorT = -1.0f)
     {
+        // Oracle: dimmed silk instead of the panel accent, so the arcs read without
+        // competing with the white legends.
+        const ImU32 arcInk = live.oracle > 0.0f ? lerpC(live.accent, kOracleMat.arc, live.oracle) : live.accent;
         const ImVec2 c = P(cx, cy);
         const float R = (r + 3.0f) * s;
         const float t0 = anchorT >= 0.0f ? anchorT : (bipolar ? 0.5f : 0.0f);
@@ -718,7 +771,7 @@ private:
             const float ang = duskdaf::DuskPanel::knobAngle(tt);
             pts[n++] = ImVec2(c.x + std::sin(ang) * R, c.y - std::cos(ang) * R);
         }
-        if (n >= 2) dl->AddPolyline(pts, n, live.accent, 0, 2.4f * s);
+        if (n >= 2) dl->AddPolyline(pts, n, arcInk, 0, 2.4f * s);
     }
 
     // Return the matrix destination represented by a visible control. Destinations
@@ -799,8 +852,41 @@ private:
 
     // Chrome knob body (matches duskdaf::DuskPanel's chrome exactly) so the local
     // skew/ratio knobs are visually identical to the shared linear knobs.
-    void drawKnobChrome(ImVec2 c, float R, float t, bool ticks = true)
+    // Oracle draws black knobs (the shared console style, black face) except the two
+    // master knobs, which keep the bright cap the instrument gives them.
+    bool oracleKnob(uint32_t p) const
     {
+        return live.oracle >= 0.5f && p != kParamMasterVol && p != kParamMasterTune;
+    }
+    // drawKnobChrome's Oracle body: the shared console knob (DuskPanel::knob, faceColor
+    // set) with kOracleMat's inks, for the local log-taper and ratio knobs.
+    void drawKnobOracle(ImVec2 c, float R, float t, bool ticks)
+    {
+        if (ticks)
+            for (int i = 0; i <= 10; ++i)
+            {
+                const float a = duskdaf::DuskPanel::knobAngle((float)i / 10.0f);
+                const ImVec2 dir(std::sin(a), -std::cos(a));
+                dl->AddLine(ImVec2(c.x + dir.x * (R + 2.5f * s), c.y + dir.y * (R + 2.5f * s)),
+                            ImVec2(c.x + dir.x * (R + 6.5f * s), c.y + dir.y * (R + 6.5f * s)),
+                            whiteDimCol(), 1.3f * s);
+            }
+        const OracleMat& m = kOracleMat;
+        dl->AddCircleFilled(c, R, m.knobBody, 48);
+        dl->AddCircleFilled(c, R * 0.86f, m.knobRing, 48);
+        dl->AddCircleFilled(c, R * 0.62f, m.knobFace, 44);
+        dl->AddCircleFilled(ImVec2(c.x - R * 0.18f, c.y - R * 0.22f), R * 0.34f, m.knobSheen, 32);
+        dl->AddCircle(c, R * 0.62f, m.knobFaceEdge, 44, 1.2f * s);
+        dl->AddCircle(c, R, m.knobRim, 48, 1.4f * s);
+        const float a = duskdaf::DuskPanel::knobAngle(t);
+        const ImVec2 dir(std::sin(a), -std::cos(a));
+        dl->AddLine(c, ImVec2(c.x + dir.x * R * 0.82f, c.y + dir.y * R * 0.82f), m.knobPointer, 2.4f * s);
+        dl->AddCircleFilled(c, R * 0.10f, m.knobPointer, 12);
+    }
+
+    void drawKnobChrome(ImVec2 c, float R, float t, bool ticks = true, bool oracle = false)
+    {
+        if (oracle) { drawKnobOracle(c, R, t, ticks); return; }
         if (ticks)
         for (int i = 0; i <= 10; ++i)
         {
@@ -940,7 +1026,7 @@ private:
         }
 
         const float t = lrange > 0.0f ? (toL(values[p]) - lmin) / lrange : 0.0f;
-        drawKnobChrome(c, R, t, ticks);
+        drawKnobChrome(c, R, t, ticks, oracleKnob(p));
         accentArc(cx, cy, r, t, bipolar);
         modulationRange(p, cx, cy, r, ticks);
 
@@ -1026,7 +1112,7 @@ private:
             }
         }
         const float t = (std::log(values[p] < d.min ? d.min : values[p]) - lmin) / lrange;
-        drawKnobChrome(c, R, t, ticks);
+        drawKnobChrome(c, R, t, ticks, oracleKnob(p));
         accentArc(cx, cy, r, t, false);
         float typed;
         if (panel.valueEdit(id, cx, cy, r, typed))
@@ -1053,7 +1139,8 @@ private:
         if (!stepped && ((d.kind == PK_LOG && d.min > 0.0f) || timeAuto))
             return knobSkewed(id, p, cx, cy, r, fmt, suffix, bipolar, persist, dmul, dadd, ticks, timeAuto);
         const bool ch = panel.knob(id, p, d.min, d.max, cx, cy, r, values[p], defaults[p],
-                                   stepped, ticks, fmt, suffix, 0, false, persist,
+                                   stepped, ticks, fmt, suffix,
+                                   oracleKnob(p) ? kOracleMat.knobFace : 0, false, persist,
                                    tips[p], false, dmul, dadd, d.name,
                                    /*contextMenu*/ false, /*overrideText*/ nullptr,
                                    /*hasExternalReadout*/ false,
@@ -1278,6 +1365,14 @@ private:
         dl->AddRectFilled(P(0, 0), P(kDesignW, 54), mulA(live.bg, 1.0f));
         dl->AddRectFilled(P(0, 0), P(kDesignW, 3), metalCol());
         dl->AddLine(P(0, 54), P(kDesignW, 54), IM_COL32(70, 70, 72, 255), 1.5f * s);
+        if (live.oracle > 0.0f)
+        {
+            // Oracle's walnut frame continues round the top: the rail and the cheeks'
+            // top ends (drawWoodCheeks draws the rest on the background).
+            walnut(0, 0, kDesignW, 5, live.oracle, false, 41u);
+            walnut(0, 5, 14, 55, live.oracle, true, 11u);
+            walnut(1226, 5, kDesignW, 55, live.oracle, true, 23u);
+        }
 
         // ---- nameplate ----
         // The version rides with the "Dusk Audio" byline, one step down the type
@@ -1749,27 +1844,59 @@ private:
         const ImU32 top = lerpC(live.bg, IM_COL32(255, 255, 255, 255), 0.05f);
         const ImU32 bot = lerpC(live.bg, IM_COL32(0, 0, 0, 255), 0.18f);
         dl->AddRectFilledMultiColor(P(0, 0), P(kDesignW, kDesignH), top, top, bot, bot);
-        const ImU32 lite = withA(lerpC(live.bg, IM_COL32(255, 255, 255, 255), 0.5f), 8);
-        const ImU32 dark = withA(IM_COL32(0, 0, 0, 255), 10);
+        ImU32 lite = withA(lerpC(live.bg, IM_COL32(255, 255, 255, 255), 0.5f), 8);
+        ImU32 dark = withA(IM_COL32(0, 0, 0, 255), 10);
+        if (live.oracle > 0.0f)   // Oracle's sheet is matte: the brushed hairlines fade out
+        { lite = mulA(lite, 1.0f - live.oracle); dark = mulA(dark, 1.0f - live.oracle); }
         for (int x = 0; x < (int)kDesignW; x += 3)
             dl->AddLine(P((float)x, 0), P((float)x, kDesignH), (x & 1) ? lite : dark, 1.0f);
     }
 
+    // Oracle's walnut cabinet: the side cheeks and the strip between the panel and the
+    // keys (the top rail and the cheeks' top ends are drawn by drawTopBar, which paints
+    // over this background). Weighted by live.oracle, so it is absent in other modes.
     void drawWoodCheeks()
     {
-        // Oracle decorative wood side cheeks; alpha follows how "Oracle" the blend is.
-        float oa = 0.0f;
-        if (curMode == 1) oa = modeBlend >= 1.0f ? 1.0f : modeBlend;
-        else if (prevMode == 1 && modeBlend < 1.0f) oa = 1.0f - modeBlend;
-        if (oa <= 0.01f) return;
-        const ImU32 wood = mulA(hx(0x2A1C10), oa);
-        dl->AddRectFilled(P(0, 54), P(14, kDesignH), wood);
-        dl->AddRectFilled(P(1226, 54), P(kDesignW, kDesignH), wood);
-        for (int i = 1; i < 12; ++i)
+        const float o = live.oracle;
+        if (o <= 0.0f) return;
+        walnut(0, 54, 14, kDesignH, o, true, 11u);
+        walnut(1226, 54, kDesignW, kDesignH, o, true, 23u);
+        walnut(14, 694, 1226, 700, o, false, 37u);
+    }
+
+    // A walnut board, drawn procedurally: the base colour, then the grain as streaks of
+    // dark and light ink running along the board, each a hashed length and strength, so
+    // it reads as wood rather than stripes. Deterministic (seeded), so captures repeat.
+    void walnut(float x0, float y0, float x1, float y1, float a, bool vertical, uint32_t seed)
+    {
+        const OracleMat& m = kOracleMat;
+        dl->AddRectFilled(P(x0, y0), P(x1, y1), mulA(m.walnut, a));
+        auto hash = [](uint32_t v) {
+            v *= 0x9E3779B1u; v ^= v >> 15; v *= 0x85EBCA77u; v ^= v >> 13; return v;
+        };
+        const float across = vertical ? (x1 - x0) : (y1 - y0);
+        const float along  = vertical ? (y1 - y0) : (x1 - x0);
+        const float pitch = 1.1f;
+        uint32_t k = seed * 7919u;
+        for (float u = 0.5f; u < across; u += pitch)
         {
-            const float y = 54 + i * (kDesignH - 54) / 12.0f;
-            dl->AddLine(P(0, y), P(14, y), mulA(hx(0x1B120A), oa), 1.0f * s);
-            dl->AddLine(P(1226, y), P(kDesignW, y), mulA(hx(0x1B120A), oa), 1.0f * s);
+            float v = 0.0f;
+            while (v < along)
+            {
+                const uint32_t h = hash(++k);
+                const float len = 18.0f + (float)(h % 140u);
+                const int kind = (int)((h >> 8) & 3u);       // 0, 1 dark; 2 light; 3 none
+                const int ink = 18 + (int)((h >> 12) % 70u);
+                if (kind != 3)
+                {
+                    const ImU32 col = withA(kind == 2 ? m.walnutLight : m.walnutDark,
+                                            (int)((float)(kind == 2 ? ink / 2 : ink) * a));
+                    const float v1 = v + len < along ? v + len : along;
+                    if (vertical) dl->AddLine(P(x0 + u, y0 + v), P(x0 + u, y0 + v1), col, 1.0f * s);
+                    else          dl->AddLine(P(x0 + v, y0 + u), P(x0 + v1, y0 + u), col, 1.0f * s);
+                }
+                v += len;
+            }
         }
     }
 
@@ -2503,6 +2630,7 @@ private:
     }
     void drawSubOracle(float a, bool it)
     {
+        oracleTitleGap(768, 332, 11.0f, "POLY-MOD \xC2\xB7 SYNC", a);
         text(768, 332, 11.0f, mulA(live.accent, a), "POLY-MOD \xC2\xB7 SYNC", -1, true);
 
         // Two hardware sources, each able to reach all three destinations.
@@ -3069,7 +3197,7 @@ private:
         const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
         dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + ws.y), wmTheme().scrim);
         const ImVec2 pMin = P(kWmX0 - 3, kWmY0 - 3), pMax = P(kWmX1 + 3, kWmY1 + 3);
-        panelBox(kWmX0, kWmY0, kWmX1, kWmY1);
+        panelBox(kWmX0, kWmY0, kWmX1, kWmY1, 1.0f, 0, 20.0f, /*sheet*/ false);
         const WheelModTheme t = wmTheme();
         const float Y = kWmY0;
         text(kWmX0 + 20, Y + 12, kWmTitle, live.accent, "WHEEL MOD", -1, true);
@@ -3204,7 +3332,7 @@ private:
         dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + ws.y), IM_COL32(0, 0, 0, 150));
         // modal
         const ImVec2 pMin = P(220 - 3, 120 - 3), pMax = P(1020 + 3, 660 + 3);
-        panelBox(220, 120, 1020, 660);
+        panelBox(220, 120, 1020, 660, 1.0f, 0, 20.0f, /*sheet*/ false);
         text(240, 130, 15.0f, live.accent, "MODULATION MATRIX", -1, true);
         // close ✕
         const ImVec2 c0 = P(988, 128), c1 = P(1012, 152);
@@ -3309,7 +3437,7 @@ private:
 
         const float x0 = 420, y0 = 285, x1 = 820, y1 = 495;
         const ImVec2 pMin = P(x0 - 3, y0 - 3), pMax = P(x1 + 3, y1 + 3);
-        panelBox(x0, y0, x1, y1);
+        panelBox(x0, y0, x1, y1, 1.0f, 0, 20.0f, /*sheet*/ false);
         text(x0 + 20, y0 + 14, 15.0f, live.accent, "SAVE USER PRESET", -1, true);
 
         // close ✕
@@ -3688,7 +3816,7 @@ private:
         dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + ws.y), IM_COL32(0, 0, 0, 150));
 
         const ImVec2 pMin = P(kBrX0 - 3, kBrY0 - 3), pMax = P(kBrX1 + 3, kBrY1 + 3);
-        panelBox(kBrX0, kBrY0, kBrX1, kBrY1);
+        panelBox(kBrX0, kBrY0, kBrX1, kBrY1, 1.0f, 0, 20.0f, /*sheet*/ false);
         text(kBrCX0, kBrY0 + 12, 15.0f, live.accent, "PRESET BROWSER", -1, true);
 
         // close ✕
