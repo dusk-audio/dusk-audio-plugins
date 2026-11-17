@@ -14,11 +14,18 @@ envelope held at full (attack 1 ms, sustain 1):
   osc B -> freq A  amount 1 with oscillator B a slow full-scale square: the
                    upward excursion is 7.5 semitones (zero-crossing periods while
                    oscillator B is high; the low half is too short to read).
+  Cross Mod        not on Oracle's panel, but Poly Mod Bells and Glass Bells use
+                   it for the old linear osc B -> freq A FM (2880 Hz x amount):
+                   amount 0.01 with the same slow square moves 55 Hz up by
+                   28.8 Hz (+-1.5). If Cross Mod were gated off in Oracle, those
+                   two presets would lose their clang without any other test
+                   noticing.
 
     measured                     law      previous laws
     FEnv -> freq A A3 / A5       867.5    +2514 / +1035 cents (linear, 720 Hz)
     FEnv -> PW, level change     -15.1    +0.5 dB (widened)
     osc B -> freq A, up          +745.9   +6883 cents (linear, 2880 Hz)
+    Cross Mod 0.01, Hz up        +28.25   (unchanged law)
 """
 import sys
 
@@ -62,6 +69,14 @@ def main():
     c = 1200.0 * np.log2(fs / np.diff(t) / 55.0)
     up = float(np.median(c[c > 0])) if np.any(c > 0) else float("nan")
     rows.append(("osc B -> freq A, amount 1, upward", up, "cents", abs(up - 750.0) <= 30.0))
+    fs, x = render(1, 33, 2.0, 2, "pm_xmod", osc1Wave=3, osc2Wave=1, osc2Semi=-24,
+                   osc2Detune=0, crossMod=0.01, **OPEN)
+    y = x[int(0.3 * fs):, 0]
+    zc = np.flatnonzero((y[:-1] < 0) & (y[1:] >= 0))
+    t = zc + (-y[zc]) / (y[zc + 1] - y[zc])
+    hz = fs / np.diff(t)
+    dev = float(np.median(hz[hz > 56.0])) - 55.0 if np.any(hz > 56.0) else float("nan")
+    rows.append(("Cross Mod 0.01 in Oracle, Hz up", dev, "Hz", abs(dev - 28.8) <= 1.5))
 
     fails = 0
     for name, v, unit, ok in rows:

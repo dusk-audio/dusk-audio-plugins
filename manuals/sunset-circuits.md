@@ -542,7 +542,7 @@ Two names are easy to misread. **Acid Squelch** and **Acid Machine** are Mono-mo
 
 - **Brass Section**: poly-mod brass with filter-envelope bite.
 - **Wooden Keys**: mellow plucked keys, short and woody.
-- **Poly Mod Bells**: inharmonic bells driven by oscillator-to-oscillator poly-mod.
+- **Poly Mod Bells**: inharmonic bells: oscillator 2 frequency-modulates oscillator 1, and the filter envelope adds a pitch swoop.
 - **Dark Oracle**: dark sustained pad with vintage character.
 - **Stab Machine**: short percussive poly stab.
 - **Upside Down**: the flagship Up/Down latched saw arpeggio, the famous 80s sci-fi title-sequence sound out of the box.
