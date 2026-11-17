@@ -143,6 +143,7 @@ void MultiSynthDSP::prepare(double sampleRate, int maxBlockSize)
     // at host rate (its samplesPerStep must match the per-host-sample advance).
     acidVoice.prepare(hostRate * (double)osFactor);
     acidSeq.prepare(hostRate);
+    wheelMod.prepare(hostRate);   // host rate: the same modulation at every OS factor
     decimL.setFactor(osFactor); decimR.setFactor(osFactor);
     padL.delay = padR.delay = padFor(osFactor, activeMode);
     // Parameter smoothers advance once per HOST sample (see processBlock), so
@@ -178,6 +179,7 @@ void MultiSynthDSP::reset()
     cosmosChorus.reset();
     arp.reset();
     acidVoice.reset(); acidSeq.reset(); acidHeldCount = 0;
+    wheelMod.reset();
     decimL.reset(); decimR.reset();
     padL.reset(); padR.reset();
     dcBlockL.reset(); dcBlockR.reset();
@@ -1006,6 +1008,27 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
     // The effect drive / wet mixes smooth themselves (Effects.hpp); they only
     // need to be told when a snapshot is a preset load rather than a knob move.
     if (smoothSnap) effects.snapSmoothing();
+
+    // --- Oracle Wheel Mod (WheelMod.hpp) ---------------------------------------
+    // Set in every mode (its LFO free-runs through mode changes) and applied by the
+    // voices only in Oracle. The wheel depth and the source mix glide like the
+    // other smoothed controls and land with them on a preset load.
+    WheelModSettings wm;
+    wm.rateHz        = p(pWheelLfoRate);
+    wm.saw           = p(pWheelLfoSaw) > 0.5f;
+    wm.tri           = p(pWheelLfoTri) > 0.5f;
+    wm.square        = p(pWheelLfoSquare) > 0.5f;
+    wm.sourceMix     = p(pWheelSourceMix);
+    wm.sampleAndHold = p(pWheelNoiseSH) > 0.5f;
+    wm.lowerLimit    = p(pWheelLowerLimit);
+    wm.upperLimit    = p(pWheelUpperLimit);
+    wm.freqA         = p(pWheelFreqA) > 0.5f;
+    wm.freqB         = p(pWheelFreqB) > 0.5f;
+    wm.pwA           = p(pWheelPwA) > 0.5f;
+    wm.pwB           = p(pWheelPwB) > 0.5f;
+    wm.filter        = p(pWheelFilter) > 0.5f;
+    wheelMod.set(wm, vp.modWheel, smoothSnap);
+    wheelOracle = (vp.mode == SynthMode::Oracle);
 }
 
 //==============================================================================
@@ -1136,6 +1159,27 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
             voiceParams.osc3Level       = smOsc3Level.next();
             voiceParams.subLevel        = smSubLevel.next();
             voiceParams.noiseLevel      = smNoiseLevel.next();
+
+            // Oracle Wheel Mod: one frame per host sample, shared by every voice and
+            // every oversampled sub-sample. Run in every mode so the LFO free-runs;
+            // published to the voices only in Oracle and only while a destination
+            // is on (or fading out), which keeps every other patch bit-identical.
+            {
+                const WheelModFrame wf = wheelMod.process();
+                const bool on = wheelOracle && wheelMod.active();
+                voiceParams.wheelModActive = on;
+                if (on)
+                {
+                    constexpr float kOctPerCent = 1.0f / 1200.0f;
+                    voiceParams.wheelFreqAOct  = wf.freqACents * kOctPerCent;
+                    voiceParams.wheelFreqBOct  = wf.freqBCents * kOctPerCent;
+                    voiceParams.wheelPwA       = wf.pwA;
+                    voiceParams.wheelPwB       = wf.pwB;
+                    voiceParams.wheelFilterOct = wf.filterOct;
+                    voiceParams.wheelPwAOn     = wheelMod.destActive(WheelMod::kPwA);
+                    voiceParams.wheelPwBOn     = wheelMod.destActive(WheelMod::kPwB);
+                }
+            }
 
             // Render osFactor internal samples, then decimate to host rate (fix #1).
             float iL[4], iR[4];

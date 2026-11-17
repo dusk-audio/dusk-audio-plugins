@@ -135,7 +135,7 @@ The signature of Oracle is poly-modulation. The mode sub-panel is a six-knob **P
 - **OscB to Filter**: oscillator 2 moves the filter cutoff at audio rate, up to 3.1 octaves either way at full, for growling and metallic filter FM.
 - **Sync**: oscillator 2 hard-syncs oscillator 1. Each time oscillator 2 starts a cycle it restarts oscillator 1, creating swept harmonic edges when their pitches differ. This is the reverse of Mono and Modular, as on the instrument Oracle is modeled on: oscillator 1 is the one Poly-Mod plays, and with Sync on, modulating its pitch (from the filter envelope, oscillator 2 or the mod matrix) sweeps its timbre while the note keeps oscillator 2's pitch.
 
-Mode-specific controls visible in Oracle: the six poly-mod knobs and the **Sync** button. There is no sub oscillator and no filter high-pass in this mode; the third panel on the left reads **AUX OSC** with a note that Oracle uses its two-oscillator poly-mod path instead.
+Mode-specific controls visible in Oracle: the six poly-mod knobs, the **Sync** button, and the **WHEEL MOD** button next to **MOD MATRIX**, which opens Oracle's Wheel Mod section (see [Wheel Mod (Oracle)](#wheel-mod-oracle)). There is no sub oscillator and no filter high-pass in this mode; the third panel on the left reads **AUX OSC** with a note that Oracle uses its two-oscillator poly-mod path instead.
 
 ### Mono: aggressive monophonic
 
@@ -294,7 +294,7 @@ The live step position highlights the current column across all four lanes as th
 
 There are two LFOs, and every voice owns its own pair, so they are per-note rather than global. Each has a **Shape** (Sine, Triangle, Square, Sample and Hold, or Random Smooth), a **Rate** from 0.01 to 50 Hz, a **Fade In** from 0 to 5 seconds for modulation that arrives after the attack, and a **Sync** switch.
 
-Nothing is hardwired. An LFO does not reach pitch, filter, or amplitude until you route it in the mod matrix, which is also true of the mod wheel. There is no built-in vibrato path to work around.
+Nothing is hardwired. An LFO does not reach pitch, filter, or amplitude until you route it in the mod matrix, which is also true of the mod wheel. There is no built-in vibrato path to work around. The one exception is Oracle's Wheel Mod section, which has its own single LFO and its own wheel path (see [Wheel Mod (Oracle)](#wheel-mod-oracle)); it is off until you switch one of its destinations on.
 
 ### LFO sync
 
@@ -309,9 +309,44 @@ Two behaviors are worth knowing:
 
 While phase-locked, **LFO1 Rate / LFO2 Rate modulation routes do not change the cycle length**; the Rate knob and host grid set it. Those routes affect speed again when the transport stops or Sync is off. For Random Smooth, rate modulation still changes the smoothing speed while locked.
 
+## Wheel Mod (Oracle)
+
+Oracle has the modulation section of the instrument it is modeled on: one LFO and one noise source, mixed, scaled by the mod wheel, and switched to five destinations. Open it with the **WHEEL MOD** button next to **MOD MATRIX** on the right of the Oracle panel. The button's lamp lights, and it shows how many destinations are on, whenever the section is doing something.
+
+![The Wheel Mod section set up for mod-wheel vibrato: triangle LFO at 5.4 Hz, the mix all the way to LFO, an upper limit of 10 percent and a lower limit of 2 percent, and the Freq A and Freq B destinations on](screenshots/sunset-circuits/08-wheel-mod.png)
+
+**It is one source for the whole instrument.** Every voice hears the same LFO and the same noise at the same moment, so a chord wobbles together, and the LFO runs freely: playing a note never restarts it. This is the difference from the two LFOs in the LFOs section, which every voice owns a copy of.
+
+**It is off by default.** Nothing reaches the sound until a destination is on, so presets and projects from earlier versions load with the section off and sound exactly as they did. The section only acts in Oracle; its settings are kept, and ignored, in the other modes.
+
+The panel reads left to right, in signal order.
+
+| Column | Control | What it does |
+|---|---|---|
+| LFO | **Rate** | 0.03 Hz (one cycle every 33 seconds) to 26.2 Hz, on an exponential knob: the middle of its travel is about 0.89 Hz. |
+| LFO | **Shape**: **Saw**, **Tri**, **Sqr** | Switch on any combination. Saw rises and drops, and only ever pushes up; Square jumps between rest and up; Triangle swings both ways. Combinations are not a simple sum, they follow the instrument: Saw with Square, for example, makes a sawtooth at twice the rate. With no shape on, the LFO is silent. |
+| Source | **Mix** | From the LFO alone (left) to the noise alone (right), a straight crossfade. |
+| Source | **Noise type**: **Noise**, **S&H** | Noise is a random wobble (about 71 cents of pitch deviation at full depth, most of its movement below about 150 Hz, and it dips further down than it rises). S&H replaces it with random steps, one new value at the start of every LFO cycle, anywhere up to 8 semitones up or down at full depth. |
+| Depth | **Upper**, **Lower** | The depth with the mod wheel all the way up, and all the way down. The wheel moves the depth in a straight line between them. Set Lower above zero for modulation that is there without touching the wheel; set Lower above Upper and the wheel turns the modulation down instead. The rail shows both limits and, filled in, the depth the wheel is giving now. |
+| Destination | **Freq A**, **Freq B**, **PW A**, **PW B**, **Filter** | Where the modulation goes: oscillator 1 or 2 pitch, oscillator 1 or 2 pulse width, the filter cutoff. Any combination. |
+
+How far each destination moves, with the mod wheel and Upper at full:
+
+- **Pitch**: the sawtooth sweeps up 11.75 semitones, the square jumps up 8 semitones, the triangle swings about 5.9 semitones each way, centered slightly above the note. The depth follows the wheel in a straight line, about 9.3 cents per step of a 128-step wheel.
+- **Pulse width**: the square widens the pulse by 80 percent of the cycle. Past either end of its range the pulse closes and falls silent, as on the instrument, so this route can gate a pulse wave in time with the LFO.
+- **Filter**: the square opens the cutoff by about 8.8 octaves, so even a small depth is a large sweep.
+
+These match measurements of the model of the instrument Oracle is modeled on, to within a few cents of pitch.
+
+**Mod-wheel vibrato:** Triangle on, Mix all the way to LFO, Rate around 5 Hz, Freq A and Freq B on, Upper around 10 percent and Lower at 0. The wheel then brings in up to about a semitone of vibrato. Raise Lower slightly for a little vibrato with the wheel at rest.
+
+Switching a destination on or off fades it over 5 ms, and the wheel and the Mix knob glide like the other smoothed controls, so none of them clicks. The Shape and Noise type switches change the modulation at once, as the panel switches do on the instrument.
+
+The mod wheel is still a source in the mod matrix as well, and the Upper and Lower limits do not affect it there. The Wheel Mod section is not tempo-synced.
+
 ## Mod Matrix
 
-The mod matrix is an eight-slot modulation router, opened from the **MOD MATRIX** bar on the right (the bar shows how many slots are active). Each slot connects one source to one destination with a bipolar amount, so you can invert a modulation by using a negative amount. All eight slots are always available in every mode.
+The mod matrix is an eight-slot modulation router, opened from the **MOD MATRIX** bar on the right (the bar shows how many slots are active; in Oracle it shares the bar with the **WHEEL MOD** button). Each slot connects one source to one destination with a bipolar amount, so you can invert a modulation by using a negative amount. All eight slots are always available in every mode.
 
 **Sources**
 
@@ -499,11 +534,11 @@ The first row is the worst case among ordinary patches: a full 8-voice FM patch,
 
 ### Parameters and automation
 
-Every control is a normal host parameter: 223 automatable parameters, plus two output-only level meters the host can read but not write, for 225 host parameters in total (229 ports in the LV2 build, counting audio, MIDI, and the latency report). Oversampling is one of the 223, so it automates like anything else, and since the latency is the same at every factor, automating it never makes the host restart the plugin. Controls that a mode hides are still present in the host's parameter list, so an automation lane never breaks when you switch circuits.
+Every control is a normal host parameter: 241 automatable parameters, plus two output-only level meters the host can read but not write, for 243 host parameters in total (247 ports in the LV2 build, counting audio, MIDI, and the latency report). Oversampling is one of the 241, so it automates like anything else, and since the latency is the same at every factor, automating it never makes the host restart the plugin. Controls that a mode hides are still present in the host's parameter list, so an automation lane never breaks when you switch circuits.
 
 Continuous parameters are smoothed, so automating or dragging them does not produce zipper noise. The smoother settles with an 8 ms time constant, short enough that a knob still feels immediate. Filter cutoffs are smoothed in the log-frequency domain rather than in Hz, so a sweep sounds even across the range instead of racing through the top octaves. The smoothed set covers the level, filter and effect-mix controls; the rest step per block, which for most of them is inaudible. A few are deliberately left unsmoothed because smoothing them would be worse than the step: oscillator and unison detune, pulse width, and the LFO and chorus rates all set a phase increment or an edge position, where a ramp is a pitch glide nobody asked for. Stepped controls (waveforms, modes, sequencer cells, mod-matrix routings) switch outright, as they should, with one exception: when an LFO gets its first LFO1 Depth or LFO2 Depth slot, or loses its last one, while a note sounds, its depth fades in or out over 5 ms so the change does not click. Any other change to a depth slot switches outright like the rest of the matrix.
 
-Loading a preset snaps rather than glides. The plugin tells the engine explicitly that a program change happened, so all 223 values land at once and a preset sounds correct on its first note instead of sliding into place over the first fraction of a second. For hosts that replay a patch as a burst of ordinary parameter writes rather than a program change, the engine detects the burst and snaps anyway.
+Loading a preset snaps rather than glides. The plugin tells the engine explicitly that a program change happened, so all 241 values land at once and a preset sounds correct on its first note instead of sliding into place over the first fraction of a second. For hosts that replay a patch as a burst of ordinary parameter writes rather than a program change, the engine detects the burst and snaps anyway.
 
 ### Hardware controllers
 

@@ -439,14 +439,15 @@ std::vector<float> noiseCents(double sr, double seconds, int dec, Moments* mom)
 void testNoise()
 {
     const char* T = "noise";
-    // Moments (reference: 71.94 c RMS, mean +0.24 c, skew -0.825, excess kurtosis
-    // +1.92; the half-wheel render has the same skew and kurtosis).
+    // Moments. Reference: three 160 s realizations pooled (48 / 96 / 44.1 kHz),
+    // 70.87 c RMS, skew -0.956, excess kurtosis 2.07, bounded to -480 .. +297 c.
+    // (Single realizations spread over 68.4..72.2 c, -0.82..-1.09, 1.91..2.36.)
     for (double sr : { 44100.0, 48000.0, 96000.0 })
     {
         Moments mo{};
         noiseCents(sr, 300.0, 1 << 30, &mo);
-        check(nearRel(mo.rms, 71.94, 0.03) && std::fabs(mo.mean) < 2.0 && near(mo.skew, -0.825, 0.05) && near(mo.exkurt, 1.92, 0.25),
-              T, "%6.0f Hz: RMS %.2f c (71.94), mean %+.2f c, skew %.3f (-0.825), excess kurtosis %.2f (1.92)",
+        check(nearRel(mo.rms, 70.87, 0.03) && std::fabs(mo.mean) < 2.0 && near(mo.skew, -0.956, 0.05) && near(mo.exkurt, 2.07, 0.25),
+              T, "%6.0f Hz: RMS %.2f c (70.87), mean %+.2f c, skew %.3f (-0.956), excess kurtosis %.2f (2.07)",
               sr, mo.rms, mo.mean, mo.skew, mo.exkurt);
     }
     // Control: a Gaussian of the same RMS (what "Gaussian-like" would have built).
@@ -455,18 +456,18 @@ void testNoise()
         std::vector<float> g(4000000);
         for (float& v : g) { double a = 0; for (int j = 0; j < 12; ++j) a += r.nextFloat(); v = (float)((a - 6.0) * 71.94); }
         const Moments mo = moments(g);
-        control(!near(mo.skew, -0.825, 0.05), T, "a symmetric Gaussian noise fails the skew check");
+        control(!near(mo.skew, -0.956, 0.05), T, "a symmetric Gaussian noise fails the skew check");
     }
 
-    // Spectrum vs the reference, dB re the 4-16 Hz level. Reference = A7 carrier,
-    // zero-crossing estimator, 60 s (bands >= 2 Hz; >= 128 Hz corrected for the
-    // estimator's sinc^3 roll-off), and the mean of the A4 / A6 / A7 renders for
-    // the bands below 2 Hz. Half-octave bands centred on fc.
+    // Spectrum vs the reference, dB re the 4-16 Hz level: the mean of the three
+    // 160 s realizations (A7 carrier, zero-crossing estimator; bands >= 96 Hz
+    // corrected for the estimator's sinc^3 roll-off). Half-octave bands centred
+    // on fc.
     struct B { double fc, ref, tol; };
     const B bands[] = {
-        { 0.25, 1.74, 1.0 }, { 0.5, 1.41, 1.0 }, { 1.0, 0.20, 1.0 }, { 2.0, 0.26, 0.75 },
-        { 32, -0.23, 0.75 }, { 48, -0.78, 0.75 }, { 64, -1.36, 0.75 }, { 96, -2.85, 0.75 }, { 128, -4.47, 0.75 },
-        { 180, -7.36, 0.75 }, { 256, -11.34, 0.75 }, { 362, -16.01, 0.75 }, { 512, -21.15, 0.75 },
+        { 0.25, 2.05, 1.0 }, { 0.5, 1.11, 1.0 }, { 1.0, -0.41, 1.0 }, { 2.0, 0.46, 0.75 },
+        { 32, -0.30, 0.75 }, { 48, -0.83, 0.75 }, { 64, -1.38, 0.75 }, { 96, -2.85, 0.75 }, { 128, -4.53, 0.75 },
+        { 180, -7.41, 0.75 }, { 256, -11.36, 0.75 }, { 362, -16.06, 0.75 }, { 512, -21.29, 0.75 },
     };
     const double sr = 48000.0, secs = 1200.0;
     // HF: boxcar 16 -> 3 kHz, 8192-point segments; the boxcar response is divided out.
@@ -504,7 +505,7 @@ void testNoise()
         for (float& v : w) v = r.nextBipolar();
         std::vector<double> fw; std::vector<double> pw = welch(w, 8192, fw, sr / 16);
         const double db = 10.0 * std::log10(bandMean(fw, pw, 256 / std::pow(2.0, 0.25), 256 * std::pow(2.0, 0.25)) / bandMean(fw, pw, 4, 16));
-        control(!near(db, -11.34, 0.75), T, "unshaped white noise fails the 256 Hz band");
+        control(!near(db, -11.36, 0.75), T, "unshaped white noise fails the 256 Hz band");
     }
 }
 
@@ -549,7 +550,7 @@ void testSH()
         pv = v;
     }
     check(jumps == 20, T, "saw + S&H at mix 0.5: %d jumps in 20 cycles (only the saw resets)", jumps);
-    control(!near(mo.exkurt, 1.92, 0.1), T, "the S&H is not the shaped noise (kurtosis differs)");
+    control(!near(mo.exkurt, 2.07, 0.1), T, "the S&H is not the shaped noise (kurtosis differs)");
 }
 
 // --------------------------------------------------------------------------
@@ -688,11 +689,12 @@ void testRobust()
         }
     }
     check(finite, T, "non-finite and huge settings never reach the output");
-    // The noise is bounded whatever the stream does: the cubic's input is clamped.
-    const double x = WheelMod::kNoiseInputClamp;
-    const double yMax = std::fabs(WheelMod::kFlA) + x * (WheelMod::kFlB + x * (std::fabs(WheelMod::kFlC) + x * WheelMod::kFlD));
-    const double bound = WheelMod::kNoiseSigma * yMax * (1.0 + WheelMod::kNoiseShelfK);
-    check(bound < 1.5, T, "noise bounded to %.3f bus units (%.0f c at full wheel)", bound, bound * WheelMod::kFreqCentsPerUnit);
+    // The noise is bounded whatever the stream does: the quantile map holds its end
+    // knots, and the shelf adds at most K times the same bound.
+    double yMax = 0.0;
+    for (float k : WheelMod::kNoiseMap) yMax = std::max(yMax, (double)std::fabs(k));
+    const double bound = yMax * (1.0 + WheelMod::kNoiseShelfK);
+    check(bound < 0.7, T, "noise bounded to %.3f bus units (%.0f c at full wheel)", bound, bound * WheelMod::kFreqCentsPerUnit);
 }
 
 } // namespace

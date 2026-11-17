@@ -43,6 +43,7 @@
 #include "Effects.hpp"
 #include "Arpeggiator.hpp"
 #include "AcidEngine.hpp"      // Acid mode (mode 5): mono voice + pattern sequencer
+#include "WheelMod.hpp"        // Oracle Wheel Mod: global LFO + shared noise (#303)
 #include "DuskOversampler.hpp" // HalfbandFIR + hbtaps
 #include "DuskFilters.hpp"     // DCBlocker (output hygiene)
 #include "DuskSmoothed.hpp"    // one-pole parameter smoothing (zipper-free automation)
@@ -560,6 +561,13 @@ private:
     int      acidHeldCount = 0;
 
     VoiceParameters voiceParams;
+
+    // Oracle Wheel Mod (#303). ONE per engine: the instrument has a single
+    // modulation bus, so every voice hears the same LFO and the same noise. It is
+    // set every block and run every host sample in EVERY mode, so its LFO free-runs
+    // through mode changes; only Oracle voices apply it (wheelOracle).
+    WheelMod wheelMod;
+    bool     wheelOracle = false;
 
     // block-cached engine-level controls (targets for the smoothers below)
     float masterGain = 1.0f, masterPan = 0.0f, stereoWidth = 0.5f, vintage = 0.0f;

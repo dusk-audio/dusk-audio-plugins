@@ -121,6 +121,10 @@ public:
     // For a modulation that may close the pulse altogether (Oracle's filter
     // envelope -> PW A): down to 0, where the pulse is gone and only DC is left.
     void setPulseWidthMayClose(float pw) noexcept { pulseWidth = clampf(pw, 0.0f, 0.95f); }
+    // For Oracle's Wheel Mod -> PW: past EITHER end the pulse closes, constant low
+    // at 0 and constant high at 1 (measured on the instrument: +0.80 of wheel from
+    // a 50 % pulse leaves it 39 dB down for the half-cycle it is over the top).
+    void setPulseWidthFullRange(float pw) noexcept { pulseWidth = clampf(pw, 0.0f, 1.0f); }
     // Called per internal sample with a detune that rarely moves: the pow() runs
     // only when it does (bit-compared, see sameBits).
     void setDetune(float cents) noexcept
@@ -626,7 +630,8 @@ private:
                 if (p < 0.5f) { edge = 0.5f; height = -2.0f; } else { edge = 1.0f; height = 2.0f; }
                 return true;
             case Waveform::Pulse:
-                if (pulseWidth <= 0.0f) return false;   // closed: no edges, constant low
+                // closed: no edges, constant low (0) or constant high (1)
+                if (pulseWidth <= 0.0f || pulseWidth >= 1.0f) return false;
                 if (p < pulseWidth) { edge = pulseWidth; height = -2.0f; } else { edge = 1.0f; height = 2.0f; }
                 return true;
             default:

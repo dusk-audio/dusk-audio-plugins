@@ -17,6 +17,10 @@
 // Runs at the HOST rate, once per host sample (process()), so the modulation is
 // the same signal at every oversampling factor; the voices read the frame it
 // returns. Audio-thread contract: no allocation, no locks, no I/O, bounded work.
+// Wiring: MultiSynthDSP sets it every block and runs it every host sample in
+// every mode, and publishes the frame into VoiceParameters (wheel* fields) only
+// in Oracle; Voice.hpp adds it to the two pitches, the two pulse widths and the
+// cutoff.
 //
 // Every number below is a measurement of the reference model taken on 2026-11-17
 // (instrument host renders, osc B as a triangle carrier at A4/A7, slow LFO, wheel
@@ -115,24 +119,36 @@ public:
     // cycle, taken at the saw reset; +-801 cents on oscillator B.
     static constexpr float kShHalfRange = 0.68167f;
 
-    // Shaped noise: a zero-mean, NEGATIVELY SKEWED distribution (skew -0.825,
-    // excess kurtosis +1.92, the same at half wheel, so it is the source and not
-    // the converter), 71.94 cents RMS at full wheel. Spectrum of the deviation,
+    // Shaped noise. Three 160 s reference renders (48, 96 and 44.1 kHz; its noise
+    // restarts identically at instance start, and each rate gives a different,
+    // partly correlated realization), pooled: a zero-mean, NEGATIVELY SKEWED and
+    // BOUNDED distribution, 70.87 cents RMS at full wheel, skew -0.956, excess
+    // kurtosis 2.07, never below -480 or above +297 cents (the same shape at half
+    // wheel, so it is the source, not the converter). Spectrum of the deviation,
     // dB re its 4-16 Hz level: flat from 2 Hz to 32 Hz, two real poles at 155 Hz
-    // (-1.4 / -4.5 / -11.3 / -21.2 dB at 64 / 128 / 256 / 512 Hz), and a rise of
-    // about +1.7 dB at 0.25 Hz. Built as uniform white -> two one-pole lowpasses
-    // at kNoiseCornerHz -> unit variance -> a monotonic cubic (Fleishman
-    // coefficients for that skew and kurtosis) -> a +2 dB low shelf.
-    static constexpr float kNoiseSigma     = 0.061222f;   // 71.94 c / 1175.06 c
+    // (-1.4 / -4.5 / -11.4 / -21.3 dB at 64 / 128 / 256 / 512 Hz), and a rise
+    // below 1 Hz (+2.0 dB at 0.25 Hz).
+    // Built as uniform white -> two one-pole lowpasses at kNoiseCornerHz -> a
+    // unit-variance Gaussian x -> the measured QUANTILE MAP (kNoiseMap, the
+    // reference's quantile at Phi(x), so the distribution and its bounds are the
+    // measured ones; a two-parameter cubic matched skew and kurtosis but reached
+    // -650 cents, half as far again as the reference ever goes) -> a first-order
+    // low shelf (+4.1 dB below 0.2 Hz, least-squares fit to the 0.25..2 Hz bands).
     static constexpr float kNoiseCornerHz  = 155.0f;
-    static constexpr float kNoiseShelfHz   = 0.6f;
-    static constexpr float kNoiseShelfK    = 0.2589254f;  // DC gain 1 + K = +2.0 dB
-    // y = kFlA + kFlB x + kFlC x^2 + kFlD x^3, with kFlA = -kFlC (zero mean, unit variance).
-    static constexpr float kFlB = 0.885057f, kFlC = -0.114807f, kFlD = 0.032799f, kFlA = -kFlC;
-    // The cubic is applied to a unit-variance Gaussian; clamping its input at 6
-    // sigma (one sample in 5e8) bounds the noise to under 1.3 bus units whatever
-    // the random stream does.
-    static constexpr float kNoiseInputClamp = 6.0f;
+    static constexpr float kNoiseShelfHz   = 0.20f;
+    static constexpr float kNoiseShelfK    = 0.6032454f;  // DC gain 1 + K = +4.1 dB
+    // Knots at x = -4, -3.75, ... +4 (33), in bus units at full depth; zero mean
+    // under a unit Gaussian. The ends are the reference's observed extremes; x is
+    // clamped to +-4 (one sample in 16000), where the map holds them.
+    static constexpr int   kNoiseMapKnots = 33;
+    static constexpr float kNoiseMapLo = -4.0f, kNoiseMapStep = 0.25f;
+    static constexpr float kNoiseMap[kNoiseMapKnots] = {
+        -0.408281f, -0.377236f, -0.362539f, -0.326167f, -0.277473f, -0.241220f, -0.205682f,
+        -0.173874f, -0.145618f, -0.120597f, -0.096792f, -0.074820f, -0.055003f, -0.037144f,
+        -0.020655f, -0.005805f,  0.008034f,  0.021118f,  0.033291f,  0.044670f,  0.055478f,
+         0.065951f,  0.076329f,  0.086628f,  0.096993f,  0.107879f,  0.119094f,  0.131477f,
+         0.144610f,  0.160992f,  0.178224f,  0.197902f,  0.252809f,
+    };
 
     // A destination switched on or off while the bus is non-zero would step the
     // pitch, pulse width or cutoff on that sample; it fades over the LFO's own seek
@@ -204,14 +220,18 @@ public:
         }
     }
 
+    enum Dest { kFreqA = 0, kFreqB, kPwA, kPwB, kFilter, kNumDest };
+
     // True while any destination is switched on or still fading out. While it is
     // false the frame is all +0.0f and the voices must not apply it (OFF CONTRACT).
     bool active() const noexcept
     {
         for (int d = 0; d < kNumDest; ++d)
-            if (enabled[d] || fade[d] > 0.0f) return true;
+            if (destActive((Dest)d)) return true;
         return false;
     }
+    // The same for one destination: its frame field is +0.0f while this is false.
+    bool destActive(Dest d) const noexcept { return enabled[d] || fade[d] > 0.0f; }
 
     // ---- sample rate (audio thread) ----------------------------------------
     // One host sample. Every source advances whether or not a destination is on,
@@ -238,10 +258,9 @@ public:
         // Shaped noise (always advanced, so the stream never depends on the mix).
         lp1 += lpCoef * (whiteGain * noiseRng.nextBipolar() - lp1);
         lp2 += lpCoef * (lp1 - lp2);
-        const float x = clampf(lp2, -kNoiseInputClamp, kNoiseInputClamp);
-        const float y = kFlA + x * (kFlB + x * (kFlC + x * kFlD));
+        const float y = noiseMap(lp2);
         shelf += shelfCoef * (y - shelf);
-        const float noise = kNoiseSigma * (y + kNoiseShelfK * shelf);
+        const float noise = y + kNoiseShelfK * shelf;
 
         const float src = useSH ? held : noise;
         const float m = mix.next();
@@ -266,7 +285,14 @@ public:
     float  depthValue() const noexcept     { return depth.value(); }
 
 private:
-    enum Dest { kFreqA = 0, kFreqB, kPwA, kPwB, kFilter, kNumDest };
+    // The quantile map, linear between knots; x clamped to the map's range.
+    static float noiseMap(float x) noexcept
+    {
+        const float u = (clampf(x, kNoiseMapLo, -kNoiseMapLo) - kNoiseMapLo) * (1.0f / kNoiseMapStep);
+        const int   i = clampi((int)u, 0, kNoiseMapKnots - 2);
+        const float f = u - (float)i;
+        return kNoiseMap[i] + f * (kNoiseMap[i + 1] - kNoiseMap[i]);
+    }
 
     static float clamp01(float v) noexcept { return std::isfinite(v) ? clampf(v, 0.0f, 1.0f) : 0.0f; }
 

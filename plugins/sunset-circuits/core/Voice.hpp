@@ -152,6 +152,17 @@ struct VoiceParameters
     // With none, once a just-removed route's fade-out has run, that LFO's output is
     // not touched at all (SynthVoice::applyLfoDepth).
     bool lfo1DepthRouted = false, lfo2DepthRouted = false;
+
+    // Oracle Wheel Mod (WheelMod.hpp), one frame per HOST sample from the engine,
+    // the same for every voice and every oversampled sub-sample. Applied only
+    // while wheelModActive (Oracle, a destination on or fading out); otherwise
+    // every expression below is the one it was before the section existed, so
+    // every patch without a wheel destination renders bit-identically.
+    bool  wheelModActive = false;
+    bool  wheelPwAOn = false, wheelPwBOn = false;      // that destination on or fading out
+    float wheelFreqAOct = 0.0f, wheelFreqBOct = 0.0f;  // pitch offsets, octaves
+    float wheelPwA = 0.0f, wheelPwB = 0.0f;            // pulse-width offsets
+    float wheelFilterOct = 0.0f;                       // cutoff offset, octaves
 };
 
 //==============================================================================
@@ -564,8 +575,11 @@ public:
         baseFreq *= (1.0f + driftSmooth * params.analogAmount * 0.002f);
         baseFreq *= bendTuneRatio((params.pitchBendSemis + params.masterTuneSemis) / 12.0f);
 
-        const float freq1 = baseFreq * pitch1Ratio(pitchMod1 * 2.0f / 12.0f);
-        const float freq2 = baseFreq * pitch2Ratio(((float)params.osc2SemiOffset + pitchMod2 * 2.0f) / 12.0f);
+        const float oct1 = pitchMod1 * 2.0f / 12.0f;
+        const float oct2 = ((float)params.osc2SemiOffset + pitchMod2 * 2.0f) / 12.0f;
+        const bool  wheel = params.wheelModActive;   // Oracle Wheel Mod (see VoiceParameters)
+        const float freq1 = baseFreq * pitch1Ratio(wheel ? oct1 + params.wheelFreqAOct : oct1);
+        const float freq2 = baseFreq * pitch2Ratio(wheel ? oct2 + params.wheelFreqBOct : oct2);
 
         float noiseSample;
         if (params.mode == SynthMode::Oracle)
@@ -638,7 +652,12 @@ public:
         const float envModTotal = clampf(
             (filtVal * params.filterEnvAmount + cutoffMod + polyModFiltExtra) * 2.0f
             + audioRateOctaves, -5.0f, 5.0f);
-        float envCutoff = params.filterCutoff * cutoffRatio(envModTotal);
+        // The Wheel Mod's cutoff offset sits outside the +-5 octave clamp of the
+        // envelope and matrix sum: on the instrument it reaches +8.8 octaves on its
+        // own (the square at full wheel). +-16 octaves only keeps exp2 finite; the
+        // cutoff clamp below is what limits it.
+        float envCutoff = params.filterCutoff
+            * cutoffRatio(wheel ? clampf(envModTotal + params.wheelFilterOct, -16.0f, 16.0f) : envModTotal);
         envCutoff *= (1.0f + filterTrackingOffset * params.analogAmount);
         // TPT models remain stable throughout the usable top octave.
         envCutoff = clampf(envCutoff, 20.0f, (float)sr * 0.45f);
@@ -774,8 +793,10 @@ private:
                 pwMayClose = true;
             }
         }
-        if (pwMayClose) o.osc1.setPulseWidthMayClose(pw1);
-        else            o.osc1.setPulseWidth(pw1);
+        if (params.wheelModActive && params.wheelPwAOn)
+            o.osc1.setPulseWidthFullRange(pw1 + params.wheelPwA);   // may close at either end
+        else if (pwMayClose) o.osc1.setPulseWidthMayClose(pw1);
+        else                 o.osc1.setPulseWidth(pw1);
         o.osc1.setDetune(params.osc1Detune + detCents);
 
         // Cross mod (fix #4): osc2 (previous sample) -> osc1 frequency, linear FM of
@@ -832,7 +853,10 @@ private:
             {
                 o.osc2.setFrequency(freq2);
                 o.osc2.setWaveform(params.osc2Wave);
-                o.osc2.setPulseWidth(params.osc2PulseWidth + pwm2);
+                if (params.wheelModActive && params.wheelPwBOn)
+                    o.osc2.setPulseWidthFullRange(params.osc2PulseWidth + pwm2 + params.wheelPwB);
+                else
+                    o.osc2.setPulseWidth(params.osc2PulseWidth + pwm2);
                 o.osc2.setDetune(params.osc2Detune + detCents);
                 // Oracle's sync runs the other way round from Mono and Modular, as on
                 // the instrument it models: oscillator B (osc 2) is the master and
