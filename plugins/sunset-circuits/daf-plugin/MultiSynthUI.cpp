@@ -664,8 +664,11 @@ private:
 
     // sheet = false: a modal panel (an overlay), not a section of the face. It keeps
     // its rail in Oracle, so it still reads against the scrim, and gets no silk box.
+    // titled = false: a section with no title (Oracle's launcher bar), whose silk box
+    // closes along the panel's top edge instead of running through a title.
     void panelBox(float x0, float y0, float x1, float y1, float alpha = 1.0f,
-                  ImU32 cosmosBand = 0, float bandHeight = 20.0f, bool sheet = true)
+                  ImU32 cosmosBand = 0, float bandHeight = 20.0f, bool sheet = true,
+                  bool titled = true)
     {
         // The older 3 px bright metal frame gave every nested section the same
         // visual weight. A slimmer, chassis-blended rail keeps the hardware
@@ -686,17 +689,36 @@ private:
             dl->AddRectFilled(P(x0 + 2, y0 + 2), P(x1 - 2, y0 + bandHeight),
                               mulA(cosmosBand, alpha * live.cosmos), 4.0f * s,
                               ImDrawFlags_RoundCornersTop);
-        if (sheet && live.oracle > 0.0f) oracleBox(x0, y0, x1, y1, alpha);
+        if (sheet && live.oracle > 0.0f) oracleBox(x0, y0, x1, y1, alpha, titled);
     }
 
     // Oracle: the panel is part of one black sheet and the section is marked the way
-    // the instrument's panel marks it, by a thin white silk-screened box whose top
-    // line runs through the section title (sectionTitle knocks the title out of it).
-    static constexpr float kSilkInset = 5.0f, kSilkTop = 9.5f;   // title centre line
-    void oracleBox(float x0, float y0, float x1, float y1, float alpha)
+    // the instrument's panel marks it, by a thin white silk-screened box. Its sides
+    // and floor run along the panel's own edge, where the rail was, so the controls
+    // keep the margins they were laid out with; neighbouring boxes read as separate
+    // boxes with the panel gap between them. The stroke sits half its width inside
+    // the edge, which puts its anti-aliased outer edge on the panel edge at every
+    // scale, so a knock-out that stays inside the panel clears it completely. A
+    // titled box's top line runs through the title (sectionTitle knocks the title
+    // out of it, oracleTitleRowGap a control on the title row); an untitled box
+    // closes along the panel's top edge.
+    static constexpr float kSilkW = 1.2f, kSilkTop = 9.5f;   // stroke width, title centre line
+    void oracleBox(float x0, float y0, float x1, float y1, float alpha, bool titled)
     {
-        dl->AddRect(P(x0 + kSilkInset, y0 + kSilkTop), P(x1 - kSilkInset, y1 - kSilkInset),
-                    mulA(kOracleMat.silk, alpha * live.oracle), 4.0f * s, 0, 1.2f * s);
+        const float in = 0.5f * kSilkW;
+        dl->AddRect(P(x0 + in, titled ? y0 + kSilkTop : y0 + in), P(x1 - in, y1 - in),
+                    mulA(kOracleMat.silk, alpha * live.oracle), 5.0f * s, 0, kSilkW * s);
+    }
+    // A control at the right end of a section's title row (a wave menu, an ON switch)
+    // sits in the silk box's top line the way the title does (Oracle only). It runs
+    // to the panel's right edge, so the knock-out takes the box's top-right corner
+    // with it, down to 4 px under the control, and keeps the panel's own corner
+    // rounding so it never paints outside the panel.
+    void oracleTitleRowGap(float cx0, float cy1, float panelY0, float panelX1)
+    {
+        if (live.oracle <= 0.0f) return;
+        dl->AddRectFilled(P(cx0 - 4.0f, panelY0), P(panelX1, cy1 + 4.0f),
+                          mulA(live.panel, live.oracle), 6.0f * s, ImDrawFlags_RoundCornersTopRight);
     }
     // Knock a title out of the silk-screen box's top line (Oracle only).
     void oracleTitleGap(float x, float y, float sz, const char* t, float alpha = 1.0f)
@@ -1949,6 +1971,7 @@ private:
         // X-MOD here as well exposed two controls for effectively the same route.
         panelBox(16, g1.y0, 340, g1.y1, 1.0f, kCosmosRed, 26.0f);
         sectionTitle(24, g1.rowY + 4.0f, "OSC 1");
+        oracleTitleRowGap(150, g1.comboY1, g1.y0, 340);
         comboBox("o1w", kParamOsc1Wave, 150, g1.rowY, 332, g1.comboY1, kWave5, 5, curMode == 5);
         klabel(60, g1.labelY, "DETUNE");
         if (curMode == 5)
@@ -2001,6 +2024,7 @@ private:
             }
             else
             {
+                oracleTitleRowGap(150, g2.comboY1, g2.y0, 340);
                 comboBox("o2w", kParamOsc2Wave, 150, g2.rowY, 332, g2.comboY1,
                          kWave5, 5);
                 klabel(56, g2.labelY, "SEMI");
@@ -2204,7 +2228,10 @@ private:
         const float fc = values[kParamFilterCutoff];
         if (fc >= 1000.0f) std::snprintf(rb, sizeof rb, "%.2f kHz", fc / 1000.0f);
         else               std::snprintf(rb, sizeof rb, "%.0f Hz", fc);
-        text(426, 290, 10.0f, live.accent, rb, 0, true);
+        // Oracle's silk box floor runs along the panel's bottom edge, which this
+        // read-out's ink reaches; there it rides 2 px higher (blended by the Oracle
+        // weight, so it does not move in any other mode).
+        text(426, 290.0f - 2.0f * live.oracle, 10.0f, live.accent, rb, 0, true);
 
         // RES / ENV AMT / HP all carry a permanent read-out (y 270, clear of the 297
         // panel floor): they are the row you ride while playing.
@@ -3022,7 +3049,7 @@ private:
 
         // Panel extended 518 -> 542 (+24 lower-body shift); the clickable button grows
         // vertically, centred in the taller panel (mid 504).
-        panelBox(760, 466, 1000, 542);
+        panelBox(760, 466, 1000, 542, 1.0f, 0, 20.0f, /*sheet*/ true, /*titled*/ false);
         if (curMode == 1) { drawOracleModLaunchers(); return; }
         const ImVec2 b0 = P(768, 474), b1 = P(992, 534);
         ImGui::SetCursorScreenPos(b0);
@@ -4450,6 +4477,7 @@ private:
         panelBox(708, 552, 834, 688);
         sectionTitle(714, 556, "DRIVE");
         const bool acid = (curMode == 5);
+        oracleTitleRowGap(786, 572, 552, 834);
         ledButton("drvon", kParamDriveOn, 786, 556, 828, 572,
                   acid ? "FX" : "ON");
         if (acid)
@@ -4472,6 +4500,7 @@ private:
         // (845.8 >= 844, 956.2 <= 958) and each neighbor by 3.6 px.
         panelBox(838, 552, 964, 688);
         sectionTitle(844, 556, "CHORUS");
+        oracleTitleRowGap(916, 572, 552, 964);
         ledButton("choon", kParamChorusOn, 916, 556, 958, 572, "ON");
         klabel(863, 598, "RATE");  knob("chorate", kParamChorusRate, 863, 636, 14, "%.2f", " Hz", false, false, ro, 1.0f, 0.0f, false);
         klabel(901, 598, "DEPTH"); knob("chodep", kParamChorusDepth, 901, 636, 14, "%.0f", " %", false, false, ro, 100.0f, 0.0f, false);
@@ -4481,9 +4510,10 @@ private:
         // end at y=606 with the FB label starting at 598 UNDER it): SYNC + the
         // context DIV combo share the top row (578..598); the knob row (labels
         // 608, centres 642) holds FB+MIX when synced or TIME+FB+MIX when free;
-        // P-P and TAPE ride a bottom row of their own (664..680).
+        // P-P and TAPE ride a bottom row of their own (664..680, 5 px higher in Oracle).
         panelBox(968, 552, 1094, 688);
         sectionTitle(974, 556, "DELAY");
+        oracleTitleRowGap(1046, 572, 552, 1094);
         ledButton("dlyon", kParamDelayOn, 1046, 556, 1088, 572, "ON");
         const bool sync = values[kParamDelaySync] > 0.5f;
         compactToggle("dlysync", kParamDelaySync, 976, 578, 1032, 596, "SYNC");
@@ -4508,8 +4538,12 @@ private:
             klabelOrValue(1069, 608, "MIX", dro, kParamDelayMix, "%.0f", " %", 100.0f);
             knob("dlymix", kParamDelayMix, 1069, 642, 14, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
         }
-        ledButton("dlypp", kParamDelayPP, 995, 664, 1031, 680, "P-P", true);
-        ledButton("dlytape", kParamDelayTape, 1037, 664, 1073, 680, "TAPE", true);
+        // The labels under P-P and TAPE reach the panel floor, where Oracle's silk box
+        // runs; there the row rides 5 px higher (blended by the Oracle weight, so it
+        // does not move in any other mode).
+        const float ppY = 664.0f - 5.0f * live.oracle;
+        ledButton("dlypp", kParamDelayPP, 995, ppY, 1031, ppY + 16.0f, "P-P", true);
+        ledButton("dlytape", kParamDelayTape, 1037, ppY, 1073, ppY + 16.0f, "TAPE", true);
 
         // Reverb — aligned two-row grid: SIZE/DECAY/DAMP r13 (labels 590, centres
         // 620), MIX/P-DLY r12 (labels 642, centres 668); row-2 label ink (..649.6)
@@ -4517,6 +4551,7 @@ private:
         // and the row-2 knob bottoms (683.2) clear the inner floor (685).
         panelBox(1098, 552, 1224, 688);
         sectionTitle(1104, 556, "REVERB");
+        oracleTitleRowGap(1176, 572, 552, 1224);
         ledButton("rvbon", kParamReverbOn, 1176, 556, 1218, 572, "ON");
         // Modular auto-engages a separate spring reverb at a fixed 15% mix. Say so
         // explicitly: the five visible knobs still control the normal reverb.
