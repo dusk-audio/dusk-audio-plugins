@@ -36,6 +36,9 @@ implemented, with at least 3 dB to spare; they stay in force after the step:
   step F1 (pre-filter before the Oracle filter, 4-pole 18 kHz):
       saw open and synced saw <= -58 dB at every note
       (kill test: -62.6/-60.9/-61.7 and -67.5/-66.5/-66.3; before: about -47)
+  step F2 (osc B -> filter modulation low-passed at 10 kHz):
+      B -> filter and trumpet <= -62 dB at every note
+      (kill test: -71.8/-72.6/-67.4 and -71.7/-72.6/-68.0; after F1: C7 -49.0 and -50.6)
 
     row            reference C6/G6/C7     before #303 F1..F5 (2x)
     saw open       -70.8 -72.3 -72.3      -48.6 -46.7 -47.9
@@ -83,8 +86,8 @@ ROWS = {
     "saw filtered": (dict(BASE, filterCutoff=1830, filterRes=0.375), 0,
                      {84: -71.0, 91: -78.4, 96: -71.0}, None, "F3"),
     "B -> filter":  (dict(BASE, filterCutoff=1830, filterRes=0.375, pmOscBFilt=0.6048388), 0,
-                     {84: -58.1, 91: -66.3, 96: -68.1}, None, "F3"),
-    "trumpet":      (dict(TRUMPET), 0, {84: -60.9, 91: -70.8, 96: -75.9}, None, "F3"),
+                     {84: -58.1, 91: -66.3, 96: -68.1}, {84: -62.0, 91: -62.0, 96: -62.0}, "F3"),
+    "trumpet":      (dict(TRUMPET), 0, {84: -60.9, 91: -70.8, 96: -75.9}, {84: -62.0, 91: -62.0, 96: -62.0}, "F3"),
 }
 
 

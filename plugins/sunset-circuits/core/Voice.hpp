@@ -163,7 +163,7 @@ public:
         sr = sampleRate;
         whiteNoiseGain = 2.85f * std::sqrt((float)sampleRate / 96000.0f);
         setOracleNoiseRate();
-        setOraclePreFilterRate();
+        setOracleBandLimits();
         rng.seed(seed);
         for (int u = 0; u < kMaxUnison; ++u)
         {
@@ -208,7 +208,7 @@ public:
         sr = sampleRate;
         whiteNoiseGain = 2.85f * std::sqrt((float)sampleRate / 96000.0f);
         setOracleNoiseRate();
-        setOraclePreFilterRate();
+        setOracleBandLimits();
         for (int u = 0; u < kMaxUnison; ++u)
         {
             osc[u].osc1.setSampleRate(sampleRate);
@@ -247,6 +247,7 @@ public:
         lfo1.reset(); lfo2.reset();
         sampleAndHold.reset(); pinkNoise.reset(); oracleNoiseBand.clear();
         for (int i = 0; i < 2; ++i) { oraclePreFilterL[i].clear(); oraclePreFilterR[i].clear(); }
+        for (RbjLowpass& f : oracleRouteLp) f.clear();
         for (int u = 0; u < kMaxUnison; ++u)
         {
             osc[u].osc1.resetPhase(); osc[u].osc2.resetPhase();
@@ -724,9 +725,11 @@ private:
         else            o.osc1.setPulseWidth(pw1);
         o.osc1.setDetune(params.osc1Detune + detCents);
 
-        // Cross mod (fix #4): osc2 (previous sample) -> osc1 frequency. The UI and
-        // design expose cross-mod only in Cosmos and Oracle, so gate it to those
-        // modes; every preset keeps crossMod=0 elsewhere, so renders are unchanged.
+        // Cross mod (fix #4): osc2 (previous sample) -> osc1 frequency, linear FM of
+        // 2880 Hz x amount. The panel shows it only in Cosmos. Oracle runs it too
+        // but hides it: it is the old osc B -> freq A law, kept as a factory-only
+        // setting for Poly Mod Bells and Glass Bells (#303). Every preset keeps
+        // crossMod=0 in the other modes, so renders there are unchanged.
         if (params.crossMod > 0.0f
             && (params.mode == SynthMode::Cosmos || params.mode == SynthMode::Oracle))
             o.osc1.applyFM(lastOsc2[(size_t)u] * params.crossMod * 0.03f);
@@ -789,7 +792,9 @@ private:
                                              : o.osc1.processSample();
                 // (OscB->PW poly-mod is applied to osc1's pulse width up in renderOscSet's
                 //  pre-render set, using the 1-sample-delayed osc2 value.)
-                filterAudioMod = osc2Sample * params.polyModOscBFilt;
+                // Band-limited to kOracleRouteHz (see ORACLE PRE-FILTER).
+                filterAudioMod = params.polyModOscBFilt > 0.0f
+                    ? oracleRouteLp[(size_t)u].process(osc2Sample) * params.polyModOscBFilt : 0.0f;
 
                 mix = osc1Sample * params.osc1Level + osc2Sample * params.osc2Level + noiseSample;
                 // The noise is NOT part of the level sum: on the instrument, noise at
@@ -1122,9 +1127,19 @@ private:
     // (oracle_alias_gate's metric). At lower internal rates
     // the oscillators' band already ends near 20 kHz and the pre-filter would
     // only dull the top, so it is off.
+    //
+    // The osc B -> filter route is band-limited too: its modulation signal (osc
+    // B's own sample, at audio rate) goes through a 2-pole Butterworth low-pass
+    // at 10 kHz at every rate. A cutoff moved by a full-band saw spreads the
+    // filter's input into sidebands at every multiple of osc B's pitch, and at
+    // high notes those run past the internal Nyquist and fold back: the route
+    // was the largest source left after the pre-filter (C7 at 2x -49 dB). Osc B
+    // harmonics above 10 kHz are the ones that move the cutoff fastest and
+    // smallest; the route's growl comes from the low ones.
     static constexpr double kOraclePreFilterHz = 18000.0;
     static constexpr double kOraclePreFilterMinRate = 88200.0;
-    void setOraclePreFilterRate() noexcept
+    static constexpr double kOracleRouteHz = 10000.0;
+    void setOracleBandLimits() noexcept
     {
         oraclePreFilterOn = sr >= kOraclePreFilterMinRate;
         // Butterworth 4-pole: Q = 1 / (2 cos(pi/8)) and 1 / (2 cos(3 pi/8)).
@@ -1134,8 +1149,11 @@ private:
             oraclePreFilterL[i].set(sr, kOraclePreFilterHz, kQ[i]);
             oraclePreFilterR[i].set(sr, kOraclePreFilterHz, kQ[i]);
         }
+        for (RbjLowpass& f : oracleRouteLp)
+            f.set(sr, std::min(kOracleRouteHz, 0.45 * sr), 0.70710678118654752);
     }
     RbjLowpass oraclePreFilterL[2], oraclePreFilterR[2];
+    RbjLowpass oracleRouteLp[kMaxUnison];
     bool oraclePreFilterOn = false;
     // Fixed white-noise density across internal rates; cached on prepare/rate
     // changes. 2.85 matches the reference's 500 Hz–4 kHz noise/saw balance.
