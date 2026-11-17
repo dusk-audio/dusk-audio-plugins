@@ -124,9 +124,10 @@ public:
     // envelope. Returns that gain, smoothed against zipper noise (dB, <= 0), and
     // updates the band's meter. Peak follows each channel's rectified band
     // signal; RMS the louder channel's RMS level over kRmsWindowSeconds, with
-    // the right envelope tracking the left so a mode switch does not jump. Both
-    // mean squares run in either mode for the same reason. For a band routed to
-    // one channel, pass the other as 0; for Mid or Side, pass that signal twice.
+    // one envelope for both channels that starts from the louder channel's, so
+    // a mode switch does not jump. Both mean squares run in either mode for the
+    // same reason. For a band routed to one channel, pass the other as 0; for
+    // Mid or Side, pass that signal twice.
     float processBandLinked(int band, float inL, float inR)
     {
         if (band < 0 || band >= NUM_BANDS)
@@ -146,6 +147,9 @@ public:
         const float releaseCoeff = calcCoefficient(params.release);
         if (rmsDetection)
         {
+            // Entering RMS from Peak, start from the louder envelope; from then
+            // on the two are equal and this changes nothing.
+            left.envelope = std::max(left.envelope, right.envelope);
             followEnvelope(left.envelope, std::sqrt(std::max(ms[0], ms[1])), attackCoeff, releaseCoeff);
             right.envelope = left.envelope;
         }

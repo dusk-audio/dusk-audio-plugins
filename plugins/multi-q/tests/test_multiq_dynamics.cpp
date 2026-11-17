@@ -3,10 +3,10 @@
 // same samples, whatever the host block size; one gain from the louder channel,
 // whatever the phase between the channels; detection follows the band's routing
 // (Left, Right, Mid, Side); RMS detection measures the band's RMS level over a
-// 10 ms window, also when switched to while running; the gain follows the
-// envelope on a 0.5 ms grid; a huge or NaN input sample does not stop the
-// dynamics; and re-activation starts clean, also for a band whose dynamics are
-// off at the time.
+// 10 ms window, also when switched to while running with one or both channels
+// loud; the gain follows the envelope on a 0.5 ms grid; a huge or NaN input
+// sample does not stop the dynamics; and re-activation starts clean, also for
+// a band whose dynamics are off at the time.
 //
 // Built twice: against the JUCE Multi-Q processor (MULTIQ_TEST_JUCE, through
 // its APVTS parameters) and against the Multi-Q 2 plugin (through DAF's
@@ -471,6 +471,36 @@ void detectionSwitch(double sr)
           switched, fresh);
 }
 
+void detectionSwitchOneChannel(double sr, bool loudRight)
+{
+    // The same switch while only one channel is loud and turned down. RMS
+    // follows one envelope for both channels, which must start from the louder
+    // channel's: the reduction may move toward the RMS gain (a little less
+    // than Peak's on a steady tone) but must not drop out while the attack
+    // builds it up again. Checked in 1 ms steps over the first 60 ms, against
+    // the gain an instance that ran RMS from the start settles on.
+    const double quiet = -120.0, loud = -15.0;
+    const double dbL = loudRight ? quiet : loud, dbR = loudRight ? loud : quiet;
+    Plugin plugin(sr, Settings{});
+    run(plugin, tone(sr, 0.0, 0.8, 0.0, dbL, dbR), {512});   // 800 whole cycles: the tone continues
+    plugin.setRms(true);
+    const Signal in = tone(sr, 0.0, 0.3, 0.0, dbL, dbR);
+    const Signal out = run(plugin, in, {512});
+    const auto& x = loudRight ? in.r : in.l;
+    const auto& y = loudRight ? out.r : out.l;
+    const int lat = plugin.latency(), ms = (int)std::lround(0.001 * sr);
+    double least = -1.0e9;   // the least reduction (highest gain) of any 1 ms window
+    for (int t = 0; t + ms <= (int)(0.06 * sr); t += ms)
+        least = std::max(least, gainDb(y, x, t, t + ms, lat));
+    Settings rms;
+    rms.rms = true;
+    const Gain fresh = steady(sr, rms, dbL, dbR);
+    const double settled = loudRight ? fresh.right : fresh.left;
+    std::printf("  sr=%.0f Peak to RMS with only the %s channel loud: least reduction in the first 60 ms "
+                "%+.3f dB, fresh RMS instance %+.3f dB\n", sr, loudRight ? "right" : "left ", least, settled);
+    check(least <= settled + 0.05, "switching Peak to RMS keeps the louder channel's reduction", least, settled);
+}
+
 void badInput(double sr, bool rmsMode, float bad, int channel)
 {
     // A steady loud tone; ten samples of `bad` replace the input on one
@@ -522,6 +552,8 @@ int main()
         reactivation(sr);
         reactivationWithDynamicsOff(sr);
         detectionSwitch(sr);
+        for (bool loudRight : {true, false})
+            detectionSwitchOneChannel(sr, loudRight);
         for (bool rmsMode : {false, true})
             for (float bad : {1.0e21f, std::numeric_limits<float>::quiet_NaN()})
                 for (int channel : {0, 1})
