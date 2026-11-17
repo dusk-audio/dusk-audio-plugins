@@ -46,7 +46,7 @@ constexpr ImU32 mix(ImU32 a, ImU32 b, float t)
 
 // Every colour on the face is one of these roles; nothing below picks its own RGB.
 // Amber is the one accent. It marks state (a held note, a ticked option, the
-// previewing display, a control under the hand) and the Roman numeral, the
+// previewing display, a control under the hand) and the detected chord name, the
 // signature read-out of the chord display.
 struct Theme
 {
@@ -344,10 +344,13 @@ protected:
         if (values[PARAM_SHOW_INVERSIONS] != 0 && shown.slashBass) label += shown.extensions;
         if (label.empty() || label == "-") label = "Play some notes";
         const float labelWidth = textWidth(kTypeHero, label.c_str(), true);
+        // Accent only for a detected chord (a bare fifth counts: it reads as a power
+        // chord, "C5"); a single note, any other interval, an unmatched set ("C?")
+        // and "Play some notes" take the legend colour.
         text(kHeroX, kHeroY, labelWidth > kHeroW ? std::max(kTypeHeroMin, kTypeHero * kHeroW / labelWidth) : kTypeHero,
-             shown.isValid ? kTheme.value : kTheme.legend, label.c_str(), true);
-        // Accent only for a real numeral; "-" and "?" are placeholders.
-        text(kReadoutX, kNumeralY, kTypeTitle, shown.isValid ? kTheme.accent : kTheme.legend, shown.romanNumeral.c_str(), true);
+             shown.isValid ? kTheme.accent : kTheme.legend, label.c_str(), true);
+        // The numeral is a read-out under the name; "-" and "?" are placeholders.
+        text(kReadoutX, kNumeralY, kTypeTitle, shown.isValid ? kTheme.value : kTheme.legend, shown.romanNumeral.c_str(), true);
         const auto function = shown.isValid ? ChordAnalyzerText::functionToString(shown.function) : std::string{};
         const float functionX = std::max(kFunctionX, kReadoutX + textWidth(kTypeTitle, shown.romanNumeral.c_str(), true) + kFunctionGap);
         text(functionX, kFunctionY, kTypeBody, kTheme.legend, function.c_str());
