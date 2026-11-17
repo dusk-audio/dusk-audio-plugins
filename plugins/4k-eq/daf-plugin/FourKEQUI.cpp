@@ -373,10 +373,11 @@ protected:
         drawMeters(dl);
         if (modalOpen)
             ImGui::EndDisabled();
-        if (showSupporters)
-            duskdaf::drawSupportersOverlay(
-                panel, dl, kDesignW, designH, showSupporters, "4K EQ 2",
-                FOURKEQ2_VERSION_STRING, &supportersOverlay);
+        // Every frame, open or not: after a click closes it, it still blocks the
+        // face for a double-click time.
+        duskdaf::drawSupportersOverlay(
+            panel, dl, kDesignW, designH, showSupporters, "4K EQ 2",
+            FOURKEQ2_VERSION_STRING, &supportersOverlay);
 
         // Own resize grip, submitted LAST so it wins ImGui's hover race (over
         // the credits card too) and paints over everything.

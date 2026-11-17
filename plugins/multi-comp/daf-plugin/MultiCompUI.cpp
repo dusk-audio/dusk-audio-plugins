@@ -942,10 +942,10 @@ protected:
 
         // Overlays and the resize grip live in the design canvas.
 
-        if (showSupporters)
-            duskdaf::drawSupportersOverlay(panel, dl, kDesignW, kDesignH, showSupporters,
-                                           "Multi-Comp 2", MULTICOMP2_VERSION_STRING,
-                                           &supporters);
+        // Every frame, open or not: after a click closes it, it still blocks the face for a double-click time.
+        duskdaf::drawSupportersOverlay(panel, dl, kDesignW, kDesignH, showSupporters,
+                                       "Multi-Comp 2", MULTICOMP2_VERSION_STRING,
+                                       &supporters);
 
         // The design size is the minimum. With the drawer open the grip is the drawer's (drawSettingsDrawer).
         duskdaf::ResizeGripState grip;

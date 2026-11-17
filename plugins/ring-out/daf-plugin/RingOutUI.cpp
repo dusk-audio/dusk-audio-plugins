@@ -280,9 +280,9 @@ protected:
         }
         if (modalOpen)
             ImGui::EndDisabled();
-        if (showSupporters)
-            duskdaf::drawSupportersOverlay(panel, dl, kDesignW, kDesignH, showSupporters,
-                                           "Ring Out", RO_VERSION_STRING, &supportersOverlay);
+        // Every frame, open or not: after a click closes it, it still blocks the face for a double-click time.
+        duskdaf::drawSupportersOverlay(panel, dl, kDesignW, kDesignH, showSupporters,
+                                       "Ring Out", RO_VERSION_STRING, &supportersOverlay);
 
         const duskdaf::ResizeGripState grip = panel.resizeGrip(dl, winW, winH, kDesignW, kDesignH);
 

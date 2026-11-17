@@ -275,10 +275,11 @@ protected:
         drawUtilityRail(dl);
         if (modalOpen)
             ImGui::EndDisabled();
-        if (showSupporters)
-            duskdaf::drawSupportersOverlay(
-                panel, dl, kDesignW, kDesignH, showSupporters, "Tape Echo 2",
-                TE2_VERSION_STRING, &supportersOverlay);
+        // Every frame, open or not: after a click closes it, it still blocks the
+        // face for a double-click time.
+        duskdaf::drawSupportersOverlay(
+            panel, dl, kDesignW, kDesignH, showSupporters, "Tape Echo 2",
+            TE2_VERSION_STRING, &supportersOverlay);
 
         // Own resize grip, submitted LAST so it wins ImGui's hover race and
         // paints over everything. AUv2 hosts (Logic) never provide a window

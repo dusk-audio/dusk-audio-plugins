@@ -116,7 +116,6 @@ namespace
     constexpr float kTypeBrand   = 22.0f;   // DUSK AUDIO (family top row)
     constexpr float kTypeTitle   = 24.0f;   // nameplate title (family top row); engine name
     constexpr float kTypeHero    = 52.0f;   // decay digits in the display
-    constexpr float kTypeOverlaySmall = 12.0f;   // DuskSupportersOverlay's 9.5-12 px text
     // Letter spacing as a fraction of the size: control legends barely
     // tracked, group brackets and display captions set wide.
     constexpr float kLegendTracking = 0.05f, kBracketTracking = 0.16f;
@@ -422,9 +421,10 @@ protected:
     // Every design size the panel draws, per weight, so that at any scale the
     // requested pixel size lands on a baked face exactly (CrispFontSet::pick
     // then scales by 1.0). Sizes are design px; bakeFonts multiplies by scale.
-    // kTypeLegend also covers the 18 px title DuskSupportersOverlay draws.
+    // kTypeBadge and kTypeTitle also cover DuskSupportersOverlay's 20 px text and
+    // 24 px heading.
     static constexpr float kLabelDesignSizes[] =
-        { kTypeOverlaySmall, kTypeSmall, kTypeLegend, kTypeBadge, kTypeBrand, kTypeTitle };
+        { kTypeSmall, kTypeLegend, kTypeBadge, kTypeBrand, kTypeTitle };
     static constexpr float kValueDesignSizes[] =
         { kTypeVersion, kTypeSmall, kTypeLegend, kTypeValue, kTypeHero };
 
@@ -543,10 +543,10 @@ protected:
 
         if (showHelp_)
             drawHelpOverlay(dl, winW, winH);
-        if (showSupporters_)
-            duskdaf::drawSupportersOverlay(panel_, dl, kDesignW, kDesignH, showSupporters_,
-                                           "DuskVerb 2", DUSKVERB2_VERSION_STRING,
-                                           &supporters_);
+        // Every frame, open or not: after a click closes it, it still blocks the face for a double-click time.
+        duskdaf::drawSupportersOverlay(panel_, dl, kDesignW, kDesignH, showSupporters_,
+                                       "DuskVerb 2", DUSKVERB2_VERSION_STRING,
+                                       &supporters_);
 
         // Submitted LAST so it wins the hover race and paints over everything.
         // AUv2 hosts never give a plugin window a grip of their own; elsewhere
