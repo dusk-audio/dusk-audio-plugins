@@ -20,7 +20,7 @@ void check(bool ok, const char* message)
 void response(double sr, int setting, int channels, int bands)
 {
     constexpr int block = 512, length = 2048;
-    // The processor owns ~897 KB of fixed DSP storage. Allocate the fixture
+    // The processor owns ~957 KB of fixed DSP storage. Allocate the fixture
     // during setup so MSVC's default 1 MB test stack still has room to run it.
     auto instance = std::make_unique<duskaudio::MultiQDSP>();
     auto& dsp = *instance;

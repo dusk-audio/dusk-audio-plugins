@@ -129,6 +129,19 @@ if(NOT CMAKE_CROSSCOMPILING)
     target_compile_definitions(MultiQMatchLatencyTest PRIVATE DAF_PLUGIN_TARGET_CLAP)
     add_test(NAME MultiQMatchLatency COMMAND MultiQMatchLatencyTest)
 
+    # Solo: the latency never changes, a soloed band lines up with the full
+    # output to the sample, and the solo switch stays a click-free crossfade.
+    add_executable(MultiQSoloLatencyTest
+        tests/MultiQSoloLatencyTest.cpp
+        ../core/MultiQDSP.cpp
+        ../core/MultiQMatch.cpp
+        ../../shared-daf/dsp/FourKEQDSP.cpp
+        "${DAF_PATH}/daf/src/DafPlugin.cpp")
+    target_link_libraries(MultiQSoloLatencyTest PRIVATE multi-q-2 Threads::Threads)
+    target_compile_definitions(MultiQSoloLatencyTest PRIVATE DAF_PLUGIN_TARGET_CLAP)
+    add_test(NAME MultiQSoloLatency COMMAND MultiQSoloLatencyTest)
+    set_tests_properties(MultiQSoloLatency PROPERTIES TIMEOUT 120)
+
     # The editor's own knobs and their inline value fields (#337): the
     # production MultiQUI.cpp against Dear ImGui's real input handling, through
     # the window-free host in shared-daf/ui/tests/daf-ui-test-host. That

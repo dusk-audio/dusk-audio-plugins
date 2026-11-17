@@ -37,10 +37,19 @@ void MultiQDSP::prepare(double sampleRate, int maxBlockSize)
     inputPeakMax = outputPeakMax = 0.0f;
     rmsSampleCount = 0;
 
-    // Per-band saturation oversamplers start transparent (1x).
-    for (auto& os : satOsL) { os.setFactor(1); os.reset(); }
-    for (auto& os : satOsR) { os.setFactor(1); os.reset(); }
+    // Per-band saturation oversamplers, and their solo timing references, start
+    // transparent (1x).
+    for (auto* set : {&satOsL, &satOsR, &satRefL, &satRefR, &deltaDelayL, &deltaDelayR})
+        for (auto& os : *set) { os.setFactor(1); os.reset(); }
     prevSatOsFactor = 1;
+    refRunning.fill(false);
+    refBlend.fill(0.0f);
+    refWarm.fill(0);
+    bandRan.fill(false);
+    bandHold.fill(0);
+    bandHistoryFill.fill(0);
+    refBlendStep = 1.0f / (float)std::max(1, (int)std::floor(0.003 * currentSampleRate));
+    deltaDelayLayout = -1;
     for (int mode = 0; mode < 3; ++mode)
     {
         satOsDelay[(size_t)mode] = measureOversamplerDelay<OversamplerWide>(mode == 2 ? 4 : mode == 1 ? 2 : 1);
@@ -82,8 +91,15 @@ void MultiQDSP::reset()
     matchProc.reset();
     tubeEQ.reset();
     limiter.requestReset();
-    for (auto& os : satOsL) os.reset();
-    for (auto& os : satOsR) os.reset();
+    for (auto* set : {&satOsL, &satOsR, &satRefL, &satRefR, &deltaDelayL, &deltaDelayR})
+        for (auto& os : *set) os.reset();
+    refRunning.fill(false);
+    refBlend.fill(0.0f);
+    refWarm.fill(0);
+    bandRan.fill(false);
+    bandHold.fill(0);
+    bandHistoryFill.fill(0);
+    deltaDelayLayout = -1;
     autoGainComp.setCurrentAndTargetValue(1.0f);
     inputRmsSum = outputRmsSum = 0.0;
     inputPeakMax = outputPeakMax = 0.0f;
@@ -137,13 +153,19 @@ void MultiQDSP::updateDynGainFilter(int band, float dynGainDb, const Params& p)
     svfDynGainFilters[(size_t)(band - 1)].setTarget(svfC);
 }
 
+std::array<bool, MultiQDSP::NUM_BANDS> MultiQDSP::enabledBands(const Params& p)
+{
+    std::array<bool, NUM_BANDS> enabled{};
+    if ((EQType)p.eqType == EQType::Match)
+        return enabled;
+    for (int i = 0; i < NUM_BANDS; ++i)
+        enabled[(size_t)i] = p.bandEnabled[(size_t)i];
+    return enabled;
+}
+
 std::array<bool, MultiQDSP::NUM_BANDS> MultiQDSP::runningBands(const Params& p)
 {
-    std::array<bool, NUM_BANDS> running{};
-    if ((EQType)p.eqType == EQType::Match)
-        return running;
-    for (int i = 0; i < NUM_BANDS; ++i)
-        running[(size_t)i] = p.bandEnabled[(size_t)i];
+    std::array<bool, NUM_BANDS> running = enabledBands(p);
     const int solo = p.soloBand;
     if (solo >= 0 && solo < NUM_BANDS && !p.deltaSolo)
     {
@@ -170,13 +192,50 @@ int MultiQDSP::getLatencySamples(const Params& p) const noexcept
         return limiterLatency;   // process() passes such a block through undelayed
 
     // The saturating bands' oversamplers sit in series: sum their delays before
-    // rounding (two bands at 2x render 125 samples, not 2 x 63).
-    const auto running = runningBands(p);
+    // rounding (two bands at 2x render 125 samples, not 2 x 63). Solo is left
+    // out: process() keeps a silenced band's delay (see satRefL).
+    const auto enabled = enabledBands(p);
     int saturating = 0;
     for (int band = 1; band < 7; ++band)
-        if (running[(size_t)band] && p.bandSatType[(size_t)band] > 0)
+        if (enabled[(size_t)band] && p.bandSatType[(size_t)band] > 0)
             ++saturating;
     return limiterLatency + (int)std::lround(saturating * satOsDelay[os]);
+}
+
+void MultiQDSP::delayAsSaturation(int routing, OversamplerWide& osL, OversamplerWide& osR,
+                                  float& l, float& r) noexcept
+{
+    const auto identity = [](float s) noexcept { return s; };
+    switch (routing)
+    {
+        case 0: l = osL.processSample(l, identity); r = osR.processSample(r, identity); break;
+        case 1: l = osL.processSample(l, identity); break;
+        case 2: r = osR.processSample(r, identity); break;
+        case 3: { float mid = (l + r) * 0.5f, side = (l - r) * 0.5f; mid = osL.processSample(mid, identity); l = mid + side; r = mid - side; break; }
+        case 4: { float mid = (l + r) * 0.5f, side = (l - r) * 0.5f; side = osR.processSample(side, identity); l = mid + side; r = mid - side; break; }
+        default: break;
+    }
+}
+
+void MultiQDSP::startReference(int band, int routing) noexcept
+{
+    auto& osL = satRefL[(size_t)(band - 1)];
+    auto& osR = satRefR[(size_t)(band - 1)];
+    osL.reset();
+    osR.reset();
+    // A round trip remembers kRoundTripMemory inputs, so replaying that many
+    // (or all the band has kept, if fewer) leaves it where an uninterrupted
+    // one would be. Bounded work, no allocation.
+    const auto& historyL = bandHistoryL[(size_t)(band - 1)];
+    const auto& historyR = bandHistoryR[(size_t)(band - 1)];
+    const int replay = std::min(bandHistoryFill[(size_t)(band - 1)], kRoundTripMemory);
+    for (int back = replay; back > 0; --back)
+    {
+        const size_t at = (size_t)((bandHistoryPos - back) & (kBandHistory - 1));
+        float l = historyL[at], r = historyR[at];
+        delayAsSaturation(routing, osL, osR, l, r);
+    }
+    refWarm[(size_t)band] = replay;
 }
 
 void MultiQDSP::computeTiltShelf(MqBiquadCoeffs& c, double sr, double freq, float gainDB)
@@ -492,6 +551,19 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
 
     const auto eqType = (EQType)p.eqType;
 
+    // The British and Tube characters do not run the Digital bands, so their
+    // solo references and input history fall out of date: they start afresh
+    // when the bands run again.
+    if (eqType == EQType::British || eqType == EQType::Tube)
+    {
+        refRunning.fill(false);
+        refBlend.fill(0.0f);
+        refWarm.fill(0);
+        bandRan.fill(false);
+        bandHold.fill(0);
+        bandHistoryFill.fill(0);
+    }
+
     // British character: route through the upgraded FourKEQDSP core (its own
     // parallel-summing EQ + console saturation + oversampling + M/S). It reads
     // inputs and writes outputs directly (in-place safe), so drive it before the
@@ -595,6 +667,7 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
         const std::array<bool, NUM_BANDS> bandEnabled = runningBands(p);
         const int currentSolo = p.soloBand;
         const bool deltaSoloActive = (currentSolo >= 0 && currentSolo < NUM_BANDS && p.deltaSolo);
+        const bool streamStart = firstBlock;   // first block since prepare() or reset()
 
         for (int i = 0; i < NUM_BANDS; ++i)
             bandEnableSmoothed[(size_t)i].setTargetValue(bandEnabled[(size_t)i] ? 1.0f : 0.0f);
@@ -690,9 +763,92 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
         const int satOsFactor = (p.oversampling == 2) ? 4 : (p.oversampling == 1) ? 2 : 1;
         if (satOsFactor != prevSatOsFactor)
         {
-            for (auto& os : satOsL) { os.setFactor(satOsFactor); os.reset(); }
-            for (auto& os : satOsR) { os.setFactor(satOsFactor); os.reset(); }
+            for (auto* set : {&satOsL, &satOsR, &satRefL, &satRefR, &deltaDelayL, &deltaDelayR})
+                for (auto& os : *set) { os.setFactor(satOsFactor); os.reset(); }
             prevSatOsFactor = satOsFactor;
+            deltaDelayLayout = -1;
+        }
+
+        // Bands whose oversampled saturation is part of the reported latency
+        // (enabled without regard to solo): they keep that delay even while a
+        // solo silences them, so soloing never moves the output in time.
+        //
+        // A band's reference runs only while something reads it: a solo
+        // silences the band, the band fades, is panned, phase-inverted or
+        // delta-soloed, or its delay blends in or out. A saturating band that
+        // simply plays, or is switched off, leaves it idle and costs nothing
+        // extra. A reference that starts replays the band's input history, so
+        // it is exact from its first sample; a band keeps that history only
+        // while it saturates.
+        auto bandRouting = [&](int band) { return allStereoRouting ? 0 : effectiveRouting[(size_t)band]; };
+        const std::array<bool, NUM_BANDS> latencyBands = enabledBands(p);
+        std::array<bool, NUM_BANDS> timedBand{}, bandHistoryKept{};
+        for (int band = 1; band < 7; ++band)
+        {
+            const size_t bi = (size_t)band;
+            timedBand[bi] = satOsFactor > 1 && latencyBands[bi] && bandSatType[bi] > 0;
+            if (streamStart) refBlend[bi] = timedBand[bi] ? 1.0f : 0.0f;   // nothing to blend from yet
+            const bool saturating = satOsFactor > 1 && eqType == EQType::Digital && bandSatType[bi] > 0;
+            // History while the band's delay counts, and through the fade of
+            // a saturating band switched off, whose reference it starts.
+            bandHistoryKept[bi] = timedBand[bi] || (saturating && bandActive[bi]);
+            if (!bandHistoryKept[bi]) bandHistoryFill[bi - 1] = 0;
+            const bool silenced = timedBand[bi] && !bandEnabled[bi];     // on, but a solo silences it
+            const bool fading = bandEnableSmoothed[bi].isSmoothing();
+            const bool neutral = targetPhaseInvertGain[bi] == 1.0f && prevBandPhaseInvertGain[bi] == 1.0f
+                                 && std::abs(targetPanVal[bi]) <= 0.001f && std::abs(prevBandPanVal[bi]) <= 0.001f;
+            const bool readsReference = bandEnabled[bi] && (!neutral || (deltaSoloActive && currentSolo == band));
+            const bool blending = refBlend[bi] != (timedBand[bi] ? 1.0f : 0.0f);
+            const bool needed = (saturating && (silenced || fading || readsReference || blending))
+                                || (refRunning[bi] && blending);
+            if (needed && !refRunning[bi])
+                startReference(band, bandRouting(band));
+            refRunning[bi] = needed;
+        }
+        if (streamStart) bandRan.fill(true);   // nothing to restart from yet: no band holds
+
+        // A band with oversampled saturation that runs again (a solo released,
+        // switched on) first runs silently for one round-trip memory, so its
+        // oversampler holds none of what it last played. A band can only start
+        // to run again at a block boundary, so this is decided here; the
+        // countdown and whether each band ran stay in locals while the samples
+        // run, and are stored back after them.
+        // A band that is off, with no reference running and no history to
+        // keep, has nothing to do this block: the samples pass it untouched.
+        std::array<int, NUM_BANDS> holdLeft{};
+        std::array<bool, NUM_BANDS> ran = bandRan, idle{};
+        for (int band = 1; band < 7; ++band)
+        {
+            const size_t bi = (size_t)band;
+            if (!bandActive[bi])
+                bandHold[bi] = 0;
+            else if (!bandRan[bi] && satOsFactor > 1 && bandSatType[bi] > 0)
+                bandHold[bi] = kRoundTripMemory;
+            holdLeft[bi] = bandHold[bi];
+            idle[bi] = !bandActive[bi] && !refRunning[bi] && !bandHistoryKept[bi];
+            if (idle[bi]) ran[bi] = false;
+        }
+
+        // Delta solo outputs the soloed band's difference, but the bands after
+        // it still delay the full output: one reference round trip per such
+        // band, with its routing. The chain restarts when its layout changes.
+        std::array<int, 6> deltaStageRouting{};
+        int deltaStages = 0, layout = -1;
+        if (deltaSoloActive)
+        {
+            layout = currentSolo;
+            for (int band = currentSolo + 1; band < 7; ++band)
+                if (band >= 1 && timedBand[(size_t)band])
+                {
+                    deltaStageRouting[(size_t)deltaStages++] = bandRouting(band);
+                    layout = layout * 8 + 1 + bandRouting(band);
+                }
+        }
+        if (layout != deltaDelayLayout)
+        {
+            for (auto* set : {&deltaDelayL, &deltaDelayR})
+                for (auto& os : *set) os.reset();
+            deltaDelayLayout = layout;
         }
 
         for (int i = 0; i < numSamples; ++i)
@@ -720,12 +876,14 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
                 sampleR = filter.processSampleR(sampleR);
             };
 
-            auto applyBandWithSmoothing = [&](int bandIdx, const auto& applyFn) {
-                auto& smooth = bandEnableSmoothed[(size_t)bandIdx];
-                float enableGain = smooth.getNextValue();
-                if (enableGain < 0.001f) return;
+            // enableGain: the band's enable/solo crossfade, this sample.
+            // prevL/prevR: the band's reference (below), so the band's effect,
+            // its phase/pan and its crossfade all line up in time. A faded-out
+            // band leaves exactly that signal.
+            auto applyBandWithSmoothing = [&](int bandIdx, float enableGain, float prevL, float prevR,
+                                              const auto& applyFn) {
+                if (enableGain < 0.001f) { sampleL = prevL; sampleR = prevR; return; }
 
-                float prevL = sampleL, prevR = sampleR;
                 applyFn();
 
                 {
@@ -758,7 +916,7 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
             if (bandActive[0])
             {
                 if (deltaSoloActive && currentSolo == 0) { deltaBeforeL = sampleL; deltaBeforeR = sampleR; }
-                applyBandWithSmoothing(0, [&]() {
+                applyBandWithSmoothing(0, bandEnableSmoothed[0].getNextValue(), sampleL, sampleR, [&]() {
                     if (allStereoRouting) applyFilterStereo(hpfFilter);
                     else                  applyFilterWithRouting(hpfFilter, effectiveRouting[0]);
                 });
@@ -768,10 +926,45 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
             // Bands 2-7
             for (int band = 1; band < 7; ++band)
             {
-                if (!bandActive[(size_t)band]) continue;
-                if (deltaSoloActive && currentSolo == band) { deltaBeforeL = sampleL; deltaBeforeR = sampleR; }
+                const size_t bi = (size_t)band;
+                if (idle[bi]) continue;
+                if (bandHistoryKept[bi])   // for startReference
+                {
+                    bandHistoryL[bi - 1][(size_t)bandHistoryPos] = sampleL;
+                    bandHistoryR[bi - 1][(size_t)bandHistoryPos] = sampleR;
+                    if (bandHistoryFill[bi - 1] < kBandHistory) ++bandHistoryFill[bi - 1];
+                }
 
-                applyBandWithSmoothing(band, [&]() {
+                const bool holding = holdLeft[bi] > 0;
+                const float enableGain = (bandActive[bi] && !holding) ? bandEnableSmoothed[bi].getNextValue() : 0.0f;
+                const bool runs = holding || enableGain >= 0.001f;
+
+                // The band's reference: its input, delayed as its saturation
+                // delays it when that delay counts toward the latency. While the
+                // band is silent (solo, faded out, holding) it takes the band's
+                // place. An idle reference is the plain input: the band then
+                // plays at full level, unpanned and not inverted, and does not
+                // read it.
+                float refL = sampleL, refR = sampleR;
+                if (refRunning[bi])
+                {
+                    float delayedL = sampleL, delayedR = sampleR;
+                    delayAsSaturation(bandRouting(band), satRefL[bi - 1], satRefR[bi - 1], delayedL, delayedR);
+                    float& blend = refBlend[bi];
+                    if (refWarm[bi] < kRoundTripMemory)
+                        ++refWarm[bi];
+                    else
+                        blend = timedBand[bi] ? std::min(1.0f, blend + refBlendStep) : std::max(0.0f, blend - refBlendStep);
+                    if (blend >= 1.0f)     { refL = delayedL; refR = delayedR; }
+                    else if (blend > 0.0f) { refL += blend * (delayedL - refL); refR += blend * (delayedR - refR); }
+                }
+                ran[bi] = runs;
+                if (!runs) { sampleL = refL; sampleR = refR; continue; }
+                if (!holding && deltaSoloActive && currentSolo == band) { deltaBeforeL = refL; deltaBeforeR = refR; }
+
+                // While the band holds it runs only to fill its oversampler,
+                // and its reference stays in its place (below).
+                applyBandWithSmoothing(band, holding ? 1.0f : enableGain, refL, refR, [&]() {
                     auto& filter = svfFilters[(size_t)(band - 1)];
                     if (allStereoRouting)
                     {
@@ -846,14 +1039,22 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
                         }
                     }
                 });
+                if (holding)
+                {
+                    --holdLeft[bi];
+                    sampleL = refL;
+                    sampleR = refR;
+                    continue;
+                }
                 if (deltaSoloActive && currentSolo == band) { deltaAfterL = sampleL; deltaAfterR = sampleR; }
             }
+            bandHistoryPos = (bandHistoryPos + 1) & (kBandHistory - 1);
 
             // Band 8: LPF
             if (bandActive[7])
             {
                 if (deltaSoloActive && currentSolo == 7) { deltaBeforeL = sampleL; deltaBeforeR = sampleR; }
-                applyBandWithSmoothing(7, [&]() {
+                applyBandWithSmoothing(7, bandEnableSmoothed[7].getNextValue(), sampleL, sampleR, [&]() {
                     if (allStereoRouting) applyFilterStereo(lpfFilter);
                     else                  applyFilterWithRouting(lpfFilter, effectiveRouting[7]);
                 });
@@ -864,6 +1065,9 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
             {
                 sampleL = deltaAfterL - deltaBeforeL;
                 sampleR = deltaAfterR - deltaBeforeR;
+                for (int s = 0; s < deltaStages; ++s)
+                    delayAsSaturation(deltaStageRouting[(size_t)s], deltaDelayL[(size_t)s], deltaDelayR[(size_t)s],
+                                      sampleL, sampleR);
             }
 
             if (!safeIsFinite(sampleL)) sampleL = 0.0f;
@@ -872,6 +1076,8 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
             procL[i] = sampleL;
             if (isStereo) procR[i] = sampleR;
         }
+        bandHold = holdLeft;
+        bandRan = ran;
 
         for (int b = 0; b < NUM_BANDS; ++b)
         {
