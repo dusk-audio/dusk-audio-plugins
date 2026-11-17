@@ -91,9 +91,9 @@ public:
 
     // Reported latency in base-rate samples. 0 only once the bypass crossfade
     // has fully SETTLED to passthrough (a bit-exact, undelayed dry path); during
-    // the ~30 ms fade, and whenever active, the oversampler latency is reported.
-    // Gating on the settled smoothed power (not the raw flag) avoids a latency
-    // flip mid-crossfade.
+    // the ~30 ms fade, and whenever active, latencySamplesFor() at the running
+    // rate and Oversampling mode is reported. Gating on the settled smoothed
+    // power (not the raw flag) avoids a latency flip mid-crossfade.
     int getLatencySamples() const noexcept
     {
         return lastSmoothedPower.load(std::memory_order_relaxed) <= 0.001f
@@ -421,6 +421,16 @@ public:
     static double consoleSatMagnitude(const ConsoleSatResponse& r, double omega) noexcept;
 
     static int   chooseFactor(double baseSampleRate, int mode) noexcept; // mode 0=1x,1=2x,2=4x
+
+    // The latency this core reports at a host rate and an Oversampling mode
+    // (0 = 1x, 1 = 2x, 2 = 4x, capped as chooseFactor caps it), in base-rate
+    // samples: the delay its oversampling renders, rounded half up. 0 at 1x,
+    // 23 at 2x (22.5 rendered) and 26 at 4x (25.75 rendered), which runs only
+    // below 88.2 kHz (44.1 and 48 kHz). prepare() and processBlock() publish
+    // it; a shell that runs this core and needs its latency before the core
+    // has processed calls it directly, so the two agree whenever the core is
+    // not bypassed (getLatencySamples() reports 0 once a bypass has settled).
+    static int   latencySamplesFor(double baseSampleRate, int oversamplingMode) noexcept;
 
 private:
     friend struct FourKEQDSPTestAccess; // tests/FourKEQDSPTests.cpp reads the running coefficients
