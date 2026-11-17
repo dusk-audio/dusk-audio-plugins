@@ -46,6 +46,11 @@ target_include_directories(cpu_bench PRIVATE ${CORE_DIR} ${SHARED_DSP})
 # -O2 here already produced one wrong perf conclusion; do not add one back.
 target_compile_options(cpu_bench PRIVATE -Wall -Wextra)
 
+# filter_tanh_gate: the TPT filter's rational tanh against a frozen std::tanh copy.
+add_executable(filter_tanh_gate filter_tanh_gate.cpp)
+target_include_directories(filter_tanh_gate PRIVATE ${CORE_DIR})
+target_compile_options(filter_tanh_gate PRIVATE -O2 -Wall -Wextra)
+
 # user_preset_test — unit gate for daf-plugin/UserPresetStore.hpp (file-based user
 # preset library). Header-only; pulls MultiSynthParams.hpp for the symbol table.
 add_executable(user_preset_test user_preset_test.cpp)

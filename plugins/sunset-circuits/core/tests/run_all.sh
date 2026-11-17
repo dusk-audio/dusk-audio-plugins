@@ -87,6 +87,10 @@ echo "########## cosmos state ##########"
 ./build/cosmos_state_test || fail=1
 
 echo
+echo "########## filter tanh ##########"
+./build/filter_tanh_gate || fail=1
+
+echo
 echo "########## fm suite ##########"
 (cd fm && ./run_all.sh) || fail=1
 
