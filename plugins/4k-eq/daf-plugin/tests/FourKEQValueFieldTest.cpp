@@ -31,7 +31,7 @@
 // and a value typed in it ("1.20 k", "30.0 Hz", "Out" for a filter) commits as
 // itself; neither the gain nor the Brown/Black mode moves the value bubble or
 // the pointer, which sits on the printed mark of its value. Each knob travels
-// through the reference's 21 dial positions, k/20 of the travel (a filter's
+// through the 21 positions the reference captures are taken at, k/20 of the travel (a filter's
 // from 0.1, its first mark), its printed marks among them: a knob set to the
 // dial value of any position points at it, and a wheel event onto a position
 // writes its dial value. The read-out and typing checks fail on the editor
@@ -40,6 +40,17 @@
 // runs linearly between the printed marks or has a wrong value anywhere in its
 // travel; the rounding checks on one that truncates or picks the unit before
 // it rounds.
+//
+// The LMF and HMF Q knobs travel the same way, through the Q the reference
+// captures label the same 21 positions with (the core's Q anchors), Brown and
+// Black alike, their five printed marks among them. The [q] checks: a Q knob
+// set to the captures' Q at any position points at it, and a wheel event onto
+// a position writes its Q. They fail on an editor whose Q knobs run linearly
+// between their printed marks (writing 1.376, 1.252, 1.128 and 1.004 at 0.55
+// to 0.7 of the travel, where the captures' Q sweep has 1.35, 1.2, 1.05 and
+// 0.95), or that has a wrong value anywhere in their travel. The editor keeps
+// its own copies of the core's frequency and Q anchors as its travel tables;
+// [guard] checks hold each copy equal to the core's.
 #include "DafUI.hpp"   // the window-free host (shared-daf/ui/tests/daf-ui-test-host), first on the path
 #include "FourKEQUI.cpp"
 #include "DuskValueFieldTest.hpp"
@@ -62,7 +73,7 @@ using Host = dusktest::EditorHost<DAF::FourKEQUI>;
 using dusktest::HostEvent;
 using dusktest::Values;
 
-int clickChecks = 0, clickFailures = 0, dialChecks = 0, dialFailures = 0;
+int clickChecks = 0, clickFailures = 0, dialChecks = 0, dialFailures = 0, qChecks = 0, qFailures = 0;
 
 // A check that fails on the editor before its knobs edited only on movement
 // (see the top of this file).
@@ -84,12 +95,23 @@ void detectsDial(bool ok, const std::string& what)
     ++dialChecks;
 }
 
-// dusktest::summary() with the [click] and [dial] checks counted too.
+// A check that fails on an editor whose Q knobs do not travel through the
+// reference's Q positions (see the top of this file).
+void detectsQ(bool ok, const std::string& what)
+{
+    std::printf("%s [q] %s\n", ok ? "PASS" : "FAIL", what.c_str());
+    dusktest::failures += ok ? 0 : 1;
+    qFailures += ok ? 0 : 1;
+    ++qChecks;
+}
+
+// dusktest::summary() with the [click], [dial] and [q] checks counted too.
 int summary()
 {
-    std::printf("%s: %d failure(s) in %d [#337], %d [guard], %d [click] and %d [dial] checks; %d [click] and %d"
-                " [dial] failures\n", dusktest::failures ? "FAILED" : "PASSED", dusktest::failures,
-                dusktest::issueChecks, dusktest::guardChecks, clickChecks, dialChecks, clickFailures, dialFailures);
+    std::printf("%s: %d failure(s) in %d [#337], %d [guard], %d [click], %d [dial] and %d [q] checks; %d [click],"
+                " %d [dial] and %d [q] failures\n", dusktest::failures ? "FAILED" : "PASSED", dusktest::failures,
+                dusktest::issueChecks, dusktest::guardChecks, clickChecks, dialChecks, qChecks, clickFailures,
+                dialFailures, qFailures);
     return dusktest::failures ? 1 : 0;
 }
 
@@ -742,8 +764,10 @@ void ownKnobsEditOnlyOnMovement()
     // (computed): LF 338 Hz is the 0.75 mark, with the reference's 360 Hz at
     // 0.8 and 315 Hz at 0.7; the HPF's 120 Hz and the LPF's 5000 Hz the 0.5
     // marks, with 144 Hz and 4700 Hz at 0.55; LF 450 Hz the top, with 427 Hz at
-    // 0.95. The gain and Q knobs travel through their marks. A reset writes the
-    // default itself.
+    // 0.95. The gain knobs travel through their marks. LMF Q 1.234 lies at
+    // 0.58867, between the captures' 1.35 at 0.55 and 1.2 at 0.6, so a notch
+    // up lands at 0.60867, between 1.2 and 1.05 at 0.65: 1.174. A reset writes
+    // the default itself.
     typeAtAnEnd(hfBottom, "2000", 2000.0f);
     typeAtAnEnd(lpfFirst, "8000", 8000.0f);
     const OwnKnob lf338 = consoleKnob("LF FREQ knob at 338 Hz", kLf, kMid, kLfFreq, { { kLfFreq, 338.0f } });
@@ -769,7 +793,7 @@ void ownKnobsEditOnlyOnMovement()
                  { { B, kLfGain, 0 }, computedWrite(kLfGain, 3.29999971f), { E, kLfGain, 0 } },
                  "a wheel step up");
     sendsExactly(lmQ1234, Unchanged::Wheel, 1.0f,
-                 { { B, kLmQ, 0 }, computedWrite(kLmQ, 1.18439996f), { E, kLmQ, 0 } },
+                 { { B, kLmQ, 0 }, computedWrite(kLmQ, 1.174f), { E, kLmQ, 0 } },
                  "a wheel step up");
     sendsExactly(lfTop, Unchanged::Wheel, -1.0f,
                  { { B, kLfFreq, 0 }, computedWrite(kLfFreq, 440.8f), { E, kLfFreq, 0 } },
@@ -1024,7 +1048,7 @@ void readoutsAreTheDial()
     }
 }
 
-// The reference's dial at its positions k/20 of the travel, from k = first
+// The captures' dial labels at the positions k/20 of the travel, from k = first
 // (the reference harness's probe_dense_bands.py FREQUENCY_DISPLAY and
 // probe_dense_filters.py HP_DISPLAY and LP_DISPLAY; a filter's run starts at
 // 0.1, k = 2, its first mark next to OUT). The printed marks sit at k = 0, 2,
@@ -1093,6 +1117,96 @@ void travelIsTheReferences()
         }
     }
 }
+
+// The Q the reference captures label their positions k/20 of the travel with,
+// for LMF and HMF in Brown and Black (the reference harness's
+// probe_dense_bands.py Q_DISPLAY; the core's Q law is calibrated at these
+// labels). The reference's own read-out confirms seven of them, at k = 0, 2,
+// 5, 10, 15, 18 and 20; the printed marks sit at k = 0, 5, 10, 15 and 20.
+constexpr float kCapturedQ[21] = { 3.f, 2.85f, 2.7f, 2.55f, 2.4f, 2.25f, 2.1f, 1.95f, 1.8f, 1.65f, 1.5f,
+                                   1.35f, 1.2f, 1.05f, .95f, .88f, .8f, .73f, .65f, .58f, .5f };
+
+// Each Q knob travels through the captures' Q at every one of its positions,
+// in Brown and Black, as travelIsTheReferences checks the frequency knobs: set
+// to the captures' Q at a position, it points at that position, and one wheel
+// event from its 0.5 mark (Q 1.5) onto a position writes the captures' Q
+// there.
+void qTravelIsTheCaptures()
+{
+    const ImU32 consolePointer = IM_COL32(245, 245, 245, 255);
+    struct QKnob { const char* name; float x; uint32_t param; };
+    for (const QKnob& q : { QKnob { "LMF Q", kLmf, kLmQ }, QKnob { "HMF Q", kHmf, kHmQ } })
+        for (int black = 0; black < 2; ++black)
+        {
+            const std::string name = std::string(q.name) + (black ? ", Black," : ", Brown,");
+            const float mode = black ? 1.0f : 0.0f;
+            OwnKnob knob;
+            knob.x = q.x;
+            knob.y = kLow;
+            for (int p = 0; p <= 20; ++p)
+            {
+                const float value = kCapturedQ[p];
+                Host h(960, 640, { { kEqType, mode }, { q.param, value } });
+                h.idle(2);
+                const float angle = pointerAngle(h, knob, consolePointer);
+                const float at = duskdaf::DuskPanel::knobAngle((float) p / 20.0f);
+                detectsQ(std::fabs(angle - at) < 0.005f, name + " at " + hz(value) + ": its pointer is at "
+                         + hz((float) p / 20.0f) + " of the travel, the captures' position for that Q ("
+                         + degrees(angle) + " deg, " + degrees(at) + " deg there)");
+            }
+            for (int p = 0; p <= 20; ++p)
+            {
+                if (p == 10)
+                    continue;   // no movement
+                const float notches = 2.5f * (float) (p - 10), to = kCapturedQ[p];
+                Host h(960, 640, { { kEqType, mode }, { q.param, kCapturedQ[10] } });
+                h.move(q.x, kLow);
+                h.idle(2);
+                const size_t m = h.mark();
+                h.wheel(notches);
+                h.idle(2);
+                float value = -1.0f;
+                const bool ok = h.lastWrite(m, q.param, value) && std::fabs(value - to) <= kComputed * to;
+                detectsQ(ok, name + " at " + hz(kCapturedQ[10]) + ": one wheel event of " + hz(notches)
+                         + " notches lands on " + hz((float) p / 20.0f) + " of the travel and writes the"
+                         " captures' " + hz(to) + " (" + hz(value) + ")");
+                if (!ok) h.printEvents(m);
+            }
+        }
+}
+
+// The editor's travel tables are copies of the core's control anchors: the
+// editor builds its marks and their compile-time pins from constexpr tables,
+// and the core's anchors are local to its .cpp. Every position's value is the
+// core's anchor there, so a knob on one of the positions writes the value the
+// core's law is calibrated at. The Q anchors ascend while the Q knob descends,
+// so Q position k is anchor 20 - k.
+void travelTablesAreTheCoreAnchors()
+{
+    using Core = duskaudio::FourKEQDSP;
+    constexpr int n = Core::kControlAnchorCount;
+    static_assert(sizeof(DAF::kQTravel) / sizeof(float) == n && sizeof(DAF::kLfTravel) / sizeof(float) == n,
+                  "one travel position per anchor");
+    struct Table { const char* name; const float* editor; const float* core; bool reversed; };
+    const Table tables[] = {
+        { "LF FREQ", DAF::kLfTravel, Core::frequencyControlAnchors(Core::Band::LF), false },
+        { "LMF FREQ", DAF::kLmTravel, Core::frequencyControlAnchors(Core::Band::LM), false },
+        { "HMF FREQ", DAF::kHmTravel, Core::frequencyControlAnchors(Core::Band::HM), false },
+        { "HF FREQ", DAF::kHfTravel, Core::frequencyControlAnchors(Core::Band::HF), false },
+        { "LMF and HMF Q", DAF::kQTravel, Core::qControlAnchors(), true },
+    };
+    for (const Table& t : tables)
+    {
+        int first = -1;
+        for (int k = 0; k < n && first < 0; ++k)
+            if (t.editor[k] != t.core[t.reversed ? n - 1 - k : k])
+                first = k;
+        const float coreThere = first < 0 ? 0.0f : t.core[t.reversed ? n - 1 - first : first];
+        dusktest::guards(first < 0, std::string(t.name) + ": the editor's travel is the core's anchors"
+                         + (first < 0 ? std::string() : " (position " + std::to_string(first) + ": "
+                         + hz(t.editor[first]) + " against the core's " + hz(coreThere) + ")"));
+    }
+}
 } // namespace
 
 int main()
@@ -1146,6 +1260,8 @@ int main()
     ownKnobsEditOnlyOnMovement();
     readoutsAreTheDial();
     travelIsTheReferences();
+    qTravelIsTheCaptures();
+    travelTablesAreTheCoreAnchors();
 
     return summary();
 }

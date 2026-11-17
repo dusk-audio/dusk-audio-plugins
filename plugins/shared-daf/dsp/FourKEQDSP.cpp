@@ -633,6 +633,21 @@ float FourKEQDSP::calibratedEqQ(float q, float hz, float gainDb, Band band,
     return atFrequency * (atControl / centerQ) * (atGain / centerQ);
 }
 
+static_assert(sizeof(kEqQControls) / sizeof(kEqQControls[0]) == FourKEQDSP::kControlAnchorCount
+                  && sizeof(kEqFrequencyControls[0]) / sizeof(kEqFrequencyControls[0][0])
+                         == FourKEQDSP::kControlAnchorCount,
+              "one anchor per k/20 of the travel");
+
+const float* FourKEQDSP::frequencyControlAnchors(Band band) noexcept
+{
+    return kEqFrequencyControls[static_cast<int>(band)];
+}
+
+const float* FourKEQDSP::qControlAnchors() noexcept
+{
+    return kEqQControls;
+}
+
 //==============================================================================
 // Section design: RBJ at the reference rate, matched-magnitude below it
 //==============================================================================

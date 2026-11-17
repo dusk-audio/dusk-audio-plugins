@@ -121,12 +121,18 @@ namespace
     }
 
     // How far a frequency knob has turned for a dial value, and back: the
-    // reference's 21 dial positions, k/20 of the travel, with the dial value
-    // its hosted read-out prints at each (the anchors the core's dial law is
-    // measured at). Seven of them carry the printed marks (0, 0.1, 0.25, 0.5,
-    // 0.75, 0.9 and 1). The reference was measured at these positions only;
-    // between two of them the dial runs linearly. A filter's run starts at 0.1
-    // (k = 2), its first mark next to OUT.
+    // positions the reference captures are taken at, k/20 of the travel, each
+    // with the dial value the captures label it with (21 for a band knob; 19
+    // for a filter, whose run starts at 0.1, k = 2, its first mark next to
+    // OUT). Those labels are the core's band anchors and among its filter
+    // anchors, at which its laws are calibrated, so a knob on one of those
+    // positions plays the response captured there. Seven positions carry the
+    // printed marks (0, 0.1, 0.25, 0.5, 0.75, 0.9 and 1), and only there does
+    // the reference's own read-out confirm the labels, Brown and Black alike:
+    // seven of a band knob's 21, six of a filter's 19 (a filter reads OUT at
+    // 0). The other 14 and 13 are the capture harness's labels. The reference
+    // was captured at these positions only; between two of them the dial runs
+    // linearly.
     constexpr float kKnobTravel[21] = { 0.f, .05f, .1f, .15f, .2f, .25f, .3f, .35f, .4f, .45f, .5f,
                                         .55f, .6f, .65f, .7f, .75f, .8f, .85f, .9f, .95f, 1.f };
     constexpr float kLfTravel[21] = { 30.f, 36.f, 42.f, 48.f, 60.f, 75.f, 90.f, 110.f, 140.f, 170.f, 200.f,
@@ -147,31 +153,48 @@ namespace
     constexpr float kLpfTravel[kFilterTravelCount] = { 15201.f, 12800.f, 11200.f, 10000.f, 8800.f, 7700.f,
                                                        6800.f, 5900.f, 5000.f, 4700.f, 4400.f, 4100.f, 3900.f,
                                                        3750.f, 3600.f, 3450.f, 3300.f, 3150.f, 3000.f };
+    // The LMF and HMF Q knobs travel the same way, through the Q the
+    // reference captures label the same 21 positions with: the core's Q
+    // anchors, at which its Q law is calibrated, so a knob on one of those
+    // positions plays the response captured there. 3 at the start of the
+    // travel, 0.5 at its end. The reference's own read-out confirms seven of
+    // them (at 0, 0.1, 0.25, 0.5, 0.75, 0.9 and 1, both bands, Brown and
+    // Black alike); the other 14 were never read back.
+    constexpr float kQTravel[21] = { 3.f, 2.85f, 2.7f, 2.55f, 2.4f, 2.25f, 2.1f, 1.95f, 1.8f, 1.65f, 1.5f,
+                                     1.35f, 1.2f, 1.05f, .95f, .88f, .8f, .73f, .65f, .58f, .5f };
 
-    // The printed marks sit at seven of those positions. Every knob's mark
-    // positions, and a band knob's dial values at its marks, are taken from
-    // the travel there, so marks and travel cannot disagree.
+    // The printed marks sit at some of those positions: a frequency knob's
+    // seven at kMarkIndex, a Q knob's five at kQMarkIndex. Every knob's mark
+    // positions, and a band knob's values at its marks, are taken from the
+    // travel there, so marks and travel cannot disagree.
     constexpr int kMarkIndex[7] = { 0, 2, 5, 10, 15, 18, 20 };
-    struct MarkValues { float v[7]; };
-    constexpr MarkValues marksOf(const float (&travel)[21])
+    constexpr int kQMarkIndex[5] = { 0, 5, 10, 15, 20 };
+    template <int N> struct MarkValues { float v[N]; };
+    template <int N>
+    constexpr MarkValues<N> marksOf(const float (&travel)[21], const int (&index)[N])
     {
-        MarkValues m {};
-        for (int i = 0; i < 7; ++i)
-            m.v[i] = travel[kMarkIndex[i]];
+        MarkValues<N> m {};
+        for (int i = 0; i < N; ++i)
+            m.v[i] = travel[index[i]];
         return m;
     }
-    constexpr MarkValues kMarkPositions = marksOf(kKnobTravel);
+    constexpr MarkValues<7> kMarkPositions = marksOf(kKnobTravel, kMarkIndex);
+    constexpr MarkValues<5> kQMarkPositions = marksOf(kKnobTravel, kQMarkIndex);
     // No test reads where a label is drawn, so the printed positions are
-    // pinned here: a wrong kMarkIndex entry does not compile.
+    // pinned here: a wrong kMarkIndex or kQMarkIndex entry does not compile.
     static_assert(kMarkPositions.v[0] == 0.f && kMarkPositions.v[1] == .1f && kMarkPositions.v[2] == .25f
                       && kMarkPositions.v[3] == .5f && kMarkPositions.v[4] == .75f && kMarkPositions.v[5] == .9f
                       && kMarkPositions.v[6] == 1.f,
                   "the printed marks sit at 0, 0.1, 0.25, 0.5, 0.75, 0.9 and 1 of the travel");
-    constexpr MarkValues kLfMarks = marksOf(kLfTravel), kLmMarks = marksOf(kLmTravel),
-                         kHmMarks = marksOf(kHmTravel), kHfMarks = marksOf(kHfTravel);
+    static_assert(kQMarkPositions.v[0] == 0.f && kQMarkPositions.v[1] == .25f && kQMarkPositions.v[2] == .5f
+                      && kQMarkPositions.v[3] == .75f && kQMarkPositions.v[4] == 1.f,
+                  "a Q knob's printed marks sit at 0, 0.25, 0.5, 0.75 and 1 of the travel");
+    constexpr MarkValues<7> kLfMarks = marksOf(kLfTravel, kMarkIndex), kLmMarks = marksOf(kLmTravel, kMarkIndex),
+                            kHmMarks = marksOf(kHmTravel, kMarkIndex), kHfMarks = marksOf(kHfTravel, kMarkIndex);
+    constexpr MarkValues<5> kQMarks = marksOf(kQTravel, kQMarkIndex);
 
-    // A band frequency knob's dial values at kKnobTravel; nullptr for a knob
-    // that travels through its printed marks (gain, Q).
+    // A band frequency or Q knob's values at kKnobTravel; nullptr for a knob
+    // that travels through its printed marks (gain).
     const float* bandTravel(uint32_t paramId)
     {
         switch (paramId)
@@ -180,6 +203,8 @@ namespace
         case kLmFreq: return kLmTravel;
         case kHmFreq: return kHmTravel;
         case kHfFreq: return kHfTravel;
+        case kLmQ:
+        case kHmQ:    return kQTravel;
         default: return nullptr;
         }
     }
@@ -1139,12 +1164,13 @@ private:
         steppedFilterKnob(dl, "hpfknob", fcx, cY(314), 28.f, kHpfEnabled, kHpfFreq, HPFL, kHpfTravel, false, "Hz");
         steppedFilterKnob(dl, "lpfknob", fcx, cY(452), 28.f, kLpfEnabled, kLpfFreq, LPFL, kLpfTravel, true,  "kHz");
 
-        // Shared GAIN (0 top, +-15 dB) and Q (.5-3 descending) detent tables.
+        // Shared GAIN (0 top, +-15 dB) detent table, and the Q knobs' marks
+        // (3 to .5, descending): positions and values from their travel.
         static const float GT[11] = { 0.f, .1f, .2f, .3f, .4f, .5f, .6f, .7f, .8f, .9f, 1.f };
         static const float GV[11] = { -15.f, -12.f, -9.f, -6.f, -3.f, 0.f, 3.f, 6.f, 9.f, 12.f, 15.f };
         static const char* const GL[11] = { "-15", "12", "9", "6", "3", "0", "3", "6", "9", "12", "+15" };
-        static const float QT[5] = { 0.f, .25f, .5f, .75f, 1.f };
-        static const float QV[5] = { 3.f, 2.25f, 1.5f, .88f, .5f };
+        const float* const QT = kQMarkPositions.v;
+        const float* const QV = kQMarks.v;
         static const char* const QL[5] = { "3", "2.25", "1.5", ".88", ".5" };
         // The frequency knobs' marks: positions and dial values from their travel.
         const float* const FT7 = kMarkPositions.v;
@@ -1550,9 +1576,9 @@ private:
     // 0 at top, +-15 dB; LF FREQ 30-450 Hz with 200 at top). Maroon cap, white
     // pointer, unit beneath. fmt is the read-out of a gain or Q knob; a
     // frequency knob reads as frequencyReadout() and takes typed values in the
-    // same form. The labels and dots sit at T; a band frequency knob travels
-    // through the reference's 21 dial positions (bandTravel), of which they
-    // are seven, and every other knob through its marks.
+    // same form. The labels and dots sit at T; a band frequency or Q knob
+    // travels through the reference's 21 positions (bandTravel), its marks
+    // among them, and a gain knob through its marks.
     //========================================================================
     void consoleDetentKnob(ImDrawList* dl, const char* id, float cx, float cy, float R,
                            uint32_t paramId, const float* T, const float* V,
