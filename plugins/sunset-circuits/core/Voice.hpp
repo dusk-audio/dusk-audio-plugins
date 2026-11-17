@@ -162,6 +162,7 @@ public:
     {
         sr = sampleRate;
         whiteNoiseGain = 2.85f * std::sqrt((float)sampleRate / 96000.0f);
+        setOracleNoiseRate();
         rng.seed(seed);
         for (int u = 0; u < kMaxUnison; ++u)
         {
@@ -205,6 +206,7 @@ public:
     {
         sr = sampleRate;
         whiteNoiseGain = 2.85f * std::sqrt((float)sampleRate / 96000.0f);
+        setOracleNoiseRate();
         for (int u = 0; u < kMaxUnison; ++u)
         {
             osc[u].osc1.setSampleRate(sampleRate);
@@ -241,7 +243,7 @@ public:
         ampEnv.reset(); filtEnv.reset();
         filterL.reset(); filterR.reset();
         lfo1.reset(); lfo2.reset();
-        sampleAndHold.reset(); pinkNoise.reset();
+        sampleAndHold.reset(); pinkNoise.reset(); oracleNoiseZ1 = oracleNoiseZ2 = 0.0f;
         for (int u = 0; u < kMaxUnison; ++u)
         {
             osc[u].osc1.resetPhase(); osc[u].osc2.resetPhase();
@@ -526,9 +528,24 @@ public:
         const float freq1 = baseFreq * pitch1Ratio(pitchMod1 * 2.0f / 12.0f);
         const float freq2 = baseFreq * pitch2Ratio(((float)params.osc2SemiOffset + pitchMod2 * 2.0f) / 12.0f);
 
-        const float noiseSample = pinkNoise.processSample(params.mode == SynthMode::Cosmos)
-                                * params.noiseLevel
-                                * (params.mode == SynthMode::Cosmos ? whiteNoiseGain : 1.0f);
+        float noiseSample;
+        if (params.mode == SynthMode::Oracle)
+        {
+            // Oracle's mixer noise is WHITE, as on the instrument it models, at a
+            // density fixed in Hz: the same level at every oversampling factor
+            // (see ORACLE MIXER NOISE).
+            // The generator advances every sample (one stream for every mode);
+            // the band filter runs only while the noise is up.
+            const float white = pinkNoise.processSample(true);
+            noiseSample = params.noiseLevel > 0.0f
+                ? oracleNoiseBand(white) * params.noiseLevel * oracleNoiseGain : 0.0f;
+        }
+        else
+        {
+            noiseSample = pinkNoise.processSample(params.mode == SynthMode::Cosmos)
+                        * params.noiseLevel
+                        * (params.mode == SynthMode::Cosmos ? whiteNoiseGain : 1.0f);
+        }
 
         const int uCount = clampi(retiring ? retireUnison : unisonCount, 1, kMaxUnison);
         // The R filter runs only on the multi-voice path; when unison count grows
@@ -766,7 +783,13 @@ private:
                 filterAudioMod = osc2Sample * params.polyModOscBFilt;
 
                 mix = osc1Sample * params.osc1Level + osc2Sample * params.osc2Level + noiseSample;
-                activeGain = params.osc1Level + params.osc2Level + params.noiseLevel;
+                // The noise is NOT part of the level sum: on the instrument, noise at
+                // full leaves the oscillators where they are (measured +0.02 dB),
+                // while dividing by it ducked them (one saw -3.6 dB, two -1.9 dB; less
+                // than the 6.0 / 3.5 dB the division predicts because the Oracle
+                // filter compresses at full level: half the input is only 3.45 dB
+                // down at its output). The oscillators still share their own sum.
+                activeGain = params.osc1Level + params.osc2Level;
                 break;
             }
 
@@ -1020,6 +1043,45 @@ private:
     float  fmCarrierTrim = 1.0f;       // 1/sqrt(numCarriers), set by updateFMParams
     float  lastOsc2[kMaxUnison] = {};
     PinkNoiseGenerator pinkNoise;
+    // ORACLE MIXER NOISE, matched to the instrument Oracle is modeled on (#303,
+    // 2026-11-17): white, flat to 2 kHz, then a gentle tilt measured with the
+    // filter open (-0.7, -2.1 and -4.8 dB per octave over 2-4, 4-8 and 8-16 kHz),
+    // at a level set against the same synth's own oscillator 1 saw (A3, filter
+    // open): broadband -10.85 dB, octave bands from -37.3 dB at 31.5 Hz to
+    // -16.3 dB at 8 kHz. The open filter and the decimator already give that top
+    // tilt at 2x and 4x (within 0.6 dB per octave), so the source is plain white.
+    // kOracleNoiseLevel is its density at 96 kHz, scaled by sqrt(rate) like
+    // whiteNoiseGain so it is the same in Hz at every rate.
+    //
+    // The source is band-limited to the audio band (2-pole Butterworth at
+    // kOracleNoiseBandHz) before the filter. White noise at the oversampled rate
+    // otherwise carries power up to that rate's Nyquist, which nobody hears but
+    // the filter's saturating input stage does: it compressed the oscillators
+    // more at every step up in rate (one saw -0.20 dB at 48 kHz 1x, -0.79 dB at
+    // 96 kHz 4x).
+    static constexpr float kOracleNoiseLevel  = 0.426f;
+    static constexpr float kOracleNoiseBandHz = 22000.0f;
+    void setOracleNoiseRate() noexcept
+    {
+        oracleNoiseGain = kOracleNoiseLevel * std::sqrt((float)sr / 96000.0f);
+        // RBJ low-pass, Q 1/sqrt(2); the corner stays below the rate's Nyquist.
+        const double fc = std::min((double)kOracleNoiseBandHz, 0.45 * sr);
+        const double w = 2.0 * 3.14159265358979323846 * fc / sr;
+        const double alpha = std::sin(w) / (2.0 * 0.70710678118654752);
+        const double a0 = 1.0 + alpha, c = std::cos(w);
+        nb0 = (float)((1.0 - c) * 0.5 / a0); nb1 = (float)((1.0 - c) / a0); nb2 = nb0;
+        na1 = (float)(-2.0 * c / a0); na2 = (float)((1.0 - alpha) / a0);
+    }
+    float oracleNoiseBand(float x) noexcept   // transposed direct form II
+    {
+        const float y = nb0 * x + oracleNoiseZ1;
+        oracleNoiseZ1 = nb1 * x - na1 * y + oracleNoiseZ2;
+        oracleNoiseZ2 = nb2 * x - na2 * y;
+        return y;
+    }
+    float oracleNoiseGain = 1.0f;
+    float nb0 = 1.0f, nb1 = 0.0f, nb2 = 0.0f, na1 = 0.0f, na2 = 0.0f;
+    float oracleNoiseZ1 = 0.0f, oracleNoiseZ2 = 0.0f;
     // Fixed white-noise density across internal rates; cached on prepare/rate
     // changes. 2.85 matches the reference's 500 Hz–4 kHz noise/saw balance.
     float whiteNoiseGain = 2.85f;

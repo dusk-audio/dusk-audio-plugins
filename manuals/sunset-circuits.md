@@ -121,7 +121,7 @@ Mode-specific controls visible in Cosmos: the **Sub** oscillator (wave and level
 
 ### Oracle: five-voice poly with poly-mod
 
-Oracle is modeled on a late-70s American five-voice polysynth with two true analog oscillators per voice and a self-oscillating low-pass filter. Where Cosmos is clean and stable, Oracle is characterful and alive. The filter reaches self-oscillation at high resonance, so it can sing on its own.
+Oracle is modeled on a late-70s American five-voice polysynth with two true analog oscillators per voice and a self-oscillating low-pass filter. Where Cosmos is clean and stable, Oracle is characterful and alive. The filter reaches self-oscillation at high resonance, so it can sing on its own. Oracle uses white noise, at the level the instrument it is modeled on sets beside its own oscillators, and turning the noise up adds to the sound without turning the oscillators down.
 
 The signature of Oracle is poly-modulation. The mode sub-panel is a six-knob **POLY-MOD / SYNC** section: filter envelope and oscillator 2 can each reach oscillator 1 pitch, oscillator 1 pulse width, and the filter.
 
@@ -463,6 +463,8 @@ The **Oversampling** control sets the internal processing rate: **1x**, **2x**, 
 Factory presets ship at 2x, except Oracle Trumpet, Modular English Horn and Prism Talking Keys, which keep the 4x they were made with.
 
 The factor changes how clean the high end is and what it costs, not how a patch moves. The slow random pitch wander that the **Analog** control adds to each voice runs on its own clock, so a patch drifts at the same speed and depth at 1x, 2x and 4x and at every session sample rate.
+
+Oracle's mixer noise works the same way: its level and its color are the same at every factor and every session sample rate.
 
 Hard sync is band-limited at every factor: each restart of the synced oscillator lands exactly where the other one wraps, between samples where it falls between them, and is smoothed like the oscillators' own edges. A synced sound therefore aliases about as little as the same sound without sync, even with oscillator 1's pitch moving under vibrato.
 
