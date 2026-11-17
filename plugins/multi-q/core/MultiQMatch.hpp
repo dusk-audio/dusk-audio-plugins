@@ -240,10 +240,14 @@ public:
     // Latency in samples to report to the host (any thread). A correction counts
     // from the moment it is committed (computed, restored or cleared), so it is
     // already known at activation: the audio thread adopts it at the start of
-    // its next block, before any audio, and plays it from there. A clear or a
-    // shorter correction takes effect only once the audio thread has faded out
-    // or replaced the longer one, so until then the longer, adopted latency is
-    // reported. The value therefore never runs behind what plays.
+    // its next block, before any audio, and plays it from there. A clear takes
+    // effect only once the audio thread has faded the correction out, so until
+    // then the adopted latency is reported and the value never runs behind what
+    // plays. Multi-Q 2 computes minimum-phase corrections only, so replacing one
+    // correction with another keeps the latency at CONV_HOP. (Were a
+    // linear-phase correction replaced by a minimum-phase one, the shorter
+    // latency would be reported while up to CONV_HOP - 1 samples the longer one
+    // had already rendered still played.)
     int getReportedLatencySamples() const noexcept;
 
     // --- state persistence (message thread). Serialises the learned spectra +
