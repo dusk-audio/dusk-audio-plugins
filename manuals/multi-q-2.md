@@ -157,6 +157,15 @@ without hair.
 - **Oversampling:** Off, 2x, or 4x, default Off. Reduces aliasing from the
   saturation stages in all modes at a CPU and latency cost. The common
   mistake is leaving 4x on for a plain clean cut, where it buys nothing.
+  In Digital mode only band saturation runs oversampled. When no band
+  saturation is on, the EQ curves and the band dynamics sound exactly the
+  same at 2x and 4x as with Oversampling Off, with no added latency. Each
+  band that is on and has saturation on adds latency at 2x and 4x (about
+  1.3 ms per band at 48 kHz). Multi-Q 2 reports it, so your host compensates
+  it, and soloing a band never changes it. The original
+  Multi-Q oversampled its whole Digital chain and always reported its 4x
+  latency, so turning Oversampling on there also changed its band dynamics
+  slightly.
 - **Processing Mode:** Stereo, Left, Right, Mid, or Side; default Stereo.
   Applies the whole EQ to one channel component. Per-band Routing below is
   the finer tool.

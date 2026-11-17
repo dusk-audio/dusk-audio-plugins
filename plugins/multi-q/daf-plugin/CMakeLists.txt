@@ -70,6 +70,13 @@ if(NOT CMAKE_CROSSCOMPILING)
         ../../shared-daf/dsp/FourKEQDSP.cpp)
     add_test(NAME MultiQAutoGain COMMAND MultiQAutoGainTest)
 
+    add_executable(MultiQEnableCrossfadeTest
+        ../tests/test_multiq_enable_crossfade.cpp
+        ../core/MultiQDSP.cpp
+        ../core/MultiQMatch.cpp
+        ../../shared-daf/dsp/FourKEQDSP.cpp)
+    add_test(NAME MultiQEnableCrossfade COMMAND MultiQEnableCrossfadeTest)
+
     add_executable(MultiQMatchStateTest
         ../tests/test_multiq_match_state.cpp
         ../core/MultiQMatch.cpp)
@@ -111,6 +118,43 @@ if(NOT CMAKE_CROSSCOMPILING)
     target_compile_definitions(MultiQHostStateTest PRIVATE DAF_PLUGIN_TARGET_CLAP)
     add_test(NAME MultiQHostState COMMAND MultiQHostStateTest)
     set_tests_properties(MultiQHostState PROPERTIES TIMEOUT 60)
+
+    # The latency a host reads at activation is the delay the plugin renders
+    # (oversampled saturation, British, Tube, limiter) and holds while running.
+    add_executable(MultiQLatencyTest
+        tests/MultiQLatencyTest.cpp
+        ../core/MultiQDSP.cpp
+        ../core/MultiQMatch.cpp
+        ../../shared-daf/dsp/FourKEQDSP.cpp
+        "${DAF_PATH}/daf/src/DafPlugin.cpp")
+    target_link_libraries(MultiQLatencyTest PRIVATE multi-q-2 Threads::Threads)
+    target_compile_definitions(MultiQLatencyTest PRIVATE DAF_PLUGIN_TARGET_CLAP)
+    add_test(NAME MultiQLatency COMMAND MultiQLatencyTest)
+
+    # Match: a learned correction's latency is known at activation, matches
+    # what plays, survives restarts, and falls to 0 only after a clear fades.
+    add_executable(MultiQMatchLatencyTest
+        tests/MultiQMatchLatencyTest.cpp
+        ../core/MultiQDSP.cpp
+        ../core/MultiQMatch.cpp
+        ../../shared-daf/dsp/FourKEQDSP.cpp
+        "${DAF_PATH}/daf/src/DafPlugin.cpp")
+    target_link_libraries(MultiQMatchLatencyTest PRIVATE multi-q-2 Threads::Threads)
+    target_compile_definitions(MultiQMatchLatencyTest PRIVATE DAF_PLUGIN_TARGET_CLAP)
+    add_test(NAME MultiQMatchLatency COMMAND MultiQMatchLatencyTest)
+
+    # Solo: the latency never changes, a soloed band lines up with the full
+    # output to the sample, and the solo switch stays a click-free crossfade.
+    add_executable(MultiQSoloLatencyTest
+        tests/MultiQSoloLatencyTest.cpp
+        ../core/MultiQDSP.cpp
+        ../core/MultiQMatch.cpp
+        ../../shared-daf/dsp/FourKEQDSP.cpp
+        "${DAF_PATH}/daf/src/DafPlugin.cpp")
+    target_link_libraries(MultiQSoloLatencyTest PRIVATE multi-q-2 Threads::Threads)
+    target_compile_definitions(MultiQSoloLatencyTest PRIVATE DAF_PLUGIN_TARGET_CLAP)
+    add_test(NAME MultiQSoloLatency COMMAND MultiQSoloLatencyTest)
+    set_tests_properties(MultiQSoloLatency PROPERTIES TIMEOUT 120)
 
     # The editor's own knobs and their inline value fields (#337): the
     # production MultiQUI.cpp against Dear ImGui's real input handling, through

@@ -24,6 +24,7 @@
 #include "MultiQLimiter.hpp"                      // output brickwall limiter (framework-free)
 #include "../../shared-daf/dsp/FourKEQDSP.hpp"   // British character = upgraded 4K EQ core
 #include "../../shared-daf/dsp/DuskOversampler.hpp" // 2x/4x OS for Digital per-band saturation
+#include "MultiQOversamplerDelay.hpp"
 #include "../../shared/AnalogEmulation/WaveshaperCurves.h"
 
 #include <array>
@@ -116,18 +117,16 @@ public:
     void process(const float* const* inputs, float* const* outputs,
                  int numChannels, int numSamples, const Params& p);
 
-    // Reported latency in base-rate samples, including active nonlinear-stage
-    // oversampling and limiter/Match delay. Reads the last-processed character
-    // (cached in process()), so call after process() for an updated latency.
-    int getLatencySamples() const noexcept
-    {
-        int lat = limiter.getLatencySamples();   // lookahead, all characters (0 if off)
-        if (lastEqType == (int)EQType::British)   lat += britishEQ.getLatencySamples();
-        else if (lastEqType == (int)EQType::Tube) lat += tubeEQ.getLatencySamples();
-        else if (lastEqType == (int)EQType::Match) lat += matchProc.getLatencySamples();
-        else                                      lat += lastDigitalSatLatency;
-        return lat;
-    }
+    // Latency in base-rate samples that process() renders with these parameters:
+    // the limiter lookahead, plus the active character's delay. Digital: the
+    // oversampler of every running band with saturation on (Oversampling 2x or
+    // 4x), in series. British and Tube: their oversampled cores. Match: its
+    // correction FIR, counted from the moment the correction is committed (see
+    // MultiQMatch::getReportedLatencySamples). Derived from the parameters and
+    // the committed correction, not from the last processed block, so the value
+    // a host reads at activation is already right and holds while the settings
+    // do. Valid after prepare().
+    int getLatencySamples(const Params& p) const noexcept;
 
     // Current limiter gain reduction (dB, >=0) for the UI meter. Read-only tap.
     float getLimiterGainReduction() const noexcept { return limiter.getGainReduction(); }
@@ -215,6 +214,22 @@ private:
     static void computeTiltShelf(MqBiquadCoeffs& c, double sr, double freq, float gainDB);
     // set the dyn-gain SVF target for a band from the given dynamic gain (dB)
     void updateDynGainFilter(int band, float dynGainDb, const Params& p);
+    // Bands switched on in the Digital path without solo: the Enabled switches,
+    // none in Match mode. The reported latency follows these, so a solo never
+    // changes it.
+    static std::array<bool, NUM_BANDS> enabledBands(const Params& p);
+    // Bands the Digital path runs: enabledBands, and under a plain (not delta)
+    // solo only the soloed band, plus the HPF and LPF when the soloed band is a
+    // parametric one.
+    static std::array<bool, NUM_BANDS> runningBands(const Params& p);
+    // Delay (l, r) exactly as a band's saturation oversamplers delay them with
+    // this routing (0=Stereo,1=Left,2=Right,3=Mid,4=Side): identity round trips
+    // through osL / osR, both channels whatever the routing.
+    static void delayAsSaturation(int routing, OversamplerWide& osL, OversamplerWide& osR,
+                                  float& l, float& r) noexcept;
+    // Start band 2-7's (1-based `band`) reference: empty, then the stored
+    // history of its input replayed through it with this routing.
+    void startReference(int band, int routing) noexcept;
 
     // read-only observer taps (RT-safe, no alloc/lock): capture the pre-process
     // input peak, and publish the post-process output peak + push the analyzer
@@ -231,7 +246,6 @@ private:
     float  biquadSmoothCoeff = 1.0f; // 1 - exp(-1/(0.001*sr)); per-sample coeff ramp
     bool   firstBlock = true;
     int    prevHpfStages = -1, prevLpfStages = -1;
-    int    lastEqType = (int)EQType::Digital; // cached in process() for getLatencySamples()
 
     CascadedFilter hpfFilter, lpfFilter;
     std::array<StereoBiquad, 6> svfFilters;       // bands 2-7 (DF2T, AnalogMatchedBiquad coeffs)
@@ -255,7 +269,52 @@ private:
     // 20 kHz / 44.1 kHz, compounded when several bands saturate in series.
     std::array<OversamplerWide, 6> satOsL, satOsR;
     int prevSatOsFactor = 1;          // reset OS state when the hq factor changes
-    int lastDigitalSatLatency = 0;    // summed active-sat-band OS latency (base samples)
+    // Solo keeps the output timing. satRef* delays a band's input exactly as its
+    // saturation does (identity round trips). For a band whose saturation sets
+    // part of the reported latency, the band crossfades from that reference,
+    // phase, pan and delta solo act against it, and a solo that silences the
+    // band leaves it in the band's place. It runs only while something reads
+    // it (see process(); refRunning: it ran in the last block). Delta solo also
+    // passes the difference through deltaDelay*, one round trip per such band
+    // after the soloed one, which still delay the full output. Fixed members:
+    // nothing is allocated.
+    std::array<OversamplerWide, 6> satRefL, satRefR, deltaDelayL, deltaDelayR;
+    std::array<bool, NUM_BANDS> refRunning {};
+    // How much of the band's delay its reference carries (0..1). It moves over
+    // 3 ms when the band starts or stops counting toward the latency (switched
+    // on or off, saturation changed), so the reference never jumps in time.
+    std::array<float, NUM_BANDS> refBlend {};
+    float refBlendStep = 1.0f;
+    // Base samples after which a round trip that starts empty renders as one
+    // that never stopped (measured: 94 at 2x, 126 at 4x).
+    static constexpr int kRoundTripMemory = 128;
+    // The last inputs of bands 2-7 (ring, kBandHistory a power of two above
+    // kRoundTripMemory), kept while a band's saturated delay counts toward the
+    // latency. A reference that starts replays them, so it renders from its
+    // first sample exactly as if it had run all along: no seam between the
+    // band's own (filtered, saturated) signal and its input. A band that is
+    // switched off keeps none and costs nothing.
+    static constexpr int kBandHistory = 256;
+    std::array<std::array<float, kBandHistory>, 6> bandHistoryL {}, bandHistoryR {};
+    int bandHistoryPos = 0;                    // where the next sample goes
+    std::array<int, 6> bandHistoryFill {};     // samples kept since a band's history last restarted
+    // Inputs a reference has taken since it started, replayed or live, up to
+    // kRoundTripMemory. Its delay blends in or out (refBlend) only once it has
+    // taken that many and so renders exactly: a band switched on starts its
+    // reference without history, and blends its delay in 128 samples later.
+    std::array<int, NUM_BANDS> refWarm {};
+    // The band ran on the last sample of the previous block.
+    std::array<bool, NUM_BANDS> bandRan {};
+    // Samples a band with oversampled saturation that runs again (a solo
+    // released, the band switched on) still runs silently, its reference in
+    // its place, so its oversampler holds only its new input before it fades
+    // in: kRoundTripMemory from the restart (as of the previous block's end).
+    std::array<int, NUM_BANDS> bandHold {};
+    int deltaDelayLayout = -1;        // soloed band + stage routings; the chain restarts when it changes
+    // Rendered oversampler delay (base samples) per Oversampling setting 0/1/2:
+    // one Digital saturating band, and the British core at the factor
+    // FourKEQDSP picks for this rate. Measured in prepare().
+    std::array<double, 3> satOsDelay {}, britishOsDelay {};
 
     //--- auto-gain (2 s RMS loudness match, +/-6 dB — MultiQ.cpp:1523-1580) ------
     LinearSmoothedValue autoGainComp; // linear make-up gain, 2 s ramp
