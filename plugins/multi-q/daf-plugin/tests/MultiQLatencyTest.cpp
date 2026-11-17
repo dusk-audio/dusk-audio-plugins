@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -125,11 +126,17 @@ Render render(double sr, const Settings& s, bool stereo = false)
     return r;
 }
 
+constexpr double kInfinite = std::numeric_limits<double>::infinity();
+
 // Delay of y against x (samples, sub-sample by a parabola through the
-// cross-correlation peak), searched over 0..400 samples.
+// cross-correlation peak), searched over 0..400 samples. A non-finite sample
+// among those it reads makes the delay infinite: a NaN never wins the
+// comparison, so the search would otherwise settle on a lag regardless.
 double delayOf(const std::vector<float>& x, const std::vector<float>& y, double sr)
 {
     const int from = (int)(0.2 * sr), to = (int)(0.9 * sr);
+    for (int i = from; i < to + 401; ++i)
+        if ((i < to && !std::isfinite(x[(size_t)i])) || !std::isfinite(y[(size_t)i])) return kInfinite;
     auto corr = [&](int lag) {
         double c = 0.0;
         for (int i = from; i < to; ++i) c += (double)x[(size_t)i] * y[(size_t)(i + lag)];
@@ -166,6 +173,21 @@ void latencyMatchesRender(double sr, const char* name, Settings s)
           out.afterRun, out.atActivation);
 }
 
+// Largest difference between two renders, over both channels; infinite at a
+// non-finite sample, which std::max would otherwise pass over.
+double maxDiff(const Render& a, const Render& b)
+{
+    double worst = 0.0;
+    for (size_t i = 0; i < a.left.size(); ++i)
+    {
+        if (!std::isfinite(a.left[i]) || !std::isfinite(b.left[i]) || !std::isfinite(a.right[i])
+            || !std::isfinite(b.right[i]))
+            return kInfinite;
+        worst = std::max({worst, (double)std::abs(a.left[i] - b.left[i]), (double)std::abs(a.right[i] - b.right[i])});
+    }
+    return worst;
+}
+
 void routingKeepsChannelsTogether(double sr, int oversampling)
 {
     // Flat saturating bands at drive 0 only delay. Routed to one channel, or to
@@ -190,10 +212,7 @@ void routingKeepsChannelsTogether(double sr, int oversampling)
         Settings stereo = s;
         stereo.routing[0] = stereo.routing[1] = 1;
         const Render routed = render(sr, s, true), reference = render(sr, stereo, true);
-        double diff = 0.0;
-        for (size_t i = 0; i < routed.left.size(); ++i)
-            diff = std::max({diff, (double)std::abs(routed.left[i] - reference.left[i]),
-                             (double)std::abs(routed.right[i] - reference.right[i])});
+        const double diff = maxDiff(routed, reference);
         const double delayL = delayOf(dry.left, routed.left, sr), delayR = delayOf(dry.right, routed.right, sr);
         std::printf("  sr=%.0f %dx, saturating band%s routed %-12s latency %3d; rendered delay L %7.3f, R %7.3f; "
                     "%.1e from the same bands routed Stereo\n", sr, oversampling == 2 ? 4 : 2,
@@ -202,6 +221,21 @@ void routingKeepsChannelsTogether(double sr, int oversampling)
               "a routed saturating band delays both channels by the reported latency", std::max(delayL, delayR),
               routed.atActivation);
     }
+}
+
+void helpersRejectNonFinite()
+{
+    // A NaN never wins std::max or a correlation comparison, so a reduction
+    // built on them would read a render with a NaN as a match or as a delay.
+    // Each must report a non-finite sample as infinite.
+    const double sr = 44100.0;
+    Render clean;
+    clean.left = clean.right = stimulus(sr);
+    Render bad = clean;
+    bad.left[(size_t)(0.5 * sr)] = std::numeric_limits<float>::quiet_NaN();
+    const double delay = delayOf(clean.left, bad.left, sr), diff = maxDiff(clean, bad);
+    std::printf("  reductions over a NaN: delay %g, render difference %g\n", delay, diff);
+    check(std::isinf(delay) && std::isinf(diff), "every reduction reports a non-finite sample as infinite", 0.0, 1.0);
 }
 
 void settingsChangeSurvivesRestart(double sr)
@@ -255,6 +289,7 @@ int main()
         routingKeepsChannelsTogether(sr, 1);
         routingKeepsChannelsTogether(sr, 2);
     }
+    helpersRejectNonFinite();
     std::printf("Multi-Q latency: %d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }
