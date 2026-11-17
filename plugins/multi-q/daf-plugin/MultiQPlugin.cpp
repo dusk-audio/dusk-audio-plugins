@@ -317,7 +317,13 @@ protected:
     {
         const StateGuard guard(stateMutex);
         prepareDsp(getSampleRate(), getBufferSize());
-        updateLatency();
+        // A CLAP host reads the latency here and nowhere else. It comes from the
+        // parameters, so run() reports the same value until they change: no
+        // restart request on a plain activate/run cycle (except a Match
+        // correction, whose latency counts from its adoption in run()).
+        MultiQDSP::Params p;
+        fillParams(p);
+        updateLatency(p);
     }
 
     void deactivate() override
@@ -376,7 +382,7 @@ protected:
         MultiQDSP::Params p;
         fillParams(p);
         dsp.process(inputs, outputs, activeChannels, (int)frames, p);
-        updateLatency(); // British oversampling changes reported latency
+        updateLatency(p); // a settings change moves it; DAF has the host restart once
     }
 
 private:
@@ -490,9 +496,12 @@ private:
         t.tubeDrive        = f(kParamTubeEqTubeDrive);
     }
 
-    void updateLatency()
+    // The latency these parameters render; 0 under hard bypass, which passes the
+    // input through undelayed (run() reports that directly).
+    void updateLatency(const MultiQDSP::Params& p)
     {
-        const int lat = dsp.getLatencySamples();
+        const bool bypassed = values[kParamBypass].load(std::memory_order_relaxed) > 0.5f;
+        const int lat = bypassed ? 0 : dsp.getLatencySamples(p);
         if (lat != lastLatency)
         {
             lastLatency = lat;

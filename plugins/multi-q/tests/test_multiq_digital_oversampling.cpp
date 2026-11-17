@@ -52,9 +52,11 @@ void response(double sr, int setting, int channels, int bands)
             irR[offset + i] = outR[i];
         }
     }
-    const int perBandLatency = setting == 0 ? 0 : setting == 1 ? 63 : 67;
-    check(dsp.getLatencySamples() == bands * perBandLatency,
-          "Digital reports the summed active saturation-filter latency");
+    // Measured rendered delay per saturating band (the decimation phase makes it
+    // half a 2x sample shorter than the filters' 63 / 66.5 samples).
+    const double renderedPerBand = setting == 0 ? 0.0 : setting == 1 ? 62.5 : 65.75;
+    check(dsp.getLatencySamples(p) == (int)std::lround(bands * renderedPerBand),
+          "Digital reports the summed rendered saturation-filter delay, rounded once");
     for (int channel = 0; channel < channels; ++channel)
     {
         const auto& ir = channel == 0 ? irL : irR;
@@ -71,9 +73,6 @@ void response(double sr, int setting, int channels, int bands)
         check(finite && energy > amplitude * amplitude * 0.1,
               "the measured channel contains finite, excited output");
         centroid /= energy;
-        // Account for the decimation phase when checking the rendered delay,
-        // separately from the oversampler's rounded host-latency contract.
-        const double renderedPerBand = setting == 0 ? 0.0 : setting == 1 ? 62.5 : 65.75;
         check(std::abs(centroid - bands * renderedPerBand) < 0.15 * bands,
               "rendered delay follows the selected filters, including serial bands");
         double worst = 0.0;
@@ -92,7 +91,7 @@ void response(double sr, int setting, int channels, int bands)
                   "actual Digital saturation chain stays within 0.1 dB through 20 kHz");
         }
         std::printf("Digital OS: sr=%.0f setting=%d channels=%d bands=%d ch=%d latency=%d centroid=%.5f max|gain|=%.6f dB\n",
-                    sr, setting, channels, bands, channel, dsp.getLatencySamples(), centroid, worst);
+                    sr, setting, channels, bands, channel, dsp.getLatencySamples(p), centroid, worst);
     }
     // The same running processor must return to transparent, zero-latency
     // Digital when saturation is disabled, regardless of the selected factor.
@@ -100,7 +99,7 @@ void response(double sr, int setting, int channels, int bands)
     p.bandSatType.fill(0);
     left.fill(0.125f); right.fill(-0.0625f);
     dsp.process(in, out, channels, block, p);
-    bool exact = dsp.getLatencySamples() == 0;
+    bool exact = dsp.getLatencySamples(p) == 0;
     for (int i = 0; i < block; ++i)
         exact &= outL[i] == left[i] && (channels == 1 || outR[i] == right[i]);
     check(exact, "disabling saturation restores exact passthrough and zero latency");

@@ -105,6 +105,18 @@ if(NOT CMAKE_CROSSCOMPILING)
     add_test(NAME MultiQHostState COMMAND MultiQHostStateTest)
     set_tests_properties(MultiQHostState PROPERTIES TIMEOUT 60)
 
+    # The latency a host reads at activation is the delay the plugin renders
+    # (oversampled saturation, British, Tube, limiter) and holds while running.
+    add_executable(MultiQLatencyTest
+        tests/MultiQLatencyTest.cpp
+        ../core/MultiQDSP.cpp
+        ../core/MultiQMatch.cpp
+        ../../shared-daf/dsp/FourKEQDSP.cpp
+        "${DAF_PATH}/daf/src/DafPlugin.cpp")
+    target_link_libraries(MultiQLatencyTest PRIVATE multi-q-2 Threads::Threads)
+    target_compile_definitions(MultiQLatencyTest PRIVATE DAF_PLUGIN_TARGET_CLAP)
+    add_test(NAME MultiQLatency COMMAND MultiQLatencyTest)
+
     # The editor's own knobs and their inline value fields (#337): the
     # production MultiQUI.cpp against Dear ImGui's real input handling, through
     # the window-free host in shared-daf/ui/tests/daf-ui-test-host. That

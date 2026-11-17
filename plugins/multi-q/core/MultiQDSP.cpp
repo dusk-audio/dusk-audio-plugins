@@ -41,7 +41,13 @@ void MultiQDSP::prepare(double sampleRate, int maxBlockSize)
     for (auto& os : satOsL) { os.setFactor(1); os.reset(); }
     for (auto& os : satOsR) { os.setFactor(1); os.reset(); }
     prevSatOsFactor = 1;
-    lastDigitalSatLatency = 0;
+    for (int mode = 0; mode < 3; ++mode)
+    {
+        satOsDelay[(size_t)mode] = measureOversamplerDelay<OversamplerWide>(mode == 2 ? 4 : mode == 1 ? 2 : 1);
+        // FourKEQDSP runs its whole core inside one Oversampler round trip.
+        britishOsDelay[(size_t)mode] =
+            measureOversamplerDelay<Oversampler>(FourKEQDSP::chooseFactor(currentSampleRate, mode));
+    }
 
     hpfFilter.reset(); lpfFilter.reset();
     // Band enable and solo crossfade over 3 ms, as in the original Multi-Q
@@ -129,6 +135,48 @@ void MultiQDSP::updateDynGainFilter(int band, float dynGainDb, const Params& p)
         else                          svfdes::computePeaking(svfC, sr, freq, dynGainDb, q);
     }
     svfDynGainFilters[(size_t)(band - 1)].setTarget(svfC);
+}
+
+std::array<bool, MultiQDSP::NUM_BANDS> MultiQDSP::runningBands(const Params& p)
+{
+    std::array<bool, NUM_BANDS> running{};
+    if ((EQType)p.eqType == EQType::Match)
+        return running;
+    for (int i = 0; i < NUM_BANDS; ++i)
+        running[(size_t)i] = p.bandEnabled[(size_t)i];
+    const int solo = p.soloBand;
+    if (solo >= 0 && solo < NUM_BANDS && !p.deltaSolo)
+    {
+        const bool soloIsParametric = (solo >= 1 && solo <= 6);
+        for (int i = 0; i < NUM_BANDS; ++i)
+            if (i != solo && !(soloIsParametric && (i == 0 || i == 7)))
+                running[(size_t)i] = false;
+    }
+    return running;
+}
+
+int MultiQDSP::getLatencySamples(const Params& p) const noexcept
+{
+    const size_t os = (size_t)(p.oversampling == 2 ? 2 : p.oversampling == 1 ? 1 : 0);
+    const int limiterLatency = p.limiterEnabled ? limiter.getMaxLookaheadSamples() : 0;
+    const auto eqType = (EQType)p.eqType;
+    if (eqType == EQType::British)
+        return limiterLatency + (int)std::lround(britishOsDelay[os]);
+    if (eqType == EQType::Tube)
+        return limiterLatency + (int)std::lround(tubeEQ.oversamplingDelay(p.oversampling));
+    if (eqType == EQType::Match)
+        return limiterLatency + matchProc.getLatencySamples();
+    if (eqType != EQType::Digital)
+        return limiterLatency;   // process() passes such a block through undelayed
+
+    // The saturating bands' oversamplers sit in series: sum their delays before
+    // rounding (two bands at 2x render 125 samples, not 2 x 63).
+    const auto running = runningBands(p);
+    int saturating = 0;
+    for (int band = 1; band < 7; ++band)
+        if (running[(size_t)band] && p.bandSatType[(size_t)band] > 0)
+            ++saturating;
+    return limiterLatency + (int)std::lround(saturating * satOsDelay[os]);
 }
 
 void MultiQDSP::computeTiltShelf(MqBiquadCoeffs& c, double sr, double freq, float gainDB)
@@ -443,8 +491,6 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
     float* procR = isStereo ? outputs[1] : nullptr;
 
     const auto eqType = (EQType)p.eqType;
-    lastEqType = p.eqType; // cache for getLatencySamples()
-    lastDigitalSatLatency = 0; // recomputed by the Digital branch if it saturates
 
     // British character: route through the upgraded FourKEQDSP core (its own
     // parallel-summing EQ + console saturation + oversampling + M/S). It reads
@@ -546,26 +592,9 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
 
     if (digitalPath)
     {
-        std::array<bool, NUM_BANDS> bandEnabled{};
-        for (int i = 0; i < NUM_BANDS; ++i)
-            bandEnabled[(size_t)i] = p.bandEnabled[(size_t)i];
-
-        if (eqType == EQType::Match)
-            bandEnabled.fill(false);
-
-        // solo / delta-solo
-        int currentSolo = p.soloBand;
-        bool deltaSoloActive = (currentSolo >= 0 && currentSolo < NUM_BANDS && p.deltaSolo);
-        if (currentSolo >= 0 && currentSolo < NUM_BANDS && !deltaSoloActive)
-        {
-            bool soloIsParametric = (currentSolo >= 1 && currentSolo <= 6);
-            for (int i = 0; i < NUM_BANDS; ++i)
-            {
-                if (i == currentSolo) continue;
-                if (soloIsParametric && (i == 0 || i == 7)) continue;
-                bandEnabled[(size_t)i] = false;
-            }
-        }
+        const std::array<bool, NUM_BANDS> bandEnabled = runningBands(p);
+        const int currentSolo = p.soloBand;
+        const bool deltaSoloActive = (currentSolo >= 0 && currentSolo < NUM_BANDS && p.deltaSolo);
 
         for (int i = 0; i < NUM_BANDS; ++i)
             bandEnableSmoothed[(size_t)i].setTargetValue(bandEnabled[(size_t)i] ? 1.0f : 0.0f);
@@ -664,16 +693,6 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
             for (auto& os : satOsL) { os.setFactor(satOsFactor); os.reset(); }
             for (auto& os : satOsR) { os.setFactor(satOsFactor); os.reset(); }
             prevSatOsFactor = satOsFactor;
-        }
-        // Latency = summed group delay of the actively-saturating bands (serial in
-        // the chain). Zero at 1x or when no band saturates, so the linear Digital
-        // path stays zero-latency and the validated A/B is untouched.
-        if (satOsFactor > 1)
-        {
-            const int perBandLat = (int)std::lround(satOsL[0].latency());
-            for (int band = 1; band < 7; ++band)
-                if (bandActive[(size_t)band] && bandSatType[(size_t)band] > 0)
-                    lastDigitalSatLatency += perBandLat;
         }
 
         for (int i = 0; i < numSamples; ++i)

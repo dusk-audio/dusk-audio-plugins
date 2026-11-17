@@ -24,6 +24,7 @@
 #include "MultiQLimiter.hpp"                      // output brickwall limiter (framework-free)
 #include "../../shared-daf/dsp/FourKEQDSP.hpp"   // British character = upgraded 4K EQ core
 #include "../../shared-daf/dsp/DuskOversampler.hpp" // 2x/4x OS for Digital per-band saturation
+#include "MultiQOversamplerDelay.hpp"
 #include "../../shared/AnalogEmulation/WaveshaperCurves.h"
 
 #include <array>
@@ -115,18 +116,16 @@ public:
     void process(const float* const* inputs, float* const* outputs,
                  int numChannels, int numSamples, const Params& p);
 
-    // Reported latency in base-rate samples, including active nonlinear-stage
-    // oversampling and limiter/Match delay. Reads the last-processed character
-    // (cached in process()), so call after process() for an updated latency.
-    int getLatencySamples() const noexcept
-    {
-        int lat = limiter.getLatencySamples();   // lookahead, all characters (0 if off)
-        if (lastEqType == (int)EQType::British)   lat += britishEQ.getLatencySamples();
-        else if (lastEqType == (int)EQType::Tube) lat += tubeEQ.getLatencySamples();
-        else if (lastEqType == (int)EQType::Match) lat += matchProc.getLatencySamples();
-        else                                      lat += lastDigitalSatLatency;
-        return lat;
-    }
+    // Latency in base-rate samples that process() renders with these parameters:
+    // the limiter lookahead, plus the active character's delay. Digital: the
+    // oversampler of every running band with saturation on (Oversampling 2x or
+    // 4x), in series. British and Tube: their oversampled cores. Derived from
+    // the parameters, not from the last processed block, so the value a host
+    // reads at activation is already right and holds while the settings do.
+    // Match adds its correction FIR's latency only once the audio thread has
+    // adopted the correction, on the first block after activation. Valid after
+    // prepare().
+    int getLatencySamples(const Params& p) const noexcept;
 
     // Current limiter gain reduction (dB, >=0) for the UI meter. Read-only tap.
     float getLimiterGainReduction() const noexcept { return limiter.getGainReduction(); }
@@ -214,6 +213,10 @@ private:
     static void computeTiltShelf(MqBiquadCoeffs& c, double sr, double freq, float gainDB);
     // set the dyn-gain SVF target for a band from the given dynamic gain (dB)
     void updateDynGainFilter(int band, float dynGainDb, const Params& p);
+    // Bands the Digital path runs: the Enabled switches, none in Match mode, and
+    // under a plain (not delta) solo only the soloed band, plus the HPF and LPF
+    // when the soloed band is a parametric one.
+    static std::array<bool, NUM_BANDS> runningBands(const Params& p);
 
     // read-only observer taps (RT-safe, no alloc/lock): capture the pre-process
     // input peak, and publish the post-process output peak + push the analyzer
@@ -230,7 +233,6 @@ private:
     float  biquadSmoothCoeff = 1.0f; // 1 - exp(-1/(0.001*sr)); per-sample coeff ramp
     bool   firstBlock = true;
     int    prevHpfStages = -1, prevLpfStages = -1;
-    int    lastEqType = (int)EQType::Digital; // cached in process() for getLatencySamples()
 
     CascadedFilter hpfFilter, lpfFilter;
     std::array<StereoBiquad, 6> svfFilters;       // bands 2-7 (DF2T, AnalogMatchedBiquad coeffs)
@@ -248,7 +250,10 @@ private:
     // 20 kHz / 44.1 kHz, compounded when several bands saturate in series.
     std::array<OversamplerWide, 6> satOsL, satOsR;
     int prevSatOsFactor = 1;          // reset OS state when the hq factor changes
-    int lastDigitalSatLatency = 0;    // summed active-sat-band OS latency (base samples)
+    // Rendered oversampler delay (base samples) per Oversampling setting 0/1/2:
+    // one Digital saturating band, and the British core at the factor
+    // FourKEQDSP picks for this rate. Measured in prepare().
+    std::array<double, 3> satOsDelay {}, britishOsDelay {};
 
     //--- auto-gain (2 s RMS loudness match, +/-6 dB — MultiQ.cpp:1523-1580) ------
     LinearSmoothedValue autoGainComp; // linear make-up gain, 2 s ramp
