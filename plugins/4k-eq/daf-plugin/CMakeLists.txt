@@ -50,10 +50,7 @@ target_compile_definitions(4k-eq-2 PUBLIC
 
 # Copies the built CLAP/VST3/LV2 into the user plugin dirs after each build
 # when configured with -DDUSK_DAF_INSTALL_LOCAL=ON.
-# A factory preset states every band and filter in Hz and leaves the legacy
-# dials where they are (FourKEQBandFrequency.hpp).
-dusk_daf_install_local(4k-eq-2 LV2_PROGRAMS
-    LV2_PRESET_OMIT hpf_freq lpf_freq lf_freq lm_freq hm_freq hf_freq)
+dusk_daf_install_local(4k-eq-2 LV2_PROGRAMS)
 
 if(NOT CMAKE_CROSSCOMPILING)
     # The shared FourKEQDSP core: bit identity with the frozen RBJ-only core at
@@ -79,9 +76,9 @@ if(NOT CMAKE_CROSSCOMPILING)
     endif()
     add_test(NAME FourKEQCore COMMAND FourKEQCoreTest)
 
-    # Band and filter frequency parameters (#288): which of the two parameters
-    # wins, factory presets, the read-out, user preset files across the change,
-    # and selector writes from two threads at once.
+    # The plugin layer without a host: the factory presets load the dial
+    # positions 1.0.5 loaded, user preset files read and write as 1.0.5's,
+    # and the response graph draws the sections that play.
     add_executable(FourKEQPluginLogicTest
         tests/FourKEQPluginLogicTests.cpp
         ../../shared-daf/dsp/FourKEQDSP.cpp)
@@ -89,8 +86,6 @@ if(NOT CMAKE_CROSSCOMPILING)
         "${CMAKE_CURRENT_SOURCE_DIR}"
         "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
     target_compile_features(FourKEQPluginLogicTest PRIVATE cxx_std_17)
-    find_package(Threads REQUIRED)
-    target_link_libraries(FourKEQPluginLogicTest PRIVATE Threads::Threads)
     add_test(NAME FourKEQPluginLogic COMMAND FourKEQPluginLogicTest)
 
     # The editor's own knobs and their inline value fields (#337): the
@@ -122,9 +117,10 @@ if(NOT CMAKE_CROSSCOMPILING)
         FOURKEQ_UI_TEST_HOME="${CMAKE_CURRENT_BINARY_DIR}/value-field-test-home")
     add_test(NAME FourKEQValueField COMMAND FourKEQValueFieldTest)
 
-    # The same through the built CLAP's state and parameter paths: pre-#288
-    # states and legacy automation keep their sound, the Hz parameters and the
-    # factory programs play the Hz they state. dlopen(), so not on Windows.
+    # The built CLAP's state, parameter and program paths: states saved by
+    # 1.0.5 and automation of the frequency dials play the core's dial law, and
+    # the factory programs load the dial positions 1.0.5 loaded. dlopen(), so
+    # not on Windows.
     if(NOT WIN32)
         add_executable(FourKEQClapStateTest
             tests/FourKEQClapStateTest.cpp
