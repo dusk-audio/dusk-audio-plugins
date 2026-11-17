@@ -221,9 +221,9 @@ private:
     // solo only the soloed band, plus the HPF and LPF when the soloed band is a
     // parametric one.
     static std::array<bool, NUM_BANDS> runningBands(const Params& p);
-    // Delay (l, r) exactly as a band's saturation oversamplers delay what they
-    // process with this routing (0=Stereo,1=Left,2=Right,3=Mid,4=Side): identity
-    // round trips through osL / osR.
+    // Delay (l, r) exactly as a band's saturation oversamplers delay them with
+    // this routing (0=Stereo,1=Left,2=Right,3=Mid,4=Side): identity round trips
+    // through osL / osR, both channels whatever the routing.
     static void delayAsSaturation(int routing, OversamplerWide& osL, OversamplerWide& osR,
                                   float& l, float& r) noexcept;
     // Start band 2-7's (1-based `band`) reference: empty, then the stored

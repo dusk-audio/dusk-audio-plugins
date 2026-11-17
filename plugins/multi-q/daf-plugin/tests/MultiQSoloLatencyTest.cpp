@@ -54,6 +54,7 @@ struct Setup
     bool limiter = false;
     int boostBand = -1;                    // UI band with a +6 dB bell, -1 none
     int midBand = -1;                      // UI band routed to Mid, -1 none
+    int leftBand = -1;                     // UI band routed to Left, -1 none
     bool edges = true;                     // HPF (band 1) and LPF (band 8) on
     int offBand = -1;                      // UI band (2..7) switched off, -1 none
     int invertBand = -1;                   // UI band with Phase Invert on, -1 none
@@ -80,6 +81,7 @@ public:
         }
         if (s.boostBand > 0) set(mqidx::gain(s.boostBand - 1), 6.0f);
         if (s.midBand > 0) set(mqidx::routing(s.midBand - 1), 4.0f);   // Mid
+        if (s.leftBand > 0) set(mqidx::routing(s.leftBand - 1), 2.0f); // Left
         set(mqidx::enabled(0), s.edges ? 1.0f : 0.0f);
         set(mqidx::enabled(7), s.edges ? 1.0f : 0.0f);
         if (s.offBand > 0) set(mqidx::enabled(s.offBand - 1), 0.0f);
@@ -219,16 +221,20 @@ Signal minus(const Signal& a, const Signal& b)
 
 void latencyIgnoresSolo(double sr)
 {
-    // Every character, oversampling setting, saturation layout and limiter
-    // setting; every band soloed plainly and as delta, engaged while running
-    // and present at activation.
+    // Every character, oversampling setting, saturation layout (also with
+    // saturating bands routed Left and Mid) and limiter setting; every band
+    // soloed plainly and as delta, engaged while running and present at
+    // activation.
+    struct Layout { std::vector<int> saturating; int leftBand, midBand; };
+    const Layout layouts[] = {{{}, -1, -1}, {{3}, -1, -1}, {{2, 4, 6}, -1, -1}, {{2, 4, 6}, 2, 4}};
     int configurations = 0, mismatches = 0;
     for (int eqType : {0, 1, 2, 3})
         for (int os : {0, 1, 2})
-            for (const std::vector<int>& sat : {std::vector<int>{}, std::vector<int>{3}, std::vector<int>{2, 4, 6}})
+            for (const Layout& layout : layouts)
                 for (bool limiter : {false, true})
                 {
-                    Setup s; s.eqType = eqType; s.oversampling = os; s.saturating = sat; s.limiter = limiter;
+                    Setup s; s.eqType = eqType; s.oversampling = os; s.saturating = layout.saturating;
+                    s.leftBand = layout.leftBand; s.midBand = layout.midBand; s.limiter = limiter;
                     Plugin plugin(sr, s);
                     plugin.silence(2);
                     const int reference = plugin.latency();
@@ -254,7 +260,7 @@ void latencyIgnoresSolo(double sr)
     check(mismatches == 0, "solo never changes the reported latency (no restart request)", mismatches, 0);
 }
 
-void timing(double sr, int os, const std::vector<int>& saturating, int midBand)
+void timing(double sr, int os, const std::vector<int>& saturating, int midBand, int leftBand = -1)
 {
     // The bands are flat (0 dB, drive 0, HPF and LPF off) except a +6 dB bell
     // on band 4, so a solo removes nothing audible but the silenced bands'
@@ -262,7 +268,8 @@ void timing(double sr, int os, const std::vector<int>& saturating, int midBand)
     // unsoloed one. Soloing the bell compares with the full render; soloing a
     // flat saturating band (3), which silences the bell, with the render
     // without the bell.
-    Setup s; s.oversampling = os; s.saturating = saturating; s.boostBand = 4; s.midBand = midBand; s.edges = false;
+    Setup s; s.oversampling = os; s.saturating = saturating; s.boostBand = 4; s.midBand = midBand;
+    s.leftBand = leftBand; s.edges = false;
     Setup flat = s; flat.boostBand = -1;
     const Signal in = noise(sr, 0.6);
     const Signal full = render(sr, s, in), fullFlat = render(sr, flat, in);
@@ -276,7 +283,8 @@ void timing(double sr, int os, const std::vector<int>& saturating, int midBand)
     const double deltaLag = std::abs(lagOf(contribution, delta, sr));
     const double deltaDiff = maxDiff(contribution, delta, sr);
     std::printf("  sr=%.0f %dx, saturating bands %zu%s: solo lag %.1e samples, max diff %.1e; delta lag %.1e, max diff %.1e\n",
-                sr, os == 2 ? 4 : 2, saturating.size(), midBand > 0 ? " (one routed Mid)" : "",
+                sr, os == 2 ? 4 : 2, saturating.size(),
+                midBand > 0 ? " (one routed Mid)" : leftBand > 0 ? " (one routed Left)" : "",
                 worstLag, worstDiff, deltaLag, deltaDiff);
     check(worstLag < 0.001 && worstDiff < 1e-5, "a soloed band lines up with the unsoloed output to the sample",
           worstLag, 0.0);
@@ -464,6 +472,7 @@ int main()
             timing(sr, os, {3}, -1);
             timing(sr, os, {2, 3, 5, 7}, -1);
             timing(sr, os, {2, 3, 5, 7}, 5);
+            timing(sr, os, {2, 3, 5, 7}, -1, 3);
             bandReference(sr, os);
             flatBandsUnchanged(sr, os);
             shapingBandClick(sr, os, 6.0f, 0.71f, 0.3f);

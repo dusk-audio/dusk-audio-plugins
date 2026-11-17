@@ -7,7 +7,9 @@
 // while running. So the latency read at activation must equal the delay measured
 // in the render (within the half sample an integer latency allows), processing
 // with unchanged settings must not move it, and after a settings change the
-// value reported while running must survive the host's restart.
+// value reported while running must survive the host's restart. A saturating
+// band routed to one channel, or to Mid or Side, must delay both channels as
+// the latency says, or the channels drift apart.
 //
 // Runs the real plugin through DAF's PluginExporter and its host parameters.
 #include "../MultiQPlugin.cpp"
@@ -40,6 +42,8 @@ struct Settings
     int oversampling = 0;             // 0 = Off, 1 = 2x, 2 = 4x
     int saturatingBands = 0;          // Digital: bands 3, 5 get Tape saturation
     bool limiter = false;
+    float drive = -1.0f;              // saturation drive; < 0 keeps the default
+    int routing[2] = {0, 0};          // bands 3, 5: 0 Global, 1 Stereo, 2 Left, 3 Right, 4 Mid, 5 Side
 };
 
 class Plugin
@@ -63,7 +67,11 @@ public:
         plugin->setParameterValue(kParamLimiterEnabled, s.limiter ? 1.0f : 0.0f);
         const int bands[] = {2, 4};   // UI bands 3 and 5
         for (int i = 0; i < 2; ++i)
+        {
             plugin->setParameterValue(mqidx::satType(bands[i]), i < s.saturatingBands ? 1.0f : 0.0f);
+            if (s.drive >= 0.0f) plugin->setParameterValue(mqidx::satDrive(bands[i]), s.drive);
+            plugin->setParameterValue(mqidx::routing(bands[i]), (float)s.routing[i]);
+        }
     }
     void reactivate() { plugin->deactivate(); plugin->activate(); }
     void process(float* left, float* right, int frames)
@@ -81,10 +89,10 @@ private:
 // One second of low-passed noise at about -30 dBFS: low enough that the
 // saturation stays close to linear, band-limited so every oversampling filter
 // passes it unchanged and only its delay shows.
-std::vector<float> stimulus(double sr)
+std::vector<float> stimulus(double sr, uint32_t seed = 12345u)
 {
     std::vector<float> x((size_t)sr);
-    uint32_t state = 12345u;
+    uint32_t state = seed;
     const double a = std::exp(-2.0 * 3.141592653589793 * 3000.0 / sr);
     double y1 = 0.0, y2 = 0.0;
     for (auto& v : x)
@@ -98,19 +106,21 @@ std::vector<float> stimulus(double sr)
     return x;
 }
 
-struct Render { std::vector<float> left; int atActivation = -1, afterRun = -1; };
+struct Render { std::vector<float> left, right; int atActivation = -1, afterRun = -1; };
 
-Render render(double sr, const Settings& s)
+// `stereo`: the right channel carries its own noise, so Mid and Side differ
+// from Left and Right; otherwise both channels carry the same.
+Render render(double sr, const Settings& s, bool stereo = false)
 {
     constexpr int block = 256;
     Plugin plugin(sr, block, s);
     Render r;
     r.atActivation = plugin.latency();
     r.left = stimulus(sr);
-    std::vector<float> right = r.left;
+    r.right = stereo ? stimulus(sr, 54321u) : r.left;
     const int n = (int)r.left.size();
     for (int pos = 0; pos < n; pos += block)
-        plugin.process(r.left.data() + pos, right.data() + pos, std::min(block, n - pos));
+        plugin.process(r.left.data() + pos, r.right.data() + pos, std::min(block, n - pos));
     r.afterRun = plugin.latency();
     return r;
 }
@@ -154,6 +164,44 @@ void latencyMatchesRender(double sr, const char* name, Settings s)
           out.atActivation, delay);
     check(out.afterRun == out.atActivation, "processing with unchanged settings keeps the latency (no restart)",
           out.afterRun, out.atActivation);
+}
+
+void routingKeepsChannelsTogether(double sr, int oversampling)
+{
+    // Flat saturating bands at drive 0 only delay. Routed to one channel, or to
+    // Mid or Side, a band must still delay both channels by its round trip, as
+    // the latency reports, so its render equals the render with the same bands
+    // routed Stereo. Delaying only what it saturates would leave the other
+    // channel (or the Side under a Mid band) early, and the channels apart.
+    struct Case { const char* name; int bands, first, second; };
+    const Case cases[] = {{"Left", 1, 2, 1},        {"Right", 1, 3, 1},       {"Mid", 1, 4, 1},
+                          {"Side", 1, 5, 1},        {"Left + Right", 2, 2, 3}, {"Left + Left", 2, 2, 2},
+                          {"Mid + Side", 2, 4, 5}};
+    Settings flat;
+    const Render dry = render(sr, flat, true);
+    for (const Case& c : cases)
+    {
+        Settings s;
+        s.oversampling = oversampling;
+        s.saturatingBands = c.bands;
+        s.drive = 0.0f;
+        s.routing[0] = c.first;
+        s.routing[1] = c.second;
+        Settings stereo = s;
+        stereo.routing[0] = stereo.routing[1] = 1;
+        const Render routed = render(sr, s, true), reference = render(sr, stereo, true);
+        double diff = 0.0;
+        for (size_t i = 0; i < routed.left.size(); ++i)
+            diff = std::max({diff, (double)std::abs(routed.left[i] - reference.left[i]),
+                             (double)std::abs(routed.right[i] - reference.right[i])});
+        const double delayL = delayOf(dry.left, routed.left, sr), delayR = delayOf(dry.right, routed.right, sr);
+        std::printf("  sr=%.0f %dx, saturating band%s routed %-12s latency %3d; rendered delay L %7.3f, R %7.3f; "
+                    "%.1e from the same bands routed Stereo\n", sr, oversampling == 2 ? 4 : 2,
+                    c.bands > 1 ? "s" : " ", c.name, routed.atActivation, delayL, delayR, diff);
+        check(diff < 1e-5 && std::abs(delayL - routed.atActivation) <= 0.6 && std::abs(delayR - routed.atActivation) <= 0.6,
+              "a routed saturating band delays both channels by the reported latency", std::max(delayL, delayR),
+              routed.atActivation);
+    }
 }
 
 void settingsChangeSurvivesRestart(double sr)
@@ -204,6 +252,8 @@ int main()
         Settings l; l.limiter = true;                latencyMatchesRender(sr, "Limiter", l);
         l.oversampling = 1; l.saturatingBands = 2;   latencyMatchesRender(sr, "Limiter + 2x, 2 sat", l);
         settingsChangeSurvivesRestart(sr);
+        routingKeepsChannelsTogether(sr, 1);
+        routingKeepsChannelsTogether(sr, 2);
     }
     std::printf("Multi-Q latency: %d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;

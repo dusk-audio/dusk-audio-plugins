@@ -192,8 +192,9 @@ int MultiQDSP::getLatencySamples(const Params& p) const noexcept
         return limiterLatency;   // process() passes such a block through undelayed
 
     // The saturating bands' oversamplers sit in series: sum their delays before
-    // rounding (two bands at 2x render 125 samples, not 2 x 63). Solo is left
-    // out: process() keeps a silenced band's delay (see satRefL).
+    // rounding (two bands at 2x render 125 samples, not 2 x 63). Each delays
+    // both channels whatever its routing. Solo is left out: process() keeps a
+    // silenced band's delay (see satRefL).
     const auto enabled = enabledBands(p);
     int saturating = 0;
     for (int band = 1; band < 7; ++band)
@@ -205,15 +206,22 @@ int MultiQDSP::getLatencySamples(const Params& p) const noexcept
 void MultiQDSP::delayAsSaturation(int routing, OversamplerWide& osL, OversamplerWide& osR,
                                   float& l, float& r) noexcept
 {
+    // A saturating band delays both channels whatever it saturates, so this
+    // does too: left and right through osL and osR, or for a band routed to Mid
+    // or Side, Mid through osL and Side through osR, as the band itself does.
     const auto identity = [](float s) noexcept { return s; };
-    switch (routing)
+    if (routing == 3 || routing == 4)
     {
-        case 0: l = osL.processSample(l, identity); r = osR.processSample(r, identity); break;
-        case 1: l = osL.processSample(l, identity); break;
-        case 2: r = osR.processSample(r, identity); break;
-        case 3: { float mid = (l + r) * 0.5f, side = (l - r) * 0.5f; mid = osL.processSample(mid, identity); l = mid + side; r = mid - side; break; }
-        case 4: { float mid = (l + r) * 0.5f, side = (l - r) * 0.5f; side = osR.processSample(side, identity); l = mid + side; r = mid - side; break; }
-        default: break;
+        float mid = (l + r) * 0.5f, side = (l - r) * 0.5f;
+        mid = osL.processSample(mid, identity);
+        side = osR.processSample(side, identity);
+        l = mid + side;
+        r = mid - side;
+    }
+    else
+    {
+        l = osL.processSample(l, identity);
+        r = osR.processSample(r, identity);
     }
 }
 
@@ -1027,14 +1035,20 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
                             auto& osL = satOsL[(size_t)(band - 1)];
                             auto& osR = satOsR[(size_t)(band - 1)];
                             auto ws = [&](float s) noexcept { return waveshaperCurves.processWithDrive(s, curve, drive); };
+                            // What the band does not saturate still takes the same
+                            // round trip (identity), so both channels carry the
+                            // band's delay, as the latency reports, and stay together.
+                            const auto identity = [](float s) noexcept { return s; };
                             switch (routing)
                             {
                                 case 0: sampleL = osL.processSample(sampleL, ws);
                                         sampleR = osR.processSample(sampleR, ws); break;
-                                case 1: sampleL = osL.processSample(sampleL, ws); break;
-                                case 2: sampleR = osR.processSample(sampleR, ws); break;
-                                case 3: { float mid=(sampleL+sampleR)*0.5f, side=(sampleL-sampleR)*0.5f; mid=osL.processSample(mid, ws); sampleL=mid+side; sampleR=mid-side; break; }
-                                case 4: { float mid=(sampleL+sampleR)*0.5f, side=(sampleL-sampleR)*0.5f; side=osR.processSample(side, ws); sampleL=mid+side; sampleR=mid-side; break; }
+                                case 1: sampleL = osL.processSample(sampleL, ws);
+                                        sampleR = osR.processSample(sampleR, identity); break;
+                                case 2: sampleL = osL.processSample(sampleL, identity);
+                                        sampleR = osR.processSample(sampleR, ws); break;
+                                case 3: { float mid=(sampleL+sampleR)*0.5f, side=(sampleL-sampleR)*0.5f; mid=osL.processSample(mid, ws); side=osR.processSample(side, identity); sampleL=mid+side; sampleR=mid-side; break; }
+                                case 4: { float mid=(sampleL+sampleR)*0.5f, side=(sampleL-sampleR)*0.5f; mid=osL.processSample(mid, identity); side=osR.processSample(side, ws); sampleL=mid+side; sampleR=mid-side; break; }
                             }
                         }
                     }
