@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -175,6 +176,13 @@ Signal render(double sr, const Setup& s, const Signal& in, int band = -1, bool d
     return out;
 }
 
+constexpr double kInfinite = std::numeric_limits<double>::infinity();
+
+// The reductions below (delay, difference, step, peak) report a non-finite
+// sample as infinite: a NaN never wins std::max or a comparison and would
+// otherwise read as a match.
+bool bothFinite(float a, float b) { return std::isfinite(a) && std::isfinite(b); }
+
 // Delay (samples) of y against x over the settled middle of the render: the
 // whole-sample lag with the largest cross-correlation within +-8, refined by
 // the least-squares fit of y[i + lag] = x[i - t] ~ x[i] - t x'[i]. A parabola
@@ -184,6 +192,11 @@ Signal render(double sr, const Setup& s, const Signal& in, int band = -1, bool d
 double lagOf(const Signal& x, const Signal& y, double sr)
 {
     const int from = (int)(0.25 * sr), to = (int)(x.l.size()) - 16;
+    // Every sample read below (y shifted by up to 8): a non-finite one reads
+    // as an infinite delay.
+    for (int i = from - 8; i < to + 8; ++i)
+        if (!bothFinite(x.l[(size_t)i], x.r[(size_t)i]) || !bothFinite(y.l[(size_t)i], y.r[(size_t)i]))
+            return kInfinite;
     auto corr = [&](int lag) {
         double c = 0.0;
         for (int i = from; i < to; ++i)
@@ -211,7 +224,10 @@ double maxDiff(const Signal& a, const Signal& b, double sr)
 {
     double worst = 0.0;
     for (size_t i = (size_t)(0.25 * sr); i < a.l.size(); ++i)
+    {
+        if (!bothFinite(a.l[i], b.l[i]) || !bothFinite(a.r[i], b.r[i])) return kInfinite;
         worst = std::max({worst, (double)std::abs(a.l[i] - b.l[i]), (double)std::abs(a.r[i] - b.r[i])});
+    }
     return worst;
 }
 
@@ -323,8 +339,19 @@ double maxStep(const Signal& y, size_t from, size_t to)
 {
     double worst = 0.0;
     for (size_t i = std::max<size_t>(from, 1); i < to; ++i)
+    {
+        if (!bothFinite(y.l[i], y.r[i]) || !bothFinite(y.l[i - 1], y.r[i - 1])) return kInfinite;
         worst = std::max({worst, (double)std::abs(y.l[i] - y.l[i - 1]), (double)std::abs(y.r[i] - y.r[i - 1])});
+    }
     return worst;
+}
+
+// Neither switch steps further than 1.5 times the steady signal does. A
+// steady step that is not finite (a NaN in the steady part) fails: as the
+// bound it would let any step pass.
+bool noClick(double atFirst, double atSecond, double steady)
+{
+    return std::isfinite(steady) && atFirst <= 1.5 * steady && atSecond <= 1.5 * steady;
 }
 
 // Largest |a - b| over samples [from, to), both channels.
@@ -332,7 +359,10 @@ double offBy(const Signal& a, const Signal& b, size_t from, size_t to)
 {
     double worst = 0.0;
     for (size_t i = from; i < std::min(to, a.l.size()); ++i)
+    {
+        if (!bothFinite(a.l[i], b.l[i]) || !bothFinite(a.r[i], b.r[i])) return kInfinite;
         worst = std::max({worst, (double)std::abs(a.l[i] - b.l[i]), (double)std::abs(a.r[i] - b.r[i])});
+    }
     return worst;
 }
 
@@ -370,7 +400,7 @@ void crossfade(double sr)
                 "%.1e from a render soloed throughout during the fade, %.1e once settled; "
                 "after release %.1e from one never soloed; latency changes %d\n",
                 sr, atEngage, atRelease, steady, during, settledSoloed, settledReleased, changes);
-    check(atEngage <= 1.5 * steady && atRelease <= 1.5 * steady, "engaging and releasing solo does not click",
+    check(noClick(atEngage, atRelease, steady), "engaging and releasing solo does not click",
           std::max(atEngage, atRelease), 1.5 * steady);
     check(during > 1e-3, "the solo is a crossfade, not a switch", during, 1e-3);
     check(settledSoloed < 1e-5, "after the crossfade the soloed output is exactly the soloed-throughout render",
@@ -406,7 +436,7 @@ void enableSwitch(double sr)
     std::printf("  sr=%.0f saturating band switched on and off: largest step %.4f on, %.4f off (steady %.4f); "
                 "once settled %.1e from the band on throughout, %.1e from it off\n",
                 sr, atOn, atOff, steady, settledOn, settledOff);
-    check(atOn <= 1.5 * steady && atOff <= 1.5 * steady, "switching a saturating band on or off does not click",
+    check(noClick(atOn, atOff, steady), "switching a saturating band on or off does not click",
           std::max(atOn, atOff), 1.5 * steady);
     check(settledOn < 1e-5 && settledOff < 1e-5, "after the switch the output is exactly the steady render",
           std::max(settledOn, settledOff), 0.0);
@@ -458,9 +488,21 @@ void shapingBandClick(double sr, int os, float gain, float q, float drive)
     std::printf("  sr=%.0f %dx, six saturating bands (drive %.1f), band 4 %+.0f dB Q %.2f silenced by a solo: "
                 "largest step x%.2f at engage, x%.2f at release; 10 ms after settling %.1e from never soloed\n",
                 sr, os == 2 ? 4 : 2, drive, gain, q, atEngage / steady, atRelease / steady, settledReleased);
-    check(atEngage <= 1.5 * steady && atRelease <= 1.5 * steady,
+    check(noClick(atEngage, atRelease, steady),
           "a solo that silences a saturating band which also boosts or cuts does not click",
           std::max(atEngage, atRelease) / steady, 1.5);
+}
+
+// Largest |sample| over both channels.
+double peakOf(const std::vector<float>& l, const std::vector<float>& r)
+{
+    double peak = 0.0;
+    for (size_t i = 0; i < l.size(); ++i)
+    {
+        if (!bothFinite(l[i], r[i])) return kInfinite;
+        peak = std::max({peak, (double)std::abs(l[i]), (double)std::abs(r[i])});
+    }
+    return peak;
 }
 
 // Runs `seconds` of `in` (or silence when `in` is null, from the start) and
@@ -472,10 +514,7 @@ double play(Plugin& plugin, double sr, double seconds, const Signal* in)
     if (in) for (size_t i = 0; i < n; ++i) { l[i] = in->l[i % in->l.size()]; r[i] = in->r[i % in->r.size()]; }
     for (size_t pos = 0; pos < n; pos += kBlock)
         plugin.process(l.data() + pos, r.data() + pos, (int)std::min<size_t>(kBlock, n - pos));
-    double peak = 0.0;
-    for (size_t i = 0; i < n; ++i)
-        peak = std::max({peak, (double)std::abs(l[i]), (double)std::abs(r[i])});
-    return peak;
+    return peakOf(l, r);
 }
 
 void deltaChainAcrossCharacterChange(double sr)
@@ -521,6 +560,27 @@ void deltaChainLayoutChange(double sr)
     check(before > 1e-3 && after < 1e-6,
           "a delta solo whose delay stages change starts them empty", after, 0.0);
 }
+
+void helpersRejectNonFinite()
+{
+    // A NaN never wins std::max or a comparison, so a reduction built on them
+    // would report a NaN output as a match. Each must report a non-finite
+    // sample as infinite, and an infinite steady step, the click check's
+    // bound, must fail that check rather than let any step pass.
+    const double sr = 1000.0;   // maxDiff starts at 0.25 s: sample 250
+    const Signal clean{std::vector<float>(1000, 0.1f), std::vector<float>(1000, 0.1f)};
+    Signal bad = clean;
+    bad.r[600] = std::numeric_limits<float>::quiet_NaN();
+    const double diff = maxDiff(clean, bad, sr), off = offBy(clean, bad, 0, 1000), step = maxStep(bad, 0, 1000);
+    const double peak = peakOf(bad.l, bad.r), lag = lagOf(clean, bad, sr);
+    const bool clickFree = noClick(0.0, 0.0, step);
+    std::printf("  reductions over a NaN: maxDiff %g, offBy %g, maxStep %g, peak %g, lag %g; "
+                "with a NaN in the steady part the click check %s\n", diff, off, step, peak, lag,
+                clickFree ? "passes" : "fails");
+    check(std::isinf(diff) && std::isinf(off) && std::isinf(step) && std::isinf(peak) && std::isinf(lag),
+          "every reduction reports a non-finite sample as infinite", 0.0, 1.0);
+    check(!clickFree, "a NaN in the steady part fails the click check", clickFree ? 1.0 : 0.0, 0.0);
+}
 }
 
 int main()
@@ -547,6 +607,7 @@ int main()
         deltaChainAcrossCharacterChange(sr);
         deltaChainLayoutChange(sr);
     }
+    helpersRejectNonFinite();
     std::printf("Multi-Q solo latency: %d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }
