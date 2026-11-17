@@ -385,6 +385,75 @@ PRESETS = [
    "seqPitch1":12,"seqPitch4":7,"seqPitch6":3,"seqPitch9":10,"seqPitch12":5,"seqPitch14":-5,
    "seqAccent0":1,"seqAccent4":1,"seqAccent8":1,"seqAccent12":1,"seqSlide6":1,"seqSlide14":1,
    "delayOn":1,"delaySync":1,"delayDiv":3,"delayMix":0.3,"delayFB":0.4,"delayPP":1}),
+
+ # --- Contributed patches (GitHub issue #303, by 70MM13) ------------------
+ # Converted from the author's .scpreset files: every row is a parameter whose
+ # saved value differs from default + baseline, with the file's own decimal
+ # text, so loadProgram() lands on the same float32 state the user-preset loader
+ # produces from those files (knob residue such as 2.38418579e-07 included).
+ # Settings that are inert in the preset's engine (poly-mod on Modular, the
+ # Prism operators on Modular, sync and poly-mod on Prism) are kept, so a mode
+ # switch after loading behaves as it does after loading the author's file. All
+ # three keep the 4x oversampling they were saved with (the bank default is 2x).
+ # Oracle Trumpet: hard-synced brass with filter-envelope and Osc B poly-mod on
+ # the filter; the mod wheel brings in LFO 1 vibrato (Mod Whl -> LFO1 Depth).
+ ("Oracle Trumpet", {"mode":1,"masterVol":-3.5,"stereoWidth":0.49999997,"oversampling":2,
+   "analogAmt":1,"osc1Level":1,"osc2Detune":0,"osc2Level":1,
+   "filterCutoff":355.03714,"filterRes":0.37500006,"filterEnvAmt":1,
+   "ampA":0.0479766354,"ampD":0.0626789629,"ampS":0.555000186,"ampR":0.121357851,
+   "filtA":0.0480906405,"filtD":0.198207721,"filtS":0.404999912,"filtR":0.100000091,"filtCurve":2,
+   "hardSync":1,"pmFenvFilt":1,
+   "lfo1Rate":4.80566263,"lfo1Shape":1,"lfo1Fade":0.675000012,
+   "lfo2Rate":2.0504818,"lfo2Shape":1,"lfo2Fade":1.32499993,
+   "unisonVoices":2,"unisonDetune":1.25,"unisonSpread":0.324999988,
+   "driveOn":1,"driveAmt":0.345000267,
+   "chorusOn":1,"chorusRate":1.63339043,"chorusDepth":0.0200000592,"chorusMix":0.265000045,
+   "delayOn":1,"delayFB":0.0569999926,"delayMix":0.0549999997,"delayPP":1,"delayTape":1,
+   "reverbOn":1,"reverbSize":0,"reverbDecay":0.100000001,"reverbDamp":0,"reverbMix":0.0449999981,"reverbPD":0,
+   "modSrc0":4,"modSrc1":1,"modDst0":13,"modDst1":1,"modAmt0":1,"modAmt1":1,
+   "pmOscBFilt":0.62500006}),
+ # Modular English Horn: triangle oscillators with sync, FM and ring mod into the
+ # driven ladder, key-tracked cutoff, and mod-wheel vibrato from LFO 2.
+ ("Modular English Horn", {"mode":3,"masterVol":6,"stereoWidth":0.780000031,"oversampling":2,
+   "analogAmt":1,"osc1Wave":2,"osc1Level":1,"osc2Wave":2,"osc2Detune":2.38418579e-07,"osc2Level":1,
+   "osc3Wave":3,"osc3Level":1,"noiseLevel":0.0650000274,
+   "filterCutoff":532.145996,"filterRes":0.295000017,"filterEnvAmt":0.650000095,
+   "ampA":0.115087986,"ampD":0.12506099,"ampS":0.295000166,"ampR":0.127077311,
+   "filtA":1.65958917,"filtD":0.86520803,"filtS":0.350000083,"filtR":0.691831708,
+   "ringMod":0.274999976,"hardSync":1,"fmAmount":0.155000314,"pmFenvFilt":1,"shRate":0.100000001,
+   "lfo1Rate":3.56688786,"lfo1Shape":1,"lfo1Fade":0.675000012,
+   "lfo2Rate":7.05028391,"lfo2Fade":1.32499993,
+   "unisonDetune":1,"unisonSpread":0.225000009,
+   "driveOn":1,"driveAmt":1,
+   "chorusOn":1,"chorusRate":1.63339043,"chorusDepth":0.0200000592,"chorusMix":0.265000045,
+   "delayFB":0.0569999926,"delayMix":0.0549999997,"delayPP":1,"delayTape":1,
+   "reverbOn":1,"reverbSize":0,"reverbDecay":0.100000001,"reverbDamp":0,"reverbMix":0.0549999997,"reverbPD":53,
+   "modSrc0":1,"modSrc1":7,"modSrc2":4,"modSrc3":2,"modSrc4":8,
+   "modDst0":1,"modDst1":5,"modDst2":14,"modDst3":1,"modDst4":10,
+   "modAmt0":0.020000089,"modAmt1":1,"modAmt2":0.50000006,"modAmt3":0.329999954,"modAmt4":-0.0899999291,
+   "prismAlgo":5,"op1Ratio":1.5,"op1A":0.0125892526,"op1D":0.00954992697,"op1S":0.26000008,"op1R":0.954992712,
+   "op2Ratio":0.75,"op2Level":0.440000057,"op2A":0.00478630001,"op4Ratio":5,
+   "pmOscBFilt":0.62500006,"modOsc3Filter":0.0749998987}),
+ # Prism Talking Clav: FM clav through a resonant, envelope-swept filter with
+ # key-tracked cutoff; the mod wheel brings in LFO 1 vibrato.
+ ("Prism Talking Clav", {"mode":4,"masterVol":6,"stereoWidth":1,"oversampling":2,
+   "analogAmt":1,"osc1Level":1,"osc2Detune":0,"osc2Level":1,
+   "filterCutoff":176.210617,"filterRes":0.734999955,"filterEnvAmt":1,
+   "ampA":0.0796214044,"ampD":0.0626789629,"ampS":0.555000186,"ampR":0.201403946,"ampCurve":2,
+   "filtA":0.0480906405,"filtD":0.198207721,"filtS":0.404999912,"filtR":0.100000091,"filtCurve":2,
+   "hardSync":1,"pmFenvFilt":1,
+   "lfo1Rate":4.22930241,"lfo1Fade":0.675000012,
+   "lfo2Rate":2.0504818,"lfo2Shape":1,"lfo2Fade":1.32499993,
+   "unisonVoices":2,"unisonDetune":2,"unisonSpread":0.35499993,
+   "driveOn":1,"driveAmt":1,
+   "chorusOn":1,"chorusRate":1.63339043,"chorusDepth":0.0200000592,"chorusMix":0.265000045,
+   "delayOn":1,"delayFB":0.0569999926,"delayMix":0.0549999997,"delayPP":1,"delayTape":1,
+   "reverbOn":1,"reverbSize":0,"reverbDecay":0.100000001,"reverbDamp":0,"reverbMix":0.0449999981,"reverbPD":0,
+   "modSrc0":1,"modSrc1":7,"modSrc2":4,"modDst0":1,"modDst1":5,"modDst2":13,
+   "modAmt0":0.7299999,"modAmt1":1,"modAmt2":0.379999995,
+   "prismAlgo":5,"op1Ratio":1.5,"op1A":0.0125892526,"op1D":0.00954992697,"op1S":0.26000008,"op1R":0.954992712,
+   "op2Ratio":0.75,"op2Level":0.440000057,"op2A":0.00478630001,"op4Ratio":5,
+   "pmOscBFilt":0.62500006}),
 ]
 
 def fl(v):
@@ -443,9 +512,11 @@ w("#undef X\n#undef LIN\n#undef LOG\n#undef INT\n#undef BOOL\n};\n\n")
 w("// ---------------------------------------------------------------------------\n")
 w(f"// Factory presets ({len(PRESETS)}) - static override table. loadProgram() resets every\n")
 w("// param to its default, applies the shared baseline, then the per-preset\n")
-w("// overrides. Every preset ships at 2x oversampling (baseline oversampling=1);\n")
-w("// the pitch bug is fixed so 2x is correct. Phase 5 re-voiced the original 40\n")
-w("// (unity-gain filter fix + level/intent) and appended new preset banks.\n")
+w("// overrides. Presets ship at 2x oversampling (baseline oversampling=1; the\n")
+w("// pitch bug is fixed so 2x is correct) unless their rows say otherwise: the\n")
+w("// three contributed presets at the end keep the 4x they were made with.\n")
+w("// Phase 5 re-voiced the original 40 (unity-gain filter fix + level/intent)\n")
+w("// and appended new preset banks.\n")
 w("// ---------------------------------------------------------------------------\n")
 w("struct PresetRow { int index; float value; };\n\n")
 def rows(name, d):

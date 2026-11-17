@@ -854,8 +854,8 @@ jobs:
       - name: Core gate suite
         run: |
           # Full suite: every pass/fail gate, the fm and acid sub-suites, the
-          # 54-preset audit, lv2_smoke, and the cpu_bench sanity bar. The
-          # fx_alias 54-preset sweep stays opt-in (FX_ALIAS_FULL=1) -- it only
+          # 57-preset audit, lv2_smoke, and the cpu_bench sanity bar. The
+          # fx_alias 57-preset sweep stays opt-in (FX_ALIAS_FULL=1) -- it only
           # changes answer when the factory presets change and is by far the
           # slowest item in the suite.
           plugins/sunset-circuits/core/tests/run_all.sh

@@ -521,7 +521,7 @@ private:
     // MIDI program change (0xC0) -> factory preset, through the SAME loadProgram()
     // the host's own program change uses, so the preset rows and the smoothing snap
     // (notifyProgramChange) stay consistent with a host-driven change.
-    // Out-of-range programs are ignored (54 factory presets; the MIDI data byte
+    // Out-of-range programs are ignored (57 factory presets; the MIDI data byte
     // reaches 127).
     //
     // RT AUDIT — this is called from handleMidi on the audio thread. loadProgram()

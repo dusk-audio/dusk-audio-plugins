@@ -1388,7 +1388,7 @@ private:
     //========================================================================
     // TapeMachine 2's preset combo groups its list with TextDisabled category
     // headers in ONE column and lets ImGui scroll it. That reads fine at twenty
-    // presets; at 54 it is a scroll hunt. So the same idea is laid out ACROSS:
+    // presets; at 57 it is a scroll hunt. So the same idea is laid out ACROSS:
     // one group per MODE — which is this synth's strongest cue, and the same
     // grouping the browser's chips use — stacked into as many columns as the
     // window can actually hold, so the whole library is on screen at once.
@@ -3353,7 +3353,7 @@ private:
         // freed width. The hover tooltip carries mode and bank verbatim at any size.
         const bool ro = readoutsOn();
         // Name ink band x0+12 .. (x1-122 with badge+tag, x1-36 without): 136 / 222 px,
-        // ~24 / ~40 chars at font 11. The longest factory name is 18, but a USER name
+        // ~24 / ~40 chars at font 11. The longest factory name is 20, but a USER name
         // is whatever fitted in saveNameBuf (128) and panel.text() never clips — so
         // the draw is clipped to the band and an over-long name is CUT, not allowed to
         // overprint the badge and bleed into the next column. Tooltip has it in full.

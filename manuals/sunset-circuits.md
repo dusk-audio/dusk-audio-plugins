@@ -24,7 +24,7 @@ The same bone structure is present in every mode. The oscillator and mixer panel
 
 ![Sunset Circuits in Cosmos mode: the six mode rockers across the top, oscillator and mixer panels on the left, filter and the amp and filter envelopes in the center, the two LFOs and the mod matrix on the right, and the sequencer, effects and keyboard along the bottom](screenshots/sunset-circuits/01-main-ui.png)
 
-Sunset Circuits ships with 54 factory presets spread across all six modes, plus a user preset library you build yourself. It is a full instrument, not an effect: insert it on an instrument track, feed it MIDI, and play.
+Sunset Circuits ships with 57 factory presets spread across all six modes, plus a user preset library you build yourself. It is a full instrument, not an effect: insert it on an instrument track, feed it MIDI, and play.
 
 ## Getting Started
 
@@ -98,7 +98,7 @@ Sunset Circuits listens on **all MIDI channels** (omni), the usual convention fo
 | CC 121 (Reset All Controllers) | Resets the four performance controllers: lifts the sustain pedal, zeroes the mod wheel, zeroes channel aftertouch, and re-centers pitch bend. It does not touch any synth parameter, so your patch is unchanged. |
 | Channel Pressure | Feeds the Aftertouch mod source for the whole instrument. |
 | Poly Key Pressure | Feeds the Aftertouch mod source for that one note's voice only. Ignored while the arpeggiator is running, where the sounding notes are the arpeggiator's own; use channel pressure there. |
-| Program Change | Recalls a factory preset by number (0 to 53); higher numbers are ignored. |
+| Program Change | Recalls a factory preset by number (0 to 56); higher numbers are ignored. |
 | CC 120 / CC 123 | All Sound Off / All Notes Off. Stops everything, including a latched arpeggiator and a running Acid pattern, and releases the pedal. |
 
 The sustain pedal works in every mode. In Mono and Acid it holds the last note you played, and with the arpeggiator or the Acid sequencer running it holds the pattern's notes exactly as keeping the keys down would, so the pattern keeps playing until the pedal comes up. The difference from Arp Latch is that the pedal is momentary: latch holds until you switch it off, the pedal holds only while it is down.
@@ -372,7 +372,7 @@ Re-record such lanes. Automation in other hosts and formats has not been tested;
 
 ### The preset menu and the browser
 
-The top bar carries the preset controls: previous and next arrows around the preset name, a **BROWSE** button, and a **SAVE** button. The name itself is a drop-down menu listing the 54 factory presets, then a separator, then your own user presets. The arrows step through factory and user presets as one combined list and wrap around at the ends.
+The top bar carries the preset controls: previous and next arrows around the preset name, a **BROWSE** button, and a **SAVE** button. The name itself is a drop-down menu listing the 57 factory presets, then a separator, then your own user presets. The arrows step through factory and user presets as one combined list and wrap around at the ends.
 
 The drop-down is a list you scroll. The browser is the library you read. **BROWSE** opens a full-window preset browser built for finding a patch rather than scrolling past it:
 
@@ -389,7 +389,7 @@ The footer shows how many presets the current filters match. The browser reads t
 
 ### The user preset library
 
-Beyond the 54 factory presets, Sunset Circuits keeps a personal preset library you build yourself, stored as files on disk independent of any DAW session, so your patches follow you between projects and hosts. The library is not saved into the host session; it lives in your own preset folder and is the same library in every project and every DAW.
+Beyond the 57 factory presets, Sunset Circuits keeps a personal preset library you build yourself, stored as files on disk independent of any DAW session, so your patches follow you between projects and hosts. The library is not saved into the host session; it lives in your own preset folder and is the same library in every project and every DAW.
 
 ### Saving a preset
 
@@ -460,7 +460,7 @@ The **Oversampling** control sets the internal processing rate: **1x**, **2x**, 
 - **2x**: the default and the recommended everyday setting. A good balance of clean high end and reasonable CPU.
 - **4x**: the cleanest high end, for exposed leads, bright FM tones, and high notes where aliasing would be audible. Use it when you can afford the CPU.
 
-Factory presets ship at 2x.
+Factory presets ship at 2x, except Oracle Trumpet, Modular English Horn and Prism Talking Clav, which keep the 4x they were made with.
 
 ### Reported latency
 
@@ -487,7 +487,7 @@ The figures below are single-core measurements taken at 48 kHz with a 512-sample
 
 The first row is the worst case among ordinary patches: a full 8-voice FM patch, every effect on, at the highest oversampling factor. Even there it uses about half of one core, so a typical session runs several instances comfortably. If you need more headroom, drop from 4x to 2x oversampling first, since that is where most of the voice cost lives, then thin out effects you are not using.
 
-**One case does run out of headroom: Prism with heavy unison at 4x.** Prism's cost is per operator bank, and unison multiplies the bank count rather than sharing one. A patch that keeps sixteen operator banks running at 4x sits at essentially the whole of one core on the reference machine above, and the transient peak while a bulk of voices retires is in the same region. It is a known limit rather than a bug, and it is a wall you have to go looking for; nothing in the 54 factory presets reaches it. If a Prism patch of yours crackles, take it to 2x, or reduce the unison count before you reduce polyphony. The other five circuits do not have a comparable ceiling.
+**One case does run out of headroom: Prism with heavy unison at 4x.** Prism's cost is per operator bank, and unison multiplies the bank count rather than sharing one. A patch that keeps sixteen operator banks running at 4x sits at essentially the whole of one core on the reference machine above, and the transient peak while a bulk of voices retires is in the same region. It is a known limit rather than a bug, and it is a wall you have to go looking for; the one factory preset that can reach it is Prism Talking Clav, whose two-voice unison at 4x makes sixteen banks when all eight voices sound at once. If that preset or a Prism patch of yours crackles, take it to 2x, or reduce the unison count before you reduce polyphony. The other five circuits do not have a comparable ceiling.
 
 ### Parameters and automation
 
@@ -514,7 +514,7 @@ Hosts that do not read these pages, and the VST3, AU and LV2 builds, map control
 
 ## Factory Presets
 
-Sunset Circuits ships with 54 factory presets. They are grouped by mode below for reading, but they are **not** stored in mode order: the menu, the previous and next arrows, and MIDI program numbers 0 to 53 run through the bank in its own order, which interleaves the modes. Use the browser's mode chips when you want to see one circuit's presets together.
+Sunset Circuits ships with 57 factory presets. They are grouped by mode below for reading, but they are **not** stored in mode order: the menu, the previous and next arrows, and MIDI program numbers 0 to 56 run through the bank in its own order, which interleaves the modes. Use the browser's mode chips when you want to see one circuit's presets together.
 
 Two names are easy to misread. **Acid Squelch** and **Acid Machine** are Mono-mode presets that happen to go for an acid sound; the five presets that actually use the Acid circuit are listed under Acid at the end.
 
@@ -545,6 +545,7 @@ Two names are easy to misread. **Acid Squelch** and **Acid Machine** are Mono-mo
 - **Analog Strings**: four-voice unison string pad with chorus.
 - **Fat Fifth**: unison fifths, wide and thick.
 - **Regal Brass**: self-oscillating poly-mod brass with two-voice unison.
+- **Oracle Trumpet**: hard-synced trumpet with filter-envelope and oscillator 2 poly-mod on the filter; the mod wheel brings in vibrato.
 - **Init Oracle**: a clean starting point for the Oracle engine.
 
 ### Mono (aggressive monophonic)
@@ -572,6 +573,7 @@ Two names are easy to misread. **Acid Squelch** and **Acid Machine** are Mono-mo
 - **Drone Machine**: huge slow FM drone with LFO cutoff movement.
 - **Noise Sweep**: filtered-noise sweep for risers and effects.
 - **Nebula Static**: sample-and-hold texture modulating cutoff and resonance, with spring and hall reverb.
+- **Modular English Horn**: reedy lead from triangle oscillators with sync, FM and ring mod into a driven filter that tracks the keyboard; the mod wheel brings in vibrato.
 - **Init Modular**: a clean starting point for the Modular engine.
 
 ### Prism (four-operator FM)
@@ -581,6 +583,7 @@ Two names are easy to misread. **Acid Squelch** and **Acid Machine** are Mono-mo
 - **Crystal Bells**: additive inharmonic bells with staggered decays and a reverb tail.
 - **Brass Machine**: serial FM brass with strong feedback growl and an attack swell.
 - **Glass Cathedral**: dual-stack FM pad with a long swell, chorus, and big reverb.
+- **Prism Talking Clav**: FM clav through a resonant filter whose envelope sweep gives each note a vocal attack; the mod wheel brings in vibrato.
 
 ### Acid (bass box and pattern sequencer)
 
