@@ -841,16 +841,19 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
         // Delta solo outputs the soloed band's difference, but the bands after
         // it still delay the full output: one reference round trip per such
         // band, with its routing. The chain restarts when its layout changes.
+        // The layout is written in base 16 with no zero digit: the soloed band
+        // plus one (1..8), then each stage's routing plus one (1..5), so two
+        // different layouts never share a value.
         std::array<int, 6> deltaStageRouting{};
         int deltaStages = 0, layout = -1;
         if (deltaSoloActive)
         {
-            layout = currentSolo;
+            layout = currentSolo + 1;
             for (int band = currentSolo + 1; band < 7; ++band)
                 if (band >= 1 && timedBand[(size_t)band])
                 {
                     deltaStageRouting[(size_t)deltaStages++] = bandRouting(band);
-                    layout = layout * 8 + 1 + bandRouting(band);
+                    layout = layout * 16 + 1 + bandRouting(band);
                 }
         }
         if (layout != deltaDelayLayout)

@@ -18,7 +18,8 @@
 //   * phase invert, pan and delta solo of a saturating band act on the band's
 //     effect lined up with its delay, as they do without oversampling;
 //   * a delta solo's delay stages start empty when the Digital bands come
-//     back from another character.
+//     back from another character;
+//   * and when the soloed band or the stages behind it change.
 //
 // Runs the real plugin through DAF's PluginExporter, its host parameters and
 // the editor's solo bridge.
@@ -497,6 +498,29 @@ void deltaChainAcrossCharacterChange(double sr)
     check(before > 1e-3 && after < 1e-6,
           "returning to Digital, the delta-solo delay stages hold nothing from before", after, 0.0);
 }
+
+void deltaChainLayoutChange(double sr)
+{
+    // Only band 2 saturates. Delta solo of the HPF (band 1) runs its
+    // difference through band 2's delay stage; delta solo of band 2 has no
+    // saturating band after it and uses no stage. Going from the first to the
+    // second and back, then playing silence, the stage must start empty
+    // again: the output is silence, not what the stage held before.
+    Setup s; s.oversampling = 1; s.saturating = {2}; s.edges = true;
+    Plugin plugin(sr, s);
+    plugin.set(mqidx::freq(0), 1000.0f);   // the HPF takes most of a 200 Hz tone away
+    plugin.solo(1, true);
+    const Signal loud = tone(sr, 0.3, -6.0, 200.0);
+    const double before = play(plugin, sr, 0.3, &loud);
+    plugin.solo(2, true);
+    play(plugin, sr, 0.2, nullptr);
+    plugin.solo(1, true);
+    const double after = play(plugin, sr, 0.1, nullptr);
+    std::printf("  sr=%.0f delta solo HPF, band 2, HPF again: %.3f before, %.1e on silence after\n",
+                sr, before, after);
+    check(before > 1e-3 && after < 1e-6,
+          "a delta solo whose delay stages change starts them empty", after, 0.0);
+}
 }
 
 int main()
@@ -521,6 +545,7 @@ int main()
         crossfade(sr);
         enableSwitch(sr);
         deltaChainAcrossCharacterChange(sr);
+        deltaChainLayoutChange(sr);
     }
     std::printf("Multi-Q solo latency: %d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
