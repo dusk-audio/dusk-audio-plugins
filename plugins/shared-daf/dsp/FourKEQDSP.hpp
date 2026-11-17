@@ -242,6 +242,17 @@ public:
     static float calibratedEqQ(float controlQ, float controlHz,
                                float controlGainDb, Band band,
                                bool black, bool bell) noexcept;
+    // The control values the measured band laws are anchored at, the values
+    // the reference captures label the positions k/20 of a band knob's travel
+    // with (k = 0 .. kControlAnchorCount - 1). Read only. A band's frequency
+    // anchor k is its dial value at k/20 of the travel. The Q anchors ascend,
+    // as the knob descends from 3 to 0.5: Q anchor k is the Q at (20 - k)/20
+    // of the travel. An editor whose knobs travel through those positions must
+    // keep its tables equal to these, so a knob on one of them plays the
+    // response captured there (FourKEQValueFieldTest checks 4K EQ 2's).
+    static constexpr int kControlAnchorCount = 21;
+    static const float* frequencyControlAnchors(Band band) noexcept;
+    static const float* qControlAnchors() noexcept;
     // The original circuit shares one active stage between LF/LM and another
     // between HM/HF. These two small correction sections reproduce the
     // measured interaction left after the isolated-band biquads. For the low
