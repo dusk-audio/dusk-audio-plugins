@@ -250,6 +250,9 @@ BASE = {
 # 5.1 -> 4.1). The linear-Hz pitch swoop the old law made cannot be matched at
 # every note by an exponential one.
 #
+# The five presets with FEnv -> freq A use 34.7 / 33.908138 times their
+# previous amounts to preserve the envelope pitch excursion.
+#
 # Poly Mod Bells and Glass Bells keep their clang through the hidden Cross Mod
 # parameter instead of osc B -> freq A (owner ruling 2026-11-17): Cross Mod is
 # the old osc B -> freq A law (linear FM, 2880 Hz x amount), so it takes the
@@ -273,9 +276,9 @@ PRESETS = [
  ("Crystal Rain", {"mode":0,"filterCutoff":6000,"filterRes":0.2,"ampA":0.003,"ampD":0.12,"ampS":0.2,"ampR":0.35,"cosmosChorus":3,"arpOn":1,"arpRate":4,"arpGate":0.3,"delayOn":1,"delayMix":0.25,"reverbOn":1,"reverbMix":0.2}),
  ("Brass Section", {"masterVol":-3.0,"mode":1,"filterCutoff":2000,"filterRes":0.4,"filterEnvAmt":0.7,"filtA":0.05,"filtD":0.3,"filtS":0.3,"ampA":0.01,"ampD":0.3,"ampS":0.7,"pmFenvFilt":0.08391608}),
  ("Wooden Keys", {"masterVol":-1.5,"mode":1,"filterCutoff":3000,"filterRes":0.2,"ampA":0.005,"ampD":0.4,"ampS":0.5,"ampR":0.3}),
- ("Poly Mod Bells", {"mode":1,"osc2Wave":2,"osc2Semi":7,"crossMod":0.5,"pmFenvOscA":0.7,"filterCutoff":5000,"ampA":0.005,"ampD":1.0,"ampS":0.0,"ampR":1.5,"reverbOn":1,"reverbMix":0.35,"reverbDecay":3.0}),
+ ("Poly Mod Bells", {"mode":1,"osc2Wave":2,"osc2Semi":7,"crossMod":0.5,"pmFenvOscA":0.716347208,"filterCutoff":5000,"ampA":0.005,"ampD":1.0,"ampS":0.0,"ampR":1.5,"reverbOn":1,"reverbMix":0.35,"reverbDecay":3.0}),
  ("Dark Oracle", {"mode":1,"filterCutoff":1200,"filterRes":0.5,"filterEnvAmt":0.3,"ampA":0.5,"ampS":0.85,"ampR":1.5,"vintage":0.3,"pmFenvFilt":0.05594406}),
- ("Stab Machine", {"mode":1,"filterCutoff":4000,"filterEnvAmt":0.6,"ampA":0.001,"ampD":0.15,"ampS":0.0,"ampR":0.1,"pmFenvOscA":0.55}),
+ ("Stab Machine", {"mode":1,"filterCutoff":4000,"filterEnvAmt":0.6,"ampA":0.001,"ampD":0.15,"ampS":0.0,"ampR":0.1,"pmFenvOscA":0.562844235}),
  ("Pulsing Darkness", {"mode":2,"osc1Wave":4,"osc2Wave":0,"osc2Semi":-12,"filterCutoff":600,"filterRes":0.55,"filterEnvAmt":0.5,"subLevel":0.9,"filtA":0.001,"filtD":0.15,"filtS":0.05,"arpOn":1,"arpRate":3,"vintage":0.3}),
  ("Acid Squelch", {"mode":2,"filterCutoff":400,"filterRes":0.85,"filterEnvAmt":0.95,"filtA":0.001,"filtD":0.15,"filtS":0.0,"subLevel":0.7,"portaTime":0.08,"ampD":0.3,"ampS":0.0,"ampR":0.15}),
  ("Screaming Lead", {"masterVol":-3.0,"mode":2,"filterCutoff":6000,"filterRes":0.3,"ampA":0.005,"portaTime":0.1,"driveOn":1,"driveAmt":0.4,"delayOn":1,"delayMix":0.2}),
@@ -299,8 +302,8 @@ PRESETS = [
  ("Retro Sequence", {"mode":3,"filterCutoff":2500,"filterEnvAmt":0.7,"arpOn":1,"arpRate":3,"arpGate":0.5,"delayOn":1,"delayTape":1}),
  ("Midnight Drive", {"masterVol":-2.5,"mode":0,"filterCutoff":1800,"filterRes":0.35,"filterEnvAmt":0.25,"ampA":0.5,"ampS":0.85,"ampR":2.0,"cosmosChorus":2,"driveOn":1,"driveAmt":0.3,"delayOn":1,"delayTape":1,"delayMix":0.25,"stereoWidth":0.7}),
  ("Starfield", {"mode":0,"filterCutoff":7000,"ampA":0.003,"ampD":0.2,"ampS":0.3,"ampR":0.5,"cosmosChorus":3,"arpOn":1,"arpMode":4,"arpRate":4,"arpOctave":3,"arpGate":0.4,"delayOn":1,"delayMix":0.3,"reverbOn":1,"reverbMix":0.25,"stereoWidth":0.8}),
- ("Poly Brass", {"mode":1,"filterCutoff":1500,"filterRes":0.3,"filterEnvAmt":0.6,"filtA":0.03,"filtD":0.25,"filtS":0.35,"ampA":0.01,"ampS":0.75,"pmFenvFilt":0.1118881,"pmFenvOscA":0.35,"velCurve":2}),
- ("Glass Bells", {"mode":1,"osc2Wave":2,"osc2Semi":19,"filterCutoff":6000,"ampA":0.001,"ampD":1.5,"ampS":0.0,"ampR":2.0,"crossMod":0.6,"pmFenvOscA":0.65,"reverbOn":1,"reverbDecay":4.0,"reverbMix":0.35}),
+ ("Poly Brass", {"mode":1,"filterCutoff":1500,"filterRes":0.3,"filterEnvAmt":0.6,"filtA":0.03,"filtD":0.25,"filtS":0.35,"ampA":0.01,"ampS":0.75,"pmFenvFilt":0.1118881,"pmFenvOscA":0.358173604,"velCurve":2}),
+ ("Glass Bells", {"mode":1,"osc2Wave":2,"osc2Semi":19,"filterCutoff":6000,"ampA":0.001,"ampD":1.5,"ampS":0.0,"ampR":2.0,"crossMod":0.6,"pmFenvOscA":0.665179551,"reverbOn":1,"reverbDecay":4.0,"reverbMix":0.35}),
  ("Acid Machine", {"mode":2,"osc1Wave":0,"filterCutoff":350,"filterRes":0.9,"filterEnvAmt":0.95,"filtA":0.001,"filtD":0.12,"filtS":0.0,"ampD":0.2,"ampS":0.0,"portaTime":0.06,"glideMode":1,"arpOn":1,"arpRate":3,"arpGate":0.6}),
  ("Thunder Sub", {"mode":2,"osc1Wave":3,"osc2Wave":3,"osc2Semi":-12,"filterCutoff":200,"filterRes":0.15,"subLevel":1.0,"subWave":1,"ampA":0.01,"ampS":1.0,"velCurve":1}),
  ("Voltage Seq", {"mode":3,"filterCutoff":2000,"filterRes":0.5,"filterEnvAmt":0.4,"shRate":8.0,"arpOn":1,"arpRate":3,"arpMode":0,"arpOctave":2,"delayOn":1,"delayMix":0.2}),
@@ -398,7 +401,7 @@ PRESETS = [
  # Regal Brass: Oracle self-osc filter + poly-mod brass with 2-voice unison.
  ("Regal Brass", {"masterVol":-3.5,"mode":1,"osc2Semi":0,"filterCutoff":1800,"filterRes":0.35,"filterEnvAmt":0.6,
    "filtA":0.04,"filtD":0.3,"filtS":0.4,"ampA":0.02,"ampD":0.3,"ampS":0.8,"ampR":0.35,
-   "pmFenvFilt":0.0979021,"pmFenvOscA":0.25,"unisonVoices":2,"unisonDetune":6,"stereoWidth":0.6}),
+   "pmFenvFilt":0.0979021,"pmFenvOscA":0.255838289,"unisonVoices":2,"unisonDetune":6,"stereoWidth":0.6}),
  # Siren Lead: Mono screaming sync lead (hard sync + osc2 up an octave), driven,
  # slap of delay, portamento glide.
  ("Siren Lead", {"masterVol":-3.0,"mode":2,"hardSync":1,"osc2Semi":12,"filterCutoff":4000,"filterRes":0.5,

@@ -7,8 +7,9 @@ the instrument Oracle is modeled on (#303, 2026-11-17), with the Poly-Mod amount
 are checked here, on one Oracle voice with the filter wide open and the filter
 envelope held at full (attack 1 ms, sustain 1):
 
-  FEnv -> freq A   amount 0.25 = 25 steps x 34.7 cents = 867.5 cents, the same
-                   at A3 and A5 (exponential). Pitch from a parabolic FFT peak.
+  FEnv -> freq A   compare A3 and A5 with the four-note reference mean at each
+                   amount. Tolerance is the population SD across the four measured
+                   notes or 10 cents, whichever is larger. Pitch from an FFT peak.
   FEnv -> PW A     amount 0.04 from a 10 % pulse narrows it to 0.8 %: the level
                    drops by more than 10 dB (it used to widen, and rise).
   osc B -> freq A  oscillator B a sine two octaves below a sine osc A (A6, at a
@@ -31,7 +32,6 @@ envelope held at full (attack 1 ms, sustain 1):
                    noticing.
 
     measured                     law      previous laws
-    FEnv -> freq A A3 / A5       867.5    +2514 / +1035 cents (linear, 720 Hz)
     FEnv -> PW, level change     -15.1    +0.5 dB (widened)
     osc B -> freq A, 0.25 / 1    -178.4 / -713.3   (7.5 cents per step: -187.1 / -748.7)
     osc B -> PW A, 0.1/0.25/0.5  0.060 / 0.149 / 0.296   (0.30 x amount: 0.032 / 0.078 / 0.151)
@@ -62,11 +62,18 @@ def tail(x, fs):
 
 def main():
     rows = []
+    # Reference on A2, A3, A4 and A5. Each row is (amount, mean cents, SD cents).
+    anchors = ((0.10, 344.075, 10.1028152), (0.25, 841.175, 30.7638891),
+               (0.50, 1703.900, 44.1645786), (1.00, 3387.700, 47.6723715))
     for note in (57, 81):
-        fs, on = render(1, note, 1.5, 2, f"pm_fenv_{note}", osc1Wave=3, pmFenvOscA=0.25, **HELD)
-        _, off = render(1, note, 1.5, 2, f"pm_fenv0_{note}", osc1Wave=3, **HELD)
-        c = 1200.0 * np.log2(peak_hz(tail(on, fs), fs) / peak_hz(tail(off, fs), fs))
-        rows.append((f"FEnv -> freq A, amount 0.25, note {note}", c, "cents", abs(c - 867.5) <= 10.0))
+        fs, off = render(1, note, 1.5, 2, f"pm_fenv0_{note}", osc1Wave=3, **HELD)
+        base = peak_hz(tail(off, fs), fs)
+        for amount, mean, sd in anchors:
+            _, on = render(1, note, 1.5, 2, f"pm_fenv_{note}_{amount}", osc1Wave=3,
+                           pmFenvOscA=amount, **HELD)
+            cents = 1200.0 * np.log2(peak_hz(tail(on, fs), fs) / base)
+            rows.append((f"FEnv -> freq A, amount {amount:.2f}, note {note}", cents, "cents",
+                         abs(cents - mean) <= max(sd, 10.0)))
     fs, on = render(1, 69, 1.5, 2, "pm_pw_on", osc1Wave=4, osc1PW=0.10, pmFenvPWM=0.04, **HELD)
     _, off = render(1, 69, 1.5, 2, "pm_pw_off", osc1Wave=4, osc1PW=0.10, **HELD)
     rms = lambda y: 20.0 * np.log10(np.sqrt(np.mean(tail(y, fs) ** 2)) + 1e-20)

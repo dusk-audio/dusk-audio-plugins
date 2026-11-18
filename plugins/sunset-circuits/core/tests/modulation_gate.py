@@ -4,7 +4,7 @@
 The Oracle envelope-to-pitch route holds a constant offset (the filter envelope
 sits at full), making pitch a direct measurement of that route at every rate:
 quality switches must preserve the sound. Its law is the measured Poly-Mod law
-(Voice.hpp, ORACLE POLY-MOD LAWS): 34.7 semitones x amount, exponential. Until
+(Voice.hpp, ORACLE POLY-MOD LAWS): 33.908 semitones x amount, exponential. Until
 2026-11-17 the route was linear FM (0.03 cycles per sample at 96 kHz x amount),
 and this gate then covered Oscillator::applyFM's rate scaling as well.
 Oscillator::applyFM is now covered through Cross Mod (which Poly Mod Bells and
@@ -21,6 +21,8 @@ import sys
 import numpy as np
 from _harness import render, peak_hz
 
+
+FENV_FULL_SEMITONES = 33.908138
 
 BASE = dict(analogAmt=0, vintage=0, masterVol=-24, arpOn=0,
             driveOn=0, chorusOn=0, delayOn=0, reverbOn=0, cosmosChorus=0,
@@ -44,8 +46,8 @@ def main():
                 sr, x = render(1, 69, 1.0, os, f"mod_pitch_{depth}_{rate}_{os}",
                                **dict(BASE, sr=rate, pmFenvOscA=depth))
                 hz = peak_hz(x[sr // 2:, 0], sr)
-                # 34.7 semitones x amount: 0.1 raises A440 by 3.47 semitones.
-                expected = 440.0 * 2.0 ** (depth * 34.7 / 12.0)
+                # One tenth of the fitted full range raises A440 by 3.39 semitones.
+                expected = 440.0 * 2.0 ** (depth * FENV_FULL_SEMITONES / 12.0)
                 check(f"pitch depth={depth} sr={rate} os={os}",
                       np.all(np.isfinite(x)) and np.max(np.abs(x)) < 0.1
                       and abs(hz - expected) < 0.3,
@@ -73,7 +75,7 @@ def main():
                           setat=["0.6:oversampling:2", "1.2:oversampling:0"]))
     peaks = [peak_hz(x[int(a * sr):int(b * sr), 0], sr)
              for a, b in ((0.2, 0.5), (0.8, 1.1), (1.4, 1.7))]
-    held = 440.0 * 2.0 ** (0.1 * 34.7 / 12.0)
+    held = 440.0 * 2.0 ** (0.1 * FENV_FULL_SEMITONES / 12.0)
     check("held pitch across 2x/4x/1x", all(abs(f - held) < 0.3 for f in peaks),
           ", ".join(f"{f:.3f} Hz" for f in peaks))
 

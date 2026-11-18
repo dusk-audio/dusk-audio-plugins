@@ -127,7 +127,7 @@ The signature of Oracle is poly-modulation. The mode sub-panel is a six-knob **P
 
 ![Oracle mode: two oscillator panels with no sub oscillator, the auxiliary oscillator slot inactive, and the POLY-MOD and SYNC sub-panel with its filter envelope and oscillator 2 routing knobs](screenshots/sunset-circuits/02-mode-oracle.png)
 
-- **FEnv to OscA**: the filter envelope raises oscillator 1's pitch, by a fixed musical interval that is the same on every note: 0.347 semitones per percent of the knob, up to 34.7 semitones at full. For pitched attack transients and bell tones.
+- **FEnv to OscA**: the filter envelope raises oscillator 1's pitch, by a fixed musical interval that is the same on every note: 0.339 semitones per percent of the knob, up to 33.9 semitones at full. For pitched attack transients and bell tones.
 - **FEnv to PW**: the filter envelope narrows oscillator 1's pulse, by 2.3 percent of the cycle per percent of the knob, and can close it altogether (the pulse falls silent), so small settings already move a narrow pulse a lot. For moving attacks and animated pulse tones.
 - **FEnv to Filter**: the filter envelope raises the cutoff on top of the filter's own envelope amount, by 0.143 octave per percent of the knob (14.3 octaves at full, more than the filter's range). For extra bite.
 - **OscB to OscA**: oscillator 2 bends oscillator 1's pitch at audio rate, up to 7.1 semitones either way at full, for clangorous inharmonic timbres.

@@ -717,8 +717,8 @@ private:
 
     // ORACLE POLY-MOD LAWS, measured on the instrument Oracle is modeled on
     // (#303, 2026-11-17), with the Poly-Mod amount 0..1 read as its 0..100 knob:
-    //   filter envelope -> freq A   34.7 cents per step, exponential, near
-    //                               note-independent: 34.7 semitones at full;
+    //   filter envelope -> freq A   33.908 cents per step, exponential, fitted to the
+    //                               mean of four measured notes at four amounts;
     //   osc B -> freq A             7.145 cents per step, exponential: +-7.145
     //                               semitones at full, oscillator B at full scale
     //                               (re-measured in review, oscillator B at its
@@ -738,7 +738,7 @@ private:
     // note), the pulse widened (+0.35 x amount) and the two filter depths were 4
     // and 3 octaves; osc B -> PW A swung +-0.30 x amount (about half the measured
     // depth) and stopped at the 5 % / 95 % widths.
-    static constexpr float kPmFEnvFreqSemis   = 34.7f;
+    static constexpr float kPmFEnvFreqSemis   = 33.908138f;
     static constexpr float kPmOscBFreqSemis   = 7.145f;
     static constexpr float kPmFEnvPwPerAmount = 2.3f;
     static constexpr float kPmFEnvFilterOct   = 14.3f;
