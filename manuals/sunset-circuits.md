@@ -131,7 +131,7 @@ The signature of Oracle is poly-modulation. The mode sub-panel is a six-knob **P
 - **FEnv to PW**: the filter envelope narrows oscillator 1's pulse, by 2.3 percent of the cycle per percent of the knob, and can close it altogether (the pulse falls silent), so small settings already move a narrow pulse a lot. For moving attacks and animated pulse tones.
 - **FEnv to Filter**: the filter envelope raises the cutoff on top of the filter's own envelope amount, by 0.143 octave per percent of the knob (14.3 octaves at full, more than the filter's range). For extra bite.
 - **OscB to OscA**: oscillator 2 bends oscillator 1's pitch at audio rate, up to 7.1 semitones either way at full, for clangorous inharmonic timbres.
-- **OscB to PW**: oscillator 2 modulates oscillator 1 pulse width, for animated pulse textures.
+- **OscB to PW**: oscillator 2 swings oscillator 1's pulse width both ways, by 0.585 percent of the cycle per percent of the knob, and from about three quarters up it can close the pulse; for animated pulse textures.
 - **OscB to Filter**: oscillator 2 moves the filter cutoff at audio rate, up to 3.1 octaves either way at full, for growling and metallic filter FM.
 - **Sync**: oscillator 2 hard-syncs oscillator 1. Each time oscillator 2 starts a cycle it restarts oscillator 1, creating swept harmonic edges when their pitches differ. This is the reverse of Mono and Modular, as on the instrument Oracle is modeled on: oscillator 1 is the one Poly-Mod plays, and with Sync on, modulating its pitch (from the filter envelope, oscillator 2 or the mod matrix) sweeps its timbre while the note keeps oscillator 2's pitch.
 

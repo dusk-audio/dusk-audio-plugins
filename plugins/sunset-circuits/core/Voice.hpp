@@ -686,15 +686,22 @@ private:
     //   filter envelope -> PW A     narrows the pulse 2.3 % per step, and can
     //                               close it (4 steps from a 10 % pulse silence it);
     //   filter envelope -> filter   0.143 octave per step: 14.3 octaves at full;
-    //   osc B -> filter             +-0.031 octave per step: +-3.1 octaves at full.
+    //   osc B -> filter             +-0.031 octave per step: +-3.1 octaves at full;
+    //   osc B -> PW A               +-0.585 % of the cycle per step (review
+    //                               re-measurement, duty of each cycle at A3:
+    //                               +-0.030 / 0.060 / 0.146 / 0.292 at 5 / 10 / 25
+    //                               / 50, linear; from 75 the pulse all but
+    //                               closes), so it may close the pulse as well.
     // Until then freq A took linear FM (2880 Hz x amount, the same at every
     // note), the pulse widened (+0.35 x amount) and the two filter depths were 4
-    // and 3 octaves. Osc B -> PW A was not measured and keeps +-0.30 x amount.
+    // and 3 octaves; osc B -> PW A swung +-0.30 x amount (about half the measured
+    // depth) and stopped at the 5 % / 95 % widths.
     static constexpr float kPmFEnvFreqSemis   = 34.7f;
     static constexpr float kPmOscBFreqSemis   = 7.145f;
     static constexpr float kPmFEnvPwPerAmount = 2.3f;
     static constexpr float kPmFEnvFilterOct   = 14.3f;
     static constexpr float kPmOscBFilterOct   = 3.1f;
+    static constexpr float kPmOscBPwPerAmount = 0.585f;
 
     // Hard sync: where in the coming interval the master wrapped, for the slave's
     // band-limited reset (Oscillator::processSampleSynced); 0 when it did not
@@ -736,7 +743,13 @@ private:
                 pw1 -= filtVal * params.polyModFEnvPWM * kPmFEnvPwPerAmount;
                 pwMayClose = true;
             }
-            pw1 += lastOsc2[(size_t)u] * params.polyModOscBPWM * 0.30f;
+            // Oscillator B swings the pulse width both ways (see kPmOscBPwPerAmount)
+            // and can close it too.
+            if (params.polyModOscBPWM > 0.0f)
+            {
+                pw1 += lastOsc2[(size_t)u] * params.polyModOscBPWM * kPmOscBPwPerAmount;
+                pwMayClose = true;
+            }
         }
         if (pwMayClose) o.osc1.setPulseWidthMayClose(pw1);
         else            o.osc1.setPulseWidth(pw1);

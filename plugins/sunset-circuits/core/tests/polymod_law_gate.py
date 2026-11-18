@@ -18,6 +18,11 @@ envelope held at full (attack 1 ms, sustain 1):
                    amounts 0.25 and 1, against the
                    reference's own downward excursions at 25 and 100 (-180.4 and
                    -713.7 cents, review re-measurement), +-10 cents.
+  osc B -> PW A    a 50 % pulse at A3, oscillator B a square two octaves below:
+                   the duty of each cycle (crossings of the midpoint), 1st and
+                   99th percentiles, half their spread, at amounts 0.10, 0.25 and
+                   0.50, against the reference measured the same way (0.060,
+                   0.146 and 0.292, review re-measurement), +-0.010.
   Cross Mod        not on Oracle's panel, but Poly Mod Bells and Glass Bells use
                    it for the old linear osc B -> freq A FM (2880 Hz x amount):
                    amount 0.01 with the same slow square moves 55 Hz up by
@@ -29,6 +34,7 @@ envelope held at full (attack 1 ms, sustain 1):
     FEnv -> freq A A3 / A5       867.5    +2514 / +1035 cents (linear, 720 Hz)
     FEnv -> PW, level change     -15.1    +0.5 dB (widened)
     osc B -> freq A, 0.25 / 1    -178.4 / -713.3   (7.5 cents per step: -187.1 / -748.7)
+    osc B -> PW A, 0.1/0.25/0.5  0.060 / 0.149 / 0.296   (0.30 x amount: 0.032 / 0.078 / 0.151)
     Cross Mod 0.01, Hz up        +28.25   (unchanged law)
 """
 import sys
@@ -81,6 +87,21 @@ def main():
         coef = np.linalg.lstsq(basis, cents, rcond=None)[0]
         down = -float(np.hypot(coef[0], coef[1]))
         rows.append((f"osc B -> freq A, amount {amount}, down", down, "cents", abs(down - ref) <= 10.0))
+    for amount, ref in ((0.10, 0.060), (0.25, 0.146), (0.50, 0.292)):
+        fs, x = render(1, 57, 2.0, 2, f"pm_oscbpw_{amount}", osc1Wave=4, osc1PW=0.5, osc1Level=0.3,
+                       osc2Wave=1, osc2Semi=-24, osc2Detune=0, pmOscBPWM=amount, **OPEN)
+        y = x[int(0.3 * fs):, 0]
+        th = 0.5 * (np.percentile(y, 5) + np.percentile(y, 95))
+        up = np.flatnonzero((y[:-1] < th) & (y[1:] >= th))
+        dn = np.flatnonzero((y[:-1] >= th) & (y[1:] < th))
+        duty = []
+        for a, b in zip(up[:-1], up[1:]):
+            k = dn[(dn > a) & (dn < b)]
+            if len(k):
+                duty.append((k[0] - a) / (b - a))
+        lo, hi = np.percentile(duty, [1, 99])
+        half = 0.5 * float(hi - lo)
+        rows.append((f"osc B -> PW A, amount {amount}, half range", half, "", abs(half - ref) <= 0.010))
     fs, x = render(1, 33, 2.0, 2, "pm_xmod", osc1Wave=3, osc2Wave=1, osc2Semi=-24,
                    osc2Detune=0, crossMod=0.01, **OPEN)
     y = x[int(0.3 * fs):, 0]
@@ -93,7 +114,8 @@ def main():
     fails = 0
     for name, v, unit, ok in rows:
         fails += not ok
-        print(f"  {name:<40} {v:+8.1f} {unit:<5} {'PASS' if ok else 'FAIL'}")
+        print(f"  {name:<40} {v:+8.3f} {unit:<5} {'PASS' if ok else 'FAIL'}" if unit == "" else
+              f"  {name:<40} {v:+8.1f} {unit:<5} {'PASS' if ok else 'FAIL'}")
     print(f"polymod_law_gate: {'PASS' if not fails else f'FAIL ({fails} rows)'}")
     sys.exit(1 if fails else 0)
 
