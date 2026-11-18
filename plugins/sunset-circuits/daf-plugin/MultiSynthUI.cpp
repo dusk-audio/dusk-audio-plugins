@@ -4510,7 +4510,7 @@ private:
         tips[kParamMasterVol] = "Overall output level.";
         tips[kParamMasterPan] = "Stereo position of the whole instrument.";
         tips[kParamStereoWidth] = "Widens or narrows the stereo image.";
-        tips[kParamOversampling] = "Internal oversampling; higher rejects aliasing at more CPU cost.";
+        tips[kParamOversampling] = "Internal rate: 1x, 2x and 4x mean about 48, 96 and 192 kHz inside.\nA 96 kHz session at 2x is already at that rate and runs at 1x.\nHigher rejects aliasing at more CPU cost.";
         tips[kParamAnalogAmt] = "Analog character: subtle drift, detune and noise.";
         tips[kParamVintage] = "Age and wear: slow pitch wobble plus faint background hiss.";
         tips[kParamOsc1Wave] = tips[kParamOsc2Wave] = tips[kParamOsc3Wave] = "Waveform of the oscillator.";

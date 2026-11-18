@@ -1195,7 +1195,7 @@ private:
     // PRE-FILTER (#303, owner rulings 2026-11-17): in Oracle, Mono and Modular
     // the oscillator mix goes through a low-pass before the filter whenever the
     // internal rate is 88.2 kHz or more: a 4-pole Butterworth at 18 kHz, or from
-    // 176.4 kHz (4x) a 2-pole at 20 kHz (40 kHz from 352.8 kHz, below).
+    // 176.4 kHz (4x) a 2-pole at 20 kHz.
     // Measured on a plain saw at 2x, the filter's input saturation acting on the
     // oscillators' ultrasonic content (up to the internal Nyquist, which nobody
     // hears) was the largest source of fold-back:
@@ -1216,11 +1216,9 @@ private:
     // 48 kHz session), which the latency pad takes back (preFilterDelay()). At
     // 4x the pad is already 0 and the 4-pole's delay would leave the voice a
     // sample late, so 4x uses the 2-pole (half the delay); it is still well
-    // clear of the reference there (kill test: saw -74 / -78 / -77 dB). From
-    // 352.8 kHz (4x in an 88.2 or 96 kHz session) even that is a host sample, so
-    // the 2-pole's corner moves up to 40 kHz (half the delay again; saw at 96 kHz
-    // 4x -80 / -73 / -85 dB, against -82 / -73 / -95 with 20 kHz and -69 / -66 /
-    // -57 with none).
+    // clear of the reference there (kill test: saw -74 / -78 / -77 dB). (The
+    // internal rate never passes 192 kHz: Oversampling names a rate, see
+    // MultiSynthDSP::factorForSetting.)
     //
     // The audio-rate cutoff routes (Oracle's osc B -> filter, Modular's osc 3 ->
     // filter) are band-limited too: their modulation signal goes through a 2-pole
@@ -1233,13 +1231,11 @@ private:
     // the low ones.
     static constexpr double kPreFilterMinRate = 88200.0;
     static constexpr double kPreFilterGentleRate = 176400.0;
-    static constexpr double kPreFilterWideRate = 352800.0;
     static constexpr double kRouteHz = 10000.0;
     struct PreFilterDesign { int sections; double fc; double q[2]; };
     static PreFilterDesign preFilterDesign(double rate) noexcept
     {
         if (rate < kPreFilterMinRate) return {0, 0.0, {0.0, 0.0}};
-        if (rate >= kPreFilterWideRate) return {1, 40000.0, {0.70710678118654752, 0.0}};
         if (rate >= kPreFilterGentleRate) return {1, 20000.0, {0.70710678118654752, 0.0}};
         // Butterworth 4-pole: Q = 1 / (2 cos(pi/8)) and 1 / (2 cos(3 pi/8)).
         return {2, 18000.0, {0.54119610014619698, 1.3065629648763766}};

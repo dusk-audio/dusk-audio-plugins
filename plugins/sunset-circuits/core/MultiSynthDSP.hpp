@@ -222,6 +222,20 @@ public:
     // read it only from the thread that calls processBlock, between calls
     // (render_test logs it after each block).
     int   getOsFactor() const noexcept { return osFactor; }
+
+    // RATE-AWARE OVERSAMPLING (#303, owner ruling 2026-11-17): the Oversampling
+    // setting names an internal rate, not a multiplier: 1x, 2x and 4x mean about
+    // 48, 96 and 192 kHz inside. A 44.1 or 48 kHz session gets factors 1, 2 and
+    // 4; an 88.2 or 96 kHz session already runs at the 2x rate, so it gets 1, 1
+    // and 2; a 176.4 or 192 kHz session 1, 1 and 1. Before, 2x in a 96 kHz
+    // session ran the voices at 192 kHz: about twice the CPU of the same patch at
+    // 48 kHz, for aliasing already at the 2x level at 1x there.
+    static int factorForSetting(int setting, double sessionRate) noexcept
+    {
+        const int target = setting <= 0 ? 1 : (setting == 1 ? 2 : 4);    // x 44.1 / 48 kHz
+        const int sessionMultiple = sessionRate >= 160000.0 ? 4 : (sessionRate >= 80000.0 ? 2 : 1);
+        return target > sessionMultiple ? target / sessionMultiple : 1;
+    }
     // Current performance-wheel state, whoever last wrote it — the shell's MIDI
     // handler (0xE0 / CC 1) or the editor's on-screen wheels. Read-only, relaxed,
     // no new state: these are the same atomics pitchBend()/modWheel() store into.

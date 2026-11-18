@@ -537,8 +537,7 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
     // curvature, a click). At zero gain it is silent, and the voices keep their
     // notes and pitch through it.
     const SynthMode requestedMode = (SynthMode)clampi((int)p(pMode), 0, 5);
-    const int osSetting = (int)p(pOversampling);
-    const int requestedOs = osSetting == 0 ? 1 : (osSetting == 1 ? 2 : 4);
+    const int requestedOs = factorForSetting((int)p(pOversampling), hostRate);
     if (!haveLastSnap)
     {
         // First snapshot after prepare/reset: adopt outright, there is nothing

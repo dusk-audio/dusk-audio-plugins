@@ -454,7 +454,7 @@ In **Modular** mode a real dispersive **spring** tank is switched in after it, a
 
 ### Oversampling
 
-The **Oversampling** control sets the internal processing rate: **1x**, **2x**, or **4x**. Higher factors reject aliasing in the oscillators, the filter, and the FM operators at the cost of more CPU. The voices render at the oversampled rate; the effects run at the host rate.
+The **Oversampling** control sets the internal processing rate: **1x**, **2x**, or **4x** stand for about 48, 96 and 192 kHz inside. In a 44.1 or 48 kHz session that means running the voices at one, two or four times the session rate. A session at 88.2 or 96 kHz is already at the 2x rate, so there 1x and 2x both run the voices at the session rate and 4x at twice it; at 176.4 or 192 kHz all three run at the session rate. Higher settings reject aliasing in the oscillators, the filter, and the FM operators at the cost of more CPU. The voices render at the internal rate; the effects run at the host rate.
 
 - **1x**: lowest CPU, most aliasing on bright and high-pitched sounds. Fine for pads and bass.
 - **2x**: the default and the recommended everyday setting. A good balance of clean high end and reasonable CPU.
