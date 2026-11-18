@@ -135,7 +135,7 @@ Oracle's black panel has white outlines and labels, red lamps and a walnut frame
 - **OscB to Filter**: oscillator 2 moves the filter cutoff at audio rate, up to 3.1 octaves either way at full, for growling and metallic filter FM.
 - **Sync**: oscillator 2 hard-syncs oscillator 1. Each time oscillator 2 starts a cycle it restarts oscillator 1, creating swept harmonic edges when their pitches differ. This is the reverse of Mono and Modular, as on the instrument Oracle is modeled on: oscillator 1 is the one Poly-Mod plays, and with Sync on, modulating its pitch (from the filter envelope, oscillator 2 or the mod matrix) sweeps its timbre while the note keeps oscillator 2's pitch.
 
-**Cross Mod** in the Poly-Mod panel applies linear frequency modulation from oscillator 2 to oscillator 1. Poly Mod Bells uses 50 percent and Glass Bells uses 60 percent for their metallic attack. Dial in this knob to recreate that part of either patch.
+**Cross Mod** in the Poly-Mod panel applies linear frequency modulation from oscillator 2 to oscillator 1. For the earlier bell voicings, the Cross Mod amounts were 50 percent on Poly Mod Bells and 60 percent on Glass Bells.
 
 Mode-specific controls visible in Oracle: the six poly-mod routing knobs, **Cross Mod**, the **Sync** button, and the **WHEEL MOD** button next to **MOD MATRIX**, which opens Oracle's Wheel Mod section (see [Wheel Mod (Oracle)](#wheel-mod-oracle)). There is no sub oscillator or adjustable high-pass filter in this mode; the third panel on the left reads **AUX OSC** with a note that Oracle uses its two-oscillator poly-mod path instead.
 
@@ -585,14 +585,14 @@ Two names are easy to misread. **Acid Squelch** and **Acid Machine** are Mono-mo
 
 ### Oracle (five-voice poly, poly-mod)
 
-- **Brass Section**: poly-mod brass with filter-envelope bite.
+- **Brass Section**: a pair of detuned saws with a gradual horn attack and a stereo room tail.
 - **Wooden Keys**: mellow plucked keys, short and woody.
-- **Poly Mod Bells**: inharmonic bells: oscillator 2 frequency-modulates oscillator 1, and the filter envelope adds a pitch swoop.
+- **Poly Mod Bells**: a low, centered bell with inharmonic partials that ring well after key release.
 - **Dark Oracle**: dark sustained pad with vintage character.
 - **Stab Machine**: short percussive poly stab.
 - **Upside Down**: the flagship Up/Down latched saw arpeggio, the famous 80s sci-fi title-sequence sound out of the box.
-- **Poly Brass**: fuller poly-mod brass ensemble.
-- **Glass Bells**: bright long-decay bells with poly-mod and reverb.
+- **Poly Brass**: a centered, low-register brass sound with one saw an octave below the played key and a short release.
+- **Glass Bells**: an octave-up triangle with a higher pulse partial, a fast strike and a stereo decay.
 - **Analog Strings**: four-voice unison string pad with chorus.
 - **Fat Fifth**: unison fifths, wide and thick.
 - **Regal Brass**: self-oscillating poly-mod brass with two-voice unison.

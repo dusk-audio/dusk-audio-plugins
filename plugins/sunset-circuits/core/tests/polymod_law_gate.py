@@ -24,12 +24,9 @@ envelope held at full (attack 1 ms, sustain 1):
                    99th percentiles, half their spread, at amounts 0.10, 0.25 and
                    0.50, against the reference measured the same way (0.060,
                    0.146 and 0.292, review re-measurement), +-0.010.
-  Cross Mod        on Oracle's Poly-Mod panel. Poly Mod Bells and Glass Bells use
-                   it for the old linear osc B -> freq A FM (2880 Hz x amount):
-                   amount 0.01 with the same slow square moves 55 Hz up by
-                   28.8 Hz (+-1.5). If Cross Mod were gated off in Oracle, those
-                   two presets would lose their clang without any other test
-                   noticing.
+  Cross Mod        on Oracle's Poly-Mod panel retains the linear osc B -> freq A
+                   FM (2880 Hz x amount). An amount of 0.01 with the same slow
+                   square moves 55 Hz up by 28.8 Hz (+-1.5).
 
     measured                     law      previous laws
     FEnv -> PW, level change     -15.1    +0.5 dB (widened)

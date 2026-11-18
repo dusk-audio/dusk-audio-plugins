@@ -7,8 +7,8 @@ quality switches must preserve the sound. Its law is the measured Poly-Mod law
 (Voice.hpp, ORACLE POLY-MOD LAWS): 33.908 semitones x amount, exponential. Until
 2026-11-17 the route was linear FM (0.03 cycles per sample at 96 kHz x amount),
 and this gate then covered Oscillator::applyFM's rate scaling as well.
-Oscillator::applyFM is now covered through Cross Mod (which Poly Mod Bells and
-Glass Bells depend on; Modular's two FM routes use applyFM too): a 55 Hz sine
+Oscillator::applyFM is now covered through Cross Mod (Modular's two FM
+routes use applyFM too): a 55 Hz sine
 carrier, Cross Mod 0.01 from a full-scale square on osc 2 two octaves below,
 must move the carrier up by the same number of hertz at every rate and factor:
 within 0.3 Hz of the 48 kHz 2x reading, and within 1.5 Hz of the law
