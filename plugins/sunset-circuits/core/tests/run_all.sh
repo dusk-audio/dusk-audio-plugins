@@ -76,7 +76,7 @@ if ! python3 ../../daf-plugin/tools/gen_params.py --check; then
 fi
 for g in sched pitch env reverb arp arp_seq filter_stability accuracy fx_reenable param_robust \
          lfo_sync modulation lfo_depth cosmos acid stuck sustain handover polyat steal legato \
-         zipper user_preset latency drift sync_alias polymod_law noise oracle_alias; do
+         zipper user_preset latency drift sync_alias polymod_law noise oracle_alias sync_toggle; do
     echo
     echo "########## ${g}_gate ##########"
     python3 "${g}_gate.py" || fail=1

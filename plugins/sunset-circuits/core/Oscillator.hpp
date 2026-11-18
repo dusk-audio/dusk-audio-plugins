@@ -27,6 +27,19 @@ enum class Waveform
     Noise    // white noise
 };
 
+// The two halves of polyBlep(): the part before an edge (on the sample the
+// edge follows) and the part after it (on the sample after the edge).
+inline float polyBlepBefore(float t, float dt) noexcept
+{
+    if (t > 1.0f - dt) { const float n = (t - 1.0f) / dt; return n * n + n + n + 1.0f; }
+    return 0.0f;
+}
+inline float polyBlepAfter(float t, float dt) noexcept
+{
+    if (t < dt) { const float n = t / dt; return n + n - n * n - 1.0f; }
+    return 0.0f;
+}
+
 // PolyBLEP residual for antialiased edges (adapted from the JUCE original;
 // the trailing-edge sign was fixed here — the original returned n*n+n+n-1,
 // the corrupted form inherited verbatim, instead of the canonical (n+1)^2).
@@ -82,7 +95,7 @@ public:
     void  resetPhase() noexcept
     {
         phase = 0.0f; triState = 0.0f;
-        syncCarry = 0.0f; syncSqCarry = 0.0f;
+        syncCarry = 0.0f; syncSqCarry = 0.0f; prevSynced = false;
     }
 
     // ============================ HARD SYNC (slave) ===========================
@@ -116,6 +129,10 @@ public:
 
         float out = stepValue(phase) + syncCarry;
         syncCarry = 0.0f;
+        // Sync just switched on: the free sample before this one put the half
+        // before its edge on itself and leaves the half after it to this sample.
+        if (!prevSynced) out += edgeHalvesAfter(waveform, phase, d);
+        prevSynced = true;
         float p = phase;
         walkEdges(waveform, p, d, 0.0f, reset ? syncFrac : 1.0f, out, syncCarry);
         if (reset)
@@ -156,6 +173,12 @@ public:
     {
         const float effectiveDt = dt * detuneRatio;
         float sample = 0.0f;
+        // Sync just switched off: the synced sample before this one already put
+        // both halves of its edges down (the second in syncCarry / syncSqCarry), so
+        // the halves after an edge are taken out here (see edgeHalvesAfter).
+        const bool afterSynced = prevSynced;
+        prevSynced = false;
+        const float owed = afterSynced ? edgeHalvesAfter(waveform, phase, effectiveDt) : 0.0f;
 
         switch (waveform)
         {
@@ -181,11 +204,15 @@ public:
                 float sq = phase < 0.5f ? 1.0f : -1.0f;
                 sq += polyBlep(phase, effectiveDt);
                 sq -= polyBlep(std::fmod(phase + 0.5f, 1.0f), effectiveDt);
+                if (afterSynced) sq += syncSqCarry - edgeHalvesAfter(Waveform::Square, phase, effectiveDt);
                 // Leaky integrator; leak derived from sr so the DC-block corner
                 // (~7 Hz) is constant across oversampling factors (a fixed 0.999
                 // per-sample leak would move the corner up with the OS rate).
-                triState = triLeak * triState + effectiveDt * sq * 4.0f;
+                // Read BEFORE the update, as the synced triangle reads (it has to,
+                // to correct a reset on both sides): a different convention for the
+                // two would skip or repeat a sample whenever sync is switched.
                 sample = triState;
+                triState = triLeak * triState + effectiveDt * sq * 4.0f;
                 break;
             }
 
@@ -200,6 +227,7 @@ public:
 
         // The half-step a synced render left for this sample (sync was switched off
         // with one pending). Zero on every other path, which then stays untouched.
+        if (waveform != Waveform::Triangle) sample -= owed;
         if (syncCarry != 0.0f) { sample += syncCarry; syncCarry = 0.0f; }
         syncSqCarry = 0.0f;
 
@@ -237,6 +265,21 @@ private:
         const float a = 1.0f - s;
         now  += g * a * a * a * (1.0f / 6.0f);
         next += g * s * s * s * (1.0f / 6.0f);
+    }
+
+    // The halves after an edge that the free path's polyBLEP puts on the sample
+    // following each edge of waveform w (phase q at that sample): what a free
+    // sample leaves for the next one, and what a free sample after a synced one
+    // must not add again.
+    float edgeHalvesAfter(Waveform w, float q, float d) const noexcept
+    {
+        switch (w)
+        {
+            case Waveform::Saw:    return -polyBlepAfter(q, d);
+            case Waveform::Square: return polyBlepAfter(q, d) - polyBlepAfter(std::fmod(q + 0.5f, 1.0f), d);
+            case Waveform::Pulse:  return polyBlepAfter(q, d) - polyBlepAfter(std::fmod(q + (1.0f - pulseWidth), 1.0f), d);
+            default:               return 0.0f;
+        }
     }
 
     // The naive (uncorrected) value of a stepped waveform at phase q. Sine has no
@@ -330,10 +373,13 @@ private:
     {
         float out = triState + syncCarry;
         syncCarry = 0.0f;
+        const bool afterFree = !prevSynced;
+        prevSynced = true;
         float p = phase;
         if (syncFrac <= 0.0f)
         {
             float sq = (p < 0.5f ? 1.0f : -1.0f) + syncSqCarry;
+            if (afterFree) sq += edgeHalvesAfter(Waveform::Square, p, d);
             syncSqCarry = 0.0f;
             walkEdges(Waveform::Square, p, d, 0.0f, 1.0f, sq, syncSqCarry);
             triState = triLeak * triState + d * sq * 4.0f;
@@ -370,6 +416,7 @@ private:
     float lastWrapFrac = 1.0f;   // see wrapFraction()
     float syncCarry = 0.0f;      // polyBLEP/BLAMP halves a synced render owes the next sample
     float syncSqCarry = 0.0f;    // the polyBLEP halves the synced triangle's square owes
+    bool  prevSynced = false;    // the last sample went through processSampleSynced()
     Waveform waveform = Waveform::Saw;
     Xorshift rng;
 };
