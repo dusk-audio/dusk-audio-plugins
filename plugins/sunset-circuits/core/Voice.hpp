@@ -805,10 +805,10 @@ private:
                 pwMayClose = true;
             }
         }
+        if (pwMayClose) o.osc1.setPulseWidthMayClose(pw1);
+        else            o.osc1.setPulseWidth(pw1);
         if (params.wheelModActive && params.wheelPwAOn)
-            o.osc1.setPulseWidthFullRange(pw1 + params.wheelPwA);   // may close at either end
-        else if (pwMayClose) o.osc1.setPulseWidthMayClose(pw1);
-        else                 o.osc1.setPulseWidth(pw1);
+            o.osc1.addWheelPulseWidth(params.wheelPwA);
         o.osc1.setDetune(params.osc1Detune + detCents);
 
         // Cross mod (fix #4): osc2 (previous sample) -> osc1 frequency, linear FM of
@@ -863,10 +863,9 @@ private:
             {
                 o.osc2.setFrequency(freq2);
                 o.osc2.setWaveform(params.osc2Wave);
+                o.osc2.setPulseWidth(params.osc2PulseWidth + pwm2);
                 if (params.wheelModActive && params.wheelPwBOn)
-                    o.osc2.setPulseWidthFullRange(params.osc2PulseWidth + pwm2 + params.wheelPwB);
-                else
-                    o.osc2.setPulseWidth(params.osc2PulseWidth + pwm2);
+                    o.osc2.addWheelPulseWidth(params.wheelPwB);
                 o.osc2.setDetune(params.osc2Detune + detCents);
                 // Oracle's sync runs the other way round from Mono and Modular, as on
                 // the instrument it models: oscillator B (osc 2) is the master and

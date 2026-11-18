@@ -121,11 +121,9 @@ public:
     // For a modulation that may close the pulse altogether (Oracle's filter
     // envelope -> PW A): down to 0, where the pulse is gone and only DC is left.
     void setPulseWidthMayClose(float pw) noexcept { pulseWidth = clampf(pw, 0.0f, 0.95f); }
-    // For Oracle's Wheel Mod -> PW: past EITHER end the pulse closes, constant low
-    // at 0 and constant high at 1, within the cycle the width crosses the end. The
-    // instrument does the same with its pulse mirrored (its width is the low part,
-    // so it closes low past the top and high below 0).
-    void setPulseWidthFullRange(float pw) noexcept { pulseWidth = clampf(pw, 0.0f, 1.0f); }
+    // Apply Wheel Mod after the ordinary PW and Poly-Mod limits. A zero
+    // offset preserves that width; the wheel itself can close either edge.
+    void addWheelPulseWidth(float offset) noexcept { pulseWidth = clampf(pulseWidth + offset, 0.0f, 1.0f); }
     // Called per internal sample with a detune that rarely moves: the pow() runs
     // only when it does (bit-compared, see sameBits).
     void setDetune(float cents) noexcept

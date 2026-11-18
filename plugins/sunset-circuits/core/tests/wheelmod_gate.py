@@ -238,6 +238,31 @@ def closure_decay_ms(x, fs):
     return result
 
 
+def check_pw_edges():
+    # With the matrix already at a width limit, the wheel must start at that
+    # audible width. Compare against a pulse dialled to the same limit by hand.
+    for osc, number, carrier in (("A", 1, CARRIER_A), ("B", 2, CARRIER_B)):
+        for width, velocity_amount in ((0.05, -0.8), (0.95, 0.8)):
+            patch = dict(carrier, wheelLfoTri=0, wheelLfoSquare=1, wheelLfoRate=2)
+            patch.update({f"osc{number}Wave": 4, f"osc{number}PW": width})
+            routed = dict(patch, modSrc0=6, modDst0=2 + number, modAmt0=velocity_amount)
+            dest = {"wheelPw" + osc: 1}
+            fs, off = render(1, 57, 2, 2, "wm_edge_off", **routed)
+            _, neutral = render(1, 57, 2, 2, "wm_edge_zero", **routed, **dest)
+            _, moving = render(1, 57, 2, 2, "wm_edge_on", modwheel=0.25, **routed, **dest)
+            _, expected = render(1, 57, 2, 2, "wm_edge_dialled", modwheel=0.25, **patch, **dest)
+            # Skip the attack. Require an audible baseline and a working wheel
+            # so silent or disconnected routes cannot satisfy the comparisons.
+            tail = slice(fs, None)
+            level = np.sqrt(np.mean(off[tail] ** 2))
+            neutral_match = np.array_equal(off, neutral)
+            moving_match = np.array_equal(moving[tail], expected[tail])
+            movement = np.max(np.abs(moving[tail] - off[tail]))
+            report("pw edge", level > 0.01 and neutral_match and moving_match and movement > 0.01,
+                   f"PW {osc}, {width:.0%} edge: dry RMS {level:.4f}, zero identical {neutral_match}, "
+                   f"wheel up matches dialled width {moving_match}, peak change {movement:.4f}")
+
+
 def check_pw_filter():
     pulse = dict(CARRIER_A, osc1Wave=4, filterCutoff=20000)
     fs, x = render(1, 57, 14.0, 2, "wm_pw32", osc1PW=0.10, wheelPwA=1, wheelLfoTri=0, wheelLfoSquare=1,
@@ -365,6 +390,7 @@ def check_shared_os():
 def main():
     check_off_and_modes()
     check_shapes()
+    check_pw_edges()
     check_pw_filter()
     check_noise_sh()
     check_shared_os()
