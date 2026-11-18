@@ -45,14 +45,38 @@ def check(program, note, output_dir):
     return ok, detail
 
 
+def attack_spectrum(audio, frames):
+    window = np.hanning(frames)
+    spectrum = np.fft.rfft(audio[:frames] * window[:, None], axis=0)
+    return 2 * np.linalg.norm(spectrum, axis=1) / window.sum()
+
+
 def check_chord_headroom(program, output_dir, **performance):
-    _, audio, _, _ = render(program, output_dir=output_dir, bars=1, tail=0.5, **performance)
+    rate, audio, _, _ = render(program, output_dir=output_dir, bars=1, tail=0.5, **performance)
     if not np.isfinite(audio).all() or db(np.sqrt(np.mean(audio ** 2))) <= SILENCE_DBFS:
         return False, "silent or invalid chord"
     # Check both the actual samples and the peaks between them.
     upsampled = resample_poly(audio, 4, 1, axis=0, window=("kaiser", 8))
     peak = db(max(np.max(np.abs(audio)), np.max(np.abs(upsampled))))
-    return peak <= PEAK_CLIP_DBFS, f"{peak:+.2f} dBTP (limit {PEAK_CLIP_DBFS:g})"
+    detail = f"{peak:+.2f} dBTP (limit {PEAK_CLIP_DBFS:g})"
+    if performance["perf"] == "hold":
+        frames = round(.16 * rate)
+        chord = attack_spectrum(audio, frames)
+        # Above 100 Hz, the strongest partial of each isolated upper-register
+        # note identifies its attack even on the inharmonic bell patch.
+        first_bin = int(np.ceil(100 * frames / rate))
+        for note in performance["hold"].split(","):
+            _, solo, _, _ = render(program, output_dir=output_dir, perf="hold", hold=note,
+                                   vel=performance["vel"], bars=1, tail=0.5)
+            spectrum = attack_spectrum(solo, frames)
+            band = first_bin + np.argmax(spectrum[first_bin:])
+            reference = spectrum[band]
+            if not np.isfinite(reference) or db(reference) <= SILENCE_DBFS:
+                return False, f"{detail}, silent or invalid isolated note {note}"
+            relative = db(np.max(chord[band - 2:band + 3]) / reference)
+            if relative < -6:
+                return False, f"{detail}, note {note} attack {relative:+.1f} dB vs isolated (limit -6)"
+    return peak <= PEAK_CLIP_DBFS, detail
 
 
 def main(output_dir):

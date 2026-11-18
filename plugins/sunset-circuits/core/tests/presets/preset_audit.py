@@ -17,7 +17,6 @@ Usage:
 """
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -27,11 +26,6 @@ import soundfile as sf
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BIN = os.path.join(HERE, "..", "build", "preset_render")
-
-# Per-process scratch dir: a fixed /tmp path is shared by every concurrent run
-# and every user on the box. Same construction as ../_harness.py.
-OUT = os.path.join(tempfile.gettempdir(),
-                   f"msynth_presets_{os.getuid()}_{os.getpid()}")
 
 # Bound every preset_render call: a hung binary must fail the audit, not hang CI.
 RENDER_TIMEOUT_S = 120
@@ -55,9 +49,7 @@ def preset_count():
 
 def render(index, *, output_dir=None, **kw):
     if output_dir is None:
-        # Keep the WAVs named in the standalone bank report.
-        os.makedirs(OUT, exist_ok=True)
-        output_dir = OUT
+        output_dir = tempfile.mkdtemp(prefix="msynth_presets_")
     path = os.path.join(output_dir, f"preset_{index:02d}.wav")
     args = [BIN, str(index), path]
     for k, v in kw.items():
@@ -121,8 +113,8 @@ def ref_f0(mono, sr):
     return float((k + delta) * sr / len(seg))
 
 
-def audit_one(index):
-    sr, x, info, path = render(index)
+def audit_one(index, output_dir=None):
+    sr, x, info, path = render(index, output_dir=output_dir)
     name = info.split('"')[1] if '"' in info else f"#{index}"
     mono = x.mean(axis=1)
     finite = bool(np.all(np.isfinite(x)))
@@ -147,13 +139,14 @@ def audit_one(index):
 
 
 def main():
-    shutil.rmtree(OUT, ignore_errors=True)
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     as_json = "--json" in sys.argv
     n = preset_count()
     indices = [int(a) for a in args] if args else list(range(n))
 
-    rows = [audit_one(i) for i in indices]
+    # The JSON report names these WAVs, so keep the private directory after exit.
+    output_dir = tempfile.mkdtemp(prefix="msynth_presets_")
+    rows = [audit_one(i, output_dir) for i in indices]
 
     if as_json:
         # numpy scalars (np.bool_/np.float64) leak into the rows; .item() them.
