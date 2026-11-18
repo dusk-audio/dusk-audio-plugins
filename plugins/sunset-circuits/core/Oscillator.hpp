@@ -1,6 +1,6 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
 //
-// Oscillator.hpp — band-limited (polyBLEP) oscillators, sub-oscillator, ring/
+// Oscillator.hpp - band-limited (minimum-phase BLEP / polyBLEP) oscillators, sub-oscillator, ring/
 // cross modulation helpers, sample & hold, and a pink-noise generator.
 //
 // Framework-free port of the JUCE OscillatorEngine.h. Every waveform formula is
@@ -13,6 +13,7 @@
 #pragma once
 
 #include "SynthCommon.hpp"
+#include "MinBlepTable.hpp"
 
 namespace msynth
 {
@@ -58,21 +59,64 @@ inline float polyBlep(float t, float dt) noexcept
     return 0.0f;
 }
 
+// ========================== MINIMUM-PHASE BLEP (#303) ==========================
+// Below kMinBlepMaxRate the oscillator band-limits every step of its waveform
+// (the saw's wrap, the square's and pulse's edges, the square inside the
+// triangle, and every hard-sync reset) with a minimum-phase BLEP: the residual
+// of a 16-sample windowed-sinc step turned minimum phase (MinBlepTable.hpp), so
+// all of it lands on the samples AFTER the step and nothing is delayed to apply
+// it. Residuals accumulate in a short ring that each sample reads once. The
+// 2-point polyBLEP it replaces folded back at -34 to -36 dB (C6 to C7, saw alone,
+// 1x) and -55 to -58 dB at 2x; this one reaches the measurement floor (-74 to
+// -82 dB) at both. Corners (the sine's and the triangle's at a sync reset) keep
+// the 2-point polyBLAMP, which a corner needs far less than a step needs a BLEP.
+//
+// A minimum-phase kernel realises each step about kMinBlepDelaySamples (2.1
+// samples at the oscillator's rate) later than it falls, so the oscillators'
+// output is that much later on average; MultiSynthDSP takes it off the latency
+// pad (blepDelay()). From kMinBlepMaxRate (4x, 176.4 kHz and up) the pad has no
+// room left for it, and the 2-point polyBLEP is already at the floor there
+// (-73 dB), so the oscillator keeps it: the same code as before, bit for bit.
 class Oscillator
 {
 public:
+    static constexpr double kMinBlepMaxRate = 176400.0;
+    // Average delay of the oscillator's output at an internal rate, in samples of
+    // that rate (see MINIMUM-PHASE BLEP).
+    static double blepDelay(double rate) noexcept { return rate < kMinBlepMaxRate ? kMinBlepDelaySamples : 0.0; }
+
     void prepare(double sampleRate) noexcept
     {
         sr = (float)sampleRate;
         phase = 0.0f;
-        triState = 0.0f;
+        triState = 0.0f; triStatePoly = 0.0f;
+        useMinBlep = sampleRate < kMinBlepMaxRate;
+        clearResiduals();
         updateTriLeak();
     }
 
     void setFrequency(float freqHz) noexcept { freq = freqHz; dt = freq / sr; }
-    // Change rate WITHOUT resetting phase (for oversampling-factor changes).
-    void setSampleRate(double sampleRate) noexcept { sr = (float)sampleRate; dt = freq / sr; updateTriLeak(); }
-    void setWaveform(Waveform w) noexcept    { waveform = w; }
+    // Change rate WITHOUT resetting phase (for oversampling-factor changes). The
+    // residuals are cleared when the band-limiting changes kind: an
+    // oversampling change runs with the voice faded out (MultiSynthDSP).
+    void setSampleRate(double sampleRate) noexcept
+    {
+        sr = (float)sampleRate; dt = freq / sr; updateTriLeak();
+        const bool minBlep = sampleRate < kMinBlepMaxRate;
+        if (minBlep != useMinBlep)
+        {
+            useMinBlep = minBlep; clearResiduals();
+            syncCarry = syncSqCarry = 0.0f; prevSynced = false;
+        }
+    }
+    void setWaveform(Waveform w) noexcept
+    {
+        if (w == waveform) return;
+        // The square's residuals belong to the triangle's integrator only.
+        if (w == Waveform::Triangle || waveform == Waveform::Triangle)
+            for (float& r : sqRes) r = 0.0f;
+        waveform = w;
+    }
     void setPulseWidth(float pw) noexcept    { pulseWidth = clampf(pw, 0.05f, 0.95f); }
     // For a modulation that may close the pulse altogether (Oracle's filter
     // envelope -> PW A): down to 0, where the pulse is gone and only DC is left.
@@ -87,6 +131,29 @@ public:
     }
 
     float getPhase() const noexcept { return phase; }
+    // The value a modulation route should read for the sample just rendered: the
+    // output itself where the polyBLEP is in use, and with the minimum-phase BLEP
+    // the polyBLEP form of the same sample. The minimum-phase output is about
+    // kMinBlepDelaySamples later than the oscillator's phase; a modulator read
+    // from it would move its carrier that much late, which changes an audio-rate
+    // FM's sidebands (up to 2.4 dB on the FM factory presets). A synced
+    // oscillator hands over its output (no factory preset modulates from one).
+    float modulationValue() const noexcept
+    {
+        if (!modLazy) return modValue;
+        // Worked out only when a route asks (most oscillators are no route's
+        // source): the polyBLEP form at the phase the sample was rendered at.
+        const float q = modPhase, d = modDt;
+        switch (waveform)
+        {
+            case Waveform::Saw:    return 2.0f * q - 1.0f - polyBlep(q, d);
+            case Waveform::Square: return (q < 0.5f ? 1.0f : -1.0f) + polyBlep(q, d) - polyBlep(std::fmod(q + 0.5f, 1.0f), d);
+            case Waveform::Pulse:  return (q < pulseWidth ? 1.0f : -1.0f) + polyBlep(q, d)
+                                        - polyBlep(std::fmod(q + (1.0f - pulseWidth), 1.0f), d);
+            case Waveform::Sine:   return std::sin(q * kTwoPi);
+            default:               return modValue;
+        }
+    }
     bool  didCross() const noexcept { return lastCrossed; }
     // Where in the interval after the last processSample() the phase wrapped, as
     // a fraction (0, 1] of that interval. Meaningful when didCross() is true; a
@@ -94,8 +161,9 @@ public:
     float wrapFraction() const noexcept { return lastWrapFrac; }
     void  resetPhase() noexcept
     {
-        phase = 0.0f; triState = 0.0f;
+        phase = 0.0f; triState = 0.0f; triStatePoly = 0.0f;
         syncCarry = 0.0f; syncSqCarry = 0.0f; prevSynced = false;
+        clearResiduals();
     }
 
     // ============================ HARD SYNC (slave) ===========================
@@ -122,6 +190,7 @@ public:
     {
         const float d = dt * detuneRatio;
         const bool reset = syncFrac > 0.0f && syncFrac <= 1.0f;
+        if (useMinBlep) return processSampleSyncedMinBlep(d, reset ? syncFrac : 0.0f);
         if (waveform == Waveform::Triangle)
             return processTriangleSynced(d, reset ? syncFrac : 0.0f);
         if (waveform == Waveform::Noise)
@@ -147,6 +216,7 @@ public:
         }
         lastCrossed = reset || p < phase;
         phase = p;
+        modValue = out; modLazy = false;
         return out;
     }
 
@@ -172,6 +242,7 @@ public:
     float processSample() noexcept
     {
         const float effectiveDt = dt * detuneRatio;
+        if (useMinBlep) return processSampleMinBlep(effectiveDt);
         float sample = 0.0f;
         // Sync just switched off: the synced sample before this one already put
         // both halves of its edges down (the second in syncCarry / syncSqCarry), so
@@ -194,9 +265,26 @@ public:
                 break;
 
             case Waveform::Pulse:
-                sample = phase < pulseWidth ? 1.0f : -1.0f;
-                sample += polyBlep(phase, effectiveDt);
-                sample -= polyBlep(std::fmod(phase + (1.0f - pulseWidth), 1.0f), effectiveDt);
+                if (pulseWidth >= kNarrowPulseSamples * effectiveDt)
+                {
+                    sample = phase < pulseWidth ? 1.0f : -1.0f;
+                    sample += polyBlep(phase, effectiveDt);
+                    sample -= polyBlep(std::fmod(phase + (1.0f - pulseWidth), 1.0f), effectiveDt);
+                }
+                else
+                {
+                    // A pulse narrower than kNarrowPulseSamples (the Poly-Mod routes
+                    // can close it) is drawn that wide and scaled to the same area:
+                    // the same level and DC, and two polyBLEP edges that no longer
+                    // share a sample (sharing one, they folded back at -46 to -56 dB
+                    // at 4x).
+                    const float w = narrowPulseWidth(effectiveDt);
+                    const float g = pulseWidth > 0.0f ? pulseWidth / w : 0.0f;
+                    sample = phase < w ? 1.0f : -1.0f;
+                    sample += polyBlep(phase, effectiveDt);
+                    sample -= polyBlep(std::fmod(phase + (1.0f - w), 1.0f), effectiveDt);
+                    sample = g * (sample + 1.0f) - 1.0f;
+                }
                 break;
 
             case Waveform::Triangle:
@@ -243,6 +331,7 @@ public:
         if (lastCrossed)
             lastWrapFrac = clampf((1.0f - prevPhase) / effectiveDt, 0.0f, 1.0f);
 
+        modValue = sample; modLazy = false;
         return sample;
     }
 
@@ -277,9 +366,238 @@ private:
         {
             case Waveform::Saw:    return -polyBlepAfter(q, d);
             case Waveform::Square: return polyBlepAfter(q, d) - polyBlepAfter(std::fmod(q + 0.5f, 1.0f), d);
-            case Waveform::Pulse:  return polyBlepAfter(q, d) - polyBlepAfter(std::fmod(q + (1.0f - pulseWidth), 1.0f), d);
+            case Waveform::Pulse:
+            {
+                const float w = narrowPulseWidth(d);
+                const float g = w > pulseWidth ? (pulseWidth > 0.0f ? pulseWidth / w : 0.0f) : 1.0f;
+                return g * (polyBlepAfter(q, d) - polyBlepAfter(std::fmod(q + (1.0f - w), 1.0f), d));
+            }
             default:               return 0.0f;
         }
+    }
+
+    // The polyBLEP's narrowest pulse, as a fraction of the cycle (see processSample()).
+    static constexpr float kNarrowPulseSamples = 2.0f;
+    float narrowPulseWidth(float d) const noexcept
+    {
+        const float wMin = kNarrowPulseSamples * d;
+        return pulseWidth < wMin ? (wMin < 0.5f ? wMin : 0.5f) : pulseWidth;
+    }
+
+    // ---- minimum-phase BLEP (see MINIMUM-PHASE BLEP) ----
+    static constexpr int kResSize = 32;   // power of two above kMinBlepTaps
+    static constexpr int kResMask = kResSize - 1;
+    static_assert(kMinBlepTaps < kResSize, "residual ring too small for the BLEP");
+    // The saw's ramp is not delayed while its wraps are realised
+    // kMinBlepDelaySamples late: that moves its mean up by the ramp's slope times
+    // that delay (9 % of full scale on a C7 at 2x). Taking it back off keeps the
+    // saw centred, as the polyBLEP saw is, so the filters see the same signal.
+    static constexpr float kSawDelayCorrection = 2.0f * (float)kMinBlepDelaySamples;
+
+    void clearResiduals() noexcept
+    {
+        for (float& r : res) r = 0.0f;
+        for (float& r : sqRes) r = 0.0f;
+    }
+    MSYNTH_INLINE float take(float* ring) noexcept
+    {
+        float& r = ring[resPos & kResMask];
+        const float v = r;
+        r = 0.0f;
+        return v;
+    }
+    // A step of height h at fraction s (0, 1] of the interval after the current
+    // sample reaches samples resPos + 1 .. resPos + kMinBlepTaps, at j - s
+    // samples after it.
+    void addMinBlep(float* ring, float h, float s) noexcept
+    {
+        constexpr int kLast = kMinBlepTaps * kMinBlepPointsPerSample;
+        for (int j = 1; j <= kMinBlepTaps; ++j)
+        {
+            const float q = ((float)j - s) * (float)kMinBlepPointsPerSample;
+            const int i = (int)q;
+            if (i >= kLast) continue;   // past the kernel: the residual is 0
+            const float f = q - (float)i;
+            ring[(resPos + j) & kResMask] += h * (kMinBlepResidual[i] + f * (kMinBlepResidual[i + 1] - kMinBlepResidual[i]));
+        }
+    }
+    // walkEdges() with each step going into a residual ring.
+    void walkEdgesMinBlep(Waveform w, float& p, float d, float s0, float s1, float* ring) noexcept
+    {
+        float s = s0, edge = 0.0f, height = 0.0f;
+        for (int guard = 0; guard < 16 && d > 0.0f && nextEdge(w, p, edge, height); ++guard)
+        {
+            if (p + d * (s1 - s) < edge) break;   // no edge before s1: skip the division
+            const float at = s + (edge - p) / d;
+            if (at > s1) break;
+            addMinBlep(ring, height, at);
+            s = at;
+            p = edge >= 1.0f ? 0.0f : edge;
+        }
+        p += d * (s1 - s);
+        if (p >= 1.0f) p -= std::floor(p);
+    }
+
+    MSYNTH_INLINE float processSampleMinBlep(float d) noexcept
+    {
+        float sample = 0.0f;
+        switch (waveform)
+        {
+            case Waveform::Saw:
+                sample = 2.0f * phase - 1.0f - kSawDelayCorrection * d;
+                modLazy = true;
+                break;
+            case Waveform::Square:
+                sample = phase < 0.5f ? 1.0f : -1.0f;
+                modLazy = true;
+                break;
+            case Waveform::Pulse:
+                sample = phase < pulseWidth ? 1.0f : -1.0f;
+                modLazy = true;
+                break;
+            case Waveform::Triangle:
+            {
+                // The band-limited square, integrated (see processSample()); the
+                // modulation value integrates the polyBLEP square alongside.
+                // Read before the update, as everywhere (see processSample()).
+                const float naive = phase < 0.5f ? 1.0f : -1.0f;
+                const float sq = naive + take(sqRes);
+                sample = triState;
+                triState = triLeak * triState + d * sq * 4.0f;
+                const float sqPoly = naive + polyBlep(phase, d) - polyBlep(std::fmod(phase + 0.5f, 1.0f), d);
+                modValue = triStatePoly; modLazy = false;
+                triStatePoly = triLeak * triStatePoly + d * sqPoly * 4.0f;
+                break;
+            }
+            case Waveform::Sine:
+                // No steps to band-limit; read kMinBlepDelaySamples back so it keeps
+                // its place against the other waveforms and the latency pad.
+                sample = std::sin((phase - (float)kMinBlepDelaySamples * d) * kTwoPi);
+                modLazy = true;
+                break;
+            case Waveform::Noise:
+                sample = rng.nextBipolar();
+                modValue = sample; modLazy = false;
+                break;
+        }
+        modPhase = phase; modDt = d;
+        sample += take(res);   // steps already past (for the triangle: sync resets)
+
+        const float prevPhase = phase;
+        advanceMinBlep(d);
+        lastCrossed = prevPhase > phase;
+        if (lastCrossed)
+            lastWrapFrac = clampf((1.0f - prevPhase) / d, 0.0f, 1.0f);
+        ++resPos;
+        return sample;
+    }
+
+    // Advance the phase over the interval after this sample and place its steps.
+    // The common case, at most one edge in the interval, is done directly;
+    // anything denser (a pulse narrower than a sample, a pathological increment)
+    // goes through the general walk.
+    MSYNTH_INLINE void advanceMinBlep(float d) noexcept
+    {
+        const float p0 = phase;
+        float p1 = p0 + d;
+        switch (waveform)
+        {
+            case Waveform::Saw:
+                if (d >= 1.0f) break;
+                if (p1 >= 1.0f) { addMinBlep(res, -2.0f, (1.0f - p0) / d); p1 -= 1.0f; }
+                phase = p1;
+                return;
+            case Waveform::Square:
+            case Waveform::Pulse:
+            case Waveform::Triangle:
+            {
+                const float w = waveform == Waveform::Pulse ? pulseWidth : 0.5f;
+                if (!(w > d && 1.0f - w > d)) break;
+                float* ring = waveform == Waveform::Triangle ? sqRes : res;
+                if (p0 < w && p1 >= w)  addMinBlep(ring, -2.0f, (w - p0) / d);
+                else if (p1 >= 1.0f) { addMinBlep(ring, 2.0f, (1.0f - p0) / d); p1 -= 1.0f; }
+                phase = p1;
+                return;
+            }
+            case Waveform::Sine:
+            case Waveform::Noise:
+                if (p1 >= 1.0f) p1 -= std::floor(p1);
+                phase = p1;
+                return;
+        }
+        float p = p0;
+        if (waveform == Waveform::Triangle) walkEdgesMinBlep(Waveform::Square, p, d, 0.0f, 1.0f, sqRes);
+        else                                walkEdgesMinBlep(waveform, p, d, 0.0f, 1.0f, res);
+        phase = p;
+    }
+
+    // processSampleSynced() and processTriangleSynced() with BLEP steps into the
+    // rings. The polyBLAMP for a corner still takes its two halves, the second on
+    // the next sample's slot of the ring.
+    MSYNTH_INLINE float processSampleSyncedMinBlep(float d, float syncFrac) noexcept
+    {
+        if (waveform == Waveform::Triangle) return processTriangleSyncedMinBlep(d, syncFrac);
+        if (waveform == Waveform::Noise) return processSample();
+
+        const bool reset = syncFrac > 0.0f;
+        float out = stepValue(phase) + take(res);
+        if (waveform == Waveform::Saw) out -= kSawDelayCorrection * d;
+        if (!reset && waveform != Waveform::Sine)
+        {
+            // No reset in this interval (the master wraps once a cycle): the same
+            // advance as the free oscillator.
+            const float prevPhase = phase;
+            advanceMinBlep(d);
+            lastCrossed = phase < prevPhase;
+            ++resPos;
+            modValue = out; modLazy = false;
+            return out;
+        }
+        float& next = res[(resPos + 1) & kResMask];
+        float p = phase;
+        walkEdgesMinBlep(waveform, p, d, 0.0f, reset ? syncFrac : 1.0f, res);
+        if (reset)
+        {
+            addMinBlep(res, stepValue(0.0f) - stepValue(p), syncFrac);
+            if (waveform == Waveform::Sine)
+                addRamp(kTwoPi * d * (1.0f - std::cos(kTwoPi * p)), syncFrac, out, next);
+            p = 0.0f;
+            walkEdgesMinBlep(waveform, p, d, syncFrac, 1.0f, res);
+        }
+        lastCrossed = reset || p < phase;
+        phase = p;
+        ++resPos;
+        modValue = out; modLazy = false;
+        return out;
+    }
+
+    float processTriangleSyncedMinBlep(float d, float syncFrac) noexcept
+    {
+        float out = triState + take(res);
+        float& next = res[(resPos + 1) & kResMask];
+        float p = phase;
+        if (syncFrac <= 0.0f)
+        {
+            const float sq = (p < 0.5f ? 1.0f : -1.0f) + take(sqRes);
+            walkEdgesMinBlep(Waveform::Square, p, d, 0.0f, 1.0f, sqRes);
+            triState = triLeak * triState + d * sq * 4.0f;
+        }
+        else
+        {
+            for (float& r : sqRes) r = 0.0f;   // they would correct the integrator the reset throws away
+            const float atReset = triState + 4.0f * d * squareIntegral(p, d, 0.0f, syncFrac);
+            const float levelBefore = p < 0.5f ? 1.0f : -1.0f;
+            addMinBlep(res, -atReset, syncFrac);
+            addRamp(4.0f * d * (1.0f - levelBefore), syncFrac, out, next);
+            p = 0.0f;
+            triState = 4.0f * d * squareIntegral(p, d, syncFrac, 1.0f);
+        }
+        lastCrossed = syncFrac > 0.0f || p < phase;
+        phase = p;
+        ++resPos;
+        modValue = out; modLazy = false;
+        triStatePoly = triState;
+        return out;
     }
 
     // The naive (uncorrected) value of a stepped waveform at phase q. Sine has no
@@ -396,6 +714,7 @@ private:
         }
         lastCrossed = syncFrac > 0.0f || p < phase;
         phase = p;
+        modValue = out; modLazy = false;
         return out;
     }
 
@@ -417,6 +736,14 @@ private:
     float syncCarry = 0.0f;      // polyBLEP/BLAMP halves a synced render owes the next sample
     float syncSqCarry = 0.0f;    // the polyBLEP halves the synced triangle's square owes
     bool  prevSynced = false;    // the last sample went through processSampleSynced()
+    bool  useMinBlep = true;     // set from the rate (see MINIMUM-PHASE BLEP)
+    float modValue = 0.0f;       // see modulationValue()
+    bool  modLazy = false;       // modulationValue() works it out from modPhase, modDt
+    float modPhase = 0.0f, modDt = 0.0f;
+    float triStatePoly = 0.0f;   // the triangle's polyBLEP integrator, for modValue
+    float res[kResSize] = {};    // BLEP residuals still owed to the output
+    float sqRes[kResSize] = {};  // ... and to the triangle's square
+    unsigned resPos = 0;
     Waveform waveform = Waveform::Saw;
     Xorshift rng;
 };

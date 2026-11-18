@@ -175,6 +175,15 @@ public:
     // Group delay at DC of the pre-filter (see PRE-FILTER), in internal samples,
     // for a mode at an internal rate; 0 where it does not run. MultiSynthDSP takes
     // it off the latency pad (CONSTANT LATENCY there).
+    // The same for the oscillators' band-limiting (Oscillator::blepDelay()), in
+    // the modes whose voices run them (Prism has its FM operators, Acid its own
+    // oscillator).
+    static double oscillatorDelay(SynthMode mode, double rate) noexcept
+    {
+        const bool usesOscillators = mode == SynthMode::Cosmos || mode == SynthMode::Oracle
+                                  || mode == SynthMode::Mono || mode == SynthMode::Modular;
+        return usesOscillators ? Oscillator::blepDelay(rate) : 0.0;
+    }
     static double preFilterDelay(SynthMode mode, double rate) noexcept
     {
         if (!usesPreFilter(mode)) return 0.0;
@@ -782,6 +791,10 @@ private:
 
         float osc1Sample = 0.0f, osc2Sample = 0.0f, osc3Sample = 0.0f, subSample = 0.0f;
         float mix = 0.0f, activeGain = 0.0f;
+        // What the pitch, FM and pulse-width routes read from osc 2 (this sample's,
+        // and the next one's lastOsc2): its modulationValue(), not its audio output,
+        // because they move an oscillator's phase (see Oscillator::modulationValue).
+        float osc2Mod = 0.0f;
 
         switch (params.mode)
         {
@@ -799,6 +812,7 @@ private:
                 o.osc2.setPulseWidth(params.osc2PulseWidth + pwm2);
                 o.osc2.setDetune(params.osc1Detune + detCents);
                 osc2Sample = o.osc2.processSample();
+                if (params.crossMod > 0.0f) osc2Mod = o.osc2.modulationValue();   // the only reader in Cosmos
 
                 o.sub.setFrequency(freq1);
                 o.sub.setWaveform(params.subWave);
@@ -825,18 +839,23 @@ private:
                 // restarts oscillator A (osc 1), the oscillator Poly-Mod drives. So
                 // osc 2 runs first and hands its wrap point to osc 1.
                 osc2Sample = o.osc2.processSample();
+                // Worked out only for a route that reads it (it costs a polyBLEP).
+                if (params.polyModOscBOscA > 0.0f || params.polyModOscBPWM > 0.0f || params.crossMod > 0.0f)
+                    osc2Mod = o.osc2.modulationValue();
                 // Poly-Mod into oscillator A's pitch, exponential like the rest of
                 // its pitch: the filter envelope and oscillator B (this sample's,
                 // osc 2 having run first) set an offset in semitones on freq1.
                 if (params.polyModFEnvOscA > 0.0f || params.polyModOscBOscA > 0.0f)
                     o.osc1.setFrequency(freq1 * std::exp2(
                         (filtVal * params.polyModFEnvOscA * kPmFEnvFreqSemis
-                         + osc2Sample * params.polyModOscBOscA * kPmOscBFreqSemis) * (1.0f / 12.0f)));
+                         + osc2Mod * params.polyModOscBOscA * kPmOscBFreqSemis) * (1.0f / 12.0f)));
                 osc1Sample = params.hardSync ? o.osc1.processSampleSynced(syncPoint(o.osc2))
                                              : o.osc1.processSample();
                 // (OscB->PW poly-mod is applied to osc1's pulse width up in renderOscSet's
                 //  pre-render set, using the 1-sample-delayed osc2 value.)
                 // Band-limited to kRouteHz (see PRE-FILTER).
+                // The cutoff routes read the audio output: it moves the filter that
+                // this same output passes through, so the two stay in step.
                 filterAudioMod = params.polyModOscBFilt > 0.0f
                     ? routeLp[(size_t)u].process(osc2Sample) * params.polyModOscBFilt : 0.0f;
 
@@ -860,6 +879,7 @@ private:
                 osc1Sample = o.osc1.processSample();
                 osc2Sample = params.hardSync ? o.osc2.processSampleSynced(syncPoint(o.osc1))
                                              : o.osc2.processSample();
+                // (Mono has no route that reads osc 2: lastOsc2 stays 0.)
 
                 o.sub.setFrequency(baseFreq);
                 o.sub.setWaveform(params.subWave);
@@ -887,9 +907,11 @@ private:
                 o.osc2.setPulseWidth(params.osc2PulseWidth + pwm2);
                 o.osc2.setDetune(params.osc2Detune + detCents);
                 osc1Sample = o.osc1.processSample();
-                if (params.fmAmount > 0.0f) o.osc2.applyFM(osc1Sample * params.fmAmount * 0.05f);
+                const float osc1Mod = o.osc1.modulationValue();
+                if (params.fmAmount > 0.0f) o.osc2.applyFM(osc1Mod * params.fmAmount * 0.05f);
                 osc2Sample = params.hardSync ? o.osc2.processSampleSynced(syncPoint(o.osc1))
                                              : o.osc2.processSample();
+                osc2Mod = o.osc2.modulationValue();
 
                 o.osc3.setFrequency(baseFreq);
                 o.osc3.setWaveform(params.osc3Wave);
@@ -906,6 +928,8 @@ private:
                 {
                     const float ring = ringModulate(osc1Sample, osc2Sample);
                     osc2Sample = osc2Sample * (1.0f - params.ringMod) + ring * params.ringMod;
+                    // osc 2 -> osc 1 reads the ring-modulated osc 2, as before.
+                    osc2Mod = osc2Mod * (1.0f - params.ringMod) + ringModulate(osc1Mod, osc2Mod) * params.ringMod;
                 }
 
                 mix = osc1Sample * params.osc1Level + osc2Sample * params.osc2Level + osc3Sample + noiseSample;
@@ -934,7 +958,7 @@ private:
             default: break; // Acid handled by the engine's mono path
         }
 
-        lastOsc2[(size_t)u] = osc2Sample;
+        lastOsc2[(size_t)u] = osc2Mod;
         if (activeGain > 1.0f) mix /= activeGain;
         return mix;
     }

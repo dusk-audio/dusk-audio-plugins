@@ -468,6 +468,8 @@ Oracle's mixer noise works the same way: its level and its color are the same at
 
 Hard sync is band-limited at every factor: each restart of the synced oscillator lands exactly where the other one wraps, between samples where it falls between them, and is smoothed like the oscillators' own edges. A synced sound therefore aliases about as little as the same sound without sync, even with oscillator 1's pitch moving under vibrato.
 
+The oscillators in Cosmos, Oracle, Mono and Modular smooth every edge of their waveforms (and every hard-sync restart) with a minimum-phase step at 1x and 2x, so on their own they fold back no more than about 75 dB below the note, even at 1x. That smoothing lands each edge about two internal samples late, which the reported latency already allows for. At 4x they keep the simpler smoothing they always had, which is already that clean there. In Oracle, Mono and Modular the oscillators also pass through a steep low-pass at 18 kHz (a gentler one at 4x) before the filter, so the filter's drive never sees content above hearing. Together these put Oracle's aliasing at the default 2x below that of the instrument it is modeled on.
+
 ### Reported latency
 
 The filter that brings the oversampled voices back to the host rate delays them slightly, by an amount that depends on the oversampling factor. The plugin pads the shorter paths so the delay is the same at every factor, and reports it to the host so plugin delay compensation keeps everything aligned:

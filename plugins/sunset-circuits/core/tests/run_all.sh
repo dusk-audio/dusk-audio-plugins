@@ -74,6 +74,10 @@ if ! python3 ../../daf-plugin/tools/gen_params.py --check; then
     echo "Re-run tools/gen_params.py and commit the result."
     fail=1
 fi
+# MinBlepTable.hpp is generated too (the oscillators' minimum-phase BLEP).
+if ! python3 ../../daf-plugin/tools/gen_minblep.py --check; then
+    fail=1
+fi
 for g in sched pitch env reverb arp arp_seq filter_stability accuracy fx_reenable param_robust \
          lfo_sync modulation lfo_depth cosmos acid stuck sustain handover polyat steal legato \
          zipper user_preset latency drift sync_alias polymod_law noise oracle_alias sync_toggle mono_modular_alias; do
