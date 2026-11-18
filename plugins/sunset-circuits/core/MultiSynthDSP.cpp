@@ -136,7 +136,7 @@ void MultiSynthDSP::prepare(double sampleRate, int maxBlockSize)
     acidVoice.prepare(hostRate * (double)osFactor);
     acidSeq.prepare(hostRate);
     decimL.setFactor(osFactor); decimR.setFactor(osFactor);
-    padL.delay = padR.delay = padFor(osFactor);
+    padL.delay = padR.delay = padFor(osFactor, activeMode);
     // Parameter smoothers advance once per HOST sample (see processBlock), so
     // they are prepared at hostRate regardless of the oversampling factor.
     for (auto* s : { &smGain, &smPanAngle, &smWidth,
@@ -159,7 +159,7 @@ void MultiSynthDSP::applyOsFactor(int factor)
     // the decimators: the samples it holds came from the old path. Both resets are
     // a step in the output, so this runs with the voice path faded to zero
     // (snapshotParameters), or before the first block.
-    padL.delay = padR.delay = padFor(osFactor);
+    padL.delay = padR.delay = padFor(osFactor, activeMode);
     padL.reset(); padR.reset();
 }
 
@@ -545,6 +545,7 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
         // sounding to fade and the host has already set the mode it wants.
         activeMode = requestedMode;
         if (requestedOs != osFactor) applyOsFactor(requestedOs);
+        updateLatencyPad();
         modeSwitchPending = false;
         modeFade = 1.0f;
     }
@@ -553,6 +554,7 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
         activeMode = requestedMode;     // muted: commit (cleanup and the held-note
         modeSwitchPending = false;      // replay run further down)
         if (requestedOs != osFactor) applyOsFactor(requestedOs);
+        updateLatencyPad();             // a mode switch can move the pad (pre-filter)
     }
     else
     {

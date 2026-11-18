@@ -444,8 +444,28 @@ private:
     // 2x by 2, 4x not at all, which lands all three within half a sample of 13.
     // Cost against the old per-factor report: 13 samples (0.27 ms at 48 kHz) at
     // 1x, about 2 at the default 2x, nothing at 4x.
-    static constexpr int padFor(int factor) noexcept
-    { return factor == 4 ? 0 : factor == 2 ? 2 : kLatencySamples; }
+    //
+    // A mode that runs the pre-filter (Voice.hpp, PRE-FILTER) is later by its
+    // group delay, which depends on the internal rate and is fractional (1.1 host
+    // samples at 2x in a 48 kHz session, 2.2 at 1x in a 96 kHz one); its pad gives
+    // that much back, rounded, so it lands on 13 too (#303). The pad therefore
+    // follows the mode as well as the factor; it changes only where both already
+    // reset the path: a factor change, or a mode switch committed at the bottom
+    // of its fade (snapshotParameters).
+    int padFor(int factor, SynthMode mode) const noexcept
+    {
+        const int base = factor == 4 ? 0 : factor == 2 ? 2 : kLatencySamples;
+        const double preFilter = SynthVoice::preFilterDelay(mode, hostRate * (double)factor) / (double)factor;
+        const int pad = base - (int)std::lround(preFilter);
+        return pad > 0 ? pad : 0;
+    }
+    void updateLatencyPad() noexcept
+    {
+        const int d = padFor(osFactor, activeMode);
+        if (d == padL.delay) return;
+        padL.delay = padR.delay = d;
+        padL.reset(); padR.reset();
+    }
     struct LatencyPad
     {
         static constexpr int kSize = 16;   // power of two above the largest pad
