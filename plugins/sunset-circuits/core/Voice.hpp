@@ -155,7 +155,21 @@ struct VoiceParameters
 };
 
 //==============================================================================
-class SynthVoice
+// Cache-line aligned (#303): the allocator keeps its voices in one array, so a
+// voice whose size is not a multiple of 64 bytes starts every voice after the
+// first at a different offset within a cache line, and every member added or
+// removed moves that for all of them. Measured on the core: adding 36 bytes of
+// members slowed Oracle patches by about 4 % through layout alone, and the same
+// build aligned to 64 bytes ran as fast as before. Over-aligned objects need
+// C++17 aligned new: the plugin's DSP lives inside the plugin object, which the
+// framework creates with new (macOS needs a deployment target of 10.13 or later
+// for that; the builds use 10.15 and 11.0). MSVC's C4324 ("structure was padded
+// due to alignment specifier") is exactly what is asked for here.
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4324)
+#endif
+class alignas(64) SynthVoice
 {
 public:
     // Group delay at DC of the pre-filter (see PRE-FILTER), in internal samples,
@@ -1229,6 +1243,9 @@ private:
     float portaTau = kDefaultPortaTau;
     Xorshift rng;
 };
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 
 //==============================================================================
 // Voice allocator: free-first then steal-quietest; unison sub-voice count with
