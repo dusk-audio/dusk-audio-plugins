@@ -294,6 +294,7 @@ public:
         sampleAndHold.reset(); pinkNoise.reset(); oracleNoiseBand.clear();
         for (int i = 0; i < 2; ++i) { preFilterL[i].clear(); preFilterR[i].clear(); }
         for (RbjLowpass& f : routeLp) f.clear();
+        clearOracleRoute();
         for (int u = 0; u < kMaxUnison; ++u)
         {
             osc[u].osc1.resetPhase(); osc[u].osc2.resetPhase();
@@ -647,6 +648,17 @@ public:
         // Oracle Osc-B->Filter and Modular Osc-3->Filter are evaluated from the
         // actual oscillator sample above, at the internal audio rate.  They enter
         // in octaves after the slower envelope/mod-matrix contribution.
+        if (params.mode == SynthMode::Oracle && params.polyModOscBFilt > 0.0f)
+        {
+            // Oscillator B reaches the cutoff through the same band limit as
+            // the signal it modulates. Filtering the unison sum is linear.
+            for (int i = 0; i < preFilterSections; ++i)
+                audioRateFilterMod = oracleRoutePre[i].process(audioRateFilterMod);
+            audioRateFilterMod *= params.polyModOscBFilt;
+            oracleRouteActive = true;
+        }
+        else if (oracleRouteActive)
+            clearOracleRoute();
         const float audioRateOctaves = audioRateFilterMod
             * (params.mode == SynthMode::Modular ? 4.0f : kPmOscBFilterOct);
         const float envModTotal = clampf(
@@ -881,7 +893,7 @@ private:
                 // The cutoff routes read the audio output: it moves the filter that
                 // this same output passes through, so the two stay in step.
                 filterAudioMod = params.polyModOscBFilt > 0.0f
-                    ? routeLp[(size_t)u].process(osc2Sample) * params.polyModOscBFilt : 0.0f;
+                    ? routeLp[(size_t)u].process(osc2Sample) : 0.0f;
 
                 mix = osc1Sample * params.osc1Level + osc2Sample * params.osc2Level + noiseSample;
                 // The noise is NOT part of the level sum: on the instrument, noise at
@@ -1270,17 +1282,26 @@ private:
     }
     void setBandLimits() noexcept
     {
+        clearOracleRoute();
         const PreFilterDesign d = preFilterDesign(sr);
         preFilterSections = d.sections;
         for (int i = 0; i < d.sections; ++i)
         {
             preFilterL[i].set(sr, d.fc, d.q[i]);
             preFilterR[i].set(sr, d.fc, d.q[i]);
+            oracleRoutePre[i].set(sr, d.fc, d.q[i]);
         }
         for (RbjLowpass& f : routeLp)
             f.set(sr, std::min(kRouteHz, 0.45 * sr), 0.70710678118654752);
     }
     RbjLowpass preFilterL[2], preFilterR[2];
+    void clearOracleRoute() noexcept
+    {
+        for (RbjLowpass& f : oracleRoutePre) f.clear();
+        oracleRouteActive = false;
+    }
+    RbjLowpass oracleRoutePre[2];
+    bool oracleRouteActive = false;
     RbjLowpass routeLp[kMaxUnison];
     int preFilterSections = 0;
     // Fixed white-noise density across internal rates; cached on prepare/rate

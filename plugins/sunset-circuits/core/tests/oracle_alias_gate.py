@@ -53,6 +53,7 @@ measured to deliver in its kill test before it was implemented, with at least
     B -> filter    -58.1 -66.3 -68.1      -51.8 -50.8 -48.5     -75.9 -87.6 -89.4
     trumpet        -60.9 -70.8 -75.9      -51.6 -50.4 -49.0     -75.7 -83.9 -82.5
 
+The wheel-up trumpet uses the separate mid-order estimator in wheel_mid_energy.
 C6 sits on the method floor (about -75 dB) in every row now.
 """
 import sys
@@ -60,6 +61,7 @@ import warnings
 
 import numpy as np
 from scipy import signal
+from scipy.interpolate import CubicSpline
 
 from _harness import render
 
@@ -142,9 +144,67 @@ def ier(m, sr, f_nom):
     return 10 * np.log10(P[inh].sum() / P[harm].sum() + 1e-30)
 
 
+def wheel_mid_energy(mono, fs, f0):
+    """Energy midway between harmonics, using the reference wheel-up estimator.
+
+    Track the carrier phase, then refine it six times in cycle coordinates.
+    This follows the corners of triangle vibrato without counting its ordinary
+    close sidebands. The measurement window is 1.0 to 5.5 seconds.
+    """
+    points = 128
+    n = np.arange(len(mono))
+    taps, beta = signal.kaiserord(100.0, 0.30 * f0 / (fs / 2))
+    kernel = signal.firwin(taps | 1, 0.35 * f0, window=("kaiser", beta), fs=fs)
+    carrier = mono * np.exp(-2j * np.pi * f0 * n / fs)
+    phase = np.unwrap(np.angle(signal.fftconvolve(carrier, kernel, mode="same")))
+    cycles = phase / (2 * np.pi) + f0 * n / fs
+    up = 8
+    first, last = int(0.75 * fs), int(5.75 * fs)
+    dense = signal.resample_poly(mono, up, 1, window=("kaiser", 14.0))
+    span = np.arange((first - 16) * up, (last + 16) * up)
+    spline = CubicSpline(span, dense[span])
+
+    def uniform_cycles(start, end):
+        begin = np.ceil(cycles[start])
+        count = int(np.floor(cycles[end]) - begin)
+        indices = np.arange(start, end + 1)
+        t = np.interp(begin + np.arange(count * points) / points, cycles[indices], indices)
+        return spline(t * up), t, count
+
+    taps, beta = signal.kaiserord(100.0, 0.8 / points)
+    taps |= 1
+    kernel = signal.firwin(taps, 0.3 / points, window=("kaiser", beta), fs=1)
+    keep = slice(taps, -taps)
+    for _ in range(6):
+        wave, t, _ = uniform_cycles(first, last)
+        carrier = wave * np.exp(-2j * np.pi * np.arange(len(wave)) / points)
+        error = np.unwrap(np.angle(signal.fftconvolve(carrier, kernel, mode="same")))
+        error -= np.mean(error[keep])
+        cycles[first:last + 1] += np.interp(np.arange(first, last + 1), t[keep], error[keep]) / (2 * np.pi)
+
+    wave, _, count = uniform_cycles(fs, int(5.5 * fs))
+    power = np.abs(np.fft.rfft(wave * signal.windows.blackmanharris(len(wave)))) ** 2
+    order = np.arange(len(power)) / count
+    bend = 2 ** (2 / 12)
+    band = (order >= 50 * bend / f0) & (order <= 16000 / (bend * f0))
+    middle = np.abs(order - np.rint(order)) >= 0.25
+    return 10 * np.log10(2 * power[band & middle].sum() / power[band].sum())
+
+
+def wheel_rows():
+    fails = 0
+    for note, limit in zip(NOTES, (-62.5, -67.7, -70.9)):
+        fs, x = render(1, note, 6.0, DEFAULT_OS, f"oag_wheel_{note}", modwheel=1, **TRUMPET)
+        db = wheel_mid_energy(x.mean(axis=1), fs, hz(note))
+        ok = db <= limit
+        print(f"  trumpet wheel up note {note}  mid {db:.3f} dB  reference {limit:.1f} {'PASS' if ok else 'FAIL'}")
+        fails += not ok
+    return fails
+
+
 def main():
     warnings.filterwarnings("ignore")
-    fails = 0
+    fails = wheel_rows()
     for osf in (DEFAULT_OS, 4):
         for note in NOTES:
             fs, x = render(1, note, 6.0, osf, f"oag_narrow_{osf}_{note}", **NARROW)
