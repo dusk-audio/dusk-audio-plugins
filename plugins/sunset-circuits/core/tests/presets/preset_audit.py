@@ -32,8 +32,6 @@ BIN = os.path.join(HERE, "..", "build", "preset_render")
 # and every user on the box. Same construction as ../_harness.py.
 OUT = os.path.join(tempfile.gettempdir(),
                    f"msynth_presets_{os.getuid()}_{os.getpid()}")
-shutil.rmtree(OUT, ignore_errors=True)
-os.makedirs(OUT, exist_ok=True)
 
 # Bound every preset_render call: a hung binary must fail the audit, not hang CI.
 RENDER_TIMEOUT_S = 120
@@ -55,8 +53,12 @@ def preset_count():
         raise RuntimeError(f"could not parse preset range from preset_render: {msg!r}")
 
 
-def render(index, **kw):
-    path = os.path.join(OUT, f"preset_{index:02d}.wav")
+def render(index, *, output_dir=None, **kw):
+    if output_dir is None:
+        # Keep the WAVs named in the standalone bank report.
+        os.makedirs(OUT, exist_ok=True)
+        output_dir = OUT
+    path = os.path.join(output_dir, f"preset_{index:02d}.wav")
     args = [BIN, str(index), path]
     for k, v in kw.items():
         args.append(f"{k}={v}")
@@ -145,6 +147,7 @@ def audit_one(index):
 
 
 def main():
+    shutil.rmtree(OUT, ignore_errors=True)
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     as_json = "--json" in sys.argv
     n = preset_count()

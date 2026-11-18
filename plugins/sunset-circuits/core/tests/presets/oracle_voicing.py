@@ -6,14 +6,16 @@ at both pitches gave -15.2/-15.9 dB for the horns and -0.3/+0.3 dB for the bells
 The late bell window checks that the long initial ring eventually dies away.
 Upper-register chords exercise factory headroom where key tracking opens the filter.
 """
+from tempfile import TemporaryDirectory
+
 import numpy as np
 from scipy.signal import resample_poly
 
 from preset_audit import PEAK_CLIP_DBFS, SILENCE_DBFS, db, render
 
 
-def check(program, note):
-    rate, audio, _, _ = render(program, perf="single", note=note, vel=100 / 127,
+def check(program, note, output_dir):
+    rate, audio, _, _ = render(program, output_dir=output_dir, perf="single", note=note, vel=100 / 127,
                                bars=1, tempo=369.230769, tail=12.5 if program == 7 else 2.5)
     held = audio[round(.32 * rate):round(.62 * rate)]
     power = np.mean(held ** 2)
@@ -43,8 +45,8 @@ def check(program, note):
     return ok, detail
 
 
-def check_chord_headroom(program, **performance):
-    _, audio, _, _ = render(program, bars=1, tail=0.5, **performance)
+def check_chord_headroom(program, output_dir, **performance):
+    _, audio, _, _ = render(program, output_dir=output_dir, bars=1, tail=0.5, **performance)
     if not np.isfinite(audio).all() or db(np.sqrt(np.mean(audio ** 2))) <= SILENCE_DBFS:
         return False, "silent or invalid chord"
     # Check both the actual samples and the peaks between them.
@@ -53,12 +55,12 @@ def check_chord_headroom(program, **performance):
     return peak <= PEAK_CLIP_DBFS, f"{peak:+.2f} dBTP (limit {PEAK_CLIP_DBFS:g})"
 
 
-if __name__ == "__main__":
+def main(output_dir):
     passed = True
     for program, name in ((22, "Poly Brass"), (5, "Brass Section"),
                           (7, "Poly Mod Bells"), (23, "Glass Bells")):
         for note in (45, 72):
-            ok, detail = check(program, note)
+            ok, detail = check(program, note, output_dir)
             print(f"{'PASS' if ok else 'FAIL'} {name}, MIDI {note}: {detail}")
             passed = passed and ok
 
@@ -68,7 +70,12 @@ if __name__ == "__main__":
         for label, performance in (
                 (f"chord rooted at MIDI {root}", dict(perf="chord", note=root, vel=100 / 127)),
                 (f"five held notes {ninth}", dict(perf="hold", hold=ninth, vel=1))):
-            ok, detail = check_chord_headroom(program, **performance)
+            ok, detail = check_chord_headroom(program, output_dir, **performance)
             print(f"{'PASS' if ok else 'FAIL'} {name}, {label}: {detail}")
             passed = passed and ok
-    raise SystemExit(0 if passed else 1)
+    return 0 if passed else 1
+
+
+if __name__ == "__main__":
+    with TemporaryDirectory() as directory:
+        raise SystemExit(main(directory))
