@@ -34,6 +34,8 @@
 #include "FMEngine.hpp"        // Prism mode (mode 4): 4-op FM osc section
 #include "DuskSmoothed.hpp"
 
+#include <bitset>
+
 namespace msynth
 {
 
@@ -813,7 +815,7 @@ private:
 
         // Cross mod (fix #4): osc2 (previous sample) -> osc1 frequency, linear FM of
         // 2880 Hz x amount. Cosmos exposes it beside osc 1 and Oracle in
-        // the Poly-Mod panel. Poly Mod Bells and Glass Bells use this route.
+        // the Poly-Mod panel.
         if (params.crossMod > 0.0f
             && (params.mode == SynthMode::Cosmos || params.mode == SynthMode::Oracle))
             o.osc1.applyFM(lastOsc2[(size_t)u] * params.crossMod * 0.03f);
@@ -1327,6 +1329,7 @@ class VoiceAllocator
 public:
     void prepare(double sampleRate) noexcept
     {
+        assignedThisSample.reset();
         for (int i = 0; i < kMaxPolyphony; ++i)
             voices[(size_t)i].prepare(sampleRate, 0x1000u + 0x1000u * (uint32_t)i);
         voiceGain.prepare(sampleRate, kParamSmoothTau);
@@ -1334,6 +1337,7 @@ public:
     }
     void reset() noexcept
     {
+        assignedThisSample.reset();
         for (auto& v : voices) v.reset();
         snapVoiceGain();
     }
@@ -1437,24 +1441,33 @@ public:
     SynthVoice* noteOn(int note, float velocity, const VoiceParameters& params) noexcept
     {
         const int poly = effectivePoly();
-        for (int i = 0; i < poly; ++i)
-            if (!voices[(size_t)i].isActive()) { voices[(size_t)i].noteOn(note, velocity, params); return &voices[(size_t)i]; }
-
-        int quietest = 0;
+        int slot = 0;
+        bool bestIsNewAttack = true;
         float quietestLevel = 1.0e9f;
         for (int i = 0; i < poly; ++i)
         {
-            float level = voices[(size_t)i].getCurrentLevel();
-            if (voices[(size_t)i].isReleasing()) level *= 0.1f;
-            if (level < quietestLevel) { quietestLevel = level; quietest = i; }
+            const auto& voice = voices[(size_t)i];
+            if (!voice.isActive()) { slot = i; break; }
+
+            // Before the first sample an attack can still read zero. Let an Oracle
+            // chord use older slots first, even when they have louder release tails.
+            const bool newAttack = params.mode == SynthMode::Oracle
+                                && assignedThisSample[(size_t)i] && voice.isGateHeld();
+            float level = voice.getCurrentLevel();
+            if (voice.isReleasing()) level *= 0.1f;
+            if ((bestIsNewAttack && !newAttack) || (newAttack == bestIsNewAttack && level < quietestLevel))
+            {
+                slot = i;
+                bestIsNewAttack = newAttack;
+                quietestLevel = level;
+            }
         }
         // No release before the new note: SynthVoice::noteOn either ties to the
         // stolen note (legato, still held) or restarts every envelope from its
         // current level, which is the click-free hand-off on its own. The release
         // this used to issue first was what turned every legato steal into a tie
         // to a dying note.
-        voices[(size_t)quietest].noteOn(note, velocity, params);
-        return &voices[(size_t)quietest];
+        return startVoice(slot, note, velocity, params);
     }
 
     // The voice, below the polyphony limit, that holds `note` with its gate still
@@ -1477,7 +1490,7 @@ public:
     {
         const int i = findHeld(from);
         if (i < 0) return false;
-        voices[(size_t)i].noteOn(to, velocity, params);
+        startVoice(i, to, velocity, params);
         return true;
     }
 
@@ -1524,6 +1537,7 @@ public:
     void renderInternalSample(const VoiceParameters& params, const ModMatrix& matrix,
                               float& outL, float& outR, float& effectsMixModOut) noexcept
     {
+        assignedThisSample.reset();
         outL = outR = 0.0f;
         // The headroom trim is a TARGET, not a value: effectivePoly() changes on a
         // unison or mode-budget edge, and stepping 2/sqrt(poly) there jumps the
@@ -1554,6 +1568,14 @@ public:
     }
 
 private:
+    SynthVoice* startVoice(int slot, int note, float velocity, const VoiceParameters& params) noexcept
+    {
+        auto& voice = voices[(size_t)slot];
+        assignedThisSample[(size_t)slot] = true;
+        voice.noteOn(note, velocity, params);
+        return &voice;
+    }
+
     // Constant-power headroom referenced to a 4-voice sum: 2/sqrt(poly), clamped
     // to unity. The old 1/(1+log2(poly)) cost a 6-voice mode 11 dB even when ONE
     // note sounded, which made every poly preset audibly quieter than the
@@ -1574,6 +1596,7 @@ private:
     float polyTrim = 1.0f;
     int modeVoices = 6;
     int unisonCount = 1;
+    std::bitset<kMaxPolyphony> assignedThisSample;
 };
 
 } // namespace msynth
