@@ -82,10 +82,10 @@ private:
 class TPTFourPole
 {
 public:
-    void prepare(double sampleRate) noexcept
+    void prepare(double sampleRate, float couplingHz = 5.0f) noexcept
     {
         sr = (float)sampleRate;
-        dcCoeff = std::exp(-kTwoPi * 5.0f / sr);
+        dcCoeff = std::exp(-kTwoPi * couplingHz / sr);
         reset();
     }
 
@@ -240,7 +240,7 @@ class OracleFilter
 public:
     void prepare(double sampleRate) noexcept
     {
-        lpf.prepare(sampleRate);
+        lpf.prepare(sampleRate, 2.4f);
         lpf.configure(4.46f, 1.08f, 0.90f, 0.72f, 0.10f, 0.96f);
     }
     void setParameters(float cutoffHz, float resonance) noexcept

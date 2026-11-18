@@ -134,8 +134,6 @@ void MultiSynthDSP::prepare(double sampleRate, int maxBlockSize)
     arp.prepare(hostRate);
     meterDecay = std::exp(-1.0f / (0.3f * (float)hostRate));
     modeFadeStep = 1.0f / (float)(kModeFadeSeconds * hostRate);
-    dcBlockL.setSampleRate(hostRate);
-    dcBlockR.setSampleRate(hostRate);
     // Full voice init at the default internal rate; later factor changes use the
     // musical-state-preserving setSampleRate path (see applyOsFactor).
     voices.prepare(hostRate * (double)osFactor);
@@ -548,6 +546,7 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
     // notes and pitch through it.
     const SynthMode requestedMode = (SynthMode)clampi((int)p(pMode), 0, 5);
     const int requestedOs = factorForSetting((int)p(pOversampling), hostRate);
+    const SynthMode previousMode = activeMode;
     if (!haveLastSnap)
     {
         // First snapshot after prepare/reset: adopt outright, there is nothing
@@ -570,6 +569,14 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
         // Starts a fade on a new request, and cancels one whose request was
         // reverted before it finished.
         modeSwitchPending = (requestedMode != activeMode) || (requestedOs != osFactor);
+    }
+    if (!haveLastSnap || activeMode != previousMode)
+    {
+        // Together with the 2.4 Hz voice pole, this reproduces the two stages
+        // of the measured closed-pulse decay. Other modes keep their 20 Hz pole.
+        const float corner = activeMode == SynthMode::Oracle ? 2.0f : 20.0f;
+        dcBlockL.setSampleRate(hostRate, corner);
+        dcBlockR.setSampleRate(hostRate, corner);
     }
     vp.mode = activeMode;
 

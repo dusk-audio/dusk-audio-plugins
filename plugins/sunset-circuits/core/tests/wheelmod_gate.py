@@ -211,6 +211,33 @@ def closed_ratio_db(x, fs, t_from=0.5, win=0.02):
     return 20 * np.log10(rh / max(rl, 1e-12))
 
 
+def closure_decay_ms(x, fs):
+    # At A3 the open pulse has two large edges per cycle. A gap of half a
+    # second marks a closed half-cycle. Average in 1 ms bins to read its DC tail.
+    width = round(0.001 * fs)
+    mono = x.mean(axis=1)
+    bins = mono[:len(mono) // width * width].reshape(-1, width)
+    spans = np.ptp(bins, axis=1)
+    edges = np.flatnonzero(spans > 0.2 * np.percentile(spans, 99))
+    if not edges.size:
+        return []
+    ends = np.append(edges[1:], len(bins))
+    result = []
+    for start in edges[(ends - edges) * width > 0.5 * fs] + 1:
+        if start * width < 0.5 * fs:
+            continue
+        means = bins[start:start + 100].mean(axis=1)
+        if abs(means[0]) < 1e-9:
+            continue
+        tail = means / means[0]
+        below = np.flatnonzero(tail <= np.exp(-1.0))
+        if len(below):
+            k = below[0]
+            frac = (tail[k - 1] - np.exp(-1.0)) / (tail[k - 1] - tail[k])
+            result.append((k - 1 + frac) * width * 1000.0 / fs)
+    return result
+
+
 def check_pw_filter():
     pulse = dict(CARRIER_A, osc1Wave=4, filterCutoff=20000)
     fs, x = render(1, 57, 14.0, 2, "wm_pw32", osc1PW=0.10, wheelPwA=1, wheelLfoTri=0, wheelLfoSquare=1,
@@ -224,6 +251,12 @@ def check_pw_filter():
     drop = closed_ratio_db(x, fs)
     report("pw", 30.6 <= drop <= 41.9, f"50 % pulse + square at full wheel: the over-the-top half reads {drop:.2f} dB "
            f"down (reference 33.25 .. 39.27 dB over seven realizations; pass 30.6 .. 41.9)")
+    # Fourteen closures in seven reference captures: 31.30..36.16 ms. Allow
+    # one 1 ms analysis bin on each side, fixed before reading Oracle.
+    times = closure_decay_ms(x, fs)
+    report("coupling", len(times) == 2 and all(30.29 <= t <= 37.16 for t in times),
+           f"closed pulse, time to 1/e: {[round(float(t), 2) for t in times]} ms "
+           "(reference 31.30 .. 36.16 ms)")
     selfosc = dict(osc1Level=0, osc2Level=0, noiseLevel=0.001, filterRes=1, filterCutoff=300,
                    filterEnvAmt=0, analogAmt=0, ampA=0.005, ampS=1, unisonVoices=1)
     fs, x = render(1, 57, 14.0, 2, "wm_filt16", wheelFilter=1, wheelLfoTri=0, wheelLfoSquare=1,
