@@ -135,7 +135,9 @@ The signature of Oracle is poly-modulation. The mode sub-panel is a six-knob **P
 - **OscB to Filter**: oscillator 2 moves the filter cutoff at audio rate, up to 3.1 octaves either way at full, for growling and metallic filter FM.
 - **Sync**: oscillator 2 hard-syncs oscillator 1. Each time oscillator 2 starts a cycle it restarts oscillator 1, creating swept harmonic edges when their pitches differ. This is the reverse of Mono and Modular, as on the instrument Oracle is modeled on: oscillator 1 is the one Poly-Mod plays, and with Sync on, modulating its pitch (from the filter envelope, oscillator 2 or the mod matrix) sweeps its timbre while the note keeps oscillator 2's pitch.
 
-Mode-specific controls visible in Oracle: the six poly-mod knobs, the **Sync** button, and the **WHEEL MOD** button next to **MOD MATRIX**, which opens Oracle's Wheel Mod section (see [Wheel Mod (Oracle)](#wheel-mod-oracle)). There is no sub oscillator and no filter high-pass in this mode; the third panel on the left reads **AUX OSC** with a note that Oracle uses its two-oscillator poly-mod path instead.
+**Cross Mod** in the Poly-Mod panel applies linear frequency modulation from oscillator 2 to oscillator 1. Poly Mod Bells uses 50 percent and Glass Bells uses 60 percent for their metallic attack. Dial in this knob to recreate that part of either patch.
+
+Mode-specific controls visible in Oracle: the six poly-mod routing knobs, **Cross Mod**, the **Sync** button, and the **WHEEL MOD** button next to **MOD MATRIX**, which opens Oracle's Wheel Mod section (see [Wheel Mod (Oracle)](#wheel-mod-oracle)). There is no sub oscillator and no filter high-pass in this mode; the third panel on the left reads **AUX OSC** with a note that Oracle uses its two-oscillator poly-mod path instead.
 
 ### Mono: aggressive monophonic
 
@@ -205,7 +207,7 @@ The pattern itself lives in the sequencer, which expands to four lanes in Acid m
 | Osc 3 wave and level | no | no | no | yes | no | no |
 | Sub wave and level | yes | no | yes | no | no | no |
 | Filter HP | yes | no | no | no | no | no |
-| Cross Mod | yes | no | no | no | no | no |
+| Cross Mod | yes | yes | no | no | no | no |
 | Poly-mod (6 knobs) | no | yes | no | no | no | no |
 | Ring Mod | no | no | yes | yes | no | no |
 | Hard Sync | no | yes | yes | yes | no | no |

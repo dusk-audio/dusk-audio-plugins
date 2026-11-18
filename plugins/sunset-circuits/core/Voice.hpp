@@ -812,10 +812,8 @@ private:
         o.osc1.setDetune(params.osc1Detune + detCents);
 
         // Cross mod (fix #4): osc2 (previous sample) -> osc1 frequency, linear FM of
-        // 2880 Hz x amount. The panel shows it only in Cosmos. Oracle runs it too
-        // but hides it: it is the old osc B -> freq A law, kept as a factory-only
-        // setting for Poly Mod Bells and Glass Bells (#303). Every preset keeps
-        // crossMod=0 in the other modes, so renders there are unchanged.
+        // 2880 Hz x amount. Cosmos exposes it beside osc 1 and Oracle in
+        // the Poly-Mod panel. Poly Mod Bells and Glass Bells use this route.
         if (params.crossMod > 0.0f
             && (params.mode == SynthMode::Cosmos || params.mode == SynthMode::Oracle))
             o.osc1.applyFM(lastOsc2[(size_t)u] * params.crossMod * 0.03f);

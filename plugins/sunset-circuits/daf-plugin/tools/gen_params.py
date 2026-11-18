@@ -253,15 +253,13 @@ BASE = {
 # The five presets with FEnv -> freq A use 34.7 / 33.908138 times their
 # previous amounts to preserve the envelope pitch excursion.
 #
-# Poly Mod Bells and Glass Bells keep their clang through the hidden Cross Mod
+# Poly Mod Bells and Glass Bells keep their clang through the Cross Mod
 # parameter instead of osc B -> freq A (owner ruling 2026-11-17): Cross Mod is
 # the old osc B -> freq A law (linear FM, 2880 Hz x amount), so it takes the
 # bells' old amounts (0.5, 0.6) and renders that path exactly as before (0.00 dB
 # with filter-envelope -> freq A off on both sides). Filter-envelope -> freq A
 # was refitted on the new law; distance to the previous-law render 6.8 -> 2.9 dB
-# and 5.5 -> 3.1 dB, all of it the filter-envelope pitch swoop. Cross Mod is not
-# shown on Oracle's panel, so these two presets carry a setting users cannot
-# see there.
+# and 5.5 -> 3.1 dB, all of it the filter-envelope pitch swoop. Oracle's Poly-Mod panel exposes the Cross Mod amount.
 # Mono and Modular no longer count the noise in the mixer's level sum (#303,
 # 2026-11-17), so noise stops turning the oscillators down. The four presets
 # whose levels added up past 1 with their noise (Sub Thunder, Alien Transmission,

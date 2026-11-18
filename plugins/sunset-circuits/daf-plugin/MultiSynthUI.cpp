@@ -1980,8 +1980,7 @@ private:
     {
         const OscGeom g1 = oscGeom(60.0f), g2 = oscGeom(165.0f), g3 = oscGeom(270.0f);
 
-        // OSC 1: DETUNE / PW / LEVEL, plus Cosmos X-MOD. Oracle routes OSC 2 into
-        // OSC 1's pitch through its Poly-Mod panel, so X-MOD is not shown there.
+        // Cosmos places X-MOD beside OSC 1. Oracle places it below the Poly-Mod routes.
         panelBox(16, g1.y0, 340, g1.y1, 1.0f, kCosmosRed, 26.0f);
         sectionTitle(24, g1.rowY + 4.0f, "OSC 1");
         oracleTitleRowGap(150, g1.comboY1, g1.y0, 340);
@@ -1999,9 +1998,6 @@ private:
                       "Acid has a fixed oscillator gain; OSC 1 level is not used.");
         else
             knob("o1lvl", kParamOsc1Level, 200, g1.cy, kOscR, "%.0f", " %", false, false, false, 100.0f);
-        // X-MOD (linear FM of osc 1 by osc 2) is Cosmos's. Oracle's Poly-Mod OSC 2 ->
-        // OSC 1 is a different law (exponential, up to +-7.5 semitones), and Voice.hpp
-        // still applies a stored X-MOD in Oracle, which no factory preset sets.
         if (curMode == 0)
         { klabel(285, g1.labelY, "X-MOD"); knob("xmod", kParamCrossMod, 285, g1.cy, kOscR, "%.0f", " %", false, false, false, 100.0f); }
 
@@ -2676,7 +2672,7 @@ private:
 
         // Two hardware sources, each able to reach all three destinations.
         constexpr float dividerX = 883.0f;
-        dl->AddLine(P(dividerX, 350), P(dividerX, 450),
+        dl->AddLine(P(dividerX, 350), P(dividerX, 417),
                     mulA(lerpC(live.textPanel, live.panel, 0.68f), a), 1.0f * s);
         text(825, 350, 9.5f, mulA(live.textPanel, a), "FILTER ENV", 0, true);
         text(943, 350, 9.5f, mulA(live.textPanel, a), "OSC 2", 0, true);
@@ -2703,13 +2699,28 @@ private:
             else    ghostKnob(pp[i], cx[i], cy, 14, a);
             text(cx[i], 410, 8.5f, mulA(whiteDimCol(), a), dest[i], 0, true);
         }
-        compactToggle("oracle_sync", kParamHardSync, 850, 427, 916, 449,
-                      "SYNC", it, a);
-        // Oracle's sync runs osc 2 -> osc 1: osc 2 is the master and restarts osc 1,
-        // the reverse of Mono and Modular (manual, Oracle: Sync). The arrow reads as
-        // in the face's other routing labels, from the oscillator that acts to the
-        // one it acts on.
-        text(956, 438, 8.5f, mulA(whiteDimCol(), a), "OSC 2 \xE2\x86\x92 OSC 1", 0, true);
+        // The two bell presets use linear FM here. Keep it distinct from
+        // the exponential OSC 2 -> OSC 1 pitch route in the row above.
+        constexpr float crossX = 785.0f, crossY = 438.0f, crossRadius = 12.0f;
+        constexpr float legendSize = 20.0f, valueSize = 22.0f;
+        bool showValue = false;
+        if (it)
+        {
+            knob("oracle_cross_mod", kParamCrossMod, crossX, crossY, crossRadius,
+                 "%.0f", " %", false, false, false, 100.0f);
+            showValue = ImGui::IsItemHovered() || ImGui::IsItemActive();
+        }
+        else ghostKnob(kParamCrossMod, crossX, crossY, crossRadius, a);
+        char amount[24];
+        if (showValue) fmtVal(amount, sizeof amount, kParamCrossMod, "%.0f", " %", 100.0f, 0.0f);
+        const float size = showValue ? std::max(valueSize, 17.0f / s)
+                                     : std::max(legendSize, 16.0f / s);
+        const char* legend = size > legendSize ? "X-MOD" : "CROSS MOD";
+        text(805, crossY - 0.5f * size, size, mulA(live.textPanel, a),
+             showValue ? amount : legend, -1);
+
+        compactToggle("oracle_sync", kParamHardSync, 924, 423, 984, 441, "SYNC", it, a);
+        text(954, 445, 8.5f, mulA(whiteDimCol(), a), "OSC 2 \xE2\x86\x92 OSC 1", 0, true);
     }
     void drawSubMono(float a, bool it)
     {
