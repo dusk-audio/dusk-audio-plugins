@@ -34,7 +34,21 @@ inline int choiceIndex(float hostValue, int count) noexcept
 inline constexpr float kDesignWidth = 1120.0f;
 inline constexpr float kDesignHeight = 380.0f;
 
-// The mode row under the header: the eight mode tabs, then AUTO MAKEUP, BYPASS and SETTINGS (16 px captions).
+// A host that builds the editor into a window of its own defines MULTICOMP2_EMBEDDED_UI to 1 for every source of its
+// copy. The title, the presets, the settings and the window's size are that host's: the editor draws no header, no
+// SETTINGS and no resize grip, and its window is the canvas from the header's foot down, the mode row at the top.
+// Canvas coordinates are the plug-in's in both builds, so every face is laid out and drawn the same.
+#if defined(MULTICOMP2_EMBEDDED_UI) && MULTICOMP2_EMBEDDED_UI
+inline constexpr bool kEmbeddedUi = true;
+#else
+inline constexpr bool kEmbeddedUi = false;
+#endif
+inline constexpr float kHeaderHeight = 44.0f;                             // the title row
+inline constexpr float kCanvasTop = kEmbeddedUi ? kHeaderHeight : 0.0f;   // the canvas y at the window's top edge
+inline constexpr float kWindowHeight = kDesignHeight - kCanvasTop;        // the window's design height
+
+// The mode row under the header: the mode tabs, then AUTO MAKEUP, BYPASS and SETTINGS (16 px captions). A tab's slot
+// is its mode, unless a host narrows the modes on offer (modeTabSlot).
 struct ModeRowLayout
 {
     static constexpr float y0 = 46.0f, y1 = 70.0f;
@@ -42,7 +56,7 @@ struct ModeRowLayout
     static constexpr float autoMakeupX0 = 790.0f, autoMakeupX1 = 912.0f;
     static constexpr float bypassX0 = 918.0f, bypassX1 = 1004.0f;
     static constexpr float settingsX0 = 1010.0f, settingsX1 = kDesignWidth - 16.0f;
-    static constexpr float tabX0(int mode) noexcept { return tabLeft + static_cast<float>(mode) * (tabWidth + tabGap); }
+    static constexpr float tabX0(int slot) noexcept { return tabLeft + static_cast<float>(slot) * (tabWidth + tabGap); }
     static constexpr float centreY = 0.5f * (y0 + y1);
 };
 
@@ -286,6 +300,26 @@ inline constexpr std::array<const char*, 8> kModeTabLabels{{
     "OPTO", "FET BLACK", "VCA", "BUS", "FET BLUE", "STUDIO VCA", "DIGITAL", "MULTIBAND"}};
 static_assert(kModeTabLabels.size() == sizeof(kModes) / sizeof(kModes[0]),
               "one toolbar caption per mode");
+
+// The modes a host lets the mode row offer (multiCompSetHostFaces): bit n is mode n, and no bit at all is every mode.
+inline constexpr uint32_t kAllModeFaces = (1u << kModeTabLabels.size()) - 1u;
+constexpr uint32_t allowedModeFaces(uint32_t mask) noexcept
+{
+    return (mask & kAllModeFaces) != 0u ? mask & kAllModeFaces : kAllModeFaces;
+}
+
+// The slot of `mode`'s tab in the mode row (ModeRowLayout::tabX0): the allowed modes in their usual order, from the
+// left. -1 where the mode has no tab: it is not allowed, or it is the only one that is.
+constexpr int modeTabSlot(uint32_t mask, int mode) noexcept
+{
+    const uint32_t faces = allowedModeFaces(mask);
+    if (mode < 0 || mode >= static_cast<int>(kModeTabLabels.size())) return -1;
+    if ((faces & (1u << mode)) == 0u || (faces & (faces - 1u)) == 0u) return -1;
+    int slot = 0;
+    for (int earlier = 0; earlier < mode; ++earlier)
+        slot += static_cast<int>((faces >> earlier) & 1u);
+    return slot;
+}
 
 inline float vcaSidechainSwitchTarget(bool currentlyEngaged,
                                       float currentHostValue,
@@ -638,7 +672,13 @@ namespace
 {
 constexpr float kDesignW = multicompp::ui_detail::kDesignWidth;
 constexpr float kDesignH = multicompp::ui_detail::kDesignHeight;
-constexpr float kHeaderH = 44.0f;   // the title row
+constexpr float kHeaderH = multicompp::ui_detail::kHeaderHeight;   // the title row
+// The window in design px, and the canvas y at its top edge: the whole canvas, unless a host embeds the editor.
+constexpr bool kEmbedded = multicompp::ui_detail::kEmbeddedUi;
+constexpr float kWindowH = multicompp::ui_detail::kWindowHeight;
+constexpr float kCanvasTop = multicompp::ui_detail::kCanvasTop;
+static_assert(DAF_UI_DEFAULT_WIDTH == static_cast<int>(kDesignW) && DAF_UI_DEFAULT_HEIGHT == static_cast<int>(kWindowH),
+              "the editor opens at the window's design size (DafPluginInfo.h)");
 // The mode row under the header, and the face area under it (design coordinates).
 constexpr float kModeRowY0 = multicompp::ui_detail::ModeRowLayout::y0;
 constexpr float kModeRowY1 = multicompp::ui_detail::ModeRowLayout::y1;
@@ -783,7 +823,7 @@ public:
                 [](const multicompp::Param& d) { return multicompp::hostDefault(d); },
                 [](const multicompp::BandParam& d, int) { return multicompp::hostDefault(d); });
 
-        setGeometryConstraints(static_cast<uint32_t>(kDesignW), static_cast<uint32_t>(kDesignH), true);
+        setGeometryConstraints(static_cast<uint32_t>(kDesignW), static_cast<uint32_t>(kWindowH), true);
         // The family's face, Barlow Condensed, bundled (owner 2026-11-06: one face on every OS, as Tape Echo 2 and
         // DuskVerb 2). The type scale (owner direction 2026-11-05) in SemiBold, at the launch scale factor: 16
         // legends, 17 values, 20 sections and hero legends, 14 the version line and meter scales, 13 small print,
@@ -810,7 +850,8 @@ public:
         if (ImFont* const face = fontSets[1].primary())
             ImGui::GetIO().FontDefault = face;
         vcaLastScHp = hostValueForPlain(P_SC_HP, kVcaPullScFirstHz);
-        scanUserPresets();
+        if (!kEmbedded)
+            scanUserPresets();
     }
 
     ~MultiCompUI() override { finishTrackedEdits(true); }
@@ -899,9 +940,9 @@ protected:
 
         const float winW = static_cast<float>(getWidth());
         const float winH = static_cast<float>(getHeight());
-        const float scale = std::min(winW / kDesignW, winH / kDesignH);
+        const float scale = std::min(winW / kDesignW, winH / kWindowH);
         const ImVec2 origin((winW - kDesignW * scale) * 0.5f,
-                            (winH - kDesignH * scale) * 0.5f);
+                            (winH - kWindowH * scale) * 0.5f - kCanvasTop * scale);
         panel.begin(scale, origin, labelFont, this);
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
@@ -925,7 +966,8 @@ protected:
         const bool modalOpen = showSupporters;
         if (modalOpen)
             ImGui::BeginDisabled();
-        drawHeader(dl);
+        if (!kEmbedded)
+            drawHeader(dl);
         drawModeRow(dl);
 
         // The settings drawer is modal to the face under it: the face stays drawn but takes no input, and the
@@ -940,16 +982,17 @@ protected:
         if (modalOpen)
             ImGui::EndDisabled();
 
-        // Overlays and the resize grip live in the design canvas.
+        // Overlays and the resize grip live in the design canvas. An embedding host has neither.
 
         // Every frame, open or not: after a click closes it, it still blocks the face for a double-click time.
-        duskdaf::drawSupportersOverlay(panel, dl, kDesignW, kDesignH, showSupporters,
-                                       "Multi-Comp 2", MULTICOMP2_VERSION_STRING,
-                                       &supporters);
+        if (!kEmbedded)
+            duskdaf::drawSupportersOverlay(panel, dl, kDesignW, kDesignH, showSupporters,
+                                           "Multi-Comp 2", MULTICOMP2_VERSION_STRING,
+                                           &supporters);
 
         // The design size is the minimum. With the drawer open the grip is the drawer's (drawSettingsDrawer).
         duskdaf::ResizeGripState grip;
-        if (!drawerOpen)
+        if (!drawerOpen && !kEmbedded)
             grip = panel.resizeGrip(dl, winW, winH, kDesignW, kDesignH, 1.0f);
         ImGui::End();
         if (drawerOpen)
@@ -1531,7 +1574,8 @@ private:
     }
 
     // The mode row under the header, in design coordinates: the eight mode tabs, then AUTO MAKEUP, BYPASS and
-    // SETTINGS (the drawer). 16 px captions, the legend floor at the minimum window.
+    // SETTINGS (the drawer). 16 px captions, the legend floor at the minimum window. A host that embeds the editor
+    // can narrow the tabs (hostFaces) and has no SETTINGS.
     void drawModeRow(ImDrawList* dl)
     {
         constexpr int modeCount = static_cast<int>(
@@ -1540,9 +1584,12 @@ private:
                       "the mode row layout must be revisited when modes change");
         using Row = multicompp::ui_detail::ModeRowLayout;
         const int selected = multicompp::ui_detail::choiceIndex(value(P_MODE), 8);
+        const uint32_t faces = hostFaces();
         for (int mode = 0; mode < modeCount; ++mode)
         {
-            const float x0 = Row::tabX0(mode);
+            const int slot = multicompp::ui_detail::modeTabSlot(faces, mode);
+            if (slot < 0) continue;
+            const float x0 = Row::tabX0(slot);
             char id[32];
             std::snprintf(id, sizeof(id), "##mc_mode_button_%d", mode);
             const bool active = mode == selected;
@@ -1558,8 +1605,17 @@ private:
         // manual makeup / output control; it needs a switch the user can see.
         modeRowToggle(dl, "mc_auto_makeup", P_AUTO_MAKEUP, Row::autoMakeupX0, Row::autoMakeupX1, "AUTO MAKEUP");
         modeRowToggle(dl, "mc_bypass", P_BYPASS, Row::bypassX0, Row::bypassX1, "BYPASS");
-        if (rowTab(dl, "##mc_settings", Row::settingsX0, Row::settingsX1, "SETTINGS", showSettings))
+        if (!kEmbedded && rowTab(dl, "##mc_settings", Row::settingsX0, Row::settingsX1, "SETTINGS", showSettings))
             showSettings = !showSettings;
+    }
+
+    // The modes the mode row offers: every one, unless a host that builds the plug-in into its own binary narrowed
+    // them (multiCompSetHostFaces). A UI without the plugin instance (split LV2) offers every mode.
+    uint32_t hostFaces() const
+    {
+        void* const instance = getPluginInstancePointer();
+        return instance != nullptr && multiCompGetHostFaces != nullptr
+            ? multiCompGetHostFaces(instance) : multicompp::ui_detail::kAllModeFaces;
     }
 
     // A mode-row tab (or a button in its style, y0..y1): lit while `active`, a 16 px caption. True when clicked.
