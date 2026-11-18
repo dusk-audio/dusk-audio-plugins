@@ -99,6 +99,11 @@ namespace
         IM_COL32(0, 0, 0, 140), IM_COL32(0, 0, 0, 255),
     };
 
+    // The face's dark control ground and its edge: compact toggles, the Acid step
+    // display and the Wheel Mod panel's buttons and rail.
+    const ImU32 kCtlGround = hx(0x26272B);
+    const ImU32 kCtlEdge   = hx(0x5B5D63);
+
     // Version chip under the "Dusk Audio" byline. Middle dot, not an em dash:
     // the crisp atlas is baked over Latin-1 and U+2014 draws as a "?" box.
     const char* const kVerLabel = "\xC2\xB7 v" SC_VERSION_STRING;
@@ -660,6 +665,15 @@ private:
         const float px = sz * s;
         ImFont* const f = panel.pickFont(px);
         return f->CalcTextSizeA(px, FLT_MAX, 0.0f, t).x / s;
+    }
+
+    // Baseline offset of the face picked for `sz`, in DESIGN units: puts text of two
+    // sizes on one baseline (text() places the top of the line).
+    float ascent(float sz) const
+    {
+        const float px = sz * s;
+        const ImFont* const f = panel.pickFont(px);
+        return f->Ascent * (px / f->FontSize) / s;
     }
 
     // sheet = false: a modal panel (an overlay), not a section of the face. It keeps
@@ -1327,11 +1341,11 @@ private:
                 ImGui::SetTooltip("%s", tips[p]);
         }
 
-        const ImU32 offBg = IM_COL32(38, 39, 43, 255);
+        const ImU32 offBg = kCtlGround;
         dl->AddRectFilled(b0, b1, mulA(on ? lerpC(offBg, live.accent, 0.20f) : offBg, alpha),
                           0.5f * (y1 - y0) * s);
         dl->AddRect(b0, b1,
-                    mulA(on ? live.accent : IM_COL32(91, 93, 99, 255), alpha),
+                    mulA(on ? live.accent : kCtlEdge, alpha),
                     0.5f * (y1 - y0) * s, 0, 1.2f * s);
         const float cy = 0.5f * (y0 + y1);
         const ImVec2 lc = P(x0 + 9.0f, cy);
@@ -1966,9 +1980,8 @@ private:
     {
         const OscGeom g1 = oscGeom(60.0f), g2 = oscGeom(165.0f), g3 = oscGeom(270.0f);
 
-        // OSC 1 — DETUNE / PW / LEVEL, plus Cosmos X-MOD. Oracle's defining
-        // OSC 2 -> OSC 1 routing belongs exclusively to its Poly-Mod panel; showing
-        // X-MOD here as well exposed two controls for effectively the same route.
+        // OSC 1: DETUNE / PW / LEVEL, plus Cosmos X-MOD. Oracle routes OSC 2 into
+        // OSC 1's pitch through its Poly-Mod panel, so X-MOD is not shown there.
         panelBox(16, g1.y0, 340, g1.y1, 1.0f, kCosmosRed, 26.0f);
         sectionTitle(24, g1.rowY + 4.0f, "OSC 1");
         oracleTitleRowGap(150, g1.comboY1, g1.y0, 340);
@@ -1986,8 +1999,9 @@ private:
                       "Acid has a fixed oscillator gain; OSC 1 level is not used.");
         else
             knob("o1lvl", kParamOsc1Level, 200, g1.cy, kOscR, "%.0f", " %", false, false, false, 100.0f);
-        // Cross-mod is the Cosmos oscillator treatment. Oracle exposes its
-        // equivalent routing in the dedicated Poly-Mod panel below the LFOs.
+        // X-MOD (linear FM of osc 1 by osc 2) is Cosmos's. Oracle's Poly-Mod OSC 2 ->
+        // OSC 1 is a different law (exponential, up to +-7.5 semitones), and Voice.hpp
+        // still applies a stored X-MOD in Oracle, which no factory preset sets.
         if (curMode == 0)
         { klabel(285, g1.labelY, "X-MOD"); knob("xmod", kParamCrossMod, 285, g1.cy, kOscR, "%.0f", " %", false, false, false, 100.0f); }
 
@@ -3064,14 +3078,16 @@ private:
         char cnt[24]; std::snprintf(cnt, sizeof(cnt), "%d active", activeModSlots());
         text(886, 514, 9.0f, live.accent, cnt, 0);
     }
-    // Oracle: the bar holds two launchers, MOD MATRIX and WHEEL MOD, each a lamp,
-    // a name and a count, in the face's own type sizes (the face-wide minimum
-    // window is an open owner decision; the panel itself meets the floor).
+    // Oracle: the bar holds two launchers, MOD MATRIX and WHEEL MOD, stacked at full
+    // width so each reads at the Wheel Mod panel's sizes (name kWmLegend, count
+    // kWmValue: 16 / 17 screen px from window scale 0.80 up): lamp and name at the
+    // left, the count right-aligned on the same baseline in the panel's value ink.
     void drawOracleModLaunchers()
     {
-        auto launcher = [&](const char* id, float x0, float x1, bool open, bool lit,
+        constexpr float x0 = 766.0f, x1 = 994.0f;
+        auto launcher = [&](const char* id, float y0, float y1, bool open, bool lit,
                             const char* name, const char* count, const char* tip) {
-            const ImVec2 b0 = P(x0, 474), b1 = P(x1, 534);
+            const ImVec2 b0 = P(x0, y0), b1 = P(x1, y1);
             ImGui::SetCursorScreenPos(b0);
             ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
             const bool clicked = ImGui::IsItemClicked();
@@ -3080,19 +3096,21 @@ private:
             const WheelModTheme t = wmTheme();
             dl->AddRectFilled(b0, b1, hov ? t.btnHover : t.btnFill, 4.0f * s);
             dl->AddRect(b0, b1, open ? live.accent : t.btnEdge, 4.0f * s, 0, 1.4f * s);
-            panel.led(dl, x0 + 12, 504, lit, 4.0f);
-            text(0.5f * (x0 + x1) + 6, 492, 12.0f, t.btnText, name, 0, true);
-            text(0.5f * (x0 + x1) + 6, 512, 9.0f, live.accent, count, 0);
+            const float cy = 0.5f * (y0 + y1);
+            const float nameY = cy - 0.5f * kWmLegend;
+            panel.led(dl, x0 + 10.0f, cy, lit, 4.0f);
+            text(x0 + 22.0f, nameY, kWmLegend, t.btnText, name, -1, true);
+            text(x1 - 8.0f, nameY + ascent(kWmLegend) - ascent(kWmValue), kWmValue, t.value, count, 1);
             return clicked;
         };
         char cnt[24]; std::snprintf(cnt, sizeof cnt, "%d active", activeModSlots());
-        if (launcher("modbar", 768, 876, showMod, showMod, "MOD MATRIX", cnt, "Open the modulation matrix"))
+        if (launcher("modbar", 472.0f, 502.0f, showMod, showMod, "MOD MATRIX", cnt, "Open the modulation matrix"))
         { showMod = true; modPopupWasOpen = false; }
         const int dests = wheelDestCount();
         char wc[24];
         if (dests == 0) std::snprintf(wc, sizeof wc, "off");
         else std::snprintf(wc, sizeof wc, "%d dest", dests);
-        if (launcher("wheelbar", 884, 992, showWheel, dests > 0, "WHEEL MOD", wc,
+        if (launcher("wheelbar", 506.0f, 536.0f, showWheel, dests > 0, "WHEEL MOD", wc,
                      "Open the Wheel Mod section: one LFO and a noise source,\n"
                      "scaled by the mod wheel, for every voice."))
             showWheel = true;
@@ -3136,9 +3154,8 @@ private:
     static constexpr float kWmGap = 12.0f;                         // legend / read-out gap
 
     // Role colours for the panel, derived from the live (mode-blended) palette, so
-    // the panel carries no colour of its own. The literals are the face's existing
-    // dark button ground and edge, black, and the two scrim levels the other
-    // overlays use.
+    // the panel carries no colour of its own: the face's control ground and edge
+    // (kCtlGround / kCtlEdge), black, and the two scrim levels the other overlays use.
     struct WheelModTheme
     {
         ImU32 btnFill, btnHover, btnEdge, btnText, btnTextOff, legend, value, seam, rail, railEdge, fill, mark;
@@ -3146,7 +3163,7 @@ private:
     };
     WheelModTheme wmTheme() const
     {
-        const ImU32 ground = IM_COL32(38, 39, 43, 255), edge = IM_COL32(91, 93, 99, 255);
+        const ImU32 ground = kCtlGround, edge = kCtlEdge;
         const ImU32 black = IM_COL32(0, 0, 0, 255);
         WheelModTheme t;
         t.btnFill    = ground;
@@ -4270,8 +4287,7 @@ private:
         ledButton("acid_latch", kParamArpLatch, 406, 568, 470, 592, "LATCH");
 
         const int step = liveStep();
-        dl->AddRectFilled(P(484, 568), P(692, 592),
-                          IM_COL32(38, 39, 43, 255), 4.0f * s);
+        dl->AddRectFilled(P(484, 568), P(692, 592), kCtlGround, 4.0f * s);
         dl->AddRect(P(484, 568), P(692, 592), withA(live.accent, 120),
                     4.0f * s, 0, 1.0f * s);
         if (step >= 0 && step < 16)

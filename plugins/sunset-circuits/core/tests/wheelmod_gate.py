@@ -24,8 +24,15 @@ before the first run.
              4.795 Hz.
   [pw]       wheel -> PW A, square, from a 10 % pulse at wheel 32: duty moves by
              0.2016 (+-0.005; reference 0.2021). From a 50 % pulse at full wheel
-             the pulse CLOSES while the square is up: level 30 dB or more below the
-             other half (reference 39.2 dB).
+             the pulse CLOSES while the square is up. Read the way the reference
+             was (channel mean, raw RMS of 20 ms windows from 0.5 s, the two-state
+             split): the reference reads 33.25 .. 39.27 dB over seven realizations
+             (prerun 0.5 / 1.5 / 2.5 / 3.5 / 4.5 s at 48 kHz, 0.5 s at 96 and
+             44.1 kHz; mean 36.89, SD 2.65). Pass band, set from that spread before
+             the model was read with this estimator: the realizations' range
+             widened by one SD each side, 30.6 .. 41.9 dB. This reading is mostly
+             the DC step of the closing decaying through the output's low-frequency
+             coupling, so it follows that coupling as much as the pulse.
   [filter]   wheel -> filter, self-oscillating filter at 300 Hz, square at wheel
              16: the two pitch states are 1.113 octaves apart (+-0.03; reference
              1.1127).
@@ -44,10 +51,18 @@ before the first run.
              reference was measured: steps uniform between +-801 c (extremes
              +-15 c, excess kurtosis -1.20 +-0.15; reference 411 steps).
   [shared]   one LFO and one noise for every voice: two voices (A5 and A7, the
-             second started 0.37 s later) have deviation correlation >= 0.98 for
-             noise (reference 0.94) and >= 0.99 for a square LFO (reference 1.000).
-             Carriers this high are needed: on an A3 carrier the instantaneous
-             frequency cannot follow the noise's 150..300 Hz content.
+             second started 0.37 s later), deviation correlation through
+             band_track. The reference, rendered with exactly this design (osc B
+             triangle, its nearest to a sine), reads 0.999942 .. 0.999961 for noise
+             (five realizations: prerun 0.5 / 1.5 / 2.5 s at 48 kHz, 0.5 s at 96 and
+             44.1 kHz) and 0.9999993 for the square LFO (knob 75, wheel 32; two
+             realizations). Bound: decorrelation 1 - r at most ten times the
+             reference's worst, r >= 0.99942 (noise) and r >= 0.9999933 (LFO); what
+             remains at the reference's level is the estimator's own floor (its
+             150..300 Hz tracking), not a per-voice source. Carriers this high are
+             needed: on an A3 carrier the instantaneous frequency cannot follow the
+             noise's 150..300 Hz content (A3 + A6 reads 0.828 / 0.830 on the
+             reference and 0.835 on the model).
   [os]       the modulation is the same at 1x / 2x / 4x: noise deviation tracks
              correlate >= 0.999 and their RMS agree within 0.5 %.
 
@@ -178,30 +193,37 @@ def check_shapes():
 def duty_track(x, fs, t_from=0.5, win=0.02):
     m = x[int(t_from * fs):, 0]
     W = int(win * fs)
-    d, r = [], []
+    d = []
     for a in range(0, len(m) - W, W):
         s = m[a:a + W]
         lo, hi = np.percentile(s, [5, 95])
         d.append(np.mean(s > 0.5 * (lo + hi)))
-        r.append(np.sqrt(np.mean((s - np.mean(s)) ** 2)))
-    return np.array(d), np.array(r)
+    return np.array(d)
+
+
+def closed_ratio_db(x, fs, t_from=0.5, win=0.02):
+    """The reference's reading of a closing pulse: channel mean, raw RMS (DC included) of 20 ms windows, the
+    two-state split, high over low in dB."""
+    m = x.mean(axis=1)
+    W = int(win * fs)
+    rms = np.array([np.sqrt(np.mean(m[a:a + W] ** 2)) for a in range(int(t_from * fs), len(m) - W, W)])
+    rl, rh = two_states(rms)
+    return 20 * np.log10(rh / max(rl, 1e-12))
 
 
 def check_pw_filter():
     pulse = dict(CARRIER_A, osc1Wave=4, filterCutoff=20000)
     fs, x = render(1, 57, 14.0, 2, "wm_pw32", osc1PW=0.10, wheelPwA=1, wheelLfoTri=0, wheelLfoSquare=1,
                    wheelLfoRate=SLOW, modwheel=32 / 127, **pulse)
-    d, _ = duty_track(x, fs)
+    d = duty_track(x, fs)
     lo, hi = two_states(d)
     report("pw", abs((hi - lo) - 0.2016) <= 0.005, f"square at wheel 32 from 10 %: duty {lo:.4f} -> {hi:.4f}, "
            f"moves {hi - lo:.4f} (reference 0.2021)")
     fs, x = render(1, 57, 14.0, 2, "wm_pwclose", osc1PW=0.50, wheelPwA=1, wheelLfoTri=0, wheelLfoSquare=1,
                    wheelLfoRate=SLOW, modwheel=1, **pulse)
-    _, r = duty_track(x, fs)
-    rl, rh = two_states(r)
-    drop = 20 * np.log10(rh / max(rl, 1e-12))
-    report("pw", drop >= 30.0, f"50 % pulse + square at full wheel: the over-the-top half is {drop:.1f} dB "
-           f"down (closed; reference 39.2 dB)")
+    drop = closed_ratio_db(x, fs)
+    report("pw", 30.6 <= drop <= 41.9, f"50 % pulse + square at full wheel: the over-the-top half reads {drop:.2f} dB "
+           f"down (reference 33.25 .. 39.27 dB over seven realizations; pass 30.6 .. 41.9)")
     selfosc = dict(osc1Level=0, osc2Level=0, noiseLevel=0.001, filterRes=1, filterCutoff=300,
                    filterEnvAmt=0, analogAmt=0, ampA=0.005, ampS=1, unisonVoices=1)
     fs, x = render(1, 57, 14.0, 2, "wm_filt16", wheelFilter=1, wheelLfoTri=0, wheelLfoSquare=1,
@@ -291,8 +313,9 @@ def check_shared_os():
     a, b = band_track(x, fs, 500, 1500), band_track(x, fs, 2000, 6000)
     n = min(len(a), len(b))
     rl = float(np.corrcoef(a[:n], b[:n])[0, 1])
-    report("shared", rn >= 0.98 and rl >= 0.99, f"two voices: noise correlation {rn:.4f} (reference 0.94), "
-           f"square LFO {rl:.4f} (reference 1.000)")
+    report("shared", rn >= 0.99942 and rl >= 0.9999933,
+           f"two voices: noise correlation {rn:.6f} (reference 0.999942 .. 0.999961; >= 0.99942), "
+           f"square LFO {rl:.7f} (reference 0.9999993; >= 0.9999933)")
     tracks = {}
     for osf in (1, 2, 4):
         fs, x = render(1, 93, 20.0, osf, f"wm_os{osf}", wheelFreqB=1, wheelSourceMix=1, modwheel=1, **CARRIER_B)
