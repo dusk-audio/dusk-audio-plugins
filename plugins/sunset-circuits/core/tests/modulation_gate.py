@@ -6,8 +6,14 @@ sits at full), making pitch a direct measurement of that route at every rate:
 quality switches must preserve the sound. Its law is the measured Poly-Mod law
 (Voice.hpp, ORACLE POLY-MOD LAWS): 34.7 semitones x amount, exponential. Until
 2026-11-17 the route was linear FM (0.03 cycles per sample at 96 kHz x amount),
-and this gate then covered Oscillator::applyFM's rate scaling as well; it no
-longer reaches applyFM.
+and this gate then covered Oscillator::applyFM's rate scaling as well.
+Oscillator::applyFM is now covered through Cross Mod (which Poly Mod Bells and
+Glass Bells depend on; Modular's two FM routes use applyFM too): a 55 Hz sine
+carrier, Cross Mod 0.01 from a full-scale square on osc 2 two octaves below,
+must move the carrier up by the same number of hertz at every rate and factor:
+within 0.3 Hz of the 48 kHz 2x reading, and within 1.5 Hz of the law
+(2880 Hz x 0.01 = 28.8 Hz; measured 28.22 to 28.33 Hz). With applyFM's rate
+scaling removed, 7 of the 9 rows fail (11.1 to 115.4 Hz).
 S&H is tested before its first clock edge, on BOTH LFOs and on a reused mono
 voice. A sine LFO is the positive control for the amplitude measurement.
 """
@@ -44,6 +50,22 @@ def main():
                       np.all(np.isfinite(x)) and np.max(np.abs(x)) < 0.1
                       and abs(hz - expected) < 0.3,
                       f"{hz:.3f} Hz, expected {expected:.3f}")
+
+    # Cross Mod (applyFM): the same deviation in hertz at every rate and factor.
+    xmod = {}
+    for rate in (44100, 48000, 96000):
+        for os in (1, 2, 4):
+            sr, x = render(1, 33, 1.0, os, f"mod_xmod_{rate}_{os}",
+                           **dict(BASE, sr=rate, osc2Wave=1, osc2Semi=-24, osc2Detune=0, crossMod=0.01))
+            y = x[int(0.2 * sr):, 0]
+            zc = np.flatnonzero((y[:-1] < 0) & (y[1:] >= 0))
+            t = zc + (-y[zc]) / (y[zc + 1] - y[zc])
+            hz = sr / np.diff(t)
+            xmod[(rate, os)] = float(np.median(hz[hz > 56.0])) - 55.0 if np.any(hz > 56.0) else float("nan")
+    ref = xmod[(48000, 2)]
+    for (rate, os), up in xmod.items():
+        check(f"Cross Mod sr={rate} os={os}", abs(up - ref) <= 0.3 and abs(up - 28.8) <= 1.5,
+              f"+{up:.2f} Hz, 48 kHz 2x +{ref:.2f}, law +28.8")
 
     # A held note must retain its modulated pitch through a live quality change.
     sr, x = render(1, 69, 1.8, 2, "mod_pitch_live_os",
