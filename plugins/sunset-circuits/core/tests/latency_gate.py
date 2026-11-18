@@ -14,8 +14,7 @@ sample. The decimators' own delays are fractional (11.3 samples at 2x, 12.9 at
 4x), so the factors agree to within 0.6 of a sample, not exactly; a pad one
 sample off moves a lag by a whole sample.
 
-Every mode with the analogue voice path (Cosmos, Oracle, Mono, Modular) is
-checked, in 44.1, 48 and 96 kHz sessions (#303). Oracle runs a pre-filter ahead
+All six engines are checked in 44.1, 48 and 96 kHz sessions (#303). Oracle runs a pre-filter ahead
 of its filter at internal rates of 88.2 kHz and up, which delays it by its
 group delay (1.1 host samples at 2x in a 48 kHz session); its pad takes that
 back. The gate used to render Mono at 48 kHz only, so when the pre-filter
@@ -48,7 +47,8 @@ def xcorr_lag(a, b, n=2400):
     return k - (n - 1)
 
 
-MODES = ((0, "Cosmos"), (1, "Oracle"), (2, "Mono"), (3, "Modular"))
+MODES = ((0, "Cosmos"), (1, "Oracle"), (2, "Mono"), (3, "Modular"),
+         (4, "Prism"), (5, "Acid"))
 RATES = (44100, 48000, 96000)
 
 
