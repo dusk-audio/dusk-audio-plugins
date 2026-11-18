@@ -3239,7 +3239,9 @@ private:
     {
         const WheelModTheme t = wmTheme();
         text(cx, cy - r - kWmGap - kWmLegend, kWmLegend, t.legend, legend, 0, true);
-        knob(id, p, cx, cy, r, "%.2f", "", false, false, false);
+        const bool rate = p == kParamWheelLfoRate;
+        knob(id, p, cx, cy, r, rate ? "%.2f" : "%.0f", rate ? " Hz" : " %",
+             false, false, false, rate ? 1.0f : 100.0f);
         text(cx, cy + r + kWmGap, kWmValue, t.value, readout, 0);
     }
 
