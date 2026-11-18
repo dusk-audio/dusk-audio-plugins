@@ -898,7 +898,9 @@ private:
                 // Osc 3 may modulate cutoff even when it is not in the audio mix.
                 const float osc3Raw = o.osc3.processSample();
                 osc3Sample = osc3Raw * params.osc3Level;
-                filterAudioMod = osc3Raw * params.modularOsc3Filter;
+                // Band-limited to kRouteHz like Oracle's osc B -> filter (see PRE-FILTER).
+                filterAudioMod = params.modularOsc3Filter > 0.0f
+                    ? routeLp[(size_t)u].process(osc3Raw) * params.modularOsc3Filter : 0.0f;
 
                 if (params.ringMod > 0.0f)
                 {
@@ -1166,12 +1168,13 @@ private:
     RbjLowpass oracleNoiseBand;
     float oracleNoiseGain = 1.0f;
 
-    // PRE-FILTER (#303, owner rulings 2026-11-17): in Oracle the oscillator mix
-    // goes through a low-pass before the filter whenever the internal rate is
-    // 88.2 kHz or more: a 4-pole Butterworth at 18 kHz, or from 176.4 kHz (4x) a
-    // 2-pole at 20 kHz (40 kHz from 352.8 kHz, below). Measured on a plain saw at 2x, the filter's input
-    // saturation acting on the oscillators' ultrasonic content (up to the internal
-    // Nyquist, which nobody hears) was the largest source of fold-back:
+    // PRE-FILTER (#303, owner rulings 2026-11-17): in Oracle, Mono and Modular
+    // the oscillator mix goes through a low-pass before the filter whenever the
+    // internal rate is 88.2 kHz or more: a 4-pole Butterworth at 18 kHz, or from
+    // 176.4 kHz (4x) a 2-pole at 20 kHz (40 kHz from 352.8 kHz, below).
+    // Measured on a plain saw at 2x, the filter's input saturation acting on the
+    // oscillators' ultrasonic content (up to the internal Nyquist, which nobody
+    // hears) was the largest source of fold-back:
     // linearising that stage alone took the saw from -48 to -62 dB; the stage
     // saturations added nothing. The same ultrasonic content, run through a cutoff
     // moved at audio rate by osc B -> filter, folded back too. Content the
@@ -1180,7 +1183,10 @@ private:
     // 15.2 kHz, -1.4 dB at 16.7 kHz, -3.3 dB at 18.8 kHz. Saw at 2x, C6 to C7:
     // -48.6 / -46.7 / -47.9 dB became -68.9 / -67.7 / -68.1 dB (oracle_alias_gate's
     // metric). At lower internal rates the oscillators' band already ends near
-    // 20 kHz and the pre-filter would only dull the top, so it is off.
+    // 20 kHz and the pre-filter would only dull the top, so it is off. Mono and
+    // Modular measured the same mechanism and got the same treatment: a saw at 2x
+    // went from about -42 and -44 dB to -68 and -69 dB, and their factory presets
+    // changed by at most 0.023 dB (spectral distance) and 0.01 dB in level.
     //
     // It delays the voice by its group delay (about 1.1 host samples at 2x in a
     // 48 kHz session), which the latency pad takes back (preFilterDelay()). At
@@ -1192,14 +1198,15 @@ private:
     // 4x -80 / -73 / -85 dB, against -82 / -73 / -95 with 20 kHz and -69 / -66 /
     // -57 with none).
     //
-    // The osc B -> filter route is band-limited too: its modulation signal (osc
-    // B's own sample, at audio rate) goes through a 2-pole Butterworth low-pass
-    // at 10 kHz at every rate. A cutoff moved by a full-band saw spreads the
-    // filter's input into sidebands at every multiple of osc B's pitch, and at
-    // high notes those run past the internal Nyquist and fold back: the route
-    // was the largest source left after the pre-filter (C7 at 2x -49 dB). Osc B
-    // harmonics above 10 kHz are the ones that move the cutoff fastest and
-    // smallest; the route's growl comes from the low ones.
+    // The audio-rate cutoff routes (Oracle's osc B -> filter, Modular's osc 3 ->
+    // filter) are band-limited too: their modulation signal goes through a 2-pole
+    // Butterworth low-pass at 10 kHz at every rate. A cutoff moved by a full-band
+    // saw spreads the filter's input into sidebands at every multiple of the
+    // modulator's pitch, and at high notes those run past the internal Nyquist
+    // and fold back: in Oracle the route was the largest source left after the
+    // pre-filter (C7 at 2x -49 dB). The modulator's harmonics above 10 kHz are the
+    // ones that move the cutoff fastest and least; the routes' growl comes from
+    // the low ones.
     static constexpr double kPreFilterMinRate = 88200.0;
     static constexpr double kPreFilterGentleRate = 176400.0;
     static constexpr double kPreFilterWideRate = 352800.0;
@@ -1213,7 +1220,10 @@ private:
         // Butterworth 4-pole: Q = 1 / (2 cos(pi/8)) and 1 / (2 cos(3 pi/8)).
         return {2, 18000.0, {0.54119610014619698, 1.3065629648763766}};
     }
-    static bool usesPreFilter(SynthMode mode) noexcept { return mode == SynthMode::Oracle; }
+    static bool usesPreFilter(SynthMode mode) noexcept
+    {
+        return mode == SynthMode::Oracle || mode == SynthMode::Mono || mode == SynthMode::Modular;
+    }
     void setBandLimits() noexcept
     {
         const PreFilterDesign d = preFilterDesign(sr);
