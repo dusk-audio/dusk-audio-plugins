@@ -47,9 +47,9 @@ def preset_count():
         raise RuntimeError(f"could not parse preset range from preset_render: {msg!r}")
 
 
-def render(index, *, output_dir=None, **kw):
-    if output_dir is None:
-        output_dir = tempfile.mkdtemp(prefix="msynth_presets_")
+def render(index, *, output_dir, **kw):
+    # The caller owns output_dir and its lifetime: a fallback directory made
+    # here would outlive every caller that forgot to pass one.
     path = os.path.join(output_dir, f"preset_{index:02d}.wav")
     args = [BIN, str(index), path]
     for k, v in kw.items():
@@ -113,7 +113,7 @@ def ref_f0(mono, sr):
     return float((k + delta) * sr / len(seg))
 
 
-def audit_one(index, output_dir=None):
+def audit_one(index, output_dir):
     sr, x, info, path = render(index, output_dir=output_dir)
     name = info.split('"')[1] if '"' in info else f"#{index}"
     mono = x.mean(axis=1)
