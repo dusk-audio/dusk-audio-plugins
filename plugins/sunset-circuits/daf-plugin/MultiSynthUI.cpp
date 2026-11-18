@@ -57,12 +57,15 @@ namespace
     {
         ImU32 bg, panel, accent, text, textPanel, ledOn, ledOff;
         float cosmos = 0.0f; // blends the extra colours even during interrupted mode fades
+        float oracle = 0.0f; // blends Oracle's materials (kOracleMat) the same way
     };
     const MSPal kPalettes[6] = {
         // Cosmos
         { hx(0x191B1A), hx(0x252725), hx(0xD9D9C9), hx(0xE3E3DA), hx(0xE3E3DA), hx(0xF44336), hx(0x401613), 1.0f },
-        // Oracle
-        { hx(0x1A130E), hx(0x241A12), hx(0xC8A15A), hx(0xEDE3CE), hx(0xEDE3CE), hx(0xFFB020), hx(0x3A2A0E) },
+        // Oracle: one near-black panel with white silk-screen and red lamps, framed in
+        // walnut (kOracleMat). Was brown panels with gold legends and amber lamps.
+        // Ground and panel are the same black: one sheet, sections marked only by silk.
+        { hx(0x1A191C), hx(0x1A191C), hx(0xE6E2E4), hx(0xECE8EA), hx(0xECE8EA), hx(0xFF3B30), hx(0x3C1512), 0.0f, 1.0f },
         // Mono
         { hx(0x0E0E10), hx(0x17181B), hx(0xC0C6CC), hx(0xE6E8EA), hx(0xE6E8EA), hx(0xFF3838), hx(0x3A1414) },
         // Modular
@@ -73,6 +76,33 @@ namespace
         { hx(0x16171A), hx(0xC8CBD0), hx(0xFF5A00), hx(0xEDEFF2), hx(0x202226), hx(0xFF2A2A), hx(0x5A1414) },
     };
     const char* const kModeNames[6] = { "COSMOS", "ORACLE", "MONO", "MODULAR", "PRISM", "ACID" };
+
+    // Oracle's materials (owner request 2026-11-17: look more like the instrument it
+    // models), sampled from photos of that instrument and deepened to the face's black:
+    // a walnut cabinet (photo strip median 82564B, cheeks 66433B) around one near-black
+    // panel, white silk-screened section boxes, black knobs with white pointers and
+    // white tick scales (the two master knobs keep bright caps), red lamps. Drawn only
+    // in proportion to MSPal::oracle, which is exactly 0 in every other mode.
+    struct OracleMat
+    {
+        ImU32 walnut, walnutDark, walnutLight;   // cabinet: base and the two grain inks
+        ImU32 silk;                               // section outlines
+        ImU32 arc;                                // knob value arcs: dimmed silk
+        ImU32 knobBody, knobRing, knobFace, knobPointer, knobSheen, knobFaceEdge, knobRim;
+    };
+    const OracleMat kOracleMat = {
+        hx(0x7A5044), hx(0x58392F), hx(0x9A7363),
+        hx(0xE6E2E4),
+        hx(0xA7A3A8),
+        // the knob inks are the shared console knob's (DuskPanel::knob), face black
+        hx(0x121214), hx(0x28282B), hx(0x1B1B1D), hx(0xF5F5F5), IM_COL32(255, 255, 255, 38),
+        IM_COL32(0, 0, 0, 140), IM_COL32(0, 0, 0, 255),
+    };
+
+    // The face's dark control ground and its edge: compact toggles, the Acid step
+    // display and the Wheel Mod panel's buttons and rail.
+    const ImU32 kCtlGround = hx(0x26272B);
+    const ImU32 kCtlEdge   = hx(0x5B5D63);
 
     // Version chip under the "Dusk Audio" byline. Middle dot, not an em dash:
     // the crisp atlas is baked over Latin-1 and U+2014 draws as a "?" box.
@@ -153,7 +183,8 @@ public:
 
         setGeometryConstraints((uint32_t)(kDesignW * 0.5f), (uint32_t)(kDesignH * 0.5f), true);
 
-        static const float kFontSizes[] = { 9.f, 10.f, 11.f, 12.f, 13.f, 15.f, 20.f, 26.f };
+        // 22 = the WHEEL MOD panel's read-outs (readability floor, see kWm*).
+        static const float kFontSizes[] = { 9.f, 10.f, 11.f, 12.f, 13.f, 15.f, 20.f, 22.f, 26.f };
         // The crisp font atlas is baked once here at the current scale factor.
         // U6 (skipped, documented limitation): rebuilding it on a live DPI change
         // is not safe with this DAF ImGui wrapper — the wrapper captures the scale
@@ -165,7 +196,8 @@ public:
         // expose). Net effect: text is slightly blurry after a monitor-DPI change
         // until the plugin window is reopened. Fixing it properly needs a DAF /
         // shared-daf change (out of scope here).
-        fontSet = duskdaf::loadCrispFontSet(kFontSizes, 8, getScaleFactor());
+        fontSet = duskdaf::loadCrispFontSet(kFontSizes, (int)(sizeof kFontSizes / sizeof kFontSizes[0]),
+                                            getScaleFactor());
         panel.setFontSet(fontSet);
 
         // Tooltips should read as deliberate UI, not text that appears immediately
@@ -276,6 +308,8 @@ protected:
             modeBlend = 0.0f;
             if (m == 5)
                 showMod = false;
+            if (m != 1)
+                showWheel = false;   // the Wheel Mod section is Oracle-only
         }
         const float dt = ImGui::GetIO().DeltaTime;
         modeBlend = std::min(1.0f, modeBlend + (dt > 0.f ? dt : 0.016f) / 0.28f);
@@ -337,6 +371,21 @@ protected:
             drawPresetBrowserOverlay();
             const duskdaf::ResizeGripState grip = submitGrip(winW, winH);
             endLayer(kLayerBrowse);
+            ImGui::PopStyleVar(2);
+            applyGrip(grip);
+           #ifdef MSYNTH_FRAME_PROFILE
+            profileFrame(_t0);
+           #endif
+            return;
+        }
+
+        if (showWheel)
+        {
+            dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), wmTheme().scrimBg); // scrim on bg list
+            beginLayerScreen("MSwheel", 0, 0, winW, winH, true);
+            drawWheelModOverlay();
+            const duskdaf::ResizeGripState grip = submitGrip(winW, winH);
+            endLayer(kLayerModal);
             ImGui::PopStyleVar(2);
             applyGrip(grip);
            #ifdef MSYNTH_FRAME_PROFILE
@@ -591,7 +640,8 @@ private:
         return { lerpC(a.bg, b.bg, t), lerpC(a.panel, b.panel, t), lerpC(a.accent, b.accent, t),
                  lerpC(a.text, b.text, t), lerpC(a.textPanel, b.textPanel, t),
                  lerpC(a.ledOn, b.ledOn, t), lerpC(a.ledOff, b.ledOff, t),
-                 a.cosmos + (b.cosmos - a.cosmos) * t };
+                 a.cosmos + (b.cosmos - a.cosmos) * t,
+                 a.oracle + (b.oracle - a.oracle) * t };
     }
     ImU32 metalCol() const // bevel frame: lighten dark panels, darken light panels
     {
@@ -617,28 +667,83 @@ private:
         return f->CalcTextSizeA(px, FLT_MAX, 0.0f, t).x / s;
     }
 
+    // Baseline offset of the face picked for `sz`, in DESIGN units: puts text of two
+    // sizes on one baseline (text() places the top of the line).
+    float ascent(float sz) const
+    {
+        const float px = sz * s;
+        const ImFont* const f = panel.pickFont(px);
+        return f->Ascent * (px / f->FontSize) / s;
+    }
+
+    // sheet = false: a modal panel (an overlay), not a section of the face. It keeps
+    // its rail in Oracle, so it still reads against the scrim, and gets no silk box.
+    // titled = false: a section with no title (Oracle's launcher bar), whose silk box
+    // closes along the panel's top edge instead of running through a title.
     void panelBox(float x0, float y0, float x1, float y1, float alpha = 1.0f,
-                  ImU32 cosmosBand = 0, float bandHeight = 20.0f)
+                  ImU32 cosmosBand = 0, float bandHeight = 20.0f, bool sheet = true,
+                  bool titled = true)
     {
         // The older 3 px bright metal frame gave every nested section the same
         // visual weight. A slimmer, chassis-blended rail keeps the hardware
         // character while allowing titles, controls, and mode colour to lead.
+        // Oracle is one black sheet: its rail and bevel fade out as the silk box
+        // (oracleBox) fades in. Exactly `alpha` in every other mode.
+        const float edgeA = (sheet && live.oracle > 0.0f) ? alpha * (1.0f - live.oracle) : alpha;
         const ImU32 frame = lerpC(metalCol(), live.bg, 0.34f);
         dl->AddRectFilled(P(x0 - 2, y0 - 2), P(x1 + 2, y1 + 2),
-                          mulA(frame, alpha), 7.0f * s);
+                          mulA(frame, edgeA), 7.0f * s);
         dl->AddRectFilled(P(x0, y0), P(x1, y1), mulA(live.panel, alpha), 6.0f * s);
         // engraved bevel: light top-edge highlight + dark bottom-edge shade
         dl->AddLine(P(x0 + 2, y0 + 1), P(x1 - 2, y0 + 1),
-                    mulA(lerpC(live.panel, IM_COL32(255, 255, 255, 255), 0.13f), alpha), 1.0f * s);
+                    mulA(lerpC(live.panel, IM_COL32(255, 255, 255, 255), 0.13f), edgeA), 1.0f * s);
         dl->AddLine(P(x0 + 2, y1 - 1), P(x1 - 2, y1 - 1),
-                    mulA(lerpC(live.panel, IM_COL32(0, 0, 0, 255), 0.26f), alpha), 1.0f * s);
+                    mulA(lerpC(live.panel, IM_COL32(0, 0, 0, 255), 0.26f), edgeA), 1.0f * s);
         if (cosmosBand != 0 && live.cosmos > 0.0f)
             dl->AddRectFilled(P(x0 + 2, y0 + 2), P(x1 - 2, y0 + bandHeight),
                               mulA(cosmosBand, alpha * live.cosmos), 4.0f * s,
                               ImDrawFlags_RoundCornersTop);
+        if (sheet && live.oracle > 0.0f) oracleBox(x0, y0, x1, y1, alpha, titled);
+    }
+
+    // Oracle: the panel is part of one black sheet and the section is marked the way
+    // the instrument's panel marks it, by a thin white silk-screened box. Its sides
+    // and floor run along the panel's own edge, where the rail was, so the controls
+    // keep the margins they were laid out with; neighbouring boxes read as separate
+    // boxes with the panel gap between them. The stroke sits half its width inside
+    // the edge, which puts its anti-aliased outer edge on the panel edge at every
+    // scale, so a knock-out that stays inside the panel clears it completely. A
+    // titled box's top line runs through the title (sectionTitle knocks the title
+    // out of it, oracleTitleRowGap a control on the title row); an untitled box
+    // closes along the panel's top edge.
+    static constexpr float kSilkW = 1.2f, kSilkTop = 9.5f;   // stroke width, title centre line
+    void oracleBox(float x0, float y0, float x1, float y1, float alpha, bool titled)
+    {
+        const float in = 0.5f * kSilkW;
+        dl->AddRect(P(x0 + in, titled ? y0 + kSilkTop : y0 + in), P(x1 - in, y1 - in),
+                    mulA(kOracleMat.silk, alpha * live.oracle), 5.0f * s, 0, kSilkW * s);
+    }
+    // A control at the right end of a section's title row (a wave menu, an ON switch)
+    // sits in the silk box's top line the way the title does (Oracle only). It runs
+    // to the panel's right edge, so the knock-out takes the box's top-right corner
+    // with it, down to 4 px under the control, and keeps the panel's own corner
+    // rounding so it never paints outside the panel.
+    void oracleTitleRowGap(float cx0, float cy1, float panelY0, float panelX1)
+    {
+        if (live.oracle <= 0.0f) return;
+        dl->AddRectFilled(P(cx0 - 4.0f, panelY0), P(panelX1, cy1 + 4.0f),
+                          mulA(live.panel, live.oracle), 6.0f * s, ImDrawFlags_RoundCornersTopRight);
+    }
+    // Knock a title out of the silk-screen box's top line (Oracle only).
+    void oracleTitleGap(float x, float y, float sz, const char* t, float alpha = 1.0f)
+    {
+        if (live.oracle <= 0.0f) return;
+        dl->AddRectFilled(P(x - 5, y + 1), P(x + textW(sz, t) + 5, y + sz + 1),
+                          mulA(live.panel, alpha * live.oracle));
     }
     void sectionTitle(float x, float y, const char* t)
     {
+        oracleTitleGap(x, y, 11.5f, t);
         // Dark panels benefit from the engraved shadow. On Acid's light silver
         // skin it reads as a second, misregistered heading instead of depth.
         if (curMode != 5)
@@ -687,6 +792,9 @@ private:
     // Mode-accent value arc drawn just outside the shared knob body (spec §3.1).
     void accentArc(float cx, float cy, float r, float t, bool bipolar, float anchorT = -1.0f)
     {
+        // Oracle: dimmed silk instead of the panel accent, so the arcs read without
+        // competing with the white legends.
+        const ImU32 arcInk = live.oracle > 0.0f ? lerpC(live.accent, kOracleMat.arc, live.oracle) : live.accent;
         const ImVec2 c = P(cx, cy);
         const float R = (r + 3.0f) * s;
         const float t0 = anchorT >= 0.0f ? anchorT : (bipolar ? 0.5f : 0.0f);
@@ -699,7 +807,7 @@ private:
             const float ang = duskdaf::DuskPanel::knobAngle(tt);
             pts[n++] = ImVec2(c.x + std::sin(ang) * R, c.y - std::cos(ang) * R);
         }
-        if (n >= 2) dl->AddPolyline(pts, n, live.accent, 0, 2.4f * s);
+        if (n >= 2) dl->AddPolyline(pts, n, arcInk, 0, 2.4f * s);
     }
 
     // Return the matrix destination represented by a visible control. Destinations
@@ -780,8 +888,41 @@ private:
 
     // Chrome knob body (matches duskdaf::DuskPanel's chrome exactly) so the local
     // skew/ratio knobs are visually identical to the shared linear knobs.
-    void drawKnobChrome(ImVec2 c, float R, float t, bool ticks = true)
+    // Oracle draws black knobs (the shared console style, black face) except the two
+    // master knobs, which keep the bright cap the instrument gives them.
+    bool oracleKnob(uint32_t p) const
     {
+        return live.oracle >= 0.5f && p != kParamMasterVol && p != kParamMasterTune;
+    }
+    // drawKnobChrome's Oracle body: the shared console knob (DuskPanel::knob, faceColor
+    // set) with kOracleMat's inks, for the local log-taper and ratio knobs.
+    void drawKnobOracle(ImVec2 c, float R, float t, bool ticks)
+    {
+        if (ticks)
+            for (int i = 0; i <= 10; ++i)
+            {
+                const float a = duskdaf::DuskPanel::knobAngle((float)i / 10.0f);
+                const ImVec2 dir(std::sin(a), -std::cos(a));
+                dl->AddLine(ImVec2(c.x + dir.x * (R + 2.5f * s), c.y + dir.y * (R + 2.5f * s)),
+                            ImVec2(c.x + dir.x * (R + 6.5f * s), c.y + dir.y * (R + 6.5f * s)),
+                            whiteDimCol(), 1.3f * s);
+            }
+        const OracleMat& m = kOracleMat;
+        dl->AddCircleFilled(c, R, m.knobBody, 48);
+        dl->AddCircleFilled(c, R * 0.86f, m.knobRing, 48);
+        dl->AddCircleFilled(c, R * 0.62f, m.knobFace, 44);
+        dl->AddCircleFilled(ImVec2(c.x - R * 0.18f, c.y - R * 0.22f), R * 0.34f, m.knobSheen, 32);
+        dl->AddCircle(c, R * 0.62f, m.knobFaceEdge, 44, 1.2f * s);
+        dl->AddCircle(c, R, m.knobRim, 48, 1.4f * s);
+        const float a = duskdaf::DuskPanel::knobAngle(t);
+        const ImVec2 dir(std::sin(a), -std::cos(a));
+        dl->AddLine(c, ImVec2(c.x + dir.x * R * 0.82f, c.y + dir.y * R * 0.82f), m.knobPointer, 2.4f * s);
+        dl->AddCircleFilled(c, R * 0.10f, m.knobPointer, 12);
+    }
+
+    void drawKnobChrome(ImVec2 c, float R, float t, bool ticks = true, bool oracle = false)
+    {
+        if (oracle) { drawKnobOracle(c, R, t, ticks); return; }
         if (ticks)
         for (int i = 0; i <= 10; ++i)
         {
@@ -921,7 +1062,7 @@ private:
         }
 
         const float t = lrange > 0.0f ? (toL(values[p]) - lmin) / lrange : 0.0f;
-        drawKnobChrome(c, R, t, ticks);
+        drawKnobChrome(c, R, t, ticks, oracleKnob(p));
         accentArc(cx, cy, r, t, bipolar);
         modulationRange(p, cx, cy, r, ticks);
 
@@ -1007,7 +1148,7 @@ private:
             }
         }
         const float t = (std::log(values[p] < d.min ? d.min : values[p]) - lmin) / lrange;
-        drawKnobChrome(c, R, t, ticks);
+        drawKnobChrome(c, R, t, ticks, oracleKnob(p));
         accentArc(cx, cy, r, t, false);
         float typed;
         if (panel.valueEdit(id, cx, cy, r, typed))
@@ -1034,7 +1175,8 @@ private:
         if (!stepped && ((d.kind == PK_LOG && d.min > 0.0f) || timeAuto))
             return knobSkewed(id, p, cx, cy, r, fmt, suffix, bipolar, persist, dmul, dadd, ticks, timeAuto);
         const bool ch = panel.knob(id, p, d.min, d.max, cx, cy, r, values[p], defaults[p],
-                                   stepped, ticks, fmt, suffix, 0, false, persist,
+                                   stepped, ticks, fmt, suffix,
+                                   oracleKnob(p) ? kOracleMat.knobFace : 0, false, persist,
                                    tips[p], false, dmul, dadd, d.name,
                                    /*contextMenu*/ false, /*overrideText*/ nullptr,
                                    /*hasExternalReadout*/ false,
@@ -1199,11 +1341,11 @@ private:
                 ImGui::SetTooltip("%s", tips[p]);
         }
 
-        const ImU32 offBg = IM_COL32(38, 39, 43, 255);
+        const ImU32 offBg = kCtlGround;
         dl->AddRectFilled(b0, b1, mulA(on ? lerpC(offBg, live.accent, 0.20f) : offBg, alpha),
                           0.5f * (y1 - y0) * s);
         dl->AddRect(b0, b1,
-                    mulA(on ? live.accent : IM_COL32(91, 93, 99, 255), alpha),
+                    mulA(on ? live.accent : kCtlEdge, alpha),
                     0.5f * (y1 - y0) * s, 0, 1.2f * s);
         const float cy = 0.5f * (y0 + y1);
         const ImVec2 lc = P(x0 + 9.0f, cy);
@@ -1259,6 +1401,14 @@ private:
         dl->AddRectFilled(P(0, 0), P(kDesignW, 54), mulA(live.bg, 1.0f));
         dl->AddRectFilled(P(0, 0), P(kDesignW, 3), metalCol());
         dl->AddLine(P(0, 54), P(kDesignW, 54), IM_COL32(70, 70, 72, 255), 1.5f * s);
+        if (live.oracle > 0.0f)
+        {
+            // Oracle's walnut frame continues round the top: the rail and the cheeks'
+            // top ends (drawWoodCheeks draws the rest on the background).
+            walnut(0, 0, kDesignW, 5, live.oracle, false, 41u);
+            walnut(0, 5, 14, 55, live.oracle, true, 11u);
+            walnut(1226, 5, kDesignW, 55, live.oracle, true, 23u);
+        }
 
         // ---- nameplate ----
         // The version rides with the "Dusk Audio" byline, one step down the type
@@ -1388,7 +1538,7 @@ private:
     //========================================================================
     // TapeMachine 2's preset combo groups its list with TextDisabled category
     // headers in ONE column and lets ImGui scroll it. That reads fine at twenty
-    // presets; at 54 it is a scroll hunt. So the same idea is laid out ACROSS:
+    // presets; at 57 it is a scroll hunt. So the same idea is laid out ACROSS:
     // one group per MODE — which is this synth's strongest cue, and the same
     // grouping the browser's chips use — stacked into as many columns as the
     // window can actually hold, so the whole library is on screen at once.
@@ -1730,27 +1880,59 @@ private:
         const ImU32 top = lerpC(live.bg, IM_COL32(255, 255, 255, 255), 0.05f);
         const ImU32 bot = lerpC(live.bg, IM_COL32(0, 0, 0, 255), 0.18f);
         dl->AddRectFilledMultiColor(P(0, 0), P(kDesignW, kDesignH), top, top, bot, bot);
-        const ImU32 lite = withA(lerpC(live.bg, IM_COL32(255, 255, 255, 255), 0.5f), 8);
-        const ImU32 dark = withA(IM_COL32(0, 0, 0, 255), 10);
+        ImU32 lite = withA(lerpC(live.bg, IM_COL32(255, 255, 255, 255), 0.5f), 8);
+        ImU32 dark = withA(IM_COL32(0, 0, 0, 255), 10);
+        if (live.oracle > 0.0f)   // Oracle's sheet is matte: the brushed hairlines fade out
+        { lite = mulA(lite, 1.0f - live.oracle); dark = mulA(dark, 1.0f - live.oracle); }
         for (int x = 0; x < (int)kDesignW; x += 3)
             dl->AddLine(P((float)x, 0), P((float)x, kDesignH), (x & 1) ? lite : dark, 1.0f);
     }
 
+    // Oracle's walnut cabinet: the side cheeks and the strip between the panel and the
+    // keys (the top rail and the cheeks' top ends are drawn by drawTopBar, which paints
+    // over this background). Weighted by live.oracle, so it is absent in other modes.
     void drawWoodCheeks()
     {
-        // Oracle decorative wood side cheeks; alpha follows how "Oracle" the blend is.
-        float oa = 0.0f;
-        if (curMode == 1) oa = modeBlend >= 1.0f ? 1.0f : modeBlend;
-        else if (prevMode == 1 && modeBlend < 1.0f) oa = 1.0f - modeBlend;
-        if (oa <= 0.01f) return;
-        const ImU32 wood = mulA(hx(0x2A1C10), oa);
-        dl->AddRectFilled(P(0, 54), P(14, kDesignH), wood);
-        dl->AddRectFilled(P(1226, 54), P(kDesignW, kDesignH), wood);
-        for (int i = 1; i < 12; ++i)
+        const float o = live.oracle;
+        if (o <= 0.0f) return;
+        walnut(0, 54, 14, kDesignH, o, true, 11u);
+        walnut(1226, 54, kDesignW, kDesignH, o, true, 23u);
+        walnut(14, 694, 1226, 700, o, false, 37u);
+    }
+
+    // A walnut board, drawn procedurally: the base colour, then the grain as streaks of
+    // dark and light ink running along the board, each a hashed length and strength, so
+    // it reads as wood rather than stripes. Deterministic (seeded), so captures repeat.
+    void walnut(float x0, float y0, float x1, float y1, float a, bool vertical, uint32_t seed)
+    {
+        const OracleMat& m = kOracleMat;
+        dl->AddRectFilled(P(x0, y0), P(x1, y1), mulA(m.walnut, a));
+        auto hash = [](uint32_t v) {
+            v *= 0x9E3779B1u; v ^= v >> 15; v *= 0x85EBCA77u; v ^= v >> 13; return v;
+        };
+        const float across = vertical ? (x1 - x0) : (y1 - y0);
+        const float along  = vertical ? (y1 - y0) : (x1 - x0);
+        const float pitch = 1.1f;
+        uint32_t k = seed * 7919u;
+        for (float u = 0.5f; u < across; u += pitch)
         {
-            const float y = 54 + i * (kDesignH - 54) / 12.0f;
-            dl->AddLine(P(0, y), P(14, y), mulA(hx(0x1B120A), oa), 1.0f * s);
-            dl->AddLine(P(1226, y), P(kDesignW, y), mulA(hx(0x1B120A), oa), 1.0f * s);
+            float v = 0.0f;
+            while (v < along)
+            {
+                const uint32_t h = hash(++k);
+                const float len = 18.0f + (float)(h % 140u);
+                const int kind = (int)((h >> 8) & 3u);       // 0, 1 dark; 2 light; 3 none
+                const int ink = 18 + (int)((h >> 12) % 70u);
+                if (kind != 3)
+                {
+                    const ImU32 col = withA(kind == 2 ? m.walnutLight : m.walnutDark,
+                                            (int)((float)(kind == 2 ? ink / 2 : ink) * a));
+                    const float v1 = v + len < along ? v + len : along;
+                    if (vertical) dl->AddLine(P(x0 + u, y0 + v), P(x0 + u, y0 + v1), col, 1.0f * s);
+                    else          dl->AddLine(P(x0 + v, y0 + u), P(x0 + v1, y0 + u), col, 1.0f * s);
+                }
+                v += len;
+            }
         }
     }
 
@@ -1798,11 +1980,10 @@ private:
     {
         const OscGeom g1 = oscGeom(60.0f), g2 = oscGeom(165.0f), g3 = oscGeom(270.0f);
 
-        // OSC 1 — DETUNE / PW / LEVEL, plus Cosmos X-MOD. Oracle's defining
-        // OSC 2 -> OSC 1 routing belongs exclusively to its Poly-Mod panel; showing
-        // X-MOD here as well exposed two controls for effectively the same route.
+        // Cosmos places X-MOD beside OSC 1. Oracle places it below the Poly-Mod routes.
         panelBox(16, g1.y0, 340, g1.y1, 1.0f, kCosmosRed, 26.0f);
         sectionTitle(24, g1.rowY + 4.0f, "OSC 1");
+        oracleTitleRowGap(150, g1.comboY1, g1.y0, 340);
         comboBox("o1w", kParamOsc1Wave, 150, g1.rowY, 332, g1.comboY1, kWave5, 5, curMode == 5);
         klabel(60, g1.labelY, "DETUNE");
         if (curMode == 5)
@@ -1817,8 +1998,6 @@ private:
                       "Acid has a fixed oscillator gain; OSC 1 level is not used.");
         else
             knob("o1lvl", kParamOsc1Level, 200, g1.cy, kOscR, "%.0f", " %", false, false, false, 100.0f);
-        // Cross-mod is the Cosmos oscillator treatment. Oracle exposes its
-        // equivalent routing in the dedicated Poly-Mod panel below the LFOs.
         if (curMode == 0)
         { klabel(285, g1.labelY, "X-MOD"); knob("xmod", kParamCrossMod, 285, g1.cy, kOscR, "%.0f", " %", false, false, false, 100.0f); }
 
@@ -1855,6 +2034,7 @@ private:
             }
             else
             {
+                oracleTitleRowGap(150, g2.comboY1, g2.y0, 340);
                 comboBox("o2w", kParamOsc2Wave, 150, g2.rowY, 332, g2.comboY1,
                          kWave5, 5);
                 klabel(56, g2.labelY, "SEMI");
@@ -2058,7 +2238,10 @@ private:
         const float fc = values[kParamFilterCutoff];
         if (fc >= 1000.0f) std::snprintf(rb, sizeof rb, "%.2f kHz", fc / 1000.0f);
         else               std::snprintf(rb, sizeof rb, "%.0f Hz", fc);
-        text(426, 290, 10.0f, live.accent, rb, 0, true);
+        // Oracle's silk box floor runs along the panel's bottom edge, which this
+        // read-out's ink reaches; there it rides 2 px higher (blended by the Oracle
+        // weight, so it does not move in any other mode).
+        text(426, 290.0f - 2.0f * live.oracle, 10.0f, live.accent, rb, 0, true);
 
         // RES / ENV AMT / HP all carry a permanent read-out (y 270, clear of the 297
         // panel floor): they are the row you ride while playing.
@@ -2484,11 +2667,12 @@ private:
     }
     void drawSubOracle(float a, bool it)
     {
+        oracleTitleGap(768, 332, 11.0f, "POLY-MOD \xC2\xB7 SYNC", a);
         text(768, 332, 11.0f, mulA(live.accent, a), "POLY-MOD \xC2\xB7 SYNC", -1, true);
 
         // Two hardware sources, each able to reach all three destinations.
         constexpr float dividerX = 883.0f;
-        dl->AddLine(P(dividerX, 350), P(dividerX, 450),
+        dl->AddLine(P(dividerX, 350), P(dividerX, 417),
                     mulA(lerpC(live.textPanel, live.panel, 0.68f), a), 1.0f * s);
         text(825, 350, 9.5f, mulA(live.textPanel, a), "FILTER ENV", 0, true);
         text(943, 350, 9.5f, mulA(live.textPanel, a), "OSC 2", 0, true);
@@ -2515,9 +2699,28 @@ private:
             else    ghostKnob(pp[i], cx[i], cy, 14, a);
             text(cx[i], 410, 8.5f, mulA(whiteDimCol(), a), dest[i], 0, true);
         }
-        compactToggle("oracle_sync", kParamHardSync, 850, 427, 916, 449,
-                      "SYNC", it, a);
-        text(956, 438, 8.5f, mulA(whiteDimCol(), a), "OSC 1 \xE2\x86\x92 OSC 2", 0, true);
+        // The two bell presets use linear FM here. Keep it distinct from
+        // the exponential OSC 2 -> OSC 1 pitch route in the row above.
+        constexpr float crossX = 785.0f, crossY = 438.0f, crossRadius = 12.0f;
+        constexpr float legendSize = 20.0f, valueSize = 22.0f;
+        bool showValue = false;
+        if (it)
+        {
+            knob("oracle_cross_mod", kParamCrossMod, crossX, crossY, crossRadius,
+                 "%.0f", " %", false, false, false, 100.0f);
+            showValue = ImGui::IsItemHovered() || ImGui::IsItemActive();
+        }
+        else ghostKnob(kParamCrossMod, crossX, crossY, crossRadius, a);
+        char amount[24];
+        if (showValue) fmtVal(amount, sizeof amount, kParamCrossMod, "%.0f", " %", 100.0f, 0.0f);
+        const float size = showValue ? std::max(valueSize, 17.0f / s)
+                                     : std::max(legendSize, 16.0f / s);
+        const char* legend = size > legendSize ? "X-MOD" : "CROSS MOD";
+        text(805, crossY - 0.5f * size, size, mulA(live.textPanel, a),
+             showValue ? amount : legend, -1);
+
+        compactToggle("oracle_sync", kParamHardSync, 924, 423, 984, 441, "SYNC", it, a);
+        text(954, 445, 8.5f, mulA(whiteDimCol(), a), "OSC 2 \xE2\x86\x92 OSC 1", 0, true);
     }
     void drawSubMono(float a, bool it)
     {
@@ -2871,7 +3074,8 @@ private:
 
         // Panel extended 518 -> 542 (+24 lower-body shift); the clickable button grows
         // vertically, centred in the taller panel (mid 504).
-        panelBox(760, 466, 1000, 542);
+        panelBox(760, 466, 1000, 542, 1.0f, 0, 20.0f, /*sheet*/ true, /*titled*/ false);
+        if (curMode == 1) { drawOracleModLaunchers(); return; }
         const ImVec2 b0 = P(768, 474), b1 = P(992, 534);
         ImGui::SetCursorScreenPos(b0);
         ImGui::InvisibleButton("modbar", ImVec2(b1.x - b0.x, b1.y - b0.y));
@@ -2885,6 +3089,287 @@ private:
         char cnt[24]; std::snprintf(cnt, sizeof(cnt), "%d active", activeModSlots());
         text(886, 514, 9.0f, live.accent, cnt, 0);
     }
+    // Oracle: the bar holds two launchers, MOD MATRIX and WHEEL MOD, stacked at full
+    // width so each reads at the Wheel Mod panel's sizes (name kWmLegend, count
+    // kWmValue: 16 / 17 screen px from window scale 0.80 up): lamp and name at the
+    // left, the count right-aligned on the same baseline in the panel's value ink.
+    void drawOracleModLaunchers()
+    {
+        constexpr float x0 = 766.0f, x1 = 994.0f;
+        auto launcher = [&](const char* id, float y0, float y1, bool open, bool lit,
+                            const char* name, const char* count, const char* tip) {
+            const ImVec2 b0 = P(x0, y0), b1 = P(x1, y1);
+            ImGui::SetCursorScreenPos(b0);
+            ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
+            const bool clicked = ImGui::IsItemClicked();
+            const bool hov = ImGui::IsItemHovered();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) ImGui::SetTooltip("%s", tip);
+            const WheelModTheme t = wmTheme();
+            dl->AddRectFilled(b0, b1, hov ? t.btnHover : t.btnFill, 4.0f * s);
+            dl->AddRect(b0, b1, open ? live.accent : t.btnEdge, 4.0f * s, 0, 1.4f * s);
+            const float cy = 0.5f * (y0 + y1);
+            const float nameY = cy - 0.5f * kWmLegend;
+            panel.led(dl, x0 + 10.0f, cy, lit, 4.0f);
+            text(x0 + 22.0f, nameY, kWmLegend, t.btnText, name, -1, true);
+            text(x1 - 8.0f, nameY + ascent(kWmLegend) - ascent(kWmValue), kWmValue, t.value, count, 1);
+            return clicked;
+        };
+        char cnt[24]; std::snprintf(cnt, sizeof cnt, "%d active", activeModSlots());
+        if (launcher("modbar", 472.0f, 502.0f, showMod, showMod, "MOD MATRIX", cnt, "Open the modulation matrix"))
+        { showMod = true; modPopupWasOpen = false; }
+        const int dests = wheelDestCount();
+        char wc[24];
+        if (dests == 0) std::snprintf(wc, sizeof wc, "off");
+        else std::snprintf(wc, sizeof wc, "%d dest", dests);
+        if (launcher("wheelbar", 506.0f, 536.0f, showWheel, dests > 0, "WHEEL MOD", wc,
+                     "Open the Wheel Mod section: one LFO and a noise source,\n"
+                     "scaled by the mod wheel, for every voice."))
+            showWheel = true;
+    }
+
+    int wheelDestCount() const
+    {
+        const uint32_t d[5] = { kParamWheelFreqA, kParamWheelFreqB, kParamWheelPwA,
+                                kParamWheelPwB, kParamWheelFilter };
+        int n = 0;
+        for (uint32_t p : d) n += values[p] > 0.5f ? 1 : 0;
+        return n;
+    }
+
+    // ===================== WHEEL MOD PANEL (Oracle, #303) =====================
+    // Replaces the base layers over a scrim, like the MOD MATRIX. Four columns in
+    // signal order: LFO -> SOURCE (LFO / noise mix) -> DEPTH (the wheel between
+    // two limits) -> DESTINATION. The signature element is the DEPTH rail: a slot
+    // drawn like the mod wheel's, with the two limits marked on it and the depth
+    // the wheel is giving now filled in, so the limits read as the wheel's travel.
+    //
+    // Readability floor (owner 2026-11-03): legends kWmLegend = 20 and read-outs
+    // kWmValue = 22 design px reach 16 / 17 screen px from window scale 0.80
+    // (992 x 624) up. The rest of the face is smaller; the face-wide minimum
+    // window is a separate, open owner decision.
+    // Layout, design px. The panel is centred on the face; every y below is an
+    // offset from its top (kWmY0) so the block moves as one. Four equal columns
+    // with equal side margins; a legend sits ABOVE every control, a read-out under
+    // every knob.
+    static constexpr float kWmW = 800.0f, kWmH = 354.0f;
+    static constexpr float kWmX0 = 0.5f * (kDesignW - kWmW), kWmY0 = 0.5f * (kDesignH - kWmH);
+    static constexpr float kWmX1 = kWmX0 + kWmW, kWmY1 = kWmY0 + kWmH;
+    static constexpr float kWmTitle = 26.0f, kWmLegend = 20.0f, kWmValue = 22.0f;
+    static constexpr float kWmColW = 190.0f;                       // column pitch
+    static constexpr float kWmCol0 = kWmX0 + 0.5f * (kWmW - 4.0f * kWmColW);
+    static constexpr float kWmHeadY = 56.0f;                       // column headers
+    static constexpr float kWmKnobY = 156.0f;                      // knob row centre
+    static constexpr float kWmRowY  = 290.0f;                      // button row top
+    static constexpr float kWmHeroR = 34.0f, kWmKnobR = 26.0f;     // RATE / the others
+    static constexpr float kWmBtnH = 38.0f, kWmBtnGap = 8.0f;      // lit buttons
+    static constexpr float kWmGap = 12.0f;                         // legend / read-out gap
+
+    // Role colours for the panel, derived from the live (mode-blended) palette, so
+    // the panel carries no colour of its own: the face's control ground and edge
+    // (kCtlGround / kCtlEdge), black, and the two scrim levels the other overlays use.
+    struct WheelModTheme
+    {
+        ImU32 btnFill, btnHover, btnEdge, btnText, btnTextOff, legend, value, seam, rail, railEdge, fill, mark;
+        ImU32 scrimBg, scrim;   // the background dim, and the panel layer's own (as the other overlays)
+    };
+    WheelModTheme wmTheme() const
+    {
+        const ImU32 ground = kCtlGround, edge = kCtlEdge;
+        const ImU32 black = IM_COL32(0, 0, 0, 255);
+        WheelModTheme t;
+        t.btnFill    = ground;
+        t.btnHover   = lerpC(ground, live.textPanel, 0.08f);
+        t.btnEdge    = edge;
+        t.btnText    = live.textPanel;
+        t.btnTextOff = lerpC(live.textPanel, ground, 0.40f);
+        t.legend     = live.textPanel;
+        t.value      = whiteDimCol();
+        t.seam       = lerpC(live.textPanel, live.panel, 0.80f);
+        t.rail       = lerpC(ground, black, 0.55f);
+        t.railEdge   = edge;
+        t.fill       = withA(live.ledOn, 170);
+        t.mark       = live.textPanel;
+        t.scrimBg    = withA(black, 170);
+        t.scrim      = withA(black, 150);
+        return t;
+    }
+
+    // A lit push button bound to a 0/1 parameter. With a lamp (the destinations)
+    // it reads as a switch: lamp, legend, accent edge when on. Without one it is a
+    // segment of a selector, lit by its fill like the face's chorus selector.
+    // radio >= 0 makes it one segment of a choice (lit when the value equals radio).
+    void wmButton(const char* id, uint32_t p, float x0, float y0, float x1, float y1,
+                  const char* label, bool lamp, int radio = -1)
+    {
+        const bool on = radio >= 0 ? (int)std::lround(values[p]) == radio : values[p] > 0.5f;
+        const ImVec2 b0 = P(x0, y0), b1 = P(x1, y1);
+        ImGui::SetCursorScreenPos(b0);
+        ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
+        if (ImGui::IsItemClicked()) setChoice(p, radio >= 0 ? radio : (on ? 0 : 1));
+        const bool hov = ImGui::IsItemHovered();
+        if (tips[p] && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+            ImGui::SetTooltip("%s", tips[p]);
+        const WheelModTheme t = wmTheme();
+        const float lit = lamp ? 0.20f : 0.38f;
+        const ImU32 fill = on ? lerpC(t.btnFill, live.accent, lit) : (hov ? t.btnHover : t.btnFill);
+        dl->AddRectFilled(b0, b1, fill, 4.0f * s);
+        dl->AddRect(b0, b1, on ? live.accent : (hov ? lerpC(t.btnEdge, live.textPanel, 0.35f) : t.btnEdge),
+                    4.0f * s, 0, (on ? 1.6f : 1.2f) * s);
+        const float cy = 0.5f * (y0 + y1);
+        if (lamp) panel.led(dl, x0 + 14.0f, cy, on, 4.5f);
+        text(0.5f * (x0 + x1) + (lamp ? 9.0f : 0.0f), cy - 0.5f * kWmLegend, kWmLegend,
+             on ? t.btnText : t.btnTextOff, label, 0, on);
+    }
+
+    // The panel's knob ids. DuskPanel::isEditingValue compares the id POINTER, so the
+    // same constants are passed to the knobs and to the Esc test below.
+    static constexpr const char* kWmRateId = "wm_rate";
+    static constexpr const char* kWmMixId  = "wm_mix";
+    static constexpr const char* kWmHiId   = "wm_hi";
+    static constexpr const char* kWmLoId   = "wm_lo";
+    bool wmEditingValue() const
+    {
+        return panel.isEditingValue(kWmRateId) || panel.isEditingValue(kWmMixId)
+            || panel.isEditingValue(kWmHiId) || panel.isEditingValue(kWmLoId);
+    }
+
+    // Knob with its legend above and its read-out below, in the panel's sizes.
+    void wmKnob(const char* id, uint32_t p, float cx, float cy, float r, const char* legend,
+                const char* readout)
+    {
+        const WheelModTheme t = wmTheme();
+        text(cx, cy - r - kWmGap - kWmLegend, kWmLegend, t.legend, legend, 0, true);
+        const bool rate = p == kParamWheelLfoRate;
+        knob(id, p, cx, cy, r, rate ? "%.2f" : "%.0f", rate ? " Hz" : " %",
+             false, false, false, rate ? 1.0f : 100.0f);
+        text(cx, cy + r + kWmGap, kWmValue, t.value, readout, 0);
+    }
+
+    void drawWheelModOverlay()
+    {
+        if (!showWheel) return;
+        // Was a typed-value field open at the start of this frame? Esc then belongs
+        // to the field (it closes itself inside the knob, before the test below).
+        const bool editingAtStart = wmEditingValue();
+        const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
+        dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + ws.y), wmTheme().scrim);
+        const ImVec2 pMin = P(kWmX0 - 3, kWmY0 - 3), pMax = P(kWmX1 + 3, kWmY1 + 3);
+        panelBox(kWmX0, kWmY0, kWmX1, kWmY1, 1.0f, 0, 20.0f, /*sheet*/ false);
+        const WheelModTheme t = wmTheme();
+        const float Y = kWmY0;
+        text(kWmX0 + 20, Y + 12, kWmTitle, live.accent, "WHEEL MOD", -1, true);
+
+        // close
+        const ImVec2 c0 = P(kWmX1 - 46, Y + 12), c1 = P(kWmX1 - 14, Y + 44);
+        ImGui::SetCursorScreenPos(c0);
+        ImGui::InvisibleButton("wheelclose", ImVec2(c1.x - c0.x, c1.y - c0.y));
+        if (ImGui::IsItemClicked()) showWheel = false;
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) ImGui::SetTooltip("Close the Wheel Mod section");
+        dl->AddRect(c0, c1, ImGui::IsItemHovered() ? t.legend : t.btnEdge, 3.0f * s, 0, 1.2f * s);
+        drawX(kWmX1 - 30, Y + 28, 6.0f, t.legend);
+
+        // columns: headers, and seams between them
+        const char* const heads[4] = { "LFO", "SOURCE", "DEPTH", "DESTINATION" };
+        for (int c = 0; c < 4; ++c)
+        {
+            const float x0 = kWmCol0 + c * kWmColW;
+            text(x0 + 0.5f * kWmColW, Y + kWmHeadY, kWmLegend, live.accent, heads[c], 0, true);
+            if (c > 0)
+                dl->AddLine(P(x0, Y + kWmHeadY + 4), P(x0, kWmY1 - 18), t.seam, 1.0f * s);
+        }
+        char buf[32];
+        const float rowLegendY = Y + kWmRowY - kWmGap - kWmLegend;
+        const float rowY0 = Y + kWmRowY, rowY1 = rowY0 + kWmBtnH;
+
+        // --- LFO: RATE (the hero) and the three combinable shapes ---
+        {
+            const float cx = kWmCol0 + 0.5f * kWmColW;
+            const float hz = values[kParamWheelLfoRate];
+            std::snprintf(buf, sizeof buf, hz < 10.0f ? "%.2f Hz" : "%.1f Hz", hz);
+            wmKnob(kWmRateId, kParamWheelLfoRate, cx, Y + kWmKnobY, kWmHeroR, "RATE", buf);
+            text(cx, rowLegendY, kWmLegend, t.legend, "SHAPE", 0, true);
+            const float bx = kWmCol0 + 12.0f, gap = 6.0f, bw = (kWmColW - 24.0f - 2.0f * gap) / 3.0f;
+            const uint32_t sp[3] = { kParamWheelLfoSaw, kParamWheelLfoTri, kParamWheelLfoSquare };
+            const char* const sl[3] = { "SAW", "TRI", "SQR" };
+            const char* const si[3] = { "wm_saw", "wm_tri", "wm_sqr" };
+            for (int i = 0; i < 3; ++i)
+            {
+                const float x0 = bx + i * (bw + gap);
+                wmButton(si[i], sp[i], x0, rowY0, x0 + bw, rowY1, sl[i], false);
+            }
+        }
+
+        // --- SOURCE: the LFO / noise mix, and what the noise is ---
+        {
+            const float cx = kWmCol0 + 1.5f * kWmColW;
+            const bool sh = values[kParamWheelNoiseSH] > 0.5f;
+            std::snprintf(buf, sizeof buf, "%.0f %%", values[kParamWheelSourceMix] * 100.0f);
+            wmKnob(kWmMixId, kParamWheelSourceMix, cx, Y + kWmKnobY, kWmKnobR, "MIX", buf);
+            // the knob's two ends, as on the panel it models
+            const float endY = Y + kWmKnobY + kWmKnobR - 0.5f * kWmLegend;
+            text(cx - kWmKnobR - 10, endY, kWmLegend, t.value, "LFO", 1, false);
+            text(cx + kWmKnobR + 10, endY, kWmLegend, t.value, sh ? "S&H" : "NOISE", -1, false);
+            text(cx, rowLegendY, kWmLegend, t.legend, "NOISE TYPE", 0, true);
+            const float x0 = kWmCol0 + kWmColW + 12.0f, gap = 6.0f, w = 0.5f * (kWmColW - 24.0f - gap);
+            wmButton("wm_noise", kParamWheelNoiseSH, x0, rowY0, x0 + w, rowY1, "NOISE", false, 0);
+            wmButton("wm_sh", kParamWheelNoiseSH, x0 + w + gap, rowY0, x0 + 2.0f * w + gap, rowY1, "S&H", false, 1);
+        }
+
+        // --- DEPTH: the rail, and the two limits that set it ---
+        {
+            const float x0 = kWmCol0 + 2.0f * kWmColW;
+            const float rx0 = x0 + 26.0f, rx1 = x0 + 54.0f;
+            const float ry0 = Y + kWmHeadY + 44.0f, ry1 = rowY1 - kWmValue - kWmGap;
+            const float lo = values[kParamWheelLowerLimit], hi = values[kParamWheelUpperLimit];
+            const float w = modValue < 0.0f ? 0.0f : (modValue > 1.0f ? 1.0f : modValue);
+            const float depth = lo + (hi - lo) * w;
+            auto yOf = [&](float v) { return ry1 - 3.0f - (ry1 - ry0 - 6.0f) * v; };
+            dl->AddRectFilled(P(rx0 - 2, ry0 - 2), P(rx1 + 2, ry1 + 2), metalCol(), 5.0f * s);
+            dl->AddRectFilled(P(rx0, ry0), P(rx1, ry1), t.rail, 4.0f * s);
+            if (depth > 0.0f)
+                dl->AddRectFilled(P(rx0 + 3, yOf(depth)), P(rx1 - 3, ry1 - 3), t.fill, 2.0f * s);
+            // limit marks, pointing at the rail from the right: upper light, lower accent
+            auto mark = [&](float v, ImU32 col) {
+                const float y = yOf(v);
+                dl->AddTriangleFilled(P(rx1 + 5, y), P(rx1 + 16, y - 7), P(rx1 + 16, y + 7), col);
+            };
+            mark(hi, t.mark);
+            mark(lo, live.accent);
+            dl->AddRect(P(rx0, ry0), P(rx1, ry1), t.railEdge, 4.0f * s, 0, 1.2f * s);
+            std::snprintf(buf, sizeof buf, "%.0f %%", depth * 100.0f);
+            text(0.5f * (rx0 + rx1), ry1 + kWmGap, kWmValue, t.value, buf, 0);
+            const float kx = x0 + 132.0f;
+            std::snprintf(buf, sizeof buf, "%.0f %%", hi * 100.0f);
+            wmKnob(kWmHiId, kParamWheelUpperLimit, kx, Y + 142.0f, kWmKnobR, "UPPER", buf);
+            std::snprintf(buf, sizeof buf, "%.0f %%", lo * 100.0f);
+            wmKnob(kWmLoId, kParamWheelLowerLimit, kx, Y + 268.0f, kWmKnobR, "LOWER", buf);
+        }
+
+        // --- DESTINATION: five switches, top to bottom as on the panel it models ---
+        {
+            const float x0 = kWmCol0 + 3.0f * kWmColW + 14.0f, x1 = x0 + kWmColW - 28.0f;
+            const uint32_t dp[5] = { kParamWheelFreqA, kParamWheelFreqB, kParamWheelPwA,
+                                     kParamWheelPwB, kParamWheelFilter };
+            const char* const dn[5] = { "FREQ A", "FREQ B", "PW A", "PW B", "FILTER" };
+            const char* const di[5] = { "wm_fa", "wm_fb", "wm_pwa", "wm_pwb", "wm_filt" };
+            const float top = Y + kWmHeadY + 40.0f;
+            const float pitch = (rowY1 - top - kWmBtnH) / 4.0f;
+            for (int i = 0; i < 5; ++i)
+            {
+                const float y0 = top + i * pitch;
+                wmButton(di[i], dp[i], x0, y0, x1, y0 + kWmBtnH, dn[i], true);
+            }
+        }
+
+        // Esc and a click on the scrim close it, as the other overlays do.
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape) && !editingAtStart && !wmEditingValue())
+            showWheel = false;
+        const ImVec2 mp = ImGui::GetIO().MousePos;
+        const bool inside = mp.x >= pMin.x && mp.x <= pMax.x && mp.y >= pMin.y && mp.y <= pMax.y;
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !inside)
+            showWheel = false;
+    }
+
     void drawModMatrixOverlay()
     {
         if (!showMod) return;
@@ -2904,7 +3389,7 @@ private:
         dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + ws.y), IM_COL32(0, 0, 0, 150));
         // modal
         const ImVec2 pMin = P(220 - 3, 120 - 3), pMax = P(1020 + 3, 660 + 3);
-        panelBox(220, 120, 1020, 660);
+        panelBox(220, 120, 1020, 660, 1.0f, 0, 20.0f, /*sheet*/ false);
         text(240, 130, 15.0f, live.accent, "MODULATION MATRIX", -1, true);
         // close ✕
         const ImVec2 c0 = P(988, 128), c1 = P(1012, 152);
@@ -3009,7 +3494,7 @@ private:
 
         const float x0 = 420, y0 = 285, x1 = 820, y1 = 495;
         const ImVec2 pMin = P(x0 - 3, y0 - 3), pMax = P(x1 + 3, y1 + 3);
-        panelBox(x0, y0, x1, y1);
+        panelBox(x0, y0, x1, y1, 1.0f, 0, 20.0f, /*sheet*/ false);
         text(x0 + 20, y0 + 14, 15.0f, live.accent, "SAVE USER PRESET", -1, true);
 
         // close ✕
@@ -3353,7 +3838,7 @@ private:
         // freed width. The hover tooltip carries mode and bank verbatim at any size.
         const bool ro = readoutsOn();
         // Name ink band x0+12 .. (x1-122 with badge+tag, x1-36 without): 136 / 222 px,
-        // ~24 / ~40 chars at font 11. The longest factory name is 18, but a USER name
+        // ~24 / ~40 chars at font 11. The longest factory name is 20, but a USER name
         // is whatever fitted in saveNameBuf (128) and panel.text() never clips — so
         // the draw is clipped to the band and an over-long name is CUT, not allowed to
         // overprint the badge and bleed into the next column. Tooltip has it in full.
@@ -3388,7 +3873,7 @@ private:
         dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + ws.y), IM_COL32(0, 0, 0, 150));
 
         const ImVec2 pMin = P(kBrX0 - 3, kBrY0 - 3), pMax = P(kBrX1 + 3, kBrY1 + 3);
-        panelBox(kBrX0, kBrY0, kBrX1, kBrY1);
+        panelBox(kBrX0, kBrY0, kBrX1, kBrY1, 1.0f, 0, 20.0f, /*sheet*/ false);
         text(kBrCX0, kBrY0 + 12, 15.0f, live.accent, "PRESET BROWSER", -1, true);
 
         // close ✕
@@ -3815,8 +4300,7 @@ private:
         ledButton("acid_latch", kParamArpLatch, 406, 568, 470, 592, "LATCH");
 
         const int step = liveStep();
-        dl->AddRectFilled(P(484, 568), P(692, 592),
-                          IM_COL32(38, 39, 43, 255), 4.0f * s);
+        dl->AddRectFilled(P(484, 568), P(692, 592), kCtlGround, 4.0f * s);
         dl->AddRect(P(484, 568), P(692, 592), withA(live.accent, 120),
                     4.0f * s, 0, 1.0f * s);
         if (step >= 0 && step < 16)
@@ -4022,6 +4506,7 @@ private:
         panelBox(708, 552, 834, 688);
         sectionTitle(714, 556, "DRIVE");
         const bool acid = (curMode == 5);
+        oracleTitleRowGap(786, 572, 552, 834);
         ledButton("drvon", kParamDriveOn, 786, 556, 828, 572,
                   acid ? "FX" : "ON");
         if (acid)
@@ -4044,6 +4529,7 @@ private:
         // (845.8 >= 844, 956.2 <= 958) and each neighbor by 3.6 px.
         panelBox(838, 552, 964, 688);
         sectionTitle(844, 556, "CHORUS");
+        oracleTitleRowGap(916, 572, 552, 964);
         ledButton("choon", kParamChorusOn, 916, 556, 958, 572, "ON");
         klabel(863, 598, "RATE");  knob("chorate", kParamChorusRate, 863, 636, 14, "%.2f", " Hz", false, false, ro, 1.0f, 0.0f, false);
         klabel(901, 598, "DEPTH"); knob("chodep", kParamChorusDepth, 901, 636, 14, "%.0f", " %", false, false, ro, 100.0f, 0.0f, false);
@@ -4053,9 +4539,10 @@ private:
         // end at y=606 with the FB label starting at 598 UNDER it): SYNC + the
         // context DIV combo share the top row (578..598); the knob row (labels
         // 608, centres 642) holds FB+MIX when synced or TIME+FB+MIX when free;
-        // P-P and TAPE ride a bottom row of their own (664..680).
+        // P-P and TAPE ride a bottom row of their own (664..680, 5 px higher in Oracle).
         panelBox(968, 552, 1094, 688);
         sectionTitle(974, 556, "DELAY");
+        oracleTitleRowGap(1046, 572, 552, 1094);
         ledButton("dlyon", kParamDelayOn, 1046, 556, 1088, 572, "ON");
         const bool sync = values[kParamDelaySync] > 0.5f;
         compactToggle("dlysync", kParamDelaySync, 976, 578, 1032, 596, "SYNC");
@@ -4080,8 +4567,12 @@ private:
             klabelOrValue(1069, 608, "MIX", dro, kParamDelayMix, "%.0f", " %", 100.0f);
             knob("dlymix", kParamDelayMix, 1069, 642, 14, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
         }
-        ledButton("dlypp", kParamDelayPP, 995, 664, 1031, 680, "P-P", true);
-        ledButton("dlytape", kParamDelayTape, 1037, 664, 1073, 680, "TAPE", true);
+        // The labels under P-P and TAPE reach the panel floor, where Oracle's silk box
+        // runs; there the row rides 5 px higher (blended by the Oracle weight, so it
+        // does not move in any other mode).
+        const float ppY = 664.0f - 5.0f * live.oracle;
+        ledButton("dlypp", kParamDelayPP, 995, ppY, 1031, ppY + 16.0f, "P-P", true);
+        ledButton("dlytape", kParamDelayTape, 1037, ppY, 1073, ppY + 16.0f, "TAPE", true);
 
         // Reverb — aligned two-row grid: SIZE/DECAY/DAMP r13 (labels 590, centres
         // 620), MIX/P-DLY r12 (labels 642, centres 668); row-2 label ink (..649.6)
@@ -4089,6 +4580,7 @@ private:
         // and the row-2 knob bottoms (683.2) clear the inner floor (685).
         panelBox(1098, 552, 1224, 688);
         sectionTitle(1104, 556, "REVERB");
+        oracleTitleRowGap(1176, 572, 552, 1224);
         ledButton("rvbon", kParamReverbOn, 1176, 556, 1218, 572, "ON");
         // Modular auto-engages a separate spring reverb at a fixed 15% mix. Say so
         // explicitly: the five visible knobs still control the normal reverb.
@@ -4152,12 +4644,31 @@ private:
         // Nothing is hardwired to the wheel, so the tooltip says where it goes: the
         // mod matrix source "Mod Whl" (issue #303), and nowhere in Acid, whose
         // engine has no matrix.
+        // In Oracle the wheel also scales the WHEEL MOD section (#303).
         drawWheel("modwheel", 86, 112, false, modValue, "MOD",
-                  live_ ? "Mod wheel (CC 1). Latches where you leave it; wheel-scroll to trim.\n"
-                          "Follows CC 1 sent by the host or a hardware wheel.\n"
-                          "Nothing is wired to it: route the source Mod Whl in the MOD MATRIX (not in Acid).\n"
-                          "Vibrato on Osc 1 and 2: LFO 1 to Osc1 Pitch and Osc2 Pitch, Mod Whl to LFO1 Depth."
-                        : "The mod wheel is unavailable in a remote (split) UI.", live_);
+                  !live_ ? "The mod wheel is unavailable in a remote (split) UI."
+                  : curMode == 1
+                  ? "Mod wheel (CC 1). Latches where you leave it; wheel-scroll to trim.\n"
+                    "Follows CC 1 sent by the host or a hardware wheel.\n"
+                    "Oracle: sets the WHEEL MOD depth between its lower and upper limit\n"
+                    "(the marks on this wheel), and is the source Mod Whl in the MOD MATRIX."
+                  : "Mod wheel (CC 1). Latches where you leave it; wheel-scroll to trim.\n"
+                    "Follows CC 1 sent by the host or a hardware wheel.\n"
+                    "Nothing is wired to it: route the source Mod Whl in the MOD MATRIX (not in Acid).\n"
+                    "Vibrato on Osc 1 and 2: LFO 1 to Osc1 Pitch and Osc2 Pitch, Mod Whl to LFO1 Depth.",
+                  live_);
+        // Oracle with a Wheel Mod destination on: the two limits marked on the slot,
+        // upper and lower, in the same colours as the panel's depth rail.
+        if (curMode == 1 && wheelDestCount() > 0)
+        {
+            const WheelModTheme t = wmTheme();
+            const float top = 700.0f, bot = 762.0f;
+            auto yOf = [&](float v) { return bot - 3.0f - (bot - top - 6.0f) * v; };
+            dl->AddLine(P(107.5f, yOf(values[kParamWheelUpperLimit])), P(111.0f, yOf(values[kParamWheelUpperLimit])),
+                        t.mark, 1.6f * s);
+            dl->AddLine(P(107.5f, yOf(values[kParamWheelLowerLimit])), P(111.0f, yOf(values[kParamWheelLowerLimit])),
+                        live.accent, 1.6f * s);
+        }
         pushWheels();   // again, so a live drag reaches the engine with no frame of lag
     }
 
@@ -4510,7 +5021,7 @@ private:
         tips[kParamMasterVol] = "Overall output level.";
         tips[kParamMasterPan] = "Stereo position of the whole instrument.";
         tips[kParamStereoWidth] = "Widens or narrows the stereo image.";
-        tips[kParamOversampling] = "Internal oversampling; higher rejects aliasing at more CPU cost.";
+        tips[kParamOversampling] = "Internal rate: 1x, 2x and 4x mean about 48, 96 and 192 kHz inside.\nA 96 kHz session at 2x is already at that rate and runs at 1x.\nHigher rejects aliasing at more CPU cost.";
         tips[kParamAnalogAmt] = "Analog character: subtle drift, detune and noise.";
         tips[kParamVintage] = "Age and wear: slow pitch wobble plus faint background hiss.";
         tips[kParamOsc1Wave] = tips[kParamOsc2Wave] = tips[kParamOsc3Wave] = "Waveform of the oscillator.";
@@ -4532,13 +5043,32 @@ private:
         tips[kParamAmpCurve] = tips[kParamFiltCurve] = "Shape of the envelope segments.";
         tips[kParamCrossMod] = "Oscillator 2 modulates oscillator 1 frequency at audio rate.";
         tips[kParamRingMod] = "Ring modulation between oscillators 1 and 2.";
-        tips[kParamHardSync] = "Oscillator 2 hard-syncs to oscillator 1 for tearing timbres.";
+        // One tip for three panels, and the direction differs: Oracle syncs osc 1 to
+        // osc 2 (osc 2 is the master), Mono and Modular osc 2 to osc 1. Short lines,
+        // because SetTooltip does not wrap.
+        tips[kParamHardSync] = "Hard sync, for tearing timbres.\n"
+                               "Oracle: oscillator 2 restarts oscillator 1.\n"
+                               "Mono and Modular: oscillator 1 restarts oscillator 2.";
         tips[kParamFMAmount] = "Linear FM from oscillator 1 into oscillator 2.";
         tips[kParamPmFenvOscA] = "Poly-mod: filter envelope to oscillator 1 pitch.";
         tips[kParamPmFenvFilt] = "Poly-mod: filter envelope added to the filter cutoff.";
         tips[kParamPmFenvPWM] = "Poly-mod: filter envelope to oscillator 1 pulse width.";
         tips[kParamPmOscBOscA] = "Poly-mod: oscillator 2 to oscillator 1 pitch.";
         tips[kParamPmOscBPWM] = "Poly-mod: oscillator 2 to oscillator 1 pulse width.";
+        tips[kParamWheelLfoRate] = "Wheel Mod LFO rate. One LFO for every voice, never restarted.";
+        tips[kParamWheelLfoSaw] = "Wheel Mod LFO: rising sawtooth. Combine with the other shapes.";
+        tips[kParamWheelLfoTri] = "Wheel Mod LFO: triangle. Combine with the other shapes.";
+        tips[kParamWheelLfoSquare] = "Wheel Mod LFO: square. Combine with the other shapes.";
+        tips[kParamWheelSourceMix] = "Blend from the LFO (left) to the noise or S&H (right).";
+        tips[kParamWheelNoiseSH] = "Noise: a smooth random wobble.\n"
+                                   "S&H: random steps, one per LFO cycle.";
+        tips[kParamWheelLowerLimit] = "Wheel Mod depth with the mod wheel all the way down.";
+        tips[kParamWheelUpperLimit] = "Wheel Mod depth with the mod wheel all the way up.";
+        tips[kParamWheelFreqA] = "Wheel Mod to oscillator 1 pitch.";
+        tips[kParamWheelFreqB] = "Wheel Mod to oscillator 2 pitch.";
+        tips[kParamWheelPwA] = "Wheel Mod to oscillator 1 pulse width.";
+        tips[kParamWheelPwB] = "Wheel Mod to oscillator 2 pulse width.";
+        tips[kParamWheelFilter] = "Wheel Mod to the filter cutoff.";
         tips[kParamPmOscBFilt] = "Poly-mod: oscillator 2 to filter cutoff at audio rate.";
         tips[kParamModFilterModel] = "Select the open early ladder or bandwidth-limited late revision.";
         tips[kParamModOsc2Osc1] = "Audio-rate phase modulation from oscillator 2 to oscillator 1.";
@@ -4652,6 +5182,7 @@ private:
     bool   midiProgramSignalSeen = false;
     bool   showMod = false;
     bool   modPopupWasOpen = false;   // a Source/Dest dropdown was up last frame
+    bool   showWheel = false;         // Oracle's WHEEL MOD panel is open
 
     // user preset library + save modal state
     scpreset::Store presetStore;
