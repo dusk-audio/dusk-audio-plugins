@@ -677,8 +677,12 @@ private:
     // (#303, 2026-11-17), with the Poly-Mod amount 0..1 read as its 0..100 knob:
     //   filter envelope -> freq A   34.7 cents per step, exponential, near
     //                               note-independent: 34.7 semitones at full;
-    //   osc B -> freq A             7.5 cents per step, exponential: +-7.5
-    //                               semitones at full, oscillator B at full scale;
+    //   osc B -> freq A             7.145 cents per step, exponential: +-7.145
+    //                               semitones at full, oscillator B at full scale
+    //                               (re-measured in review, oscillator B at its
+    //                               negative peak: -70.9 / -180.4 / -358.2 /
+    //                               -713.7 cents at 10 / 25 / 50 / 100; the
+    //                               positive peak could not be read there);
     //   filter envelope -> PW A     narrows the pulse 2.3 % per step, and can
     //                               close it (4 steps from a 10 % pulse silence it);
     //   filter envelope -> filter   0.143 octave per step: 14.3 octaves at full;
@@ -687,7 +691,7 @@ private:
     // note), the pulse widened (+0.35 x amount) and the two filter depths were 4
     // and 3 octaves. Osc B -> PW A was not measured and keeps +-0.30 x amount.
     static constexpr float kPmFEnvFreqSemis   = 34.7f;
-    static constexpr float kPmOscBFreqSemis   = 7.5f;
+    static constexpr float kPmOscBFreqSemis   = 7.145f;
     static constexpr float kPmFEnvPwPerAmount = 2.3f;
     static constexpr float kPmFEnvFilterOct   = 14.3f;
     static constexpr float kPmOscBFilterOct   = 3.1f;

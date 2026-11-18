@@ -11,9 +11,13 @@ envelope held at full (attack 1 ms, sustain 1):
                    at A3 and A5 (exponential). Pitch from a parabolic FFT peak.
   FEnv -> PW A     amount 0.04 from a 10 % pulse narrows it to 0.8 %: the level
                    drops by more than 10 dB (it used to widen, and rise).
-  osc B -> freq A  amount 1 with oscillator B a slow full-scale square: the
-                   upward excursion is 7.5 semitones (zero-crossing periods while
-                   oscillator B is high; the low half is too short to read).
+  osc B -> freq A  oscillator B a sine two octaves below a sine osc A (A6, at a
+                   low level so the filter stays linear): the downward excursion
+                   of osc A's instantaneous frequency (analytic signal, low-passed
+                   at 4.5 kHz, in cents, fitted with oscillator B's own sine) at
+                   amounts 0.25 and 1, against the
+                   reference's own downward excursions at 25 and 100 (-180.4 and
+                   -713.7 cents, review re-measurement), +-10 cents.
   Cross Mod        not on Oracle's panel, but Poly Mod Bells and Glass Bells use
                    it for the old linear osc B -> freq A FM (2880 Hz x amount):
                    amount 0.01 with the same slow square moves 55 Hz up by
@@ -24,12 +28,13 @@ envelope held at full (attack 1 ms, sustain 1):
     measured                     law      previous laws
     FEnv -> freq A A3 / A5       867.5    +2514 / +1035 cents (linear, 720 Hz)
     FEnv -> PW, level change     -15.1    +0.5 dB (widened)
-    osc B -> freq A, up          +745.9   +6883 cents (linear, 2880 Hz)
+    osc B -> freq A, 0.25 / 1    -178.4 / -713.3   (7.5 cents per step: -187.1 / -748.7)
     Cross Mod 0.01, Hz up        +28.25   (unchanged law)
 """
 import sys
 
 import numpy as np
+from scipy import signal
 
 from _harness import render
 
@@ -61,14 +66,21 @@ def main():
     rms = lambda y: 20.0 * np.log10(np.sqrt(np.mean(tail(y, fs) ** 2)) + 1e-20)
     d = rms(on) - rms(off)
     rows.append(("FEnv -> PW A, amount 0.04 from 10 %", d, "dB", d < -10.0))
-    fs, x = render(1, 33, 2.0, 2, "pm_oscb", osc1Wave=3, osc2Wave=1, osc2Semi=-24,
-                   osc2Detune=0, pmOscBOscA=1, **OPEN)
-    y = x[int(0.3 * fs):, 0]
-    zc = np.flatnonzero((y[:-1] < 0) & (y[1:] >= 0))
-    t = zc + (-y[zc]) / (y[zc + 1] - y[zc])
-    c = 1200.0 * np.log2(fs / np.diff(t) / 55.0)
-    up = float(np.median(c[c > 0])) if np.any(c > 0) else float("nan")
-    rows.append(("osc B -> freq A, amount 1, upward", up, "cents", abs(up - 750.0) <= 30.0))
+    for amount, ref in ((0.25, -180.4), (1.0, -713.7)):
+        fs, x = render(1, 93, 1.5, 2, f"pm_oscb_{amount}", osc1Wave=3, osc1Level=0.05, osc2Wave=3,
+                       osc2Semi=-24, osc2Detune=0, pmOscBOscA=amount, **OPEN)
+        y = x[int(0.3 * fs):, 0]
+        y = signal.sosfiltfilt(signal.butter(6, 4500.0, "low", fs=fs, output="sos"), y)
+        y = signal.sosfiltfilt(signal.butter(2, 50.0, "high", fs=fs, output="sos"), y)
+        inst = (np.gradient(np.unwrap(np.angle(signal.hilbert(y)))) * fs / (2.0 * np.pi))[400:-400]
+        # The pitch in cents follows oscillator B, a 440 Hz sine: fit that sine (and
+        # its phase) by least squares; its amplitude is the excursion each way.
+        cents = 1200.0 * np.log2(np.maximum(inst, 1.0) / 1760.0)
+        tt = np.arange(len(cents)) / fs
+        basis = np.column_stack([np.sin(2 * np.pi * 440.0 * tt), np.cos(2 * np.pi * 440.0 * tt), np.ones_like(tt)])
+        coef = np.linalg.lstsq(basis, cents, rcond=None)[0]
+        down = -float(np.hypot(coef[0], coef[1]))
+        rows.append((f"osc B -> freq A, amount {amount}, down", down, "cents", abs(down - ref) <= 10.0))
     fs, x = render(1, 33, 2.0, 2, "pm_xmod", osc1Wave=3, osc2Wave=1, osc2Semi=-24,
                    osc2Detune=0, crossMod=0.01, **OPEN)
     y = x[int(0.3 * fs):, 0]
