@@ -4,6 +4,7 @@
 # reports max-abs and RMS sample difference in dBFS. Exit 0 if under threshold.
 #
 #   ab_null.py JUCE.wav DAF.wav [--thresh-db -120] [--max-shift 4096] [--label X]
+# Add --bit-exact to compare aligned settled float32 bytes without tolerance.
 #
 # Threshold guidance: bit-identical DSP nulls near the float floor (< -140 dB).
 # 1x transparent paths should pass -120 dB. Oversampled (2x/4x) paths use a
@@ -50,6 +51,7 @@ def best_shift(a, b, max_shift):
     import numpy as np
     x = np.asarray(a, dtype=np.float64); y = np.asarray(b, dtype=np.float64)
     N = min(len(x), len(y)); x = x[:N]; y = y[:N]
+    max_shift = min(max_shift, N - 1)
     n = 1 << (2*N - 1).bit_length()
     corr = np.fft.irfft(np.fft.rfft(x, n) * np.conj(np.fft.rfft(y, n)), n)
     # lags 0..max_shift live at the front, negative lags wrap to the tail
@@ -67,6 +69,7 @@ def main():
     jpath, dpath = args[0], args[1]
     thresh, max_shift, label, skip = -120.0, 4096, "", 0.25
     spectral = False
+    bit_exact = False
     i = 2
     while i < len(args):
         if args[i] == '--thresh-db': thresh = float(args[i+1]); i += 2
@@ -74,7 +77,10 @@ def main():
         elif args[i] == '--label': label = args[i+1]; i += 2
         elif args[i] == '--skip-start': skip = float(args[i+1]); i += 2
         elif args[i] == '--spectral': spectral = True; i += 1
-        else: i += 1
+        elif args[i] == '--bit-exact': bit_exact = True; i += 1
+        else: raise SystemExit(f"unknown argument: {args[i]}")
+    if bit_exact and spectral:
+        raise SystemExit("--bit-exact is a time-domain comparison, incompatible with --spectral")
     # In spectral mode the threshold is a magnitude error in dB (not dBFS).
     if spectral and thresh == -120.0: thresh = 0.1
 
@@ -83,20 +89,38 @@ def main():
     if sr_j != sr_d or ch_j != ch_d:
         raise SystemExit(f"format mismatch: {sr_j}Hz/{ch_j}ch vs {sr_d}Hz/{ch_d}ch")
 
-    lag = best_shift(cj[0], cd[0], max_shift)
-    skip_smp = int(skip * sr_j)  # ignore initial settling (param smoothing ramps)
     import numpy as np
+    if not math.isfinite(skip) or skip < 0 or max_shift < 0:
+        raise SystemExit("skip and maximum shift must be finite, nonnegative values")
+    if not all(np.isfinite(channel).all() for channel in cj + cd):
+        raise SystemExit("FAIL: non-finite samples in a parity render")
+    skip_smp = int(skip * sr_j)  # ignore initial settling (param smoothing ramps)
+    if ch_j <= 0 or min(len(cj[0]), len(cd[0])) <= skip_smp:
+        raise SystemExit("FAIL: no settled audio remains to compare")
+    alignment_channel = max(range(ch_j), key=lambda c: np.sum(np.square(cj[c][skip_smp:])))
+    lag = best_shift(cj[alignment_channel], cd[alignment_channel], max_shift)
     worst_max, worst_rms = 0.0, 0.0
+    excited_j, excited_d = False, False
+    byte_equal = True
     for c in range(ch_j):
         a = np.asarray(cj[c], dtype=np.float64)
         b = np.asarray(cd[c], dtype=np.float64)
         N = min(len(a), len(b))
         # align b to a by lag, restrict to the overlapping settled region
         lo = max(skip_smp, -lag); hi = min(N, N - lag)
+        if hi <= lo:
+            raise SystemExit("FAIL: no settled overlap remains after alignment")
+        excited_j |= bool(np.max(np.abs(a[lo:hi])) > 1e-12)
+        excited_d |= bool(np.max(np.abs(b[lo+lag:hi+lag])) > 1e-12)
         d = a[lo:hi] - b[lo+lag:hi+lag]
+        if bit_exact:
+            byte_equal &= (np.asarray(a[lo:hi], dtype='<f4').tobytes()
+                           == np.asarray(b[lo+lag:hi+lag], dtype='<f4').tobytes())
         if d.size:
             worst_max = max(worst_max, float(np.max(np.abs(d))))
             worst_rms = max(worst_rms, float(np.sqrt(np.mean(d*d))))
+    if not excited_j or not excited_d:
+        raise SystemExit("FAIL: a settled render has no measurable excitation")
 
     tag = f"[{label}] " if label else ""
 
@@ -106,34 +130,44 @@ def main():
         # paths whose halfband filters differ. Time-domain subtraction there is
         # dominated by sub-sample phase, not by any audible magnitude error.
         import numpy as np
-        a = np.asarray(cj[0][skip_smp:], dtype=np.float64)
-        b = np.asarray(cd[0][skip_smp:], dtype=np.float64)
-        N = min(len(a), len(b)); a = a[:N]; b = b[:N]
         nfft = 1 << 13
         win = np.hanning(nfft)
         def avg_mag(x):
             acc = np.zeros(nfft//2+1); k = 0
-            for s in range(0, N-nfft, nfft//4):
+            for s in range(0, N-nfft+1, nfft//4):
                 acc += np.abs(np.fft.rfft(x[s:s+nfft]*win)); k += 1
-            return acc/max(k,1)
-        ma, mb = avg_mag(a), avg_mag(b)
+            return acc/k
         freqs = np.fft.rfftfreq(nfft, 1.0/sr_j)
         band = (freqs >= 20) & (freqs <= 20000)
         eps = 1e-12
-        ddb = np.abs(20*np.log10((ma[band]+eps)/(mb[band]+eps)))
-        # Gate on the MEDIAN magnitude error: with a random-noise probe single
-        # bins have high Welch variance, so max|Δmag| is a noisy outlier, not a
-        # real audible error. Median answers "is this the same EQ curve?".
-        med = float(np.median(ddb))
-        p95 = float(np.percentile(ddb, 95))
-        worst = float(np.max(ddb)); wf = float(freqs[band][int(np.argmax(ddb))])
-        print(f"{tag}spectral 20Hz-20kHz  median|Δmag|={med:.3f} dB  p95={p95:.3f} dB  max={worst:.2f} dB @ {wf:.0f}Hz  (thresh median {thresh:.2f} dB)")
-        ok = med <= thresh
+        ok = True
+        for c in range(ch_j):
+            # Use corresponding settled samples, just as the time-domain gate
+            # does. Otherwise an identical integer-delayed noise render acquires
+            # spurious Welch magnitude error from different window contents.
+            count = min(len(cj[c]), len(cd[c]))
+            lo = max(skip_smp, -lag); hi = min(count, count - lag)
+            a = np.asarray(cj[c][lo:hi], dtype=np.float64)
+            b = np.asarray(cd[c][lo+lag:hi+lag], dtype=np.float64)
+            N = len(a)
+            if N < nfft:
+                raise SystemExit("FAIL: too few settled samples for a spectral frame")
+            ma, mb = avg_mag(a), avg_mag(b)
+            ddb = np.abs(20*np.log10((ma[band]+eps)/(mb[band]+eps)))
+            # Retain the existing median gate for typical magnitude error, on
+            # every channel. Reported tails require separate frequency-specific
+            # assessment; a median alone cannot prove high-frequency parity.
+            med = float(np.median(ddb))
+            p95 = float(np.percentile(ddb, 95))
+            worst = float(np.max(ddb)); wf = float(freqs[band][int(np.argmax(ddb))])
+            print(f"{tag}ch={c} spectral 20Hz-20kHz  median|Δmag|={med:.3f} dB  p95={p95:.3f} dB  max={worst:.2f} dB @ {wf:.0f}Hz  (thresh median {thresh:.2f} dB)")
+            ok &= med <= thresh
         print(f"{tag}{'PASS' if ok else 'FAIL'}")
         return 0 if ok else 1
 
-    print(f"{tag}lag={lag} smp  max_diff={db(worst_max):.1f} dBFS  rms_diff={db(worst_rms):.1f} dBFS  (thresh {thresh:.0f})")
-    ok = db(worst_max) <= thresh
+    rule = f"bytes_equal={int(byte_equal)}" if bit_exact else f"thresh {thresh:.0f}"
+    print(f"{tag}lag={lag} smp  max_diff={db(worst_max):.1f} dBFS  rms_diff={db(worst_rms):.1f} dBFS  ({rule})")
+    ok = byte_equal if bit_exact else db(worst_max) <= thresh
     print(f"{tag}{'PASS' if ok else 'FAIL'}")
     return 0 if ok else 1
 

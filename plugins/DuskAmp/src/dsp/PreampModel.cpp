@@ -29,18 +29,18 @@ std::unique_ptr<PreampModel> PreampModel::create (AmpType type)
 {
     switch (type)
     {
-        case AmpType::Fender:  return std::make_unique<FenderPreamp>();
-        case AmpType::Marshall: return std::make_unique<MarshallPreamp>();
-        case AmpType::Vox:     return std::make_unique<VoxPreamp>();
+        case AmpType::AmericanClean:  return std::make_unique<AmericanCleanPreamp>();
+        case AmpType::BritishCrunch:  return std::make_unique<BritishCrunchPreamp>();
+        case AmpType::BritishChime:   return std::make_unique<BritishChimePreamp>();
     }
-    return std::make_unique<MarshallPreamp>(); // fallback
+    return std::make_unique<BritishCrunchPreamp>(); // fallback
 }
 
 // ============================================================================
-// Fender Twin Reverb
+// American clean amp
 // ============================================================================
 
-void FenderPreamp::prepare (double sampleRate)
+void AmericanCleanPreamp::prepare (double sampleRate)
 {
     sampleRate_ = sampleRate;
 
@@ -55,7 +55,7 @@ void FenderPreamp::prepare (double sampleRate)
     reset();
 }
 
-void FenderPreamp::reset()
+void AmericanCleanPreamp::reset()
 {
     v1a_.reset();
     dc1_.reset();
@@ -65,19 +65,19 @@ void FenderPreamp::reset()
     brightCapState_ = 0.0f;
 }
 
-void FenderPreamp::setGain (float gain01)
+void AmericanCleanPreamp::setGain (float gain01)
 {
     gain_ = std::clamp (gain01, 0.0f, 1.0f);
-    // Fender: map 0-1 to gentle drive range (lots of clean headroom)
+    // American clean: map 0-1 to gentle drive range (lots of clean headroom)
     v1a_.setDrive (gain_ * 0.5f);
 }
 
-void FenderPreamp::setBright (bool on)
+void AmericanCleanPreamp::setBright (bool on)
 {
     bright_ = on;
 }
 
-void FenderPreamp::process (float* buffer, int numSamples)
+void AmericanCleanPreamp::process (float* buffer, int numSamples)
 {
     for (int i = 0; i < numSamples; ++i)
     {
@@ -101,7 +101,7 @@ void FenderPreamp::process (float* buffer, int numSamples)
         sample = dc1_.processSample (sample);
 
         // Cathode bypass: boost low frequencies (25uF → ~80Hz)
-        // This adds warmth to the Fender clean tone
+        // This adds warmth to the American clean tone
         cathodeBypassState_ += (sample - cathodeBypassState_) * cathodeBypassCoeff_;
         sample += cathodeBypassState_ * 0.15f * gain_;
 
@@ -122,7 +122,7 @@ void FenderPreamp::process (float* buffer, int numSamples)
     }
 }
 
-void FenderPreamp::updateCoeffs()
+void AmericanCleanPreamp::updateCoeffs()
 {
     couplingCapCoeff_ = hpfCoeff (30.0f, sampleRate_);   // 22nF → ~30Hz
     cathodeBypassCoeff_ = lpfCoeff (80.0f, sampleRate_); // 25uF → ~80Hz
@@ -134,10 +134,10 @@ void FenderPreamp::updateCoeffs()
 }
 
 // ============================================================================
-// Marshall Plexi 1959
+// British crunch amp
 // ============================================================================
 
-void MarshallPreamp::prepare (double sampleRate)
+void BritishCrunchPreamp::prepare (double sampleRate)
 {
     sampleRate_ = sampleRate;
 
@@ -147,7 +147,7 @@ void MarshallPreamp::prepare (double sampleRate)
     v1a_.prepare (sampleRate, 1);
     v1b_.prepare (sampleRate, 1);
 
-    // Marshall runs hotter bias than Fender
+    // British crunch runs hotter bias than American clean
     v1a_.setBiasPoint (0.0f);
     v1b_.setBiasPoint (0.05f); // slightly hot = earlier breakup
 
@@ -158,7 +158,7 @@ void MarshallPreamp::prepare (double sampleRate)
     reset();
 }
 
-void MarshallPreamp::reset()
+void BritishCrunchPreamp::reset()
 {
     v1a_.reset();
     v1b_.reset();
@@ -169,21 +169,21 @@ void MarshallPreamp::reset()
     brightCapState_ = 0.0f;
 }
 
-void MarshallPreamp::setGain (float gain01)
+void BritishCrunchPreamp::setGain (float gain01)
 {
     gain_ = std::clamp (gain01, 0.0f, 1.0f);
-    // Marshall: progressive cascaded gain
+    // British crunch: progressive cascaded gain
     // V1a gets moderate drive, V1b gets more (driven by V1a's output)
     v1a_.setDrive (gain_ * 0.4f);
     v1b_.setDrive (gain_ * 0.7f);
 }
 
-void MarshallPreamp::setBright (bool on)
+void BritishCrunchPreamp::setBright (bool on)
 {
     bright_ = on;
 }
 
-void MarshallPreamp::process (float* buffer, int numSamples)
+void BritishCrunchPreamp::process (float* buffer, int numSamples)
 {
     for (int i = 0; i < numSamples; ++i)
     {
@@ -194,7 +194,7 @@ void MarshallPreamp::process (float* buffer, int numSamples)
         {
             float hp = sample - brightCapState_;
             brightCapState_ += hp * (1.0f - brightCapCoeff_);
-            sample += hp * 0.35f; // more aggressive than Fender
+            sample += hp * 0.35f; // more aggressive than American clean
         }
 
         // --- Stage 1 (V1a) ---
@@ -208,7 +208,7 @@ void MarshallPreamp::process (float* buffer, int numSamples)
         sample = v1a_.processSample (sample, 0);
         sample = dc1_.processSample (sample);
 
-        // Cathode bypass V1a: 0.68uF → ~340Hz (less bass boost than Fender)
+        // Cathode bypass V1a: 0.68uF → ~340Hz (less bass boost than American clean)
         cathodeBypassState_[0] += (sample - cathodeBypassState_[0]) * cathodeBypassCoeff_;
         sample += cathodeBypassState_[0] * 0.1f * gain_;
 
@@ -231,7 +231,7 @@ void MarshallPreamp::process (float* buffer, int numSamples)
     }
 }
 
-void MarshallPreamp::updateCoeffs()
+void BritishCrunchPreamp::updateCoeffs()
 {
     couplingCapCoeff_ = hpfCoeff (30.0f, sampleRate_);     // 22nF → ~30Hz
     cathodeBypassCoeff_ = lpfCoeff (340.0f, sampleRate_);  // 0.68uF → ~340Hz
@@ -239,10 +239,10 @@ void MarshallPreamp::updateCoeffs()
 }
 
 // ============================================================================
-// Vox AC30 Top Boost
+// British class-A chime amp
 // ============================================================================
 
-void VoxPreamp::prepare (double sampleRate)
+void BritishChimePreamp::prepare (double sampleRate)
 {
     sampleRate_ = sampleRate;
 
@@ -252,7 +252,7 @@ void VoxPreamp::prepare (double sampleRate)
     v1a_.prepare (sampleRate, 1);
     v2a_.prepare (sampleRate, 1);
 
-    // AC30: hot bias for early breakup (Class A character)
+    // Class-A chime: hot bias for early breakup (Class A character)
     v1a_.setBiasPoint (0.1f);
     v2a_.setBiasPoint (0.1f);
 
@@ -263,7 +263,7 @@ void VoxPreamp::prepare (double sampleRate)
     reset();
 }
 
-void VoxPreamp::reset()
+void BritishChimePreamp::reset()
 {
     v1a_.reset();
     v2a_.reset();
@@ -274,20 +274,20 @@ void VoxPreamp::reset()
     cathodeBypassState_ = 0.0f;
 }
 
-void VoxPreamp::setGain (float gain01)
+void BritishChimePreamp::setGain (float gain01)
 {
     gain_ = std::clamp (gain01, 0.0f, 1.0f);
-    // Vox: V1a moderate, V2a adds the "Top Boost" gain
+    // Class-A chime: V1a moderate, V2a adds the treble-boost gain
     v1a_.setDrive (gain_ * 0.35f);
     v2a_.setDrive (gain_ * 0.55f);
 }
 
-void VoxPreamp::setBright (bool /*on*/)
+void BritishChimePreamp::setBright (bool /*on*/)
 {
-    // AC30 has no bright cap — the Cut control on the tone stack handles HF
+    // The class-A chime amp has no bright cap — the Cut control on the tone stack handles HF
 }
 
-void VoxPreamp::process (float* buffer, int numSamples)
+void BritishChimePreamp::process (float* buffer, int numSamples)
 {
     for (int i = 0; i < numSamples; ++i)
     {
@@ -304,27 +304,27 @@ void VoxPreamp::process (float* buffer, int numSamples)
         sample = v1a_.processSample (sample, 0);
         sample = dc1_.processSample (sample);
 
-        // Cathode bypass V1a: 25uF → ~80Hz (full bass boost, like Fender)
+        // Cathode bypass V1a: 25uF → ~80Hz (full bass boost, like American clean)
         cathodeBypassState_ += (sample - cathodeBypassState_) * cathodeBypassCoeff_;
         sample += cathodeBypassState_ * 0.12f * gain_;
 
         // --- Cathode follower (V1b) ---
-        // The CF between stages is what gives the AC30 its spongy compression
-        // and chime. It's a more pronounced effect than the Fender CF because
-        // the AC30 runs in Class A with hotter bias.
+        // The CF between stages is what gives the class-A chime amp its spongy compression
+        // and chime. It's a more pronounced effect than the American clean CF because
+        // the class-A chime amp runs in Class A with hotter bias.
         float absSample = std::abs (sample);
         if (absSample > cfEnvelope_)
             cfEnvelope_ = cfAttackCoeff_ * cfEnvelope_ + (1.0f - cfAttackCoeff_) * absSample;
         else
             cfEnvelope_ = cfReleaseCoeff_ * cfEnvelope_;
 
-        // Stronger compression than Fender — up to 40% reduction
+        // Stronger compression than American clean — up to 40% reduction
         float compression = 1.0f - cfEnvelope_ * 0.4f;
         compression = std::max (compression, 0.4f);
         sample *= compression;
 
         // --- Stage 2 (V2a) — after tone circuit in the real amp ---
-        // In the real AC30, the tone circuit sits between V1b and V2a.
+        // In the real class-A chime amp, the tone circuit sits between V1b and V2a.
         // Here, the tone stack runs separately in the engine after this preamp.
         // V2a re-amplifies the tone-shaped signal.
 
@@ -341,12 +341,12 @@ void VoxPreamp::process (float* buffer, int numSamples)
     }
 }
 
-void VoxPreamp::updateCoeffs()
+void BritishChimePreamp::updateCoeffs()
 {
     couplingCapCoeff_ = hpfCoeff (50.0f, sampleRate_);    // 10nF → ~50Hz
     cathodeBypassCoeff_ = lpfCoeff (80.0f, sampleRate_);  // 25uF → ~80Hz
 
-    // Cathode follower envelope: faster attack than Fender (AC30 Class A)
+    // Cathode follower envelope: faster attack than American clean (Class A chime)
     cfAttackCoeff_ = std::exp (-1000.0f / (1.5f * static_cast<float> (sampleRate_)));
     cfReleaseCoeff_ = std::exp (-1000.0f / (40.0f * static_cast<float> (sampleRate_)));
 }

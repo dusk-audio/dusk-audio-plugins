@@ -3,7 +3,10 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "../../shared/CrashLog.h"
 #include "ChordAnalyzer.h"
+#include "../core/MidiNoteState.hpp"
+#include "../core/NoteSnapshot.hpp"
 #include "ChordRecorder.h"
+#include "../core/ChordHistory.hpp"
 #include <array>
 #include <atomic>
 
@@ -81,7 +84,7 @@ public:
     // Recent chord history — rolling window of distinct detected chords
     // (newest last). Always-on, independent of the recording session.
     // Capped at maxHistorySize entries so memory is bounded.
-    static constexpr int maxHistorySize = 32;
+    static constexpr int maxHistorySize = duskaudio::chord::maxChordHistorySize;
     std::vector<ChordInfo> getChordHistory() const;
     void clearChordHistory();
 
@@ -136,14 +139,10 @@ private:
 
     //==========================================================================
     // Active notes tracking
-    std::array<std::atomic<uint64_t>, 2> activeNoteWords{
-        std::atomic<uint64_t>{0}, std::atomic<uint64_t>{0} };
-
-    struct PendingAnalysis
-    {
-        std::array<uint64_t, 2> noteWords{};
-        double timeSec = 0.0;
-    };
+    using PendingAnalysis = duskaudio::chord::NoteSnapshot;
+    duskaudio::chord::NoteSnapshotMailbox latestNoteSnapshot;
+    // UI-only retention on a bounded read miss, guarded by chordLock.
+    mutable PendingAnalysis lastUiNoteSnapshot;
     static constexpr size_t analysisQueueCapacity = 64;
     std::array<PendingAnalysis, analysisQueueCapacity> analysisQueue{};
     std::atomic<size_t> analysisQueueWrite{0};
@@ -155,13 +154,8 @@ private:
     ChordInfo currentChord;
     std::vector<ChordSuggestion> currentSuggestions;
 
-    // Ring buffer (preallocated, no reallocation while publishing analysis).
-    // historyHead is the next write slot; historyCount is the number of
-    // valid entries (0..maxHistorySize). Logical order is oldest..newest
-    // = chordHistory[(historyHead - historyCount + N) % N .. historyHead).
-    std::array<ChordInfo, maxHistorySize> chordHistory{};
-    int historyHead = 0;
-    int historyCount = 0;
+    // Shared non-real-time history, protected by chordLock in this adapter.
+    duskaudio::chord::BasicChordHistory<ChordInfo> chordHistory;
     mutable juce::SpinLock chordLock;
 
     //==========================================================================
@@ -178,9 +172,8 @@ private:
     std::atomic<double> hostBPM{120.0};
 
     //==========================================================================
-    // Sustain pedal (CC 64) state — audio-thread only, mutated in processMidiInput.
-    bool sustainPedalDown = false;
-    std::array<uint64_t, 2> sustainedReleasedWords{};
+    // Shared bounded MIDI state; owned exclusively by the audio thread.
+    duskaudio::chord::MidiNoteState midiNoteState;
 
     //==========================================================================
     // Timing
@@ -203,12 +196,9 @@ private:
     // (so a re-prepare starts clean) and releaseResources (so a stopped
     // instance cannot retain held notes or a stuck pedal).
     void resetNoteState() noexcept;
-    bool activateNote(int note) noexcept;
-    bool deactivateNote(int note) noexcept;
-    std::array<uint64_t, 2> snapshotActiveNoteWords() const noexcept;
     static std::vector<int> notesFromWords(const std::array<uint64_t, 2>& words);
     std::vector<int> snapshotActiveNotes() const;
-    bool enqueueAnalysisSnapshot(double timeSec) noexcept;
+    bool enqueueAnalysisSnapshot(const PendingAnalysis& snapshot) noexcept;
     bool dequeueAnalysisSnapshot(PendingAnalysis& snapshot) noexcept;
     void updateAnalysis();
     void updateAnalysis(const PendingAnalysis& snapshot);

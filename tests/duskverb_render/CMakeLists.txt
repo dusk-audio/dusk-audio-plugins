@@ -90,7 +90,7 @@ set_target_properties(duskverb_render PROPERTIES
 )
 
 # Apple-native AU renderer for plugins that don't load via JUCE's
-# setStateInformation path (Arturia LX-24's .aupreset format goes through
+# setStateInformation path (the reference emulation's .aupreset format goes through
 # kAudioUnitProperty_ClassInfo which JUCE silently drops for non-JUCE AUs).
 if(APPLE)
     add_executable(au_native_render

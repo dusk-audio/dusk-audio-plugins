@@ -140,7 +140,8 @@ tests/test_linear_phase
 tests/velvet90_match/
 
 # DuskAmp DSP comparison runtime artifacts (regenerated locally per developer)
-# Scripts, schematics, and committed baseline reports under results/ stay tracked.
+# Scripts and schematics stay tracked; results/ is local-only.
+plugins/DuskAmp/tests/comparison/results/
 plugins/DuskAmp/tests/comparison/dsp_test_output/
 plugins/DuskAmp/tests/comparison/signals/
 
@@ -152,11 +153,11 @@ plugins/DuskAmp/tests/comparison/signals/
 plugins/DuskAmp/resources/cabs/*.wav
 # Soundwoofer-sourced IRs — redistribution permission confirmed; see
 # plugins/DuskAmp/resources/cabs/LICENSES.md for per-file attribution.
-!plugins/DuskAmp/resources/cabs/fender_twin_sm57_oa.wav
-!plugins/DuskAmp/resources/cabs/marshall_1960vb_sm57_oa.wav
-!plugins/DuskAmp/resources/cabs/marshall_1960vb_sm57_off.wav
-!plugins/DuskAmp/resources/cabs/vox_ac15_sm57.wav
-!plugins/DuskAmp/resources/cabs/vox_ac15_se4_close.wav
+!plugins/DuskAmp/resources/cabs/american_2x12_dynamic_oa.wav
+!plugins/DuskAmp/resources/cabs/british_4x12_dynamic_oa.wav
+!plugins/DuskAmp/resources/cabs/british_4x12_dynamic_off.wav
+!plugins/DuskAmp/resources/cabs/british_1x12_dynamic.wav
+!plugins/DuskAmp/resources/cabs/british_1x12_condenser_close.wav
 
 # DuskVerb render-tool test stimuli — render.cpp resolves these from
 # tests/duskverb_render/test_signals/; the historical anchors were rendered
@@ -174,3 +175,12 @@ plugins/neural-amp/
 
 # Sunset Circuits (multi-synth) core test build artifacts
 plugins/sunset-circuits/core/tests/build/
+
+# Local AI-assistant configuration (kept on disk, never published)
+CLAUDE.md
+AGENTS.md
+.agents/
+
+# Outputs of the manual compile commands documented in these test sources
+plugins/multi-comp/tests/compressor_analysis
+plugins/multi-q/tests/test_multiq_dsp

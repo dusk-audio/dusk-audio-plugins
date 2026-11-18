@@ -14,7 +14,6 @@
 
 #include "DafUI.hpp"
 #include "FourKEQAccess.hpp"
-#include "FourKEQBandFrequency.hpp"
 #include "FourKEQParams.hpp"
 #include "FourKEQDSP.hpp"
 #include "FourKEQPresetRuntime.hpp"
@@ -27,6 +26,7 @@
 #include "DuskImGuiWidgets.hpp"
 #include "DuskSupportersOverlay.hpp" // shared DAF Patreon "Special Thanks" overlay
 #include "DuskUserPresetStore.hpp"
+#include "DuskValueText.hpp"
 #include "util/CrashLog.hpp"
 
 #include <numeric> // std::gcd, for the exact-aspect minimum size
@@ -94,6 +94,165 @@ namespace
 
     const int   kGridF[]  = { 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000 };
     const char* kGridFL[] = { "20", "50", "100", "200", "500", "1k", "2k", "5k", "10k", "20k" };
+
+    // A band or filter frequency (its dial value, the console legend the knob
+    // points at) as the reference's own read-out prints it at every printed
+    // mark: three significant digits, "k" from 1 kHz up ("30.0 Hz", "200 Hz",
+    // "1.00 k", "16.0 k"), the LPF in whole Hz ("15201 Hz"). Rounded before the
+    // unit is chosen, so 999.7 reads "1.00 k". The digits come from integer
+    // arithmetic: printf's %f follows the host's LC_NUMERIC, and the value
+    // field reads a '.' only.
+    void frequencyText(char* buf, size_t size, uint32_t paramId, float hz)
+    {
+        const double v = hz;
+        if (paramId == kLpfFreq)
+            std::snprintf(buf, size, "%ld Hz", std::lround(v));
+        else if (const long tenths = std::lround(v * 10.0); tenths < 1000)
+            std::snprintf(buf, size, "%ld.%ld Hz", tenths / 10, tenths % 10);
+        else if (const long whole = std::lround(v); whole < 1000)
+            std::snprintf(buf, size, "%ld Hz", whole);
+        else if (const long hundredths = std::lround(v / 10.0); hundredths < 1000)
+            std::snprintf(buf, size, "%ld.%02ld k", hundredths / 100, hundredths % 100);
+        else
+        {
+            const long k10 = std::lround(v / 100.0);
+            std::snprintf(buf, size, "%ld.%ld k", k10 / 10, k10 % 10);
+        }
+    }
+
+    // How far a frequency knob has turned for a dial value, and back: the
+    // positions the reference captures are taken at, k/20 of the travel, each
+    // with the dial value the captures label it with (21 for a band knob; 19
+    // for a filter, whose run starts at 0.1, k = 2, its first mark next to
+    // OUT). Those labels are the core's band anchors and among its filter
+    // anchors, at which its laws are calibrated, so a knob on one of those
+    // positions plays the response captured there. Seven positions carry the
+    // printed marks (0, 0.1, 0.25, 0.5, 0.75, 0.9 and 1), and only there does
+    // the reference's own read-out confirm the labels, Brown and Black alike:
+    // seven of a band knob's 21, six of a filter's 19 (a filter reads OUT at
+    // 0). The other 14 and 13 are the capture harness's labels. The reference
+    // was captured at these positions only; between two of them the dial runs
+    // linearly.
+    constexpr float kKnobTravel[21] = { 0.f, .05f, .1f, .15f, .2f, .25f, .3f, .35f, .4f, .45f, .5f,
+                                        .55f, .6f, .65f, .7f, .75f, .8f, .85f, .9f, .95f, 1.f };
+    constexpr float kLfTravel[21] = { 30.f, 36.f, 42.f, 48.f, 60.f, 75.f, 90.f, 110.f, 140.f, 170.f, 200.f,
+                                      230.f, 260.f, 290.f, 315.f, 338.f, 360.f, 382.f, 405.f, 427.f, 450.f };
+    constexpr float kLmTravel[21] = { 200.f, 230.f, 260.f, 290.f, 400.f, 550.f, 700.f, 820.f, 880.f, 940.f,
+                                      1000.f, 1150.f, 1300.f, 1450.f, 1600.f, 1750.f, 1900.f, 2050.f, 2200.f,
+                                      2350.f, 2500.f };
+    constexpr float kHmTravel[21] = { 600.f, 660.f, 720.f, 780.f, 940.f, 1150.f, 1360.f, 1650.f, 2100.f, 2550.f,
+                                      3000.f, 3450.f, 3900.f, 4350.f, 4800.f, 5250.f, 5700.f, 6100.f, 6400.f,
+                                      6700.f, 7000.f };
+    constexpr float kHfTravel[21] = { 1500.f, 1650.f, 1800.f, 1950.f, 2600.f, 3500.f, 4400.f, 5300.f, 6200.f,
+                                      7100.f, 8000.f, 8600.f, 9200.f, 9800.f, 10800.f, 12000.f, 13200.f, 14200.f,
+                                      14800.f, 15400.f, 16000.f };
+    constexpr int kFilterTravelCount = 19;   // positions 0.1 .. 1: kKnobTravel + 2
+    constexpr float kHpfTravel[kFilterTravelCount] = { 16.f, 19.f, 30.f, 45.f, 60.f, 75.f, 90.f, 105.f, 120.f,
+                                                       144.f, 168.f, 192.f, 220.f, 250.f, 280.f, 305.f, 320.f,
+                                                       335.f, 350.f };
+    constexpr float kLpfTravel[kFilterTravelCount] = { 15201.f, 12800.f, 11200.f, 10000.f, 8800.f, 7700.f,
+                                                       6800.f, 5900.f, 5000.f, 4700.f, 4400.f, 4100.f, 3900.f,
+                                                       3750.f, 3600.f, 3450.f, 3300.f, 3150.f, 3000.f };
+    // The LMF and HMF Q knobs travel the same way, through the Q the
+    // reference captures label the same 21 positions with: the core's Q
+    // anchors, at which its Q law is calibrated, so a knob on one of those
+    // positions plays the response captured there. 3 at the start of the
+    // travel, 0.5 at its end. The reference's own read-out confirms seven of
+    // them (at 0, 0.1, 0.25, 0.5, 0.75, 0.9 and 1, both bands, Brown and
+    // Black alike); the other 14 were never read back.
+    constexpr float kQTravel[21] = { 3.f, 2.85f, 2.7f, 2.55f, 2.4f, 2.25f, 2.1f, 1.95f, 1.8f, 1.65f, 1.5f,
+                                     1.35f, 1.2f, 1.05f, .95f, .88f, .8f, .73f, .65f, .58f, .5f };
+
+    // The printed marks sit at some of those positions: a frequency knob's
+    // seven at kMarkIndex, a Q knob's five at kQMarkIndex. Every knob's mark
+    // positions, and a band knob's values at its marks, are taken from the
+    // travel there, so marks and travel cannot disagree.
+    constexpr int kMarkIndex[7] = { 0, 2, 5, 10, 15, 18, 20 };
+    constexpr int kQMarkIndex[5] = { 0, 5, 10, 15, 20 };
+    template <int N> struct MarkValues { float v[N]; };
+    template <int N>
+    constexpr MarkValues<N> marksOf(const float (&travel)[21], const int (&index)[N])
+    {
+        MarkValues<N> m {};
+        for (int i = 0; i < N; ++i)
+            m.v[i] = travel[index[i]];
+        return m;
+    }
+    constexpr MarkValues<7> kMarkPositions = marksOf(kKnobTravel, kMarkIndex);
+    constexpr MarkValues<5> kQMarkPositions = marksOf(kKnobTravel, kQMarkIndex);
+    // No test reads where a label is drawn, so the printed positions are
+    // pinned here: a wrong kMarkIndex or kQMarkIndex entry does not compile.
+    static_assert(kMarkPositions.v[0] == 0.f && kMarkPositions.v[1] == .1f && kMarkPositions.v[2] == .25f
+                      && kMarkPositions.v[3] == .5f && kMarkPositions.v[4] == .75f && kMarkPositions.v[5] == .9f
+                      && kMarkPositions.v[6] == 1.f,
+                  "the printed marks sit at 0, 0.1, 0.25, 0.5, 0.75, 0.9 and 1 of the travel");
+    static_assert(kQMarkPositions.v[0] == 0.f && kQMarkPositions.v[1] == .25f && kQMarkPositions.v[2] == .5f
+                      && kQMarkPositions.v[3] == .75f && kQMarkPositions.v[4] == 1.f,
+                  "a Q knob's printed marks sit at 0, 0.25, 0.5, 0.75 and 1 of the travel");
+    constexpr MarkValues<7> kLfMarks = marksOf(kLfTravel, kMarkIndex), kLmMarks = marksOf(kLmTravel, kMarkIndex),
+                            kHmMarks = marksOf(kHmTravel, kMarkIndex), kHfMarks = marksOf(kHfTravel, kMarkIndex);
+    constexpr MarkValues<5> kQMarks = marksOf(kQTravel, kQMarkIndex);
+
+    // A band frequency or Q knob's values at kKnobTravel; nullptr for a knob
+    // that travels through its printed marks (gain).
+    const float* bandTravel(uint32_t paramId)
+    {
+        switch (paramId)
+        {
+        case kLfFreq: return kLfTravel;
+        case kLmFreq: return kLmTravel;
+        case kHmFreq: return kHmTravel;
+        case kHfFreq: return kHfTravel;
+        case kLmQ:
+        case kHmQ:    return kQTravel;
+        default: return nullptr;
+        }
+    }
+
+    // What a filter knob reads with the filter switched out.
+    constexpr const char* kFilterOutText = "Out";
+
+    // Whether text, past leading and trailing blanks, is `word` in any case.
+    bool isWord(const char* text, const char* word)
+    {
+        while (*text == ' ' || *text == '\t') ++text;
+        for (; *word != '\0'; ++text, ++word)
+            if (std::tolower((unsigned char) *text) != *word)
+                return false;
+        while (*text == ' ' || *text == '\t') ++text;
+        return *text == '\0';
+    }
+
+    // A typed frequency: a number, then optionally Hz, or k or kHz for
+    // thousands, in any case, so every read-out typed back reads as itself
+    // ("1.00 k", "30.0 Hz", "15201 Hz"; also "1k", "450"). Given a flag to set
+    // (a filter's field), it also takes "Out", which sets the flag. The value
+    // field's parser hook; locale-independent, as value_text is.
+    bool parseFrequencyText(const char* text, uint32_t, void* filterOut, float& out)
+    {
+        if (filterOut != nullptr && isWord(text, "out"))
+        {
+            *static_cast<bool*>(filterOut) = true;
+            out = 0.0f;
+            return true;
+        }
+        const char* end = nullptr;
+        float v = 0.0f;
+        if (!duskdaf::value_text::parseDecimal(text, end, v))
+            return false;
+        while (*end == ' ' || *end == '\t') ++end;
+        if (*end == 'k' || *end == 'K')
+        {
+            ++end;
+            v *= 1000.0f;
+            if (!duskdaf::value_text::finiteFloat(v))
+                return false;
+        }
+        if (!isWord(end, "") && !isWord(end, "hz"))
+            return false;
+        out = v;
+        return true;
+    }
 }
 
 class FourKEQUI : public UI, public duskdaf::ParamHost
@@ -130,9 +289,7 @@ protected:
     void parameterChanged(uint32_t index, float value) override
     {
         if (index >= kParamCount) return;
-        fkStoreParam(values, index, value);
-        if (const int sel = selectorSlot(index); sel >= 0)
-            selectorPort[sel] = value;
+        values[index] = value;
         if (index == kShowGraph)
         {
             // restore persisted graph state on UI (re)open; size on next frame
@@ -145,8 +302,7 @@ protected:
         // back to a preset recovers the selection. It also clears once an edit
         // diverges from every preset. Gated on the preset params so the
         // per-frame meter outputs never trigger a scan.
-        if (fkIsPresetParam(index) || fkBandOfLegacyDialParam(index) >= 0
-            || fkFilterOfLegacyDialParam(index) >= 0)
+        if (fkIsPresetParam(index))
             syncPresetSelection();
     }
 
@@ -163,9 +319,7 @@ protected:
         // directly (store only, no write-back: the host already has the values).
         forEachFourKEQFactoryPresetParam(currentPreset,
                                          [this](uint32_t param, float value)
-                                         { fkStoreParam(values, param, fkNormalizeParamValue(param, value)); });
-        selectorPort[0] = values[kLegacyDialBands];
-        selectorPort[1] = values[kLegacyDialFilters];
+                                         { values[param] = fkNormalizeParamValue(param, value); });
     }
 
     void onImGuiDisplay() override
@@ -219,10 +373,11 @@ protected:
         drawMeters(dl);
         if (modalOpen)
             ImGui::EndDisabled();
-        if (showSupporters)
-            duskdaf::drawSupportersOverlay(
-                panel, dl, kDesignW, designH, showSupporters, "4K EQ 2",
-                FOURKEQ2_VERSION_STRING, &supportersOverlay);
+        // Every frame, open or not: after a click closes it, it still blocks the
+        // face for a double-click time.
+        duskdaf::drawSupportersOverlay(
+            panel, dl, kDesignW, designH, showSupporters, "4K EQ 2",
+            FOURKEQ2_VERSION_STRING, &supportersOverlay);
 
         // Own resize grip, submitted LAST so it wins ImGui's hover race (over
         // the credits card too) and paints over everything.
@@ -638,50 +793,11 @@ private:
     {
         if (param >= kParamCount || !std::isfinite(value))
             return;
-        if (const int sel = selectorSlot(param); sel >= 0)
-        {
-            stateSelector(param, sel == 0 ? fkLegacyDialBits(value) : fkLegacyDialFilterBits(value));
-            return;
-        }
         value = fkNormalizeParamValue(param, value);
-        fkStoreParam(values, param, value);
+        values[param] = value;
         editParameter(param, true);
         setParameterValue(param, value);
         editParameter(param, false);
-    }
-
-    static int selectorSlot(uint32_t param)
-    {
-        return param == kLegacyDialBands ? 0 : param == kLegacyDialFilters ? 1 : -1;
-    }
-
-    // Writes a selector with the flag its port does not hold (fkStatedSelector),
-    // so the write reaches the plugin even through a host that passes on only
-    // changed values.
-    void stateSelector(uint32_t selector, uint32_t bits)
-    {
-        const int sel = selectorSlot(selector);
-        const float value = fkStatedSelector(bits, selectorPort[sel], kFourKParams[selector].max);
-        selectorPort[sel] = value;
-        fkStoreParam(values, selector, value);
-        editParameter(selector, true);
-        setParameterValue(selector, value);
-        editParameter(selector, false);
-    }
-
-    // A band or filter Hz write. One still on its legacy dial is also taken off
-    // it through the selector: where the Hz port already holds this value, the
-    // Hz write alone would not reach the plugin.
-    void setFrequency(uint32_t paramId, float value)
-    {
-        const int band = fkBandOfHzParam(paramId), filter = fkFilterOfHzParam(paramId);
-        const StateView before = stateView();
-        fkStoreParam(values, paramId, value);
-        setParameterValue(paramId, value);
-        if (band >= 0 && fkBandFollowsLegacyDial(before.v, band))
-            stateSelector(kLegacyDialBands, fkLegacyDialBits(before.v[kLegacyDialBands]) & ~(1u << band));
-        else if (filter >= 0 && fkFilterFollowsLegacyDial(before.v, filter))
-            stateSelector(kLegacyDialFilters, fkLegacyDialFilterBits(before.v[kLegacyDialFilters]) & ~(1u << filter));
     }
 
     void applyPreset(int idx)
@@ -716,8 +832,6 @@ private:
         for (uint32_t i = 0; i < kParamCount; ++i)
             if (fkIsPresetParam(i))
                 setP(i, kFourKParams[i].def);
-        stateSelector(kLegacyDialBands, 0u);
-        stateSelector(kLegacyDialFilters, 0u);
         // Re-derive rather than assuming: a user preset saved at the defaults
         // is a recognised state and should read as such in the combo.
         syncPresetSelection();
@@ -752,7 +866,7 @@ private:
         const auto saved = duskdaf::writeUserPreset(
             configDir(), ".4kpreset", rawName,
             [this](std::ostream& output) {
-                fkWriteUserPreset(output, stateView().v);
+                fkWriteUserPreset(output, values);
             }, true); // This editor retains its existing Save-as-replace behavior.
         if (!saved)
             return false;
@@ -775,22 +889,8 @@ private:
         // identity records - otherwise a missing key would keep the current
         // value and deriveUserPreset() could never match.
         for (uint32_t i = 0; i < kParamCount; ++i)
-            if (fkIsPresetParam(i) && fkBandOfHzParam(i) < 0 && fkFilterOfHzParam(i) < 0)
+            if (fkIsPresetParam(i))
                 setP(i, loaded[i]);
-        for (int b = 0; b < 4; ++b)
-        {
-            const uint32_t id = fkBandFollowsLegacyDial(loaded, b) ? kFourKEQBands[b].legacyDial
-                                                                   : kFourKEQBands[b].hz;
-            setP(id, loaded[id]);
-        }
-        for (int f = 0; f < 2; ++f)
-        {
-            const uint32_t id = fkFilterFollowsLegacyDial(loaded, f) ? kFourKEQFilters[f].legacyDial
-                                                                     : kFourKEQFilters[f].hz;
-            setP(id, loaded[id]);
-        }
-        stateSelector(kLegacyDialBands, fkLegacyDialBits(loaded[kLegacyDialBands]));
-        stateSelector(kLegacyDialFilters, fkLegacyDialFilterBits(loaded[kLegacyDialFilters]));
         currentPreset = -1;
         currentUserName = name;
         currentUserPath = path;
@@ -805,16 +905,7 @@ private:
     {
         const FourKParam& d = kFourKParams[id];
         const float tol = std::max(1.0e-3f, (d.max - d.min) * 1.0e-4f);
-        return std::fabs(userPresetValue(stateView().v, id) - v) <= tol;
-    }
-
-    static float userPresetValue(const float* vals, uint32_t id)
-    {
-        if (const int band = fkBandOfHzParam(id); band >= 0)
-            return fkBandHz(vals, band);
-        if (const int filter = fkFilterOfHzParam(id); filter >= 0)
-            return fkFilterHz(vals, filter);
-        return vals[id];
+        return std::fabs(values[id] - v) <= tol;
     }
 
     int deriveFactoryPreset() const
@@ -842,7 +933,7 @@ private:
                 {
                     bool ok = true;
                     for (uint32_t id = 0; id < kParamCount && ok; ++id)
-                        if (fkIsPresetParam(id) && !paramMatches(id, userPresetValue(userPresets[i].vals, id)))
+                        if (fkIsPresetParam(id) && !paramMatches(id, userPresets[i].vals[id]))
                             ok = false;
                     if (ok)
                         return (int)i;
@@ -853,7 +944,7 @@ private:
         {
             bool ok = true;
             for (uint32_t id = 0; id < kParamCount && ok; ++id)
-                if (fkIsPresetParam(id) && !paramMatches(id, userPresetValue(userPresets[i].vals, id)))
+                if (fkIsPresetParam(id) && !paramMatches(id, userPresets[i].vals[id]))
                     ok = false;
             if (ok)
                 return (int)i;
@@ -896,13 +987,12 @@ private:
         c.black        = values[kEqType] > 0.5f;
         c.hpfEnabled   = values[kHpfEnabled] > 0.5f;
         c.lpfEnabled   = values[kLpfEnabled] > 0.5f;
-        c.lfGain = values[kLfGain]; c.lfBell = values[kLfBell];
-        c.lmGain = values[kLmGain]; c.lmQ    = values[kLmQ];
-        c.hmGain = values[kHmGain]; c.hmQ    = values[kHmQ];
-        c.hfGain = values[kHfGain]; c.hfBell = values[kHfBell];
-        const StateView state = stateView();
-        fkSetCurveBandFrequencies(c, state.v);
-        fkSetCurveFilterFrequencies(c, state.v);
+        c.hpfFreq      = values[kHpfFreq];
+        c.lpfFreq      = values[kLpfFreq];
+        c.lfGain = values[kLfGain]; c.lfFreq = values[kLfFreq]; c.lfBell = values[kLfBell];
+        c.lmGain = values[kLmGain]; c.lmFreq = values[kLmFreq]; c.lmQ    = values[kLmQ];
+        c.hmGain = values[kHmGain]; c.hmFreq = values[kHmFreq]; c.hmQ    = values[kHmQ];
+        c.hfGain = values[kHfGain]; c.hfFreq = values[kHfFreq]; c.hfBell = values[kHfBell];
         // NOT values[kSaturation]. That index is a retired compatibility slot
         // kept so existing sessions do not remap; FourKEQPlugin.cpp answers it
         // with dsp.setSaturation(0.0f), so the standalone 4K DSP always runs at
@@ -1066,66 +1156,62 @@ private:
         }
 
         // FILTERS — British-style stepped HPF & LPF (OUT folds in each enable).
-        // Marked at the reference's dial positions; each marking is the Hz the
-        // filter is 3 dB down at there.
+        // Marked at the reference's dial positions with the dial values its
+        // hosted read-out prints there; they travel through kHpfTravel and
+        // kLpfTravel.
         static const char* const HPFL[7] = { "OUT", "16", "45", "120", "250", "320", "350" };
-        static const float        HPFF[7] = { 16.f, 16.f, 45.f, 120.f, 250.f, 320.f, 350.f };
         static const char* const LPFL[7] = { "OUT", "15.2", "10", "5", "3.75", "3.3", "3" };
-        static const float        LPFF[7] = { 15201.f, 15201.f, 10000.f, 5000.f, 3750.f, 3300.f, 3000.f };
         const float fcx = 0.5f * (COL[0] + COL[1]);
-        steppedFilterKnob(dl, "hpfknob", fcx, cY(314), 28.f, kHpfEnabled, kHpfHz, HPFL, HPFF, false, "Hz");
-        steppedFilterKnob(dl, "lpfknob", fcx, cY(452), 28.f, kLpfEnabled, kLpfHz, LPFL, LPFF, true,  "kHz");
+        steppedFilterKnob(dl, "hpfknob", fcx, cY(314), 28.f, kHpfEnabled, kHpfFreq, HPFL, kHpfTravel, false, "Hz");
+        steppedFilterKnob(dl, "lpfknob", fcx, cY(452), 28.f, kLpfEnabled, kLpfFreq, LPFL, kLpfTravel, true,  "kHz");
 
-        // Shared GAIN (0 top, +-15 dB) and Q (.5-3 descending) detent tables.
+        // Shared GAIN (0 top, +-15 dB) detent table, and the Q knobs' marks
+        // (3 to .5, descending): positions and values from their travel.
         static const float GT[11] = { 0.f, .1f, .2f, .3f, .4f, .5f, .6f, .7f, .8f, .9f, 1.f };
         static const float GV[11] = { -15.f, -12.f, -9.f, -6.f, -3.f, 0.f, 3.f, 6.f, 9.f, 12.f, 15.f };
         static const char* const GL[11] = { "-15", "12", "9", "6", "3", "0", "3", "6", "9", "12", "+15" };
-        static const float QT[5] = { 0.f, .25f, .5f, .75f, 1.f };
-        static const float QV[5] = { 3.f, 2.25f, 1.5f, .88f, .5f };
+        const float* const QT = kQMarkPositions.v;
+        const float* const QV = kQMarks.v;
         static const char* const QL[5] = { "3", "2.25", "1.5", ".88", ".5" };
-        static const float FT7[7] = { 0.f, .1f, .25f, .5f, .75f, .9f, 1.f };
+        // The frequency knobs' marks: positions and dial values from their travel.
+        const float* const FT7 = kMarkPositions.v;
 
         // LF — British brown band: GAIN + FREQ (30-450 Hz) + BELL/SHELF button.
         // The LF caps signal the voicing like the consoles they emulate: maroon
         // on Brown (E-series), black on Black (G-series).
         {
             const float lcx = 0.5f * (COL[1] + COL[2]);
-            static const float FT[7] = { 0.f, .1f, .25f, .5f, .75f, .9f, 1.f };
-            static const float FV[7] = { 30.f, 42.f, 75.f, 200.f, 338.f, 405.f, 450.f };
             static const char* const FL[7] = { "30", "42", "75", "200", "338", "405", "450" };
             const ImU32 lfCap = values[kEqType] > 0.5f ? C_LF_BLACK : C_LF_BROWN;
             consoleDetentKnob(dl, "lfg", lcx, cY(314), 28.f, kLfGain, GT, GV, GL, 11, lfCap, "dB", "%.1f dB");
-            consoleDetentKnob(dl, "lff", lcx, cY(452), 28.f, kLfHz, FT, FV, FL, 7, lfCap, "Hz", kFourKBandHzFormat, true);
+            consoleDetentKnob(dl, "lff", lcx, cY(452), 28.f, kLfFreq, FT7, kLfMarks.v, FL, 7, lfCap, "Hz", nullptr, true);
             metalButton(dl, "lfbell", lcx - 32.f, cY(560), lcx + 32.f, cY(584), kLfBell, "BELL", "SHELF");
         }
         // LMF — British blue band: GAIN + FREQ (.2-2.5 kHz, 1 at top) + Q
         // (.5-3, descending), with narrow/wide bandwidth symbols under Q.
         {
             const float mcx = 0.5f * (COL[2] + COL[3]);
-            static const float MFV[7] = { 200.f, 260.f, 550.f, 1000.f, 1750.f, 2200.f, 2500.f };
             static const char* const MFL[7] = { ".2", ".26", ".55", "1", "1.75", "2.2", "2.5" };
             consoleDetentKnob(dl, "lmg", mcx, cY(314), 28.f, kLmGain, GT, GV, GL, 11, C_LMF_BLUE, "dB", "%.1f dB");
-            consoleDetentKnob(dl, "lmf", mcx, cY(452), 28.f, kLmHz, FT7, MFV, MFL, 7, C_LMF_BLUE, "kHz", kFourKBandHzFormat, true);
+            consoleDetentKnob(dl, "lmf", mcx, cY(452), 28.f, kLmFreq, FT7, kLmMarks.v, MFL, 7, C_LMF_BLUE, "kHz", nullptr, true);
             consoleDetentKnob(dl, "lmq", mcx, cY(590), 28.f, kLmQ, QT, QV, QL, 5, C_LMF_BLUE, "", "Q %.2f");
             bandwidthIcons(dl, mcx, cY(590) + 40.f);
         }
         // HMF — British green band: GAIN + FREQ (.6-7 kHz, 3 at top) + Q.
         {
             const float hcx = 0.5f * (COL[3] + COL[4]);
-            static const float HFV[7] = { 600.f, 720.f, 1150.f, 3000.f, 5250.f, 6400.f, 7000.f };
             static const char* const HFL[7] = { ".6", ".72", "1.15", "3", "5.25", "6.4", "7" };
             consoleDetentKnob(dl, "hmg", hcx, cY(314), 28.f, kHmGain, GT, GV, GL, 11, C_HMF_GREEN, "dB", "%.1f dB");
-            consoleDetentKnob(dl, "hmf", hcx, cY(452), 28.f, kHmHz, FT7, HFV, HFL, 7, C_HMF_GREEN, "kHz", kFourKBandHzFormat, true);
+            consoleDetentKnob(dl, "hmf", hcx, cY(452), 28.f, kHmFreq, FT7, kHmMarks.v, HFL, 7, C_HMF_GREEN, "kHz", nullptr, true);
             consoleDetentKnob(dl, "hmq", hcx, cY(590), 28.f, kHmQ, QT, QV, QL, 5, C_HMF_GREEN, "", "Q %.2f");
             bandwidthIcons(dl, hcx, cY(590) + 40.f);
         }
         // HF — British red band: GAIN + FREQ (1.5-16 kHz, 8 at top) + BELL/SHELF.
         {
             const float hcx = 0.5f * (COL[4] + COL[5]);
-            static const float XFV[7] = { 1500.f, 1800.f, 3500.f, 8000.f, 12000.f, 14800.f, 16000.f };
             static const char* const XFL[7] = { "1.5", "1.8", "3.5", "8", "12", "14.8", "16" };
             consoleDetentKnob(dl, "hfg", hcx, cY(314), 28.f, kHfGain, GT, GV, GL, 11, C_HF_RED, "dB", "%.1f dB");
-            consoleDetentKnob(dl, "hff", hcx, cY(452), 28.f, kHfHz, FT7, XFV, XFL, 7, C_HF_RED, "kHz", kFourKBandHzFormat, true);
+            consoleDetentKnob(dl, "hff", hcx, cY(452), 28.f, kHfFreq, FT7, kHfMarks.v, XFL, 7, C_HF_RED, "kHz", nullptr, true);
             metalButton(dl, "hfbell", hcx - 32.f, cY(560), hcx + 32.f, cY(584), kHfBell, "BELL", "SHELF");
         }
 
@@ -1239,82 +1325,94 @@ private:
     }
 
     //========================================================================
-    // Frequency read-outs. A band or filter knob is its Hz parameter and shows
-    // the Hz it plays (fkBandHz, fkFilterHz), which no gain setting moves.
+    // Frequency read-outs. A band or filter frequency knob is its parameter, a
+    // position on the console's printed dial: its pointer, its value bubble and
+    // a typed value are that dial value, in the reference's read-out format
+    // (frequencyText). It plays what the reference plays there (the core's
+    // measured dial law), which is not the dial value in Hz, and no gain
+    // setting moves the read-out.
     //========================================================================
 
-    // The UI's mirror with kLegacyDialBands and kLegacyDialFilters taken from
-    // the plugin when it shares the process: a host restoring a pre-#288
-    // session never sets those parameters, so the values it forwards are stale.
-    struct StateView { float v[kParamCount]; };
-    StateView stateView() const
+    // The read-out of a band or filter frequency knob; a filter that is
+    // switched out reads "Out".
+    void frequencyReadout(char* buf, size_t size, uint32_t freqId, bool filterIn = true) const
     {
-        StateView view;
-        std::copy(values, values + kParamCount, view.v);
-       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
-        if (void* inst = getPluginInstancePointer())
-        {
-            if (fourKEQGetLegacyDialBands != nullptr)
-                view.v[kLegacyDialBands] = (float)fourKEQGetLegacyDialBands(inst);
-            if (fourKEQGetLegacyDialFilters != nullptr)
-                view.v[kLegacyDialFilters] = (float)fourKEQGetLegacyDialFilters(inst);
-        }
-       #endif
-        return view;
-    }
-
-    float displayValue(uint32_t paramId) const
-    {
-        if (const int band = fkBandOfHzParam(paramId); band >= 0)
-            return fkBandHz(stateView().v, band);
-        if (const int filter = fkFilterOfHzParam(paramId); filter >= 0)
-            return fkFilterHz(stateView().v, filter);
-        return values[paramId];
-    }
-
-    static bool isFrequencyParam(uint32_t paramId)
-    {
-        return fkFilterOfHzParam(paramId) >= 0 || fkBandOfHzParam(paramId) >= 0;
+        if (!filterIn)
+            std::snprintf(buf, size, "%s", kFilterOutText);
+        else
+            frequencyText(buf, size, freqId, values[freqId]);
     }
 
     //========================================================================
     // British-style stepped filter rotary (HPF & LPF): OUT + 6 labelled Hz detents,
     // dots + labels around a brushed-metal knob, vertical pointer, rolloff icon.
-    // The OUT position folds in the filter enable (no separate IN switch). F[]
-    // is t-indexed (F[0] == F[1]); frequencies may ascend (HPF) or descend (LPF).
+    // The OUT position folds in the filter enable (no separate IN switch):
+    // below 0.06 of the travel the filter is out, and up to 0.1 it plays its
+    // first dial value. From 0.1 to 1 the knob travels through the reference's
+    // dial positions (kKnobTravel + 2) with the dial values F[] (its
+    // kFilterTravelCount entries, ascending for the HPF, descending for the
+    // LPF). The labels sit on seven of those positions (stepLT).
     //========================================================================
-    static float stepLT(int i) { static const float t[7] = {0.f, .1f, .25f, .5f, .75f, .9f, 1.f}; return t[i]; }
+    static float stepLT(int i) { return kMarkPositions.v[i]; }
 
     void stepPosToState(const float* F, float t, bool& en, float& f) const
     {
         if (t < 0.06f) { en = false; f = 0.f; return; }
         en = true;
-        if (t <= stepLT(1)) { f = F[1]; return; }
-        for (int i = 1; i <= 5; ++i)
-            if (t <= stepLT(i + 1)) { const float a = (t - stepLT(i)) / (stepLT(i + 1) - stepLT(i)); f = F[i] + (F[i + 1] - F[i]) * a; return; }
-        f = F[6];
+        f = duskdaf::knobDetentPosToValue(kKnobTravel + 2, F, kFilterTravelCount, t);   // F[0] up to 0.1
     }
     float stepStateToPos(const float* F, bool en, float freq) const
     {
-        if (!en) return 0.f;
-        float lo = F[1], hi = F[1];
-        for (int i = 2; i <= 6; ++i) { lo = std::min(lo, F[i]); hi = std::max(hi, F[i]); }
-        const float fr = freq < lo ? lo : (freq > hi ? hi : freq);
-        for (int i = 1; i <= 5; ++i) // segment containing fr (works ascending or descending)
-            if ((fr - F[i]) * (fr - F[i + 1]) <= 0.f)
-            {
-                const float d = F[i + 1] - F[i];
-                const float a = d != 0.f ? (fr - F[i]) / d : 0.f;
-                return stepLT(i) + (stepLT(i + 1) - stepLT(i)) * a;
-            }
-        return 1.f;
+        return en ? duskdaf::knobDetentValueToPos(kKnobTravel + 2, F, kFilterTravelCount, freq) : 0.f;
+    }
+    // Whether moving the knob from t0 to t1 changes its setting. As in
+    // DuskPanel::knob only movement edits: a press alone writes nothing, and
+    // a knob pinned at an end edits nothing while a gesture pushes it further
+    // out. A move can also stay on one setting here: everything from just
+    // above OUT up to the first detent sets that detent's value, so a filter
+    // at that detent, pushed toward OUT, stays as it is until it reaches OUT.
+    bool stepSettingMoves(const float* F, float t0, float t1) const
+    {
+        if (t0 == t1)
+            return false;
+        bool en0, en1; float f0, f1;
+        stepPosToState(F, t0, en0, f0);
+        stepPosToState(F, t1, en1, f1);
+        return en0 != en1 || f0 != f1;
     }
     void stepApply(uint32_t enId, uint32_t freqId, const float* F, float t)
     {
         bool en; float f; stepPosToState(F, t, en, f);
         values[enId] = en ? 1.f : 0.f; setParameterValue(enId, values[enId]);
         if (en)
-            setFrequency(freqId, fkNormalizeParamValue(freqId, f));
+        {
+            values[freqId] = fkNormalizeParamValue(freqId, f);
+            setParameterValue(freqId, values[freqId]);
+        }
+    }
+
+    // One frame of a held filter or console knob, dragged the way
+    // DuskPanel::knob drags: Shift drags finer, and on the press frame only
+    // mouse movement after the press counts (that frame can also carry
+    // movement from before it). Moves stepDragT and returns where it was. The
+    // knob's pointer t shows the parameter, which a host may automate while
+    // the knob is held, until the gesture moves; then it follows the gesture.
+    float stepDrag(float& t)
+    {
+        const ImGuiIO& io = ImGui::GetIO();
+        const bool pressFrame = ImGui::IsItemActivated();
+        if (pressFrame)
+            stepDragMoved_ = false;
+        const float sp = io.KeyShift ? 0.0008f : 0.005f;
+        const float dy = pressFrame ? io.MousePos.y - io.MouseClickedPos[0].y
+                                    : io.MouseDelta.y;
+        const float from = stepDragT, to = stepDragT - dy * sp;
+        stepDragT = to < 0.f ? 0.f : (to > 1.f ? 1.f : to);
+        if (stepDragT != from)
+            stepDragMoved_ = true;
+        if (stepDragMoved_)
+            t = stepDragT;
+        return from;
     }
 
     void steppedFilterKnob(ImDrawList* dl, const char* id, float cx, float cy, float R,
@@ -1327,15 +1425,19 @@ private:
         auto c01 = [](float v) { return v < 0.f ? 0.f : (v > 1.f ? 1.f : v); };
 
         const bool en = values[enId] > 0.5f;
-        // By the Hz the filter plays, so a legacy dial points where its corner
-        // is: a Brown HPF dial at 120 is 3 dB down near 80 Hz.
-        float t = stepStateToPos(F, en, displayValue(freqId));
+        // By the dial value, as the printed marks are.
+        float t = stepStateToPos(F, en, values[freqId]);
 
-        // interaction
-        ImGui::SetCursorScreenPos(ImVec2(c.x - RR, c.y - RR));
-        ImGui::InvisibleButton(id, ImVec2(2.f * RR, 2.f * RR));
-        const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+        // interaction. No button while the value field is open over the knob:
+        // it would take every click inside the field (see DuskPanel::knob).
         const bool editing = panel.isEditingValue(id);
+        bool hov = false, act = false;
+        if (!editing)
+        {
+            ImGui::SetCursorScreenPos(ImVec2(c.x - RR, c.y - RR));
+            ImGui::InvisibleButton(id, ImVec2(2.f * RR, 2.f * RR));
+            hov = ImGui::IsItemHovered(); act = ImGui::IsItemActive();
+        }
         const bool modKey = ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper;
         if (!editing)
         {
@@ -1347,22 +1449,32 @@ private:
             }
             if (act && !stepModReset_)
             {
-                const float sp = ImGui::GetIO().KeyShift ? 0.0008f : 0.005f;
-                stepDragT = c01(stepDragT - ImGui::GetIO().MouseDelta.y * sp);
-                t = stepDragT; stepApply(enId, freqId, F, t);
+                // Only a move to another setting edits (see stepSettingMoves).
+                const float dragFrom = stepDrag(t);
+                if (stepSettingMoves(F, dragFrom, stepDragT))
+                    stepApply(enId, freqId, F, stepDragT);
             }
             if (ImGui::IsItemDeactivated()) { if (!stepModReset_) { editParameter(enId, false); editParameter(freqId, false); } stepModReset_ = false; }
-            if (!modKey && (hov || act) && ImGui::IsMouseDoubleClicked(0)) // double-click: type a frequency (actual Hz)
-            { panel.openValueEdit(id, displayValue(freqId)); editParameter(enId, false); editParameter(freqId, false); }
+            if (!modKey && (hov || act) && ImGui::IsMouseDoubleClicked(0)) // double-click: type a dial value, or Out
+            {
+                char seed[24];
+                frequencyReadout(seed, sizeof(seed), freqId, en);
+                panel.openValueEdit(id, values[freqId], seed);
+                editParameter(enId, false); editParameter(freqId, false);
+            }
             else if (hov && !act)
             {
                 const float wh = ImGui::GetIO().MouseWheel;
                 if (wh != 0.f)
                 {
+                    const float wheelFrom = t;
                     t = c01(t + wh * 0.02f);
-                    editParameter(enId, true); editParameter(freqId, true);
-                    stepApply(enId, freqId, F, t);
-                    editParameter(freqId, false); editParameter(enId, false);
+                    if (stepSettingMoves(F, wheelFrom, t))   // as for a drag
+                    {
+                        editParameter(enId, true); editParameter(freqId, true);
+                        stepApply(enId, freqId, F, t);
+                        editParameter(freqId, false); editParameter(enId, false);
+                    }
                 }
             }
         }
@@ -1398,24 +1510,31 @@ private:
         }
 
         float typed;
-        if (panel.valueEdit(id, cx, cy, R, typed))
+        bool typedOut = false;
+        if (panel.valueEdit(id, cx, cy, R, typed, parseFrequencyText, freqId, &typedOut))
         {
-            float lo = F[1], hi = F[1];
-            for (int i = 2; i <= 6; ++i) { lo = std::min(lo, F[i]); hi = std::max(hi, F[i]); }
-            typed = typed < lo ? lo : (typed > hi ? hi : typed);
-            typed = fkNormalizeParamValue(freqId, typed);
-            editParameter(enId, true); editParameter(freqId, true);
-            values[enId] = 1.f;    setParameterValue(enId, 1.f);
-            setFrequency(freqId, typed);
-            editParameter(freqId, false); editParameter(enId, false);
+            if (typedOut) // as the Ctrl/Cmd+click reset to OUT: the switch alone
+            {
+                editParameter(enId, true);
+                values[enId] = 0.f; setParameterValue(enId, 0.f);
+                editParameter(enId, false);
+            }
+            else
+            {
+                float lo = F[0], hi = F[0];
+                for (int i = 1; i < kFilterTravelCount; ++i) { lo = std::min(lo, F[i]); hi = std::max(hi, F[i]); }
+                typed = typed < lo ? lo : (typed > hi ? hi : typed);
+                typed = fkNormalizeParamValue(freqId, typed);
+                editParameter(enId, true); editParameter(freqId, true);
+                values[enId] = 1.f;    setParameterValue(enId, 1.f);
+                values[freqId] = typed; setParameterValue(freqId, typed);
+                editParameter(freqId, false); editParameter(enId, false);
+            }
         }
         else if ((hov || act) && !editing)
         {
             char buf[24];
-            const float shown = displayValue(freqId);
-            if (!en) std::snprintf(buf, sizeof(buf), "OUT");
-            else if (shown >= 1000.f) std::snprintf(buf, sizeof(buf), "%.1f kHz", shown / 1000.f);
-            else std::snprintf(buf, sizeof(buf), "%.0f Hz", shown);
+            frequencyReadout(buf, sizeof(buf), freqId, en);
             panel.valueBubble(cx, cy, R, buf);
         }
     }
@@ -1456,7 +1575,11 @@ private:
     // British-style brown console band knob: continuous knob over arbitrary
     // (t, value) breakpoints with dots + labels all around (e.g. LF GAIN with
     // 0 at top, +-15 dB; LF FREQ 30-450 Hz with 200 at top). Maroon cap, white
-    // pointer, unit beneath.
+    // pointer, unit beneath. fmt is the read-out of a gain or Q knob; a
+    // frequency knob reads as frequencyReadout() and takes typed values in the
+    // same form. The labels and dots sit at T; a band frequency or Q knob
+    // travels through the reference's 21 positions (bandTravel), its marks
+    // among them, and a gain knob through its marks.
     //========================================================================
     void consoleDetentKnob(ImDrawList* dl, const char* id, float cx, float cy, float R,
                            uint32_t paramId, const float* T, const float* V,
@@ -1469,35 +1592,36 @@ private:
         const float RR = R * s;
         auto c01 = [](float v) { return v < 0.f ? 0.f : (v > 1.f ? 1.f : v); };
 
-        const bool frequencyKnob = isFrequencyParam(paramId);
-        float t = duskdaf::knobDetentValueToPos(T, V, n,
-                                frequencyKnob ? displayValue(paramId)
-                                              : values[paramId]);
+        const bool frequencyKnob = fkIsFrequencyParam(paramId);
+        const float* const travel = bandTravel(paramId);
+        const bool throughTravel = travel != nullptr;
+        const float* const posT = throughTravel ? kKnobTravel : T;
+        const float* const posV = throughTravel ? travel : V;
+        const int posN = throughTravel ? 21 : n;
+        float t = duskdaf::knobDetentValueToPos(posT, posV, posN, values[paramId]);
 
-        ImGui::SetCursorScreenPos(ImVec2(c.x - RR, c.y - RR));
-        ImGui::InvisibleButton(id, ImVec2(2.f * RR, 2.f * RR));
-        const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+        // No button while the value field is open over the knob: it would take
+        // every click inside the field (see DuskPanel::knob).
         const bool editing = panel.isEditingValue(id);
+        bool hov = false, act = false;
+        if (!editing)
+        {
+            ImGui::SetCursorScreenPos(ImVec2(c.x - RR, c.y - RR));
+            ImGui::InvisibleButton(id, ImVec2(2.f * RR, 2.f * RR));
+            hov = ImGui::IsItemHovered(); act = ImGui::IsItemActive();
+        }
         const bool modKey = ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper;
         auto setFromT = [&](float tt) {
-            const float nv = fkNormalizeParamValue(paramId, duskdaf::knobDetentPosToValue(T, V, n, tt));
-            if (frequencyKnob) { setFrequency(paramId, nv); return; }
-            fkStoreParam(values, paramId, nv);
+            const float nv = fkNormalizeParamValue(paramId, duskdaf::knobDetentPosToValue(posT, posV, posN, tt));
+            values[paramId] = nv;
             setParameterValue(paramId, nv);
         };
         auto resetDefault = [&] {
             editParameter(paramId, true);
-            if (frequencyKnob)
-                setFrequency(paramId, kDefault(paramId));
-            else
-            {
-                fkStoreParam(values, paramId, kDefault(paramId));
-                setParameterValue(paramId, kDefault(paramId));
-            }
+            values[paramId] = kDefault(paramId);
+            setParameterValue(paramId, kDefault(paramId));
             editParameter(paramId, false);
-            t = duskdaf::knobDetentValueToPos(T, V, n,
-                              frequencyKnob ? displayValue(paramId)
-                                            : values[paramId]);
+            t = duskdaf::knobDetentValueToPos(posT, posV, posN, values[paramId]);
         };
         if (!editing)
         {
@@ -1508,25 +1632,47 @@ private:
             }
             if (act && !stepModReset_)
             {
-                const float sp = ImGui::GetIO().KeyShift ? 0.0008f : 0.005f;
-                stepDragT = c01(stepDragT - ImGui::GetIO().MouseDelta.y * sp);
-                t = stepDragT; setFromT(t);
+                // Only movement edits, as in DuskPanel::knob. A press alone
+                // would write the value back through the knob. A knob pinned
+                // at an end edits nothing either while the drag pushes it
+                // further out.
+                const float dragFrom = stepDrag(t);
+                if (stepDragT != dragFrom)
+                    setFromT(stepDragT);
             }
             if (ImGui::IsItemDeactivated()) { if (!stepModReset_) editParameter(paramId, false); stepModReset_ = false; }
-            if (!modKey && (hov || act) && ImGui::IsMouseDoubleClicked(0))
-            { panel.openValueEdit(id, displayValue(paramId)); editParameter(paramId, false); } // double-click: type a value (freq knobs: actual Hz)
+            if (!modKey && (hov || act) && ImGui::IsMouseDoubleClicked(0)) // double-click: type a value
+            {
+                char seed[24];
+                if (frequencyKnob)
+                    frequencyReadout(seed, sizeof(seed), paramId);
+                panel.openValueEdit(id, values[paramId], frequencyKnob ? seed : nullptr);
+                editParameter(paramId, false);
+            }
             else if (hov && !act)
             {
                 const float wh = ImGui::GetIO().MouseWheel;
-                if (wh != 0.f) { t = c01(t + wh * 0.02f); editParameter(paramId, true); setFromT(t); editParameter(paramId, false); }
+                if (wh != 0.f)
+                {
+                    // As for a drag: a step pushing a knob pinned at an end
+                    // edits nothing.
+                    const float wheelFrom = t;
+                    t = c01(t + wh * 0.02f);
+                    if (t != wheelFrom)
+                    {
+                        editParameter(paramId, true);
+                        setFromT(t);
+                        editParameter(paramId, false);
+                    }
+                }
             }
         }
 
         // The console frequency scales have deliberately non-uniform major
         // positions. Their two 0.25-wide segments leave conspicuous blank arcs
         // around the top detent, so add one unlabeled minor dot at each midpoint
-        // (e.g. LF 75→200 and 200→338). This is visual only: interpolation
-        // and the labeled parameter detents remain exactly as before.
+        // (e.g. LF 75→200 and 200→338). This is visual only: the knob's travel
+        // and its labeled marks do not depend on it.
         duskdaf::KnobRingStyle ring;
         ring.dotMarks = true;
         ring.markOuter = 9.0f;   ring.minorOuter = 9.0f;
@@ -1548,25 +1694,21 @@ private:
         panel.text(dl, cx, cy + R + 16.f, 12.f, IM_COL32(210, 212, 216, 255), unit, 0, true);
 
         float typed;
-        if (panel.valueEdit(id, cx, cy, R, typed))
+        if (panel.valueEdit(id, cx, cy, R, typed, frequencyKnob ? parseFrequencyText : nullptr, paramId))
         {
             float lo = V[0], hi = V[0];
             for (int i = 1; i < n; ++i) { lo = std::min(lo, V[i]); hi = std::max(hi, V[i]); }
             typed = typed < lo ? lo : (typed > hi ? hi : typed);
             typed = fkNormalizeParamValue(paramId, typed);
-            editParameter(paramId, true);
-            if (frequencyKnob)
-                setFrequency(paramId, typed);
-            else
-            {
-                fkStoreParam(values, paramId, typed);
-                setParameterValue(paramId, typed);
-            }
-            editParameter(paramId, false);
+            editParameter(paramId, true); values[paramId] = typed; setParameterValue(paramId, typed); editParameter(paramId, false);
         }
         else if ((hov || act) && !editing)
         {
-            char buf[24]; std::snprintf(buf, sizeof(buf), fmt, displayValue(paramId));
+            char buf[24];
+            if (frequencyKnob)
+                frequencyReadout(buf, sizeof(buf), paramId);
+            else
+                std::snprintf(buf, sizeof(buf), fmt, values[paramId]);
             panel.valueBubble(cx, cy, R, buf);
         }
     }
@@ -1705,8 +1847,6 @@ private:
     float meterDbIn_ = -60.f, meterDbOut_ = -60.f;
     float meterTimer_ = 0.f;
     float values[kParamCount] = {};
-    // What each selector port was last set to, by the host or by this editor.
-    float selectorPort[2] = { kFourKParams[kLegacyDialBands].def, kFourKParams[kLegacyDialFilters].def };
     int currentPreset = -1;
     bool showGraph = true;
     bool showSupporters = false; // Patreon supporters overlay (title click)
@@ -1722,7 +1862,8 @@ private:
     bool needResize = false;
     bool gripCursorSet = false;  // NWSE cursor currently pushed to the window
     float ctlDstTop_ = 180.0f, ctlScaleY_ = 1.0f;
-    float stepDragT = 0.0f; // stepped filter-knob drag origin (HPF/LPF)
+    float stepDragT = 0.0f; // the held filter or console knob's drag position
+    bool  stepDragMoved_ = false; // the held knob's gesture moved (stepDrag)
     bool  stepModReset_ = false; // Ctrl/Cmd+click reset in progress (suppress drag)
 
     DAF_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FourKEQUI)

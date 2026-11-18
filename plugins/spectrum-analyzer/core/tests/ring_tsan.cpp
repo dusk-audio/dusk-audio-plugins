@@ -1,19 +1,26 @@
 // Copyright (C) 2026 Dusk Audio - GNU GPL v3.0 or later (see repository LICENSE).
 //
-// Race-detector harness for SpectrumRing (GH #184; the command lives in
-// docs/daf-migration/10-spectrum-analyzer.md):
+// Stress and race-detector harness for SpectrumRing (GH #184). Registered in
+// core/CMakeLists.txt as SpectrumCoreRingStress, and with -DSPECTRUM_CORE_TSAN=ON
+// as SpectrumCoreRingTsan; by hand:
 //
 //   clang++ -std=c++17 -O1 -g -fsanitize=thread \
 //       plugins/spectrum-analyzer/core/tests/ring_tsan.cpp -o ring_tsan && ./ring_tsan
 //
 // A writer thread pushes audio-rate blocks while a reader snapshots at display
-// rate, exactly the production thread shape. Two gates:
-//   1. TSan reports nothing (the process exits 0 under -fsanitize=thread).
+// rate, exactly the production thread shape. Two checks:
+//   1. TSan reports nothing (the process exits 0 under -fsanitize=thread). This
+//      covers the ring's index atomicity, not the ordering of its sample
+//      copies: on Apple clang 21 TSan does not see the ring's memcpy (a ring
+//      with relaxed publishes passes), and on GCC 11.4 aarch64 a relaxed ring
+//      also passes, cause not established.
 //   2. No torn read: the writer emits a strictly increasing ramp. The ring
 //      DROPS samples when full (write truncation is its design), so forward
 //      jumps are legal; what a torn, duplicated, or reordered copy produces
 //      is a NON-INCREASING step, and that fails the run even without TSan.
-// Also runnable without TSan as a plain stress test (gate 2 still applies).
+//      Whether a broken ordering shows up as one is timing dependent: at this
+//      pacing a ring with relaxed publishes ran clean.
+// Also runnable without TSan as a plain stress test (check 2 still applies).
 
 #include "../SpectrumRing.hpp"
 

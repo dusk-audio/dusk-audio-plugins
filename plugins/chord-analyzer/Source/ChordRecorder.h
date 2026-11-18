@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ChordAnalyzer.h"
+#include "../core/ChordRecorder.hpp"
 #include <juce_core/juce_core.h>
 #include <vector>
 
@@ -19,6 +20,9 @@ struct RecordedChordEvent
 // Recording session metadata
 struct RecordingSession
 {
+    using Event = RecordedChordEvent;
+    using Name = juce::String;
+    using Time = juce::Time;
     juce::String name = "Untitled";
     juce::Time startTime;
     double tempoBPM = 120.0;
@@ -28,48 +32,14 @@ struct RecordingSession
 };
 
 //==============================================================================
-class ChordRecorder
+// Thin legacy type/clock adapter. Recording logic is shared with DAF consumers.
+class ChordRecorder : public duskaudio::chord::BasicChordRecorder<ChordInfo, RecordingSession>
 {
+    using Base = duskaudio::chord::BasicChordRecorder<ChordInfo, RecordingSession>;
 public:
     ChordRecorder();
-
-    //==========================================================================
-    // Recording control
     void startRecording();
-    void stopRecording(double currentTimeSec);
-    bool isRecording() const { return recording; }
-
-    //==========================================================================
-    // Chord recording
-    void recordChord(const ChordInfo& chord, double currentTimeSec);
-    void endCurrentChord(double endTimeSec);
-
-    //==========================================================================
-    // Session management
-    void clearSession();
-    const RecordingSession& getSession() const { return currentSession; }
-    void setSessionName(const juce::String& name);
-    void setTempo(double bpm);
-    void setKey(int root, bool minor);
-
-    //==========================================================================
-    // Get recorded events
-    const std::vector<RecordedChordEvent>& getEvents() const { return currentSession.events; }
-    int getEventCount() const { return static_cast<int>(currentSession.events.size()); }
-    double getRecordingDuration() const;
 
 private:
-    bool recording = false;
-    RecordingSession currentSession;
-    double sessionStartTime = 0.0;
-    bool sessionStartCaptured = false;   // set on first recordChord() so
-                                         // events are recording-relative,
-                                         // not absolute plugin time
-
-    // Current chord tracking
-    ChordInfo lastChord;
-    double lastChordStartTime = 0.0;
-    bool hasActiveChord = false;
-
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ChordRecorder)
 };

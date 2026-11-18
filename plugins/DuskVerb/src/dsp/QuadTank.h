@@ -59,7 +59,7 @@ public:
     void clearBuffers();
     // Wet-output stereo chorus/ensemble (anti-phase modulated delay + auto-pan) —
     // the ShimmerEngine::StereoMod design, ported 2026-07-08 for 79 Vocal Chamber's
-    // missing "phasey/fizzy" VVV character (Marc's ear; the osc_p2p gate is blind to
+    // missing "phasey/fizzy" VVV character (listening test; the osc_p2p gate is blind to
     // it, and raw tank modDepth smears T60/ripple instead). depth 0 = bypass/bit-null.
     void setStereoMod (float rateHz, float depth);
 

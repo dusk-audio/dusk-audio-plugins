@@ -1,0 +1,48 @@
+name: Spectrum Analyzer core gates
+
+# Builds plugins/spectrum-analyzer/core on its own (no JUCE, no DAF) and runs
+# its CTest gates (GH #184, migration plan step 1): the golden calibration
+# suite, the SpectrumRing stress harness, the descriptor-table contract against
+# the plan and the JUCE adapter, and the core capture (prepare/reset/re-prepare,
+# frozen meter readings and spectrum digest, display laws, loudness gates,
+# gated-history cap, adapter tripwire).
+# x86_64 GCC on the oldest supported Ubuntu LTS. The ThreadSanitizer run stays
+# opt-in (SPECTRUM_CORE_TSAN) and out of CI: it checks index atomicity only.
+on:
+  pull_request:
+    paths:
+      - 'plugins/spectrum-analyzer/**'
+      # The core compiles these two shared headers.
+      - 'plugins/shared-daf/dsp/DuskFft.hpp'
+      - 'plugins/shared-daf/dsp/DuskDenormals.hpp'
+      - '.github/workflows/spectrum-core.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spectrum-core-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Configure
+        shell: bash
+        run: cmake -S plugins/spectrum-analyzer/core -B build-core -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        shell: bash
+        run: cmake --build build-core -j 4
+
+      - name: Test
+        shell: bash
+        run: ctest --test-dir build-core --output-on-failure --no-tests=error

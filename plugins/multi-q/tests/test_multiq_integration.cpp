@@ -426,7 +426,7 @@ static void testEditorPresetSurvivesOpen(const std::function<void()>& completion
     // queued by editor construction has fired. Nested dispatch loops are invalid
     // on macOS and previously made this otherwise-passing test abort at exit.
     auto tube = std::make_shared<TestContext> (
-        setupMode (3, ParamIDs::pultecLfBoostGain, "#105 Tube"));
+        setupMode (3, ParamIDs::tubeEqLfBoostGain, "#105 Tube"));
     auto british = std::make_shared<TestContext> (
         setupMode (2, ParamIDs::britishLfGain, "#105 British"));
     juce::MessageManager::callAsync ([tube, british, verifyMode, completion] {
@@ -479,11 +479,11 @@ static void testBritishTubeStateRoundTrip(MultiQ& plugin)
     // --- TUBE mode (eqType index 3) ---
     resetPlugin(plugin);
     setParam(plugin, ParamIDs::eqType, 3.0f);
-    setParam(plugin, ParamIDs::pultecTubeDrive, 0.8f);
+    setParam(plugin, ParamIDs::tubeEqTubeDrive, 0.8f);
     {
         auto p3 = roundTrip(plugin);
         checkDb("RT Tube: eqType stays Tube(3)", getParam(*p3, ParamIDs::eqType), 3.0f, 0.01f);
-        checkDb("RT Tube: tube drive survives", getParam(*p3, ParamIDs::pultecTubeDrive), 0.8f, 0.02f);
+        checkDb("RT Tube: tube drive survives", getParam(*p3, ParamIDs::tubeEqTubeDrive), 0.8f, 0.02f);
     }
 
     // --- EXACT user path: select a British FACTORY PRESET, then round-trip ---

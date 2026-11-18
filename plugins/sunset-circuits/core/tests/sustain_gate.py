@@ -11,7 +11,8 @@ Scenarios (48k, 2x OS, sustained patch ampS=1 ampR=0.3, no reverb/delay):
                  pedal up at 2.0 -> final 1 s silent
   b. control   : identical WITHOUT the pedal -> silent at 1.0-1.4. Proves (a)
                  measures deferral and not a long tail.
-  c. mode-switch under pedal : pedal-held notes + mode 0 -> 1 at 1.0 -> silent
+  c. mode-switch under pedal : pedal-held notes + mode 0 -> 1 at 1.0 carry into the
+                 new mode (they are held notes) and still release on pedal-up
   d. panic     : pedal-held notes + allNotesOff (CC120/123) at 1.0 -> silent
   e. re-press  : key re-pressed while the pedal holds it must survive pedal-up
                  (its key is down) and release on its own key-up
@@ -79,15 +80,18 @@ def main():
     fails += check("b", b_mid < SILENT_DB,
                    f"control     : keys-up no pedal {b_mid:6.1f} dB (<{SILENT_DB:.0f})")
 
-    # (c) mode switch while the pedal holds the notes: the poly voices are reset and
-    #     the captured set is dropped with them, so nothing can be re-released later.
+    # (c) mode switch while the pedal holds the notes: pedal-held notes are held
+    #     notes, so the commit replays them into the new mode and KEEPS their
+    #     captured key-ups -- pedal-up at 2.5 must still find and release them.
     sr, x = render(0, 60, seconds, 2, "sus_mode", hold="64,67", release=0.5,
-                   sustainat="0.1:1", setat="1.0:mode:1", **PATCH)
+                   sustainat=["0.1:1", "2.5:0"], setat="1.0:mode:1", **PATCH)
     c_early = window_db(x, sr, 0.6, 0.9)
+    c_mid = window_db(x, sr, 1.3, 2.2)
     c_end = window_db(x, sr, seconds - 1.0, seconds)
-    fails += check("c", c_early > LOUD_DB and c_end < SILENT_DB,
+    fails += check("c", c_early > LOUD_DB and c_mid > LOUD_DB and c_end < SILENT_DB,
                    f"mode-switch : held {c_early:6.1f} dB (>{LOUD_DB:.0f}), "
-                   f"after switch {c_end:6.1f} dB (<{SILENT_DB:.0f})")
+                   f"after switch {c_mid:6.1f} dB (>{LOUD_DB:.0f}), "
+                   f"after pedal-up {c_end:6.1f} dB (<{SILENT_DB:.0f})")
 
     # (d) panic (CC120/CC123) while the pedal holds the notes.
     sr, x = render(0, 60, seconds, 2, "sus_panic", hold="64,67", release=0.5,

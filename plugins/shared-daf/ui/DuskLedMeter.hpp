@@ -38,6 +38,13 @@
 namespace duskdaf
 {
 
+struct LedLadderColors
+{
+    ImU32 lit;
+    ImU32 unlit;
+    ImU32 glow;
+};
+
 struct LedLadderStyle
 {
     int   segments = 12;          // JUCE LEDMeter uses 12; a taller rail can use more
@@ -56,27 +63,25 @@ struct LedLadderStyle
     float peakFallDbPerSec = 15.0f;
 
     bool  glow = true;            // bloom under a lit segment
+
+    // Zone colours, transcribed from LEDMeter::getColorsForSegment. A panel with
+    // its own palette overrides these rather than forking the ladder.
+    LedLadderColors greenZone  = { IM_COL32(0x4a, 0xde, 0x80, 255), IM_COL32(0x0d, 0x2a, 0x12, 255),
+                                   IM_COL32(0x22, 0xc5, 0x5e, 255) };
+    LedLadderColors yellowZone = { IM_COL32(0xfd, 0xe0, 0x47, 255), IM_COL32(0x2a, 0x22, 0x08, 255),
+                                   IM_COL32(0xea, 0xb3, 0x08, 255) };
+    LedLadderColors redZone    = { IM_COL32(0xf8, 0x71, 0x71, 255), IM_COL32(0x2a, 0x0d, 0x0d, 255),
+                                   IM_COL32(0xef, 0x44, 0x44, 255) };
 };
 
-struct LedLadderColors
-{
-    ImU32 lit;
-    ImU32 unlit;
-    ImU32 glow;
-};
-
-// Transcribed from LEDMeter::getColorsForSegment.
 inline LedLadderColors ledLadderColors(float fractionUpTheLadder,
                                        const LedLadderStyle& style) noexcept
 {
     if (fractionUpTheLadder >= style.redFrom)
-        return { IM_COL32(0xf8, 0x71, 0x71, 255), IM_COL32(0x2a, 0x0d, 0x0d, 255),
-                 IM_COL32(0xef, 0x44, 0x44, 255) };
+        return style.redZone;
     if (fractionUpTheLadder >= style.yellowFrom)
-        return { IM_COL32(0xfd, 0xe0, 0x47, 255), IM_COL32(0x2a, 0x22, 0x08, 255),
-                 IM_COL32(0xea, 0xb3, 0x08, 255) };
-    return { IM_COL32(0x4a, 0xde, 0x80, 255), IM_COL32(0x0d, 0x2a, 0x12, 255),
-             IM_COL32(0x22, 0xc5, 0x5e, 255) };
+        return style.yellowZone;
+    return style.greenZone;
 }
 
 // One two-channel ladder. Hold the instance next to the UI, feed it every frame.

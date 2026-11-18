@@ -8,7 +8,7 @@
 #   cmake --build build
 
 cmake_minimum_required(VERSION 3.15)
-project(FourKEQ2DAF VERSION 1.0.5)
+project(FourKEQ2DAF VERSION 1.0.6)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -48,12 +48,9 @@ target_compile_definitions(4k-eq-2 PUBLIC
     FOURKEQ2_VERSION_MINOR=${PROJECT_VERSION_MINOR}
     FOURKEQ2_VERSION_PATCH=${PROJECT_VERSION_PATCH})
 
-# Auto-deploy the built CLAP/VST3/LV2 into the user plugin dirs after each build
-# (disable with -DDUSK_DAF_INSTALL_LOCAL=OFF).
-# A factory preset states every band and filter in Hz and leaves the legacy
-# dials where they are (FourKEQBandFrequency.hpp).
-dusk_daf_install_local(4k-eq-2 LV2_PROGRAMS
-    LV2_PRESET_OMIT hpf_freq lpf_freq lf_freq lm_freq hm_freq hf_freq)
+# Copies the built CLAP/VST3/LV2 into the user plugin dirs after each build
+# when configured with -DDUSK_DAF_INSTALL_LOCAL=ON.
+dusk_daf_install_local(4k-eq-2 LV2_PROGRAMS)
 
 if(NOT CMAKE_CROSSCOMPILING)
     # The shared FourKEQDSP core: bit identity with the frozen RBJ-only core at
@@ -66,11 +63,22 @@ if(NOT CMAKE_CROSSCOMPILING)
     target_include_directories(FourKEQCoreTest PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
     target_compile_features(FourKEQCoreTest PRIVATE cxx_std_17)
+    # The test compares the live core against the frozen reference core bit for
+    # bit. Both call the same RBJ designers, but clang merges a sin and a cos of
+    # one angle into a single sincos call only where both land in one basic
+    # block, which depends on how each core's caller inlined them. Apple's arm64
+    # libm sincos differs from sinf/cosf by an ulp for ~0.7% of arguments, so
+    # the merge alone broke bit identity on Apple Silicon. Errno-setting math
+    # stops clang from merging, so both cores call sinf and cosf. Test-only: the
+    # shipped plugin is built without this flag.
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_compile_options(FourKEQCoreTest PRIVATE -fmath-errno)
+    endif()
     add_test(NAME FourKEQCore COMMAND FourKEQCoreTest)
 
-    # Band and filter frequency parameters (#288): which of the two parameters
-    # wins, factory presets, the read-out, user preset files across the change,
-    # and selector writes from two threads at once.
+    # The plugin layer without a host: the factory presets load the dial
+    # positions 1.0.5 loaded, user preset files read and write as 1.0.5's,
+    # and the response graph draws the sections that play.
     add_executable(FourKEQPluginLogicTest
         tests/FourKEQPluginLogicTests.cpp
         ../../shared-daf/dsp/FourKEQDSP.cpp)
@@ -78,13 +86,41 @@ if(NOT CMAKE_CROSSCOMPILING)
         "${CMAKE_CURRENT_SOURCE_DIR}"
         "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
     target_compile_features(FourKEQPluginLogicTest PRIVATE cxx_std_17)
-    find_package(Threads REQUIRED)
-    target_link_libraries(FourKEQPluginLogicTest PRIVATE Threads::Threads)
     add_test(NAME FourKEQPluginLogic COMMAND FourKEQPluginLogicTest)
 
-    # The same through the built CLAP's state and parameter paths: pre-#288
-    # states and legacy automation keep their sound, the Hz parameters and the
-    # factory programs play the Hz they state. dlopen(), so not on Windows.
+    # The editor's own knobs and their inline value fields (#337): the
+    # production FourKEQUI.cpp against Dear ImGui's real input handling, through
+    # the window-free host in shared-daf/ui/tests/daf-ui-test-host. That
+    # directory comes first so the editor's DafUI.hpp resolves to the host.
+    # DAF's Resources.cpp is its DejaVu Sans, which the host puts first in the
+    # atlas as DAF does. Needs no window or display; in CI it runs in
+    # daf-build.yml's Linux x64 and arm64 jobs (the macOS and Windows jobs
+    # build only the plugin targets).
+    add_executable(FourKEQValueFieldTest
+        tests/FourKEQValueFieldTest.cpp
+        ../../shared-daf/dsp/FourKEQDSP.cpp
+        "${DAF_PATH}/dgl/src/Resources.cpp"
+        "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui.cpp"
+        "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_draw.cpp"
+        "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_tables.cpp"
+        "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_widgets.cpp")
+    target_include_directories(FourKEQValueFieldTest PRIVATE
+        "${DUSK_SHARED_DAF_DIR}/ui/tests/daf-ui-test-host"
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        ${DUSK_DAF_INCLUDE_DIRS}
+        "${DAF_PATH}")   # last, for dgl/src/Resources.hpp by its full path
+    target_compile_features(FourKEQValueFieldTest PRIVATE cxx_std_17)
+    target_compile_definitions(FourKEQValueFieldTest PRIVATE
+        FOURKEQ2_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
+        FOURKEQ2_VERSION_MINOR=${PROJECT_VERSION_MINOR}
+        FOURKEQ2_VERSION_PATCH=${PROJECT_VERSION_PATCH}
+        FOURKEQ_UI_TEST_HOME="${CMAKE_CURRENT_BINARY_DIR}/value-field-test-home")
+    add_test(NAME FourKEQValueField COMMAND FourKEQValueFieldTest)
+
+    # The built CLAP's state, parameter and program paths: states saved by
+    # 1.0.5 and automation of the frequency dials play the core's dial law, and
+    # the factory programs load the dial positions 1.0.5 loaded. dlopen(), so
+    # not on Windows.
     if(NOT WIN32)
         add_executable(FourKEQClapStateTest
             tests/FourKEQClapStateTest.cpp
@@ -138,3 +174,4 @@ endif()
 dusk_daf_add_output_param_tests(4k-eq-2)
 dusk_daf_add_ui_drag_test(4k-eq-2 258 274)   # LF gain knob
 dusk_daf_add_resize_test(4k-eq-2 684 23)     # GRAPH button collapses the design
+dusk_daf_add_clap_preset_test(4k-eq-2)

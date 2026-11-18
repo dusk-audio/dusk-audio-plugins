@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Dusk Audio - GNU GPL v3.0 or later (see repository LICENSE).
 //
 // Golden-signal calibration suite for the framework-free spectrum-analyzer
-// core (GH #184, protocol in docs/daf-migration/10-spectrum-analyzer.md).
+// core (GH #184).
 //
 // These tests LOCK the meters' current calibration so the DAF port cannot
 // drift it: deterministic fixtures (mt19937 seed 0x5EED), three sample rates,

@@ -20,7 +20,7 @@
 //
 // Reference-calibrated DAF implementation. Isolated band/filter laws, shared
 // LF/LM and HM/HF stage interactions, native nonlinear residue, and overload
-// rails are fitted from hosted SSL E-channel measurements. The EQ and
+// rails are fitted from hosted British console E-series channel measurements. The EQ and
 // saturation chain is oversampled (>=2x) per the project "no EQ cramping" rule.
 //
 // Signal flow (reproduces FourKEQ::processBlock):

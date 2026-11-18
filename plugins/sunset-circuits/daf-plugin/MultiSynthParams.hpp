@@ -136,14 +136,14 @@
     X(ModSrc5, "modSrc5", "Mod 6 Source", 0.0f, 10.0f, 0.0f, INT, "") \
     X(ModSrc6, "modSrc6", "Mod 7 Source", 0.0f, 10.0f, 0.0f, INT, "") \
     X(ModSrc7, "modSrc7", "Mod 8 Source", 0.0f, 10.0f, 0.0f, INT, "") \
-    X(ModDst0, "modDst0", "Mod 1 Dest", 0.0f, 12.0f, 0.0f, INT, "") \
-    X(ModDst1, "modDst1", "Mod 2 Dest", 0.0f, 12.0f, 0.0f, INT, "") \
-    X(ModDst2, "modDst2", "Mod 3 Dest", 0.0f, 12.0f, 0.0f, INT, "") \
-    X(ModDst3, "modDst3", "Mod 4 Dest", 0.0f, 12.0f, 0.0f, INT, "") \
-    X(ModDst4, "modDst4", "Mod 5 Dest", 0.0f, 12.0f, 0.0f, INT, "") \
-    X(ModDst5, "modDst5", "Mod 6 Dest", 0.0f, 12.0f, 0.0f, INT, "") \
-    X(ModDst6, "modDst6", "Mod 7 Dest", 0.0f, 12.0f, 0.0f, INT, "") \
-    X(ModDst7, "modDst7", "Mod 8 Dest", 0.0f, 12.0f, 0.0f, INT, "") \
+    X(ModDst0, "modDst0", "Mod 1 Dest", 0.0f, 14.0f, 0.0f, INT, "") \
+    X(ModDst1, "modDst1", "Mod 2 Dest", 0.0f, 14.0f, 0.0f, INT, "") \
+    X(ModDst2, "modDst2", "Mod 3 Dest", 0.0f, 14.0f, 0.0f, INT, "") \
+    X(ModDst3, "modDst3", "Mod 4 Dest", 0.0f, 14.0f, 0.0f, INT, "") \
+    X(ModDst4, "modDst4", "Mod 5 Dest", 0.0f, 14.0f, 0.0f, INT, "") \
+    X(ModDst5, "modDst5", "Mod 6 Dest", 0.0f, 14.0f, 0.0f, INT, "") \
+    X(ModDst6, "modDst6", "Mod 7 Dest", 0.0f, 14.0f, 0.0f, INT, "") \
+    X(ModDst7, "modDst7", "Mod 8 Dest", 0.0f, 14.0f, 0.0f, INT, "") \
     X(ModAmt0, "modAmt0", "Mod 1 Amount", -1.0f, 1.0f, 0.0f, LIN, "") \
     X(ModAmt1, "modAmt1", "Mod 2 Amount", -1.0f, 1.0f, 0.0f, LIN, "") \
     X(ModAmt2, "modAmt2", "Mod 3 Amount", -1.0f, 1.0f, 0.0f, LIN, "") \
@@ -281,8 +281,7 @@ static constexpr ParamDef kParamDefs[kNumCoreParams] =
 // param to its default, applies the shared baseline, then the per-preset
 // overrides. Every preset ships at 2x oversampling (baseline oversampling=1);
 // the pitch bug is fixed so 2x is correct. Phase 5 re-voiced the original 40
-// (unity-gain filter fix + level/intent) and appended new preset banks; see
-// docs/daf-migration/09-multi-synth-presets.md for the per-preset change log.
+// (unity-gain filter fix + level/intent) and appended new preset banks.
 // ---------------------------------------------------------------------------
 struct PresetRow { int index; float value; };
 

@@ -68,7 +68,7 @@ public:
             for (int l = 0; l < kLines; ++l)
             {
                 len_[b][l] = std::max (16, static_cast<int> (std::round (base[b][l] * rr * sizeScale_)));
-                int cap = 1; while (cap < len_[b][l] + kMaxExc + 4) cap <<= 1;
+                int cap = 1; while (cap < len_[b][l] + std::max (kMaxExc, sideReadHeadroom()) + 4) cap <<= 1;
                 buf_[b][l].assign (static_cast<size_t> (cap), 0.0f);
                 mask_[b][l] = cap - 1;
                 wp_[b][l] = 0;
@@ -199,6 +199,13 @@ public:
         for (int b = 0; b < kBands; ++b)
             for (int f = 0; f < 8; ++f)
                 biasZ_[b][f][0] = biasZ_[b][f][1] = 0.0f;   // stereo-image-bias side filter (unused while off)
+        for (int b = 0; b < kBands; ++b)
+            for (int f = 0; f < 8; ++f)
+                sideZ_[b][f][0] = sideZ_[b][f][1] = 0.0f;   // decorrelated-side filter (unused while off)
+        // The side's read offsets at this rate (clear() ends every prepare(), which reserves
+        // sideReadHeadroom() behind every line), +1 for the write that precedes the read.
+        for (int b = 0; b < kBands; ++b)
+            sideReadOffset_[b] = 1.0f + static_cast<float> (std::lround (kSideReadMs[b] * 0.001f * sr_));
     }
 
     // ── Per-band config ─────────────────────────────────────────────────────
@@ -211,6 +218,11 @@ public:
         width_[b]  = std::clamp (width, 0.0f, 2.0f);
         if (prepared_) updateGains();
     }
+    // Read-only view of a band's config as stored (after setBand's clamps).
+    float getBandT60    (int b) const noexcept { return b >= 0 && b < kBands ? t60_[b]    : 0.0f; }
+    float getBandLevel  (int b) const noexcept { return b >= 0 && b < kBands ? level_[b]  : 0.0f; }
+    float getBandDirect (int b) const noexcept { return b >= 0 && b < kBands ? direct_[b] : 0.0f; }
+    float getBandWidth  (int b) const noexcept { return b >= 0 && b < kBands ? width_[b]  : 0.0f; }
     // Decay knob: scales every band's T60 (reference-coupled like the GEQ forks).
     void setDecayScale (float s) { decayScale_ = std::clamp (s, 0.05f, 8.0f); if (prepared_) updateGains(); }
     void setSize (float s01)
@@ -239,9 +251,34 @@ public:
         for (int b = 0; b < kBands; ++b)
             for (int l = 0; l < kLines; ++l)
             {
-                smearLfo_[b][l].setDepth (smearDepthSamples_);
+                smearLfo_[b][l].setDepth (smearDepthSamples_ * smearBandShare_[b]);
                 smearLfo_[b][l].setRate  (smearRateHz_ * (0.85f + 0.02f * static_cast<float> (b * kLines + l)));
             }
+    }
+
+    // The share of the mode smear's depth band `band` takes, 0..1 (1, the default: all of it). A
+    // smear aimed at one band's ring (Medium Drum's 252 Hz mode in band 1) can then leave the
+    // bands that set the tail's brightness unmodulated; a share of 0 reads exactly as no smear.
+    void setModeSmearBandShare (int band, float share)
+    {
+        if (band < 0 || band >= kBands)
+            return;
+        smearBandShare_[band] = std::clamp (share, 0.0f, 1.0f);
+        setModeSmear (smearDepthSamples_, smearRateHz_);
+    }
+
+    // DENSIFIER COEFFICIENT (DuskVerb 2). A band's in-loop allpasses at k 0.55 (kApCoeff) swing the
+    // loop's group delay between 0.29 and 3.4 times each allpass's length, periodically in frequency
+    // (every fs / length Hz): the band's modes bunch at those peaks and, the loop being longer
+    // there, decay slower per second. Medium Drum Room's 1377/1395 and 1789/1809 Hz tail pairs sit
+    // on line 5's allpass delays (its tail autocorrelates at 0.40 / 0.32 at 7.2 / 5.1 ms, 348 / 246
+    // samples), and line 5 is the band's mid tap; k 0.15 takes them out. Below 0 restores
+    // kApCoeff. Never called by the legacy build, and the default reads the same 0.55.
+    void setDensifierCoeff (int band, float k)
+    {
+        if (band < 0 || band >= kBands)
+            return;
+        apCoeff_[band] = k < 0.0f ? kApCoeff[band] : std::min (k, 0.75f);
     }
 
     // STEREO IMAGE BIAS (issue #123). A hard-panned source leaves this tank dead
@@ -310,6 +347,38 @@ public:
                 for (int f = 0; f < 8; ++f)
                     biasZ_[b][f][0] = biasZ_[b][f][1] = 0.0f;
     }
+
+    // DECORRELATED SIDE (DuskVerb 2). With the taps above, a band's output MID is
+    // line 5's read (the input mid one loop ago) and its SIDE is line 2's read
+    // plus the band's R input, UNDELAYED: bl = ½(p2 + p5), br = ½(p5 − p2) with
+    // p2 = read2 + R. Line 2 is never fed, so on a short band, where little
+    // energy recirculates, the mid outweighs the side and the tail collapses to
+    // the centre (Medium Drum Room: L/R correlation +0.85 against its anchor's
+    // +0.15, measured 2026-10-25), and on a mono input the undelayed R puts an
+    // anti-phase copy of the band input on the side. No output width fixes both:
+    // widening enough for a stereo input drives a mono input's lows anti-phase.
+    //
+    // On, the side is line 1's read: the input mid too, one loop ago over a
+    // different line length, so mid and side carry equal power whatever the
+    // input's own correlation and the band's decay, and nothing reaches the
+    // output undelayed. Read where it stands, though, line 1 stays covariant with
+    // line 5: the two-pass paths 1->5 and 5->1 are equally long, so the shared
+    // input lands on both at once and L ran 0.85 dB over R (1 dB in the top band).
+    // Read further back (kSideReadMs), those paths no longer coincide: -0.2 dB
+    // broadband against the legacy taps' -0.07, every band within 0.4 dB on
+    // average over bursts (measured 2026-10-25). The mid is the
+    // taps' own, so L + R (level, spectrum, T60, every mono measure) is unchanged;
+    // width and level act on it as before. Takes precedence over the stereo-image
+    // bias, whose side it replaces. Off = never entered = bit-identical.
+    void setDecorrelatedSide (bool on)
+    {
+        if (on && ! decorrelatedSide_)
+            for (int b = 0; b < kBands; ++b)
+                for (int f = 0; f < 8; ++f)
+                    sideZ_[b][f][0] = sideZ_[b][f][1] = 0.0f;
+        decorrelatedSide_ = on;
+    }
+    bool decorrelatedSide() const noexcept { return decorrelatedSide_; }
 
     // ── In-loop sustained-energy limiter (SustainBandLimiter.h) ────────────
     // The band IS the spectral slice, so no split filters: the config's [loHz,hiHz]
@@ -432,6 +501,18 @@ public:
                     bl = midF + sNew;
                     br = midF - sNew;
                 }
+                // Decorrelated side (setDecorrelatedSide), appended for the same
+                // reason as the bias above: the side becomes line 1's read taken
+                // sideReadOffset_ samples further back (the write above has already
+                // advanced the line, hence its +1), filtered like the taps; the mid
+                // is kept as the taps made it.
+                if (decorrelatedSide_)
+                {
+                    const float midF  = 0.5f * (bl + br);
+                    const float sideF = sideBandFilter (b, 0.5f * readLine (b, 1, sideReadOffset_[b]));
+                    bl = midF + sideF;
+                    br = midF - sideF;
+                }
                 // feed-forward direct (EDT/front-load, outside the loop —
                 // unfiltered: it is already band-split and must stay
                 // phase-tight for EDT shaping)
@@ -511,7 +592,7 @@ private:
         const int m = apMask_[b][l][a];
         int& w = apWp_[b][l][a];
         const float d = bufr[static_cast<size_t> ((w - apLen_[b][l][a]) & m)];
-        const float k = kApCoeff[b];
+        const float k = apCoeff_[b];
         const float y = d - k * v;
         bufr[static_cast<size_t> (w)] = v + k * y;
         w = (w + 1) & m;
@@ -655,4 +736,36 @@ private:
     float biasZ_[kBands][8][2] = {};
     float stereoBias_ = 0.0f, biasCos_ = 1.0f, biasSin_ = 0.0f;
     bool  stereoBiasActive_ = false;
+
+    // Decorrelated side (setDecorrelatedSide): the band confinement filter with
+    // private state for the line-1 side, kept last like the bias members above.
+    float sideBandFilter (int b, float v)
+    {
+        for (int f = 0; f < outNb_[b]; ++f)
+        {
+            const BQ& c = outBq_[b][f];
+            float* z = sideZ_[b][f];
+            const float x = v;
+            v = c.b0 * x + z[0];
+            z[0] = c.b1 * x - c.a1 * v + z[1];
+            z[1] = c.b2 * x - c.a2 * v;
+        }
+        return v;
+    }
+    float sideZ_[kBands][8][2] = {};
+    bool  decorrelatedSide_ = false;
+    // How far behind line 1's own read the side is taken, per band, 256/192/128
+    // samples at 48 kHz: past the narrow low bands' coherence time (band 0 would want
+    // ~10 ms; 5.3 ms keeps the line headroom at 48 kHz exactly where it was).
+    static constexpr float kSideReadMs[kBands] = { 5.3333f, 4.0f, 2.6667f, 2.6667f, 2.6667f, 2.6667f };
+    float sideReadOffset_[kBands] = { 257.0f, 193.0f, 129.0f, 129.0f, 129.0f, 129.0f };
+    // Samples each line keeps behind its read for the side (and the cubic read's neighbours).
+    int sideReadHeadroom() const noexcept
+    { return static_cast<int> (std::ceil (kSideReadMs[0] * 0.001f * sr_)) + 3; }
+
+    // setModeSmearBandShare: each band's share of the smear depth, kept last like the members above.
+    float smearBandShare_[kBands] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
+
+    // setDensifierCoeff: each band's in-loop allpass coefficient, kept last like the members above.
+    float apCoeff_[kBands] = { kApCoeff[0], kApCoeff[1], kApCoeff[2], kApCoeff[3], kApCoeff[4], kApCoeff[5] };
 };

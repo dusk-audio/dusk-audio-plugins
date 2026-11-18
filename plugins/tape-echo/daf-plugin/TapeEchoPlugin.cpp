@@ -3,6 +3,7 @@
 #include "DafPlugin.hpp"
 #include "TapeEchoAccess.hpp"
 #include "TapeEchoDSP.hpp"
+#include "DuskDenormals.hpp"
 #include "TapeEchoParams.hpp"
 #include "TapeEchoVersion.hpp"
 #include "util/CrashLog.hpp"
@@ -42,6 +43,8 @@ public:
         values[kParamPeakLevel]   = 0.0f;
         values[kParamMix]         = 0.5f;
         values[kParamEchoRateNote] = 5.0f; // fifth physical detent (Head 1 = 1/16)
+        values[kParamNoise]       = 0.0f;
+        values[kParamHumFrequency] = 0.0f; // 60 Hz
     }
 
 public:
@@ -120,8 +123,8 @@ protected:
             break;
         case kParamDryLevel:
             // Retained at its shipped ID for old projects and automation. The
-            // custom UI now exposes the appended Mix control instead.
-            p.hints |= kParameterIsHidden;
+            // custom UI now exposes the appended Mix control instead. Not
+            // hidden from hosts, for the reason given at kParamSyncDivision.
             p.name = "Dry Level";   p.symbol = "dry_level";
             p.ranges.def = 1.0f;    p.ranges.min = 0.0f;  p.ranges.max = 1.0f;
             break;
@@ -135,19 +138,45 @@ protected:
             // for old projects and automation, but expose the physical detent
             // below for all new edits.
             //
-            // kParameterIsHidden only reaches the LV2 exporter, which turns it
-            // into port-props#notOnGUI. The VST3, CLAP and AU backends never
-            // read the flag, so in those formats BOTH this and Echo Rate Note
-            // appear in the host's generic parameter list and both are
-            // automatable. Writing this one latches legacySyncDivisionOverride
-            // and the Echo Rate Note detent stops driving the delay until it is
-            // moved again. That is deliberate -- it is the only way 0.1.x
-            // automation lanes keep working, exactly as for Dry Level -- but it
-            // is a real trap for anyone who automates the wrong one of the
-            // pair, so RELEASE_CHECKLIST asks for it to be exercised by hand.
+            // This and Dry Level must NOT carry kParameterIsHidden. Since DAF
+            // 4556beb6 the hint is no longer LV2-only (port-props#notOnGUI):
+            // VST3 gets V3_PARAM_IS_HIDDEN and CLAP gets CLAP_PARAM_IS_HIDDEN.
+            // AU has never read it. The VST3 SDK defines a hidden parameter as
+            // one that "cannot be changed from outside the plug-in" and implies
+            // read-only and not automatable; CLAP says a host need not process
+            // its automation. Either lets a host drop these two from its
+            // parameter and automation lists and stop playing the lanes old
+            // sessions saved, which is the only reason they exist. The 1.0.8
+            // release reported both as automatable and not hidden in VST3, CLAP
+            // and AU. TapeEchoHostParamFlagsTest pins every parameter's CLAP
+            // and VST3 flags to that release; it does not cover AU, which never
+            // read the hint.
+            //
+            // The hint should not be kept for LV2 alone either. This file is
+            // compiled once for all formats, into the DSP library each of them
+            // links, so no DAF_PLUGIN_TARGET_* macro reaches it. The one
+            // per-format switch left is the runtime getPluginFormatName(),
+            // which DAF documents as informational only and not to be used to
+            // change plugin behaviour, and which would no longer link into
+            // TapeEchoRateHandoffTest (that builds this file against
+            // DafPlugin.cpp alone). LV2 therefore differs from 1.0.8: generic
+            // LV2 UIs and parameter lists show both parameters, and writing
+            // Sync Division there latches the legacy override as in every other
+            // format. The custom UI, the LV2 port indices and symbols, saved
+            // state and presets are unchanged.
+            //
+            // So in every format BOTH this and Echo Rate Note appear in the
+            // host's generic parameter list and both are automatable. Writing
+            // this one latches legacySyncDivisionOverride and the Echo Rate
+            // Note detent stops driving the delay until it is moved again. That
+            // is deliberate -- it is the only way 0.1.x automation lanes keep
+            // working, exactly as for Dry Level -- but it is a real trap for
+            // anyone who automates the wrong one of the pair, so every release
+            // exercises it by hand.
             // Do NOT "fix" it by assigning p.hints to drop
-            // kParameterIsAutomatable: that silences shipped 0.1.x automation.
-            p.hints |= kParameterIsInteger | kParameterIsHidden;
+            // kParameterIsAutomatable, or by adding kParameterIsHidden: either
+            // may silence shipped 0.1.x automation.
+            p.hints |= kParameterIsInteger;
             p.name = "Sync Division"; p.symbol = "sync_division";
             p.ranges.def = 2.0f;    p.ranges.min = 0.0f;
             p.ranges.max = (float)(kNumSyncDivisions - 1);
@@ -205,6 +234,23 @@ protected:
             p.name = "Echo Rate Note"; p.symbol = "echo_rate_note";
             p.ranges.def = 5.0f;    p.ranges.min = 1.0f;  p.ranges.max = 11.0f;
             break;
+        case kParamNoise:
+            p.name = "Noise";       p.symbol = "noise";
+            p.ranges.def = 0.0f;    p.ranges.min = 0.0f;  p.ranges.max = 1.0f;
+            break;
+        case kParamHumFrequency:
+            p.hints |= kParameterIsInteger;
+            p.name = "Hum Frequency"; p.symbol = "hum_frequency";
+            p.ranges.def = 0.0f;    p.ranges.min = 0.0f;  p.ranges.max = 1.0f;
+            p.enumValues.count = 2;
+            p.enumValues.restrictedMode = true;
+            {
+                auto* const e = new ParameterEnumerationValue[2];
+                e[0] = ParameterEnumerationValue(0.0f, "60 Hz");
+                e[1] = ParameterEnumerationValue(1.0f, "50 Hz");
+                p.enumValues.values = e;
+            }
+            break;
         }
     }
 
@@ -232,7 +278,8 @@ protected:
             value = std::round(value);
         else if (index == kParamBypass
                  || index == kParamTempoSync
-                 || index == kParamInputSend)
+                 || index == kParamInputSend
+                 || index == kParamHumFrequency)
             value = value >= 0.5f ? 1.0f : 0.0f;
         if (index == kParamTapeAge)
             value = teQuantizeTapeAge(value);
@@ -240,10 +287,10 @@ protected:
         switch (index)
         {
         case kParamBypass:      dsp.setBypass(value > 0.5f);      break;
+        // run() alone selects and publishes the effective motor rate. A host
+        // load must not race a synced block's later write to the DSP (#292).
         case kParamTempoSync:
-            if (value < 0.5f) // sync released: hand control back to the knob
-                dsp.setRepeatRate(values[kParamRepeatRate].load(std::memory_order_relaxed));
-            break;
+        case kParamRepeatRate:  break;
         case kParamSyncDivision:
             // Compatibility input: an old project may automate any semantic
             // division, including values the reference's eleven detents cannot
@@ -255,9 +302,10 @@ protected:
             break;
         case kParamEchoRateNote:
             // The physical detent is authoritative for new edits. Keep the
-            // hidden legacy value intact so automation/state inspection never
-            // observes an undeclared sibling-parameter mutation; run() derives
-            // the effective semantic division without changing either value.
+            // legacy value (not on the panel, still a host parameter) intact so
+            // automation/state inspection never observes an undeclared
+            // sibling-parameter mutation; run() derives the effective semantic
+            // division without changing either value.
             legacySyncDivisionOverride.store(false, std::memory_order_relaxed);
             break;
         case kParamTapeAge:     dsp.setTapeAge(value);            break;
@@ -271,10 +319,6 @@ protected:
             // parameter is rewritten as a side effect of changing Mode.
             dsp.setMode((int)(value + 0.5f));
             break;
-        case kParamRepeatRate:
-            if (values[kParamTempoSync].load(std::memory_order_relaxed) < 0.5f)
-                dsp.setRepeatRate(value);
-            break;
         case kParamIntensity:   dsp.setIntensity(value);          break;
         case kParamEchoLevel:   dsp.setEchoLevel(value);          break;
         case kParamReverbLevel: dsp.setReverbLevel(value);        break;
@@ -284,6 +328,8 @@ protected:
         case kParamWowFlutter:  dsp.setWowFlutter(value);         break;
         case kParamDryLevel:    dsp.setDryLevel(value);           break;
         case kParamMix:         dsp.setMix(value);                break;
+        case kParamNoise:       dsp.setNoise(value);              break;
+        case kParamHumFrequency:dsp.setHumFrequency50(value >= 0.5f); break;
         }
     }
 
@@ -306,6 +352,7 @@ protected:
         setParameterValue(kParamReverbPan, preset.reverbPan);
         setParameterValue(kParamInputSend, preset.inputSend);
         setParameterValue(kParamMix, preset.mix);
+        setParameterValue(kParamNoise, preset.noise);
         const int leadingHead = teLeadingHeadIndexForMode(
             (int)(preset.v[kParamMode] + 0.5f));
         const int knobPos = teSyncKnobPosForDivision(
@@ -318,6 +365,10 @@ protected:
     //--- lifecycle ---------------------------------------------------------------
     void activate() override
     {
+        // Inactive setup: seed the smoother before prepare() snaps it. Live
+        // host edits only update the mirror; run() applies them per block.
+        if (values[kParamTempoSync].load(std::memory_order_relaxed) < 0.5f)
+            dsp.setRepeatRate(values[kParamRepeatRate].load(std::memory_order_relaxed));
         dsp.prepare(getSampleRate(), (int)getBufferSize());
         pushAllParams();
     }
@@ -326,6 +377,8 @@ protected:
 
     void sampleRateChanged(double newSampleRate) override
     {
+        if (values[kParamTempoSync].load(std::memory_order_relaxed) < 0.5f)
+            dsp.setRepeatRate(values[kParamRepeatRate].load(std::memory_order_relaxed));
         dsp.prepare(newSampleRate, (int)getBufferSize());
         pushAllParams();
     }
@@ -341,8 +394,12 @@ protected:
     //--- audio -------------------------------------------------------------------
     void run(const float** inputs, float** outputs, uint32_t frames) override
     {
-        float effectiveMs = duskaudio::TapeEchoDSP::delayMsForRepeatRate(
-            values[kParamRepeatRate].load(std::memory_order_relaxed));
+        duskaudio::ScopedFlushDenormals ftz;
+        if (frames == 0)
+            return;
+
+        float effectiveRate = values[kParamRepeatRate].load(std::memory_order_relaxed);
+        float effectiveMs = duskaudio::TapeEchoDSP::delayMsForRepeatRate(effectiveRate);
         bool outOfRange = false;
         if (values[kParamTempoSync].load(std::memory_order_relaxed) > 0.5f)
         {
@@ -399,10 +456,12 @@ protected:
 
             // Convert the clamped delay to the motor-speed knob's 0..1 range;
             // the DSP's inertia smoother turns tempo changes into tape glides.
-            dsp.setRepeatRate(
-                duskaudio::TapeEchoDSP::repeatRateForDelayMs((float)clampedMs));
+            effectiveRate = duskaudio::TapeEchoDSP::repeatRateForDelayMs((float)clampedMs);
             effectiveMs = (float)clampedMs;
         }
+        // Publish on every block, including sync-off and bypass. A sync change
+        // during this block can be stale for one block, never indefinitely.
+        dsp.setRepeatRate(effectiveRate);
         effectiveHead1DelayMs.store(effectiveMs, std::memory_order_relaxed);
         syncNoteOutOfRange.store(outOfRange, std::memory_order_relaxed);
 
@@ -410,6 +469,7 @@ protected:
     }
 
 private:
+    friend struct TapeEchoPluginTestAccess;
     void pushAllParams()
     {
         const bool preserveLegacy =

@@ -28,7 +28,8 @@ enum class FilterMode
     Cosmos = 0,
     Oracle,
     Mono,
-    Modular
+    Modular,
+    Prism // retains the clean, subcritical response of the original FM path
 };
 
 enum class ModularFilterModel
@@ -94,7 +95,7 @@ public:
         maxFeedback = maxFb;
         preGain = inputGain;
         inputDrive = maxf(0.05f, inputSat);
-        stageDrive = maxf(0.05f, stageSat);
+        stageDrive = maxf(0.0f, stageSat);
         bassComp = lowComp;
         outputGain = outGain;
     }
@@ -159,7 +160,7 @@ private:
     {
         // Dividing by amount (not tanh(amount)) preserves unity small-signal
         // gain and therefore the calibrated resonance threshold.
-        return std::tanh(x * amount) / amount;
+        return amount > 0.0f ? std::tanh(x * amount) / amount : x;
     }
 
     float sr = 44100.0f;
@@ -177,27 +178,44 @@ private:
     float dcIn = 0.0f, dcOut = 0.0f;
 };
 
-// Early-80s OTA poly filter. Cleaner stages and a subcritical feedback ceiling
-// retain the DCO clarity without crossing into sustained self-oscillation.
+// Early-80s OTA poly filter. The last part of the resonance control crosses
+// unity loop gain; a tiny noise floor lets it start with the DCO mixer muted.
+// Prism explicitly keeps the earlier subcritical calibration.
 class CosmosFilter
 {
 public:
-    void prepare(double sampleRate) noexcept
+    void prepare(double sampleRate, bool resonant = true) noexcept
     {
         lpf.prepare(sampleRate);
         hpf.prepare(sampleRate);
-        lpf.configure(3.88f, 0.88f, 0.16f, 0.12f, 0.02f, 1.10f);
+        selfOscillating = resonant;
+        // Saturate the feedback input, not each integrator's stored state:
+        // repeated state clipping would change the oscillation amplitude with
+        // sample rate. Linear stages plus bounded input keep the loop stable.
+        if (resonant) lpf.configure(4.4f, 0.88f, 0.16f, 0.0f, 0.02f, 1.10f);
+        else lpf.configure(3.88f, 0.88f, 0.16f, 0.12f, 0.02f, 1.10f);
+        reset();
     }
     void setParameters(float lpCutoff, float lpResonance, float hpCutoff) noexcept
     {
         lpf.setParameters(lpCutoff, lpResonance);
         hpf.setCutoff(hpCutoff);
+        excite = selfOscillating && lpResonance > 0.9f;
     }
-    float process(float input) noexcept { return lpf.process(hpf.process(input)); }
-    void reset() noexcept { lpf.reset(); hpf.reset(); }
+    float process(float input) noexcept
+    {
+        const float excitation = excite ? noise.nextBipolar() * 1.0e-7f : 0.0f;
+        return lpf.process(hpf.process(input) + excitation);
+    }
+    void reset() noexcept
+    {
+        lpf.reset(); hpf.reset(); noise.seed(0xC05F17u); excite = false;
+    }
 private:
     TPTFourPole lpf;
     SimpleHPF hpf;
+    Xorshift noise;
+    bool selfOscillating = true, excite = false;
 };
 
 // Late-70s American poly filter.  Hotter input and a slightly supercritical
@@ -299,23 +317,46 @@ public:
     void prepare(double sampleRate) noexcept
     {
         cosmos.prepare(sampleRate);
+        prism.prepare(sampleRate, false);
         oracle.prepare(sampleRate);
         mono.prepare(sampleRate);
         ladder.prepare(sampleRate);
+        haveCoeffs = false;   // the rate is part of every coefficient
     }
 
     void setMode(FilterMode m) noexcept { mode = m; }
-    void setModularModel(ModularFilterModel m) noexcept { ladder.setModel(m); }
+    void setModularModel(ModularFilterModel m) noexcept
+    {
+        if (m == ladderModel) return;
+        ladderModel = m;
+        ladder.setModel(m);
+        haveCoeffs = false;   // the model sets the ladder's feedback ceiling
+    }
 
     // Re-preparing resets only filter memory; oscillator/envelope musical state is
     // retained by SynthVoice during an oversampling-factor change.
     void setSampleRate(double sampleRate) noexcept { prepare(sampleRate); }
 
+    // The voice calls this every INTERNAL sample, and its inputs usually have not
+    // moved since the last one (an envelope in sustain, no cutoff modulation): two
+    // tan() per call for coefficients it already has. The coefficients are a pure
+    // function of these inputs, the mode, the rate and the ladder model, so they
+    // are recomputed only when an input's BITS change (sameBits). prepare(),
+    // reset() and a model change drop the memo, because each leaves derived state
+    // the inputs alone do not describe -- CosmosFilter::reset() clears its
+    // self-oscillation flag, for one. Output is bit-identical to recomputing.
     void setParameters(float cutoff, float resonance, float hpCutoff = 20.0f) noexcept
     {
+        if (haveCoeffs && mode == memoMode && sameBits(cutoff, memoCutoff)
+            && sameBits(resonance, memoRes) && sameBits(hpCutoff, memoHp))
+            return;
+        haveCoeffs = true;
+        memoMode = mode;
+        memoCutoff = cutoff; memoRes = resonance; memoHp = hpCutoff;
         switch (mode)
         {
             case FilterMode::Cosmos:  cosmos.setParameters(cutoff, resonance, hpCutoff); break;
+            case FilterMode::Prism:   prism.setParameters(cutoff, resonance, hpCutoff); break;
             case FilterMode::Oracle:  oracle.setParameters(cutoff, resonance); break;
             case FilterMode::Mono:    mono.setParameters(cutoff, resonance); break;
             case FilterMode::Modular: ladder.setParameters(cutoff, resonance); break;
@@ -327,6 +368,7 @@ public:
         switch (mode)
         {
             case FilterMode::Cosmos:  return cosmos.process(input);
+            case FilterMode::Prism:   return prism.process(input);
             case FilterMode::Oracle:  return oracle.process(input);
             case FilterMode::Mono:    return mono.process(input);
             case FilterMode::Modular: return ladder.process(input);
@@ -337,14 +379,22 @@ public:
     void reset() noexcept
     {
         cosmos.reset();
+        prism.reset();
         oracle.reset();
         mono.reset();
         ladder.reset();
+        haveCoeffs = false;
     }
 
 private:
     FilterMode mode = FilterMode::Cosmos;
+    // Memo for setParameters(). ladderModel mirrors LadderFilter's own default.
+    ModularFilterModel ladderModel = ModularFilterModel::Early;
+    bool       haveCoeffs = false;
+    FilterMode memoMode = FilterMode::Cosmos;
+    float      memoCutoff = 0.0f, memoRes = 0.0f, memoHp = 0.0f;
     CosmosFilter cosmos;
+    CosmosFilter prism;
     OracleFilter oracle;
     MonoFilter mono;
     LadderFilter ladder;

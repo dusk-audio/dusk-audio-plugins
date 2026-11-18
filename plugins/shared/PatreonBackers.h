@@ -19,11 +19,11 @@
     (plugins-main / plugins-worktree / plugins-multi-synth), so credits stay
     consistent across worktrees.
 
-    Tier Benefits:
-    - Hugs ($1/month):       Development updates, name in credits
-    - Supporter ($3/month):  Development updates, name in credits
-    - Patron ($5/month):     Development updates, name in credits
-    - Champion ($10/month):  Development updates, name in credits
+    Arrays and the credits heading each one is shown under:
+    - champions  -> PATRONS              (Patron, $10/month)
+    - patrons    -> SUPPORTERS           (Supporter, $5/month)
+    - supporters -> FOUNDING SUPPORTERS  (closed $1 Hugs and $3 legacy tiers)
+    - hugs       -> retired, always empty (kept for older DuskStudio builds)
 
   ==============================================================================
 */
@@ -58,26 +58,25 @@ namespace PatreonCredits
 
     // Supporter ($3/month)
     inline const std::vector<juce::String> supporters = {
+        "Adrienne",
+        "Andre C",
         "Beau Landry",
+        "Benjamin Walker",
+        "Chaumontet Olivier",
+        "Codey",
         "Eblen Macari",
+        "fennek",
+        "fisHkiD76",
         "Jano",
+        "Jon Skarin",
+        "LEONID FEDOROV",
         "Manav",
+        "Samantha Druker",
         "Someone64",
     };
 
     // Hugs ($1/month)
     inline const std::vector<juce::String> hugs = {
-        "Adrienne",
-        "Andre C",
-        "Benjamin Walker",
-        "Chaumontet Olivier",
-        "Codey",
-        "Dusk Audio",
-        "fennek",
-        "fisHkiD76",
-        "Jon Skarin",
-        "LEONID FEDOROV",
-        "Samantha Druker",
     };
 
     // Past Supporters — thank you for your support!
@@ -98,7 +97,7 @@ namespace PatreonCredits
 
         if (!champions.empty())
         {
-            result += "CHAMPIONS\n\n";
+            result += "PATRONS\n\n";
             for (const auto& name : champions)
                 result += name + "\n";
             result += "\n";
@@ -106,7 +105,7 @@ namespace PatreonCredits
 
         if (!patrons.empty())
         {
-            result += "PATRONS\n\n";
+            result += "SUPPORTERS\n\n";
             for (const auto& name : patrons)
                 result += name + "\n";
             result += "\n";
@@ -114,7 +113,7 @@ namespace PatreonCredits
 
         if (!supporters.empty())
         {
-            result += "SUPPORTERS\n\n";
+            result += "FOUNDING SUPPORTERS\n\n";
             for (const auto& name : supporters)
                 result += name + "\n";
         }

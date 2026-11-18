@@ -10,7 +10,8 @@
 //      poly x unison <= 16 (handled in VoiceAllocator);
 //   #4 Cross Mod wired — osc2 (1-sample-delayed) modulates osc1 frequency;
 //   #5 LFO1Rate / LFO2Rate / UnisonDetune mod destinations consumed here
-//      (EffectsMix is consumed at engine level);
+//      (EffectsMix is consumed at engine level), as are the LFO1Depth /
+//      LFO2Depth destinations appended later (applyLfoDepth);
 //   #10 member xorshift PRNG (drift / per-note random), NaN guards kept.
 //
 // The oscillator section is a plain per-mode switch. Modes 0-3 use the analog
@@ -56,6 +57,14 @@ static constexpr int kMaxOscVoices   = 16; // poly x unison ceiling
 // high-resonance filters retain more upper-band energy than the former shared
 // cascade, so 36 ms is used to keep the fade's C1 corners below audibility.
 static constexpr float kRetireSeconds = 0.036f;
+
+// Crossfade for the two edges at which an LFO's depth starts or stops being
+// applied while a voice is sounding: its FIRST depth slot appearing, or its LAST
+// one disappearing (SynthVoice::applyLfoDepth). Without it the LFO's output would
+// step on that sample, a click on every route the LFO feeds. Only those two edges
+// fade; see applyLfoDepth for what does not. The same length, and for the same
+// reason, as the LFO's own seek crossfade (Envelope.hpp).
+static constexpr float kLfoDepthFadeSeconds = LFO::kSeekFadeSeconds;
 
 // Per-voice parameters (shared across voices for a given mode). Set once per
 // block by the engine from atomics — never looked up in the render path.
@@ -133,6 +142,16 @@ struct VoiceParameters
 
     // Performance controllers (mod sources).
     float modWheel = 0.0f, aftertouch = 0.0f;
+
+    // Whether any mod-matrix slot reads LFO 1 / LFO 2 (source set, destination
+    // not None). An unread LFO still advances every piece of its state but skips
+    // evaluating its sine (LFO::processSample), the costliest part of it.
+    bool lfo1Used = true, lfo2Used = true;
+
+    // Whether any mod-matrix slot targets LFO 1 / LFO 2 Depth (ModMatrix::targets).
+    // With none, once a just-removed route's fade-out has run, that LFO's output is
+    // not touched at all (SynthVoice::applyLfoDepth).
+    bool lfo1DepthRouted = false, lfo2DepthRouted = false;
 };
 
 //==============================================================================
@@ -142,6 +161,7 @@ public:
     void prepare(double sampleRate, uint32_t seed) noexcept
     {
         sr = sampleRate;
+        whiteNoiseGain = 2.85f * std::sqrt((float)sampleRate / 96000.0f);
         rng.seed(seed);
         for (int u = 0; u < kMaxUnison; ++u)
         {
@@ -172,6 +192,8 @@ public:
         portaFreq.snap(440.0f);
         retireStep = 1.0f / (float)(kRetireSeconds * sampleRate);
         retiring = false; retirePhase = 1.0f;
+        lfoDepthFadeStep = 1.0f / (float)(kLfoDepthFadeSeconds * sampleRate);
+        resetLfoDepth();
     }
 
     // Change the internal (oversampled) rate WITHOUT resetting musical state:
@@ -181,6 +203,7 @@ public:
     void setSampleRate(double sampleRate) noexcept
     {
         sr = sampleRate;
+        whiteNoiseGain = 2.85f * std::sqrt((float)sampleRate / 96000.0f);
         for (int u = 0; u < kMaxUnison; ++u)
         {
             osc[u].osc1.setSampleRate(sampleRate);
@@ -203,6 +226,7 @@ public:
         // 0.1 s one part-way through. Keeps current/target value.
         portaFreq.prepare(sampleRate, portaTau);
         retireStep = 1.0f / (float)(kRetireSeconds * sampleRate); // keeps retirePhase
+        lfoDepthFadeStep = 1.0f / (float)(kLfoDepthFadeSeconds * sampleRate); // keeps the fades
     }
 
     void reset() noexcept
@@ -223,19 +247,35 @@ public:
         effectsMixMod = 0.0f;
         polyPressure = 0.0f;
         retiring = false; retirePhase = 1.0f;
+        resetLfoDepth();
     }
 
+    // LEGATO ("Glide only when notes overlap"). A note that lands on a voice whose
+    // note is still HELD -- key or sustain pedal down, see isGateHeld() -- is TIED
+    // to it: the envelopes, LFOs and oscillator phases run on, the voice keeps the
+    // first note's velocity (a new one would step the level without an attack to
+    // hide it), and only the pitch moves, gliding when Glide is up. Any other note
+    // starts one of its own, and with legato on that note does not glide.
+    //
+    // The tie used to be decided by ampEnv.isActive(), which is also true while the
+    // envelope RELEASES. A legato note landing on a releasing voice -- every arp
+    // step, since the arp releases each step before the next starts, and every
+    // steal of a held voice, which used to be released first -- skipped its attack
+    // and rode the old note's release down to silence (measured: 58 of 64 Mono arp
+    // steps silent with a 1 s release, and a held Mono legato note gone within 2 s).
     void noteOn(int midiNote, float velocity, const VoiceParameters& params) noexcept
     {
+        const bool tie = params.legatoMode && isGateHeld();
+
         currentNote = midiNote;
-        currentVelocity = velocity;
+        if (!tie) currentVelocity = velocity;
         active = true;
         polyPressure = 0.0f;   // a new note starts unpressed until 0xA0 says otherwise
         retiring = false; retirePhase = 1.0f;   // a re-used voice is no longer retiring
 
         const float targetFreq = midiToHz((float)midiNote);
 
-        if (params.portamentoTime > 0.0f && lastFreq > 0.0f)
+        if (params.portamentoTime > 0.0f && lastFreq > 0.0f && (tie || !params.legatoMode))
         {
             float tau = params.portamentoTime;
             if (params.glideMode != 0) // constant rate: proportional to interval (octaves)
@@ -250,25 +290,32 @@ public:
         }
         lastFreq = targetFreq;
 
-        float mappedVel = velocity;
-        switch (params.velocityCurve)
+        if (!tie)
         {
-            case 1: mappedVel = std::sqrt(velocity); break;
-            case 2: mappedVel = velocity * velocity; break;
-            case 3: mappedVel = 1.0f; break;
-            default: break;
+            float mappedVel = velocity;
+            switch (params.velocityCurve)
+            {
+                case 1: mappedVel = std::sqrt(velocity); break;
+                case 2: mappedVel = velocity * velocity; break;
+                case 3: mappedVel = 1.0f; break;
+                default: break;
+            }
+            velocityGain = 1.0f - params.velocitySensitivity * (1.0f - mappedVel);
         }
-        velocityGain = 1.0f - params.velocitySensitivity * (1.0f - mappedVel);
 
         randomPerNote = rng.nextFloat();
 
-        if (!params.legatoMode || !ampEnv.isActive())
+        if (!tie)
         {
             ampEnv.noteOn();
             filtEnv.noteOn();
             // Per-note LFO retrigger (resets phase + fade-in + S&H target). Legato
             // notes keep the running LFO. Without this the LFO fade-in is inert.
             lfo1.retrigger(); lfo2.retrigger();
+            // A new note has no LFO depth to fade from: it starts settled on
+            // whatever the matrix routes now (applyLfoDepth), not on whatever the
+            // voice's previous note left behind.
+            lfoDepthPrime = true;
             filterR.reset(); // keep the (usually idle) R filter fresh for unison
             for (int u = 0; u < kMaxUnison; ++u)
             {
@@ -329,18 +376,17 @@ public:
     // zeroes it). Controllers stop sending 0xA0 at key-up, so the last value simply
     // persists; that is the same convention channel pressure follows.
     void setPolyPressure(float v01) noexcept { polyPressure = v01; }
-    // Voice steal: release everything that shapes the outgoing note before the new
-    // one is triggered on top. The FILTER envelope must release with the amp
-    // envelope, not just alongside it: in legato mode noteOn() deliberately skips
-    // the retrigger while ampEnv is still active, so a stolen voice runs its amp
-    // release to silence while filtEnv sat in Sustain holding the cutoff wide open
-    // for the whole fade — and left that stale level as the seed for the next note
-    // to land on this voice. Outside legato the following noteOn() retriggers both
-    // envelopes from their current values, so this is a no-op there.
-    void setSteal() noexcept
+
+    // The note on this voice is still held, by its key or by the sustain pedal (a
+    // pedal-held key-up never reaches the voice): the amp envelope is in attack,
+    // decay or sustain. Release does not count -- that note is ending -- and
+    // neither does a retiring voice, which retire() has already released.
+    bool isGateHeld() const noexcept
     {
-        ampEnv.noteOff(); filtEnv.noteOff();
-        for (int u = 0; u < kMaxUnison; ++u) fm[u].noteOff();
+        const ADSREnvelope::Stage s = ampEnv.getStage();
+        return active && !retiring
+            && (s == ADSREnvelope::Stage::Attack || s == ADSREnvelope::Stage::Decay
+                || s == ADSREnvelope::Stage::Sustain);
     }
 
     // Retire: the voice has fallen OUTSIDE the allocator's effective polyphony
@@ -469,12 +515,14 @@ public:
         if (--driftCounter <= 0) { driftTarget = rng.nextBipolar(); driftCounter = 200 + rng.nextInt(300); }
         driftSmooth += (driftTarget - driftSmooth) * 0.001f;
         baseFreq *= (1.0f + driftSmooth * params.analogAmount * 0.002f);
-        baseFreq *= std::pow(2.0f, (params.pitchBendSemis + params.masterTuneSemis) / 12.0f);
+        baseFreq *= bendTuneRatio((params.pitchBendSemis + params.masterTuneSemis) / 12.0f);
 
-        const float freq1 = baseFreq * std::pow(2.0f, pitchMod1 * 2.0f / 12.0f);
-        const float freq2 = baseFreq * std::pow(2.0f, ((float)params.osc2SemiOffset + pitchMod2 * 2.0f) / 12.0f);
+        const float freq1 = baseFreq * pitch1Ratio(pitchMod1 * 2.0f / 12.0f);
+        const float freq2 = baseFreq * pitch2Ratio(((float)params.osc2SemiOffset + pitchMod2 * 2.0f) / 12.0f);
 
-        const float noiseSample = pinkNoise.processSample() * params.noiseLevel;
+        const float noiseSample = pinkNoise.processSample(params.mode == SynthMode::Cosmos)
+                                * params.noiseLevel
+                                * (params.mode == SynthMode::Cosmos ? whiteNoiseGain : 1.0f);
 
         const int uCount = clampi(retiring ? retireUnison : unisonCount, 1, kMaxUnison);
         // The R filter runs only on the multi-voice path; when unison count grows
@@ -509,10 +557,10 @@ public:
             }
             else
             {
-                const float totalPan = clampf(uPan + panMod, -1.0f, 1.0f);
-                const float angle = (totalPan + 1.0f) * 0.25f * kPi;
-                preL += mix * std::cos(angle) * uGain;
-                preR += mix * std::sin(angle) * uGain;
+                float c, s;
+                unisonPanMemo[(size_t)u].get(clampf(uPan + panMod, -1.0f, 1.0f), c, s);
+                preL += mix * c * uGain;
+                preR += mix * s * uGain;
             }
         }
 
@@ -527,17 +575,17 @@ public:
         const float envModTotal = clampf(
             (filtVal * params.filterEnvAmount + cutoffMod + polyModFiltExtra) * 2.0f
             + audioRateOctaves, -5.0f, 5.0f);
-        float envCutoff = params.filterCutoff * std::pow(2.0f, envModTotal);
+        float envCutoff = params.filterCutoff * cutoffRatio(envModTotal);
         envCutoff *= (1.0f + filterTrackingOffset * params.analogAmount);
         // TPT models remain stable throughout the usable top octave.
         envCutoff = clampf(envCutoff, 20.0f, (float)sr * 0.45f);
         const float envRes = clampf(params.filterResonance + resMod, 0.0f, 1.0f);
 
-        // Prism has no analog filter model of its own; route it through the clean
-        // (non-self-oscillating) Cosmos LPF so the section stays in circuit.
+        // Keep Prism's original clean, subcritical response independently of
+        // Cosmos's resonant DCO filter calibration.
         const FilterMode filtMode = (params.mode == SynthMode::Prism)
-            ? FilterMode::Cosmos : (FilterMode)clampi((int)params.mode, 0, 3);
-        // Prism routes through the Cosmos filter model but has no dedicated HP
+            ? FilterMode::Prism : (FilterMode)clampi((int)params.mode, 0, 3);
+        // Prism has no dedicated HP
         // control, so feed a neutral 20 Hz HP (U3). Modes 1-3 ignore the HP arg.
         const float hpCut = (params.mode == SynthMode::Prism) ? 20.0f : params.filterHPCutoff;
         filterL.setModularModel(params.modularFilterModel);
@@ -549,10 +597,10 @@ public:
             const float filtered = filterL.process(preL);
             // Clamp panMod to the valid pan range before the constant-power angle
             // math; the multi-voice path already clamps its totalPan (C4a).
-            const float sPan = clampf(panMod, -1.0f, 1.0f);
-            const float angle = (sPan + 1.0f) * 0.25f * kPi; // == JUCE single-voice pan
-            sL = filtered * std::cos(angle);
-            sR = filtered * std::sin(angle);
+            float c, s;
+            panMemo.get(clampf(panMod, -1.0f, 1.0f), c, s); // == JUCE single-voice pan
+            sL = filtered * c;
+            sR = filtered * s;
         }
         else
         {
@@ -628,19 +676,26 @@ private:
                 // (JUCE double-advanced osc2 here, an octave-up bug; fixed: osc2 is
                 //  configured as the pulse component at freq1 and processed once.)
                 osc1Sample = o.osc1.processSample();
+                // The DCO's saw and pulse have reinforcing fundamentals. The
+                // generic ascending saw has the opposite polarity to Pulse.
+                if (params.osc1Wave == Waveform::Saw) osc1Sample = -osc1Sample;
                 o.osc2.setFrequency(freq1);
                 o.osc2.setWaveform(Waveform::Pulse);
                 o.osc2.setPulseWidth(params.osc2PulseWidth + pwm2);
                 o.osc2.setDetune(params.osc1Detune + detCents);
                 osc2Sample = o.osc2.processSample();
 
-                o.sub.setFrequency(baseFreq);
+                o.sub.setFrequency(freq1);
                 o.sub.setWaveform(params.subWave);
-                o.sub.setDetune(detCents);
+                o.sub.setDetune(params.osc1Detune + detCents);
                 subSample = o.sub.processSample() * params.subLevel;
 
-                mix = osc1Sample * params.osc1Level + osc2Sample * params.osc2Level + subSample + noiseSample;
-                activeGain = params.osc1Level + params.osc2Level + params.subLevel + params.noiseLevel;
+                // Fixed DCO mixer gains: enabling a second waveform adds to
+                // the first instead of turning every source down. Pulse/sub
+                // balance follows isolated reference captures (saw = unity).
+                mix = osc1Sample * params.osc1Level
+                    + osc2Sample * params.osc2Level * 0.91f
+                    + subSample * 0.73f + noiseSample;
                 break;
             }
 
@@ -730,7 +785,7 @@ private:
                 // plus this unison sub-voice's detune; the FM output is already
                 // envelope-shaped internally, so no activeGain normalisation —
                 // just the carrier-count headroom trim.
-                const float detFreq = freq1 * std::pow(2.0f, detCents / 1200.0f);
+                const float detFreq = freq1 * prismDetuneRatio[(size_t)u](detCents / 1200.0f);
                 fm[(size_t)u].setFrequency(detFreq);
                 // Wire noise into Prism so the always-visible NOISE knob is honest
                 // (U4). noiseLevel defaults to 0, so existing presets are bit-null.
@@ -758,8 +813,8 @@ private:
         lfo1.setRate(baseLfo1Rate * (1.0f + clampf(lfoRateMod1, -0.9f, 4.0f)));
         lfo2.setRate(baseLfo2Rate * (1.0f + clampf(lfoRateMod2, -0.9f, 4.0f)));
 
-        state.setSourceValue(ModSource::LFO1, lfo1.processSample());
-        state.setSourceValue(ModSource::LFO2, lfo2.processSample());
+        state.setSourceValue(ModSource::LFO1, lfo1.processSample(params.lfo1Used));
+        state.setSourceValue(ModSource::LFO2, lfo2.processSample(params.lfo2Used));
         state.setSourceValue(ModSource::Envelope2, filtEnv.getCurrentValue());
         state.setSourceValue(ModSource::ModWheel, params.modWheel);
         // One Aftertouch source, fed by whichever pressure message is higher:
@@ -781,7 +836,74 @@ private:
         sampleAndHold.setRate(params.shRate);
         state.setSourceValue(ModSource::SampleAndHold, sampleAndHold.process(rng.nextBipolar()));
 
+        applyLfoDepth(state, matrix, params);
         matrix.process(state);
+    }
+
+    // LFO depth destinations (ModDest::LFO1Depth / LFO2Depth). While at least one
+    // slot targets an LFO's depth, that LFO's output -- the value every other slot
+    // reads -- is multiplied by the sum of those slots' contributions (source x
+    // amount), clamped to 0..1. While none does (and no removed route is still
+    // fading out, below), the output is not touched at all, which is what keeps
+    // every patch without such a route bit-identical.
+    //
+    // SAME sample, not one sample late like the rate routes above. A rate route
+    // has to wait because it moves the LFO's phase, and the phase is advanced
+    // before the matrix runs; a depth only scales a value that already exists. So
+    // both sums are taken from the sources as they stand, before either LFO is
+    // scaled, and only then are the scaled LFOs handed to the matrix. A delay
+    // would also leak: the first sample of every note would get the depth the
+    // voice's previous note left behind, and a triangle or square LFO starts at
+    // -1 / +1, so "wheel at zero" would not be silent. The order has one visible
+    // consequence: a route from an LFO to an LFO's depth reads that LFO UNSCALED.
+    //
+    // Two edges are crossfaded over kLfoDepthFadeSeconds (smoothstep) while the
+    // voice sounds: an LFO's FIRST depth slot appearing (from no depth to the sum)
+    // and its LAST one disappearing (from the last sum, held, back to no depth;
+    // when that fade ends the LFO is untouched again). Nothing else is: adding or
+    // removing a depth slot while another still targets the same LFO, editing a
+    // depth slot's source or amount, or moving its source (the wheel) changes the
+    // sum on the next block or sample like every other matrix edit, and can click
+    // the same way on an LFO -> Amp route. A fresh note (lfoDepthPrime) has
+    // nothing to fade from and starts settled.
+    void applyLfoDepth(ModulationState& state, const ModMatrix& matrix,
+                       const VoiceParameters& params) noexcept
+    {
+        const bool routed[2] = { params.lfo1DepthRouted, params.lfo2DepthRouted };
+        if (lfoDepthPrime)
+        {
+            lfoDepthPrime = false;
+            lfoDepthFade[0] = routed[0] ? 1.0f : 0.0f;
+            lfoDepthFade[1] = routed[1] ? 1.0f : 0.0f;
+        }
+        if (!routed[0] && !routed[1] && lfoDepthFade[0] <= 0.0f && lfoDepthFade[1] <= 0.0f)
+            return;
+
+        static constexpr ModSource kLfo[2]   = { ModSource::LFO1, ModSource::LFO2 };
+        static constexpr ModDest   kDepth[2] = { ModDest::LFO1Depth, ModDest::LFO2Depth };
+        for (int k = 0; k < 2; ++k)   // both sums first, from the unscaled sources
+            if (routed[k])
+                lfoDepthHeld[k] = clampf(matrix.sumFor(state, kDepth[k]), 0.0f, 1.0f);
+        for (int k = 0; k < 2; ++k)
+        {
+            float& fade = lfoDepthFade[k];
+            if (routed[k]) { fade += lfoDepthFadeStep; if (fade > 1.0f) fade = 1.0f; }
+            else           { fade -= lfoDepthFadeStep; if (fade < 0.0f) fade = 0.0f; }
+            if (fade <= 0.0f) continue;   // settled unrouted: untouched
+            const float d = lfoDepthHeld[k];
+            // Settled: exactly the clamped sum. Mid-fade: smoothstep from 1 (no
+            // depth applied) to it, C1 at both ends like the voice's other fades.
+            const float g = fade >= 1.0f ? d
+                                         : 1.0f + (d - 1.0f) * (fade * fade * (3.0f - 2.0f * fade));
+            state.sourceValues[(size_t)kLfo[k]] *= g;
+        }
+    }
+
+    void resetLfoDepth() noexcept
+    {
+        lfoDepthFade[0] = lfoDepthFade[1] = 0.0f;
+        lfoDepthHeld[0] = lfoDepthHeld[1] = 1.0f;
+        lfoDepthPrime = true;
     }
 
     double sr = 44100.0;
@@ -796,6 +918,11 @@ private:
     float filterTrackingOffset = 0.0f, voicePanOffset = 0.0f;
     float baseLfo1Rate = 1.0f, baseLfo2Rate = 0.5f;
     float lfoRateMod1 = 0.0f, lfoRateMod2 = 0.0f;
+    // LFO depth routes (applyLfoDepth), index 0 = LFO 1, 1 = LFO 2.
+    float lfoDepthFade[2] = { 0.0f, 0.0f };  // 0 = depth not applied .. 1 = fully applied
+    float lfoDepthHeld[2] = { 1.0f, 1.0f };  // last routed depth, held through a fade-out
+    float lfoDepthFadeStep = 1.0f;           // per internal sample, set by prepare/setSampleRate
+    bool  lfoDepthPrime = true;              // next render settles the fades (fresh note)
     float effectsMixMod = 0.0f;
     float polyPressure = 0.0f;     // per-note key pressure (MIDI 0xA0), see render loop
     int   prevUCount = 1; // detects the 1 -> >1 unison transition (C4b)
@@ -809,11 +936,20 @@ private:
     // the note at its use.
     ModulationState modState;
 
+    // Exact memos for the per-sample pow / cos / sin (SynthCommon.hpp): the call
+    // runs only when its input moves, and the output is bit-identical.
+    Exp2Memo bendTuneRatio, pitch1Ratio, pitch2Ratio, cutoffRatio;
+    Exp2Memo prismDetuneRatio[kMaxUnison];
+    PanMemo  panMemo, unisonPanMemo[kMaxUnison];
+
     OscSet osc[kMaxUnison];
     FMVoiceEngine fm[kMaxUnison];      // Prism (mode 4) — one op bank per unison sub-voice
     float  fmCarrierTrim = 1.0f;       // 1/sqrt(numCarriers), set by updateFMParams
     float  lastOsc2[kMaxUnison] = {};
     PinkNoiseGenerator pinkNoise;
+    // Fixed white-noise density across internal rates; cached on prepare/rate
+    // changes. 2.85 matches the reference's 500 Hz–4 kHz noise/saw balance.
+    float whiteNoiseGain = 2.85f;
     SampleAndHold sampleAndHold;
     SynthFilter filterL, filterR;
     ADSREnvelope ampEnv, filtEnv;
@@ -955,9 +1091,37 @@ public:
             if (voices[(size_t)i].isReleasing()) level *= 0.1f;
             if (level < quietestLevel) { quietestLevel = level; quietest = i; }
         }
-        voices[(size_t)quietest].setSteal();
+        // No release before the new note: SynthVoice::noteOn either ties to the
+        // stolen note (legato, still held) or restarts every envelope from its
+        // current level, which is the click-free hand-off on its own. The release
+        // this used to issue first was what turned every legato steal into a tie
+        // to a dying note.
         voices[(size_t)quietest].noteOn(note, velocity, params);
         return &voices[(size_t)quietest];
+    }
+
+    // The voice, below the polyphony limit, that holds `note` with its gate still
+    // held, or -1. A retiring voice does not count: it is on its way out.
+    int findHeld(int note) const noexcept
+    {
+        const int poly = effectivePoly();
+        for (int i = 0; i < poly; ++i)
+            if (voices[(size_t)i].getCurrentNote() == note && voices[(size_t)i].isGateHeld())
+                return i;
+        return -1;
+    }
+
+    // A tied arp step: `to` takes over the voice that holds `from` with its gate
+    // still held, so SynthVoice::noteOn ties to it. noteOn() above would start `to`
+    // on a free voice, with an attack of its own, whenever the circuit has one,
+    // which in a poly circuit is every step. False when no voice holds `from` that
+    // way (it was stolen, released or retired); the caller then starts `to` as usual.
+    bool retarget(int from, int to, float velocity, const VoiceParameters& params) noexcept
+    {
+        const int i = findHeld(from);
+        if (i < 0) return false;
+        voices[(size_t)i].noteOn(to, velocity, params);
+        return true;
     }
 
     void noteOff(int note) noexcept

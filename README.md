@@ -92,7 +92,7 @@ Algorithmic reverb with 11 selectable engines and 20 factory presets:
 - 11 engines: Plate, Vintage Plate, Smooth Plate, Chamber, Spring, Gated, Shimmer, Reverse, Hall, Tiled Room, Dense Hall
 - Tone / Character / Duck macro row for one-knob global shaping over any engine
 - Overhauled Shimmer engine: post-loop HF air voice for sparkle plus a down-octave voice for warmth
-- Per-preset tuned engine wrappers with corrective EQ, anchored to Lexicon, EMT, and AMS references
+- Per-preset tuned engine wrappers with corrective EQ, anchored to classic digital reverb, plate, and nonlinear hardware references
 - Honest Decay knob (position tracks actual tail length), size, pre-delay, damping, modulation, and mix controls
 - Early reflections with configurable patterns
 
@@ -119,6 +119,18 @@ Three-head tape delay with spring reverb:
 
 See the [Tape Echo 2 manual](manuals/tape-echo-2.md).
 
+### Ring Out - IN DEVELOPMENT
+Feedback eliminator for ringing out stage monitors and PA before soundcheck (DAF):
+- SETUP arms a detection engine for one minute; ADD (hold) hunts for a single filter; RESET clears
+- Up to 20 notch filters, each with CUT (0 to -20 dB), FREQ (24 Hz to 20 kHz) and Q (0.5 to 20), editable by hand
+- Detection by the standard acoustic-feedback criteria: a persistent, growing pure tone with no harmonics
+- Filters the engine places are deepened in 3 dB steps, then widened, while the tone keeps ringing
+- GLOBAL Q and AMP act on every filter at once; LINK ties AMP to GAIN OUT in opposite directions
+- Live input analyser, filter curve, input and output peak meters
+- Sensitivity Low/High, mono and stereo, zero latency
+
+See `plugins/ring-out/README.md` for the engine design and the state model.
+
 ### GrooveMind - IN DEVELOPMENT
 > ⚠️ Early development - not functional yet.
 ML-powered intelligent drum pattern generator:
@@ -131,12 +143,12 @@ Training data: Groove MIDI Dataset (Google Magenta), CC-BY 4.0. See [DATASETS.md
 
 ### DuskAmp - IN DEVELOPMENT
 Guitar amp plugin with WDF-modeled preamps, tone stack, power amp, convolution cab, and post-FX:
-- Three preamp topologies: Clean (Fender Twin), British Crunch (Marshall Plexi), British Chime (Vox AC30)
+- Three preamp topologies: American Clean, British Crunch, and British Chime (class-A)
 - Yeh/Smith bilinear tone stack
 - Power amp with negative-feedback presence/resonance and sag
 - Convolution cab with hi/lo cut
 - Optional NAM (Neural Amp Modeler) integration
-- Built-in delay + plate reverb + noise gate + Tube Screamer-style stompbox
+- Built-in delay + plate reverb + noise gate + mid-hump overdrive stompbox
 - 2x/4x oversampling on nonlinear stages
 
 ### Sunset Circuits - RELEASED
@@ -265,7 +277,11 @@ To use these plugins in Pro Tools, route the VST3 build through a wrapper such a
 
 ## Supporting Development
 
-These plugins are free and open source. If you'd like to support continued development, please consider becoming a [Patreon supporter](https://patreon.com/duskaudio). Supporters get their name in the About panel of every plugin (click the title bar to view credits).
+These plugins are free and open source.
+
+- **Hear about new releases:** [follow Dusk Audio free on Patreon](https://www.patreon.com/cw/DuskAudio).
+- **Support development:** [become a member](https://www.patreon.com/cw/DuskAudio/membership). Members get new plugins and plugin updates two weeks before everyone else, official Dusk Studio builds, and their name in the About panel of every plugin (click the title bar to view credits).
+- **One-time tip:** prefer not to subscribe? [Leave a tip on Ko-fi](https://ko-fi.com/duskaudio).
 
 ## Shared Libraries
 

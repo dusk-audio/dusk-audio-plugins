@@ -44,9 +44,90 @@ target_compile_definitions(multi-q-2 PUBLIC
     MQ2_VERSION_MINOR=${PROJECT_VERSION_MINOR}
     MQ2_VERSION_PATCH=${PROJECT_VERSION_PATCH})
 
-# Auto-deploy the built CLAP/VST3/LV2 into the user plugin dirs after each build
-# (disable with -DDUSK_DAF_INSTALL_LOCAL=OFF).
+# Copies the built CLAP/VST3/LV2 into the user plugin dirs after each build
+# when configured with -DDUSK_DAF_INSTALL_LOCAL=ON.
 dusk_daf_install_local(multi-q-2 LV2_PROGRAMS)
+
+if(NOT CMAKE_CROSSCOMPILING)
+    enable_testing()
+    add_executable(MultiQCoreFiltersTest ../tests/test_multiq_core_filters.cpp)
+    add_test(NAME MultiQCoreFilters COMMAND MultiQCoreFiltersTest)
+
+    add_executable(MultiQSmoothingTest ../tests/test_multiq_smoothing.cpp)
+    add_test(NAME MultiQSmoothing COMMAND MultiQSmoothingTest)
+
+    add_executable(MultiQDigitalOversamplingTest
+        ../tests/test_multiq_digital_oversampling.cpp
+        ../core/MultiQDSP.cpp
+        ../core/MultiQMatch.cpp
+        ../../shared-daf/dsp/FourKEQDSP.cpp)
+    add_test(NAME MultiQDigitalOversampling COMMAND MultiQDigitalOversamplingTest)
+
+    add_executable(MultiQAutoGainTest
+        ../tests/test_multiq_auto_gain.cpp
+        ../core/MultiQDSP.cpp
+        ../core/MultiQMatch.cpp
+        ../../shared-daf/dsp/FourKEQDSP.cpp)
+    add_test(NAME MultiQAutoGain COMMAND MultiQAutoGainTest)
+
+    add_executable(MultiQMatchStateTest
+        ../tests/test_multiq_match_state.cpp
+        ../core/MultiQMatch.cpp)
+    add_test(NAME MultiQMatchState COMMAND MultiQMatchStateTest)
+
+    find_package(Threads REQUIRED)
+    target_link_libraries(MultiQMatchStateTest PRIVATE Threads::Threads)
+    add_executable(MultiQMatchSnapshotTest ../tests/test_multiq_match_snapshot.cpp)
+    target_link_libraries(MultiQMatchSnapshotTest PRIVATE Threads::Threads)
+    add_test(NAME MultiQMatchSnapshot COMMAND MultiQMatchSnapshotTest)
+
+    add_executable(MultiQMatchIRTest
+        ../tests/test_multiq_match_ir.cpp
+        ../core/MultiQMatch.cpp)
+    target_link_libraries(MultiQMatchIRTest PRIVATE Threads::Threads)
+    add_test(NAME MultiQMatchIR COMMAND MultiQMatchIRTest)
+
+    add_executable(MultiQHostStateTest
+        tests/MultiQHostStateTest.cpp
+        ../core/MultiQDSP.cpp
+        ../core/MultiQMatch.cpp
+        ../../shared-daf/dsp/FourKEQDSP.cpp
+        "${DAF_PATH}/daf/src/DafPlugin.cpp")
+    target_link_libraries(MultiQHostStateTest PRIVATE multi-q-2 Threads::Threads)
+    target_compile_definitions(MultiQHostStateTest PRIVATE DAF_PLUGIN_TARGET_CLAP)
+    add_test(NAME MultiQHostState COMMAND MultiQHostStateTest)
+    set_tests_properties(MultiQHostState PROPERTIES TIMEOUT 60)
+
+    # The editor's own knobs and their inline value fields (#337): the
+    # production MultiQUI.cpp against Dear ImGui's real input handling, through
+    # the window-free host in shared-daf/ui/tests/daf-ui-test-host. That
+    # directory comes first so the editor's DafUI.hpp resolves to the host.
+    # DAF's Resources.cpp is its DejaVu Sans, which the host puts first in the
+    # atlas as DAF does. Needs no window or display; in CI it runs in
+    # daf-build.yml's Linux x64 and arm64 jobs (the macOS and Windows jobs
+    # build only the plugin targets).
+    add_executable(MultiQValueFieldTest
+        tests/MultiQValueFieldTest.cpp
+        ../../shared-daf/dsp/FourKEQDSP.cpp
+        "${DAF_PATH}/dgl/src/Resources.cpp"
+        "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui.cpp"
+        "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_draw.cpp"
+        "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_tables.cpp"
+        "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_widgets.cpp")
+    target_include_directories(MultiQValueFieldTest PRIVATE
+        "${DUSK_SHARED_DAF_DIR}/ui/tests/daf-ui-test-host"
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../core"
+        ${DUSK_DAF_INCLUDE_DIRS}
+        "${DAF_PATH}")   # last, for dgl/src/Resources.hpp by its full path
+    target_compile_features(MultiQValueFieldTest PRIVATE cxx_std_17)
+    target_compile_definitions(MultiQValueFieldTest PRIVATE
+        MQ2_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
+        MQ2_VERSION_MINOR=${PROJECT_VERSION_MINOR}
+        MQ2_VERSION_PATCH=${PROJECT_VERSION_PATCH}
+        MULTIQ_UI_TEST_HOME="${CMAKE_CURRENT_BINARY_DIR}/value-field-test-home")
+    add_test(NAME MultiQValueField COMMAND MultiQValueFieldTest)
+endif()
 
 # Fleet gates. Multi-Q 2 registered no ctest at all; see #148.
 #
@@ -56,3 +137,4 @@ dusk_daf_install_local(multi-q-2 LV2_PROGRAMS)
 # vacuously.
 dusk_daf_add_ui_drag_test(multi-q-2 323 618)   # Digital-mode GAIN knob
 dusk_daf_add_resize_test(multi-q-2)
+dusk_daf_add_clap_preset_test(multi-q-2)

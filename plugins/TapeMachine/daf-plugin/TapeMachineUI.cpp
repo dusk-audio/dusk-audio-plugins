@@ -168,10 +168,10 @@ protected:
         drawControls(dl);
         if (modalOpen) ImGui::EndDisabled();
         if (showAdvanced) drawAdvanced(dl);
-        if (showSupporters)
-            duskdaf::drawSupportersOverlay(panel, dl, kDesignW, kDesignH, showSupporters,
-                                           "TapeMachine 2", TM2_VERSION_STRING,
-                                           &supportersOverlay);
+        // Every frame, open or not: after a click closes it, it still blocks the face for a double-click time.
+        duskdaf::drawSupportersOverlay(panel, dl, kDesignW, kDesignH, showSupporters,
+                                       "TapeMachine 2", TM2_VERSION_STRING,
+                                       &supportersOverlay);
 
         // Own resize grip, submitted LAST so it wins ImGui's hover race (over the
         // Advanced card and the supporters overlay alike) and paints over

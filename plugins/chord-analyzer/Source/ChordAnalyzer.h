@@ -1,115 +1,17 @@
 #pragma once
 
 #include <juce_core/juce_core.h>
+#include "../core/ChordAnalyzerText.hpp"
 #include <vector>
-#include <set>
-#include <cstdint>
 
-//==============================================================================
-// Chord quality enumeration
-enum class ChordQuality
-{
-    Major,
-    Minor,
-    Diminished,
-    Augmented,
-    Dominant7,
-    Major7,
-    Minor7,
-    MinorMajor7,
-    Diminished7,
-    HalfDiminished7,
-    Augmented7,
-    AugmentedMajor7,
-    Sus2,
-    Sus4,
-    Dominant7Sus4,
-    Add9,
-    Add11,
-    Major6,
-    Minor6,
-    Major9,
-    Minor9,
-    Dominant9,
-    Major11,
-    Minor11,
-    Dominant11,
-    Major13,
-    Minor13,
-    Dominant13,
-    Power5,
-    Dominant7Flat5,
-    Dominant7Sharp5,
-    Dominant7Flat9,
-    Dominant7Sharp9,
-    Unknown
-};
+// Keep the shipping source API and enum ordinals while using one numeric model.
+using ChordQuality = duskaudio::chord::ChordQuality;
+using HarmonicFunction = duskaudio::chord::HarmonicFunction;
+using SuggestionCategory = duskaudio::chord::SuggestionCategory;
+using ChordFacts = duskaudio::chord::ChordFacts;
+using SuggestionFacts = duskaudio::chord::SuggestionFacts;
+inline constexpr int kInversionSlashBass = duskaudio::chord::kInversionSlashBass;
 
-//==============================================================================
-// Harmonic function enumeration
-enum class HarmonicFunction
-{
-    Tonic,           // I, vi, iii
-    Subdominant,     // IV, ii
-    Dominant,        // V, vii
-    SecondaryDom,    // V/x chords
-    Borrowed,        // Modal interchange (bVII, bVI, etc.)
-    Chromatic,       // Outside the key
-    Unknown
-};
-
-//==============================================================================
-// Suggestion category
-enum class SuggestionCategory
-{
-    Basic,          // Common progressions (I-IV-V-I)
-    Intermediate,   // Secondary dominants, borrowed chords
-    Advanced        // Modal interchange, tritone subs, chromatic mediants
-};
-
-//==============================================================================
-// Inversion numbering. An inversion is the ordinal of the bass tone in the
-// chord's stacked-thirds spelling, judged against the pattern that matched:
-//
-//   0  root      1  third      2  fifth      3  seventh
-//   4  ninth     5  eleventh   6  thirteenth
-//
-// The interval alone cannot decide it - 3 semitones above the root is the minor
-// third of an m7 and the #9 of a 7#9 - so the numbering always goes through the
-// matched pattern.
-//
-// A bass the matched pattern does not spell (an added tension, or a foreign
-// bass such as the F# under a C triad) is no inversion at all. It gets its own
-// value, sorted after the six real ordinals so the host parameter that renders
-// these can append one choice for it.
-inline constexpr int kInversionSlashBass = 7;
-
-//==============================================================================
-// Numeric analysis result: no strings, no heap, safe to compute on an audio
-// thread. The headless LV2 wrapper publishes only these fields.
-struct ChordFacts
-{
-    int rootNote = -1;              // Root pitch class (0-11, C=0)
-    int bassNote = -1;              // Lowest note pitch class
-    ChordQuality quality = ChordQuality::Unknown;
-    int inversion = 0;              // 0..6 by degree, kInversionSlashBass otherwise
-    bool slashBass = false;         // Bass is not the root
-    bool isValid = false;
-    float confidence = 0.0f;
-    int patternIndex = -1;          // matched entry, -1 when nothing fitted
-    std::uint32_t intervals = 0;    // interval bit mask from the root
-
-    bool operator==(const ChordFacts& o) const
-    {
-        return rootNote == o.rootNote && bassNote == o.bassNote
-            && quality == o.quality && inversion == o.inversion
-            && isValid == o.isValid;
-    }
-    bool operator!=(const ChordFacts& o) const { return !(*this == o); }
-};
-
-//==============================================================================
-// Chord information structure
 struct ChordInfo
 {
     juce::String name;              // e.g., "Cmaj7", "Dm", "G7"
@@ -140,8 +42,6 @@ struct ChordInfo
     }
 };
 
-//==============================================================================
-// Chord suggestion structure
 struct ChordSuggestion
 {
     juce::String romanNumeral;
@@ -151,71 +51,17 @@ struct ChordSuggestion
     float commonality = 0.5f;       // How common this progression is (0.0-1.0)
 };
 
-//==============================================================================
-// Numeric form of a suggestion: no strings, no heap, safe to compute on an
-// audio thread. The headless LV2 wrapper publishes these through its
-// suggestion output control ports, using the same encoding as its detected
-// root and detected quality ports.
-struct SuggestionFacts
-{
-    int rootNote = -1;                                  // 0-11, C=0; -1 when unset
-    ChordQuality quality = ChordQuality::Unknown;
-    SuggestionCategory category = SuggestionCategory::Basic;
-    float commonality = 0.5f;                           // 0.0-1.0, how common the move is
-};
-
-//==============================================================================
-// Main chord analyzer class
-class ChordAnalyzer
+// JUCE display adapter: numeric analysis, naming and encoded labels use the
+// same framework-free model available to DAF. Keep the shipping source
+// API and UTF-8/Unicode input conversions at this boundary.
+class ChordAnalyzer : public duskaudio::chord::ChordAnalyzerText
 {
 public:
-    ChordAnalyzer();
-
-    //==========================================================================
-    // Main analysis function
+    ChordAnalyzer() = default;
     ChordInfo analyze(const std::vector<int>& midiNotes);
-
-    // Numeric-only analysis. Allocates nothing and builds no strings, so it is
-    // safe to call from an audio callback - the headless LV2 wrapper does.
-    // analyze() is this plus the display strings.
-    ChordFacts analyzeFacts(const int* midiNotes, int numNotes) const noexcept;
-
-    //==========================================================================
-    // Key context
-    void setKey(int rootNote, bool isMinor);
-    int getKeyRoot() const { return keyRoot; }
-    bool isMinorKey() const { return minorKey; }
     juce::String getKeyName() const;
-
-    //==========================================================================
-    // Get Roman numeral for chord in current key
-    juce::String getRomanNumeral(const ChordInfo& chord) const;
-
-    // Get harmonic function
-    HarmonicFunction getHarmonicFunction(int chordRoot, ChordQuality quality) const;
-
-    //==========================================================================
-    // Get chord suggestions based on current chord
     std::vector<ChordSuggestion> getSuggestions(const ChordInfo& currentChord,
-                                                 SuggestionCategory maxLevel = SuggestionCategory::Advanced) const;
-
-    // The longest list the generator can produce, so a caller can size a
-    // fixed buffer and never truncate. Asserted by the unit tests over every
-    // key, degree and quality.
-    static constexpr int maxSuggestions = 16;
-
-    // The same suggestions without the strings. Writes at most maxOut entries
-    // into out and returns how many it wrote, in the same order and with the
-    // same contents getSuggestions produces - both go through one generator.
-    // Allocates nothing, builds no juce::String and takes no lock, so the
-    // headless LV2 wrapper calls it from run().
-    int getSuggestionFacts(const ChordFacts& currentChord,
-                           SuggestionCategory maxLevel,
-                           SuggestionFacts* out,
-                           int maxOut) const noexcept;
-
-    //==========================================================================
-    // Static utilities
+        SuggestionCategory maxLevel = SuggestionCategory::Advanced) const;
     static juce::String noteToName(int midiNote, bool useFlats = false);
     static juce::String pitchClassToName(int pitchClass, bool useFlats = false);
     static int nameToNote(const juce::String& name);
@@ -223,7 +69,6 @@ public:
     static juce::String qualityToSuffix(ChordQuality quality);
     static juce::String functionToString(HarmonicFunction func);
 
-    //==========================================================================
     // Host-parameter encoding of the label the editor displays.
     //
     // The "Detected Chord" parameter has to build its text out of the
@@ -234,7 +79,7 @@ public:
     // integer; decodeLabel rebuilds the string from that integer and nothing
     // else, through the same naming helpers analyze() uses.
     //
-    // Value layout (the bases live in ChordAnalyzer.cpp):
+    // Value layout (the bases live in core/ChordAnalyzerText.cpp):
     //   0                no chord, "-"
     //   1 .. 128         single note, MIDI 0..127 (that label carries an octave)
     //   129 .. 416       two sounding pitch classes, "C+E (M3)", "C+C (octave)"
@@ -243,127 +88,16 @@ public:
     //
     // 295340 needs 19 bits, comfortably inside the 24-bit mantissa a float
     // NormalisableRange has to round-trip.
-    static constexpr int maxLabelCode = 295340;
+    static constexpr int maxLabelCode = duskaudio::chord::ChordAnalyzerText::maxLabelCode;
 
     // showInversions mirrors the editor's Show Inversions toggle: the slash
     // bass belongs to the label only while that toggle is on.
     static int encodeLabel(const ChordInfo& chord, bool showInversions) noexcept;
     static juce::String decodeLabel(int code);
-
-    //==========================================================================
-    // Pitch classes the pattern at this index spells, one bit each, or 0 for an
-    // index outside the table. Public so a test can state the inversion
-    // contract in the pattern's own terms rather than restating the table.
-    static std::uint16_t patternPitchClasses(int patternIndex) noexcept;
+    // Canonical inverse of decodeLabel; -1 means an unrecognized label.
+    // String parsing is for host/UI calls, never the audio callback.
+    static int labelToCode(const juce::String& text);
 
 private:
-    int keyRoot = 0;        // C
-    bool minorKey = false;
-
-    //==========================================================================
-    // Interval pattern matching
-    struct ChordPattern
-    {
-        std::set<int> intervals;    // Semitone intervals from root
-        ChordQuality quality;
-        juce::String suffix;
-        int priority;               // Higher = preferred match
-
-        // Set on the shapes that deliberately leave the fifth out. The fifth
-        // is the most disposable chord tone, so these voicings are everywhere
-        // in practice, but the name has to say the fifth is absent or it would
-        // claim a note that is not sounding.
-        bool omitsFifth = false;
-    };
-
-    static const std::vector<ChordPattern> chordPatterns;
-
-    //==========================================================================
-    // Each pattern reduced to bit masks once, at static-init time, so analysis
-    // touches no heap container. Interval masks carry bits 0-21 (the compound
-    // 14, 17 and 21 included); pitch masks are folded to 12 bits.
-    struct PatternMask
-    {
-        std::uint32_t intervals;
-        std::uint16_t pitches;
-        int           pitchCount;
-
-        // Inversion ordinal of each pitch class in this pattern's spelling (see
-        // kInversionSlashBass above for the numbering), -1 for a pitch class the
-        // pattern does not spell. Resolved once, at static-init time, because
-        // the same interval means different degrees in different patterns.
-        std::int8_t   degrees[12];
-    };
-
-    static const std::vector<PatternMask> kPatternMasks;
-    static std::vector<PatternMask> buildPatternMasks();
-
-    //==========================================================================
-    // Analysis helpers. All operate on masks and allocate nothing.
-    static int findRoot(std::uint16_t pitchMask, int bassPitch) noexcept;
-    static std::uint32_t intervalsFrom(std::uint16_t pitchMask, int root) noexcept;
-    static bool patternMatches(int patternIndex, std::uint32_t intervals) noexcept;
-    static int countPitchClasses(std::uint16_t mask) noexcept;
-    static int matchPattern(std::uint32_t intervals) noexcept;   // -1 if none
-    static int calculateInversion(int bassPitch, int root, int patternIndex) noexcept;
-    static float calculateConfidence(int patternIndex, std::uint32_t intervals) noexcept;
-
-    //==========================================================================
-    // Naming of tones the matched pattern does not account for
-    static const char* tensionLabel(int semitonesFromRoot);   // nullptr if none
-    static const char* intervalName(int semitones);           // "M3", "tritone", ...
-    static juce::String describeAddedTones(int patternIndex, std::uint32_t intervals);
-
-    //==========================================================================
-    // Roman numeral helpers
-    int getScaleDegree(int chordRoot) const noexcept;
-    bool isChromatic(int chordRoot) const noexcept;
-    juce::String getAccidental(int chordRoot) const;
-    juce::String degreeToRoman(int degree, bool uppercase) const;
-    juce::String buildRomanNumeral(int chordRoot, ChordQuality quality) const;
-
-    //==========================================================================
-    // Suggestion generation.
-    //
-    // The generator emits numeric seeds; getSuggestions spells them and
-    // getSuggestionFacts copies the numbers straight out. One list, so the
-    // strings the editor shows and the numbers the LV2 ports carry cannot
-    // drift apart.
-    //
-    // How a seed's root is spelled in the chord name. The three tiers were
-    // written with different conventions - the diatonic degrees follow the key
-    // signature, the flat-numeral borrowings are always written with flats -
-    // and this records which one each suggestion used.
-    enum class RootSpelling { KeyAware, Sharp, Flat };
-
-    struct SuggestionSeed
-    {
-        int rootNote;                   // pitch class 0-11
-        ChordQuality quality;
-        SuggestionCategory category;
-        float commonality;
-        const char* romanNumeral;       // string literal, never owned
-        const char* reason;             // string literal, never owned
-        RootSpelling spelling;
-        const char* nameSuffix;         // overrides qualityToSuffix when set
-    };
-
-    // Each appends to out[] starting at count and returns the new count,
-    // never writing past maxOut.
-    static int emitSeed(SuggestionSeed* out, int count, int maxOut,
-                        const SuggestionSeed& seed) noexcept;
-    int collectSuggestions(SuggestionSeed* out, int maxOut, int currentDegree,
-                           ChordQuality quality, SuggestionCategory maxLevel) const noexcept;
-    int addBasicSuggestions(SuggestionSeed* out, int count, int maxOut,
-                            int currentDegree, ChordQuality quality) const noexcept;
-    int addIntermediateSuggestions(SuggestionSeed* out, int count, int maxOut,
-                                   int currentDegree, ChordQuality quality) const noexcept;
-    int addAdvancedSuggestions(SuggestionSeed* out, int count, int maxOut,
-                               int currentDegree, ChordQuality quality) const noexcept;
-
-    int rootPitchClassForDegree(int degree) const noexcept;
-    juce::String spellSeed(const SuggestionSeed& seed) const;
-    juce::String getSpellingForKey(int pitchClass) const;
-
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ChordAnalyzer)
 };

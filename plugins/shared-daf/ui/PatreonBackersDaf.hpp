@@ -24,10 +24,9 @@ struct BackerTier
 inline const std::vector<BackerTier>& patreonTiers()
 {
     static const std::vector<BackerTier> tiers = {
-        { "CHAMPIONS", {} },
-        { "PATRONS", { "danboy", "David", "nuertine DIGEL" } },
-        { "SUPPORTERS", { "Beau Landry", "Eblen Macari", "Jano", "Manav", "Someone64" } },
-        { "HUGS", { "Adrienne", "Andre C", "Benjamin Walker", "Chaumontet Olivier", "Codey", "Dusk Audio", "fennek", "fisHkiD76", "Jon Skarin", "LEONID FEDOROV", "Samantha Druker" } },
+        { "PATRONS", {} },
+        { "SUPPORTERS", { "danboy", "David", "nuertine DIGEL" } },
+        { "FOUNDING SUPPORTERS", { "Adrienne", "Andre C", "Beau Landry", "Benjamin Walker", "Chaumontet Olivier", "Codey", "Eblen Macari", "fennek", "fisHkiD76", "Jano", "Jon Skarin", "LEONID FEDOROV", "Manav", "Samantha Druker", "Someone64" } },
         { "PAST SUPPORTERS", { "mister-universe", "S C", "Stefan Windus" } },
     };
     return tiers;

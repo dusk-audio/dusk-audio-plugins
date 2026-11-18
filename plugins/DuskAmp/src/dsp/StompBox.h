@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// StompBox.h — Tube Screamer-style boost/overdrive pedal
+// StompBox.h — mid-hump boost/overdrive pedal
 //
 // Signal chain: Input gain → bandpass "mid hump" (720Hz) → asymmetric
 // diode clipper → tone control (variable hi-cut) → output level.
@@ -39,7 +39,7 @@ private:
     float outputGain_ = 0.5f;
 
     // Mid-hump bandpass: 2nd-order BPF at 720Hz (Q=0.7)
-    // This is THE Tube Screamer character — it cuts bass and extreme highs,
+    // This is the classic mid-hump overdrive character — it cuts bass and extreme highs,
     // pushing the midrange into the amp's sweet spot.
     struct Biquad
     {

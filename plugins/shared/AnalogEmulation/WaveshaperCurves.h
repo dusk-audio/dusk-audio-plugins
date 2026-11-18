@@ -327,7 +327,7 @@ private:
 
     // Triode tube saturation — derived from Koren model for 6V6GT
     // Parameters: mu=8.7, Kp=48, Kvb=12, Ex=1.35, Kg1=1460
-    // Fender Deluxe Reverb AB763: Vb=417V, Rp=8kΩ (OT reflected impedance)
+    // American clean amp (6V6 push-pull): Vb=417V, Rp=8kΩ (OT reflected impedance)
     void initializeTriodeCurve()
     {
         float mu = 8.7f, Kp = 48.0f, Kvb = 12.0f, Ex = 1.35f, Kg1 = 1460.0f;
@@ -356,7 +356,7 @@ private:
 
     // Pentode tube saturation — derived from Koren model for EL34
     // Parameters: mu=11.5, Kp=60, Kvb=24.5, Ex=1.35, Kg1=650
-    // Marshall 1959 Plexi: Vb=490V, Rp=4kΩ (OT primary impedance)
+    // British crunch amp (EL34 push-pull): Vb=490V, Rp=4kΩ (OT primary impedance)
     void initializePentodeCurve()
     {
         float mu = 11.5f, Kp = 60.0f, Kvb = 24.5f, Ex = 1.35f, Kg1 = 650.0f;
@@ -385,7 +385,7 @@ private:
 
     // EL84 power tube saturation — derived from Koren tube model
     // Parameters: mu=19.1, Kp=84, Kvb=25.3, Ex=1.35, Kg1=820
-    // Vox AC30: Vb=320V, Rp=4kΩ (8kΩ effective, 2 pairs parallel → 4kΩ per pair)
+    // British class-A chime amp: Vb=320V, Rp=4kΩ (8kΩ effective, 2 pairs parallel → 4kΩ per pair)
     void initializeEL84Curve()
     {
         float mu = 19.1f, Kp = 84.0f, Kvb = 25.3f, Ex = 1.35f, Kg1 = 820.0f;

@@ -1,6 +1,6 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
 //
-// DuskVerbParams.hpp — the DAF-facing view of the parameter set, plus the full
+// DuskVerbParams.hpp - the DAF-facing view of the parameter set, plus the full
 // state codec and the factory-program apply path.
 //
 // The parameter TABLE itself (ids, names, ranges, defaults, tapers) lives in
@@ -12,6 +12,7 @@
 #include "../core/DuskVerbParamTable.hpp"
 #include "../core/DuskVerbDSP.hpp"
 #include "../src/FactoryPresets.h"
+#include "../core/DuskVerbPresets.hpp"
 
 #include <array>
 #include <charconv>
@@ -45,13 +46,13 @@ namespace duskverb
 // worth failing a release gate for.
 inline constexpr int kTotalParamCount = kNumParams;
 
-// ── State ───────────────────────────────────────────────────────────────────
+// State
 //
 // Format: "v=2" followed by ';'-separated "<key>=<value>" tokens.
 //   * parameter keys are the APVTS parameter ids; values are the IEEE-754 bit
 //     pattern in hex. Hex bits rather than a decimal float because reading a
 //     decimal back needs the floating-point std::from_chars, which libc++ marks
-//     "introduced in macOS 13.3" — above our deployment target. Exact and
+//     "introduced in macOS 13.3" - above our deployment target. Exact and
 //     locale-independent either way. (Same reasoning as Multi-Comp 2.)
 //   * "@sixap_*" keys carry the per-preset SixAPTank brightness/density state,
 //     which the JUCE build stored as custom properties on the state ValueTree
@@ -217,6 +218,17 @@ inline std::string encodeState(const StateValues& v)
     return state;
 }
 
+// A user preset name is printable text: no C0 control byte and no DEL. The
+// state codec refuses anything else, so every decoder that fills userName
+// checks the same rule; otherwise the editor would mirror a recalled name (and
+// sound) the plugin then refused.
+inline bool validUserName(std::string_view name) noexcept
+{
+    for (unsigned char c : name)
+        if (c < 0x20 || c == 0x7f) return false;
+    return true;
+}
+
 // Complete-set transactional decoder: `out` is untouched unless every
 // parameter key appears exactly once with a finite, in-range value. A
 // half-applied state is worse than a rejected one.
@@ -263,8 +275,7 @@ inline bool decodeState(std::string_view state, StateValues& out) noexcept
         {
             if (userSeen || !decodeHexText(value, decoded.userName)) return false;
             userSeen = true;
-            for (unsigned char c : decoded.userName)
-                if (c < 0x20 || c == 0x7f) return false;
+            if (!validUserName(decoded.userName)) return false;
         }
         else if (key == "@edited")
         {
@@ -329,22 +340,38 @@ inline StateValues makeDefaultState()
     return state;
 }
 
-// ── Factory programs ────────────────────────────────────────────────────────
-inline int factoryPresetCount() { return static_cast<int>(getFactoryPresets().size()); }
+// MIX LOCK
+// While it is on, recalling a sound (a factory or user preset, INIT, an import,
+// a host program change) leaves Mix and Bus Mode as they are, so a send stays
+// 100 % wet and an insert keeps its balance while presets are auditioned. A/B
+// swaps and session restores still bring back a complete sound. The lock is the
+// instance's "mix_lock" state: not a parameter, and not part of any sound.
+inline constexpr bool isMixLockParam(int i) noexcept { return i == Mix || i == BusMode; }
+
+// `next` with the locked parameters taken from `current`.
+inline void holdMixLock(StateValues& next, const StateValues& current) noexcept
+{
+    next.params[Mix] = current.params[Mix];
+    next.params[BusMode] = current.params[BusMode];
+}
+
+// Factory programs
+inline int factoryPresetCount() { return static_cast<int>(duskverb::dv2FactoryPresets().size()); }
 
 inline const FactoryPreset* factoryPresetByName(std::string_view name)
 {
-    for (const auto& preset : getFactoryPresets())
+    for (const auto& preset : duskverb::dv2FactoryPresets())
         if (name == preset.name) return &preset;
     return nullptr;
 }
 
-// Emits (parameter index, HOST value) for every parameter the preset sets, in
-// the JUCE build's order. `apply` is called as apply(int index, float hostValue).
+// Emits (parameter index, HOST value) for every parameter the preset sets, as
+// DuskVerb 2 recalls it (collectDv2Parameters), in the JUCE build's order.
+// `apply` is called as apply(int index, float hostValue).
 template <typename ApplyFn>
 inline void applyFactoryPresetToHostParameters(const FactoryPreset& preset, ApplyFn&& apply)
 {
-    preset.collectParameters([&apply](const char* id, float plainValue)
+    collectDv2Parameters(preset, [&apply](const char* id, float plainValue)
     {
         const int index = paramIndexForId(id);
         if (index < 0) return;

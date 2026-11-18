@@ -61,7 +61,14 @@ public:
     void setSampleRate(double sampleRate) noexcept { sr = (float)sampleRate; dt = freq / sr; updateTriLeak(); }
     void setWaveform(Waveform w) noexcept    { waveform = w; }
     void setPulseWidth(float pw) noexcept    { pulseWidth = clampf(pw, 0.05f, 0.95f); }
-    void setDetune(float cents) noexcept     { detuneRatio = std::pow(2.0f, cents / 1200.0f); }
+    // Called per internal sample with a detune that rarely moves: the pow() runs
+    // only when it does (bit-compared, see sameBits).
+    void setDetune(float cents) noexcept
+    {
+        if (sameBits(cents, detuneCents)) return;
+        detuneCents = cents;
+        detuneRatio = std::pow(2.0f, cents / 1200.0f);
+    }
 
     void hardSync() noexcept   { phase = 0.0f; triState = 0.0f; }
     float getPhase() const noexcept { return phase; }
@@ -70,10 +77,12 @@ public:
 
     void seedNoise(uint32_t s) noexcept { rng.seed(s); }
 
-    // FM: add to phase (through-zero-ish, wraps).
+    // FM depth is calibrated in cycles per sample at 96 kHz (the existing
+    // 48 kHz / 2x default). Convert to the current internal rate so the same
+    // patch retains its pitch/deviation when sample rate or oversampling changes.
     void applyFM(float fmAmount) noexcept
     {
-        phase += fmAmount;
+        phase += fmAmount * (96000.0f / sr);
         // Constant-time wrap. The while loops this replaces ran once per whole
         // cycle of overshoot, so their cost was proportional to |fmAmount| -- a
         // large modulation value would have spun the audio thread. Nothing
@@ -154,6 +163,7 @@ private:
     float dt = 0.01f;
     float phase = 0.0f;
     float pulseWidth = 0.5f;
+    float detuneCents = 0.0f;   // input of detuneRatio: pow(2, 0 / 1200) is exactly 1
     float detuneRatio = 1.0f;
     float triState = 0.0f;
     float triLeak = 0.999f;
@@ -218,7 +228,10 @@ class PinkNoiseGenerator
 public:
     void seed(uint32_t s) noexcept { rng.seed(s); }
 
-    float processSample() noexcept
+    // Cosmos takes the white source before coloration. Advance the same PRNG
+    // and pink-filter state in either case so neighbouring modes keep their
+    // noise stream and mode changes cannot expose stale filter memory.
+    float processSample(bool whiteOutput = false) noexcept
     {
         const float white = rng.nextBipolar();
         b0 = 0.99886f * b0 + white * 0.0555179f;
@@ -229,7 +242,7 @@ public:
         b5 = -0.7616f * b5 - white * 0.0168980f;
         const float pink = b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362f;
         b6 = white * 0.115926f;
-        return pink * 0.11f;
+        return whiteOutput ? white : pink * 0.11f;
     }
 
     void reset() noexcept { b0 = b1 = b2 = b3 = b4 = b5 = b6 = 0.0f; }

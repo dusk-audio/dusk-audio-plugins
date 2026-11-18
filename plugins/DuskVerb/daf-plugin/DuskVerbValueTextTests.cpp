@@ -40,6 +40,9 @@ void testTypedExamples()
     parseIs(EngineType::FDN, Decay, "2", 2.0f, 2.0f);         // current visible s
     parseIs(EngineType::FDN, HiCut, "2", 2000.0f, 2000.0f); // current visible kHz
     parseIs(EngineType::FDN, HiCut, "2 kHz", 2000.0f, 2000.0f);
+    // 999.6 Hz prints "1.0 kHz", so a bare number typed over it is kilohertz too.
+    parseIs(EngineType::FDN, Crossover, "1.2", 999.6f, 1200.0f);
+    parseIs(EngineType::FDN, Crossover, "500", 999.4f, 500.0f);
     parseIs(EngineType::Shimmer, ModDepth, "12st", 0.5f, 0.5f);
     parseIs(EngineType::Shimmer, ModDepth, "12 semitones", 0.5f, 0.5f);
     parseIs(EngineType::NonLinear, ModDepth, "25ms", 0.5f, 24.0f / 49.0f);
@@ -101,7 +104,7 @@ void testRoundTrips()
     formatPlainValue(EngineType::FDN, Decay, 0.689f, text, sizeof(text));
     check(std::strcmp(text, "689 ms") == 0, "existing decay readout remains exact");
     formatPlainValue(EngineType::FDN, HiCut, 17597.19f, text, sizeof(text));
-    check(std::strcmp(text, "17.60 kHz") == 0, "existing frequency readout remains exact");
+    check(std::strcmp(text, "17.6 kHz") == 0, "kilohertz print one decimal");
     formatPlainValue(EngineType::Shimmer, ModDepth, 0.5f, text, sizeof(text));
     check(std::strcmp(text, "+12 st") == 0, "existing shimmer readout remains exact");
 }

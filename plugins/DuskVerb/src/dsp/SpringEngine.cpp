@@ -9,7 +9,7 @@ namespace
     constexpr float kTwoPi = 6.283185307179586f;
 
     // Per-spring base dispersion coefficient *magnitude*. The sign is always
-    // negative (chirps with HF arriving later, the canonical 6G15 character).
+    // negative (chirps with HF arriving later, the canonical 3-spring-unit character).
     // Slight per-spring variation gives the parallel sum its characteristic
     // shimmer instead of a coherent single-spring chirp.
     constexpr float kPerSpringChirpScale[3] = { 0.65f, 0.70f, 0.75f };
@@ -47,7 +47,7 @@ float SpringEngine::Spring::process (float input, float lfoOffset) noexcept
                      + delayBuf[static_cast<size_t> (idx1)] *         frac;
 
     // 2) HF damping IN THE LOOP — 1-pole LP on the recirculating signal so the
-    //    tail progressively darkens with every bounce (a real Fender 6G15 spring
+    //    tail progressively darkens with every bounce (a real 3-spring outboard spring
     //    rolls off more HF on each pass, not just once at the output).
     dampState = (1.0f - dampCoeff) * read + dampCoeff * dampState;
 
@@ -93,7 +93,7 @@ void SpringEngine::prepare (double sampleRate, int /*maxBlockSize*/)
     }
 
     // Independent random-walk LFOs per channel — the read-position wobble
-    // that gives a real Fender tank its constantly-quivering character.
+    // that gives a real 3-spring tank its constantly-quivering character.
     lfoL_.prepare (static_cast<float> (sampleRate), 0xC0FFEEu);
     lfoR_.prepare (static_cast<float> (sampleRate), 0xBADBEEFu);
 
@@ -227,7 +227,7 @@ void SpringEngine::updateFeedback()
 
 void SpringEngine::updateDamping()
 {
-    // trebleMult = 1.0  → fc ≈ 5000 Hz (canonical Fender spring rolloff)
+    // trebleMult = 1.0  → fc ≈ 5000 Hz (canonical tube-amp spring rolloff)
     // trebleMult = 0.1  → fc ≈ 500 Hz  (very dark)
     // trebleMult = 1.5  → fc ≈ 7500 Hz (open / bright)
     const float fc = std::clamp (5000.0f * trebleMult_, 200.0f,

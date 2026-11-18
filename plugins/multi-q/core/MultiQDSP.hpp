@@ -11,8 +11,8 @@
 // Match-mode band-bypass — plus per-band dynamic EQ (MultiQDynamics), the British
 // (FourKEQDSP) and Tube (MultiQTube) characters, output limiter, auto-gain, 2x/4x
 // oversampling, the analyzer taps, and the Match FIR correction (MultiQMatch).
-// Ported line-for-line from the JUCE build so the two null-match (see
-// tests/run_ab_parity.sh).
+// Selected transparent paths null-match the JUCE build; oversampling topology
+// and the upgraded British core differ (see tests/run_ab_parity.sh).
 
 #pragma once
 
@@ -67,7 +67,7 @@ public:
         int   processingMode = 0;    // 0=Stereo,1=L,2=R,3=Mid,4=Side
         int   qCoupleMode   = 0;     // 0..8
         int   eqType        = 0;     // 0=Digital,1=Match,2=British,3=Tube
-        int   oversampling  = 0;     // 0=1x,1=2x,2=4x (British/Tube nonlinearity only)
+        int   oversampling  = 0;     // 0=1x,1=2x,2=4x (nonlinear stages in each character)
         int   soloBand      = -1;    // -1 = none
         bool  deltaSolo     = false;
 
@@ -115,10 +115,9 @@ public:
     void process(const float* const* inputs, float* const* outputs,
                  int numChannels, int numSamples, const Params& p);
 
-    // Reported latency in base-rate samples. Digital/Tube run at base rate (0);
-    // British routes through FourKEQDSP, which reports oversampler latency when
-    // oversampling > 0. Reads the last-processed character (cached in process()),
-    // so call it after process() when the host asks for an updated latency.
+    // Reported latency in base-rate samples, including active nonlinear-stage
+    // oversampling and limiter/Match delay. Reads the last-processed character
+    // (cached in process()), so call after process() for an updated latency.
     int getLatencySamples() const noexcept
     {
         int lat = limiter.getLatencySamples();   // lookahead, all characters (0 if off)
@@ -245,7 +244,9 @@ private:
     // Digital per-band saturation oversampling: one L/R polyphase oversampler per
     // middle band (2-7). Engaged only when hq_enabled>0 AND the band saturates; at
     // 1x each is a transparent passthrough (Digital A/B stays bit-identical).
-    std::array<Oversampler, 6> satOsL, satOsR;
+    // The wider stage-A passband avoids the 47-tap filter's ~1.2 dB loss at
+    // 20 kHz / 44.1 kHz, compounded when several bands saturate in series.
+    std::array<OversamplerWide, 6> satOsL, satOsR;
     int prevSatOsFactor = 1;          // reset OS state when the hq factor changes
     int lastDigitalSatLatency = 0;    // summed active-sat-band OS latency (base samples)
 

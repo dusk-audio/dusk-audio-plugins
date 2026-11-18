@@ -2,7 +2,9 @@
 //
 // DuskVerbFormat.hpp — how DuskVerb 2's editor prints a value and names a knob,
 // kept out of the ImGui file so DuskVerbPluginLayerTests can hold it to the
-// JUCE editor's formatValue() / valueOverride / relabel rules string for string.
+// JUCE editor's formatValue() / valueOverride / relabel rules string for string,
+// apart from frequency precision (see formatPlainValue). The plugin prints host
+// parameter text with the same function, so a DAW shows what the editor shows.
 
 #pragma once
 
@@ -66,8 +68,10 @@ inline ValueStyle valueStyleFor(int p)
     }
 }
 
-// Transcribed from DuskVerbEditor's formatValue(). Decay switches ms/s at
-// 1 s, frequencies switch Hz/kHz at 1 kHz and gain two decimals below 100 Hz.
+// Transcribed from DuskVerbEditor's formatValue(), with one deliberate change
+// (owner, 2026-11-03): frequencies print whole hertz below 1 kHz ("393 Hz") and
+// kilohertz with one decimal from there ("17.6 kHz"), where JUCE printed two
+// decimals below 100 Hz and above 1 kHz. Decay switches ms/s at 1 s.
 // Per-engine value-text overrides, transcribed from DuskVerbEditor's
 // valueOverride lambdas: the Gated engine re-purposes mod_depth / mod_rate /
 // diffusion / mid_mult as ATTACK / RELEASE / HOLD / THRESHOLD and the Shimmer
@@ -75,6 +79,16 @@ inline ValueStyle valueStyleFor(int p)
 // print the unit the engine actually applies (ms, dB, st, %) rather than the
 // raw parameter. The parameter values themselves are untouched.
 inline float displayNumber(EngineType engine, int p, float plain) noexcept;
+
+// The Hz/kHz switch is decided on the ROUNDED value, so 999.6 Hz prints
+// "1.0 kHz", and every path that shows or reads a frequency (the printed text,
+// the display number, a bare number typed over it) agrees on the unit.
+inline bool showsKiloHertz(float hz) noexcept { return std::lround(hz) >= 1000; }
+
+// Sub-audio rates keep two decimals; whole hertz would print 0.15 Hz as
+// "0 Hz". A rate is a range whose top is 100 Hz or less: in practice the LFO
+// rates, which top out at 10 Hz.
+inline bool isRateHertz(const duskverb::ParamDesc& d) noexcept { return d.max <= 100.0f; }
 inline bool formatEngineOverride(EngineType e, int p, float v, char* out, size_t n)
 {
     if (e == EngineType::NonLinear)
@@ -122,8 +136,8 @@ inline bool formatEngineOverride(EngineType e, int p, float v, char* out, size_t
     return false;
 }
 
-// Per-engine knob names, transcribed from DuskVerbEditor::updateEngine...:
-// Spring re-labels DEPTH/RATE/DIFFUSION as SPRING LEN/DRIP/CHIRP, Shimmer as
+// Per-engine knob names: Spring re-labels DEPTH/RATE/DIFFUSION as LENGTH/DRIP/
+// CHIRP (under the SPRING card title, so LENGTH is the spring's), Shimmer as
 // PITCH/FEEDBACK, the Gated engine as ATTACK/RELEASE/HOLD and MID MULT as
 // THRESHOLD. Everything else keeps its universal name.
 inline const char* labelFor(EngineType e, int p, const char* universal)
@@ -132,12 +146,44 @@ inline const char* labelFor(EngineType e, int p, const char* universal)
                gated  = e == EngineType::NonLinear;
     switch (p)
     {
-        case duskverb::ModDepth:  return spring ? "SPRING LEN" : shimmer ? "PITCH"    : gated ? "ATTACK"  : universal;
+        case duskverb::ModDepth:  return spring ? "LENGTH"     : shimmer ? "PITCH"    : gated ? "ATTACK"  : universal;
         case duskverb::ModRate:   return spring ? "DRIP"       : shimmer ? "FEEDBACK" : gated ? "RELEASE" : universal;
         case duskverb::Diffusion: return gated  ? "HOLD"       : spring  ? "CHIRP"    : universal;
         case duskverb::MidMult:   return gated  ? "THRESHOLD"  : universal;
         default:                  return universal;
     }
+}
+
+// The engine card: the editor's bottom-row card that holds every control an
+// engine re-purposes, so a re-labelled knob never sits under a card title that
+// contradicts it (HOLD is not an early reflection, THRESHOLD is not a damping
+// band). A parameter listed here is drawn in the card; its home slot (Diffusion
+// in SPACE, Mid Multiply in TONE) shows an inert placeholder instead.
+struct EngineCard
+{
+    const char* title;
+    int params[4];
+    int count;
+};
+
+inline EngineCard engineCard(EngineType e) noexcept
+{
+    using namespace duskverb;
+    switch (e)
+    {
+        case EngineType::NonLinear: return { "GATE",       { ModDepth, ModRate, Diffusion, MidMult }, 4 };
+        case EngineType::Spring:    return { "SPRING",     { ModDepth, ModRate, Diffusion, 0 },       3 };
+        case EngineType::Shimmer:   return { "SHIMMER",    { ModDepth, ModRate, 0, 0 },               2 };
+        default:                    return { "MODULATION", { ModDepth, ModRate, 0, 0 },               2 };
+    }
+}
+
+inline bool inEngineCard(EngineType e, int p) noexcept
+{
+    const EngineCard card = engineCard(e);
+    for (int i = 0; i < card.count; ++i)
+        if (card.params[i] == p) return true;
+    return false;
 }
 
 inline float displayNumber(EngineType engine, int p, float plain) noexcept
@@ -163,7 +209,7 @@ inline float displayNumber(EngineType engine, int p, float plain) noexcept
     if (std::strcmp(d.unit, "s") == 0)
         return plain < 1.0f ? plain * 1000.0f : plain;
     if (std::strcmp(d.unit, "Hz") == 0)
-        return plain >= 1000.0f ? plain / 1000.0f : plain;
+        return showsKiloHertz(plain) ? plain / 1000.0f : plain;
     return plain;
 }
 
@@ -187,7 +233,7 @@ inline float plainFromDisplayNumber(EngineType engine, int p, float number,
     if (std::strcmp(d.unit, "s") == 0)
         return currentPlain < 1.0f ? number / 1000.0f : number;
     if (std::strcmp(d.unit, "Hz") == 0)
-        return currentPlain >= 1000.0f ? number * 1000.0f : number;
+        return showsKiloHertz(currentPlain) ? number * 1000.0f : number;
     return number;
 }
 
@@ -226,7 +272,7 @@ inline bool parsePlainValue(EngineType engine, int p, const char* text,
     else if (std::strcmp(d.unit, "ms") == 0) { accepted = bare || has("ms") || has("s"); converted = milliseconds; }
     else if (std::strcmp(d.unit, "Hz") == 0)
     {
-        const bool adaptiveKHz = currentPlain >= 1000.0f;
+        const bool adaptiveKHz = showsKiloHertz(currentPlain);
         accepted = bare || has("Hz") || has("kHz");
         if (accepted && bare) converted = adaptiveKHz ? number * 1000.0f : number;
         else if (accepted && has("kHz")) converted = number * 1000.0f;
@@ -260,15 +306,31 @@ inline void formatPlainValue(EngineType engine, int p, float v, char* out, size_
     if (std::strcmp(d.unit, "ms") == 0) { std::snprintf(out, n, "%d ms", (int)std::lround(v)); return; }
     if (std::strcmp(d.unit, "Hz") == 0)
     {
-        // Choose precision from the rounded display value so host-domain
-        // conversion noise cannot alternate between "100 Hz" and "100.00 Hz".
-        if (v >= 1000.0f) { char number[32]; formatFixed(v / 1000.0, 2, number, sizeof(number)); std::snprintf(out, n, "%s kHz", number); }
-        else if (std::lround(v * 100.0f) < 10000) { char number[32]; formatFixed(v, 2, number, sizeof(number)); std::snprintf(out, n, "%s Hz", number); }
-        else                  std::snprintf(out, n, "%d Hz", (int)std::lround(v));
+        char number[32];
+        if (isRateHertz(d))         { formatFixed(v, 2, number, sizeof(number)); std::snprintf(out, n, "%s Hz", number); }
+        else if (showsKiloHertz(v)) { formatFixed(v / 1000.0, 1, number, sizeof(number)); std::snprintf(out, n, "%s kHz", number); }
+        else                        std::snprintf(out, n, "%d Hz", (int)std::lround(v));
         return;
     }
     if (std::strcmp(d.unit, "dB") == 0) { char number[32]; formatFixed(v, 1, number, sizeof(number)); std::snprintf(out, n, "%s dB", number); return; }
     formatFixed(v, 2, out, n);
+}
+
+// The Decay the engine a slot plays honours. The nonlinear burst stops lengthening at
+// kNonLinMaxDecaySeconds, so a longer setting reads as that time there; every other engine plays
+// Decay as set. (No Decay calibration row applies to that slot, so its Decay is the engine's:
+// pinned by DuskVerbPluginLayerTests.)
+inline float shownDecaySeconds(int slot, float decay) noexcept
+{
+    return resolveAlgorithm(slot) == kNonLinAlgorithm ? std::min(decay, kNonLinMaxDecaySeconds) : decay;
+}
+
+// A value as the engine a slot plays it: formatPlainValue for the slot's control family, with
+// Decay at the time that engine honours. The editor's Decay read-out and the host's parameter
+// text both print through here, so neither names a burst the engine does not play.
+inline void formatSlotValue(int slot, int p, float v, char* out, size_t n)
+{
+    formatPlainValue(controlEngine(slot), p, p == duskverb::Decay ? shownDecaySeconds(slot, v) : v, out, n);
 }
 
 // The hero read-out prints the number and its unit at two different sizes.

@@ -78,6 +78,15 @@ struct ParamHost
     virtual void setParam(uint32_t idx, float value) = 0;
 };
 
+// A colour at a fraction of its alpha (0 = transparent, 1 = unchanged): the
+// scrim, glow and dimmed-state helper the panels share.
+inline ImU32 scaleAlpha(ImU32 c, float amount) noexcept
+{
+    amount = amount < 0.0f ? 0.0f : (amount > 1.0f ? 1.0f : amount);
+    const ImU32 a = (c >> 24) & 0xffu;
+    return (c & 0x00ffffffu) | ((ImU32)((float)a * amount + 0.5f) << 24);
+}
+
 struct Palette
 {
     ImU32 white    = IM_COL32(238, 236, 228, 255);
@@ -108,6 +117,15 @@ public:
     void begin(float scale, ImVec2 origin, ImFont* font, ParamHost* h) noexcept
     {
         s = scale; org = origin; labelFont = font; host = h;
+        // A field asked for while another was open waits for that one to commit
+        // or close, which it normally does on the same click when it draws. If it
+        // is still open on a later frame (it was not drawn, it was not yet active,
+        // or its text does not parse) it is dropped, unparseable text and all,
+        // and the asked-for field opens. A request must never lapse: a knob that
+        // asked by double-click has already ended its host gesture and relies on
+        // editing to stop its own press.
+        if (!valueEditPendingId_.empty() && ImGui::GetFrameCount() > valueEditPendingFrame_)
+            closeValueEdit();
     }
     void setPalette(const Palette& p) noexcept { pal = p; }
     void setFontSet(const CrispFontSet& fs) noexcept { fontSet = fs; }
@@ -145,7 +163,7 @@ public:
             dl->AddText(font, sz, ImVec2(pos.x + 0.6f * s, pos.y), col, txt);
     }
 
-    // A lamp that is not the panel's indicator colour. The dbx 160 face carries
+    // A lamp that is not the panel's indicator colour. The VCA compressor face carries
     // an amber BELOW and a red ABOVE side by side, which one palette entry
     // cannot say, and the jewel it uses is built a little differently from the
     // small panel indicator: a drop shadow under the bezel, a wider glow, an
@@ -229,10 +247,14 @@ public:
     // list. A modal/overlay must therefore stop the knob being hovered in the first
     // place — submit a full-window InvisibleButton BEFORE the controls so it wins
     // ImGui's hover race (see FourKEQUI's "modalblock").
+    // The value bubble's text size in design pixels (12 unless a plugin asks for more: Multi-Comp 2 sets its
+    // readability floor, 17).
+    void setValueBubbleTextSize(float size) noexcept { bubbleTextSize = size; }
+
     void valueBubble(float cx, float cy, float r, const char* txt) const
     {
         ImDrawList* dl = ImGui::GetForegroundDrawList();
-        const float fs = 12.0f * s;
+        const float fs = bubbleTextSize * s;
         ImFont* font = pickFont(fs);
         const ImVec2 ts = font->CalcTextSizeA(fs, FLT_MAX, 0.0f, txt);
         const float padX = 7.0f * s, padY = 4.0f * s, gap = 7.0f * s, tail = 5.0f * s;
@@ -288,17 +310,44 @@ public:
     }
 
     // Open the inline editor on the knob `id`, seeded with its current value.
+    //
+    // CALL ORDER: a caller's own entry target (a read-out that opens the field)
+    // must be submitted BEFORE the knob() it belongs to. A second click on it then
+    // reaches here before the field reacts to the click, so the field stays open
+    // and keeps what was typed (see valueEdit).
     void openValueEdit(const char* id, float curValue, const char* seedText = nullptr) noexcept
     {
-        valueEditId_ = id;
+        char seed[sizeof(valueEditBuf_)];
         if (seedText != nullptr)
-            std::snprintf(valueEditBuf_, sizeof(valueEditBuf_), "%s", seedText);
+            std::snprintf(seed, sizeof(seed), "%s", seedText);
         else
-            std::snprintf(valueEditBuf_, sizeof(valueEditBuf_), "%.4g", (double) curValue);
-        valueEditInvalid_ = false;
-        valueEditFocus_ = true;
+            std::snprintf(seed, sizeof(seed), "%.4g", (double) curValue);
+        // Asked again for the field that is open: keep its text, take focus back.
+        if (valueEditId_ == id)
+        {
+            valueEditFocus_ = true;
+            return;
+        }
+        // Another knob's field is open. It commits or closes on this same click
+        // when it draws, and this one opens then (closeValueEdit). Opening now
+        // would overwrite its text first whenever it is drawn later in the frame.
+        if (!valueEditId_.empty())
+        {
+            valueEditPendingId_ = id;
+            std::memcpy(valueEditPendingSeed_, seed, sizeof(seed));
+            valueEditPendingFrame_ = ImGui::GetFrameCount();
+            return;
+        }
+        startValueEdit(id, seed);
     }
     bool isEditingValue(const char* id) const noexcept { return valueEditId_ == id; }
+    void cancelValueEdit() noexcept
+    {
+        valueEditId_.clear();
+        valueEditInvalid_ = false;
+        valueEditFocus_ = false;
+        valueEditPendingId_.clear();
+    }
 
     // Draw the inline InputText over knob `id` when it is being edited. Returns
     // true and writes the parsed number to outValue on commit (Enter / focus
@@ -335,11 +384,13 @@ public:
                                                                   : IM_COL32(246, 247, 249, 255));
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(22, 22, 24, 255));
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f * s, 3.0f * s));
+        // Set on the frame the field opens and on a re-open (openValueEdit).
+        const bool reopened = valueEditFocus_;
         if (valueEditFocus_) { ImGui::SetKeyboardFocusHere(); valueEditFocus_ = false; }
         char wid[48]; std::snprintf(wid, sizeof(wid), "##ve_%s", id);
         const bool entered = ImGui::InputText(wid, valueEditBuf_, sizeof(valueEditBuf_),
             ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
-        const bool committed = ImGui::IsItemDeactivatedAfterEdit();
+        const bool edited = ImGui::IsItemDeactivatedAfterEdit();
         const bool deactivated = ImGui::IsItemDeactivated();
         const bool escaped = ImGui::IsKeyPressed(ImGuiKey_Escape, false);
         ImGui::PopStyleVar();
@@ -348,42 +399,54 @@ public:
         // frame, and committing here would turn a cancel into an edit.
         if (escaped)
         {
-            valueEditId_.clear();
-            valueEditInvalid_ = false;
+            closeValueEdit();
             return false;
         }
-        if (entered || committed)
+        // A second click on the caller's entry target took focus from the field
+        // to ask for the field again (openValueEdit): not a click-away. Keep the
+        // field and its text; it takes focus back on the next frame.
+        if (reopened && deactivated)
+            return false;
+        // Enter, or focus leaving the field, commits whatever differs from the
+        // seed. The text decides, not ImGui's edited flag: that restarts each
+        // time a re-open re-activates the field, while the text is kept.
+        if (!entered && !deactivated)
+            return false;
+        // Committing the seed text (untouched, or edited back to it) is no edit: parsing the rounded seed back would
+        // move the value.
+        if (std::strcmp(valueEditBuf_, valueEditSeed_) == 0)
         {
-            float parsed = 0.0f;
-            bool valid;
-            if (parseText != nullptr)
-                valid = parseText(valueEditBuf_, param, parseContext, parsed);
-            else
-            {
-                // Existing consumers seed with locale-sensitive snprintf. Keep
-                // their matching parser; custom unit entry opts into its own
-                // locale-independent seed/parser pair.
-                char* end = nullptr;
-                parsed = std::strtof(valueEditBuf_, &end);
-                valid = end != valueEditBuf_ && duskdaf::value_text::finiteFloat(parsed);
-                while (valid && *end != '\0')
-                {
-                    if (*end != ' ' && *end != '\t') valid = false;
-                    ++end;
-                }
-            }
-            if (valid)
-            {
-                valueEditId_.clear();
-                valueEditInvalid_ = false;
-                outValue = parsed;
-                return true;
-            }
-            valueEditInvalid_ = true;
-            ImGui::SetKeyboardFocusHere(-1);
+            closeValueEdit();
             return false;
         }
-        if (deactivated && !valueEditInvalid_) valueEditId_.clear(); // click-away without an edit
+        float parsed = 0.0f;
+        bool valid;
+        if (parseText != nullptr)
+            valid = parseText(valueEditBuf_, param, parseContext, parsed);
+        else
+        {
+            // Existing consumers seed with locale-sensitive snprintf. Keep
+            // their matching parser; custom unit entry opts into its own
+            // locale-independent seed/parser pair.
+            char* end = nullptr;
+            parsed = std::strtof(valueEditBuf_, &end);
+            valid = end != valueEditBuf_ && duskdaf::value_text::finiteFloat(parsed);
+            while (valid && *end != '\0')
+            {
+                if (*end != ' ' && *end != '\t') valid = false;
+                ++end;
+            }
+        }
+        if (valid)
+        {
+            closeValueEdit();
+            outValue = parsed;
+            return true;
+        }
+        // Text that does not parse keeps the field open, marked. A fresh attempt
+        // (Enter, or an edit followed by a click away) also keeps the focus.
+        valueEditInvalid_ = true;
+        if (entered || edited) ImGui::SetKeyboardFocusHere(-1);
         return false;
     }
 
@@ -412,6 +475,8 @@ public:
     //   dragInDisplayDomain: opt into gestures and wheel steps in the transformed
     //                   domain (for example, equal Hz per pixel on a tapered host
     //                   parameter). The value sent to the host remains [minV,maxV].
+    //   valueEditPosition: optional inline field center in panel coordinates,
+    //                   for a readout placed outside the knob (copied per call).
     bool knob(const char* id, uint32_t param, float minV, float maxV,
               float cx, float cy, float radius, float& value, float defaultVal,
               bool stepped = false, bool panelTicks = true,
@@ -432,7 +497,8 @@ public:
               float (*fromDisplay)(float, uint32_t, void*) = nullptr,
               void* displayContext = nullptr,
               bool dragInDisplayDomain = false,
-              bool (*parseText)(const char*, uint32_t, void*, float&) = nullptr)
+              bool (*parseText)(const char*, uint32_t, void*, float&) = nullptr,
+              const ImVec2* valueEditPosition = nullptr)
     {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const float R  = radius * s;
@@ -450,19 +516,32 @@ public:
         };
         const float dragMinimum = dragInDisplayDomain ? displayValue(minV) : minV;
         const float dragMaximum = dragInDisplayDomain ? displayValue(maxV) : maxV;
-        const auto beginDragValue = [&]() {
-            dragValue = dragInDisplayDomain ? displayValue(value) : value;
+        // The coordinate a gesture starts from, inside the drag domain: a value beyond the travel (a host range wider
+        // than the knob's, as the BUS dials keep for older sessions) starts at the end it lies beyond.
+        const auto dragCoordinateOf = [&](float v) {
+            const float coordinate = dragInDisplayDomain ? displayValue(v) : v;
+            return coordinate < dragMinimum ? dragMinimum : (coordinate > dragMaximum ? dragMaximum : coordinate);
         };
+        const auto beginDragValue = [&]() { dragValue = dragCoordinateOf(value); };
 
-        ImGui::SetCursorScreenPos(ImVec2(c.x - R, c.y - R));
-        ImGui::InvisibleButton(id, ImVec2(2.0f * R, 2.0f * R));
-        const bool hovered = ImGui::IsItemHovered();
-        const bool active  = ImGui::IsItemActive();
-        if (tooltip != nullptr && !active
-            && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
-            ImGui::SetTooltip("%s", tooltip);
-
+        // While its inline field is open the knob submits no button at all. The
+        // field sits over the knob, and ImGui gives a click to the item submitted
+        // first: the field would close and a drag start with no host gesture
+        // opened. A disabled button is no help, because ImGui still lets it claim
+        // the hover. Every gesture below is skipped while editing anyway.
         const bool editing = (valueEditId_ == id);
+        bool hovered = false, active = false;
+        if (!editing)
+        {
+            ImGui::SetCursorScreenPos(ImVec2(c.x - R, c.y - R));
+            ImGui::InvisibleButton(id, ImVec2(2.0f * R, 2.0f * R));
+            hovered = ImGui::IsItemHovered();
+            active  = ImGui::IsItemActive();
+            if (tooltip != nullptr && !active
+                && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+                ImGui::SetTooltip("%s", tooltip);
+        }
+
         // Reset modifier: Option/Alt on every platform, plus Cmd (Super) on macOS or
         // Ctrl on Windows/Linux. macOS deliberately EXCLUDES Ctrl here: the OS routes a
         // Ctrl+left-click as a right-click, so it must fall through to the context menu,
@@ -490,14 +569,26 @@ public:
                 // Activation can share a frame with pointer movement before the press.
                 const float deltaY = ImGui::IsItemActivated()
                     ? io.MousePos.y - io.MouseClickedPos[0].y : io.MouseDelta.y;
-                dragValue = dragKnobCoordinate(dragValue, deltaY,
-                                               dragMinimum, dragMaximum,
-                                               ImGui::GetIO().KeyShift);
-                if (stepped && dragInDisplayDomain) dragValue = std::round(dragValue);
-                float nv = dragInDisplayDomain ? valueFromDisplay(dragValue) : dragValue;
-                nv = nv < minV ? minV : (nv > maxV ? maxV : nv);
-                if (stepped && !dragInDisplayDomain) nv = std::round(nv);
-                if (nv != value) { value = nv; host->setParam(param, nv); changed = true; }
+                // Only movement edits. A press alone would write the value back through the drag domain: a value
+                // beyond a display domain narrower than the host range (a dial's travel) would jump to its end,
+                // and any other could come back a rounding step off.
+                // A coordinate pinned at an end of the drag domain edits nothing either: a value beyond the travel
+                // stays put while the drag pushes it further out.
+                const float dragFrom = dragValue;
+                if (deltaY != 0.0f)
+                {
+                    dragValue = dragKnobCoordinate(dragValue, deltaY,
+                                                   dragMinimum, dragMaximum,
+                                                   ImGui::GetIO().KeyShift);
+                    if (stepped && dragInDisplayDomain) dragValue = std::round(dragValue);
+                }
+                if (dragValue != dragFrom)
+                {
+                    float nv = dragInDisplayDomain ? valueFromDisplay(dragValue) : dragValue;
+                    nv = nv < minV ? minV : (nv > maxV ? maxV : nv);
+                    if (stepped && !dragInDisplayDomain) nv = std::round(nv);
+                    if (nv != value) { value = nv; host->setParam(param, nv); changed = true; }
+                }
             }
             if (ImGui::IsItemDeactivated()) { if (!modResetActive_) host->endEdit(param); modResetActive_ = false; }
 
@@ -533,15 +624,16 @@ public:
                     const float dragRange = dragMaximum - dragMinimum;
                     const float wheelStep = ImGui::GetIO().KeyShift
                         ? dragRange * 0.004f : dragRange * 0.02f;
-                    float wheelValue = dragInDisplayDomain ? displayValue(value) : value;
-                    wheelValue += wheel * (stepped ? 1.0f : wheelStep);
+                    const float wheelFrom = dragCoordinateOf(value);
+                    float wheelValue = wheelFrom + wheel * (stepped ? 1.0f : wheelStep);
                     wheelValue = wheelValue < dragMinimum ? dragMinimum
                         : (wheelValue > dragMaximum ? dragMaximum : wheelValue);
                     if (stepped && dragInDisplayDomain) wheelValue = std::round(wheelValue);
                     float nv = dragInDisplayDomain ? valueFromDisplay(wheelValue) : wheelValue;
                     nv = nv < minV ? minV : (nv > maxV ? maxV : nv);
                     if (stepped && !dragInDisplayDomain) nv = std::round(nv);
-                    if (nv != value)
+                    // As for a drag: a wheel step pushing a coordinate pinned at an end edits nothing.
+                    if (wheelValue != wheelFrom && nv != value)
                     {
                         host->beginEdit(param); value = nv;
                         host->setParam(param, nv); host->endEdit(param); changed = true;
@@ -645,7 +737,9 @@ public:
         }
 
         float typed;
-        if (valueEdit(id, cx, cy, radius, typed, parseText, param, displayContext))
+        if (valueEdit(id, valueEditPosition ? valueEditPosition->x : cx,
+                      valueEditPosition ? valueEditPosition->y : cy,
+                      radius, typed, parseText, param, displayContext))
         {
             if (parseText == nullptr)
                 typed = valueFromDisplay(typed); // display -> actual
@@ -879,14 +973,42 @@ private:
     Palette pal;
     CrispFontSet fontSet;  // multi-size faces; pickFont() chooses nearest
     float dragValue = 0.0f;
+    float bubbleTextSize = 12.0f;  // valueBubble(), design pixels (setValueBubbleTextSize)
     float gripStartScale_ = 1.0f;  // resizeGrip(): scale when the drag started
     uint32_t gripReqW_ = 0, gripReqH_ = 0;  // resizeGrip(): last size asked of the host
 
     // Inline value-entry state (double-click a knob to type a value).
     std::string valueEditId_;
     char        valueEditBuf_[32] = { 0 };
+    char        valueEditSeed_[32] = { 0 };   // what openValueEdit() put in valueEditBuf_
     bool        valueEditFocus_ = false;
     bool        valueEditInvalid_ = false;
+    // A field asked for while another was open (openValueEdit), and its seed.
+    std::string valueEditPendingId_;
+    char        valueEditPendingSeed_[32] = { 0 };
+    int         valueEditPendingFrame_ = 0;
+
+    void startValueEdit(std::string id, const char* seed) noexcept
+    {
+        valueEditId_ = std::move(id);
+        std::snprintf(valueEditBuf_, sizeof(valueEditBuf_), "%s", seed);
+        std::memcpy(valueEditSeed_, valueEditBuf_, sizeof(valueEditSeed_));
+        valueEditInvalid_ = false;
+        valueEditFocus_ = true;
+    }
+
+    // Close the field, then open the one a click asked for while it was open.
+    void closeValueEdit() noexcept
+    {
+        valueEditId_.clear();
+        valueEditInvalid_ = false;
+        if (!valueEditPendingId_.empty())
+        {
+            std::string next;
+            next.swap(valueEditPendingId_);
+            startValueEdit(std::move(next), valueEditPendingSeed_);
+        }
+    }
     bool        modResetActive_ = false; // Ctrl/Cmd+click reset in progress (suppress drag)
 };
 

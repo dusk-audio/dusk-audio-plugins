@@ -68,10 +68,18 @@ FLEET_WIDE = (
     ".github/scripts/apt_install.sh",
 )
 
-# Subtrees inside a plugin directory that no JUCE target compiles. The workflow's
-# own paths filter already subtracts these; repeated here so a DAF-only change
-# that slips through the filter still selects nothing rather than everything.
+# Subtrees generally owned by DAF targets. Chord Analyzer's extracted numeric
+# model is shared with both legacy desktop adapters, and the Spectrum Analyzer
+# core is compiled into its JUCE plugin; both are explicit exceptions.
+# Keep this aligned with the workflow's ordered paths filter.
 NON_JUCE_SUBTREES = ("/daf-plugin/", "/core/")
+JUCE_SHARED_CORES = ("plugins/chord-analyzer/core/", "plugins/spectrum-analyzer/core/")
+
+# Exact cross-tree dependencies which do not reach the whole JUCE fleet.
+SHARED_HEADER_TARGETS = {
+    "plugins/shared-daf/dsp/DuskSeqLock.hpp": PLUGIN_DIRS["plugins/chord-analyzer/"],
+    "plugins/shared-daf/dsp/DuskFft.hpp": PLUGIN_DIRS["plugins/spectrum-analyzer/"],
+}
 
 
 def changed_files(base_ref: str) -> list[str]:
@@ -97,7 +105,9 @@ def select(files: list[str]) -> tuple[list[str], str]:
 
     selected: list[str] = []
     for path in files:
-        if any(sub in "/" + path for sub in NON_JUCE_SUBTREES):
+        selected += [t for t in SHARED_HEADER_TARGETS.get(path, []) if t not in selected]
+        if (any(sub in "/" + path for sub in NON_JUCE_SUBTREES)
+                and not path.startswith(JUCE_SHARED_CORES)):
             continue
         for prefix, targets in PLUGIN_DIRS.items():
             if path.startswith(prefix):

@@ -4,7 +4,7 @@
 //
 // MultiQTube.hpp — framework-free (ZERO JUCE) port of the Multi-Q "Tube"
 // character. Verbatim transcription of TubeEQProcessor.h (InductorModel,
-// TubeEQTubeStage, PultecLFSection, TubeEQProcessor) with the JUCE facade
+// TubeEQTubeStage, TubeEqLFSection, TubeEQProcessor) with the JUCE facade
 // removed. Every magic number and the sample-level op-order are preserved.
 //
 // JUCE → framework-free substitutions (see file header of this port branch):
@@ -301,8 +301,8 @@ private:
 
 //==============================================================================
 /** Passive-EQ-style LF section: dual-biquad boost/cut with inductor
-    nonlinearity between stages. Verbatim from PultecLFSection. */
-class TubePultecLFSection
+    nonlinearity between stages. Verbatim from TubeEqLFSection. */
+class TubePassiveLFSection
 {
 public:
     static constexpr float kPeakGainScale = 1.4f;
@@ -549,7 +549,7 @@ public:
         // the BASE rate so the character is stable regardless of the hq setting.
         characterSeed = static_cast<uint32_t>(sampleRate * 1000.0);
         tubeStage.prepare(sampleRate, numChannels);
-        pultecLF.prepare(sampleRate, characterSeed);
+        tubeEqLF.prepare(sampleRate, characterSeed);
         hfInductorL.prepare(sampleRate, characterSeed + 1);
         hfInductorR.prepare(sampleRate, characterSeed + 2);
         hfQInductor.prepare(sampleRate, characterSeed + 1);
@@ -575,7 +575,7 @@ public:
         midDipFilterL.reset(); midDipFilterR.reset();
         midHighPeakFilterL.reset(); midHighPeakFilterR.reset();
         tubeStage.reset();
-        pultecLF.reset();
+        tubeEqLF.reset();
         hfInductorL.reset();
         hfInductorR.reset();
         inputTransformer.reset();
@@ -620,7 +620,7 @@ public:
     {
         currentSampleRate = newRate;
         tubeStage.updateSampleRate(newRate);
-        pultecLF.updateSampleRate(newRate);
+        tubeEqLF.updateSampleRate(newRate);
         hfInductorL.updateSampleRate(newRate);
         hfInductorR.updateSampleRate(newRate);
         hfQInductor.updateSampleRate(newRate);
@@ -734,7 +734,7 @@ private:
     inline float processOneSample(float sample, int ch, bool isLeft) noexcept
     {
         sample = inputTransformer.processSample(sample, ch);
-        sample = pultecLF.processSample(sample, ch);
+        sample = tubeEqLF.processSample(sample, ch);
 
         if (params.hfBoostGain > 0.01f)
         {
@@ -791,7 +791,7 @@ private:
     TubeBiquad midHighPeakFilterL, midHighPeakFilterR;
 
     TubeStage tubeStage;
-    TubePultecLFSection pultecLF;
+    TubePassiveLFSection tubeEqLF;
     TubeInductorModel hfInductorL;
     TubeInductorModel hfInductorR;
     TubeInductorModel hfQInductor;
@@ -828,7 +828,7 @@ private:
 
     void updateFilters()
     {
-        pultecLF.updateCoefficients(params.lfBoostGain, params.lfAttenGain,
+        tubeEqLF.updateCoefficients(params.lfBoostGain, params.lfAttenGain,
                                      params.lfBoostFreq, currentSampleRate);
         updateHFBoost();
         updateHFAtten();

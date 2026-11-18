@@ -8,7 +8,7 @@
 #   cmake --build build
 
 cmake_minimum_required(VERSION 3.15)
-project(TapeEchoDAF VERSION 1.0.7)
+project(TapeEchoDAF VERSION 1.0.9)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -47,8 +47,8 @@ target_compile_definitions(tape-echo-2 PUBLIC
     TE2_VERSION_MINOR=${PROJECT_VERSION_MINOR}
     TE2_VERSION_PATCH=${PROJECT_VERSION_PATCH})
 
-# Auto-deploy the built CLAP/VST3/LV2 into the user plugin dirs after each build
-# (disable with -DDUSK_DAF_INSTALL_LOCAL=OFF).
+# Copies the built CLAP/VST3/LV2 into the user plugin dirs after each build
+# when configured with -DDUSK_DAF_INSTALL_LOCAL=ON.
 dusk_daf_install_local(tape-echo-2 LV2_PROGRAMS)
 
 if(NOT CMAKE_CROSSCOMPILING)
@@ -64,6 +64,36 @@ if(NOT CMAKE_CROSSCOMPILING)
         "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
     target_compile_features(TapeEchoCoreTest PRIVATE cxx_std_17)
     add_test(NAME TapeEchoCore COMMAND TapeEchoCoreTest)
+
+    # Exercise the actual shell and DSP with DAF's in-process host. The rate
+    # probe pins the sync/off handoff even when a host load overlaps a block.
+    add_executable(TapeEchoRateHandoffTest
+        tests/TapeEchoRateHandoffTest.cpp
+        ../core/TapeEchoDSP.cpp
+        "${DAF_PATH}/daf/src/DafPlugin.cpp")
+    target_link_libraries(TapeEchoRateHandoffTest PRIVATE tape-echo-2)
+    add_test(NAME TapeEchoRateHandoff COMMAND TapeEchoRateHandoffTest)
+
+    # Every parameter's host flags in the built CLAP and VST3 must match the
+    # test's expected table, measured on the 1.0.8 release: above all, legacy
+    # Dry Level and Sync Division stay automatable and not hidden (see
+    # initParameter). dlopen(), so not on Windows.
+    if(NOT WIN32)
+        add_executable(TapeEchoHostParamFlagsTest tests/TapeEchoHostParamFlagsTest.cpp)
+        target_include_directories(TapeEchoHostParamFlagsTest PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}"
+            "${DAF_PATH}/daf/src")
+        target_compile_features(TapeEchoHostParamFlagsTest PRIVATE cxx_std_17)
+        target_link_libraries(TapeEchoHostParamFlagsTest PRIVATE ${CMAKE_DL_LIBS})
+        add_dependencies(TapeEchoHostParamFlagsTest tape-echo-2-clap tape-echo-2-vst3)
+        add_test(NAME TapeEchoClapParamFlags
+                 COMMAND TapeEchoHostParamFlagsTest --clap "$<TARGET_FILE:tape-echo-2-clap>")
+        add_test(NAME TapeEchoVst3ParamFlags
+                 COMMAND TapeEchoHostParamFlagsTest --vst3 "$<TARGET_FILE:tape-echo-2-vst3>")
+        # Well under a second each; CI's ctest passes no --timeout, so a hang
+        # in a plugin's load path must fail rather than stall the job.
+        set_tests_properties(TapeEchoClapParamFlags TapeEchoVst3ParamFlags PROPERTIES TIMEOUT 120)
+    endif()
 
     find_program(DUSK_SERDI_EXECUTABLE serdi)
     if(DUSK_SERDI_EXECUTABLE)
@@ -82,4 +112,5 @@ endif()
 # (#231). The macro handles the cross-compile skip and enable_testing() itself.
 dusk_daf_add_output_param_tests(tape-echo-2)
 dusk_daf_add_ui_drag_test(tape-echo-2 37 232)   # INPUT knob
+dusk_daf_add_clap_preset_test(tape-echo-2)
 dusk_daf_add_resize_test(tape-echo-2)

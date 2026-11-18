@@ -11,7 +11,7 @@
 // energy over ~80-130 ms so the late tank's impulse response BUILDS GRADUALLY
 // instead of being dense from sample zero.
 //
-// Why this exists (hall ER+tail topology, 2026-06-19): the VVV/Lexicon halls
+// Why this exists (hall ER+tail topology, 2026-06-19): the reference halls
 // front a snare with sparse discrete early reflections (onset → gap → loud 2nd
 // hit ~130-140 ms) over a diffuse tail that BUILDS over ~150 ms. DuskVerb's
 // DenseHall tank is dense from sample zero, so it FILLS the gap the discrete 2nd

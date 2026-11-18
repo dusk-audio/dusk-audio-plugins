@@ -461,12 +461,27 @@ void FDNReverbT<WithOctaveGEQ, N>::prepare (double sampleRate, int /*maxBlockSiz
     prepared_ = true;
     setModeSmear (smearDepthSamples_, smearRateHz_);   // apply smear depth/rate — AFTER prepared_ (the
                                                        // setter early-returns while prepared_ is false)
+    setFeedbackRotation (fbRotPeak_, fbRotRateHz_);    // likewise
+    resetFeedbackRotation();
 }
 
 // ---------------------------------------------------------------------------
 template <bool WithOctaveGEQ, int N>
 void FDNReverbT<WithOctaveGEQ, N>::process (const float* inputL, const float* inputR,
                          float* outputL, float* outputR, int numSamples)
+{
+    // The feedback turn is compiled into its own instantiation rather than branched on in the
+    // loop: a runtime guard in this recursive loop moves the codegen of everything around it.
+    if (fbRotActive_)
+        processLoop<true> (inputL, inputR, outputL, outputR, numSamples);
+    else
+        processLoop<false> (inputL, inputR, outputL, outputR, numSamples);
+}
+
+template <bool WithOctaveGEQ, int N>
+template <bool Rotate>
+void FDNReverbT<WithOctaveGEQ, N>::processLoop (const float* inputL, const float* inputR,
+                                                float* outputL, float* outputR, int numSamples)
 {
     if (! prepared_)
         return;
@@ -740,6 +755,28 @@ void FDNReverbT<WithOctaveGEQ, N>::process (const float* inputL, const float* in
                 hadamardInPlace32 (feedback);
             else
                 hadamardInPlace16 (feedback);
+        }
+
+        // --- 2b) Time-varying feedback matrix (setFeedbackRotation): turn each line pair
+        // (2k, 2k+1) of the mixed vector. Pairs stay inside one half, so the stereo split's and
+        // the dual slope's halves stay apart. Held still while frozen, like every other
+        // modulator, so a frozen tank does not move.
+        if constexpr (Rotate)
+        {
+            if (! frozen)
+            {
+                if (--fbRotCounter_ <= 0)
+                    advanceFeedbackRotation();
+                for (int k = 0; k < N / 2; ++k)
+                {
+                    fbRotCos_[k] += fbRotCosStep_[k];
+                    fbRotSin_[k] += fbRotSinStep_[k];
+                    const float a = feedback[2 * k];
+                    const float b = feedback[2 * k + 1];
+                    feedback[2 * k]     = fbRotCos_[k] * a - fbRotSin_[k] * b;
+                    feedback[2 * k + 1] = fbRotSin_[k] * a + fbRotCos_[k] * b;
+                }
+            }
         }
 
         // --- 3) Three-band damping + input injection -> write to delay lines ---
@@ -1052,7 +1089,7 @@ void FDNReverbT<WithOctaveGEQ, N>::setAirCrossoverFreq (float hz)
 }
 
 // ── Low-Band Transient Shaper (Phase A) ─────────────────────────────────────
-// Plain members (like feedbackModDepth_): written on the message thread, read
+// Plain members (like smearDepthSamples_): written on the message thread, read
 // on the audio thread; aligned float load/store is atomic on the target. The
 // block is gated by shaperActive_ so depth 0 (default) never executes → bypass.
 template <bool WithOctaveGEQ, int N>
@@ -1168,6 +1205,14 @@ template <bool WithOctaveGEQ, int N>
 void FDNReverbT<WithOctaveGEQ, N>::setModRate (float hz)
 {
     modRateHz_ = std::max (hz, 0.01f);
+    if (prepared_)
+        updateLFORates();
+}
+
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setModRateSpread (bool spread)
+{
+    modRateSpread_ = spread;
     if (prepared_)
         updateLFORates();
 }
@@ -1800,9 +1845,57 @@ void FDNReverbT<WithOctaveGEQ, N>::setStructuralLFDamping (float hz)
 }
 
 template <bool WithOctaveGEQ, int N>
-void FDNReverbT<WithOctaveGEQ, N>::setFeedbackModDepth (float depth)
+void FDNReverbT<WithOctaveGEQ, N>::setFeedbackRotation (float peakRad, float rateHz)
 {
-    feedbackModDepth_ = std::clamp (depth, 0.0f, 1.0f);
+    fbRotPeak_   = std::clamp (peakRad, 0.0f, 1.5707964f);
+    fbRotRateHz_ = std::clamp (rateHz, 0.01f, 10.0f);
+    fbRotActive_ = fbRotPeak_ > 1.0e-6f;
+    if (! prepared_)
+        return;
+    // Per-pair rates spread over 0.8..1.2x by the golden-ratio sequence, so no two pairs share
+    // a period and the matrix never returns to where it started.
+    constexpr float kPhi = 1.6180339887498949f;
+    const float blockRad = kTwoPi * fbRotRateHz_ * static_cast<float> (kFbRotBlock)
+                         / static_cast<float> (sampleRate_);
+    for (int k = 0; k < N / 2; ++k)
+    {
+        const float frac = static_cast<float> (k) * kPhi - std::floor (static_cast<float> (k) * kPhi);
+        fbRotInc_[k] = blockRad * (0.8f + 0.4f * frac);
+    }
+}
+
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::resetFeedbackRotation()
+{
+    // Phases to their seeds and the turn to none: the first control block ramps it to the angle
+    // there, as it does when the turn is first set on, so a cleared tank replays a fresh one.
+    for (int k = 0; k < N / 2; ++k)
+    {
+        fbRotPhase_[k] = kTwoPi * static_cast<float> (k) / static_cast<float> (N / 2);
+        fbRotCos_[k] = 1.0f;
+        fbRotSin_[k] = 0.0f;
+        fbRotCosStep_[k] = fbRotSinStep_[k] = 0.0f;
+    }
+    fbRotCounter_ = 0;
+}
+
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::advanceFeedbackRotation()
+{
+    // Interpolating the cosine and sine of the angle between control points leaves the turn just
+    // inside the unit circle mid-block (gain 1 - 7e-8 at 0.3 rad and 0.5 Hz, 1 - 9e-4 at the
+    // pi/2 and 10 Hz limits): never a gain above 1, and each control point is back on the circle.
+    fbRotCounter_ = kFbRotBlock;
+    constexpr float inv = 1.0f / static_cast<float> (kFbRotBlock);
+    for (int k = 0; k < N / 2; ++k)
+    {
+        fbRotPhase_[k] += fbRotInc_[k];
+        if (fbRotPhase_[k] >= kTwoPi)
+            fbRotPhase_[k] -= kTwoPi;
+        const float theta = fbRotPeak_ * std::sin (fbRotPhase_[k]);
+        fbRotCosStep_[k] = (std::cos (theta) - fbRotCos_[k]) * inv;
+        fbRotSinStep_[k] = (std::sin (theta) - fbRotSin_[k]) * inv;
+    }
 }
 
 template <bool WithOctaveGEQ, int N>
@@ -1902,12 +1995,17 @@ void FDNReverbT<WithOctaveGEQ, N>::clearBuffers()
     {
         const uint32_t seed = kFixedBaseSeed + static_cast<uint32_t> (i * 1847);
         lfos_[i].prepare (static_cast<float> (sampleRate_), seed);
-        lfos_[i].setRate  (modRateHz_);
         lfos_[i].setDepth (modDepthSamples_);
         smearLfos_[i].prepare (static_cast<float> (sampleRate_),
                                0xA5C3E97Bu + static_cast<uint32_t> (i * 2749));
     }
+    // The re-prepare leaves every line at one rate. Restore the rates prepare() gives them (the
+    // per-line spread, unless setModRateSpread turned it off): nothing pushes Mod Rate again after
+    // a host reset or an Algorithm change, so without this the random walks step in lockstep.
+    if (prepared_)
+        updateLFORates();
     setModeSmear (smearDepthSamples_, smearRateHz_);
+    resetFeedbackRotation();
 }
 
 // ===========================================================================
@@ -2229,7 +2327,7 @@ void FDNReverbT<WithOctaveGEQ, N>::updateLFORates()
         1.005f, 1.011f, 1.018f, 1.025f, 1.032f, 1.039f, 1.046f, 1.048f
     };
     for (int i = 0; i < N; ++i)
-        lfos_[i].setRate (modRateHz_ * kRateFactors[i]);
+        lfos_[i].setRate (modRateSpread_ ? modRateHz_ * kRateFactors[i] : modRateHz_);
     // Phase 2 master sine LFO uses the BASE rate (no per-line spread —
     // intra-half spread comes from phase offset, not detune).
     coherentLfo_.setRate (modRateHz_);

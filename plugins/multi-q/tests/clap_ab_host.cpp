@@ -6,9 +6,6 @@
 // cross-correlate to remove the plugin's reported latency, then diff samples.
 //   g++ -std=c++17 -O2 -I<clap>/include clap_ab_host.cpp -o clap_ab_host -ldl
 
-// Minimal headless CLAP host — loads a .clap, sets params by name via input
-// events, renders a fixed input signal in stereo, writes a float32 WAV.
-// Purpose: A/B the Multi-Comp multiband mix for comb filtering under CLAP.
 #include <clap/clap.h>
 #include <dlfcn.h>
 #include <cstdio>
@@ -19,6 +16,10 @@
 #include <string>
 #include <vector>
 #include <random>
+#include <algorithm>
+#include <cctype>
+#include <locale>
+#include <sstream>
 
 static const void* host_get_ext(const clap_host_t*, const char*) { return nullptr; }
 static void host_noop(const clap_host_t*) {}
@@ -38,9 +39,10 @@ static const clap_event_header_t* in_get(const clap_input_events_t* l, uint32_t 
 static bool out_push(const clap_output_events_t*, const clap_event_header_t*) { return true; }
 
 // ---- WAV (float32) ---------------------------------------------------------
-static void writeWavF32(const char* path, const std::vector<float>& interleaved,
+static bool writeWavF32(const char* path, const std::vector<float>& interleaved,
                         int ch, int sr) {
     FILE* f = fopen(path, "wb");
+    if (!f) { fprintf(stderr, "cannot create WAV: %s\n", path); return false; }
     uint32_t dataBytes = (uint32_t)(interleaved.size() * 4);
     uint32_t byteRate = (uint32_t)(sr * ch * 4);
     uint16_t blockAlign = (uint16_t)(ch * 4);
@@ -58,18 +60,19 @@ static void writeWavF32(const char* path, const std::vector<float>& interleaved,
     fwrite("data", 1, 4, f);
     fwrite(&dataBytes, 4, 1, f);
     fwrite(interleaved.data(), 4, interleaved.size(), f);
-    fclose(f);
+    const bool written = !ferror(f);
+    return fclose(f) == 0 && written;
 }
 
 int main(int argc, char** argv) {
-    // args: --clap PATH --out WAV --mix N [--signal noise|impulse] [--param "Name=val"]...
+    // args: --clap PATH --out WAV [--signal noise|impulse] [--param "Name=val"]...
     //       --dump-params        print each param (index, name, stepped, choice
     //                            labels) as a stable table to stdout and exit.
     //                            Diff two dumps (JUCE vs DAF .clap) to prove the
     //                            parameter lists match by name/order/choices —
     //                            catches silent reorders the count static_assert
     //                            in MultiQParams.hpp cannot.
-    std::string clapPath, outPath, signal = "noise";
+    std::string clapPath, outPath, inputPath, signal = "noise";
     bool dumpParams = false;
     // params set by DISPLAY TEXT (converted via the plugin's text_to_value, so
     // callers pass human values like "Band 2 Gain=6" regardless of normalisation).
@@ -78,12 +81,22 @@ int main(int argc, char** argv) {
         std::string a = argv[i];
         if (a == "--clap" && i+1 < argc) clapPath = argv[++i];
         else if (a == "--out" && i+1 < argc) outPath = argv[++i];
+        else if (a == "--out-input" && i+1 < argc) inputPath = argv[++i];
         else if (a == "--signal" && i+1 < argc) signal = argv[++i];
         else if (a == "--dump-params") dumpParams = true;
         else if (a == "--param" && i+1 < argc) {
             std::string kv = argv[++i]; auto eq = kv.find('=');
+            if (eq == std::string::npos || eq == 0 || eq + 1 == kv.size()) {
+                fprintf(stderr, "bad --param '%s' (expected Name=value)\n", kv.c_str()); return 2;
+            }
             textParams.push_back({kv.substr(0,eq), kv.substr(eq+1)});
         }
+        else { fprintf(stderr, "unknown or incomplete argument: %s\n", a.c_str()); return 2; }
+    }
+    if (clapPath.empty() || (!dumpParams && outPath.empty())
+        || (!inputPath.empty() && inputPath == outPath)
+        || (signal != "noise" && signal != "impulse")) {
+        fprintf(stderr, "expected --clap PATH, --out WAV and --signal noise|impulse\n"); return 2;
     }
     // CLAP_AB_SR overrides the session rate so run_ab_parity.sh can sweep
     // 44.1/48/96 kHz (the cramping check in GH #148) without a rebuild.
@@ -105,7 +118,7 @@ int main(int argc, char** argv) {
     if (!lib) { fprintf(stderr, "dlopen fail: %s\n", dlerror()); return 1; }
     auto* entry = (const clap_plugin_entry_t*)dlsym(lib, "clap_entry");
     if (!entry) { fprintf(stderr, "no clap_entry\n"); return 1; }
-    entry->init(clapPath.c_str());
+    if (!entry->init(clapPath.c_str())) { fprintf(stderr, "entry init failed\n"); dlclose(lib); return 1; }
     auto* factory = (const clap_plugin_factory_t*)entry->get_factory(CLAP_PLUGIN_FACTORY_ID);
     if (!factory) { fprintf(stderr, "no plugin factory\n"); return 1; }
     uint32_t n = factory->get_plugin_count(factory);
@@ -122,12 +135,16 @@ int main(int argc, char** argv) {
 
     const clap_plugin_t* plug = factory->create_plugin(factory, &host, desc->id);
     if (!plug) { fprintf(stderr, "create_plugin fail\n"); return 1; }
-    if (!plug->init(plug)) { fprintf(stderr, "init fail\n"); return 1; }
+    if (!plug->init(plug)) {
+        fprintf(stderr, "init fail\n"); plug->destroy(plug); entry->deinit(); dlclose(lib); return 1;
+    }
+    auto cleanup = [&] { plug->destroy(plug); entry->deinit(); dlclose(lib); };
 
     // params ext: match names → ids
     auto* params = (const clap_plugin_params_t*)plug->get_extension(plug, CLAP_EXT_PARAMS);
-    if (!params) { fprintf(stderr, "no params ext\n"); return 1; }
+    if (!params) { fprintf(stderr, "no params ext\n"); cleanup(); return 1; }
     uint32_t pc = params->count(plug);
+    if (pc == 0) { fprintf(stderr, "no parameters to validate\n"); cleanup(); return 1; }
 
     // --dump-params: emit a stable, framework-neutral parameter table for A/B
     // diffing (JUCE MultiQ.clap vs DAF multi-q-2.clap). We deliberately print
@@ -140,7 +157,9 @@ int main(int argc, char** argv) {
         printf("# param dump: %s (%u params)\n", desc->name ? desc->name : "?", pc);
         for (uint32_t i = 0; i < pc; ++i) {
             clap_param_info_t info{};
-            if (!params->get_info(plug, i, &info)) { printf("%u\t<get_info failed>\n", i); continue; }
+            if (!params->get_info(plug, i, &info)) {
+                fprintf(stderr, "parameter %u metadata unavailable\n", i); cleanup(); return 1;
+            }
             const bool stepped = (info.flags & CLAP_PARAM_IS_STEPPED) != 0;
             printf("%u\t%s\tstepped=%d", i, info.name, stepped ? 1 : 0);
             // Enumerate value_to_text over the integer range regardless of the
@@ -164,9 +183,7 @@ int main(int argc, char** argv) {
             }
             printf("\n");
         }
-        plug->destroy(plug);
-        entry->deinit();
-        dlclose(lib);
+        cleanup();
         return 0;
     }
 
@@ -183,13 +200,37 @@ int main(int argc, char** argv) {
     InEvents in{};
     in.api.ctx = &in;
     in.api.size = in_size; in.api.get = in_get;
-    auto pushParamText = [&](const std::string& name, const std::string& text) {
+    auto pushParamText = [&](const std::string& name, const std::string& text) -> bool {
         clap_id id; double mn, mx;
-        if (!findId(name, id, mn, mx)) { fprintf(stderr, "  ! param not found: %s\n", name.c_str()); return; }
+        if (!findId(name, id, mn, mx)) { fprintf(stderr, "  ! param not found: %s\n", name.c_str()); return false; }
         double val = 0.0;
         if (!params->text_to_value(plug, id, text.c_str(), &val)) {
             fprintf(stderr, "  ! text_to_value failed: %s='%s'\n", name.c_str(), text.c_str());
-            return;
+            return false;
+        }
+        if (!std::isfinite(val) || val < mn || val > mx) {
+            fprintf(stderr, "  ! invalid parsed value: %s='%s'\n", name.c_str(), text.c_str()); return false;
+        }
+        // Some wrappers report successful conversion of an unknown choice as
+        // its first item. Accept plain numbers or canonical display text so a
+        // typo cannot silently turn an intended test into the default setting.
+        std::istringstream number(text); number.imbue(std::locale::classic());
+        double numeric = 0.0;
+        const bool plainNumber = (number >> numeric) && (number >> std::ws).eof();
+        if (!plainNumber) {
+            auto normalized = [](const std::string& value) {
+                std::string result;
+                for (unsigned char c : value)
+                    if (!std::isspace(c)) result += static_cast<char>(std::tolower(c));
+                return result;
+            };
+            char canonical[256]{};
+            if (!params->value_to_text(plug, id, val, canonical, sizeof(canonical))
+                || normalized(text) != normalized(canonical)) {
+                fprintf(stderr, "  ! display text %s='%s' resolved to '%s'; use a number or canonical display text\n",
+                        name.c_str(), text.c_str(), canonical);
+                return false;
+            }
         }
         clap_event_param_value_t e{};
         e.header.size = sizeof(e);
@@ -201,14 +242,19 @@ int main(int argc, char** argv) {
         e.note_id = -1; e.port_index = -1; e.channel = -1; e.key = -1;
         e.value = val;
         in.evs.push_back(e);
-        fprintf(stderr, "  param %-22s -> '%s' (norm %.4f)\n", name.c_str(), text.c_str(), val);
+        fprintf(stderr, "  param %-22s -> '%s' (value %.4f)\n", name.c_str(), text.c_str(), val);
+        return true;
     };
-    for (auto& kv : textParams) pushParamText(kv.first, kv.second);
+    for (auto& kv : textParams)
+        if (!pushParamText(kv.first, kv.second)) { cleanup(); return 2; }
 
     clap_output_events_t out{}; out.ctx = nullptr; out.try_push = out_push;
 
-    plug->activate(plug, sr, block, block);
-    plug->start_processing(plug);
+    // The final chunk may be shorter than a full block.
+    if (!plug->activate(plug, sr, 1, block)) { fprintf(stderr, "activation failed\n"); cleanup(); return 1; }
+    if (!plug->start_processing(plug)) {
+        fprintf(stderr, "start_processing failed\n"); plug->deactivate(plug); cleanup(); return 1;
+    }
 
     // input signal: deterministic white noise (fixed seed) or impulse
     std::mt19937 rng(12345);
@@ -221,6 +267,8 @@ int main(int argc, char** argv) {
     abOut.data32 = chans; abOut.channel_count = ch; abOut.latency = 0; abOut.constant_mask = 0;
 
     std::vector<float> outInterleaved; outInterleaved.reserve((size_t)totalFrames * ch);
+    std::vector<float> originalInput;
+    if (!inputPath.empty()) originalInput.reserve((size_t)totalFrames * ch);
 
     int64_t steady = 0;
     for (int pos = 0; pos < totalFrames; pos += block) {
@@ -230,6 +278,7 @@ int main(int argc, char** argv) {
             if (signal == "impulse") s = (pos + i == 0) ? 1.0f : 0.0f;
             else s = dist(rng);
             L[i] = s; R[i] = s;
+            if (!inputPath.empty()) { originalInput.push_back(s); originalInput.push_back(s); }
         }
         clap_process_t p{};
         p.steady_time = steady;
@@ -238,7 +287,21 @@ int main(int argc, char** argv) {
         p.audio_inputs = &abIn; p.audio_outputs = &abOut;
         p.audio_inputs_count = 1; p.audio_outputs_count = 1;
         p.in_events = &in.api; p.out_events = &out;
-        plug->process(plug, &p);
+        if (plug->process(plug, &p) == CLAP_PROCESS_ERROR) {
+            fprintf(stderr, "processing failed\n");
+            plug->stop_processing(plug); plug->deactivate(plug); cleanup(); return 1;
+        }
+        if (pos == 0) {
+            for (const auto& event : in.evs) {
+                double actual = 0.0;
+                if (!params->get_value(plug, event.param_id, &actual) || !std::isfinite(actual)
+                    || std::abs(actual - event.value) > 1e-6 * std::max(1.0, std::abs(event.value))) {
+                    fprintf(stderr, "parameter %u was not applied: requested %.9g, read %.9g\n",
+                            event.param_id, event.value, actual);
+                    plug->stop_processing(plug); plug->deactivate(plug); cleanup(); return 1;
+                }
+            }
+        }
         // events consumed after first block
         if (pos == 0) in.evs.clear();
         for (int i = 0; i < fr; ++i) { outInterleaved.push_back(L[i]); outInterleaved.push_back(R[i]); }
@@ -247,11 +310,10 @@ int main(int argc, char** argv) {
 
     plug->stop_processing(plug);
     plug->deactivate(plug);
-    plug->destroy(plug);
-    entry->deinit();
-    dlclose(lib);
+    cleanup();
 
-    writeWavF32(outPath.c_str(), outInterleaved, ch, sr);
+    if (!writeWavF32(outPath.c_str(), outInterleaved, ch, sr)) return 1;
+    if (!inputPath.empty() && !writeWavF32(inputPath.c_str(), originalInput, ch, sr)) return 1;
     fprintf(stderr, "wrote %s (%d frames)\n", outPath.c_str(), totalFrames);
     return 0;
 }

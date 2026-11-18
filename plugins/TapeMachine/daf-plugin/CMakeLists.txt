@@ -7,7 +7,7 @@
 #   cmake --build build
 
 cmake_minimum_required(VERSION 3.15)
-project(TapeMachine2DAF VERSION 1.0.11)
+project(TapeMachine2DAF VERSION 1.0.12)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -52,3 +52,4 @@ dusk_daf_install_local(tapemachine-2 LV2_PROGRAMS)
 dusk_daf_add_output_param_tests(tapemachine-2)
 dusk_daf_add_ui_drag_test(tapemachine-2 72 330)   # INPUT knob
 dusk_daf_add_resize_test(tapemachine-2)
+dusk_daf_add_clap_preset_test(tapemachine-2)

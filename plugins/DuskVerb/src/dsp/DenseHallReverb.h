@@ -122,6 +122,9 @@ public:
         for (int b = 0; b < 9; ++b) if (octaveT60_[b] > 0.0f) { octaveActive_ = true; break; }
         if (prepared_) update();
     }
+    // Read-only view of the octave targets as last set, and whether any is engaged.
+    float getOctaveT60 (int band) const noexcept { return band >= 0 && band < 9 ? octaveT60_[band] : 0.0f; }
+    bool  isOctaveT60Active() const noexcept     { return octaveActive_; }
     // Decay-knob coupling: reference broadband decay at which the octave curve is
     // realized 1:1; the live Decay knob then scales the whole curve. <=0 → 1.0.
     void setOctaveDecayRef (float seconds) { octaveDecayRef_ = seconds; if (prepared_) update(); }

@@ -33,7 +33,7 @@ public:
             automation_[i].store(pack(0, initial.params[i]));
         }
         current_.store(new Node(initial, 1));
-        for (const auto& preset : getFactoryPresets())
+        for (const auto& preset : duskverb::dv2FactoryPresets())
         {
             Factory data;
             data.preset = &preset;
@@ -67,10 +67,28 @@ public:
         return parameterFor(*node, program, i);
     }
 
+    // MIX LOCK (DuskVerbParams.hpp isMixLockParam), from the plugin's "mix_lock" state.
+    void setMixLock(bool locked) noexcept { mixLock_.store(locked, std::memory_order_seq_cst); }
+    bool mixLock() const noexcept { return mixLock_.load(std::memory_order_seq_cst); }
+
     void loadProgram(uint32_t index) noexcept
     {
         if (index >= factories_.size()) return;
+        // Under MIX LOCK the Mix and Bus in effect are re-stamped with this
+        // recall's epoch BEFORE it becomes visible. An edit that carries a
+        // recall's own epoch outranks the recall (as one made while it was being
+        // published does), so the program cannot move them, even when the value in
+        // effect came from an earlier program rather than from the published
+        // state; and no reader sees a gap between the two stores.
+        const bool locked = mixLock();
+        const float heldMix = locked ? parameter(Mix) : 0.0f;
+        const float heldBus = locked ? parameter(BusMode) : 0.0f;
         const uint32_t epoch = epoch_.fetch_add(1, std::memory_order_seq_cst) + 1;
+        if (locked)
+        {
+            automation_[Mix].store(pack(epoch, heldMix), std::memory_order_seq_cst);
+            automation_[BusMode].store(pack(epoch, heldBus), std::memory_order_seq_cst);
+        }
         const uint64_t request = (uint64_t(epoch) << 32) | (index + 1);
         uint64_t old = program_.load(std::memory_order_seq_cst);
         while (newer(epoch, uint32_t(old >> 32))
@@ -185,12 +203,14 @@ private:
         result.preset = factory ? factory->preset : node.preset;
         result.program = -1;
         if (result.preset)
-            result.program = int(result.preset - &getFactoryPresets().front());
+            result.program = int(result.preset - &duskverb::dv2FactoryPresets().front());
         result.edited = !factory && node.state.edited;
+        // Under MIX LOCK, Mix and Bus are not part of the sound a preset names.
+        const bool locked = mixLock();
         for (int i = 0; i < kNumParams; ++i)
         {
             result.params[i] = parameterFor(node, program, i);
-            if (i != Bypass && !newer(result.epoch,
+            if (i != Bypass && !(locked && isMixLockParam(i)) && !newer(result.epoch,
                        uint32_t(automation_[i].load(std::memory_order_seq_cst) >> 32)))
                 result.edited = true;
         }
@@ -200,6 +220,7 @@ private:
     static_assert(std::atomic<uint64_t>::is_always_lock_free, "Realtime parameter stamps must be lock-free");
     std::atomic<uint32_t> epoch_{1};
     std::atomic<uint64_t> program_{0};
+    std::atomic<bool> mixLock_{false};
     std::array<std::atomic<uint64_t>, kNumParams> automation_{};
     std::atomic<Node*> current_{nullptr};
     mutable std::atomic<unsigned> readers_{0};

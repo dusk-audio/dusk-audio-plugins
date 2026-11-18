@@ -281,6 +281,7 @@ int main(int argc, char **argv)
             v3_param_id programId = 0;
             int programSteps = 0;
             bool foundMix = false;
+            v3_param_id algorithmId = 0, freezeId = 0;
             int checkedUnits = 0;
             for (int i = 0; i < v3_cpp_obj(controller)->get_parameter_count(controller); ++i)
             {
@@ -294,24 +295,38 @@ int main(int argc, char **argv)
                 char title[129]{};
                 for (int j = 0; j < 128 && info.title[j]; ++j)
                     title[j] = char(info.title[j]);
+                if (std::strcmp(title, duskverb::paramDesc(duskverb::Algorithm).name) == 0) algorithmId = info.param_id;
+                if (std::strcmp(title, duskverb::paramDesc(duskverb::Freeze).name) == 0) freezeId = info.param_id;
                 for (const auto& d : duskverb::paramTable())
                     if (std::strcmp(title, d.name) == 0)
                     {
                         char units[129]{};
                         for (int j = 0; j < 128 && info.units[j]; ++j) units[j] = char(info.units[j]);
-                        check(std::strcmp(units, duskverb::hasSkew(d) ? "" : d.unit) == 0,
-                              "host units match physical versus normalized parameter domain");
+                        // Custom text already contains its unit. VST3 hosts append
+                        // this metadata, so only non-custom physical text uses it.
+                        const bool customText = d.enumLabels == nullptr;
+                        check(std::strcmp(units, customText || duskverb::hasSkew(d) ? "" : d.unit) == 0,
+                              "host units avoid duplicating custom value-text units");
                         ++checkedUnits;
                     }
                 if (std::strcmp(title, "Dry/Wet") == 0)
                 {
                     parameter.id = info.param_id;
                     foundMix = true;
+                    v3_str_128 formatted{};
+                    check(v3_cpp_obj(controller)->get_parameter_string_for_value(controller, info.param_id, 0.25,
+                                                                                 formatted) == V3_OK,
+                          "host receives custom mix value text");
+                    char text[129]{};
+                    for (int j = 0; j < 128 && formatted[j]; ++j) text[j] = char(formatted[j]);
+                    check(std::strcmp(text, "25.0%") == 0,
+                          "host mix value text includes exactly one percentage unit");
                 }
             }
             check(foundMix, "mix parameter enumerated");
             check(checkedUnits == duskverb::kNumParams, "all parameter unit metadata checked");
-            check(programSteps == 19, "twenty host factory programs enumerated");
+            check(programSteps == static_cast<int>(duskverb::dv2FactoryPresets().size()) - 1,
+                  "every factory program enumerated");
             v3_cpp_obj(controller)->set_parameter_normalised(controller, programId, 2.0 / programSteps);
             StateStream saved;
             check(v3_cpp_obj(component)->get_state(component, saved.handle()) == V3_OK,
@@ -364,8 +379,9 @@ int main(int argc, char **argv)
                 check(v3_cpp_obj(processor)->setup_processing(processor, &setup) == V3_OK,
                       "valid repeated setup remains supported");
                 v3_cpp_obj(component)->set_active(component, true);
-                check(v3_cpp_obj(processor)->get_tail_samples(processor) == 30u * 48000u,
-                      "active processor reports the JUCE build's 30-second tail");
+                check(v3_cpp_obj(processor)->get_tail_samples(processor) >= 30u * 48000u &&
+                          v3_cpp_obj(processor)->get_tail_samples(processor) < 0x80000000u,
+                      "active processor reports a conservative finite tail");
                 v3_cpp_obj(processor)->set_processing(processor, true);
                 float signal[512]{}, l[512]{}, r[512]{};
                 float *inputs[] = {signal, signal};
@@ -451,6 +467,23 @@ int main(int argc, char **argv)
                     check(matches, "queued program restores complete controller parameter values and identity");
                     check(outParams.attemptedWrites == 0, "queued recall does not create automation edits");
                 }
+                // Exercise the actual wrapper's tail sentinel after host automation.
+                data.nframes = 512;
+                ParamQueue tailParameter;
+                inParams.parameter = &tailParameter;
+                tailParameter.id = algorithmId;
+                tailParameter.value = 10.0 / duskverb::paramDesc(duskverb::Algorithm).max;
+                check(v3_cpp_obj(processor)->process(processor, &data) == V3_OK, "VST3 engine automation arrives");
+                tailParameter.id = freezeId;
+                tailParameter.value = 1.0;
+                for (int b = 0; b < 20; ++b)
+                    check(v3_cpp_obj(processor)->process(processor, &data) == V3_OK, "frozen VST3 renders");
+                check(v3_cpp_obj(processor)->get_tail_samples(processor) == 0xffffffffu,
+                      "VST3 exposes the infinite frozen-tail sentinel");
+                tailParameter.value = 0.0;
+                check(v3_cpp_obj(processor)->process(processor, &data) == V3_OK, "unfrozen VST3 renders");
+                check(v3_cpp_obj(processor)->get_tail_samples(processor) < 0x80000000u,
+                      "VST3 returns to a finite tail after unfreezing");
                 v3_cpp_obj(processor)->set_processing(processor, false);
                 v3_cpp_obj(component)->set_active(component, false);
             }

@@ -352,7 +352,7 @@ void testBritish18dBHPF()
 // Tube EQ Interaction Tests
 //==============================================================================
 
-void testPultecBoostOnly()
+void testTubeEqBoostOnly()
 {
     // Boost at 60Hz, no atten: should produce a peak centered at 60Hz
     BiquadCoeffs peak;
@@ -364,7 +364,7 @@ void testPultecBoostOnly()
     check("Tube LF boost flat at 1kHz", gainToDb(peak.getMagnitudeForFrequency(1000, 44100)), 0.0, 0.5);
 }
 
-void testPultecAttenOnly()
+void testTubeEqAttenOnly()
 {
     // Atten at 60Hz, no boost: should produce a low shelf cut
     BiquadCoeffs dip;
@@ -377,7 +377,7 @@ void testPultecAttenOnly()
     check("Tube LF atten cuts below freq", mag20 < -3.0, true);
 }
 
-void testPultecBoostAttenInteraction()
+void testTubeEqBoostAttenInteraction()
 {
     // Classic vintage trick: boost AND atten at same frequency
     // Should produce: peak at 60Hz + dip below 60Hz
@@ -516,9 +516,9 @@ int main()
     testBritish18dBHPF();
 
     std::cout << "\n--- Tube EQ Interaction ---" << std::endl;
-    testPultecBoostOnly();
-    testPultecAttenOnly();
-    testPultecBoostAttenInteraction();
+    testTubeEqBoostOnly();
+    testTubeEqAttenOnly();
+    testTubeEqBoostAttenInteraction();
 
     std::cout << "\n--- Dynamic EQ ---" << std::endl;
     testDynamicGainReduction();

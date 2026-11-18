@@ -4,16 +4,15 @@
 // (~/.config/DuskAudio/FourKEQ2/presets/*.4kpreset), framework-free so the
 // tests can read what the editor writes.
 //
-// key=value lines. format_version 4 stores each band and filter in Hz under
-// lf_hz..hf_hz, hpf_hz and lpf_hz, or, for one following its legacy dial
-// (FourKEQBandFrequency.hpp), the dial position under lf_freq..hf_freq, or
-// hpf_freq / lpf_freq. Version 2 and the unversioned files before it stored
-// every band and filter as a dial position: raw (frequency_domain=control_hz,
-// or no domain line), or as the gain-dependent frequency the pre-#288 read-out
-// showed (effective_hz). Those load onto the legacy dial they meant, so they
-// play what they played. A filter's dial position is stored as its design
-// frequency when the domain is effective_hz, as every version since 2 writes
-// it.
+// key=value lines: format_version 2, then every sound-shaping parameter
+// (fkIsPresetParam) under its parameter key. The band and filter frequency
+// parameters are positions on the console's printed dial. A file states each
+// as the frequency that position plays at the file's own mode, gain and shape
+// (frequency_domain=effective_hz, FourKEQDSP::calibratedEqFrequency and
+// calibratedFilterFrequency), and reading maps it back onto the dial through
+// their inverses. With frequency_domain=control_hz, or no domain line (the
+// unversioned files before version 2), a file states the dial positions
+// themselves. These are the files 4K EQ 2 1.0.5 reads and writes.
 
 #pragma once
 
@@ -28,12 +27,10 @@
 #include <sstream>
 #include <string>
 
-#include "FourKEQBandFrequency.hpp"
 #include "FourKEQDSP.hpp"
 #include "FourKEQParams.hpp"
 
-static constexpr int kFourKUserPresetFormatVersion = 4;
-static constexpr int kFourKLegacyUserPresetFormatVersion = 2;
+static constexpr int kFourKUserPresetFormatVersion = 2;
 
 // Clamp to range and quantise the discrete parameters exactly the way the
 // DSP shell reads them, so the cached value can never disagree with what
@@ -51,11 +48,81 @@ inline float fkNormalizeParamValue(uint32_t idx, float v) noexcept
         // disagree with this cache about which side a boundary value took.
         return v >= 0.5f ? 1.0f : 0.0f;
     case kOversampling:
-    case kLegacyDialBands:
-    case kLegacyDialFilters:
         return std::round(v);
     default:
         return v;
+    }
+}
+
+// The band and filter frequency parameters: dial positions, which a file
+// states in its frequency domain.
+constexpr bool fkIsFrequencyParam(uint32_t paramId)
+{
+    switch (paramId)
+    {
+    case kHpfFreq: case kLpfFreq:
+    case kLfFreq: case kLmFreq: case kHmFreq: case kHfFreq:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// The frequency dial position `dial` of frequency parameter paramId plays,
+// by the measured law, at the mode, gain and shape in state.
+inline float fkCalibratedFrequency(uint32_t paramId, float dial, const float* state) noexcept
+{
+    using duskaudio::FourKEQDSP;
+    const bool black = state[kEqType] > 0.5f;
+    switch (paramId)
+    {
+    case kHpfFreq:
+        return FourKEQDSP::calibratedFilterFrequency(dial, true, black);
+    case kLpfFreq:
+        return FourKEQDSP::calibratedFilterFrequency(dial, false, black);
+    case kLfFreq:
+        return FourKEQDSP::calibratedEqFrequency(
+            dial, state[kLfGain], FourKEQDSP::Band::LF, black, state[kLfBell] > 0.5f);
+    case kLmFreq:
+        return FourKEQDSP::calibratedEqFrequency(
+            dial, state[kLmGain], FourKEQDSP::Band::LM, black, true);
+    case kHmFreq:
+        return FourKEQDSP::calibratedEqFrequency(
+            dial, state[kHmGain], FourKEQDSP::Band::HM, black, true);
+    case kHfFreq:
+        return FourKEQDSP::calibratedEqFrequency(
+            dial, state[kHfGain], FourKEQDSP::Band::HF, black, state[kHfBell] > 0.5f);
+    default:
+        return dial;
+    }
+}
+
+// Inverse of fkCalibratedFrequency: the dial position that plays `target`,
+// clamped to the dial's ends. The same core inverse factory presets use.
+inline float fkControlForCalibratedFrequency(uint32_t paramId, float target, const float* state) noexcept
+{
+    using duskaudio::FourKEQDSP;
+    const bool black = state[kEqType] > 0.5f;
+    switch (paramId)
+    {
+    case kHpfFreq:
+        return FourKEQDSP::controlForCalibratedFilterFrequency(target, true, black);
+    case kLpfFreq:
+        return FourKEQDSP::controlForCalibratedFilterFrequency(target, false, black);
+    case kLfFreq:
+        return FourKEQDSP::controlForCalibratedEqFrequency(
+            target, state[kLfGain], FourKEQDSP::Band::LF, black, state[kLfBell] > 0.5f);
+    case kLmFreq:
+        return FourKEQDSP::controlForCalibratedEqFrequency(
+            target, state[kLmGain], FourKEQDSP::Band::LM, black, true);
+    case kHmFreq:
+        return FourKEQDSP::controlForCalibratedEqFrequency(
+            target, state[kHmGain], FourKEQDSP::Band::HM, black, true);
+    case kHfFreq:
+        return FourKEQDSP::controlForCalibratedEqFrequency(
+            target, state[kHfGain], FourKEQDSP::Band::HF, black, state[kHfBell] > 0.5f);
+    default:
+        return target;
     }
 }
 
@@ -64,7 +131,7 @@ inline float fkNormalizeParamValue(uint32_t idx, float v) noexcept
 // yields NaN/inf for "nan"/"1e999", all of which would reach the DSP through
 // setP(); require the whole field to be one finite float. Range clamping is
 // done after the file's frequency domain is known: effective LPF values can
-// legitimately exceed the legacy host parameter's 15.201 kHz end stop.
+// legitimately exceed the host parameter's 15.201 kHz end stop.
 //
 // Locale-independent on purpose, in both directions (the writer imbues the
 // same classic locale): plugin hosts do call setlocale(), and a comma-decimal
@@ -86,17 +153,16 @@ inline bool fkParsePresetNumber(const std::string& line, std::size_t valueStart,
     return true;
 }
 
-// The returned array is in the host-parameter domain, kLegacyDialBands
-// included, so preset identity and the loader see one representation.
+// Reads version 2 files and the unversioned files before them. The returned
+// array is always in the host-parameter domain (dial positions), so preset
+// identity and setP() see one representation.
 inline bool fkReadUserPreset(std::istream& in, std::string& name, float (&out)[kParamCount])
 {
-    using duskaudio::FourKEQDSP;
     for (uint32_t i = 0; i < kParamCount; ++i)
         out[i] = kFourKParams[i].def;
     bool present[kParamCount] = {};
     bool effectiveHz = false;
     bool supportedDomain = true;
-    int version = 0;
 
     std::string line;
     while (std::getline(in, line))
@@ -115,17 +181,14 @@ inline bool fkReadUserPreset(std::istream& in, std::string& name, float (&out)[k
         }
         if (key == "format_version")
         {
-            float v = 0.0f;
-            if (!fkParsePresetNumber(line, eq + 1, v)
-                || (v != (float)kFourKUserPresetFormatVersion
-                    && v != (float)kFourKLegacyUserPresetFormatVersion))
+            float version = 0.0f;
+            if (!fkParsePresetNumber(line, eq + 1, version)
+                || version != (float)kFourKUserPresetFormatVersion)
                 return false;
-            version = (int)v;
             continue;
         }
         for (uint32_t i = 0; i < kParamCount; ++i)
-            if ((fkIsPresetParam(i) || fkBandOfLegacyDialParam(i) >= 0 || fkFilterOfLegacyDialParam(i) >= 0)
-                && key == kFourKParams[i].key)
+            if (fkIsPresetParam(i) && key == kFourKParams[i].key)
             {
                 float v = 0.0f;
                 if (!fkParsePresetNumber(line, eq + 1, v))
@@ -137,83 +200,30 @@ inline bool fkReadUserPreset(std::istream& in, std::string& name, float (&out)[k
     }
     if (!supportedDomain)
         return false;
-    const bool legacyFile = version < kFourKUserPresetFormatVersion;
 
-    // Mode, gain and shape first: they select the inverse laws below,
-    // whatever order the file lists them in.
+    // Normalise mode/gain/shape first: those values select the inverse
+    // frequency law used below, regardless of their order in the file.
     for (uint32_t i = 0; i < kParamCount; ++i)
-        if (present[i] && fkFilterOfHzParam(i) < 0 && fkFilterOfLegacyDialParam(i) < 0
-            && fkBandOfHzParam(i) < 0 && fkBandOfLegacyDialParam(i) < 0)
+        if (present[i] && !fkIsFrequencyParam(i))
             out[i] = fkNormalizeParamValue(i, out[i]);
-
-    const bool black = out[kEqType] > 0.5f;
-    uint32_t filterBits = 0;
-    for (int f = 0; f < 2; ++f)
-    {
-        const FourKEQFilterIds& ids = kFourKEQFilters[f];
-        if (legacyFile)
-            present[ids.hz] = false;
-        if (present[ids.hz])
-            out[ids.hz] = fkNormalizeParamValue(ids.hz, out[ids.hz]);
-        else if (present[ids.legacyDial])
-        {
-            const float v = out[ids.legacyDial];
-            out[ids.legacyDial] = fkNormalizeParamValue(ids.legacyDial, effectiveHz
-                ? FourKEQDSP::controlForCalibratedFilterFrequency(v, ids.highPass, black)
-                : v);
-            filterBits |= 1u << f;
-        }
-    }
-    out[kLegacyDialFilters] = (float)filterBits;
-
-    uint32_t bits = 0;
-    for (int b = 0; b < 4; ++b)
-    {
-        const FourKEQBandIds& ids = kFourKEQBands[b];
-        if (legacyFile)
-            present[ids.hz] = false;
-        if (present[ids.hz])
-            out[ids.hz] = fkNormalizeParamValue(ids.hz, out[ids.hz]);
-        else if (present[ids.legacyDial])
-        {
-            float dial = out[ids.legacyDial];
-            if (legacyFile && effectiveHz)
-                dial = FourKEQDSP::controlForCalibratedEqFrequency(
-                    dial, out[ids.gain], ids.band, black, fkBandIsBell(out, b));
-            out[ids.legacyDial] = fkNormalizeParamValue(ids.legacyDial, dial);
-            bits |= 1u << b;
-        }
-    }
-    out[kLegacyDialBands] = (float)bits;
+    for (uint32_t i = 0; i < kParamCount; ++i)
+        if (present[i] && fkIsFrequencyParam(i))
+            out[i] = fkNormalizeParamValue(
+                i, effectiveHz ? fkControlForCalibratedFrequency(i, out[i], out)
+                               : out[i]);
     return true;
 }
 
-// values must carry the plugin's kLegacyDialBands and kLegacyDialFilters.
+// values: every parameter in the host-parameter domain.
 inline void fkWriteUserPreset(std::ostream& out, const float* values)
 {
-    using duskaudio::FourKEQDSP;
     out.imbue(std::locale::classic());
     out << "format_version=" << kFourKUserPresetFormatVersion << '\n';
     out << "frequency_domain=effective_hz\n";
     out << std::setprecision(std::numeric_limits<float>::max_digits10);
-    const bool black = values[kEqType] > 0.5f;
     for (uint32_t i = 0; i < kParamCount; ++i)
-    {
-        if (!fkIsPresetParam(i))
-            continue;
-        if (const int b = fkBandOfHzParam(i); b >= 0 && fkBandFollowsLegacyDial(values, b))
-        {
-            const uint32_t dial = kFourKEQBands[b].legacyDial;
-            out << kFourKParams[dial].key << '=' << values[dial] << '\n';
-            continue;
-        }
-        if (const int f = fkFilterOfHzParam(i); f >= 0 && fkFilterFollowsLegacyDial(values, f))
-        {
-            const FourKEQFilterIds& ids = kFourKEQFilters[f];
-            out << kFourKParams[ids.legacyDial].key << '='
-                << FourKEQDSP::calibratedFilterFrequency(values[ids.legacyDial], ids.highPass, black) << '\n';
-            continue;
-        }
-        out << kFourKParams[i].key << '=' << values[i] << '\n';
-    }
+        if (fkIsPresetParam(i))
+            out << kFourKParams[i].key << '='
+                << (fkIsFrequencyParam(i) ? fkCalibratedFrequency(i, values[i], values) : values[i])
+                << '\n';
 }

@@ -116,6 +116,7 @@
         #define WIN32_LEAN_AND_MEAN 1
     #endif
     #include <windows.h>
+    #include <shellapi.h>
 #else
     #define DUSK_CRASHLOG_WINDOWS 0
     #include <cerrno>
@@ -1229,17 +1230,17 @@ namespace DuskCrashLog
         std::error_code ec;
         std::filesystem::create_directories (folder, ec);
 
+        // Only ever hand the opener a directory. If something else sits at this
+        // path, "opening" it would launch whatever the file association says.
+        if (! std::filesystem::is_directory (folder, ec))
+            return;
+
     #if DUSK_CRASHLOG_WINDOWS
-        std::wstring command = L"explorer.exe \"" + folder.native() + L"\"";
-        STARTUPINFOW startup {};
-        startup.cb = sizeof (startup);
-        PROCESS_INFORMATION process {};
-        if (::CreateProcessW (nullptr, command.data(), nullptr, nullptr, FALSE, 0,
-                              nullptr, nullptr, &startup, &process) != 0)
-        {
-            ::CloseHandle (process.hThread);
-            ::CloseHandle (process.hProcess);
-        }
+        // Let the shell resolve the folder handler. A bare "explorer.exe" passed
+        // to CreateProcessW is searched for in the host's directory and current
+        // directory before %WINDIR%, so a planted explorer.exe in a project
+        // folder would run instead.
+        ::ShellExecuteW (nullptr, L"open", folder.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     #else
         const std::string path = folder.native();
       #if defined(__APPLE__)

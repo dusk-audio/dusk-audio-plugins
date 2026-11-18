@@ -148,7 +148,7 @@ struct FilterCalibration
 // `q_control = [q_frequency[10]] * 21` fallback for the four bands that have no
 // Q sweep (which is why exactly 8 arrays here are entirely constant).
 //
-// The duplication is in the REFERENCE. The UAD/LUNA parameter law flattens over
+// The duplication is in the REFERENCE. The reference plugin's parameter law flattens over
 // its top 1/20th, so positions 19/20 and 20/20 return the same response, for
 // frequency, gain and Q alike. One property of the reference explains all 64
 // arrays at once. FourKEQFilterCalibration.inc shows the same signature on the
@@ -631,6 +631,21 @@ float FourKEQDSP::calibratedEqQ(float q, float hz, float gainDb, Band band,
     const float atGain = interpolateAnchors(
         std::abs(gainDb), kEqGainControls, calibration.qAtGain);
     return atFrequency * (atControl / centerQ) * (atGain / centerQ);
+}
+
+static_assert(sizeof(kEqQControls) / sizeof(kEqQControls[0]) == FourKEQDSP::kControlAnchorCount
+                  && sizeof(kEqFrequencyControls[0]) / sizeof(kEqFrequencyControls[0][0])
+                         == FourKEQDSP::kControlAnchorCount,
+              "one anchor per k/20 of the travel");
+
+const float* FourKEQDSP::frequencyControlAnchors(Band band) noexcept
+{
+    return kEqFrequencyControls[static_cast<int>(band)];
+}
+
+const float* FourKEQDSP::qControlAnchors() noexcept
+{
+    return kEqQControls;
 }
 
 //==============================================================================
@@ -1208,6 +1223,27 @@ int FourKEQDSP::chooseFactor(double baseSampleRate, int mode) noexcept
     return req < cap ? req : cap;
 }
 
+// The delay the oversampler's up/down round trip renders, in base-rate
+// samples, at a factor chooseFactor gives (1, 2 or 4). Oversampler::latency()
+// adds up the centre-tap delays of its halfband stages (kStageALatency, 23
+// base samples, for the outer stage and 3.5 more for the inner one at 4x), but
+// each decimator keeps the second sample of its pair, one sample of its own
+// rate after the first. So the round trip renders (factor - 1) / factor of a
+// base sample less: 22.5 at 2x, 25.75 at 4x. Built from the oversampler's
+// constants, not an instance, as processBlock() calls this when the factor
+// changes; FourKEQDSPTests measures the delay and holds the report to it.
+static constexpr float renderedOversamplingDelay(int factor) noexcept
+{
+    const float counted = factor == 4 ? Oversampler::kStageALatency + 3.5f
+                        : factor == 2 ? Oversampler::kStageALatency : 0.0f;
+    return factor > 1 ? counted - (float)(factor - 1) / (float)factor : 0.0f;
+}
+
+int FourKEQDSP::latencySamplesFor(double baseSampleRate, int oversamplingMode) noexcept
+{
+    return (int)std::lround(renderedOversamplingDelay(chooseFactor(baseSampleRate, oversamplingMode)));
+}
+
 //==============================================================================
 // Lifecycle
 //==============================================================================
@@ -1219,11 +1255,12 @@ void FourKEQDSP::prepare(double sampleRate, int maxBlockSize)
     scratchL.assign((size_t)maxBlock, 0.0f);
     scratchR.assign((size_t)maxBlock, 0.0f);
 
-    curFactor = chooseFactor(baseSampleRate, (int)(pOversampling.load(R) + 0.5f));
+    const int mode = (int)(pOversampling.load(R) + 0.5f);
+    curFactor = chooseFactor(baseSampleRate, mode);
     const double osRate = baseSampleRate * curFactor;
 
     for (auto& o : os) { o.setFactor(curFactor); o.reset(); }
-    reportedLatency.store((int)std::lround(os[0].latency()), std::memory_order_relaxed);
+    reportedLatency.store(latencySamplesFor(baseSampleRate, mode), std::memory_order_relaxed);
 
     consoleSat.setSampleRate(osRate);
     consoleSat.setNoiseEnabled(false); // Measured EQ/filter path preserves digital silence.
@@ -1398,7 +1435,8 @@ void FourKEQDSP::processChunk(const float* const* inputs, float* const* outputs,
                               int nCh, int nS) noexcept
 {
     // Oversampling factor may change with sample rate / user param at block rate.
-    const int wantFactor = chooseFactor(baseSampleRate, (int)(pOversampling.load(R) + 0.5f));
+    const int mode = (int)(pOversampling.load(R) + 0.5f);
+    const int wantFactor = chooseFactor(baseSampleRate, mode);
     if (wantFactor != curFactor)
     {
         curFactor = wantFactor;
@@ -1406,7 +1444,7 @@ void FourKEQDSP::processChunk(const float* const* inputs, float* const* outputs,
         for (auto& c : ch) c.reset();
         consoleSat.setSampleRate(baseSampleRate * curFactor);
         consoleSat.reset();
-        reportedLatency.store((int)std::lround(os[0].latency()), std::memory_order_relaxed);
+        reportedLatency.store(latencySamplesFor(baseSampleRate, mode), std::memory_order_relaxed);
     }
     const double osRate = baseSampleRate * curFactor;
 

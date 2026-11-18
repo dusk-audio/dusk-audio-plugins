@@ -153,11 +153,12 @@ public:
             values[i].store(d, std::memory_order_relaxed);
             dsp.setParameter((int)i, d);
         }
-        // Report the default-state latency from construction so a host that
-        // queries getLatency() before activate() (e.g. at plugin scan/load)
-        // gets the correct 2x value (12 samples) rather than 0 — otherwise PDC
-        // is misaligned until the first activate(). (E1)
-        updateLatency();
+        // Report the latency from construction so a host that queries
+        // getLatency() before activate() (e.g. at plugin scan/load) gets it
+        // rather than 0. It is the same at every oversampling factor (the core
+        // pads the shorter paths), so this is the only value ever reported and an
+        // Oversampling change never asks the host to restart the plugin. (E1)
+        setLatency((uint32_t)msynth::MultiSynthDSP::kLatencySamples);
     }
 
     // Same-process accessors for the Phase-4 UI bridge (MultiSynthAccess.hpp).
@@ -233,7 +234,6 @@ protected:
         if (index >= kNumCoreParams) return; // output params are not settable
         values[index].store(value, std::memory_order_relaxed);
         dsp.setParameter((int)index, value);
-        if (index == kParamOversampling) updateLatency(); // E1
     }
 
     //--- programs (factory presets; count = kNumFactoryPresets) -----------------
@@ -241,6 +241,56 @@ protected:
     {
         if (index < (uint32_t)kNumFactoryPresets)
             programName = kFactoryPresets[index].name;
+    }
+
+    //--- remote control pages (CLAP hosts' hardware controls) ------------------
+    // A controller lands on page 0, so it holds what a player reaches for.
+    // Without pages, hosts that map knobs to the first eight parameters put Mode
+    // on knob 1 and Oversampling on knob 6: a nudge switched the engine (which
+    // resets every voice) or the oversampling. Neither is on any page.
+    bool initRemoteControlPage(uint32_t index, RemoteControlPage& page) override
+    {
+        struct PageDef { const char* section; const char* name; uint32_t params[kRemoteControlsPerPage]; };
+        static const PageDef kPages[] = {
+            { "Main", "Performance",
+              { kParamFilterCutoff, kParamFilterRes, kParamFilterEnvAmt, kParamAmpA,
+                kParamAmpD, kParamAmpS, kParamAmpR, kParamMasterVol } },
+            { "Oscillators", "Oscillators",
+              { kParamOsc1Wave, kParamOsc1Level, kParamOsc1PW, kParamOsc2Wave,
+                kParamOsc2Level, kParamOsc2Detune, kParamSubLevel, kParamNoiseLevel } },
+            { "Filter", "Filter",
+              { kParamFilterCutoff, kParamFilterRes, kParamFilterHP, kParamFilterEnvAmt,
+                kParamFiltA, kParamFiltD, kParamFiltS, kParamFiltR } },
+            { "Amp", "Amp",
+              { kParamAmpA, kParamAmpD, kParamAmpS, kParamAmpR,
+                kParamVelSens, kParamAnalogAmt, kParamVintage, kParamMasterVol } },
+            { "Modulation", "LFOs",
+              { kParamLfo1Rate, kParamLfo1Shape, kParamLfo1Fade, kParamLfo2Rate,
+                kParamLfo2Shape, kParamLfo2Fade, kParamModAmt0, kParamModAmt1 } },
+            { "Voice", "Voice",
+              { kParamPortaTime, kParamLegato, kParamUnisonVoices, kParamUnisonDetune,
+                kParamUnisonSpread, kParamStereoWidth, kParamMasterPan, kParamMasterTune } },
+            { "Arp", "Arp",
+              { kParamArpOn, kParamArpMode, kParamArpOctave, kParamArpRate,
+                kParamArpGate, kParamArpSwing, kParamArpLatch, kParamArpVelMode } },
+            { "Effects", "Effects",
+              { kParamDriveAmt, kParamDriveMix, kParamChorusMix, kParamDelayTime,
+                kParamDelayFB, kParamDelayMix, kParamReverbDecay, kParamReverbMix } },
+            { "Prism", "Operators",
+              { kParamOp1Level, kParamOp2Level, kParamOp3Level, kParamOp4Level,
+                kParamOp1Ratio, kParamOp2Ratio, kParamOp3Ratio, kParamOp4Ratio } },
+            { "Acid", "Acid",
+              { kParamFilterCutoff, kParamFilterRes, kParamFilterEnvAmt, kParamAmpD,
+                kParamDriveAmt, kParamAcidAccentAmt, kParamAcidSlideTime, kParamArpRate } },
+        };
+        if (index >= sizeof(kPages) / sizeof(kPages[0]))
+            return false;
+        const PageDef& def = kPages[index];
+        page.section = def.section;
+        page.name = def.name;
+        for (uint32_t i = 0; i < kRemoteControlsPerPage; ++i)
+            page.parameters[i] = def.params[i];
+        return true;
     }
 
     // Two threads can ask for a program: the HOST (main thread, this override)
@@ -274,7 +324,6 @@ protected:
     {
         dsp.prepare(getSampleRate(), (int)getBufferSize());
         pushAllParams();
-        updateLatency(); // E1
         haveLastTransportFrame = false; // S3: no stale frame across a re-activate
     }
 
@@ -311,26 +360,29 @@ protected:
         {
             // ---- PER-WRAPPER BBT BEAT SEMANTICS (S1) -------------------------
             // DAF's BarBeatTick struct is a copy of jack_position_t and its doc
-            // (DafDetails.hpp:987-1000) only constrains beat <= beatsPerBar;
+            // (DafDetails.hpp, BarBeatTick) only constrains beat <= beatsPerBar;
             // it never states the unit of a "beat". The wrappers disagree:
             //
             //   VST3, VST2, LV2, JACK  ->  beat/tick in TIME-SIGNATURE
             //                              DENOMINATOR units (in 6/8 a beat is an
             //                              eighth note, beat runs 1..6).
-            //     DafPluginVST3.cpp:1422-1429  ppqPerBar = num*4/denom, then
-            //       barBeats = fmod(ppq, ppqPerBar)/ppqPerBar * num  -> denominator
-            //     DafPluginVST2.cpp:1036-1043  identical arithmetic
-            //     DafPluginLV2.cpp:460-464     pass-through of time:barBeat,
+            //     DafPluginVST3.cpp, DafPluginVST2.cpp  fillBarBeatTickFromQuarters
+            //       (DafPluginInternal.hpp): the host's quarter-note position over
+            //       bars of num*4/denom quarter notes, counted in denominator beats.
+            //       Before DAF #114 the bar length was an int (a 7/8 bar was 3
+            //       quarter notes long), so the arp ran 7/6 fast in VST2/VST3 7/8,
+            //       and 3/16 divided by zero.
+            //     DafPluginLV2.cpp             pass-through of time:barBeat,
             //       which LV2 defines in time:beatUnit (denominator) units
-            //     DafPluginJACK.cpp:394-396    verbatim jack_position_t copy
+            //     DafPluginJACK.cpp            verbatim jack_position_t copy
             //
             //   CLAP, AudioUnit        ->  beat/tick in QUARTER NOTES, merely
             //                              wrapped modulo the NUMERATOR.
-            //     DafPluginCLAP.cpp:930-936    clapBeats = song_pos_beats >> 31,
+            //     DafPluginCLAP.cpp            clapBeats = song_pos_beats >> 31,
             //       and CLAP defines song_pos_beats in quarter notes
-            //       (clap/events.h:219, fixedpoint.h:12 CLAP_BEATTIME_FACTOR).
+            //       (clap/events.h, fixedpoint.h CLAP_BEATTIME_FACTOR).
             //       beat = clapBeats % tsig_num + 1; tick = frac(quarter)*1920.
-            //     DafPluginAU.cpp:2334-2339    same shape, on the AU quarter-
+            //     DafPluginAU.cpp              same shape, on the AU quarter-
             //       note musical timeline divided by the numerator.
             //
             // So the raw sum below is denominator-beats on the first group and
@@ -352,9 +404,9 @@ protected:
         }
         else
         {
-            // No BBT, OR BBT with no sub-beat tick resolution (ticksPerBeat <= 0
-            // — only JACK can report that, DafPluginJACK.cpp:392 sets valid
-            // from the BBT flag alone while :408 copies ticks_per_beat unguarded).
+            // No BBT, OR BBT with no sub-beat tick resolution (ticksPerBeat <= 0:
+            // only JACK can report that, as DafPluginJACK.cpp sets valid from the
+            // BBT flag alone and copies ticks_per_beat unguarded).
             // In the latter case BBT is block-constant within a beat, so songBeat
             // would jump backward at each buffer start and machine-gun the arp/
             // acid backward-jump (loop-wrap) detector. Derive songBeat from the
@@ -362,22 +414,22 @@ protected:
             //
             // tp.frame is NOT a dependable song-position counter on every wrapper
             // (S3):
-            //   VST3 (DafPluginVST3.cpp:1409-1412) has no else branch — when
+            //   VST3 (DafPluginVST3.cpp, process()) has no else branch: when
             //     the host sets neither PROJECT_TIME_VALID nor CONT_TIME_VALID,
             //     fTimePosition.frame keeps its PREVIOUS value forever (0 until
             //     the first valid block).
-            //   CLAP (DafPluginCLAP.cpp:916) uses process->steady_time, which
-            //     is pinned to 0 on every block when the host reports -1
-            //     ("not available", clap/process.h:36).
+            //   CLAP (DafPluginCLAP.cpp) takes the transport's seconds timeline,
+            //     or its beats at the current tempo, and reports 0 on every
+            //     block when the host gives neither.
             // Either way the counter FREEZES, so songBeat is a constant. Reporting
             // that as a valid host position pins the arp/acid grid to step 0 for as
             // long as the transport rolls. Detect the freeze and report invalid
             // instead, which makes the core free-run on its own clock — a stable
             // wrong phase beats a stuck one.
             //
-            // (CLAP's steady_time also keeps counting while the transport is
-            // STOPPED, which is harmless here: the core only phase-locks while
-            // tp.playing, see dsp.setTempo above and processBlock.)
+            // (What a STOPPED transport reports does not matter here: the core
+            // only phase-locks while tp.playing, see dsp.setTempo above and
+            // processBlock.)
             const int64_t frame = tp.frame;
             const bool frozen = tp.playing && frames > 0
                              && haveLastTransportFrame && frame == lastTransportFrame;
@@ -443,7 +495,6 @@ private:
         // Must come after the writes above so the snapshot that consumes the flag
         // already sees the whole preset.
         dsp.notifyProgramChange();
-        updateLatency(); // a preset may change oversampling (E1)
     }
 
     // Audio-thread retry for a program request that lost the programBusy race.
@@ -467,42 +518,17 @@ private:
             dsp.setParameter((int)i, values[i].load(std::memory_order_relaxed));
     }
 
-    // E1: report the oversampling group delay to the host so it can compensate.
-    // The oversampling param is 0=1x, 1=2x, 2=4x. The added latency (in host
-    // samples) is the halfband decimator group delay, measured by cross-
-    // correlating the same note-onset rendered at each factor (see the core
-    // Decimator: downA = HalfbandFIR<47,12> for 2x<->1x, downB = <15,4> for
-    // 4x<->2x). Those group delays are rate-independent in samples:
-    //   1x -> 0        (oversampling bypassed, no filter)
-    //   2x -> 12       (downA only: 12 host samples)
-    //   4x -> 14       (downA 12 + downB 4-at-2x = 2 host samples)
-    // Values verified by measurement; changing the halfband taps requires
-    // re-measuring these three ints.
-    static uint32_t latencyForOsParam(float osParamValue) noexcept
-    {
-        const int os = (int)(osParamValue + 0.5f);
-        if (os >= 2) return 14u; // 4x
-        if (os == 1) return 12u; // 2x
-        return 0u;               // 1x
-    }
-
-    void updateLatency()
-    {
-        setLatency(latencyForOsParam(values[kParamOversampling].load(std::memory_order_relaxed)));
-    }
-
     // MIDI program change (0xC0) -> factory preset, through the SAME loadProgram()
-    // the host's own program change uses, so the preset rows, the smoothing snap
-    // (notifyProgramChange) and the reported latency all stay consistent with a
-    // host-driven change. Out-of-range programs are ignored (54 factory presets;
-    // the MIDI data byte reaches 127).
+    // the host's own program change uses, so the preset rows and the smoothing snap
+    // (notifyProgramChange) stay consistent with a host-driven change.
+    // Out-of-range programs are ignored (54 factory presets; the MIDI data byte
+    // reaches 127).
     //
     // RT AUDIT — this is called from handleMidi on the audio thread. loadProgram()
     // does: kNumCoreParams + kBaselineRows + preset rows calls to setParameterValue,
-    // each a pair of relaxed atomic stores (values[] and the core's params[]); one
-    // dsp.notifyProgramChange() (release store); and updateLatency(), which is a
-    // plain field store in DAF (Plugin::setLatency -> pData->latency = frames). No
-    // allocation, no lock, no I/O, no host callback — RT-safe, so it runs inline
+    // each a pair of relaxed atomic stores (values[] and the core's params[]), and
+    // one dsp.notifyProgramChange() (release store). No allocation, no lock, no
+    // I/O, no host callback: RT-safe, so it runs inline
     // rather than through a pending-program atomic. Inline is also strictly better
     // for timing: run() splits the buffer at every MIDI event, so applying it here
     // lands the preset on the event's own frame instead of the next block boundary.

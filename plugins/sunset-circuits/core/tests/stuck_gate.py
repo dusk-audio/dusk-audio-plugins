@@ -8,13 +8,17 @@ Two engine-side holes caused notes to sustain indefinitely until plugin re-init:
   (b) Arp disable (arpOn 1->0) resets the arp (dropping the pending note-off) and
       processBlock stops advancing it, so the arp-triggered voice keeps sounding.
 
-The fix handles these transitions engine-side in snapshotParameters (release
-semantics, tails ring out). This gate proves the fix while also proving ordinary
-held notes are NOT killed (scenario c).
+The fix handles these transitions engine-side in snapshotParameters: the old
+path is ended (release semantics, tails ring out) and the notes still HELD are
+handed to the new path (handover_gate.py proves that half). This gate proves
+that once those keys go up, nothing is left sounding, while also proving
+ordinary held notes are NOT killed (scenario c).
 
 Scenarios (48k, 2x OS, 4 s, sustained patch ampS=1 ampR=0.3, no reverb/delay):
-  a. mode-switch : note held, setat 1.0:mode:1   -> final 1 s silent, note sounded
-  b. arp-off     : arp on, chord held, setat 1.0:arpOn:0 -> final 1 s silent
+  a. mode-switch : note held, setat 1.0:mode:1, key up at 2.5 -> carried into the
+                   new mode (loud 1.2-2.3), final 1 s silent
+  b. arp-off     : arp on, chord held, setat 1.0:arpOn:0, keys up at 2.5 -> the
+                   chord sounds (loud 1.2-2.3), final 1 s silent
   c. control     : note held, no switch          -> final 1 s LOUD (not killed)
   d. latch-off   : latched arp chord, keys released at 0.5 s (LOUD mid, latch keeps
                    playing), setat 1.5:arpLatch:0 -> final 1 s silent (pattern stops)
@@ -25,21 +29,22 @@ Scenarios (48k, 2x OS, 4 s, sustained patch ampS=1 ampR=0.3, no reverb/delay):
   f. panic+acid  : same for the Acid sequencer's latched root note, whose run gate
                    used to accept `latch` as a substitute for `held` and so kept
                    sequencing from the default C3 root after the panic.
-  g. arp on-edge : poly notes sounding, arp switched ON at 1.0 -> the voices must be
-                   released, not stranded. Note routing reads arpOn on EACH event,
-                   so the key-ups of notes started before the arp went on are
-                   delivered to the arpeggiator, which never sees those voices.
-  h. fade key-up : a key pressed AND released inside the ~12 ms mode-switch fade.
-                   The fade captures mid-fade note-ons (deferredNotes) and the
-                   commit replays them into the mode that actually arrived; the
-                   key-up has to CANCEL that capture. It used not to, so the
-                   commit re-issued a note whose note-off had already come and
-                   gone -- a voice nothing can reach (measured -16.6 dB forever).
-  i. fade CC123  : the same capture, cancelled by an All Notes Off instead of a
-                   key-up. allNotesOff cleared every held/latched set except the
-                   deferred one, so the commit handed the notes back ~12 ms after
-                   the panic (measured -16.6 dB forever).
-  j. fade CC120  : as (i) for All Sound Off, which must cancel the capture too.
+  g. arp on-edge : poly notes sounding, arp switched ON at 1.0, keys up at 2.5 ->
+                   the voices must be released, not stranded, and the arp plays
+                   the held chord until the keys go up. Note routing reads arpOn on
+                   EACH event, so the key-ups of notes started before the arp went
+                   on are delivered to the arpeggiator, which never sees those
+                   voices.
+  h. fade key-up : a key pressed AND released inside the mode-switch fade. The
+                   commit replays every HELD note into the mode that actually
+                   arrived; a key that already went up is not held and must not
+                   come back. An earlier capture list did replay it -- a voice
+                   nothing can reach (measured -16.6 dB forever).
+  i. fade CC123  : the same note, ended by an All Notes Off instead of a key-up.
+                   The panic clears the key and pedal state the replay reads, so
+                   the commit hands nothing back (an earlier capture list handed
+                   the notes back after the panic, measured -16.6 dB forever).
+  j. fade CC120  : as (i) for All Sound Off.
   k. CC120 tail  : CC123 and CC120 differ on a LONG release (ampR = 8 s). 123
                    releases -- the tail rings out, and must still be audible.
                    120 is an immediate mute -- it must be gone. Both directions
@@ -88,22 +93,29 @@ def main():
     fails = []
 
     # (a) mode-switch: Cosmos poly note held, preset jumps to Oracle (mode 1) at 1 s.
-    sr, x = render(0, 60, seconds, 2, "stuck_mode", setat="1.0:mode:1", **PATCH)
+    #     The held key carries into Oracle; its key-up at 2.5 s must end it there.
+    sr, x = render(0, 60, seconds, 2, "stuck_mode", setat="1.0:mode:1", release=2.5,
+                   **PATCH)
     a_early = window_db(x, sr, 0.0, 0.9)
+    a_mid = window_db(x, sr, 1.2, 2.3)
     a_final = window_db(x, sr, seconds - 1.0, seconds)
-    a_ok = (a_early > LOUD_DB) and (a_final < SILENT_DB)
+    a_ok = (a_early > LOUD_DB) and (a_mid > LOUD_DB) and (a_final < SILENT_DB)
     print(f"(a) mode-switch : early {a_early:6.1f} dB (>{LOUD_DB:.0f}), "
+          f"carried {a_mid:6.1f} dB (>{LOUD_DB:.0f}), "
           f"final {a_final:6.1f} dB (<{SILENT_DB:.0f})  {'PASS' if a_ok else 'FAIL'}")
     if not a_ok:
         fails.append("a")
 
-    # (b) arp-off: arp running on a held chord, arpOn 1->0 at 1 s.
+    # (b) arp-off: arp running on a held chord, arpOn 1->0 at 1 s. The held chord
+    #     keeps sounding as a chord; the key-ups at 2.5 s must end it.
     sr, x = render(0, 60, seconds, 2, "stuck_arp", arpOn=1, arpRate=3,
-                   hold="64,67", setat="1.0:arpOn:0", **PATCH)
+                   hold="64,67", setat="1.0:arpOn:0", release=2.5, **PATCH)
     b_early = window_db(x, sr, 0.0, 0.9)
+    b_mid = window_db(x, sr, 1.2, 2.3)
     b_final = window_db(x, sr, seconds - 1.0, seconds)
-    b_ok = (b_early > LOUD_DB) and (b_final < SILENT_DB)
+    b_ok = (b_early > LOUD_DB) and (b_mid > LOUD_DB) and (b_final < SILENT_DB)
     print(f"(b) arp-off     : early {b_early:6.1f} dB (>{LOUD_DB:.0f}), "
+          f"chord {b_mid:6.1f} dB (>{LOUD_DB:.0f}), "
           f"final {b_final:6.1f} dB (<{SILENT_DB:.0f})  {'PASS' if b_ok else 'FAIL'}")
     if not b_ok:
         fails.append("b")
@@ -156,31 +168,32 @@ def main():
     if not f_ok:
         fails.append("f")
 
-    # (g) arp switched ON while poly notes are sounding: the mirror of (b). The arp's
-    #     own held-set is empty (those keys went down before it was enabled), so the
-    #     correct result is silence -- the failure mode is the OLD voices droning on.
+    # (g) arp switched ON while poly notes are sounding: the mirror of (b). The
+    #     arp picks the held chord up, so it keeps playing until the keys go up at
+    #     2.5 s -- the failure mode is the OLD voices droning on after that.
     sr, x = render(0, 60, seconds, 2, "stuck_arp_on", arpRate=3, hold="64,67",
-                   setat="1.0:arpOn:1", **PATCH)
+                   setat="1.0:arpOn:1", release=2.5, **PATCH)
     g_early = window_db(x, sr, 0.0, 0.9)
+    g_mid = window_db(x, sr, 1.2, 2.3)
     g_final = window_db(x, sr, seconds - 1.0, seconds)
-    g_ok = (g_early > LOUD_DB) and (g_final < SILENT_DB)
+    g_ok = (g_early > LOUD_DB) and (g_mid > LOUD_DB) and (g_final < SILENT_DB)
     print(f"(g) arp on-edge : early {g_early:6.1f} dB (>{LOUD_DB:.0f}), "
+          f"arp {g_mid:6.1f} dB (>{LOUD_DB:.0f}), "
           f"final {g_final:6.1f} dB (<{SILENT_DB:.0f})  {'PASS' if g_ok else 'FAIL'}")
     if not g_ok:
         fails.append("g")
 
-    # --- mode-switch fade: the deferred-note capture ----------------------------
-    # Common shape: mode 0 -> 1 requested at 1.0 s (starts the ~12 ms fade), a NEW
-    # key pressed 2 ms in (captured for replay by the commit), and the event that
-    # has to cancel that capture 4 ms later, still inside the fade. The originally
-    # held note 60 is wiped by the commit either way (that is scenario (a)), so
-    # anything left in the final second is the replayed note 62 with nothing able
-    # to release it.
+    # --- mode-switch fade: what the commit replays --------------------------------
+    # Common shape: mode 0 -> 1 requested at 1.0 s (starts the fade), a NEW key
+    # pressed 2 ms in, and the event that ends it 4 ms later, still inside the
+    # fade. The originally held note 60 is replayed into the new mode with every
+    # other held note and released at 2.0 s, so anything left in the final second
+    # is note 62 replayed with nothing able to release it.
     FADE = dict(PATCH, block=64)
 
     def fade_case(tag, name, label, **events):
         sr, x = render(0, 60, seconds, 2, name, setat="1.0:mode:1",
-                       noteon="1.002:62", **events, **FADE)
+                       noteon="1.002:62", release=2.0, **events, **FADE)
         early = window_db(x, sr, 0.0, 0.9)
         final = window_db(x, sr, seconds - 1.0, seconds)
         ok = (early > LOUD_DB) and (final < SILENT_DB)

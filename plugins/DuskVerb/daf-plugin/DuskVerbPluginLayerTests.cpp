@@ -173,7 +173,7 @@ void testStateWithoutIdentity()
 
 void testProgramApply()
 {
-    const auto& presets = getFactoryPresets();
+    const auto& presets = duskverb::dv2FactoryPresets();
     checkf(duskverb::factoryPresetCount() == static_cast<int>(presets.size()),
            "the program count matches the preset table");
 
@@ -203,6 +203,19 @@ void testProgramApply()
                "preset '%s' emits 79 parameters (got %d)", preset.name, emitted);
     }
 
+    // A program hands the host Decay's reading where the preset has one (DuskVerbPresets.hpp
+    // kDecayShownByName), else its row's decay: the DuskVerb 2 recall, never the bare row.
+    for (const auto& preset : presets)
+    {
+        const float* shown = duskverb::decayShownFor(preset.name);
+        const auto& d = duskverb::paramDesc(duskverb::Decay);
+        const float want = duskverb::plainToHost(d, shown != nullptr ? *shown : preset.decay);
+        float host = -1.0f;
+        duskverb::applyFactoryPresetToHostParameters(preset,
+            [&](int index, float value) { if (index == duskverb::Decay) host = value; });
+        checkf(host == want, "preset '%s' hands the host Decay %g (got %g)", preset.name, want, host);
+    }
+
     // The 13 parameters a preset deliberately leaves alone. Emitting any of them
     // would reset the user's macro layer or post-tank gains on a preset change —
     // behaviour the JUCE build has never had.
@@ -222,13 +235,40 @@ void testProgramApply()
                "a preset apply leaves '%s' alone", id);
     }
 }
+
+// MIX LOCK's two parameters and the hold the editor's recalls apply: exactly Mix
+// and Bus Mode move over, nothing else of the incoming sound is touched.
+void testMixLockHold()
+{
+    int locked = 0;
+    for (int i = 0; i < duskverb::kNumParams; ++i)
+        locked += duskverb::isMixLockParam(i) ? 1 : 0;
+    checkf(locked == 2 && duskverb::isMixLockParam(duskverb::Mix) && duskverb::isMixLockParam(duskverb::BusMode),
+           "MIX LOCK holds exactly Mix and Bus Mode");
+
+    duskverb::StateValues current = duskverb::makeDefaultState(), next = duskverb::makeDefaultState();
+    current.params[duskverb::Mix] = 1.0f;
+    current.params[duskverb::BusMode] = 1.0f;
+    current.params[duskverb::Size] = 0.9f;
+    next.params[duskverb::Mix] = 0.3f;
+    next.params[duskverb::BusMode] = 0.0f;
+    next.params[duskverb::Size] = 0.2f;
+    next.presetName = "Incoming";
+    duskverb::holdMixLock(next, current);
+    checkf(next.params[duskverb::Mix] == 1.0f && next.params[duskverb::BusMode] == 1.0f,
+           "the hold keeps the current Mix and Bus");
+    checkf(next.params[duskverb::Size] == 0.2f && next.presetName == "Incoming",
+           "the hold leaves the rest of the incoming sound alone");
+}
 } // namespace
 
 
 // The editor's read-outs against the JUCE editor's rules (DuskVerbEditor::
-// formatValue and the per-engine valueOverride lambdas), string for string:
-// decay switches ms/s at 1 s, frequencies switch Hz/kHz at 1 kHz with two
-// decimals below 100 Hz, dB one decimal, multipliers two decimals + "x",
+// formatValue and the per-engine valueOverride lambdas), string for string,
+// except frequency precision (owner rule, 2026-11-03):
+// decay switches ms/s at 1 s, frequencies print whole hertz below 1 kHz and
+// kilohertz with one decimal from there (LFO rates keep two decimals), dB one
+// decimal, multipliers two decimals + "x",
 // percentages one decimal, and the Gated / Shimmer engines re-purpose four knobs
 // into ms / dB / st / % read-outs.
 void testReadoutFormatting()
@@ -244,12 +284,18 @@ void testReadoutFormatting()
         { hall, duskverb::Decay,        0.689f,    "689 ms" },
         { hall, duskverb::Decay,        4.82f,     "4.82 s" },
         { hall, duskverb::Decay,        1.0f,      "1.00 s" },
-        { hall, duskverb::LoCut,        30.0f,     "30.00 Hz" },
+        { hall, duskverb::LoCut,        30.0f,     "30 Hz" },
+        { hall, duskverb::LoCut,        29.6f,     "30 Hz" },
         { hall, duskverb::Crossover,    392.516f,  "393 Hz" },
-        { hall, duskverb::HighCrossover, 2196.6f,  "2.20 kHz" },
-        { hall, duskverb::HiCut,        17597.19f, "17.60 kHz" },
-        { hall, duskverb::MonoBelow,    20.0f,     "20.00 Hz" },
-        { hall, duskverb::ModRate,      1.51f,     "1.51 Hz" },
+        { hall, duskverb::Crossover,    999.4f,    "999 Hz" },
+        { hall, duskverb::Crossover,    999.6f,    "1.0 kHz" },   // the switch follows the rounded value
+        { hall, duskverb::Crossover,    1049.9f,   "1.0 kHz" },
+        { hall, duskverb::HighCrossover, 2196.6f,  "2.2 kHz" },
+        { hall, duskverb::HiCut,        17597.19f, "17.6 kHz" },
+        { hall, duskverb::HiCut,        20000.0f,  "20.0 kHz" },
+        { hall, duskverb::MonoBelow,    20.0f,     "20 Hz" },
+        { hall, duskverb::ModRate,      1.51f,     "1.51 Hz" },   // an LFO rate keeps two decimals
+        { hall, duskverb::ModRate,      0.15f,     "0.15 Hz" },
         { hall, duskverb::GainTrim,     1.9f,      "1.9 dB" },
         { hall, duskverb::GainTrim,     -3.0f,     "-3.0 dB" },
         { hall, duskverb::BassMult,     1.03f,     "1.03x" },
@@ -300,7 +346,7 @@ void testReadoutFormatting()
         { shimmer, duskverb::ModDepth,  "DEPTH",     "PITCH" },
         { shimmer, duskverb::ModRate,   "RATE",      "FEEDBACK" },
         { shimmer, duskverb::Diffusion, "DIFFUSION", "DIFFUSION" },
-        { spring,  duskverb::ModDepth,  "DEPTH",     "SPRING LEN" },
+        { spring,  duskverb::ModDepth,  "DEPTH",     "LENGTH" },
         { spring,  duskverb::ModRate,   "RATE",      "DRIP" },
         { spring,  duskverb::Diffusion, "DIFFUSION", "CHIRP" },
         { spring,  duskverb::MidMult,   "MID MULT",  "MID MULT" },
@@ -309,16 +355,84 @@ void testReadoutFormatting()
         checkf(std::strcmp(labelFor(l.engine, l.param, l.universal), l.expected) == 0,
                "'%s' on engine %d is labelled %s (got %s)", duskverb::paramDesc(l.param).id,
                (int)l.engine, l.expected, labelFor(l.engine, l.param, l.universal));
+
+    // The engine card holds exactly the controls an engine re-labels, so a home slot is
+    // replaced by a placeholder exactly where its label would contradict its card.
+    using duskverb::ui::engineCard;
+    using duskverb::ui::inEngineCard;
+    checkf(std::strcmp(engineCard(gated).title, "GATE") == 0 && engineCard(gated).count == 4,
+           "the Gated engine's card is GATE with four controls");
+    checkf(inEngineCard(gated, duskverb::Diffusion) && inEngineCard(gated, duskverb::MidMult),
+           "HOLD and THRESHOLD move into the GATE card");
+    checkf(inEngineCard(spring, duskverb::Diffusion) && !inEngineCard(spring, duskverb::MidMult),
+           "CHIRP moves into the SPRING card, Mid Multiply stays in TONE");
+    checkf(!inEngineCard(shimmer, duskverb::Diffusion) && !inEngineCard(hall, duskverb::Diffusion),
+           "Diffusion stays in SPACE on the Shimmer and every other engine");
+    for (EngineType e : { hall, gated, shimmer, spring })
+    {
+        const auto card = engineCard(e);
+        for (int i = 0; i < card.count; ++i)
+            checkf(std::strcmp(labelFor(e, card.params[i], "?"), "?") != 0
+                   || card.params[i] == duskverb::ModDepth || card.params[i] == duskverb::ModRate,
+                   "every re-purposed control in the %s card carries its engine's label", card.title);
+    }
+}
+
+// The read-out names what the engine a slot plays. The nonlinear burst stops lengthening at
+// 2.5 s, so there a longer Decay reads 2.50 s; every other engine, a Reserved slot (it plays
+// Hall) and every other control read exactly what formatPlainValue prints for the slot's family.
+void testSlotReadout()
+{
+    using duskverb::ui::formatPlainValue;
+    using duskverb::ui::formatSlotValue;
+    using duskverb::ui::shownDecaySeconds;
+    const int nonlin = duskverb::kNonLinAlgorithm;
+    struct Row { int slot; float decay; const char* expected; };
+    const Row rows[] = {
+        { nonlin, 30.0f, "2.50 s" }, { nonlin, 2.6f, "2.50 s" }, { nonlin, 2.5f, "2.50 s" },
+        { nonlin, 1.5f, "1.50 s" },  { nonlin, 0.46f, "460 ms" }, { nonlin, 0.2f, "200 ms" },
+        { 10, 30.0f, "30.00 s" },    { 6, 10.0f, "10.00 s" },     { 0, 2.6f, "2.60 s" },
+        { 20, 10.0f, "10.00 s" },    { -1, 10.0f, "10.00 s" },
+    };
+    for (const Row& r : rows)
+    {
+        char buf[48];
+        formatSlotValue(r.slot, duskverb::Decay, r.decay, buf, sizeof(buf));
+        checkf(std::strcmp(buf, r.expected) == 0, "Decay %g on slot %d prints \"%s\" (got \"%s\")",
+               r.decay, r.slot, r.expected, buf);
+    }
+    checkf(shownDecaySeconds(nonlin, 30.0f) == duskverb::NonLinBurstEngine::kMaxDecaySeconds
+           && shownDecaySeconds(nonlin, 0.46f) == 0.46f && shownDecaySeconds(10, 30.0f) == 30.0f,
+           "only the nonlinear burst caps the Decay it shows");
+    // What it caps is Decay itself: DuskVerbDSP::engineDecay() gives the engine a calibrated
+    // reading only on a calibrated preset's own engine, and none of them plays the burst.
+    for (const auto& row : duskverb::kDecayShownByName)
+    {
+        const FactoryPreset* preset = duskverb::factoryPresetByName(row.first);
+        checkf(preset != nullptr && duskverb::resolveAlgorithm(preset->algorithm) != duskverb::kNonLinAlgorithm,
+               "Decay calibration row '%s' names no preset off the nonlinear burst", std::string(row.first).c_str());
+    }
+    for (int slot : { 0, 6, 7, 10, nonlin, 20 })
+        for (int p : { duskverb::ModDepth, duskverb::ModRate, duskverb::MidMult, duskverb::Predelay })
+        {
+            char slotText[48], familyText[48];
+            formatSlotValue(slot, p, 0.5f, slotText, sizeof(slotText));
+            formatPlainValue(duskverb::controlEngine(slot), p, 0.5f, familyText, sizeof(familyText));
+            checkf(std::strcmp(slotText, familyText) == 0, "'%s' on slot %d prints as its family does",
+                   duskverb::paramDesc(p).id, slot);
+        }
 }
 
 int main()
 {
     testReadoutFormatting();
+    testSlotReadout();
     testStateRoundTrip();
     testStateRejection();
     testStateSixApCompleteness();
     testStateWithoutIdentity();
     testProgramApply();
+    testMixLockHold();
 
     if (failures == 0) std::printf("DuskVerbPluginLayerTests: all checks passed\n");
     else               std::printf("DuskVerbPluginLayerTests: %d check(s) FAILED\n", failures);

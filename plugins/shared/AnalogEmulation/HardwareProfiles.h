@@ -349,7 +349,7 @@ inline HardwareUnitProfile createConsoleBus()
 }
 
 // tracking tape deck
-inline TapeProfile createStuderA800()
+inline TapeProfile createTrackingTape()
 {
     return TapeProfile::create(
         "tracking tape deck", "classic tape",
@@ -362,7 +362,7 @@ inline TapeProfile createStuderA800()
 }
 
 // mastering tape deck
-inline TapeProfile createAmpexATR102()
+inline TapeProfile createMasteringTape()
 {
     return TapeProfile::create(
         "mastering tape deck", "classic tape",
@@ -503,15 +503,15 @@ public:
         return profile;
     }
 
-    static const TapeProfile& getStuderA800()
+    static const TapeProfile& getTrackingTape()
     {
-        static const TapeProfile profile = Profiles::createStuderA800();
+        static const TapeProfile profile = Profiles::createTrackingTape();
         return profile;
     }
 
-    static const TapeProfile& getAmpexATR102()
+    static const TapeProfile& getMasteringTape()
     {
-        static const TapeProfile profile = Profiles::createAmpexATR102();
+        static const TapeProfile profile = Profiles::createMasteringTape();
         return profile;
     }
 };

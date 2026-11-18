@@ -4,7 +4,7 @@
 
 #include <vector>
 
-// SpringEngine — physical-spring-tank emulation modelled on the Fender 6G15
+// SpringEngine — physical-spring-tank emulation modelled on the classic 3-spring outboard
 // reverb unit (1961-65) and its descendants. Three parallel "spring" lines
 // per channel; each spring is a delay line with a 24-stage cascaded
 // 1st-order all-pass dispersion network at its input and a 1-pole HF
@@ -17,7 +17,7 @@
 //     the impulse dispersing into a chirp. We synthesize this with cascaded
 //     1st-order APs (Välimäki/Parker 2010) — coefficient `a` near −1 gives
 //     a quadratic-ish group-delay curve over the audio band.
-//   • Multiple springs: the 6G15 used three mechanical springs of different
+//   • Multiple springs: the classic outboard unit used three mechanical springs of different
 //     lengths in parallel; their summed output produces the characteristic
 //     dense-but-uneven shimmer. We use mutually-prime delay lengths per
 //     spring for natural decorrelation.

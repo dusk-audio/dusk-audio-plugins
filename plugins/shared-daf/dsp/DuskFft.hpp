@@ -10,7 +10,7 @@
 // Promoted VERBATIM from plugins/multi-q/core/MultiQMatch.{hpp,cpp} so the
 // fleet has one DSP-grade FFT: Multi-Q's Match engine consumes it through its
 // original duskaudio::FFTr2 name, and the Spectrum Analyzer 2 port builds its
-// analysis core on it (docs/daf-migration/10-spectrum-analyzer.md, step 1).
+// analysis core on it.
 // Verbatim matters: Multi-Q's JUCE-vs-DAF A/B harness gates Match behaviour,
 // so this move must not change a single arithmetic operation.
 //

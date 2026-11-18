@@ -1,13 +1,11 @@
 ---
 slug: tape-echo-2
-version: 1.0.7
-last_updated: 2026-09-06
+version: 1.0.9
+last_updated: 2026-11-15
 tagline: three-head tape delay with spring reverb
 ---
 
 # Tape Echo 2 User Manual
-
-Version 1.0.0
 
 Tape Echo 2 is a three-head tape-delay and spring-reverb effect. It models the
 mechanical timing, record and playback coloration, regeneration, tape wear,
@@ -73,6 +71,15 @@ keep loading; each one is noted in parentheses where the control is described.
 - **Tape Age** selects **New**, **Used**, or **Old** tape. New retains a very
   quiet tape/electronics bed; older states progressively add bandwidth loss,
   noise, transport variation, level wear, and a more audible tape splice.
+- **Noise** raises the tape and electronics noise (hum, low machine bed, and
+  hiss together) by up to 60 dB. At minimum the noise sits at its very quiet
+  captured level; Tape Age still scales it, so Old is louder than New at any
+  setting. The noise follows the echo path: Bass, Treble, Echo Level, Echo
+  Pan, Mix, and Output all act on it.
+- **Hum** sets the mains hum to **60 Hz** or **50 Hz** to match your region.
+  It is not stored in presets, so recalling a factory or user preset leaves it
+  where you set it. Loading a preset through an LV2 host's own preset menu
+  writes every control and returns it to 60 Hz.
 - **Wow & Flutter** extends the intrinsic transport movement from subtle
   mechanical motion to a creative wobble range.
 - **Power** is the host-designated bypass and uses a click-free transition.
@@ -94,8 +101,11 @@ keep loading; each one is noted in parentheses where the control is described.
   `t` (triplet),
   `+`/`-`, and out-of-range blinking indications used by the reference unit.
   Changing Head Select keeps the knob at the same detent and updates its note
-  assignment. The older Sync Division parameter remains hidden so projects and
-  automation saved by the 0.1 series continue to load correctly.
+  assignment. The older Sync Division parameter is not on the panel. Projects
+  saved by the 0.1 series keep the division they stored, and Sync Division
+  stays in the host's parameter list so their automation still plays back.
+  Automate Echo Rate Note for new work: writing Sync Division takes the note
+  over from the knob until Echo Rate Note is moved again.
 - **Mix** crossfades the direct signal against the combined echo and spring
   returns. At 0% the output is dry-only, 50% preserves both paths at unity, and
   100% is fully wet for send/return use.
@@ -145,9 +155,17 @@ Developer ID signed and notarized AU, VST3, and CLAP bundles. The LV2 bundle is
 Developer ID signed but is not submitted for notarization.
 
 Parameter IDs from the 0.1 series are preserved. Mix was appended after all
-previously shipped IDs. The hidden Dry Level parameter retains its original
-meaning for old project state and automation. Tape Age snaps stored continuous
-values to the nearest New/Used/Old state.
+previously shipped IDs. Dry Level is no longer on the panel but keeps its
+original meaning, so old projects restore it, and it stays in the host's
+parameter list so their automation still plays back. Tape Age snaps stored
+continuous values to the nearest New/Used/Old state. Noise and Hum Frequency
+were appended in the same way; projects saved before they existed load with
+the captured noise level and 60 Hz hum, so they sound unchanged.
+
+Changes for hosts: from 1.0.9, LV2 hosts that build a generic control view list
+Dry Level and Sync Division too, as VST3, CLAP and Audio Unit hosts always
+have; releases 1.0.0 to 1.0.8 asked LV2 hosts to leave both off that view. The
+plugin's own panel, LV2 port numbers, saved state and presets are unchanged.
 
 ## Gain and safety
 

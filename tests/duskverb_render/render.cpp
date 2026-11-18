@@ -22,7 +22,7 @@
 //   duskverb_render <preset_name>                              # default DuskVerb
 //   duskverb_render "Lush Dark Hall"
 //   duskverb_render --vst3 ~/.vst3/DuskVerb.vst3 "Vintage Vocal Plate"
-//   duskverb_render --vst2 ~/.vst/yabridge/LexConcertHall.so --program "Concert Hall"
+//   duskverb_render --vst2 ~/.vst/yabridge/ReferenceHall.so --program "Concert Hall"
 //   duskverb_render --vst3 plugin.vst3 --program "Preset" --dump-nparams
 //   duskverb_render --vst3 plugin.vst3 --input-wav input.wav \
 //       --nparam-event "Input Send=0@1.0" --legacy-stem-name
@@ -36,11 +36,13 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <limits>
 #include <map>
 #include <string>
+#include <system_error>
 
 namespace
 {
@@ -49,7 +51,7 @@ namespace
     // actually runs at is the only way to catch a rate-dependent defect.
     double kSampleRate = 48000.0;
     // 2048 samples ≈ 43 ms blocks. 4096 triggered Wine-side stack overflows
-    // inside Lex VST2 plugins after a full vpreset apply (yabridge handles
+    // inside REF VST2 plugins after a full vpreset apply (yabridge handles
     // every Wine exception on a finite thread stack; deep call stacks
     // from plugin-internal FPU/SSE handling crashed at 4096). 256 is
     // historical default but hits yabridge IPC overhead. 2048 is the
@@ -119,14 +121,29 @@ namespace
             << "  --sample-rate HZ              Render rate (default 48000)\n"
             << "  --block-size FRAMES           Host block size (default 2048)\n"
             << "  --channels 1|2                Main input/output channels (default 2)\n"
+            << "  --disable-aux-inputs         Use the plugin's internal detector (no auxiliary inputs)\n"
             << "  --self-test-resampler         Check rate conversion is band-limited, then exit\n"
             << "  --list-params|--list-programs Inspect the hosted plugin\n"
             << "  --dump-nparams               Dump normalized parameter values\n"
             << "  --param NAME=VALUE            Set a displayed parameter value\n"
             << "  --nparam NAME=VALUE           Set a normalized parameter value\n"
+            << "                                (every NAME option also takes #INDEX, the --list-params index)\n"
             << "  --nparam-event NAME=VALUE@SEC Automate at an exact sample\n"
             << "  --meter-film STEM,START,STOP,STEP[,A:B:D[;A:B:D...]] Capture editor frames at rendered-sample times\n"
             << "  --print-params IDX|NAME,...   Log post-apply values of those parameters\n"
+            << "  --only-stimuli LIST           Render only these built-in stimuli (comma separated:\n"
+            << "                                impulse,noiseburst,snare,session,piano,sine1k,sinelong,\n"
+            << "                                sustained); default all. Each stimulus is rendered from a\n"
+            << "                                hard reset, so the ones kept are unchanged by the filter\n"
+            << "  --wait-after-apply MS         Sleep after the preset/state apply (plugins that load\n"
+            << "                                resources asynchronously after a program change)\n"
+            << "  --write-stimuli DIR           Also write each built-in stimulus INPUT buffer to\n"
+            << "                                DIR/<stimulus>.wav (FLOAT), the exact signal the\n"
+            << "                                plugin was fed\n"
+            << "  --param-text-sweep NAME:STEPS Step a parameter 0..1 and print the plugin's own\n"
+            << "                                display text per step, then exit (repeatable;\n"
+            << "                                ALL:STEPS sweeps every parameter; NAME:STEPS:LO:HI\n"
+            << "                                sweeps LO..HI instead of 0..1)\n"
             << "  --help                        Show this help\n";
     }
 
@@ -257,8 +274,8 @@ namespace
         return {
             "Blade Runner 224",
             {
-                // 2026-05-25 re-anchor to Lex Large RHall 4 (the actual
-                // 224 Random Hall algorithm used on the 1982 Blade Runner
+                // 2026-05-25 re-anchor to REF Large RHall 4 (the actual
+                // vintage random-hall algorithm used on the 1982 Blade Runner
                 // score). Engine swapped from Dattorro (algo 0) to FDN
                 // (algo 4) — Dattorro 2-AP topology can't replicate Random
                 // Hall's multi-tap input + dense diffusion + heavy mod.
@@ -272,7 +289,7 @@ namespace
                 { "Mod Depth",       0.35f },     // heavy mod — Random Hall signature
                 { "Mod Rate",        0.64f },
                 { "Treble Multiply", 0.93f },
-                { "Bass Multiply",   2.08f },     // extended bass — Lex 1.5× BassRT
+                { "Bass Multiply",   2.08f },     // extended bass — REF 1.5× BassRT
                 { "Mid Multiply",    1.94f },
                 { "Low Crossover",   550.0f },
                 { "High Crossover",  1581.0f },
@@ -284,7 +301,7 @@ namespace
                 { "Hi Cut",          19723.0f },
                 { "Width",           1.10f },
                 { "Freeze",          0.0f },
-                { "Gain Trim",      -11.3f },     // level-matched to Lex Random Hall RHall 4
+                { "Gain Trim",      -11.3f },     // level-matched to random-hall reference RHall 4
                 { "Mono Below",      20.0f },
             }
         };
@@ -341,7 +358,7 @@ namespace
     PresetParams getPresetByName (const juce::String& name)
     {
         // For Cathedral we keep the explicit definition (has bus_mode=1 for the
-        // 100 % wet A/B against Valhalla). Otherwise transcribe FactoryPresets.h.
+        // 100 % wet A/B against REF). Otherwise transcribe FactoryPresets.h.
         if (name == "Cathedral")          return getCathedral();
         if (name == "Lush Dark Hall")     return getLushDarkHall();
         if (name == "Blade Runner 224")   return getBladeRunner224();
@@ -382,7 +399,7 @@ namespace
         // Smooth Concert Hall — algo=3 (QuadTank) per FactoryPresets.h post-reorder.
         // Stress-test rendering: BUS=true, Mix=1.0 to expose any FDN/QuadTank
         // residual artifacts. Factory bus/mix/predelay otherwise preserved.
-        // Rich Plate — algo=4 (FDN). Bright + diffuse Lexicon PCM-90 plate
+        // Rich Plate — algo=4 (FDN). Bright + diffuse vintage digital plate
         // anchor. Stress-rendered at BUS=true Mix=1.0 (factory is mix=0.40 bus=false).
         // Vocal Booth — algo=4 (FDN). Sub-second tight close-mic room.
         // Stress-rendered at BUS=true Mix=1.0 (factory is mix=0.30 bus=false).
@@ -446,9 +463,9 @@ namespace
         // Mirrors FactoryPresets.h "Bright Hall" row.
         if (name == "Bright Hall")
             return makePreset (name.toRawUTF8(), 4, 1.0f, true, 0.0f, 4.31f, 0.75f, 0.103f, 0.83f, 1.29f, 1.38f, 540.0f, 0.44f, 0.50f, 0.50f, 20.0f, 11112.0f, 0.99f, -2.84f, 20.0f, 0.68f, 8344.0f, 0.03f);
-        // PCM 90 — Rooms (QuadTank / NonLinear):
-        // Ambience — Optuna-aligned to VVV Ambience (all 5 metrics within strict noise floor, lowest loss 0.248).
-        // ModDepth + ModRate pulled to VVV's actual values (0.36, 0.32 Hz) —
+        // Vintage digital — Rooms (QuadTank / NonLinear):
+        // Ambience — Optuna-aligned to REF Ambience (all 5 metrics within strict noise floor, lowest loss 0.248).
+        // ModDepth + ModRate pulled to REF's actual values (0.36, 0.32 Hz) —
         // Ambience — v1 autonomous staged_tuner.py (--category Rooms).
         // Mirrors FactoryPresets.h "Ambience" row.
         if (name == "Ambience")
@@ -742,9 +759,23 @@ namespace
     // Locate parameter by display name. The AU wrapper hashes the original
     // string IDs to integers, but the display names survive — and they're
     // what the user sees in Logic too, so this also makes the test honest.
+    // "#N" addresses parameter N by its host index (as --list-params prints
+    // it): plugins that reuse a display name across modes ("Threshold",
+    // "Attack", ...) cannot be driven by name alone.
     juce::AudioProcessorParameter* findParam (juce::AudioPluginInstance& plugin, const juce::String& name)
     {
-        for (auto* p : plugin.getParameters())
+        const auto& params = plugin.getParameters();
+        if (name.startsWithChar ('#') && name.length() > 1
+            && name.substring (1).containsOnly ("0123456789"))
+        {
+            // parseInt, not getIntValue: an unchecked parse wraps on overflow and a
+            // wrapped value inside 0..size-1 would address the wrong parameter.
+            int index = -1;
+            if (! parseInt (name.substring (1), index))
+                return nullptr;
+            return index >= 0 && index < params.size() ? params[index] : nullptr;
+        }
+        for (auto* p : params)
         {
             if (p->getName (50) == name)
                 return p;
@@ -772,7 +803,7 @@ namespace
         return nullptr;
     }
 
-    // Apply a Valhalla-style .vpreset XML directly: each XML attribute is a
+    // Apply a REF-style .vpreset XML directly: each XML attribute is a
     // parameter name with an already-normalised 0..1 value. Skip the XML
     // metadata attributes (version, encoding, pluginVersion, presetName).
     void applyVpresetXml (juce::AudioPluginInstance& plugin, const juce::File& xmlFile,
@@ -808,7 +839,7 @@ namespace
             // as a raw display value (e.g. "10" seconds, "540" Hz) and ask
             // the plugin to convert text → normalised. This makes a single
             // .vpreset file work both for our DuskVerb (normalised values)
-            // and for hosted plugins like Arturia LX-24 (raw display values).
+            // and for hosted plugins like the reference emulation (raw display values).
             float normalised;
             if (raw > 1.0f)
             {
@@ -820,8 +851,8 @@ namespace
                 if (normalised == 0.0f && raw > 0.0f && raw <= 1.0f)
                     normalised = raw;
             }
-            // Hard clamp to [0, 1] before pushing. Some VST2s (Lex PCM
-            // Native) return the raw display value verbatim from
+            // Hard clamp to [0, 1] before pushing. Some VST2s (a reference
+            // reverb) return the raw display value verbatim from
             // getValueForText for negative-dB inputs ("-3.0 dB" → -3.0),
             // which then gets reinterpreted as a huge positive coefficient
             // inside the plugin (we saw read_back='2.2e+07') and crashes
@@ -837,7 +868,7 @@ namespace
             }
             p->setValueNotifyingHost (normalised);
             std::cout << "  " << name << " set=" << rawText << "  norm=" << normalised
-                      << "  read_back='" << p->getText (p->getValue(), 50) << "'" << std::endl;
+                      << "  read_back='" << p->getCurrentValueAsText() << "'" << std::endl;
             if (perParamDelayMs > 0)
                 juce::Thread::sleep (perParamDelayMs);
         }
@@ -845,7 +876,7 @@ namespace
 
     // Apply an Apple-format `.aupreset` (binary plist with embedded JUCE
     // plugin state). Used to render through hosted JUCE-built AUs (e.g.
-    // Valhalla Shimmer) at one of their factory presets, for A/B comparison.
+    // reference shimmer) at one of their factory presets, for A/B comparison.
     // The .aupreset is XML-on-the-outside but the relevant payload is the
     // base64-encoded `jucePluginState` data element, which is exactly what
     // `setStateInformation` consumes.
@@ -861,8 +892,8 @@ namespace
         if (dict == nullptr) { std::cerr << "aupreset: no <dict>\n"; return; }
 
         // Strategy: prefer 'jucePluginState' (works for JUCE-built plugins
-        // like Valhalla Shimmer); fall back to passing the whole .aupreset
-        // as a binary plist (works for non-JUCE AUs like Arturia LX-24,
+        // like reference shimmer); fall back to passing the whole .aupreset
+        // as a binary plist (works for non-JUCE AUs like the reference emulation,
         // whose state lives under the 'data' key in Apple ClassInfo format
         // — JUCE's AU wrapper routes the whole serialized plist to the AU's
         // kAudioUnitProperty_ClassInfo when setStateInformation can't find
@@ -948,7 +979,7 @@ namespace
         {
             auto* p = params[i];
             std::cout << "    [" << i << "] '" << p->getName (50) << "' = "
-                      << p->getValue() << "  (text: '" << p->getText (p->getValue(), 50) << "')\n";
+                      << p->getValue() << "  (text: '" << p->getCurrentValueAsText() << "')\n";
         }
     }
 
@@ -998,8 +1029,7 @@ namespace
             }
             normalised = juce::jlimit (0.0f, 1.0f, normalised);
             p->setValueNotifyingHost (normalised);
-            const float readBack = p->getValue();
-            const juce::String readBackText = p->getText (readBack, 50);
+            const juce::String readBackText = p->getCurrentValueAsText();
             std::cout << "  " << name << " set=" << raw
                       << "  norm=" << normalised
                       << "  read_back='" << readBackText << "'"
@@ -1021,7 +1051,7 @@ namespace
     // this makes momentary controls and automation testable through the same
     // hosted wrapper path a DAW uses.
     // The processBlock buffer must have max(totalInputChannels,
-    // totalOutputChannels) channels so multi-bus plugins (Arturia LX-24
+    // totalOutputChannels) channels so multi-bus plugins (the reference emulation
     // exposes 2 stereo input buses = 4 channels) don't read past the
     // buffer end and segfault.
     juce::AudioBuffer<float> renderThroughPlugin (juce::AudioPluginInstance& plugin,
@@ -1089,10 +1119,12 @@ int main (int argc, char** argv)
     juce::String aupresetPath;
     juce::String slugArg;
     juce::String outDirArg;
+    juce::String stimuliDirArg;     // --write-stimuli: dump each stimulus input buffer
+    juce::StringArray onlyStimuli;  // --only-stimuli: render just these built-in stimuli
     // Arbitrary stem input: when set, load WAV, pad with reverb-tail
     // headroom, render through the configured engine, write to
     // {outDir}/{slug}_{input-file-stem}_stem.wav. Lets users A/B real-world
-    // stems against Lexicon reference renders without going through a DAW.
+    // stems against reference renders without going through a DAW.
     // May be repeated; the input-stem naming applies regardless of count so
     // capture sets stay resolvable. --legacy-stem-name restores the old
     // single-input {slug}_stem.wav name for scripts that predate the multi-
@@ -1108,6 +1140,7 @@ int main (int argc, char** argv)
     juce::String screenshotPath;        // --screenshot: open the plugin editor + grab its window to PNG, then exit
     juce::String meterFilmArg;          // --meter-film: persistent editor capture driven by one --input-wav
     int          waitAfterLoadMs = 0;   // for yabridge handshake races
+    int          waitAfterApplyMs = 0;  // wall-clock settle after the preset/state apply (async resource loads)
     int          perParamDelayMs = 0;   // throttle preset apply for slow plugin bridges
     // SixAPTank-specific engine-state property overrides. Useful for tuner
     // workflows where the tuner sweeps engine-internal params that aren't
@@ -1129,12 +1162,17 @@ int main (int argc, char** argv)
     // kMaxPrintParams so a stray argument cannot flood a render log.
     juce::StringArray printParamSpecs;
     constexpr int kMaxPrintParams = 64;
+    // --param-text-sweep NAME:STEPS: maps a closed plugin's normalized values to
+    // its own display strings (see the sweep block below for why getText() can't).
+    juce::StringArray textSweepSpecs;
+    constexpr int kMaxTextSweepSteps = 100000;
     bool         selfTestResampler = false;  // --self-test-resampler: see below
     bool         dumpParams       = false;   // --dump-params: emit baked program
     bool         dumpNParams      = false;   // --dump-nparams: normalized host values
                                              // params as JSON (Optuna warm-start
                                              // seed), then exit before rendering.
     bool         prePrepareApply  = false;
+    bool         disableAuxInputs = false;
     // Dry-passthrough test: override bus_mode=0 + mix=0 on the loaded preset
     // so the engine's wet path is silent and only the dry passes through.
     // Used to verify that gain_trim does not bleed into the dry signal.
@@ -1159,7 +1197,7 @@ int main (int argc, char** argv)
     // Per-parameter overrides via --param NAME=VALUE. Stored in declaration
     // order so multiple --param flags compose the way the user wrote them
     // (last write wins). Applied AFTER the preset so they override anything
-    // the preset set. Works against any plugin — DuskVerb, Valhalla, Lex, etc.
+    // the preset set. Works against any plugin — DuskVerb, reference reverbs, etc.
     std::vector<std::pair<juce::String, juce::String>> paramOverrides;
     std::vector<std::pair<juce::String, juce::String>> nparamOverrides;
     std::vector<NormalizedParameterEvent> nparamEvents;
@@ -1193,6 +1231,29 @@ int main (int argc, char** argv)
         else if (a == "--aupreset"  && i + 1 < argc) aupresetPath = argv[++i];
         else if (a == "--slug"      && i + 1 < argc) slugArg      = argv[++i];
         else if (a == "--output-dir" && i + 1 < argc) outDirArg   = argv[++i];
+        else if (a == "--write-stimuli" && i + 1 < argc) stimuliDirArg = argv[++i];
+        else if (a == "--only-stimuli" && i + 1 < argc)
+        {
+            static const juce::StringArray known { "impulse", "noiseburst", "snare", "session",
+                                                   "piano", "sine1k", "sinelong", "sustained" };
+            onlyStimuli.addTokens (juce::String (argv[++i]), ",", "");
+            onlyStimuli.trim();
+            onlyStimuli.removeEmptyStrings();
+            for (const auto& name : onlyStimuli)
+            {
+                if (! known.contains (name))
+                {
+                    std::cerr << "Invalid --only-stimuli entry '" << name << "' (expected "
+                              << known.joinIntoString (",") << ")\n";
+                    return 2;
+                }
+            }
+            if (onlyStimuli.isEmpty())
+            {
+                std::cerr << "Invalid --only-stimuli (empty list)\n";
+                return 2;
+            }
+        }
         else if (a == "--sample-rate" && i + 1 < argc)
         {
             double rate = 0.0;
@@ -1222,6 +1283,7 @@ int main (int argc, char** argv)
                 return 2;
             }
         }
+        else if (a == "--disable-aux-inputs")       disableAuxInputs = true;
         else if (a == "--input-wav"  && i + 1 < argc) inputWavPaths.emplace_back (argv[++i]);
         else if (a == "--legacy-stem-name")          legacyStemName = true;
         else if (a == "--program"   && i + 1 < argc) programArg   = argv[++i];
@@ -1230,6 +1292,14 @@ int main (int argc, char** argv)
             if (! parseInt (argv[++i], programIndex) || programIndex < 0)
             {
                 std::cerr << "Invalid --program-index (expected a non-negative integer)\n";
+                return 2;
+            }
+        }
+        else if (a == "--wait-after-apply" && i + 1 < argc)
+        {
+            if (! parseInt (argv[++i], waitAfterApplyMs) || waitAfterApplyMs < 0)
+            {
+                std::cerr << "Invalid --wait-after-apply (expected non-negative milliseconds)\n";
                 return 2;
             }
         }
@@ -1297,6 +1367,7 @@ int main (int argc, char** argv)
             }
             printParamSpecs = tokens;
         }
+        else if (a == "--param-text-sweep" && i + 1 < argc) textSweepSpecs.add (argv[++i]);
         else if (a == "--list-params")              listParamsOnly   = true;
         else if (a == "--list-programs")            listProgramsOnly = true;
         else if (a == "--self-test-resampler")      selfTestResampler = true;
@@ -1350,7 +1421,7 @@ int main (int argc, char** argv)
         {
             // Format: NAME=NORMVALUE — sets the parameter's NORMALISED value
             // directly, bypassing getValueForText. Needed when replaying a
-            // plugin's own saved state (e.g. a Valhalla .vstpreset XML, whose
+            // plugin's own saved state (e.g. a REF .vstpreset XML, whose
             // attributes are normalised 0..1 floats): the text parser would
             // misread "0.2299" as 0.23 seconds/percent/etc.
             const juce::String spec = argv[++i];
@@ -1692,7 +1763,7 @@ int main (int argc, char** argv)
     }
 
     // Build a mono or stereo bus layout that matches the plugin's bus topology.
-    // Most reverbs are 1-in/1-out, but some (Arturia Rev LX-24) expose a
+    // Most reverbs are 1-in/1-out, but some (the reference emulation) expose a
     // sidechain or auxiliary input bus. If we configure too few buses
     // here the plugin's processBlock segfaults trying to read from an
     // unprepared channel.
@@ -1701,7 +1772,8 @@ int main (int argc, char** argv)
                           ? juce::AudioChannelSet::mono()
                           : juce::AudioChannelSet::stereo();
     for (int i = 0; i < plugin->getBusCount (true);  ++i)
-        layout.inputBuses.add  (channelSet);
+        layout.inputBuses.add  (disableAuxInputs && i > 0
+                               ? juce::AudioChannelSet::disabled() : channelSet);
     for (int i = 0; i < plugin->getBusCount (false); ++i)
         layout.outputBuses.add (channelSet);
     if (! plugin->setBusesLayout (layout))
@@ -1718,6 +1790,9 @@ int main (int argc, char** argv)
     }
 
     plugin->prepareToPlay (kSampleRate, kBlockSize);
+
+    std::cout << "Active audio channels: inputs=" << plugin->getTotalNumInputChannels()
+              << " outputs=" << plugin->getTotalNumOutputChannels() << std::endl;
 
     // Some yabridge-bridged plugins need a moment after prepareToPlay before
     // the Wine-side dispatcher is fully responsive (yabridge issues #167/#391).
@@ -1748,7 +1823,7 @@ int main (int argc, char** argv)
             auto* p = params[i];
             const juce::String name = p->getName (100);
             const float val = p->getValue();
-            const juce::String text = p->getText (val, 100);
+            const juce::String text = p->getCurrentValueAsText();
             std::cout << "  [" << i << "] '" << name << "' = " << val
                       << "  (text: '" << text << "')";
             if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
@@ -1795,7 +1870,7 @@ int main (int argc, char** argv)
     // measured a phantom config no shipped plugin uses. Resolving to the
     // program kills that footgun: --preset now == what the DAW loads. The
     // mirror is kept ONLY as a fallback for names with no matching program
-    // (e.g. external Lex/Valhalla A/B definitions). --param overrides (Dry/Wet,
+    // (e.g. external REF A/B definitions). --param overrides (Dry/Wet,
     // Bus Mode) still apply on top, exactly as before.
     if (isDuskVerb && resolvedProgramIndex < 0 && programArg.isEmpty()
         && presetExplicit && loadStatePath.isEmpty())
@@ -1924,7 +1999,7 @@ int main (int argc, char** argv)
             p->setValueNotifyingHost (normalised);
             std::cout << "  --param " << name << " set='" << valueStr
                       << "' norm=" << normalised
-                      << " read_back='" << p->getText (p->getValue(), 50) << "'" << std::endl;
+                      << " read_back='" << p->getCurrentValueAsText() << "'" << std::endl;
         }
         for (const auto& [name, valueStr] : nparamOverrides)
         {
@@ -1958,13 +2033,13 @@ int main (int argc, char** argv)
             const float normalised = juce::jlimit (0.0f, 1.0f, static_cast<float> (parsed));
             p->setValueNotifyingHost (normalised);
             std::cout << "  --nparam " << name << " norm=" << normalised
-                      << " read_back='" << p->getText (p->getValue(), 50) << "'" << std::endl;
+                      << " read_back='" << p->getCurrentValueAsText() << "'" << std::endl;
         }
     };
 
     // Optional first pass: apply the preset BEFORE the final prepareToPlay
     // so the plugin sizes its per-algorithm DSP buffers correctly for any
-    // Algorithm change. Required by Arturia Rev LX-24 (segfaults otherwise).
+    // Algorithm change. Required by the reference emulation (segfaults otherwise).
     // Off by default — each param-set on a yabridge-bridged plugin is a Wine
     // IPC round-trip, so double-applying is expensive.
     if (prePrepareApply)
@@ -1980,6 +2055,89 @@ int main (int argc, char** argv)
     // values are what the renderer hears.
     applyAnyPreset();
     applyParamOverrides();
+
+    // --wait-after-apply: a plugin that loads a resource on a background thread after a
+    // program or state change (a sampled-IR reverb swapping its impulse) answers process()
+    // before the new resource is in place, and renders far faster than real time, so no
+    // amount of pre-roll audio waits for it. Give it wall-clock time instead.
+    if (waitAfterApplyMs > 0)
+        juce::Thread::sleep (waitAfterApplyMs);
+
+    // --param-text-sweep: step each named parameter through STEPS+1 evenly spaced
+    // normalized values and print the plugin's OWN display string at each one.
+    // This is how a closed reference plugin's display units (ms, sec, Hz, "1.25x")
+    // are mapped onto normalized values: JUCE's hosted VST2 parameter answers
+    // getText(value) with a generic number formatter and getValueForText() with a
+    // plain float parse, so neither knows the plugin's units. Only
+    // getCurrentValueAsText() asks the plugin (effGetParamDisplay), and only for
+    // the value it currently holds, hence set-then-read. Runs after the preset and
+    // overrides so a parameter whose text depends on another (a displayed reverb
+    // time that depends on size) is swept in that context. Every parameter is
+    // restored afterwards; nothing is rendered.
+    // Spec: NAME:STEPS, or NAME:STEPS:LO:HI to refine inside [LO, HI] (0 <= LO < HI <= 1).
+    if (! textSweepSpecs.isEmpty())
+    {
+        struct TextSweep { juce::AudioProcessorParameter* param; int steps; double lo, hi; };
+        const auto& hosted = plugin->getParameters();
+        std::vector<TextSweep> sweeps;
+        for (const auto& spec : textSweepSpecs)
+        {
+            juce::StringArray tokens;
+            tokens.addTokens (spec, ":", "");
+            int steps = 0;
+            double lo = 0.0, hi = 1.0;
+            int nameTokens = tokens.size() - 1;
+            if (tokens.size() >= 4 && parseFiniteDouble (tokens[tokens.size() - 2], lo)
+                && parseFiniteDouble (tokens[tokens.size() - 1], hi))
+                nameTokens = tokens.size() - 3;
+            else
+                lo = 0.0, hi = 1.0;
+            if (nameTokens < 1 || ! parseInt (tokens[nameTokens], steps)
+                || steps < 1 || steps > kMaxTextSweepSteps || ! (lo >= 0.0 && lo < hi && hi <= 1.0))
+            {
+                std::cerr << "Invalid --param-text-sweep '" << spec
+                          << "' (expected NAME:STEPS[:LO:HI], STEPS in 1.." << kMaxTextSweepSteps
+                          << ", 0 <= LO < HI <= 1)\n";
+                return 2;
+            }
+            juce::StringArray nameParts;
+            for (int t = 0; t < nameTokens; ++t)
+                nameParts.add (tokens[t]);
+            const juce::String name = nameParts.joinIntoString (":");
+            if (name == "ALL")
+            {
+                for (auto* p : hosted)
+                    sweeps.push_back ({ p, steps, lo, hi });
+                continue;
+            }
+            auto* p = findParam (*plugin, name);
+            if (p == nullptr)
+            {
+                std::cerr << "--param-text-sweep: parameter '" << name << "' not found\n";
+                return 2;
+            }
+            sweeps.push_back ({ p, steps, lo, hi });
+        }
+
+        std::cout << std::setprecision (9);
+        for (const auto& [p, steps, lo, hi] : sweeps)
+        {
+            const float original = p->getValue();
+            const int index = hosted.indexOf (p);
+            const juce::String name = p->getName (128);
+            for (int k = 0; k <= steps; ++k)
+            {
+                const float norm = static_cast<float> (lo + (hi - lo) * k / steps);
+                p->setValueNotifyingHost (norm);
+                std::cout << "SWEEP\t" << index << '\t' << name << '\t' << k << '\t'
+                          << p->getValue() << '\t' << p->getCurrentValueAsText() << '\n';
+            }
+            p->setValueNotifyingHost (original);
+        }
+        std::cout << std::flush;
+        plugin->releaseResources();
+        return 0;
+    }
 
     // --print-params: readback of the post-apply host parameter values. This is
     // the --load-state counterpart of the "read_back=" line every --nparam write
@@ -2030,7 +2188,7 @@ int main (int argc, char** argv)
             }
             std::cout << "  --print-params [" << index << "] '" << p->getName (128)
                       << "' norm=" << std::setprecision (9) << p->getValue()
-                      << " read_back='" << p->getText (p->getValue(), 50) << "'" << std::endl;
+                      << " read_back='" << p->getCurrentValueAsText() << "'" << std::endl;
         }
         // std::setprecision is sticky on the stream; restore it so this
         // diagnostic cannot change the formatting of any later output.
@@ -2041,12 +2199,12 @@ int main (int argc, char** argv)
     // --screenshot PATH: open the plugin's editor (with --param/--nparam preset
     // applied so the GUI shows that state), let it paint, then grab the desktop
     // to a PNG and exit. A reusable way to read a closed-source plugin's GUI
-    // state (e.g. Valhalla mode NAMES the host API exposes only as raw norms),
+    // state (e.g. REF mode NAMES the host API exposes only as raw norms),
     // WITH a chosen preset set. Runs on the message thread (this console app owns
     // the MessageManager via ScopedJuceInitialiser_GUI).
     //
     // WORKS on the dev box's GNOME/Mutter Wayland session (verified 2026-06-16 on
-    // ValhallaShimmer + DuskVerb). Two things were essential: (1) host the editor
+    // reference shimmer + DuskVerb). Two things were essential: (1) host the editor
     // in a DocumentWindow that is setAlwaysOnTop(true) BEFORE setVisible, so the
     // Wine GUI maps + the window raises above the user's maximised apps; (2)
     // capture with gnome-screenshot (GNOME Shell Wayland capture composites
@@ -2757,10 +2915,90 @@ int main (int argc, char** argv)
         }
     };
 
+    // Pre-validate every requested input: a missing file is a caller error and a
+    // partial capture set silently poisons downstream A/B analysis, so fail the
+    // whole run up front instead of rendering the subset that exists. This runs
+    // before the first --write-stimuli export, which could otherwise create a
+    // missing DIR/<stimulus>.wav input that this check would then accept.
+    {
+        int missingInputs = 0;
+        for (const auto& inputWavPath : inputWavPaths)
+            if (! juce::File (inputWavPath).existsAsFile())
+            {
+                std::cerr << "  ! --input-wav file not found: " << inputWavPath << std::endl;
+                ++missingInputs;
+            }
+        if (missingInputs > 0)
+            return 1;
+    }
+
+    // --write-stimuli: keep the exact input of every stimulus as data, so a renderer
+    // that is not this harness (a CLAP host for the DAF plugins) feeds identical
+    // signals, and anchors and renders stay comparable without re-implementing the
+    // generators or juce::Random.
+    const juce::File stimuliDir = stimuliDirArg.isNotEmpty() ? juce::File (stimuliDirArg) : juce::File();
+    if (stimuliDirArg.isNotEmpty() && ! stimuliDir.createDirectory())
+    {
+        std::cerr << "Cannot create --write-stimuli directory " << stimuliDirArg << std::endl;
+        plugin->releaseResources();
+        return 1;
+    }
+    // A stimulus that fails to write fails the run once the renders are done, like the
+    // partial capture checks below: the other renderer would be fed a missing file.
+    int stimulusWriteFailures = 0;
+    // renderThroughPlugin copies only the plugin's input channels out of a stimulus
+    // (channel 0 alone with --channels 1), so those are the signal it was fed.
+    const int fedChannels = plugin->getTotalNumInputChannels();
+    // SOURCE is the WAV a file-backed stimulus was read from. Writing over it (DIR set to
+    // test_signals) would replace the bundled input with its tail-padded copy, which the
+    // next run would pad again, so that write is refused. So is a write over an
+    // --input-wav stem: the stems are read after most stimuli are written.
+    auto writeStimulus = [&stimuliDir, &stimulusWriteFailures, fedChannels, &inputWavPaths] (
+        const char* stimulus, const juce::AudioBuffer<float>& input, const juce::File& source = juce::File())
+    {
+        if (stimuliDir == juce::File())
+            return;
+        const auto file = stimuliDir.getChildFile (juce::String (stimulus) + ".wav");
+        const auto isReadByThisRun = [&file] (const juce::File& readFile)
+        {
+            std::error_code compareError;
+            return readFile != juce::File()
+                && std::filesystem::equivalent (std::filesystem::path (file.getFullPathName().toWideCharPointer()),
+                                                std::filesystem::path (readFile.getFullPathName().toWideCharPointer()),
+                                                compareError);
+        };
+        if (isReadByThisRun (source)
+            || std::any_of (inputWavPaths.begin(), inputWavPaths.end(),
+                            [&isReadByThisRun] (const juce::String& stem) { return isReadByThisRun (juce::File (stem)); }))
+        {
+            std::cerr << "  ! refusing to write stimulus over an input WAV of this run: "
+                      << file.getFullPathName() << std::endl;
+            ++stimulusWriteFailures;
+            return;
+        }
+        juce::AudioBuffer<float> fed (std::min (input.getNumChannels(), fedChannels), input.getNumSamples());
+        for (int ch = 0; ch < fed.getNumChannels(); ++ch)
+            fed.copyFrom (ch, 0, input, ch, 0, input.getNumSamples());
+        if (writeWav (file, fed, kSampleRate))
+            std::cout << "Wrote stimulus " << file.getFullPathName() << std::endl;
+        else
+        {
+            std::cerr << "  ! failed to write stimulus WAV: " << file.getFullPathName() << std::endl;
+            ++stimulusWriteFailures;
+        }
+    };
+
+    auto wantStimulus = [&onlyStimuli] (const char* name)
+    {
+        return onlyStimuli.isEmpty() || onlyStimuli.contains (name);
+    };
+
     // ---- Render 1: Impulse ----
+    if (wantStimulus ("impulse"))
     {
         juce::AudioBuffer<float> input (2, kTotalSamples);
         fillImpulse (input);
+        writeStimulus ("impulse", input);
         auto output = renderThroughPlugin (*plugin, input, nparamEvents);
         auto outFile = outDir.getChildFile (slug + "_impulse.wav");
         if (writeWav (outFile, output, kSampleRate))
@@ -2775,9 +3013,11 @@ int main (int argc, char** argv)
     runPreroll (prerunSeconds);
 
     // ---- Render 2: Pink noise burst (100ms then silence) ----
+    if (wantStimulus ("noiseburst"))
     {
         juce::AudioBuffer<float> input (2, kTotalSamples);
         fillNoiseBurst (input, kSampleRate);
+        writeStimulus ("noiseburst", input);
         auto output = renderThroughPlugin (*plugin, input, nparamEvents);
         auto outFile = outDir.getChildFile (slug + "_noiseburst.wav");
         if (writeWav (outFile, output, kSampleRate))
@@ -2797,6 +3037,7 @@ int main (int argc, char** argv)
     // Real-world transient test — broadband percussive content reveals
     // burst-level disparities that a steady sine cannot. Source: Logic Pro
     // acoustic snare (D1 vel 32, normalised to -12 dBFS peak, stereo, 48 kHz).
+    if (wantStimulus ("snare"))
     {
         const int snareTotalSamples = static_cast<int> (kSampleRate * 4.0);
         juce::AudioBuffer<float> input (2, snareTotalSamples);
@@ -2825,6 +3066,7 @@ int main (int argc, char** argv)
         const bool snareFileFound = snareWav.existsAsFile();
         if (fillFromWav (input, snareWav, kSampleRate))
         {
+            writeStimulus ("snare", input, snareWav);
             auto output = renderThroughPlugin (*plugin, input, nparamEvents);
             auto outFile = outDir.getChildFile (slug + "_snare.wav");
             if (writeWav (outFile, output, kSampleRate))
@@ -2848,6 +3090,7 @@ int main (int argc, char** argv)
     // highs" the snare and noiseburst don't surface. Auto-resolved like the
     // snare (no flag needed); writes {outDir}/{slug}_session.wav. Padded with
     // a full tail so the decay is captured for residual/distortion analysis.
+    if (wantStimulus ("session"))
     {
         const juce::File exeDir = juce::File::getSpecialLocation (
                                       juce::File::currentExecutableFile).getParentDirectory();
@@ -2878,6 +3121,7 @@ int main (int argc, char** argv)
                 for (int ch = 0; ch < 2; ++ch)
                     sessionInput.copyFrom (ch, 0, stem, ch, 0, stemSamples);
 
+                writeStimulus ("session", sessionInput, sessionWav);
                 auto output = renderThroughPlugin (*plugin, sessionInput, nparamEvents);
                 auto outFile = outDir.getChildFile (slug + "_session.wav");
                 if (writeWav (outFile, output, kSampleRate))
@@ -2908,6 +3152,7 @@ int main (int argc, char** argv)
     // coloration on the material the user actually listens with. Auto-resolved
     // like the session stem; skips with a warning when absent. Padded with a
     // full tail for decay analysis.
+    if (wantStimulus ("piano"))
     {
         const juce::File exeDir = juce::File::getSpecialLocation (
                                       juce::File::currentExecutableFile).getParentDirectory();
@@ -2938,6 +3183,7 @@ int main (int argc, char** argv)
                 for (int ch = 0; ch < 2; ++ch)
                     pianoInput.copyFrom (ch, 0, stem, ch, 0, stemSamples);
 
+                writeStimulus ("piano", pianoInput, pianoWav);
                 auto output = renderThroughPlugin (*plugin, pianoInput, nparamEvents);
                 auto outFile = outDir.getChildFile (slug + "_piano.wav");
                 if (writeWav (outFile, output, kSampleRate))
@@ -2977,20 +3223,6 @@ int main (int argc, char** argv)
     if (legacyStemName && inputWavPaths.size() != 1)
         std::cerr << "  ! --legacy-stem-name ignored: it applies only with exactly one --input-wav"
                   << std::endl;
-    // Pre-validate every requested input: a missing file is a caller error and a
-    // partial capture set silently poisons downstream A/B analysis, so fail the
-    // whole run up front instead of rendering the subset that exists.
-    {
-        int missingInputs = 0;
-        for (const auto& inputWavPath : inputWavPaths)
-            if (! juce::File (inputWavPath).existsAsFile())
-            {
-                std::cerr << "  ! --input-wav file not found: " << inputWavPath << std::endl;
-                ++missingInputs;
-            }
-        if (missingInputs > 0)
-            return 1;
-    }
     juce::StringArray writtenStemNames;
     int stemRenderFailures = 0;
     for (size_t inputIndex = 0; inputIndex < inputWavPaths.size(); ++inputIndex)
@@ -3097,10 +3329,12 @@ int main (int argc, char** argv)
     // measures -12 dBFS RMS. Insensitive to spectral shape AT 1 kHz only
     // — presets with very different spectral tilts will perceptibly differ
     // even after this calibration.
+    if (wantStimulus ("sine1k"))
     {
         const int sineSamples = static_cast<int> (kSampleRate * 2.0);
         juce::AudioBuffer<float> input (2, sineSamples);
         fillSineTone (input, kSampleRate, 1000.0, -12.0);
+        writeStimulus ("sine1k", input);
         auto output = renderThroughPlugin (*plugin, input, nparamEvents);
         auto outFile = outDir.getChildFile (slug + "_sine1k.wav");
         if (writeWav (outFile, output, kSampleRate))
@@ -3113,7 +3347,7 @@ int main (int argc, char** argv)
     // opt-in long render at -18 dBFS lets the cascade settle so the rel-fundamental
     // down-octave gate measures the real low-octave content. Off (==0) → not written
     // → every existing render byte-identical (bit-null). 15 s matches the anchor protocol.
-    if (longSineSeconds > 0.0)
+    if (longSineSeconds > 0.0 && wantStimulus ("sinelong"))
     {
         restoreConfiguredParams();
         hardReset();
@@ -3134,6 +3368,7 @@ int main (int argc, char** argv)
             for (int ch = 0; ch < 2; ++ch)
                 input.copyFrom (ch, 0, tone, ch, 0, sineSamples);
         }
+        writeStimulus ("sinelong", input);
         auto output = renderThroughPlugin (*plugin, input, nparamEvents);
         auto outFile = outDir.getChildFile (slug + "_sinelong.wav");
         if (writeWav (outFile, output, kSampleRate))
@@ -3147,7 +3382,7 @@ int main (int argc, char** argv)
     // per-band decay character of the engine under musical-content excitation
     // — what the user actually hears, not the burst-and-stop response that
     // noiseburst measures. Skipped unless --sustained-pink-seconds > 0.
-    if (sustainedPinkSeconds > 0.0)
+    if (sustainedPinkSeconds > 0.0 && wantStimulus ("sustained"))
     {
         restoreConfiguredParams();
         hardReset();
@@ -3155,6 +3390,7 @@ int main (int argc, char** argv)
         const int total = static_cast<int> (kSampleRate * sustainedPinkSeconds * 2.0);
         juce::AudioBuffer<float> input (2, total);
         fillSustainedPink (input, kSampleRate, sustainedPinkSeconds);
+        writeStimulus ("sustained", input);
         auto output = renderThroughPlugin (*plugin, input, nparamEvents);
         auto outFile = outDir.getChildFile (slug + "_sustained.wav");
         if (writeWav (outFile, output, kSampleRate))
@@ -3162,5 +3398,11 @@ int main (int argc, char** argv)
     }
 
     plugin->releaseResources();
+    if (stimulusWriteFailures > 0)
+    {
+        std::cerr << stimulusWriteFailures << " --write-stimuli WAV(s) failed; refusing to "
+                  << "report success on a partial stimulus set" << std::endl;
+        return 1;
+    }
     return 0;
 }

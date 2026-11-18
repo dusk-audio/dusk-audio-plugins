@@ -43,12 +43,12 @@ int main()
     check(controls.sound().recallEpoch != beforeRename.recallEpoch,
           "changing hidden sound configuration does request a recall");
 
-    for (uint32_t program = 0; program < getFactoryPresets().size(); ++program)
+    for (uint32_t program = 0; program < duskverb::dv2FactoryPresets().size(); ++program)
     {
         controls.publish(original);
         controls.setParameter(Tone, -0.7f);
         auto expected = controls.snapshot();
-        applyFactoryPresetToHostParameters(getFactoryPresets()[program], [&](int i, float v) {
+        applyFactoryPresetToHostParameters(duskverb::dv2FactoryPresets()[program], [&](int i, float v) {
             expected.params[i] = v;
         });
         controls.loadProgram(program);
@@ -57,10 +57,45 @@ int main()
         check(factory.params[Bypass] == 1.0f && factory.params[Tone] == -0.7f,
               "factory preserves bypass and macro edits");
         check(factory.userName.empty() && !factory.edited
-           && factory.presetName == getFactoryPresets()[program].name,
+           && factory.presetName == duskverb::dv2FactoryPresets()[program].name,
               "host factory recall replaces user identity and edited status");
         controls.setParameter(Mix, 0.4f);
         check(controls.parameter(Mix) == 0.4f, "automation follows factory recall");
+    }
+
+    // MIX LOCK on the host's program path: a locked recall keeps the Mix and Bus
+    // in effect, even ones an earlier program set (they are in no published
+    // state); it stays an un-edited recall; unlocking moves nothing; and a send
+    // keeps its Bus through any number of recalls.
+    {
+        const auto& presets = duskverb::dv2FactoryPresets();
+        const auto factoryValue = [&](uint32_t program, int param) {
+            float value = -1.0f;
+            applyFactoryPresetToHostParameters(presets[program], [&](int i, float v) { if (i == param) value = v; });
+            return value;
+        };
+        controls.publish(original);
+        controls.setMixLock(true);
+        controls.loadProgram(0);
+        check(controls.parameter(Mix) == 0.25f, "a locked recall keeps the published Mix");
+        check(!controls.snapshot().edited && controls.snapshot().presetName == presets[0].name,
+              "a locked recall is a clean recall of that program");
+        controls.setMixLock(false);
+        controls.loadProgram(1);
+        check(controls.parameter(Mix) == factoryValue(1, Mix), "unlocked, a recall writes its program's Mix");
+        controls.setMixLock(true);
+        controls.loadProgram(2);
+        check(controls.parameter(Mix) == factoryValue(1, Mix),
+              "a locked recall keeps a Mix an earlier program set");
+        controls.setMixLock(false);
+        check(controls.parameter(Mix) == factoryValue(1, Mix), "unlocking does not move the sound");
+        controls.setMixLock(true);
+        controls.setParameter(BusMode, 1.0f);
+        for (uint32_t program = 3; program < 6; ++program)
+            controls.loadProgram(program);
+        check(controls.parameter(BusMode) == 1.0f && factoryValue(5, BusMode) == 0.0f,
+              "a send keeps Bus on through locked recalls of programs that turn it off");
+        controls.setMixLock(false);
     }
 
     // Every snapshot is one of two deliberately distinct complete states.
@@ -91,6 +126,7 @@ int main()
     reader.join();
     check(torn.load() == 0, "concurrent recall never exposes partial parameters/configuration");
     check(reads.load() > 0, "concurrent reader actually sampled the publication path");
-    std::printf("Control state: %d failures; 20 factory programs; 20000 concurrent recalls\n", failures);
+    std::printf("Control state: %d failures; %zu factory programs; 20000 concurrent recalls\n", failures,
+                duskverb::dv2FactoryPresets().size());
     return failures ? 1 : 0;
 }

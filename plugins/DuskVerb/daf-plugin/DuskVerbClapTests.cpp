@@ -1,7 +1,8 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
 // Standalone, real-binary CLAP host regression test for DuskVerb 2.
 
-#include "../core/DuskVerbParamTable.hpp"
+#include "DuskVerbParams.hpp"
+#include "../core/DuskVerbPresets.hpp"
 
 #include <algorithm>
 #include <array>
@@ -23,9 +24,24 @@
 #include "clap/ext/audio-ports.h"
 #include "clap/ext/params.h"
 #include "clap/ext/state.h"
+#include "clap/ext/tail.h"
 #include "clap/factory/plugin-factory.h"
 #include "clap/plugin.h"
 #include "clap/process.h"
+// The MIX LOCK contract loads a factory preset through CLAP preset-load, which DAF ships
+// with CLAP factory presets. A DAF without them still serves the programs to VST3 and AU
+// hosts but gives this test nothing to load through over CLAP, so the contract is not
+// built and the run says so: MIX LOCK's host wiring then has no hosted test. CMake sets
+// DUSKVERB_CLAP_PRESET_LOAD from DAF's own headers, the check the shared ClapPresets guard
+// uses (DUSK_DAF_HAS_CLAP_PRESETS in DuskDafPlugin.cmake), never from whatever CLAP SDK
+// sits on an include path.
+#ifndef DUSKVERB_CLAP_PRESET_LOAD
+#error "DUSKVERB_CLAP_PRESET_LOAD comes from CMake (DUSK_DAF_HAS_CLAP_PRESETS)"
+#endif
+#if DUSKVERB_CLAP_PRESET_LOAD
+#include "clap/ext/preset-load.h"
+#include "clap/factory/preset-discovery.h"
+#endif
 
 namespace {
 
@@ -64,7 +80,8 @@ static const void* CLAP_ABI hostGetExtension(const clap_host_t*, const char* id)
 {
     return id != nullptr && std::strcmp(id, CLAP_EXT_PARAMS) == 0 ? &hostParams : nullptr;
 }
-static void CLAP_ABI hostRequestRestart(const clap_host_t*) {}
+static int hostRestartRequests = 0;
+static void CLAP_ABI hostRequestRestart(const clap_host_t*) { ++hostRestartRequests; }
 static void CLAP_ABI hostRequestProcess(const clap_host_t*) {}
 static void CLAP_ABI hostRequestCallback(const clap_host_t*) {}
 
@@ -322,6 +339,20 @@ void parameterContract(Instance& instance, const std::vector<ParamMeta>& metadat
           "CLAP parses Gated attack 25 ms");
     checkNear(parsed, 0.49, 1e-6, "Gated attack 25 ms maps to snapped depth 0.49");
 
+    // On the Nonlinear engine Decay reads the burst the engine plays: past the longest (2.5 s)
+    // the text stays there. Every other engine reads the setting itself.
+    const auto decayText = [&](float seconds) {
+        std::memset(text, 0, sizeof(text));
+        instance.params->value_to_text(instance.plugin, duskverb::Decay,
+            duskverb::plainToHost(duskverb::paramDesc(duskverb::Decay), seconds), text, sizeof(text));
+        return std::string(text);
+    };
+    instance.set(duskverb::Algorithm, duskverb::kNonLinAlgorithm);
+    check(decayText(10.0f) == "2.50 s", "Nonlinear Decay 10 s reads as the 2.50 s burst it plays");
+    check(decayText(1.5f) == "1.50 s", "Nonlinear Decay 1.5 s reads as set");
+    instance.set(duskverb::Algorithm, 10.0);
+    check(decayText(10.0f) == "10.00 s", "Hall Decay 10 s reads as set");
+
     instance.set(duskverb::Algorithm, 0.0);
     for (size_t i = 0; i < metadata.size() && i < static_cast<size_t>(duskverb::kNumParams); ++i)
     {
@@ -386,21 +417,47 @@ void parameterContract(Instance& instance, const std::vector<ParamMeta>& metadat
     for (size_t i = 0; i < metadata.size() && i < static_cast<size_t>(duskverb::kNumParams); ++i)
     {
         const auto& desc = duskverb::paramDesc(static_cast<int>(i));
-        for (const double invalid : {std::numeric_limits<double>::quiet_NaN(),
-                                     std::numeric_limits<double>::infinity(),
-                                    -std::numeric_limits<double>::infinity()})
+        const clap_id id = metadata[i].info.id;
+        const double lo = metadata[i].info.min_value;
+        const double hi = metadata[i].info.max_value;
+        const double def = duskverb::hostDefault(desc);
+        char what[160];
+        // DAF drops a host value that is not finite, or too large for a float, before it
+        // reaches the plugin (dusk-audio/DAF#103), so the parameter keeps what it had.
+        // Hold each end of the range in turn, so that neither a clamp toward either end nor
+        // a reset to the default (at least one held end differs from it) can pass for the
+        // value being kept.
+        bool heldAwayFromDefault = false;
+        for (const double rangeEnd : {lo, hi})
         {
-            instance.set(metadata[i].info.id, invalid);
-            checkNear(instance.get(metadata[i].info.id), duskverb::hostDefault(desc), 2e-6,
-                      "invalid host numbers fall back to the parameter default");
+            instance.set(id, rangeEnd);
+            const double held = instance.get(id);
+            std::snprintf(what, sizeof(what), "%s holds its range end %g", desc.id, rangeEnd);
+            checkNear(held, rangeEnd, 2e-6, what);
+            heldAwayFromDefault = heldAwayFromDefault || std::abs(held - def) > 2e-6;
+            for (const double invalid : {std::numeric_limits<double>::quiet_NaN(),
+                                         std::numeric_limits<double>::infinity(),
+                                        -std::numeric_limits<double>::infinity(),
+                                         std::numeric_limits<double>::max(),
+                                        -std::numeric_limits<double>::max()})
+            {
+                instance.set(id, invalid);
+                std::snprintf(what, sizeof(what), "invalid host number %g leaves %s at %g",
+                              invalid, desc.id, held);
+                checkNear(instance.get(id), held, 2e-6, what);
+            }
         }
+        std::snprintf(what, sizeof(what), "%s holds a range end away from its default", desc.id);
+        check(heldAwayFromDefault, what);
+        // The state contract runs on this instance next, so put the parameter back at its
+        // default (a snapping one is set again just below).
+        instance.set(id, def);
         if (!desc.integer && desc.interval <= 0.0f) continue;
-        const double sent = metadata[i].info.min_value
-                          + (metadata[i].info.max_value - metadata[i].info.min_value) * 0.4137;
-        instance.set(metadata[i].info.id, sent);
+        const double sent = lo + (hi - lo) * 0.4137;
+        instance.set(id, sent);
         const double expected = duskverb::snapHostValue(desc, static_cast<float>(sent));
-        checkNear(instance.get(metadata[i].info.id), expected, 2e-6,
-                  "integer/interval host setter snaps on CLAP readback");
+        std::snprintf(what, sizeof(what), "%s snaps a host value on CLAP readback", desc.id);
+        checkNear(instance.get(id), expected, 2e-6, what);
     }
 }
 
@@ -753,7 +810,223 @@ void audioContract(const clap_plugin_factory_t* factory, const Instance& probe)
     }
 }
 
+// A host reset (clap_plugin::reset) goes straight to the plugin's realtime reset:
+// the tail is gone on the next block, the host is not asked for a restart (which a
+// host may ignore, and whose deactivate() keeps the engines' buffers, see
+// DuskVerbPlugin::deactivate), and the instance rings again.
+// This runs the default program; DuskVerbDSP::clearState() names the presets whose
+// output match EQ it cannot clear.
+
+// Exercise the host contract, including changes while a previous preset is still fading.
+void tailContract(const clap_plugin_factory_t* factory)
+{
+    Instance instance(factory);
+    check(instance.plugin != nullptr, "tail probe instance creates");
+    if (!instance.plugin) return;
+    const auto* tail = static_cast<const clap_plugin_tail_t*>(
+        instance.plugin->get_extension(instance.plugin, CLAP_EXT_TAIL));
+    check(tail != nullptr, "CLAP exposes tail length");
+    if (!tail) return;
+    instance.set(duskverb::Algorithm, 10.0); // Hall can freeze
+    instance.set(duskverb::Mix, 1.0);
+    check(instance.activate(48000.0, 256), "tail probe activates");
+    if (!instance.processing) return;
+    std::array<float, 256> input{}, left{}, right{};
+    float* in[] = {input.data(), input.data()};
+    float* out[] = {left.data(), right.data()};
+    clap_audio_buffer_t a{}, b{};
+    a.data32 = in; a.channel_count = 2; b.data32 = out; b.channel_count = 2;
+    ParamEvents events;
+    EmptyOutEvents output;
+    clap_process_t process{};
+    process.frames_count = 256;
+    process.audio_inputs = &a; process.audio_outputs = &b;
+    process.audio_inputs_count = process.audio_outputs_count = 1;
+    process.in_events = &events.iface; process.out_events = &output.iface;
+    const auto run = [&](int blocks = 1) {
+        for (int i = 0; i < blocks; ++i) {
+            check(instance.plugin->process(instance.plugin, &process) != CLAP_PROCESS_ERROR,
+                  "tail probe processes");
+            process.steady_time += process.frames_count;
+        }
+    };
+    run(20);
+    const auto normal = tail->get(instance.plugin);
+    check(normal >= 30u * 48000u && normal < 0x80000000u, "unfrozen tail is finite");
+    input[0] = 0.25f; run(); input[0] = 0; run(20);
+    instance.set(duskverb::Freeze, 1.0);
+    run();
+    check(tail->get(instance.plugin) == UINT32_MAX, "Freeze advertises an infinite tail");
+    run(32 * 48000 / 256);
+    float peak = 0;
+    for (int i = 0; i < 256; ++i) peak = std::max({peak, std::abs(left[i]), std::abs(right[i])});
+    check(peak > 1e-5f, "frozen audio really outlasts the former 30-second report");
+    instance.plugin->reset(instance.plugin);
+    run();
+    check(tail->get(instance.plugin) == UINT32_MAX, "reset retains the Freeze contract");
+    instance.set(duskverb::Bypass, 1.0); run(20);
+    instance.set(duskverb::Freeze, 0.0); run();
+    check(tail->get(instance.plugin) < 0x80000000u, "unfreeze while bypassed restores a finite tail");
+    instance.set(duskverb::Bypass, 0.0); run(20);
+    instance.set(duskverb::Decay, 1.0); // maximum normalized decay
+    instance.set(duskverb::BassMult, 2.5); run();
+    check(tail->get(instance.plugin) > 75u * 48000u, "long low-band decays exceed 30 seconds");
+    instance.set(duskverb::Freeze, 1.0); run();
+    instance.set(duskverb::Algorithm, duskverb::kNonLinAlgorithm); run();
+    check(tail->get(instance.plugin) == UINT32_MAX, "outgoing frozen engine keeps its tail report during crossfade");
+    run(20);
+    check(tail->get(instance.plugin) < 0x80000000u, "nonlinear engine ignores Freeze after the fade");
+    instance.set(duskverb::Algorithm, 10.0); run(20);
+    check(tail->get(instance.plugin) == UINT32_MAX, "return to a freeze-capable engine restores infinity");
+    instance.set(duskverb::Freeze, 0.0); run();
+    const auto at48 = tail->get(instance.plugin);
+    process.frames_count = 0;
+    run();
+    check(tail->get(instance.plugin) == at48, "zero-frame processing preserves the applied tail");
+    process.frames_count = 256;
+    instance.deactivate();
+    check(instance.activate(96000.0, 256), "tail probe reactivates at 96 kHz");
+    run(20);
+    check(std::abs(double(tail->get(instance.plugin)) / 96000.0 - double(at48) / 48000.0) < 1e-4,
+          "finite tail follows the sample rate across reactivation");
+    auto frozen = duskverb::makeDefaultState();
+    frozen.params[duskverb::Algorithm] = 10;
+    frozen.params[duskverb::Freeze] = 1;
+    const auto container = instance.save();
+    check(instance.load(replaceCustomPayload(container, duskverb::encodeState(frozen))),
+          "frozen snapshot loads during playback");
+    run();
+    frozen.params[duskverb::Algorithm] = duskverb::kNonLinAlgorithm;
+    check(instance.load(replaceCustomPayload(container, duskverb::encodeState(frozen))),
+          "second snapshot queues during the active crossfade");
+    run();
+    check(tail->get(instance.plugin) == UINT32_MAX, "queued recall preserves the still-sounding frozen tail");
+    run(80);
+    check(tail->get(instance.plugin) < 0x80000000u, "queued nonlinear recall eventually restores a finite tail");
+}
+
+void resetContract(const clap_plugin_factory_t* factory)
+{
+    Instance instance(factory);
+    check(instance.plugin != nullptr && instance.params != nullptr, "reset probe instance creates");
+    if (instance.plugin == nullptr || instance.params == nullptr) return;
+    instance.set(duskverb::Mix, 1.0);
+    check(instance.activate(48000.0, 256), "reset probe instance activates");
+    if (!instance.processing) return;   // process() and reset() need an active instance
+
+    EmptyOutEvents outEvents;
+    ParamEvents inEvents;
+    int64_t steady = 0;
+    auto block = [&](bool impulse) {
+        std::vector<float> inL(256, 0.0f), inR(256, 0.0f), outL(256, 0.0f), outR(256, 0.0f);
+        if (impulse) inL[0] = inR[0] = 0.25f;
+        float* inChannels[] = { inL.data(), inR.data() };
+        float* outChannels[] = { outL.data(), outR.data() };
+        clap_audio_buffer_t input{};
+        input.data32 = inChannels;
+        input.channel_count = 2;
+        clap_audio_buffer_t output{};
+        output.data32 = outChannels;
+        output.channel_count = 2;
+        clap_process_t process{};
+        process.steady_time = steady;
+        process.frames_count = 256;
+        process.audio_inputs = &input;
+        process.audio_outputs = &output;
+        process.audio_inputs_count = 1;
+        process.audio_outputs_count = 1;
+        process.in_events = &inEvents.iface;
+        process.out_events = &outEvents.iface;
+        check(instance.plugin->process(instance.plugin, &process) != CLAP_PROCESS_ERROR, "reset probe processes");
+        steady += 256;
+        float peak = 0.0f;
+        for (int i = 0; i < 256; ++i) peak = std::max({ peak, std::fabs(outL[i]), std::fabs(outR[i]) });
+        return peak;
+    };
+    auto ring = [&] {
+        block(true);
+        float peak = 0.0f;
+        for (int i = 0; i < 8; ++i) peak = block(false);
+        return peak;
+    };
+
+    const float ringing = ring();
+    check(ringing > 1e-6f, "reset probe excites a tail");
+    const int restartsBefore = hostRestartRequests;
+    instance.plugin->reset(instance.plugin);
+    check(hostRestartRequests == restartsBefore, "clap reset does not ask the host for a restart");
+    const float after = block(false);
+    check(after < ringing * 1e-6f, "clap reset silences the tail on the next block");
+    check(ring() > 1e-6f, "the instance rings again after a clap reset");
+}
+
 } // namespace
+
+#if DUSKVERB_CLAP_PRESET_LOAD
+// MIX LOCK end to end through the host: it travels with the session, off by
+// default, and while it is on a factory preset loaded through the host's
+// preset-load path (DAF's program path) leaves Mix and Bus as they were; off,
+// the preset writes its own.
+void mixLockContract(const clap_plugin_factory_t* factory)
+{
+    Instance instance(factory);
+    if (instance.plugin == nullptr || instance.state == nullptr)
+    {
+        check(false, "MIX LOCK: the plugin creates with its state extension");
+        return;
+    }
+    const auto* presets = static_cast<const clap_plugin_preset_load_t*>(
+        instance.plugin->get_extension(instance.plugin, CLAP_EXT_PRESET_LOAD));
+    check(presets != nullptr, "MIX LOCK: the plugin offers preset-load, the host's program path");
+    if (presets == nullptr) return;
+    clap_id mixId = CLAP_INVALID_ID, busId = CLAP_INVALID_ID;
+    for (const auto& p : readParams(instance))
+    {
+        if (p.symbol == "mix") mixId = p.info.id;
+        if (p.symbol == "bus_mode") busId = p.info.id;
+    }
+    check(mixId != CLAP_INVALID_ID && busId != CLAP_INVALID_ID, "MIX LOCK: Mix and Bus are host parameters");
+
+    // The state blob is key/value pairs, each NUL-terminated; MIX LOCK's value is
+    // one character. Empty when the key is missing.
+    const auto withLock = [](std::vector<uint8_t> state, char value) {
+        static constexpr char key[] = "mix_lock";
+        for (size_t i = 0; i + sizeof(key) < state.size(); ++i)
+            if (std::memcmp(state.data() + i, key, sizeof(key)) == 0)
+            {
+                state[i + sizeof(key)] = static_cast<uint8_t>(value);
+                return state;
+            }
+        return std::vector<uint8_t>();
+    };
+    constexpr uint32_t kProgram = 2;
+    const auto& preset = duskverb::dv2FactoryPresets()[kProgram];
+    const double presetMix = duskverb::plainToHost(duskverb::paramDesc(duskverb::Mix), preset.mix);
+    check(!preset.busMode && std::fabs(presetMix - 0.8) > 0.05, "MIX LOCK: the test preset differs from the held values");
+
+    instance.set(mixId, 0.8);
+    instance.set(busId, 1.0);
+    const auto unlocked = instance.save();
+    const auto locked = withLock(unlocked, '1');
+    check(!locked.empty() && withLock(unlocked, '0') == unlocked, "MIX LOCK is saved with the session, off by default");
+
+    char key[8];
+    std::snprintf(key, sizeof(key), "%u", kProgram);
+    check(instance.load(locked), "MIX LOCK: a session with the lock on loads");
+    check(presets->from_location(instance.plugin, CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN, nullptr, key),
+          "MIX LOCK: a factory preset loads through the host");
+    checkNear(instance.get(mixId), 0.8, 1e-6, "MIX LOCK keeps Mix through a host preset load");
+    checkNear(instance.get(busId), 1.0, 1e-6, "MIX LOCK keeps Bus on through a host preset load");
+    const auto relocked = instance.save();
+    check(!relocked.empty() && withLock(relocked, '1') == relocked, "the lock stays on in the saved session");
+
+    check(instance.load(unlocked), "MIX LOCK: the same session with the lock off loads");
+    check(presets->from_location(instance.plugin, CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN, nullptr, key),
+          "MIX LOCK: the factory preset loads again");
+    checkNear(instance.get(mixId), presetMix, 1e-6, "unlocked, a host preset load writes the preset's Mix");
+    checkNear(instance.get(busId), 0.0, 1e-6, "unlocked, a host preset load writes the preset's Bus");
+}
+#endif
 
 int main(int argc, char** argv)
 {
@@ -790,6 +1063,13 @@ int main(int argc, char** argv)
     parameterContract(probe, metadata);
     stateContract(probe);
     audioContract(library.factory, probe);
+    resetContract(library.factory);
+    tailContract(library.factory);
+#if DUSKVERB_CLAP_PRESET_LOAD
+    mixLockContract(library.factory);
+#else
+    std::printf("SKIP: MIX LOCK host preset-load contract (this DAF has no CLAP preset-load)\n");
+#endif
 
     if (failures != 0)
     {

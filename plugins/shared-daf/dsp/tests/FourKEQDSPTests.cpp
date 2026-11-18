@@ -11,13 +11,16 @@
 //   3. The Hz API puts a band, and a filter's -3 dB point, where it is asked
 //      to (dusk-audio-plugins#288).
 //   4. No NaN, no unstable section and no runaway tail at extreme settings.
+//   5. The latency the core reports is the delay it renders, rounded.
 
 #include "FourKEQDSP.hpp"
+#include "DuskOversampler.hpp"
 #include "reference/FourKEQDSPMainRef.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <complex>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -365,6 +368,60 @@ RenderResult render(double fs, int maxBlock, Settings s, const std::vector<Autom
     return r;
 }
 
+// A response's group delay at fHz, in samples: Re{ sum(n h[n] e^-jwn) /
+// sum(h[n] e^-jwn) }, exact and free of phase unwrapping.
+double groupDelay(const std::vector<double>& h, double fHz, double fs)
+{
+    const double w = 2.0 * kPi * fHz / fs;
+    std::complex<double> sum(0.0, 0.0), moment(0.0, 0.0);
+    for (size_t n = 0; n < h.size(); ++n)
+    {
+        const std::complex<double> e = std::polar(1.0, -w * (double)n);
+        sum += h[n] * e;
+        moment += (double)n * h[n] * e;
+    }
+    return (moment / sum).real();
+}
+
+// A unit impulse through duskaudio::Oversampler, the class the core runs, with
+// nothing in between: the up/down round trip's impulse response.
+std::vector<double> oversamplerImpulse(int factor)
+{
+    duskaudio::Oversampler os;
+    os.setFactor(factor);
+    os.reset();
+    std::vector<double> h(1024);
+    for (size_t n = 0; n < h.size(); ++n)
+        h[n] = os.processSample(n == 0 ? 1.0f : 0.0f, [](float s) noexcept { return s; });
+    return h;
+}
+
+// The delay the core's oversampling renders, measured, in base-rate samples:
+// the centroid of the round trip's impulse response, sum(n h[n]) / sum(h[n]),
+// its group delay at DC. The halfbands are linear phase, so it is the delay at
+// every frequency (testLatencyIsTheRenderedDelay checks that). It lies on a
+// quarter-sample grid, and is snapped to 1/64 so float noise cannot move 22.5
+// (2x) off its half before it is rounded.
+double renderedDelay(int factor)
+{
+    if (factor <= 1)
+        return 0.0;
+    const std::vector<double> h = oversamplerImpulse(factor);
+    double sum = 0.0, moment = 0.0;
+    for (size_t n = 0; n < h.size(); ++n)
+    {
+        sum += h[n];
+        moment += (double)n * h[n];
+    }
+    return std::round(moment / sum * 64.0) / 64.0;
+}
+
+// The latency the core must report at a factor: that delay rounded, half up.
+int renderedLatency(int factor)
+{
+    return (int)std::lround(renderedDelay(factor));
+}
+
 //==============================================================================
 // 1. Bit identity at the reference design rate
 //==============================================================================
@@ -437,8 +494,13 @@ void testReferenceRateIsBitIdentical()
             ++compared;
             identical += same ? 1 : 0;
             CHECK(same, "%s at %.0f Hz x%d is not bit-identical to the reference core", names[p], rate.host, factor);
-            CHECK(live.latency == ref.latency && std::memcmp(&live.outPeakL, &ref.outPeakL, sizeof(float)) == 0,
-                  "%s at %.0f Hz x%d: latency/meter differ", names[p], rate.host, factor);
+            // The meter as the frozen core's. The latency as the delay the
+            // core renders (testLatencyIsTheRenderedDelay): the frozen core
+            // reported the oversampler's latency(), 27 at 4x for 25.75.
+            CHECK(live.latency == renderedLatency(factor)
+                      && std::memcmp(&live.outPeakL, &ref.outPeakL, sizeof(float)) == 0,
+                  "%s at %.0f Hz x%d: latency %d (the rendered delay rounds to %d) or meter differ", names[p],
+                  rate.host, factor, live.latency, renderedLatency(factor));
 
             // The drawn curve too, section by section.
             const auto a = liveCurve(s, rate.host);
@@ -1420,6 +1482,148 @@ void testExtremeRendersStayFiniteAndDecay()
     std::printf("[4b] %d extreme renders (4 settings x 7 rates x 1/2/4x): finite, bounded, no subnormal output, "
                 "tails decaying\n", renders);
 }
+
+//==============================================================================
+// 5. The latency the core reports is the delay it renders
+//==============================================================================
+
+// The core with every band at 0 dB and both filters out, prepared at fs in
+// an Oversampling mode, and its response to an impulse of 0.01 (the console
+// saturator stays linear), 2^16 samples in blocks of 512.
+struct NeutralRun
+{
+    std::vector<double> h;
+    int reportedPrepared = -1, reportedRun = -1;
+};
+NeutralRun neutralImpulse(double fs, int mode)
+{
+    Settings s;
+    s.oversampling = mode;
+    auto core = std::make_unique<FourKEQDSP>();
+    apply(*core, s);
+    core->prepare(fs, 512);
+    core->reset();
+    NeutralRun r;
+    r.reportedPrepared = core->getLatencySamples();
+    const int total = 1 << 16;
+    std::vector<float> in((size_t)total, 0.0f), outL((size_t)total), outR((size_t)total);
+    in[0] = 0.01f;
+    for (int offset = 0; offset < total; offset += 512)
+    {
+        const float* inputs[2] = { in.data() + offset, in.data() + offset };
+        float* outputs[2] = { outL.data() + offset, outR.data() + offset };
+        core->processBlock(inputs, outputs, 2, 512);
+    }
+    r.reportedRun = core->getLatencySamples();
+    r.h.resize((size_t)total);
+    for (int n = 0; n < total; ++n)
+        r.h[(size_t)n] = outL[(size_t)n] / 0.01;
+    return r;
+}
+
+// The core's one delay is the oversampler's FIR round trip. Measured on the
+// oversampler alone it renders 22.5 base samples at 2x and 25.75 at 4x at
+// every frequency, where its latency() counts 23 and 26.5 (it leaves out the
+// decimators' phase). The whole core at neutral settings adds exactly that to
+// the group delay it has at 1x, at every host rate and mode. That 1x group
+// delay, 0.012 samples at 1 kHz at 44.1 kHz, is phase, not latency: it comes
+// from the 5 Hz DC blocker on the console saturator's wet branch, whose long
+// negative tail also swamps the core's DC centroid (-794 samples in Brown at
+// 48 kHz, for a DC gain of 0.65), so the core is measured by its group delay
+// instead. The core reports the rendered delay rounded half up (23 at 2x, 26
+// at 4x), after prepare(), after processing, when the Oversampling mode
+// changes between blocks and after a bypass is undone, and
+// latencySamplesFor() gives the same number. The numbers are also pinned as
+// literals at every rate and mode, so a regression that chooseFactor shares
+// with all of the above (a factor cap moved) cannot pass: 4x runs below
+// 88.2 kHz and 2x below 176.4 kHz.
+void testLatencyIsTheRenderedDelay()
+{
+    std::printf("[5] latency: what the core reports against the delay it renders\n");
+    for (int factor : { 2, 4 })
+    {
+        const double delay = renderedDelay(factor);
+        const double pinned = factor == 2 ? 22.5 : 25.75;
+        CHECK(delay == pinned, "%dx: the oversampler renders %.6f samples, measured before as %.2f", factor, delay,
+              pinned);
+        const std::vector<double> h = oversamplerImpulse(factor);
+        for (double f : { 100.0, 1000.0, 5000.0, 10000.0, 15000.0 })
+        {
+            const double gd = groupDelay(h, f, 48000.0);
+            CHECK(std::abs(gd - delay) < 1.0e-4, "%dx: group delay %.6f at %.0f Hz (48 kHz), %.6f at DC: not a pure"
+                  " delay", factor, gd, f, delay);
+        }
+        duskaudio::Oversampler os;
+        os.setFactor(factor);
+        std::printf("  %dx: the oversampler renders %.4f samples; its latency() counts %.4f\n", factor, delay,
+                    (double)os.latency());
+    }
+
+    struct Pinned { double fs; int latency[3]; };   // by Oversampling mode: 1x, 2x, 4x
+    const Pinned pinned[] = { { 44100.0, { 0, 23, 26 } }, { 48000.0, { 0, 23, 26 } },
+                              { 88200.0, { 0, 23, 23 } }, { 96000.0, { 0, 23, 23 } },
+                              { 176400.0, { 0, 0, 0 } }, { 192000.0, { 0, 0, 0 } } };
+    for (const Pinned& pin : pinned)
+    {
+        const double fs = pin.fs;
+        const double atOneX = groupDelay(neutralImpulse(fs, 0).h, 1000.0, fs);
+        for (int mode = 0; mode <= 2; ++mode)
+        {
+            const int factor = FourKEQDSP::chooseFactor(fs, mode);
+            const NeutralRun r = neutralImpulse(fs, mode);
+            const double added = groupDelay(r.h, 1000.0, fs) - atOneX;
+            const int expected = renderedLatency(factor);
+            CHECK(std::abs(added - renderedDelay(factor)) < 1.0e-3, "%.0f Hz mode %d (%dx): the core adds %.5f samples"
+                  " to its 1x group delay at 1 kHz; the oversampler renders %.5f", fs, mode, factor, added,
+                  renderedDelay(factor));
+            CHECK(r.reportedPrepared == expected && r.reportedRun == expected
+                      && FourKEQDSP::latencySamplesFor(fs, mode) == expected,
+                  "%.0f Hz mode %d (%dx): reports %d after prepare(), %d after processing, latencySamplesFor() %d;"
+                  " the rendered %.4f rounds to %d", fs, mode, factor, r.reportedPrepared, r.reportedRun,
+                  FourKEQDSP::latencySamplesFor(fs, mode), renderedDelay(factor), expected);
+            const int literal = pin.latency[mode];
+            CHECK(r.reportedPrepared == literal && r.reportedRun == literal
+                      && FourKEQDSP::latencySamplesFor(fs, mode) == literal,
+                  "%.0f Hz mode %d: reports %d after prepare(), %d after processing, latencySamplesFor() %d;"
+                  " pinned %d", fs, mode, r.reportedPrepared, r.reportedRun, FourKEQDSP::latencySamplesFor(fs, mode),
+                  literal);
+            std::printf("  %6.0f Hz mode %d (%dx): renders %8.5f more than at 1x, reports %d\n", fs, mode, factor,
+                        added, r.reportedRun);
+        }
+    }
+
+    // Between blocks: an Oversampling change publishes its latency at once; a
+    // settled bypass reports 0 and undoing it the rendered delay again.
+    Settings s;
+    s.oversampling = 1;
+    auto core = std::make_unique<FourKEQDSP>();
+    apply(*core, s);
+    core->prepare(48000.0, 512);
+    core->reset();
+    std::vector<float> silence(24000, 0.0f), outL(24000), outR(24000);
+    auto run = [&](int samples) {
+        const float* inputs[2] = { silence.data(), silence.data() };
+        float* outputs[2] = { outL.data(), outR.data() };
+        core->processBlock(inputs, outputs, 2, samples);
+        return core->getLatencySamples();
+    };
+    const int at2x = run(512);
+    core->setOversampling(2);
+    const int at4x = run(512);
+    core->setOversampling(0);
+    const int at1x = run(512);
+    core->setOversampling(2);
+    core->setBypass(true);
+    // 0.5 s: the crossfade, a one-pole of 30 ms, is under its 0.001 gate after 207 ms.
+    const int bypassed = run(24000);
+    core->setBypass(false);
+    const int resumed = run(512);
+    CHECK(at2x == renderedLatency(2) && at4x == renderedLatency(4) && at1x == 0 && bypassed == 0
+              && resumed == renderedLatency(4),
+          "48 kHz, between blocks: 2x %d, then 4x %d, 1x %d, 4x bypassed %d and resumed %d; expected %d, %d, 0, 0"
+          " and %d", at2x, at4x, at1x, bypassed, resumed, renderedLatency(2), renderedLatency(4),
+          renderedLatency(4));
+}
 } // namespace
 
 int main()
@@ -1437,6 +1641,7 @@ int main()
     testLastFilterSetterWins();
     testEveryDesignedSectionIsStable();
     testExtremeRendersStayFiniteAndDecay();
+    testLatencyIsTheRenderedDelay();
     if (gFailures > 0)
     {
         std::fprintf(stderr, "FourKEQDSP core tests: %d of %d checks FAILED\n", gFailures, gChecks);

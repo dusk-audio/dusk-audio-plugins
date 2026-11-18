@@ -28,10 +28,10 @@ public:
         frequency = nyquistSafeDesignHz(fs, frequency);
         if (std::abs(frequency - currentFrequency) <= 0.001f) return;
         currentFrequency = frequency;
-        const auto lp = Biquad::lowPass(fs, frequency, kButterworthQ);
-        const auto hp = Biquad::highPass(fs, frequency, kButterworthQ);
-        lowA.setCoeffs(lp); lowB.setCoeffs(lp);
-        highA.setCoeffs(hp); highB.setCoeffs(hp);
+        lowA.setLowPass(fs, frequency, kButterworthQ);
+        lowB.setLowPass(fs, frequency, kButterworthQ);
+        highA.setHighPass(fs, frequency, kButterworthQ);
+        highB.setHighPass(fs, frequency, kButterworthQ);
     }
 
     void reset() noexcept
@@ -74,7 +74,8 @@ private:
     static constexpr float kButterworthQ = 0.7071067811865476f;
     double fs = 48000.0;
     float currentFrequency = -1.0f;
-    Biquad lowA, lowB, highA, highB;
+    // Guarded: a 20 Hz corner at 384 kHz has unstable float coefficients.
+    GuardedBiquad lowA, lowB, highA, highB;
 };
 
 } // namespace duskaudio

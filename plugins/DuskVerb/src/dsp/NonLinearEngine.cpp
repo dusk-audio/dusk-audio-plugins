@@ -25,6 +25,10 @@ void NonLinearEngine::prepare (double sampleRate, int maxBlockSize)
     // engineer would dial up before patching the gate after it. Per-preset
     // overrides via the universal setter API.
     fdn_.prepare (sampleRate, maxBlockSize);
+    // Every line at one delay-mod rate. Mod Rate sets the gate release here (setModRate), so the
+    // tank never gets it, and the presets on this engine were voiced that way: until 2026-10-28
+    // every preset load left the tank's lines at one rate (FDNReverb::clearBuffers dropped the spread).
+    fdn_.setModRateSpread (false);
 
     // Default hall character: lushest config (matches the Lush Dark Hall preset
     // baseline as the user requested in the v7 plan). Per-preset setters then

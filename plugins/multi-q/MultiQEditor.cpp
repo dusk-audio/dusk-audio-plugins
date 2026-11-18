@@ -1802,6 +1802,17 @@ void MultiQEditor::setupLabel(juce::Label& label, const juce::String& text)
 
 void MultiQEditor::updateSelectedBandControls()
 {
+    // Same swap as BandDetailPanel::updateAttachments: commit a typed value into
+    // the band it was typed for before these sliders follow the new band.
+    // Defensive, unreachable today: freqSlider and qSlider are always hidden and
+    // gainSlider is shown but never laid out (0 x 0), so no user can open a
+    // field on them. The call keeps the rule if they are ever shown again. No
+    // user-reachable path exercises it; the value-entry test reaches only the
+    // 0 x 0 gainSlider.
+    for (auto* slider : { freqSlider.get(), gainSlider.get(), qSlider.get() })
+        if (slider != nullptr)
+            ValueEditor::commitOpenEditorNow(*slider);
+
     freqAttachment.reset();
     gainAttachment.reset();
     qAttachment.reset();
@@ -2695,43 +2706,43 @@ void MultiQEditor::setupTubeEQControls()
 
     // Create attachments
     tubeEQLfBoostAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        processor.parameters, ParamIDs::pultecLfBoostGain, *tubeEQLfBoostSlider);
+        processor.parameters, ParamIDs::tubeEqLfBoostGain, *tubeEQLfBoostSlider);
     tubeEQLfFreqAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        processor.parameters, ParamIDs::pultecLfBoostFreq, *tubeEQLfFreqSelector);
+        processor.parameters, ParamIDs::tubeEqLfBoostFreq, *tubeEQLfFreqSelector);
     tubeEQLfAttenAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        processor.parameters, ParamIDs::pultecLfAttenGain, *tubeEQLfAttenSlider);
+        processor.parameters, ParamIDs::tubeEqLfAttenGain, *tubeEQLfAttenSlider);
     tubeEQHfBoostAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        processor.parameters, ParamIDs::pultecHfBoostGain, *tubeEQHfBoostSlider);
+        processor.parameters, ParamIDs::tubeEqHfBoostGain, *tubeEQHfBoostSlider);
     tubeEQHfBoostFreqAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        processor.parameters, ParamIDs::pultecHfBoostFreq, *tubeEQHfBoostFreqSelector);
+        processor.parameters, ParamIDs::tubeEqHfBoostFreq, *tubeEQHfBoostFreqSelector);
     tubeEQHfBandwidthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        processor.parameters, ParamIDs::pultecHfBoostBandwidth, *tubeEQHfBandwidthSlider);
+        processor.parameters, ParamIDs::tubeEqHfBoostBandwidth, *tubeEQHfBandwidthSlider);
     tubeEQHfAttenAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        processor.parameters, ParamIDs::pultecHfAttenGain, *tubeEQHfAttenSlider);
+        processor.parameters, ParamIDs::tubeEqHfAttenGain, *tubeEQHfAttenSlider);
     tubeEQHfAttenFreqAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        processor.parameters, ParamIDs::pultecHfAttenFreq, *tubeEQHfAttenFreqSelector);
+        processor.parameters, ParamIDs::tubeEqHfAttenFreq, *tubeEQHfAttenFreqSelector);
     tubeEQInputGainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        processor.parameters, ParamIDs::pultecInputGain, *tubeEQInputGainSlider);
+        processor.parameters, ParamIDs::tubeEqInputGain, *tubeEQInputGainSlider);
     tubeEQOutputGainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        processor.parameters, ParamIDs::pultecOutputGain, *tubeEQOutputGainSlider);
+        processor.parameters, ParamIDs::tubeEqOutputGain, *tubeEQOutputGainSlider);
     tubeEQTubeDriveAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        processor.parameters, ParamIDs::pultecTubeDrive, *tubeEQTubeDriveSlider);
+        processor.parameters, ParamIDs::tubeEqTubeDrive, *tubeEQTubeDriveSlider);
 
     // Mid section attachments
     tubeEQMidEnabledAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
-        processor.parameters, ParamIDs::pultecMidEnabled, *tubeEQMidEnabledButton);
+        processor.parameters, ParamIDs::tubeEqMidEnabled, *tubeEQMidEnabledButton);
     tubeEQMidLowFreqAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        processor.parameters, ParamIDs::pultecMidLowFreq, *tubeEQMidLowFreqSelector);
+        processor.parameters, ParamIDs::tubeEqMidLowFreq, *tubeEQMidLowFreqSelector);
     tubeEQMidLowPeakAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        processor.parameters, ParamIDs::pultecMidLowPeak, *tubeEQMidLowPeakSlider);
+        processor.parameters, ParamIDs::tubeEqMidLowPeak, *tubeEQMidLowPeakSlider);
     tubeEQMidDipFreqAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        processor.parameters, ParamIDs::pultecMidDipFreq, *tubeEQMidDipFreqSelector);
+        processor.parameters, ParamIDs::tubeEqMidDipFreq, *tubeEQMidDipFreqSelector);
     tubeEQMidDipAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        processor.parameters, ParamIDs::pultecMidDip, *tubeEQMidDipSlider);
+        processor.parameters, ParamIDs::tubeEqMidDip, *tubeEQMidDipSlider);
     tubeEQMidHighFreqAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        processor.parameters, ParamIDs::pultecMidHighFreq, *tubeEQMidHighFreqSelector);
+        processor.parameters, ParamIDs::tubeEqMidHighFreq, *tubeEQMidHighFreqSelector);
     tubeEQMidHighPeakAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        processor.parameters, ParamIDs::pultecMidHighPeak, *tubeEQMidHighPeakSlider);
+        processor.parameters, ParamIDs::tubeEqMidHighPeak, *tubeEQMidHighPeakSlider);
 }
 
 void MultiQEditor::layoutTubeEQControls()
@@ -3321,6 +3332,17 @@ void MultiQEditor::layoutDynamicControls()
 
 void MultiQEditor::updateDynamicAttachments()
 {
+    // Same swap as BandDetailPanel::updateAttachments (see there). Defensive,
+    // unreachable today: layoutDynamicControls() hides these sliders, so no
+    // user can open a field on them; no test covers it through the UI.
+    // updateEQModeVisibility() also drops these attachments when leaving Digital
+    // without committing first. That is deliberate: it only detaches, so a
+    // later commit can reach no parameter at all, let alone another band.
+    for (auto* slider : { dynThresholdSlider.get(), dynAttackSlider.get(),
+                          dynReleaseSlider.get(), dynRangeSlider.get() })
+        if (slider != nullptr)
+            ValueEditor::commitOpenEditorNow(*slider);
+
     dynEnableAttachment.reset();
     dynThresholdAttachment.reset();
     dynAttackAttachment.reset();

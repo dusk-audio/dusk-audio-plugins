@@ -6,7 +6,7 @@
 //
 // Reference-calibrated DAF implementation. Isolated band/filter laws, shared
 // LF/LM and HM/HF stage interactions, native nonlinear residue, and overload
-// rails are fitted from hosted SSL E-channel measurements. The EQ and
+// rails are fitted from hosted British console E-series channel measurements. The EQ and
 // saturation chain can be oversampled; below kReferenceDesignRate the EQ
 // sections are matched-magnitude designs, so no rate cramps them.
 //
@@ -91,9 +91,9 @@ public:
 
     // Reported latency in base-rate samples. 0 only once the bypass crossfade
     // has fully SETTLED to passthrough (a bit-exact, undelayed dry path); during
-    // the ~30 ms fade, and whenever active, the oversampler latency is reported.
-    // Gating on the settled smoothed power (not the raw flag) avoids a latency
-    // flip mid-crossfade.
+    // the ~30 ms fade, and whenever active, latencySamplesFor() at the running
+    // rate and Oversampling mode is reported. Gating on the settled smoothed
+    // power (not the raw flag) avoids a latency flip mid-crossfade.
     int getLatencySamples() const noexcept
     {
         return lastSmoothedPower.load(std::memory_order_relaxed) <= 0.001f
@@ -242,6 +242,17 @@ public:
     static float calibratedEqQ(float controlQ, float controlHz,
                                float controlGainDb, Band band,
                                bool black, bool bell) noexcept;
+    // The control values the measured band laws are anchored at, the values
+    // the reference captures label the positions k/20 of a band knob's travel
+    // with (k = 0 .. kControlAnchorCount - 1). Read only. A band's frequency
+    // anchor k is its dial value at k/20 of the travel. The Q anchors ascend,
+    // as the knob descends from 3 to 0.5: Q anchor k is the Q at (20 - k)/20
+    // of the travel. An editor whose knobs travel through those positions must
+    // keep its tables equal to these, so a knob on one of them plays the
+    // response captured there (FourKEQValueFieldTest checks 4K EQ 2's).
+    static constexpr int kControlAnchorCount = 21;
+    static const float* frequencyControlAnchors(Band band) noexcept;
+    static const float* qControlAnchors() noexcept;
     // The original circuit shares one active stage between LF/LM and another
     // between HM/HF. These two small correction sections reproduce the
     // measured interaction left after the isolated-band biquads. For the low
@@ -410,6 +421,16 @@ public:
     static double consoleSatMagnitude(const ConsoleSatResponse& r, double omega) noexcept;
 
     static int   chooseFactor(double baseSampleRate, int mode) noexcept; // mode 0=1x,1=2x,2=4x
+
+    // The latency this core reports at a host rate and an Oversampling mode
+    // (0 = 1x, 1 = 2x, 2 = 4x, capped as chooseFactor caps it), in base-rate
+    // samples: the delay its oversampling renders, rounded half up. 0 at 1x,
+    // 23 at 2x (22.5 rendered) and 26 at 4x (25.75 rendered), which runs only
+    // below 88.2 kHz (44.1 and 48 kHz). prepare() and processBlock() publish
+    // it; a shell that runs this core and needs its latency before the core
+    // has processed calls it directly, so the two agree whenever the core is
+    // not bypassed (getLatencySamples() reports 0 once a bypass has settled).
+    static int   latencySamplesFor(double baseSampleRate, int oversamplingMode) noexcept;
 
 private:
     friend struct FourKEQDSPTestAccess; // tests/FourKEQDSPTests.cpp reads the running coefficients

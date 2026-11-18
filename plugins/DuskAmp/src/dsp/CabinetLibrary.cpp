@@ -27,12 +27,12 @@ namespace CabinetLibrary
         //   5) document the file's licensing in resources/cabs/LICENSES.md
         const Entry kEntries[] =
         {
-            { None,                     "(none)",                       "" },
-            { FenderTwin_SM57,          "Fender Twin — SM57",           "fender_twin_sm57_oa" },
-            { Marshall1960VB_SM57_OA,   "Marshall 1960VB — SM57 OA",    "marshall_1960vb_sm57_oa" },
-            { Marshall1960VB_SM57_Off,  "Marshall 1960VB — SM57 Off",   "marshall_1960vb_sm57_off" },
-            { VoxAC15_SM57,             "Vox AC15 — SM57",              "vox_ac15_sm57" },
-            { VoxAC15_sE4_Close,        "Vox AC15 — sE4 Close",         "vox_ac15_se4_close" },
+            { None,                         "(none)",                           "" },
+            { American2x12_Dynamic,         "American 2x12 — Dynamic",          "american_2x12_dynamic_oa" },
+            { British4x12_Dynamic_OA,       "British 4x12 — Dynamic OA",        "british_4x12_dynamic_oa" },
+            { British4x12_Dynamic_Off,      "British 4x12 — Dynamic Off",       "british_4x12_dynamic_off" },
+            { British1x12_Dynamic,          "British 1x12 — Dynamic",           "british_1x12_dynamic" },
+            { British1x12_Condenser_Close,  "British 1x12 — Condenser Close",   "british_1x12_condenser_close" },
         };
 
         static_assert (sizeof (kEntries) / sizeof (kEntries[0]) == static_cast<size_t> (Count),
@@ -78,7 +78,7 @@ namespace CabinetLibrary
     {
         if (choiceIndex < 0 || choiceIndex >= static_cast<int> (Count))
             return "(unknown)";
-        return juce::String (kEntries[choiceIndex].displayName);
+        return juce::String::fromUTF8 (kEntries[choiceIndex].displayName);
     }
 
     bool loadInto (CabinetIR& cabinet, int choiceIndex)
@@ -94,7 +94,7 @@ namespace CabinetLibrary
 
         cabinet.loadIRFromMemory (bytes.data,
                                    static_cast<size_t> (bytes.size),
-                                   juce::String (entry.displayName));
+                                   juce::String::fromUTF8 (entry.displayName));
         return true;
     }
 }

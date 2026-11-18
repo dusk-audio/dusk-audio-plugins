@@ -1,7 +1,7 @@
 ---
 slug: sunset-circuits
-version: 1.0.7
-last_updated: 2026-09-06
+version: 1.1.0
+last_updated: 2026-11-16
 tagline: Six vintage synth circuits in one instrument
 ---
 
@@ -13,7 +13,7 @@ Sunset Circuits is six vintage synthesizers in one instrument. A row of six back
 
 The six modes cover the ground that defined subtractive and FM synthesis:
 
-- **Cosmos** is an early-80s Japanese six-voice poly built on digitally controlled oscillators, with a clean non-resonant filter and a built-in bucket-brigade chorus.
+- **Cosmos** is an early-80s Japanese six-voice poly built on digitally controlled oscillators, with a resonant low-pass filter and a built-in bucket-brigade chorus.
 - **Oracle** is a late-70s American five-voice poly with two analog oscillators, a self-oscillating filter, and poly-modulation routing.
 - **Mono** is an aggressive 70s monophonic voice with two oscillators plus a sub, a fat driven filter, ring modulation, and hard sync.
 - **Modular** is a 70s semi-modular patchable voice with three oscillators, a transistor-ladder filter, sample and hold, and a spring reverb.
@@ -63,7 +63,7 @@ After installing, rescan plugins in your DAW. If the instrument does not appear,
 
 The six mode rockers at the top center are the most important control in the instrument. Click one to switch circuits. The panel color crossfades over about a quarter second, the mode sub-panel (the small panel on the right, below the LFOs) morphs to show that mode's signature controls, and a few controls in the standard panels appear or disappear depending on which mode is active. The mode is a normal automatable parameter, so you can switch circuits from the host if you want.
 
-Switching modes is click-safe. The old circuit's voices are crossfaded out over 12 ms while the new one comes up, so a mode change under a held chord is a fast dip rather than a click, and the delay and reverb tails ring on through it. The crossfade lands on an exact sample rather than waiting for the next buffer boundary, so a mode switch sounds the same at a 64-sample buffer and at 4096.
+Switching modes is click-safe. The old circuit's voices fade out over 36 ms and the new circuit fades in over the same time, so a mode change under a held chord is a short dip rather than a click, and the delay and reverb tails ring on through it. The notes you are holding, on the keys or with the sustain pedal, carry over: the new circuit plays them as it comes up, so you can audition circuits under a held chord. A circuit with fewer voices than the notes you hold takes the most recent ones, so Mono plays the last key you pressed. The switch lands on an exact sample rather than waiting for the next buffer boundary, so it sounds the same at a 64-sample buffer and at 4096.
 
 Loading a factory preset also sets the mode, because the mode is stored with the preset. If you switch modes by hand without loading a preset, the other parameters keep their current values, so the sound may not match what you expect from that circuit until you load a preset or dial it in.
 
@@ -76,6 +76,8 @@ The full-width keyboard at the bottom is playable with the mouse and sends MIDI 
 **The OCT- and OCT+ buttons** shift the played octave by twelve semitones per click, from a bottom key of C0 up to a bottom key of C6. The default is C3.
 
 **The pitch and mod wheels** sit to the left of the keys. The pitch wheel is bipolar and springs back to center when you let go; the mod wheel latches where you leave it and also responds to the scroll wheel. Both grab absolutely, so clicking part-way up a wheel jumps it there. They are the on-screen stand-ins for the two controllers a hardware synth puts left of the keybed, and the only way to exercise the Pitch Bend and Mod Whl mod-matrix sources without external hardware.
+
+**Glide and Legato.** Glide slides the pitch from one note to the next over the Glide time, or at a fixed rate with Glide Mode. With **Legato** on, notes that overlap tie: the new note takes over the one still held without a new attack, and glide happens only between overlapping notes, so a detached note lands straight on its pitch. That is the classic way to play Mono basses and leads. In the poly circuits a note ties only when it has to take over a voice that is still held, because a free voice is always used first. At full arpeggiator gate, Legato ties the arpeggiator's steps too, in every circuit: each step takes over the voice of the step before it (see the arpeggiator controls).
 
 ### Reading the panel
 
@@ -109,9 +111,11 @@ One caveat applies to program changes in the LV2 version only. A preset recalled
 
 ### Cosmos: six-voice DCO poly
 
-Cosmos is modeled on an early-80s Japanese polysynth with digitally controlled oscillators. It is six-voice polyphonic. The DCO gives it rock-steady tuning, which is what made this class of synth a workhorse for pads, plucks, and arpeggios. The filter is a clean 24 dB per octave low-pass that does not self-oscillate, paired with a separate high-pass control for thinning the low end.
+Cosmos uses a JUNO-inspired charcoal panel, red synth-section bars, blue performance-section bars, yellow/orange chorus switches, and a green display.
 
-The signature of Cosmos is the built-in bucket-brigade chorus. The mode sub-panel is titled **BBD CHORUS** and offers four settings, **OFF**, **I**, **II**, and **I+II**, which set the `Chorus Mode`. Chorus I is the subtle single-rate chorus; Chorus II is faster and deeper; I+II runs both together for the lush, wide, slightly seasick wash this synth is famous for. This chorus is separate from the global chorus in the effects section, and it is the fastest way to get the classic warm poly sound.
+Cosmos is modeled on an early-80s Japanese polysynth with digitally controlled oscillators. It is six-voice polyphonic. The DCO combines saw, pulse, and an octave-down sub with fixed mixer levels: adding a waveform adds to the sound without turning the other sources down. The sub follows Oscillator 1 pitch modulation and detune. Cosmos uses white noise. The 24 dB per octave low-pass reaches self-oscillation near the top of the resonance control, paired with a separate high-pass control for thinning the low end.
+
+The signature of Cosmos is the built-in bucket-brigade chorus. The mode sub-panel is titled **BBD CHORUS** and offers four settings, **OFF**, **I**, **II**, and **I+II**, which set the `Chorus Mode`. Chorus I sweeps at about 0.40 Hz; Chorus II is faster and slightly deeper at about 0.83 Hz. Each uses opposing left/right delay sweeps, so the chorus remains audible when summed to mono. I+II adds both for a denser sound. Fixed headroom ahead of the global effects accommodates the additive mixer and chorus. This chorus is separate from the global chorus in the effects section.
 
 Mode-specific controls visible in Cosmos: the **Sub** oscillator (wave and level), the filter **HP** knob, the **Cross Mod** knob (oscillator 2 modulating oscillator 1 at audio rate), and the four chorus buttons.
 
@@ -255,11 +259,11 @@ The sequencer strip along the bottom is an arpeggiator and step sequencer shared
 
 ### Arpeggiator controls
 
-- **Arp On**: enable the arpeggiator or step sequencer.
+- **Arp On**: enable the arpeggiator or step sequencer. Switch it on while you hold keys and the pattern starts on them; switch it off and the keys you are still holding keep sounding as a chord (in Mono and Acid, the last key you pressed). Nothing has to be pressed again.
 - **Arp Mode**: the note order the arpeggiator plays: Up, Down, Up/Down, Down/Up, Random, Order (as played), or Chord. Chord is a known limitation in this release: it is selectable and stable, but it currently steps one note at a time exactly as Up does rather than striking every held note on each step. Use a held chord with the arpeggiator off if you want block chords.
 - **Arp Octave**: how many octaves the arpeggio spans, 1 to 4.
 - **Arp Rate**: the step length as a note division, from 1/1 down to 1/32, including dotted (1/8. and so on) and triplet (1/8T and so on) divisions.
-- **Arp Gate**: the length of each step relative to its slot, from staccato to fully connected.
+- **Arp Gate**: the length of each step relative to its slot, from staccato to fully connected. At full gate with Legato on, the steps tie: each one takes over the last without a new attack, and glides into it when Glide is up. A repeated note simply holds.
 - **Arp Swing**: delays the off-beat steps for a swung feel while keeping the downbeats on the grid.
 - **Arp Latch**: holds the pattern after you release the keys, so it keeps playing hands-free.
 - **Arp Vel Mode**: where each step's velocity comes from: As Played, Fixed, or Accent.
@@ -303,6 +307,8 @@ Two behaviors are worth knowing:
 - **A note-on does not retrigger a locked LFO.** That is the point of locking: every voice you play joins the same running phase, so a chord modulates in step instead of each note starting its own sweep. Without sync, a note-on does reset the LFO to the start of its cycle. The fade-in restarts either way.
 - **Sync free-runs when the transport is stopped.** You still get a tempo-correct rate for auditioning; the phase lock engages when you press play. The lock is eased in over up to a quarter second rather than snapped, so engaging the transport does not jump a slow modulation.
 
+While phase-locked, **LFO1 Rate / LFO2 Rate modulation routes do not change the cycle length**; the Rate knob and host grid set it. Those routes affect speed again when the transport stops or Sync is off. For Random Smooth, rate modulation still changes the smoothing speed while locked.
+
 ## Mod Matrix
 
 The mod matrix is an eight-slot modulation router, opened from the **MOD MATRIX** bar on the right (the bar shows how many slots are active). Each slot connects one source to one destination with a bipolar amount, so you can invert a modulation by using a negative amount. All eight slots are always available in every mode.
@@ -336,8 +342,31 @@ The mod matrix is an eight-slot modulation router, opened from the **MOD MATRIX*
 | LFO1 Rate / LFO2 Rate | The speed of LFO 1 or 2. |
 | FX Mix | The wet/dry balance of the effects. |
 | Uni Det | The unison detune spread. |
+| LFO1 Depth / LFO2 Depth | How much of LFO 1 or 2 reaches every slot that uses it. While any slot targets an LFO's depth, that LFO is scaled by the sum of those slots (source times amount), held between 0 and 100 %, so a depth slot at 0 % holds the LFO at zero; with none, the LFO runs at full depth. Routing one LFO to the other's depth uses its unscaled output. |
 
 A classic starting patch is LFO 1 to Cutoff for a filter wobble, or Key Track to Cutoff so the filter opens as you play higher. Aftertouch to LFO1 Rate gives expressive vibrato that speeds up under pressure.
+
+**Vibrato from the mod wheel.** Route LFO 1 to Osc1 Pitch at a small amount such as +20 % and, in a second slot, LFO 1 to Osc2 Pitch, then route Mod Whl to LFO1 Depth at +100 %. With the wheel down there is no vibrato, and pushing it up brings it in, up to the depth the LFO slots set. Osc1 Pitch moves the whole voice in Cosmos and Prism and Oscillator 1 in the other modes; Osc2 Pitch moves Oscillator 2 in Oracle, Mono and Modular. Neither moves the Mono sub oscillator or Modular's Osc 3, which stay at the played pitch.
+
+In Acid mode the mod matrix is not in circuit, so the mod wheel and the depth destinations do nothing there.
+
+**Compatibility of the depth destinations.** Saved projects and presets keep their destinations in every format. A project or preset that uses LFO1 Depth or LFO2 Depth, opened in version 1.0.10 or earlier, plays those slots as Uni Det, and the mod matrix shows Uni Det. Destination automation is different: the two depth destinations grew each slot's destination from 13 to 15 choices, and a host that stores an automation lane as a position between the first and last value, as VST3 hosts do, now plays a different destination for most values of a lane recorded before:
+
+| Recorded | Now plays |
+|---|---|
+| None, Osc1 Pitch, Osc2 Pitch | unchanged |
+| Osc1 PW | Osc2 PW |
+| Osc2 PW | Cutoff |
+| Cutoff | Reso |
+| Reso | Amp |
+| Amp | Pan |
+| Pan | LFO1 Rate |
+| LFO1 Rate | FX Mix |
+| LFO2 Rate | Uni Det |
+| FX Mix | LFO1 Depth |
+| Uni Det | LFO2 Depth |
+
+Re-record such lanes. Automation in other hosts and formats has not been tested; after updating, check any lanes on the eight Mod Dest parameters.
 
 ## Presets
 
@@ -356,7 +385,7 @@ The drop-down is a list you scroll. The browser is the library you read. **BROWS
 
 The footer shows how many presets the current filters match. The browser reads the preset library as it was last scanned; see the note on rescanning below.
 
-![The preset browser: factory presets laid out in a column per mode, Cosmos through Acid, with the user library in its own column](screenshots/sunset-circuits/07-preset-browser.png)
+![The preset browser: a grid of preset cards with mode and bank badges, a search field, and mode and bank filters](screenshots/sunset-circuits/07-preset-browser.png)
 
 ### The user preset library
 
@@ -404,7 +433,7 @@ A standard stereo chorus with **Rate**, **Depth**, and **Mix**. This is the glob
 
 ### Vintage chorus (Cosmos)
 
-Cosmos has its own bucket-brigade chorus built into the circuit, controlled by the three **I / II / I+II** buttons in the mode sub-panel rather than by the effects Chorus. This is the authentic vintage chorus of the original hardware and is the source of that synth's signature warmth. You can run it alongside the effects chorus, but usually one or the other is plenty.
+Cosmos has its own bucket-brigade chorus built into the circuit, controlled by the three **I / II / I+II** buttons in the mode sub-panel rather than by the effects Chorus. Its stereo delay sweeps and filtered wet paths are calibrated against reference captures. You can run it alongside the effects chorus, but usually one or the other is plenty.
 
 ### Delay
 
@@ -435,15 +464,13 @@ Factory presets ship at 2x.
 
 ### Reported latency
 
-Oversampling adds a small, fixed processing latency from the decimation filter, which the plugin reports to the host so plugin delay compensation keeps everything aligned:
+The filter that brings the oversampled voices back to the host rate delays them slightly, by an amount that depends on the oversampling factor. The plugin pads the shorter paths so the delay is the same at every factor, and reports it to the host so plugin delay compensation keeps everything aligned:
 
 | Oversampling | Reported latency |
 |---|---|
-| 1x | 0 samples |
-| 2x | 12 samples |
-| 4x | 14 samples |
+| 1x, 2x and 4x | 13 samples |
 
-These are host samples and are independent of the sample rate. If other tracks sound slightly out of time when you change oversampling, confirm plugin delay compensation is enabled in your DAW.
+These are host samples and are independent of the sample rate: 13 samples is 0.27 ms at 48 kHz. Because the latency never changes, switching oversampling does not make your DAW restart the plugin, and held notes keep playing. The voices fade out over 36 ms, change factor in silence, and fade back in over the same time, so the switch is a short dip rather than a click; the delay and reverb tails ring on through it. If other tracks sound slightly out of time, confirm plugin delay compensation is enabled in your DAW.
 
 ### CPU
 
@@ -464,11 +491,17 @@ The first row is the worst case among ordinary patches: a full 8-voice FM patch,
 
 ### Parameters and automation
 
-Every control is a normal host parameter: 223 automatable parameters, plus two output-only level meters the host can read but not write, for 225 host parameters in total (229 ports in the LV2 build, counting audio, MIDI, and the latency report). Oversampling is one of the 223, so it automates like anything else. Controls that a mode hides are still present in the host's parameter list, so an automation lane never breaks when you switch circuits.
+Every control is a normal host parameter: 223 automatable parameters, plus two output-only level meters the host can read but not write, for 225 host parameters in total (229 ports in the LV2 build, counting audio, MIDI, and the latency report). Oversampling is one of the 223, so it automates like anything else, and since the latency is the same at every factor, automating it never makes the host restart the plugin. Controls that a mode hides are still present in the host's parameter list, so an automation lane never breaks when you switch circuits.
 
-Continuous parameters are smoothed, so automating or dragging them does not produce zipper noise. The smoother settles with an 8 ms time constant, short enough that a knob still feels immediate. Filter cutoffs are smoothed in the log-frequency domain rather than in Hz, so a sweep sounds even across the range instead of racing through the top octaves. The smoothed set covers the level, filter and effect-mix controls; the rest step per block, which for most of them is inaudible. A few are deliberately left unsmoothed because smoothing them would be worse than the step: oscillator and unison detune, pulse width, and the LFO and chorus rates all set a phase increment or an edge position, where a ramp is a pitch glide nobody asked for. Stepped controls (waveforms, modes, sequencer cells, mod-matrix routings) switch outright, as they should.
+Continuous parameters are smoothed, so automating or dragging them does not produce zipper noise. The smoother settles with an 8 ms time constant, short enough that a knob still feels immediate. Filter cutoffs are smoothed in the log-frequency domain rather than in Hz, so a sweep sounds even across the range instead of racing through the top octaves. The smoothed set covers the level, filter and effect-mix controls; the rest step per block, which for most of them is inaudible. A few are deliberately left unsmoothed because smoothing them would be worse than the step: oscillator and unison detune, pulse width, and the LFO and chorus rates all set a phase increment or an edge position, where a ramp is a pitch glide nobody asked for. Stepped controls (waveforms, modes, sequencer cells, mod-matrix routings) switch outright, as they should, with one exception: when an LFO gets its first LFO1 Depth or LFO2 Depth slot, or loses its last one, while a note sounds, its depth fades in or out over 5 ms so the change does not click. Any other change to a depth slot switches outright like the rest of the matrix.
 
 Loading a preset snaps rather than glides. The plugin tells the engine explicitly that a program change happened, so all 223 values land at once and a preset sounds correct on its first note instead of sliding into place over the first fraction of a second. For hosts that replay a patch as a burst of ordinary parameter writes rather than a program change, the engine detects the burst and snaps anyway.
+
+### Hardware controllers
+
+In CLAP hosts that read a plugin's remote control pages, such as Bitwig Studio, a controller's eight knobs land on pages laid out for playing rather than on the first eight parameters. The first page, **Performance**, holds filter cutoff, resonance and envelope amount, the four amp envelope stages and the master volume. The other pages cover the oscillators, the filter, the amp, the LFOs, the voice (glide, legato, unison, width), the arpeggiator, the effects, the Prism operators and the Acid controls. Mode and Oversampling are on no page, so a knob cannot switch the circuit or the oversampling by accident.
+
+Hosts that do not read these pages, and the VST3, AU and LV2 builds, map controllers their own way. Many simply take the parameters in order, which start with Mode, Master Tune, Master Volume, Master Pan, Stereo Width and Oversampling, so assign the knobs you want by hand there.
 
 ### Known limits
 
@@ -573,4 +606,6 @@ Two names are easy to misread. **Acid Squelch** and **Acid Machine** are Mono-mo
 
 **The text looks slightly soft.** The font atlas is baked once when the plugin window opens, at the pixel density of the display it opened on. Moving the window to a display with a different density, or zooming a long way from the size it opened at, softens the text until you close and reopen the plugin. A live atlas rebuild is planned for a future release.
 
-**My host shows extra latency.** Oversampling at 2x or 4x reports a small fixed latency (12 or 14 samples) so the host can compensate. Confirm plugin delay compensation is enabled in your DAW if other tracks sound out of sync.
+**My host shows extra latency.** The plugin reports a small fixed latency of 13 samples, the same at every oversampling setting, so the host can compensate. Confirm plugin delay compensation is enabled in your DAW if other tracks sound out of sync.
+
+**The arpeggiator stops, or notes cut out, while I am holding keys.** Check whether it happens on a loop wrap, a jump of the playhead, or a transport stop. Many DAWs send All Notes Off or All Sound Off (MIDI CC 123 or CC 120) to an instrument at those moments, and Sunset Circuits obeys them: the arpeggiator's held notes are cleared and stay silent until you press the keys again. If the cut-outs line up with the loop point, the host is sending the panic. A mode change also dips the sound for a moment, and drops a latched pattern that no key or pedal is holding.

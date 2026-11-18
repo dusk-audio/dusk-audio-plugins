@@ -8,7 +8,7 @@ name: DAF Plugins (build + release)
 # They do not go through the JUCE pipeline in build.yml.
 #
 # A single registry (see the "plan" step) drives a dynamic matrix:
-#   - PR touching plugin-local daf-plugin/core   -> build the touched plugin(s).
+#   - PR touching plugin-local source/tests      -> build the touched plugin(s).
 #   - PR touching shared-daf, this workflow, its gate scripts or the DAF revision
 #     (.github/daf-ref) -> build ALL DAF plugins. This is the shared-code safety
 #     net: shared-daf/ and DAF are compiled into every DAF plugin, so a change
@@ -31,6 +31,9 @@ on:
       - 'multi-q-2-v*'
       - 'multi-comp-2-v*'
       - 'duskverb-2-v*'
+      - 'ring-out-v*'
+      - 'chord-analyzer-2-v*'
+      - 'chord-analyzer-midi-2-v*'
   workflow_dispatch:
     inputs:
       plugin:
@@ -46,10 +49,24 @@ on:
           - 'multi-q-2'
           - 'multi-comp-2'
           - 'duskverb-2'
+          - 'ring-out'
+          - 'chord-analyzer-2'
+          - 'chord-analyzer-midi-2'
   pull_request:
     paths:
       - 'plugins/*/daf-plugin/**'
       - 'plugins/*/core/**'
+      - 'plugins/chord-analyzer/lv2/**'
+      - 'plugins/chord-analyzer/tests/**'
+      # What registered plugins build from outside core/ and daf-plugin/: Multi-Q 2's
+      # ctest gate (../tests in its CMakeLists) and the JUCE Multi-Q headers its core and
+      # parity tests include, Multi-Comp's HardwareEmulation, and the two shared JUCE
+      # sources Multi-Q 2 includes (built like shared code, see the plan step).
+      - 'plugins/multi-q/tests/**'
+      - 'plugins/multi-q/*.h'
+      - 'plugins/multi-comp/HardwareEmulation/**'
+      - 'plugins/shared/AnalogEmulation/**'
+      - 'plugins/shared/CrashLog.h'
       - 'plugins/DuskVerb/src/**'
       - 'plugins/shared-daf/**'
       - '.github/workflows/daf-build.yml'
@@ -58,6 +75,17 @@ on:
       - '.github/scripts/**'
       # The DAF revision every plugin is built against.
       - '.github/daf-ref'
+      # Sunset Circuits is built, tested and released by its own workflow
+      # (daf-release.yml) and is not in this workflow's registry. Without this, a
+      # PR that only touches it matches the two globs above and fails the plan
+      # step with "no registered plugin owns its changed paths". Last, because a
+      # negated pattern only excludes what the patterns before it matched.
+      - '!plugins/sunset-circuits/**'
+      # Spectrum Analyzer has no registered DAF plugin until step 3 of its
+      # migration (GH #184); spectrum-core.yml and juce-compile-check.yml build
+      # it. Without this, a PR that only touches its core fails the plan step
+      # the same way. Remove it when spectrum-analyzer-2 joins the registry.
+      - '!plugins/spectrum-analyzer/**'
 
 # DAF is the single hard-fork dependency under dusk-audio. Its widgets/ and
 # dgl/src/pugl-upstream/ trees are included in the same revision; archived
@@ -72,7 +100,6 @@ on:
 # hold builds on a known revision (e.g. while DAF main is broken), put its full
 # SHA in .github/daf-ref. Local builds: docker/check_daf_checkout.sh.
 env:
-  AU_TYPE: aufx
   AU_MANUFACTURER: Dusk
 
 jobs:
@@ -92,6 +119,7 @@ jobs:
       rel_display: ${{ steps.plan.outputs.rel_display }}
       rel_base: ${{ steps.plan.outputs.rel_base }}
       daf_sha: ${{ steps.daf.outputs.sha }}
+      manual_ref: ${{ steps.manual.outputs.ref }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -109,10 +137,26 @@ jobs:
         shell: bash
         run: ./tests/check_provenance_guards.sh
 
+      - name: Test complete release asset sets
+        shell: bash
+        run: python3 .github/scripts/test_daf_release_checksums.py
+
       - name: Resolve DAF revision
         id: daf
         shell: bash
         run: ./.github/scripts/resolve_daf_ref.sh --github-output
+
+      # Release archives bundle the plugin's manual PDF from the website. An early-access
+      # release's regenerated PDF waits on early-access/<public date> until that date, while
+      # website main still has the previous version's (early_access.sh website-ref).
+      - name: Resolve the manual's website branch
+        id: manual
+        shell: bash
+        env:
+          EARLY_ACCESS_DAYS: ${{ vars.EARLY_ACCESS_DAYS }}
+          HAS_EARLY_TOKEN: ${{ secrets.EARLY_ACCESS_TOKEN != '' }}
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/early_access.sh website-ref
 
       - name: Resolve build set + release info
         id: plan
@@ -126,6 +170,7 @@ jobs:
           #         above is that the artefact name IS the release slug.
           # project: project(<name> ...) token, for the tag<->CMake version guard
           # au    : DISTRHO_PLUGIN_UNIQUE_ID (AU subtype code)
+          # au_type: AU component type; omitted for the default aufx effects
           # name  : human display name
           # tag   : release tag PREFIX (version is the suffix)
           # asset : release/website asset base (asset zip = <asset>-<os>.zip)
@@ -137,6 +182,9 @@ jobs:
             {"key":"multi-q-2","dir":"plugins/multi-q/daf-plugin","base":"multi-q-2","project":"MultiQ2DAF","au":"DsMq","uri":"https://dusk-audio.github.io/plugins/multi-q-2","name":"Multi-Q 2","tag":"multi-q-2-v","asset":"multi-q-2"}
             ,{"key":"multi-comp-2","dir":"plugins/multi-comp/daf-plugin","base":"multi-comp-2","project":"MultiComp2DAF","au":"DsMc","uri":"https://dusk-audio.github.io/plugins/multi-comp-2","name":"Multi-Comp 2","tag":"multi-comp-2-v","asset":"multi-comp-2"}
             ,{"key":"duskverb-2","dir":"plugins/DuskVerb/daf-plugin","base":"duskverb-2","project":"DuskVerb2DAF","au":"DsDv","uri":"https://dusk-audio.github.io/plugins/duskverb-2","name":"DuskVerb 2","tag":"duskverb-2-v","asset":"duskverb-2"}
+            ,{"key":"ring-out","dir":"plugins/ring-out/daf-plugin","base":"ring-out","project":"RingOutDAF","au":"DsRO","uri":"https://dusk-audio.github.io/plugins/ring-out","name":"Ring Out","tag":"ring-out-v","asset":"ring-out"}
+            ,{"key":"chord-analyzer-2","dir":"plugins/chord-analyzer/daf-plugin","base":"chord-analyzer-2","project":"ChordAnalyzerDAF","au":"DsCA","au_type":"aumu","uri":"https://dusk-audio.github.io/plugins/chord-analyzer-2","name":"Chord Analyzer 2","tag":"chord-analyzer-2-v","asset":"chord-analyzer-2"}
+            ,{"key":"chord-analyzer-midi-2","dir":"plugins/chord-analyzer/daf-plugin","base":"chord-analyzer-midi-2","project":"ChordAnalyzerDAF","au":"DsCM","au_type":"aumi","uri":"https://dusk-audio.github.io/plugins/chord-analyzer-midi-2","name":"Chord Analyzer MIDI 2","tag":"chord-analyzer-midi-2-v","asset":"chord-analyzer-midi-2"}
           ]
           JSON
 
@@ -155,7 +203,7 @@ jobs:
             TAGPFX=$(jq -r '.tag'     <<<"$ENTRY")
             PROJECT=$(jq -r '.project' <<<"$ENTRY")
             PDIR=$(jq -r '.dir'       <<<"$ENTRY")
-            VERSION="${TAG#$TAGPFX}"
+            VERSION="${TAG#"$TAGPFX"}"
             # Guard: tag version must equal the CMake project() version (ignoring a
             # -beta/-rc suffix), else the release ships binaries whose embedded
             # version disagrees with the tag.
@@ -180,7 +228,9 @@ jobs:
             # --- PR: build touched plugins, or all when shared infrastructure changed ---
             BASE_SHA="${{ github.event.pull_request.base.sha }}"
             HEAD_SHA="${{ github.event.pull_request.head.sha }}"
-            CHANGED_PATHS=$(git diff --name-only --diff-filter=ACDMRT "$BASE_SHA" "$HEAD_SHA")
+            # --no-renames: a moved file is its old path and its new one, so moving a
+            # shared header away still names the shared path it left.
+            CHANGED_PATHS=$(git diff --name-only --no-renames --diff-filter=ACDMRT "$BASE_SHA" "$HEAD_SHA")
             echo "=== changed paths ==="
             printf '%s\n' "$CHANGED_PATHS"
 
@@ -190,7 +240,10 @@ jobs:
                 # .github/daf-ref and the scripts that resolve and verify it change
                 # what every plugin is built against, so they build everything, as
                 # shared code does. (daf-provenance.yml tests the guards themselves.)
-                plugins/shared-daf/*|.github/workflows/daf-build.yml|.github/scripts/*|.github/daf-ref)
+                # plugins/shared/AnalogEmulation and CrashLog.h are under no plugin's
+                # root, so the ownership match below cannot place them; they build
+                # everything too.
+                plugins/shared-daf/*|plugins/shared/AnalogEmulation/*|plugins/shared/CrashLog.h|.github/workflows/daf-build.yml|.github/scripts/*|.github/daf-ref)
                   BUILD_ALL=true
                   break
                   ;;
@@ -267,6 +320,7 @@ jobs:
       PLUGIN_BASE: ${{ matrix.plugin.base }}
       PLUGIN_URI: ${{ matrix.plugin.uri }}
       ASSET: ${{ matrix.plugin.asset }}
+      MANUAL_REF: ${{ needs.plan.outputs.manual_ref }}
     steps:
       # git + ca-certificates must exist BEFORE actions/checkout so the DAF
       # submodule checkouts work inside the bare container.
@@ -277,8 +331,11 @@ jobs:
           # The container starts on stock Ubuntu repositories by policy and
           # remains there. The timeout guards stalls, retries guard hard
           # failures, and the dpkg repair handles interrupted transactions.
+          # 180s for the index fetch: on a degraded mirror it ran past 90s on all
+          # three attempts (PR #300). Worst case 3 x (180 + 180) + 2 x 55 s, inside
+          # the job limit.
           prereqs() {
-            timeout 90 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
+            timeout 180 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
             timeout 180 apt-get install -y --no-install-recommends \
               -o Acquire::Retries=3 git ca-certificates
           }
@@ -340,10 +397,10 @@ jobs:
             build-essential pkg-config cmake ninja-build zip unzip curl \
             libgl1-mesa-dev libx11-dev libxext-dev libxtst-dev libdbus-1-dev \
             libasound2 libfreetype6 \
-            xvfb python3 serdi lilv-utils liblilv-dev
+            xvfb python3 serdi lilv-utils liblilv-dev lv2-dev
           # Binaries, not packages: these come from several of the packages above
           # and a missing one should fail here rather than mid-gate.
-          for tool in cmake ninja zip unzip curl python3 serdi lv2info xvfb-run; do
+          for tool in cmake ninja zip unzip curl python3 serdi lv2info readelf ldd xvfb-run; do
             command -v "$tool" >/dev/null || { echo "::error::missing dependency: $tool"; exit 1; }
           done
 
@@ -385,10 +442,23 @@ jobs:
             # xvfb-run: the UI drag guard opens the plugin's real editor, so ctest
             # now needs a display. The harness fails with that instruction rather
             # than skipping when DISPLAY is unset, so this must stay.
-            xvfb-run -a ctest --test-dir build --output-on-failure
+            # Tests labelled report-only (Multi-Comp 2's parity run against the
+            # measured reference units) report accuracy and are not a gate.
+            xvfb-run -a ctest --test-dir build --output-on-failure --label-exclude report-only
           else
             echo "::notice::no ctest targets registered for ${PLUGIN_BASE}; skipping"
           fi
+
+      - name: Upload chord editor diagnostics
+        if: always() && startsWith(matrix.plugin.key, 'chord-analyzer-')
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.plugin.asset }}-linux-ui-diagnostics
+          path: |
+            ${{ env.PLUGIN_DIR }}/build/ui-artifacts/
+            ${{ env.PLUGIN_DIR }}/build/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Validate CLAP (clap-validator gate)
         working-directory: ${{ env.PLUGIN_DIR }}
@@ -401,11 +471,23 @@ jobs:
           # returning the whole matrix to advisory, and NEVER add a per-test
           # allowlist (see .github/scripts/daf_clap_validate.py).
           SUITE_STRICT: "1"
+          # The release tag's version; empty unless this run is a release.
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
         run: |
+          # The descriptor must report the version this build was configured with
+          # (project() VERSION, which getVersion() is built from) and, on a release,
+          # the tag's: every CLAP built before dusk-audio/DAF#108 reports an empty
+          # one (#358). A prerelease tag's -suffix is not part of the binary's
+          # version, as in the plan step's tag guard.
+          PROJECT_VERSION=$(sed -n 's/^CMAKE_PROJECT_VERSION:STATIC=//p' build/CMakeCache.txt)
+          EXPECT=(--expect-version "$PROJECT_VERSION")
+          if [ -n "$RELEASE_VERSION" ]; then
+            EXPECT+=(--expect-version "${RELEASE_VERSION%%-*}")
+          fi
           # xvfb: clap-validator drives the plugin GUI, which needs an X display in
           # this headless container.
           xvfb-run -a python3 "${GITHUB_WORKSPACE}/.github/scripts/daf_clap_validate.py" \
-            "build/bin/${PLUGIN_BASE}.clap"
+            "${EXPECT[@]}" "build/bin/${PLUGIN_BASE}.clap"
 
       - name: Validate LV2 metadata and discovery (gate)
         working-directory: ${{ env.PLUGIN_DIR }}
@@ -494,15 +576,27 @@ jobs:
           # the website repo's main branch; /release-plugin regenerates it on every
           # tag so it tracks the released version. Missing PDF is non-fatal (a brand-
           # new plugin without a published manual yet must not block the release).
-          manual_url="https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/main/assets/manuals/${ASSET}-manual.pdf"
-          if curl -fL --silent --show-error "$manual_url" -o "${STAGE}/${ASSET}-manual.pdf"; then
-            echo "bundled ${ASSET}-manual.pdf into ${STAGE}/"
-          else
-            rm -f "${STAGE}/${ASSET}-manual.pdf"
-            echo "::warning::User manual PDF not found at ${manual_url} (non-fatal)"
-          fi
+          bash "$GITHUB_WORKSPACE/.github/scripts/fetch_manual_pdf.sh" "$ASSET" "${STAGE}/${ASSET}-manual.pdf" "${MANUAL_REF:-main}"
           echo "=== staged ==="; find "${STAGE}" -maxdepth 2
           zip -r "${STAGE}.zip" "${STAGE}"
+
+      # The retained native headless product has its own download, as in the
+      # legacy release pipeline. Only the instrument job owns these two assets.
+      - name: Package and verify retained headless LV2 (linux)
+        if: matrix.plugin.key == 'chord-analyzer-2'
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          python3 ../lv2/package.py "build/bin/Chord Analyzer Headless.lv2" "chord-analyzer-headless-linux.zip"
+          python3 ../tests/test_chord_headless_bundle.py --archive "chord-analyzer-headless-linux.zip"
+
+      - name: Upload retained headless LV2 (linux)
+        if: matrix.plugin.key == 'chord-analyzer-2'
+        uses: actions/upload-artifact@v4
+        with:
+          name: chord-analyzer-headless-linux
+          path: ${{ env.PLUGIN_DIR }}/chord-analyzer-headless-linux.zip
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
@@ -540,6 +634,7 @@ jobs:
       PLUGIN_DIR: ${{ matrix.plugin.dir }}
       PLUGIN_BASE: ${{ matrix.plugin.base }}
       ASSET: ${{ matrix.plugin.asset }}
+      MANUAL_REF: ${{ needs.plan.outputs.manual_ref }}
     steps:
       # git + ca-certificates must exist BEFORE actions/checkout so the DAF
       # submodule checkouts work inside the bare container.
@@ -552,8 +647,11 @@ jobs:
           # failures, and the dpkg repair handles interrupted transactions.
           # Inline because checkout cannot run until git is installed and the
           # shared script is not on disk yet.
+          # 180s for the index fetch: on a degraded mirror it ran past 90s on all
+          # three attempts (PR #300). Worst case 3 x (180 + 180) + 2 x 55 s, inside
+          # the job limit.
           prereqs() {
-            timeout 90 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
+            timeout 180 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
             timeout 180 apt-get install -y --no-install-recommends \
               -o Acquire::Retries=3 git ca-certificates
           }
@@ -610,10 +708,10 @@ jobs:
           .github/scripts/apt_install.sh \
             build-essential pkg-config cmake ninja-build zip curl \
             libgl1-mesa-dev libx11-dev libxext-dev libxtst-dev libdbus-1-dev \
-            xvfb python3 serdi liblilv-dev
+            xvfb python3 serdi lilv-utils liblilv-dev lv2-dev
           # Binaries, not packages: these come from several of the packages above
           # and a missing one should fail here rather than mid-gate.
-          for tool in cmake ninja zip curl python3 serdi xvfb-run; do
+          for tool in cmake ninja zip curl python3 serdi lv2info readelf ldd xvfb-run; do
             command -v "$tool" >/dev/null || { echo "::error::missing dependency: $tool"; exit 1; }
           done
 
@@ -656,7 +754,9 @@ jobs:
             # xvfb-run: the UI drag guard opens the plugin's real editor, so ctest
             # needs a display. The harness fails with that instruction rather
             # than skipping when DISPLAY is unset, so this must stay.
-            xvfb-run -a ctest --test-dir build --output-on-failure
+            # Tests labelled report-only (Multi-Comp 2's parity run against the
+            # measured reference units) report accuracy and are not a gate.
+            xvfb-run -a ctest --test-dir build --output-on-failure --label-exclude report-only
           else
             echo "::notice::no ctest targets registered for ${PLUGIN_BASE}; skipping"
           fi
@@ -676,15 +776,38 @@ jobs:
           # the website repo's main branch; /release-plugin regenerates it on every
           # tag so it tracks the released version. Missing PDF is non-fatal (a brand-
           # new plugin without a published manual yet must not block the release).
-          manual_url="https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/main/assets/manuals/${ASSET}-manual.pdf"
-          if curl -fL --silent --show-error "$manual_url" -o "${STAGE}/${ASSET}-manual.pdf"; then
-            echo "bundled ${ASSET}-manual.pdf into ${STAGE}/"
-          else
-            rm -f "${STAGE}/${ASSET}-manual.pdf"
-            echo "::warning::User manual PDF not found at ${manual_url} (non-fatal)"
-          fi
+          bash "$GITHUB_WORKSPACE/.github/scripts/fetch_manual_pdf.sh" "$ASSET" "${STAGE}/${ASSET}-manual.pdf" "${MANUAL_REF:-main}"
           echo "=== staged ==="; find "${STAGE}" -maxdepth 2
           zip -r "${STAGE}.zip" "${STAGE}"
+
+      - name: Upload chord editor diagnostics (ARM64)
+        if: always() && startsWith(matrix.plugin.key, 'chord-analyzer-')
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.plugin.asset }}-linux-arm64-ui-diagnostics
+          path: |
+            ${{ env.PLUGIN_DIR }}/build/ui-artifacts/
+            ${{ env.PLUGIN_DIR }}/build/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      # The retained native headless product has its own download, as in the
+      # legacy release pipeline. Only the instrument job owns these two assets.
+      - name: Package and verify retained headless LV2 (linux-arm64)
+        if: matrix.plugin.key == 'chord-analyzer-2'
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          python3 ../lv2/package.py "build/bin/Chord Analyzer Headless.lv2" "chord-analyzer-headless-linux-arm64.zip"
+          python3 ../tests/test_chord_headless_bundle.py --archive "chord-analyzer-headless-linux-arm64.zip"
+
+      - name: Upload retained headless LV2 (linux-arm64)
+        if: matrix.plugin.key == 'chord-analyzer-2'
+        uses: actions/upload-artifact@v4
+        with:
+          name: chord-analyzer-headless-linux-arm64
+          path: ${{ env.PLUGIN_DIR }}/chord-analyzer-headless-linux-arm64.zip
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Upload Linux ARM64 artifacts
         uses: actions/upload-artifact@v4
@@ -699,7 +822,7 @@ jobs:
   # -------------------------------------------------------------------------
   build-macos:
     needs: plan
-    runs-on: macos-14  # ARM64 (M1)
+    runs-on: macos-15  # ARM64 (M1)
     timeout-minutes: 30
     permissions:
       contents: read
@@ -711,7 +834,9 @@ jobs:
       PLUGIN_DIR: ${{ matrix.plugin.dir }}
       PLUGIN_BASE: ${{ matrix.plugin.base }}
       ASSET: ${{ matrix.plugin.asset }}
+      MANUAL_REF: ${{ needs.plan.outputs.manual_ref }}
       AU_SUBTYPE: ${{ matrix.plugin.au }}
+      AU_TYPE: ${{ matrix.plugin.au_type || 'aufx' }}
     steps:
       - name: Checkout plugins repo
         uses: actions/checkout@v4
@@ -751,12 +876,19 @@ jobs:
             --target "${PLUGIN_BASE}-au" "${PLUGIN_BASE}-vst3" \
                      "${PLUGIN_BASE}-clap" "${PLUGIN_BASE}-lv2"
 
+      - name: Run core and ABI tests (macOS)
+        if: startsWith(matrix.plugin.key, 'chord-analyzer-') || matrix.plugin.key == 'duskverb-2'
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          cmake --build build --config Release -j"$(sysctl -n hw.ncpu)"
+          ctest --test-dir build -C Release --no-tests=error --output-on-failure
+
       - name: Locate AU component
         id: findau
         working-directory: ${{ env.PLUGIN_DIR }}
         run: |
-          COMP=$(find build/bin -name '*.component' -type d | head -1)
-          if [ -z "$COMP" ]; then
+          COMP="build/bin/${PLUGIN_BASE}.component"
+          if [ ! -d "$COMP" ]; then
             echo "::error::No .component was built"; find build -maxdepth 3 -type d; exit 1
           fi
           echo "component=${COMP}" >> "$GITHUB_OUTPUT"
@@ -911,13 +1043,7 @@ jobs:
           # the website repo's main branch; /release-plugin regenerates it on every
           # tag so it tracks the released version. Missing PDF is non-fatal (a brand-
           # new plugin without a published manual yet must not block the release).
-          manual_url="https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/main/assets/manuals/${ASSET}-manual.pdf"
-          if curl -fL --silent --show-error "$manual_url" -o "${STAGE}/${ASSET}-manual.pdf"; then
-            echo "bundled ${ASSET}-manual.pdf into ${STAGE}/"
-          else
-            rm -f "${STAGE}/${ASSET}-manual.pdf"
-            echo "::warning::User manual PDF not found at ${manual_url} (non-fatal)"
-          fi
+          bash "$GITHUB_WORKSPACE/.github/scripts/fetch_manual_pdf.sh" "$ASSET" "${STAGE}/${ASSET}-manual.pdf" "${MANUAL_REF:-main}"
           echo "=== staged ==="; find "${STAGE}" -maxdepth 2 -type d
           # ditto preserves macOS bundle metadata better than zip
           ditto -c -k --keepParent "${STAGE}" "${STAGE}.zip"
@@ -953,6 +1079,7 @@ jobs:
       PLUGIN_DIR: ${{ matrix.plugin.dir }}
       PLUGIN_BASE: ${{ matrix.plugin.base }}
       ASSET: ${{ matrix.plugin.asset }}
+      MANUAL_REF: ${{ needs.plan.outputs.manual_ref }}
     steps:
       - name: Checkout plugins repo
         uses: actions/checkout@v4
@@ -1016,6 +1143,61 @@ jobs:
           cmake --build build --config Release -j $env:NUMBER_OF_PROCESSORS `
             --target "$env:PLUGIN_BASE-vst3" "$env:PLUGIN_BASE-clap"
 
+      - name: Build and run core and ABI tests (MSVC)
+        if: startsWith(matrix.plugin.key, 'chord-analyzer-') || matrix.plugin.key == 'duskverb-2'
+        working-directory: ${{ env.PLUGIN_DIR }}
+        shell: pwsh
+        run: |
+          cmake --build build --config Release -j $env:NUMBER_OF_PROCESSORS
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ctest --test-dir build -C Release --no-tests=error --output-on-failure
+
+      - name: Verify DuskVerb has no external VC++ runtime dependency
+        if: matrix.plugin.key == 'duskverb-2'
+        working-directory: ${{ env.PLUGIN_DIR }}
+        shell: pwsh
+        run: |
+          # The DLLs of the VC++ redistributable, which the download does not ship. VCOMP
+          # (OpenMP) has no static form, so linking the runtime statically cannot remove it.
+          $runtimeImport = '^\s*(MSVCP|MSVCR|VCRUNTIME|VCOMP|CONCRT)[A-Za-z0-9_]*\.dll\s*$'
+          function Find-RuntimeImports([string[]] $Lines) { @($Lines -match $runtimeImport) }
+          # Negative controls for the check below, in dumpbin's layout: it must reject each
+          # runtime DLL and pass Windows system DLLs.
+          foreach ($dll in 'MSVCP140.dll', 'MSVCR120.dll', 'VCRUNTIME140_1.dll', 'VCOMP140.dll', 'CONCRT140.dll') {
+            $found = Find-RuntimeImports @('  Image has the following dependencies:', '', "    $dll", '    KERNEL32.dll')
+            if ($found.Count -ne 1) { throw "The runtime import check does not reject $dll" }
+          }
+          if ((Find-RuntimeImports @('    KERNEL32.dll', '    USER32.dll', '    OPENGL32.dll')).Count -ne 0) {
+            throw "The runtime import check rejects a Windows system DLL"
+          }
+          $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
+          $dumpbin = & $vswhere -latest -products '*' -find 'VC/Tools/MSVC/**/bin/Hostx64/x64/dumpbin.exe' | Select-Object -First 1
+          if (-not $dumpbin) { throw "dumpbin not found" }
+          $binaries = Get-ChildItem build -Recurse -File | Where-Object {
+            $_.Name -eq "$env:PLUGIN_BASE.clap" -or $_.Name -eq "$env:PLUGIN_BASE.vst3"
+          }
+          if ($binaries.Count -ne 2) { throw "Expected the CLAP and VST3 binaries, found $($binaries.Count)" }
+          foreach ($binary in $binaries) {
+            $dependencies = & $dumpbin /DEPENDENTS $binary.FullName
+            if ($LASTEXITCODE -ne 0) { throw "Cannot inspect $($binary.FullName)" }
+            $dependencies | Write-Output
+            if ((Find-RuntimeImports $dependencies).Count -ne 0) {
+              throw "$($binary.Name) requires an unbundled VC++ runtime"
+            }
+          }
+
+      # #271 was invisible here because only plugin targets were compiled.
+      - name: Build and run Multi-Comp core tests (MSVC)
+        if: matrix.plugin.key == 'multi-comp-2'
+        working-directory: ${{ env.PLUGIN_DIR }}
+        shell: pwsh
+        run: |
+          cmake --build build --config Release -j $env:NUMBER_OF_PROCESSORS `
+            --target MultiCompCoreTest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ctest --test-dir build -C Release -R '^MultiCompCore$' `
+            --no-tests=error --output-on-failure
+
       - name: Package
         working-directory: ${{ env.PLUGIN_DIR }}
         shell: pwsh
@@ -1035,11 +1217,21 @@ jobs:
           # Bundle the User Manual PDF INSIDE the archive, matching the JUCE plugins on
           # build.yml. Missing PDF is non-fatal (a brand-new plugin without a published
           # manual yet must not block the release).
-          $manualUrl = "https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/main/assets/manuals/$env:ASSET-manual.pdf"
-          try {
-            Invoke-WebRequest -Uri $manualUrl -OutFile "$stage/$env:ASSET-manual.pdf" -ErrorAction Stop
-            Write-Host "bundled $env:ASSET-manual.pdf into $stage/"
-          } catch {
+          # Same source as fetch_manual_pdf.sh: the release's website branch, then main.
+          $refs = @($env:MANUAL_REF, 'main') | Where-Object { $_ -match '^[A-Za-z0-9][A-Za-z0-9._/-]*$' } | Select-Object -Unique
+          $bundled = $false
+          foreach ($ref in $refs) {
+            $manualUrl = "https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/$ref/assets/manuals/$env:ASSET-manual.pdf"
+            try {
+              Invoke-WebRequest -Uri $manualUrl -OutFile "$stage/$env:ASSET-manual.pdf" -ErrorAction Stop
+              Write-Host "bundled $env:ASSET-manual.pdf from website $ref"
+              $bundled = $true
+              break
+            } catch {
+              if ($ref -ne 'main') { Write-Host "::warning::No manual PDF on website branch $ref; falling back to main, which may hold the previous version's." }
+            }
+          }
+          if (-not $bundled) {
             Remove-Item -Force -ErrorAction SilentlyContinue "$stage/$env:ASSET-manual.pdf"
             Write-Host "::warning::User manual PDF not found at $manualUrl (non-fatal)"
           }
@@ -1063,6 +1255,7 @@ jobs:
     if: needs.plan.outputs.is_release == 'true'
     permissions:
       contents: write
+      actions: write
     env:
       VERSION: ${{ needs.plan.outputs.version }}
       DISPLAY: ${{ needs.plan.outputs.rel_display }}
@@ -1085,22 +1278,41 @@ jobs:
       - name: Assemble release notes
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
-          # Changelog from the annotated tag message (skip first line = title).
-          TAG_MESSAGE=$(git tag -l --format='%(contents)' "$TAG" 2>/dev/null || echo "")
-          CHANGELOG=$(echo "$TAG_MESSAGE" | tail -n +2 | sed '/^$/d; 1{/^$/d}')
+          # Changelog from the annotated tag message (title line dropped); the
+          # script re-fetches the annotated tag that checkout replaced.
+          CHANGELOG=$(.github/scripts/release_changelog.sh "$TAG")
+          # The build jobs bundle the manual only when the website has one, so
+          # claim it only when every archive actually holds it. The listing is
+          # captured first rather than piped into `grep -q`, whose early exit
+          # can fail the pipeline with SIGPIPE wherever pipefail is on.
+          ZIPS=0; WITH_MANUAL=0
+          while IFS= read -r -d '' zip; do
+            ZIPS=$((ZIPS + 1))
+            LISTING=$(unzip -Z1 "$zip") || { echo "::warning::cannot list $zip"; LISTING=""; }
+            if grep -q -- '-manual\.pdf$' <<< "$LISTING"; then WITH_MANUAL=$((WITH_MANUAL + 1)); fi
+          done < <(find dist -type f -name '*.zip' -print0)
+          MANUAL_NOTE=""
+          if [ "$ZIPS" -gt 0 ] && [ "$WITH_MANUAL" -eq "$ZIPS" ]; then
+            MANUAL_NOTE=" Every archive also bundles the User Manual PDF."
+          fi
+          echo "archives: ${ZIPS}, with the manual: ${WITH_MANUAL}"
           {
             echo "## ${DISPLAY} v${VERSION}"
             echo ""
             if [ -n "$CHANGELOG" ]; then echo "$CHANGELOG"; echo ""; fi
             echo "### Installation"
             echo ""
-            echo "Linux and macOS zips contain \`VST3/\`, \`CLAP/\`, \`LV2/\` and (macOS only) \`AU/\`. The Windows zip contains \`VST3/\` and \`CLAP/\` (no AU or LV2). Every archive also bundles the User Manual PDF."
+            echo "Desktop Linux and macOS zips contain \`VST3/\`, \`CLAP/\`, \`LV2/\` and (macOS only) \`AU/\`. The Windows zip contains \`VST3/\` and \`CLAP/\` (no AU or LV2).${MANUAL_NOTE}"
             echo ""
             echo "**Linux (x86_64 and arm64):**"
             echo "- VST3: copy \`VST3/${BASE}.vst3\` to \`~/.vst3/\`"
             echo "- CLAP: copy \`CLAP/${BASE}.clap\` to \`~/.clap/\`"
             echo "- LV2: copy \`LV2/${BASE}.lv2\` to \`~/.lv2/\`"
             echo ""
+            if [ "$BASE" = "chord-analyzer-2" ]; then
+              echo "The separate \`chord-analyzer-headless-linux*.zip\` archives contain the retained native headless LV2, its installation guide and licenses. Copy \`LV2/Chord Analyzer Headless.lv2\` from the appropriate architecture's archive into the host's LV2 plugin directory. Its shipping URI and 19-port assignments are preserved."
+              echo ""
+            fi
             echo "**macOS (universal arm64/x86_64):**"
             echo "- AU: copy \`AU/${BASE}.component\` to \`~/Library/Audio/Plug-Ins/Components/\`"
             echo "- VST3: copy \`VST3/${BASE}.vst3\` to \`~/Library/Audio/Plug-Ins/VST3/\`"
@@ -1125,16 +1337,27 @@ jobs:
           # flattened to basenames), not by the dist/<artifact-dir>/… path, so
           # SHA256SUMS entries match the actual release asset filenames. Basenames
           # are unique: a release tag builds a single plugin.
-          : > dist/SHA256SUMS
-          find dist -type f -name '*.zip' -print0 \
-            | sort -z | while IFS= read -r -d '' f; do
-                ( cd "$(dirname "$f")" && shasum -a 256 "$(basename "$f")" )
-              done >> dist/SHA256SUMS
-          if [ "$(wc -l < dist/SHA256SUMS)" -ne 4 ]; then
-            echo "::error::Expected checksums for four ZIP assets"; exit 1
-          fi
+          .github/scripts/daf_release_checksums.sh "$ASSET" "$BASE" dist
+
+      - name: Plan early access
+        id: ea
+        env:
+          EARLY_ACCESS_DAYS: ${{ vars.EARLY_ACCESS_DAYS }}
+          HAS_EARLY_TOKEN: ${{ secrets.EARLY_ACCESS_TOKEN != '' }}
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/early_access.sh plan "${GITHUB_REF#refs/tags/}"
+
+      - name: Finish release notes
+        env:
+          EARLY: ${{ steps.ea.outputs.early }}
+          PUBLIC_ON: ${{ steps.ea.outputs.public_on }}
+          MEMBERS_ONLY: ${{ steps.ea.outputs.members_only }}
+          EARLY_ACCESS_DAYS: ${{ vars.EARLY_ACCESS_DAYS }}
+        run: .github/scripts/early_access.sh notes release_body.md
 
       - name: Publish Release
+        # A members-only prerelease gets no public release, only the mirror below.
+        if: steps.ea.outputs.members_only != 'true'
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2 (Node 24)
         with:
           files: |
@@ -1142,5 +1365,33 @@ jobs:
             dist/SHA256SUMS
           generate_release_notes: true
           body_path: release_body.md
-          draft: false
+          draft: ${{ steps.ea.outputs.early == 'true' }}
           prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-alpha') || contains(github.ref, '-rc') }}
+
+      - name: Mirror to early access
+        # Members download this copy through the Patreon build gate until the
+        # draft above goes public (early-access-publish.yml).
+        if: steps.ea.outputs.early == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.EARLY_ACCESS_TOKEN }}
+          EARLY_ACCESS_REPO: ${{ vars.EARLY_ACCESS_REPO || 'dusk-audio/dusk-plugins-early' }}
+          PUBLIC_ON: ${{ steps.ea.outputs.public_on }}
+          MEMBERS_ONLY: ${{ steps.ea.outputs.members_only }}
+        run: |
+          shopt -s globstar nullglob
+          .github/scripts/early_access.sh mirror "${GITHUB_REF#refs/tags/}" release_body.md dist/**/*.zip dist/SHA256SUMS
+
+      - name: Delete early build artifacts
+        # Anyone signed in to GitHub can download a public run's artifacts, so
+        # early builds must not outlive the mirror. Skipped on failure so the
+        # job can still be re-run.
+        if: steps.ea.outputs.early == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" \
+            --jq '.artifacts[].id' |
+            while read -r id; do
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id"
+            done

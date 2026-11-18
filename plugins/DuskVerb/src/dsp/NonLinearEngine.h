@@ -13,8 +13,8 @@
 //   v3: 256-tap TDL + dynamic threshold gate — wrong model
 //   v4: + 4-stage allpass pre-diffusion — destroyed snare transients
 //   v5: classic noise-gate envelope — still wrong (missing real reverb)
-//   v6: TRUE static FIR — mathematically the AMS RMX16 NonLin algorithm,
-//       but USERS DON'T WANT the RMX16 algorithm. They want the
+//   v6: TRUE static FIR — mathematically the classic 1980s digital nonlinear algorithm,
+//       but USERS DON'T WANT that algorithm. They want the
 //       engineering TECHNIQUE: a long lush hall + sidechain noise gate.
 //   v7 (this file): the engineering technique exactly:
 //      ┌─────────┐   ┌────────────────┐   ┌─────────────┐
@@ -60,6 +60,9 @@ public:
     void setBassMultiply      (float mult);
     void setMidMultiply       (float mult);    // → gate THRESHOLD
     void setTrebleMultiply    (float mult);
+    // The hall's high-band decay multiplier. setTrebleMultiply reaches only
+    // FDNReverb::trebleMultiply_, which its loop never reads; this one does.
+    void setAirTrebleMultiply (float mult) { fdn_.setAirTrebleMultiply (mult); }
     void setCrossoverFreq     (float hz);
     void setHighCrossoverFreq (float hz);
     void setSaturation        (float amount);

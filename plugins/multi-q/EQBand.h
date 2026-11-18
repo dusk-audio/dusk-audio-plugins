@@ -268,25 +268,25 @@ namespace ParamIDs
     const juce::String britishInputGain = "british_input_gain";
     const juce::String britishOutputGain = "british_output_gain";
 
-    const juce::String pultecLfBoostGain = "pultec_lf_boost_gain";
-    const juce::String pultecLfBoostFreq = "pultec_lf_boost_freq";
-    const juce::String pultecLfAttenGain = "pultec_lf_atten_gain";
-    const juce::String pultecHfBoostGain = "pultec_hf_boost_gain";
-    const juce::String pultecHfBoostFreq = "pultec_hf_boost_freq";
-    const juce::String pultecHfBoostBandwidth = "pultec_hf_boost_bw";
-    const juce::String pultecHfAttenGain = "pultec_hf_atten_gain";
-    const juce::String pultecHfAttenFreq = "pultec_hf_atten_freq";
-    const juce::String pultecInputGain = "pultec_input_gain";
-    const juce::String pultecOutputGain = "pultec_output_gain";
-    const juce::String pultecTubeDrive = "pultec_tube_drive";
+    const juce::String tubeEqLfBoostGain = "pultec_lf_boost_gain";
+    const juce::String tubeEqLfBoostFreq = "pultec_lf_boost_freq";
+    const juce::String tubeEqLfAttenGain = "pultec_lf_atten_gain";
+    const juce::String tubeEqHfBoostGain = "pultec_hf_boost_gain";
+    const juce::String tubeEqHfBoostFreq = "pultec_hf_boost_freq";
+    const juce::String tubeEqHfBoostBandwidth = "pultec_hf_boost_bw";
+    const juce::String tubeEqHfAttenGain = "pultec_hf_atten_gain";
+    const juce::String tubeEqHfAttenFreq = "pultec_hf_atten_freq";
+    const juce::String tubeEqInputGain = "pultec_input_gain";
+    const juce::String tubeEqOutputGain = "pultec_output_gain";
+    const juce::String tubeEqTubeDrive = "pultec_tube_drive";
 
-    const juce::String pultecMidEnabled = "pultec_mid_enabled";
-    const juce::String pultecMidLowFreq = "pultec_mid_low_freq";
-    const juce::String pultecMidLowPeak = "pultec_mid_low_peak";
-    const juce::String pultecMidDipFreq = "pultec_mid_dip_freq";
-    const juce::String pultecMidDip = "pultec_mid_dip";
-    const juce::String pultecMidHighFreq = "pultec_mid_high_freq";
-    const juce::String pultecMidHighPeak = "pultec_mid_high_peak";
+    const juce::String tubeEqMidEnabled = "pultec_mid_enabled";
+    const juce::String tubeEqMidLowFreq = "pultec_mid_low_freq";
+    const juce::String tubeEqMidLowPeak = "pultec_mid_low_peak";
+    const juce::String tubeEqMidDipFreq = "pultec_mid_dip_freq";
+    const juce::String tubeEqMidDip = "pultec_mid_dip";
+    const juce::String tubeEqMidHighFreq = "pultec_mid_high_freq";
+    const juce::String tubeEqMidHighPeak = "pultec_mid_high_peak";
 
     inline juce::String bandDynEnabled(int bandNum) { return "band" + juce::String(bandNum) + "_dyn_enabled"; }
     inline juce::String bandDynThreshold(int bandNum) { return "band" + juce::String(bandNum) + "_dyn_threshold"; }

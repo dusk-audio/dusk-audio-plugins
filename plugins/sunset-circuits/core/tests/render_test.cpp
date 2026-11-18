@@ -15,8 +15,33 @@
 // these special keys. Every <sec> below is validated against the HALF-OPEN window
 // [0, seconds): an event at exactly `seconds` has no block left to fire on, so it
 // is rejected rather than silently ignored (see validEventTime).
+//
+// Scheduled events -- setat, noteon/noteoff, notifyat, sustainat, panicat,
+// soundoffat, polyat/chanat, modwheelat, progat and loopat, all repeatable -- are
+// applied on the first block that starts at or after their frame (<sec> x sr,
+// truncated), not on the frame itself. block= sets where blocks start, and
+// release= makes one start on its frame: if that frame falls inside a block, the
+// block is split there and every later start moves with it.
+//   * One key's events are applied in time order, whatever order they are given
+//     in; events at the same time keep their argument order. noteon and noteoff
+//     share one schedule, and so do polyat and chanat.
+//   * Events of different keys that fall due on the same block start are applied
+//     in this fixed order, whatever their times: progat, setat, notifyat,
+//     sustainat, polyat/chanat, modwheelat, noteon/noteoff, release=, panicat,
+//     soundoffat, then the transport state (playat=) and the song position
+//     (loopat); then the block is rendered.
+//   * An event that no block start reaches before the render ends was never
+//     applied. That is an error, and so is a playat= or release= that is never
+//     reached: each one is reported on stderr, one line per event, and
+//     render_test exits 1 without writing the WAV.
+//
 //   vel=<0..1>          note-on velocity (default 1.0)
-//   release=<sec>       call noteOff at this time (default: no release)
+//   release=<sec>       release <midinote> and the hold= notes at this time
+//                       (default: no release). Sample-exact: a block starts on its
+//                       frame (<sec> x sr, truncated), the block holding that
+//                       frame being split there if need be. For a time just
+//                       below `seconds` that frame can be the one just past the
+//                       end, where no block starts.
 //   tempo=<bpm>         host tempo (default 120)
 //   playing=<0|1>       transport playing flag (default 1)
 //   songpos=<beats>     host song position at frame 0, in beats. When set, the
@@ -26,27 +51,37 @@
 //   loopat=<sec>:<beats>
 //                       jump the song position back (or forward) to <beats> at
 //                       this time and carry on from there — a loop wrap or a
-//                       seek. Applied at the first block starting at/after <sec>.
-//                       Repeatable. Needs songpos= to have any effect.
+//                       seek. Repeatable; jumps act in time order on different
+//                       block starts too, each one moving the playhead from where
+//                       the earlier ones left it. Needs songpos= (the song
+//                       position is not sent without it): loopat= without it is
+//                       an error. With playing=0 it is accepted and applied: the
+//                       position is still sent (a seek on a stopped transport),
+//                       and whether a stopped engine reacts to it is up to the
+//                       engine.
 //   playat=<sec>        start the transport at this time instead of at frame 0:
 //                       until then the host reports "stopped" and parks the
 //                       playhead at songpos (a stopped DAW does not advance it),
 //                       after it the position rolls from songpos. This is the
 //                       free -> host-locked transition, which is the only way to
-//                       exercise how the clocks acquire the lock mid-note.
+//                       exercise how the clocks acquire the lock mid-note. Unlike
+//                       a scheduled event it is compared as a time, not as a
+//                       truncated frame: it is reached on the first block whose
+//                       start (frame / sr) is at or after <sec>. Needs playing=1:
+//                       playat= with playing=0 is an error.
 //   hold=n,n,n          extra held notes (played in addition to <midinote>);
 //                       useful for arpeggiator/chord tests
 //   sr=<hz>             sample rate (default 48000)
 //   block=<frames>      host buffer size (default 512, 1..16384). Scheduled
 //                       events still fire on the first block starting at/after
-//                       their time, so they land on a block boundary — which is
+//                       their frame, so they land on a block boundary — which is
 //                       the point: anything the engine defers to a boundary
 //                       (parameter snapshots, mode switches) has to behave the
 //                       same at every buffer size, and this is the knob that
 //                       proves it.
 //   setat=<sec>:<name>:<value>
 //                       schedule a parameter change: at the first block that
-//                       starts at/after <sec>, call setParameter(name, value).
+//                       starts at/after its frame, call setParameter(name, value).
 //                       Repeatable (pass multiple setat= args) — used to
 //                       reproduce preset-switch / arp-toggle stuck-note bugs.
 //                       This is the ONE place a non-finite value is accepted:
@@ -54,18 +89,26 @@
 //                       one) pass through verbatim, because injecting a bad
 //                       parameter write is the whole point of the fault gate.
 //                       Every other key stays strictly finite.
+//   noteon=<sec>:<note>, noteoff=<sec>:<note>
+//                       press <note> (at vel=) or release it at this time.
+//                       Repeatable.
 //   meters=<path>       append "<sec> <levelL_dB> <levelR_dB>" per rendered
 //                       block to <path>, read from getOutputLevelL/R after each
 //                       processBlock. The meters are a published observable with
 //                       a declared -60 dB floor, and this is the only way a gate
 //                       can see them.
+//   oslog=<path>        append "<sec> <factor>" per rendered block to <path>:
+//                       the time at the END of the block and the oversampling
+//                       factor the voices render at then (getOsFactor). A change
+//                       commits at the bottom of the voice-path fade, so this is
+//                       how a gate sees that an oversampling write was applied.
 //   notifyat=<sec>      call notifyProgramChange() on the same block boundary as
 //                       a setat= at the same time, AFTER that block's parameter
 //                       writes — i.e. exactly what the shell's loadProgram() and
 //                       the UI preset paths do. Repeatable.
 //   sustainat=<sec>:<0|1>
 //                       sustain pedal (MIDI CC64) up/down at this time, applied on
-//                       the first block starting at/after <sec>. Repeatable.
+//                       the first block starting at/after its frame. Repeatable.
 //   panicat=<sec>       call allNotesOff() (MIDI CC123 and the channel-mode
 //                       messages that imply it) at this time. Repeatable.
 //   soundoffat=<sec>    call allSoundOff() (MIDI CC120) at this time — the same
@@ -75,6 +118,11 @@
 //                       polyphonic key pressure (MIDI 0xA0) for one note.
 //                       Repeatable.
 //   chanat=<sec>:<0..1> channel pressure (MIDI 0xD0). Repeatable.
+//   modwheel=<0..1>     mod wheel (MIDI CC 1) position before the first note, i.e.
+//                       what the shell's CC 1 handler would have stored before
+//                       frame 0 (default 0, the engine's power-on value).
+//   modwheelat=<sec>:<0..1>
+//                       move the mod wheel (MIDI CC 1) at this time. Repeatable.
 //   progat=<sec>:<n>    load factory program <n> at this time, exactly as the DAF
 //                       shell's loadProgram() does (every parameter to its
 //                       default, then the shared baseline, then the preset's own
@@ -128,15 +176,38 @@ void loadFactoryProgram(msynth::MultiSynthDSP& synth, int index) noexcept
     synth.notifyProgramChange();
 }
 
-// Scheduled events fire on the FIRST BLOCK STARTING AT OR AFTER their time, and
+// Scheduled events fire on the FIRST BLOCK STARTING AT OR AFTER their frame, and
 // the render loop stops at `seconds`. An event scheduled at exactly `seconds`
 // therefore has no block left to fire on: the harness used to accept it and
 // silently do nothing, so a gate written around it measured an untouched render
 // and passed. The schedule window is half-open -- [0, seconds) -- and this is
-// where that is enforced, for every event key and for release=.
+// where that is enforced, for every event key and for release= and playat=. A
+// time inside the window can still be one that no block start reaches: its frame
+// can lie past the START of the last block, and for a time just below `seconds`
+// it can be the frame just past the end. The check after the render loop refuses
+// every such event.
 bool validEventTime(double t, double seconds) noexcept
 {
     return std::isfinite(t) && t >= 0.0 && t < seconds;
+}
+
+// An event's scheduled time: the event itself in the schedules that hold nothing
+// else (notifyat=, panicat=, soundoffat=), its `time` in the others.
+double eventTime(double t) noexcept { return t; }
+template <typename Event>
+double eventTime(const Event& e) noexcept { return e.time; }
+
+// Put a schedule in time order. The render loop applies the events of a schedule
+// that are due on a block start in the order the schedule holds them, so of two
+// events due on the same block the earlier one, given second, would be applied
+// last and win; the events never applied are reported in that order too. A
+// stable sort: events at the same time keep their argument order.
+template <typename Event>
+void sortByTime(std::vector<Event>& events)
+{
+    std::stable_sort(events.begin(), events.end(), [](const Event& a, const Event& b) {
+        return eventTime(a) < eventTime(b);
+    });
 }
 
 // Strict string->double: reject empty, trailing garbage, or non-finite results.
@@ -282,17 +353,18 @@ int main(int argc, char** argv)
     std::vector<int> holdNotes;
     int    blockSize = 512;
     std::string meterPath;
+    std::string osLogPath;
 
     struct Override { int idx; float val; };
     std::vector<Override> overrides;
 
     // Scheduled parameter changes (setat=<sec>:<name>:<value>). Applied at the
-    // first block starting at/after <sec>; multiple allowed.
+    // first block starting at/after their frame; multiple allowed.
     struct Scheduled { double time; int idx; float val; };
     std::vector<Scheduled> scheduled;
 
     // Scheduled note events (noteon=<sec>:<note> / noteoff=<sec>:<note>). Fired at
-    // the first block starting at/after <sec>; used for retrigger/steal tests.
+    // the first block starting at/after their frame; used for retrigger/steal tests.
     struct SchedNote { double time; int note; bool on; };
     std::vector<SchedNote> schedNotes;
 
@@ -310,6 +382,12 @@ int main(int argc, char** argv)
     // channel pressure (0xD0, note < 0).
     struct SchedPressure { double time; int note; float value; };
     std::vector<SchedPressure> schedPressure;
+
+    // Mod wheel (MIDI CC 1): the position before frame 0 (modwheel=) and scheduled
+    // moves (modwheelat=<sec>:<0..1>).
+    float modWheelStart = 0.0f;
+    struct SchedWheel { double time; float value; };
+    std::vector<SchedWheel> schedWheel;
 
     // Scheduled factory-program loads (progat=<sec>:<n>).
     struct SchedProgram { double time; int index; };
@@ -449,6 +527,41 @@ int main(int argc, char** argv)
             schedPressure.push_back({ t, note, (float)v });
             continue;
         }
+        if (key == "modwheel")
+        {
+            const double v = parseNum("modwheel", val);
+            if (!(v >= 0.0 && v <= 1.0))
+            {
+                std::fprintf(stderr, "bad modwheel value: %g (want 0..1)\n", v);
+                return 1;
+            }
+            modWheelStart = (float)v;
+            continue;
+        }
+        if (key == "modwheelat")
+        {
+            // <sec>:<0..1>
+            const auto c1 = val.find(':');
+            if (c1 == std::string::npos)
+            {
+                std::fprintf(stderr, "bad modwheelat (want <sec>:<0..1>): %s\n", val.c_str());
+                return 1;
+            }
+            const double t = parseNum("modwheelat.time", val.substr(0, c1));
+            const double v = parseNum("modwheelat.value", val.substr(c1 + 1));
+            if (!validEventTime(t, seconds))
+            {
+                std::fprintf(stderr, "bad modwheelat time: %g (want 0 <= t < %g)\n", t, seconds);
+                return 1;
+            }
+            if (!(v >= 0.0 && v <= 1.0))
+            {
+                std::fprintf(stderr, "bad modwheelat value: %g (want 0..1)\n", v);
+                return 1;
+            }
+            schedWheel.push_back({ t, (float)v });
+            continue;
+        }
         if (key == "panicat" || key == "soundoffat")
         {
             const double t = parseNum(key.c_str(), val);
@@ -547,6 +660,7 @@ int main(int argc, char** argv)
             continue;
         }
         if (key == "meters")   { meterPath = val; continue; }
+        if (key == "oslog")    { osLogPath = val; continue; }
         if (key == "sr")       { sampleRate = parseNum("sr", val); continue; }
         if (key == "block")
         {
@@ -582,6 +696,37 @@ int main(int argc, char** argv)
         const int idx = msynth::MultiSynthDSP::paramIndexForName(key.c_str());
         if (idx < 0) { std::fprintf(stderr, "unknown param: %s\n", key.c_str()); return 1; }
         overrides.push_back({ idx, (float)parseNum(key.c_str(), val) });
+    }
+
+    // Every schedule runs in time order (sortByTime). For loopat= that also matters
+    // across blocks: each jump's shift is measured from the shifts of the jumps
+    // before it in the schedule.
+    sortByTime(schedProgram);
+    sortByTime(scheduled);
+    sortByTime(schedNotify);
+    sortByTime(schedPedal);
+    sortByTime(schedPressure);
+    sortByTime(schedWheel);
+    sortByTime(schedNotes);
+    sortByTime(schedPanic);
+    sortByTime(schedSoundOff);
+    sortByTime(schedLoops);
+
+    // Two combinations in which an event can never be applied, whatever the block
+    // starts: loop jumps are applied where the song position is sent, which only
+    // songpos= turns on, and playat= starts a transport that playing=0 keeps
+    // stopped for the whole render.
+    if (!schedLoops.empty() && !haveSongPos)
+    {
+        std::fprintf(stderr, "loopat needs songpos=: without it no song position is sent, "
+                             "so a loop or seek is never applied\n");
+        return 1;
+    }
+    if (playAtTime >= 0.0 && !playing)
+    {
+        std::fprintf(stderr, "playat needs playing=1: with playing=0 the transport never "
+                             "starts\n");
+        return 1;
     }
 
     if (osFactor != 1 && osFactor != 2 && osFactor != 4)
@@ -635,6 +780,7 @@ int main(int argc, char** argv)
     // Transport state as of frame 0, so the notes below are pressed against the
     // same state the first block will render with (playat= means "stopped" here).
     synth.setTempo(tempo, playing && playAtTime <= 0.0);
+    synth.modWheel(modWheelStart);
 
     // Trigger note(s). noteOn routes to the arp internally when arpOn is set.
     synth.noteOn(midiNote, vel);
@@ -646,7 +792,9 @@ int main(int argc, char** argv)
     std::vector<float> interleaved((size_t)totalFrames * 2, 0.0f);
     std::vector<float> bufL((size_t)blockSize), bufR((size_t)blockSize);
 
-    // Frame at which each scheduled change fires (first block starting >= it).
+    // Whether each scheduled event has been applied yet (on the first block that
+    // starts at or after its frame), and the song-position shift of each loop jump
+    // once it has.
     std::vector<char> schedDone(scheduled.size(), 0);
     std::vector<char> schedNoteDone(schedNotes.size(), 0);
     std::vector<char> schedNotifyDone(schedNotify.size(), 0);
@@ -654,6 +802,7 @@ int main(int argc, char** argv)
     std::vector<char> schedPanicDone(schedPanic.size(), 0);
     std::vector<char> schedSoundOffDone(schedSoundOff.size(), 0);
     std::vector<char> schedPressureDone(schedPressure.size(), 0);
+    std::vector<char> schedWheelDone(schedWheel.size(), 0);
     std::vector<char> schedProgramDone(schedProgram.size(), 0);
     std::vector<char> schedLoopDone(schedLoops.size(), 0);
     std::vector<double> schedLoopShift(schedLoops.size(), 0.0);
@@ -669,8 +818,22 @@ int main(int argc, char** argv)
             return 2;
         }
     }
+    // Optional oversampling log (oslog=<path>): one line per rendered block.
+    FILE* osLogFile = nullptr;
+    if (!osLogPath.empty())
+    {
+        osLogFile = std::fopen(osLogPath.c_str(), "w");
+        if (!osLogFile)
+        {
+            std::fprintf(stderr, "cannot open oversampling log %s\n", osLogPath.c_str());
+            return 2;
+        }
+    }
 
     bool released = false;
+    // Set on the first block the transport plays in, if any; with playat= that is
+    // the first block that reaches it (see the transport state below).
+    bool transportStarted = false;
     for (int pos = 0; pos < totalFrames; )
     {
         int n = std::min(blockSize, totalFrames - pos);
@@ -742,6 +905,17 @@ int main(int argc, char** argv)
             }
         }
 
+        // Mod wheel moves (MIDI CC 1).
+        for (size_t s = 0; s < schedWheel.size(); ++s)
+        {
+            if (schedWheelDone[s]) continue;
+            if (pos >= (int)(schedWheel[s].time * sampleRate))
+            {
+                synth.modWheel(schedWheel[s].value);
+                schedWheelDone[s] = 1;
+            }
+        }
+
         // Apply any scheduled note events whose time has arrived.
         for (size_t s = 0; s < schedNotes.size(); ++s)
         {
@@ -794,6 +968,8 @@ int main(int argc, char** argv)
         // it, nowPlaying == playing and rolled == elapsed, exactly as before.
         const double tNow = (double)pos / sampleRate;
         const bool nowPlaying = playing && (playAtTime < 0.0 || tNow >= playAtTime);
+        if (nowPlaying)
+            transportStarted = true;
         synth.setTempo(tempo, nowPlaying);
 
         // Host phase-lock: feed the song position for THIS block's start frame
@@ -842,6 +1018,13 @@ int main(int argc, char** argv)
                 std::exit(2);
             }
         }
+        if (osLogFile != nullptr
+            && std::fprintf(osLogFile, "%.9g %d\n", (double)(pos + n) / sampleRate,
+                            synth.getOsFactor()) < 0)
+        {
+            std::fprintf(stderr, "short write to oversampling log %s\n", osLogPath.c_str());
+            std::exit(2);
+        }
         for (int i = 0; i < n; ++i)
         {
             interleaved[(size_t)((pos + i) * 2 + 0)] = bufL[(size_t)i];
@@ -855,6 +1038,62 @@ int main(int argc, char** argv)
         std::fprintf(stderr, "error closing meter log %s\n", meterPath.c_str());
         return 2;
     }
+    if (osLogFile != nullptr && std::fclose(osLogFile) != 0)
+    {
+        std::fprintf(stderr, "error closing oversampling log %s\n", osLogPath.c_str());
+        return 2;
+    }
+
+    // An event that no block start reached was never applied: its frame lies past
+    // the start of the last block (block= sets the starts, and release= moves them
+    // by splitting a block). A gate built on it would measure a render the event
+    // never touched and pass, so every such event is reported, one line each, and
+    // the render is refused: exit code 1 and no WAV (a meters= or oslog= log
+    // already has been written). The same goes for a playat= that no block start
+    // reached, and for a release= whose frame is the one just past the end. They
+    // are found here, not with the time checks above, because only the loop knows
+    // where its blocks start. Applied is all this establishes, not audible: an
+    // event applied a few frames before the end may change nothing in the output.
+    // Times are printed to 9 significant digits, so two different times (an event
+    // and `seconds`, say) can print alike.
+    char split[64] = "";
+    if (releaseProvided)
+        std::snprintf(split, sizeof split, ", release=%.9g", releaseTime);
+    int unapplied = 0;
+    const auto reportUnapplied = [&](const char* key, double time, bool applied) {
+        if (applied) return;
+        std::fprintf(stderr, "%s %.9g was never applied: no block starts at or after "
+                             "it before the render ends at %.9g (block=%d%s)\n",
+                     key, time, seconds, blockSize, split);
+        ++unapplied;
+    };
+    // Reported in the order the loop applies the keys, each key in time order.
+    for (size_t s = 0; s < schedProgram.size(); ++s)
+        reportUnapplied("progat", schedProgram[s].time, schedProgramDone[s] != 0);
+    for (size_t s = 0; s < scheduled.size(); ++s)
+        reportUnapplied("setat", scheduled[s].time, schedDone[s] != 0);
+    for (size_t s = 0; s < schedNotify.size(); ++s)
+        reportUnapplied("notifyat", schedNotify[s], schedNotifyDone[s] != 0);
+    for (size_t s = 0; s < schedPedal.size(); ++s)
+        reportUnapplied("sustainat", schedPedal[s].time, schedPedalDone[s] != 0);
+    for (size_t s = 0; s < schedPressure.size(); ++s)
+        reportUnapplied(schedPressure[s].note >= 0 ? "polyat" : "chanat",
+                        schedPressure[s].time, schedPressureDone[s] != 0);
+    for (size_t s = 0; s < schedWheel.size(); ++s)
+        reportUnapplied("modwheelat", schedWheel[s].time, schedWheelDone[s] != 0);
+    for (size_t s = 0; s < schedNotes.size(); ++s)
+        reportUnapplied(schedNotes[s].on ? "noteon" : "noteoff", schedNotes[s].time,
+                        schedNoteDone[s] != 0);
+    reportUnapplied("release", releaseTime, !releaseProvided || released);
+    for (size_t s = 0; s < schedPanic.size(); ++s)
+        reportUnapplied("panicat", schedPanic[s], schedPanicDone[s] != 0);
+    for (size_t s = 0; s < schedSoundOff.size(); ++s)
+        reportUnapplied("soundoffat", schedSoundOff[s], schedSoundOffDone[s] != 0);
+    reportUnapplied("playat", playAtTime, playAtTime < 0.0 || transportStarted);
+    for (size_t s = 0; s < schedLoops.size(); ++s)
+        reportUnapplied("loopat", schedLoops[s].time, schedLoopDone[s] != 0);
+    if (unapplied > 0)
+        return 1;
 
     writeFloatWav(outPath, interleaved, (int)sampleRate);
     std::fprintf(stderr, "wrote %s  (%d frames @ %.0f Hz, os=%dx)\n", outPath, totalFrames, sampleRate, osFactor);

@@ -28,6 +28,7 @@ BUFFER_SIZES=(64 128 256 512 1024)
 TESTS_PASSED=0
 TESTS_FAILED=0
 TESTS_SKIPPED=0
+REQUIRED_TESTS_SKIPPED=0
 
 # Plugins to test
 PLUGINS=(
@@ -77,6 +78,12 @@ print_fail() {
 print_skip() {
     echo -e "${YELLOW}[SKIP]${NC} $1"
     ((TESTS_SKIPPED++)) || true
+}
+
+print_required_skip() {
+    echo -e "${RED}[SKIP-REQUIRED]${NC} $1"
+    ((TESTS_SKIPPED++)) || true
+    ((REQUIRED_TESTS_SKIPPED++)) || true
 }
 
 print_info() {
@@ -130,12 +137,12 @@ run_pluginval_tests() {
     print_section "Pluginval validation: $plugin_name"
 
     if ! command -v pluginval &> /dev/null; then
-        print_skip "pluginval not installed (install from https://github.com/Tracktion/pluginval)"
+        print_required_skip "pluginval not installed (install from https://github.com/Tracktion/pluginval)"
         return
     fi
 
     if [ ! -d "$vst3_path" ]; then
-        print_skip "VST3 not found, skipping pluginval"
+        print_required_skip "VST3 not found, skipping pluginval"
         return
     fi
 
@@ -182,7 +189,7 @@ test_binary_symbols() {
     print_section "Binary analysis: $plugin_name"
 
     if [ ! -f "$vst3_path" ]; then
-        print_skip "Binary not found"
+        print_required_skip "Binary not found"
         return
     fi
 
@@ -212,12 +219,12 @@ run_audio_tests() {
     print_section "Audio processing tests: $plugin_name"
 
     if [ ! -f "$SCRIPT_DIR/audio_analyzer.py" ]; then
-        print_skip "audio_analyzer.py not found"
+        print_required_skip "audio_analyzer.py not found"
         return
     fi
 
     if ! command -v python3 &> /dev/null; then
-        print_skip "Python3 not available"
+        print_required_skip "Python3 not available"
         return
     fi
 
@@ -229,15 +236,16 @@ run_audio_tests() {
 # Sunset Circuits (DAF) - core gate suite + pluginval on the built VST3
 #------------------------------------------------------------------------------
 
-# Prefer an installed bundle, fall back to the DAF build tree (which is where it
-# lands when the plugin is configured with -DDUSK_DAF_INSTALL_LOCAL=OFF).
+# Prefer the DAF build tree's bundle, the build under test, and fall back to an
+# installed one. Local installation is opt-in (-DDUSK_DAF_INSTALL_LOCAL=ON), so
+# an installed bundle can be older than the build.
 sunset_vst3_path() {
     local installed="$VST3_DIR/${SUNSET_BUNDLE}.vst3"
     local built="$PROJECT_DIR/plugins/sunset-circuits/daf-plugin/build/bin/${SUNSET_BUNDLE}.vst3"
-    if [ -d "$installed" ]; then
-        echo "$installed"
-    elif [ -d "$built" ]; then
+    if [ -d "$built" ]; then
         echo "$built"
+    elif [ -d "$installed" ]; then
+        echo "$installed"
     fi
 }
 
@@ -248,13 +256,13 @@ run_sunset_circuits_tests() {
 
     # --- offline gate suite (the authoritative DSP check for this plugin) -----
     # Honours --skip-audio: the suite is offline audio rendering and takes
-    # minutes, and the documented fleet command in CLAUDE.md
+    # minutes, and the documented fleet command
     # (run_plugin_tests.sh --plugin "<Name>" --skip-audio) has to stay quick.
     print_section "Core gate suite: $SUNSET_NAME"
     if [ "$skip_audio" = true ]; then
         print_skip "Core gate suite (--skip-audio); run $suite directly for the DSP gates"
     elif [ ! -x "$suite" ]; then
-        print_skip "run_all.sh not found or not executable: $suite"
+        print_required_skip "run_all.sh not found or not executable: $suite"
     else
         print_info "Running $suite (several minutes; builds its own harness)"
         if "$suite"; then
@@ -271,7 +279,7 @@ run_sunset_circuits_tests() {
     local vst3
     vst3="$(sunset_vst3_path)"
     if [ -z "$vst3" ]; then
-        print_skip "No ${SUNSET_BUNDLE}.vst3 found (build daf-plugin, or install to $VST3_DIR)"
+        print_required_skip "No ${SUNSET_BUNDLE}.vst3 found (build daf-plugin, or install to $VST3_DIR)"
         return
     fi
     print_pass "VST3 exists: $vst3"
@@ -290,12 +298,13 @@ run_sunset_circuits_tests() {
         print_fail "VST3 binary missing: $so"
     fi
 
-    local lv2="$LV2_DIR/${SUNSET_BUNDLE}.lv2"
-    [ -d "$lv2" ] || lv2="$PROJECT_DIR/plugins/sunset-circuits/daf-plugin/build/bin/${SUNSET_BUNDLE}.lv2"
+    # Same order as sunset_vst3_path.
+    local lv2="$PROJECT_DIR/plugins/sunset-circuits/daf-plugin/build/bin/${SUNSET_BUNDLE}.lv2"
+    [ -d "$lv2" ] || lv2="$LV2_DIR/${SUNSET_BUNDLE}.lv2"
     if [ -f "$lv2/manifest.ttl" ]; then
         print_pass "LV2 manifest.ttl exists"
     else
-        print_skip "LV2 bundle not built/installed"
+        print_required_skip "LV2 bundle not built/installed"
     fi
 
     # --- pluginval ------------------------------------------------------------
@@ -305,13 +314,12 @@ run_sunset_circuits_tests() {
 
     print_section "Pluginval validation: $SUNSET_NAME"
     if ! command -v pluginval &> /dev/null; then
-        print_skip "pluginval not installed (https://github.com/Tracktion/pluginval)"
+        print_required_skip "pluginval not installed (https://github.com/Tracktion/pluginval)"
         return
     fi
 
     # --skip-gui-tests is mandatory: pluginval's editor tests segfault headless
-    # for every DAF plugin (a host-side XEmbed issue, docs/daf-migration
-    # 00-OVERVIEW.md landmine 9), so a GUI run says nothing about this plugin.
+    # for every DAF plugin (a host-side XEmbed issue), so a GUI run says nothing about this plugin.
     # Strictness 8 is the bar the Sunset Circuits QA checklist declares
     # authoritative for the 222-parameter state round-trip.
     local level=8
@@ -421,10 +429,11 @@ main() {
     echo -e "${GREEN}Passed:${NC}  $TESTS_PASSED"
     echo -e "${RED}Failed:${NC}  $TESTS_FAILED"
     echo -e "${YELLOW}Skipped:${NC} $TESTS_SKIPPED"
+    echo -e "${RED}Required skips:${NC} $REQUIRED_TESTS_SKIPPED"
     echo ""
 
-    if [ $TESTS_FAILED -gt 0 ]; then
-        echo -e "${RED}Some tests failed!${NC}"
+    if [ $TESTS_FAILED -gt 0 ] || [ $REQUIRED_TESTS_SKIPPED -gt 0 ]; then
+        echo -e "${RED}Some tests failed or required checks could not run!${NC}"
         exit 1
     else
         echo -e "${GREEN}All tests passed!${NC}"

@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.15)
 include(${CMAKE_SOURCE_DIR}/cmake/PluginVersion.cmake)
 
 # Get version from git tag or CI environment (fallback to default version)
-set(MULTIQ_DEFAULT_VERSION "0.10.9")
+set(MULTIQ_DEFAULT_VERSION "0.10.10")
 get_plugin_version("multi-q" MULTIQ_VERSION)
 if(NOT MULTIQ_VERSION OR MULTIQ_VERSION STREQUAL "0.0.0")
     set(MULTIQ_VERSION ${MULTIQ_DEFAULT_VERSION})
@@ -212,6 +212,9 @@ if(NOT CMAKE_CROSSCOMPILING)
         JUCE_USE_CURL=0
         JUCE_DISPLAY_SPLASH_SCREEN=0
         JUCE_STANDALONE_APPLICATION=1
+        # On Windows START_JUCE_APPLICATION defines main only when _CONSOLE is set
+        # (juce_add_console_app sets it); otherwise WinMain, which won't link here.
+        $<$<PLATFORM_ID:Windows>:_CONSOLE=1>
     )
 
     target_compile_features(MultiQIntegrationTest PRIVATE cxx_std_17)
@@ -251,6 +254,9 @@ if(NOT CMAKE_CROSSCOMPILING)
         JUCE_USE_CURL=0
         JUCE_DISPLAY_SPLASH_SCREEN=0
         JUCE_STANDALONE_APPLICATION=1
+        # On Windows START_JUCE_APPLICATION defines main only when _CONSOLE is set
+        # (juce_add_console_app sets it); otherwise WinMain, which won't link here.
+        $<$<PLATFORM_ID:Windows>:_CONSOLE=1>
     )
 
     target_compile_features(MultiQMSRoutingTest PRIVATE cxx_std_17)
@@ -290,6 +296,9 @@ if(NOT CMAKE_CROSSCOMPILING)
         JUCE_USE_CURL=0
         JUCE_DISPLAY_SPLASH_SCREEN=0
         JUCE_STANDALONE_APPLICATION=1
+        # On Windows START_JUCE_APPLICATION defines main only when _CONSOLE is set
+        # (juce_add_console_app sets it); otherwise WinMain, which won't link here.
+        $<$<PLATFORM_ID:Windows>:_CONSOLE=1>
     )
 
     target_compile_features(MultiQTransferTest PRIVATE cxx_std_17)
@@ -501,4 +510,73 @@ if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
     )
 
     add_dependencies(MultiQAnalogAccuracyTest MultiQ_All)
+endif()
+
+# Coefficient interpolation regression: compile the actual JUCE filter types.
+if(NOT CMAKE_CROSSCOMPILING)
+    add_executable(MultiQSmoothingJuceTest tests/test_multiq_smoothing.cpp)
+    target_compile_definitions(MultiQSmoothingJuceTest PRIVATE
+        MULTIQ_TEST_JUCE=1 $<TARGET_PROPERTY:MultiQ,COMPILE_DEFINITIONS>)
+    target_include_directories(MultiQSmoothingJuceTest PRIVATE
+        "${CMAKE_CURRENT_BINARY_DIR}/MultiQ_artefacts/JuceLibraryCode"
+        $<TARGET_PROPERTY:MultiQ,INCLUDE_DIRECTORIES>)
+    target_link_libraries(MultiQSmoothingJuceTest PRIVATE MultiQ)
+    add_test(NAME MultiQSmoothingJuce COMMAND MultiQSmoothingJuceTest)
+endif()
+
+# Exercise the actual JUCE auto-gain path, including a return to neutral.
+if(NOT CMAKE_CROSSCOMPILING)
+    add_executable(MultiQAutoGainJuceTest tests/test_multiq_auto_gain.cpp)
+    target_compile_definitions(MultiQAutoGainJuceTest PRIVATE
+        MULTIQ_TEST_JUCE=1 $<TARGET_PROPERTY:MultiQ,COMPILE_DEFINITIONS>)
+    target_include_directories(MultiQAutoGainJuceTest PRIVATE
+        "${CMAKE_CURRENT_BINARY_DIR}/MultiQ_artefacts/JuceLibraryCode"
+        $<TARGET_PROPERTY:MultiQ,INCLUDE_DIRECTORIES>)
+    target_link_libraries(MultiQAutoGainJuceTest PRIVATE MultiQ)
+    add_test(NAME MultiQAutoGainJuce COMMAND MultiQAutoGainJuceTest)
+endif()
+
+# #165 / #359: type a value into Multi-Q's knobs and close the field every way a
+# host can. Fails on a destroyed callback, a non-finite parameter, or a value
+# written into the wrong band. No CI job runs it. Without a sanitizer it detects
+# the pre-0.10.8 use-after-free only where the allocator makes the stale read
+# visible (measured on macOS: a time-out); build with -fsanitize=address to prove
+# it absent. See the test's header.
+#
+# Windows (MSVC 19.44, VS 2022 Build Tools, x64, Ninja, Release): built and
+# passed with the macOS counts (1403 fields, 10057 checks, 0 failures). That
+# run had CLAP off (no submodules); CI builds with CLAP on, so there the test
+# also gets clap_juce_extensions and HAS_CLAP_JUCE_EXTENSIONS=1 through MultiQ,
+# as on Linux and macOS. No pull-request job compiles it on Windows: the first
+# Windows compile in CI is a full-fleet build.yml run ("all"). The test has a
+# plain main (no START_JUCE_APPLICATION, so no dependence on _CONSOLE in
+# juce_events). Its private home there is USERPROFILE: with it set, JUCE's
+# AppData folder was %USERPROFILE%\AppData\Roaming (a .NET probe of the shell's
+# folder lookup also ignored APPDATA alone). That holds only while AppData sits
+# in its default place under the profile (folder redirection by policy would
+# defeat it; not tried). The folder is created below; the run had it in place,
+# and a run without it was not tried.
+# Not proven on Windows: with the two #359 fixes taken out, only the wrong-band
+# checks failed there (84 failures). The non-finite checks passed even without
+# their fix, so a Windows run does not show that defect.
+if(NOT CMAKE_CROSSCOMPILING)
+    add_executable(MultiQValueEntryTest tests/test_multiq_value_entry.cpp)
+    target_compile_definitions(MultiQValueEntryTest PRIVATE
+        $<TARGET_PROPERTY:MultiQ,COMPILE_DEFINITIONS>)
+    target_include_directories(MultiQValueEntryTest PRIVATE
+        "${CMAKE_CURRENT_BINARY_DIR}/MultiQ_artefacts/JuceLibraryCode"
+        $<TARGET_PROPERTY:MultiQ,INCLUDE_DIRECTORIES>)
+    target_link_libraries(MultiQValueEntryTest PRIVATE MultiQ)
+    add_test(NAME MultiQValueEntry COMMAND MultiQValueEntryTest)
+    # Private home (CFFIXED_USER_HOME on macOS, HOME on Linux, USERPROFILE on
+    # Windows) so the editor's saved window size and the crash-log folder stay
+    # in the build tree. Exit 77 means skipped (Linux without an X display).
+    set(_multiq_value_entry_home "${CMAKE_CURRENT_BINARY_DIR}/value-entry-home")
+    file(MAKE_DIRECTORY "${_multiq_value_entry_home}")
+    if(WIN32)
+        file(MAKE_DIRECTORY "${_multiq_value_entry_home}/AppData/Roaming")
+    endif()
+    set_tests_properties(MultiQValueEntry PROPERTIES
+        ENVIRONMENT "CFFIXED_USER_HOME=${_multiq_value_entry_home};HOME=${_multiq_value_entry_home};USERPROFILE=${_multiq_value_entry_home}"
+        SKIP_RETURN_CODE 77)
 endif()

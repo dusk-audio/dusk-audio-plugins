@@ -374,8 +374,10 @@ void MultiQDSP::applyAutoGain(float* L, float* R, bool isStereo, int numSamples)
             if (outputPeakMax > 1e-6f && inputPeakMax > 1e-6f)
                 targetGain = std::min(targetGain, inputPeakMax / outputPeakMax);
             targetGain = std::clamp(targetGain, 0.5f, 2.0f); // +/-6 dB max
-            if (std::abs(targetGain - 1.0f) > 0.01f)         // dead zone (~0.09 dB)
-                autoGainComp.setTargetValue(targetGain);
+            // The dead zone suppresses tiny corrections, but must also release
+            // a preceding correction when the EQ returns to unity.
+            if (std::abs(targetGain - 1.0f) <= 0.01f) targetGain = 1.0f;
+            autoGainComp.setTargetValue(targetGain);
         }
         inputRmsSum = outputRmsSum = 0.0;
         inputPeakMax = outputPeakMax = 0.0f;

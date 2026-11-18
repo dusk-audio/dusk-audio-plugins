@@ -1,8 +1,7 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
 //
 // TapeMachineDSP.cpp — orchestration layer (port of PluginProcessor.cpp's
-// prepareToPlay / processBlock / updateFilters). See TapeMachineDSP.hpp and
-// core/PORT_NOTES.md.
+// prepareToPlay / processBlock / updateFilters). See TapeMachineDSP.hpp.
 
 #include "TapeMachineDSP.hpp"
 
@@ -12,7 +11,7 @@ namespace duskaudio
 //==============================================================================
 // Tunable smoothing time-constants (exponential one-pole SmoothedValue replaces
 // juce::SmoothedValue<Linear>). Chosen to settle in a similar time to the JUCE
-// linear ramps (~3*tau ≈ ramp length). See PORT_NOTES for the shape change.
+// linear ramps (~3*tau ≈ ramp length); the ramp shape differs, the settle time does not.
 //==============================================================================
 static constexpr float kGainTau  = 0.0067f; // ~20 ms settle (juce::dsp::Gain 20 ms ramp)
 static constexpr float kSatTau   = 0.05f;   // ~150 ms settle (smoothedSaturation 150 ms)
@@ -117,7 +116,7 @@ void TapeMachineDSP::prepare (double sampleRate, int maxBlockSize)
     currentOsRate = baseSampleRate * static_cast<double> (currentFactor);
     lastFactor    = currentFactor;
 
-    // Deterministic RNG streams: distinct constant seeds per channel (PORT_NOTES).
+    // Deterministic RNG streams: distinct constant seeds per channel.
     coreL.setSeeds (1000u);
     coreR.setSeeds (2000u);
     sharedWowFlutter.setSeed (1u);
@@ -144,7 +143,7 @@ void TapeMachineDSP::prepare (double sampleRate, int maxBlockSize)
     lastLpQ    = lpQ;
 
     // Smoothers: param smoothers configured at BASE rate but advanced at the
-    // oversampled rate (matches the JUCE structure — see PORT_NOTES). Output gain
+    // oversampled rate (matches the JUCE structure). Output gain
     // is advanced at the oversampled rate so it is configured there.
     inGain.prepare  (baseSampleRate, kGainTau);
     outGain.prepare (currentOsRate,  kGainTau);
@@ -345,8 +344,8 @@ int TapeMachineDSP::latencySamples() const noexcept
     // latency while bypassed would make the host's PDC shift the (undelayed) bypassed track
     // by ~32+ samples relative to the rest of the mix. The DAF shell re-queries this on every
     // block and only calls setLatency() when the value actually changes, so the host re-runs
-    // PDC exactly once on each bypass toggle. CLAUDE.md: latency cleared on bypass, restored
-    // on un-bypass.
+    // PDC exactly once on each bypass toggle. Latency is cleared on bypass and restored on
+    // un-bypass.
     if (pBypass.load (std::memory_order_relaxed))
         return 0;
 
@@ -703,7 +702,7 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     smNoise.setTarget   (pNoiseAmount.load (std::memory_order_relaxed) * 0.01f);
 
     // JUCE derives the noise gate from the amount knob (>0.05 %); the boolean
-    // noiseEnabled param is dead in the source, so we mirror that (PORT_NOTES).
+    // noiseEnabled param is dead in the JUCE source, so we mirror that.
     const bool noiseEnabled = pNoiseAmount.load (std::memory_order_relaxed) > 0.05f;
 
     const float calibrationDb = calibrationDbFromIndex (pCalibration.load (std::memory_order_relaxed));

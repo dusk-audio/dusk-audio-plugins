@@ -14,7 +14,8 @@
 #     (reverb_gate covers the reverb alone.)
 #   * Mod matrix routing. No gate walks source x destination and confirms the
 #     modulation lands on the right target with the right depth and polarity,
-#     or that an unrouted slot is inert.
+#     or that an unrouted slot is inert. (lfo_depth_gate covers only the two
+#     LFO Depth destinations.)
 #   * Unison spread. steal_gate covers unisonVoices only as far as the poly
 #     budget (effectivePoly = min(modeVoices, 16 / unisonCount)); unisonDetune
 #     and unisonSpread are set but never measured, so the detune amount and the
@@ -23,7 +24,8 @@
 #   * Stereo width. No gate measures the width control's effect on correlation,
 #     mono compatibility, or that width=0 is genuinely mono.
 #   * Portamento / glide at the synth level. acid/slide_gate covers the Acid
-#     engine's slide only -- the other five modes' portamento is untested.
+#     engine's slide; legato_gate only checks WHETHER a Mono note glides (the
+#     legato rule). Glide time, glide mode and the other modes are untested.
 #   * Velocity curve. Nothing asserts the velocity-to-level (or velocity-to-
 #     anything) mapping, so a curve inversion or a dead top/bottom would pass.
 #   * Overlapping unison shrinks. VoiceAllocator::retireAbove budgets how many
@@ -72,12 +74,17 @@ if ! python3 ../../daf-plugin/tools/gen_params.py --check; then
     echo "Re-run tools/gen_params.py and commit the result."
     fail=1
 fi
-for g in pitch env reverb arp arp_seq filter_stability accuracy fx_reenable param_robust \
-         lfo_sync acid stuck sustain polyat steal zipper user_preset; do
+for g in sched pitch env reverb arp arp_seq filter_stability accuracy fx_reenable param_robust \
+         lfo_sync modulation lfo_depth cosmos acid stuck sustain handover polyat steal legato \
+         zipper user_preset latency; do
     echo
     echo "########## ${g}_gate ##########"
     python3 "${g}_gate.py" || fail=1
 done
+
+echo
+echo "########## cosmos state ##########"
+./build/cosmos_state_test || fail=1
 
 echo
 echo "########## fm suite ##########"
