@@ -27,3 +27,8 @@ DUSK_ACCESS_DECL(uint32_t, multiCompGetHostFaces);
 // for a format wrapper. run() then reads inputs[0 .. channels - 1] and writes outputs[0 .. channels - 1] only.
 // Call it only while the plug-in is deactivated.
 DUSK_WEAK void multiCompSetHostChannels(void* pluginInstancePointer, int channels) noexcept;
+// The state deactivate() leaves, without deactivating: every delay, filter, envelope, meter and needle at rest, the
+// parameters, the layout and the prepared buffers kept, so the next run() starts as the first one after activate().
+// Real-time safe (no allocation, no lock, no I/O, time bounded by the prepared buffers): it may be called on the
+// audio thread between two run() calls, never concurrently with run(). It does not move the reported latency.
+DUSK_WEAK void multiCompResetHost(void* pluginInstancePointer) noexcept;

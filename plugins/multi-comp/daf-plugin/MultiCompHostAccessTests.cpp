@@ -7,15 +7,33 @@
 #include "MultiCompParams.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
+#include <new>
 #include <string>
 #include <vector>
 
 static_assert(DAF_UI_DEFAULT_WIDTH == 1120 && DAF_UI_DEFAULT_HEIGHT == 336,
               "a host that embeds the editor opens it at the canvas without the header");
+
+// Heap allocations made while armed: multiCompResetHost() runs on a host's audio thread.
+static std::atomic<bool> gCountAllocations{false};
+static std::atomic<int> gAllocations{0};
+
+void* operator new(std::size_t size)
+{
+    if (gCountAllocations.load(std::memory_order_relaxed))
+        gAllocations.fetch_add(1, std::memory_order_relaxed);
+    if (void* p = std::malloc(size != 0 ? size : 1))
+        return p;
+    throw std::bad_alloc();
+}
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete(void* p, std::size_t) noexcept { std::free(p); }
 
 namespace
 {
@@ -151,12 +169,119 @@ void hostChannels()
               "any layout but 1 is stereo without a sidechain");
     }
 }
+
+struct Rendered { std::vector<float> left, right; };
+
+// Stereo blocks through the instance, every output sample kept: a 1 kHz tone at `level` from phase zero, or silence.
+Rendered render(DAF_NAMESPACE::PluginExporter& plugin, float level, int blocks)
+{
+    std::vector<float> in(kBlock), outLeft(kBlock), outRight(kBlock);
+    const float* inputs[4] = {in.data(), in.data(), nullptr, nullptr};
+    float* outputs[2] = {outLeft.data(), outRight.data()};
+    Rendered result;
+    uint32_t n = 0;
+    for (int block = 0; block < blocks; ++block)
+    {
+        for (uint32_t i = 0; i < kBlock; ++i, ++n)
+        {
+            const double phase = 2.0 * 3.14159265358979323846 * 1000.0 * n / kSampleRate;
+            in[i] = level * static_cast<float>(std::sin(phase));
+        }
+        plugin.run(inputs, outputs, kBlock);
+        result.left.insert(result.left.end(), outLeft.begin(), outLeft.end());
+        result.right.insert(result.right.end(), outRight.begin(), outRight.end());
+    }
+    return result;
+}
+
+float peakOf(const Rendered& r)
+{
+    float peak = 0.0f;
+    for (const auto* channel : {&r.left, &r.right})
+        for (const float sample : *channel) peak = std::max(peak, std::fabs(sample));
+    return peak;
+}
+
+bool sameSamples(const Rendered& a, const Rendered& b) { return a.left == b.left && a.right == b.right; }
+
+// multiCompResetHost between two run() calls, as a host that stops running a compressor switched off: the instance
+// is where activate() puts it, with nothing allocated on the way and the reported latency where it was. Silence and
+// a tone after it come out sample for sample as from a freshly activated instance: reset() and prepare() leave the
+// same state, so neither comparison has a tolerance. That silence is exact zero from the first sample in FET Black,
+// VCA and Bus. Opto at rest gives its own output for silence, 2e-15 at most (-293 dBFS), fresh or reset alike, so
+// there the bound is 1e-12. Without the reset the delays still hold the tone.
+void hostReset()
+{
+    static constexpr const char* const names[] = {"Opto", "FET Black", "VCA", "Bus"};
+    gAllocations.store(0);
+    gCountAllocations.store(true);
+    void* (*volatile request)(std::size_t) = ::operator new;
+    ::operator delete(request(8));
+    gCountAllocations.store(false);
+    check(gAllocations.load() == 1, "the allocation counter sees an allocation");
+    for (int mode = 0; mode < 4; ++mode)
+    {
+        const auto engaged = [mode] {
+            auto plugin = makePlugin();
+            multiCompSetHostChannels(plugin->getInstancePointer(), 2);
+            plugin->setParameterValue(pid(ParamId::Mode), static_cast<float>(mode));
+            plugin->setParameterValue(pid(ParamId::OptoPeakReduction), 80.0f);
+            plugin->activate();
+            return plugin;
+        };
+        const auto hot = [](DAF_NAMESPACE::PluginExporter& plugin) { return render(plugin, 0.9f, 150); };
+
+        const auto reset = engaged();
+        void* const instance = reset->getInstancePointer();
+        hot(*reset);
+        const float reduction = multiCompGetGainReduction(instance);
+        const uint32_t latency = reset->getLatency();
+        gAllocations.store(0);
+        gCountAllocations.store(true);
+        multiCompResetHost(instance);
+        gCountAllocations.store(false);
+        const int allocations = gAllocations.load();
+        const bool atRest = multiCompGetGainReduction(instance) == 0.0f
+            && multiCompGetOutputVuLevel(instance) == -120.0f && multiCompGetGainReductionNeedle(instance) == 0.0f
+            && reset->getLatency() == latency;
+        const Rendered quiet = render(*reset, 0.0f, 20);
+        const float afterReset = peakOf(quiet);
+        const bool latencyHeld = reset->getLatency() == latency;
+        const bool quietAsFresh = sameSamples(quiet, render(*engaged(), 0.0f, 20));
+
+        const auto running = engaged();
+        hot(*running);
+        const float withoutReset = peakOf(render(*running, 0.0f, 20));
+
+        const auto again = engaged();
+        hot(*again);
+        multiCompResetHost(again->getInstancePointer());
+        const Rendered resumed = render(*again, 0.5f, 60);
+        const Rendered fresh = render(*engaged(), 0.5f, 60);
+        const bool toneAsFresh = sameSamples(resumed, fresh);
+
+        std::printf("host reset %s: gain reduction %.2f dB, %d allocations, latency %u; silence after it peaks at %g "
+                    "(%g without), as a fresh instance's %d; a tone after it as a fresh instance's %d (peak %.4f)\n",
+                    names[mode], static_cast<double>(reduction), allocations, latency,
+                    static_cast<double>(afterReset), static_cast<double>(withoutReset), quietAsFresh, toneAsFresh,
+                    static_cast<double>(peakOf(fresh)));
+        check(std::fabs(reduction) > 1.0f, "the instance is compressing when it is reset");
+        check(allocations == 0, "multiCompResetHost allocates nothing");
+        check(atRest && latencyHeld, "the reset puts the meters at rest and leaves the reported latency");
+        check(quietAsFresh && (mode == 0 ? afterReset < 1.0e-12f : afterReset == 0.0f),
+              "silence after the reset is a fresh instance's silence from the first sample");
+        check(withoutReset > 1.0e-4f, "without the reset the instance still holds the tone");
+        check(toneAsFresh && peakOf(fresh) > 0.01f, "a tone after the reset runs as through a fresh instance");
+    }
+    multiCompResetHost(nullptr);
+}
 }
 
 int main()
 {
     faceMask();
     hostChannels();
+    hostReset();
     std::printf("host access failures=%d\n", failures);
     return failures == 0 ? 0 : 1;
 }
