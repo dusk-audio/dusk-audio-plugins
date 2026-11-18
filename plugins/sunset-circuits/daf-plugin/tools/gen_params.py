@@ -268,13 +268,15 @@ PRESETS = [
  ("Wooden Keys", {"masterVol":-1.5,"mode":1,"filterCutoff":3000,"filterRes":0.2,"ampA":0.005,"ampD":0.4,"ampS":0.5,"ampR":0.3}),
  # A low square modulates the triangle. The long amplitude release and a
  # quiet fixed-time delay keep the inharmonic partials ringing after key-up.
- ("Poly Mod Bells", {"mode":1,"masterVol":5.065,"stereoWidth":0,"analogAmt":0.13,"velSens":0,
+ # Key tracking trims amplitude as the filter opens in the upper register.
+ ("Poly Mod Bells", {"mode":1,"masterVol":4.8,"stereoWidth":0,"analogAmt":0.13,"velSens":0,
    "osc1Wave":2,"osc2Wave":1,"osc2Semi":-12,"osc2Detune":0,"osc2Level":0.3253,
    "filterCutoff":290,"filterRes":0.0207,"filterEnvAmt":0,"pmFenvOscA":0.1044,"pmOscBOscA":0.596,
    "ampA":0.006,"ampD":0.09,"ampS":0.62,"ampR":9,"ampCurve":0,
    "filtA":0.001,"filtS":1,"filtR":10,
    "delayOn":1,"delaySync":0,"delayTime":233,"delayFB":0.91,"delayMix":0.12,
-   "modSrc0":7,"modDst0":5,"modAmt0":1,"modSrc1":7,"modDst1":5,"modAmt1":0.375}),
+   "modSrc0":7,"modDst0":5,"modAmt0":1,"modSrc1":7,"modDst1":5,"modAmt1":0.375,
+   "modSrc2":7,"modDst2":7,"modAmt2":-0.55}),
  ("Dark Oracle", {"mode":1,"filterCutoff":1200,"filterRes":0.5,"filterEnvAmt":0.3,"ampA":0.5,"ampS":0.85,"ampR":1.5,"vintage":0.3,"pmFenvFilt":0.05594406}),
  ("Stab Machine", {"mode":1,"filterCutoff":4000,"filterEnvAmt":0.6,"ampA":0.001,"ampD":0.15,"ampS":0.0,"ampR":0.1,"pmFenvOscA":0.562844235}),
  ("Pulsing Darkness", {"mode":2,"osc1Wave":4,"osc2Wave":0,"osc2Semi":-12,"filterCutoff":600,"filterRes":0.55,"filterEnvAmt":0.5,"subLevel":0.9,"filtA":0.001,"filtD":0.15,"filtS":0.05,"arpOn":1,"arpRate":3,"vintage":0.3}),
@@ -300,13 +302,15 @@ PRESETS = [
  ("Retro Sequence", {"mode":3,"filterCutoff":2500,"filterEnvAmt":0.7,"arpOn":1,"arpRate":3,"arpGate":0.5,"delayOn":1,"delayTape":1}),
  ("Midnight Drive", {"masterVol":-2.5,"mode":0,"filterCutoff":1800,"filterRes":0.35,"filterEnvAmt":0.25,"ampA":0.5,"ampS":0.85,"ampR":2.0,"cosmosChorus":2,"driveOn":1,"driveAmt":0.3,"delayOn":1,"delayTape":1,"delayMix":0.25,"stereoWidth":0.7}),
  ("Starfield", {"mode":0,"filterCutoff":7000,"ampA":0.003,"ampD":0.2,"ampS":0.3,"ampR":0.5,"cosmosChorus":3,"arpOn":1,"arpMode":4,"arpRate":4,"arpOctave":3,"arpGate":0.4,"delayOn":1,"delayMix":0.3,"reverbOn":1,"reverbMix":0.25,"stereoWidth":0.8}),
- # Single saw one octave down, with key tracking into the filter.
- ("Poly Brass", {"mode":1,"masterVol":4.5,"stereoWidth":0,"analogAmt":0.13,"velSens":0,
+ # Single saw one octave down. Key tracking opens the filter and trims
+ # amplitude so upper-register chords keep their headroom.
+ ("Poly Brass", {"mode":1,"masterVol":2,"stereoWidth":0,"analogAmt":0.13,"velSens":0,
    "osc1Level":0,"osc2Semi":-12,"osc2Detune":0,"osc2Level":0.9,
    "filterCutoff":351,"filterRes":0.38,"filterEnvAmt":0.8,
    "ampA":0.0175,"ampD":0.105,"ampS":0.52,"ampR":0.133,
    "filtA":0.25,"filtD":0.35,"filtS":0,"filtR":0.16,
-   "modSrc0":7,"modDst0":5,"modAmt0":1,"modSrc1":7,"modDst1":5,"modAmt1":1}),
+   "modSrc0":7,"modDst0":5,"modAmt0":1,"modSrc1":7,"modDst1":5,"modAmt1":1,
+   "modSrc2":7,"modDst2":7,"modAmt2":-0.6}),
  # The triangle rings an octave up. The sustained filter envelope and its
  # matrix pitch route tune the quieter pulse two octaves above the triangle.
  ("Glass Bells", {"mode":1,"masterVol":-6,"stereoWidth":0.59,"analogAmt":0.13,"velSens":0.4,

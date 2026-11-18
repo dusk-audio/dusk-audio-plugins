@@ -1,27 +1,20 @@
-"""Factory-program recall at A2 and C5, with the wheel down and velocity 100.
+"""Oracle factory voicing and chord headroom with the wheel down.
 
-Two pitch anchors distinguish the intended oscillator registers. The two release
-anchors compare the tail to the held note in the same render. Reference captures
+Single notes at A2 and C5, velocity 100, check the oscillator register or the
+release level relative to the held note in the same render. Reference captures
 at both pitches gave -15.2/-15.9 dB for the horns and -0.3/+0.3 dB for the bells.
-Allow 1% on frequency and 6 dB on the release-to-sustain level difference.
+The late bell window checks that the long initial ring eventually dies away.
+Upper-register chords exercise factory headroom where key tracking opens the filter.
 """
-import subprocess
-import tempfile
-from pathlib import Path
-
 import numpy as np
-import soundfile as sf
+from scipy.signal import resample_poly
+
+from preset_audit import PEAK_CLIP_DBFS, SILENCE_DBFS, db, render
 
 
-RENDER = Path(__file__).resolve().parents[1] / "build" / "preset_render"
-
-
-def check(program, note, wav):
-    subprocess.run([str(RENDER), str(program), str(wav), "perf=single",
-                    f"note={note}", "vel=0.787401575", "bars=1",
-                    "tempo=369.230769", "tail=2.5"], check=True,
-                   capture_output=True, timeout=30)
-    audio, rate = sf.read(wav, always_2d=True)
+def check(program, note):
+    rate, audio, _, _ = render(program, perf="single", note=note, vel=100 / 127,
+                               bars=1, tempo=369.230769, tail=12.5 if program == 7 else 2.5)
     held = audio[round(.32 * rate):round(.62 * rate)]
     power = np.mean(held ** 2)
     if not np.isfinite(audio).all() or power < 1e-8:
@@ -39,16 +32,43 @@ def check(program, note, wav):
     start, stop, target = (.90, 1.15, -15.5) if program == 5 else (2.50, 2.75, 0.0)
     tail = audio[round(start * rate):round(stop * rate)]
     level = 10 * np.log10(max(np.mean(tail ** 2) / power, 1e-15))
-    return abs(level - target) <= 6, f"{level:+.1f} dB relative to held note (target {target:+.1f})"
+    ok = abs(level - target) <= 6
+    detail = f"{level:+.1f} dB relative to held note (target {target:+.1f})"
+    if program == 7:
+        # Key-up is at 0.65 s. A lost note-off also passes the early ring check.
+        late = audio[round(12.65 * rate):round(12.90 * rate)]
+        late_level = 10 * np.log10(max(np.mean(late ** 2) / power, 1e-15))
+        ok = ok and late_level <= -30
+        detail += f", {late_level:+.1f} dB 12 s after key-up (limit -30 dB)"
+    return ok, detail
+
+
+def check_chord_headroom(program, **performance):
+    _, audio, _, _ = render(program, bars=1, tail=0.5, **performance)
+    if not np.isfinite(audio).all() or db(np.sqrt(np.mean(audio ** 2))) <= SILENCE_DBFS:
+        return False, "silent or invalid chord"
+    # Check both the actual samples and the peaks between them.
+    upsampled = resample_poly(audio, 4, 1, axis=0, window=("kaiser", 8))
+    peak = db(max(np.max(np.abs(audio)), np.max(np.abs(upsampled))))
+    return peak <= PEAK_CLIP_DBFS, f"{peak:+.2f} dBTP (limit {PEAK_CLIP_DBFS:g})"
 
 
 if __name__ == "__main__":
     passed = True
-    with tempfile.TemporaryDirectory() as directory:
-        for program, name in ((22, "Poly Brass"), (5, "Brass Section"),
-                              (7, "Poly Mod Bells"), (23, "Glass Bells")):
-            for note in (45, 72):
-                ok, detail = check(program, note, Path(directory) / "note.wav")
-                print(f"{'PASS' if ok else 'FAIL'} {name}, MIDI {note}: {detail}")
-                passed = passed and ok
+    for program, name in ((22, "Poly Brass"), (5, "Brass Section"),
+                          (7, "Poly Mod Bells"), (23, "Glass Bells")):
+        for note in (45, 72):
+            ok, detail = check(program, note)
+            print(f"{'PASS' if ok else 'FAIL'} {name}, MIDI {note}: {detail}")
+            passed = passed and ok
+
+    for program, name, root, high_root in ((22, "Poly Brass", 82, 82),
+                                           (7, "Poly Mod Bells", 90, 106)):
+        ninth = ",".join(str(high_root + interval) for interval in (0, 4, 7, 11, 14))
+        for label, performance in (
+                (f"chord rooted at MIDI {root}", dict(perf="chord", note=root, vel=100 / 127)),
+                (f"five held notes {ninth}", dict(perf="hold", hold=ninth, vel=1))):
+            ok, detail = check_chord_headroom(program, **performance)
+            print(f"{'PASS' if ok else 'FAIL'} {name}, {label}: {detail}")
+            passed = passed and ok
     raise SystemExit(0 if passed else 1)
