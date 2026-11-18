@@ -1,7 +1,7 @@
 ---
 slug: sunset-circuits
 version: 1.1.0
-last_updated: 2026-11-16
+last_updated: 2026-11-17
 tagline: Six vintage synth circuits in one instrument
 ---
 
@@ -111,7 +111,7 @@ One caveat applies to program changes in the LV2 version only. A preset recalled
 
 ### Cosmos: six-voice DCO poly
 
-Cosmos uses a JUNO-inspired charcoal panel, red synth-section bars, blue performance-section bars, yellow/orange chorus switches, and a green display.
+Cosmos uses a charcoal panel, red synth-section bars, blue performance-section bars, yellow/orange chorus switches, and a green display.
 
 Cosmos is modeled on an early-80s Japanese polysynth with digitally controlled oscillators. It is six-voice polyphonic. The DCO combines saw, pulse, and an octave-down sub with fixed mixer levels: adding a waveform adds to the sound without turning the other sources down. The sub follows Oscillator 1 pitch modulation and detune. Cosmos uses white noise. The 24 dB per octave low-pass reaches self-oscillation near the top of the resonance control, paired with a separate high-pass control for thinning the low end.
 
@@ -123,7 +123,7 @@ Mode-specific controls visible in Cosmos: the **Sub** oscillator (wave and level
 
 Oracle is modeled on a late-70s American five-voice polysynth with two true analog oscillators per voice and a self-oscillating low-pass filter. Where Cosmos is clean and stable, Oracle is characterful and alive. The filter reaches self-oscillation at high resonance, so it can sing on its own. Oracle uses white noise, at the level the instrument it is modeled on sets beside its own oscillators, and turning the noise up adds to the sound without turning the oscillators down.
 
-The signature of Oracle is poly-modulation. The mode sub-panel is a six-knob **POLY-MOD / SYNC** section: filter envelope and oscillator 2 can each reach oscillator 1 pitch, oscillator 1 pulse width, and the filter.
+Oracle's black panel has white outlines and labels, red lamps and a walnut frame. The six routing knobs in **POLY-MOD / SYNC** send the filter envelope or oscillator 2 to oscillator 1 pitch, oscillator 1 pulse width, or filter cutoff. Below them sit Cross Mod and Sync. The arrow under Sync reads OSC 2 -> OSC 1.
 
 ![Oracle mode: two oscillator panels with no sub oscillator, the auxiliary oscillator slot inactive, and the POLY-MOD and SYNC sub-panel with its filter envelope and oscillator 2 routing knobs](screenshots/sunset-circuits/02-mode-oracle.png)
 
@@ -137,7 +137,7 @@ The signature of Oracle is poly-modulation. The mode sub-panel is a six-knob **P
 
 **Cross Mod** in the Poly-Mod panel applies linear frequency modulation from oscillator 2 to oscillator 1. Poly Mod Bells uses 50 percent and Glass Bells uses 60 percent for their metallic attack. Dial in this knob to recreate that part of either patch.
 
-Mode-specific controls visible in Oracle: the six poly-mod routing knobs, **Cross Mod**, the **Sync** button, and the **WHEEL MOD** button next to **MOD MATRIX**, which opens Oracle's Wheel Mod section (see [Wheel Mod (Oracle)](#wheel-mod-oracle)). There is no sub oscillator and no filter high-pass in this mode; the third panel on the left reads **AUX OSC** with a note that Oracle uses its two-oscillator poly-mod path instead.
+Mode-specific controls visible in Oracle: the six poly-mod routing knobs, **Cross Mod**, the **Sync** button, and the **WHEEL MOD** button next to **MOD MATRIX**, which opens Oracle's Wheel Mod section (see [Wheel Mod (Oracle)](#wheel-mod-oracle)). There is no sub oscillator or adjustable high-pass filter in this mode; the third panel on the left reads **AUX OSC** with a note that Oracle uses its two-oscillator poly-mod path instead.
 
 ### Mono: aggressive monophonic
 
@@ -319,7 +319,7 @@ Oracle has the modulation section of the instrument it is modeled on: one LFO an
 
 **It is one source for the whole instrument.** Every voice hears the same LFO and the same noise at the same moment, so a chord wobbles together, and the LFO runs freely: playing a note never restarts it. This is the difference from the two LFOs in the LFOs section, which every voice owns a copy of.
 
-**It is off by default.** Nothing reaches the sound until a destination is on, so presets and projects from earlier versions load with the section off and sound exactly as they did. The section only acts in Oracle; its settings are kept, and ignored, in the other modes.
+**Wheel Mod starts off.** Older projects and presets load with all five destinations off. Turn on a destination to hear the section in Oracle. Switching to another mode keeps the settings for when you return to Oracle.
 
 The panel reads left to right, in signal order.
 
@@ -338,9 +338,7 @@ How far each destination moves, with the mod wheel and Upper at full:
 - **Pulse width**: the square widens the pulse by 80 percent of the cycle. Past either end of its range the pulse closes and falls silent, as on the instrument, so this route can gate a pulse wave in time with the LFO.
 - **Filter**: the square opens the cutoff by about 8.8 octaves, so even a small depth is a large sweep.
 
-These match measurements of the model of the instrument Oracle is modeled on, to within a few cents of pitch.
-
-**Mod-wheel vibrato:** Triangle on, Mix all the way to LFO, Rate around 5 Hz, Freq A and Freq B on, Upper around 10 percent and Lower at 0. The wheel then brings in up to about a semitone of vibrato. Raise Lower slightly for a little vibrato with the wheel at rest.
+**Mod-wheel vibrato:** Triangle on, Mix all the way to LFO, Rate around 5 Hz, Freq A and Freq B on, Upper around 10 percent and Lower at 0. At full wheel the triangle then bends pitch by about 0.6 semitone either side of the note. Raise Lower slightly for a little vibrato with the wheel at rest.
 
 Switching a destination on or off fades it over 5 ms, and the wheel and the Mix knob glide like the other smoothed controls, so none of them clicks. The Shape and Noise type switches change the modulation at once, as the panel switches do on the instrument.
 
@@ -406,6 +404,14 @@ In Acid mode the mod matrix is not in circuit, so the mod wheel and the depth de
 Re-record such lanes. Automation in other hosts and formats has not been tested; after updating, check any lanes on the eight Mod Dest parameters.
 
 ## Presets
+
+### Opening an older project
+
+A project recalls its program first, then restores the knob values you saved. A re-voiced factory preset therefore plays with the old settings in an existing project. Select the preset again to load the adjusted factory version. Save a copy first if you want to keep your edits.
+
+With older saved values, Poly Brass measured 1.09 dB louder and sounded brighter, Brass Section gained 0.44 dB, Poly Mod Bells lost its metallic attack, and Noise Sweep gained 2.52 dB. These changes come from the revised Oracle Poly-Mod routes and bell settings, and from removing the oscillator level drop when Mono or Modular noise is mixed in. Both modes still use pink noise.
+
+For your own Oracle sync patches, put vibrato on oscillator 2 to move the note or on oscillator 1 to sweep the tone. Oscillator 1 has no independent semitone control, so recreating an older sync patch can take retuning by ear. The envelope now raises oscillator 1 by the same interval across the keyboard, and narrows its pulse. Oracle's mixer now uses white noise and lets the oscillators keep their level as you add it. Its filter and output also pass more low bass, which can raise peaks. If a project runs at 88.2 or 96 kHz, check its Oversampling setting too. At these rates 1x and 2x now both run at the session rate and 4x runs at twice it.
 
 ### The preset menu and the browser
 
@@ -497,15 +503,15 @@ The **Oversampling** control sets the internal processing rate: **1x**, **2x**, 
 - **2x**: the default and the recommended everyday setting. A good balance of clean high end and reasonable CPU.
 - **4x**: the cleanest high end, for exposed leads, bright FM tones, and high notes where aliasing would be audible. Use it when you can afford the CPU.
 
-Factory presets ship at 2x, except Oracle Trumpet, Modular English Horn and Prism Talking Keys, which keep the 4x they were made with.
+The three new factory presets, Oracle Trumpet, Modular English Horn and Prism Talking Keys, keep the 4x setting they were made with. Prism Talking Keys was originally called Prism Talking Clav. The other 54 presets load at 2x.
 
 The factor changes how clean the high end is and what it costs, not how a patch moves. The slow random pitch wander that the **Analog** control adds to each voice runs on its own clock, so a patch drifts at the same speed and depth at 1x, 2x and 4x and at every session sample rate.
 
 Oracle's mixer noise works the same way: its level and its color are the same at every factor and every session sample rate.
 
-Hard sync is band-limited at every factor: each restart of the synced oscillator lands exactly where the other one wraps, between samples where it falls between them, and is smoothed like the oscillators' own edges. A synced sound therefore aliases about as little as the same sound without sync, even with oscillator 1's pitch moving under vibrato.
+A hard-sync restart falls where the master oscillator wraps within a sample. On a steady Oracle C7 (MIDI 96, three octaves above middle C) at 2x and 48 kHz, the strongest unwanted tone measured between -109.0 and -91.7 dBc across five waveforms. Vibrato moves the harmonics, so it calls for a different measurement. With the wheel up, Oracle Trumpet's energy outside the moving harmonics measured -66.6 dB at C6, -69.2 dB at G6 and -71.0 dB at C7.
 
-The oscillators in Cosmos, Oracle, Mono and Modular smooth every edge of their waveforms (and every hard-sync restart) with a minimum-phase step at 1x and 2x, so on their own they fold back no more than about 75 dB below the note, even at 1x. That smoothing lands each edge about two internal samples late, which the reported latency already allows for. At 4x they keep the simpler smoothing they always had, which is already that clean there. In Oracle, Mono and Modular the oscillators also pass through a steep low-pass at 18 kHz (a gentler one at 4x) before the filter, so the filter's drive never sees content above hearing. Together these put Oracle's aliasing at the default 2x below that of the instrument it is modeled on.
+Cosmos, Oracle, Mono and Modular smooth oscillator edges with a minimum-phase step at lower internal rates. Oracle, Mono and Modular also filter the oscillator mix before it reaches the voice filter. This pre-filter uses four poles at 18 kHz from an internal rate of 88.2 kHz and two poles at 20 kHz from 176.4 kHz. The highest harmonics of Oracle's oscillator 2 and Modular's oscillator 3 are also filtered on their routes to cutoff.
 
 ### Reported latency
 
@@ -521,7 +527,7 @@ These are host samples and are independent of the sample rate: 13 samples is 0.2
 
 CPU cost scales with the number of sounding voices, the oversampling factor, and how many effects are engaged. The oscillators, filter, and FM operators run at the oversampled rate, so 4x costs roughly twice what 2x costs for the same patch; the effects run once at the host rate regardless.
 
-The figures below are single-core measurements taken at 48 kHz with a 512-sample buffer, expressed as a percentage of one CPU core. They come from an offline profile of the engine's processing loop on an Intel Core i7-8809G (4 cores, 3.1 GHz base), so treat them as a guide; a faster or slower machine will scale the numbers accordingly, and a smaller buffer raises the per-block overhead slightly.
+The figures below are single-core measurements taken at 48 kHz with a 512-sample buffer, expressed as a percentage of one CPU core. They come from an offline profile of the engine's processing loop on a four-core processor with a 3.1 GHz base clock, so treat them as a guide; a faster or slower machine will scale the numbers accordingly, and a smaller buffer raises the per-block overhead slightly.
 
 | Patch | Oversampling | CPU (one core) |
 |---|---|---|
@@ -544,14 +550,14 @@ Loading a preset snaps rather than glides. The plugin tells the engine explicitl
 
 ### Hardware controllers
 
-In CLAP hosts that read a plugin's remote control pages, such as Bitwig Studio, a controller's eight knobs land on pages laid out for playing rather than on the first eight parameters. The first page, **Performance**, holds filter cutoff, resonance and envelope amount, the four amp envelope stages and the master volume. The other pages cover the oscillators, the filter, the amp, the LFOs, the voice (glide, legato, unison, width), the arpeggiator, the effects, the Prism operators and the Acid controls. Mode and Oversampling are on no page, so a knob cannot switch the circuit or the oversampling by accident.
+In CLAP hosts that read remote control pages, a controller's eight knobs land on pages laid out for playing rather than on the first eight parameters. The first page, **Performance**, holds filter cutoff, resonance and envelope amount, the four amp envelope stages and the master volume. The other pages cover the oscillators, the filter, the amp, the LFOs, the voice (glide, legato, unison, width), the arpeggiator, the effects, the Prism operators and the Acid controls. Mode and Oversampling are on no page, so a knob cannot switch the circuit or the oversampling by accident.
 
 Hosts that do not read these pages, and the VST3, AU and LV2 builds, map controllers their own way. Many simply take the parameters in order, which start with Mode, Master Tune, Master Volume, Master Pan, Stereo Width and Oversampling, so assign the knobs you want by hand there.
 
 ### Known limits
 
 - **Prism with heavy unison at 4x oversampling** can exceed one core. See the CPU section above.
-- **Aliasing on the voice path** is measured and bounded, not eliminated. At 2x the worst alias images sit around -47 dBc, which is inaudible on normal material; at 1x they are considerably higher and 1x is best reserved for pads and bass. 4x is there for exposed bright leads and high FM tones.
+- **Aliasing on the voice path** is measured and bounded, not eliminated. Results depend on the sound and the note. The Oracle measurements above cover five steady waveforms and one preset played with the mod wheel up. 4x is there for exposed bright leads and high FM tones.
 - **The effects run at the host rate**, downstream of the voice decimation, so they are not covered by the Oversampling control. Drive in particular is a nonlinearity at host rate: pushed hard on an already bright, wide-open source it can fold a little energy back down the spectrum, and raising Oversampling will not help because the voice path was never the problem. If a driven lead sounds gritty in a way you do not want, back off Drive Amount or the Drive Mix, or darken the source with the filter before the drive rather than after. Nothing in the factory bank is pushed into that region.
 - **Chord arpeggiator mode** currently plays like Up. See the arpeggiator section.
 - **The font atlas is baked when the plugin window opens**, so text can look slightly soft after you move the window to a display with a different pixel density, until you close and reopen the plugin.
@@ -648,7 +654,7 @@ Two names are easy to misread. **Acid Squelch** and **Acid Machine** are Mono-mo
 
 **The synced delay is not tracking a very slow tempo.** The delay buffer is 2 seconds. At slow tempi the longest note divisions ask for more than 2 seconds and are clamped to the buffer, so they hold at 2 seconds instead of tracking further. Use a shorter division or the free (milliseconds) mode if you need the delay to follow a very slow tempo exactly.
 
-**Bright or high notes sound harsh or buzzy.** That is aliasing. Raise the Oversampling from 1x to 2x or 4x. FM tones in Prism and high-resonance filter sweeps benefit the most. If raising oversampling changes nothing, the grit is coming from the effects rather than from the voice: Drive runs at the host rate and is not oversampled, so back off Drive Amount or Drive Mix instead.
+**Bright or high notes sound harsh or buzzy.** That is aliasing. Raise the Oversampling from 1x to 2x or 4x. FM tones in Prism and high-resonance filter sweeps benefit the most. If raising Oversampling by one step leaves the internal rate unchanged, try the next higher setting. Drive runs at the host rate. If Drive is on, turn down Drive Amount or Drive Mix to check its contribution.
 
 **The interface looks small, or the knob values disappeared.** The UI scales with the window: drag the window corner to resize it and the whole panel scales to fit while keeping its aspect ratio. The smallest size is 620 by 390. The persistent value read-outs need legible room and switch off below about 893 by 562, leaving a hover bubble in their place, so if the numbers under the knobs have vanished the window is simply too small.
 
