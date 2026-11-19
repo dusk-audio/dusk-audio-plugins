@@ -11,8 +11,7 @@
 #define MULTICOMP_UI_TEST_HOST
 #define START_NAMESPACE_DAF namespace DAF {
 #define END_NAMESPACE_DAF }
-#define DAF_UI_DEFAULT_WIDTH 1120
-#define DAF_UI_DEFAULT_HEIGHT 380
+#include "DafPluginInfo.h"   // DAF_UI_DEFAULT_WIDTH and DAF_UI_DEFAULT_HEIGHT, the window this build opens
 using GLint = int;
 constexpr int GL_MAX_TEXTURE_SIZE = 0x0D33;
 inline void glGetIntegerv(int, GLint* p) { p[0] = 16384; }   // the editor asks only for GL_MAX_TEXTURE_SIZE
@@ -22,6 +21,7 @@ struct TestInstance
 {
     std::array<float, 256> parameters{};
     bool externalActive = false;
+    uint32_t faces = 0xFFu;   // the host's face mask (multiCompGetHostFaces)
 };
 class UI
 {
@@ -37,7 +37,8 @@ public:
     void draw() { onImGuiDisplay(); }
     void parameter(uint32_t p, float v) { state.parameters[p] = v; parameterChanged(p, v); }
     void restore(const char* key, const char* value) { stateChanged(key, value); }
-    uint32_t width = 1120, height = 380;   // the editor window (Host sets a letterboxed one)
+    // The editor window (Host sets a letterboxed one).
+    uint32_t width = DAF_UI_DEFAULT_WIDTH, height = DAF_UI_DEFAULT_HEIGHT;
     uint32_t getWidth() const { return width; }
     uint32_t getHeight() const { return height; }
     float getScaleFactor() const { return 1; }
@@ -89,6 +90,7 @@ float multiCompGetExternalSidechainActive(void* p) noexcept
 {
     return p != nullptr && static_cast<DAF::TestInstance*>(p)->externalActive ? 1.0f : 0.0f;
 }
+uint32_t multiCompGetHostFaces(void* p) noexcept { return static_cast<DAF::TestInstance*>(p)->faces; }
 
 namespace
 {
@@ -112,7 +114,7 @@ struct Host
         ~Context() { ImGui::DestroyContext(context); }
     } context;
     DAF::MultiCompUI ui;
-    explicit Host(int mode, uint32_t width = 1120, uint32_t height = 380)
+    explicit Host(int mode, uint32_t width = DAF_UI_DEFAULT_WIDTH, uint32_t height = DAF_UI_DEFAULT_HEIGHT)
     {
         ui.width = width;
         ui.height = height;
@@ -137,12 +139,12 @@ struct Host
     // position (each face's layout is in ui_detail). A negative position stays off the window.
     void frame(float x = -100, float y = -100, bool down = false) { canvas(x, y, down); }
     // The pointer at (x, y) on the 1120 x 380 canvas itself: the header, the mode row and the settings drawer (their
-    // controls' positions: At below).
+    // controls' positions: At below). An embedded editor's window starts at the header's foot (kCanvasTop).
     void canvas(float x = -100, float y = -100, bool down = false)
     {
         ImGui::SetCurrentContext(context.context);
         auto& io = ImGui::GetIO();
-        io.AddMousePosEvent(x, y); io.AddMouseButtonEvent(0, down);
+        io.AddMousePosEvent(x, y - multicompp::ui_detail::kCanvasTop); io.AddMouseButtonEvent(0, down);
         ImGui::NewFrame(); ui.draw(); ImGui::Render();
     }
     void canvasClick(float x, float y) { canvas(x, y); canvas(x, y, true); canvas(x, y); }
@@ -663,6 +665,112 @@ void numericOwnership()
     std::printf("numeric band change ownWrites=%d replacementWrites=%d\n", own, sibling);
     check(own == 1 && sibling == 0, "numeric entry commits to its original band before selection changes");
 }
+
+// The mode row under a host's face mask (multiCompSetHostFaces), by its tabs' presses: the allowed modes' tabs from
+// the left in mode order, none for a single mode, all eight for an empty mask and for an editor without the plugin.
+// A press where no tab is drawn selects nothing, and AUTO MAKEUP stays where it is. The Mode a host sets outside the
+// mask still shows its face.
+void hostFaces()
+{
+    const uint32_t modeId = pid(ParamId::Mode), autoMakeup = pid(ParamId::AutoMakeup);
+    struct Case { const char* name; bool reachable; uint32_t mask; int start; std::vector<float> tabs; };
+    const Case cases[] = {
+        {"no mask", true, 0xFFu, 7, {0, 1, 2, 3, 4, 5, 6, 7}},
+        {"empty mask", true, 0u, 7, {0, 1, 2, 3, 4, 5, 6, 7}},
+        {"editor without the plugin", false, 0x08u, 7, {0, 1, 2, 3, 4, 5, 6, 7}},
+        {"Opto, FET Black, VCA", true, 0x07u, 2, {0, 1, 2}},
+        {"Opto, FET Black, VCA with Bus running", true, 0x07u, 3, {0, 1, 2}},
+        {"Bus, Multiband", true, 0x88u, 7, {3, 7}},
+        {"Bus", true, 0x08u, 3, {}},
+        {"Multiband", true, 0x80u, 7, {}},
+        {"Bus with Opto running", true, 0x08u, 0, {}},
+    };
+    for (const Case& c : cases)
+    {
+        Host h(c.start);
+        h.ui.state.faces = c.mask;
+        if (c.reachable) h.ui.instance = &h.ui.state;
+        h.frame();
+        for (int slot = 0; slot < 8; ++slot) h.canvasClick(At::tabX(slot), At::rowY);
+        std::vector<float> chosen;
+        for (const auto& event : h.ui.writes) if (event.parameter == modeId) chosen.push_back(event.value);
+        h.canvasClick(At::autoMakeupX, At::rowY);
+        std::printf("host faces %s: %zu of %zu tabs answered, AUTO MAKEUP writes=%d\n", c.name, chosen.size(),
+                    c.tabs.size(), h.writes(autoMakeup));
+        check(chosen == c.tabs, "the mode row draws the allowed modes' tabs from the left, none for a single mode");
+        check(h.writes(autoMakeup) == 1, "AUTO MAKEUP answers under a face mask");
+    }
+    // FET BLUE's face under a strip's mask: the mask narrows the tabs, not the faces.
+    Host blue(4);
+    blue.ui.state.faces = 0x07u; blue.ui.instance = &blue.ui.state;
+    blue.frame();
+    blue.drag(multicompp::ui_detail::FetFaceplateLayout::blueTrimX,
+              multicompp::ui_detail::FetFaceplateLayout::blueHeadroomY);
+    check(blue.writes(pid(ParamId::FetBlueHeadroom)) > 0, "a mode outside the mask still shows its face");
+}
+
+// The editor a host builds into its own window (MULTICOMP2_EMBEDDED_UI, the MultiCompEmbeddedUi build of this file):
+// the window is the canvas without the header, the mode row at its top at any window size, and there is no SETTINGS,
+// no drawer and no resize grip. Every other test here but the drawer's runs against that build too: the faces answer
+// at the canvas positions they have in the plug-in.
+void embeddedWindow()
+{
+    namespace ui = multicompp::ui_detail;
+    const uint32_t modeId = pid(ParamId::Mode), distortion = pid(ParamId::Distortion), bypass = pid(ParamId::Bypass);
+    const float top = ui::kCanvasTop, bypassX = 0.5f * (At::Row::bypassX0 + At::Row::bypassX1);
+    std::printf("embedded window: %d x %d, the canvas from y=%.0f\n", DAF_UI_DEFAULT_WIDTH, DAF_UI_DEFAULT_HEIGHT,
+                static_cast<double>(top));
+    check(ui::kEmbeddedUi && top == ui::kHeaderHeight && ui::kWindowHeight == ui::kDesignHeight - ui::kHeaderHeight,
+          "the embedded window is the canvas without its header");
+    check(DAF_UI_DEFAULT_WIDTH == 1120 && DAF_UI_DEFAULT_HEIGHT == 336 && ui::kWindowHeight == 336.0f,
+          "DafPluginInfo.h opens the embedded editor at 1120 x 336");
+    {
+        Host h(0);
+        const bool atTop = At::Row::y0 - top >= 0.0f && At::Row::y0 - top < 4.0f;
+        h.canvasClick(At::tabX(3), At::rowY);
+        h.canvasClick(bypassX, At::rowY);
+        std::printf("embedded mode row: top edge %.0f px into the window, BUS writes=%d, BYPASS writes=%d\n",
+                    static_cast<double>(At::Row::y0 - top), h.count(h.ui.writes, modeId, 3), h.writes(bypass));
+        check(atTop && h.count(h.ui.writes, modeId, 3) == 1 && h.writes(bypass) == 1,
+              "the embedded mode row is at the window's top and answers there");
+    }
+    for (int mode = 0; mode < 8; ++mode)
+    {
+        Host h(mode);
+        // The header band would be drawn above the window's top edge.
+        float highest = 0.0f;
+        const ImDrawData* const drawn = ImGui::GetDrawData();
+        for (int list = 0; list < drawn->CmdListsCount; ++list)
+            for (const ImDrawVert& vertex : drawn->CmdLists[list]->VtxBuffer) highest = std::min(highest, vertex.pos.y);
+        check(highest > -1.0f, "the embedded editor draws no header");
+        h.canvasClick(At::settingsX, At::rowY);                           // where SETTINGS is in the plug-in
+        h.canvasClick(At::driveX(At::soft), At::driveY(At::soft));        // where the drawer's DRIVE would be
+        h.canvasClick(At::closeX, At::closeY);
+        const int drawerWrites = h.writes(distortion);
+        // No drawer covers the editor: the mode row still takes the pointer.
+        const int next = (mode + 1) % 8;
+        h.canvasClick(At::tabX(next), At::rowY);
+        const float gx = At::designW - 7.0f, gy = At::designH - 7.0f;     // the plug-in's resize grip, the corner
+        h.canvas(gx, gy); h.canvas(gx, gy, true); h.canvas(gx + 40, gy + 25, true); h.canvas(gx + 40, gy + 25);
+        h.canvas();
+        std::printf("embedded mode=%d drawer writes=%d next mode writes=%d size requests=%u\n", mode, drawerWrites,
+                    h.count(h.ui.writes, modeId, static_cast<float>(next)), h.ui.sizeRequests);
+        check(drawerWrites == 0 && h.count(h.ui.writes, modeId, static_cast<float>(next)) == 1,
+              "the embedded editor has no SETTINGS and no drawer");
+        check(h.ui.sizeRequests == 0, "the embedded editor has no resize grip");
+    }
+    {
+        // Twice the size, then a window taller than the canvas: the row scales and letterboxes with the faces.
+        Host twice(0, 2 * DAF_UI_DEFAULT_WIDTH, 2 * DAF_UI_DEFAULT_HEIGHT);
+        twice.canvasClick(2.0f * At::tabX(1), 2.0f * (At::rowY - top) + top);
+        Host tall(0, DAF_UI_DEFAULT_WIDTH, DAF_UI_DEFAULT_HEIGHT + 100);
+        tall.canvasClick(At::tabX(2), At::rowY + 50.0f);
+        std::printf("embedded window at 2x: FET BLACK writes=%d; 100 px taller: VCA writes=%d\n",
+                    twice.count(twice.ui.writes, modeId, 1), tall.count(tall.ui.writes, modeId, 2));
+        check(twice.count(twice.ui.writes, modeId, 1) == 1 && tall.count(tall.ui.writes, modeId, 2) == 1,
+              "the embedded canvas scales and letterboxes from the mode row down");
+    }
+}
 // ImGui's own surfaces (the save dialog, a typed value, tooltips, menus) draw in ImGui's default font. The editor makes
 // that its embedded Regular face at the value size (17), not the framework's 13 px DejaVu Sans. The faces are compiled
 // in, so every build has them: the atlas holds the ten SemiBold sizes and the Regular one, and anything less is a
@@ -698,9 +806,13 @@ int main(int argc, char** argv)
     if (run("hidden")) hiddenControls();
     if (run("output")) outputAccess();
     if (run("pull-sc")) vcaPullScFirstValue();
-    if (run("drawer")) settingsDrawer();
-    if (run("drawer-keys")) drawerKeysAndCorner();
+    // The settings drawer is the plug-in's; a host that embeds the editor has its window checked instead.
+    const bool embedded = multicompp::ui_detail::kEmbeddedUi;
+    if (!embedded && run("drawer")) settingsDrawer();
+    if (!embedded && run("drawer-keys")) drawerKeysAndCorner();
+    if (embedded && run("embedded")) embeddedWindow();
     if (run("numeric")) numericOwnership();
+    if (run("host-faces")) hostFaces();
     if (run("restore")) restoredFace();
     if (run("default-font")) defaultFontIsTheValueFace();
     std::printf("modern UI failures=%d\n", failures);

@@ -124,6 +124,31 @@ public:
         return multicompp::plainToHost(multicompp::kParams[index],
                                        ordered[index - x1]);
     }
+    // The faces the editor's mode row offers (MultiCompAccess.hpp): bit n is mode n. The editor alone reads it.
+    static constexpr uint32_t kAllHostFaces = (1u << (sizeof(multicompp::kModes) / sizeof(multicompp::kModes[0]))) - 1u;
+    uint32_t hostFaces() const noexcept { return hostFaceMask.load(std::memory_order_relaxed); }
+    void setHostFaces(uint32_t modeMask) noexcept
+    {
+        const uint32_t faces = modeMask & kAllHostFaces;
+        hostFaceMask.store(faces != 0u ? faces : kAllHostFaces, std::memory_order_relaxed);
+    }
+    // ioChanged() for a host that holds the instance itself: a main layout of 1 or 2 channels, no sidechain.
+    void setHostChannels(int channels) noexcept
+    {
+        const uint16_t width = channels == 1 ? 1 : 2;
+        ioChanged(width, width);
+    }
+    // The state deactivate() leaves, for a host that stops calling run() without deactivating: the DSP, the meters
+    // and the needles at rest, the parameters, the layout and the prepared buffers kept. Everything it reaches
+    // clears storage prepare() sized (MultiCompDSP::reset()): no allocation, no lock, no I/O, so it may run on the
+    // audio thread between two run() calls. The latency report is left to the next run().
+    void resetHost() noexcept
+    {
+        dsp.reset(); outputVu.reset(); grNeedle.reset(); vcaGrNeedle.reset();
+        studioVcaInputMeter.reset(); studioVcaOutputMeter.reset();
+        resetChannelLevels();
+        externalSidechainInUse.store(false, std::memory_order_release);
+    }
 
 protected:
     const char* getLabel() const override { return "MultiComp2"; }
@@ -337,13 +362,7 @@ protected:
     }
 
     void activate() override { prepare(getSampleRate(), getBufferSize()); }
-    void deactivate() override
-    {
-        dsp.reset(); outputVu.reset(); grNeedle.reset(); vcaGrNeedle.reset();
-        studioVcaInputMeter.reset(); studioVcaOutputMeter.reset();
-        resetChannelLevels();
-        externalSidechainInUse.store(false, std::memory_order_release);
-    }
+    void deactivate() override { resetHost(); }
     void sampleRateChanged(double sr) override { prepare(sr, getBufferSize()); }
     void bufferSizeChanged(uint32_t bs) override { prepare(getSampleRate(), bs); }
 
@@ -515,6 +534,7 @@ private:
     // correct default rather than a placeholder.
     int activeInputs = DAF_PLUGIN_NUM_INPUTS;
     int activeChannels = DAF_PLUGIN_NUM_OUTPUTS;
+    std::atomic<uint32_t> hostFaceMask{kAllHostFaces};   // setHostFaces(): the editor's mode tabs
     std::array<std::atomic<float>, multicompp::kTotalParamCount> values{};
     int lastLatency = -1;
     long needleMode = -1;   // the mode the needles last moved in (run() snaps them on a switch)
@@ -561,5 +581,10 @@ float multiCompGetBusMeterReading(void* p) noexcept { return p ? asMultiComp(p)-
 float multiCompGetBusFadePosition(void* p) noexcept { return p ? asMultiComp(p)->busFadePosition() : 0.0f; }
 float multiCompGetParameterValue(void* p, uint32_t index) noexcept
 { return p ? asMultiComp(p)->parameterValue(index) : 0.0f; }
+void multiCompSetHostFaces(void* p, uint32_t modeMask) noexcept { if (p) asMultiComp(p)->setHostFaces(modeMask); }
+uint32_t multiCompGetHostFaces(void* p) noexcept
+{ return p ? asMultiComp(p)->hostFaces() : DAF_NAMESPACE::MultiCompPlugin::kAllHostFaces; }
+void multiCompSetHostChannels(void* p, int channels) noexcept { if (p) asMultiComp(p)->setHostChannels(channels); }
+void multiCompResetHost(void* p) noexcept { if (p) asMultiComp(p)->resetHost(); }
 
 #endif // MULTICOMP_PLUGIN_LOGIC_TEST

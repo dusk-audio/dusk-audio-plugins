@@ -713,6 +713,44 @@ void testRunGuardsSidechainPortsPerLayout()
     }
 }
 
+// The mode row under a host's face mask (multiCompSetHostFaces): the allowed modes' tabs in their usual order, packed
+// from the left at the usual pitch, and no tab at all for a single mode. Dusk Studio's channel strips offer Opto, FET
+// Black and VCA, its buses Bus alone and its mastering chain Multiband alone.
+void testModeRowFollowsHostFaces()
+{
+    namespace ui = multicompp::ui_detail;
+    using Row = ui::ModeRowLayout;
+    static_assert(!ui::kEmbeddedUi && ui::kCanvasTop == 0.0f && ui::kWindowHeight == ui::kDesignHeight
+                      && DAF_UI_DEFAULT_HEIGHT == 380,
+                  "the plug-in's window is the whole canvas");
+    static_assert(ui::kAllModeFaces == 0xFFu && ui::allowedModeFaces(0u) == 0xFFu
+                      && ui::allowedModeFaces(0xFFFFFF00u) == 0xFFu && ui::allowedModeFaces(0x107u) == 0x07u,
+                  "a mask without one of the eight modes allows them all");
+    const auto slots = [](uint32_t mask) {
+        std::array<int, 8> row{};
+        for (int mode = 0; mode < 8; ++mode) row[static_cast<size_t>(mode)] = ui::modeTabSlot(mask, mode);
+        return row;
+    };
+    using Slots = std::array<int, 8>;
+    const uint32_t strip = 0x07u, bus = 1u << 3, mastering = 1u << 7;
+    reviewCheck(slots(0xFFu) == Slots{{0, 1, 2, 3, 4, 5, 6, 7}} && slots(0u) == slots(0xFFu),
+                "every mode allowed: each tab in its own slot, and an empty mask is every mode");
+    reviewCheck(slots(strip) == Slots{{0, 1, 2, -1, -1, -1, -1, -1}},
+                "Opto, FET Black and VCA allowed: their three tabs from the left, no others");
+    reviewCheck(slots(bus) == Slots{{-1, -1, -1, -1, -1, -1, -1, -1}} && slots(mastering) == slots(bus),
+                "one mode allowed: no tabs");
+    reviewCheck(slots(bus | mastering) == Slots{{-1, -1, -1, 0, -1, -1, -1, 1}}
+                    && slots(0xFFu & ~1u) == Slots{{-1, 0, 1, 2, 3, 4, 5, 6}},
+                "the allowed tabs close up to the left in mode order");
+    reviewCheck(ui::modeTabSlot(0xFFu, -1) == -1 && ui::modeTabSlot(0xFFu, 8) == -1,
+                "only the eight modes have tabs");
+    reviewCheck(Row::tabX0(0) == Row::tabLeft && Row::tabX0(2) == Row::tabLeft + 2.0f * (Row::tabWidth + Row::tabGap)
+                    && Row::tabX0(7) + Row::tabWidth < Row::autoMakeupX0,
+                "a slot keeps the row's tab width and gap, and the eighth ends before AUTO MAKEUP");
+    std::printf("mode row under a face mask: strip slots %d %d %d, bus tab %d, mastering tab %d\n",
+                slots(strip)[0], slots(strip)[1], slots(strip)[2], slots(bus)[3], slots(mastering)[7]);
+}
+
 void testQuantisedFineStepFallsBackToRestingPrecision()
 {
     const float minValue = 0.0f, maxValue = 1.0f, value = 0.0f;
@@ -1944,6 +1982,7 @@ int main(int argc, char** argv)
         return 0;
     }
     testRunGuardsSidechainPortsPerLayout();
+    testModeRowFollowsHostFaces();
     testCrossoverOrderingDoesNotRatchet();
     testQuantisedFineStepFallsBackToRestingPrecision();
     testOptoSidechainHpUsesPhysicalDragDomain();

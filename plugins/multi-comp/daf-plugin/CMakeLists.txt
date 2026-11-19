@@ -171,14 +171,35 @@ if(NOT CMAKE_CROSSCOMPILING)
   target_include_directories(MultiCompMeterRenderTest PRIVATE ${DUSK_DAF_INCLUDE_DIRS})
   add_test(NAME MultiCompMeterRender COMMAND MultiCompMeterRenderTest)
 
-  add_executable(MultiCompModernUiTest MultiCompModernUiTests.cpp
-    "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui.cpp"
-    "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_draw.cpp"
-    "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_tables.cpp"
-    "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_widgets.cpp")
-  target_include_directories(MultiCompModernUiTest PRIVATE "${MULTICOMP_GENERATED_DIR}" ${DUSK_DAF_INCLUDE_DIRS})
-  target_compile_features(MultiCompModernUiTest PRIVATE cxx_std_17)
-  add_test(NAME MultiCompModernUi COMMAND MultiCompModernUiTest)
+  # MultiCompEmbeddedUi is the same file against the editor a host builds into its own window
+  # (MULTICOMP2_EMBEDDED_UI): the canvas without the header, no settings drawer, and every face answering at the
+  # canvas positions it has in the plug-in.
+  foreach(editor IN ITEMS ModernUi EmbeddedUi)
+    add_executable(MultiComp${editor}Test MultiCompModernUiTests.cpp
+      "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui.cpp"
+      "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_draw.cpp"
+      "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_tables.cpp"
+      "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_widgets.cpp")
+    target_include_directories(MultiComp${editor}Test PRIVATE "${MULTICOMP_GENERATED_DIR}" ${DUSK_DAF_INCLUDE_DIRS})
+    target_compile_features(MultiComp${editor}Test PRIVATE cxx_std_17)
+    add_test(NAME MultiComp${editor} COMMAND MultiComp${editor}Test)
+  endforeach()
+  target_compile_definitions(MultiCompEmbeddedUiTest PRIVATE MULTICOMP2_EMBEDDED_UI=1)
+
+  # The plug-in as a host builds it into its own binary: DAF's static target and the embedded-editor macro on every
+  # source, the instance driven through MultiCompAccess.hpp (the editor's face mask, the host's channel layout).
+  add_executable(MultiCompHostAccessTest MultiCompHostAccessTests.cpp MultiCompPlugin.cpp ../core/MultiCompDSP.cpp
+    "${DAF_PATH}/daf/DafPluginMain.cpp")
+  target_compile_definitions(MultiCompHostAccessTest PRIVATE DAF_PLUGIN_TARGET_STATIC MULTICOMP2_EMBEDDED_UI=1)
+  target_include_directories(MultiCompHostAccessTest PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../core"
+    "${DAF_PATH}/daf"
+    "${DAF_PATH}/daf/src"
+    ${DUSK_DAF_INCLUDE_DIRS})
+  target_compile_features(MultiCompHostAccessTest PRIVATE cxx_std_17)
+  target_link_libraries(MultiCompHostAccessTest PRIVATE ${CMAKE_DL_LIBS})
+  add_test(NAME MultiCompHostAccess COMMAND MultiCompHostAccessTest)
 
   if(APPLE)
     add_executable(MultiCompAUTest MultiCompAUTests.cpp)
