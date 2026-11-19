@@ -67,12 +67,28 @@ public:
     // zero-stuffing upsamplers below always do. Every side tap then reads a
     // stuffed +0 (L/2 is odd for every halfband length 4m+3), so out() is the
     // centre term plus a run of +-0 products. With a positive first tap those
-    // add up to exactly centre + 0.0f (only a -0 centre changes, to +0), so this
-    // returns the identical float without the NSide multiply-adds.
+    // add up to centre + 0.0f (only a -0 centre changes, to +0), so this returns
+    // the same value without the NSide multiply-adds.
+    //
+    // Same value, not always the same bits: where the compiler fuses the multiply
+    // and the add below into one operation (arm64 by default), a negative centre
+    // whose half underflows to zero comes back as -0 here and as +0 from out().
+    // outAfterStuffedZeroExact() has no such case.
     float outAfterStuffedZero() const noexcept
     {
         static_assert((L / 2) % 2 == 1, "zero-stuffed phases need an odd centre offset");
         return 0.5f * buf[(pos - L / 2) & kMask] + 0.0f;
+    }
+
+    // The same phase, bit-identical to out() for every centre value and with or
+    // without multiply-add fusion: out() halves the centre and then adds zero terms,
+    // the first of them +0, which turns a zero of either sign into +0 and leaves
+    // every other value alone. The select below says exactly that, with no add to fuse.
+    float outAfterStuffedZeroExact() const noexcept
+    {
+        static_assert((L / 2) % 2 == 1, "zero-stuffed phases need an odd centre offset");
+        const float centre = 0.5f * buf[(pos - L / 2) & kMask];
+        return centre == 0.0f ? 0.0f : centre;
     }
 
 private:
@@ -118,7 +134,8 @@ namespace hbtaps
         0.0001145247f, -0.0000730276f, 0.0000436856f, -0.0000314876f,
     };
 
-    // HalfbandFIR::outAfterStuffedZero() relies on the first side tap being positive.
+    // HalfbandFIR::outAfterStuffedZero() and outAfterStuffedZeroExact() rely on the first
+    // side tap being positive.
     static_assert(kA[0] > 0.0f && kB[0] > 0.0f && kAwide[0] > 0.0f, "first side tap must be positive");
 
     // Stage-A tap-set descriptors for OversamplerT. L = full tap length, NSide =
@@ -309,7 +326,7 @@ public:
         // local 4x (outer 2x + inner 2x) so harmonics land high, then the OUTER
         // decimation uses the deep -116 dB set to kill the near-Nyquist fold.
         upA.push (x);       const float a0 = 2.0f * upA.out (hbtaps::kA);
-        upA.push (0.0f);    const float a1 = 2.0f * upA.out (hbtaps::kA);
+        upA.push (0.0f);    const float a1 = 2.0f * upA.outAfterStuffedZeroExact();
         downA.push (inner (a0, f));
         downA.push (inner (a1, f));
         return downA.out (hbtaps::kAdeep);
@@ -320,7 +337,7 @@ private:
     float inner (float s, Fn&& f) noexcept
     {
         upB.push (s);       const float b0 = 2.0f * upB.out (hbtaps::kB);
-        upB.push (0.0f);    const float b1 = 2.0f * upB.out (hbtaps::kB);
+        upB.push (0.0f);    const float b1 = 2.0f * upB.outAfterStuffedZeroExact();
         downB.push (f (b0));
         downB.push (f (b1));
         return downB.out (hbtaps::kB);

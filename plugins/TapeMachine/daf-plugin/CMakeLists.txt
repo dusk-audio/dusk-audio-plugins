@@ -53,3 +53,17 @@ dusk_daf_add_output_param_tests(tapemachine-2)
 dusk_daf_add_ui_drag_test(tapemachine-2 72 330)   # INPUT knob
 dusk_daf_add_resize_test(tapemachine-2)
 dusk_daf_add_clap_preset_test(tapemachine-2)
+
+if(NOT CMAKE_CROSSCOMPILING)
+    # LocalAAStage (the anti-aliasing stage around the soft limiter and the shaper)
+    # skips the FIR sum on its zero-stuffed phases. The test holds that shortcut to
+    # the bits of the full sum, zero sign included. TapeMachine 2 is the only user
+    # of the stage, so the test is registered here.
+    enable_testing()
+    add_executable(TapeMachine2OversamplerTest
+        ../../shared-daf/dsp/tests/DuskOversamplerTest.cpp)
+    target_include_directories(TapeMachine2OversamplerTest PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+    target_compile_features(TapeMachine2OversamplerTest PRIVATE cxx_std_17)
+    add_test(NAME TapeMachine2Oversampler COMMAND TapeMachine2OversamplerTest)
+endif()
