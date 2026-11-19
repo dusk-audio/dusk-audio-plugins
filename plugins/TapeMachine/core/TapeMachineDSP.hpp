@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <random>
 #include <vector>
 #include <algorithm>
@@ -758,6 +759,11 @@ public:
     {
         sampleRate = sr;
         oversamplingFactor = std::max (1, osFactor);
+        inc1 = phaseIncrement (50.0f, sampleRate);
+        inc2 = phaseIncrement (15.0f, sampleRate);
+        inc3 = phaseIncrement (3.0f, sampleRate);
+        osScale = static_cast<float> (oversamplingFactor);
+        sqrtOsScale = std::sqrt (osScale);
         reset();
     }
 
@@ -767,32 +773,38 @@ public:
     {
         if (motorQuality < 0.001f) return 0.0f;
 
-        constexpr float twoPiF = 6.28318530f;
-        float inc1 = twoPiF * 50.0f / static_cast<float> (sampleRate);
-        float inc2 = twoPiF * 15.0f / static_cast<float> (sampleRate);
-        float inc3 = twoPiF * 3.0f / static_cast<float> (sampleRate);
-
         phase1 += inc1; phase2 += inc2; phase3 += inc3;
-        if (phase1 > twoPiF) phase1 -= twoPiF;
-        if (phase2 > twoPiF) phase2 -= twoPiF;
-        if (phase3 > twoPiF) phase3 -= twoPiF;
+        if (phase1 > kTwoPiF) phase1 -= kTwoPiF;
+        if (phase2 > kTwoPiF) phase2 -= kTwoPiF;
+        if (phase3 > kTwoPiF) phase3 -= kTwoPiF;
 
-        float osScale = static_cast<float> (oversamplingFactor);
         float baseFlutter = motorQuality * 0.0004f * osScale;
 
         float motorComponent = fastSin (static_cast<float> (phase1)) * baseFlutter * 0.3f;
         float bearingComponent = fastSin (static_cast<float> (phase2)) * baseFlutter * 0.5f;
         float eccentricityComponent = fastSin (static_cast<float> (phase3)) * baseFlutter * 0.2f;
 
-        float randomComponent = jitter (rng) * baseFlutter * 0.1f / std::sqrt (osScale);
+        float randomComponent = jitter (rng) * baseFlutter * 0.1f / sqrtOsScale;
 
         return motorComponent + bearingComponent + eccentricityComponent + randomComponent;
     }
 
 private:
+    // Phase advance per call of a component at `hz`.
+    static float phaseIncrement (float hz, double rate) noexcept
+    {
+        return kTwoPiF * hz / static_cast<float> (rate);
+    }
+
     double phase1 = 0.0, phase2 = 0.0, phase3 = 0.0;
     double sampleRate = 44100.0;
     int oversamplingFactor = 1;
+    // Set by prepare(); until then they follow from the two defaults above.
+    float inc1 = phaseIncrement (50.0f, sampleRate);
+    float inc2 = phaseIncrement (15.0f, sampleRate);
+    float inc3 = phaseIncrement (3.0f, sampleRate);
+    float osScale = static_cast<float> (oversamplingFactor);
+    float sqrtOsScale = std::sqrt (osScale);
     std::mt19937 rng;                                       // deterministic (fixed seed)
     std::uniform_real_distribution<float> jitter{ -1.0f, 1.0f };
 };
@@ -1247,12 +1259,20 @@ public:
         // tunes the slope to each deck's reference THD-vs-cal curve; calRestore inverts the
         // flux + baseline so the tape CORE stays level-neutral (cal changes saturation
         // onset, not output level).
-        constexpr float kCalRefDb = 6.0f;
-        const float kCalFlux    = (machine == Swiss) ? 0.58f : 1.30f;
-        const float baseAtten   = dbToGain (kCalRefDb);
-        const float fluxScale   = dbToGain ((calibrationLevel - kCalRefDb) * kCalFlux);
-        const float calRestore  = baseAtten / fluxScale;
-        float signal = input * 0.95f * (fluxScale / baseAtten);
+        // The two gains depend only on the calibration level and the machine, so they are
+        // kept until either changes (the key starts as NaN, which never compares equal).
+        if (calibrationLevel != m_calKeyLevel || machine != m_calKeyMachine)
+        {
+            constexpr float kCalRefDb = 6.0f;
+            const float kCalFlux    = (machine == Swiss) ? 0.58f : 1.30f;
+            const float baseAtten   = dbToGain (kCalRefDb);
+            const float fluxScale   = dbToGain ((calibrationLevel - kCalRefDb) * kCalFlux);
+            m_calRestore = baseAtten / fluxScale;
+            m_calFlux    = fluxScale / baseAtten;
+            m_calKeyLevel = calibrationLevel; m_calKeyMachine = machine;
+        }
+        const float calRestore = m_calRestore;
+        float signal = input * 0.95f * m_calFlux;
 
         signal = preEmphasisEQ.processSample (signal);
 
@@ -1483,6 +1503,10 @@ private:
     float m_americanEvenScale = 1.0f; // American even-order (2nd) scale: 1 = Transformer On (default), <1 thins the 2nd when Transformer Off
     bool  m_transformerBypass = false; // true only when Transformer Off (American): applies the LF-restore shelf
     bool  m_slowModernPresence = false; // true only for measured American 3.75 IPS / FormulaModern resonance
+    // Calibration flux gains and the inputs they were computed from (see processSample).
+    float m_calKeyLevel = std::numeric_limits<float>::quiet_NaN();
+    TapeMachine m_calKeyMachine = Swiss;
+    float m_calFlux = 1.0f, m_calRestore = 1.0f;
     float m_limPrev = 0.0f;         // ADAA soft-limit state (per channel)
     float m_shaperPrev = 0.0f;      // ADAA waveshaper state (per channel)
     // Carried antiderivatives. Each ADAA step needs F(s) and F(sPrev), and F(sPrev) is the value
