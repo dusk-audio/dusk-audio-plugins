@@ -432,6 +432,8 @@ void MultiCompDSP::reset()
     noiseState = 0x6d2b79f5u;
     for (auto& m : bandGR) m.store(0.0f, std::memory_order_relaxed);
     masterGR.store(0.0f, std::memory_order_relaxed);
+    inputLevel.store(-60.0f, std::memory_order_relaxed);
+    outputLevel.store(-60.0f, std::memory_order_relaxed);
 }
 
 void MultiCompDSP::setParameter(Parameter parameter, float value) noexcept
