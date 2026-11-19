@@ -34,7 +34,9 @@
 
 #include <cerrno>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <numeric>
 #include <cstdlib>
 #include <filesystem>
 #include <iomanip>
@@ -123,6 +125,7 @@ namespace
             << "  --channels 1|2                Main input/output channels (default 2)\n"
             << "  --disable-aux-inputs         Use the plugin's internal detector (no auxiliary inputs)\n"
             << "  --self-test-resampler         Check rate conversion is band-limited, then exit\n"
+            << "  --benchmark-session WAV       Time stereo callbacks using a 48 kHz session (128-frame blocks)\n"
             << "  --list-params|--list-programs Inspect the hosted plugin\n"
             << "  --dump-nparams               Dump normalized parameter values\n"
             << "  --param NAME=VALUE            Set a displayed parameter value\n"
@@ -1103,6 +1106,79 @@ namespace
         }
         return output;
     }
+
+    // Time only the hosted callback. Input copies, output validation and window
+    // statistics stay outside the timer. Both formats use the frozen 2.5 s phrase.
+    int benchmarkSession (juce::AudioPluginInstance& plugin, const juce::File& file)
+    {
+        constexpr int frames = 128, rate = 48000, phrase = rate * 5 / 2;
+        if (kBlockSize != frames || kSampleRate != rate ||
+            plugin.getTotalNumInputChannels() != 2 || plugin.getTotalNumOutputChannels() != 2)
+        {
+            std::cerr << "Benchmark requires 48 kHz stereo and --block-size 128\n";
+            return 2;
+        }
+        juce::AudioFormatManager formats;
+        formats.registerBasicFormats();
+        std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
+        juce::AudioBuffer<float> music (2, phrase);
+        if (!reader || reader->sampleRate != rate || reader->numChannels != 2
+            || reader->lengthInSamples < phrase || !reader->read (&music, 0, phrase, 0, true, true))
+        {
+            std::cerr << "Benchmark requires at least 2.5 s of 48 kHz stereo music: " << file.getFullPathName() << '\n';
+            return 2;
+        }
+
+        juce::ScopedNoDenormals noDenormals;
+        juce::AudioBuffer<float> block (2, frames);
+        juce::MidiBuffer midi;
+        constexpr int blocksPerWindow = 8 * rate / frames;
+        std::vector<double> times (blocksPerWindow);
+        int cursor = 0;
+        for (int window = -1; window < 5; ++window)
+        {
+            const int count = window < 0 ? blocksPerWindow / 2 : blocksPerWindow;
+            double energy = 0.0, difference = 0.0;
+            for (int i = 0; i < count; ++i)
+            {
+                const int contiguous = std::min (frames, phrase - cursor);
+                for (int ch = 0; ch < 2; ++ch)
+                {
+                    block.copyFrom (ch, 0, music, ch, cursor, contiguous);
+                    if (contiguous < frames)
+                        block.copyFrom (ch, contiguous, music, ch, 0, frames - contiguous);
+                }
+                midi.clear();
+                const auto start = std::chrono::steady_clock::now();
+                plugin.processBlock (block, midi);
+                const auto end = std::chrono::steady_clock::now();
+                times[i] = std::chrono::duration<double, std::micro> (end - start).count();
+                for (int ch = 0; ch < 2; ++ch)
+                    for (int n = 0; n < frames; ++n)
+                    {
+                        const double y = block.getSample (ch, n);
+                        const double residual = y - music.getSample (ch, (cursor + n) % phrase);
+                        energy += y * y;
+                        difference += residual * residual;
+                    }
+                cursor = (cursor + frames) % phrase;
+            }
+            if (!std::isfinite (energy) || !std::isfinite (difference) || energy <= 1e-8 || difference <= 1e-8)
+            {
+                std::cerr << "Silent, dry-only or non-finite benchmark output\n";
+                return 2;
+            }
+            if (window >= 0)
+            {
+                const double mean = std::accumulate (times.begin(), times.end(), 0.0) / count;
+                std::sort (times.begin(), times.end());
+                std::cout << "BENCH " << window << ' ' << std::setprecision (10) << mean
+                          << ' ' << times[count * 95 / 100] << '\n';
+            }
+        }
+        return 0;
+    }
+
 }
 
 int main (int argc, char** argv)
@@ -1119,6 +1195,7 @@ int main (int argc, char** argv)
     juce::String aupresetPath;
     juce::String slugArg;
     juce::String outDirArg;
+    juce::String benchmarkSessionPath;
     juce::String stimuliDirArg;     // --write-stimuli: dump each stimulus input buffer
     juce::StringArray onlyStimuli;  // --only-stimuli: render just these built-in stimuli
     // Arbitrary stem input: when set, load WAV, pad with reverb-tail
@@ -1254,6 +1331,7 @@ int main (int argc, char** argv)
                 return 2;
             }
         }
+        else if (a == "--benchmark-session" && i + 1 < argc) benchmarkSessionPath = argv[++i];
         else if (a == "--sample-rate" && i + 1 < argc)
         {
             double rate = 0.0;
@@ -2481,6 +2559,12 @@ int main (int argc, char** argv)
     };
 
     runPreroll (prerunSeconds);
+    if (benchmarkSessionPath.isNotEmpty())
+    {
+        const int status = benchmarkSession (*plugin, juce::File::getCurrentWorkingDirectory().getChildFile (benchmarkSessionPath));
+        plugin->releaseResources();
+        return status;
+    }
 
     // Output directory resolution priority:
     //   1. --output-dir CLI flag

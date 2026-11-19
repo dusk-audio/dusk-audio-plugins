@@ -1305,6 +1305,7 @@ private:
         duskverb::applyFactoryPresetToHostParameters(preset,
             [&](int i, float value) { state.params[i] = value; });
         state.presetName = preset.name;
+        state.room = duskverb::RoomVoicing::Factory;
         state.userName.clear();
         state.edited = false;
         state.sixAP.densityBaseline = preset.sixAPDensityBaseline;

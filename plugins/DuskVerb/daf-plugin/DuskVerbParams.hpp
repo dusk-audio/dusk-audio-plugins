@@ -111,6 +111,7 @@ struct StateValues
 {
     std::array<float, static_cast<size_t>(kNumParams)> params{};
     DuskVerbDSP::SixAPBrightnessState sixAP{};
+    RoomVoicing room = RoomVoicing::Factory;        // optional voicing of the 79 Vocal Chamber engine
     std::string presetName;          // factory identity; empty = no identity
     std::string userName;            // optional arbitrary UTF-8 display name
     bool edited = false;
@@ -213,6 +214,8 @@ inline std::string encodeState(const StateValues& v)
         if (safePresetText(v.presetName)) state += v.presetName;
         else { state += "hex:"; appendHexText(state, v.presetName); }
     }
+    if (v.room == RoomVoicing::EarlyStudy) state += ";@voicing=Big Drum Room";
+    if (v.room == RoomVoicing::Matched) state += ";@voicing=Big Drum Room Matched";
     if (!v.userName.empty()) { state += ";@user=hex:"; appendHexText(state, v.userName); }
     if (v.edited) state += ";@edited=1";
     return state;
@@ -277,6 +280,13 @@ inline bool decodeState(std::string_view state, StateValues& out) noexcept
             userSeen = true;
             if (!validUserName(decoded.userName)) return false;
         }
+        else if (key == "@voicing")
+        {
+            if (decoded.room != RoomVoicing::Factory || version != kStateVersion) return false;
+            if (value == "Big Drum Room") decoded.room = RoomVoicing::EarlyStudy;
+            else if (value == "Big Drum Room Matched") decoded.room = RoomVoicing::Matched;
+            else return false;
+        }
         else if (key == "@edited")
         {
             if (editedSeen || value != "1") return false;
@@ -322,6 +332,7 @@ inline bool decodeState(std::string_view state, StateValues& out) noexcept
         if (end == std::string_view::npos) break;
         begin = end + 1;
     }
+    if (decoded.room != RoomVoicing::Factory && decoded.presetName != kBigDrumRoomBase) return false;
     for (bool present : seen)
         if (!present) return false;
     // The encoder always writes all 10 SixAP keys; a state missing any of them

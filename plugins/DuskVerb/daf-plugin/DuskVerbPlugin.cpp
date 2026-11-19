@@ -340,7 +340,7 @@ private:
             }
         if (sound.recallEpoch != appliedEpoch_)
         {
-            dsp_.stageSound(plainParams_, sound.preset, sound.sixAP);
+            dsp_.stageSound(plainParams_, sound.preset, sound.sixAP, sound.room);
             appliedEpoch_ = sound.recallEpoch;
         }
         else

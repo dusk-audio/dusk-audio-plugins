@@ -334,6 +334,9 @@ void DuskVerbDSP::prepare (double sampleRate, int samplesPerBlock)
     // coefficients to designUnity, so without this re-install the PostTankEQ /
     // modulation topology / sixAP overrides installed by an earlier swap would
     // be gone by render time.
+    const auto pending = pendingPresetSwap_.load (std::memory_order_acquire);
+    if (pending.has_value())
+        room_ = *pending;
     if (auto* preset = lastAppliedPreset_.load (std::memory_order_acquire))
     {
         preset->applyEngineConfig (engineA_);
@@ -466,11 +469,11 @@ void DuskVerbDSP::setSixAPBrightness (const SixAPBrightnessState& s)
 }
 
 void DuskVerbDSP::stageSound(const std::array<float, kNumParams>& plain,
-                            const FactoryPreset* preset, const SixAPBrightnessState& sixAP) noexcept
+                            const FactoryPreset* preset, const SixAPBrightnessState& sixAP, RoomVoicing room) noexcept
 {
     for (int i = 0; i < kNumParams; ++i) setParameter(i, plain[i]);
     sixAPBrightness_ = sixAP;
-    restorePresetIdentity(preset);
+    restorePresetIdentity(preset, room);
 }
 
 void DuskVerbDSP::applyFactoryPresetConfig (const FactoryPreset& preset)
@@ -489,11 +492,10 @@ void DuskVerbDSP::applyFactoryPresetConfig (const FactoryPreset& preset)
 
     // Release ordering pairs with the acquire load in processBlock to publish
     // the brightness writes above.
-    lastAppliedPreset_.store (&preset, std::memory_order_release);
-    pendingPresetSwap_.store (true, std::memory_order_release);
+    restorePresetIdentity (&preset);
 }
 
-void DuskVerbDSP::restorePresetIdentity (const FactoryPreset* preset)
+void DuskVerbDSP::restorePresetIdentity (const FactoryPreset* preset, RoomVoicing room)
 {
     // Deliberately does NOT write sixAPBrightness_ or any parameter: the
     // restored session's own values are already in place and must win.
@@ -504,7 +506,7 @@ void DuskVerbDSP::restorePresetIdentity (const FactoryPreset* preset)
     // forcePushAllParametersTo touches). The armed swap runs
     // performPresetSwap()'s null branch, which resets those on the audio thread.
     lastAppliedPreset_.store (preset, std::memory_order_release);
-    pendingPresetSwap_.store (true, std::memory_order_release);
+    pendingPresetSwap_.store (preset && preset->name == kBigDrumRoomBase ? room : RoomVoicing::Factory, std::memory_order_release);
 }
 
 void DuskVerbDSP::forcePushAllParametersTo (DuskVerbEngine* target)
@@ -782,7 +784,8 @@ const BandLimitSetting& DuskVerbDSP::bandLimitSettingFor (const FactoryPreset* p
 {
     if (preset == nullptr)
         return kNoBandLimit;           // no preset identity: none, as the trim is flat
-    return hasBandLimitOverride_ ? bandLimitOverride_ : bandLimitFor (preset->name);
+    if (hasBandLimitOverride_) return bandLimitOverride_;
+    return room_ != RoomVoicing::Factory && preset->name == kBigDrumRoomBase ? kNoBandLimit : bandLimitFor (preset->name);
 }
 
 const StereoBands::Gains& DuskVerbDSP::stereoBandsFor (const FactoryPreset* preset) const noexcept
@@ -796,6 +799,25 @@ void DuskVerbDSP::applyEnginePatch (DuskVerbEngine& engine, const FactoryPreset*
 {
     // Every feature is set, on or off, so a reused engine never keeps the last preset's; the mode
     // smear and the octave decay change what the shared config has just installed.
+    if (room_ != RoomVoicing::Factory && preset && preset->name == kBigDrumRoomBase)
+    {
+        if (room_ == RoomVoicing::Matched)
+            engine.setReflectionTap (48.0f, 0.65f, 2500.0f);
+        else
+            engine.setReflectionTap (95.0f, 0.85f, 1000.0f);
+    }
+    // Gain automation uses the same band centre and Q as prepare and preset recall.
+    const bool sweptEq = resolvePteqFreqQ (preset ? preset->name : "", pteqBandFreq_, pteqBandQ_);
+    if (preset && !sweptEq)
+        for (const auto& band : kPlateTrebleEq)
+            if (band.name == preset->name)
+            {
+                pteqBandFreq_[3] = band.hz;
+                pteqBandQ_[3] = band.q;
+                engine.setPostTankEQBand (3, band.hz, band.q, band.gainDb);
+                break;
+            }
+
     const EnginePatch& patch = preset != nullptr ? enginePatchFor (preset->name) : kNoEnginePatch;
     const bool side = preset != nullptr && pmbSideOverride_ >= 0 ? pmbSideOverride_ == 1 : patch.pmbDecorrelatedSide;
     engine.setPmbDecorrelatedSide (side);
@@ -906,7 +928,21 @@ void DuskVerbDSP::installEarlyField (const DuskVerbEngine* engine, const Factory
     // that state over when the outgoing one played none: a reload of the same preset then
     // renders the very samples the outgoing field does, and their crossfade changes nothing.
     FieldVoice& voice = fieldFor (engine);
-    voice.field.configure (earlyFieldConfigFor (preset));
+    auto config = earlyFieldConfigFor (preset);
+    if (!hasEarlyFieldOverride_ && room_ != RoomVoicing::Factory && preset && preset->name == kBigDrumRoomBase)
+    {
+        // The cluster is separate from the supporting reflection.
+        config.burstDb = -20.0f;
+        config.burstStartMs = 53.0f;
+        config.burstMs = 7.0f;
+        config.burstLowpassHz = 3800.0f;
+        if (room_ == RoomVoicing::Matched)
+        {
+            config.directDb = -31.035f;
+            config.burstLowpassHz = 2400.0f;
+        }
+    }
+    voice.field.configure (config);
     voice.needsSnap = true;
     if (outgoing == nullptr)
         return;
@@ -1000,9 +1036,6 @@ void DuskVerbDSP::performPresetSwap()
         preset->applyEngineConfig (*newActive);
         applyEnginePatch (*newActive, preset);
         scalerFor (newActive).capture (*newActive, storedDampingKnobs (*preset), true);
-        // Cache freq + Q so subsequent gain edge-detects can re-issue
-        // setPostTankEQBand without re-consulting the name-keyed map.
-        resolvePteqFreqQ (preset->name, pteqBandFreq_, pteqBandQ_);
     }
     else
     {
@@ -1015,7 +1048,6 @@ void DuskVerbDSP::performPresetSwap()
         // No stored knob values without a preset: the restored ones are the reference, so the
         // session sounds as it did before the damping card was rescaled, and moves from there.
         scalerFor (newActive).capture (*newActive, dampingKnobs (toneTrebleFactor (p (Tone))), false);
-        resolvePteqFreqQ ("", pteqBandFreq_, pteqBandQ_);
         // reapplyNeutralEngineConfig() flattened the PostTankEQ, but the
         // restored session still carries its own pteq gains. Re-install them now
         // (at the default freq/Q) — otherwise syncParameterCacheToCurrent()
@@ -1152,9 +1184,15 @@ void DuskVerbDSP::processBlock (const float* const* in, float* const* out,
     // on presetFadeRemaining_ == 0: starting a new swap mid-fade would clear the
     // engine that is currently fading out, dropping its tail — audible as a
     // click on rapid preset cycling.
-    if (presetFadeRemaining_ == 0
-        && pendingPresetSwap_.exchange (false, std::memory_order_acquire))
-        performPresetSwap();
+    if (presetFadeRemaining_ == 0)
+    {
+        const auto swap = pendingPresetSwap_.exchange (std::nullopt, std::memory_order_acquire);
+        if (swap.has_value())
+        {
+            room_ = *swap;
+            performPresetSwap();
+        }
+    }
 
     // ---- Push parameter changes to the engine on edges only ----
     const int algoIdx = algorithm();

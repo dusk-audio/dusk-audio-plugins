@@ -265,6 +265,28 @@ void testNothingUndelayed()
     checkf (legacyEarly > 1.0e-3, "the legacy side passes the input undelayed (peak %g)", legacyEarly);
 }
 
+// At zero coefficient an allpass is a pure delay. In the top band the
+// decorrelated side reads line 1 after three densifiers and the main delay.
+void testDensifierTiming()
+{
+    auto t = tank (solo (kShort, 5), true);
+    t->setDensifierCoeff (5, 0.0f);
+    // At 48 kHz line 1 has densifier delays of 128, 89 and 157 samples,
+    // then a 521-sample main delay and a 128-sample offset for the side.
+    constexpr size_t arrival = 128 + 89 + 157 + 521 + 128;
+    Stereo impulse { std::vector<float> (arrival + 1), std::vector<float> (arrival + 1) };
+    impulse.l[0] = impulse.r[0] = 1.0f;
+    for (int pass = 0; pass < 2; ++pass)
+    {
+        const Stereo wet = run (*t, impulse);
+        size_t first = 0;
+        while (first < wet.l.size() && std::abs (wet.l[first] - wet.r[first]) < 1.0e-6f)
+            ++first;
+        checkf (first == arrival, "top-band side arrives at sample %zu (got %zu)", arrival, first);
+        t->clear();
+    }
+}
+
 void testStateIsCleared()
 {
     // clear() wipes the side filter: two tanks with the same history but for the side (on in
@@ -328,6 +350,23 @@ void testSmearShare()
     checkf (otherOff.l == other.l && otherOff.r == other.r, "a smear shared to band 1 leaves band 3 still");
     const Stereo ownFull = smeared (solo (kShort, 1), nullptr, 80.0f), own = smeared (solo (kShort, 1), &band1, 80.0f);
     checkf (ownFull.l == own.l && ownFull.r == own.r, "band 1 takes its whole share");
+
+    // Modulation runs during silence. Re-enabling a band's share must land on the
+    // same phase as an always-enabled band, including after the delay wraps.
+    auto continuous = tank (solo (kShort, 1), true), muted = tank (solo (kShort, 1), true);
+    continuous->setModeSmear (80.0f, 2.5f);
+    muted->setModeSmear (80.0f, 2.5f);
+    muted->setModeSmearBandShare (1, 0.0f);
+    const Stereo silence { std::vector<float> (17003), std::vector<float> (17003) };
+    run (*continuous, silence);
+    run (*muted, silence);
+    muted->setModeSmearBandShare (1, 1.0f);
+    const auto signal = input (Input::Decorrelated);
+    const auto expected = run (*continuous, signal), resumed = run (*muted, signal);
+    checkf (*std::max_element (expected.l.begin(), expected.l.end()) > 0.001f,
+            "the resumed modulation test produces a tail");
+    checkf (expected.l == resumed.l && expected.r == resumed.r,
+            "zero band share preserves modulation phase when re-enabled");
 }
 
 void testDensifierCoeff()
@@ -364,6 +403,7 @@ int main()
     testBandBalance();
     testOtherRates();
     testNothingUndelayed();
+    testDensifierTiming();
     testStateIsCleared();
     testSmearShare();
     testDensifierCoeff();

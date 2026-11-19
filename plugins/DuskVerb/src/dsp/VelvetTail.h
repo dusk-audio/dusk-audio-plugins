@@ -35,12 +35,12 @@ public:
     {
         sampleRate_ = sampleRate;
         const int bufLen = DspUtils::nextPowerOf2 (
-            static_cast<int> (std::ceil (kMaxTimeMs * 0.001 * sampleRate)) + 8);
-        for (int b = 0; b < kBands; ++b)
-        {
-            ringL_[b].assign (static_cast<size_t> (bufLen), 0.0f);
-            ringR_[b].assign (static_cast<size_t> (bufLen), 0.0f);
-        }
+            static_cast<int> (std::ceil (kMaxTimeMs * 0.001 * sampleRate)) + kBatchSize);
+        // Leave a batch of headroom beyond the longest delay, so writing a batch
+        // cannot overwrite history needed by its first sample. Mirror the first
+        // batch at the end for contiguous reads across the wrap.
+        for (auto& ring : rings_)
+            ring.assign (static_cast<size_t> (bufLen + kBatchSize - 1), 0.0f);
         mask_ = bufLen - 1;
         writePos_ = 0;
         readEnv();
@@ -71,48 +71,12 @@ public:
     void setSizeScale (float s)              { const float v=std::clamp(s,0.2f,3.0f); if(std::abs(v-sizeScale_)<=1e-4f)return; sizeScale_=v; if(prepared_)buildTaps(); }
     void setGlobalDecayScale (float s)       { const float v=std::clamp(s,0.1f,8.0f); if(std::abs(v-decayScale_)<=1e-4f)return; decayScale_=v; if(prepared_)buildTaps(); }
 
-    void process (const float* inL, const float* inR, float* outL, float* outR, int n)
-    {
-        if (! prepared_) { std::fill (outL, outL+n, 0.0f); std::fill (outR, outR+n, 0.0f); return; }
-        for (int i = 0; i < n; ++i)
-        {
-            const float x = 0.5f * (inL[i] + inR[i]);   // mono feed; L/R differ by tap geometry
-            const float lo  = lp500_.process (x);
-            const float hi  = x - lo;
-            const float b0  = lp250_.process (lo);
-            const float b1  = lo - b0;
-            const float b2  = lp2k_.process (hi);
-            const float b3  = hi - b2;
-            const float bf[kBands] = { b0, b1, b2, b3 };
-
-            float l = 0.0f, r = 0.0f;
-            const int wp = writePos_;
-            for (int b = 0; b < kBands; ++b)
-            {
-                ringL_[b][static_cast<size_t> (wp)] = bf[b];
-                ringR_[b][static_cast<size_t> (wp)] = bf[b];
-                const float* rl = ringL_[b].data();
-                const float* rr = ringR_[b].data();
-                const Field& fl = fieldL_[b];
-                const Field& fr = fieldR_[b];
-                float al = 0.0f, ar = 0.0f;
-                const int nl = fl.n, nr = fr.n;
-                for (int t = 0; t < nl; ++t) al += fl.gain[t] * rl[(wp - fl.pos[t]) & mask_];
-                for (int t = 0; t < nr; ++t) ar += fr.gain[t] * rr[(wp - fr.pos[t]) & mask_];
-                l += al; r += ar;
-            }
-            outL[i] = l; outR[i] = r;
-            writePos_ = (wp + 1) & mask_;
-        }
-    }
+    void process (const float* inL, const float* inR, float* outL, float* outR, int n);
 
     void clear()
     {
-        for (int b = 0; b < kBands; ++b)
-        {
-            std::fill (ringL_[b].begin(), ringL_[b].end(), 0.0f);
-            std::fill (ringR_[b].begin(), ringR_[b].end(), 0.0f);
-        }
+        for (auto& ring : rings_)
+            std::fill (ring.begin(), ring.end(), 0.0f);
         writePos_ = 0;
         lp500_.reset(); lp250_.reset(); lp2k_.reset();
     }
@@ -120,6 +84,7 @@ public:
 private:
     static constexpr float kMaxTimeMs = 700.0f;
     static constexpr int   kMaxTaps   = 512;
+    static constexpr int   kBatchSize = 64;
 
     struct Rng { uint32_t s; float next() { s^=s<<13; s^=s>>17; s^=s<<5; return (s & 0xFFFFFF) / float(0x1000000); } };
 
@@ -127,13 +92,7 @@ private:
     {
         float b0=1,b1=0,b2=0,a1=0,a2=0,z1=0,z2=0;
         void reset() { z1=z2=0; }
-        float process (float x)
-        {
-            const float y = b0*x + z1;
-            z1 = b1*x - a1*y + z2;
-            z2 = b2*x - a2*y;
-            return y;
-        }
+        float process (float x);
         void lowpass (float fc, float sr)
         {
             const float w = std::tan (3.14159265358979f
@@ -147,6 +106,8 @@ private:
     };
 
     struct Field { std::vector<int> pos; std::vector<float> gain; int n = 0; };
+
+    void addField (const Field& field, const float* ring, float* out, int count) const noexcept;
 
     void designCrossovers()
     {
@@ -269,7 +230,7 @@ private:
     double sampleRate_ = 48000.0;
     bool   prepared_   = false;
     int    writePos_ = 0, mask_ = 0;
-    std::vector<float> ringL_[kBands], ringR_[kBands];
+    std::vector<float> rings_[kBands];
     Field  fieldL_[kBands], fieldR_[kBands];
     Biquad lp250_, lp500_, lp2k_;
 
