@@ -7,16 +7,23 @@ at 4x, where the decimator supplies the rest. Hosts compensate by the REPORTED
 figure, so a pad that went wrong would put the voices out of time with every
 other track while the report, and every check on it, stayed at 13.
 
-This measures the delay itself. The same note (Mono, sharp attack, dry) is
-rendered at each factor, and the 2x and 4x renders are cross-correlated with
-the 1x one over the first 50 ms, with parabolic interpolation for the fraction
-of a sample. The decimators' own delays are fractional (11.3 samples at 2x,
-12.9 at 4x), so the factors agree to within 0.6 of a sample, not exactly; a pad
-one sample off moves a lag by a whole sample.
+This measures the delay itself. The same note (sharp attack, dry) is rendered
+at each factor, and the 2x and 4x renders are cross-correlated with the 1x one
+over the first 50 ms, with parabolic interpolation for the fraction of a
+sample. The decimators' own delays are fractional (11.3 samples at 2x, 12.9 at
+4x), so the factors agree to within 0.6 of a sample, not exactly; a pad one
+sample off moves a lag by a whole sample.
 
-    measured lag vs 1x     2x       4x
-    padded (now)           +0.33    -0.04
-    unpadded (1.0.8)      +11.32   +12.93
+All six engines are checked in 44.1, 48 and 96 kHz sessions (#303). Oracle runs a pre-filter ahead
+of its filter at internal rates of 88.2 kHz and up, which delays it by its
+group delay (1.1 host samples at 2x in a 48 kHz session); its pad takes that
+back. The gate used to render Mono at 48 kHz only, so when the pre-filter
+landed it did not see Oracle's 2x and 4x land a sample late (+1.27 and +0.95).
+
+    measured lag vs 1x, 48 kHz     2x       4x
+    padded (now)                   +0.27 .. +0.34   -0.12 .. -0.01
+    Oracle, pre-filter unpadded    +1.27    +0.95
+    unpadded (1.0.8)              +11.32   +12.93
 """
 import sys
 
@@ -40,20 +47,27 @@ def xcorr_lag(a, b, n=2400):
     return k - (n - 1)
 
 
+MODES = ((0, "Cosmos"), (1, "Oracle"), (2, "Mono"), (3, "Modular"),
+         (4, "Prism"), (5, "Acid"))
+RATES = (44100, 48000, 96000)
+
+
 def main():
-    x = {}
-    for factor in (1, 2, 4):
-        _, r = render(2, 57, 0.5, factor, f"latency_{factor}x", **DRY)
-        x[factor] = r[:, 0]
     fails = []
-    for factor in (2, 4):
-        lag = xcorr_lag(x[1], x[factor])
-        ok = abs(lag) <= MAX_LAG
-        print(f"{factor}x vs 1x: {lag:+6.2f} samples (within +-{MAX_LAG})  "
-              f"{'PASS' if ok else 'FAIL'}")
-        if not ok:
-            fails.append(f"{factor}x")
-    print(f"latency_gate: {'PASS' if not fails else 'FAIL (' + ','.join(fails) + ')'}")
+    for sr in RATES:
+        for mode, name in MODES:
+            x = {}
+            for factor in (1, 2, 4):
+                _, r = render(mode, 57, 0.5, factor, f"latency_{mode}_{sr}_{factor}x", sr=sr, **DRY)
+                x[factor] = r[:, 0]
+            for factor in (2, 4):
+                lag = xcorr_lag(x[1], x[factor], n=int(0.05 * sr))
+                ok = abs(lag) <= MAX_LAG
+                print(f"{name:<8} {sr:>6} Hz  {factor}x vs 1x: {lag:+6.2f} samples (within +-{MAX_LAG})  "
+                      f"{'PASS' if ok else 'FAIL'}")
+                if not ok:
+                    fails.append(f"{name} {sr} {factor}x")
+    print(f"latency_gate: {'PASS' if not fails else 'FAIL (' + ', '.join(fails) + ')'}")
     sys.exit(0 if not fails else 1)
 
 

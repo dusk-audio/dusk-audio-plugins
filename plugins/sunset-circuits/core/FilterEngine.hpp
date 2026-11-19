@@ -82,10 +82,10 @@ private:
 class TPTFourPole
 {
 public:
-    void prepare(double sampleRate) noexcept
+    void prepare(double sampleRate, float couplingHz = 5.0f) noexcept
     {
         sr = (float)sampleRate;
-        dcCoeff = std::exp(-kTwoPi * 5.0f / sr);
+        dcCoeff = std::exp(-kTwoPi * couplingHz / sr);
         reset();
     }
 
@@ -160,7 +160,22 @@ private:
     {
         // Dividing by amount (not tanh(amount)) preserves unity small-signal
         // gain and therefore the calibrated resonance threshold.
-        return amount > 0.0f ? std::tanh(x * amount) / amount : x;
+        return amount > 0.0f ? rationalTanh(x * amount) / amount : x;
+    }
+
+    // tanh by Lambert's continued fraction cut at 7/6, with z held to +-4.97
+    // where that fraction reaches 1 in float. Against std::tanh it is within
+    // 1.2e-6 for |z| < 3 and within 1e-4 everywhere (worst just below the
+    // clamp, where tanh itself is 0.9999). soft() runs five times per sample
+    // per voice at the internal rate, which made std::tanh the largest single
+    // cost of every voice that uses this filter (#303); this form is several
+    // times cheaper and renders the factory presets to within -125 dB.
+    static float rationalTanh(float z) noexcept
+    {
+        z = z > 4.97f ? 4.97f : (z < -4.97f ? -4.97f : z);
+        const float z2 = z * z;
+        return z * (135135.0f + z2 * (17325.0f + z2 * (378.0f + z2)))
+                 / (135135.0f + z2 * (62370.0f + z2 * (3150.0f + 28.0f * z2)));
     }
 
     float sr = 44100.0f;
@@ -225,7 +240,7 @@ class OracleFilter
 public:
     void prepare(double sampleRate) noexcept
     {
-        lpf.prepare(sampleRate);
+        lpf.prepare(sampleRate, 2.4f);
         lpf.configure(4.46f, 1.08f, 0.90f, 0.72f, 0.10f, 0.96f);
     }
     void setParameters(float cutoffHz, float resonance) noexcept

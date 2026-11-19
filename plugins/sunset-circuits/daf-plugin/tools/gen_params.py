@@ -162,6 +162,23 @@ add("PmOscBFilt","pmOscBFilt","PM OscB-Filt",0,1,0,L)
 add("ModFilterModel","modFilterModel","Modular Filter",0,1,0,I)
 add("ModOsc2Osc1","modOsc2Osc1","Mod Osc2-Osc1",0,1,0,L)
 add("ModOsc3Filter","modOsc3Filter","Mod Osc3-Filter",0,1,0,L)
+# Oracle Wheel Mod (issue #303; core/WheelMod.hpp). Off by default: every
+# destination switch defaults to 0, so existing presets and sessions render
+# bit-identically. The rate range IS the measured exponential knob law (a LOG
+# parameter, 0.03 Hz to 26.2 Hz); the other defaults are the reference panel's.
+add("WheelLfoRate","wheelLfoRate","Wheel LFO Rate",0.03,26.2,0.8866,LOG)
+add("WheelLfoSaw","wheelLfoSaw","Wheel LFO Saw",0,1,0,B)
+add("WheelLfoTri","wheelLfoTri","Wheel LFO Triangle",0,1,1,B)
+add("WheelLfoSquare","wheelLfoSquare","Wheel LFO Square",0,1,0,B)
+add("WheelSourceMix","wheelSourceMix","Wheel Source Mix",0,1,0,L)
+add("WheelNoiseSH","wheelNoiseSH","Wheel Noise/S&H",0,1,0,I)
+add("WheelLowerLimit","wheelLowerLimit","Wheel Lower Limit",0,1,0,L)
+add("WheelUpperLimit","wheelUpperLimit","Wheel Upper Limit",0,1,1,L)
+add("WheelFreqA","wheelFreqA","Wheel Freq A",0,1,0,B)
+add("WheelFreqB","wheelFreqB","Wheel Freq B",0,1,0,B)
+add("WheelPwA","wheelPwA","Wheel PW A",0,1,0,B)
+add("WheelPwB","wheelPwB","Wheel PW B",0,1,0,B)
+add("WheelFilter","wheelFilter","Wheel Filter",0,1,0,B)
 
 NCORE = len(P)
 sym2enum = {p[1]: "kParam"+p[0] for p in P}
@@ -190,7 +207,7 @@ def _units(unit, *syms):
 
 _units(UNIT_DB, "masterVol")
 _units(UNIT_HZ, "filterCutoff", "filterHP", "shRate", "lfo1Rate", "lfo2Rate",
-       "chorusRate")
+       "chorusRate", "wheelLfoRate")
 _units(UNIT_CT, "masterTune", "osc1Detune", "osc2Detune", "unisonDetune")
 _units(UNIT_ST, "osc2Semi", "pbRange")
 _units(UNIT_MS, "delayTime", "reverbPD", "acidSlideTime")
@@ -223,21 +240,49 @@ BASE = {
  "vintage":0, "oversampling":1,
 }
 
+# The earlier Oracle Poly-Mod re-voice scaled filter-envelope -> filter by
+# 4/14.3 to preserve the old cutoff depth. Stab Machine and Regal Brass also
+# retain their fitted envelope -> pitch amounts, scaled by 34.7/33.908138
+# after the pitch law was measured again. The brass and bell rows described
+# below were voiced separately across the keyboard.
+# Mono and Modular no longer count the noise in the mixer's level sum (#303,
+# 2026-11-17), so noise stops turning the oscillators down. The four presets
+# whose levels added up past 1 with their noise (Sub Thunder, Alien Transmission,
+# Noise Sweep, Modular English Horn) had every level, noise included, divided by
+# that old sum: the mix is then exactly what the old division made, and below 1,
+# so nothing divides it now. They render as before to within float rounding.
 PRESETS = [
  ("Neon Nights", {"mode":0,"osc1Wave":0,"osc2Wave":4,"osc2Detune":8,"filterCutoff":2500,"filterRes":0.15,"filterEnvAmt":0.3,"ampA":0.4,"ampD":0.6,"ampS":0.85,"ampR":1.8,"cosmosChorus":3,"analogAmt":0.3,"reverbOn":1,"reverbSize":0.6,"reverbMix":0.2}),
  ("Glass Highway", {"mode":0,"filterCutoff":5000,"filterRes":0.35,"ampA":0.005,"ampD":0.25,"ampS":0.5,"ampR":0.6,"cosmosChorus":1,"arpOn":1,"arpRate":3,"arpGate":0.6,"delayOn":1,"delayMix":0.2}),
  ("Velvet Fog", {"mode":0,"filterCutoff":1200,"filterRes":0.25,"filterEnvAmt":0.15,"ampA":1.0,"ampS":0.9,"ampR":2.5,"cosmosChorus":2,"vintage":0.5}),
  ("Sunset Strip", {"mode":0,"osc2Detune":15,"filterCutoff":3500,"ampA":0.25,"ampS":0.8,"ampR":1.5,"cosmosChorus":3,"analogAmt":0.35}),
  ("Crystal Rain", {"mode":0,"filterCutoff":6000,"filterRes":0.2,"ampA":0.003,"ampD":0.12,"ampS":0.2,"ampR":0.35,"cosmosChorus":3,"arpOn":1,"arpRate":4,"arpGate":0.3,"delayOn":1,"delayMix":0.25,"reverbOn":1,"reverbMix":0.2}),
- ("Brass Section", {"masterVol":-3.0,"mode":1,"filterCutoff":2000,"filterRes":0.4,"filterEnvAmt":0.7,"filtA":0.05,"filtD":0.3,"filtS":0.3,"ampA":0.01,"ampD":0.3,"ampS":0.7,"pmFenvFilt":0.3}),
+ # Detuned saws, a little mixer noise, and a room tail behind the horn swell.
+ ("Brass Section", {"mode":1,"masterVol":-8.1,"stereoWidth":0.22,"analogAmt":0.13,"velSens":0.4,
+   "osc1Detune":7,"osc1Level":0.7,"osc2Detune":-9,"osc2Level":0.23,"noiseLevel":0.18,
+   "filterCutoff":2565,"filterRes":0.27,"filterEnvAmt":1,
+   "ampA":0.148,"ampD":0.976,"ampS":0.31,"ampR":1.03,
+   "filtA":0.32,"filtD":0.12,"filtS":0.3,
+   "reverbOn":1,"reverbDecay":4.5,"reverbMix":0.31,
+   "modSrc0":7,"modDst0":5,"modAmt0":1,"modSrc1":7,"modDst1":5,"modAmt1":1}),
  ("Wooden Keys", {"masterVol":-1.5,"mode":1,"filterCutoff":3000,"filterRes":0.2,"ampA":0.005,"ampD":0.4,"ampS":0.5,"ampR":0.3}),
- ("Poly Mod Bells", {"mode":1,"osc2Wave":2,"osc2Semi":7,"pmOscBOscA":0.5,"pmFenvOscA":0.4,"filterCutoff":5000,"ampA":0.005,"ampD":1.0,"ampS":0.0,"ampR":1.5,"reverbOn":1,"reverbMix":0.35,"reverbDecay":3.0}),
- ("Dark Oracle", {"mode":1,"filterCutoff":1200,"filterRes":0.5,"filterEnvAmt":0.3,"ampA":0.5,"ampS":0.85,"ampR":1.5,"vintage":0.3,"pmFenvFilt":0.2}),
- ("Stab Machine", {"mode":1,"filterCutoff":4000,"filterEnvAmt":0.6,"ampA":0.001,"ampD":0.15,"ampS":0.0,"ampR":0.1,"pmFenvOscA":0.3}),
+ # A low square modulates the triangle. The long amplitude release and a
+ # quiet fixed-time delay keep the inharmonic partials ringing after key-up.
+ # Key tracking trims amplitude as the filter opens in the upper register.
+ ("Poly Mod Bells", {"mode":1,"masterVol":4.8,"stereoWidth":0,"analogAmt":0.13,"velSens":0,
+   "osc1Wave":2,"osc2Wave":1,"osc2Semi":-12,"osc2Detune":0,"osc2Level":0.3253,
+   "filterCutoff":290,"filterRes":0.0207,"filterEnvAmt":0,"pmFenvOscA":0.1044,"pmOscBOscA":0.596,
+   "ampA":0.006,"ampD":0.09,"ampS":0.62,"ampR":9,"ampCurve":0,
+   "filtA":0.001,"filtS":1,"filtR":10,
+   "delayOn":1,"delaySync":0,"delayTime":233,"delayFB":0.91,"delayMix":0.12,
+   "modSrc0":7,"modDst0":5,"modAmt0":1,"modSrc1":7,"modDst1":5,"modAmt1":0.375,
+   "modSrc2":7,"modDst2":7,"modAmt2":-0.55}),
+ ("Dark Oracle", {"mode":1,"filterCutoff":1200,"filterRes":0.5,"filterEnvAmt":0.3,"ampA":0.5,"ampS":0.85,"ampR":1.5,"vintage":0.3,"pmFenvFilt":0.05594406}),
+ ("Stab Machine", {"mode":1,"filterCutoff":4000,"filterEnvAmt":0.6,"ampA":0.001,"ampD":0.15,"ampS":0.0,"ampR":0.1,"pmFenvOscA":0.562844235}),
  ("Pulsing Darkness", {"mode":2,"osc1Wave":4,"osc2Wave":0,"osc2Semi":-12,"filterCutoff":600,"filterRes":0.55,"filterEnvAmt":0.5,"subLevel":0.9,"filtA":0.001,"filtD":0.15,"filtS":0.05,"arpOn":1,"arpRate":3,"vintage":0.3}),
  ("Acid Squelch", {"mode":2,"filterCutoff":400,"filterRes":0.85,"filterEnvAmt":0.95,"filtA":0.001,"filtD":0.15,"filtS":0.0,"subLevel":0.7,"portaTime":0.08,"ampD":0.3,"ampS":0.0,"ampR":0.15}),
  ("Screaming Lead", {"masterVol":-3.0,"mode":2,"filterCutoff":6000,"filterRes":0.3,"ampA":0.005,"portaTime":0.1,"driveOn":1,"driveAmt":0.4,"delayOn":1,"delayMix":0.2}),
- ("Sub Thunder", {"mode":2,"osc1Wave":3,"osc2Wave":3,"filterCutoff":400,"subLevel":1.0,"noiseLevel":0.02}),
+ ("Sub Thunder", {"mode":2,"osc1Wave":3,"osc2Wave":3,"filterCutoff":400,"osc1Level":0.330578512,"osc2Level":0.247933884,"subLevel":0.41322314,"noiseLevel":0.00826446281}),
  ("Sync Sweep", {"mode":2,"osc2Semi":7,"filterCutoff":800,"filterRes":0.6,"filterEnvAmt":0.7,"filtA":0.01,"filtD":0.4,"ringMod":0.3,"delayOn":1,"delayMix":0.2}),
  # Flagship (design-doc mandate): Oracle mode, two slightly detuned saws, arp
  # Up-Down 1/8 with latch so holding a Cmaj-ish chord instantly plays the famous
@@ -257,12 +302,28 @@ PRESETS = [
  ("Retro Sequence", {"mode":3,"filterCutoff":2500,"filterEnvAmt":0.7,"arpOn":1,"arpRate":3,"arpGate":0.5,"delayOn":1,"delayTape":1}),
  ("Midnight Drive", {"masterVol":-2.5,"mode":0,"filterCutoff":1800,"filterRes":0.35,"filterEnvAmt":0.25,"ampA":0.5,"ampS":0.85,"ampR":2.0,"cosmosChorus":2,"driveOn":1,"driveAmt":0.3,"delayOn":1,"delayTape":1,"delayMix":0.25,"stereoWidth":0.7}),
  ("Starfield", {"mode":0,"filterCutoff":7000,"ampA":0.003,"ampD":0.2,"ampS":0.3,"ampR":0.5,"cosmosChorus":3,"arpOn":1,"arpMode":4,"arpRate":4,"arpOctave":3,"arpGate":0.4,"delayOn":1,"delayMix":0.3,"reverbOn":1,"reverbMix":0.25,"stereoWidth":0.8}),
- ("Poly Brass", {"mode":1,"filterCutoff":1500,"filterRes":0.3,"filterEnvAmt":0.6,"filtA":0.03,"filtD":0.25,"filtS":0.35,"ampA":0.01,"ampS":0.75,"pmFenvFilt":0.4,"pmFenvOscA":0.15,"velCurve":2}),
- ("Glass Bells", {"mode":1,"osc2Wave":2,"osc2Semi":19,"filterCutoff":6000,"ampA":0.001,"ampD":1.5,"ampS":0.0,"ampR":2.0,"pmOscBOscA":0.6,"pmFenvOscA":0.3,"reverbOn":1,"reverbDecay":4.0,"reverbMix":0.35}),
+ # Single saw one octave down. Key tracking opens the filter and trims
+ # amplitude so upper-register chords keep their headroom.
+ ("Poly Brass", {"mode":1,"masterVol":2,"stereoWidth":0,"analogAmt":0.13,"velSens":0,
+   "osc1Level":0,"osc2Semi":-12,"osc2Detune":0,"osc2Level":0.9,
+   "filterCutoff":351,"filterRes":0.38,"filterEnvAmt":0.8,
+   "ampA":0.0175,"ampD":0.105,"ampS":0.52,"ampR":0.133,
+   "filtA":0.25,"filtD":0.35,"filtS":0,"filtR":0.16,
+   "modSrc0":7,"modDst0":5,"modAmt0":1,"modSrc1":7,"modDst1":5,"modAmt1":1,
+   "modSrc2":7,"modDst2":7,"modAmt2":-0.6}),
+ # The triangle rings an octave up. The sustained filter envelope and its
+ # matrix pitch route tune the quieter pulse two octaves above the triangle.
+ ("Glass Bells", {"mode":1,"masterVol":-6,"stereoWidth":0.59,"analogAmt":0.13,"velSens":0.4,
+   "osc1Wave":4,"osc1PW":0.62,"osc1Detune":12,"osc1Level":0.157,"osc2Wave":2,"osc2Semi":12,"osc2Detune":2,"osc2Level":0.9,
+   "filterCutoff":3200,"filterRes":0.47,"filterEnvAmt":0,"pmFenvOscA":1,
+   "ampA":0.001,"ampD":1.53,"ampS":0.065,"ampR":1.22,
+   "filtA":0.001,"filtS":1,"filtR":10,
+   "reverbOn":1,"reverbSize":0.78,"reverbDecay":6,"reverbMix":0.17,
+   "modSrc0":7,"modDst0":5,"modAmt0":1,"modSrc1":7,"modDst1":5,"modAmt1":1,"modSrc2":3,"modDst2":1,"modAmt2":1}),
  ("Acid Machine", {"mode":2,"osc1Wave":0,"filterCutoff":350,"filterRes":0.9,"filterEnvAmt":0.95,"filtA":0.001,"filtD":0.12,"filtS":0.0,"ampD":0.2,"ampS":0.0,"portaTime":0.06,"glideMode":1,"arpOn":1,"arpRate":3,"arpGate":0.6}),
  ("Thunder Sub", {"mode":2,"osc1Wave":3,"osc2Wave":3,"osc2Semi":-12,"filterCutoff":200,"filterRes":0.15,"subLevel":1.0,"subWave":1,"ampA":0.01,"ampS":1.0,"velCurve":1}),
  ("Voltage Seq", {"mode":3,"filterCutoff":2000,"filterRes":0.5,"filterEnvAmt":0.4,"shRate":8.0,"arpOn":1,"arpRate":3,"arpMode":0,"arpOctave":2,"delayOn":1,"delayMix":0.2}),
- ("Alien Transmission", {"mode":3,"fmAmount":0.7,"ringMod":0.4,"hardSync":1,"osc2Semi":7,"filterCutoff":4000,"filterRes":0.4,"ampA":0.3,"ampR":2.0,"noiseLevel":0.1,"reverbOn":1,"reverbDecay":5.0,"reverbMix":0.4,"vintage":0.4}),
+ ("Alien Transmission", {"mode":3,"fmAmount":0.7,"ringMod":0.4,"hardSync":1,"osc2Semi":7,"filterCutoff":4000,"filterRes":0.4,"ampA":0.3,"ampR":2.0,"osc1Level":0.4,"osc2Level":0.3,"osc3Level":0.25,"noiseLevel":0.05,"reverbOn":1,"reverbDecay":5.0,"reverbMix":0.4,"vintage":0.4}),
  ("Warm Keys", {"masterVol":-2.0,"mode":0,"osc1Wave":2,"osc2Wave":3,"filterCutoff":4000,"ampA":0.005,"ampD":0.8,"ampS":0.3,"ampR":0.5,"cosmosChorus":1,"velCurve":2}),
  ("Analog Strings", {"masterVol":-3.0,"mode":1,"filterCutoff":3000,"filterRes":0.15,"ampA":0.8,"ampS":0.9,"ampR":1.5,"unisonVoices":4,"unisonDetune":12,"stereoWidth":0.7,"chorusOn":1,"chorusMix":0.3}),
  ("Wobble Bass", {"mode":2,"filterCutoff":600,"filterRes":0.6,"subLevel":0.8,"lfo1Rate":4.0,"lfo1Shape":0,"modSrc0":1,"modDst0":5,"modAmt0":0.6}),
@@ -270,7 +331,7 @@ PRESETS = [
  ("Drone Machine", {"mode":3,"fmAmount":0.3,"osc3Level":0.6,"osc3Wave":3,"filterCutoff":1200,"filterRes":0.55,"ampA":3.0,"ampS":1.0,"ampR":5.0,"lfo1Rate":0.1,"modSrc0":1,"modDst0":5,"modAmt0":0.4,"reverbOn":1,"reverbDecay":12.0,"reverbMix":0.5,"vintage":0.6}),
  ("Arp Factory", {"mode":0,"filterCutoff":4500,"filterRes":0.3,"filterEnvAmt":0.4,"filtD":0.2,"ampA":0.003,"ampD":0.15,"ampS":0.4,"ampR":0.3,"cosmosChorus":3,"arpOn":1,"arpMode":2,"arpRate":4,"arpOctave":3,"arpGate":0.5,"arpSwing":0.3,"delayOn":1,"delayMix":0.2}),
  ("Fat Fifth", {"masterVol":-3.5,"mode":1,"osc2Semi":7,"filterCutoff":3500,"filterRes":0.2,"ampA":0.01,"ampS":0.8,"unisonVoices":3,"unisonDetune":8,"stereoWidth":0.65}),
- ("Noise Sweep", {"mode":3,"osc1Level":0.0,"osc2Level":0.0,"noiseLevel":1.0,"filterCutoff":500,"filterRes":0.7,"filterEnvAmt":0.8,"filtA":0.5,"filtD":2.0,"filtS":0.1,"ampA":0.3,"ampS":0.7,"ampR":3.0,"reverbOn":1,"reverbMix":0.4}),
+ ("Noise Sweep", {"mode":3,"osc1Level":0.0,"osc2Level":0.0,"osc3Level":0.333333333,"noiseLevel":0.666666667,"filterCutoff":500,"filterRes":0.7,"filterEnvAmt":0.8,"filtA":0.5,"filtD":2.0,"filtS":0.1,"ampA":0.3,"ampS":0.7,"ampR":3.0,"reverbOn":1,"reverbMix":0.4}),
  ("Init Cosmos", {"mode":0,"cosmosChorus":3}),
  ("Init Oracle", {"masterVol":-4.0,"mode":1}),
  ("Init Mono", {"mode":2}),
@@ -356,7 +417,7 @@ PRESETS = [
  # Regal Brass: Oracle self-osc filter + poly-mod brass with 2-voice unison.
  ("Regal Brass", {"masterVol":-3.5,"mode":1,"osc2Semi":0,"filterCutoff":1800,"filterRes":0.35,"filterEnvAmt":0.6,
    "filtA":0.04,"filtD":0.3,"filtS":0.4,"ampA":0.02,"ampD":0.3,"ampS":0.8,"ampR":0.35,
-   "pmFenvFilt":0.35,"pmFenvOscA":0.1,"unisonVoices":2,"unisonDetune":6,"stereoWidth":0.6}),
+   "pmFenvFilt":0.0979021,"pmFenvOscA":0.255838289,"unisonVoices":2,"unisonDetune":6,"stereoWidth":0.6}),
  # Siren Lead: Mono screaming sync lead (hard sync + osc2 up an octave), driven,
  # slap of delay, portamento glide.
  ("Siren Lead", {"masterVol":-3.0,"mode":2,"hardSync":1,"osc2Semi":12,"filterCutoff":4000,"filterRes":0.5,
@@ -385,6 +446,82 @@ PRESETS = [
    "seqPitch1":12,"seqPitch4":7,"seqPitch6":3,"seqPitch9":10,"seqPitch12":5,"seqPitch14":-5,
    "seqAccent0":1,"seqAccent4":1,"seqAccent8":1,"seqAccent12":1,"seqSlide6":1,"seqSlide14":1,
    "delayOn":1,"delaySync":1,"delayDiv":3,"delayMix":0.3,"delayFB":0.4,"delayPP":1}),
+
+ # --- Contributed patches (GitHub issue #303, by 70MM13) ------------------
+ # Converted from the author's .scpreset files: every row is a parameter whose
+ # saved value differs from default + baseline, with the file's own decimal
+ # text, so loadProgram() lands on the same float32 state the user-preset loader
+ # produces from those files (knob residue such as 2.38418579e-07 included),
+ # except where a later engine change needed a re-voice (noted per preset).
+ # Settings that are inert in the preset's engine (poly-mod on Modular, the
+ # Prism operators on Modular, sync and poly-mod on Prism) are kept, so a mode
+ # switch after loading behaves as it does after loading the author's file. All
+ # three keep the 4x oversampling they were saved with (the bank default is 2x).
+ # Oracle Trumpet: hard-synced brass with filter-envelope and Osc B poly-mod on
+ # the filter; the mod wheel brings in LFO 1 vibrato (Mod Whl -> LFO1 Depth).
+ # Its Poly-Mod filter amounts were rescaled to the measured laws (Voice.hpp,
+ # ORACLE POLY-MOD LAWS): 1 x 4/14.3 and 0.625 x 3/3.1 give the same depths.
+ # The author's file routes LFO 1 to Osc1 Pitch, for the sync master it then
+ # was. Oracle's sync now runs from osc 2 to osc 1 (osc 2 is the master), and the
+ # two oscillators are set identically, so the route moves to Osc2 Pitch: the
+ # vibrato stays on the master and the sync on the steady oscillator.
+ ("Oracle Trumpet", {"mode":1,"masterVol":-3.5,"stereoWidth":0.49999997,"oversampling":2,
+   "analogAmt":1,"osc1Level":1,"osc2Detune":0,"osc2Level":1,
+   "filterCutoff":355.03714,"filterRes":0.37500006,"filterEnvAmt":1,
+   "ampA":0.0479766354,"ampD":0.0626789629,"ampS":0.555000186,"ampR":0.121357851,
+   "filtA":0.0480906405,"filtD":0.198207721,"filtS":0.404999912,"filtR":0.100000091,"filtCurve":2,
+   "hardSync":1,"pmFenvFilt":0.2797203,
+   "lfo1Rate":4.80566263,"lfo1Shape":1,"lfo1Fade":0.675000012,
+   "lfo2Rate":2.0504818,"lfo2Shape":1,"lfo2Fade":1.32499993,
+   "unisonVoices":2,"unisonDetune":1.25,"unisonSpread":0.324999988,
+   "driveOn":1,"driveAmt":0.345000267,
+   "chorusOn":1,"chorusRate":1.63339043,"chorusDepth":0.0200000592,"chorusMix":0.265000045,
+   "delayOn":1,"delayFB":0.0569999926,"delayMix":0.0549999997,"delayPP":1,"delayTape":1,
+   "reverbOn":1,"reverbSize":0,"reverbDecay":0.100000001,"reverbDamp":0,"reverbMix":0.0449999981,"reverbPD":0,
+   "modSrc0":4,"modSrc1":1,"modDst0":13,"modDst1":2,"modAmt0":1,"modAmt1":1,
+   "pmOscBFilt":0.6048388}),
+ # Modular English Horn: triangle oscillators with sync, FM and ring mod into the
+ # driven ladder, key-tracked cutoff, and mod-wheel vibrato from LFO 2.
+ ("Modular English Horn", {"mode":3,"masterVol":6,"stereoWidth":0.780000031,"oversampling":2,
+   "analogAmt":1,"osc1Wave":2,"osc1Level":0.326264271,"osc2Wave":2,"osc2Detune":2.38418579e-07,"osc2Level":0.326264271,
+   "osc3Wave":3,"osc3Level":0.326264271,"noiseLevel":0.0212071866,
+   "filterCutoff":532.145996,"filterRes":0.295000017,"filterEnvAmt":0.650000095,
+   "ampA":0.115087986,"ampD":0.12506099,"ampS":0.295000166,"ampR":0.127077311,
+   "filtA":1.65958917,"filtD":0.86520803,"filtS":0.350000083,"filtR":0.691831708,
+   "ringMod":0.274999976,"hardSync":1,"fmAmount":0.155000314,"pmFenvFilt":1,"shRate":0.100000001,
+   "lfo1Rate":3.56688786,"lfo1Shape":1,"lfo1Fade":0.675000012,
+   "lfo2Rate":7.05028391,"lfo2Fade":1.32499993,
+   "unisonDetune":1,"unisonSpread":0.225000009,
+   "driveOn":1,"driveAmt":1,
+   "chorusOn":1,"chorusRate":1.63339043,"chorusDepth":0.0200000592,"chorusMix":0.265000045,
+   "delayFB":0.0569999926,"delayMix":0.0549999997,"delayPP":1,"delayTape":1,
+   "reverbOn":1,"reverbSize":0,"reverbDecay":0.100000001,"reverbDamp":0,"reverbMix":0.0549999997,"reverbPD":53,
+   "modSrc0":1,"modSrc1":7,"modSrc2":4,"modSrc3":2,"modSrc4":8,
+   "modDst0":1,"modDst1":5,"modDst2":14,"modDst3":1,"modDst4":10,
+   "modAmt0":0.020000089,"modAmt1":1,"modAmt2":0.50000006,"modAmt3":0.329999954,"modAmt4":-0.0899999291,
+   "prismAlgo":5,"op1Ratio":1.5,"op1A":0.0125892526,"op1D":0.00954992697,"op1S":0.26000008,"op1R":0.954992712,
+   "op2Ratio":0.75,"op2Level":0.440000057,"op2A":0.00478630001,"op4Ratio":5,
+   "pmOscBFilt":0.62500006,"modOsc3Filter":0.0749998987}),
+ # Prism Talking Keys: FM keys through a resonant, envelope-swept filter with
+ # key-tracked cutoff; the mod wheel brings in LFO 1 vibrato.
+ ("Prism Talking Keys", {"mode":4,"masterVol":6,"stereoWidth":1,"oversampling":2,
+   "analogAmt":1,"osc1Level":1,"osc2Detune":0,"osc2Level":1,
+   "filterCutoff":176.210617,"filterRes":0.734999955,"filterEnvAmt":1,
+   "ampA":0.0796214044,"ampD":0.0626789629,"ampS":0.555000186,"ampR":0.201403946,"ampCurve":2,
+   "filtA":0.0480906405,"filtD":0.198207721,"filtS":0.404999912,"filtR":0.100000091,"filtCurve":2,
+   "hardSync":1,"pmFenvFilt":1,
+   "lfo1Rate":4.22930241,"lfo1Fade":0.675000012,
+   "lfo2Rate":2.0504818,"lfo2Shape":1,"lfo2Fade":1.32499993,
+   "unisonVoices":2,"unisonDetune":2,"unisonSpread":0.35499993,
+   "driveOn":1,"driveAmt":1,
+   "chorusOn":1,"chorusRate":1.63339043,"chorusDepth":0.0200000592,"chorusMix":0.265000045,
+   "delayOn":1,"delayFB":0.0569999926,"delayMix":0.0549999997,"delayPP":1,"delayTape":1,
+   "reverbOn":1,"reverbSize":0,"reverbDecay":0.100000001,"reverbDamp":0,"reverbMix":0.0449999981,"reverbPD":0,
+   "modSrc0":1,"modSrc1":7,"modSrc2":4,"modDst0":1,"modDst1":5,"modDst2":13,
+   "modAmt0":0.7299999,"modAmt1":1,"modAmt2":0.379999995,
+   "prismAlgo":5,"op1Ratio":1.5,"op1A":0.0125892526,"op1D":0.00954992697,"op1S":0.26000008,"op1R":0.954992712,
+   "op2Ratio":0.75,"op2Level":0.440000057,"op2A":0.00478630001,"op4Ratio":5,
+   "pmOscBFilt":0.62500006}),
 ]
 
 def fl(v):
@@ -443,9 +580,11 @@ w("#undef X\n#undef LIN\n#undef LOG\n#undef INT\n#undef BOOL\n};\n\n")
 w("// ---------------------------------------------------------------------------\n")
 w(f"// Factory presets ({len(PRESETS)}) - static override table. loadProgram() resets every\n")
 w("// param to its default, applies the shared baseline, then the per-preset\n")
-w("// overrides. Every preset ships at 2x oversampling (baseline oversampling=1);\n")
-w("// the pitch bug is fixed so 2x is correct. Phase 5 re-voiced the original 40\n")
-w("// (unity-gain filter fix + level/intent) and appended new preset banks.\n")
+w("// overrides. Presets ship at 2x oversampling (baseline oversampling=1; the\n")
+w("// pitch bug is fixed so 2x is correct) unless their rows say otherwise: the\n")
+w("// three contributed presets at the end keep the 4x they were made with.\n")
+w("// Phase 5 re-voiced the original 40 (unity-gain filter fix + level/intent)\n")
+w("// and appended new preset banks.\n")
 w("// ---------------------------------------------------------------------------\n")
 w("struct PresetRow { int index; float value; };\n\n")
 def rows(name, d):

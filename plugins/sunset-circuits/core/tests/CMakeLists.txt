@@ -25,6 +25,15 @@ add_executable(cosmos_state_test cosmos_state_test.cpp)
 target_include_directories(cosmos_state_test PRIVATE ${CORE_DIR} ${SHARED_DSP})
 target_compile_options(cosmos_state_test PRIVATE -O2 -Wall -Wextra)
 
+# wheelmod_test — unit gate for core/WheelMod.hpp (Oracle Wheel Mod, issue #303):
+# the reference laws, the off contract, and the appended parameters (core and
+# shell tables, so it links the core for paramIndexForName and the defaults).
+add_executable(wheelmod_test
+    wheelmod_test.cpp
+    ${CORE_DIR}/MultiSynthDSP.cpp)
+target_include_directories(wheelmod_test PRIVATE ${CORE_DIR} ${SHARED_DSP} ${DAF_PLUGIN})
+target_compile_options(wheelmod_test PRIVATE -O2 -Wall -Wextra)
+
 # preset_render — includes the static factory-preset table (MultiSynthParams.hpp)
 # from the DAF shell plus the core DSP; renders mode-appropriate performances for
 # the Phase 5 preset re-voice + audit (no plugin hosting / MIDI injection).
@@ -45,6 +54,11 @@ target_include_directories(cpu_bench PRIVATE ${CORE_DIR} ${SHARED_DSP})
 # cpu_bench must compile like the shipping plugin (-O3 from Release) — a stray
 # -O2 here already produced one wrong perf conclusion; do not add one back.
 target_compile_options(cpu_bench PRIVATE -Wall -Wextra)
+
+# filter_tanh_gate: the TPT filter's rational tanh against a frozen std::tanh copy.
+add_executable(filter_tanh_gate filter_tanh_gate.cpp)
+target_include_directories(filter_tanh_gate PRIVATE ${CORE_DIR})
+target_compile_options(filter_tanh_gate PRIVATE -O2 -Wall -Wextra)
 
 # user_preset_test — unit gate for daf-plugin/UserPresetStore.hpp (file-based user
 # preset library). Header-only; pulls MultiSynthParams.hpp for the symbol table.

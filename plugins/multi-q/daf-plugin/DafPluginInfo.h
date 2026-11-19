@@ -33,9 +33,10 @@
 #define DAF_UI_DEFAULT_WIDTH        1040
 #define DAF_UI_DEFAULT_HEIGHT       680
 #define DAF_UI_USER_RESIZABLE       1
-// British character routes through FourKEQDSP, which reports oversampler latency
-// when its oversampling factor > 0; the shell forwards MultiQDSP::getLatencySamples()
-// via setLatency() each block. Digital/Tube and un-oversampled British report 0.
+// Latency comes from MultiQDSP::getLatencySamples(params): the oversampled
+// saturation (Digital), the oversampled British and Tube cores, the limiter
+// lookahead and the Match FIR. The shell reports it in activate() and again in
+// run() whenever the settings move it; 0 under hard bypass.
 #define DAF_PLUGIN_WANT_LATENCY 1
 #define DAF_PLUGIN_WANT_PROGRAMS 1
 // Match spectrum-EQ persists its learned spectra + correction FIR as one base64

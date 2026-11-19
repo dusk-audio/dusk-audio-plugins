@@ -8,7 +8,9 @@
 //   mode      0..5   (Cosmos/Oracle/Mono/Modular/Prism/Acid)
 //   midinote  MIDI note number to play (e.g. 69 = A440)
 //   seconds   render length
-//   osfactor  1 | 2 | 4   (oversampling)
+//   osfactor  1 | 2 | 4   (the Oversampling setting; the engine picks the internal
+//                          factor from it and the session rate, see
+//                          MultiSynthDSP::factorForSetting)
 //   out.wav   output path (float32 stereo WAV)
 //
 // key=value overrides any engine parameter by name (see paramIndexForName), plus
@@ -156,6 +158,7 @@ static_assert((int)kParamModSrc0   == (int)msynth::pModSrc0,   "mod matrix drift
 static_assert((int)kParamSeqSlide0 == (int)msynth::pSeqSlide0, "seq slide drift");
 static_assert((int)kParamModOsc3Filter == (int)msynth::pModOsc3Filter,
               "accuracy-upgrade block drift");
+static_assert((int)kParamWheelFilter == (int)msynth::pWheelFilter, "wheel-mod block drift");
 static_assert((int)kNumCoreParams  == (int)msynth::kNumParams, "core param count drift");
 
 namespace

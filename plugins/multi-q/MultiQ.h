@@ -780,6 +780,13 @@ private:
     DynamicEQProcessor dynamicEQ;
     std::atomic<bool> dynamicParamsChanged{true};
 
+    // Band dynamic-gain filters follow their envelopes every kDynGainUpdateSeconds
+    // on a grid counted across processBlock calls (at the processing rate), so the
+    // applied gain does not depend on the host block size. Audio thread only;
+    // Multi-Q 2 (core/MultiQDSP) uses the same grid.
+    static constexpr double kDynGainUpdateSeconds = 0.0005;
+    int dynUpdateInterval = 24;     // processing-rate samples per grid step
+    int dynUpdateCountdown = 0;     // samples until the next step; 0 = at the next sample
 
     // Dynamic mode per-band parameters
     std::array<std::atomic<float>*, NUM_BANDS> bandDynEnabledParams{};

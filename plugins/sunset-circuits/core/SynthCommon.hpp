@@ -13,6 +13,14 @@
 #include <cstdint>
 #include <cstring>
 
+// Forces inlining where the compiler's own judgement measurably does not
+// (the oscillators' per-sample band-limiting, #303: 8.2 -> 4.7 ns per sample).
+#if defined(_MSC_VER)
+#define MSYNTH_INLINE __forceinline
+#else
+#define MSYNTH_INLINE inline __attribute__((always_inline))
+#endif
+
 namespace msynth
 {
 

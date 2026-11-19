@@ -100,6 +100,7 @@ void MultiQMatch::reset()
     irUpdates.reset();
     activeIR = IRSpectra{};
     activeLatency.store(0, std::memory_order_release);
+    committedLatency.store(0, std::memory_order_release); // the correction is gone too
     convL.reset(); convR.reset();
     hopFill = 0;
     convState.store(ConvState::Inactive, std::memory_order_release);
@@ -144,6 +145,7 @@ void MultiQMatch::requestClear()
     // Retire any update published after the audio thread took this block's
     // mailbox slot but before it observed Clear. It must not revive next block.
     irUpdates.writeBuffer().active = false;
+    committedLatency.store(0, std::memory_order_release);
     publishUpdate();
 }
 
@@ -205,7 +207,7 @@ void MultiQMatch::syncUpdate(const IRUpdate* update)
     if (update != nullptr && !clearRequested && update->active)
     {
         activeIR = update->spectra;
-        activeLatency.store(CONV_HOP + (update->minimumPhase ? 0 : FIR_LENGTH / 2), std::memory_order_release);
+        activeLatency.store(latencyFor(update->minimumPhase), std::memory_order_release);
         if (convState.load(std::memory_order_relaxed) == ConvState::Inactive)
         {
             convL.reset(); convR.reset(); hopFill = 0;
@@ -543,6 +545,7 @@ void MultiQMatch::installFIR()
 
     update.active = true;
     update.minimumPhase = lastMinimumPhase;
+    committedLatency.store(latencyFor(lastMinimumPhase), std::memory_order_release);
     publishUpdate();
 }
 
@@ -681,6 +684,12 @@ void MultiQMatch::doClearNow()
 int MultiQMatch::getLatencySamples() const noexcept
 {
     return activeLatency.load(std::memory_order_acquire);
+}
+
+int MultiQMatch::getReportedLatencySamples() const noexcept
+{
+    return std::max(committedLatency.load(std::memory_order_acquire),
+                    activeLatency.load(std::memory_order_acquire));
 }
 
 //==============================================================================
@@ -858,6 +867,7 @@ bool MultiQMatch::deserialize(const std::string& base64)
     {
         correctionValid.store(false, std::memory_order_release);
         irUpdates.writeBuffer().active = false;
+        committedLatency.store(0, std::memory_order_release);
         publishUpdate();
     }
     return true;

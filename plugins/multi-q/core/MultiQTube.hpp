@@ -31,6 +31,7 @@
 
 #include "../../shared-daf/dsp/DuskDenormals.hpp"
 #include "../../shared-daf/dsp/DuskOversampler.hpp"   // 2x/4x nonlinear-stage OS
+#include "MultiQOversamplerDelay.hpp"
 
 #include <array>
 #include <cmath>
@@ -544,6 +545,8 @@ public:
         // Tube path is bit-identical to the pre-oversampling build when hq is Off.
         osFactor = 1;
         for (auto& os : oversamplers) { os.setFactor(1); os.reset(); }
+        for (int mode = 0; mode < 3; ++mode)
+            osDelay[(size_t)mode] = measureOversamplerDelay<Oversampler>(factorForMode(mode));
 
         // deterministic character seed (kept EXACTLY as the JUCE build). Seeded off
         // the BASE rate so the character is stable regardless of the hq setting.
@@ -606,7 +609,7 @@ public:
     // steady-state blocks pay nothing.
     void setOversampling(int mode)
     {
-        int f = (mode == 2) ? 4 : (mode == 1) ? 2 : 1;
+        const int f = factorForMode(mode);
         if (f == osFactor)
             return;
         osFactor = f;
@@ -634,10 +637,12 @@ public:
         needsUpdate = true;   // recompute biquad coeffs at the new rate
     }
 
-    // Added latency (base-rate samples) of the nonlinear-stage oversampler. 0 at 1x.
-    int getLatencySamples() const noexcept
+    // Delay (base-rate samples) the nonlinear-stage oversampler renders at
+    // Oversampling `mode` (0=Off, 1=2x, 2=4x); 0 when Off. Measured in prepare()
+    // for every mode, so the latency of any setting is known before audio runs.
+    double oversamplingDelay(int mode) const noexcept
     {
-        return osFactor <= 1 ? 0 : (int)std::lround(oversamplers[0].latency());
+        return osDelay[(size_t)(mode == 2 ? 2 : mode == 1 ? 1 : 0)];
     }
 
     // Process channel buffers in place. Mirrors TubeEQProcessor::process(buffer).
@@ -782,7 +787,10 @@ private:
     int osFactor = 1;                   // 1 / 2 / 4 (nonlinear-stage oversampling)
     uint32_t characterSeed = 0;
 
+    static int factorForMode(int mode) { return mode == 2 ? 4 : mode == 1 ? 2 : 1; }
+
     std::array<Oversampler, 8> oversamplers; // per-channel nonlinear-stage OS
+    std::array<double, 3> osDelay {};        // rendered OS delay per mode (see oversamplingDelay)
 
     TubeBiquad hfBoostFilterL, hfBoostFilterR;
     TubeBiquad hfAttenFilterL, hfAttenFilterR;
