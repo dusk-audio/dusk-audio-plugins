@@ -8,7 +8,10 @@
 //
 // The case that separates the exact shortcut from a plain `0.5f * centre + 0.0f` is a
 // negative centre sample whose half underflows to zero, which needs flush-to-zero for
-// a normal float, so every check runs with and without it.
+// a normal float, so each of those bit checks runs with and without it.
+//
+// Two more checks, run once: LocalAAStage keeps its own interpolation image out of the
+// nonlinearity (checkImageRejection), and its delay matches latency() (checkLatency).
 #include "DuskDenormals.hpp"
 #include "DuskOversampler.hpp"
 
@@ -88,18 +91,18 @@ void checkRing (const float* taps, const std::vector<float>& values, const char*
     }
 }
 
-// LocalAAStage as it was before the shortcut: the full FIR on every phase.
+// LocalAAStage without the shortcut: the full FIR on every phase.
 class FullFirStage
 {
 public:
     template <class Fn>
     float process (float x, Fn&& f) noexcept
     {
-        upA.push (x);       const float a0 = 2.0f * upA.out (duskaudio::hbtaps::kA);
-        upA.push (0.0f);    const float a1 = 2.0f * upA.out (duskaudio::hbtaps::kA);
+        upA.push (x);       const float a0 = 2.0f * upA.out (Outer::taps);
+        upA.push (0.0f);    const float a1 = 2.0f * upA.out (Outer::taps);
         downA.push (inner (a0, f));
         downA.push (inner (a1, f));
-        return downA.out (duskaudio::hbtaps::kAdeep);
+        return downA.out (Outer::taps);
     }
 
 private:
@@ -112,8 +115,9 @@ private:
         downB.push (f (b1));
         return downB.out (duskaudio::hbtaps::kB);
     }
-    duskaudio::HalfbandFIR<47, 12> upA;
-    duskaudio::HalfbandFIR<71, 18> downA;
+    using Outer = duskaudio::hbtaps::StageAdeep;
+    duskaudio::HalfbandFIR<Outer::L, Outer::NSide> upA;
+    duskaudio::HalfbandFIR<Outer::L, Outer::NSide> downA;
     duskaudio::HalfbandFIR<15, 4>  upB, downB;
 };
 
@@ -259,6 +263,62 @@ void runOversamplers (const char* mode)
     }
 }
 
+// What the deep outer interpolator is for: a 19 kHz tone at a 96 kHz surrounding rate has
+// its interpolation image at 77 kHz, and a saturating functor mixes the two into
+// 77 - 4*19 = 1 kHz. With the ordinary 47-tap set that product sits near -88 dB re the
+// tone, with the deep set near -148 dB. A bound of -120 dB separates them.
+void checkImageRejection()
+{
+    const double rate = 96000.0, twoPi = 6.283185307179586;
+    duskaudio::LocalAAStage stage;
+    const auto saturate = [] (float v) noexcept { return std::tanh (2.0f * v); };
+    const long warm = 4096, n = 96000;                 // one second: 1 kHz and 19 kHz are whole bins
+    double re1 = 0.0, im1 = 0.0, re19 = 0.0, im19 = 0.0;
+    for (long i = 0; i < warm + n; ++i)
+    {
+        const float y = stage.process (static_cast<float> (std::sin (twoPi * 19000.0 * static_cast<double> (i) / rate)), saturate);
+        if (i < warm) continue;
+        const double t = static_cast<double> (i - warm) / rate;
+        const double w = 0.5 - 0.5 * std::cos (twoPi * static_cast<double> (i - warm) / static_cast<double> (n));
+        re1  += w * y * std::cos (twoPi * 1000.0 * t);   im1  += w * y * std::sin (twoPi * 1000.0 * t);
+        re19 += w * y * std::cos (twoPi * 19000.0 * t);  im19 += w * y * std::sin (twoPi * 19000.0 * t);
+    }
+    const double productDb = 10.0 * std::log10 ((re1 * re1 + im1 * im1) / (re19 * re19 + im19 * im19) + 1e-300);
+    std::printf ("LocalAAStage image product (19 kHz at 96 kHz through tanh): %.1f dB re the tone\n", productDb);
+    if (! (productDb < -120.0))
+    {
+        ++failures;
+        std::printf ("FAIL image rejection: the 1 kHz product is %.1f dB re the tone, expected below -120 dB\n", productDb);
+    }
+}
+
+// latency() counts each halfband by its centre tap. The stage's real delay at low
+// frequencies, the centroid of its impulse response through an identity functor
+// (sum of n*h[n] over sum of h[n]), is 0.75 samples lower (see the comment on latency()).
+// Pinning that difference means a change of tap set that moves the delay must move
+// latency() with it.
+void checkLatency()
+{
+    duskaudio::LocalAAStage stage;
+    const auto identity = [] (float v) noexcept { return v; };
+    double sum = 0.0, moment = 0.0;
+    for (int i = 0; i < 512; ++i)
+    {
+        const double y = stage.process (i == 0 ? 1.0f : 0.0f, identity);
+        sum += y;
+        moment += y * static_cast<double> (i);
+    }
+    const double centroid = moment / sum;
+    const double expected = static_cast<double> (duskaudio::LocalAAStage::latency()) - 0.75;
+    std::printf ("LocalAAStage delay: centroid %.4f samples, latency() %.2f\n", centroid,
+                 static_cast<double> (duskaudio::LocalAAStage::latency()));
+    if (! (std::abs (centroid - expected) <= 0.01))      // written so that a NaN centroid fails
+    {
+        ++failures;
+        std::printf ("FAIL latency: impulse centroid %.4f, expected latency() - 0.75 = %.4f\n", centroid, expected);
+    }
+}
+
 void runAll (const char* mode)
 {
     const std::vector<float> values = hostileValues();
@@ -267,6 +327,8 @@ void runAll (const char* mode)
     checkRing<47, 12> (duskaudio::hbtaps::kA, values, name);
     std::snprintf (name, sizeof name, "15-tap ring, %s", mode);
     checkRing<15, 4> (duskaudio::hbtaps::kB, values, name);
+    std::snprintf (name, sizeof name, "71-tap ring, %s", mode);
+    checkRing<71, 18> (duskaudio::hbtaps::kAdeep, values, name);
     std::snprintf (name, sizeof name, "127-tap ring, %s", mode);
     checkRing<127, 32> (duskaudio::hbtaps::kAwide, values, name);
     std::snprintf (name, sizeof name, "LocalAAStage, %s", mode);
@@ -276,6 +338,8 @@ void runAll (const char* mode)
 
 int main()
 {
+    checkImageRejection();
+    checkLatency();
     runAll ("denormals kept");
     runOversamplers ("denormals kept");
     {
