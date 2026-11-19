@@ -1,0 +1,776 @@
+// Copyright (C) 2026 Dusk Audio , GNU GPL v3.0 or later (see repository LICENSE).
+// Framework-free transcriptions of the JUCE processor's detector helpers.
+#pragma once
+
+#include "MultiCompParams.hpp"
+#include "MultiCompOversampler.hpp"
+#include "../../shared-daf/dsp/DuskFilters.hpp"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdint>
+#include <cstring>
+#include <utility>
+#include <vector>
+#if defined(__aarch64__)
+#include <arm_neon.h>
+#endif
+
+namespace duskaudio
+{
+
+// One non-finite input sample latches for good. It lands in the sidechain
+// shelf biquads (every mode filters its detector through them), the
+// oversampler FIR histories, the multiband crossovers and the mode envelopes,
+// and none of those can flush a NaN with more audio: only reset() clears them.
+// So the guard has to run before any of that state is touched.
+//
+// Exponent-field maximum rather than a per-sample std::isfinite: a finite
+// float has a biased exponent of at most 0xfe, an infinity or NaN has exactly
+// 0xff, so the maximum over the field is 0x7f800000 if and only if at least
+// one sample is non-finite. Branch-free, sign- and payload-agnostic, and it
+// vectorises to an AND plus an unsigned MAX, where an isfinite loop with an
+// early exit does not. Exact, so it never fires on finite input.
+inline bool blockIsAllFinite(const float* samples, int numSamples) noexcept
+{
+    std::uint32_t worstExponent = 0;
+    for (int i = 0; i < numSamples; ++i)
+    {
+        std::uint32_t bits = 0;
+        std::memcpy(&bits, samples + i, sizeof(bits));
+        worstExponent = std::max(worstExponent, bits & 0x7f800000u);
+    }
+    return worstExponent != 0x7f800000u;
+}
+
+// max(start, |x[i]|) over a block, start not NaN. A NaN sample is passed over:
+// std::max(peak, NaN) keeps the peak, and the four-lane form takes maxNum,
+// which does the same. The maximum does not depend on the order it is taken
+// in, so the four-lane form gives the same value as the plain loop.
+inline float blockAbsPeak(const float* x, int n, float start) noexcept
+{
+    float peak = start;
+    int i = 0;
+#if defined(__aarch64__)
+    if (n >= 4)
+    {
+        float32x4_t lanes = vdupq_n_f32(start);
+        for (; i + 4 <= n; i += 4) lanes = vmaxnmq_f32(lanes, vabsq_f32(vld1q_f32(x + i)));
+        peak = vmaxnmvq_f32(lanes);
+    }
+#endif
+    for (; i < n; ++i) peak = std::max(peak, std::abs(x[i]));
+    return peak;
+}
+
+// Substitute silence for the offending samples only. Everything finite in the
+// block is copied through bit-exactly, so a glitch costs one sample, not one
+// buffer.
+inline void copyWithoutNonFinite(const float* source, float* destination,
+                                 int numSamples) noexcept
+{
+    for (int i = 0; i < numSamples; ++i)
+    {
+        std::uint32_t bits = 0;
+        std::memcpy(&bits, source + i, sizeof(bits));
+        destination[i] = (bits & 0x7f800000u) == 0x7f800000u ? 0.0f : source[i];
+    }
+}
+
+// Input ceiling. A finite sample at or above 2^10 (+60.2 dBFS) is not audio, and it is as destructive as a
+// NaN while leaving every output sample finite, so output-only recovery never fires: a 10 ms burst at 1e20
+// overflows the squared detector powers to inf (the Opto cell then holds 0 dB of reduction until a host
+// reset), and a burst anywhere from ~1e10 up parks the double envelopes and the sub-audio audio-path
+// high-passes so high that they take tens of seconds to drain. Same exponent-field trick as above: the
+// biased exponent of 2^10 is 0x89, so (bits & 0x7f800000) >= 0x89 << 23 if and only if |x| >= 1024 or x is
+// non-finite. Exact: nothing below the ceiling is touched. Per sample, not per block, so the result does not
+// depend on the host's block size; a burst that straddles the ceiling keeps its sub-ceiling samples. The guard
+// runs ahead of the bypass path too, so a settled bypass also emits silence for those samples.
+constexpr std::uint32_t kInputCeilingExponentBits = 0x89u << 23;   // |x| >= 1024
+
+inline bool blockIsAllAudio(const float* samples, int numSamples) noexcept
+{
+    std::uint32_t worstExponent = 0;
+    for (int i = 0; i < numSamples; ++i)
+    {
+        std::uint32_t bits = 0;
+        std::memcpy(&bits, samples + i, sizeof(bits));
+        worstExponent = std::max(worstExponent, bits & 0x7f800000u);
+    }
+    return worstExponent < kInputCeilingExponentBits;
+}
+
+inline void copyWithoutNonAudio(const float* source, float* destination, int numSamples) noexcept
+{
+    for (int i = 0; i < numSamples; ++i)
+    {
+        std::uint32_t bits = 0;
+        std::memcpy(&bits, source + i, sizeof(bits));
+        destination[i] = (bits & 0x7f800000u) >= kInputCeilingExponentBits ? 0.0f : source[i];
+    }
+}
+
+class MultiCompSidechainFilter
+{
+public:
+    void prepare(double rate) noexcept
+    {
+        sampleRate = rate > 0.0 ? rate : 44100.0;
+        currentFrequency = -1.0f;
+        setFrequency(80.0f);
+        reset();
+    }
+
+    void setFrequency(float frequency, float q = 0.707f) noexcept
+    {
+        const float f = std::clamp(frequency, 20.0f, 500.0f);
+        if (std::abs(f - currentFrequency) > 0.1f || q != currentQ)
+        {
+            currentFrequency = f;
+            currentQ = q;
+            filter.setHighPass(sampleRate, f, q);
+        }
+    }
+
+    float process(float input) noexcept
+    {
+        return filter.process(input);
+    }
+
+    void reset() noexcept { filter.reset(); }
+
+private:
+    double sampleRate = 44100.0;
+    float currentFrequency = -1.0f;
+    float currentQ = 0.707f;
+    GuardedBiquad filter;
+};
+
+// The sidechain EQ's low shelf: the RBJ S = 1 shelf Biquad::shelfSlope1 designs, in double, for a section that runs in
+// double (MultiCompDoubleSection here, DoubleBiquad in Bus's own shelf). Its corner sits far below the rate it runs at
+// (60 Hz is 4.9e-4 rad at 768 kHz, Bus's mode rate at 192 kHz and 4x), where the plateau is set by differences of
+// nearly equal coefficients finer than float holds.
+// Designed and run in float, the shelf missed its own response by up to 0.03 dB at 48 kHz, 0.17 dB at 192, 0.77 dB at
+// 384 and 8.9 dB at 768; designed in double with the coefficients rounded to float, still 0.56 and 3.98 dB. With double
+// coefficients and state it holds within 2e-7 dB at every rate to 768 kHz. The high shelf's corner (2 kHz and up) is
+// far enough above that its float design stays within 1e-3 dB at all of them. Normalised by division, so at 0 dB the
+// section is the exact identity (b0 = 1, b1 = a1, b2 = a2), as the float design is at the default 100 Hz.
+inline BiquadCoeffsDouble sidechainLowShelfCoeffs(double fs, float frequency, float gainDb) noexcept
+{
+    constexpr double kPi = 3.14159265358979323846;
+    const double f = nyquistSafeDesignHzD(fs, static_cast<double>(frequency), kMaxDesignFreqRatio);
+    const double A = std::pow(10.0, static_cast<double>(gainDb) / 40.0);
+    const double w0 = 2.0 * kPi * f / fs;
+    const double cosw = std::cos(w0);
+    const double sinw = std::sin(w0);
+    const double alpha = 0.5 * sinw * std::sqrt(2.0);   // S = 1
+    const double sqA2a = 2.0 * std::sqrt(A) * alpha;
+    const double b0 = A * ((A + 1.0) - (A - 1.0) * cosw + sqA2a);
+    const double b1 = 2.0 * A * ((A - 1.0) - (A + 1.0) * cosw);
+    const double b2 = A * ((A + 1.0) - (A - 1.0) * cosw - sqA2a);
+    const double a0 = (A + 1.0) + (A - 1.0) * cosw + sqA2a;
+    const double a1 = -2.0 * ((A - 1.0) + (A + 1.0) * cosw);
+    const double a2 = (A + 1.0) + (A - 1.0) * cosw - sqA2a;
+    return {b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0};
+}
+
+// The sidechain EQ's low shelf section: TDF-II in double, DoubleBiquad's arithmetic, with the state exposed so the
+// stereo block path (MultiCompSidechainEQ::processPair) can run the left and right sections in one register's lanes.
+class MultiCompDoubleSection
+{
+public:
+    void setCoeffs(const BiquadCoeffsDouble& k) noexcept { c = k; }
+    const BiquadCoeffsDouble& coeffs() const noexcept { return c; }
+    void reset() noexcept { z1 = z2 = 0.0; }
+    std::pair<double, double> state() const noexcept { return {z1, z2}; }
+    void setState(double s1, double s2) noexcept { z1 = s1; z2 = s2; }
+
+    float process(float x) noexcept
+    {
+        const double y = c.b0 * x + z1;
+        z1 = c.b1 * x - c.a1 * y + z2;
+        z2 = c.b2 * x - c.a2 * y;
+        return static_cast<float>(y);
+    }
+
+private:
+    BiquadCoeffsDouble c;
+    double z1 = 0.0, z2 = 0.0;
+};
+
+// JUCE multicomp.cpp:575-690. Two RBJ shelves in TDF-II, after the sidechain
+// high-pass and before stereo linking; the low one in double (sidechainLowShelfCoeffs).
+class MultiCompSidechainEQ
+{
+public:
+    void prepare(double rate) noexcept
+    {
+        sampleRate = rate > 0.0 ? rate : 44100.0;
+        lowFrequency = -1.0f; highFrequency = -1.0f;
+        setLowShelf(100.0f, 0.0f);
+        setHighShelf(8000.0f, 0.0f);
+        reset();
+    }
+    void setLowShelf(float frequency, float gain) noexcept
+    {
+        const float f = std::clamp(frequency, 60.0f, 500.0f);
+        const float g = std::clamp(gain, -12.0f, 12.0f);
+        if (std::abs(f - lowFrequency) > 0.001f || std::abs(g - lowGain) > 0.001f)
+        {
+            lowFrequency = f; lowGain = g;
+            low.setCoeffs(sidechainLowShelfCoeffs(sampleRate, f, g));
+        }
+    }
+    void setHighShelf(float frequency, float gain) noexcept
+    {
+        const float f = std::clamp(frequency, 2000.0f, 16000.0f);
+        const float g = std::clamp(gain, -12.0f, 12.0f);
+        if (std::abs(f - highFrequency) > 0.001f || std::abs(g - highGain) > 0.001f)
+        {
+            highFrequency = f; highGain = g;
+            high.setCoeffs(Biquad::shelfSlope1(sampleRate, f, g, true));
+        }
+    }
+    float process(float input) noexcept { return high.process(low.process(input)); }
+    void reset() noexcept { low.reset(); high.reset(); }
+
+    // process() on a left and a right EQ over a block, in place: each lane runs process()'s arithmetic, the low
+    // shelf's in double (MultiCompDoubleSection::process) and the high shelf's in float (Biquad::process).
+    static void processPair(MultiCompSidechainEQ& left, MultiCompSidechainEQ& right,
+                            float* x0, float* x1, int n) noexcept
+    {
+#if defined(__aarch64__)
+        struct LowLanes { float64x2_t b0, b1, b2, a1, a2, z1, z2; };
+        const auto& kl = left.low.coeffs();
+        const auto& kr = right.low.coeffs();
+        const auto ls = left.low.state();
+        const auto rs = right.low.state();
+        LowLanes lo{{kl.b0, kr.b0}, {kl.b1, kr.b1}, {kl.b2, kr.b2}, {kl.a1, kr.a1}, {kl.a2, kr.a2},
+                    {ls.first, rs.first}, {ls.second, rs.second}};
+        const auto stepLow = [](LowLanes& f, float64x2_t x) noexcept {
+            const float64x2_t y = vaddq_f64(vmulq_f64(f.b0, x), f.z1);
+            f.z1 = vaddq_f64(vsubq_f64(vmulq_f64(f.b1, x), vmulq_f64(f.a1, y)), f.z2);
+            f.z2 = vsubq_f64(vmulq_f64(f.b2, x), vmulq_f64(f.a2, y));
+            return y;
+        };
+        struct Lanes { float32x2_t b0, b1, b2, a1, a2, z1, z2; };
+        const auto load = [](const Biquad& l, const Biquad& r) noexcept {
+            const auto& cl = l.coeffs();
+            const auto& cr = r.coeffs();
+            const auto sl = l.state();
+            const auto sr = r.state();
+            return Lanes{{cl.b0, cr.b0}, {cl.b1, cr.b1}, {cl.b2, cr.b2}, {cl.a1, cr.a1}, {cl.a2, cr.a2},
+                         {sl.first, sr.first}, {sl.second, sr.second}};
+        };
+        Lanes hi = load(left.high, right.high);
+        const auto step = [](Lanes& f, float32x2_t x) noexcept {
+            const float32x2_t y = vadd_f32(vmul_f32(f.b0, x), f.z1);
+            f.z1 = vadd_f32(vsub_f32(vmul_f32(f.b1, x), vmul_f32(f.a1, y)), f.z2);
+            f.z2 = vsub_f32(vmul_f32(f.b2, x), vmul_f32(f.a2, y));
+            return y;
+        };
+        for (int i = 0; i < n; ++i)
+        {
+            const float32x2_t low = vcvt_f32_f64(stepLow(lo, vcvt_f64_f32(float32x2_t{x0[i], x1[i]})));
+            const float32x2_t y = step(hi, low);
+            x0[i] = vget_lane_f32(y, 0);
+            x1[i] = vget_lane_f32(y, 1);
+        }
+        left.low.setState(vgetq_lane_f64(lo.z1, 0), vgetq_lane_f64(lo.z2, 0));
+        right.low.setState(vgetq_lane_f64(lo.z1, 1), vgetq_lane_f64(lo.z2, 1));
+        left.high.setState(vget_lane_f32(hi.z1, 0), vget_lane_f32(hi.z2, 0));
+        right.high.setState(vget_lane_f32(hi.z1, 1), vget_lane_f32(hi.z2, 1));
+#else
+        for (int i = 0; i < n; ++i)
+        {
+            x0[i] = left.process(x0[i]);
+            x1[i] = right.process(x1[i]);
+        }
+#endif
+    }
+
+private:
+    double sampleRate = 44100.0;
+    float lowFrequency = 100.0f, lowGain = 0.0f, highFrequency = 8000.0f, highGain = 0.0f;
+    MultiCompDoubleSection low;
+    Biquad high;
+};
+
+class MultiCompTransientShaper
+{
+public:
+    void prepare(double rate) noexcept
+    {
+        sampleRate = rate > 0.0 ? rate : 44100.0;
+        setRate(sampleRate);
+        reset();
+    }
+
+    void setRate(double rate) noexcept
+    {
+        sampleRate = rate > 0.0 ? rate : 44100.0;
+        fastAttack = std::exp(-1.0f / (0.0005f * static_cast<float>(sampleRate)));
+        fastRelease = std::exp(-1.0f / (0.020f * static_cast<float>(sampleRate)));
+        slowAttack = std::exp(-1.0f / (0.010f * static_cast<float>(sampleRate)));
+        slowRelease = std::exp(-1.0f / (0.100f * static_cast<float>(sampleRate)));
+        holdSamples = static_cast<int>(0.005f * static_cast<float>(sampleRate));
+    }
+
+    float process(float input, int channel, float sensitivity) noexcept
+    {
+        if (channel < 0 || channel >= 2) return 1.0f;
+        auto& state = channels[static_cast<size_t>(channel)];
+        const float absolute = std::abs(input);
+        state.fast = absolute > state.fast ? fastAttack * state.fast + (1.0f - fastAttack) * absolute
+                                            : fastRelease * state.fast + (1.0f - fastRelease) * absolute;
+        state.slow = absolute > state.slow ? slowAttack * state.slow + (1.0f - slowAttack) * absolute
+                                           : slowRelease * state.slow + (1.0f - slowRelease) * absolute;
+        if (absolute > state.peak) { state.peak = absolute; state.hold = holdSamples; }
+        else if (state.hold > 0) --state.hold;
+        else state.peak *= 0.9995f;
+        const float ratio = state.slow > 0.0001f ? state.fast / state.slow : 1.0f;
+        const float amount = std::clamp(sensitivity / 100.0f, 0.0f, 1.0f);
+        return ratio > 1.0f ? 1.0f + std::min((ratio - 1.0f) * 2.0f, 2.0f) * amount : 1.0f;
+    }
+
+    void reset() noexcept { for (auto& state : channels) state = Channel{}; }
+
+private:
+    struct Channel { float fast = 0.0f, slow = 0.0f, peak = 0.0f; int hold = 0; };
+    double sampleRate = 44100.0;
+    std::array<Channel, 2> channels{};
+    float fastAttack = 0.0f, fastRelease = 0.0f, slowAttack = 0.0f, slowRelease = 0.0f;
+    int holdSamples = 0;
+};
+
+class MultiCompTruePeakDetector
+{
+public:
+    static constexpr int TAPS_PER_PHASE = 12;
+    void prepare() noexcept { for (auto& c : channels) c = Channel{}; initialize(); }
+    // The channels' histories and peaks to rest, the coefficients kept (realtime-safe).
+    void reset() noexcept { for (auto& c : channels) c = Channel{}; }
+    enum class Quality { Standard4x, High8x };
+    void setQuality(Quality quality) noexcept { oversamplingFactor = quality == Quality::High8x ? 8 : 4; }
+    float processSample(float sample, int channel) noexcept
+    {
+        if (channel < 0 || channel >= 2) return std::abs(sample);
+        auto& state = channels[static_cast<size_t>(channel)];
+        state.history[state.index] = sample;
+        state.index = (state.index + 1) & 15;
+        float peak = std::abs(sample);
+        const int phases = oversamplingFactor == 4 ? 4 : 8;
+        for (int phase = 1; phase < phases; ++phase)
+        {
+            const auto& coeff = phases == 4 ? coefficients4[static_cast<size_t>(phase)] : coefficients8[static_cast<size_t>(phase)];
+            float value = 0.0f;
+            for (int i = 0; i < TAPS_PER_PHASE; ++i)
+                value += state.history[static_cast<size_t>((state.index - TAPS_PER_PHASE + i + 16) & 15)] * coeff[static_cast<size_t>(i)];
+            peak = std::max(peak, std::abs(value));
+        }
+        state.peak = peak;
+        return peak;
+    }
+    float getTruePeak(int channel) const noexcept { return channel >= 0 && channel < 2 ? channels[static_cast<size_t>(channel)].peak : 0.0f; }
+    int getLatency() const noexcept { return TAPS_PER_PHASE / 2; }
+
+private:
+    struct Channel { std::array<float, 16> history{}; float peak = 0.0f; int index = 0; };
+    std::array<Channel, 2> channels{};
+    int oversamplingFactor = 4;
+    std::array<std::array<float, TAPS_PER_PHASE>, 4> coefficients4{};
+    std::array<std::array<float, TAPS_PER_PHASE>, 8> coefficients8{};
+    void initialize() noexcept
+    {
+        coefficients4[0] = {{0.0000f,-0.0015f,0.0076f,-0.0251f,0.0700f,-0.3045f,0.9722f,0.3045f,-0.0700f,0.0251f,-0.0076f,0.0015f}};
+        coefficients4[1] = {{-0.0005f,0.0027f,-0.0105f,0.0330f,-0.1125f,0.7265f,0.7265f,-0.1125f,0.0330f,-0.0105f,0.0027f,-0.0005f}};
+        coefficients4[2] = {{0.0015f,-0.0076f,0.0251f,-0.0700f,0.3045f,0.9722f,-0.3045f,0.0700f,-0.0251f,0.0076f,-0.0015f,0.0000f}};
+        coefficients4[3] = {{-0.0010f,0.0055f,-0.0178f,0.0514f,-0.1755f,0.8940f,0.5260f,-0.0900f,0.0280f,-0.0092f,0.0023f,-0.0003f}};
+        coefficients8[0] = {{0.0000f,-0.0008f,0.0038f,-0.0126f,0.0350f,-0.1523f,0.9861f,0.1523f,-0.0350f,0.0126f,-0.0038f,0.0008f}};
+        coefficients8[1] = {{-0.0002f,0.0011f,-0.0045f,0.0147f,-0.0503f,0.3245f,0.9352f,0.0650f,-0.0175f,0.0063f,-0.0019f,0.0003f}};
+        coefficients8[2] = {{-0.0004f,0.0020f,-0.0078f,0.0245f,-0.0837f,0.5405f,0.8415f,-0.0180f,0.0030f,0.0000f,-0.0005f,0.0000f}};
+        coefficients8[3] = coefficients4[1];
+        coefficients8[4] = {{0.0000f,-0.0005f,0.0000f,0.0030f,-0.0180f,0.8415f,0.5405f,-0.0837f,0.0245f,-0.0078f,0.0020f,-0.0004f}};
+        coefficients8[5] = {{0.0003f,-0.0019f,0.0063f,-0.0175f,0.0650f,0.9352f,0.3245f,-0.0503f,0.0147f,-0.0045f,0.0011f,-0.0002f}};
+        coefficients8[6] = {{0.0008f,-0.0038f,0.0126f,-0.0350f,0.1523f,0.9861f,0.1523f,-0.0350f,0.0126f,-0.0038f,0.0008f,0.0000f}};
+        coefficients8[7] = {{0.0005f,-0.0028f,0.0095f,-0.0270f,0.1050f,0.9650f,0.2380f,-0.0420f,0.0137f,-0.0042f,0.0010f,-0.0001f}};
+    }
+};
+
+inline float interpolateOversampledSidechain(float current, float next,
+                                              int phase, int factor) noexcept
+{
+    if (factor <= 1) return current;
+    const float position = static_cast<float>(std::clamp(phase, 0, factor - 1) + 1)
+                         / static_cast<float>(factor);
+    return current + (next - current) * position;
+}
+
+// Ring-buffer index arithmetic without a per-sample integer division. Both
+// take an index in [0, size) and an offset in [0, size), as every delay line
+// here does, and return exactly what `(index + size) % size` and
+// `(index + 1) % size` returned.
+inline int wrapRingIndex(int index, int size) noexcept { return index < 0 ? index + size : index; }
+inline int advanceRingIndex(int index, int size) noexcept { return index + 1 == size ? 0 : index + 1; }
+
+// A lookahead (ms) in whole host samples. The latency the host is told rounds it here (MultiCompDSP::lookaheadSamples),
+// and so does every delay that applies it: the host-rate delay lines, and Digital's mode-rate one, which delays by this
+// many host samples times its oversampling factor. Rounded at the mode rate instead, Digital's delay missed the report
+// by up to half a host sample at 2x and 4x.
+inline int lookaheadHostSamples(float milliseconds, double hostRate) noexcept
+{
+    return static_cast<int>(std::round(milliseconds * 0.001f * static_cast<float>(hostRate)));
+}
+
+// A ring-buffer delay line over a block, exactly as the per-sample loop
+//   line[write] = input[i]; output[i] = line[(write - delay) mod size]; advance write
+// leaves it: the first `delay` outputs come from the ring, the rest are the
+// block's own input `delay` samples back, and the block is written into the
+// ring afterwards. 0 <= delay < size; `output` may be null (history only) and
+// must not alias `input`.
+inline void delayLineBlock(float* line, int size, int& write, int delay,
+                           const float* input, float* output, int n) noexcept
+{
+    if (output != nullptr)
+    {
+        const int fromRing = std::min(delay, n);
+        int read = wrapRingIndex(write - delay, size);
+        for (int i = 0; i < fromRing; ++i)
+        {
+            output[i] = line[read];
+            read = advanceRingIndex(read, size);
+        }
+        if (n > fromRing)
+            std::memcpy(output + fromRing, input, static_cast<size_t>(n - fromRing) * sizeof(float));
+    }
+    // Only the last `size` samples of a long block survive in the ring.
+    const int skip = std::max(0, n - size);
+    int position = (write + skip) % size;
+    for (int i = skip; i < n;)
+    {
+        const int run = std::min(n - i, size - position);
+        std::memcpy(line + position, input + i, static_cast<size_t>(run) * sizeof(float));
+        i += run;
+        position = (position + run) % size;
+    }
+    write = (write + n) % size;
+}
+
+class MultiCompAntiAliasing
+{
+public:
+    void prepare(int maxBlock) noexcept
+    {
+        blockScratch.assign(static_cast<size_t>(MultiCompOversamplerWide::blockScratch(std::max(1, maxBlock))), 0.0f);
+        decimated.assign(static_cast<size_t>(std::max(1, maxBlock)), 0.0f);
+        MultiCompOversamplerWide maxOversampler;
+        maxOversampler.setFactor(4);
+        maxLatency = static_cast<int>(std::lround(maxOversampler.latency()));
+        compensation.assign(static_cast<size_t>(std::max(1, maxLatency + 1)), 0.0f);
+        writePosition = 0;
+        setFactor(factor);
+    }
+    void setFactor(int factorValue) noexcept
+    {
+        factor = factorValue;
+        oversamplingOff = factorValue <= 1;
+        use4x = factorValue >= 4;
+        oversampler.setFactor(oversamplingOff ? 1 : (use4x ? 4 : 2));
+        // The streaming decimators emit their odd polyphase sample, making the
+        // rendered delays 62.5 (2x) and 65.75 (4x) with the 127-tap wide stage
+        // (22.5 / 25.75 with the classic 47-tap set). Exact phase-rate padding
+        // brings both paths to the helper's integer 67-sample contract.
+        const int requiredPhaseDelay = oversamplingOff ? 0 : (use4x ? 5 : 1);
+        if (requiredPhaseDelay != phaseDelaySamples)
+        {
+            phaseDelaySamples = requiredPhaseDelay;
+            phaseDelay.fill(0.0f);
+            phaseWritePosition = 0;
+        }
+        compensationDelay = std::clamp(maxLatency - (oversamplingOff ? 0
+            : static_cast<int>(std::lround(oversampler.latency()))), 0, maxLatency);
+    }
+    void reset() noexcept
+    {
+        oversampler.reset();
+        std::fill(compensation.begin(), compensation.end(), 0.0f);
+        phaseDelay.fill(0.0f);
+        writePosition = 0;
+        phaseWritePosition = 0;
+    }
+    template <class Fn> float process(float input, Fn&& fn) noexcept
+    {
+        if (phaseDelaySamples <= 0)
+        {
+            const float wet = oversampler.processSample(input, static_cast<Fn&&>(fn));
+            return compensateBaseRate(wet);
+        }
+        const float wet = oversampler.processSample(input, [this, &fn](float sample) noexcept {
+            const float processed = fn(sample);
+            const float delayed = phaseDelay[static_cast<size_t>(phaseWritePosition)];
+            phaseDelay[static_cast<size_t>(phaseWritePosition)] = processed;
+            phaseWritePosition = advanceRingIndex(phaseWritePosition, phaseDelaySamples);
+            return delayed;
+        });
+        return compensateBaseRate(wet);
+    }
+    template <class Fn> float processSample(float input, Fn&& fn) noexcept { return process(input, static_cast<Fn&&>(fn)); }
+    // process() over a block, for a phase function that does not feed back
+    // into this oversampler: every sample up, fn(sample index, phase, value)
+    // on every phase, every sample down. Each filter sees the same values in
+    // the same order as per-sample process(). `phases` holds 4 * n floats.
+    template <class Fn> void processBlock(const float* input, float* output, int n,
+                                          float* phases, Fn&& fn) noexcept
+    {
+        const int phaseCount = oversampler.getFactor();
+        upsampleBlock(input, n, phases);
+        for (int i = 0; i < n; ++i)
+            for (int phase = 0; phase < phaseCount; ++phase)
+                phases[i * phaseCount + phase] = fn(i, phase, phases[i * phaseCount + phase]);
+        downsampleBlock(phases, n, output);
+    }
+    // upsampleSample() / downsampleSample() for n samples; phases interleaved,
+    // getFactor() per sample. downsampleBlock() consumes `phases`.
+    void upsampleBlock(const float* input, int n, float* phases) noexcept
+    {
+        oversampler.upsampleBlock(input, n, phases, blockScratch.data());
+    }
+    void downsampleBlock(float* phases, int n, float* output) noexcept
+    {
+        // downsampleSample()'s phase delay, phase by phase in order.
+        if (phaseDelaySamples > 0)
+            for (int k = 0; k < n * oversampler.getFactor(); ++k)
+            {
+                const float delayed = phaseDelay[static_cast<size_t>(phaseWritePosition)];
+                phaseDelay[static_cast<size_t>(phaseWritePosition)] = phases[k];
+                phaseWritePosition = advanceRingIndex(phaseWritePosition, phaseDelaySamples);
+                phases[k] = delayed;
+            }
+        // compensateBaseRate() for every sample: delayLineBlock() is the same ring a block at a time. At 1x the
+        // phases are the host-rate samples already.
+        if (oversampler.getFactor() == 1)
+        {
+            compensateBaseRateBlock(phases, output, n);
+            return;
+        }
+        oversampler.downsampleBlock(phases, n, decimated.data(), blockScratch.data());
+        compensateBaseRateBlock(decimated.data(), output, n);
+    }
+    int getFactor() const noexcept { return oversampler.getFactor(); }
+    void upsampleSample(float input, float* phases) noexcept
+    {
+        oversampler.upsampleSample(input, phases);
+    }
+    float downsampleSample(float* phases) noexcept
+    {
+        const int phaseCount = oversampler.getFactor();
+        if (phaseDelaySamples > 0)
+            for (int phase = 0; phase < phaseCount; ++phase)
+            {
+                const float delayed = phaseDelay[static_cast<size_t>(phaseWritePosition)];
+                phaseDelay[static_cast<size_t>(phaseWritePosition)] = phases[phase];
+                phaseWritePosition = advanceRingIndex(phaseWritePosition, phaseDelaySamples);
+                phases[phase] = delayed;
+            }
+        return compensateBaseRate(oversampler.downsampleSample(phases));
+    }
+    float latency() const noexcept { return static_cast<float>(maxLatency); }
+    bool isOversamplingOff() const noexcept { return oversamplingOff; }
+    // The native-calibrated host-rate controls (the OPTO detector feeds, the
+    // vintage FET link control) were measured against the classic 47-tap audio
+    // FIR, whose upsampling lead is 11.5 host samples at 2x and 13.25 at 4x.
+    // The wide 127-tap stage adds (127 - 47) / 4 = 20 host samples at either
+    // factor. MultiCompDSP delays those controls' host samples by this amount
+    // whenever oversampling is on, so their detector-to-audio timing is exactly
+    // the calibrated one and the wide stage is a linear-path change for them.
+    static constexpr int kHostSidechainAlignmentSamples
+        = (hbtaps::StageAwide::L - hbtaps::StageA::L) / 4;
+    static_assert(kHostSidechainAlignmentSamples * 4
+                      == hbtaps::StageAwide::L - hbtaps::StageA::L,
+                  "wide and classic stage lengths must differ by a multiple of four");
+    int hostSidechainAlignmentSamples() const noexcept
+    {
+        return oversamplingOff ? 0 : kHostSidechainAlignmentSamples;
+    }
+private:
+    float compensateBaseRate(float wet) noexcept
+    {
+        if (compensation.empty() || maxLatency <= 0) return wet;
+        const int size = static_cast<int>(compensation.size());
+        compensation[static_cast<size_t>(writePosition)] = wet;
+        const float result = compensation[static_cast<size_t>(wrapRingIndex(writePosition - compensationDelay, size))];
+        writePosition = advanceRingIndex(writePosition, size);
+        return compensationDelay > 0 ? result : wet;
+    }
+    // compensateBaseRate() for n samples; `output` must not alias `wet`.
+    void compensateBaseRateBlock(const float* wet, float* output, int n) noexcept
+    {
+        if (compensation.empty() || maxLatency <= 0)
+        {
+            std::memcpy(output, wet, static_cast<size_t>(n) * sizeof(float));
+            return;
+        }
+        delayLineBlock(compensation.data(), static_cast<int>(compensation.size()), writePosition,
+                       compensationDelay, wet, output, n);
+    }
+    MultiCompOversamplerWide oversampler;   // 127-tap stage A: flat to 20 kHz at 44.1 kHz
+    bool oversamplingOff = false, use4x = false;
+    std::vector<float> compensation;
+    int maxLatency = 0, writePosition = 0, factor = 2;
+    int compensationDelay = 0;   // maxLatency minus the current factor's FIR latency (setFactor)
+    std::vector<float> blockScratch;   // processBlock()
+    std::vector<float> decimated;      // downsampleBlock(): the host-rate samples before compensateBaseRateBlock()
+    std::array<float, 5> phaseDelay{};
+    int phaseDelaySamples = 1, phaseWritePosition = 0;
+};
+
+// An upsample-only detector feed whose phases only some modes read (the BUS
+// sidechain, the OPTO detector feeds). While no one reads it, idle() records
+// the host sample instead of filtering it; the next upsampleSample() or factor
+// change first replays the record, so the filter history, and every phase it
+// hands out afterwards, is byte-identical to one that ran throughout.
+//
+// The record holds the last kRecord inputs filtered at a factor of 2 or 4 (at
+// factor 1 the upsampler keeps no history). A longer idle spell replays only
+// those: the halfband FIRs read at most 63 host samples back (the 127-tap
+// stage), and at 4x the inner stage only reaches the last few outer outputs,
+// so the replay rewrites every tap a later output reads. A stage that a factor
+// does not step (both at 1x, the 4x inner stage at 2x) restarts from rest when
+// the factor next steps it (PolyphaseOversampler::setFactor), as it does in an
+// upsampler that runs throughout.
+template <class Upsampler>
+class LazyUpsampler
+{
+public:
+    void prepare(int maxBlock) noexcept { upsampler.prepare(maxBlock); clearRecord(); }
+    void reset() noexcept { upsampler.reset(); clearRecord(); }
+    void setFactor(int factor) noexcept
+    {
+        if (normalised(factor) != upsampler.getFactor()) catchUp();
+        upsampler.setFactor(factor);
+    }
+    void upsampleSample(float input, float* phases) noexcept
+    {
+        catchUp();
+        upsampler.upsampleSample(input, phases);
+    }
+    // upsampleSample() for n samples (MultiCompOversampler only); room for
+    // `maxBlock` samples is reserved by reserveBlock().
+    void reserveBlock(int maxBlock) { blockScratch.assign(static_cast<size_t>(Upsampler::blockScratch(std::max(1, maxBlock))), 0.0f); }
+    void upsampleBlock(const float* input, int n, float* phases) noexcept
+    {
+        catchUp();
+        upsampler.upsampleBlock(input, n, phases, blockScratch.data());
+    }
+    // upsampleSample() for n samples through an upsampler that keeps its own
+    // block scratch (MultiCompAntiAliasing).
+    void upsampleOwnBlock(const float* input, int n, float* phases) noexcept
+    {
+        catchUp();
+        upsampler.upsampleBlock(input, n, phases);
+    }
+    void idle(float input) noexcept
+    {
+        if (upsampler.getFactor() == 1) return;
+        record[static_cast<size_t>(recordWrite)] = input;
+        recordWrite = (recordWrite + 1) & kRecordMask;
+        if (recorded < kRecord) ++recorded;
+    }
+    // idle() for each of n samples.
+    void idleBlock(const float* input, int n) noexcept
+    {
+        if (upsampler.getFactor() == 1 || n <= 0) return;
+        const int skip = std::max(0, n - kRecord);   // only the last kRecord survive
+        int position = (recordWrite + skip) & kRecordMask;
+        for (int i = skip; i < n; ++i)
+        {
+            record[static_cast<size_t>(position)] = input[i];
+            position = (position + 1) & kRecordMask;
+        }
+        recordWrite = position;
+        recorded = std::min(recorded + n, kRecord);
+    }
+
+private:
+    static constexpr int kRecord = 128;
+    static constexpr int kRecordMask = kRecord - 1;
+    static int normalised(int factor) noexcept { return factor == 4 ? 4 : factor == 2 ? 2 : 1; }
+    void clearRecord() noexcept { recorded = 0; }
+    void catchUp() noexcept
+    {
+        if (recorded == 0) return;
+        float phases[4];
+        for (int k = recorded; k > 0; --k)
+            upsampler.upsampleSample(record[static_cast<size_t>((recordWrite - k) & kRecordMask)], phases);
+        clearRecord();
+    }
+
+    Upsampler upsampler;
+    std::vector<float> blockScratch;   // upsampleBlock()
+    std::array<float, kRecord> record{};
+    int recordWrite = 0, recorded = 0;
+};
+
+class MultiCompLookupTables
+{
+public:
+    static constexpr int kAllButtonsSize = 512;
+    void prepare() noexcept
+    {
+        constexpr float points[][2] = {{0.0f,0.0f},{1.0f,0.9f},{2.0f,1.9f},{4.0f,3.85f},{6.0f,5.8f},
+                                       {8.0f,7.8f},{10.0f,9.8f},{15.0f,14.8f},{20.0f,19.7f},{30.0f,29.5f}};
+        for (int i = 0; i < kAllButtonsSize; ++i)
+        {
+            const float over = 30.0f * static_cast<float>(i) / static_cast<float>(kAllButtonsSize - 1);
+            modern[static_cast<size_t>(i)] = over < 1.0f ? over * (0.7f + over * 0.28f) : 0.98f + (over - 1.0f) * 0.99f;
+            modern[static_cast<size_t>(i)] = std::min(modern[static_cast<size_t>(i)], 30.0f);
+            float measuredReduction = 0.0f;
+            for (int p = 0; p < 9; ++p)
+                if (over >= points[p][0] && over <= points[p + 1][0])
+                {
+                    const float t = (over - points[p][0]) / (points[p + 1][0] - points[p][0]);
+                    measuredReduction = points[p][1] + t * (points[p + 1][1] - points[p][1]);
+                    break;
+                }
+            measured[static_cast<size_t>(i)] = over > 30.0f ? 29.5f : measuredReduction;
+        }
+    }
+
+    float getAllButtonsReduction(float overThresholdDb, bool measuredCurve) const noexcept
+    {
+        // std::clamp passes NaN through; this form sends it to 0 dB and is
+        // identical to the clamp for every other value.
+        const float over = overThresholdDb >= 0.0f ? std::min(overThresholdDb, 30.0f) : 0.0f;
+        const float index = over * static_cast<float>(kAllButtonsSize - 1) / 30.0f;
+        const int i0 = static_cast<int>(index), i1 = std::min(i0 + 1, kAllButtonsSize - 1);
+        const float fraction = index - static_cast<float>(i0);
+        const auto& curve = measuredCurve ? measured : modern;
+        return curve[static_cast<size_t>(i0)] + fraction * (curve[static_cast<size_t>(i1)] - curve[static_cast<size_t>(i0)]);
+    }
+
+private:
+    std::array<float, kAllButtonsSize> modern{}, measured{};
+};
+
+inline float applyCoreDistortion(float input, DistortionType type, float amount) noexcept
+{
+    if (type == DistortionType::Off || amount <= 0.0f) return input;
+    float wet = input;
+    if (type == DistortionType::Soft) wet = std::tanh(input * (1.0f + amount));
+    else if (type == DistortionType::Hard)
+    {
+        float threshold = std::min(0.7f / (0.5f + amount * 0.5f), 0.95f);
+        const float negThreshold = threshold * 0.9f;
+        if (wet > threshold) { const float diff = wet - threshold, n = diff / (1.0f - threshold); wet = threshold + diff / (1.0f + n * n); }
+        else if (wet < -negThreshold) { const float diff = std::abs(wet) - negThreshold, n = diff / (1.0f - negThreshold); wet = -negThreshold - diff / (1.0f + n * n); }
+    }
+    else if (type == DistortionType::Clip)
+    {
+        const float limit = 1.0f / (0.5f + amount * 0.5f);
+        wet = std::clamp(input, -limit, limit);
+    }
+    return wet;
+}
+
+} // namespace duskaudio

@@ -1,0 +1,798 @@
+#pragma once
+
+#include "../core/MultiCompDSP.hpp"
+#include "../core/MultiCompVcaLaw.hpp"
+#include "../core/MultiCompPresets.hpp"
+#include "../../shared-daf/ui/DuskValueText.hpp"
+#include <algorithm>
+#include <array>
+#include <cctype>
+#include <charconv>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <locale>
+#include <sstream>
+#include <string>
+#include <string_view>
+#include <utility>
+
+namespace multicompp
+{
+using CoreParameter = duskaudio::MultiCompDSP::Parameter;
+struct Param
+{
+    const char* id; const char* name; const char* unit;
+    float min, max, def; CoreParameter core; bool integer;
+    float interval = 0.0f, skew = 1.0f;
+    float linearMidpoint = 0.0f; // Optional two-segment taper, at host position 0.5.
+};
+struct BandParam
+{
+    const char* id; const char* name; const char* unit;
+    float min, max, def; duskaudio::MultiCompDSP::MultibandParameter core; bool integer;
+    float interval = 0.0f, skew = 1.0f;
+    float linearMidpoint = 0.0f;
+};
+
+enum class ParamId : uint32_t {
+ Mode, Bypass, StereoLink, Mix, SidechainHP, TruePeakEnable, TruePeakQuality,
+ ExternalSidechain, AutoMakeup, Distortion, DistortionAmount, Oversampling, GlobalLookahead,
+ OptoPeakReduction, OptoGain, OptoLimit, FetInput, FetOutput, FetAttack, FetRelease,
+ FetRatio, FetCurve, FetTransient, FetThreshold, VcaThreshold, VcaRatio, VcaAttack,
+ VcaRelease, VcaOutput, VcaOverEasy, VcaClassicDetector, BusThreshold, BusRatio,
+ BusAttack, BusRelease, BusMakeup, BusMix, StudioVcaThreshold, StudioVcaRatio,
+ StudioVcaAttack, StudioVcaRelease, StudioVcaOutput, DigitalThreshold, DigitalRatio,
+ DigitalKnee, DigitalAttack, DigitalRelease, DigitalLookahead, DigitalMix, DigitalOutput,
+ DigitalAdaptive, Crossover1, Crossover2, Crossover3, GlobalSidechainListen,
+ MbMix, MbOutput, NoiseEnable, ScLowFreq, ScLowGain, ScHighFreq,
+ ScHighGain, StereoLinkMode, Count,
+ // Append after the original five meter IDs; existing automation IDs stay fixed.
+ BusHeadroom = 100, BusFadeRate, BusFade, OptoMeter, FetMeter,
+ StudioVcaInput, StudioVcaAutoRelease, StudioVcaMeter,
+ FetBlueRatio, FetBlueScFilter, FetBlueHeadroom
+};
+
+// Single source of truth for host symbols, physical ranges/defaults, JUCE taper
+// metadata, UI mapping and state keys. The retired studio_vca_mix plus the
+// JUCE-inert envelope_curve and saturation_mode controls are absent.
+// FET Attack keeps JUCE's skew but not its 0.01 ms interval (2026-10-27): under the
+// 0.3 skew that snap put the bottom 5.5 % of the knob's travel on 0.02 ms, the
+// position FET BLUE's SLO detent reads, and left the slow end in coarse steps
+// (position 0 -> 0.0675 -> 0.0826). Continuous, the detent is the stop alone.
+// FET Attack and FET Release keep their legacy ranges (0.02..80 under that skew, 50..1100) for the sessions and
+// automation that hold them, but no unit: those numbers place the 1-7 dials (fetTimingDialValue), they are not times.
+inline constexpr std::array<Param, 63> kParams = {{
+ {"mode","Mode","",0,7,0,CoreParameter::Mode,true}, {"bypass","Bypass","",0,1,0,CoreParameter::Bypass,true},
+ {"stereo_link","Stereo Link","%",0,100,100,CoreParameter::StereoLink,false}, {"mix","Mix","%",0,100,100,CoreParameter::Mix,false},
+ {"sidechain_hp","SC HP Filter","Hz",0,500,0,CoreParameter::SidechainHP,false,1,0.5f}, {"true_peak_enable","True Peak","",0,1,0,CoreParameter::TruePeakEnable,true},
+ {"true_peak_quality","TP Quality","",0,1,0,CoreParameter::TruePeakQuality,true}, {"sidechain_enable","External Sidechain","",0,1,0,CoreParameter::ExternalSidechain,true},
+ {"auto_makeup","Auto Makeup","",0,1,0,CoreParameter::AutoMakeup,true}, {"distortion_type","Distortion","",0,3,0,CoreParameter::Distortion,true},
+ {"distortion_amount","Distortion Amt","%",0,100,50,CoreParameter::DistortionAmount,false}, {"oversampling","Oversampling","",0,2,1,CoreParameter::Oversampling,true},
+ {"global_lookahead","Lookahead","ms",0,10,0,CoreParameter::GlobalLookahead,false},
+ {"opto_peak_reduction","Opto Peak Reduction","%",0,100,0,CoreParameter::OptoPeakReduction,false}, {"opto_gain","Opto Gain","%",0,100,duskaudio::kOptoGainUnityKnob,CoreParameter::OptoGain,false}, {"opto_limit","Opto Limit","",0,1,0,CoreParameter::OptoLimit,true},
+ {"fet_input","FET Input","dB",-20,40,0,CoreParameter::FetInput,false}, {"fet_output","FET Output","dB",-20,20,0,CoreParameter::FetOutput,false}, {"fet_attack","FET Attack","",duskaudio::kFetAttackMinMs,duskaudio::kFetAttackMaxMs,0.2f,CoreParameter::FetAttack,false,0.0f,duskaudio::kFetAttackSkew}, {"fet_release","FET Release","",duskaudio::kFetReleaseMinMs,duskaudio::kFetReleaseMaxMs,400,CoreParameter::FetRelease,false}, {"fet_ratio","FET Ratio",":1",0,4,0,CoreParameter::FetRatio,true}, {"fet_curve_mode","FET Curve","",0,1,0,CoreParameter::FetCurve,true}, {"fet_transient","FET Transient","%",0,100,0,CoreParameter::FetTransient,false}, {"fet_threshold","FET Threshold","dB",-60,0,-10,CoreParameter::FetThreshold,false},
+ {"vca_threshold","VCA Threshold","dB",duskaudio::vcaLaw::kThresholdMinDb,duskaudio::vcaLaw::kThresholdMaxDb,duskaudio::vcaLaw::kThresholdDefaultDb,CoreParameter::VcaThreshold,false}, {"vca_compression","VCA Compression","",duskaudio::vcaLaw::kCompressLaw.front().position,duskaudio::vcaLaw::kCompressLaw.back().position,duskaudio::vcaLaw::kCompressDefaultPosition,CoreParameter::VcaRatio,false}, {"vca_attack","VCA Attack","ms",0.1f,50,1,CoreParameter::VcaAttack,false}, {"vca_release","VCA Release","ms",10,5000,100,CoreParameter::VcaRelease,false}, {"vca_output","VCA Output","dB",-20,20,0,CoreParameter::VcaOutput,false}, {"vca_overeasy","VCA Soft Knee","",0,1,0,CoreParameter::VcaOverEasy,true}, {"vca_detector_mode","VCA Detector","",0,1,0,CoreParameter::VcaClassicDetector,true},
+ {"bus_threshold","Bus Threshold","dB",-30,15,0,CoreParameter::BusThreshold,false}, {"bus_ratio","Bus Ratio",":1",0,2,0,CoreParameter::BusRatio,true}, {"bus_attack","Bus Attack","",0,5,2,CoreParameter::BusAttack,true}, {"bus_release","Bus Release","",0,4,1,CoreParameter::BusRelease,true}, {"bus_makeup","Bus Makeup","dB",0,20,0,CoreParameter::BusMakeup,false}, {"bus_mix","Bus Mix","%",0,100,100,CoreParameter::BusMix,false},
+ {"studio_vca_threshold","Studio VCA Threshold","dB",-50,20,-10,CoreParameter::StudioVcaThreshold,false}, {"studio_vca_ratio","Studio VCA Ratio",":1",1,50,1.5f,CoreParameter::StudioVcaRatio,false}, {"studio_vca_attack","Studio VCA Attack","ms",0.1805f,75,7.2305f,CoreParameter::StudioVcaAttack,false}, {"studio_vca_release","Studio VCA Release","ms",100,4000,1000,CoreParameter::StudioVcaRelease,false}, {"studio_vca_output","Studio VCA Make Up","dB",-20,40,0,CoreParameter::StudioVcaOutput,false},
+ {"digital_threshold","Digital Threshold","dB",-60,0,-20,CoreParameter::DigitalThreshold,false}, {"digital_ratio","Digital Ratio",":1",1,100,4,CoreParameter::DigitalRatio,false,0.1f,0.4f}, {"digital_knee","Digital Knee","dB",0,20,6,CoreParameter::DigitalKnee,false}, {"digital_attack","Digital Attack","ms",0.01f,500,10,CoreParameter::DigitalAttack,false,0.01f,0.3f}, {"digital_release","Digital Release","ms",1,5000,100,CoreParameter::DigitalRelease,false,1,0.4f}, {"digital_lookahead","Digital Lookahead","ms",0,10,0,CoreParameter::DigitalLookahead,false}, {"digital_mix","Digital Mix","%",0,100,100,CoreParameter::DigitalMix,false}, {"digital_output","Digital Output","dB",-24,24,0,CoreParameter::DigitalOutput,false}, {"digital_adaptive","Digital Adaptive Release","",0,1,0,CoreParameter::DigitalAdaptive,true},
+ {"mb_crossover_1","MB Crossover 1","Hz",20,500,200,CoreParameter::Crossover1,false,1,0.4f}, {"mb_crossover_2","MB Crossover 2","Hz",200,5000,2000,CoreParameter::Crossover2,false,1,0.4f}, {"mb_crossover_3","MB Crossover 3","Hz",2000,16000,8000,CoreParameter::Crossover3,false,1,0.4f},
+ {"global_sidechain_listen","SC Listen","",0,1,0,CoreParameter::GlobalSidechainListen,true},
+ {"mb_mix","MB Mix","%",0,100,100,CoreParameter::MbMix,false},
+ {"mb_output","MB Output","dB",-24,24,0,CoreParameter::MbOutput,false},
+ {"noise_enable","Analog Noise","",0,1,0,CoreParameter::NoiseEnable,true},
+ {"sc_low_freq","SC Low Freq","Hz",60,500,100,CoreParameter::ScLowFreq,false,1,0.5f},
+ {"sc_low_gain","SC Low Gain","dB",-12,12,0,CoreParameter::ScLowGain,false},
+ {"sc_high_freq","SC High Freq","Hz",2000,16000,8000,CoreParameter::ScHighFreq,false,10,0.5f},
+ {"sc_high_gain","SC High Gain","dB",-12,12,0,CoreParameter::ScHighGain,false},
+ {"stereo_link_mode","Link Mode","",0,2,0,CoreParameter::StereoLinkMode,true}
+}};
+inline constexpr int kParamCount = static_cast<int>(kParams.size());
+
+// Stored and automatable for the sessions that saved them, but no mode reads
+// them (the VCA face's attack, release, knee and detector are fixed), so they
+// are hidden from host parameter lists.
+inline constexpr bool isInertParameter(uint32_t parameter) noexcept
+{
+    return parameter == static_cast<uint32_t>(ParamId::VcaAttack)
+        || parameter == static_cast<uint32_t>(ParamId::VcaRelease)
+        || parameter == static_cast<uint32_t>(ParamId::VcaOverEasy)
+        || parameter == static_cast<uint32_t>(ParamId::VcaClassicDetector);
+}
+
+inline bool usesOptoReferenceDisplay(uint32_t parameter) noexcept
+{
+    return parameter == static_cast<uint32_t>(ParamId::OptoPeakReduction)
+        || parameter == static_cast<uint32_t>(ParamId::OptoGain);
+}
+
+// UADx LA-2A control readout measured through the AU at 0.05-normalised
+// intervals. The central 5..95 region is affine; endpoints clamp. This is a
+// display conversion only: host values, state and automation remain 0..100.
+inline constexpr float kOptoReadoutHostOffset = 5.5555556f;
+inline constexpr float kOptoReadoutScale = 1.125f;
+
+inline float optoReferenceDisplayValue(float hostValue) noexcept
+{
+    return std::clamp((hostValue - kOptoReadoutHostOffset) * kOptoReadoutScale, 0.0f, 100.0f);
+}
+
+// Host-typed Opto display text ("0".."100", classic locale, nothing before or
+// after the number) to a display value. Floating-point std::from_chars would be
+// the natural parser, but libc++ marks it unavailable below the macOS
+// deployment target (see the state serialization note below).
+inline bool parseOptoDisplayText(const char* text, float& display)
+{
+    if (text == nullptr) return false;
+    std::istringstream in{std::string(text)};
+    in.imbue(std::locale::classic());
+    float parsed = 0.0f;
+    in >> std::noskipws >> parsed;
+    if (in.fail() || in.peek() != std::char_traits<char>::eof()
+        || !std::isfinite(parsed) || parsed < 0.0f || parsed > 100.0f)
+        return false;
+    display = parsed;
+    return true;
+}
+
+inline float optoReferenceHostValue(float displayValue) noexcept
+{
+    const float display = std::clamp(displayValue, 0.0f, 100.0f);
+    if (display <= 0.0f) return 0.0f;
+    if (display >= 100.0f) return 100.0f;
+    // Between the 5 and 95 readouts, invert the displayed integer anchors, not
+    // the unrounded affine line: typing the UAD readout 33 or 72 selects the
+    // measured .35 or .70 position exactly. Host automation itself remains in
+    // the 0..100 domain, and the readouts 0 and 100 stay mapped to 0 / 100 above.
+    constexpr std::array<float, 18> displayed{{
+        0, 5, 11, 16, 22, 28, 33, 39, 44, 50,
+        56, 61, 67, 72, 78, 84, 89, 95}};
+    constexpr std::array<float, 18> host{{
+        5, 10, 15, 20, 25, 30, 35, 40, 45, 50,
+        55, 60, 65, 70, 75, 80, 85, 90}};
+    // Outside the 5 and 95 anchors the readout is the clamped affine line, and
+    // its exact inverse meets both anchors; interpolating towards the clamped
+    // 0 / 100 readouts there read typed 1 back as 0 and 99 as 100.
+    if (display < displayed[1] || display > displayed.back())
+        return display / kOptoReadoutScale + kOptoReadoutHostOffset;
+    size_t upper = 1;
+    while (display > displayed[upper]) ++upper;   // ends by 95: display <= displayed.back()
+    const float fraction = (display - displayed[upper - 1])
+        / (displayed[upper] - displayed[upper - 1]);
+    return host[upper - 1] + fraction * (host[upper] - host[upper - 1]);
+}
+static_assert(kParamCount == static_cast<int>(ParamId::Count));
+static_assert(kParamCount == 63);
+#define MC_ASSERT_PARAM(name) \
+    static_assert(kParams[static_cast<size_t>(ParamId::name)].core == CoreParameter::name, \
+                  "kParams order does not match ParamId::" #name);
+MC_ASSERT_PARAM(Mode) MC_ASSERT_PARAM(Bypass) MC_ASSERT_PARAM(StereoLink) MC_ASSERT_PARAM(Mix)
+MC_ASSERT_PARAM(SidechainHP) MC_ASSERT_PARAM(TruePeakEnable) MC_ASSERT_PARAM(TruePeakQuality)
+MC_ASSERT_PARAM(ExternalSidechain) MC_ASSERT_PARAM(AutoMakeup) MC_ASSERT_PARAM(Distortion)
+MC_ASSERT_PARAM(DistortionAmount) MC_ASSERT_PARAM(Oversampling) MC_ASSERT_PARAM(GlobalLookahead)
+MC_ASSERT_PARAM(OptoPeakReduction) MC_ASSERT_PARAM(OptoGain) MC_ASSERT_PARAM(OptoLimit)
+MC_ASSERT_PARAM(FetInput) MC_ASSERT_PARAM(FetOutput) MC_ASSERT_PARAM(FetAttack) MC_ASSERT_PARAM(FetRelease)
+MC_ASSERT_PARAM(FetRatio) MC_ASSERT_PARAM(FetCurve) MC_ASSERT_PARAM(FetTransient) MC_ASSERT_PARAM(FetThreshold)
+MC_ASSERT_PARAM(VcaThreshold) MC_ASSERT_PARAM(VcaRatio) MC_ASSERT_PARAM(VcaAttack) MC_ASSERT_PARAM(VcaRelease)
+MC_ASSERT_PARAM(VcaOutput) MC_ASSERT_PARAM(VcaOverEasy) MC_ASSERT_PARAM(VcaClassicDetector)
+MC_ASSERT_PARAM(BusThreshold) MC_ASSERT_PARAM(BusRatio) MC_ASSERT_PARAM(BusAttack) MC_ASSERT_PARAM(BusRelease)
+MC_ASSERT_PARAM(BusMakeup) MC_ASSERT_PARAM(BusMix) MC_ASSERT_PARAM(StudioVcaThreshold)
+MC_ASSERT_PARAM(StudioVcaRatio) MC_ASSERT_PARAM(StudioVcaAttack) MC_ASSERT_PARAM(StudioVcaRelease)
+MC_ASSERT_PARAM(StudioVcaOutput) MC_ASSERT_PARAM(DigitalThreshold) MC_ASSERT_PARAM(DigitalRatio)
+MC_ASSERT_PARAM(DigitalKnee) MC_ASSERT_PARAM(DigitalAttack) MC_ASSERT_PARAM(DigitalRelease)
+MC_ASSERT_PARAM(DigitalLookahead) MC_ASSERT_PARAM(DigitalMix) MC_ASSERT_PARAM(DigitalOutput)
+MC_ASSERT_PARAM(DigitalAdaptive) MC_ASSERT_PARAM(Crossover1) MC_ASSERT_PARAM(Crossover2)
+MC_ASSERT_PARAM(Crossover3) MC_ASSERT_PARAM(GlobalSidechainListen) MC_ASSERT_PARAM(MbMix)
+MC_ASSERT_PARAM(MbOutput) MC_ASSERT_PARAM(NoiseEnable) MC_ASSERT_PARAM(ScLowFreq)
+MC_ASSERT_PARAM(ScLowGain) MC_ASSERT_PARAM(ScHighFreq) MC_ASSERT_PARAM(ScHighGain)
+MC_ASSERT_PARAM(StereoLinkMode)
+#undef MC_ASSERT_PARAM
+inline constexpr int kBandParamCount = 8 * duskaudio::kMultiCompBands;
+inline constexpr int kBandBase = kParamCount;
+inline constexpr int kMeterMaster = kBandBase + kBandParamCount;
+inline constexpr int kMeterBand0 = kMeterMaster + 1;
+inline constexpr int kMeterBand1 = kMeterMaster + 2;
+inline constexpr int kMeterBand2 = kMeterMaster + 3;
+inline constexpr int kMeterBand3 = kMeterMaster + 4;
+inline constexpr int kExtensionBase = kMeterMaster + 5;
+inline constexpr std::array<Param, 11> kExtensionParams{{
+ {"bus_headroom", "Bus Headroom", "dB", 0, 6, 3, CoreParameter::BusHeadroom, true},
+ {"bus_fade_rate", "Bus Fade Rate", "s", 1, 60, 24.8f, CoreParameter::BusFadeRate, false, 0.1f, 0.5f, 6.0f},
+ {"bus_fade", "Bus Auto Fade", "", 0, 1, 0, CoreParameter::BusFade, true},
+ {"opto_meter", "Opto Meter", "", 0, 2, 0, CoreParameter::None, true},
+ {"fet_meter", "FET Meter", "", 0, 2, 0, CoreParameter::None, true},
+ {"studio_vca_input", "Studio VCA Input", "dB", -18, 18, 0, CoreParameter::StudioVcaInput, false},
+ {"studio_vca_auto_release", "Studio VCA Auto Release", "", 0, 1, 1, CoreParameter::StudioVcaAutoRelease, true},
+ {"studio_vca_meter", "Studio VCA Meter", "", 0, 1, 0, CoreParameter::None, true},
+ // FET BLUE's own controls (it shares Input, Output, Attack and Release with FET BLACK): Ratio in the reference's
+ // order (kFetBlueRatios; 2:1 its default), the side-chain filter, Headroom 4..28 dB (16 its default).
+ {"fet_blue_ratio", "FET Blue Ratio", "", 0, 10, 1, CoreParameter::FetBlueRatio, true},
+ {"fet_blue_sc_filter", "FET Blue SC Filter", "", 0, 1, 0, CoreParameter::FetBlueScFilter, true},
+ {"fet_blue_headroom", "FET Blue Headroom", "dB", 0, 6, 3, CoreParameter::FetBlueHeadroom, true}
+}};
+inline constexpr int kTotalParamCount = kExtensionBase + static_cast<int>(kExtensionParams.size());
+inline constexpr int kVintageMeterBase = static_cast<int>(ParamId::OptoMeter);
+inline constexpr int kStudioVcaExtensionBase = static_cast<int>(ParamId::StudioVcaInput);
+inline constexpr int kFetBlueExtensionBase = static_cast<int>(ParamId::FetBlueRatio);
+static_assert(kExtensionBase == static_cast<int>(ParamId::BusHeadroom));
+inline constexpr bool isControlParameter(int index) noexcept
+{
+    return index >= 0 && (index < kMeterMaster || (index >= kExtensionBase && index < kTotalParamCount));
+}
+inline constexpr bool isDisplayParameter(int index) noexcept
+{
+    return index >= kExtensionBase && index < kTotalParamCount
+        && kExtensionParams[static_cast<size_t>(index - kExtensionBase)].core == CoreParameter::None;
+}
+inline constexpr int nextControlParameter(int index) noexcept
+{
+    return index + 1 == kMeterMaster ? kExtensionBase : index + 1;
+}
+inline constexpr BandParam bandParam(int field, int band)
+{
+    const char* names[8] = {"Threshold", "Ratio", "Attack", "Release", "Makeup", "Bypass", "Solo", "Enabled"};
+    const char* units[8] = {"dB", ":1", "ms", "ms", "dB", "", "", ""};
+    (void)band;
+    switch (field)
+    {
+        case 0: return {"mb_threshold", names[field], units[field], -60, 0, -20, duskaudio::MultiCompDSP::MultibandParameter::Threshold, false};
+        case 1: return {"mb_ratio", names[field], units[field], 1, 20, 4, duskaudio::MultiCompDSP::MultibandParameter::Ratio, false, 0.1f, 0.5f};
+        case 2: return {"mb_attack", names[field], units[field], 0.1f, 100, 10, duskaudio::MultiCompDSP::MultibandParameter::Attack, false, 0.1f, 0.4f};
+        case 3: return {"mb_release", names[field], units[field], 10, 1000, 100, duskaudio::MultiCompDSP::MultibandParameter::Release, false, 1, 0.4f};
+        case 4: return {"mb_makeup", names[field], units[field], -12, 12, 0, duskaudio::MultiCompDSP::MultibandParameter::Makeup, false};
+        case 5: return {"mb_bypass", names[field], units[field], 0, 1, 0, duskaudio::MultiCompDSP::MultibandParameter::Bypass, true};
+        case 6: return {"mb_solo", names[field], units[field], 0, 1, 0, duskaudio::MultiCompDSP::MultibandParameter::Solo, true};
+        default:return {"mb_enabled", names[field], units[field], 0, 1, 1, duskaudio::MultiCompDSP::MultibandParameter::Enabled, true};
+    }
+}
+
+template <class GlobalFn, class BandFn>
+decltype(auto) resolveParameter(int index, GlobalFn&& globalFn, BandFn&& bandFn)
+{
+    if (index >= kExtensionBase)
+        return std::forward<GlobalFn>(globalFn)(kExtensionParams[static_cast<size_t>(index - kExtensionBase)]);
+    if (index < kParamCount)
+        return std::forward<GlobalFn>(globalFn)(kParams[static_cast<size_t>(index)]);
+
+    const int relative = index - kBandBase;
+    const int band = relative / 8;
+    const int field = relative % 8;
+    return std::forward<BandFn>(bandFn)(bandParam(field, band), band);
+}
+
+template <class Descriptor>
+inline bool hasSkew(const Descriptor& d) noexcept { return d.skew != 1.0f; }
+
+template <class Descriptor>
+inline float hostMin(const Descriptor& d) noexcept { return hasSkew(d) ? 0.0f : d.min; }
+
+template <class Descriptor>
+inline float hostMax(const Descriptor& d) noexcept { return hasSkew(d) ? 1.0f : d.max; }
+
+template <class Descriptor>
+inline float snapPlainValue(const Descriptor& d, float value) noexcept
+{
+    value = std::clamp(value, d.min, d.max);
+    if (d.interval > 0.0f)
+        value = d.min + d.interval * std::floor((value - d.min) / d.interval + 0.5f);
+    return std::clamp(value, d.min, d.max);
+}
+
+template <class Descriptor>
+inline float plainToHost(const Descriptor& d, float value) noexcept
+{
+    value = snapPlainValue(d, value);
+    if (!hasSkew(d)) return value;
+    if (d.linearMidpoint != 0.0f)
+        return value <= d.linearMidpoint
+            ? 0.5f * (value - d.min) / (d.linearMidpoint - d.min)
+            : 0.5f + 0.5f * (value - d.linearMidpoint) / (d.max - d.linearMidpoint);
+    const float proportion = (value - d.min) / (d.max - d.min);
+    return std::pow(proportion, d.skew);
+}
+
+template <class Descriptor>
+inline float hostToPlain(const Descriptor& d, float value) noexcept
+{
+    value = std::clamp(value, hostMin(d), hostMax(d));
+    if (!hasSkew(d)) return snapPlainValue(d, value);
+    if (d.linearMidpoint != 0.0f)
+        return snapPlainValue(d, value <= 0.5f
+            ? d.min + 2.0f * value * (d.linearMidpoint - d.min)
+            : d.linearMidpoint + 2.0f * (value - 0.5f) * (d.max - d.linearMidpoint));
+    const float proportion = std::pow(value, 1.0f / d.skew);
+    return snapPlainValue(d, d.min + (d.max - d.min) * proportion);
+}
+
+template <class Descriptor>
+inline float hostDefault(const Descriptor& d) noexcept { return plainToHost(d, d.def); }
+
+inline constexpr const char* const kModes[8] = {"Opto","FET Black","VCA","Bus","FET Blue","Studio VCA","Digital","Multiband"};
+inline constexpr const char* const kOnOff[2] = {"Off","On"};
+inline constexpr const char* const kRatios[5] = {"4:1","8:1","12:1","20:1","All"};
+inline constexpr const char* const kFetBlueRatios[11] = {"None","2:1","4:1","8:1","20:1","2:1+4:1","4:1+8:1",
+                                                         "8:1+20:1","2:1+8:1","4:1+20:1","2:1+20:1"};
+inline constexpr const char* const kOptoMeterModes[3] = {"GR", "Output +10", "Output +4"};
+inline constexpr const char* const kFetMeterModes[3] = {"GR", "Output +8", "Output +4"};
+inline constexpr const char* const kOversampling[3] = {"Off","2x","4x"};
+inline constexpr const char* const kDistortion[4] = {"Off","Soft","Hard","Clip"};
+inline constexpr const char* const kTruePeakQuality[2] = {"4x (Standard)","8x (High)"};
+inline constexpr const char* const kFetCurve[2] = {"Modern", "Measured"};
+inline constexpr const char* const kVcaDetector[2] = {"Adaptive", "Classic"};
+inline constexpr const char* const kBusHeadroom[7] = {"4 dB", "8 dB", "12 dB", "16 dB", "20 dB", "24 dB", "28 dB"};
+inline constexpr const char* const kBusRatios[3] = {"2:1", "4:1", "10:1"};
+inline constexpr const char* const kBusAttack[6] = {"0.1ms", "0.3ms", "1ms", "3ms", "10ms", "30ms"};
+inline constexpr const char* const kBusRelease[5] = {"0.1s", "0.3s", "0.6s", "1.2s", "Auto"};
+inline constexpr const char* const kLinkMode[3] = {"Stereo","Mid-Side","Dual Mono"};
+inline constexpr const char* const kStudioVcaMeterModes[2] = {"Input", "Output"};
+
+// The labels a host shows for a switch or stepped control (count 0 for the others); a boolean one reads Off / On.
+struct SwitchLabels { const char* const* labels; int count; bool boolean; };
+inline SwitchLabels switchLabels(ParamId id) noexcept
+{
+    switch (id)
+    {
+        case ParamId::Mode: return {kModes, 8, false};
+        case ParamId::TruePeakEnable: case ParamId::ExternalSidechain: case ParamId::AutoMakeup:
+        case ParamId::OptoLimit: case ParamId::VcaOverEasy: case ParamId::DigitalAdaptive:
+        case ParamId::GlobalSidechainListen: case ParamId::NoiseEnable: case ParamId::BusFade:
+        case ParamId::StudioVcaAutoRelease: case ParamId::FetBlueScFilter:
+            return {kOnOff, 2, true};
+        case ParamId::TruePeakQuality: return {kTruePeakQuality, 2, false};
+        case ParamId::Distortion: return {kDistortion, 4, false};
+        case ParamId::Oversampling: return {kOversampling, 3, false};
+        case ParamId::FetRatio: return {kRatios, 5, false};
+        case ParamId::FetBlueRatio: return {kFetBlueRatios, 11, false};
+        case ParamId::OptoMeter: return {kOptoMeterModes, 3, false};
+        case ParamId::FetMeter: return {kFetMeterModes, 3, false};
+        case ParamId::FetCurve: return {kFetCurve, 2, false};
+        case ParamId::VcaClassicDetector: return {kVcaDetector, 2, false};
+        case ParamId::BusRatio: return {kBusRatios, 3, false};
+        case ParamId::BusAttack: return {kBusAttack, 6, false};
+        case ParamId::BusRelease: return {kBusRelease, 5, false};
+        case ParamId::BusHeadroom: case ParamId::FetBlueHeadroom: return {kBusHeadroom, 7, false};
+        case ParamId::StereoLinkMode: return {kLinkMode, 3, false};
+        case ParamId::StudioVcaMeter: return {kStudioVcaMeterModes, 2, false};
+        default: return {nullptr, 0, false};
+    }
+}
+
+// State serialization, shared so the plugin and the UI cannot drift apart the
+// way their preset application once did.
+//
+// Version 1 wrote decimal floats. It never shipped in any build a user could
+// install, and reading it back needs the C++17 floating-point std::from_chars,
+// which libc++ marks "introduced in macOS 13.3", above our deployment target.
+// Version 2 therefore carried the float's bit pattern through the integer
+// overloads. Version 3 removes two inert fields and stores tapered controls in
+// their new normalized host domain. Both are exact and locale-independent.
+// Version 4 (2026-09-01) moves the VCA mode onto the measured VCA compressor laws:
+// `vca_ratio` (a skew-0.3 ratio stored host-normalized 0..1) became
+// `vca_compression` (a plain 0..100 knob position), and `vca_threshold` moved
+// from -38..+12 dB to -55..0 dB. Version-3 states are still loaded: the legacy
+// ratio is converted to the knob position that applies the same ratio, and the
+// threshold is clamped into the new range.
+// Version 7 (2026-10-26) appends the Studio VCA Input, Auto Release and meter controls; older states load with their
+// defaults, except Auto Release, which they load off (their Release control set the release). Studio VCA's five
+// original controls only widened, so every value an older state holds stays valid.
+// Version 8 (2026-10-27) appends FET BLUE's Ratio, SC Filter and Headroom; older states load with their defaults.
+// Mode 4, a generic Studio FET before, is FET BLUE from this version. An older state saved in mode 4 reopens in FET
+// (mode 1), which reads every fet_* control that state set (Ratio with All, Curve, Transient); in FET BLUE its
+// Ratio, depth and level would have changed to FET BLUE's defaults.
+inline constexpr int kStateVersion = 8;
+inline constexpr int kPreFetBlueStateVersion = 7;
+inline constexpr int kPreStudioVcaStateVersion = 6;
+inline constexpr int kPreMeterStateVersion = 5;
+inline constexpr int kPreBusStateVersion = 4;
+inline constexpr int kLegacyVcaStateVersion = 3;
+
+// Parses "v=N" and returns N, or -1 when the token is malformed.
+inline int stateVersionOf(std::string_view state) noexcept
+{
+    const size_t end = state.find(';');
+    const std::string_view token = state.substr(0, end == std::string_view::npos ? state.size() : end);
+    if (token.size() < 3 || token.substr(0, 2) != "v=") return -1;
+
+    int version = 0;
+    const std::string_view digits = token.substr(2);
+    const auto parsed = std::from_chars(digits.data(), digits.data() + digits.size(), version);
+    if (parsed.ec != std::errc() || parsed.ptr != digits.data() + digits.size()) return -1;
+    return version;
+}
+
+// A version we do not understand must be refused outright. Decoding it anyway
+// makes every value fail to parse and silently restores defaults, which reads
+// to the user as a session that quietly lost its settings.
+inline bool stateVersionSupported(std::string_view state) noexcept
+{
+    const int version = stateVersionOf(state);
+    return version == kStateVersion || version == kPreFetBlueStateVersion || version == kPreStudioVcaStateVersion
+        || version == kPreMeterStateVersion || version == kPreBusStateVersion || version == kLegacyVcaStateVersion;
+}
+
+// Version-3 `vca_ratio`: skew 0.3 over 1..120, stored in its normalized host
+// domain. Returns the plain ratio the old build applied for that state value.
+inline float legacyVcaRatioFromState(float normalized) noexcept
+{
+    return 1.0f + 119.0f * std::pow(normalized, 1.0f / 0.3f);
+}
+
+inline bool decodeStateFloat(std::string_view text, float& out) noexcept
+{
+    std::uint32_t bits = 0;
+    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), bits, 16);
+    if (parsed.ec != std::errc() || parsed.ptr != text.data() + text.size()) return false;
+    std::memcpy(&out, &bits, sizeof(out));
+    return std::isfinite(out);
+}
+
+inline void appendStateFloat(std::string& out, float value)
+{
+    std::uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    char number[16];
+    const auto result = std::to_chars(number, number + sizeof(number), bits, 16);
+    if (result.ec == std::errc()) out.append(number, result.ptr);
+}
+
+using StateValues = std::array<float, static_cast<size_t>(kTotalParamCount)>;
+
+inline int stateIndexForId(std::string_view id) noexcept
+{
+    for (int i = 0; i < kParamCount; ++i)
+        if (id == kParams[static_cast<size_t>(i)].id) return i;
+
+    for (size_t i = 0; i < kExtensionParams.size(); ++i)
+        if (id == kExtensionParams[i].id) return kExtensionBase + static_cast<int>(i);
+
+    for (int field = 0; field < 8; ++field)
+    {
+        const std::string_view base = bandParam(field, 0).id;
+        if (id.size() != base.size() + 2 || id.substr(0, base.size()) != base
+            || id[base.size()] != '_' || id[base.size() + 1] < '0'
+            || id[base.size() + 1] >= static_cast<char>('0' + duskaudio::kMultiCompBands))
+            continue;
+        const int band = id[base.size() + 1] - '0';
+        return kBandBase + band * 8 + field;
+    }
+    return -1;
+}
+
+// Clamp a host value into its descriptor's range, and snap it to an integer
+// when the descriptor is integral.
+//
+// Snapping matters beyond tidiness. getState() serialises the stored host values
+// verbatim, and decodeState() rejects the WHOLE state if an integer-valued
+// parameter carries a fraction. A host ramping an integer parameter delivers
+// fractional intermediates, so without snapping a project saved mid-ramp stores
+// something like mode=0.6 and fails to load in its entirety.
+//
+// Rejecting fractional values here instead would be worse: the plugin would
+// ignore legitimate automation. Snapping keeps automation working and keeps
+// every stored value loadable. Rounding rather than truncating also handles a
+// host that delivers 0.9999999 for 1.
+template <class Descriptor>
+inline float snapHostValue(const Descriptor& d, float value) noexcept
+{
+    const float clamped = duskaudio::clampFinite(value, hostMin(d), hostMax(d), hostDefault(d));
+    return d.integer ? std::round(clamped) : clamped;
+}
+
+inline bool hostValueInRange(float value, float minimum, float maximum,
+                             bool integer) noexcept
+{
+    return std::isfinite(value) && value >= minimum && value <= maximum
+        && (!integer || std::trunc(value) == value);
+}
+
+inline bool hostValueInRange(int index, float value) noexcept
+{
+    return resolveParameter(index,
+        [value](const Param& d) {
+            return hostValueInRange(value, hostMin(d), hostMax(d), d.integer);
+        },
+        [value](const BandParam& d, int) {
+            return hostValueInRange(value, hostMin(d), hostMax(d), d.integer);
+        });
+}
+
+// Host names carry the mode or band they belong to: in a host's automation list
+// "Threshold" alone appeared five times. Symbols, and so sessions, are unchanged.
+inline constexpr const char* const kBandHostNames[4] = {"Low", "Low-Mid", "High-Mid", "High"};
+
+inline std::string bandHostName(const BandParam& d, int band)
+{
+    return std::string("MB ") + kBandHostNames[static_cast<size_t>(std::clamp(band, 0, 3))] + " " + d.name;
+}
+
+// A fixed-point number with '.' as its decimal point whatever the C library's
+// LC_NUMERIC says: printf's %f follows it, and a host can set a comma ("0,20 ms"
+// in a German-locale Qt host, "8, kHz" once the kHz trim met it). Host text uses
+// '.', as the parsers below (classic locale) read it back. No locale is queried,
+// so threads formatting at once cannot disturb each other: the separator is
+// whatever printf put between the whole digits and the `decimals` last ones.
+inline int formatFixed(char* text, size_t size, double value, int decimals) noexcept
+{
+    decimals = std::clamp(decimals, 0, 6);
+    char number[64];
+    const int written = std::snprintf(number, sizeof(number), "%.*f", decimals, value);
+    if (written < 0 || static_cast<size_t>(written) >= sizeof(number)) return -1;
+    if (decimals > 0 && std::isfinite(value) && written > decimals)
+    {
+        const size_t fraction = static_cast<size_t>(written - decimals);
+        size_t integerEnd = number[0] == '-' ? 1 : 0;
+        while (integerEnd < fraction && std::isdigit(static_cast<unsigned char>(number[integerEnd]))) ++integerEnd;
+        if (integerEnd < fraction)
+        {
+            number[integerEnd] = '.';
+            std::memmove(number + integerEnd + 1, number + fraction, static_cast<size_t>(decimals) + 1);
+        }
+    }
+    return std::snprintf(text, size, "%s", number);
+}
+
+// A tapered control (hasSkew) reaches the host as its 0..1 knob position, so the
+// host's own text would read "0.160578" for 0.20 ms. Its text is the plain value
+// with its unit; the reported unit is empty for these, so nothing is appended.
+template <class Descriptor>
+inline bool formatTaperedText(const Descriptor& d, float hostValue, char* text, uint32_t size)
+{
+    if (text == nullptr || size == 0 || !std::isfinite(hostValue)) return false;
+    const float plain = hostToPlain(d, hostValue);
+    const std::string_view unit(d.unit);
+    int written = 0;
+    if (unit == "Hz" && d.min <= 0.0f && plain < 0.5f)
+        written = std::snprintf(text, size, "Off");
+    else if (unit == "Hz" && plain >= 1000.0f)
+    {
+        // "8 kHz", "1.25 kHz": two decimals at most, no trailing zeros.
+        char number[32];
+        if (formatFixed(number, sizeof(number), static_cast<double>(plain * 0.001f), 2) < 0) return false;
+        std::string trimmed(number);
+        while (trimmed.back() == '0') trimmed.pop_back();
+        if (trimmed.back() == '.') trimmed.pop_back();
+        written = std::snprintf(text, size, "%s kHz", trimmed.c_str());
+    }
+    else
+    {
+        char number[32];
+        const int decimals = unit == "Hz" ? 0 : unit == "ms" ? (plain < 10.0f ? 2 : plain < 100.0f ? 1 : 0) : 1;
+        if (formatFixed(number, sizeof(number), static_cast<double>(plain), decimals) < 0) return false;
+        written = unit == ":1" ? std::snprintf(text, size, "%s:1", number)
+                               : std::snprintf(text, size, "%s %s", number, d.unit);
+    }
+    return written >= 0 && static_cast<uint32_t>(written) < size;
+}
+
+// Typed text back to a host value: a number in the classic locale, optionally
+// followed by the control's unit ("k" / "kHz" scale Hz); "Off" for a Hz control
+// whose range starts at 0. Any other suffix is rejected rather than guessed.
+template <class Descriptor>
+inline bool parseTaperedText(const Descriptor& d, const char* text, float& hostValue)
+{
+    if (text == nullptr) return false;
+    std::string input(text);
+    const auto notSpace = [](unsigned char c) { return !std::isspace(c); };
+    input.erase(input.begin(), std::find_if(input.begin(), input.end(), notSpace));
+    input.erase(std::find_if(input.rbegin(), input.rend(), notSpace).base(), input.end());
+    std::string lower(input);
+    for (char& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    const std::string_view unit(d.unit);
+    if (unit == "Hz" && d.min <= 0.0f && lower == "off")
+    {
+        hostValue = plainToHost(d, d.min);
+        return true;
+    }
+    std::istringstream in(input);
+    in.imbue(std::locale::classic());
+    float plain = 0.0f;
+    in >> plain;
+    if (in.fail() || !std::isfinite(plain)) return false;
+    std::string suffix;
+    std::getline(in, suffix);
+    suffix.erase(suffix.begin(), std::find_if(suffix.begin(), suffix.end(), notSpace));
+    for (char& c : suffix) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    std::string unitLower(unit);
+    for (char& c : unitLower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (unit == "Hz" && (suffix == "k" || suffix == "khz")) plain *= 1000.0f;
+    else if (!suffix.empty() && suffix != unitLower) return false;
+    hostValue = plainToHost(d, std::clamp(plain, d.min, d.max));
+    return true;
+}
+
+// VCA Compression is a knob position on the reference's measured law, so its
+// host value (0..100) means nothing to read; its text is the ratio the face
+// prints, "INF" from where the law's slope reaches zero.
+inline bool formatVcaCompressionText(float position, char* text, uint32_t size)
+{
+    if (text == nullptr || size == 0 || !std::isfinite(position)) return false;
+    const float ratio = duskaudio::vcaLaw::compressRatio(position);
+    if (!std::isfinite(ratio))
+    {
+        const int written = std::snprintf(text, size, "INF");
+        return written >= 0 && static_cast<uint32_t>(written) < size;
+    }
+    char number[32];
+    if (formatFixed(number, sizeof(number), static_cast<double>(ratio), ratio < 100.0f ? 1 : 0) < 0) return false;
+    const int written = std::snprintf(text, size, "%s:1", number);
+    return written >= 0 && static_cast<uint32_t>(written) < size;
+}
+
+inline bool parseVcaCompressionText(const char* text, float& position)
+{
+    if (text == nullptr) return false;
+    std::string input(text);
+    for (char& c : input) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    input.erase(std::remove_if(input.begin(), input.end(), [](unsigned char c) { return std::isspace(c) != 0; }),
+                input.end());
+    if (input == "inf" || input == "inf:1")
+    {
+        position = duskaudio::vcaLaw::kCompressLaw.back().position;
+        return true;
+    }
+    std::istringstream in(input);
+    in.imbue(std::locale::classic());
+    float ratio = 0.0f;
+    in >> ratio;
+    if (in.fail() || !std::isfinite(ratio)) return false;
+    std::string suffix;
+    std::getline(in, suffix);
+    if (!suffix.empty() && suffix != ":1") return false;
+    position = duskaudio::vcaLaw::compressPosition(ratio);
+    return true;
+}
+
+// FET Attack and FET Release are the reference unit's numbered 1-7 dials (7 the fastest), on both FET faces. Their host
+// values stay on the legacy ranges for the sessions and automation that hold them: Attack's is its knob position
+// 0..1, the skew duskaudio::fetAttackPositionFromMilliseconds inverts; Release's is 50..1100, the range
+// duskaudio::fetReleasePositionFromMilliseconds normalises. The dial reads 1 + 6 x that position, the one the DSP
+// plays. The face (readout, gesture domain, pointer) and the host text both read this law.
+inline bool fetTimingUsesDialReadout(uint32_t parameter) noexcept
+{
+    return parameter == static_cast<uint32_t>(ParamId::FetAttack)
+        || parameter == static_cast<uint32_t>(ParamId::FetRelease);
+}
+
+inline float fetTimingDialValue(float hostValue, uint32_t parameter) noexcept
+{
+    if (!fetTimingUsesDialReadout(parameter)) return hostValue;
+    const auto& descriptor = kParams[parameter];
+    const float minimum = hostMin(descriptor);
+    const float range = hostMax(descriptor) - minimum;
+    const float position = std::clamp((hostValue - minimum) / range, 0.0f, 1.0f);
+    return 1.0f + 6.0f * position;
+}
+
+inline float fetTimingHostValue(float dialValue, uint32_t parameter) noexcept
+{
+    if (!fetTimingUsesDialReadout(parameter)) return dialValue;
+    const auto& descriptor = kParams[parameter];
+    const float position = std::clamp((dialValue - 1.0f) / 6.0f, 0.0f, 1.0f);
+    return hostMin(descriptor)
+        + position * (hostMax(descriptor) - hostMin(descriptor));
+}
+
+// Attack's counter-clockwise stop, the reference's SLO detent: FET BLUE's face prints it there, and typed text may
+// name it.
+inline constexpr const char* kFetSloText = "SLO";
+
+// A FET timing dial's host text: its reading, "1.0" to "7.0", one decimal, '.' in every locale, no unit. Host text
+// follows the value alone, so Attack's stop reads 1.0 in FET BLUE too, where the face prints SLO.
+inline bool formatFetTimingText(uint32_t parameter, float hostValue, char* text, uint32_t size) noexcept
+{
+    if (text == nullptr || size == 0 || !std::isfinite(hostValue) || !fetTimingUsesDialReadout(parameter))
+        return false;
+    const int written = formatFixed(text, size, static_cast<double>(fetTimingDialValue(hostValue, parameter)), 1);
+    return written >= 0 && static_cast<uint32_t>(written) < size;
+}
+
+// Text typed on a FET timing dial, in a host or on FET BLUE's Attack, back to a host value: a dial reading ("3",
+// "3.0", "3.5"; '.'-decimal, space around it allowed), held to the dial's 1-7 travel; on Attack also its stop by name
+// (SLO, slo or Slo). Anything else is refused, a unit included ("4 ms").
+inline bool parseFetTimingText(uint32_t parameter, const char* text, float& hostValue) noexcept
+{
+    namespace entry = duskdaf::value_text;
+    if (text == nullptr || !fetTimingUsesDialReadout(parameter)) return false;
+    if (parameter == static_cast<uint32_t>(ParamId::FetAttack)
+        && (entry::suffix(text, kFetSloText, "slo") || entry::suffix(text, "Slo")))
+    {
+        hostValue = hostMin(kParams[parameter]);
+        return true;
+    }
+    const char* end = nullptr;
+    float dial = 0.0f;
+    if (!entry::parseDecimal(text, end, dial) || !entry::finish(end, "")) return false;
+    hostValue = fetTimingHostValue(dial, parameter);
+    return true;
+}
+
+// Complete-set transactional decoder. The caller's output is untouched unless
+// every required key appears exactly once with a finite in-range value.
+inline bool decodeState(std::string_view state, StateValues& out) noexcept
+{
+    if (state.empty() || state.back() == ';' || !stateVersionSupported(state)) return false;
+    const bool legacy = stateVersionOf(state) == kLegacyVcaStateVersion;
+    const size_t versionEnd = state.find(';');
+    if (versionEnd == std::string_view::npos) return false;
+
+    StateValues decoded{};
+    std::array<bool, static_cast<size_t>(kTotalParamCount)> seen{};
+    const int version = stateVersionOf(state);
+    const int firstAbsent = version < kPreMeterStateVersion ? kExtensionBase
+                          : version < kPreStudioVcaStateVersion ? kVintageMeterBase
+                          : version < kPreFetBlueStateVersion ? kStudioVcaExtensionBase
+                          : version < kStateVersion ? kFetBlueExtensionBase : kTotalParamCount;
+    for (int i = firstAbsent; i < kTotalParamCount; ++i)
+        decoded[static_cast<size_t>(i)] = hostDefault(kExtensionParams[static_cast<size_t>(i - kExtensionBase)]);
+    // Before version 7 Studio VCA's Release control always set the release: an older session keeps it working
+    // (Auto Release, on for a new instance, would ignore it).
+    if (version < kPreFetBlueStateVersion)
+        decoded[static_cast<size_t>(ParamId::StudioVcaAutoRelease)] = 0.0f;
+    size_t begin = versionEnd + 1;
+    while (begin < state.size())
+    {
+        const size_t end = state.find(';', begin);
+        const std::string_view token = state.substr(
+            begin, end == std::string_view::npos ? state.size() - begin : end - begin);
+        const size_t equal = token.find('=');
+        if (equal == std::string_view::npos || equal == 0
+            || equal + 1 == token.size() || token.find('=', equal + 1) != std::string_view::npos)
+            return false;
+
+        const std::string_view id = token.substr(0, equal);
+        if (legacy && id == "vca_compression") return false;
+        const bool legacyRatio = legacy && id == "vca_ratio";
+        const int index = legacyRatio ? static_cast<int>(ParamId::VcaRatio) : stateIndexForId(id);
+        if (index < 0 || index >= firstAbsent || seen[static_cast<size_t>(index)]) return false;
+        float value = 0.0f;
+        if (!decodeStateFloat(token.substr(equal + 1), value)) return false;
+        if (legacyRatio)
+        {
+            if (!hostValueInRange(value, 0.0f, 1.0f, false)) return false;
+            value = duskaudio::vcaLaw::compressPosition(legacyVcaRatioFromState(value));
+        }
+        else if (legacy && index == static_cast<int>(ParamId::VcaThreshold))
+        {
+            if (!hostValueInRange(value, -38.0f, 12.0f, false)) return false;
+            value = std::clamp(value, duskaudio::vcaLaw::kThresholdMinDb, duskaudio::vcaLaw::kThresholdMaxDb);
+        }
+        if (!hostValueInRange(index, value)) return false;
+        decoded[static_cast<size_t>(index)] = value;
+        seen[static_cast<size_t>(index)] = true;
+
+        if (end == std::string_view::npos) { begin = state.size(); break; }
+        begin = end + 1;
+    }
+    if (begin != state.size()) return false;
+    for (int i = 0; i < kTotalParamCount; i = nextControlParameter(i))
+        if (i < firstAbsent && !seen[static_cast<size_t>(i)]) return false;
+    // Mode 4 was Studio FET before version 8: such a session reopens in FET (see kStateVersion).
+    float& mode = decoded[static_cast<size_t>(ParamId::Mode)];
+    if (version <= kPreFetBlueStateVersion
+        && std::lround(mode) == static_cast<long>(duskaudio::MultiCompMode::FetBlue))
+        mode = static_cast<float>(duskaudio::MultiCompMode::FET);
+    out = decoded;
+    return true;
+}
+
+inline std::string encodeState(const StateValues& values)
+{
+    std::string state = "v=" + std::to_string(kStateVersion);
+    state.reserve(32 + static_cast<size_t>(kMeterMaster) * 28);
+    for (int i = 0; i < kTotalParamCount; i = nextControlParameter(i))
+    {
+        state.push_back(';');
+        resolveParameter(i,
+            [&state](const Param& d) { state += d.id; },
+            [&state](const BandParam& d, int band) {
+                state += d.id;
+                state.push_back('_');
+                state.push_back(static_cast<char>('0' + band));
+            });
+        state.push_back('=');
+        appendStateFloat(state, values[static_cast<size_t>(i)]);
+    }
+    return state;
+}
+}

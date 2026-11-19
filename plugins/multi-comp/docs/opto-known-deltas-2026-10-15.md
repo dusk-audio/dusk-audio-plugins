@@ -1,0 +1,88 @@
+# Opto: known deltas against the UAD LA-2A at campaign close (2026-10-15)
+
+Owner decision 2026-10-15: OPTO ships as it stands. The four readings still over the 1.00 dB bar (the phase and family
+screen tables, the crest and short-charge fixture-gate rows) are recorded here with their root cause and left as known
+deltas. The rest of the probe set, by when it was read: the fifteen
+screen tables, re-run on the working tree that carries the 2026-10-15 emission shape (commit 743d2347), hold no other
+cell over the bar except two at its edge (settled 1.0007 dB, short 1.0022 dB); the fixture gate (the re-captured core
+fixtures: release, onset, harmonic, crest and short-charge rows) was last read in full on 2026-10-14, before that
+commit. Since the linked pair takes the current sample's drive (2026-10-18, commit 83b2b5bc), the settled screen
+table's edge cell reads 1.0061 dB, so it is over the bar too, and the short screen table has no cell over it (the
+short-charge fixture delta below is a separate reading).
+
+Update 2026-11-03: the owner reopened OPTO. Two corrections to this record:
+- After the 2026-10-20/21 CPU work, the settled edge cell reads 1.0066 dB. That move is inside the 0.01 dB screen floor.
+- The fixture gate read cited below (`compare-p55b`, 2026-10-14) also has 10 of its 32 harmonic rows over 1.00 dB, with the worst at H5 of -4 dBFS, PR 70. This record omitted them. The core harmonic test's own bar is 2 dB per harmonic.
+  - That read predates the emission shape.
+  - The partial re-read of 2026-10-15 still puts three H3/H5 rows more than 1 dB off.
+
+Full re-read on main, 2026-11-03 (the first since 2026-10-14). 14 of 8,628 fixture rows are over 1.00 dB; harmonic rows count at 1.00 dB from now on (owner ruling 2026-11-03):
+
+| family | rows over 1.00 dB | worst |
+|---|---|---|
+| short charge | 3 of 16 | 1 ms at -0.25 / -4 / -12 dBFS: 1.93 / 1.31 / 1.11 dB, MC-2 short |
+| short release | 4 of 28 | 48 samples at -4 dBFS: 1.31 dB |
+| harmonics | 4 of 32 | H5 of -12 dBFS at PR 70: 1.85 dB |
+| crest | 2 of 4 | 23.8 dB crest: 1.40 dB |
+| pedestal | 1 of 32 | 1.0002 dB |
+
+How the 2026-10-14 counts became these:
+- The 2026-10-15 emission shape (743d2347) cleared 7 harmonic rows. It also took 0.55 dB of charge from a 1 ms burst, which grew the short-event rows from 1 to 7.
+- The 2026-10-18 linked-drive change (83b2b5bc) took the pedestal row over the bar.
+- The gate was not re-read after either change, so neither move was seen when it landed. From now on the fixture gate is re-read after every OPTO landing.
+
+The screen is unchanged since 2026-10-21: 89 cells over (phase 25, family 63, settled 1). Two-tone IMD (423 of 1,205 cells) and the slow sweep (302 of 2,391) are over the 2 dB report bar.
+
+Why they are left: the owner's blind ABX against the UAD on thirty real clips, including a kick-only round, was at
+chance (13 / 22 pairs, p = 0.26; `opto-abx-2026-10-03.md`). All four readings below come from synthetic probes that no
+clip in that corpus resembles. Every cheap mechanism that could have moved them has been measured and falsified; the
+one lever left is a structural refit of the cell's time step, which the owner stopped on cost (2026-10-14).
+
+| probe | cell | UAD | MC-2 | delta | direction |
+|---|---|---|---|---|---|
+| Phase offset (25 Hz on both channels, right 90 degrees behind, Limit, Peak Reduction .8125, stereo link) | `pr0.8125_lim1 l25_p090`, left | -23.90 dB | -25.58 dB | 1.68 | MC-2 reduces more |
+| Low + mid family (60 Hz with 300 Hz 6 dB below it in quadrature, Limit, Peak Reduction 1, stereo link), settled | `pr1_lim1 l60_m300_d06_quad`, left | -29.49 dB | -30.99 dB | 1.50 | MC-2 reduces more |
+| Crest sweep, gain reduction on the 23.8 dB crest-factor signal | `crest_sweep/crest23.8/gr` | 8.52 dB | 7.02 dB | 1.51 | MC-2 reduces less |
+| Short charge, reduction after a 1 ms burst at -0.25 dBFS | `short_charge/1.000ms_peak-0.25` | 12.73 dB | 11.23 dB | 1.50 | MC-2 reduces less |
+
+Counts behind the worst cells: phase probe 25 of 162 cells over (all at Limit, 60-120 degrees, 25-40 Hz); family 63 of
+4,392 over (57 deeper, 6 shallower; 60 linked rows and 3 mono masters at 60 + 300 Hz Limit 100 and 25 + 150 Hz
+Limit 81); crest sweep 2 of 4 (20.0 dB crest 1.10, 23.8 dB 1.51); short charge 1 of the fixture gate's 16 rows over
+1.00 dB (the 1 ms -0.25 dBFS row in the table; the next two, 1 ms at -12 and at -4 dBFS, read 0.84 and 0.76). The phase
+and family counts are screen tables; the crest and short-charge readings are the fixture gate's last full read
+(`fixtures/compare-p55b.json`, 2026-10-14, before the emission shape landed), and no later read of them was made.
+
+## Root cause, measured
+
+**Phase and family (the stereo link).** Each channel has its own panel, and a panel's emission is a burst at each
+polarity change of its drive plus a steady part. A linked pair's cell is lit by the larger of the two emissions. When
+the channels' zero crossings are offset the cell sees four bursts per cycle instead of two; the native unit's single
+cell does not double them (its added reduction over the in-phase pair is complete within about 1 ms of offset and flat
+to 150 degrees: 1.77 / 2.18 / 2.76 dB at 25 / 40 / 60 Hz, Limit .8125). The partner's steady light filling this
+panel's dark window is only 0.2-0.3 dB of the excess. Forms that pass the partner's burst and withhold its steady
+light per channel (B', C12 to C20, 2026-10-13/14) fix the probe and the family but set the two channels of real stereo
+music up to 0.3 dB apart where the native unit reads alike, and raise the pooled error of the stationary stereo and
+split-spectrum tables over the never-worse floor; no symmetric (one-light) form reaches the probe with the present
+cell, whose time step follows the instantaneous light and so reads the in-cycle shape of what it is lit by. Measured
+and falsified on 2026-10-15 (cell observers, `triage/panel-clock/killtests-20261015/`): one panel on the signed union
+of both drives (adds grow with the offset instead of saturating), the steady light held through the crossing with the
+cycle's charge conserved (90 degree cells unchanged, mono moves).
+
+**Crest sweep and short charge (the time step).** A hot, short burst charges this cell less than the native unit:
+the populations' time step slows as the light rises (dt / (1 + (light / 19.9)^0.33)), so the same charge delivered
+brighter and shorter moves them less. The second clock exponent above the light table's top (plan B2, 2026-10-15)
+buys at most +0.42 dB and breaks the 2 ms burst row; the time step on a cycle-averaged light (T1, 2026-10-14) loses
+the 1 kHz statics (worst 2.42 dB against 0.33) and its light table could not be re-solved within the campaign. The
+pedestal "3.7 dB" reading of the same fixture family was a one-sample window misalignment in the test helper, fixed in
+the test code on 2026-10-15; its real shortfall is 0.3-1.0 dB and belongs to the same time-step question.
+
+## What stays in place
+
+- The CTest bounds, the fifteen screen tables and the fixture gate keep their current bars; nothing is loosened. The
+  four rows above stay red in their report-only readers, and their "cells over" counts stay the never-worse base for
+  any later OPTO change: 25 / 63 on the screen's phase and family tables (`screen.py compare <cand> h5-r3`), 2 / 1 on
+  the fixture gate's crest and short-charge readers. The fixture gate's base dates from 2026-10-14, before the
+  emission shape: re-read it on the current tree before its first never-worse use.
+- The native captures stay (local, never in a repo) for a re-ABX if the cell is changed.
+- Reopen only on a user report that names material and setting: run `abx_kit.py focus` on that material first, then
+  the time-step refit plan (`handoff/PLAN-MC2-OPTO-TIMELAW-REFIT-20261014.md`), never a per-channel link law.

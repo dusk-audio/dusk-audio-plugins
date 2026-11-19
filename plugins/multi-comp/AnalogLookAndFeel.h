@@ -292,7 +292,10 @@ public:
     void addListener(Listener* l) { listeners.add(l); }
     void removeListener(Listener* l) { listeners.remove(l); }
 
-    void setSelectedRatio(int index);
+    // Listeners hear about the change only when asked to, so a parameter
+    // attachment can mirror the host value without echoing it back as a click.
+    void setSelectedRatio(int index, juce::NotificationType notification = juce::dontSendNotification);
+    int getSelectedRatio() const noexcept { return currentRatio; }
     void setAccentColor(juce::Colour color);  // Set the illuminated button color
     void resized() override;
     void paint(juce::Graphics& g) override;

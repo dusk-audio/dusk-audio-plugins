@@ -1,0 +1,285 @@
+# Compressor parity playbook (2026-10-03)
+
+Process that produced the OPTO result in one day, written down for FET, VCA and BUS. Tools live in the tools
+repo under `plugins/MultiComp/tests/programme_parity/kit/`; evidence stays in the local, ignored
+`build-multi-comp-1176/` tree. Every step of the loop below was run on OPTO on 2026-10-03 and reproduced that
+day's tables. The later sections are updates and carry their own dates: the probe set (2026-10-06, with lessons to
+2026-10-09) and the per-mode state (OPTO closed 2026-10-15).
+
+## The loop
+
+1. **Listen first, blind.** Build an ABX from the reference captures and the installed MC-2 before any DSP
+   work. Tiers: 0 dB GR (linear, doubles as a null control), 1-3 dB, 7-10 dB, and the loud cells the
+   measurement flags. If the owner is at chance everywhere, ship. If not, the trials the owner gets right
+   are the entire target. Twenty trials detect only differences heard most of the time; that is the bar.
+2. **Measure where the residual is.** `corpus_diff.py` over the 30-clip corpus: per setting, per material
+   family, worst cells, with level and 20-120 Hz offsets. The audible-sized residual is usually one family
+   at one range of settings (OPTO: kick and bass at PR 1 / Limit, 2-3.6 dB). Everything under ~0.6 dB rms
+   on vocals was inaudible in four listening rounds.
+3. **Probe the mechanism with synthetic signals.** `probes.py synth` then render both devices at the
+   settings under study. Read the table in this order: settled column (statics) first, then onsets, then
+   low vs high drive, then from dark vs already lit. Each contrast rules a class of mechanism in or out
+   before any constant moves. OPTO: statics matched everywhere, the error was the 60 Hz onset from dark
+   and flipped sign with drive.
+4. **State the hypothesis and its falsifier, then build the candidate off by default.** New constants
+   appended to the defaults array, bit-identical renders with the element off (verify, do not assume).
+   Three OPTO candidates were falsified in under an hour each because the lab answers in seconds.
+5. **Fit in the lab, select on FIT clips, hold out VAL and the sealed mixes.** Grid first (coarse, then
+   around the edge it lands on), one mechanism per round. A machine fit is exempt from the one-knob rule;
+   a hand round is not.
+6. **Gates before landing, in this order:** probe table not worse on any row class; FIT and held-out
+   music cells; the full DEV set unchanged within self-noise (0.001-0.01 dB); CTest; byte-compare the
+   corpus renders when a change claims to be transparent (120 of 120 stems, not "should be").
+7. **Re-ABX on the cells that changed, fresh seed.** Then write the report with the negative results in
+   it, and keep each change as its own patch so the owner can commit them separately.
+
+## What did not work, so it is not repeated
+
+- Instrument-only loops with many simultaneous gates and no audibility reference. Twelve hand rounds in
+  two weeks traded gates and produced no shippable decision.
+- A pooled fit over the whole corpus to fix a minority family: the optimiser moves the error to where
+  the loss is cheapest (iteration 6 fixed Comp .5 and made deep settings 7 dB worse).
+- Confidence labels in listening tests. "Sure" and "probably" never beat chance; null controls drew
+  confident answers. Only the hit count over many trials means anything.
+- End-to-end learned capture on a small corpus (closed 2026-10-02).
+
+## What the probe set must cover (2026-10-06: each line is an error several passes could not see)
+
+- **Every control position, not only the fitted ones.** The FET Release knob was 3.7 dB wrong between .75
+  and .95 while 0, .33, .666 and 1 fitted. Capture a few positions that enter no fit and keep them out.
+- **Music per cell, not only per tier.** Tiers under 1 dB hid sixteen FET cells above it, one clip at five
+  conditions among them. Print every cell at or above the bar by name.
+- **An event from rest, at the deepest setting.** A probe on a bed that already holds reduction keeps the
+  slow states charged. FET stopped 3-5 dB short on any deep burst from silence and no table showed it.
+- **A train of events, read between them and after the last.** What a single burst leaves behind says
+  nothing about what six leave: the FET reference builds 6 dB over six bursts at its fastest release.
+- **More than two frequencies in every dynamic table.** The OPTO onset table held 60 Hz and 1 kHz; the
+  element fitted on it was unconstrained from 80 to 400 Hz, where a kick drum is.
+- **Where in the cycle the gain moves.** Fold the reduction on a 15-45 Hz sine over the half-cycle (output
+  over the device's own low-level output at the same sample). The phase of the ripple says where the side
+  chain reads the signal and when the element responds; a level table cannot. FET read the wrong side of
+  a high-pass (56 degrees at 15 Hz); the OPTO reference lights right after the zero crossing at deep
+  settings.
+- **A linear reference that is linear.** A "no reduction" setting was still compressing. Use the same
+  stimulus 60 dB down at the same setting, per device.
+- **A music cell split by what the stimulus does, not only by what the reference's gain does.** The frames
+  where the reference's gain "moves fastest" were read as attacks for two passes; split by the stimulus
+  (onset, offset, low level, rest) 60 % of one OPTO cell's squared error sat in the frames after gated note
+  ENDS, where the stimulus is at -46 to -87 dBFS and the gate's own 20 Hz high-pass is still ringing above
+  its -60 dBFS keep rule. An element was built for the attacks and did not move the cell.
+- **Before adding a state, read the one you have through the device's law.** The FET reference leaves more
+  memory after its second burst than after its first; an exposure state was built for that. The square
+  root of the memory is first order: one state, read through a gain law that is quadratic at the bottom,
+  and the same law explained two other readings (the memory counting for more under a fast charge, the
+  loop sitting low from rest at the highest ratio).
+- **Fit a part of the model only on the cells that read that part.** Low-carrier windows after a burst
+  read the output stage; they judge a gain-computer fit and do not enter it.
+- **Which side of the gain element a filter sits on.** A linear capture gives the product of all linear
+  sections and nothing else. Step the gain with a burst the model already holds, under a steady low tone
+  50 dB below it, in both polarities: half the difference is the tone's response alone. What is behind
+  the gain element rings with its own poles when the gain steps; what is ahead of it does nothing. Read
+  the product itself on the tails that low bursts leave when they end, at a level too low to compress
+  (the FET path's low end was one second-order section fitted on phase; it is two, one each side, and
+  sixteen of the twenty burst-train cells left were that).
+- **What the device does once the stimulus is gone.** A gate that needs stimulus level cannot read the
+  gain after a note is cut. A pilot 60 dB under the note reads it, and the output's mean after the note
+  reads what the device was adding to the mean during it (the OPTO reference's one-sided clip: 3 % second
+  harmonic on programme at full Peak Reduction, and the step when the note ends was the last music cell).
+- **A table read through the model's kernel is only the plugin while nothing acts on the audio sample.**
+  Once an element does, read the same rows on what the plugin puts out, through the same extraction as
+  the reference's capture, and feed the kernel the audio.
+- **An element found late was inside every earlier fit.** The tables were fitted with its level in them;
+  adding it on top counts that twice. Split it: the part that changes level stays with the tables, the
+  part no table can hold is added (the OPTO clip is one-sided; its odd half is a loss of level, its even
+  half is the even harmonics and the step of the mean, and the even half is memoryless). Giving the loss
+  back through a gain instead needs a memory, and a memory leaves a bump behind every loud event. The
+  alternative is to refit every table that held it.
+- **A kink evaluated point by point folds.** Take the nonlinear term off the sample itself, averaged over
+  the line from the last sample (antiderivative form), not through a gain made from one sample and
+  applied to the next; and ask the reference how much it folds before deciding how clean to be.
+- **A new table at one level is one point of a law.** The OPTO release-into-silence table (five notes at
+  -8 dBFS) read eight cells over, the worst 2.25 dB; the same reading at -2 dBFS, at Limit 1 and at 3 kHz
+  (2026-10-09, `opto/silence_holdout.py`) read 6.7 dB, and showed what the table could not: the reference
+  never lets go faster than 0.245 dB/ms from any depth. Capture the level, the length and the control
+  positions around a table before fitting anything to it, and keep those captures out of the fit.
+- **Then ask where the law stops.** That limit holds after 60 ms of note and not after a 2-20 ms burst
+  (`opto/silence_short.py`: 0.80 dB/ms after 2 ms). An element built on the long notes alone read the
+  bursts 4 dB wrong and failed a core test that reads the same event on a bed. Probe the short side of
+  every time-dependent law before landing it.
+- **"Lit tables unchanged" is a measurement, not a property of the code.** A state meant to exist only in
+  silence built up inside the zero crossings of a 55 Hz sawtooth and moved two settled rows by 0.07 dB.
+  Run the settled table with each new element alone; one of the two elements was exact and the other was not.
+- **A hidden state shows when its mask goes.** After a low note the cell sat 2.7 dB deeper than the applied
+  gain (the LF floor's lift). Slowing the cell's release to the reference's exposed that as a slow release
+  after low notes only; the release table needed both elements together.
+
+## Kit commands (tools repo, `programme_parity/kit/`)
+
+```
+# render host with #INDEX parameter addressing (MC-2 reuses "Threshold"/"Attack" across modes)
+cmake --build build --target duskverb_render
+# capture a device over a clip directory at one setting (values 0..1, snapped to the UAD 1/32768 grid)
+python3 render.py 1176     OUT --stim CLIPS --set "Input=0.6,Ratio=0"                      --tag in60_r4
+python3 render.py mc2:fet  OUT --stim CLIPS --set "input=0.6,output=0.625916,attack=0.5,release=0.665955,ratio=0" --tag in60_r4
+# (FET knob map is identity on the normalised axis, fet/knob_map.py 2026-10-03: give MC-2 the 1176 values, Output
+#  included; Output 0.5 vs the 1176 neutral 0.625916 is 8.9 dB of linear gain)
+# where the residual is (lags measured on the first tag; pass a linear tag first, then pin them)
+python3 corpus_diff.py REF_ROOT DUT_ROOT --stim CLIPS --tags lin,in60_r4 --json diff.json
+# mechanism probes
+python3 probes.py synth PROBES; render both devices on PROBES; python3 probes.py eval REF DUT --lag-ref N --lag-dut N --stim PROBES
+# blind ABX
+python3 abx.py build OUT REF_ROOT DUT_ROOT --stim CLIPS --lag-ref N --lag-dut N --seed S clip:tag clip:tag:null ...
+python3 abx.py score OUT results.json
+```
+
+Device specs (AU paths, parameter names, MC-2 mode and control indices, measured latencies) are in
+`references.py`; add a reference there, nowhere else. The exact-core lab used for OPTO (`greybox/gb_r14.py`,
+`gb_common.Cell`) wraps `OptoCell::setParams`; FET, VCA and BUS have no such hook yet, so their candidates
+go through `lab.py` (full DSP from a patched core copy, byte-exact baseline check) until one is added.
+
+## Per-mode starting state
+
+| Mode | Reference | Access | Existing probes and captures | First step |
+|---|---|---|---|---|
+| OPTO | UADx LA-2A | installed | Campaign closed 2026-10-15, reopened by the owner 2026-11-03. Baseline 2026-11-03 (main, fixed tools): 103 readings over 1.00 dB, counted per table. Screen cells 89 of 6,800 (phase 25 and family 63, all at Limit, MC-2 reducing more on linked offset-phase drives; settled edge cell 1.0066); fixture gate 14 of 8,628 rows (short-event charge 3 and release 4, harmonics 4, crest 2, pedestal 1). The short-event rows grew from 1 to 7 with the 2026-10-15 emission shape (a 1 ms burst now charges 0.55 dB less), and the pedestal row crossed with the 2026-10-18 linked-drive change; the gate had not been re-read after either. Two-tone IMD 423 of 1,205 and slow sweep 302 of 2,391 cells over the 2 dB report bar. See `opto-known-deltas-2026-10-15.md`. The short-event charge rows were parked 2026-11-04 after three kill tests.
+- Fresh reference data (49 short events, not fixture rows) shows MC-2 too shallow on short events in general (144 of 616 readings over 1 dB), and the deficit grows with carrier frequency.
+- A charge burst at each polarity reversal cut the error 25% but cancelled the 2f ripple (H3 down 1-2 dB).
+- The same charge timed by the emission spared the harmonics, but cannot reach sub-half-cycle events or the crest rows.
+
+Both point back to the cell's light-dependent time step. A term that is zero on steady tones would be tone-gated and is not allowed. Report: tools `handoff/reports/mc2-instrument-audit-phase3-2026-11-03.md` | Re-read the fixture gate after every OPTO landing. Short-event charge: a time-step law on the fresh data (owner decision); otherwise the stereo link |
+| FET | UADx 1176 | installed | Baseline 2026-11-03: 14 readings over 1.00 dB, counted per table. Probe-group cells 2 of 4,346 (set-4 onsets at +0.25 ms, read by the phase-free onset reader; one firm at -1.14 dB, one at +1.008 that depends on the estimator); music 0 of 1,320 and 0 of 600 on the AU; harmonic rows 7 of 156 (five stimuli, worst +3.15 dB, H5 of 100 Hz at the knee bottom); programme recovery 5 row-times: rows 28-31 are All buttons, where the reference recovers within about 20 ms (+5 ms 10.7, +10 ms 4.6, +20 ms 0.04 dB) and MC-2 still holds 2.0-2.2 dB at +50 ms, plus row 22 (12:1 train, 1.017 at +200 ms). The core-test fixtures were re-captured at the tests' own Release on 2026-11-03. The All-buttons release was parked on 2026-11-04 after six kill tests: K4, Q4 and K5-K8, with evidence in the local `audit-20261103/phase3/<test>`. The reference releases through one pot-law element, but every detector tried in MC-2's separate All arm either droops with the carrier or overshoots at level edges. Routing All through the C6 feedback loop gets the ripple right, but puts the burst on the static law, 2.5-4.3 dB deeper than the reference | Harmonic rows; for All buttons, a long-tone reference capture to tell a slow build-up from a static-law offset |
+| VCA | UADx dbx 160 | installed | `vca/` (18 scripts: tilt, onset, fits); VCA faceplate UI on branch `mc2/dbx160-vca-ui`. Baseline 2026-11-03: 0 of 13,192 cells over 1.00 dB in 44 tables at 44.1-192 kHz, read against the stored 2026-10-12 reference readings (the reference stems were deleted 2026-10-12); music on the AU 0 of 270 (worst 0.073 dB) | Tiered ABX |
+| BUS | UADx SSL G | licensed again 2026-10-25 (`bus/oct/licence_check.py`) | `bus/` (137 scripts), accepted at the internal bar 2026-09-21; `bus/oct/` October method. Baseline 2026-11-03: music 0 of 1,020 cells over 1.00 dB (worst 0.431); the first probe tables (`bus/oct/probes/`, nine tables, both channels) 2 of 6,036 over: one moment, the first millisecond of an onset from rest at 10:1, attack 0.1 ms, 1 kHz, where MC-2 reduces 1.41 dB less (read on L and R) | That onset cell, then tiered ABX (kit ready, not yet run) |
+| FET BLUE | second measured FET reference | installed | `fet_ae/` in the tools repo; fixtures `MultiCompFetBlueFixtures.hpp`. Baseline 2026-11-03: 13 readings over 1.00 dB, counted per table, all the Release-1 short-event release: FIT probes 6 of 65 (worst 1.70 dB), Release-1 event table 6 of 64 (worst 2.45 dB, 50 ms after a 20 ms hit at 20:1), music 1 of 1,800 (held out, 1.149 dB by the per-channel gate); `--fet-blue` gate rows 0 of 16 (worst 0.72) and SC screen within its bound. Parked 2026-10-30, reopened by the owner 2026-11-03 | Kill test of a hold-length memory on the release time (2026-11-03) |
+| Studio VCA | measured studio VCA reference | installed | Baseline 2026-11-03 (fresh renders on the installed AU): music 0 of 540 cells over 1.00 dB (worst 0.254); 67 probe traces with no 5 ms frame over 1 dB (worst 0.938, onset samples) | Tiered ABX |
+| Digital, Multiband | none | | | Not parity targets |
+
+How a cell is counted (owner rulings 2026-11-03): a music cell fails when its L+R, L or R rms error is over
+1.00 dB (1.00 passes); the worst 50 ms window is reported, not gated; harmonic rows count at 1.00 dB in every mode;
+two-tone IMD and the slow sweep stay a 2 dB report for OPTO. Tools: `kit/latency.py`, `kit/gates.py`,
+`kit/metric_core.py`, `kit/stems.py` in the tools repo (instrument audit, 2026-11-03).
+
+Rules that stay: never loosen a test bound; no classifiers or hand corrections in the audio path; captures
+and candidate renders never enter a repo; the owner commits.
+
+## Open before the stable 1.0.0 (from the 1.0.0-alpha1 review, 2026-10-18; status 2026-11-06)
+
+Status on the release branch `mc2/release-1.0.0` and DAF main (c74776b4) on 2026-11-06. Owner rulings of 2026-11-05:
+the parity residuals in the per-mode table above ship as documented known deltas, not blockers. The user-facing side
+of the open items below is in `release-notes-1.0.0.md`.
+
+### Done
+
+- FET BLACK Ratio into or out of All (was: the buttons switch without a crossfade and going to or from All jumps).
+  Since 2026-11-05 (1bea349e) that change is a ducked switch: the old ratio plays until the wet output is silent, the
+  FET state is cleared and the new topology fades in (`--fet-all-switch-duck`). Steps among 4, 8, 12 and 20 stay in
+  the C6 loop and stay instant.
+- Global Lookahead in Multiband fixed 2026-10-27: its detector splits the undelayed filtered key while the
+  audio splits the delayed input, for both internal and external keys. `MultiCompModernRegression` checks
+  transient anticipation and aligned dry/wet paths, including M/S and host latency padding.
+- Latency held constant across modes (2026-10-19): each mode's output is padded to Opto's latency
+  (`MultiCompLatencyPad.hpp`, `MultiCompDSP::getHostLatencySamples()`; 73 samples at 44.1 / 48 kHz, 79 at
+  88.2 / 96, 91 at 176.4 / 192, where Opto's output stage runs at the fixed mode rate). Since 2026-10-21 the
+  DSP does it (`setHostLatencyPadding`, on in the plugin): the dry, bypass and listen paths are delayed straight
+  to the host latency, so a mode switch never moves them, and only the wet path is padded, ahead of Mix, where a
+  ducked switch changes its padding inside the mute. Multiband's dry is its split-band sum, so it gets the wet
+  path's padding in a pad of its own. With static controls, manual makeup and Analog Noise off, every mode's padded
+  output is its unpadded output delayed, bit for bit (the Mix ramps, the BUS fade and the noise run at host time,
+  after the pad). Auto makeup measures the padded signals, so its 64-sample windows fall elsewhere on the
+  programme: its gain is the one an unpadded render takes with the input starting a padding later (up to 0.5 dB
+  apart in the first seconds of pink noise, 0.01-0.06 dB after 8 s). Only the lookaheads (Global Lookahead in
+  Digital and Multiband, Digital's own) still move the report. Since 2026-11-05 the AU wrapper tells the host when
+  they do (DAF #109, merged as c74776b4: a main-run-loop watch notifies the latency listeners after the render that
+  moved the latency), and a switch that moves the report ducks the dry, bypass and listen paths with the wet path,
+  with both lookaheads held in `SwitchConfig` until the silence (1bea349e, c27de4b0; `--latency-switch-duck`,
+  `--lookahead-switch-duck`).
+- Parameters with no control on any face: done 2026-11-05 (bad8fc45). `MultiCompParams.hpp` declares 106 control
+  parameters (63 in `kParams`, 32 Multiband band parameters, 11 in `kExtensionParams`) and 5 meter outputs; the four
+  inert VCA parameters are hidden from host lists, which leaves 102. Eighteen of the 102 had no control on any face
+  (this item said sixteen): External Sidechain, SC Listen, the four SC EQ controls, Oversampling, True Peak, TP
+  Quality, Analog Noise, Stereo Link, Link Mode, Distortion, Distortion Amt, Lookahead, and FET Threshold, Transient
+  and Curve. The SETTINGS drawer at the end of the mode row holds all eighteen, greyed where the mode ignores them;
+  the other 84 are on the faces and the mode row. FET BLUE shares FET's Input, Output, Attack
+  and Release and has its own `fet_blue_*` Ratio, SC Filter and Headroom; Curve and Transient act in FET only.
+  Sessions saved in mode 4 before FET BLUE (Studio FET, state version 7 and older) reopen in FET in VST3, CLAP
+  and AU (`MultiCompSessionRestoreTest`); in LV2 the host's restored Mode port wins and they reopen in FET BLUE,
+  the editor's face included (`MultiCompModernUiTest restore`).
+  Done 2026-10-19: host names
+  carry their mode or band ("FET Threshold", "MB Low Ratio"), tapered controls and VCA Compression show plain
+  text with units, and the four inert VCA parameters are hidden (the VST3 and CLAP flag comes from DAF #83).
+- Float one-poles at high processing rates (closed 2026-11-05, measured): the Studio VCA, Digital and FET All
+  envelopes, and the FET feedback capacitor's leak (whose time the 4:1 release depth term stretches up to about 40x
+  at extreme depth), are float one-poles at the mode rate, so at 192 kHz and above with oversampling a long release
+  could stall short of unity. Emulating those one-poles in the 1.0.0 release review put the worst stall at 0.03 dB.
+  No change.
+- The CLAP version string (DAF #108, merged as 50a61d40): the descriptor carries the version (M.m.p from
+  `getVersion()`, 1.0.0) and the homepage (`getHomePage()`). Its manual and support URLs stay empty until
+  `DafPluginInfo.h` defines `DAF_PLUGIN_MANUAL_URL` and `DAF_PLUGIN_SUPPORT_URL`. The alphas reported 1.0.0 as well;
+  from the stable release on, that number is right.
+- Readability and window: all eight faces, the header and ImGui's own surfaces (the save dialog, typed values,
+  tooltips, menus) at the readability floor, legends 16 px and values 17 px at the minimum window, relaid out inside
+  one 1120 x 380 window for every mode (42247cbf to cc79a6e8, 9e3379ad; owner 2026-11-05: one size, the original).
+- From the 2026-11-05 release review: a session saved bypassed played about 30 ms processed at every activation
+  (e1c570d2, `--bypass-activation`); host text in comma-decimal locales and the doubled ":1" units (f59c3feb); meter
+  buttons rewriting unchanged values, the FET row rewriting Bypass, knobs writing after they went inapplicable while
+  held, and PULL/SC seeded at 500 Hz (d5d7d690).
+
+From the CPU-parity review (2026-10-21; report in the tools repo, `mc2-alpha2-review-2026-10-21.md`), done 2026-11-05
+in 1bea349e by the owner's ruling to duck every switch:
+- Mode switches during playback stepped the waveform wherever the latency changed between the two modes, and the
+  entered mode started from rest (48 kHz VCA <-> Opto: 1.0-7.6x a tone's slope depending on the switch's phase;
+  alpha1 too). Every mode switch is ducked now; `testEveryModeSwitchIsDucked` runs all 56 ordered switches.
+- An Oversampling change replayed the anti-alias path at its new factor without a duck (5.6-11x at 48 kHz, 11-27x
+  at 96 kHz; VCA, Digital, Opto), and leaving Multiband stepped 11-39x at 96-192 kHz. An Oversampling change that
+  moves the mode's audio factor or Opto's output stage is now ducked (`--oversampling-change-duck`), and leaving
+  Multiband is a ducked mode switch.
+- Entering VCA restarts the anti-alias filters, so its first ~1.4 ms is near silent; that now falls inside the
+  switch's 128-sample mute.
+- From the 2026-11-06 release work:
+  - Digital's own lookahead, rounded at the mode rate while the report counts whole host samples, left the wet path
+    a quarter or half a host sample off the report at 2x and 4x in 24 of 75 settings; both now round in host
+    samples (73878236, `--digital-lookahead-latency`).
+  - The sidechain EQ's low shelf, designed and run in float far below its rate, missed its response by 0.17 dB at
+    192 kHz and 8.9 dB at 768 (Bus runs it at the mode rate); it now has double coefficients and state, within
+    2e-7 dB to 768 kHz, bit-identical at the 0 dB defaults (15442ddf, `--sidechain-low-shelf`,
+    `--bus-sidechain-low-shelf`). Designing in double and rounding to float was measured and does not hold it.
+  - Dead weight removed (6714d64d): the legacy `SidechainTilt` and the fixed-Hz SC branch in `MultiCompVcaLaw.hpp`
+    (both behind compile-time switches the shipped path never took, used by no test), and the two harmonics headers
+    included nowhere. Every core-test output byte-identical. (The 2026-10-12 ruling kept `SidechainTilt` for that
+    pass; the 2026-11-05 release plan listed it for removal.)
+  - The six FET factory presets carried JUCE times that, read as knob positions, sat every one near Attack 2 and
+    Release 1 to 2; they now set the dials their names call for (3898f2cd, `--fet-preset-dials`; owner 2026-11-06).
+  - AU: disposing the unit while the host kept its view ran the view's idle timer into the deleted plugin (heap use
+    after free under ASan; Multi-Comp 2's `uiIdle` reads the plugin). Fixed in DAF on
+    `fix/au-view-timer-after-dispose` with `tests/AUViewDispose.cpp`; a DAF PR before the release.
+
+### Still open
+
+- FET Curve Measured with All: the small-signal gain sits 1.20 dB under the reference (pinned by
+  `testFetMeasuredCurveAllButtons`). A known issue in the 1.0.0 notes.
+- From code review, not yet measured: `MultiCompDSP::prepare()` at the same rate keeps most modes' state (the
+  plugin masks it: the framework deactivates first; the same-rate test runs no audio between the two prepares).
+- User manual: `manuals/multi-comp-2.md` and `manuals/screenshots/multi-comp-2/` landed on 2026-11-06 (a5171c1f).
+  The release writes `/assets/manuals/multi-comp-2-manual.pdf`; until then the website's page links a PDF that does
+  not exist.
+- GR needles (2026-10-22, `daf-plugin/MultiCompGainReductionNeedle.hpp`): the plugin feeds them the DSP's
+  block-end gain reduction once per host block, so a transient reads up to a block early and, at large buffers,
+  slightly deep (a 6 dB kick: about 0.1 dB at 512 samples, 0.5 dB VU / 0.9 dB VCA at 2048). The fix is a block
+  mean of the gain in the OPTO/FET/VCA paths (linear for the VU needle, dB for VCA), measured against CPU parity.
+  The FET needle reads true GR: the reference 1176's meter is not a function of GR (its drive has dynamics of its
+  own; tools `needle_meter/README.md` has the kill-tests and a measurement plan).
+- Entering BUS from rest runs up to 14 dB above its steady level for about 10 ms (a level transient, not a click,
+  in alpha1 too; on 2026-10-21 the duck took about half of it). Not changed.
+- `getLatencySamples()` reports the requested mode from the request on, also while the duck still holds the old one
+  (with the lookaheads at 0 the host report, `getHostLatencySamples()`, is the same in every mode).
+- Windows: `MultiCompPluginLayer` fails its `__FILE__` path check on backslashes (CI runs only `MultiCompCore` on
+  Windows). On Windows ARM64 (`_M_ARM64`) `ScopedFlushDenormals` does nothing.
+- Known issues by ruling or by design, in the 1.0.0 notes. LV2 factory preset recall resets the globals (Bypass,
+  Oversampling, external key, lookahead, link): DAF writes each LV2 preset from a fresh instance with every input
+  port, and the factory walker leaves the globals at their defaults there (owner 2026-11-05: a known issue for
+  1.0.0). A lookahead change on its own applies at once and can step 3-11x (pre-existing; ducking it gated 99 % of
+  an automated ramp). A switch that moves the latency mutes the bypass and dry paths with the wet path: 128 samples
+  between 1 ms fades, plus Digital's own lookahead when entering Digital (12.7 ms of silence at 10 ms, 48 kHz).
+- From the 2026-11-05 release review, deferred: the VST3 wrapper caches the latency at construction (0 before the
+  first activate), so an instance's first process sends one latency event (measured: one event; deferred as
+  benign); the Multiband envelope parks 0.012 dB short at 48 kHz (recorded here, no change).

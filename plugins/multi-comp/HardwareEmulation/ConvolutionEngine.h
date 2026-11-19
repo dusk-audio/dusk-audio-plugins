@@ -61,7 +61,7 @@ public:
         switch (type)
         {
             case TransformerType::Opto:
-                // UTC transformer: 80Hz warmth, gentle HF rolloff (real LA-2A rolls off top end)
+                // Vintage transformer: 80Hz warmth, gentle HF rolloff (a real opto leveler rolls off top end)
                 generateTransformerIR(80.0f, 0.5f, 16000.0f, -1.0f, 64);
                 break;
 
@@ -74,7 +74,7 @@ public:
                 break;
 
             case TransformerType::Console_Bus:
-                // SSL G-Bus: transparent active design — bypass convolution
+                // British bus: transparent active design — bypass convolution
                 // (TransformerEmulation handles saturation/harmonics)
                 irLength = 1;
                 impulseResponse[0] = 1.0f;
@@ -94,6 +94,9 @@ public:
                 break;
         }
     }
+
+    // True when the IR is the unit impulse: processSample then returns its input.
+    bool isUnity() const noexcept { return irLength <= 1 && impulseResponse[0] == 1.0f; }
 
     // Process a single sample
     float processSample(float input)
@@ -320,6 +323,7 @@ public:
 
     int getLatency() const { return left.getLatency(); }
     bool isEnabled() const { return left.isEnabled(); }
+    bool isUnity() const noexcept { return left.isUnity() && right.isUnity(); }
 
 private:
     ShortConvolution left;

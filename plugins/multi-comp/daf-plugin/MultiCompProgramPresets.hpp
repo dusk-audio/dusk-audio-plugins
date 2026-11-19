@@ -1,0 +1,223 @@
+#pragma once
+#include "../core/MultiCompPresets.hpp"
+#include "MultiCompParams.hpp"
+namespace multicompp { inline constexpr auto& kFactoryPresets = duskaudio::kMultiCompPresets; }
+
+namespace multicompp
+{
+inline int coreParamIndex(CoreParameter parameter) noexcept
+{
+    if (parameter == CoreParameter::None) return -1;
+    for (int i = 0; i < kParamCount; ++i)
+        if (kParams[static_cast<size_t>(i)].core == parameter) return i;
+    for (size_t i = 0; i < kExtensionParams.size(); ++i)
+        if (kExtensionParams[i].core == parameter) return kExtensionBase + static_cast<int>(i);
+    return -1;
+}
+
+// Shared factory-program walker. A recall owns only the JUCE preset's common
+// controls and the controls for its selected compressor mode. Machine/global
+// choices (including Bypass, oversampling, external sidechain and global
+// lookahead) remain untouched.
+template <class SetParameter, class SetBandParameter>
+void forEachPresetParam(const duskaudio::MultiCompPreset& preset,
+                        SetParameter&& setParameter,
+                        SetBandParameter&& setBandParameter)
+{
+    using P = CoreParameter;
+    setParameter(P::Mode, static_cast<float>(preset.mode));
+    setParameter(P::Mix, preset.mix);
+    setParameter(P::SidechainHP, preset.sidechainHP);
+    setParameter(P::AutoMakeup, preset.autoMakeup ? 1.0f : 0.0f);
+
+    switch (preset.mode)
+    {
+        case 0:
+            setParameter(P::OptoPeakReduction, preset.peakReduction);
+            setParameter(P::OptoGain, duskaudio::optoGainDbToKnob(preset.makeup));
+            setParameter(P::OptoLimit, preset.limitMode ? 1.0f : 0.0f);
+            break;
+        case 1:
+            setParameter(P::FetInput, -preset.threshold);
+            setParameter(P::FetOutput, preset.makeup);
+            setParameter(P::FetAttack, preset.attack);
+            setParameter(P::FetRelease, preset.release);
+            setParameter(P::FetRatio, static_cast<float>(preset.fetRatio));
+            setParameter(P::FetCurve, kParams[static_cast<size_t>(ParamId::FetCurve)].def);
+            setParameter(P::FetTransient, kParams[static_cast<size_t>(ParamId::FetTransient)].def);
+            setParameter(P::FetThreshold, kParams[static_cast<size_t>(ParamId::FetThreshold)].def);
+            break;
+        case 4:
+            // FET BLUE shares Input, Output, Attack and Release with FET BLACK; Ratio, SC Filter and Headroom are
+            // its own.
+            setParameter(P::FetInput, -preset.threshold);
+            setParameter(P::FetOutput, preset.makeup);
+            setParameter(P::FetAttack, preset.attack);
+            setParameter(P::FetRelease, preset.release);
+            setParameter(P::FetBlueRatio, static_cast<float>(preset.fetRatio));
+            setParameter(P::FetBlueScFilter, 0.0f);   // the reference's defaults: filter off, 16 dB headroom
+            setParameter(P::FetBlueHeadroom, 3.0f);
+            break;
+        case 2:
+            setParameter(P::VcaThreshold, preset.threshold);
+            setParameter(P::VcaRatio, duskaudio::vcaLaw::compressPosition(preset.ratio));
+            setParameter(P::VcaAttack, preset.attack);
+            setParameter(P::VcaRelease, preset.release);
+            setParameter(P::VcaOutput, preset.makeup);
+            setParameter(P::VcaOverEasy, preset.vcaOverEasy);
+            setParameter(P::VcaClassicDetector,
+                         kParams[static_cast<size_t>(ParamId::VcaClassicDetector)].def);
+            break;
+        case 3:
+        {
+            const int ratioChoice = preset.ratio <= 2.0f ? 0 : preset.ratio <= 4.0f ? 1 : 2;
+            setParameter(P::BusThreshold, preset.threshold);
+            setParameter(P::BusRatio, static_cast<float>(ratioChoice));
+            setParameter(P::BusAttack, static_cast<float>(preset.busAttack));
+            setParameter(P::BusRelease, static_cast<float>(preset.busRelease));
+            setParameter(P::BusMakeup, preset.makeup);
+            setParameter(P::BusMix, preset.mix);
+            setParameter(P::BusHeadroom, 3.0f);
+            setParameter(P::BusFadeRate, 24.8f);
+            setParameter(P::BusFade, 0.0f);
+            break;
+        }
+        case 5:
+            setParameter(P::StudioVcaThreshold, preset.threshold);
+            setParameter(P::StudioVcaRatio, preset.ratio);
+            setParameter(P::StudioVcaAttack, preset.attack);
+            setParameter(P::StudioVcaRelease, preset.release);
+            setParameter(P::StudioVcaOutput, preset.makeup);
+            // The program's release is a fixed time; the input stays at unity.
+            setParameter(P::StudioVcaInput, 0.0f);
+            setParameter(P::StudioVcaAutoRelease, 0.0f);
+            break;
+        case 6:
+            setParameter(P::DigitalThreshold, preset.threshold);
+            setParameter(P::DigitalRatio, preset.ratio);
+            setParameter(P::DigitalKnee, kParams[static_cast<size_t>(ParamId::DigitalKnee)].def);
+            setParameter(P::DigitalAttack, preset.attack);
+            setParameter(P::DigitalRelease, preset.release);
+            setParameter(P::DigitalLookahead,
+                         kParams[static_cast<size_t>(ParamId::DigitalLookahead)].def);
+            setParameter(P::DigitalMix, kParams[static_cast<size_t>(ParamId::DigitalMix)].def);
+            setParameter(P::DigitalOutput, preset.makeup);
+            setParameter(P::DigitalAdaptive,
+                         kParams[static_cast<size_t>(ParamId::DigitalAdaptive)].def);
+            break;
+        case 7:
+            setParameter(P::Crossover1, kParams[static_cast<size_t>(ParamId::Crossover1)].def);
+            setParameter(P::Crossover2, kParams[static_cast<size_t>(ParamId::Crossover2)].def);
+            setParameter(P::Crossover3, kParams[static_cast<size_t>(ParamId::Crossover3)].def);
+            setParameter(P::MbMix, kParams[static_cast<size_t>(ParamId::MbMix)].def);
+            setParameter(P::MbOutput, kParams[static_cast<size_t>(ParamId::MbOutput)].def);
+            for (int band = 0; band < duskaudio::kMultiCompBands; ++band)
+                for (int field = 0; field < 8; ++field)
+                    setBandParameter(band, field, bandParam(field, band).def);
+            break;
+        default:
+            break;
+    }
+}
+
+// Host-program adapter used by Plugin::loadProgram. Values passed to the
+// setter are host-domain values at their real DAF parameter indices.
+template <class SetHostParameter>
+void applyPresetToHostParameters(const duskaudio::MultiCompPreset& preset,
+                                 SetHostParameter&& setHostParameter)
+{
+    forEachPresetParam(preset,
+        [&](CoreParameter parameter, float value)
+        {
+            const int parameterIndex = coreParamIndex(parameter);
+            if (parameterIndex >= 0)
+            {
+                const auto& d = parameterIndex < kParamCount ? kParams[static_cast<size_t>(parameterIndex)]
+                    : kExtensionParams[static_cast<size_t>(parameterIndex - kExtensionBase)];
+                setHostParameter(parameterIndex, plainToHost(d, value));
+            }
+        },
+        [&](int band, int field, float value)
+        {
+            const auto d = bandParam(field, band);
+            setHostParameter(kBandBase + band * 8 + field, plainToHost(d, value));
+        });
+}
+
+struct ExpandedFactoryPreset
+{
+    std::array<float, kTotalParamCount> hostValues{};
+    std::array<bool, kTotalParamCount> ownsParameter{};
+};
+
+// Expand the small core preset records into their exact host-domain writes once
+// at module load.  The UI receives a parameter callback for every automation
+// change, so rebuilding all 13 records there made preset-name synchronisation
+// needlessly quadratic in the parameter table size.
+inline const std::array<ExpandedFactoryPreset, kFactoryPresets.size()>
+    kExpandedFactoryPresets = [] {
+        std::array<ExpandedFactoryPreset, kFactoryPresets.size()> expanded{};
+        for (size_t presetIndex = 0; presetIndex < kFactoryPresets.size(); ++presetIndex)
+            applyPresetToHostParameters(kFactoryPresets[presetIndex],
+                [&expanded, presetIndex](int parameterIndex, float hostValue)
+                {
+                    if (!isControlParameter(parameterIndex)) return;
+                    auto& preset = expanded[presetIndex];
+                    preset.hostValues[static_cast<size_t>(parameterIndex)] = hostValue;
+                    preset.ownsParameter[static_cast<size_t>(parameterIndex)] = true;
+                });
+        return expanded;
+    }();
+
+inline bool presetOwnsParam(int presetIndex, uint32_t parameterIndex) noexcept
+{
+    return presetIndex >= 0
+        && static_cast<size_t>(presetIndex) < kExpandedFactoryPresets.size()
+        && isControlParameter(static_cast<int>(parameterIndex))
+        && kExpandedFactoryPresets[static_cast<size_t>(presetIndex)]
+               .ownsParameter[static_cast<size_t>(parameterIndex)];
+}
+
+template <class SetHostParameter>
+void applyFactoryPresetToHostParameters(uint32_t presetIndex,
+                                        SetHostParameter&& setHostParameter)
+{
+    if (presetIndex >= kExpandedFactoryPresets.size()) return;
+    const auto& preset = kExpandedFactoryPresets[presetIndex];
+    for (int parameterIndex = 0; parameterIndex < kTotalParamCount; parameterIndex = nextControlParameter(parameterIndex))
+        if (presetOwnsParam(static_cast<int>(presetIndex),
+                            static_cast<uint32_t>(parameterIndex)))
+            setHostParameter(parameterIndex,
+                             preset.hostValues[static_cast<size_t>(parameterIndex)]);
+}
+
+// A control reads `expected` when within 1e-5 of its host range (at least 1e-6): host round trips of a preset's
+// writes land there, an edit does not.
+inline bool hostValueMatches(int parameterIndex, float actual, float expected) noexcept
+{
+    const float range = resolveParameter(parameterIndex,
+        [](const Param& d) { return hostMax(d) - hostMin(d); },
+        [](const BandParam& d, int) { return hostMax(d) - hostMin(d); });
+    return std::fabs(actual - expected) <= std::max(1.0e-6f, range * 1.0e-5f);
+}
+
+// The factory preset whose controls all read its values (hostValueMatches), or -1. `hostValue(index)` reads a
+// control's current host value. The editor names its preset by this, and the plugin reports it as its current
+// program, so a session restored from its state still names the preset it was saved on.
+template <class HostValue>
+int matchingFactoryPreset(HostValue&& hostValue)
+{
+    for (size_t presetIndex = 0; presetIndex < kExpandedFactoryPresets.size(); ++presetIndex)
+    {
+        const auto& preset = kExpandedFactoryPresets[presetIndex];
+        bool matches = true;
+        for (int parameterIndex = 0; parameterIndex < kTotalParamCount && matches;
+             parameterIndex = nextControlParameter(parameterIndex))
+            if (preset.ownsParameter[static_cast<size_t>(parameterIndex)])
+                matches = hostValueMatches(parameterIndex, hostValue(parameterIndex),
+                                           preset.hostValues[static_cast<size_t>(parameterIndex)]);
+        if (matches) return static_cast<int>(presetIndex);
+    }
+    return -1;
+}
+} // namespace multicompp
