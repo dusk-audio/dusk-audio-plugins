@@ -362,9 +362,10 @@ void QuadTank::renderOutput (float* left, float* right, int count)
 // -----------------------------------------------------------------------
 namespace
 {
-// The GCC SSE2 Release scalar read rounds the two halves of the quadratic term
-// separately. Keep that grouping when interpolating consecutive output samples.
-#if defined(__GNUC__) && !defined(__clang__) && defined(__SSE2__) && defined(__FAST_MATH__) && !defined(__FMA__)
+// Match the scalar cubicHermite rounding for these GCC SSE2 fast-math builds.
+// Other GCC versions use TapRead::sampleAt until their grouping is verified.
+#if defined(__GNUC__) && !defined(__clang__) && defined(__SSE2__) && defined(__FAST_MATH__) && !defined(__FMA__) \
+    && (__GNUC__ == 11 || __GNUC__ == 15 || __GNUC__ == 16)
 __attribute__((optimize("no-associative-math")))
 void addContiguousTap (const float* __restrict__ samples, float* __restrict__ out, int count, float frac, float gain)
 {
@@ -378,7 +379,12 @@ void addContiguousTap (const float* __restrict__ samples, float* __restrict__ ou
         const float cubic = 0.5f * (y3 - y0) + 1.5f * (y1 - y2);
         const float inner = 2.0f * y2 - 2.5f * y1;
         const float outer = y0 - 0.5f * y3;
+#if __GNUC__ == 11
+        // GCC 11 finishes the quadratic coefficient before adding the cubic term.
+        const float t = cubic * frac + (inner + outer);
+#else
         const float t = (cubic * frac + inner) + outer;
+#endif
         out[i] += gain * ((t * frac + linear) * frac + y1);
     }
 }
