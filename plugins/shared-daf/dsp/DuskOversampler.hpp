@@ -100,9 +100,10 @@ namespace hbtaps
     static constexpr float kB[4] = {
         0.3048934958f, -0.0712879483f, 0.0197218961f, -0.0034083969f,
     };
-    // stage A-deep: 71-tap halfband, transition 0.05, stopband -116 dB. Used for the
-    // OUTER decimation of LocalAAStage so a hot near-Nyquist harmonic doesn't fold to LF
-    // through the ordinary halfband's shallow stopband edge (see LocalAAStage below).
+    // stage A-deep: 71-tap halfband, stopband -116 dB from 0.30 of its sample rate (kA
+    // holds -67 dB from 0.29). Its stopband starts a little later than kA's: it is still
+    // in transition until 0.30, and between about 0.287 and 0.293 it rejects LESS than kA
+    // (-58 dB against -67 dB at 0.29). Used for both OUTER halfbands of LocalAAStage.
     static constexpr float kAdeep[18] = {
         0.3170305596f, -0.1023212374f, 0.0575401133f, -0.0372667917f, 0.0254042771f,
         -0.0175876005f, 0.0121372392f, -0.0082512865f, 0.0054777043f, -0.0035240612f,
@@ -126,12 +127,14 @@ namespace hbtaps
     };
 
     // HalfbandFIR::outAfterStuffedZeroExact() relies on the first side tap being positive.
-    static_assert(kA[0] > 0.0f && kB[0] > 0.0f && kAwide[0] > 0.0f, "first side tap must be positive");
+    static_assert(kA[0] > 0.0f && kB[0] > 0.0f && kAdeep[0] > 0.0f && kAwide[0] > 0.0f,
+                  "first side tap must be positive");
 
     // Stage-A tap-set descriptors for OversamplerT. L = full tap length, NSide =
     // one-sided nonzero taps, taps = the set.
     struct StageA     { static constexpr int L = 47;  static constexpr int NSide = 12; static constexpr const float* taps = kA; };
     struct StageAwide { static constexpr int L = 127; static constexpr int NSide = 32; static constexpr const float* taps = kAwide; };
+    struct StageAdeep { static constexpr int L = 71;  static constexpr int NSide = 18; static constexpr const float* taps = kAdeep; };
 }
 
 // Streaming oversampler parameterised on its base<->2x halfband (stage A). The
@@ -293,36 +296,60 @@ private:
 
 //==============================================================================
 // LocalAAStage — local 4x oversampler for ONE memoryless nonlinearity, with a DEEP
-// (-116 dB, 71-tap `kAdeep`) OUTER decimation halfband. The weak spot of a local NL
-// stage is that final 2x->1x decimation: a hot near-Nyquist harmonic (a 19 kHz tone's
-// 5th at 95 kHz) folds to LF through an ordinary halfband's ~-75 dB stopband, and more
-// oversampling can't help because that last stage always sees the harmonic at the
-// stopband edge. The deep set drops the fold below -110 dB, so the surrounding core can
-// stay at a cheap 2x while the NL is alias-free (the mixed-rate: filters at 2x, NL clean).
+// (-116 dB, 71-tap `kAdeep`) OUTER halfband in both directions.
+//
+// Decimation: the weak spot of a local NL stage is the final 2x->1x decimation. A hot
+// near-Nyquist harmonic (a 19 kHz tone's 5th at 95 kHz) folds to LF through the ordinary
+// kA halfband's -67 dB stopband, and more oversampling can't help because that last stage
+// always sees the harmonic at the stopband edge. The deep set drops the fold below -110 dB.
+//
+// Interpolation: the outer 1x->2x step leaves an image of the input at (rate - f), only
+// as far down as the interpolator's stopband. A saturating nonlinearity mixes that image
+// with the tone itself: at a 96 kHz surrounding rate a 19 kHz tone has its image at
+// 77 kHz, and 77 - 4*19 = 1 kHz lands in the audio band. Through tanh(2x) that product
+// measures -88 dB re the tone with kA (image at -69 dB) and -148 dB with the deep set
+// (DuskOversamplerTest holds it below -120 dB).
+//
+// What this stage does NOT remove is an image that is already in its input. A surrounding
+// oversampler with a shallower interpolator leaves its own image of the same tone (at
+// host rate - f), and the nonlinearity mixes that one just the same: TapeMachine 2's 2x
+// core interpolates with kA, and 2*19 - 29 = 9 kHz is what remains on a 48 kHz host.
+//
 // Group delay (in surrounding-rate samples) is reported by latency() so the host can
-// compensate it — unlike the shallow Local2xStage its 47+71-tap round trip is large.
+// compensate it — unlike the shallow Local2xStage its 71+71-tap round trip is large.
 class LocalAAStage
 {
 public:
     void reset() noexcept { upA.reset(); downA.reset(); upB.reset(); downB.reset(); }
 
-    // Round-trip group delay in SURROUNDING-rate samples: outer up(47)+down(71) center
-    // taps = (23+35)=58 @2x-local = 29; inner up(15)+down(15) = (7+7)=14 @4x-local = 3.5.
-    static constexpr float latency() noexcept { return 29.0f + 3.5f; }
+    // Round-trip group delay in SURROUNDING-rate samples, by this file's convention of
+    // counting every halfband by its centre tap: outer up(71)+down(71) = (35+35)=70
+    // @2x-local = 35; inner up(15)+down(15) = (7+7)=14 @4x-local = 3.5.
+    // The stage's measured delay is 0.75 lower (37.75): a decimator reads right after its
+    // second push, so each up/down pair delays one fast-rate sample less than twice its
+    // centre tap (0.5 here for the outer pair, 0.25 for the inner). OversamplerT::latency()
+    // follows the same convention. DuskOversamplerTest pins the 0.75.
+    static constexpr float latency() noexcept
+    {
+        return static_cast<float> (Outer::L / 2) + 3.5f;
+    }
 
     template <class Fn>
     float process (float x, Fn&& f) noexcept
     {
-        // local 4x (outer 2x + inner 2x) so harmonics land high, then the OUTER
-        // decimation uses the deep -116 dB set to kill the near-Nyquist fold.
-        upA.push (x);       const float a0 = 2.0f * upA.out (hbtaps::kA);
+        // local 4x (outer 2x + inner 2x) so harmonics land high. The OUTER halfband is
+        // the deep -116 dB set both ways: up, so this stage's own interpolation image stays
+        // out of the nonlinearity; down, to kill the near-Nyquist fold.
+        upA.push (x);       const float a0 = 2.0f * upA.out (Outer::taps);
         upA.push (0.0f);    const float a1 = 2.0f * upA.outAfterStuffedZeroExact();
         downA.push (inner (a0, f));
         downA.push (inner (a1, f));
-        return downA.out (hbtaps::kAdeep);
+        return downA.out (Outer::taps);
     }
 
 private:
+    using Outer = hbtaps::StageAdeep;   // ring size and tap set of both outer halfbands, as one
+
     template <class Fn>
     float inner (float s, Fn&& f) noexcept
     {
@@ -332,8 +359,8 @@ private:
         downB.push (f (b1));
         return downB.out (hbtaps::kB);
     }
-    HalfbandFIR<47, 12> upA;
-    HalfbandFIR<71, 18> downA;   // deep outer decimation (the fold-critical stage)
+    HalfbandFIR<Outer::L, Outer::NSide> upA;     // deep outer interpolation (keeps its own image out of the NL)
+    HalfbandFIR<Outer::L, Outer::NSide> downA;   // deep outer decimation (the fold-critical stage)
     HalfbandFIR<15, 4>  upB, downB;
 };
 

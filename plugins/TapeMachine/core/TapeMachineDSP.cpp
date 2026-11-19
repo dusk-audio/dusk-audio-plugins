@@ -342,7 +342,7 @@ int TapeMachineDSP::latencySamples() const noexcept
     // Bypass is a true zero-delay passthrough (processBlock copies input->output with no
     // oversampling round trip), so it must report ZERO latency. Reporting the active-path
     // latency while bypassed would make the host's PDC shift the (undelayed) bypassed track
-    // by ~32+ samples relative to the rest of the mix. The DAF shell re-queries this on every
+    // by ~60 samples relative to the rest of the mix. The DAF shell re-queries this on every
     // block and only calls setLatency() when the value actually changes, so the host re-runs
     // PDC exactly once on each bypass toggle. Latency is cleared on bypass and restored on
     // un-bypass.
@@ -352,7 +352,7 @@ int TapeMachineDSP::latencySamples() const noexcept
     // Thru is the same true zero-delay passthrough: its branch in processBlock copies
     // input->output and returns before the oversampler ever runs. Reporting the active-path
     // latency here made the host compensate for a delay that is not present, placing a
-    // Thru'd track ~32+ samples EARLY against the rest of the mix.
+    // Thru'd track ~60 samples EARLY against the rest of the mix.
     if (static_cast<TapeCore::SignalPath> (
             clampI (pSignalPath.load (std::memory_order_relaxed), 0, 3)) == TapeCore::Thru)
         return 0;
