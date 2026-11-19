@@ -40,7 +40,8 @@ set(DUSKVERB_ENGINE_SOURCES
     ../src/dsp/NonLinearEngine.cpp
     ../src/dsp/ShimmerEngine.cpp
     ../src/dsp/DattorroPlateVintage.cpp
-    ../src/dsp/ReverseRoomEngine.cpp)
+    ../src/dsp/ReverseRoomEngine.cpp
+    ../src/dsp/VelvetTail.cpp)
 
 # DuskVerb 2's own framework-free DSP: the core (shared with nothing but these targets, except
 # DuskVerbPresetEngineConfig.cpp, which the legacy plugin compiles too) and the engines only
@@ -174,6 +175,23 @@ enable_testing()
     target_include_directories(DuskKnobGestureTest PRIVATE "${DAFWIDGETS_PATH}/imgui")
     target_compile_features(DuskKnobGestureTest PRIVATE cxx_std_17)
     add_test(NAME DuskKnobGesture COMMAND DuskKnobGestureTest)
+
+    add_executable(DuskVerbVelvetTailTest ../core/tests/VelvetTailTests.cpp ../src/dsp/VelvetTail.cpp)
+    target_compile_features(DuskVerbVelvetTailTest PRIVATE cxx_std_17)
+    add_executable(DuskVerbQuadTankOutputTest ../core/tests/QuadTankOutputTests.cpp ../src/dsp/QuadTank.cpp)
+    target_include_directories(DuskVerbQuadTankOutputTest PRIVATE ../src/dsp ../../shared-daf/dsp)
+    target_compile_features(DuskVerbQuadTankOutputTest PRIVATE cxx_std_17)
+    foreach(output_test IN ITEMS DuskVerbVelvetTailTest DuskVerbQuadTankOutputTest)
+        if(NOT MSVC)
+            target_compile_options(${output_test} PRIVATE
+                $<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:-O3 -ffast-math>)
+        else()
+            target_compile_options(${output_test} PRIVATE
+                $<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:/O2 /fp:fast>)
+        endif()
+    endforeach()
+    add_test(NAME DuskVerbQuadTankOutput COMMAND DuskVerbQuadTankOutputTest)
+    add_test(NAME DuskVerbVelvetTail COMMAND DuskVerbVelvetTailTest)
 
     add_executable(DuskVerbCoreTest
         ../core/tests/DuskVerbCoreTests.cpp
@@ -348,6 +366,8 @@ enable_testing()
         endif()
         add_test(NAME ${testTarget} COMMAND ${testTarget})
     endforeach()
+    add_test(NAME DuskVerbMatchedRoomPreset COMMAND DuskVerbStateCodecTest
+        "${CMAKE_CURRENT_SOURCE_DIR}/../presets/Big Drum Room Matched.dvpreset")
     find_package(Threads REQUIRED)
     target_link_libraries(DuskVerbControlStateTest PRIVATE Threads::Threads)
     if(APPLE)

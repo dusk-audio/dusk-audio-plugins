@@ -10,8 +10,8 @@
 
 // 4-tank cross-coupled allpass reverb for Hall algorithm.
 //
-// Extends the DattorroTank concept from 2 tanks to 4, providing 4x more
-// output tap points (14 per channel vs 7) and circular cross-coupling
+// Extends the DattorroTank concept from 2 tanks to 4, with 48 output taps
+// per channel and circular cross-coupling
 // (0→1→2→3→0) for naturally smooth tails without discrete recirculation peaks.
 //
 // Each tank: modulated allpass → delay → 3 density allpasses → damping →
@@ -274,7 +274,7 @@ private:
     Tank tanks_[kNumTanks];
 
     // -----------------------------------------------------------------------
-    // Output taps: 14 per channel from all 4 tanks.
+    // Output taps: 48 per channel from all 4 tanks.
     // Buffer indices: 0-3=Delay1 (tanks 0-3), 4-7=Delay2 (tanks 0-3),
     //                 8-11=AP2 (tanks 0-3)
     struct OutputTap
@@ -387,7 +387,18 @@ public:
     void setModulationTopology (DspUtils::ModulationTopology t);
 private:
 
-    float readOutputTap (const OutputTap& tap) const;
+    struct TapRead
+    {
+        const float* data;
+        int mask, writePos;
+        float delay;
+        float sampleAt (int head) const;
+    };
+    static constexpr int kOutputBatch = 128;
+    int outputBatchLimit_ = 1; // Geometry only. Recomputed whenever the tap lengths change.
+    TapRead tapRead (const OutputTap& tap) const;
+    void sumOutputTaps (const OutputTap (&taps)[kNumOutputTaps], float* out, int count) const;
+    void renderOutput (float* left, float* right, int count);
 
     // --- Stereo-input injection state (issue #123). Declared LAST so the disabled
     // path compiles to the identical instruction stream for the legacy tankIn

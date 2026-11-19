@@ -160,7 +160,7 @@ void QuadTank::process (const float* inputL, const float* inputR,
                         float* outputL, float* outputR, int numSamples,
                         const float* sourceSide)
 {
-    if (! prepared_)
+    if (! prepared_ || numSamples <= 0)
         return;
 
     // Drive-style saturation (see DattorroTank for rationale).
@@ -182,6 +182,9 @@ void QuadTank::process (const float* inputL, const float* inputR,
         (modulationTopology_ == DspUtils::ModulationTopology::CoherentLoop)
         && ! frozen_;
 
+    // Only feedback is recursive. Read the stereo output taps in short batches
+    // while their original samples are still present in all twelve rings.
+    int outputStart = 0;
     for (int i = 0; i < numSamples; ++i)
     {
         float input = (inputL[i] + inputR[i]) * 0.5f;
@@ -320,16 +323,23 @@ void QuadTank::process (const float* inputL, const float* inputR,
                                               -kSafetyClip, kSafetyClip);
         }
 
-        // ------------------------------------------------------------------
-        // Output: sum 14 signed taps from all 4 tanks per channel
-        float outL = 0.0f;
-        for (int t = 0; t < kNumOutputTaps; ++t)
-            outL += readOutputTap (kLeftOutputTaps[t]) * kLeftOutputTaps[t].sign;
+        const int count = i - outputStart + 1;
+        if (count == outputBatchLimit_ || i + 1 == numSamples)
+        {
+            renderOutput (outputL + outputStart, outputR + outputStart, count);
+            outputStart = i + 1;
+        }
+    }
+}
 
-        float outR = 0.0f;
-        for (int t = 0; t < kNumOutputTaps; ++t)
-            outR += readOutputTap (kRightOutputTaps[t]) * kRightOutputTaps[t].sign;
-
+void QuadTank::renderOutput (float* left, float* right, int count)
+{
+    float sumL[kOutputBatch];
+    float sumR[kOutputBatch];
+    sumOutputTaps (kLeftOutputTaps, sumL, count);
+    sumOutputTaps (kRightOutputTaps, sumR, count);
+    for (int i = 0; i < count; ++i)
+    {
         // Normalize output tap sum. With alternating signs on highly correlated
         // taps (same tank, adjacent delay positions), effective independence is
         // ~8 taps, not 48 — 1/sqrt(48) severely over-attenuates.
@@ -338,49 +348,122 @@ void QuadTank::process (const float* inputL, const float* inputR,
         constexpr float kOutputScale = 0.35f;  // ~1/sqrt(8)
         const float outputGain = kOutputScale * lateGainScale_;
 
-        float qoL = outL * outputGain;
-        float qoR = outR * outputGain;
+        float qoL = sumL[i] * outputGain;
+        float qoR = sumR[i] * outputGain;
         // Wet-output stereo chorus/ensemble (setStereoMod); inactive = bit-null.
         if (stereoMod_.active) stereoMod_.process (qoL, qoR);
         // Safety clamp AFTER the modulation so its modulated-delay peaks can't push
         // the output past kSafetyClip.
-        outputL[i] = std::clamp (qoL, -kSafetyClip, kSafetyClip);
-        outputR[i] = std::clamp (qoR, -kSafetyClip, kSafetyClip);
+        left[i] = std::clamp (qoL, -kSafetyClip, kSafetyClip);
+        right[i] = std::clamp (qoR, -kSafetyClip, kSafetyClip);
     }
 }
 
 // -----------------------------------------------------------------------
-float QuadTank::readOutputTap (const OutputTap& tap) const
+namespace
 {
-    // Buffer index mapping:
-    //   0-3:  Delay1 from tanks 0-3
-    //   4-7:  Delay2 from tanks 0-3
-    //   8-11: AP2 from tanks 0-3
-    int tankIdx = tap.bufferIndex % kNumTanks;
-    int bufType = tap.bufferIndex / kNumTanks;  // 0=del1, 1=del2, 2=ap2
-
-    const auto& tank = tanks_[tankIdx];
-
-    if (bufType == 2)
+// Match the scalar cubicHermite rounding for these GCC SSE2 fast-math builds.
+// Other GCC versions use TapRead::sampleAt until their grouping is verified.
+#if defined(__GNUC__) && !defined(__clang__) && defined(__SSE2__) && defined(__FAST_MATH__) && !defined(__FMA__) \
+    && (__GNUC__ == 11 || __GNUC__ == 15 || __GNUC__ == 16)
+__attribute__((optimize("no-associative-math")))
+void addContiguousTap (const float* __restrict__ samples, float* __restrict__ out, int count, float frac, float gain)
+{
+    for (int i = 0; i < count; ++i)
     {
-        // Read from AP2 internal buffer at fractional position. Use the same cubic
-        // interpolation as the delay-line taps below (readInterpolated) so the
-        // output tap geometry isn't snapped to whole samples — truncating
-        // positionFrac to an int offset broke the fractional tap placement.
-        const auto& ap = tank.ap2;
-        float tapDelay = std::max (tap.positionFrac * static_cast<float> (ap.delaySamples), 1.0f);
-        float readPos  = static_cast<float> (ap.writePos) - tapDelay;
-        int   intIdx   = static_cast<int> (std::floor (readPos));
-        float frac     = readPos - static_cast<float> (intIdx);
-        return DspUtils::cubicHermite (ap.buffer.data(), ap.mask, intIdx, frac);
+        const float y0 = samples[i];
+        const float y1 = samples[i + 1];
+        const float y2 = samples[i + 2];
+        const float y3 = samples[i + 3];
+        const float linear = 0.5f * (y2 - y0);
+        const float cubic = 0.5f * (y3 - y0) + 1.5f * (y1 - y2);
+        const float inner = 2.0f * y2 - 2.5f * y1;
+        const float outer = y0 - 0.5f * y3;
+#if __GNUC__ == 11
+        // GCC 11 finishes the quadratic coefficient before adding the cubic term.
+        const float t = cubic * frac + (inner + outer);
+#else
+        const float t = (cubic * frac + inner) + outer;
+#endif
+        out[i] += gain * ((t * frac + linear) * frac + y1);
     }
+}
+#define DUSK_QUAD_CONTIGUOUS_TAP 1
+#elif !defined(__FAST_MATH__) && !defined(_MSC_VER)
+void addContiguousTap (const float* samples, float* out, int count, float frac, float gain)
+{
+    for (int i = 0; i < count; ++i)
+        out[i] += gain * DspUtils::cubicHermite (samples, -1, i + 1, frac);
+}
+#define DUSK_QUAD_CONTIGUOUS_TAP 1
+#endif
+}
 
-    const DelayLine* delayBuf = (bufType == 0) ? &tank.delay1 : &tank.delay2;
-    float totalDelay = (bufType == 0) ? tank.delay1Samples : tank.delay2Samples;
+QuadTank::TapRead QuadTank::tapRead (const OutputTap& tap) const
+{
+    const auto& tank = tanks_[tap.bufferIndex % kNumTanks];
+    const int type = tap.bufferIndex / kNumTanks;
+    if (type == 2)
+    {
+        const auto& ap = tank.ap2;
+        return { ap.buffer.data(), ap.mask, ap.writePos,
+                 std::max (tap.positionFrac * static_cast<float> (ap.delaySamples), 1.0f) };
+    }
+    const auto& d = type == 0 ? tank.delay1 : tank.delay2;
+    const float length = type == 0 ? tank.delay1Samples : tank.delay2Samples;
+    return { d.buffer.data(), d.mask, d.writePos, std::max (tap.positionFrac * length, 1.0f) };
+}
 
-    float tapDelay = tap.positionFrac * totalDelay;
-    tapDelay = std::max (tapDelay, 1.0f);
-    return delayBuf->readInterpolated (tapDelay);
+float QuadTank::TapRead::sampleAt (int head) const
+{
+    const float pos = static_cast<float> (head) - delay;
+    const int index = static_cast<int> (std::floor (pos));
+    return DspUtils::cubicHermite (data, mask, index, pos - static_cast<float> (index));
+}
+
+void QuadTank::sumOutputTaps (const OutputTap (&taps)[kNumOutputTaps], float* out, int count) const
+{
+    if (count == 1)
+    {
+        float sum = 0.0f;
+        for (const auto& tap : taps)
+        {
+            const auto r = tapRead (tap);
+            sum += tap.sign * r.sampleAt (r.writePos);
+        }
+        out[0] = sum;
+        return;
+    }
+    std::fill_n (out, count, 0.0f);
+    for (const auto& tap : taps)
+    {
+        const auto r = tapRead (tap);
+        const int head = (r.writePos - count + 1) & r.mask;
+#ifdef DUSK_QUAD_CONTIGUOUS_TAP
+        // The scalar read rounds (head - delay) to float before splitting it.
+        // Make both endpoints round the same way even in a fast-math build.
+        const volatile float first = static_cast<float> (head) - r.delay;
+        const volatile float last = static_cast<float> (head + count - 1) - r.delay;
+        const int base = static_cast<int> (std::floor (first));
+        const int lastBase = static_cast<int> (std::floor (last));
+        const float frac = first - static_cast<float> (base);
+        const int start = (base - 1) & r.mask;
+        // On one side of zero the float spacing changes monotonically. Below
+        // 2^22 it is finer than half a sample: equal endpoint fractions then
+        // imply the same fraction throughout. Otherwise use each rounded head.
+        constexpr float maxPosition = 4194304.0f;
+        if (count - 1 <= r.mask - head && count <= r.mask - start - 2
+            && std::abs (first) < maxPosition && std::abs (last) < maxPosition
+            && (first < 0.0f) == (last < 0.0f)
+            && lastBase - base == count - 1 && last - static_cast<float> (lastBase) == frac)
+        {
+            addContiguousTap (r.data + start, out, count, frac, tap.sign);
+            continue;
+        }
+#endif
+        for (int i = 0; i < count; ++i)
+            out[i] += tap.sign * r.sampleAt ((head + i) & r.mask);
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -685,6 +768,22 @@ void QuadTank::updateDelayLengths()
             tank.densityAP[i].updateJitterDepth (sr);
         }
     }
+#if defined(__clang__) && (defined(__FMA__) || defined(__ARM_FEATURE_FMA))
+    // Clang contracts a different part of the cubic when several reads share
+    // a delay on FMA targets. Keep its sample-at-a-time evaluation there.
+    outputBatchLimit_ = 1;
+#else
+    // Neither end of the four-point read may be overwritten by later writes
+    // in the batch. Very short delays can read ahead of the current write head.
+    outputBatchLimit_ = kOutputBatch;
+    for (const auto* taps : { kLeftOutputTaps, kRightOutputTaps })
+        for (int i = 0; i < kNumOutputTaps; ++i)
+        {
+            const auto r = tapRead (taps[i]);
+            const int history = r.mask - static_cast<int> (std::ceil (r.delay)) - 1;
+            outputBatchLimit_ = std::min (outputBatchLimit_, r.delay < 3.0f ? 1 : std::max (1, history));
+        }
+#endif
 }
 
 void QuadTank::updateDecayCoefficients()

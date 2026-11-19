@@ -24,6 +24,9 @@
 namespace duskverb
 {
 
+// Factory configuration underlying the separately importable Big Drum Room voicing.
+inline constexpr std::string_view kBigDrumRoomBase = "79 Vocal Chamber";
+
 // The classic nonlinear burst. Decay is the time to -60 dB; the four lengths are the burst
 // lengths of the program the engine is fitted to (its shortest, two middle and longest).
 // Field order: name, category, algorithm, mix, busMode, predelay, predelaySync, decay, size,
@@ -127,7 +130,7 @@ struct PresetOverride
     float value;
 };
 
-inline constexpr std::array<PresetOverride, 59> kPresetOverrides {{
+inline constexpr std::array<PresetOverride, 66> kPresetOverrides {{
     // Paired with the engine patch's decorrelated side and band widths
     // (DuskVerbDv2Voicing.hpp): only the deep sub stays mono, as in the reference.
     { "Medium Drum Room", "mono_below", 40.0f },
@@ -140,6 +143,7 @@ inline constexpr std::array<PresetOverride, 59> kPresetOverrides {{
     { "Tiled Room", "bass_mult", 1.51685f },
     { "Vintage Vocal Plate", "hi_cut", 18749.9982f },
     { "Vocal Hall", "high_crossover", 3452.854f },
+    { "Vocal Hall", "lo_cut", 28.74f },
     { "Vocal Plate", "crossover", 220.79024f },
     { "79 Vocal Chamber", "crossover", 898.375106f },
     { "Black Hole", "crossover", 227.5569f },
@@ -193,6 +197,13 @@ inline constexpr std::array<PresetOverride, 59> kPresetOverrides {{
     { "Live Room", "gain_trim", 1.0f },                // row 6.63, +5.6
     { "Ambience", "gain_trim", 4.1f },                 // row 2.95, -1.2
     { "Reverse Taps", "gain_trim", 8.1f },             // row 4.60, -3.5
+    // Per-preset snare and music matches, checked against the full parity sheet.
+    { "Deep Blue Day", "width", 0.969538391f },
+    { "Deep Blue Day", "hi_cut", 14287.3594f },
+    { "Deep Blue Day", "hi_cut_shelf_db", -13.4396973f },
+    { "Deep Blue Day", "predelay", 20.4054508f },
+    { "Deep Blue Day", "damping", 0.961438954f },
+    { "Deep Blue Day", "er_level", 0.203092337f },
 }};
 
 constexpr bool presetOverridesValid() noexcept

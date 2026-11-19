@@ -610,6 +610,63 @@ void testNeutralPmbReset()
                 static_cast<double> (engine->getPmbBandT60 (b)), static_cast<double> (engine->getPmbBandLevel (b)),
                 static_cast<double> (engine->getPmbBandDirect (b)), static_cast<double> (engine->getPmbBandWidth (b)));
 }
+
+void testBigDrumRoomRecall()
+{
+    const auto* chamber = presetNamed (kBigDrumRoomBase);
+    checkf (chamber != nullptr, "Big Drum Room has its factory base");
+    if (!chamber) return;
+    auto study = recalled (*chamber), factory = recalled (*chamber);
+    study->restorePresetIdentity (chamber, RoomVoicing::EarlyStudy);
+    factory->restorePresetIdentity (chamber);
+    settle (*study);
+    settle (*factory);
+    study->prepare (kSr, kBlock);
+    factory->prepare (kSr, kBlock);
+    study->clearState();
+    factory->clearState();
+    const auto a = burstResponse (*study), b = burstResponse (*factory);
+    double error = 0.0, energy = 0.0;
+    for (size_t i = 0; i < a.size(); ++i)
+    {
+        const double diff = a[i] - b[i];
+        error += diff * diff;
+        energy += b[i] * b[i];
+    }
+    checkf (energy > 1e-4 && error > 0.01 * energy,
+            "the study voicing is audible after prepare and clear (error %g, factory energy %g)", error, energy);
+    auto matchedStudy = recalled (*chamber);
+    matchedStudy->restorePresetIdentity (chamber, RoomVoicing::Matched);
+    settle (*matchedStudy);
+    matchedStudy->prepare (kSr, kBlock);
+    matchedStudy->clearState();
+    const auto matched = burstResponse (*matchedStudy);
+    double earlyError = 0.0, factoryError = 0.0;
+    for (size_t i = 0; i < matched.size(); ++i)
+    {
+        const double earlyDiff = matched[i] - a[i];
+        const double factoryDiff = matched[i] - b[i];
+        earlyError += earlyDiff * earlyDiff;
+        factoryError += factoryDiff * factoryDiff;
+    }
+    checkf (earlyError > 1e-4 * energy && factoryError > 1e-4 * energy,
+            "matched room survives prepare as a distinct sound (early %g, factory %g, energy %g)",
+            earlyError, factoryError, energy);
+    // Visit both engine slots so the previously voiced one is reused.
+    for (int i = 0; i < 2; ++i)
+    {
+        recallOnto (*study, *chamber);
+        recallOnto (*factory, *chamber);
+        study->clearState();
+        factory->clearState();
+        recallOnto (*matchedStudy, *chamber);
+        matchedStudy->clearState();
+        const auto expected = burstResponse (*factory);
+        checkf (burstResponse (*study) == expected && burstResponse (*matchedStudy) == expected,
+                "factory chamber after either room voicing reproduces its own samples on swap %d", i);
+    }
+}
+
 } // namespace
 
 int main()
@@ -626,6 +683,7 @@ int main()
     testFdnDelaysPatch();
     testFeedbackRotationPatch();
     testNeutralPmbReset();
+    testBigDrumRoomRecall();
     if (failures != 0)
     {
         std::printf ("%d failure(s)\n", failures);

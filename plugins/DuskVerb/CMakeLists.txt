@@ -87,6 +87,7 @@ target_sources(DuskVerb
         src/dsp/ShimmerEngine.cpp
         src/dsp/DattorroPlateVintage.cpp
         src/dsp/ReverseRoomEngine.cpp
+        src/dsp/VelvetTail.cpp
         ../shared/LEDMeter.cpp
 )
 
@@ -235,6 +236,7 @@ if(NOT CMAKE_CROSSCOMPILING)
     # compares helper/legacy bytes at standard rates, and exercises the real DSP types.
     add_executable(DuskVerbNyquistClampTest
         tests/test_nyquist_clamps.cpp
+        src/dsp/VelvetTail.cpp
         src/dsp/DattorroTank.cpp
         src/dsp/DattorroPlateVintage.cpp
         src/dsp/OctaveGEQDesign.cpp

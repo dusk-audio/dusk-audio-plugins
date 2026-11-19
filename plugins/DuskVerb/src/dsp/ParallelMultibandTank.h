@@ -73,25 +73,17 @@ public:
                 mask_[b][l] = cap - 1;
                 wp_[b][l] = 0;
             }
-        // Per-band in-loop allpass densifiers (2 per line, short primes).
-        // Third AP stage on the top two bands only (2026-07-06): their static
-        // 4-line tanks read spiky (hf_tail_kurt ~28 vs anchor ~13). A third,
-        // longer allpass multiplies late echo density where it is missing.
-        // 0 = stage absent (allpass() passes through).
-        static const int apbase[kBands][kAps] = {
-            { 431, 293, 0 }, { 347, 239, 0 }, { 283, 197, 0 },
-            { 211, 149, 0 }, { 157, 107, 193 }, { 113, 79, 139 } };
         for (int b = 0; b < kBands; ++b)
             for (int l = 0; l < kLines; ++l)
                 for (int a = 0; a < kAps; ++a)
                 {
-                    if (apbase[b][a] == 0) { apLen_[b][l][a] = 0; apBuf_[b][l][a].assign (8, 0.0f); apMask_[b][l][a] = 7; apWp_[b][l][a] = 0; continue; }
-                    const int alen = std::max (8, static_cast<int> (std::round (apbase[b][a] * rr * (1.0f + 0.13f * l))));
+                    const auto baseDelay = kAllpassDelays[b][a];
+                    if (baseDelay == 0) continue;
+                    const int alen = std::max (8, static_cast<int> (std::round (baseDelay * rr * (1.0f + 0.13f * l))));
                     int cap = 1; while (cap < alen + 4) cap <<= 1;
                     apBuf_[b][l][a].assign (static_cast<size_t> (cap), 0.0f);
                     apMask_[b][l][a] = cap - 1;
                     apLen_[b][l][a]  = alen;
-                    apWp_[b][l][a]   = 0;
                 }
         // Split filters + LFOs. 4th-order Butterworth lowpass per split point
         // (two cascaded RBJ biquads, Q = 0.5412 / 1.3066). The subtractive tree
@@ -178,6 +170,7 @@ public:
 
     void clear()
     {
+        apClock_ = 0;
         for (int b = 0; b < kBands; ++b)
             for (int l = 0; l < kLines; ++l)
             {
@@ -205,7 +198,7 @@ public:
         // The side's read offsets at this rate (clear() ends every prepare(), which reserves
         // sideReadHeadroom() behind every line), +1 for the write that precedes the read.
         for (int b = 0; b < kBands; ++b)
-            sideReadOffset_[b] = 1.0f + static_cast<float> (std::lround (kSideReadMs[b] * 0.001f * sr_));
+            sideReadOffset_[b] = 1 + static_cast<int> (std::lround (kSideReadMs[b] * 0.001f * sr_));
     }
 
     // ── Per-band config ─────────────────────────────────────────────────────
@@ -429,11 +422,23 @@ public:
                 // decorrelated → strong median fill). Advanced only when active →
                 // depth 0 leaves the read at the un-smeared exc → bit-null.
                 float x[kLines];
-                for (int l = 0; l < kLines; ++l)
+                if ((! smearActive_ || smearBandShare_[b] == 0.0f) && kExcSamp[b] == 0.0f)
                 {
-                    const float base = (l & 1) ? -exc : exc;
-                    const float sm   = smearActive_ ? smearLfo_[b][l].next() : 0.0f;
-                    x[l] = readLine (b, l, base + sm);
+                    for (int l = 0; l < kLines; ++l)
+                    {
+                        // Keep the modulation phase continuous if this band is enabled later.
+                        if (smearActive_) smearLfo_[b][l].advance();
+                        x[l] = readInteger (b, l, len_[b][l]);
+                    }
+                }
+                else
+                {
+                    for (int l = 0; l < kLines; ++l)
+                    {
+                        const float base = (l & 1) ? -exc : exc;
+                        const float sm   = smearActive_ ? smearLfo_[b][l].next() : 0.0f;
+                        x[l] = readLine (b, l, base + sm);
+                    }
                 }
                 // inject band input into lines 0/1 (L) and 2/3 (R), sign-alternated
                 x[0] += bandsL[b]; x[1] -= bandsL[b];
@@ -453,7 +458,7 @@ public:
                         float v = x[l] * g_[b];
                         v = allpass (b, l, 0, v);
                         v = allpass (b, l, 1, v);
-                        v = allpass (b, l, 2, v);
+                        if (kAllpassDelays[b][2] != 0) v = allpass (b, l, 2, v);
                         writeLine (b, l, v);
                     }
                 }
@@ -469,7 +474,7 @@ public:
                         float v = x[l] * gb;
                         v = allpass (b, l, 0, v);
                         v = allpass (b, l, 1, v);
-                        v = allpass (b, l, 2, v);
+                        if (kAllpassDelays[b][2] != 0) v = allpass (b, l, 2, v);
                         writeLine (b, l, v);
                     }
                 }
@@ -509,7 +514,7 @@ public:
                 if (decorrelatedSide_)
                 {
                     const float midF  = 0.5f * (bl + br);
-                    const float sideF = sideBandFilter (b, 0.5f * readLine (b, 1, sideReadOffset_[b]));
+                    const float sideF = sideBandFilter (b, 0.5f * readInteger (b, 1, len_[b][1] + sideReadOffset_[b]));
                     bl = midF + sideF;
                     br = midF - sideF;
                 }
@@ -523,6 +528,7 @@ public:
                 oL += level_[b] * (m + sd);
                 oR += level_[b] * (m - sd);
             }
+            ++apClock_;
             outL[s] = oL;
             outR[s] = oR;
         }
@@ -569,6 +575,11 @@ private:
         bands[kBands - 1] = rest;
     }
 
+    float readInteger (int b, int l, int delay) const
+    {
+        return buf_[b][l][static_cast<size_t> ((wp_[b][l] - delay) & mask_[b][l])];
+    }
+
     float readLine (int b, int l, float exc)
     {
         // Cubic-Hermite modulated read (HF-lossless — so a deep mode-smear excursion
@@ -576,7 +587,9 @@ private:
         // integer (fr=0) and cubic Hermite returns the exact sample, so this is
         // byte-identical to the previous linear read for the un-smeared (exc=0) path.
         const float rpos = static_cast<float> (wp_[b][l]) - (static_cast<float> (len_[b][l]) + exc);
-        const int   i0   = static_cast<int> (std::floor (rpos));
+        // Truncation equals floor except at negative fractional positions.
+        const int truncated = static_cast<int> (rpos);
+        const int i0 = truncated - (static_cast<float> (truncated) > rpos);
         const float fr   = rpos - static_cast<float> (i0);
         return DspUtils::cubicHermite (buf_[b][l].data(), mask_[b][l], i0, fr);
     }
@@ -587,15 +600,13 @@ private:
     }
     float allpass (int b, int l, int a, float v)
     {
-        if (apLen_[b][l][a] == 0) return v;   // absent stage (lower bands)
         auto& bufr = apBuf_[b][l][a];
         const int m = apMask_[b][l][a];
-        int& w = apWp_[b][l][a];
+        const int w = static_cast<int> (apClock_ & static_cast<std::uint32_t> (m));
         const float d = bufr[static_cast<size_t> ((w - apLen_[b][l][a]) & m)];
         const float k = apCoeff_[b];
         const float y = d - k * v;
         bufr[static_cast<size_t> (w)] = v + k * y;
-        w = (w + 1) & m;
         return y;
     }
     static void hadamard8 (float* x)
@@ -684,8 +695,16 @@ private:
     int  len_[kBands][kLines] = {}, mask_[kBands][kLines] = {}, wp_[kBands][kLines] = {};
     float damp_[kBands][kLines] = {};
     static constexpr int kAps = 3;
+    // Two prime-length densifiers per line at 48 kHz, with a third on the top two bands.
+    // A zero stage has no delay memory and is skipped in the feedback loop.
+    static constexpr int kAllpassDelays[kBands][kAps] = {
+        { 431, 293, 0 }, { 347, 239, 0 }, { 283, 197, 0 },
+        { 211, 149, 0 }, { 157, 107, 193 }, { 113, 79, 139 }
+    };
     std::vector<float> apBuf_[kBands][kLines][kAps];
-    int  apLen_[kBands][kLines][kAps] = {}, apMask_[kBands][kLines][kAps] = {}, apWp_[kBands][kLines][kAps] = {};
+    int  apLen_[kBands][kLines][kAps] = {}, apMask_[kBands][kLines][kAps] = {};
+    // All active densifiers advance once per sample. Each ring masks the shared clock.
+    std::uint32_t apClock_ = 0;
 
     float bandFilter (int b, int ch, float v)
     {
@@ -758,7 +777,7 @@ private:
     // samples at 48 kHz: past the narrow low bands' coherence time (band 0 would want
     // ~10 ms; 5.3 ms keeps the line headroom at 48 kHz exactly where it was).
     static constexpr float kSideReadMs[kBands] = { 5.3333f, 4.0f, 2.6667f, 2.6667f, 2.6667f, 2.6667f };
-    float sideReadOffset_[kBands] = { 257.0f, 193.0f, 129.0f, 129.0f, 129.0f, 129.0f };
+    int sideReadOffset_[kBands] = { 257, 193, 129, 129, 129, 129 };
     // Samples each line keeps behind its read for the side (and the cubic read's neighbours).
     int sideReadHeadroom() const noexcept
     { return static_cast<int> (std::ceil (kSideReadMs[0] * 0.001f * sr_)) + 3; }

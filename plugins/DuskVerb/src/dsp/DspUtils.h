@@ -226,11 +226,16 @@ struct MultiSineLFO
         inc1_ = twoPi * f * 1.37f  / sampleRate_;   // incommensurate 2nd partial
     }
     void setDepth (float d) { depth_ = std::max (d, 0.0f); }
-    float next()
+    void advance()
     {
         const float twoPi = 6.28318530718f;
         ph0_ += inc0_; if (ph0_ >= twoPi) ph0_ -= twoPi;
         ph1_ += inc1_; if (ph1_ >= twoPi) ph1_ -= twoPi;
+    }
+    float next()
+    {
+        advance();
+        if (depth_ == 0.0f) return 0.0f;
         // 0.5·(sin+sin) ∈ [-1,1]; ×depth = peak excursion in samples.
         return depth_ * 0.5f * (std::sin (ph0_) + std::sin (ph1_));
     }

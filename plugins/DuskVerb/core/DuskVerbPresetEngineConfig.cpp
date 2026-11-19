@@ -346,7 +346,7 @@ void primeTuningEnvCache() noexcept { primeParseLocale(); tuningEnv(); }
 // Per-preset PostTankEQ band centres + Qs (the GAINS are parameters).
 // Hoisted out of the anonymous namespace so DuskVerbDSP::performPresetSwap can
 // cache them for the gain edge-detect; body unchanged.
-void resolvePteqFreqQ (const char* name, float fOut[4], float qOut[4]) noexcept
+bool resolvePteqFreqQ (const char* name, float fOut[4], float qOut[4]) noexcept
 {
     // Env sweep override (DUSKVERB_PTEQ = 12 CSV floats f,q,g per band x4)
     // takes precedence — must match the freq/Q that applyEngineConfig()
@@ -359,7 +359,7 @@ void resolvePteqFreqQ (const char* name, float fOut[4], float qOut[4]) noexcept
         {
             for (int b = 0; b < 4; ++b)
             { fOut[b] = t.getFloatValue (b * 3); qOut[b] = t.getFloatValue (b * 3 + 1); }
-            return;
+            return true;
         }
     }
     auto& m = pteqByName();
@@ -367,6 +367,7 @@ void resolvePteqFreqQ (const char* name, float fOut[4], float qOut[4]) noexcept
     const float* fSrc = (it != m.end()) ? it->second.freq : kPteqDefaultFreq;
     const float* qSrc = (it != m.end()) ? it->second.q    : kPteqDefaultQ;
     for (int b = 0; b < 4; ++b) { fOut[b] = fSrc[b]; qOut[b] = qSrc[b]; }
+    return false;
 }
 
 } // namespace duskverb
