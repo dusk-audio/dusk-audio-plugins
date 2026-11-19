@@ -235,12 +235,16 @@ void hostReset()
         void* const instance = reset->getInstancePointer();
         hot(*reset);
         const float reduction = multiCompGetGainReduction(instance);
+        check(multiCompGetInputLevel(instance) > -60.0f && multiCompGetOutputLevel(instance) > -60.0f,
+              "the tone registers on both level meters before reset");
         const uint32_t latency = reset->getLatency();
         gAllocations.store(0);
         gCountAllocations.store(true);
         multiCompResetHost(instance);
         gCountAllocations.store(false);
         const int allocations = gAllocations.load();
+        check(multiCompGetInputLevel(instance) == -60.0f, "host reset immediately clears the input level");
+        check(multiCompGetOutputLevel(instance) == -60.0f, "host reset immediately clears the output level");
         const bool atRest = multiCompGetGainReduction(instance) == 0.0f
             && multiCompGetOutputVuLevel(instance) == -120.0f && multiCompGetGainReductionNeedle(instance) == 0.0f
             && reset->getLatency() == latency;
