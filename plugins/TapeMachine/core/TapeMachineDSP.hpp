@@ -956,6 +956,7 @@ public:
 
         playbackHead.reset(); motorFlutter.reset();
         m_limPrev = 0.0f; m_shaperPrev = 0.0f;
+        m_limAdValid = false; m_adSource = AdSource::None;
         m_lim2x.reset(); m_shaper2x.reset();
         crosstalkBuffer = 0.0f;
         m_humPhase = 0.0f;
@@ -1484,6 +1485,19 @@ private:
     bool  m_slowModernPresence = false; // true only for measured American 3.75 IPS / FormulaModern resonance
     float m_limPrev = 0.0f;         // ADAA soft-limit state (per channel)
     float m_shaperPrev = 0.0f;      // ADAA waveshaper state (per channel)
+    // Carried antiderivatives. Each ADAA step needs F(s) and F(sPrev), and F(sPrev) is the value
+    // the step before it computed as F(s), so it is kept instead of evaluated a second time.
+    // A carried value is used only when the same antiderivative produced it. The shaper and the
+    // floor share s, sPrev and the epsilon test, so one tag covers both: it names the machine
+    // whose shaper and floor wrote m_shAd / m_floorAd on the previous step. The shaper also
+    // checks its drive, which scales its argument; the floor has no such input. The epsilon
+    // branch evaluates no antiderivative, so it drops the carry, and reset() drops it because
+    // it rewrites sPrev.
+    enum class AdSource { None, Swiss, American };
+    double   m_limAd = 0.0, m_shAd = 0.0, m_floorAd = 0.0;
+    float    m_shAdDrive = 0.0f;
+    AdSource m_adSource = AdSource::None;
+    bool     m_limAdValid = false;
     LocalAAStage m_lim2x, m_shaper2x;  // soft-limit + shaper: deep local-4x AA (mixed-rate: filters at 2x core, NL alias-free)
 
     DBiquad headBumpFilter;                 // juce IIR<double> in source
@@ -1761,19 +1775,33 @@ private:
         return g / (p + 1.0) * std::pow (s * s + (double) kFloorEps * kFloorEps, (p + 1.0) * 0.5)
              - g * lin * 0.5 * s * s;
     }
-    inline float adaaFloor (float s, float sp, float g, float p, float lin) noexcept
+    // carried: m_floorAd holds floorAD (sp, g, p, lin), left by the previous step of the same
+    // machine. Only the two adaaSat functions call this; they own the tag that decides it.
+    // The epsilon test here must stay identical to theirs: their tag says this function
+    // wrote m_floorAd on the previous step, which holds only while both take the same branch.
+    inline float adaaFloor (float s, float sp, bool carried, float g, float p, float lin) noexcept
     {
         const double dx = (double) s - (double) sp;
         if (std::abs (dx) < kAdaaEps) return floorF (0.5f * (s + sp), g, p, lin);
-        return (float) ((floorAD ((double) s, g, p, lin) - floorAD ((double) sp, g, p, lin)) / dx);
+        const double fp = carried ? m_floorAd : floorAD ((double) sp, g, p, lin);
+        const double fs = floorAD ((double) s, g, p, lin);
+        m_floorAd = fs;
+        return (float) ((fs - fp) / dx);
     }
     // ADAA soft-limit (shared by both machines); m_limPrev is per-channel state.
     inline float adaaLimit (float s) noexcept
     {
         const float sp = m_limPrev; m_limPrev = s;
         const double dx = (double) s - (double) sp;
-        if (std::abs (dx) < kAdaaEps) return swissSoftLimit (0.5f * (s + sp));
-        return (float) ((softLimitAD (s) - softLimitAD (sp)) / dx);
+        if (std::abs (dx) < kAdaaEps)
+        {
+            m_limAdValid = false;
+            return swissSoftLimit (0.5f * (s + sp));
+        }
+        const double fp = m_limAdValid ? m_limAd : softLimitAD (sp);
+        const double fs = softLimitAD (s);
+        m_limAd = fs; m_limAdValid = true;
+        return (float) ((fs - fp) / dx);
     }
     // ADAA waveshaper: G(s)=(dInv/d)*F(s*d) so ADAA runs in the pre-drive signal domain;
     // the small even-order term is applied to the (already anti-aliased) output.
@@ -1781,30 +1809,48 @@ private:
     {
         const float sp = m_shaperPrev; m_shaperPrev = s;
         const double dx = (double) s - (double) sp;
+        const bool sameSource = m_adSource == AdSource::Swiss;
         float sh;
         if (std::abs (dx) < kAdaaEps)
+        {
+            m_adSource = AdSource::None;
             sh = swissShaper (0.5f * (s + sp) * m_swissDrive) * m_swissDriveInv;
+        }
         else
-            sh = (float) ((double) m_swissDriveInv / m_swissDrive
-                 * (swissShaperAD ((double) s * m_swissDrive) - swissShaperAD ((double) sp * m_swissDrive)) / dx);
+        {
+            const double fp = (sameSource && m_shAdDrive == m_swissDrive)
+                                ? m_shAd : swissShaperAD ((double) sp * m_swissDrive);
+            const double fs = swissShaperAD ((double) s * m_swissDrive);
+            m_shAd = fs; m_shAdDrive = m_swissDrive; m_adSource = AdSource::Swiss;
+            sh = (float) ((double) m_swissDriveInv / m_swissDrive * (fs - fp) / dx);
+        }
         // Even term on the RAW input midpoint (drive-independent, level-persistent 2nd).
         const float sm = 0.5f * (s + sp);
         // Covariant low-level harmonic floor (ADAA'd; slowly-decaying 3f/5f/7f like the reference).
-        return sh + kSwissEven * (sm * sm) + adaaFloor (s, sp, kSwissFloorG, kSwissFloorP, kSwissFloorLin);
+        return sh + kSwissEven * (sm * sm) + adaaFloor (s, sp, sameSource, kSwissFloorG, kSwissFloorP, kSwissFloorLin);
     }
     inline float adaaSatAmerican (float s) noexcept
     {
         const float sp = m_shaperPrev; m_shaperPrev = s;
         const double dx = (double) s - (double) sp;
+        const bool sameSource = m_adSource == AdSource::American;
         float sh;
         if (std::abs (dx) < kAdaaEps)
+        {
+            m_adSource = AdSource::None;
             sh = americanShaper (0.5f * (s + sp) * m_americanDrive) * m_americanDriveInv;
+        }
         else
-            sh = (float) ((double) m_americanDriveInv / m_americanDrive
-                 * (americanShaperAD ((double) s * m_americanDrive) - americanShaperAD ((double) sp * m_americanDrive)) / dx);
+        {
+            const double fp = (sameSource && m_shAdDrive == m_americanDrive)
+                                ? m_shAd : americanShaperAD ((double) sp * m_americanDrive);
+            const double fs = americanShaperAD ((double) s * m_americanDrive);
+            m_shAd = fs; m_shAdDrive = m_americanDrive; m_adSource = AdSource::American;
+            sh = (float) ((double) m_americanDriveInv / m_americanDrive * (fs - fp) / dx);
+        }
         const float sm = 0.5f * (s + sp);
         return sh + kAmericanEven * m_americanEvenScale * (sm * sm)
-                  + adaaFloor (s, sp, kAmericanFloorG, kAmericanFloorP, kAmericanFloorLin);
+                  + adaaFloor (s, sp, sameSource, kAmericanFloorG, kAmericanFloorP, kAmericanFloorLin);
     }
 
     static float softClip (float input, float threshold)
