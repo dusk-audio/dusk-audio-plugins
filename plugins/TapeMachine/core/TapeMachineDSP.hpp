@@ -2308,7 +2308,28 @@ public:
     // and one running on this object at the same time may be overwritten by the copy.
     void copySettingsFrom (const TapeMachineSettings& other) noexcept;
 
+    // Machine, speed and calibration as one number, the speed being the one the deck runs
+    // at: the settings whose change alone makes a path burst if its state is kept (see
+    // TapeMachineDSP::BlockSettings::topologyKey, which packs one block's reading the same way).
+    uint32_t topologyKey() const noexcept;
+    // Every setting as one number: has anything at all been set since the last look?
+    uint32_t everySettingPrint() const noexcept;
+    float inputGainDb() const noexcept { return pInputGainDb.load (std::memory_order_relaxed); }
+    float outputGainDb() const noexcept { return pOutputGainDb.load (std::memory_order_relaxed); }
+    // Gain Link: the output is the inverse of Input and the stored Output is not used.
+    bool  isGainLinked() const noexcept { return pAutoComp.load (std::memory_order_relaxed); }
+    // Bypass or the Thru path: the input goes out untouched and nothing is processed.
+    bool isPassthrough() const noexcept;
+
 protected:
+    // The Swiss deck has no 3.75 IPS and runs it at 15.
+    static int effectiveSpeedIndex (int machine, int speed) noexcept;
+    static uint32_t packTopology (int machine, int effectiveSpeed, int calibration) noexcept
+    {
+        return static_cast<uint32_t> (machine)
+            | (static_cast<uint32_t> (effectiveSpeed) << 1u)
+            | (static_cast<uint32_t> (calibration) << 3u);
+    }
     static int clampI (int v, int lo, int hi) noexcept { return v < lo ? lo : (v > hi ? hi : v); }
 
     std::atomic<int>   pMachine{0}, pSpeed{1}, pType{0}, pSignalPath{0}, pEqStandard{0};
@@ -2339,12 +2360,17 @@ public:
     // may allocate; setup thread only) and ends in restart(). restart() is the start state
     // for the settings as they stand: the path empty, the smoothers at their targets, the
     // generators at their seeds; after a prepare() it does not allocate. reset() empties the
-    // path and the meters and leaves the smoothers and the generators where they are.
+    // path and the meters and leaves the smoothers and the random generators where they are.
     void prepare (double sampleRate, int maxBlockSize);
     void restart() noexcept;
     void reset();
     void processBlock (const float* const* inputs, float* const* outputs, int nCh, int nSamples) noexcept;
     int  latencySamples() const noexcept;
+    // The latency of the processing path, whether or not bypass or Thru is on right now.
+    int  processingLatencySamples() const noexcept { return activeLatencySamples(); }
+    // The meters go on from where `other`'s are: for a path that takes over from another one
+    // in running programme, so that the readings do not start from zero at the handover.
+    void copyMeterStateFrom (const TapeMachineDSP& other) noexcept;
 
     float getVuL() const noexcept { return vuL.load (std::memory_order_relaxed); }
     float getVuR() const noexcept { return vuR.load (std::memory_order_relaxed); }
@@ -2381,7 +2407,6 @@ private:
     };
     BlockSettings readBlockSettings() const noexcept;
     uint32_t settingsPrint (const BlockSettings& now) const noexcept;
-    static int effectiveSpeedIndex (int machine, int speed) noexcept;
     bool clearSignalState (bool keepOutputTail) noexcept;
     void clearLevelFollowers() noexcept;
     void applyFactor (int newFactor);   // reconfigure internal DSP for an OS-factor change

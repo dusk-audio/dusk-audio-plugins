@@ -202,12 +202,22 @@ level compensation. Turn it off for independent input and output gains.
 compressing. Gain Link removes the gain you added, not the compression. Turn the
 link off and raise Output if you want to make it up.
 
-**There is a tiny gap when I change presets or switch bypass off.** Changing the
-machine, the speed or the calibration, dropping Input by more than 6 dB at once,
-and coming back from bypass or Thru start the tape path from a clean state: the
-signal comes back in over a couple of milliseconds. That replaces the burst the
-old settings would otherwise leave behind. A second large drop of Input within
-a tenth of a second does not start over again; it follows the knob smoothly.
+**A preset change takes a moment to arrive.** Changing the machine, the speed or
+the calibration, or (with Gain Link on) dropping Input by more than 6 dB at
+once, is a short morph: for about 60 ms the old setting and the new one both
+play, as on the tape machines this plugin is modelled on. There is no cut and no
+burst; between two very different presets the level can dip a few dB while both
+play. The morph starts one to three processing blocks after the change, so that
+a whole preset arrives together. With Gain Link off, Input and Output are plain
+level controls at any size of step: they act at once and are not morphed (a drop
+of Input by more than 6 dB at once then restarts the tape path over a couple of
+milliseconds, as before). The same goes for a preset loaded while Gain Link is
+off: if it lowers Input by more than 6 dB, the old setting is cut over a couple
+of milliseconds before the morph to the new one.
+
+**There is a tiny gap when I switch bypass off.** Coming back from bypass or
+Thru starts the tape path from a clean state: the signal comes back in over a
+couple of milliseconds.
 
 **Bias does not respond.** Auto Bias is on. Disable it before adjusting Bias.
 

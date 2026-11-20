@@ -2,14 +2,15 @@
 // Third-party components in the built plugins (DAF — ISC; Dear ImGui — MIT; and
 // others) are attributed in plugins/shared-daf/THIRD_PARTY_LICENSES.md.
 //
-// TapeMachinePlugin.cpp — DAF shell around the framework-free TapeMachineDSP core.
+// TapeMachinePlugin.cpp — DAF shell around the framework-free core: TapeMachineSwitcher,
+// which runs two TapeMachineDSP paths and morphs between them when the deck is switched.
 
 #include "DafPlugin.hpp"
 #include "TapeMachineAccess.hpp"
 #include "TapeMachineParams.hpp"
 #include "TapeMachinePresets.hpp"
 #include "TapeMachineVersion.hpp"
-#include "TapeMachineDSP.hpp"
+#include "TapeMachineSwitcher.hpp"
 #include "util/CrashLog.hpp"
 
 #include <atomic>
@@ -249,7 +250,9 @@ private:
         }
     }
 
-    duskaudio::TapeMachineDSP dsp;
+    // Two paths and the morph between them when the deck is switched (TapeMachineSwitcher.hpp);
+    // towards the shell it is one TapeMachineDSP.
+    duskaudio::TapeMachineSwitcher dsp;
     // Host-negotiated channel count (AU mono instances); see ioChanged().
     int activeChannels = DAF_PLUGIN_NUM_INPUTS;
     int lastLatency = -1;

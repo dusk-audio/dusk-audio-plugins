@@ -443,9 +443,56 @@ void TapeMachineSettings::copySettingsFrom (const TapeMachineSettings& other) no
 // to 1 dB on a bass note alone) are not here: they switch as they always did, without a gap.
 uint32_t TapeMachineDSP::BlockSettings::topologyKey() const noexcept
 {
-    return static_cast<uint32_t> (machine)
-        | (static_cast<uint32_t> (speed) << 1u)
-        | (static_cast<uint32_t> (calibration) << 3u);
+    return packTopology (machine, speed, calibration);
+}
+
+uint32_t TapeMachineSettings::topologyKey() const noexcept
+{
+    const int machine = clampI (pMachine.load (std::memory_order_relaxed), 0, 1);
+    return packTopology (machine, effectiveSpeedIndex (machine, pSpeed.load (std::memory_order_relaxed)),
+                         clampI (pCalibration.load (std::memory_order_relaxed), 0, 3));
+}
+
+bool TapeMachineSettings::isPassthrough() const noexcept
+{
+    return pBypass.load (std::memory_order_relaxed)
+        || clampI (pSignalPath.load (std::memory_order_relaxed), 0, 3) == 3;     // TapeCore::Thru
+}
+
+uint32_t TapeMachineSettings::everySettingPrint() const noexcept
+{
+    uint32_t h = 2166136261u;
+    const auto mix = [&h] (uint32_t v) noexcept { h = (h ^ v) * 16777619u; };
+    const auto mixFloat = [&mix] (float v) noexcept
+    {
+        uint32_t bits;
+        std::memcpy (&bits, &v, sizeof (bits));
+        mix (bits);
+    };
+    for (const std::atomic<int>* a : { &pMachine, &pSpeed, &pType, &pSignalPath, &pEqStandard, &pCalibration, &pOversampling, &pHeadWidth })
+        mix (static_cast<uint32_t> (a->load (std::memory_order_relaxed)));
+    for (const std::atomic<float>* a : { &pInputGainDb, &pSaturation, &pBias, &pHighpassHz, &pLowpassHz, &pNoiseAmount, &pWow, &pFlutter,
+                                         &pOutputGainDb, &pReproLf, &pReproLmf, &pReproHmf, &pReproHf, &pReproSubBell, &pLevelHmfTrim,
+                                         &pLevelHfTrim, &pProgHmfTrim, &pProgHfTrim, &pProgLfTrim, &pLpQ })
+        mixFloat (a->load (std::memory_order_relaxed));
+    for (const std::atomic<bool>* a : { &pAutoCal, &pNoiseEnabled, &pAutoComp, &pBypass, &pCrosstalk, &pWowFlutterOn, &pTransformer })
+        mix (a->load (std::memory_order_relaxed) ? 1u : 0u);
+    return h;
+}
+
+void TapeMachineDSP::copyMeterStateFrom (const TapeMachineDSP& other) noexcept
+{
+    vuStateL = other.vuStateL; vuStateR = other.vuStateR;
+    inVuStateL = other.inVuStateL; inVuStateR = other.inVuStateR;
+    inPeakStateL = other.inPeakStateL; inPeakStateR = other.inPeakStateR;
+    outPeakStateL = other.outPeakStateL; outPeakStateR = other.outPeakStateR;
+    inputPeakUsesRawInput = other.inputPeakUsesRawInput;
+    const auto copy = [] (std::atomic<float>& to, const std::atomic<float>& from) noexcept
+    {
+        to.store (from.load (std::memory_order_relaxed), std::memory_order_relaxed);
+    };
+    copy (vuL, other.vuL); copy (vuR, other.vuR); copy (inVuL, other.inVuL); copy (inVuR, other.inVuR);
+    copy (inPeakL, other.inPeakL); copy (inPeakR, other.inPeakR); copy (outPeakL, other.outPeakL); copy (outPeakR, other.outPeakR);
 }
 
 // Machine, speed, calibration and signal path in range, the speed being the one the core
@@ -467,7 +514,7 @@ TapeMachineDSP::BlockSettings TapeMachineDSP::readBlockSettings() const noexcept
 // The Swiss deck has no 3.75 IPS and runs it at 15. A block's speed is this one, in the key
 // and in the print too, so that choosing between the two on that deck, which changes nothing
 // in the path, is not a change.
-int TapeMachineDSP::effectiveSpeedIndex (int machine, int speed) noexcept
+int TapeMachineSettings::effectiveSpeedIndex (int machine, int speed) noexcept
 {
     speed = clampI (speed, 0, 3);
     return (machine == TapeCore::Swiss && speed == TapeCore::Speed_3_75_IPS) ? static_cast<int> (TapeCore::Speed_15_IPS)
