@@ -159,7 +159,7 @@ void TapeMachineDSP::prepare (double sampleRate, int maxBlockSize)
     inGain.snap  (inGainDb);
     lastInputGainDb = inGainDb;
     lastTopologyKey = now.topologyKey();
-    lastSettingsPrint = currentSettingsPrint();
+    lastSettingsPrint = settingsPrint (now);
     wasPassthrough = false;
     cleanFadeLeft = 0;
     cleanSettleLeft = 0;
@@ -326,7 +326,7 @@ void TapeMachineDSP::reset()
     const BlockSettings now = readBlockSettings();
     lastInputGainDb = now.inputGainDb;
     lastTopologyKey = now.topologyKey();
-    lastSettingsPrint = currentSettingsPrint();
+    lastSettingsPrint = settingsPrint (now);
     wasPassthrough = false;
     cleanFadeLeft = 0;
     cleanSettleLeft = 0;
@@ -393,23 +393,25 @@ uint32_t TapeMachineDSP::BlockSettings::topologyKey() const noexcept
         | (static_cast<uint32_t> (calibration) << 3u);
 }
 
-// Machine, speed and calibration in range, the speed being the one the core runs at, and
-// Input as stored. The one place they are read for a block: processBlock decides the clean
-// start on these and runs the block on them, and prepare() and reset() store the Input and
-// the key of one such reading, so the first block after either is not a clean start.
+// Machine, speed, calibration and signal path in range, the speed being the one the core
+// runs at, and Input as stored. The one place they are read for a block: processBlock
+// decides the clean start on these and runs the block on them, and prepare() and reset()
+// store the Input, the key and the print of one such reading, so the first block after
+// either is not a clean start.
 TapeMachineDSP::BlockSettings TapeMachineDSP::readBlockSettings() const noexcept
 {
     BlockSettings now;
     now.machine = clampI (pMachine.load (std::memory_order_relaxed), 0, 1);
     now.speed = effectiveSpeedIndex (now.machine, pSpeed.load (std::memory_order_relaxed));
     now.calibration = clampI (pCalibration.load (std::memory_order_relaxed), 0, 3);
+    now.signalPath = clampI (pSignalPath.load (std::memory_order_relaxed), 0, 3);
     now.inputGainDb = pInputGainDb.load (std::memory_order_relaxed);
     return now;
 }
 
-// The Swiss deck has no 3.75 IPS and runs it at 15. A block's speed is this one, and so is
-// the print's, so that choosing between the two on that deck, which changes nothing in the
-// path, is not a change.
+// The Swiss deck has no 3.75 IPS and runs it at 15. A block's speed is this one, in the key
+// and in the print too, so that choosing between the two on that deck, which changes nothing
+// in the path, is not a change.
 int TapeMachineDSP::effectiveSpeedIndex (int machine, int speed) noexcept
 {
     speed = clampI (speed, 0, 3);
@@ -420,25 +422,29 @@ int TapeMachineDSP::effectiveSpeedIndex (int machine, int speed) noexcept
 // Everything a preset sets in the audio path, as one number: has anything moved since the
 // last block? Gain Link and Output are left out: they act after the tape, and a linked and
 // an unlinked instance must go through the same clean starts.
-uint32_t TapeMachineDSP::currentSettingsPrint() const noexcept
+// Machine, speed, calibration, signal path and Input come from the block's own reading, not
+// from a second load: the block runs on that reading, and a print that had already seen an
+// Input set a moment later would find nothing new in the next block, when that Input takes
+// effect. Everything else here is loaded for the processing only after this print.
+uint32_t TapeMachineDSP::settingsPrint (const BlockSettings& now) const noexcept
 {
     uint32_t h = 2166136261u;
     const auto mix = [&h] (uint32_t v) noexcept { h = (h ^ v) * 16777619u; };
-    const auto mixFloat = [&mix] (const std::atomic<float>& a) noexcept
+    const auto mixFloat = [&mix] (float v) noexcept
     {
-        const float v = a.load (std::memory_order_relaxed);
         uint32_t bits;
         std::memcpy (&bits, &v, sizeof (bits));
         mix (bits);
     };
-    for (const std::atomic<int>* a : { &pMachine, &pType, &pSignalPath, &pEqStandard, &pCalibration, &pHeadWidth })
+    for (const int v : { now.machine, now.speed, now.calibration, now.signalPath })
+        mix (static_cast<uint32_t> (v));
+    mixFloat (now.inputGainDb);
+    for (const std::atomic<int>* a : { &pType, &pEqStandard, &pHeadWidth })
         mix (static_cast<uint32_t> (a->load (std::memory_order_relaxed)));
-    mix (static_cast<uint32_t> (effectiveSpeedIndex (clampI (pMachine.load (std::memory_order_relaxed), 0, 1),
-                                                     pSpeed.load (std::memory_order_relaxed))));
-    for (const std::atomic<float>* a : { &pInputGainDb, &pBias, &pHighpassHz, &pLowpassHz, &pLpQ, &pNoiseAmount, &pWow,
+    for (const std::atomic<float>* a : { &pBias, &pHighpassHz, &pLowpassHz, &pLpQ, &pNoiseAmount, &pWow,
                                          &pFlutter, &pReproLf, &pReproLmf, &pReproHmf, &pReproHf, &pReproSubBell,
                                          &pLevelHmfTrim, &pLevelHfTrim, &pProgHmfTrim, &pProgHfTrim, &pProgLfTrim })
-        mixFloat (*a);
+        mixFloat (a->load (std::memory_order_relaxed));
     for (const std::atomic<bool>* a : { &pAutoCal, &pCrosstalk, &pWowFlutterOn, &pTransformer })
         mix (a->load (std::memory_order_relaxed) ? 1u : 0u);
     return h;
@@ -490,8 +496,10 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
 
     const bool hardBypass = pBypass.load (std::memory_order_relaxed);
     const bool gainLinked = pAutoComp.load (std::memory_order_relaxed);
-    const auto signalPath = static_cast<TapeCore::SignalPath> (
-        clampI (pSignalPath.load (std::memory_order_relaxed), 0, 3));
+    // Machine, speed, calibration, signal path and Input: read once, here, for the whole
+    // block (the passthrough test below, the clean-start decision and the processing).
+    const BlockSettings now = readBlockSettings();
+    const auto signalPath = static_cast<TapeCore::SignalPath> (now.signalPath);
     const bool useRawInputPeak = hardBypass || signalPath == TapeCore::Thru;
 
     // A preset-sized change starts from a clean state. The tape path is full of filters, and
@@ -518,24 +526,23 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     //     at a large host block from being a clean start on every block.
     // The smoothers that would otherwise ramp from the old setting into the empty path are
     // set to their targets (further down), and the input comes back in over kCleanFadeSec.
-    // Machine, speed, calibration and Input are read here for this decision AND for the
-    // processing further down: the block runs on the values its clean start was decided on.
-    // Read a second time down there, a setter on another thread could land between the two
-    // reads, and the block would run on a deck this decision had not seen: one block of the
-    // new deck on the old state before the clean start. (These are still four loads, not a
-    // snapshot, and the settings print reads its own copies: a preset that lands in between
-    // is taken as a preset delivered in two parts.)
-    const BlockSettings now = readBlockSettings();
+    // The decision is taken on the block's one reading (`now`, top of the block), and the
+    // processing further down runs on the same values. Read a second time down there, a
+    // setter on another thread could land between the two reads, and the block would run on
+    // a deck this decision had not seen: one block of the new deck on the old state before
+    // the clean start. (The reading is still five loads, not a snapshot, and the print loads
+    // the other settings itself: a preset that lands in between is taken as a preset
+    // delivered in two parts.)
     const float inputGainDb = now.inputGainDb;
     const uint32_t topologyKey = now.topologyKey();
-    const uint32_t settingsPrint = currentSettingsPrint();
+    const uint32_t print = settingsPrint (now);
     const bool topologyChanged = topologyKey != lastTopologyKey;
     const bool inputDropped = lastInputGainDb - inputGainDb > kCleanChangeGainDb
                               && sinceCleanStart >= cleanGainHoldSamples;
     const bool laterPart = cleanSettleLeft > 0 && cleanSettleRestartsLeft > 0
-                           && settingsPrint != lastSettingsPrint;
+                           && print != lastSettingsPrint;
     lastTopologyKey = topologyKey;
-    lastSettingsPrint = settingsPrint;
+    lastSettingsPrint = print;
     lastInputGainDb = inputGainDb;
     bool cleanStart = false;
     bool followersAtTargets = false;

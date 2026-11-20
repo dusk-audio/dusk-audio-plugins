@@ -2335,11 +2335,12 @@ private:
     struct BlockSettings
     {
         int machine = 0, speed = 0, calibration = 0;    // in range; the speed the core runs at
+        int signalPath = 0;                             // in range
         float inputGainDb = 0.0f;
         uint32_t topologyKey() const noexcept;
     };
     BlockSettings readBlockSettings() const noexcept;
-    uint32_t currentSettingsPrint() const noexcept;
+    uint32_t settingsPrint (const BlockSettings& now) const noexcept;
     static int effectiveSpeedIndex (int machine, int speed) noexcept;
     bool clearSignalState (bool keepOutputTail) noexcept;
     void clearLevelFollowers() noexcept;
