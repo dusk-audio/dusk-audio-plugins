@@ -66,4 +66,16 @@ if(NOT CMAKE_CROSSCOMPILING)
         "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
     target_compile_features(TapeMachine2OversamplerTest PRIVATE cxx_std_17)
     add_test(NAME TapeMachine2Oversampler COMMAND TapeMachine2OversamplerTest)
+
+    # Gain Link is the exact inverse of Input Gain (a linked instance gives the bits of an
+    # unlinked one with Output = -Input), and a preset-sized change starts from a clean
+    # state: no burst, no hole, no click. Links the core directly, no plugin or host.
+    add_executable(TapeMachine2CleanChangeTest
+        ../core/tests/CleanChangeTest.cpp
+        ../core/TapeMachineDSP.cpp)
+    target_include_directories(TapeMachine2CleanChangeTest PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../core"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+    target_compile_features(TapeMachine2CleanChangeTest PRIVATE cxx_std_17)
+    add_test(NAME TapeMachine2CleanChange COMMAND TapeMachine2CleanChangeTest)
 endif()

@@ -1089,8 +1089,8 @@ private:
         // exact inverse of the input (drive the tape harder without a gain-stage level
         // change). The stored outputGain value is used only while the link is off; linked
         // preset changes therefore cannot add a hidden output-trim step. The link lives in
-        // the DSP and its post-tape makeup holds the host-facing sample peak at the incoming
-        // level, including during guarded preset transitions. To make the link read clearly the OUTPUT
+        // the DSP, where it is that inverse and nothing else: no level is measured or
+        // matched after the tape. To make the link read clearly the OUTPUT
         // knob MIRRORS input under link — its needle AND readout show -input (an opposed pair,
         // e.g. +3 / -3) on the normal ±12 scale, and moving either knob moves the other the
         // opposite way (the drag is routed to INPUT in the setParam adapter, linkOffset = -input).

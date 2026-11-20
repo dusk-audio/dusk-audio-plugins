@@ -1601,7 +1601,7 @@ private:
     float m_gapWidth = 3.0f;
     // Per-machine linear trim making the tape core unity-gain (compensates the input
     // 0.95 scale + the tape's small insertion offset). Set in updateFilters. Chosen so
-    // -12 dBFS in -> -12 dBFS out at the reference (matches gain-link makeup on/off).
+    // -12 dBFS in -> -12 dBFS out at the reference.
     float m_machineMakeupGain = 1.0f;
 
     static constexpr float denormalPrevention = 1e-8f;
@@ -2264,14 +2264,7 @@ public:
     void processBlock (const float* const* inputs, float* const* outputs, int nCh, int nSamples) noexcept;
     int  latencySamples() const noexcept;
 
-    void setTapeMachine (int idx)  noexcept
-    {
-        pMachine.store (clampI (idx, 0, 1), std::memory_order_relaxed);
-        // Factory and user preset application writes Machine first, even when its value is
-        // unchanged. Keep that signal separate from a lone Input Gain gesture so a preset
-        // recall can arm the large-gain transition guard without classifying knob motion.
-        pLinkedBatchRevision.fetch_add (1u, std::memory_order_relaxed);
-    }
+    void setTapeMachine (int idx)  noexcept { pMachine.store (clampI (idx, 0, 1), std::memory_order_relaxed); }
     void setTapeSpeed   (int idx)  noexcept { pSpeed.store (clampI (idx, 0, 3), std::memory_order_relaxed); }
     void setTapeType    (int idx)  noexcept { pType.store (clampI (idx, 0, 3), std::memory_order_relaxed); }
     void setSignalPath  (int idx)  noexcept { pSignalPath.store (clampI (idx, 0, 3), std::memory_order_relaxed); }
@@ -2339,7 +2332,10 @@ private:
     static int factorFromChoice (int /*storedChoice*/) noexcept { return 2; }
 
     int activeLatencySamples() const noexcept;
-    uint32_t currentLinkedTopologyKey() const noexcept;
+    uint32_t currentTopologyKey() const noexcept;
+    uint32_t currentSettingsPrint() const noexcept;
+    bool clearSignalState (bool keepOutputTail) noexcept;
+    void clearLevelFollowers() noexcept;
     void applyFactor (int newFactor);   // reconfigure internal DSP for an OS-factor change
 
     // --- parameters (atomics) ---
@@ -2354,7 +2350,6 @@ private:
     std::atomic<float> pProgHmfTrim{0.0f}, pProgHfTrim{0.0f};   // hidden program-band above-anchor HF trims (Phase C)
     std::atomic<float> pProgLfTrim{0.0f};                        // hidden program-band deep-sub bloom (EAR-GREEN)
     std::atomic<float> pLpQ{0.707f};        // lowpass SVF resonance (hidden preset data; 0.707 = the historic fixed Q)
-    std::atomic<uint32_t> pLinkedBatchRevision{0u};
     std::atomic<bool>  pAutoCal{true}, pNoiseEnabled{false}, pAutoComp{true}, pBypass{false};
     // American front-panel toggles — default On = the state the American tuning captured.
     std::atomic<bool>  pCrosstalk{true}, pWowFlutterOn{true}, pTransformer{true};
@@ -2376,25 +2371,48 @@ private:
     // inGain/outGain hold dB, not linear gain (dbToGain applied per ramp sample): with
     // the gain link on, dB-domain one-poles cancel exactly so in*out stays at unity
     // through a transition. Linear-domain smoothing of g and 1/g bulged the product
-    // by up to ~+13 dB on a large preset-switch gain step. linkedMakeupDb then restores
-    // host-facing peak unity across nonlinear and topology-dependent level changes.
+    // by up to ~+13 dB on a large preset-switch gain step. Nothing measures or matches
+    // level after the tape: with the link on, Output is minus Input and that is all.
     SmoothedValue inGain;                   // base-rate ramp, dB (shared by L/R)
     SmoothedValue outGain;                  // OS-rate ramp, dB (shared by L/R)
-    float lastLinkedInputGainDb = 1000.0f;
-    SmoothedValue linkedMakeupDb;            // post-tape linked peak matching, dB
-    int linkedGuardSamples = 0;
-    bool linkedGuardFirstBlock = false;
-    bool linkedGuardDiscontinuity = false;
-    float linkedGuardSlewScale = 4.0f;
-    float lastLinkedOutputL = 0.0f, lastLinkedOutputR = 0.0f;
-    float linkedRecentOutputSlewL = 0.0f, linkedRecentOutputSlewR = 0.0f;
-    float linkedOutputSlewDecay = 0.0f;
-    float linkedInputMatchPeak = 0.0f, linkedOutputMatchPeak = 0.0f;
-    float linkedMatchPeakDecay = 0.0f;
-    std::vector<float> linkedInputDelayL, linkedInputDelayR;
-    size_t linkedInputDelayIndex = 0;
-    uint32_t linkedTopologyKey = UINT32_MAX;
-    uint32_t lastLinkedBatchRevision = 0u;
+    // A preset-sized change starts from a clean state (see processBlock).
+    float lastInputGainDb = 0.0f;
+    uint32_t lastTopologyKey = 0u;
+    bool wasPassthrough = false;             // the last block was bypassed or Thru
+    int cleanFadeLeft = 0, cleanFadeSamples = 1;                // input fade-in after a clean start
+    int sinceCleanStart = 0, cleanGainHoldSamples = 0;          // a lone Input jump counts once per hold
+    int cleanSettleLeft = 0, cleanSettleSamples = 0;            // later parts of the same change
+    int cleanSettleRestartsLeft = 0;
+    uint32_t lastSettingsPrint = 0u;
+    // What was playing runs out: a pulse that starts at the last value and comes back to
+    // zero with no net area, v e^(-t/tau) (1 - t/tau). The cut is then neither a step (it
+    // starts where the signal was) nor a thump (it has no DC). A value that is not finite,
+    // or absurdly large, is not run out at all.
+    struct RunOut
+    {
+        float p = 0.0f, q = 0.0f;           // v a^n and v n a^n
+        void start (float value) noexcept
+        {
+            p = std::abs (value) < 64.0f ? value : 0.0f;    // false for NaN and inf
+            q = 0.0f;
+        }
+        bool running() const noexcept { return p != 0.0f || q != 0.0f; }
+        float next (float decay, float invTau) noexcept
+        {
+            const float y = p - q * invTau;
+            q = decay * (q + p);
+            p *= decay;
+            if (std::abs (p) < 1.0e-9f && std::abs (q) * invTau < 1.0e-9f)    // -180 dBFS: over
+                p = q = 0.0f;
+            return y;
+        }
+    };
+    RunOut cleanRunL, cleanRunR;                                // at the decimators' input, after a change
+    RunOut exitRunL, exitRunR;                                  // at the output, after a passthrough
+    float cleanTailDecay = 0.0f, cleanTailInvTau = 0.0f;        // oversampled rate
+    float exitTailDecay = 0.0f, exitTailInvTau = 0.0f;          // base rate
+    float lastOsOutL = 0.0f, lastOsOutR = 0.0f;                 // what the decimators were last fed
+    float lastOutL = 0.0f, lastOutR = 0.0f;                     // the last sample that went out
     SmoothedValue smSat, smWow, smFlutter, smNoise, smBias;
 
     bool bypassLowpass = true;

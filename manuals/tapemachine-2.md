@@ -30,7 +30,8 @@ installed for old-session compatibility.
 2. Choose **Classic Rock Crisp** for restrained Swiss color or **Big 456
    Master** for American mastering color.
 3. Leave **Gain Link** on and raise **Input**. The linked Output control moves in
-   the opposite direction so louder is not mistaken for better.
+   the opposite direction, so what you hear is the tape working harder and not
+   just a louder signal.
 4. Compare with the top-right **Bypass** button.
 5. For stronger color, try **Thick Saturation**, **Drum Bus**, or **Fat 456
    Master**. For deliberate degradation, try **Sunbaked Cassette** or **Old
@@ -79,8 +80,14 @@ installed for old-session compatibility.
 
 - **Input** ranges from -12 to +12 dB and is the primary drive control.
 - **Output** ranges from -12 to +12 dB.
-- **Gain Link** applies inverse output compensation. With it on, Output acts as
-  an additional makeup trim on top of the inverse Input gain.
+- **Gain Link** ties Output to Input: Output is always the exact opposite of
+  Input (Input +6 dB gives Output -6 dB), and moving either knob moves the other.
+  The gain you add going in is taken off coming out. The level change that
+  remains is what the tape itself does: driven hard by a loud source, tape
+  compresses and the result comes out lower, by several dB on the hottest
+  presets; a few settings come out a little louder than they go in. Nothing
+  measures or rides the level. Loading a preset sets its own Output value for
+  use with the link off.
 
 ### Tape character
 
@@ -164,14 +171,15 @@ defaults. **Save** stores user presets in
 ### Transparent mix color
 
 Start with **Classic Rock Crisp** or **Modern Rock**. Leave wow, flutter, and
-noise at zero. Keep Gain Link on, then adjust Input while level-matched. Switch
+noise at zero. Keep Gain Link on, then adjust Input: Output follows in the
+opposite direction, so the level stays close while the color changes. Switch
 to 30 IPS if you want less low-speed character.
 
 ### Drum-bus saturation
 
 Start with **Drum Bus**, **GP9 Drum Bus**, or **Fat 456 Master**. Preserve the
-factory Advanced EQ at first. Adjust Input for density, then use Output only as
-the final makeup trim.
+factory Advanced EQ at first. Adjust Input for density. For a final makeup trim,
+turn Gain Link off and use Output.
 
 ### Strong tape color
 
@@ -189,6 +197,16 @@ American-only 3.75 IPS mode.
 
 **Input gets louder but Output turns down.** Gain Link is on. This is intentional
 level compensation. Turn it off for independent input and output gains.
+
+**The level drops when I push Input with Gain Link on.** That is the tape
+compressing. Gain Link removes the gain you added, not the compression. Turn the
+link off and raise Output if you want to make it up.
+
+**There is a tiny gap when I change presets or switch bypass off.** Changing the
+machine, the speed or the calibration, dropping Input by more than 6 dB at once,
+and coming back from bypass or Thru start the tape path from a clean state. That
+takes a couple of milliseconds, and it replaces the burst the old settings would
+otherwise leave behind.
 
 **Bias does not respond.** Auto Bias is on. Disable it before adjusting Bias.
 
