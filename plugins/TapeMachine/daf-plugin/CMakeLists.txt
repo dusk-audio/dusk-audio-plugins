@@ -89,4 +89,15 @@ if(NOT CMAKE_CROSSCOMPILING)
         "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
     target_compile_features(TapeMachine2SettingsCopyTest PRIVATE cxx_std_17)
     add_test(NAME TapeMachine2SettingsCopy COMMAND TapeMachine2SettingsCopyTest)
+
+    # restart() leaves the state prepare() leaves (the render after it is that of an instance
+    # prepared afresh, bit for bit) and does not allocate. Links the core directly.
+    add_executable(TapeMachine2RestartTest
+        ../core/tests/RestartTest.cpp
+        ../core/TapeMachineDSP.cpp)
+    target_include_directories(TapeMachine2RestartTest PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../core"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+    target_compile_features(TapeMachine2RestartTest PRIVATE cxx_std_17)
+    add_test(NAME TapeMachine2Restart COMMAND TapeMachine2RestartTest)
 endif()
