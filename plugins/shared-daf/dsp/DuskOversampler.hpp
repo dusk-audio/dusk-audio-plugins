@@ -153,6 +153,10 @@ public:
         upA.reset(); downA.reset();
         upB.reset(); downB.reset();
     }
+    // Clears the interpolators only. The decimators keep their history, so what the
+    // oversampled path was playing runs out through them instead of ending in one sample.
+    // For a caller that restarts the path behind the interpolators and wants no cut.
+    void resetInterpolators() noexcept { upA.reset(); upB.reset(); }
 
     // Fixed group delay of the up+down FIR round trip, in base-rate samples.
     // 2x stage (L taps): L-1 samples @2x = (L-1)/2 base (23 for the 47-tap set,
