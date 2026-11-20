@@ -50,9 +50,10 @@ double toDb (double lin) { return 20.0 * std::log10 (std::max (lin, 1.0e-12)); }
 
 // The programme: by default a four-sine chord, the right channel a little lower and without
 // the top partial so the two channels are not copies. `level` scales it sample by sample.
-// The other two are for what a chord that stops at 3.3 kHz cannot show: treble (the tape's
-// level-dependent top end) and a single tone (anything added under it stands out).
-enum Programme { chordProgramme, trebleProgramme, toneProgramme };
+// The others are for what a chord that stops at 3.3 kHz cannot show: treble (the tape's
+// level-dependent top end) and a single tone, at 1 kHz or at 5 kHz (anything added under it
+// stands out).
+enum Programme { chordProgramme, trebleProgramme, toneProgramme, highToneProgramme };
 struct Chord
 {
     double rate;
@@ -62,9 +63,10 @@ struct Chord
 
     void next (float level, float& left, float& right)
     {
-        static constexpr double freqs[3][4] = { { 110.0, 440.0, 1200.0, 3300.0 },
+        static constexpr double freqs[4][4] = { { 110.0, 440.0, 1200.0, 3300.0 },
                                                 { 440.0, 440.0, 9000.0, 13000.0 },
-                                                { 1000.0, 1000.0, 1000.0, 1000.0 } };
+                                                { 1000.0, 1000.0, 1000.0, 1000.0 },
+                                                { 5000.0, 5000.0, 5000.0, 5000.0 } };
         const double* freq = freqs[kind];
         static constexpr double twoPi = 6.283185307179586;
         double sum = 0.0, sumNoTop = 0.0;
@@ -248,6 +250,23 @@ void hotBusFlat (TapeMachineDSP& d)
     d.setReproHf (0.0f); d.setReproSubBell (0.0f);
     d.setProgHmfTrim (0.0f); d.setProgHfTrim (0.0f);
 }
+// A slow deck with a lot of wow and flutter, and the thick setting with none: the depth of
+// both has the longest way to go here.
+void wobbly (TapeMachineDSP& d)
+{
+    d.setTapeMachine (1); d.setTapeSpeed (3); d.setTapeType (3); d.setCalibration (3);
+    d.setAutoCal (false); d.setBias (37.3f);
+    d.setWow (14.0f); d.setFlutter (10.0f);
+    d.setReproHf (9.1f); d.setReproSubBell (15.5f);
+    d.setProgHmfTrim (8.0f); d.setProgHfTrim (20.0f);
+}
+void wowOnly (TapeMachineDSP& d)     { wobbly (d); d.setFlutter (0.0f); }
+void flutterOnly (TapeMachineDSP& d) { wobbly (d); d.setWow (0.0f); }
+void thickAndSteady (TapeMachineDSP& d)
+{
+    thick (d);
+    d.setWow (0.0f); d.setFlutter (0.0f);
+}
 void cleanDeck (TapeMachineDSP& d)
 {
     d.setTapeMachine (0); d.setTapeSpeed (2); d.setTapeType (2); d.setCalibration (0);
@@ -267,6 +286,14 @@ void setInput (TapeMachineDSP& d, bool isPlain, float inputDb)
 using Setting = void (*) (TapeMachineDSP&);
 
 // One thing changed on the hot bus setting, and nothing else.
+// The machine alone, at the same speed: from the American deck at 30 IPS on one-inch heads
+// to the Swiss one. Kept state bursts by 26 dB there (from the hot bus setting it does not).
+void wideAmerican (TapeMachineDSP& d)
+{
+    d.setTapeMachine (1); d.setTapeSpeed (2); d.setTapeType (1); d.setCalibration (1); d.setHeadWidth (2);
+    d.setAutoCal (true);
+}
+void toSwiss (TapeMachineDSP& d)           { d.setTapeMachine (0); }
 void otherSpeed (TapeMachineDSP& d)        { d.setTapeSpeed (2); }
 void otherTape (TapeMachineDSP& d)         { d.setTapeType (3); }
 void otherCalibration (TapeMachineDSP& d)  { d.setCalibration (3); }
@@ -335,6 +362,80 @@ void checkLeftAlone (const char* name, double rate, int block, Setting before, f
     hold (sc.label(), "level in any 5 ms after it under the quieter of before and after, dB", worst, -1.5, true);
     const double allowed = std::max (p.peak (at, -250.0, 0.0), p.peak (at, 500.0, 750.0));
     hold (sc.label(), "peak in the 250 ms after it over the louder of before and after, dB", p.peak (at, 0.0, 250.0) - allowed, 1.0);
+}
+
+// Long after the change: a wow or flutter depth still on its way down from the old setting
+// would modulate the new programme through a line that was emptied, and a sample or a few
+// of that stand out a quarter of a second later. Whether they do depends on where in the
+// modulation the switch falls, so it is read at four instants. By then the output is the new
+// setting, so the reading is against the settled peak alone.
+void checkLongAfter (double rate, int block)
+{
+    for (int later = 0; later < 4; ++later)
+    {
+        const size_t at = boundary (1.0, rate, block) + static_cast<size_t> (later) * static_cast<size_t> (block);
+        char name[96];
+        std::snprintf (name, sizeof (name), "deck with wow and flutter to a steady thick setting, %d blocks on", later);
+        const Script sc {
+            name, rate, block, 2.75,
+            [] (TapeMachineDSP& d, bool isPlain) { wobbly (d); setInput (d, isPlain, -12.0f); d.setAutoComp (! isPlain); },
+            [=] (TapeMachineDSP& d, bool isPlain, size_t pos) {
+                if (pos != at) return;
+                thickAndSteady (d);
+                setInput (d, isPlain, 2.2f);
+            },
+            [] (size_t) { return 0.25f; } };
+        const Render p = linkedIsPlain (sc);
+        hold (sc.label(), "peak 200 to 500 ms after the change over the settled peak, dB",
+              p.peak (at, 200.0, 500.0) - p.peak (at, 1000.0, 1250.0), 0.5);
+    }
+}
+
+// With only one of the two depths still on its way down, the four instants above show no
+// peak (at others it does show, smaller and more rarely). What one depth alone always
+// leaves is the new programme modulated for as long as the depth takes to get there. So:
+// the same change from the same deck with the depth at zero all along. After a clean start
+// the two runs differ only by what the old deck left behind, and from 50 ms on by nothing.
+void checkOldDepthIsGone (const char* which, Setting deck, double rate, int block)
+{
+    const size_t at = boundary (1.0, rate, block);
+    const auto script = [=] (bool modulated) {
+        char name[96];
+        std::snprintf (name, sizeof (name), "deck with %s to a steady thick setting, against the deck without", which);
+        return Script { name, rate, block, 2.5,
+                        [=] (TapeMachineDSP& d, bool isPlain) {
+                            deck (d);
+                            if (! modulated) { d.setWow (0.0f); d.setFlutter (0.0f); }
+                            setInput (d, isPlain, -12.0f); d.setAutoComp (! isPlain);
+                        },
+                        [=] (TapeMachineDSP& d, bool isPlain, size_t pos) {
+                            if (pos != at) return;
+                            thickAndSteady (d);
+                            setInput (d, isPlain, 2.2f);
+                        },
+                        [] (size_t) { return 0.25f; } };
+    };
+    const Render with = linkedIsPlain (script (true)), without = render (script (false), true);
+    // Both channels; `from` in ms relative to the change, over the 100 ms that follow.
+    const auto difference = [&] (double from) {
+        double diff = 0.0, ref = 0.0;
+        const size_t begin = from < 0.0 ? at - with.at (-from) : at + with.at (from);
+        for (size_t i = begin; i < begin + with.at (100.0); ++i)
+        {
+            diff += (with.left[i] - without.left[i]) * static_cast<double> (with.left[i] - without.left[i])
+                  + (with.right[i] - without.right[i]) * static_cast<double> (with.right[i] - without.right[i]);
+            ref += static_cast<double> (without.left[i]) * without.left[i] + static_cast<double> (without.right[i]) * without.right[i];
+        }
+        return 10.0 * std::log10 (std::max (diff, 1e-30) / std::max (ref, 1e-30));
+    };
+    // The depth does something on the old deck, or the comparison below would hold nothing.
+    hold (script (true).label(), "difference over the 100 ms from 250 ms before the change, dB relative to the signal", difference (-250.0), -10.0, true);
+    for (const double from : { 50.0, 150.0 })
+    {
+        char reading[112];
+        std::snprintf (reading, sizeof (reading), "difference over the 100 ms from %.0f ms after the change, dB relative to the signal", from);
+        hold (script (true).label(), reading, difference (from), -40.0);
+    }
 }
 
 // A preset whose parameters reach the core over two blocks. Either the deck first and Input
@@ -629,26 +730,109 @@ void checkAfterANonFiniteSample (float bad, const char* name)
           std::abs (p.rms (at, 500.0, 900.0) - reference.rms (at, 500.0, 900.0)), 0.1);
 }
 
-// A 1 kHz tone through a calibration switch. What runs out of the old signal has no net
-// area, so nothing is left under the tone: the mean of the 20 ms after the change stays far
-// below the tone.
-void checkNoThump()
+// The Swiss deck has no 3.75 IPS: set to it, it is the deck at 15 IPS, sample for sample.
+// Held from prepare() on and through a preset-sized change with the speed kept, and for a
+// switch from 15 to 3.75 IPS in running programme, which is then no event at all.
+void checkSwissSlowSpeedIsFifteen()
 {
     const double rate = 48000.0; const int block = 64;
     const size_t at = boundary (1.0, rate, block);
+    const auto differing = [] (const Render& a, const Render& b) {
+        size_t n = 0;
+        for (size_t i = 0; i < a.left.size(); ++i)
+            n += std::memcmp (&a.left[i], &b.left[i], sizeof (float)) != 0 || std::memcmp (&a.right[i], &b.right[i], sizeof (float)) != 0;
+        return static_cast<double> (n);
+    };
+    {
+        const auto script = [=] (int speed) {
+            return Script { "Swiss deck at 3.75 IPS, through a preset-sized change", rate, block, 2.0,
+                            [=] (TapeMachineDSP& d, bool) { d.setTapeMachine (0); d.setTapeSpeed (speed); setInput (d, true, 6.0f); },
+                            [=] (TapeMachineDSP& d, bool, size_t pos) { if (pos == at) { hotBus (d); d.setTapeSpeed (speed); } },
+                            [] (size_t) { return 0.25f; } };
+        };
+        const Render slow = render (script (3), true), fifteen = render (script (1), true);
+        hold (script (3).label(), "samples that differ from the same run at 15 IPS", differing (slow, fifteen), 0.0);
+        hold (script (3).label(), "render peak, dBFS (it must not be silent)", slow.peak (0, 0.0, 2000.0), -40.0, true);
+    }
+    {
+        const auto script = [=] (bool switched) {
+            return Script { "Swiss deck switched from 15 to 3.75 IPS", rate, block, 2.0,
+                            [] (TapeMachineDSP& d, bool) { hotBus (d); setInput (d, true, 6.0f); },
+                            [=] (TapeMachineDSP& d, bool, size_t pos) { if (switched && pos == at) d.setTapeSpeed (3); },
+                            [] (size_t) { return 0.25f; } };
+        };
+        const Render switched = render (script (true), true), left = render (script (false), true);
+        hold (script (true).label(), "samples that differ from the run without the switch", differing (switched, left), 0.0);
+        hold (script (true).label(), "render peak, dBFS (it must not be silent)", switched.peak (0, 0.0, 2000.0), -40.0, true);
+    }
+}
+
+// A tone through a calibration switch. What runs out of the old signal has no net area, so
+// nothing is left under the tone: the mean of the 20 ms after the change stays far below the
+// tone.
+// That mean has a second source, which is not a thump: the tone itself, cut and brought back
+// in, is no longer whole cycles in the window, and the part cycles have an area of their own.
+// It is a sinusoid in the tone's phase at the switch and falls by 6 dB per octave of the
+// tone. At 1 kHz it is about as large as the bound: -44.9 dB at the instant read here,
+// -40.9 and -38.1 dB one and two blocks later, and over the bound at 22 of the 48 instants
+// of a cycle. The 1 kHz reading therefore holds the instant it is taken at, and a change
+// that moves the output by a few samples can turn it red without a thump. It stays all the
+// same: it reads a run-out with a tenth of the area of a one-sided one (-37.1 dB), and with
+// the 5 kHz reading below a leftover area from 6 % of a one-sided one in one sign and from
+// 8 % in the other is red in one of the two.
+// On a 5 kHz tone the tone's own part is small (-48.8 dB at the worst of three instants a
+// block apart, -48.5 dB over all 48), so the bound can sit closer, at -45 dB, and holds at
+// every instant: a one-sided run-out reads -23.4, -39.7 and -21.6 dB, one with a tenth of
+// the area -42.8, -53.0 and -40.9 dB. Three instants because the area scales with the last
+// value before the cut, which is near zero at one of them.
+void checkNoThump (Programme programme = toneProgramme, int blocksOn = 0, double bound = -40.0)
+{
+    const double rate = 48000.0; const int block = 64;
+    const size_t at = boundary (1.0, rate, block) + static_cast<size_t> (blocksOn) * static_cast<size_t> (block);
+    char name[96];
+    const char* tone = programme == toneProgramme ? "1 kHz" : programme == highToneProgramme ? "5 kHz" : "?";
+    if (blocksOn == 0) std::snprintf (name, sizeof (name), "%s tone through a calibration switch", tone);
+    else               std::snprintf (name, sizeof (name), "%s tone through a calibration switch, %d blocks on", tone, blocksOn);
     Script sc {
-        "1 kHz tone through a calibration switch", rate, block, 2.0,
+        name, rate, block, 2.0,
         [] (TapeMachineDSP& d, bool isPlain) { d.setTapeMachine (0); d.setCalibration (0); setInput (d, isPlain, 0.0f); d.setAutoComp (! isPlain); },
         [=] (TapeMachineDSP& d, bool, size_t pos) { if (pos == at) d.setCalibration (1); },
         [] (size_t) { return 0.5f; } };
-    sc.programme = toneProgramme;
+    sc.programme = programme;
     const Render p = linkedIsPlain (sc);
     double sum = 0.0;
     const size_t n = p.at (20.0);
     for (size_t i = at; i < at + n; ++i)
         sum += p.left[i];
     hold (sc.label(), "mean of the 20 ms after the change against the tone's level, dB",
-          toDb (std::abs (sum / static_cast<double> (n))) - p.rms (at, 500.0, 750.0), -40.0);
+          toDb (std::abs (sum / static_cast<double> (n))) - p.rms (at, 500.0, 750.0), bound);
+}
+
+// The first block after prepare() or reset() is not a clean start: both store the settings
+// the block will find. A clean start there would bring the input in over 2 ms, so the first
+// cycle of a 1 kHz tone that comes out is read against a later one: -2.8 dB as it is (the
+// path's own onset), -15.7 dB with the input brought in.
+void checkFirstBlockIsNotAStart()
+{
+    const double rate = 48000.0; const int block = 64;
+    const size_t again = boundary (0.5, rate, block);
+    for (const bool afterReset : { false, true })
+    {
+        Script sc {
+            afterReset ? "first block after reset()" : "first block after prepare()", rate, block, 1.0,
+            [] (TapeMachineDSP& d, bool isPlain) { hotBus (d); setInput (d, isPlain, 6.0f); d.setAutoComp (! isPlain); },
+            [=] (TapeMachineDSP& d, bool, size_t pos) { if (afterReset && pos == again) d.reset(); },
+            [] (size_t) { return 0.25f; } };
+        sc.programme = toneProgramme;
+        const Render p = linkedIsPlain (sc);
+        // The first sample that is not silence is where the tone comes out (the path's latency).
+        const size_t from = afterReset ? again : 0;
+        size_t onset = from;
+        while (onset < p.left.size() && std::abs (p.left[onset]) < 1.0e-6f) ++onset;
+        // Found, and within the path's latency: with no onset the two windows below are empty.
+        hold (sc.label(), "samples of silence before the tone comes out", static_cast<double> (onset - from), 0.005 * rate);
+        hold (sc.label(), "first 1 ms that comes out against the 1 ms from 20 ms on, dB", p.rms (onset, 0.0, 1.0) - p.rms (onset, 20.0, 21.0), -9.0, true);
+    }
 }
 
 // reset() and a second prepare() in the middle of programme: the linked render is still
@@ -829,6 +1013,7 @@ int main (int argc, char** argv)
     checkChange ("hot bus to clean deck, Input unchanged", 48000.0, 64, 0.25f, hotBus, 6.0f, cleanDeck, 6.0f);
     checkChange ("Swiss to American", 48000.0, 512, 0.25f, swiss, 3.0f, american, 3.0f);
     // Each setting that makes the path burst, changed alone.
+    checkChange ("machine alone", 48000.0, 64, 0.25f, wideAmerican, 6.8f, toSwiss, 6.8f);
     checkChange ("speed alone", 48000.0, 64, 0.25f, hotBus, 6.0f, otherSpeed, 6.0f);
     checkChange ("calibration alone", 48000.0, 64, 0.7f, hotBus, 6.0f, otherCalibration, 6.0f);
     // The same change in mono, at two more rates, and in quiet treble, where the tape's
@@ -844,6 +1029,9 @@ int main (int argc, char** argv)
     checkLeftAlone ("signal path Repro to Input alone", 48000.0, 64, hotBus, 6.0f, inputPath, 6.0f);
     checkLeftAlone ("head width alone", 48000.0, 64, american, 3.0f, otherHeadWidth, 3.0f);
     checkLeftAlone ("Swiss, 15 to 3.75 IPS (the same speed there)", 48000.0, 64, swissAt15, 3.0f, sameSpeedOnSwiss, 3.0f);
+    checkLongAfter (48000.0, 512);
+    checkOldDepthIsGone ("wow", wowOnly, 48000.0, 512);
+    checkOldDepthIsGone ("flutter", flutterOnly, 48000.0, 512);
     checkSplitPreset (true, 48000.0, 64);
     checkSplitPreset (false, 48000.0, 64);
     checkSplitWithEverythingLater();
@@ -851,8 +1039,12 @@ int main (int argc, char** argv)
     checkStoredOutputInsideTheWindow();
     checkAfterANonFiniteSample (std::numeric_limits<float>::quiet_NaN(), "a NaN sample, then a calibration switch");
     checkAfterANonFiniteSample (std::numeric_limits<float>::infinity(), "an infinite sample, then a calibration switch");
+    checkSwissSlowSpeedIsFifteen();
     checkNoThump();
+    for (int blocksOn = 0; blocksOn < 3; ++blocksOn)
+        checkNoThump (highToneProgramme, blocksOn, -45.0);
     checkResetAndPrepare();
+    checkFirstBlockIsNotAStart();
     checkChange ("hot bus to a thick setting", 48000.0, 512, 0.25f, hotBus, 10.9f, thick, 2.2f);
     checkChange ("low bias to high bias", 48000.0, 64, 0.25f, lowBias, -10.2f, highBias, 11.8f);
     checkChange ("low bias to high bias", 48000.0, 512, 0.25f, lowBias, -10.2f, highBias, 11.8f);
