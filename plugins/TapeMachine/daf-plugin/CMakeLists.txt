@@ -78,4 +78,15 @@ if(NOT CMAKE_CROSSCOMPILING)
         "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
     target_compile_features(TapeMachine2CleanChangeTest PRIVATE cxx_std_17)
     add_test(NAME TapeMachine2CleanChange COMMAND TapeMachine2CleanChangeTest)
+
+    # copySettingsFrom() carries every setting: an instance set up through a copy of another
+    # one's settings renders the same bits, setter by setter. Links the core directly.
+    add_executable(TapeMachine2SettingsCopyTest
+        ../core/tests/SettingsCopyTest.cpp
+        ../core/TapeMachineDSP.cpp)
+    target_include_directories(TapeMachine2SettingsCopyTest PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../core"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+    target_compile_features(TapeMachine2SettingsCopyTest PRIVATE cxx_std_17)
+    add_test(NAME TapeMachine2SettingsCopy COMMAND TapeMachine2SettingsCopyTest)
 endif()

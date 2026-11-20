@@ -381,6 +381,49 @@ int TapeMachineDSP::latencySamples() const noexcept
     return activeLatencySamples();
 }
 
+void TapeMachineSettings::copySettingsFrom (const TapeMachineSettings& other) noexcept
+{
+    const auto copy = [] (auto& to, const auto& from) noexcept
+    {
+        to.store (from.load (std::memory_order_relaxed), std::memory_order_relaxed);
+    };
+    copy (pMachine, other.pMachine);
+    copy (pSpeed, other.pSpeed);
+    copy (pType, other.pType);
+    copy (pSignalPath, other.pSignalPath);
+    copy (pEqStandard, other.pEqStandard);
+    copy (pCalibration, other.pCalibration);
+    copy (pOversampling, other.pOversampling);
+    copy (pHeadWidth, other.pHeadWidth);
+    copy (pInputGainDb, other.pInputGainDb);
+    copy (pSaturation, other.pSaturation);
+    copy (pBias, other.pBias);
+    copy (pHighpassHz, other.pHighpassHz);
+    copy (pLowpassHz, other.pLowpassHz);
+    copy (pNoiseAmount, other.pNoiseAmount);
+    copy (pWow, other.pWow);
+    copy (pFlutter, other.pFlutter);
+    copy (pOutputGainDb, other.pOutputGainDb);
+    copy (pReproLf, other.pReproLf);
+    copy (pReproLmf, other.pReproLmf);
+    copy (pReproHmf, other.pReproHmf);
+    copy (pReproHf, other.pReproHf);
+    copy (pReproSubBell, other.pReproSubBell);
+    copy (pLevelHmfTrim, other.pLevelHmfTrim);
+    copy (pLevelHfTrim, other.pLevelHfTrim);
+    copy (pProgHmfTrim, other.pProgHmfTrim);
+    copy (pProgHfTrim, other.pProgHfTrim);
+    copy (pProgLfTrim, other.pProgLfTrim);
+    copy (pLpQ, other.pLpQ);
+    copy (pAutoCal, other.pAutoCal);
+    copy (pNoiseEnabled, other.pNoiseEnabled);
+    copy (pAutoComp, other.pAutoComp);
+    copy (pBypass, other.pBypass);
+    copy (pCrosstalk, other.pCrosstalk);
+    copy (pWowFlutterOn, other.pWowFlutterOn);
+    copy (pTransformer, other.pTransformer);
+}
+
 // The settings whose change alone makes the path burst if its state is kept. Measured on the
 // 20 factory presets with nothing else changed, on a four-sine chord, peak over the louder
 // of before and after: machine 26 dB, speed 23 dB, calibration 2.6 dB. Tape type (1.2 dB at
