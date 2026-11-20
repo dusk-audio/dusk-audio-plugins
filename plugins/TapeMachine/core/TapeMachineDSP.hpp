@@ -2332,7 +2332,13 @@ private:
     static int factorFromChoice (int /*storedChoice*/) noexcept { return 2; }
 
     int activeLatencySamples() const noexcept;
-    uint32_t currentTopologyKey() const noexcept;
+    struct BlockSettings
+    {
+        int machine = 0, speed = 0, calibration = 0;    // in range; the speed the core runs at
+        float inputGainDb = 0.0f;
+        uint32_t topologyKey() const noexcept;
+    };
+    BlockSettings readBlockSettings() const noexcept;
     uint32_t currentSettingsPrint() const noexcept;
     static int effectiveSpeedIndex (int machine, int speed) noexcept;
     bool clearSignalState (bool keepOutputTail) noexcept;

@@ -154,10 +154,11 @@ void TapeMachineDSP::prepare (double sampleRate, int maxBlockSize)
 
     // Initial (snap) values matching PluginProcessor::prepareToPlay. inGain/outGain
     // hold dB (converted per sample in processBlock — see the smoothing note there).
-    const float inGainDb = pInputGainDb.load (std::memory_order_relaxed);
+    const BlockSettings now = readBlockSettings();
+    const float inGainDb = now.inputGainDb;
     inGain.snap  (inGainDb);
     lastInputGainDb = inGainDb;
-    lastTopologyKey = currentTopologyKey();
+    lastTopologyKey = now.topologyKey();
     lastSettingsPrint = currentSettingsPrint();
     wasPassthrough = false;
     cleanFadeLeft = 0;
@@ -173,16 +174,12 @@ void TapeMachineDSP::prepare (double sampleRate, int maxBlockSize)
     const float initSat = std::clamp (((inGainDb + 12.0f) / 24.0f) * 100.0f, 0.0f, 100.0f);
     smSat.snap     (initSat);
     {
-        const auto initMachine = static_cast<TapeCore::TapeMachine> (clampI (pMachine.load (std::memory_order_relaxed), 0, 1));
         const auto initType    = static_cast<TapeCore::TapeType>    (clampI (pType.load  (std::memory_order_relaxed), 0, 3));
-        // Normalize speed the same way processBlock does before autoCalBiasFromTypeSpeed:
-        // the Swiss has no 3.75 IPS, so coerce it to 15 IPS. Without this the snap uses
-        // the un-coerced 3.75 target and smBias ramps on the first block for a Swiss+3.75
-        // preset/automation recall.
-        int initSpeedIdx = clampI (pSpeed.load (std::memory_order_relaxed), 0, 3);
-        if (initMachine == TapeCore::Swiss && initSpeedIdx == TapeCore::Speed_3_75_IPS)
-            initSpeedIdx = TapeCore::Speed_15_IPS;
-        const auto initSpeed = static_cast<TapeCore::TapeSpeed> (initSpeedIdx);
+        // The speed the core runs at, as processBlock takes it (the Swiss has no 3.75 IPS;
+        // readBlockSettings). With the stored speed the snap would use the 3.75 target
+        // and smBias would ramp on the first block for a Swiss+3.75 preset/automation
+        // recall.
+        const auto initSpeed = static_cast<TapeCore::TapeSpeed> (now.speed);
         smBias.snap    (pAutoCal.load (std::memory_order_relaxed)
                             ? autoCalBiasFromTypeSpeed (initType, initSpeed)
                             : std::clamp (pBias.load (std::memory_order_relaxed) * 0.01f, 0.0f, 1.0f));
@@ -326,8 +323,9 @@ void TapeMachineDSP::reset()
     vuStateL = vuStateR = inVuStateL = inVuStateR = 0.0f;
     inPeakStateL = inPeakStateR = 0.0f;
     inputPeakUsesRawInput = false;
-    lastInputGainDb = pInputGainDb.load (std::memory_order_relaxed);
-    lastTopologyKey = currentTopologyKey();
+    const BlockSettings now = readBlockSettings();
+    lastInputGainDb = now.inputGainDb;
+    lastTopologyKey = now.topologyKey();
     lastSettingsPrint = currentSettingsPrint();
     wasPassthrough = false;
     cleanFadeLeft = 0;
@@ -388,17 +386,30 @@ int TapeMachineDSP::latencySamples() const noexcept
 // of before and after: machine 26 dB, speed 23 dB, calibration 2.6 dB. Tape type (1.2 dB at
 // worst), EQ standard, signal path other than Thru and head width (0.0 dB on the chord, up
 // to 1 dB on a bass note alone) are not here: they switch as they always did, without a gap.
-uint32_t TapeMachineDSP::currentTopologyKey() const noexcept
+uint32_t TapeMachineDSP::BlockSettings::topologyKey() const noexcept
 {
-    const int machine = clampI (pMachine.load (std::memory_order_relaxed), 0, 1);
     return static_cast<uint32_t> (machine)
-        | (static_cast<uint32_t> (effectiveSpeedIndex (machine, pSpeed.load (std::memory_order_relaxed))) << 1u)
-        | (static_cast<uint32_t> (clampI (pCalibration.load (std::memory_order_relaxed), 0, 3)) << 3u);
+        | (static_cast<uint32_t> (speed) << 1u)
+        | (static_cast<uint32_t> (calibration) << 3u);
 }
 
-// The Swiss deck has no 3.75 IPS and runs it at 15 (see processBlock). The key and the print
-// take the speed the core runs at, so that choosing between the two on that deck, which
-// changes nothing in the path, is not a change.
+// Machine, speed and calibration in range, the speed being the one the core runs at, and
+// Input as stored. The one place they are read for a block: processBlock decides the clean
+// start on these and runs the block on them, and prepare() and reset() store the Input and
+// the key of one such reading, so the first block after either is not a clean start.
+TapeMachineDSP::BlockSettings TapeMachineDSP::readBlockSettings() const noexcept
+{
+    BlockSettings now;
+    now.machine = clampI (pMachine.load (std::memory_order_relaxed), 0, 1);
+    now.speed = effectiveSpeedIndex (now.machine, pSpeed.load (std::memory_order_relaxed));
+    now.calibration = clampI (pCalibration.load (std::memory_order_relaxed), 0, 3);
+    now.inputGainDb = pInputGainDb.load (std::memory_order_relaxed);
+    return now;
+}
+
+// The Swiss deck has no 3.75 IPS and runs it at 15. A block's speed is this one, and so is
+// the print's, so that choosing between the two on that deck, which changes nothing in the
+// path, is not a change.
 int TapeMachineDSP::effectiveSpeedIndex (int machine, int speed) noexcept
 {
     speed = clampI (speed, 0, 3);
@@ -489,7 +500,7 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     // So does the path's memory after bypass or Thru: it is the programme of the moment the
     // passthrough was switched on. Rather than catch that at the output, the state is
     // cleared where it would start:
-    //   - on a change of machine, speed or calibration (currentTopologyKey): the path is
+    //   - on a change of machine, speed or calibration (the topology key): the path is
     //     cleared behind the decimators, which run out what was playing;
     //   - on the first processed block after bypass or Thru: everything is cleared, the
     //     level followers start at this block's targets like the smoothers, and what runs
@@ -507,17 +518,25 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     //     at a large host block from being a clean start on every block.
     // The smoothers that would otherwise ramp from the old setting into the empty path are
     // set to their targets (further down), and the input comes back in over kCleanFadeSec.
-    const uint32_t topologyKey = currentTopologyKey();
+    // Machine, speed, calibration and Input are read here for this decision AND for the
+    // processing further down: the block runs on the values its clean start was decided on.
+    // Read a second time down there, a setter on another thread could land between the two
+    // reads, and the block would run on a deck this decision had not seen: one block of the
+    // new deck on the old state before the clean start. (These are still four loads, not a
+    // snapshot, and the settings print reads its own copies: a preset that lands in between
+    // is taken as a preset delivered in two parts.)
+    const BlockSettings now = readBlockSettings();
+    const float inputGainDb = now.inputGainDb;
+    const uint32_t topologyKey = now.topologyKey();
     const uint32_t settingsPrint = currentSettingsPrint();
-    const float inputGainNow = pInputGainDb.load (std::memory_order_relaxed);
     const bool topologyChanged = topologyKey != lastTopologyKey;
-    const bool inputDropped = lastInputGainDb - inputGainNow > kCleanChangeGainDb
+    const bool inputDropped = lastInputGainDb - inputGainDb > kCleanChangeGainDb
                               && sinceCleanStart >= cleanGainHoldSamples;
     const bool laterPart = cleanSettleLeft > 0 && cleanSettleRestartsLeft > 0
                            && settingsPrint != lastSettingsPrint;
     lastTopologyKey = topologyKey;
     lastSettingsPrint = settingsPrint;
-    lastInputGainDb = inputGainNow;
+    lastInputGainDb = inputGainDb;
     bool cleanStart = false;
     bool followersAtTargets = false;
     if (! useRawInputPeak)
@@ -663,14 +682,12 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     }
 
     // --- block-constant parameter reads --------------------------------------
-    const auto machine = static_cast<TapeCore::TapeMachine> (clampI (pMachine.load (std::memory_order_relaxed), 0, 1));
-    int speedIdx = clampI (pSpeed.load (std::memory_order_relaxed), 0, 3);
-    // 3.75 IPS is an American-only speed; the Swiss model has no 3.75. Coerce it
-    // to 15 IPS on the Swiss so preset/automation recall of Swiss+3.75 stays valid
-    // (the UI hard-hides 3.75 from the Swiss's dropdown).
-    if (machine == TapeCore::Swiss && speedIdx == TapeCore::Speed_3_75_IPS)
-        speedIdx = TapeCore::Speed_15_IPS;
-    const auto speed   = static_cast<TapeCore::TapeSpeed> (speedIdx);
+    // Machine, speed and calibration as read for the clean-start decision above.
+    const auto machine = static_cast<TapeCore::TapeMachine> (now.machine);
+    // 3.75 IPS is an American-only speed; the Swiss model has no 3.75. It runs at
+    // 15 IPS on the Swiss (readBlockSettings) so preset/automation recall of Swiss+3.75
+    // stays valid (the UI hard-hides 3.75 from the Swiss's dropdown).
+    const auto speed   = static_cast<TapeCore::TapeSpeed> (now.speed);
     const auto type    = static_cast<TapeCore::TapeType>    (clampI (pType.load (std::memory_order_relaxed), 0, 3));
     // AES removed (neither reference deck has it); a stale AES(2) from an old preset -> NAB.
     int eqIdx = pEqStandard.load (std::memory_order_relaxed);
@@ -683,8 +700,6 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     const bool crosstalkOn   = pCrosstalk.load (std::memory_order_relaxed);
     const bool wfEnabled     = pWowFlutterOn.load (std::memory_order_relaxed);
     const bool transformerOn = pTransformer.load (std::memory_order_relaxed);
-
-    const float inputGainDb = pInputGainDb.load (std::memory_order_relaxed);
 
     float targetOutputGainDb;
     if (gainLinked)
@@ -743,7 +758,7 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     // noiseEnabled param is dead in the JUCE source, so we mirror that.
     const bool noiseEnabled = pNoiseAmount.load (std::memory_order_relaxed) > 0.05f;
 
-    const float calibrationDb = calibrationDbFromIndex (pCalibration.load (std::memory_order_relaxed));
+    const float calibrationDb = calibrationDbFromIndex (now.calibration);
     // Head Width (American only; the DSP ignores it on the Swiss model). 1 = 1/2" reference.
     const int headWidth = clampI (pHeadWidth.load (std::memory_order_relaxed), 0, 2);
 
