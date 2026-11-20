@@ -23,6 +23,15 @@ namespace MultiComp
  * because it measures the real output including tubes, transformers and the
  * dry/wet blend.
  *
+ * From a reset the window starts short: the first 50 ms of signal (the
+ * compressor catching hold, its output still at the input's level) are not
+ * measured, and the window is then the time measured since, halved, until it
+ * reaches its full length. A fixed window kept that onset in the estimate for
+ * ten seconds and more under heavy reduction; this forgets it as (t0 / t)
+ * squared. Only blocks above the silence floor count, so silence after a reset
+ * leaves the start waiting for the signal. Once the window is full the update
+ * is the plain one-pole.
+ *
  * Not real-time hostile: no allocation, no locks, a handful of flops per block.
  */
 class AutoGainMatcher
@@ -35,13 +44,15 @@ public:
         reset();
     }
 
-    /** Drops the estimate. The next block with signal primes it directly. */
+    /** Drops the estimate. Signal after the onset skip primes it again. */
     void reset()
     {
         meanSquareIn = 0.0;
         meanSquareOut = 0.0;
         primed = false;
         currentGain = 1.0f;
+        skippedSeconds = 0.0;
+        measuredSeconds = 0.0;
     }
 
     /** Estimator window in seconds. Longer = steadier, slower to settle. */
@@ -69,6 +80,14 @@ public:
         if (inRms < kSilenceFloor || outRms < kSilenceFloor)
             return currentGain;
 
+        const double blockSeconds = static_cast<double> (numSamples) / sampleRate;
+        if (skippedSeconds < kOnsetSkipSeconds)
+        {
+            skippedSeconds += blockSeconds;
+            return currentGain;
+        }
+        measuredSeconds = juce::jmin (measuredSeconds + blockSeconds, kWindowGrowth * windowSeconds);
+
         const double msIn = static_cast<double> (inRms) * inRms;
         const double msOut = static_cast<double> (outRms) * outRms;
 
@@ -83,8 +102,8 @@ public:
         }
         else
         {
-            const double blockSeconds = static_cast<double> (numSamples) / sampleRate;
-            const double alpha = 1.0 - std::exp (-blockSeconds / windowSeconds);
+            const double window = juce::jmin (measuredSeconds / kWindowGrowth, windowSeconds);
+            const double alpha = 1.0 - std::exp (-blockSeconds / window);
             meanSquareIn += alpha * (msIn - meanSquareIn);
             meanSquareOut += alpha * (msOut - meanSquareOut);
         }
@@ -106,6 +125,9 @@ public:
     bool isPrimed() const noexcept { return primed; }
 
 private:
+    static constexpr double kWindowGrowth = 2.0;
+    static constexpr double kOnsetSkipSeconds = 0.05;
+
     double sampleRate = 44100.0;
     double windowSeconds = 2.0;
     float maxCorrectionDb = 24.0f;
@@ -114,6 +136,8 @@ private:
     double meanSquareOut = 0.0;
     bool primed = false;
     float currentGain = 1.0f;
+    double skippedSeconds = 0.0;
+    double measuredSeconds = 0.0;
 };
 
 } // namespace MultiComp

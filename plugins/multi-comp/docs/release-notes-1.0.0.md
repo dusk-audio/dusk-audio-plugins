@@ -35,8 +35,10 @@ next to the original Multi-Comp without replacing it. Thank you to everyone who 
   about 1.4 ms, entering or leaving Multiband replayed or skipped a little audio, and Oversampling changes clicked.
   With SC Listen on, the key fades as well wherever the switch changes the sidechain filtering you hear, and Auto
   Makeup does not measure the fade.
-- **Auto Makeup gives back up to 24 dB.** It stopped at 12 dB, so heavy compression came out quieter than it went
-  in by everything past that. Its two-second level match is unchanged.
+- **Auto Makeup gives back up to 24 dB, and gets there at once.** It stopped at 12 dB, so heavy compression came out
+  quieter than it went in by everything past that. It also took ten seconds and more under heavy compression to
+  reach its level whenever it started from rest (a session opening, a bounce, a host reset); it now gets there
+  within about a second, then matches over two seconds as before.
 - **Lookahead moves with the switch.** When a switch changes the latency (a Lookahead set, and Digital or
   Multiband against another mode), the dry, bypassed and sidechain-listen signals fade with it, since their delay
   changes too, and the plugin reports the new latency only once the new delay is in place. A preset or INIT that
