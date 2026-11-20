@@ -2252,18 +2252,16 @@ private:
 };
 
 //==============================================================================
-// TapeMachineDSP — framework-free equivalent of the JUCE PluginProcessor audio path.
+// TapeMachineSettings — everything a host or a preset sets on the tape machine: the
+// parameter atomics and their setters, apart from the DSP that runs on them, so that a full
+// set of settings can be held, and handed over, without an instance to process it.
+// A setting added here goes into copySettingsFrom() and into SettingsCopyTest as well: one
+// forgotten in the copy alone turns that test red, one forgotten in both is caught by nothing.
+// No virtuals: the DSP derives from it and is never deleted through this type.
 //==============================================================================
-class TapeMachineDSP
+class TapeMachineSettings
 {
 public:
-    static constexpr int kMaxChannels = 2;
-
-    void prepare (double sampleRate, int maxBlockSize);   // may allocate; setup thread only
-    void reset();
-    void processBlock (const float* const* inputs, float* const* outputs, int nCh, int nSamples) noexcept;
-    int  latencySamples() const noexcept;
-
     void setTapeMachine (int idx)  noexcept { pMachine.store (clampI (idx, 0, 1), std::memory_order_relaxed); }
     void setTapeSpeed   (int idx)  noexcept { pSpeed.store (clampI (idx, 0, 3), std::memory_order_relaxed); }
     void setTapeType    (int idx)  noexcept { pType.store (clampI (idx, 0, 3), std::memory_order_relaxed); }
@@ -2305,6 +2303,43 @@ public:
     void setProgLfTrim  (float db) noexcept { pProgLfTrim.store  (db, std::memory_order_relaxed); } // program-keyed deep-sub bloom (EAR-GREEN)
     void setBypass      (bool b)   noexcept { pBypass.store (b, std::memory_order_relaxed); }
 
+    // Takes every setting of `other`. One load and one store per setting, not a snapshot:
+    // a setter running on `other` at the same time lands before or after its own value,
+    // and one running on this object at the same time may be overwritten by the copy.
+    void copySettingsFrom (const TapeMachineSettings& other) noexcept;
+
+protected:
+    static int clampI (int v, int lo, int hi) noexcept { return v < lo ? lo : (v > hi ? hi : v); }
+
+    std::atomic<int>   pMachine{0}, pSpeed{1}, pType{0}, pSignalPath{0}, pEqStandard{0};
+    std::atomic<int>   pCalibration{0}, pOversampling{1}, pHeadWidth{1};   // OS default 2x (index 1); headWidth 1 = 1/2"
+    std::atomic<float> pInputGainDb{0.0f}, pSaturation{4.0f}, pBias{50.0f};
+    std::atomic<float> pHighpassHz{20.0f}, pLowpassHz{20000.0f};
+    std::atomic<float> pNoiseAmount{0.0f}, pWow{7.0f}, pFlutter{3.0f}, pOutputGainDb{0.0f};
+    std::atomic<float> pReproLf{0.0f}, pReproLmf{0.0f}, pReproHmf{0.0f}, pReproHf{0.0f}; // advanced repro-head 4-band EQ (0 = neutral)
+    std::atomic<float> pReproSubBell{0.0f}; // per-preset repro sub-bell 31 Hz Q2.5 (0 = neutral, exact bypass)
+    std::atomic<float> pLevelHmfTrim{0.0f}, pLevelHfTrim{0.0f}; // hidden per-preset above-anchor HF curve
+    std::atomic<float> pProgHmfTrim{0.0f}, pProgHfTrim{0.0f};   // hidden program-band above-anchor HF trims (Phase C)
+    std::atomic<float> pProgLfTrim{0.0f};                        // hidden program-band deep-sub bloom (EAR-GREEN)
+    std::atomic<float> pLpQ{0.707f};        // lowpass SVF resonance (hidden preset data; 0.707 = the historic fixed Q)
+    std::atomic<bool>  pAutoCal{true}, pNoiseEnabled{false}, pAutoComp{true}, pBypass{false};
+    // American front-panel toggles — default On = the state the American tuning captured.
+    std::atomic<bool>  pCrosstalk{true}, pWowFlutterOn{true}, pTransformer{true};
+};
+
+//==============================================================================
+// TapeMachineDSP — framework-free equivalent of the JUCE PluginProcessor audio path.
+//==============================================================================
+class TapeMachineDSP : public TapeMachineSettings
+{
+public:
+    static constexpr int kMaxChannels = 2;
+
+    void prepare (double sampleRate, int maxBlockSize);   // may allocate; setup thread only
+    void reset();
+    void processBlock (const float* const* inputs, float* const* outputs, int nCh, int nSamples) noexcept;
+    int  latencySamples() const noexcept;
+
     float getVuL() const noexcept { return vuL.load (std::memory_order_relaxed); }
     float getVuR() const noexcept { return vuR.load (std::memory_order_relaxed); }
     // Pre-processing input peak (for a UI In/Out meter switch). Metering only.
@@ -2322,7 +2357,6 @@ public:
     float getOutPeakR() const noexcept { return outPeakR.load (std::memory_order_relaxed); }
 
 private:
-    static int clampI (int v, int lo, int hi) noexcept { return v < lo ? lo : (v > hi ? hi : v); }
     // Oversampling is PINNED at 2x. The reference decks this emulates have no OS control, and the
     // 4x mode is un-tuned (~0.3-0.5 dB dark in the top octave — the IIR chain and all 20
     // factory presets were joint-fit at the 2x core). The Oversampling parameter is retained
@@ -2345,22 +2379,6 @@ private:
     bool clearSignalState (bool keepOutputTail) noexcept;
     void clearLevelFollowers() noexcept;
     void applyFactor (int newFactor);   // reconfigure internal DSP for an OS-factor change
-
-    // --- parameters (atomics) ---
-    std::atomic<int>   pMachine{0}, pSpeed{1}, pType{0}, pSignalPath{0}, pEqStandard{0};
-    std::atomic<int>   pCalibration{0}, pOversampling{1}, pHeadWidth{1};   // OS default 2x (index 1); headWidth 1 = 1/2"
-    std::atomic<float> pInputGainDb{0.0f}, pSaturation{4.0f}, pBias{50.0f};
-    std::atomic<float> pHighpassHz{20.0f}, pLowpassHz{20000.0f};
-    std::atomic<float> pNoiseAmount{0.0f}, pWow{7.0f}, pFlutter{3.0f}, pOutputGainDb{0.0f};
-    std::atomic<float> pReproLf{0.0f}, pReproLmf{0.0f}, pReproHmf{0.0f}, pReproHf{0.0f}; // advanced repro-head 4-band EQ (0 = neutral)
-    std::atomic<float> pReproSubBell{0.0f}; // per-preset repro sub-bell 31 Hz Q2.5 (0 = neutral, exact bypass)
-    std::atomic<float> pLevelHmfTrim{0.0f}, pLevelHfTrim{0.0f}; // hidden per-preset above-anchor HF curve
-    std::atomic<float> pProgHmfTrim{0.0f}, pProgHfTrim{0.0f};   // hidden program-band above-anchor HF trims (Phase C)
-    std::atomic<float> pProgLfTrim{0.0f};                        // hidden program-band deep-sub bloom (EAR-GREEN)
-    std::atomic<float> pLpQ{0.707f};        // lowpass SVF resonance (hidden preset data; 0.707 = the historic fixed Q)
-    std::atomic<bool>  pAutoCal{true}, pNoiseEnabled{false}, pAutoComp{true}, pBypass{false};
-    // American front-panel toggles — default On = the state the American tuning captured.
-    std::atomic<bool>  pCrosstalk{true}, pWowFlutterOn{true}, pTransformer{true};
 
     // --- config ---
     double baseSampleRate = 44100.0;
