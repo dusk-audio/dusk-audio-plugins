@@ -11,6 +11,10 @@ namespace duskaudio
 class MultiCompAutoGainMatcher
 {
 public:
+    // The most the correction moves the output either way. Heavy compression takes 20 dB and more off the level, all
+    // of which the makeup has to give back.
+    static constexpr float kMaxCorrectionDb = 24.0f;
+
     void prepare(double newSampleRate) noexcept
     {
         sampleRate = newSampleRate > 0.0 ? newSampleRate : 44100.0;
@@ -51,7 +55,7 @@ public:
             return currentGain;
 
         const float correctionDb = static_cast<float>(10.0 * std::log10(meanSquareIn / meanSquareOut));
-        const float limited = std::clamp(correctionDb, -12.0f, 12.0f);
+        const float limited = std::clamp(correctionDb, -kMaxCorrectionDb, kMaxCorrectionDb);
         currentGain = std::pow(10.0f, limited * 0.05f);
         return currentGain;
     }

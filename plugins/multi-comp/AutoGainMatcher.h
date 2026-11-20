@@ -108,7 +108,7 @@ public:
 private:
     double sampleRate = 44100.0;
     double windowSeconds = 2.0;
-    float maxCorrectionDb = 12.0f;
+    float maxCorrectionDb = 24.0f;
 
     double meanSquareIn = 0.0;
     double meanSquareOut = 0.0;
