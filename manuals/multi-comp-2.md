@@ -132,7 +132,7 @@ Setting a value works like this:
 - **SAVE:** stores every control except BYPASS as a user preset. Saving under an existing name replaces that preset. User presets are files in `DuskAudio/MultiComp2/presets` inside your configuration folder: `~/.config` on macOS, `$XDG_CONFIG_HOME` (or `~/.config` when it is unset) on Linux, and `%APPDATA%` on Windows.
 - **Title plate:** click MULTI-COMP MC-2 to see the project's supporters.
 - **Mode tabs:** default OPTO. Each mode keeps its own settings while you visit the others, apart from the shared controls listed under Tips and Traps. A mode change ducks the output for a few milliseconds so it does not click.
-- **AUTO MAKEUP:** off by default. It matches the output's loudness to the input's (RMS over about two seconds, within 24 dB either way) and sets the face's own output or makeup control aside while it runs. It switches itself off while EXTERNAL KEY is in use.
+- **AUTO MAKEUP:** off by default. It matches the output's loudness to the input's (RMS over about two seconds, within 24 dB either way, reached within about a second of starting) and sets the face's own output or makeup control aside while it runs. It switches itself off while EXTERNAL KEY is in use.
 - **BYPASS:** off by default. A 30 ms crossfade to the input, delayed by MC-2's latency, so bypassing never shifts the track's timing.
 - **SETTINGS:** opens the drawer described at the end of this section.
 - **Window:** opens at 1120 x 380, which is also the minimum. Drag the lower-right corner to make it larger; everything scales together.

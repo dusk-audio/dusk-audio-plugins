@@ -8403,6 +8403,10 @@ struct AutoGainSegment
     double seconds;
     float levelDb;
     bool autoMakeup;
+    // Runs on the instance as the segment starts, after its Auto Makeup is set.
+    void (*atStart)(MultiCompDSP&) = nullptr;
+    // The input is also the external key, with External Key on.
+    bool keyed = false;
 };
 
 struct AutoGainRender
@@ -8414,6 +8418,7 @@ struct AutoGainRender
 };
 
 using AutoGainConfigure = void (*)(MultiCompDSP&);
+using AutoGainSource = float (*)(int n, float levelDb);
 
 struct AutoGainFault
 {
@@ -8424,7 +8429,8 @@ struct AutoGainFault
 // The programme in segments, through one stereo instance at 1x in 256-sample blocks; Auto Makeup changes at a
 // segment's first sample. Each fault puts its value on `length` input samples from `at`.
 AutoGainRender renderAutoGainSegments(AutoGainConfigure configure, const std::vector<AutoGainSegment>& segments,
-                                      const std::vector<AutoGainFault>& faults = {})
+                                      const std::vector<AutoGainFault>& faults = {},
+                                      AutoGainSource source = autoGainProgramme)
 {
     static constexpr int kBlockSize = 256;
     AutoGainRender r;
@@ -8446,7 +8452,7 @@ AutoGainRender renderAutoGainSegments(AutoGainConfigure configure, const std::ve
         {
             const float from = segments[s > 0 ? s - 1 : 0].levelDb;
             const float fade = std::min(1.0f, static_cast<float>(n - r.starts[s]) / kFadeSamples);
-            r.input[static_cast<size_t>(n)] = autoGainProgramme(n, from + fade * (segments[s].levelDb - from));
+            r.input[static_cast<size_t>(n)] = source(n, from + fade * (segments[s].levelDb - from));
         }
     std::vector<float> fed = r.input, right(static_cast<size_t>(total));
     for (const AutoGainFault& fault : faults)
@@ -8462,12 +8468,15 @@ AutoGainRender renderAutoGainSegments(AutoGainConfigure configure, const std::ve
     for (size_t s = 0; s < segments.size(); ++s)
     {
         dsp.setParameter(MultiCompDSP::Parameter::AutoMakeup, segments[s].autoMakeup ? 1.0f : 0.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::ExternalSidechain, segments[s].keyed ? 1.0f : 0.0f);
+        if (segments[s].atStart != nullptr) segments[s].atStart(dsp);
         for (int position = r.starts[s]; position < r.starts[s + 1]; position += kBlockSize)
         {
             const int count = std::min(kBlockSize, r.starts[s + 1] - position);
             const float* inputs[] = {fed.data() + position, fed.data() + position};
             float* outputs[] = {r.output.data() + position, right.data() + position};
-            dsp.processBlock(inputs, outputs, 2, count);
+            if (segments[s].keyed) dsp.processBlockExternal(inputs, inputs, outputs, 2, count);
+            else dsp.processBlock(inputs, outputs, 2, count);
             const float gain = duskaudio::MultiCompDSPTestAccess::autoGainDb(dsp);
             std::fill_n(r.gainDb.begin() + position, count, gain);
             r.finite = r.finite && std::isfinite(gain);
@@ -8702,6 +8711,149 @@ void testAutoGainSwitchRampsAtTheLimit()
     require(switchOn <= rampStep * 1.01f && switchOff <= rampStep * 1.01f && switchAgain <= rampStep * 1.01f,
             "Auto Makeup switched at the correction limit glides, no sample further than the glide's first step");
     require(std::abs(output.back() - on) < 1.0e-3f * on, "Auto Makeup switched on again returns to the same level");
+}
+
+// The makeup the case settles to, measured without the matcher: its level loss with Auto Makeup off, which the
+// settled makeup gives back within 0.1 dB under the correction limit (testAutoGainMatchesHeavyReduction).
+float settledAutoGainDb(AutoGainConfigure configure, float programmeDb)
+{
+    const AutoGainRender off = renderAutoGainSegments(configure, {{2.0, programmeDb, false}});
+    return static_cast<float>(levelDb(off.input, 48000, 96000) - levelDb(off.output, 48000, 96000));
+}
+
+// The makeup against `settled` one and two seconds after `from`, and the most it rose above it from there on.
+struct AutoGainStart
+{
+    float atOneSecond, atTwoSeconds, overshoot;
+};
+
+AutoGainStart autoGainStart(const AutoGainRender& r, int from, float settled)
+{
+    AutoGainStart start{r.gainDb[static_cast<size_t>(from + 48000)] - settled,
+                        r.gainDb[static_cast<size_t>(from + 96000)] - settled, -100.0f};
+    for (size_t n = static_cast<size_t>(from); n < r.gainDb.size(); ++n)
+        start.overshoot = std::max(start.overshoot, r.gainDb[n] - settled);
+    return start;
+}
+
+bool autoGainStartedFast(const AutoGainStart& start)
+{
+    return std::abs(start.atOneSecond) <= 1.0f && std::abs(start.atTwoSeconds) <= 0.5f && start.overshoot <= 0.5f;
+}
+
+// From a reset the makeup reaches its level within a second, and silence before the signal changes nothing: the
+// matcher skips the compressor's onset and its window grows with the signal it has measured. A fixed two-second
+// window took ten seconds and more under heavy reduction.
+void testAutoGainStartsFast()
+{
+    static constexpr float kLevelDb = -10.0f;
+    for (const AutoGainModeCase& c : kHeavyAutoGainCases)
+    {
+        const float settled = settledAutoGainDb(c.configure, kLevelDb);
+        const AutoGainRender cold = renderAutoGainSegments(c.configure, {{3.0, kLevelDb, true}});
+        const AutoGainStart fromPrepare = autoGainStart(cold, 0, settled);
+        const AutoGainRender silent = renderAutoGainSegments(c.configure,
+                                                             {{2.0, -300.0f, true}, {3.0, kLevelDb, true}});
+        const AutoGainStart afterSilence = autoGainStart(silent, silent.starts[1], settled);
+        std::printf("auto gain start: %-10s settled %.2f dB; from prepare %+.2f at 1 s, %+.2f at 2 s, peak over %+.2f; "
+                    "after 2 s of silence %+.2f, %+.2f, %+.2f\n", c.name, static_cast<double>(settled),
+                    static_cast<double>(fromPrepare.atOneSecond), static_cast<double>(fromPrepare.atTwoSeconds),
+                    static_cast<double>(fromPrepare.overshoot), static_cast<double>(afterSilence.atOneSecond),
+                    static_cast<double>(afterSilence.atTwoSeconds), static_cast<double>(afterSilence.overshoot));
+        require(cold.finite && silent.finite, "auto gain start renders stay finite");
+        require(settled > 15.0f, "auto gain start case is made up by more than 15 dB");
+        require(autoGainStartedFast(fromPrepare),
+                "from prepare the makeup is within 1 dB at 1 s and 0.5 dB at 2 s, never 0.5 dB over");
+        require(autoGainStartedFast(afterSilence),
+                "silence after prepare leaves the fast start waiting for the signal");
+    }
+}
+
+// Every path that resets the matcher starts it the same way, after the 50 ms hold the switches keep. Bypass does not
+// reset it: the chain runs on, so the makeup comes back where it was.
+void testAutoGainStartsFastAfterEveryReset()
+{
+    using Mode = duskaudio::MultiCompMode;
+    using Parameter = MultiCompDSP::Parameter;
+    static constexpr float kLevelDb = -10.0f;
+    struct Path
+    {
+        const char* name;
+        AutoGainSegment before, after;
+    };
+    const auto toUnityDigital = [](MultiCompDSP& d) {
+        d.setMode(static_cast<int>(Mode::Digital));
+        d.setParameter(Parameter::DigitalThreshold, 0.0f);
+        d.setParameter(Parameter::DigitalRatio, 1.0f);
+    };
+    const Path paths[] = {
+        {"reset()", {1.5, kLevelDb, true}, {3.0, kLevelDb, true, [](MultiCompDSP& d) { d.reset(); }}},
+        {"Auto Makeup on", {1.5, kLevelDb, false}, {3.0, kLevelDb, true}},
+        {"listen off",
+         {1.5, kLevelDb, true, [](MultiCompDSP& d) { d.setParameter(Parameter::GlobalSidechainListen, 1.0f); }},
+         {3.0, kLevelDb, true, [](MultiCompDSP& d) { d.setParameter(Parameter::GlobalSidechainListen, 0.0f); }}},
+        {"external key off", {1.5, kLevelDb, true, nullptr, true}, {3.0, kLevelDb, true}},
+    };
+    for (const AutoGainModeCase& c : {kHeavyAutoGainCases[2], kHeavyAutoGainCases[6]})
+    {
+        const float settled = settledAutoGainDb(c.configure, kLevelDb);
+        const auto check = [&](const char* name, const AutoGainRender& r) {
+            const AutoGainStart start = autoGainStart(r, r.starts[1], settled);
+            std::printf("auto gain start after %-17s %-10s %+.2f at 1 s, %+.2f at 2 s, peak over %+.2f\n", name, c.name,
+                        static_cast<double>(start.atOneSecond), static_cast<double>(start.atTwoSeconds),
+                        static_cast<double>(start.overshoot));
+            require(r.finite && autoGainStartedFast(start),
+                    "after every matcher reset the makeup is within 1 dB at 1 s and 0.5 dB at 2 s, never 0.5 dB over");
+        };
+        for (const Path& path : paths) check(path.name, renderAutoGainSegments(c.configure, {path.before, path.after}));
+        // Into the case's mode from Digital at unity: the entered mode starts from rest.
+        const AutoGainRender modeSwitch = renderAutoGainSegments(c.configure,
+            {{1.5, kLevelDb, true, toUnityDigital}, {3.0, kLevelDb, true, c.configure}});
+        check("a mode switch", modeSwitch);
+
+        const AutoGainRender bypass = renderAutoGainSegments(c.configure,
+            {{6.0, kLevelDb, true}, {1.0, kLevelDb, true, [](MultiCompDSP& d) { d.setBypass(true); }},
+             {2.0, kLevelDb, true, [](MultiCompDSP& d) { d.setBypass(false); }}});
+        const float beforeBypass = bypass.gainDb[static_cast<size_t>(bypass.starts[1] - 1)];
+        float moved = 0.0f;
+        for (size_t n = static_cast<size_t>(bypass.starts[1]); n < bypass.gainDb.size(); ++n)
+            moved = std::max(moved, std::abs(bypass.gainDb[n] - beforeBypass));
+        std::printf("auto gain through bypass and back: %-10s moves %.3f dB\n", c.name, static_cast<double>(moved));
+        require(moved < 0.1f, "bypass keeps the auto gain where it was");
+    }
+}
+
+// What the short window after a start costs: on the JUCE-era pumping gate's programme (noise, loud and 18 dB down
+// for half a second each), the makeup's peak-to-peak movement while the window grows, against its movement once
+// it is full. Only the full window is held to that gate's 3 dB.
+float pumpingProgramme(int n, float)
+{
+    auto h = static_cast<std::uint32_t>(n) * 2654435761u;
+    h ^= h >> 16;
+    h *= 0x45d9f3bu;
+    h ^= h >> 16;
+    const float unit = static_cast<float>(h >> 8) / 8388608.0f - 1.0f;
+    return ((n / 24000) % 2 == 0 ? 0.35f : 0.045f) * unit;
+}
+
+void testAutoGainPumpingAfterAStart()
+{
+    for (const AutoGainModeCase& c : kHeavyAutoGainCases)
+    {
+        const AutoGainRender r = renderAutoGainSegments(c.configure, {{10.0, 0.0f, true}}, {}, pumpingProgramme);
+        const auto swing = [&r](double from, double to) {
+            const auto a = static_cast<size_t>(from * 48000.0), z = static_cast<size_t>(to * 48000.0);
+            const auto range = std::minmax_element(r.gainDb.begin() + static_cast<std::ptrdiff_t>(a),
+                                                   r.gainDb.begin() + static_cast<std::ptrdiff_t>(z));
+            return *range.second - *range.first;
+        };
+        const float early = swing(0.5, 2.0), growing = swing(2.0, 4.0), full = swing(5.0, 10.0);
+        std::printf("auto gain pumping after a start: %-10s makeup moves %.2f dB over 0.5-2 s, %.2f over 2-4 s, "
+                    "%.2f once the window is full (5-10 s)\n", c.name, static_cast<double>(early),
+                    static_cast<double>(growing), static_cast<double>(full));
+        require(r.finite && full <= 3.0f,
+                "once its window is full the makeup moves no more than 3 dB on the pumping programme");
+    }
 }
 
 void testBypassCompletesDuringSidechainListen()
@@ -15365,6 +15517,9 @@ int main(int argc, char** argv)
         testAutoGainMatchesHeavyReduction();
         testAutoGainAfterHeavyReduction();
         testAutoGainSwitchRampsAtTheLimit();
+        testAutoGainStartsFast();
+        testAutoGainStartsFastAfterEveryReset();
+        testAutoGainPumpingAfterAStart();
         std::puts("Multi-Comp auto gain heavy reduction tests: PASS");
         return 0;
     }
@@ -15477,6 +15632,9 @@ int main(int argc, char** argv)
     testAutoGainMatchesHeavyReduction();
     testAutoGainAfterHeavyReduction();
     testAutoGainSwitchRampsAtTheLimit();
+    testAutoGainStartsFast();
+    testAutoGainStartsFastAfterEveryReset();
+    testAutoGainPumpingAfterAStart();
     testHardwareRateRefreshAfterOversamplingChange();
     testOptoExposureTimebaseSurvivesRateChange();
     testOptoFastChargeIsOversamplingInvariant();
