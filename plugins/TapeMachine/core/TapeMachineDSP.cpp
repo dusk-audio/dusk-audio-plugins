@@ -111,6 +111,28 @@ void TapeMachineDSP::prepare (double sampleRate, int maxBlockSize)
     maxBlock       = maxBlockSize;
     maxOsRate      = baseSampleRate * 4.0;
 
+    // Scratch buffers (allocated here; never on the audio thread).
+    inGainArr.assign  (static_cast<size_t> (maxBlock), 0.0f);
+    const size_t osCap = static_cast<size_t> (maxBlock) * 4u;
+    satArr.assign       (osCap, 0.0f);
+    biasArr.assign      (osCap, 0.0f);
+    wowFlutArr.assign   (osCap, 0.0f);
+    noiseArr.assign     (osCap, 0.0f);
+    sharedModArr.assign (osCap, 0.0f);
+    outGainArr.assign   (osCap, 0.0f);
+
+    restart();
+}
+
+// The state prepare() leaves, for the settings as they stand now, without allocating: the
+// path empty, every smoother at its target, the generators at their seeds. A render after
+// restart() is the render of an instance prepared afresh with these settings, bit for bit.
+// It is what a path that has been idle is given before it is switched to. Rate and block
+// size are those of the last prepare(), and there must have been one: the delay lines were
+// sized there and are only cleared here (WowFlutterProcessor::prepare keeps its buffer when
+// the size is unchanged; on an instance never prepared it would allocate it).
+void TapeMachineDSP::restart() noexcept
+{
     currentFactor = factorFromChoice (pOversampling.load (std::memory_order_relaxed));
     currentOsRate = baseSampleRate * static_cast<double> (currentFactor);
     lastFactor    = currentFactor;
@@ -187,16 +209,6 @@ void TapeMachineDSP::prepare (double sampleRate, int maxBlockSize)
     smWow.snap     (pWow.load (std::memory_order_relaxed));
     smFlutter.snap (pFlutter.load (std::memory_order_relaxed));
     smNoise.snap   (pNoiseAmount.load (std::memory_order_relaxed) * 0.01f);
-
-    // Scratch buffers (allocated here; never on the audio thread).
-    inGainArr.assign  (static_cast<size_t> (maxBlock), 0.0f);
-    const size_t osCap = static_cast<size_t> (maxBlock) * 4u;
-    satArr.assign       (osCap, 0.0f);
-    biasArr.assign      (osCap, 0.0f);
-    wowFlutArr.assign   (osCap, 0.0f);
-    noiseArr.assign     (osCap, 0.0f);
-    sharedModArr.assign (osCap, 0.0f);
-    outGainArr.assign   (osCap, 0.0f);
 
     // VU: standard ANSI C16.5 ballistics — a mean-abs (rectified) one-pole integrator.
     // tau = 300ms / ln(100) = 65.14 ms gives 99% of final deflection in 300 ms on tone

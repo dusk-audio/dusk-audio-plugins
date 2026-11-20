@@ -2335,7 +2335,13 @@ class TapeMachineDSP : public TapeMachineSettings
 public:
     static constexpr int kMaxChannels = 2;
 
-    void prepare (double sampleRate, int maxBlockSize);   // may allocate; setup thread only
+    // Three ways to start over. prepare() sizes everything for a rate and a block size (it
+    // may allocate; setup thread only) and ends in restart(). restart() is the start state
+    // for the settings as they stand: the path empty, the smoothers at their targets, the
+    // generators at their seeds; after a prepare() it does not allocate. reset() empties the
+    // path and the meters and leaves the smoothers and the generators where they are.
+    void prepare (double sampleRate, int maxBlockSize);
+    void restart() noexcept;
     void reset();
     void processBlock (const float* const* inputs, float* const* outputs, int nCh, int nSamples) noexcept;
     int  latencySamples() const noexcept;
