@@ -204,9 +204,10 @@ link off and raise Output if you want to make it up.
 
 **There is a tiny gap when I change presets or switch bypass off.** Changing the
 machine, the speed or the calibration, dropping Input by more than 6 dB at once,
-and coming back from bypass or Thru start the tape path from a clean state. That
-takes a couple of milliseconds, and it replaces the burst the old settings would
-otherwise leave behind.
+and coming back from bypass or Thru start the tape path from a clean state: the
+signal comes back in over a couple of milliseconds. That replaces the burst the
+old settings would otherwise leave behind. A second large drop of Input within
+a tenth of a second does not start over again; it follows the knob smoothly.
 
 **Bias does not respond.** Auto Bias is on. Disable it before adjusting Bias.
 

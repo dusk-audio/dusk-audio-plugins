@@ -218,7 +218,7 @@ void TapeMachineDSP::prepare (double sampleRate, int maxBlockSize)
     {
         const float tau = std::max (1.0f, kCleanTailSec * static_cast<float> (baseSampleRate));
         exitTailDecay = std::exp (-1.0f / tau);
-        exitTailInvTau = 1.0f / tau;
+        exitTailSlope = RunOut::slopeFor (exitTailDecay);
     }
     sinceCleanStart = cleanGainHoldSamples;
 
@@ -284,7 +284,7 @@ bool TapeMachineDSP::clearSignalState (bool keepOutputTail) noexcept
     {
         const float tau = std::max (1.0f, kCleanTailSec * static_cast<float> (currentOsRate));
         cleanTailDecay = std::exp (-1.0f / tau);
-        cleanTailInvTau = 1.0f / tau;
+        cleanTailSlope = RunOut::slopeFor (cleanTailDecay);
     }
     coreL.reset(); coreR.reset();
     // sharedWowFlutter has no dedicated reset(); re-zero its consumed state.
@@ -390,9 +390,20 @@ int TapeMachineDSP::latencySamples() const noexcept
 // to 1 dB on a bass note alone) are not here: they switch as they always did, without a gap.
 uint32_t TapeMachineDSP::currentTopologyKey() const noexcept
 {
-    return static_cast<uint32_t> (clampI (pMachine.load (std::memory_order_relaxed), 0, 1))
-        | (static_cast<uint32_t> (clampI (pSpeed.load (std::memory_order_relaxed), 0, 3)) << 1u)
+    const int machine = clampI (pMachine.load (std::memory_order_relaxed), 0, 1);
+    return static_cast<uint32_t> (machine)
+        | (static_cast<uint32_t> (effectiveSpeedIndex (machine, pSpeed.load (std::memory_order_relaxed))) << 1u)
         | (static_cast<uint32_t> (clampI (pCalibration.load (std::memory_order_relaxed), 0, 3)) << 3u);
+}
+
+// The Swiss deck has no 3.75 IPS and runs it at 15 (see processBlock). The key and the print
+// take the speed the core runs at, so that choosing between the two on that deck, which
+// changes nothing in the path, is not a change.
+int TapeMachineDSP::effectiveSpeedIndex (int machine, int speed) noexcept
+{
+    speed = clampI (speed, 0, 3);
+    return (machine == TapeCore::Swiss && speed == TapeCore::Speed_3_75_IPS) ? static_cast<int> (TapeCore::Speed_15_IPS)
+                                                                             : speed;
 }
 
 // Everything a preset sets in the audio path, as one number: has anything moved since the
@@ -409,8 +420,10 @@ uint32_t TapeMachineDSP::currentSettingsPrint() const noexcept
         std::memcpy (&bits, &v, sizeof (bits));
         mix (bits);
     };
-    for (const std::atomic<int>* a : { &pMachine, &pSpeed, &pType, &pSignalPath, &pEqStandard, &pCalibration, &pHeadWidth })
+    for (const std::atomic<int>* a : { &pMachine, &pType, &pSignalPath, &pEqStandard, &pCalibration, &pHeadWidth })
         mix (static_cast<uint32_t> (a->load (std::memory_order_relaxed)));
+    mix (static_cast<uint32_t> (effectiveSpeedIndex (clampI (pMachine.load (std::memory_order_relaxed), 0, 1),
+                                                     pSpeed.load (std::memory_order_relaxed))));
     for (const std::atomic<float>* a : { &pInputGainDb, &pBias, &pHighpassHz, &pLowpassHz, &pLpQ, &pNoiseAmount, &pWow,
                                          &pFlutter, &pReproLf, &pReproLmf, &pReproHmf, &pReproHf, &pReproSubBell,
                                          &pLevelHmfTrim, &pLevelHfTrim, &pProgHmfTrim, &pProgHfTrim, &pProgLfTrim })
@@ -551,6 +564,8 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     if (hardBypass)
     {
         wasPassthrough = true;
+        cleanSettleLeft = 0;            // whatever was settling is over: the way back starts clean
+        cleanSettleRestartsLeft = 0;
         for (int ch = 0; ch < nCh; ++ch)
             if (inputs[ch] != outputs[ch])
                 for (int n = 0; n < nSamples; ++n) outputs[ch][n] = inputs[ch][n];
@@ -590,6 +605,8 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     if (signalPath == TapeCore::Thru)
     {
         wasPassthrough = true;
+        cleanSettleLeft = 0;            // whatever was settling is over: the way back starts clean
+        cleanSettleRestartsLeft = 0;
         for (int ch = 0; ch < nCh; ++ch)
             if (inputs[ch] != outputs[ch])
                 for (int n = 0; n < nSamples; ++n) outputs[ch][n] = inputs[ch][n];
@@ -713,6 +730,14 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     smWow.setTarget     (wowPct);
     smFlutter.setTarget (flutPct);
     smNoise.setTarget   (pNoiseAmount.load (std::memory_order_relaxed) * 0.01f);
+    if (cleanStart)
+    {
+        // The wow/flutter line was cleared with the path: a depth still ramping down from
+        // the old setting would modulate the new programme through an empty delay.
+        smWow.snap     (wowPct);
+        smFlutter.snap (flutPct);
+        smNoise.snap   (pNoiseAmount.load (std::memory_order_relaxed) * 0.01f);
+    }
 
     // JUCE derives the noise gate from the amount knob (>0.05 %); the boolean
     // noiseEnabled param is dead in the JUCE source, so we mirror that.
@@ -1039,7 +1064,7 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     // only while there is one, so the path without it is the path as it always was, bit for bit.
     RunOut runL = cleanRunL, runR = cleanRunR;
     float lastL = lastOsOutL, lastR = lastOsOutR;
-    const float tailDecay = cleanTailDecay, tailInvTau = cleanTailInvTau;
+    const float tailDecay = cleanTailDecay, tailSlope = cleanTailSlope;
 
     // --- per-channel oversampled processing ----------------------------------
     // Functor chain (at the oversampled rate): HP SVF -> tape core -> LP SVF ->
@@ -1066,7 +1091,7 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
                 if (! bypassLowpass) s = lpL.process (s);
                 s *= outGainArr[si];
                 if (runL.running())
-                    s += runL.next (tailDecay, tailInvTau);
+                    s += runL.next (tailDecay, tailSlope);
                 lastL = s;
                 ++osIdx;
                 return s;
@@ -1092,7 +1117,7 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
                 if (! bypassLowpass) s = lpR.process (s);
                 s *= outGainArr[si];
                 if (runR.running())
-                    s += runR.next (tailDecay, tailInvTau);
+                    s += runR.next (tailDecay, tailSlope);
                 lastR = s;
                 ++osIdx;
                 return s;
@@ -1138,9 +1163,9 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     {
         for (int n = 0; n < nSamples; ++n)
         {
-            outputs[0][n] += exitRunL.next (exitTailDecay, exitTailInvTau);
+            outputs[0][n] += exitRunL.next (exitTailDecay, exitTailSlope);
             if (nCh >= 2)
-                outputs[1][n] += exitRunR.next (exitTailDecay, exitTailInvTau);
+                outputs[1][n] += exitRunR.next (exitTailDecay, exitTailSlope);
         }
         if (nCh < 2)
             exitRunR = RunOut{};

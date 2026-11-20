@@ -2334,6 +2334,7 @@ private:
     int activeLatencySamples() const noexcept;
     uint32_t currentTopologyKey() const noexcept;
     uint32_t currentSettingsPrint() const noexcept;
+    static int effectiveSpeedIndex (int machine, int speed) noexcept;
     bool clearSignalState (bool keepOutputTail) noexcept;
     void clearLevelFollowers() noexcept;
     void applyFactor (int newFactor);   // reconfigure internal DSP for an OS-factor change
@@ -2386,31 +2387,34 @@ private:
     uint32_t lastSettingsPrint = 0u;
     // What was playing runs out: a pulse that starts at the last value and comes back to
     // zero with no net area, v e^(-t/tau) (1 - t/tau). The cut is then neither a step (it
-    // starts where the signal was) nor a thump (it has no DC). A value that is not finite,
-    // or absurdly large, is not run out at all.
+    // starts where the signal was) nor a thump (it has no DC). In samples it is
+    // v a^n (1 - s n) with a = e^(-1/tau), and s = (1 - a) / a rather than 1/tau, which is
+    // the slope that makes the SUM of the samples zero, not only the integral. A value that
+    // is not finite, or absurdly large, is not run out at all.
     struct RunOut
     {
         float p = 0.0f, q = 0.0f;           // v a^n and v n a^n
+        static float slopeFor (float decay) noexcept { return decay > 0.0f ? (1.0f - decay) / decay : 0.0f; }
         void start (float value) noexcept
         {
             p = std::abs (value) < 64.0f ? value : 0.0f;    // false for NaN and inf
             q = 0.0f;
         }
         bool running() const noexcept { return p != 0.0f || q != 0.0f; }
-        float next (float decay, float invTau) noexcept
+        float next (float decay, float slope) noexcept
         {
-            const float y = p - q * invTau;
+            const float y = p - q * slope;
             q = decay * (q + p);
             p *= decay;
-            if (std::abs (p) < 1.0e-9f && std::abs (q) * invTau < 1.0e-9f)    // -180 dBFS: over
+            if (std::abs (p) < 1.0e-9f && std::abs (q) * slope < 1.0e-9f)     // -180 dBFS: over
                 p = q = 0.0f;
             return y;
         }
     };
     RunOut cleanRunL, cleanRunR;                                // at the decimators' input, after a change
     RunOut exitRunL, exitRunR;                                  // at the output, after a passthrough
-    float cleanTailDecay = 0.0f, cleanTailInvTau = 0.0f;        // oversampled rate
-    float exitTailDecay = 0.0f, exitTailInvTau = 0.0f;          // base rate
+    float cleanTailDecay = 0.0f, cleanTailSlope = 0.0f;         // oversampled rate
+    float exitTailDecay = 0.0f, exitTailSlope = 0.0f;           // base rate
     float lastOsOutL = 0.0f, lastOsOutR = 0.0f;                 // what the decimators were last fed
     float lastOutL = 0.0f, lastOutR = 0.0f;                     // the last sample that went out
     SmoothedValue smSat, smWow, smFlutter, smNoise, smBias;

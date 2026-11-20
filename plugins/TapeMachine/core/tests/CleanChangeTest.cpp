@@ -170,6 +170,13 @@ Render linkedIsPlain (const Script& sc)
 {
     const Render linked = render (sc, false), plain = render (sc, true);
     hold (sc.label(), "plain render peak, dBFS (it must not be silent)", plain.peak (0, 0.0, sc.seconds * 1000.0), -40.0, true);
+    // Finite first: two renders with the same NaN in the same place have the same bits, and
+    // the level readings would step over it.
+    size_t notFinite = 0;
+    for (size_t i = 0; i < linked.left.size(); ++i)
+        notFinite += ! (std::isfinite (linked.left[i]) && std::isfinite (linked.right[i])
+                        && std::isfinite (plain.left[i]) && std::isfinite (plain.right[i]));
+    hold (sc.label(), "non-finite samples in the linked and the plain render", static_cast<double> (notFinite), 0.0);
     size_t at = linked.left.size();
     for (size_t i = 0; i < linked.left.size() && at == linked.left.size(); ++i)
         if (std::memcmp (&linked.left[i], &plain.left[i], sizeof (float)) != 0
@@ -266,6 +273,9 @@ void otherCalibration (TapeMachineDSP& d)  { d.setCalibration (3); }
 void otherEqStandard (TapeMachineDSP& d)   { d.setEqStandard (1); }
 void inputPath (TapeMachineDSP& d)         { d.setSignalPath (2); }
 void otherHeadWidth (TapeMachineDSP& d)    { d.setHeadWidth (2); }
+// The Swiss deck has no 3.75 IPS and runs it at 15: from 15 to 3.75 nothing changes there.
+void swissAt15 (TapeMachineDSP& d)         { d.setTapeMachine (0); d.setTapeSpeed (1); }
+void sameSpeedOnSwiss (TapeMachineDSP& d)  { d.setTapeSpeed (3); }
 
 // --- checks -------------------------------------------------------------------------------
 // A preset-sized change at one second, from one setting and Input Gain to another.
@@ -459,6 +469,31 @@ void checkSettling()
         }
         hold (script (true).label(), "difference from the run without the nudge over the 20 ms after it, dB under the signal",
               10.0 * std::log10 (std::max (diff, 1e-30) / std::max (ref, 1e-30)), -20.0);
+    }
+    {   // A machine switch, then bypass 5 ms later for a second: what was settling does not
+        // outlive the passthrough. A knob nudged in the block after the way back is a knob.
+        const int block = 64;
+        const size_t at = boundary (1.0, rate, block), on = at + 4 * static_cast<size_t> (block);
+        const size_t off = boundary (2.0, rate, block), later = off + static_cast<size_t> (block);
+        const auto script = [=] (bool withNudge) {
+            return Script { "a knob nudged after a bypass that began inside a settling time", rate, block, 3.5,
+                            [] (TapeMachineDSP& d, bool isPlain) { d.setTapeMachine (0); setInput (d, isPlain, 3.0f); d.setAutoComp (! isPlain); },
+                            [=] (TapeMachineDSP& d, bool isPlain, size_t pos) {
+                                if (pos == at)  d.setTapeMachine (1);
+                                if (pos == on)  d.setBypass (true);
+                                if (pos == off) d.setBypass (false);
+                                if (withNudge && pos == later) setInput (d, isPlain, 2.0f);
+                            }, level };
+        };
+        const Render with = linkedIsPlain (script (true)), without = render (script (false), true);
+        double diff = 0.0, ref = 0.0;
+        for (size_t i = later; i < later + with.at (5.0); ++i)
+        {
+            diff += (with.left[i] - without.left[i]) * static_cast<double> (with.left[i] - without.left[i]);
+            ref += static_cast<double> (without.left[i]) * without.left[i];
+        }
+        hold (script (true).label(), "difference from the run without the nudge over the 5 ms after it, dB under the signal",
+              10.0 * std::log10 (std::max (diff, 1e-30) / std::max (ref, 1e-30)), -15.0);
     }
     {   // Two lone drops 300 ms apart: the hold is 100 ms, so each starts clean.
         const int block = 64;
@@ -673,8 +708,10 @@ void checkBackFromPassthrough (bool thru, bool drop, double rate, int block, int
     for (int ms = 10; ms < 300; ms += 5)
         worst = std::min (worst, p.rms (off, ms, ms + 5) - p.rms (off, 1000.0, 1250.0));
     hold (sc.label(), "level from 10 ms after the event under the settled level, dB", worst, -3.0, true);
-    hold (sc.label(), "largest sample jump in the 5 ms after the event over the largest before and after, dB",
-          p.jump (off, 0.0, 5.0) - std::max (p.jump (on, -250.0, 0.0), p.jump (off, 1000.0, 1250.0)), 3.0);
+    // Against the dry signal just before the exit and the settled one after it, not against
+    // the loud processed signal from before the passthrough.
+    hold (sc.label(), "largest sample jump in the 5 ms after the event over the largest just before and after, dB",
+          p.jump (off, 0.0, 5.0) - std::max (p.jump (off, -250.0, 0.0), p.jump (off, 1000.0, 1250.0)), 3.0);
 }
 
 // Knob gestures run on the smoothers and leave no dip: a 2 dB step, a 4 dB drop, and a
@@ -806,6 +843,7 @@ int main (int argc, char** argv)
     checkLeftAlone ("EQ standard alone", 48000.0, 64, hotBus, 6.0f, otherEqStandard, 6.0f);
     checkLeftAlone ("signal path Repro to Input alone", 48000.0, 64, hotBus, 6.0f, inputPath, 6.0f);
     checkLeftAlone ("head width alone", 48000.0, 64, american, 3.0f, otherHeadWidth, 3.0f);
+    checkLeftAlone ("Swiss, 15 to 3.75 IPS (the same speed there)", 48000.0, 64, swissAt15, 3.0f, sameSpeedOnSwiss, 3.0f);
     checkSplitPreset (true, 48000.0, 64);
     checkSplitPreset (false, 48000.0, 64);
     checkSplitWithEverythingLater();
