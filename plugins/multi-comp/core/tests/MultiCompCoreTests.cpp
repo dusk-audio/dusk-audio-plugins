@@ -8388,6 +8388,322 @@ void testAutoGainResetsOnModeChange()
     require(settledRatio > 0.9f, "mode change discards old auto-gain history and returns toward unity");
 }
 
+// The heavy-reduction auto gain gates share a steady programme: 110 Hz, 997 Hz and 4 kHz at equal level, `levelDb`
+// RMS, the same on both channels.
+float autoGainProgramme(int n, float levelDb)
+{
+    const double t = static_cast<double>(n) / 48000.0;
+    const double amplitude = std::pow(10.0, levelDb / 20.0) * std::sqrt(2.0 / 3.0);
+    return static_cast<float>(amplitude * (std::sin(2.0 * kPi * 110.0 * t) + std::sin(2.0 * kPi * 997.0 * t + 0.7)
+                                           + std::sin(2.0 * kPi * 4000.0 * t + 1.9)));
+}
+
+struct AutoGainSegment
+{
+    double seconds;
+    float levelDb;
+    bool autoMakeup;
+};
+
+struct AutoGainRender
+{
+    std::vector<float> input, output;   // channel 0; the input as generated, before any fault
+    std::vector<float> gainDb;          // the auto makeup gain after each block, over the block's samples
+    std::vector<int> starts;            // each segment's first sample, then the end
+    bool finite = true;
+};
+
+using AutoGainConfigure = void (*)(MultiCompDSP&);
+
+struct AutoGainFault
+{
+    int at, length;
+    float value;
+};
+
+// The programme in segments, through one stereo instance at 1x in 256-sample blocks; Auto Makeup changes at a
+// segment's first sample. Each fault puts its value on `length` input samples from `at`.
+AutoGainRender renderAutoGainSegments(AutoGainConfigure configure, const std::vector<AutoGainSegment>& segments,
+                                      const std::vector<AutoGainFault>& faults = {})
+{
+    static constexpr int kBlockSize = 256;
+    AutoGainRender r;
+    int total = 0;
+    for (const AutoGainSegment& segment : segments)
+    {
+        r.starts.push_back(total);
+        total += static_cast<int>(segment.seconds * 48000.0);
+    }
+    r.starts.push_back(total);
+    r.input.resize(static_cast<size_t>(total));
+    r.output.resize(static_cast<size_t>(total));
+    r.gainDb.resize(static_cast<size_t>(total));
+    // A level change fades over 10 ms, as music does: a sample-instant cut is a click of its own, which Multiband
+    // passes in the bands it is not compressing.
+    static constexpr int kFadeSamples = 480;
+    for (size_t s = 0; s < segments.size(); ++s)
+        for (int n = r.starts[s]; n < r.starts[s + 1]; ++n)
+        {
+            const float from = segments[s > 0 ? s - 1 : 0].levelDb;
+            const float fade = std::min(1.0f, static_cast<float>(n - r.starts[s]) / kFadeSamples);
+            r.input[static_cast<size_t>(n)] = autoGainProgramme(n, from + fade * (segments[s].levelDb - from));
+        }
+    std::vector<float> fed = r.input, right(static_cast<size_t>(total));
+    for (const AutoGainFault& fault : faults)
+        for (int n = std::max(0, fault.at); n < std::min(total, fault.at + fault.length); ++n)
+            fed[static_cast<size_t>(n)] = fault.value;
+
+    MultiCompDSP dsp;
+    dsp.setOversampling(kOversamplingOffSetting);
+    dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+    configure(dsp);
+    dsp.setParameter(MultiCompDSP::Parameter::AutoMakeup, segments.front().autoMakeup ? 1.0f : 0.0f);
+    dsp.prepare(48000.0, kBlockSize);
+    for (size_t s = 0; s < segments.size(); ++s)
+    {
+        dsp.setParameter(MultiCompDSP::Parameter::AutoMakeup, segments[s].autoMakeup ? 1.0f : 0.0f);
+        for (int position = r.starts[s]; position < r.starts[s + 1]; position += kBlockSize)
+        {
+            const int count = std::min(kBlockSize, r.starts[s + 1] - position);
+            const float* inputs[] = {fed.data() + position, fed.data() + position};
+            float* outputs[] = {r.output.data() + position, right.data() + position};
+            dsp.processBlock(inputs, outputs, 2, count);
+            const float gain = duskaudio::MultiCompDSPTestAccess::autoGainDb(dsp);
+            std::fill_n(r.gainDb.begin() + position, count, gain);
+            r.finite = r.finite && std::isfinite(gain);
+        }
+    }
+    for (size_t n = 0; n < r.output.size(); ++n)
+        r.finite = r.finite && std::isfinite(r.output[n]) && std::isfinite(right[n]);
+    return r;
+}
+
+double levelDb(const std::vector<float>& x, int from, int to)
+{
+    double sum = 0.0;
+    for (int n = from; n < to; ++n) sum += static_cast<double>(x[static_cast<size_t>(n)]) * x[static_cast<size_t>(n)];
+    return 10.0 * std::log10(std::max(sum / std::max(1, to - from), 1.0e-30));
+}
+
+// The loudest 50 ms RMS in [from, to), and the largest sample magnitude, in dB.
+double loudestShortLevelDb(const std::vector<float>& x, int from, int to)
+{
+    static constexpr int kWindow = 2400;
+    double loudest = -300.0;
+    for (int n = from; n + kWindow <= to; n += kWindow / 4) loudest = std::max(loudest, levelDb(x, n, n + kWindow));
+    return loudest;
+}
+
+double peakLevelDb(const std::vector<float>& x, int from, int to)
+{
+    float peak = 0.0f;
+    for (int n = from; n < to; ++n) peak = std::max(peak, std::abs(x[static_cast<size_t>(n)]));
+    return 20.0 * std::log10(std::max(static_cast<double>(peak), 1.0e-30));
+}
+
+struct AutoGainModeCase
+{
+    const char* name;
+    AutoGainConfigure configure;   // about 20 dB of loss on the programme at -10 dBFS RMS
+};
+
+const AutoGainModeCase kHeavyAutoGainCases[] = {
+    {"Opto", [](MultiCompDSP& d) {
+        d.setMode(static_cast<int>(duskaudio::MultiCompMode::Opto));
+        d.setParameter(MultiCompDSP::Parameter::OptoPeakReduction, 66.0f); }},
+    {"FET", [](MultiCompDSP& d) {
+        d.setMode(static_cast<int>(duskaudio::MultiCompMode::FET));
+        d.setParameter(MultiCompDSP::Parameter::FetRatio, 3.0f);
+        d.setParameter(MultiCompDSP::Parameter::FetThreshold, -14.0f); }},
+    {"VCA", [](MultiCompDSP& d) {
+        d.setMode(static_cast<int>(duskaudio::MultiCompMode::VCA));
+        d.setParameter(MultiCompDSP::Parameter::VcaRatio, 80.0f);
+        d.setParameter(MultiCompDSP::Parameter::VcaThreshold, -29.6f); }},
+    {"Bus", [](MultiCompDSP& d) {
+        d.setMode(static_cast<int>(duskaudio::MultiCompMode::Bus));
+        d.setParameter(MultiCompDSP::Parameter::BusRatio, 2.0f);
+        d.setParameter(MultiCompDSP::Parameter::BusThreshold, -1.7f); }},
+    {"Studio VCA", [](MultiCompDSP& d) {
+        d.setMode(static_cast<int>(duskaudio::MultiCompMode::StudioVCA));
+        d.setParameter(MultiCompDSP::Parameter::StudioVcaRatio, 20.0f);
+        d.setParameter(MultiCompDSP::Parameter::StudioVcaThreshold, -22.7f); }},
+    {"Digital", [](MultiCompDSP& d) {
+        d.setMode(static_cast<int>(duskaudio::MultiCompMode::Digital));
+        d.setParameter(MultiCompDSP::Parameter::DigitalRatio, 20.0f);
+        d.setParameter(MultiCompDSP::Parameter::DigitalThreshold, -32.2f); }},
+    {"Multiband", [](MultiCompDSP& d) {
+        d.setMode(static_cast<int>(duskaudio::MultiCompMode::Multiband));
+        for (int band = 0; band < 4; ++band)
+        {
+            d.setMultibandParameter(band, MultiCompDSP::MultibandParameter::Ratio, 20.0f);
+            d.setMultibandParameter(band, MultiCompDSP::MultibandParameter::Threshold, -39.5f);
+        } }},
+};
+
+// Heavy compression takes 20 dB and more off the level, and Auto Makeup has to give all of it back. The compressor
+// settles with Auto Makeup off, then Auto Makeup comes on, so the matcher primes on the settled level and the
+// measurement is its match, not its convergence from cold.
+void testAutoGainMatchesHeavyReduction()
+{
+    static constexpr float kLevelDb = -10.0f;
+    static constexpr double kMatchToleranceDb = 0.5;
+    const int second = 48000;
+    for (const AutoGainModeCase& c : kHeavyAutoGainCases)
+    {
+        const AutoGainRender r = renderAutoGainSegments(c.configure, {{1.0, kLevelDb, false}, {3.0, kLevelDb, true}});
+        const double in = levelDb(r.input, 0, r.starts.back());
+        const double off = levelDb(r.output, second / 2, second);
+        const double on = levelDb(r.output, 3 * second, 4 * second);
+        std::printf("auto gain heavy reduction: %-10s in %.2f dB, Auto Makeup off %.2f dB (loss %.2f), on %.2f dB "
+                    "(error %+.3f)\n", c.name, in, off, in - off, on, on - in);
+        require(r.finite, "heavy-reduction auto gain render stays finite");
+        require(in - off >= 18.0 && in - off <= 22.0, "heavy-reduction auto gain case loses 18 to 22 dB");
+        require(std::abs(on - in) <= kMatchToleranceDb, "Auto Makeup gives back heavy gain reduction");
+    }
+
+    // Past the limit the makeup stops at it: about 30 dB of loss, 24 dB given back.
+    const AutoGainRender r = renderAutoGainSegments([](MultiCompDSP& d) {
+        d.setMode(static_cast<int>(duskaudio::MultiCompMode::Digital));
+        d.setParameter(MultiCompDSP::Parameter::DigitalRatio, 20.0f);
+        d.setParameter(MultiCompDSP::Parameter::DigitalThreshold, -42.0f); },
+        {{1.0, kLevelDb, false}, {3.0, kLevelDb, true}});
+    const double in = levelDb(r.input, 0, r.starts.back());
+    const double off = levelDb(r.output, second / 2, second);
+    const double on = levelDb(r.output, 3 * second, 4 * second);
+    std::printf("auto gain limit: loss %.2f dB, made up %.3f dB (limit %.1f)\n", in - off, on - off,
+                static_cast<double>(duskaudio::MultiCompAutoGainMatcher::kMaxCorrectionDb));
+    require(in - off > duskaudio::MultiCompAutoGainMatcher::kMaxCorrectionDb + 3.0,
+            "auto gain limit case loses more than the limit");
+    require(std::abs(on - off - duskaudio::MultiCompAutoGainMatcher::kMaxCorrectionDb) < 0.05,
+            "Auto Makeup stops at its correction limit");
+}
+
+// What a larger correction exposes. The matcher follows the level over about two seconds, so a quiet passage after a
+// loud, heavily reduced one is lifted by the loud passage's makeup until the estimate catches up. It must stay
+// bounded: never louder than the loud passage went in, never more than the limit over its own level. Under the
+// matcher's floor the gain holds, so a near-silent tail cannot wind it up. A non-finite input sample is stopped by
+// the input guard before the measurement sees it.
+void testAutoGainAfterHeavyReduction()
+{
+    static constexpr float kLoudDb = -6.0f, kQuietDb = -40.0f, kFloorDb = -110.0f;
+    static constexpr double kMarginDb = 0.5;
+    const double limit = duskaudio::MultiCompAutoGainMatcher::kMaxCorrectionDb;
+    const int second = 48000;
+    const float inf = std::numeric_limits<float>::infinity();
+    // Into the settled, made-up loud passage: 10 ms at 3e38 (the input guard's silence), then +inf, -inf and NaN.
+    const std::vector<AutoGainFault> faults {{second + 117, 480, 3.0e38f}, {3 * second / 2 + 117, 1, inf},
+                                             {7 * second / 4 + 117, 1, -inf},
+                                             {2 * second + 117, 1, std::numeric_limits<float>::quiet_NaN()}};
+    for (const AutoGainModeCase& c : kHeavyAutoGainCases)
+    {
+        const AutoGainRender r = renderAutoGainSegments(c.configure,
+            {{0.5, kLoudDb, false}, {3.5, kLoudDb, true}, {4.0, kQuietDb, true}, {2.0, kFloorDb, true}});
+        const int drop = r.starts[2], floor = r.starts[3], end = r.starts[4];
+        const double loudIn = levelDb(r.input, r.starts[1], drop);
+        const double madeUp = levelDb(r.output, drop - second / 2, drop) - levelDb(r.output, second / 4, second / 2);
+        const double quietLoudest = loudestShortLevelDb(r.output, drop, floor);
+        const double quietPeak = peakLevelDb(r.output, drop, floor);
+        const double loudInPeak = peakLevelDb(r.input, r.starts[1], drop);
+
+        // The windows of the 10 ms fall still measure. Once the gain has glided to their last target (six of the
+        // smoother's 50 ms time constants), it holds.
+        const size_t heldFrom = static_cast<size_t>(floor + 3 * second / 10);
+        const float held = r.gainDb[heldFrom];
+        float tailMove = 0.0f;
+        for (size_t n = heldFrom; n < r.gainDb.size(); ++n) tailMove = std::max(tailMove, std::abs(r.gainDb[n] - held));
+        const double tailLevel = levelDb(r.output, end - second / 2, end);
+
+        const AutoGainRender faulted = renderAutoGainSegments(c.configure,
+            {{0.5, kLoudDb, false}, {3.5, kLoudDb, true}}, faults);
+        const double faultDelta = std::abs(levelDb(faulted.output, 3 * second, 4 * second)
+                                           - levelDb(r.output, 3 * second, 4 * second));
+
+        std::printf("auto gain after heavy reduction: %-10s made up %.2f dB; quiet passage loudest %.2f dB, peak "
+                    "%.2f dB (loud passage in %.2f dB, peak %.2f dB); under the floor the gain holds %.2f dB, moving "
+                    "%.4f dB, output %.2f dB; non-finite input moves the level 1 s later by %.3f dB\n", c.name,
+                    madeUp, quietLoudest, quietPeak, loudIn, loudInPeak, static_cast<double>(held),
+                    static_cast<double>(tailMove), tailLevel, faultDelta);
+        require(madeUp > 12.0, "the loud passage is made up past the old 12 dB limit");
+        require(r.finite && faulted.finite, "auto gain after heavy reduction stays finite");
+        require(quietLoudest <= loudIn + kMarginDb && quietPeak <= loudInPeak + kMarginDb,
+                "a quiet passage after heavy reduction is never louder than the loud passage went in");
+        require(quietLoudest <= kQuietDb + limit + kMarginDb,
+                "a quiet passage after heavy reduction is lifted by at most the correction limit");
+        require(held <= limit && tailMove < 0.001f && tailLevel <= kFloorDb + limit + kMarginDb,
+                "under the matcher's floor the gain holds and does not wind up");
+        require(faultDelta < 0.1, "non-finite input leaves the auto gain where it was");
+    }
+
+    // A near-silent input from cold has nothing to match: it plays at its own level.
+    const AutoGainRender cold = renderAutoGainSegments(kHeavyAutoGainCases[5].configure, {{6.0, -95.0f, true}});
+    const double coldIn = levelDb(cold.input, 5 * second, 6 * second);
+    const double coldOut = levelDb(cold.output, 5 * second, 6 * second);
+    std::printf("auto gain near silence from cold: in %.2f dB, out %.2f dB\n", coldIn, coldOut);
+    require(cold.finite && std::abs(coldOut - coldIn) < kMarginDb,
+            "near-silent input from cold plays at its own level");
+}
+
+// Auto Makeup switched off and on again at the correction limit glides the gain there with the smoother's 50 ms time
+// constant: no sample moves further than the glide's first step, so nothing jumps. A DC input into a hard Digital knee
+// makes the output the gain.
+void testAutoGainSwitchRampsAtTheLimit()
+{
+    MultiCompDSP dsp;
+    dsp.setOversampling(kOversamplingOffSetting);
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Digital));
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalThreshold, -40.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalRatio, 20.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalAttack, 0.1f);
+    dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::AutoMakeup, 0.0f);
+    dsp.prepare(48000.0, 256);
+    const int second = 48000;
+    std::vector<float> input(256, 0.25f), block(256), output;
+    const float* ip[] = {input.data()};
+    float* op[] = {block.data()};
+    const auto run = [&](int samples) {
+        for (int done = 0; done < samples; done += 256)
+        {
+            dsp.processBlock(ip, op, 1, 256);
+            output.insert(output.end(), block.begin(), block.end());
+        }
+    };
+    run(second);
+    const float off = output.back();
+    dsp.setParameter(MultiCompDSP::Parameter::AutoMakeup, 1.0f);
+    const size_t onAt = output.size();
+    run(3 * second);
+    const float on = output.back();
+    dsp.setParameter(MultiCompDSP::Parameter::AutoMakeup, 0.0f);
+    const size_t offAt = output.size();
+    run(second);
+    dsp.setParameter(MultiCompDSP::Parameter::AutoMakeup, 1.0f);
+    const size_t againAt = output.size();
+    run(second);
+
+    const double madeUpDb = 20.0 * std::log10(static_cast<double>(on) / off);
+    const float rampStep = (on - off) * (1.0f - std::exp(-1.0f / (0.050f * 48000.0f)));
+    const auto largestStep = [&](size_t from, size_t to) {
+        float step = 0.0f;
+        for (size_t n = from + 1; n < to; ++n) step = std::max(step, std::abs(output[n] - output[n - 1]));
+        return step;
+    };
+    const float steadyStep = largestStep(onAt - static_cast<size_t>(second / 2), onAt);
+    const float switchOn = largestStep(onAt, onAt + static_cast<size_t>(second / 4));
+    const float switchOff = largestStep(offAt, offAt + static_cast<size_t>(second / 4));
+    const float switchAgain = largestStep(againAt, againAt + static_cast<size_t>(second / 4));
+    std::printf("auto gain switch at the limit: made up %.3f dB; largest step a sample on %.6g, off %.6g, on again "
+                "%.6g (glide's first step %.6g, steady %.3g)\n", madeUpDb, static_cast<double>(switchOn),
+                static_cast<double>(switchOff), static_cast<double>(switchAgain), static_cast<double>(rampStep),
+                static_cast<double>(steadyStep));
+    require(std::abs(madeUpDb - duskaudio::MultiCompAutoGainMatcher::kMaxCorrectionDb) < 0.05,
+            "DC into a hard knee is made up by the correction limit");
+    require(steadyStep < 1.0e-6f, "the made-up DC is steady");
+    require(switchOn <= rampStep * 1.01f && switchOff <= rampStep * 1.01f && switchAgain <= rampStep * 1.01f,
+            "Auto Makeup switched at the correction limit glides, no sample further than the glide's first step");
+    require(std::abs(output.back() - on) < 1.0e-3f * on, "Auto Makeup switched on again returns to the same level");
+}
+
 void testBypassCompletesDuringSidechainListen()
 {
     struct Result { float maxDryError; float minimumListenTail; };
@@ -15044,6 +15360,14 @@ int main(int argc, char** argv)
         std::puts("Multi-Comp Listen through every mode switch test: PASS");
         return 0;
     }
+    if (argc == 2 && std::strcmp(argv[1], "--auto-gain-heavy") == 0)
+    {
+        testAutoGainMatchesHeavyReduction();
+        testAutoGainAfterHeavyReduction();
+        testAutoGainSwitchRampsAtTheLimit();
+        std::puts("Multi-Comp auto gain heavy reduction tests: PASS");
+        return 0;
+    }
     if (argc == 2 && std::strcmp(argv[1], "--auto-gain-switch-duck") == 0)
     {
         testAutoGainIgnoresTheSwitchDuck();
@@ -15150,6 +15474,9 @@ int main(int argc, char** argv)
     testAutoGainNeutralisesManualOutput();
     testAutoGainBypassSettleBoundary();
     testAutoGainEffectiveExternalSidechain();
+    testAutoGainMatchesHeavyReduction();
+    testAutoGainAfterHeavyReduction();
+    testAutoGainSwitchRampsAtTheLimit();
     testHardwareRateRefreshAfterOversamplingChange();
     testOptoExposureTimebaseSurvivesRateChange();
     testOptoFastChargeIsOversamplingInvariant();
