@@ -576,10 +576,21 @@ void SpringReverb::prepare(double sampleRate, float detune)
     // per round trip, enough to move every mode: a steady 1 kHz sine landed
     // 3 dB hot on a resonance the reference does not have there.
     //
+    // Then refined against the modes themselves: the fine spectrum of each
+    // spring alone (impulse tail, 40 Hz-detrended log magnitude) correlated
+    // with the reference's over 300-1500 and 800-1250 Hz, searched in whole
+    // internal-rate samples of round trip at 44.1 AND 48 kHz, and the transit
+    // chosen that maximises the summed correlation of both rates and both
+    // bands (springs 0 / 1 / 2: 0.90 -> 1.05, 1.46 -> 1.46, 1.12 -> 1.22).
+    // The rates disagree by a sample on springs 0 and 2 -- the reference's own
+    // delays are whole samples of ITS internal rate, which is not the same
+    // number of seconds at 44.1 and 48 kHz -- so this is a joint fit, not a fit
+    // to either rate.
+    //
     // reflectionAmount is applied at BOTH terminations, so a round trip is
     // multiplied by its square; each spring gets the amount that gives the
     // same decay for its own round trip, |R| = 10^(-3 T_rt / T60).
-    constexpr float kSpringOneWaySeconds[3] = { 0.022977f, 0.025858f, 0.028224f };
+    constexpr float kSpringOneWaySeconds[3] = { 0.022958f, 0.025836f, 0.028208f };
     constexpr float kSpringDispersionScale[3] = { 0.993f, 1.000f, 1.007f };
     for (int k = 0; k < 3; ++k)
     {
