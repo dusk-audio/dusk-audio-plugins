@@ -89,6 +89,11 @@ namespace
     constexpr float kFlutterAgeLin = 0.589f;
     constexpr float kFlutterAgeSq  = 1.214f;
 
+    // Splice-gain skip thresholds, in seconds from the splice. Changing either
+    // requires re-running the exactness proof named at the splice gain.
+    constexpr float kSpliceUnityBeyondSeconds = 2.0f;
+    constexpr float kSpliceNarrowZeroBeyondSeconds = 0.25f;
+
     // Captured reference cartridges expose a quiet 60 Hz odd-harmonic bed. The
     // fifth harmonic is strongest; the others are normalized to it from the
     // hosted New/Used/Old noise spectra. A separate, much quieter random layer
@@ -172,14 +177,21 @@ float TapeEchoDSP::preampOversampled(Channel& ch, float x, float drive) noexcept
     // 4x oversampled saturation: upsample (2 cascaded 2x halfbands), shape,
     // decimate through the same filters. Zero-stuffed interpolation needs
     // the x2 gain on each upsampling stage.
+    //
+    // Every second push into each upsampler is a stuffed zero, so the output
+    // read right after it sees zeros on every side tap: those phases use
+    // outAfterStuffedZeroExact(), which returns out()'s bits without the
+    // multiply-adds (DuskOversamplerTest pins the identity).
     for (int p = 0; p < 2; ++p)
     {
         ch.upA.push(p == 0 ? x : 0.0f);
-        const float a = 2.0f * ch.upA.out(hbtaps::kA);
+        const float a = 2.0f * (p == 0 ? ch.upA.out(hbtaps::kA)
+                                       : ch.upA.outAfterStuffedZeroExact());
         for (int q = 0; q < 2; ++q)
         {
             ch.upB.push(q == 0 ? a : 0.0f);
-            const float b = 2.0f * ch.upB.out(hbtaps::kB);
+            const float b = 2.0f * (q == 0 ? ch.upB.out(hbtaps::kB)
+                                           : ch.upB.outAfterStuffedZeroExact());
             ch.downB.push(preampShape(b * drive));
         }
         ch.downA.push(ch.downB.out(hbtaps::kB));
@@ -1369,28 +1381,50 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                                * (tapeMagnitude - ch.recordEnvelope);
         else
             ch.recordEnvelope *= recordEnvelopeRelease;
-        const float over = std::max(ch.recordEnvelope - 0.12f, 0.0f);
-        const float reductionDb = 4.5f * (1.0f - std::exp(-2.7f * over));
-        const float compression =
-            std::pow(10.0f, -reductionDb * (1.0f / 20.0f));
-        // Below the nominal tape threshold, gain reduction is clean and
-        // leaves the measured harmonic curve intact. Above it, a growing
-        // fraction moves ahead of the shaper so THD approaches the
-        // measured high-level plateau instead of climbing without bound.
-        const float preCompression01 = clamp01(
-            (ch.recordEnvelope - 0.45f) * (1.0f / 0.75f));
-        const float preExponent =
-            1.2f * std::pow(preCompression01, 0.8f);
-        const float postExponent =
-            std::max(1.0f - 0.3f * preExponent, 0.6f);
-        const float preDriveGain =
-            std::pow(compression, preExponent);
-        const float highLevel01 = clamp01(
-            (ch.recordEnvelope - 0.65f) * (1.0f / 0.59f));
-        const float highLevelTrim = std::pow(
-            10.0f, -1.1f * std::sqrt(highLevel01) * (1.0f / 20.0f));
-        const float postDriveGain =
-            std::pow(compression, postExponent) * highLevelTrim;
+        // The law has exact closed forms below its knees, taken as branches
+        // so the transcendentals run only where they change the result:
+        //   envelope <= 0.12: over = 0, so compression = 10^-0 = 1 exactly;
+        //   envelope <= 0.45: preCompression01 = 0, so preExponent = 0 and
+        //                     postExponent = 1, and pow(c, 0) = 1 and
+        //                     pow(c, 1) = c are exact identities;
+        //   envelope <= 0.65: highLevel01 = 0, so highLevelTrim = 10^-0 = 1.
+        float preDriveGain = 1.0f;
+        float postDriveGain = 1.0f;
+        if (ch.recordEnvelope > 0.12f)
+        {
+            const float over = std::max(ch.recordEnvelope - 0.12f, 0.0f);
+            const float reductionDb =
+                4.5f * (1.0f - std::exp(-2.7f * over));
+            const float compression =
+                std::pow(10.0f, -reductionDb * (1.0f / 20.0f));
+            if (ch.recordEnvelope <= 0.45f)
+            {
+                postDriveGain = compression;
+            }
+            else
+            {
+                // Below the nominal tape threshold, gain reduction is clean
+                // and leaves the measured harmonic curve intact. Above it, a
+                // growing fraction moves ahead of the shaper so THD
+                // approaches the measured high-level plateau instead of
+                // climbing without bound.
+                const float preCompression01 = clamp01(
+                    (ch.recordEnvelope - 0.45f) * (1.0f / 0.75f));
+                const float preExponent =
+                    1.2f * std::pow(preCompression01, 0.8f);
+                const float postExponent =
+                    std::max(1.0f - 0.3f * preExponent, 0.6f);
+                preDriveGain = std::pow(compression, preExponent);
+                const float highLevel01 = clamp01(
+                    (ch.recordEnvelope - 0.65f) * (1.0f / 0.59f));
+                const float highLevelTrim = highLevel01 == 0.0f
+                    ? 1.0f
+                    : std::pow(10.0f, -1.1f * std::sqrt(highLevel01)
+                                          * (1.0f / 20.0f));
+                postDriveGain =
+                    std::pow(compression, postExponent) * highLevelTrim;
+            }
+        }
 
         // FET preamp front-end, saturated at 4x to keep fold-back
         // products out of the echo passband.
@@ -1462,8 +1496,19 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
         {
             const float secondsToEvent =
                 samplesToEvent / (float)fs;
-            const float narrow =
-                std::exp(-0.5f * std::pow(
+            // Far from the splice both Gaussians sit so far below float
+            // resolution that the gain is exactly 1.0f, and beyond a quarter
+            // second the narrow one is exactly 0.0f. Both thresholds are
+            // proven over the whole reachable age/motor range, with and
+            // without denormal flushing (tools repo,
+            // plugins/TapeEcho/tests/cpu/splice_far_proof.cpp), so skipping
+            // the transcendentals there returns the same bits.
+            const float distance = std::abs(secondsToEvent);
+            if (distance > kSpliceUnityBeyondSeconds)
+                return 1.0f;
+            const float narrow = distance > kSpliceNarrowZeroBeyondSeconds
+                ? 0.0f
+                : std::exp(-0.5f * std::pow(
                     secondsToEvent / narrowSeconds, 2.0f));
             const float broad =
                 std::exp(-0.5f * std::pow(
