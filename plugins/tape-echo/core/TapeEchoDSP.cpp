@@ -275,36 +275,6 @@ float TapeEchoDSP::leadingHeadRatioForMode(int mode1to12) noexcept
     return 1.0f;
 }
 
-//==============================================================================
-// Oversampled preamp — halfband taps now shared (plugins/shared-daf/dsp/
-// DuskOversampler.hpp, duskaudio::hbtaps::kA/kB; scipy remez, identical values).
-//==============================================================================
-float TapeEchoDSP::preampOversampled(Channel& ch, float x, float drive) noexcept
-{
-    // 4x oversampled saturation: upsample (2 cascaded 2x halfbands), shape,
-    // decimate through the same filters. Zero-stuffed interpolation needs
-    // the x2 gain on each upsampling stage.
-    //
-    // Every second push into each upsampler is a stuffed zero, so the output
-    // read right after it sees zeros on every side tap: those phases use
-    // outAfterStuffedZeroExact(), which returns out()'s bits without the
-    // multiply-adds (DuskOversamplerTest pins the identity).
-    for (int p = 0; p < 2; ++p)
-    {
-        ch.upA.push(p == 0 ? x : 0.0f);
-        const float a = 2.0f * (p == 0 ? ch.upA.out(hbtaps::kA)
-                                       : ch.upA.outAfterStuffedZeroExact());
-        for (int q = 0; q < 2; ++q)
-        {
-            ch.upB.push(q == 0 ? a : 0.0f);
-            const float b = 2.0f * (q == 0 ? ch.upB.out(hbtaps::kB)
-                                           : ch.upB.outAfterStuffedZeroExact());
-            ch.downB.push(preampShape(b * drive));
-        }
-        ch.downA.push(ch.downB.out(hbtaps::kB));
-    }
-    return ch.downA.out(hbtaps::kA);
-}
 
 //==============================================================================
 // (ShelfFilter coefficient design moved to shared Biquad::shelfSlope1 — see
@@ -1126,8 +1096,7 @@ void TapeEchoDSP::reset()
     {
         std::fill(ch.tape.begin(), ch.tape.end(), 0.0f);
         ch.preampDC.reset();
-        ch.upA.reset(); ch.downA.reset();
-        ch.upB.reset(); ch.downB.reset();
+        ch.preamp.reset();
         ch.recordHP.reset();
         ch.speedLP.reset();
         ch.ageContour.reset();
@@ -1470,6 +1439,8 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
     // waiting out one long dependency chain per sample. Only the tape loop
     // reads what it writes, and it stays one pass in sample order.
     constexpr int kSubBlock = 128;
+    static_assert(kSubBlock <= BlockPreamp4x::kMaxBlock,
+                  "the preamp processes at most kMaxBlock samples per call");
     float x_age[kSubBlock];
     float x_d1[kSubBlock];
     float x_d2[kSubBlock];
@@ -1500,6 +1471,9 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
     float x_echoWet[kSubBlock];
     float x_rev[kSubBlock];
     float x_recordEnvelopeNow[kSubBlock];
+    float x_preIn[kSubBlock];
+    float x_preOut[kSubBlock];
+    float x_postDriveGain[kSubBlock];
     float x_splice1[kSubBlock];
     float x_splice2[kSubBlock];
     float x_splice3[kSubBlock];
@@ -1745,11 +1719,9 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
 
             // FET preamp front-end, saturated at 4x to keep fold-back
             // products out of the echo passband.
-            const float pre = ch.preampDC.process(
-                                  preampOversampled(
-                                      ch, tapeInput * preDriveGain,
-                                      kInputStageDrive))
-                              * kInputStageTrim * postDriveGain;
+            // The preamp itself runs a sub-block at a time after this pass.
+            x_preIn[i] = tapeInput * preDriveGain;
+            x_postDriveGain[i] = postDriveGain;
             // The spring send is taken entirely ahead of the record-stage shaper
             // and its compressor. A drive ladder measured through the hosted
             // spring (impulse and pink burst, 48 dB of input range, reverb level
@@ -1874,7 +1846,6 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             x_nominalMs[i] = nominalMs;
             x_outputGain[i] = outputGain;
             x_power[i] = power;
-            x_pre[i] = pre;
             x_reproAgeNoise[i] = reproAgeNoise;
             x_reproNoiseGate[i] = reproNoiseGate;
             x_revLvl[i] = revLvl;
@@ -1883,6 +1854,19 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             x_wetMixGain[i] = wetMixGain;
             x_wobble[i] = wobble;
             x_recordEnvelopeNow[i] = ch.recordEnvelope;
+        }
+        {
+            constexpr float kInputStageDrive = 2.65f;
+            constexpr float kInputStageTrim  = 0.459f;
+            Channel& ch = channels[0];
+            // FET preamp front-end, saturated at 4x to keep fold-back
+            // products out of the echo passband.
+            ch.preamp.process(x_preIn, x_preOut, len, [](float v) noexcept {
+                return preampShape(v * kInputStageDrive);
+            });
+            for (int i = 0; i < len; ++i)
+                x_pre[i] = ch.preampDC.process(x_preOut[i])
+                         * kInputStageTrim * x_postDriveGain[i];
         }
         for (int i = 0; i < len; ++i)
         {

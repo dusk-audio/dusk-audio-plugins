@@ -32,6 +32,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <iterator>
 #include <limits>
 #include <vector>
 
@@ -270,6 +271,107 @@ public:
     // Host-rate samples of low-frequency group delay through the decimator,
     // the frame buffer and the interpolator (the tank itself excluded).
     static double resamplerLatencySamples(int stages) noexcept;
+};
+
+//==============================================================================
+// The record preamp's 4x oversampled saturation, a sub-block at a time.
+//
+// Same arithmetic as running two cascaded zero-stuffing halfband upsamplers
+// (hbtaps::kA 47 taps, then kB 15), the shaper at 4x and the mirror
+// decimators one host sample at a time: every output is the same sum of the
+// same products in the same tap order, and the phases that follow a stuffed
+// zero take HalfbandFIR::outAfterStuffedZeroExact()'s shortcut. Only the
+// loop order differs -- stage by stage over the sub-block, which lets each
+// stage vectorise across outputs -- so the results are bit-identical
+// (te2_corebench pins this against the per-sample version it replaces).
+//==============================================================================
+class BlockPreamp4x
+{
+public:
+    static constexpr int kMaxBlock = 128;
+
+    void reset() noexcept
+    {
+        std::fill(std::begin(x), std::end(x), 0.0f);
+        std::fill(std::begin(a), std::end(a), 0.0f);
+        std::fill(std::begin(c), std::end(c), 0.0f);
+        std::fill(std::begin(d), std::end(d), 0.0f);
+    }
+
+    // in[0..n) -> out[0..n), n <= kMaxBlock. shape(v) is applied at 4x.
+    template <typename Shape>
+    void process(const float* in, float* out, int n, Shape shape) noexcept
+    {
+        // Histories: kA reaches 23 samples back at its input rate, kB 7, and
+        // the decimators read their full spans (14 and 46).
+        constexpr int HX = 23, HA = 7, HC = 14, HD = 46;
+        for (int j = 0; j < n; ++j)
+            x[HX + j] = in[j];
+
+        // 1x -> 2x through kA: even outputs are the full sum over the real
+        // samples (the centre tap reads a stuffed zero), odd outputs the
+        // halved centre only.
+        for (int j = 0; j < n; ++j)
+        {
+            const float* s = x + HX + j;
+            float acc = 0.0f;
+            for (int i = 0; i < 12; ++i)
+                acc += hbtaps::kA[i] * (s[-(11 - i)] + s[-(12 + i)]);
+            const float centre = 0.5f * s[-11];
+            a[HA + 2 * j] = 2.0f * acc;
+            a[HA + 2 * j + 1] = 2.0f * (centre == 0.0f ? 0.0f : centre);
+        }
+
+        // 2x -> 4x through kB, then the shaper at 4x.
+        for (int m = 0; m < 2 * n; ++m)
+        {
+            const float* s = a + HA + m;
+            float acc = 0.0f;
+            for (int i = 0; i < 4; ++i)
+                acc += hbtaps::kB[i] * (s[-(3 - i)] + s[-(4 + i)]);
+            const float centre = 0.5f * s[-3];
+            c[HC + 2 * m] = shape(2.0f * acc);
+            c[HC + 2 * m + 1] = shape(2.0f * (centre == 0.0f ? 0.0f : centre));
+        }
+
+        // 4x -> 2x through kB: a full sum at every second 4x sample.
+        for (int r = 0; r < 2 * n; ++r)
+        {
+            const float* s = c + HC + 2 * r + 1;
+            float acc = 0.5f * s[-7];
+            for (int i = 0; i < 4; ++i)
+            {
+                const int k = 2 * i + 1;
+                acc += hbtaps::kB[i] * (s[-(7 - k)] + s[-(7 + k)]);
+            }
+            d[HD + r] = acc;
+        }
+
+        // 2x -> 1x through kA.
+        for (int u = 0; u < n; ++u)
+        {
+            const float* s = d + HD + 2 * u + 1;
+            float acc = 0.5f * s[-23];
+            for (int i = 0; i < 12; ++i)
+            {
+                const int k = 2 * i + 1;
+                acc += hbtaps::kA[i] * (s[-(23 - k)] + s[-(23 + k)]);
+            }
+            out[u] = acc;
+        }
+
+        // Carry the histories into the next sub-block.
+        std::copy(x + n, x + n + HX, x);
+        std::copy(a + 2 * n, a + 2 * n + HA, a);
+        std::copy(c + 4 * n, c + 4 * n + HC, c);
+        std::copy(d + 2 * n, d + 2 * n + HD, d);
+    }
+
+private:
+    float x[23 + kMaxBlock] {};
+    float a[7 + 2 * kMaxBlock] {};
+    float c[14 + 4 * kMaxBlock] {};
+    float d[46 + 2 * kMaxBlock] {};
 };
 
 //==============================================================================
@@ -665,8 +767,8 @@ private:
     {
         std::vector<float> tape;
         DCBlocker          preampDC;
-        HalfbandFIR<47, 12> upA, downA;   // base <-> 2x (tight, -67 dB)
-        HalfbandFIR<15, 4>  upB, downB;   // 2x <-> 4x (loose, -75 dB)
+        // base <-> 2x kA (tight, -67 dB), 2x <-> 4x kB (loose, -75 dB)
+        BlockPreamp4x preamp;
         Biquad             recordHP;   // in-loop, two-pole low-end cleanup
         Biquad             speedLP;    // tape-speed-dependent playback bandwidth
         Biquad             ageContour; // age-only HF shoulder, inside the loop
@@ -685,7 +787,6 @@ private:
     std::array<Channel, kMaxChannels> channels;
     SpringReverb spring; // shared mono wet path
 
-    float preampOversampled(Channel& ch, float x, float drive) noexcept;
 
     //--- tape transport --------------------------------------------------------
     int    writeIdx   = 0;
