@@ -99,7 +99,14 @@ namespace
 
     // Spring transit moved from the outgoing to the returning path so the
     // first arrival lands where the reference's does (round trip unchanged).
-    constexpr double kSpringArrivalAdvanceSeconds = 0.00094;
+    constexpr double kSpringArrivalAdvanceSeconds = 0.001117;
+
+    // Scalar decay target the reflection amounts are derived from. The in-loop
+    // filters add their own loss on top: the fitted first-order reflection
+    // loss costs ~0.09 dB per trip at 1 kHz, which with 2.90 here measured
+    // 2.66 s at 500-2000 Hz against the reference's 2.81 (reverb probe). The
+    // scalar loss is set so the two together land on the reference.
+    constexpr double kSpringLoopT60Seconds = 3.08;
 
     // Below this the spring send and tank state are treated as silence (see
     // the idle skip in processBlock); far under one float ulp of any signal.
@@ -527,10 +534,8 @@ void SpringReverb::prepare(double sampleRate, float detune)
     // add the frequency-dependent travel time on both the outgoing and return
     // journeys. The first arrivals remain tightly grouped, while successive
     // round trips separate naturally as their chirps accumulate dispersion.
-    // Transits measured from the reference's own return series: its envelope
-    // peaks fall into three families at odd multiples of the one-way time
-    // (70.4/116.2/161.2, 80.4/132.8/184.6, 87.5/144.1/206.9 ms), and
-    // regressing each family against 1, 3, 5 recovers 22.8 / 26.1 / 28.4 ms.
+    // The transits are fitted to the reference's measured round trips (see
+    // kSpringOneWaySeconds below).
     //
     // dispersionScale spread is kept to +/-0.7%, not the former +/-3%: the
     // fitted dispersion is a narrow hump at 3.6 kHz, and scaling the centres
@@ -539,10 +544,8 @@ void SpringReverb::prepare(double sampleRate, float detune)
     // reflectionAmount is applied at BOTH terminations, so a round trip is
     // multiplied by its SQUARE -- the old 0.925 was really 0.856 per trip. Each
     // spring therefore needs its own value: a longer spring makes fewer trips
-    // per second and must lose less on each to land on the same decay time.
-    //   |R| = 10^(-3 * T_roundtrip / T60_target),  reflectionAmount = sqrt(|R|)
-    // against the reference's measured 2.90 s mid-band T60 and the round trips
-    // 2 x 22.8 / 26.1 / 28.4 ms.
+    // per second and must lose less on each to land on the same decay time
+    // (derived per spring below).
     // Internal rate: halve the host rate while it stays at or above 10 kHz,
     // which lands on fs/4 at 44.1/48 kHz and fs/8 at 88.2/96 kHz, the rates
     // the reference's tank runs at.
@@ -562,12 +565,32 @@ void SpringReverb::prepare(double sampleRate, float detune)
     const double advanceSeconds =
         resamplerLatencySamples(stages) / sampleRate
         + kSpringArrivalAdvanceSeconds;
-    springs[0].prepare(internalRate, 0.0228f * detune,
-                       0.993f, 0.9472f, 1.30f, advanceSeconds);
-    springs[1].prepare(internalRate, 0.0261f * detune,
-                       1.000f, 0.9397f, 1.30f, advanceSeconds);
-    springs[2].prepare(internalRate, 0.0284f * detune,
-                       1.007f, 0.9346f, 1.30f, advanceSeconds);
+    // Transits REFIT 2026-11-21 from the reference's round trips, measured
+    // directly: autocorrelation of its latency-compensated reverb-only tail,
+    // 300-1500 Hz (below the dispersion hump), parabolic peak interpolation.
+    // It gives 46.20 / 51.96 / 56.74 ms at 48 kHz and 46.27 / 52.04 / 56.71 at
+    // 44.1 kHz. The same measurement on this tank reads 0.27 ms above its
+    // delay-line round trip (the in-loop filters' group delay), which sets the
+    // one-way delays below. The previous 22.8 / 26.1 / 28.4 ms came from
+    // regressing envelope-peak families and missed by -0.35 / +0.55 / +0.33 ms
+    // per round trip, enough to move every mode: a steady 1 kHz sine landed
+    // 3 dB hot on a resonance the reference does not have there.
+    //
+    // reflectionAmount is applied at BOTH terminations, so a round trip is
+    // multiplied by its square; each spring gets the amount that gives the
+    // same decay for its own round trip, |R| = 10^(-3 T_rt / T60).
+    constexpr float kSpringOneWaySeconds[3] = { 0.022977f, 0.025858f, 0.028224f };
+    constexpr float kSpringDispersionScale[3] = { 0.993f, 1.000f, 1.007f };
+    for (int k = 0; k < 3; ++k)
+    {
+        const double roundTrip = 2.0 * (double)kSpringOneWaySeconds[k];
+        const float reflectionAmount = (float)std::sqrt(
+            std::pow(10.0, -3.0 * roundTrip / kSpringLoopT60Seconds));
+        springs[(size_t)k].prepare(internalRate,
+                                   kSpringOneWaySeconds[k] * detune,
+                                   kSpringDispersionScale[k],
+                                   reflectionAmount, 1.30f, advanceSeconds);
+    }
     dcBlock.setSampleRate(internalRate, kDcBlockerCutoffHz);
     inputHP.setCutoff(140.0f, sampleRate);
     inputLP.setCutoff(4200.0f, sampleRate);
@@ -773,7 +796,9 @@ float SpringReverb::processInternal(float voiced) noexcept
     // rms, and the early-field kurtosis matches the reference as well as
     // before (log-rms error 0.44 vs 0.42 over 20-80 ms). Weaker diffusers
     // were worse than either end of the sweep.
-    float voicedWet = dcBlock.process(0.904f * wet);
+    // 0.955 (was 0.904): +0.48 dB, the level the rebuilt tank measured light
+    // against the reference (reverb-only noise burst, 44.1 and 48 kHz mean).
+    float voicedWet = dcBlock.process(0.955f * wet);
     for (auto& hp : outputTransducerHP)
         voicedWet = hp.process(voicedWet);
     voicedWet = outputHP.process(voicedWet);
