@@ -57,6 +57,86 @@ namespace duskaudio
 //==============================================================================
 
 //==============================================================================
+// Polyphase IIR halfband for 2x resampling: two parallel chains of first-order
+// allpasses in z^2 (the classic two-path elliptic halfband), H(z) =
+// 0.5 * (A0(z^2) + z^-1 A1(z^2)), even coefficients in A0, odd in A1. Unlike a
+// linear-phase FIR halfband it is causal with no pre-ringing -- the spring
+// tank's first arrival must not be preceded by any output (the reference's
+// tank is digital silence until its arrival) -- and it costs one multiply per
+// coefficient at the low rate. Coefficients come from the standard elliptic
+// halfband design for a given transition width and stopband attenuation.
+//==============================================================================
+template <int N>
+class IirHalfband
+{
+public:
+    explicit IirHalfband(const float* coefficients) noexcept : coef(coefficients) {}
+
+    void reset() noexcept
+    {
+        for (int i = 0; i < N; ++i) { x[i] = 0.0f; y[i] = 0.0f; }
+    }
+
+    // Decimate: the older and newer of two input samples -> one output.
+    float down(float older, float newer) noexcept
+    {
+        float a = newer, b = older;
+        for (int i = 0; i < N; i += 2) a = section(i, a);
+        for (int i = 1; i < N; i += 2) b = section(i, b);
+        return 0.5f * (a + b);
+    }
+
+    // Interpolate: one input -> the two outputs at twice the rate, in order.
+    void up(float in, float& first, float& second) noexcept
+    {
+        float a = in, b = in;
+        for (int i = 0; i < N; i += 2) a = section(i, a);
+        for (int i = 1; i < N; i += 2) b = section(i, b);
+        first = a;
+        second = b;
+    }
+
+    // Low-frequency group delay in samples of the faster (input) rate:
+    // 2 (1 - a) / (1 + a) per section of the undelayed path.
+    static double dcGroupDelay(const float* coefficients) noexcept
+    {
+        double d = 0.0;
+        for (int i = 0; i < N; i += 2)
+            d += 2.0 * (1.0 - (double)coefficients[i])
+                     / (1.0 + (double)coefficients[i]);
+        return d;
+    }
+
+private:
+    float section(int i, float in) noexcept
+    {
+        const float out = (in - y[i]) * coef[i] + x[i];
+        x[i] = in;
+        y[i] = out;
+        return out;
+    }
+
+    const float* coef;
+    float x[N] {};
+    float y[N] {};
+};
+
+// 100 dB stopband, transition 0.02 of the stage input rate: the stage next to
+// the internal rate, flat to 0.92 of the internal Nyquist.
+inline constexpr float kSpringFinalHalfband[10] = {
+    0.038198144521f, 0.141848414467f, 0.284326749234f,
+    0.436500581449f, 0.577049051805f, 0.695524100512f,
+    0.790200596392f, 0.864465799905f, 0.923995927877f,
+    0.975286561376f,
+};
+// 100 dB stopband, transition 0.10: the earlier stages only keep images out of
+// the band the final stage passes.
+inline constexpr float kSpringEarlyHalfband[6] = {
+    0.039151597734f, 0.147377113601f, 0.302646848328f,
+    0.482468542770f, 0.674615918547f, 0.883005025769f,
+};
+
+//==============================================================================
 // Spring reverb — three parallel bidirectional dispersive waveguides.
 //
 // The tank runs at a reduced internal rate, as the reference's does: the host
@@ -149,24 +229,34 @@ private:
     float processInternal(float in) noexcept;
 
     // Resampling between the host rate and the internal rate: factor 2^stages.
-    // Every stage but the one next to the internal rate is a short halfband
-    // (kB: it only has to keep images out of the band the last stage keeps);
-    // the last stage is the steep 127-tap kAwide halfband that sets the cliff.
+    // Every stage but the one next to the internal rate is a loose halfband
+    // (it only has to keep images out of the band the last stage keeps); the
+    // last stage is the steep one that, with outputCliff, sets the top end.
     static constexpr int kMaxResampleStages = 4; // factor 16 at 176.4/192 kHz
     static constexpr int kMaxResampleFactor = 1 << kMaxResampleStages;
     int resampleStages = 0;
     int resampleFactor = 1;
     int resamplePhase = 0;
-    std::array<HalfbandFIR<15, 4>, kMaxResampleStages - 1> earlyDown, earlyUp;
-    HalfbandFIR<127, 32> finalDown, finalUp;
+    using EarlyHalfband = IirHalfband<6>;
+    using FinalHalfband = IirHalfband<10>;
+    std::array<EarlyHalfband, kMaxResampleStages - 1> earlyDown {
+        EarlyHalfband(kSpringEarlyHalfband), EarlyHalfband(kSpringEarlyHalfband),
+        EarlyHalfband(kSpringEarlyHalfband) };
+    std::array<EarlyHalfband, kMaxResampleStages - 1> earlyUp {
+        EarlyHalfband(kSpringEarlyHalfband), EarlyHalfband(kSpringEarlyHalfband),
+        EarlyHalfband(kSpringEarlyHalfband) };
+    FinalHalfband finalDown { kSpringFinalHalfband };
+    FinalHalfband finalUp { kSpringFinalHalfband };
+    // Decimator inputs waiting for their pair, one per stage.
+    std::array<float, kMaxResampleStages> pendingDown {};
     // The interpolator produces a whole frame of host samples per internal
     // sample; it is played out over the next frame.
     std::array<float, kMaxResampleFactor> outputFrame {};
 
 public:
     int resampleFactorForTest() const noexcept { return resampleFactor; }
-    // Host-rate samples of group delay through the decimator, the frame
-    // buffer and the interpolator (the tank itself excluded).
+    // Host-rate samples of low-frequency group delay through the decimator,
+    // the frame buffer and the interpolator (the tank itself excluded).
     static double resamplerLatencySamples(int stages) noexcept;
 };
 

@@ -151,6 +151,26 @@ std::vector<float> renderSpringImpulse()
     return output;
 }
 
+// First arrival (first sample within 40 dB of the impulse's peak), in seconds,
+// of the spring alone at a given host rate.
+double springOnsetSeconds(double rate)
+{
+    duskaudio::SpringReverb spring;
+    spring.prepare(rate, 1.0f);
+    const int samples = (int)std::lround(0.2 * rate);
+    std::vector<float> output((size_t)samples, 0.0f);
+    float peak = 0.0f;
+    for (int i = 0; i < samples; ++i)
+    {
+        output[(size_t)i] = spring.process(i == 0 ? 1.0f : 0.0f);
+        peak = std::max(peak, std::abs(output[(size_t)i]));
+    }
+    for (int i = 0; i < samples; ++i)
+        if (std::abs(output[(size_t)i]) > 0.01f * peak)
+            return (double)i / rate;
+    return -1.0;
+}
+
 double windowEnergy(const std::vector<float>& signal,
                     double startSeconds, double endSeconds)
 {
@@ -278,6 +298,26 @@ int main()
                   << " earlyDecay=" << earlyDecay
                   << " lateDecay=" << lateDecay << '\n';
         return 1;
+    }
+
+    // The tank runs at a reduced internal rate behind host-rate resampling
+    // whose latency is taken out of the transit. If that latency were wrong,
+    // the arrival would move with the host rate (the factor is 4 at 44.1/48,
+    // 8 at 88.2/96 and 16 at 192 kHz), so pin it to within 0.1 ms of 48 kHz.
+    // The internal-rate sample grid itself is ~0.09 ms, hence the bound.
+    {
+        const double reference = springOnsetSeconds(48000.0);
+        for (double rate : { 44100.0, 88200.0, 96000.0, 192000.0 })
+        {
+            const double onset = springOnsetSeconds(rate);
+            if (!(std::abs(onset - reference) <= 0.0001))
+            {
+                std::cerr << "spring first arrival moves with the host rate: "
+                          << onset * 1000.0 << " ms at " << rate << " Hz vs "
+                          << reference * 1000.0 << " ms at 48 kHz\n";
+                return 1;
+            }
+        }
     }
 
     // Noise spans the captured floor (0) to 60 dB above it (1), and the hum

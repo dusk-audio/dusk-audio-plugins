@@ -682,24 +682,28 @@ void SpringReverb::reset()
     for (auto& f : earlyUp) f.reset();
     finalDown.reset();
     finalUp.reset();
+    pendingDown.fill(0.0f);
     outputFrame.fill(0.0f);
     resamplePhase = 0;
 }
 
 double SpringReverb::resamplerLatencySamples(int stages) noexcept
 {
-    // A linear-phase halfband of L taps delays by (L - 1) / 2 samples at the
-    // rate it runs at; stage s runs at fs / 2^s on the way down and its mirror
-    // at the same rate on the way up. The frame buffer adds one host sample
-    // (the interpolated frame is played out starting the sample after the
-    // internal sample is computed, see process()). Pinned by TapeEchoCoreTest.
+    // Stage s runs at fs / 2^s on the way down and its mirror at the same
+    // rate on the way up; each delays the band the tank uses by its
+    // low-frequency group delay. The frame buffer adds one host sample (the
+    // interpolated frame is played out starting the sample after the internal
+    // sample is computed, see process()). TapeEchoCoreTest pins the result:
+    // the first arrival must not move with the host rate.
     if (stages <= 0)
         return 0.0;
     double perDirection = 0.0;
     for (int s = 0; s < stages; ++s)
     {
-        const int taps = s == stages - 1 ? 127 : 15;
-        perDirection += 0.5 * (double)(taps - 1) * (double)(1 << s);
+        const double stageDelay = s == stages - 1
+            ? FinalHalfband::dcGroupDelay(kSpringFinalHalfband)
+            : EarlyHalfband::dcGroupDelay(kSpringEarlyHalfband);
+        perDirection += stageDelay * (double)(1 << s);
     }
     return 2.0 * perDirection + 1.0;
 }
@@ -751,17 +755,15 @@ float SpringReverb::process(float in) noexcept
     const int last = resampleStages - 1;
     for (int s = 0; s < resampleStages; ++s)
     {
-        if (s == last)
-            finalDown.push(v);
-        else
-            earlyDown[(size_t)s].push(v);
         if (((resamplePhase >> s) & 1) == 0)
         {
+            pendingDown[(size_t)s] = v;
             ready = false;
             break;
         }
-        v = s == last ? finalDown.out(hbtaps::kAwide)
-                      : earlyDown[(size_t)s].out(hbtaps::kB);
+        const float older = pendingDown[(size_t)s];
+        v = s == last ? finalDown.down(older, v)
+                      : earlyDown[(size_t)s].down(older, v);
     }
 
     // The frame interpolated from the previous internal sample plays out one
@@ -769,9 +771,7 @@ float SpringReverb::process(float in) noexcept
     const float out = outputFrame[(size_t)resamplePhase];
     if (ready)
     {
-        // Interpolate: zero-stuff by two per stage, lowest rate first. The x2
-        // restores the gain zero-stuffing removes; every second output of a
-        // stage follows a stuffed zero and takes the exact shortcut.
+        // Interpolate by two per stage, lowest rate first.
         std::array<float, kMaxResampleFactor> a {}, b {};
         a[0] = processInternal(v);
         int count = 1;
@@ -780,22 +780,11 @@ float SpringReverb::process(float in) noexcept
             for (int i = 0; i < count; ++i)
             {
                 if (s == last)
-                {
-                    finalUp.push(a[(size_t)i]);
-                    b[(size_t)(2 * i)] = 2.0f * finalUp.out(hbtaps::kAwide);
-                    finalUp.push(0.0f);
-                    b[(size_t)(2 * i + 1)] =
-                        2.0f * finalUp.outAfterStuffedZeroExact();
-                }
+                    finalUp.up(a[(size_t)i], b[(size_t)(2 * i)],
+                               b[(size_t)(2 * i + 1)]);
                 else
-                {
-                    auto& up = earlyUp[(size_t)s];
-                    up.push(a[(size_t)i]);
-                    b[(size_t)(2 * i)] = 2.0f * up.out(hbtaps::kB);
-                    up.push(0.0f);
-                    b[(size_t)(2 * i + 1)] =
-                        2.0f * up.outAfterStuffedZeroExact();
-                }
+                    earlyUp[(size_t)s].up(a[(size_t)i], b[(size_t)(2 * i)],
+                                          b[(size_t)(2 * i + 1)]);
             }
             count *= 2;
             a = b;
