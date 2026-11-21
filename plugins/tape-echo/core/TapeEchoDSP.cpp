@@ -1020,6 +1020,8 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     powerSmoother.snap(1.0f - pBypass.load(std::memory_order_relaxed));
     ageSmoother.snap(pTapeAge.load(std::memory_order_relaxed));
     noiseGainSmoother.snap(noiseGainFor(pNoise.load(std::memory_order_relaxed)));
+    memoAge = std::numeric_limits<float>::quiet_NaN();
+    memoOutputVolume = std::numeric_limits<float>::quiet_NaN();
     lastPlaybackCutoff = -1.0f;
     lastAntiAliasCutoff = -1.0f;
     lastAgeContourDb = 999.0f;
@@ -1374,8 +1376,13 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                  * wobbleLP.process(ageRand() * noiseRateComp);
         // New/Used/Old noise rises 1:2:4 in amplitude. Even New retains the
         // reference's tiny electronics/tape floor instead of digital silence.
-        const float ageNoiseScale =
-            0.25f * std::exp(1.38629436112f * age);
+        // Recomputed only when the (smoothed) tape age moves: same bits.
+        if (age != memoAge)
+        {
+            memoAge = age;
+            memoAgeNoiseScale = 0.25f * std::exp(1.38629436112f * age);
+        }
+        const float ageNoiseScale = memoAgeNoiseScale;
         float ageHum = 0.0f;
         float previousHarmonic = 0.0f;
         float harmonic = ageHumSin;
@@ -1482,8 +1489,13 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
         const float outputVolume = outputVolumeSmoother.next();
         // Hosted output trim is linear in decibels: -20 dB at zero, unity at
         // midpoint, and +20 dB at maximum.
-        const float outputGain = std::pow(
-            10.0f, 2.0f * outputVolume - 1.0f);
+        // Recomputed only when the (smoothed) output volume moves: same bits.
+        if (outputVolume != memoOutputVolume)
+        {
+            memoOutputVolume = outputVolume;
+            memoOutputGain = std::pow(10.0f, 2.0f * outputVolume - 1.0f);
+        }
+        const float outputGain = memoOutputGain;
         const float driveKnob = driveSmoother.next();
         const float inputGain = inputGainFromControl(driveKnob);
         // Equivalent-level hosted sweeps at multiple knob positions collapse
@@ -1790,8 +1802,13 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
         const float lowFloorSmooth =
             lowFloor01 * lowFloor01 * (3.0f - 2.0f * lowFloor01);
         const float lowFloorFade = 1.0f - lowFloorSmooth;
+        // With the fade at exactly zero the product is a signed zero whatever
+        // the (positive, finite) power is, so the pow is skipped there.
+        const float lowFloorShape = lowFloorFade == 0.0f
+            ? 1.0f
+            : std::pow(recorded2 + 0.006f * 0.006f, 0.575f);
         const float lowFloor = 1.325f * lowFloorFade * recorded
-            * std::pow(recorded2 + 0.006f * 0.006f, 0.575f);
+            * lowFloorShape;
         const float magneticInput =
             recorded * (1.0f - 5.0f * recorded2
                         / (1.0f + 8.0f * recorded2))
@@ -1887,7 +1904,10 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
         const float magneticMakeupDb =
             1.8f * std::sqrt(std::sqrt(magneticMakeup01))
             + 0.46f * hot - 2.70f * veryHot;
-        toTape *= std::pow(10.0f, magneticMakeupDb * (1.0f / 20.0f));
+        // At or below the 0.18 knee every term is zero, the makeup is
+        // 10^0 = 1 exactly, and the multiply is skipped with the same bits.
+        if (ch.recordEnvelope > 0.18f)
+            toTape *= std::pow(10.0f, magneticMakeupDb * (1.0f / 20.0f));
         for (auto& lp : ch.antiAliasLP)
             toTape = lp.process(toTape);
         ch.tape[(size_t)writeIdx] = toTape;

@@ -32,6 +32,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 // Shared DSP primitives (namespace duskaudio) — these replace the building
@@ -629,6 +630,13 @@ private:
     static constexpr float kPreampLatencySamples = 23.0f + 3.5f;
 
     float readTape(const std::vector<float>& buf, float delaySamples) const noexcept;
+
+    // Last input and result of per-sample laws on smoothed controls; NaN
+    // forces the first evaluation (NaN compares unequal to everything).
+    float memoAge = std::numeric_limits<float>::quiet_NaN();
+    float memoAgeNoiseScale = 0.0f;
+    float memoOutputVolume = std::numeric_limits<float>::quiet_NaN();
+    float memoOutputGain = 1.0f;
     void  refreshBlockRateControls();
 
     //--- per-channel state ----------------------------------------------------
