@@ -392,7 +392,7 @@ def section_delay(results):
 # candidate fix directly.
 OS_IDEAL = 8                    # "alias-free" reference rate for the residual
 STRESS = dict(type=0, amt=0.75, mix=1.0)   # what a user cranking Drive gets
-EXPECTED_PRESETS = 57           # tripwire on the MultiSynthParams.hpp parser
+EXPECTED_PRESETS = 54           # tripwire on the MultiSynthParams.hpp parser
 
 
 def parse_presets():

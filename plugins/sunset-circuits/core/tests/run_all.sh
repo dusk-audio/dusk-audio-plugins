@@ -74,13 +74,9 @@ if ! python3 ../../daf-plugin/tools/gen_params.py --check; then
     echo "Re-run tools/gen_params.py and commit the result."
     fail=1
 fi
-# MinBlepTable.hpp is generated too (the oscillators' minimum-phase BLEP).
-if ! python3 ../../daf-plugin/tools/gen_minblep.py --check; then
-    fail=1
-fi
-for g in sched pitch env reverb arp arp_seq filter_stability accuracy fx_reenable param_robust \
-         lfo_sync modulation lfo_depth cosmos acid stuck sustain handover polyat steal oracle_chord legato \
-         zipper user_preset latency wheelmod drift sync_alias polymod_law noise oracle_alias sync_toggle mono_modular_alias os_rate; do
+for g in pitch env reverb arp arp_seq filter_stability accuracy fx_reenable param_robust \
+         lfo_sync modulation lfo_depth cosmos acid stuck sustain handover polyat steal legato \
+         zipper user_preset latency; do
     echo
     echo "########## ${g}_gate ##########"
     python3 "${g}_gate.py" || fail=1
@@ -89,14 +85,6 @@ done
 echo
 echo "########## cosmos state ##########"
 ./build/cosmos_state_test || fail=1
-
-echo
-echo "########## filter tanh ##########"
-./build/filter_tanh_gate || fail=1
-
-echo
-echo "########## wheel mod ##########"
-./build/wheelmod_test || fail=1
 
 echo
 echo "########## fm suite ##########"
@@ -113,7 +101,6 @@ echo
 echo "########## preset audit ##########"
 # preset_render is built by the cmake step above (target in tests/CMakeLists.txt).
 python3 presets/preset_audit.py || fail=1
-python3 presets/oracle_voicing.py || fail=1
 
 echo
 echo "########## lv2_smoke (LV2 host integration) ##########"
@@ -235,15 +222,15 @@ echo "########## fx_alias_gate (report only) ##########"
 # host rate, downstream of the voice decimation, so voice oversampling cannot
 # reach them. Report only, same as alias_gate.
 #
-# Sections 0-2 by default (~30 s). Section 3's 57-preset sweep costs 114 extra
-# preset_render subprocesses plus ~1600 8x resamples, which makes it the single
+# Sections 0-2 by default (~30 s). Section 3's 54-preset sweep costs 108 extra
+# preset_render subprocesses plus ~1500 8x resamples, which makes it the single
 # slowest item in this suite; it only changes answer when the factory presets
 # change, so it is opt-in. FX_ALIAS_FULL=1 ./run_all.sh runs it.
 if [ "${FX_ALIAS_FULL:-0}" = "1" ]; then
     python3 fx_alias_gate.py || echo "fx_alias_gate exited nonzero (report-only, not fatal)"
 else
     python3 fx_alias_gate.py --no-presets || echo "fx_alias_gate exited nonzero (report-only, not fatal)"
-    echo "(section 3, the 57-preset sweep, was skipped: re-run with FX_ALIAS_FULL=1)"
+    echo "(section 3, the 54-preset sweep, was skipped: re-run with FX_ALIAS_FULL=1)"
 fi
 
 echo

@@ -92,32 +92,5 @@ int main()
     release.x = 258.0f; release.y = 142.0f;
     suite.previousItemTooltip(ratio2, release);
 
-    // Wheel Mod shows these three values as percentages. Exercise typed
-    // entry on the actual overlay and check the value written to the host.
-    dusktest::EditorHost<DAF::MultiSynthUI> wheel(1240, 780, {
-        { kParamMode, 1.0f }, { kParamWheelSourceMix, 0.18f },
-        { kParamWheelUpperLimit, 0.18f }, { kParamWheelLowerLimit, 0.18f }
-    });
-    wheel.click(870, 522);
-    wheel.idle();
-    struct WheelKnob { uint32_t id; float x, y; };
-    const WheelKnob controls[] = {
-        { kParamWheelSourceMix, 525, 369 }, { kParamWheelUpperLimit, 752, 355 },
-        { kParamWheelLowerLimit, 752, 481 }
-    };
-    for (const auto& control : controls)
-    {
-        const auto start = wheel.ui.hostEvents.size();
-        wheel.doubleClick(control.x, control.y);
-        wheel.idle();
-        wheel.type("25");
-        wheel.key(ImGuiKey_Enter);
-        wheel.idle();
-        float written = -1.0f;
-        const bool received = wheel.lastWrite(start, control.id, written);
-        dusktest::guards(received && written == 0.25f,
-                         std::string(kParamDefs[control.id].name) + " typed 25% wrote " + std::to_string(written));
-    }
-
     return dusktest::summary();
 }

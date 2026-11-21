@@ -75,7 +75,6 @@ before the note through render_test's modwheel= key, or moved with modwheelat=.
            to be dropped in silence. The block starts are the render loop's own,
            which release= moves: one release puts a move out of reach that is
            reached without it, another brings the refused move within reach.
-           sched_gate.py checks the same for render_test's other event keys.
 """
 import filecmp
 import itertools
