@@ -28,6 +28,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -98,8 +99,6 @@ public:
         second = b;
     }
 
-    // Low-frequency group delay in samples of the faster (input) rate:
-    // 2 (1 - a) / (1 + a) per section of the undelayed path.
     bool isQuiet(float floor) const noexcept
     {
         for (int i = 0; i < N; ++i)
@@ -108,6 +107,8 @@ public:
         return true;
     }
 
+    // Low-frequency group delay in samples of the faster (input) rate:
+    // 2 (1 - a) / (1 + a) per section of the undelayed path.
     static double dcGroupDelay(const float* coefficients) noexcept
     {
         double d = 0.0;
@@ -174,6 +175,14 @@ public:
     float process(float in) noexcept;
     // True when every piece of state is below floor in magnitude.
     bool isSilent(float floor) const noexcept;
+    // Idle skip support: clear the tank but keep the resampler's frame phase,
+    // and advance that phase over samples that were not processed, so a skip
+    // leaves the frame grid exactly where processing every sample would have.
+    void clearKeepingPhase() noexcept;
+    void advanceIdle(int samples) noexcept
+    {
+        resamplePhase = (resamplePhase + samples) & (resampleFactor - 1);
+    }
 
 private:
     // Section count is bounded from below by physics, not taste: each
@@ -245,7 +254,7 @@ private:
     // Every stage but the one next to the internal rate is a loose halfband
     // (it only has to keep images out of the band the last stage keeps); the
     // last stage is the steep one that, with outputCliff, sets the top end.
-    static constexpr int kMaxResampleStages = 4; // factor 16 at 176.4/192 kHz
+    static constexpr int kMaxResampleStages = 5; // factor 32 at 352.8/384 kHz
     static constexpr int kMaxResampleFactor = 1 << kMaxResampleStages;
     int resampleStages = 0;
     int resampleFactor = 1;
@@ -254,10 +263,10 @@ private:
     using FinalHalfband = IirHalfband<10>;
     std::array<EarlyHalfband, kMaxResampleStages - 1> earlyDown {
         EarlyHalfband(kSpringEarlyHalfband), EarlyHalfband(kSpringEarlyHalfband),
-        EarlyHalfband(kSpringEarlyHalfband) };
+        EarlyHalfband(kSpringEarlyHalfband), EarlyHalfband(kSpringEarlyHalfband) };
     std::array<EarlyHalfband, kMaxResampleStages - 1> earlyUp {
         EarlyHalfband(kSpringEarlyHalfband), EarlyHalfband(kSpringEarlyHalfband),
-        EarlyHalfband(kSpringEarlyHalfband) };
+        EarlyHalfband(kSpringEarlyHalfband), EarlyHalfband(kSpringEarlyHalfband) };
     FinalHalfband finalDown { kSpringFinalHalfband };
     FinalHalfband finalUp { kSpringFinalHalfband };
     // Decimator inputs waiting for their pair, one per stage.
@@ -267,7 +276,6 @@ private:
     std::array<float, kMaxResampleFactor> outputFrame {};
 
 public:
-    int resampleFactorForTest() const noexcept { return resampleFactor; }
     // Host-rate samples of low-frequency group delay through the decimator,
     // the frame buffer and the interpolator (the tank itself excluded).
     static double resamplerLatencySamples(int stages) noexcept;

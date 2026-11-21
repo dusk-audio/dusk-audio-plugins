@@ -112,6 +112,12 @@ namespace
     // the idle skip in processBlock); far under one float ulp of any signal.
     constexpr float kSpringIdleFloor = 1.0e-20f;
 
+    // Record input stage: drive into the 4x preamp shaper and the trim after
+    // it. One definition: the shaper, the clean spring send gain and the
+    // flux gate's input scaling all depend on the same pair.
+    constexpr float kInputStageDrive = 2.65f;
+    constexpr float kInputStageTrim  = 0.459f;
+
     // Below this a read head's (smoothed) gain is treated as off.
     constexpr float kHeadIdleFloor = 1.0e-20f;
 
@@ -402,10 +408,13 @@ void SpringReverb::Spring::prepare(double fs, float oneWaySeconds,
         fs, safeBiquadFrequency(fs, 49.5f), 0.70710678f));
     // +0.05, not -0.10: a net +0.15 dB per round trip below the corner, which
     // is the measured deficit above. This is a small BOOST inside the loop and
-    // that is safe here -- the round-trip gain stays lossy at every frequency
-    // because reflectionAmount^2 is at most 0.9472^2 = 0.8972 (-0.943 dB), so
-    // the worst-case loop gain is 0.8972 * 10^(0.05/20) = 0.9024 < 1, before
-    // the high-pass and low-pass take their own further bite.
+    // that is safe here -- the round-trip gain stays lossy at every frequency.
+    // The largest reflection amount (spring 0, derived from
+    // kSpringLoopT60Seconds) is 0.9498, a scalar round trip of 0.9021
+    // (-0.894 dB); with this shelf that is 0.9074, and the fitted first-order
+    // loss below never exceeds -0.024 dB anywhere (its maximum is its DC gain,
+    // 0.9972 at an 11-12 kHz internal rate), so the worst-case loop gain is
+    // about 0.905 < 1 before the high-pass takes its own bite.
     reflectionLowLoss.setCoeffs(Biquad::shelfSlope1(
         fs, safeBiquadFrequency(fs, 550.0f), 0.05f, false));
     // High-frequency loss per reflection: ONE first-order low-pass whose
@@ -582,14 +591,13 @@ void SpringReverb::prepare(double sampleRate, float detune)
     // Butterworth high-pass supplies the missing lower edge of the measured
     // roughly 100 Hz-5 kHz passband without disturbing the spring body.
     //
-    // 60 Hz, not 90. Four low-end removers were stacked here in series --
-    // this one, outputHP, outputLowContour and the pre-tank inputHP -- for a
-    // combined 7th order where the reference's measured low slope is about
-    // 3rd. At 90 Hz the fourth-order skirt was still taking 100-125 Hz with
-    // it. Fitting the stack against the measured deficit drove this corner to
-    // its 30 Hz search bound; 60 Hz is taken instead, because between 60 and
-    // 90 the whole-band mean error only moves 0.71 vs 0.82 dB while 30 Hz
-    // would abandon the sub-bass rejection this filter exists for.
+    // 90 Hz (was 60). Remeasured 2026-11-21 against the reference
+    // latency-compensated, reverb-only noise burst at 44.1 and 48 kHz, after
+    // the tank moved to its reduced internal rate: 63 Hz was +10.7 / +11.9 dB
+    // and 80 Hz +5.4 / +7.7 dB hot, in the first 120 ms most of all, while
+    // 100-125 Hz had room (+0.2..+3.4 dB). 90 Hz took 63 Hz to +0.8 / +2.3 and
+    // 80 Hz to -2.9 / +0.3 with 100 Hz at -2.8 / -1.4. The earlier choice of
+    // 60 over 90 was made on the full-rate tank with uncompensated captures.
     // The transducer voicing runs at the internal rate.
     const double fi = internalRate;
     constexpr float kFourthOrderButterworthQ[2] =
@@ -598,15 +606,12 @@ void SpringReverb::prepare(double sampleRate, float detune)
         outputTransducerHP[i].setCoeffs(Biquad::highPass(
             fi, safeBiquadFrequency(fi, 90.0f),
             kFourthOrderButterworthQ[i]));
-    // 320 Hz, not 400 -- the dominant lever in the low-end refit. Measured
-    // against the reference, this tank was 5.2 dB light at 100 Hz, 3.4 at
-    // 125, 3.25 at 160 and 2.45 at 200, and a second-order corner sitting at
-    // 400 Hz is what put it there (it alone costs 12 dB at 200 Hz and 20 dB
-    // at 125). The figures above are the MEAN of two independent measurements
-    // that now agree within about 1 dB: a Logic bounce of program material
-    // and a 44.1 kHz impulse render. Predicted mean |error| over 100 Hz-1 kHz
-    // after this change: 1.97 -> 0.71 dB, with every band above 1.25 kHz
-    // moving less than 0.1 dB.
+    // 360 Hz (was 320; 400 before that). The same 2026-11-21 remeasurement
+    // put 125-400 Hz +1..+3.6 dB hot at both rates with the transducer
+    // high-pass at 90 Hz; a 360 Hz second-order corner takes that to within
+    // about +-1.5 dB (125 -1.2 / +1.2, 160 +0.3 / +0.9, 250 -0.5 / +1.1).
+    // The earlier 400 -> 320 refit was made against a full-rate tank that was
+    // 2-5 dB light in this region on uncompensated captures.
     outputHP.setCoeffs(Biquad::highPass(
         fi, safeBiquadFrequency(fi, 360.0f), 0.70710678f));
     outputVoiceLP.setCoeffs(matchedLowPass(fi, 1800.0, 0.70710678));
@@ -740,6 +745,13 @@ bool SpringReverb::isSilent(float floor) const noexcept
     for (float v : pendingDown) if (!small(v)) return false;
     for (float v : outputFrame) if (!small(v)) return false;
     return true;
+}
+
+void SpringReverb::clearKeepingPhase() noexcept
+{
+    const int phase = resamplePhase;
+    reset();
+    resamplePhase = phase;
 }
 
 double SpringReverb::resamplerLatencySamples(int stages) noexcept
@@ -1424,9 +1436,11 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
         springIdle = false;
     else if (!springIdle && spring.isSilent(kSpringIdleFloor))
     {
-        spring.reset();
+        spring.clearKeepingPhase();
         springIdle = true;
     }
+    if (springIdle)
+        spring.advanceIdle(numSamples);
 
     constexpr float kVuSineCalibration = 1.110720735f;
 
@@ -1441,7 +1455,6 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
     constexpr int kSubBlock = 128;
     static_assert(kSubBlock <= BlockPreamp4x::kMaxBlock,
                   "the preamp processes at most kMaxBlock samples per call");
-    float x_age[kSubBlock];
     float x_d1[kSubBlock];
     float x_d2[kSubBlock];
     float x_d3[kSubBlock];
@@ -1457,7 +1470,6 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
     float x_inL[kSubBlock];
     float x_inR[kSubBlock];
     float x_inputGain[kSubBlock];
-    float x_nominalMs[kSubBlock];
     float x_outputGain[kSubBlock];
     float x_power[kSubBlock];
     float x_pre[kSubBlock];
@@ -1641,8 +1653,6 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             // Equivalent-level hosted sweeps at multiple knob positions collapse
             // onto one transfer curve: the input control is a gain taper feeding
             // a fixed record-stage nonlinearity, not a second distortion control.
-            constexpr float kInputStageDrive = 2.65f;
-            constexpr float kInputStageTrim  = 0.459f;
             const float power     = powerSmoother.next(); // 0 = bypassed
 
             //--- mono effect path -------------------------------------------------
@@ -1827,7 +1837,6 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             x_splice1[i] = splice1;
             x_splice2[i] = splice2;
             x_splice3[i] = splice3;
-            x_age[i] = age;
             x_d1[i] = d1;
             x_d2[i] = d2;
             x_d3[i] = d3;
@@ -1843,7 +1852,6 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             x_inL[i] = inL;
             x_inR[i] = inR;
             x_inputGain[i] = inputGain;
-            x_nominalMs[i] = nominalMs;
             x_outputGain[i] = outputGain;
             x_power[i] = power;
             x_reproAgeNoise[i] = reproAgeNoise;
@@ -1856,8 +1864,6 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             x_recordEnvelopeNow[i] = ch.recordEnvelope;
         }
         {
-            constexpr float kInputStageDrive = 2.65f;
-            constexpr float kInputStageTrim  = 0.459f;
             Channel& ch = channels[0];
             // FET preamp front-end, saturated at 4x to keep fold-back
             // products out of the echo passband.
@@ -1871,7 +1877,6 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
         for (int i = 0; i < len; ++i)
         {
             const int n = base + i;
-            (void)n;
             const float d1 = x_d1[i];
             const float d2 = x_d2[i];
             const float d3 = x_d3[i];
@@ -1891,13 +1896,14 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             const float splice2 = x_splice2[i];
             const float splice3 = x_splice3[i];
             Channel& ch = channels[0];
-            constexpr float kInputStageDrive = 2.65f;
-            constexpr float kInputStageTrim  = 0.459f;
             // A head whose gain has decayed below kHeadIdleFloor (its smoother
             // stalls near 1e-36 with denormals flushed, it never reaches zero)
-            // is not read: its term is far under one ulp of anything it is
-            // summed with. te2_corebench pins every mode, switch and silence
-            // tail byte for byte against reading all three.
+            // is not read. Its term is below 1e-20 of the tape level, under one
+            // ulp of any head that is on and of the noise bed the output always
+            // carries in the head modes; in Reverb Only, where every head is
+            // off, the head sum is exactly 0 instead of a sub-1e-20 residue.
+            // te2_corebench pins every mode, switch and silence tail byte for
+            // byte against reading all three.
             const float h1 = std::abs(g1) < kHeadIdleFloor ? 0.0f
                            : readTape(ch.tape, d1) * splice1;
             const float h2 = std::abs(g2) < kHeadIdleFloor ? 0.0f

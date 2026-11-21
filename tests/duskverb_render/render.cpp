@@ -1124,6 +1124,12 @@ namespace
                                      keepFrom - pos, next - keepFrom);
             pos = next;
         }
+        // The latency is read once, before the first block. A plug-in that
+        // publishes or changes it later would leave this render offset.
+        if (gCompensateLatency && plugin.getLatencySamples() != latency)
+            std::cerr << "  ! --compensate-latency: reported latency changed from "
+                      << latency << " to " << plugin.getLatencySamples()
+                      << " samples during the render\n";
         return output;
     }
 

@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <vector>
 
@@ -171,6 +173,36 @@ double springOnsetSeconds(double rate)
     return -1.0;
 }
 
+// The per-sample 4x preamp chain BlockPreamp4x replaced: two zero-stuffing
+// halfband upsamplers (kA, then kB), the shaper at 4x, and the mirror
+// decimators, one host sample at a time.
+float referencePreamp4x(duskaudio::HalfbandFIR<47, 12>& upA,
+                        duskaudio::HalfbandFIR<15, 4>& upB,
+                        duskaudio::HalfbandFIR<15, 4>& downB,
+                        duskaudio::HalfbandFIR<47, 12>& downA, float x)
+{
+    using duskaudio::hbtaps::kA;
+    using duskaudio::hbtaps::kB;
+    const auto shape = [](float v) {
+        v = std::min(2.5f, std::max(-2.5f, v * 2.65f));
+        const float v2 = v * v;
+        return v * (27.0f + v2) / (27.0f + 9.0f * v2);
+    };
+    for (int p = 0; p < 2; ++p)
+    {
+        upA.push(p == 0 ? x : 0.0f);
+        const float a = 2.0f * (p == 0 ? upA.out(kA) : upA.outAfterStuffedZeroExact());
+        for (int q = 0; q < 2; ++q)
+        {
+            upB.push(q == 0 ? a : 0.0f);
+            const float b = 2.0f * (q == 0 ? upB.out(kB) : upB.outAfterStuffedZeroExact());
+            downB.push(shape(b));
+        }
+        downA.push(downB.out(kB));
+    }
+    return downA.out(kA);
+}
+
 double windowEnergy(const std::vector<float>& signal,
                     double startSeconds, double endSeconds)
 {
@@ -318,6 +350,49 @@ int main()
                 return 1;
             }
         }
+    }
+
+    // BlockPreamp4x must reproduce the per-sample halfband chain bit for bit,
+    // over uneven sub-block sizes, hot and quiet passages and signed zeros.
+    {
+        duskaudio::BlockPreamp4x block;
+        duskaudio::HalfbandFIR<47, 12> upA, downA;
+        duskaudio::HalfbandFIR<15, 4> upB, downB;
+        const auto shape = [](float v) {
+            v = std::min(2.5f, std::max(-2.5f, v * 2.65f));
+            const float v2 = v * v;
+            return v * (27.0f + v2) / (27.0f + 9.0f * v2);
+        };
+        uint32_t seed = 12345u;
+        const int sizes[] = { 1, 7, 128, 64, 3, 128, 100, 2, 128, 128, 31 };
+        std::vector<float> in, out;
+        int checked = 0;
+        for (int pass = 0; pass < 6; ++pass)
+            for (int size : sizes)
+            {
+                in.assign((size_t)size, 0.0f);
+                out.assign((size_t)size, 0.0f);
+                for (int i = 0; i < size; ++i)
+                {
+                    seed = seed * 1664525u + 1013904223u;
+                    const float r = (float)(int32_t)seed * (1.0f / 2147483648.0f);
+                    in[(size_t)i] = (pass % 3 == 0) ? 1.4f * r
+                                  : (pass % 3 == 1) ? 1.0e-3f * r
+                                  : (i % 5 == 0 ? -0.0f : 0.3f * r);
+                }
+                block.process(in.data(), out.data(), size, shape);
+                for (int i = 0; i < size; ++i)
+                {
+                    const float ref = referencePreamp4x(upA, upB, downB, downA, in[(size_t)i]);
+                    if (std::memcmp(&ref, &out[(size_t)i], sizeof(float)) != 0)
+                    {
+                        std::cerr << "BlockPreamp4x differs from the per-sample chain at "
+                                  << checked << ": " << out[(size_t)i] << " vs " << ref << '\n';
+                        return 1;
+                    }
+                    ++checked;
+                }
+            }
     }
 
     // Noise spans the captured floor (0) to 60 dB above it (1), and the hum
