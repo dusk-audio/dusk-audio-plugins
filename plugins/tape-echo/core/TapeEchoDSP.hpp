@@ -157,8 +157,10 @@ inline constexpr float kSpringEarlyHalfband[6] = {
 // falls off a cliff at exactly half that rate (5.5 kHz at 44.1 kHz, 6 kHz at
 // 48 and 96 kHz), so the resampling filters ARE the tank's top end, not a cost
 // paid to save CPU. The resampler's group delay is taken out of the outgoing
-// transit and added to the returning one, so the round trip and every arrival
-// time are unchanged.
+// transit and added to the returning one, so the arrivals and the round trip
+// stay where they were fitted (each direction is rounded to whole
+// internal-rate samples on its own; the transits were fitted with exactly
+// that rounding at 44.1 and 48 kHz).
 //
 // Each spring explicitly propagates an outgoing and returning torsional wave.
 // A fitted cascade of second-order allpasses is flat below about 1.8 kHz,
@@ -214,7 +216,8 @@ private:
         // latency does not delay the arrivals.
         void  prepare(double fs, float oneWaySeconds,
                       float dispersionScale, float reflectionAmount,
-                      float gain, double advanceSeconds);
+                      float gain, double advanceSeconds,
+                      const BiquadCoeffs& reflectionLoss);
         void  reset();
         float process(float x) noexcept;
         bool  isSilent(float floor) const noexcept;
@@ -254,7 +257,7 @@ private:
     // Every stage but the one next to the internal rate is a loose halfband
     // (it only has to keep images out of the band the last stage keeps); the
     // last stage is the steep one that, with outputCliff, sets the top end.
-    static constexpr int kMaxResampleStages = 5; // factor 32 at 352.8/384 kHz
+    static constexpr int kMaxResampleStages = 6; // factor 64 at 705.6/768 kHz
     static constexpr int kMaxResampleFactor = 1 << kMaxResampleStages;
     int resampleStages = 0;
     int resampleFactor = 1;
@@ -263,10 +266,12 @@ private:
     using FinalHalfband = IirHalfband<10>;
     std::array<EarlyHalfband, kMaxResampleStages - 1> earlyDown {
         EarlyHalfband(kSpringEarlyHalfband), EarlyHalfband(kSpringEarlyHalfband),
-        EarlyHalfband(kSpringEarlyHalfband), EarlyHalfband(kSpringEarlyHalfband) };
+        EarlyHalfband(kSpringEarlyHalfband), EarlyHalfband(kSpringEarlyHalfband),
+        EarlyHalfband(kSpringEarlyHalfband) };
     std::array<EarlyHalfband, kMaxResampleStages - 1> earlyUp {
         EarlyHalfband(kSpringEarlyHalfband), EarlyHalfband(kSpringEarlyHalfband),
-        EarlyHalfband(kSpringEarlyHalfband), EarlyHalfband(kSpringEarlyHalfband) };
+        EarlyHalfband(kSpringEarlyHalfband), EarlyHalfband(kSpringEarlyHalfband),
+        EarlyHalfband(kSpringEarlyHalfband) };
     FinalHalfband finalDown { kSpringFinalHalfband };
     FinalHalfband finalUp { kSpringFinalHalfband };
     // Decimator inputs waiting for their pair, one per stage.
@@ -786,13 +791,11 @@ private:
     float memoIntensity = std::numeric_limits<float>::quiet_NaN();
     float memoFeedbackCurve = 0.0f;
     float memoFbGain = 0.0f;
-    float memoBlendCurve = std::numeric_limits<float>::quiet_NaN();
     float memoLoopReadBlend = 0.0f;
 
     // The spring is skipped while its send and every piece of its state have
     // decayed below kSpringIdleFloor (see processBlock).
     bool springIdle = false;
-    float reverbSendTarget = 0.0f;
     void  refreshBlockRateControls();
 
     //--- per-channel state ----------------------------------------------------

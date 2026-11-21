@@ -293,7 +293,8 @@ float TapeEchoDSP::leadingHeadRatioForMode(int mode1to12) noexcept
 void SpringReverb::Spring::prepare(double fs, float oneWaySeconds,
                                    float dispersionScale,
                                    float reflectionAmount, float gain,
-                                   double advanceSeconds)
+                                   double advanceSeconds,
+                                   const BiquadCoeffs& reflectionLoss)
 {
     const int outgoingSamples = std::max(
         16, (int)std::lround(((double)oneWaySeconds - advanceSeconds) * fs));
@@ -430,8 +431,8 @@ void SpringReverb::Spring::prepare(double fs, float oneWaySeconds,
     // that is +0.09 / +0.38 / +0.59 / +0.90 dB more loss per trip at 1 / 2.5 /
     // 3.15 / 4 kHz and LESS at 5 kHz -- the shape of a single first-order
     // corner near 6.5 kHz, which a second-order skirt cannot give.
-    reflectionLowPass.setCoeffs(
-        fittedFirstOrderLowPass(fs, kReflectionLossCornerHz));
+    // (fitted once per prepare in SpringReverb::prepare, shared by all three)
+    reflectionLowPass.setCoeffs(reflectionLoss);
     reset();
 }
 
@@ -574,6 +575,8 @@ void SpringReverb::prepare(double sampleRate, float detune)
     // same decay for its own round trip, |R| = 10^(-3 T_rt / T60).
     constexpr float kSpringOneWaySeconds[3] = { 0.022958f, 0.025836f, 0.028208f };
     constexpr float kSpringDispersionScale[3] = { 0.993f, 1.000f, 1.007f };
+    const BiquadCoeffs reflectionLoss =
+        fittedFirstOrderLowPass(internalRate, kReflectionLossCornerHz);
     for (int k = 0; k < 3; ++k)
     {
         const double roundTrip = 2.0 * (double)kSpringOneWaySeconds[k];
@@ -582,7 +585,8 @@ void SpringReverb::prepare(double sampleRate, float detune)
         springs[(size_t)k].prepare(internalRate,
                                    kSpringOneWaySeconds[k] * detune,
                                    kSpringDispersionScale[k],
-                                   reflectionAmount, 1.30f, advanceSeconds);
+                                   reflectionAmount, 1.30f, advanceSeconds,
+                                   reflectionLoss);
     }
     dcBlock.setSampleRate(internalRate, kDcBlockerCutoffHz);
     inputHP.setCutoff(140.0f, sampleRate);
@@ -841,7 +845,11 @@ float SpringReverb::process(float in) noexcept
     if (ready)
     {
         // Interpolate by two per stage, lowest rate first.
-        std::array<float, kMaxResampleFactor> a {}, b {};
+        // Ping-pong over the live entries only (2^stages of them).
+        float bufferA[kMaxResampleFactor];
+        float bufferB[kMaxResampleFactor];
+        float* a = bufferA;
+        float* b = bufferB;
         a[0] = processInternal(v);
         int count = 1;
         for (int s = last; s >= 0; --s)
@@ -849,16 +857,14 @@ float SpringReverb::process(float in) noexcept
             for (int i = 0; i < count; ++i)
             {
                 if (s == last)
-                    finalUp.up(a[(size_t)i], b[(size_t)(2 * i)],
-                               b[(size_t)(2 * i + 1)]);
+                    finalUp.up(a[i], b[2 * i], b[2 * i + 1]);
                 else
-                    earlyUp[(size_t)s].up(a[(size_t)i], b[(size_t)(2 * i)],
-                                          b[(size_t)(2 * i + 1)]);
+                    earlyUp[(size_t)s].up(a[i], b[2 * i], b[2 * i + 1]);
             }
             count *= 2;
-            a = b;
+            std::swap(a, b);
         }
-        outputFrame = a;
+        std::copy(a, a + count, outputFrame.begin());
     }
     resamplePhase = (resamplePhase + 1) & (resampleFactor - 1);
     return out;
@@ -1075,7 +1081,6 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     headGain[2].snap(m.h3);
     loopHeadNormSmoother.snap(loopHeadNormForMode(m));
     reverbSendSmoother.snap(m.reverb);
-    reverbSendTarget = m.reverb;
     echoLevelSmoother.snap(pEchoLevel.load(std::memory_order_relaxed));
     reverbLevelSmoother.snap(pReverbLevel.load(std::memory_order_relaxed));
     dryLevelSmoother.snap(pDryLevel.load(std::memory_order_relaxed));
@@ -1093,7 +1098,6 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     memoAge = std::numeric_limits<float>::quiet_NaN();
     memoOutputVolume = std::numeric_limits<float>::quiet_NaN();
     memoIntensity = std::numeric_limits<float>::quiet_NaN();
-    memoBlendCurve = std::numeric_limits<float>::quiet_NaN();
     lastPlaybackCutoff = -1.0f;
     lastAntiAliasCutoff = -1.0f;
     lastAgeContourDb = 999.0f;
@@ -1186,7 +1190,6 @@ void TapeEchoDSP::refreshBlockRateControls()
     headGain[1].setTarget(m.h2);
     headGain[2].setTarget(m.h3);
     reverbSendSmoother.setTarget(m.reverb);
-    reverbSendTarget = m.reverb;
     {
         // MULTI-HEAD LOOP-GAIN NORMALIZATION. One table cannot serve two sums.
         //
@@ -1427,11 +1430,13 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
     // reaches the mix only through revLvl, which carries that same send, so
     // its contribution is already below 1e-40 and flushes to zero; and the
     // tank is reset on entry, so when a spring mode returns it starts from
-    // the zero its decayed state was indistinguishable from. Heads-only modes
-    // 1-4 have no spring send at all, so there the tank costs nothing once its
-    // last tail has died away. te2_corebench's auto_spring_idle_and_back pins
-    // the result byte for byte against processing it all.
-    if (reverbSendTarget != 0.0f
+    // the zero its decayed state was indistinguishable from to within 1e-20.
+    // Heads-only modes 1-4 have no spring send at all, so there the tank costs
+    // nothing once its last tail has died away. Not exact in principle: the
+    // stalled send still feeds a never-skipped tank a ~1e-36 residue. In
+    // practice te2_corebench's idle-and-back scenarios (block 256 and 441)
+    // are byte-identical to a build that never skips.
+    if (reverbSendSmoother.targetValue() != 0.0f
         || std::abs(reverbSendSmoother.value()) >= kSpringIdleFloor)
         springIdle = false;
     else if (!springIdle && spring.isSilent(kSpringIdleFloor))
@@ -1483,6 +1488,7 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
     float x_echoWet[kSubBlock];
     float x_rev[kSubBlock];
     float x_recordEnvelopeNow[kSubBlock];
+    float x_loopReadBlend[kSubBlock];
     float x_preIn[kSubBlock];
     float x_preOut[kSubBlock];
     float x_postDriveGain[kSubBlock];
@@ -1620,7 +1626,9 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                 memoIntensity = intensity;
                 memoFeedbackCurve = feedbackKneeControl(intensity);
                 memoFbGain = feedbackGainFromControl(memoFeedbackCurve);
+                memoLoopReadBlend = feedbackReadLoopBlend(memoFeedbackCurve);
             }
+            x_loopReadBlend[i] = memoLoopReadBlend;
             const float feedbackCurve = memoFeedbackCurve;
             const float fbGain = memoFbGain;
             const float revSend   = reverbSendSmoother.next();
@@ -1913,12 +1921,7 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             const float headSum = (h1 * g1 + h2 * g2 + h3 * g3) * wobble;
             const float amplifiedHeadSum =
                 feedbackReadAmplifier(headSum, feedbackCurve);
-            if (feedbackCurve != memoBlendCurve)
-            {
-                memoBlendCurve = feedbackCurve;
-                memoLoopReadBlend = feedbackReadLoopBlend(feedbackCurve);
-            }
-            const float loopReadBlend = memoLoopReadBlend;
+            const float loopReadBlend = x_loopReadBlend[i];
             // Multi-head loop-gain correction, loop path only. Advanced once per
             // sample alongside headGain above so the two track each other through a
             // mode change. See refreshBlockRateControls() for the derivation.
