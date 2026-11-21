@@ -8,12 +8,15 @@ opmz-parity/REVIEW.md, "Second decay and key rate scaling"):
    did: the render is bit-identical to one that never sets Decay 2, and so is
    one a hair under the top (95 s, past the 92.9 s hold threshold).
 
-2. DECAY 2 SLOPE. From the sustain level the operator falls in a straight line
+2. DECAY 2 SLOPE, AND THE LONG GRID. From the sustain level the operator falls in a straight line
    in dB at 60 dB per Decay 2 time, the time snapped to the envelope's grid
    (48 steps from 1 ms to 10 s, continued to 86.3 s). On the DX the second
    decay runs on the first decay's rate table; Prism's Decay already reads as
    60 dB per its time, so the two agree by construction. Checked at 48 kHz and
    at 192 kHz (the 4x internal rate): the slope must not depend on the rate.
+   Decay and Release run on the same long grid (the hardware's slowest first
+   decay takes about 80 s for 60 dB, its slowest release about 40 s): a 40 s
+   Decay and a 30 s Release fall at 60 dB per their grid time.
 
 3. RATE SCALE AGAINST THE HARDWARE. The decay's speed on C1..C7 relative to C1,
    in the chip's rate steps (4 steps double the speed), against what OPMZ
@@ -95,6 +98,25 @@ for sr_hz in (48000, 192000):
         err = abs(got / want - 1.0)
         check(err <= 0.02, f"{sr_hz:6d} Hz Decay 2 {d2:4.1f} s (grid {grid(d2):.3f} s): "
                            f"{got:8.2f} dB/s, want {want:8.2f} ({err * 100:.2f} %, tol 2 %)")
+
+# --- 2b. Long Decay and Release -------------------------------------------------
+# The hardware's slowest first decay falls 60 dB in about 80 s and its slowest
+# release in about 40 s; Prism's Decay and Release run on the long grid to 86.3 s.
+print("Long Decay and Release (the grid past 10 s):")
+for stage, secs, params in (("Decay", 10.0, dict(op1A=0.001, op1D=40.0, op1S=0.0)),
+                            ("Release", 10.0, dict(op1A=0.001, op1D=10.0, op1S=1.0, op1R=30.0, release=0.2))):
+    t_set = params.get("op1R", params["op1D"])
+    sr, x = render(7, 60, secs, f"rate_long_{stage}", **params)
+    t, e = env_db(x, sr, 60)
+    if stage == "Release":
+        keep = t >= 0.21
+        t, e = t[keep], e[keep]
+    top = float(np.median(e[:3]))
+    got = slope(t, e, top - 2.0, top - 12.0)
+    want = -60.0 / grid(t_set)
+    err = abs(got / want - 1.0)
+    check(err <= 0.02, f"{stage} {t_set:.0f} s (grid {grid(t_set):.2f} s): {got:7.3f} dB/s, want {want:7.3f} "
+                       f"({err * 100:.2f} %, tol 2 %)")
 
 # --- 3. Rate Scale against OPMZ ------------------------------------------------
 print("Rate Scale: decay speed relative to C1, in chip rate steps, Prism vs OPMZ:")

@@ -238,9 +238,9 @@ for op in (1,2,3,4):
     add(f"Op{op}Vel",f"op{op}Vel",f"Op {op} Vel Sens",0,1,0,L)
     add(f"Op{op}KeyScale",f"op{op}KeyScale",f"Op {op} Key Scale",-1,1,0,L)
     add(f"Op{op}A",f"op{op}A",f"Op {op} Attack",0.001,10,atk48(0.005),LOG)
-    add(f"Op{op}D",f"op{op}D",f"Op {op} Decay",0.001,10,dec48(0.4, 0.7),LOG)
+    add(f"Op{op}D",f"op{op}D",f"Op {op} Decay",0.001,100,dec48(0.4, 0.7),LOG)
     add(f"Op{op}S",f"op{op}S",f"Op {op} Sustain",0,1,sus48(0.7),L)
-    add(f"Op{op}R",f"op{op}R",f"Op {op} Release",0.001,10,0.4,LOG)
+    add(f"Op{op}R",f"op{op}R",f"Op {op} Release",0.001,100,0.4,LOG)
 # --- Acid ---
 add("AcidAccentAmt","acidAccentAmt","Acid Accent",0,1,0.7,L)
 add("AcidSlideTime","acidSlideTime","Acid Slide",10,200,60,LOG)
@@ -446,7 +446,7 @@ PRESETS = [
  # Glass Keys: dual-stack tine e-piano (algo 4). Stack A = body (op2 1:1 -> op1
  # carrier); Stack B = tine (op4 ratio 14 fast-decay -> op3 carrier), keyScale
  # rolls the tine off up the keyboard. Percussive amp with a little sustain.
- ("Glass Keys", {"masterVol":4.8,"mode":4,"prismAlgo":4,"prismFB":0,
+ ("Glass Keys", {"masterVol":5.0,"mode":4,"prismAlgo":4,"prismFB":0,
    "op1Ratio":1,"op1Level":from48(1.0),"op1A":0.001,"op1D":dec48(2.0, 0.4),"op1S":sus48(0.4),"op1R":0.4,
    "op2Ratio":1,"op2Level":mod48(0.45),"op2A":0.001,"op2D":dec48(1.2, 0.2),"op2S":sus48(0.2),"op2R":0.3,
    "op3Ratio":1,"op3Level":from48(0.85),"op3A":0.001,"op3D":dec48(1.5, 0.25),"op3S":sus48(0.25),"op3R":0.4,
@@ -540,7 +540,7 @@ PRESETS = [
    "reverbOn":1,"reverbSize":0.6,"reverbDecay":6.0,"reverbMix":0.35,"vintage":0.3}),
  # Glass Cathedral: Prism dual-stack pad — mellow FM, long amp swell, chorus +
  # big reverb for a glassy cathedral wash.
- ("Glass Cathedral", {"masterVol":1.5,"mode":4,"prismAlgo":4,"prismFB":0,
+ ("Glass Cathedral", {"masterVol":1.4,"mode":4,"prismAlgo":4,"prismFB":0,
    "op1Ratio":1,"op1Level":from48(0.9),"op1A":atk48(0.8),"op1D":dec48(2.0, 0.7),"op1S":sus48(0.7),"op1R":2.5,
    "op2Ratio":2,"op2Level":mod48(0.35),"op2A":atk48(1.0),"op2D":dec48(2.0, 0.6),"op2S":sus48(0.6),"op2R":2.5,
    "op3Ratio":1,"op3Level":from48(0.7),"op3A":atk48(0.8),"op3D":dec48(2.0, 0.7),"op3S":sus48(0.7),"op3R":2.5,
@@ -617,7 +617,7 @@ PRESETS = [
    "pmOscBFilt":0.62500006,"modOsc3Filter":0.0749998987}),
  # Prism Talking Keys: FM keys through a resonant, envelope-swept filter with
  # key-tracked cutoff; the mod wheel brings in LFO 1 vibrato.
- ("Prism Talking Keys", {"mode":4,"masterVol":17.3,"stereoWidth":1,"oversampling":2,
+ ("Prism Talking Keys", {"mode":4,"masterVol":17.2,"stereoWidth":1,"oversampling":2,
    "analogAmt":1,"osc1Level":1,"osc2Detune":0,"osc2Level":1,
    "filterCutoff":176.210617,"filterRes":0.734999955,"filterEnvAmt":1,
    "ampA":0.0796214044,"ampD":0.0626789629,"ampS":0.555000186,"ampR":0.201403946,"ampCurve":2,

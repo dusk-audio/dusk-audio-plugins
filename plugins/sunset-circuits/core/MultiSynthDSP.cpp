@@ -578,9 +578,10 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
     }
     if (!haveLastSnap || activeMode != previousMode)
     {
-        // Together with the 2.4 Hz voice pole, this reproduces the two stages
-        // of the measured closed-pulse decay. Other modes keep their 20 Hz pole.
-        const float corner = activeMode == SynthMode::Oracle ? 2.0f : 20.0f;
+        // Oracle: together with the 2.4 Hz voice pole, this reproduces the two
+        // stages of the measured closed-pulse decay. Prism: its hardware is flat
+        // into the bass (see Voice.hpp, the Prism HP). Other modes keep 20 Hz.
+        const float corner = (activeMode == SynthMode::Oracle || activeMode == SynthMode::Prism) ? 2.0f : 20.0f;
         dcBlockL.setSampleRate(hostRate, corner);
         dcBlockR.setSampleRate(hostRate, corner);
     }

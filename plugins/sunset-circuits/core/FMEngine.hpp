@@ -72,9 +72,9 @@ public:
                        float decay2 = kDecay2Hold, float rateMul = 1.0f) noexcept
     {
         a = quantizeTime(attack);
-        d = quantizeTime(decay);
+        d = quantizeTime(decay, kLongTimeSteps);
         d2Hold = !(decay2 < kDecay2HoldFrom);   // NaN holds
-        d2 = d2Hold ? 0.0f : quantizeTime(decay2, kDecay2Steps);
+        d2 = d2Hold ? 0.0f : quantizeTime(decay2, kLongTimeSteps);
         m = rateMul > 0.0f ? rateMul : 1.0f;
         // Sustain follows the DX27 / DX100's sustain level: 3.01 dB per 1/15 of
         // the range (measured: steps 14, 8 and 1 sit 3.01, 21.10 and 42.54 dB
@@ -84,7 +84,7 @@ public:
         // step), so a stepped knob could not carry a sound over exactly.
         const float sc = clampf(sustain, 0.0f, 1.0f);
         s = sc > 0.0f ? std::exp2((sc - 1.0f) * 7.49925f) : 0.0f;
-        r = quantizeTime(release);
+        r = quantizeTime(release, kLongTimeSteps);
         updateCoefficients();
     }
 
@@ -167,10 +167,13 @@ public:
         if (nm != m) { m = nm; updateCoefficients(); }
     }
 
-    // The time grid: 48 logarithmic steps from 1 ms to 10 s (A, D, R); Decay 2
-    // continues the same grid to step 58, 86.3 s.
+    // The time grid: logarithmic steps of 10^(4/47) from 1 ms. Attack stops at
+    // step 47 (10 s; the DX27 / DX100's slowest attack reaches full level in
+    // about 9 s). Decay, Decay 2 and Release continue to step 58, 86.3 s: the
+    // hardware's slowest first and second decays fall 60 dB in about 80 s and
+    // its slowest release in about 40 s (measured on chipsynth OPMZ).
     static constexpr int kTimeSteps = 47;
-    static constexpr int kDecay2Steps = 58;
+    static constexpr int kLongTimeSteps = 58;
 
 private:
     // The attack curve: attackW = e^(-4.3 pos) runs from 1 down to e^(-4.3), and
@@ -187,8 +190,8 @@ private:
     }
 
     // The upper clamp sits far above the grid's top so the step clamp decides
-    // the longest time; for A, D and R (top step 47, 10 s) that is bit-identical
-    // to the earlier clamp at 10 s.
+    // the longest time; every time up to 10 s quantizes exactly as it did when
+    // all four stages clamped at 10 s.
     static float quantizeTime(float seconds, int maxStep = kTimeSteps) noexcept
     {
         const float t = clampf(seconds, 0.001f, 1000.0f);

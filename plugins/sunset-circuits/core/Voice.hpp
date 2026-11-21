@@ -684,9 +684,12 @@ public:
         // Cosmos's resonant DCO filter calibration.
         const FilterMode filtMode = (params.mode == SynthMode::Prism)
             ? FilterMode::Prism : (FilterMode)clampi((int)params.mode, 0, 3);
-        // Prism has no dedicated HP
-        // control, so feed a neutral 20 Hz HP (U3). Modes 1-3 ignore the HP arg.
-        const float hpCut = (params.mode == SynthMode::Prism) ? 20.0f : params.filterHPCutoff;
+        // Prism has no dedicated HP control. It feeds the HP its 10 Hz floor:
+        // the DX27 / DX100 it is modeled on is flat into the bass (measured on
+        // chipsynth OPMZ: -0.11 dB at 65 Hz against middle C), where the earlier
+        // 20 Hz, with the 20 Hz output DC blocker, took 0.76 dB off C2. Modes 1-3
+        // ignore the HP arg.
+        const float hpCut = (params.mode == SynthMode::Prism) ? 10.0f : params.filterHPCutoff;
         filterL.setModularModel(params.modularFilterModel);
         filterL.setMode(filtMode); filterL.setParameters(envCutoff, envRes, hpCut);
 
