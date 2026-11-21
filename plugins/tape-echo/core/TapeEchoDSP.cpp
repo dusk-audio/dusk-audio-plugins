@@ -628,6 +628,9 @@ void SpringReverb::prepare(double sampleRate, float detune)
     // 2-5 dB light in this region on uncompensated captures.
     outputHP.setCoeffs(Biquad::highPass(
         fi, safeBiquadFrequency(fi, 360.0f), 0.70710678f));
+    // Owner-approved exception (2026-11-21, #401) to the project rule that
+    // every IIR filter oversamples: this tank runs at a reduced internal rate
+    // on purpose (the reference's own), so its filters run there too.
     // The voicing that sits up the internal band uses the shared
     // matched-magnitude designs (DuskFilters, Vicanek 2016): a bilinear
     // design at an 11-12 kHz rate squeezes its response towards Nyquist (it
