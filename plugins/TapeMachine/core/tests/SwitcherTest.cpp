@@ -10,10 +10,21 @@
 //       first block, mixed at equal gains along a raised cosine;
 //       after it, that new path alone, to the bit.
 //     On a chord the level never falls under the quieter nor rises over the louder of the two
-//     settings by more than a fraction of a dB, and nothing clicks.
-//   - A preset that arrives over two or three blocks is one fade, to the whole preset.
+//     settings by more than a fraction of a dB, and nothing clicks. No sample in a fade is
+//     other than a finite number.
+//   - A preset that arrives over two to five blocks is one fade, to the whole preset, also
+//     when a later part does nothing but change the sign of two settings.
 //   - A second switch during a fade, of the deck or a drop of Input, waits for its end and is
 //     the next fade, and the incoming path takes nothing of it. reset() during a fade ends it.
+//   - What a drop of Input is counted from: the Input a kept path took (a switch taken back is
+//     no second fade), not one it did not take (a linked path kept through a rise that is taken
+//     back starts no fade), and, when the drop is itself the switch waited for, the Input before
+//     it (unlinked to linked with Input 20 dB down is one fade).
+//   - The latency reported while a path is kept on its settings is what that path does: in a
+//     fade with the Thru path and a second switch asked for.
+//   - Bypass or the Thru path switched off together with the deck: no fade, one path to the bit,
+//     the latency a single path reports. In a fade, switched on and then off together with the
+//     deck: the incoming path takes it, no second fade, the latency a single path reports.
 //   - Input, Output and the link are never held back from a path that is unlinked, so a
 //     preset whose level settings arrive blocks apart is off for as long as a single path
 //     would be, not for the length of a wait and a fade: held against a single path fed the
@@ -39,6 +50,9 @@
 #include <new>
 #include <string>
 #include <vector>
+#if defined (_WIN32)
+ #include <malloc.h>
+#endif
 
 namespace
 {
@@ -56,18 +70,38 @@ void operator delete[] (void* p) noexcept { std::free (p); }
 void operator delete (void* p, std::size_t) noexcept { std::free (p); }
 void operator delete[] (void* p, std::size_t) noexcept { std::free (p); }
 // The over-aligned forms count as well. (An allocation that went to malloc directly would not be seen.)
+// The Windows C runtime has no aligned_alloc: its own pair there, each freed by its own.
+namespace
+{
+void* allocateAligned (std::size_t alignment, std::size_t bytes) noexcept
+{
+   #if defined (_WIN32)
+    return _aligned_malloc (bytes, alignment);
+   #else
+    return std::aligned_alloc (alignment, bytes);
+   #endif
+}
+void freeAligned (void* p) noexcept
+{
+   #if defined (_WIN32)
+    _aligned_free (p);
+   #else
+    std::free (p);
+   #endif
+}
+}
 void* operator new (std::size_t size, std::align_val_t alignment)
 {
     allocations.fetch_add (1, std::memory_order_relaxed);
     const std::size_t a = static_cast<std::size_t> (alignment);
-    if (void* p = std::aligned_alloc (a, (std::max<std::size_t> (size, 1) + a - 1) / a * a)) return p;
+    if (void* p = allocateAligned (a, (std::max<std::size_t> (size, 1) + a - 1) / a * a)) return p;
     throw std::bad_alloc();
 }
 void* operator new[] (std::size_t size, std::align_val_t alignment) { return operator new (size, alignment); }
-void operator delete (void* p, std::align_val_t) noexcept { std::free (p); }
-void operator delete[] (void* p, std::align_val_t) noexcept { std::free (p); }
-void operator delete (void* p, std::size_t, std::align_val_t) noexcept { std::free (p); }
-void operator delete[] (void* p, std::size_t, std::align_val_t) noexcept { std::free (p); }
+void operator delete (void* p, std::align_val_t) noexcept { freeAligned (p); }
+void operator delete[] (void* p, std::align_val_t) noexcept { freeAligned (p); }
+void operator delete (void* p, std::size_t, std::align_val_t) noexcept { freeAligned (p); }
+void operator delete[] (void* p, std::size_t, std::align_val_t) noexcept { freeAligned (p); }
 
 namespace
 {
@@ -274,14 +308,18 @@ Switched checkSwitch (const char* name, const Setting& before, const std::vector
     hold (what, differing (s.ofSwitcher, s.ofNew, s.fadeEnd, total) == 0,
           std::to_string (differing (s.ofSwitcher, s.ofNew, s.fadeEnd, total)) + " samples after the fade differ from a path started afresh at its first block (must be 0)");
     double worst = 0.0, moved = 0.0;
+    std::size_t notNumbers = 0;     // a distance that is not a number would not show in `worst`
     for (std::size_t i = s.fadeFirst; i < s.fadeEnd; ++i)
     {
         const float t = static_cast<float> (i - s.fadeFirst) / static_cast<float> (fadeLen);
         const float g = 0.5f - 0.5f * std::cos (3.14159265358979f * t);
-        worst = std::max (worst, std::abs (static_cast<double> (s.ofSwitcher.left[i]) - (s.ofOld.left[i] + g * (s.ofNew.left[i] - s.ofOld.left[i]))));
-        worst = std::max (worst, std::abs (static_cast<double> (s.ofSwitcher.right[i]) - (s.ofOld.right[i] + g * (s.ofNew.right[i] - s.ofOld.right[i]))));
+        const double offLeft  = std::abs (static_cast<double> (s.ofSwitcher.left[i]) - (s.ofOld.left[i] + g * (s.ofNew.left[i] - s.ofOld.left[i])));
+        const double offRight = std::abs (static_cast<double> (s.ofSwitcher.right[i]) - (s.ofOld.right[i] + g * (s.ofNew.right[i] - s.ofOld.right[i])));
+        notNumbers += ! std::isfinite (offLeft) || ! std::isfinite (offRight);
+        worst = std::max (worst, std::max (offLeft, offRight));
         moved = std::max (moved, std::abs (static_cast<double> (s.ofNew.left[i]) - s.ofOld.left[i]));
     }
+    hold (what, notNumbers == 0, std::to_string (notNumbers) + " samples in the fade are not finite, in the switcher or in a path (must be 0)");
     holdAtMost (what, "largest distance, in the fade, from the two paths mixed at equal gains along a raised cosine", worst, 1.0e-6);
     holdAtLeast (what, "largest distance between the two paths in the fade (they must differ, or the mix holds nothing)", moved, 1.0e-3);
 
@@ -376,6 +414,220 @@ void checkKnobsInAFade()
           std::to_string (differing (out, ofNew, (at + 1) * n + fadeLen, total)) + " samples after the fade differ from the incoming path given the same knob moves (must be 0)");
 }
 
+// A level given to the incoming path while a second switch is asked for is the level that
+// path is on from then. Unlinked, ten blocks into a fade: another speed, and Input 20 dB
+// lower. A block later the speed is taken back and Gain Link turned on. Nothing is left to
+// switch then: the incoming path has that Input already, and the link goes to it as any
+// setting does. (Counted from the Input the fade started on, it would be a drop of 20 dB
+// with the link on, and a second fade.)
+void checkSwitchTakenBack()
+{
+    const int block = 64;
+    const std::size_t n = 64, at = kSwitchBlockAt, second = at + 10, blocks = at + 750, total = blocks * n;
+    const std::size_t fadeLen = static_cast<std::size_t> (TapeMachineSwitcher::kFadeSec * static_cast<float> (kRate));
+    const char* what = "unlinked, a second switch with Input 20 dB down in a fade, taken back a block later with the link on";
+    TapeMachineSwitcher switcher;
+    hotUnlinked (switcher);
+    switcher.prepare (kRate, block);
+    Render out (total), ofNew (total);
+    run (switcher, out, block, 0, blocks, [&] (std::size_t b) {
+        if (b == at) switcher.setCalibration (3);
+        if (b == second) { switcher.setTapeSpeed (2); switcher.setInputGainDb (-9.1f); }
+        if (b == second + 1) { switcher.setTapeSpeed (1); switcher.setAutoComp (true); }
+    });
+    TapeMachineDSP fresh;       // the fade's incoming path: Input in the one block, the link in the next
+    hotUnlinked (fresh); fresh.setCalibration (3);
+    fresh.prepare (kRate, block);
+    run (fresh, ofNew, block, at + 1, blocks, [&] (std::size_t b) {
+        if (b == second) fresh.setInputGainDb (-9.1f);
+        if (b == second + 1) fresh.setAutoComp (true);
+    });
+    hold (what, switcher.fadesStarted() == 1, std::to_string (switcher.fadesStarted()) + " fades started (must be 1)");
+    hold (what, differing (out, ofNew, (at + 1) * n + fadeLen, total) == 0,
+          std::to_string (differing (out, ofNew, (at + 1) * n + fadeLen, total)) + " samples after the fade differ from the incoming path given that Input and then the link (must be 0)");
+}
+
+// --- what later drops of Input are counted from -----------------------------------------------
+// From an unlinked setting to the link on with Input 20 dB lower, nothing else changed, in one
+// block: the drop is the switch. The kept path takes the Input with the link (its own clean
+// start) and the switch is still there to wait for: one fade, to a path started afresh on the
+// new settings at the fade's first block. (Counted from the Input the kept path took, there
+// would be no switch left, and no fade.)
+void checkUnlinkedToLinkedDrop()
+{
+    const int block = 64;
+    const std::size_t n = 64, at = kSwitchBlockAt, blocks = at + 750, total = blocks * n;
+    const std::size_t fadeLen = static_cast<std::size_t> (TapeMachineSwitcher::kFadeSec * static_cast<float> (kRate));
+    const char* what = "unlinked to the link on with Input 20 dB down, in one block";
+    TapeMachineSwitcher switcher;
+    hotUnlinked (switcher);
+    switcher.prepare (kRate, block);
+    Render out (total), ofNew (total);
+    run (switcher, out, block, 0, blocks, [&] (std::size_t b) { if (b == at) { switcher.setAutoComp (true); switcher.setInputGainDb (-9.1f); } });
+    TapeMachineDSP fresh;       // the fade's incoming path, started a block after the change
+    hotUnlinked (fresh); fresh.setAutoComp (true); fresh.setInputGainDb (-9.1f);
+    fresh.prepare (kRate, block);
+    run (fresh, ofNew, block, at + 1, blocks);
+    hold (what, switcher.fadesStarted() == 1, std::to_string (switcher.fadesStarted()) + " fades started (must be 1)");
+    hold (what, differing (out, ofNew, (at + 1) * n + fadeLen, total) == 0,
+          std::to_string (differing (out, ofNew, (at + 1) * n + fadeLen, total)) + " samples after the fade differ from a path started afresh at its first block (must be 0)");
+}
+
+// A linked path kept for a switch takes no Input, so a new Input asked for meanwhile is not
+// what it is on. Linked, another speed and Input 10 dB higher in one block, both taken back in
+// the next: nothing is left to switch, no fade, and the output is that of a path that was
+// never touched. (Counted from the Input that was asked for, the way back would be a drop of
+// 10 dB with the link on, and a fade.)
+void checkLinkedRiseTakenBack()
+{
+    const int block = 64;
+    const std::size_t n = 64, at = kSwitchBlockAt, blocks = at + 750, total = blocks * n;
+    const char* what = "linked, another speed with Input 10 dB up, both taken back a block later";
+    TapeMachineSwitcher switcher;
+    swissDeck (switcher);
+    switcher.prepare (kRate, block);
+    Render out (total), ofSingle (total);
+    run (switcher, out, block, 0, blocks, [&] (std::size_t b) {
+        if (b == at) { switcher.setTapeSpeed (2); switcher.setInputGainDb (13.0f); }
+        if (b == at + 1) { switcher.setTapeSpeed (1); switcher.setInputGainDb (3.0f); }
+    });
+    TapeMachineDSP single;
+    swissDeck (single);
+    single.prepare (kRate, block);
+    run (single, ofSingle, block, 0, blocks);
+    hold (what, switcher.fadesStarted() == 0, std::to_string (switcher.fadesStarted()) + " fades started (must be 0)");
+    hold (what, differing (out, ofSingle, 0, total) == 0,
+          std::to_string (differing (out, ofSingle, 0, total)) + " samples differ from a path that was never touched (must be 0)");
+}
+
+// --- the latency that is reported while a path is kept on its settings ------------------------
+// The Thru path asked for ten blocks into a fade. Alone, it reaches the incoming path in that
+// block and no latency is reported from then on, as a single path does. Together with a
+// second switch the incoming path keeps what it has, and the output stays the two processing
+// paths', delayed, until the fade is over: the latency reported must be a path's until then.
+void checkLatencyInAFade (bool withSecondSwitch)
+{
+    const int block = 64;
+    const std::size_t n = 64, at = kSwitchBlockAt, second = at + 10, blocks = at + 300, total = blocks * n;
+    const std::size_t fadeLen = static_cast<std::size_t> (TapeMachineSwitcher::kFadeSec * static_cast<float> (kRate));
+    const std::size_t firstOver = ((at + 1) * n + fadeLen + n - 1) / n;     // the first block after the fade
+    const std::string what = std::string ("the Thru path asked for in a fade, ") + (withSecondSwitch ? "with a second switch" : "alone");
+    TapeMachineSwitcher switcher;
+    swissDeck (switcher);
+    switcher.prepare (kRate, block);
+    Render out (total), dry (total);
+    for (std::size_t i = 0; i < total; ++i) programme (i, dry.left[i], dry.right[i]);
+    int before = -1, inTheFade = -1, atItsEnd = -1, after = -1;
+    bool fadingThen = false, fadingAtItsEnd = false, fadingAfter = true;
+    run (switcher, out, block, 0, blocks, [&] (std::size_t b) {
+        if (b == at) switcher.setCalibration (3);
+        if (b == second) { before = switcher.latencySamples(); switcher.setSignalPath (3); if (withSecondSwitch) switcher.setTapeSpeed (2); }
+        if (b == second + 1) { inTheFade = switcher.latencySamples(); fadingThen = switcher.isFading(); }
+        if (b == firstOver - 1) { atItsEnd = switcher.latencySamples(); fadingAtItsEnd = switcher.isFading(); }
+        if (b == firstOver + 1) { after = switcher.latencySamples(); fadingAfter = switcher.isFading(); }
+    });
+    hold (what, before > 0 && fadingThen && fadingAtItsEnd && ! fadingAfter,
+          "a latency of " + std::to_string (before) + " samples before (must be more than 0); a fade is running in the block after and in its last block, none two blocks later");
+    hold (what, inTheFade == (withSecondSwitch ? before : 0) && atItsEnd == (withSecondSwitch ? before : 0),
+          "latency reported in the fade: " + std::to_string (inTheFade) + " after the block that asked, " + std::to_string (atItsEnd) + " in its last block (must be "
+          + (withSecondSwitch ? "the path's, " + std::to_string (before) + ": the output is still delayed)" : "0: the incoming path passes the input through)"));
+    hold (what, after == 0, "latency reported once the fade is over: " + std::to_string (after) + " (must be 0)");
+    hold (what, differing (out, dry, firstOver * n, total) == 0,
+          std::to_string (differing (out, dry, firstOver * n, total)) + " samples after the fade differ from the input (must be 0)");
+    if (withSecondSwitch)
+        hold (what, differing (out, dry, (second + 1) * n, (second + 2) * n) == n,
+              std::to_string (differing (out, dry, (second + 1) * n, (second + 2) * n)) + " of " + std::to_string (n) + " samples differ from the input in the block after it was asked for (must be all: nothing is passed through yet)");
+}
+
+// Bypass or the Thru path switched off in the same block as a switch of the deck (a preset
+// loaded on the Thru path sets the path and the deck together): nothing to morph. The path
+// takes it all and starts clean on its way back, as a single path does: the output is that
+// of one TapeMachineDSP given the same events, to the bit, with no fade, and the latency
+// reported after every block is that path's. (Kept for a fade instead, the running path would
+// go on passing the input through, and the fade would be from the dry input to the new path,
+// 62 samples later: a comb, about -20 dB at 1 kHz.)
+void checkPassthroughEndsWithASwitch (bool thru, int block)
+{
+    const std::size_t n = static_cast<std::size_t> (block), at = 19200 / n, blocks = at + 24000 / n, total = blocks * n;
+    const std::string what = std::string (thru ? "the Thru path switched off together with the machine and the speed"
+                                               : "bypass switched off together with the calibration") + ", block " + std::to_string (block);
+    const auto events = [thru, at] (TapeMachineSettings& d, std::size_t b) {
+        if (b != at) return;
+        if (thru) { d.setSignalPath (0); d.setTapeMachine (1); d.setTapeSpeed (2); }
+        else      { d.setBypass (false); d.setCalibration (3); }
+    };
+    const auto before = [thru] (TapeMachineSettings& d) { swissDeck (d); if (thru) d.setSignalPath (3); else d.setBypass (true); };
+    TapeMachineSwitcher switcher;
+    TapeMachineDSP single;
+    before (switcher); before (single);
+    switcher.prepare (kRate, block);
+    single.prepare (kRate, block);
+    Render ofSwitcher (total), ofSingle (total);
+    std::vector<int> latSwitcher, latSingle;
+    run (switcher, ofSwitcher, block, 0, blocks, [&] (std::size_t b) { latSwitcher.push_back (switcher.latencySamples()); events (switcher, b); });
+    run (single, ofSingle, block, 0, blocks, [&] (std::size_t b) { latSingle.push_back (single.latencySamples()); events (single, b); });
+    latSwitcher.push_back (switcher.latencySamples()); latSingle.push_back (single.latencySamples());
+    std::size_t latencyOff = 0;
+    for (std::size_t b = 0; b < latSingle.size(); ++b) latencyOff += latSwitcher[b] != latSingle[b];
+    hold (what, peakDb (ofSingle, at * n, total) > -60.0 && latSingle.front() == 0 && latSingle.back() > 0,
+          "the single path is passed through before, processes after, and is not silent");
+    hold (what, switcher.fadesStarted() == 0, std::to_string (switcher.fadesStarted()) + " fades started (must be 0)");
+    hold (what, differing (ofSwitcher, ofSingle, 0, total) == 0,
+          std::to_string (differing (ofSwitcher, ofSingle, 0, total)) + " samples differ from one TapeMachineDSP given the same events (must be 0)");
+    hold (what, latencyOff == 0, std::to_string (latencyOff) + " blocks after which the latency reported is not the single path's (must be 0)");
+}
+
+// The same in a fade: bypass or the Thru path switched on ten blocks into a fade to another
+// calibration (it reaches the incoming path), and off again five blocks later together with
+// another speed or machine. The incoming path is passing the input through then, and takes
+// that switch as a single path would; nothing is kept for a second fade. One fade; after it
+// the output is that of a path started at the fade's first block and given the same events,
+// to the bit; the latency reported after every block is that of a single path given them.
+// (Kept instead, the incoming path would go on passing the input through for the rest of
+// the fade, against the delayed outgoing path, with no latency reported.)
+void checkPassthroughEndsInAFade (bool thru)
+{
+    const int block = 64;
+    const std::size_t n = 64, at = kSwitchBlockAt, on = at + 10, off = at + 15, blocks = at + 300, total = blocks * n;
+    const std::size_t fadeLen = static_cast<std::size_t> (TapeMachineSwitcher::kFadeSec * static_cast<float> (kRate));
+    const std::string what = std::string (thru ? "the Thru path on in a fade, off five blocks later with the machine"
+                                               : "bypass on in a fade, off five blocks later with the speed");
+    const auto events = [=] (TapeMachineSettings& d, std::size_t b) {
+        if (b == on)  { if (thru) d.setSignalPath (3); else d.setBypass (true); }
+        if (b == off) { if (thru) { d.setSignalPath (0); d.setTapeMachine (1); } else { d.setBypass (false); d.setTapeSpeed (2); } }
+    };
+    TapeMachineSwitcher switcher;
+    swissDeck (switcher);
+    switcher.prepare (kRate, block);
+    TapeMachineDSP single;      // for the latency: the same events, one path
+    swissDeck (single);
+    single.prepare (kRate, block);
+    Render out (total), ofSingle (total), ofNew (total);
+    std::vector<int> latSwitcher, latSingle;
+    run (switcher, out, block, 0, blocks, [&] (std::size_t b) {
+        latSwitcher.push_back (switcher.latencySamples());
+        if (b == at) switcher.setCalibration (3);
+        events (switcher, b);
+    });
+    run (single, ofSingle, block, 0, blocks, [&] (std::size_t b) {
+        latSingle.push_back (single.latencySamples());
+        if (b == at) single.setCalibration (3);
+        events (single, b);
+    });
+    latSwitcher.push_back (switcher.latencySamples()); latSingle.push_back (single.latencySamples());
+    TapeMachineDSP fresh;       // the fade's incoming path, as it was started, given the events
+    swissDeck (fresh); fresh.setCalibration (3);
+    fresh.prepare (kRate, block);
+    run (fresh, ofNew, block, at + 1, blocks, [&] (std::size_t b) { events (fresh, b); });
+    std::size_t latencyOff = 0;
+    for (std::size_t b = 0; b < latSingle.size(); ++b) latencyOff += latSwitcher[b] != latSingle[b];
+    const std::size_t fadeEnd = (at + 1) * n + fadeLen;
+    hold (what, switcher.fadesStarted() == 1, std::to_string (switcher.fadesStarted()) + " fades started (must be 1)");
+    hold (what, differing (out, ofNew, fadeEnd, total) == 0,
+          std::to_string (differing (out, ofNew, fadeEnd, total)) + " samples after the fade differ from the incoming path given the same events (must be 0)");
+    hold (what, latencyOff == 0, std::to_string (latencyOff) + " blocks after which the latency reported is not the single path's (must be 0)");
+}
+
 // After a preset that used up the waits, a switch that arrives during its fade waits one
 // block after the fade's end, like any other: the count starts over with each fade.
 void checkWaitsStartOver()
@@ -418,6 +670,12 @@ void checkWaitsStartOver()
 // two-part deliveries), and from a hot setting to a quiet one the level stays low for some
 // milliseconds longer: up to 7.5 dB under the single path's lowest 10 ms. The bounds are
 // there to catch what keeping a path on half a pair costs: 15 to 18 dB for 16 to 57 ms.
+// Known to go further, and not among the deliveries here: a switch of the deck with Input
+// 20 dB down, and Input back one to four blocks later (hot, block 16 or 64) reads up to
+// 9.9 dB under the single path's lowest 10 ms. The single path snaps that second Input
+// inside the settling window its own clean start for the deck opened; the kept path, which
+// is not given the deck, takes it through its gain smoother, and the output is the kept
+// path's for most of that time. Removing it needs a change to the path, not to the switcher.
 struct Delivery
 {
     const char* name;
@@ -887,6 +1145,14 @@ int main (int argc, char** argv)
         if (b == 750) d.setTapeSpeed (2);
         if (b == 900) d.setSignalPath (0);
     });
+    // Into bypass or the Thru path in the same block as a switch of the deck: the path takes it
+    // all and passes the input through, as a single path does.
+    checkOnePath ("bypass and Thru, each switched on together with the deck", swissDeck, [] (TapeMachineSettings& d, std::size_t b) {
+        if (b == 300) { d.setBypass (true); d.setCalibration (3); }
+        if (b == 500) d.setBypass (false);
+        if (b == 700) { d.setSignalPath (3); d.setTapeMachine (1); }
+        if (b == 900) d.setSignalPath (0);
+    });
     checkOnePath ("the Swiss deck switched from 15 to 3.75 IPS (the same speed there)", swissDeck, [] (TapeMachineSettings& d, std::size_t b) {
         if (b == 500) d.setTapeSpeed (3);
     });
@@ -916,8 +1182,24 @@ int main (int argc, char** argv)
     // new setting are not for it.
     checkSwitch ("linked to unlinked, with the calibration", hotLinked,
                  { [] (TapeMachineSettings& d) { d.setCalibration (3); d.setAutoComp (false); d.setInputGainDb (-9.1f); d.setOutputGainDb (9.1f); } }, 1);
+    // The second part changes the sign of two settings and nothing else: it is a part like any
+    // other, the fade waits for the block after it and starts on it.
+    checkSwitch ("a preset over two blocks, the second two changes of sign",
+                 [] (TapeMachineSettings& d) { swissDeck (d); d.setReproLf (3.0f); d.setReproLmf (2.0f); },
+                 { toThirty, [] (TapeMachineSettings& d) { d.setReproLf (-3.0f); d.setReproLmf (-2.0f); } }, 2);
     checkSecondSwitch();
     checkKnobsInAFade();
+    checkSwitchTakenBack();
+    checkUnlinkedToLinkedDrop();
+    checkLinkedRiseTakenBack();
+    checkLatencyInAFade (false);
+    checkLatencyInAFade (true);
+    checkPassthroughEndsWithASwitch (false, 64);
+    checkPassthroughEndsWithASwitch (false, 512);
+    checkPassthroughEndsWithASwitch (true, 64);
+    checkPassthroughEndsWithASwitch (true, 512);
+    checkPassthroughEndsInAFade (false);
+    checkPassthroughEndsInAFade (true);
     checkWaitsStartOver();
     checkUnlinked();
     checkInputDropInAFade();

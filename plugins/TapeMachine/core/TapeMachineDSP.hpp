@@ -2255,8 +2255,9 @@ private:
 // TapeMachineSettings — everything a host or a preset sets on the tape machine: the
 // parameter atomics and their setters, apart from the DSP that runs on them, so that a full
 // set of settings can be held, and handed over, without an instance to process it.
-// A setting added here goes into copySettingsFrom() and into SettingsCopyTest as well: one
-// forgotten in the copy alone turns that test red, one forgotten in both is caught by nothing.
+// A setting added here goes into eachSetting(), which the copy and the comparison both go
+// through, and into SettingsCopyTest as well: one forgotten in eachSetting() alone turns that
+// test red, one forgotten in both is caught by nothing.
 // No virtuals: the DSP derives from it and is never deleted through this type.
 //==============================================================================
 class TapeMachineSettings
@@ -2312,8 +2313,9 @@ public:
     // at: the settings whose change alone makes a path burst if its state is kept (see
     // TapeMachineDSP::BlockSettings::topologyKey, which packs one block's reading the same way).
     uint32_t topologyKey() const noexcept;
-    // Every setting as one number: has anything at all been set since the last look?
-    uint32_t everySettingPrint() const noexcept;
+    // Whether every setting has the value it has in `other`, to the bit. (Not a number made
+    // of them all: two values that change together can leave such a number as it was.)
+    bool sameSettingsAs (const TapeMachineSettings& other) const noexcept;
     float inputGainDb() const noexcept { return pInputGainDb.load (std::memory_order_relaxed); }
     float outputGainDb() const noexcept { return pOutputGainDb.load (std::memory_order_relaxed); }
     // Gain Link: the output is the inverse of Input and the stored Output is not used.
@@ -2322,6 +2324,8 @@ public:
     bool isPassthrough() const noexcept;
 
 protected:
+    template <class A, class B, class Fn>
+    static void eachSetting (A& a, B& b, Fn&& fn) noexcept;     // defined, and used, in the .cpp only
     // The Swiss deck has no 3.75 IPS and runs it at 15.
     static int effectiveSpeedIndex (int machine, int speed) noexcept;
     static uint32_t packTopology (int machine, int effectiveSpeed, int calibration) noexcept

@@ -183,8 +183,9 @@ protected:
     void run(const float** inputs, float** outputs, uint32_t frames) override
     {
         dsp.processBlock(inputs, outputs, activeChannels, (int)frames);
-        // Re-query latency each block: it changes on an oversampling-factor change AND on a
-        // bypass toggle (bypass = zero-delay passthrough -> latencySamples() returns 0).
+        // Re-query latency each block: it changes on a bypass toggle and with the Thru path
+        // (zero-delay passthrough -> latencySamples() returns 0), and while a path is kept for
+        // a morph it is what that path does. (The oversampling factor is pinned at 2x.)
         // updateLatency() only forwards to setLatency() when the value actually changes, so
         // the host re-runs PDC once per transition, never per block. DAF permits setLatency()
         // from run() (see DafPlugin.hpp setLatency docs).

@@ -7,6 +7,9 @@
 // Three settings are stored and have no effect on the output (see `stored only`); for those
 // the test holds exactly that, so that the day one of them comes alive it turns red here and
 // gets a case of its own, and it reads the copied value itself.
+// sameSettingsAs() goes through the same list of settings as the copy and is held for each
+// setting beside it: false against the settings without that one, true against a copy; and
+// it compares to the bit (a value that is not a number is the same as itself).
 //
 //   SettingsCopyTest            prints failures and a summary
 //   SettingsCopyTest --print    every case
@@ -16,6 +19,7 @@
 #include <cstdio>
 #include <cstring>
 #include <functional>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -105,6 +109,16 @@ struct Stored : TapeMachineSettings
     int   oversampling() const { return pOversampling.load (std::memory_order_relaxed); }
 };
 
+// sameSettingsAs() sees the one setting that `a` has and `without` has not, both ways round,
+// and sees none between `a` and a copy of it.
+void sameSettings (const char* name, const TapeMachineDSP& a, const TapeMachineDSP& without)
+{
+    TapeMachineSettings holder;
+    holder.copySettingsFrom (a);
+    hold (name, ! a.sameSettingsAs (without) && ! without.sameSettingsAs (a), "sameSettingsAs() is false against the settings without it");
+    hold (name, a.sameSettingsAs (holder) && holder.sameSettingsAs (a) && a.sameSettingsAs (a), "sameSettingsAs() is true against a copy, and against itself");
+}
+
 // `needs` is what the setting needs around it to be heard, where it needs something; `set`
 // is the setting itself.
 void live (const char* name, const Setup& needs, const Setup& set)
@@ -116,6 +130,7 @@ void live (const char* name, const Setup& needs, const Setup& set)
     hold (name, finiteAndNotSilent (ofA), "the render with the setting is finite and not silent");
     hold (name, ! same (ofA, ofWithout), "the setting changes the render (or this case holds nothing)");
     hold (name, same (ofA, ofCopy), "the copy renders the same bits");
+    sameSettings (name, a, without);
 }
 
 void storedOnly (const char* name, const Setup& set)
@@ -123,6 +138,7 @@ void storedOnly (const char* name, const Setup& set)
     TapeMachineDSP a, without;
     set (a);
     hold (name, same (render (a), render (without)), "stored only: no effect on the render (if it has one now, give it a case)");
+    sameSettings (name, a, without);
 }
 } // namespace
 
@@ -198,6 +214,29 @@ int main (int argc, char** argv)
         const std::vector<float> ofA = render (a);
         hold ("every setting at once", finiteAndNotSilent (ofA), "the render is finite and not silent");
         hold ("every setting at once", same (ofA, renderCopyOf (a)), "the copy renders the same bits");
+    }
+
+    // Two values that change sign together: every bit but two is as it was, and a number
+    // made of all the settings by multiplying them in one after the other comes out the same.
+    {
+        TapeMachineSettings a, b;
+        a.setReproLf (3.0f); a.setReproLmf (2.0f);
+        b.setReproLf (-3.0f); b.setReproLmf (-2.0f);
+        hold ("two signs flipped together", ! a.sameSettingsAs (b) && ! b.sameSettingsAs (a), "sameSettingsAs() is false");
+    }
+
+    // To the bit, not by value. The setters store what they are given, a value that is not a
+    // number included, and such a value is the same as itself: compared by value it never
+    // is, and every switch would then wait its longest for the rest of a preset. And -0 is
+    // not +0.
+    {
+        TapeMachineSettings a, b;
+        a.setReproLf (std::numeric_limits<float>::quiet_NaN());
+        b.copySettingsFrom (a);
+        hold ("a value that is not a number", a.sameSettingsAs (a) && a.sameSettingsAs (b) && b.sameSettingsAs (a), "sameSettingsAs() is true against itself and a copy");
+        TapeMachineSettings plus, minus;
+        plus.setReproLf (0.0f); minus.setReproLf (-0.0f);
+        hold ("+0 against -0", ! plus.sameSettingsAs (minus) && ! minus.sameSettingsAs (plus), "sameSettingsAs() is false");
     }
 
     if (failures == 0) std::printf ("SettingsCopyTest: all checks passed\n");

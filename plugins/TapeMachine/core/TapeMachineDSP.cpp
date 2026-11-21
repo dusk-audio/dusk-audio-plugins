@@ -393,47 +393,64 @@ int TapeMachineDSP::latencySamples() const noexcept
     return activeLatencySamples();
 }
 
+// Every setting of `a` with the same one of `b`: the one list of them.
+template <class A, class B, class Fn>
+void TapeMachineSettings::eachSetting (A& a, B& b, Fn&& fn) noexcept
+{
+    fn (a.pMachine, b.pMachine);
+    fn (a.pSpeed, b.pSpeed);
+    fn (a.pType, b.pType);
+    fn (a.pSignalPath, b.pSignalPath);
+    fn (a.pEqStandard, b.pEqStandard);
+    fn (a.pCalibration, b.pCalibration);
+    fn (a.pOversampling, b.pOversampling);
+    fn (a.pHeadWidth, b.pHeadWidth);
+    fn (a.pInputGainDb, b.pInputGainDb);
+    fn (a.pSaturation, b.pSaturation);
+    fn (a.pBias, b.pBias);
+    fn (a.pHighpassHz, b.pHighpassHz);
+    fn (a.pLowpassHz, b.pLowpassHz);
+    fn (a.pNoiseAmount, b.pNoiseAmount);
+    fn (a.pWow, b.pWow);
+    fn (a.pFlutter, b.pFlutter);
+    fn (a.pOutputGainDb, b.pOutputGainDb);
+    fn (a.pReproLf, b.pReproLf);
+    fn (a.pReproLmf, b.pReproLmf);
+    fn (a.pReproHmf, b.pReproHmf);
+    fn (a.pReproHf, b.pReproHf);
+    fn (a.pReproSubBell, b.pReproSubBell);
+    fn (a.pLevelHmfTrim, b.pLevelHmfTrim);
+    fn (a.pLevelHfTrim, b.pLevelHfTrim);
+    fn (a.pProgHmfTrim, b.pProgHmfTrim);
+    fn (a.pProgHfTrim, b.pProgHfTrim);
+    fn (a.pProgLfTrim, b.pProgLfTrim);
+    fn (a.pLpQ, b.pLpQ);
+    fn (a.pAutoCal, b.pAutoCal);
+    fn (a.pNoiseEnabled, b.pNoiseEnabled);
+    fn (a.pAutoComp, b.pAutoComp);
+    fn (a.pBypass, b.pBypass);
+    fn (a.pCrosstalk, b.pCrosstalk);
+    fn (a.pWowFlutterOn, b.pWowFlutterOn);
+    fn (a.pTransformer, b.pTransformer);
+}
+
 void TapeMachineSettings::copySettingsFrom (const TapeMachineSettings& other) noexcept
 {
-    const auto copy = [] (auto& to, const auto& from) noexcept
+    eachSetting (*this, other, [] (auto& to, const auto& from) noexcept
     {
         to.store (from.load (std::memory_order_relaxed), std::memory_order_relaxed);
-    };
-    copy (pMachine, other.pMachine);
-    copy (pSpeed, other.pSpeed);
-    copy (pType, other.pType);
-    copy (pSignalPath, other.pSignalPath);
-    copy (pEqStandard, other.pEqStandard);
-    copy (pCalibration, other.pCalibration);
-    copy (pOversampling, other.pOversampling);
-    copy (pHeadWidth, other.pHeadWidth);
-    copy (pInputGainDb, other.pInputGainDb);
-    copy (pSaturation, other.pSaturation);
-    copy (pBias, other.pBias);
-    copy (pHighpassHz, other.pHighpassHz);
-    copy (pLowpassHz, other.pLowpassHz);
-    copy (pNoiseAmount, other.pNoiseAmount);
-    copy (pWow, other.pWow);
-    copy (pFlutter, other.pFlutter);
-    copy (pOutputGainDb, other.pOutputGainDb);
-    copy (pReproLf, other.pReproLf);
-    copy (pReproLmf, other.pReproLmf);
-    copy (pReproHmf, other.pReproHmf);
-    copy (pReproHf, other.pReproHf);
-    copy (pReproSubBell, other.pReproSubBell);
-    copy (pLevelHmfTrim, other.pLevelHmfTrim);
-    copy (pLevelHfTrim, other.pLevelHfTrim);
-    copy (pProgHmfTrim, other.pProgHmfTrim);
-    copy (pProgHfTrim, other.pProgHfTrim);
-    copy (pProgLfTrim, other.pProgLfTrim);
-    copy (pLpQ, other.pLpQ);
-    copy (pAutoCal, other.pAutoCal);
-    copy (pNoiseEnabled, other.pNoiseEnabled);
-    copy (pAutoComp, other.pAutoComp);
-    copy (pBypass, other.pBypass);
-    copy (pCrosstalk, other.pCrosstalk);
-    copy (pWowFlutterOn, other.pWowFlutterOn);
-    copy (pTransformer, other.pTransformer);
+    });
+}
+
+bool TapeMachineSettings::sameSettingsAs (const TapeMachineSettings& other) const noexcept
+{
+    bool same = true;
+    eachSetting (*this, other, [&same] (const auto& mine, const auto& theirs) noexcept
+    {
+        const auto x = mine.load (std::memory_order_relaxed), y = theirs.load (std::memory_order_relaxed);
+        same = same && std::memcmp (&x, &y, sizeof (x)) == 0;
+    });
+    return same;
 }
 
 // The settings whose change alone makes the path burst if its state is kept. Measured on the
@@ -457,27 +474,6 @@ bool TapeMachineSettings::isPassthrough() const noexcept
 {
     return pBypass.load (std::memory_order_relaxed)
         || clampI (pSignalPath.load (std::memory_order_relaxed), 0, 3) == 3;     // TapeCore::Thru
-}
-
-uint32_t TapeMachineSettings::everySettingPrint() const noexcept
-{
-    uint32_t h = 2166136261u;
-    const auto mix = [&h] (uint32_t v) noexcept { h = (h ^ v) * 16777619u; };
-    const auto mixFloat = [&mix] (float v) noexcept
-    {
-        uint32_t bits;
-        std::memcpy (&bits, &v, sizeof (bits));
-        mix (bits);
-    };
-    for (const std::atomic<int>* a : { &pMachine, &pSpeed, &pType, &pSignalPath, &pEqStandard, &pCalibration, &pOversampling, &pHeadWidth })
-        mix (static_cast<uint32_t> (a->load (std::memory_order_relaxed)));
-    for (const std::atomic<float>* a : { &pInputGainDb, &pSaturation, &pBias, &pHighpassHz, &pLowpassHz, &pNoiseAmount, &pWow, &pFlutter,
-                                         &pOutputGainDb, &pReproLf, &pReproLmf, &pReproHmf, &pReproHf, &pReproSubBell, &pLevelHmfTrim,
-                                         &pLevelHfTrim, &pProgHmfTrim, &pProgHfTrim, &pProgLfTrim, &pLpQ })
-        mixFloat (a->load (std::memory_order_relaxed));
-    for (const std::atomic<bool>* a : { &pAutoCal, &pNoiseEnabled, &pAutoComp, &pBypass, &pCrosstalk, &pWowFlutterOn, &pTransformer })
-        mix (a->load (std::memory_order_relaxed) ? 1u : 0u);
-    return h;
 }
 
 void TapeMachineDSP::copyMeterStateFrom (const TapeMachineDSP& other) noexcept

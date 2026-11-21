@@ -22,6 +22,10 @@ void TapeMachineSwitcher::prepare (double sampleRate, int maxBlockSize)
         p.prepare (sampleRate, maxBlock);
     }
     running.store (0, std::memory_order_relaxed);
+    // Stored here only: a path's processing latency changes in prepare() alone, since its
+    // oversampling factor is pinned (TapeMachineDSP's factorFromChoice). Were the factor to
+    // follow the parameter again, this would have to be published per block.
+    pathLatency.store (path[0].processingLatencySamples(), std::memory_order_relaxed);
     fades = 0;
     fading = false;
     fadePos = 0;
@@ -47,34 +51,58 @@ void TapeMachineSwitcher::reset()
 int TapeMachineSwitcher::latencySamples() const noexcept
 {
     // As a single path reports it: none while the input is passed through (bypass, Thru),
-    // the processing path's otherwise. Both paths have the same.
-    return isPassthrough() ? 0 : path[0].processingLatencySamples();
+    // the processing path's otherwise (both paths have the same), from what is asked for.
+    // Not so while the newest path is kept on its settings (in the wait, and in a fade while
+    // a second switch is asked for): a kept path is processing, since one that passes the
+    // input through is never kept (decide()), so the output is delayed whatever is asked.
+    // Nothing of a path is read here: a path may be restarted while this is called.
+    const bool through = ! newestKept.load (std::memory_order_relaxed) && isPassthrough();
+    return through ? 0 : pathLatency.load (std::memory_order_relaxed);
 }
 
-// `now` against what the running path is on.
+// With Gain Link on, Input below what the newest path is on by more than kInputDropDb.
+bool TapeMachineSwitcher::isInputDrop() const noexcept
+{
+    return now.isGainLinked() && runningInputDb - now.inputGainDb() > kInputDropDb;
+}
+
+// `now` against what the newest path is on.
 bool TapeMachineSwitcher::isSwitch() const noexcept
 {
-    return now.topologyKey() != runningKey
-        || (now.isGainLinked() && runningInputDb - now.inputGainDb() > kInputDropDb);
+    return now.topologyKey() != runningKey || isInputDrop();
 }
 
-// The running path has been given `now`: that is what later readings are compared with.
+// The newest path has been given `now`: that is what later readings are compared with.
 void TapeMachineSwitcher::follow() noexcept
 {
     runningKey = now.topologyKey();
     runningInputDb = now.inputGainDb();
+    newestKept.store (false, std::memory_order_relaxed);
 }
 
 // For a path that is kept on its settings (waiting to be faded out, fading out, or coming in
 // while a second switch is asked for): if it is unlinked it takes Input, Output and the link
 // all the same, whatever is asked for. With the link it becomes a linked path, and is kept
-// from then on.
-void TapeMachineSwitcher::giveLevels (TapeMachineDSP& kept) const noexcept
+// from then on. Returns whether the path took them.
+bool TapeMachineSwitcher::giveLevels (TapeMachineDSP& kept) const noexcept
 {
-    if (kept.isGainLinked()) return;
+    if (kept.isGainLinked()) return false;
     kept.setInputGainDb (now.inputGainDb());
     kept.setOutputGainDb (now.outputGainDb());
     kept.setAutoComp (now.isGainLinked());
+    return true;
+}
+
+// The newest path is kept on its settings for this block, the levels of an unlinked one
+// excepted. An Input it takes is the Input it is on, and later drops are counted from there:
+// otherwise a level it has already been given could pass for a drop, and a switch that was
+// taken back for a switch still. Not so when the drop is the switch that is being waited
+// for: counted from the new Input there would be no switch left to wait for.
+void TapeMachineSwitcher::keep (TapeMachineDSP& newest) noexcept
+{
+    const bool dropIsTheSwitch = isInputDrop();
+    if (giveLevels (newest) && ! dropIsTheSwitch) runningInputDb = now.inputGainDb();
+    newestKept.store (true, std::memory_order_relaxed);
 }
 
 // Starts the idle path on `now`.
@@ -103,21 +131,25 @@ void TapeMachineSwitcher::decide() noexcept
     {
         // The incoming path takes what is set, except while a second switch is asked for:
         // then it keeps what it has (half of the next preset would be worse than none of
-        // it). The outgoing path keeps its settings throughout. Unlinked levels reach both.
+        // it). Not if it is passing the input through (bypass or Thru switched on in this
+        // fade): as below, it takes the switch and starts clean on its way back. The
+        // outgoing path keeps its settings throughout. Unlinked levels reach both.
         giveLevels (path[runs]);
-        if (! isSwitch())
+        if (! isSwitch() || path[1 - runs].isPassthrough())
         {
             path[1 - runs].copySettingsFrom (now);
             follow();
         }
         else
-            giveLevels (path[1 - runs]);
+            keep (path[1 - runs]);
         return;
     }
 
-    // While the input is passed through there is nothing to morph: the path takes the
-    // settings and starts clean on its way back, as it always did.
-    if (! isSwitch() || now.isPassthrough())
+    // While the input is passed through, and in the block it stops being passed through,
+    // there is nothing to morph: the path takes the settings and starts clean on its way
+    // back, as it always did. (Kept for a fade instead, the path would go on passing the
+    // input through, and the fade would be from the dry input to the delayed new path.)
+    if (! isSwitch() || now.isPassthrough() || path[runs].isPassthrough())
     {
         pending = false;
         path[runs].copySettingsFrom (now);
@@ -128,19 +160,18 @@ void TapeMachineSwitcher::decide() noexcept
     // A switch. The running path is left on its old settings from here on (unlinked levels
     // excepted). Wait for the block that finds the settings as the block before left them:
     // the rest of a preset may still be on its way.
-    giveLevels (path[runs]);
-    const uint32_t print = now.everySettingPrint();
+    keep (path[runs]);
     if (! pending)
     {
         pending = true;
         waits = 0;
-        seenPrint = print;
+        seen.copySettingsFrom (now);
         return;
     }
-    if (print != seenPrint && waits < kMaxWaits)
+    if (! now.sameSettingsAs (seen) && waits < kMaxWaits)
     {
         ++waits;
-        seenPrint = print;
+        seen.copySettingsFrom (now);
         return;
     }
     startFade();

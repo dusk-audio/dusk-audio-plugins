@@ -208,16 +208,21 @@ once, is a short morph: for about 60 ms the old setting and the new one both
 play, as on the tape machines this plugin is modelled on. There is no cut and no
 burst; between two very different presets the level can dip a few dB while both
 play. The morph starts one to three processing blocks after the change, so that
-a whole preset arrives together. With Gain Link off, Input and Output are plain
-level controls at any size of step: they act at once and are not morphed (a drop
+a whole preset arrives together; a change made while a morph is running waits
+for that morph to end first. With Gain Link off, Input and Output are plain
+level controls at any size of step: they act at once and are not morphed. A drop
 of Input by more than 6 dB at once then restarts the tape path over a couple of
-milliseconds, as before). The same goes for a preset loaded while Gain Link is
-off: if it lowers Input by more than 6 dB, the old setting is cut over a couple
-of milliseconds before the morph to the new one.
+milliseconds, as before, and a second such drop within a tenth of a second
+follows the knob smoothly instead. The same goes for a preset loaded while Gain
+Link is off: if it lowers Input by more than 6 dB, the old setting is cut over a
+couple of milliseconds. If the preset also changes the machine, the speed or
+the calibration, or turns Gain Link on in the same moment as it lowers Input,
+the morph to the new setting follows that cut.
 
 **There is a tiny gap when I switch bypass off.** Coming back from bypass or
 Thru starts the tape path from a clean state: the signal comes back in over a
-couple of milliseconds.
+couple of milliseconds. A preset loaded while on bypass or the Thru path comes
+in the same way, with no morph.
 
 **Bias does not respond.** Auto Bias is on. Disable it before adjusting Bias.
 

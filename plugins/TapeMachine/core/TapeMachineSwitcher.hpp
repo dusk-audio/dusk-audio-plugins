@@ -57,10 +57,19 @@ namespace duskaudio
 // What is left to the paths, and which of a path's own clean starts (TapeMachineDSP::
 // processBlock) can still happen here:
 //   - Bypass and the Thru path: the running path passes the input through and starts clean
-//     on its way back, as before. Nothing is morphed while the input is passed through; a
-//     change of the deck made then goes to the path and is there when it comes back.
+//     on its way back, as before. Nothing is morphed while the input is passed through, nor
+//     in the block it stops being passed through: a change of the deck made then goes to
+//     the path, as it would to a single path, and is there when it comes back (a preset
+//     loaded on the Thru path sets the path and the deck together).
 //   - Bypass or Thru switched on DURING a fade reaches the incoming path only: the output is
-//     the dry input once the fade is over, not at once.
+//     the dry input once the fade is over, not at once. Switched off again in that fade
+//     together with a switch of the deck, it goes to the incoming path the same way, which
+//     takes the switch and starts clean on its way back.
+//   - The latency reported is a single path's: none while the input is passed through. While
+//     the newest path is kept on its settings (in the wait, and in a fade while a second
+//     switch is asked for) that is what this path does, not what is asked for: a Thru path
+//     asked for together with a second switch is not there until the fade is over, and until
+//     then the output is the delayed one.
 //   - A path never sees a change of the deck in running programme, nor, with Gain Link on, a
 //     drop of Input beyond kInputDropDb: those are switches, and its clean start for them
 //     cannot fire. With Gain Link off a drop of Input reaches the paths and can.
@@ -100,9 +109,11 @@ public:
 
 private:
     const TapeMachineDSP& metered() const noexcept { return path[running.load (std::memory_order_relaxed)]; }
+    bool isInputDrop() const noexcept;
     bool isSwitch() const noexcept;
     void follow() noexcept;
-    void giveLevels (TapeMachineDSP& kept) const noexcept;
+    bool giveLevels (TapeMachineDSP& kept) const noexcept;
+    void keep (TapeMachineDSP& newest) noexcept;
     void decide() noexcept;
     void startFade() noexcept;
     void processChunk (const float* const* inputs, float* const* outputs, int nCh, int nSamples) noexcept;
@@ -117,14 +128,20 @@ private:
     int  fadePos = 0, fadeLen = 1;
     int  fades = 0;
 
-    // What the running path (during a fade: the incoming one) is on: the deck it was started
-    // on, and the Input it was last given.
+    // What the newest path (the running one; during a fade the incoming one) is on: the deck
+    // it was started on, and the Input it was last given.
     uint32_t runningKey = 0;
     float    runningInputDb = 0.0f;
 
-    // A switch that is waiting for the rest of its preset.
-    bool     pending = false;
-    int      waits = 0;
-    uint32_t seenPrint = 0;
+    // For latencySamples(), which another thread may call: a path's latency, and whether the
+    // newest path is kept on its settings (then it is processing: a path that passes the
+    // input through is never kept) or takes what is asked for.
+    std::atomic<int>  pathLatency { 0 };
+    std::atomic<bool> newestKept { false };
+
+    // A switch that is waiting for the rest of its preset, and the settings its last block found.
+    bool pending = false;
+    int  waits = 0;
+    TapeMachineSettings seen;
 };
 } // namespace duskaudio
