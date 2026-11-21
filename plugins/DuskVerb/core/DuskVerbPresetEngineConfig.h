@@ -21,8 +21,8 @@ void primeTuningEnvCache() noexcept;
 // ordinary parameters; freq + Q come from the name-keyed table (or the
 // DUSKVERB_PTEQ sweep override) and must be cached at preset-swap time so the
 // gain edge-detect can re-issue setPostTankEQBand() with the same centres.
-// `name` may be "" — that yields the default centres.
-void resolvePteqFreqQ (const char* name, float fOut[4], float qOut[4]) noexcept;
+// An empty name selects the default centres. Returns true when the tuning override supplied them.
+bool resolvePteqFreqQ (const char* name, float fOut[4], float qOut[4]) noexcept;
 
 // The ParallelMultiband bands and the mode smear as FactoryPreset::applyEngineConfig installs them
 // for a preset without rows. DuskVerb 2's preset-less swap installs these: the shared

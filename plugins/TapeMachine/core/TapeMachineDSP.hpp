@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <random>
 #include <vector>
 #include <algorithm>
@@ -758,6 +759,11 @@ public:
     {
         sampleRate = sr;
         oversamplingFactor = std::max (1, osFactor);
+        inc1 = phaseIncrement (50.0f, sampleRate);
+        inc2 = phaseIncrement (15.0f, sampleRate);
+        inc3 = phaseIncrement (3.0f, sampleRate);
+        osScale = static_cast<float> (oversamplingFactor);
+        sqrtOsScale = std::sqrt (osScale);
         reset();
     }
 
@@ -767,32 +773,38 @@ public:
     {
         if (motorQuality < 0.001f) return 0.0f;
 
-        constexpr float twoPiF = 6.28318530f;
-        float inc1 = twoPiF * 50.0f / static_cast<float> (sampleRate);
-        float inc2 = twoPiF * 15.0f / static_cast<float> (sampleRate);
-        float inc3 = twoPiF * 3.0f / static_cast<float> (sampleRate);
-
         phase1 += inc1; phase2 += inc2; phase3 += inc3;
-        if (phase1 > twoPiF) phase1 -= twoPiF;
-        if (phase2 > twoPiF) phase2 -= twoPiF;
-        if (phase3 > twoPiF) phase3 -= twoPiF;
+        if (phase1 > kTwoPiF) phase1 -= kTwoPiF;
+        if (phase2 > kTwoPiF) phase2 -= kTwoPiF;
+        if (phase3 > kTwoPiF) phase3 -= kTwoPiF;
 
-        float osScale = static_cast<float> (oversamplingFactor);
         float baseFlutter = motorQuality * 0.0004f * osScale;
 
         float motorComponent = fastSin (static_cast<float> (phase1)) * baseFlutter * 0.3f;
         float bearingComponent = fastSin (static_cast<float> (phase2)) * baseFlutter * 0.5f;
         float eccentricityComponent = fastSin (static_cast<float> (phase3)) * baseFlutter * 0.2f;
 
-        float randomComponent = jitter (rng) * baseFlutter * 0.1f / std::sqrt (osScale);
+        float randomComponent = jitter (rng) * baseFlutter * 0.1f / sqrtOsScale;
 
         return motorComponent + bearingComponent + eccentricityComponent + randomComponent;
     }
 
 private:
+    // Phase advance per call of a component at `hz`.
+    static float phaseIncrement (float hz, double rate) noexcept
+    {
+        return kTwoPiF * hz / static_cast<float> (rate);
+    }
+
     double phase1 = 0.0, phase2 = 0.0, phase3 = 0.0;
     double sampleRate = 44100.0;
     int oversamplingFactor = 1;
+    // Set by prepare(); until then they follow from the two defaults above.
+    float inc1 = phaseIncrement (50.0f, sampleRate);
+    float inc2 = phaseIncrement (15.0f, sampleRate);
+    float inc3 = phaseIncrement (3.0f, sampleRate);
+    float osScale = static_cast<float> (oversamplingFactor);
+    float sqrtOsScale = std::sqrt (osScale);
     std::mt19937 rng;                                       // deterministic (fixed seed)
     std::uniform_real_distribution<float> jitter{ -1.0f, 1.0f };
 };
@@ -956,6 +968,7 @@ public:
 
         playbackHead.reset(); motorFlutter.reset();
         m_limPrev = 0.0f; m_shaperPrev = 0.0f;
+        m_limAdValid = false; m_adSource = AdSource::None;
         m_lim2x.reset(); m_shaper2x.reset();
         crosstalkBuffer = 0.0f;
         m_humPhase = 0.0f;
@@ -1246,12 +1259,20 @@ public:
         // tunes the slope to each deck's reference THD-vs-cal curve; calRestore inverts the
         // flux + baseline so the tape CORE stays level-neutral (cal changes saturation
         // onset, not output level).
-        constexpr float kCalRefDb = 6.0f;
-        const float kCalFlux    = (machine == Swiss) ? 0.58f : 1.30f;
-        const float baseAtten   = dbToGain (kCalRefDb);
-        const float fluxScale   = dbToGain ((calibrationLevel - kCalRefDb) * kCalFlux);
-        const float calRestore  = baseAtten / fluxScale;
-        float signal = input * 0.95f * (fluxScale / baseAtten);
+        // The two gains depend only on the calibration level and the machine, so they are
+        // kept until either changes (the key starts as NaN, which never compares equal).
+        if (calibrationLevel != m_calKeyLevel || machine != m_calKeyMachine)
+        {
+            constexpr float kCalRefDb = 6.0f;
+            const float kCalFlux    = (machine == Swiss) ? 0.58f : 1.30f;
+            const float baseAtten   = dbToGain (kCalRefDb);
+            const float fluxScale   = dbToGain ((calibrationLevel - kCalRefDb) * kCalFlux);
+            m_calRestore = baseAtten / fluxScale;
+            m_calFlux    = fluxScale / baseAtten;
+            m_calKeyLevel = calibrationLevel; m_calKeyMachine = machine;
+        }
+        const float calRestore = m_calRestore;
+        float signal = input * 0.95f * m_calFlux;
 
         signal = preEmphasisEQ.processSample (signal);
 
@@ -1482,8 +1503,25 @@ private:
     float m_americanEvenScale = 1.0f; // American even-order (2nd) scale: 1 = Transformer On (default), <1 thins the 2nd when Transformer Off
     bool  m_transformerBypass = false; // true only when Transformer Off (American): applies the LF-restore shelf
     bool  m_slowModernPresence = false; // true only for measured American 3.75 IPS / FormulaModern resonance
+    // Calibration flux gains and the inputs they were computed from (see processSample).
+    float m_calKeyLevel = std::numeric_limits<float>::quiet_NaN();
+    TapeMachine m_calKeyMachine = Swiss;
+    float m_calFlux = 1.0f, m_calRestore = 1.0f;
     float m_limPrev = 0.0f;         // ADAA soft-limit state (per channel)
     float m_shaperPrev = 0.0f;      // ADAA waveshaper state (per channel)
+    // Carried antiderivatives. Each ADAA step needs F(s) and F(sPrev), and F(sPrev) is the value
+    // the step before it computed as F(s), so it is kept instead of evaluated a second time.
+    // A carried value is used only when the same antiderivative produced it. The shaper and the
+    // floor share s, sPrev and the epsilon test, so one tag covers both: it names the machine
+    // whose shaper and floor wrote m_shAd / m_floorAd on the previous step. The shaper also
+    // checks its drive, which scales its argument; the floor has no such input. The epsilon
+    // branch evaluates no antiderivative, so it drops the carry, and reset() drops it because
+    // it rewrites sPrev.
+    enum class AdSource { None, Swiss, American };
+    double   m_limAd = 0.0, m_shAd = 0.0, m_floorAd = 0.0;
+    float    m_shAdDrive = 0.0f;
+    AdSource m_adSource = AdSource::None;
+    bool     m_limAdValid = false;
     LocalAAStage m_lim2x, m_shaper2x;  // soft-limit + shaper: deep local-4x AA (mixed-rate: filters at 2x core, NL alias-free)
 
     DBiquad headBumpFilter;                 // juce IIR<double> in source
@@ -1563,7 +1601,7 @@ private:
     float m_gapWidth = 3.0f;
     // Per-machine linear trim making the tape core unity-gain (compensates the input
     // 0.95 scale + the tape's small insertion offset). Set in updateFilters. Chosen so
-    // -12 dBFS in -> -12 dBFS out at the reference (matches gain-link makeup on/off).
+    // -12 dBFS in -> -12 dBFS out at the reference.
     float m_machineMakeupGain = 1.0f;
 
     static constexpr float denormalPrevention = 1e-8f;
@@ -1761,19 +1799,33 @@ private:
         return g / (p + 1.0) * std::pow (s * s + (double) kFloorEps * kFloorEps, (p + 1.0) * 0.5)
              - g * lin * 0.5 * s * s;
     }
-    inline float adaaFloor (float s, float sp, float g, float p, float lin) noexcept
+    // carried: m_floorAd holds floorAD (sp, g, p, lin), left by the previous step of the same
+    // machine. Only the two adaaSat functions call this; they own the tag that decides it.
+    // The epsilon test here must stay identical to theirs: their tag says this function
+    // wrote m_floorAd on the previous step, which holds only while both take the same branch.
+    inline float adaaFloor (float s, float sp, bool carried, float g, float p, float lin) noexcept
     {
         const double dx = (double) s - (double) sp;
         if (std::abs (dx) < kAdaaEps) return floorF (0.5f * (s + sp), g, p, lin);
-        return (float) ((floorAD ((double) s, g, p, lin) - floorAD ((double) sp, g, p, lin)) / dx);
+        const double fp = carried ? m_floorAd : floorAD ((double) sp, g, p, lin);
+        const double fs = floorAD ((double) s, g, p, lin);
+        m_floorAd = fs;
+        return (float) ((fs - fp) / dx);
     }
     // ADAA soft-limit (shared by both machines); m_limPrev is per-channel state.
     inline float adaaLimit (float s) noexcept
     {
         const float sp = m_limPrev; m_limPrev = s;
         const double dx = (double) s - (double) sp;
-        if (std::abs (dx) < kAdaaEps) return swissSoftLimit (0.5f * (s + sp));
-        return (float) ((softLimitAD (s) - softLimitAD (sp)) / dx);
+        if (std::abs (dx) < kAdaaEps)
+        {
+            m_limAdValid = false;
+            return swissSoftLimit (0.5f * (s + sp));
+        }
+        const double fp = m_limAdValid ? m_limAd : softLimitAD (sp);
+        const double fs = softLimitAD (s);
+        m_limAd = fs; m_limAdValid = true;
+        return (float) ((fs - fp) / dx);
     }
     // ADAA waveshaper: G(s)=(dInv/d)*F(s*d) so ADAA runs in the pre-drive signal domain;
     // the small even-order term is applied to the (already anti-aliased) output.
@@ -1781,30 +1833,48 @@ private:
     {
         const float sp = m_shaperPrev; m_shaperPrev = s;
         const double dx = (double) s - (double) sp;
+        const bool sameSource = m_adSource == AdSource::Swiss;
         float sh;
         if (std::abs (dx) < kAdaaEps)
+        {
+            m_adSource = AdSource::None;
             sh = swissShaper (0.5f * (s + sp) * m_swissDrive) * m_swissDriveInv;
+        }
         else
-            sh = (float) ((double) m_swissDriveInv / m_swissDrive
-                 * (swissShaperAD ((double) s * m_swissDrive) - swissShaperAD ((double) sp * m_swissDrive)) / dx);
+        {
+            const double fp = (sameSource && m_shAdDrive == m_swissDrive)
+                                ? m_shAd : swissShaperAD ((double) sp * m_swissDrive);
+            const double fs = swissShaperAD ((double) s * m_swissDrive);
+            m_shAd = fs; m_shAdDrive = m_swissDrive; m_adSource = AdSource::Swiss;
+            sh = (float) ((double) m_swissDriveInv / m_swissDrive * (fs - fp) / dx);
+        }
         // Even term on the RAW input midpoint (drive-independent, level-persistent 2nd).
         const float sm = 0.5f * (s + sp);
         // Covariant low-level harmonic floor (ADAA'd; slowly-decaying 3f/5f/7f like the reference).
-        return sh + kSwissEven * (sm * sm) + adaaFloor (s, sp, kSwissFloorG, kSwissFloorP, kSwissFloorLin);
+        return sh + kSwissEven * (sm * sm) + adaaFloor (s, sp, sameSource, kSwissFloorG, kSwissFloorP, kSwissFloorLin);
     }
     inline float adaaSatAmerican (float s) noexcept
     {
         const float sp = m_shaperPrev; m_shaperPrev = s;
         const double dx = (double) s - (double) sp;
+        const bool sameSource = m_adSource == AdSource::American;
         float sh;
         if (std::abs (dx) < kAdaaEps)
+        {
+            m_adSource = AdSource::None;
             sh = americanShaper (0.5f * (s + sp) * m_americanDrive) * m_americanDriveInv;
+        }
         else
-            sh = (float) ((double) m_americanDriveInv / m_americanDrive
-                 * (americanShaperAD ((double) s * m_americanDrive) - americanShaperAD ((double) sp * m_americanDrive)) / dx);
+        {
+            const double fp = (sameSource && m_shAdDrive == m_americanDrive)
+                                ? m_shAd : americanShaperAD ((double) sp * m_americanDrive);
+            const double fs = americanShaperAD ((double) s * m_americanDrive);
+            m_shAd = fs; m_shAdDrive = m_americanDrive; m_adSource = AdSource::American;
+            sh = (float) ((double) m_americanDriveInv / m_americanDrive * (fs - fp) / dx);
+        }
         const float sm = 0.5f * (s + sp);
         return sh + kAmericanEven * m_americanEvenScale * (sm * sm)
-                  + adaaFloor (s, sp, kAmericanFloorG, kAmericanFloorP, kAmericanFloorLin);
+                  + adaaFloor (s, sp, sameSource, kAmericanFloorG, kAmericanFloorP, kAmericanFloorLin);
     }
 
     static float softClip (float input, float threshold)
@@ -2182,26 +2252,18 @@ private:
 };
 
 //==============================================================================
-// TapeMachineDSP — framework-free equivalent of the JUCE PluginProcessor audio path.
+// TapeMachineSettings — everything a host or a preset sets on the tape machine: the
+// parameter atomics and their setters, apart from the DSP that runs on them, so that a full
+// set of settings can be held, and handed over, without an instance to process it.
+// A setting added here goes into eachSetting(), which the copy and the comparison both go
+// through, and into SettingsCopyTest as well: one forgotten in eachSetting() alone turns that
+// test red, one forgotten in both is caught by nothing.
+// No virtuals: the DSP derives from it and is never deleted through this type.
 //==============================================================================
-class TapeMachineDSP
+class TapeMachineSettings
 {
 public:
-    static constexpr int kMaxChannels = 2;
-
-    void prepare (double sampleRate, int maxBlockSize);   // may allocate; setup thread only
-    void reset();
-    void processBlock (const float* const* inputs, float* const* outputs, int nCh, int nSamples) noexcept;
-    int  latencySamples() const noexcept;
-
-    void setTapeMachine (int idx)  noexcept
-    {
-        pMachine.store (clampI (idx, 0, 1), std::memory_order_relaxed);
-        // Factory and user preset application writes Machine first, even when its value is
-        // unchanged. Keep that signal separate from a lone Input Gain gesture so a preset
-        // recall can arm the large-gain transition guard without classifying knob motion.
-        pLinkedBatchRevision.fetch_add (1u, std::memory_order_relaxed);
-    }
+    void setTapeMachine (int idx)  noexcept { pMachine.store (clampI (idx, 0, 1), std::memory_order_relaxed); }
     void setTapeSpeed   (int idx)  noexcept { pSpeed.store (clampI (idx, 0, 3), std::memory_order_relaxed); }
     void setTapeType    (int idx)  noexcept { pType.store (clampI (idx, 0, 3), std::memory_order_relaxed); }
     void setSignalPath  (int idx)  noexcept { pSignalPath.store (clampI (idx, 0, 3), std::memory_order_relaxed); }
@@ -2242,6 +2304,78 @@ public:
     void setProgLfTrim  (float db) noexcept { pProgLfTrim.store  (db, std::memory_order_relaxed); } // program-keyed deep-sub bloom (EAR-GREEN)
     void setBypass      (bool b)   noexcept { pBypass.store (b, std::memory_order_relaxed); }
 
+    // Takes every setting of `other`. One load and one store per setting, not a snapshot:
+    // a setter running on `other` at the same time lands before or after its own value,
+    // and one running on this object at the same time may be overwritten by the copy.
+    void copySettingsFrom (const TapeMachineSettings& other) noexcept;
+
+    // Machine, speed and calibration as one number, the speed being the one the deck runs
+    // at: the settings whose change alone makes a path burst if its state is kept (see
+    // TapeMachineDSP::BlockSettings::topologyKey, which packs one block's reading the same way).
+    uint32_t topologyKey() const noexcept;
+    // Whether every setting has the value it has in `other`, to the bit. (Not a number made
+    // of them all: two values that change together can leave such a number as it was.)
+    bool sameSettingsAs (const TapeMachineSettings& other) const noexcept;
+    float inputGainDb() const noexcept { return pInputGainDb.load (std::memory_order_relaxed); }
+    float outputGainDb() const noexcept { return pOutputGainDb.load (std::memory_order_relaxed); }
+    // Gain Link: the output is the inverse of Input and the stored Output is not used.
+    bool  isGainLinked() const noexcept { return pAutoComp.load (std::memory_order_relaxed); }
+    // Bypass or the Thru path: the input goes out untouched and nothing is processed.
+    bool isPassthrough() const noexcept;
+
+protected:
+    template <class A, class B, class Fn>
+    static void eachSetting (A& a, B& b, Fn&& fn) noexcept;     // defined, and used, in the .cpp only
+    // The Swiss deck has no 3.75 IPS and runs it at 15.
+    static int effectiveSpeedIndex (int machine, int speed) noexcept;
+    static uint32_t packTopology (int machine, int effectiveSpeed, int calibration) noexcept
+    {
+        return static_cast<uint32_t> (machine)
+            | (static_cast<uint32_t> (effectiveSpeed) << 1u)
+            | (static_cast<uint32_t> (calibration) << 3u);
+    }
+    static int clampI (int v, int lo, int hi) noexcept { return v < lo ? lo : (v > hi ? hi : v); }
+
+    std::atomic<int>   pMachine{0}, pSpeed{1}, pType{0}, pSignalPath{0}, pEqStandard{0};
+    std::atomic<int>   pCalibration{0}, pOversampling{1}, pHeadWidth{1};   // OS default 2x (index 1); headWidth 1 = 1/2"
+    std::atomic<float> pInputGainDb{0.0f}, pSaturation{4.0f}, pBias{50.0f};
+    std::atomic<float> pHighpassHz{20.0f}, pLowpassHz{20000.0f};
+    std::atomic<float> pNoiseAmount{0.0f}, pWow{7.0f}, pFlutter{3.0f}, pOutputGainDb{0.0f};
+    std::atomic<float> pReproLf{0.0f}, pReproLmf{0.0f}, pReproHmf{0.0f}, pReproHf{0.0f}; // advanced repro-head 4-band EQ (0 = neutral)
+    std::atomic<float> pReproSubBell{0.0f}; // per-preset repro sub-bell 31 Hz Q2.5 (0 = neutral, exact bypass)
+    std::atomic<float> pLevelHmfTrim{0.0f}, pLevelHfTrim{0.0f}; // hidden per-preset above-anchor HF curve
+    std::atomic<float> pProgHmfTrim{0.0f}, pProgHfTrim{0.0f};   // hidden program-band above-anchor HF trims (Phase C)
+    std::atomic<float> pProgLfTrim{0.0f};                        // hidden program-band deep-sub bloom (EAR-GREEN)
+    std::atomic<float> pLpQ{0.707f};        // lowpass SVF resonance (hidden preset data; 0.707 = the historic fixed Q)
+    std::atomic<bool>  pAutoCal{true}, pNoiseEnabled{false}, pAutoComp{true}, pBypass{false};
+    // American front-panel toggles — default On = the state the American tuning captured.
+    std::atomic<bool>  pCrosstalk{true}, pWowFlutterOn{true}, pTransformer{true};
+};
+
+//==============================================================================
+// TapeMachineDSP — framework-free equivalent of the JUCE PluginProcessor audio path.
+//==============================================================================
+class TapeMachineDSP : public TapeMachineSettings
+{
+public:
+    static constexpr int kMaxChannels = 2;
+
+    // Three ways to start over. prepare() sizes everything for a rate and a block size (it
+    // may allocate; setup thread only) and ends in restart(). restart() is the start state
+    // for the settings as they stand: the path empty, the smoothers at their targets, the
+    // generators at their seeds; after a prepare() it does not allocate. reset() empties the
+    // path and the meters and leaves the smoothers and the random generators where they are.
+    void prepare (double sampleRate, int maxBlockSize);
+    void restart() noexcept;
+    void reset();
+    void processBlock (const float* const* inputs, float* const* outputs, int nCh, int nSamples) noexcept;
+    int  latencySamples() const noexcept;
+    // The latency of the processing path, whether or not bypass or Thru is on right now.
+    int  processingLatencySamples() const noexcept { return activeLatencySamples(); }
+    // The meters go on from where `other`'s are: for a path that takes over from another one
+    // in running programme, so that the readings do not start from zero at the handover.
+    void copyMeterStateFrom (const TapeMachineDSP& other) noexcept;
+
     float getVuL() const noexcept { return vuL.load (std::memory_order_relaxed); }
     float getVuR() const noexcept { return vuR.load (std::memory_order_relaxed); }
     // Pre-processing input peak (for a UI In/Out meter switch). Metering only.
@@ -2259,7 +2393,6 @@ public:
     float getOutPeakR() const noexcept { return outPeakR.load (std::memory_order_relaxed); }
 
 private:
-    static int clampI (int v, int lo, int hi) noexcept { return v < lo ? lo : (v > hi ? hi : v); }
     // Oversampling is PINNED at 2x. The reference decks this emulates have no OS control, and the
     // 4x mode is un-tuned (~0.3-0.5 dB dark in the top octave — the IIR chain and all 20
     // factory presets were joint-fit at the 2x core). The Oversampling parameter is retained
@@ -2269,25 +2402,18 @@ private:
     static int factorFromChoice (int /*storedChoice*/) noexcept { return 2; }
 
     int activeLatencySamples() const noexcept;
-    uint32_t currentLinkedTopologyKey() const noexcept;
+    struct BlockSettings
+    {
+        int machine = 0, speed = 0, calibration = 0;    // in range; the speed the core runs at
+        int signalPath = 0;                             // in range
+        float inputGainDb = 0.0f;
+        uint32_t topologyKey() const noexcept;
+    };
+    BlockSettings readBlockSettings() const noexcept;
+    uint32_t settingsPrint (const BlockSettings& now) const noexcept;
+    bool clearSignalState (bool keepOutputTail) noexcept;
+    void clearLevelFollowers() noexcept;
     void applyFactor (int newFactor);   // reconfigure internal DSP for an OS-factor change
-
-    // --- parameters (atomics) ---
-    std::atomic<int>   pMachine{0}, pSpeed{1}, pType{0}, pSignalPath{0}, pEqStandard{0};
-    std::atomic<int>   pCalibration{0}, pOversampling{1}, pHeadWidth{1};   // OS default 2x (index 1); headWidth 1 = 1/2"
-    std::atomic<float> pInputGainDb{0.0f}, pSaturation{4.0f}, pBias{50.0f};
-    std::atomic<float> pHighpassHz{20.0f}, pLowpassHz{20000.0f};
-    std::atomic<float> pNoiseAmount{0.0f}, pWow{7.0f}, pFlutter{3.0f}, pOutputGainDb{0.0f};
-    std::atomic<float> pReproLf{0.0f}, pReproLmf{0.0f}, pReproHmf{0.0f}, pReproHf{0.0f}; // advanced repro-head 4-band EQ (0 = neutral)
-    std::atomic<float> pReproSubBell{0.0f}; // per-preset repro sub-bell 31 Hz Q2.5 (0 = neutral, exact bypass)
-    std::atomic<float> pLevelHmfTrim{0.0f}, pLevelHfTrim{0.0f}; // hidden per-preset above-anchor HF curve
-    std::atomic<float> pProgHmfTrim{0.0f}, pProgHfTrim{0.0f};   // hidden program-band above-anchor HF trims (Phase C)
-    std::atomic<float> pProgLfTrim{0.0f};                        // hidden program-band deep-sub bloom (EAR-GREEN)
-    std::atomic<float> pLpQ{0.707f};        // lowpass SVF resonance (hidden preset data; 0.707 = the historic fixed Q)
-    std::atomic<uint32_t> pLinkedBatchRevision{0u};
-    std::atomic<bool>  pAutoCal{true}, pNoiseEnabled{false}, pAutoComp{true}, pBypass{false};
-    // American front-panel toggles — default On = the state the American tuning captured.
-    std::atomic<bool>  pCrosstalk{true}, pWowFlutterOn{true}, pTransformer{true};
 
     // --- config ---
     double baseSampleRate = 44100.0;
@@ -2306,25 +2432,51 @@ private:
     // inGain/outGain hold dB, not linear gain (dbToGain applied per ramp sample): with
     // the gain link on, dB-domain one-poles cancel exactly so in*out stays at unity
     // through a transition. Linear-domain smoothing of g and 1/g bulged the product
-    // by up to ~+13 dB on a large preset-switch gain step. linkedMakeupDb then restores
-    // host-facing peak unity across nonlinear and topology-dependent level changes.
+    // by up to ~+13 dB on a large preset-switch gain step. Nothing measures or matches
+    // level after the tape: with the link on, Output is minus Input and that is all.
     SmoothedValue inGain;                   // base-rate ramp, dB (shared by L/R)
     SmoothedValue outGain;                  // OS-rate ramp, dB (shared by L/R)
-    float lastLinkedInputGainDb = 1000.0f;
-    SmoothedValue linkedMakeupDb;            // post-tape linked peak matching, dB
-    int linkedGuardSamples = 0;
-    bool linkedGuardFirstBlock = false;
-    bool linkedGuardDiscontinuity = false;
-    float linkedGuardSlewScale = 4.0f;
-    float lastLinkedOutputL = 0.0f, lastLinkedOutputR = 0.0f;
-    float linkedRecentOutputSlewL = 0.0f, linkedRecentOutputSlewR = 0.0f;
-    float linkedOutputSlewDecay = 0.0f;
-    float linkedInputMatchPeak = 0.0f, linkedOutputMatchPeak = 0.0f;
-    float linkedMatchPeakDecay = 0.0f;
-    std::vector<float> linkedInputDelayL, linkedInputDelayR;
-    size_t linkedInputDelayIndex = 0;
-    uint32_t linkedTopologyKey = UINT32_MAX;
-    uint32_t lastLinkedBatchRevision = 0u;
+    // A preset-sized change starts from a clean state (see processBlock).
+    float lastInputGainDb = 0.0f;
+    uint32_t lastTopologyKey = 0u;
+    bool wasPassthrough = false;             // the last block was bypassed or Thru
+    int cleanFadeLeft = 0, cleanFadeSamples = 1;                // input fade-in after a clean start
+    int sinceCleanStart = 0, cleanGainHoldSamples = 0;          // a lone Input jump counts once per hold
+    int cleanSettleLeft = 0, cleanSettleSamples = 0;            // later parts of the same change
+    int cleanSettleRestartsLeft = 0;
+    uint32_t lastSettingsPrint = 0u;
+    // What was playing runs out: a pulse that starts at the last value and comes back to
+    // zero with no net area, v e^(-t/tau) (1 - t/tau). The cut is then neither a step (it
+    // starts where the signal was) nor a thump (it has no DC). In samples it is
+    // v a^n (1 - s n) with a = e^(-1/tau), and s = (1 - a) / a rather than 1/tau, which is
+    // the slope that makes the SUM of the samples zero, not only the integral. A value that
+    // is not finite, or absurdly large, is not run out at all.
+    struct RunOut
+    {
+        float p = 0.0f, q = 0.0f;           // v a^n and v n a^n
+        static float slopeFor (float decay) noexcept { return decay > 0.0f ? (1.0f - decay) / decay : 0.0f; }
+        void start (float value) noexcept
+        {
+            p = std::abs (value) < 64.0f ? value : 0.0f;    // false for NaN and inf
+            q = 0.0f;
+        }
+        bool running() const noexcept { return p != 0.0f || q != 0.0f; }
+        float next (float decay, float slope) noexcept
+        {
+            const float y = p - q * slope;
+            q = decay * (q + p);
+            p *= decay;
+            if (std::abs (p) < 1.0e-9f && std::abs (q) * slope < 1.0e-9f)     // -180 dBFS: over
+                p = q = 0.0f;
+            return y;
+        }
+    };
+    RunOut cleanRunL, cleanRunR;                                // at the decimators' input, after a change
+    RunOut exitRunL, exitRunR;                                  // at the output, after a passthrough
+    float cleanTailDecay = 0.0f, cleanTailSlope = 0.0f;         // oversampled rate
+    float exitTailDecay = 0.0f, exitTailSlope = 0.0f;           // base rate
+    float lastOsOutL = 0.0f, lastOsOutR = 0.0f;                 // what the decimators were last fed
+    float lastOutL = 0.0f, lastOutR = 0.0f;                     // the last sample that went out
     SmoothedValue smSat, smWow, smFlutter, smNoise, smBias;
 
     bool bypassLowpass = true;

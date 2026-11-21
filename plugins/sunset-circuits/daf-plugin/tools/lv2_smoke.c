@@ -376,7 +376,7 @@ int main(int argc, char** argv) {
             ++failures;
         }
         const float parked = run_peak(inst, audio, nPorts, 48);
-        pc[1] = 127;                                  // > 54 factory presets
+        pc[1] = 127;                                  // > 57 factory presets
         put_midi_event(buf, midiEventURID, pc, 2);
         const float oorBlock = run_peak(inst, audio, nPorts, 1);
         clear_seq(buf);

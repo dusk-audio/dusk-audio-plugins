@@ -34,6 +34,8 @@
 #include "FMEngine.hpp"        // Prism mode (mode 4): 4-op FM osc section
 #include "DuskSmoothed.hpp"
 
+#include <bitset>
+
 namespace msynth
 {
 
@@ -152,16 +154,64 @@ struct VoiceParameters
     // With none, once a just-removed route's fade-out has run, that LFO's output is
     // not touched at all (SynthVoice::applyLfoDepth).
     bool lfo1DepthRouted = false, lfo2DepthRouted = false;
+
+    // Oracle Wheel Mod (WheelMod.hpp), one frame per HOST sample from the engine,
+    // the same for every voice and every oversampled sub-sample. Applied only
+    // while wheelModActive (Oracle, a destination on or fading out); otherwise
+    // every expression below is the one it was before the section existed, so
+    // every patch without a wheel destination renders bit-identically.
+    bool  wheelModActive = false;
+    bool  wheelPwAOn = false, wheelPwBOn = false;      // that destination on or fading out
+    float wheelFreqAOct = 0.0f, wheelFreqBOct = 0.0f;  // pitch offsets, octaves
+    float wheelPwA = 0.0f, wheelPwB = 0.0f;            // pulse-width offsets
+    float wheelFilterOct = 0.0f;                       // cutoff offset, octaves
 };
 
 //==============================================================================
-class SynthVoice
+// Cache-line aligned (#303): the allocator keeps its voices in one array, so a
+// voice whose size is not a multiple of 64 bytes starts every voice after the
+// first at a different offset within a cache line, and every member added or
+// removed moves that for all of them. Measured on the core: adding 36 bytes of
+// members slowed Oracle patches by about 4 % through layout alone, and the same
+// build aligned to 64 bytes ran as fast as before. Over-aligned objects need
+// C++17 aligned new: the plugin's DSP lives inside the plugin object, which the
+// framework creates with new (macOS needs a deployment target of 10.13 or later
+// for that; the builds use 10.15 and 11.0). MSVC's C4324 ("structure was padded
+// due to alignment specifier") is exactly what is asked for here.
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4324)
+#endif
+class alignas(64) SynthVoice
 {
 public:
+    // Group delay at DC of the pre-filter (see PRE-FILTER), in internal samples,
+    // for a mode at an internal rate; 0 where it does not run. MultiSynthDSP takes
+    // it off the latency pad (CONSTANT LATENCY there).
+    // The same for the oscillators' band-limiting (Oscillator::blepDelay()), in
+    // the modes whose voices run them (Prism has its FM operators, Acid its own
+    // oscillator).
+    static double oscillatorDelay(SynthMode mode, double rate) noexcept
+    {
+        const bool usesOscillators = mode == SynthMode::Cosmos || mode == SynthMode::Oracle
+                                  || mode == SynthMode::Mono || mode == SynthMode::Modular;
+        return usesOscillators ? Oscillator::blepDelay(rate) : 0.0;
+    }
+    static double preFilterDelay(SynthMode mode, double rate) noexcept
+    {
+        if (!usesPreFilter(mode)) return 0.0;
+        const PreFilterDesign d = preFilterDesign(rate);
+        double delay = 0.0;
+        for (int i = 0; i < d.sections; ++i) delay += RbjLowpass::dcGroupDelay(rate, d.fc, d.q[i]);
+        return delay;
+    }
+
     void prepare(double sampleRate, uint32_t seed) noexcept
     {
         sr = sampleRate;
         whiteNoiseGain = 2.85f * std::sqrt((float)sampleRate / 96000.0f);
+        setOracleNoiseRate();
+        setBandLimits();
         rng.seed(seed);
         for (int u = 0; u < kMaxUnison; ++u)
         {
@@ -182,7 +232,8 @@ public:
         lfo2.prepare(sampleRate); lfo2.seed(seed + 202u);
         sampleAndHold.prepare(sampleRate);
 
-        driftCounter = rng.nextInt(200) + 100;
+        setDriftRate();
+        driftCounter = driftSamples(rng.nextInt(200) + 100);
         driftTarget = rng.nextBipolar();
         driftSmooth = 0.0f;
         filterTrackingOffset = (rng.nextFloat() - 0.5f) * 0.04f;
@@ -204,6 +255,8 @@ public:
     {
         sr = sampleRate;
         whiteNoiseGain = 2.85f * std::sqrt((float)sampleRate / 96000.0f);
+        setOracleNoiseRate();
+        setBandLimits();
         for (int u = 0; u < kMaxUnison; ++u)
         {
             osc[u].osc1.setSampleRate(sampleRate);
@@ -227,6 +280,11 @@ public:
         portaFreq.prepare(sampleRate, portaTau);
         retireStep = 1.0f / (float)(kRetireSeconds * sampleRate); // keeps retirePhase
         lfoDepthFadeStep = 1.0f / (float)(kLfoDepthFadeSeconds * sampleRate); // keeps the fades
+        // Analog drift keeps its target and smoothed value; the samples left until
+        // the next target are rescaled so that interval keeps its length in time.
+        const double oldScale = driftStepScale;
+        setDriftRate();
+        driftCounter = maxi(1, (int)std::lround((double)driftCounter * driftStepScale / oldScale));
     }
 
     void reset() noexcept
@@ -235,7 +293,10 @@ public:
         ampEnv.reset(); filtEnv.reset();
         filterL.reset(); filterR.reset();
         lfo1.reset(); lfo2.reset();
-        sampleAndHold.reset(); pinkNoise.reset();
+        sampleAndHold.reset(); pinkNoise.reset(); oracleNoiseBand.clear();
+        for (int i = 0; i < 2; ++i) { preFilterL[i].clear(); preFilterR[i].clear(); }
+        for (RbjLowpass& f : routeLp) f.clear();
+        clearOracleRoute();
         for (int u = 0; u < kMaxUnison; ++u)
         {
             osc[u].osc1.resetPhase(); osc[u].osc2.resetPhase();
@@ -512,17 +573,35 @@ public:
 
         // --- base frequency: porta + drift + pitch bend + master tune (fix #2) ---
         float baseFreq = portaFreq.next();
-        if (--driftCounter <= 0) { driftTarget = rng.nextBipolar(); driftCounter = 200 + rng.nextInt(300); }
-        driftSmooth += (driftTarget - driftSmooth) * 0.001f;
+        if (--driftCounter <= 0) { driftTarget = rng.nextBipolar(); driftCounter = driftSamples(200 + rng.nextInt(300)); }
+        driftSmooth += (driftTarget - driftSmooth) * driftCoeff;
         baseFreq *= (1.0f + driftSmooth * params.analogAmount * 0.002f);
         baseFreq *= bendTuneRatio((params.pitchBendSemis + params.masterTuneSemis) / 12.0f);
 
-        const float freq1 = baseFreq * pitch1Ratio(pitchMod1 * 2.0f / 12.0f);
-        const float freq2 = baseFreq * pitch2Ratio(((float)params.osc2SemiOffset + pitchMod2 * 2.0f) / 12.0f);
+        const float oct1 = pitchMod1 * 2.0f / 12.0f;
+        const float oct2 = ((float)params.osc2SemiOffset + pitchMod2 * 2.0f) / 12.0f;
+        const bool  wheel = params.wheelModActive;   // Oracle Wheel Mod (see VoiceParameters)
+        const float freq1 = baseFreq * pitch1Ratio(wheel ? oct1 + params.wheelFreqAOct : oct1);
+        const float freq2 = baseFreq * pitch2Ratio(wheel ? oct2 + params.wheelFreqBOct : oct2);
 
-        const float noiseSample = pinkNoise.processSample(params.mode == SynthMode::Cosmos)
-                                * params.noiseLevel
-                                * (params.mode == SynthMode::Cosmos ? whiteNoiseGain : 1.0f);
+        float noiseSample;
+        if (params.mode == SynthMode::Oracle)
+        {
+            // Oracle's mixer noise is WHITE, as on the instrument it models, at a
+            // density fixed in Hz: the same level at every oversampling factor
+            // (see ORACLE MIXER NOISE).
+            // The generator advances every sample (one stream for every mode);
+            // the band filter runs only while the noise is up.
+            const float white = pinkNoise.processSample(true);
+            noiseSample = params.noiseLevel > 0.0f
+                ? oracleNoiseBand.process(white) * params.noiseLevel * oracleNoiseGain : 0.0f;
+        }
+        else
+        {
+            noiseSample = pinkNoise.processSample(params.mode == SynthMode::Cosmos)
+                        * params.noiseLevel
+                        * (params.mode == SynthMode::Cosmos ? whiteNoiseGain : 1.0f);
+        }
 
         const int uCount = clampi(retiring ? retireUnison : unisonCount, 1, kMaxUnison);
         // The R filter runs only on the multi-voice path; when unison count grows
@@ -565,17 +644,34 @@ public:
         }
 
         // --- filter (env-modulated cutoff) ---
+        // (halved: this sum is doubled into octaves below)
         const float polyModFiltExtra = (params.mode == SynthMode::Oracle)
-            ? filtVal * params.polyModFEnvFilt * 2.0f : 0.0f;
+            ? filtVal * params.polyModFEnvFilt * (0.5f * kPmFEnvFilterOct) : 0.0f;
         // Oracle Osc-B->Filter and Modular Osc-3->Filter are evaluated from the
         // actual oscillator sample above, at the internal audio rate.  They enter
         // in octaves after the slower envelope/mod-matrix contribution.
+        if (params.mode == SynthMode::Oracle && params.polyModOscBFilt > 0.0f)
+        {
+            // Oscillator B reaches the cutoff through the same band limit as
+            // the signal it modulates. Filtering the unison sum is linear.
+            for (int i = 0; i < preFilterSections; ++i)
+                audioRateFilterMod = oracleRoutePre[i].process(audioRateFilterMod);
+            audioRateFilterMod *= params.polyModOscBFilt;
+            oracleRouteActive = true;
+        }
+        else if (oracleRouteActive)
+            clearOracleRoute();
         const float audioRateOctaves = audioRateFilterMod
-            * (params.mode == SynthMode::Modular ? 4.0f : 3.0f);
+            * (params.mode == SynthMode::Modular ? 4.0f : kPmOscBFilterOct);
         const float envModTotal = clampf(
             (filtVal * params.filterEnvAmount + cutoffMod + polyModFiltExtra) * 2.0f
             + audioRateOctaves, -5.0f, 5.0f);
-        float envCutoff = params.filterCutoff * cutoffRatio(envModTotal);
+        // The Wheel Mod's cutoff offset sits outside the +-5 octave clamp of the
+        // envelope and matrix sum: on the instrument it reaches +8.8 octaves on its
+        // own (the square at full wheel). +-16 octaves only keeps exp2 finite; the
+        // cutoff clamp below is what limits it.
+        float envCutoff = params.filterCutoff
+            * cutoffRatio(wheel ? clampf(envModTotal + params.wheelFilterOct, -16.0f, 16.0f) : envModTotal);
         envCutoff *= (1.0f + filterTrackingOffset * params.analogAmount);
         // TPT models remain stable throughout the usable top octave.
         envCutoff = clampf(envCutoff, 20.0f, (float)sr * 0.45f);
@@ -590,6 +686,13 @@ public:
         const float hpCut = (params.mode == SynthMode::Prism) ? 20.0f : params.filterHPCutoff;
         filterL.setModularModel(params.modularFilterModel);
         filterL.setMode(filtMode); filterL.setParameters(envCutoff, envRes, hpCut);
+
+        if (preFilterSections > 0 && usesPreFilter(params.mode))
+        {
+            for (int i = 0; i < preFilterSections; ++i) preL = preFilterL[i].process(preL);
+            if (uCount > 1)
+                for (int i = 0; i < preFilterSections; ++i) preR = preFilterR[i].process(preR);
+        }
 
         float sL, sR;
         if (uCount == 1)
@@ -626,6 +729,44 @@ private:
         return clampf(x, -4.0f, 4.0f);
     }
 
+    // ORACLE POLY-MOD LAWS, measured on the instrument Oracle is modeled on
+    // (#303, 2026-11-17), with the Poly-Mod amount 0..1 read as its 0..100 knob:
+    //   filter envelope -> freq A   33.908 cents per step, exponential, fitted to the
+    //                               mean of four measured notes at four amounts;
+    //   osc B -> freq A             7.145 cents per step, exponential: +-7.145
+    //                               semitones at full, oscillator B at full scale
+    //                               (re-measured in review, oscillator B at its
+    //                               negative peak: -70.9 / -180.4 / -358.2 /
+    //                               -713.7 cents at 10 / 25 / 50 / 100; the
+    //                               positive peak could not be read there);
+    //   filter envelope -> PW A     narrows the pulse 2.3 % per step, and can
+    //                               close it (4 steps from a 10 % pulse silence it);
+    //   filter envelope -> filter   0.143 octave per step: 14.3 octaves at full;
+    //   osc B -> filter             +-0.031 octave per step: +-3.1 octaves at full;
+    //   osc B -> PW A               +-0.585 % of the cycle per step (review
+    //                               re-measurement, duty of each cycle at A3:
+    //                               +-0.030 / 0.060 / 0.146 / 0.292 at 5 / 10 / 25
+    //                               / 50, linear; from 75 the pulse all but
+    //                               closes), so it may close the pulse as well.
+    // Until then freq A took linear FM (2880 Hz x amount, the same at every
+    // note), the pulse widened (+0.35 x amount) and the two filter depths were 4
+    // and 3 octaves; osc B -> PW A swung +-0.30 x amount (about half the measured
+    // depth) and stopped at the 5 % / 95 % widths.
+    static constexpr float kPmFEnvFreqSemis   = 33.908138f;
+    static constexpr float kPmOscBFreqSemis   = 7.145f;
+    static constexpr float kPmFEnvPwPerAmount = 2.3f;
+    static constexpr float kPmFEnvFilterOct   = 14.3f;
+    static constexpr float kPmOscBFilterOct   = 3.1f;
+    static constexpr float kPmOscBPwPerAmount = 0.585f;
+
+    // Hard sync: where in the coming interval the master wrapped, for the slave's
+    // band-limited reset (Oscillator::processSampleSynced); 0 when it did not
+    // wrap. The master is osc 1 in Mono and Modular and osc 2 in Oracle.
+    static float syncPoint(const Oscillator& master) noexcept
+    {
+        return master.didCross() ? master.wrapFraction() : 0.0f;
+    }
+
     static int popcount8(uint8_t v) noexcept
     {
         int c = 0;
@@ -648,17 +789,33 @@ private:
         // the 1-sample-delayed osc2 value. (The old Oracle-branch setPulseWidth ran
         // AFTER this call, so it was overwritten here on the next sample -> dead.)
         float pw1 = params.osc1PulseWidth + pwm1;
+        bool  pwMayClose = false;
         if (params.mode == SynthMode::Oracle)
         {
-            pw1 += filtVal * params.polyModFEnvPWM * 0.35f;
-            pw1 += lastOsc2[(size_t)u] * params.polyModOscBPWM * 0.30f;
+            // The filter envelope NARROWS oscillator A's pulse, and may close it
+            // altogether (silence), as on the instrument; see kPmFEnvPwPerAmount.
+            if (params.polyModFEnvPWM > 0.0f)
+            {
+                pw1 -= filtVal * params.polyModFEnvPWM * kPmFEnvPwPerAmount;
+                pwMayClose = true;
+            }
+            // Oscillator B swings the pulse width both ways (see kPmOscBPwPerAmount)
+            // and can close it too.
+            if (params.polyModOscBPWM > 0.0f)
+            {
+                pw1 += lastOsc2[(size_t)u] * params.polyModOscBPWM * kPmOscBPwPerAmount;
+                pwMayClose = true;
+            }
         }
-        o.osc1.setPulseWidth(pw1);
+        if (pwMayClose) o.osc1.setPulseWidthMayClose(pw1);
+        else            o.osc1.setPulseWidth(pw1);
+        if (params.wheelModActive && params.wheelPwAOn)
+            o.osc1.addWheelPulseWidth(params.wheelPwA);
         o.osc1.setDetune(params.osc1Detune + detCents);
 
-        // Cross mod (fix #4): osc2 (previous sample) -> osc1 frequency. The UI and
-        // design expose cross-mod only in Cosmos and Oracle, so gate it to those
-        // modes; every preset keeps crossMod=0 elsewhere, so renders are unchanged.
+        // Cross mod (fix #4): osc2 (previous sample) -> osc1 frequency, linear FM of
+        // 2880 Hz x amount. Cosmos exposes it beside osc 1 and Oracle in
+        // the Poly-Mod panel.
         if (params.crossMod > 0.0f
             && (params.mode == SynthMode::Cosmos || params.mode == SynthMode::Oracle))
             o.osc1.applyFM(lastOsc2[(size_t)u] * params.crossMod * 0.03f);
@@ -667,6 +824,10 @@ private:
 
         float osc1Sample = 0.0f, osc2Sample = 0.0f, osc3Sample = 0.0f, subSample = 0.0f;
         float mix = 0.0f, activeGain = 0.0f;
+        // What the pitch, FM and pulse-width routes read from osc 2 (this sample's,
+        // and the next one's lastOsc2): its modulationValue(), not its audio output,
+        // because they move an oscillator's phase (see Oscillator::modulationValue).
+        float osc2Mod = 0.0f;
 
         switch (params.mode)
         {
@@ -684,6 +845,7 @@ private:
                 o.osc2.setPulseWidth(params.osc2PulseWidth + pwm2);
                 o.osc2.setDetune(params.osc1Detune + detCents);
                 osc2Sample = o.osc2.processSample();
+                if (params.crossMod > 0.0f) osc2Mod = o.osc2.modulationValue();   // the only reader in Cosmos
 
                 o.sub.setFrequency(freq1);
                 o.sub.setWaveform(params.subWave);
@@ -704,20 +866,42 @@ private:
                 o.osc2.setFrequency(freq2);
                 o.osc2.setWaveform(params.osc2Wave);
                 o.osc2.setPulseWidth(params.osc2PulseWidth + pwm2);
+                if (params.wheelModActive && params.wheelPwBOn)
+                    o.osc2.addWheelPulseWidth(params.wheelPwB);
                 o.osc2.setDetune(params.osc2Detune + detCents);
-                osc1Sample = o.osc1.processSample();
-                if (params.hardSync && o.osc1.didCross()) o.osc2.hardSync();
+                // Oracle's sync runs the other way round from Mono and Modular, as on
+                // the instrument it models: oscillator B (osc 2) is the master and
+                // restarts oscillator A (osc 1), the oscillator Poly-Mod drives. So
+                // osc 2 runs first and hands its wrap point to osc 1.
                 osc2Sample = o.osc2.processSample();
-
-                // Poly-mod (affects next sample via applyFM, matching original).
-                if (params.polyModFEnvOscA > 0.0f) o.osc1.applyFM(filtVal * params.polyModFEnvOscA * 0.03f);
-                if (params.polyModOscBOscA > 0.0f) o.osc1.applyFM(osc2Sample * params.polyModOscBOscA * 0.03f);
+                // Worked out only for a route that reads it (it costs a polyBLEP).
+                if (params.polyModOscBOscA > 0.0f || params.polyModOscBPWM > 0.0f || params.crossMod > 0.0f)
+                    osc2Mod = o.osc2.modulationValue();
+                // Poly-Mod into oscillator A's pitch, exponential like the rest of
+                // its pitch: the filter envelope and oscillator B (this sample's,
+                // osc 2 having run first) set an offset in semitones on freq1.
+                if (params.polyModFEnvOscA > 0.0f || params.polyModOscBOscA > 0.0f)
+                    o.osc1.setFrequency(freq1 * std::exp2(
+                        (filtVal * params.polyModFEnvOscA * kPmFEnvFreqSemis
+                         + osc2Mod * params.polyModOscBOscA * kPmOscBFreqSemis) * (1.0f / 12.0f)));
+                osc1Sample = params.hardSync ? o.osc1.processSampleSynced(syncPoint(o.osc2))
+                                             : o.osc1.processSample();
                 // (OscB->PW poly-mod is applied to osc1's pulse width up in renderOscSet's
                 //  pre-render set, using the 1-sample-delayed osc2 value.)
-                filterAudioMod = osc2Sample * params.polyModOscBFilt;
+                // Band-limited to kRouteHz (see PRE-FILTER).
+                // The cutoff routes read the audio output: it moves the filter that
+                // this same output passes through, so the two stay in step.
+                filterAudioMod = params.polyModOscBFilt > 0.0f
+                    ? routeLp[(size_t)u].process(osc2Sample) : 0.0f;
 
                 mix = osc1Sample * params.osc1Level + osc2Sample * params.osc2Level + noiseSample;
-                activeGain = params.osc1Level + params.osc2Level + params.noiseLevel;
+                // The noise is NOT part of the level sum: on the instrument, noise at
+                // full leaves the oscillators where they are (measured +0.02 dB),
+                // while dividing by it ducked them (one saw -3.6 dB, two -1.9 dB; less
+                // than the 6.0 / 3.5 dB the division predicts because the Oracle
+                // filter compresses at full level: half the input is only 3.45 dB
+                // down at its output). The oscillators still share their own sum.
+                activeGain = params.osc1Level + params.osc2Level;
                 break;
             }
 
@@ -728,8 +912,9 @@ private:
                 o.osc2.setPulseWidth(params.osc2PulseWidth + pwm2);
                 o.osc2.setDetune(params.osc2Detune + detCents);
                 osc1Sample = o.osc1.processSample();
-                if (params.hardSync && o.osc1.didCross()) o.osc2.hardSync();
-                osc2Sample = o.osc2.processSample();
+                osc2Sample = params.hardSync ? o.osc2.processSampleSynced(syncPoint(o.osc1))
+                                             : o.osc2.processSample();
+                // (Mono has no route that reads osc 2: lastOsc2 stays 0.)
 
                 o.sub.setFrequency(baseFreq);
                 o.sub.setWaveform(params.subWave);
@@ -743,7 +928,10 @@ private:
                 }
 
                 mix = osc1Sample * params.osc1Level + osc2Sample * params.osc2Level + subSample + noiseSample;
-                activeGain = params.osc1Level + params.osc2Level + params.subLevel + params.noiseLevel;
+                // Noise is not part of the level sum (as in Oracle): dividing by it
+                // turned the oscillators down when the noise came up (one saw at full
+                // -2.6 to -3.0 dB with noise at full). The oscillators share their own.
+                activeGain = params.osc1Level + params.osc2Level + params.subLevel;
                 break;
             }
 
@@ -754,9 +942,11 @@ private:
                 o.osc2.setPulseWidth(params.osc2PulseWidth + pwm2);
                 o.osc2.setDetune(params.osc2Detune + detCents);
                 osc1Sample = o.osc1.processSample();
-                if (params.hardSync && o.osc1.didCross()) o.osc2.hardSync();
-                if (params.fmAmount > 0.0f) o.osc2.applyFM(osc1Sample * params.fmAmount * 0.05f);
-                osc2Sample = o.osc2.processSample();
+                const float osc1Mod = o.osc1.modulationValue();
+                if (params.fmAmount > 0.0f) o.osc2.applyFM(osc1Mod * params.fmAmount * 0.05f);
+                osc2Sample = params.hardSync ? o.osc2.processSampleSynced(syncPoint(o.osc1))
+                                             : o.osc2.processSample();
+                osc2Mod = o.osc2.modulationValue();
 
                 o.osc3.setFrequency(baseFreq);
                 o.osc3.setWaveform(params.osc3Wave);
@@ -765,16 +955,22 @@ private:
                 // Osc 3 may modulate cutoff even when it is not in the audio mix.
                 const float osc3Raw = o.osc3.processSample();
                 osc3Sample = osc3Raw * params.osc3Level;
-                filterAudioMod = osc3Raw * params.modularOsc3Filter;
+                // Band-limited to kRouteHz like Oracle's osc B -> filter (see PRE-FILTER).
+                filterAudioMod = params.modularOsc3Filter > 0.0f
+                    ? routeLp[(size_t)u].process(osc3Raw) * params.modularOsc3Filter : 0.0f;
 
                 if (params.ringMod > 0.0f)
                 {
                     const float ring = ringModulate(osc1Sample, osc2Sample);
                     osc2Sample = osc2Sample * (1.0f - params.ringMod) + ring * params.ringMod;
+                    // osc 2 -> osc 1 reads the ring-modulated osc 2, as before.
+                    osc2Mod = osc2Mod * (1.0f - params.ringMod) + ringModulate(osc1Mod, osc2Mod) * params.ringMod;
                 }
 
                 mix = osc1Sample * params.osc1Level + osc2Sample * params.osc2Level + osc3Sample + noiseSample;
-                activeGain = params.osc1Level + params.osc2Level + params.osc3Level + params.noiseLevel;
+                // Noise is not part of the level sum, as in Mono and Oracle (one saw at
+                // full was -2.8 to -3.2 dB with noise at full).
+                activeGain = params.osc1Level + params.osc2Level + params.osc3Level;
                 break;
             }
 
@@ -797,7 +993,7 @@ private:
             default: break; // Acid handled by the engine's mono path
         }
 
-        lastOsc2[(size_t)u] = osc2Sample;
+        lastOsc2[(size_t)u] = osc2Mod;
         if (activeGain > 1.0f) mix /= activeGain;
         return mix;
     }
@@ -913,8 +1109,32 @@ private:
     float randomPerNote = 0.0f;
     bool  active = false;
     float lastFreq = 0.0f;
+    // ANALOG DRIFT. A random target every 200 to 500 samples, followed by a
+    // one-pole of 0.001 per sample, both counted at kDriftRefRate: 2.1 to 5.2 ms
+    // between targets and a 10.4 ms time constant. They used to be counted in
+    // INTERNAL samples at whatever rate the voice ran, so the wander kept its
+    // depth but moved twice as fast at 4x as at 2x and half as fast at 1x
+    // (pitch-wander centroid 9.3 / 18.9 / 35.0 Hz at 44.1 kHz 1x / 2x / 4x).
+    // The reference is the 48 kHz / 2x default the drift was voiced at, the same
+    // one Oscillator::applyFM calibrates against: renders at 96 kHz internal are
+    // unchanged bit for bit, every other rate now drifts like them.
+    static constexpr double kDriftRefRate = 96000.0;
+    void setDriftRate() noexcept
+    {
+        driftStepScale = sr / kDriftRefRate;
+        // 0.001 per sample at the reference, the same decay per second elsewhere.
+        // At the reference this is 1 - 0.999 in double, which rounds to 0.001f.
+        driftCoeff = (float)(1.0 - std::pow(1.0 - 0.001, kDriftRefRate / sr));
+    }
+    int driftSamples(int refSamples) const noexcept
+    {
+        return maxi(1, (int)std::lround((double)refSamples * driftStepScale));
+    }
+    static int maxi(int a, int b) noexcept { return a > b ? a : b; }
     float driftTarget = 0.0f, driftSmooth = 0.0f;
     int   driftCounter = 0;
+    double driftStepScale = 1.0;   // sr / kDriftRefRate
+    float driftCoeff = 0.001f;     // one-pole coefficient per sample at sr
     float filterTrackingOffset = 0.0f, voicePanOffset = 0.0f;
     float baseLfo1Rate = 1.0f, baseLfo2Rate = 0.5f;
     float lfoRateMod1 = 0.0f, lfoRateMod2 = 0.0f;
@@ -947,6 +1167,142 @@ private:
     float  fmCarrierTrim = 1.0f;       // 1/sqrt(numCarriers), set by updateFMParams
     float  lastOsc2[kMaxUnison] = {};
     PinkNoiseGenerator pinkNoise;
+    // ORACLE MIXER NOISE, matched to the instrument Oracle is modeled on (#303,
+    // 2026-11-17): white, flat to 2 kHz, then a gentle tilt measured with the
+    // filter open (-0.7, -2.1 and -4.8 dB per octave over 2-4, 4-8 and 8-16 kHz),
+    // at a level set against the same synth's own oscillator 1 saw (A3, filter
+    // open): broadband -10.85 dB, octave bands from -37.3 dB at 31.5 Hz to
+    // -16.3 dB at 8 kHz. The open filter and the decimator already give that top
+    // tilt at 2x and 4x (within 0.6 dB per octave), so the source is plain white.
+    // kOracleNoiseLevel is its density at 96 kHz, scaled by sqrt(rate) like
+    // whiteNoiseGain so it is the same in Hz at every rate.
+    //
+    // The source is band-limited to the audio band (2-pole Butterworth at
+    // kOracleNoiseBandHz) before the filter. White noise at the oversampled rate
+    // otherwise carries power up to that rate's Nyquist, which nobody hears but
+    // the filter's saturating input stage does: it compressed the oscillators
+    // more at every step up in rate (one saw -0.20 dB at 48 kHz 1x, -0.79 dB at
+    // 96 kHz 4x).
+    static constexpr float kOracleNoiseLevel  = 0.426f;
+    static constexpr float kOracleNoiseBandHz = 22000.0f;
+    void setOracleNoiseRate() noexcept
+    {
+        oracleNoiseGain = kOracleNoiseLevel * std::sqrt((float)sr / 96000.0f);
+        // Q 1/sqrt(2); the corner stays below the rate's Nyquist.
+        oracleNoiseBand.set(sr, std::min((double)kOracleNoiseBandHz, 0.45 * sr), 0.70710678118654752);
+    }
+
+    // RBJ cookbook low-pass biquad, transposed direct form II. set() leaves the
+    // state alone (clear() does that), so a rate change does not reset it.
+    struct RbjLowpass
+    {
+        void set(double rate, double fc, double q) noexcept
+        {
+            const double w = 2.0 * 3.14159265358979323846 * fc / rate;
+            const double alpha = std::sin(w) / (2.0 * q);
+            const double a0 = 1.0 + alpha, c = std::cos(w);
+            b0 = (float)((1.0 - c) * 0.5 / a0); b1 = (float)((1.0 - c) / a0); b2 = b0;
+            a1 = (float)(-2.0 * c / a0); a2 = (float)((1.0 - alpha) / a0);
+        }
+        float process(float x) noexcept
+        {
+            const float y = b0 * x + z1;
+            z1 = b1 * x - a1 * y + z2;
+            z2 = b2 * x - a2 * y;
+            return y;
+        }
+        void clear() noexcept { z1 = z2 = 0.0f; }
+        // Group delay at DC in samples: the numerator [1 2 1] gives 1 sample, the
+        // denominator takes (a1 + 2 a2) / (1 + a1 + a2) off it.
+        static double dcGroupDelay(double rate, double fc, double q) noexcept
+        {
+            const double w = 2.0 * 3.14159265358979323846 * fc / rate;
+            const double alpha = std::sin(w) / (2.0 * q);
+            const double a0 = 1.0 + alpha, c = std::cos(w);
+            const double a1 = -2.0 * c / a0, a2 = (1.0 - alpha) / a0;
+            return 1.0 - (a1 + 2.0 * a2) / (1.0 + a1 + a2);
+        }
+        float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f, a1 = 0.0f, a2 = 0.0f, z1 = 0.0f, z2 = 0.0f;
+    };
+    RbjLowpass oracleNoiseBand;
+    float oracleNoiseGain = 1.0f;
+
+    // PRE-FILTER (#303, owner rulings 2026-11-17): in Oracle, Mono and Modular
+    // the oscillator mix goes through a low-pass before the filter whenever the
+    // internal rate is 88.2 kHz or more: a 4-pole Butterworth at 18 kHz, or from
+    // 176.4 kHz (4x) a 2-pole at 20 kHz.
+    // Measured on a plain saw at 2x, the filter's input saturation acting on the
+    // oscillators' ultrasonic content (up to the internal Nyquist, which nobody
+    // hears) was the largest source of fold-back:
+    // linearising that stage alone took the saw from -48 to -62 dB; the stage
+    // saturations added nothing. The same ultrasonic content, run through a cutoff
+    // moved at audio rate by osc B -> filter, folded back too. Content the
+    // decimator removes anyway no longer reaches the nonlinearity. Cost: up to two
+    // biquads per voice. Top octave with the filter open at 2x: -0.7 dB at
+    // 15.2 kHz, -1.4 dB at 16.7 kHz, -3.3 dB at 18.8 kHz. Saw at 2x, C6 to C7:
+    // -48.6 / -46.7 / -47.9 dB became -68.9 / -67.7 / -68.1 dB (oracle_alias_gate's
+    // metric). At lower internal rates the oscillators' band already ends near
+    // 20 kHz and the pre-filter would only dull the top, so it is off. Mono and
+    // Modular measured the same mechanism and got the same treatment: a saw at 2x
+    // went from about -42 and -44 dB to -68 and -69 dB, and their factory presets
+    // changed by at most 0.023 dB (spectral distance) and 0.01 dB in level.
+    //
+    // It delays the voice by its group delay (about 1.1 host samples at 2x in a
+    // 48 kHz session), which the latency pad takes back (preFilterDelay()). At
+    // 4x the pad is already 0 and the 4-pole's delay would leave the voice a
+    // sample late, so 4x uses the 2-pole (half the delay); it is still well
+    // clear of the reference there (kill test: saw -74 / -78 / -77 dB). (The
+    // internal rate never passes 192 kHz: Oversampling names a rate, see
+    // MultiSynthDSP::factorForSetting.)
+    //
+    // The audio-rate cutoff routes (Oracle's osc B -> filter, Modular's osc 3 ->
+    // filter) are band-limited too: their modulation signal goes through a 2-pole
+    // Butterworth low-pass at 10 kHz at every rate. A cutoff moved by a full-band
+    // saw spreads the filter's input into sidebands at every multiple of the
+    // modulator's pitch, and at high notes those run past the internal Nyquist
+    // and fold back: in Oracle the route was the largest source left after the
+    // pre-filter (C7 at 2x -49 dB). The modulator's harmonics above 10 kHz are the
+    // ones that move the cutoff fastest and least; the routes' growl comes from
+    // the low ones.
+    static constexpr double kPreFilterMinRate = 88200.0;
+    static constexpr double kPreFilterGentleRate = 176400.0;
+    static constexpr double kRouteHz = 10000.0;
+    struct PreFilterDesign { int sections; double fc; double q[2]; };
+    static PreFilterDesign preFilterDesign(double rate) noexcept
+    {
+        if (rate < kPreFilterMinRate) return {0, 0.0, {0.0, 0.0}};
+        if (rate >= kPreFilterGentleRate) return {1, 20000.0, {0.70710678118654752, 0.0}};
+        // Butterworth 4-pole: Q = 1 / (2 cos(pi/8)) and 1 / (2 cos(3 pi/8)).
+        return {2, 18000.0, {0.54119610014619698, 1.3065629648763766}};
+    }
+    static bool usesPreFilter(SynthMode mode) noexcept
+    {
+        return mode == SynthMode::Oracle || mode == SynthMode::Mono || mode == SynthMode::Modular;
+    }
+    void setBandLimits() noexcept
+    {
+        clearOracleRoute();
+        const PreFilterDesign d = preFilterDesign(sr);
+        preFilterSections = d.sections;
+        for (int i = 0; i < d.sections; ++i)
+        {
+            preFilterL[i].set(sr, d.fc, d.q[i]);
+            preFilterR[i].set(sr, d.fc, d.q[i]);
+            oracleRoutePre[i].set(sr, d.fc, d.q[i]);
+        }
+        for (RbjLowpass& f : routeLp)
+            f.set(sr, std::min(kRouteHz, 0.45 * sr), 0.70710678118654752);
+    }
+    RbjLowpass preFilterL[2], preFilterR[2];
+    void clearOracleRoute() noexcept
+    {
+        for (RbjLowpass& f : oracleRoutePre) f.clear();
+        oracleRouteActive = false;
+    }
+    RbjLowpass oracleRoutePre[2];
+    bool oracleRouteActive = false;
+    RbjLowpass routeLp[kMaxUnison];
+    int preFilterSections = 0;
     // Fixed white-noise density across internal rates; cached on prepare/rate
     // changes. 2.85 matches the reference's 500 Hz–4 kHz noise/saw balance.
     float whiteNoiseGain = 2.85f;
@@ -961,6 +1317,9 @@ private:
     float portaTau = kDefaultPortaTau;
     Xorshift rng;
 };
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 
 //==============================================================================
 // Voice allocator: free-first then steal-quietest; unison sub-voice count with
@@ -970,6 +1329,7 @@ class VoiceAllocator
 public:
     void prepare(double sampleRate) noexcept
     {
+        assignedThisSample.reset();
         for (int i = 0; i < kMaxPolyphony; ++i)
             voices[(size_t)i].prepare(sampleRate, 0x1000u + 0x1000u * (uint32_t)i);
         voiceGain.prepare(sampleRate, kParamSmoothTau);
@@ -977,6 +1337,7 @@ public:
     }
     void reset() noexcept
     {
+        assignedThisSample.reset();
         for (auto& v : voices) v.reset();
         snapVoiceGain();
     }
@@ -1080,24 +1441,33 @@ public:
     SynthVoice* noteOn(int note, float velocity, const VoiceParameters& params) noexcept
     {
         const int poly = effectivePoly();
-        for (int i = 0; i < poly; ++i)
-            if (!voices[(size_t)i].isActive()) { voices[(size_t)i].noteOn(note, velocity, params); return &voices[(size_t)i]; }
-
-        int quietest = 0;
+        int slot = 0;
+        bool bestIsNewAttack = true;
         float quietestLevel = 1.0e9f;
         for (int i = 0; i < poly; ++i)
         {
-            float level = voices[(size_t)i].getCurrentLevel();
-            if (voices[(size_t)i].isReleasing()) level *= 0.1f;
-            if (level < quietestLevel) { quietestLevel = level; quietest = i; }
+            const auto& voice = voices[(size_t)i];
+            if (!voice.isActive()) { slot = i; break; }
+
+            // Before the first sample an attack can still read zero. Let an Oracle
+            // chord use older slots first, even when they have louder release tails.
+            const bool newAttack = params.mode == SynthMode::Oracle
+                                && assignedThisSample[(size_t)i] && voice.isGateHeld();
+            float level = voice.getCurrentLevel();
+            if (voice.isReleasing()) level *= 0.1f;
+            if ((bestIsNewAttack && !newAttack) || (newAttack == bestIsNewAttack && level < quietestLevel))
+            {
+                slot = i;
+                bestIsNewAttack = newAttack;
+                quietestLevel = level;
+            }
         }
         // No release before the new note: SynthVoice::noteOn either ties to the
         // stolen note (legato, still held) or restarts every envelope from its
         // current level, which is the click-free hand-off on its own. The release
         // this used to issue first was what turned every legato steal into a tie
         // to a dying note.
-        voices[(size_t)quietest].noteOn(note, velocity, params);
-        return &voices[(size_t)quietest];
+        return startVoice(slot, note, velocity, params);
     }
 
     // The voice, below the polyphony limit, that holds `note` with its gate still
@@ -1120,7 +1490,7 @@ public:
     {
         const int i = findHeld(from);
         if (i < 0) return false;
-        voices[(size_t)i].noteOn(to, velocity, params);
+        startVoice(i, to, velocity, params);
         return true;
     }
 
@@ -1167,6 +1537,7 @@ public:
     void renderInternalSample(const VoiceParameters& params, const ModMatrix& matrix,
                               float& outL, float& outR, float& effectsMixModOut) noexcept
     {
+        assignedThisSample.reset();
         outL = outR = 0.0f;
         // The headroom trim is a TARGET, not a value: effectivePoly() changes on a
         // unison or mode-budget edge, and stepping 2/sqrt(poly) there jumps the
@@ -1197,6 +1568,14 @@ public:
     }
 
 private:
+    SynthVoice* startVoice(int slot, int note, float velocity, const VoiceParameters& params) noexcept
+    {
+        auto& voice = voices[(size_t)slot];
+        assignedThisSample[(size_t)slot] = true;
+        voice.noteOn(note, velocity, params);
+        return &voice;
+    }
+
     // Constant-power headroom referenced to a 4-voice sum: 2/sqrt(poly), clamped
     // to unity. The old 1/(1+log2(poly)) cost a 6-voice mode 11 dB even when ONE
     // note sounded, which made every poly preset audibly quieter than the
@@ -1217,6 +1596,7 @@ private:
     float polyTrim = 1.0f;
     int modeVoices = 6;
     int unisonCount = 1;
+    std::bitset<kMaxPolyphony> assignedThisSample;
 };
 
 } // namespace msynth

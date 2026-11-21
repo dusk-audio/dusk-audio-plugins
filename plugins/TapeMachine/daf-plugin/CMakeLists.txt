@@ -7,7 +7,7 @@
 #   cmake --build build
 
 cmake_minimum_required(VERSION 3.15)
-project(TapeMachine2DAF VERSION 1.0.12)
+project(TapeMachine2DAF VERSION 1.0.13)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -24,6 +24,7 @@ daf_add_plugin(tapemachine-2
     FILES_DSP
         TapeMachinePlugin.cpp
         ../core/TapeMachineDSP.cpp
+        ../core/TapeMachineSwitcher.cpp
     FILES_UI
         TapeMachineUI.cpp
         ${DUSK_DAF_UI_SOURCES})
@@ -53,3 +54,63 @@ dusk_daf_add_output_param_tests(tapemachine-2)
 dusk_daf_add_ui_drag_test(tapemachine-2 72 330)   # INPUT knob
 dusk_daf_add_resize_test(tapemachine-2)
 dusk_daf_add_clap_preset_test(tapemachine-2)
+
+if(NOT CMAKE_CROSSCOMPILING)
+    # LocalAAStage (the anti-aliasing stage around the soft limiter and the shaper)
+    # skips the FIR sum on its zero-stuffed phases. The test holds that shortcut to
+    # the bits of the full sum, zero sign included. TapeMachine 2 is the only user
+    # of the stage, so the test is registered here.
+    enable_testing()
+    add_executable(TapeMachine2OversamplerTest
+        ../../shared-daf/dsp/tests/DuskOversamplerTest.cpp)
+    target_include_directories(TapeMachine2OversamplerTest PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+    target_compile_features(TapeMachine2OversamplerTest PRIVATE cxx_std_17)
+    add_test(NAME TapeMachine2Oversampler COMMAND TapeMachine2OversamplerTest)
+
+    # Gain Link is the exact inverse of Input Gain (a linked instance gives the bits of an
+    # unlinked one with Output = -Input), and a preset-sized change starts from a clean
+    # state: no burst, no hole, no click. Links the core directly, no plugin or host.
+    add_executable(TapeMachine2CleanChangeTest
+        ../core/tests/CleanChangeTest.cpp
+        ../core/TapeMachineDSP.cpp)
+    target_include_directories(TapeMachine2CleanChangeTest PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../core"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+    target_compile_features(TapeMachine2CleanChangeTest PRIVATE cxx_std_17)
+    add_test(NAME TapeMachine2CleanChange COMMAND TapeMachine2CleanChangeTest)
+
+    # copySettingsFrom() carries every setting: an instance set up through a copy of another
+    # one's settings renders the same bits, setter by setter. Links the core directly.
+    add_executable(TapeMachine2SettingsCopyTest
+        ../core/tests/SettingsCopyTest.cpp
+        ../core/TapeMachineDSP.cpp)
+    target_include_directories(TapeMachine2SettingsCopyTest PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../core"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+    target_compile_features(TapeMachine2SettingsCopyTest PRIVATE cxx_std_17)
+    add_test(NAME TapeMachine2SettingsCopy COMMAND TapeMachine2SettingsCopyTest)
+
+    # restart() leaves the state prepare() leaves (the render after it is that of an instance
+    # prepared afresh, bit for bit) and does not allocate. Links the core directly.
+    add_executable(TapeMachine2RestartTest
+        ../core/tests/RestartTest.cpp
+        ../core/TapeMachineDSP.cpp)
+    target_include_directories(TapeMachine2RestartTest PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../core"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+    target_compile_features(TapeMachine2RestartTest PRIVATE cxx_std_17)
+    add_test(NAME TapeMachine2Restart COMMAND TapeMachine2RestartTest)
+
+    # The switcher: one path while nothing is switched (bit for bit), and at a switch of the
+    # deck the old path and a new one mixed along a raised cosine, then the new one alone.
+    add_executable(TapeMachine2SwitcherTest
+        ../core/tests/SwitcherTest.cpp
+        ../core/TapeMachineDSP.cpp
+        ../core/TapeMachineSwitcher.cpp)
+    target_include_directories(TapeMachine2SwitcherTest PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../core"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+    target_compile_features(TapeMachine2SwitcherTest PRIVATE cxx_std_17)
+    add_test(NAME TapeMachine2Switcher COMMAND TapeMachine2SwitcherTest)
+endif()

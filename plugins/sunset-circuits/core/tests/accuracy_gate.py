@@ -56,9 +56,11 @@ def main():
                    "pmOscBFilt", 0, 1, osc1Wave=0, osc2Wave=3, osc2Semi=12)
     rows.append(("Oracle OscB -> filter", rms_db(a - b), finite(a, b)))
 
-    sync_patch = dict(osc1Wave=0, osc1Level=0, osc2Wave=0,
-                      osc2Level=1, osc2Semi=19)
-    _, a, b = pair(1, 48, "accuracy_oracle_sync",
+    # Oracle syncs osc 1 (the slave, audible here) to osc 2 (the master, silent,
+    # 19 semitones below it at note 48).
+    sync_patch = dict(osc1Wave=0, osc1Level=1, osc2Wave=0,
+                      osc2Level=0, osc2Semi=-19)
+    _, a, b = pair(1, 67, "accuracy_oracle_sync",
                    "hardSync", 0, 1, **sync_patch)
     rows.append(("Oracle hard sync", rms_db(a - b), finite(a, b)))
 

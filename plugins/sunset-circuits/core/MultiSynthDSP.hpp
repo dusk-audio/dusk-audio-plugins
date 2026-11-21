@@ -43,6 +43,7 @@
 #include "Effects.hpp"
 #include "Arpeggiator.hpp"
 #include "AcidEngine.hpp"      // Acid mode (mode 5): mono voice + pattern sequencer
+#include "WheelMod.hpp"        // Oracle Wheel Mod: global LFO + shared noise (#303)
 #include "DuskOversampler.hpp" // HalfbandFIR + hbtaps
 #include "DuskFilters.hpp"     // DCBlocker (output hygiene)
 #include "DuskSmoothed.hpp"    // one-pole parameter smoothing (zipper-free automation)
@@ -118,6 +119,13 @@ enum Param : int
     // Modular audio-rate patch points / two filter revisions.
     pPmFenvPWM, pPmOscBFilt,
     pModFilterModel, pModOsc2Osc1, pModOsc3Filter,
+    // Oracle Wheel Mod (issue #303; WheelMod.hpp): one free-running LFO and one
+    // shared noise source, mixed, scaled by the mod wheel between two limits and
+    // switched to five destinations. Every destination defaults to off, so the
+    // section changes nothing until one is switched on.
+    pWheelLfoRate, pWheelLfoSaw, pWheelLfoTri, pWheelLfoSquare,
+    pWheelSourceMix, pWheelNoiseSH, pWheelLowerLimit, pWheelUpperLimit,
+    pWheelFreqA, pWheelFreqB, pWheelPwA, pWheelPwB, pWheelFilter,
     kNumParams
 };
 
@@ -222,6 +230,20 @@ public:
     // read it only from the thread that calls processBlock, between calls
     // (render_test logs it after each block).
     int   getOsFactor() const noexcept { return osFactor; }
+
+    // RATE-AWARE OVERSAMPLING (#303, owner ruling 2026-11-17): the Oversampling
+    // setting names an internal rate, not a multiplier: 1x, 2x and 4x mean about
+    // 48, 96 and 192 kHz inside. A 44.1 or 48 kHz session gets factors 1, 2 and
+    // 4; an 88.2 or 96 kHz session already runs at the 2x rate, so it gets 1, 1
+    // and 2; a 176.4 or 192 kHz session 1, 1 and 1. Before, 2x in a 96 kHz
+    // session ran the voices at 192 kHz: about twice the CPU of the same patch at
+    // 48 kHz, for aliasing already at the 2x level at 1x there.
+    static int factorForSetting(int setting, double sessionRate) noexcept
+    {
+        const int target = setting <= 0 ? 1 : (setting == 1 ? 2 : 4);    // x 44.1 / 48 kHz
+        const int sessionMultiple = sessionRate >= 160000.0 ? 4 : (sessionRate >= 80000.0 ? 2 : 1);
+        return target > sessionMultiple ? target / sessionMultiple : 1;
+    }
     // Current performance-wheel state, whoever last wrote it — the shell's MIDI
     // handler (0xE0 / CC 1) or the editor's on-screen wheels. Read-only, relaxed,
     // no new state: these are the same atomics pitchBend()/modWheel() store into.
@@ -444,8 +466,32 @@ private:
     // 2x by 2, 4x not at all, which lands all three within half a sample of 13.
     // Cost against the old per-factor report: 13 samples (0.27 ms at 48 kHz) at
     // 1x, about 2 at the default 2x, nothing at 4x.
-    static constexpr int padFor(int factor) noexcept
-    { return factor == 4 ? 0 : factor == 2 ? 2 : kLatencySamples; }
+    //
+    // A mode that runs the pre-filter (Voice.hpp, PRE-FILTER) is later by its
+    // group delay, which depends on the internal rate and is fractional (1.1 host
+    // samples at 2x in a 48 kHz session, 2.2 at 1x in a 96 kHz one), and the
+    // oscillators' minimum-phase BLEP (Oscillator.hpp) adds 2.1 samples of the
+    // internal rate below 176.4 kHz; the pad gives that much back, rounded, so
+    // every mode lands on 13 too (#303). The pad therefore
+    // follows the mode as well as the factor; it changes only where both already
+    // reset the path: a factor change, or a mode switch committed at the bottom
+    // of its fade (snapshotParameters).
+    int padFor(int factor, SynthMode mode) const noexcept
+    {
+        const int base = factor == 4 ? 0 : factor == 2 ? 2 : kLatencySamples;
+        const double rate = hostRate * (double)factor;
+        const double voiceDelay = (SynthVoice::preFilterDelay(mode, rate) + SynthVoice::oscillatorDelay(mode, rate))
+                                / (double)factor;
+        const int pad = base - (int)std::lround(voiceDelay);
+        return pad > 0 ? pad : 0;
+    }
+    void updateLatencyPad() noexcept
+    {
+        const int d = padFor(osFactor, activeMode);
+        if (d == padL.delay) return;
+        padL.delay = padR.delay = d;
+        padL.reset(); padR.reset();
+    }
     struct LatencyPad
     {
         static constexpr int kSize = 16;   // power of two above the largest pad
@@ -515,6 +561,13 @@ private:
     int      acidHeldCount = 0;
 
     VoiceParameters voiceParams;
+
+    // Oracle Wheel Mod (#303). ONE per engine: the instrument has a single
+    // modulation bus, so every voice hears the same LFO and the same noise. It is
+    // set every block and run every host sample in EVERY mode, so its LFO free-runs
+    // through mode changes; only Oracle voices apply it (wheelOracle).
+    WheelMod wheelMod;
+    bool     wheelOracle = false;
 
     // block-cached engine-level controls (targets for the smoothers below)
     float masterGain = 1.0f, masterPan = 0.0f, stereoWidth = 0.5f, vintage = 0.0f;

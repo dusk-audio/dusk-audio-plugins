@@ -55,6 +55,19 @@
 namespace duskverb
 {
 
+// The fourth post-tank EQ band shapes the music release on these two DuskVerb 2 plates.
+struct PlateTrebleEq
+{
+    std::string_view name;
+    float hz;
+    float q;
+    float gainDb;
+};
+inline constexpr PlateTrebleEq kPlateTrebleEq[] {
+    { "Vintage Vocal Plate", 10800.0f, 2.2f, -1.7f },
+    { "Vocal Plate",         10000.0f, 1.0f,  0.77f },
+};
+
 // Linear scans avoid allocation on audio-thread preset swaps. Reverse Taps has no early
 // field because an added reflection would precede its 104 ms swell.
 inline constexpr std::array<std::pair<std::string_view, EarlyFieldConfig>, 16> kEarlyFieldByName = {{
@@ -270,7 +283,7 @@ inline constexpr std::array<std::pair<std::string_view, OctaveTrimGains>, 17> kO
     { "Large Chamber", {{ 2.29713774f, 1.2263025f, -0.649435639f, 0.620101988f, 1.91332257f, 1.03331375f, -1.48754799f, 2.62679315f, -0.555481493f }} },
     { "Live Room", {{ 0.622846842f, -0.463719219f, 0.588961184f, 0.452516139f, 0.18761763f, -0.888634801f, -0.827028215f, 0.209748209f, 0.830334663f }} },
     // This tilt balances low-mid energy against the densifier and band-level settings.
-    { "Medium Drum Room", {{ -0.582f, -0.388f, -0.582f, -0.194f, 0.194f, 0.388f, 0.388f, 0.0f, 0.0f }} },
+    { "Medium Drum Room", {{ -0.298f, -0.982f, -1.917f, -1.799f, -1.011f, -0.531f, 1.716f, 0.614f, -2.985f }} },
     { "Reverse Taps", {{ 0.316647798f, 2.20800257f, 2.27045536f, 2.24588609f, 0.484986275f, 0.368917704f, -0.371552557f, 1.25592148f, -1.37708199f }} },
     { "Small Drum Room", {{ -0.323900789f, 0.963136971f, -0.480009556f, 0.468286514f, 0.462088585f, -2.23359466f, 0.0839468911f, 0.488428742f, -2.29271841f }} },
     { "Tiled Room", {{ 2.96405005f, -0.11537648f, -1.23354101f, 0.0184728466f, 0.38636291f, 0.236264035f, -0.0842026472f, 1.81604993f, 1.36784935f }} },

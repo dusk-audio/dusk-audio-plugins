@@ -7,8 +7,8 @@
 // calibration, head width, drive, and reproduce-EQ settings.
 //
 // Gain link (Auto Compensation) is ON for every preset: driving the tape via Input
-// adds saturation while the output holds unity (-12 dBFS in -> -12 dBFS out), which
-// is how the calibrated -12 dBFS internal level operates. Each preset also stores an
+// adds saturation while the output gain takes the same amount off again, so the level
+// that comes out is the input's give or take what the tape does to it. Each preset also stores an
 // Output trim for unlinked operation; Gain Link deliberately ignores it so preset
 // changes cannot alter the linked gain-stage level.
 

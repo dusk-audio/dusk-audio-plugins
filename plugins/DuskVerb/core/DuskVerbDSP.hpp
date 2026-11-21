@@ -58,12 +58,16 @@
 #include "dsp/NonLinBurstEngine.h"
 
 #include <atomic>
+#include <optional>
 #include <vector>
 
 struct FactoryPreset;
 
 namespace duskverb
 {
+
+// The optional room variant belongs to the recalled sound across prepare and reset.
+enum class RoomVoicing : unsigned char { Factory, EarlyStudy, Matched };
 
 class DuskVerbDSP
 {
@@ -164,7 +168,7 @@ public:
     // brightness over the state's at swap time. Here performPresetSwap()
     // pushes the state's SixAP values after applyEngineConfig(), so a restored
     // custom snapshot keeps its own.
-    void restorePresetIdentity (const FactoryPreset* preset);
+    void restorePresetIdentity (const FactoryPreset* preset, RoomVoicing room = RoomVoicing::Factory);
 
     const FactoryPreset* lastAppliedPreset() const noexcept
     { return lastAppliedPreset_.load (std::memory_order_acquire); }
@@ -187,7 +191,7 @@ public:
     // Audio thread, or while processing is stopped. The complete control
     // snapshot is installed together, before any engine sees the new values.
     void stageSound(const std::array<float, kNumParams>& plain,
-                    const FactoryPreset* preset, const SixAPBrightnessState& sixAP) noexcept;
+                    const FactoryPreset* preset, const SixAPBrightnessState& sixAP, RoomVoicing room = RoomVoicing::Factory) noexcept;
     SixAPBrightnessState getSixAPBrightness() const { return sixAPBrightness_; }
     // Message thread, before audio starts or between blocks: pushes to both
     // engines, matching setStateInformation()'s behaviour.
@@ -324,7 +328,10 @@ private:
     DuskVerbEngine* activeEngine_   = &engineA_;
     DuskVerbEngine* previousEngine_ = nullptr;
 
-    std::atomic<bool> pendingPresetSwap_ { false };
+    using PendingSwap = std::optional<RoomVoicing>;
+    static_assert (std::atomic<PendingSwap>::is_always_lock_free);
+    std::atomic<PendingSwap> pendingPresetSwap_ { std::nullopt };
+    RoomVoicing room_ = RoomVoicing::Factory;  // Latched with the swap; part of the sound across reset and prepare.
     int presetFadeRemaining_ = 0;
     int presetFadeTotal_     = 0;
     std::atomic<const FactoryPreset*> lastAppliedPreset_ { nullptr };

@@ -20,10 +20,10 @@
 //   [138..185] dyn per-band ×8 (enabled, threshold, attack, release, range, ratio)
 //   [186..189] dyn_detection_mode, auto_gain_enabled, limiter_enabled, limiter_ceiling
 //
-// Match/analyzer/display/dyn-detection/auto-gain/limiter params are exposed for
-// host automation completeness; the Phase-2 core snapshot ignores the ones with
-// no matching core Params field (eq_type==Match IS handled by the core as an
-// all-bands-bypass).
+// Match/analyzer/display params are exposed for host automation completeness;
+// the core snapshot ignores the ones with no matching core Params field
+// (eq_type==Match IS handled by the core as an all-bands-bypass). Dynamics
+// detection, auto-gain and the limiter map to core Params fields.
 
 #pragma once
 

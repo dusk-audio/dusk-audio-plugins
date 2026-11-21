@@ -339,6 +339,13 @@ void MultiQ::prepareToPlay(double sampleRate, int samplesPerBlock)
     filtersNeedUpdate.store(true);
     updateAllFilters();
 
+    // dynamicEQ.prepare() below resets every band's dynamic gain to 0 dB. Aim
+    // every band's dynamic-gain filter there before the snap, dynamics on or
+    // off, or a re-prepared band would start from its old reduction, at once or
+    // when its dynamics are switched on again.
+    for (int band = 1; band < 7; ++band)
+        updateDynGainFilter(band, 0.0f);
+
     // Snap SVF filters to target (no interpolation at startup)
     for (auto& f : svfFilters)
         f.snapToTarget();
@@ -360,6 +367,8 @@ void MultiQ::prepareToPlay(double sampleRate, int samplesPerBlock)
     // Prepare Dynamic EQ processor
     dynamicEQ.prepare(currentSampleRate, 2);
     dynamicParamsChanged.store(true);
+    dynUpdateInterval = juce::jmax(1, static_cast<int>(std::lround(kDynGainUpdateSeconds * currentSampleRate)));
+    dynUpdateCountdown = 0;
 
     // Pre-allocate FFT objects for all 3 resolutions (avoids RT allocation in processBlock)
     {
@@ -657,6 +666,8 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
         tubeEQParamsChanged.store(true);
         dynamicEQ.updateSampleRate(newSR);
         dynamicParamsChanged.store(true);
+        dynUpdateInterval = juce::jmax(1, static_cast<int>(std::lround(kDynGainUpdateSeconds * newSR)));
+        dynUpdateCountdown = 0;
 
         // Force filter coefficient update at new sample rate
         filtersNeedUpdate.store(true);
@@ -1078,14 +1089,9 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
                 float bandQ = safeGetParam(bandQParams[static_cast<size_t>(band)], 0.71f);
                 dynamicEQ.updateDetectionFilter(band, bandFreq, bandQ);
             }
-
-            // Update dynamic gain filter coefficients for this block
-            // Uses the latest smoothed gain from the previous block's envelope followers
-            for (int band = 1; band < 7; ++band)
-            {
-                if (bandDynEnabled[static_cast<size_t>(band)])
-                    updateDynGainFilter(band, dynamicEQ.getCurrentDynamicGain(band));
-            }
+            dynamicEQ.setRmsDetection(safeGetParam(dynDetectionModeParam, 0.0f) > 0.5f);  // 0=Peak, 1=RMS
+            // The dynamic gain filter coefficients follow the envelopes inside the
+            // sample loop, on the kDynGainUpdateSeconds grid (see dynUpdateCountdown).
 
             // Read per-band phase invert and pan target values once per block
             std::array<float, NUM_BANDS> targetPhaseInvertGain{};
@@ -1152,6 +1158,17 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
             {
                 float sampleL = procL[i];
                 float sampleR = isStereo ? procR[i] : sampleL;
+
+                // Each dynamic band's gain filter takes the envelope's current gain
+                // every kDynGainUpdateSeconds. The grid runs across processBlock
+                // calls, so the gain does not depend on how the host splits the audio.
+                if (--dynUpdateCountdown <= 0)
+                {
+                    dynUpdateCountdown = dynUpdateInterval;
+                    for (int band = 1; band < 7; ++band)
+                        if (bandDynEnabled[static_cast<size_t>(band)])
+                            updateDynGainFilter(band, dynamicEQ.getCurrentDynamicGain(band));
+                }
 
                 // Delta solo: capture signal before and after the target band
                 float deltaBeforeL = 0.0f, deltaBeforeR = 0.0f;
@@ -1283,11 +1300,9 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
                             // Fast path: all bands use Stereo routing, skip routing switch
                             if (bandDynEnabled[static_cast<size_t>(band)])
                             {
-                                // Per-sample detection (stereo = use both channels directly)
-                                float detectionL = dynamicEQ.processDetection(band, sampleL, 0);
-                                float detectionR = dynamicEQ.processDetection(band, sampleR, 1);
-                                dynamicEQ.processBand(band, detectionL, 0);
-                                dynamicEQ.processBand(band, detectionR, 1);
+                                // Per-sample detection, linked: the louder channel's
+                                // envelope sets one gain for both.
+                                dynamicEQ.processBandLinked(band, sampleL, sampleR);
 
                                 applyFilterStereo(filter);
                                 applyFilterStereo(svfDynGainFilters[static_cast<size_t>(band - 1)]);
@@ -1314,7 +1329,8 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
 
                             if (bandDynEnabled[static_cast<size_t>(band)])
                             {
-                                // Detection input respects per-band routing
+                                // Detect what the band processes: one channel, Mid,
+                                // Side, or both channels linked (the louder one).
                                 float detL = sampleL;
                                 float detR = sampleR;
                                 if (routing == 3 || routing == 4)
@@ -1328,10 +1344,7 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
                                 else if (routing == 2) { detL = 0.0f; }
 
                                 // Per-sample detection and envelope following
-                                float detectionL = dynamicEQ.processDetection(band, detL, 0);
-                                float detectionR = dynamicEQ.processDetection(band, detR, 1);
-                                dynamicEQ.processBand(band, detectionL, 0);
-                                dynamicEQ.processBand(band, detectionR, 1);
+                                dynamicEQ.processBandLinked(band, detL, detR);
 
                                 // Apply static EQ filter (SVF with per-sample interpolation)
                                 applyFilterWithRouting(filter, routing);
