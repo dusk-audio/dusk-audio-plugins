@@ -138,6 +138,10 @@ namespace
             << "                                impulse,noiseburst,snare,session,piano,sine1k,sinelong,\n"
             << "                                sustained); default all. Each stimulus is rendered from a\n"
             << "                                hard reset, so the ones kept are unchanged by the filter\n"
+            << "  --compensate-latency          Align every rendered output with its input by the\n"
+            << "                                plugin's reported latency, as a DAW's delay\n"
+            << "                                compensation does (renders that many extra samples and\n"
+            << "                                drops the leading ones)\n"
             << "  --wait-after-apply MS         Sleep after the preset/state apply (plugins that load\n"
             << "                                resources asynchronously after a program change)\n"
             << "  --write-stimuli DIR           Also write each built-in stimulus INPUT buffer to\n"
@@ -1057,11 +1061,20 @@ namespace
     // totalOutputChannels) channels so multi-bus plugins (the reference emulation
     // exposes 2 stereo input buses = 4 channels) don't read past the
     // buffer end and segfault.
+    // --compensate-latency: a DAW shifts a plug-in's output earlier by the latency
+    // it reports, so two plug-ins are compared as a user hears them only when
+    // that shift is applied. Without it, a reference that reports latency reads
+    // late by exactly that many samples in every timing measurement.
+    bool gCompensateLatency = false;
+
     juce::AudioBuffer<float> renderThroughPlugin (juce::AudioPluginInstance& plugin,
                                                    const juce::AudioBuffer<float>& input,
                                                    const std::vector<NormalizedParameterEvent>& events = {})
     {
         const int total      = input.getNumSamples();
+        const int latency    = gCompensateLatency
+                                 ? std::max (0, plugin.getLatencySamples()) : 0;
+        const int rendered   = total + latency;
         const int inChans    = plugin.getTotalNumInputChannels();
         const int outChans   = plugin.getTotalNumOutputChannels();
         const int blockChans = std::max (inChans, outChans);
@@ -1076,7 +1089,7 @@ namespace
 
         int pos = 0;
         size_t eventIndex = 0;
-        while (pos < total)
+        while (pos < rendered)
         {
             while (eventIndex < events.size()
                    && events[eventIndex].sampleOffset <= pos)
@@ -1086,7 +1099,7 @@ namespace
                     parameter->setValueNotifyingHost (event.normalized);
             }
 
-            int next = std::min (pos + kBlockSize, total);
+            int next = std::min (pos + kBlockSize, rendered);
             if (eventIndex < events.size())
                 next = std::min (next, events[eventIndex].sampleOffset);
             if (next <= pos)
@@ -1095,13 +1108,20 @@ namespace
             juce::AudioBuffer<float> activeBlock (
                 block.getArrayOfWritePointers(), blockChans, n);
             activeBlock.clear();
+            // Past the end of the input the compensated tail is fed silence.
+            const int fromInput = std::max (0, std::min (n, total - pos));
             for (int ch = 0; ch < copyChans; ++ch)
-                activeBlock.copyFrom (ch, 0, input, ch, pos, n);
+                if (fromInput > 0)
+                    activeBlock.copyFrom (ch, 0, input, ch, pos, fromInput);
 
             plugin.processBlock (activeBlock, midi);
 
-            for (int ch = 0; ch < outCopy; ++ch)
-                output.copyFrom (ch, pos, activeBlock, ch, 0, n);
+            // Output sample k (input time) is the plug-in's sample k + latency.
+            const int keepFrom = std::max (pos, latency);
+            if (next > keepFrom)
+                for (int ch = 0; ch < outCopy; ++ch)
+                    output.copyFrom (ch, keepFrom - latency, activeBlock, ch,
+                                     keepFrom - pos, next - keepFrom);
             pos = next;
         }
         return output;
@@ -1364,6 +1384,7 @@ int main (int argc, char** argv)
         else if (a == "--disable-aux-inputs")       disableAuxInputs = true;
         else if (a == "--input-wav"  && i + 1 < argc) inputWavPaths.emplace_back (argv[++i]);
         else if (a == "--legacy-stem-name")          legacyStemName = true;
+        else if (a == "--compensate-latency")        gCompensateLatency = true;
         else if (a == "--program"   && i + 1 < argc) programArg   = argv[++i];
         else if (a == "--program-index" && i + 1 < argc)
         {

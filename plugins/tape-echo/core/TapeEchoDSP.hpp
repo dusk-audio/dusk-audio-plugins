@@ -59,6 +59,16 @@ namespace duskaudio
 //==============================================================================
 // Spring reverb — three parallel bidirectional dispersive waveguides.
 //
+// The tank runs at a reduced internal rate, as the reference's does: the host
+// signal is decimated by a power of two to about 11-12 kHz (fs/4 at 44.1 and
+// 48 kHz, fs/8 at 88.2 and 96 kHz), the tank and its voicing run there, and
+// the result is interpolated back. Measured on the reference, its spring output
+// falls off a cliff at exactly half that rate (5.5 kHz at 44.1 kHz, 6 kHz at
+// 48 and 96 kHz), so the resampling filters ARE the tank's top end, not a cost
+// paid to save CPU. The resampler's group delay is taken out of the outgoing
+// transit and added to the returning one, so the round trip and every arrival
+// time are unchanged.
+//
 // Each spring explicitly propagates an outgoing and returning torsional wave.
 // A fitted cascade of second-order allpasses is flat below about 1.8 kHz,
 // peaks near +21 ms of one-way group delay at 3.6 kHz, and collapses by
@@ -97,11 +107,13 @@ private:
         Biquad reflectionHighPass;
         Biquad reflectionLowLoss;
         Biquad reflectionLowPass;
-        Biquad reflectionAirLoss;
 
+        // advanceSeconds moves that much transit time from the outgoing
+        // to the returning path (round trip unchanged) so the resampler's
+        // latency does not delay the arrivals.
         void  prepare(double fs, float oneWaySeconds,
                       float dispersionScale, float reflectionAmount,
-                      float gain);
+                      float gain, double advanceSeconds);
         void  reset();
         float process(float x) noexcept;
     };
@@ -118,34 +130,44 @@ private:
     // beats are fewer and faster (1.6 / 2.7 / 4.3 Hz) and read as texture.
     // That same 5.6 ms arrival spread is also what softens its attack.
     std::array<Spring, 3> springs;
-    // Pickup diffusion. Two short allpasses on the summed tank output, of
-    // deliberately incommensurate length so they do not stack into a comb.
-    //
-    // Three waveguides give the right ARRIVALS but a bare gap between them:
-    // measured 10 ms-window kurtosis peaks at 9-10 through the 25-45 ms region
-    // where the reference sits at 4.5-6.2, i.e. our early field is a set of
-    // spikes where the reference is already a dense texture. A real tank gets
-    // that fill from the transducer plate and the springs' own cross-coupling,
-    // neither of which a three-waveguide model has. These are allpass and sit
-    // outside every feedback path, so they cannot move the magnitude response,
-    // any loop period, or the decay -- they only redistribute each arrival in
-    // time.
-    static constexpr int kNumDiffusers = 2;
-    std::array<std::vector<float>, kNumDiffusers> diffusionBuf;
-    std::array<int, kNumDiffusers> diffusionWriteIdx {};
     OnePoleHP inputHP;   // springs don't transmit deep lows
     OnePoleLP inputLP;   // dark transducer voicing
     DCBlocker dcBlock;
     std::array<Biquad, 2> outputTransducerHP;
     Biquad outputHP;
     Biquad outputVoiceLP;
-    std::array<Biquad, 13> outputCeilingLP;
-    Biquad outputFizzNotch;
     Biquad outputLowContour;
     Biquad outputBody;
     Biquad outputFourKhzSeat;
     Biquad outputLowMidBalance;
     Biquad outputOneKhzSeat;
+    // The cliff below the internal Nyquist (see processInternal()).
+    std::array<Biquad, 2> outputCliff;
+
+    // Runs one internal-rate sample: the decimated input in, the tank and its
+    // voicing, one internal-rate sample out.
+    float processInternal(float in) noexcept;
+
+    // Resampling between the host rate and the internal rate: factor 2^stages.
+    // Every stage but the one next to the internal rate is a short halfband
+    // (kB: it only has to keep images out of the band the last stage keeps);
+    // the last stage is the steep 127-tap kAwide halfband that sets the cliff.
+    static constexpr int kMaxResampleStages = 4; // factor 16 at 176.4/192 kHz
+    static constexpr int kMaxResampleFactor = 1 << kMaxResampleStages;
+    int resampleStages = 0;
+    int resampleFactor = 1;
+    int resamplePhase = 0;
+    std::array<HalfbandFIR<15, 4>, kMaxResampleStages - 1> earlyDown, earlyUp;
+    HalfbandFIR<127, 32> finalDown, finalUp;
+    // The interpolator produces a whole frame of host samples per internal
+    // sample; it is played out over the next frame.
+    std::array<float, kMaxResampleFactor> outputFrame {};
+
+public:
+    int resampleFactorForTest() const noexcept { return resampleFactor; }
+    // Host-rate samples of group delay through the decimator, the frame
+    // buffer and the interpolator (the tank itself excluded).
+    static double resamplerLatencySamples(int stages) noexcept;
 };
 
 //==============================================================================

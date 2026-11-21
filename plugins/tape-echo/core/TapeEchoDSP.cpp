@@ -94,6 +94,13 @@ namespace
     constexpr float kSpliceUnityBeyondSeconds = 2.0f;
     constexpr float kSpliceNarrowZeroBeyondSeconds = 0.25f;
 
+    // Analog corner of the spring's per-reflection high-frequency loss.
+    constexpr double kReflectionLossCornerHz = 6500.0;
+
+    // Spring transit moved from the outgoing to the returning path so the
+    // first arrival lands where the reference's does (round trip unchanged).
+    constexpr double kSpringArrivalAdvanceSeconds = 0.00094;
+
     // Captured reference cartridges expose a quiet 60 Hz odd-harmonic bed. The
     // fifth harmonic is strongest; the others are normalized to it from the
     // hosted New/Used/Old noise spectra. A separate, much quieter random layer
@@ -143,6 +150,92 @@ namespace
     {
         return (float) nyquistSafeDesignHzD(sampleRate, (double) frequency,
                                             kTapeEchoDesignFreqRatio);
+    }
+
+    // Second-order low-pass whose magnitude tracks the analog prototype up to
+    // Nyquist (M. Vicanek, "Matched Second Order Digital Filters", 2016):
+    // impulse-invariant poles, numerator matched at DC and at the corner. A
+    // bilinear design squeezes its response towards the zero it puts at
+    // Nyquist; at an 11-12 kHz internal rate that cost the 1800 Hz voicing
+    // low-pass 6.9 dB at 4 kHz against the same filter at 48 kHz.
+    inline BiquadCoeffs matchedLowPass(double fs, double f0, double q) noexcept
+    {
+        const double w0 = 2.0 * 3.14159265358979323846 * f0 / fs;
+        const double zeta = 1.0 / (2.0 * q);
+        const double decay = std::exp(-zeta * w0);
+        const double a1 = zeta <= 1.0
+            ? -2.0 * decay * std::cos(std::sqrt(1.0 - zeta * zeta) * w0)
+            : -2.0 * decay * std::cosh(std::sqrt(zeta * zeta - 1.0) * w0);
+        const double a2 = decay * decay;
+        const double A0 = (1.0 + a1 + a2) * (1.0 + a1 + a2);
+        const double A1 = (1.0 - a1 + a2) * (1.0 - a1 + a2);
+        const double A2 = -4.0 * a2;
+        const double s2 = std::sin(0.5 * w0) * std::sin(0.5 * w0);
+        const double phi0 = 1.0 - s2, phi1 = s2, phi2 = 4.0 * phi0 * phi1;
+        const double R1 = (A0 * phi0 + A1 * phi1 + A2 * phi2) * q * q;
+        const double B0 = A0;
+        const double B1 = std::max(0.0, (R1 - B0 * phi0) / phi1);
+        const double b0 = 0.5 * (std::sqrt(B0) + std::sqrt(B1));
+        const double b1 = std::sqrt(B0) - b0;
+        return { (float)b0, (float)b1, 0.0f, (float)a1, (float)a2 };
+    }
+
+    // First-order low-pass at rate fs whose magnitude follows an ANALOG
+    // first-order low-pass with corner fcHz, |H|^2 = 1 / (1 + (f/fc)^2), from
+    // 50 Hz to 0.45 fs -- including a corner above Nyquist, which no bilinear
+    // or impulse-invariant design can hold (both pin the response at Nyquist).
+    // |H(e^jw)|^2 of (b0 + b1 z^-1) / (1 + a1 z^-1) is (B0 + B1 cos w) /
+    // (1 + a1^2 + 2 a1 cos w) with B0 = b0^2 + b1^2 and B1 = 2 b0 b1, which is
+    // linear in (B0, B1) for a fixed a1: a 1-D search over the pole with a 2x2
+    // least squares (relative error) at each step, then b0, b1 from B0, B1.
+    // Measured accuracy at 11-16 kHz with fc 6.5-7 kHz: within 0.09 dB of the
+    // analog curve up to 0.45 fs.
+    inline BiquadCoeffs fittedFirstOrderLowPass(double fs, double fcHz) noexcept
+    {
+        constexpr int kPoints = 48;
+        double cosW[kPoints], target[kPoints];
+        for (int i = 0; i < kPoints; ++i)
+        {
+            const double f = 50.0 + (0.45 * fs - 50.0) * i / (kPoints - 1);
+            cosW[i] = std::cos(2.0 * 3.14159265358979323846 * f / fs);
+            target[i] = 1.0 / (1.0 + (f / fcHz) * (f / fcHz));
+        }
+        double bestErr = 1.0e300, bestA1 = 0.0, bestB0 = 1.0, bestB1 = 0.0;
+        for (int k = 0; k < 399; ++k)
+        {
+            const double a1 = -0.995 + 1.99 * k / 398.0;
+            // Rows m_i = [1, cos w_i] / y_i, rhs 1, y_i = T_i (1 + a1^2 + 2 a1 cos w_i).
+            double s00 = 0.0, s01 = 0.0, s11 = 0.0, r0 = 0.0, r1 = 0.0;
+            for (int i = 0; i < kPoints; ++i)
+            {
+                const double y = target[i] * (1.0 + a1 * a1 + 2.0 * a1 * cosW[i]);
+                const double m0 = 1.0 / y, m1 = cosW[i] / y;
+                s00 += m0 * m0; s01 += m0 * m1; s11 += m1 * m1;
+                r0 += m0; r1 += m1;
+            }
+            const double det = s00 * s11 - s01 * s01;
+            if (std::abs(det) < 1.0e-300)
+                continue;
+            const double B0 = (r0 * s11 - r1 * s01) / det;
+            const double B1 = (r1 * s00 - r0 * s01) / det;
+            if (B0 <= std::abs(B1))
+                continue;
+            double err = 0.0;
+            for (int i = 0; i < kPoints; ++i)
+            {
+                const double y = target[i] * (1.0 + a1 * a1 + 2.0 * a1 * cosW[i]);
+                const double e = (B0 + B1 * cosW[i]) / y - 1.0;
+                err += e * e;
+            }
+            if (err < bestErr)
+            {
+                bestErr = err; bestA1 = a1; bestB0 = B0; bestB1 = B1;
+            }
+        }
+        const double sp = std::sqrt(bestB0 + bestB1);
+        const double sm = std::sqrt(bestB0 - bestB1);
+        return { (float)(0.5 * (sp + sm)), (float)(0.5 * (sp - sm)), 0.0f,
+                 (float)bestA1, 0.0f };
     }
 
     // DCBlocker's default pole (R = 0.9975) is FIXED, so its corner rides the
@@ -209,12 +302,15 @@ float TapeEchoDSP::preampOversampled(Channel& ch, float x, float drive) noexcept
 //==============================================================================
 void SpringReverb::Spring::prepare(double fs, float oneWaySeconds,
                                    float dispersionScale,
-                                   float reflectionAmount, float gain)
+                                   float reflectionAmount, float gain,
+                                   double advanceSeconds)
 {
-    const int delaySamples =
-        std::max(16, (int)std::lround(oneWaySeconds * fs));
-    outgoingDelay.assign((size_t)delaySamples, 0.0f);
-    returningDelay.assign((size_t)delaySamples, 0.0f);
+    const int outgoingSamples = std::max(
+        16, (int)std::lround(((double)oneWaySeconds - advanceSeconds) * fs));
+    const int returningSamples = std::max(
+        16, (int)std::lround(((double)oneWaySeconds + advanceSeconds) * fs));
+    outgoingDelay.assign((size_t)outgoingSamples, 0.0f);
+    returningDelay.assign((size_t)returningSamples, 0.0f);
     outgoingWriteIdx = 0;
     returningWriteIdx = 0;
     driverReflection = -reflectionAmount;
@@ -328,15 +424,21 @@ void SpringReverb::Spring::prepare(double fs, float oneWaySeconds,
     // the high-pass and low-pass take their own further bite.
     reflectionLowLoss.setCoeffs(Biquad::shelfSlope1(
         fs, safeBiquadFrequency(fs, 550.0f), 0.05f, false));
-    // 5.5 kHz rather than 7: the second-order skirt gives -1.03 dB at 4 kHz
-    // against the 7 kHz version's -0.44, supplying the extra per-reflection
-    // loss the dispersion-inflated 4 kHz round trip needs. Above 6 kHz this
-    // is well past the tank's own band and the output ceiling, so the extra
-    // attenuation there costs nothing audible.
-    reflectionLowPass.setCoeffs(Biquad::lowPass(
-        fs, safeBiquadFrequency(fs, 5500.0f), 0.70710678f));
-    reflectionAirLoss.setCoeffs(Biquad::shelfSlope1(
-        fs, safeBiquadFrequency(fs, 2500.0f), -0.35f, true));
+    // High-frequency loss per reflection: ONE first-order low-pass whose
+    // magnitude follows an analog first-order corner (fitted design, see
+    // fittedFirstOrderLowPass), replacing the former 5.5 kHz second-order
+    // low-pass plus -0.35 dB / 2.5 kHz air shelf.
+    //
+    // Fitted against the reference's per-band decay (reverb-only impulse,
+    // latency-compensated, 44.1 and 48 kHz averaged). With the old pair the
+    // tank rang 0.66 / 0.89 / 1.01 s too long at 2.5 / 3.15 / 4 kHz yet
+    // 0.39 s SHORT at 5 kHz. Inverted through this tank's own round-trip
+    // times (52-79 ms: the dispersion hump makes 3.15 kHz trips the longest),
+    // that is +0.09 / +0.38 / +0.59 / +0.90 dB more loss per trip at 1 / 2.5 /
+    // 3.15 / 4 kHz and LESS at 5 kHz -- the shape of a single first-order
+    // corner near 6.5 kHz, which a second-order skirt cannot give.
+    reflectionLowPass.setCoeffs(
+        fittedFirstOrderLowPass(fs, kReflectionLossCornerHz));
     reset();
 }
 
@@ -353,7 +455,6 @@ void SpringReverb::Spring::reset()
     reflectionHighPass.reset();
     reflectionLowLoss.reset();
     reflectionLowPass.reset();
-    reflectionAirLoss.reset();
 }
 
 float SpringReverb::Spring::process(float x) noexcept
@@ -377,7 +478,6 @@ float SpringReverb::Spring::process(float x) noexcept
     float reflected = reflectionHighPass.process(farEnd);
     reflected = reflectionLowLoss.process(reflected);
     reflected = reflectionLowPass.process(reflected);
-    reflected = reflectionAirLoss.process(reflected);
     returningDelay[(size_t)returningWriteIdx] =
         pickupReflection * reflected;
     if (++returningWriteIdx >= (int)returningDelay.size())
@@ -423,25 +523,32 @@ void SpringReverb::prepare(double sampleRate, float detune)
     //   |R| = 10^(-3 * T_roundtrip / T60_target),  reflectionAmount = sqrt(|R|)
     // against the reference's measured 2.90 s mid-band T60 and the round trips
     // 2 x 22.8 / 26.1 / 28.4 ms.
-    springs[0].prepare(sampleRate, 0.0228f * detune,
-                       0.993f, 0.9472f, 1.30f);
-    springs[1].prepare(sampleRate, 0.0261f * detune,
-                       1.000f, 0.9397f, 1.30f);
-    springs[2].prepare(sampleRate, 0.0284f * detune,
-                       1.007f, 0.9346f, 1.30f);
-    dcBlock.setSampleRate(sampleRate, kDcBlockerCutoffHz);
-    // Diffuser lengths are a deliberately irrational-ish ratio (1:2.38) so the
-    // two stages never line up into a periodic comb.
-    {
-        constexpr double kDiffuserSeconds[kNumDiffusers] = { 0.0013, 0.0031 };
-        for (int i = 0; i < kNumDiffusers; ++i)
-        {
-            diffusionBuf[(size_t)i].assign(
-                (size_t)std::max(1, (int)std::lround(
-                    kDiffuserSeconds[i] * sampleRate)), 0.0f);
-            diffusionWriteIdx[(size_t)i] = 0;
-        }
-    }
+    // Internal rate: halve the host rate while it stays at or above 10 kHz,
+    // which lands on fs/4 at 44.1/48 kHz and fs/8 at 88.2/96 kHz, the rates
+    // the reference's tank runs at.
+    int stages = 0;
+    while (stages < kMaxResampleStages
+           && sampleRate / (double)(1 << (stages + 1)) >= 10000.0)
+        ++stages;
+    resampleStages = stages;
+    resampleFactor = 1 << stages;
+    resamplePhase = 0;
+    const double internalRate = sampleRate / (double)resampleFactor;
+    // Also moved: the measured offset of the first arrival. The transits
+    // below were regressed from the SPACING of the reference's arrival
+    // families, which leaves their absolute offset free; measured
+    // latency-compensated, this tank's first arrival trailed the reference's
+    // by 0.90 ms at 48 kHz and 0.98 ms at 44.1 kHz (onset at -40 dB re peak).
+    const double advanceSeconds =
+        resamplerLatencySamples(stages) / sampleRate
+        + kSpringArrivalAdvanceSeconds;
+    springs[0].prepare(internalRate, 0.0228f * detune,
+                       0.993f, 0.9472f, 1.30f, advanceSeconds);
+    springs[1].prepare(internalRate, 0.0261f * detune,
+                       1.000f, 0.9397f, 1.30f, advanceSeconds);
+    springs[2].prepare(internalRate, 0.0284f * detune,
+                       1.007f, 0.9346f, 1.30f, advanceSeconds);
+    dcBlock.setSampleRate(internalRate, kDcBlockerCutoffHz);
     inputHP.setCutoff(140.0f, sampleRate);
     inputLP.setCutoff(4200.0f, sampleRate);
     // Real tank transducers reject the sub-bass sharply. A fourth-order
@@ -456,11 +563,13 @@ void SpringReverb::prepare(double sampleRate, float detune)
     // its 30 Hz search bound; 60 Hz is taken instead, because between 60 and
     // 90 the whole-band mean error only moves 0.71 vs 0.82 dB while 30 Hz
     // would abandon the sub-bass rejection this filter exists for.
+    // The transducer voicing runs at the internal rate.
+    const double fi = internalRate;
     constexpr float kFourthOrderButterworthQ[2] =
         { 0.54119610f, 1.30656296f };
     for (size_t i = 0; i < outputTransducerHP.size(); ++i)
         outputTransducerHP[i].setCoeffs(Biquad::highPass(
-            sampleRate, safeBiquadFrequency(sampleRate, 60.0f),
+            fi, safeBiquadFrequency(fi, 90.0f),
             kFourthOrderButterworthQ[i]));
     // 320 Hz, not 400 -- the dominant lever in the low-end refit. Measured
     // against the reference, this tank was 5.2 dB light at 100 Hz, 3.4 at
@@ -472,69 +581,24 @@ void SpringReverb::prepare(double sampleRate, float detune)
     // after this change: 1.97 -> 0.71 dB, with every band above 1.25 kHz
     // moving less than 0.1 dB.
     outputHP.setCoeffs(Biquad::highPass(
-        sampleRate, safeBiquadFrequency(sampleRate, 320.0f), 0.70710678f));
-    outputVoiceLP.setCoeffs(Biquad::lowPass(
-        sampleRate, safeBiquadFrequency(sampleRate, 1800.0f), 0.70710678f));
-    // The pickup transducer is effectively brick-walled above 5 kHz. The
-    // steep ceiling is deliberately out of the waveguide so it cannot create
-    // or prolong tank modes; unlike the former return, there is no resonant
-    // presence boost at its corner.
-    for (size_t i = 0; i < outputCeilingLP.size(); ++i)
-    {
-        const float theta =
-            ((2.0f * (float)i + 1.0f) * kDuskPi)
-            / (4.0f * (float)outputCeilingLP.size());
-        const float q = 1.0f / (2.0f * std::cos(theta));
-        // 5250 Hz / 13 sections (26th order), was 5150 / 9 (18th).
-        //
-        // The corner stays where it is for the reason recorded before: an
-        // 18th-order wall at 4900 put its knee on 5.0-5.3 kHz, where the
-        // reference still has usable sizzle, and that hole was audible on
-        // cymbals. What was WRONG in that note is the claim that "above ~5.7 kHz
-        // both are ~-56 dB and inaudible, so the small excess this leaves up
-        // there costs nothing". The excess is not small. The reference's spring
-        // runs at a reduced internal rate and its output falls off a CLIFF just
-        // above 5.5 kHz, far steeper than an 18th-order Butterworth, so we sat
-        // hot in exactly the band it abandons.
-        //
-        // Measured at the user's own A/B state ("AB Spring Match": reverb only,
-        // Used tape, Wow & Flutter 0), 1/12-octave, ours minus reference:
-        //     5040 Hz  -3.2      5339 Hz  -2.8      5657 Hz   +8.0
-        //     5993 Hz +21.9      6350 Hz +19.4      6727 Hz  +16.2
-        //     7127 Hz  +2.7      7551 Hz -22.0
-        // A +22 dB bump the listener heard as brightness at ~5.9 kHz, and one
-        // that EVERY octave gate is blind to (band "8000" spans 5657-11314 Hz
-        // and both sides sit >50 dB below midband there, so it is dropped as
-        // noise floor). Raising the order steepens the transition where the
-        // reference's decimation filter does; the corner moves only 100 Hz so
-        // the 5.0-5.3 kHz sizzle above is preserved. Do NOT lower the corner to
-        // chase this -- that reopens the cymbal hole. The remaining peak is
-        // taken out by outputFizzNotch below.
-        outputCeilingLP[i].setCoeffs(Biquad::lowPass(
-            sampleRate, safeBiquadFrequency(sampleRate, 5250.0f), q));
-    }
-    // Residual of the reference's spring cliff that the ceiling above cannot
-    // reach. Even at 26th order a Butterworth knee is far gentler than a
-    // decimation filter, leaving roughly +13 dB centred near 6 kHz; this takes
-    // that peak out without touching 5.0-5.4 kHz, where we are already about
-    // 3 dB DARK and must not be cut further. Fitted against the measured
-    // 1/12-octave excess listed at the ceiling above (least squares over
-    // 4-7.3 kHz, with an explicit penalty on any attenuation below 5.4 kHz).
-    // Bands above ~7.3 kHz are deliberately excluded from the fit: the
-    // reference's content up there is reconstruction imaging from its own
-    // decimation, we are already 22-60 dB below it, and it must never be
-    // copied.
-    outputFizzNotch.setCoeffs(Biquad::peak(
-        sampleRate, safeBiquadFrequency(sampleRate, 6100.0f),
-        -7.5f, 6.0f));
+        fi, safeBiquadFrequency(fi, 360.0f), 0.70710678f));
+    outputVoiceLP.setCoeffs(matchedLowPass(fi, 1800.0, 0.70710678));
+    // The 26th-order 5250 Hz ceiling and the 6.1 kHz fizz notch that sat here
+    // are gone. They imitated, at the host rate, the cliff the reference's
+    // spring gets from running at a reduced internal rate (its output falls
+    // off just above half that rate and the ceiling, even at 26th order, sat
+    // up to +22 dB hot at ~5.9 kHz before the notch took the peak out). The
+    // tank now runs at that internal rate itself, so the resampling filters
+    // provide the cliff directly. The reference's content above the cliff is
+    // reconstruction imaging and must never be copied.
     // Static return voicing follows the measured pickup response. These
     // filters are outside the propagation/reflection paths and therefore do
     // not alter the fitted group delay or per-trip decay.
     outputLowContour.setCoeffs(Biquad::peak(
-        sampleRate, safeBiquadFrequency(sampleRate, 120.0f),
+        fi, safeBiquadFrequency(fi, 120.0f),
         -10.0f, 2.5f));
     outputBody.setCoeffs(Biquad::peak(
-        sampleRate, safeBiquadFrequency(sampleRate, 1000.0f),
+        fi, safeBiquadFrequency(fi, 1000.0f),
         0.5f, 0.70f));
     // -0.6 dB, not -4.5. Measured 1/3-octave against the reference, the tank
     // sat 3.9 dB dark at 4 kHz and 4.4 dB dark at 5 kHz while 500 Hz-3.15 kHz
@@ -543,7 +607,7 @@ void SpringReverb::prepare(double sampleRate, float detune)
     // which piled energy into this band; the fitted upward chirp does not, so
     // the correction is no longer needed.
     outputFourKhzSeat.setCoeffs(Biquad::peak(
-        sampleRate, safeBiquadFrequency(sampleRate, 4050.0f),
+        fi, safeBiquadFrequency(fi, 4050.0f),
         -0.6f, 8.0f));
     // Restores the tank's body. Two independent measurements agree that this
     // band is the one audible tone error left: the reference impulse at
@@ -573,11 +637,27 @@ void SpringReverb::prepare(double sampleRate, float detune)
     // and 500 Hz only -0.5 dB -- the two-band feature the comment above
     // predicted, now closed instead of left neutralised.
     outputLowMidBalance.setCoeffs(Biquad::peak(
-        sampleRate, safeBiquadFrequency(sampleRate, 346.0f),
+        fi, safeBiquadFrequency(fi, 346.0f),
         -4.7f, 4.0f));
     outputOneKhzSeat.setCoeffs(Biquad::peak(
-        sampleRate, safeBiquadFrequency(sampleRate, 1000.0f),
+        fi, safeBiquadFrequency(fi, 1000.0f),
         1.0f, 3.0f));
+    // The reference's cliff, measured as its excess attenuation over this
+    // tank (same resampling, reverb-only noise burst, latency-compensated)
+    // at 44.1 and 48 kHz, in fractions of the internal Nyquist: flat to 0.85,
+    // then about -8 / -14 / -24 / -30 / -39 / -45 dB at 0.88 / 0.90 / 0.92 /
+    // 0.94 / 0.96 / 0.98, the same at both rates. A 3rd-order Chebyshev I
+    // low-pass (0.1 dB ripple, edge 0.7875 of Nyquist) fits that transition
+    // at 2.2 dB rms while staying within 0.10 dB up to 0.72 of Nyquist. The
+    // design is relative to the internal Nyquist, so one table serves every
+    // host rate. Valid only at a reduced internal rate: with no resampling
+    // (hosts below 20 kHz) the cliff is left out.
+    static constexpr BiquadCoeffs kCliff[2] = {
+        { 0.579898546f, 0.579898546f, 0.000000000f, 0.473064529f, 0.000000000f },
+        { 1.000000000f, 2.000000000f, 1.000000000f, 1.462612409f, 0.686732563f },
+    };
+    for (size_t i = 0; i < outputCliff.size(); ++i)
+        outputCliff[i].setCoeffs(resampleStages > 0 ? kCliff[i] : BiquadCoeffs {});
     reset();
 }
 
@@ -585,9 +665,6 @@ void SpringReverb::reset()
 {
     for (auto& s : springs)
         s.reset();
-    for (auto& buf : diffusionBuf)
-        std::fill(buf.begin(), buf.end(), 0.0f);
-    diffusionWriteIdx.fill(0);
     inputHP.reset();
     inputLP.reset();
     dcBlock.reset();
@@ -595,65 +672,138 @@ void SpringReverb::reset()
         hp.reset();
     outputHP.reset();
     outputVoiceLP.reset();
-    for (auto& lp : outputCeilingLP)
-        lp.reset();
-    outputFizzNotch.reset();
     outputLowContour.reset();
     outputBody.reset();
     outputFourKhzSeat.reset();
     outputLowMidBalance.reset();
     outputOneKhzSeat.reset();
+    for (auto& f : outputCliff) f.reset();
+    for (auto& f : earlyDown) f.reset();
+    for (auto& f : earlyUp) f.reset();
+    finalDown.reset();
+    finalUp.reset();
+    outputFrame.fill(0.0f);
+    resamplePhase = 0;
 }
 
-float SpringReverb::process(float in) noexcept
+double SpringReverb::resamplerLatencySamples(int stages) noexcept
 {
-    const float voiced = inputLP.process(inputHP.process(in));
+    // A linear-phase halfband of L taps delays by (L - 1) / 2 samples at the
+    // rate it runs at; stage s runs at fs / 2^s on the way down and its mirror
+    // at the same rate on the way up. The frame buffer adds one host sample
+    // (the interpolated frame is played out starting the sample after the
+    // internal sample is computed, see process()). Pinned by TapeEchoCoreTest.
+    if (stages <= 0)
+        return 0.0;
+    double perDirection = 0.0;
+    for (int s = 0; s < stages; ++s)
+    {
+        const int taps = s == stages - 1 ? 127 : 15;
+        perDirection += 0.5 * (double)(taps - 1) * (double)(1 << s);
+    }
+    return 2.0 * perDirection + 1.0;
+}
+
+float SpringReverb::processInternal(float voiced) noexcept
+{
     float wet = 0.0f;
     for (auto& spring : springs)
         wet += spring.process(voiced);
 
-    // Pickup diffusion (see the member declaration for why). Standard
-    // single-multiply allpass per stage, so each is magnitude-flat by
-    // construction and the tank's calibration cannot drift through it.
-    constexpr float kDiffusionCoeff[kNumDiffusers] = { 0.40f, 0.32f };
-    for (int i = 0; i < kNumDiffusers; ++i)
-    {
-        std::vector<float>& buf = diffusionBuf[(size_t)i];
-        int& idx = diffusionWriteIdx[(size_t)i];
-        const float delayed = buf[(size_t)idx];
-        const float diffused = delayed - kDiffusionCoeff[i] * wet;
-        buf[(size_t)idx] = wet + kDiffusionCoeff[i] * diffused;
-        if (++idx >= (int)buf.size())
-            idx = 0;
-        wet = diffused;
-    }
-
-    // Output trim is calibrated per channel. The wet path is mono and panned
-    // later; measuring an L/R average here would overstate the spring level
-    // because the former dual-mono tanks partially cancelled at center.
-    // Master wet trim, re-derived AFTER the round-trip loss was solved.
-    //
-    // It was briefly 1.201 while the tail was still 30% short, purely to put
-    // the first-packet strike back after the undispersed pickup tap was
-    // removed. Once the per-band loss made the decay correct, that same trim
-    // left the tank 2.46 dB hot broadband -- which is the honest order of
-    // operations here: decay first, level second, because the integrated level
-    // of a reverb is mostly its decay time and only partly its gain.
+    // No pickup diffusers. Two allpasses (1.3 and 3.1 ms) used to smear
+    // each arrival on the theory that the reference's early field is denser;
+    // measured against it latency-compensated, they did the opposite of what
+    // the reference does. Its envelope crests 4.5 ms after the first arrival
+    // (26.9 ms) and is 15 dB down by 32 ms; with the diffusers this tank
+    // crested at 31.7 ms, 8.4 ms after its first arrival, because the 3.1 ms
+    // stage piled the third spring's arrival up behind itself. Without them
+    // the crest is at 27.3 ms, the 22-60 ms envelope error falls 8.8 -> 6.6 dB
+    // rms, and the early-field kurtosis matches the reference as well as
+    // before (log-rms error 0.44 vs 0.42 over 20-80 ms). Weaker diffusers
+    // were worse than either end of the sweep.
     float voicedWet = dcBlock.process(0.904f * wet);
     for (auto& hp : outputTransducerHP)
         voicedWet = hp.process(voicedWet);
     voicedWet = outputHP.process(voicedWet);
     voicedWet = outputVoiceLP.process(voicedWet);
-    for (auto& lp : outputCeilingLP)
-        voicedWet = lp.process(voicedWet);
-    voicedWet = outputFizzNotch.process(voicedWet);
     voicedWet = outputLowContour.process(voicedWet);
     voicedWet = outputFourKhzSeat.process(voicedWet);
-    const float springReturn = outputOneKhzSeat.process(
+    float springReturn = outputOneKhzSeat.process(
         outputLowMidBalance.process(
             outputBody.process(voicedWet)));
+    for (auto& f : outputCliff)
+        springReturn = f.process(springReturn);
 
     return springReturn;
+}
+
+float SpringReverb::process(float in) noexcept
+{
+    const float voiced = inputLP.process(inputHP.process(in));
+    if (resampleStages == 0)
+        return processInternal(voiced);
+
+    // Decimate: stage s takes every sample of the stage above it and hands
+    // one on for every two, so the internal sample is ready on the last host
+    // sample of each frame.
+    float v = voiced;
+    bool ready = true;
+    const int last = resampleStages - 1;
+    for (int s = 0; s < resampleStages; ++s)
+    {
+        if (s == last)
+            finalDown.push(v);
+        else
+            earlyDown[(size_t)s].push(v);
+        if (((resamplePhase >> s) & 1) == 0)
+        {
+            ready = false;
+            break;
+        }
+        v = s == last ? finalDown.out(hbtaps::kAwide)
+                      : earlyDown[(size_t)s].out(hbtaps::kB);
+    }
+
+    // The frame interpolated from the previous internal sample plays out one
+    // host sample per call; read before a new frame replaces it.
+    const float out = outputFrame[(size_t)resamplePhase];
+    if (ready)
+    {
+        // Interpolate: zero-stuff by two per stage, lowest rate first. The x2
+        // restores the gain zero-stuffing removes; every second output of a
+        // stage follows a stuffed zero and takes the exact shortcut.
+        std::array<float, kMaxResampleFactor> a {}, b {};
+        a[0] = processInternal(v);
+        int count = 1;
+        for (int s = last; s >= 0; --s)
+        {
+            for (int i = 0; i < count; ++i)
+            {
+                if (s == last)
+                {
+                    finalUp.push(a[(size_t)i]);
+                    b[(size_t)(2 * i)] = 2.0f * finalUp.out(hbtaps::kAwide);
+                    finalUp.push(0.0f);
+                    b[(size_t)(2 * i + 1)] =
+                        2.0f * finalUp.outAfterStuffedZeroExact();
+                }
+                else
+                {
+                    auto& up = earlyUp[(size_t)s];
+                    up.push(a[(size_t)i]);
+                    b[(size_t)(2 * i)] = 2.0f * up.out(hbtaps::kB);
+                    up.push(0.0f);
+                    b[(size_t)(2 * i + 1)] =
+                        2.0f * up.outAfterStuffedZeroExact();
+                }
+            }
+            count *= 2;
+            a = b;
+        }
+        outputFrame = a;
+    }
+    resamplePhase = (resamplePhase + 1) & (resampleFactor - 1);
+    return out;
 }
 
 //==============================================================================
