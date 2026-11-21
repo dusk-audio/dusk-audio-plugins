@@ -173,9 +173,10 @@ double springOnsetSeconds(double rate)
     return -1.0;
 }
 
-// The per-sample 4x preamp chain BlockPreamp4x replaced: two zero-stuffing
-// halfband upsamplers (kA, then kB), the shaper at 4x, and the mirror
-// decimators, one host sample at a time.
+// The per-sample 4x preamp chain BlockPreamp4x replaced, as it was before any
+// of the #401 changes: two zero-stuffing halfband upsamplers (kA, then kB,
+// full sums on every phase), the shaper at 4x, and the mirror decimators, one
+// host sample at a time.
 float referencePreamp4x(duskaudio::HalfbandFIR<47, 12>& upA,
                         duskaudio::HalfbandFIR<15, 4>& upB,
                         duskaudio::HalfbandFIR<15, 4>& downB,
@@ -191,11 +192,11 @@ float referencePreamp4x(duskaudio::HalfbandFIR<47, 12>& upA,
     for (int p = 0; p < 2; ++p)
     {
         upA.push(p == 0 ? x : 0.0f);
-        const float a = 2.0f * (p == 0 ? upA.out(kA) : upA.outAfterStuffedZeroExact());
+        const float a = 2.0f * upA.out(kA);
         for (int q = 0; q < 2; ++q)
         {
             upB.push(q == 0 ? a : 0.0f);
-            const float b = 2.0f * (q == 0 ? upB.out(kB) : upB.outAfterStuffedZeroExact());
+            const float b = 2.0f * upB.out(kB);
             downB.push(shape(b));
         }
         downA.push(downB.out(kB));
@@ -339,7 +340,10 @@ int main()
     // The internal-rate sample grid itself is ~0.09 ms, hence the bound.
     {
         const double reference = springOnsetSeconds(48000.0);
-        for (double rate : { 44100.0, 88200.0, 96000.0, 192000.0 })
+        // 22.05 kHz (one stage) and 32 kHz (16 kHz internal, runtime cliff)
+        // are pinned too. Hosts below 20 kHz are not resampled and their
+        // internal sample grid (0.09-0.125 ms) is coarser than this bound.
+        for (double rate : { 22050.0, 32000.0, 44100.0, 88200.0, 96000.0, 192000.0 })
         {
             const double onset = springOnsetSeconds(rate);
             if (!(std::abs(onset - reference) <= 0.0001))

@@ -144,6 +144,7 @@ namespace
             << "                                drops the leading ones). Read after the pre-roll, so a\n"
             << "                                plug-in that publishes its latency on its first render\n"
             << "                                is covered; a later change is reported on stderr\n"
+            << "                                (audio renders only; --meter-film frames are not shifted)\n"
             << "  --wait-after-apply MS         Sleep after the preset/state apply (plugins that load\n"
             << "                                resources asynchronously after a program change)\n"
             << "  --write-stimuli DIR           Also write each built-in stimulus INPUT buffer to\n"

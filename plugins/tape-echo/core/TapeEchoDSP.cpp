@@ -701,14 +701,14 @@ void SpringReverb::prepare(double sampleRate, float detune)
     // Other hosts land elsewhere: 32 kHz runs the tank at 16 kHz, and hosts
     // below 20 kHz are not resampled at all. A cliff relative to THOSE Nyquist
     // frequencies would sit at 6.3-8 kHz and let back the 5.5-7 kHz fizz the
-    // reference does not have, so above a 12.5 kHz internal rate the same
-    // 3rd-order Chebyshev is designed at runtime at the absolute edge it has
-    // at a 12 kHz internal rate (4725 Hz).
+    // reference does not have, so outside an 11-12.5 kHz internal rate the
+    // same 3rd-order Chebyshev is designed at runtime at the absolute edge it
+    // has at a 12 kHz internal rate (4725 Hz).
     static constexpr BiquadCoeffs kCliff[2] = {
         { 0.579898546f, 0.579898546f, 0.000000000f, 0.473064529f, 0.000000000f },
         { 1.000000000f, 2.000000000f, 1.000000000f, 1.462612409f, 0.686732563f },
     };
-    if (fi <= 12500.0)
+    if (fi >= 11000.0 && fi <= 12500.0)
     {
         for (size_t i = 0; i < outputCliff.size(); ++i)
             outputCliff[i].setCoeffs(kCliff[i]);
@@ -1120,9 +1120,16 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     powerSmoother.snap(1.0f - pBypass.load(std::memory_order_relaxed));
     ageSmoother.snap(pTapeAge.load(std::memory_order_relaxed));
     noiseGainSmoother.snap(noiseGainFor(pNoise.load(std::memory_order_relaxed)));
-    memoAge = std::numeric_limits<float>::quiet_NaN();
-    memoOutputVolume = std::numeric_limits<float>::quiet_NaN();
-    memoIntensity = std::numeric_limits<float>::quiet_NaN();
+    // Seed the per-sample memos from the snapped controls with the same
+    // expressions the loop uses, so they are valid from the first sample.
+    memoAge = ageSmoother.value();
+    memoAgeNoiseScale = 0.25f * std::exp(1.38629436112f * memoAge);
+    memoOutputVolume = outputVolumeSmoother.value();
+    memoOutputGain = std::pow(10.0f, 2.0f * memoOutputVolume - 1.0f);
+    memoIntensity = intensitySmoother.value();
+    memoFeedbackCurve = feedbackKneeControl(memoIntensity);
+    memoFbGain = feedbackGainFromControl(memoFeedbackCurve);
+    memoLoopReadBlend = feedbackReadLoopBlend(memoFeedbackCurve);
     lastPlaybackCutoff = -1.0f;
     lastAntiAliasCutoff = -1.0f;
     lastAgeContourDb = 999.0f;
@@ -1482,44 +1489,10 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
     // is short enough for the CPU to overlap successive samples instead of
     // waiting out one long dependency chain per sample. Only the tape loop
     // reads what it writes, and it stays one pass in sample order.
-    constexpr int kSubBlock = 128;
+    constexpr int kSubBlock = SubBlockScratch::kSize;
+    SubBlockScratch x; // on the stack: ~19 KB, see the struct
     static_assert(kSubBlock <= BlockPreamp4x::kMaxBlock,
                   "the preamp processes at most kMaxBlock samples per call");
-    float x_d1[kSubBlock];
-    float x_d2[kSubBlock];
-    float x_d3[kSubBlock];
-    float x_drivenInput[kSubBlock];
-    float x_dryLvl[kSubBlock];
-    float x_dryMixGain[kSubBlock];
-    float x_echoLvl[kSubBlock];
-    float x_fbGain[kSubBlock];
-    float x_feedbackCurve[kSubBlock];
-    float x_g1[kSubBlock];
-    float x_g2[kSubBlock];
-    float x_g3[kSubBlock];
-    float x_inL[kSubBlock];
-    float x_inR[kSubBlock];
-    float x_inputGain[kSubBlock];
-    float x_outputGain[kSubBlock];
-    float x_power[kSubBlock];
-    float x_pre[kSubBlock];
-    float x_reproAgeNoise[kSubBlock];
-    float x_reproNoiseGate[kSubBlock];
-    float x_revLvl[kSubBlock];
-    float x_revSend[kSubBlock];
-    float x_springPre[kSubBlock];
-    float x_wetMixGain[kSubBlock];
-    float x_wobble[kSubBlock];
-    float x_echoWet[kSubBlock];
-    float x_rev[kSubBlock];
-    float x_recordEnvelopeNow[kSubBlock];
-    float x_loopReadBlend[kSubBlock];
-    float x_preIn[kSubBlock];
-    float x_preOut[kSubBlock];
-    float x_postDriveGain[kSubBlock];
-    float x_splice1[kSubBlock];
-    float x_splice2[kSubBlock];
-    float x_splice3[kSubBlock];
     for (int base = 0; base < numSamples; base += kSubBlock)
     {
         const int len = std::min(kSubBlock, numSamples - base);
@@ -1653,7 +1626,7 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                 memoFbGain = feedbackGainFromControl(memoFeedbackCurve);
                 memoLoopReadBlend = feedbackReadLoopBlend(memoFeedbackCurve);
             }
-            x_loopReadBlend[i] = memoLoopReadBlend;
+            x.loopReadBlend[i] = memoLoopReadBlend;
             const float feedbackCurve = memoFeedbackCurve;
             const float fbGain = memoFbGain;
             const float revSend   = reverbSendSmoother.next();
@@ -1763,8 +1736,8 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             // FET preamp front-end, saturated at 4x to keep fold-back
             // products out of the echo passband.
             // The preamp itself runs a sub-block at a time after this pass.
-            x_preIn[i] = tapeInput * preDriveGain;
-            x_postDriveGain[i] = postDriveGain;
+            x.preIn[i] = tapeInput * preDriveGain;
+            x.postDriveGain[i] = postDriveGain;
             // The spring send is taken entirely ahead of the record-stage shaper
             // and its compressor. A drive ladder measured through the hosted
             // spring (impulse and pink burst, 48 dB of input range, reverb level
@@ -1867,67 +1840,67 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                     9.23f * speedScale * (float)fs;
                 spliceSamplesToHead1 += loopPeriodSamples;
             }
-            x_splice1[i] = splice1;
-            x_splice2[i] = splice2;
-            x_splice3[i] = splice3;
-            x_d1[i] = d1;
-            x_d2[i] = d2;
-            x_d3[i] = d3;
-            x_drivenInput[i] = drivenInput;
-            x_dryLvl[i] = dryLvl;
-            x_dryMixGain[i] = dryMixGain;
-            x_echoLvl[i] = echoLvl;
-            x_fbGain[i] = fbGain;
-            x_feedbackCurve[i] = feedbackCurve;
-            x_g1[i] = g1;
-            x_g2[i] = g2;
-            x_g3[i] = g3;
-            x_inL[i] = inL;
-            x_inR[i] = inR;
-            x_inputGain[i] = inputGain;
-            x_outputGain[i] = outputGain;
-            x_power[i] = power;
-            x_reproAgeNoise[i] = reproAgeNoise;
-            x_reproNoiseGate[i] = reproNoiseGate;
-            x_revLvl[i] = revLvl;
-            x_revSend[i] = revSend;
-            x_springPre[i] = springPre;
-            x_wetMixGain[i] = wetMixGain;
-            x_wobble[i] = wobble;
-            x_recordEnvelopeNow[i] = ch.recordEnvelope;
+            x.splice1[i] = splice1;
+            x.splice2[i] = splice2;
+            x.splice3[i] = splice3;
+            x.d1[i] = d1;
+            x.d2[i] = d2;
+            x.d3[i] = d3;
+            x.drivenInput[i] = drivenInput;
+            x.dryLvl[i] = dryLvl;
+            x.dryMixGain[i] = dryMixGain;
+            x.echoLvl[i] = echoLvl;
+            x.fbGain[i] = fbGain;
+            x.feedbackCurve[i] = feedbackCurve;
+            x.g1[i] = g1;
+            x.g2[i] = g2;
+            x.g3[i] = g3;
+            x.inL[i] = inL;
+            x.inR[i] = inR;
+            x.inputGain[i] = inputGain;
+            x.outputGain[i] = outputGain;
+            x.power[i] = power;
+            x.reproAgeNoise[i] = reproAgeNoise;
+            x.reproNoiseGate[i] = reproNoiseGate;
+            x.revLvl[i] = revLvl;
+            x.revSend[i] = revSend;
+            x.springPre[i] = springPre;
+            x.wetMixGain[i] = wetMixGain;
+            x.wobble[i] = wobble;
+            x.recordEnvelopeNow[i] = ch.recordEnvelope;
         }
         {
             Channel& ch = channels[0];
             // FET preamp front-end, saturated at 4x to keep fold-back
             // products out of the echo passband.
-            ch.preamp.process(x_preIn, x_preOut, len, [](float v) noexcept {
+            ch.preamp.process(x.preIn, x.preOut, len, [](float v) noexcept {
                 return preampShape(v * kInputStageDrive);
             });
             for (int i = 0; i < len; ++i)
-                x_pre[i] = ch.preampDC.process(x_preOut[i])
-                         * kInputStageTrim * x_postDriveGain[i];
+                x.pre[i] = ch.preampDC.process(x.preOut[i])
+                         * kInputStageTrim * x.postDriveGain[i];
         }
         for (int i = 0; i < len; ++i)
         {
             const int n = base + i;
-            const float d1 = x_d1[i];
-            const float d2 = x_d2[i];
-            const float d3 = x_d3[i];
-            const float drivenInput = x_drivenInput[i];
-            const float fbGain = x_fbGain[i];
-            const float feedbackCurve = x_feedbackCurve[i];
-            const float g1 = x_g1[i];
-            const float g2 = x_g2[i];
-            const float g3 = x_g3[i];
-            const float power = x_power[i];
-            const float pre = x_pre[i];
-            const float reproAgeNoise = x_reproAgeNoise[i];
-            const float reproNoiseGate = x_reproNoiseGate[i];
-            const float wobble = x_wobble[i];
-            const float recordEnvelopeNow = x_recordEnvelopeNow[i];
-            const float splice1 = x_splice1[i];
-            const float splice2 = x_splice2[i];
-            const float splice3 = x_splice3[i];
+            const float d1 = x.d1[i];
+            const float d2 = x.d2[i];
+            const float d3 = x.d3[i];
+            const float drivenInput = x.drivenInput[i];
+            const float fbGain = x.fbGain[i];
+            const float feedbackCurve = x.feedbackCurve[i];
+            const float g1 = x.g1[i];
+            const float g2 = x.g2[i];
+            const float g3 = x.g3[i];
+            const float power = x.power[i];
+            const float pre = x.pre[i];
+            const float reproAgeNoise = x.reproAgeNoise[i];
+            const float reproNoiseGate = x.reproNoiseGate[i];
+            const float wobble = x.wobble[i];
+            const float recordEnvelopeNow = x.recordEnvelopeNow[i];
+            const float splice1 = x.splice1[i];
+            const float splice2 = x.splice2[i];
+            const float splice3 = x.splice3[i];
             Channel& ch = channels[0];
             // A head whose gain has decayed below kHeadIdleFloor (its smoother
             // stalls near 1e-36 with denormals flushed, it never reaches zero)
@@ -1946,7 +1919,7 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             const float headSum = (h1 * g1 + h2 * g2 + h3 * g3) * wobble;
             const float amplifiedHeadSum =
                 feedbackReadAmplifier(headSum, feedbackCurve);
-            const float loopReadBlend = x_loopReadBlend[i];
+            const float loopReadBlend = x.loopReadBlend[i];
             // Multi-head loop-gain correction, loop path only. Advanced once per
             // sample alongside headGain above so the two track each other through a
             // mode change. See refreshBlockRateControls() for the derivation.
@@ -2188,31 +2161,31 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                 echoWet = ch.trebleShelf.process(echoWet);
 
             writeIdx = (writeIdx + 1) & mask;
-            x_echoWet[i] = echoWet;
+            x.echoWet[i] = echoWet;
         }
         for (int i = 0; i < len; ++i)
         {
-            const float revSend = x_revSend[i];
-            const float springPre = x_springPre[i];
+            const float revSend = x.revSend[i];
+            const float springPre = x.springPre[i];
             // Spring tank is fed from the same mono preamp signal.
             const float rev = springIdle ? 0.0f : spring.process(springPre * revSend);
-            x_rev[i] = rev;
+            x.rev[i] = rev;
         }
         for (int i = 0; i < len; ++i)
         {
             const int n = base + i;
-            const float dryLvl = x_dryLvl[i];
-            const float dryMixGain = x_dryMixGain[i];
-            const float echoLvl = x_echoLvl[i];
-            const float inL = x_inL[i];
-            const float inR = x_inR[i];
-            const float inputGain = x_inputGain[i];
-            const float outputGain = x_outputGain[i];
-            const float power = x_power[i];
-            const float revLvl = x_revLvl[i];
-            const float wetMixGain = x_wetMixGain[i];
-            const float echoWet = x_echoWet[i];
-            const float rev = x_rev[i];
+            const float dryLvl = x.dryLvl[i];
+            const float dryMixGain = x.dryMixGain[i];
+            const float echoLvl = x.echoLvl[i];
+            const float inL = x.inL[i];
+            const float inR = x.inR[i];
+            const float inputGain = x.inputGain[i];
+            const float outputGain = x.outputGain[i];
+            const float power = x.power[i];
+            const float revLvl = x.revLvl[i];
+            const float wetMixGain = x.wetMixGain[i];
+            const float echoWet = x.echoWet[i];
+            const float rev = x.rev[i];
 
             // Both wet-path pan controls are measured linear amplitude laws.
             // In stereo, the x2 factor pairs with the input average above:

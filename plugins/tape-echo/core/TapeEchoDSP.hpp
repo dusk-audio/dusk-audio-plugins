@@ -331,6 +331,7 @@ private:
     template <typename Shape>
     void processChunk(const float* in, float* out, int n, Shape shape) noexcept
     {
+        float acc[2 * kMaxBlock]; // per-output sums of the stage being run
         // Histories: kA reaches 23 samples back at its input rate, kB 7, and
         // the decimators read their full spans (14 and 46).
         constexpr int HX = 23, HA = 7, HC = 14, HD = 46;
@@ -341,7 +342,6 @@ private:
         // outer, outputs inner): each output still adds the same products in
         // the same tap order as the per-sample FIR, but the inner loop is now
         // independent across outputs and vectorises.
-        float acc[4 * kMaxBlock];
 
         // 1x -> 2x through kA: even outputs are the full sum over the real
         // samples (the centre tap reads a stuffed zero), odd outputs the
@@ -426,6 +426,7 @@ private:
     float a[7 + 2 * kMaxBlock] {};
     float c[14 + 4 * kMaxBlock] {};
     float d[46 + 2 * kMaxBlock] {};
+
 };
 
 //==============================================================================
@@ -798,13 +799,58 @@ private:
 
     float readTape(const std::vector<float>& buf, float delaySamples) const noexcept;
 
-    // Last input and result of per-sample laws on smoothed controls; NaN
-    // forces the first evaluation (NaN compares unequal to everything).
-    float memoAge = std::numeric_limits<float>::quiet_NaN();
+    // Last input and result of per-sample laws on smoothed controls, seeded
+    // in prepare() from the snapped controls.
+    float memoAge = 0.0f;
     float memoAgeNoiseScale = 0.0f;
-    float memoOutputVolume = std::numeric_limits<float>::quiet_NaN();
+    float memoOutputVolume = 0.0f;
     float memoOutputGain = 1.0f;
-    float memoIntensity = std::numeric_limits<float>::quiet_NaN();
+
+    // Per-sample values carried between the passes of one sub-block. Kept on
+    // the stack in processBlock (about 19 KB): as a member it measured 3-5 %
+    // slower (48 kHz core, default state), and 19 KB is far inside the audio
+    // thread stacks hosts give plug-ins (512 KB and up on macOS, 1 MB on
+    // Windows, 8 MB on Linux).
+    struct SubBlockScratch
+    {
+        static constexpr int kSize = 128;
+        float d1[kSize];
+        float d2[kSize];
+        float d3[kSize];
+        float drivenInput[kSize];
+        float dryLvl[kSize];
+        float dryMixGain[kSize];
+        float echoLvl[kSize];
+        float fbGain[kSize];
+        float feedbackCurve[kSize];
+        float g1[kSize];
+        float g2[kSize];
+        float g3[kSize];
+        float inL[kSize];
+        float inR[kSize];
+        float inputGain[kSize];
+        float outputGain[kSize];
+        float power[kSize];
+        float pre[kSize];
+        float reproAgeNoise[kSize];
+        float reproNoiseGate[kSize];
+        float revLvl[kSize];
+        float revSend[kSize];
+        float springPre[kSize];
+        float wetMixGain[kSize];
+        float wobble[kSize];
+        float echoWet[kSize];
+        float rev[kSize];
+        float recordEnvelopeNow[kSize];
+        float loopReadBlend[kSize];
+        float preIn[kSize];
+        float preOut[kSize];
+        float postDriveGain[kSize];
+        float splice1[kSize];
+        float splice2[kSize];
+        float splice3[kSize];
+    };
+    float memoIntensity = 0.0f;
     float memoFeedbackCurve = 0.0f;
     float memoFbGain = 0.0f;
     float memoLoopReadBlend = 0.0f;
