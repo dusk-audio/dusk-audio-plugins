@@ -24,6 +24,7 @@ daf_add_plugin(tapemachine-2
     FILES_DSP
         TapeMachinePlugin.cpp
         ../core/TapeMachineDSP.cpp
+        ../core/TapeMachineSwitcher.cpp
     FILES_UI
         TapeMachineUI.cpp
         ${DUSK_DAF_UI_SOURCES})
@@ -100,4 +101,16 @@ if(NOT CMAKE_CROSSCOMPILING)
         "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
     target_compile_features(TapeMachine2RestartTest PRIVATE cxx_std_17)
     add_test(NAME TapeMachine2Restart COMMAND TapeMachine2RestartTest)
+
+    # The switcher: one path while nothing is switched (bit for bit), and at a switch of the
+    # deck the old path and a new one mixed along a raised cosine, then the new one alone.
+    add_executable(TapeMachine2SwitcherTest
+        ../core/tests/SwitcherTest.cpp
+        ../core/TapeMachineDSP.cpp
+        ../core/TapeMachineSwitcher.cpp)
+    target_include_directories(TapeMachine2SwitcherTest PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../core"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+    target_compile_features(TapeMachine2SwitcherTest PRIVATE cxx_std_17)
+    add_test(NAME TapeMachine2Switcher COMMAND TapeMachine2SwitcherTest)
 endif()

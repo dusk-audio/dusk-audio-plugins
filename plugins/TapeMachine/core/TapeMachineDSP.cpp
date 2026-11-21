@@ -393,47 +393,64 @@ int TapeMachineDSP::latencySamples() const noexcept
     return activeLatencySamples();
 }
 
+// Every setting of `a` with the same one of `b`: the one list of them.
+template <class A, class B, class Fn>
+void TapeMachineSettings::eachSetting (A& a, B& b, Fn&& fn) noexcept
+{
+    fn (a.pMachine, b.pMachine);
+    fn (a.pSpeed, b.pSpeed);
+    fn (a.pType, b.pType);
+    fn (a.pSignalPath, b.pSignalPath);
+    fn (a.pEqStandard, b.pEqStandard);
+    fn (a.pCalibration, b.pCalibration);
+    fn (a.pOversampling, b.pOversampling);
+    fn (a.pHeadWidth, b.pHeadWidth);
+    fn (a.pInputGainDb, b.pInputGainDb);
+    fn (a.pSaturation, b.pSaturation);
+    fn (a.pBias, b.pBias);
+    fn (a.pHighpassHz, b.pHighpassHz);
+    fn (a.pLowpassHz, b.pLowpassHz);
+    fn (a.pNoiseAmount, b.pNoiseAmount);
+    fn (a.pWow, b.pWow);
+    fn (a.pFlutter, b.pFlutter);
+    fn (a.pOutputGainDb, b.pOutputGainDb);
+    fn (a.pReproLf, b.pReproLf);
+    fn (a.pReproLmf, b.pReproLmf);
+    fn (a.pReproHmf, b.pReproHmf);
+    fn (a.pReproHf, b.pReproHf);
+    fn (a.pReproSubBell, b.pReproSubBell);
+    fn (a.pLevelHmfTrim, b.pLevelHmfTrim);
+    fn (a.pLevelHfTrim, b.pLevelHfTrim);
+    fn (a.pProgHmfTrim, b.pProgHmfTrim);
+    fn (a.pProgHfTrim, b.pProgHfTrim);
+    fn (a.pProgLfTrim, b.pProgLfTrim);
+    fn (a.pLpQ, b.pLpQ);
+    fn (a.pAutoCal, b.pAutoCal);
+    fn (a.pNoiseEnabled, b.pNoiseEnabled);
+    fn (a.pAutoComp, b.pAutoComp);
+    fn (a.pBypass, b.pBypass);
+    fn (a.pCrosstalk, b.pCrosstalk);
+    fn (a.pWowFlutterOn, b.pWowFlutterOn);
+    fn (a.pTransformer, b.pTransformer);
+}
+
 void TapeMachineSettings::copySettingsFrom (const TapeMachineSettings& other) noexcept
 {
-    const auto copy = [] (auto& to, const auto& from) noexcept
+    eachSetting (*this, other, [] (auto& to, const auto& from) noexcept
     {
         to.store (from.load (std::memory_order_relaxed), std::memory_order_relaxed);
-    };
-    copy (pMachine, other.pMachine);
-    copy (pSpeed, other.pSpeed);
-    copy (pType, other.pType);
-    copy (pSignalPath, other.pSignalPath);
-    copy (pEqStandard, other.pEqStandard);
-    copy (pCalibration, other.pCalibration);
-    copy (pOversampling, other.pOversampling);
-    copy (pHeadWidth, other.pHeadWidth);
-    copy (pInputGainDb, other.pInputGainDb);
-    copy (pSaturation, other.pSaturation);
-    copy (pBias, other.pBias);
-    copy (pHighpassHz, other.pHighpassHz);
-    copy (pLowpassHz, other.pLowpassHz);
-    copy (pNoiseAmount, other.pNoiseAmount);
-    copy (pWow, other.pWow);
-    copy (pFlutter, other.pFlutter);
-    copy (pOutputGainDb, other.pOutputGainDb);
-    copy (pReproLf, other.pReproLf);
-    copy (pReproLmf, other.pReproLmf);
-    copy (pReproHmf, other.pReproHmf);
-    copy (pReproHf, other.pReproHf);
-    copy (pReproSubBell, other.pReproSubBell);
-    copy (pLevelHmfTrim, other.pLevelHmfTrim);
-    copy (pLevelHfTrim, other.pLevelHfTrim);
-    copy (pProgHmfTrim, other.pProgHmfTrim);
-    copy (pProgHfTrim, other.pProgHfTrim);
-    copy (pProgLfTrim, other.pProgLfTrim);
-    copy (pLpQ, other.pLpQ);
-    copy (pAutoCal, other.pAutoCal);
-    copy (pNoiseEnabled, other.pNoiseEnabled);
-    copy (pAutoComp, other.pAutoComp);
-    copy (pBypass, other.pBypass);
-    copy (pCrosstalk, other.pCrosstalk);
-    copy (pWowFlutterOn, other.pWowFlutterOn);
-    copy (pTransformer, other.pTransformer);
+    });
+}
+
+bool TapeMachineSettings::sameSettingsAs (const TapeMachineSettings& other) const noexcept
+{
+    bool same = true;
+    eachSetting (*this, other, [&same] (const auto& mine, const auto& theirs) noexcept
+    {
+        const auto x = mine.load (std::memory_order_relaxed), y = theirs.load (std::memory_order_relaxed);
+        same = same && std::memcmp (&x, &y, sizeof (x)) == 0;
+    });
+    return same;
 }
 
 // The settings whose change alone makes the path burst if its state is kept. Measured on the
@@ -443,9 +460,35 @@ void TapeMachineSettings::copySettingsFrom (const TapeMachineSettings& other) no
 // to 1 dB on a bass note alone) are not here: they switch as they always did, without a gap.
 uint32_t TapeMachineDSP::BlockSettings::topologyKey() const noexcept
 {
-    return static_cast<uint32_t> (machine)
-        | (static_cast<uint32_t> (speed) << 1u)
-        | (static_cast<uint32_t> (calibration) << 3u);
+    return packTopology (machine, speed, calibration);
+}
+
+uint32_t TapeMachineSettings::topologyKey() const noexcept
+{
+    const int machine = clampI (pMachine.load (std::memory_order_relaxed), 0, 1);
+    return packTopology (machine, effectiveSpeedIndex (machine, pSpeed.load (std::memory_order_relaxed)),
+                         clampI (pCalibration.load (std::memory_order_relaxed), 0, 3));
+}
+
+bool TapeMachineSettings::isPassthrough() const noexcept
+{
+    return pBypass.load (std::memory_order_relaxed)
+        || clampI (pSignalPath.load (std::memory_order_relaxed), 0, 3) == 3;     // TapeCore::Thru
+}
+
+void TapeMachineDSP::copyMeterStateFrom (const TapeMachineDSP& other) noexcept
+{
+    vuStateL = other.vuStateL; vuStateR = other.vuStateR;
+    inVuStateL = other.inVuStateL; inVuStateR = other.inVuStateR;
+    inPeakStateL = other.inPeakStateL; inPeakStateR = other.inPeakStateR;
+    outPeakStateL = other.outPeakStateL; outPeakStateR = other.outPeakStateR;
+    inputPeakUsesRawInput = other.inputPeakUsesRawInput;
+    const auto copy = [] (std::atomic<float>& to, const std::atomic<float>& from) noexcept
+    {
+        to.store (from.load (std::memory_order_relaxed), std::memory_order_relaxed);
+    };
+    copy (vuL, other.vuL); copy (vuR, other.vuR); copy (inVuL, other.inVuL); copy (inVuR, other.inVuR);
+    copy (inPeakL, other.inPeakL); copy (inPeakR, other.inPeakR); copy (outPeakL, other.outPeakL); copy (outPeakR, other.outPeakR);
 }
 
 // Machine, speed, calibration and signal path in range, the speed being the one the core
@@ -467,7 +510,7 @@ TapeMachineDSP::BlockSettings TapeMachineDSP::readBlockSettings() const noexcept
 // The Swiss deck has no 3.75 IPS and runs it at 15. A block's speed is this one, in the key
 // and in the print too, so that choosing between the two on that deck, which changes nothing
 // in the path, is not a change.
-int TapeMachineDSP::effectiveSpeedIndex (int machine, int speed) noexcept
+int TapeMachineSettings::effectiveSpeedIndex (int machine, int speed) noexcept
 {
     speed = clampI (speed, 0, 3);
     return (machine == TapeCore::Swiss && speed == TapeCore::Speed_3_75_IPS) ? static_cast<int> (TapeCore::Speed_15_IPS)
