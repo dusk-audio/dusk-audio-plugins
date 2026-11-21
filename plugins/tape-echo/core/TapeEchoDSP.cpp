@@ -172,6 +172,37 @@ namespace
                                             kTapeEchoDesignFreqRatio);
     }
 
+    // 3rd-order Chebyshev type I low-pass (ripple rippleDb, band edge edgeHz)
+    // as a first-order and a second-order section: analog prototype poles,
+    // bilinear transform prewarped at the edge (the scipy.signal.cheby1
+    // design; at a 12 kHz rate it reproduces the spring's kCliff table to
+    // 3e-10 dB).
+    inline std::array<BiquadCoeffs, 2> chebyshev3LowPass(double fs, double edgeHz,
+                                                         double rippleDb) noexcept
+    {
+        constexpr double kPi = 3.14159265358979323846;
+        const double eps = std::sqrt(std::pow(10.0, rippleDb / 10.0) - 1.0);
+        const double a = std::asinh(1.0 / eps) / 3.0;
+        const double w = 2.0 * fs * std::tan(kPi * std::min(edgeHz, 0.49 * fs) / fs);
+        const double k = 2.0 * fs;
+        // Real pole: H(s) = p / (s + p).
+        const double p = std::sinh(a) * w;
+        const double b0 = p / (k + p);
+        const BiquadCoeffs first { (float)b0, (float)b0, 0.0f,
+                                   (float)((p - k) / (k + p)), 0.0f };
+        // Complex pair: H(s) = w0^2 / (s^2 + 2 sigma s + w0^2).
+        const double sr = std::sinh(a) * std::sin(kPi / 6.0) * w;
+        const double si = std::cosh(a) * std::cos(kPi / 6.0) * w;
+        const double w0sq = sr * sr + si * si;
+        const double twoSigma = 2.0 * sr;
+        const double d = k * k + twoSigma * k + w0sq;
+        const BiquadCoeffs second { (float)(w0sq / d), (float)(2.0 * w0sq / d),
+                                    (float)(w0sq / d),
+                                    (float)((2.0 * w0sq - 2.0 * k * k) / d),
+                                    (float)((k * k - twoSigma * k + w0sq) / d) };
+        return { first, second };
+    }
+
     // First-order low-pass at rate fs whose magnitude follows an ANALOG
     // first-order low-pass with corner fcHz, |H|^2 = 1 / (1 + (f/fc)^2), from
     // 50 Hz to 0.45 fs -- including a corner above Nyquist, which no bilinear
@@ -252,7 +283,6 @@ float TapeEchoDSP::leadingHeadRatioForMode(int mode1to12) noexcept
     if (mode.h3 > 0.0f) return kHeadRatio[2];
     return 1.0f;
 }
-
 
 //==============================================================================
 // (ShelfFilter coefficient design moved to shared Biquad::shelfSlope1 — see
@@ -471,7 +501,7 @@ float SpringReverb::Spring::process(float x) noexcept
     // relative to the dispersed wave, on the theory that a tank carries a
     // second, faster propagation mode. The reference does have a
     // non-dispersive branch, but it sits 19-24 dB down and exists only above
-    // 4.2 kHz -- where the output ceiling already suppresses it -- not
+    // 4.2 kHz -- where the resampler and outputCliff already suppress it -- not
     // broadband at unity. Summing a full-level copy of the input is the
     // sharpest attack physically available, and it measured as such: onset
     // slope 9.03 dB/ms against the reference's 3.28, plus per-band arrival
@@ -662,14 +692,30 @@ void SpringReverb::prepare(double sampleRate, float detune)
     // low-pass (0.1 dB ripple, edge 0.7875 of Nyquist) fits that transition
     // at 2.2 dB rms while staying within 0.10 dB up to 0.72 of Nyquist. The
     // design is relative to the internal Nyquist, so one table serves every
-    // host rate. Valid only at a reduced internal rate: with no resampling
-    // (hosts below 20 kHz) the cliff is left out.
+    // host rate whose internal rate lands at 11-12.5 kHz (44.1/48 kHz and
+    // their multiples).
+    //
+    // Other hosts land elsewhere: 32 kHz runs the tank at 16 kHz, and hosts
+    // below 20 kHz are not resampled at all. A cliff relative to THOSE Nyquist
+    // frequencies would sit at 6.3-8 kHz and let back the 5.5-7 kHz fizz the
+    // reference does not have, so above a 12.5 kHz internal rate the same
+    // 3rd-order Chebyshev is designed at runtime at the absolute edge it has
+    // at a 12 kHz internal rate (4725 Hz).
     static constexpr BiquadCoeffs kCliff[2] = {
         { 0.579898546f, 0.579898546f, 0.000000000f, 0.473064529f, 0.000000000f },
         { 1.000000000f, 2.000000000f, 1.000000000f, 1.462612409f, 0.686732563f },
     };
-    for (size_t i = 0; i < outputCliff.size(); ++i)
-        outputCliff[i].setCoeffs(resampleStages > 0 ? kCliff[i] : BiquadCoeffs {});
+    if (fi <= 12500.0)
+    {
+        for (size_t i = 0; i < outputCliff.size(); ++i)
+            outputCliff[i].setCoeffs(kCliff[i]);
+    }
+    else
+    {
+        const auto designed = chebyshev3LowPass(fi, 0.7875 * 6000.0, 0.1);
+        for (size_t i = 0; i < outputCliff.size(); ++i)
+            outputCliff[i].setCoeffs(designed[i]);
+    }
     reset();
 }
 

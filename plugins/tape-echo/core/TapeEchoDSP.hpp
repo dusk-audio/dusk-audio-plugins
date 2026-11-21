@@ -312,8 +312,24 @@ public:
     }
 
     // in[0..n) -> out[0..n), n <= kMaxBlock. shape(v) is applied at 4x.
+    // Any n: longer runs are processed kMaxBlock samples at a time.
     template <typename Shape>
     void process(const float* in, float* out, int n, Shape shape) noexcept
+    {
+        while (n > kMaxBlock)
+        {
+            processChunk(in, out, kMaxBlock, shape);
+            in += kMaxBlock;
+            out += kMaxBlock;
+            n -= kMaxBlock;
+        }
+        if (n > 0)
+            processChunk(in, out, n, shape);
+    }
+
+private:
+    template <typename Shape>
+    void processChunk(const float* in, float* out, int n, Shape shape) noexcept
     {
         // Histories: kA reaches 23 samples back at its input rate, kB 7, and
         // the decimators read their full spans (14 and 46).
@@ -822,7 +838,6 @@ private:
 
     std::array<Channel, kMaxChannels> channels;
     SpringReverb spring; // shared mono wet path
-
 
     //--- tape transport --------------------------------------------------------
     int    writeIdx   = 0;
