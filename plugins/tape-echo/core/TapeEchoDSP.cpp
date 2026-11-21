@@ -1500,6 +1500,9 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
     float x_echoWet[kSubBlock];
     float x_rev[kSubBlock];
     float x_recordEnvelopeNow[kSubBlock];
+    float x_splice1[kSubBlock];
+    float x_splice2[kSubBlock];
+    float x_splice3[kSubBlock];
     for (int base = 0; base < numSamples; base += kSubBlock)
     {
         const int len = std::min(kSubBlock, numSamples - base);
@@ -1784,59 +1787,9 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             const float springPre =
                 kCleanSpringSendGain * delayedTapeInput;
 
-            x_age[i] = age;
-            x_d1[i] = d1;
-            x_d2[i] = d2;
-            x_d3[i] = d3;
-            x_drivenInput[i] = drivenInput;
-            x_dryLvl[i] = dryLvl;
-            x_dryMixGain[i] = dryMixGain;
-            x_echoLvl[i] = echoLvl;
-            x_fbGain[i] = fbGain;
-            x_feedbackCurve[i] = feedbackCurve;
-            x_g1[i] = g1;
-            x_g2[i] = g2;
-            x_g3[i] = g3;
-            x_inL[i] = inL;
-            x_inR[i] = inR;
-            x_inputGain[i] = inputGain;
-            x_nominalMs[i] = nominalMs;
-            x_outputGain[i] = outputGain;
-            x_power[i] = power;
-            x_pre[i] = pre;
-            x_reproAgeNoise[i] = reproAgeNoise;
-            x_reproNoiseGate[i] = reproNoiseGate;
-            x_revLvl[i] = revLvl;
-            x_revSend[i] = revSend;
-            x_springPre[i] = springPre;
-            x_wetMixGain[i] = wetMixGain;
-            x_wobble[i] = wobble;
-            x_recordEnvelopeNow[i] = ch.recordEnvelope;
-        }
-        for (int i = 0; i < len; ++i)
-        {
-            const int n = base + i;
-            (void)n;
-            const float age = x_age[i];
-            const float d1 = x_d1[i];
-            const float d2 = x_d2[i];
-            const float d3 = x_d3[i];
-            const float drivenInput = x_drivenInput[i];
-            const float fbGain = x_fbGain[i];
-            const float feedbackCurve = x_feedbackCurve[i];
-            const float g1 = x_g1[i];
-            const float g2 = x_g2[i];
-            const float g3 = x_g3[i];
-            const float nominalMs = x_nominalMs[i];
-            const float power = x_power[i];
-            const float pre = x_pre[i];
-            const float reproAgeNoise = x_reproAgeNoise[i];
-            const float reproNoiseGate = x_reproNoiseGate[i];
-            const float wobble = x_wobble[i];
-            const float recordEnvelopeNow = x_recordEnvelopeNow[i];
-            Channel& ch = channels[0];
-            constexpr float kInputStageDrive = 2.65f;
-            constexpr float kInputStageTrim  = 0.459f;
+            // Splice gains (and the splice clock) depend only on time, tape age
+            // and the motor, never on the audio, so they are computed here,
+            // ahead of the tape loop. Heads that are off are not evaluated.
             // Three playback heads off the shared tape.
             // The joined ends of the physical tape create a recurring dropout.
             // Its loop period is 9.23 s at the fastest motor setting and scales
@@ -1884,22 +1837,89 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                     narrowWeight * narrow + (1.0f - narrowWeight) * broad;
                 return std::pow(10.0f, -spliceDepthDb * shape * 0.05f);
             };
+            const float splice1 = std::abs(g1) < kHeadIdleFloor ? 1.0f
+                : spliceGain(spliceSamplesToHead1);
+            const float splice2 = std::abs(g2) < kHeadIdleFloor ? 1.0f
+                : spliceGain(spliceSamplesToHead1 + (d2 - d1));
+            const float splice3 = std::abs(g3) < kHeadIdleFloor ? 1.0f
+                : spliceGain(spliceSamplesToHead1 + (d3 - d1));
+            spliceSamplesToHead1 -= 1.0f;
+            const float spliceTailSamples =
+                0.8f * speedScale * (float)fs;
+            if (spliceSamplesToHead1 < -spliceTailSamples)
+            {
+                const float loopPeriodSamples =
+                    9.23f * speedScale * (float)fs;
+                spliceSamplesToHead1 += loopPeriodSamples;
+            }
+            x_splice1[i] = splice1;
+            x_splice2[i] = splice2;
+            x_splice3[i] = splice3;
+            x_age[i] = age;
+            x_d1[i] = d1;
+            x_d2[i] = d2;
+            x_d3[i] = d3;
+            x_drivenInput[i] = drivenInput;
+            x_dryLvl[i] = dryLvl;
+            x_dryMixGain[i] = dryMixGain;
+            x_echoLvl[i] = echoLvl;
+            x_fbGain[i] = fbGain;
+            x_feedbackCurve[i] = feedbackCurve;
+            x_g1[i] = g1;
+            x_g2[i] = g2;
+            x_g3[i] = g3;
+            x_inL[i] = inL;
+            x_inR[i] = inR;
+            x_inputGain[i] = inputGain;
+            x_nominalMs[i] = nominalMs;
+            x_outputGain[i] = outputGain;
+            x_power[i] = power;
+            x_pre[i] = pre;
+            x_reproAgeNoise[i] = reproAgeNoise;
+            x_reproNoiseGate[i] = reproNoiseGate;
+            x_revLvl[i] = revLvl;
+            x_revSend[i] = revSend;
+            x_springPre[i] = springPre;
+            x_wetMixGain[i] = wetMixGain;
+            x_wobble[i] = wobble;
+            x_recordEnvelopeNow[i] = ch.recordEnvelope;
+        }
+        for (int i = 0; i < len; ++i)
+        {
+            const int n = base + i;
+            (void)n;
+            const float d1 = x_d1[i];
+            const float d2 = x_d2[i];
+            const float d3 = x_d3[i];
+            const float drivenInput = x_drivenInput[i];
+            const float fbGain = x_fbGain[i];
+            const float feedbackCurve = x_feedbackCurve[i];
+            const float g1 = x_g1[i];
+            const float g2 = x_g2[i];
+            const float g3 = x_g3[i];
+            const float power = x_power[i];
+            const float pre = x_pre[i];
+            const float reproAgeNoise = x_reproAgeNoise[i];
+            const float reproNoiseGate = x_reproNoiseGate[i];
+            const float wobble = x_wobble[i];
+            const float recordEnvelopeNow = x_recordEnvelopeNow[i];
+            const float splice1 = x_splice1[i];
+            const float splice2 = x_splice2[i];
+            const float splice3 = x_splice3[i];
+            Channel& ch = channels[0];
+            constexpr float kInputStageDrive = 2.65f;
+            constexpr float kInputStageTrim  = 0.459f;
             // A head whose gain has decayed below kHeadIdleFloor (its smoother
             // stalls near 1e-36 with denormals flushed, it never reaches zero)
             // is not read: its term is far under one ulp of anything it is
             // summed with. te2_corebench pins every mode, switch and silence
             // tail byte for byte against reading all three.
             const float h1 = std::abs(g1) < kHeadIdleFloor ? 0.0f
-                           : readTape(ch.tape, d1)
-                           * spliceGain(spliceSamplesToHead1);
+                           : readTape(ch.tape, d1) * splice1;
             const float h2 = std::abs(g2) < kHeadIdleFloor ? 0.0f
-                           : readTape(ch.tape, d2)
-                           * spliceGain(
-                               spliceSamplesToHead1 + (d2 - d1));
+                           : readTape(ch.tape, d2) * splice2;
             const float h3 = std::abs(g3) < kHeadIdleFloor ? 0.0f
-                           : readTape(ch.tape, d3)
-                           * spliceGain(
-                               spliceSamplesToHead1 + (d3 - d1));
+                           : readTape(ch.tape, d3) * splice3;
             const float headSum = (h1 * g1 + h2 * g2 + h3 * g3) * wobble;
             const float amplifiedHeadSum =
                 feedbackReadAmplifier(headSum, feedbackCurve);
@@ -2150,15 +2170,6 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                 echoWet = ch.trebleShelf.process(echoWet);
 
             writeIdx = (writeIdx + 1) & mask;
-            spliceSamplesToHead1 -= 1.0f;
-            const float spliceTailSamples =
-                0.8f * speedScale * (float)fs;
-            if (spliceSamplesToHead1 < -spliceTailSamples)
-            {
-                const float loopPeriodSamples =
-                    9.23f * speedScale * (float)fs;
-                spliceSamplesToHead1 += loopPeriodSamples;
-            }
             x_echoWet[i] = echoWet;
         }
         for (int i = 0; i < len; ++i)
