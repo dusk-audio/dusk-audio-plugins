@@ -56,7 +56,7 @@ dBFS for New/Used/Old at Noise 0, and −78/−72/−66 dBFS at Noise 1.
 | ID | Name          | Setter            | Range      | Default | Notes |
 |----|---------------|-------------------|------------|---------|-------|
 | 0  | Mode          | `setMode`         | 1–12 (int, stepped) | 1 | three playback heads plus spring combinations |
-| 1  | Repeat Rate   | `setRepeatRate`   | 0–1        | 0.0     | head 1: about 177 ms (slow) to 69 ms (fast); heads 2/3 scale to 337/489 and 131/189 ms |
+| 1  | Repeat Rate   | `setRepeatRate`   | 0–1        | 0.0     | head 1: about 177 ms (slow) to 69 ms (fast); heads 2/3 scale to 336/487 and 130/189 ms |
 | 2  | Intensity     | `setIntensity`    | 0–1        | 0.0     | self-oscillates above ~0.75 |
 | 3  | Echo Volume   | `setEchoLevel`    | 0–1        | 0.5     | |
 | 4  | Reverb Volume | `setReverbLevel`  | 0–1        | 0.0     | only audible in modes 5–12 |

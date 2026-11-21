@@ -535,14 +535,14 @@ int main()
 
     constexpr std::array<float, duskaudio::TapeEchoDSP::kNumModes>
         leadingHeadRatios{
-            1.0f, 1.91172f, 2.76118f, 1.91172f,
-            1.0f, 1.91172f, 2.76118f, 1.0f,
-            1.91172f, 1.0f, 1.0f, 1.0f };
+            1.0f, 1.905322f, 2.759947f, 1.905322f,
+            1.0f, 1.905322f, 2.759947f, 1.0f,
+            1.905322f, 1.0f, 1.0f, 1.0f };
     constexpr std::array<float, duskaudio::TapeEchoDSP::kNumModes>
         leadingHeadOffsets{
-            0.0f, -1.428f, -2.141f, -1.428f,
-            0.0f, -1.428f, -2.141f, 0.0f,
-            -1.428f, 0.0f, 0.0f, 0.0f };
+            0.0f, -0.6929f, -0.9351f, -0.6929f,
+            0.0f, -0.6929f, -0.9351f, 0.0f,
+            -0.6929f, 0.0f, 0.0f, 0.0f };
     for (int mode = 1; mode <= duskaudio::TapeEchoDSP::kNumModes; ++mode)
         if (duskaudio::TapeEchoDSP::leadingHeadRatioForMode(mode)
                 != leadingHeadRatios[static_cast<size_t>(mode - 1)]

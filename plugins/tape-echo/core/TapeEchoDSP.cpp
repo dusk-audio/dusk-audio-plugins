@@ -903,16 +903,23 @@ constexpr float TapeEchoDSP::kHeadOffsetMs[3];
 
 float TapeEchoDSP::delayMsForRepeatRate(float v01) noexcept
 {
-    const float x  = clamp01(v01);
-    const float x2 = x * x;
-    // Monotonic endpoint-constrained fit to hosted head-1 arrivals at five
-    // motor positions. A linear knob law was over 10 ms early at midpoint.
-    const float slow01 = clamp01(
-        1.0f - 2.14728717f * x2
-             + 0.90911783f * x2 * x
-             + 0.23816934f * x2 * x2
-             + 0.06891f * x2 * (1.0f - x) * (1.0f - x));
-    return kMinDelayMs + slow01 * (kMaxDelayMs - kMinDelayMs);
+    // Degree-6 fit to the reference's head-1 arrival at 21 motor positions
+    // (latency-compensated, each the mean of 40 impulses so the transport's
+    // wow averages out). Residuals sit inside the measurement noise (rms
+    // 0.03 ms, leave-one-out 0.06 ms); the five-point law it replaces was off
+    // by up to 1.1 ms between its knots. Strictly decreasing on [0, 1] (its
+    // flattest point is the slow stop, -0.72 ms per unit), which
+    // repeatRateForDelayMs' bisection relies on. Its endpoints are
+    // kMaxDelayMs (x = 0) and kMinDelayMs (x = 1).
+    const float x = clamp01(v01);
+    const float ms = kMaxDelayMs
+        + x * (-0.719629189f
+        + x * (-113.76089f
+        + x * (-521.948905f
+        + x * (1197.20089f
+        + x * (-926.154326f
+        + x * 257.30185f)))));
+    return clampF(ms, kMinDelayMs, kMaxDelayMs);
 }
 
 float TapeEchoDSP::repeatRateForDelayMs(float delayMs) noexcept

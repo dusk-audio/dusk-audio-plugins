@@ -438,19 +438,23 @@ public:
     static constexpr int kNumModes    = 12;
     static constexpr int kMaxChannels = 2;
 
-    // Hosted head-1 arrival endpoints. These include the record/playback path
-    // delay so rendered repeats align with the reference, not just the nominal
-    // motor labels.
-    static constexpr float kMinDelayMs = 69.33f;
-    static constexpr float kMaxDelayMs = 177.354f;
+    // Hosted head-1 arrival endpoints: the motor law's values at the fast and
+    // slow stops (delayMsForRepeatRate(1) and (0)). They include the
+    // record/playback path delay so rendered repeats align with the reference,
+    // not just the nominal motor labels.
+    static constexpr float kMinDelayMs = 68.7542f;
+    static constexpr float kMaxDelayMs = 176.83522f;
 
-    // Effective head spacing and fixed playback-electronics offsets, fitted
-    // jointly across slow/mid/fast hosted arrivals. A ratio alone left the far
-    // heads 2-3 ms late because each pickup has a small fixed phase delay.
+    // Effective head spacing and fixed playback-electronics offsets: a least
+    // squares fit of the reference's head-2 and head-3 arrivals against its
+    // head-1 arrival over 21 motor positions (latency-compensated, 40-impulse
+    // averages). The fit leaves residuals inside the measurement noise
+    // (rms 0.06 / 0.13 ms). A ratio alone left the far heads late because each
+    // pickup has a small fixed phase delay.
     static constexpr float kHeadRatio[3] =
-        { 1.0f, 1.91172f, 2.76118f };
+        { 1.0f, 1.905322f, 2.759947f };
     static constexpr float kHeadOffsetMs[3] =
-        { 0.0f, -1.428f, -2.141f };
+        { 0.0f, -0.6929f, -0.9351f };
 
     TapeEchoDSP() = default;
 
