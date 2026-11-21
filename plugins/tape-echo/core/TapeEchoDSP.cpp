@@ -112,6 +112,9 @@ namespace
     // the idle skip in processBlock); far under one float ulp of any signal.
     constexpr float kSpringIdleFloor = 1.0e-20f;
 
+    // Below this a read head's (smoothed) gain is treated as off.
+    constexpr float kHeadIdleFloor = 1.0e-20f;
+
     // Captured reference cartridges expose a quiet 60 Hz odd-harmonic bed. The
     // fifth harmonic is strongest; the others are normalized to it from the
     // hosted New/Used/Old noise spectra. A separate, much quieter random layer
@@ -1107,6 +1110,8 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     noiseGainSmoother.snap(noiseGainFor(pNoise.load(std::memory_order_relaxed)));
     memoAge = std::numeric_limits<float>::quiet_NaN();
     memoOutputVolume = std::numeric_limits<float>::quiet_NaN();
+    memoIntensity = std::numeric_limits<float>::quiet_NaN();
+    memoBlendCurve = std::numeric_limits<float>::quiet_NaN();
     lastPlaybackCutoff = -1.0f;
     lastAntiAliasCutoff = -1.0f;
     lastAgeContourDb = 999.0f;
@@ -1620,8 +1625,15 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             // unity for small signals and the in-loop tape saturation clamps it
             // into stable, warm self-oscillation.
             const float intensity = intensitySmoother.next();
-            const float feedbackCurve = feedbackKneeControl(intensity);
-            const float fbGain = feedbackGainFromControl(feedbackCurve);
+            // Recomputed only when the (smoothed) intensity moves: same bits.
+            if (intensity != memoIntensity)
+            {
+                memoIntensity = intensity;
+                memoFeedbackCurve = feedbackKneeControl(intensity);
+                memoFbGain = feedbackGainFromControl(memoFeedbackCurve);
+            }
+            const float feedbackCurve = memoFeedbackCurve;
+            const float fbGain = memoFbGain;
             const float revSend   = reverbSendSmoother.next();
             // Level controls use measured analog-style tapers. The effect-volume
             // curve includes a linear term, so low settings remain useful.
@@ -1872,18 +1884,31 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                     narrowWeight * narrow + (1.0f - narrowWeight) * broad;
                 return std::pow(10.0f, -spliceDepthDb * shape * 0.05f);
             };
-            const float h1 = readTape(ch.tape, d1)
+            // A head whose gain has decayed below kHeadIdleFloor (its smoother
+            // stalls near 1e-36 with denormals flushed, it never reaches zero)
+            // is not read: its term is far under one ulp of anything it is
+            // summed with. te2_corebench pins every mode, switch and silence
+            // tail byte for byte against reading all three.
+            const float h1 = std::abs(g1) < kHeadIdleFloor ? 0.0f
+                           : readTape(ch.tape, d1)
                            * spliceGain(spliceSamplesToHead1);
-            const float h2 = readTape(ch.tape, d2)
+            const float h2 = std::abs(g2) < kHeadIdleFloor ? 0.0f
+                           : readTape(ch.tape, d2)
                            * spliceGain(
                                spliceSamplesToHead1 + (d2 - d1));
-            const float h3 = readTape(ch.tape, d3)
+            const float h3 = std::abs(g3) < kHeadIdleFloor ? 0.0f
+                           : readTape(ch.tape, d3)
                            * spliceGain(
                                spliceSamplesToHead1 + (d3 - d1));
             const float headSum = (h1 * g1 + h2 * g2 + h3 * g3) * wobble;
             const float amplifiedHeadSum =
                 feedbackReadAmplifier(headSum, feedbackCurve);
-            const float loopReadBlend = feedbackReadLoopBlend(feedbackCurve);
+            if (feedbackCurve != memoBlendCurve)
+            {
+                memoBlendCurve = feedbackCurve;
+                memoLoopReadBlend = feedbackReadLoopBlend(feedbackCurve);
+            }
+            const float loopReadBlend = memoLoopReadBlend;
             // Multi-head loop-gain correction, loop path only. Advanced once per
             // sample alongside headGain above so the two track each other through a
             // mode change. See refreshBlockRateControls() for the derivation.

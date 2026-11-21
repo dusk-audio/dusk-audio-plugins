@@ -648,6 +648,11 @@ private:
     float memoAgeNoiseScale = 0.0f;
     float memoOutputVolume = std::numeric_limits<float>::quiet_NaN();
     float memoOutputGain = 1.0f;
+    float memoIntensity = std::numeric_limits<float>::quiet_NaN();
+    float memoFeedbackCurve = 0.0f;
+    float memoFbGain = 0.0f;
+    float memoBlendCurve = std::numeric_limits<float>::quiet_NaN();
+    float memoLoopReadBlend = 0.0f;
 
     // The spring is skipped while its send and every piece of its state have
     // decayed below kSpringIdleFloor (see processBlock).
