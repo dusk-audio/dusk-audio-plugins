@@ -308,57 +308,82 @@ public:
         for (int j = 0; j < n; ++j)
             x[HX + j] = in[j];
 
+        // Every stage accumulates tap by tap across all of its outputs (taps
+        // outer, outputs inner): each output still adds the same products in
+        // the same tap order as the per-sample FIR, but the inner loop is now
+        // independent across outputs and vectorises.
+        float acc[4 * kMaxBlock];
+
         // 1x -> 2x through kA: even outputs are the full sum over the real
         // samples (the centre tap reads a stuffed zero), odd outputs the
         // halved centre only.
         for (int j = 0; j < n; ++j)
+            acc[j] = 0.0f;
+        for (int i = 0; i < 12; ++i)
         {
-            const float* s = x + HX + j;
-            float acc = 0.0f;
-            for (int i = 0; i < 12; ++i)
-                acc += hbtaps::kA[i] * (s[-(11 - i)] + s[-(12 + i)]);
-            const float centre = 0.5f * s[-11];
-            a[HA + 2 * j] = 2.0f * acc;
+            const float t = hbtaps::kA[i];
+            const float* newer = x + HX - (11 - i);
+            const float* older = x + HX - (12 + i);
+            for (int j = 0; j < n; ++j)
+                acc[j] += t * (newer[j] + older[j]);
+        }
+        for (int j = 0; j < n; ++j)
+        {
+            const float centre = 0.5f * x[HX + j - 11];
+            a[HA + 2 * j] = 2.0f * acc[j];
             a[HA + 2 * j + 1] = 2.0f * (centre == 0.0f ? 0.0f : centre);
         }
 
         // 2x -> 4x through kB, then the shaper at 4x.
-        for (int m = 0; m < 2 * n; ++m)
+        const int n2 = 2 * n;
+        for (int m = 0; m < n2; ++m)
+            acc[m] = 0.0f;
+        for (int i = 0; i < 4; ++i)
         {
-            const float* s = a + HA + m;
-            float acc = 0.0f;
-            for (int i = 0; i < 4; ++i)
-                acc += hbtaps::kB[i] * (s[-(3 - i)] + s[-(4 + i)]);
-            const float centre = 0.5f * s[-3];
-            c[HC + 2 * m] = shape(2.0f * acc);
-            c[HC + 2 * m + 1] = shape(2.0f * (centre == 0.0f ? 0.0f : centre));
+            const float t = hbtaps::kB[i];
+            const float* newer = a + HA - (3 - i);
+            const float* older = a + HA - (4 + i);
+            for (int m = 0; m < n2; ++m)
+                acc[m] += t * (newer[m] + older[m]);
         }
+        for (int m = 0; m < n2; ++m)
+        {
+            const float centre = 0.5f * a[HA + m - 3];
+            c[HC + 2 * m] = 2.0f * acc[m];
+            c[HC + 2 * m + 1] = 2.0f * (centre == 0.0f ? 0.0f : centre);
+        }
+        for (int q = 0; q < 4 * n; ++q)
+            c[HC + q] = shape(c[HC + q]);
 
         // 4x -> 2x through kB: a full sum at every second 4x sample.
-        for (int r = 0; r < 2 * n; ++r)
+        for (int r = 0; r < n2; ++r)
+            acc[r] = 0.5f * c[HC + 2 * r + 1 - 7];
+        for (int i = 0; i < 4; ++i)
         {
-            const float* s = c + HC + 2 * r + 1;
-            float acc = 0.5f * s[-7];
-            for (int i = 0; i < 4; ++i)
-            {
-                const int k = 2 * i + 1;
-                acc += hbtaps::kB[i] * (s[-(7 - k)] + s[-(7 + k)]);
-            }
-            d[HD + r] = acc;
+            const int k = 2 * i + 1;
+            const float t = hbtaps::kB[i];
+            const float* newer = c + HC + 1 - (7 - k);
+            const float* older = c + HC + 1 - (7 + k);
+            for (int r = 0; r < n2; ++r)
+                acc[r] += t * (newer[2 * r] + older[2 * r]);
         }
+        for (int r = 0; r < n2; ++r)
+            d[HD + r] = acc[r];
 
         // 2x -> 1x through kA.
         for (int u = 0; u < n; ++u)
+            acc[u] = 0.5f * d[HD + 2 * u + 1 - 23];
+        for (int i = 0; i < 12; ++i)
         {
-            const float* s = d + HD + 2 * u + 1;
-            float acc = 0.5f * s[-23];
-            for (int i = 0; i < 12; ++i)
-            {
-                const int k = 2 * i + 1;
-                acc += hbtaps::kA[i] * (s[-(23 - k)] + s[-(23 + k)]);
-            }
-            out[u] = acc;
+            const int k = 2 * i + 1;
+            const float t = hbtaps::kA[i];
+            const float* newer = d + HD + 1 - (23 - k);
+            const float* older = d + HD + 1 - (23 + k);
+            for (int u = 0; u < n; ++u)
+                acc[u] += t * (newer[2 * u] + older[2 * u]);
         }
+        for (int u = 0; u < n; ++u)
+            out[u] = acc[u];
 
         // Carry the histories into the next sub-block.
         std::copy(x + n, x + n + HX, x);
