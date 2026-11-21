@@ -22,7 +22,7 @@ echo "########## sin_gate ##########"
 # puzzling THD or sideband failure downstream.
 ./build/sin_test || fail=1
 
-for g in spectrum env feedback; do
+for g in spectrum env feedback rate; do
     echo
     echo "########## ${g}_gate ##########"
     python3 "${g}_gate.py" || fail=1

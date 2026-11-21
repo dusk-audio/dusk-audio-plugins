@@ -30,6 +30,8 @@ static_assert((int)kParamModSrc0     == (int)msynth::pModSrc0,     "mod matrix d
 static_assert((int)kParamPrismAlgo   == (int)msynth::pPrismAlgo,   "prism block drift");
 static_assert((int)kParamOp1Ratio    == (int)msynth::pOp1Ratio,    "op block drift");
 static_assert((int)kParamOp4R        == (int)msynth::pOp4R,        "op block end drift");
+static_assert((int)kParamOp1D2       == (int)msynth::pOp1D2,       "op extra block drift");
+static_assert((int)kParamOp4RateScale == (int)msynth::pOp4RateScale, "op extra block end drift");
 static_assert((int)kParamSeqPitch0   == (int)msynth::pSeqPitch0,   "seq pitch drift");
 static_assert((int)kParamSeqSlide0   == (int)msynth::pSeqSlide0,   "seq slide drift");
 static_assert((int)kParamArpAccentPattern == (int)msynth::pArpAccentPattern,

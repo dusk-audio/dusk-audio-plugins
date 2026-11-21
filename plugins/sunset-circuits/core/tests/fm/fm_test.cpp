@@ -17,11 +17,12 @@
 //   fb=<0..1>          op-4 feedback amount
 //
 // Per-operator keys — op<N><Param>, N = 1..4, Param in
-//   Ratio Fine Level Vel KeyScale A D S R
+//   Ratio Fine Level Vel KeyScale A D S R D2 RateScale
 // e.g.  op1Ratio=1 op1Level=1 op2Ratio=14 op2Level=0.8 op2D=0.15
 //
 // Defaults: every op ratio 1, fine 0, velSens 0, keyScale 0, ADSR
-// {0.002,0.4,1,0.3}; op1 level 1 (a lone carrier), ops 2-4 level 0. So an
+// {0.002,0.4,1,0.3}, Decay 2 Hold, Rate Scale 0; op1 level 1 (a lone carrier),
+// ops 2-4 level 0. So an
 // unconfigured render on any single-carrier algorithm is a clean sine.
 
 #include "FMEngine.hpp"
@@ -120,6 +121,8 @@ struct OpCfg
 {
     float ratio = 1.0f, fine = 0.0f, level = 0.0f, vel = 0.0f, key = 0.0f;
     float a = 0.002f, d = 0.4f, s = 1.0f, r = 0.3f;
+    float d2 = msynth::FMRateEnvelope::kDecay2Hold;
+    int   rateScale = 0;
 };
 } // namespace
 
@@ -197,6 +200,12 @@ int main(int argc, char** argv)
             else if (p == "D")        { if (v < 0.0f) { std::fprintf(stderr, "invalid %s: %g (want >= 0)\n", key.c_str(), (double)v); return 1; } o.d = v; }
             else if (p == "S")        { if (v < 0.0f) { std::fprintf(stderr, "invalid %s: %g (want >= 0)\n", key.c_str(), (double)v); return 1; } o.s = v; }
             else if (p == "R")        { if (v < 0.0f) { std::fprintf(stderr, "invalid %s: %g (want >= 0)\n", key.c_str(), (double)v); return 1; } o.r = v; }
+            else if (p == "D2")       { if (v < 0.0f) { std::fprintf(stderr, "invalid %s: %g (want >= 0)\n", key.c_str(), (double)v); return 1; } o.d2 = v; }
+            else if (p == "RateScale")
+            {
+                if (v < 0.0f || v > 3.0f || v != std::floor(v)) { std::fprintf(stderr, "invalid %s: %g (want 0, 1, 2 or 3)\n", key.c_str(), (double)v); return 1; }
+                o.rateScale = (int)v;
+            }
             else { std::fprintf(stderr, "unknown op param: %s\n", key.c_str()); return 1; }
             continue;
         }
@@ -256,7 +265,7 @@ int main(int argc, char** argv)
         eng.setOpLevel(i, ops[i].level);
         eng.setOpVelSens(i, ops[i].vel);
         eng.setOpKeyScale(i, ops[i].key);
-        eng.setOpADSR(i, ops[i].a, ops[i].d, ops[i].s, ops[i].r);
+        eng.setOpEnvelope(i, ops[i].a, ops[i].d, ops[i].s, ops[i].r, ops[i].d2, ops[i].rateScale);
     }
 
     eng.noteOn(freqHz, velocity);

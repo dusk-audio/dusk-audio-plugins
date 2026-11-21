@@ -104,13 +104,16 @@ struct VoiceParameters
     float fmAmount = 0.0f;
 
     // Prism (mode 4) 4-op FM. algo 0..7, feedback 0..1; op[] carries the 4
-    // operators' {ratio, fine cents, level, velSens, keyScale, ADSR}.
+    // operators' {ratio, fine cents, level, velSens, keyScale, ADSR, second
+    // decay, rate scaling}.
     int   prismAlgo = 4;
     float prismFB = 0.0f;
     struct FMOpParams
     {
         float ratio = 1.0f, fine = 0.0f, level = 0.0f, vel = 0.0f, keyScale = 0.0f;
         float a = 0.005f, d = 0.4f, s = 0.7f, r = 0.4f;
+        float d2 = FMRateEnvelope::kDecay2Hold;   // Hold: the sustain level holds
+        int   rateScale = 0;
     };
     FMOpParams op[FMVoiceEngine::kNumOps];
 
@@ -411,7 +414,7 @@ public:
                 fm[u].setOpLevel(i, o.level);
                 fm[u].setOpVelSens(i, o.vel);
                 fm[u].setOpKeyScale(i, o.keyScale);
-                fm[u].setOpADSR(i, o.a, o.d, o.s, o.r);
+                fm[u].setOpEnvelope(i, o.a, o.d, o.s, o.r, o.d2, o.rateScale);
             }
         }
         // Summed carriers are NOT normalised inside FMVoiceEngine (peak can reach

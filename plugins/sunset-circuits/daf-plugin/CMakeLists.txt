@@ -113,30 +113,40 @@ dusk_daf_add_clap_preset_test(sunset-circuits)
 # its DejaVu Sans, which the host puts first in the atlas as DAF does. Needs no
 # window or display; in CI it runs in daf-release.yml's test-linux job (the
 # macOS and Windows jobs build only the plugin targets).
+#
+# MultiSynthPresetStep: the top bar's previous / next arrows step in the preset
+# menu's order, on the same host.
+#
+# MultiSynthRatioStep: Prism's operator RATIO knob steps through the classic FM
+# ratios and the DX ratio table, by drag and by wheel, on the same host.
 if(NOT CMAKE_CROSSCOMPILING)
     enable_testing()
-    add_executable(MultiSynthValueFieldTest
-        tests/MultiSynthValueFieldTest.cpp
-        "${DAF_PATH}/dgl/src/Resources.cpp"
-        "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui.cpp"
-        "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_draw.cpp"
-        "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_tables.cpp"
-        "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_widgets.cpp")
-    target_include_directories(MultiSynthValueFieldTest PRIVATE
-        "${DUSK_SHARED_DAF_DIR}/ui/tests/daf-ui-test-host"
-        "${CMAKE_CURRENT_SOURCE_DIR}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/../core"
-        ${DUSK_DAF_INCLUDE_DIRS}
-        "${DAF_PATH}")   # last, for dgl/src/Resources.hpp by its full path
-    target_compile_features(MultiSynthValueFieldTest PRIVATE cxx_std_17)
-    # Expected here: the test #includes MultiSynthUI.cpp, so GCC sees its class (with
-    # anonymous-namespace MSPal fields) outside the main source file. Clang lacks the flag.
-    target_compile_options(MultiSynthValueFieldTest PRIVATE $<$<CXX_COMPILER_ID:GNU>:-Wno-subobject-linkage>)
-    target_compile_definitions(MultiSynthValueFieldTest PRIVATE
-        SC_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
-        SC_VERSION_MINOR=${PROJECT_VERSION_MINOR}
-        SC_VERSION_PATCH=${PROJECT_VERSION_PATCH}
-        SC_VERSION_STRING="${PROJECT_VERSION}"
-        SUNSET_UI_TEST_HOME="${CMAKE_CURRENT_BINARY_DIR}/value-field-test-home")
-    add_test(NAME MultiSynthValueField COMMAND MultiSynthValueFieldTest)
+    foreach(_sc_test ValueField PresetStep RatioStep)
+        set(_sc_target MultiSynth${_sc_test}Test)
+        add_executable(${_sc_target}
+            tests/${_sc_target}.cpp
+            "${DAF_PATH}/dgl/src/Resources.cpp"
+            "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui.cpp"
+            "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_draw.cpp"
+            "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_tables.cpp"
+            "${DAFWIDGETS_PATH}/imgui/DearImGui/imgui_widgets.cpp")
+        target_include_directories(${_sc_target} PRIVATE
+            "${DUSK_SHARED_DAF_DIR}/ui/tests/daf-ui-test-host"
+            "${CMAKE_CURRENT_SOURCE_DIR}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../core"
+            ${DUSK_DAF_INCLUDE_DIRS}
+            "${DAF_PATH}")   # last, for dgl/src/Resources.hpp by its full path
+        target_compile_features(${_sc_target} PRIVATE cxx_std_17)
+        # Expected here: the test #includes MultiSynthUI.cpp, so GCC sees its class (with
+        # anonymous-namespace MSPal fields) outside the main source file. Clang lacks the flag.
+        target_compile_options(${_sc_target} PRIVATE $<$<CXX_COMPILER_ID:GNU>:-Wno-subobject-linkage>)
+        string(TOLOWER "${_sc_test}" _sc_home)
+        target_compile_definitions(${_sc_target} PRIVATE
+            SC_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
+            SC_VERSION_MINOR=${PROJECT_VERSION_MINOR}
+            SC_VERSION_PATCH=${PROJECT_VERSION_PATCH}
+            SC_VERSION_STRING="${PROJECT_VERSION}"
+            SUNSET_UI_TEST_HOME="${CMAKE_CURRENT_BINARY_DIR}/${_sc_home}-test-home")
+        add_test(NAME MultiSynth${_sc_test} COMMAND ${_sc_target})
+    endforeach()
 endif()

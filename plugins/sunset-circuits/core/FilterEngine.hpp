@@ -207,8 +207,12 @@ public:
         // Saturate the feedback input, not each integrator's stored state:
         // repeated state clipping would change the oscillation amplitude with
         // sample rate. Linear stages plus bounded input keep the loop stable.
+        // The non-resonant form is Prism's, and Prism stays clean like the FM
+        // hardware it is modeled on: input drive at TPTFourPole's 0.05 floor
+        // and linear stages. (0.16 / 0.12 put a full-level operator's third
+        // harmonic at -54 dB, against about -89 dB on that hardware.)
         if (resonant) lpf.configure(4.4f, 0.88f, 0.16f, 0.0f, 0.02f, 1.10f);
-        else lpf.configure(3.88f, 0.88f, 0.16f, 0.12f, 0.02f, 1.10f);
+        else lpf.configure(3.88f, 0.88f, 0.05f, 0.0f, 0.02f, 1.10f);
         reset();
     }
     void setParameters(float lpCutoff, float lpResonance, float hpCutoff) noexcept

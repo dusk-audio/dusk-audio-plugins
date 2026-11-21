@@ -21,6 +21,13 @@ add_executable(render_test
 target_include_directories(render_test PRIVATE ${CORE_DIR} ${SHARED_DSP} ${DAF_PLUGIN})
 target_compile_options(render_test PRIVATE -O2 -Wall -Wextra)
 
+# param_defaults_test: the core's default table equals the plugin's generated one.
+add_executable(param_defaults_test
+    param_defaults_test.cpp
+    ${CORE_DIR}/MultiSynthDSP.cpp)
+target_include_directories(param_defaults_test PRIVATE ${CORE_DIR} ${SHARED_DSP} ${DAF_PLUGIN})
+target_compile_options(param_defaults_test PRIVATE -O2 -Wall -Wextra)
+
 add_executable(cosmos_state_test cosmos_state_test.cpp)
 target_include_directories(cosmos_state_test PRIVATE ${CORE_DIR} ${SHARED_DSP})
 target_compile_options(cosmos_state_test PRIVATE -O2 -Wall -Wextra)

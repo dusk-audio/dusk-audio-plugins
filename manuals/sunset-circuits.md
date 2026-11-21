@@ -65,6 +65,8 @@ The six mode rockers at the top center are the most important control in the ins
 
 Switching modes is click-safe. The old circuit's voices fade out over 36 ms and the new circuit fades in over the same time, so a mode change under a held chord is a short dip rather than a click, and the delay and reverb tails ring on through it. The notes you are holding, on the keys or with the sustain pedal, carry over: the new circuit plays them as it comes up, so you can audition circuits under a held chord. A circuit with fewer voices than the notes you hold takes the most recent ones, so Mono plays the last key you pressed. The switch lands on an exact sample rather than waiting for the next buffer boundary, so it sounds the same at a 64-sample buffer and at 4096.
 
+All six circuits play at Cosmos's level, so a mode change does not jump the volume. On the factory starting patch, a held note in any mode measures on average within 0.1 dB of Cosmos across C2, C3, C4 and C5, and within 2 dB on any one of those notes. Chords match within 0.2 dB, except on Modular, where they play about 2.4 dB quieter. The level match is applied after the effects, so it does not change how hard a patch drives the Drive effect. Delay and reverb tails still ringing from the old mode keep their level through the 36 ms fade, then settle to the new mode's level over about 40 ms, so switching from Cosmos to Oracle or Acid lowers a long tail by 5 to 6 dB. The same holds with every knob at its default, which is how a new instance starts: Oscillator 1 and 2 Level now default to 0.8 and 0.6, the values every factory sound starts from.
+
 Loading a factory preset also sets the mode, because the mode is stored with the preset. If you switch modes by hand without loading a preset, the other parameters keep their current values, so the sound may not match what you expect from that circuit until you load a preset or dial it in.
 
 ### Playing
@@ -168,18 +170,20 @@ Prism is a mid-80s four-operator FM digital engine. It is eight-voice polyphonic
 
 When Prism is active, the left column re-skins into an **operator matrix**: four stacked operator strips replace the standard oscillator panels. Each strip has these controls:
 
-- **Ratio**: the operator's frequency as a multiple of the played note, stepped through a musical snap list.
+- **Ratio**: the operator's frequency as a multiple of the played note. Dragging or turning the mouse wheel steps through 53 ratios in order: the classic FM ratios 0.25, 0.5, 0.75, 1, 1.5 and 2 to 16, and the ratio table of the four-operator hardware Prism is modeled on, which adds the inharmonic ratios 1.41, 1.57 and 1.73 times each whole ratio (0.71, 0.79 and 0.87 below 1), such as 2.83, 3.14 and 3.46 above 2. Each step takes 5 pixels of drag. Hold Shift for a continuous drag, or type a value; any ratio plays in tune.
 - **Fine**: fine detune of the operator in cents, for slight beating and inharmonicity.
-- **Level**: the operator's output. For a carrier this is volume; for a modulator this is modulation depth (FM brightness).
+- **Level**: the operator's output. For a carrier this is volume; for a modulator this is modulation depth (FM brightness). It follows the output-level law of the instruments Prism is modeled on: each percent of the knob is about 0.75 dB, about 74 dB over the whole range, so most of the musical range sits in the upper half.
 - **Vel**: how strongly note velocity affects that operator's level, so harder playing gets brighter.
-- **Key Scale**: how the operator's level changes across the keyboard, for rolling a bright tine or edge off the top of the range.
-- **A / D / S / R**: a full envelope per operator, so each partial can have its own attack and decay.
+- **Key Scale**: how the operator's level falls across the keyboard, for rolling a bright tine or edge off the top of the range. Turned to the left it takes level off toward the high keys, as on the hardware: about 6 dB at middle C at full scaling, doubling every octave up. Turned to the right it does the same toward the low keys.
+- **A / D / S / R**: a full envelope per operator, so each partial can have its own attack and decay. As on the hardware, the attack rises quickly out of silence and eases into full level, and the decay and release fall at a steady rate in decibels; the decay stops at the sustain level. Sustain is in decibels too, about 3 dB per fifteenth of the knob, 45 dB over its range.
+- **D2**: a second decay, as on the hardware. Once the decay reaches the sustain level, the operator keeps falling at this rate, 60 dB in the time shown, down to silence while the key is held, so a held FM piano or bell note can fade on its own. At the top of the knob, HOLD, the sustain level holds as before. It runs up to 86 seconds.
+- **KEY RT**: rate scaling, 0 to 3. The operator's whole envelope (attack, decay, D2 and release) runs faster on higher keys and slower on lower ones, so high notes of a piano or bell die away sooner, as on the hardware. At 0 it tracks slightly, as the hardware does: about 1.2 times slower at C2 and below, as shown from C#2 to C4, about 1.2 times faster from C#4 to C6 and about 1.4 times faster from C#6 up. Each setting doubles the tracking, up to 3, which doubles the speed every octave. The times shown on the knobs are exact at middle C.
 
-Operator 4 additionally carries the **Feedback** knob, which feeds the operator back into its own phase for growl and edge. The filter section stays in circuit in Prism, so you can still filter the FM tone if a preset opens the cutoff.
+Operator 4 additionally carries the **Feedback** knob, which feeds the operator back into its own phase for growl and edge. It has seven steps, and as on the hardware it feeds back operator 4's actual output, so turning that operator's Level down or letting its envelope decay also softens the feedback. The top step gives a smooth, saw-like tone. The filter section stays in circuit in Prism, so you can still filter the FM tone if a preset opens the cutoff. In Prism it runs clean, without the drive the filters of the analog modes add.
 
 The mode sub-panel is the **ALGORITHM** widget: a numbered list of the eight routings down the left, and a large diagram of the selected one filling the rest of the panel. Click a name to switch. Hovering a name shows its number and title as a tooltip. See the FM guide below for what each algorithm does.
 
-![Prism mode: the left column replaced by the four-operator matrix, each operator carrying ratio, fine, level, velocity, key scaling and its own envelope, with the algorithm list and the active routing diagram on the right](screenshots/sunset-circuits/05-mode-prism.png)
+![Prism mode: the left column replaced by the four-operator matrix, each operator carrying ratio, fine, level, velocity, key scaling, rate scaling and its own envelope with a second decay, with the algorithm list and the active routing diagram on the right](screenshots/sunset-circuits/05-mode-prism.png)
 
 ### Acid: bass box and pattern sequencer
 
@@ -413,18 +417,24 @@ With older saved values, Poly Brass measured 1.09 dB louder and sounded brighter
 
 For your own Oracle sync patches, put vibrato on oscillator 2 to move the note or on oscillator 1 to sweep the tone. Oscillator 1 has no independent semitone control, so recreating an older sync patch can take retuning by ear. The envelope now raises oscillator 1 by the same interval across the keyboard, and narrows its pulse. Oracle's mixer now uses white noise and lets the oscillators keep their level as you add it. Its filter and output also pass more low bass, which can raise peaks. If a project runs at 88.2 or 96 kHz, check its Oversampling setting too. At these rates 1x and 2x now both run at the session rate and 4x runs at twice it.
 
+Your own patches in Oracle, Mono, Modular, Prism and Acid play quieter than before, by 5.1, 4.9, 3.8, 3.7 and 5.8 dB, because those circuits now play at Cosmos's level (see The six mode rockers). Raise Master Volume by the same amount to get the old level back. Its range now reaches +18 dB, up from +6 dB, so that the quietest factory sounds can reach the bank's level. Cosmos patches are unchanged. A project saved with a factory preset in one of those modes restores the preset's old Master Volume, so it also plays quieter. Select the preset again to load its new level.
+
+In your own Prism patches, an operator Level below full is now quieter as a carrier and modulates less as a modulator, because the knob follows the steeper level law described under Prism, and a modulator at full level reaches half its old depth. A carrier at 50 percent plays about 13 dB lower than before, and a modulator at 50 percent gives about a ninth of its old depth. Raise those Levels to get the old balance back. Prism's Feedback steps are also weaker than before, by 6 to 11 dB at full operator level, and now follow operator 4's level and envelope. Key Scale now only lowers the level, toward the high keys or the low keys, so a patch that used it to raise one side of the keyboard sounds different there. Operator attacks now rise quickly out of silence, so a slow attack swells in sooner; lengthen it by about 30 percent for the old feel. An operator Sustain below full now sits lower, because the knob is in decibels: 50 percent was -6 dB and is now about -23 dB.
+
 ### The preset menu and the browser
 
-The top bar carries the preset controls: previous and next arrows around the preset name, a **BROWSE** button, and a **SAVE** button. The name itself is a drop-down menu listing the 57 factory presets, then a separator, then your own user presets. The arrows step through factory and user presets as one combined list and wrap around at the ends.
+The top bar carries the preset controls: previous and next arrows around the preset name, a **BROWSE** button, and a **SAVE** button. The name itself is a drop-down menu that shows the whole library at once, one column per mode. Presets by a contributing artist close their mode's column under the artist's name: ZULU MATRIX under Oracle, Modular and Prism. Your own presets come last, under USER. The arrows step through the presets in the menu's order, column by column, and wrap around at the ends.
 
-The drop-down is a list you scroll. The browser is the library you read. **BROWSE** opens a full-window preset browser built for finding a patch rather than scrolling past it:
+The drop-down shows names only. The browser is the library you read. **BROWSE** opens a full-window preset browser built for finding a patch rather than scanning for it:
 
-- **Search.** The FIND field is focused the moment the browser opens, so you can just start typing. Matching is case-insensitive on any part of the name.
+- **Search.** The FIND field is focused the moment the browser opens, so you can just start typing. Matching is case-insensitive on any part of the name or the author.
 - **Mode chips.** Seven chips (ALL plus the six mode names) narrow the list to one circuit.
-- **Bank chips.** ALL, FACTORY, or USER, so you can look at only your own patches. Each cell is also tagged with its bank and its mode.
+- **Bank chips.** ALL, FACTORY, ARTISTS or USER. ARTISTS shows the presets made by contributing artists, each with its author under the name; USER shows only your own patches. Each cell is also tagged with its bank and its mode.
 - **Keyboard.** Up and Down move a whole row and keep working while you are typing in the search field; Left and Right move one preset when no field has focus. Enter loads the highlighted preset and closes the browser.
 - **Esc happens in two stages.** The first press clears a typed search; only once the search is empty does a press close the browser. This means Esc never throws away your place in the list by accident.
 - **Mouse.** A single click loads the preset and leaves the browser open, so you can audition down a list while the panel re-skins around you. A double click (or APPLY) loads and closes. The close button in the title bar, the CLOSE button, and a click outside all close the browser without loading.
+
+Hovering a cell shows the preset's name, mode and bank, and the author of an artist preset.
 
 The footer shows how many presets the current filters match. The browser reads the preset library as it was last scanned; see the note on rescanning below.
 
@@ -436,11 +446,11 @@ Beyond the 57 factory presets, Sunset Circuits keeps a personal preset library y
 
 ### Saving a preset
 
-Click the **SAVE** button in the top bar, to the right of BROWSE. A name-entry box appears; type a name and confirm (Enter commits, Esc closes). The current state of all parameters is written to a file, and the new preset appears in the preset menu below a separator, in its own user section under the factory presets.
+Click the **SAVE** button in the top bar, to the right of BROWSE. A name-entry box appears; type a name and confirm (Enter commits, Esc closes). The current state of all parameters is written to a file, and the new preset appears in the preset menu under USER, after the factory presets.
 
 If a preset with that name already exists, the box says so before you commit, and SAVE turns into an OVERWRITE and CANCEL pair so the overwrite is always a second, deliberate click. When the patch you are currently on is a user preset, the same box offers DELETE, which likewise asks for confirmation before it removes the file.
 
-Loading a user preset works exactly like a factory preset: pick it from the menu, find it in the browser, or step to it with the previous and next arrows, and every parameter (including the mode) is restored. The arrows step through the factory and user presets as one combined list and wrap around at the ends.
+Loading a user preset works exactly like a factory preset: pick it from the menu, find it in the browser, or step to it with the previous and next arrows, and every parameter (including the mode) is restored. The arrows reach your presets after the last factory column and wrap around at the ends.
 
 The preset folder is scanned when the plugin opens and after each save or delete, not on every menu open. If you add or remove `.scpreset` files by hand while the plugin is running, reopen the plugin to see the change.
 
@@ -542,11 +552,11 @@ The first row is the worst case among ordinary patches: a full 8-voice FM patch,
 
 ### Parameters and automation
 
-Every control is a normal host parameter: 241 automatable parameters, plus two output-only level meters the host can read but not write, for 243 host parameters in total (247 ports in the LV2 build, counting audio, MIDI, and the latency report). Oversampling is one of the 241, so it automates like anything else, and since the latency is the same at every factor, automating it never makes the host restart the plugin. Controls that a mode hides are still present in the host's parameter list, so an automation lane never breaks when you switch circuits.
+Every control is a normal host parameter: 249 automatable parameters, plus two output-only level meters the host can read but not write, for 251 host parameters in total (255 ports in the LV2 build, counting audio, MIDI, and the latency report). Oversampling is one of the 249, so it automates like anything else, and since the latency is the same at every factor, automating it never makes the host restart the plugin. Controls that a mode hides are still present in the host's parameter list, so an automation lane never breaks when you switch circuits.
 
 Continuous parameters are smoothed, so automating or dragging them does not produce zipper noise. The smoother settles with an 8 ms time constant, short enough that a knob still feels immediate. Filter cutoffs are smoothed in the log-frequency domain rather than in Hz, so a sweep sounds even across the range instead of racing through the top octaves. The smoothed set covers the level, filter and effect-mix controls; the rest step per block, which for most of them is inaudible. A few are deliberately left unsmoothed because smoothing them would be worse than the step: oscillator and unison detune, pulse width, and the LFO and chorus rates all set a phase increment or an edge position, where a ramp is a pitch glide nobody asked for. Stepped controls (waveforms, modes, sequencer cells, mod-matrix routings) switch outright, as they should, with one exception: when an LFO gets its first LFO1 Depth or LFO2 Depth slot, or loses its last one, while a note sounds, its depth fades in or out over 5 ms so the change does not click. Any other change to a depth slot switches outright like the rest of the matrix.
 
-Loading a preset snaps rather than glides. The plugin tells the engine explicitly that a program change happened, so all 241 values land at once and a preset sounds correct on its first note instead of sliding into place over the first fraction of a second. For hosts that replay a patch as a burst of ordinary parameter writes rather than a program change, the engine detects the burst and snaps anyway.
+Loading a preset snaps rather than glides. The plugin tells the engine explicitly that a program change happened, so all 249 values land at once and a preset sounds correct on its first note instead of sliding into place over the first fraction of a second. For hosts that replay a patch as a burst of ordinary parameter writes rather than a program change, the engine detects the burst and snaps anyway.
 
 ### Hardware controllers
 
@@ -565,7 +575,9 @@ Hosts that do not read these pages, and the VST3, AU and LV2 builds, map control
 
 ## Factory Presets
 
-Sunset Circuits ships with 57 factory presets. They are grouped by mode below for reading, but they are **not** stored in mode order: the menu, the previous and next arrows, and MIDI program numbers 0 to 56 run through the bank in its own order, which interleaves the modes. Use the browser's mode chips when you want to see one circuit's presets together.
+Sunset Circuits ships with 57 factory presets. They are grouped by mode below, as the preset menu groups them, and the previous and next arrows follow the menu. They are **not** stored in mode order: MIDI program numbers 0 to 56, a host's own program list and the browser run through the bank in its own order, which interleaves the modes. Use the browser's mode chips when you want to see one circuit's presets together.
+
+The factory presets are leveled to one loudness, so switching between them, in any mode, does not jump the volume. Each plays about as loud as Init Cosmos's chord when it is played the way it is meant to be: a pad as a chord, a lead or bass as a line, an arpeggio or an Acid pattern as it runs. Forty-nine of the 57 land within 0.2 dB of that level. Poly Mod Bells sits 0.6 dB under so that its highest chords also peak below -1 dBFS. The other seven have strong attacks and stop where their peaks reach -1 dBFS. Judged by their loudest moment, Glass Keys, Glass Bells, Warm Keys, Crystal Rain and Prism Talking Keys come within 2 dB of the rest, Acid Squelch about 2.5 dB under, and Stab Machine about 5 dB under.
 
 Two names are easy to misread. **Acid Squelch** and **Acid Machine** are Mono-mode presets that happen to go for an acid sound; the five presets that actually use the Acid circuit are listed under Acid at the end.
 
@@ -596,7 +608,7 @@ Two names are easy to misread. **Acid Squelch** and **Acid Machine** are Mono-mo
 - **Analog Strings**: four-voice unison string pad with chorus.
 - **Fat Fifth**: unison fifths, wide and thick.
 - **Regal Brass**: self-oscillating poly-mod brass with two-voice unison.
-- **Oracle Trumpet**: hard-synced trumpet with filter-envelope and oscillator 2 poly-mod on the filter; the mod wheel brings in vibrato.
+- **Oracle Trumpet**: hard-synced trumpet with filter-envelope and oscillator 2 poly-mod on the filter; the mod wheel brings in vibrato. By ZULU MATRIX.
 - **Init Oracle**: a clean starting point for the Oracle engine.
 
 ### Mono (aggressive monophonic)
@@ -624,7 +636,7 @@ Two names are easy to misread. **Acid Squelch** and **Acid Machine** are Mono-mo
 - **Drone Machine**: huge slow FM drone with LFO cutoff movement.
 - **Noise Sweep**: filtered-noise sweep for risers and effects.
 - **Nebula Static**: sample-and-hold texture modulating cutoff and resonance, with spring and hall reverb.
-- **Modular English Horn**: reedy lead from triangle oscillators with sync, FM and ring mod into a driven filter that tracks the keyboard; the mod wheel brings in vibrato.
+- **Modular English Horn**: reedy lead from triangle oscillators with sync, FM and ring mod into a driven filter that tracks the keyboard; the mod wheel brings in vibrato. By ZULU MATRIX.
 - **Init Modular**: a clean starting point for the Modular engine.
 
 ### Prism (four-operator FM)
@@ -634,7 +646,7 @@ Two names are easy to misread. **Acid Squelch** and **Acid Machine** are Mono-mo
 - **Crystal Bells**: additive inharmonic bells with staggered decays and a reverb tail.
 - **Brass Machine**: serial FM brass with strong feedback growl and an attack swell.
 - **Glass Cathedral**: dual-stack FM pad with a long swell, chorus, and big reverb.
-- **Prism Talking Keys**: FM keys through a resonant filter whose envelope sweep gives each note a vocal attack; the mod wheel brings in vibrato.
+- **Prism Talking Keys**: FM keys through a resonant filter whose envelope sweep gives each note a vocal attack; the mod wheel brings in vibrato. By ZULU MATRIX.
 
 ### Acid (bass box and pattern sequencer)
 

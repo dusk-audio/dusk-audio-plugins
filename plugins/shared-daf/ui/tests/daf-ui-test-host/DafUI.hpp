@@ -58,9 +58,10 @@ public:
     virtual ~UI() = default;
 
     // Test side: one editor frame (between ImGui::NewFrame and ImGui::Render),
-    // and a host parameter change.
+    // a host parameter change, and a host program load.
     void draw() { onImGuiDisplay(); }
     void parameter(uint32_t index, float value) { parameterChanged(index, value); }
+    void program(uint32_t index) { programLoaded(index); }
 
     // Host side, as the editor calls it.
     uint getWidth() const noexcept { return width; }

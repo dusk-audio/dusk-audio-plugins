@@ -87,6 +87,10 @@ for g in sched pitch env reverb arp arp_seq filter_stability accuracy fx_reenabl
 done
 
 echo
+echo "########## parameter defaults ##########"
+./build/param_defaults_test || fail=1
+
+echo
 echo "########## cosmos state ##########"
 ./build/cosmos_state_test || fail=1
 

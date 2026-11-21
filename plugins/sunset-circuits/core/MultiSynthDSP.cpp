@@ -14,7 +14,9 @@ namespace msynth
 
 //==============================================================================
 // Parameter name/default table. The 16 arp-step and 24 mod-matrix entries are
-// contiguous in the enum; listed explicitly here for name resolution.
+// contiguous in the enum; listed explicitly here for name resolution. The
+// defaults must equal the plugin's generated table (daf-plugin/MultiSynthParams.hpp,
+// from tools/gen_params.py); tests/param_defaults_test.cpp fails on any difference.
 namespace
 {
 struct ParamDef { int idx; const char* name; float def; };
@@ -24,8 +26,8 @@ const ParamDef kParamDefs[] = {
     { pMasterPan, "masterPan", 0 }, { pStereoWidth, "stereoWidth", 0.5f },
     { pOversampling, "oversampling", 1 }, { pAnalogAmt, "analogAmt", 0.2f }, { pVintage, "vintage", 0 },
 
-    { pOsc1Wave, "osc1Wave", 0 }, { pOsc1Detune, "osc1Detune", 0 }, { pOsc1PW, "osc1PW", 0.5f }, { pOsc1Level, "osc1Level", 1.0f },
-    { pOsc2Wave, "osc2Wave", 0 }, { pOsc2Detune, "osc2Detune", 7.0f }, { pOsc2PW, "osc2PW", 0.5f }, { pOsc2Level, "osc2Level", 0.8f },
+    { pOsc1Wave, "osc1Wave", 0 }, { pOsc1Detune, "osc1Detune", 0 }, { pOsc1PW, "osc1PW", 0.5f }, { pOsc1Level, "osc1Level", 0.8f },
+    { pOsc2Wave, "osc2Wave", 0 }, { pOsc2Detune, "osc2Detune", 7.0f }, { pOsc2PW, "osc2PW", 0.5f }, { pOsc2Level, "osc2Level", 0.6f },
     { pOsc2Semi, "osc2Semi", 0 }, { pOsc3Wave, "osc3Wave", 0 }, { pOsc3Level, "osc3Level", 0.5f },
     { pSubLevel, "subLevel", 0.5f }, { pSubWave, "subWave", 0 }, { pNoiseLevel, "noiseLevel", 0 },
 
@@ -64,16 +66,16 @@ const ParamDef kParamDefs[] = {
     { pPrismAlgo, "prismAlgo", 4 }, { pPrismFB, "prismFB", 0 },
     { pOp1Ratio, "op1Ratio", 1.0f }, { pOp1Fine, "op1Fine", 0 }, { pOp1Level, "op1Level", 1.0f },
     { pOp1Vel, "op1Vel", 0 }, { pOp1KeyScale, "op1KeyScale", 0 },
-    { pOp1A, "op1A", 0.005f }, { pOp1D, "op1D", 0.4f }, { pOp1S, "op1S", 0.7f }, { pOp1R, "op1R", 0.4f },
-    { pOp2Ratio, "op2Ratio", 1.0f }, { pOp2Fine, "op2Fine", 0 }, { pOp2Level, "op2Level", 0.5f },
+    { pOp1A, "op1A", 0.0065035f }, { pOp1D, "op1D", 2.2240800252930435f }, { pOp1S, "op1S", 0.9309466786412428f }, { pOp1R, "op1R", 0.4f },
+    { pOp2Ratio, "op2Ratio", 1.0f }, { pOp2Fine, "op2Fine", 0 }, { pOp2Level, "op2Level", 0.7578531974852474f },
     { pOp2Vel, "op2Vel", 0 }, { pOp2KeyScale, "op2KeyScale", 0 },
-    { pOp2A, "op2A", 0.005f }, { pOp2D, "op2D", 0.4f }, { pOp2S, "op2S", 0.7f }, { pOp2R, "op2R", 0.4f },
-    { pOp3Ratio, "op3Ratio", 1.0f }, { pOp3Fine, "op3Fine", 0 }, { pOp3Level, "op3Level", 0.8f },
+    { pOp2A, "op2A", 0.0065035f }, { pOp2D, "op2D", 2.2240800252930435f }, { pOp2S, "op2S", 0.9309466786412428f }, { pOp2R, "op2R", 0.4f },
+    { pOp3Ratio, "op3Ratio", 1.0f }, { pOp3Fine, "op3Fine", 0 }, { pOp3Level, "op3Level", 0.8707070707070708f },
     { pOp3Vel, "op3Vel", 0 }, { pOp3KeyScale, "op3KeyScale", 0 },
-    { pOp3A, "op3A", 0.005f }, { pOp3D, "op3D", 0.4f }, { pOp3S, "op3S", 0.7f }, { pOp3R, "op3R", 0.4f },
-    { pOp4Ratio, "op4Ratio", 1.0f }, { pOp4Fine, "op4Fine", 0 }, { pOp4Level, "op4Level", 0.5f },
+    { pOp3A, "op3A", 0.0065035f }, { pOp3D, "op3D", 2.2240800252930435f }, { pOp3S, "op3S", 0.9309466786412428f }, { pOp3R, "op3R", 0.4f },
+    { pOp4Ratio, "op4Ratio", 1.0f }, { pOp4Fine, "op4Fine", 0 }, { pOp4Level, "op4Level", 0.7578531974852474f },
     { pOp4Vel, "op4Vel", 0 }, { pOp4KeyScale, "op4KeyScale", 0 },
-    { pOp4A, "op4A", 0.005f }, { pOp4D, "op4D", 0.4f }, { pOp4S, "op4S", 0.7f }, { pOp4R, "op4R", 0.4f },
+    { pOp4A, "op4A", 0.0065035f }, { pOp4D, "op4D", 2.2240800252930435f }, { pOp4S, "op4S", 0.9309466786412428f }, { pOp4R, "op4R", 0.4f },
 
     // --- Acid globals (per-step seqPitch/Accent/Slide resolved by prefix below) ---
     { pAcidAccentAmt, "acidAccentAmt", 0.7f }, { pAcidSlideTime, "acidSlideTime", 60.0f },
@@ -90,6 +92,10 @@ const ParamDef kParamDefs[] = {
     { pWheelLowerLimit, "wheelLowerLimit", 0 }, { pWheelUpperLimit, "wheelUpperLimit", 1 },
     { pWheelFreqA, "wheelFreqA", 0 }, { pWheelFreqB, "wheelFreqB", 0 },
     { pWheelPwA, "wheelPwA", 0 }, { pWheelPwB, "wheelPwB", 0 }, { pWheelFilter, "wheelFilter", 0 },
+    { pOp1D2, "op1D2", 100.0f }, { pOp1RateScale, "op1RateScale", 0 },
+    { pOp2D2, "op2D2", 100.0f }, { pOp2RateScale, "op2RateScale", 0 },
+    { pOp3D2, "op3D2", 100.0f }, { pOp3RateScale, "op3RateScale", 0 },
+    { pOp4D2, "op4D2", 100.0f }, { pOp4RateScale, "op4RateScale", 0 },
 };
 } // namespace
 
@@ -651,6 +657,9 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
         o.d        = p((Param)(b + 6));
         o.s        = p((Param)(b + 7));
         o.r        = p((Param)(b + 8));
+        const int e = pOp1D2 + i * kOpExtraStride;
+        o.d2        = p((Param)(e + 0));
+        o.rateScale = clampi((int)std::lround(p((Param)(e + 1))), 0, 3);
     }
 
     vp.portamentoTime = p(pPortaTime);
@@ -860,15 +869,37 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
     // only — drive/delay/reverb tone is untouched. Hot presets are trimmed via
     // their masterVol rows so the audit ceiling (peak <= -1 dBFS) still holds.
     constexpr float kOutputMakeup = 2.51188643f; // +8 dB
-    // Clamped to the range the shell declares for this parameter (-60..+6 dB).
-    // Unclamped, a host writing a wild but FINITE value gets past the non-finite
+    // Clamped to the range the shell declares for this parameter (-60..+18 dB).
+    // The top was +6 dB until the per-mode trim below: with the factory sounds
+    // levelled to one loudness, the quietest need up to +17.5 dB. Unclamped, a host writing a wild but FINITE value gets past the non-finite
     // guard in setParameter and overflows here: masterVol = 1e30 makes pow()
     // return +Inf, which lands in smGain, whose one-pole state is recursive and
     // therefore Inf for good. The engine then renders silence permanently, even
     // after the parameter is set back (measured: 20 blocks at peak 0.00000 with
     // the note still held). Clamping the dB value is the only place this can be
     // stopped -- once the target is Inf, no downstream reset recovers it.
-    masterGain = kOutputMakeup * std::pow(10.0f, clampf(p(pMasterVol), -60.0f, 6.0f) / 20.0f);
+    //
+    // Per-mode output trim, so the same patch plays at the same loudness in every
+    // mode and switching mode does not jump the volume. Cosmos is the benchmark
+    // (0 dB, its output unchanged). The other values are measured, not chosen:
+    // BS.1770 integrated loudness of the factory preset baseline (Init Cosmos with
+    // the mode changed, masterVol 0) on single held notes C2, C3, C4 and C5 at
+    // velocity 100, each mode's mean distance to Cosmos (tools repo,
+    // tools/sunset-circuits/mode-volume/mode_trim.py). Before it Oracle and Acid
+    // played 5-6 dB louder than Cosmos. The trim follows the ACTIVE mode, so it
+    // moves on the block the switch commits, with the voices muted by the mode
+    // fade, and smGain glides it on the effect tails. It sits with masterGain,
+    // after the effects, so a patch's drive, delay and reverb sound the same.
+    static constexpr float kModeTrim[6] = {
+        1.0f,          // Cosmos    0.0 dB (benchmark)
+        0.55590426f,   // Oracle   -5.1 dB
+        0.56885293f,   // Mono     -4.9 dB
+        0.64565423f,   // Modular  -3.8 dB
+        0.65313055f,   // Prism    -3.7 dB
+        0.51286138f,   // Acid     -5.8 dB
+    };
+    masterGain = kOutputMakeup * kModeTrim[clampi((int)activeMode, 0, 5)]
+               * std::pow(10.0f, clampf(p(pMasterVol), -60.0f, 18.0f) / 20.0f);
     masterPan = p(pMasterPan);
     stereoWidth = p(pStereoWidth);
     vintage = p(pVintage);

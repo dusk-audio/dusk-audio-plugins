@@ -8,14 +8,7 @@
 #include "DafUI.hpp"   // the window-free host (shared-daf/ui/tests/daf-ui-test-host), first on the path
 #include "MultiSynthUI.cpp"
 #include "DuskValueFieldTest.hpp"
-
-// The DSP bridge (MultiSynthAccess.hpp) as an out-of-process UI sees it.
-// Defined because a weak reference must still resolve when an Apple binary links.
-float multiSynthGetOutLevelL(void*) noexcept { return -60.0f; }
-float multiSynthGetOutLevelR(void*) noexcept { return -60.0f; }
-int multiSynthGetArpStep(void*) noexcept { return -1; }
-msynth::MultiSynthDSP* multiSynthGetDSP(void*) noexcept { return nullptr; }
-uint32_t multiSynthGetMidiProgramSignal(void*) noexcept { return 0; }
+#include "MultiSynthTestBridge.hpp"
 
 int main()
 {
@@ -47,7 +40,7 @@ int main()
     // radius 13, so the only knob outside its field is a band above and below it.
     ValueFieldKnob ratio;
     ratio.name = "Prism OP 1 RATIO knob";
-    ratio.x = 96.0f; ratio.y = 102.0f; ratio.radius = 13.0f; ratio.aboveField = -12.0f;
+    ratio.x = 94.0f; ratio.y = 102.0f; ratio.radius = 13.0f; ratio.aboveField = -12.0f;
     ratio.outside = ImVec2(60.0f, 150.0f);   // the strip's left gutter, beside OP 1's A knob
     ratio.parameters = { kParamOp1Ratio };
     ratio.valueParameter = kParamOp1Ratio;
@@ -60,7 +53,7 @@ int main()
     // Operator 1 FINE, the shared knob beside RATIO.
     ValueFieldKnob fine;
     fine.name = "Prism OP 1 FINE knob";
-    fine.x = 150.0f; fine.y = 102.0f;
+    fine.x = 138.0f; fine.y = 102.0f;
     fine.parameters = { kParamOp1Ratio + 1 };
     fine.valueParameter = kParamOp1Ratio + 1;
 
