@@ -101,6 +101,10 @@ namespace
     // first arrival lands where the reference's does (round trip unchanged).
     constexpr double kSpringArrivalAdvanceSeconds = 0.00094;
 
+    // Below this the spring send and tank state are treated as silence (see
+    // the idle skip in processBlock); far under one float ulp of any signal.
+    constexpr float kSpringIdleFloor = 1.0e-20f;
+
     // Captured reference cartridges expose a quiet 60 Hz odd-harmonic bed. The
     // fifth harmonic is strongest; the others are normalized to it from the
     // hosted New/Used/Old noise spectra. A separate, much quieter random layer
@@ -442,6 +446,22 @@ void SpringReverb::Spring::prepare(double fs, float oneWaySeconds,
     reset();
 }
 
+bool SpringReverb::Spring::isSilent(float floor) const noexcept
+{
+    const auto zero = [floor](float v) { return std::abs(v) < floor; };
+    if (!std::all_of(outgoingDelay.begin(), outgoingDelay.end(), zero)
+        || !std::all_of(returningDelay.begin(), returningDelay.end(), zero))
+        return false;
+    const auto quiet = [floor](const Biquad& b) {
+        const auto st = b.state();
+        return std::abs(st.first) < floor && std::abs(st.second) < floor;
+    };
+    for (const auto& b : outgoingDispersion) if (!quiet(b)) return false;
+    for (const auto& b : returningDispersion) if (!quiet(b)) return false;
+    return quiet(reflectionHighPass) && quiet(reflectionLowLoss)
+        && quiet(reflectionLowPass);
+}
+
 void SpringReverb::Spring::reset()
 {
     std::fill(outgoingDelay.begin(), outgoingDelay.end(), 0.0f);
@@ -685,6 +705,34 @@ void SpringReverb::reset()
     pendingDown.fill(0.0f);
     outputFrame.fill(0.0f);
     resamplePhase = 0;
+}
+
+bool SpringReverb::isSilent(float floor) const noexcept
+{
+    for (const auto& spring : springs)
+        if (!spring.isSilent(floor))
+            return false;
+    const auto small = [floor](float v) { return std::abs(v) < floor; };
+    const auto quiet = [&small](const Biquad& b) {
+        const auto st = b.state();
+        return small(st.first) && small(st.second);
+    };
+    for (const auto& b : outputTransducerHP) if (!quiet(b)) return false;
+    for (const auto& b : outputCliff) if (!quiet(b)) return false;
+    if (!quiet(outputHP) || !quiet(outputVoiceLP) || !quiet(outputLowContour)
+        || !quiet(outputBody) || !quiet(outputFourKhzSeat)
+        || !quiet(outputLowMidBalance) || !quiet(outputOneKhzSeat))
+        return false;
+    if (!small(inputHP.state()) || !small(inputLP.state())
+        || !small(dcBlock.stateX()) || !small(dcBlock.stateY()))
+        return false;
+    for (const auto& f : earlyDown) if (!f.isQuiet(floor)) return false;
+    for (const auto& f : earlyUp) if (!f.isQuiet(floor)) return false;
+    if (!finalDown.isQuiet(floor) || !finalUp.isQuiet(floor))
+        return false;
+    for (float v : pendingDown) if (!small(v)) return false;
+    for (float v : outputFrame) if (!small(v)) return false;
+    return true;
 }
 
 double SpringReverb::resamplerLatencySamples(int stages) noexcept
@@ -1006,6 +1054,7 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     headGain[2].snap(m.h3);
     loopHeadNormSmoother.snap(loopHeadNormForMode(m));
     reverbSendSmoother.snap(m.reverb);
+    reverbSendTarget = m.reverb;
     echoLevelSmoother.snap(pEchoLevel.load(std::memory_order_relaxed));
     reverbLevelSmoother.snap(pReverbLevel.load(std::memory_order_relaxed));
     dryLevelSmoother.snap(pDryLevel.load(std::memory_order_relaxed));
@@ -1054,6 +1103,7 @@ void TapeEchoDSP::reset()
         ch.magneticEnvelope = 0.0f;
     }
     spring.reset();
+    springIdle = false;
     noiseLP.reset();
     flutterBand.reset();
     flutterBandLP.reset();
@@ -1114,6 +1164,7 @@ void TapeEchoDSP::refreshBlockRateControls()
     headGain[1].setTarget(m.h2);
     headGain[2].setTarget(m.h3);
     reverbSendSmoother.setTarget(m.reverb);
+    reverbSendTarget = m.reverb;
     {
         // MULTI-HEAD LOOP-GAIN NORMALIZATION. One table cannot serve two sums.
         //
@@ -1345,6 +1396,27 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
 
     numChannels = clampInt(numChannels, 1, kMaxChannels);
     refreshBlockRateControls();
+
+    // Skip the spring while it can no longer contribute anything a float can
+    // hold. Its send target is zero and the send has decayed below
+    // kSpringIdleFloor (a one-pole smoother never reaches exactly zero with
+    // denormals flushed: its step underflows near 1e-36 and it stops there),
+    // and every piece of tank state is below the same floor. The tank output
+    // reaches the mix only through revLvl, which carries that same send, so
+    // its contribution is already below 1e-40 and flushes to zero; and the
+    // tank is reset on entry, so when a spring mode returns it starts from
+    // the zero its decayed state was indistinguishable from. Heads-only modes
+    // 1-4 have no spring send at all, so there the tank costs nothing once its
+    // last tail has died away. te2_corebench's auto_spring_idle_and_back pins
+    // the result byte for byte against processing it all.
+    if (reverbSendTarget != 0.0f
+        || std::abs(reverbSendSmoother.value()) >= kSpringIdleFloor)
+        springIdle = false;
+    else if (!springIdle && spring.isSilent(kSpringIdleFloor))
+    {
+        spring.reset();
+        springIdle = true;
+    }
 
     constexpr float kVuSineCalibration = 1.110720735f;
 
@@ -1921,7 +1993,7 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             echoWet = ch.trebleShelf.process(echoWet);
 
         // Spring tank is fed from the same mono preamp signal.
-        const float rev = spring.process(springPre * revSend);
+        const float rev = springIdle ? 0.0f : spring.process(springPre * revSend);
 
         // Both wet-path pan controls are measured linear amplitude laws.
         // In stereo, the x2 factor pairs with the input average above:

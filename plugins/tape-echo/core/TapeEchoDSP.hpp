@@ -99,6 +99,14 @@ public:
 
     // Low-frequency group delay in samples of the faster (input) rate:
     // 2 (1 - a) / (1 + a) per section of the undelayed path.
+    bool isQuiet(float floor) const noexcept
+    {
+        for (int i = 0; i < N; ++i)
+            if (std::abs(x[i]) >= floor || std::abs(y[i]) >= floor)
+                return false;
+        return true;
+    }
+
     static double dcGroupDelay(const float* coefficients) noexcept
     {
         double d = 0.0;
@@ -163,6 +171,8 @@ public:
     void prepare(double sampleRate, float detune /* per-channel length scale */);
     void reset();
     float process(float in) noexcept;
+    // True when every piece of state is below floor in magnitude.
+    bool isSilent(float floor) const noexcept;
 
 private:
     // Section count is bounded from below by physics, not taste: each
@@ -197,6 +207,7 @@ private:
                       float gain, double advanceSeconds);
         void  reset();
         float process(float x) noexcept;
+        bool  isSilent(float floor) const noexcept;
     };
 
     // THREE springs, not four, and deliberately far apart.
@@ -637,6 +648,11 @@ private:
     float memoAgeNoiseScale = 0.0f;
     float memoOutputVolume = std::numeric_limits<float>::quiet_NaN();
     float memoOutputGain = 1.0f;
+
+    // The spring is skipped while its send and every piece of its state have
+    // decayed below kSpringIdleFloor (see processBlock).
+    bool springIdle = false;
+    float reverbSendTarget = 0.0f;
     void  refreshBlockRateControls();
 
     //--- per-channel state ----------------------------------------------------
