@@ -172,34 +172,6 @@ namespace
                                             kTapeEchoDesignFreqRatio);
     }
 
-    // Second-order low-pass whose magnitude tracks the analog prototype up to
-    // Nyquist (M. Vicanek, "Matched Second Order Digital Filters", 2016):
-    // impulse-invariant poles, numerator matched at DC and at the corner. A
-    // bilinear design squeezes its response towards the zero it puts at
-    // Nyquist; at an 11-12 kHz internal rate that cost the 1800 Hz voicing
-    // low-pass 6.9 dB at 4 kHz against the same filter at 48 kHz.
-    inline BiquadCoeffs matchedLowPass(double fs, double f0, double q) noexcept
-    {
-        const double w0 = 2.0 * 3.14159265358979323846 * f0 / fs;
-        const double zeta = 1.0 / (2.0 * q);
-        const double decay = std::exp(-zeta * w0);
-        const double a1 = zeta <= 1.0
-            ? -2.0 * decay * std::cos(std::sqrt(1.0 - zeta * zeta) * w0)
-            : -2.0 * decay * std::cosh(std::sqrt(zeta * zeta - 1.0) * w0);
-        const double a2 = decay * decay;
-        const double A0 = (1.0 + a1 + a2) * (1.0 + a1 + a2);
-        const double A1 = (1.0 - a1 + a2) * (1.0 - a1 + a2);
-        const double A2 = -4.0 * a2;
-        const double s2 = std::sin(0.5 * w0) * std::sin(0.5 * w0);
-        const double phi0 = 1.0 - s2, phi1 = s2, phi2 = 4.0 * phi0 * phi1;
-        const double R1 = (A0 * phi0 + A1 * phi1 + A2 * phi2) * q * q;
-        const double B0 = A0;
-        const double B1 = std::max(0.0, (R1 - B0 * phi0) / phi1);
-        const double b0 = 0.5 * (std::sqrt(B0) + std::sqrt(B1));
-        const double b1 = std::sqrt(B0) - b0;
-        return { (float)b0, (float)b1, 0.0f, (float)a1, (float)a2 };
-    }
-
     // First-order low-pass at rate fs whose magnitude follows an ANALOG
     // first-order low-pass with corner fcHz, |H|^2 = 1 / (1 + (f/fc)^2), from
     // 50 Hz to 0.45 fs -- including a corner above Nyquist, which no bilinear
@@ -575,6 +547,13 @@ void SpringReverb::prepare(double sampleRate, float detune)
     // same decay for its own round trip, |R| = 10^(-3 T_rt / T60).
     constexpr float kSpringOneWaySeconds[3] = { 0.022958f, 0.025836f, 0.028208f };
     constexpr float kSpringDispersionScale[3] = { 0.993f, 1.000f, 1.007f };
+    // Per-spring pickup gain, 1.30 x { 0, +0.25, -0.75 dB }: measured
+    // against the reference's three first arrivals (impulse, energy-normalised,
+    // 21.5-25 / 25-27.6 / 27.6-30.5 ms windows), which carry nearly equal energy
+    // (-18.7 / -18.1 / -18.9 dB) where equal gains here gave -18.7 / -18.5 /
+    // -18.0 at 48 kHz and -18.6 / -18.4 / -18.0 at 44.1 kHz. The hot third
+    // arrival also set the impulse's sample peak 1.2 dB above the reference's.
+    constexpr float kSpringOutputGain[3] = { 1.30f, 1.338f, 1.193f };
     const BiquadCoeffs reflectionLoss =
         fittedFirstOrderLowPass(internalRate, kReflectionLossCornerHz);
     for (int k = 0; k < 3; ++k)
@@ -585,7 +564,8 @@ void SpringReverb::prepare(double sampleRate, float detune)
         springs[(size_t)k].prepare(internalRate,
                                    kSpringOneWaySeconds[k] * detune,
                                    kSpringDispersionScale[k],
-                                   reflectionAmount, 1.30f, advanceSeconds,
+                                   reflectionAmount, kSpringOutputGain[k],
+                                   advanceSeconds,
                                    reflectionLoss);
     }
     dcBlock.setSampleRate(internalRate, kDcBlockerCutoffHz);
@@ -618,7 +598,13 @@ void SpringReverb::prepare(double sampleRate, float detune)
     // 2-5 dB light in this region on uncompensated captures.
     outputHP.setCoeffs(Biquad::highPass(
         fi, safeBiquadFrequency(fi, 360.0f), 0.70710678f));
-    outputVoiceLP.setCoeffs(matchedLowPass(fi, 1800.0, 0.70710678));
+    // The voicing that sits up the internal band uses the shared
+    // matched-magnitude designs (DuskFilters, Vicanek 2016): a bilinear
+    // design at an 11-12 kHz rate squeezes its response towards Nyquist (it
+    // cost the 1800 Hz low-pass 6.9 dB at 4 kHz and cramps the Q8 seat at
+    // 4.05 kHz). The high-passes above sit at 49.5-360 Hz, where the bilinear
+    // warp at this rate is far below a tenth of a dB.
+    outputVoiceLP.setCoeffs(Biquad::matchedLowPass(fi, 1800.0, 0.70710678));
     // The 26th-order 5250 Hz ceiling and the 6.1 kHz fizz notch that sat here
     // are gone. They imitated, at the host rate, the cliff the reference's
     // spring gets from running at a reduced internal rate (its output falls
@@ -630,21 +616,15 @@ void SpringReverb::prepare(double sampleRate, float detune)
     // Static return voicing follows the measured pickup response. These
     // filters are outside the propagation/reflection paths and therefore do
     // not alter the fitted group delay or per-trip decay.
-    outputLowContour.setCoeffs(Biquad::peak(
-        fi, safeBiquadFrequency(fi, 120.0f),
-        -10.0f, 2.5f));
-    outputBody.setCoeffs(Biquad::peak(
-        fi, safeBiquadFrequency(fi, 1000.0f),
-        0.5f, 0.70f));
+    outputLowContour.setCoeffs(Biquad::matchedPeak(fi, 120.0, -10.0, 2.5));
+    outputBody.setCoeffs(Biquad::matchedPeak(fi, 1000.0, 0.5, 0.70));
     // -0.6 dB, not -4.5. Measured 1/3-octave against the reference, the tank
     // sat 3.9 dB dark at 4 kHz and 4.4 dB dark at 5 kHz while 500 Hz-3.15 kHz
     // was already within 1 dB -- a notch, not a tilt, and this seat was the
     // notch. It was dialled in against the OLD downward-chirp dispersion,
     // which piled energy into this band; the fitted upward chirp does not, so
     // the correction is no longer needed.
-    outputFourKhzSeat.setCoeffs(Biquad::peak(
-        fi, safeBiquadFrequency(fi, 4050.0f),
-        -0.6f, 8.0f));
+    outputFourKhzSeat.setCoeffs(Biquad::matchedPeak(fi, 4050.0, -0.6, 8.0));
     // Restores the tank's body. Two independent measurements agree that this
     // band is the one audible tone error left: the reference impulse at
     // 44.1 kHz sits 5.5 dB above this tank at 250 Hz, 3.9 at 400 and 2.2 at
@@ -672,12 +652,8 @@ void SpringReverb::prepare(double sampleRate, float detune)
     // lands -2.98 dB at 315 and -1.98 at 400 while moving 250 Hz only -0.6 dB
     // and 500 Hz only -0.5 dB -- the two-band feature the comment above
     // predicted, now closed instead of left neutralised.
-    outputLowMidBalance.setCoeffs(Biquad::peak(
-        fi, safeBiquadFrequency(fi, 346.0f),
-        -4.7f, 4.0f));
-    outputOneKhzSeat.setCoeffs(Biquad::peak(
-        fi, safeBiquadFrequency(fi, 1000.0f),
-        1.0f, 3.0f));
+    outputLowMidBalance.setCoeffs(Biquad::matchedPeak(fi, 346.0, -4.7, 4.0));
+    outputOneKhzSeat.setCoeffs(Biquad::matchedPeak(fi, 1000.0, 1.0, 3.0));
     // The reference's cliff, measured as its excess attenuation over this
     // tank (same resampling, reverb-only noise burst, latency-compensated)
     // at 44.1 and 48 kHz, in fractions of the internal Nyquist: flat to 0.85,
