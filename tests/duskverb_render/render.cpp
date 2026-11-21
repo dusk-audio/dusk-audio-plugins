@@ -1078,6 +1078,8 @@ namespace
         const int latency    = gCompensateLatency
                                  ? std::max (0, plugin.getLatencySamples()) : 0;
         const int rendered   = total + latency;
+        bool latencyChanged  = false;
+        int  lastSeenLatency = latency;
         const int inChans    = plugin.getTotalNumInputChannels();
         const int outChans   = plugin.getTotalNumOutputChannels();
         const int blockChans = std::max (inChans, outChans);
@@ -1118,6 +1120,11 @@ namespace
                     activeBlock.copyFrom (ch, 0, input, ch, pos, fromInput);
 
             plugin.processBlock (activeBlock, midi);
+            if (gCompensateLatency && plugin.getLatencySamples() != latency)
+            {
+                latencyChanged = true;
+                lastSeenLatency = plugin.getLatencySamples();
+            }
 
             // Output sample k (input time) is the plug-in's sample k + latency.
             const int keepFrom = std::max (pos, latency);
@@ -1127,11 +1134,12 @@ namespace
                                      keepFrom - pos, next - keepFrom);
             pos = next;
         }
-        // The latency is read once, before the first block. A plug-in that
-        // publishes or changes it later would leave this render offset.
-        if (gCompensateLatency && plugin.getLatencySamples() != latency)
+        // The latency is read once, before the first block, and the shift
+        // stays fixed. A plug-in that reports a different latency after any
+        // block (even if it changes back) has left this render offset.
+        if (latencyChanged)
             std::cerr << "  ! --compensate-latency: reported latency changed from "
-                      << latency << " to " << plugin.getLatencySamples()
+                      << latency << " to " << lastSeenLatency
                       << " samples during the render\n";
         return output;
     }
