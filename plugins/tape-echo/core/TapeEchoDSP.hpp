@@ -28,10 +28,13 @@
 
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <iterator>
+#include <limits>
 #include <vector>
 
 // Shared DSP primitives (namespace duskaudio) — these replace the building
@@ -57,7 +60,107 @@ namespace duskaudio
 //==============================================================================
 
 //==============================================================================
+// Polyphase IIR halfband for 2x resampling: two parallel chains of first-order
+// allpasses in z^2 (the classic two-path elliptic halfband), H(z) =
+// 0.5 * (A0(z^2) + z^-1 A1(z^2)), even coefficients in A0, odd in A1. Unlike a
+// linear-phase FIR halfband it is causal with no pre-ringing -- the spring
+// tank's first arrival must not be preceded by any output (the reference's
+// tank is digital silence until its arrival) -- and it costs one multiply per
+// coefficient at the low rate. Coefficients come from the standard elliptic
+// halfband design for a given transition width and stopband attenuation.
+//==============================================================================
+template <int N>
+class IirHalfband
+{
+public:
+    explicit IirHalfband(const float* coefficients) noexcept : coef(coefficients) {}
+
+    void reset() noexcept
+    {
+        for (int i = 0; i < N; ++i) { x[i] = 0.0f; y[i] = 0.0f; }
+    }
+
+    // Decimate: the older and newer of two input samples -> one output.
+    float down(float older, float newer) noexcept
+    {
+        float a = newer, b = older;
+        for (int i = 0; i < N; i += 2) a = section(i, a);
+        for (int i = 1; i < N; i += 2) b = section(i, b);
+        return 0.5f * (a + b);
+    }
+
+    // Interpolate: one input -> the two outputs at twice the rate, in order.
+    void up(float in, float& first, float& second) noexcept
+    {
+        float a = in, b = in;
+        for (int i = 0; i < N; i += 2) a = section(i, a);
+        for (int i = 1; i < N; i += 2) b = section(i, b);
+        first = a;
+        second = b;
+    }
+
+    bool isQuiet(float floor) const noexcept
+    {
+        for (int i = 0; i < N; ++i)
+            if (std::abs(x[i]) >= floor || std::abs(y[i]) >= floor)
+                return false;
+        return true;
+    }
+
+    // Low-frequency group delay in samples of the faster (input) rate:
+    // 2 (1 - a) / (1 + a) per section of the undelayed path.
+    static double dcGroupDelay(const float* coefficients) noexcept
+    {
+        double d = 0.0;
+        for (int i = 0; i < N; i += 2)
+            d += 2.0 * (1.0 - (double)coefficients[i])
+                     / (1.0 + (double)coefficients[i]);
+        return d;
+    }
+
+private:
+    float section(int i, float in) noexcept
+    {
+        const float out = (in - y[i]) * coef[i] + x[i];
+        x[i] = in;
+        y[i] = out;
+        return out;
+    }
+
+    const float* coef;
+    float x[N] {};
+    float y[N] {};
+};
+
+// 100 dB stopband, transition 0.02 of the stage input rate: the stage next to
+// the internal rate, flat to 0.92 of the internal Nyquist.
+inline constexpr float kSpringFinalHalfband[10] = {
+    0.038198144521f, 0.141848414467f, 0.284326749234f,
+    0.436500581449f, 0.577049051805f, 0.695524100512f,
+    0.790200596392f, 0.864465799905f, 0.923995927877f,
+    0.975286561376f,
+};
+// 100 dB stopband, transition 0.10: the earlier stages only keep images out of
+// the band the final stage passes.
+inline constexpr float kSpringEarlyHalfband[6] = {
+    0.039151597734f, 0.147377113601f, 0.302646848328f,
+    0.482468542770f, 0.674615918547f, 0.883005025769f,
+};
+
+//==============================================================================
 // Spring reverb — three parallel bidirectional dispersive waveguides.
+//
+// The tank runs at a reduced internal rate, as the reference's does: the host
+// signal is decimated by a power of two to about 11-12 kHz (fs/4 at 44.1 and
+// 48 kHz, fs/8 at 88.2 and 96 kHz), the tank and its voicing run there, and
+// the result is interpolated back. Measured on the reference, its spring output
+// falls off a cliff at exactly half that rate (5.5 kHz at 44.1 kHz, 6 kHz at
+// 48 and 96 kHz), so the resampling filters ARE the tank's top end, not a cost
+// paid to save CPU. The resampler's group delay is taken out of the outgoing
+// transit and added to the returning one, so the arrivals and the round trip
+// stay where they were fitted (each direction is rounded to whole
+// internal-rate samples on its own; the transits were fitted with exactly
+// that rounding at 44.1 and 48 kHz).
 //
 // Each spring explicitly propagates an outgoing and returning torsional wave.
 // A fitted cascade of second-order allpasses is flat below about 1.8 kHz,
@@ -72,6 +175,16 @@ public:
     void prepare(double sampleRate, float detune /* per-channel length scale */);
     void reset();
     float process(float in) noexcept;
+    // True when every piece of state is below floor in magnitude.
+    bool isSilent(float floor) const noexcept;
+    // Idle skip support: clear the tank but keep the resampler's frame phase,
+    // and advance that phase over samples that were not processed, so a skip
+    // leaves the frame grid exactly where processing every sample would have.
+    void clearKeepingPhase() noexcept;
+    void advanceIdle(int samples) noexcept
+    {
+        resamplePhase = (resamplePhase + samples) & (resampleFactor - 1);
+    }
 
 private:
     // Section count is bounded from below by physics, not taste: each
@@ -97,13 +210,17 @@ private:
         Biquad reflectionHighPass;
         Biquad reflectionLowLoss;
         Biquad reflectionLowPass;
-        Biquad reflectionAirLoss;
 
+        // advanceSeconds moves that much transit time from the outgoing
+        // to the returning path (round trip unchanged) so the resampler's
+        // latency does not delay the arrivals.
         void  prepare(double fs, float oneWaySeconds,
                       float dispersionScale, float reflectionAmount,
-                      float gain);
+                      float gain, double advanceSeconds,
+                      const BiquadCoeffs& reflectionLoss);
         void  reset();
         float process(float x) noexcept;
+        bool  isSilent(float floor) const noexcept;
     };
 
     // THREE springs, not four, and deliberately far apart.
@@ -118,34 +235,198 @@ private:
     // beats are fewer and faster (1.6 / 2.7 / 4.3 Hz) and read as texture.
     // That same 5.6 ms arrival spread is also what softens its attack.
     std::array<Spring, 3> springs;
-    // Pickup diffusion. Two short allpasses on the summed tank output, of
-    // deliberately incommensurate length so they do not stack into a comb.
-    //
-    // Three waveguides give the right ARRIVALS but a bare gap between them:
-    // measured 10 ms-window kurtosis peaks at 9-10 through the 25-45 ms region
-    // where the reference sits at 4.5-6.2, i.e. our early field is a set of
-    // spikes where the reference is already a dense texture. A real tank gets
-    // that fill from the transducer plate and the springs' own cross-coupling,
-    // neither of which a three-waveguide model has. These are allpass and sit
-    // outside every feedback path, so they cannot move the magnitude response,
-    // any loop period, or the decay -- they only redistribute each arrival in
-    // time.
-    static constexpr int kNumDiffusers = 2;
-    std::array<std::vector<float>, kNumDiffusers> diffusionBuf;
-    std::array<int, kNumDiffusers> diffusionWriteIdx {};
     OnePoleHP inputHP;   // springs don't transmit deep lows
     OnePoleLP inputLP;   // dark transducer voicing
     DCBlocker dcBlock;
     std::array<Biquad, 2> outputTransducerHP;
     Biquad outputHP;
     Biquad outputVoiceLP;
-    std::array<Biquad, 13> outputCeilingLP;
-    Biquad outputFizzNotch;
     Biquad outputLowContour;
     Biquad outputBody;
     Biquad outputFourKhzSeat;
     Biquad outputLowMidBalance;
     Biquad outputOneKhzSeat;
+    // The cliff below the internal Nyquist (see processInternal()).
+    std::array<Biquad, 2> outputCliff;
+
+    // Runs one internal-rate sample: the decimated input in, the tank and its
+    // voicing, one internal-rate sample out.
+    float processInternal(float in) noexcept;
+
+    // Resampling between the host rate and the internal rate: factor 2^stages.
+    // Every stage but the one next to the internal rate is a loose halfband
+    // (it only has to keep images out of the band the last stage keeps); the
+    // last stage is the steep one that, with outputCliff, sets the top end.
+    static constexpr int kMaxResampleStages = 6; // factor 64 at 705.6/768 kHz
+    static constexpr int kMaxResampleFactor = 1 << kMaxResampleStages;
+    int resampleStages = 0;
+    int resampleFactor = 1;
+    int resamplePhase = 0;
+    using EarlyHalfband = IirHalfband<6>;
+    using FinalHalfband = IirHalfband<10>;
+    std::array<EarlyHalfband, kMaxResampleStages - 1> earlyDown {
+        EarlyHalfband(kSpringEarlyHalfband), EarlyHalfband(kSpringEarlyHalfband),
+        EarlyHalfband(kSpringEarlyHalfband), EarlyHalfband(kSpringEarlyHalfband),
+        EarlyHalfband(kSpringEarlyHalfband) };
+    std::array<EarlyHalfband, kMaxResampleStages - 1> earlyUp {
+        EarlyHalfband(kSpringEarlyHalfband), EarlyHalfband(kSpringEarlyHalfband),
+        EarlyHalfband(kSpringEarlyHalfband), EarlyHalfband(kSpringEarlyHalfband),
+        EarlyHalfband(kSpringEarlyHalfband) };
+    FinalHalfband finalDown { kSpringFinalHalfband };
+    FinalHalfband finalUp { kSpringFinalHalfband };
+    // Decimator inputs waiting for their pair, one per stage.
+    std::array<float, kMaxResampleStages> pendingDown {};
+    // The interpolator produces a whole frame of host samples per internal
+    // sample; it is played out over the next frame.
+    std::array<float, kMaxResampleFactor> outputFrame {};
+
+public:
+    // Host-rate samples of low-frequency group delay through the decimator,
+    // the frame buffer and the interpolator (the tank itself excluded).
+    static double resamplerLatencySamples(int stages) noexcept;
+};
+
+//==============================================================================
+// The record preamp's 4x oversampled saturation, a sub-block at a time.
+//
+// Same arithmetic as running two cascaded zero-stuffing halfband upsamplers
+// (hbtaps::kA 47 taps, then kB 15), the shaper at 4x and the mirror
+// decimators one host sample at a time: every output is the same sum of the
+// same products in the same tap order, and the phases that follow a stuffed
+// zero take HalfbandFIR::outAfterStuffedZeroExact()'s shortcut. Only the
+// loop order differs -- stage by stage over the sub-block, which lets each
+// stage vectorise across outputs -- so the results are bit-identical
+// (te2_corebench pins this against the per-sample version it replaces).
+//==============================================================================
+class BlockPreamp4x
+{
+public:
+    static constexpr int kMaxBlock = 128;
+
+    void reset() noexcept
+    {
+        std::fill(std::begin(x), std::end(x), 0.0f);
+        std::fill(std::begin(a), std::end(a), 0.0f);
+        std::fill(std::begin(c), std::end(c), 0.0f);
+        std::fill(std::begin(d), std::end(d), 0.0f);
+    }
+
+    // in[0..n) -> out[0..n), n <= kMaxBlock. shape(v) is applied at 4x.
+    // Any n: longer runs are processed kMaxBlock samples at a time.
+    template <typename Shape>
+    void process(const float* in, float* out, int n, Shape shape) noexcept
+    {
+        while (n > kMaxBlock)
+        {
+            processChunk(in, out, kMaxBlock, shape);
+            in += kMaxBlock;
+            out += kMaxBlock;
+            n -= kMaxBlock;
+        }
+        if (n > 0)
+            processChunk(in, out, n, shape);
+    }
+
+private:
+    template <typename Shape>
+    void processChunk(const float* in, float* out, int n, Shape shape) noexcept
+    {
+        float acc[2 * kMaxBlock]; // per-output sums of the stage being run
+        // Histories: kA reaches 23 samples back at its input rate, kB 7, and
+        // the decimators read their full spans (14 and 46).
+        constexpr int HX = 23, HA = 7, HC = 14, HD = 46;
+        for (int j = 0; j < n; ++j)
+            x[HX + j] = in[j];
+
+        // Every stage accumulates tap by tap across all of its outputs (taps
+        // outer, outputs inner): each output still adds the same products in
+        // the same tap order as the per-sample FIR, but the inner loop is now
+        // independent across outputs and vectorises.
+
+        // 1x -> 2x through kA: even outputs are the full sum over the real
+        // samples (the centre tap reads a stuffed zero), odd outputs the
+        // halved centre only.
+        for (int j = 0; j < n; ++j)
+            acc[j] = 0.0f;
+        for (int i = 0; i < 12; ++i)
+        {
+            const float t = hbtaps::kA[i];
+            const float* newer = x + HX - (11 - i);
+            const float* older = x + HX - (12 + i);
+            for (int j = 0; j < n; ++j)
+                acc[j] += t * (newer[j] + older[j]);
+        }
+        for (int j = 0; j < n; ++j)
+        {
+            const float centre = 0.5f * x[HX + j - 11];
+            a[HA + 2 * j] = 2.0f * acc[j];
+            a[HA + 2 * j + 1] = 2.0f * (centre == 0.0f ? 0.0f : centre);
+        }
+
+        // 2x -> 4x through kB, then the shaper at 4x.
+        const int n2 = 2 * n;
+        for (int m = 0; m < n2; ++m)
+            acc[m] = 0.0f;
+        for (int i = 0; i < 4; ++i)
+        {
+            const float t = hbtaps::kB[i];
+            const float* newer = a + HA - (3 - i);
+            const float* older = a + HA - (4 + i);
+            for (int m = 0; m < n2; ++m)
+                acc[m] += t * (newer[m] + older[m]);
+        }
+        for (int m = 0; m < n2; ++m)
+        {
+            const float centre = 0.5f * a[HA + m - 3];
+            c[HC + 2 * m] = 2.0f * acc[m];
+            c[HC + 2 * m + 1] = 2.0f * (centre == 0.0f ? 0.0f : centre);
+        }
+        for (int q = 0; q < 4 * n; ++q)
+            c[HC + q] = shape(c[HC + q]);
+
+        // 4x -> 2x through kB: a full sum at every second 4x sample.
+        for (int r = 0; r < n2; ++r)
+            acc[r] = 0.5f * c[HC + 2 * r + 1 - 7];
+        for (int i = 0; i < 4; ++i)
+        {
+            const int k = 2 * i + 1;
+            const float t = hbtaps::kB[i];
+            const float* newer = c + HC + 1 - (7 - k);
+            const float* older = c + HC + 1 - (7 + k);
+            for (int r = 0; r < n2; ++r)
+                acc[r] += t * (newer[2 * r] + older[2 * r]);
+        }
+        for (int r = 0; r < n2; ++r)
+            d[HD + r] = acc[r];
+
+        // 2x -> 1x through kA.
+        for (int u = 0; u < n; ++u)
+            acc[u] = 0.5f * d[HD + 2 * u + 1 - 23];
+        for (int i = 0; i < 12; ++i)
+        {
+            const int k = 2 * i + 1;
+            const float t = hbtaps::kA[i];
+            const float* newer = d + HD + 1 - (23 - k);
+            const float* older = d + HD + 1 - (23 + k);
+            for (int u = 0; u < n; ++u)
+                acc[u] += t * (newer[2 * u] + older[2 * u]);
+        }
+        for (int u = 0; u < n; ++u)
+            out[u] = acc[u];
+
+        // Carry the histories into the next sub-block.
+        std::copy(x + n, x + n + HX, x);
+        std::copy(a + 2 * n, a + 2 * n + HA, a);
+        std::copy(c + 4 * n, c + 4 * n + HC, c);
+        std::copy(d + 2 * n, d + 2 * n + HD, d);
+    }
+
+private:
+    float x[23 + kMaxBlock] {};
+    float a[7 + 2 * kMaxBlock] {};
+    float c[14 + 4 * kMaxBlock] {};
+    float d[46 + 2 * kMaxBlock] {};
+
 };
 
 //==============================================================================
@@ -517,6 +798,66 @@ private:
     static constexpr float kPreampLatencySamples = 23.0f + 3.5f;
 
     float readTape(const std::vector<float>& buf, float delaySamples) const noexcept;
+
+    // Last input and result of per-sample laws on smoothed controls, seeded
+    // in prepare() from the snapped controls.
+    float memoAge = 0.0f;
+    float memoAgeNoiseScale = 0.0f;
+    float memoOutputVolume = 0.0f;
+    float memoOutputGain = 1.0f;
+
+    // Per-sample values carried between the passes of one sub-block. Kept on
+    // the stack in processBlock (about 19 KB): as a member it measured 3-5 %
+    // slower (48 kHz core, default state), and 19 KB is far inside the audio
+    // thread stacks hosts give plug-ins (512 KB and up on macOS, 1 MB on
+    // Windows, 8 MB on Linux).
+    struct SubBlockScratch
+    {
+        static constexpr int kSize = 128;
+        float d1[kSize];
+        float d2[kSize];
+        float d3[kSize];
+        float drivenInput[kSize];
+        float dryLvl[kSize];
+        float dryMixGain[kSize];
+        float echoLvl[kSize];
+        float fbGain[kSize];
+        float feedbackCurve[kSize];
+        float g1[kSize];
+        float g2[kSize];
+        float g3[kSize];
+        float inL[kSize];
+        float inR[kSize];
+        float inputGain[kSize];
+        float outputGain[kSize];
+        float power[kSize];
+        float pre[kSize];
+        float reproAgeNoise[kSize];
+        float reproNoiseGate[kSize];
+        float revLvl[kSize];
+        float revSend[kSize];
+        float springPre[kSize];
+        float wetMixGain[kSize];
+        float wobble[kSize];
+        float echoWet[kSize];
+        float rev[kSize];
+        float recordEnvelopeNow[kSize];
+        float loopReadBlend[kSize];
+        float preIn[kSize];
+        float preOut[kSize];
+        float postDriveGain[kSize];
+        float splice1[kSize];
+        float splice2[kSize];
+        float splice3[kSize];
+    };
+    float memoIntensity = 0.0f;
+    float memoFeedbackCurve = 0.0f;
+    float memoFbGain = 0.0f;
+    float memoLoopReadBlend = 0.0f;
+
+    // The spring is skipped while its send and every piece of its state have
+    // decayed below kSpringIdleFloor (see processBlock).
+    bool springIdle = false;
     void  refreshBlockRateControls();
 
     //--- per-channel state ----------------------------------------------------
@@ -524,8 +865,8 @@ private:
     {
         std::vector<float> tape;
         DCBlocker          preampDC;
-        HalfbandFIR<47, 12> upA, downA;   // base <-> 2x (tight, -67 dB)
-        HalfbandFIR<15, 4>  upB, downB;   // 2x <-> 4x (loose, -75 dB)
+        // base <-> 2x kA (tight, -67 dB), 2x <-> 4x kB (loose, -75 dB)
+        BlockPreamp4x preamp;
         Biquad             recordHP;   // in-loop, two-pole low-end cleanup
         Biquad             speedLP;    // tape-speed-dependent playback bandwidth
         Biquad             ageContour; // age-only HF shoulder, inside the loop
@@ -543,8 +884,6 @@ private:
 
     std::array<Channel, kMaxChannels> channels;
     SpringReverb spring; // shared mono wet path
-
-    float preampOversampled(Channel& ch, float x, float drive) noexcept;
 
     //--- tape transport --------------------------------------------------------
     int    writeIdx   = 0;

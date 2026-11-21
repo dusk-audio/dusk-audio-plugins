@@ -26,6 +26,7 @@ public:
     void  setTarget(float v) noexcept { target = v; }
     float next() noexcept             { current += coeff * (target - current); return current; }
     float value() const noexcept      { return current; }
+    float targetValue() const noexcept { return target; }
 
 private:
     float current = 0.0f, target = 0.0f, coeff = 1.0f;
