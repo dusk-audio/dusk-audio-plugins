@@ -1740,10 +1740,16 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                                   + kNoiseDepth
                                         * noiseLP.process(frand() * noiseRateComp));
 
-            // The oversampled preamp delays the tape feed by a fixed group delay;
-            // subtract it AFTER the head-ratio scaling so all three heads stay at
-            // their exact mechanical times (subtracting from T would scale the
-            // compensation by the far-head ratios).
+            // Transport motion modulates every head's read delay in proportion to
+            // its path length. Measured against the reference (1 kHz tone, pitch
+            // deviation from the Hilbert phase, Repeat Rate 0.727): head 1 matches
+            // (0.79 / 6.01 cents rms below / above 1.5 Hz, reference 0.72 / 6.24)
+            // but head 2 carries 1.4-1.5x the reference's (1.56 / 11.45 against
+            // 1.06 / 8.08). The reference's fast head-2/head-1 ratio, 1.29, is
+            // what tape speed averaged over each head's path predicts (1.35),
+            // not this proportional model (1.9); its slow ratio, 1.47, fits
+            // neither alone. Open: a path-integrated transport model, recalibrated
+            // so head 1 stays matched.
             const float t1 = nominalT1 * (1.0f + mod);
             const float d1 = clampF(t1, 4.0f, maxDelaySamples);
             const float d2 = clampF(
