@@ -246,5 +246,11 @@ for sr_hz in (48000, 96000, 192000, 384000):
     check(err <= 0.02, f"{sr_hz:6d} Hz Attack  10 s (x{mul:.3f}: {want:.0f} s): runs as {got:7.2f} s "
                        f"({err * 100:.2f} %, tol 2 %)", (name,))
 
+if OK:
+    # Every passing check deleted its renders, so the scratch dir is empty.
+    try:
+        os.rmdir(OUT)
+    except OSError:
+        pass
 print(f"rate_gate: {'PASS' if OK else 'FAIL'}")
 sys.exit(0 if OK else 1)
