@@ -340,6 +340,86 @@ namespace
         return { (float)(b0 * g), (float)(b1 * g), (float)(b2 * g), (float)a1, (float)a2 };
     }
 
+    // High end of the tape loop, split where the reference splits it.
+    //
+    // Measured with probe_loop_response (impulse through head 1, feedback 0.5,
+    // Repeat Rate 0/0.25/0.5/0.75/1 x Tape Age new/mid/old): the first echo
+    // carries everything between input and output once, packet 2 / packet 1 is
+    // exactly one trip round the loop, and where they differ the filtering is
+    // outside the loop. The reference's first echo has a cliff above ~11 kHz
+    // that its per-pass response does not, and its age loss is shared between
+    // the two. Ours had every high-frequency stage inside the loop (a fixed
+    // ~11 kHz sixth-order ceiling, a speed low-pass and an age shelf), so the
+    // cliff compounded per repeat (-7 to -18 dB per pass at 12.8 kHz where the
+    // reference loses a few) while the first echo ran 1-4 dB bright at
+    // 2-10 kHz on aged tape. That is why the old age shelf had to be cut to
+    // 0.60x its single-repeat fit: one in-loop stage cannot be right on both
+    // the first echo and the tail.
+    //
+    // Model, one row per cartridge state (Tape Age is quantised to 0/0.5/1;
+    // the smoothed value interpolates between rows), speed = kMinDelayMs/delay:
+    //   in the loop:  low-pass  lpHz * speed^lpExp, Q lpQ        (playback)
+    //                 6th-order Butterworth ceilingHz * speed^ceilingExp
+    //   outside it:   low-pass  outHz, Q outQ, on the echo output only
+    // Fitted per state through the full DSP (first echo and per pass, third
+    // octaves 635 Hz-12.8 kHz, re 1 kHz, bands at least 35 dB down and
+    // repeatable pass-to-pass), restarted from the optimum to confirm it.
+    // Residual rms against the reference, first echo and per pass together,
+    // re-measured on the built plug-in: 0.33 / 0.33 / 0.35 dB (new / mid /
+    // old) where the former chain read 0.73 / 1.00 / 0.96 dB, worst band
+    // 2.1 dB where it read 4.0. Per pass at 1-2 kHz now sits within 0.3 dB of
+    // the reference (was up to +1.4 dB on aged tape).
+    //
+    // Known side effects, measured, not tuned away:
+    //  * The fit is relative to 1 kHz. At slow speeds the playback low-pass
+    //    droops 0.1-0.35 dB more at 1 kHz than the old one, and the first echo
+    //    of a single-sample impulse was already 0.3-0.65 dB short there (the
+    //    open small-signal level shortfall, outside the loop). Impulse renders
+    //    read 0.2-1.2 dB quieter; noise, snare and sine renders are unchanged
+    //    or closer.
+    //  * At -3 dBFS the output ceiling trims our 7th and 9th harmonics, which
+    //    sit 13 dB above the reference's: H7 -54.2 -> -55.0, H9 -65.1 -> -67.2
+    //    (reference -67.2 / -75.8). Our THD at that rung leans on that excess
+    //    instead of the reference's 5th, so the summed THD falls further from
+    //    the reference (4.67% -> 4.33%, reference 4.99%) while two harmonics
+    //    move toward it. See the fold-back derivation at the Chebyshev terms.
+    //
+    // Matched-magnitude sections (Biquad::matched*) keep the analog corner
+    // shapes far closer to Nyquist than bilinear ones. The fit ran at 48 kHz;
+    // at 44.1 kHz the chain reads within 0.1 dB of that up to 10 kHz (-0.3 dB
+    // at 12.5 kHz, -0.9 dB at 16 kHz, 35-60 dB below 1 kHz there). At 96 kHz
+    // it is within 0.2 dB of the analog prototype to 16 kHz.
+    struct TapeBandwidthRow
+    {
+        float lpHz, lpExp, lpQ;          // in-loop playback low-pass
+        float ceilingHz, ceilingExp;     // in-loop sixth-order ceiling
+        float outHz, outQ;               // echo output, outside the loop
+    };
+    constexpr TapeBandwidthRow kTapeBandwidth[3] = {
+        { 11928.70f, 1.2896f, 0.5761f, 10906.59f, 0.2179f, 13509.90f, 0.6080f }, // new
+        {  6979.18f, 0.8757f, 0.6390f, 10137.95f, 0.2163f, 14037.42f, 0.5853f }, // mid
+        {  5378.67f, 0.7153f, 0.6688f, 10166.21f, 0.2508f, 11619.25f, 0.6223f }, // old
+    };
+    constexpr double kButterworth6Q[3] = { 0.51763809, 0.70710678, 1.93185165 };
+
+    struct TapeBandwidth { double lpHz, lpQ, ceilingHz, outHz, outQ; };
+
+    inline TapeBandwidth tapeBandwidthFor(float age01, float speed) noexcept
+    {
+        const float a = std::min(std::max(age01, 0.0f), 1.0f) * 2.0f;
+        const int i = a >= 1.0f ? 1 : 0;
+        const float t = a - (float)i;
+        const TapeBandwidthRow& lo = kTapeBandwidth[i];
+        const TapeBandwidthRow& hi = kTapeBandwidth[i + 1];
+        auto lerp = [t](float x, float y) { return (double)(x + t * (y - x)); };
+        const double s = (double)speed;
+        return { lerp(lo.lpHz, hi.lpHz) * std::pow(s, lerp(lo.lpExp, hi.lpExp)),
+                 lerp(lo.lpQ, hi.lpQ),
+                 lerp(lo.ceilingHz, hi.ceilingHz) * std::pow(s, lerp(lo.ceilingExp, hi.ceilingExp)),
+                 lerp(lo.outHz, hi.outHz),
+                 lerp(lo.outQ, hi.outQ) };
+    }
+
     // Sample rate the spring dispersion bank was fitted at. Only the radii
     // need rate compensation; the centre frequencies are already handled by
     // theta = 2*pi*f/fs.
@@ -1022,6 +1102,34 @@ float TapeEchoDSP::leadingHeadOffsetMsForMode(int mode1to12) noexcept
     return 0.0f;
 }
 
+// Redesigns the tape bandwidth sections (kTapeBandwidth) when the smoothed
+// cartridge condition or the motor's target delay moved. Every channel is
+// configured, so a later mono-to-stereo switch finds channel 1 already set.
+// Block rate: five matched sections, about 0.5 us per design.
+void TapeEchoDSP::updateTapeBandwidth(float age01, float delayMs) noexcept
+{
+    const bool ageMoved = age01 != lastBandwidthAge;
+    if (! ageMoved && delayMs == lastBandwidthDelayMs)
+        return;
+    lastBandwidthAge = age01;
+    lastBandwidthDelayMs = delayMs;
+
+    const TapeBandwidth bw = tapeBandwidthFor(age01, kMinDelayMs / delayMs);
+    const BiquadCoeffs playback = Biquad::matchedLowPass(fs, bw.lpHz, bw.lpQ);
+    BiquadCoeffs ceiling[3];
+    for (int i = 0; i < 3; ++i)
+        ceiling[i] = Biquad::matchedLowPass(fs, bw.ceilingHz, kButterworth6Q[i]);
+    const BiquadCoeffs output = Biquad::matchedLowPass(fs, bw.outHz, bw.outQ);
+    for (auto& ch : channels)
+    {
+        ch.speedLP.setCoeffs(playback);
+        for (int i = 0; i < 3; ++i)
+            ch.loopCeilingLP[(size_t)i].setCoeffs(ceiling[i]);
+        if (ageMoved)
+            ch.outputCeilingLP.setCoeffs(output);
+    }
+}
+
 void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
 {
     // Validate BEFORE anything reads it. `sampleRate <= 0.0` alone would let NaN
@@ -1057,27 +1165,6 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
         ch.inputLowShelf.setCoeffs(inputLowShelfCoeffs(fs));
         ch.inputLowShape.setCoeffs(recordLowShapeCoeffs(fs));
         ch.loopLowShape.setCoeffs(recordLowShapeCoeffs(fs));
-        const float initialMs = delayMsForRepeatRate(
-            pRepeatRate.load(std::memory_order_relaxed));
-        const float initialSlow01 = clamp01(
-            (initialMs - kMinDelayMs) / (kMaxDelayMs - kMinDelayMs));
-        const float initialVoicing = 1.05f + 0.08f * initialSlow01
-            + 0.48f * initialSlow01 * (1.0f - initialSlow01);
-        ch.speedLP.setCoeffs(Biquad::lowPass(
-            fs, safeBiquadFrequency(
-                fs, 7200.0f * kMinDelayMs / initialMs * initialVoicing),
-            0.70710678f));
-        constexpr float kButterworthQ[3] =
-            { 0.51763809f, 0.70710678f, 1.93185165f };
-        const float initialFast01 = 1.0f - initialSlow01;
-        const float initialAntiAliasCutoff =
-            9710.0f + 1488.0f * initialFast01
-                    + 422.0f * initialFast01 * initialFast01;
-        for (int i = 0; i < 3; ++i)
-            ch.antiAliasLP[(size_t)i].setCoeffs(Biquad::lowPass(
-                fs, safeBiquadFrequency(
-                    fs, initialAntiAliasCutoff),
-                kButterworthQ[i]));
         // The direct monitor path retains full midrange level while its
         // coupling network and output amplifier gently soften the extremes.
         // These shelves are outside the echo/reverb sends.
@@ -1209,9 +1296,9 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     memoFeedbackCurve = feedbackKneeControl(memoIntensity);
     memoFbGain = feedbackGainFromControl(memoIntensity);
     memoLoopReadBlend = feedbackReadLoopBlend(memoFeedbackCurve);
-    lastPlaybackCutoff = -1.0f;
-    lastAntiAliasCutoff = -1.0f;
-    lastAgeContourDb = 999.0f;
+    lastBandwidthAge = -1.0f; // force the tape bandwidth design
+    updateTapeBandwidth(ageSmoother.value(),
+        delayMsForRepeatRate(pRepeatRate.load(std::memory_order_relaxed)));
 
     lastBass = lastTreble = -999.0f; // force shelf recompute
     reset();
@@ -1228,9 +1315,9 @@ void TapeEchoDSP::reset()
         ch.inputLowShape.reset();
         ch.loopLowShape.reset();
         ch.speedLP.reset();
-        ch.ageContour.reset();
-        for (auto& lp : ch.antiAliasLP)
+        for (auto& lp : ch.loopCeilingLP)
             lp.reset();
+        ch.outputCeilingLP.reset();
         ch.bassShelf.reset();
         ch.trebleShelf.reset();
         ch.dryLowShelf.reset();
@@ -1399,83 +1486,9 @@ void TapeEchoDSP::refreshBlockRateControls()
     ageHumRotSin = ageHumRateSin[humIndex];
     ageHumRotCos = ageHumRateCos[humIndex];
 
-    // Playback bandwidth is proportional to tape speed. Tape condition splits
-    // the wear into a broad 5 kHz shoulder and a steeper upper ceiling: this
-    // preserves the hosted Old cartridge's 3-4 kHz presence while matching its
-    // much larger 8-12 kHz loss.
-    {
-        const float age = ageSmoother.value();
-        const float age2 = age * age;
-        const float slow01 = clamp01(
-            (tMs - kMinDelayMs) / (kMaxDelayMs - kMinDelayMs));
-        const float fast01 = 1.0f - slow01;
-        const float voicing = 1.05f + 0.08f * slow01
-                            + 0.48f * slow01 * (1.0f - slow01);
-        const float playbackAgeScale =
-            1.0f + 0.2335f * age - 0.1634f * age2;
-        const float cutoff = safeBiquadFrequency(
-            fs, 7200.0f * kMinDelayMs / tMs * voicing
-              * playbackAgeScale);
-        if (cutoff != lastPlaybackCutoff)
-        {
-            lastPlaybackCutoff = cutoff;
-            for (int c = 0; c < kMaxChannels; ++c)
-                channels[(size_t)c].speedLP.setCoeffs(
-                    Biquad::lowPass(fs, cutoff, 0.70710678f));
-        }
-        const float oldTape01 = clamp01((age - 0.5f) * 2.0f);
-        // Depth is 0.60x the originally fitted curve (-12.954 / 3.752 / 3.2
-        // scaled to -7.7724 / 2.2512 / 1.92). This shelf is INSIDE the loop, so
-        // its error is paid once per pass and COMPOUNDS: the original depth was
-        // fitted against single-repeat tone and measured correct there, but on
-        // program material through many passes it drove the whole echo dark.
-        // Measured across the factory bank, every preset showed the same tilt
-        // (125 Hz hot, 4-16 kHz light), scaling with tape age AND with pass
-        // count -- age 0 states were fine at 0.46-0.57 octave median while the
-        // Old-tape three-head state sat at 3.57.
-        // Swept with a fresh render per point, worst-case (Full Wash) 8 kHz
-        // band: 1.00 -> -3.6 dB, 0.85 -> -2.3, 0.70 -> -0.9, 0.60 -> 0.0,
-        // 0.50 -> +1.0. 0.60 lands 8 kHz exactly on the reference without
-        // pushing any state bright; 0.50 overshoots three of them positive.
-        // factory_mean_octave_median 0.9108 -> 0.7825 against a 0.90 limit.
-        // Orthogonal to the multi-head loop fix above: the level gate moved
-        // only 0.4663 -> 0.4688 across this entire sweep.
-        // The residual 125/250 Hz excess is NOT this filter -- it tracks reverb
-        // send (Full Wash +6.7 and Ambient Trails +2.5 both at rev 0.588,
-        // Worn Tape +0.8 at rev 0), i.e. it is spring LF, deliberately untouched.
-        const float ageContourDb =
-            -7.7724f * age + 2.2512f * age2
-            - 1.92f * oldTape01 * oldTape01 * fast01;
-        if (ageContourDb != lastAgeContourDb)
-        {
-            lastAgeContourDb = ageContourDb;
-            const bool active = std::abs(ageContourDb) > 1.0e-6f;
-            if (active != ageContourActive)
-                for (auto& ch : channels) ch.ageContour.reset();
-            ageContourActive = active;
-            for (int c = 0; c < kMaxChannels; ++c)
-                channels[(size_t)c].ageContour.setCoeffs(
-                    Biquad::shelf(
-                        fs, safeBiquadFrequency(fs, 5000.0f),
-                        ageContourDb, 0.70710678f, /*high=*/true));
-        }
-        const float antiAliasAgeScale =
-            1.0f - 0.1332f * age + 0.0584f * age2;
-        const float baseAntiAliasCutoff =
-            9710.0f + 1488.0f * fast01 + 422.0f * fast01 * fast01;
-        const float antiAliasCutoff = safeBiquadFrequency(
-            fs, baseAntiAliasCutoff * antiAliasAgeScale);
-        if (antiAliasCutoff != lastAntiAliasCutoff)
-        {
-            lastAntiAliasCutoff = antiAliasCutoff;
-            constexpr float kButterworthQ[3] =
-                { 0.51763809f, 0.70710678f, 1.93185165f };
-            for (int c = 0; c < kMaxChannels; ++c)
-                for (int i = 0; i < 3; ++i)
-                    channels[(size_t)c].antiAliasLP[(size_t)i].setCoeffs(
-                        Biquad::lowPass(fs, antiAliasCutoff, kButterworthQ[i]));
-        }
-    }
+    // Tape bandwidth from motor speed and cartridge condition: see
+    // kTapeBandwidth for the in-loop / outside-the-loop split and its fit.
+    updateTapeBandwidth(ageSmoother.value(), tMs);
 
     // Echo-path tone shelves: recompute only when the knobs actually moved.
     const float bass   = pBass.load(std::memory_order_relaxed);
@@ -1492,7 +1505,7 @@ void TapeEchoDSP::refreshBlockRateControls()
             for (auto& ch : channels) ch.trebleShelf.reset();
         bassShelfActive = bassActive;
         trebleShelfActive = trebleActive;
-        // Configure ALL channels (like the age-retune block above), not just the
+        // Configure ALL channels (like updateTapeBandwidth), not just the
         // current numChannels: a later mono→stereo switch without a knob move
         // would otherwise leave channels[1]'s shelves at their passthrough
         // default while channels[0] is shelved — an L/R mismatch.
@@ -2116,8 +2129,6 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
 
             float recorded = ch.speedLP.process(
                 pre + ch.loopLowShape.process(loopDrive));
-            if (ageContourActive)
-                recorded = ch.ageContour.process(recorded);
             // The tape's low-level magnetisation curve is more strongly curved
             // than the record preamp, but its slope remains positive at overload.
             // This bounded cubic term raises the odd-harmonic ladder without
@@ -2252,13 +2263,15 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             // 10^0 = 1 exactly, and the multiply is skipped with the same bits.
             if (recordEnvelopeNow > 0.18f)
                 toTape *= std::pow(10.0f, magneticMakeupDb * (1.0f / 20.0f));
-            for (auto& lp : ch.antiAliasLP)
+            for (auto& lp : ch.loopCeilingLP)
                 toTape = lp.process(toTape);
             ch.tape[(size_t)writeIdx] = toTape;
 
-            // Echo output path only: bass/treble shelves (dry and reverb
-            // are unaffected, matching the hardware layout).
-            float echoWet = amplifiedHeadSum + reproNoiseGate * reproAgeNoise;
+            // Echo output path only: the out-of-loop ceiling, then the
+            // bass/treble shelves (dry and reverb are unaffected, matching the
+            // hardware layout).
+            float echoWet = ch.outputCeilingLP.process(amplifiedHeadSum)
+                          + reproNoiseGate * reproAgeNoise;
             if (bassShelfActive)
                 echoWet = ch.bassShelf.process(echoWet);
             if (trebleShelfActive)

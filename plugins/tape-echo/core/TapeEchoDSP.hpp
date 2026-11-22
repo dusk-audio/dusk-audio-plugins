@@ -529,6 +529,8 @@ private:
     static float clampF(float v, float lo, float hi) noexcept { return v < lo ? lo : (v > hi ? hi : v); }
     static int   clampInt(int v, int lo, int hi) noexcept     { return v < lo ? lo : (v > hi ? hi : v); }
 
+    void updateTapeBandwidth(float age01, float delayMs) noexcept;
+
     // Bounded cubic soft clip, tanh-like, branch-light. Monotonic on the
     // clamped range, |out| <= 1. Used for tape saturation and the feedback
     // limiter — this is what stabilizes self-oscillation.
@@ -900,9 +902,11 @@ private:
         Biquad             inputLowShelf;   // program feed only
         Biquad             inputLowShape;   // program feed, ahead of the preamp
         Biquad             loopLowShape;    // regeneration feed
-        Biquad             speedLP;    // tape-speed-dependent playback bandwidth
-        Biquad             ageContour; // age-only HF shoulder, inside the loop
-        std::array<Biquad, 3> antiAliasLP; // sixth-order fixed record/repro ceiling
+        // High end, split where the reference splits it (see kTapeBandwidth
+        // in the .cpp): speed and condition set all three.
+        Biquad             speedLP;    // playback bandwidth, inside the loop
+        std::array<Biquad, 3> loopCeilingLP; // sixth-order ceiling, inside the loop
+        Biquad             outputCeilingLP;  // echo output, outside the loop
         Biquad             bassShelf;  // echo output path only
         Biquad             trebleShelf;
         Biquad             dryLowShelf;  // direct-path coupling/amp bandwidth
@@ -1053,10 +1057,8 @@ private:
     float     ageHumRateSin[2] = { 0.0f, 0.0f };
     float     ageHumRateCos[2] = { 1.0f, 1.0f };
     uint32_t  ageHumRenormalize = 0u;
-    float     lastPlaybackCutoff = -1.0f;         // block-rate speed/age guard
-    float     lastAntiAliasCutoff = -1.0f;
-    float     lastAgeContourDb = 999.0f;
-    bool      ageContourActive = false;
+    float     lastBandwidthAge = -1.0f;      // updateTapeBandwidth guards
+    float     lastBandwidthDelayMs = -1.0f;
     uint32_t  lastClearRequest = 0u;
     float     spliceSamplesToHead1 = 0.0f;
     bool      spliceClockStarted = false;
