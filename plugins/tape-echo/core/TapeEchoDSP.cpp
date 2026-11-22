@@ -2053,9 +2053,7 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             // Record chain: program + feedback -> head EQ -> magnetic
             // saturation -> tape. Everything here is inside the loop, so
             // repeats darken and compress cumulatively.
-            const float loopDrive = hardKnee(
-                fbGain * softClip(loopHeadSum),
-                kLoopCeilingKnee, kLoopCeiling);
+            const float loopDrive = loopLimit(fbGain * softClip(loopHeadSum));
             // Meter point: after Input Volume, BEFORE the regeneration sum. This
             // deliberately ignores Input Send. drivenInput carries the power gate
             // already (monoInput = power * ...), so both readings still die with

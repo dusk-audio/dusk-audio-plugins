@@ -419,20 +419,19 @@ private:
         return x * (0.30355f + 0.69645f * x);
     }
 
-    // Hard ceiling with a quadratic knee: identity below `knee`, exactly
-    // `ceiling` at and above knee + 2(ceiling - knee). Monotonic, and C1 at
-    // both joins (unit slope entering the knee, zero slope leaving it).
-    static float hardKnee(float x, float knee, float ceiling) noexcept
+    // Loop limiter: identity below kLoopLimitKnee, above it a soft approach to
+    // kLoopLimitCeiling shaped by softClip (unit slope at the knee, so C1 there;
+    // softClip reaches its bound at 3, so the curve meets the ceiling flat at
+    // knee + 3 (ceiling - knee)). Odd-symmetric and monotonic.
+    static float loopLimit(float x) noexcept
     {
         const float magnitude = x < 0.0f ? -x : x;
-        if (magnitude <= knee)
+        if (magnitude <= kLoopLimitKnee)
             return x;
-        const float width = 2.0f * (ceiling - knee);
-        const float sign  = x < 0.0f ? -1.0f : 1.0f;
-        if (magnitude >= knee + width)
-            return sign * ceiling;
-        const float under = 1.0f - (magnitude - knee) / width;
-        return sign * (knee + (ceiling - knee) * (1.0f - under * under));
+        constexpr float span = kLoopLimitCeiling - kLoopLimitKnee;
+        const float limited = kLoopLimitKnee
+            + span * softClip((magnitude - kLoopLimitKnee) * (1.0f / span));
+        return x < 0.0f ? -limited : limited;
     }
 
     // Record-amplifier overload, seen only by the regeneration path. The
@@ -444,9 +443,8 @@ private:
     // intensity control at minimum, so every harmonic and level calibration
     // measured there is bit-identical.
     //
-    // The knee is 22 dB above the loop level anywhere in the calibrated repeat
-    // ladder and 15 dB above the marginal-oscillation level at intensity 0.7,
-    // so nothing at or below the matched settings can reach it.
+    // The knee is 16 dB above the loop level anywhere in the calibrated repeat
+    // ladder, and the curve stays within 0.1 dB of identity well past it.
     //
     // A ceiling at the tape write instead - which is demonstrably where the
     // reference's is, since its loudest program peak (-22.15 dBFS wet) and its
@@ -462,13 +460,23 @@ private:
     // 2.13 baseline) because sustained tones in the factory presets reach that
     // flux too.
     //
-    // This ceiling is now the runaway's only rail (the read amplifier that
-    // used to sit on the echo output is gone, see feedbackGainFromControl).
-    // Its peak level matches the reference's within about 1 dB at 0.8-1.0,
-    // but it is hard: the reference's rail climbs about 3 dB from 0.8 to 1.0
-    // where ours stays flat. Open.
-    static constexpr float kLoopCeilingKnee = 0.2000f;
-    static constexpr float kLoopCeiling     = 0.2940f;
+    // This is the runaway's rail (the read amplifier that used to sit on the
+    // echo output is gone, see feedbackGainFromControl), and its SHAPE sets how
+    // the rail moves with Intensity: a loop settles where the limiter's
+    // compression cancels the excess loop gain, so a hard ceiling holds the
+    // rail flat whatever the gain, and a soft approach lets it climb. The
+    // reference's runaway tail (probe_feedback, RMS from 3 s) climbs 3.3 dB
+    // from 0.8 to 1.0: -25.9 / -23.2 / -22.6 dBFS at 0.8 / 0.9 / 1.0. The
+    // former hard knee (0.200 into 0.294) gave -25.5 / -24.0 / -23.8, flat
+    // within 1.7 dB. Knee and ceiling swept on a lab copy of the DSP that
+    // reproduced the plug-in's tails to 0.1 dB:
+    //     knee 0.20, ceiling 0.40  ->  -25.1 / -23.1 / -22.7
+    //     knee 0.15, ceiling 0.40  ->  -25.4 / -23.3 / -22.9
+    //     knee 0.10, ceiling 0.45  ->  -25.5 / -23.3 / -22.8   <- chosen
+    //     knee 0.08, ceiling 0.42  ->  -25.8 / -23.6 / -23.1
+    // (worst error 0.4 dB, was 1.2).
+    static constexpr float kLoopLimitKnee    = 0.10f;
+    static constexpr float kLoopLimitCeiling = 0.45f;
 
     // Loop gain per repeat against Intensity, MEASURED against the reference:
     // head 1, Repeat Rate 0.5, new tape, energy in the 1 kHz third octave.
@@ -500,7 +508,7 @@ private:
     // ours by up to 10.7 dB and sat it on its own rail from the first repeat,
     // so our runaway started where the reference's ends. Its loop blend was
     // also 0.6 dB per repeat hot at 0.75. The runaway's level and density come
-    // from the loop instead: kLoopCeiling and the noise bed circulating with
+    // from the loop instead: loopLimit and the noise bed circulating with
     // the signal (see the loop tap in processBlock).
     static constexpr int kFeedbackLawKnots = 15;
     static constexpr float kFeedbackLawX[kFeedbackLawKnots] =
