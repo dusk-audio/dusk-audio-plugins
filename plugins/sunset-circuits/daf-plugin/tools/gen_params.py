@@ -10,6 +10,7 @@ import argparse
 import io
 import math
 import os
+import struct
 import sys
 
 L, LOG, I, B = "LIN", "LOG", "INT", "BOOL"
@@ -179,9 +180,26 @@ def sus48(x):
 # slowing as they neared it, so above a sustain of zero a decay time meant
 # something else. dec48(d, s) gives the decay time whose line follows the old
 # curve most closely in dB (least squares over the part more than 0.3 dB above
-# the sustain level, golden-section search on a log scale, 10 s at most); with
-# sustain 0 the two are the same.
+# the sustain level, between d/2 and min(10 s, 40 d)); with sustain 0 the two
+# are the same.
+#
+# The minimum is solved exactly, not searched for. The line max(sdb, -60 t u),
+# u = 1/time, is linear in u while the same points sit above the floor, so the
+# error is a quadratic in u on each stretch between two points' kinks and its
+# minimum there is closed-form; the smallest of those is the answer. The
+# golden-section search this replaced had two faults. It ended on comparisons
+# of a flat error that rounding decides, so its last ~9 digits followed the
+# platform's libm and the Python version (3.12 changed sum() to compensated
+# summation), and the header came out different on macOS and Linux. And with a
+# kink at every point the error has more than one minimum, so it could stop on
+# a local one: the default (2.224 s, best fit 2.209 s) and Brass Machine's
+# Op 2 Decay (1.645 s, best fit 1.635 s). Both land on the same step of the
+# envelope's time grid either way, so no sound changed. Here a last-bit
+# difference in libm moves the answer by a few ulps, far below the float32 the
+# header stores. Plain running sums, not sum(), for the same reason.
 def dec48(d, s):
+    if not 0.0 < d <= 10.0:
+        sys.exit(f"gen_params: dec48 converts the old decay times (at most 10 s), not {d}")
     s = round(s * 63.0) / 63.0
     if s <= 0.0:
         return d
@@ -192,18 +210,29 @@ def dec48(d, s):
         o = 20.0 * math.log10(s + (1.0 - s) * math.exp(-6.90775528 * t / d))
         if o > sdb + 0.3:
             pts.append((t, o))
-    def err(lg):
-        dn = math.exp(lg)
-        return sum((max(sdb, -60.0 * t / dn) - o) ** 2 for t, o in pts)
-    a, b = math.log(d * 0.5), math.log(min(10.0, d * 40.0))
-    g = (math.sqrt(5.0) - 1.0) / 2.0
-    for _ in range(80):
-        c, e = b - g * (b - a), a + g * (b - a)
-        if err(c) < err(e):
-            b = e
-        else:
-            a = c
-    return min(10.0, math.exp((a + b) / 2.0))
+    n = len(pts)
+    c = -sdb / 60.0                     # a point is on the line while t u < c
+    u_lo, u_hi = 1.0 / min(10.0, d * 40.0), 2.0 / d
+    # floor[k]: the error of points k.. sitting on the sustain level
+    floor = [0.0] * (n + 1)
+    for i in range(n - 1, -1, -1):
+        floor[i] = floor[i + 1] + (sdb - pts[i][1]) ** 2
+    best_e, best_u = math.inf, u_lo
+    stt = sto = soo = 0.0
+    for k in range(1, n + 1):           # points 0..k-1 on the line
+        t, o = pts[k - 1]
+        stt += t * t
+        sto += t * o
+        soo += o * o
+        lo = max(u_lo, c / pts[k][0] if k < n else 0.0)
+        hi = min(u_hi, c / t if t > 0.0 else math.inf)
+        if lo > hi:
+            continue
+        u = min(max(-sto / (60.0 * stt) if stt > 0.0 else lo, lo), hi)
+        e = 3600.0 * stt * u * u + 120.0 * sto * u + soo + floor[k]
+        if e < best_e:
+            best_e, best_u = e, u
+    return min(10.0, 1.0 / best_u)
 # Key Scale follows the DX27/DX100's key level scaling (FMEngine.hpp, updateGain):
 # |Key Scale| x 5.96 dB of attenuation at middle C, doubling every octave up
 # (mirrored toward the low keys for a positive Key Scale). Until 2026-11 it
@@ -655,12 +684,24 @@ for _nm, _by in PRESET_AUTHORS.items():
         sys.exit(f"gen_params: author for {_nm!r} must be non-empty, without quotes "
                  "or backslashes (it is emitted as a C string literal)")
 
+def f32(v):
+    """v rounded to the nearest float32, the value the C++ compiler stores."""
+    return struct.unpack("<f", struct.pack("<f", float(v)))[0]
+
 def fl(v):
-    """Format a number as a valid C++ float literal (always has a decimal)."""
-    f = float(v)
+    """Format a number as a C++ float literal: the shortest decimal that is the
+    same float32 (always has a decimal point or an exponent). Printing the
+    double instead carried digits the float cannot hold, and the helpers above
+    compute some values through libm, whose last bit differs between platforms:
+    the same float printed differently on macOS and Linux and --check failed."""
+    f = f32(v)
     if f == int(f):
         return f"{int(f)}.0f"
-    return f"{f!r}f"
+    for digits in range(1, 10):          # 9 significant digits always round-trip
+        s = f"{f:.{digits}g}"
+        if f32(s) == f:
+            return f"{s}f"
+    raise AssertionError(f"no 9-digit form of {f!r}")
 
 out = io.StringIO()
 w = out.write
