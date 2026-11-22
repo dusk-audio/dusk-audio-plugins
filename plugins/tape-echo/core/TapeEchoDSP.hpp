@@ -796,7 +796,7 @@ private:
     float     lastBandwidthAge = -1.0f;      // updateTapeBandwidth guards
     float     lastBandwidthDelayMs = -1.0f;
     uint32_t  lastClearRequest = 0u;
-    float     spliceSamplesToHead1 = 0.0f;
+    double    spliceLoopPosition = 0.0; // tape travel since the last head-1 splice, in loop lengths
     bool      spliceClockStarted = false;
 
     float ageRand() noexcept

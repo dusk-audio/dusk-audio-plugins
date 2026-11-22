@@ -145,6 +145,21 @@ namespace
 
     constexpr float kTwoPi = 6.28318530717958647692f;
 
+    // Tape loop and splice placement, measured on the reference (a steady tone,
+    // splice dips found on its envelope, two fresh instances per speed giving
+    // identical times to 10 ms, so its tape position is deterministic). Loop
+    // period against the head-1 delay T1 (seconds):
+    //     P = 135.321 * (T1 - 0.532 ms)
+    //     Repeat Rate 1.0 / 0.727 / 0.5: 9.2326 / 13.4540 / 17.8850 s measured,
+    //     the law within 1.3 ms of each.
+    // The first head-1 splice after the instance starts (renderer pre-roll
+    // included) falls 1.0306 loops in at every speed (1.0311 / 1.0302 /
+    // 1.0305), i.e. the tape starts 0.0306 of a loop before a splice: the
+    // position tracks tape travel, not time.
+    constexpr double kSpliceLoopPerDelay      = 135.321;
+    constexpr double kSpliceDelayOffsetSeconds = 0.000532;
+    constexpr double kSpliceStartPosition     = 1.0 - 0.0306;
+
     // clap-validator exercises fractional sample rates down to 1 kHz. Keep
     // every bilinear-transform design safely below Nyquist; this is a no-op
     // throughout the plug-in's normal supported audio-rate range.
@@ -1372,10 +1387,8 @@ void TapeEchoDSP::reset()
     meterPeak = 0.0f;
     recordVu.store(0.0f, std::memory_order_relaxed);
     recordPeak.store(0.0f, std::memory_order_relaxed);
-    // Initial cartridge position is deterministic. Hosted captures place the
-    // first head-1 splice at about 7.0 s over most of the motor range and
-    // 9.1 s at the extreme fast end (after renderer pre-roll).
-    spliceSamplesToHead1 = 7.58f * (float)fs;
+    // Initial cartridge position is deterministic (see kSpliceStartPosition).
+    spliceLoopPosition = kSpliceStartPosition;
     spliceClockStarted = false;
     lastClearRequest =
         pClearRequest.load(std::memory_order_relaxed);
@@ -1486,10 +1499,7 @@ void TapeEchoDSP::refreshBlockRateControls()
     const float rate = pRepeatRate.load(std::memory_order_relaxed);
     if (!spliceClockStarted)
     {
-        const float initialSpliceSeconds =
-            7.58f + 2.07f * std::pow(rate, 6.0f);
-        spliceSamplesToHead1 =
-            initialSpliceSeconds * (float)fs;
+        spliceLoopPosition = kSpliceStartPosition;
         spliceClockStarted = true;
     }
     const float tMs  = delayMsForRepeatRate(rate);
@@ -1921,10 +1931,20 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             // ahead of the tape loop. Heads that are off are not evaluated.
             // Three playback heads off the shared tape.
             // The joined ends of the physical tape create a recurring dropout.
-            // Its loop period is 9.23 s at the fastest motor setting and scales
-            // inversely with tape speed. A narrow join is followed by a broader
-            // loss region; age determines how audible both become.
+            // The splice rides on tape travel: its loop period follows the
+            // motor (kSpliceLoopPerDelay), so a speed change moves the next
+            // splice the way the tape would. A narrow join is followed by a
+            // broader loss region; age determines how audible both become.
             const float speedScale = nominalMs / kMinDelayMs;
+            const double loopPeriodSamples = kSpliceLoopPerDelay
+                * ((double)nominalT1 - kSpliceDelayOffsetSeconds * fs);
+            const float spliceTailSamples = 0.8f * speedScale * (float)fs;
+            // Signed distance to head 1's splice, in samples: negative for the
+            // tail after it, positive while approaching the next one.
+            const double sinceSplice = spliceLoopPosition * loopPeriodSamples;
+            const float spliceSamplesToHead1 = sinceSplice <= (double)spliceTailSamples
+                ? (float)-sinceSplice
+                : (float)((1.0 - spliceLoopPosition) * loopPeriodSamples);
             float spliceDepthDb;
             if (age <= 0.5f)
                 spliceDepthDb = 1.58f + 4.60f * age;
@@ -1972,15 +1992,9 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                 : spliceGain(spliceSamplesToHead1 + (d2 - d1));
             const float splice3 = std::abs(g3) < kHeadIdleFloor ? 1.0f
                 : spliceGain(spliceSamplesToHead1 + (d3 - d1));
-            spliceSamplesToHead1 -= 1.0f;
-            const float spliceTailSamples =
-                0.8f * speedScale * (float)fs;
-            if (spliceSamplesToHead1 < -spliceTailSamples)
-            {
-                const float loopPeriodSamples =
-                    9.23f * speedScale * (float)fs;
-                spliceSamplesToHead1 += loopPeriodSamples;
-            }
+            spliceLoopPosition += 1.0 / loopPeriodSamples;
+            if (spliceLoopPosition >= 1.0)
+                spliceLoopPosition -= 1.0;
             x.splice1[i] = splice1;
             x.splice2[i] = splice2;
             x.splice3[i] = splice3;
