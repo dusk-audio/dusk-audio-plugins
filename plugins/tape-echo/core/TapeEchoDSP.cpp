@@ -56,7 +56,7 @@ namespace
     // derivation and the measured sweep are at the setTarget site in
     // refreshBlockRateControls(); this lives here so prepare() can snap the
     // smoother to the initial mode without duplicating the table.
-    constexpr float kLoopHeadNorm[4] = { 1.0f, 1.0f, 1.0f, 0.972f };
+    constexpr float kLoopHeadNorm[4] = { 1.0f, 1.0f, 0.983f, 0.972f };
 
     constexpr float loopHeadNormForMode(const ModeConfig& m) noexcept
     {
@@ -1293,9 +1293,7 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     memoOutputVolume = outputVolumeSmoother.value();
     memoOutputGain = std::pow(10.0f, 2.0f * memoOutputVolume - 1.0f);
     memoIntensity = intensitySmoother.value();
-    memoFeedbackCurve = feedbackKneeControl(memoIntensity);
     memoFbGain = feedbackGainFromControl(memoIntensity);
-    memoLoopReadBlend = feedbackReadLoopBlend(memoFeedbackCurve);
     lastBandwidthAge = -1.0f; // force the tape bandwidth design
     updateTapeBandwidth(ageSmoother.value(),
         delayMsForRepeatRate(pRepeatRate.load(std::memory_order_relaxed)));
@@ -1409,16 +1407,21 @@ void TapeEchoDSP::refreshBlockRateControls()
         // and regenerate; ours climbed 11 dB off the trough where the reference
         // climbed 6. Accumulation, not level and not tone.
         //
-        // Applied to the LOOP FEED ONLY -- amplifiedHeadSum still reaches the
+        // Applied to the LOOP FEED ONLY -- the head sum still reaches the
         // echo output at full strength, so nothing here changes the calibrated
         // multi-head output loudness. Entries 0 and 1 are exactly 1.0f, which
         // keeps every single-head and reverb-only state BIT-IDENTICAL and so
         // preserves the calibrated repeat ladder and the fb <= 0.5 anchors.
         //
-        // Coefficients are per head count because the correction is NOT a single
-        // exponent: two-head states already matched (Runaway Drone +0.09 dB,
-        // Multi-Head Bounce +0.16 dB) and only degrade when scaled, while the
-        // three-head state needed roughly a halving. An earlier pass swept one
+        // Coefficients are per head count. Both multi-head values are MEASURED
+        // head by head (below), against the single-head loop measured right.
+        // Two heads (modes 4, 8, 9, 10 all agree): the reference scales the
+        // first head's loop by -2.92 / -2.94 dB against head 1 alone, ours read
+        // -2.77 / -2.78, so 10^(-0.15 / 20) = 0.983. Left at 1.0 (an earlier
+        // sweep against level gates under the old, short law) it ran a two-head
+        // comb mode near 250 Hz 0.3 dB per repeat hot at Intensity 0.6, and once
+        // the noise bed circulated that mode self-oscillated (+12 dB at 250 Hz
+        // in "Two Fat Heads"). An earlier pass swept one
         // shared pow(activeHeads, -alpha) and read the MEAN OF ABSOLUTE deltas,
         // which hid a sign flip and made an 11 dB lever look inert -- always
         // read signed per-stimulus deltas when calibrating this.
@@ -1723,12 +1726,8 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             if (intensity != memoIntensity)
             {
                 memoIntensity = intensity;
-                memoFeedbackCurve = feedbackKneeControl(intensity);
                 memoFbGain = feedbackGainFromControl(memoIntensity);
-                memoLoopReadBlend = feedbackReadLoopBlend(memoFeedbackCurve);
             }
-            x.loopReadBlend[i] = memoLoopReadBlend;
-            const float feedbackCurve = memoFeedbackCurve;
             const float fbGain = memoFbGain;
             const float revSend   = reverbSendSmoother.next();
             // Level controls use measured analog-style tapers. The effect-volume
@@ -1956,7 +1955,6 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             x.dryMixGain[i] = dryMixGain;
             x.echoLvl[i] = echoLvl;
             x.fbGain[i] = fbGain;
-            x.feedbackCurve[i] = feedbackCurve;
             x.g1[i] = g1;
             x.g2[i] = g2;
             x.g3[i] = g3;
@@ -1993,7 +1991,6 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             const float d3 = x.d3[i];
             const float drivenInput = x.drivenInput[i];
             const float fbGain = x.fbGain[i];
-            const float feedbackCurve = x.feedbackCurve[i];
             const float g1 = x.g1[i];
             const float g2 = x.g2[i];
             const float g3 = x.g3[i];
@@ -2022,14 +2019,21 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             const float h3 = std::abs(g3) < kHeadIdleFloor ? 0.0f
                            : readTape(ch.tape, d3) * splice3;
             const float headSum = (h1 * g1 + h2 * g2 + h3 * g3) * wobble;
-            const float amplifiedHeadSum =
-                feedbackReadAmplifier(headSum, feedbackCurve);
-            const float loopReadBlend = x.loopReadBlend[i];
+            // The repro noise bed (hum, bed, hiss) is the playback head's own
+            // output, so it circulates with the signal: it enters the loop here
+            // as well as the echo output below. Measured against the reference,
+            // whose loop self-starts from its own floor: from silence, our loop
+            // now grows at the reference's rate period by period, and its
+            // runaway fills in between repeats (tail crest at Intensity
+            // 0.8 / 0.9 / 1.0: 10.5 / 7.9 / 5.9 dB without it, 5.7 / 3.1 / 3.0
+            // with it, reference 3.1 / 1.0 / 0.4). With Intensity at minimum
+            // fbGain is exactly 0, so the feedback-off output is unchanged.
+            const float headNoise = reproNoiseGate * reproAgeNoise;
             // Multi-head loop-gain correction, loop path only. Advanced once per
             // sample alongside headGain above so the two track each other through a
             // mode change. See refreshBlockRateControls() for the derivation.
             const float loopHeadSum = loopHeadNormSmoother.next()
-                * (headSum + loopReadBlend * (amplifiedHeadSum - headSum));
+                * (headSum + headNoise);
 
             // Record chain: program + feedback -> head EQ -> magnetic
             // saturation -> tape. Everything here is inside the loop, so
@@ -2270,8 +2274,7 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             // Echo output path only: the out-of-loop ceiling, then the
             // bass/treble shelves (dry and reverb are unaffected, matching the
             // hardware layout).
-            float echoWet = ch.outputCeilingLP.process(amplifiedHeadSum)
-                          + reproNoiseGate * reproAgeNoise;
+            float echoWet = ch.outputCeilingLP.process(headSum) + headNoise;
             if (bassShelfActive)
                 echoWet = ch.bassShelf.process(echoWet);
             if (trebleShelfActive)

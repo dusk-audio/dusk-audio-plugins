@@ -605,218 +605,88 @@ private:
     // raised to 0.2620 and then 0.3000 to clear those, it still broke the
     // factory octave-band gate (2.81 and 2.68 dB against a 2.50 limit, from a
     // 2.13 baseline) because sustained tones in the factory presets reach that
-    // flux too. The cost of this placement instead is crest: the loop clip
-    // sits ahead of the playback roll-off, so a slammed loop reads back at
-    // 2.3-2.6 dB crest against the reference's 0.35-0.77. Closing that means
-    // reshaping the record stage's peak factor, which re-opens the
-    // already-matched harmonic calibration and is its own campaign.
+    // flux too.
+    //
+    // This ceiling is now the runaway's only rail (the read amplifier that
+    // used to sit on the echo output is gone, see feedbackGainFromControl).
+    // Its peak level matches the reference's within about 1 dB at 0.8-1.0,
+    // but it is hard: the reference's rail climbs about 3 dB from 0.8 to 1.0
+    // where ours stays flat. Open.
     static constexpr float kLoopCeilingKnee = 0.2000f;
     static constexpr float kLoopCeiling     = 0.2940f;
 
-    // The hosted feedback pot has a pronounced dead-band immediately before
-    // regeneration. Installed states at 0.640 and 0.669 match our former
-    // 0.624 and 0.630 behavior, while the hosted 0.700 anchor genuinely jumps
-    // to our 0.700 runaway onset. Shape only that narrow interval; <= 0.62
-    // and >= 0.70 remain identity, preserving the calibrated repeat ladder
-    // and runaway anchors.
+    // Loop gain per repeat against Intensity, MEASURED against the reference:
+    // head 1, Repeat Rate 0.5, new tape, energy in the 1 kHz third octave.
+    //   0.40-0.72  impulse, median of the packet-to-packet steps 2-6
+    //   0.75-0.95  growth of the loop's own noise from silence (the
+    //              reference self-starts there, so an impulse lands in an
+    //              oscillation that is already running)
+    // The reference, dB per repeat:
+    //   0.40 -10.50  0.50 -6.05  0.60 -2.45  0.65 -0.90  0.68 -0.04
+    //   0.70  +0.49  0.72 +0.98  0.75 +1.94  0.80 +3.06  0.85 +3.99
+    //   0.90  +5.28  0.95 +5.84
+    // Read at 1 kHz on purpose: the tape bandwidth law (kTapeBandwidth in the
+    // .cpp) owns the loop's shape re 1 kHz, so the level is fitted where that
+    // shape is pinned. A wider band (500 Hz-4 kHz) is dominated by the loop's
+    // strongest region and folds the bandwidth law's 2-4 kHz residual into
+    // the level, which ran the low and mid repeats hot.
+    // The law is the cubic below corrected in dB by kFeedbackLawDb, iterated
+    // through the full DSP until every knot read within 0.03 dB of the
+    // reference. Below 0.40 the reference's repeats reach the render floor in
+    // two or three steps; the one clean step at 0.30 sits on the same offset,
+    // so the correction is held at its 0.40 value. At 1.00 the reference is
+    // already oscillating when the render starts and no growth is readable;
+    // that knot continues the 0.90-0.95 slope.
     //
-    // This curve now drives ONLY the read amplifier and its loop blend. The
-    // loop GAIN is driven from the raw Intensity (feedbackGainFromControl):
-    // measured repeat by repeat, the reference's loop gain has no dead band
-    // (-2.84 / -1.30 / -0.44 / +0.09 dB per repeat at 0.60 / 0.65 / 0.68 /
-    // 0.70), so the "dead band" those installed states showed was our loop
-    // running 0.4-0.5 dB per repeat short, not the pot.
-    static float feedbackKneeControl(float x) noexcept
-    {
-        if (x <= 0.62f || x >= 0.70f)
-            return x;
-        if (x <= 0.67f)
-        {
-            const float t = (x - 0.62f) / 0.05f;
-            const float smooth = t * t * (3.0f - 2.0f * t);
-            return 0.62f + 0.01f * smooth;
-        }
-        const float t = (x - 0.67f) / 0.03f;
-        const float smooth = t * t * (3.0f - 2.0f * t);
-        return 0.63f + 0.07f * smooth;
-    }
+    // This replaces a knee curve, a read amplifier and a runaway lift. Fresh
+    // renders falsified the read amplifier's premise ("the FIRST repeat rises
+    // about 2.6 dB at 0.7"): the reference's first echo is the same from 0.60
+    // to 0.85 (-33.1 dBFS peak, -68.0 dB band energy) while the amplifier lifted
+    // ours by up to 10.7 dB and sat it on its own rail from the first repeat,
+    // so our runaway started where the reference's ends. Its loop blend was
+    // also 0.6 dB per repeat hot at 0.75. The runaway's level and density come
+    // from the loop instead: kLoopCeiling and the noise bed circulating with
+    // the signal (see the loop tap in processBlock).
+    static constexpr int kFeedbackLawKnots = 15;
+    static constexpr float kFeedbackLawX[kFeedbackLawKnots] =
+        { 0.40f, 0.45f, 0.50f, 0.55f, 0.60f, 0.65f, 0.68f, 0.70f,
+          0.72f, 0.75f, 0.80f, 0.85f, 0.90f, 0.95f, 1.00f };
+    static constexpr float kFeedbackLawDb[kFeedbackLawKnots] =
+        { 0.7755f, 0.7663f, 0.7390f, 0.6897f, 0.6201f, 0.5487f, 0.4858f,
+          0.4531f, 0.3977f, 0.3464f, 0.1117f, -0.2505f, -0.2176f, -0.8297f,
+          -1.3880f };
+    // Fritsch-Carlson slopes (dB per unit Intensity): shape-preserving, so
+    // the correction never overshoots between knots. Zero at 0.40 to join
+    // the constant below C1.
+    static constexpr float kFeedbackLawSlope[kFeedbackLawKnots] =
+        { 0.0000f, -0.2758f, -0.7030f, -1.1543f, -1.4096f, -1.7266f,
+          -1.8240f, -2.0576f, -2.1491f, -2.4155f, -5.6960f, 0.0000f, 0.0000f,
+          -11.6791f, -10.6254f };
 
-    // Intensity also drives the playback/read amplifier. Hosted impulses prove
-    // this is not regeneration alone: the FIRST repeat rises about 2.6 dB at
-    // 0.7 and reaches the same fixed ceiling as the runaway tail by 0.8. A
-    // feedback-only multiplier cannot reproduce that observation because no
-    // returned signal exists before the first playback-head arrival.
-    //
-    // Keep the stage exactly transparent through 0.62 so the calibrated 0.5
-    // repeat ladder and every feedback-off transfer measurement are unchanged.
-    // Above it, the measured gain enters a read-amplifier rail at 0.240. Placing
-    // this ceiling after tape playback also closes the reference's very low
-    // runaway crest factor without clipping ordinary program material at the
-    // tape-write point.
-    static float feedbackReadAmplifier(float headSignal,
-                                       float intensity) noexcept
+    static float feedbackLawCorrectionDb(float x) noexcept
     {
-        if (intensity <= 0.62f)
-            return headSignal;
-
-        constexpr float kX[5] =
-            { 0.62f, 0.70f, 0.80f, 0.90f, 1.00f };
-        constexpr float kG[5] =
-            { 1.00f, 1.35f, 3.80f, 4.00f, 4.00f };
-        // At the onset point the hosted loop has a lower intermediate rail;
-        // it then jumps to the full runaway rail by 0.8. The 0.8 knee is very
-        // narrow (repeat peaks are fixed but the tail keeps ~2.6 dB crest),
-        // while 0.9 and above are fully compressed to sub-1 dB crest.
-        constexpr float kKnee[5] =
-            { 0.280f, 0.094f, 0.227f, 0.200f, 0.200f };
-        constexpr float kCeiling[5] =
-            { 0.300f, 0.096f, 0.235f, 0.240f, 0.240f };
-        int segment = 3;
-        if (intensity <= kX[1])
-            segment = 0;
-        else if (intensity <= kX[2])
-            segment = 1;
-        else if (intensity <= kX[3])
-            segment = 2;
-        const float t = (intensity - kX[segment])
-                      / (kX[segment + 1] - kX[segment]);
-        const float smooth = t * t * (3.0f - 2.0f * t);
-        const float gain = kG[segment]
-                         + (kG[segment + 1] - kG[segment]) * smooth;
-        const float knee = kKnee[segment]
-                         + (kKnee[segment + 1] - kKnee[segment]) * smooth;
-        const float ceiling = kCeiling[segment]
-                            + (kCeiling[segment + 1]
-                               - kCeiling[segment]) * smooth;
-        const float limited = hardKnee(gain * headSignal, knee, ceiling);
-        if (segment > 0)
-            return limited;
-        // Fade the limiter in across the onset window rather than switching it
-        // on at full strength. The gain/knee/ceiling interpolation alone is not
-        // enough: segment 0 opens at knee 0.280, which is BELOW the loudest
-        // reachable head sum (tape content is bounded near kLoopCeiling and the
-        // multi-head modes sum two reads), so crossing 0.62 stepped loud wet
-        // peaks down by 1-3 dB in one sample -- and this stage feeds the echo
-        // output directly, not just the loop. `smooth` is already the 0->1
-        // smoothstep over exactly 0.62..0.70, so reuse it: the result is
-        // identity at 0.62, fully limited from 0.70 up (runaway anchors
-        // untouched), and bit-identical at every level at or below the knee,
-        // where hardKnee is identity and the blend has nothing to move.
-        return headSignal + smooth * (limited - headSignal);
-    }
-
-    // Around the self-oscillation threshold the read amplifier bootstraps the
-    // record return, then falls out of that path as the main loop reaches its
-    // full rail. The blend is narrow and triangular so 0.8 never gets the
-    // overly dense, sub-1 dB crest of a permanently read-amplified feedback
-    // bus.
-    //
-    // PEAK 0.10, NOT 1.0 -- this is a measured anchor, do not raise it.
-    // The read amplifier applies 1.35x gain at intensity 0.70. Feeding that
-    // multiplier into the loop at full strength puts the loop over unity where
-    // the reference is still decaying: probe_feedback measured our 0.700 tail
-    // RMS at -35.19 dBFS against the reference's -56.80, i.e. +21.61 dB, while
-    // 0.000 / 0.250 / 0.500 / 0.800 / 0.900 / 1.000 all matched within 1 dB.
-    // An earlier campaign had 0.7 "holding unity +/-0.3 dB", so full-strength
-    // blending was a regression against an already-matched anchor, not a new
-    // behaviour. Swept against a fresh render at each step:
-    //     peak 0.00 -> -8.07 dB    0.05 -> -3.50    0.10 -> +0.93
-    //          0.15 -> +5.42       0.25 -> +13.06   1.00 -> +21.61
-    // 0.10 puts 0.700 on the same small positive bias the whole rest of the
-    // ladder carries (+0.92 at 0.800, +0.93 at 0.000/0.250).
-    //
-    // Note this scales ONLY the loop contribution. feedbackReadAmplifier still
-    // reaches the echo OUTPUT at full strength, so the measured ~2.6 dB rise of
-    // the first repeat at 0.7 -- the observation the stage exists for, and one
-    // no feedback-only multiplier can produce -- is preserved intact.
-    static float feedbackReadLoopBlend(float intensity) noexcept
-    {
-        if (intensity <= 0.62f || intensity >= 0.80f)
-            return 0.0f;
-        const float t = intensity <= 0.70f
-            ? (intensity - 0.62f) / 0.08f
-            : (0.80f - intensity) / 0.10f;
-        const float clamped = clamp01(t);
-        return 0.10f * clamped * clamped * (3.0f - 2.0f * clamped);
-    }
-
-    // Runaway shaping above the onset knee. The reference crosses unity loop
-    // gain near 0.7 and is fully slammed into its tape ceiling by 0.8, holding
-    // that ceiling to maximum. The measured taper below only grazes unity, so
-    // the loop equilibrated shallow and clean instead of dense and saturated.
-    // This multiplier is exactly 1.0 with zero slope at and below 0.62, so
-    // every calibration measured at or below feedback 0.5 - the whole repeat
-    // ladder and all harmonic gates - is bit-identical. Piecewise smoothstep
-    // between anchors, hence C1 continuous with no zipper for the 30 ms
-    // intensity smoother to chase.
-    static float feedbackRunawayLift(float x) noexcept
-    {
-        constexpr float kX[5] = { 0.62f, 0.70f, 0.80f, 0.90f, 1.00f };
-        // Regeneration has its own measured law. The threshold bootstrap above
-        // supplies the missing 0.7 return; 0.8 keeps the softer main loop that
-        // preserves the reference's 2.6 dB crest, then the rail grows denser.
-        constexpr float kL[5] = { 1.0f, 1.0225f, 1.4500f, 2.0500f, 2.7500f };
-        if (x <= kX[0])
-            return kL[0];
-        int i = 3;
-        if (x <= kX[1])      i = 0;
-        else if (x <= kX[2]) i = 1;
-        else if (x <= kX[3]) i = 2;
-        const float t = (x - kX[i]) / (kX[i + 1] - kX[i]);
-        const float smooth = t * t * (3.0f - 2.0f * t);
-        return kL[i] + (kL[i + 1] - kL[i]) * smooth;
+        if (x <= kFeedbackLawX[0])
+            return kFeedbackLawDb[0];
+        int i = 0;
+        while (i < kFeedbackLawKnots - 2 && x > kFeedbackLawX[i + 1])
+            ++i;
+        const float h = kFeedbackLawX[i + 1] - kFeedbackLawX[i];
+        const float t = (x - kFeedbackLawX[i]) / h;
+        const float t2 = t * t, t3 = t2 * t;
+        return (2.0f * t3 - 3.0f * t2 + 1.0f) * kFeedbackLawDb[i]
+             + (t3 - 2.0f * t2 + t) * h * kFeedbackLawSlope[i]
+             + (-2.0f * t3 + 3.0f * t2) * kFeedbackLawDb[i + 1]
+             + (t3 - t2) * h * kFeedbackLawSlope[i + 1];
     }
 
     static float feedbackGainFromControl(float x) noexcept
     {
         x = clamp01(x);
-        float normalized;
-        if (x <= 0.7f)
-        {
-            // Measured loop gain per repeat (head 1, Repeat Rate 0.5, new
-            // tape, impulse, median of repeats 2-6) against the reference at
-            // Intensity 0.40-0.68: the former cubic ran 0.36-0.57 dB short
-            // per repeat below the knee and 1.1-1.2 dB short at 0.65-0.68,
-            // where the knee curve held it flat. Short per repeat compounds:
-            // ten repeats at 0.5 ended 5 dB quiet, and the multi-head Full Wash
-            // state fell below unity loop gain where the reference runs away.
-            // The cubic is kept and corrected in dB by a smooth curve fitted
-            // to those readings (within 0.07 dB of each), held at its 0.40
-            // value below (0.30 and under are floor-limited) and pinned at 0.70
-            // to the start of the branch below, so the law stays continuous.
-            // Driven from the raw Intensity: the reference's gain rises
-            // smoothly through 0.62-0.70, with no dead band.
-            const float cubic = 0.00063492f * x
-                              + 0.95619048f * x * x
-                              + 0.96507937f * x * x * x;
-            const float u = std::max(x - 0.40f, 0.0f);
-            const float correctionDb = 0.589331f
-                + u * u * (-23.489727f + u * (201.436561f - 520.370029f * u));
-            normalized = cubic * std::pow(10.0f, correctionDb * (1.0f / 20.0f));
-        }
-        else
-        {
-            float loX, hiX, loGain, hiGain;
-            if (x <= 0.8f)
-            {
-                loX = 0.7f; hiX = 0.8f;
-                loGain = 0.77271764f; hiGain = 0.82074074f;
-            }
-            else if (x <= 0.9f)
-            {
-                loX = 0.8f; hiX = 0.9f;
-                loGain = 0.82074074f; hiGain = 0.85925926f;
-            }
-            else
-            {
-                loX = 0.9f; hiX = 1.0f;
-                loGain = 0.85925926f; hiGain = 0.88f;
-            }
-            const float t = (x - loX) / (hiX - loX);
-            const float smooth = t * t * (3.0f - 2.0f * t);
-            normalized = loGain + (hiGain - loGain) * smooth;
-        }
-        return 1.30f * normalized * feedbackRunawayLift(x);
+        const float cubic = 0.00063492f * x
+                          + 0.95619048f * x * x
+                          + 0.96507937f * x * x * x;
+        return 1.30f * cubic
+             * std::pow(10.0f, feedbackLawCorrectionDb(x) * (1.0f / 20.0f));
     }
 
     // Group delay of the 4x oversampling chain in base-rate samples
@@ -849,7 +719,6 @@ private:
         float dryMixGain[kSize];
         float echoLvl[kSize];
         float fbGain[kSize];
-        float feedbackCurve[kSize];
         float g1[kSize];
         float g2[kSize];
         float g3[kSize];
@@ -869,7 +738,6 @@ private:
         float echoWet[kSize];
         float rev[kSize];
         float recordEnvelopeNow[kSize];
-        float loopReadBlend[kSize];
         float preIn[kSize];
         float preOut[kSize];
         float postDriveGain[kSize];
@@ -878,9 +746,7 @@ private:
         float splice3[kSize];
     };
     float memoIntensity = 0.0f;
-    float memoFeedbackCurve = 0.0f;
     float memoFbGain = 0.0f;
-    float memoLoopReadBlend = 0.0f;
 
     // The spring is skipped while its send and every piece of its state have
     // decayed below kSpringIdleFloor (see processBlock).
