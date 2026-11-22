@@ -1327,7 +1327,6 @@ void TapeEchoDSP::reset()
     {
         std::fill(ch.tape.begin(), ch.tape.end(), 0.0f);
         ch.preampDC.reset();
-        ch.preamp.reset();
         ch.inputLowShelf.reset();
         ch.inputLowShape.reset();
         ch.loopLowShape.reset();
@@ -1617,8 +1616,6 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
     // reads what it writes, and it stays one pass in sample order.
     constexpr int kSubBlock = SubBlockScratch::kSize;
     SubBlockScratch x; // on the stack: ~19 KB, see the struct
-    static_assert(kSubBlock <= BlockPreamp4x::kMaxBlock,
-                  "the preamp processes at most kMaxBlock samples per call");
     for (int base = 0; base < numSamples; base += kSubBlock)
     {
         const int len = std::min(kSubBlock, numSamples - base);
