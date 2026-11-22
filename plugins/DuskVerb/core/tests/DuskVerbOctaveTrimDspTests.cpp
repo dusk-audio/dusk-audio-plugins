@@ -512,7 +512,11 @@ void testASwapBetweenTwoTrimsIsClean()
         checkf (swellDb <= 0.05, "%s: the level moves %.4f dB from the ideal in a 5 ms window", p.name, swellDb);
         checkf (equalPowerDb >= 1.0, "%s: an equal-power fade moves the level only %.2f dB, too little for the measure to see a swell",
                 p.name, equalPowerDb);
-        checkf (outside <= 0.05, "%s: mid-fade the level leaves the two trims' own by %.4f dB", p.name, outside);
+        // 0.1 dB: a linear crossfade of two trims that differ in phase dips a little under the
+        // lower of the two, by how much depends on what is playing. With Large Chamber's
+        // 2026-11-20 voicing the ideal crossfade itself reads 0.061 dB on "mixed -> flat" (0.05 dB
+        // was the limit while it read less), and the stage follows the ideal to 0.0000 dB above.
+        checkf (outside <= 0.1, "%s: mid-fade the level leaves the two trims' own by %.4f dB", p.name, outside);
     }
 }
 

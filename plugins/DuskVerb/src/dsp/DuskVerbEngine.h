@@ -339,6 +339,7 @@ public:
     // Per-pass HF-sustain compensation shelf (top-octave cliff / "muffle" fix) —
     // Dattorro + DenseHall; 0 dB = bit-null.
     void setTankHFSustain (float db, float cornerHz);
+    void setDenseHallAllpassModulation (bool input, bool loop);   // DenseHallReverb::setAllpassModulation; both on is the tank as it always was
     // Sustained-energy limiter (SustainBandLimiter.h). NOTE: despite the family name,
     // these setters configure the ENGINE-LEVEL wet-input duck (wetSusLim*), applied in
     // process() step 1b on the post-predelay wet feed BEFORE the ER/tank split — NOT a

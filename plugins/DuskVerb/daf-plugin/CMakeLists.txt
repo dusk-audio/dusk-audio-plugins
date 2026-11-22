@@ -181,7 +181,11 @@ enable_testing()
     add_executable(DuskVerbQuadTankOutputTest ../core/tests/QuadTankOutputTests.cpp ../src/dsp/QuadTank.cpp)
     target_include_directories(DuskVerbQuadTankOutputTest PRIVATE ../src/dsp ../../shared-daf/dsp)
     target_compile_features(DuskVerbQuadTankOutputTest PRIVATE cxx_std_17)
-    foreach(output_test IN ITEMS DuskVerbVelvetTailTest DuskVerbQuadTankOutputTest)
+    # The DenseHall tank's allpass modulation setting (the top-octave fix a DuskVerb 2 preset opts into).
+    add_executable(DuskVerbDenseHallAllpassTest ../core/tests/DenseHallAllpassModulationTests.cpp ../src/dsp/OctaveGEQDesign.cpp)
+    target_include_directories(DuskVerbDenseHallAllpassTest PRIVATE ../src/dsp ../../shared-daf/dsp)
+    target_compile_features(DuskVerbDenseHallAllpassTest PRIVATE cxx_std_17)
+    foreach(output_test IN ITEMS DuskVerbVelvetTailTest DuskVerbQuadTankOutputTest DuskVerbDenseHallAllpassTest)
         if(NOT MSVC)
             target_compile_options(${output_test} PRIVATE
                 $<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:-O3 -ffast-math>)
@@ -191,6 +195,7 @@ enable_testing()
         endif()
     endforeach()
     add_test(NAME DuskVerbQuadTankOutput COMMAND DuskVerbQuadTankOutputTest)
+    add_test(NAME DuskVerbDenseHallAllpass COMMAND DuskVerbDenseHallAllpassTest)
     add_test(NAME DuskVerbVelvetTail COMMAND DuskVerbVelvetTailTest)
 
     add_executable(DuskVerbCoreTest

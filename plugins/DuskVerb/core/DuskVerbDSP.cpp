@@ -130,6 +130,21 @@ DuskVerbDSP::DuskVerbDSP (const EarlyFieldConfig* earlyFieldOverride, const Octa
         else
             std::fprintf (stderr, "DuskVerb 2: DUSKVERB2_SPARSEERLP ignored, not 0 or 1000-20000 Hz: '%s'\n", env);
     }
+    // The engine patch's sparse early field shape, for every preset that loads:
+    // "onset ms,decay ms,late-burst gain,level", each below 0 to keep the shared row's.
+    if (const char* env = std::getenv ("DUSKVERB2_SPARSEERSHAPE"); env != nullptr && env[0] != '\0')
+    {
+        std::array<float, 4> v {};
+        if (detail::parseNumberList (env, v, -1.0, 200.0, true) && sparseERShapeValid (v))
+        {
+            sparseERShapeOverride_ = v;
+            hasSparseERShapeOverride_ = true;
+            std::fprintf (stderr, "DuskVerb 2: DUSKVERB2_SPARSEERSHAPE=%g,%g,%g,%g for every preset\n", static_cast<double> (v[0]),
+                          static_cast<double> (v[1]), static_cast<double> (v[2]), static_cast<double> (v[3]));
+        }
+        else
+            std::fprintf (stderr, "DuskVerb 2: DUSKVERB2_SPARSEERSHAPE ignored, not onset 0-60 ms, decay 10-200 ms, burst 0-4, level 0-2 (or below 0): '%s'\n", env);
+    }
     // The engine patch's dual slope, for every preset that loads: "ratio,gain".
     if (const char* env = std::getenv ("DUSKVERB2_DUALSLOPE"); env != nullptr && env[0] != '\0')
     {
@@ -160,6 +175,27 @@ DuskVerbDSP::DuskVerbDSP (const EarlyFieldConfig* earlyFieldOverride, const Octa
     // The shared density-jitter sweep hook, likewise.
     if (const char* env = std::getenv ("DUSKVERB_DENSJIT"); env != nullptr && env[0] != '\0')
         sharedDensityJitterHook_ = true;
+    // The engine patch's DenseHall allpasses without modulation, for every preset that loads.
+    if (const char* env = std::getenv ("DUSKVERB2_DHSTATIC"); env != nullptr && env[0] != '\0')
+    {
+        if (env[0] >= '0' && env[0] <= '2' && env[1] == '\0')
+        {
+            denseHallStaticOverride_ = env[0] - '0';
+            std::fprintf (stderr, "DuskVerb 2: DUSKVERB2_DHSTATIC=%d for every preset\n", denseHallStaticOverride_);
+        }
+        else
+            std::fprintf (stderr, "DuskVerb 2: DUSKVERB2_DHSTATIC ignored, not 0, 1 or 2: '%s'\n", env);
+    }
+    // The shared tank build-up and early tank duck sweep hooks, likewise.
+    if (const char* env = std::getenv ("DUSKVERB_BUILDUP"); env != nullptr && env[0] != '\0')
+        sharedBuildupHook_ = true;
+    if (const char* env = std::getenv ("DUSKVERB_TANKDUCK"); env != nullptr && env[0] != '\0')
+        sharedTankDuckHook_ = true;
+    // The shared sustain limiter sweep hooks, likewise.
+    if (const char* env = std::getenv ("DUSKVERB_SUSLIM_MID"); env != nullptr && env[0] != '\0')
+        sharedSustainLimitMidHook_ = true;
+    if (const char* env = std::getenv ("DUSKVERB_SUSLIM_LOW"); env != nullptr && env[0] != '\0')
+        sharedSustainLimitLowHook_ = true;
     // The shared FDN delay sweep hook, likewise.
     if (const char* env = std::getenv ("DUSKVERB_FDN_DELAYS"); env != nullptr && env[0] != '\0')
         sharedFdnDelaysHook_ = true;
@@ -211,7 +247,14 @@ DuskVerbDSP::DuskVerbDSP (const EarlyFieldConfig* earlyFieldOverride, const Octa
     // The engine patch's band width stage, for every preset that loads.
     if (const char* env = std::getenv ("DUSKVERB2_STEREOBANDS"); env != nullptr && env[0] != '\0')
     {
-        if (parseStereoBands (env, stereoBandsOverride_))
+        if (std::string_view (env) == "off")
+        {
+            // No stage for any preset, a row or not: the engine's own width bands play, as without a row.
+            stereoBandsOverride_ = StereoBands::kOff;
+            hasStereoBandsOverride_ = true;
+            std::fprintf (stderr, "DuskVerb 2: DUSKVERB2_STEREOBANDS off for every preset\n");
+        }
+        else if (parseStereoBands (env, stereoBandsOverride_))
         {
             hasStereoBandsOverride_ = true;
             std::fprintf (stderr, "DuskVerb 2: DUSKVERB2_STEREOBANDS for every preset: %s\n", env);
@@ -809,7 +852,7 @@ void DuskVerbDSP::applyEnginePatch (DuskVerbEngine& engine, const FactoryPreset*
     // Gain automation uses the same band centre and Q as prepare and preset recall.
     const bool sweptEq = resolvePteqFreqQ (preset ? preset->name : "", pteqBandFreq_, pteqBandQ_);
     if (preset && !sweptEq)
-        for (const auto& band : kPlateTrebleEq)
+        for (const auto& band : kTankTrebleEq)
             if (band.name == preset->name)
             {
                 pteqBandFreq_[3] = band.hz;
@@ -822,6 +865,38 @@ void DuskVerbDSP::applyEnginePatch (DuskVerbEngine& engine, const FactoryPreset*
     const bool side = preset != nullptr && pmbSideOverride_ >= 0 ? pmbSideOverride_ == 1 : patch.pmbDecorrelatedSide;
     engine.setPmbDecorrelatedSide (side);
     engine.setSparseERTone (preset != nullptr && sparseERLpOverride_ >= 0.0f ? sparseERLpOverride_ : patch.sparseERLowpassHz);
+    // Over what the shared config has just set for this preset, so nothing here outlives it.
+    const std::array<float, 4>& shape = preset != nullptr && hasSparseERShapeOverride_ ? sparseERShapeOverride_ : patch.sparseERShape;
+    if (shape[0] >= 0.0f)
+        engine.setSparseFieldOnsetMs (shape[0]);
+    if (shape[1] >= 0.0f)
+        engine.setSparseFieldDecayMs (shape[1]);
+    if (shape[2] >= 0.0f)
+        engine.setSparseFieldBurst2Gain (shape[2]);
+    if (shape[3] >= 0.0f)
+        engine.setSparseERGain (shape[3]);
+    // At level 0 the Dattorro composite has nothing left to add (its tank passes at unity), so it
+    // is switched off and the sparse field is not run: the same samples for less processing.
+    if (shape[3] == 0.0f)
+        engine.setDattorroEarlyField (false);
+    // The tank's onset over the shared row's. The time scale after the shared one only ever
+    // shortens the cascade here (a row asks for less than its shared row), which fits the buffers
+    // the shared call has just sized.
+    if (! sharedBuildupHook_)
+    {
+        if (patch.tankOnset[0] >= 0.0f)
+            engine.setBuildupAmount (patch.tankOnset[0]);
+        if (patch.tankOnset[1] >= 0.0f)
+            engine.setBuildupTimeScale (patch.tankOnset[1]);
+    }
+    if (patch.tankOnset[2] >= 0.0f && ! sharedTankDuckHook_)
+        engine.setEarlyTankDuck (patch.tankOnset[2], patch.tankOnset[3], patch.tankOnset[4]);
+    const int still = preset != nullptr && denseHallStaticOverride_ >= 0 ? denseHallStaticOverride_ : patch.denseHallStaticAllpasses;
+    engine.setDenseHallAllpassModulation (still < 1, still < 2);
+    if (const auto& m = patch.sustainLimitMid; m[0] >= 0.0f && ! sharedSustainLimitMidHook_)
+        engine.setSustainLimiterMid (m[0], m[1], m[2], m[3], m[4], m[5], m[6]);
+    if (const auto& l = patch.sustainLimitLow; l[0] >= 0.0f && ! sharedSustainLimitLowHook_)
+        engine.setSustainLimiterLow (l[0], l[1], l[2], l[3], l[4], l[5], l[6]);
     const std::array<float, 2>& dual = preset != nullptr && hasDualSlopeOverride_ ? dualSlopeOverride_ : patch.dualSlope;
     engine.setFDNDualSlope (dual[0], dual[1]);
     const std::array<float, 2>& rot = preset != nullptr && hasFbRotationOverride_ ? fbRotationOverride_ : patch.fbRotation;

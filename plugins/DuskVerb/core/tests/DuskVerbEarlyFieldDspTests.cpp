@@ -276,8 +276,10 @@ EarlyFieldConfig directField()
     return c;
 }
 
-// Energy (dB) of `x`'s left plus right, mid or side signal between lo and hi Hz: its DFT,
-// zero-padded to a power of two.
+// Energy (dB) of `x`'s left plus right, mid or side signal between lo and hi Hz: its DFT under a
+// Hann window, zero-padded to a power of two. Unwindowed, a strong tank mode beside a narrow band
+// leaked into it: the engine's side at 55-65 Hz read Mono Below's cut 1.2 dB short of the field's
+// once Large Chamber's low modes moved (2026-11-21), and 0.4 dB windowed.
 enum class Part { Both, Mid, Side };
 
 double bandDb (const Render& x, Part part, double lo, double hi)
@@ -286,7 +288,9 @@ double bandDb (const Render& x, Part part, double lo, double hi)
     while (n < x.l.size()) n <<= 1;
     const auto spectrum = [n] (const std::vector<double>& v) {
         std::vector<std::complex<double>> a (n);
-        std::copy (v.begin(), v.end(), a.begin());
+        const double span = static_cast<double> (std::max<size_t> (v.size(), 2) - 1);
+        for (size_t i = 0; i < v.size(); ++i)
+            a[i] = v[i] * (0.5 - 0.5 * std::cos (2.0 * kPi * static_cast<double> (i) / span));
         for (size_t i = 1, j = 0; i < n; ++i)
         {
             size_t bit = n >> 1;

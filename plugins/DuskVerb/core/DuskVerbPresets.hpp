@@ -130,7 +130,7 @@ struct PresetOverride
     float value;
 };
 
-inline constexpr std::array<PresetOverride, 66> kPresetOverrides {{
+inline constexpr std::array<PresetOverride, 72> kPresetOverrides {{
     // Paired with the engine patch's decorrelated side and band widths
     // (DuskVerbDv2Voicing.hpp): only the deep sub stays mono, as in the reference.
     { "Medium Drum Room", "mono_below", 40.0f },
@@ -152,8 +152,13 @@ inline constexpr std::array<PresetOverride, 66> kPresetOverrides {{
     { "Ambience", "edt_midhi_attack_db", 3.0f },
     { "Deep Blue Day", "tank_level", 1.0976f },
     { "Drum Plate", "er_boost", 1.33f },
-    { "Large Chamber", "tank_level", 0.85f },
+    { "Large Chamber", "tank_level", 1.0f },      // 0.85 left the tail 1 to 2 dB under the reference from 200 ms on
+    { "Large Chamber", "er_level", 0.0f },        // the engine's own early burst peaked 10 ms ahead of the reference's; the early field row places the taps
     { "Live Room", "predelay", 15.0f },
+    { "Live Room", "tank_level", 0.72f },         // at 1.0 the tail sat 3 to 5 dB over the reference from 200 ms on
+    { "Live Room", "width", 1.0f },               // the row's 1.5 widened every band; the band width stage sets the lows' and mids' own
+    { "Live Room", "hi_cut_shelf_db", -3.0f },    // the row's -10.9 dB took 6 dB off the tail at 16 kHz, where it was already short; not 0, which leaves Hi Cut with nothing to move
+    { "Live Room", "lo_cut", 10.0f },             // the reference passes the lows down to 10 Hz; at 20 Hz the noise burst read 4.8 dB quiet
     { "Medium Drum Room", "predelay", 8.1f },
     { "Reverse Taps", "edt_air_attack_db", 3.0f },
     { "Reverse Taps", "edt_lowmid_attack_db", 3.0f },
@@ -169,9 +174,18 @@ inline constexpr std::array<PresetOverride, 66> kPresetOverrides {{
     { "Small Drum Room", "edt_sub_attack_db", -3.0f },
     { "Small Drum Room", "edt_air_attack_db", 3.0f },
     { "Live Room", "edt_lowmid_attack_db", -3.0f },
-    { "Large Chamber", "lo_cut", 32.0f },
-    { "Small Drum Room", "hi_cut", 3555.3112f },
-    { "Small Drum Room", "width", 1.135f },
+    { "Large Chamber", "lo_cut", 28.0f },         // 32 Hz left 20 to 50 Hz 4 dB under the reference
+    // 6 kHz, not the 3.6 kHz the October screen picked: the shelf began inside the 4-8 kHz band and
+    // left the music 4.9 dB dull at 4-6 kHz against the reference, whose roll-off starts higher. The
+    // corner is the lever: a shallower shelf or a brighter early bus lifts 12-16 kHz, where the
+    // preset was already at or over the reference (its band limit in DuskVerbDv2Voicing.hpp now ends
+    // it at 15 kHz, as the reference ends).
+    { "Small Drum Room", "hi_cut", 6000.0f },
+    { "Small Drum Room", "width", 1.05f },     // 1.135 left the music's side/mid 2.6 dB over the reference with the 2026-11-20 trim
+    // Mid decay up by one lever step (tools repo lever_screen.py, 2026-11-20): with the hit on the early
+    // field the tank let go of 500 Hz-8 kHz 23-25 % early on sustained sound; this closes those decay
+    // gates and the tail envelope with them.
+    { "Small Drum Room", "mid_mult", 1.400689f },
     { "Vintage Gold Plate", "edt_midhi_attack_db", -5.9805f },
     { "Vintage Gold Plate", "hi_cut", 11298.3925f },
     { "Vintage Gold Plate", "hi_cut_shelf_db", -12.7646f },
@@ -192,7 +206,7 @@ inline constexpr std::array<PresetOverride, 66> kPresetOverrides {{
     { "Blade Runner 224", "gain_trim", 9.7f },         // row 7.67, -2.0
     { "79 Vocal Chamber", "gain_trim", 0.1f },         // row -2.99, -3.1
     { "Large Chamber", "gain_trim", 6.7f },            // row 3.21, -3.5
-    { "Small Drum Room", "gain_trim", 9.0f },          // row 12.19, +3.1
+    { "Small Drum Room", "gain_trim", 7.9f },          // row 12.19, +4.2: snare +0.5 LU, music -0.7 LU
     { "Medium Drum Room", "gain_trim", 14.1f },        // row 16.96, +2.8
     { "Live Room", "gain_trim", 1.0f },                // row 6.63, +5.6
     { "Ambience", "gain_trim", 4.1f },                 // row 2.95, -1.2

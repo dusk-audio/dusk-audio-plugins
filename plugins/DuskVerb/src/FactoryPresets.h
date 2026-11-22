@@ -1007,8 +1007,10 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // ═══════════ CHAMBERS ═══════════
         // ═══════════ ROOMS ═══════════
         // ── Small Drum Room (REF anchor) ───────────────────────────────────
-        // Engine: QuadTank. Anchor: REF "Small Drum Room" preset (Reverb
-        // Mode = Ambience, ModDepth = 100 %, HighCut low for dark room).
+        // Reference: REF "84 Small Room" (Hall1984 mode, 1980s colour, Size 0), since
+        // 2026-05-31 and in the tools repo's anchors/manifest.json. The v1 note below was
+        // written against REF "Small Drum Room" (Ambience mode, ModDepth 100 %, low HighCut),
+        // a different, darker preset that only shares this preset's name.
         //
         // v1 (2026-05-27): staged_tuner.py autonomous --category Rooms.
         // 1300 trials. Stage 1 1.28 / Stage 2 109.58 / Stage 3 60.02.

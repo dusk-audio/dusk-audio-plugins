@@ -127,6 +127,8 @@ namespace
             << "  --self-test-resampler         Check rate conversion is band-limited, then exit\n"
             << "  --benchmark-session WAV       Time stereo callbacks using a 48 kHz session (128-frame blocks)\n"
             << "  --list-params|--list-programs Inspect the hosted plugin\n"
+            << "  --print-params                After the program, preset and overrides are applied, print\n"
+            << "                                every parameter as: value 'NAME' NORMALIZED 'TEXT', and exit\n"
             << "  --dump-nparams               Dump normalized parameter values\n"
             << "  --param NAME=VALUE            Set a displayed parameter value\n"
             << "  --nparam NAME=VALUE           Set a normalized parameter value\n"
@@ -1227,6 +1229,7 @@ int main (int argc, char** argv)
     float        sixAPEarlyHighpassHz = -1.0f;
     float        sixAPEarlyMixOverride = -1.0f;  // -1 = no override
     bool         listParamsOnly   = false;
+    bool         printParamsOnly  = false;  // --print-params: the values a program (plus overrides) leaves
     bool         listProgramsOnly = false;
     // --print-params LIST: after the authoritative preset/state apply, print the
     // host-side value and display text of the named parameters. LIST is comma
@@ -1447,6 +1450,7 @@ int main (int argc, char** argv)
         }
         else if (a == "--param-text-sweep" && i + 1 < argc) textSweepSpecs.add (argv[++i]);
         else if (a == "--list-params")              listParamsOnly   = true;
+        else if (a == "--print-params")             printParamsOnly  = true;
         else if (a == "--list-programs")            listProgramsOnly = true;
         else if (a == "--self-test-resampler")      selfTestResampler = true;
         else if (a == "--dump-params")              dumpParams       = true;
@@ -2133,6 +2137,17 @@ int main (int argc, char** argv)
     // values are what the renderer hears.
     applyAnyPreset();
     applyParamOverrides();
+
+    if (printParamsOnly)
+    {
+        // What the selected program leaves, read back through the host as a DAW would see it.
+        std::cout.precision (9);
+        for (auto* p : plugin->getParameters())
+            std::cout << "value '" << p->getName (100) << "' " << p->getValue()
+                      << " '" << p->getCurrentValueAsText() << "'" << std::endl;
+        plugin->releaseResources();
+        return 0;
+    }
 
     // --wait-after-apply: a plugin that loads a resource on a background thread after a
     // program or state change (a sampled-IR reverb swapping its impulse) answers process()
