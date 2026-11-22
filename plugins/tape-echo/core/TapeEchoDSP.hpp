@@ -689,10 +689,11 @@ private:
              * std::pow(10.0f, feedbackLawCorrectionDb(x) * (1.0f / 20.0f));
     }
 
-    // Group delay of the 4x oversampling chain in base-rate samples
-    // (2x stage: 46 samples at 2x; 4x stage: 14 at 4x). Compensated in the
-    // tape delay so head timing stays exact.
-    static constexpr float kPreampLatencySamples = 23.0f + 3.5f;
+    // The clean spring feed's delay, in base-rate samples. It matched the
+    // group delay of the 4x preamp oversampler the record path used to have
+    // (23 + 3.5 samples) and the spring's measured timing includes it, so it
+    // stays: the spring is untouched by the record path's restructure.
+    static constexpr float kSpringFeedDelaySamples = 23.0f + 3.5f;
 
     float readTape(const std::vector<float>& buf, float delaySamples) const noexcept;
 
@@ -768,11 +769,16 @@ private:
         Biquad             inputLowShelf;   // program feed only
         Biquad             inputLowShape;   // program feed, ahead of the preamp
         Biquad             loopLowShape;    // regeneration feed
-        // High end, split where the reference splits it (see kTapeBandwidth
-        // in the .cpp): speed and condition set all three.
-        Biquad             speedLP;    // playback bandwidth, inside the loop
-        std::array<Biquad, 3> loopCeilingLP; // sixth-order ceiling, inside the loop
-        Biquad             outputCeilingLP;  // echo output, outside the loop
+        // High end, split where the reference splits it, and ahead of every
+        // saturating stage (see kTapeBandwidth in the .cpp). The program feed
+        // and the regeneration feed are band-limited separately so the preamp
+        // curve can act on the program alone: the same sections, the same
+        // coefficients, so the linear response is that of one shared chain.
+        Biquad             speedLP;    // playback bandwidth, regeneration feed
+        std::array<Biquad, 3> loopCeilingLP; // sixth-order ceiling, regeneration feed
+        Biquad             programSpeedLP;   // playback bandwidth, program feed
+        std::array<Biquad, 3> programCeilingLP; // sixth-order ceiling, program feed
+        Biquad             programOuterLP;   // program feed only: outside the loop
         Biquad             bassShelf;  // echo output path only
         Biquad             trebleShelf;
         Biquad             dryLowShelf;  // direct-path coupling/amp bandwidth

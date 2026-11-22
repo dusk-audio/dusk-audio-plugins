@@ -360,7 +360,22 @@ namespace
     // the smoothed value interpolates between rows), speed = kMinDelayMs/delay:
     //   in the loop:  low-pass  lpHz * speed^lpExp, Q lpQ        (playback)
     //                 6th-order Butterworth ceilingHz * speed^ceilingExp
-    //   outside it:   low-pass  outHz, Q outQ, on the echo output only
+    //   outside it:   low-pass  outHz, Q outQ, on the program feed only
+    //
+    // All of it sits AHEAD of the saturating stages (the preamp curve and the
+    // magnetic stage). The reference's third harmonic at -6 dBFS stays at
+    // -13.1 to -14.8 dBc from 500 Hz to 6 kHz -- an 18 kHz harmonic of a 6 kHz
+    // tone 15 dB under the fundamental, where its echo response is 40 dB
+    // down -- so its harmonics are made after its band-limiting, not before.
+    // Ours were made ahead of these sections (a 4x-oversampled preamp, then
+    // the magnetic stage ahead of the ceiling): -15.1 / -23.5 / -37.9 /
+    // -52.1 dBc at 3 / 4 / 5 / 6 kHz. The same order explains transients: the
+    // reference's first echo of a 0.9 impulse is 1.8 dB under its small-signal
+    // gain, ours was 6.7 dB under, because our preamp clipped the impulse's
+    // full peak where the reference saturates a band-limited, spread one.
+    // Band-limited first: -12.4 to -17.2 dBc across 500 Hz-6 kHz and the
+    // impulse curve -1.06 / -1.81 dB at 0.5 / 0.9 (reference -0.95 / -1.81),
+    // with the 1 kHz harmonic ladder within 0.1-1 dB of the former chain.
     // Fitted per state through the full DSP (first echo and per pass, third
     // octaves 635 Hz-12.8 kHz, re 1 kHz, bands at least 35 dB down and
     // repeatable pass-to-pass), restarted from the optimum to confirm it.
@@ -1123,10 +1138,14 @@ void TapeEchoDSP::updateTapeBandwidth(float age01, float delayMs) noexcept
     for (auto& ch : channels)
     {
         ch.speedLP.setCoeffs(playback);
+        ch.programSpeedLP.setCoeffs(playback);
         for (int i = 0; i < 3; ++i)
+        {
             ch.loopCeilingLP[(size_t)i].setCoeffs(ceiling[i]);
+            ch.programCeilingLP[(size_t)i].setCoeffs(ceiling[i]);
+        }
         if (ageMoved)
-            ch.outputCeilingLP.setCoeffs(output);
+            ch.programOuterLP.setCoeffs(output);
     }
 }
 
@@ -1315,7 +1334,10 @@ void TapeEchoDSP::reset()
         ch.speedLP.reset();
         for (auto& lp : ch.loopCeilingLP)
             lp.reset();
-        ch.outputCeilingLP.reset();
+        ch.programSpeedLP.reset();
+        for (auto& lp : ch.programCeilingLP)
+            lp.reset();
+        ch.programOuterLP.reset();
         ch.bassShelf.reset();
         ch.trebleShelf.reset();
         ch.dryLowShelf.reset();
@@ -1695,16 +1717,14 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             // their exact mechanical times (subtracting from T would scale the
             // compensation by the far-head ratios).
             const float t1 = nominalT1 * (1.0f + mod);
-            const float d1 = clampF(t1                 - kPreampLatencySamples, 4.0f, maxDelaySamples);
+            const float d1 = clampF(t1, 4.0f, maxDelaySamples);
             const float d2 = clampF(
                 t1 * kHeadRatio[1]
-                    + kHeadOffsetMs[1] * 0.001f * (float)fs
-                    - kPreampLatencySamples,
+                    + kHeadOffsetMs[1] * 0.001f * (float)fs,
                 4.0f, maxDelaySamples);
             const float d3 = clampF(
                 t1 * kHeadRatio[2]
-                    + kHeadOffsetMs[2] * 0.001f * (float)fs
-                    - kPreampLatencySamples,
+                    + kHeadOffsetMs[2] * 0.001f * (float)fs,
                 4.0f, maxDelaySamples);
 
             const float head1 = headGain[0].next();
@@ -1851,7 +1871,7 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             // dense-program level errors disagree. Only the preamp-latency
             // alignment below is kept, so the first arrival is unchanged.
             float cleanReadPos =
-                (float)ch.springCleanDelayWriteIdx - kPreampLatencySamples;
+                (float)ch.springCleanDelayWriteIdx - kSpringFeedDelaySamples;
             if (cleanReadPos < 0.0f)
                 cleanReadPos += (float)ch.springCleanDelay.size();
             const int cleanRead0 = (int)cleanReadPos;
@@ -1974,14 +1994,11 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
         }
         {
             Channel& ch = channels[0];
-            // FET preamp front-end, saturated at 4x to keep fold-back
-            // products out of the echo passband.
-            ch.preamp.process(x.preIn, x.preOut, len, [](float v) noexcept {
-                return preampShape(v * kInputStageDrive);
-            });
+            // Program feed at preamp drive, DC-blocked. The preamp's curve is
+            // applied in the tape loop below, after the feed is band-limited
+            // (see kTapeBandwidth): no oversampler, no latency.
             for (int i = 0; i < len; ++i)
-                x.pre[i] = ch.preampDC.process(x.preOut[i])
-                         * kInputStageTrim * x.postDriveGain[i];
+                x.pre[i] = ch.preampDC.process(x.preIn[i] * kInputStageDrive);
         }
         for (int i = 0; i < len; ++i)
         {
@@ -1996,6 +2013,7 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             const float g3 = x.g3[i];
             const float power = x.power[i];
             const float pre = x.pre[i];
+            const float postDriveGain = x.postDriveGain[i];
             const float reproAgeNoise = x.reproAgeNoise[i];
             const float reproNoiseGate = x.reproNoiseGate[i];
             const float wobble = x.wobble[i];
@@ -2131,8 +2149,19 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             const float fluxEnvelope =
                 recordEnvelopeNow + ch.loopEnvelope * kRecordDriveToInput;
 
-            float recorded = ch.speedLP.process(
-                pre + ch.loopLowShape.process(loopDrive));
+            // Band-limit both feeds with the same sections, then saturate:
+            // the preamp curve on the program alone, the magnetic stage below
+            // on the sum. Nothing filters after the saturation, so harmonics
+            // reach the echo as the reference's do; on the next pass round the
+            // loop the regeneration feed's sections filter them like any signal.
+            float programFeed = ch.programSpeedLP.process(ch.programOuterLP.process(pre));
+            for (auto& lp : ch.programCeilingLP)
+                programFeed = lp.process(programFeed);
+            float loopFeed = ch.speedLP.process(ch.loopLowShape.process(loopDrive));
+            for (auto& lp : ch.loopCeilingLP)
+                loopFeed = lp.process(loopFeed);
+            float recorded = preampShape(programFeed) * kInputStageTrim * postDriveGain
+                           + loopFeed;
             // The tape's low-level magnetisation curve is more strongly curved
             // than the record preamp, but its slope remains positive at overload.
             // This bounded cubic term raises the odd-harmonic ladder without
@@ -2267,14 +2296,11 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             // 10^0 = 1 exactly, and the multiply is skipped with the same bits.
             if (recordEnvelopeNow > 0.18f)
                 toTape *= std::pow(10.0f, magneticMakeupDb * (1.0f / 20.0f));
-            for (auto& lp : ch.loopCeilingLP)
-                toTape = lp.process(toTape);
             ch.tape[(size_t)writeIdx] = toTape;
 
-            // Echo output path only: the out-of-loop ceiling, then the
-            // bass/treble shelves (dry and reverb are unaffected, matching the
-            // hardware layout).
-            float echoWet = ch.outputCeilingLP.process(headSum) + headNoise;
+            // Echo output path only: bass/treble shelves (dry and reverb are
+            // unaffected, matching the hardware layout).
+            float echoWet = headSum + headNoise;
             if (bassShelfActive)
                 echoWet = ch.bassShelf.process(echoWet);
             if (trebleShelfActive)
