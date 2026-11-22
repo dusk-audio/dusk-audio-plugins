@@ -56,7 +56,7 @@ namespace
     // derivation and the measured sweep are at the setTarget site in
     // refreshBlockRateControls(); this lives here so prepare() can snap the
     // smoother to the initial mode without duplicating the table.
-    constexpr float kLoopHeadNorm[4] = { 1.0f, 1.0f, 1.0f, 0.93f };
+    constexpr float kLoopHeadNorm[4] = { 1.0f, 1.0f, 1.0f, 0.972f };
 
     constexpr float loopHeadNormForMode(const ModeConfig& m) noexcept
     {
@@ -1336,20 +1336,27 @@ void TapeEchoDSP::refreshBlockRateControls()
         // which hid a sign flip and made an 11 dB lever look inert -- always
         // read signed per-stimulus deltas when calibrating this.
         //
-        // The three-head value is a BIFURCATION, not a gain law: at feedback
-        // 0.616 the loop is either above or below unity and the state jumps
-        // between sustaining and decaying. Measured Full Wash noiseburst/snare
-        // against the reference, one rebuild and render per point:
-        //     1.00 -> +5.31 / +6.55      0.97 -> +4.34 / +3.82
-        //     0.95 -> +3.41 / +1.50      0.93 -> +2.11 / -0.72   <- chosen
-        //     0.90 -> -0.97 / -3.06      0.85 -> -4.34 / -4.95
-        //     0.80 -> -5.04 / -5.47      0.75 -> -5.18 / -5.63
-        // Below about 0.85 it saturates near -5 dB (the loop simply stops
-        // regenerating) and there is nothing further to gain. 0.93 straddles
-        // the two stimuli and takes factory_mean_abs_level_delta from
-        // 0.7402 to 0.4663 against a 0.65 limit. Do not chase a lower number
-        // by pushing past 0.90: that trades a positive error for a larger
-        // negative one and worsens the octave gates.
+        // The three-head value is MEASURED head by head, not swept. Impulse
+        // trains (10 impulses across the wow cycle, feedback 0.5, 500 Hz-4 kHz)
+        // through head 1 alone and through all three heads; the packets at T1,
+        // 2*T1 and 3*T1 stay separate from the other heads' arrivals, so the
+        // three-head mode's scale on head 1's OUTPUT (T1) and on its LOOP
+        // (2*T1 / T1, and again 3*T1 / 2*T1) read directly against head 1 alone.
+        // The reference: output -4.56 / -4.62 dB, loop -4.68..-4.75 dB, at
+        // Repeat Rate 0.5 / 0. Ours at 1.0 read output -4.50 and loop -4.46,
+        // so the loop needs 10^((-4.72 + 4.47) / 20) = 0.972.
+        //
+        // The former 0.93 was swept across the Full Wash bifurcation (feedback
+        // 0.616, the loop either sustains or decays) against the level gate,
+        // while the single-head loop itself still ran 0.4 dB per repeat short
+        // (see feedbackGainFromControl). With the loop gain measured right it
+        // left three-head tails decaying 4-6 dB/s faster than the reference.
+        //
+        // Even at the measured per-head scale, three-head tails decay 2-3 dB/s
+        // faster than the reference's (single-head and two-head tails agree):
+        // with every per-head gain matched, what is left is how coherently the
+        // three paths sum at the comb peaks -- sub-0.1 ms relative head timing
+        // and per-head phase -- not a scale. Do not close it with this number.
         //
         // SMOOTHED, not assigned: this shares headGain's 15 ms ramp. Stepping it
         // at the block boundary while headGain ramps would apply one mode's
