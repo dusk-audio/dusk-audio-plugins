@@ -112,8 +112,14 @@ public:
         resonanceAmount = r;
     }
 
+    // 0 = the plain four-pole low-pass; 1 = out of the signal path (each stage
+    // passes its input, the feedback is gone, the passband gain stays). Used by
+    // Prism's filter at the top of its range. See processOpen().
+    void setOpenness(float amount) noexcept { open = clampf(amount, 0.0f, 1.0f); }
+
     float process(float input) noexcept
     {
+        if (open > 0.0f) return processOpen(input);
         const float oneMinusG = 1.0f - G;
         const float G2 = G * G;
         const float G3 = G2 * G;
@@ -156,6 +162,54 @@ public:
     }
 
 private:
+    // process() with every stage's output blended toward its input by `open`:
+    // y' = y + open (x - y). For a TPT one-pole y = G x + (1 - G) s, so the
+    // blended stage is the same one-pole with G' = G + open (1 - G) on the
+    // unchanged state s, and the zero-delay feedback solve below is process()'s
+    // with G'. The state itself still advances with G, so sweeping `open` back
+    // to 0 lands on the plain filter without a jump. The resonance fades with
+    // (1 - open); at open = 1 the output is the input times the passband gain
+    // (preGain x outputGain), as an open filter's passband. Blending stage by
+    // stage keeps the dry and filtered signals close in phase (about 22 degrees
+    // per stage at 8 kHz with the cutoff at 20 kHz), so the sweep has no dip,
+    // which one dry/wet crossfade over the whole cascade (about 90 degrees
+    // apart there) would.
+    float processOpen(float input) noexcept
+    {
+        const float Gp = G + open * (1.0f - G);
+        const float oneMinusGp = 1.0f - Gp;
+        const float G2 = Gp * Gp;
+        const float G3 = G2 * Gp;
+        const float G4 = G2 * G2;
+        const float sigma = oneMinusGp
+            * (G3 * z[0] + G2 * z[1] + Gp * z[2] + z[3]);
+        const float fb = feedback * (1.0f - open);
+
+        float u = (input * preGain - fb * sigma) / (1.0f + fb * G4);
+        u = soft(u, inputDrive);
+
+        float x = u;
+        for (int i = 0; i < 4; ++i)
+        {
+            const float v = G * (x - z[i]);
+            float y = soft(z[i] + v, stageDrive);
+            z[i] = y + v;
+            if (isBad(z[i]))
+            {
+                z[i] = 0.0f;
+                y = 0.0f;
+            }
+            x = y + open * (x - y);
+        }
+
+        const float raw = (x + input * bassComp * resonanceAmount * (1.0f - open)) * outputGain;
+        const float out = raw - dcIn + dcCoeff * dcOut;
+        dcIn = raw;
+        dcOut = isBad(out) ? 0.0f : out;
+        if (isBad(dcIn)) dcIn = 0.0f;
+        return dcOut;
+    }
+
     static float soft(float x, float amount) noexcept
     {
         // Dividing by amount (not tanh(amount)) preserves unity small-signal
@@ -188,6 +242,7 @@ private:
     float stageDrive = 0.8f;
     float bassComp = 0.0f;
     float outputGain = 1.0f;
+    float open = 0.0f;            // setOpenness(); 0 runs process() unchanged
     float z[4] = {};
     float dcCoeff = 0.999f;
     float dcIn = 0.0f, dcOut = 0.0f;
@@ -221,6 +276,7 @@ public:
         hpf.setCutoff(hpCutoff);
         excite = selfOscillating && lpResonance > 0.9f;
     }
+    void setOpenness(float amount) noexcept { lpf.setOpenness(amount); }
     float process(float input) noexcept
     {
         const float excitation = excite ? noise.nextBipolar() * 1.0e-7f : 0.0f;
@@ -375,11 +431,26 @@ public:
         switch (mode)
         {
             case FilterMode::Cosmos:  cosmos.setParameters(cutoff, resonance, hpCutoff); break;
-            case FilterMode::Prism:   prism.setParameters(cutoff, resonance, hpCutoff); break;
+            case FilterMode::Prism:
+                prism.setParameters(cutoff, resonance, hpCutoff);
+                prism.setOpenness(prismOpenness(cutoff));
+                break;
             case FilterMode::Oracle:  oracle.setParameters(cutoff, resonance); break;
             case FilterMode::Mono:    mono.setParameters(cutoff, resonance); break;
             case FilterMode::Modular: ladder.setParameters(cutoff, resonance); break;
         }
+    }
+
+    // Prism's filter steps out of the signal path at the top of its range: the
+    // four-operator hardware Prism is modeled on has no filter and is flat to the
+    // top of the band (measured on chipsynth OPMZ: within 0.13 dB of middle C up
+    // to 8.4 kHz), where the four poles at the 20 kHz ceiling took 2.1 dB off
+    // 8.4 kHz. From a 16 kHz effective cutoff to 20 kHz (the knob's top) the
+    // filter eases out (TPTFourPole::processOpen); below 16 kHz it is untouched.
+    static float prismOpenness(float cutoffHz) noexcept
+    {
+        const float t = clampf((cutoffHz - 16000.0f) / 4000.0f, 0.0f, 1.0f);
+        return t * t * (3.0f - 2.0f * t);
     }
 
     float process(float input) noexcept
