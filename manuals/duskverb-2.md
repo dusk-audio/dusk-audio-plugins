@@ -1,8 +1,8 @@
 ---
 slug: duskverb-2
 title: DuskVerb 2
-version: 1.0.1
-last_updated: 2026-11-08
+version: 1.0.2
+last_updated: 2026-11-22
 tagline: Algorithmic reverb with 24 factory sounds
 ---
 
@@ -138,3 +138,10 @@ In version 1.0.1 the Nonlinear burst stopped getting longer at a Decay of
 783 ms played that 783 ms burst and now plays the Decay it shows; set Decay
 to 783 ms to get the old length back (when typing it, include the unit).
 Recorded Decay automation above 783 ms likewise now plays what it says.
+
+Version 1.0.2 retunes five factory presets: Vocal Plate, Vintage Vocal
+Plate, Medium Drum Room, Vocal Hall and Deep Blue Day. A project saved with
+1.0.1 on Vocal Plate, Vintage Vocal Plate or Medium Drum Room plays the
+retuned sound. A project on Vocal Hall or Deep Blue Day keeps the settings it
+saved and sounds as before; select the preset again to get the retuned
+version.
