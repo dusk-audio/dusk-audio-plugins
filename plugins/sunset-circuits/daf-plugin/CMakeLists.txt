@@ -118,7 +118,7 @@ dusk_daf_add_clap_preset_test(sunset-circuits)
 # menu's order, on the same host.
 #
 # MultiSynthRatioStep: Prism's operator RATIO knob steps through the classic FM
-# ratios and the DX ratio table, by drag and by wheel, on the same host.
+# ratios and the hardware's ratio table, by drag and by wheel, on the same host.
 if(NOT CMAKE_CROSSCOMPILING)
     enable_testing()
     foreach(_sc_test ValueField PresetStep RatioStep)

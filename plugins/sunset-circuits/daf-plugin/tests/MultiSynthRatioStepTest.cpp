@@ -2,10 +2,11 @@
 //
 // Prism's operator RATIO knob, on the production editor. A plain drag and the
 // mouse wheel step through one list: the classic FM ratios (0.25, 0.5, 0.75, 1,
-// 1.5, 2..16) together with the frequency-ratio table of the DX21/27/100 that
-// Prism is modelled on (coarse 0.5, 1..15 times the chip's DT2 offsets of 0,
-// +600, +781 and +950 cents), up to the knob's 16. Before, plain drag snapped to
-// the classic ratios only, so the DX's inharmonic ratios could only be typed.
+// 1.5, 2..16) together with the frequency-ratio table of the four-operator
+// hardware Prism is modelled on (coarse 0.5, 1..15 times the chip's DT2 offsets
+// of 0, +600, +781 and +950 cents), up to the knob's 16. Before, plain drag
+// snapped to the classic ratios only, so the hardware's inharmonic ratios could
+// only be typed.
 // One step is a fixed 5 px of drag, so the dense top of the list stays usable.
 #include "DafUI.hpp"   // the window-free host (shared-daf/ui/tests/daf-ui-test-host), first on the path
 #include "MultiSynthUI.cpp"
@@ -108,7 +109,8 @@ int main()
         guards(std::isnan(past) || near(past, 16.0f), "a drag past 16 stays at 16");
     }
 
-    // A longer drag takes one step per 5 px: four steps up from 1 is the DX's x1.73.
+    // A longer drag takes one step per 5 px: four steps up from 1 is the hardware's
+    // x1.73.
     {
         Host h(1240, 780, { { kParamMode, 4.0f }, { kParamOp1Ratio, 1.0f } });
         const float got = dragUp(h, 4.0f * kStepPx);

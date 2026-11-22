@@ -1091,12 +1091,12 @@ private:
 
     // Prism op-ratio step list, in ascending order: the classic FM ratios (0.25,
     // 0.5, 0.75, 1, 1.5, 2..16) together with the frequency-ratio table of the
-    // four-operator instruments Prism is modelled on (DX21/27/100): every coarse
-    // ratio 0.5, 1..15 times each of the chip's four DT2 offsets, 0, +600, +781
-    // and +950 cents, up to the knob's 16. 53 entries. The DX's own entries were
-    // measured on OPMZ within 0.5 cents of these nominal intervals (tools repo,
-    // opmz-parity/REVIEW.md, fix 9). Plain drag and the wheel step through the
-    // list; Shift-drag is continuous.
+    // four-operator instruments Prism is modelled on: every coarse ratio 0.5,
+    // 1..15 times each of the chip's four DT2 offsets, 0, +600, +781 and +950
+    // cents, up to the knob's 16. 53 entries. The hardware's own entries were
+    // measured on the reference within 0.5 cents of these nominal intervals
+    // (tools repo, Prism parity review, fix 9). Plain drag and the wheel step
+    // through the list; Shift-drag is continuous.
     static const float* ratioList(int& n)
     {
         static float L[64];
@@ -1125,7 +1125,8 @@ private:
       return best; }
     // Pixels of plain vertical drag per ratio step. 53 steps make the whole
     // range 265 px, against 166 px for the old continuous-then-snap drag, which
-    // left the top of the knob a pixel or two per step once the DX entries were in.
+    // left the top of the knob a pixel or two per step once the hardware ratios
+    // were in.
     static constexpr float kRatioStepPx = 5.0f;
 
     bool knobRatio(const char* id, uint32_t p, float cx, float cy, float r, bool ticks = true)

@@ -139,10 +139,10 @@ for n in range(8): add(f"ModAmt{n}",f"modAmt{n}",f"Mod {n+1} Amount",-1,1,0,L)
 # --- Prism (4-op FM) ---
 add("PrismAlgo","prismAlgo","Prism Algorithm",0,7,4,I)
 add("PrismFB","prismFB","Prism Feedback",0,1,0,L)
-# Prism operator levels follow the DX27/DX100 output-level law: 0.75 dB per
-# 1/99 of the range, 74.25 dB in all, and a full-level modulator reaches four
-# turns of phase deviation (FMEngine.hpp, updateGain). Until 2026-11 levels
-# followed a 48 dB law with eight turns at full. A level written for that
+# Prism operator levels follow the four-operator hardware's output-level law:
+# 0.75 dB per 1/99 of the range, 74.25 dB in all, and a full-level modulator
+# reaches four turns of phase deviation (FMEngine.hpp, updateGain). Until
+# 2026-11 levels followed a 48 dB law with eight turns at full. A level written for that
 # engine goes through one of two helpers, which keep the gain it had at full
 # velocity on middle C (0 stays off):
 #   from48()  a carrier: the same volume.
@@ -159,7 +159,7 @@ def mod48(x):
         sys.exit(f"gen_params: modulator level {x} cannot keep its depth (needs {y:.4f} > 1)")
     return y
 opdef_level = {1:1.0,2:mod48(0.5),3:from48(0.8),4:mod48(0.5)}
-# Operator attacks follow the DX27/DX100's curve, an exponential in dB that is
+# Operator attacks follow the hardware's curve, an exponential in dB that is
 # fast out of silence (FMEngine.hpp, FMRateEnvelope); until 2026-11 they were a
 # squared ramp. A preset's old attack time goes through atk48(), which stretches
 # it by 1.30: the factor at which the new curve follows the old ramp's rise most
@@ -168,7 +168,7 @@ opdef_level = {1:1.0,2:mod48(0.5),3:from48(0.8),4:mod48(0.5)}
 # The 1 ms minimum stays put.
 def atk48(t):
     return t if t <= 0.001 else t * 1.3007
-# Operator sustain follows the DX27/DX100's sustain level, 3.01 dB per 1/15 of
+# Operator sustain follows the hardware's sustain level, 3.01 dB per 1/15 of
 # the range and silence at 0 (FMEngine.hpp, FMRateEnvelope); until 2026-11 it
 # was a linear amplitude in 1/63 steps. sus48() gives the knob value with the
 # old level exactly (the new knob is continuous).
@@ -176,7 +176,7 @@ def sus48(x):
     x = round(x * 63.0) / 63.0          # the old engine's own 1/63 steps
     return 0.0 if x <= 0.0 else max(1e-4, 1.0 + 20.0 * math.log10(x) / 45.15)
 # Operator decays now fall in a straight line in dB and stop at the sustain
-# level, as on the DX27/DX100; until 2026-11 they approached it exponentially,
+# level, as on the hardware; until 2026-11 they approached it exponentially,
 # slowing as they neared it, so above a sustain of zero a decay time meant
 # something else. dec48(d, s) gives the decay time whose line follows the old
 # curve most closely in dB (least squares over the part more than 0.3 dB above
@@ -233,7 +233,7 @@ def dec48(d, s):
         if e < best_e:
             best_e, best_u = e, u
     return min(10.0, 1.0 / best_u)
-# Key Scale follows the DX27/DX100's key level scaling (FMEngine.hpp, updateGain):
+# Key Scale follows the hardware's key level scaling (FMEngine.hpp, updateGain):
 # |Key Scale| x 5.96 dB of attenuation at middle C, doubling every octave up
 # (mirrored toward the low keys for a positive Key Scale). Until 2026-11 it
 # multiplied the level before the level law. A preset's old Key Scale goes
@@ -255,7 +255,7 @@ def ksfix(level, ks):
         sys.exit(f"gen_params: level {level} cannot absorb Key Scale {ks} (needs {y:.4f} > 1)")
     return y
 # Feedback: operator 4's loop taps its output after level and envelope, with
-# the DX27/DX100's measured step depths (FMEngine.hpp, kFeedbackTurns), so the
+# the hardware's measured step depths (FMEngine.hpp, kFeedbackTurns), so the
 # old fixed depths do not carry over. Solid Bass (was 0.15, step 1) and Brass
 # Machine (was 0.6, step 4) use step 7, whose depth at operator 4's full output
 # comes closest to the old one (+1.7 dB and -4.1 dB); it now fades with that
@@ -307,7 +307,7 @@ add("WheelPwB","wheelPwB","Wheel PW B",0,1,0,B)
 add("WheelFilter","wheelFilter","Wheel Filter",0,1,0,B)
 # Prism second decay and envelope rate scaling (issue #400), appended so every
 # earlier index keeps its value. Decay 2's top, 100 s, is Hold (the sustain
-# level holds, as before); Rate Scale 0..3 follows the DX27 / DX100's rate
+# level holds, as before); Rate Scale 0..3 follows the hardware's rate
 # scaling, against middle C. Core: MultiSynthDSP.hpp, pOp1D2.
 for op in range(1, 5):
     add(f"Op{op}D2",f"op{op}D2",f"Op {op} Decay 2",0.001,100,100,LOG)
@@ -484,9 +484,8 @@ PRESETS = [
    "chorusOn":1,"chorusMix":0.25}),
  # Solid Bass: serial FM bass (algo 0, 4->3->2->1) with a touch of op4 feedback
  # for grit; filter-env pluck for punch.
- # Solid Bass: Master Volume -1.3 (was -1.0). The straight-line operator decay
- # (2026-11) lifts its first 50 ms 0.38 dB, which put the audit chord's peak at
- # -0.9 dBFS, past the -1 dBFS ceiling.
+ # Solid Bass: Master Volume 1.4 (was -1.0), set when the whole bank was
+ # leveled to Init Cosmos's loudness in 2026-11, like every preset's.
  ("Solid Bass", {"masterVol":1.4,"mode":4,"prismAlgo":0,"prismFB":1.0,
    "op1Ratio":1,"op1Level":from48(1.0),"op1A":0.001,"op1D":dec48(0.5, 0.6),"op1S":sus48(0.6),"op1R":0.2,
    "op2Ratio":1,"op2Level":mod48(0.5),"op2A":0.001,"op2D":dec48(0.3, 0.2),"op2S":sus48(0.2),"op2R":0.2,
@@ -594,7 +593,8 @@ PRESETS = [
  # except where a later engine change needed a re-voice (noted per preset).
  # Operator levels are the general exception: like every preset's, they go
  # through from48() or mod48() (see opdef_level), so these keep their sound
- # under the DX level law and now differ from what the author's files load to.
+ # under the hardware's level law and now differ from what the author's files
+ # load to.
  # Settings that are inert in the preset's engine (poly-mod on Modular, the
  # Prism operators on Modular, sync and poly-mod on Prism) are kept, so a mode
  # switch after loading behaves as it does after loading the author's file. All

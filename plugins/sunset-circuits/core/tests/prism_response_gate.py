@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Prism output frequency response against the four-operator hardware (issue #400).
 
-The DX27 / DX100 Prism is modeled on has no filter and is flat across the band
-(measured on chipsynth OPMZ, one carrier at full level, steady RMS against
+The hardware Prism is modeled on has no filter and is flat across the band
+(measured on the reference, one carrier at full level, steady RMS against
 middle C: -0.36 / -0.11 / -0.02 dB at C1 / C2 / C3, within 0.13 dB from C4 to
 8.4 kHz). Prism carries a filter and output high-passes the hardware does not:
 
@@ -33,7 +33,7 @@ BASE = dict(prismAlgo=7, prismFB=0, analogAmt=0, vintage=0, noiseLevel=0, filter
             chorusOn=0, delayOn=0, reverbOn=0, driveOn=0, masterVol=-18,
             op1Ratio=1, op1Level=1, op1Vel=0, op1KeyScale=0, op1A=0.001, op1D=10, op1S=1, op1R=0.001,
             op2Level=0, op3Level=0, op4Level=0)
-DX = {24: -0.36, 36: -0.11, 48: -0.02, 60: 0.0, 96: -0.03, 108: -0.13, 120: -0.13}
+HW = {24: -0.36, 36: -0.11, 48: -0.02, 60: 0.0, 96: -0.03, 108: -0.13, 120: -0.13}
 
 
 def check(ok, msg):
@@ -50,10 +50,10 @@ def level(note, name, **kw):
 
 print("1. Flat with the filter fully open (against the hardware):")
 ref, _, _ = level(60, "resp_60", filterCutoff=20000)
-for n, dx in DX.items():
+for n, hw in HW.items():
     v, _, _ = level(n, f"resp_{n}", filterCutoff=20000)
     d = v - ref
-    check(abs(d - dx) <= 0.25, f"note {n:3d} ({440 * 2 ** ((n - 69) / 12):7.1f} Hz): {d:+6.2f} dB, hardware {dx:+6.2f}")
+    check(abs(d - hw) <= 0.25, f"note {n:3d} ({440 * 2 ** ((n - 69) / 12):7.1f} Hz): {d:+6.2f} dB, hardware {hw:+6.2f}")
 
 print("2. Sweeping out through the top of the range, 8.4 kHz only rises:")
 row = [(fc, level(120, f"sweep_{fc}", filterCutoff=fc)[0]) for fc in (15000, 16000, 17000, 18000, 19000, 19500, 20000)]

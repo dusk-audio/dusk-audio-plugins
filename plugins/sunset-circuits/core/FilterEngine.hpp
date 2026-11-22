@@ -443,7 +443,7 @@ public:
 
     // Prism's filter steps out of the signal path at the top of its range: the
     // four-operator hardware Prism is modeled on has no filter and is flat to the
-    // top of the band (measured on chipsynth OPMZ: within 0.13 dB of middle C up
+    // top of the band (measured on the reference: within 0.13 dB of middle C up
     // to 8.4 kHz), where the four poles at the 20 kHz ceiling took 2.1 dB off
     // 8.4 kHz. From a 16 kHz effective cutoff to 20 kHz (the knob's top) the
     // filter eases out (TPTFourPole::processOpen); below 16 kHz it is untouched.

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Prism operator envelope: Decay 2 and Rate Scale (issue #400).
 
-Both follow the DX27 / DX100, measured on chipsynth OPMZ (tools repo,
-opmz-parity/REVIEW.md, "Second decay and key rate scaling"):
+Both follow the four-operator hardware Prism is modeled on, measured on the
+reference (tools repo, Prism parity review, "Second decay and key rate
+scaling"):
 
 1. HOLD. Decay 2 at its top (100 s) holds the sustain level, as Prism always
    did: the render is bit-identical to one that never sets Decay 2, and so is
@@ -10,7 +11,7 @@ opmz-parity/REVIEW.md, "Second decay and key rate scaling"):
 
 2. DECAY 2 SLOPE, AND THE LONG GRID. From the sustain level the operator falls in a straight line
    in dB at 60 dB per Decay 2 time, the time snapped to the envelope's grid
-   (48 steps from 1 ms to 10 s, continued to 86.3 s). On the DX the second
+   (48 steps from 1 ms to 10 s, continued to 86.3 s). On the hardware the second
    decay runs on the first decay's rate table; Prism's Decay already reads as
    60 dB per its time, so the two agree by construction. Checked at 48 kHz and
    at 192 kHz (the 4x internal rate): the slope must not depend on the rate.
@@ -19,8 +20,8 @@ opmz-parity/REVIEW.md, "Second decay and key rate scaling"):
    Decay and a 30 s Release fall at 60 dB per their grid time.
 
 3. RATE SCALE AGAINST THE HARDWARE. The decay's speed on C1..C7 relative to C1,
-   in the chip's rate steps (4 steps double the speed), against what OPMZ
-   measured at Rate Scale 0, 1 and 2. Prism steps by 2^(1/4); the chip's own
+   in the chip's rate steps (4 steps double the speed), against what the
+   reference measured at Rate Scale 0, 1 and 2. Prism steps by 2^(1/4); the chip's own
    steps within a doubling run x1.25, x1.2, x1.17, x1.14, so single readings
    may sit up to 0.4 steps off; each doubling lands exactly.
 
@@ -129,13 +130,13 @@ for stage, secs, params in (("Decay", 10.0, dict(op1A=0.001, op1D=40.0, op1S=0.0
     check(err <= 0.02, f"{stage} {t_set:.0f} s (grid {grid(t_set):.2f} s): {got:7.3f} dB/s, want {want:7.3f} "
                        f"({err * 100:.2f} %, tol 2 %)")
 
-# --- 3. Rate Scale against OPMZ ------------------------------------------------
-print("Rate Scale: decay speed relative to C1, in chip rate steps, Prism vs OPMZ:")
+# --- 3. Rate Scale against the reference -------------------------------------------
+print("Rate Scale: decay speed relative to C1, in chip rate steps, Prism vs the reference:")
 NOTES = (24, 36, 48, 60, 72, 84, 96)
-OPMZ = {0: (0.0, 0.01, 1.29, 1.31, 2.36, 2.36, 3.26),
-        1: (0.0, 1.29, 2.34, 3.25, 4.00, 5.31, 6.37),
-        2: (0.0, 1.93, 3.98, 5.95, 8.01, 9.96, 11.99)}
-for rs, dx in OPMZ.items():
+REF = {0: (0.0, 0.01, 1.29, 1.31, 2.36, 2.36, 3.26),
+       1: (0.0, 1.29, 2.34, 3.25, 4.00, 5.31, 6.37),
+       2: (0.0, 1.93, 3.98, 5.95, 8.01, 9.96, 11.99)}
+for rs, ref_steps in REF.items():
     slopes = []
     for n in NOTES:
         sr, x = render(7, n, 6.0, f"rate_ks{rs}_{n}", op1A=0.001, op1D=0.5, op1S=0.0, op1RateScale=rs)
@@ -143,9 +144,9 @@ for rs, dx in OPMZ.items():
         top = float(np.median(e[:3]))
         slopes.append(slope(t, e, top - 3.0, top - 40.0))
     steps = [4.0 * np.log2(s / slopes[0]) for s in slopes]
-    worst = max(abs(a - b) for a, b in zip(steps, dx))
+    worst = max(abs(a - b) for a, b in zip(steps, ref_steps))
     check(worst <= 0.4, f"Rate Scale {rs}: Prism " + " ".join(f"{v:5.2f}" for v in steps)
-          + f" | OPMZ " + " ".join(f"{v:5.2f}" for v in dx) + f" | worst {worst:.2f} steps (tol 0.4)")
+          + " | ref " + " ".join(f"{v:5.2f}" for v in ref_steps) + f" | worst {worst:.2f} steps (tol 0.4)")
 
 # --- 4. Middle C ------------------------------------------------------------------
 print("Middle C plays every stage as displayed, at every Rate Scale:")

@@ -12,12 +12,13 @@
 //   * 4 sine operators, each a phase accumulator + stepped digital rate envelope.
 //   * 8 routing algorithms from the shared kPrismAlgos table (FMAlgorithms.hpp),
 //     which the UI diagram widget renders from too.
-//   * Phase modulation: the normalized operator control follows the DX27 /
-//     DX100 output-level law, 0.75 dB per 1/99 of the range (74.25 dB in all).
-//     A full-level modulator reaches four turns (8 pi rad) of deviation, as on
-//     that hardware; carriers use the same law as output gain.
+//   * Phase modulation: the normalized operator control follows the output-
+//     level law of the four-operator hardware Prism is modeled on, 0.75 dB per
+//     1/99 of the range (74.25 dB in all). A full-level modulator reaches four
+//     turns (8 pi rad) of deviation, as on that hardware; carriers use the same
+//     law as output gain.
 //   * Op 4 self-feedback 0..1 in seven steps with the classic 2-sample-average
-//     damping; each step's depth is measured on the DX27 / DX100 (kFeedbackTurns),
+//     damping; each step's depth is measured on the hardware (kFeedbackTurns),
 //     and the loop taps the operator's output, so it follows level and envelope.
 //   * Per op: ratio, fine cents, level, velocity sensitivity, key-level scaling.
 //
@@ -76,7 +77,7 @@ public:
         d2Hold = !(decay2 < kDecay2HoldFrom);   // NaN holds
         d2 = d2Hold ? 0.0f : quantizeTime(decay2, kLongTimeSteps);
         m = rateMul > 0.0f ? rateMul : 1.0f;
-        // Sustain follows the DX27 / DX100's sustain level: 3.01 dB per 1/15 of
+        // Sustain follows the hardware's sustain level: 3.01 dB per 1/15 of
         // the range (measured: steps 14, 8 and 1 sit 3.01, 21.10 and 42.54 dB
         // below full), 45.15 dB over it, and silence at 0. Continuous, not in
         // the hardware's 3 dB steps: a modulator's sustain can sit on a sharp
@@ -104,9 +105,9 @@ public:
         {
             case Stage::Idle: return 0.0f;
             case Stage::Attack:
-                // The DX27 / DX100 attack climbs along an exponential in dB, fast
-                // out of silence and easing into full level. Measured on
-                // chipsynth OPMZ at attack rates 20, 22 and 24 (one shape at every
+                // The hardware's attack climbs along an exponential in dB, fast
+                // out of silence and easing into full level. Measured on the
+                // reference at attack rates 20, 22 and 24 (one shape at every
                 // speed): across its rise from -40 to -0.2 dB it crosses -30, -20,
                 // -10, -6, -3 and -1 dB at 0.074, 0.174, 0.345, 0.491, 0.646 and
                 // 0.859 of the way. dB(pos) = -60 (e^(-4.3 pos) - e^(-4.3)) /
@@ -125,8 +126,8 @@ public:
                 }
                 break;
             case Stage::Decay:
-                // The DX27 / DX100 decays in a straight line in dB and stops at the
-                // sustain level. Measured on chipsynth OPMZ: decay rate 16 to
+                // The hardware decays in a straight line in dB and stops at the
+                // sustain level. Measured on the reference: decay rate 16 to
                 // sustain step 8 falls 9.7 dB per 100 ms and sits at -21.2 dB from
                 // about 220 ms. An approach toward the sustain level, as this
                 // was, slows as it nears it; to a sustain of zero the two are the
@@ -135,10 +136,10 @@ public:
                 if (value <= (double)maxf(s, 0.0005f)) { value = s; stage = Stage::Sustain; }
                 break;
             case Stage::Sustain:
-                // The DX27 / DX100's second decay (D2R) carries on from the
+                // The hardware's second decay (D2R) carries on from the
                 // sustain level in a straight line in dB at its own rate, down to
                 // silence while the key is held. It runs on the first decay's
-                // rate table (measured on chipsynth OPMZ: second over first decay
+                // rate table (measured on the reference: second over first decay
                 // slope 1.00 to 1.02 at five steps), so Decay 2 is a time on the
                 // same 60 dB law and grid as Decay. At Hold the level stays.
                 if (d2Hold) value = s;
@@ -169,10 +170,10 @@ public:
     }
 
     // The time grid: logarithmic steps of 10^(4/47) from 1 ms. Attack stops at
-    // step 47 (10 s; the DX27 / DX100's slowest attack reaches full level in
+    // step 47 (10 s; the hardware's slowest attack reaches full level in
     // about 9 s). Decay, Decay 2 and Release continue to step 58, 86.3 s: the
     // hardware's slowest first and second decays fall 60 dB in about 80 s and
-    // its slowest release in about 40 s (measured on chipsynth OPMZ).
+    // its slowest release in about 40 s (measured on the reference).
     static constexpr int kTimeSteps = 47;
     static constexpr int kLongTimeSteps = 58;
 
@@ -320,12 +321,12 @@ inline float sinTurns(float x) noexcept
 }
 
 // Operator-4 feedback depth per step 1..7, in turns of phase per unit of the
-// two-sample average of the feedback tap. Fitted to chipsynth OPMZ in DX27 /
-// DX100 mode (tools repo, tools/sunset-circuits/opmz-parity): with this loop at
-// the default 2x internal rate (96 kHz), each value reproduces that step's
-// harmonics 2 to 8 within 1.1 dB rms. The steps nearly double, like the chip's
-// 1/128 turn x 2^(k-1); step 6 sits 1.5 dB under that rule, where the chip's
-// own rate (55.9 kHz) shapes the loop most.
+// two-sample average of the feedback tap. Fitted to the reference (tools repo,
+// the Prism parity review): with this loop at the default 2x internal rate
+// (96 kHz), each value reproduces that step's harmonics 2 to 8 within 1.1 dB
+// rms. The steps nearly double, like the chip's 1/128 turn x 2^(k-1); step 6
+// sits 1.5 dB under that rule, where the chip's own rate (55.9 kHz) shapes the
+// loop most.
 static constexpr float kFeedbackTurns[8] = {
     0.0f, 0.00816f, 0.01606f, 0.02975f, 0.06153f, 0.12026f, 0.21019f, 0.47662f
 };
@@ -431,8 +432,8 @@ public:
     void setOpRatio(int i, float ratio) noexcept
     {
         // Ratios are resolved to 1/4096: whole and simple ratios stay exact, and
-        // the DX27 / DX100's inharmonic ones land within half a cent. Those sit a
-        // fixed interval above the coarse ratio (measured on chipsynth OPMZ: x1.4143,
+        // the hardware's inharmonic ones land within half a cent. Those sit a
+        // fixed interval above the coarse ratio (measured on the reference: x1.4143,
         // x1.5702, x1.7306, i.e. +600, +781, +950 cents); at the earlier 1/64 they
         // came out up to 9.3 cents off (1.4143 -> 91/64).
         op[idx(i)].ratio = std::round(clampf(ratio, 0.0f, 32.0f) * 4096.0f) / 4096.0f;
@@ -468,9 +469,9 @@ public:
         o.env.setParameters(a, d, s, r, d2, rateMultiplier((int)std::lround(note), o.rateScale));
     }
 
-    // The DX27 / DX100's key code for envelope rate scaling: 4 per octave plus a
-    // note group of three keys, each octave running C# to C (the YM2151 family's
-    // KC >> 2). Measured on chipsynth OPMZ: at Rate Scale 0 the envelope speeds
+    // The hardware's key code for envelope rate scaling: 4 per octave plus a
+    // note group of three keys, each octave running C# to C (the FM chip's
+    // KC >> 2). Measured on the reference: at Rate Scale 0 the envelope speeds
     // up one step between C2 and C3, C4 and C5, and C6 and C7, which places the
     // octave boundaries between C and C#.
     static int rateKeyCode(int midiNote) noexcept
@@ -530,7 +531,7 @@ public:
             if (i == A.fbOp)
             {
                 // The tap is the operator's output after its envelope and level,
-                // as on the DX27 / DX100, whose feedback brightness falls with both
+                // as on the hardware, whose feedback brightness falls with both
                 // (measured: 10.5 dB less level gives 10.5 dB less second harmonic,
                 // and a decay 24 dB down takes it down 23.9 dB).
                 fbZ2 = fbZ1;
@@ -590,14 +591,14 @@ private:
     }
 
     // Effective level after velocity sensitivity and key-level scaling, through
-    // the DX27 / DX100 output-level law: the normalized control is the output
+    // the hardware's output-level law: the normalized control is the output
     // level 0..99 over 99, and each step is 0.75 dB, so the range spans 74.25 dB.
-    // Measured on chipsynth OPMZ in DX27/DX100 mode (tools repo,
-    // tools/sunset-circuits/opmz-parity): a lone carrier falls 0.75 dB per step
-    // from level 99 down to 40, and a modulator's index follows the same 0.75 dB
-    // per step from level 27 to 84. Below 40 the carrier measures up to 2.3 dB
-    // lower still while the index does not, so that extra sag is in the chip's
-    // output stage, not in the level law.
+    // Measured on the reference (tools repo, the Prism parity review): a lone
+    // carrier falls 0.75 dB per step from level 99 down to 40, and a
+    // modulator's index follows the same 0.75 dB per step from level 27 to 84.
+    // Below 40 the carrier measures up to 2.3 dB lower still while the index
+    // does not, so that extra sag is in the chip's output stage, not in the
+    // level law.
     // A full-level modulator reaches four turns (8 pi rad) of phase deviation:
     // the measured index at levels 70 to 84, carried up the 0.75 dB law, puts
     // level 99 at 24.9 to 25.2 rad. Carriers use the same amplitude law directly.
@@ -613,10 +614,10 @@ private:
             o.modDepth = 0.0f;
             return;
         }
-        // Key Scale follows the DX27 / DX100's key level scaling: an attenuation
+        // Key Scale follows the hardware's key level scaling: an attenuation
         // in dB proportional to the note's frequency, added to the output level
-        // whatever that is, on carriers and modulators alike. Measured on
-        // chipsynth OPMZ: scaling level 50 takes 3.01 dB off at C4, 6.02 at C5,
+        // whatever that is, on carriers and modulators alike. Measured on the
+        // reference: scaling level 50 takes 3.01 dB off at C4, 6.02 at C5,
         // 12.05 at C6 and 24.9 at C7, the same at output levels 99, 80 and 65, so
         // 0.0602 dB per unit of scaling level (0..99) at middle C. Key Scale -1..0
         // is that law at scaling level 99..0. The hardware has no positive side;

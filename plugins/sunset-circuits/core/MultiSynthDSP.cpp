@@ -872,7 +872,8 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
     constexpr float kOutputMakeup = 2.51188643f; // +8 dB
     // Clamped to the range the shell declares for this parameter (-60..+18 dB).
     // The top was +6 dB until the per-mode trim below: with the factory sounds
-    // levelled to one loudness, the quietest need up to +17.5 dB. Unclamped, a host writing a wild but FINITE value gets past the non-finite
+    // levelled to one loudness, the quietest need up to +17.5 dB.
+    // Unclamped, a host writing a wild but FINITE value gets past the non-finite
     // guard in setParameter and overflows here: masterVol = 1e30 makes pow()
     // return +Inf, which lands in smGain, whose one-pole state is recursive and
     // therefore Inf for good. The engine then renders silence permanently, even

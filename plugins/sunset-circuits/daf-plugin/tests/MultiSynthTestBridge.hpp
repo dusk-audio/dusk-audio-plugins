@@ -2,7 +2,7 @@
 //
 // The DSP bridge (MultiSynthAccess.hpp) as an out-of-process UI sees it, for the
 // editor tests that #include MultiSynthUI.cpp. Defined because a weak reference
-// must still resolve when an Apple binary links. Include once, after the UI.
+// must still resolve when a macOS binary links. Include once, after the UI.
 #pragma once
 
 float multiSynthGetOutLevelL(void*) noexcept { return -60.0f; }

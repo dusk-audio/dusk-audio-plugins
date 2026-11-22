@@ -127,8 +127,8 @@ enum Param : int
     pWheelSourceMix, pWheelNoiseSH, pWheelLowerLimit, pWheelUpperLimit,
     pWheelFreqA, pWheelFreqB, pWheelPwA, pWheelPwB, pWheelFilter,
     // Prism second decay and envelope rate scaling (issue #400), per operator,
-    // after the DX27 / DX100 (tools repo, opmz-parity/REVIEW.md). Decay 2 at its
-    // top (Hold) holds the sustain level, as Prism always did.
+    // after the four-operator hardware (tools repo, Prism parity review).
+    // Decay 2 at its top (Hold) holds the sustain level, as Prism always did.
     pOp1D2, pOp1RateScale, pOp2D2, pOp2RateScale,
     pOp3D2, pOp3RateScale, pOp4D2, pOp4RateScale,
     kNumParams
