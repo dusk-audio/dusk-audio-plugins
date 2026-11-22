@@ -47,14 +47,14 @@ public:
 
     void prepare(double sampleRate) noexcept
     {
-        sr = (float)sampleRate;
+        sr = sampleRate;
         updateCoefficients();
         reset();
     }
 
     void setSampleRate(double sampleRate) noexcept
     {
-        sr = (float)sampleRate;
+        sr = sampleRate;
         updateCoefficients();
     }
 
@@ -92,7 +92,7 @@ public:
     {
         // A retrigger, or a re-press during the release, climbs on from where
         // the envelope is rather than restarting from silence.
-        attackW = attackStartFor(value);
+        attackW = attackStartFor((float)value);
         stage = Stage::Attack;
     }
     void noteOff() noexcept { if (stage != Stage::Idle) stage = Stage::Release; }
@@ -121,7 +121,7 @@ public:
                 }
                 else
                 {
-                    value = std::exp2((attackW - kAttackEndW) * kAttackLog2PerW);
+                    value = std::exp2((float)(attackW - kAttackEndW) * kAttackLog2PerW);
                 }
                 break;
             case Stage::Decay:
@@ -132,7 +132,7 @@ public:
                 // was, slows as it nears it; to a sustain of zero the two are the
                 // same, and this form is bit-identical there.
                 value -= value * cd;
-                if (value <= maxf(s, 0.0005f)) { value = s; stage = Stage::Sustain; }
+                if (value <= (double)maxf(s, 0.0005f)) { value = s; stage = Stage::Sustain; }
                 break;
             case Stage::Sustain:
                 // The DX27 / DX100's second decay (D2R) carries on from the
@@ -145,19 +145,20 @@ public:
                 else
                 {
                     value -= value * cd2;
-                    if (value <= 0.0001f) value = 0.0f;
+                    if (value <= 0.0001) value = 0.0;
                 }
                 break;
             case Stage::Release:
-                value += (0.0f - value) * cr;
-                if (value <= 0.0001f) { value = 0.0f; stage = Stage::Idle; }
+                value += (0.0 - value) * cr;
+                if (value <= 0.0001) { value = 0.0; stage = Stage::Idle; }
                 break;
         }
-        if (isBad(value)) { value = 0.0f; stage = Stage::Idle; }
-        return value;
+        const float out = (float)value;
+        if (isBad(out)) { value = 0.0; stage = Stage::Idle; return 0.0f; }
+        return out;
     }
 
-    void reset() noexcept { value = 0.0f; attackW = 1.0f; stage = Stage::Idle; }
+    void reset() noexcept { value = 0.0; attackW = 1.0; stage = Stage::Idle; }
 
     // Rate scaling: every stage runs rateMul times faster than its displayed
     // time (1 = as displayed). Set per note by FMVoiceEngine::noteOn.
@@ -202,28 +203,36 @@ private:
         return std::exp2(lo + clampf(q, 0.0f, (float)maxStep) * (hi - lo) / steps);
     }
 
-    float coeff(float seconds) const noexcept
+    // The per-sample steps and the level they move are doubles. The slowest
+    // stage, 86.3 s at Rate Scale 3 on the lowest keys (x0.074: 1162 s), moves
+    // the level by 3e-8 of itself per sample at a 192 kHz internal rate, about
+    // float's half-ulp near full level. In float, 1 - exp(-x) rounded that step
+    // to 6e-8 and the level could not take steps that small: the stage ran
+    // 2.2x fast at 192 kHz, stood still at 384 kHz and ran 2.3 % fast even at
+    // 48 kHz, and the attack's e^(-4.3 pos) was 6 % off at 96 kHz (rate_gate,
+    // section 6). expm1 keeps the step exact as it shrinks.
+    double coeff(double seconds) const noexcept
     {
         // Reach within -60 dB of the target in the displayed time.
-        return 1.0f - std::exp(-6.90775528f / maxf(1.0f, seconds * sr));
+        return -std::expm1(-6.90775528 / std::fmax(1.0, seconds * sr));
     }
 
-    // Dividing by m == 1 is exact, so with no rate scaling these are the
-    // coefficients the envelope always had.
+    // Dividing by m == 1 is exact, so middle C runs every stage as displayed at
+    // every Rate Scale (rate_gate compares those renders bit for bit).
     void updateCoefficients() noexcept
     {
-        attackMul = std::exp(-4.3f / maxf(1.0f, a * sr / m));
-        cd = coeff(d / m);
-        cd2 = d2Hold ? 0.0f : coeff(d2 / m);
-        cr = coeff(r / m);
+        attackMul = std::exp(-4.3 / std::fmax(1.0, (double)a * sr / m));
+        cd = coeff((double)d / m);
+        cd2 = d2Hold ? 0.0 : coeff((double)d2 / m);
+        cr = coeff((double)r / m);
     }
 
-    float sr = 44100.0f;
+    double sr = 44100.0;
     float a = 0.005f, d = 0.4f, s = 0.7f, r = 0.4f;
     float d2 = 0.0f, m = 1.0f;
     bool  d2Hold = true;
-    float attackMul = 0.0f, cd = 1.0f, cd2 = 0.0f, cr = 1.0f;
-    float value = 0.0f, attackW = 1.0f;
+    double attackMul = 0.0, cd = 1.0, cd2 = 0.0, cr = 1.0;
+    double value = 0.0, attackW = 1.0;
     Stage stage = Stage::Idle;
 };
 

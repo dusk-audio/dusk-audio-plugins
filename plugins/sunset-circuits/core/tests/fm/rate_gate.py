@@ -30,12 +30,23 @@ opmz-parity/REVIEW.md, "Second decay and key rate scaling"):
 5. EVERY STAGE SCALES. The attack's 10-90 % rise and the release's fall run
    2^(steps/4) faster on C7 than on C4 at Rate Scale 2, as on the hardware,
    where rate scaling adds to every rate.
+
+6. THE SLOWEST STAGES KEEP THEIR SPEED AT EVERY RATE. Rate Scale 3 on the
+   lowest keys (C0, key code 0) runs every stage x0.074 of its displayed speed,
+   so the grid's top, 86.3 s, takes 1162 s: per sample the level moves by 3e-8
+   of itself at a 192 kHz internal rate, under float32's resolution near full
+   level. Decay, Decay 2, Release (86.3 s) and Attack (10 s) must run at their
+   grid time / 0.074 at 48, 96, 192 and 384 kHz (384 kHz is the internal rate
+   of a 384 kHz session, which runs at 1x). A 20 s stretch of each gives the
+   slope; the attack's is read through its curve, dB(pos) above.
 """
+import math
+import os
 import sys
 
 import numpy as np
 
-from _fm import render
+from _fm import OUT, render
 
 OK = True
 
@@ -172,6 +183,50 @@ for n in (60, 96):
     rel.append(slope(t[after], e[after], e[after][0] - 3.0, e[after][0] - 40.0))
 check(abs((rel[1] / rel[0]) / want - 1.0) <= 0.03, f"release slope: C4 {rel[0]:.1f} dB/s, C7 {rel[1]:.1f} dB/s, "
                                                    f"ratio {rel[1] / rel[0]:.3f}, want {want:.3f} (tol 3 %)")
+
+# --- 6. The slowest stages, at every rate ---------------------------------------------
+print("The slowest stages (Rate Scale 3 on C0, x0.074) at every internal rate:")
+LOW = 12                                                    # C0, key code 0
+mul = 2.0 ** ((key_code(LOW) - key_code(60)) / 4.0)          # Rate Scale 3: key code >> 0
+K_END = math.exp(-4.3)                                       # the attack curve's end
+
+
+def attack_pos(e):
+    """Where on the attack curve (0 = -60 dB, 1 = full) the level e (dB) sits."""
+    return -np.log(K_END + (-e / 60.0) * (1.0 - K_END)) / 4.3
+
+
+def slow_check(ok, msg, name):
+    """check(), then drop a passing render: these run to 30 MB (20 s at
+    384 kHz), and only a failing one is worth keeping for a post-mortem."""
+    check(ok, msg)
+    if ok:
+        os.remove(os.path.join(OUT, name + ".wav"))
+
+
+SLOW = (("Decay", "d", dict(op1A=0.001, op1D=86.3, op1S=0.0)),
+        ("Decay 2", "d2", dict(op1A=0.001, op1D=0.001, op1S=1.0, op1D2=86.3)),
+        ("Release", "r", dict(op1A=0.001, op1D=10.0, op1S=1.0, op1R=86.3, release=0.2)))
+for sr_hz in (48000, 96000, 192000, 384000):
+    for stage, tag, params in SLOW:
+        name = f"rate_slow_{tag}_{sr_hz}"
+        sr, x = render(7, LOW, 20.0, name, sr=sr_hz, op1RateScale=3, **params)
+        t, e = env_db(x, sr, LOW)
+        keep = t >= 0.5
+        got = float(np.polyfit(t[keep], e[keep], 1)[0])
+        want = -60.0 / (grid(86.3) / mul)
+        err = abs(got / want - 1.0)
+        slow_check(err <= 0.02, f"{sr_hz:6d} Hz {stage:7s} 86.3 s (x{mul:.3f}: {grid(86.3) / mul:.0f} s): "
+                                f"{got:8.4f} dB/s, want {want:8.4f} ({err * 100:.2f} %, tol 2 %)", name)
+    name = f"rate_slow_a_{sr_hz}"
+    sr, x = render(7, LOW, 14.0, name, sr=sr_hz, op1A=10.0, op1D=10.0, op1S=1.0, op1RateScale=3)
+    t, e = env_db(x, sr, LOW)
+    sel = (e >= -55.0) & (e <= -35.0)
+    got = 1.0 / float(np.polyfit(t[sel], attack_pos(e[sel]), 1)[0]) if np.count_nonzero(sel) >= 8 else float("nan")
+    want = grid(10.0) / mul
+    err = abs(got / want - 1.0)
+    slow_check(err <= 0.02, f"{sr_hz:6d} Hz Attack  10 s (x{mul:.3f}: {want:.0f} s): runs as {got:7.2f} s "
+                            f"({err * 100:.2f} %, tol 2 %)", name)
 
 print(f"rate_gate: {'PASS' if OK else 'FAIL'}")
 sys.exit(0 if OK else 1)
