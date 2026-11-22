@@ -1199,7 +1199,11 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     noiseLP.setCutoff(2.0f, fs);
     flutterBand.set(kFlutterNoiseHz, kFlutterNoiseQ, fs);
     flutterBandLP.setCutoff(kFlutterNoiseLPHz, fs);
-    wowInc     = kTwoPi * kWowHz     / (float)fs;
+    {
+        const double wowStep = 2.0 * 3.14159265358979323846 * kWowHz / fs;
+        wowRotSin = (float)std::sin(wowStep);
+        wowRotCos = (float)std::cos(wowStep);
+    }
     flutterInc = kTwoPi * kFlutterMaxHz / (float)fs;
     // The record VU owns the needle ballistics. The UI deliberately adds no
     // second smoothing stage.
@@ -1361,7 +1365,8 @@ void TapeEchoDSP::reset()
     ageHumCos = 1.0f;
     ageHumRenormalize = 0u;
     writeIdx = 0;
-    wowPhase = flutterPhase = 0.0f;
+    wowSin = 0.0f; wowCos = 1.0f;
+    flutterSin = 0.0f; flutterCos = 1.0f;
     meterVu = 0.0f;
     meterVuStage1 = 0.0f;
     meterPeak = 0.0f;
@@ -1632,10 +1637,26 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             flutterInc = kTwoPi * kFlutterMaxHz
                        * (kMinDelayMs / nominalMs) / (float)fs;
 
-            wowPhase += wowInc;
-            if (wowPhase > kTwoPi)     wowPhase     -= kTwoPi;
-            flutterPhase += flutterInc;
-            if (flutterPhase > kTwoPi) flutterPhase -= kTwoPi;
+            {
+                // Advance both oscillators one sample. The flutter step is a
+                // few 1e-4 rad, where these series are exact to float
+                // precision. One Newton step per sample holds each vector at
+                // unit length, so the recurrence cannot drift in amplitude.
+                const float ws = wowSin * wowRotCos + wowCos * wowRotSin;
+                const float wc = wowCos * wowRotCos - wowSin * wowRotSin;
+                const float wn = 1.5f - 0.5f * (ws * ws + wc * wc);
+                wowSin = ws * wn;
+                wowCos = wc * wn;
+                const float d = flutterInc;
+                const float d2 = d * d;
+                const float rs = d * (1.0f - d2 * (1.0f / 6.0f));
+                const float rc = 1.0f - 0.5f * d2 * (1.0f - d2 * (1.0f / 12.0f));
+                const float fs1 = flutterSin * rc + flutterCos * rs;
+                const float fc1 = flutterCos * rc - flutterSin * rs;
+                const float fn = 1.5f - 0.5f * (fs1 * fs1 + fc1 * fc1);
+                flutterSin = fs1 * fn;
+                flutterCos = fc1 * fn;
+            }
 
             // The reference transport always moves, even in its freshest state.
             // The user control adds an intentionally wider creative range.
@@ -1692,8 +1713,8 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                        * hissCeiling.process(
                            hissVoice.process(ageRand() * noiseRateComp)));
             const float flutterDepth = 0.00237f + 0.00242f * slow01;
-            const float flutterWave = std::sin(flutterPhase)
-                                    + 0.088f * std::sin(2.0f * flutterPhase);
+            const float flutterWave = flutterSin
+                                    + 0.088f * (2.0f * flutterSin * flutterCos);
             // Scrape flutter: band noise around 6 Hz. Age worsens it steeply on the
             // reference, far faster than the loop-rate wow it rides on.
             const float flutterNoiseGain =
@@ -1703,7 +1724,7 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                 flutterNoiseGain
                 * flutterBandLP.process(
                       flutterBand.process(flutterRand() * noiseRateComp));
-            const float mod = wf * (kWowDepth * std::sin(wowPhase)
+            const float mod = wf * (kWowDepth * wowSin
                                   + flutterDepth * flutterWave
                                   + flutterNoise
                                   + kNoiseDepth
@@ -1854,9 +1875,8 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                 }
             }
 
-            // FET preamp front-end, saturated at 4x to keep fold-back
-            // products out of the echo passband.
-            // The preamp itself runs a sub-block at a time after this pass.
+            // Program feed into the record path; the preamp curve is applied
+            // in the tape loop, after the feed is band-limited.
             x.preIn[i] = tapeInput * preDriveGain;
             x.postDriveGain[i] = postDriveGain;
             // The spring send is taken entirely ahead of the record-stage shaper

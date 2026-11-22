@@ -703,8 +703,11 @@ private:
         float a1 = 0.0f, a2 = 0.0f, a3 = 0.0f, s1 = 0.0f, s2 = 0.0f;
     };
 
-    float     wowPhase = 0.0f, wowInc = 0.0f;
-    float     flutterPhase = 0.0f, flutterInc = 0.0f;
+    // Wow and flutter oscillators as unit vectors rotated once per sample (no
+    // per-sample sinf). Wow turns by a fixed step; flutter's step follows the
+    // motor, so it turns by a small-angle polynomial of flutterInc.
+    float     wowSin = 0.0f, wowCos = 1.0f, wowRotSin = 0.0f, wowRotCos = 1.0f;
+    float     flutterSin = 0.0f, flutterCos = 1.0f, flutterInc = 0.0f;
     OnePoleLP noiseLP;
     uint32_t  rngState = 0x9E3779B9u;
 
