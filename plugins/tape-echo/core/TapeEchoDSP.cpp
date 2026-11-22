@@ -269,6 +269,77 @@ namespace
     // calibrated 48 kHz response is preserved bit-for-bit.
     constexpr float kDcBlockerCutoffHz = 19.122506f;
 
+    // Low end of the record path, measured as two curves against the reference
+    // (impulse through head 1, feedback 0.5, latency-compensated, mean of 15
+    // Repeat Rate x Tape Age cells; the low end does not move with either):
+    // the first echo (once through everything) and one pass round the loop
+    // (packet 2 / packet 1). The reference's pass keeps far more low end than
+    // its first echo (-11.8 against -17.7 dB at 32 Hz, re 1 kHz), so part of
+    // its low cut is OUTSIDE the loop; and its third harmonic FALLS toward low
+    // frequencies (-33 dBc at 50 Hz against -13 at 1 kHz, -6 dBFS) where a
+    // cut after a saturating stage makes it rise, so the cut is AHEAD of the
+    // saturation. The former single 115 Hz two-pole high-pass sat inside the
+    // loop and after the preamp: -22.5 dB per pass at 32 Hz, compounding, and
+    // -8 dBc of 50 Hz third harmonic.
+    //
+    // Shape (zeros / poles, Hz) shared by the program feed and the regeneration
+    // feed, fitted to the per-pass curve; then a first-order shelf on the
+    // program feed only, fitted to the first-echo / pass ratio. Both fits are
+    // through the full model, so the preamp's DC blocker is accounted for.
+    // Residual over 32-800 Hz: rms 0.28 dB, worst 0.65 dB at 32-40 Hz.
+    constexpr double kRecordLowShapeZeroHz[2] = { 9.983, 49.812 };
+    constexpr double kRecordLowShapePoleHz[2] = { 93.048, 100.011 };
+    constexpr double kInputLowShelfZeroHz = 37.137;
+    constexpr double kInputLowShelfPoleHz = 75.106;
+
+    // Bilinear (s + wz) / (s + wp) sections; corners this far below fs need
+    // no prewarping (under 0.01 dB at 192 Hz, 44.1 kHz).
+    inline void firstOrderZeroPole(double fs, double zeroHz, double poleHz,
+                                   double& b0, double& b1, double& a1) noexcept
+    {
+        const double c = 2.0 * fs;
+        const double wz = 2.0 * 3.14159265358979323846 * zeroHz;
+        const double wp = 2.0 * 3.14159265358979323846 * poleHz;
+        const double g = 1.0 / (c + wp);
+        b0 = (c + wz) * g;
+        b1 = (wz - c) * g;
+        a1 = (wp - c) * g;
+    }
+
+    // Both curves were fitted re 1 kHz, so each section is scaled to exactly
+    // unity there: it shapes the low end and leaves the calibrated midband
+    // record level alone. (Unscaled, the pair read -0.088 dB at 1 kHz, enough
+    // to move the record envelope off the measured fold-back point.)
+    inline double gainAt1k(double fs, double b0, double b1, double b2,
+                           double a1, double a2) noexcept
+    {
+        const double w = 2.0 * 3.14159265358979323846 * 1000.0 / fs;
+        const double c1 = std::cos(w), s1 = std::sin(w);
+        const double c2 = std::cos(2.0 * w), s2 = std::sin(2.0 * w);
+        const double nr = b0 + b1 * c1 + b2 * c2, ni = -(b1 * s1 + b2 * s2);
+        const double dr = 1.0 + a1 * c1 + a2 * c2, di = -(a1 * s1 + a2 * s2);
+        return std::sqrt((nr * nr + ni * ni) / (dr * dr + di * di));
+    }
+
+    inline BiquadCoeffs inputLowShelfCoeffs(double fs) noexcept
+    {
+        double b0, b1, a1;
+        firstOrderZeroPole(fs, kInputLowShelfZeroHz, kInputLowShelfPoleHz, b0, b1, a1);
+        const double g = 1.0 / gainAt1k(fs, b0, b1, 0.0, a1, 0.0);
+        return { (float)(b0 * g), (float)(b1 * g), 0.0f, (float)a1, 0.0f };
+    }
+
+    inline BiquadCoeffs recordLowShapeCoeffs(double fs) noexcept
+    {
+        double b0a, b1a, a1a, b0b, b1b, a1b;
+        firstOrderZeroPole(fs, kRecordLowShapeZeroHz[0], kRecordLowShapePoleHz[0], b0a, b1a, a1a);
+        firstOrderZeroPole(fs, kRecordLowShapeZeroHz[1], kRecordLowShapePoleHz[1], b0b, b1b, a1b);
+        const double b0 = b0a * b0b, b1 = b0a * b1b + b1a * b0b, b2 = b1a * b1b;
+        const double a1 = a1a + a1b, a2 = a1a * a1b;
+        const double g = 1.0 / gainAt1k(fs, b0, b1, b2, a1, a2);
+        return { (float)(b0 * g), (float)(b1 * g), (float)(b2 * g), (float)a1, (float)a2 };
+    }
+
     // Sample rate the spring dispersion bank was fitted at. Only the radii
     // need rate compensation; the centre frequencies are already handled by
     // theta = 2*pi*f/fs.
@@ -983,8 +1054,9 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     {
         ch.tape.assign((size_t)tapeLen, 0.0f);
         ch.preampDC.setSampleRate(fs, kDcBlockerCutoffHz);
-        ch.recordHP.setCoeffs(Biquad::highPass(
-            fs, safeBiquadFrequency(fs, 115.0f), 0.70710678f));
+        ch.inputLowShelf.setCoeffs(inputLowShelfCoeffs(fs));
+        ch.inputLowShape.setCoeffs(recordLowShapeCoeffs(fs));
+        ch.loopLowShape.setCoeffs(recordLowShapeCoeffs(fs));
         const float initialMs = delayMsForRepeatRate(
             pRepeatRate.load(std::memory_order_relaxed));
         const float initialSlow01 = clamp01(
@@ -1135,7 +1207,7 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     memoOutputGain = std::pow(10.0f, 2.0f * memoOutputVolume - 1.0f);
     memoIntensity = intensitySmoother.value();
     memoFeedbackCurve = feedbackKneeControl(memoIntensity);
-    memoFbGain = feedbackGainFromControl(memoFeedbackCurve);
+    memoFbGain = feedbackGainFromControl(memoIntensity);
     memoLoopReadBlend = feedbackReadLoopBlend(memoFeedbackCurve);
     lastPlaybackCutoff = -1.0f;
     lastAntiAliasCutoff = -1.0f;
@@ -1152,7 +1224,9 @@ void TapeEchoDSP::reset()
         std::fill(ch.tape.begin(), ch.tape.end(), 0.0f);
         ch.preampDC.reset();
         ch.preamp.reset();
-        ch.recordHP.reset();
+        ch.inputLowShelf.reset();
+        ch.inputLowShape.reset();
+        ch.loopLowShape.reset();
         ch.speedLP.reset();
         ch.ageContour.reset();
         for (auto& lp : ch.antiAliasLP)
@@ -1630,7 +1704,7 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             {
                 memoIntensity = intensity;
                 memoFeedbackCurve = feedbackKneeControl(intensity);
-                memoFbGain = feedbackGainFromControl(memoFeedbackCurve);
+                memoFbGain = feedbackGainFromControl(memoIntensity);
                 memoLoopReadBlend = feedbackReadLoopBlend(memoFeedbackCurve);
             }
             x.loopReadBlend[i] = memoLoopReadBlend;
@@ -1682,7 +1756,11 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                 power * (numChannels > 1 ? 0.5f * (inL + inR) : inL);
             Channel& ch = channels[0];
             const float drivenInput = monoInput * inputGain;
-            const float tapeInput = inputSend * drivenInput;
+            // The record path's low cut, ahead of the compressor's detector and
+            // the preamp (see kRecordLowShapeZeroHz). The spring send below is
+            // taken from drivenInput and does not see it.
+            const float tapeInput = ch.inputLowShape.process(
+                ch.inputLowShelf.process(inputSend * drivenInput));
 
             // The hosted record path has a broad tape-compression knee above
             // nominal level and asymptotically reaches about 4.5 dB of gain
@@ -2029,10 +2107,10 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             const float fluxEnvelope =
                 recordEnvelopeNow + ch.loopEnvelope * kRecordDriveToInput;
 
-            float recorded = ch.speedLP.process(pre + loopDrive);
+            float recorded = ch.speedLP.process(
+                pre + ch.loopLowShape.process(loopDrive));
             if (ageContourActive)
                 recorded = ch.ageContour.process(recorded);
-            recorded = ch.recordHP.process(recorded);
             // The tape's low-level magnetisation curve is more strongly curved
             // than the record preamp, but its slope remains positive at overload.
             // This bounded cubic term raises the odd-harmonic ladder without
@@ -2126,15 +2204,27 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             // Result at the -3 rung: dFundamental +1.73 -> +0.00 dB,
             // dTHD +4.85 -> +0.03 dB.
             //
+            // Refitted when the record low cut moved ahead of the preamp
+            // (kRecordLowShapeZeroHz): the old 115 Hz high-pass after the preamp
+            // shifted the fundamental ~9 degrees against the preamp's own 3rd
+            // (~3 degrees), and this rung's 3rd is a near-cancellation, so
+            // removing that phase shift alone took H3 -53.0 -> -50.5 dBFS.
+            // Same procedure, same targets, one knob at a time:
+            //   c3  0.35 -> 0.46     H3 back on the reference (-55.4, ref -55.2)
+            //   makeup -2.70 -> -3.17 dB   fundamental back to -24.34 (ref -24.34)
+            // THD 4.67% against 4.99%.
+            //
             // KNOWN RESIDUAL, deliberately not chased: the reference's 5th is
-            // -52.2 dBFS and ours reaches only -62.3. c5 in EITHER direction
+            // -52.3 dBFS and ours reaches only -62.5, while our 7th and 9th sit
+            // 13 dB above it (-53.8 / -63.1 against -67.2 / -75.8): the THD
+            // matched only in sum, never harmonic by harmonic. c5 in EITHER direction
             // spills into the 3rd faster than it lifts the 5th, so a genuinely
             // 5th-dominant spectrum is not reachable with this Chebyshev pair.
             // Both harmonics move toward the reference and the gated quantities
             // match; the fold-back is PARTIALLY modelled. Closing the rest needs
             // a reshaped magnetisation curve, which re-opens the whole harmonic
             // calibration -- its own campaign. Do not "fix" it by pushing c5.
-            const float c3 = -0.0983f * hot + 0.35f * veryHot;
+            const float c3 = -0.0983f * hot + 0.46f * veryHot;
             const float c5 = -0.0195f * hot - 0.20f * veryHot;
             const float c7 = 0.0f;
             float toTape = baseTape + magneticAmplitude
@@ -2150,7 +2240,7 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             // See the fold-back derivation at the Chebyshev coefficients above.
             const float magneticMakeupDb =
                 1.8f * std::sqrt(std::sqrt(magneticMakeup01))
-                + 0.46f * hot - 2.70f * veryHot;
+                + 0.46f * hot - 3.17f * veryHot;
             // At or below the 0.18 knee every term is zero, the makeup is
             // 10^0 = 1 exactly, and the multiply is skipped with the same bits.
             if (recordEnvelopeNow > 0.18f)

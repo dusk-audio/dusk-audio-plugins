@@ -617,6 +617,13 @@ private:
     // to our 0.700 runaway onset. Shape only that narrow interval; <= 0.62
     // and >= 0.70 remain identity, preserving the calibrated repeat ladder
     // and runaway anchors.
+    //
+    // This curve now drives ONLY the read amplifier and its loop blend. The
+    // loop GAIN is driven from the raw Intensity (feedbackGainFromControl):
+    // measured repeat by repeat, the reference's loop gain has no dead band
+    // (-2.84 / -1.30 / -0.44 / +0.09 dB per repeat at 0.60 / 0.65 / 0.68 /
+    // 0.70), so the "dead band" those installed states showed was our loop
+    // running 0.4-0.5 dB per repeat short, not the pot.
     static float feedbackKneeControl(float x) noexcept
     {
         if (x <= 0.62f || x >= 0.70f)
@@ -764,12 +771,26 @@ private:
         float normalized;
         if (x <= 0.7f)
         {
-            normalized = 0.00063492f * x
-                       + 0.95619048f * x * x
-                       + 0.96507937f * x * x * x;
-            const float knee = clamp01((x - 0.65f) * 20.0f);
-            const float kneeSmooth = knee * knee * (3.0f - 2.0f * knee);
-            normalized -= 0.02728236f * kneeSmooth;
+            // Measured loop gain per repeat (head 1, Repeat Rate 0.5, new
+            // tape, impulse, median of repeats 2-6) against the reference at
+            // Intensity 0.40-0.68: the former cubic ran 0.36-0.57 dB short
+            // per repeat below the knee and 1.1-1.2 dB short at 0.65-0.68,
+            // where the knee curve held it flat. Short per repeat compounds:
+            // ten repeats at 0.5 ended 5 dB quiet, and the multi-head Full Wash
+            // state fell below unity loop gain where the reference runs away.
+            // The cubic is kept and corrected in dB by a smooth curve fitted
+            // to those readings (within 0.07 dB of each), held at its 0.40
+            // value below (0.30 and under are floor-limited) and pinned at 0.70
+            // to the start of the branch below, so the law stays continuous.
+            // Driven from the raw Intensity: the reference's gain rises
+            // smoothly through 0.62-0.70, with no dead band.
+            const float cubic = 0.00063492f * x
+                              + 0.95619048f * x * x
+                              + 0.96507937f * x * x * x;
+            const float u = std::max(x - 0.40f, 0.0f);
+            const float correctionDb = 0.589331f
+                + u * u * (-23.489727f + u * (201.436561f - 520.370029f * u));
+            normalized = cubic * std::pow(10.0f, correctionDb * (1.0f / 20.0f));
         }
         else
         {
@@ -871,7 +892,14 @@ private:
         DCBlocker          preampDC;
         // base <-> 2x kA (tight, -67 dB), 2x <-> 4x kB (loose, -75 dB)
         BlockPreamp4x preamp;
-        Biquad             recordHP;   // in-loop, two-pole low-end cleanup
+        // Low end of the tape loop, split where the reference splits it (see
+        // kRecordLowShape in the .cpp): the record-side shape on the program
+        // feed AHEAD of the preamp, an input-only shelf ahead of that, and the
+        // same shape on the regeneration feed. Nothing low-cut sits after a
+        // saturating stage.
+        Biquad             inputLowShelf;   // program feed only
+        Biquad             inputLowShape;   // program feed, ahead of the preamp
+        Biquad             loopLowShape;    // regeneration feed
         Biquad             speedLP;    // tape-speed-dependent playback bandwidth
         Biquad             ageContour; // age-only HF shoulder, inside the loop
         std::array<Biquad, 3> antiAliasLP; // sixth-order fixed record/repro ceiling
