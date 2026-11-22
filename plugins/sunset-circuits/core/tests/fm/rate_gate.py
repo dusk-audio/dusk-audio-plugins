@@ -40,6 +40,9 @@ scaling"):
    grid time / 0.074 at 48, 96, 192 and 384 kHz (384 kHz is the internal rate
    of a 384 kHz session, which runs at 1x). A 20 s stretch of each gives the
    slope; the attack's is read through its curve, dB(pos) above.
+
+A passing check deletes the renders it read; a failing one leaves them in the
+scratch dir (_fm.OUT) for a post-mortem.
 """
 import math
 import os
@@ -52,10 +55,20 @@ from _fm import OUT, render
 OK = True
 
 
-def check(ok, msg):
+def drop(*names):
+    """Delete these renders from the scratch dir."""
+    for name in names:
+        os.remove(os.path.join(OUT, name + ".wav"))
+
+
+def check(ok, msg, renders=()):
+    """Record a result; on a pass, delete the renders it read (section 6's run
+    to 30 MB each), and on a failure keep them for a post-mortem."""
     global OK
     OK = OK and ok
     print(f"  {'ok ' if ok else 'BAD'} {msg}")
+    if ok:
+        drop(*renders)
 
 
 def f0(note):
@@ -93,23 +106,28 @@ def key_code(note):
 print("Decay 2 at HOLD (bit-identical to no Decay 2):")
 BASE = dict(op1A=0.001, op1D=0.05, op1S=0.8)
 _, ref = render(7, 60, 0.8, "rate_hold_ref", **BASE)
+same = []
 for d2 in (100, 95):
     _, x = render(7, 60, 0.8, f"rate_hold_{d2}", op1D2=d2, **BASE)
-    check(np.array_equal(ref, x), f"op1D2={d2}: identical")
+    same.append(np.array_equal(ref, x))
+    check(same[-1], f"op1D2={d2}: identical", (f"rate_hold_{d2}",))
+if all(same):
+    drop("rate_hold_ref")
 
 # --- 2. Decay 2 slope -------------------------------------------------------------
 print("Decay 2 slope, 60 dB per grid time, from the sustain level (op1S 0.8 = -9.03 dB):")
 for sr_hz in (48000, 192000):
     for d2 in (0.5, 2.0, 8.0):
         secs = min(12.0, 0.2 + 0.75 * grid(d2))
-        sr, x = render(7, 60, secs, f"rate_d2_{d2}_{sr_hz}", sr=sr_hz, op1D2=d2, **BASE)
+        name = f"rate_d2_{d2}_{sr_hz}"
+        sr, x = render(7, 60, secs, name, sr=sr_hz, op1D2=d2, **BASE)
         t, e = env_db(x, sr, 60)
         top = float(np.median(e[:3]))
         got = slope(t, e, top - 10.0, top - 40.0)
         want = -60.0 / grid(d2)
         err = abs(got / want - 1.0)
         check(err <= 0.02, f"{sr_hz:6d} Hz Decay 2 {d2:4.1f} s (grid {grid(d2):.3f} s): "
-                           f"{got:8.2f} dB/s, want {want:8.2f} ({err * 100:.2f} %, tol 2 %)")
+                           f"{got:8.2f} dB/s, want {want:8.2f} ({err * 100:.2f} %, tol 2 %)", (name,))
 
 # --- 2b. Long Decay and Release -------------------------------------------------
 # The hardware's slowest first decay falls 60 dB in about 80 s and its slowest
@@ -128,7 +146,7 @@ for stage, secs, params in (("Decay", 10.0, dict(op1A=0.001, op1D=40.0, op1S=0.0
     want = -60.0 / grid(t_set)
     err = abs(got / want - 1.0)
     check(err <= 0.02, f"{stage} {t_set:.0f} s (grid {grid(t_set):.2f} s): {got:7.3f} dB/s, want {want:7.3f} "
-                       f"({err * 100:.2f} %, tol 2 %)")
+                       f"({err * 100:.2f} %, tol 2 %)", (f"rate_long_{stage}",))
 
 # --- 3. Rate Scale against the reference -------------------------------------------
 print("Rate Scale: decay speed relative to C1, in chip rate steps, Prism vs the reference:")
@@ -146,15 +164,20 @@ for rs, ref_steps in REF.items():
     steps = [4.0 * np.log2(s / slopes[0]) for s in slopes]
     worst = max(abs(a - b) for a, b in zip(steps, ref_steps))
     check(worst <= 0.4, f"Rate Scale {rs}: Prism " + " ".join(f"{v:5.2f}" for v in steps)
-          + " | ref " + " ".join(f"{v:5.2f}" for v in ref_steps) + f" | worst {worst:.2f} steps (tol 0.4)")
+          + " | ref " + " ".join(f"{v:5.2f}" for v in ref_steps) + f" | worst {worst:.2f} steps (tol 0.4)",
+          [f"rate_ks{rs}_{n}" for n in NOTES])
 
 # --- 4. Middle C ------------------------------------------------------------------
 print("Middle C plays every stage as displayed, at every Rate Scale:")
 _, c0 = render(7, 60, 0.8, "rate_mid_0", op1A=0.01, op1D=0.2, op1S=0.5, op1D2=1.0, release=0.6)
+same = []
 for rs in (1, 2, 3):
     _, c = render(7, 60, 0.8, f"rate_mid_{rs}", op1A=0.01, op1D=0.2, op1S=0.5, op1D2=1.0,
                   release=0.6, op1RateScale=rs)
-    check(np.array_equal(c0, c), f"C4 at Rate Scale {rs} identical to Rate Scale 0")
+    same.append(np.array_equal(c0, c))
+    check(same[-1], f"C4 at Rate Scale {rs} identical to Rate Scale 0", (f"rate_mid_{rs}",))
+if all(same):
+    drop("rate_mid_0")
 
 # --- 5. Attack and release scale too -------------------------------------------------
 print("Attack and release scale with the key (Rate Scale 2, C7 against C4):")
@@ -174,7 +197,8 @@ ATK = dict(op1A=0.2, op1D=10.0, op1S=1.0, op1RateScale=2)
 r60 = rise(*render(7, 60, 0.6, "rate_atk60", **ATK), 60)
 r96 = rise(*render(7, 96, 0.6, "rate_atk96", **ATK), 96)
 check(abs((r60 / r96) / want - 1.0) <= 0.03, f"attack 10-90 %: C4 {r60 * 1000:.2f} ms, C7 {r96 * 1000:.2f} ms, "
-                                             f"ratio {r60 / r96:.3f}, want {want:.3f} (tol 3 %)")
+                                             f"ratio {r60 / r96:.3f}, want {want:.3f} (tol 3 %)",
+      ("rate_atk60", "rate_atk96"))
 REL = dict(op1A=0.001, op1D=10.0, op1S=1.0, op1R=1.0, op1RateScale=2, release=0.2)
 rel = []
 for n in (60, 96):
@@ -183,7 +207,8 @@ for n in (60, 96):
     after = t >= 0.21
     rel.append(slope(t[after], e[after], e[after][0] - 3.0, e[after][0] - 40.0))
 check(abs((rel[1] / rel[0]) / want - 1.0) <= 0.03, f"release slope: C4 {rel[0]:.1f} dB/s, C7 {rel[1]:.1f} dB/s, "
-                                                   f"ratio {rel[1] / rel[0]:.3f}, want {want:.3f} (tol 3 %)")
+                                                   f"ratio {rel[1] / rel[0]:.3f}, want {want:.3f} (tol 3 %)",
+      ("rate_rel60", "rate_rel96"))
 
 # --- 6. The slowest stages, at every rate ---------------------------------------------
 print("The slowest stages (Rate Scale 3 on C0, x0.074) at every internal rate:")
@@ -195,14 +220,6 @@ K_END = math.exp(-4.3)                                       # the attack curve'
 def attack_pos(e):
     """Where on the attack curve (0 = -60 dB, 1 = full) the level e (dB) sits."""
     return -np.log(K_END + (-e / 60.0) * (1.0 - K_END)) / 4.3
-
-
-def slow_check(ok, msg, name):
-    """check(), then drop a passing render: these run to 30 MB (20 s at
-    384 kHz), and only a failing one is worth keeping for a post-mortem."""
-    check(ok, msg)
-    if ok:
-        os.remove(os.path.join(OUT, name + ".wav"))
 
 
 SLOW = (("Decay", "d", dict(op1A=0.001, op1D=86.3, op1S=0.0)),
@@ -217,8 +234,8 @@ for sr_hz in (48000, 96000, 192000, 384000):
         got = float(np.polyfit(t[keep], e[keep], 1)[0])
         want = -60.0 / (grid(86.3) / mul)
         err = abs(got / want - 1.0)
-        slow_check(err <= 0.02, f"{sr_hz:6d} Hz {stage:7s} 86.3 s (x{mul:.3f}: {grid(86.3) / mul:.0f} s): "
-                                f"{got:8.4f} dB/s, want {want:8.4f} ({err * 100:.2f} %, tol 2 %)", name)
+        check(err <= 0.02, f"{sr_hz:6d} Hz {stage:7s} 86.3 s (x{mul:.3f}: {grid(86.3) / mul:.0f} s): "
+                           f"{got:8.4f} dB/s, want {want:8.4f} ({err * 100:.2f} %, tol 2 %)", (name,))
     name = f"rate_slow_a_{sr_hz}"
     sr, x = render(7, LOW, 14.0, name, sr=sr_hz, op1A=10.0, op1D=10.0, op1S=1.0, op1RateScale=3)
     t, e = env_db(x, sr, LOW)
@@ -226,8 +243,8 @@ for sr_hz in (48000, 96000, 192000, 384000):
     got = 1.0 / float(np.polyfit(t[sel], attack_pos(e[sel]), 1)[0]) if np.count_nonzero(sel) >= 8 else float("nan")
     want = grid(10.0) / mul
     err = abs(got / want - 1.0)
-    slow_check(err <= 0.02, f"{sr_hz:6d} Hz Attack  10 s (x{mul:.3f}: {want:.0f} s): runs as {got:7.2f} s "
-                            f"({err * 100:.2f} %, tol 2 %)", name)
+    check(err <= 0.02, f"{sr_hz:6d} Hz Attack  10 s (x{mul:.3f}: {want:.0f} s): runs as {got:7.2f} s "
+                       f"({err * 100:.2f} %, tol 2 %)", (name,))
 
 print(f"rate_gate: {'PASS' if OK else 'FAIL'}")
 sys.exit(0 if OK else 1)
