@@ -92,7 +92,7 @@ namespace
     // Splice-gain skip thresholds, in seconds from the splice. Changing either
     // requires re-running the exactness proof named at the splice gain.
     constexpr float kSpliceUnityBeyondSeconds = 2.0f;
-    constexpr float kSpliceNarrowZeroBeyondSeconds = 0.25f;
+    constexpr float kSpliceNarrowZeroBeyondSeconds = 0.35f;
 
     // Analog corner of the spring's per-reflection high-frequency loss.
     constexpr double kReflectionLossCornerHz = 6500.0;
@@ -1946,21 +1946,32 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                 ? (float)-sinceSplice
                 : (float)((1.0 - spliceLoopPosition) * loopPeriodSamples);
             float spliceDepthDb;
+            // New / Used / Old nodes 1.75 / 4.27 / 15.53 dB, measured with the
+            // speed-scaled dip shape below (60 s tone against the reference:
+            // New and Used read 0.2 / 0.4 dB shallow at the former 1.58 / 3.88).
             if (age <= 0.5f)
-                spliceDepthDb = 1.58f + 4.60f * age;
+                spliceDepthDb = 1.75f + 5.04f * age;
             else
             {
                 const float old01 = (age - 0.5f) * 2.0f;
                 spliceDepthDb =
-                    3.88f + 11.65f * std::pow(old01, 1.5f);
+                    4.27f + 11.26f * std::pow(old01, 1.5f);
             }
             const float old01 = clamp01((age - 0.5f) * 2.0f);
             const float narrowWeight = age <= 0.5f
                 ? 0.545f + 0.106f * age
                 : 0.598f + 0.164f * old01;
-            const float narrowSeconds = age <= 0.5f
-                ? 0.0132f - 0.0012f * age
-                : 0.0126f - 0.0028f * old01;
+            // Both parts of the dip are lengths of tape, so both last longer at
+            // a slower motor. Measured against the reference (60 s tone, dips on
+            // its envelope, 3 ages x 3 speeds): with the join a fixed 13.2 ms
+            // the dip depth was flat across speed (old tape -14.5 / -14.4 /
+            // -14.8 dB at fast / middle / slow) where the reference's deepens as
+            // the tape slows (-12.5 / -15.3 / -15.7). Scaling the join with
+            // speed and refitting both widths: -12.9 / -14.7 / -15.1, depth
+            // error 0.92 -> 0.45 dB rms over the nine cells.
+            const float narrowSeconds = speedScale * (age <= 0.5f
+                ? 0.00796f - 0.000724f * age
+                : 0.00760f - 0.00169f * old01);
             const auto spliceGain = [&](float samplesToEvent) noexcept
             {
                 const float secondsToEvent =
@@ -1981,7 +1992,7 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                         secondsToEvent / narrowSeconds, 2.0f));
                 const float broad =
                     std::exp(-0.5f * std::pow(
-                        secondsToEvent / (0.080f * speedScale), 2.0f));
+                        secondsToEvent / (0.0974f * speedScale), 2.0f));
                 const float shape =
                     narrowWeight * narrow + (1.0f - narrowWeight) * broad;
                 return std::pow(10.0f, -spliceDepthDb * shape * 0.05f);
