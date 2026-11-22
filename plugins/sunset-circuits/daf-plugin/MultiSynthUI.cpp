@@ -1097,12 +1097,13 @@ private:
     // measured on the reference within 0.5 cents of these nominal intervals
     // (tools repo, Prism parity review, fix 9). Plain drag and the wheel step
     // through the list; Shift-drag is continuous.
+    struct RatioTable { float v[64] {}; int n = 0; };
     static const float* ratioList(int& n)
     {
-        static float L[64];
-        static int count = 0;
-        if (count == 0)
-        {
+        // Built once, by a function-local static's initializer: C++11 runs it
+        // exactly once even when two editors open at the same time.
+        static const RatioTable table = [] {
+            RatioTable t;
             float tmp[96]; int k = 0;
             for (float c : { 0.25f, 0.5f, 0.75f, 1.5f }) tmp[k++] = c;
             const float dt2[4] = { 1.0f, std::exp2(600.0f / 1200.0f), std::exp2(781.0f / 1200.0f),
@@ -1115,9 +1116,10 @@ private:
                 }
             std::sort(tmp, tmp + k);
             for (int i = 0; i < k; ++i)
-                if (count == 0 || tmp[i] != L[count - 1]) L[count++] = tmp[i];
-        }
-        n = count; return L;
+                if (t.n == 0 || tmp[i] != t.v[t.n - 1]) t.v[t.n++] = tmp[i];
+            return t;
+        }();
+        n = table.n; return table.v;
     }
     static int nearestRatioIndex(float v)
     { int n; const float* L = ratioList(n); int best = 0; float bd = 1e9f;
