@@ -127,11 +127,12 @@ projects that use it.
 The VST3 identity is the same on Windows, Linux and macOS. The first Windows
 build, 1.0.0, had a different one. A Windows project saved with 1.0.0 opens in a
 host that reads VST3 compatibility information, as REAPER does. In a host that
-does not, the project reports DuskVerb 2 as missing: while 1.0.0 is still
-installed, open the project and save the instance's settings as a user preset,
-then update, insert DuskVerb 2, load the preset, and check automation and
-routing. CLAP, AU and LV2 projects are not
-affected.
+does not, the project reports DuskVerb 2 as missing and does not load its
+settings. If 1.0.0 is still installed, open the project with it before updating
+and save each instance's settings as a user preset; after the update insert
+DuskVerb 2, load the preset, and check automation and routing. Without 1.0.0
+the settings in such a project cannot be brought back in that host: insert
+DuskVerb 2 and set it up again. CLAP, AU and LV2 projects are not affected.
 Original DuskVerb has a separate identity and is unaffected.
 
 The plugin supports mono, mono-to-stereo and stereo operation where the host
