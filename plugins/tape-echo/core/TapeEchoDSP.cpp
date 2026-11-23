@@ -66,9 +66,24 @@ namespace
     }
 
     // Transport motion. Flutter frequency follows tape speed; its depth grows
-    // toward the slow end of the motor range. The second harmonic gives the
-    // measured capstan cycle its slightly non-sinusoidal shape.
+    // toward the slow end of the motor range and does not change with Loop
+    // Age. Measured on the reference's head-1 delay tracks (32 s, Repeat Rate
+    // 1.0 / 0.81 / 0.727 / 0.4): the line's speed-deviation amplitude is
+    // kFlutterLine0 + slow01 (kFlutterLine1 + slow01 kFlutterLine2), within
+    // 1 % of every cell, and 0.182 / 0.183 / 0.187 ms of delay at Loop Age 0 /
+    // 0.5 / 1.0 (Repeat Rate 0.81). Its 2nd and 3rd harmonics do grow with
+    // age: 0.096 / 0.112 / 0.153 and 0.017 / 0.021 / 0.031 of the line in the
+    // delay, i.e. 0.142 + 0.084 age^2 and 0.061 + 0.050 age^2 of it in speed
+    // (head 1's path window passes 0.68 / 0.28 of the 2nd / 3rd harmonic
+    // relative to the line, the same at every speed).
     constexpr float kFlutterMaxHz= 3.857f;
+    constexpr float kFlutterLine0 = 0.0027021f;
+    constexpr float kFlutterLine1 = 0.0030468f;
+    constexpr float kFlutterLine2 = -0.0011856f;
+    constexpr float kFlutterH2    = 0.142f;
+    constexpr float kFlutterH2Age = 0.084f;
+    constexpr float kFlutterH3    = 0.061f;
+    constexpr float kFlutterH3Age = 0.050f;
 
     // Slow drift: the reference's motion below the flutter line is random,
     // not a wow tone. From its head-1 delay tracks (32 s, Repeat Rates 0.727 /
@@ -76,17 +91,15 @@ namespace
     // through one pole: corner 0.31-0.41 Hz in every cell (0.36 here), the same
     // fraction of speed at Repeat Rate 0.4 and 0.81, and an rms of 0.13 /
     // 0.24 / 0.45 % over Loop Age 0 / 0.5 / 1.0, i.e. 0.13 % x e^(1.23 age).
-    // The common `wf` factor below already carries (1 + 0.20 age), so the
-    // depth law divides it out.
     constexpr float kDriftHz       = 0.36f;
     constexpr float kDriftRms      = 0.0013f;
     constexpr float kDriftAgeExp   = 1.23f;
 
-    // Slow-drift depth (fraction of speed, before the wf factor) times the
-    // unit-rms normalisation of the drift filter.
+    // Slow-drift depth (fraction of speed, before the user's Wow & Flutter
+    // factor) times the unit-rms normalisation of the drift filter.
     inline float driftDepthFor(float age, float norm) noexcept
     {
-        return kDriftRms * std::exp(kDriftAgeExp * age) / (1.0f + 0.20f * age) * norm;
+        return kDriftRms * std::exp(kDriftAgeExp * age) * norm;
     }
 
     // Scrape flutter. The reference's flutter band (6-100 Hz) is stochastic,
@@ -100,7 +113,7 @@ namespace
     constexpr float kFlutterNoiseLPHz  = 9.0f;
     constexpr float kFlutterNoiseDepth = 0.00515f;
     // Age coupling. Measured reference flutter grows 1.00 / 1.76 / 3.36 over
-    // Loop Age 0 / 0.5 / 1.0. The common `wf` factor below already contributes
+    // Loop Age 0 / 0.5 / 1.0. Its Wow & Flutter factor below also contributes
     // (1 + 0.20*age), so this polynomial carries the remainder.
     constexpr float kFlutterAgeLin = 0.589f;
     constexpr float kFlutterAgeSq  = 1.214f;
@@ -1358,6 +1371,8 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     memoAge = ageSmoother.value();
     memoAgeNoiseScale = 0.25f * std::exp(1.38629436112f * memoAge);
     memoDriftDepth = driftDepthFor(memoAge, driftNorm);
+    memoFlutterH2 = kFlutterH2 + kFlutterH2Age * memoAge * memoAge;
+    memoFlutterH3 = kFlutterH3 + kFlutterH3Age * memoAge * memoAge;
     memoOutputVolume = outputVolumeSmoother.value();
     memoOutputGain = std::pow(10.0f, 2.0f * memoOutputVolume - 1.0f);
     memoIntensity = intensitySmoother.value();
@@ -1696,9 +1711,13 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             }
 
             // The reference transport always moves, even in its freshest state.
-            // The user control adds an intentionally wider creative range.
+            // The user control adds an intentionally wider creative range. Only
+            // the scrape flutter's factor carries (1 + 0.20 age) as part of
+            // its measured age law; the drift and the flutter line have their
+            // own (see their constants).
             const float age = ageSmoother.next();
-            const float wf  = 1.0f + 1.5f * wowFlutterSmoother.next() + 0.20f * age;
+            const float wf  = 1.0f + 1.5f * wowFlutterSmoother.next();
+            const float scrapeWf = wf + 0.20f * age;
             // slow playback-level wobble (worn pinch roller / dropout precursor);
             // exactly 1.0 at age 0.
             const float wobble =
@@ -1712,6 +1731,8 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                 memoAge = age;
                 memoAgeNoiseScale = 0.25f * std::exp(1.38629436112f * age);
                 memoDriftDepth = driftDepthFor(age, driftNorm);
+                memoFlutterH2 = kFlutterH2 + kFlutterH2Age * age * age;
+                memoFlutterH3 = kFlutterH3 + kFlutterH3Age * age * age;
             }
             const float ageNoiseScale = memoAgeNoiseScale;
             float ageHum = 0.0f;
@@ -1750,14 +1771,13 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                    + kAgeHissGain
                        * hissCeiling.process(
                            hissVoice.process(ageRand() * noiseRateComp)));
-            // x1.18 on the former depth: integrated over head 1's path the
-            // periodic flutter keeps sin(pi f T1) / (pi f T1) = 0.85 of its
-            // proportional-model swing, and f T1 is the same at every motor
-            // speed (the flutter rate follows the tape), so one factor holds
-            // head 1's measured pitch deviation everywhere.
-            const float flutterDepth = 1.18f * (0.00237f + 0.00242f * slow01);
+            const float flutterDepth =
+                kFlutterLine0 + slow01 * (kFlutterLine1 + slow01 * kFlutterLine2);
+            // sin 2x = 2 sin x cos x, sin 3x = sin x (3 - 4 sin^2 x).
             const float flutterWave = flutterSin
-                                    + 0.088f * (2.0f * flutterSin * flutterCos);
+                + memoFlutterH2 * (2.0f * flutterSin * flutterCos)
+                + memoFlutterH3 * flutterSin
+                      * (3.0f - 4.0f * flutterSin * flutterSin);
             // Scrape flutter: band noise around 6 Hz. Age worsens it steeply on the
             // reference, far faster than the loop-rate wow it rides on.
             const float flutterNoiseGain =
@@ -1769,9 +1789,8 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                       flutterBand.process(flutterRand() * noiseRateComp));
             const float drift = memoDriftDepth
                               * driftLP.process(frand() * noiseRateComp);
-            const float mod = wf * (drift
-                                  + flutterDepth * flutterWave
-                                  + flutterNoise);
+            const float mod = wf * (drift + flutterDepth * flutterWave)
+                            + scrapeWf * flutterNoise;
 
             // Each head's delay is its nominal path plus the transport's speed
             // deviation summed over a window as long as that path. Head 1's

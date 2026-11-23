@@ -565,6 +565,8 @@ private:
     float memoAge = 0.0f;
     float memoAgeNoiseScale = 0.0f;
     float memoDriftDepth = 0.0f;
+    float memoFlutterH2 = 0.0f;
+    float memoFlutterH3 = 0.0f;
     float memoOutputVolume = 0.0f;
     float memoOutputGain = 1.0f;
 
