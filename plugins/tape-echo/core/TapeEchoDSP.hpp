@@ -564,6 +564,7 @@ private:
     // in prepare() from the snapped controls.
     float memoAge = 0.0f;
     float memoAgeNoiseScale = 0.0f;
+    float memoDriftDepth = 0.0f;
     float memoOutputVolume = 0.0f;
     float memoOutputGain = 1.0f;
 
@@ -711,16 +712,18 @@ private:
         float a1 = 0.0f, a2 = 0.0f, a3 = 0.0f, s1 = 0.0f, s2 = 0.0f;
     };
 
-    // Wow and flutter oscillators as unit vectors rotated once per sample (no
-    // per-sample sinf). Wow turns by a fixed step; flutter's step follows the
-    // motor, so it turns by a small-angle polynomial of flutterInc.
-    float     wowSin = 0.0f, wowCos = 1.0f, wowRotSin = 0.0f, wowRotCos = 1.0f;
+    // Flutter oscillator as a unit vector rotated once per sample (no
+    // per-sample sinf). Its step follows the motor, so it turns by a
+    // small-angle polynomial of flutterInc.
     float     flutterSin = 0.0f, flutterCos = 1.0f, flutterInc = 0.0f;
-    OnePoleLP noiseLP;
+    // Slow transport drift: white noise through one pole, scaled to unit rms
+    // by driftNorm (set in prepare()).
+    OnePoleLP driftLP;
+    float     driftNorm = 1.0f;
     uint32_t  rngState = 0x9E3779B9u;
 
     // Stochastic scrape flutter: band noise around 6 Hz. Its own RNG stream so
-    // the wow noise realization (and therefore the measured wow depth) is
+    // the drift noise realization (and therefore the measured drift depth) is
     // untouched by this addition.
     BandPassSVF flutterBand;
     OnePoleLP   flutterBandLP;                    // steepens the upper skirt

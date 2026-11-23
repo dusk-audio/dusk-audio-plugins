@@ -68,10 +68,26 @@ namespace
     // Transport motion. Flutter frequency follows tape speed; its depth grows
     // toward the slow end of the motor range. The second harmonic gives the
     // measured capstan cycle its slightly non-sinusoidal shape.
-    constexpr float kWowHz       = 0.5f;
     constexpr float kFlutterMaxHz= 3.857f;
-    constexpr float kWowDepth    = 0.0008f;
-    constexpr float kNoiseDepth  = 0.0004f;
+
+    // Slow drift: the reference's motion below the flutter line is random,
+    // not a wow tone. From its head-1 delay tracks (32 s, Repeat Rates 0.727 /
+    // 0.81, Loop Age 0 / 0.5 / 1.0) the speed deviation there is white noise
+    // through one pole: corner 0.31-0.41 Hz in every cell (0.36 here), the same
+    // fraction of speed at Repeat Rate 0.4 and 0.81, and an rms of 0.13 /
+    // 0.24 / 0.45 % over Loop Age 0 / 0.5 / 1.0, i.e. 0.13 % x e^(1.23 age).
+    // The common `wf` factor below already carries (1 + 0.20 age), so the
+    // depth law divides it out.
+    constexpr float kDriftHz       = 0.36f;
+    constexpr float kDriftRms      = 0.0013f;
+    constexpr float kDriftAgeExp   = 1.23f;
+
+    // Slow-drift depth (fraction of speed, before the wf factor) times the
+    // unit-rms normalisation of the drift filter.
+    inline float driftDepthFor(float age, float norm) noexcept
+    {
+        return kDriftRms * std::exp(kDriftAgeExp * age) / (1.0f + 0.20f * age) * norm;
+    }
 
     // Scrape flutter. The reference's flutter band (6-100 Hz) is stochastic,
     // not a tone: band noise centred near 6 Hz, not a harmonic of the loop
@@ -1222,14 +1238,16 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     }
     spring.prepare(fs, 1.0f);
 
-    noiseLP.setCutoff(2.0f, fs);
+    driftLP.setCutoff(kDriftHz, fs);
+    {
+        // Unit rms for uniform [-1, 1) noise (variance 1/3) through the one
+        // pole at 48 kHz; noiseRateComp holds that rms at other rates.
+        const double a = 1.0 - std::exp(-2.0 * 3.14159265358979323846 * kDriftHz
+                                        / kNoiseCalibrationFs);
+        driftNorm = (float)(1.0 / std::sqrt(a / (3.0 * (2.0 - a))));
+    }
     flutterBand.set(kFlutterNoiseHz, kFlutterNoiseQ, fs);
     flutterBandLP.setCutoff(kFlutterNoiseLPHz, fs);
-    {
-        const double wowStep = 2.0 * 3.14159265358979323846 * kWowHz / fs;
-        wowRotSin = (float)std::sin(wowStep);
-        wowRotCos = (float)std::cos(wowStep);
-    }
     flutterInc = kTwoPi * kFlutterMaxHz / (float)fs;
     // The record VU owns the needle ballistics. The UI deliberately adds no
     // second smoothing stage.
@@ -1339,6 +1357,7 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     // expressions the loop uses, so they are valid from the first sample.
     memoAge = ageSmoother.value();
     memoAgeNoiseScale = 0.25f * std::exp(1.38629436112f * memoAge);
+    memoDriftDepth = driftDepthFor(memoAge, driftNorm);
     memoOutputVolume = outputVolumeSmoother.value();
     memoOutputGain = std::pow(10.0f, 2.0f * memoOutputVolume - 1.0f);
     memoIntensity = intensitySmoother.value();
@@ -1382,7 +1401,7 @@ void TapeEchoDSP::reset()
     }
     spring.reset();
     springIdle = false;
-    noiseLP.reset();
+    driftLP.reset();
     flutterBand.reset();
     flutterBandLP.reset();
     hissVoice.reset();
@@ -1394,7 +1413,6 @@ void TapeEchoDSP::reset()
     ageHumCos = 1.0f;
     ageHumRenormalize = 0u;
     writeIdx = 0;
-    wowSin = 0.0f; wowCos = 1.0f;
     flutterSin = 0.0f; flutterCos = 1.0f;
     meterVu = 0.0f;
     meterVuStage1 = 0.0f;
@@ -1662,15 +1680,10 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                        * (kMinDelayMs / nominalMs) / (float)fs;
 
             {
-                // Advance both oscillators one sample. The flutter step is a
-                // few 1e-4 rad, where these series are exact to float
-                // precision. One Newton step per sample holds each vector at
-                // unit length, so the recurrence cannot drift in amplitude.
-                const float ws = wowSin * wowRotCos + wowCos * wowRotSin;
-                const float wc = wowCos * wowRotCos - wowSin * wowRotSin;
-                const float wn = 1.5f - 0.5f * (ws * ws + wc * wc);
-                wowSin = ws * wn;
-                wowCos = wc * wn;
+                // Advance the flutter oscillator one sample. The step is a few
+                // 1e-4 rad, where these series are exact to float precision.
+                // One Newton step per sample holds the vector at unit length,
+                // so the recurrence cannot drift in amplitude.
                 const float d = flutterInc;
                 const float d2 = d * d;
                 const float rs = d * (1.0f - d2 * (1.0f / 6.0f));
@@ -1698,6 +1711,7 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             {
                 memoAge = age;
                 memoAgeNoiseScale = 0.25f * std::exp(1.38629436112f * age);
+                memoDriftDepth = driftDepthFor(age, driftNorm);
             }
             const float ageNoiseScale = memoAgeNoiseScale;
             float ageHum = 0.0f;
@@ -1753,11 +1767,11 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                 flutterNoiseGain
                 * flutterBandLP.process(
                       flutterBand.process(flutterRand() * noiseRateComp));
-            const float mod = wf * (kWowDepth * wowSin
+            const float drift = memoDriftDepth
+                              * driftLP.process(frand() * noiseRateComp);
+            const float mod = wf * (drift
                                   + flutterDepth * flutterWave
-                                  + flutterNoise
-                                  + kNoiseDepth
-                                        * noiseLP.process(frand() * noiseRateComp));
+                                  + flutterNoise);
 
             // Each head's delay is its nominal path plus the transport's speed
             // deviation summed over a window as long as that path. Head 1's
