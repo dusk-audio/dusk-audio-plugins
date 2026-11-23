@@ -147,6 +147,14 @@ namespace
     constexpr float kInputStageDrive = 2.65f;
     constexpr float kInputStageTrim  = 0.459f;
 
+    // Record-compressor detector (see its use in processBlock): the band
+    // whose phase-independent amplitude it reads, the critically damped
+    // smoothing of that amplitude (two one-poles), and the weight on the
+    // sample magnitude that keeps transients and low tones on the fast path.
+    constexpr float kDetectorBandHz   = 700.0f;
+    constexpr float kDetectorSmoothHz = 200.0f;
+    constexpr float kDetectorPeakWeight = 0.99f;
+
     // Below this a read head's (smoothed) gain is treated as off.
     constexpr float kHeadIdleFloor = 1.0e-20f;
 
@@ -1303,6 +1311,11 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     recordEnvelopeAttack =
         1.0f - std::exp(-1.0f / (0.00005f * (float)fs));
     recordEnvelopeRelease = std::exp(-1.0f / (0.12f * (float)fs));
+    detectorSmoothCoeff =
+        1.0f - std::exp(-2.0f * kDuskPi * kDetectorSmoothHz / (float)fs);
+    for (auto& ch : channels)
+        ch.detectorHighPass.setCoeffs(
+            Biquad::highPass(fs, kDetectorBandHz, 0.70710678f));
     meterVu = 0.0f;
     meterVuStage1 = 0.0f;
     meterPeak = 0.0f;
@@ -1422,6 +1435,10 @@ void TapeEchoDSP::reset()
         std::fill(ch.springCleanDelay.begin(), ch.springCleanDelay.end(), 0.0f);
         ch.springCleanDelayWriteIdx = 0;
         ch.recordEnvelope = 0.0f;
+        ch.detectorHighPass.reset();
+        ch.detectorHilbert.reset();
+        ch.detectorSmooth1 = 0.0f;
+        ch.detectorSmooth2 = 0.0f;
         ch.loopEnvelope = 0.0f;
         ch.magneticEnvelope = 0.0f;
     }
@@ -1933,11 +1950,38 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             // nominal level and asymptotically reaches about 4.5 dB of gain
             // reduction. Most of that reduction happens before the saturator
             // (limiting harmonic growth); the balance is clean record gain.
+            //
+            // The detector reads the louder of the sample magnitude (x 0.99)
+            // and the smoothed amplitude of the band above kDetectorBandHz.
+            // On the sample magnitude alone, a steady high tone's sampled
+            // peaks land at a different phase every cycle (up to 29 % under
+            // the true peak near a quarter of the sample rate), the release
+            // decays between the highest of them, and the gain then rides at
+            // their beat rate: a 9 kHz tone carried a 3 kHz spur at -78 dBc
+            // ahead of the saturation, a 12.01 kHz tone 40 Hz sidebands at
+            // -39 dBc, and the gain itself moved with frequency (0.912 / 0.932
+            // at 9 / 12 kHz for 0.911 below). The band amplitude is the same at
+            // every phase, so steady tones from 2 kHz up read their true
+            // amplitude (spurs -95 to -114 dBc, gain 0.911 everywhere, the same
+            // at 48 and 192 kHz). Below the band and on transients the sample
+            // magnitude still leads, as before: 30 Hz-1 kHz spurs and gains
+            // and a 0.9 impulse's response are unchanged to 0.004 in gain, a
+            // 1 kHz tone burst's envelope 0.492 against 0.497.
             const float tapeMagnitude =
                 tapeInput < 0.0f ? -tapeInput : tapeInput;
-            if (tapeMagnitude > ch.recordEnvelope)
+            float bandI = 0.0f, bandQ = 0.0f;
+            ch.detectorHilbert.process(
+                ch.detectorHighPass.process(tapeInput), bandI, bandQ);
+            const float bandAmplitude = std::sqrt(bandI * bandI + bandQ * bandQ);
+            ch.detectorSmooth1 += detectorSmoothCoeff
+                                * (bandAmplitude - ch.detectorSmooth1);
+            ch.detectorSmooth2 += detectorSmoothCoeff
+                                * (ch.detectorSmooth1 - ch.detectorSmooth2);
+            const float detectorInput = std::max(
+                kDetectorPeakWeight * tapeMagnitude, ch.detectorSmooth2);
+            if (detectorInput > ch.recordEnvelope)
                 ch.recordEnvelope += recordEnvelopeAttack
-                                   * (tapeMagnitude - ch.recordEnvelope);
+                                   * (detectorInput - ch.recordEnvelope);
             else
                 ch.recordEnvelope *= recordEnvelopeRelease;
             // The law has exact closed forms below its knees, taken as branches

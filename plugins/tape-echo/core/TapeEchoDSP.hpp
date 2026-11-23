@@ -619,6 +619,38 @@ private:
     bool springIdle = false;
     void  refreshBlockRateControls();
 
+    // Two chains of four second-order allpass sections (in z^-2) whose outputs
+    // stay 90 degrees apart, within about 0.35 degrees from 20 Hz to 22 kHz at
+    // 44.1 / 48 kHz, so sqrt(i^2 + q^2) is a sinusoid's amplitude at any phase
+    // (ripple +-0.6 % at twice its frequency). Chain A runs one sample late.
+    // Coefficients: the widely published 4 + 4 section design (Niemitalo).
+    struct HilbertPair
+    {
+        float a[4][4] {};   // per section: x[n-1], x[n-2], y[n-1], y[n-2]
+        float b[4][4] {};
+        float aLate = 0.0f;
+        void reset() noexcept { *this = HilbertPair{}; }
+        void process(float x, float& i, float& q) noexcept
+        {
+            static constexpr float kA[4] = {
+                0.6923878f * 0.6923878f, 0.9360654322959f * 0.9360654322959f,
+                0.9882295226860f * 0.9882295226860f, 0.9987488452737f * 0.9987488452737f };
+            static constexpr float kB[4] = {
+                0.4021921162426f * 0.4021921162426f, 0.8561710882420f * 0.8561710882420f,
+                0.9722909545651f * 0.9722909545651f, 0.9952884791278f * 0.9952884791278f };
+            float va = x, vb = x;
+            for (int k = 0; k < 4; ++k)
+            {
+                const float ya = kA[k] * (va + a[k][3]) - a[k][1];
+                a[k][1] = a[k][0]; a[k][0] = va; a[k][3] = a[k][2]; a[k][2] = ya; va = ya;
+                const float yb = kB[k] * (vb + b[k][3]) - b[k][1];
+                b[k][1] = b[k][0]; b[k][0] = vb; b[k][3] = b[k][2]; b[k][2] = yb; vb = yb;
+            }
+            i = aLate; aLate = va;
+            q = vb;
+        }
+    };
+
     //--- per-channel state ----------------------------------------------------
     struct Channel
     {
@@ -649,6 +681,12 @@ private:
         std::vector<float> springCleanDelay;   // sized in prepare()
         int                springCleanDelayWriteIdx = 0;
         float              recordEnvelope = 0.0f;   // program drive only
+        // Record-compressor detector: phase-independent amplitude of the band
+        // above kDetectorBandHz (see processBlock).
+        Biquad             detectorHighPass;
+        HilbertPair        detectorHilbert;
+        float              detectorSmooth1 = 0.0f;
+        float              detectorSmooth2 = 0.0f;
         float              loopEnvelope = 0.0f;     // regeneration drive only
         float              magneticEnvelope = 0.0f;
     };
@@ -681,6 +719,7 @@ private:
     float meterPeakDecayPerSample = 1.0f;
     float recordEnvelopeAttack = 1.0f;
     float recordEnvelopeRelease = 1.0f;
+    float detectorSmoothCoeff = 1.0f;
 
     //--- modulation (shared across channels: one motor, one tape) --------------
     // Two-pole state-variable band-pass, TPT (Zavalishin) topology. A direct-form
