@@ -573,8 +573,8 @@ private:
     float memoOutputGain = 1.0f;
 
     // Per-sample values carried between the passes of one sub-block. Kept on
-    // the stack in processBlock (about 18 KB): as a member it measured 3-5 %
-    // slower (48 kHz core, default state), and 18 KB is far inside the audio
+    // the stack in processBlock (about 27 KB): as a member it measured 3-5 %
+    // slower (48 kHz core, default state), and 27 KB is far inside the audio
     // thread stacks hosts give plug-ins (512 KB and up on macOS, 1 MB on
     // Windows, 8 MB on Linux).
     struct SubBlockScratch
@@ -612,6 +612,17 @@ private:
         float splice1[kSize];
         float splice2[kSize];
         float splice3[kSize];
+        // Record saturation, run in its own passes after the head reads.
+        float programFeed[kSize];
+        float loopFeed[kSize];
+        float lowFloorFade[kSize];
+        float programGain[kSize];
+        float c3[kSize];
+        float c5[kSize];
+        float makeupGain[kSize];
+        float programOs[kSize][4];
+        float loopOs[kSize][4];
+        float tapeOs[kSize][4];
     };
     float memoIntensity = 0.0f;
     float memoFbGain = 0.0f;
@@ -731,6 +742,9 @@ private:
     float detectorSmoothCoeff = 1.0f;
     float magneticReleaseOs = 1.0f;   // the record release per 4x sample
     int   magneticHoldSamplesOs = 0;
+    // Longest sub-block whose tape writes can wait for its head reads: half
+    // the shortest head delay (see processBlock), at most the scratch size.
+    int   subBlockLimit = 1;
 
     //--- modulation (shared across channels: one motor, one tape) --------------
     // Two-pole state-variable band-pass, TPT (Zavalishin) topology. A direct-form

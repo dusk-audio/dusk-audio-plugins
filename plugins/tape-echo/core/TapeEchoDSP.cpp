@@ -1336,6 +1336,14 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
         1.0f - std::exp(-2.0f * kDuskPi * kDetectorSmoothHz / (float)fs);
     magneticReleaseOs = std::exp(-1.0f / (0.12f * 4.0f * (float)fs));
     magneticHoldSamplesOs = (int)std::lround(kMagneticHoldSeconds * 4.0 * fs);
+    // The record saturation's passes write the tape after the sub-block's
+    // head reads; that is exact while no head reads a sample of the same
+    // sub-block, i.e. while the sub-block is shorter than the shortest head
+    // delay (kMinDelayMs at the fastest motor). Half of it leaves room for
+    // the transport's excursion; at audio rates the scratch size is far
+    // below (128 against 1650 samples at 48 kHz).
+    subBlockLimit = std::max(1, std::min(SubBlockScratch::kSize,
+        (int)(0.5 * kMinDelayMs * 0.001 * fs)));
     for (auto& ch : channels)
     {
         ch.feedUp1.set(kOsSharp);
@@ -1737,10 +1745,10 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
     // waiting out one long dependency chain per sample. Only the tape loop
     // reads what it writes, and it stays one pass in sample order.
     constexpr int kSubBlock = SubBlockScratch::kSize;
-    SubBlockScratch x; // on the stack: ~18 KB, see the struct
-    for (int base = 0; base < numSamples; base += kSubBlock)
+    SubBlockScratch x; // on the stack: ~27 KB, see the struct
+    for (int base = 0, len = 0; base < numSamples; base += len)
     {
-        const int len = std::min(kSubBlock, numSamples - base);
+        len = std::min(subBlockLimit, numSamples - base);
         for (int i = 0; i < len; ++i)
         {
             const int n = base + i;
@@ -2396,15 +2404,6 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             float loopFeed = ch.speedLP.process(ch.loopLowShape.process(loopDrive));
             for (auto& lp : ch.loopCeilingLP)
                 loopFeed = lp.process(loopFeed);
-            // Everything from the preamp curve to the tape write runs at 4x
-            // and is decimated back: at 1x its harmonics above Nyquist folded
-            // into the band (a 9 kHz tone at -6 dBFS: its 3rd at 27 kHz back
-            // at 21 kHz, -22 dBc; the reference -114 dBc), and no filter at
-            // 1x can keep a 7 kHz tone's real 3rd at 21 kHz while removing
-            // that one. Measured on off-grid tones 5-12 kHz at -6 dBFS the
-            // worst non-harmonic component is -94 to -107 dBc at 4x with the
-            // held normalization below; at 2x it was -53 (higher harmonics
-            // still fold) and with an unheld normalization -62 at 4x.
             const float lowFloor01 = clamp01(
                 (fluxEnvelope - 0.02f) * (1.0f / 0.07f));
             const float lowFloorSmooth =
@@ -2431,91 +2430,28 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             const float c5 = -0.0195f * hot;
             const float programGain = kInputStageTrim * postDriveGain;
 
-            float programOs[4], loopOs[4];
-            {
-                float p0, p1, l0, l1;
-                ch.feedUp1.process(programFeed, loopFeed, p0, p1, l0, l1);
-                ch.feedUp2.process(p0, l0, programOs[0], programOs[1], loopOs[0], loopOs[1]);
-                ch.feedUp2.process(p1, l1, programOs[2], programOs[3], loopOs[2], loopOs[3]);
-            }
-            // In passes over the four sub-samples, so the static curves
-            // vectorize; only the held envelope runs in sample order.
-            float recorded[4], recorded2[4], lowFloor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-            for (int k = 0; k < 4; ++k)
-            {
-                recorded[k] = preampShape(programOs[k]) * programGain + loopOs[k];
-                recorded2[k] = recorded[k] * recorded[k];
-            }
-            // At low flux the measured odd harmonics fall much more slowly than
-            // a cubic can produce: a regularized p = 2.15 term holds that quiet
-            // harmonic floor, fading out before the main curve's -18 dB
-            // operating point. With the fade at exactly zero the term is zero
-            // whatever the power is, so the pow is skipped there (and kept out
-            // of the passes around it, which then vectorize).
-            if (lowFloorFade != 0.0f)
-                for (int k = 0; k < 4; ++k)
-                    lowFloor[k] = 1.325f * lowFloorFade * recorded[k]
-                        * std::pow(recorded2[k] + 0.006f * 0.006f, 0.575f);
-            float baseTape[4];
-            for (int k = 0; k < 4; ++k)
-            {
-                // The tape's magnetisation curve: more strongly curved than the
-                // preamp at low level, slope still positive at overload.
-                const float magneticInput =
-                    recorded[k] * (1.0f - 5.0f * recorded2[k]
-                                   / (1.0f + 8.0f * recorded2[k]))
-                    - lowFloor[k];
-                baseTape[k] = softClip(magneticInput);
-            }
-            float magneticAmplitude[4];
-            for (int k = 0; k < 4; ++k)
-            {
-                const float baseMagnitude = std::abs(baseTape[k]);
-                if (baseMagnitude > ch.magneticEnvelope)
-                {
-                    ch.magneticEnvelope = baseMagnitude;
-                    ch.magneticHold = magneticHoldSamplesOs;
-                }
-                else if (ch.magneticHold > 0)
-                    --ch.magneticHold;
-                else
-                    ch.magneticEnvelope *= magneticReleaseOs;
-                magneticAmplitude[k] = std::max(ch.magneticEnvelope, 1.0e-4f);
-            }
-            float tapeOs[4];
-            for (int k = 0; k < 4; ++k)
-            {
-                // At high record flux the hosted tape adds a steep odd-harmonic
-                // ladder while its fundamental has already reached a level
-                // plateau: Chebyshev terms on the signal normalized by its peak
-                // supply those harmonics without moving the fundamental, zero
-                // through the matched nominal range.
-                const float z = clampF(
-                    baseTape[k] / magneticAmplitude[k], -1.0f, 1.0f);
-                const float z2 = z * z;
-                const float z3 = z2 * z;
-                const float z5 = z3 * z2;
-                const float t3 = 4.0f * z3 - 3.0f * z;
-                const float t5 = 16.0f * z5 - 20.0f * z3 + 5.0f * z;
-                tapeOs[k] = baseTape[k] + magneticAmplitude[k] * (c3 * t3 + c5 * t5);
-            }
-            float toTape = ch.tapeDown1.process(
-                ch.tapeDown2.process(tapeOs[0], tapeOs[1]),
-                ch.tapeDown2.process(tapeOs[2], tapeOs[3]));
+            x.programFeed[i] = programFeed;
+            x.loopFeed[i] = loopFeed;
+            x.lowFloorFade[i] = lowFloorFade;
+            x.programGain[i] = programGain;
+            x.c3[i] = c3;
+            x.c5[i] = c5;
             // Restore the measured level plateau without undoing the magnetic
             // curvature. The slowly tracked envelope makes this a program-level
             // makeup law (not a sample-by-sample waveshaper), so harmonic ratios
-            // stay intact. It is inactive below ordinary musical peaks.
-            const float magneticMakeup01 = clamp01(
-                (recordEnvelopeNow - 0.18f) * (1.0f / 0.82f));
-            const float magneticMakeupDb =
-                1.8f * std::sqrt(std::sqrt(magneticMakeup01))
-                + 0.46f * hot;
-            // At or below the 0.18 knee every term is zero, the makeup is
-            // 10^0 = 1 exactly, and the multiply is skipped with the same bits.
+            // stay intact. It is inactive below ordinary musical peaks; at or
+            // below the 0.18 knee every term is zero and the gain is 1 exactly.
+            float makeupGain = 1.0f;
             if (recordEnvelopeNow > 0.18f)
-                toTape *= std::pow(10.0f, magneticMakeupDb * (1.0f / 20.0f));
-            ch.tape[(size_t)writeIdx] = toTape;
+            {
+                const float magneticMakeup01 = clamp01(
+                    (recordEnvelopeNow - 0.18f) * (1.0f / 0.82f));
+                const float magneticMakeupDb =
+                    1.8f * std::sqrt(std::sqrt(magneticMakeup01))
+                    + 0.46f * hot;
+                makeupGain = std::pow(10.0f, magneticMakeupDb * (1.0f / 20.0f));
+            }
+            x.makeupGain[i] = makeupGain;
 
             // Echo output path only: bass/treble shelves (dry and reverb are
             // unaffected, matching the hardware layout).
@@ -2527,6 +2463,106 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
 
             writeIdx = (writeIdx + 1) & mask;
             x.echoWet[i] = echoWet;
+        }
+        {
+            // Record saturation, in passes over the sub-block. The tape it
+            // writes is read back no sooner than the shortest head delay, which
+            // subBlockLimit keeps longer than a sub-block, so the passes may run
+            // after the head reads: each stage is then a tight loop whose only
+            // recurrence is its own state, and successive samples overlap.
+                // Everything from the preamp curve to the tape write runs at 4x
+                // and is decimated back: at 1x its harmonics above Nyquist folded
+                // into the band (a 9 kHz tone at -6 dBFS: its 3rd at 27 kHz back
+                // at 21 kHz, -22 dBc; the reference -114 dBc), and no filter at
+                // 1x can keep a 7 kHz tone's real 3rd at 21 kHz while removing
+                // that one. Measured on off-grid tones 5-12 kHz at -6 dBFS the
+                // worst non-harmonic component is -94 to -107 dBc at 4x with the
+                // held normalization below; at 2x it was -53 (higher harmonics
+                // still fold) and with an unheld normalization -62 at 4x.
+            Channel& ch = channels[0];
+            for (int i = 0; i < len; ++i)
+            {
+                float p0, p1, l0, l1;
+                ch.feedUp1.process(x.programFeed[i], x.loopFeed[i], p0, p1, l0, l1);
+                ch.feedUp2.process(p0, l0, x.programOs[i][0], x.programOs[i][1],
+                                   x.loopOs[i][0], x.loopOs[i][1]);
+                ch.feedUp2.process(p1, l1, x.programOs[i][2], x.programOs[i][3],
+                                   x.loopOs[i][2], x.loopOs[i][3]);
+            }
+            for (int i = 0; i < len; ++i)
+            {
+                float recorded[4], recorded2[4], lowFloor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+                for (int k = 0; k < 4; ++k)
+                {
+                    recorded[k] = preampShape(x.programOs[i][k]) * x.programGain[i]
+                                + x.loopOs[i][k];
+                    recorded2[k] = recorded[k] * recorded[k];
+                }
+                // At low flux the measured odd harmonics fall much more slowly
+                // than a cubic can produce: a regularized p = 2.15 term holds
+                // that quiet harmonic floor, fading out before the main curve's
+                // -18 dB operating point. With the fade at exactly zero the term
+                // is zero whatever the power is, so the pow is skipped there.
+                const float lowFloorFade = x.lowFloorFade[i];
+                if (lowFloorFade != 0.0f)
+                    for (int k = 0; k < 4; ++k)
+                        lowFloor[k] = 1.325f * lowFloorFade * recorded[k]
+                            * std::pow(recorded2[k] + 0.006f * 0.006f, 0.575f);
+                for (int k = 0; k < 4; ++k)
+                {
+                    // The tape's magnetisation curve: more strongly curved than
+                    // the preamp at low level, slope still positive at overload.
+                    const float magneticInput =
+                        recorded[k] * (1.0f - 5.0f * recorded2[k]
+                                       / (1.0f + 8.0f * recorded2[k]))
+                        - lowFloor[k];
+                    x.tapeOs[i][k] = softClip(magneticInput);
+                }
+            }
+            int tapeIdx = (writeIdx - len) & mask;   // the first sample this sub-block wrote
+            for (int i = 0; i < len; ++i)
+            {
+                float magneticAmplitude[4];
+                for (int k = 0; k < 4; ++k)
+                {
+                    const float baseMagnitude = std::abs(x.tapeOs[i][k]);
+                    if (baseMagnitude > ch.magneticEnvelope)
+                    {
+                        ch.magneticEnvelope = baseMagnitude;
+                        ch.magneticHold = magneticHoldSamplesOs;
+                    }
+                    else if (ch.magneticHold > 0)
+                        --ch.magneticHold;
+                    else
+                        ch.magneticEnvelope *= magneticReleaseOs;
+                    magneticAmplitude[k] = std::max(ch.magneticEnvelope, 1.0e-4f);
+                }
+                float tapeOs[4];
+                for (int k = 0; k < 4; ++k)
+                {
+                    // At high record flux the hosted tape adds a steep
+                    // odd-harmonic ladder while its fundamental has already
+                    // reached a level plateau: Chebyshev terms on the signal
+                    // normalized by its peak supply those harmonics without
+                    // moving the fundamental, zero through the matched nominal
+                    // range.
+                    const float baseTape = x.tapeOs[i][k];
+                    const float z = clampF(
+                        baseTape / magneticAmplitude[k], -1.0f, 1.0f);
+                    const float z2 = z * z;
+                    const float z3 = z2 * z;
+                    const float z5 = z3 * z2;
+                    const float t3 = 4.0f * z3 - 3.0f * z;
+                    const float t5 = 16.0f * z5 - 20.0f * z3 + 5.0f * z;
+                    tapeOs[k] = baseTape
+                        + magneticAmplitude[k] * (x.c3[i] * t3 + x.c5[i] * t5);
+                }
+                const float toTape = ch.tapeDown1.process(
+                    ch.tapeDown2.process(tapeOs[0], tapeOs[1]),
+                    ch.tapeDown2.process(tapeOs[2], tapeOs[3]));
+                ch.tape[(size_t)tapeIdx] = toTape * x.makeupGain[i];
+                tapeIdx = (tapeIdx + 1) & mask;
+            }
         }
         for (int i = 0; i < len; ++i)
         {
