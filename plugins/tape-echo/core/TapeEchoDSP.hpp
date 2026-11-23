@@ -6,25 +6,24 @@
 //
 // Signal flow (stereo input, mono wet paths, stereo dry path):
 //
-//   L+R ─► record preamp (odd soft clip + DC block) ───────┬──► reverb send
-//                                                         │
-//        ┌────────────────────────────────────────────────┘
-//        ▼
-//   [+]──► record EQ (HP + speed-dependent LP) ──► tape saturation ──► TAPE
-//    ▲                                                                │
-//    │                                                     3 read heads (Hermite)
-//    │                                              T · {1.00, 1.9117, 2.7612}
-//    └── intensity · softClip(head sum)  ◄─────────────────┴──┐
-//                                                             ▼
-//                                    bass/treble shelves (echo path only)
-//                                                             ▼
+//   L+R ─► input shelf + record low shape ─► DC block ─────────┬──► reverb send
+//                                                             │
+//   program: band-limit (outer LP, speed LP, ceiling) ─► preamp curve ─┐
+//                                                                     [+]─► magnetic stage ─► TAPE
+//   regen:   band-limit (low shape, speed LP, ceiling) ────────────────┘                     │
+//    ▲                                                                3 read heads (Hermite)
+//    │                                                  T · {1, 1.905322, 2.759947} + offsets
+//    └── loopLimit(intensity · softClip(head sum + noise bed))  ◄──────────┴──┐
+//                                                                            ▼
+//                                               bass/treble shelves (echo path only)
+//                                                                            ▼
 //   out L/R = dry·input L/R + pan(echoLevel·echoEQ)
 //                           + pan(reverbLevel·spring(reverb send))
 //
-// The record EQ and tape saturation live INSIDE the feedback loop, so each
-// repeat progressively darkens and compresses — this is what lets high
-// Intensity settings bloom into stable, warm self-oscillation instead of
-// exploding numerically.
+// The band-limiting and tape saturation of the regeneration feed live INSIDE
+// the feedback loop, so each repeat progressively darkens and compresses --
+// this is what lets high Intensity settings bloom into stable, warm
+// self-oscillation instead of exploding numerically.
 
 #pragma once
 
@@ -328,7 +327,7 @@ public:
     //--- parameters (thread-safe: callable from any thread) -------------------
     void setMode(int mode1to12) noexcept          { pMode.store(clampInt(mode1to12, 1, 12), std::memory_order_relaxed); }
     void setRepeatRate(float v01) noexcept        { pRepeatRate.store(clamp01(v01), std::memory_order_relaxed); }  // 0 = slow motor (177 ms), 1 = fast (69 ms)
-    void setIntensity(float v01) noexcept         { pIntensity.store(clamp01(v01), std::memory_order_relaxed); }   // > ~0.75 self-oscillates
+    void setIntensity(float v01) noexcept         { pIntensity.store(clamp01(v01), std::memory_order_relaxed); }   // > ~0.69 self-oscillates
     void setEchoLevel(float v01) noexcept         { pEchoLevel.store(clamp01(v01), std::memory_order_relaxed); }
     void setReverbLevel(float v01) noexcept       { pReverbLevel.store(clamp01(v01), std::memory_order_relaxed); }
     void setDryLevel(float v01) noexcept          { pDryLevel.store(clamp01(v01), std::memory_order_relaxed); }
@@ -552,11 +551,12 @@ private:
              * std::pow(10.0f, feedbackLawCorrectionDb(x) * (1.0f / 20.0f));
     }
 
-    // The clean spring feed's delay, in base-rate samples. It matched the
-    // group delay of the 4x preamp oversampler the record path used to have
-    // (23 + 3.5 samples) and the spring's measured timing includes it, so it
-    // stays: the spring is untouched by the record path's restructure.
-    static constexpr float kSpringFeedDelaySamples = 23.0f + 3.5f;
+    // The clean spring feed's delay: 26.5 samples at 48 kHz, held as a time
+    // at every rate (springFeedDelaySamples, set in prepare()). It once
+    // matched a record-path oversampler's group delay; the spring's measured
+    // first arrival includes it, so it stays.
+    static constexpr double kSpringFeedDelaySamplesAt48k = 26.5;
+    float springFeedDelaySamples = 26.5f;
 
     float readTape(const std::vector<float>& buf, float delaySamples) const noexcept;
 
@@ -571,8 +571,8 @@ private:
     float memoOutputGain = 1.0f;
 
     // Per-sample values carried between the passes of one sub-block. Kept on
-    // the stack in processBlock (about 19 KB): as a member it measured 3-5 %
-    // slower (48 kHz core, default state), and 19 KB is far inside the audio
+    // the stack in processBlock (about 16 KB): as a member it measured 3-5 %
+    // slower (48 kHz core, default state), and 16 KB is far inside the audio
     // thread stacks hosts give plug-ins (512 KB and up on macOS, 1 MB on
     // Windows, 8 MB on Linux).
     struct SubBlockScratch
@@ -624,7 +624,6 @@ private:
     {
         std::vector<float> tape;
         DCBlocker          preampDC;
-        // base <-> 2x kA (tight, -67 dB), 2x <-> 4x kB (loose, -75 dB)
         // Low end of the tape loop, split where the reference splits it (see
         // kRecordLowShape in the .cpp): the record-side shape on the program
         // feed AHEAD of the preamp, an input-only shelf ahead of that, and the
@@ -647,7 +646,7 @@ private:
         Biquad             trebleShelf;
         Biquad             dryLowShelf;  // direct-path coupling/amp bandwidth
         Biquad             dryHighShelf;
-        std::array<float, 32> springCleanDelay {};
+        std::vector<float> springCleanDelay;   // sized in prepare()
         int                springCleanDelayWriteIdx = 0;
         float              recordEnvelope = 0.0f;   // program drive only
         float              loopEnvelope = 0.0f;     // regeneration drive only
@@ -669,6 +668,7 @@ private:
     double transportSumNow = 0.0;
     int    transportIdx    = 0;
     int    transportMask   = 0;
+    int    transportWritten = 0;   // entries written since reset(), saturating
     double fs         = 44100.0;
 
     //--- metering ---------------------------------------------------------------
@@ -810,7 +810,6 @@ private:
     float     lastBandwidthDelayMs = -1.0f;
     uint32_t  lastClearRequest = 0u;
     double    spliceLoopPosition = 0.0; // tape travel since the last head-1 splice, in loop lengths
-    bool      spliceClockStarted = false;
 
     float ageRand() noexcept
     {

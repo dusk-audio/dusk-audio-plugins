@@ -479,6 +479,42 @@ int main()
             return 1;
         }
 
+    // POWER off holds the loop silent. The repro noise bed feeds the loop
+    // tap, so a bed that POWER does not gate self-starts a high-Intensity
+    // loop while the user hears dry, and the tape is full when POWER returns
+    // (measured -24 dBFS in the first 100 ms at Intensity 0.9).
+    {
+        constexpr int block = 256;
+        duskaudio::TapeEchoDSP dsp;
+        dsp.setIntensity(0.9f);
+        dsp.setRepeatRate(1.0f);
+        dsp.prepare(kSampleRate, block);
+        dsp.setBypass(true);
+        std::array<std::vector<float>, 2> silence{
+            std::vector<float>(block, 0.0f), std::vector<float>(block, 0.0f) };
+        std::array<std::vector<float>, 2> output{
+            std::vector<float>(block, 0.0f), std::vector<float>(block, 0.0f) };
+        const float* inputs[] = { silence[0].data(), silence[1].data() };
+        float* outputs[] = { output[0].data(), output[1].data() };
+        for (int n = 0; n < static_cast<int>(10.0 * kSampleRate) / block; ++n)
+            dsp.processBlock(inputs, outputs, 2, block);
+        dsp.setBypass(false);
+        float peak = 0.0f;
+        for (int n = 0; n < static_cast<int>(0.1 * kSampleRate) / block; ++n)
+        {
+            dsp.processBlock(inputs, outputs, 2, block);
+            for (const auto& channel : output)
+                for (const float v : channel)
+                    peak = std::max(peak, std::abs(v));
+        }
+        if (!(peak < 1.0e-4f))
+        {
+            std::cerr << "loop ran while POWER was off: peak " << peak
+                      << " in the first 100 ms after POWER on\n";
+            return 1;
+        }
+    }
+
     std::cout << "Tape Echo DSP tests passed\n";
     return 0;
 }
