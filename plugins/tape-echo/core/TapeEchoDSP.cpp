@@ -1192,6 +1192,17 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     maxDelaySamples = (float)(tapeLen - 8);
     writeIdx        = 0;
 
+    // Transport history: head 3's window ends (path3 - path1) back and spans
+    // path3, so it reaches 2 * path3 - path1 into the past (see the head
+    // delays), plus the same wow headroom and interpolation guard.
+    const float transportSec = (kMaxDelayMs * 0.001f)
+                             * (2.0f * kHeadRatio[2] - kHeadRatio[0]) * 1.05f;
+    const int transportLen = nextPowerOfTwo((int)std::ceil(transportSec * fs) + 8);
+    transportMask = transportLen - 1;
+    transportSum.assign((size_t)transportLen, 0.0);
+    transportSumNow = 0.0;
+    transportIdx    = 0;
+
     for (auto& ch : channels)
     {
         ch.tape.assign((size_t)tapeLen, 0.0f);
@@ -1342,6 +1353,9 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
 
 void TapeEchoDSP::reset()
 {
+    std::fill(transportSum.begin(), transportSum.end(), 0.0);
+    transportSumNow = 0.0;
+    transportIdx = 0;
     for (auto& ch : channels)
     {
         std::fill(ch.tape.begin(), ch.tape.end(), 0.0f);
@@ -1722,7 +1736,12 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                    + kAgeHissGain
                        * hissCeiling.process(
                            hissVoice.process(ageRand() * noiseRateComp)));
-            const float flutterDepth = 0.00237f + 0.00242f * slow01;
+            // x1.18 on the former depth: integrated over head 1's path the
+            // periodic flutter keeps sin(pi f T1) / (pi f T1) = 0.85 of its
+            // proportional-model swing, and f T1 is the same at every motor
+            // speed (the flutter rate follows the tape), so one factor holds
+            // head 1's measured pitch deviation everywhere.
+            const float flutterDepth = 1.18f * (0.00237f + 0.00242f * slow01);
             const float flutterWave = flutterSin
                                     + 0.088f * (2.0f * flutterSin * flutterCos);
             // Scrape flutter: band noise around 6 Hz. Age worsens it steeply on the
@@ -1740,25 +1759,56 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                                   + kNoiseDepth
                                         * noiseLP.process(frand() * noiseRateComp));
 
-            // Transport motion modulates every head's read delay in proportion to
-            // its path length. Measured against the reference (1 kHz tone, pitch
-            // deviation from the Hilbert phase, Repeat Rate 0.727): head 1 matches
-            // (0.79 / 6.01 cents rms below / above 1.5 Hz, reference 0.72 / 6.24)
-            // but head 2 carries 1.4-1.5x the reference's (1.56 / 11.45 against
-            // 1.06 / 8.08). The reference's fast head-2/head-1 ratio, 1.29, is
-            // what tape speed averaged over each head's path predicts (1.35),
-            // not this proportional model (1.9); its slow ratio, 1.47, fits
-            // neither alone. Open: a path-integrated transport model, recalibrated
-            // so head 1 stays matched.
-            const float t1 = nominalT1 * (1.0f + mod);
-            const float d1 = clampF(t1, 4.0f, maxDelaySamples);
+            // Each head's delay is its nominal path plus the transport's speed
+            // deviation summed over a window as long as that path. Head 1's
+            // window ends now; head k's ends (path_k - path_1) earlier, so the
+            // heads share one motion but see it at different times.
+            //
+            // Measured against the reference: each head's delay track from a
+            // 1 kHz tone (Hilbert phase, Repeat Rate 0.727, 32 s, single-head
+            // renders sharing one transport timeline). Head k against head 1 is
+            // fully coherent (one motion, no per-head noise) with the transfer
+            // of a path-long window delayed by path_k - path_1: this
+            // zero-parameter form leaves a residual of 0.027 / 0.055 (heads 2 /
+            // 3), a free fit of window lengths, delay and gain 0.018 / 0.049.
+            // The former delay = path x instantaneous deviation left 0.47 /
+            // 0.66 and gave head 2 1.4x the reference's pitch deviation; windows
+            // all ending now (tape travel) left 0.29 / 0.40 and made every
+            // two-pass path through two heads arrive in phase, which ran the
+            // multi-head loops away. With the delayed windows the paths
+            // decorrelate as the reference's do (two-head cross-path coherence
+            // 0.61 / 0.69 / 0.72 below 500 Hz / to 1.5 kHz / to 4 kHz, reference
+            // 0.63 / 0.67 / 0.69), and heads 1 + 2 at Intensity 0.6 decay
+            // instead of sustaining a comb mode.
+            transportSumNow += (double)mod;
+            transportIdx = (transportIdx + 1) & transportMask;
+            transportSum[(size_t)transportIdx] = transportSumNow;
+            const auto transportAt = [&](double samplesAgo) noexcept
+            {
+                const double at = (double)transportIdx - samplesAgo;
+                const double base = std::floor(at);
+                const double frac = at - base;
+                // Two's complement & wraps a negative index into the ring.
+                const int i0 = (int)base;
+                const double c0 = transportSum[(size_t)(i0 & transportMask)];
+                const double c1 = transportSum[(size_t)((i0 + 1) & transportMask)];
+                return c0 + frac * (c1 - c0);
+            };
+            const double path1 = nominalT1;
+            const double path2 = (double)nominalT1 * kHeadRatio[1]
+                               + kHeadOffsetMs[1] * 0.001 * fs;
+            const double path3 = (double)nominalT1 * kHeadRatio[2]
+                               + kHeadOffsetMs[2] * 0.001 * fs;
+            const double lag2 = path2 - path1;
+            const double lag3 = path3 - path1;
+            const float d1 = clampF(
+                (float)(path1 + transportSumNow - transportAt(path1)),
+                4.0f, maxDelaySamples);
             const float d2 = clampF(
-                t1 * kHeadRatio[1]
-                    + kHeadOffsetMs[1] * 0.001f * (float)fs,
+                (float)(path2 + transportAt(lag2) - transportAt(lag2 + path2)),
                 4.0f, maxDelaySamples);
             const float d3 = clampF(
-                t1 * kHeadRatio[2]
-                    + kHeadOffsetMs[2] * 0.001f * (float)fs,
+                (float)(path3 + transportAt(lag3) - transportAt(lag3 + path3)),
                 4.0f, maxDelaySamples);
 
             const float head1 = headGain[0].next();

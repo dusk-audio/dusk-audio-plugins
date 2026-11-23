@@ -658,6 +658,14 @@ private:
     int    writeIdx   = 0;
     int    mask       = 0;      // tape length is a power of two
     float  maxDelaySamples = 0.0f;
+    // Running sum of the transport's speed deviation, one entry per sample:
+    // a head's delay is its path plus this sum over a window as long as the
+    // path (see the head delays). Its own power-of-two length, sized in
+    // prepare() for head 3's window at the slowest motor speed.
+    std::vector<double> transportSum;
+    double transportSumNow = 0.0;
+    int    transportIdx    = 0;
+    int    transportMask   = 0;
     double fs         = 44100.0;
 
     //--- metering ---------------------------------------------------------------
