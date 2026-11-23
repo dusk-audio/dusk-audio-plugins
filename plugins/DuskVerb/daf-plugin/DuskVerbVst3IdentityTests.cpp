@@ -1,9 +1,16 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
+// DuskVerb 2's VST3 identity, read from the built binary as a host reads it: the class ID
+// string every platform has had since 1.0.1, and the ID the Windows build of 1.0.0 had
+// declared an older ID of the same plugin, so projects saved with any version find it.
+#include "travesty/bstream.h"
+#include "travesty/component.h"
 #include "travesty/factory.h"
+#include "travesty/plugin_compatibility.h"
 
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <utility>
 
 #ifdef _WIN32
 # include <windows.h>
@@ -32,13 +39,42 @@ std::string canonicalId(const v3_tuid id)
         std::snprintf(text + 2 * i, sizeof(text) - 2 * i, "%02X", unsigned(bytes[i]));
     return text;
 }
+
+uint32_t V3_API staticRef(void*) { return 1; }
+
+// collects what the compatibility class writes
+struct TextStream : v3_bstream_cpp
+{
+    TextStream* self = this;
+    std::string text;
+
+    TextStream()
+    {
+        query_interface = [](void*, const v3_tuid, void** out) -> v3_result { *out = nullptr; return V3_NO_INTERFACE; };
+        ref = unref = staticRef;
+        stream.read = [](void*, void*, int32_t, int32_t*) -> v3_result { return V3_NOT_IMPLEMENTED; };
+        stream.write = [](void* handle, void* data, int32_t size, int32_t* written) -> v3_result
+        {
+            (*static_cast<TextStream**>(handle))->text.append(static_cast<const char*>(data), size_t(size));
+            if (written != nullptr) *written = size;
+            return V3_OK;
+        };
+        stream.seek = [](void*, int64_t, int32_t, int64_t*) -> v3_result { return V3_NOT_IMPLEMENTED; };
+        stream.tell = [](void*, int64_t*) -> v3_result { return V3_NOT_IMPLEMENTED; };
+    }
+
+    v3_bstream** handle() { return reinterpret_cast<v3_bstream**>(&self); }
+};
 }
 
 int main(int argc, char** argv)
 {
     if (argc != 2) return 2;
-    // Frozen before the public 1.0 release. Windows must expose the same canonical ID.
+    // The class ID string hosts show, the same on every platform. It must never change.
+    // The old ID is what the Windows build of 1.0.0 showed (the same words in DAF's default
+    // layout); the plugin declares it an older ID of itself.
     const char* expectedId = "2046504473616C63764473446B737544";
+    const char* expectedOldId = "445046206173636C764473446B737544";
     const char* expectedName = "DuskVerb 2";
 #ifdef _WIN32
     const auto library = LoadLibraryA(argv[1]);
@@ -81,18 +117,61 @@ int main(int argc, char** argv)
     if (factory != nullptr)
     {
         const int count = v3_cpp_obj(factory)->num_classes(factory);
-        check(count == 1, "one monolithic audio class");
+        check(count == 2, "one monolithic audio class and its compatibility class");
+        int audioClasses = 0, compatibilityClasses = 0;
         for (int i = 0; i < count; ++i)
         {
             v3_class_info info{};
             const bool haveInfo = v3_cpp_obj(factory)->get_class_info(factory, i, &info) == V3_OK;
             check(haveInfo, "factory class info");
             if (!haveInfo) continue;
-            check(std::strcmp(info.category, "Audio Module Class") == 0, "audio class category");
             check(std::strcmp(info.name, expectedName) == 0, "product name");
+
+            if (std::strcmp(info.category, V3_PLUGIN_COMPATIBILITY_CLASS) == 0)
+            {
+                ++compatibilityClasses;
+                v3_plugin_compatibility** compatibility = nullptr;
+                check(v3_cpp_obj(factory)->create_instance(factory, info.class_id, v3_plugin_compatibility_iid,
+                                                           reinterpret_cast<void**>(&compatibility)) == V3_OK
+                    && compatibility != nullptr, "compatibility class instantiates");
+                if (compatibility != nullptr)
+                {
+                    TextStream json;
+                    check(v3_cpp_obj(compatibility)->get_compatibility_json(compatibility, json.handle()) == V3_OK,
+                          "compatibility JSON written");
+                    const std::string expectedJson = std::string("[{\"New\":\"") + expectedId + "\",\"Old\":[\""
+                                                   + expectedOldId + "\"]}]";
+                    std::printf("compatibility: %s\n", json.text.c_str());
+                    check(json.text == expectedJson, "the 1.0.0 Windows class ID is declared an old ID of the plugin");
+                    v3_cpp_obj_unref(compatibility);
+                }
+                continue;
+            }
+
+            ++audioClasses;
+            check(std::strcmp(info.category, "Audio Module Class") == 0, "audio class category");
             const std::string id = canonicalId(info.class_id);
             std::printf("%s: %s (expected %s)\n", info.name, id.c_str(), expectedId);
-            check(id == expectedId, "canonical class ID matches every platform");
+            check(id == expectedId, "class ID string matches every platform and every release since 1.0.1");
+
+            // a host that asks for the plugin by the old ID gets it: the old ID is this one's GUID fields swapped
+            v3_tuid oldId;
+            std::memcpy(oldId, info.class_id, sizeof(v3_tuid));
+            std::swap(oldId[0], oldId[3]);
+            std::swap(oldId[1], oldId[2]);
+            std::swap(oldId[4], oldId[5]);
+            std::swap(oldId[6], oldId[7]);
+            check(canonicalId(oldId) == expectedOldId, "the old ID is the other layout of the same bytes");
+            v3_component** byOldId = nullptr;
+            check(v3_cpp_obj(factory)->create_instance(factory, oldId, v3_component_iid,
+                                                       reinterpret_cast<void**>(&byOldId)) == V3_OK
+                && byOldId != nullptr, "the factory creates the plugin for the old ID");
+            if (byOldId != nullptr)
+            {
+                check(v3_cpp_obj_initialize(byOldId, nullptr) == V3_OK, "the plugin created by the old ID initializes");
+                v3_cpp_obj_terminate(byOldId);
+                v3_cpp_obj_unref(byOldId);
+            }
 
             v3_plugin_factory_2** factory2 = nullptr;
             check(v3_cpp_obj_query_interface(factory, v3_plugin_factory_2_iid, &factory2) == V3_OK
@@ -115,6 +194,8 @@ int main(int argc, char** argv)
                 v3_cpp_obj_unref(factory3);
             }
         }
+        check(audioClasses == 1, "exactly one audio class");
+        check(compatibilityClasses == 1, "exactly one compatibility class");
         v3_cpp_obj_unref(factory);
     }
     check(leave(), "module shutdown");
