@@ -353,7 +353,7 @@ namespace
     // Both curves were fitted re 1 kHz, so each section is scaled to exactly
     // unity there: it shapes the low end and leaves the calibrated midband
     // record level alone. (Unscaled, the pair read -0.088 dB at 1 kHz, enough
-    // to move the record envelope off the measured fold-back point.)
+    // to move the record envelope at the hottest ladder rungs.)
     inline double gainAt1k(double fs, double b0, double b1, double b2,
                            double a1, double a2) noexcept
     {
@@ -436,12 +436,6 @@ namespace
     //    open small-signal level shortfall, outside the loop). Impulse renders
     //    read 0.2-1.2 dB quieter; noise, snare and sine renders are unchanged
     //    or closer.
-    //  * At -3 dBFS the output ceiling trims our 7th and 9th harmonics, which
-    //    sit 13 dB above the reference's: H7 -54.2 -> -55.0, H9 -65.1 -> -67.2
-    //    (reference -67.2 / -75.8). Our THD at that rung leans on that excess
-    //    instead of the reference's 5th, so the summed THD falls further from
-    //    the reference (4.67% -> 4.33%, reference 4.99%) while two harmonics
-    //    move toward it. See the fold-back derivation at the Chebyshev terms.
     //
     // Matched-magnitude sections (Biquad::matched*) keep the analog corner
     // shapes far closer to Nyquist than bilinear ones. The fit ran at 48 kHz;
@@ -2255,8 +2249,8 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             // transfer back on itself and caps the tape at 0.130 - the whole
             // measured 11 dB self-oscillation shortfall. The same flux driven from
             // the input reached the matched plateau, because the input envelope
-            // opened the gate. Only that gate is moved onto total flux: the hot /
-            // very-hot Chebyshev terms and the magnetic makeup below stay on the
+            // opened the gate. Only that gate is moved onto total flux: the hot
+            // Chebyshev terms and the magnetic makeup below stay on the
             // program envelope, because they were fitted as program-level makeup
             // laws. Feeding them total flux as well measured 0.5 dB worse on the
             // factory octave-band gate (2.66 against a 2.50 limit) - they are
@@ -2343,69 +2337,25 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                 (recordEnvelopeNow - 0.26f) * (1.0f / 0.21f));
             const float hot =
                 hot01 * hot01 * (3.0f - 2.0f * hot01);
-            const float veryHot01 = clamp01(
-                (recordEnvelopeNow - 0.52f) * (1.0f / 0.16f));
-            const float veryHot =
-                veryHot01 * veryHot01 * (3.0f - 2.0f * veryHot01);
             const float t3 = 4.0f * z3 - 3.0f * z;
             const float t5 = 16.0f * z5 - 20.0f * z3 + 5.0f * z;
             const float t7 =
                 64.0f * z7 - 112.0f * z5 + 56.0f * z3 - 7.0f * z;
-            // veryHot terms: the RECORD FOLD-BACK. Measured, not dialled.
-            //
-            // At the top of the hosted transfer ladder (Input Volume 0.50, the
-            // -3 dBFS rung, record envelope 0.700) the reference stops behaving
-            // like a compressor and turns over: its fundamental FALLS 1.35 dB as
-            // the input rises 3 dB, its 3rd harmonic COLLAPSES -44.5 -> -55.2 dBFS
-            // and its 5th RISES -64.3 -> -52.2, overtaking the 3rd. A falling
-            // fundamental with 5th-over-3rd is a fold-back transfer curve -- the
-            // magnetisation curve turning over at overload, where the third-order
-            // coefficient crosses zero and higher orders take over. It is not a
-            // ceiling: a ceiling drives odd harmonics UP monotonically, and every
-            // tape-write ceiling tried previously (0.2396 / 0.262 / 0.300) clipped
-            // ordinary program and broke other gates.
-            //
-            // veryHot01 spans record envelope 0.52..0.68, and the ladder rungs
-            // measure 0.124 / 0.248 / 0.495 / 0.700 -- so veryHot is EXACTLY zero
-            // at the -6 rung and saturated at -3. That is why these three
-            // constants move the broken rung while leaving -18 / -12 / -6
-            // bit-identical; they were already matched (dFund <= 0.29 dB,
-            // dTHD <= 0.63 dB) and must not move.
-            //
-            // Fitted one knob at a time against the hosted reference, each with a
-            // fresh render (offline harness replicating probe_transfer.py's
-            // window and THD definition, validated against the hosted numbers):
-            //   c3  0.0209 -> 0.35   nulls most of the base curve's 3rd
-            //                        (H3 -43.8 -> -52.6 dBFS, reference -55.2)
-            //   c5 -0.0255 -> -0.20  lands THD on 5.026% against 5.010%
-            //   makeup 0.06 -> -2.70 dB   the fold-back's own level drop; this
-            //                        term is a pure gain, so it moves the
-            //                        fundamental 1:1 in dB and leaves THD alone
-            // Result at the -3 rung: dFundamental +1.73 -> +0.00 dB,
-            // dTHD +4.85 -> +0.03 dB.
-            //
-            // Refitted when the record low cut moved ahead of the preamp
-            // (kRecordLowShapeZeroHz): the old 115 Hz high-pass after the preamp
-            // shifted the fundamental ~9 degrees against the preamp's own 3rd
-            // (~3 degrees), and this rung's 3rd is a near-cancellation, so
-            // removing that phase shift alone took H3 -53.0 -> -50.5 dBFS.
-            // Same procedure, same targets, one knob at a time:
-            //   c3  0.35 -> 0.46     H3 back on the reference (-55.4, ref -55.2)
-            //   makeup -2.70 -> -3.17 dB   fundamental back to -24.34 (ref -24.34)
-            // THD 4.67% against 4.99%.
-            //
-            // KNOWN RESIDUAL, deliberately not chased: the reference's 5th is
-            // -52.3 dBFS and ours reaches only -62.5, while our 7th and 9th sit
-            // 13 dB above it (-53.8 / -63.1 against -67.2 / -75.8): the THD
-            // matched only in sum, never harmonic by harmonic. c5 in EITHER direction
-            // spills into the 3rd faster than it lifts the 5th, so a genuinely
-            // 5th-dominant spectrum is not reachable with this Chebyshev pair.
-            // Both harmonics move toward the reference and the gated quantities
-            // match; the fold-back is PARTIALLY modelled. Closing the rest needs
-            // a reshaped magnetisation curve, which re-opens the whole harmonic
-            // calibration -- its own campaign. Do not "fix" it by pushing c5.
-            const float c3 = -0.0983f * hot + 0.46f * veryHot;
-            const float c5 = -0.0195f * hot - 0.20f * veryHot;
+            // No fold-back at the top of the ladder. A former fit here (c3 0.46,
+            // c5 -0.20, makeup -3.17 dB above record envelope 0.52) modelled the
+            // reference's fundamental falling 1.35 dB and its 3rd collapsing
+            // from the -6 to the -3 dBFS rung. Those were single-FFT-bin readings
+            // over a 0.7 s window, which flutter spreads: the reference's -3
+            // window happened to lose 4.05 dB to that spread (6th percentile over
+            // 290 windows of its own 32 s tone at this speed; mean 2.76 dB).
+            // Measured as band energy (+-12 n Hz around each harmonic n) its
+            // fundamental rises 0.24 dB there and its 3rd stays at -11 dBc.
+            // Without those terms ours reads at -3 dBFS: fundamental 0.02 dB
+            // under the reference, H3 / H5 / H7 / H9 -12 / -22 / -32 / -43 dBc
+            // against -11 / -20 / -29 / -41, THD 27.1 % against 29.3 %. With
+            // them it read 1.58 dB under, H3 -21, H7 -18, H9 -22 dBc.
+            const float c3 = -0.0983f * hot;
+            const float c5 = -0.0195f * hot;
             const float c7 = 0.0f;
             float toTape = baseTape + magneticAmplitude
                 * (c3 * t3 + c5 * t5 + c7 * t7);
@@ -2415,12 +2365,9 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             // stay intact. It is inactive below ordinary musical peaks.
             const float magneticMakeup01 = clamp01(
                 (recordEnvelopeNow - 0.18f) * (1.0f / 0.82f));
-            // The veryHot coefficient is NEGATIVE: above the fold-back knee the
-            // measured plateau does not just stop rising, it comes back down.
-            // See the fold-back derivation at the Chebyshev coefficients above.
             const float magneticMakeupDb =
                 1.8f * std::sqrt(std::sqrt(magneticMakeup01))
-                + 0.46f * hot - 3.17f * veryHot;
+                + 0.46f * hot;
             // At or below the 0.18 knee every term is zero, the makeup is
             // 10^0 = 1 exactly, and the multiply is skipped with the same bits.
             if (recordEnvelopeNow > 0.18f)
