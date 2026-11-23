@@ -41,6 +41,7 @@
 // during the shared-daf extraction, so consuming them is bit-identical.
 #include "DuskSmoothed.hpp"    // SmoothedValue
 #include "DuskFilters.hpp"     // OnePoleLP/HP, DCBlocker, Biquad (shelves)
+#include "DuskHalfbandIIR.hpp" // record saturation x4 stages
 #include "../daf-plugin/TapeEchoParams.hpp" // shared discrete-value helpers
 
 namespace duskaudio
@@ -53,6 +54,7 @@ namespace duskaudio
 //   DCBlocker                -> DuskFilters.hpp (default R = 0.9975, ~20 Hz @ 48k;
 //                               tape-echo keeps the default, so it is unchanged)
 //   ShelfFilter              -> DuskFilters.hpp Biquad + Biquad::shelfSlope1()
+//   (new, not lifted) polyphase IIR halfband x2 stages -> DuskHalfbandIIR.hpp
 // The shared versions were lifted from this file, so behavior is bit-identical.
 //==============================================================================
 
@@ -626,85 +628,28 @@ private:
     // Coefficients: the widely published 4 + 4 section design (Niemitalo).
     struct HilbertPair
     {
-        float a[4][4] {};   // per section: x[n-1], x[n-2], y[n-1], y[n-2]
-        float b[4][4] {};
+        float x1[4][2] {}, x2[4][2] {}, y1[4][2] {}, y2[4][2] {};  // per section, per chain
         float aLate = 0.0f;
         void reset() noexcept { *this = HilbertPair{}; }
         void process(float x, float& i, float& q) noexcept
         {
-            static constexpr float kA[4] = {
-                0.6923878f * 0.6923878f, 0.9360654322959f * 0.9360654322959f,
-                0.9882295226860f * 0.9882295226860f, 0.9987488452737f * 0.9987488452737f };
-            static constexpr float kB[4] = {
-                0.4021921162426f * 0.4021921162426f, 0.8561710882420f * 0.8561710882420f,
-                0.9722909545651f * 0.9722909545651f, 0.9952884791278f * 0.9952884791278f };
-            float va = x, vb = x;
+            // The two chains run as lanes of one loop (lane 0: A, lane 1: B).
+            static constexpr float kCoef[4][2] = {
+                { 0.6923878f * 0.6923878f, 0.4021921162426f * 0.4021921162426f },
+                { 0.9360654322959f * 0.9360654322959f, 0.8561710882420f * 0.8561710882420f },
+                { 0.9882295226860f * 0.9882295226860f, 0.9722909545651f * 0.9722909545651f },
+                { 0.9987488452737f * 0.9987488452737f, 0.9952884791278f * 0.9952884791278f } };
+            float v[2] = { x, x };
             for (int k = 0; k < 4; ++k)
-            {
-                const float ya = kA[k] * (va + a[k][3]) - a[k][1];
-                a[k][1] = a[k][0]; a[k][0] = va; a[k][3] = a[k][2]; a[k][2] = ya; va = ya;
-                const float yb = kB[k] * (vb + b[k][3]) - b[k][1];
-                b[k][1] = b[k][0]; b[k][0] = vb; b[k][3] = b[k][2]; b[k][2] = yb; vb = yb;
-            }
-            i = aLate; aLate = va;
-            q = vb;
-        }
-    };
-
-    // One branch of a polyphase IIR halfband: first-order allpass sections
-    // in the low-rate domain, y = a (x - y[n-1]) + x[n-1].
-    struct HalfbandBranch
-    {
-        static constexpr int kMaxSections = 5;
-        float coef[kMaxSections] {};
-        float x1[kMaxSections] {};
-        float y1[kMaxSections] {};
-        int   sections = 0;
-        void set(const float* coefs, int count, int first) noexcept
-        {
-            sections = 0;
-            for (int k = first; k < count; k += 2)
-                coef[sections++] = coefs[k];
-        }
-        void reset() noexcept
-        {
-            for (int k = 0; k < kMaxSections; ++k)
-                x1[k] = y1[k] = 0.0f;
-        }
-        float process(float v) noexcept
-        {
-            for (int k = 0; k < sections; ++k)
-            {
-                const float out = coef[k] * (v - y1[k]) + x1[k];
-                x1[k] = v;
-                y1[k] = out;
-                v = out;
-            }
-            return v;
-        }
-    };
-    // x2 interpolator / decimator from one halfband: even coefficients on one
-    // branch, odd on the other (the decimator feeds the later input sample to
-    // the even branch).
-    struct Upsampler2x
-    {
-        HalfbandBranch even, odd;
-        void set(const float* coefs, int count) noexcept { even.set(coefs, count, 0); odd.set(coefs, count, 1); }
-        void reset() noexcept { even.reset(); odd.reset(); }
-        void process(float x, float& first, float& second) noexcept
-        {
-            first = even.process(x);
-            second = odd.process(x);
-        }
-    };
-    struct Downsampler2x
-    {
-        HalfbandBranch even, odd;
-        void set(const float* coefs, int count) noexcept { even.set(coefs, count, 0); odd.set(coefs, count, 1); }
-        void reset() noexcept { even.reset(); odd.reset(); }
-        float process(float first, float second) noexcept
-        {
-            return 0.5f * (even.process(second) + odd.process(first));
+                for (int l = 0; l < 2; ++l)
+                {
+                    const float y = kCoef[k][l] * (v[l] + y2[k][l]) - x2[k][l];
+                    x2[k][l] = x1[k][l]; x1[k][l] = v[l];
+                    y2[k][l] = y1[k][l]; y1[k][l] = y;
+                    v[l] = y;
+                }
+            i = aLate; aLate = v[0];
+            q = v[1];
         }
     };
 
@@ -749,8 +694,10 @@ private:
         int                magneticHold = 0;        // samples at 4x
         // Record saturation runs at 4x (see processBlock): both feeds are
         // interpolated twice, the tape signal decimated twice.
-        Upsampler2x        programUp1, programUp2, loopUp1, loopUp2;
-        Downsampler2x      tapeDown2, tapeDown1;
+        HalfbandUpsampler2xPair<5> feedUp1;   // program and loop feeds, 1x -> 2x
+        HalfbandUpsampler2xPair<3> feedUp2;   // 2x -> 4x
+        HalfbandDownsampler2x<3>   tapeDown2; // 4x -> 2x
+        HalfbandDownsampler2x<5>   tapeDown1; // 2x -> 1x
     };
 
     std::array<Channel, kMaxChannels> channels;
