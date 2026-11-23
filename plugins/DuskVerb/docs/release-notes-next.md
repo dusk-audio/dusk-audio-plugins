@@ -1,11 +1,11 @@
 # DuskVerb 2, next release
 
-Not released yet. The version number is set when this release is made.
+Entries for the next release go here, above the released ones. The version number is set when that release is made.
 
-## After 1.0.2
+## Released as 1.0.3 on 2026-11-23
 
 - Windows VST3: a project saved with the first Windows build, 1.0.0, finds DuskVerb 2 again. 1.0.1 changed the Windows VST3 class ID to the string Linux and macOS show, and such a project opened with the plugin reported as not available. The plugin now declares the 1.0.0 ID an older ID of itself (VST3's plugin compatibility information), and a host that reads it loads the project with its settings. Checked in REAPER 7.78 on Windows with a project saved by 1.0.0 and one saved by 1.0.2: both open with their settings and no warning.
-- A host that does not read the compatibility information still reports DuskVerb 2 as missing in a project saved with 1.0.0: while 1.0.0 is still installed, open the project and save the instance's settings as a user preset, then update, insert DuskVerb 2 and load the preset.
+- A host that does not read the compatibility information still reports DuskVerb 2 as missing in a project saved with 1.0.0 and does not load its settings. If 1.0.0 is still installed, open the project with it before updating and save each instance's settings as a user preset; after the update insert DuskVerb 2 and load the preset. If 1.0.0 is gone and no such preset was saved, the settings in that project cannot be brought back in that host: insert DuskVerb 2 and set it up again.
 - The class ID itself does not change in this release: `2046504473616C63764473446B737544` on every platform, as in 1.0.1 and 1.0.2. Projects saved with those versions, on any platform, load as before. The 1.0.0 Windows ID was `445046206173636C764473446B737544`. CLAP, AU and LV2 are not affected.
 
 ## Released as 1.0.2 on 2026-11-22
