@@ -558,7 +558,7 @@ private:
     static constexpr double kSpringFeedDelaySamplesAt48k = 26.5;
     float springFeedDelaySamples = 26.5f;
 
-    float readTape(const std::vector<float>& buf, float delaySamples) const noexcept;
+    float readTape(const std::vector<float>& buf, double delaySamples) const noexcept;
 
     // Last input and result of per-sample laws on smoothed controls, seeded
     // in prepare() from the snapped controls.
@@ -571,16 +571,16 @@ private:
     float memoOutputGain = 1.0f;
 
     // Per-sample values carried between the passes of one sub-block. Kept on
-    // the stack in processBlock (about 16 KB): as a member it measured 3-5 %
-    // slower (48 kHz core, default state), and 16 KB is far inside the audio
+    // the stack in processBlock (about 18 KB): as a member it measured 3-5 %
+    // slower (48 kHz core, default state), and 18 KB is far inside the audio
     // thread stacks hosts give plug-ins (512 KB and up on macOS, 1 MB on
     // Windows, 8 MB on Linux).
     struct SubBlockScratch
     {
         static constexpr int kSize = 128;
-        float d1[kSize];
-        float d2[kSize];
-        float d3[kSize];
+        double d1[kSize];
+        double d2[kSize];
+        double d3[kSize];
         float drivenInput[kSize];
         float dryLvl[kSize];
         float dryMixGain[kSize];

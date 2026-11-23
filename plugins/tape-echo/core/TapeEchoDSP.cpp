@@ -1505,11 +1505,16 @@ void TapeEchoDSP::reset()
         pClearRequest.load(std::memory_order_relaxed);
 }
 
-float TapeEchoDSP::readTape(const std::vector<float>& buf, float delaySamples) const noexcept
+float TapeEchoDSP::readTape(const std::vector<float>& buf, double delaySamples) const noexcept
 {
-    const float rp   = (float)writeIdx - delaySamples;
-    int         i0   = (int)std::floor(rp);
-    const float frac = rp - (float)i0;
+    // In double: in float the read position (up to the tape length, 32768
+    // at 48 kHz) resolves 1/256 of a sample, and as the transport moves the
+    // delay that rounding became a white floor (-107 dB per 0.25 Hz bin re a
+    // 12 kHz tone, -84 dBc in 40 Hz). In double the floor is the signal's.
+    const double rp   = (double)writeIdx - delaySamples;
+    const double base = std::floor(rp);
+    int          i0   = (int)base;
+    const float  frac = (float)(rp - base);
 
     i0 &= mask; // power-of-two wrap (two's complement handles negative i0)
     const int im1 = (i0 - 1) & mask;
@@ -1736,7 +1741,7 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
     // waiting out one long dependency chain per sample. Only the tape loop
     // reads what it writes, and it stays one pass in sample order.
     constexpr int kSubBlock = SubBlockScratch::kSize;
-    SubBlockScratch x; // on the stack: ~16 KB, see the struct
+    SubBlockScratch x; // on the stack: ~18 KB, see the struct
     for (int base = 0; base < numSamples; base += kSubBlock)
     {
         const int len = std::min(kSubBlock, numSamples - base);
@@ -1909,18 +1914,19 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             // The record saturation's oversampling round trip writes each
             // sample kRecordOversamplingDelay late; every head reads that much
             // sooner, so arrival times are unchanged.
-            const float d1 = clampF(
-                (float)(path1 + transportSumNow - transportAt(path1))
-                    - kRecordOversamplingDelay,
-                4.0f, maxDelaySamples);
-            const float d2 = std::abs(g2) < kHeadIdleFloor ? 0.0f : clampF(
-                (float)(path2 + transportAt(lag2) - transportAt(lag2 + path2))
-                    - kRecordOversamplingDelay,
-                4.0f, maxDelaySamples);
-            const float d3 = std::abs(g3) < kHeadIdleFloor ? 0.0f : clampF(
-                (float)(path3 + transportAt(lag3) - transportAt(lag3 + path3))
-                    - kRecordOversamplingDelay,
-                4.0f, maxDelaySamples);
+            // Delays stay in double down to the tape read: a float delay of a
+            // few thousand samples resolves only 2e-4 to 1e-3 of a sample,
+            // and the moving transport turns that rounding into phase noise.
+            const auto headDelay = [&](double samples) noexcept
+            {
+                return std::min(std::max(samples - (double)kRecordOversamplingDelay, 4.0),
+                                (double)maxDelaySamples);
+            };
+            const double d1 = headDelay(path1 + transportSumNow - transportAt(path1));
+            const double d2 = std::abs(g2) < kHeadIdleFloor ? 0.0
+                : headDelay(path2 + transportAt(lag2) - transportAt(lag2 + path2));
+            const double d3 = std::abs(g3) < kHeadIdleFloor ? 0.0
+                : headDelay(path3 + transportAt(lag3) - transportAt(lag3 + path3));
             // The bed is repro-head noise: with no head selected (Reverb Only)
             // nothing plays it back. Every head mode sums to at least 1, so this
             // is unity there and only follows the 15 ms mode ramp to and from zero.
@@ -2187,9 +2193,9 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             const float splice1 = std::abs(g1) < kHeadIdleFloor ? 1.0f
                 : spliceGain(spliceSamplesToHead1);
             const float splice2 = std::abs(g2) < kHeadIdleFloor ? 1.0f
-                : spliceGain(spliceSamplesToHead1 + (d2 - d1));
+                : spliceGain(spliceSamplesToHead1 + (float)(d2 - d1));
             const float splice3 = std::abs(g3) < kHeadIdleFloor ? 1.0f
-                : spliceGain(spliceSamplesToHead1 + (d3 - d1));
+                : spliceGain(spliceSamplesToHead1 + (float)(d3 - d1));
             spliceLoopPosition += 1.0 / loopPeriodSamples;
             if (spliceLoopPosition >= 1.0)
                 spliceLoopPosition -= 1.0;
@@ -2232,9 +2238,9 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
         for (int i = 0; i < len; ++i)
         {
             const int n = base + i;
-            const float d1 = x.d1[i];
-            const float d2 = x.d2[i];
-            const float d3 = x.d3[i];
+            const double d1 = x.d1[i];
+            const double d2 = x.d2[i];
+            const double d3 = x.d3[i];
             const float drivenInput = x.drivenInput[i];
             const float fbGain = x.fbGain[i];
             const float g1 = x.g1[i];
