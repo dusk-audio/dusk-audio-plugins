@@ -124,10 +124,14 @@ DuskVerb. Importing an original preset does not convert a DAW project or
 replace an original plugin instance. Keep the original plugin available for
 projects that use it.
 
-The 1.0 Windows VST3 identity matches Linux and macOS. Windows projects saved
-with an earlier DuskVerb 2 preview may need the preview instance replaced:
-export its user preset first, insert 1.0, import the preset, and check automation
-and routing. Keep the preview available until those projects are migrated.
+The VST3 identity is the same on Windows, Linux and macOS. The first Windows
+build, 1.0.0, had a different one. A Windows project saved with 1.0.0 opens in a
+host that reads VST3 compatibility information, as REAPER does. In a host that
+does not, the project reports DuskVerb 2 as missing: while 1.0.0 is still
+installed, open the project and save the instance's settings as a user preset,
+then update, insert DuskVerb 2, load the preset, and check automation and
+routing. CLAP, AU and LV2 projects are not
+affected.
 Original DuskVerb has a separate identity and is unaffected.
 
 The plugin supports mono, mono-to-stereo and stereo operation where the host
