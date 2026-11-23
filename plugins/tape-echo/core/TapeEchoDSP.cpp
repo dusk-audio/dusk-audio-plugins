@@ -1828,22 +1828,24 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                                + kHeadOffsetMs[2] * 0.001 * fs;
             const double lag2 = path2 - path1;
             const double lag3 = path3 - path1;
-            const float d1 = clampF(
-                (float)(path1 + transportSumNow - transportAt(path1)),
-                4.0f, maxDelaySamples);
-            const float d2 = clampF(
-                (float)(path2 + transportAt(lag2) - transportAt(lag2 + path2)),
-                4.0f, maxDelaySamples);
-            const float d3 = clampF(
-                (float)(path3 + transportAt(lag3) - transportAt(lag3 + path3)),
-                4.0f, maxDelaySamples);
-
             const float head1 = headGain[0].next();
             const float head2 = headGain[1].next();
             const float head3 = headGain[2].next();
             const float g1 = head1 * kHeadTrim[0];
             const float g2 = head2 * kHeadTrim[1];
             const float g3 = head3 * kHeadTrim[2];
+            // Head 1's delay always (the other heads' splice offsets are taken
+            // from it); heads 2 and 3 only while they play: every use of their
+            // delays below sits behind the same idle test.
+            const float d1 = clampF(
+                (float)(path1 + transportSumNow - transportAt(path1)),
+                4.0f, maxDelaySamples);
+            const float d2 = std::abs(g2) < kHeadIdleFloor ? 0.0f : clampF(
+                (float)(path2 + transportAt(lag2) - transportAt(lag2 + path2)),
+                4.0f, maxDelaySamples);
+            const float d3 = std::abs(g3) < kHeadIdleFloor ? 0.0f : clampF(
+                (float)(path3 + transportAt(lag3) - transportAt(lag3 + path3)),
+                4.0f, maxDelaySamples);
             // The bed is repro-head noise: with no head selected (Reverb Only)
             // nothing plays it back. Every head mode sums to at least 1, so this
             // is unity there and only follows the 15 ms mode ramp to and from zero.
