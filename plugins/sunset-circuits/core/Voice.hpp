@@ -104,13 +104,16 @@ struct VoiceParameters
     float fmAmount = 0.0f;
 
     // Prism (mode 4) 4-op FM. algo 0..7, feedback 0..1; op[] carries the 4
-    // operators' {ratio, fine cents, level, velSens, keyScale, ADSR}.
+    // operators' {ratio, fine cents, level, velSens, keyScale, ADSR, second
+    // decay, rate scaling}.
     int   prismAlgo = 4;
     float prismFB = 0.0f;
     struct FMOpParams
     {
         float ratio = 1.0f, fine = 0.0f, level = 0.0f, vel = 0.0f, keyScale = 0.0f;
         float a = 0.005f, d = 0.4f, s = 0.7f, r = 0.4f;
+        float d2 = FMRateEnvelope::kDecay2Hold;   // Hold: the sustain level holds
+        int   rateScale = 0;
     };
     FMOpParams op[FMVoiceEngine::kNumOps];
 
@@ -411,7 +414,7 @@ public:
                 fm[u].setOpLevel(i, o.level);
                 fm[u].setOpVelSens(i, o.vel);
                 fm[u].setOpKeyScale(i, o.keyScale);
-                fm[u].setOpADSR(i, o.a, o.d, o.s, o.r);
+                fm[u].setOpEnvelope(i, o.a, o.d, o.s, o.r, o.d2, o.rateScale);
             }
         }
         // Summed carriers are NOT normalised inside FMVoiceEngine (peak can reach
@@ -681,9 +684,12 @@ public:
         // Cosmos's resonant DCO filter calibration.
         const FilterMode filtMode = (params.mode == SynthMode::Prism)
             ? FilterMode::Prism : (FilterMode)clampi((int)params.mode, 0, 3);
-        // Prism has no dedicated HP
-        // control, so feed a neutral 20 Hz HP (U3). Modes 1-3 ignore the HP arg.
-        const float hpCut = (params.mode == SynthMode::Prism) ? 20.0f : params.filterHPCutoff;
+        // Prism has no dedicated HP control. It feeds the HP its 10 Hz floor:
+        // the four-operator hardware it is modeled on is flat into the bass
+        // (measured on the reference: -0.11 dB at 65 Hz against middle C),
+        // where the earlier 20 Hz, with the 20 Hz output DC blocker, took
+        // 0.76 dB off C2. Modes 1-3 ignore the HP arg.
+        const float hpCut = (params.mode == SynthMode::Prism) ? 10.0f : params.filterHPCutoff;
         filterL.setModularModel(params.modularFilterModel);
         filterL.setMode(filtMode); filterL.setParameters(envCutoff, envRes, hpCut);
 

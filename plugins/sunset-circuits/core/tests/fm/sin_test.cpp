@@ -17,9 +17,10 @@
 //   2. EXACT ZEROS at x = 0, +-0.5. The x*(1-4x^2) factor exists to make the
 //      phase wrap bit-exactly silent; if a re-fit ever drops it, the residual
 //      becomes a once-per-cycle step and this fails.
-//   3. ACCURACY ACROSS THE FULL REACHABLE RANGE. Prism can drive the argument to
-//      +-33 turns (level clamp 4 -> 16 turns of depth, in-degree 2, plus 1 turn
-//      of op-4 feedback). The range reduction is exact in turns, so the error
+//   3. ACCURACY ACROSS THE FULL REACHABLE RANGE. Prism drives the argument to
+//      about +-10 turns (four turns of depth per modulator, in-degree 2, under
+//      half a turn of op-4 feedback, plus the phase); this checks +-33 turns, over three
+//      times that, as margin. The range reduction is exact in turns, so the error
 //      there must be no worse than the argument's own float32 quantisation
 //      (ulp(33)/2 = 1e-6 turns = 6.2e-6 in value) plus the fit residual.
 //      This is ALSO the guard on the reduction's two standing assumptions --

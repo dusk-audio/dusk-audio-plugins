@@ -220,6 +220,7 @@ public:
         // Mode tag per factory preset for the browser's badge + mode filter: one
         // walk of each override table, here, instead of on every filter change.
         for (int i = 0; i < kNumFactoryPresets; ++i) factoryMode[i] = factoryPresetMode(i);
+        buildMenuOrder();
 
         curMode = clampMode((int)std::lround(values[kParamMode]));
         prevMode = curMode;
@@ -965,6 +966,10 @@ private:
     void fmtVal(char* buf, int n, uint32_t p, const char* fmt, const char* suffix,
                 float dmul, float dadd, bool timeAuto = false)
     {
+        // Decay 2 at its top holds the sustain level (msynth::FMRateEnvelope).
+        if (p >= kParamOp1D2 && p <= kParamOp4RateScale && (p - kParamOp1D2) % 2 == 0
+            && !(values[p] < msynth::FMRateEnvelope::kDecay2HoldFrom))
+        { std::snprintf(buf, n, "HOLD"); return; }
         const float disp = values[p] * dmul + dadd;
         if (suffix)
         {
@@ -1084,11 +1089,47 @@ private:
         return changed;
     }
 
-    // Prism op-ratio snap list (classic FM ratios); plain drag snaps, Shift = fine.
-    static const float* ratioList(int& n) { static const float L[] = { 0.25f, 0.5f, 0.75f, 1, 1.5f, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 }; n = 20; return L; }
-    static float snapRatio(float v)
-    { int n; const float* L = ratioList(n); float best = L[0], bd = 1e9f;
-      for (int i = 0; i < n; ++i) { float dd = std::fabs(L[i] - v); if (dd < bd) { bd = dd; best = L[i]; } } return best; }
+    // Prism op-ratio step list, in ascending order: the classic FM ratios (0.25,
+    // 0.5, 0.75, 1, 1.5, 2..16) together with the frequency-ratio table of the
+    // four-operator instruments Prism is modelled on: every coarse ratio 0.5,
+    // 1..15 times each of the chip's four DT2 offsets, 0, +600, +781 and +950
+    // cents, up to the knob's 16. 53 entries. The hardware's own entries were
+    // measured on the reference within 0.5 cents of these nominal intervals
+    // (tools repo, Prism parity review, fix 9). Plain drag and the wheel step
+    // through the list; Shift-drag is continuous.
+    struct RatioTable { float v[64] {}; int n = 0; };
+    static const float* ratioList(int& n)
+    {
+        // Built once, by a function-local static's initializer: C++11 runs it
+        // exactly once even when two editors open at the same time.
+        static const RatioTable table = [] {
+            RatioTable t;
+            float tmp[96]; int k = 0;
+            for (float c : { 0.25f, 0.5f, 0.75f, 1.5f }) tmp[k++] = c;
+            const float dt2[4] = { 1.0f, std::exp2(600.0f / 1200.0f), std::exp2(781.0f / 1200.0f),
+                                   std::exp2(950.0f / 1200.0f) };
+            for (int coarse = 0; coarse <= 16; ++coarse)
+                for (float f : dt2)
+                {
+                    const float v = (coarse == 0 ? 0.5f : (float)coarse) * f;
+                    if (v <= 16.0f) tmp[k++] = v;
+                }
+            std::sort(tmp, tmp + k);
+            for (int i = 0; i < k; ++i)
+                if (t.n == 0 || tmp[i] != t.v[t.n - 1]) t.v[t.n++] = tmp[i];
+            return t;
+        }();
+        n = table.n; return table.v;
+    }
+    static int nearestRatioIndex(float v)
+    { int n; const float* L = ratioList(n); int best = 0; float bd = 1e9f;
+      for (int i = 0; i < n; ++i) { const float dd = std::fabs(std::log(L[i]) - std::log(v)); if (dd < bd) { bd = dd; best = i; } }
+      return best; }
+    // Pixels of plain vertical drag per ratio step. 53 steps make the whole
+    // range 265 px, against 166 px for the old continuous-then-snap drag, which
+    // left the top of the knob a pixel or two per step once the hardware ratios
+    // were in.
+    static constexpr float kRatioStepPx = 5.0f;
 
     bool knobRatio(const char* id, uint32_t p, float cx, float cy, float r, bool ticks = true)
     {
@@ -1116,15 +1157,44 @@ private:
             if (ImGui::IsItemActivated())
             {
                 if (modKey) { beginEdit(p); values[p] = d.def; setParam(p, d.def); endEdit(p); changed = true; skewReset = true; }
-                else        { beginEdit(p); skewL = std::log(values[p] < d.min ? d.min : values[p]); skewReset = false; }
+                else
+                {
+                    beginEdit(p); skewReset = false;
+                    ratioDragFine = ImGui::GetIO().KeyShift;
+                    skewL = std::log(values[p] < d.min ? d.min : values[p]);
+                    ratioStepIdx = nearestRatioIndex(values[p] < d.min ? d.min : values[p]);
+                    ratioStepAccum = 0.0f;
+                }
             }
             if (active && !skewReset)
             {
                 const bool fine = ImGui::GetIO().KeyShift;
-                skewL -= ImGui::GetIO().MouseDelta.y * (fine ? 0.0016f : 0.006f) * lrange;
-                if (skewL < lmin) skewL = lmin; if (skewL > lmax) skewL = lmax;
-                float nv = std::exp(skewL);
-                if (!fine) nv = snapRatio(nv);           // snap to the classic list on plain drag
+                const float cur = values[p] < d.min ? d.min : values[p];
+                float nv = cur;
+                if (fine)
+                {
+                    // Continuous, from wherever the plain drag left the value.
+                    if (!ratioDragFine) skewL = std::log(cur);
+                    skewL -= ImGui::GetIO().MouseDelta.y * 0.0016f * lrange;
+                    if (skewL < lmin) skewL = lmin; if (skewL > lmax) skewL = lmax;
+                    nv = std::exp(skewL);
+                }
+                else
+                {
+                    // One list entry per kRatioStepPx of drag, from the entry
+                    // nearest the value (re-taken when Shift is let go mid-drag).
+                    if (ratioDragFine) { ratioStepIdx = nearestRatioIndex(cur); ratioStepAccum = 0.0f; }
+                    int n; const float* L = ratioList(n);
+                    ratioStepAccum -= ImGui::GetIO().MouseDelta.y;
+                    const int steps = (int)(ratioStepAccum / kRatioStepPx);   // toward zero
+                    if (steps != 0)
+                    {
+                        ratioStepAccum -= (float)steps * kRatioStepPx;
+                        ratioStepIdx = std::clamp(ratioStepIdx + steps, 0, n - 1);
+                        nv = L[ratioStepIdx];
+                    }
+                }
+                ratioDragFine = fine;
                 nv = nv < d.min ? d.min : (nv > d.max ? d.max : nv);
                 if (nv != values[p]) { values[p] = nv; setParam(p, nv); changed = true; }
             }
@@ -1137,12 +1207,17 @@ private:
                 if (wheel != 0.0f)
                 {
                     // No Shift-fine here by design: this wheel steps the discrete
-                    // classic-ratio list, matching the shared knob's `stepped`
-                    // path (which also uses a fixed 1-step and ignores Shift).
+                    // ratio list, matching the shared knob's `stepped` path (which
+                    // also uses a fixed 1-step and ignores Shift). It moves to the
+                    // next entry above or below the value, so a typed ratio between
+                    // two entries steps to its neighbour rather than past it. The
+                    // 1e-4 tolerance (0.17 cents) sits under the closest pair,
+                    // 14.13 and 14.14 (1.4 cents apart).
                     int n; const float* L = ratioList(n);
-                    int idx = 0; float bd = 1e9f;
-                    for (int i = 0; i < n; ++i) { float dd = std::fabs(L[i] - values[p]); if (dd < bd) { bd = dd; idx = i; } }
-                    idx += wheel > 0 ? 1 : -1; if (idx < 0) idx = 0; if (idx > n - 1) idx = n - 1;
+                    const float v = values[p];
+                    int idx = wheel > 0 ? n - 1 : 0;
+                    if (wheel > 0) { for (int i = 0; i < n; ++i)      if (L[i] > v * 1.0001f) { idx = i; break; } }
+                    else           { for (int i = n - 1; i >= 0; --i) if (L[i] < v * 0.9999f) { idx = i; break; } }
                     if (L[idx] != values[p]) { beginEdit(p); values[p] = L[idx]; setParam(p, L[idx]); endEdit(p); changed = true; }
                 }
             }
@@ -1477,10 +1552,11 @@ private:
 
         // ---- preset cluster ----
         // currentPreset is a COMBINED index: factory [0..kNumFactoryPresets) then
-        // user [kNumFactoryPresets..total).
+        // user [kNumFactoryPresets..total). The chevrons step in MENU order, not
+        // index order (stepPreset).
         const char* preview = presetName(currentPreset);
         if (chevron("presetPrev", kBarPrevX0, kBarY0, kBarPrevX0 + kBarChevW, kBarY1, false, "Previous preset"))
-            applyCombined(currentPreset < 0 ? comboTotal() - 1 : currentPreset - 1);
+            stepPreset(-1);
 
         ImGui::SetCursorScreenPos(P(kBarComboX0, kBarY0));
         ImGui::SetNextItemWidth(kBarComboW * s);
@@ -1520,11 +1596,11 @@ private:
         ImGui::PopStyleColor(7); ImGui::PopStyleVar(); ImGui::PopFont();
 
         if (chevron("presetNext", kBarNextX0, kBarY0, kBarNextX0 + kBarChevW, kBarY1, true, "Next preset"))
-            applyCombined(currentPreset < 0 ? 0 : currentPreset + 1);
+            stepPreset(+1);
 
         // BROWSE — full-screen searchable browser over factory + user presets.
         if (barButton("presetBrowse", kBarBrowseX0, kBarY0, kBarBrowseX0 + kBarBrowseW, kBarY1, "BROWSE",
-                      "Browse every preset: search by name, filter by mode or bank"))
+                      "Browse every preset: search by name or author, filter by mode or bank"))
             openBrowse();
 
         // SAVE — opens the user-preset save modal (writes the current patch).
@@ -1564,10 +1640,9 @@ private:
         const ImGuiStyle& st = ImGui::GetStyle();
         const float pitch = popupColW + st.ItemSpacing.x;
 
-        // Rows per group (header + entries), for the balance below.
+        // Rows per group (headers + entries), for the balance below.
         int rows[7] = {};
-        for (int i = 0; i < kNumFactoryPresets; ++i) ++rows[clampMode(factoryMode[i])];
-        for (int m = 0; m < 6; ++m) rows[m] += 1;
+        for (int m = 0; m < 6; ++m) rows[m] = menuGroupRows[m];
         if (nUsers > 0) rows[6] = 1 + nUsers;
 
         // How many columns fit. Not "one per group": seven 1:1 columns are ~1.1
@@ -1608,26 +1683,38 @@ private:
        #endif
     }
 
-    // One group: an accent header with a hairline rule, then its presets. The
-    // header is drawn in that MODE's accent (not the live one) so the column a
-    // preset lives in is identifiable at a glance even mid-crossfade.
+    // A popup header: the label in an accent over a hairline rule the column's
+    // width. Mode and author headers use that MODE's accent (not the live one) so
+    // the column a preset lives in is identifiable at a glance even mid-crossfade.
+    void popupHeader(const char* label, ImU32 col)
+    {
+        ImGui::PushStyleColor(ImGuiCol_Text, col);
+        ImGui::TextUnformatted(label);
+        ImGui::PopStyleColor();
+        const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+        ImGui::GetWindowDrawList()->AddLine(ImVec2(a.x, b.y), ImVec2(a.x + popupColW, b.y),
+                                            withA(col, 80), 1.0f);
+    }
+
+    // A mode group walks its run of menuOrder, so the column lists exactly the
+    // sequence the chevrons step through. A credited author's presets close the
+    // run under the author's own header, in the mode's accent: they belong to
+    // that engine's column, the way USER closes the menu as a whole.
     void drawPresetPopupGroup(int g, const std::vector<scpreset::Entry>& users)
     {
         const bool isUser = (g >= 6);
         const ImU32 col = isUser ? live.accent : kPalettes[g].accent;
-        ImGui::PushStyleColor(ImGuiCol_Text, col);
-        ImGui::TextUnformatted(isUser ? "USER" : kModeNames[g]);
-        ImGui::PopStyleColor();
-        { const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
-          ImGui::GetWindowDrawList()->AddLine(ImVec2(a.x, b.y), ImVec2(a.x + popupColW, b.y),
-                                              withA(col, 80), 1.0f); }
+        popupHeader(isUser ? "USER" : kModeNames[g], col);
 
         const ImVec2 cell(popupColW, 0.0f);
         if (!isUser)
         {
-            for (int i = 0; i < kNumFactoryPresets; ++i)
+            for (int p = menuGroupStart[g]; p < menuGroupStart[g + 1]; ++p)
             {
-                if (clampMode(factoryMode[i]) != g) continue;
+                const int i = menuOrder[p];
+                const char* const by = presetAuthor(i);
+                if (by != nullptr && (p == menuGroupStart[g] || !sameAuthor(presetAuthor(menuOrder[p - 1]), by)))
+                    popupHeader(by, col);
                 const bool sel = (i == currentPreset);
                 ImGui::PushID(i);
                 if (ImGui::Selectable(kFactoryPresets[i].name, sel, 0, cell)) applyPreset(i);
@@ -1660,7 +1747,11 @@ private:
         float w = 0.0f;
         const auto widen = [&](const char* t)
         { w = std::max(w, f->CalcTextSizeA(fs, FLT_MAX, 0.0f, t).x); };
-        for (int i = 0; i < kNumFactoryPresets; ++i) widen(kFactoryPresets[i].name);
+        for (int i = 0; i < kNumFactoryPresets; ++i)
+        {
+            widen(kFactoryPresets[i].name);
+            if (const char* by = presetAuthor(i)) widen(by);   // its group header
+        }
         for (const auto& e : presetStore.list())     widen(e.name.c_str());
         for (int m = 0; m < 6; ++m)                  widen(kModeNames[m]);
         // A user name can be up to 128 chars (saveNameBuf); cap the column so one
@@ -1703,6 +1794,80 @@ private:
         const int u = combined - kNumFactoryPresets;
         if (u >= 0 && u < userCount()) return presetStore.list()[u].name.c_str();
         return "Presets";
+    }
+
+    // Credited author of a combined index, or nullptr: user presets carry no
+    // author, and most factory presets are uncredited (gen_params PRESET_AUTHORS).
+    static const char* presetAuthor(int combined)
+    {
+        return (combined >= 0 && combined < kNumFactoryPresets)
+            ? kFactoryPresets[combined].author : nullptr;
+    }
+
+    // The browser's banks, one per preset: the bank chips filter by them and each
+    // cell is tagged with its bank. An ARTIST preset is a built-in program with a
+    // credited author; it is its own bank rather than part of FACTORY, so the
+    // three banks split the library with no preset in two of them.
+    enum Bank { kBankFactory, kBankArtist, kBankUser, kNumBanks };
+    static constexpr const char* kBankNames[kNumBanks] = { "FACTORY", "ARTIST", "USER" };
+    static Bank presetBank(int combined)
+    {
+        if (combined >= kNumFactoryPresets) return kBankUser;
+        return presetAuthor(combined) != nullptr ? kBankArtist : kBankFactory;
+    }
+
+    static bool sameAuthor(const char* a, const char* b)
+    {
+        return (a == nullptr || b == nullptr) ? a == b : std::strcmp(a, b) == 0;
+    }
+
+    // The preset menu's order, built once: mode by mode (COSMOS..ACID), each
+    // mode's uncredited presets in bank order, then each credited author's
+    // presets of that mode, authors in order of first appearance in the bank.
+    // menuGroupStart[m]..[m + 1] is mode m's run of menuOrder; menuPos inverts it.
+    // User presets follow the factory runs in store order, so their menu position
+    // IS their combined index and needs no table.
+    void buildMenuOrder()
+    {
+        const char* authors[kNumFactoryPresets] = {};
+        int nAuthors = 0;
+        for (int i = 0; i < kNumFactoryPresets; ++i)
+        {
+            const char* const by = presetAuthor(i);
+            if (by == nullptr) continue;
+            bool seen = false;
+            for (int a = 0; a < nAuthors && !seen; ++a) seen = sameAuthor(authors[a], by);
+            if (!seen) authors[nAuthors++] = by;
+        }
+        int n = 0;
+        for (int m = 0; m < 6; ++m)
+        {
+            menuGroupStart[m] = n;
+            menuGroupRows[m] = 1;   // the mode header
+            for (int a = -1; a < nAuthors; ++a)   // -1 = uncredited
+            {
+                const char* const by = (a < 0) ? nullptr : authors[a];
+                const int run0 = n;
+                for (int i = 0; i < kNumFactoryPresets; ++i)
+                    if (factoryMode[i] == m && sameAuthor(presetAuthor(i), by)) menuOrder[n++] = i;
+                menuGroupRows[m] += (n - run0) + (by != nullptr && n > run0 ? 1 : 0);
+            }
+        }
+        menuGroupStart[6] = n;
+        for (int p = 0; p < n; ++p) menuPos[menuOrder[p]] = p;
+    }
+
+    // Previous / next preset in menu order (wraps). With nothing loaded, next
+    // goes to the first entry and previous to the last.
+    void stepPreset(int dir)
+    {
+        const int total = comboTotal();
+        if (total <= 0) return;
+        int pos;
+        if (currentPreset < 0 || currentPreset >= total) pos = (dir > 0) ? -1 : total;
+        else pos = (currentPreset < kNumFactoryPresets) ? menuPos[currentPreset] : currentPreset;
+        pos = ((pos + dir) % total + total) % total;
+        applyCombined(pos < kNumFactoryPresets ? menuOrder[pos] : pos);
     }
 
     // Recall by combined index (wraps). Factory -> applyPreset; user -> file load.
@@ -2817,8 +2982,8 @@ private:
         // Each operator gets its own block with two grouped sub-rows of larger,
         // tickless knobs (r13, accent-arc STROKE spans R+1.8..R+4.2 -> reach ±17.2)
         // so every control is legible (defect 3):
-        //   sub-row 1: RATIO · FINE · LEVEL | VEL · KEY
-        //   sub-row 2: A · D · S · R        (+ FB on op 4)
+        //   sub-row 1: RATIO · FINE · LEVEL | VEL · KEY · KEY RT
+        //   sub-row 2: A · D · S · D2 · R   (+ FB on op 4)
         // Strip pitch 80: top = 84 + op*80, sub-row centres cy1 = top+18, cy2 = top+58
         // (40 apart). Labels font 9.5 (ink ~6.4 px from y+1) at centre-22, and they are
         // drawn AFTER the knobs: at mid-range values the accent arc passes through 12
@@ -2826,9 +2991,12 @@ private:
         // vs row-2 ink top+37..+43.4) — label-last ordering keeps the letter ink on
         // top instead of letting the arc slice it (the round-2 illegibility). Row-1
         // arc bottom band ends top+35.2, 1.8 px above the row-2 ink top (top+37).
-        // Columns cxc spacing 54 >= arc-reach diameter 34.4 + 4. Last strip bottom
-        // (84+3*80+58+17.2 = 399.2) clears the panel inner floor (405) by ~6 px.
-        const float cxc[5] = { 96.0f, 150.0f, 204.0f, 258.0f, 312.0f };
+        // Six columns since Decay 2 and KEY RT (issue #400): spacing 44 >= arc-reach
+        // diameter 34.4 + 4. Column 0's arc reaches x 76.8, 8.8 px clear of the
+        // gutter read-out (ends ~68); column 5's reaches 331.2, ~6 px inside the
+        // panel's inner wall (337). Last strip bottom (84+3*80+58+17.2 = 399.2)
+        // clears the panel inner floor (405) by ~6 px.
+        const float cxc[6] = { 94.0f, 138.0f, 182.0f, 226.0f, 270.0f, 314.0f };
         const float kr = 13.0f;
         for (int op = 0; op < 4; ++op)
         {
@@ -2836,6 +3004,7 @@ private:
             const float cy1 = top + 18.0f, cy2 = top + 58.0f;
             const bool carrier = (alg.carrierMask >> op) & 1;
             const uint32_t base = kParamOp1Ratio + op * 9;
+            const uint32_t extra = kParamOp1D2 + op * 2;   // Decay 2, Rate Scale
 
             if (op > 0) dl->AddLine(P(22, top - 6), P(332, top - 6), withA(live.textPanel, 30), 1.0f * s);
             // op number + carrier/modulator LED
@@ -2857,7 +3026,7 @@ private:
                 text(48, top + 51, 8.5f, whiteDimCol(), ov, 0);
             }
             // group divider between LEVEL and VEL in sub-row 1
-            dl->AddLine(P(231, top + 8), P(231, top + 32), withA(live.textPanel, 30), 1.0f * s);
+            dl->AddLine(P(204, top + 8), P(204, top + 32), withA(live.textPanel, 30), 1.0f * s);
 
             char id[24];
             // knobs first ...
@@ -2866,12 +3035,14 @@ private:
             std::snprintf(id, sizeof(id), "op%dL", op); knob(id, base + 2, cxc[2], cy1, kr, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
             std::snprintf(id, sizeof(id), "op%dV", op); knob(id, base + 3, cxc[3], cy1, kr, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
             std::snprintf(id, sizeof(id), "op%dK", op); knob(id, base + 4, cxc[4], cy1, kr, "%+.0f", " %", true, false, false, 100.0f, 0.0f, false);
+            std::snprintf(id, sizeof(id), "op%dKR", op); knob(id, extra + 1, cxc[5], cy1, kr, "%.0f", "", false, true, false, 1.0f, 0.0f, false);
             std::snprintf(id, sizeof(id), "op%dA", op); knob(id, base + 5, cxc[0], cy2, kr, "%.0f", " ms", false, false, false, 1000.0f, 0.0f, false, true);
             std::snprintf(id, sizeof(id), "op%dD", op); knob(id, base + 6, cxc[1], cy2, kr, "%.0f", " ms", false, false, false, 1000.0f, 0.0f, false, true);
             std::snprintf(id, sizeof(id), "op%dS", op); knob(id, base + 7, cxc[2], cy2, kr, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
-            std::snprintf(id, sizeof(id), "op%dRl", op); knob(id, base + 8, cxc[3], cy2, kr, "%.0f", " ms", false, false, false, 1000.0f, 0.0f, false, true);
-            if (op == 3) // feedback op hosts the FB knob, aligned in the KEY column
-                knob("prismfb", kParamPrismFB, cxc[4], cy2, kr, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
+            std::snprintf(id, sizeof(id), "op%dD2", op); knob(id, extra + 0, cxc[3], cy2, kr, "%.0f", " ms", false, false, false, 1000.0f, 0.0f, false, true);
+            std::snprintf(id, sizeof(id), "op%dRl", op); knob(id, base + 8, cxc[4], cy2, kr, "%.0f", " ms", false, false, false, 1000.0f, 0.0f, false, true);
+            if (op == 3) // feedback op hosts the FB knob, aligned in the KEY RT column
+                knob("prismfb", kParamPrismFB, cxc[5], cy2, kr, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
             // ... labels after, each on a small panel-colored chip: at high values
             // the accent arc passes through 12 o'clock, i.e. straight through the
             // label band, and letter-ink-over-arc alone still reads as "covered"
@@ -2885,9 +3056,10 @@ private:
                 text(cx, y - 22.0f, 9.5f, accent ? live.accent : live.textPanel, t, 0, true);
             };
             L(cxc[0], cy1, "RATIO"); L(cxc[1], cy1, "FINE"); L(cxc[2], cy1, "LEVEL");
-            L(cxc[3], cy1, "VEL");   L(cxc[4], cy1, "KEY");
-            L(cxc[0], cy2, "A"); L(cxc[1], cy2, "D"); L(cxc[2], cy2, "S"); L(cxc[3], cy2, "R");
-            if (op == 3) L(cxc[4], cy2, "FB", true);
+            L(cxc[3], cy1, "VEL");   L(cxc[4], cy1, "KEY");   L(cxc[5], cy1, "KEY RT");
+            L(cxc[0], cy2, "A"); L(cxc[1], cy2, "D"); L(cxc[2], cy2, "S"); L(cxc[3], cy2, "D2");
+            L(cxc[4], cy2, "R");
+            if (op == 3) L(cxc[5], cy2, "FB", true);
         }
     }
 
@@ -3648,7 +3820,7 @@ private:
         browseSearch[0] = '\0';
         browseSearchHadText = false;
         browseModeFilter = -1;   // all modes
-        browseSrcFilter  = 0;    // all banks
+        browseBankFilter = -1;   // all banks
         browseSel = -1;          // rebuild parks the cursor on the loaded preset
         browseRow0 = 0;
         browseWheelAcc = 0.0f;
@@ -3717,11 +3889,11 @@ private:
         const int total = std::min(comboTotal(), kBrowseMax);
         for (int i = 0; i < total; ++i)
         {
-            const bool user = (i >= kNumFactoryPresets);
-            if (browseSrcFilter == 1 && user) continue;
-            if (browseSrcFilter == 2 && !user) continue;
+            if (browseBankFilter >= 0 && presetBank(i) != browseBankFilter) continue;
             if (browseModeFilter >= 0 && presetMode(i) != browseModeFilter) continue;
-            if (!containsCI(presetName(i), needle)) continue;
+            // An empty needle matches, so the author test only runs on a search.
+            if (!containsCI(presetName(i), needle) && !containsCI(presetAuthor(i), needle))
+                continue;
             browseIdx[browseN++] = i;
         }
         // Keep the cursor on the same preset when it survived the new filter,
@@ -3800,7 +3972,6 @@ private:
     {
         const int idx = browseIdx[fi];
         const float x1 = x0 + kBrCellW, y1 = y0 + kBrCellH;
-        const bool user = (idx >= kNumFactoryPresets);
         const bool cur  = (idx == currentPreset);
         const bool sel  = (fi == browseSel);
         const int  m    = presetMode(idx);
@@ -3834,31 +4005,47 @@ private:
         // minimum (s = 0.5) — the same mush kReadoutMinS exists to suppress (§3.1b).
         // Below it the row degrades instead of disappearing: the badge becomes a
         // text-less colour swatch, which still names the mode (the palette IS the
-        // mode cue, §4.0), the FACTORY / USER tag drops, and the name takes the
-        // freed width. The hover tooltip carries mode and bank verbatim at any size.
+        // mode cue, §4.0), the bank tag and the author line drop, and the name
+        // takes the freed width. The hover tooltip carries mode, bank and author
+        // verbatim at any size.
         const bool ro = readoutsOn();
+        const Bank bank = presetBank(idx);
+        const char* const by = presetAuthor(idx);
         // Name ink band x0+12 .. (x1-122 with badge+tag, x1-36 without): 136 / 222 px,
         // ~24 / ~40 chars at font 11. The longest factory name is 20, but a USER name
         // is whatever fitted in saveNameBuf (128) and panel.text() never clips — so
         // the draw is clipped to the band and an over-long name is CUT, not allowed to
         // overprint the badge and bleed into the next column. Tooltip has it in full.
+        // A credited preset stacks "by <author>" under its name: the pair is centred
+        // on the badge (name y 7, author y 22) where a lone name sits at y 14.
         const float nameX1 = ro ? x1 - 122.0f : x1 - 36.0f;
+        const bool byLine = ro && by != nullptr;
         dl->PushClipRect(P(x0 + 12, y0), P(nameX1, y1), true);
-        text(x0 + 12, y0 + 14, 11.0f, cur ? live.accent : IM_COL32(226, 229, 234, 255),
-             presetName(idx), -1, cur || sel);
+        text(x0 + 12, y0 + (byLine ? 7.0f : 14.0f), 11.0f,
+             cur ? live.accent : IM_COL32(226, 229, 234, 255), presetName(idx), -1, cur || sel);
+        if (byLine)
+        {
+            char line[64]; std::snprintf(line, sizeof line, "by %s", by);
+            text(x0 + 12, y0 + 22, 9.0f, whiteDimCol(), line, -1);
+        }
         dl->PopClipRect();
         if (ro)
         {
+            const bool tagLit = (bank != kBankFactory);
             dl->AddRectFilled(P(x1 - 116, y0 + 11), P(x1 - 58, y0 + 27), mc, 3.0f * s);
             text(x1 - 87, y0 + 15, 8.0f, inkOn(mc), kModeNames[m], 0, true);
-            text(x1 - 12, y0 + 15, 8.0f, user ? live.accent : IM_COL32(140, 142, 148, 255),
-                 user ? "USER" : "FACTORY", 1, user);
+            text(x1 - 12, y0 + 15, 8.0f, tagLit ? live.accent : IM_COL32(140, 142, 148, 255),
+                 kBankNames[bank], 1, tagLit);
         }
         else
             dl->AddRectFilled(P(x1 - 30, y0 + 11), P(x1 - 12, y0 + 27), mc, 3.0f * s);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
-            ImGui::SetTooltip("%s \xC2\xB7 %s \xC2\xB7 %s preset%s", presetName(idx), kModeNames[m],
-                              user ? "user" : "factory", cur ? " (loaded)" : "");
+        {
+            static constexpr const char* kBankWords[kNumBanks] = { "factory", "artist", "user" };
+            ImGui::SetTooltip("%s \xC2\xB7 %s \xC2\xB7 %s preset%s%s%s", presetName(idx), kModeNames[m],
+                              kBankWords[bank], by ? " by " : "", by ? by : "",
+                              cur ? " (loaded)" : "");
+        }
     }
 
     void drawPresetBrowserOverlay()
@@ -3915,17 +4102,19 @@ private:
         ImGui::PopStyleVar();
         ImGui::PopFont();
         if (browseSearch[0] == '\0' && !ImGui::IsItemActive())
-            text(kBrCX0 + 52, 110, 10.0f, withA(live.textPanel, 110), "search preset names", -1);
+            text(kBrCX0 + 52, 110, 10.0f, withA(live.textPanel, 110), "search names and authors", -1);
 
         // ---- bank chips (right of the search field, same row) ----
         {
-            const char* const labs[3] = { "ALL", "FACTORY", "USER" };
-            for (int i = 0; i < 3; ++i)
+            const char* const labs[1 + kNumBanks] = { "ALL", "FACTORY", "ARTISTS", "USER" };
+            for (int i = 0; i < 1 + kNumBanks; ++i)   // 0 = ALL, then the banks
             {
                 char id[16]; std::snprintf(id, sizeof id, "brsrc%d", i);
-                const float x0 = 908.0f + i * 90.0f;   // 908..992 / 998..1082 / 1088..1172
-                if (chip(id, x0, 104, x0 + 84, 130, labs[i], browseSrcFilter == i))
-                { browseSrcFilter = i; browseDirty = true; }
+                // 818..902 / 908..992 / 998..1082 / 1088..1172
+                const float x0 = 818.0f + i * 90.0f;
+                const int   bf = i - 1;
+                if (chip(id, x0, 104, x0 + 84, 130, labs[i], browseBankFilter == bf))
+                { browseBankFilter = bf; browseDirty = true; }
             }
         }
 
@@ -5140,6 +5329,9 @@ private:
             tips[b + 6] = "Decay of the operator's envelope.";
             tips[b + 7] = "Sustain of the operator's envelope.";
             tips[b + 8] = "Release of the operator's envelope.";
+            const uint32_t e = kParamOp1D2 + op * 2;
+            tips[e + 0] = "Decay 2: after the decay reaches the sustain level, keeps falling at this rate.\nAt the top (HOLD) the sustain level holds.";
+            tips[e + 1] = "Rate scaling: the operator's envelope runs faster on higher keys.\n0 tracks slightly, as on the hardware; 3 tracks most. Times are as shown at middle C.";
         }
         tips[kParamAcidAccentAmt] = "How much accented steps boost level, resonance, and envelope.";
         tips[kParamAcidSlideTime] = "Glide time for slid steps.";
@@ -5207,13 +5399,17 @@ private:
     char   browseSearch[64] = {};
     bool   browseSearchHadText = false;   // buffer non-empty at the END of last frame
     int    browseModeFilter = -1;    // -1 = every mode, else 0..5
-    int    browseSrcFilter = 0;      // 0 both banks, 1 factory only, 2 user only
+    int    browseBankFilter = -1;    // -1 = every bank, else a Bank
     int    browseSel = -1;           // cursor: index INTO browseIdx, not a preset id
     int    browseRow0 = 0;           // first visible grid row (whole-row scrolling)
     float  browseWheelAcc = 0.0f;    // sub-row wheel remainder (touchpad deltas)
     int    browseN = 0;
     int    browseIdx[kBrowseMax] = {};
     int    factoryMode[kNumFactoryPresets] = {};   // derived once in the ctor
+    int    menuOrder[kNumFactoryPresets] = {};     // menu position -> factory index (buildMenuOrder)
+    int    menuPos[kNumFactoryPresets] = {};       // factory index -> menu position
+    int    menuGroupStart[7] = {};                 // mode m's run is [m]..[m + 1]
+    int    menuGroupRows[6] = {};                  // header rows + entries per mode group
     // Preset-combo popup: column width in DEVICE px, measured from the live atlas
     // face each time the popup opens (see measurePopupColumn).
     float  popupColW = 0.0f;
@@ -5256,6 +5452,9 @@ private:
     // local skew/ratio-knob drag state (one knob active at a time, like the shared knob)
     float  skewL = 0.0f;
     bool   skewReset = false;
+    float  ratioStepAccum = 0.0f;   // plain-drag pixels not yet spent on a ratio step
+    int    ratioStepIdx = 0;        // ratio list entry the plain drag is on
+    bool   ratioDragFine = false;   // Shift state on the previous drag frame
 
    #ifdef MSYNTH_FRAME_PROFILE
     double profLogic[100] = {}, profTotal[100] = {};

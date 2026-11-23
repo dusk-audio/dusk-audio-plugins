@@ -126,12 +126,20 @@ enum Param : int
     pWheelLfoRate, pWheelLfoSaw, pWheelLfoTri, pWheelLfoSquare,
     pWheelSourceMix, pWheelNoiseSH, pWheelLowerLimit, pWheelUpperLimit,
     pWheelFreqA, pWheelFreqB, pWheelPwA, pWheelPwB, pWheelFilter,
+    // Prism second decay and envelope rate scaling (issue #400), per operator,
+    // after the four-operator hardware (tools repo, Prism parity review).
+    // Decay 2 at its top (Hold) holds the sustain level, as Prism always did.
+    pOp1D2, pOp1RateScale, pOp2D2, pOp2RateScale,
+    pOp3D2, pOp3RateScale, pOp4D2, pOp4RateScale,
     kNumParams
 };
 
 // Fields per Prism op block (Ratio,Fine,Level,Vel,KeyScale,A,D,S,R): op N field
 // F lives at pOp1Ratio + N*kOpParamStride + F.
 static constexpr int kOpParamStride = 9;
+// The appended per-op fields (D2, RateScale): op N field F lives at
+// pOp1D2 + N*kOpExtraStride + F.
+static constexpr int kOpExtraStride = 2;
 
 class MultiSynthDSP
 {

@@ -12,10 +12,14 @@
 //   * 4 sine operators, each a phase accumulator + stepped digital rate envelope.
 //   * 8 routing algorithms from the shared kPrismAlgos table (FMAlgorithms.hpp),
 //     which the UI diagram widget renders from too.
-//   * Phase modulation: the normalized operator control follows a 48 dB
-//     logarithmic law. A full-level modulator reaches eight turns of deviation;
-//     carriers use the same law as output gain.
-//   * Op 4 self-feedback 0..1 with the classic 2-sample-average damping.
+//   * Phase modulation: the normalized operator control follows the output-
+//     level law of the four-operator hardware Prism is modeled on, 0.75 dB per
+//     1/99 of the range (74.25 dB in all). A full-level modulator reaches four
+//     turns (8 pi rad) of deviation, as on that hardware; carriers use the same
+//     law as output gain.
+//   * Op 4 self-feedback 0..1 in seven steps with the classic 2-sample-average
+//     damping; each step's depth is measured on the hardware (kFeedbackTurns),
+//     and the loop taps the operator's output, so it follows level and envelope.
 //   * Per op: ratio, fine cents, level, velocity sensitivity, key-level scaling.
 //
 // Real-time safe: no allocation, no locks, no I/O in noteOn/processSample; all
@@ -35,8 +39,8 @@ namespace msynth
 
 // Four-operator hardware uses quantised rate/level envelope generators rather
 // than a continuously parameterised analogue ADSR.  Prism keeps the familiar
-// ADSR UI, but maps it onto stepped logarithmic times and stepped sustain levels
-// before running this exponential digital EG.
+// ADSR UI, but maps it onto stepped logarithmic times and the hardware's sustain
+// law before running this exponential digital EG.
 class FMRateEnvelope
 {
 public:
@@ -44,29 +48,52 @@ public:
 
     void prepare(double sampleRate) noexcept
     {
-        sr = (float)sampleRate;
+        sr = sampleRate;
         updateCoefficients();
         reset();
     }
 
     void setSampleRate(double sampleRate) noexcept
     {
-        sr = (float)sampleRate;
+        sr = sampleRate;
         updateCoefficients();
     }
 
-    void setParameters(float attack, float decay, float sustain, float release) noexcept
+    // Decay 2's top value: the sustain level holds, as it always did before the
+    // second decay existed. Anything above kDecay2HoldFrom (the geometric middle
+    // between the slowest step, 86.3 s, and the top) reads as Hold, so a host's
+    // normalised value a hair under the maximum still holds.
+    static constexpr float kDecay2Hold = 100.0f;
+    static constexpr float kDecay2HoldFrom = 92.9f;
+
+    // decay2 is Decay 2's time to fall 60 dB (kDecay2Hold = hold). rateMul speeds
+    // every stage up by that factor (rate scaling, see FMVoiceEngine); 1 leaves
+    // the displayed times exact.
+    void setParameters(float attack, float decay, float sustain, float release,
+                       float decay2 = kDecay2Hold, float rateMul = 1.0f) noexcept
     {
         a = quantizeTime(attack);
-        d = quantizeTime(decay);
-        s = std::round(clampf(sustain, 0.0f, 1.0f) * 63.0f) / 63.0f;
-        r = quantizeTime(release);
+        d = quantizeTime(decay, kLongTimeSteps);
+        d2Hold = !(decay2 < kDecay2HoldFrom);   // NaN holds
+        d2 = d2Hold ? 0.0f : quantizeTime(decay2, kLongTimeSteps);
+        m = rateMul > 0.0f ? rateMul : 1.0f;
+        // Sustain follows the hardware's sustain level: 3.01 dB per 1/15 of
+        // the range (measured: steps 14, 8 and 1 sit 3.01, 21.10 and 42.54 dB
+        // below full), 45.15 dB over it, and silence at 0. Continuous, not in
+        // the hardware's 3 dB steps: a modulator's sustain can sit on a sharp
+        // spectral notch (Prism Talking Keys swings 11 dB across one 0.72 dB
+        // step), so a stepped knob could not carry a sound over exactly.
+        const float sc = clampf(sustain, 0.0f, 1.0f);
+        s = sc > 0.0f ? std::exp2((sc - 1.0f) * 7.49925f) : 0.0f;
+        r = quantizeTime(release, kLongTimeSteps);
         updateCoefficients();
     }
 
     void noteOn() noexcept
     {
-        attackPos = std::sqrt(clampf(value, 0.0f, 1.0f));
+        // A retrigger, or a re-press during the release, climbs on from where
+        // the envelope is rather than restarting from silence.
+        attackW = attackStartFor((float)value);
         stage = Stage::Attack;
     }
     void noteOff() noexcept { if (stage != Stage::Idle) stage = Stage::Release; }
@@ -78,67 +105,135 @@ public:
         {
             case Stage::Idle: return 0.0f;
             case Stage::Attack:
-                // Classic digital FM attacks accelerate toward the target,
-                // unlike an analogue RC rise.  A squared linear rate counter
-                // also makes the displayed attack's 10-90 interval predictable.
-                attackPos += attackInc;
-                if (attackPos >= 1.0f)
+                // The hardware's attack climbs along an exponential in dB, fast
+                // out of silence and easing into full level. Measured on the
+                // reference at attack rates 20, 22 and 24 (one shape at every
+                // speed): across its rise from -40 to -0.2 dB it crosses -30, -20,
+                // -10, -6, -3 and -1 dB at 0.074, 0.174, 0.345, 0.491, 0.646 and
+                // 0.859 of the way. dB(pos) = -60 (e^(-4.3 pos) - e^(-4.3)) /
+                // (1 - e^(-4.3)) crosses them within 0.015. attackW carries
+                // e^(-4.3 pos), so each sample is one multiply and one exp2.
+                attackW *= attackMul;
+                if (attackW <= kAttackEndW)
                 {
-                    attackPos = 1.0f;
+                    attackW = kAttackEndW;
                     value = 1.0f;
                     stage = Stage::Decay;
                 }
                 else
                 {
-                    value = attackPos * attackPos;
+                    value = std::exp2((float)(attackW - kAttackEndW) * kAttackLog2PerW);
                 }
                 break;
             case Stage::Decay:
-                value += (s - value) * cd;
-                if (std::abs(value - s) <= 0.0005f) { value = s; stage = Stage::Sustain; }
+                // The hardware decays in a straight line in dB and stops at the
+                // sustain level. Measured on the reference: decay rate 16 to
+                // sustain step 8 falls 9.7 dB per 100 ms and sits at -21.2 dB from
+                // about 220 ms. An approach toward the sustain level, as this
+                // was, slows as it nears it; to a sustain of zero the two are the
+                // same, and this form is bit-identical there.
+                value -= value * cd;
+                if (value <= (double)maxf(s, 0.0005f)) { value = s; stage = Stage::Sustain; }
                 break;
             case Stage::Sustain:
-                value = s;
+                // The hardware's second decay (D2R) carries on from the
+                // sustain level in a straight line in dB at its own rate, down to
+                // silence while the key is held. It runs on the first decay's
+                // rate table (measured on the reference: second over first decay
+                // slope 1.00 to 1.02 at five steps), so Decay 2 is a time on the
+                // same 60 dB law and grid as Decay. At Hold the level stays.
+                if (d2Hold) value = s;
+                else
+                {
+                    value -= value * cd2;
+                    if (value <= 0.0001) value = 0.0;
+                }
                 break;
             case Stage::Release:
-                value += (0.0f - value) * cr;
-                if (value <= 0.0001f) { value = 0.0f; stage = Stage::Idle; }
+                value += (0.0 - value) * cr;
+                if (value <= 0.0001) { value = 0.0; stage = Stage::Idle; }
                 break;
         }
-        if (isBad(value)) { value = 0.0f; stage = Stage::Idle; }
-        return value;
+        const float out = (float)value;
+        if (isBad(out)) { value = 0.0; stage = Stage::Idle; return 0.0f; }
+        return out;
     }
 
-    void reset() noexcept { value = attackPos = 0.0f; stage = Stage::Idle; }
+    void reset() noexcept { value = 0.0; attackW = 1.0; stage = Stage::Idle; }
+
+    // Rate scaling: every stage runs rateMul times faster than its displayed
+    // time (1 = as displayed). Set per note by FMVoiceEngine::noteOn.
+    void setRateMultiplier(float rateMul) noexcept
+    {
+        const float nm = rateMul > 0.0f ? rateMul : 1.0f;
+        if (nm != m) { m = nm; updateCoefficients(); }
+    }
+
+    // The time grid: logarithmic steps of 10^(4/47) from 1 ms. Attack stops at
+    // step 47 (10 s; the hardware's slowest attack reaches full level in
+    // about 9 s). Decay, Decay 2 and Release continue to step 58, 86.3 s: the
+    // hardware's slowest first and second decays fall 60 dB in about 80 s and
+    // its slowest release in about 40 s (measured on the reference).
+    static constexpr int kTimeSteps = 47;
+    static constexpr int kLongTimeSteps = 58;
 
 private:
-    static float quantizeTime(float seconds) noexcept
+    // The attack curve: attackW = e^(-4.3 pos) runs from 1 down to e^(-4.3), and
+    // the level is 2^((attackW - e^(-3)) x kAttackLog2PerW), -60 dB to 0 dB.
+    static constexpr float kAttackEndW = 0.0135685590f;        // e^(-4.3)
+    static constexpr float kAttackLog2PerW = -10.1028656f;     // -60 dB / (1 - e^(-4.3)), in powers of two
+
+    // Where on the attack curve the level is v (1 = silence, the start).
+    static float attackStartFor(float v) noexcept
     {
-        const float t = clampf(seconds, 0.001f, 10.0f);
+        if (v <= 0.001f) return 1.0f;
+        if (v >= 1.0f) return kAttackEndW;
+        return kAttackEndW + std::log2(v) / kAttackLog2PerW;
+    }
+
+    // The upper clamp sits far above the grid's top so the step clamp decides
+    // the longest time; every time up to 10 s quantizes exactly as it did when
+    // all four stages clamped at 10 s.
+    static float quantizeTime(float seconds, int maxStep = kTimeSteps) noexcept
+    {
+        const float t = clampf(seconds, 0.001f, 1000.0f);
         constexpr float lo = -9.96578428f; // log2(0.001)
         constexpr float hi =  3.32192809f; // log2(10)
         constexpr float steps = 47.0f;
         const float q = std::round((std::log2(t) - lo) * steps / (hi - lo));
-        return std::exp2(lo + clampf(q, 0.0f, steps) * (hi - lo) / steps);
+        return std::exp2(lo + clampf(q, 0.0f, (float)maxStep) * (hi - lo) / steps);
     }
 
-    float coeff(float seconds) const noexcept
+    // The per-sample steps and the level they move are doubles. The slowest
+    // stage, 86.3 s at Rate Scale 3 on the lowest keys (x0.074: 1162 s), moves
+    // the level by 3e-8 of itself per sample at a 192 kHz internal rate, about
+    // float's half-ulp near full level. In float, 1 - exp(-x) rounded that step
+    // to 6e-8 and the level could not take steps that small: the stage ran
+    // 2.2x fast at 192 kHz, stood still at 384 kHz and ran 2.3 % fast even at
+    // 48 kHz, and the attack's e^(-4.3 pos) was 6 % off at 96 kHz (rate_gate,
+    // section 6). expm1 keeps the step exact as it shrinks.
+    double coeff(double seconds) const noexcept
     {
         // Reach within -60 dB of the target in the displayed time.
-        return 1.0f - std::exp(-6.90775528f / maxf(1.0f, seconds * sr));
+        return -std::expm1(-6.90775528 / std::fmax(1.0, seconds * sr));
     }
 
+    // Dividing by m == 1 is exact, so middle C runs every stage as displayed at
+    // every Rate Scale (rate_gate compares those renders bit for bit).
     void updateCoefficients() noexcept
     {
-        attackInc = 1.0f / maxf(1.0f, a * sr);
-        cd = coeff(d);
-        cr = coeff(r);
+        attackMul = std::exp(-4.3 / std::fmax(1.0, (double)a * sr / m));
+        cd = coeff((double)d / m);
+        cd2 = d2Hold ? 0.0 : coeff((double)d2 / m);
+        cr = coeff((double)r / m);
     }
 
-    float sr = 44100.0f;
+    double sr = 44100.0;
     float a = 0.005f, d = 0.4f, s = 0.7f, r = 0.4f;
-    float attackInc = 1.0f, cd = 1.0f, cr = 1.0f;
-    float value = 0.0f, attackPos = 0.0f;
+    float d2 = 0.0f, m = 1.0f;
+    bool  d2Hold = true;
+    double attackMul = 0.0, cd = 1.0, cd2 = 0.0, cr = 1.0;
+    double value = 0.0, attackW = 1.0;
     Stage stage = Stage::Idle;
 };
 
@@ -194,18 +289,18 @@ private:
 // 6.7e-6 to 1.0.
 //
 // Accuracy, measured in float32 in this operation order by the fm suite's
-// sin_gate: max abs error 6.7e-6 = −103.5 dB, over one period and over the full
-// ±34-turn reachable range alike. That is 23 dB inside the −80 dB (1e-4) design
-// target, and below the float32 quantisation of the argument itself at deep
-// modulation (ulp(33 turns)/2 = 1e-6 turns = 6.2e-6 in sine value). The error is
-// a smooth function of phase, so on a steady tone it lands on the signal's own
-// harmonics rather than creating new non-harmonic bins: measured on a bare
-// carrier, THD goes from 0.000027% to 0.000656% against a 1% gate.
+// sin_gate: max abs error 6.7e-6 = −103.5 dB, over one period and over ±34
+// turns (well past the reachable range below) alike. That is 23 dB inside the
+// −80 dB (1e-4) design target, and below the float32 quantisation of the
+// argument itself at 33 turns (ulp(33)/2 = 1e-6 turns = 6.2e-6 in sine value).
+// The error is a smooth function of phase, so on a steady tone it lands on the
+// signal's own harmonics rather than creating new non-harmonic bins: measured
+// on a bare carrier, THD goes from 0.000027% to 0.000656% against a 1% gate.
 //
 // REACHABLE RANGE. The argument is phase + modAccum. modAccum is bounded
-// structurally: modDepth is at most eight turns, the largest target in-degree is
-// two, and operator-4 feedback adds at most one turn. Including the phase, that
-// is 18 turns. The ±34-turn sin_gate deliberately exercises almost twice the
+// structurally: modDepth is at most four turns, the largest target in-degree is
+// two, and operator-4 feedback adds under half a turn. Including the phase, that
+// is under 10 turns. The ±34-turn sin_gate deliberately exercises over three times the
 // reachable range as a guard against future depth changes.
 // A non-finite argument is unreachable (every term is bounded and the output of
 // this function is bounded by construction), but if one ever arrived it would
@@ -224,6 +319,21 @@ inline float sinTurns(float x) noexcept
     const float g  = (6.2830423f + u * -16.1981858f) + u2 * (16.5597331f + u * -8.15233665f);
     return w * (1.0f - 4.0f * u) * g;
 }
+
+// Operator-4 feedback depth per step 1..7, in turns of phase per unit of the
+// two-sample average of the feedback tap. Fitted to the reference (tools repo,
+// the Prism parity review): with this loop at the default 2x internal rate
+// (96 kHz), each value reproduces that step's harmonics 2 to 8 within 1.1 dB
+// rms. The steps nearly double, like the chip's 1/128 turn x 2^(k-1); step 6
+// sits 1.5 dB under that rule, where the chip's own rate (55.9 kHz) shapes the
+// loop most.
+static constexpr float kFeedbackTurns[8] = {
+    0.0f, 0.00816f, 0.01606f, 0.02975f, 0.06153f, 0.12026f, 0.21019f, 0.47662f
+};
+
+// Key level scaling at full Key Scale (scaling level 99), in dB at middle C:
+// 0.0602 dB per unit of scaling level, measured (see updateGain).
+static constexpr float kKeyScaleDbAtC4 = 0.0602f * 99.0f;
 
 class FMVoiceEngine
 {
@@ -279,9 +389,11 @@ public:
         vel  = clampf(velocity, 0.0f, 1.0f);
 
         recomputeIncrements();
+        const int key = (int)std::lround(note);
         for (int i = 0; i < kNumOps; ++i)
         {
             updateGain(i);          // vel/keyScale depend on the new note+velocity
+            op[i].env.setRateMultiplier(rateMultiplier(key, op[i].rateScale));
             op[i].phase = 0.0f;     // deterministic attack transient
             op[i].env.noteOn();
         }
@@ -319,10 +431,12 @@ public:
 
     void setOpRatio(int i, float ratio) noexcept
     {
-        // The chip frequency word is stepped.  1/64 ratio resolution retains
-        // imported TX-style fractional ratios while avoiding a continuously
-        // perfect oscillator relationship.
-        op[idx(i)].ratio = std::round(clampf(ratio, 0.0f, 32.0f) * 64.0f) / 64.0f;
+        // Ratios are resolved to 1/4096: whole and simple ratios stay exact, and
+        // the hardware's inharmonic ones land within half a cent. Those sit a
+        // fixed interval above the coarse ratio (measured on the reference: x1.4143,
+        // x1.5702, x1.7306, i.e. +600, +781, +950 cents); at the earlier 1/64 they
+        // came out up to 9.3 cents off (1.4143 -> 91/64).
+        op[idx(i)].ratio = std::round(clampf(ratio, 0.0f, 32.0f) * 4096.0f) / 4096.0f;
         recomputeIncrement(idx(i));
     }
     void setOpFine(int i, float cents) noexcept
@@ -346,15 +460,46 @@ public:
         op[idx(i)].keyScale = clampf(k, -1.0f, 1.0f);
         updateGain(idx(i));
     }
-    void setOpADSR(int i, float a, float d, float s, float r) noexcept
+    // Operator envelope: attack, decay, sustain, release, Decay 2 (the second
+    // decay; FMRateEnvelope::kDecay2Hold holds) and Rate Scale 0..3.
+    void setOpEnvelope(int i, float a, float d, float s, float r, float d2, int rateScale) noexcept
     {
-        op[idx(i)].env.setParameters(a, d, s, r);
+        Op& o = op[idx(i)];
+        o.rateScale = clampi(rateScale, 0, 3);
+        o.env.setParameters(a, d, s, r, d2, rateMultiplier((int)std::lround(note), o.rateScale));
     }
 
-    // Op-4 self-feedback amount, 0..1.
+    // The hardware's key code for envelope rate scaling: 4 per octave plus a
+    // note group of three keys, each octave running C# to C (the FM chip's
+    // KC >> 2). Measured on the reference: at Rate Scale 0 the envelope speeds
+    // up one step between C2 and C3, C4 and C5, and C6 and C7, which places the
+    // octave boundaries between C and C#.
+    static int rateKeyCode(int midiNote) noexcept
+    {
+        const int k = midiNote - 13;    // C#0 = 0
+        if (k < 0) return 0;
+        const int code = 4 * (k / 12) + (k % 12) / 3;
+        return code > 31 ? 31 : code;
+    }
+    // How much faster than displayed the envelope runs on this key: the hardware
+    // adds key code >> (3 - Rate Scale) to every rate, and four rate steps double
+    // the speed (measured: 0.5, 1 and 2 steps per octave at Rate Scale 0, 1 and
+    // 2). Taken against middle C, where Prism shows its times, so Rate Scale 0
+    // keeps the hardware's slight tracking (one step slower, /1.19, at C2 and
+    // below; as displayed from C#2 to C4; x1.19 from C#4 to C6; x1.41 from C#6)
+    // and middle C plays every stage exactly as displayed. Each step is 2^(1/4): the
+    // chip's own steps run x1.25, x1.2, x1.17, x1.14 within each doubling.
+    static float rateMultiplier(int midiNote, int rateScale) noexcept
+    {
+        const int shift = 3 - clampi(rateScale, 0, 3);
+        const int steps = (rateKeyCode(midiNote) >> shift) - (rateKeyCode(60) >> shift);
+        return std::exp2(0.25f * (float)steps);
+    }
+
+    // Op-4 self-feedback amount, 0..1, in seven steps (k/7).
     void setFeedback(float fb) noexcept
     {
-        feedback = std::round(clampf(fb, 0.0f, 1.0f) * 7.0f) / 7.0f;
+        fbDepth = kFeedbackTurns[(int)std::lround(clampf(fb, 0.0f, 1.0f) * 7.0f)];
     }
 
     // ---- audio -----------------------------------------------------------
@@ -371,14 +516,8 @@ public:
 
         // Distribute op-4 self-feedback into its own phase first (classic
         // 2-sample average damping keeps the loop from screaming).
-        if (feedback > 0.0f)
-        {
-            // Seven hardware feedback steps, with approximately exponential
-            // spacing; the highest step is one turn of phase modulation.
-            const float fbDepth = feedback <= 0.0f
-                ? 0.0f : std::exp2(feedback * 6.0f) / 64.0f;
+        if (fbDepth > 0.0f)
             modAccum[A.fbOp] += fbDepth * 0.5f * (fbZ1 + fbZ2);
-        }
 
         float out = 0.0f;
 
@@ -391,8 +530,12 @@ public:
 
             if (i == A.fbOp)
             {
+                // The tap is the operator's output after its envelope and level,
+                // as on the hardware, whose feedback brightness falls with both
+                // (measured: 10.5 dB less level gives 10.5 dB less second harmonic,
+                // and a decay 24 dB down takes it down 23.9 dB).
                 fbZ2 = fbZ1;
-                fbZ1 = s;               // pre-level output feeds the feedback tap
+                fbZ1 = env * o.carrierGain * s;
             }
 
             // Feed-forward into the ops this one modulates.
@@ -426,10 +569,11 @@ private:
         float level    = 0.0f;
         float velSens  = 0.0f;
         float keyScale = 0.0f;
+        int   rateScale = 0;
         // derived
         float inc         = 0.0f;   // phase increment per sample
         float modDepth    = 0.0f;   // log control mapped to turns (modulator)
-        float carrierGain = 0.0f;   // log control mapped to gain (carrier)
+        float carrierGain = 0.0f;   // log control mapped to gain (carrier output, op-4 feedback tap)
         // state
         float phase = 0.0f;
         FMRateEnvelope env;
@@ -446,28 +590,45 @@ private:
         for (int i = 0; i < kNumOps; ++i) recomputeIncrement(i);
     }
 
-    // Effective level after velocity sensitivity and key-level scaling. Classic
-    // digital operator output levels are logarithmic, so the normalized UI value
-    // is converted through a 48 dB law. A full-level modulator reaches eight
-    // turns of phase deviation; carriers use the same amplitude law directly.
+    // Effective level after velocity sensitivity and key-level scaling, through
+    // the hardware's output-level law: the normalized control is the output
+    // level 0..99 over 99, and each step is 0.75 dB, so the range spans 74.25 dB.
+    // Measured on the reference (tools repo, the Prism parity review): a lone
+    // carrier falls 0.75 dB per step from level 99 down to 40, and a
+    // modulator's index follows the same 0.75 dB per step from level 27 to 84.
+    // Below 40 the carrier measures up to 2.3 dB lower still while the index
+    // does not, so that extra sag is in the chip's output stage, not in the
+    // level law.
+    // A full-level modulator reaches four turns (8 pi rad) of phase deviation:
+    // the measured index at levels 70 to 84, carried up the 0.75 dB law, puts
+    // level 99 at 24.9 to 25.2 rad. Carriers use the same amplitude law directly.
     void updateGain(int i) noexcept
     {
         Op& o = op[i];
         // velSens=0 -> always full; velSens=1 -> scales straight with velocity.
         const float velFactor = 1.0f - o.velSens * (1.0f - vel);
-        // keyScale -1..+1: ±1 halves/doubles the level every two octaves from
-        // note 60 (gentle enough for e-piano tine roll-off).
-        const float keyFactor = std::pow(2.0f, o.keyScale * (note - 60.0f) / 24.0f);
-        const float control = clampf(o.level * velFactor * keyFactor, 0.0f, 1.0f);
+        const float control = clampf(o.level * velFactor, 0.0f, 1.0f);
         if (control <= 0.0f)
         {
             o.carrierGain = 0.0f;
             o.modDepth = 0.0f;
             return;
         }
-        const float linear = std::exp2((control - 1.0f) * 7.97262743f); // 48 dB
+        // Key Scale follows the hardware's key level scaling: an attenuation
+        // in dB proportional to the note's frequency, added to the output level
+        // whatever that is, on carriers and modulators alike. Measured on the
+        // reference: scaling level 50 takes 3.01 dB off at C4, 6.02 at C5,
+        // 12.05 at C6 and 24.9 at C7, the same at output levels 99, 80 and 65, so
+        // 0.0602 dB per unit of scaling level (0..99) at middle C. Key Scale -1..0
+        // is that law at scaling level 99..0. The hardware has no positive side;
+        // 0..+1 mirrors it, attenuating toward the low keys instead.
+        const float ksDb = o.keyScale < 0.0f
+            ? -o.keyScale * kKeyScaleDbAtC4 * std::exp2((note - 60.0f) / 12.0f)
+            :  o.keyScale * kKeyScaleDbAtC4 * std::exp2((60.0f - note) / 12.0f);
+        // 74.25 dB over the level range; ksDb / 6.0206 turns dB into powers of two.
+        const float linear = std::exp2((control - 1.0f) * 12.3326581f - ksDb * 0.166096405f);
         o.carrierGain = linear;
-        o.modDepth = linear * 8.0f;
+        o.modDepth = linear * 4.0f;
     }
 
     Op  op[kNumOps];
@@ -479,8 +640,8 @@ private:
     float note = 60.0f;
     float vel  = 1.0f;
 
-    float feedback = 0.0f;
-    float fbZ1 = 0.0f, fbZ2 = 0.0f;   // op-4 feedback history (pre-level sines)
+    float fbDepth = 0.0f;              // turns per unit of tap, from kFeedbackTurns
+    float fbZ1 = 0.0f, fbZ2 = 0.0f;   // op-4 feedback history (its output after envelope and level)
 };
 
 } // namespace msynth

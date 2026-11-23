@@ -55,9 +55,7 @@ def check_chord_headroom(program, output_dir, **performance):
     rate, audio, _, _ = render(program, output_dir=output_dir, bars=1, tail=0.5, **performance)
     if not np.isfinite(audio).all() or db(np.sqrt(np.mean(audio ** 2))) <= SILENCE_DBFS:
         return False, "silent or invalid chord"
-    # Check both the actual samples and the peaks between them.
-    upsampled = resample_poly(audio, 4, 1, axis=0, window=("kaiser", 8))
-    peak = db(max(np.max(np.abs(audio)), np.max(np.abs(upsampled))))
+    peak = true_peak_db(audio)
     detail = f"{peak:+.2f} dBTP (limit {PEAK_CLIP_DBFS:g})"
     if performance["perf"] == "hold":
         frames = round(.16 * rate)
@@ -79,6 +77,24 @@ def check_chord_headroom(program, output_dir, **performance):
     return peak <= PEAK_CLIP_DBFS, detail
 
 
+# Upper-register headroom cases: (program, name, chord root, held-ninth root).
+# Also read by the preset leveller in the tools repo (mode-volume/level_presets.py),
+# so a Master Volume it sets cannot fail this gate.
+HEADROOM_CASES = ((22, "Poly Brass", 82, 82), (7, "Poly Mod Bells", 90, 106))
+
+
+def headroom_performances(root, high_root):
+    ninth = ",".join(str(high_root + interval) for interval in (0, 4, 7, 11, 14))
+    return ((f"chord rooted at MIDI {root}", dict(perf="chord", note=root, vel=100 / 127)),
+            (f"five held notes {ninth}", dict(perf="hold", hold=ninth, vel=1)))
+
+
+def true_peak_db(audio):
+    """Peak of the samples and of the peaks between them (4x upsampled)."""
+    upsampled = resample_poly(audio, 4, 1, axis=0, window=("kaiser", 8))
+    return db(max(np.max(np.abs(audio)), np.max(np.abs(upsampled))))
+
+
 def main(output_dir):
     passed = True
     for program, name in ((22, "Poly Brass"), (5, "Brass Section"),
@@ -88,12 +104,8 @@ def main(output_dir):
             print(f"{'PASS' if ok else 'FAIL'} {name}, MIDI {note}: {detail}")
             passed = passed and ok
 
-    for program, name, root, high_root in ((22, "Poly Brass", 82, 82),
-                                           (7, "Poly Mod Bells", 90, 106)):
-        ninth = ",".join(str(high_root + interval) for interval in (0, 4, 7, 11, 14))
-        for label, performance in (
-                (f"chord rooted at MIDI {root}", dict(perf="chord", note=root, vel=100 / 127)),
-                (f"five held notes {ninth}", dict(perf="hold", hold=ninth, vel=1))):
+    for program, name, root, high_root in HEADROOM_CASES:
+        for label, performance in headroom_performances(root, high_root):
             ok, detail = check_chord_headroom(program, output_dir, **performance)
             print(f"{'PASS' if ok else 'FAIL'} {name}, {label}: {detail}")
             passed = passed and ok

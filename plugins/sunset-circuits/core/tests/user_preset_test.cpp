@@ -84,8 +84,9 @@ int main()
 
     const int N = (int)kNumCoreParams;
     std::fprintf(stderr, "kNumCoreParams = %d\n", N);
-    // 228 in 1.1.0, plus the 13 Oracle Wheel Mod parameters appended for #303.
-    CHECK(N == 241, "241 core params");
+    // 228 in 1.1.0, plus the 13 Oracle Wheel Mod parameters appended for #303,
+    // plus Prism's Decay 2 and Rate Scale per operator (8) for #400.
+    CHECK(N == 249, "249 core params");
 
     Store store;
 
