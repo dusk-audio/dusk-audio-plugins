@@ -651,6 +651,63 @@ private:
         }
     };
 
+    // One branch of a polyphase IIR halfband: first-order allpass sections
+    // in the low-rate domain, y = a (x - y[n-1]) + x[n-1].
+    struct HalfbandBranch
+    {
+        static constexpr int kMaxSections = 5;
+        float coef[kMaxSections] {};
+        float x1[kMaxSections] {};
+        float y1[kMaxSections] {};
+        int   sections = 0;
+        void set(const float* coefs, int count, int first) noexcept
+        {
+            sections = 0;
+            for (int k = first; k < count; k += 2)
+                coef[sections++] = coefs[k];
+        }
+        void reset() noexcept
+        {
+            for (int k = 0; k < kMaxSections; ++k)
+                x1[k] = y1[k] = 0.0f;
+        }
+        float process(float v) noexcept
+        {
+            for (int k = 0; k < sections; ++k)
+            {
+                const float out = coef[k] * (v - y1[k]) + x1[k];
+                x1[k] = v;
+                y1[k] = out;
+                v = out;
+            }
+            return v;
+        }
+    };
+    // x2 interpolator / decimator from one halfband: even coefficients on one
+    // branch, odd on the other (the decimator feeds the later input sample to
+    // the even branch).
+    struct Upsampler2x
+    {
+        HalfbandBranch even, odd;
+        void set(const float* coefs, int count) noexcept { even.set(coefs, count, 0); odd.set(coefs, count, 1); }
+        void reset() noexcept { even.reset(); odd.reset(); }
+        void process(float x, float& first, float& second) noexcept
+        {
+            first = even.process(x);
+            second = odd.process(x);
+        }
+    };
+    struct Downsampler2x
+    {
+        HalfbandBranch even, odd;
+        void set(const float* coefs, int count) noexcept { even.set(coefs, count, 0); odd.set(coefs, count, 1); }
+        void reset() noexcept { even.reset(); odd.reset(); }
+        float process(float first, float second) noexcept
+        {
+            return 0.5f * (even.process(second) + odd.process(first));
+        }
+    };
+
     //--- per-channel state ----------------------------------------------------
     struct Channel
     {
@@ -689,6 +746,11 @@ private:
         float              detectorSmooth2 = 0.0f;
         float              loopEnvelope = 0.0f;     // regeneration drive only
         float              magneticEnvelope = 0.0f;
+        int                magneticHold = 0;        // samples at 4x
+        // Record saturation runs at 4x (see processBlock): both feeds are
+        // interpolated twice, the tape signal decimated twice.
+        Upsampler2x        programUp1, programUp2, loopUp1, loopUp2;
+        Downsampler2x      tapeDown2, tapeDown1;
     };
 
     std::array<Channel, kMaxChannels> channels;
@@ -720,6 +782,8 @@ private:
     float recordEnvelopeAttack = 1.0f;
     float recordEnvelopeRelease = 1.0f;
     float detectorSmoothCoeff = 1.0f;
+    float magneticReleaseOs = 1.0f;   // the record release per 4x sample
+    int   magneticHoldSamplesOs = 0;
 
     //--- modulation (shared across channels: one motor, one tape) --------------
     // Two-pole state-variable band-pass, TPT (Zavalishin) topology. A direct-form

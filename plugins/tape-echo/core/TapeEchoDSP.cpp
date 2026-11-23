@@ -155,6 +155,28 @@ namespace
     constexpr float kDetectorSmoothHz = 200.0f;
     constexpr float kDetectorPeakWeight = 0.99f;
 
+    // Record saturation oversampling: x4 in two halfband stages. The outer
+    // stages pass 0-21 kHz and stop from 27 kHz at -115 dB (10 sections);
+    // the inner ones only have to clear what the outer stage passed
+    // (transition 0.109, -90 dB up, -108 dB down). Elliptic halfband
+    // designs (two allpass chains, coefficients from the closed-form
+    // design), magnitude flat to 1e-5 dB from 20 Hz to 20 kHz. The round
+    // trip delays the tape signal 5.00 samples at low frequencies (15.1 at
+    // 20 kHz), which the head delays take back (kRecordOversamplingDelay).
+    constexpr float kOsSharp[10] = {
+        0.030673329f, 0.115644061f, 0.237063296f, 0.373760039f, 0.508111354f,
+        0.629339673f, 0.733401726f, 0.821207104f, 0.896722831f, 0.965735963f };
+    constexpr float kOsUpWide[5] = {
+        0.051173826f, 0.189999271f, 0.384040355f, 0.606776158f, 0.856149231f };
+    constexpr float kOsDownWide[6] = {
+        0.036914228f, 0.139795771f, 0.289717724f, 0.467101703f, 0.661375192f,
+        0.877138467f };
+    constexpr float kRecordOversamplingDelay = 4.997f;
+    // The Chebyshev terms' normalization (the tape signal's peak) holds this
+    // long before it releases, so it stays flat through a steady tone instead
+    // of rising and falling with each sampled peak.
+    constexpr float kMagneticHoldSeconds = 0.025f;
+
     // Below this a read head's (smoothed) gain is treated as off.
     constexpr float kHeadIdleFloor = 1.0e-20f;
 
@@ -1313,6 +1335,17 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     recordEnvelopeRelease = std::exp(-1.0f / (0.12f * (float)fs));
     detectorSmoothCoeff =
         1.0f - std::exp(-2.0f * kDuskPi * kDetectorSmoothHz / (float)fs);
+    magneticReleaseOs = std::exp(-1.0f / (0.12f * 4.0f * (float)fs));
+    magneticHoldSamplesOs = (int)std::lround(kMagneticHoldSeconds * 4.0 * fs);
+    for (auto& ch : channels)
+    {
+        ch.programUp1.set(kOsSharp, 10);
+        ch.loopUp1.set(kOsSharp, 10);
+        ch.programUp2.set(kOsUpWide, 5);
+        ch.loopUp2.set(kOsUpWide, 5);
+        ch.tapeDown2.set(kOsDownWide, 6);
+        ch.tapeDown1.set(kOsSharp, 10);
+    }
     for (auto& ch : channels)
         ch.detectorHighPass.setCoeffs(
             Biquad::highPass(fs, kDetectorBandHz, 0.70710678f));
@@ -1436,6 +1469,10 @@ void TapeEchoDSP::reset()
         ch.springCleanDelayWriteIdx = 0;
         ch.recordEnvelope = 0.0f;
         ch.detectorHighPass.reset();
+        ch.magneticHold = 0;
+        ch.programUp1.reset(); ch.programUp2.reset();
+        ch.loopUp1.reset(); ch.loopUp2.reset();
+        ch.tapeDown2.reset(); ch.tapeDown1.reset();
         ch.detectorHilbert.reset();
         ch.detectorSmooth1 = 0.0f;
         ch.detectorSmooth2 = 0.0f;
@@ -1869,14 +1906,20 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             // Head 1's delay always (the other heads' splice offsets are taken
             // from it); heads 2 and 3 only while they play: every use of their
             // delays below sits behind the same idle test.
+            // The record saturation's oversampling round trip writes each
+            // sample kRecordOversamplingDelay late; every head reads that much
+            // sooner, so arrival times are unchanged.
             const float d1 = clampF(
-                (float)(path1 + transportSumNow - transportAt(path1)),
+                (float)(path1 + transportSumNow - transportAt(path1))
+                    - kRecordOversamplingDelay,
                 4.0f, maxDelaySamples);
             const float d2 = std::abs(g2) < kHeadIdleFloor ? 0.0f : clampF(
-                (float)(path2 + transportAt(lag2) - transportAt(lag2 + path2)),
+                (float)(path2 + transportAt(lag2) - transportAt(lag2 + path2))
+                    - kRecordOversamplingDelay,
                 4.0f, maxDelaySamples);
             const float d3 = std::abs(g3) < kHeadIdleFloor ? 0.0f : clampF(
-                (float)(path3 + transportAt(lag3) - transportAt(lag3 + path3)),
+                (float)(path3 + transportAt(lag3) - transportAt(lag3 + path3))
+                    - kRecordOversamplingDelay,
                 4.0f, maxDelaySamples);
             // The bed is repro-head noise: with no head selected (Reverb Only)
             // nothing plays it back. Every head mode sums to at least 1, so this
@@ -2351,61 +2394,24 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             float loopFeed = ch.speedLP.process(ch.loopLowShape.process(loopDrive));
             for (auto& lp : ch.loopCeilingLP)
                 loopFeed = lp.process(loopFeed);
-            float recorded = preampShape(programFeed) * kInputStageTrim * postDriveGain
-                           + loopFeed;
-            // The tape's low-level magnetisation curve is more strongly curved
-            // than the record preamp, but its slope remains positive at overload.
-            // This bounded cubic term raises the odd-harmonic ladder without
-            // changing small-signal loop gain or the separately calibrated spring
-            // send.
-            const float recorded2 = recorded * recorded;
-            // At low flux the measured odd harmonics fall much more slowly than a
-            // cubic polynomial can produce. A regularized, scale-covariant p=2.15
-            // term restores that quiet harmonic floor, then fades out before the
-            // main magnetic curve reaches its already-matched -18 dB operating
-            // point.
+            // Everything from the preamp curve to the tape write runs at 4x
+            // and is decimated back: at 1x its harmonics above Nyquist folded
+            // into the band (a 9 kHz tone at -6 dBFS: its 3rd at 27 kHz back
+            // at 21 kHz, -22 dBc; the reference -114 dBc), and no filter at
+            // 1x can keep a 7 kHz tone's real 3rd at 21 kHz while removing
+            // that one. Measured on off-grid tones 5-12 kHz at -6 dBFS the
+            // worst non-harmonic component is -94 to -107 dBc at 4x with the
+            // held normalization below; at 2x it was -53 (higher harmonics
+            // still fold) and with an unheld normalization -62 at 4x.
             const float lowFloor01 = clamp01(
                 (fluxEnvelope - 0.02f) * (1.0f / 0.07f));
             const float lowFloorSmooth =
                 lowFloor01 * lowFloor01 * (3.0f - 2.0f * lowFloor01);
             const float lowFloorFade = 1.0f - lowFloorSmooth;
-            // With the fade at exactly zero the product is a signed zero whatever
-            // the (positive, finite) power is, so the pow is skipped there.
-            const float lowFloorShape = lowFloorFade == 0.0f
-                ? 1.0f
-                : std::pow(recorded2 + 0.006f * 0.006f, 0.575f);
-            const float lowFloor = 1.325f * lowFloorFade * recorded
-                * lowFloorShape;
-            const float magneticInput =
-                recorded * (1.0f - 5.0f * recorded2
-                            / (1.0f + 8.0f * recorded2))
-                - lowFloor;
-            const float baseTape = softClip(magneticInput);
-            const float baseMagnitude = std::abs(baseTape);
-            if (baseMagnitude > ch.magneticEnvelope)
-                ch.magneticEnvelope = baseMagnitude;
-            else
-                ch.magneticEnvelope *= recordEnvelopeRelease;
-
-            // At high record flux the hosted tape adds a steep odd-harmonic
-            // ladder while its fundamental has already reached a level plateau.
-            // Chebyshev terms supply those missing harmonics without changing the
-            // steady-state fundamental. Their envelope-gated, normalized sum is
-            // bounded to roughly thirteen percent of the tape signal and remains
-            // zero through the already-matched nominal range.
-            const float magneticAmplitude =
-                std::max(ch.magneticEnvelope, 1.0e-4f);
-            const float z = clampF(
-                baseTape / magneticAmplitude, -1.0f, 1.0f);
-            const float z2 = z * z;
-            const float z3 = z2 * z;
-            const float z5 = z3 * z2;
             const float hot01 = clamp01(
                 (recordEnvelopeNow - 0.26f) * (1.0f / 0.21f));
             const float hot =
                 hot01 * hot01 * (3.0f - 2.0f * hot01);
-            const float t3 = 4.0f * z3 - 3.0f * z;
-            const float t5 = 16.0f * z5 - 20.0f * z3 + 5.0f * z;
             // No fold-back at the top of the ladder. A former fit here (c3 0.46,
             // c5 -0.20, makeup -3.17 dB above record envelope 0.52) modelled the
             // reference's fundamental falling 1.35 dB and its 3rd collapsing
@@ -2421,8 +2427,71 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             // them it read 1.58 dB under, H3 -21, H7 -18, H9 -22 dBc.
             const float c3 = -0.0983f * hot;
             const float c5 = -0.0195f * hot;
-            float toTape = baseTape + magneticAmplitude
-                * (c3 * t3 + c5 * t5);
+            const float programGain = kInputStageTrim * postDriveGain;
+
+            float programOs[4], loopOs[4];
+            {
+                float p0, p1, l0, l1;
+                ch.programUp1.process(programFeed, p0, p1);
+                ch.loopUp1.process(loopFeed, l0, l1);
+                ch.programUp2.process(p0, programOs[0], programOs[1]);
+                ch.programUp2.process(p1, programOs[2], programOs[3]);
+                ch.loopUp2.process(l0, loopOs[0], loopOs[1]);
+                ch.loopUp2.process(l1, loopOs[2], loopOs[3]);
+            }
+            float tapeOs[4];
+            for (int k = 0; k < 4; ++k)
+            {
+                const float recorded =
+                    preampShape(programOs[k]) * programGain + loopOs[k];
+                const float recorded2 = recorded * recorded;
+                // At low flux the measured odd harmonics fall much more slowly
+                // than a cubic can produce: a regularized p = 2.15 term holds
+                // that quiet harmonic floor, fading out before the main curve's
+                // -18 dB operating point. With the fade at exactly zero the
+                // product is a signed zero whatever the power is, so the pow is
+                // skipped there.
+                const float lowFloorShape = lowFloorFade == 0.0f
+                    ? 1.0f
+                    : std::pow(recorded2 + 0.006f * 0.006f, 0.575f);
+                const float lowFloor = 1.325f * lowFloorFade * recorded
+                    * lowFloorShape;
+                // The tape's magnetisation curve: more strongly curved than the
+                // preamp at low level, slope still positive at overload.
+                const float magneticInput =
+                    recorded * (1.0f - 5.0f * recorded2
+                                / (1.0f + 8.0f * recorded2))
+                    - lowFloor;
+                const float baseTape = softClip(magneticInput);
+                const float baseMagnitude = std::abs(baseTape);
+                if (baseMagnitude > ch.magneticEnvelope)
+                {
+                    ch.magneticEnvelope = baseMagnitude;
+                    ch.magneticHold = magneticHoldSamplesOs;
+                }
+                else if (ch.magneticHold > 0)
+                    --ch.magneticHold;
+                else
+                    ch.magneticEnvelope *= magneticReleaseOs;
+                // At high record flux the hosted tape adds a steep odd-harmonic
+                // ladder while its fundamental has already reached a level
+                // plateau: Chebyshev terms on the signal normalized by its peak
+                // supply those harmonics without moving the fundamental, zero
+                // through the matched nominal range.
+                const float magneticAmplitude =
+                    std::max(ch.magneticEnvelope, 1.0e-4f);
+                const float z = clampF(
+                    baseTape / magneticAmplitude, -1.0f, 1.0f);
+                const float z2 = z * z;
+                const float z3 = z2 * z;
+                const float z5 = z3 * z2;
+                const float t3 = 4.0f * z3 - 3.0f * z;
+                const float t5 = 16.0f * z5 - 20.0f * z3 + 5.0f * z;
+                tapeOs[k] = baseTape + magneticAmplitude * (c3 * t3 + c5 * t5);
+            }
+            float toTape = ch.tapeDown1.process(
+                ch.tapeDown2.process(tapeOs[0], tapeOs[1]),
+                ch.tapeDown2.process(tapeOs[2], tapeOs[3]));
             // Restore the measured level plateau without undoing the magnetic
             // curvature. The slowly tracked envelope makes this a program-level
             // makeup law (not a sample-by-sample waveshaper), so harmonic ratios
