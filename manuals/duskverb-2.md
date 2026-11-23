@@ -130,9 +130,10 @@ host that reads VST3 compatibility information, as REAPER does. In a host that
 does not, the project reports DuskVerb 2 as missing and does not load its
 settings. If 1.0.0 is still installed, open the project with it before updating
 and save each instance's settings as a user preset; after the update insert
-DuskVerb 2, load the preset, and check automation and routing. Without 1.0.0
-the settings in such a project cannot be brought back in that host: insert
-DuskVerb 2 and set it up again. CLAP, AU and LV2 projects are not affected.
+DuskVerb 2, load the preset, and check automation and routing. If 1.0.0 is gone
+and no such preset was saved, the settings in that project cannot be brought
+back in that host: insert DuskVerb 2 and set it up again. CLAP, AU and LV2
+projects are not affected.
 Original DuskVerb has a separate identity and is unaffected.
 
 The plugin supports mono, mono-to-stereo and stereo operation where the host
