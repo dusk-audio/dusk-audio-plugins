@@ -17,7 +17,7 @@
 #include "MultiCompOptoStageOversampler.hpp"
 #include "MultiCompOptoStructuralHarmonics.hpp"
 #include "MultiCompHelpers.hpp"
-#include "MultiCompFastMath.hpp"
+#include "../../shared-daf/dsp/DuskFastMath.hpp"
 #include "../../shared-daf/dsp/DuskCrossover.hpp"
 #include "../../shared-daf/dsp/DuskFilters.hpp"
 #include "MultiCompHardware.hpp"
@@ -6996,7 +6996,7 @@ private:
 
     // The VCA's static law for one detector power: RMS level in dB, the
     // measured detector correction, the knee, the gain. The logarithm and the
-    // exponential are MultiCompFastMath's, so the four-lane block form below
+    // exponential are DuskFastMath's, so the four-lane block form below
     // (vcaLawGains) gives the same value for every power.
     static float vcaLawRawDb(float power) noexcept
     {
