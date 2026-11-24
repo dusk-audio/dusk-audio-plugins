@@ -1792,7 +1792,6 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
     // is short enough for the CPU to overlap successive samples instead of
     // waiting out one long dependency chain per sample. Only the tape loop
     // reads what it writes, and it stays one pass in sample order.
-    constexpr int kSubBlock = SubBlockScratch::kSize;
     SubBlockScratch x; // on the stack: ~27 KB, see the struct
     for (int base = 0, len = 0; base < numSamples; base += len)
     {
