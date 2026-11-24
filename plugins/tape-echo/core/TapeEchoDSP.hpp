@@ -620,6 +620,7 @@ private:
         // Record saturation, run in its own passes after the head reads.
         float programFeed[kSize];
         float loopFeed[kSize];
+        float loopDrive[kSize];
         float lowFloorFade[kSize];
         float programGain[kSize];
         float c3[kSize];
@@ -715,6 +716,8 @@ private:
         HalfbandDownsampler2x<3>   tapeDown2; // 4x -> 2x
         HalfbandDownsampler2x<5>   tapeDown1; // 2x -> 1x
     };
+    // True while every regeneration-feed section's state is exactly zero.
+    static bool loopFeedSectionsAtRest(const Channel& ch) noexcept;
 
     std::array<Channel, kMaxChannels> channels;
     SpringReverb spring; // shared mono wet path

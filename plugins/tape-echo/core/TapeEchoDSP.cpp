@@ -1259,6 +1259,19 @@ void TapeEchoDSP::updateAgeMemos(float age) noexcept
         : 0.00760f - 0.00169f * old01;
 }
 
+bool TapeEchoDSP::loopFeedSectionsAtRest(const Channel& ch) noexcept
+{
+    const auto atRest = [](const Biquad& b) noexcept
+    {
+        const auto s = b.state();
+        return s.first == 0.0f && s.second == 0.0f;
+    };
+    bool rest = atRest(ch.loopLowShape) && atRest(ch.speedLP);
+    for (const auto& lp : ch.loopCeilingLP)
+        rest = rest && atRest(lp);
+    return rest;
+}
+
 void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
 {
     // Validate BEFORE anything reads it. `sampleRate <= 0.0` alone would let NaN
@@ -2416,9 +2429,6 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             // on the sum. Nothing filters after the saturation, so harmonics
             // reach the echo as the reference's do; on the next pass round the
             // loop the regeneration feed's sections filter them like any signal.
-            float loopFeed = ch.speedLP.process(ch.loopLowShape.process(loopDrive));
-            for (auto& lp : ch.loopCeilingLP)
-                loopFeed = lp.process(loopFeed);
             const float lowFloor01 = clamp01(
                 (fluxEnvelope - 0.02f) * (1.0f / 0.07f));
             const float lowFloorSmooth =
@@ -2445,7 +2455,7 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             const float c5 = -0.0195f * hot;
             const float programGain = kInputStageTrim * postDriveGain;
 
-            x.loopFeed[i] = loopFeed;
+            x.loopDrive[i] = loopDrive;
             x.lowFloorFade[i] = lowFloorFade;
             x.programGain[i] = programGain;
             x.c3[i] = c3;
@@ -2477,6 +2487,27 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
 
             writeIdx = (writeIdx + 1) & mask;
             x.echoWet[i] = echoWet;
+        }
+        {
+            // The regeneration feed's band limits, the same sections as the
+            // program feed's below. With Intensity at minimum the loop drive
+            // is exactly zero; once these sections have also decayed to zero
+            // (denormals flush), zero in gives zero out, so a sub-block whose
+            // drive is all zero is skipped while every section state is zero.
+            Channel& ch = channels[0];
+            bool silent = loopFeedSectionsAtRest(ch);
+            for (int i = 0; silent && i < len; ++i)
+                silent = x.loopDrive[i] == 0.0f;
+            if (silent)
+                std::fill(x.loopFeed, x.loopFeed + len, 0.0f);
+            else
+                for (int i = 0; i < len; ++i)
+                {
+                    float loopFeed = ch.speedLP.process(ch.loopLowShape.process(x.loopDrive[i]));
+                    for (auto& lp : ch.loopCeilingLP)
+                        loopFeed = lp.process(loopFeed);
+                    x.loopFeed[i] = loopFeed;
+                }
         }
         {
             // The program feed's band limits: it does not depend on the tape
