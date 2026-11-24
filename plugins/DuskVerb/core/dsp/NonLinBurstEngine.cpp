@@ -11,8 +11,8 @@ namespace duskverb
 namespace
 {
 
-// Every constant below is the reference model's (proto.py), fitted to the reference with
-// fit.py. Times are ms after the onset unless stated otherwise.
+// Every constant below is the reference model's (proto.py), fitted to the target responses
+// with fit.py. Times are ms after the onset unless stated otherwise.
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kOnsetMs = 13.5;
 constexpr std::uint64_t kSeed = 0x4E4C32;          // "NL2"

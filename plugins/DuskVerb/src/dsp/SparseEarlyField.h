@@ -10,7 +10,7 @@
 // SparseEarlyField — front-loaded, sparse, broadband, WIDE early-reflection
 // field extending to ~200 ms. The early-dominant topology that the standard
 // parallel EarlyReflections (24 taps, 8-80 ms, inverse-distance, LP-rolled,
-// anti-phase R) cannot be: VVV front-loads 56% of energy in the first 50 ms and
+// anti-phase R) cannot be: the target front-loads 56% of energy in the first 50 ms and
 // stays SPARSE/discrete out to ~200 ms (two-burst kurtosis trajectory), where
 // every DuskVerb tank/FDN back-loads into a Gaussian wash by 60 ms.
 //
@@ -22,7 +22,7 @@
 //   - a gently-RISING onset gain ramp (peak ~onsetPeakMs) -> attack_time/onset_slope,
 //   - INDEPENDENT L/R tap times+signs (decorrelated, not anti-phase) -> wide,
 //     uniform stereo image (stereo_corr ~ 0),
-//   - broadband taps (no per-tap LP) -> spectrally full like VVV.
+//   - broadband taps (no per-tap LP) -> spectrally full.
 //
 // Deterministic (seeded) tap geometry => reproducible renders. Allocation-free
 // process; taps rebuilt off-thread on param change.
@@ -127,7 +127,7 @@ private:
         // their gain near-silent (gainEnv(139ms) ≈ 0.03 at decayMs 40), so a strong
         // EARLY onset cannot coexist with a loud LATE tap. This lifts the burst2 taps'
         // gain independently of the onset decay → onset stays the attack, burst2 is the
-        // prominent secondary reflection (the VVV hall/chamber tap). 0 → bit-null (every
+        // prominent secondary reflection (the hall/chamber tap). 0 → bit-null (every
         // existing composite preset: Tiled/Cathedral/Vocal Hall/Blade/Large Chamber/79VC).
         if (burst2Gain_ > 0.0f && burst2Ms_ > 0.0f)
         {
@@ -184,8 +184,8 @@ private:
     float stereoInputAmount_ = 0.0f;
 
 public:
-    // DuskVerb 2: a 4th-order Butterworth low-pass on the field's output, for a reference whose early
-    // field is darker than this broadband one. Blade Runner 224's anchor sits 14 dB under it at
+    // DuskVerb 2: a 4th-order Butterworth low-pass on the field's output, for a target whose early
+    // field is darker than this broadband one. Blade Runner 224's target sits 14 dB under it at
     // 12.5-16 kHz through its first 50 ms, where this field is the early energy (Phase C5,
     // 2026-10-27). 0 Hz: off, and applyTone() returns at once. The engine runs it on the field's
     // output after process(); process() and every member above are untouched (DenseHallReverb.h

@@ -124,8 +124,8 @@ enum class ModulationTopology : int
     ModulatedDamping = 2,    // Phase 3 — STATIC delay lines (zero Doppler) +
                              // slow master LFO that lerps per-line ThreeBand
                              // damping coefficients between dark/bright sets.
-                             // No pitch warble, no harmonic stack — mimics
-                             // VVV's tank-coupled mod character on vocal
+                             // No pitch warble, no harmonic stack — a
+                             // tank-coupled mod character on vocal
                              // material where any line-length LFO produces
                              // audible Doppler sidebands.
 };
@@ -137,8 +137,7 @@ enum class ModulationTopology : int
 // toward it, producing band-limited "wander" with no audible cyclic warble.
 // Unlike a sine LFO (which has a fixed period and locks into beating with
 // other modulators), this drifts aperiodically — gives the "expensive"
-// shimmer of high-end hardware random reverbs (1980s flagship hall hardware random hall,
-// modern modulation pedal).
+// shimmer of a random-modulated hall.
 //
 // Output bounded exactly to ±depth. Allocation-free.
 struct RandomWalkLFO
@@ -251,8 +250,8 @@ private:
 // Phase 2 modulation topology (2026-05-28). The existing RandomWalkLFO
 // gives smooth aperiodic wander but per-line LFOs are statistically
 // independent — across many delay lines the modulation envelope sums to
-// ~zero, killing the macro-rhythmic envelope ripple that vintage
-// hardware reverbs produce (osc P2P ±22 dB on VVV).
+// ~zero, killing the intended macro-rhythmic envelope ripple
+// (target osc P2P ±22 dB).
 //
 // CoherentLoop topology: ONE master sine LFO, sampled at PER-LINE phase
 // offsets. Pair (line_i, line_j) sample the sine 180° apart so when
@@ -405,7 +404,7 @@ private:
 //
 // Series chain of 4 ParametricBands. Sits AFTER the FDN feedback loop's
 // Hi Cut Shelf, BEFORE the dry/wet mix matrix. Lets a preset hand-shape an
-// inverse-mirror of measured spectral deviations vs reference anchor, with
+// inverse-mirror of measured spectral deviations from the target, with
 // surgical Q-resolution the 3-band feedback damping (Bass/Mid/Treble) cannot.
 //
 // Default state: all 4 bands at gainDb = 0 → ParametricBand designUnity()

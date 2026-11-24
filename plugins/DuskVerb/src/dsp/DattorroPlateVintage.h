@@ -6,7 +6,7 @@
 #include <cmath>
 #include <vector>
 
-// DattorroPlateVintage — Dattorro figure-8 tank wrapped in a vintage-hardware
+// DattorroPlateVintage — Dattorro figure-8 tank wrapped in a vintage-plate
 // corrective signal chain. Dedicated to the "Vintage Vocal Plate" preset
 // (no other factory preset routes through this engine).
 //
@@ -19,20 +19,20 @@
 //         → output
 //
 // 2026-05-13: Built as a structural fix for the 200-500 Hz box artifact
-//   on noise-burst tails (~+12 dB above the anchor). Initial design carved the
+//   on noise-burst tails (~+12 dB above target). Initial design carved the
 //   hump with a post-tank peaking biquad and kept the tank untouched.
 //
-// 2026-05-24: Refit to match the anchor's bright-early / dark-late spectrum
+// 2026-05-24: Refit to the target bright-early / dark-late spectrum
 //   (cent_50 ≈ 10.5 kHz, cent_500 ≈ 4.3 kHz). Moved the HF shelf PRE-tank
 //   (the tank impulse response is LTI w.r.t. external filters so position
 //   is acoustically equivalent to post-tank — pre is cleaner topologically
 //   for future time-varying replacements). Wired up DattorroTank's
 //   per-loop structural HF damper (was off by default) so the bright
 //   shelf entering the tank attenuates over each modal pass, producing
-//   The anchor-style steep early-to-late HF rolloff. Combined with the
+//   the intended steep early-to-late HF rolloff. Combined with the
 //   factory preset's lowered Treble Multiply (0.95) and Gain Trim (4 dB
 //   to make headroom for the +22 dB shelf), both centroid metrics now
-//   land within ±10 % of the anchor.
+//   land within ±10 % of target.
 //
 // Interface mirrors DattorroVintage so the DuskVerbEngine glue layer
 // is a pure rename — call sites unchanged. HDP-specific setters
@@ -88,7 +88,7 @@ public:
     // the pre-tank HF shelf and re-applies the in-loop structural HF damper.
     // Defaults match the Vintage Vocal Plate calibration (shelf +22 dB at
     // 6 kHz, struct HF damp at 8 kHz). Other presets can dial these to match
-    // their own anchor brightness without forking the engine.
+    // their own target brightness without forking the engine.
     void setHfShelfGainDb     (float gainDb);     // pre-tank shelf gain (dB)
     void setHfShelfFreqHz     (float fcHz);       // pre-tank shelf corner (Hz)
     void setStructHfDampHz    (float hz);         // in-loop per-pass LP cutoff (Hz)
@@ -104,8 +104,8 @@ public:
     void setBassShelfFreqHz   (float fcHz);       // pre-tank low-shelf corner (Hz)
 
     // Front-load early-reflection network (2026-06-19). The Dattorro tank is
-    // dense-from-onset (~44% of the energy in the first 50 ms); the reference
-    // Vintage Plate BUILDS over ~90 ms to a prominent reflection then tails
+    // dense-from-onset (~44% of the energy in the first 50 ms); the target
+    // vintage plate BUILDS over ~90 ms to a prominent reflection then tails
     // (~11% first-50 ms, peak/tap @ ~92 ms). This injects a sparse, lightly-
     // diffused, band-limited early field (0..~tapMs, building) AND pre-delays
     // the tank input so its dense field arrives AFTER the early build — the
@@ -116,8 +116,8 @@ public:
     // pre-network engine byte-for-byte.
     void setFrontLoad (float erGain, float predelayMs, float tapMs, float lpHz);
 
-    // Post-main discrete second reflection tap — the anchor's "duh-DUH"
-    // (vintage plate reference: main onset ~83 ms + a near-equal SECOND arrival
+    // Post-main discrete second reflection tap — the target "duh-DUH"
+    // (main onset ~83 ms + a near-equal SECOND arrival
     // ~143 ms). A darkened, stereo-decorrelated, delayed copy of the pre-tank
     // signal summed POST-tank, arriving AFTER the main onset (the opposite of
     // the front-load ER, which pre-echoes). Mirrors DenseHall's reflBuf tap.
@@ -137,7 +137,7 @@ public:
 private:
     DattorroTank tank_;
 
-    // RBJ peaking biquad — vintage-hardware corrective EQ. Two stages used:
+    // RBJ peaking biquad — vintage-plate corrective EQ. Two stages used:
     //   1) box-cut: 350 Hz peak, Q=1.4, gain set in prepare() to flatten
     //      the Dattorro tank's intrinsic 200-500 Hz hump.
     //   2) low_shelf-style "tightness" cut: gentler low-mid trim that
@@ -162,7 +162,7 @@ private:
         }
         // RBJ high-shelf biquad. Used to lift the upper octaves on
         // the post-tank chain so the Dattorro plate can match brighter
-        // vintage-hardware tilt targets without altering the in-loop tank.
+        // vintage-plate tilt targets without altering the in-loop tank.
         void designHighShelf (float fcHz, float Q, float gainDb, float sr)
         {
             const float A     = std::pow (10.0f, gainDb / 40.0f);
@@ -219,7 +219,7 @@ private:
     // attenuates the boosted top-end naturally over each modal pass.
     // Early reflections retain the boost (few passes through damping);
     // late tail darkens (many passes). Combined with structural HF
-    // damping at 8 kHz inside the tank, this matches the anchor's bright-
+    // damping at 8 kHz inside the tank, this matches the target bright-
     // early / dark-late spectrum without a static post-EQ shelf.
     PeakBiquad hfLift_;
     // Bass shelf — applied PRE-tank to inject low-frequency energy that
@@ -260,9 +260,9 @@ private:
     float frontTapMs_       = 80.0f;
     float frontLpHz_        = 7000.0f;
     // Early-field tap pattern: a FEW well-separated DISCRETE taps (NOT diffused —
-    // diffusion fills the envelope dips and collapses env_p2p, the anchor's defining
+    // diffusion fills the envelope dips and collapses env_p2p, the target's defining
     // dynamic). Fractions of frontTapMs_ + building gains; silence between taps =
-    // the envelope ripple the reference plate has. The delayed-tank onset supplies the
+    // the intended envelope ripple. The delayed-tank onset supplies the
     // final peak. R taps offset a hair for L/R decorrelation (stereo_corr).
     static constexpr int   kErTaps = 3;
     static constexpr float kErTapFrac[kErTaps] = { 0.30f, 0.60f, 0.92f };
@@ -293,7 +293,7 @@ private:
     static constexpr float kDfApG   = 0.7f;
     static constexpr float kDfLpHz  = 12000.0f;    // dense-field band-limit (near-bypass; LP hurt the shelf fill)
     static constexpr float kDfDecorrMs = 3.7f;     // R decorrelation delay (mild)
-    static constexpr float kDfDecorrG  = 0.14f;    // mild decorrelation (anchor early field is near-mono)
+    static constexpr float kDfDecorrG  = 0.14f;    // mild decorrelation (target early field is near-mono)
     // Comb/allpass base delays (ms @ 44.1k) — prime-ish, dense buildup.
     static constexpr float kDfCombMs[4] = { 23.3f, 29.7f, 37.1f, 43.3f };
     static constexpr float kDfAp1Ms = 5.5f, kDfAp2Ms = 1.7f;

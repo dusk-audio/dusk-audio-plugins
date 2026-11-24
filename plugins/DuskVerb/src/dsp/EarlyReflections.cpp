@@ -160,7 +160,7 @@ void EarlyReflections::updateTaps()
             // Rising-onset envelope: gain ramps 0→1 up to a peak at onsetRiseMs_
             // (smoothstep for a soft swell), then inverse-distance rolloff after.
             // Output envelope therefore peaks at ~onsetRiseMs_ instead of at the
-            // first tap → matches VVV's gentle attack swell, not a spike.
+            // first tap → a gentle attack swell, not a spike.
             auto riseEnv = [this] (float timeMs) {
                 // Peak-normalized: rise (smoothstep, clamped at the peak) ×
                 // rolloff (clamped at the peak). For taps before onsetRiseMs_
@@ -215,7 +215,7 @@ void EarlyReflections::updateTaps()
     // done — so the default path is byte-for-byte the original (verified
     // bit-exact on the fleet). Recomputes the R channel with an independent
     // sign pattern + per-tap delay jitter so L/R decorrelate by timing AND
-    // sign independence (uniform corr ≈ 0, VVV-like) instead of the legacy
+    // sign independence (uniform corr ≈ 0) instead of the legacy
     // opposed-sign anti-phase. L channel is left exactly as computed above.
     if (stereoNeutral_)
     {

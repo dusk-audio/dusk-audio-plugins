@@ -145,7 +145,6 @@ public:
 // HeroDecay — oversized DECAY visualisation: concentric rings whose
 // count + radius reflect the decay value, value text below, name above.
 // Replaces the standard rotary knob for the single most-used control.
-// Style cue: external reference VintageVerb's hero-Decay visualisation.
 // =====================================================================
 class HeroDecay : public juce::Component
 {

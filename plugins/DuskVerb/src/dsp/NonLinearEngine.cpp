@@ -21,8 +21,8 @@ void NonLinearEngine::prepare (double sampleRate, int maxBlockSize)
 
     // ── Hall (FDNReverb) ──
     // Configured for "lush big hall" baseline — dense, slightly dark,
-    // matching the Logic Space Designer "Big Hall" character a vintage
-    // engineer would dial up before patching the gate after it. Per-preset
+    // the hall an engineer would dial up before patching the gate
+    // after it. Per-preset
     // overrides via the universal setter API.
     fdn_.prepare (sampleRate, maxBlockSize);
     // Every line at one delay-mod rate. Mod Rate sets the gate release here (setModRate), so the

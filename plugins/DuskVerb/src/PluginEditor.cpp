@@ -799,8 +799,7 @@ void DuskVerbEditor::paint (juce::Graphics& g)
     int contentW = getWidth() - contentX - margin - meterW - meterGap;
 
     // Brand wordmark — large, bold, slightly compressed for visual character.
-    // The plugin name is the brand; no need to explain "Algorithmic Reverb"
-    // (external reference, Crystalline, Blackhole all skip the explanatory subtitle).
+    // The plugin name is the brand; no explanatory "Algorithmic Reverb" subtitle.
     g.setColour (juce::Colour (DuskVerbLookAndFeel::kText));
     juce::Font titleFont (juce::FontOptions (32.0f * sf, juce::Font::bold));
     titleFont.setHorizontalScale (0.95f);
@@ -890,7 +889,7 @@ namespace
     void placeKnob (KnobWithLabel& k, juce::Rectangle<int> area, int knobSize, float scaleFactor,
                     float labelScale = 1.0f)
     {
-        // Logic-style stack: NAME (small dim) → VALUE (large accent) → KNOB.
+        // Stack: NAME (small dim) → VALUE (large accent) → KNOB.
         // Putting the value ABOVE the knob makes the readout the dominant
         // element of each control column; the rotary becomes a tactile
         // affordance underneath.

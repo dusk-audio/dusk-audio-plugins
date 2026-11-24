@@ -11,7 +11,7 @@
 // DenseHallReverb — DuskVerb's own dense hall reverberator.
 //
 // Original DuskVerb implementation of the well-known "diffused FDN" hall
-// technique (the algorithm class behind zita-rev / Dragonfly Hall): density and
+// technique: density and
 // smoothness come NOT from a high line count but from heavy allpass diffusion at
 // every stage + modulation everywhere, which is exactly what our 16-line
 // Hadamard FDN (AccurateHall) lacks — leaving a sparse tonal tail (measured tail
@@ -107,7 +107,7 @@ public:
     void setMidMultiply (float m)    { midMul_ = std::clamp (m, 0.2f, 3.0f);    if (prepared_) update(); }   // mid-band RT60 factor (was a no-op; now the 3rd damping band)
 
     // Per-OCTAVE GEQ damping (FORK #2, 2026-06-16). The 3-band shelf above
-    // (bass/mid/treble) cannot fit an arbitrary anchor's 9-octave T60 curve, and
+    // (bass/mid/treble) cannot fit an arbitrary target 9-octave T60 curve, and
     // each band's gain sets BOTH decay AND steady level (the coupling wall →
     // cent dark + T60-16k dies on the DenseHall presets). This sets each ISO
     // octave's T60 independently (Jot/Schlecht accurate-RT, same OctaveBandDamping
@@ -167,7 +167,7 @@ public:
     void setCrossoverFreq (float hz)     { lowX_  = std::clamp (hz, 40.0f, 2000.0f);   if (lowX_ > highX_) highX_ = lowX_; if (prepared_) update(); }  // bass↔mid split (keeps lowX_<=highX_)
     void setHighCrossoverFreq (float hz) { highX_ = std::clamp (hz, 800.0f, 14000.0f); if (highX_ < lowX_) lowX_ = highX_; if (prepared_) update(); }  // mid↔high split (keeps lowX_<=highX_)
     // STEREO IMAGE BIAS (issue #123). A hard-panned source comes out of this tank
-    // dead centre (measured tail ILD −0.21 dB) while the reference halls hold a
+    // dead centre (measured tail ILD −0.21 dB) while the target halls hold a
     // +1.3..+4.3 dB lean toward the source side. Root cause is in the output taps,
     // not the tank: after the Hadamard butterfly the two taps collapse EXACTLY to
     //   oL = g·(p1 + p5),   oR = g·(p2 − p6)
@@ -195,7 +195,7 @@ public:
     // MEASURED CEILING — READ BEFORE TUNING THIS. amount=1 is the FULL rotation
     // (sin=1: the side is entirely the provenance difference) and it buys only
     // −0.21 → +0.76 dB of tail ILD on algo 14, well short of the +2.5..+4 dB the
-    // reference halls show. That is a property of the tank, not of this formula:
+    // target halls show. That is a property of the tank, not of this formula:
     // ILD ∝ (E_Lfed − E_Rfed), and the Hadamard-8 scatter is FULL mixing, so line
     // provenance is destroyed within one loop pass (~60-90 ms) while 77% of the
     // tail energy arrives at or after that point. Measured per-window on a
@@ -509,7 +509,7 @@ private:
     int loopAP2Len (int i, float size) const
     {
         // Second nested diffuser per line (mutually prime vs loopAP) — doubles
-        // in-loop echo density to lift the tail toward the anchors' diffuse
+        // in-loop echo density to lift the tail toward the targets' diffuse
         // wash (ed_end ~1.0 -> ~1.5+); kills sparse-mode beating ("watery").
         static const float baseMs[kN] = { 2.9f, 4.3f, 1.7f, 3.7f, 2.1f, 4.9f, 1.5f, 3.3f };
         return std::max (1, (int) std::round (baseMs[i] * 0.001f * sr_ * size));

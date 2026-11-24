@@ -8,8 +8,8 @@
 // SustainBandLimiter — IN-LOOP, band-configurable, drive-following sustained-energy
 // limiter (2026-07-07, the sine1k + piano-buildup surgery).
 //
-// DV's recirculating tanks accumulate energy on SUSTAINED input far above the commercial
-// anchors: a ~1 kHz mode pumps the sine1k steady-state +3..+12 dB hot (10 presets), and the
+// DV's recirculating tanks accumulate energy on SUSTAINED input far above
+// target: a ~1 kHz mode pumps the sine1k steady-state +3..+12 dB hot (10 presets), and the
 // low band charges over a 22.6 s piano stem (growth/tail/band gates, ~25 instances). A
 // FINITE noiseburst/impulse decays normally — the calibrated T60 voicing is correct — so the
 // fix must engage ONLY under sustained drive and release before the input-off decay that the
@@ -22,8 +22,8 @@
 // more design traps, encoded here:
 //   - LAW A (mid/"sine regulator"): the sine1k gate is whole-file RMS of a 2.0 s tone — any
 //     slow attack caps the achievable reduction at −3 dB (first uncut second dominates). So
-//     the mid config is FAST (full cut within ~0.3 s) and DEEP, threshold ≈ the anchor's
-//     in-band steady level → the loop self-regulates toward the anchor. Safe because the
+//     the mid config is FAST (full cut within ~0.3 s) and DEEP, threshold ≈ the target
+//     in-band steady level → the loop self-regulates toward the target. Safe because the
 //     sine's in-band level clears every other stimulus by 8-17 dB (measured).
 //   - LAW B (low/"charge limiter"): sustained-pink is HOTTER in 62-300 Hz than the piano on
 //     every preset, so no absolute threshold separates them. The separator is DURATION:

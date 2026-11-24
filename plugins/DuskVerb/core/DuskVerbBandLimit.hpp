@@ -1,8 +1,8 @@
 // Copyright (C) 2026 Dusk Audio, GNU GPL v3.0 or later (see repository LICENSE).
 //
 // BandLimit: DuskVerb 2's per-preset band limit on the summed wet, right after the octave trim:
-// an RBJ peaking lift under a Butterworth low-pass, for a reference that has no top octave.
-// 79 Vocal Chamber's reference walls at ~8 kHz (-8.7 dB at 8 kHz, -50 dB at 10 kHz against its
+// an RBJ peaking lift under a Butterworth low-pass, for a target that has no top octave.
+// 79 Vocal Chamber's target walls at ~8 kHz (-8.7 dB at 8 kHz, -50 dB at 10 kHz against its
 // 2-5 kHz) where DuskVerb 2 runs full band, and DuskVerb 2 is 4-9 dB dark at 6-8 kHz in every
 // window of its impulse, so the wall alone darkens it further; the octave trim (3 dB either way,
 // an octave wide) cannot lift 6-8 kHz under the wall without lifting 2-4 kHz with it.

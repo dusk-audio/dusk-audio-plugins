@@ -11,8 +11,8 @@
 // Per-line energy-following high-shelf with coefficient lerping between
 // pre-computed "early" (transient / bright) and "late" (decayed / dark)
 // RBJ biquad coefficient sets. Replaces static ThreeBandDamping's fixed
-// high-band attenuation with a program-dependent dynamic tilt that
-// matches the physical behavior of premium hardware reverbs.
+// high-band attenuation with a program-dependent dynamic tilt
+// (bright early, dark late).
 //
 // DESIGN DECISIONS (validated 2026-05-28 in architectural review):
 //

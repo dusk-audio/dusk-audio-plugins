@@ -191,7 +191,7 @@ void DattorroPlateVintage::process (const float* inputL, const float* inputR,
         }
         // Post-main second reflection tap: a darkened, delayed copy of the
         // pre-tank signal summed POST-tank so it arrives AFTER the main onset —
-        // the anchor's ~143 ms second arrival, WITHOUT pre-echo. preTankL_ holds
+        // the target ~143 ms second arrival, WITHOUT pre-echo. preTankL_ holds
         // the pre-tank filtered signal (front is off for VVP). gain 0 = bit-null.
         if (postMainActive_)
         {

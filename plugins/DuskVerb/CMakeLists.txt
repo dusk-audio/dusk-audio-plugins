@@ -148,7 +148,7 @@ set_target_properties(DuskVerb PROPERTIES
 )
 
 # Test/IR helper binaries removed during the v2 soft reset — they referenced
-# the SDIR-matching infrastructure (per-preset engines, analyze_ir.py outputs)
+# the IR-matching infrastructure (per-preset engines, analyze_ir.py outputs)
 # that was nuked. Re-add against the new clean engine when needed.
 
 # Issue #123 stereo-image regression: verifies the complete factory-preset

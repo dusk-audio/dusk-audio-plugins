@@ -6,7 +6,7 @@
 #include <cstring>
 
 // ============================================================================
-// ShimmerEngine v8 — classic Eno/Lanois rig topology.
+// ShimmerEngine v8: classic aux-send shimmer topology.
 // See header for full architecture description.
 // ============================================================================
 
@@ -148,8 +148,8 @@ float ShimmerEngine::GranularPitchShifter::process (float input)
     // creates the sharp metallic peaks at e.g. 376/428/758/1314 Hz when a
     // 200 Hz fundamental migrates octave-by-octave through the loop.
     // Modulation smears those peaks across narrow bands so they blend with
-    // the rest of the cascade tail (the "subdued" character the user
-    // observed in external reference Shimmer).
+    // the rest of the cascade tail (the intended "subdued"
+    // character).
     const float effectiveRatio = ratioModEnabled_
         ? pitchRatio_ * (1.0f + ratioModDepth_ * ratioMod_.next())
         : pitchRatio_;
@@ -226,8 +226,7 @@ void ShimmerEngine::prepare (double sampleRate, int maxBlockSize)
     noiseDuckG_ = 1.0f;
     tailNoise_.setGain (noiseGain_);
 
-    // Hall reverb baseline: long, lush, slightly dark (period-correct
-    // for the late-1970s digital hall hardware character that the original Eno/Lanois rig used).
+    // Hall reverb baseline: long, lush, slightly dark.
     reverb_.prepare (sampleRate, maxBlockSize);
     // Every line at one delay-mod rate. Mod Rate drives the cascade feedback here (setModRate), so
     // the tank never gets it, and the presets on this engine were voiced that way: until 2026-10-28
@@ -388,7 +387,7 @@ void ShimmerEngine::setOutputHeadroom (float h)
 }
 
 // DEPTH (mod_depth, 0..1) → PITCH semitones (0..24). 0 = unity (no shift),
-// 0.5 = +12 (octave up — canonical Eno Choir), 1.0 = +24 (Cascading Heaven).
+// 0.5 = +12 (octave up), 1.0 = +24 (two octaves up).
 void ShimmerEngine::setModDepth (float depth)
 {
     const float clamped = std::clamp (depth, 0.0f, 1.0f);
@@ -548,7 +547,7 @@ void ShimmerEngine::process (const float* inL, const float* inR,
         const float fbSrcR = fbDelayLineR_[static_cast<size_t> (readPos)];
         // Per-preset scale on the upward voices (voice1 +12 st fills 250-500, voice2 +24 st fills
         // 500-1k). Deep Blue Day boosts these to regenerate the mid tail harder on transients
-        // (the snare body ×2/×4 → the 250 Hz-1 kHz body REF has). Default 1.0 → ×1.0f bypass
+        // (the snare body ×2/×4 → the target 250 Hz-1 kHz body). Default 1.0 → ×1.0f bypass
         // → bit-identical to legacy for Black Hole + every other preset.
         float pitchedFbL = kVoice1Mix * voice1Scale_ * pitchL_.process (fbSrcL)
                          + kVoice2Mix * voice2Scale_ * pitch2L_.process (fbSrcL);
@@ -569,8 +568,8 @@ void ShimmerEngine::process (const float* inL, const float* inR,
                                                          kFeedbackSoftClipKnee, kFeedbackSoftClipCeil);
         }
         // Octave-DOWN-2 (sub) voice: reaches 250 Hz in ONE step where the −1 oct cascade
-        // dies out, then the loop regenerates 125→62 Hz from it → the deep low wash REF
-        // Shimmer has. Same softClip + loop band-pass keep it bounded. 0 → branch skipped
+        // dies out, then the loop regenerates 125→62 Hz from it → the intended deep low
+        // wash. Same softClip + loop band-pass keep it bounded. 0 → branch skipped
         // (byte-identical on non-shimmer presets; recursive-feedback TU, see the .h note).
         if (subMix_ > 0.0f)
         {
@@ -631,7 +630,7 @@ void ShimmerEngine::process (const float* inL, const float* inR,
 
         // Dry-fed octave cascade (mono, feed-forward): each −12 st stage pitches the previous
         // stage's output down another octave, summed at its own gain → an independent, EVEN
-        // 500/250/125/62 Hz descent (REF's structure) that does NOT depend on the feedback
+        // 500/250/125/62 Hz descent (the intended structure) that does NOT depend on the feedback
         // loop. Fed from the raw dry (inL/inR), so a transient generates the full cascade in one
         // pass instead of starving the feedback voices. octActive_ false → skipped → bit-null.
         float octMono = 0.0f;
@@ -694,7 +693,7 @@ void ShimmerEngine::process (const float* inL, const float* inR,
         // Taps the raw wet (wL/wR), pitches its 6-12 kHz up to 12-24 k. mix 0 → bit-null.
         if (air_.active) air_.process (wL, wR, oL, oR);
         if (stereoMod_.active) stereoMod_.process (oL, oR);
-        // Tail noise floor — envelope-tracked to the wet, fades with the decay (REF's
+        // Tail noise floor — envelope-tracked to the wet, fades with the decay (a
         // dense noise-like fade; masks the sparse-mode ring). gain 0 → skipped → bit-null.
         // NOISE SUSTAIN-DUCK (2026-07-08): the noise's gentle LP leaks 8-16 kHz; on a
         // 22 s sustained stem the envelope-tracked noise runs continuously → measured
