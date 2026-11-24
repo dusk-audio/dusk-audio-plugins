@@ -127,7 +127,7 @@ namespace
             << "  --self-test-resampler         Check rate conversion is band-limited, then exit\n"
             << "  --benchmark-session WAV       Time stereo callbacks using a 48 kHz session (128-frame blocks)\n"
             << "  --list-params|--list-programs Inspect the hosted plugin\n"
-            << "  --print-params                After the program, preset and overrides are applied, print\n"
+            << "  --print-all-params            After the program, preset and overrides are applied, print\n"
             << "                                every parameter as: value 'NAME' NORMALIZED 'TEXT', and exit\n"
             << "  --dump-nparams               Dump normalized parameter values\n"
             << "  --param NAME=VALUE            Set a displayed parameter value\n"
@@ -1229,7 +1229,7 @@ int main (int argc, char** argv)
     float        sixAPEarlyHighpassHz = -1.0f;
     float        sixAPEarlyMixOverride = -1.0f;  // -1 = no override
     bool         listParamsOnly   = false;
-    bool         printParamsOnly  = false;  // --print-params: the values a program (plus overrides) leaves
+    bool         printParamsOnly  = false;  // --print-all-params: the values a program (plus overrides) leaves
     bool         listProgramsOnly = false;
     // --print-params LIST: after the authoritative preset/state apply, print the
     // host-side value and display text of the named parameters. LIST is comma
@@ -1450,7 +1450,7 @@ int main (int argc, char** argv)
         }
         else if (a == "--param-text-sweep" && i + 1 < argc) textSweepSpecs.add (argv[++i]);
         else if (a == "--list-params")              listParamsOnly   = true;
-        else if (a == "--print-params")             printParamsOnly  = true;
+        else if (a == "--print-all-params")         printParamsOnly  = true;
         else if (a == "--list-programs")            listProgramsOnly = true;
         else if (a == "--self-test-resampler")      selfTestResampler = true;
         else if (a == "--dump-params")              dumpParams       = true;
@@ -1568,6 +1568,15 @@ int main (int argc, char** argv)
             printUsage();
             return 2;
         }
+    }
+
+    // --print-all-params reads the parameters back right after the authoritative apply; --gate-off
+    // and --dry-passthrough-test write theirs later, so the readback would leave them out.
+    if (printParamsOnly && (forceGateOff || dryPassthroughTest))
+    {
+        std::cerr << "--print-all-params cannot be combined with --gate-off or --dry-passthrough-test "
+                     "(their overrides are applied after the readback)\n";
+        return 2;
     }
 
     // ---- Resampler regression fixture (--self-test-resampler) ----
