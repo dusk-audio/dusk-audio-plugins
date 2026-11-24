@@ -217,6 +217,24 @@ namespace
     // tone gets the same harmonics as from the bare held peak.
     constexpr float kMagneticSmoothSeconds = 0.00067f;
     constexpr float kMagneticHeadroom = 1.06f;
+    // The magnetic makeup rises as the fourth root of the envelope's distance
+    // above its knee, whose slope at the knee is unbounded: a moving envelope
+    // that hovered there turned its ripple into gain jitter on the whole tape
+    // write (7 Hz AM tone, feedback off, at -12 dBFS: a broadband floor at
+    // -108 dBc for 1 kHz, -104 for 3.3 kHz; -137 / -124 with the makeup held
+    // at 1). Below kMakeupRootBlend (of the law's 0..1 span, ~1.5 dB above
+    // the knee) the root is replaced by the quadratic through zero that meets
+    // it with the same value and slope there, so the law is C1, its slope
+    // stays under ~20, and it is unchanged from that point up. The floor
+    // reads -132 / -123; a steady tone's makeup moves only where its envelope
+    // dips into that span within a cycle (60 Hz at -3 dBFS: fundamental
+    // -0.2 dB, 7th / 9th -7.7 / -10 dB, toward the reference). Smoothing the
+    // makeup instead cleared the floor as well but slowed it on transients
+    // and moved the factory-program gates away from the reference (octave
+    // median 0.575 -> 0.636).
+    constexpr float kMakeupRootBlend = 0.04f;
+    constexpr float kMakeupRootBlendA = 19.5655948f;  // root's slope and value
+    constexpr float kMakeupRootBlendB = -209.631373f;  // matched at the blend
 
     // Below this a read head's (smoothed) gain is treated as off.
     constexpr float kHeadIdleFloor = 1.0e-20f;
@@ -2599,8 +2617,11 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             {
                 const float magneticMakeup01 = clamp01(
                     (recordEnvelopeNow - 0.18f) * (1.0f / 0.82f));
+                const float magneticMakeupRoot = magneticMakeup01 < kMakeupRootBlend
+                    ? magneticMakeup01 * (kMakeupRootBlendA + kMakeupRootBlendB * magneticMakeup01)
+                    : std::sqrt(std::sqrt(magneticMakeup01));
                 const float magneticMakeupDb =
-                    1.8f * std::sqrt(std::sqrt(magneticMakeup01))
+                    1.8f * magneticMakeupRoot
                     + 0.46f * hot;
                 makeupGain = std::pow(10.0f, magneticMakeupDb * (1.0f / 20.0f));
             }
