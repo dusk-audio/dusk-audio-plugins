@@ -2240,6 +2240,104 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             x.wetMixGain[i] = wetMixGain;
             x.wobble[i] = wobble;
         }
+        // The tape loop's playback side: the heads, in sample order (the
+        // tape they read was written at least a sub-block earlier).
+        for (int i = 0; i < len; ++i)
+        {
+            const double d1 = x.d1[i];
+            const double d2 = x.d2[i];
+            const double d3 = x.d3[i];
+            const float g1 = x.g1[i];
+            const float g2 = x.g2[i];
+            const float g3 = x.g3[i];
+            const float reproAgeNoise = x.reproAgeNoise[i];
+            const float reproNoiseGate = x.reproNoiseGate[i];
+            const float wobble = x.wobble[i];
+            const float splice1 = x.splice1[i];
+            const float splice2 = x.splice2[i];
+            const float splice3 = x.splice3[i];
+            Channel& ch = channels[0];
+            // A head whose gain has decayed below kHeadIdleFloor (its smoother
+            // stalls near 1e-36 with denormals flushed, it never reaches zero)
+            // is not read. Its term is below 1e-20 of the tape level, under one
+            // ulp of any head that is on and of the noise bed the output always
+            // carries in the head modes; in Reverb Only, where every head is
+            // off, the head sum is exactly 0 instead of a sub-1e-20 residue.
+            // te2_corebench pins every mode, switch and silence tail byte for
+            // byte against reading all three.
+            const float h1 = std::abs(g1) < kHeadIdleFloor ? 0.0f
+                           : readTape(ch.tape, d1) * splice1;
+            const float h2 = std::abs(g2) < kHeadIdleFloor ? 0.0f
+                           : readTape(ch.tape, d2) * splice2;
+            const float h3 = std::abs(g3) < kHeadIdleFloor ? 0.0f
+                           : readTape(ch.tape, d3) * splice3;
+            const float headSum = (h1 * g1 + h2 * g2 + h3 * g3) * wobble;
+            // The repro noise bed (hum, bed, hiss) is the playback head's own
+            // output, so it circulates with the signal: it enters the loop here
+            // as well as the echo output below. Measured against the reference,
+            // whose loop self-starts from its own floor: from silence, our loop
+            // now grows at the reference's rate period by period, and its
+            // runaway fills in between repeats (tail crest at Intensity
+            // 0.8 / 0.9 / 1.0: 10.5 / 7.9 / 5.9 dB without it, 5.7 / 3.1 / 3.0
+            // with it, reference 3.1 / 1.0 / 0.4). With Intensity at minimum
+            // fbGain is exactly 0, so the feedback-off output is unchanged.
+            const float headNoise = reproNoiseGate * reproAgeNoise;
+            // Multi-head loop-gain correction, loop path only. Advanced once per
+            // sample alongside headGain above so the two track each other through a
+            // mode change. See refreshBlockRateControls() for the derivation.
+            const float loopHeadSum = loopHeadNormSmoother.next()
+                * (headSum + headNoise);
+
+            // Echo output path only: bass/treble shelves (dry and reverb are
+            // unaffected, matching the hardware layout).
+            float echoWet = headSum + headNoise;
+            if (bassShelfActive)
+                echoWet = ch.bassShelf.process(echoWet);
+            if (trebleShelfActive)
+                echoWet = ch.trebleShelf.process(echoWet);
+
+            writeIdx = (writeIdx + 1) & mask;
+            x.loopHeadSum[i] = loopHeadSum;
+            x.echoWet[i] = echoWet;
+        }
+        // The regeneration drive: a pure function of each sample, a pass
+        // of its own so it runs across samples.
+        for (int i = 0; i < len; ++i)
+        {
+            const float loopHeadSum = x.loopHeadSum[i];
+            // Record chain: program + feedback -> head EQ -> magnetic
+            // saturation -> tape. Everything here except the program feed's
+            // outer low-pass (programOuterLP) is inside the loop, so repeats
+            // darken and compress cumulatively.
+            // POWER off breaks the loop, as switching the machine off stops its
+            // tape: otherwise the cleared loop keeps circulating while the user
+            // hears dry, and anything that enters it as POWER ramps down (the
+            // repro noise bed is in the loop tap) grows above unity gain until
+            // the tape is full when POWER returns. 1 x fbGain is exact, so with
+            // POWER on this is the same bits.
+            const float loopGain = x.power[i] * x.fbGain[i];
+            x.loopGain[i] = loopGain;
+            // The record amp's overload (softClip, then loopLimit) is applied
+            // at x4 in the record stage, after the band limits: at the host
+            // rate its harmonics folded into the band, and in a hot loop they
+            // circulate (a 7.2 kHz tone at -6 dBFS, Intensity 0.616: its 7th
+            // back at 2.5 kHz, -52 dBc; the reference -101). The feed's band
+            // limits are linear and the gain is smoothed, so they run on the
+            // unshaped drive.
+            x.loopLinear[i] = loopGain * loopHeadSum;
+            // The record meter and the low-flux gate read the shaped drive at
+            // the host rate, as they did when the audio path did too: they
+            // take a level, not a spectrum, and keep their calibration.
+            x.loopDrive[i] = loopLimit(loopGain * softClip(loopHeadSum));
+        }
+        // Whether any sample of the sub-block regenerates. A scan of its own:
+        // folded into the pass above, it kept that pass from vectorizing.
+        bool loopActive = false;
+        for (int i = 0; i < len && !loopActive; ++i)
+            loopActive = x.loopGain[i] > 0.0f;
+        // The record detector and the compressor's law, after the heads and
+        // the regeneration drive: the compressor's gain scales that drive too
+        // (see the law below).
         {
             Channel& ch = channels[0];
             for (int i = 0; i < len; ++i)
@@ -2343,104 +2441,24 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                 // in the tape loop, after the feed is band-limited.
                 x.preIn[i] = tapeInput * preDriveGain;
                 x.postDriveGain[i] = postDriveGain;
+                // The regeneration goes through the record compressor as
+                // well: the program it follows turns down everything the
+                // record head writes, repeats included (the reference's
+                // manual: echo feedback joins the program before the level
+                // detection and record amp). Measured with a quiet burst
+                // under a steady program, its repeats lose per pass, beyond
+                // the loop's own decay: 10.9 kHz at -6 dBFS, Intensity
+                // 0.616: 2.9 dB in the reference, 0.05 dB here without this
+                // and 3.2 with it; 1 kHz at -12 dBFS, 5.3 / 3.0 / 3.7. With
+                // the program silent and a hot loop the drop is the loop's
+                // own in both, so the detector stays on the program. Without
+                // this a hot tone held the loop at unity for everything
+                // under it and the loop's floor built up (Intensity 0.68:
+                // -84 dBc where the reference reads -94..-98).
+                x.loopLinear[i] *= preDriveGain * postDriveGain;
                 x.pre[i] = ch.preampDC.process(x.preIn[i] * kInputStageDrive);
             }
         }
-        // The tape loop's playback side: the heads, in sample order (the
-        // tape they read was written at least a sub-block earlier).
-        for (int i = 0; i < len; ++i)
-        {
-            const double d1 = x.d1[i];
-            const double d2 = x.d2[i];
-            const double d3 = x.d3[i];
-            const float g1 = x.g1[i];
-            const float g2 = x.g2[i];
-            const float g3 = x.g3[i];
-            const float reproAgeNoise = x.reproAgeNoise[i];
-            const float reproNoiseGate = x.reproNoiseGate[i];
-            const float wobble = x.wobble[i];
-            const float splice1 = x.splice1[i];
-            const float splice2 = x.splice2[i];
-            const float splice3 = x.splice3[i];
-            Channel& ch = channels[0];
-            // A head whose gain has decayed below kHeadIdleFloor (its smoother
-            // stalls near 1e-36 with denormals flushed, it never reaches zero)
-            // is not read. Its term is below 1e-20 of the tape level, under one
-            // ulp of any head that is on and of the noise bed the output always
-            // carries in the head modes; in Reverb Only, where every head is
-            // off, the head sum is exactly 0 instead of a sub-1e-20 residue.
-            // te2_corebench pins every mode, switch and silence tail byte for
-            // byte against reading all three.
-            const float h1 = std::abs(g1) < kHeadIdleFloor ? 0.0f
-                           : readTape(ch.tape, d1) * splice1;
-            const float h2 = std::abs(g2) < kHeadIdleFloor ? 0.0f
-                           : readTape(ch.tape, d2) * splice2;
-            const float h3 = std::abs(g3) < kHeadIdleFloor ? 0.0f
-                           : readTape(ch.tape, d3) * splice3;
-            const float headSum = (h1 * g1 + h2 * g2 + h3 * g3) * wobble;
-            // The repro noise bed (hum, bed, hiss) is the playback head's own
-            // output, so it circulates with the signal: it enters the loop here
-            // as well as the echo output below. Measured against the reference,
-            // whose loop self-starts from its own floor: from silence, our loop
-            // now grows at the reference's rate period by period, and its
-            // runaway fills in between repeats (tail crest at Intensity
-            // 0.8 / 0.9 / 1.0: 10.5 / 7.9 / 5.9 dB without it, 5.7 / 3.1 / 3.0
-            // with it, reference 3.1 / 1.0 / 0.4). With Intensity at minimum
-            // fbGain is exactly 0, so the feedback-off output is unchanged.
-            const float headNoise = reproNoiseGate * reproAgeNoise;
-            // Multi-head loop-gain correction, loop path only. Advanced once per
-            // sample alongside headGain above so the two track each other through a
-            // mode change. See refreshBlockRateControls() for the derivation.
-            const float loopHeadSum = loopHeadNormSmoother.next()
-                * (headSum + headNoise);
-
-            // Echo output path only: bass/treble shelves (dry and reverb are
-            // unaffected, matching the hardware layout).
-            float echoWet = headSum + headNoise;
-            if (bassShelfActive)
-                echoWet = ch.bassShelf.process(echoWet);
-            if (trebleShelfActive)
-                echoWet = ch.trebleShelf.process(echoWet);
-
-            writeIdx = (writeIdx + 1) & mask;
-            x.loopHeadSum[i] = loopHeadSum;
-            x.echoWet[i] = echoWet;
-        }
-        // The regeneration drive: a pure function of each sample, a pass
-        // of its own so it runs across samples.
-        for (int i = 0; i < len; ++i)
-        {
-            const float loopHeadSum = x.loopHeadSum[i];
-            // Record chain: program + feedback -> head EQ -> magnetic
-            // saturation -> tape. Everything here except the program feed's
-            // outer low-pass (programOuterLP) is inside the loop, so repeats
-            // darken and compress cumulatively.
-            // POWER off breaks the loop, as switching the machine off stops its
-            // tape: otherwise the cleared loop keeps circulating while the user
-            // hears dry, and anything that enters it as POWER ramps down (the
-            // repro noise bed is in the loop tap) grows above unity gain until
-            // the tape is full when POWER returns. 1 x fbGain is exact, so with
-            // POWER on this is the same bits.
-            const float loopGain = x.power[i] * x.fbGain[i];
-            x.loopGain[i] = loopGain;
-            // The record amp's overload (softClip, then loopLimit) is applied
-            // at x4 in the record stage, after the band limits: at the host
-            // rate its harmonics folded into the band, and in a hot loop they
-            // circulate (a 7.2 kHz tone at -6 dBFS, Intensity 0.616: its 7th
-            // back at 2.5 kHz, -52 dBc; the reference -101). The feed's band
-            // limits are linear and the gain is smoothed, so they run on the
-            // unshaped drive.
-            x.loopLinear[i] = loopGain * loopHeadSum;
-            // The record meter and the low-flux gate read the shaped drive at
-            // the host rate, as they did when the audio path did too: they
-            // take a level, not a spectrum, and keep their calibration.
-            x.loopDrive[i] = loopLimit(loopGain * softClip(loopHeadSum));
-        }
-        // Whether any sample of the sub-block regenerates. A scan of its own:
-        // folded into the pass above, it kept that pass from vectorizing.
-        bool loopActive = false;
-        for (int i = 0; i < len && !loopActive; ++i)
-            loopActive = x.loopGain[i] > 0.0f;
         // Record meter, regeneration envelope and the record stage's
         // per-sample laws.
         for (int i = 0; i < len; ++i)
