@@ -155,6 +155,17 @@ namespace
     constexpr float kDetectorBandHz   = 700.0f;
     constexpr float kDetectorSmoothHz = 200.0f;
     constexpr float kDetectorPeakWeight = 0.99f;
+    // The detector hears the input through a 4th-order low-pass at this
+    // corner (matched-magnitude Butterworth sections, detector only; the
+    // audio path is untouched). The reference compresses a high tone as if
+    // its level detection sat after the record band limit: with feedback off
+    // a 10.9 kHz tone lost 2.2 / 4.3 / 6.7 dB at -6 / -3 / 0 dBFS here
+    // (re its -30 dBFS rung) and 1.7 / 2.5 / 3.9 in the reference, while
+    // 250 Hz-6 kHz matched within 0.9 dB. With the low-pass the 10.9 kHz
+    // gap is under 0.4 dB at every level and 250 Hz-6 kHz move under
+    // 0.03 dB. 8 kHz took 6 kHz down a little; 10 kHz left 10.9 kHz
+    // 0.6 dB over at 0 dBFS.
+    constexpr double kDetectorLowPassHz = 9000.0;
     // The record laws (the compressor's drive gains, the Chebyshev terms'
     // strength, the magnetic makeup, the low-flux gate) read the envelope
     // through two critically damped poles of this time constant each. The
@@ -1472,8 +1483,12 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
         ch.tapeDown1.set(kOsSharp);
     }
     for (auto& ch : channels)
+    {
         ch.detectorHighPass.setCoeffs(
             Biquad::highPass(fs, kDetectorBandHz, 0.70710678f));
+        ch.detectorLowPass1.setCoeffs(Biquad::matchedLowPass(fs, kDetectorLowPassHz, 0.54119610));
+        ch.detectorLowPass2.setCoeffs(Biquad::matchedLowPass(fs, kDetectorLowPassHz, 1.30656296));
+    }
     meterVu = 0.0f;
     meterVuStage1 = 0.0f;
     meterPeak = 0.0f;
@@ -1590,6 +1605,8 @@ void TapeEchoDSP::reset()
         ch.springCleanDelayWriteIdx = 0;
         ch.recordEnvelope = 0.0f;
         ch.detectorHighPass.reset();
+        ch.detectorLowPass1.reset();
+        ch.detectorLowPass2.reset();
         ch.magneticHold = 0;
         ch.feedUp1.reset(); ch.feedUp2.reset();
         ch.tapeDown2.reset(); ch.tapeDown1.reset();
@@ -2360,7 +2377,9 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             Channel& ch = channels[0];
             for (int i = 0; i < len; ++i)
             {
-                const float tapeInput = x.tapeInput[i];
+                // Through the detector's low-pass (see kDetectorLowPassHz).
+                const float tapeInput = ch.detectorLowPass2.process(
+                    ch.detectorLowPass1.process(x.tapeInput[i]));
                 const float tapeMagnitude =
                     tapeInput < 0.0f ? -tapeInput : tapeInput;
                 float bandI = 0.0f, bandQ = 0.0f;

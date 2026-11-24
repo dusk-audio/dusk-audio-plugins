@@ -718,8 +718,10 @@ private:
         std::vector<float> springCleanDelay;   // sized in prepare()
         int                springCleanDelayWriteIdx = 0;
         float              recordEnvelope = 0.0f;   // program drive only
-        // Record-compressor detector: phase-independent amplitude of the band
-        // above kDetectorBandHz (see processBlock).
+        // Record-compressor detector: its input low-pass (kDetectorLowPassHz),
+        // then the phase-independent amplitude of the band above
+        // kDetectorBandHz (see processBlock).
+        Biquad             detectorLowPass1, detectorLowPass2;
         Biquad             detectorHighPass;
         HilbertPair        detectorHilbert;
         float              detectorSmooth1 = 0.0f;
