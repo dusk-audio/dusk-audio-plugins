@@ -569,6 +569,10 @@ private:
     float memoDriftDepth = 0.0f;
     float memoFlutterH2 = 0.0f;
     float memoFlutterH3 = 0.0f;
+    float memoSpliceDepthDb = 0.0f;
+    float memoSpliceNarrowWeight = 0.0f;
+    float memoSpliceNarrowSeconds = 0.0f; // at the fastest motor; scaled per sample
+    void  updateAgeMemos(float age) noexcept;
     float memoOutputVolume = 0.0f;
     float memoOutputGain = 1.0f;
 

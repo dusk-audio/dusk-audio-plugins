@@ -1221,6 +1221,44 @@ void TapeEchoDSP::updateTapeBandwidth(float age01, float delayMs) noexcept
     }
 }
 
+// The per-sample laws of the smoothed tape age, recomputed only when it
+// moves (same expressions, same bits).
+void TapeEchoDSP::updateAgeMemos(float age) noexcept
+{
+    memoAge = age;
+    memoAgeNoiseScale = 0.25f * std::exp(1.38629436112f * age);
+    memoDriftDepth = driftDepthFor(age, driftNorm);
+    memoFlutterH2 = kFlutterH2 + kFlutterH2Age * age * age;
+    memoFlutterH3 = kFlutterH3 + kFlutterH3Age * age * age;
+    // Splice dip. New / Used / Old depth nodes 1.75 / 4.27 / 15.53 dB,
+    // measured with the speed-scaled dip shape (60 s tone against the
+    // reference: New and Used read 0.2 / 0.4 dB shallow at the former
+    // 1.58 / 3.88).
+    if (age <= 0.5f)
+        memoSpliceDepthDb = 1.75f + 5.04f * age;
+    else
+    {
+        const float old01 = (age - 0.5f) * 2.0f;
+        memoSpliceDepthDb =
+            4.27f + 11.26f * std::pow(old01, 1.5f);
+    }
+    const float old01 = clamp01((age - 0.5f) * 2.0f);
+    memoSpliceNarrowWeight = age <= 0.5f
+        ? 0.545f + 0.106f * age
+        : 0.598f + 0.164f * old01;
+    // Both parts of the dip are lengths of tape, so both last longer at a
+    // slower motor (the caller scales this width by the motor). Measured
+    // against the reference (60 s tone, dips on its envelope, 3 ages x 3
+    // speeds): with the join a fixed 13.2 ms the dip depth was flat across
+    // speed (old tape -14.5 / -14.4 / -14.8 dB at fast / middle / slow) where
+    // the reference's deepens as the tape slows (-12.5 / -15.3 / -15.7).
+    // Scaling the join with speed and refitting both widths: -12.9 / -14.7 /
+    // -15.1, depth error 0.92 -> 0.45 dB rms over the nine cells.
+    memoSpliceNarrowSeconds = age <= 0.5f
+        ? 0.00796f - 0.000724f * age
+        : 0.00760f - 0.00169f * old01;
+}
+
 void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
 {
     // Validate BEFORE anything reads it. `sampleRate <= 0.0` alone would let NaN
@@ -1425,11 +1463,7 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     noiseGainSmoother.snap(noiseGainFor(pNoise.load(std::memory_order_relaxed)));
     // Seed the per-sample memos from the snapped controls with the same
     // expressions the loop uses, so they are valid from the first sample.
-    memoAge = ageSmoother.value();
-    memoAgeNoiseScale = 0.25f * std::exp(1.38629436112f * memoAge);
-    memoDriftDepth = driftDepthFor(memoAge, driftNorm);
-    memoFlutterH2 = kFlutterH2 + kFlutterH2Age * memoAge * memoAge;
-    memoFlutterH3 = kFlutterH3 + kFlutterH3Age * memoAge * memoAge;
+    updateAgeMemos(ageSmoother.value());
     memoOutputVolume = outputVolumeSmoother.value();
     memoOutputGain = std::pow(10.0f, 2.0f * memoOutputVolume - 1.0f);
     memoIntensity = intensitySmoother.value();
@@ -1796,13 +1830,7 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             // reference's tiny electronics/tape floor instead of digital silence.
             // Recomputed only when the (smoothed) tape age moves: same bits.
             if (age != memoAge)
-            {
-                memoAge = age;
-                memoAgeNoiseScale = 0.25f * std::exp(1.38629436112f * age);
-                memoDriftDepth = driftDepthFor(age, driftNorm);
-                memoFlutterH2 = kFlutterH2 + kFlutterH2Age * age * age;
-                memoFlutterH3 = kFlutterH3 + kFlutterH3Age * age * age;
-            }
+                updateAgeMemos(age);
             const float ageNoiseScale = memoAgeNoiseScale;
             float ageHum = 0.0f;
             float previousHarmonic = 0.0f;
@@ -2079,33 +2107,11 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             const float spliceSamplesToHead1 = sinceSplice <= (double)spliceTailSamples
                 ? (float)-sinceSplice
                 : (float)((1.0 - spliceLoopPosition) * loopPeriodSamples);
-            float spliceDepthDb;
-            // New / Used / Old nodes 1.75 / 4.27 / 15.53 dB, measured with the
-            // speed-scaled dip shape below (60 s tone against the reference:
-            // New and Used read 0.2 / 0.4 dB shallow at the former 1.58 / 3.88).
-            if (age <= 0.5f)
-                spliceDepthDb = 1.75f + 5.04f * age;
-            else
-            {
-                const float old01 = (age - 0.5f) * 2.0f;
-                spliceDepthDb =
-                    4.27f + 11.26f * std::pow(old01, 1.5f);
-            }
-            const float old01 = clamp01((age - 0.5f) * 2.0f);
-            const float narrowWeight = age <= 0.5f
-                ? 0.545f + 0.106f * age
-                : 0.598f + 0.164f * old01;
-            // Both parts of the dip are lengths of tape, so both last longer at
-            // a slower motor. Measured against the reference (60 s tone, dips on
-            // its envelope, 3 ages x 3 speeds): with the join a fixed 13.2 ms
-            // the dip depth was flat across speed (old tape -14.5 / -14.4 /
-            // -14.8 dB at fast / middle / slow) where the reference's deepens as
-            // the tape slows (-12.5 / -15.3 / -15.7). Scaling the join with
-            // speed and refitting both widths: -12.9 / -14.7 / -15.1, depth
-            // error 0.92 -> 0.45 dB rms over the nine cells.
-            const float narrowSeconds = speedScale * (age <= 0.5f
-                ? 0.00796f - 0.000724f * age
-                : 0.00760f - 0.00169f * old01);
+            // Depth, narrow weight and narrow width depend on tape age only
+            // (updateAgeMemos); the width scales with the motor here.
+            const float spliceDepthDb = memoSpliceDepthDb;
+            const float narrowWeight = memoSpliceNarrowWeight;
+            const float narrowSeconds = speedScale * memoSpliceNarrowSeconds;
             const auto spliceGain = [&](float samplesToEvent) noexcept
             {
                 const float secondsToEvent =
