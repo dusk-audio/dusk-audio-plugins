@@ -2409,9 +2409,6 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             // on the sum. Nothing filters after the saturation, so harmonics
             // reach the echo as the reference's do; on the next pass round the
             // loop the regeneration feed's sections filter them like any signal.
-            float programFeed = ch.programSpeedLP.process(ch.programOuterLP.process(pre));
-            for (auto& lp : ch.programCeilingLP)
-                programFeed = lp.process(programFeed);
             float loopFeed = ch.speedLP.process(ch.loopLowShape.process(loopDrive));
             for (auto& lp : ch.loopCeilingLP)
                 loopFeed = lp.process(loopFeed);
@@ -2441,7 +2438,6 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             const float c5 = -0.0195f * hot;
             const float programGain = kInputStageTrim * postDriveGain;
 
-            x.programFeed[i] = programFeed;
             x.loopFeed[i] = loopFeed;
             x.lowFloorFade[i] = lowFloorFade;
             x.programGain[i] = programGain;
@@ -2474,6 +2470,18 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
 
             writeIdx = (writeIdx + 1) & mask;
             x.echoWet[i] = echoWet;
+        }
+        {
+            // The program feed's band limits: it does not depend on the tape
+            // loop, so it runs as a pass of its own.
+            Channel& ch = channels[0];
+            for (int i = 0; i < len; ++i)
+            {
+                float programFeed = ch.programSpeedLP.process(ch.programOuterLP.process(x.pre[i]));
+                for (auto& lp : ch.programCeilingLP)
+                    programFeed = lp.process(programFeed);
+                x.programFeed[i] = programFeed;
+            }
         }
         {
             // Record saturation, in passes over the sub-block. The tape it
