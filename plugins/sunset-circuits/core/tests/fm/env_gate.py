@@ -46,7 +46,18 @@ def quantized_time(seconds):
     return 2.0 ** (lo + np.clip(q, 0.0, steps) * (hi - lo) / steps)
 
 RATE_QUANTIZED_ATTACK = quantized_time(RATE_ATTACK)
-RATE_IDEAL_RISE = (np.sqrt(0.9) - np.sqrt(0.1)) * RATE_QUANTIZED_ATTACK
+# The attack curve (FMEngine.hpp, FMRateEnvelope): level = 2^((w - e^-4.3) * K)
+# with w = e^(-4.3 pos) and K = -60 dB / (1 - e^-4.3) in powers of two, so the
+# position where the level is q is -ln(e^-4.3 + log2(q) / K) / 4.3.
+_ATK_END_W, _ATK_K = np.exp(-4.3), -60.0 / (1.0 - np.exp(-4.3)) * np.log2(10.0) / 20.0
+def _attack_pos(q):
+    return -np.log(_ATK_END_W + np.log2(q) / _ATK_K) / 4.3
+# Rate scaling (op Rate Scale, at 0 as on the hardware) runs the envelope one
+# rate step, 2^(1/4), faster on A4 than the displayed time, which holds at
+# middle C (FMVoiceEngine::rateMultiplier; rate_gate.py checks the law). A4 is
+# kept because its shorter carrier period bins the rise finely enough for 3 %.
+RATE_KEY_SPEEDUP = 2.0 ** 0.25
+RATE_IDEAL_RISE = (_attack_pos(0.9) - _attack_pos(0.1)) * RATE_QUANTIZED_ATTACK / RATE_KEY_SPEEDUP
 RATE_TOL = 0.02                    # measured spread across the three rates: 0.00%
 RATE_IDEAL_TOL = 0.03              # one carrier-period peak bins + rate quantisation
 

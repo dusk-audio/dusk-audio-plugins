@@ -172,7 +172,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
 
     // Phase 4 (option 2): rising-onset ER envelope peak time. 0 = legacy
     // first-tap rolloff → bit-identical. >0 swells the ER to a peak at this ms,
-    // matching VVV's gentle attack instead of an instantaneous spike.
+    // a gentle attack instead of an instantaneous spike.
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "er_rise", 1 }, "Early Ref Rise",
         juce::NormalisableRange<float> (0.0f, 40.0f), 0.0f));
@@ -205,7 +205,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::NormalisableRange<float> (0.0f, 1000.0f), 0.0f));
 
     // ER stereo-neutral mode (Phase 2). 0 = legacy opposed-sign R taps → bit-
-    // identical. 1 = independent R taps → uniform ~0 L/R corr (VVV-like), no
+    // identical. 1 = independent R taps → uniform ~0 L/R corr, no
     // anti-phase low. Needed so the front-load tank-rebalance keeps a clean
     // stereo image. Per-preset via kERStereoNeutralByName.
     layout.add (std::make_unique<juce::AudioParameterFloat> (
@@ -213,7 +213,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::NormalisableRange<float> (0.0f, 1.0f), 0.0f));
 
     // ER decorrelation allpass depth (Phase 2). 0 = bypassed → bit-identical.
-    // Different prime delays per channel push L/R correlation toward 0 (VVV's
+    // Different prime delays per channel push L/R correlation toward 0 (a
     // uniform-neutral image) without the anti-phase of sign-opposition.
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "er_decorr", 1 }, "ER Decorr",
@@ -381,7 +381,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::NormalisableRange<float> (20.0f, 300.0f, 0.0f, 0.5f), fp0.monoBelow));
 
     // Partial mono-below blend. 1.0 = full mono (legacy, bit-identical); <1
-    // leaves the lows partially decorrelated (VVV lows ~-0.03 corr, not mono).
+    // leaves the lows partially decorrelated (target lows ~-0.03 corr, not mono).
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "mono_below_depth", 1 }, "Mono Below Depth",
         juce::NormalisableRange<float> (0.0f, 1.0f), 1.0f));

@@ -11,7 +11,7 @@
 // energy over ~80-130 ms so the late tank's impulse response BUILDS GRADUALLY
 // instead of being dense from sample zero.
 //
-// Why this exists (hall ER+tail topology, 2026-06-19): the reference halls
+// Why this exists (hall ER+tail topology, 2026-06-19): the target halls
 // front a snare with sparse discrete early reflections (onset → gap → loud 2nd
 // hit ~130-140 ms) over a diffuse tail that BUILDS over ~150 ms. DuskVerb's
 // DenseHall tank is dense from sample zero, so it FILLS the gap the discrete 2nd
@@ -42,7 +42,7 @@ public:
     // Per-preset BUILD TIME = hall size: scales the cascade delays, so a bigger hall
     // (later energy centroid) builds over a longer window. 1.0 = ~84 ms (Bright Hall);
     // a larger value (e.g. 1.6 → ~134 ms) suits a much larger space (Blade Runner,
-    // anchor t50 ~446 ms vs ~204). Re-builds the cascade (message-thread preset-apply;
+    // target t50 ~446 ms vs ~204). Re-builds the cascade (message-thread preset-apply;
     // change-guarded so it only re-allocates when the scale actually moves).
     void setTimeScale (float s)
     {

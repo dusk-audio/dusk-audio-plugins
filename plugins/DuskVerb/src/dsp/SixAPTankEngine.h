@@ -46,7 +46,7 @@ public:
     // Per-preset brightness/density tunables (default values match the
     // engine's historical hardcoded constants, so any preset that doesn't
     // call these gets identical sound to before). Black Hole opts in to
-    // brighter/denser values to match VS BlackHole's late-tail content.
+    // brighter/denser values for its target late-tail content.
     void setDensityBaseline (float v);          // default 0.62, range [0.30, 0.90]
     void setBloomCeiling (float v);             // default 0.85, range [0.70, 0.95]
     void setBloomStagger (const float values[6]); // per-stage [0..2] coeff multipliers
@@ -126,7 +126,7 @@ private:
         int writePos = 0;
         int mask = 0;
         int delaySamples = 0;
-        // vintage-hardware-style "spin and wander". The jitter on the read position
+        // random "spin and wander". The jitter on the read position
         // breaks the perfect periodicity of the cascaded allpasses that
         // otherwise leak each AP's delay period into the tail as an audible
         // discrete echo (verified by render-tool autocorrelation).
@@ -226,8 +226,8 @@ private:
         // Random-walk LFO replaces the old sine modulator. Sine LFOs at low
         // rates create a perceptible periodic warble when the period is close
         // to the tank's natural modal beat frequency; smoothed-noise wander
-        // breaks that beat and produces the "expensive" shimmer of high-end
-        // hardware random reverbs. This LFO carries the USER's mod_depth knob
+        // breaks that beat and produces the "expensive" shimmer of a
+        // random-modulated hall. This LFO carries the USER's mod_depth knob
         // for chorus character.
         DspUtils::RandomWalkLFO lfo;
     };
@@ -269,7 +269,7 @@ private:
     // densityDiffCoeff baseline was 0.18 — far too low to act as proper
     // diffusion; each AP just rang at its delay period (3.6-13.9 ms across
     // the 6-AP cascade at hall sizes), producing audible discrete repetitions
-    // in the tail. 0.55 matches reference hardware hall density-AP convention and
+    // in the tail. 0.55 is the usual hall density-AP value and
     // smears the signal across the cascade rather than ringing per-stage.
     // Loop stability is guaranteed by the 0.98 band-gain ceiling in
     // updateDecayCoefficients(). setTankDiffusion() scales around this.

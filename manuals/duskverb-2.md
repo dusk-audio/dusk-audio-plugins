@@ -1,8 +1,8 @@
 ---
 slug: duskverb-2
 title: DuskVerb 2
-version: 1.0.1
-last_updated: 2026-11-08
+version: 1.0.3
+last_updated: 2026-11-23
 tagline: Algorithmic reverb with 24 factory sounds
 ---
 
@@ -124,10 +124,16 @@ DuskVerb. Importing an original preset does not convert a DAW project or
 replace an original plugin instance. Keep the original plugin available for
 projects that use it.
 
-The 1.0 Windows VST3 identity matches Linux and macOS. Windows projects saved
-with an earlier DuskVerb 2 preview may need the preview instance replaced:
-export its user preset first, insert 1.0, import the preset, and check automation
-and routing. Keep the preview available until those projects are migrated.
+The VST3 identity is the same on Windows, Linux and macOS. The first Windows
+build, 1.0.0, had a different one. A Windows project saved with 1.0.0 opens in a
+host that reads VST3 compatibility information, as REAPER does. In a host that
+does not, the project reports DuskVerb 2 as missing and does not load its
+settings. If 1.0.0 is still installed, open the project with it before updating
+and save each instance's settings as a user preset; after the update insert
+DuskVerb 2, load the preset, and check automation and routing. If 1.0.0 is gone
+and no such preset was saved, the settings in that project cannot be brought
+back in that host: insert DuskVerb 2 and set it up again. CLAP, AU and LV2
+projects are not affected.
 Original DuskVerb has a separate identity and is unaffected.
 
 The plugin supports mono, mono-to-stereo and stereo operation where the host
@@ -138,3 +144,10 @@ In version 1.0.1 the Nonlinear burst stopped getting longer at a Decay of
 783 ms played that 783 ms burst and now plays the Decay it shows; set Decay
 to 783 ms to get the old length back (when typing it, include the unit).
 Recorded Decay automation above 783 ms likewise now plays what it says.
+
+Version 1.0.2 retunes five factory presets: Vocal Plate, Vintage Vocal
+Plate, Medium Drum Room, Vocal Hall and Deep Blue Day. A project saved with
+1.0.1 on Vocal Plate, Vintage Vocal Plate or Medium Drum Room plays the
+retuned sound. A project on Vocal Hall or Deep Blue Day keeps the settings it
+saved and sounds as before; select the preset again to get the retuned
+version.

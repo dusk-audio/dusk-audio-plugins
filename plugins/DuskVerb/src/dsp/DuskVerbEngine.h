@@ -163,10 +163,10 @@ public:
     // instead of at the first tap. 0 = legacy rolloff = bit-identical.
     void setEROnsetRiseMs (float ms);
     // Stereo-neutral early-field mode (Phase 2): independent R taps → uniform
-    // ~0 L/R correlation (REF-like), no anti-phase low. false → bit-identical.
+    // ~0 L/R correlation, no anti-phase low. false → bit-identical.
     void setERStereoNeutral (bool enabled);
     // ER decorrelation allpass depth (0 = bypassed → bit-identical). Different
-    // prime delays per channel → pushes L/R correlation toward 0 (REF-like).
+    // prime delays per channel → pushes L/R correlation toward 0.
     void setERDecorr (float coeff);
     // Phase 4 (Change 2): output cross-talk shelving matrix. Decorrelates only
     // the HF air (>1.5 kHz) by cross-bleeding each channel's high band into the
@@ -176,7 +176,7 @@ public:
     // Per-band stereo Width tilt — independent width for the LOW (<300 Hz), MID
     // (300 Hz-5 kHz) and HIGH (>5 kHz) bands of the SIDE signal (crossovers match
     // the width_low/mid/hi gates). The global Width scalar is frequency-flat, so
-    // matching one band's L/R correlation to the anchor mis-sets the others
+    // matching one band's L/R correlation to target mis-sets the others
     // (measured: a flat Width raise traded bands net-negative across the fleet).
     // 1.0/1.0/1.0 → bandWidthActive_ false → the original side*width path runs
     // (bit-identical for the fleet). >1 widens that band, <1 narrows it.
@@ -210,7 +210,7 @@ public:
     // stays bright. Feed-forward into the loop: the loop poles (per-band T60)
     // are untouched; only the recirculating field's spectrum is tilted. This
     // is the decoupled lever for the bright-attack -> dark-tail temporal
-    // signature (anchor cent 2214 -> 1346 Hz over 50 -> 500 ms) that in-loop
+    // signature (target cent 2214 -> 1346 Hz over 50 -> 500 ms) that in-loop
     // damping (pole-coupled) and post-sum trims (time-uniform) both failed
     // to express. 0 dB gains -> branch skipped -> bit-identical.
     void setTankFeedEQ (float lowFc, float lowGainDb, float highFc, float highGainDb);
@@ -260,7 +260,7 @@ public:
     // (splitHz = 0 → current behavior, bit-identical). When splitHz > 0, the
     // tank's LOW band (below splitHz) stays at unity while only MID/HIGH is
     // scaled by tankOutLevel_ — so front-loading the washy mid/high bloom does
-    // NOT sacrifice the tank's correlated low (body + REF-matched low image).
+    // NOT sacrifice the tank's correlated low (body + target low image).
     // One-pole split on the tank output, OUTSIDE the recursive loop → bit-safe.
     void setTankSplitHz (float hz);
 
@@ -375,7 +375,7 @@ public:
     void setDenseHallStereoImageBias (float amount);   // #123 source-side energy lean; 0 = off = bit-identical
     // FORK A: discrete early-reflection tap (the "duh-duh"). ms ~90-110, gain 0=off.
     void setReflectionTap (float ms, float gain, float lpFc = 11000.0f);  // lpFc: tap rolloff (11k=sharp tick, ~5-6k=fuller/softer)
-    void setEarlyTapBank  (const float* timesMs, const float* gains, int count, float lpFc = 9000.0f);  // up to 8 discrete ER taps at anchor-measured times; count 0 = off/bit-null
+    void setEarlyTapBank  (const float* timesMs, const float* gains, int count, float lpFc = 9000.0f);  // up to 8 discrete ER taps at target times; count 0 = off/bit-null
     void setEarlyTapDuck  (float amount, float holdMs, float thresh);  // transient-gate the tap bank: fires on a hit, silent on sustain. amount 0 = off/bit-null
 
     // Jot tonal correction (AccurateHall algo 10): flatten per-band steady-state
@@ -383,8 +383,8 @@ public:
     void setTonalCorrection (bool enabled);
 
     // Phase 3 output match-EQ: shape the wet steady-state envelope toward the
-    // anchor. corrLinear[0..8] = per-octave (63 Hz..16 kHz) output gains in
-    // [1e-3,1] (cut-only; normalize the anchor/DV ratio to max=1 offline, then
+    // target. corrLinear[0..8] = per-octave (63 Hz..16 kHz) output gains in
+    // [1e-3,1] (cut-only; normalize the target/DV ratio to max=1 offline, then
     // re-gain-match). All ~1.0 → identity → bit-null. Engine-agnostic.
     void setOutputMatchEQ (const float* corrLinear9);
 
@@ -434,7 +434,7 @@ public:
     void setOutputDiffusion (bool enable, float amount, float lfoScale, float delayScale);
 
     // Phase β (2026-05-29): per-preset FDN base delays. Lets each preset
-    // choose a 16-int delay-line set tuned to match a specific anchor's
+    // choose a 16-int delay-line set tuned to match a specific target's
     // per-band modal-beat pattern (Hilbert-FFT envelope peak frequency).
     // No-op for non-FDN engines. Pass nullptr to retain the engine default.
     void setFDNBaseDelays (const int* delays);
@@ -511,7 +511,7 @@ public:
     // DattorroPlateVintage front-load early-reflection network (algo 1 only).
     // erGain 0 = bypassed (byte-identical). See DattorroPlateVintage::setFrontLoad.
     void setDpvFrontLoad         (float erGain, float predelayMs, float tapMs, float lpHz);
-    // DPV post-main second reflection tap (the anchor's ~143 ms "duh-DUH").
+    // DPV post-main second reflection tap (the target ~143 ms "duh-DUH").
     // gain 0 = off = byte-identical. Forwards to DattorroPlateVintage::setPostMainTap.
     void setDpvPostMainTap       (float ms, float gain, float lpHz);
     // DPV dense early-field (fills the post-onset 0.1-0.5s "shelf"). gain 0 = off.
@@ -519,7 +519,7 @@ public:
     // Dattorro (algo 0) dense early-field — the SAME compact Schroeder field as the
     // DPV one, but summed post-tank in this engine (DattorroTank.cpp stays untouched →
     // all algo-0 presets bit-null when off). Fills the thin tail of the short rooms
-    // (Medium Drum Room: decay sub/low/mid -23..-30% vs anchor). gain 0 = off.
+    // (Medium Drum Room: decay sub/low/mid -23..-30% vs target). gain 0 = off.
     void setDattorroDenseField   (float gain, float predelayMs, float t60Ms);
 
     // Reset all delay buffers, biquad state, pre-delay, and mono-maker LP state
@@ -572,7 +572,7 @@ private:
     SpringEngine       spring_;
     NonLinearEngine    nonLinear_;
     ShimmerEngine      shimmer_;
-    DattorroPlateVintage dattorroVintage_;  // re-pointed 2026-05-13: algo 7 slot now hosts DattorroPlateVintage (vintage-hardware post-EQ on Dattorro tank). Variable name retained so call sites stay stable.
+    DattorroPlateVintage dattorroVintage_;  // re-pointed 2026-05-13: algo 7 slot now hosts DattorroPlateVintage (vintage-plate post-EQ on Dattorro tank). Variable name retained so call sites stay stable.
     DenseEarlyField    dattorroDenseField_; // algo 0 dense early-field, summed post-tank (off by default → bit-null). See setDattorroDenseField.
     DynamicLowMidLimiter dynLowMid_;        // post-tank sustained low-mid buildup limiter (piano cluster); off by default → bit-null.
     // Sustained-energy WET-INPUT duck (SustainBandLimiter.h; process() step 1b, pre-ER/
@@ -586,7 +586,7 @@ private:
     SustainBandLimiter::PeakCut  wetSusLimMidCutL_, wetSusLimMidCutR_,
                                  wetSusLimLowCutL_, wetSusLimLowCutR_;
     SustainBandLimiter::InputKey wetSusLimKey_;
-    ReverseRoomEngine  reverseRoom_;     // algo 9 (2026-05-31): causal rising-ER onset + dark FDN tail; replicates reference "Reverse 1" program.
+    ReverseRoomEngine  reverseRoom_;     // algo 9 (2026-05-31): causal rising-ER onset + dark FDN tail; a causal gated reverse.
     FDNReverbT<true>   accurateHall_;    // algo 10 (2026-06-09): FDN + per-octave GEQ. Also the fallback for the removed VintageTank(8)/AccurateHall32(12) engines on old saved sessions.
     SparseEarlyField   sparseField_;     // algo 11 (2026-06-10): velvet-noise front-loaded sparse early field. Summed with a reduced accurateHall_ tail in the SparseField process() case.
     DiffusedEarlyReflections diffuseER_; // 2026-06-25: DISCRETE-but-smooth early reflections (diffuse-then-tap) — the clarity/un-masking comb the velvet field can't do without going metallic. DenseHall additive bus; bit-null when no reflections set.
@@ -632,7 +632,7 @@ private:
     bool outDiffActive_ = false;
 
     // Phase 3 output match-EQ: a static per-octave (9-band) GEQ on the wet output
-    // that shapes DV's steady-state spectral envelope toward the anchor's measured
+    // that shapes DV's steady-state spectral envelope toward the target
     // octave balance (closes the ss-energy gates — engine-agnostic, post-tank,
     // pre-mix). Per-preset gain table via setOutputMatchEQ(); identity / skipped
     // when inactive → bit-null. Stereo state (L/R), shared coeffs.
@@ -681,7 +681,7 @@ private:
 
     // FORK A — discrete EARLY-REFLECTION tap ("duh-duh"). A single delayed dry tap
     // (~90-110 ms, per-preset) summed to the wet, giving the prominent SECOND
-    // arrival the REF hall anchors have at that time (DV's tank decays smoothly
+    // arrival the target halls have at that time (DV's tank decays smoothly
     // through it). NOT the smooth er_ cluster (8-80 ms) and NOT a tank-onset delay
     // (that left a silence gap — reverted). One discrete reflection + a slightly
     // offset R tap for width + a gentle LP (a real reflection is darker). reflGain_
@@ -695,7 +695,7 @@ private:
     float reflLpCoeff_ = 0.0f, reflLpStateL_ = 0.0f, reflLpStateR_ = 0.0f;  // reflection HF rolloff
 
     // Early-tap BANK (setEarlyTapBank) — up to 8 discrete reflections at the
-    // ANCHOR's measured arrival times. Generalizes the single Fork-A tap: the
+    // target arrival times. Generalizes the single Fork-A tap: the
     // early-refl-count gate wants 2-10 discrete arrivals; one tap can't match a
     // pattern. Shares reflBuf_/reflDryMono_ (clean pre-diffuser dry). Per-tap
     // alternating ±4 ms R offset decorrelates arrivals (width without a mono
@@ -714,7 +714,7 @@ private:
     // sparse early field (1.0 = full tail). Per-preset via kSparseFieldByName.
     float sparseTailGain_ = 0.45f;
     // algo 13 composite: ER front-end level in the mix (1.0 = full ER). Lets a
-    // less-front-loaded room (Medium Drum Room, anchor first50 44.8%) back off the
+    // less-front-loaded room (Medium Drum Room, target first50 44.8%) back off the
     // ER so it doesn't overshoot. Default 1.0 = Tiled Room behaviour (bit-exact).
     float sparseERGain_ = 1.0f;
     float diffuseERGain_ = 1.0f;   // DiffusedEarlyReflections bus level (DenseHall)
@@ -727,7 +727,7 @@ private:
     float sparseERDuckAmount_ = 0.0f;   // 0 = no duck (bit-null), 1 = full duck
     // Transient-ducked EARLY-TAP bank (setEarlyTapDuck): scales the discrete tap
     // sum by a per-sample transient gate so the taps fire on a hit (impulse/snare
-    // reproduce the anchor's discrete reflection pattern + prominent late tap) but
+    // reproduce the target discrete reflection pattern + prominent late tap) but
     // stay silent on sustain → no sine1k/ripple feed-forward cascade (measured
     // +13.9 dB sine1k on Large Chamber without the duck). A SEPARATE instance from
     // erDuck_: a preset may duck BOTH the sparse field (engine case) AND the tap
@@ -834,7 +834,7 @@ private:
 
     // Output air-shelf (HF voicing): a post-tank RBJ high-shelf that can BOOST
     // — unlike hiCutFilter_ (cut-only) and the cut-only output match-EQ — to
-    // lift the HF-deficient fleet toward the bright references (the documented
+    // lift the HF-deficient fleet toward the bright targets (the documented
     // HF-tilt wall: no engine had an HF up-tilt lever). Per-preset freq + gain
     // dB; 0 dB → inactive → bit-identical bypass. Feed-forward (not in any
     // feedback loop), so |H|>1 boost is unconditionally stable.
@@ -847,7 +847,7 @@ private:
     // Output low-shelf (LF "fullness" voicing): the deep-sub counterpart of the
     // air-shelf — a post-tank RBJ low-shelf that can BOOST the 20-60Hz deep-sub
     // octave the boom gates (40Hz+) and the cut-only EQs don't cover, restoring the
-    // weight a preset's Lo Cut strips vs the references. Per-preset freq + gain dB;
+    // weight a preset's Lo Cut strips vs the targets. Per-preset freq + gain dB;
     // 0 dB → inactive → bit-identical bypass. Feed-forward → boost is stable.
     Biquad lowShelfFilter_;
     float  lowShelfFreqHz_ = 60.0f;
@@ -905,14 +905,14 @@ private:
     // ---- Post-tank stereo image steer (issue #123) — declared LAST ----
     // Engine-agnostic source-side energy lean keyed off the clean dry-input L/R
     // balance, downstream of every engine. The legacy scalar path precedes width;
-    // the anchor-calibrated three-band path follows all output imaging so its
+    // the target-calibrated three-band path follows all output imaging so its
     // measured transfer is stable across preset width/cross-talk configurations.
     //
     // Declared LAST so existing member offsets are unchanged and the disabled path's
     // codegen stays byte-identical (Lessons #2). postSteerActive_ false → the whole
     // per-sample block is skipped → bit-null. Centered input → psEnvL_==psEnvR_ →
     // b==0 exactly → gl==gr==sqrt(1)==1.0f → wet × 1.0f → byte-identical even ON.
-    // raised 2026-07-20 to reach the Cathedral anchor's +11.9 dB lean (k=0.875); at full
+    // raised 2026-07-20 to reach the Cathedral target +11.9 dB lean (k=0.875); at full
     // k the opposite channel drops ~-10 dB — per-preset amounts are calibrated, presets
     // never receive raw 1.0 blindly.
     static constexpr float kPostSteerKMax = 0.9f;

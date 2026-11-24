@@ -96,8 +96,11 @@ void testParams()
     check(h == kHash110, T, "first %d symbols in 1.1.0 order (hash 0x%016llx)", kParams110, (unsigned long long)h);
     check((int)pWheelLfoRate == kParams110 && (int)pModOsc3Filter == kParams110 - 1, T,
           "wheel block appended right after the 1.1.0 table (first index %d)", (int)pWheelLfoRate);
-    check((int)kNumParams == kParams110 + 13 && (int)kNumCoreParams == (int)kNumParams, T,
-          "13 parameters appended, core %d == shell %d", (int)kNumParams, (int)kNumCoreParams);
+    // The wheel block is the 13 parameters right after the 1.1.0 table; later
+    // blocks (Prism Decay 2 / Rate Scale, #400) append after it.
+    check((int)pWheelFilter == kParams110 + 12 && (int)kNumCoreParams == (int)kNumParams, T,
+          "13 wheel parameters appended (last index %d), core %d == shell %d",
+          (int)pWheelFilter, (int)kNumParams, (int)kNumCoreParams);
 
     // Core name table, shell table and the module agree, symbol by symbol.
     struct Want { int idx; const char* sym; float def; };

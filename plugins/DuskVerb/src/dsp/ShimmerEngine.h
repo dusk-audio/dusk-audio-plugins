@@ -9,7 +9,7 @@
 #include <cmath>
 #include <vector>
 
-// ShimmerEngine v9 — external reference-style topology: pitch shifter sits in the
+// ShimmerEngine v9: pitch shifter sits in the
 // FEEDBACK loop only, not on the forward path. The reverb sees the dry
 // input directly, so the first wet hit is a natural reverb tail at the
 // original pitch. Pitched reverb is added on top of that natural tail
@@ -25,15 +25,14 @@
 //   (pitched fb × fb × softClip) ←── [PitchShifter +N] ←── [delay 50 ms]
 //
 // Why this fixes "doesn't sound like reverb":
-//   v8 (Eno aux-send chain) put the pitch shifter on the FORWARD path,
+//   v8 (aux-send chain) put the pitch shifter on the FORWARD path,
 //   so the very first reverb hit was already pitched up — the wet output
 //   was 100% pitched-cascade, with no natural reverb component anywhere.
 //   That's only musical when the dry source is loud in the listener's
-//   mix (Eno's actual use case), but as a "shimmer reverb" plugin where
+//   mix (the aux-send use case), but as a "shimmer reverb" plugin where
 //   mix=80% means dry sits at -10 dB while wet dominates, the listener
 //   hears only pitched-cascade-of-pitched-cascade and no real tail.
-//   v9 mirrors what external reference Shimmer / modern multi-FX hardware / modern shimmer
-//   plugins do: dry input goes straight through the reverb (natural
+//   v9: dry input goes straight through the reverb (natural
 //   tail), and the pitch shifter is in the feedback loop only, adding
 //   the shimmer harmonics on top. At PITCH=0, the engine collapses to
 //   an enhanced reverb with feedback-driven tail extension.
@@ -78,13 +77,13 @@ public:
     void setModDepth          (float depth);   // hijacked: PITCH (0..1 → 0..24 semitones)
     void setModRate           (float hz);      // hijacked: FEEDBACK (0.1..10 → 0..0.95)
     void setTankDiffusion     (float amount);
-    void setDownOctaveMix     (float mix);     // octave-DOWN voice level (0 = off/bit-null) — the warm low reference shimmer has, DV's up-only voices lacked
+    void setDownOctaveMix     (float mix);     // octave-DOWN voice level (0 = off/bit-null) — the warm low DV's up-only voices lacked
     void setSubOctaveMix      (float mix);     // octave-DOWN-2 voice (×0.25 → 250 Hz from 1 kHz); 0 = off/bit-null — reaches the deep lows in ONE step where the −1 oct cascade dies out
     void setFeedbackHpfHz     (float hz);      // feedback-loop HPF corner; lower = the low cascade survives (default 60; ~35 keeps killing the 12 Hz grain rumble)
     void setReverbBaseDelays  (const int* delays);   // its FDN hall's 16 base delays (DuskVerbEngine::setFDNBaseDelays reaches it too)
     void resetReverbBaseDelays();                    // back to the FDN's default table
     void setReverbFeedbackRotation (float peakRad, float rateHz);   // its FDN hall's time-varying feedback matrix (DuskVerbEngine::setFeedbackRotation reaches it); 0 = off
-    void setStereoMod         (float rateHz, float depth);  // wet-output stereo chorus/ensemble (anti-phase modulated delay); depth 0 = bypassed/bit-null. Matches REF Black Hole's moving stereo field.
+    void setStereoMod         (float rateHz, float depth);  // wet-output stereo chorus/ensemble (anti-phase modulated delay); depth 0 = bypassed/bit-null. Gives Black Hole its moving stereo field.
     void setHFAir             (float mix);   // post-loop +12 st air voice (genuine >12 kHz air); mix 0 = bit-null
     void setModeSmear         (float depthSamples, float rateHz);  // deep+slow FDN mode-smear on the reverb tail (anti-boing); depth 0 = off/bit-null
     // In-loop sustained-energy limiter in the internal reverb tank(s) (SustainBandLimiter.h).
@@ -94,7 +93,7 @@ public:
     void setSustainLimiterLow (float loHz, float hiHz, float threshDb, float maxCutDb,
                                float atkMs, float relFastMs, float relSlowMs);
     // RATIO-KEYED loop hi limiter (P5, 2026-07-08): Black Hole's pitch loop regenerates
-    // air endlessly on sustained input (piano air +36.9 dB vs anchor). An absolute
+    // air endlessly on sustained input (piano air +36.9 dB vs target). An absolute
     // threshold is impossible (sustained pink is 19 dB hotter in 4-16k than the piano's
     // air content), so the detector keys on REGENERATION: env(wet-hi)/env(input-hi).
     // Pink: input-hi large -> ratio small -> off. Piano: input has ~no air while the
@@ -107,11 +106,11 @@ public:
     void setNoiseSustainDuck  (float amt);
     void setUseDenseReverb    (bool on);     // route the tank through DenseHallReverb (dense diffusion → smooth, non-metallic HF tail) instead of the sparse 16-line FDN. false = legacy FDN (bit-identical).
     void setUseTailSpin       (bool on);     // 2-stage modulated-allpass spin-comb on the FDN wet output — smears the metallic HF while keeping the FDN's cascade/width/HF (for Deep Blue Day). false = untouched.
-    void setTailNoise         (float gain, float hpHz = 250.0f, float lpHz = 7000.0f);  // envelope-tracked band-limited noise floor on the output — the 'ocean' fade REF has; masks the sparse-mode ring. Band corners shape its color. 0 = off/bit-null.
+    void setTailNoise         (float gain, float hpHz = 250.0f, float lpHz = 7000.0f);  // envelope-tracked band-limited noise floor on the output — the intended 'ocean' fade; masks the sparse-mode ring. Band corners shape its color. 0 = off/bit-null.
     void setUpVoiceScale      (float v1, float v2);  // per-preset scale on the +12/+24 up-voices — fills the mid tail (250 Hz-1 kHz) harder on transients (Deep Blue Day). 1.0/1.0 = bit-identical.
-    void setOctaveCascade     (const float gains[4]);  // dry-fed feed-forward octave cascade levels (500/250/125/62 Hz) — matches REF's even down-cascade. all 0 = off/bit-null.
+    void setOctaveCascade     (const float gains[4]);  // dry-fed feed-forward octave cascade levels (500/250/125/62 Hz) — an even down-cascade. all 0 = off/bit-null.
     void setHFSustainDb       (float db, float cornerHz = 4000.0f);   // feedback-loop HF compensation shelf (dB lift above cornerHz, applied post-band-pass, pre-fb-gain). The FDN tank is HF-lossy per pass — that loss, not the loop LPF, caps HF T60 (T60-16k wall). Re-entering the loop with the HF band lifted extends the HF ring; bounded by kFeedbackLoopAttn + the loop softClip. First-order (6 dB/oct) — corner placement is the mid-isolation lever. 0 dB = off/bit-null.
-    void setOutputHeadroom    (float h);   // OUTPUT-stage tanh headroom. The wet output is tanh(oL*kWetOutputGain); on very-long-decay presets (Deep Blue Day, Decay 20 s) the sustained-tone buildup drives that tanh into its nonlinear region → ODD-harmonic (3k/5k) grit on a 1 kHz tone (~5% vs anchor 0.01%). h scales the knee: out = h*tanh(x/h) so the curve stays linear up to ±h (h>1 = more headroom, less distortion; the RAW wet feeding the loop is untouched, so cascade dynamics are identical). h=1.0 → EXACTLY tanh(x) = bit-null (Black Hole + every non-DBD preset).
+    void setOutputHeadroom    (float h);   // OUTPUT-stage tanh headroom. The wet output is tanh(oL*kWetOutputGain); on very-long-decay presets (Deep Blue Day, Decay 20 s) the sustained-tone buildup drives that tanh into its nonlinear region → ODD-harmonic (3k/5k) grit on a 1 kHz tone (~5% vs target 0.01%). h scales the knee: out = h*tanh(x/h) so the curve stays linear up to ±h (h>1 = more headroom, less distortion; the RAW wet feeding the loop is untouched, so cascade dynamics are identical). h=1.0 → EXACTLY tanh(x) = bit-null (Black Hole + every non-DBD preset).
     void setFreeze            (bool frozen);
 
 private:
@@ -187,7 +186,7 @@ private:
     // SECOND pitch voice — an octave ABOVE voice 1 (2026-05-31). A single
     // granular voice + its anti-alias filter (cutoff = nyquist/ratio ≈ 12 kHz
     // for the +12 octave) is band-limited: the top octave (10-20 kHz) is
-    // starved vs reference shimmer's broadband octave (Deep Blue Day: ss-air
+    // starved vs the target broadband octave (Deep Blue Day: ss-air
     // -19 dB short, spec_L1 max +36 dB at 12.9 kHz). Voice 2 pitches the same
     // feedback up a FURTHER octave (ratio ×2, AA cutoff ~6 kHz → output to
     // 24 kHz), filling 12-24 kHz so the shimmer reads broadband. Lower mix —
@@ -195,14 +194,14 @@ private:
     GranularPitchShifter pitch2L_, pitch2R_;
     static constexpr float kVoice2OctaveMul = 2.0f;   // +12 st above voice 1
     static constexpr float kVoice1Mix       = 0.78f;
-    static constexpr float kVoice2Mix       = 0.60f;   // 2026-06-16: 0.34->0.60 — boost the +24 air voice to fill 12-24k toward the anchor's broadband octave (cent_500/spec_L1@12.9k).
+    static constexpr float kVoice2Mix       = 0.60f;   // 2026-06-16: 0.34->0.60 — boost the +24 air voice to fill 12-24k toward the target broadband octave (cent_500/spec_L1@12.9k).
     float voice1Scale_ = 1.0f;   // per-preset multiplier on kVoice1Mix (mid-tail fill); 1.0 = legacy
     float voice2Scale_ = 1.0f;   // per-preset multiplier on kVoice2Mix; 1.0 = legacy
 
     // DOWN voice (2026-06-19) — pitches the feedback DOWN one octave (×0.5) IN THE
     // FEEDBACK LOOP, alongside the up voices. The loop regenerates a descending ladder
-    // (500, 250, 125 Hz from a 1 kHz input) — the WARM LOW that reference shimmer's
-    // DeepBlueDay has and DV's up-only voices lacked (measured: Shimmer 500 Hz = 64 dB,
+    // (500, 250, 125 Hz from a 1 kHz input) — the WARM LOW the target
+    // has and DV's up-only voices lacked (measured: target 500 Hz = 64 dB,
     // DV = 0 dB from a pure 1 kHz sine). Crucially it shares the SAME loop as the up
     // shimmer, so the low octave builds with IDENTICAL timing — no late "kick-in" (the
     // output-side self-feeding ladder had a per-rung grain latency → audibly late). A
@@ -212,28 +211,28 @@ private:
     // presets are byte-identical (they never instantiate this engine); the shimmer presets
     // that DO run this loop with downMix_ 0 are functionally unchanged but NOT byte-guaranteed
     // (this is the recursive-feedback TU — a guarded branch can still perturb FP ~1e-4 via
-    // codegen, see duskverb_bitnull_codegen_limit) — they're validated by ear/anchor, not byte-null.
+    // codegen, see duskverb_bitnull_codegen_limit) — they're validated by ear and gates, not byte-null.
     GranularPitchShifter pitchDownL_, pitchDownR_;    // −1 oct (×0.5 → 500 Hz)
     static constexpr float kVoiceDownRatio  = 0.5f;   // −12 st
     float downMix_ = 0.0f;                            // per-preset; 0 = off (bit-null)
 
     // SUB voice (2026-06-29) — pitches the feedback DOWN TWO octaves (×0.25). The −1 oct
     // voice must cascade 1k→500→250→125 over successive loop passes, losing level each step
-    // (softClip + loop attn), so the deep lows never arrive — measured against REF
-    // Shimmer DeepBlueDay the DV deficit GROWS with depth (500 Hz −7 dB, 250 −19, 125 −21,
+    // (softClip + loop attn), so the deep lows never arrive — measured against the
+    // Deep Blue Day target the DV deficit GROWS with depth (500 Hz −7 dB, 250 −19, 125 −21,
     // 60 −35). This voice reaches 250 Hz in ONE step (and the loop regenerates 125→62 from
-    // it), filling the low wash REF has. Same loop = identical build timing. subMix_ 0
+    // it), filling the intended low wash. Same loop = identical build timing. subMix_ 0
     // → branch skipped. Byte-identical on NON-shimmer presets (they don't run this engine);
     // the shimmer presets that run this loop with subMix_ 0 are functionally unchanged but
     // NOT byte-guaranteed (recursive-feedback TU codegen ~1e-4, see duskverb_bitnull_codegen_limit)
-    // — validated by ear/anchor, not byte-null.
+    // — validated by ear and gates, not byte-null.
     GranularPitchShifter pitchSubL_, pitchSubR_;      // −2 oct (×0.25 → 250 Hz)
     static constexpr float kVoiceSubRatio   = 0.25f;  // −24 st
     float subMix_ = 0.0f;                             // per-preset; 0 = off (bit-null)
 
     // DRY-FED OCTAVE CASCADE (2026-07-01) — a mono, FEED-FORWARD chain of −12 st pitch stages
     // fed from the DRY input (not the feedback), each octave summed into the reverb input at its
-    // OWN gain. This is what reference shimmer does: independent per-octave generation → a gentle
+    // OWN gain. Independent per-octave generation → a gentle
     // EVEN 500/250/125/62 descent. DV's old feedback down/sub voices could not (they read the
     // recirculated wet, so a transient starves them, and the "sub" ratio 0.25 was silently
     // clamped to 0.5 by setPitchRatio — never actually −24 st). Feed-forward → each stage's level
@@ -250,7 +249,7 @@ private:
     // override.
     //
     // NOTE (2026-06-16): the octave-up shimmer's defining trait — the pitched HF
-    // tail ringing AT LEAST AS LONG AS the body (anchor T60: Black Hole 16 kHz
+    // tail ringing AT LEAST AS LONG AS the body (target T60: Black Hole 16 kHz
     // 9.6 s, Deep Blue 16 kHz 11.9 s, both RISING with freq) — is structurally
     // unreachable on this FDN. Proven this session: switching to the per-octave-
     // GEQ variant (FDNReverbT<true>) fixes the BODY decay (125 Hz–2 kHz land
@@ -349,8 +348,8 @@ private:
 
     // Stereo modulation (chorus/ensemble) on the WET output — a slow LFO sweeps
     // per-channel modulated delays in ANTI-PHASE, so the L/R combs move oppositely:
-    // on a steady tone the image swings side-to-side (reference shimmer Black Hole
-    // measured 0.83 Hz, ±25 dB L-R), on broadband it's a moving, animated field.
+    // on a steady tone the image swings side-to-side (Black Hole target
+    // 0.83 Hz, ±25 dB L-R), on broadband it's a moving, animated field.
     // depth 0 → bypassed → bit-null. Applied post-feedback-write so the loop stays clean.
     struct StereoMod
     {
@@ -414,7 +413,7 @@ private:
     // Tail spin-comb — a 2-stage cascade of MODULATED Schroeder allpasses on the
     // WET output (allpass = magnitude-flat → no comb notches, only the slow spin
     // modulation smears the spectrum). L/R run in opposite mod phase. It smears the
-    // sparse FDN's metallic HF modes (kurt ~31 → ~9, matching REF) WITHOUT the
+    // sparse FDN's metallic HF modes (kurt ~31 → ~9, on target) WITHOUT the
     // density of a full reverb swap, so the FDN tank's deep-low cascade / width /
     // HF-sustain are preserved. Applied to the OUTPUT only, post-feedback-write, so
     // the recirculating cascade stays un-spun. Used on Deep Blue Day (keeps its FDN);
@@ -449,8 +448,8 @@ private:
     TailSpin tailSpin_;
     bool useTailSpin_ = false;
 
-    // Tail noise floor — the dense, noise-like decay REF's shimmer has and DV's sparse FDN
-    // lacks (measured: REF's fade stays denser + ~2 dB higher; DV collapses to a single
+    // Tail noise floor — the dense, noise-like decay the target has and DV's sparse FDN
+    // lacks (measured: the target fade stays denser + ~2 dB higher; DV collapses to a single
     // sparse mode). A low-level band-limited noise, ENVELOPE-TRACKED to the wet tail so it fades
     // WITH the decay ("white noise heard as the audio fades out"). It fills the spectral gaps
     // between DV's sparse modes → masks the discrete low-mode ring (203 Hz boing) so it blends
@@ -506,7 +505,7 @@ private:
     float noiseGain_ = 0.0f;   // per-preset; 0 = off (bit-null)
     float stereoModRate_ = 0.83f, stereoModDepth_ = 0.0f;   // depth 0 = bypassed (bit-null)
 
-    // HF-air voice — the genuine >12 kHz "air" reference shimmer has (centroid ~9.9k BH /
+    // HF-air voice — the genuine >12 kHz "air" of the target (centroid ~9.9k BH /
     // 6.6k DBD vs DV ~6k/5k). DV's reverb HF-damps + AA-caps the top, and the +12 loop
     // voice's air is cut by the 14 kHz feedback LPF before it recirculates. This taps the
     // wet 6-12 kHz POST-loop, pitches it up +12 st (the granular shifter outputs up to 24 kHz
@@ -548,17 +547,17 @@ private:
     // fundamental (≈12 Hz at 4096-sample grains / 48 kHz) and its first
     // few odd harmonics (~36, 60 Hz), while preserving natural-reverb
     // low-frequency content above 60 Hz. Earlier iteration at 120 Hz was
-    // over-aggressive and removed musical bass that external reference clearly retains.
+    // over-aggressive and removed musical bass that should stay.
     static constexpr float kFeedbackHpfHz = 60.0f;
     float feedbackHpfHz_ = kFeedbackHpfHz;   // runtime-tunable corner (setFeedbackHpfHz); default = the constant → bit-null for presets that don't override
     // LPF at 14 kHz — a gentle ceiling on the feedback path. Each cascade cycle
     // pitches up by N semitones (×2 at +12), so without any cap the migrated
     // content piles up against the AA-filter wall as a metallic 1-3 kHz peak.
     // Earlier iterations cut hard (1.5 kHz, then 6 kHz) but ran too dark vs the
-    // anchor (cent_500 was -42%). 14 kHz keeps the cascade bright while still
+    // target (cent_500 was -42%). 14 kHz keeps the cascade bright while still
     // trimming the very top before it recirculates. (A 22 kHz experiment gained
     // only +0.5 s T60-16k → the FDN hall, not this LPF, caps HF sustain.)
-    static constexpr float kFeedbackLpfHz = 14000.0f;   // 2026-06-16: 6k->14k brighten toward anchor
+    static constexpr float kFeedbackLpfHz = 14000.0f;   // 2026-06-16: 6k->14k brighten toward target
 
     double sampleRate_ = 48000.0;
     int    maxBlockSize_ = 0;
@@ -585,24 +584,23 @@ private:
     // characteristic shimmer swell on a sparse input like an impulse).
     // As the cascade grows, the softClip compresses the feedback,
     // dropping effective loop gain below unity. The cascade settles into
-    // a stable fixed point — the "self-limiting" behavior heard in
-    // external reference Shimmer's impulse response (cascade builds then plateaus
+    // a stable fixed point — the "self-limiting" behavior wanted in
+    // the impulse response (cascade builds then plateaus
     // around -52 dB before decaying).
     static constexpr float kFeedbackSoftClipKnee = 0.5f;
     static constexpr float kFeedbackSoftClipCeil = 1.5f;
 
     // Fixed per-cycle feedback attenuation. Combined with the softClip
     // above, sets the unity-loop-gain operating point. Empirically tuned
-    // against external reference reference renders so that low-signal loop gain is just
+    // on renders so that low-signal loop gain is just
     // above 1.0 (cascade buildup on impulse-like inputs) and high-signal
     // loop gain is below 1.0 (bounded steady-state, no runaway). The
     // user's FEEDBACK knob still scales the cascade strength linearly
     // around this calibration point.
     static constexpr float kFeedbackLoopAttn = 0.92f;
 
-    // Internal wet-output attenuation. Tuned by direct A/B comparison to
-    // external reference Shimmer reference renders (VS_EnoChoir_*, VS_CascadingHeaven_*)
-    // — at -20 dB the snare/noise peaks land within ~1 dB of the external reference engine
+    // Internal wet-output attenuation. Tuned by direct A/B comparison:
+    // at -20 dB the snare/noise peaks land within ~1 dB of target
     // at the same preset settings. The wrapper's gain_trim is reserved for
     // per-preset fine-tuning, not blanket level normalization.
     static constexpr float kWetOutputGain = 0.40f;   // -8 dB

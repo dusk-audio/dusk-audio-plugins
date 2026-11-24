@@ -612,7 +612,7 @@ void DuskVerbEngine::setModDepth (float depth)
     shimmer_.setModDepth (depth);   // hijacked → PITCH (0..1 → 0..24 semitones)
     dattorroVintage_.setModDepth (depth);
     // VintageTank: depth knob ∈ [0, 1] → mod excursion in samples (~0..16
-    // sample sweep range, the Lex/Griesinger lush-mode default).
+    // sample sweep range, a lush-mode default).
 
     reverseRoom_.setModDepth (depth);
     denseHall_.setModDepth (depth);
@@ -775,10 +775,10 @@ void DuskVerbEngine::setPmbDensifierCoeff (int band, float k)
 void DuskVerbEngine::setPostSteer (float amount)
 {
     // Issue #123 — engine-agnostic post-tank source-side ILD steer on the
-    // FINAL wet. 0 = off = bit-identical. Factory presets provide anchor-matched
+    // FINAL wet. 0 = off = bit-identical. Factory presets provide target-matched
     // amounts; precompute psK_ so the hot loop only reads members.
     // amount ∈ [-1,+1]: negative leans AWAY from the source side (de-steers presets whose
-    // engine already over-leans vs the anchor). psK_ tracks the sign.
+    // engine already over-leans vs target). psK_ tracks the sign.
     psAmount_        = std::clamp (amount, -1.0f, 1.0f);
     postSteerActive_ = std::abs (psAmount_) > 1.0e-6f || psProfileActive_;
     psK_             = kPostSteerKMax * psAmount_;
@@ -919,12 +919,12 @@ void DuskVerbEngine::setReflectionTap (float ms, float gain, float lpFc)
     // whole block is skipped → bit-identical for every preset not opting in.
     // lpFc = the tap's one-pole rolloff: 11 kHz = a sharp/bright tick (79VC);
     // ~5-6 kHz = a darker, FULLER, softer reflection (Bright Hall — the ear wanted
-    // VVV's "fuller, softer room reflection", not a snappy tick).
+    // a "fuller, softer room reflection", not a snappy tick).
     const float sr = static_cast<float> (sampleRate_);
     const int   maxD = (reflMask_ > 1) ? reflMask_ - 1 : 1;
     reflDelayL_ = std::clamp (static_cast<int> (ms * 0.001f * sr), 1, maxD);
     reflDelayR_ = std::clamp (static_cast<int> ((ms + 9.0f) * 0.001f * sr), 1, maxD);
-    reflGain_   = std::clamp (gain, 0.0f, 4.0f);   // >1 allowed: the anchor tap is LOUDER than the dry (+8.5dB rel onset), needs gain>1 to match the discrete-tap prominence
+    reflGain_   = std::clamp (gain, 0.0f, 4.0f);   // >1 allowed: the target tap is LOUDER than the dry (+8.5dB rel onset), needs gain>1 to match the discrete-tap prominence
     reflActive_ = reflGain_ > 1.0e-6f;
     const float fc = std::clamp (lpFc, 1000.0f, 20000.0f);
     reflLpCoeff_ = 1.0f - std::exp (-6.283185307179586f * fc / sr);
@@ -932,8 +932,8 @@ void DuskVerbEngine::setReflectionTap (float ms, float gain, float lpFc)
 
 void DuskVerbEngine::setEarlyTapBank (const float* timesMs, const float* gains, int count, float lpFc)
 {
-    // Multi-tap generalization of Fork A: N discrete reflections at the anchor's
-    // measured arrival times. Shares reflBuf_ (clean pre-diffuser dry). Per-tap
+    // Multi-tap generalization of Fork A: N discrete reflections at the target
+    // arrival times. Shares reflBuf_ (clean pre-diffuser dry). Per-tap
     // alternating ±4 ms R offset gives each arrival width without smearing the
     // pattern. count 0 → etapActive_ false → the block is skipped → bit-null.
     const float sr = static_cast<float> (sampleRate_);
@@ -2087,7 +2087,7 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             accurateHall_.process (tankInL_.data(), tankInR_.data(),
                                    tankOutL_.data(), tankOutR_.data(), numSamples);
             // Early-field composite (opt-in, 2026-07-07): the FDN's slow washy onset
-            // (~26 ms attack floor) can't reach a sharp front-loaded plate anchor
+            // (~26 ms attack floor) can't reach a sharp front-loaded plate target
             // (Vocal Plate: attack 9.3 ms, onset_slope 4.3, first50 49 %, 6 reflections
             // 26-79 ms). The ducked velvet sparse ER supplies that sharp early field on
             // top of the FDN tail. Gated by accurateHallEarlyFieldOn_ → every other
@@ -2133,7 +2133,7 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             // COMPOSITE: DuskVerb's diffused-FDN dense hall tail (primary) + the
             // sparse discrete-ER front (additive). The dense tank already builds
             // its own density/smoothness; sparseField_ supplies the early discrete
-            // reflections the anchor halls have. sparseERGain_ sets the ER level
+            // reflections the target halls have. sparseERGain_ sets the ER level
             // (0 -> pure tail). Makes its own early field -> off the smooth-ER bus.
             // Optional BUILDUP: a long allpass cascade makes the dense tail BUILD
             // gradually (quiet early) instead of dense from sample 0 — lets the sparse
@@ -2251,7 +2251,7 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
                 tankOutR_[static_cast<size_t> (i)] += sparseOutR_[static_cast<size_t> (i)] * sparseERGain_;
             }
             // Diffused-burst ER bus, same hookup as the DenseHall composite
-            // (2026-07-06: the post-hit "whoosh" the VVV anchor carries lives
+            // (2026-07-06: the post-hit "whoosh" the target carries lives
             // here — the parallel band tanks alone onset too cleanly).
             // Optionally highpassed (setDiffuseERHighpass) so the whoosh adds
             // NO steady-state energy at/below 1 kHz — an unfiltered bus pumped
@@ -2292,7 +2292,7 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         outputDiffusion_.process (tankOutL_.data(), tankOutR_.data(), numSamples);
 
     // ---- 4c) Phase 3 output match-EQ (per-preset): static per-octave GEQ that
-    // shapes the wet steady-state envelope toward the anchor's measured octave
+    // shapes the wet steady-state envelope toward the target octave
     // balance. Post-tank, pre-mix, engine-agnostic. Skipped → bit-null. ----
     if (matchEQActive_)
         for (int i = 0; i < numSamples; ++i)
@@ -2302,7 +2302,7 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         }
 
     // Dynamic low-mid buildup limiter (piano-cluster fix) — cut the sustained low-mid
-    // charge the recirculating tanks accumulate above the anchors. Post-tank, before the
+    // charge the recirculating tanks accumulate above target. Post-tank, before the
     // ER sum. active() false (maxCut 0) → skipped → tankOut byte-identical (bit-null).
     if (dynLowMid_.active())
         for (int i = 0; i < numSamples; ++i)
@@ -2324,10 +2324,10 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
     // shared ER bus on top would double-count the onset. Exclude both.
     // DenseHall RE-INCLUDED 2026-06-16: its 10-stage input allpass is a SMEAR,
     // not discrete reflections — the shared er_ supplies the parallel DISCRETE
-    // early taps (the "duh-duh" the anchor halls produce, which the user heard
+    // early taps (the "duh-duh" the target halls produce, which the user heard
     // missing on Bright Hall + Blade Runner). The 2026-06-13 DenseHall migration
     // dropped these presets' (already-set) erLevel by excluding them here. The two
-    // are complementary (discrete ER + diffuse tail = the anchor's early field),
+    // are complementary (discrete ER + diffuse tail = the target early field),
     // NOT double-ER. Per-preset erLevel re-tuned after this change.
     const bool useSmoothER = (currentEngine_ != EngineType::DattorroVintage
                            && currentEngine_ != EngineType::ReverseRoom
@@ -2400,7 +2400,7 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
                 wetL += reflGain_ * reflLpStateL_;
                 wetR += reflGain_ * reflLpStateR_;
             }
-            // Early-tap BANK: N anchor-timed discrete arrivals, one shared LP pair
+            // Early-tap BANK: N target-timed discrete arrivals, one shared LP pair
             // (real reflections are darker than the direct sound).
             if (etapActive_)
             {
@@ -2412,7 +2412,7 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
                 }
                 etapLpStateL_ += etapLpCoeff_ * (sumL - etapLpStateL_);
                 etapLpStateR_ += etapLpCoeff_ * (sumR - etapLpStateR_);
-                // Transient duck: on a hit the taps fire (reproduce the anchor's
+                // Transient duck: on a hit the taps fire (reproduce the target
                 // discrete reflection pattern); on sustain they close so the
                 // feed-forward tap sum can't pump the steady-state spectrum
                 // (sine1k/ripple). Keyed off the CLEAN dry-mono (same source the
@@ -2567,7 +2567,7 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             const float highR   = wetR - monoLPStateR_;
             // Partial mono: blend the per-channel low toward the summed mono by
             // monoBelowDepth_. 1.0 = full mono (legacy, bit-identical); <1 leaves
-            // the lows PARTIALLY decorrelated — VVV's lows sit ~-0.03 corr, not
+            // the lows PARTIALLY decorrelated — the target lows sit ~-0.03 corr, not
             // mono, so full mono over-correlated the broadband stereo image.
             const float lowL = monoBelowDepth_ * monoLow + (1.0f - monoBelowDepth_) * monoLPStateL_;
             const float lowR = monoBelowDepth_ * monoLow + (1.0f - monoBelowDepth_) * monoLPStateR_;
@@ -2615,7 +2615,7 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         }
 
         // The calibrated profile is deliberately the final stereo operation.
-        // This makes its anchor fit independent of Width/Mono Maker/cross-talk,
+        // This makes its target fit independent of Width/Mono Maker/cross-talk,
         // while the legacy scalar path above remains byte-compatible.
         if (psProfileActive_)
         {
@@ -2667,7 +2667,7 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
                 wetR = s * wetL + c * wetR;
                 wetL = rotatedL;
             }
-            // Some symmetric mono-summing tanks match the anchor by mirroring
+            // Some symmetric mono-summing tanks match target by mirroring
             // their final field for a hard-right source. A full swap preserves
             // channel energy exactly, unlike a crossfade, and leaves the
             // calibrated hard-left transfer untouched.

@@ -66,7 +66,7 @@ void OutputDiffusion::setDiffusion (float amount)
     // Maps 0.0-1.0 to coefficient 0.0-0.62. The deeper 8-stage cascade needs
     // a stronger per-stage coefficient to fully decorrelate the FDN's sparse
     // HF modes into a dense wash (the old 4-stage ×0.3 cap topped out at
-    // kurtosis ~18 vs the anchor's 12). 0.62 stays well inside allpass
+    // kurtosis ~18 vs the target 12). 0.62 stays well inside allpass
     // stability and below the point where the cascade rings on its own.
     diffusionCoeff_ = std::clamp (amount, 0.0f, 1.0f) * 0.62f;
 }

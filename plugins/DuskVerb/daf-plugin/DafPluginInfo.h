@@ -6,9 +6,16 @@
 
 #pragma once
 
-// Freeze the public 1.0 VST3 identity across Windows COM and Unix GUID layouts.
-// This changes the Windows preview ID only; legacy DuskVerb has its own IDs.
+// The VST3 class ID string is 2046504473616C63764473446B737544 on every platform, as
+// released since 1.0.1 (DAF_VST3_CROSS_PLATFORM_UID). It is frozen: never remove that
+// define, and never change DAF_PLUGIN_UNIQUE_ID or DAF_PLUGIN_BRAND_ID.
+// The first Windows build, 1.0.0, did not have the define, so Windows showed its ID
+// as 445046206173636C764473446B737544, and Windows projects saved with it stopped
+// finding the plugin in 1.0.1 and 1.0.2. DAF_VST3_COMPATIBLE_OTHER_UID_LAYOUT declares
+// that ID an older ID of this plugin, so those projects load again in hosts that
+// support VST3's IPluginCompatibility. DuskVerbVst3IdentityTests.cpp pins both strings.
 #define DAF_VST3_CROSS_PLATFORM_UID
+#define DAF_VST3_COMPATIBLE_OTHER_UID_LAYOUT
 
 #define DAF_PLUGIN_BRAND        "Dusk Audio"
 #define DAF_PLUGIN_NAME         "DuskVerb 2"

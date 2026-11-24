@@ -147,6 +147,7 @@ public:
     void  setCutoff(float hz, double fs) noexcept { c = 1.0f - std::exp(-kDuskTwoPi * hz / (float)fs); }
     void  reset() noexcept { z = 0.0f; }
     float process(float x) noexcept { z += c * (x - z); return z; }
+    float state() const noexcept { return z; }
 
 private:
     float c = 1.0f, z = 0.0f;
@@ -158,6 +159,7 @@ public:
     void  setCutoff(float hz, double fs) noexcept { lp.setCutoff(hz, fs); }
     void  reset() noexcept { lp.reset(); }
     float process(float x) noexcept { return x - lp.process(x); }
+    float state() const noexcept { return lp.state(); }
 
 private:
     OnePoleLP lp;
@@ -176,6 +178,8 @@ public:
         R = std::exp(-kDuskTwoPi * cutoffHz / (float)fs);
     }
     void  reset() noexcept { x1 = y1 = 0.0f; }
+    float stateX() const noexcept { return x1; }
+    float stateY() const noexcept { return y1; }
     float process(float x) noexcept
     {
         const float y = x - x1 + R * y1;

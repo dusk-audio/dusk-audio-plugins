@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <vector>
 
@@ -151,6 +153,105 @@ std::vector<float> renderSpringImpulse()
     return output;
 }
 
+// First arrival (first sample within 40 dB of the impulse's peak), in seconds,
+// of the spring alone at a given host rate. Negative when the render is invalid:
+// any non-finite sample, or no arrival at all (a silent render).
+double springOnsetSeconds(double rate)
+{
+    duskaudio::SpringReverb spring;
+    spring.prepare(rate, 1.0f);
+    const int samples = (int)std::lround(0.2 * rate);
+    std::vector<float> output((size_t)samples, 0.0f);
+    float peak = 0.0f;
+    for (int i = 0; i < samples; ++i)
+    {
+        const float sample = spring.process(i == 0 ? 1.0f : 0.0f);
+        if (!std::isfinite(sample))
+            return -1.0;
+        output[(size_t)i] = sample;
+        peak = std::max(peak, std::abs(sample));
+    }
+    if (peak <= 0.0f)
+        return -1.0;
+    for (int i = 0; i < samples; ++i)
+        if (std::abs(output[(size_t)i]) > 0.01f * peak)
+            return (double)i / rate;
+    return -1.0;
+}
+
+// One channel pair of output from TapeEchoDSP for a fixed stereo programme in
+// mode 11 (three heads, regeneration, spring), rendered in calls of
+// blockSize samples. inPlace passes the output buffers as the input too, the
+// way hosts that process in place do.
+std::array<std::vector<float>, 2> renderMode11(int blockSize, bool inPlace)
+{
+    constexpr int renderSamples = 24000;
+    duskaudio::TapeEchoDSP dsp;
+    dsp.setMode(11);
+    dsp.setIntensity(0.6f);
+    dsp.setReverbLevel(0.6f);
+    dsp.setTapeAge(1.0f);
+    dsp.setRepeatRate(0.8f);
+    dsp.prepare(kSampleRate, blockSize);
+
+    std::array<std::vector<float>, 2> input{
+        std::vector<float>(renderSamples, 0.0f),
+        std::vector<float>(renderSamples, 0.0f) };
+    uint32_t seed = 987654321u;
+    for (int i = 0; i < 6000; ++i)
+        for (int c = 0; c < 2; ++c)
+        {
+            seed = seed * 1664525u + 1013904223u;
+            input[(size_t)c][(size_t)i] =
+                0.4f * (float)(int32_t)seed * (1.0f / 2147483648.0f);
+        }
+    std::array<std::vector<float>, 2> output = input;
+    std::array<std::vector<float>, 2> scratch{
+        std::vector<float>(renderSamples, 0.0f),
+        std::vector<float>(renderSamples, 0.0f) };
+    for (int offset = 0; offset < renderSamples; offset += blockSize)
+    {
+        const int count = std::min(blockSize, renderSamples - offset);
+        float* outs[] = { (inPlace ? output : scratch)[0].data() + offset,
+                          (inPlace ? output : scratch)[1].data() + offset };
+        const float* ins[] = { (inPlace ? output : input)[0].data() + offset,
+                               (inPlace ? output : input)[1].data() + offset };
+        dsp.processBlock(ins, outs, 2, count);
+    }
+    return inPlace ? output : scratch;
+}
+
+// The per-sample 4x preamp chain BlockPreamp4x replaced, as it was before any
+// of the #401 changes: two zero-stuffing halfband upsamplers (kA, then kB,
+// full sums on every phase), the shaper at 4x, and the mirror decimators, one
+// host sample at a time.
+float referencePreamp4x(duskaudio::HalfbandFIR<47, 12>& upA,
+                        duskaudio::HalfbandFIR<15, 4>& upB,
+                        duskaudio::HalfbandFIR<15, 4>& downB,
+                        duskaudio::HalfbandFIR<47, 12>& downA, float x)
+{
+    using duskaudio::hbtaps::kA;
+    using duskaudio::hbtaps::kB;
+    const auto shape = [](float v) {
+        v = std::min(2.5f, std::max(-2.5f, v * 2.65f));
+        const float v2 = v * v;
+        return v * (27.0f + v2) / (27.0f + 9.0f * v2);
+    };
+    for (int p = 0; p < 2; ++p)
+    {
+        upA.push(p == 0 ? x : 0.0f);
+        const float a = 2.0f * upA.out(kA);
+        for (int q = 0; q < 2; ++q)
+        {
+            upB.push(q == 0 ? a : 0.0f);
+            const float b = 2.0f * upB.out(kB);
+            downB.push(shape(b));
+        }
+        downA.push(downB.out(kB));
+    }
+    return downA.out(kA);
+}
+
 double windowEnergy(const std::vector<float>& signal,
                     double startSeconds, double endSeconds)
 {
@@ -278,6 +379,115 @@ int main()
                   << " earlyDecay=" << earlyDecay
                   << " lateDecay=" << lateDecay << '\n';
         return 1;
+    }
+
+    // The tank runs at a reduced internal rate behind host-rate resampling
+    // whose latency is taken out of the transit. If that latency were wrong,
+    // the arrival would move with the host rate (the factor is 4 at 44.1/48,
+    // 8 at 88.2/96 and 16 at 192 kHz), so pin it to within 0.1 ms of 48 kHz.
+    // The internal-rate sample grid itself is ~0.09 ms, hence the bound.
+    {
+        const double reference = springOnsetSeconds(48000.0);
+        if (!(reference >= 0.0))
+        {
+            std::cerr << "spring onset render invalid at 48 kHz "
+                         "(non-finite or silent)\n";
+            return 1;
+        }
+        // 22.05 kHz (one stage) and 32 kHz (16 kHz internal, runtime cliff)
+        // are pinned too. Hosts below 20 kHz are not resampled and their
+        // internal sample grid (0.09-0.125 ms) is coarser than this bound.
+        for (double rate : { 22050.0, 32000.0, 44100.0, 88200.0, 96000.0, 192000.0 })
+        {
+            const double onset = springOnsetSeconds(rate);
+            if (!(onset >= 0.0))
+            {
+                std::cerr << "spring onset render invalid at " << rate
+                          << " Hz (non-finite or silent)\n";
+                return 1;
+            }
+            if (!(std::abs(onset - reference) <= 0.0001))
+            {
+                std::cerr << "spring first arrival moves with the host rate: "
+                          << onset * 1000.0 << " ms at " << rate << " Hz vs "
+                          << reference * 1000.0 << " ms at 48 kHz\n";
+                return 1;
+            }
+        }
+    }
+
+    // The per-sample work runs in passes over 128-sample sub-blocks, and the
+    // preamp keeps its own histories across them: the output must not depend
+    // on where host blocks split those sub-blocks, nor on the host passing the
+    // output buffers as the input (in-place processing). Mode 11 keeps all
+    // three heads, the regenerating loop and the spring busy.
+    {
+        const auto at128 = renderMode11(128, false);
+        const auto at129 = renderMode11(129, false);
+        const auto inPlace129 = renderMode11(129, true);
+        bool heard = false;
+        for (int c = 0; c < 2; ++c)
+            for (size_t i = 0; i < at128[(size_t)c].size(); ++i)
+            {
+                heard = heard || std::abs(at128[(size_t)c][i]) > 1.0e-4f;
+                if (std::memcmp(&at128[(size_t)c][i], &at129[(size_t)c][i], sizeof(float)) != 0
+                    || std::memcmp(&at128[(size_t)c][i], &inPlace129[(size_t)c][i], sizeof(float)) != 0)
+                {
+                    std::cerr << "mode 11 output depends on block split or in-place "
+                                 "buffers at channel " << c << " sample " << i << ": "
+                              << at128[(size_t)c][i] << " / " << at129[(size_t)c][i]
+                              << " / " << inPlace129[(size_t)c][i] << '\n';
+                    return 1;
+                }
+            }
+        if (!heard)
+        {
+            std::cerr << "mode 11 block-split check rendered silence\n";
+            return 1;
+        }
+    }
+
+    // BlockPreamp4x must reproduce the per-sample halfband chain bit for bit,
+    // over uneven sub-block sizes, hot and quiet passages and signed zeros.
+    {
+        duskaudio::BlockPreamp4x block;
+        duskaudio::HalfbandFIR<47, 12> upA, downA;
+        duskaudio::HalfbandFIR<15, 4> upB, downB;
+        const auto shape = [](float v) {
+            v = std::min(2.5f, std::max(-2.5f, v * 2.65f));
+            const float v2 = v * v;
+            return v * (27.0f + v2) / (27.0f + 9.0f * v2);
+        };
+        uint32_t seed = 12345u;
+        const int sizes[] = { 1, 7, 128, 64, 3, 128, 100, 2, 128, 128, 31 };
+        std::vector<float> in, out;
+        int checked = 0;
+        for (int pass = 0; pass < 6; ++pass)
+            for (int size : sizes)
+            {
+                in.assign((size_t)size, 0.0f);
+                out.assign((size_t)size, 0.0f);
+                for (int i = 0; i < size; ++i)
+                {
+                    seed = seed * 1664525u + 1013904223u;
+                    const float r = (float)(int32_t)seed * (1.0f / 2147483648.0f);
+                    in[(size_t)i] = (pass % 3 == 0) ? 1.4f * r
+                                  : (pass % 3 == 1) ? 1.0e-3f * r
+                                  : (i % 5 == 0 ? -0.0f : 0.3f * r);
+                }
+                block.process(in.data(), out.data(), size, shape);
+                for (int i = 0; i < size; ++i)
+                {
+                    const float ref = referencePreamp4x(upA, upB, downB, downA, in[(size_t)i]);
+                    if (std::memcmp(&ref, &out[(size_t)i], sizeof(float)) != 0)
+                    {
+                        std::cerr << "BlockPreamp4x differs from the per-sample chain at "
+                                  << checked << ": " << out[(size_t)i] << " vs " << ref << '\n';
+                        return 1;
+                    }
+                    ++checked;
+                }
+            }
     }
 
     // Noise spans the captured floor (0) to 60 dB above it (1), and the hum

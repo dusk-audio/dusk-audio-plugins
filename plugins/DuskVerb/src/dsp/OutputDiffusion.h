@@ -9,7 +9,7 @@
 // Activated per-preset (Bright Hall, 2026-06-10) to smear the FDN's sparse
 // high-frequency tail modes into a denser, smoother wash — the 16-line FDN
 // leaves isolated HF resonances above 4 kHz (tail spectral kurtosis ~19 vs a
-// dense reference ~12) that read as a metallic ring. delayScale spreads the
+// dense target ~12) that read as a metallic ring. delayScale spreads the
 // allpass delays so the smearing reaches the closely-spaced HF modes.
 class OutputDiffusion
 {

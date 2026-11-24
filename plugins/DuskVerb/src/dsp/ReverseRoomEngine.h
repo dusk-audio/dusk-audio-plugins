@@ -5,7 +5,7 @@
 #include <vector>
 
 // ReverseRoomEngine — the gated-reverse engine (algo 9, the single preset
-// "Reverse Taps"), reverse-engineered from the GATED lex-reverse-1 anchor:
+// "Reverse Taps"), a GATED reverse:
 //
 //   * NOT backwards-convolution — fully CAUSAL, no time-reversal, no latency.
 //   * The "reverse" character is a RISING-GAIN early-reflection onset: discrete
@@ -14,14 +14,14 @@
 //   * An INPUT-KEYED hard gate (keyed off |dry input|, NOT the tail — the tail
 //     never falls below threshold) supplies the pre-onset silence + post-peak
 //     cliff: it opens on input, HOLDS while input is present (duration-dependent
-//     hold), then HARD-releases to near-silence → the anchor's gated envelope
+//     hold), then HARD-releases to near-silence → the target gated envelope
 //     (env_p2p ~+72 dB), cutting the tail to its short per-band T60.
 //
 // Signal flow:  input -> [rising-ER swell FIR] -> [VelvetTail tail] -> [gate] -> out
 // The swell-ER shapes the dry input into a rising-onset burst that feeds the
 // feed-FORWARD VelvetTail (sparse velvet-noise FIR: per-band tap-gain decay, NO
 // recirculation → no mid-decay floor, per-band decay/level/brightness/stereo all
-// decouple). The input-keyed gate then cuts the tail to the anchor's short T60 +
+// decouple). The input-keyed gate then cuts the tail to the target short T60 +
 // hard cliff. (Replaces the original FDNReverb tail, which floored the mids ~0.3 s
 // and ran too dark/correlated for this short, bright, wide gated reverse.)
 //
@@ -33,7 +33,7 @@
 //   Saturation, Mod Depth/Rate, Tail Spin, Freeze) are NO-OPS on this engine —
 //   the VelvetTail per-band T60/level/brightness + the gate timing are baked
 //   engine constants (the fixed "Reverse" signature: rampMs_/slope_/holdMs_/
-//   closeTauMs_/bandT60_), tuned to the reference, not exposed as knobs.
+//   closeTauMs_/bandT60_), tuned to target, not exposed as knobs.
 class ReverseRoomEngine
 {
 public:
@@ -65,14 +65,14 @@ private:
     // Dark modulated diffuse tail, fed by the rising-ER output (so the tail
     // inherits the swell). FDNReverbT<true> = AccurateHall GEQ variant: a
     // per-OCTAVE loop-attenuation GEQ (setOctaveT60) shapes each band's decay +
-    // level. The anchor's per-band T60 spans 0.17-0.47s on SUSTAINED but its
+    // level. The target per-band T60 spans 0.17-0.47s on SUSTAINED but its
     // IMPULSE tail is 0.094s — reconciled by the DURATION-DEPENDENT hold below
     // (long input → long hold → bands decay naturally → GEQ sets per-band T60;
     // short input → short hold → the gate sets the fast impulse tail).
     VelvetTail velvet_;
 
     // Rising-gain early-reflection FIR (the "reverse" onset). Two independent
-    // tap sets (L/R) for the wide-stereo decorrelation the reference shows.
+    // tap sets (L/R) for the intended wide-stereo decorrelation.
     static constexpr int kMaxTaps = 128;
     struct ERChannel
     {
@@ -87,15 +87,15 @@ private:
 
     std::vector<float> erBufL_, erBufR_;   // ER output scratch -> FDN input
 
-    // "Reverse" signature (tuned to lex-reverse-1). rampMs_ is the onset rise
+    // "Reverse" signature. rampMs_ is the onset rise
     // duration; slope_ is the Tap Slope (gain ~ (t/ramp)^slope_).
-    // GATED anchor (lex-reverse-1 re-measured 2026-06-17): ~102ms predelay →
+    // GATED target (re-measured 2026-06-17): ~102ms predelay →
     // concave swell to peak ~320ms → HARD CLIFF to silence. slope_<1 = concave
     // (gain ~ (t/ramp)^0.7, fast initial rise into the peak). The input-keyed
     // GATE (below) supplies the pre-onset silence + post-peak cliff, so floorGain_
     // drops to near-zero (the old 0.45 dodged an env_p2p cliff vs the OLD UNGATED
-    // anchor — that anchor/verdict is stale; the current anchor IS +72dB gated).
-    float rampMs_    = 310.0f;  // onset RISE to the peak. 2026-07-04 EAR "too much vs the subtle Lex": 470 made the swell keep rising to 606 ms and peak +1.5 dB hot where the Lex peaks at 410 ms and fades — 310 (+102 ms predelay) lands the peak at ~410.
+    // target, a stale verdict; the current target IS +72dB gated).
+    float rampMs_    = 310.0f;  // onset RISE to the peak. 2026-07-04 EAR "too much, should be subtle": 470 made the swell keep rising to 606 ms and peak +1.5 dB hot where the target peaks at 410 ms and fades — 310 (+102 ms predelay) lands the peak at ~410.
     float slope_     = 0.7f;    // Tap Slope; <1 = concave (was 1.6 convex)
     float floorGain_ = 0.05f;   // near-zero: gate owns silence/cliff (was 0.45)
     float density_   = 0.85f;   // from setTankDiffusion
@@ -122,14 +122,14 @@ private:
     int   holdCounter_ = 0;        // samples remaining in Hold before Closing
     int   holdSamples_ = 0;        // = holdMs_ * sr (base hold, retriggerable)
     float holdMs_      = 340.0f;   // BASE hold ms (≈ impulse; short input) (swept)
-    float closeTauMs_  = 8.0f;     // close slew tau. 2026-07-08: 30->8 WITH the onset-window close — the anchor's post-peak fall is a cliff once the window owns the timing (tail_t60 +255%->+24%). The old "30 ms reads subtle" note predates the window.
+    float closeTauMs_  = 8.0f;     // close slew tau. 2026-07-08: 30->8 WITH the onset-window close — the target post-peak fall is a cliff once the window owns the timing (tail_t60 +255%->+24%). The old "30 ms reads subtle" note predates the window.
 
     // DURATION-DEPENDENT hold: hold grows with how long input has been present in
     // this burst, so an impulse cuts fast (impulse tail_t60 0.094s) while
     // sustained holds long enough that the per-octave GEQ decay (≤0.47s) shows as
     // the measured per-band T60 instead of being truncated by the gate.
     int   inputActiveSamps_ = 0;   // samples input has been present this burst
-    // ONSET-KEYED window close (2026-07-08): the Lex reverse gate is a FIXED
+    // ONSET-KEYED window close (2026-07-08): the target reverse gate is a FIXED
     // WINDOW from burst ONSET — close begins T_window after the burst STARTS,
     // regardless of input length. A fixed input-off hold cannot satisfy both
     // stimuli (impulse needs >=334 ms of hold for the swell to complete,
@@ -143,7 +143,7 @@ private:
     int   onsetAgeSamps_    = 0;   // samples since burst onset (counts while not Idle, capped at window+1)
     int   holdMaxSamps_     = 0;   // = holdMaxMs_ * sr (ceiling)
     float holdPerSec_       = 60.0f;  // +ms hold per second of input presence
-    float holdMaxMs_        = 450.0f; // hold ceiling (sustained). 2026-07-04 600->450: on the 22.6 s piano stem the gate held ~0.5 s of loud low-mid past where the Lex reverse had closed (piano-tail gate +21 dB); 450 tracks the anchor's release without touching the noiseburst T60s (hold there is duration-scaled ~346 ms, under both caps).
+    float holdMaxMs_        = 450.0f; // hold ceiling (sustained). 2026-07-04 600->450: on the 22.6 s piano stem the gate held ~0.5 s of loud low-mid past where the target reverse had closed (piano-tail gate +21 dB); 450 tracks the target release without touching the noiseburst T60s (hold there is duration-scaled ~346 ms, under both caps).
 
     double sampleRate_ = 48000.0;
     int    maxBlock_   = 0;

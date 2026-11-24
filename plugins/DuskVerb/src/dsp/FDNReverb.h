@@ -102,7 +102,7 @@ public:
     void setInlineDiffusion (float coeff);
     // User-facing tank density. amount is the DIFFUSION knob value [0, 1].
     // Linear map to inline-AP coefficient: knob 0 → off (Hadamard-only density,
-    // current behaviour), knob 1 → 0.55 (reference hardware hall-density convention).
+    // current behaviour), knob 1 → 0.55 (the usual hall-density value).
     // Routes through setInlineDiffusion which also updates inlineDiffCoeff2_/3_.
     void setTankDiffusion (float amount);
     void setUseShortInlineAP (bool use);
@@ -172,8 +172,8 @@ public:
     //
     // shortLineScale = longLineScale = 1.0 → backward identical (default).
     // Setting longLineScale > 1.0 + shortLineScale < 1.0 extends bass RT60
-    // while shortening high-band RT60 — exactly what VVV Concert Hall
-    // delivers structurally and what 3-band damping multiplexing alone
+    // while shortening high-band RT60 — a concert-hall decay shape that
+    // 3-band damping multiplexing alone
     // cannot reach (FDN modal mixing redistributes per-band gains into
     // an averaged shape).
     //

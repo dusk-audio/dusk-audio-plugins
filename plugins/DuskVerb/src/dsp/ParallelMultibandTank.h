@@ -30,7 +30,7 @@
 //               the loop, so a long ring no longer forces a hot level)
 //   direct[b] — feed-forward band add (front-load / EDT shaping without
 //               touching the recirculation)
-//   width[b]  — per-band stereo width (M/S at the band output; the anchors'
+//   width[b]  — per-band stereo width (M/S at the band output; the target
 //               "mono highs over wide broadband" signature)
 //
 // Low-band lines are LONG and UNMODULATED: the 50-75 Hz sub-skirt smear
@@ -275,7 +275,7 @@ public:
     }
 
     // STEREO IMAGE BIAS (issue #123). A hard-panned source leaves this tank dead
-    // centre (measured tail ILD −0.31 dB) where the reference halls hold a
+    // centre (measured tail ILD −0.31 dB) where the target halls hold a
     // +1.3..+4.3 dB lean toward the source side. The cause is visible in the tap
     // algebra: the two band taps reduce EXACTLY to
     //   bl = ½(p2 + p5),   br = ½(p5 − p2)
@@ -346,7 +346,7 @@ public:
     // plus the band's R input, UNDELAYED: bl = ½(p2 + p5), br = ½(p5 − p2) with
     // p2 = read2 + R. Line 2 is never fed, so on a short band, where little
     // energy recirculates, the mid outweighs the side and the tail collapses to
-    // the centre (Medium Drum Room: L/R correlation +0.85 against its anchor's
+    // the centre (Medium Drum Room: L/R correlation +0.85 against its target
     // +0.15, measured 2026-10-25), and on a mono input the undelayed R puts an
     // anti-phase copy of the band input on the side. No output width fixes both:
     // widening enough for a stereo input drives a mono input's lows anti-phase.
@@ -639,7 +639,7 @@ private:
             // per-band factor: an allpass rings BEYOND its nominal delay
             // (k^n echo tail, k=0.55), and the effect grows with AP-to-line
             // length ratio — largest on the short high bands. Factors measured
-            // 2026-07-06 (48 kHz, realized/commanded on an anchor-shaped
+            // 2026-07-06 (48 kHz, realized/commanded on a target-shaped
             // curve); they are sr-invariant to first order because every
             // length above scales with rr.
             static constexpr float kLoopAdj[kBands] = { 1.03f, 1.03f, 1.10f, 1.06f, 1.22f, 1.33f };
