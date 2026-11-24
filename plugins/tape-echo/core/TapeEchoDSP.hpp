@@ -646,7 +646,7 @@ private:
         float programOs[kSize][4];
         float loopOs[kSize][4];
         float tapeOs[kSize][4];
-        float magneticAmplitude[kSize][4];
+        float magneticAmplitude[kSize];
     };
     float memoIntensity = 0.0f;
     float memoFbGain = 0.0f;
@@ -727,6 +727,9 @@ private:
         float              loopEnvelope = 0.0f;     // regeneration drive only
         float              magneticEnvelope = 0.0f;
         int                magneticHold = 0;        // samples at 4x
+        float              magneticAmplitude1 = 0.0f;    // the normalization's
+        float              magneticAmplitude2 = 0.0f;    // two smoothing poles,
+        float              magneticAmplitudeLast = 0.0f; // and its last value
         // Record saturation runs at 4x (see processBlock): both feeds are
         // interpolated twice, the tape signal decimated twice.
         HalfbandUpsampler2xPair<5> feedUp1;   // program and loop feeds, 1x -> 2x
@@ -768,6 +771,7 @@ private:
     float detectorSmoothCoeff = 1.0f;
     float magneticReleaseOs = 1.0f;   // the record release per 4x sample
     int   magneticHoldSamplesOs = 0;
+    float magneticSmoothCoeff = 1.0f;  // the normalization's poles, per sample
     // Longest sub-block whose tape writes can wait for its head reads: half
     // the shortest head delay (see processBlock), at most the scratch size.
     int   subBlockLimit = 1;

@@ -176,6 +176,20 @@ namespace
     // long before it releases, so it stays flat through a steady tone instead
     // of rising and falling with each sampled peak.
     constexpr float kMagneticHoldSeconds = 0.025f;
+    // The held peak reaches the normalization through two critically damped
+    // poles of this time constant each, with kMagneticHeadroom on top. The
+    // held peak still steps whenever a sampled peak exceeds it, and in a
+    // beating loop that is ~2000 times a second: applied as it was, each step
+    // moved the Chebyshev coefficients at once, and the steps' spectrum put
+    // sidebands at the fold frequencies (a 5.1 kHz tone at -6 dBFS,
+    // Intensity 0.616: -76 dBc at 8.5 kHz; the reference -100). Smoothed,
+    // the normalization moves 40 dB/decade more slowly above ~240 Hz; the
+    // headroom covers the poles' lag behind a rising peak, so the clamp on
+    // the normalized signal stays off outside fast attacks, and the
+    // polynomials are rescaled for it (see the Chebyshev pass): a steady
+    // tone gets the same harmonics as from the bare held peak.
+    constexpr float kMagneticSmoothSeconds = 0.00067f;
+    constexpr float kMagneticHeadroom = 1.06f;
 
     // Below this a read head's (smoothed) gain is treated as off.
     constexpr float kHeadIdleFloor = 1.0e-20f;
@@ -1393,6 +1407,8 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
         1.0f - std::exp(-2.0f * kDuskPi * kDetectorSmoothHz / (float)fs);
     magneticReleaseOs = std::exp(-1.0f / (0.12f * 4.0f * (float)fs));
     magneticHoldSamplesOs = (int)std::lround(kMagneticHoldSeconds * 4.0 * fs);
+    magneticSmoothCoeff =
+        1.0f - std::exp(-1.0f / (kMagneticSmoothSeconds * (float)fs));
     // The record saturation's passes write the tape after the sub-block's
     // head reads; that is exact while no head reads a sample of the same
     // sub-block, i.e. while the sub-block is shorter than the shortest head
@@ -1535,6 +1551,9 @@ void TapeEchoDSP::reset()
         ch.detectorSmooth2 = 0.0f;
         ch.loopEnvelope = 0.0f;
         ch.magneticEnvelope = 0.0f;
+        ch.magneticAmplitude1 = 0.0f;
+        ch.magneticAmplitude2 = 0.0f;
+        ch.magneticAmplitudeLast = 0.0f;
     }
     spring.reset();
     springIdle = false;
@@ -2650,6 +2669,7 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             }
             // The magnetic peak envelope, a recurrence of its own.
             for (int i = 0; i < len; ++i)
+            {
                 for (int k = 0; k < 4; ++k)
                 {
                     const float baseMagnitude = std::abs(x.tapeOs[i][k]);
@@ -2662,10 +2682,38 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                         --ch.magneticHold;
                     else
                         ch.magneticEnvelope *= magneticReleaseOs;
-                    x.magneticAmplitude[i][k] = std::max(ch.magneticEnvelope, 1.0e-4f);
                 }
+                // The normalization: the held peak through the smoothing
+                // poles, at the host rate (it moves below ~240 Hz) and
+                // interpolated across the four x4 samples in the Chebyshev
+                // pass. The second pole takes the first one's previous value,
+                // so the two update side by side, a sample apart. Where the
+                // terms are off the poles stand at the held peak, so they
+                // start from it when the terms come on.
+                const float target =
+                    kMagneticHeadroom * std::max(ch.magneticEnvelope, 1.0e-4f);
+                if (x.c3[i] == 0.0f && x.c5[i] == 0.0f)
+                {
+                    ch.magneticAmplitude1 = target;
+                    ch.magneticAmplitude2 = target;
+                }
+                else
+                {
+                    const float first = ch.magneticAmplitude1;
+                    ch.magneticAmplitude1 = first + magneticSmoothCoeff * (target - first);
+                    ch.magneticAmplitude2 += magneticSmoothCoeff
+                                           * (first - ch.magneticAmplitude2);
+                }
+                x.magneticAmplitude[i] =
+                    std::max(ch.magneticAmplitude2, kMagneticHeadroom * 1.0e-4f);
+            }
+            float amplitudeBefore = ch.magneticAmplitudeLast;
             for (int i = 0; i < len; ++i)
             {
+                const float amplitudeNow = x.magneticAmplitude[i];
+                const float amplitudeStep = 0.25f * (amplitudeNow - amplitudeBefore);
+                const float amplitudeFrom = amplitudeBefore;
+                amplitudeBefore = amplitudeNow;
                 // At high record flux the hosted tape adds a steep
                 // odd-harmonic ladder while its fundamental has already
                 // reached a level plateau: Chebyshev terms on the signal
@@ -2679,19 +2727,30 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                 // they are (at most a -0 sample keeps its sign).
                 if (c3 == 0.0f && c5 == 0.0f)
                     continue;
+                // The normalization carries kMagneticHeadroom (h), so a
+                // steady tone's peak reads z = 1/h, not 1. The polynomials
+                // are T3 and T5 rescaled for it, T_n(h z) / h: with the
+                // amplitude at h times the peak they give the tone exactly
+                // the harmonics the bare Chebyshev terms gave at the peak,
+                // and the fundamental is still untouched.
+                constexpr float h2 = kMagneticHeadroom * kMagneticHeadroom;
+                constexpr float k3 = 4.0f * h2;
+                constexpr float k53 = 20.0f * h2;
+                constexpr float k55 = 16.0f * h2 * h2;
                 for (int k = 0; k < 4; ++k)
                 {
                     const float baseTape = x.tapeOs[i][k];
-                    const float amplitude = x.magneticAmplitude[i][k];
+                    const float amplitude = amplitudeFrom + amplitudeStep * (float)(k + 1);
                     const float z = clampF(baseTape / amplitude, -1.0f, 1.0f);
                     const float z2 = z * z;
                     const float z3 = z2 * z;
                     const float z5 = z3 * z2;
-                    const float t3 = 4.0f * z3 - 3.0f * z;
-                    const float t5 = 16.0f * z5 - 20.0f * z3 + 5.0f * z;
+                    const float t3 = k3 * z3 - 3.0f * z;
+                    const float t5 = k55 * z5 - k53 * z3 + 5.0f * z;
                     x.tapeOs[i][k] = baseTape + amplitude * (c3 * t3 + c5 * t5);
                 }
             }
+            ch.magneticAmplitudeLast = amplitudeBefore;
             // Back to 1x and onto the tape.
             int tapeIdx = (writeIdx - len) & mask;   // the first sample this sub-block wrote
             for (int i = 0; i < len; ++i)
