@@ -8,12 +8,13 @@
 //
 //   L+R ─► input shelf + record low shape ─► DC block ─────────┬──► reverb send
 //                                                             │
-//   program: band-limit (outer LP, speed LP, ceiling) ─► preamp curve ─┐
-//                                                                     [+]─► magnetic stage ─► TAPE
-//   regen:   band-limit (low shape, speed LP, ceiling) ────────────────┘                     │
-//    ▲                                                                3 read heads (Hermite)
+//   program: band-limit (outer LP, speed LP, ceiling) ─► preamp curve ─────────┐
+//                                                                             [+]─► magnetic stage ─► TAPE
+//   regen:   band-limit (low shape, speed LP, ceiling) ─► loopLimit(softClip) ─┘   (x4, from the  │
+//    ▲                                                                             preamp curve on)
+//    │                                                                        3 read heads (Hermite)
 //    │                                                  T · {1, 1.905322, 2.759947} + offsets
-//    └── loopLimit(intensity · softClip(head sum + noise bed))  ◄──────────┴──┐
+//    └── intensity · (head sum + noise bed)  ◄────────────────────────────────────────┴──┐
 //                                                                            ▼
 //                                               bass/treble shelves (echo path only)
 //                                                                            ▼
@@ -436,16 +437,16 @@ private:
     // Loop limiter: identity below kLoopLimitKnee, above it a soft approach to
     // kLoopLimitCeiling shaped by softClip (unit slope at the knee, so C1 there;
     // softClip reaches its bound at 3, so the curve meets the ceiling flat at
-    // knee + 3 (ceiling - knee)). Odd-symmetric and monotonic.
+    // knee + 3 (ceiling - knee)). Odd-symmetric and monotonic. Both sides of
+    // the knee are computed and one is selected, so a pass of it vectorizes
+    // (it runs at x4 in the record stage).
     static float loopLimit(float x) noexcept
     {
-        const float magnitude = x < 0.0f ? -x : x;
-        if (magnitude <= kLoopLimitKnee)
-            return x;
+        const float magnitude = std::abs(x);
         constexpr float span = kLoopLimitCeiling - kLoopLimitKnee;
         const float limited = kLoopLimitKnee
             + span * softClip((magnitude - kLoopLimitKnee) * (1.0f / span));
-        return x < 0.0f ? -limited : limited;
+        return magnitude <= kLoopLimitKnee ? x : std::copysign(limited, x);
     }
 
     // Record-amplifier overload, seen only by the regeneration path. The
@@ -634,6 +635,8 @@ private:
         float programFeed[kSize];
         float loopFeed[kSize];
         float loopDrive[kSize];
+        float loopLinear[kSize];
+        float loopGain[kSize];
         float loopHeadSum[kSize];
         float lowFloorFade[kSize];
         float programGain[kSize];

@@ -180,6 +180,11 @@ namespace
     // Below this a read head's (smoothed) gain is treated as off.
     constexpr float kHeadIdleFloor = 1.0e-20f;
 
+    // Below this the regeneration gain is treated as off by the record amp's
+    // overload stage, which divides by it: a subnormal gain would make the
+    // inverse infinite, and a zero feed times infinity is a NaN on the tape.
+    constexpr float kLoopGainFloor = 1.0e-20f;
+
     // Captured reference cartridges expose a quiet 60 Hz odd-harmonic bed. The
     // fifth harmonic is strongest; the others are normalized to it from the
     // hosted New/Used/Old noise spectra. A separate, much quieter random layer
@@ -2334,8 +2339,6 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
         for (int i = 0; i < len; ++i)
         {
             const float loopHeadSum = x.loopHeadSum[i];
-            const float power = x.power[i];
-            const float fbGain = x.fbGain[i];
             // Record chain: program + feedback -> head EQ -> magnetic
             // saturation -> tape. Everything here except the program feed's
             // outer low-pass (programOuterLP) is inside the loop, so repeats
@@ -2346,9 +2349,26 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             // repro noise bed is in the loop tap) grows above unity gain until
             // the tape is full when POWER returns. 1 x fbGain is exact, so with
             // POWER on this is the same bits.
-            const float loopDrive = loopLimit(power * fbGain * softClip(loopHeadSum));
-            x.loopDrive[i] = loopDrive;
+            const float loopGain = x.power[i] * x.fbGain[i];
+            x.loopGain[i] = loopGain;
+            // The record amp's overload (softClip, then loopLimit) is applied
+            // at x4 in the record stage, after the band limits: at the host
+            // rate its harmonics folded into the band, and in a hot loop they
+            // circulate (a 7.2 kHz tone at -6 dBFS, Intensity 0.616: its 7th
+            // back at 2.5 kHz, -52 dBc; the reference -101). The feed's band
+            // limits are linear and the gain is smoothed, so they run on the
+            // unshaped drive.
+            x.loopLinear[i] = loopGain * loopHeadSum;
+            // The record meter and the low-flux gate read the shaped drive at
+            // the host rate, as they did when the audio path did too: they
+            // take a level, not a spectrum, and keep their calibration.
+            x.loopDrive[i] = loopLimit(loopGain * softClip(loopHeadSum));
         }
+        // Whether any sample of the sub-block regenerates. A scan of its own:
+        // folded into the pass above, it kept that pass from vectorizing.
+        bool loopActive = false;
+        for (int i = 0; i < len && !loopActive; ++i)
+            loopActive = x.loopGain[i] > 0.0f;
         // Record meter, regeneration envelope and the record stage's
         // per-sample laws.
         for (int i = 0; i < len; ++i)
@@ -2499,10 +2519,11 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
         {
             // Band-limit both feeds with the same sections, then saturate
             // (the passes below): the preamp curve on the program alone, the
-            // magnetic stage on the sum. Nothing filters after the
-            // saturation, so harmonics reach the echo as the reference's do;
-            // on the next pass round the loop the regeneration feed's
-            // sections filter them like any signal.
+            // record amp's overload on the regeneration alone, the magnetic
+            // stage on the sum. Nothing filters after the saturation, so
+            // harmonics reach the echo as the reference's do; on the next
+            // pass round the loop the regeneration feed's sections filter
+            // them like any signal.
             //
             // The regeneration feed first. With Intensity at minimum its
             // drive is exactly zero; once its sections have also decayed to
@@ -2512,13 +2533,13 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             Channel& ch = channels[0];
             bool silent = loopFeedSectionsAtRest(ch);
             for (int i = 0; silent && i < len; ++i)
-                silent = x.loopDrive[i] == 0.0f;
+                silent = x.loopLinear[i] == 0.0f;
             if (silent)
                 std::fill(x.loopFeed, x.loopFeed + len, 0.0f);
             else
                 for (int i = 0; i < len; ++i)
                 {
-                    float loopFeed = ch.speedLP.process(ch.loopLowShape.process(x.loopDrive[i]));
+                    float loopFeed = ch.speedLP.process(ch.loopLowShape.process(x.loopLinear[i]));
                     for (auto& lp : ch.loopCeilingLP)
                         loopFeed = lp.process(loopFeed);
                     x.loopFeed[i] = loopFeed;
@@ -2561,6 +2582,28 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                 ch.feedUp2.process(p1, l1, x.programOs[i][2], x.programOs[i][3],
                                    x.loopOs[i][2], x.loopOs[i][3]);
             }
+            // The record amp's overload on the band-limited regeneration:
+            // loopLimit(gain . softClip(drive)), the drive recovered from the
+            // feed by the inverse gain. With the gain at zero (POWER off,
+            // Intensity at minimum) or under kLoopGainFloor the shaped term
+            // would be zero to within that floor, so the feed's decaying
+            // sections, which then carry only the tail of an earlier drive,
+            // pass as they are, and a sub-block without regeneration skips
+            // the pass: it is then the same bits as before the shaping moved
+            // here.
+            if (loopActive)
+                for (int i = 0; i < len; ++i)
+                {
+                    const float loopGain = x.loopGain[i];
+                    const bool shapes = loopGain > kLoopGainFloor;
+                    const float loopGainInverse = shapes ? 1.0f / loopGain : 0.0f;
+                    for (int k = 0; k < 4; ++k)
+                    {
+                        const float feed = x.loopOs[i][k];
+                        const float shaped = loopLimit(loopGain * softClip(feed * loopGainInverse));
+                        x.loopOs[i][k] = shapes ? shaped : feed;
+                    }
+                }
             for (int i = 0; i < len; ++i)
             {
                 float recorded[4], recorded2[4], lowFloor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
