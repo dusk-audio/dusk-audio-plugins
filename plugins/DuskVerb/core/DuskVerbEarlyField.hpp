@@ -14,7 +14,7 @@
 // makes (eight taps inside 5 ms sum coherently below 1 kHz). The side burst is the same kind of
 // pulse run, decaying 60 dB across its length after a fade-in, lowpassed (Linkwitz-Riley 4) and
 // played anti-phase (+left, -right): the strong, short, out-of-phase low early reflection a room
-// reference opens with (Live Room's first 25 ms: lows at -0.9 correlation, 8 dB over DuskVerb's),
+// target opens with (Live Room's first 25 ms: lows at -0.9 correlation, 8 dB over DuskVerb's),
 // which no width setting on the tank can give without also turning its tail anti-phase. Sent into the engine it
 // moves where the engine's energy lands (a rising slope delays it, the direct path brings energy
 // forward); heard directly, with the reflections, it gives the early field discrete arrivals.
@@ -56,7 +56,7 @@
 namespace duskverb
 {
 
-// Discrete reflections a field can place: the references put up to ten distinct arrivals in their
+// Discrete reflections a field can place: the targets put up to ten distinct arrivals in their
 // first 150 ms (the full_check early-reflection count), more than the four the field first had.
 inline constexpr int kMaxEarlyReflections = 10;
 

@@ -6,7 +6,7 @@
 // Post-tank dynamic low-mid buildup limiter (2026-07-07, the piano-cluster fix).
 //
 // DV's recirculating tanks accumulate low-mid energy on a SUSTAINED input (piano stem /
-// sustained tone) far above the commercial anchors (+3..+10 dB, measured fleet-wide),
+// sustained tone) far above target (+3..+10 dB, measured fleet-wide),
 // because the low-mid feedback sits near unity: a FINITE noiseburst decays normally (so the
 // noiseburst-tuned per-band T60 gates pass) but a sustained tone charges without bound.
 //

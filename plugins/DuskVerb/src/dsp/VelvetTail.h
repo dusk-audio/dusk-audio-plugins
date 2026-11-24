@@ -18,7 +18,7 @@
 //   feed (mono ER output) ─▶ LR2 4-band split (250/500/2000 Hz)
 //        each band ─▶ per-band velvet field (signed sparse taps, exp-decay gains)
 //        L/R fields: mid/hi INDEPENDENT seeds (corr≈0); sub/lowmid SHARED tap
-//        positions with a sign-flip fraction (corr<0 = the anchor's wide bass).
+//        positions with a sign-flip fraction (corr<0 = the target wide bass).
 //   Σ bands ─▶ out.  Unit-normalize each field THEN apply per-band level.
 //
 // (A 9-band PER-OCTAVE variant was tried 2026-06-18 to resolve the 9-octave T60
@@ -234,9 +234,9 @@ private:
     Field  fieldL_[kBands], fieldR_[kBands];
     Biquad lp250_, lp500_, lp2k_;
 
-    // baked 4-band defaults (anchor lex-reverse-1, hand-tuned 2026-06-17/18).
-    float bandT60_[kBands]      = { 0.09f, 0.15f, 0.115f, 0.145f };   // 2026-07-04 recal vs anchor after the swell ear-fix exposed the tail (the old 3 ms gate cliff was guillotining it): T60 63/125/8k -> in-gate. Residual 250/500 straddle = the documented crossover-leak wall.
-    float band125T60_          = 0.42f;   // 2026-07-04: 125 Hz measured +33% over anchor at 0.55
+    // baked 4-band defaults (hand-tuned 2026-06-17/18).
+    float bandT60_[kBands]      = { 0.09f, 0.15f, 0.115f, 0.145f };   // 2026-07-04 recal vs target after the swell ear-fix exposed the tail (the old 3 ms gate cliff was guillotining it): T60 63/125/8k -> in-gate. Residual 250/500 straddle = the documented crossover-leak wall.
+    float band125T60_          = 0.42f;   // 2026-07-04: 125 Hz measured +33% over target at 0.55
     float bandLevelLin_[kBands] = { 1.413f, 0.794f, 0.708f, 2.512f };  // 2026-07-04 {+3,-2,-3,+8} dB: mid up (sine1k deficit), hi down (ss upper-mid hot)
     float flipFrac_            = 0.60f;  // in-clamp; ≥0.30 ⇒ always-flip the ~30% else-taps (the validated sound)
     float cellRateMs_[kBands]  = { 0.5f, 0.5f, 0.5f, 0.25f };

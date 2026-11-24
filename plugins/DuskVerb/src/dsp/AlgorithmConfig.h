@@ -15,20 +15,19 @@
 enum class EngineType : int
 {
     Dattorro          = 0,  // 2-AP cross-coupled plate (Dattorro 1997).
-    DattorroVintage   = 1,  // Dattorro tank + fixed post-EQ for vintage-hardware character (DattorroPlateVintage wrapper).
+    DattorroVintage   = 1,  // Dattorro tank + fixed post-EQ for a vintage plate character (DattorroPlateVintage wrapper).
     SixAPTank         = 2,  // 6-AP density cascade tank (lush halls, dense ambience).
     QuadTank          = 3,  // 4 cross-coupled tanks, 48 taps, no modulation.
     FDN               = 4,  // 16-channel Hadamard feedback delay network.
-    Spring            = 5,  // Classic outboard-unit-style 3-spring tank with dispersion-AP chirp.
+    Spring            = 5,  // Classic 3-spring tank with dispersion-AP chirp.
     NonLinear         = 6,  // Classic nonlinear-program-style 64-tap feed-forward TDL with envelope shapes.
     Shimmer           = 7,  // 8-channel Hadamard FDN with in-loop granular pitch shifter.
-    VintageTank       = 8,  // Griesinger figure-8 modulated AP loop — replaces FDN's
+    VintageTank       = 8,  // Figure-8 modulated AP loop — replaces FDN's
                             // unitary Hadamard scatter with a recirculating tank that builds
-                            // modal density + lateral bloom over time. Reference architecture
-                            // for vintage hardware reverbs.
+                            // modal density + lateral bloom over time.
     ReverseRoom       = 9,  // Causal rising-gain early-reflection onset + dark modulated FDN
-                            // tail. Replicates the reference "Reverse 1" program (NOT
-                            // backwards-convolution — the reference is causal, impulse peaks
+                            // tail. A causal reverse program (NOT
+                            // backwards-convolution: the impulse peaks
                             // ~70ms then decays). The rising-ER "Tap Slope" is the reverse.
     AccurateHall      = 10, // FDN + per-OCTAVE attenuation GEQ in the feedback loop (Jot/
                             // Schlecht accurate-RT control). Independent per-octave T60 — closes
@@ -80,8 +79,8 @@ inline int getNumAlgorithms() { return 16; }
 inline const AlgorithmConfig& getAlgorithmConfig (int index)
 {
     // User-facing engine names. Standardized 2026-06-11: clean musician-facing
-    // labels, no internal-algorithm jargon and no trademark references (was
-    // hardware / product / Eno / Figure-8 / Dattorro names). ENUM ORDER IS FIXED —
+    // labels, no internal-algorithm jargon and no trademark, artist or algorithm
+    // names. ENUM ORDER IS FIXED —
     // AudioParameterChoice stores the index, presets store the algorithm index,
     // so these strings are display-only and must NOT be reordered or removed
     // (that would shift indices and break saved state). Rename freely.

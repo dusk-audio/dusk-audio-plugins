@@ -9,8 +9,7 @@
 
 // ============================================================================
 // ReverseRoomEngine — causal rising-ER onset + dark modulated FDN tail.
-// Reverse-engineered from ref-reverse-1 (reference "Reverse 1" program).
-// See header for the full architecture and the measured reference spec.
+// See header for the full architecture and the target spec.
 // ============================================================================
 
 void ReverseRoomEngine::prepare (double sampleRate, int maxBlockSize)
@@ -38,7 +37,7 @@ void ReverseRoomEngine::prepare (double sampleRate, int maxBlockSize)
     }
 
     // Velvet-noise FIR tail (replaces the FDN — see VelvetTail.h). Baked defaults
-    // = the ref-reverse-1 per-band T60 / level / stereo; DUSKVERB_VELVET overrides
+    // = the target per-band T60 / level / stereo; DUSKVERB_VELVET overrides
     // for hand-tuning without a rebuild. Feed-forward → no FDN mid-decay floor.
     velvet_.prepare (sampleRate, maxBlockSize);
 
@@ -117,7 +116,7 @@ void ReverseRoomEngine::rebuildTaps()
             // roughly-even spacing (+-half-slot jitter) left the tap train
             // periodic: ramp/nTaps ~ 2.8-4.2 ms -> a comb resonance the boing
             // gate read as a massive ringing mode (213 Hz at ramp 470,
-            // 289 Hz at ramp 310, up to +27 dB over the anchor). Uniform
+            // 289 Hz at ramp 310, up to +27 dB over target). Uniform
             // random draws have no period -> no comb; density is preserved
             // (same tap count over the same ramp).
             const float pf = std::clamp (rnd(), 0.0f, 1.0f);
@@ -128,9 +127,9 @@ void ReverseRoomEngine::rebuildTaps()
             // RISING gain from a floor: g = floor + (1-floor)*(t/ramp)^slope.
             // The floor keeps the onset off digital silence (which made an
             // infinite env_p2p cliff); the rising ramp IS the "reverse" swell.
-            // (A bimodal dip-then-bump was tried to chase the reference's
+            // (A bimodal dip-then-bump was tried to chase the target
             // env_p2p +24.6 secondary swell, but it broke env_shape_l1 for <1dB
-            // of env_p2p — the reference's value comes from its mod+tap-comb
+            // of env_p2p: that value comes from a mod+tap-comb
             // interaction, not a clean ER bloom. Kept the clean rising ramp:
             // the +60->+15 cliff fix is the win; +15 vs +24.6 is a smooth tail.)
             const float rel = std::clamp (static_cast<float> (p) / static_cast<float> (rampSamp), 0.0f, 1.0f);
@@ -245,7 +244,7 @@ void ReverseRoomEngine::process (const float* inL, const float* inR,
 
         // Onset-keyed window close (ENDED bursts only): once the burst is older
         // than the window AND the input has stopped, cut immediately instead of
-        // serving out the remaining hold — the REF reverse window is fixed-length
+        // serving out the remaining hold — the intended reverse window is fixed-length
         // from onset. While input is still present the legacy hold semantics
         // stand untouched (a latch here killed the sustained stimuli: the piano
         // never drops below threshold, so the gate stayed shut for 22 s).
@@ -254,7 +253,7 @@ void ReverseRoomEngine::process (const float* inL, const float* inR,
             if (age <= winSamp) ++age;   // capped: Closing never returns to Idle, so an
                                          // un-capped counter would overflow on long silence
             // SHORT bursts only (input itself ended inside the window): a long
-            // sustained drive gets the legacy release — the anchor rings its
+            // sustained drive gets the legacy release — the target rings its
             // full per-band T60 after sustained input (the sustained-release
             // Schroeder fits need that tail), it only hard-windows one-shots.
             if (age > winSamp && ! present && iActive <= winSamp && st != GateState::Closing)

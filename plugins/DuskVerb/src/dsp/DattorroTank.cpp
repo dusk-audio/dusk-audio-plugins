@@ -443,7 +443,7 @@ void DattorroTank::processLoop (const float* inputL, const float* inputR,
             // Random-walk LFO replaces the previous std::sin(phase) + drift
             // chain. The smoothed-noise modulator never settles into a
             // perceptible periodic warble — gives the "expensive shimmer" of
-            // high-end random-hall hardware. When frozen, hold the last
+            // a random-modulated hall. When frozen, hold the last
             // modulation offset so the read head doesn't snap (avoids click).
             float currentMod = frozen_ ? tank.savedAP1Mod : tank.lfo.next();
             if (! frozen_)
@@ -1387,8 +1387,8 @@ void DattorroTank::updateLFORates()
     // (×√5/2 offset) to "prevent correlated modulation paths," but this
     // turned out to be the dominant source of LR-correlation jitter — over
     // time the two LFOs drift in and out of phase, causing the late-field
-    // L/R correlation to wander. Measured against the reference emulation's Blade Runner preset
-    // (LR stddev 0.028), our wandering of 0.066 is audibly less stable
+    // L/R correlation to wander. Measured on Blade Runner
+    // (target LR stddev 0.028), our wandering of 0.066 is audibly less stable
     // than a true random late field.
     //
     // The LFOs already use distinct PRNG seeds (0x12345678u vs 0x87654321u

@@ -9,7 +9,7 @@
 
 // DiffusedEarlyReflections — a DISCRETE-but-SMOOTH early-reflection generator.
 //
-// Why this exists (clarity / "snare not masked" / two-taps, 2026-06-25): the VVV
+// Why this exists (clarity / "snare not masked" / two-taps, 2026-06-25): the target
 // halls front a transient with a handful of DISCRETE early reflections (a comb at
 // ~16/31/40/56/70/... ms) that stay DEFINED — the source cuts through, the ear
 // hears distinct taps. DuskVerb's DenseHall tank is diffuse-from-zero (smears the
@@ -22,7 +22,7 @@
 // read out at the discrete reflection times. Each tap therefore emits a smooth
 // diffuse burst (no comb → not metallic) AT a discrete arrival time (defined →
 // clarity). Independent L/R allpass chains decorrelate the field (wide, stereo).
-// The reflection list is per-preset (matched to the anchor's measured comb).
+// The reflection list is per-preset (matched to the preset's target comb).
 //
 // Allpasses are unity-gain (flat magnitude) → the field's spectrum is the input's;
 // no spectral tilt, only temporal structure. Empty reflection list / not prepared

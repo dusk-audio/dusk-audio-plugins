@@ -19,7 +19,7 @@ public:
     void setGainExponent (float exponent);
     // Rising-onset envelope: tap gains ramp UP to a peak at onsetRiseMs then
     // decay (vs the default inverse-distance rolloff that peaks at the first
-    // tap). Reproduces VVV's gentle ~15 ms attack swell instead of an
+    // tap). Gives a gentle ~15 ms attack swell instead of an
     // instantaneous first-tap spike. 0 = off → legacy rolloff → bit-identical.
     void setOnsetRiseMs (float ms);
     void setAirAbsorptionFloor (float hz);
@@ -27,7 +27,7 @@ public:
     void setDecorrCoeff (float coeff);
     // Stereo-neutral early-field mode. false (default) → legacy opposed-sign R
     // taps → bit-identical. true → independent R signs + delay jitter → uniform
-    // ~0 L/R correlation (VVV-like), no anti-phase low. Per-preset opt-in.
+    // ~0 L/R correlation, no anti-phase low. Per-preset opt-in.
     void setStereoNeutral (bool enabled);
 
     // Zero the multi-tap delay buffers, per-tap lowpass states, and the
@@ -103,12 +103,12 @@ private:
     // strongly ANTI-correlated — worst at low freq where the tiny delay offset
     // is negligible. With a full tank that's masked; once the tank is cut to
     // front-load energy, the ER's anti-phase low dominates (width-low gate goes
-    // to -0.5). VVV's early field is uniformly ~0 (decorrelated, NOT anti-phase).
+    // to -0.5). The target early field is uniformly ~0 (decorrelated, NOT anti-phase).
     //
     // Stereo-neutral mode (opt-in, default OFF → bit-identical) gives R an
     // INDEPENDENT sign pattern (a different balanced 12+/12-, NOT -kSignsL) plus
     // a per-tap delay JITTER, so L and R decorrelate by timing+sign independence
-    // → uniform corr ≈ 0 across bands, matching VVV, with no anti-phase.
+    // → uniform corr ≈ 0 across bands, on target, with no anti-phase.
     static constexpr float kSignsRNeutral[kNumTaps] = {
          1,  1, -1, -1,  1, -1, -1,  1,
         -1, -1,  1,  1, -1,  1,  1, -1,

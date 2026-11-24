@@ -31,14 +31,14 @@ struct SteerProfile
     float wanderPhase = 0.0f;
 };
 
-// Issue #123 anchor-matched calibration. Positive amounts retain the source-side
+// Issue #123 target-matched calibration. Positive amounts retain the source-side
 // lean in the wet tail; negative amounts reduce an engine's existing over-lean.
 // A zero entry is intentional and documents that the preset already matches its
-// anchor. Native tank injection remains disabled because it changes the
+// target. Native tank injection remains disabled because it changes the
 // decorrelated-stereo fleet transfers; source provenance is restored only in
 // the final image stage. Surf '63 Spring and 1981 Gated Snare do
-// not have external anchors; the gated preset's 0.38 value retains the neutral
-// +3 dB source-side target used for its ear pass without claiming an anchor fit.
+// not have measured targets; the gated preset's 0.38 value retains the neutral
+// +3 dB source-side target used for its ear pass without claiming a measured fit.
 inline constexpr std::array<PresetCalibration, 20> kPresetCalibrations = {{
     { "Vocal Plate",           0.35f, 0.00f,  2.90f, true  },
     { "Vintage Vocal Plate",  -0.10f, 0.00f, -0.68f, true  },
@@ -63,7 +63,7 @@ inline constexpr std::array<PresetCalibration, 20> kPresetCalibrations = {{
 }};
 
 // Three-band, causal wet-image profiles fitted against the hard-left/right
-// anchor transfers. Black Hole is the one anchored preset that passes without
+// target transfers. Black Hole is the one measured-target preset that passes without
 // steering. Centre input is an exact bypass in the DSP stage.
 inline constexpr std::array<SteerProfile, 17> kSteerProfiles = {{
     { "Vocal Plate",          {-0.999194f, -0.999860f, -0.999894f},

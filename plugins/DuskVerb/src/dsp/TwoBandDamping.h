@@ -433,7 +433,7 @@ public:
     // realize gBand[k] at the octave centres — 2nd-order RBJ transition
     // slopes leak across the 1-octave spacing, and at long T60 (g → 0.99+) a
     // ~0.1 dB composite error is a huge T60 error (this leakage is what made
-    // the external render-based octave-T60 calibrator diverge on steep/long
+    // the offline render-based octave-T60 calibrator diverge on steep/long
     // profiles: Bright Hall >190 s, Cathedral >40 s). So iterate the
     // COMMANDED gains in log domain (damped fixed point, λ=0.7, keep-best,
     // λ-halving on stall) until the measured composite hits the targets at

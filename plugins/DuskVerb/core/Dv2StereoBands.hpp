@@ -9,7 +9,7 @@
 // Why not the engine's own width bands: they split the side with a complementary one-pole pair at
 // the same frequencies (DuskVerbEngine's effSide block), which carries a band's gain an octave and
 // more into its neighbour. Live Room's side x3 below 300 Hz then drags 300 Hz to 1.6 kHz anti-phase
-// (Phase C0.3); with these crossovers the lows keep x3 while the mids sit where the reference does.
+// (Phase C0.3); with these crossovers the lows keep x3 while the mids sit on target.
 //
 // A preset without a row leaves the wet exactly as it is: process() does nothing while no gains
 // play and no fade runs. A swap crossfades linearly over the preset fade, between the outgoing

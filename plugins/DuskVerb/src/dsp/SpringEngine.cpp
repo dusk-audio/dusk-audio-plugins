@@ -47,7 +47,7 @@ float SpringEngine::Spring::process (float input, float lfoOffset) noexcept
                      + delayBuf[static_cast<size_t> (idx1)] *         frac;
 
     // 2) HF damping IN THE LOOP — 1-pole LP on the recirculating signal so the
-    //    tail progressively darkens with every bounce (a real 3-spring outboard spring
+    //    tail progressively darkens with every bounce (a real spring
     //    rolls off more HF on each pass, not just once at the output).
     dampState = (1.0f - dampCoeff) * read + dampCoeff * dampState;
 

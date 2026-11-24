@@ -10,7 +10,7 @@
 // early_tap — the reflections land at 70-160 ms, so a duck that only opens AT the
 // onset and closes within ~10 ms would silence them) but is silent on a sustained
 // sine or noise burst — the whole reason a plain additive ER bus cannot be tuned
-// onto the anchor: steady ER energy raises the noiseburst, full_check's gain-match
+// onto the target: steady ER energy raises the noiseburst, full_check's gain-match
 // then rescales the whole spectrum + the ER's unit-energy 1 kHz throughput pumps
 // sine1k, and a duck that AMs on noise adds spectral ripple. Hold-then-close fixes
 // all three.

@@ -1,8 +1,8 @@
 // Copyright (C) 2026 Dusk Audio, GNU GPL v3.0 or later (see repository LICENSE).
 //
-// NonLinBurstEngine: DuskVerb 2's classic nonlinear program, the gated burst of the early
-// 1980s digital reverbs. Linear and time-invariant, like the hardware it answers to: a dense
-// burst whose level follows a programmed envelope and then stops, the same at any input level.
+// NonLinBurstEngine: DuskVerb 2's classic nonlinear program, a gated burst. Linear and
+// time-invariant: a dense burst whose level follows a programmed envelope and then stops,
+// the same at any input level.
 //
 // Per channel, with its own random seed (the channels are uncorrelated):
 //
@@ -16,7 +16,7 @@
 // The envelope is an energy envelope shared by every length: a rise over the first 60 ms, a
 // plateau, a knee shape around the knee, then a straight fall to the floor, where the taps stop.
 // The knee shape, the plateau slope, the fall rate and the output level vary with the knee as
-// quadratics fitted to the reference. All of it is the reference model in the private tools
+// quadratics fitted to the target responses. All of it is the reference model in the private tools
 // repo (tools/duskverb/nonlin_lab/proto.py), which this mirrors: the same SplitMix64 stream with
 // four draws per tap in tap order, so at 48 kHz the tap layout is identical to the model's.
 //
@@ -96,15 +96,15 @@ public:
     // (7 on average, 1 ms steps) from 0.784 to 2.5 s. Past kMaxDecaySeconds: kMaxKneeMs.
     static float kneeForDecaySeconds (float seconds) noexcept;
 
-    // HF damping: a one-pole lowpass after the burst, as on the hardware. At or above
+    // HF damping: a one-pole lowpass after the burst. At or above
     // kHfDampOffHz it is bypassed (the filter keeps running, so switching it in starts from
-    // the signal rather than from stale state). The reference's four settings sit at 6750,
+    // the signal rather than from stale state). The four target settings sit at 6750,
     // 4250, 2750 and 2250 Hz.
     static constexpr float kHfDampOffHz = 20000.0f;
     void setHfDamp (float hz) noexcept;
 
     // The shared Treble Multiply control (0.1-1.5) as the HF damping corner: 1.0 and above is
-    // off; below it the corner falls exponentially to 2 kHz at 0.1. The reference's four
+    // off; below it the corner falls exponentially to 2 kHz at 0.1. The four target
     // settings sit at 0.58 (6750 Hz), 0.40 (4250), 0.22 (2750) and 0.15 (2250).
     static float hfDampHzForTreble (float trebleMultiply) noexcept;
 

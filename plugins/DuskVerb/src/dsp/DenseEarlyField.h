@@ -14,7 +14,7 @@
 // onset (no pre-echo). gain 0 → inactive → contributes exactly 0 (bit-null sum).
 //
 // The algorithm mirrors DattorroPlateVintage's inline dense field (which stays
-// inline there to preserve its byte-exact VVP render). This header lets the
+// inline there to preserve its byte-exact Vintage Vocal Plate render). This header lets the
 // DuskVerbEngine reuse the same field for the algo-0 Dattorro rooms without
 // touching DattorroTank.cpp — so every algo-0 preset stays bit-null when the
 // field is off. See [[duskverb_dpv_dense_early_field]].

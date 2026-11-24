@@ -431,8 +431,8 @@ void SixAPTankEngine::process (const float* inputL, const float* inputR,
     // clamped to bloomCoeffCeiling_ so even the largest late-stage
     // multiplier × densityDiffCoeff_ cannot push an AP toward self-
     // oscillation. Defaults preserve the historical {0.7..1.2}/0.85 values;
-    // Black Hole opts in to a steeper stagger + higher ceiling for VS
-    // BlackHole-character late-tail density.
+    // Black Hole opts in to a steeper stagger + higher ceiling for more
+    // late-tail density.
 
     // ---- Step 0: shatter the input through the parallel diffuser ----
     // The 6-AP-specific input shatter replaces the global series diffuser
@@ -463,7 +463,7 @@ void SixAPTankEngine::process (const float* inputL, const float* inputR,
         // Random-walk LFO: smoothed-noise modulation of the AP1 read head.
         // Replaces the previous std::sin(phase) LFO so the modulation never
         // beats periodically against the tank's modal frequencies — gives
-        // the "expensive shimmer" of high-end random-hall hardware.
+        // the "expensive shimmer" of a random-modulated hall.
         const float lfoMod = leftTank_.lfo.next();
         float ap1Read = leftTank_.ap1Buffer.readInterpolated (
             std::clamp (leftTank_.ap1DelaySamples + lfoMod, 1.0f,

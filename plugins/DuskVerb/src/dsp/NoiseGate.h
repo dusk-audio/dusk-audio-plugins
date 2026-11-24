@@ -3,10 +3,9 @@
 #include <algorithm>
 #include <cmath>
 
-// NoiseGate — classic outboard-rig noise gate with sidechain-style trigger.
+// NoiseGate — noise gate with sidechain-style trigger.
 //
-// Modeled after the classic outboard hardware gates used on the
-// 1980s big-snare records. The trigger envelope follower watches the DRY
+// Built for the classic gated big-snare sound. The trigger envelope follower watches the DRY
 // input (which IS the sidechain in our single-plugin context). When the
 // dry signal crosses the threshold, the gate opens fast, holds for HOLD
 // time, then releases over RELEASE time. The gate is applied to the wet
