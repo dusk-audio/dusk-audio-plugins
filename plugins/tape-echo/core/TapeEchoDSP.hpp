@@ -724,6 +724,8 @@ private:
         HilbertPair        detectorHilbert;
         float              detectorSmooth1 = 0.0f;
         float              detectorSmooth2 = 0.0f;
+        float              recordEnvelopeSmooth1 = 0.0f;  // what the record
+        float              recordEnvelopeSmooth2 = 0.0f;  // laws read
         float              loopEnvelope = 0.0f;     // regeneration drive only
         float              magneticEnvelope = 0.0f;
         int                magneticHold = 0;        // samples at 4x
@@ -769,6 +771,7 @@ private:
     float recordEnvelopeAttack = 1.0f;
     float recordEnvelopeRelease = 1.0f;
     float detectorSmoothCoeff = 1.0f;
+    float recordEnvelopeSmoothCoeff = 1.0f;
     float magneticReleaseOs = 1.0f;   // the record release per 4x sample
     int   magneticHoldSamplesOs = 0;
     float magneticSmoothCoeff = 1.0f;  // the normalization's poles, per sample

@@ -155,6 +155,24 @@ namespace
     constexpr float kDetectorBandHz   = 700.0f;
     constexpr float kDetectorSmoothHz = 200.0f;
     constexpr float kDetectorPeakWeight = 0.99f;
+    // The record laws (the compressor's drive gains, the Chebyshev terms'
+    // strength, the magnetic makeup, the low-flux gate) read the envelope
+    // through two critically damped poles of this time constant each. The
+    // envelope follows the sample magnitude, and a high tone's sampled peaks
+    // differ cycle to cycle in a pattern at fold frequencies (10.9 kHz:
+    // 48 kHz - 4 x 10.9 kHz = 4.5 kHz); every law that moved with it put
+    // that pattern on the record signal as sidebands at the fold
+    // frequencies. With feedback off a steady 10.9 kHz tone read -89..-95 dBc
+    // at 1.9 kHz, under the alias floor, but a hot loop circulates it near
+    // unity gain (Intensity 0.68: -77 dBc; the reference -94), and a moving
+    // envelope (a tone with 7 Hz AM) read -68 dBc with feedback off.
+    // The corner (~1.6 kHz) splits the envelope's movement in two: the
+    // ripple a low tone leaves (a few hundred Hz), through which the laws
+    // add that tone's upper harmonics, passes; the kHz-rate pattern a high
+    // tone leaves, whose products fold, is cut. A 0.67 ms time constant
+    // (240 Hz) cleared the folds as well but took 60-100 Hz tones' 7th and
+    // 9th down 7-17 dB.
+    constexpr float kRecordEnvelopeSmoothSeconds = 0.0001f;
 
     // Record saturation oversampling: x4 in two halfband stages. The outer
     // stages pass 0-21 kHz and stop from 27 kHz at -115 dB (10 sections);
@@ -176,6 +194,15 @@ namespace
     // long before it releases, so it stays flat through a steady tone instead
     // of rising and falling with each sampled peak.
     constexpr float kMagneticHoldSeconds = 0.025f;
+    // A peak within this fraction of the held one renews the hold as well.
+    // A steady tone's sampled peaks repeat exactly, never above the held
+    // peak, so with a strict comparison the hold ran out, the peak released
+    // and the next one caught it again: a cycle of a few half-periods that
+    // moved the Chebyshev terms at tens of Hz and put sub-harmonics on the
+    // tone (200 Hz at -6 dBFS: f0/2 at -73 dBc, H2 at -94, with the record
+    // envelope smoothed; -89 and -100 with this). A real decay falls past
+    // the tolerance and releases as before.
+    constexpr float kMagneticHoldTolerance = 0.99f;
     // The held peak reaches the normalization through two critically damped
     // poles of this time constant each, with kMagneticHeadroom on top. The
     // held peak still steps whenever a sampled peak exceeds it, and in a
@@ -1405,6 +1432,8 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     recordEnvelopeRelease = std::exp(-1.0f / (0.12f * (float)fs));
     detectorSmoothCoeff =
         1.0f - std::exp(-2.0f * kDuskPi * kDetectorSmoothHz / (float)fs);
+    recordEnvelopeSmoothCoeff =
+        1.0f - std::exp(-1.0f / (kRecordEnvelopeSmoothSeconds * (float)fs));
     magneticReleaseOs = std::exp(-1.0f / (0.12f * 4.0f * (float)fs));
     magneticHoldSamplesOs = (int)std::lround(kMagneticHoldSeconds * 4.0 * fs);
     magneticSmoothCoeff =
@@ -1549,6 +1578,8 @@ void TapeEchoDSP::reset()
         ch.detectorHilbert.reset();
         ch.detectorSmooth1 = 0.0f;
         ch.detectorSmooth2 = 0.0f;
+        ch.recordEnvelopeSmooth1 = 0.0f;
+        ch.recordEnvelopeSmooth2 = 0.0f;
         ch.loopEnvelope = 0.0f;
         ch.magneticEnvelope = 0.0f;
         ch.magneticAmplitude1 = 0.0f;
@@ -2231,7 +2262,15 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                                        * (detectorInput - ch.recordEnvelope);
                 else
                     ch.recordEnvelope *= recordEnvelopeRelease;
-                x.recordEnvelopeNow[i] = ch.recordEnvelope;
+                // The laws read it through the smoothing poles (see
+                // kRecordEnvelopeSmoothSeconds); the second pole takes the
+                // first one's previous value, so the two update side by side.
+                const float smoothFirst = ch.recordEnvelopeSmooth1;
+                ch.recordEnvelopeSmooth1 = smoothFirst + recordEnvelopeSmoothCoeff
+                                         * (ch.recordEnvelope - smoothFirst);
+                ch.recordEnvelopeSmooth2 += recordEnvelopeSmoothCoeff
+                                          * (smoothFirst - ch.recordEnvelopeSmooth2);
+                x.recordEnvelopeNow[i] = ch.recordEnvelopeSmooth2;
             }
             // The record compressor's gain law, from the envelope above, then the program feed at preamp drive, DC-blocked.
             // The preamp's curve is applied in the tape loop below, after the
@@ -2678,6 +2717,8 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                         ch.magneticEnvelope = baseMagnitude;
                         ch.magneticHold = magneticHoldSamplesOs;
                     }
+                    else if (baseMagnitude >= kMagneticHoldTolerance * ch.magneticEnvelope)
+                        ch.magneticHold = magneticHoldSamplesOs;
                     else if (ch.magneticHold > 0)
                         --ch.magneticHold;
                     else
