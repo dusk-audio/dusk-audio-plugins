@@ -2255,8 +2255,22 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                                     * (bandAmplitude - ch.detectorSmooth1);
                 ch.detectorSmooth2 += detectorSmoothCoeff
                                     * (ch.detectorSmooth1 - ch.detectorSmooth2);
+                // The fast path takes the larger of the sample magnitude and
+                // the band's unsmoothed analytic amplitude. A high tone's
+                // sample magnitude peaks below its amplitude by a pattern of
+                // the sample phase (9.4 kHz: 5.09 samples a cycle, the
+                // sampled peaks beat at 48 kHz - 5 x 9.4 kHz = 845 Hz); a
+                // moving envelope kept the envelope re-catching those peaks,
+                // and below the laws' smoothing corner the pattern reached
+                // the record signal (9.4 kHz with 7 Hz AM, feedback off: its
+                // 11th folded to 7.7 kHz at -74 dBc, the reference -82; every
+                // tone 3.3-10.9 kHz showed fold lines 5-20 dB over the
+                // floor). The analytic amplitude does not depend on the
+                // sample phase; low tones, under the band, keep the sample
+                // magnitude.
                 const float detectorInput = std::max(
-                    kDetectorPeakWeight * tapeMagnitude, ch.detectorSmooth2);
+                    kDetectorPeakWeight * std::max(tapeMagnitude, bandAmplitude),
+                    ch.detectorSmooth2);
                 if (detectorInput > ch.recordEnvelope)
                     ch.recordEnvelope += recordEnvelopeAttack
                                        * (detectorInput - ch.recordEnvelope);
