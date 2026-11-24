@@ -2492,7 +2492,17 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                 // this a hot tone held the loop at unity for everything
                 // under it and the loop's floor built up (Intensity 0.68:
                 // -84 dBc where the reference reads -94..-98).
-                x.loopLinear[i] *= preDriveGain * postDriveGain;
+                //
+                // The regeneration takes the compressor's gain twice: once,
+                // every carrier's toll on the loop came out ~0.75x the
+                // reference's (averaged over six bursts per cell, 250 Hz-
+                // 10.9 kHz, -18..-3 dBFS, Intensity 0.5). Squared, the
+                // summed |ours - reference| over those cells falls 26.1 ->
+                // 12.3 dB per pass (1 kHz within 0.2 dB at every level);
+                // x1.5 gave 15.1, and the few cells that x2 already
+                // overshoots (6 / 10.9 kHz at -3 dBFS) rule out more.
+                const float loopCompression = preDriveGain * postDriveGain;
+                x.loopLinear[i] *= loopCompression * loopCompression;
                 x.pre[i] = ch.preampDC.process(x.preIn[i] * kInputStageDrive);
             }
         }
