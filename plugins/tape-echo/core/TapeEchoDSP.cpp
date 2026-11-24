@@ -2270,24 +2270,19 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                 x.pre[i] = ch.preampDC.process(x.preIn[i] * kInputStageDrive);
             }
         }
+        // The tape loop's playback side: the heads, in sample order (the
+        // tape they read was written at least a sub-block earlier).
         for (int i = 0; i < len; ++i)
         {
-            const int n = base + i;
             const double d1 = x.d1[i];
             const double d2 = x.d2[i];
             const double d3 = x.d3[i];
-            const float drivenInput = x.drivenInput[i];
-            const float fbGain = x.fbGain[i];
             const float g1 = x.g1[i];
             const float g2 = x.g2[i];
             const float g3 = x.g3[i];
-            const float power = x.power[i];
-            const float pre = x.pre[i];
-            const float postDriveGain = x.postDriveGain[i];
             const float reproAgeNoise = x.reproAgeNoise[i];
             const float reproNoiseGate = x.reproNoiseGate[i];
             const float wobble = x.wobble[i];
-            const float recordEnvelopeNow = x.recordEnvelopeNow[i];
             const float splice1 = x.splice1[i];
             const float splice2 = x.splice2[i];
             const float splice3 = x.splice3[i];
@@ -2323,6 +2318,25 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             const float loopHeadSum = loopHeadNormSmoother.next()
                 * (headSum + headNoise);
 
+            // Echo output path only: bass/treble shelves (dry and reverb are
+            // unaffected, matching the hardware layout).
+            float echoWet = headSum + headNoise;
+            if (bassShelfActive)
+                echoWet = ch.bassShelf.process(echoWet);
+            if (trebleShelfActive)
+                echoWet = ch.trebleShelf.process(echoWet);
+
+            writeIdx = (writeIdx + 1) & mask;
+            x.loopHeadSum[i] = loopHeadSum;
+            x.echoWet[i] = echoWet;
+        }
+        // The regeneration drive: a pure function of each sample, a pass
+        // of its own so it runs across samples.
+        for (int i = 0; i < len; ++i)
+        {
+            const float loopHeadSum = x.loopHeadSum[i];
+            const float power = x.power[i];
+            const float fbGain = x.fbGain[i];
             // Record chain: program + feedback -> head EQ -> magnetic
             // saturation -> tape. Everything here except the program feed's
             // outer low-pass (programOuterLP) is inside the loop, so repeats
@@ -2334,6 +2348,18 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             // the tape is full when POWER returns. 1 x fbGain is exact, so with
             // POWER on this is the same bits.
             const float loopDrive = loopLimit(power * fbGain * softClip(loopHeadSum));
+            x.loopDrive[i] = loopDrive;
+        }
+        // Record meter, regeneration envelope and the record stage's
+        // per-sample laws.
+        for (int i = 0; i < len; ++i)
+        {
+            const float drivenInput = x.drivenInput[i];
+            const float power = x.power[i];
+            const float loopDrive = x.loopDrive[i];
+            const float recordEnvelopeNow = x.recordEnvelopeNow[i];
+            const float postDriveGain = x.postDriveGain[i];
+            Channel& ch = channels[0];
             // Meter point: after Input Volume, BEFORE the regeneration sum. This
             // deliberately ignores Input Send. drivenInput carries the power gate
             // already (monoInput = power * ...), so both readings still die with
@@ -2424,11 +2450,6 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             const float fluxEnvelope =
                 recordEnvelopeNow + ch.loopEnvelope * kRecordDriveToInput;
 
-            // Band-limit both feeds with the same sections, then saturate:
-            // the preamp curve on the program alone, the magnetic stage below
-            // on the sum. Nothing filters after the saturation, so harmonics
-            // reach the echo as the reference's do; on the next pass round the
-            // loop the regeneration feed's sections filter them like any signal.
             const float lowFloor01 = clamp01(
                 (fluxEnvelope - 0.02f) * (1.0f / 0.07f));
             const float lowFloorSmooth =
@@ -2455,7 +2476,6 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             const float c5 = -0.0195f * hot;
             const float programGain = kInputStageTrim * postDriveGain;
 
-            x.loopDrive[i] = loopDrive;
             x.lowFloorFade[i] = lowFloorFade;
             x.programGain[i] = programGain;
             x.c3[i] = c3;
@@ -2476,24 +2496,20 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                 makeupGain = std::pow(10.0f, magneticMakeupDb * (1.0f / 20.0f));
             }
             x.makeupGain[i] = makeupGain;
-
-            // Echo output path only: bass/treble shelves (dry and reverb are
-            // unaffected, matching the hardware layout).
-            float echoWet = headSum + headNoise;
-            if (bassShelfActive)
-                echoWet = ch.bassShelf.process(echoWet);
-            if (trebleShelfActive)
-                echoWet = ch.trebleShelf.process(echoWet);
-
-            writeIdx = (writeIdx + 1) & mask;
-            x.echoWet[i] = echoWet;
         }
         {
-            // The regeneration feed's band limits, the same sections as the
-            // program feed's below. With Intensity at minimum the loop drive
-            // is exactly zero; once these sections have also decayed to zero
-            // (denormals flush), zero in gives zero out, so a sub-block whose
-            // drive is all zero is skipped while every section state is zero.
+            // Band-limit both feeds with the same sections, then saturate
+            // (the passes below): the preamp curve on the program alone, the
+            // magnetic stage on the sum. Nothing filters after the
+            // saturation, so harmonics reach the echo as the reference's do;
+            // on the next pass round the loop the regeneration feed's
+            // sections filter them like any signal.
+            //
+            // The regeneration feed first. With Intensity at minimum its
+            // drive is exactly zero; once its sections have also decayed to
+            // zero (denormals flush), zero in gives zero out, so a sub-block
+            // whose drive is all zero is skipped while every section state
+            // is zero.
             Channel& ch = channels[0];
             bool silent = loopFeedSectionsAtRest(ch);
             for (int i = 0; silent && i < len; ++i)

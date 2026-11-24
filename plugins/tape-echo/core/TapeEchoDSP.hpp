@@ -621,6 +621,7 @@ private:
         float programFeed[kSize];
         float loopFeed[kSize];
         float loopDrive[kSize];
+        float loopHeadSum[kSize];
         float lowFloorFade[kSize];
         float programGain[kSize];
         float c3[kSize];
