@@ -156,7 +156,7 @@ inline constexpr const char* const kAlgorithmLabels[kNumAlgorithmSlots] = {
     "Studio", "Spring", "Gated", "Shimmer",
     "Vintage Hall", "Reverse", "Hall", "Sparse",
     "Concert Hall", "Tiled Room", "Dense Hall", "Parallel Hall",
-    "Nonlinear", "Reserved", "Reserved", "Reserved",
+    "Nonlinear", "Room", "Chamber II", "Vintage Plate II",
     "Reserved", "Reserved", "Reserved", "Reserved",
     "Reserved", "Reserved", "Reserved", "Reserved",
     "Reserved", "Reserved", "Reserved", "Reserved"

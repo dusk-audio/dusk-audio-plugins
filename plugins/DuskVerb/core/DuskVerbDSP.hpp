@@ -55,6 +55,7 @@
 #include "DuskVerbParamTable.hpp"
 #include "Dv2OutputShell.hpp"
 #include "Dv2StereoBands.hpp"
+#include "dsp/SectionReverbEngine.h"
 #include "dsp/NonLinBurstEngine.h"
 
 #include <atomic>
@@ -65,6 +66,8 @@ struct FactoryPreset;
 
 namespace duskverb
 {
+
+struct SectionReverbRow;   // DuskVerbDv2Voicing.hpp
 
 // The optional room variant belongs to the recalled sound across prepare and reset.
 enum class RoomVoicing : unsigned char { Factory, EarlyStudy, Matched };
@@ -221,7 +224,14 @@ private:
     struct OwnVoice
     {
         NonLinBurstEngine nonLin;
+        SectionReverbEngine sections;
         Dv2OutputShell shell;
+        int algorithm = kNonLinAlgorithm;          // the own engine this voice plays while active
+        // The row installed when the voice was armed, kept until the voice is armed again: a
+        // preset published while a fade defers its swap must not re-voice the sounding one.
+        const SectionReverbRow* sectionRow = nullptr;
+        SectionReverbConfig sectionsRequested {};  // what the controls last asked the room or chamber for
+        bool sectionsConfigured = false;           // sectionsRequested has reached the engine since arming
         bool active = false;
         bool needsSnap = false;      // armed since the last push: start at the targets, no glide
     };
@@ -263,6 +273,8 @@ private:
     void armOwnVoice (const DuskVerbEngine* engine, bool own) noexcept;
     void pushShellParameters (Dv2OutputShell& shell, float toneHiCut) noexcept;
     void pushOwnParameters (OwnVoice& voice, float preDelayMs, float toneTreble, float toneHiCut) noexcept;
+    // The room's or the chamber's settings: its preset's row, moved by the controls.
+    void pushSectionParameters (OwnVoice& voice, float preDelayMs, float toneTreble) noexcept;
     void pushFieldParameters (FieldVoice& voice, float toneHiCut) noexcept;
     void renderWet (DuskVerbEngine* engine, float* left, float* right, int numSamples) noexcept;
     void addEarlyFields (float* left, float* right, int numSamples,

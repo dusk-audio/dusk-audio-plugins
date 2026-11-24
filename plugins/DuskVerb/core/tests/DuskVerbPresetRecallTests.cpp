@@ -54,6 +54,13 @@ constexpr double kDensifiedRepeat = 0.15;      // past the 50 ms preset fade, so
 
 bool sameBits (float a, float b) noexcept { return std::memcmp (&a, &b, sizeof (float)) == 0; }
 
+// Every sample a number. A comparison by peaks and largest differences alone would pass a NaN:
+// std::max keeps its first argument when the other is NaN.
+bool allFinite (const std::vector<float>& x)
+{
+    return std::all_of (x.begin(), x.end(), [] (float v) { return std::isfinite (v); });
+}
+
 void setPlain (DuskVerbDSP& dsp, int index, float plain)
 {
     dsp.setParameter (index, dspFromPlain (paramDesc (index), plain));
@@ -136,8 +143,11 @@ void testTable()
         if (preset == nullptr)
             continue;
         checkf (shown >= decay.min && shown <= decay.max, "'%s' reads %g s, inside Decay's range", n.c_str(), shown);
+        // The room's and the chamber's Decay is an exponential tail like the shared engines'; the
+        // nonlinear burst's is a burst length.
         const EngineType type = controlEngine (preset->algorithm);
-        checkf (! isOwnAlgorithm (preset->algorithm) && type != EngineType::NonLinear && type != EngineType::ReverseRoom,
+        checkf (resolveAlgorithm (preset->algorithm) != kNonLinAlgorithm && type != EngineType::NonLinear
+                    && type != EngineType::ReverseRoom,
                 "'%s' is not on the Gated, Reverse or Nonlinear engine", n.c_str());
     }
 }
@@ -415,38 +425,141 @@ double earlyLowCorrelation (DuskVerbDSP& dsp, double hiHz, double ms)
     return lr / std::sqrt (std::max (ll * rr, 1.0e-300));
 }
 
-// Live Room recalls with DuskVerb 2's stereo voicing (DuskVerbDv2Voicing.hpp): the early field's
-// side burst opens the response with anti-phase lows, as the reference's first reflection does,
-// while the band width stage (Linkwitz-Riley crossovers) keeps the tail's lows and mids out of the
-// anti-phase the shared one-pole width split ran them into (-0.84 broadband). And the stage plays
-// on after a host deactivate/activate.
-void testStereoBandsPatch()
+// Live Room and Reverse Taps play on DuskVerb 2's room, Large Chamber on its chamber and the two
+// vintage plates on its vintage plate (kOwnEngineByName, kSectionReverbByName). Live Room opens with anti-phase lows (its left taps negative, its right
+// positive, and the loop's two sections feeding opposite sides). On both, a host
+// deactivate/activate renders what a fresh recall does: the engine's configuration survives a
+// re-prepare (DuskVerbDSP::prepare re-installs the shared config, which must not take it).
+void testSectionPresetsOnTheirEngines()
 {
-    const FactoryPreset* preset = presetNamed ("Live Room");
-    checkf (preset != nullptr, "Live Room is a factory preset");
-    if (preset == nullptr)
+    struct Expect { const char* name; int algorithm; const char* engine; };
+    for (const Expect& e : { Expect { "Live Room", kRoomAlgorithm, "Room" },
+                             Expect { "Reverse Taps", kRoomAlgorithm, "Room" },
+                             Expect { "Large Chamber", kChamberAlgorithm, "Chamber" },
+                             Expect { "Vintage Vocal Plate", kSectionPlateAlgorithm, "vintage plate" },
+                             Expect { "Vintage Gold Plate", kSectionPlateAlgorithm, "vintage plate" } })
+    {
+        const FactoryPreset* preset = presetNamed (e.name);
+        checkf (preset != nullptr, "%s is a factory preset", e.name);
+        if (preset == nullptr)
+            continue;
+        checkf (resolveAlgorithm (preset->algorithm) == e.algorithm, "%s plays on the %s engine", e.name, e.engine);
+        const auto fresh = recalled (*preset);
+        const std::vector<float> a = burstResponse (*fresh);
+        const auto cycled = recalled (*preset);
+        cycled->releaseResources();
+        cycled->prepare (kSr, kBlock);
+        settle (*cycled);
+        const std::vector<float> b = burstResponse (*cycled);
+        checkf (allFinite (a) && allFinite (b), "%s: the burst responses are finite", e.name);
+        double peak = 0.0, diff = 0.0;
+        for (std::size_t i = 0; i < a.size() && i < b.size(); ++i)
+        {
+            peak = std::max (peak, static_cast<double> (std::fabs (a[i])));
+            diff = std::max (diff, static_cast<double> (std::fabs (a[i] - b[i])));
+        }
+        std::printf ("%s: after a deactivate/activate the burst differs by %.3g of its peak\n", e.name,
+                     peak > 0.0 ? diff / peak : 0.0);
+        checkf (peak > 0.0 && diff <= 1.0e-4 * peak, "%s: a deactivate/activate renders as a fresh recall (%.3g of the peak)",
+                e.name, peak > 0.0 ? diff / peak : 0.0);
+    }
+    if (const FactoryPreset* room = presetNamed ("Live Room"))
+    {
+        const auto early = recalled (*room);
+        const double opening = earlyLowCorrelation (*early, 300.0, 60.0);
+        std::printf ("Live Room L/R correlation, first 60 ms below 300 Hz %+.3f\n", opening);
+        checkf (opening < -0.5, "Live Room opens with anti-phase lows (L/R correlation %+.3f)", opening);
+    }
+}
+
+// A host reset (clearState) drops the algorithm cache but leaves a sounding own voice in place.
+// An Algorithm change after it must still move the voice to the newly chosen own engine: Live Room
+// switched to the chamber after a reset plays the chamber, as the same switch without one does.
+void testOwnEngineChangeAfterReset()
+{
+    const FactoryPreset* room = presetNamed ("Live Room");
+    if (room == nullptr)
         return;
-    const auto early = recalled (*preset);
-    const double opening = earlyLowCorrelation (*early, 300.0, 60.0);
-    const auto fresh = recalled (*preset);
-    const double low = tailCorrelation (*fresh, 0.0, 300.0);
-    const auto again = recalled (*preset);
-    const double mid = tailCorrelation (*again, 300.0, 5000.0);
-    const auto cycled = recalled (*preset);
-    cycled->releaseResources();
-    cycled->prepare (kSr, kBlock);
-    settle (*cycled);
-    const double midAfterCycle = tailCorrelation (*cycled, 300.0, 5000.0);
-    std::printf ("Live Room L/R correlation: first 60 ms below 300 Hz %+.3f; tail below 300 Hz %+.3f, "
-                 "300 Hz-5 kHz %+.3f (%+.3f after a deactivate/activate)\n", opening, low, mid, midAfterCycle);
-    checkf (opening < -0.7, "Live Room opens with anti-phase lows (L/R correlation %+.3f)", opening);
-    checkf (low > -0.5, "Live Room's low tail is out of the legacy anti-phase (L/R correlation %+.3f)", low);
-    checkf (mid > -0.25, "Live Room's mid tail stays out of anti-phase (L/R correlation %+.3f)", mid);
-    checkf (std::abs (midAfterCycle - mid) < 0.05, "a deactivate/activate keeps the stage (%+.3f against %+.3f)", midAfterCycle, mid);
+    auto stay = recalled (*room);
+    stay->clearState();
+    settle (*stay);
+    const std::vector<float> roomOut = burstResponse (*stay);
+    auto reset = recalled (*room);
+    reset->clearState();
+    setPlain (*reset, Algorithm, static_cast<float> (kChamberAlgorithm));
+    settle (*reset);
+    const std::vector<float> afterReset = burstResponse (*reset);
+    auto direct = recalled (*room);
+    setPlain (*direct, Algorithm, static_cast<float> (kChamberAlgorithm));
+    settle (*direct);
+    const std::vector<float> noReset = burstResponse (*direct);
+    checkf (allFinite (roomOut) && allFinite (afterReset) && allFinite (noReset),
+            "Live Room to the chamber after a reset: the burst responses are finite");
+    double peak = 0.0, fromRoom = 0.0, fromNoReset = 0.0;
+    for (std::size_t i = 0; i < afterReset.size(); ++i)
+    {
+        peak = std::max (peak, static_cast<double> (std::fabs (noReset[i])));
+        fromRoom = std::max (fromRoom, static_cast<double> (std::fabs (afterReset[i] - roomOut[i])));
+        fromNoReset = std::max (fromNoReset, static_cast<double> (std::fabs (afterReset[i] - noReset[i])));
+    }
+    std::printf ("Live Room to the chamber after a reset: %.3g of the peak from the room, %.3g from the switch "
+                 "without a reset\n", peak > 0.0 ? fromRoom / peak : 0.0, peak > 0.0 ? fromNoReset / peak : 0.0);
+    checkf (peak > 0.0 && fromRoom > 0.1 * peak, "after a reset, Live Room switched to the chamber still plays the room");
+    checkf (peak > 0.0 && fromNoReset <= 1.0e-4 * peak, "after a reset, the switch to the chamber plays as it does without one "
+            "(%.3g of the peak)", peak > 0.0 ? fromNoReset / peak : 0.0);
+}
+
+// A preset published while a crossfade defers its swap must not re-voice the sounding own voice:
+// during the fade into Live Room, publishing Reverse Taps (the same engine, another row, no
+// parameter changed) leaves the fade rendering exactly as it does without it.
+void testDeferredPresetKeepsTheSoundingRow()
+{
+    const FactoryPreset* gold = presetNamed ("Vintage Gold Plate");
+    const FactoryPreset* live = presetNamed ("Live Room");
+    const FactoryPreset* reverse = presetNamed ("Reverse Taps");
+    if (gold == nullptr || live == nullptr || reverse == nullptr)
+        return;
+    const auto fadeInto = [&] (bool publish) {
+        auto dsp = recalled (*gold);
+        collectDv2Parameters (*live, [&] (const char* id, float v) {
+            const int i = paramIndexForId (id);
+            if (i >= 0) setPlain (*dsp, i, v);
+        });
+        setPlain (*dsp, Mix, 1.0f);
+        dsp->applyFactoryPresetConfig (*live);
+        std::vector<float> l (kBlock), r (kBlock), out;
+        uint32_t seed = 777u;
+        // 8 blocks of 256: 43 ms, inside the 50 ms fade that the first block starts.
+        for (int b = 0; b < 8; ++b)
+        {
+            if (b == 1 && publish)
+                dsp->applyFactoryPresetConfig (*reverse);
+            for (int i = 0; i < kBlock; ++i)
+            {
+                seed = seed * 1664525u + 1013904223u;
+                l[static_cast<size_t> (i)] = r[static_cast<size_t> (i)] = 0.25f * (static_cast<float> (seed >> 8) / 8388608.0f - 1.0f);
+            }
+            const float* in[] = { l.data(), r.data() };
+            float* outs[] = { l.data(), r.data() };
+            dsp->processBlock (in, outs, 2, kBlock);
+            if (b >= 1)
+            {
+                out.insert (out.end(), l.begin(), l.end());
+                out.insert (out.end(), r.begin(), r.end());
+            }
+        }
+        return out;
+    };
+    const std::vector<float> without = fadeInto (false), with = fadeInto (true);
+    checkf (allFinite (without) && allFinite (with), "the fade into Live Room renders finite samples");
+    bool same = without.size() == with.size();
+    for (std::size_t i = 0; same && i < with.size(); ++i)
+        same = sameBits (with[i], without[i]);
+    checkf (same, "a preset published during the fade into Live Room changed what the fade renders");
 }
 
 // The normalized autocorrelation at `lag` samples of `dsp`'s mono answer to one impulse, band-passed
-// to loHz..hiHz, over its tail from 200 ms to 1.2 s past the peak (full_check's boing window); each
+// to loHz..hiHz, over its tail from 200 ms to 1.2 s past the peak (the resonance check's window); each
 // sample is taken over the 100 ms RMS around it, so the decay does not weight the lags.
 double tailAutocorrelation (DuskVerbDSP& dsp, double loHz, double hiHz, int lag)
 {
@@ -677,7 +790,9 @@ int main()
     testEngineDecay();
     testSwapGivesCalibratedDecay();
     testStereoPatch();
-    testStereoBandsPatch();
+    testSectionPresetsOnTheirEngines();
+    testOwnEngineChangeAfterReset();
+    testDeferredPresetKeepsTheSoundingRow();
     testDensifierPatch();
     testEnginePatchNames();
     testFdnDelaysPatch();

@@ -237,7 +237,9 @@ public:
 
     // The post path's state of `other`, for a field taking over from the one fading out: with
     // the input shared, that is all a field holds. A OnePoleLP copies whole, so this field's own
-    // cutoff goes back on.
+    // cutoff goes back on. The shelf and the two burst filters run only while their path is on,
+    // so where the other field's is off its state is history from whenever it last ran: this
+    // field's starts over instead (a recall after a long silence would otherwise replay it).
     void copyStateFrom (const EarlyField& other) noexcept
     {
         for (int s = 0; s < 2; ++s)
@@ -245,18 +247,39 @@ public:
             lowpass_[static_cast<size_t> (s)] = other.lowpass_[static_cast<size_t> (s)];
             lowpass_[static_cast<size_t> (s)].setCutoff (lowpassHz_, sr_);
             // The other field's shelf state under this field's own shelf, as the side burst's
-            // lowpass below; a field without a shelf never runs it.
-            const duskaudio::BiquadCoeffsDouble own = shelf_[static_cast<size_t> (s)].coeffs();
-            shelf_[static_cast<size_t> (s)] = other.shelf_[static_cast<size_t> (s)];
-            shelf_[static_cast<size_t> (s)].setCoeffs (own);
+            // lowpass below.
+            if (other.shelfOn_)
+            {
+                const duskaudio::BiquadCoeffsDouble own = shelf_[static_cast<size_t> (s)].coeffs();
+                shelf_[static_cast<size_t> (s)] = other.shelf_[static_cast<size_t> (s)];
+                shelf_[static_cast<size_t> (s)].setCoeffs (own);
+            }
+            else
+            {
+                shelf_[static_cast<size_t> (s)].reset();
+            }
         }
-        burstLowpass_ = other.burstLowpass_;
-        burstLowpass_.setCutoff (burstLowpassHz_, sr_);
+        if (other.burstGain_ > 0.0f)
+        {
+            burstLowpass_ = other.burstLowpass_;
+            burstLowpass_.setCutoff (burstLowpassHz_, sr_);
+        }
+        else
+        {
+            burstLowpass_.reset();
+        }
         for (int k = 0; k < 2; ++k)
         {
-            const duskaudio::BiquadCoeffsDouble own = sideLowpass_[k].coeffs();
-            sideLowpass_[k] = other.sideLowpass_[k];
-            sideLowpass_[k].setCoeffs (own);
+            if (other.sideGain_ > 0.0f)
+            {
+                const duskaudio::BiquadCoeffsDouble own = sideLowpass_[k].coeffs();
+                sideLowpass_[k] = other.sideLowpass_[k];
+                sideLowpass_[k].setCoeffs (own);
+            }
+            else
+            {
+                sideLowpass_[k].reset();
+            }
         }
     }
 

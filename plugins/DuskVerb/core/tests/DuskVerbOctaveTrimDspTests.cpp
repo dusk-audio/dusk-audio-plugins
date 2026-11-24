@@ -275,7 +275,7 @@ void testPresetsWithoutATrimAreUnchanged()
 
 void testTheTuningHook()
 {
-    const FactoryPreset& preset = presetNamed ("Large Chamber");
+    const FactoryPreset& preset = presetNamed ("Bright Hall");
     const char* text = "1.25,-0.5,2.75,-1,-2,0.3,-1.1,2.9,-2.6";
     OctaveTrimGains parsed {};
     checkf (duskverb::parseOctaveTrim (text, parsed) && parsed == kTrim, "the test's hook text is refused or misread");
@@ -345,7 +345,7 @@ void testTheTrimIsTheStageOnTheSummedWet()
           [] (DuskVerbDSP& d, const FactoryPreset&, int b) { if (b == at) { d.releaseResources(); d.prepare (kSr, kBlock); } },
           [] (OctaveTrim& t, const OctaveTrimGains& g, int b) { if (b == 0) t.swapTo (g, kFade); if (b == at) t.prepare (kSr); } },
     };
-    for (const char* name : { "Large Chamber", "Surf '63 Spring", "Nonlinear Medium" })
+    for (const char* name : { "Bright Hall", "Surf '63 Spring", "Nonlinear Medium" })
     {
         const FactoryPreset& preset = presetNamed (name);
         double worst = 0.0, moved = 1.0e9;
@@ -373,7 +373,7 @@ void testTheTrimIsTheStageOnTheSummedWet()
 // (the stage run over the ducked flat render) that does not hold, which the test checks it sees.
 void testTheTrimSitsBeforeTheDuckerAndTheMix()
 {
-    const FactoryPreset& preset = presetNamed ("Large Chamber");
+    const FactoryPreset& preset = presetNamed ("Bright Hall");
     constexpr int n = 40800;
     const auto setUp = [] (int index, float value) {
         return [index, value] (DuskVerbDSP& d, int b) {
@@ -413,7 +413,7 @@ void testTheTrimSitsBeforeTheDuckerAndTheMix()
             ahead, wrongWay);
 }
 
-// Large Chamber to Medium Drum Room under a sustained 440 Hz tone (-13.3 dBFS), 1.5 s in: the
+// Bright Hall to Medium Drum Room under a sustained 440 Hz tone (-13.3 dBFS), 1.5 s in: the
 // session rendered flat, then the stage over it, swapping from one trim to another where the
 // engines swap (as the previous test shows DuskVerbDSP does). The ideal is the crossfade (with the
 // engines' t) of the two trims, each run over the whole render. Measured, with a step and an
@@ -424,7 +424,7 @@ void testTheTrimSitsBeforeTheDuckerAndTheMix()
 //          swap to 100 ms after the fade, and the level kept between the two trims' own levels.
 void testASwapBetweenTwoTrimsIsClean()
 {
-    const FactoryPreset& from = presetNamed ("Large Chamber");
+    const FactoryPreset& from = presetNamed ("Bright Hall");
     const FactoryPreset& to = presetNamed ("Medium Drum Room");
     const int swapBlock = (kSettle + 72000) / kBlock, swap = swapBlock * kBlock, n = swap + 24000;
     // Both at their rows' Gain Trim, not DuskVerb 2's level match (kPresetOverrides): the click is
@@ -513,9 +513,10 @@ void testASwapBetweenTwoTrimsIsClean()
         checkf (equalPowerDb >= 1.0, "%s: an equal-power fade moves the level only %.2f dB, too little for the measure to see a swell",
                 p.name, equalPowerDb);
         // 0.1 dB: a linear crossfade of two trims that differ in phase dips a little under the
-        // lower of the two, by how much depends on what is playing. With Large Chamber's
-        // 2026-11-20 voicing the ideal crossfade itself reads 0.061 dB on "mixed -> flat" (0.05 dB
-        // was the limit while it read less), and the stage follows the ideal to 0.0000 dB above.
+        // lower of the two, by how much depends on what is playing. With the Large Chamber voicing
+        // this test ran on until 2026-11-23 the ideal crossfade itself read 0.061 dB on "mixed ->
+        // flat" (0.05 dB was the limit while it read less), and the stage followed the ideal to
+        // 0.0000 dB above.
         checkf (outside <= 0.1, "%s: mid-fade the level leaves the two trims' own by %.4f dB", p.name, outside);
     }
 }
@@ -523,7 +524,7 @@ void testASwapBetweenTwoTrimsIsClean()
 // Processing with a trim allocates nothing: steadily, and through a fade to flat and back.
 void testNoAllocationInProcess()
 {
-    const FactoryPreset& preset = presetNamed ("Large Chamber");
+    const FactoryPreset& preset = presetNamed ("Bright Hall");
     auto dsp = std::make_unique<DuskVerbDSP> (nullptr, &kTrim);
     dsp->prepare (kSr, kBlock);
     setPreset (*dsp, preset);

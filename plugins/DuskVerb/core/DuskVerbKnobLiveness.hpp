@@ -63,6 +63,22 @@ inline constexpr bool nonLinHears (int paramId) noexcept
     }
 }
 
+// The room and the chamber (DuskVerbDSP::pushSectionParameters) have no freeze, no drive, no gate
+// and no octave network, their output stage has no Mono Below, and their damping is one bass band
+// under the crossover and the treble cut: no mid or high-crossover control.
+inline constexpr bool sectionReverbHears (int paramId) noexcept
+{
+    switch (paramId)
+    {
+        case Freeze: case GateEnabled: case Saturation: case Character:
+        case MonoBelow: case MonoBelowDepth: case TonalCorrection:
+        case MidMult: case HighCrossover:
+            return false;
+        default:
+            return true;
+    }
+}
+
 // True when moving `paramId` changes what the engine `algorithm` (any slot value) renders.
 // Parameters this table does not cover always read live.
 inline bool controlLive (int algorithm, int paramId) noexcept
@@ -70,6 +86,8 @@ inline bool controlLive (int algorithm, int paramId) noexcept
     const int engine = resolveAlgorithm (algorithm);
     if (engine == kNonLinAlgorithm)
         return nonLinHears (paramId);
+    if (isSectionAlgorithm (engine))
+        return sectionReverbHears (paramId);
 
     const EngineType type = getAlgorithmConfig (engine).engine;
     const bool reverse = type == EngineType::ReverseRoom, parallel = type == EngineType::ParallelMultiband;

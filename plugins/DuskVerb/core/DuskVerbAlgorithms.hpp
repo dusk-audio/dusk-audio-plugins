@@ -19,12 +19,15 @@ inline constexpr int kNonLinAlgorithm = 16;      // the classic nonlinear burst 
 // The longest Decay that burst honours (NonLinBurstEngine::kMaxDecaySeconds, asserted equal in
 // DuskVerbDSP.cpp), here for the editor and host text, which do not include the engine.
 inline constexpr float kNonLinMaxDecaySeconds = 2.5f;
-inline constexpr int kNumAlgorithms = 17;        // engines that exist
+inline constexpr int kRoomAlgorithm = 17;        // the room (SectionReverbEngine, Room model)
+inline constexpr int kChamberAlgorithm = 18;     // the chamber (SectionReverbEngine, Chamber model)
+inline constexpr int kSectionPlateAlgorithm = 19;   // the vintage plate (SectionReverbEngine, Vintage Plate model)
+inline constexpr int kNumAlgorithms = 20;        // engines that exist
 
 // The size of the Algorithm parameter as hosts see it. VST3 stores automation as a fraction
 // of a parameter's range, so this range must never change once a release is public: an engine
 // added later takes the next Reserved slot in place, and every recorded automation lane keeps
-// pointing at the same slot. 32 slots: the 17 engines, then room for 15 more.
+// pointing at the same slot. 32 slots: the 20 engines, then room for 12 more.
 inline constexpr int kNumAlgorithmSlots = 32;
 static_assert (kNumAlgorithms <= kNumAlgorithmSlots, "every engine needs a slot");
 
@@ -41,11 +44,31 @@ inline constexpr int resolveAlgorithm (int slot) noexcept
 
 inline constexpr bool isOwnAlgorithm (int slot) noexcept { return resolveAlgorithm (slot) >= kNumSharedAlgorithms; }
 
+// The engines SectionReverbEngine plays, and the model each one is (SectionReverbModel's values).
+inline constexpr bool isSectionAlgorithm (int slot) noexcept
+{
+    const int engine = resolveAlgorithm (slot);
+    return engine == kRoomAlgorithm || engine == kChamberAlgorithm || engine == kSectionPlateAlgorithm;
+}
+inline constexpr int sectionModelFor (int slot) noexcept
+{
+    const int engine = resolveAlgorithm (slot);
+    return engine == kChamberAlgorithm ? 1 : (engine == kSectionPlateAlgorithm ? 2 : 0);
+}
+
 // The name of the engine a slot plays.
 inline const char* algorithmName (int slot) noexcept
 {
     const int engine = resolveAlgorithm (slot);
-    return engine == kNonLinAlgorithm ? "Nonlinear" : getAlgorithmConfig (engine).name;
+    if (engine == kNonLinAlgorithm)
+        return "Nonlinear";
+    if (engine == kRoomAlgorithm)
+        return "Room";
+    if (engine == kChamberAlgorithm)
+        return "Chamber II";
+    if (engine == kSectionPlateAlgorithm)
+        return "Vintage Plate II";
+    return getAlgorithmConfig (engine).name;
 }
 
 // A slot as hosts list it: the engine's name, or "Reserved".

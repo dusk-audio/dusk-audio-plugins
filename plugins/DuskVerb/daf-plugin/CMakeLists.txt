@@ -49,7 +49,8 @@ set(DUSKVERB_ENGINE_SOURCES
 set(DUSKVERB2_DSP_SOURCES
     ../core/DuskVerbDSP.cpp
     ../core/DuskVerbPresetEngineConfig.cpp
-    ../core/dsp/NonLinBurstEngine.cpp)
+    ../core/dsp/NonLinBurstEngine.cpp
+    ../core/dsp/SectionReverbEngine.cpp)
 
 # Tuning hooks for local tuning builds, never a release: with this ON, the DUSKVERB2_EARLYFIELD,
 # DUSKVERB2_OCTAVETRIM and DUSKVERB2_BANDLIMIT environment variables replace DuskVerb 2's
@@ -251,6 +252,18 @@ enable_testing()
         target_compile_options(NonLinBurstEngineTest PRIVATE -O2)
     endif()
     add_test(NAME NonLinBurstEngine COMMAND NonLinBurstEngineTest)
+
+    add_executable(SectionReverbEngineTest
+        ../core/tests/SectionReverbEngineTests.cpp
+        ../core/dsp/SectionReverbEngine.cpp)
+    target_include_directories(SectionReverbEngineTest PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+    target_compile_features(SectionReverbEngineTest PRIVATE cxx_std_17)
+    if(NOT MSVC)
+        target_compile_options(SectionReverbEngineTest PRIVATE -O2)
+    endif()
+    add_test(NAME SectionReverbEngine COMMAND SectionReverbEngineTest)
+
     add_executable(DuskVerbTonalCorrectionTest
         DuskVerbTonalCorrectionTests.cpp
         ${DUSKVERB2_DSP_SOURCES}

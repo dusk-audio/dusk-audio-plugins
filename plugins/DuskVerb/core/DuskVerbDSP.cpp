@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <type_traits>
 
 namespace duskverb
 {
@@ -308,6 +309,7 @@ void DuskVerbDSP::prepare (double sampleRate, int samplesPerBlock)
         for (OwnVoice* own : { &ownA_, &ownB_ })
         {
             own->nonLin.prepare (sampleRate, safeBlockSize);
+            own->sections.prepare (sampleRate);
             own->shell.prepare (sampleRate);
         }
         scalerA_.prepare (sampleRate);
@@ -424,7 +426,10 @@ void DuskVerbDSP::clearState() noexcept
     {
         if (! own->active)
             continue;
-        own->nonLin.clear();
+        if (isSectionAlgorithm (own->algorithm))
+            own->sections.clear();
+        else
+            own->nonLin.clear();
         own->shell.clear();
     }
     // The fields' input is what every field installed later starts from, so it is cleared
@@ -758,7 +763,20 @@ void DuskVerbDSP::armOwnVoice (const DuskVerbEngine* engine, bool own) noexcept
     voice.active = own;
     if (own)
     {
-        voice.nonLin.clear();
+        voice.algorithm = resolveAlgorithm (algorithm());
+        if (isSectionAlgorithm (voice.algorithm))
+        {
+            const FactoryPreset* preset = lastAppliedPreset_.load (std::memory_order_acquire);
+            voice.sectionRow = &sectionRowFor (preset != nullptr ? std::string_view (preset->name) : std::string_view {},
+                                               sectionModelFor (voice.algorithm));
+            voice.sections.clear();
+        }
+        else
+        {
+            voice.sectionRow = nullptr;
+            voice.nonLin.clear();
+        }
+        voice.sectionsConfigured = false;
         voice.shell.clear();
         voice.needsSnap = true;
     }
@@ -780,6 +798,17 @@ static_assert (NonLinBurstEngine::kMaxDecaySeconds == kNonLinMaxDecaySeconds,
 
 void DuskVerbDSP::pushOwnParameters (OwnVoice& voice, float preDelayMs, float toneTreble, float toneHiCut) noexcept
 {
+    if (isSectionAlgorithm (voice.algorithm))
+    {
+        pushSectionParameters (voice, preDelayMs, toneTreble);
+        pushShellParameters (voice.shell, toneHiCut);
+        if (voice.needsSnap)
+        {
+            voice.shell.snap();
+            voice.needsSnap = false;
+        }
+        return;
+    }
     // The shared controls keep the meaning they have on every engine: Decay is the
     // time to -60 dB, Treble Multiply under 1 darkens (the Tone macro folded in as
     // for the shared engines), then Pre-Delay, Lo Cut, Hi Cut and its shelf depth,
@@ -793,6 +822,55 @@ void DuskVerbDSP::pushOwnParameters (OwnVoice& voice, float preDelayMs, float to
         voice.shell.snap();
         voice.needsSnap = false;
     }
+}
+
+static_assert (static_cast<int> (SectionReverbModel::Room) == sectionModelFor (kRoomAlgorithm)
+               && static_cast<int> (SectionReverbModel::Chamber) == sectionModelFor (kChamberAlgorithm)
+               && static_cast<int> (SectionReverbModel::VintagePlate) == sectionModelFor (kSectionPlateAlgorithm),
+               "each section algorithm plays its own model");
+
+void DuskVerbDSP::pushSectionParameters (OwnVoice& voice, float preDelayMs, float toneTreble) noexcept
+{
+    // Each control moves the row's configuration by its ratio to the value the row belongs to
+    // (Pre-Delay, Diffusion and ER Level by their difference), so the preset at its own values
+    // plays exactly the row and every control the editor draws undimmed is heard. Where the row
+    // holds 0, which no ratio moves, the control adds in proportion to its range instead.
+    const int model = sectionModelFor (voice.algorithm);
+    const SectionReverbRow& row = voice.sectionRow != nullptr ? *voice.sectionRow : sectionRowFor ({}, model);
+    const auto ratio = [] (float value, float base) { return base > 0.0f ? value / base : 1.0f; };
+    const auto follow = [&ratio] (float value, float knob, float rowKnob, float span) {
+        return value > 0.0f ? value * ratio (knob, rowKnob) : std::max (0.0f, span * (knob - rowKnob));
+    };
+    SectionReverbConfig c = row.config;
+    // The decay time goes with how far the reverb time sits above the table's shortest step, so
+    // Decay scales that span: double Decay, double the tail.
+    const float shortest = SectionReverbEngine::rtSecondsForStep (model, 0);
+    c.reverbTime = shortest + (c.reverbTime - shortest) * ratio (engineDecay(), row.decay);
+    c.sizeMeters *= std::exp2 (2.0f * (p (Size) - row.size));
+    c.rtHiCutHz *= ratio (p (Damping) * toneTreble, row.damping);
+    c.bassRt *= ratio (p (BassMult), row.bassMult);
+    c.bassXoverHz *= ratio (p (Crossover), row.crossover);
+    c.wanderMs = follow (c.wanderMs, p (ModDepth), row.modDepth, 24.0f);
+    c.spinHz = follow (c.spinHz, p (ModRate), row.modRate, 4.0f);
+    c.diffusion += 100.0f * (p (Diffusion) - row.diffusion);
+    c.earlyLevelDb += 20.0f * std::log10 (std::max (p (ErLevel), 1.0e-3f) / std::max (row.erLevel, 1.0e-3f));
+    if (model == static_cast<int> (SectionReverbModel::Room))
+    {
+        c.earlyPredelayMs += preDelayMs - row.predelayMs;
+        c.roomScale *= (0.25f + p (ErSize)) / (0.25f + row.erSize);
+    }
+    else
+    {
+        c.predelayMs += preDelayMs - row.predelayMs;
+        c.spread = follow (c.spread, 0.25f + p (ErSize), 0.25f + row.erSize, 100.0f);
+    }
+    // The engine clamps and rounds every value to its range.
+    static_assert (std::is_trivially_copyable_v<SectionReverbConfig>, "compared byte for byte");
+    if (voice.sectionsConfigured && std::memcmp (&c, &voice.sectionsRequested, sizeof c) == 0)
+        return;
+    voice.sectionsRequested = c;
+    voice.sectionsConfigured = true;
+    voice.sections.configure (c);
 }
 
 void DuskVerbDSP::pushFieldParameters (FieldVoice& voice, float toneHiCut) noexcept
@@ -1045,7 +1123,10 @@ void DuskVerbDSP::renderWet (DuskVerbEngine* engine, float* left, float* right, 
         engine->process (left, right, numSamples);
         return;
     }
-    own.nonLin.process (left, right, left, right, numSamples);
+    if (isSectionAlgorithm (own.algorithm))
+        own.sections.process (left, right, left, right, numSamples);
+    else
+        own.nonLin.process (left, right, left, right, numSamples);
     own.shell.process (left, right, numSamples);
 }
 
@@ -1274,11 +1355,13 @@ void DuskVerbDSP::processBlock (const float* const* in, float* const* out,
     if (algoIdx != cachedAlgorithm_)
     {
         const bool own = isOwnAlgorithm (algoIdx);
-        if (cachedAlgorithm_ >= 0 && own != ownFor (activeEngine_).active)
+        const OwnVoice& current = ownFor (activeEngine_);
+        const bool otherOwn = own && current.active && current.algorithm != resolveAlgorithm (algoIdx);
+        if (cachedAlgorithm_ >= 0 && (own != current.active || otherOwn))
         {
-            // A change of engine family crossfades like a preset swap: the outgoing
-            // engine keeps its tail while the other member of the pair starts in
-            // the new family. Mid-fade, cachedAlgorithm_ stays put and the next
+            // A change of engine family, or from one own engine to another, crossfades like
+            // a preset swap: the outgoing engine keeps its tail while the other member of the
+            // pair starts in the new one. Mid-fade, cachedAlgorithm_ stays put and the next
             // block tries again, as a preset request would.
             if (presetFadeRemaining_ == 0)
                 performPresetSwap();
@@ -1288,8 +1371,12 @@ void DuskVerbDSP::processBlock (const float* const* in, float* const* out,
             cachedAlgorithm_ = algoIdx;
             if (own)
             {
-                if (! ownFor (activeEngine_).active)
-                    armOwnVoice (activeEngine_, true);     // a fresh start: nothing to fade
+                // A fresh start, nothing to fade: an idle voice, or one a host reset or re-prepare
+                // (which drop the cache) left playing another own engine. A voice already on this
+                // engine stays as it is.
+                if (const OwnVoice& voice = ownFor (activeEngine_);
+                    ! voice.active || voice.algorithm != resolveAlgorithm (algoIdx))
+                    armOwnVoice (activeEngine_, true);
             }
             else
             {

@@ -2,7 +2,7 @@
 //
 // Dv2OutputShell: the output chain DuskVerbEngine runs after each of its engines, for what
 // DuskVerb 2 renders outside them: the engines only DuskVerb 2 has, and the early field's post
-// path. Lo Cut (2nd-order Butterworth high-pass, 5-500 Hz), Hi Cut (a high shelf at the corner,
+// path. Lo Cut (2nd-order Butterworth high-pass, 5-500 Hz; off at 5 Hz, see process()), Hi Cut (a high shelf at the corner,
 // Q 1/sqrt(2), as deep as the preset's shelf depth), Mono Below (the lows under a first-order
 // split at 20-300 Hz summed to mono by its depth; off at 20 Hz), Width (the side signal times
 // width, 0-2) and the output trim (dB), in DuskVerbEngine's order and with its ranges, filter
@@ -97,10 +97,18 @@ public:
         if (std::abs (lo - appliedLoCut_) > 0.5f) designLoCut (lo);
         if (std::abs (hi - appliedHiCut_) > 1.0f) designHiCut (hi);
         if (std::abs (mono - appliedMonoBelow_) > 0.5f) designMonoBelow (mono);
+        // At the bottom of its range Lo Cut is off: from kLoCutFullHz down to kLoCutOffHz the
+        // high-pass output blends into the unfiltered signal, so the knob reaches a flat low end
+        // without a step. The high-pass keeps running underneath, and at kLoCutFullHz and above
+        // its output passes as it is.
+        const float loMix = std::clamp ((lo - kLoCutOffHz) / (kLoCutFullHz - kLoCutOffHz), 0.0f, 1.0f);
         for (int i = 0; i < numSamples; ++i)
         {
-            float l = hi_[0].process (lo_[0].process (left[i]));
-            float r = hi_[1].process (lo_[1].process (right[i]));
+            const float hpL = lo_[0].process (left[i]), hpR = lo_[1].process (right[i]);
+            const float cutL = loMix >= 1.0f ? hpL : (loMix <= 0.0f ? left[i] : left[i] + loMix * (hpL - left[i]));
+            const float cutR = loMix >= 1.0f ? hpR : (loMix <= 0.0f ? right[i] : right[i] + loMix * (hpR - right[i]));
+            float l = hi_[0].process (cutL);
+            float r = hi_[1].process (cutR);
             if (monoOn_)
             {
                 // DuskVerbEngine's Mono Maker: low plus high is the input, so the split is flat.
@@ -129,6 +137,8 @@ private:
     // (a 0 dB Hi Cut shelf does), and zeroing it alone would move that signal. Mono Below's state
     // counts only while it runs: switched off it is left as it is, for when it comes back.
     static constexpr float kZeroBelow = 1.0e-30f;
+    static constexpr float kLoCutOffHz = 5.0f;     // the bottom of Lo Cut's range: no high-pass
+    static constexpr float kLoCutFullHz = 10.0f;   // the full high-pass from here up
     static bool decayed (float s) noexcept { return std::abs (s) < kZeroBelow; }
     static bool decayed (const duskaudio::Biquad& f) noexcept
     {
