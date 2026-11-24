@@ -2,6 +2,7 @@
 
 #include "TapeEchoDSP.hpp"
 #include "DuskDenormals.hpp"   // ScopedFlushDenormals (SSE + ARM64 FPCR)
+#include "DuskFastMath.hpp"    // fastmath::log2x4 / exp2x4
 
 #include <algorithm>
 
@@ -2521,12 +2522,26 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                 // than a cubic can produce: a regularized p = 2.15 term holds
                 // that quiet harmonic floor, fading out before the main curve's
                 // -18 dB operating point. With the fade at exactly zero the term
-                // is zero whatever the power is, so the pow is skipped there.
+                // is zero whatever the power is, so the power is skipped there.
+                // The power is exp2(0.575 log2 v) in four lanes (DuskFastMath,
+                // relative error under 2e-6, -114 dB): libm's powf here cost
+                // 12 % of the whole default state, and replacing it with a
+                // half-ulp-accurate double pow moves the core renders as far
+                // (worst -89.5 against -88.6 dBFS): the loop's own rounding
+                // sensitivity, not this power's accuracy, sets that figure.
                 const float lowFloorFade = x.lowFloorFade[i];
                 if (lowFloorFade != 0.0f)
+                {
+                    float power[4];
                     for (int k = 0; k < 4; ++k)
-                        lowFloor[k] = 1.325f * lowFloorFade * recorded[k]
-                            * std::pow(recorded2[k] + 0.006f * 0.006f, 0.575f);
+                        power[k] = recorded2[k] + 0.006f * 0.006f;
+                    fastmath::log2x4(power, power);
+                    for (int k = 0; k < 4; ++k)
+                        power[k] *= 0.575f;
+                    fastmath::exp2x4(power, power);
+                    for (int k = 0; k < 4; ++k)
+                        lowFloor[k] = 1.325f * lowFloorFade * recorded[k] * power[k];
+                }
                 for (int k = 0; k < 4; ++k)
                 {
                     // The tape's magnetisation curve: more strongly curved than
