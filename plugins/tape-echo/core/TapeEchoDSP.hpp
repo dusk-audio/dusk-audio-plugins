@@ -629,6 +629,7 @@ private:
         float programOs[kSize][4];
         float loopOs[kSize][4];
         float tapeOs[kSize][4];
+        float magneticAmplitude[kSize][4];
     };
     float memoIntensity = 0.0f;
     float memoFbGain = 0.0f;

@@ -2590,10 +2590,8 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                     x.tapeOs[i][k] = softClip(magneticInput);
                 }
             }
-            int tapeIdx = (writeIdx - len) & mask;   // the first sample this sub-block wrote
+            // The magnetic peak envelope, a recurrence of its own.
             for (int i = 0; i < len; ++i)
-            {
-                float magneticAmplitude[4];
                 for (int k = 0; k < 4; ++k)
                 {
                     const float baseMagnitude = std::abs(x.tapeOs[i][k]);
@@ -2606,31 +2604,43 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                         --ch.magneticHold;
                     else
                         ch.magneticEnvelope *= magneticReleaseOs;
-                    magneticAmplitude[k] = std::max(ch.magneticEnvelope, 1.0e-4f);
+                    x.magneticAmplitude[i][k] = std::max(ch.magneticEnvelope, 1.0e-4f);
                 }
-                float tapeOs[4];
+            for (int i = 0; i < len; ++i)
+            {
+                // At high record flux the hosted tape adds a steep
+                // odd-harmonic ladder while its fundamental has already
+                // reached a level plateau: Chebyshev terms on the signal
+                // normalized by its peak supply those harmonics without
+                // moving the fundamental, zero through the matched nominal
+                // range.
+                const float c3 = x.c3[i];
+                const float c5 = x.c5[i];
+                // Below the hot knee both coefficients are exactly zero and
+                // the terms add only a signed zero, so the samples stay as
+                // they are (at most a -0 sample keeps its sign).
+                if (c3 == 0.0f && c5 == 0.0f)
+                    continue;
                 for (int k = 0; k < 4; ++k)
                 {
-                    // At high record flux the hosted tape adds a steep
-                    // odd-harmonic ladder while its fundamental has already
-                    // reached a level plateau: Chebyshev terms on the signal
-                    // normalized by its peak supply those harmonics without
-                    // moving the fundamental, zero through the matched nominal
-                    // range.
                     const float baseTape = x.tapeOs[i][k];
-                    const float z = clampF(
-                        baseTape / magneticAmplitude[k], -1.0f, 1.0f);
+                    const float amplitude = x.magneticAmplitude[i][k];
+                    const float z = clampF(baseTape / amplitude, -1.0f, 1.0f);
                     const float z2 = z * z;
                     const float z3 = z2 * z;
                     const float z5 = z3 * z2;
                     const float t3 = 4.0f * z3 - 3.0f * z;
                     const float t5 = 16.0f * z5 - 20.0f * z3 + 5.0f * z;
-                    tapeOs[k] = baseTape
-                        + magneticAmplitude[k] * (x.c3[i] * t3 + x.c5[i] * t5);
+                    x.tapeOs[i][k] = baseTape + amplitude * (c3 * t3 + c5 * t5);
                 }
+            }
+            // Back to 1x and onto the tape.
+            int tapeIdx = (writeIdx - len) & mask;   // the first sample this sub-block wrote
+            for (int i = 0; i < len; ++i)
+            {
                 const float toTape = ch.tapeDown1.process(
-                    ch.tapeDown2.process(tapeOs[0], tapeOs[1]),
-                    ch.tapeDown2.process(tapeOs[2], tapeOs[3]));
+                    ch.tapeDown2.process(x.tapeOs[i][0], x.tapeOs[i][1]),
+                    ch.tapeDown2.process(x.tapeOs[i][2], x.tapeOs[i][3]));
                 ch.tape[(size_t)tapeIdx] = toTape * x.makeupGain[i];
                 tapeIdx = (tapeIdx + 1) & mask;
             }
