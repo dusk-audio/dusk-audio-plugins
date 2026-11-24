@@ -14,6 +14,7 @@
 #include "../src/FactoryPresets.h"
 #include "../core/DuskVerbPresets.hpp"
 
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <cmath>
@@ -111,13 +112,13 @@ struct StateValues
 {
     std::array<float, static_cast<size_t>(kNumParams)> params{};
     DuskVerbDSP::SixAPBrightnessState sixAP{};
-    RoomVoicing room = RoomVoicing::Factory;        // optional voicing of the 79 Vocal Chamber engine
     std::string presetName;          // factory identity; empty = no identity
     std::string userName;            // optional arbitrary UTF-8 display name
     bool edited = false;
 };
 
 inline StateValues makeDefaultState();
+inline bool adoptLegacyRoomVoicing(StateValues& state);
 
 inline bool sixApValueInRange(int i, float v) noexcept
 {
@@ -214,8 +215,6 @@ inline std::string encodeState(const StateValues& v)
         if (safePresetText(v.presetName)) state += v.presetName;
         else { state += "hex:"; appendHexText(state, v.presetName); }
     }
-    if (v.room == RoomVoicing::EarlyStudy) state += ";@voicing=Big Drum Room";
-    if (v.room == RoomVoicing::Matched) state += ";@voicing=Big Drum Room Matched";
     if (!v.userName.empty()) { state += ";@user=hex:"; appendHexText(state, v.userName); }
     if (v.edited) state += ";@edited=1";
     return state;
@@ -251,7 +250,7 @@ inline bool decodeState(std::string_view state, StateValues& out) noexcept
     }
 
     StateValues decoded = makeDefaultState();
-    bool presetSeen = false, userSeen = false, editedSeen = false;
+    bool presetSeen = false, userSeen = false, editedSeen = false, voicingSeen = false;
     std::array<bool, static_cast<size_t>(kNumParams)> seen{};
     std::array<bool, 10> sixApSeen{};
     size_t begin = versionEnd + 1;
@@ -282,10 +281,11 @@ inline bool decodeState(std::string_view state, StateValues& out) noexcept
         }
         else if (key == "@voicing")
         {
-            if (decoded.room != RoomVoicing::Factory || version != kStateVersion) return false;
-            if (value == "Big Drum Room") decoded.room = RoomVoicing::EarlyStudy;
-            else if (value == "Big Drum Room Matched") decoded.room = RoomVoicing::Matched;
-            else return false;
+            // Written by 1.0.2 and 1.0.3 for the Big Drum Room voicings of 79 Vocal Chamber;
+            // read only, as the factory preset that replaced them (adoptLegacyRoomVoicing).
+            if (voicingSeen || version != kStateVersion) return false;
+            if (value != "Big Drum Room" && value != "Big Drum Room Matched") return false;
+            voicingSeen = true;
         }
         else if (key == "@edited")
         {
@@ -332,13 +332,14 @@ inline bool decodeState(std::string_view state, StateValues& out) noexcept
         if (end == std::string_view::npos) break;
         begin = end + 1;
     }
-    if (decoded.room != RoomVoicing::Factory && decoded.presetName != kBigDrumRoomBase) return false;
+    if (voicingSeen && decoded.presetName != "79 Vocal Chamber") return false;
     for (bool present : seen)
         if (!present) return false;
     // The encoder always writes all 10 SixAP keys; a state missing any of them
     // is not one this build wrote, so it is rejected rather than half-applied.
     for (bool present : sixApSeen)
         if (!present) return false;
+    if (voicingSeen && !adoptLegacyRoomVoicing(decoded)) return false;
     out = std::move(decoded);
     return true;
 }
@@ -388,6 +389,28 @@ inline void applyFactoryPresetToHostParameters(const FactoryPreset& preset, Appl
         if (index < 0) return;
         apply(index, plainToHost(paramDesc(index), plainValue));
     });
+}
+
+// A 1.0.2 or 1.0.3 state carrying a Big Drum Room voicing: that sound is now the Big Drum Room
+// factory preset, which the state becomes. Its stored controls described the old voicing, so the
+// preset's take their place; Mix, Bus Mode and Bypass are the session's routing and stay.
+inline bool adoptLegacyRoomVoicing(StateValues& state)
+{
+    const FactoryPreset* preset = factoryPresetByName("Big Drum Room");
+    if (preset == nullptr) return false;
+    const auto kept = state.params;
+    applyFactoryPresetToHostParameters(*preset, [&](int i, float v) { state.params[static_cast<size_t>(i)] = v; });
+    for (int id : { int(Mix), int(BusMode), int(Bypass) })
+        state.params[static_cast<size_t>(id)] = kept[static_cast<size_t>(id)];
+    state.sixAP.densityBaseline = preset->sixAPDensityBaseline;
+    state.sixAP.bloomCeiling = preset->sixAPBloomCeiling;
+    state.sixAP.earlyMix = preset->sixAPEarlyMix;
+    state.sixAP.outputTrim = preset->sixAPOutputTrim;
+    std::copy_n(preset->sixAPBloomStagger, 6, state.sixAP.bloomStagger);
+    state.presetName = preset->name;
+    state.userName.clear();
+    state.edited = false;
+    return true;
 }
 
 } // namespace duskverb

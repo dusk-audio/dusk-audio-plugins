@@ -1042,7 +1042,7 @@ private:
     bool beginCombo(const char* id, float x0, float y0, float x1, float y1,
                     const char* preview, float fontSize = kTypeSmall,
                     ComboSkin skin = ComboSkin::Panel, bool lit = false,
-                    ImGuiComboFlags flags = 0)
+                    ImGuiComboFlags flags = 0, float rowFontSize = kTypeLegend)
     {
         ImGui::SetCursorScreenPos(P(x0, y0));
         ImGui::SetNextItemWidth((x1 - x0) * s_);
@@ -1081,10 +1081,11 @@ private:
         // ImGui checks the style stack when a window ends.
         comboRowInk_ = comboOpen_ && (glass || lit);
         if (comboRowInk_) ImGui::PushStyleColor(ImGuiCol_Text, kTheme.value);
-        // Rows print at the legend size, larger than a header preview, so the
-        // whole preset list stays readable at the smallest window. Pushed and
-        // popped inside the popup for the same reason as the row ink.
-        comboRowFont_ = comboOpen_ ? panel_.pickFont(kTypeLegend * s_) : nullptr;
+        // Rows print larger than a header preview (the legend size unless the
+        // caller asks for more), so a list stays readable at the smallest
+        // window. Pushed and popped inside the popup for the same reason as the
+        // row ink.
+        comboRowFont_ = comboOpen_ ? panel_.pickFont(rowFontSize * s_) : nullptr;
         if (comboRowFont_ != nullptr) ImGui::PushFont(comboRowFont_);
         return comboOpen_;
     }
@@ -1162,16 +1163,20 @@ private:
     void drawPresetCombo()
     {
         const auto& presets = duskverb::dv2FactoryPresets();
-        if (beginCombo("##dv_presets", 364, kBandY0, 556, kBandY1, presetPreview()))
+        // The preset list prints at the read-out size: its rows are what a user
+        // scans to choose a sound. The preview keeps the header's size, so the
+        // longest names still fit the fleet header's preset slot.
+        if (beginCombo("##dv_presets", 364, kBandY0, 556, kBandY1, presetPreview(), kTypeSmall,
+                       ComboSkin::Panel, false, 0, kTypeValue))
         {
             if (ImGui::Selectable("Import preset..."))
                 importRequested_ = true;
             ImGui::Separator();
-            // Factory presets are grouped contiguously by category (see the
-            // note in FactoryPresets.h), so a heading whenever the category
-            // changes reproduces the JUCE editor's sectioned menu.
+            // One heading per category, in menu order (presetMenuOrder): a
+            // preset DuskVerb 2 appended to a shared category sits under that
+            // category's heading, not under a second one at the end.
             const char* lastCategory = nullptr;
-            for (size_t i = 0; i < presets.size(); ++i)
+            for (const size_t i : presetMenuOrder())
             {
                 const FactoryPreset& fp = presets[i];
                 if (fp.category != nullptr
@@ -1305,7 +1310,6 @@ private:
         duskverb::applyFactoryPresetToHostParameters(preset,
             [&](int i, float value) { state.params[i] = value; });
         state.presetName = preset.name;
-        state.room = duskverb::RoomVoicing::Factory;
         state.userName.clear();
         state.edited = false;
         state.sixAP.densityBaseline = preset.sixAPDensityBaseline;
@@ -1317,12 +1321,47 @@ private:
     }
 
     // Clamped, never wrapping: stepping off either end parks on the end preset.
+    // Steps in menu order, so the arrows walk the list as the menu shows it.
     void stepPreset(int direction)
     {
-        const int count = (int)duskverb::dv2FactoryPresets().size();
-        int i = identity_.factory < 0 ? (direction < 0 ? 0 : -1) : identity_.factory;
-        i = std::clamp(i + direction, 0, count - 1);
-        applyPreset(i);
+        const auto& order = presetMenuOrder();
+        const int count = (int)order.size();
+        const auto at = std::find(order.begin(), order.end(), (size_t)std::max(identity_.factory, 0));
+        int pos = identity_.factory < 0 ? (direction < 0 ? 0 : -1) : (int)(at - order.begin());
+        pos = std::clamp(pos + direction, 0, count - 1);
+        applyPreset((int)order[(size_t)pos]);
+    }
+
+    // The factory presets in menu order: grouped by category, the categories in
+    // the order they first appear, each preset in program order within its
+    // category. Program numbers never move (hosts store them); DuskVerb 2's own
+    // presets come after the shared ones, so a category can recur at the end.
+    static const std::vector<size_t>& presetMenuOrder()
+    {
+        static const std::vector<size_t> order = [] {
+            const auto& presets = duskverb::dv2FactoryPresets();
+            std::vector<size_t> out;
+            out.reserve(presets.size());
+            std::vector<bool> placed(presets.size(), false);
+            for (size_t i = 0; i < presets.size(); ++i)
+            {
+                if (placed[i]) continue;
+                for (size_t j = i; j < presets.size(); ++j)
+                {
+                    const char* a = presets[i].category;
+                    const char* b = presets[j].category;
+                    const bool same = (a == nullptr && b == nullptr)
+                                   || (a != nullptr && b != nullptr && std::strcmp(a, b) == 0);
+                    if (!placed[j] && same)
+                    {
+                        out.push_back(j);
+                        placed[j] = true;
+                    }
+                }
+            }
+            return out;
+        }();
+        return order;
     }
 
     // Everything back to the factory defaults, INCLUDING the engine

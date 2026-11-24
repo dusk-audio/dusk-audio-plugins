@@ -23,7 +23,6 @@ public:
         uint32_t recallEpoch = 1;
         int program = -1;
         bool edited = false;
-        RoomVoicing room = RoomVoicing::Factory;
     };
 
     ControlState()
@@ -107,8 +106,7 @@ public:
         retired_.emplace_back(nullptr);
         const auto previous = sound();
         next->epoch = epoch_.fetch_add(1, std::memory_order_seq_cst) + 1;
-        bool same = previous.params == state.params && previous.preset == next->preset
-                 && previous.room == state.room;
+        bool same = previous.params == state.params && previous.preset == next->preset;
         for (int i = 0; i < 10; ++i)
             same = same && *sixApSlot(previous.sixAP, i) == *sixApSlot(state.sixAP, i);
         // Renaming/saving an unchanged sound must not clear its reverb tail.
@@ -135,7 +133,6 @@ public:
         StateValues state = node.state;
         state.params = sound.params;
         state.sixAP = sound.sixAP;
-        state.room = sound.room;
         state.presetName = sound.preset ? sound.preset->name : "";
         if (newer(sound.epoch, node.epoch)) state.userName.clear();
         state.edited = sound.edited;
@@ -202,7 +199,6 @@ private:
         const Factory* factory = factoryFor(node, program);
         result.epoch = factory ? uint32_t(program >> 32) : node.epoch;
         result.recallEpoch = factory ? result.epoch : node.recallEpoch;
-        result.room = factory ? RoomVoicing::Factory : node.state.room;
         result.sixAP = factory ? factory->sixAP : node.state.sixAP;
         result.preset = factory ? factory->preset : node.preset;
         result.program = -1;

@@ -121,7 +121,10 @@ inline bool decodeUserPreset(std::string_view text, StateValues& out)
     if (!v2.empty())
     {
         if (!decodeState(v2, decoded)) return false;
-        if (headerSeen) decoded.userName = headerName;
+        // A 1.0.2 or 1.0.3 room voicing file now loads the factory preset that replaced it
+        // (adoptLegacyRoomVoicing), so the file's own name does not label it.
+        const bool legacyVoicing = v2.find(";@voicing=") != std::string::npos;
+        if (headerSeen && !legacyVoicing) decoded.userName = headerName;
         out = std::move(decoded);
         return true;
     }

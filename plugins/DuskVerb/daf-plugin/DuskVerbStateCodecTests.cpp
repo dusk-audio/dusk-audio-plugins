@@ -26,7 +26,7 @@ static StateValues sample()
 
 static bool same(const StateValues& a, const StateValues& b)
 {
-    if (a.presetName != b.presetName || a.userName != b.userName || a.edited != b.edited || a.room != b.room) return false;
+    if (a.presetName != b.presetName || a.userName != b.userName || a.edited != b.edited) return false;
     for (int i = 0; i < kNumParams; ++i)
         if (std::memcmp(&a.params[static_cast<size_t>(i)], &b.params[static_cast<size_t>(i)], sizeof(float)) != 0) return false;
     return std::memcmp(&a.sixAP, &b.sixAP, sizeof(a.sixAP)) == 0;
@@ -40,8 +40,9 @@ int main(int argc, char** argv)
         const std::string text((std::istreambuf_iterator<char>(file)), {});
         StateValues imported{}, restored{};
         CHECK(decodeUserPreset(text, imported));
-        CHECK(imported.userName == "Big Drum Room Matched");
-        CHECK(imported.room == RoomVoicing::Matched && imported.presetName == kBigDrumRoomBase);
+        // The file 1.0.2 shipped for the matched room voicing imports as the factory preset that
+        // replaced it (adoptLegacyRoomVoicing).
+        CHECK(imported.presetName == "Big Drum Room" && imported.userName.empty());
         CHECK(decodeState(encodeState(imported), restored) && same(imported, restored));
         return failures == 0 ? 0 : 1;
     }

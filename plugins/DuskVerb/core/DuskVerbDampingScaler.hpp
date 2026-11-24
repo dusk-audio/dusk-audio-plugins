@@ -130,7 +130,7 @@ public:
         credit_ = std::min (credit_ + numSamples, std::max (numSamples, samplesPerPush_));
         const int budget = flush ? kOctaves : credit_ / samplesPerPush_;
 
-        if (algorithm < 0 || algorithm >= kNumSharedAlgorithms)
+        if (algorithm < 0 || algorithm >= kNumSharedAlgorithms || isOwnAlgorithm (algorithm))
             return;                                     // an own engine reads its knobs itself
         switch (getAlgorithmConfig (algorithm).engine)
         {

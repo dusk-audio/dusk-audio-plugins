@@ -148,15 +148,15 @@ enum ParamId : int
 // ── Enumerated value labels ─────────────────────────────────────────────────
 // kAlgorithmLabels mirrors algorithmLabel(i) (DuskVerbAlgorithms.hpp) for every one
 // of the kNumAlgorithmSlots slots: the shared engines' getAlgorithmConfig(i).name for
-// i in [0, kNumSharedAlgorithms), DuskVerb 2's own engines, then "Reserved" up to the
-// fixed slot count. Kept as a literal list (rather than built at runtime) so the
+// i in [0, kNumSharedAlgorithms) (DuskVerb 2's own vintage plate and chamber at 1 and 3
+// keep those names), DuskVerb 2's own engines, then "Reserved" up to the fixed slot count. Kept as a literal list (rather than built at runtime) so the
 // table stays constexpr; the core tests re-check it against both.
 inline constexpr const char* const kAlgorithmLabels[kNumAlgorithmSlots] = {
     "Plate", "Vintage Plate", "Smooth Plate", "Chamber",
     "Studio", "Spring", "Gated", "Shimmer",
     "Vintage Hall", "Reverse", "Hall", "Sparse",
     "Concert Hall", "Tiled Room", "Dense Hall", "Parallel Hall",
-    "Nonlinear", "Room", "Chamber II", "Vintage Plate II",
+    "Nonlinear", "Room", "Reserved", "Reserved",
     "Reserved", "Reserved", "Reserved", "Reserved",
     "Reserved", "Reserved", "Reserved", "Reserved",
     "Reserved", "Reserved", "Reserved", "Reserved"

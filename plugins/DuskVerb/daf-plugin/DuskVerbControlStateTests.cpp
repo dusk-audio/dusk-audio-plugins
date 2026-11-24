@@ -44,41 +44,43 @@ int main()
           "changing hidden sound configuration does request a recall");
 
     {
-        auto base = makeDefaultState();
-        base.presetName = kBigDrumRoomBase;
-        controls.publish(base);
-        const auto baseEpoch = controls.sound().recallEpoch;
-        const std::string tag = ";@voicing=Big Drum Room";
-        const auto wire = encodeState(base) + tag;
-        auto study = makeDefaultState();
-        check(decodeState(wire, study) && study.room == RoomVoicing::EarlyStudy, "read the optional room voicing");
-        controls.publish(study);
-        const auto studyEpoch = controls.sound().recallEpoch;
-        check(studyEpoch != baseEpoch && controls.sound().room == RoomVoicing::EarlyStudy,
-              "the same controls with the study voicing request a new sound");
-        study.userName = "Renamed room";
-        controls.publish(study);
-        check(controls.sound().recallEpoch == studyEpoch
-              && encodeState(controls.snapshot()).find(tag) != std::string::npos,
-              "renaming the room retains its voicing and tail");
-        const auto saved = encodeState(study);
-        check(!decodeState(wire + tag, study)
-              && !decodeState(encodeState(original) + tag, study)
-              && !decodeState(encodeState(base) + ";@voicing=unknown", study)
-              && encodeState(study) == saved, "invalid voicing leaves the decoded sound intact");
-        auto matched = makeDefaultState();
-        const auto matchedWire = encodeState(base) + ";@voicing=Big Drum Room Matched";
-        check(decodeState(matchedWire, matched) && matched.room == RoomVoicing::Matched
-              && encodeState(matched).find(";@voicing=Big Drum Room Matched") != std::string::npos,
-              "matched room persists across the state codec");
-        controls.publish(matched);
-        check(controls.sound().recallEpoch != studyEpoch && controls.sound().room == RoomVoicing::Matched,
-              "changing between two room voicings recalls the new sound");
-        const auto index = controls.sound().program;
-        check(index >= 0, "the study references its factory base");
-        if (index >= 0) controls.loadProgram(static_cast<uint32_t>(index));
-        check(controls.sound().room == RoomVoicing::Factory && controls.snapshot().room == RoomVoicing::Factory,
-              "loading even the same factory base clears the room voicing");
+        // 1.0.2 and 1.0.3 wrote the Big Drum Room voicings as 79 Vocal Chamber plus a tag. Such a
+        // state now loads the Big Drum Room factory preset, the session's routing kept.
+        const FactoryPreset* room = factoryPresetByName("Big Drum Room");
+        check(room != nullptr, "Big Drum Room is a factory preset");
+        auto legacy = makeDefaultState();
+        legacy.presetName = "79 Vocal Chamber";
+        legacy.userName = "Big Drum Room Matched";
+        legacy.params[Mix] = 0.37f;
+        legacy.params[Decay] = 0.123f;
+        const auto wire = encodeState(legacy);
+        for (const char* tag : { ";@voicing=Big Drum Room", ";@voicing=Big Drum Room Matched" })
+        {
+            auto adopted = makeDefaultState();
+            check(decodeState(wire + tag, adopted), "a 1.0.3 room voicing state still loads");
+            check(adopted.presetName == "Big Drum Room" && adopted.userName.empty() && !adopted.edited,
+                  "it loads as the Big Drum Room factory preset");
+            bool presetValues = room != nullptr;
+            if (room != nullptr)
+                applyFactoryPresetToHostParameters(*room, [&](int i, float v) {
+                    if (i != Mix && i != BusMode && i != Bypass)
+                        presetValues = presetValues && adopted.params[static_cast<size_t>(i)] == v;
+                });
+            check(presetValues && adopted.params[Mix] == 0.37f,
+                  "the preset's controls replace the old voicing's; the session's Mix stays");
+            check(encodeState(adopted).find("@voicing") == std::string::npos, "nothing writes the tag again");
+            controls.publish(adopted);
+            check(room != nullptr && controls.sound().preset == room, "the published sound is the factory preset");
+        }
+        auto untouched = makeDefaultState();
+        const auto before = encodeState(untouched);
+        auto other = legacy;
+        other.presetName = "Live Room";
+        check(!decodeState(wire + ";@voicing=Big Drum Room;@voicing=Big Drum Room", untouched)
+              && !decodeState(encodeState(other) + ";@voicing=Big Drum Room", untouched)
+              && !decodeState(wire + ";@voicing=unknown", untouched)
+              && encodeState(untouched) == before,
+              "an invalid voicing tag is refused and leaves the decoded sound intact");
     }
 
     for (uint32_t program = 0; program < duskverb::dv2FactoryPresets().size(); ++program)

@@ -100,6 +100,19 @@ constexpr SectionReverbConfig liveRoomSectionConfig() noexcept
     return c;
 }
 
+constexpr SectionReverbConfig bigDrumRoomSectionConfig() noexcept
+{
+    SectionReverbConfig c;
+    c.model = static_cast<int> (SectionReverbModel::Room);
+    c.diffusion = 100.0f; c.pattern = 2; c.earlyPredelayMs = 0.0f; c.reverbPredelayMs = 60.0f; c.roomScale = 2.0f;
+    c.roomBassXoverHz = 1000.0f; c.roomBassBoostDb = 1.0f; c.sizeMeters = 80.0f; c.reverbTime = 0.321426868f;
+    c.bassRt = 1.0f; c.bassXoverHz = 2325.0f; c.rtHiCutHz = 8750.0f; c.damping = 1; c.tapSlope = 0;
+    c.spinHz = 0.200000003f; c.wanderMs = 7.0f; c.tailWidthDeg = 0.0f;
+    c.earlyLevelDb = -11.0f; c.earlyFilter = { 0, 4800.0f, 3.0f, -96.0f };
+    c.reverbLevelDb = -14.0f; c.reverbFilter = { 0, 9000.0f, 2.0f, -96.0f };
+    return c;
+}
+
 constexpr SectionReverbConfig largeChamberSectionConfig() noexcept
 {
     SectionReverbConfig c;
@@ -173,6 +186,7 @@ inline constexpr SectionReverbRow kSectionReverbByName[] {
     //                                                         decay   size     pre    damp    bass     xover     depth    rate      diff     erLvl  erSize
     { "Live Room",           liveRoomSectionConfig(),           0.66f,  0.45f,   3.0f,  0.81f,  1.4f,    317.135f, 0.10f,   0.80f,    0.72f,   0.50f, 0.15f },
     { "Reverse Taps",        reverseTapsSectionConfig(),        0.11f,  0.59f,   0.0f,  1.32f,  0.61f,   451.0f,   0.1395f, 2.28741f, 0.19f,   0.0f,  0.30f },
+    { "Big Drum Room",       bigDrumRoomSectionConfig(),        1.38f,  0.50f,   0.0f,  1.00f,  1.00f,   2325.0f,  0.29f,   0.20f,    1.00f,   0.50f, 0.50f },
     { "Large Chamber",       largeChamberSectionConfig(),       4.454f, 0.55f,   6.0f,  1.323f, 1.411f,  373.086f, 0.30f,   1.00f,    0.60f,   0.12f, 0.45f },
     { "Vintage Vocal Plate", vintageVocalPlateSectionConfig(),  0.90f,  0.80357f, 20.0f, 1.3f,  1.38104f, 522.55f, 0.70f,   1.64421f, 0.2423f, 0.0f,  0.30f },
     { "Vintage Gold Plate",  vintageGoldPlateSectionConfig(),   1.961f, 0.45f,   0.0f,  1.50f,  1.40f,   683.296f, 0.0f,    1.00f,    0.85f,   0.30f, 0.45f },

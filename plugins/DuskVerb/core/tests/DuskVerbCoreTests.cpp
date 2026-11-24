@@ -215,13 +215,16 @@ void testPresetTable()
         checkf(std::strcmp(presets[i].name, getFactoryPresets()[i].name) == 0,
                "program %zu is the shared preset '%s' (a shared program number never moves)", i, getFactoryPresets()[i].name);
 
-    // The editor's preset dropdown emits a section heading whenever the category
-    // changes, so a category that appears in two separate runs produces two
-    // identical headings.
+    // The legacy editor's preset menu emits a section heading whenever the category
+    // changes, so in the shared list a category that appears in two separate runs
+    // would produce two identical headings. DuskVerb 2's editor groups by category
+    // (presetMenuOrder), so its own presets may join a shared category at the end.
     std::set<std::string> seenCategories;
     std::string current;
-    for (const auto& preset : presets)
+    for (size_t index = 0; index < presets.size(); ++index)
     {
+        const auto& preset = presets[index];
+        const bool shared = index < getFactoryPresets().size();
         checkf(preset.name != nullptr && preset.name[0] != '\0', "every preset has a name");
         checkf(preset.category != nullptr && preset.category[0] != '\0',
                "preset '%s' has a category", preset.name);
@@ -231,11 +234,11 @@ void testPresetTable()
         // the preset identity in a ';'/'=' delimited string.
         checkf(std::strchr(preset.name, ';') == nullptr && std::strchr(preset.name, '=') == nullptr,
                "preset name '%s' is free of the state codec's delimiters", preset.name);
-        if (preset.category != current)
+        if (shared && preset.category != current)
         {
             current = preset.category;
             checkf(seenCategories.insert(current).second,
-                   "category '%s' is contiguous (seen only once)", current.c_str());
+                   "category '%s' is contiguous in the shared list (seen only once)", current.c_str());
         }
     }
 

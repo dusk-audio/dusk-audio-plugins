@@ -3,15 +3,16 @@ slug: duskverb-2
 title: DuskVerb 2
 version: 1.0.3
 last_updated: 2026-11-23
-tagline: Algorithmic reverb with 24 factory sounds
+tagline: Algorithmic reverb with 25 factory sounds
 ---
 
 # DuskVerb 2
 
 ## Overview
 
-DuskVerb 2 combines the original DuskVerb reverb engines, its own nonlinear
-engine and updated voicing with a redesigned interface. Its 24 factory presets
+DuskVerb 2 combines the original DuskVerb reverb engines, its own room,
+chamber, vintage plate and nonlinear engines and updated voicing with a
+redesigned interface. Its 25 factory presets
 provide starting points for plates, rooms, halls, springs and nonlinear bursts.
 Engine selection changes the reverb topology;
 some controls change labels or availability to match the selected engine.
@@ -49,8 +50,9 @@ Filter and Output controls fill the rows below.
 
 Sync retains the free pre-delay setting, and Bus retains the Dry / Wet setting.
 
-**Freeze** holds the reverb on supported engines; it is hidden for Reverse
-and Nonlinear. The gated engine also exposes its **Gate** switch. Controls
+**Freeze** holds the reverb on supported engines; it is hidden for Reverse,
+Nonlinear, Room, Chamber and Vintage Plate. The gated engine also exposes
+its **Gate** switch. Controls
 unused by the selected engine are dimmed.
 **Tonal Correction** appears only where it changes the sound: the Vocal Plate,
 Ambience and Tiled Room sounds on the Hall and Tiled Room engines (and on the

@@ -234,40 +234,46 @@ void neverAllocates()
     prepareWith (e, testRoom());
     const Stereo in = noise (9600, 3);
     Stereo out { std::vector<float> (in.l.size()), std::vector<float> (in.r.size()) };
+    // Every render is checked before a later one reuses its part of `out`, so a non-finite
+    // intermediate render cannot be overwritten by a finite one. The scan allocates nothing.
+    bool finite = true;
+    const auto render = [&] (int from, int to) {
+        run (e, in, out, from, to);
+        for (int i = from; i < to; ++i)
+            finite = finite && std::isfinite (out.l[static_cast<std::size_t> (i)])
+                            && std::isfinite (out.r[static_cast<std::size_t> (i)]);
+    };
     gAllocations = 0;
     gCountAllocations = true;
-    run (e, in, out, 0, 2400);
+    render (0, 2400);
     SectionReverbConfig c = e.config();
     c.sizeMeters *= 1.4f;
     c.earlyPredelayMs += 7.0f;
     e.configure (c);
-    run (e, in, out, 2400, 4800);
+    render (2400, 4800);
     e.configure (testChamber());            // a change of model
-    run (e, in, out, 4800, 6000);
+    render (4800, 6000);
     e.configure (testPlate());
-    run (e, in, out, 6000, 7200);
+    render (6000, 7200);
     c = e.config();
     c.spread *= 1.5f;
     c.reflections[0].delayMs += 5.0f;
     e.configure (c);
-    run (e, in, out, 7200, 9600);
+    render (7200, 9600);
     // Every model across the whole Size range (2 to 80 m), the largest first.
     for (const Model& m : kModels)
         for (float size : { 80.0f, 2.0f, 80.0f })
         {
             c = m.config();
             e.configure (c);
-            run (e, in, out, 0, 1200);
+            render (0, 1200);
             c.sizeMeters = size;
             e.configure (c);
-            run (e, in, out, 1200, 4800);
+            render (1200, 4800);
         }
     e.clear();
     gCountAllocations = false;
     checkf (gAllocations.load() == 0, "configure/clear/process allocated %d times", gAllocations.load());
-    bool finite = true;
-    for (std::size_t i = 0; i < out.l.size(); ++i)
-        finite = finite && std::isfinite (out.l[i]) && std::isfinite (out.r[i]);
     checkf (finite, "a change of model gave non-finite output");
 }
 

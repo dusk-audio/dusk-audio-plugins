@@ -24,14 +24,17 @@
 namespace duskverb
 {
 
-// Factory configuration underlying the separately importable Big Drum Room voicing.
-inline constexpr std::string_view kBigDrumRoomBase = "79 Vocal Chamber";
-
-// The classic nonlinear burst. Decay is the time to -60 dB; the four lengths are the engine's
-// burst lengths (its shortest, two middle and longest).
+// The presets only DuskVerb 2 has, after the shared ones so no program number moves.
+// The classic nonlinear burst: Decay is the time to -60 dB. The four presets are factory voicings
+// at short burst lengths (0.27 to 0.46 s), not the engine's limits: the burst follows Decay up to
+// kNonLinMaxDecaySeconds (2.5 s).
+// Big Drum Room plays its row on the room engine (kSectionReverbByName). Its controls are set where
+// the row's units allow (Bass Multiply, Low Crossover, Mod Rate, Diffusion, Pre-Delay) and Decay
+// reads its tail (T_mid, the mean of the 500 Hz and 1 kHz RT60s over six start phases, 1.33 to
+// 1.41 s); the output stage is set as for the shared presets on the own engines (kPresetOverrides).
 // Field order: name, category, algorithm, mix, busMode, predelay, predelaySync, decay, size,
 // modDepth, modRate, damping, bassMult, crossover, diffusion, erLevel, erSize, loCut, hiCut,
-// width, freeze, gainTrim.
+// width, freeze, gainTrim, then monoBelow, midMult, highCrossover, saturation, hiCutShelfGainDb.
 inline const std::vector<FactoryPreset>& ownFactoryPresets()
 {
     static const std::vector<FactoryPreset> presets = {
@@ -43,6 +46,9 @@ inline const std::vector<FactoryPreset>& ownFactoryPresets()
           0.36f, 0.5f, 0.0f, 0.5f, 1.0f, 1.0f, 500.0f, 0.5f, 0.0f, 0.0f, 20.0f, 20000.0f, 1.0f, false, -1.0f },
         { "Nonlinear Huge",   "Nonlinear", kNonLinAlgorithm, 1.00f, false, 0.0f, 0,
           0.46f, 0.5f, 0.0f, 0.5f, 1.0f, 1.0f, 500.0f, 0.5f, 0.0f, 0.0f, 20.0f, 20000.0f, 1.0f, false, -0.7f },
+        { "Big Drum Room",    "Rooms",     kRoomAlgorithm,   1.00f, false, 0.0f, 0,
+          1.38f, 0.5f, 0.29f, 0.2f, 1.0f, 1.0f, 2325.0f, 1.0f, 0.5f, 0.5f, 5.0f, 20000.0f, 1.0f, false, 0.0f,
+          20.0f, 1.0f, 4000.0f, 0.0f, -0.5f },
     };
     return presets;
 }

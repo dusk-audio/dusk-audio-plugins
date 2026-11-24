@@ -56,9 +56,13 @@
 // JUCE consumes the final point of each host parameter queue before processing
 // the block. Preserve that automation timing along with its parameter taper.
 #define DAF_PLUGIN_VST3_LAST_PARAMETER_POINT 1
-// No DAF_PLUGIN_WANT_LATENCY: every DuskVerb engine is zero-latency and the
-// JUCE build reports setLatencySamples(0). Declaring it would advertise a
-// latency contract the plugin does not need.
+// No DAF_PLUGIN_WANT_LATENCY: the plugin reports zero latency, as the JUCE
+// build does (setLatencySamples(0)). The dry path and the shared engines have
+// none. The room, chamber and vintage plate engines work in 32-sample blocks:
+// their wet output starts 32 samples late, which is part of their sound (0.7 ms
+// of extra pre-delay at 48 kHz), not latency to compensate. Reporting it would
+// need the same delay on the dry path and every other engine, so the reported
+// latency stays constant when the engine changes.
 
 // Dear ImGui UI via DAF-Widgets.
 #define DAF_UI_USE_CUSTOM           1
