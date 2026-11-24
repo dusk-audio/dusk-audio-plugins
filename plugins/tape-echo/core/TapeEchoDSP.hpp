@@ -195,6 +195,11 @@ private:
     // sized by it.
     static constexpr int kNumDispersionSections = 24;
 
+    // Every spring's two dispersion chains (returning wave in lane 2k,
+    // outgoing in 2k + 1; lanes 6 and 7 idle) run as lanes of one bank.
+    static constexpr int kDispersionLanes = 8;
+    using DispersionBank = BiquadLanes<kNumDispersionSections, kDispersionLanes>;
+
     struct Spring
     {
         std::vector<float> outgoingDelay;
@@ -204,8 +209,6 @@ private:
         float driverReflection = -0.90f;
         float pickupReflection = -0.90f;
         float outputGain = 0.25f;
-        std::array<Biquad, kNumDispersionSections> outgoingDispersion;
-        std::array<Biquad, kNumDispersionSections> returningDispersion;
         Biquad reflectionHighPass;
         Biquad reflectionLowLoss;
         Biquad reflectionLowPass;
@@ -213,12 +216,21 @@ private:
         // advanceSeconds moves that much transit time from the outgoing
         // to the returning path (round trip unchanged) so the resampler's
         // latency does not delay the arrivals.
+        // Sets this spring's two chains (lanes 2 index and 2 index + 1)
+        // in the dispersion bank.
         void  prepare(double fs, float oneWaySeconds,
                       float dispersionScale, float reflectionAmount,
                       float gain, double advanceSeconds,
-                      const BiquadCoeffs& reflectionLoss);
+                      const BiquadCoeffs& reflectionLoss,
+                      DispersionBank& dispersion, int index);
         void  reset();
-        float process(float x) noexcept;
+        // The waves entering the dispersion chains: arriving back at the
+        // driver, and arriving at the pickup end.
+        float returningIn() const noexcept { return returningDelay[(size_t)returningWriteIdx]; }
+        float outgoingIn() const noexcept  { return outgoingDelay[(size_t)outgoingWriteIdx]; }
+        // The rest of one sample, from both chains' outputs: the pickup's
+        // output.
+        float finish(float x, float returned, float farEnd) noexcept;
         bool  isSilent(float floor) const noexcept;
     };
 
@@ -234,6 +246,7 @@ private:
     // beats are fewer and faster (1.6 / 2.7 / 4.3 Hz) and read as texture.
     // That same 5.6 ms arrival spread is also what softens its attack.
     std::array<Spring, 3> springs;
+    DispersionBank dispersion;
     OnePoleHP inputHP;   // springs don't transmit deep lows
     OnePoleLP inputLP;   // dark transducer voicing
     DCBlocker dcBlock;

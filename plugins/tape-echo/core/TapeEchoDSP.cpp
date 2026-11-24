@@ -533,7 +533,8 @@ void SpringReverb::Spring::prepare(double fs, float oneWaySeconds,
                                    float dispersionScale,
                                    float reflectionAmount, float gain,
                                    double advanceSeconds,
-                                   const BiquadCoeffs& reflectionLoss)
+                                   const BiquadCoeffs& reflectionLoss,
+                                   DispersionBank& dispersion, int index)
 {
     const int outgoingSamples = std::max(
         16, (int)std::lround(((double)oneWaySeconds - advanceSeconds) * fs));
@@ -586,7 +587,7 @@ void SpringReverb::Spring::prepare(double fs, float oneWaySeconds,
     // across rates would halve the dispersion at 96 kHz. Hold (1-r) inversely
     // proportional to fs instead; exactly the fitted value at 48 kHz.
     const double radiusRateScale = kSpringDispersionFitFs / fs;
-    for (size_t i = 0; i < outgoingDispersion.size(); ++i)
+    for (int i = 0; i < kNumDispersionSections; ++i)
     {
         const double radius = std::min(
             0.99995,
@@ -599,8 +600,8 @@ void SpringReverb::Spring::prepare(double fs, float oneWaySeconds,
         const BiquadCoeffs coeffs {
             radiusSquared, radial, 1.0f, radial, radiusSquared
         };
-        outgoingDispersion[i].setCoeffs(coeffs);
-        returningDispersion[i].setCoeffs(coeffs);
+        dispersion.setCoeffs(i, 2 * index, coeffs);       // returning
+        dispersion.setCoeffs(i, 2 * index + 1, coeffs);   // outgoing
     }
 
     // Loss belongs at the termination: every completed trip is progressively
@@ -685,8 +686,6 @@ bool SpringReverb::Spring::isSilent(float floor) const noexcept
         const auto st = b.state();
         return std::abs(st.first) < floor && std::abs(st.second) < floor;
     };
-    for (const auto& b : outgoingDispersion) if (!quiet(b)) return false;
-    for (const auto& b : returningDispersion) if (!quiet(b)) return false;
     return quiet(reflectionHighPass) && quiet(reflectionLowLoss)
         && quiet(reflectionLowPass);
 }
@@ -697,30 +696,20 @@ void SpringReverb::Spring::reset()
     std::fill(returningDelay.begin(), returningDelay.end(), 0.0f);
     outgoingWriteIdx = 0;
     returningWriteIdx = 0;
-    for (auto& section : outgoingDispersion)
-        section.reset();
-    for (auto& section : returningDispersion)
-        section.reset();
     reflectionHighPass.reset();
     reflectionLowLoss.reset();
     reflectionLowPass.reset();
 }
 
-float SpringReverb::Spring::process(float x) noexcept
+float SpringReverb::Spring::finish(float x, float returned, float farEnd) noexcept
 {
-    // Read the wave arriving back at the driver termination.
-    float returned = returningDelay[(size_t)returningWriteIdx];
-    for (auto& section : returningDispersion)
-        returned = section.process(returned);
-
-    // The driver launches the input plus the inverted returning wave.
+    // `returned` and `farEnd` are returningIn() and outgoingIn() after their
+    // dispersion chains. The driver launches the input plus the inverted
+    // returning wave.
     const float launched = x + driverReflection * returned;
-    float farEnd = outgoingDelay[(size_t)outgoingWriteIdx];
     outgoingDelay[(size_t)outgoingWriteIdx] = launched;
     if (++outgoingWriteIdx >= (int)outgoingDelay.size())
         outgoingWriteIdx = 0;
-    for (auto& section : outgoingDispersion)
-        farEnd = section.process(farEnd);
 
     // The pickup observes the outgoing wave, then its termination reflects a
     // filtered, inverted copy into the return propagation path.
@@ -731,7 +720,6 @@ float SpringReverb::Spring::process(float x) noexcept
         pickupReflection * reflected;
     if (++returningWriteIdx >= (int)returningDelay.size())
         returningWriteIdx = 0;
-
     // The pickup hears the dispersed wave only.
     //
     // A broadband undispersed tap used to be summed in here at +0.6 dB
@@ -833,7 +821,7 @@ void SpringReverb::prepare(double sampleRate, float detune)
                                    kSpringDispersionScale[k],
                                    reflectionAmount, kSpringOutputGain[k],
                                    advanceSeconds,
-                                   reflectionLoss);
+                                   reflectionLoss, dispersion, k);
     }
     dcBlock.setSampleRate(internalRate, kDcBlockerCutoffHz);
     inputHP.setCutoff(140.0f, sampleRate);
@@ -963,6 +951,7 @@ void SpringReverb::reset()
 {
     for (auto& s : springs)
         s.reset();
+    dispersion.reset();
     inputHP.reset();
     inputLP.reset();
     dcBlock.reset();
@@ -990,6 +979,8 @@ bool SpringReverb::isSilent(float floor) const noexcept
     for (const auto& spring : springs)
         if (!spring.isSilent(floor))
             return false;
+    if (!dispersion.isQuiet(floor))
+        return false;
     const auto small = [floor](float v) { return std::abs(v) < floor; };
     const auto quiet = [&small](const Biquad& b) {
         const auto st = b.state();
@@ -1043,9 +1034,18 @@ double SpringReverb::resamplerLatencySamples(int stages) noexcept
 
 float SpringReverb::processInternal(float voiced) noexcept
 {
+    // Each spring's returning and outgoing waves through their dispersion
+    // chains at once (see DispersionBank), then the rest of each spring.
+    float waves[kDispersionLanes] {};
+    for (int k = 0; k < 3; ++k)
+    {
+        waves[2 * k] = springs[(size_t)k].returningIn();
+        waves[2 * k + 1] = springs[(size_t)k].outgoingIn();
+    }
+    dispersion.process(waves);
     float wet = 0.0f;
-    for (auto& spring : springs)
-        wet += spring.process(voiced);
+    for (int k = 0; k < 3; ++k)
+        wet += springs[(size_t)k].finish(voiced, waves[2 * k], waves[2 * k + 1]);
 
     // No pickup diffusers. Two allpasses (1.3 and 3.1 ms) used to smear
     // each arrival on the theory that the reference's early field is denser;
