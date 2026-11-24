@@ -55,6 +55,7 @@
 #include "DuskVerbParamTable.hpp"
 #include "Dv2OutputShell.hpp"
 #include "Dv2StereoBands.hpp"
+#include "dsp/SectionReverbEngine.h"
 #include "dsp/NonLinBurstEngine.h"
 
 #include <atomic>
@@ -65,6 +66,8 @@ struct FactoryPreset;
 
 namespace duskverb
 {
+
+struct SectionReverbRow;   // DuskVerbDv2Voicing.hpp
 
 // The optional room variant belongs to the recalled sound across prepare and reset.
 enum class RoomVoicing : unsigned char { Factory, EarlyStudy, Matched };
@@ -221,7 +224,14 @@ private:
     struct OwnVoice
     {
         NonLinBurstEngine nonLin;
+        SectionReverbEngine sections;
         Dv2OutputShell shell;
+        int algorithm = kNonLinAlgorithm;          // the own engine this voice plays while active
+        // The row installed when the voice was armed, kept until the voice is armed again: a
+        // preset published while a fade defers its swap must not re-voice the sounding one.
+        const SectionReverbRow* sectionRow = nullptr;
+        SectionReverbConfig sectionsRequested {};  // what the controls last asked the room or chamber for
+        bool sectionsConfigured = false;           // sectionsRequested has reached the engine since arming
         bool active = false;
         bool needsSnap = false;      // armed since the last push: start at the targets, no glide
     };
@@ -263,6 +273,8 @@ private:
     void armOwnVoice (const DuskVerbEngine* engine, bool own) noexcept;
     void pushShellParameters (Dv2OutputShell& shell, float toneHiCut) noexcept;
     void pushOwnParameters (OwnVoice& voice, float preDelayMs, float toneTreble, float toneHiCut) noexcept;
+    // The room's or the chamber's settings: its preset's row, moved by the controls.
+    void pushSectionParameters (OwnVoice& voice, float preDelayMs, float toneTreble) noexcept;
     void pushFieldParameters (FieldVoice& voice, float toneHiCut) noexcept;
     void renderWet (DuskVerbEngine* engine, float* left, float* right, int numSamples) noexcept;
     void addEarlyFields (float* left, float* right, int numSamples,
@@ -310,10 +322,17 @@ private:
     float sparseERLpOverride_ = -1.0f;   // DUSKVERB2_SPARSEERLP (hook builds): below 0 the table, else the corner (0: off)
     std::array<float, 2> dualSlopeOverride_ {};   // DUSKVERB2_DUALSLOPE (hook builds)
     bool hasDualSlopeOverride_ = false;
+    std::array<float, 4> sparseERShapeOverride_ {};   // DUSKVERB2_SPARSEERSHAPE (hook builds)
+    bool hasSparseERShapeOverride_ = false;
     std::array<float, 9> octaveDecayOverride_ {};   // DUSKVERB2_OCTDECAY (hook builds)
     bool hasOctaveDecayOverride_ = false;
     bool sharedModeSmearHook_ = false;   // DUSKVERB_MODESMEAR set (hook builds): the patch leaves the smear to it
     bool sharedDensityJitterHook_ = false;   // DUSKVERB_DENSJIT set (hook builds): the patch leaves the jitter to it
+    bool sharedBuildupHook_ = false;    // DUSKVERB_BUILDUP set (hook builds): the patch leaves the tank's build-up to it
+    int denseHallStaticOverride_ = -1;   // DUSKVERB2_DHSTATIC (hook builds): 0, 1 or 2; -1 the patch's
+    bool sharedTankDuckHook_ = false;   // DUSKVERB_TANKDUCK set (hook builds): the patch leaves the early tank duck to it
+    bool sharedSustainLimitMidHook_ = false;   // DUSKVERB_SUSLIM_MID set (hook builds): the patch leaves that limiter to it
+    bool sharedSustainLimitLowHook_ = false;   // DUSKVERB_SUSLIM_LOW set (hook builds), likewise
     bool sharedFdnDelaysHook_ = false;   // DUSKVERB_FDN_DELAYS set (hook builds): the patch leaves the delays to it
     std::array<float, 2> fbRotationOverride_ {};   // DUSKVERB2_FBROT (hook builds)
     bool hasFbRotationOverride_ = false;

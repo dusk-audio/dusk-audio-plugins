@@ -49,7 +49,8 @@ set(DUSKVERB_ENGINE_SOURCES
 set(DUSKVERB2_DSP_SOURCES
     ../core/DuskVerbDSP.cpp
     ../core/DuskVerbPresetEngineConfig.cpp
-    ../core/dsp/NonLinBurstEngine.cpp)
+    ../core/dsp/NonLinBurstEngine.cpp
+    ../core/dsp/SectionReverbEngine.cpp)
 
 # Tuning hooks for local tuning builds, never a release: with this ON, the DUSKVERB2_EARLYFIELD,
 # DUSKVERB2_OCTAVETRIM and DUSKVERB2_BANDLIMIT environment variables replace DuskVerb 2's
@@ -181,7 +182,11 @@ enable_testing()
     add_executable(DuskVerbQuadTankOutputTest ../core/tests/QuadTankOutputTests.cpp ../src/dsp/QuadTank.cpp)
     target_include_directories(DuskVerbQuadTankOutputTest PRIVATE ../src/dsp ../../shared-daf/dsp)
     target_compile_features(DuskVerbQuadTankOutputTest PRIVATE cxx_std_17)
-    foreach(output_test IN ITEMS DuskVerbVelvetTailTest DuskVerbQuadTankOutputTest)
+    # The DenseHall tank's allpass modulation setting (the top-octave fix a DuskVerb 2 preset opts into).
+    add_executable(DuskVerbDenseHallAllpassTest ../core/tests/DenseHallAllpassModulationTests.cpp ../src/dsp/OctaveGEQDesign.cpp)
+    target_include_directories(DuskVerbDenseHallAllpassTest PRIVATE ../src/dsp ../../shared-daf/dsp)
+    target_compile_features(DuskVerbDenseHallAllpassTest PRIVATE cxx_std_17)
+    foreach(output_test IN ITEMS DuskVerbVelvetTailTest DuskVerbQuadTankOutputTest DuskVerbDenseHallAllpassTest)
         if(NOT MSVC)
             target_compile_options(${output_test} PRIVATE
                 $<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:-O3 -ffast-math>)
@@ -191,6 +196,7 @@ enable_testing()
         endif()
     endforeach()
     add_test(NAME DuskVerbQuadTankOutput COMMAND DuskVerbQuadTankOutputTest)
+    add_test(NAME DuskVerbDenseHallAllpass COMMAND DuskVerbDenseHallAllpassTest)
     add_test(NAME DuskVerbVelvetTail COMMAND DuskVerbVelvetTailTest)
 
     add_executable(DuskVerbCoreTest
@@ -246,6 +252,18 @@ enable_testing()
         target_compile_options(NonLinBurstEngineTest PRIVATE -O2)
     endif()
     add_test(NAME NonLinBurstEngine COMMAND NonLinBurstEngineTest)
+
+    add_executable(SectionReverbEngineTest
+        ../core/tests/SectionReverbEngineTests.cpp
+        ../core/dsp/SectionReverbEngine.cpp)
+    target_include_directories(SectionReverbEngineTest PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
+    target_compile_features(SectionReverbEngineTest PRIVATE cxx_std_17)
+    if(NOT MSVC)
+        target_compile_options(SectionReverbEngineTest PRIVATE -O2)
+    endif()
+    add_test(NAME SectionReverbEngine COMMAND SectionReverbEngineTest)
+
     add_executable(DuskVerbTonalCorrectionTest
         DuskVerbTonalCorrectionTests.cpp
         ${DUSKVERB2_DSP_SOURCES}

@@ -147,6 +147,9 @@ EarlyFieldConfig longConfig()
     c.sideMs = 30.0f;
     c.sideAttackMs = 2.0f;
     c.sideLowpassHz = 250.0f;
+    c.reflTrimDb = { 0.0f, -3.0f, 2.0f, 0.0f };
+    c.shelfDb = -6.0f;
+    c.shelfHz = 300.0f;
     return c;
 }
 
@@ -438,6 +441,7 @@ void testASilentInputDrains()
     c.startMs = 2.0f;
     c.windowMs = 60.0f;
     c.reflMs = { 5.0f, 20.0f, 70.0f, 90.0f };
+    c.shelfDb = 0.0f;       // the taps are what must drain by the longest delay; a 300 Hz shelf rings on for tens of ms
     const int n = 24000, silentFrom = 4096;
     const int fade = static_cast<int> (std::lround (EarlyFieldInput::kSilenceFadeMs * 48.0));
     const Stereo in = noise (n, 13u);
@@ -594,7 +598,200 @@ bool sameConfig (const EarlyFieldConfig& a, const EarlyFieldConfig& b)
         && a.reflDb == b.reflDb && a.reflCount == b.reflCount && a.reflMs == b.reflMs && a.lowpassHz == b.lowpassHz
         && a.burstDb == b.burstDb && a.burstStartMs == b.burstStartMs && a.burstMs == b.burstMs
         && a.burstLowpassHz == b.burstLowpassHz && a.sideDb == b.sideDb && a.sideStartMs == b.sideStartMs
-        && a.sideMs == b.sideMs && a.sideAttackMs == b.sideAttackMs && a.sideLowpassHz == b.sideLowpassHz;
+        && a.sideMs == b.sideMs && a.sideAttackMs == b.sideAttackMs && a.sideLowpassHz == b.sideLowpassHz
+        && a.reflTrimDb == b.reflTrimDb && a.sideOffsetMs == b.sideOffsetMs && a.shelfDb == b.shelfDb
+        && a.shelfHz == b.shelfHz && a.sidesOpposed == b.sidesOpposed;
+}
+
+// sidesOpposed: the taps sit where they sat and are as loud, every one negative on the left and
+// positive on the right, the reflections too; a low tone then comes out in opposite phase.
+void testSidesOpposed()
+{
+    EarlyFieldConfig c;
+    c.enabled = true;
+    c.startMs = 20.0f;
+    c.windowMs = 15.0f;
+    c.taps = 13;
+    c.slopeDb = -3.0f;
+    c.directDb = -6.0f;
+    c.reflDb = -12.0f;
+    c.reflCount = 2;
+    c.reflMs = { 60.0f, 70.0f };
+    c.lowpassHz = 18000.0f;
+    const Rig drawn (kSr, 256, c);
+    c.sidesOpposed = true;
+    Rig opposed (kSr, 256, c);
+    bool mixed = false;
+    for (int side = 0; side < 2; ++side)
+    {
+        const auto& a = drawn.f.direct (side);
+        const auto& b = opposed.f.direct (side);
+        for (int k = 0; k < c.taps; ++k)
+        {
+            const size_t i = static_cast<size_t> (k);
+            checkf (b.delay[i] == a.delay[i] && std::abs (b.gain[i]) == std::abs (a.gain[i]),
+                    "side %d tap %d: opposed moves it (%d samples at %g, drawn %d at %g)", side, k, b.delay[i],
+                    static_cast<double> (b.gain[i]), a.delay[i], static_cast<double> (a.gain[i]));
+            checkf (side == 0 ? b.gain[i] < 0.0f : b.gain[i] > 0.0f, "side %d tap %d: opposed gain %g has the wrong sign", side, k,
+                    static_cast<double> (b.gain[i]));
+            mixed = mixed || (a.gain[i] < 0.0f) != (a.gain[0] < 0.0f);
+        }
+    }
+    checkf (mixed, "the drawn layout has one sign throughout: the test cannot tell it from the opposed one");
+
+    Stereo in = silence (9600);
+    in.l[0] = in.r[0] = 1.0f;
+    const Run r = run (opposed, in, 256);
+    const std::vector<float> left = unLowpass (r.post.l, c.lowpassHz), right = unLowpass (r.post.r, c.lowpassHz);
+    const float refl = std::pow (10.0f, c.reflDb / 20.0f);
+    checkf (std::abs (left[static_cast<size_t> (opposed.f.reflectionDelay (0))] + refl) <= 1e-4f, "the left reflection reads %g, want %g",
+            static_cast<double> (left[static_cast<size_t> (opposed.f.reflectionDelay (0))]), static_cast<double> (-refl));
+    checkf (std::abs (right[static_cast<size_t> (opposed.f.reflectionDelay (1))] - refl) <= 1e-4f, "the right reflection reads %g, want %g",
+            static_cast<double> (right[static_cast<size_t> (opposed.f.reflectionDelay (1))]), static_cast<double> (refl));
+
+    // 30 Hz in on both sides, direct taps only: the two outputs in opposite phase (each side's
+    // taps span 15 ms of a 33 ms period, so they add up, with the sign their side gives them).
+    Stereo tone = silence (24000);
+    for (size_t i = 0; i < tone.l.size(); ++i)
+        tone.l[i] = tone.r[i] = static_cast<float> (0.5 * std::sin (2.0 * 3.14159265358979323846 * 30.0 * static_cast<double> (i) / kSr));
+    c.reflCount = 0;
+    Rig lowRig (kSr, 256, c);
+    const Run low = run (lowRig, tone, 256);
+    double lr = 0.0, ll = 0.0, rr = 0.0;
+    for (size_t i = 12000; i < tone.l.size(); ++i)
+    {
+        lr += static_cast<double> (low.post.l[i]) * low.post.r[i];
+        ll += static_cast<double> (low.post.l[i]) * low.post.l[i];
+        rr += static_cast<double> (low.post.r[i]) * low.post.r[i];
+    }
+    const double correlation = lr / std::sqrt (ll * rr);
+    checkf (correlation < -0.9, "30 Hz through opposed sides comes out at correlation %+.2f", correlation);
+}
+
+// A reflection's trim is its level over reflDb; at 0 it plays at reflDb exactly.
+void testReflectionTrims()
+{
+    EarlyFieldConfig c;
+    c.enabled = true;
+    c.directDb = EarlyField::kOffDb;
+    c.reflDb = -12.0f;
+    c.reflCount = 4;
+    c.reflMs = { 10.0f, 20.0f, 30.0f, 40.0f };
+    c.reflTrimDb = { 0.0f, 6.0f, -6.0f, -20.0f };
+    c.lowpassHz = 6000.0f;
+    Rig rig (kSr, 256, c);
+    Stereo in = silence (4800);
+    in.l[0] = in.r[0] = 1.0f;
+    const Run r = run (rig, in, 256);
+    const std::vector<float> early[2] = { unLowpass (r.post.l, c.lowpassHz), unLowpass (r.post.r, c.lowpassHz) };
+    for (int k = 0; k < c.reflCount; ++k)
+    {
+        const float want = std::pow (10.0f, (c.reflDb + c.reflTrimDb[static_cast<size_t> (k)]) / 20.0f);
+        const float got = early[k % 2][static_cast<size_t> (rig.f.reflectionDelay (k))];
+        checkf (std::abs (got - want) <= 1e-4f * want + 1e-6f, "reflection %d at %+g dB of trim reads %g, want %g", k,
+                static_cast<double> (c.reflTrimDb[static_cast<size_t> (k)]), static_cast<double> (got), static_cast<double> (want));
+    }
+    EarlyFieldConfig plain = c;
+    plain.reflTrimDb = {};
+    Rig untrimmed (kSr, 256, plain);
+    const Run u = run (untrimmed, in, 256);
+    checkf (u.post.l[static_cast<size_t> (untrimmed.f.reflectionDelay (0))] == r.post.l[static_cast<size_t> (rig.f.reflectionDelay (0))],
+            "a reflection at 0 dB of trim does not play as one without trims");
+    checkf (! EarlyField::valid ([&] { EarlyFieldConfig over = c; over.reflDb = 0.0f; over.reflTrimDb[0] = 13.0f; return over; }()),
+            "a reflection trimmed past +12 dB is valid");
+}
+
+// sideOffsetMs: both sides play the right side's pattern, one of them a whole number of samples
+// later, so the two outputs are the same signal that far apart. At 0 each side has its own.
+void testSideOffset()
+{
+    EarlyFieldConfig c;
+    c.enabled = true;
+    c.startMs = 5.0f;
+    c.windowMs = 12.0f;
+    c.taps = 27;
+    c.slopeDb = -6.0f;
+    c.attackMs = 4.0f;
+    c.directDb = -6.0f;
+    c.lowpassHz = 2500.0f;
+    const Rig own (kSr, 256, c);
+    for (const float offsetMs : { 2.65f, -2.65f })
+    {
+        c.sideOffsetMs = offsetMs;
+        Rig rig (kSr, 256, c);
+        const int shift = static_cast<int> (std::lround (std::abs (static_cast<double> (offsetMs)) * 48.0));
+        const int late = offsetMs > 0.0f ? 0 : 1, early = 1 - late;           // side index: 0 left, 1 right
+        const auto& a = rig.f.direct (early);
+        const auto& b = rig.f.direct (late);
+        const auto& pattern = own.f.direct (1);
+        for (int k = 0; k < c.taps; ++k)
+        {
+            const size_t i = static_cast<size_t> (k);
+            checkf (a.delay[i] == pattern.delay[i] && a.gain[i] == pattern.gain[i],
+                    "offset %g ms: tap %d of the side that is not late is not the right side's own", static_cast<double> (offsetMs), k);
+            checkf (b.delay[i] == a.delay[i] + shift && b.gain[i] == a.gain[i],
+                    "offset %g ms: tap %d is %d samples behind at gain %g, want %d at %g", static_cast<double> (offsetMs), k,
+                    b.delay[i] - a.delay[i], static_cast<double> (b.gain[i]), shift, static_cast<double> (a.gain[i]));
+        }
+        Stereo in = noise (4800, 5u);
+        in.r = in.l;                                                          // one input on both sides
+        const Run r = run (rig, in, 256);
+        const std::vector<float>& first = early == 0 ? r.post.l : r.post.r;
+        const std::vector<float>& second = late == 0 ? r.post.l : r.post.r;
+        checkf (std::memcmp (second.data() + shift, first.data(), (first.size() - static_cast<size_t> (shift)) * sizeof (float)) == 0,
+                "offset %g ms: the late side is not the other side %d samples later", static_cast<double> (offsetMs), shift);
+    }
+    c.sideOffsetMs = EarlyField::kMaxSideOffsetMs + 1.0f;
+    checkf (! EarlyField::valid (c), "a side offset past the limit is valid");
+    c.sideOffsetMs = 15.0f;
+    c.startMs = 380.0f;                                                        // 380 + 12 + 15 ms: past the ring
+    checkf (! EarlyField::valid (c), "direct taps offset past the longest delay are valid");
+}
+
+// The low shelf: shelfDb under shelfHz, nothing well above it; at 0 dB the stage is not run.
+void testLowShelf()
+{
+    EarlyFieldConfig c;
+    c.enabled = true;
+    c.directDb = EarlyField::kOffDb;
+    c.reflDb = 0.0f;
+    c.reflCount = 2;
+    c.reflMs = { 1.0f, 1.0f };
+    c.lowpassHz = 48000.0f;
+    EarlyFieldConfig shelved = c;
+    shelved.shelfDb = -9.0f;
+    shelved.shelfHz = 250.0f;
+    const auto level = [] (const EarlyFieldConfig& cfg, double hz) {
+        Rig rig (kSr, 256, cfg);
+        Stereo in = silence (48000);
+        for (size_t i = 0; i < in.l.size(); ++i)
+            in.l[i] = in.r[i] = static_cast<float> (0.5 * std::sin (2.0 * 3.14159265358979323846 * hz * static_cast<double> (i) / kSr));
+        const Run r = run (rig, in, 256);
+        double e[2] = {};
+        for (size_t i = 24000; i < r.post.l.size(); ++i)
+        {
+            e[0] += static_cast<double> (r.post.l[i]) * r.post.l[i];
+            e[1] += static_cast<double> (r.post.r[i]) * r.post.r[i];
+        }
+        return std::array<double, 2> { 10.0 * std::log10 (e[0]), 10.0 * std::log10 (e[1]) };
+    };
+    for (int side = 0; side < 2; ++side)
+    {
+        const size_t i = static_cast<size_t> (side);
+        const double low = level (shelved, 40.0)[i] - level (c, 40.0)[i];
+        const double corner = level (shelved, 250.0)[i] - level (c, 250.0)[i];
+        const double high = level (shelved, 4000.0)[i] - level (c, 4000.0)[i];
+        checkf (std::abs (low + 9.0) <= 0.3, "side %d: a -9 dB shelf at 250 Hz changes 40 Hz by %+.2f dB", side, low);
+        checkf (std::abs (corner + 4.5) <= 0.3, "side %d: a -9 dB shelf at 250 Hz changes its corner by %+.2f dB", side, corner);
+        checkf (std::abs (high) <= 0.05, "side %d: a -9 dB shelf at 250 Hz changes 4 kHz by %+.2f dB", side, high);
+    }
+    // Off by default: a config that names the corner but no gain renders as one that names neither.
+    EarlyFieldConfig cornerOnly = c;
+    cornerOnly.shelfHz = 800.0f;
+    Rig a (kSr, 256, c), b (kSr, 256, cornerOnly);
+    const Stereo in = noise (4800, 9u);
+    const Run ra = run (a, in, 256), rb = run (b, in, 256);
+    checkf (same (ra.post.l, rb.post.l) && same (ra.post.r, rb.post.r), "a shelf at 0 dB changes the output");
 }
 
 // The side burst: velvet pulses inside [start, start + length], peak 1, played +left / -right, and
@@ -724,6 +921,10 @@ void testParser()
         "refl_count=11", "refl_ms=", "refl_ms=1/2/3/4/5/6/7/8/9/10/11", "refl_ms=1//3/4", "refl_ms=1/2/",
         "refl_count=1,refl_ms=401/0/0/0",
         "lowpass_hz=10", "direct_db=-121", "slope_db=61", "enabled=1;taps=8",
+        "side_offset_ms=21", "side_offset_ms=-21", "start_ms=380,window_ms=10,side_offset_ms=15",
+        "shelf_db=13", "shelf_db=-25", "shelf_hz=10", "shelf_hz=2001",
+        "refl_count=1,refl_db=0,refl_trim_db=13", "refl_count=1,refl_trim_db=-61", "refl_trim_db=1/2/3/4/5/6/7/8/9/10/11",
+        "opposed=2", "opposed=yes", "opposed=0.5",
     };
     for (const char* text : refused)
     {
@@ -749,6 +950,17 @@ void testParser()
     odd.slopeDb = -7.77777f;
     odd.inject = 1.0f / 3.0f;
     odd.lowpassHz = 6789.123f;
+    odd.sideOffsetMs = -2.65f;
+    odd.shelfDb = -9.1f;
+    odd.shelfHz = 233.3f;
+    odd.reflTrimDb = { 1.5f, -3.3f, 0.0f, -59.9f };
+    odd.sidesOpposed = true;
+    EarlyFieldConfig levers;
+    checkf (parseEarlyFieldConfig ("side_offset_ms=2.65,shelf_db=-9,shelf_hz=250,refl_count=2,refl_db=-24,refl_trim_db=3/-6", levers,
+                                   error, sizeof (error))
+                && levers.sideOffsetMs == 2.65f && levers.shelfDb == -9.0f && levers.shelfHz == 250.0f
+                && levers.reflTrimDb[0] == 3.0f && levers.reflTrimDb[1] == -6.0f && levers.reflTrimDb[2] == 0.0f,
+            "the side offset, the shelf or the reflection trims are refused or misread: %s", error);
     for (const EarlyFieldConfig& original : { longConfig(), odd, EarlyFieldConfig {} })
     {
         char text[512];
@@ -846,6 +1058,10 @@ int main (int argc, char** argv)
     testSilenceFadesInAndOut();
     testTakingOverRendersTheSameSamples();
     testSampleRates();
+    testReflectionTrims();
+    testSideOffset();
+    testLowShelf();
+    testSidesOpposed();
     testOnsetBurst();
     testSideBurst();
     testParser();

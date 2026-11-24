@@ -276,8 +276,10 @@ EarlyFieldConfig directField()
     return c;
 }
 
-// Energy (dB) of `x`'s left plus right, mid or side signal between lo and hi Hz: its DFT,
-// zero-padded to a power of two.
+// Energy (dB) of `x`'s left plus right, mid or side signal between lo and hi Hz: its DFT under a
+// Hann window, zero-padded to a power of two. Unwindowed, a strong tank mode beside a narrow band
+// leaked into it: the engine's side at 55-65 Hz read Mono Below's cut 1.2 dB short of the field's
+// once Large Chamber's low modes moved (2026-11-21), and 0.4 dB windowed.
 enum class Part { Both, Mid, Side };
 
 double bandDb (const Render& x, Part part, double lo, double hi)
@@ -286,7 +288,9 @@ double bandDb (const Render& x, Part part, double lo, double hi)
     while (n < x.l.size()) n <<= 1;
     const auto spectrum = [n] (const std::vector<double>& v) {
         std::vector<std::complex<double>> a (n);
-        std::copy (v.begin(), v.end(), a.begin());
+        const double span = static_cast<double> (std::max<size_t> (v.size(), 2) - 1);
+        for (size_t i = 0; i < v.size(); ++i)
+            a[i] = v[i] * (0.5 - 0.5 * std::cos (2.0 * kPi * static_cast<double> (i) / span));
         for (size_t i = 1, j = 0; i < n; ++i)
         {
             size_t bit = n >> 1;
@@ -392,7 +396,7 @@ void testPresetsWithoutAFieldAreUnchanged()
 
 void testTheTuningHook()
 {
-    const FactoryPreset& preset = presetNamed ("Large Chamber");
+    const FactoryPreset& preset = presetNamed ("Bright Hall");
     const char* text = "enabled=1,start_ms=7,window_ms=40,taps=12,slope_db=4,attack_ms=5,inject=0.3,"
                        "direct_db=-6,refl_db=-9,refl_count=3,refl_ms=2.5/3.5/60/0,lowpass_hz=9000";
     EarlyFieldConfig parsed;
@@ -418,7 +422,7 @@ void testTheTuningHook()
 // through the preset's output controls.
 void testTheFieldReachesTheOutput()
 {
-    const FactoryPreset& preset = presetNamed ("Large Chamber");
+    const FactoryPreset& preset = presetNamed ("Bright Hall");
     const EarlyFieldConfig c = directField();
     const int n = 9600;
     const Render on = render (preset, &c, n), off = render (preset, &kOff, n);
@@ -461,7 +465,7 @@ void testTheFieldReachesTheOutput()
 // control's gain barely varies across it (then the change is that gain, whatever the spectrum).
 void testTheOutputControlsMoveTheField()
 {
-    const FactoryPreset& preset = presetNamed ("Large Chamber");
+    const FactoryPreset& preset = presetNamed ("Bright Hall");
     const EarlyFieldConfig c = directField();
     const int at = 14400, length = 9600;     // the impulse 0.3 s after the move: every glide is over
     const auto source = [] (int t, int) { return t == 14400 ? 1.0f : 0.0f; };
@@ -545,7 +549,7 @@ void testOwnEnginesNeverPlayIt()
 // played while frozen never reaches it.
 void testFreezeStopsTheField()
 {
-    const FactoryPreset& preset = presetNamed ("Large Chamber");
+    const FactoryPreset& preset = presetNamed ("Bright Hall");
     const EarlyFieldConfig c = directField();                       // the longest arrival at 60 ms
     const int n = 48000, frozenFrom = 9 * kBlock, longest = 2880;
     const auto freeze = [] (DuskVerbDSP& dsp, int block) { if (block == 8) setPlain (dsp, duskverb::Freeze, 1.0f); };
@@ -614,7 +618,7 @@ void testFreezeFadesTheFieldsInput()
 // engine has none, not even for a second impulse once the fade is over.
 void testAnEngineFadingOutKeepsItsField()
 {
-    const FactoryPreset& preset = presetNamed ("Large Chamber");
+    const FactoryPreset& preset = presetNamed ("Bright Hall");
     EarlyFieldConfig c = directField();
     c.startMs = 1.0f;
     c.windowMs = 99.0f;
@@ -656,7 +660,7 @@ void testAnEngineFadingOutKeepsItsField()
 // unchanged by the field (its pre path is off here).
 void testAReloadLeavesTheFieldAlone()
 {
-    const FactoryPreset& preset = presetNamed ("Large Chamber");
+    const FactoryPreset& preset = presetNamed ("Bright Hall");
     EarlyFieldConfig c = directField();
     c.startMs = 1.0f;
     c.windowMs = 99.0f;
@@ -684,7 +688,7 @@ void testAReloadLeavesTheFieldAlone()
 // level in each 5 ms of the fade, against the same render without the reload.
 void testAReloadUnderASustainedToneIsClean()
 {
-    const FactoryPreset& preset = presetNamed ("Large Chamber");
+    const FactoryPreset& preset = presetNamed ("Bright Hall");
     EarlyFieldConfig c = directField();
     c.directDb = -3.0f;
     const int n = 24000, swap = 40 * kBlock;
@@ -714,7 +718,7 @@ void testAReloadUnderASustainedToneIsClean()
 // module's own classes, fed the same input, predicts the field's contribution exactly.
 void testASwapToAnotherPresetCrossfadesLinearly()
 {
-    const FactoryPreset& from = presetNamed ("Large Chamber");
+    const FactoryPreset& from = presetNamed ("Bright Hall");
     const FactoryPreset& to = presetNamed ("Medium Drum Room");       // every output control differs
     const EarlyFieldConfig c = directField();
     const int n = 19200, swapBlock = 20;
@@ -807,7 +811,7 @@ void testASwapToAnotherPresetCrossfadesLinearly()
 // A host reset right after the impulse (every tap still to come): none of them plays.
 void testAHostResetSilencesIt()
 {
-    const FactoryPreset& preset = presetNamed ("Large Chamber");
+    const FactoryPreset& preset = presetNamed ("Bright Hall");
     EarlyFieldConfig c = directField();
     c.startMs = 20.0f;
     c.reflMs = { 30.0f, 40.0f, 60.0f, 0.0f };

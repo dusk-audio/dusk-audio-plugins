@@ -53,6 +53,7 @@ public:
         for (int i = 0; i < kN; ++i) loopAP_[i].alloc (loopAPLen (i, 1.6f), kLoopExc);
         for (int i = 0; i < kN; ++i) loopAP2_[i].alloc (loopAP2Len (i, 1.6f), kLoopExc);
         for (int i = 0; i < kN; ++i) loopAP3_[i].alloc (loopAP3Len (i, 1.6f), kLoopExc);
+        setAllpassModulation (inputModulated_, loopAllpassModulated_);   // alloc() has just put the excursions back
         // Spin combs — alloc here (sample-rate-dependent length) so a re-prepare
         // at a new SR reallocates; keeps update() allocation-free (audio-thread).
         spinL_.alloc ((int)(0.0061f*sr_), (int)(0.0002f*sr_));
@@ -97,6 +98,10 @@ public:
         spinLa_.clear(); spinLb_.clear(); spinRa_.clear(); spinRb_.clear();
         tcL_.reset(); tcR_.reset();
         for (auto& d : dc_) d.reset();   // process() always runs the input DC blockers — clear their history too, else state leaks across instances/sessions
+        // The HF-sustain shelf's lowpass state as well: left standing, the first samples after a
+        // clear feed gain x that state back into the lines (measured -92 dBFS on the first block
+        // of a cleared Large Chamber, 2026-11-20).
+        for (int i = 0; i < kN; ++i) hfSusLp_[i] = 0.0f;
     }
 
     // ── Setters (universal surface) ──────────────────────────────────────────
@@ -163,6 +168,30 @@ public:
             hfSusCoeff_ = 1.0f - std::exp (-6.2831853f * hfSusHz_ / sr_);
             for (int i = 0; i < kN; ++i) hfSusLp_[i] = 0.0f;
         }
+    }
+    // ALLPASSES WITHOUT MODULATION (2026-11-20). Every allpass reads its delay through
+    // cubicHermite at a position the LFO moves, and a cubic read that lands between samples is a
+    // low-pass: averaged over the positions, 0.7 dB at 12.7 kHz, 1.5 dB at 16 kHz and 2.3 dB at
+    // 18 kHz a read at 48 kHz. This is the "top-octave cliff" the hall presets show against
+    // references whose tails run to 20 kHz (200 to 800 ms into Large Chamber's impulse response:
+    // 6, 18 and 26 dB down at those three frequencies), in two halves:
+    //   input: the ten input allpasses a side, in series, are a fixed low-pass on everything the
+    //          tank is fed. Still, they give 3, 7 and 10 dB of it back (measured).
+    //   loop:  each line's three loop allpasses add three such reads to the delay's one on every
+    //          pass, so inside the 16 kHz octave the decay steepens with frequency faster than one
+    //          octave gain can follow: the octave rows fit its average and its top falls away.
+    // With an excursion at 0 every read lands on a sample, where the cubic returns that sample, so
+    // the allpass is exact again. The delay lines keep their modulation in either case: that is
+    // what moves the tail's modes.
+    // process() is not touched: the excursions are data its loop already reads, so with both on
+    // (the default) the instruction stream and the output are what they were.
+    void setAllpassModulation (bool input, bool loop)
+    {
+        inputModulated_ = input;
+        loopAllpassModulated_ = loop;
+        const float in = input ? (float) kInExc : 0.0f, lp = loop ? (float) kLoopExc : 0.0f;
+        for (int i = 0; i < kNumInAP; ++i) { inAPL_[i].exc = in; inAPR_[i].exc = in; }
+        for (int i = 0; i < kN; ++i) { loopAP_[i].exc = lp; loopAP2_[i].exc = lp; loopAP3_[i].exc = lp; }
     }
     void setCrossoverFreq (float hz)     { lowX_  = std::clamp (hz, 40.0f, 2000.0f);   if (lowX_ > highX_) highX_ = lowX_; if (prepared_) update(); }  // bass↔mid split (keeps lowX_<=highX_)
     void setHighCrossoverFreq (float hz) { highX_ = std::clamp (hz, 800.0f, 14000.0f); if (highX_ < lowX_) lowX_ = highX_; if (prepared_) update(); }  // mid↔high split (keeps lowX_<=highX_)
@@ -690,4 +719,5 @@ private:
     SpinComb spinLa_, spinLb_, spinRa_, spinRb_;
     float stereoBias_ = 0.0f, biasCos_ = 1.0f, biasSin_ = 0.0f;
     bool  stereoBiasActive_ = false;
+    bool  inputModulated_ = true, loopAllpassModulated_ = true;   // setAllpassModulation; after the members above, as they say
 };

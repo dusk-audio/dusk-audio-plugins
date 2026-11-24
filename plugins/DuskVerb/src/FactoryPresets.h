@@ -984,7 +984,8 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // ═══════════ CHAMBERS ═══════════
         // ═══════════ ROOMS ═══════════
         // ── Small Drum Room ────────────────────────────────────────────────
-        // Engine: QuadTank. Target: a dark, heavily modulated small room.
+        // The first QuadTank tuning used a darker, heavily modulated room.
+        // From 2026-05-31 onward, the target was a hall at its smallest size.
         //
         // v1 (2026-05-27): staged_tuner.py autonomous --category Rooms.
         // 1300 trials. Stage 1 1.28 / Stage 2 109.58 / Stage 3 60.02.

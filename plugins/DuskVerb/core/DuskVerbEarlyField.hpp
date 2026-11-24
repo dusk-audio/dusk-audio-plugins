@@ -6,7 +6,7 @@
 // every table their presets were tuned with.
 //
 //   engine input = (1 - inject) x in + inject x injector(in) / its RMS gain
-//   wet out     += output stage (lowpass (direct x injector'(in) + reflections(in)))
+//   wet out     += output stage (shelf (lowpass (direct x injector'(in) + reflections(in))))
 //
 // The injector is a run of discrete taps over [start, start + window]; its level slopes across
 // the window by slopeDb after a fade-in over attackMs (-24 dB to 0). The onset burst is a few milliseconds of velvet pulses heard directly, the same on both sides: a peak
@@ -19,7 +19,10 @@
 // moves where the engine's energy lands (a rising slope delays it, the direct path brings energy
 // forward); heard directly, with the reflections, it gives the early field discrete arrivals.
 // Each side has its own direct tap stream and the reflections alternate sides, so the field is
-// as decorrelated as the engine's own.
+// as decorrelated as the engine's own. With sideOffsetMs the two sides instead play one stream a
+// few ms apart: correlated, and in opposite phase where the offset is half a period, as a
+// reference that taps one cluster twice is. The low shelf (off at 0 dB) takes the lows out of the
+// direct taps and reflections, which leaves them to the engine.
 //
 // Tap layout: SplitMix64, two draws per tap (time jitter, sign), mirrored by taps_kernel() in
 // the tools repo's classic_lab/earlyfield_screen.py so a layout screened there renders
@@ -83,6 +86,27 @@ struct EarlyFieldConfig
     float sideMs = 30.0f;        // its length (60 dB down at the end)
     float sideAttackMs = 2.0f;   // fade-in from -24 dB
     float sideLowpassHz = 250.0f;
+    // Each reflection's level over reflDb, in dB (0: at reflDb), in reflMs' order: a reference's
+    // repeats fall off from one to the next, which one level for all ten cannot follow.
+    std::array<float, kMaxEarlyReflections> reflTrimDb {};
+    // One pattern for both sides' direct taps (the right side's), the left side later by this many
+    // ms, or the right side later by as many when negative; 0: each side its own pattern. A
+    // reference whose two sides play one cluster a few ms apart is in opposite phase where that
+    // offset is half a period (2.5 ms: 200 Hz) and in phase well below it, so its mono sum loses
+    // level there. Two independent patterns are uncorrelated at every frequency and lose none.
+    float sideOffsetMs = 0.0f;
+    // Low shelf on the direct taps and the reflections (RBJ, slope 1): dB below shelfHz; 0: none.
+    // A reference cluster that is light below a few hundred Hz leaves the lows to the tank, and
+    // with them the lows' width.
+    float shelfDb = 0.0f;
+    float shelfHz = 250.0f;
+    // Every direct tap and reflection negative on the left and positive on the right, where a
+    // direct tap otherwise draws its sign and a reflection is positive. A reference that sets its
+    // early cluster up so (Lexicon Medium Live Room: thirteen taps a side inside 15 ms, the left
+    // ones negative, the right ones positive) has its lows in opposite phase for as long as the
+    // cluster lasts and louder than taps of mixed sign would make them, with its highs as
+    // uncorrelated as ever: same-sign taps add up below the frequency their spread allows.
+    bool sidesOpposed = false;
 };
 
 // The input history the early fields read: one stereo ring for both engines of the pair.
@@ -163,6 +187,7 @@ public:
     static constexpr double kSidePerSecond  = 2000.0;   // the side burst's density: 32 ms in kMaxTaps
     static constexpr float kMaxDelayMs     = EarlyFieldInput::kMaxDelayMs;
     static constexpr float kOffDb          = -120.0f;   // a path at this level is off: exactly silent
+    static constexpr float kMaxSideOffsetMs = 20.0f;    // one side's direct taps behind the other's
 
     // The ranges a config keeps: every tap and reflection inside kMaxDelayMs. The voicing table
     // is checked against them when it compiles and the tuning hook refuses anything outside;
@@ -178,14 +203,19 @@ public:
                && c.directDb >= kOffDb && c.directDb <= 12.0f && c.reflDb >= kOffDb && c.reflDb <= 12.0f))
             return false;
         for (int r = 0; r < c.reflCount; ++r)
-            if (! (c.reflMs[static_cast<size_t> (r)] >= 0.0f && c.reflMs[static_cast<size_t> (r)] <= kMaxDelayMs))
+            if (! (c.reflMs[static_cast<size_t> (r)] >= 0.0f && c.reflMs[static_cast<size_t> (r)] <= kMaxDelayMs
+                   && c.reflTrimDb[static_cast<size_t> (r)] >= -60.0f && c.reflTrimDb[static_cast<size_t> (r)] <= 24.0f
+                   && c.reflDb + c.reflTrimDb[static_cast<size_t> (r)] <= 12.0f))
                 return false;
         return c.burstDb >= kOffDb && c.burstDb <= 12.0f && c.burstStartMs >= 0.0f && c.burstMs >= 0.5f
             && c.burstMs * kBurstPerSecond * 1e-3 <= kMaxBurstTaps && c.burstStartMs + c.burstMs <= kMaxDelayMs
             && c.burstLowpassHz >= 20.0f && c.burstLowpassHz <= 48000.0f
             && c.sideDb >= kOffDb && c.sideDb <= 12.0f && c.sideStartMs >= 0.0f && c.sideMs >= 1.0f
             && c.sideMs * kSidePerSecond * 1e-3 <= kMaxTaps && c.sideStartMs + c.sideMs <= kMaxDelayMs
-            && c.sideAttackMs >= 0.0f && c.sideAttackMs <= c.sideMs && c.sideLowpassHz >= 20.0f && c.sideLowpassHz <= 2000.0f;
+            && c.sideAttackMs >= 0.0f && c.sideAttackMs <= c.sideMs && c.sideLowpassHz >= 20.0f && c.sideLowpassHz <= 2000.0f
+            && c.sideOffsetMs >= -kMaxSideOffsetMs && c.sideOffsetMs <= kMaxSideOffsetMs
+            && c.startMs + c.windowMs + (c.sideOffsetMs < 0.0f ? -c.sideOffsetMs : c.sideOffsetMs) <= kMaxDelayMs
+            && c.shelfDb >= -24.0f && c.shelfDb <= 12.0f && c.shelfHz >= 20.0f && c.shelfHz <= 2000.0f;
     }
 
     // The rate and the longest delay of the input this field reads; prepare that first.
@@ -200,27 +230,56 @@ public:
     void clearState() noexcept
     {
         for (auto& lp : lowpass_) lp.reset();
+        for (auto& f : shelf_) f.reset();
         burstLowpass_.reset();
         for (auto& f : sideLowpass_) f.reset();
     }
 
     // The post path's state of `other`, for a field taking over from the one fading out: with
     // the input shared, that is all a field holds. A OnePoleLP copies whole, so this field's own
-    // cutoff goes back on.
+    // cutoff goes back on. The shelf and the two burst filters run only while their path is on,
+    // so where the other field's is off its state is history from whenever it last ran: this
+    // field's starts over instead (a recall after a long silence would otherwise replay it).
     void copyStateFrom (const EarlyField& other) noexcept
     {
         for (int s = 0; s < 2; ++s)
         {
             lowpass_[static_cast<size_t> (s)] = other.lowpass_[static_cast<size_t> (s)];
             lowpass_[static_cast<size_t> (s)].setCutoff (lowpassHz_, sr_);
+            // The other field's shelf state under this field's own shelf, as the side burst's
+            // lowpass below.
+            if (other.shelfOn_)
+            {
+                const duskaudio::BiquadCoeffsDouble own = shelf_[static_cast<size_t> (s)].coeffs();
+                shelf_[static_cast<size_t> (s)] = other.shelf_[static_cast<size_t> (s)];
+                shelf_[static_cast<size_t> (s)].setCoeffs (own);
+            }
+            else
+            {
+                shelf_[static_cast<size_t> (s)].reset();
+            }
         }
-        burstLowpass_ = other.burstLowpass_;
-        burstLowpass_.setCutoff (burstLowpassHz_, sr_);
+        if (other.burstGain_ > 0.0f)
+        {
+            burstLowpass_ = other.burstLowpass_;
+            burstLowpass_.setCutoff (burstLowpassHz_, sr_);
+        }
+        else
+        {
+            burstLowpass_.reset();
+        }
         for (int k = 0; k < 2; ++k)
         {
-            const duskaudio::BiquadCoeffsDouble own = sideLowpass_[k].coeffs();
-            sideLowpass_[k] = other.sideLowpass_[k];
-            sideLowpass_[k].setCoeffs (own);
+            if (other.sideGain_ > 0.0f)
+            {
+                const duskaudio::BiquadCoeffsDouble own = sideLowpass_[k].coeffs();
+                sideLowpass_[k] = other.sideLowpass_[k];
+                sideLowpass_[k].setCoeffs (own);
+            }
+            else
+            {
+                sideLowpass_[k].reset();
+            }
         }
     }
 
@@ -237,8 +296,18 @@ public:
         cfg_ = c;
         const int n = std::clamp (c.taps, 1, kMaxTaps);
         layout (injector_, n, 0x11ull);
-        layout (direct_[0], n, 0x23ull);
-        layout (direct_[1], n, 0x29ull);
+        const float leftSign = c.sidesOpposed ? -1.0f : 0.0f, rightSign = c.sidesOpposed ? 1.0f : 0.0f;
+        if (c.sideOffsetMs == 0.0f)
+        {
+            layout (direct_[0], n, 0x23ull, 0, leftSign);
+            layout (direct_[1], n, 0x29ull, 0, rightSign);
+        }
+        else                                   // the right side's pattern on both, one side later
+        {
+            const int later = delaySamples (std::abs (static_cast<double> (c.sideOffsetMs)));
+            layout (direct_[0], n, 0x29ull, c.sideOffsetMs > 0.0f ? later : 0, leftSign);
+            layout (direct_[1], n, 0x29ull, c.sideOffsetMs < 0.0f ? later : 0, rightSign);
+        }
         double e = 0.0;
         for (int k = 0; k < n; ++k)
             e += static_cast<double> (injector_.gain[static_cast<size_t> (k)]) * injector_.gain[static_cast<size_t> (k)];
@@ -248,10 +317,20 @@ public:
         reflGain_   = gain (c.reflDb);
         reflCount_  = reflGain_ > 0.0f ? std::clamp (c.reflCount, 0, kMaxReflections) : 0;
         for (int r = 0; r < kMaxReflections; ++r)
+        {
             reflDelay_[static_cast<size_t> (r)] = delaySamples (c.reflMs[static_cast<size_t> (r)]);
+            // Exactly reflGain_ at a trim of 0, so a row without trims plays as it always did.
+            const float trim = c.reflTrimDb[static_cast<size_t> (r)];
+            const float level = trim == 0.0f ? reflGain_ : reflGain_ * std::pow (10.0f, trim / 20.0f);
+            reflGainEach_[static_cast<size_t> (r)] = c.sidesOpposed && r % 2 == 0 ? -level : level;   // even ones play on the left
+        }
         lowpassHz_ = std::min (c.lowpassHz, 0.45f * static_cast<float> (sr_));
         for (auto& lp : lowpass_)
             lp.setCutoff (lowpassHz_, sr_);
+        shelfOn_ = c.shelfDb != 0.0f;
+        const duskaudio::BiquadCoeffsDouble shelf = shelfOn_ ? lowShelf (sr_, std::min (c.shelfHz, 2000.0f), c.shelfDb)
+                                                             : duskaudio::BiquadCoeffsDouble {};
+        for (auto& f : shelf_) f.setCoeffs (shelf);
         burstGain_ = gain (c.burstDb);
         burstLayout (c.burstStartMs, c.burstMs);
         burstLowpassHz_ = std::min (c.burstLowpassHz, 0.45f * static_cast<float> (sr_));
@@ -300,8 +379,11 @@ public:
                 const auto& ring = in.ring_[static_cast<size_t> (s)];
                 float early = directGain_ > 0.0f ? directGain_ * sum (in, ring, pos, direct_[s]) : 0.0f;
                 for (int r = s; r < reflCount_; r += 2)            // reflections alternate sides
-                    early += reflGain_ * ring[static_cast<size_t> (wrap (in, pos - reflDelay_[static_cast<size_t> (r)]))];
-                out[s][i] = lowpass_[static_cast<size_t> (s)].process (early) + burst + (s == 0 ? side : -side);
+                    early += reflGainEach_[static_cast<size_t> (r)] * ring[static_cast<size_t> (wrap (in, pos - reflDelay_[static_cast<size_t> (r)]))];
+                early = lowpass_[static_cast<size_t> (s)].process (early);
+                if (shelfOn_)
+                    early = shelf_[static_cast<size_t> (s)].process (early);
+                out[s][i] = early + burst + (s == 0 ? side : -side);
             }
             if (++pos == in.len_) pos = 0;
         }
@@ -333,7 +415,10 @@ private:
         return static_cast<double> (z >> 11) * (1.0 / 9007199254740992.0);
     }
 
-    void layout (Layout& l, int n, uint64_t seed) const noexcept
+    // `later`: samples added to every delay, so one seed laid out twice gives the same pattern a
+    // whole number of samples apart. `sign`: below or above 0, every tap takes that sign; at 0 each
+    // draws its own. The draw is made either way, so the times do not depend on it.
+    void layout (Layout& l, int n, uint64_t seed, int later = 0, float sign = 0.0f) const noexcept
     {
         const double start = cfg_.startMs, window = cfg_.windowMs;
         const double slope = std::clamp (cfg_.slopeDb, -60.0f, 60.0f), attack = cfg_.attackMs;
@@ -345,8 +430,8 @@ private:
             const double u = k == 0 ? 0.0 : std::clamp ((k + jitter - 0.5) / n, 0.0, 1.0);
             const double ramp = attack > 0.0 ? -24.0 * std::max (0.0, 1.0 - u * window / attack) : 0.0;
             const float g = static_cast<float> (std::pow (10.0, (slope * (u - 0.5) + ramp) / 20.0))
-                          * (signDraw < 0.5 ? -1.0f : 1.0f);
-            l.delay[static_cast<size_t> (k)] = delaySamples (start + u * window);
+                          * (sign != 0.0f ? (sign < 0.0f ? -1.0f : 1.0f) : (signDraw < 0.5 ? -1.0f : 1.0f));
+            l.delay[static_cast<size_t> (k)] = std::min (delaySamples (start + u * window) + later, maxDelay_);
             l.gain[static_cast<size_t> (k)] = g;
             peak = std::max (peak, std::abs (g));
         }
@@ -416,6 +501,24 @@ private:
         return c;
     }
 
+    // RBJ low shelf with shelf slope 1, in double: at 250 Hz and a high rate the poles sit too
+    // close to z = 1 for float coefficients.
+    static duskaudio::BiquadCoeffsDouble lowShelf (double fs, double hz, double gainDb) noexcept
+    {
+        const double A = std::pow (10.0, gainDb / 40.0);
+        const double w0 = 2.0 * 3.14159265358979323846 * hz / fs;
+        const double cw = std::cos (w0), alpha = std::sin (w0) * 0.70710678118654752;
+        const double k = 2.0 * std::sqrt (A) * alpha;
+        const double a0 = (A + 1.0) + (A - 1.0) * cw + k;
+        duskaudio::BiquadCoeffsDouble c;
+        c.b0 = A * ((A + 1.0) - (A - 1.0) * cw + k) / a0;
+        c.b1 = 2.0 * A * ((A - 1.0) - (A + 1.0) * cw) / a0;
+        c.b2 = A * ((A + 1.0) - (A - 1.0) * cw - k) / a0;
+        c.a1 = -2.0 * ((A - 1.0) + (A + 1.0) * cw) / a0;
+        c.a2 = ((A + 1.0) + (A - 1.0) * cw - k) / a0;
+        return c;
+    }
+
     static float gain (float db) noexcept { return db <= kOffDb ? 0.0f : std::pow (10.0f, db / 20.0f); }
 
     // lround halves away from zero, as the model's floor(x + 0.5) does for these positive times.
@@ -441,8 +544,11 @@ private:
     float injectorNorm_ = 1.0f, inject_ = 0.0f, directGain_ = 0.0f, reflGain_ = 0.0f;
     int reflCount_ = 0;
     std::array<int, kMaxReflections> reflDelay_ {};
+    std::array<float, kMaxReflections> reflGainEach_ {};     // reflGain_ times each reflection's trim
     float lowpassHz_ = 8000.0f;
     duskaudio::OnePoleLP lowpass_[2];
+    duskaudio::DoubleBiquad shelf_[2];
+    bool shelfOn_ = false;
     Layout burst_;
     float burstGain_ = 0.0f, burstLowpassHz_ = 12000.0f;
     duskaudio::OnePoleLP burstLowpass_;

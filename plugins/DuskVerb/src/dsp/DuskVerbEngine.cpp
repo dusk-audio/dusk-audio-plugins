@@ -713,6 +713,8 @@ void DuskVerbEngine::setTankHFSustain (float db, float cornerHz)
     denseHall_.setHFSustain (db, cornerHz);
 }
 
+void DuskVerbEngine::setDenseHallAllpassModulation (bool input, bool loop) { denseHall_.setAllpassModulation (input, loop); }
+
 void DuskVerbEngine::setSustainLimiterMid (float loHz, float hiHz, float threshDb, float maxCutDb,
                                            float atkMs, float relFastMs, float relSlowMs)
 {
