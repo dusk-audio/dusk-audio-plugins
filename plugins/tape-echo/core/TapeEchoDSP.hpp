@@ -607,6 +607,7 @@ private:
         float echoWet[kSize];
         float rev[kSize];
         float recordEnvelopeNow[kSize];
+        float tapeInput[kSize];
         float preIn[kSize];
         float postDriveGain[kSize];
         float splice1[kSize];

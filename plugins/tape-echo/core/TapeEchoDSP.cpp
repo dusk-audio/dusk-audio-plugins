@@ -2020,72 +2020,8 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             // magnitude still leads, as before: 30 Hz-1 kHz spurs and gains
             // and a 0.9 impulse's response are unchanged to 0.004 in gain, a
             // 1 kHz tone burst's envelope 0.492 against 0.497.
-            const float tapeMagnitude =
-                tapeInput < 0.0f ? -tapeInput : tapeInput;
-            float bandI = 0.0f, bandQ = 0.0f;
-            ch.detectorHilbert.process(
-                ch.detectorHighPass.process(tapeInput), bandI, bandQ);
-            const float bandAmplitude = std::sqrt(bandI * bandI + bandQ * bandQ);
-            ch.detectorSmooth1 += detectorSmoothCoeff
-                                * (bandAmplitude - ch.detectorSmooth1);
-            ch.detectorSmooth2 += detectorSmoothCoeff
-                                * (ch.detectorSmooth1 - ch.detectorSmooth2);
-            const float detectorInput = std::max(
-                kDetectorPeakWeight * tapeMagnitude, ch.detectorSmooth2);
-            if (detectorInput > ch.recordEnvelope)
-                ch.recordEnvelope += recordEnvelopeAttack
-                                   * (detectorInput - ch.recordEnvelope);
-            else
-                ch.recordEnvelope *= recordEnvelopeRelease;
-            // The law has exact closed forms below its knees, taken as branches
-            // so the transcendentals run only where they change the result:
-            //   envelope <= 0.12: over = 0, so compression = 10^-0 = 1 exactly;
-            //   envelope <= 0.45: preCompression01 = 0, so preExponent = 0 and
-            //                     postExponent = 1, and pow(c, 0) = 1 and
-            //                     pow(c, 1) = c are exact identities;
-            //   envelope <= 0.65: highLevel01 = 0, so highLevelTrim = 10^-0 = 1.
-            float preDriveGain = 1.0f;
-            float postDriveGain = 1.0f;
-            if (ch.recordEnvelope > 0.12f)
-            {
-                const float over = std::max(ch.recordEnvelope - 0.12f, 0.0f);
-                const float reductionDb =
-                    4.5f * (1.0f - std::exp(-2.7f * over));
-                const float compression =
-                    std::pow(10.0f, -reductionDb * (1.0f / 20.0f));
-                if (ch.recordEnvelope <= 0.45f)
-                {
-                    postDriveGain = compression;
-                }
-                else
-                {
-                    // Below the nominal tape threshold, gain reduction is clean
-                    // and leaves the measured harmonic curve intact. Above it, a
-                    // growing fraction moves ahead of the shaper so THD
-                    // approaches the measured high-level plateau instead of
-                    // climbing without bound.
-                    const float preCompression01 = clamp01(
-                        (ch.recordEnvelope - 0.45f) * (1.0f / 0.75f));
-                    const float preExponent =
-                        1.2f * std::pow(preCompression01, 0.8f);
-                    const float postExponent =
-                        std::max(1.0f - 0.3f * preExponent, 0.6f);
-                    preDriveGain = std::pow(compression, preExponent);
-                    const float highLevel01 = clamp01(
-                        (ch.recordEnvelope - 0.65f) * (1.0f / 0.59f));
-                    const float highLevelTrim = highLevel01 == 0.0f
-                        ? 1.0f
-                        : std::pow(10.0f, -1.1f * std::sqrt(highLevel01)
-                                              * (1.0f / 20.0f));
-                    postDriveGain =
-                        std::pow(compression, postExponent) * highLevelTrim;
-                }
-            }
+            x.tapeInput[i] = tapeInput;
 
-            // Program feed into the record path; the preamp curve is applied
-            // in the tape loop, after the feed is band-limited.
-            x.preIn[i] = tapeInput * preDriveGain;
-            x.postDriveGain[i] = postDriveGain;
             // The spring send is taken entirely ahead of the record-stage shaper
             // and its compressor. A drive ladder measured through the hosted
             // spring (impulse and pink burst, 48 dB of input range, reverb level
@@ -2229,15 +2165,90 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             x.springPre[i] = springPre;
             x.wetMixGain[i] = wetMixGain;
             x.wobble[i] = wobble;
-            x.recordEnvelopeNow[i] = ch.recordEnvelope;
         }
         {
             Channel& ch = channels[0];
-            // Program feed at preamp drive, DC-blocked. The preamp's curve is
-            // applied in the tape loop below, after the feed is band-limited
-            // (see kTapeBandwidth): no oversampler, no latency.
             for (int i = 0; i < len; ++i)
+            {
+                const float tapeInput = x.tapeInput[i];
+                const float tapeMagnitude =
+                    tapeInput < 0.0f ? -tapeInput : tapeInput;
+                float bandI = 0.0f, bandQ = 0.0f;
+                ch.detectorHilbert.process(
+                    ch.detectorHighPass.process(tapeInput), bandI, bandQ);
+                const float bandAmplitude = std::sqrt(bandI * bandI + bandQ * bandQ);
+                ch.detectorSmooth1 += detectorSmoothCoeff
+                                    * (bandAmplitude - ch.detectorSmooth1);
+                ch.detectorSmooth2 += detectorSmoothCoeff
+                                    * (ch.detectorSmooth1 - ch.detectorSmooth2);
+                const float detectorInput = std::max(
+                    kDetectorPeakWeight * tapeMagnitude, ch.detectorSmooth2);
+                if (detectorInput > ch.recordEnvelope)
+                    ch.recordEnvelope += recordEnvelopeAttack
+                                       * (detectorInput - ch.recordEnvelope);
+                else
+                    ch.recordEnvelope *= recordEnvelopeRelease;
+                x.recordEnvelopeNow[i] = ch.recordEnvelope;
+            }
+            // The record compressor's gain law, from the envelope above, then the program feed at preamp drive, DC-blocked.
+            // The preamp's curve is applied in the tape loop below, after the
+            // feed is band-limited (see kTapeBandwidth).
+            for (int i = 0; i < len; ++i)
+            {
+                const float recordEnvelope = x.recordEnvelopeNow[i];
+                const float tapeInput = x.tapeInput[i];
+                // The law has exact closed forms below its knees, taken as
+                // branches so the transcendentals run only where they change
+                // the result:
+                //   envelope <= 0.12: over = 0, so compression = 10^-0 = 1 exactly;
+                //   envelope <= 0.45: preCompression01 = 0, so preExponent = 0 and
+                //                     postExponent = 1, and pow(c, 0) = 1 and
+                //                     pow(c, 1) = c are exact identities;
+                //   envelope <= 0.65: highLevel01 = 0, so highLevelTrim = 10^-0 = 1.
+                float preDriveGain = 1.0f;
+                float postDriveGain = 1.0f;
+                if (recordEnvelope > 0.12f)
+                {
+                    const float over = std::max(recordEnvelope - 0.12f, 0.0f);
+                    const float reductionDb =
+                        4.5f * (1.0f - std::exp(-2.7f * over));
+                    const float compression =
+                        std::pow(10.0f, -reductionDb * (1.0f / 20.0f));
+                    if (recordEnvelope <= 0.45f)
+                    {
+                        postDriveGain = compression;
+                    }
+                    else
+                    {
+                        // Below the nominal tape threshold, gain reduction is clean
+                        // and leaves the measured harmonic curve intact. Above it, a
+                        // growing fraction moves ahead of the shaper so THD
+                        // approaches the measured high-level plateau instead of
+                        // climbing without bound.
+                        const float preCompression01 = clamp01(
+                            (recordEnvelope - 0.45f) * (1.0f / 0.75f));
+                        const float preExponent =
+                            1.2f * std::pow(preCompression01, 0.8f);
+                        const float postExponent =
+                            std::max(1.0f - 0.3f * preExponent, 0.6f);
+                        preDriveGain = std::pow(compression, preExponent);
+                        const float highLevel01 = clamp01(
+                            (recordEnvelope - 0.65f) * (1.0f / 0.59f));
+                        const float highLevelTrim = highLevel01 == 0.0f
+                            ? 1.0f
+                            : std::pow(10.0f, -1.1f * std::sqrt(highLevel01)
+                                                  * (1.0f / 20.0f));
+                        postDriveGain =
+                            std::pow(compression, postExponent) * highLevelTrim;
+                    }
+                }
+
+                // Program feed into the record path; the preamp curve is applied
+                // in the tape loop, after the feed is band-limited.
+                x.preIn[i] = tapeInput * preDriveGain;
+                x.postDriveGain[i] = postDriveGain;
                 x.pre[i] = ch.preampDC.process(x.preIn[i] * kInputStageDrive);
+            }
         }
         for (int i = 0; i < len; ++i)
         {
