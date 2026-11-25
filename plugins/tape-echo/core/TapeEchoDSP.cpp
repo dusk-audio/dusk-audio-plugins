@@ -1882,7 +1882,7 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
     // is short enough for the CPU to overlap successive samples instead of
     // waiting out one long dependency chain per sample. Only the tape loop
     // reads what it writes, and it stays one pass in sample order.
-    SubBlockScratch x; // on the stack: ~27 KB, see the struct
+    SubBlockScratch x; // on the stack: 30 KB, see the struct
     for (int base = 0, len = 0; base < numSamples; base += len)
     {
         len = std::min(subBlockLimit, numSamples - base);
@@ -2516,13 +2516,13 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             const float recordEnvelopeNow = x.recordEnvelopeNow[i];
             const float postDriveGain = x.postDriveGain[i];
             Channel& ch = channels[0];
-            // Meter point: after Input Volume, BEFORE the regeneration sum. This
-            // deliberately ignores Input Send. drivenInput carries the power gate
-            // already (monoInput = power * ...), so both readings still die with
-            // POWER off.
+            // Meter point: after Input Volume, plus a quarter of the regeneration
+            // drive (kMeterRegenAmount below). This deliberately ignores Input
+            // Send. drivenInput carries the power gate already (monoInput =
+            // power * ...), so both readings still die with POWER off.
             //
-            // The regeneration term was `+ power * loopDrive` and is deliberately
-            // gone. That placement follows the reference plugin's manual, which says "echo
+            // The regeneration term was `+ power * loopDrive` at full level. That
+            // placement follows the reference plugin's manual, which says "echo
             // feedback is applied just before the level detection circuit, so the
             // Feedback control will affect the level readings" -- but it does not
             // match the reference's observable behaviour. Watching both plugins

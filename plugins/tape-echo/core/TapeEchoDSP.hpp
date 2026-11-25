@@ -658,9 +658,13 @@ private:
 
     // Two chains of four second-order allpass sections (in z^-2) whose outputs
     // stay 90 degrees apart, within about 0.35 degrees from 20 Hz to 22 kHz at
-    // 44.1 / 48 kHz, so sqrt(i^2 + q^2) is a sinusoid's amplitude at any phase
-    // (ripple +-0.6 % at twice its frequency). Chain A runs one sample late.
-    // Coefficients: the widely published 4 + 4 section design (Niemitalo).
+    // 44.1 kHz, so sqrt(i^2 + q^2) is a sinusoid's amplitude at any phase
+    // (ripple +-0.6 % at twice its frequency). The band scales with the rate:
+    // the low edge is 30 Hz at 48 kHz and 90 Hz at 192 kHz, and below it the
+    // ripple grows (+-1.4 % at 20 Hz, 48 kHz). The detector feeds the pair
+    // through its 700 Hz high-pass, which holds +-0.6 % at every rate.
+    // Chain A runs one sample late. Coefficients: the widely published 4 + 4
+    // section design (Niemitalo).
     struct HilbertPair
     {
         float x1[4][2] {}, x2[4][2] {}, y1[4][2] {}, y2[4][2] {};  // per section, per chain

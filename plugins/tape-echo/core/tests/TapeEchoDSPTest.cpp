@@ -8,10 +8,27 @@
 #include <iostream>
 #include <vector>
 
+namespace duskaudio
+{
+// The record path's oversampling stages and the detector's Hilbert pair as
+// prepare() set them up, so the tests below check the production
+// coefficients rather than a copy of them.
+struct TapeEchoDSPTestAccess
+{
+    using Hilbert = TapeEchoDSP::HilbertPair;
+    static auto outerUp(const TapeEchoDSP& dsp)   { return dsp.channels[0].feedUp1; }
+    static auto innerUp(const TapeEchoDSP& dsp)   { return dsp.channels[0].feedUp2; }
+    static auto innerDown(const TapeEchoDSP& dsp) { return dsp.channels[0].tapeDown2; }
+    static auto outerDown(const TapeEchoDSP& dsp) { return dsp.channels[0].tapeDown1; }
+};
+} // namespace duskaudio
+
 namespace
 {
 constexpr double kSampleRate = 48000.0;
 constexpr int kSamples = 4096;
+constexpr double kTwoPi = 6.283185307179586476925;
+using Access = duskaudio::TapeEchoDSPTestAccess;
 
 struct MeterResult
 {
@@ -232,10 +249,242 @@ double windowEnergy(const std::vector<float>& signal,
         energy += (double)signal[i] * (double)signal[i];
     return energy;
 }
+
+float sineAt(double hz, double rate, size_t n)
+{
+    return (float)std::sin(kTwoPi * hz * (double)n / rate);
+}
+
+// Level in dB of DFT bin `bin` over x[offset, offset + length), scaled so a
+// unit sine on that bin reads 0 dB.
+double binLevelDb(const std::vector<float>& x, size_t offset, size_t length, size_t bin)
+{
+    double re = 0.0, im = 0.0;
+    for (size_t i = 0; i < length; ++i)
+    {
+        const double phase = kTwoPi * (double)bin * (double)i / (double)length;
+        re += (double)x[offset + i] * std::cos(phase);
+        im -= (double)x[offset + i] * std::sin(phase);
+    }
+    return 20.0 * std::log10(std::max(2.0 * std::hypot(re, im) / (double)length, 1.0e-30));
+}
+
+// The record path's x4 oversampling, stage by stage, with the coefficients
+// prepare() loads at 48 kHz. Passbands are unity, and images (upsamplers) and
+// folds (decimators) sit at the designs' depth: measured -115.2 dB worst for
+// the outer stages (from 27 kHz) and -107.7 dB for the inner ones (from
+// 58.5 kHz at 192 kHz), on these grids. A swapped or mistyped coefficient
+// costs tens of dB. Every tone sits on a 10 Hz bin centre at every rate (N
+// samples at 48 kHz, 2N at 96, 4N at 192), so the plain DFT leaks nothing;
+// each stage runs one window to settle before the measured one.
+bool recordOversamplingMeetsDesign()
+{
+    duskaudio::TapeEchoDSP dsp;
+    dsp.prepare(48000.0, 512);
+    constexpr size_t N = 4800;
+    constexpr double kPassDb = 1.0e-4;
+    constexpr double kOuterStopDb = -114.5;
+    constexpr double kInnerStopDb = -107.0;
+    const auto bin10 = [](double hz) { return (size_t)std::lround(hz / 10.0); };
+    double worstPass = 0.0, worstOuter = -999.0, worstInner = -999.0;
+    const auto pass = [&](double db) { worstPass = std::max(worstPass, std::abs(db)); };
+
+    // Outer upsampler, 48 -> 96 kHz: image at 48 kHz - f.
+    for (double f = 10.0; f <= 21000.0; f += 170.0)
+    {
+        auto up = Access::outerUp(dsp);
+        up.reset();
+        std::vector<float> y;
+        for (size_t n = 0; n < 2 * N; ++n)
+        {
+            float a0 = 0.0f, a1 = 0.0f, b0 = 0.0f, b1 = 0.0f;
+            up.process(sineAt(f, 48000.0, n), 0.0f, a0, a1, b0, b1);
+            y.push_back(a0);
+            y.push_back(a1);
+        }
+        pass(binLevelDb(y, 2 * N, 2 * N, bin10(f)));
+        worstOuter = std::max(worstOuter, binLevelDb(y, 2 * N, 2 * N, bin10(48000.0 - f)));
+    }
+    // Inner upsampler, 96 -> 192 kHz, on what the outer stage passes and
+    // its transition band: image at 96 kHz - f.
+    for (double f = 10.0; f <= 37490.0; f += 370.0)
+    {
+        auto up = Access::innerUp(dsp);
+        up.reset();
+        std::vector<float> y;
+        for (size_t n = 0; n < 4 * N; ++n)
+        {
+            float a0 = 0.0f, a1 = 0.0f, b0 = 0.0f, b1 = 0.0f;
+            up.process(sineAt(f, 96000.0, n), 0.0f, a0, a1, b0, b1);
+            y.push_back(a0);
+            y.push_back(a1);
+        }
+        pass(binLevelDb(y, 4 * N, 4 * N, bin10(f)));
+        worstInner = std::max(worstInner, binLevelDb(y, 4 * N, 4 * N, bin10(96000.0 - f)));
+    }
+    // Inner decimator, 192 -> 96 kHz: fold at 96 kHz - f.
+    const auto innerDecimate = [&](double f) {
+        auto down = Access::innerDown(dsp);
+        down.reset();
+        std::vector<float> y;
+        for (size_t n = 0; n < 4 * N; ++n)
+            y.push_back(down.process(sineAt(f, 192000.0, 2 * n), sineAt(f, 192000.0, 2 * n + 1)));
+        return y;
+    };
+    for (const double f : { 1000.0, 21000.0, 27000.0 })
+        pass(binLevelDb(innerDecimate(f), 2 * N, 2 * N, bin10(f)));
+    for (double f = 58500.0; f <= 95990.0; f += 370.0)
+        worstInner = std::max(worstInner,
+            binLevelDb(innerDecimate(f), 2 * N, 2 * N, bin10(96000.0 - f)));
+    // Outer decimator, 96 -> 48 kHz: fold at 48 kHz - f.
+    const auto outerDecimate = [&](double f) {
+        auto down = Access::outerDown(dsp);
+        down.reset();
+        std::vector<float> y;
+        for (size_t n = 0; n < 2 * N; ++n)
+            y.push_back(down.process(sineAt(f, 96000.0, 2 * n), sineAt(f, 96000.0, 2 * n + 1)));
+        return y;
+    };
+    for (const double f : { 20.0, 1000.0, 20000.0, 21000.0 })
+        pass(binLevelDb(outerDecimate(f), N, N, bin10(f)));
+    for (double f = 27000.0; f <= 47990.0; f += 170.0)
+        worstOuter = std::max(worstOuter,
+            binLevelDb(outerDecimate(f), N, N, bin10(48000.0 - f)));
+    // The whole round trip as the record path runs it: the pair upsamplers
+    // carry one signal here, and the inner one runs once per 2x sample.
+    for (const double f : { 20.0, 100.0, 1000.0, 5000.0, 10000.0, 15000.0, 20000.0, 21000.0 })
+    {
+        auto up1 = Access::outerUp(dsp);
+        auto up2 = Access::innerUp(dsp);
+        auto down2 = Access::innerDown(dsp);
+        auto down1 = Access::outerDown(dsp);
+        up1.reset();
+        up2.reset();
+        down2.reset();
+        down1.reset();
+        std::vector<float> y;
+        for (size_t n = 0; n < 2 * N; ++n)
+        {
+            float h0 = 0.0f, h1 = 0.0f, unused0 = 0.0f, unused1 = 0.0f;
+            float q[4] = {};
+            up1.process(sineAt(f, 48000.0, n), 0.0f, h0, h1, unused0, unused1);
+            up2.process(h0, 0.0f, q[0], q[1], unused0, unused1);
+            up2.process(h1, 0.0f, q[2], q[3], unused0, unused1);
+            y.push_back(down1.process(down2.process(q[0], q[1]), down2.process(q[2], q[3])));
+        }
+        pass(binLevelDb(y, N, N, bin10(f)));
+    }
+
+    if (worstPass > kPassDb || worstOuter > kOuterStopDb || worstInner > kInnerStopDb)
+    {
+        std::cerr << "record oversampling off its design: passband " << worstPass
+                  << " dB (limit " << kPassDb << "), outer stopband " << worstOuter
+                  << " dB (limit " << kOuterStopDb << "), inner stopband " << worstInner
+                  << " dB (limit " << kInnerStopDb << ")\n";
+        return false;
+    }
+    return true;
+}
+
+// BiquadLanes runs every lane through Biquad::process's operations in its
+// order, so each lane must match a chain of Biquads bit for bit, and a lane
+// left at zero coefficients must output zero.
+bool biquadLanesMatchScalarChains()
+{
+    constexpr int kSections = 3;
+    constexpr int kLanes = 5;
+    constexpr int kIdleLane = kLanes - 1;
+    duskaudio::BiquadLanes<kSections, kLanes> bank;
+    duskaudio::Biquad chains[kSections][kIdleLane];
+    for (int s = 0; s < kSections; ++s)
+        for (int l = 0; l < kIdleLane; ++l)
+        {
+            const duskaudio::BiquadCoeffs k = l == 2
+                ? duskaudio::Biquad::lowPass(48000.0, 3000.0f + 2000.0f * (float)s, 0.707f)
+                : duskaudio::Biquad::peak(48000.0, 200.0f * (float)(1 + s + 3 * l),
+                                          6.0f - 4.0f * (float)s, 0.5f + 0.3f * (float)l);
+            bank.setCoeffs(s, l, k);
+            chains[s][l].setCoeffs(k);
+        }
+    uint32_t seed = 7u;
+    for (int n = 0; n < 20000; ++n)
+    {
+        float lanes[kLanes];
+        float scalar[kLanes];
+        for (int l = 0; l < kLanes; ++l)
+        {
+            seed = seed * 1664525u + 1013904223u;
+            lanes[l] = scalar[l] = (float)((double)seed / 4294967296.0 * 2.0 - 1.0);
+        }
+        bank.process(lanes);
+        for (int l = 0; l < kIdleLane; ++l)
+        {
+            for (int s = 0; s < kSections; ++s)
+                scalar[l] = chains[s][l].process(scalar[l]);
+            if (std::memcmp(&scalar[l], &lanes[l], sizeof(float)) != 0)
+            {
+                std::cerr << "BiquadLanes lane " << l << " differs from its Biquad chain at sample "
+                          << n << ": " << lanes[l] << " vs " << scalar[l] << '\n';
+                return false;
+            }
+        }
+        if (lanes[kIdleLane] != 0.0f)
+        {
+            std::cerr << "BiquadLanes idle lane output " << lanes[kIdleLane] << '\n';
+            return false;
+        }
+    }
+    return true;
+}
+
+// The detector's Hilbert pair reads a sinusoid's amplitude, sqrt(i^2 + q^2),
+// within 0.65 % at any phase (worst measured 0.615 %): from 20 Hz to 22 kHz at
+// 44.1 kHz, the band the design covers, and from 700 Hz (the detector's
+// high-pass, ahead of the pair) to 20 kHz at every rate up to 192 kHz.
+bool detectorHilbertReadsAmplitude()
+{
+    struct Band { double rate, lowHz, highHz; };
+    constexpr Band kBands[] = { { 44100.0, 20.0, 22000.0 }, { 48000.0, 700.0, 20000.0 },
+                                { 96000.0, 700.0, 20000.0 }, { 192000.0, 700.0, 20000.0 } };
+    constexpr double kLimit = 0.0065;
+    const double step = std::pow(2.0, 1.0 / 16.0);
+    for (const Band& band : kBands)
+        for (double f = band.lowHz;; f = std::min(f * step, band.highHz))
+        {
+            Access::Hilbert hilbert;
+            const size_t total = (size_t)(0.5 * band.rate);
+            double lowest = 1.0e9, highest = 0.0;
+            for (size_t n = 0; n < total; ++n)
+            {
+                float i = 0.0f, q = 0.0f;
+                hilbert.process(sineAt(f, band.rate, n), i, q);
+                if (n >= total / 2)
+                {
+                    const double amplitude = std::hypot((double)i, (double)q);
+                    lowest = std::min(lowest, amplitude);
+                    highest = std::max(highest, amplitude);
+                }
+            }
+            if (highest - 1.0 > kLimit || 1.0 - lowest > kLimit)
+            {
+                std::cerr << "detector Hilbert pair at " << band.rate << " Hz reads a " << f
+                          << " Hz sine as " << lowest << ".." << highest << " (limit +-"
+                          << kLimit << ")\n";
+                return false;
+            }
+            if (f >= band.highHz)
+                break;
+        }
+    return true;
+}
 }
 
 int main()
 {
+    if (!recordOversamplingMeetsDesign() || !biquadLanesMatchScalarChains()
+        || !detectorHilbertReadsAmplitude())
+        return 1;
+
     const RenderResult oneSampleResult = renderWithBlockSize(1);
     const RenderResult smallBlockResult = renderWithBlockSize(64);
     const RenderResult wholeRenderResult = renderWithBlockSize(kSamples);
