@@ -525,31 +525,53 @@ namespace
     // reference's first echo of a 0.9 impulse is 1.8 dB under its small-signal
     // gain, ours was 6.7 dB under, because our preamp clipped the impulse's
     // full peak where the reference saturates a band-limited, spread one.
-    // Band-limited first: -12.4 to -17.2 dBc across 500 Hz-6 kHz and the
-    // impulse curve -1.06 / -1.81 dB at 0.5 / 0.9 (reference -0.95 / -1.81),
-    // with the 1 kHz harmonic ladder within 0.1-1 dB of the former chain.
-    // Fitted per state through the full DSP (first echo and per pass, third
-    // octaves 635 Hz-12.8 kHz, re 1 kHz, bands at least 35 dB down and
-    // repeatable pass-to-pass), restarted from the optimum to confirm it.
-    // Residual rms against the reference, first echo and per pass together,
-    // re-measured on the built plug-in: 0.33 / 0.33 / 0.35 dB (new / mid /
-    // old) where the former chain read 0.73 / 1.00 / 0.96 dB, worst band
-    // 2.1 dB where it read 4.0. Per pass at 1-2 kHz now sits within 0.3 dB of
-    // the reference (was up to +1.4 dB on aged tape).
+    // Band-limited first (measured with the single-impulse rows below): -12.4
+    // to -17.2 dBc across 500 Hz-6 kHz and the impulse curve -1.06 / -1.81 dB
+    // at 0.5 / 0.9 (reference -0.95 / -1.81), with the 1 kHz harmonic ladder
+    // within 0.1-1 dB of the former chain.
     //
-    // Known side effects, measured, not tuned away:
+    // Fitted at 48 kHz, per state, through the full DSP against first echo
+    // and per pass, third octaves 600 Hz-13 kHz re 1 kHz, bands within 35 dB
+    // of 1 kHz (the 12.8 kHz band, on the ceiling's slope, at half weight),
+    // five Repeat Rates per state, each curve power-averaged over ten
+    // impulses 3.7 s apart: one impulse's packet spectrum moves by up to
+    // 3.5 dB in a band with the transport's motion. The in-loop sections are
+    // fitted; the output low-pass is kept from the single-impulse fit before
+    // this one. That fit read 0.33 / 0.33 / 0.35 dB rms on single impulses,
+    // over only the bands that repeated from pass to pass; on these averaged
+    // curves it reads 0.91 / 0.88 / 1.05 dB (new / mid / old), 0.54 dB mean
+    // below 11 kHz, worst band 3.8 dB. These rows, on the built plug-in:
+    // 0.64 / 0.62 / 0.72 dB, 0.43 dB, 2.8 dB. The first echo's 12.8 kHz band
+    // reads -3.6 to +3.8 dB against the reference (was -7.9 to +3.5).
+    // Fitting the output low-pass as well reached 0.38 dB below 11 kHz but
+    // lifted that band to +5.7 dB on old tape. Program renders against the
+    // single-impulse rows: the factory set's level and octave spreads and
+    // the reference bank's octave spreads come closer to the reference, but
+    // the bank's mean level error grows 0.444 -> 0.449 dB and its worst
+    // preset 1.238 -> 1.291 dB. Left over, structural: at the fastest motor
+    // new tape's first echo and per pass read 0.4-0.8 dB under the reference
+    // at 2.5-5 kHz, where the reference lifts slightly over 1 kHz.
+    //
+    // Known side effects of the single-impulse rows, measured, not tuned
+    // away (not re-measured on these rows):
     //  * The fit is relative to 1 kHz. At slow speeds the playback low-pass
-    //    droops 0.1-0.35 dB more at 1 kHz than the old one, and the first echo
-    //    of a single-sample impulse was already 0.3-0.65 dB short there (the
-    //    open small-signal level shortfall, outside the loop). Impulse renders
-    //    read 0.2-1.2 dB quieter; noise, snare and sine renders are unchanged
-    //    or closer.
+    //    droops 0.1-0.35 dB more at 1 kHz than the chain before those rows
+    //    did, and the first echo of a single-sample impulse was already
+    //    0.3-0.65 dB short there (the open small-signal level shortfall,
+    //    outside the loop). Impulse renders read 0.2-1.2 dB quieter; noise,
+    //    snare and sine renders are unchanged or closer.
     //
     // Matched-magnitude sections (Biquad::matched*) keep the analog corner
-    // shapes far closer to Nyquist than bilinear ones. The fit ran at 48 kHz;
-    // at 44.1 kHz the chain reads within 0.1 dB of that up to 10 kHz (-0.3 dB
-    // at 12.5 kHz, -0.9 dB at 16 kHz, 35-60 dB below 1 kHz there). At 96 kHz
-    // it is within 0.2 dB of the analog prototype to 16 kHz.
+    // shapes far closer to Nyquist than bilinear ones. With the
+    // single-impulse rows, at 44.1 kHz the chain read within 0.1 dB of 48 kHz
+    // up to 10 kHz (-0.3 dB at 12.5 kHz, -0.9 dB at 16 kHz, 35-60 dB below
+    // 1 kHz there), and at 96 kHz within 0.2 dB of the analog prototype to
+    // 16 kHz. Through the whole echo path (worst over the fitted states),
+    // how far 44.1 and 96 kHz read from 48 kHz changes by at most 0.05 dB
+    // from 63 Hz to 8 kHz between the single-impulse rows and these. At
+    // 12.8 kHz on the first echo (worst over the fitted states), 44.1 minus
+    // 48 kHz reads -1.8 dB with these rows (-1.7 with the single-impulse
+    // rows) and 96 minus 48 kHz +4.6 dB (+5.6 with the single-impulse rows).
     struct TapeBandwidthRow
     {
         float lpHz, lpExp, lpQ;          // in-loop playback low-pass
@@ -557,9 +579,9 @@ namespace
         float outHz, outQ;               // echo output, outside the loop
     };
     constexpr TapeBandwidthRow kTapeBandwidth[3] = {
-        { 11928.70f, 1.2896f, 0.5761f, 10906.59f, 0.2179f, 13509.90f, 0.6080f }, // new
-        {  6979.18f, 0.8757f, 0.6390f, 10137.95f, 0.2163f, 14037.42f, 0.5853f }, // mid
-        {  5378.67f, 0.7153f, 0.6688f, 10166.21f, 0.2508f, 11619.25f, 0.6223f }, // old
+        {  9941.78f, 1.1301f, 0.6124f, 11861.13f, 0.2326f, 13509.90f, 0.6080f }, // new
+        {  7182.19f, 0.9042f, 0.6303f, 10893.88f, 0.2544f, 14037.42f, 0.5853f }, // mid
+        {  5150.58f, 0.6519f, 0.6775f, 11423.04f, 0.3759f, 11619.25f, 0.6223f }, // old
     };
     constexpr double kButterworth6Q[3] = { 0.51763809, 0.70710678, 1.93185165 };
 
