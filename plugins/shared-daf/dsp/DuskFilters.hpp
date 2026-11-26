@@ -639,6 +639,65 @@ private:
     float z1 = 0.0f, z2 = 0.0f;
 };
 
+// `Lanes` independent chains of `Sections` Biquad sections each, run as lanes
+// of one loop (lane innermost) so a compiler vectorizes them. Every lane
+// performs Biquad::process's operations in its order, so each chain gives the
+// values a chain of Biquads would: bit for bit where the compiler fuses
+// multiply-adds alike in both (Clang's default, or -ffp-contract=off), to the
+// last bit otherwise (GCC's default fast contraction may fuse the vector loop
+// and the scalar one differently on targets with FMA). Coefficients are per
+// section and lane; a lane left at zero coefficients and state outputs zero.
+template <int Sections, int Lanes>
+struct BiquadLanes
+{
+    float b0[Sections][Lanes] {}, b1[Sections][Lanes] {}, b2[Sections][Lanes] {};
+    float a1[Sections][Lanes] {}, a2[Sections][Lanes] {};
+    float z1[Sections][Lanes] {}, z2[Sections][Lanes] {};
+
+    void setCoeffs(int section, int lane, const BiquadCoeffs& k) noexcept
+    {
+        b0[section][lane] = k.b0; b1[section][lane] = k.b1; b2[section][lane] = k.b2;
+        a1[section][lane] = k.a1; a2[section][lane] = k.a2;
+    }
+
+    void reset() noexcept
+    {
+        for (int s = 0; s < Sections; ++s)
+            for (int l = 0; l < Lanes; ++l)
+                z1[s][l] = z2[s][l] = 0.0f;
+    }
+
+    // True when every state magnitude is below floor.
+    bool isQuiet(float floor) const noexcept
+    {
+        for (int s = 0; s < Sections; ++s)
+            for (int l = 0; l < Lanes; ++l)
+                if (!(std::abs(z1[s][l]) < floor && std::abs(z2[s][l]) < floor))
+                    return false;
+        return true;
+    }
+
+    // One sample through every chain: v[lane] in, v[lane] out. The chain
+    // runs on a local copy, which the compiler can see aliases no state.
+    void process(float (&v)[Lanes]) noexcept
+    {
+        float w[Lanes];
+        for (int l = 0; l < Lanes; ++l)
+            w[l] = v[l];
+        for (int s = 0; s < Sections; ++s)
+            for (int l = 0; l < Lanes; ++l)
+            {
+                const float x = w[l];
+                const float y = b0[s][l] * x + z1[s][l];
+                z1[s][l] = b1[s][l] * x - a1[s][l] * y + z2[s][l];
+                z2[s][l] = b2[s][l] * x - a2[s][l] * y;
+                w[l] = y;
+            }
+        for (int l = 0; l < Lanes; ++l)
+            v[l] = w[l];
+    }
+};
+
 // A JUCE-form high- or low-pass section that runs Biquad's float path wherever
 // the float coefficients are safely stable, and a double-precision section
 // where they are not. Rounding a1 and a2 to float moves the poles of a low

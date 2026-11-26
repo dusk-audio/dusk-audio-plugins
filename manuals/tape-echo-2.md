@@ -52,7 +52,7 @@ keep loading; each one is noted in parentheses where the control is described.
   12. Reverb Only
 - **Repeat Rate** controls tape speed. Head 1 spans approximately 177 ms at
   the slow end to 69 ms at the fast end. The corresponding Head 2 range is
-  337 to 131 ms and Head 3 is 489 to 189 ms.
+  336 to 130 ms and Head 3 is 487 to 189 ms.
 - **Intensity** controls regeneration. High values can self-oscillate and become
   substantially louder than the input.
 - **Echo Level** (automation name: Echo Volume) sets echo-return level.

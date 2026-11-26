@@ -56,14 +56,14 @@ dBFS for New/Used/Old at Noise 0, and −78/−72/−66 dBFS at Noise 1.
 | ID | Name          | Setter            | Range      | Default | Notes |
 |----|---------------|-------------------|------------|---------|-------|
 | 0  | Mode          | `setMode`         | 1–12 (int, stepped) | 1 | three playback heads plus spring combinations |
-| 1  | Repeat Rate   | `setRepeatRate`   | 0–1        | 0.0     | head 1: about 177 ms (slow) to 69 ms (fast); heads 2/3 scale to 337/489 and 131/189 ms |
-| 2  | Intensity     | `setIntensity`    | 0–1        | 0.0     | self-oscillates above ~0.75 |
+| 1  | Repeat Rate   | `setRepeatRate`   | 0–1        | 0.0     | head 1: about 177 ms (slow) to 69 ms (fast); heads 2/3 scale to 336/487 and 130/189 ms |
+| 2  | Intensity     | `setIntensity`    | 0–1        | 0.0     | self-oscillates above ~0.69 |
 | 3  | Echo Volume   | `setEchoLevel`    | 0–1        | 0.5     | |
 | 4  | Reverb Volume | `setReverbLevel`  | 0–1        | 0.0     | only audible in modes 5–12 |
 | 5  | Bass          | `setBass`         | −1–+1      | 0.0     | ≈±17 dB shelf; turnover 67.6–154.3 Hz and Q 1.074–0.494 vary with \|parameter\|; echo path only |
 | 6  | Treble        | `setTreble`       | −1–+1      | 0.0     | ≈±17 dB shelf; separate boost/cut turnover laws reach ≈991/1441 Hz at half travel and ≈2.85/3.44 kHz at full travel; Q 0.545–0.443; echo path only |
 | 7  | Input Volume  | `setInputGain`    | 0–1        | 0.5     | preamp drive / saturation amount |
-| 8  | Wow & Flutter | `setWowFlutter`   | 0–1        | 0.0     | transport modulation amount; the whole motion signal (wow, capstan flutter and the stochastic ~6 Hz scrape-flutter band) is scaled by a shared 1 + 1.5·value + 0.20·age multiplier — this knob contributes the 1.5·value term, Tape Age the 0.20·age term (scrape flutter additionally has its own steeper age law, see Tape Age). 0 is NOT still: the intrinsic transport matches the reference (≈0.45 % wow, ≈0.033 % flutter at Tape Age 0) |
+| 8  | Wow & Flutter | `setWowFlutter`   | 0–1        | 0.0     | transport modulation amount. The slow random drift and the capstan flutter line are scaled by 1 + 1.5·value; the stochastic ~6 Hz scrape-flutter band by 1 + 1.5·value + 0.20·age (additive), times its own steeper age law (see Tape Age). The other parts' own Tape Age laws: drift rms 0.13 % × e^(1.23·age), the capstan line none (its 2nd/3rd harmonics grow with age). 0 is NOT still: at 0 the transport keeps the intrinsic motion the reference has at its own lowest setting |
 | 9  | Dry Level (legacy) | `setDryLevel` | 0–1        | 1.0     | legacy compatibility control, not on the panel but still a host parameter; retains old instrument-through automation |
 | 10 | Tempo Sync    | (shell-level)     | off/on     | off     | locks the leading active head to a host-tempo division, clamped to the physical motor range |
 | 11 | Sync Division (legacy) | (shell-level) | 0–15 (int) | 2 (1/16)| legacy compatibility parameter, not on the panel but still a host parameter; preserves the semantic divisions stored by 0.1-series sessions |

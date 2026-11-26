@@ -1,11 +1,12 @@
 // Copyright (C) 2026 Dusk Audio, GNU GPL v3.0 or later (see repository LICENSE).
-// Base-2 logarithm and exponential for gain laws evaluated over a block.
+// DuskFastMath.hpp: base-2 logarithm and exponential for gain laws and
+// curves evaluated over a block.
 //
 // Each function exists as a scalar form and a four-lane form that perform the
 // same IEEE single-precision operations in the same order (separate multiply
-// and add, no fusion; the plugin builds with -ffp-contract=off), so a value is
-// the same whichever form computed it and on every platform. The four-lane form
-// uses NEON on arm64 and the scalar form lane by lane elsewhere.
+// and add, no fusion), so in a build with -ffp-contract=off (Multi-Comp 2) a
+// value is the same whichever form computed it and on every platform. The
+// four-lane form uses NEON on arm64 and the scalar form lane by lane elsewhere.
 //
 // Accuracy, checked against double-precision libm at every normal float input
 // (2026-10-19):

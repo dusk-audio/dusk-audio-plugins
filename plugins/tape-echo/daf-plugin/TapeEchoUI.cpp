@@ -1474,8 +1474,8 @@ private:
 
         // Documented front-panel timing ranges. The calibrated DSP
         // retains the more precise hosted arrival times internally.
-        constexpr float kFastMs[3] = { 69.0f, 131.0f, 189.0f };
-        constexpr float kSlowMs[3] = { 177.0f, 337.0f, 489.0f };
+        constexpr float kFastMs[3] = { 69.0f, 130.0f, 189.0f };
+        constexpr float kSlowMs[3] = { 177.0f, 336.0f, 487.0f };
         // Bottom of the green head-select panel, three equal timing cells.
         constexpr float kCellX[4] =
             { 298.0f, 349.33333f, 400.66667f, 452.0f };

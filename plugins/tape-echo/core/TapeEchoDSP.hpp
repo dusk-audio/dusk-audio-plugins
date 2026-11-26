@@ -6,25 +6,25 @@
 //
 // Signal flow (stereo input, mono wet paths, stereo dry path):
 //
-//   L+R ─► record preamp (odd soft clip + DC block) ───────┬──► reverb send
-//                                                         │
-//        ┌────────────────────────────────────────────────┘
-//        ▼
-//   [+]──► record EQ (HP + speed-dependent LP) ──► tape saturation ──► TAPE
-//    ▲                                                                │
-//    │                                                     3 read heads (Hermite)
-//    │                                              T · {1.00, 1.9117, 2.7612}
-//    └── intensity · softClip(head sum)  ◄─────────────────┴──┐
-//                                                             ▼
-//                                    bass/treble shelves (echo path only)
-//                                                             ▼
+//   L+R ─► input shelf + record low shape ─► DC block ─────────┬──► reverb send
+//                                                             │
+//   program: band-limit (outer LP, speed LP, ceiling) ─► preamp curve ─────────┐
+//                                                                             [+]─► magnetic stage ─► TAPE
+//   regen:   band-limit (low shape, speed LP, ceiling) ─► loopLimit(softClip) ─┘   (x4, from the  │
+//    ▲                                                                             preamp curve on)
+//    │                                                                        3 read heads (Hermite)
+//    │                                                  T · {1, 1.905322, 2.759947} + offsets
+//    └── intensity · (head sum + noise bed)  ◄────────────────────────────────────────┴──┐
+//                                                                            ▼
+//                                               bass/treble shelves (echo path only)
+//                                                                            ▼
 //   out L/R = dry·input L/R + pan(echoLevel·echoEQ)
 //                           + pan(reverbLevel·spring(reverb send))
 //
-// The record EQ and tape saturation live INSIDE the feedback loop, so each
-// repeat progressively darkens and compresses — this is what lets high
-// Intensity settings bloom into stable, warm self-oscillation instead of
-// exploding numerically.
+// The band-limiting and tape saturation of the regeneration feed live INSIDE
+// the feedback loop, so each repeat progressively darkens and compresses --
+// this is what lets high Intensity settings bloom into stable, warm
+// self-oscillation instead of exploding numerically.
 
 #pragma once
 
@@ -42,7 +42,7 @@
 // during the shared-daf extraction, so consuming them is bit-identical.
 #include "DuskSmoothed.hpp"    // SmoothedValue
 #include "DuskFilters.hpp"     // OnePoleLP/HP, DCBlocker, Biquad (shelves)
-#include "DuskOversampler.hpp" // HalfbandFIR, hbtaps::kA/kB
+#include "DuskHalfbandIIR.hpp" // record saturation x4 stages
 #include "../daf-plugin/TapeEchoParams.hpp" // shared discrete-value helpers
 
 namespace duskaudio
@@ -55,7 +55,7 @@ namespace duskaudio
 //   DCBlocker                -> DuskFilters.hpp (default R = 0.9975, ~20 Hz @ 48k;
 //                               tape-echo keeps the default, so it is unchanged)
 //   ShelfFilter              -> DuskFilters.hpp Biquad + Biquad::shelfSlope1()
-//   HalfbandFIR + hb taps    -> DuskOversampler.hpp (HalfbandFIR, hbtaps::kA/kB)
+//   (new, not lifted) polyphase IIR halfband x2 stages -> DuskHalfbandIIR.hpp
 // The shared versions were lifted from this file, so behavior is bit-identical.
 //==============================================================================
 
@@ -196,6 +196,11 @@ private:
     // sized by it.
     static constexpr int kNumDispersionSections = 24;
 
+    // Every spring's two dispersion chains (returning wave in lane 2k,
+    // outgoing in 2k + 1; lanes 6 and 7 idle) run as lanes of one bank.
+    static constexpr int kDispersionLanes = 8;
+    using DispersionBank = BiquadLanes<kNumDispersionSections, kDispersionLanes>;
+
     struct Spring
     {
         std::vector<float> outgoingDelay;
@@ -205,8 +210,6 @@ private:
         float driverReflection = -0.90f;
         float pickupReflection = -0.90f;
         float outputGain = 0.25f;
-        std::array<Biquad, kNumDispersionSections> outgoingDispersion;
-        std::array<Biquad, kNumDispersionSections> returningDispersion;
         Biquad reflectionHighPass;
         Biquad reflectionLowLoss;
         Biquad reflectionLowPass;
@@ -214,12 +217,21 @@ private:
         // advanceSeconds moves that much transit time from the outgoing
         // to the returning path (round trip unchanged) so the resampler's
         // latency does not delay the arrivals.
+        // Sets this spring's two chains (lanes 2 index and 2 index + 1)
+        // in the dispersion bank.
         void  prepare(double fs, float oneWaySeconds,
                       float dispersionScale, float reflectionAmount,
                       float gain, double advanceSeconds,
-                      const BiquadCoeffs& reflectionLoss);
+                      const BiquadCoeffs& reflectionLoss,
+                      DispersionBank& bank, int index);
         void  reset();
-        float process(float x) noexcept;
+        // The waves entering the dispersion chains: arriving back at the
+        // driver, and arriving at the pickup end.
+        float returningIn() const noexcept { return returningDelay[(size_t)returningWriteIdx]; }
+        float outgoingIn() const noexcept  { return outgoingDelay[(size_t)outgoingWriteIdx]; }
+        // The rest of one sample, from both chains' outputs: the pickup's
+        // output.
+        float finish(float x, float returned, float farEnd) noexcept;
         bool  isSilent(float floor) const noexcept;
     };
 
@@ -235,6 +247,7 @@ private:
     // beats are fewer and faster (1.6 / 2.7 / 4.3 Hz) and read as texture.
     // That same 5.6 ms arrival spread is also what softens its attack.
     std::array<Spring, 3> springs;
+    DispersionBank dispersion;
     OnePoleHP inputHP;   // springs don't transmit deep lows
     OnePoleLP inputLP;   // dark transducer voicing
     DCBlocker dcBlock;
@@ -287,149 +300,6 @@ public:
 };
 
 //==============================================================================
-// The record preamp's 4x oversampled saturation, a sub-block at a time.
-//
-// Same arithmetic as running two cascaded zero-stuffing halfband upsamplers
-// (hbtaps::kA 47 taps, then kB 15), the shaper at 4x and the mirror
-// decimators one host sample at a time: every output is the same sum of the
-// same products in the same tap order, and the phases that follow a stuffed
-// zero take HalfbandFIR::outAfterStuffedZeroExact()'s shortcut. Only the
-// loop order differs -- stage by stage over the sub-block, which lets each
-// stage vectorise across outputs -- so the results are bit-identical
-// (te2_corebench pins this against the per-sample version it replaces).
-//==============================================================================
-class BlockPreamp4x
-{
-public:
-    static constexpr int kMaxBlock = 128;
-
-    void reset() noexcept
-    {
-        std::fill(std::begin(x), std::end(x), 0.0f);
-        std::fill(std::begin(a), std::end(a), 0.0f);
-        std::fill(std::begin(c), std::end(c), 0.0f);
-        std::fill(std::begin(d), std::end(d), 0.0f);
-    }
-
-    // in[0..n) -> out[0..n), n <= kMaxBlock. shape(v) is applied at 4x.
-    // Any n: longer runs are processed kMaxBlock samples at a time.
-    template <typename Shape>
-    void process(const float* in, float* out, int n, Shape shape) noexcept
-    {
-        while (n > kMaxBlock)
-        {
-            processChunk(in, out, kMaxBlock, shape);
-            in += kMaxBlock;
-            out += kMaxBlock;
-            n -= kMaxBlock;
-        }
-        if (n > 0)
-            processChunk(in, out, n, shape);
-    }
-
-private:
-    template <typename Shape>
-    void processChunk(const float* in, float* out, int n, Shape shape) noexcept
-    {
-        float acc[2 * kMaxBlock]; // per-output sums of the stage being run
-        // Histories: kA reaches 23 samples back at its input rate, kB 7, and
-        // the decimators read their full spans (14 and 46).
-        constexpr int HX = 23, HA = 7, HC = 14, HD = 46;
-        for (int j = 0; j < n; ++j)
-            x[HX + j] = in[j];
-
-        // Every stage accumulates tap by tap across all of its outputs (taps
-        // outer, outputs inner): each output still adds the same products in
-        // the same tap order as the per-sample FIR, but the inner loop is now
-        // independent across outputs and vectorises.
-
-        // 1x -> 2x through kA: even outputs are the full sum over the real
-        // samples (the centre tap reads a stuffed zero), odd outputs the
-        // halved centre only.
-        for (int j = 0; j < n; ++j)
-            acc[j] = 0.0f;
-        for (int i = 0; i < 12; ++i)
-        {
-            const float t = hbtaps::kA[i];
-            const float* newer = x + HX - (11 - i);
-            const float* older = x + HX - (12 + i);
-            for (int j = 0; j < n; ++j)
-                acc[j] += t * (newer[j] + older[j]);
-        }
-        for (int j = 0; j < n; ++j)
-        {
-            const float centre = 0.5f * x[HX + j - 11];
-            a[HA + 2 * j] = 2.0f * acc[j];
-            a[HA + 2 * j + 1] = 2.0f * (centre == 0.0f ? 0.0f : centre);
-        }
-
-        // 2x -> 4x through kB, then the shaper at 4x.
-        const int n2 = 2 * n;
-        for (int m = 0; m < n2; ++m)
-            acc[m] = 0.0f;
-        for (int i = 0; i < 4; ++i)
-        {
-            const float t = hbtaps::kB[i];
-            const float* newer = a + HA - (3 - i);
-            const float* older = a + HA - (4 + i);
-            for (int m = 0; m < n2; ++m)
-                acc[m] += t * (newer[m] + older[m]);
-        }
-        for (int m = 0; m < n2; ++m)
-        {
-            const float centre = 0.5f * a[HA + m - 3];
-            c[HC + 2 * m] = 2.0f * acc[m];
-            c[HC + 2 * m + 1] = 2.0f * (centre == 0.0f ? 0.0f : centre);
-        }
-        for (int q = 0; q < 4 * n; ++q)
-            c[HC + q] = shape(c[HC + q]);
-
-        // 4x -> 2x through kB: a full sum at every second 4x sample.
-        for (int r = 0; r < n2; ++r)
-            acc[r] = 0.5f * c[HC + 2 * r + 1 - 7];
-        for (int i = 0; i < 4; ++i)
-        {
-            const int k = 2 * i + 1;
-            const float t = hbtaps::kB[i];
-            const float* newer = c + HC + 1 - (7 - k);
-            const float* older = c + HC + 1 - (7 + k);
-            for (int r = 0; r < n2; ++r)
-                acc[r] += t * (newer[2 * r] + older[2 * r]);
-        }
-        for (int r = 0; r < n2; ++r)
-            d[HD + r] = acc[r];
-
-        // 2x -> 1x through kA.
-        for (int u = 0; u < n; ++u)
-            acc[u] = 0.5f * d[HD + 2 * u + 1 - 23];
-        for (int i = 0; i < 12; ++i)
-        {
-            const int k = 2 * i + 1;
-            const float t = hbtaps::kA[i];
-            const float* newer = d + HD + 1 - (23 - k);
-            const float* older = d + HD + 1 - (23 + k);
-            for (int u = 0; u < n; ++u)
-                acc[u] += t * (newer[2 * u] + older[2 * u]);
-        }
-        for (int u = 0; u < n; ++u)
-            out[u] = acc[u];
-
-        // Carry the histories into the next sub-block.
-        std::copy(x + n, x + n + HX, x);
-        std::copy(a + 2 * n, a + 2 * n + HA, a);
-        std::copy(c + 4 * n, c + 4 * n + HC, c);
-        std::copy(d + 2 * n, d + 2 * n + HD, d);
-    }
-
-private:
-    float x[23 + kMaxBlock] {};
-    float a[7 + 2 * kMaxBlock] {};
-    float c[14 + 4 * kMaxBlock] {};
-    float d[46 + 2 * kMaxBlock] {};
-
-};
-
-//==============================================================================
 // TapeEchoDSP — the complete tape echo core.
 //==============================================================================
 class TapeEchoDSP
@@ -438,19 +308,23 @@ public:
     static constexpr int kNumModes    = 12;
     static constexpr int kMaxChannels = 2;
 
-    // Hosted head-1 arrival endpoints. These include the record/playback path
-    // delay so rendered repeats align with the reference, not just the nominal
-    // motor labels.
-    static constexpr float kMinDelayMs = 69.33f;
-    static constexpr float kMaxDelayMs = 177.354f;
+    // Hosted head-1 arrival endpoints: the motor law's values at the fast and
+    // slow stops (delayMsForRepeatRate(1) and (0)). They include the
+    // record/playback path delay so rendered repeats align with the reference,
+    // not just the nominal motor labels.
+    static constexpr float kMinDelayMs = 68.7542f;
+    static constexpr float kMaxDelayMs = 176.83522f;
 
-    // Effective head spacing and fixed playback-electronics offsets, fitted
-    // jointly across slow/mid/fast hosted arrivals. A ratio alone left the far
-    // heads 2-3 ms late because each pickup has a small fixed phase delay.
+    // Effective head spacing and fixed playback-electronics offsets: a least
+    // squares fit of the reference's head-2 and head-3 arrivals against its
+    // head-1 arrival over 21 motor positions (latency-compensated, 40-impulse
+    // averages). The fit leaves residuals inside the measurement noise
+    // (rms 0.06 / 0.13 ms). A ratio alone left the far heads late because each
+    // pickup has a small fixed phase delay.
     static constexpr float kHeadRatio[3] =
-        { 1.0f, 1.91172f, 2.76118f };
+        { 1.0f, 1.905322f, 2.759947f };
     static constexpr float kHeadOffsetMs[3] =
-        { 0.0f, -1.428f, -2.141f };
+        { 0.0f, -0.6929f, -0.9351f };
 
     TapeEchoDSP() = default;
 
@@ -469,7 +343,7 @@ public:
     //--- parameters (thread-safe: callable from any thread) -------------------
     void setMode(int mode1to12) noexcept          { pMode.store(clampInt(mode1to12, 1, 12), std::memory_order_relaxed); }
     void setRepeatRate(float v01) noexcept        { pRepeatRate.store(clamp01(v01), std::memory_order_relaxed); }  // 0 = slow motor (177 ms), 1 = fast (69 ms)
-    void setIntensity(float v01) noexcept         { pIntensity.store(clamp01(v01), std::memory_order_relaxed); }   // > ~0.75 self-oscillates
+    void setIntensity(float v01) noexcept         { pIntensity.store(clamp01(v01), std::memory_order_relaxed); }   // > ~0.69 self-oscillates
     void setEchoLevel(float v01) noexcept         { pEchoLevel.store(clamp01(v01), std::memory_order_relaxed); }
     void setReverbLevel(float v01) noexcept       { pReverbLevel.store(clamp01(v01), std::memory_order_relaxed); }
     void setDryLevel(float v01) noexcept          { pDryLevel.store(clamp01(v01), std::memory_order_relaxed); }
@@ -525,6 +399,8 @@ private:
     static float clampF(float v, float lo, float hi) noexcept { return v < lo ? lo : (v > hi ? hi : v); }
     static int   clampInt(int v, int lo, int hi) noexcept     { return v < lo ? lo : (v > hi ? hi : v); }
 
+    void updateTapeBandwidth(float age01, float delayMs) noexcept;
+
     // Bounded cubic soft clip, tanh-like, branch-light. Monotonic on the
     // clamped range, |out| <= 1. Used for tape saturation and the feedback
     // limiter — this is what stabilizes self-oscillation.
@@ -558,20 +434,19 @@ private:
         return x * (0.30355f + 0.69645f * x);
     }
 
-    // Hard ceiling with a quadratic knee: identity below `knee`, exactly
-    // `ceiling` at and above knee + 2(ceiling - knee). Monotonic, and C1 at
-    // both joins (unit slope entering the knee, zero slope leaving it).
-    static float hardKnee(float x, float knee, float ceiling) noexcept
+    // Loop limiter: identity below kLoopLimitKnee, above it a soft approach to
+    // kLoopLimitCeiling shaped by softClip (unit slope at the knee, so C1 there;
+    // softClip reaches its bound at 3, so the curve meets the ceiling flat at
+    // knee + 3 (ceiling - knee)). Odd-symmetric and monotonic. Both sides of
+    // the knee are computed and one is selected, so a pass of it vectorizes
+    // (it runs at x4 in the record stage).
+    static float loopLimit(float x) noexcept
     {
-        const float magnitude = x < 0.0f ? -x : x;
-        if (magnitude <= knee)
-            return x;
-        const float width = 2.0f * (ceiling - knee);
-        const float sign  = x < 0.0f ? -1.0f : 1.0f;
-        if (magnitude >= knee + width)
-            return sign * ceiling;
-        const float under = 1.0f - (magnitude - knee) / width;
-        return sign * (knee + (ceiling - knee) * (1.0f - under * under));
+        const float magnitude = std::abs(x);
+        constexpr float span = kLoopLimitCeiling - kLoopLimitKnee;
+        const float limited = kLoopLimitKnee
+            + span * softClip((magnitude - kLoopLimitKnee) * (1.0f / span));
+        return magnitude <= kLoopLimitKnee ? x : std::copysign(limited, x);
     }
 
     // Record-amplifier overload, seen only by the regeneration path. The
@@ -583,9 +458,8 @@ private:
     // intensity control at minimum, so every harmonic and level calibration
     // measured there is bit-identical.
     //
-    // The knee is 22 dB above the loop level anywhere in the calibrated repeat
-    // ladder and 15 dB above the marginal-oscillation level at intensity 0.7,
-    // so nothing at or below the matched settings can reach it.
+    // The knee is 16 dB above the loop level anywhere in the calibrated repeat
+    // ladder, and the curve stays within 0.1 dB of identity well past it.
     //
     // A ceiling at the tape write instead - which is demonstrably where the
     // reference's is, since its loudest program peak (-22.15 dBFS wet) and its
@@ -599,230 +473,139 @@ private:
     // raised to 0.2620 and then 0.3000 to clear those, it still broke the
     // factory octave-band gate (2.81 and 2.68 dB against a 2.50 limit, from a
     // 2.13 baseline) because sustained tones in the factory presets reach that
-    // flux too. The cost of this placement instead is crest: the loop clip
-    // sits ahead of the playback roll-off, so a slammed loop reads back at
-    // 2.3-2.6 dB crest against the reference's 0.35-0.77. Closing that means
-    // reshaping the record stage's peak factor, which re-opens the
-    // already-matched harmonic calibration and is its own campaign.
-    static constexpr float kLoopCeilingKnee = 0.2000f;
-    static constexpr float kLoopCeiling     = 0.2940f;
-
-    // The hosted feedback pot has a pronounced dead-band immediately before
-    // regeneration. Installed states at 0.640 and 0.669 match our former
-    // 0.624 and 0.630 behavior, while the hosted 0.700 anchor genuinely jumps
-    // to our 0.700 runaway onset. Shape only that narrow interval; <= 0.62
-    // and >= 0.70 remain identity, preserving the calibrated repeat ladder
-    // and runaway anchors.
-    static float feedbackKneeControl(float x) noexcept
-    {
-        if (x <= 0.62f || x >= 0.70f)
-            return x;
-        if (x <= 0.67f)
-        {
-            const float t = (x - 0.62f) / 0.05f;
-            const float smooth = t * t * (3.0f - 2.0f * t);
-            return 0.62f + 0.01f * smooth;
-        }
-        const float t = (x - 0.67f) / 0.03f;
-        const float smooth = t * t * (3.0f - 2.0f * t);
-        return 0.63f + 0.07f * smooth;
-    }
-
-    // Intensity also drives the playback/read amplifier. Hosted impulses prove
-    // this is not regeneration alone: the FIRST repeat rises about 2.6 dB at
-    // 0.7 and reaches the same fixed ceiling as the runaway tail by 0.8. A
-    // feedback-only multiplier cannot reproduce that observation because no
-    // returned signal exists before the first playback-head arrival.
+    // flux too.
     //
-    // Keep the stage exactly transparent through 0.62 so the calibrated 0.5
-    // repeat ladder and every feedback-off transfer measurement are unchanged.
-    // Above it, the measured gain enters a read-amplifier rail at 0.240. Placing
-    // this ceiling after tape playback also closes the reference's very low
-    // runaway crest factor without clipping ordinary program material at the
-    // tape-write point.
-    static float feedbackReadAmplifier(float headSignal,
-                                       float intensity) noexcept
-    {
-        if (intensity <= 0.62f)
-            return headSignal;
+    // This is the runaway's rail (the read amplifier that used to sit on the
+    // echo output is gone, see feedbackGainFromControl), and its SHAPE sets how
+    // the rail moves with Intensity: a loop settles where the limiter's
+    // compression cancels the excess loop gain, so a hard ceiling holds the
+    // rail flat whatever the gain, and a soft approach lets it climb. The
+    // reference's runaway tail (probe_feedback, RMS from 3 s) climbs 3.3 dB
+    // from 0.8 to 1.0: -25.9 / -23.2 / -22.6 dBFS at 0.8 / 0.9 / 1.0. The
+    // former hard knee (0.200 into 0.294) gave -25.5 / -24.0 / -23.8, flat
+    // within 1.7 dB. Knee and ceiling swept on a lab copy of the DSP that
+    // reproduced the plug-in's tails to 0.1 dB:
+    //     knee 0.20, ceiling 0.40  ->  -25.1 / -23.1 / -22.7
+    //     knee 0.15, ceiling 0.40  ->  -25.4 / -23.3 / -22.9
+    //     knee 0.10, ceiling 0.45  ->  -25.5 / -23.3 / -22.8   <- chosen
+    //     knee 0.08, ceiling 0.42  ->  -25.8 / -23.6 / -23.1
+    // (worst error 0.4 dB, was 1.2).
+    static constexpr float kLoopLimitKnee    = 0.10f;
+    static constexpr float kLoopLimitCeiling = 0.45f;
 
-        constexpr float kX[5] =
-            { 0.62f, 0.70f, 0.80f, 0.90f, 1.00f };
-        constexpr float kG[5] =
-            { 1.00f, 1.35f, 3.80f, 4.00f, 4.00f };
-        // At the onset point the hosted loop has a lower intermediate rail;
-        // it then jumps to the full runaway rail by 0.8. The 0.8 knee is very
-        // narrow (repeat peaks are fixed but the tail keeps ~2.6 dB crest),
-        // while 0.9 and above are fully compressed to sub-1 dB crest.
-        constexpr float kKnee[5] =
-            { 0.280f, 0.094f, 0.227f, 0.200f, 0.200f };
-        constexpr float kCeiling[5] =
-            { 0.300f, 0.096f, 0.235f, 0.240f, 0.240f };
-        int segment = 3;
-        if (intensity <= kX[1])
-            segment = 0;
-        else if (intensity <= kX[2])
-            segment = 1;
-        else if (intensity <= kX[3])
-            segment = 2;
-        const float t = (intensity - kX[segment])
-                      / (kX[segment + 1] - kX[segment]);
-        const float smooth = t * t * (3.0f - 2.0f * t);
-        const float gain = kG[segment]
-                         + (kG[segment + 1] - kG[segment]) * smooth;
-        const float knee = kKnee[segment]
-                         + (kKnee[segment + 1] - kKnee[segment]) * smooth;
-        const float ceiling = kCeiling[segment]
-                            + (kCeiling[segment + 1]
-                               - kCeiling[segment]) * smooth;
-        const float limited = hardKnee(gain * headSignal, knee, ceiling);
-        if (segment > 0)
-            return limited;
-        // Fade the limiter in across the onset window rather than switching it
-        // on at full strength. The gain/knee/ceiling interpolation alone is not
-        // enough: segment 0 opens at knee 0.280, which is BELOW the loudest
-        // reachable head sum (tape content is bounded near kLoopCeiling and the
-        // multi-head modes sum two reads), so crossing 0.62 stepped loud wet
-        // peaks down by 1-3 dB in one sample -- and this stage feeds the echo
-        // output directly, not just the loop. `smooth` is already the 0->1
-        // smoothstep over exactly 0.62..0.70, so reuse it: the result is
-        // identity at 0.62, fully limited from 0.70 up (runaway anchors
-        // untouched), and bit-identical at every level at or below the knee,
-        // where hardKnee is identity and the blend has nothing to move.
-        return headSignal + smooth * (limited - headSignal);
-    }
-
-    // Around the self-oscillation threshold the read amplifier bootstraps the
-    // record return, then falls out of that path as the main loop reaches its
-    // full rail. The blend is narrow and triangular so 0.8 never gets the
-    // overly dense, sub-1 dB crest of a permanently read-amplified feedback
-    // bus.
+    // Loop gain per repeat against Intensity, MEASURED against the reference:
+    // head 1, Repeat Rate 0.5, new tape, energy in the 1 kHz third octave.
+    //   0.40-0.72  impulse, median of the packet-to-packet steps 2-6
+    //   0.75-0.95  growth of the loop's own noise from silence (the
+    //              reference self-starts there, so an impulse lands in an
+    //              oscillation that is already running)
+    // The reference, dB per repeat:
+    //   0.40 -10.50  0.50 -6.05  0.60 -2.45  0.65 -0.90  0.68 -0.04
+    //   0.70  +0.49  0.72 +0.98  0.75 +1.94  0.80 +3.06  0.85 +3.99
+    //   0.90  +5.28  0.95 +5.84
+    // Read at 1 kHz on purpose: the tape bandwidth law (kTapeBandwidth in the
+    // .cpp) owns the loop's shape re 1 kHz, so the level is fitted where that
+    // shape is pinned. A wider band (500 Hz-4 kHz) is dominated by the loop's
+    // strongest region and folds the bandwidth law's 2-4 kHz residual into
+    // the level, which ran the low and mid repeats hot.
+    // The law is the cubic below corrected in dB by kFeedbackLawDb, iterated
+    // through the full DSP until every knot read within 0.03 dB of the
+    // reference. Below 0.40 the reference's repeats reach the render floor in
+    // two or three steps; the one clean step at 0.30 sits on the same offset,
+    // so the correction is held at its 0.40 value. At 1.00 the reference is
+    // already oscillating when the render starts and no growth is readable;
+    // that knot continues the 0.90-0.95 slope.
     //
-    // PEAK 0.10, NOT 1.0 -- this is a measured anchor, do not raise it.
-    // The read amplifier applies 1.35x gain at intensity 0.70. Feeding that
-    // multiplier into the loop at full strength puts the loop over unity where
-    // the reference is still decaying: probe_feedback measured our 0.700 tail
-    // RMS at -35.19 dBFS against the reference's -56.80, i.e. +21.61 dB, while
-    // 0.000 / 0.250 / 0.500 / 0.800 / 0.900 / 1.000 all matched within 1 dB.
-    // An earlier campaign had 0.7 "holding unity +/-0.3 dB", so full-strength
-    // blending was a regression against an already-matched anchor, not a new
-    // behaviour. Swept against a fresh render at each step:
-    //     peak 0.00 -> -8.07 dB    0.05 -> -3.50    0.10 -> +0.93
-    //          0.15 -> +5.42       0.25 -> +13.06   1.00 -> +21.61
-    // 0.10 puts 0.700 on the same small positive bias the whole rest of the
-    // ladder carries (+0.92 at 0.800, +0.93 at 0.000/0.250).
-    //
-    // Note this scales ONLY the loop contribution. feedbackReadAmplifier still
-    // reaches the echo OUTPUT at full strength, so the measured ~2.6 dB rise of
-    // the first repeat at 0.7 -- the observation the stage exists for, and one
-    // no feedback-only multiplier can produce -- is preserved intact.
-    static float feedbackReadLoopBlend(float intensity) noexcept
-    {
-        if (intensity <= 0.62f || intensity >= 0.80f)
-            return 0.0f;
-        const float t = intensity <= 0.70f
-            ? (intensity - 0.62f) / 0.08f
-            : (0.80f - intensity) / 0.10f;
-        const float clamped = clamp01(t);
-        return 0.10f * clamped * clamped * (3.0f - 2.0f * clamped);
-    }
+    // This replaces a knee curve, a read amplifier and a runaway lift. Fresh
+    // renders falsified the read amplifier's premise ("the FIRST repeat rises
+    // about 2.6 dB at 0.7"): the reference's first echo is the same from 0.60
+    // to 0.85 (-33.1 dBFS peak, -68.0 dB band energy) while the amplifier lifted
+    // ours by up to 10.7 dB and sat it on its own rail from the first repeat,
+    // so our runaway started where the reference's ends. Its loop blend was
+    // also 0.6 dB per repeat hot at 0.75. The runaway's level and density come
+    // from the loop instead: loopLimit and the noise bed circulating with
+    // the signal (see the loop tap in processBlock).
+    static constexpr int kFeedbackLawKnots = 15;
+    static constexpr float kFeedbackLawX[kFeedbackLawKnots] =
+        { 0.40f, 0.45f, 0.50f, 0.55f, 0.60f, 0.65f, 0.68f, 0.70f,
+          0.72f, 0.75f, 0.80f, 0.85f, 0.90f, 0.95f, 1.00f };
+    static constexpr float kFeedbackLawDb[kFeedbackLawKnots] =
+        { 0.7755f, 0.7663f, 0.7390f, 0.6897f, 0.6201f, 0.5487f, 0.4858f,
+          0.4531f, 0.3977f, 0.3464f, 0.1117f, -0.2505f, -0.2176f, -0.8297f,
+          -1.3880f };
+    // Fritsch-Carlson slopes (dB per unit Intensity): shape-preserving, so
+    // the correction never overshoots between knots. Zero at 0.40 to join
+    // the constant below C1.
+    static constexpr float kFeedbackLawSlope[kFeedbackLawKnots] =
+        { 0.0000f, -0.2758f, -0.7030f, -1.1543f, -1.4096f, -1.7266f,
+          -1.8240f, -2.0576f, -2.1491f, -2.4155f, -5.6960f, 0.0000f, 0.0000f,
+          -11.6791f, -10.6254f };
 
-    // Runaway shaping above the onset knee. The reference crosses unity loop
-    // gain near 0.7 and is fully slammed into its tape ceiling by 0.8, holding
-    // that ceiling to maximum. The measured taper below only grazes unity, so
-    // the loop equilibrated shallow and clean instead of dense and saturated.
-    // This multiplier is exactly 1.0 with zero slope at and below 0.62, so
-    // every calibration measured at or below feedback 0.5 - the whole repeat
-    // ladder and all harmonic gates - is bit-identical. Piecewise smoothstep
-    // between anchors, hence C1 continuous with no zipper for the 30 ms
-    // intensity smoother to chase.
-    static float feedbackRunawayLift(float x) noexcept
+    static float feedbackLawCorrectionDb(float x) noexcept
     {
-        constexpr float kX[5] = { 0.62f, 0.70f, 0.80f, 0.90f, 1.00f };
-        // Regeneration has its own measured law. The threshold bootstrap above
-        // supplies the missing 0.7 return; 0.8 keeps the softer main loop that
-        // preserves the reference's 2.6 dB crest, then the rail grows denser.
-        constexpr float kL[5] = { 1.0f, 1.0225f, 1.4500f, 2.0500f, 2.7500f };
-        if (x <= kX[0])
-            return kL[0];
-        int i = 3;
-        if (x <= kX[1])      i = 0;
-        else if (x <= kX[2]) i = 1;
-        else if (x <= kX[3]) i = 2;
-        const float t = (x - kX[i]) / (kX[i + 1] - kX[i]);
-        const float smooth = t * t * (3.0f - 2.0f * t);
-        return kL[i] + (kL[i + 1] - kL[i]) * smooth;
+        if (x <= kFeedbackLawX[0])
+            return kFeedbackLawDb[0];
+        int i = 0;
+        while (i < kFeedbackLawKnots - 2 && x > kFeedbackLawX[i + 1])
+            ++i;
+        const float h = kFeedbackLawX[i + 1] - kFeedbackLawX[i];
+        const float t = (x - kFeedbackLawX[i]) / h;
+        const float t2 = t * t, t3 = t2 * t;
+        return (2.0f * t3 - 3.0f * t2 + 1.0f) * kFeedbackLawDb[i]
+             + (t3 - 2.0f * t2 + t) * h * kFeedbackLawSlope[i]
+             + (-2.0f * t3 + 3.0f * t2) * kFeedbackLawDb[i + 1]
+             + (t3 - t2) * h * kFeedbackLawSlope[i + 1];
     }
 
     static float feedbackGainFromControl(float x) noexcept
     {
         x = clamp01(x);
-        float normalized;
-        if (x <= 0.7f)
-        {
-            normalized = 0.00063492f * x
-                       + 0.95619048f * x * x
-                       + 0.96507937f * x * x * x;
-            const float knee = clamp01((x - 0.65f) * 20.0f);
-            const float kneeSmooth = knee * knee * (3.0f - 2.0f * knee);
-            normalized -= 0.02728236f * kneeSmooth;
-        }
-        else
-        {
-            float loX, hiX, loGain, hiGain;
-            if (x <= 0.8f)
-            {
-                loX = 0.7f; hiX = 0.8f;
-                loGain = 0.77271764f; hiGain = 0.82074074f;
-            }
-            else if (x <= 0.9f)
-            {
-                loX = 0.8f; hiX = 0.9f;
-                loGain = 0.82074074f; hiGain = 0.85925926f;
-            }
-            else
-            {
-                loX = 0.9f; hiX = 1.0f;
-                loGain = 0.85925926f; hiGain = 0.88f;
-            }
-            const float t = (x - loX) / (hiX - loX);
-            const float smooth = t * t * (3.0f - 2.0f * t);
-            normalized = loGain + (hiGain - loGain) * smooth;
-        }
-        return 1.30f * normalized * feedbackRunawayLift(x);
+        const float cubic = 0.00063492f * x
+                          + 0.95619048f * x * x
+                          + 0.96507937f * x * x * x;
+        return 1.30f * cubic
+             * std::pow(10.0f, feedbackLawCorrectionDb(x) * (1.0f / 20.0f));
     }
 
-    // Group delay of the 4x oversampling chain in base-rate samples
-    // (2x stage: 46 samples at 2x; 4x stage: 14 at 4x). Compensated in the
-    // tape delay so head timing stays exact.
-    static constexpr float kPreampLatencySamples = 23.0f + 3.5f;
+    // The clean spring feed's delay: 26.5 samples at 48 kHz, held as a time
+    // at every rate (springFeedDelaySamples, set in prepare()). It once
+    // matched a record-path oversampler's group delay; the spring's measured
+    // first arrival includes it, so it stays.
+    static constexpr double kSpringFeedDelaySamplesAt48k = 26.5;
+    float springFeedDelaySamples = 26.5f;
 
-    float readTape(const std::vector<float>& buf, float delaySamples) const noexcept;
+    float readTape(const std::vector<float>& buf, double delaySamples) const noexcept;
 
     // Last input and result of per-sample laws on smoothed controls, seeded
     // in prepare() from the snapped controls.
     float memoAge = 0.0f;
     float memoAgeNoiseScale = 0.0f;
+    float memoDriftDepth = 0.0f;
+    float memoFlutterH2 = 0.0f;
+    float memoFlutterH3 = 0.0f;
+    float memoSpliceDepthDb = 0.0f;
+    float memoSpliceNarrowWeight = 0.0f;
+    float memoSpliceNarrowSeconds = 0.0f; // at the fastest motor; scaled per sample
+    void  updateAgeMemos(float age) noexcept;
     float memoOutputVolume = 0.0f;
     float memoOutputGain = 1.0f;
 
     // Per-sample values carried between the passes of one sub-block. Kept on
-    // the stack in processBlock (about 19 KB): as a member it measured 3-5 %
-    // slower (48 kHz core, default state), and 19 KB is far inside the audio
+    // the stack in processBlock (30 KB): as a member it measured 3-5 %
+    // slower (48 kHz core, default state), and 30 KB is far inside the audio
     // thread stacks hosts give plug-ins (512 KB and up on macOS, 1 MB on
     // Windows, 8 MB on Linux).
     struct SubBlockScratch
     {
         static constexpr int kSize = 128;
-        float d1[kSize];
-        float d2[kSize];
-        float d3[kSize];
+        double d1[kSize];
+        double d2[kSize];
+        double d3[kSize];
         float drivenInput[kSize];
         float dryLvl[kSize];
         float dryMixGain[kSize];
         float echoLvl[kSize];
         float fbGain[kSize];
-        float feedbackCurve[kSize];
         float g1[kSize];
         float g2[kSize];
         float g3[kSize];
@@ -842,45 +625,128 @@ private:
         float echoWet[kSize];
         float rev[kSize];
         float recordEnvelopeNow[kSize];
-        float loopReadBlend[kSize];
+        float tapeInput[kSize];
         float preIn[kSize];
-        float preOut[kSize];
         float postDriveGain[kSize];
         float splice1[kSize];
         float splice2[kSize];
         float splice3[kSize];
+        // Record saturation, run in its own passes after the head reads.
+        float programFeed[kSize];
+        float loopFeed[kSize];
+        float loopDrive[kSize];
+        float loopLinear[kSize];
+        float loopGain[kSize];
+        float loopHeadSum[kSize];
+        float lowFloorFade[kSize];
+        float programGain[kSize];
+        float c3[kSize];
+        float c5[kSize];
+        float makeupGain[kSize];
+        float programOs[kSize][4];
+        float loopOs[kSize][4];
+        float tapeOs[kSize][4];
+        float magneticAmplitude[kSize];
     };
     float memoIntensity = 0.0f;
-    float memoFeedbackCurve = 0.0f;
     float memoFbGain = 0.0f;
-    float memoLoopReadBlend = 0.0f;
 
     // The spring is skipped while its send and every piece of its state have
     // decayed below kSpringIdleFloor (see processBlock).
     bool springIdle = false;
     void  refreshBlockRateControls();
 
+    // Two chains of four second-order allpass sections (in z^-2) whose outputs
+    // stay 90 degrees apart, within about 0.35 degrees from 20 Hz to 22 kHz at
+    // 44.1 kHz, so sqrt(i^2 + q^2) is a sinusoid's amplitude at any phase
+    // (ripple +-0.6 % at twice its frequency). The band scales with the rate:
+    // the low edge is 30 Hz at 48 kHz and 90 Hz at 192 kHz, and below it the
+    // ripple grows (+-1.4 % at 20 Hz, 48 kHz). The detector feeds the pair
+    // through its 700 Hz high-pass, which holds +-0.6 % at every rate.
+    // Chain A runs one sample late. Coefficients: the widely published 4 + 4
+    // section design (Niemitalo).
+    struct HilbertPair
+    {
+        float x1[4][2] {}, x2[4][2] {}, y1[4][2] {}, y2[4][2] {};  // per section, per chain
+        float aLate = 0.0f;
+        void reset() noexcept { *this = HilbertPair{}; }
+        void process(float x, float& i, float& q) noexcept
+        {
+            // The two chains run as lanes of one loop (lane 0: A, lane 1: B).
+            static constexpr float kCoef[4][2] = {
+                { 0.6923878f * 0.6923878f, 0.4021921162426f * 0.4021921162426f },
+                { 0.9360654322959f * 0.9360654322959f, 0.8561710882420f * 0.8561710882420f },
+                { 0.9882295226860f * 0.9882295226860f, 0.9722909545651f * 0.9722909545651f },
+                { 0.9987488452737f * 0.9987488452737f, 0.9952884791278f * 0.9952884791278f } };
+            float v[2] = { x, x };
+            for (int k = 0; k < 4; ++k)
+                for (int l = 0; l < 2; ++l)
+                {
+                    const float y = kCoef[k][l] * (v[l] + y2[k][l]) - x2[k][l];
+                    x2[k][l] = x1[k][l]; x1[k][l] = v[l];
+                    y2[k][l] = y1[k][l]; y1[k][l] = y;
+                    v[l] = y;
+                }
+            i = aLate; aLate = v[0];
+            q = v[1];
+        }
+    };
+
     //--- per-channel state ----------------------------------------------------
     struct Channel
     {
         std::vector<float> tape;
         DCBlocker          preampDC;
-        // base <-> 2x kA (tight, -67 dB), 2x <-> 4x kB (loose, -75 dB)
-        BlockPreamp4x preamp;
-        Biquad             recordHP;   // in-loop, two-pole low-end cleanup
-        Biquad             speedLP;    // tape-speed-dependent playback bandwidth
-        Biquad             ageContour; // age-only HF shoulder, inside the loop
-        std::array<Biquad, 3> antiAliasLP; // sixth-order fixed record/repro ceiling
+        // Low end of the tape loop, split where the reference splits it (see
+        // kRecordLowShape in the .cpp): the record-side shape on the program
+        // feed AHEAD of the preamp, an input-only shelf ahead of that, and the
+        // same shape on the regeneration feed. Nothing low-cut sits after a
+        // saturating stage.
+        Biquad             inputLowShelf;   // program feed only
+        Biquad             inputLowShape;   // program feed, ahead of the preamp
+        Biquad             loopLowShape;    // regeneration feed
+        // High end, split where the reference splits it, and ahead of every
+        // saturating stage (see kTapeBandwidth in the .cpp). The program feed
+        // and the regeneration feed are band-limited separately so the preamp
+        // curve can act on the program alone: the same sections, the same
+        // coefficients, so the linear response is that of one shared chain.
+        Biquad             speedLP;    // playback bandwidth, regeneration feed
+        std::array<Biquad, 3> loopCeilingLP; // sixth-order ceiling, regeneration feed
+        Biquad             programSpeedLP;   // playback bandwidth, program feed
+        std::array<Biquad, 3> programCeilingLP; // sixth-order ceiling, program feed
+        Biquad             programOuterLP;   // program feed only: outside the loop
         Biquad             bassShelf;  // echo output path only
         Biquad             trebleShelf;
         Biquad             dryLowShelf;  // direct-path coupling/amp bandwidth
         Biquad             dryHighShelf;
-        std::array<float, 32> springCleanDelay {};
+        std::vector<float> springCleanDelay;   // sized in prepare()
         int                springCleanDelayWriteIdx = 0;
         float              recordEnvelope = 0.0f;   // program drive only
+        // Record-compressor detector: its input low-pass (kDetectorLowPassHz),
+        // then the phase-independent amplitude of the band above
+        // kDetectorBandHz (see processBlock).
+        Biquad             detectorLowPass1, detectorLowPass2;
+        Biquad             detectorHighPass;
+        HilbertPair        detectorHilbert;
+        float              detectorSmooth1 = 0.0f;
+        float              detectorSmooth2 = 0.0f;
+        float              recordEnvelopeSmooth1 = 0.0f;  // what the record
+        float              recordEnvelopeSmooth2 = 0.0f;  // laws read
         float              loopEnvelope = 0.0f;     // regeneration drive only
         float              magneticEnvelope = 0.0f;
+        int                magneticHold = 0;        // samples at 4x
+        float              magneticAmplitude1 = 0.0f;    // the normalization's
+        float              magneticAmplitude2 = 0.0f;    // two smoothing poles,
+        float              magneticAmplitudeLast = 0.0f; // and its last value
+        // Record saturation runs at 4x (see processBlock): both feeds are
+        // interpolated twice, the tape signal decimated twice.
+        HalfbandUpsampler2xPair<5> feedUp1;   // program and loop feeds, 1x -> 2x
+        HalfbandUpsampler2xPair<3> feedUp2;   // 2x -> 4x
+        HalfbandDownsampler2x<3>   tapeDown2; // 4x -> 2x
+        HalfbandDownsampler2x<5>   tapeDown1; // 2x -> 1x
     };
+    // True while every regeneration-feed section's state is exactly zero.
+    static bool loopFeedSectionsAtRest(const Channel& ch) noexcept;
 
     std::array<Channel, kMaxChannels> channels;
     SpringReverb spring; // shared mono wet path
@@ -889,6 +755,15 @@ private:
     int    writeIdx   = 0;
     int    mask       = 0;      // tape length is a power of two
     float  maxDelaySamples = 0.0f;
+    // Running sum of the transport's speed deviation, one entry per sample:
+    // a head's delay is its path plus this sum over a window as long as the
+    // path (see the head delays). Its own power-of-two length, sized in
+    // prepare() for head 3's window at the slowest motor speed.
+    std::vector<double> transportSum;
+    double transportSumNow = 0.0;
+    int    transportIdx    = 0;
+    int    transportMask   = 0;
+    int    transportWritten = 0;   // entries written since reset(), saturating
     double fs         = 44100.0;
 
     //--- metering ---------------------------------------------------------------
@@ -901,6 +776,14 @@ private:
     float meterPeakDecayPerSample = 1.0f;
     float recordEnvelopeAttack = 1.0f;
     float recordEnvelopeRelease = 1.0f;
+    float detectorSmoothCoeff = 1.0f;
+    float recordEnvelopeSmoothCoeff = 1.0f;
+    float magneticReleaseOs = 1.0f;   // the record release per 4x sample
+    int   magneticHoldSamplesOs = 0;
+    float magneticSmoothCoeff = 1.0f;  // the normalization's poles, per sample
+    // Longest sub-block whose tape writes can wait for its head reads: half
+    // the shortest head delay (see processBlock), at most the scratch size.
+    int   subBlockLimit = 1;
 
     //--- modulation (shared across channels: one motor, one tape) --------------
     // Two-pole state-variable band-pass, TPT (Zavalishin) topology. A direct-form
@@ -934,13 +817,18 @@ private:
         float a1 = 0.0f, a2 = 0.0f, a3 = 0.0f, s1 = 0.0f, s2 = 0.0f;
     };
 
-    float     wowPhase = 0.0f, wowInc = 0.0f;
-    float     flutterPhase = 0.0f, flutterInc = 0.0f;
-    OnePoleLP noiseLP;
+    // Flutter oscillator as a unit vector rotated once per sample (no
+    // per-sample sinf). Its step follows the motor, so it turns by a
+    // small-angle polynomial of flutterInc.
+    float     flutterSin = 0.0f, flutterCos = 1.0f, flutterInc = 0.0f;
+    // Slow transport drift: white noise through one pole, scaled to unit rms
+    // by driftNorm (set in prepare()).
+    OnePoleLP driftLP;
+    float     driftNorm = 1.0f;
     uint32_t  rngState = 0x9E3779B9u;
 
     // Stochastic scrape flutter: band noise around 6 Hz. Its own RNG stream so
-    // the wow noise realization (and therefore the measured wow depth) is
+    // the drift noise realization (and therefore the measured drift depth) is
     // untouched by this addition.
     BandPassSVF flutterBand;
     OnePoleLP   flutterBandLP;                    // steepens the upper skirt
@@ -1021,13 +909,10 @@ private:
     float     ageHumRateSin[2] = { 0.0f, 0.0f };
     float     ageHumRateCos[2] = { 1.0f, 1.0f };
     uint32_t  ageHumRenormalize = 0u;
-    float     lastPlaybackCutoff = -1.0f;         // block-rate speed/age guard
-    float     lastAntiAliasCutoff = -1.0f;
-    float     lastAgeContourDb = 999.0f;
-    bool      ageContourActive = false;
+    float     lastBandwidthAge = -1.0f;      // updateTapeBandwidth guards
+    float     lastBandwidthDelayMs = -1.0f;
     uint32_t  lastClearRequest = 0u;
-    float     spliceSamplesToHead1 = 0.0f;
-    bool      spliceClockStarted = false;
+    double    spliceLoopPosition = 0.0; // tape travel since the last head-1 splice, in loop lengths
 
     float ageRand() noexcept
     {
