@@ -370,7 +370,11 @@ bool recordOversamplingMeetsDesign()
             up1.process(sineAt(f, 48000.0, n), 0.0f, h0, h1, unused0, unused1);
             up2.process(h0, 0.0f, q[0], q[1], unused0, unused1);
             up2.process(h1, 0.0f, q[2], q[3], unused0, unused1);
-            y.push_back(down1.process(down2.process(q[0], q[1]), down2.process(q[2], q[3])));
+            // In sample order: as two arguments of one call the decimator's
+            // calls would run in an unspecified order.
+            const float early = down2.process(q[0], q[1]);
+            const float late = down2.process(q[2], q[3]);
+            y.push_back(down1.process(early, late));
         }
         pass(binLevelDb(y, N, N, bin10(f)));
     }

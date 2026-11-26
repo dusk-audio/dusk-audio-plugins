@@ -2878,9 +2878,12 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             int tapeIdx = (writeIdx - len) & mask;   // the first sample this sub-block wrote
             for (int i = 0; i < len; ++i)
             {
-                const float toTape = ch.tapeDown1.process(
-                    ch.tapeDown2.process(x.tapeOs[i][0], x.tapeOs[i][1]),
-                    ch.tapeDown2.process(x.tapeOs[i][2], x.tapeOs[i][3]));
+                // The inner decimator holds state, so its two calls must run
+                // in sample order: as two arguments of one call their order
+                // is unspecified (GCC and MSVC evaluate right to left).
+                const float early = ch.tapeDown2.process(x.tapeOs[i][0], x.tapeOs[i][1]);
+                const float late = ch.tapeDown2.process(x.tapeOs[i][2], x.tapeOs[i][3]);
+                const float toTape = ch.tapeDown1.process(early, late);
                 ch.tape[(size_t)tapeIdx] = toTape * x.makeupGain[i];
                 tapeIdx = (tapeIdx + 1) & mask;
             }
